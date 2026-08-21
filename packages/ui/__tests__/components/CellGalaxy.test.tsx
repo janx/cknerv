@@ -16,15 +16,11 @@ import {
   writeFlashSlots,
   writeCellBuffers,
   writeCellExitStampSlots,
-  writeCellInspectionNavigationRoles,
-  writeCellInspectionTargets,
 } from '../../src/components/CellGalaxy';
 import {
   ENTER_STAMP_SENTINEL,
   EXIT_STAMP_SENTINEL,
 } from '../../src/geometry/cellLifecycleStamps';
-import { deriveCellInspectionField } from '../../src/nerve/cellInspectionField';
-import type { NeighborGraph } from '../../src/geometry/neighborGraph';
 import { CellGalaxyProvider } from '../../src/hooks/cellGalaxyContext';
 import { emptyCellsCache } from '@cknerv/cache';
 import type { Cell } from '@cknerv/types';
@@ -168,18 +164,18 @@ describe('CellGalaxy', () => {
     expect(source).toContain('geometry={cellFlareGeometry}');
   });
 
-  it('turns direct inspection neighbours into the bounded pick surface', () => {
+  it('keeps every drawn cell pickable — no inspection navigation gate', () => {
     const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
 
-    expect(source).toContain(
-      'cellInspectionNavigationTarget(inspectionField, c.id)',
-    );
+    // During inspection the picker must accept ANY cell: clicking another
+    // cell switches the open card through the same handleSelect path.
+    expect(source).not.toContain('cellInspectionNavigationTarget');
+    expect(source).not.toContain('inspectionFieldRef');
+    expect(source).not.toContain('aInspection');
     expect(source).toContain(
       'const count = Math.min(drawCountRef.current, cells.length)',
     );
     expect(source).toContain('i < count');
-    expect(source).toContain('inspectionFieldRef={inspectionFieldRef}');
-    expect(source).toContain("g.setAttribute('aInspectionRole'");
   });
 
   it('uses the live expanded-braid detail for a forgiving pick surface', () => {
@@ -227,8 +223,8 @@ describe('CellGalaxy', () => {
     expect(source).not.toContain('currentActivityCellIds');
     expect(source).not.toContain('pinCellInspectionFieldInVisiblePrefix');
     // Staged members resolve canonical-first through the display residents,
-    // and selection/inspection visibility rides the bounded overlay pool
-    // appended after the staged list.
+    // and selection visibility rides the bounded overlay pool appended
+    // after the staged list.
     expect(source).toContain('cellsCache.displayResidents.get(');
     expect(source).toContain('cellRenderOverlay(');
     expect(source).toContain('renderSet.displayToken !== cellsCache.displayToken');
@@ -495,108 +491,6 @@ describe('writeFlashSlots', () => {
   });
 });
 
-describe('writeCellInspectionTargets', () => {
-  it('writes graph-hop energy in the current visible Cell order', () => {
-    const cells = [mkCell(3), mkCell(1), mkCell(4), mkCell(2)];
-    const graph: NeighborGraph = {
-      adjacency: new Map([
-        [1, new Set([2])],
-        [2, new Set([1, 3])],
-        [3, new Set([2])],
-        [4, new Set()],
-      ]),
-      edges: [
-        { from: 1, to: 2, d: 1 },
-        { from: 2, to: 3, d: 1 },
-      ],
-    };
-    const field = deriveCellInspectionField(graph, 1);
-    // Packed pair per slot; only the `.y` (next) endpoint is written here.
-    const targets = new Float32Array(8);
-
-    writeCellInspectionTargets(cells, cells.length, field, targets);
-
-    expect(targets[1]).toBeCloseTo(0.72);
-    expect(targets[3]).toBe(1);
-    expect(targets[5]).toBeCloseTo(0.46);
-    expect(targets[7]).toBeCloseTo(0.9);
-  });
-
-  it('restores every visible Cell to full energy without inspection', () => {
-    const targets = new Float32Array(6).fill(0);
-
-    writeCellInspectionTargets([mkCell(1), mkCell(2)], 2, null, targets);
-
-    expect([...targets]).toEqual([0, 1, 0, 1, 0, 0]);
-  });
-
-  it('patches only changed membership ranges during a block update', () => {
-    const targets = new Float32Array(6).fill(0.25);
-
-    writeCellInspectionTargets(
-      [mkCell(1), mkCell(2), mkCell(3)],
-      3,
-      null,
-      targets,
-      [{ start: 1, count: 1 }],
-    );
-
-    // Ranges are SLOT ranges: slot 1 is components 2 and 3.
-    expect([...targets]).toEqual([0.25, 0.25, 0.25, 1, 0.25, 0.25]);
-  });
-});
-
-describe('writeCellInspectionNavigationRoles', () => {
-  it('marks only direct neighbours in the current visible Cell order', () => {
-    const cells = [mkCell(3), mkCell(1), mkCell(4), mkCell(2)];
-    const graph: NeighborGraph = {
-      adjacency: new Map([
-        [1, new Set([2])],
-        [2, new Set([1, 3])],
-        [3, new Set([2])],
-        [4, new Set()],
-      ]),
-      edges: [
-        { from: 1, to: 2, d: 1 },
-        { from: 2, to: 3, d: 1 },
-      ],
-    };
-    const field = deriveCellInspectionField(graph, 1);
-    const roles = new Float32Array(4);
-
-    writeCellInspectionNavigationRoles(cells, cells.length, field, roles);
-
-    expect([...roles]).toEqual([0, 0, 0, 1]);
-  });
-
-  it('clears navigation roles when inspection closes', () => {
-    const roles = new Float32Array([1, 1, 1]);
-
-    writeCellInspectionNavigationRoles(
-      [mkCell(1), mkCell(2)],
-      2,
-      null,
-      roles,
-    );
-
-    expect([...roles]).toEqual([0, 0, 1]);
-  });
-
-  it('patches only changed navigation slots during a block update', () => {
-    const roles = new Float32Array([1, 1, 1]);
-
-    writeCellInspectionNavigationRoles(
-      [mkCell(1), mkCell(2), mkCell(3)],
-      3,
-      null,
-      roles,
-      [{ start: 1, count: 1 }],
-    );
-
-    expect([...roles]).toEqual([1, 0, 1]);
-  });
-});
-
 describe('writeCellBuffers', () => {
   it('coalesces only changed immutable Cell slots after a block delta', () => {
     const first = mkCell(1);
@@ -839,11 +733,6 @@ describe('CellGalaxy useSimFrame buffer behavior', () => {
     );
     expect(source).toContain('cellBufferRanges,');
     expect(source).toContain('markCellBufferUpdateRanges(');
-    expect(source).toContain('cellInspectionAttr');
-    expect(source).toContain('uInspectionBlend.value');
-    expect(source).not.toContain(
-      'markPopulatedBufferUpdate(cellInspectionAttr, count)',
-    );
   });
 
   it('draws staged + overlay + exit holds, and reaps every frame', () => {

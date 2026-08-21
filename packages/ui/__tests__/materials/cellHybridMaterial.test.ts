@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import {
   BIRTH_BLOOM,
-  CELL_INSPECTION_NAVIGATION_SIZE_SCALE,
   makeCellHybridMaterial,
   WITHER_COOL_END,
   WITHER_EMBER_TINT,
@@ -47,7 +46,6 @@ describe('makeCellHybridMaterial', () => {
     expect(m.uniforms.uMemoryMinPointPx.value).toBe(24);
     expect(m.uniforms.uMemoryLinePx.value).toBe(0.55);
     expect(m.uniforms.uMemorySignalEnergy.value).toBe(1);
-    expect(m.uniforms.uInspectionBlend.value).toBe(1);
     expect(m.uniforms.uWarmth.value).toBe(0.12);
     expect(m.uniforms.uCenterDim.value).toBe(0.3);
     expect(m.uniforms.uEnterDurS.value).toBe(ENTER_FADE_MS / 1000);
@@ -120,40 +118,18 @@ describe('makeCellHybridMaterial', () => {
     );
   });
 
-  it('applies topology inspection only to the resting Cell body', () => {
+  it('keeps the resting body at full energy — no inspection dimming machinery', () => {
     const m = makeCellHybridMaterial();
 
-    expect(m.vertexShader).toContain('attribute vec2  aInspection;');
-    expect(m.vertexShader).toContain('uniform float uInspectionBlend');
-    expect(m.vertexShader).toContain('vInspection = mix(');
-    // Both endpoints ride one packed attribute: .x is where the body is
-    // fading from, .y where it is fading to.
-    expect(m.vertexShader).toContain('aInspection.x');
-    expect(m.vertexShader).toContain('aInspection.y');
-    expect(m.fragmentShader).toContain(
-      'base.a *= vCenterDim * vInspection',
-    );
-    expect(m.fragmentShader.indexOf('base.a *= vCenterDim * vInspection'))
-      .toBeLessThan(m.fragmentShader.indexOf('focusSignal'));
-    expect(m.fragmentShader.indexOf('base.a *= vCenterDim * vInspection'))
-      .toBeLessThan(m.fragmentShader.indexOf('readEnergy'));
-  });
-
-  it('gives direct neighbours a split interface affordance within the pick footprint', () => {
-    const m = makeCellHybridMaterial();
-
-    expect(CELL_INSPECTION_NAVIGATION_SIZE_SCALE).toBeGreaterThan(1);
-    expect(m.vertexShader).toContain('attribute float aInspectionRole');
-    expect(m.vertexShader).toContain('inspectionNavigationScale');
-    expect(m.vertexShader).toContain(
-      CELL_INSPECTION_NAVIGATION_SIZE_SCALE.toFixed(2),
-    );
-    expect(m.fragmentShader).toContain('navigationRing');
-    expect(m.fragmentShader).toContain('navigationArc');
-    expect(m.fragmentShader).toContain('navigationNotch');
-    expect(m.fragmentShader.indexOf('navigationSignal'))
-      .toBeLessThan(m.fragmentShader.indexOf('focusSignal'));
-    expect(m.fragmentShader).toContain('if (vInspectionRole > 0.0001)');
+    // The hop-field dim is gone end to end: no packed inspection attributes,
+    // no cross-fade uniform, no navigation size boost or interface arcs. The
+    // resting body pays only the shared centre compression.
+    expect(m.uniforms.uInspectionBlend).toBeUndefined();
+    expect(m.vertexShader).not.toContain('aInspection');
+    expect(m.vertexShader).not.toContain('uInspectionBlend');
+    expect(m.fragmentShader).not.toContain('vInspection');
+    expect(m.fragmentShader).not.toContain('navigationRing');
+    expect(m.fragmentShader).toContain('base.a *= vCenterDim;');
   });
 
   it('renders hover and selection as an interrupted braid interference signal', () => {
@@ -239,7 +215,7 @@ describe('makeCellHybridMaterial', () => {
     );
     // On the resting body, before any event accent can be tinted by it.
     expect(m.fragmentShader.indexOf('vHotColor, ' + BIRTH_BLOOM.toFixed(2)))
-      .toBeLessThan(m.fragmentShader.indexOf('navigationSignal'));
+      .toBeLessThan(m.fragmentShader.indexOf('focusSignal'));
   });
 
   it('withers a corpse by cooling and guttering it, not by deflating it', () => {

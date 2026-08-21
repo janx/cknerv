@@ -149,34 +149,6 @@ const SCREEN_CAPSULE_TEST = `
 			#endif`;
 
 const COLOR_FRAGMENT = '			#include <color_fragment>';
-const INSPECTION_TRANSITION_VERTEX_PARS = `
-		attribute float instanceInspectionFromStart;
-		attribute float instanceInspectionFromEnd;
-		attribute float instanceInspectionToStart;
-		attribute float instanceInspectionToEnd;
-		varying float vInspectionFrom;
-		varying float vInspectionTo;`;
-const INSPECTION_TRANSITION_FRAGMENT_PARS = `
-		varying float vInspectionFrom;
-		varying float vInspectionTo;
-		uniform float inspectionTransitionProgress;`;
-const INSPECTION_TRANSITION_VERTEX_ASSIGNMENT = `
-			vInspectionFrom = ( position.y < 0.5 )
-				? instanceInspectionFromStart
-				: instanceInspectionFromEnd;
-			vInspectionTo = ( position.y < 0.5 )
-				? instanceInspectionToStart
-				: instanceInspectionToEnd;`;
-const INSPECTION_TRANSITION_FRAGMENT = `
-			diffuseColor.rgb *= mix(
-				vInspectionFrom,
-				vInspectionTo,
-				smoothstep(
-					0.0,
-					1.0,
-					clamp( inspectionTransitionProgress, 0.0, 1.0 )
-				)
-			);`;
 const CAPSULE_COLOR_FRAGMENT = `
 			#ifdef USE_COLOR
 
@@ -194,70 +166,6 @@ const CAPSULE_COLOR_FRAGMENT = `
 				);
 
 			#endif`;
-const CAPSULE_INSPECTION_VERTEX_ASSIGNMENT = `
-			vCapsuleInspectionFromStart = instanceInspectionFromStart;
-			vCapsuleInspectionFromEnd = instanceInspectionFromEnd;
-			vCapsuleInspectionToStart = instanceInspectionToStart;
-			vCapsuleInspectionToEnd = instanceInspectionToEnd;`;
-/** Exported so the fabric lifecycle patch can anchor its flash-lifted
- * replacement on this exact chunk. */
-export const CAPSULE_INSPECTION_FRAGMENT = `
-			#ifdef USE_COLOR
-
-				diffuseColor.rgb *= mix(
-					mix(
-						vCapsuleInspectionFromStart,
-						vCapsuleInspectionFromEnd,
-						clamp( capsuleColorT, 0.0, 1.0 )
-					),
-					mix(
-						vCapsuleInspectionToStart,
-						vCapsuleInspectionToEnd,
-						clamp( capsuleColorT, 0.0, 1.0 )
-					),
-					smoothstep(
-						0.0,
-						1.0,
-						clamp( inspectionTransitionProgress, 0.0, 1.0 )
-					)
-				);
-
-			#endif`;
-
-/** Add endpoint inspection-energy interpolation to a stock screen-space
- * LineMaterial. Geometry supplies two static snapshots; one uniform advances
- * the complete passive field without streaming colour buffers each frame. */
-export function enableLineInspectionTransitionMaterial(
-  material: LineMaterial,
-): LineMaterial {
-  material.uniforms.inspectionTransitionProgress = { value: 1 };
-  material.vertexShader = replaceShaderChunk(
-    material.vertexShader,
-    '#include <color_pars_vertex>',
-    `#include <color_pars_vertex>${INSPECTION_TRANSITION_VERTEX_PARS}`,
-    'inspection vertex declarations',
-  );
-  material.vertexShader = replaceShaderChunk(
-    material.vertexShader,
-    VERTEX_COLOR_ASSIGNMENT,
-    `${VERTEX_COLOR_ASSIGNMENT}${INSPECTION_TRANSITION_VERTEX_ASSIGNMENT}`,
-    'inspection vertex assignment',
-  );
-  material.fragmentShader = replaceShaderChunk(
-    material.fragmentShader,
-    '#include <color_pars_fragment>',
-    `#include <color_pars_fragment>${INSPECTION_TRANSITION_FRAGMENT_PARS}`,
-    'inspection fragment declarations',
-  );
-  material.fragmentShader = replaceShaderChunk(
-    material.fragmentShader,
-    COLOR_FRAGMENT,
-    `${COLOR_FRAGMENT}${INSPECTION_TRANSITION_FRAGMENT}`,
-    'inspection fragment application',
-  );
-  material.needsUpdate = true;
-  return material;
-}
 
 /**
  * Patch a non-dashed, screen-space LineMaterial to shade the enclosing quad as
@@ -272,19 +180,6 @@ export function optimizeScreenSpaceCapsuleMaterial(
     throw new Error(
       'screen-space capsule optimization requires a solid pixel-width LineMaterial',
     );
-  }
-  const inspectionTransition =
-    material.uniforms.inspectionTransitionProgress !== undefined;
-  if (inspectionTransition) {
-    // The enclosing capsule needs endpoint-constant values rather than the
-    // stock quad's ordinary interpolation. Replace the generic patch with the
-    // exact capsule variant instead of carrying unused varyings.
-    material.vertexShader = material.vertexShader
-      .replace(INSPECTION_TRANSITION_VERTEX_PARS, '')
-      .replace(INSPECTION_TRANSITION_VERTEX_ASSIGNMENT, '');
-    material.fragmentShader = material.fragmentShader
-      .replace(INSPECTION_TRANSITION_FRAGMENT_PARS, '')
-      .replace(INSPECTION_TRANSITION_FRAGMENT, '');
   }
   material.uniforms.capsulePixelRatio = { value: 1 };
   material.uniforms.capsuleViewportOrigin = { value: new Vector2() };
@@ -303,23 +198,13 @@ export function optimizeScreenSpaceCapsuleMaterial(
 		#ifdef USE_COLOR
 			varying vec3 vCapsuleColorStart;
 			varying vec3 vCapsuleColorEnd;
-		#endif${inspectionTransition ? `
-		attribute float instanceInspectionFromStart;
-		attribute float instanceInspectionFromEnd;
-		attribute float instanceInspectionToStart;
-		attribute float instanceInspectionToEnd;
-		varying float vCapsuleInspectionFromStart;
-		varying float vCapsuleInspectionFromEnd;
-		varying float vCapsuleInspectionToStart;
-		varying float vCapsuleInspectionToEnd;` : ''}`,
+		#endif`,
     'vertex varying insertion point',
   );
   material.vertexShader = replaceShaderChunk(
     material.vertexShader,
     VERTEX_COLOR_ASSIGNMENT,
-    `${VERTEX_CAPSULE_ASSIGNMENT}${inspectionTransition
-      ? CAPSULE_INSPECTION_VERTEX_ASSIGNMENT
-      : ''}`,
+    VERTEX_CAPSULE_ASSIGNMENT,
     'vertex color assignment',
   );
   material.vertexShader = replaceShaderChunk(
@@ -343,12 +228,7 @@ export function optimizeScreenSpaceCapsuleMaterial(
 		#ifdef USE_COLOR
 			varying vec3 vCapsuleColorStart;
 			varying vec3 vCapsuleColorEnd;
-		#endif${inspectionTransition ? `
-		varying float vCapsuleInspectionFromStart;
-		varying float vCapsuleInspectionFromEnd;
-		varying float vCapsuleInspectionToStart;
-		varying float vCapsuleInspectionToEnd;
-		uniform float inspectionTransitionProgress;` : ''}`,
+		#endif`,
     'fragment varying insertion point',
   );
   material.fragmentShader = replaceShaderChunk(
@@ -360,9 +240,7 @@ export function optimizeScreenSpaceCapsuleMaterial(
   material.fragmentShader = replaceShaderChunk(
     material.fragmentShader,
     COLOR_FRAGMENT,
-    `${CAPSULE_COLOR_FRAGMENT}${inspectionTransition
-      ? CAPSULE_INSPECTION_FRAGMENT
-      : ''}`,
+    CAPSULE_COLOR_FRAGMENT,
     'fragment color application',
   );
   material.needsUpdate = true;
@@ -439,10 +317,9 @@ const CAPSULE_WIDTH_RADIUS = `				float capsuleRadius = max(
  *    a round cone — and both caps are still exact circles at their own end's
  *    width. There is no endpoint emphasis in either direction: a cap is a
  *    silhouette, not a brightening.
- *  - the two attributes ride their own interleaved buffer at stride 2, the
- *    same shape the inspection lanes use. Two floats a segment, and the layer
- *    that does not ask for them allocates nothing and compiles the stock
- *    shader.
+ *  - the two attributes ride their own interleaved buffer at stride 2. Two
+ *    floats a segment, and the layer that does not ask for them allocates
+ *    nothing and compiles the stock shader.
  *
  * ⚠️ The radius is taken at the CLOSEST point on the segment rather than by
  * solving for the true tangent of a round cone. Those differ by `dr/dl` of the

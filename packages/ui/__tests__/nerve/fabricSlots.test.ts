@@ -17,7 +17,6 @@ import { FABRIC_TRUNK_NO_ARBOR } from '../../src/nerve/fabricTrunkClass';
 
 type WriterLayer = Parameters<typeof writeFabricEdgeSegments>[0];
 type Aperture = Parameters<typeof writeFabricEdgeSegments>[7];
-type Inspection = Parameters<typeof writeFabricEdgeSegments>[8];
 
 const QUIET_APERTURE: Aperture = {
   active: null,
@@ -25,14 +24,11 @@ const QUIET_APERTURE: Aperture = {
   departing: null,
   departingStrength: 0,
 };
-const NO_INSPECTION: Inspection = { from: null, to: null, progress: 1 };
 
 function makeLayer(segments: number): WriterLayer {
   return {
     positions: new Float32Array(segments * 6),
     colors: new Float32Array(segments * 6),
-    inspectionFrom: new Float32Array(segments * 2).fill(1),
-    inspectionTo: new Float32Array(segments * 2).fill(1),
     count: 0,
   } as unknown as WriterLayer;
 }
@@ -175,7 +171,7 @@ describe('fixed-slot fabric layout', () => {
     for (const st of edges) {
       writeFabricEdgeSegments(
         layer, st, fabricEdgeRenderState(st, now), sample, now,
-        0, 1, QUIET_APERTURE, NO_INSPECTION,
+        0, 1, QUIET_APERTURE,
       );
     }
     return layer;
@@ -187,7 +183,7 @@ describe('fixed-slot fabric layout', () => {
       layer.count = slot * FABRIC_SLOT_SEGMENTS;
       writeFabricEdgeSegments(
         layer, st, fabricEdgeRenderState(st, now), sample, now,
-        0, 1, QUIET_APERTURE, NO_INSPECTION,
+        0, 1, QUIET_APERTURE,
       );
       fillFabricSlotRemainder(layer, (slot + 1) * FABRIC_SLOT_SEGMENTS);
     });
@@ -210,12 +206,6 @@ describe('fixed-slot fabric layout', () => {
             .toBe(packed.positions[(packedStart + s) * 6 + f]);
           expect(slotted.colors[(slotStart + s) * 6 + f])
             .toBe(packed.colors[(packedStart + s) * 6 + f]);
-        }
-        for (let f = 0; f < 2; f += 1) {
-          expect(slotted.inspectionFrom![(slotStart + s) * 2 + f])
-            .toBe(packed.inspectionFrom![(packedStart + s) * 2 + f]);
-          expect(slotted.inspectionTo![(slotStart + s) * 2 + f])
-            .toBe(packed.inspectionTo![(packedStart + s) * 2 + f]);
         }
       }
       // Remainder segments are parked off-frustum with zero colour.
@@ -240,7 +230,7 @@ describe('fixed-slot fabric layout', () => {
     layer.count = 1 * FABRIC_SLOT_SEGMENTS;
     writeFabricEdgeSegments(
       layer, growing, fabricEdgeRenderState(growing, later), sample, later,
-      0, 1, QUIET_APERTURE, NO_INSPECTION,
+      0, 1, QUIET_APERTURE,
     );
     fillFabricSlotRemainder(layer, 2 * FABRIC_SLOT_SEGMENTS);
 

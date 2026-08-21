@@ -8,7 +8,6 @@
 
 import type { Cell } from '@cknerv/types';
 import type { CellGalaxyCache } from '@cknerv/cache';
-import type { CellInspectionField } from '../nerve/cellInspectionField';
 
 /** One contiguous run of visible Cell slots whose immutable presentation
  * changed. Consumers can upload only these ranges instead of comparing the
@@ -442,7 +441,7 @@ export function syncCellRenderSet(
 
 /** No-display-plane compatibility fallback: the canonical insertion-order
  * prefix of the display budget, journal-driven via `cellChanges` exactly as
- * the historical no-composition path. Selection/inspection visibility is the
+ * the historical no-composition path. Selection visibility is the
  * overlay pool's job in both regimes, so this path carries no pinning. */
 function syncFallbackPrefix(
   state: CellRenderSetState,
@@ -542,51 +541,29 @@ function syncFallbackPrefix(
   };
 }
 
-// ── inspection-field overlay pool (design D4) ───────────────────────────
+// ── selected-cell overlay pool (design D4) ──────────────────────────────
 // The only client-side "membership intervention" left is an interaction
-// transient: the selected cell and its inspection-field members may sit
-// off-stage. They render as overlay entries APPENDED after the staged list —
-// client-transient, never entering the shared display membership, never
-// entering the passive display graph. Buffer allocations reserve
-// `OVERLAY_SLOT_POOL` slots past the display budget for them.
+// transient: the SELECTED cell may sit off-stage. It renders as an overlay
+// entry APPENDED after the staged list — client-transient, never entering
+// the shared display membership, never entering the passive display graph.
+// Buffer allocations reserve `OVERLAY_SLOT_POOL` slots past the display
+// budget for it.
 
 export const OVERLAY_SLOT_POOL = 256;
 
 const EMPTY_OVERLAY: Cell[] = [];
 
-/** Resolve the bounded overlay list for a selection. Entries are the
- * selected cell first, then inspection-field members in ascending hop
- * order, each resolved canonical-first and skipped when already staged. */
+/** Resolve the bounded overlay list for a selection: the selected cell,
+ * resolved canonical-first and skipped when already staged. */
 export function cellRenderOverlay(
   cache: Pick<CellGalaxyCache, 'cells' | 'displayResidents'>,
   stagedIndex: ReadonlyMap<number, number>,
   selectedCellId: number | null,
-  field: CellInspectionField | null,
   pool = OVERLAY_SLOT_POOL,
 ): Cell[] {
   if (selectedCellId === null || pool <= 0) return EMPTY_OVERLAY;
-  const overlay: Cell[] = [];
-  const seen = new Set<number>();
-  const admit = (id: number): boolean => {
-    if (overlay.length >= pool) return false;
-    if (seen.has(id) || stagedIndex.has(id)) return true;
-    const cell = resolveStagedCell(cache, id);
-    if (!cell) return true;
-    seen.add(id);
-    overlay.push(cell);
-    return true;
-  };
-  admit(selectedCellId);
-  if (field?.selectedCellId === selectedCellId) {
-    const fieldMembers: Array<[number, number]> = [];
-    for (const [id, hop] of field.hopsByCellId) {
-      if (!Number.isFinite(hop) || hop <= 0 || hop > field.maxHops) continue;
-      fieldMembers.push([id, hop]);
-    }
-    fieldMembers.sort((a, b) => a[1] - b[1] || a[0] - b[0]);
-    for (const [id] of fieldMembers) {
-      if (!admit(id)) break;
-    }
-  }
-  return overlay.length === 0 ? EMPTY_OVERLAY : overlay;
+  if (stagedIndex.has(selectedCellId)) return EMPTY_OVERLAY;
+  const cell = resolveStagedCell(cache, selectedCellId);
+  if (!cell) return EMPTY_OVERLAY;
+  return [cell];
 }

@@ -4,7 +4,6 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import {
   SCREEN_CAPSULE_INDEX,
   SCREEN_CAPSULE_TRIANGLES_PER_SEGMENT,
-  enableLineInspectionTransitionMaterial,
   enableTaperedCapsuleWidthMaterial,
   makeScreenSpaceCapsuleGeometry,
   optimizeScreenSpaceCapsuleMaterial,
@@ -138,26 +137,16 @@ describe('screen-space capsule line', () => {
     }))).toThrow('solid pixel-width LineMaterial');
   });
 
-  it('cross-fades static endpoint inspection energy through one uniform', () => {
-    const stock = enableLineInspectionTransitionMaterial(new LineMaterial({
+  it('carries no inspection cross-fade machinery on the stock patch', () => {
+    const material = optimizeScreenSpaceCapsuleMaterial(new LineMaterial({
       vertexColors: true,
       worldUnits: false,
     }));
-    expect(stock.uniforms.inspectionTransitionProgress.value).toBe(1);
-    expect(stock.vertexShader).toContain('instanceInspectionFromStart');
-    expect(stock.vertexShader).toContain('instanceInspectionToEnd');
-    expect(stock.fragmentShader).toContain(
-      'clamp( inspectionTransitionProgress, 0.0, 1.0 )',
-    );
-
-    // The same patch composes with the two-triangle capsule rewrite used by
-    // the complete passive fabric.
-    optimizeScreenSpaceCapsuleMaterial(stock);
-    expect(stock.fragmentShader).toContain('capsuleDistanceSq');
-    expect(stock.fragmentShader).toContain(
-      'vCapsuleInspectionFromStart',
-    );
-    expect(stock.fragmentShader).toContain(
+    expect(material.uniforms.inspectionTransitionProgress).toBeUndefined();
+    expect(material.vertexShader).not.toContain('instanceInspection');
+    expect(material.fragmentShader).not.toContain('inspectionTransitionProgress');
+    expect(material.fragmentShader).toContain('capsuleDistanceSq');
+    expect(material.fragmentShader).toContain(
       'clamp( capsuleColorT, 0.0, 1.0 )',
     );
   });

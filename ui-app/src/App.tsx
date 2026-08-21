@@ -74,7 +74,6 @@ import {
   type ConsensusMemoryTraceReadout,
   type ConsensusMemoryRouteHopFocus,
   type ConsensusMemoryTargetResponse,
-  type CellInspectionField,
   type CellInspectionHandles,
   type NodeInspectionHandles,
   type PeerInspectionHandles,
@@ -566,7 +565,6 @@ export default function App({
   const cellFlashRef = useRef<Map<number, number>>(new Map());
   const flashDirtyRef = useRef<boolean>(false);
   const flashDirtyIdsRef = useRef<Set<number>>(new Set());
-  const cellInspectionFieldRef = useRef<CellInspectionField | null>(null);
   const burstArrivalRef = useRef<
     Map<number, { firedAt: number; color: [number, number, number] }>
   >(new Map());
@@ -1504,7 +1502,6 @@ export default function App({
             cellFlashRef={cellFlashRef}
             flashDirtyRef={flashDirtyRef}
             flashDirtyIdsRef={flashDirtyIdsRef}
-            inspectionFieldRef={cellInspectionFieldRef}
             pickingSuspendedRef={orbitPickingSuspendedRef}
             overlay={
               <>
@@ -1542,8 +1539,6 @@ export default function App({
                   topology={galaxyConfig.topology}
                   pulses={galaxyConfig.pulses}
                   livePulseDelayS={livePulseDelayS}
-                  inspectionCellId={selectedCell?.id ?? null}
-                  inspectionFieldRef={cellInspectionFieldRef}
                   cellDetailViewFocusRef={cellDetailViewFocusRef}
                   traceRequest={memoryTraceRequest}
                   traceMaxPulses={CELL_MEMORY_RECALL_MAX_PULSES}

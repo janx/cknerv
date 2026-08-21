@@ -11,7 +11,7 @@ const SEGMENTS = 32;
 
 describe('fabric lifecycle layer construction', () => {
   it('a lifecycle layer binds the static-record attributes and uniforms', () => {
-    const layer = makeFatLineLayer(SEGMENTS, 2.5, 'screen', true, true, true);
+    const layer = makeFatLineLayer(SEGMENTS, 2.5, 'screen', true, true);
     expect(layer.lifecycle).toBeDefined();
     const expectations: Array<[string, number, number]> = [
       ['fabricCurveFrom', 4, 0],
@@ -43,7 +43,7 @@ describe('fabric lifecycle layer construction', () => {
   });
 
   it('non-lifecycle layers stay byte-identical to before', () => {
-    const layer = makeFatLineLayer(SEGMENTS, 2.5, 'screen', true, true, false);
+    const layer = makeFatLineLayer(SEGMENTS, 2.5, 'screen', true, false);
     expect(layer.lifecycle).toBeUndefined();
     expect(layer.geometry.getAttribute('fabricCurveFrom')).toBeUndefined();
     expect(layer.material.uniforms.fabricSimTimeSec).toBeUndefined();
@@ -51,7 +51,7 @@ describe('fabric lifecycle layer construction', () => {
   });
 
   it('lifecycle mode requires the screen-capsule pipeline', () => {
-    expect(() => makeFatLineLayer(SEGMENTS, 2.5, 'additive', false, false, true))
+    expect(() => makeFatLineLayer(SEGMENTS, 2.5, 'additive', false, true))
       .toThrow(/screen-capsule/);
   });
 });

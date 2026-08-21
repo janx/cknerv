@@ -60,7 +60,7 @@ describe('the bridge layer stays render-only', () => {
     // or a memory.
     for (const specifier of LAYER_IMPORTS) {
       expect(specifier).not.toMatch(
-        /pathRouter|consensusMemory|cellInspectionField|fabricReinforce|pulse|screenSpaceHitIndex|NeuralNetwork$/i,
+        /pathRouter|consensusMemory|fabricReinforce|pulse|screenSpaceHitIndex|NeuralNetwork$/i,
       );
     }
     expect(LAYER_IMPORTS).toContain('./NeuralFabric');
@@ -107,7 +107,7 @@ describe('the bridge layer is the only tapered-width stroke in the scene', () =>
     // has to be asked for at build time — the buffer and the shader patch both
     // ride the same flag, and a layer that does not ask for them allocates
     // nothing and compiles the stock capsule.
-    const layer = makeFatLineLayer(8, 2.4, 'screen', true, false, false, true);
+    const layer = makeFatLineLayer(8, 2.4, 'screen', true, false, true);
     expect(layer.widths).toBeDefined();
     expect(layer.widths).toHaveLength(8 * 2);
     expect(layer.widthBuf).toBeDefined();
@@ -132,24 +132,24 @@ describe('the bridge layer is the only tapered-width stroke in the scene', () =>
     plain.material.dispose();
     // And the lane is meaningless without the screen capsule it patches, so
     // asking for it on an additive layer is refused rather than ignored.
-    expect(() => makeFatLineLayer(8, 2.5, 'additive', false, false, false, true))
+    expect(() => makeFatLineLayer(8, 2.5, 'additive', false, false, true))
       .toThrow(/screen-capsule/);
   });
 
   it('uploads the width lane on the same gate the positions ride', () => {
     // A tapered stroke's width is a function of where it is along its own
     // curve, so widths and positions are dirty together and never separately.
-    const layer = makeFatLineLayer(8, 2.4, 'screen', true, false, false, true);
+    const layer = makeFatLineLayer(8, 2.4, 'screen', true, false, true);
     layer.count = 3;
     const before = layer.widthBuf!.version;
     commitLayer(layer);
     // Stride 2 against the positions' 6: three segments are six floats.
     expect(layer.widthBuf!.updateRanges).toEqual([{ start: 0, count: 6 }]);
     expect(layer.widthBuf!.version).toBeGreaterThan(before);
-    // A colours-and-inspection-only commit leaves it alone, exactly as it
-    // leaves the positions alone.
+    // A colours-only commit leaves it alone, exactly as it leaves the
+    // positions alone.
     const uploaded = layer.widthBuf!.version;
-    commitLayer(layer, false, true, true);
+    commitLayer(layer, false, true);
     expect(layer.widthBuf!.updateRanges).toEqual([]);
     expect(layer.widthBuf!.version).toBe(uploaded);
     layer.geometry.dispose();

@@ -95,7 +95,6 @@ import {
   type FabricFullWalkReason,
 } from './fabricStats';
 import {
-  enableLineInspectionTransitionMaterial,
   makeScreenSpaceCapsuleGeometry,
   enableTaperedCapsuleWidthMaterial,
   optimizeScreenSpaceCapsuleMaterial,
@@ -116,10 +115,6 @@ import {
   consensusMemoryApertureScale,
   type ConsensusMemoryAperture,
 } from './consensusMemoryAperture';
-import {
-  cellInspectionEdgeScaleAt,
-  type CellInspectionField,
-} from './cellInspectionField';
 import {
   cellDetailFabricEnergyGain,
   cellDetailFabricWidthScale,
@@ -200,9 +195,6 @@ export interface ActiveHop {
 }
 
 export interface NeuralFabricHandles {
-  /** Grade passive structure by bounded real adjacency around one inspected
-   * Cell. Active writes and recalled routes keep their independent layers. */
-  setInspectionField(field: CellInspectionField | null): void;
   /** Clear passive noise only behind exact recalled-route wavefronts. */
   setRecallAperture(
     active: ConsensusMemoryAperture | null,
@@ -288,8 +280,6 @@ export interface NeuralFabricProps {
 export interface FatLineLayer {
   positions: Float32Array;
   colors: Float32Array;
-  inspectionFrom?: Float32Array;
-  inspectionTo?: Float32Array;
   /** Per-endpoint width FACTOR on the material's own `linewidth`, present only
    *  on a layer built with `taperedWidth`. Two floats a segment, initialised to
    *  1 so an instance nobody writes draws at exactly the uniform width. See
@@ -298,8 +288,6 @@ export interface FatLineLayer {
   widths?: Float32Array;
   posBuf: THREE.InstancedInterleavedBuffer;
   colBuf: THREE.InstancedInterleavedBuffer;
-  inspectionFromBuf?: THREE.InstancedInterleavedBuffer;
-  inspectionToBuf?: THREE.InstancedInterleavedBuffer;
   widthBuf?: THREE.InstancedInterleavedBuffer;
   geometry: LineSegmentsGeometry;
   material: LineMaterial;
@@ -379,12 +367,6 @@ interface RecallApertureState {
   departingStrength: number;
 }
 
-interface InspectionFieldTransition {
-  from: CellInspectionField | null;
-  to: CellInspectionField | null;
-  progress: number;
-}
-
 /** One deferred add candidate of a staggered setFabric diff. */
 interface PendingFabricAdd {
   key: string;
@@ -410,28 +392,6 @@ interface PendingFabricCohorts {
   cohorts: FabricCohortSlice[];
   /** Next unadmitted cohort index (slices before it are already in). */
   next: number;
-}
-
-/** Short enough to feel directly attached to selection, long enough that a
- * different Cell's graph-distance hierarchy never pops into existence. */
-const INSPECTION_FIELD_TRANSITION_SECONDS = 0.34;
-
-function inspectionFieldEndpointScaleAt(
-  field: CellInspectionField | null,
-  fromCellId: number,
-  toCellId: number,
-  edgeT: number,
-  lifecycleFlash: number,
-): number {
-  const fieldScale = cellInspectionEdgeScaleAt(
-    field,
-    fromCellId,
-    toCellId,
-    edgeT,
-  );
-  // A real Cell retirement is an event, not passive context. Let its existing
-  // semantic flash reclaim full energy even when it occurs outside inspection.
-  return fieldScale + (1 - fieldScale) * lifecycleFlash;
 }
 
 function recallApertureScaleAt(
@@ -477,13 +437,10 @@ function recallApertureScaleAt(
 // band, and a brightness band restated in two files is a band that drifts.
 
 /** Park every remaining segment of a fixed slot: zero colours, endpoints far
- * outside the frustum, neutral inspection weights. Exported for the packed vs
- * slot-layout equivalence tests. */
+ * outside the frustum. Exported for the packed vs slot-layout equivalence
+ * tests. */
 export function fillFabricSlotRemainder(
-  layer: Pick<
-    FatLineLayer,
-    'positions' | 'colors' | 'inspectionFrom' | 'inspectionTo' | 'count'
-  >,
+  layer: Pick<FatLineLayer, 'positions' | 'colors' | 'count'>,
   slotEndSegments: number,
 ): void {
   while (layer.count < slotEndSegments) {
@@ -500,34 +457,6 @@ export function fillFabricSlotRemainder(
     layer.colors[off + 3] = 0;
     layer.colors[off + 4] = 0;
     layer.colors[off + 5] = 0;
-    if (layer.inspectionFrom && layer.inspectionTo) {
-      const inspectionOffset = layer.count * 2;
-      layer.inspectionFrom[inspectionOffset] = 1;
-      layer.inspectionFrom[inspectionOffset + 1] = 1;
-      layer.inspectionTo[inspectionOffset] = 1;
-      layer.inspectionTo[inspectionOffset + 1] = 1;
-    }
-    layer.count += 1;
-  }
-}
-
-/** Inspection-only variant: touches nothing but the two inspection arrays. */
-function fillInspectionSlotRemainder(
-  layer: FatLineLayer,
-  slotEndSegments: number,
-): void {
-  const inspectionFrom = layer.inspectionFrom;
-  const inspectionTo = layer.inspectionTo;
-  if (!inspectionFrom || !inspectionTo) {
-    layer.count = slotEndSegments;
-    return;
-  }
-  while (layer.count < slotEndSegments) {
-    const inspectionOffset = layer.count * 2;
-    inspectionFrom[inspectionOffset] = 1;
-    inspectionFrom[inspectionOffset + 1] = 1;
-    inspectionTo[inspectionOffset] = 1;
-    inspectionTo[inspectionOffset + 1] = 1;
     layer.count += 1;
   }
 }
@@ -536,7 +465,7 @@ function fillInspectionSlotRemainder(
  * the sparse warm-route overlay. `usage` changes route colour/spatial energy;
  * `brightnessGain` selects the complete baseline (1) or only reinforcement's
  * incremental contribution (>0). Keeping one sampler prevents the overlay
- * from drifting away from lifecycle, aperture, inspection, or taper semantics.
+ * from drifting away from lifecycle, aperture, or taper semantics.
  * Exported (with its EdgeState input) for the slot-equivalence tests. */
 export function writeFabricEdgeSegments(
   layer: FatLineLayer,
@@ -547,7 +476,6 @@ export function writeFabricEdgeSegments(
   usage: number,
   brightnessGain: number,
   recallAperture: RecallApertureState,
-  inspectionField: InspectionFieldTransition,
   writePositions = true,
 ): void {
   if (!render.visible || render.alphaMul <= 0 || brightnessGain <= 0) return;
@@ -611,20 +539,6 @@ export function writeFabricEdgeSegments(
     flash,
     now,
   );
-  let prevInspectionFrom = inspectionFieldEndpointScaleAt(
-    inspectionField.from,
-    st.fromCellId,
-    st.toCellId,
-    tStart,
-    flash,
-  );
-  let prevInspectionTo = inspectionFieldEndpointScaleAt(
-    inspectionField.to,
-    st.fromCellId,
-    st.toCellId,
-    tStart,
-    flash,
-  );
   const startEnergy = energy
     * startTaper
     * prevSpatial
@@ -666,20 +580,6 @@ export function writeFabricEdgeSegments(
       flash,
       now,
     );
-    const endInspectionFrom = inspectionFieldEndpointScaleAt(
-      inspectionField.from,
-      st.fromCellId,
-      st.toCellId,
-      t,
-      flash,
-    );
-    const endInspectionTo = inspectionFieldEndpointScaleAt(
-      inspectionField.to,
-      st.fromCellId,
-      st.toCellId,
-      t,
-      flash,
-    );
     const endEnergy = energy
       * endTaper
       * endSpatial
@@ -699,8 +599,6 @@ export function writeFabricEdgeSegments(
       sample[0], sample[1], sample[2],
       prevR, prevG, prevB,
       endR, endG, endB,
-      prevInspectionFrom, endInspectionFrom,
-      prevInspectionTo, endInspectionTo,
       writePositions,
     );
     prevX = sample[0];
@@ -709,83 +607,20 @@ export function writeFabricEdgeSegments(
     prevR = endR;
     prevG = endG;
     prevB = endB;
-    prevInspectionFrom = endInspectionFrom;
-    prevInspectionTo = endInspectionTo;
     if (t >= tEnd) break;
   }
 }
 
-/** Rewrite only the two inspection snapshots for stable passive geometry.
- * Selection does not change an edge, its Bezier, semantic colour, taper, or
- * aperture, so walking those paths again would be pure duplicate work. */
-function writeFabricEdgeInspectionSegments(
-  layer: FatLineLayer,
-  st: EdgeState,
-  render: EdgeRender,
-  inspectionField: InspectionFieldTransition,
-): void {
-  if (!render.visible || render.alphaMul <= 0) return;
-  const inspectionFrom = layer.inspectionFrom;
-  const inspectionTo = layer.inspectionTo;
-  if (!inspectionFrom || !inspectionTo) return;
-  const tStart = render.tStart;
-  const tEnd = render.tEnd;
-  let startFrom = inspectionFieldEndpointScaleAt(
-    inspectionField.from,
-    st.fromCellId,
-    st.toCellId,
-    tStart,
-    render.flash,
-  );
-  let startTo = inspectionFieldEndpointScaleAt(
-    inspectionField.to,
-    st.fromCellId,
-    st.toCellId,
-    tStart,
-    render.flash,
-  );
-  for (let index = 1; index <= FABRIC_SAMPLES_PER_EDGE; index += 1) {
-    if (layer.count >= layer.positions.length / 6) return;
-    const rawT = tStart
-      + (tEnd - tStart) * (index / FABRIC_SAMPLES_PER_EDGE);
-    const t = rawT > tEnd ? tEnd : rawT;
-    const endFrom = inspectionFieldEndpointScaleAt(
-      inspectionField.from,
-      st.fromCellId,
-      st.toCellId,
-      t,
-      render.flash,
-    );
-    const endTo = inspectionFieldEndpointScaleAt(
-      inspectionField.to,
-      st.fromCellId,
-      st.toCellId,
-      t,
-      render.flash,
-    );
-    const offset = layer.count * 2;
-    inspectionFrom[offset] = startFrom;
-    inspectionFrom[offset + 1] = endFrom;
-    inspectionTo[offset] = startTo;
-    inspectionTo[offset + 1] = endTo;
-    layer.count += 1;
-    startFrom = endFrom;
-    startTo = endTo;
-    if (t >= tEnd) break;
-  }
-}
-
-/** One fat-line material, patched in the only order the three shader patches
- * tolerate: inspection first (it anchors on stock chunks), then the capsule
- * (it rewrites those chunks), then — at the caller — the lifecycle (it anchors
- * on the capsule's). Split out of `makeFatLineLayer` so a second pass over an
+/** One fat-line material, patched in the only order the shader patches
+ * tolerate: the capsule first (it rewrites stock chunks), then — at the
+ * caller — the lifecycle (it anchors on the capsule's). Split out of
+ * `makeFatLineLayer` so a second pass over an
  * EXISTING geometry can be built from the same recipe rather than a copy of
  * it. */
 function makeFatLineMaterial(
   widthPx: number,
   accumulation: 'screen' | 'additive',
   useScreenCapsule: boolean,
-  inspectionTransition: boolean,
   taperedWidth = false,
 ): LineMaterial {
   const material = new LineMaterial({
@@ -799,9 +634,6 @@ function makeFatLineMaterial(
     worldUnits: false,
     toneMapped: false,
   });
-  if (inspectionTransition) {
-    enableLineInspectionTransitionMaterial(material);
-  }
   if (useScreenCapsule) {
     optimizeScreenSpaceCapsuleMaterial(material);
   }
@@ -854,39 +686,23 @@ export function makeFatLineLayer(
   widthPx: number,
   accumulation: 'screen' | 'additive',
   optimizePassiveGeometry = false,
-  inspectionTransition = false,
   lifecycle = false,
   taperedWidth = false,
 ): FatLineLayer {
   const positions = new Float32Array(maxSegments * 6);
   const colors = new Float32Array(maxSegments * 6);
-  const inspectionFrom = inspectionTransition
-    ? new Float32Array(maxSegments * 2).fill(1)
-    : undefined;
-  const inspectionTo = inspectionTransition
-    ? new Float32Array(maxSegments * 2).fill(1)
-    : undefined;
   // 1, not 0: an instance the emit never reaches draws the material's own
-  // width rather than vanishing, which is the same failure discipline the
-  // inspection lanes use.
+  // width rather than vanishing.
   const widths = taperedWidth
     ? new Float32Array(maxSegments * 2).fill(1)
     : undefined;
   const posBuf = new THREE.InstancedInterleavedBuffer(positions, 6, 1);
   const colBuf = new THREE.InstancedInterleavedBuffer(colors, 6, 1);
-  const inspectionFromBuf = inspectionFrom
-    ? new THREE.InstancedInterleavedBuffer(inspectionFrom, 2, 1)
-    : undefined;
-  const inspectionToBuf = inspectionTo
-    ? new THREE.InstancedInterleavedBuffer(inspectionTo, 2, 1)
-    : undefined;
   const widthBuf = widths
     ? new THREE.InstancedInterleavedBuffer(widths, 2, 1)
     : undefined;
   posBuf.setUsage(THREE.DynamicDrawUsage);
   colBuf.setUsage(THREE.DynamicDrawUsage);
-  inspectionFromBuf?.setUsage(THREE.DynamicDrawUsage);
-  inspectionToBuf?.setUsage(THREE.DynamicDrawUsage);
   widthBuf?.setUsage(THREE.DynamicDrawUsage);
   const useScreenCapsule = accumulation === 'screen'
     && optimizePassiveGeometry;
@@ -900,24 +716,6 @@ export function makeFatLineLayer(
   geometry.setAttribute('instanceEnd', new THREE.InterleavedBufferAttribute(posBuf, 3, 3));
   geometry.setAttribute('instanceColorStart', new THREE.InterleavedBufferAttribute(colBuf, 3, 0));
   geometry.setAttribute('instanceColorEnd', new THREE.InterleavedBufferAttribute(colBuf, 3, 3));
-  if (inspectionFromBuf && inspectionToBuf) {
-    geometry.setAttribute(
-      'instanceInspectionFromStart',
-      new THREE.InterleavedBufferAttribute(inspectionFromBuf, 1, 0),
-    );
-    geometry.setAttribute(
-      'instanceInspectionFromEnd',
-      new THREE.InterleavedBufferAttribute(inspectionFromBuf, 1, 1),
-    );
-    geometry.setAttribute(
-      'instanceInspectionToStart',
-      new THREE.InterleavedBufferAttribute(inspectionToBuf, 1, 0),
-    );
-    geometry.setAttribute(
-      'instanceInspectionToEnd',
-      new THREE.InterleavedBufferAttribute(inspectionToBuf, 1, 1),
-    );
-  }
   if (widthBuf) {
     geometry.setAttribute(
       'instanceWidthStart',
@@ -934,7 +732,6 @@ export function makeFatLineLayer(
     widthPx,
     accumulation,
     useScreenCapsule,
-    inspectionTransition,
     taperedWidth,
   );
   let lifecycleBuffers: FabricLifecycleBuffers | undefined;
@@ -971,13 +768,9 @@ export function makeFatLineLayer(
   return {
     positions,
     colors,
-    inspectionFrom,
-    inspectionTo,
     widths,
     posBuf,
     colBuf,
-    inspectionFromBuf,
-    inspectionToBuf,
     widthBuf,
     geometry,
     material,
@@ -999,8 +792,8 @@ export interface FabricTrunkPass {
  *
  * A second material and mesh over the passive layer's OWN geometry. Nothing is
  * copied: the two passes read the same interleaved buffers, the same lifecycle
- * records, the same inspection snapshots and the same recall-aperture lanes,
- * and differ only in `linewidth` and their `fabricTrunkPass` uniform. That is
+ * records and the same recall-aperture lanes, and differ only in `linewidth`
+ * and their `fabricTrunkPass` uniform. That is
  * the point — parity with the mesh pass is structural rather than maintained,
  * and the subset needs no bake, no slot space and no allocation of its own.
  *
@@ -1017,7 +810,7 @@ export function makeFabricTrunkPass(
   if (!source.lifecycle) {
     throw new Error('the trunk pass requires a GPU-parametric lifecycle layer');
   }
-  const material = makeFatLineMaterial(widthPx, 'screen', true, true);
+  const material = makeFatLineMaterial(widthPx, 'screen', true);
   enableFabricLifecycleMaterial(material, FABRIC_TRUNK_PASS_TRUNK);
   const mesh = makeFatLineMesh(source.geometry, material, true);
   // The twin shares its geometry, so LineSegments2's real raycast would
@@ -1062,8 +855,6 @@ function pushSegmentGradient(
   bx: number, by: number, bz: number,
   rA: number, gA: number, bA: number,
   rB: number, gB: number, bB: number,
-  inspectionFromA: number, inspectionFromB: number,
-  inspectionToA: number, inspectionToB: number,
   writePositions: boolean,
 ): void {
   if (layer.count >= layer.positions.length / 6) return;
@@ -1082,13 +873,6 @@ function pushSegmentGradient(
   layer.colors[off + 3] = rB;
   layer.colors[off + 4] = gB;
   layer.colors[off + 5] = bB;
-  const inspectionOffset = layer.count * 2;
-  if (layer.inspectionFrom && layer.inspectionTo) {
-    layer.inspectionFrom[inspectionOffset] = inspectionFromA;
-    layer.inspectionFrom[inspectionOffset + 1] = inspectionFromB;
-    layer.inspectionTo[inspectionOffset] = inspectionToA;
-    layer.inspectionTo[inspectionOffset + 1] = inspectionToB;
-  }
   layer.count += 1;
 }
 
@@ -1096,13 +880,10 @@ export function commitLayer(
   layer: FatLineLayer,
   updatePositions = true,
   updateColors = true,
-  updateInspections = true,
 ): void {
   const usedFloats = layer.count * 6;
   layer.posBuf.clearUpdateRanges();
   layer.colBuf.clearUpdateRanges();
-  layer.inspectionFromBuf?.clearUpdateRanges();
-  layer.inspectionToBuf?.clearUpdateRanges();
   layer.widthBuf?.clearUpdateRanges();
   if (usedFloats > 0) {
     // Three uploads the complete backing array when no range is supplied.
@@ -1117,30 +898,19 @@ export function commitLayer(
       layer.colBuf.addUpdateRange(0, usedFloats);
       layer.colBuf.needsUpdate = true;
     }
-    const usedInspectionFloats = layer.count * 2;
-    if (
-      updateInspections
-      && layer.inspectionFromBuf
-      && layer.inspectionToBuf
-    ) {
-      layer.inspectionFromBuf.addUpdateRange(0, usedInspectionFloats);
-      layer.inspectionFromBuf.needsUpdate = true;
-      layer.inspectionToBuf.addUpdateRange(0, usedInspectionFloats);
-      layer.inspectionToBuf.needsUpdate = true;
-    }
-    // The width lane rides the POSITION gate, not the inspection one: a
-    // tapered stroke's width is a function of where it is along its own curve,
-    // so the two are dirty together and never separately.
+    // The width lane rides the POSITION gate: a tapered stroke's width is a
+    // function of where it is along its own curve, so the two are dirty
+    // together and never separately.
     if (updatePositions && layer.widthBuf) {
-      layer.widthBuf.addUpdateRange(0, usedInspectionFloats);
+      layer.widthBuf.addUpdateRange(0, layer.count * 2);
       layer.widthBuf.needsUpdate = true;
     }
   }
   layer.geometry.instanceCount = layer.count;
 }
 
-/** Upload only the given SEGMENT ranges (positions + colours + inspection).
- * The incremental animating-edge path rewrites fixed slots in place, so the
+/** Upload only the given SEGMENT ranges (positions + colours). The
+ * incremental animating-edge path rewrites fixed slots in place, so the
  * populated prefix and instanceCount are unchanged. */
 function commitFabricSlotRanges(
   layer: FatLineLayer,
@@ -1149,28 +919,20 @@ function commitFabricSlotRanges(
   if (ranges.length === 0) return;
   layer.posBuf.clearUpdateRanges();
   layer.colBuf.clearUpdateRanges();
-  layer.inspectionFromBuf?.clearUpdateRanges();
-  layer.inspectionToBuf?.clearUpdateRanges();
   let rangeSegments = 0;
   for (const range of ranges) {
     rangeSegments += range.count;
     layer.posBuf.addUpdateRange(range.start * 6, range.count * 6);
     layer.colBuf.addUpdateRange(range.start * 6, range.count * 6);
-    layer.inspectionFromBuf?.addUpdateRange(range.start * 2, range.count * 2);
-    layer.inspectionToBuf?.addUpdateRange(range.start * 2, range.count * 2);
   }
   layer.posBuf.needsUpdate = true;
   layer.colBuf.needsUpdate = true;
-  if (layer.inspectionFromBuf) layer.inspectionFromBuf.needsUpdate = true;
-  if (layer.inspectionToBuf) layer.inspectionToBuf.needsUpdate = true;
   layer.geometry.instanceCount = layer.count;
   // This path serves only the passive fabric layer; its upload volume is
   // the number the range-governance and cohort staggering exist to bound.
   fabricStats.observeUpload(fabricUploadBytes(rangeSegments, {
     positions: true,
     colors: true,
-    inspection: (layer.inspectionFromBuf ? 1 : 0)
-      + (layer.inspectionToBuf ? 1 : 0),
   }));
 }
 
@@ -1213,26 +975,14 @@ function commitFabricLifecycleSlotRanges(
   lifecycle.curveBuf.needsUpdate = true;
   lifecycle.colorBuf.needsUpdate = true;
   lifecycle.scalarBuf.needsUpdate = true;
-  // Admits bake inspection snapshots into recycled slots alongside the
-  // static record, so those two buffers ride the same event ranges.
-  if (layer.inspectionFromBuf && layer.inspectionToBuf) {
-    layer.inspectionFromBuf.clearUpdateRanges();
-    layer.inspectionToBuf.clearUpdateRanges();
-    for (const range of ranges) {
-      layer.inspectionFromBuf.addUpdateRange(range.start * 2, range.count * 2);
-      layer.inspectionToBuf.addUpdateRange(range.start * 2, range.count * 2);
-    }
-    layer.inspectionFromBuf.needsUpdate = true;
-    layer.inspectionToBuf.needsUpdate = true;
-  }
   layer.geometry.instanceCount = layer.count;
   fabricStats.observeUpload(
-    rangeSegments * (FABRIC_LIFECYCLE_BYTES_PER_SEGMENT + 16),
+    rangeSegments * FABRIC_LIFECYCLE_BYTES_PER_SEGMENT,
   );
 }
 
-/** Full-population upload of the static records + inspection snapshots after
- * a compacting walk (boot / slot-space overflow / rare global repaint). */
+/** Full-population upload of the static records after a compacting walk
+ * (boot / slot-space overflow / rare global repaint). */
 function commitFabricLifecycleFull(layer: FatLineLayer): void {
   const lifecycle = layer.lifecycle;
   if (!lifecycle) return;
@@ -1240,8 +990,6 @@ function commitFabricLifecycleFull(layer: FatLineLayer): void {
   lifecycle.curveBuf.clearUpdateRanges();
   lifecycle.colorBuf.clearUpdateRanges();
   lifecycle.scalarBuf.clearUpdateRanges();
-  layer.inspectionFromBuf?.clearUpdateRanges();
-  layer.inspectionToBuf?.clearUpdateRanges();
   if (segments > 0) {
     lifecycle.curveBuf.addUpdateRange(0, segments * FABRIC_LIFE_CURVE_STRIDE);
     lifecycle.colorBuf.addUpdateRange(0, segments * FABRIC_LIFE_COLOR_STRIDE);
@@ -1249,16 +997,10 @@ function commitFabricLifecycleFull(layer: FatLineLayer): void {
     lifecycle.curveBuf.needsUpdate = true;
     lifecycle.colorBuf.needsUpdate = true;
     lifecycle.scalarBuf.needsUpdate = true;
-    if (layer.inspectionFromBuf && layer.inspectionToBuf) {
-      layer.inspectionFromBuf.addUpdateRange(0, segments * 2);
-      layer.inspectionFromBuf.needsUpdate = true;
-      layer.inspectionToBuf.addUpdateRange(0, segments * 2);
-      layer.inspectionToBuf.needsUpdate = true;
-    }
   }
   layer.geometry.instanceCount = segments;
   fabricStats.observeUpload(
-    segments * (FABRIC_LIFECYCLE_BYTES_PER_SEGMENT + 16),
+    segments * FABRIC_LIFECYCLE_BYTES_PER_SEGMENT,
   );
 }
 
@@ -1275,13 +1017,6 @@ function commitFabricApertureLanes(layer: FatLineLayer): void {
   }
   fabricStats.observeUpload(layer.count * 4 * FABRIC_LIFE_COLOR_STRIDE);
 }
-
-/** A settled lifecycle for static-span inspection/aperture baking: the shader
- * owns the real interval, alpha, and flash. */
-const SETTLED_EDGE_RENDER: EdgeRender = {
-  visible: true, alphaMul: 1, tStart: 0, tEnd: 1, flash: 0,
-  reap: false, animating: false,
-};
 
 export default function NeuralFabric({
   onReady,
@@ -1300,7 +1035,6 @@ export default function NeuralFabric({
       fabricSegmentAllocation(allocationEdges),
       LIVE.cell.fabricWidth,
       'screen',
-      true,
       true,
       true, // GPU-parametric lifecycle: static slots, sim-time evaluation
     ),
@@ -1326,8 +1060,6 @@ export default function NeuralFabric({
       warmSegmentAllocation(allocationEdges),
       LIVE.cell.fabricWidth,
       'screen',
-      false,
-      true,
     ),
     [allocationEdges],
   );
@@ -1392,8 +1124,6 @@ export default function NeuralFabric({
    *  growth/decay and its appearance changes per frame. Flipped
    *  off after a final emit settles everything into stable state. */
   const emitDirtyRef = useRef<boolean>(false);
-  /** A field selection changes only the two static inspection snapshots. */
-  const inspectionOnlyDirtyRef = useRef(false);
   /** STRUCTURAL changes (graph diff / per-edge grow-kill / reap compaction):
    * slot assignment and sampled endpoints are invalid → full rebuild. */
   const passivePositionsDirtyRef = useRef<boolean>(true);
@@ -1440,11 +1170,6 @@ export default function NeuralFabric({
     departingStrength: 0,
   });
   const apertureAnimationRef = useRef(false);
-  const inspectionFieldRef = useRef<InspectionFieldTransition>({
-    from: null,
-    to: null,
-    progress: 1,
-  });
 
   useEffect(() => {
     fabric.material.resolution.set(size.width, size.height);
@@ -1515,16 +1240,6 @@ export default function NeuralFabric({
         brightnessMul: st.brightnessMul,
         trunkness: st.trunkness,
       });
-      // Inspection snapshots bake at the STATIC span (flash = 0; the shader
-      // owns interval and lift) — a recycled slot may hold stale values.
-      fabric.count = slot * FABRIC_SLOT_SEGMENTS;
-      writeFabricEdgeInspectionSegments(
-        fabric,
-        st,
-        SETTLED_EDGE_RENDER,
-        inspectionFieldRef.current,
-      );
-      fillInspectionSlotRemainder(fabric, (slot + 1) * FABRIC_SLOT_SEGMENTS);
       lifeDirtySlots.push(slot);
     };
     /** Two FIFO expiry queues (fixed windows per kind ⇒ each queue stays
@@ -1694,18 +1409,6 @@ export default function NeuralFabric({
     const handles: NeuralFabricHandles = {
       setTrunkTier(graph) {
         applyTrunkTier(graph);
-      },
-      setInspectionField(field) {
-        const transition = inspectionFieldRef.current;
-        if (transition.to === field) return;
-        transition.from = transition.to;
-        transition.to = field;
-        transition.progress = 0;
-        fabric.material.uniforms.inspectionTransitionProgress.value = 0;
-        trunk.material.uniforms.inspectionTransitionProgress.value = 0;
-        warmRoutes.material.uniforms.inspectionTransitionProgress.value = 0;
-        inspectionOnlyDirtyRef.current = true;
-        emitDirtyRef.current = true;
       },
       setRecallAperture(
         activeAperture,
@@ -2204,23 +1907,6 @@ export default function NeuralFabric({
           lc.b = ct.activeColorB; lc.fw = ct.fabricWidth; lc.aw = ct.activeWidth;
           emitDirtyRef.current = true; // one pass applies the new values
         }
-        const inspectionField = inspectionFieldRef.current;
-        if (inspectionField.progress < 1) {
-          inspectionField.progress = Math.min(
-            1,
-            inspectionField.progress
-              + dt / INSPECTION_FIELD_TRANSITION_SECONDS,
-          );
-          fabric.material.uniforms.inspectionTransitionProgress.value =
-            inspectionField.progress;
-          trunk.material.uniforms.inspectionTransitionProgress.value =
-            inspectionField.progress;
-          warmRoutes.material.uniforms.inspectionTransitionProgress.value =
-            inspectionField.progress;
-          if (inspectionField.progress >= 1) {
-            inspectionField.from = inspectionField.to;
-          }
-        }
         const recallAperture = recallApertureRef.current;
         // Recall apertures are the one lifecycle input the CPU still owns
         // (spatial-hash segment queries can't move to the vertex stage).
@@ -2317,7 +2003,6 @@ export default function NeuralFabric({
                 LIVE.cell.reinforceGain,
               ),
               recallAperture,
-              inspectionField,
             );
           }
           commitLayer(warmRoutes);
@@ -2325,60 +2010,6 @@ export default function NeuralFabric({
 
         if (!emitDirtyRef.current) {
           fabricStats.observeSkipFrame();
-          return;
-        }
-        if (
-          inspectionOnlyDirtyRef.current
-          && !passivePositionsDirtyRef.current
-          && !globalRepaintRef.current
-        ) {
-          // Selection changed over a settled fabric: rewrite only the two
-          // static inspection snapshots, slot-addressed so they stay aligned
-          // with the fixed position/colour slots.
-          const slots = slotByKeyRef.current;
-          for (const key of renderOrderRef.current) {
-            const st = states.get(key);
-            if (!st) continue;
-            const slot = slots.get(key);
-            if (slot === undefined) continue;
-            fabric.count = slot * FABRIC_SLOT_SEGMENTS;
-            // Static-span bake: the shader owns interval and flash lift.
-            writeFabricEdgeInspectionSegments(
-              fabric,
-              st,
-              SETTLED_EDGE_RENDER,
-              inspectionField,
-            );
-            fillInspectionSlotRemainder(
-              fabric,
-              (slot + 1) * FABRIC_SLOT_SEGMENTS,
-            );
-          }
-          fabric.count = usedSlotCountRef.current * FABRIC_SLOT_SEGMENTS;
-          // A selection change can land in the SAME frame as births/deaths —
-          // the topology build issues both — and this branch clears the dirty
-          // gate on the way out. Without flushing here those static records
-          // stayed written in RAM but never uploaded, so a killed edge kept
-          // rendering alive until some unrelated event happened to flush it.
-          // The inspection ranges these add are a subset of the full prefix
-          // the commit below re-adds.
-          if (lifeDirtySlots.length > 0) {
-            commitFabricLifecycleSlotRanges(
-              fabric,
-              mergeFabricSlotRanges(lifeDirtySlots),
-            );
-            lifeDirtySlots.length = 0;
-          }
-          fabricStats.observeUpload(fabricUploadBytes(fabric.count, {
-            positions: false,
-            colors: false,
-            inspection: (fabric.inspectionFromBuf ? 1 : 0)
-              + (fabric.inspectionToBuf ? 1 : 0),
-          }));
-          commitLayer(fabric, false, false, true);
-          inspectionOnlyDirtyRef.current = false;
-          emitDirtyRef.current = false;
-          fabricStats.observeInspectionOnlyFrame();
           return;
         }
         // Live line widths. LineMaterial.linewidth is runtime-settable, so
@@ -2403,14 +2034,13 @@ export default function NeuralFabric({
             fabricStats.observeIncrementalFrame(lifeDirtySlots.length, 0);
             lifeDirtySlots.length = 0;
           }
-          inspectionOnlyDirtyRef.current = false;
           emitDirtyRef.current = false;
           return;
         }
 
         // Full walk: compacting structural change (slot-space overflow /
         // boot) or a rare global repaint. Rewrites every static record into
-        // freshly assigned slots plus the settled inspection snapshots.
+        // freshly assigned slots.
         const fullWalkReason: FabricFullWalkReason = passivePositionsDirtyRef.current
           ? 'structural'
           : 'global-repaint';
@@ -2454,17 +2084,6 @@ export default function NeuralFabric({
               trunkness: st.trunkness,
             },
           );
-          fabric.count = slotIndex * FABRIC_SLOT_SEGMENTS;
-          writeFabricEdgeInspectionSegments(
-            fabric,
-            st,
-            SETTLED_EDGE_RENDER,
-            inspectionField,
-          );
-          fillInspectionSlotRemainder(
-            fabric,
-            (slotIndex + 1) * FABRIC_SLOT_SEGMENTS,
-          );
           // The slot writer resets the aperture lanes to the 1.0 baseline;
           // the aperture pass re-bakes them next frame while a recall holds.
           slots.set(key, slotIndex);
@@ -2492,7 +2111,6 @@ export default function NeuralFabric({
         renderOrderTombstonesRef.current = 0;
 
         commitFabricLifecycleFull(fabric);
-        inspectionOnlyDirtyRef.current = false;
         globalRepaintRef.current = false;
         passivePositionsDirtyRef.current = false;
         emitDirtyRef.current = false;

@@ -24,7 +24,6 @@ describe('fabricStats', () => {
     });
     fabricStats.observeSkipFrame();
     fabricStats.observeSkipFrame();
-    fabricStats.observeInspectionOnlyFrame();
     fabricStats.observeIncrementalFrame(132, 132);
     fabricStats.observeIncrementalFrame(90, 90);
     fabricStats.observeReapInPlace();
@@ -40,7 +39,7 @@ describe('fabricStats', () => {
     expect(s.dying).toBe(89);
     expect(s.recentDiffs).toHaveLength(3);
     expect(s.recentDiffs[0].kind).toBe('setFabric');
-    expect(s.frames).toEqual({ skip: 2, inspectionOnly: 1, incremental: 2, fullWalk: 2 });
+    expect(s.frames).toEqual({ skip: 2, incremental: 2, fullWalk: 2 });
     expect(s.fullWalkReasons.structural).toBe(1);
     expect(s.fullWalkReasons['mass-churn-guard']).toBe(1);
     expect(s.incrementalSlotsWritten).toBe(222);
@@ -90,24 +89,18 @@ describe('fabricStats', () => {
   });
 
   it('computes upload bytes per actually-flagged buffer', () => {
-    // One segment: positions 6 floats + colours 6 floats + two inspection
-    // buffers × 2 floats, × 4 bytes — the fabric layer's 64 B/segment.
-    expect(fabricUploadBytes(1, { positions: true, colors: true, inspection: 2 }))
-      .toBe(64);
-    // One full fabric slot = 4 segments × 64 B = 256 B.
-    expect(fabricUploadBytes(FABRIC_SLOT_SEGMENTS, {
-      positions: true, colors: true, inspection: 2,
-    })).toBe(256);
-    // Colours-only global repaint skips the position floats.
-    expect(fabricUploadBytes(1, { positions: false, colors: true, inspection: 2 }))
-      .toBe(40);
-    // Inspection-only selection rewrite touches just the two 2-float buffers.
-    expect(fabricUploadBytes(1, { positions: false, colors: false, inspection: 2 }))
-      .toBe(16);
-    // Layers without inspection attributes upload none of those bytes.
-    expect(fabricUploadBytes(1, { positions: true, colors: true, inspection: 0 }))
+    // One segment: positions 6 floats + colours 6 floats, × 4 bytes —
+    // 48 B/segment.
+    expect(fabricUploadBytes(1, { positions: true, colors: true }))
       .toBe(48);
-    expect(fabricUploadBytes(0, { positions: true, colors: true, inspection: 2 }))
+    // One full fabric slot = 4 segments × 48 B = 192 B.
+    expect(fabricUploadBytes(FABRIC_SLOT_SEGMENTS, {
+      positions: true, colors: true,
+    })).toBe(192);
+    // Colours-only global repaint skips the position floats.
+    expect(fabricUploadBytes(1, { positions: false, colors: true }))
+      .toBe(24);
+    expect(fabricUploadBytes(0, { positions: true, colors: true }))
       .toBe(0);
   });
 

@@ -105,7 +105,6 @@ export {
   default as CellGalaxy,
   writeCellBuffers,
   writeFlashSlots,
-  writeCellInspectionTargets,
   type CellBufferTargets,
 } from './components/CellGalaxy';
 export {
@@ -247,18 +246,10 @@ export {
 // ── Consensus flow overlay (Cell→Cell protocol writes) ──────────────
 export { default as NeuralNetwork, MAX_ACTIVE_PULSES } from './nerve/NeuralNetwork';
 export {
-  CELL_INSPECTION_BACKGROUND_ENERGY,
-  CELL_INSPECTION_HOP_ENERGY,
-  CELL_INSPECTION_MAX_HOPS,
-  cellInspectionEdgeScaleAt,
-  cellInspectionFieldScale,
-  cellInspectionFieldTransitionScaleAt,
-  cellInspectionBodyTransitionBlend,
-  CELL_INSPECTION_BODY_TRANSITION_SECONDS,
-  dampCellInspectionFieldScale,
-  deriveCellInspectionField,
-  type CellInspectionField,
-} from './nerve/cellInspectionField';
+  CONTEXT_DAMP_RATE,
+  CONTEXT_DAMP_SNAP,
+  dampContextEnergy,
+} from './nerve/contextDamp';
 export { consensusMemoryTraceIdentityKey } from './nerve/consensusMemoryTraceContinuity';
 export { default as ConsensusWriteSeal } from './nerve/DendriticBurst';
 export {

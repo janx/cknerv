@@ -3,7 +3,7 @@
 // server-side now — its algorithm tests were ported to Rust in S2. What
 // remains here is pure mechanism: journal patching, canonical-first
 // resolution, rebuild fallbacks, the presentation clamp, and the D4
-// inspection overlay pool.
+// selected-cell overlay pool.
 
 import { describe, expect, it } from 'vitest';
 import type { Cell, CellDelta, CellGalaxySnapshot } from '@cknerv/types';
@@ -15,7 +15,6 @@ import {
   OVERLAY_SLOT_POOL,
   syncCellRenderSet,
 } from '../../src/geometry/cellRenderSet';
-import type { CellInspectionField } from '../../src/nerve/cellInspectionField';
 import {
   applyCellDelta,
   applyRevisionedCellDeltas,
@@ -632,44 +631,24 @@ describe('syncCellRenderSet — no-display-plane fallback (canonical prefix)', (
   });
 });
 
-describe('cellRenderOverlay (D4 inspection pool)', () => {
+describe('cellRenderOverlay (D4 selected-cell pool)', () => {
   const stagedIndex = new Map<number, number>([[1, 0], [2, 1]]);
 
   it('returns the off-stage selected cell and nothing when staged', () => {
     const cache = fallbackCacheWithCells([1, 2, 3]);
     expect(
-      cellRenderOverlay(cache, stagedIndex, 3, null).map(({ id }) => id),
+      cellRenderOverlay(cache, stagedIndex, 3).map(({ id }) => id),
     ).toEqual([3]);
-    expect(cellRenderOverlay(cache, stagedIndex, 1, null)).toEqual([]);
-    expect(cellRenderOverlay(cache, stagedIndex, null, null)).toEqual([]);
+    expect(cellRenderOverlay(cache, stagedIndex, 1)).toEqual([]);
+    expect(cellRenderOverlay(cache, stagedIndex, null)).toEqual([]);
   });
 
-  it('appends off-stage field members in ascending hop order', () => {
-    const cache = fallbackCacheWithCells([1, 2, 3, 4, 5, 6]);
-    const field: CellInspectionField = {
-      selectedCellId: 3,
-      maxHops: 2,
-      hopsByCellId: new Map([[3, 0], [5, 2], [4, 1], [2, 1], [99, 1]]),
-    };
-    const overlay = cellRenderOverlay(cache, stagedIndex, 3, field);
-    // Selected first; staged member 2 excluded; unresolvable 99 skipped;
-    // members ordered by hop.
-    expect(overlay.map(({ id }) => id)).toEqual([3, 4, 5]);
+  it('returns nothing for a selection no retained record resolves', () => {
+    const cache = fallbackCacheWithCells([1, 2]);
+    expect(cellRenderOverlay(cache, stagedIndex, 99)).toEqual([]);
   });
 
-  it('ignores a stale field belonging to a different selection', () => {
-    const cache = fallbackCacheWithCells([1, 2, 3, 4]);
-    const field: CellInspectionField = {
-      selectedCellId: 4,
-      maxHops: 2,
-      hopsByCellId: new Map([[4, 0], [3, 1]]),
-    };
-    expect(
-      cellRenderOverlay(cache, stagedIndex, 3, field).map(({ id }) => id),
-    ).toEqual([3]);
-  });
-
-  it('resolves resident members through the display plane', () => {
+  it('resolves a resident selection through the display plane', () => {
     const resident = cell(501);
     const cache = applyCellDelta(
       fallbackCacheWithCells([1]),
@@ -680,21 +659,15 @@ describe('cellRenderOverlay (D4 inspection pool)', () => {
         exit_ids: [],
       },
     );
-    const overlay = cellRenderOverlay(cache, new Map(), 501, null);
+    const overlay = cellRenderOverlay(cache, new Map(), 501);
     expect(overlay).toHaveLength(1);
     expect(overlay[0]).toBe(cache.displayResidents.get(501));
   });
 
-  it('caps the overlay at the reserved slot pool', () => {
-    const ids = Array.from({ length: OVERLAY_SLOT_POOL + 50 }, (_, i) => i + 10);
-    const cache = fallbackCacheWithCells([1, ...ids]);
-    const field: CellInspectionField = {
-      selectedCellId: 1,
-      maxHops: 1,
-      hopsByCellId: new Map([[1, 0], ...ids.map((id) => [id, 1] as const)]),
-    };
-    const overlay = cellRenderOverlay(cache, new Map(), 1, field);
-    expect(overlay).toHaveLength(OVERLAY_SLOT_POOL);
-    expect(overlay[0].id).toBe(1);
+  it('never draws anything with an exhausted slot pool', () => {
+    const cache = fallbackCacheWithCells([1]);
+    expect(cellRenderOverlay(cache, new Map(), 1, 0)).toEqual([]);
+    expect(cellRenderOverlay(cache, new Map(), 1, OVERLAY_SLOT_POOL))
+      .toHaveLength(1);
   });
 });

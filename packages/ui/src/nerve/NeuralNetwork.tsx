@@ -175,10 +175,6 @@ import {
   deriveConsensusMemoryRouteHopPulseEdges,
   type ConsensusMemoryRouteHopPulseClock,
 } from './consensusRouteHopPulse';
-import {
-  deriveCellInspectionField,
-  type CellInspectionField,
-} from './cellInspectionField';
 import type { Cell } from '@cknerv/types';
 
 const SPIKE_POOL_CAPACITY = 1024;
@@ -247,11 +243,6 @@ interface NeuralNetworkProps {
    * consumers default to immediate live traffic.
    */
   livePulseDelayS?: number;
-  /** Exact selected Cell used to derive a bounded real-adjacency field. */
-  inspectionCellId?: number | null;
-  /** Shared with CellGalaxy so body points and passive fibres read one field
-   * without duplicating the neighbour graph or triggering React frame state. */
-  inspectionFieldRef?: React.MutableRefObject<CellInspectionField | null>;
   /** Shared camera-distance focus; affects only the passive fabric layer. */
   cellDetailViewFocusRef?: { readonly current: number };
   /** Explicit user-requested replay of one retained historical link. */
@@ -350,8 +341,6 @@ export default function NeuralNetwork({
   topology,
   pulses,
   livePulseDelayS = 0,
-  inspectionCellId = null,
-  inspectionFieldRef,
   cellDetailViewFocusRef,
   traceRequest = null,
   traceMaxPulses,
@@ -470,14 +459,10 @@ export default function NeuralNetwork({
   const displayCellsRef = useRef<Map<number, Cell>>(new Map());
   const displayRenderSetRef = useRef(createCellRenderSetState());
   const fabricHandlesRef = useRef<NeuralFabricHandles | null>(null);
-  const inspectionFieldSnapshotRef = useRef<CellInspectionField | null>(null);
   const displayTopologyRef = useRef('');
   const displayTopologyVersionRef = useRef(-1);
-  const displayInspectionCellIdRef = useRef<number | null>(null);
   const displayBootstrappedRef = useRef(false);
   const displayBuildGenerationRef = useRef(0);
-  const latestInspectionCellIdRef = useRef(inspectionCellId);
-  const latestInspectionFieldRef = useRef(inspectionFieldRef);
   const displayRequestedCellsRef = useRef<Map<number, Cell> | null>(null);
   const displayRequestedTopologyRef = useRef('');
   const displayRequestedTopologyVersionRef = useRef(-1);
@@ -485,9 +470,6 @@ export default function NeuralNetwork({
   /** Bumped when a display build swaps the graph pulses ride, so link batches
    *  that arrive in the same commit plan against the graph that just landed. */
   const [displayGraphVersion, setDisplayGraphVersion] = useState(0);
-
-  latestInspectionCellIdRef.current = inspectionCellId;
-  latestInspectionFieldRef.current = inspectionFieldRef;
 
   useEffect(() => () => {
     displayBuildGenerationRef.current += 1;
@@ -560,229 +542,195 @@ export default function NeuralNetwork({
       || displayTopologyRef.current !== displaySelectionKey
       || displayTopologyVersionRef.current !== renderUpdate.topologyVersion
     );
-    const inspectionChanged = (
-      displayInspectionCellIdRef.current !== inspectionCellId
-    );
 
     // A canonical birth that the plane does not stage changes nothing here:
     // membership is what this graph is built from, so an unchanged stage must
     // not rebuild it and restart every fibre lifecycle.
-    if (!topologyChanged && !inspectionChanged) {
-      if (inspectionFieldRef) {
-        inspectionFieldRef.current = inspectionFieldSnapshotRef.current;
-      }
-      return;
-    }
+    if (!topologyChanged) return;
 
-    if (topologyChanged) {
-      const requestedCells = displayRequestedCellsRef.current;
-      const requestMatches = (
-        requestedCells !== null
-        && displayRequestedTopologyRef.current === displaySelectionKey
-        && displayRequestedTopologyVersionRef.current
-          === renderUpdate.topologyVersion
+    const requestedCells = displayRequestedCellsRef.current;
+    const requestMatches = (
+      requestedCells !== null
+      && displayRequestedTopologyRef.current === displaySelectionKey
+      && displayRequestedTopologyVersionRef.current
+        === renderUpdate.topologyVersion
+    );
+    if (requestMatches) return;
+
+    // Fallback full coverage: the display list IS the canonical map's
+    // cells, so reuse the retained Map instead of materialising a copy
+    // per block. Under a display plane membership mixes residents in, so
+    // the staged list always materialises its own map (identity frozen
+    // per request for the completion-time guards below).
+    const displayPlaneActive = cellsCache.displayBudget !== null;
+    // The manual display-limit clamp truncates the staged list, so the
+    // journal below describes churn this build cannot express (see the
+    // cellsJournal branch).
+    const clampActive = cellRenderClampActive(cellsCache, cellDisplayLimit);
+    const displayCells =
+      !displayPlaneActive && visibleCells.length === cellsCache.cells.size
+        ? cellsCache.cells
+        : cellRenderMap(visibleCells);
+    // Admit this generation's newborns into the display graph on the exact
+    // map the build below packs, closing the window between the delta and
+    // the worker completion. Graph-only: resting fibres still grow from the
+    // authoritative passive selection, so an edge the selection never
+    // confirms is never rendered. Past the comparison ceiling the eager pass
+    // is pure duplicated work — the build superseding it is already issued.
+    if (
+      meshDiff
+      && meshDiff.born.length > 0
+      && !shouldDeferBirthsToBulkRebuild(
+        meshDiff.born.length,
+        displayCells.size,
+      )
+    ) {
+      planMeshUpdate(
+        { born: meshDiff.born, died: NO_CELL_IDS, evicted: NO_CELL_IDS },
+        displayGraphRef.current,
+        displayCells,
+        meshNow,
+        meshOpts,
+        RIPPLE_STAGGER_MS,
       );
-      if (requestMatches) return;
-
-      // Fallback full coverage: the display list IS the canonical map's
-      // cells, so reuse the retained Map instead of materialising a copy
-      // per block. Under a display plane membership mixes residents in, so
-      // the staged list always materialises its own map (identity frozen
-      // per request for the completion-time guards below).
-      const displayPlaneActive = cellsCache.displayBudget !== null;
-      // The manual display-limit clamp truncates the staged list, so the
-      // journal below describes churn this build cannot express (see the
-      // cellsJournal branch).
-      const clampActive = cellRenderClampActive(cellsCache, cellDisplayLimit);
-      const displayCells =
-        !displayPlaneActive && visibleCells.length === cellsCache.cells.size
-          ? cellsCache.cells
-          : cellRenderMap(visibleCells);
-      // Admit this generation's newborns into the display graph on the exact
-      // map the build below packs, closing the window between the delta and
-      // the worker completion. Graph-only: resting fibres still grow from the
-      // authoritative passive selection, so an edge the selection never
-      // confirms is never rendered. Past the comparison ceiling the eager pass
-      // is pure duplicated work — the build superseding it is already issued.
-      if (
-        meshDiff
-        && meshDiff.born.length > 0
-        && !shouldDeferBirthsToBulkRebuild(
-          meshDiff.born.length,
-          displayCells.size,
-        )
-      ) {
-        planMeshUpdate(
-          { born: meshDiff.born, died: NO_CELL_IDS, evicted: NO_CELL_IDS },
-          displayGraphRef.current,
-          displayCells,
-          meshNow,
-          meshOpts,
-          RIPPLE_STAGGER_MS,
-        );
-      }
-      // The map moves with the graph it defines, at request time rather than
-      // at completion. A pulse planned this tick targets cells born this tick,
-      // and its hops resolve their geometry from here — waiting for the worker
-      // would extinguish exactly the pulses a new block just created.
-      displayCellsRef.current = displayCells;
-      const requestedTopologyVersion = renderUpdate.topologyVersion;
-      displayRequestedCellsRef.current = displayCells;
-      displayRequestedTopologyRef.current = displaySelectionKey;
-      displayRequestedTopologyVersionRef.current = requestedTopologyVersion;
-      const generation = displayBuildGenerationRef.current + 1;
-      displayBuildGenerationRef.current = generation;
-      void displayGraphBuilder.build(displayCells, {
-        topology: {
-          k: topology?.neighborK,
-          maxEdgeLength: topology?.maxEdgeLength,
-        },
-        includePassive: true,
-        // The resolved screen budget and shares ride every request: the
-        // worker holds its own module instances, so the panel's LIVE values
-        // can only reach the selection through here.
-        passiveEdgeBudget: resolvedNerveBudget,
-        passiveTuning: {
-          coverageShare: nerveCoverageShare,
-          trunkShare: nerveTrunkShare,
-          twigShare: nerveTwigShare,
-        },
-        // Under a display plane the journal is a valid delta feed — the
-        // server display journal describes the staged membership churn
-        // exactly, so a full pack happens only on bootstrap/reset/chain
-        // breaks. The two TRUNCATED-PREFIX regimes are the exception, and
-        // both invalidate: the manual clamp under a plane, and partial
-        // canonical coverage without one. Their windows are prefixes of a
-        // membership the journal describes in full, so a delta would patch
-        // a base the clamp never reached.
-        cellsJournal: (displayPlaneActive && !clampActive)
-          || displayCells === cellsCache.cells
-          ? consumeTopologyJournal(displayFeedRef.current.journal)
-          : invalidateTopologyJournal(displayFeedRef.current.journal),
-        preferredEdges: passiveGraphRef.current.edges,
-        // Patch-deserialize both display CSRs against the graphs being
-        // replaced (read at completion): per-block churn touches a small
-        // fraction of nodes, so the Set/object churn collapses to O(changed).
-        reuseFrom: () => ({
-          graph: displayGraphRef.current,
-          passiveGraph: passiveGraphRef.current,
-        }),
-      }).then((result) => {
-        if (
-          result === null
-          || displayBuildGenerationRef.current !== generation
-          || displayRequestedCellsRef.current !== displayCells
-          || displayRequestedTopologyRef.current !== displaySelectionKey
-          || displayRequestedTopologyVersionRef.current
-            !== requestedTopologyVersion
-        ) return;
-        const passiveGraph = result.passiveGraph ?? emptyNeighborGraph();
-        displayRequestedCellsRef.current = null;
-        displayRequestedTopologyVersionRef.current = -1;
-        displayGraphRef.current = result.graph;
-        setDisplayGraphVersion((version) => version + 1);
-        passiveGraphRef.current = passiveGraph;
-        fabricStats.passiveSelectionEdges = passiveGraph.edges.length;
-        // The fabric's WIDTH tier is a property of the whole drawn selection,
-        // and the delta branch below never hands the layer that selection —
-        // so it is published here, on every completed build, beside the gauge
-        // that measures the same thing.
-        fabricHandlesRef.current?.setTrunkTier(passiveGraph);
-        // Already set at request time; re-asserted here because the guards
-        // above are what prove THIS response is the live one.
-        displayCellsRef.current = displayCells;
-        displayTopologyRef.current = displaySelectionKey;
-        displayTopologyVersionRef.current = requestedTopologyVersion;
-        const wasBootstrapped = displayBootstrappedRef.current;
-        displayBootstrappedRef.current = true;
-        const handles = fabricHandlesRef.current;
-        // Selection deltas from the worker session let ordinary per-block
-        // churn skip the O(selection) full-set diff. The eager living-mesh
-        // driver may occasionally grow an edge the final selection never
-        // confirms, so every 16th delta application reconciles with one
-        // full setFabric — bounded drift, amortized cost.
-        const delta = result.passiveDelta;
-        const epochClean =
-          fabricEpochRef.current === fabricEpochAppliedRef.current;
-        fabricEpochAppliedRef.current = fabricEpochRef.current;
-        if (
-          handles
-          && wasBootstrapped
-          && epochClean
-          && delta !== null
-        ) {
-          fabricDeltaStreakRef.current += 1;
-          // The worker speaks the graph's edge vocabulary and the fabric its
-          // own; `planSelectionDeltaUpdate` is the single translation, because
-          // an untranslated key is skipped in silence rather than rejected.
-          const deltaNow = simClock.elapsedSec;
-          const instructions = planSelectionDeltaUpdate(delta, deltaNow);
-          if (instructions.killKeys.length > 0) {
-            handles.killEdges(instructions.killKeys, deltaNow, 'gc');
-          }
-          if (delta.added.length > 0) {
-            handles.growEdges(
-              delta.added,
-              displayCells,
-              instructions.bornAtByKey,
-              instructions.dirByKey,
-            );
-          }
-          // Periodic reconcile: while deltas chain, drift can only be EXTRA
-          // fabric edges (eager living-mesh growth the selection never
-          // confirmed) — missing edges are impossible, so pruning extras
-          // replaces the old full re-admission (which cost a 300-500ms
-          // admission storm every 16th block at the High tier).
-          if (fabricDeltaStreakRef.current >= 16) {
-            fabricDeltaStreakRef.current = 0;
-            const extras = selectionStrayEdgeKeys(
-              passiveGraph.edges,
-              handles.collectLiveEdgeKeys(),
-            );
-            if (extras.length > 0) {
-              handles.killEdges(extras, simClock.elapsedSec, 'gc');
-            }
-          }
-        } else {
-          fabricDeltaStreakRef.current = 0;
-          handles?.setFabric(
-            passiveGraph,
-            displayCells,
-            simClock.elapsedSec,
-          );
-        }
-        const selectedCellId = latestInspectionCellIdRef.current;
-        const next = deriveCellInspectionField(result.graph, selectedCellId);
-        displayInspectionCellIdRef.current = selectedCellId;
-        inspectionFieldSnapshotRef.current = next;
-        const targetRef = latestInspectionFieldRef.current;
-        if (targetRef) targetRef.current = next;
-        fabricHandlesRef.current?.setInspectionField(next);
-        invalidate();
-      }).catch((error: unknown) => {
-        if (displayBuildGenerationRef.current !== generation) return;
-        displayRequestedCellsRef.current = null;
-        displayRequestedTopologyVersionRef.current = -1;
-        console.error('failed to build Cell display topology', error);
-      });
-      return;
     }
-
-    if (displayRequestedCellsRef.current !== null) {
-      displayBuildGenerationRef.current += 1;
+    // The map moves with the graph it defines, at request time rather than
+    // at completion. A pulse planned this tick targets cells born this tick,
+    // and its hops resolve their geometry from here — waiting for the worker
+    // would extinguish exactly the pulses a new block just created.
+    displayCellsRef.current = displayCells;
+    const requestedTopologyVersion = renderUpdate.topologyVersion;
+    displayRequestedCellsRef.current = displayCells;
+    displayRequestedTopologyRef.current = displaySelectionKey;
+    displayRequestedTopologyVersionRef.current = requestedTopologyVersion;
+    const generation = displayBuildGenerationRef.current + 1;
+    displayBuildGenerationRef.current = generation;
+    void displayGraphBuilder.build(displayCells, {
+      topology: {
+        k: topology?.neighborK,
+        maxEdgeLength: topology?.maxEdgeLength,
+      },
+      includePassive: true,
+      // The resolved screen budget and shares ride every request: the
+      // worker holds its own module instances, so the panel's LIVE values
+      // can only reach the selection through here.
+      passiveEdgeBudget: resolvedNerveBudget,
+      passiveTuning: {
+        coverageShare: nerveCoverageShare,
+        trunkShare: nerveTrunkShare,
+        twigShare: nerveTwigShare,
+      },
+      // Under a display plane the journal is a valid delta feed — the
+      // server display journal describes the staged membership churn
+      // exactly, so a full pack happens only on bootstrap/reset/chain
+      // breaks. The two TRUNCATED-PREFIX regimes are the exception, and
+      // both invalidate: the manual clamp under a plane, and partial
+      // canonical coverage without one. Their windows are prefixes of a
+      // membership the journal describes in full, so a delta would patch
+      // a base the clamp never reached.
+      cellsJournal: (displayPlaneActive && !clampActive)
+        || displayCells === cellsCache.cells
+        ? consumeTopologyJournal(displayFeedRef.current.journal)
+        : invalidateTopologyJournal(displayFeedRef.current.journal),
+      preferredEdges: passiveGraphRef.current.edges,
+      // Patch-deserialize both display CSRs against the graphs being
+      // replaced (read at completion): per-block churn touches a small
+      // fraction of nodes, so the Set/object churn collapses to O(changed).
+      reuseFrom: () => ({
+        graph: displayGraphRef.current,
+        passiveGraph: passiveGraphRef.current,
+      }),
+    }).then((result) => {
+      if (
+        result === null
+        || displayBuildGenerationRef.current !== generation
+        || displayRequestedCellsRef.current !== displayCells
+        || displayRequestedTopologyRef.current !== displaySelectionKey
+        || displayRequestedTopologyVersionRef.current
+          !== requestedTopologyVersion
+      ) return;
+      const passiveGraph = result.passiveGraph ?? emptyNeighborGraph();
       displayRequestedCellsRef.current = null;
       displayRequestedTopologyVersionRef.current = -1;
-      displayGraphBuilder.cancel();
-    }
-    const next = deriveCellInspectionField(
-      displayGraphRef.current,
-      inspectionCellId,
-    );
-
-    displayInspectionCellIdRef.current = inspectionCellId;
-    inspectionFieldSnapshotRef.current = next;
-    if (inspectionFieldRef) inspectionFieldRef.current = next;
-    fabricHandlesRef.current?.setInspectionField(next);
+      displayGraphRef.current = result.graph;
+      setDisplayGraphVersion((version) => version + 1);
+      passiveGraphRef.current = passiveGraph;
+      fabricStats.passiveSelectionEdges = passiveGraph.edges.length;
+      // The fabric's WIDTH tier is a property of the whole drawn selection,
+      // and the delta branch below never hands the layer that selection —
+      // so it is published here, on every completed build, beside the gauge
+      // that measures the same thing.
+      fabricHandlesRef.current?.setTrunkTier(passiveGraph);
+      // Already set at request time; re-asserted here because the guards
+      // above are what prove THIS response is the live one.
+      displayCellsRef.current = displayCells;
+      displayTopologyRef.current = displaySelectionKey;
+      displayTopologyVersionRef.current = requestedTopologyVersion;
+      const wasBootstrapped = displayBootstrappedRef.current;
+      displayBootstrappedRef.current = true;
+      const handles = fabricHandlesRef.current;
+      // Selection deltas from the worker session let ordinary per-block
+      // churn skip the O(selection) full-set diff. The eager living-mesh
+      // driver may occasionally grow an edge the final selection never
+      // confirms, so every 16th delta application reconciles with one
+      // full setFabric — bounded drift, amortized cost.
+      const delta = result.passiveDelta;
+      const epochClean =
+        fabricEpochRef.current === fabricEpochAppliedRef.current;
+      fabricEpochAppliedRef.current = fabricEpochRef.current;
+      if (
+        handles
+        && wasBootstrapped
+        && epochClean
+        && delta !== null
+      ) {
+        fabricDeltaStreakRef.current += 1;
+        // The worker speaks the graph's edge vocabulary and the fabric its
+        // own; `planSelectionDeltaUpdate` is the single translation, because
+        // an untranslated key is skipped in silence rather than rejected.
+        const deltaNow = simClock.elapsedSec;
+        const instructions = planSelectionDeltaUpdate(delta, deltaNow);
+        if (instructions.killKeys.length > 0) {
+          handles.killEdges(instructions.killKeys, deltaNow, 'gc');
+        }
+        if (delta.added.length > 0) {
+          handles.growEdges(
+            delta.added,
+            displayCells,
+            instructions.bornAtByKey,
+            instructions.dirByKey,
+          );
+        }
+        // Periodic reconcile: while deltas chain, drift can only be EXTRA
+        // fabric edges (eager living-mesh growth the selection never
+        // confirmed) — missing edges are impossible, so pruning extras
+        // replaces the old full re-admission (which cost a 300-500ms
+        // admission storm every 16th block at the High tier).
+        if (fabricDeltaStreakRef.current >= 16) {
+          fabricDeltaStreakRef.current = 0;
+          const extras = selectionStrayEdgeKeys(
+            passiveGraph.edges,
+            handles.collectLiveEdgeKeys(),
+          );
+          if (extras.length > 0) {
+            handles.killEdges(extras, simClock.elapsedSec, 'gc');
+          }
+        }
+      } else {
+        fabricDeltaStreakRef.current = 0;
+        handles?.setFabric(
+          passiveGraph,
+          displayCells,
+          simClock.elapsedSec,
+        );
+      }
+      invalidate();
+    }).catch((error: unknown) => {
+      if (displayBuildGenerationRef.current !== generation) return;
+      displayRequestedCellsRef.current = null;
+      displayRequestedTopologyVersionRef.current = -1;
+      console.error('failed to build Cell display topology', error);
+    });
   }, [
     cellDisplayLimit,
     cellsCache.cellChanges,
@@ -798,8 +746,6 @@ export default function NeuralNetwork({
     nerveCoverageShare,
     nerveTrunkShare,
     nerveTwigShare,
-    inspectionCellId,
-    inspectionFieldRef,
     invalidate,
     topology?.neighborK,
     topology?.maxEdgeLength,
@@ -808,15 +754,6 @@ export default function NeuralNetwork({
   useEffect(() => {
     syncDisplayFabric();
   }, [syncDisplayFabric]);
-
-  useEffect(() => () => {
-    if (
-      inspectionFieldRef
-      && inspectionFieldRef.current === inspectionFieldSnapshotRef.current
-    ) {
-      inspectionFieldRef.current = null;
-    }
-  }, [inspectionFieldRef]);
 
   // Pulse queue. Pulses are removed when their head reaches the
   // terminal cell (or after a generous fallback lifetime).
@@ -1486,7 +1423,6 @@ export default function NeuralNetwork({
       displayCellsRef.current,
       simClock.elapsedSec,
     );
-    handles.setInspectionField(inspectionFieldSnapshotRef.current);
   }, []);
 
   // Per-frame: roll every active pulse forward, light up the current

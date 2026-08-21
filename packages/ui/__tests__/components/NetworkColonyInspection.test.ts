@@ -18,7 +18,7 @@ describe('NetworkColony close-view context', () => {
     expect(network).toContain('cellDetailPeerContextEnergy(');
     expect(network).toContain('cellDetailPeerLinkContextEnergy(');
     expect(network).toContain('useFrame((_, deltaSeconds) =>');
-    expect(network).toContain('dampCellInspectionFieldScale(');
+    expect(network).toContain('dampContextEnergy(');
     expect(network).toContain('contextEnergyRef={linkContextEnergyRef}');
     expect(network).toContain('contextEnergyRef={nodeContextEnergyRef}');
     // Only camera proximity subdues the colony now — a Cell card being open

@@ -50,7 +50,7 @@ import ColonyEdges from './ColonyEdges';
 import ColonyCourierLayer from './ColonyCourierLayer';
 import BlockDeliveryLayer, { type BlockDeliveryPulse } from './BlockDeliveryLayer';
 import { consensusBlockColor } from '../derives/consensusFlow.derive';
-import { dampCellInspectionFieldScale } from '../nerve/cellInspectionField';
+import { dampContextEnergy } from '../nerve/contextDamp';
 import {
   cellDetailPeerContextEnergy,
   cellDetailPeerLinkContextEnergy,
@@ -110,12 +110,12 @@ export default function NetworkColony({
     const detailFocus = selectedId === null
       ? cellDetailViewFocusRef?.current ?? 0
       : 0;
-    nodeContextEnergyRef.current = dampCellInspectionFieldScale(
+    nodeContextEnergyRef.current = dampContextEnergy(
       nodeContextEnergyRef.current,
       cellDetailPeerContextEnergy(detailFocus),
       deltaSeconds,
     );
-    linkContextEnergyRef.current = dampCellInspectionFieldScale(
+    linkContextEnergyRef.current = dampContextEnergy(
       linkContextEnergyRef.current,
       cellDetailPeerLinkContextEnergy(detailFocus),
       deltaSeconds,

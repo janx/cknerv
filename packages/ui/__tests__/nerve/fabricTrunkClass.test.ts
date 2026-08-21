@@ -37,7 +37,6 @@ import {
 } from '../../src/nerve/fabricLifecycleSlots';
 import { FABRIC_SAMPLES_PER_EDGE } from '../../src/nerve/fabricCapacity';
 import {
-  enableLineInspectionTransitionMaterial,
   optimizeScreenSpaceCapsuleMaterial,
 } from '../../src/geometry/screenSpaceCapsuleLine';
 import { makeFabricTrunkPass, makeFatLineLayer } from '../../src/nerve/NeuralFabric';
@@ -368,9 +367,9 @@ describe('fabric trunk tier — lifecycle parity', () => {
   });
 
   it('a promoted edge bakes the same lifecycle vec4s a mesh edge would', () => {
-    // Promotion is one lane. Grow/decay/death, colour, span, aperture and the
-    // inspection snapshots are the same records, which is why the wide pass
-    // needs no bake of its own: it reads this one.
+    // Promotion is one lane. Grow/decay/death, colour, span and aperture are
+    // the same records, which is why the wide pass needs no bake of its own:
+    // it reads this one.
     const segments = FABRIC_SAMPLES_PER_EDGE;
     const mesh = makeFabricLifecycleArrays(segments);
     const wide = makeFabricLifecycleArrays(segments);
@@ -414,7 +413,6 @@ describe('fabric trunk tier — the two passes', () => {
     const material = new LineMaterial({
       vertexColors: true, linewidth: 2.5, transparent: true, worldUnits: false,
     });
-    enableLineInspectionTransitionMaterial(material);
     optimizeScreenSpaceCapsuleMaterial(material);
     return enableFabricLifecycleMaterial(material, pass);
   }
@@ -458,11 +456,11 @@ describe('fabric trunk tier — the two passes', () => {
   });
 
   it('the wide pass is one draw call over the mesh pass own buffers', () => {
-    const fabric = makeFatLineLayer(32, 2.5, 'screen', true, true, true);
+    const fabric = makeFatLineLayer(32, 2.5, 'screen', true, true);
     const wide = makeFabricTrunkPass(fabric, 4.4);
     // No second allocation: same geometry object, therefore the same
-    // interleaved buffers, the same instanceCount, and the same inspection
-    // and recall-aperture lanes the mesh pass reads.
+    // interleaved buffers, the same instanceCount, and the same
+    // recall-aperture lanes the mesh pass reads.
     expect(wide.mesh.geometry).toBe(fabric.geometry);
     expect(wide.material).not.toBe(fabric.material);
     expect(wide.material.linewidth).toBe(4.4);
@@ -470,7 +468,6 @@ describe('fabric trunk tier — the two passes', () => {
       .toBe(FABRIC_TRUNK_PASS_TRUNK);
     expect(fabric.material.uniforms.fabricTrunkPass.value)
       .toBe(FABRIC_TRUNK_PASS_MESH);
-    expect(wide.material.uniforms.inspectionTransitionProgress).toBeDefined();
     // Render-only: it shares geometry, so a live raycast would report every
     // edge twice — including the ones this pass hides in the vertex stage.
     expect(wide.mesh.raycast).toBe(neverRaycast);
@@ -478,7 +475,7 @@ describe('fabric trunk tier — the two passes', () => {
   });
 
   it('refuses to ride a layer that has no lifecycle records to share', () => {
-    const plain = makeFatLineLayer(32, 2.5, 'screen', true, true, false);
+    const plain = makeFatLineLayer(32, 2.5, 'screen', true, false);
     expect(() => makeFabricTrunkPass(plain, 4.4)).toThrow(/lifecycle/);
   });
 });

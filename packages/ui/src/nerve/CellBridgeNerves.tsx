@@ -112,9 +112,7 @@ export default function CellBridgeNerves({
       // The passive fabric's two-triangle screen capsule. Not `worldUnits`: a
       // bridge is a screen-space stroke like every other nerve in the frame.
       true,
-      // No inspection transition and no GPU lifecycle — a bridge cannot enter
-      // the inspection field and its lifecycle is driven on the CPU here.
-      false,
+      // No GPU lifecycle — a bridge's lifecycle is driven on the CPU here.
       false,
       // ⭐ The one thing this class does that no other stroke in the scene
       // does: `linewidth` becomes the KNOT width and each sub-segment scales

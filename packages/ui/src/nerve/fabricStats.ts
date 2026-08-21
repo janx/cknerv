@@ -1,7 +1,7 @@
 // Dev instrumentation: measures HOW MUCH the passive fabric churns — how big
 // each graph diff is (setFabric reconciliations vs live grow/kill), how often
-// emitFabric takes each path (skip / inspection-only / incremental slots /
-// full walk, and WHY a full walk fired), and how large the animating set is.
+// emitFabric takes each path (skip / incremental slots / full walk, and WHY
+// a full walk fired), and how large the animating set is.
 // Pure module singleton — same idiom as `pulseStats` / `simClock`: read and
 // mutated directly, reset by tests. Always-on (a handful of integer
 // increments per diff/frame — negligible). The WINDOW hook that surfaces this
@@ -29,32 +29,25 @@ export type FabricFullWalkReason =
   | 'reap'
   | 'structural'
   | 'global-repaint'
-  | 'inspection-during-animation'
   | 'mass-churn-guard';
 
 /** Which interleaved buffers one passive-fabric commit actually flags for
- *  upload. Positions and colours are 6 floats per segment each; every
- *  inspection buffer present adds 2 floats per segment (the fabric layer
- *  carries two — from/to — other layers none). */
+ *  upload. Positions and colours are 6 floats per segment each. */
 export interface FabricUploadBuffers {
   positions: boolean;
   colors: boolean;
-  /** Count of inspection interleaved buffers uploaded (0 or 2). */
-  inspection: number;
 }
 
 /** Bytes gl.bufferSubData will move for `segments` segment entries across
  *  the buffers a commit actually uploads: 6 floats × 4 B per flagged
- *  position/colour buffer, plus 2 floats × 4 B per inspection buffer —
- *  e.g. one 4-segment fabric slot with all four buffers = 256 B. */
+ *  position/colour buffer — e.g. one 4-segment slot with both = 192 B. */
 export function fabricUploadBytes(
   segments: number,
   buffers: FabricUploadBuffers,
 ): number {
   if (segments <= 0) return 0;
   const floatsPerSegment = (buffers.positions ? 6 : 0)
-    + (buffers.colors ? 6 : 0)
-    + buffers.inspection * 2;
+    + (buffers.colors ? 6 : 0);
   return segments * floatsPerSegment * 4;
 }
 
@@ -69,7 +62,6 @@ export interface FabricStatsSnapshot {
   /** emitFabric frames by taken path. */
   frames: {
     skip: number;
-    inspectionOnly: number;
     incremental: number;
     fullWalk: number;
   };
@@ -98,7 +90,7 @@ export interface FabricStatsSnapshot {
   trunkTierEdges: number;
   trunkTierThreshold: number;
   /** Passive-fabric bytes handed to bufferSubData (Σ across every commit —
-   *  incremental slot ranges and full-walk/inspection prefix uploads). */
+   *  incremental slot ranges and full-walk prefix uploads). */
   uploadedBytes: number;
   /** Bytes of the most recent uploading fabric commit. */
   uploadedBytesLast: number;
@@ -116,7 +108,6 @@ function zeroFullWalkReasons(): Record<FabricFullWalkReason, number> {
     reap: 0,
     structural: 0,
     'global-repaint': 0,
-    'inspection-during-animation': 0,
     'mass-churn-guard': 0,
   };
 }
@@ -152,7 +143,6 @@ interface FabricStatsState {
   uploadedBytesMax: number;
   observeDiff(sample: FabricDiffSample): void;
   observeSkipFrame(): void;
-  observeInspectionOnlyFrame(): void;
   observeIncrementalFrame(slotsWritten: number, animating: number): void;
   observeReapInPlace(): void;
   observeFullWalk(
@@ -176,7 +166,7 @@ export const fabricStats: FabricStatsState = {
   revived: 0,
   dying: 0,
   recentDiffs: [],
-  frames: { skip: 0, inspectionOnly: 0, incremental: 0, fullWalk: 0 },
+  frames: { skip: 0, incremental: 0, fullWalk: 0 },
   fullWalkReasons: zeroFullWalkReasons(),
   incrementalSlotsWritten: 0,
   reapsInPlace: 0,
@@ -203,9 +193,6 @@ export const fabricStats: FabricStatsState = {
   },
   observeSkipFrame() {
     this.frames.skip += 1;
-  },
-  observeInspectionOnlyFrame() {
-    this.frames.inspectionOnly += 1;
   },
   observeIncrementalFrame(slotsWritten, animating) {
     this.frames.incremental += 1;
@@ -263,7 +250,7 @@ export const fabricStats: FabricStatsState = {
     this.revived = 0;
     this.dying = 0;
     this.recentDiffs = [];
-    this.frames = { skip: 0, inspectionOnly: 0, incremental: 0, fullWalk: 0 };
+    this.frames = { skip: 0, incremental: 0, fullWalk: 0 };
     this.fullWalkReasons = zeroFullWalkReasons();
     this.incrementalSlotsWritten = 0;
     this.reapsInPlace = 0;

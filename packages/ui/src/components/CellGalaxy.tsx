@@ -75,10 +75,7 @@ import {
   dampCellGalaxyRotationScale,
   selectedCellNumericId,
 } from '../derives/cellInteraction.derive';
-import {
-  CELL_INSPECTION_NAVIGATION_SIZE_SCALE,
-  makeCellHybridMaterial,
-} from '../materials/cellHybridMaterial';
+import { makeCellHybridMaterial } from '../materials/cellHybridMaterial';
 import { makeCellFlareMaterial } from '../materials/cellFlareMaterial';
 import { CELL_FLASH_DURATION_S } from '../materials/cellEnvelope.glsl';
 import {
@@ -95,14 +92,6 @@ import CellIdentityProofMarker, {
 } from './CellIdentityProofMarker';
 import CellIdentityBindingMarker from './CellIdentityBindingMarker';
 import CanonicalRewriteEcho from './CanonicalRewriteEcho';
-import {
-  cellInspectionDirectNavigationRole,
-  cellInspectionBodyTransitionBlend,
-  cellInspectionFieldScale,
-  cellInspectionNavigationTarget,
-  CELL_INSPECTION_BODY_TRANSITION_SECONDS,
-  type CellInspectionField,
-} from '../nerve/cellInspectionField';
 import { deriveCanonicalRewriteArrivals } from '../derives/canonicalRewrite.derive';
 import {
   cellIdsWithinRadiusFromIndex,
@@ -185,9 +174,6 @@ interface CellGalaxyProps {
    *  animations (e.g. consensus routes + write seals) atop the
    *  cell field without coupling CellGalaxy to non-generic components. */
   overlay?: ReactNode;
-  /** Shared topology field published by the overlay's NeuralNetwork. The
-   * Cell body reads it directly so selection never rebuilds the graph here. */
-  inspectionFieldRef?: React.RefObject<CellInspectionField | null>;
   /** Optional live interaction gate. Consumers with camera controls can
    * suspend the O(N) screen-space picker after a real drag begins while still
    * allowing the pointer-down and click raycasts that preserve R3F semantics. */
@@ -260,45 +246,6 @@ export function diffCellBufferSlots(
   next: readonly Cell[],
 ): CellBufferDiff {
   return diffCellRenderSlots(previous, next);
-}
-
-/** Write the NEXT static graph-distance endpoint of every visible Cell into
- * the packed `aInspection` pair (`.y`). The shader cross-fades `.x`→`.y`
- * through a single material uniform, so the previous endpoint is never
- * touched here. */
-export function writeCellInspectionTargets(
-  cells: Cell[],
-  count: number,
-  field: CellInspectionField | null,
-  inspectionArr: Float32Array,
-  ranges?: readonly CellBufferRange[],
-): void {
-  const activeRanges = ranges ?? [{ start: 0, count }];
-  for (const range of activeRanges) {
-    const end = Math.min(count, range.start + range.count);
-    for (let i = Math.max(0, range.start); i < end; i += 1) {
-      inspectionArr[i * 2 + 1] = cellInspectionFieldScale(field, cells[i].id);
-    }
-  }
-}
-
-/** Write the atomic navigation affordance for direct renderer-neighbours.
- * This intentionally does not ease: visual role and pickability change on the
- * same field snapshot, so a fading marker never advertises a stale target. */
-export function writeCellInspectionNavigationRoles(
-  cells: Cell[],
-  count: number,
-  field: CellInspectionField | null,
-  roleArr: Float32Array,
-  ranges?: readonly CellBufferRange[],
-): void {
-  const activeRanges = ranges ?? [{ start: 0, count }];
-  for (const range of activeRanges) {
-    const end = Math.min(count, range.start + range.count);
-    for (let i = Math.max(0, range.start); i < end; i += 1) {
-      roleArr[i] = cellInspectionDirectNavigationRole(field, cells[i].id);
-    }
-  }
 }
 
 export interface CellBufferTargets {
@@ -803,7 +750,6 @@ interface CellPickerProps {
   detailAttr: THREE.BufferAttribute;
   selectedCellIdRef: React.MutableRefObject<number | null>;
   hoveredCellIdRef: React.MutableRefObject<number | null>;
-  inspectionFieldRef?: React.RefObject<CellInspectionField | null>;
   pickingSuspendedRef?: React.RefObject<boolean>;
   onSelect: (id: string | null) => void;
 }
@@ -852,7 +798,6 @@ function CellPicker({
   detailAttr,
   selectedCellIdRef,
   hoveredCellIdRef,
-  inspectionFieldRef,
   pickingSuspendedRef,
   onSelect,
 }: CellPickerProps) {
@@ -880,7 +825,6 @@ function CellPicker({
     const indexedProjection = new THREE.Matrix4();
     let indexedCells: Cell[] | null = null;
     let indexedCount = -1;
-    let indexedInspectionField: CellInspectionField | null = null;
     let indexedSelectedCellId: number | null = null;
     let indexedHoveredCellId: number | null = null;
     let indexedDetailVersion = -1;
@@ -895,7 +839,6 @@ function CellPicker({
       const count = Math.min(drawCountRef.current, cells.length);
       if (count === 0) return;
       const detailArray = detailAttr.array as Float32Array;
-      const inspectionField = inspectionFieldRef?.current ?? null;
       const camera = raycaster.camera;
       if (!camera) return;
       const ray = raycaster.ray;
@@ -923,7 +866,6 @@ function CellPicker({
             > CELL_PICK_ROTATION_DRIFT_BUDGET_PX);
       const structuralIndexChange = indexedCells !== cells
         || indexedCount !== count
-        || indexedInspectionField !== inspectionField
         || indexedSelectedCellId !== selectedCellIdRef.current
         || indexedHoveredCellId !== hoveredCellIdRef.current
         || indexedDetailVersion !== detailAttr.version
@@ -941,7 +883,6 @@ function CellPicker({
         let maxDriftPxPerRadian = 0;
         for (let i = 0; i < count; i += 1) {
           const c = cells[i];
-          if (!cellInspectionNavigationTarget(inspectionField, c.id)) continue;
           cellView
             .set(c.pos_seed[0], c.pos_seed[1], c.pos_seed[2])
             .applyMatrix4(modelView);
@@ -949,16 +890,8 @@ function CellPicker({
           // View-space depth feeds both visual footprint and frustum rejection.
           const viewZ = -cellView.z;
           if (viewZ <= 0) continue;
-          const navigationSizeScale = cellInspectionDirectNavigationRole(
-            inspectionField,
-            c.id,
-          ) > 0
-            ? CELL_INSPECTION_NAVIGATION_SIZE_SCALE
-            : 1;
           const depthToPx = halfH / viewZ;
-          const cellPointPxR = cellPointSize(c)
-            * navigationSizeScale
-            * depthToPx;
+          const cellPointPxR = cellPointSize(c) * depthToPx;
           const focus = cellFocusTarget(
             c.id,
             selectedCellId,
@@ -1004,7 +937,6 @@ function CellPicker({
         }
         indexedCells = cells;
         indexedCount = count;
-        indexedInspectionField = inspectionField;
         indexedSelectedCellId = selectedCellIdRef.current;
         indexedHoveredCellId = hoveredCellIdRef.current;
         indexedDetailVersion = detailAttr.version;
@@ -1023,10 +955,7 @@ function CellPicker({
       );
       if (!hit) return;
       const hitCell = cells[hit.index];
-      if (
-        !hitCell
-        || !cellInspectionNavigationTarget(inspectionField, hitCell.id)
-      ) return;
+      if (!hitCell) return;
       bestPoint
         .set(hitCell.pos_seed[0], hitCell.pos_seed[1], hitCell.pos_seed[2])
         .applyMatrix4(matrix);
@@ -1054,7 +983,6 @@ function CellPicker({
     detailAttr,
     drawCountRef,
     hoveredCellIdRef,
-    inspectionFieldRef,
     pickingSuspendedRef,
     selectedCellIdRef,
   ]);
@@ -1133,10 +1061,6 @@ function CellPicker({
         ) return;
         const cell = cellsListRef.current[e.instanceId];
         if (!cell) return;
-        if (!cellInspectionNavigationTarget(
-          inspectionFieldRef?.current ?? null,
-          cell.id,
-        )) return;
         setHovered(cell.id);
         onSelect(`cell:${cell.id}`);
       }}
@@ -1175,7 +1099,6 @@ export default function CellGalaxy({
   flashDirtyRef,
   flashDirtyIdsRef,
   overlay,
-  inspectionFieldRef,
   pickingSuspendedRef,
   populationGain = 0,
   localReceiveDelayS = 0,
@@ -1220,13 +1143,12 @@ export default function CellGalaxy({
    * Ordinary churn patches indexed slots; only reset/skipped-journal/clamp
    * transitions rebuild. */
   const cellRenderSetRef = useRef(createCellRenderSetState());
-  /** D4 overlay pool state: the selected cell and inspection-field members
-   * that sit off-stage render as overlay entries appended after the staged
-   * list — client-transient, never entering the shared display membership
-   * or the passive display graph. */
+  /** D4 overlay pool state: a SELECTED cell that sits off-stage renders as
+   * an overlay entry appended after the staged list — client-transient,
+   * never entering the shared display membership or the passive display
+   * graph. */
   const overlayStateRef = useRef<{
     selectedCellId: number | null;
-    field: CellInspectionField | null;
     entries: Cell[];
     /** Ids of `entries`, resolved only while the pool is non-empty — every
      * other segment has to ask whether the overlay already draws an id. */
@@ -1234,7 +1156,6 @@ export default function CellGalaxy({
     combined: Cell[];
   }>({
     selectedCellId: null,
-    field: null,
     entries: EMPTY_OVERLAY_ENTRIES,
     ids: null,
     combined: [],
@@ -1385,26 +1306,6 @@ export default function CellGalaxy({
       .setUsage(THREE.DynamicDrawUsage),
     [],
   );
-  // Static transition endpoints per body point. Selection changes upload each
-  // endpoint once; the shader advances one scalar instead of rewriting the
-  // complete visible Cell buffer on every easing frame.
-  const cellInspectionAttr = useMemo(() => {
-    const arr = new Float32Array(INSTANCE_CAPACITY * 2);
-    arr.fill(1);
-    return new THREE.BufferAttribute(arr, 2)
-      .setUsage(THREE.DynamicDrawUsage);
-  }, []);
-  // Atomic direct-neighbour navigation role. Unlike the body energy, this does
-  // not cross-fade: the shader affordance and CellPicker eligibility always
-  // describe the same current graph snapshot.
-  const cellInspectionRoleAttr = useMemo(
-    () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1)
-      .setUsage(THREE.DynamicDrawUsage),
-    [],
-  );
-  const lastInspectionFieldRef = useRef<CellInspectionField | null>(null);
-  const inspectionTransitionRef = useRef({ elapsed: 0, active: false });
-
   const hybridMaterial = useMemo(() => makeCellHybridMaterial(), []);
   const flareMaterial = useMemo(() => makeCellFlareMaterial(), []);
 
@@ -1422,8 +1323,6 @@ export default function CellGalaxy({
     g.setAttribute('aFocus', cellFocusAttr);
     g.setAttribute('aRecall', cellRecallAttr);
     g.setAttribute('aRecallState', cellRecallStateAttr);
-    g.setAttribute('aInspection', cellInspectionAttr);
-    g.setAttribute('aInspectionRole', cellInspectionRoleAttr);
     g.setDrawRange(0, 0);
     // Permissive sphere for the bounded tissue plus its rare halo drift.
     // Skipping this would let frustum culling drop the entire cloud at
@@ -1443,8 +1342,6 @@ export default function CellGalaxy({
     cellFocusAttr,
     cellRecallAttr,
     cellRecallStateAttr,
-    cellInspectionAttr,
-    cellInspectionRoleAttr,
   ]);
 
   const cellFlareGeometry = useMemo(() => {
@@ -1513,7 +1410,6 @@ export default function CellGalaxy({
 
     const prevPulseAtMs = lastPulseAtMsRef.current;
     const pulseAtMs = cellsCache.lastPulseAtMs;
-    const inspectionField = inspectionFieldRef?.current ?? null;
     const rewrite = cellsCache.linkPrune;
     const rewriteMarkerChanged = rewrite !== handledRewriteRef.current;
     const rewriteReplayActive = cellsCache.backfill?.phase === 'reorg'
@@ -1563,22 +1459,19 @@ export default function CellGalaxy({
     const renderUpdate = renderNeedsSync
       ? syncCellRenderSet(renderSet, cellsCache, cellDisplayLimit)
       : null;
-    // Overlay pool: selection/inspection visibility is a client transient
-    // appended AFTER the staged list, resolved canonical-first. Recomputed
-    // only when the staged list or the selection inputs move.
+    // Overlay pool: selection visibility is a client transient appended
+    // AFTER the staged list, resolved canonical-first. Recomputed only when
+    // the staged list or the selection inputs move.
     const overlayState = overlayStateRef.current;
     const overlayNeedsSync = renderUpdate !== null
-      || overlayState.selectedCellId !== selectedCellIdRef.current
-      || overlayState.field !== inspectionField;
+      || overlayState.selectedCellId !== selectedCellIdRef.current;
     if (overlayNeedsSync) {
       const overlay = cellRenderOverlay(
         cellsCache,
         renderSet.indexById,
         selectedCellIdRef.current,
-        inspectionField,
       );
       overlayState.selectedCellId = selectedCellIdRef.current;
-      overlayState.field = inspectionField;
       // The shared buffers hold INSTANCE_CAPACITY slots; the staged list is
       // bounded by the display budget, so the reserved overlay pool fits.
       // Clamp defensively so a manual full-capacity clamp can never push
@@ -1661,7 +1554,6 @@ export default function CellGalaxy({
     const cellsList = slotSync?.cells ?? cellSlotStateRef.current.published;
     const count = cellsList.length;
     const cellBufferRanges = slotSync?.ranges ?? EMPTY_CELL_BUFFER_RANGES;
-    const renderMembershipChanged = slotSync?.membershipChanged ?? false;
     const drawCountChanged = count !== drawCountRef.current;
     cellsListRef.current = cellsList;
     drawCountRef.current = count;
@@ -1750,88 +1642,6 @@ export default function CellGalaxy({
       const liveIds = new Set(cellsList.map((c) => c.id));
       for (const id of flashMap.keys()) {
         if (!liveIds.has(id)) flashMap.delete(id);
-      }
-    }
-
-    // 2. Topology-distance field. Its immutable endpoint snapshots change only
-    // when selection or real graph membership changes. The transition itself
-    // advances through one material uniform, with no per-frame Cell loop or
-    // BufferAttribute upload.
-    const inspectionFieldChanged =
-      inspectionField !== lastInspectionFieldRef.current;
-    const inspectionRanges = inspectionFieldChanged
-      ? [{ start: 0, count }]
-      : renderMembershipChanged
-        ? cellBufferRanges
-        : [];
-    if (inspectionRanges.length > 0) {
-      // One packed pair per slot: .x is the endpoint the body is fading
-      // FROM, .y the one it is fading TO.
-      const inspection = cellInspectionAttr.array as Float32Array;
-      if (inspectionFieldChanged) {
-        // Preserve the exact on-screen value if a second selection arrives
-        // before the previous transition has settled.
-        const currentBlend = hybridMaterial.uniforms.uInspectionBlend.value;
-        for (let i = 0; i < count; i += 1) {
-          inspection[i * 2] += (
-            inspection[i * 2 + 1] - inspection[i * 2]
-          ) * currentBlend;
-        }
-      }
-      writeCellInspectionTargets(
-        cellsList,
-        count,
-        inspectionField,
-        inspection,
-        inspectionRanges,
-      );
-      if (!inspectionFieldChanged) {
-        // New/replaced render slots have no previous identity to cross-fade.
-        // Seed both endpoints from their authoritative current target.
-        for (const range of inspectionRanges) {
-          const end = Math.min(count, range.start + range.count);
-          for (let i = Math.max(0, range.start); i < end; i += 1) {
-            inspection[i * 2] = inspection[i * 2 + 1];
-          }
-        }
-      }
-      writeCellInspectionNavigationRoles(
-        cellsList,
-        count,
-        inspectionField,
-        cellInspectionRoleAttr.array as Float32Array,
-        inspectionRanges,
-      );
-      markCellBufferUpdateRanges(
-        cellInspectionRoleAttr,
-        inspectionRanges,
-        count,
-      );
-      markCellBufferUpdateRanges(
-        cellInspectionAttr,
-        inspectionRanges,
-        count,
-      );
-    }
-    if (inspectionFieldChanged) {
-      lastInspectionFieldRef.current = inspectionField;
-      inspectionTransitionRef.current.elapsed = 0;
-      inspectionTransitionRef.current.active = true;
-      hybridMaterial.uniforms.uInspectionBlend.value = 0;
-    }
-    const inspectionTransition = inspectionTransitionRef.current;
-    if (!inspectionFieldChanged && inspectionTransition.active) {
-      inspectionTransition.elapsed = Math.min(
-        CELL_INSPECTION_BODY_TRANSITION_SECONDS,
-        inspectionTransition.elapsed + dt,
-      );
-      hybridMaterial.uniforms.uInspectionBlend.value =
-        cellInspectionBodyTransitionBlend(inspectionTransition.elapsed);
-      if (
-        inspectionTransition.elapsed
-        >= CELL_INSPECTION_BODY_TRANSITION_SECONDS
-      ) {
-        inspectionTransition.active = false;
       }
     }
 
@@ -2129,7 +1939,6 @@ export default function CellGalaxy({
           detailAttr={cellDetailAttr}
           selectedCellIdRef={selectedCellIdRef}
           hoveredCellIdRef={hoveredCellIdRef}
-          inspectionFieldRef={inspectionFieldRef}
           pickingSuspendedRef={pickingSuspendedRef}
           onSelect={onSelect}
         />

@@ -20,7 +20,6 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
     expect(NETWORK_SOURCE).toContain('syncCellRenderSet(');
     expect(NETWORK_SOURCE).toContain('displayTopologyVersionRef.current');
     expect(NETWORK_SOURCE).toContain('createNeighborGraphBuilder');
-    expect(NETWORK_SOURCE).toContain('displayGraphBuilder.cancel()');
     // Unmount ends the Worker thread but never the builder: Strict Mode
     // replays setup→cleanup→setup against the same instance, and `dispose`
     // is terminal.

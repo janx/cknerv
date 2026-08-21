@@ -46,9 +46,6 @@ describe('HudOverlay wiring', () => {
     expect(APP_SOURCE.match(
       /identityProofBinding=\{cellIdentityProofBinding\}/g,
     )).toHaveLength(2);
-    expect(APP_SOURCE).toContain(
-      'inspectionCellId={selectedCell?.id ?? null}',
-    );
     expect(APP_SOURCE).toContain('onStart={beginOrbitInteraction}');
     expect(APP_SOURCE).toContain('onChange={changeOrbitInteraction}');
     expect(APP_SOURCE).toContain('onEnd={endOrbitInteraction}');
@@ -57,13 +54,10 @@ describe('HudOverlay wiring', () => {
     )).toHaveLength(3);
   });
 
-  it('shares one selected-Cell topology field between bodies and fibres', () => {
-    expect(APP_SOURCE).toContain(
-      'useRef<CellInspectionField | null>(null)',
-    );
-    expect(APP_SOURCE.match(
-      /inspectionFieldRef=\{cellInspectionFieldRef\}/g,
-    )).toHaveLength(2);
+  it('threads no inspection field — the galaxy never dims for an open card', () => {
+    expect(APP_SOURCE).not.toContain('CellInspectionField');
+    expect(APP_SOURCE).not.toContain('inspectionFieldRef');
+    expect(APP_SOURCE).not.toContain('inspectionCellId');
   });
 
   it('shares one camera-distance focus between Cell fabric and passive peers', () => {

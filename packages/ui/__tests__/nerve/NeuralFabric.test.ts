@@ -127,26 +127,15 @@ describe('NeuralFabric living-mesh handles', () => {
     expect(SRC).not.toMatch(/globalRepaintRef\.current = true/);
   });
 
-  it('grades passive fibres by real selected-Cell topology without dimming events', () => {
-    expect(SRC).toContain('setInspectionField');
-    expect(SRC).toContain('cellInspectionEdgeScaleAt');
-    expect(SRC).toContain('st.fromCellId');
-    expect(SRC).toContain('st.toCellId');
-    expect(SRC).toContain('instanceInspectionFromStart');
-    expect(SRC).toContain('instanceInspectionToEnd');
-    expect(SRC).toContain('inspectionTransitionProgress.value');
-    expect(SRC).toContain('(1 - fieldScale) * lifecycleFlash');
-    const transitionAdvance = SRC.slice(
-      SRC.indexOf('if (inspectionField.progress < 1)'),
-      SRC.indexOf('const recallAperture =', SRC.indexOf(
-        'if (inspectionField.progress < 1)',
-      )),
-    );
-    expect(transitionAdvance).not.toContain('emitDirtyRef.current = true');
-    const activeImplementation = SRC.slice(
-      SRC.lastIndexOf('pushActiveHop(hop, cells)'),
-    );
-    expect(activeImplementation).not.toContain('inspectionFieldEndpointScaleAt');
+  it('carries no selection-topology dimming — passive fibres keep full energy', () => {
+    // The hop-field edge grading is gone end to end: no field handle, no
+    // per-edge inspection lanes, no cross-fade uniform. The zoom-recede
+    // (cellDetailFabric*) is the only passive view weighting left.
+    expect(SRC).not.toContain('setInspectionField');
+    expect(SRC).not.toContain('cellInspectionEdgeScaleAt');
+    expect(SRC).not.toContain('instanceInspection');
+    expect(SRC).not.toContain('inspectionTransitionProgress');
+    expect(SRC).not.toContain('inspectionFieldEndpointScaleAt');
   });
 
   it('keeps the full four-sample passive Bezier at every quality preset', () => {
@@ -245,7 +234,7 @@ describe('NeuralFabric living-mesh handles', () => {
     expect(SRC).toContain('passivePositionsDirtyRef');
     // The GPU-parametric fabric writes static records once per lifecycle
     // event; per-frame CPU is the uniform sync alone, and even the compacting
-    // full walk uploads static records + inspection, never sampled positions.
+    // full walk uploads static records, never sampled positions.
     expect(SRC).toContain('syncFabricLifecycleUniforms(fabric.material, now)');
     expect(SRC).toContain('writeFabricLifecycleSlot(');
     expect(SRC).toContain('commitFabricLifecycleFull(fabric)');
@@ -376,24 +365,11 @@ describe('NeuralFabric oversized-diff cohort staggering', () => {
     expect(pump).toContain('if (!st || st.dyingAt !== null) continue');
   });
 
-  it('never lets a same-frame selection change swallow pending records', () => {
-    // The inspection-only return clears the dirty gate, so a birth/death
-    // written in the same frame (the topology build issues both) would have
-    // stayed in RAM, unuploaded, until an unrelated event flushed it.
-    const inspectionBranch = SRC.slice(
-      SRC.indexOf('// Selection changed over a settled fabric'),
-      SRC.indexOf('fabricStats.observeInspectionOnlyFrame()'),
-    );
-    expect(inspectionBranch).toContain('commitFabricLifecycleSlotRanges(');
-    expect(inspectionBranch).toContain('mergeFabricSlotRanges(lifeDirtySlots)');
-    expect(inspectionBranch).toContain('lifeDirtySlots.length = 0;');
-  });
-
   it('meters passive-fabric uploads through fabricUploadBytes', () => {
     expect(SRC).toContain('fabricUploadBytes');
     const observeCalls = SRC.match(/fabricStats\.observeUpload\(/g) ?? [];
-    // Legacy slot ranges (test surface) + inspection-only prefix + the three
-    // lifecycle commits (event ranges, full population, aperture prefix).
-    expect(observeCalls.length).toBe(5);
+    // Legacy slot ranges (test surface) + the three lifecycle commits
+    // (event ranges, full population, aperture prefix).
+    expect(observeCalls.length).toBe(4);
   });
 });

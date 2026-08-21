@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import {
-  enableLineInspectionTransitionMaterial,
   optimizeScreenSpaceCapsuleMaterial,
 } from '../../src/geometry/screenSpaceCapsuleLine';
 import {
@@ -18,7 +17,7 @@ import {
 import { TAPER_MIN, TWIG_MIN } from '../../src/nerve/fabricLuminance';
 import { CONSENSUS_BRAID_PALETTE } from '../../src/derives/consensusBraid.derive';
 
-/** The fabric layer's real material stack: capsule + inspection + lifecycle. */
+/** The fabric layer's real material stack: capsule + lifecycle. */
 function makeFabricStackMaterial(): LineMaterial {
   const material = new LineMaterial({
     vertexColors: true,
@@ -26,7 +25,6 @@ function makeFabricStackMaterial(): LineMaterial {
     transparent: true,
     worldUnits: false,
   });
-  enableLineInspectionTransitionMaterial(material);
   optimizeScreenSpaceCapsuleMaterial(material);
   return enableFabricLifecycleMaterial(material);
 }
@@ -60,9 +58,8 @@ describe('fabric lifecycle shader patch', () => {
     expect(vertex).not.toContain('attribute vec3 instanceStart;');
     expect(vertex).not.toContain('attribute vec3 instanceColorStart;');
     // Source-level declarations include ifdef'd-out dash attributes; the
-    // ACTIVE set is 6 lifecycle + 4 inspection (+ position/uv from three's
-    // prefix), safely under the 16-location floor the old 19-attribute
-    // stack overflowed.
+    // ACTIVE set is 6 lifecycle (+ position/uv from three's prefix), safely
+    // under the 16-location floor the old 19-attribute stack overflowed.
     const attributeCount = (vertex.match(/attribute /g) ?? []).length;
     expect(attributeCount).toBeLessThanOrEqual(13);
     expect(material.uniforms.fabricSimTimeSec).toBeDefined();
