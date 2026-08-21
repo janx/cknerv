@@ -14,9 +14,9 @@ use std::path::PathBuf;
 
 use cknerv_core::{
     AssetKind, Cell, CellDelta, CellGalaxySnapshot, CellLinkEndpointAnchor, Chain, ChainAnchor,
-    DisplayMode, DisplayProvenance, LockKind, Mutation, OutPoint, ReplayPhase, ScriptCensus,
-    ScriptCount, ScriptId, ScriptNameRecord, ScriptRegistryRecord, SemanticsDelta,
-    SemanticsSnapshot,
+    DisplayMode, DisplayProvenance, LockKind, Mutation, OutPoint, PeerSightingAbsence,
+    PeerSightingLookup, PeerSightingRecord, ReplayPhase, ScriptCensus, ScriptCount, ScriptId,
+    ScriptNameRecord, ScriptRegistryRecord, SemanticsDelta, SemanticsSnapshot,
 };
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -464,6 +464,46 @@ fn enrichment_script_registry() -> ScriptRegistryRecord {
     }
 }
 
+/// The crawler's own view of one node the local node is linked to. It is the
+/// only enrichment record that describes a network peer rather than a chain
+/// object, and the only one resolved purely on demand — so it rides the
+/// fixture as its own section instead of a snapshot slot or a delta arm.
+///
+/// The clocks are milliseconds here although the crawler counts seconds: the
+/// conversion belongs to the adapter, and this file is what the browser has
+/// to be able to read.
+fn enrichment_peer_sighting() -> PeerSightingRecord {
+    PeerSightingRecord {
+        source: "ckbadger".to_string(),
+        as_of: ChainAnchor {
+            block: 100,
+            hash: "0xblock100".to_string(),
+        },
+        updated_at_ms: 1_700_000_000_005,
+        node_id: "QmagxSv7GNwKXQE7mi1iDjFHghjUpbqjBgqSot7PmMJqHA".to_string(),
+        country: "DE".to_string(),
+        asn: "AS24940 Hetzner Online GmbH".to_string(),
+        client_version: "0.209.0 (d166e28 2026-07-29)".to_string(),
+        protocols: vec!["/ckb/syn".to_string(), "/ckb/relay".to_string()],
+        first_seen_ms: 1_650_000_000_000,
+        last_seen_ms: 1_699_999_940_000,
+        last_reachable_at_ms: Some(1_699_999_940_000),
+        reachable: true,
+        rtt_ms: Some(41),
+        known_peers_count: 45,
+    }
+}
+
+/// Total by construction, same contract as [`semantics_delta_variant`]: a new
+/// absence reason cannot be added without being fixtured for the browser.
+fn peer_sighting_absence_variant(reason: &PeerSightingAbsence) -> &'static str {
+    match reason {
+        PeerSightingAbsence::NoCrawler => "no_crawler",
+        PeerSightingAbsence::UnreadableNodeId => "unreadable_node_id",
+        PeerSightingAbsence::NeverSighted => "never_sighted",
+    }
+}
+
 /// The file's two halves as one serializable value, so the whole thing —
 /// snapshot and every delta variant — is written by the serializer.
 ///
@@ -476,6 +516,9 @@ fn enrichment_script_registry() -> ScriptRegistryRecord {
 struct EnrichmentSamples {
     snapshot: SemanticsSnapshot,
     deltas: BTreeMap<&'static str, SemanticsDelta>,
+    /// The lazy per-peer lookup: not a snapshot slot and not a delta, because
+    /// the set of peers belongs to the network rather than to the chain.
+    peer_sightings: BTreeMap<&'static str, PeerSightingLookup>,
 }
 
 fn enrichment_samples() -> EnrichmentSamples {
@@ -585,12 +628,52 @@ fn enrichment_samples() -> EnrichmentSamples {
     deltas.insert("prune", SemanticsDelta::Prune { from_block: 100 });
     deltas.insert("clear", SemanticsDelta::Clear);
 
-    EnrichmentSamples { snapshot, deltas }
+    let mut peer_sightings: BTreeMap<&'static str, PeerSightingLookup> = BTreeMap::new();
+    peer_sightings.insert(
+        "sighted",
+        PeerSightingLookup::sighted(enrichment_peer_sighting()),
+    );
+    for reason in [
+        PeerSightingAbsence::NoCrawler,
+        PeerSightingAbsence::UnreadableNodeId,
+        PeerSightingAbsence::NeverSighted,
+    ] {
+        peer_sightings.insert(
+            peer_sighting_absence_variant(&reason),
+            PeerSightingLookup::unsighted(reason),
+        );
+    }
+
+    EnrichmentSamples {
+        snapshot,
+        deltas,
+        peer_sightings,
+    }
 }
 
 #[test]
 fn enrichment_samples_are_authored_by_the_serializer() {
     assert_authored_fixture("enrichment_samples.json", &enrichment_samples());
+}
+
+#[test]
+fn enrichment_samples_cover_every_peer_absence_reason() {
+    let covered: std::collections::BTreeSet<&str> = enrichment_samples()
+        .peer_sightings
+        .values()
+        .filter_map(|lookup| match lookup {
+            PeerSightingLookup::Sighted { .. } => None,
+            PeerSightingLookup::Unsighted { reason } => Some(peer_sighting_absence_variant(reason)),
+        })
+        .collect();
+    assert_eq!(
+        covered,
+        ["never_sighted", "no_crawler", "unreadable_node_id"]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<&str>>(),
+        "every PeerSightingAbsence reason needs a sample in enrichment_samples.json — \
+         the DOSSIER plate prints a different sentence for each one"
+    );
 }
 
 #[test]

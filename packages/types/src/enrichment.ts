@@ -344,6 +344,52 @@ export interface NetworkAtlasRecord {
   versions: NetworkAtlasBucket[];
 }
 
+/** How one node looked the last time an optional network crawler reached it.
+ *
+ * The only enrichment record that describes a network peer rather than a
+ * chain object, and the only one resolved purely on demand — it never
+ * arrives in the semantics snapshot or a delta. Every row drawn from it is
+ * CRAWLER-class: a different vantage and a different clock from the local
+ * RPC link, so it must be stamped with `last_seen_ms` rather than blended
+ * into live link telemetry. */
+export interface PeerSightingRecord {
+  source: string;
+  as_of: ChainAnchor;
+  updated_at_ms: number;
+  /** The base58 node id the lookup asked with — the same string the local
+   * node's peer list carries. */
+  node_id: string;
+  country: string;
+  asn: string;
+  client_version: string;
+  protocols: string[];
+  first_seen_ms: number;
+  last_seen_ms: number;
+  /** Absent when the crawler has never completed a dial to this node. */
+  last_reachable_at_ms?: number;
+  reachable: boolean;
+  rtt_ms?: number;
+  known_peers_count: number;
+}
+
+/** Why a peer lookup came back without a sighting. Each one is a different
+ * true statement, and none of them is a failure. */
+export type PeerSightingAbsence =
+  /** The configured source has no network crawler at all. */
+  | 'no_crawler'
+  /** The local node's id for this peer is not one the source can be keyed
+   * by, so nothing was asked. */
+  | 'unreadable_node_id'
+  /** The source answered, and has never seen this node from outside. */
+  | 'never_sighted';
+
+/** The result of `GET /api/enrichment/peers/:node_id` when a source is
+ * configured. Deliberately not `PeerSightingRecord | null`: "never seen from
+ * outside" is an observation about the network, not a missing record. */
+export type PeerSightingLookup =
+  | { state: 'sighted'; sighting: PeerSightingRecord }
+  | { state: 'unsighted'; reason: PeerSightingAbsence };
+
 export interface SemanticsSnapshot {
   source: EnrichmentSourceStatus;
   cells: CellSemanticRecord[];

@@ -27,6 +27,8 @@
 //!     indexed context for one selected canonical Cell.
 //!   * `GET /api/enrichment/transactions/:tx_hash` — optional lazy indexed
 //!     context for that Cell's origin transaction.
+//!   * `GET /api/enrichment/peers/:node_id` — optional lazy crawler sighting
+//!     for one peer the local node is linked to.
 
 pub mod adapter;
 pub mod enrichment;

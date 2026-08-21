@@ -55,6 +55,7 @@ pub fn build_router(
             "/api/enrichment/transactions/:tx_hash",
             get(enrich_transaction),
         )
+        .route("/api/enrichment/peers/:node_id", get(enrich_peer))
         .with_state(RouterState {
             state,
             shutdown_rx,
@@ -251,6 +252,50 @@ async fn enrich_transaction(
             })),
         )
             .into_response(),
+        Err(error) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "enrichment_unavailable",
+                "message": error.to_string()
+            })),
+        )
+            .into_response(),
+    }
+}
+
+/// How the network's own crawler last saw one peer, resolved on demand.
+///
+/// Three different true answers, in three different shapes:
+///   * no source configured — `404 enrichment_disabled`, byte-for-byte what
+///     the Cell and transaction routes answer, so a CKB-only dashboard reads
+///     the whole plate as absent rather than as broken;
+///   * the source answered and has no sighting — `200` carrying `unsighted`
+///     and the reason. Never having been seen from outside is a fact about
+///     the node, not a failure of the lookup, and a 404 here would bury it;
+///   * a sighting — `200` carrying the record.
+///
+/// Unlike the Cell route, nothing is pushed into the semantics projection:
+/// the record describes a network node rather than a chain object, so it has
+/// no projection slot to age in and no anchor conflict to lose a record to.
+/// The source still validates its canonical anchor around the fetch — a
+/// chain change mid-flight surfaces as unavailable, never as an absence.
+async fn enrich_peer(
+    Path(node_id): Path<String>,
+    State(router): State<RouterState>,
+) -> impl IntoResponse {
+    let Some(source) = router.enrichment_source else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "enrichment_disabled",
+                "message": "no enrichment source is configured"
+            })),
+        )
+            .into_response();
+    };
+    let context = router.state.canonical_context();
+    match source.enrich_peer(&node_id, &context).await {
+        Ok(lookup) => Json(lookup).into_response(),
         Err(error) => (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({

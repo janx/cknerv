@@ -17,6 +17,7 @@ import type {
   CellDelta,
   ChainEntry,
   CellGalaxySnapshot,
+  PeerSightingLookup,
   SemanticsDelta,
   SemanticsSnapshot,
 } from '../src';
@@ -279,6 +280,7 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     const sample = fixture<{
       snapshot: SemanticsSnapshot;
       deltas: Record<string, SemanticsDelta>;
+      peer_sightings: Record<string, PeerSightingLookup>;
     }>('enrichment_samples.json');
 
     expect(sample.snapshot.source.status).toBe('ready');
@@ -375,5 +377,33 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(sample.snapshot).not.toHaveProperty('galaxy_composition');
     expect(sample.deltas).not.toHaveProperty('galaxy_composition_replace');
     expect(sample.deltas.prune).toEqual({ type: 'prune', from_block: 100 });
+
+    // The peer dossier is neither a snapshot slot nor a delta arm: it is
+    // resolved one node at a time through /api/enrichment/peers/:node_id,
+    // because the set of peers belongs to the network, not to the chain.
+    expect(sample.snapshot).not.toHaveProperty('peer_sightings');
+    expect(sample.deltas).not.toHaveProperty('peer_sighting_replace');
+    const sighted = sample.peer_sightings.sighted;
+    expect(sighted.state).toBe('sighted');
+    if (sighted.state !== 'sighted') throw new Error('sighted sample is unsighted');
+    // The crawler counts unix SECONDS; cknerv's wire counts milliseconds
+    // everywhere, and the adapter is where that conversion happens.
+    expect(sighted.sighting.last_seen_ms).toBe(1_699_999_940_000);
+    expect(sighted.sighting.first_seen_ms).toBe(1_650_000_000_000);
+    expect(sighted.sighting.last_reachable_at_ms).toBe(1_699_999_940_000);
+    expect(sighted.sighting.node_id).toMatch(/^Qm/);
+    expect(sighted.sighting.asn).toBe('AS24940 Hetzner Online GmbH');
+    expect(sighted.sighting.protocols).toEqual(['/ckb/syn', '/ckb/relay']);
+    expect(sighted.sighting.known_peers_count).toBe(45);
+    expect(sighted.sighting.rtt_ms).toBe(41);
+    expect(sighted.sighting.reachable).toBe(true);
+    // Same total-match pin as the deltas: the Rust writer enumerates every
+    // absence reason, and the plate prints a different sentence for each.
+    const absences = Object.values(sample.peer_sightings).flatMap((lookup) =>
+      lookup.state === 'unsighted' ? [lookup.reason] : [],
+    );
+    expect(new Set(absences)).toEqual(
+      new Set(['no_crawler', 'unreadable_node_id', 'never_sighted']),
+    );
   });
 });

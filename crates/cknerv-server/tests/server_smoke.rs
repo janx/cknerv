@@ -8,10 +8,15 @@ use async_trait::async_trait;
 use cknerv_core::{
     ActivityFeedItem, ActivityFeedRecord, AssetEcosystemCategory, AssetEcosystemRecord, CellGalaxy,
     CellSemanticRecord, ChainAnchor, EnrichmentSourceState, EnrichmentSourceStatus, Mutation,
-    OutPoint, ReplayPhase, SemanticsProjection, TransactionSemanticRecord,
+    OutPoint, PeerSightingAbsence, PeerSightingLookup, PeerSightingRecord, ReplayPhase,
+    SemanticsProjection, TransactionSemanticRecord,
 };
 use cknerv_server::{Adapter, CanonicalContext, EnrichmentSource, ServerBuilder};
 use tokio::sync::{mpsc, watch};
+
+/// A live `get_peers` id, base58 as CKB prints it. The fixture source knows
+/// this one node and nothing else.
+const SIGHTED_NODE_ID: &str = "QmagxSv7GNwKXQE7mi1iDjFHghjUpbqjBgqSot7PmMJqHA";
 
 struct CompletedBootReplayAdapter;
 
@@ -28,6 +33,7 @@ impl EnrichmentSource for TransactionFixtureSource {
             "transaction_detail".to_string(),
             "asset_ecosystem".to_string(),
             "activity_feed".to_string(),
+            "peer_sighting".to_string(),
         ]
     }
 
@@ -106,6 +112,45 @@ impl EnrichmentSource for TransactionFixtureSource {
                 share_bps: 2_500,
             }],
             top_assets: Vec::new(),
+        }))
+    }
+
+    /// One node is sighted and every other one honestly is not. Both are
+    /// answers, and the route has to keep them apart without calling either
+    /// a failure.
+    async fn enrich_peer(
+        &self,
+        node_id: &str,
+        context: &CanonicalContext,
+    ) -> anyhow::Result<PeerSightingLookup> {
+        let Some(block) = context.recent_blocks.last() else {
+            return Ok(PeerSightingLookup::unsighted(
+                PeerSightingAbsence::NeverSighted,
+            ));
+        };
+        if node_id != SIGHTED_NODE_ID {
+            return Ok(PeerSightingLookup::unsighted(
+                PeerSightingAbsence::NeverSighted,
+            ));
+        }
+        Ok(PeerSightingLookup::sighted(PeerSightingRecord {
+            source: self.name().to_string(),
+            as_of: ChainAnchor {
+                block: block.number,
+                hash: block.hash.clone(),
+            },
+            updated_at_ms: 1,
+            node_id: node_id.to_string(),
+            country: "DE".to_string(),
+            asn: "AS24940 Hetzner".to_string(),
+            client_version: "0.209.0".to_string(),
+            protocols: vec!["/ckb/syn".to_string()],
+            first_seen_ms: 1_650_000_000_000,
+            last_seen_ms: 1_700_000_000_000,
+            last_reachable_at_ms: Some(1_699_999_000_000),
+            reachable: true,
+            rtt_ms: Some(41),
+            known_peers_count: 45,
         }))
     }
 
@@ -436,6 +481,15 @@ async fn disabled_enrichment_route_is_an_isolated_404() {
     .expect("GET succeeds");
     assert_eq!(transaction.status(), 404);
 
+    let peer = reqwest::get(format!(
+        "http://{addr}/api/enrichment/peers/{SIGHTED_NODE_ID}"
+    ))
+    .await
+    .expect("GET succeeds");
+    assert_eq!(peer.status(), 404);
+    let peer_body: serde_json::Value = peer.json().await.unwrap();
+    assert_eq!(peer_body["error"], "enrichment_disabled");
+
     let canonical = reqwest::get(format!("http://{addr}/api/entities/chain/snapshot"))
         .await
         .expect("canonical route remains available");
@@ -551,4 +605,61 @@ async fn completed_boot_replay_is_checkpointed_without_shutdown() {
 
     handle.shutdown().await;
     std::fs::remove_dir_all(workdir).unwrap();
+}
+
+#[tokio::test]
+async fn peer_sighting_route_separates_a_sighting_from_a_silence() {
+    let (router, handle) = ServerBuilder::new()
+        .add_adapter(CompletedBootReplayAdapter)
+        .add_enrichment_projection(SemanticsProjection::default())
+        .enrichment_source(TransactionFixtureSource)
+        .build()
+        .expect("build");
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let sighted = reqwest::get(format!(
+        "http://{addr}/api/enrichment/peers/{SIGHTED_NODE_ID}"
+    ))
+    .await
+    .expect("peer enrichment succeeds");
+    assert_eq!(sighted.status(), 200);
+    let body: serde_json::Value = sighted.json().await.unwrap();
+    assert_eq!(body["state"], "sighted");
+    assert_eq!(body["sighting"]["node_id"], SIGHTED_NODE_ID);
+    assert_eq!(body["sighting"]["last_seen_ms"], 1_700_000_000_000_u64);
+    assert_eq!(body["sighting"]["known_peers_count"], 45);
+
+    // A node the crawler never saw is a 200 that says so: the plate has
+    // something true to print, and a 404 would have thrown it away.
+    let unsighted = reqwest::get(format!("http://{addr}/api/enrichment/peers/QmNobody"))
+        .await
+        .expect("peer enrichment succeeds");
+    assert_eq!(unsighted.status(), 200);
+    let body: serde_json::Value = unsighted.json().await.unwrap();
+    assert_eq!(body["state"], "unsighted");
+    assert_eq!(body["reason"], "never_sighted");
+    assert!(body.get("sighting").is_none(), "body: {body}");
+
+    // The lookup describes a network node, not a chain object: nothing of it
+    // reaches the semantics projection.
+    let semantics: serde_json::Value =
+        reqwest::get(format!("http://{addr}/api/projections/semantics/snapshot"))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+    assert!(
+        semantics["snapshot"].get("peer_sightings").is_none(),
+        "semantics: {semantics}"
+    );
+
+    handle.shutdown().await;
+    server_task.abort();
 }

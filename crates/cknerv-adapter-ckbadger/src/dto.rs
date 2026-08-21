@@ -70,6 +70,28 @@ pub(crate) struct NetworkNodeSummaryResponse {
     pub rtt_ms: Option<u32>,
 }
 
+/// One node's crawler dossier, keyed by hex-encoded PeerId bytes. The clocks
+/// are unix SECONDS here; the shared wire contract counts milliseconds, and
+/// the mapper is where that conversion happens. `ownAddrs` and `flags` are
+/// deliberately not read: the dashboard already holds the addresses the local
+/// node negotiated, and capability bits have no reader yet.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NetworkNodeDetailResponse {
+    pub peer_id: String,
+    pub client_version: String,
+    #[serde(default)]
+    pub protocols: Vec<String>,
+    pub first_seen: u64,
+    pub last_seen: u64,
+    pub last_reachable_at: u64,
+    pub reachable: bool,
+    pub country: String,
+    pub asn: String,
+    pub rtt_ms: Option<u32>,
+    pub known_peers: u64,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AssetEcosystemResponse {

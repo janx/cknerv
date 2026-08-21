@@ -598,13 +598,16 @@ binary header.
 | `GET /api/projections/:name/stream?since=N&bin=1` | WebSocket | Resync snapshot may be binary |
 | `GET /api/enrichment/cells/:tx_hash/:output_index` | JSON | Lazy semantic detail for a selected Cell |
 | `GET /api/enrichment/transactions/:tx_hash` | JSON | Lazy origin-transaction semantics |
+| `GET /api/enrichment/peers/:node_id` | JSON | Lazy crawler sighting for one linked peer |
 | `GET /runtime-config.js` | JavaScript | CLI-injected build, galaxy, and enrichment config |
 | Other extensionless paths | Embedded SPA | Dashboard client-side routes |
 
 For enrichment detail, disabled or unindexed data returns 404, an anchor that
 expired during loading returns 409, and an unavailable source returns 503.
-These routes are optional enhancement; their errors never alter the canonical
-stream.
+The peer route differs in one place on purpose: a configured source that has
+never sighted a node answers `200 {"state":"unsighted"}`, because that is an
+observation about the network rather than a missing record. These routes are
+optional enhancement; their errors never alter the canonical stream.
 
 ### 8.2 WebSocket Frames
 

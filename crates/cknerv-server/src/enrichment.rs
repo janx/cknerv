@@ -11,8 +11,8 @@ use cknerv_core::{
     ActivityFeedRecord, AssetEcosystemRecord, CellSemanticRecord, ChainCensus, CompositionDemand,
     DaoStateRecord, EnrichmentSourceStatus, ForkWatchRecord, GalaxyCompositionCandidates,
     GalaxyCompositionRecord, GalaxyCompositionTopUp, NetworkAtlasRecord, OutPoint,
-    ProtocolEraRecord, RecentBlock, RecentTx, ScriptId, ScriptRegistryRecord,
-    TransactionHorizonRecord, TransactionSemanticRecord,
+    PeerSightingAbsence, PeerSightingLookup, ProtocolEraRecord, RecentBlock, RecentTx, ScriptId,
+    ScriptRegistryRecord, TransactionHorizonRecord, TransactionSemanticRecord,
 };
 
 /// Bounded canonical evidence supplied to an enrichment source when it
@@ -151,6 +151,26 @@ pub trait EnrichmentSource: Send + Sync + 'static {
         _context: &CanonicalContext,
     ) -> anyhow::Result<Option<NetworkAtlasRecord>> {
         Ok(None)
+    }
+
+    /// Resolve how a crawler last saw ONE node the local node is linked to.
+    /// Bounded to a single point lookup: implementations must not answer it
+    /// by walking their node set.
+    ///
+    /// Unlike the other lazy lookups this returns a
+    /// [`PeerSightingLookup`] rather than an `Option`, because a crawler
+    /// that has never seen a node is *reporting* something and a source
+    /// without a crawler is reporting something else. Only an operational
+    /// fault — an unreachable source, a malformed answer, an anchor that
+    /// moved mid-fetch — is an `Err`.
+    async fn enrich_peer(
+        &self,
+        _node_id: &str,
+        _context: &CanonicalContext,
+    ) -> anyhow::Result<PeerSightingLookup> {
+        Ok(PeerSightingLookup::unsighted(
+            PeerSightingAbsence::NoCrawler,
+        ))
     }
 
     /// Refresh the exact whole-chain live-Cell census. Sources must answer

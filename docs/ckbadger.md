@@ -98,6 +98,7 @@ membership ordered against the births, deaths, and reorgs it is staged against.
 | `WS` | `/api/projections/cells/stream?since=<rev>` | Canonical Cell deltas **and** `display` membership patches, in one revision order |
 | `GET` | `/api/enrichment/cells/:tx_hash/:output_index` | Resolve one selected Cell lazily; returns `404 enrichment_disabled` without a configured source |
 | `GET` | `/api/enrichment/transactions/:tx_hash` | Resolve the selected Cell's origin transaction lazily |
+| `GET` | `/api/enrichment/peers/:node_id` | Resolve one linked peer's crawler sighting lazily; `200` for both a sighting and an honest silence, `404 enrichment_disabled` without a configured source |
 
 The SPA does not include the optional semantics stream in its required startup
 `Promise.all`. In CKB-only mode it neither connects to that stream nor renders
@@ -508,6 +509,46 @@ rather than two adjacent network panels, and it creates no scene nodes or edges.
 The standalone base detail returns when the crawler is unconfigured, empty,
 disabled, or canonically unusable. Staleness dims only the network-wide stage
 after three missed minute refreshes.
+
+### Peer Sighting
+
+With `peer_sighting`, selecting one peer resolves that single node's crawler
+dossier on demand through `GET /api/enrichment/peers/:node_id`: country, ASN,
+client version, opened protocols, first and last sighting, public
+reachability, dial RTT, and address-book size. This is the one thing local RPC
+cannot answer — how the network sees a node from outside, including our own.
+The lookup is a point read; the atlas remains the only bounded whole-network
+sample, and neither one puts a peer identity into the streamed contract.
+
+cknerv holds the base58 node id CKB's `get_peers` reports and the crawler is
+keyed by the multihash bytes behind it, so the adapter decodes the id before
+asking. The source-specific camelCase DTO and its unix-second clocks stay
+inside the adapter; the shared `PeerSightingRecord` counts milliseconds like
+every other cknerv wire type, and carries `last_seen_ms` so every row drawn
+from it can be stamped with its own observation age instead of passing for
+live link telemetry.
+
+The route distinguishes three true statements, and only the first is an
+absence of configuration:
+
+- no source configured — `404 enrichment_disabled`, exactly as the Cell and
+  transaction routes answer it;
+- `200 {"state":"unsighted","reason":…}` — the lookup succeeded and there is
+  no sighting. `never_sighted` means the source was asked and has never seen
+  this node from outside (a source running with its crawler switched off looks
+  the same from here and means the same thing); `unreadable_node_id` means the
+  local node's id for this peer could not be turned into the source's key, so
+  nothing was asked; `no_crawler` means the configured source has no crawler
+  at all. Never having been seen from outside is real information about a
+  node, so it is reported rather than discarded as a 404;
+- `200 {"state":"sighted","sighting":…}` — the record.
+
+An unreachable source, a malformed answer, an upstream store error, or a
+canonical anchor that moved during the fetch is `503 enrichment_unavailable`:
+absence never papers over a fault. The record rides the same validated anchor
+and re-read fence as the network atlas, but it never enters the semantics
+projection — it describes a network node rather than a chain object, and the
+set of peers belongs to the network.
 
 ### Chain Census
 

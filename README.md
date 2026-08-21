@@ -258,6 +258,7 @@ fall back to the SPA.
 | `WS` | `/api/projections/semantics/stream?since=<rev>` | Independent optional semantics snapshot/delta stream |
 | `GET` | `/api/enrichment/cells/:tx_hash/:output_index` | Lazily resolve one selected Cell; `404 enrichment_disabled` when absent |
 | `GET` | `/api/enrichment/transactions/:tx_hash` | Lazily resolve one origin transaction |
+| `GET` | `/api/enrichment/peers/:node_id` | Lazily resolve one linked peer's crawler sighting; `200` says either `sighted` or `unsighted`, `404 enrichment_disabled` when no source is configured |
 
 The projection route name for the cell galaxy is literally `cells`
 (`CellGalaxy::name()`).

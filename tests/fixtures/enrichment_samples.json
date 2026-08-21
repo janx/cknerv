@@ -781,5 +781,44 @@
         "cycles": 12345
       }
     }
+  },
+  "peer_sightings": {
+    "never_sighted": {
+      "state": "unsighted",
+      "reason": "never_sighted"
+    },
+    "no_crawler": {
+      "state": "unsighted",
+      "reason": "no_crawler"
+    },
+    "sighted": {
+      "state": "sighted",
+      "sighting": {
+        "source": "ckbadger",
+        "as_of": {
+          "block": 100,
+          "hash": "0xblock100"
+        },
+        "updated_at_ms": 1700000000005,
+        "node_id": "QmagxSv7GNwKXQE7mi1iDjFHghjUpbqjBgqSot7PmMJqHA",
+        "country": "DE",
+        "asn": "AS24940 Hetzner Online GmbH",
+        "client_version": "0.209.0 (d166e28 2026-07-29)",
+        "protocols": [
+          "/ckb/syn",
+          "/ckb/relay"
+        ],
+        "first_seen_ms": 1650000000000,
+        "last_seen_ms": 1699999940000,
+        "last_reachable_at_ms": 1699999940000,
+        "reachable": true,
+        "rtt_ms": 41,
+        "known_peers_count": 45
+      }
+    },
+    "unreadable_node_id": {
+      "state": "unsighted",
+      "reason": "unreadable_node_id"
+    }
   }
 }

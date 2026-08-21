@@ -13,11 +13,12 @@ use cknerv_core::{
     CommonKnowledgeBreakdown, CompositionDemand, DaoStateRecord, EnrichmentSourceState,
     EnrichmentSourceStatus, ForkWatchDeepFork, ForkWatchEventKind, ForkWatchRecord, ForkWatchReorg,
     GalaxyCompositionRecord, GalaxyCompositionTopUp, HashType, NetworkAtlasBucket,
-    NetworkAtlasRecord, OutPoint, ProtocolEra, ProtocolEraRecord, ScriptNameRecord,
-    ScriptRegistryRecord, SemanticAsset, SemanticAttribute, SemanticCellContent,
-    SemanticContentDecode, SemanticContentGuess, SemanticContentSegment, SemanticFacet,
-    SemanticScript, TransactionHorizonRecord, TransactionParticipantSemantic,
-    TransactionSemanticRecord, DATA_HEX_TRUNCATION_MARKER, MAX_SCRIPT_REGISTRY_ENTRIES,
+    NetworkAtlasRecord, OutPoint, PeerSightingAbsence, PeerSightingLookup, PeerSightingRecord,
+    ProtocolEra, ProtocolEraRecord, ScriptNameRecord, ScriptRegistryRecord, SemanticAsset,
+    SemanticAttribute, SemanticCellContent, SemanticContentDecode, SemanticContentGuess,
+    SemanticContentSegment, SemanticFacet, SemanticScript, TransactionHorizonRecord,
+    TransactionParticipantSemantic, TransactionSemanticRecord, DATA_HEX_TRUNCATION_MARKER,
+    MAX_SCRIPT_REGISTRY_ENTRIES,
 };
 use cknerv_server::{CanonicalContext, EnrichmentSource, GalaxyCompositionHydrator};
 
@@ -25,11 +26,11 @@ use crate::dto::{
     AssetEcosystemResponse, BlockResponse, CellDataAnalysis, CellDetailResponse,
     CommonKnowledgeSizeBreakdown, DaoInfo, DaoStatisticsResponse, HardforkEventResponse,
     HardforkTimelineResponse, LatestActivityResponse, LiveCellSummaryResponse,
-    LookupScriptsRequest, NetworkCrawlerSummaryResponse, NetworkNodesPageResponse, NetworkStats,
-    RecentReorgResponse, ReorgEventResponse, ScriptCatalogueResponse, ScriptFamilyResponse,
-    ScriptLookupInfo, ScriptLookupResponse, ScriptResponse, TokenResponse,
-    TransactionDetailResponse, TransactionLifecycleResponse, TransactionStatsPoint,
-    TransactionStatsResponse,
+    LookupScriptsRequest, NetworkCrawlerSummaryResponse, NetworkNodeDetailResponse,
+    NetworkNodesPageResponse, NetworkStats, RecentReorgResponse, ReorgEventResponse,
+    ScriptCatalogueResponse, ScriptFamilyResponse, ScriptLookupInfo, ScriptLookupResponse,
+    ScriptResponse, TokenResponse, TransactionDetailResponse, TransactionLifecycleResponse,
+    TransactionStatsPoint, TransactionStatsResponse,
 };
 use crate::galaxy_composition::{
     discover as discover_galaxy_composition, top_up as top_up_galaxy_composition, CandidateTail,
@@ -47,6 +48,7 @@ const CAPABILITIES: &[&str] = &[
     "transaction_horizon",
     "fork_watch",
     "network_atlas",
+    "peer_sighting",
     "chain_census",
     "script_registry",
     "transaction_detail",
@@ -98,6 +100,13 @@ fn hash_type_wire(hash_type: HashType) -> String {
 }
 const MAX_NETWORK_LABEL_CHARS: usize = 96;
 const MAX_PEER_ID_HEX_CHARS: usize = 256;
+/// A CKB PeerId is a multihash — 34 base58 characters for the identity form,
+/// 46 for the sha256 one. The cap is far above both and exists so a hostile
+/// path segment is rejected before it reaches the decoder.
+const MAX_PEER_ID_BASE58_CHARS: usize = 128;
+/// CKB opens a handful of protocols per peer; the cap is here so a
+/// mis-shaped answer is refused rather than rendered.
+const MAX_PEER_PROTOCOLS: usize = 32;
 const MAX_CELL_CONTENT_PREVIEW_BYTES: usize = 4 * 1024;
 const MAX_CELL_CONTENT_SEGMENTS: usize = 64;
 const MAX_CELL_CONTENT_GUESSES: usize = 16;
@@ -1198,6 +1207,49 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         Ok(Some(record))
     }
 
+    async fn enrich_peer(
+        &self,
+        node_id: &str,
+        context: &CanonicalContext,
+    ) -> anyhow::Result<PeerSightingLookup> {
+        // An id we cannot read is a fact about our own peer list, not a
+        // question worth putting to the source: no request is made.
+        let Some(peer_hex) = peer_id_to_hex(node_id) else {
+            return Ok(PeerSightingLookup::unsighted(
+                PeerSightingAbsence::UnreadableNodeId,
+            ));
+        };
+        let anchor = self.current_anchor(context)?;
+        let url = self.endpoint(&format!("network/nodes/{peer_hex}"))?;
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .context("fetch ckbadger network node detail")?;
+        if response.status() == StatusCode::NOT_FOUND {
+            // Either the crawler has never sighted this node, or this source
+            // runs with its crawler switched off. A reader learns the same
+            // thing from both: nobody has seen this node from outside.
+            return Ok(PeerSightingLookup::unsighted(
+                PeerSightingAbsence::NeverSighted,
+            ));
+        }
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "ckbadger network node detail returned HTTP {}",
+                response.status()
+            ));
+        }
+        let detail: NetworkNodeDetailResponse = response
+            .json()
+            .await
+            .context("decode ckbadger network node detail")?;
+        let record = map_peer_sighting(node_id, &peer_hex, detail, anchor.clone())?;
+        self.revalidate_anchor(&anchor, "peer sighting").await?;
+        Ok(PeerSightingLookup::sighted(record))
+    }
+
     async fn enrich_script_registry(
         &self,
         context: &CanonicalContext,
@@ -2012,6 +2064,104 @@ fn validate_network_peer_id(value: &str) -> anyhow::Result<()> {
         return Err(anyhow!("ckbadger network node returned an invalid peerId"));
     }
     Ok(())
+}
+
+/// The join between the two halves of one node's identity: CKB's RPC prints a
+/// peer id as base58 (`Qm…`), and the crawler stores the multihash bytes
+/// behind that string. `None` says the local node handed us something that is
+/// not a peer id at all, which the caller reports as an absence rather than
+/// asking the source about it.
+fn peer_id_to_hex(node_id: &str) -> Option<String> {
+    use std::fmt::Write as _;
+
+    if node_id.is_empty() || node_id.len() > MAX_PEER_ID_BASE58_CHARS {
+        return None;
+    }
+    // Decoded into a fixed buffer: the id is bounded above, so nothing a
+    // peer list can hold allocates here.
+    let mut bytes = [0_u8; MAX_PEER_ID_HEX_CHARS / 2];
+    let length = bs58::decode(node_id).onto(&mut bytes).ok()?;
+    if length == 0 {
+        return None;
+    }
+    let mut hex = String::with_capacity(length * 2);
+    for byte in &bytes[..length] {
+        let _ = write!(hex, "{byte:02x}");
+    }
+    Some(hex)
+}
+
+fn map_peer_sighting(
+    node_id: &str,
+    peer_hex: &str,
+    detail: NetworkNodeDetailResponse,
+    anchor: ChainAnchor,
+) -> anyhow::Result<PeerSightingRecord> {
+    validate_network_peer_id(&detail.peer_id)?;
+    if !detail.peer_id.eq_ignore_ascii_case(peer_hex) {
+        return Err(anyhow!("ckbadger returned a different network node"));
+    }
+    let first_seen_ms = sighting_clock_ms(detail.first_seen, "network node firstSeen")?;
+    let last_seen_ms = sighting_clock_ms(detail.last_seen, "network node lastSeen")?;
+    if last_seen_ms < first_seen_ms {
+        return Err(anyhow!(
+            "ckbadger network node was last seen before it was first seen"
+        ));
+    }
+    // Zero is the crawler's "never": a node it has never completed a dial to
+    // has no reachable-at moment, and 1970 is not one.
+    let last_reachable_at_ms = match detail.last_reachable_at {
+        0 => None,
+        seconds => Some(seconds_to_wire_ms(seconds, "network node lastReachableAt")?),
+    };
+    if detail.protocols.len() > MAX_PEER_PROTOCOLS {
+        return Err(anyhow!(
+            "ckbadger network node returned more protocols than a peer can open"
+        ));
+    }
+    let protocols = detail
+        .protocols
+        .iter()
+        .map(|protocol| bounded_network_label(protocol, "network node protocol"))
+        .collect::<anyhow::Result<Vec<String>>>()?;
+
+    Ok(PeerSightingRecord {
+        source: "ckbadger".to_string(),
+        as_of: anchor,
+        updated_at_ms: now_ms(),
+        node_id: node_id.to_string(),
+        country: bounded_network_label(&detail.country, "network node country")?,
+        asn: bounded_network_label(&detail.asn, "network node asn")?,
+        client_version: bounded_network_label(
+            &detail.client_version,
+            "network node clientVersion",
+        )?,
+        protocols,
+        first_seen_ms,
+        last_seen_ms,
+        last_reachable_at_ms,
+        reachable: detail.reachable,
+        rtt_ms: detail.rtt_ms,
+        known_peers_count: u32::try_from(detail.known_peers)
+            .context("ckbadger network node knownPeers is outside u32")?,
+    })
+}
+
+/// A sighting's own clock, in the milliseconds the shared wire counts. Zero is
+/// refused rather than published: an epoch-1970 stamp would render as a node
+/// the network has known for fifty-six years, which the source never claimed.
+fn sighting_clock_ms(seconds: u64, field: &str) -> anyhow::Result<u64> {
+    if seconds == 0 {
+        return Err(anyhow!("ckbadger returned a sighting with no {field}"));
+    }
+    seconds_to_wire_ms(seconds, field)
+}
+
+fn seconds_to_wire_ms(seconds: u64, field: &str) -> anyhow::Result<u64> {
+    let millis = seconds
+        .checked_mul(1_000)
+        .ok_or_else(|| anyhow!("ckbadger returned {field} outside the millisecond range"))?;
+    wire_safe_u64(millis, field)
 }
 
 fn map_transaction_horizon(
@@ -4967,5 +5117,332 @@ mod tests {
         assert_eq!(feed.activities.len(), 1);
         assert_eq!(feed.activities[0].block, 100);
         assert_eq!(feed.activities[0].tx_hash, format!("0x{}", "22".repeat(32)));
+    }
+
+    /// A CKB peer id is a multihash the RPC prints in base58; the crawler
+    /// stores the bytes. The vector is BUILT here rather than pasted, so the
+    /// test pins the conversion instead of pinning one lucky string.
+    fn base58_peer_id(bytes: &[u8]) -> String {
+        let mut encoded = [0_u8; 128];
+        let length = bs58::encode(bytes)
+            .onto(&mut encoded[..])
+            .expect("encode peer id");
+        String::from_utf8(encoded[..length].to_vec()).expect("base58 is ascii")
+    }
+
+    /// `0x12 0x20` + 32 bytes: the sha2-256 multihash every `Qm…` peer id on
+    /// a live CKB network carries.
+    fn sighted_peer_bytes() -> Vec<u8> {
+        let mut bytes = vec![0x12, 0x20];
+        bytes.extend((0..32).map(|index| 0xa0_u8 ^ index));
+        bytes
+    }
+
+    fn broken_store_peer_bytes() -> Vec<u8> {
+        let mut bytes = vec![0x12, 0x20];
+        bytes.extend((0..32).map(|index| 0x50_u8 ^ index));
+        bytes
+    }
+
+    async fn spawn_peer_dossier_api() -> (Url, tokio::task::JoinHandle<()>, Arc<AtomicUsize>) {
+        let node_requests = Arc::new(AtomicUsize::new(0));
+        let counted_requests = node_requests.clone();
+        let sighted = peer_id_to_hex(&base58_peer_id(&sighted_peer_bytes())).unwrap();
+        let broken = peer_id_to_hex(&base58_peer_id(&broken_store_peer_bytes())).unwrap();
+        let app = Router::new()
+            .route(
+                "/api/v1/statistics/network",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "syncStatus": {
+                            "isSyncing": false,
+                            "syncedBlock": 100
+                        }
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/blocks/:number",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "number": 100,
+                        "hash": "0xblock100"
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/network/nodes/:peer_id",
+                get(
+                    move |axum::extract::Path(peer_id): axum::extract::Path<String>| {
+                        let node_requests = counted_requests.clone();
+                        let sighted = sighted.clone();
+                        let broken = broken.clone();
+                        async move {
+                            node_requests.fetch_add(1, Ordering::Relaxed);
+                            if peer_id == broken {
+                                return (
+                                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                                    Json(serde_json::json!({ "error": "store" })),
+                                );
+                            }
+                            if peer_id != sighted {
+                                return (
+                                    axum::http::StatusCode::NOT_FOUND,
+                                    Json(serde_json::json!({ "error": "not_found" })),
+                                );
+                            }
+                            (
+                                axum::http::StatusCode::OK,
+                                Json(serde_json::json!({
+                                    "peerId": peer_id,
+                                    "ownAddrs": ["/ip4/203.0.113.7/tcp/8115"],
+                                    "clientVersion": "0.209.0 (d166e28 2026-07-29)",
+                                    "flags": 3,
+                                    "protocols": ["/ckb/syn", "/ckb/relay"],
+                                    "firstSeen": 1_650_000_000,
+                                    "lastSeen": 1_700_000_000,
+                                    "lastReachableAt": 1_699_999_000,
+                                    "reachable": true,
+                                    "country": "DE",
+                                    "asn": "AS24940 Hetzner",
+                                    "rttMs": 41,
+                                    "knownPeers": 45
+                                })),
+                            )
+                        }
+                    },
+                ),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (
+            Url::parse(&format!("http://{address}/api/v1")).unwrap(),
+            handle,
+            node_requests,
+        )
+    }
+
+    #[test]
+    fn a_base58_peer_id_becomes_the_crawlers_hex_key() {
+        let bytes = sighted_peer_bytes();
+        let expected: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+
+        let node_id = base58_peer_id(&bytes);
+
+        // The shape a live `get_peers` answer carries, not just any base58.
+        assert!(node_id.starts_with("Qm"), "node id was {node_id}");
+        assert_eq!(peer_id_to_hex(&node_id), Some(expected));
+    }
+
+    #[test]
+    fn an_id_that_is_not_a_peer_id_has_no_crawler_key() {
+        // Base58 has no `0`, `O`, `I` or `l`; an address, an empty segment
+        // and an oversized one are all not peer ids either.
+        assert_eq!(peer_id_to_hex("QmO0Il"), None);
+        assert_eq!(peer_id_to_hex(""), None);
+        assert_eq!(
+            peer_id_to_hex(&"Q".repeat(MAX_PEER_ID_BASE58_CHARS + 1)),
+            None
+        );
+        assert_eq!(peer_id_to_hex("/ip4/127.0.0.1/tcp/8115"), None);
+    }
+
+    #[tokio::test]
+    async fn a_peer_sighting_carries_the_crawlers_clock_in_milliseconds() {
+        let (api_base, server, _) = spawn_peer_dossier_api().await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        assert_eq!(
+            source.probe(&context()).await.status,
+            EnrichmentSourceState::Ready
+        );
+        let node_id = base58_peer_id(&sighted_peer_bytes());
+
+        let lookup = source.enrich_peer(&node_id, &context()).await.unwrap();
+
+        let PeerSightingLookup::Sighted { sighting } = lookup else {
+            panic!("expected a sighting, got {lookup:?}");
+        };
+        // The id the browser holds comes back, not the crawler's hex key.
+        assert_eq!(sighting.node_id, node_id);
+        assert_eq!(sighting.source, "ckbadger");
+        assert_eq!(sighting.as_of.block, 100);
+        assert_eq!(sighting.country, "DE");
+        assert_eq!(sighting.asn, "AS24940 Hetzner");
+        assert_eq!(sighting.client_version, "0.209.0 (d166e28 2026-07-29)");
+        assert_eq!(sighting.protocols, vec!["/ckb/syn", "/ckb/relay"]);
+        // Unix SECONDS upstream, milliseconds on cknerv's wire.
+        assert_eq!(sighting.first_seen_ms, 1_650_000_000_000);
+        assert_eq!(sighting.last_seen_ms, 1_700_000_000_000);
+        assert_eq!(sighting.last_reachable_at_ms, Some(1_699_999_000_000));
+        assert!(sighting.reachable);
+        assert_eq!(sighting.rtt_ms, Some(41));
+        assert_eq!(sighting.known_peers_count, 45);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_node_the_crawler_never_saw_is_answered_not_refused() {
+        let (api_base, server, node_requests) = spawn_peer_dossier_api().await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        assert_eq!(
+            source.probe(&context()).await.status,
+            EnrichmentSourceState::Ready
+        );
+        let unseen = base58_peer_id(&[0x12, 0x20, 0x77, 0x77]);
+
+        let lookup = source.enrich_peer(&unseen, &context()).await.unwrap();
+
+        // Upstream 404 is the crawler's own report — it was asked, and it
+        // has never seen this node from outside.
+        assert_eq!(
+            lookup,
+            PeerSightingLookup::unsighted(PeerSightingAbsence::NeverSighted)
+        );
+        assert_eq!(node_requests.load(Ordering::Relaxed), 1);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_node_id_is_never_put_to_the_source() {
+        let (api_base, server, node_requests) = spawn_peer_dossier_api().await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        assert_eq!(
+            source.probe(&context()).await.status,
+            EnrichmentSourceState::Ready
+        );
+
+        let lookup = source
+            .enrich_peer("not-a-peer-id-0OIl", &context())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            lookup,
+            PeerSightingLookup::unsighted(PeerSightingAbsence::UnreadableNodeId)
+        );
+        assert_eq!(node_requests.load(Ordering::Relaxed), 0);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_broken_network_store_is_an_error_not_an_absence() {
+        let (api_base, server, _) = spawn_peer_dossier_api().await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        assert_eq!(
+            source.probe(&context()).await.status,
+            EnrichmentSourceState::Ready
+        );
+        let node_id = base58_peer_id(&broken_store_peer_bytes());
+
+        let error = source
+            .enrich_peer(&node_id, &context())
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("HTTP 500"), "error was {error}");
+        server.abort();
+    }
+
+    #[test]
+    fn a_sighting_of_a_different_node_is_refused() {
+        let detail = NetworkNodeDetailResponse {
+            peer_id: "1220ff".to_string(),
+            client_version: "0.209.0".to_string(),
+            protocols: Vec::new(),
+            first_seen: 1_650_000_000,
+            last_seen: 1_700_000_000,
+            last_reachable_at: 0,
+            reachable: false,
+            country: String::new(),
+            asn: String::new(),
+            rtt_ms: None,
+            known_peers: 0,
+        };
+
+        let error = map_peer_sighting(
+            "QmWhoever",
+            "1220ee",
+            detail,
+            ChainAnchor {
+                block: 100,
+                hash: "0xblock100".to_string(),
+            },
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(
+            error.contains("different network node"),
+            "error was {error}"
+        );
+    }
+
+    #[test]
+    fn a_node_never_dialed_has_no_reachable_moment_and_empty_labels_stay_unknown() {
+        let detail = NetworkNodeDetailResponse {
+            peer_id: "1220ee".to_string(),
+            client_version: String::new(),
+            protocols: Vec::new(),
+            first_seen: 1_650_000_000,
+            last_seen: 1_700_000_000,
+            last_reachable_at: 0,
+            reachable: false,
+            country: "  ".to_string(),
+            asn: String::new(),
+            rtt_ms: None,
+            known_peers: 0,
+        };
+
+        let record = map_peer_sighting(
+            "QmWhoever",
+            "1220EE",
+            detail,
+            ChainAnchor {
+                block: 100,
+                hash: "0xblock100".to_string(),
+            },
+        )
+        .unwrap();
+
+        // Zero is the crawler's "never", and 1970 is not a reachable moment.
+        assert_eq!(record.last_reachable_at_ms, None);
+        assert_eq!(record.country, "Unknown");
+        assert_eq!(record.asn, "Unknown");
+        assert_eq!(record.client_version, "Unknown");
+    }
+
+    #[test]
+    fn a_sighting_without_a_clock_is_not_a_sighting() {
+        let detail = NetworkNodeDetailResponse {
+            peer_id: "1220ee".to_string(),
+            client_version: "0.209.0".to_string(),
+            protocols: Vec::new(),
+            first_seen: 0,
+            last_seen: 0,
+            last_reachable_at: 0,
+            reachable: true,
+            country: "DE".to_string(),
+            asn: "AS24940 Hetzner".to_string(),
+            rtt_ms: None,
+            known_peers: 1,
+        };
+
+        let error = map_peer_sighting(
+            "QmWhoever",
+            "1220ee",
+            detail,
+            ChainAnchor {
+                block: 100,
+                hash: "0xblock100".to_string(),
+            },
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("firstSeen"), "error was {error}");
     }
 }

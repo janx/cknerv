@@ -693,6 +693,85 @@ pub struct NetworkAtlasRecord {
     pub versions: Vec<NetworkAtlasBucket>,
 }
 
+/// How one node looked the last time an optional network crawler reached it.
+///
+/// This is the only enrichment record that does not describe a chain object:
+/// it describes an observation of a *node*, made from a different vantage and
+/// a different clock than the local RPC link. It therefore carries its own
+/// observation stamp (`last_seen_ms`) as well as the canonical anchor the
+/// lookup was validated against — a consumer must date every row it draws
+/// from here rather than blending it with live link telemetry.
+///
+/// It is resolved lazily, one node at a time, and never enters the streamed
+/// semantics projection: the set of peers is the network's, not the chain's.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PeerSightingRecord {
+    pub source: String,
+    pub as_of: ChainAnchor,
+    pub updated_at_ms: u64,
+    /// The node id as cknerv asked with — the same base58 string the local
+    /// node's peer list carries, not the source's internal encoding of it.
+    pub node_id: String,
+    pub country: String,
+    pub asn: String,
+    pub client_version: String,
+    #[serde(default)]
+    pub protocols: Vec<String>,
+    pub first_seen_ms: u64,
+    pub last_seen_ms: u64,
+    /// Absent when the crawler has never completed a dial to this node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_reachable_at_ms: Option<u64>,
+    pub reachable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rtt_ms: Option<u32>,
+    pub known_peers_count: u32,
+}
+
+/// Why a peer lookup came back without a sighting.
+///
+/// Each variant is a different true statement, and none of them is a failure:
+/// an operational fault is an error, not an absence.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PeerSightingAbsence {
+    /// The configured source has no network crawler at all, so no node was
+    /// ever going to be found through it.
+    NoCrawler,
+    /// The id the local node reports for this peer cannot be turned into the
+    /// key the source is indexed by, so nothing was asked.
+    UnreadableNodeId,
+    /// The source answered, and it has never seen this node from outside.
+    /// A source running with its crawler switched off looks the same from
+    /// here, and means the same thing to a reader: no outside observation.
+    NeverSighted,
+}
+
+/// The result of one lazy per-peer crawler lookup.
+///
+/// Deliberately not an `Option`: "the crawler has never seen this node" is a
+/// real observation about the network — arguably the most interesting one a
+/// dashboard can print about a peer — and it must not be flattened into the
+/// same nothing that a missing chain object produces.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum PeerSightingLookup {
+    Sighted { sighting: Box<PeerSightingRecord> },
+    Unsighted { reason: PeerSightingAbsence },
+}
+
+impl PeerSightingLookup {
+    pub fn unsighted(reason: PeerSightingAbsence) -> Self {
+        Self::Unsighted { reason }
+    }
+
+    pub fn sighted(record: PeerSightingRecord) -> Self {
+        Self::Sighted {
+            sighting: Box::new(record),
+        }
+    }
+}
+
 /// Source events entering the semantics projection.  They use a separate
 /// server-side pipeline from canonical [`crate::Mutation`] values.
 #[derive(Clone, Debug, PartialEq)]
