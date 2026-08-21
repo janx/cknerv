@@ -39,8 +39,8 @@ export function drawPortraitPlateGradient(
     cx + (dirX * lineLength) / 2,
     cy + (dirY * lineLength) / 2,
   );
-  gradient.addColorStop(0, 'rgba(2,5,12,.96)');
-  gradient.addColorStop(0.72, 'rgba(3,8,17,.9)');
+  gradient.addColorStop(0, 'rgba(2,5,12,.985)');
+  gradient.addColorStop(0.72, 'rgba(3,8,17,.965)');
   gradient.addColorStop(1, spatialPlateTail(accent));
   ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = gradient;

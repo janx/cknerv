@@ -215,8 +215,9 @@ export function CloseButton({ onClose, title }: { onClose: () => void; title?: s
 // The scene-anchored inspection satellites speak a directional-plate dialect
 // of the house language: a leading accent edge, a ~100° near-opaque gradient,
 // one cut corner. Single-sourced so every plate agrees — and so the trailing
-// edge can never thin out enough to let a dimmed HUD panel print through the
-// plate (the tail alpha floor is the load-bearing part).
+// edge can never thin out enough to let a full-brightness HUD panel print
+// through the plate (the tail alpha floor is the load-bearing part: the rails
+// no longer dim for an open card, so a plate may sit directly over lit text).
 
 const SPATIAL_PLATE_CUT_PX = 12;
 
@@ -226,11 +227,11 @@ export function spatialPlateTail(accent: string): string {
   const r = parseInt(h.slice(0, 2), 16);
   const g = parseInt(h.slice(2, 4), 16);
   const b = parseInt(h.slice(4, 6), 16);
-  return `rgba(${Math.round(4 + r * 0.055)},${Math.round(8 + g * 0.055)},${Math.round(14 + b * 0.055)},0.88)`;
+  return `rgba(${Math.round(4 + r * 0.055)},${Math.round(8 + g * 0.055)},${Math.round(14 + b * 0.055)},0.95)`;
 }
 
 export function spatialPlateBackground(accent: string): string {
-  return `linear-gradient(100deg,rgba(2,5,12,.96),rgba(3,8,17,.9) 72%,${spatialPlateTail(accent)})`;
+  return `linear-gradient(100deg,rgba(2,5,12,.985),rgba(3,8,17,.965) 72%,${spatialPlateTail(accent)})`;
 }
 
 export function spatialPlate(accent: string): CSSProperties {
