@@ -1,0 +1,739 @@
+// LINK PROBE — the peer dialect of the floating inspection constellation.
+//
+// The Cell card is a specimen scan; this one is communications telemetry. It
+// is DOM/SVG only and renders as a Canvas sibling, so nothing here may touch
+// three.js. Every instrument decodes an encoding the colony is already drawing
+// (ring = latency, bearing = id hash, tint = version/direction), which is what
+// makes the card an explanation of the scene rather than a second opinion.
+//
+// Instruments update at data cadence only — the 4s adapter poll, the block
+// pulse, and one 1 Hz uptime tick. No animation loops: motion is CSS
+// transitions, so an open card costs nothing per frame beyond the shared
+// anchor transform write.
+import {
+  type CSSProperties,
+  memo,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
+import type { Peer } from '@cknerv/types';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import { CloseButton, SpatialPlateHeader, spatialPlate } from './primitives';
+import { PROBE_STEP_S, probeScan } from './probeScan';
+import { useReducedMotion } from './useReducedMotion';
+import { PEER_LATENCY_CAP_MS } from '../../derives/peers.derive';
+import {
+  derivePeerLinkInstrument,
+  formatLinkUptime,
+  PEER_LINK_FACETS,
+  PEER_LINK_UNKNOWN,
+  type PeerLinkFacet,
+  type PeerLinkFactRow,
+} from '../../derives/peerLinkInstrument.derive';
+import type { SceneInspectorPlacementSide } from '../sceneInspection';
+
+/** Card width — the probe is a readout, not a specimen scan; it stays narrow
+ *  enough to sit beside its node without covering the colony. */
+const CARD_WIDTH_PX = 340;
+
+/** Compass viewBox is square; the rim is the latency cap ring. */
+const COMPASS_VIEW_PX = 128;
+const COMPASS_CENTER = COMPASS_VIEW_PX / 2;
+const COMPASS_RIM = 52;
+const COMPASS_RINGS = [0.25, 0.5, 0.75, 1] as const;
+/** Where the direction arrow sits along the center↔blip chord. */
+const COMPASS_ARROW_T = 0.58;
+
+const PING_HISTORY_CAP = 24;
+const PING_VIEW_W = 120;
+const PING_VIEW_H = 26;
+
+export type PeerLinkLayoutSide = SceneInspectorPlacementSide;
+
+export interface PeerLinkCardProps {
+  peer: Peer;
+  /** Local chain tip the sync ladder measures the peer against. */
+  tip: number;
+  /** Our own client version — the reference every mismatch is judged from. */
+  localVersion: string;
+  /** Spatial fan direction chosen by the scene-anchor placement solver. */
+  layoutSide?: PeerLinkLayoutSide;
+  /** The peer has left `peers[]`; the card is showing a retained snapshot.
+   *  Presentation only — retention and dismissal live with the overlay. */
+  linkLost?: boolean;
+  /** Mirrors the selected fact into the scene-to-card connector tint. */
+  onFacetChange?: (facet: PeerLinkFacet | null) => void;
+  onClose: () => void;
+  style?: CSSProperties;
+}
+
+const nowPerf = () => (typeof performance !== 'undefined' ? performance.now() : 0);
+
+function blocks(n: number): string {
+  return n.toLocaleString('en-US');
+}
+
+function moduleTag(tag: string) {
+  return (
+    <span style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 1, color: '#5a6470' }}>
+      {tag}
+    </span>
+  );
+}
+
+type PeerScanFactProps = PeerLinkFactRow & {
+  revealed: boolean;
+  selected: boolean;
+  interactive: boolean;
+  onActivate: () => void;
+};
+
+/** The peer twin of the Cell card's scan fact: same affordances (dark until
+ *  the probe reaches it, inert until classified), peer-typed identity. */
+const PeerScanFact = memo(function PeerScanFact({
+  facet,
+  label,
+  value,
+  color,
+  revealed,
+  selected,
+  interactive,
+  onActivate,
+}: PeerScanFactProps) {
+  const accent = color ?? HUD_COLORS.cyanWire;
+  return (
+    <button
+      type="button"
+      data-peer-probe-fact={facet}
+      data-peer-probe-fact-state={selected ? 'focused' : revealed ? 'resolved' : 'scanning'}
+      aria-pressed={selected}
+      disabled={!interactive}
+      onClick={onActivate}
+      style={{
+        position: 'relative',
+        minWidth: 0,
+        minHeight: 38,
+        margin: 0,
+        padding: '5px 6px 4px 9px',
+        border: 0,
+        borderLeft: `1px solid ${selected ? accent : rgba(accent, 0.34)}`,
+        background: selected
+          ? `linear-gradient(90deg,${rgba(accent, 0.17)},transparent 88%)`
+          : 'transparent',
+        boxShadow: selected ? `-3px 0 10px ${rgba(accent, 0.22)}` : undefined,
+        color: accent,
+        font: 'inherit',
+        textAlign: 'left',
+        cursor: interactive ? 'crosshair' : 'default',
+        opacity: revealed ? 1 : 0.18,
+        transition: 'opacity 260ms ease, background 160ms ease, box-shadow 160ms ease',
+        pointerEvents: interactive ? 'auto' : 'none',
+      }}
+    >
+      <span style={{ display: 'block', fontSize: HUD_TYPE.micro, letterSpacing: 1.2, color: HUD_COLORS.dim }}>
+        {label}
+      </span>
+      <span
+        title={revealed ? value : undefined}
+        style={{
+          display: 'block',
+          marginTop: 2,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          fontSize: HUD_TYPE.label,
+          lineHeight: 1.25,
+          color: selected ? accent : color ?? HUD_COLORS.ink,
+          opacity: revealed ? 1 : 0,
+          transition: 'opacity 260ms ease',
+        }}
+      >
+        {value}
+      </span>
+    </button>
+  );
+}, (previous, next) => (
+  previous.facet === next.facet
+  && previous.label === next.label
+  && previous.value === next.value
+  && previous.color === next.color
+  && previous.revealed === next.revealed
+  && previous.selected === next.selected
+  && previous.interactive === next.interactive
+));
+
+/** The colony compass: our node at the center, the peer on its true latency
+ *  ring at its true bearing. The scene lays measured peers out on the XZ plane
+ *  (`measuredPeerPos`: x = cos·r, z = sin·r) under a top-down camera, so SVG's
+ *  y-down axis already IS the scene's +Z — the bearing needs no remapping for
+ *  the instrument to agree with the colony. */
+function ColonyCompass({
+  ring01,
+  bearingRad,
+  inbound,
+  measured,
+  accent,
+  dimmed,
+}: {
+  ring01: number;
+  bearingRad: number;
+  inbound: boolean;
+  measured: boolean;
+  accent: string;
+  dimmed: boolean;
+}) {
+  const radius = COMPASS_RIM * ring01;
+  const blipX = COMPASS_CENTER + Math.cos(bearingRad) * radius;
+  const blipY = COMPASS_CENTER + Math.sin(bearingRad) * radius;
+  const arrowX = COMPASS_CENTER + Math.cos(bearingRad) * radius * COMPASS_ARROW_T;
+  const arrowY = COMPASS_CENTER + Math.sin(bearingRad) * radius * COMPASS_ARROW_T;
+  // Inbound: they dialed us, so the arrow runs toward the center.
+  const arrowDeg = ((inbound ? bearingRad + Math.PI : bearingRad) * 180) / Math.PI;
+  return (
+    <svg
+      data-peer-probe-compass
+      data-peer-probe-compass-state={measured ? 'measured' : 'unmeasured'}
+      viewBox={`0 0 ${COMPASS_VIEW_PX} ${COMPASS_VIEW_PX}`}
+      width={COMPASS_VIEW_PX}
+      height={COMPASS_VIEW_PX}
+      role="img"
+      aria-label={measured ? 'Peer position on the latency compass' : 'Peer latency unmeasured'}
+      style={{ display: 'block', margin: '0 auto', opacity: dimmed ? 0.55 : 1, transition: 'opacity 240ms ease' }}
+    >
+      {COMPASS_RINGS.map((ring) => (
+        <circle
+          key={ring}
+          cx={COMPASS_CENTER}
+          cy={COMPASS_CENTER}
+          r={COMPASS_RIM * ring}
+          fill="none"
+          stroke={rgba(HUD_COLORS.peerWire, ring === 1 ? 0.34 : 0.14)}
+          strokeWidth={ring === 1 ? 1 : 0.6}
+        />
+      ))}
+      {measured ? null : (
+        // The scene parks unmeasured peers on the mid ring; the dashed rim
+        // says that ring is a fallback, not a measurement.
+        <circle
+          data-peer-probe-unmeasured-ring
+          cx={COMPASS_CENTER}
+          cy={COMPASS_CENTER}
+          r={COMPASS_RIM * 0.5}
+          fill="none"
+          stroke={rgba(HUD_COLORS.caution, 0.5)}
+          strokeWidth={1}
+          strokeDasharray="3 4"
+        />
+      )}
+      <circle cx={COMPASS_CENTER} cy={COMPASS_CENTER} r={3} fill={HUD_COLORS.cyanWire} />
+      <circle
+        cx={COMPASS_CENTER}
+        cy={COMPASS_CENTER}
+        r={6.5}
+        fill="none"
+        stroke={rgba(HUD_COLORS.cyanWire, 0.4)}
+        strokeWidth={0.7}
+      />
+      {measured ? (
+        <>
+          <line
+            x1={COMPASS_CENTER}
+            y1={COMPASS_CENTER}
+            x2={blipX}
+            y2={blipY}
+            stroke={rgba(accent, 0.45)}
+            strokeWidth={0.8}
+          />
+          <polygon
+            data-peer-probe-compass-arrow={inbound ? 'inbound' : 'outbound'}
+            points="-4,-3.1 4.2,0 -4,3.1"
+            fill={accent}
+            opacity={0.9}
+            transform={`translate(${arrowX} ${arrowY}) rotate(${arrowDeg})`}
+          />
+          <circle
+            data-peer-probe-blip
+            cx={blipX}
+            cy={blipY}
+            r={4.2}
+            fill={accent}
+            stroke={rgba(accent, 0.35)}
+            strokeWidth={4}
+          />
+        </>
+      ) : (
+        <text
+          x={COMPASS_CENTER}
+          y={COMPASS_CENTER + COMPASS_RIM * 0.5 + 12}
+          textAnchor="middle"
+          fill={HUD_COLORS.caution}
+          fontFamily={HUD_FONTS.mono}
+          fontSize={HUD_TYPE.micro}
+          letterSpacing={1.1}
+        >
+          UNMEASURED
+        </text>
+      )}
+      <text
+        x={COMPASS_CENTER}
+        y={COMPASS_CENTER - COMPASS_RIM - 3}
+        textAnchor="middle"
+        fill={HUD_COLORS.dim}
+        fontFamily={HUD_FONTS.mono}
+        fontSize={HUD_TYPE.micro}
+        letterSpacing={0.9}
+      >
+        {PEER_LATENCY_CAP_MS}MS RIM
+      </text>
+    </svg>
+  );
+}
+
+/** Every latency sample seen while the card has been open. The adapter polls
+ *  every ~4s, so this fills at the rate the node actually re-pings. */
+function PingStrip({
+  samples,
+  accent,
+  flatlined,
+}: {
+  samples: readonly number[];
+  accent: string;
+  flatlined: boolean;
+}) {
+  const count = samples.length;
+  const peak = count > 0 ? Math.max(...samples) : 0;
+  const floor = count > 0 ? Math.min(...samples) : 0;
+  const slot = PING_VIEW_W / Math.max(1, count);
+  const scale = Math.max(peak, 1);
+  return (
+    <div data-peer-probe-ping data-peer-probe-ping-state={flatlined ? 'flatlined' : count > 0 ? 'live' : 'empty'}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 2, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.9, color: HUD_COLORS.dim }}>
+        <span style={{ color: HUD_COLORS.cyanInk, fontFamily: HUD_FONTS.tech, letterSpacing: 1.2 }}>PING STRIP</span>
+        <span style={{ marginLeft: 'auto', whiteSpace: 'nowrap' }}>
+          {count > 0 ? `${floor}–${peak} MS · ${count}/${PING_HISTORY_CAP}` : `AWAITING SAMPLES · 0/${PING_HISTORY_CAP}`}
+        </span>
+      </div>
+      <svg
+        viewBox={`0 0 ${PING_VIEW_W} ${PING_VIEW_H}`}
+        preserveAspectRatio="none"
+        width="100%"
+        height={PING_VIEW_H}
+        aria-hidden="true"
+        style={{ display: 'block', opacity: flatlined ? 0.32 : 1, transition: 'opacity 240ms ease' }}
+      >
+        <line x1={0} y1={PING_VIEW_H - 0.5} x2={PING_VIEW_W} y2={PING_VIEW_H - 0.5} stroke={rgba(HUD_COLORS.peerWire, 0.22)} strokeWidth={1} />
+        {flatlined ? (
+          <line
+            data-peer-probe-ping-flatline
+            x1={0}
+            y1={PING_VIEW_H / 2}
+            x2={PING_VIEW_W}
+            y2={PING_VIEW_H / 2}
+            stroke={rgba(HUD_COLORS.caution, 0.72)}
+            strokeWidth={1}
+            strokeDasharray="5 3"
+          />
+        ) : null}
+        {samples.map((value, index) => {
+          const height = 2 + (Math.min(value, scale) / scale) * (PING_VIEW_H - 4);
+          return (
+            <rect
+              // Samples are a positional series: index IS the identity.
+              key={index}
+              x={index * slot + 0.6}
+              y={PING_VIEW_H - height}
+              width={Math.max(0.8, slot - 1.2)}
+              height={height}
+              fill={rgba(accent, 0.72)}
+            />
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+export default function PeerLinkCard({
+  peer,
+  tip,
+  localVersion,
+  layoutSide = 'left',
+  linkLost = false,
+  onFacetChange,
+  onClose,
+  style,
+}: PeerLinkCardProps) {
+  const reduced = useReducedMotion();
+  const instrument = useMemo(
+    () => derivePeerLinkInstrument(peer, tip, localVersion),
+    [peer, tip, localVersion],
+  );
+  // A lost link is no longer describable by its own tint: the card speaks
+  // caution until the overlay retires it.
+  const accent = linkLost ? HUD_COLORS.caution : instrument.accent;
+
+  const [selectedFacetState, setSelectedFacetState] = useState<{
+    nodeId: string;
+    facet: PeerLinkFacet | null;
+  }>(() => ({ nodeId: peer.node_id, facet: null }));
+  const selectedFacet = selectedFacetState.nodeId === peer.node_id
+    ? selectedFacetState.facet
+    : null;
+
+  const [scanClock, setScanClock] = useState(() => {
+    const atMs = nowPerf();
+    return { nodeId: peer.node_id, epochMs: atMs, nowMs: atMs };
+  });
+
+  const [pings, setPings] = useState<{ nodeId: string; samples: number[] }>(
+    () => ({
+      nodeId: peer.node_id,
+      samples: instrument.latencyMs == null ? [] : [instrument.latencyMs],
+    }),
+  );
+  const [uptimeTickMs, setUptimeTickMs] = useState(0);
+
+  const revealSteps = PEER_LINK_FACETS.length;
+
+  useEffect(() => {
+    onFacetChange?.(selectedFacet);
+  }, [onFacetChange, selectedFacet]);
+
+  useEffect(() => {
+    if (reduced) return;
+    const epochMs = nowPerf();
+    const update = () => setScanClock({
+      nodeId: peer.node_id,
+      epochMs,
+      nowMs: nowPerf(),
+    });
+    setScanClock({ nodeId: peer.node_id, epochMs, nowMs: epochMs });
+    const interval = window.setInterval(update, 80);
+    const stop = window.setTimeout(() => {
+      window.clearInterval(interval);
+      update();
+    }, revealSteps * PROBE_STEP_S * 1000 + 80);
+    return () => {
+      window.clearInterval(interval);
+      window.clearTimeout(stop);
+    };
+  }, [peer.node_id, reduced, revealSteps]);
+
+  // One sample per observed latency change. The effect's own dependencies are
+  // the dedupe: an unchanged reading is not a new measurement, and a peer swap
+  // starts a fresh history rather than splicing two links into one series.
+  const latencySample = instrument.latencyMs;
+  useEffect(() => {
+    setPings((current) => {
+      if (current.nodeId !== peer.node_id) {
+        return { nodeId: peer.node_id, samples: latencySample == null ? [] : [latencySample] };
+      }
+      if (latencySample == null) return current;
+      if (current.samples[current.samples.length - 1] === latencySample) return current;
+      const samples = [...current.samples, latencySample];
+      return {
+        nodeId: current.nodeId,
+        samples: samples.length > PING_HISTORY_CAP
+          ? samples.slice(samples.length - PING_HISTORY_CAP)
+          : samples,
+      };
+    });
+  }, [peer.node_id, latencySample]);
+
+  // The uptime clock advances from the last poll's snapshot; a lost link stops
+  // the clock rather than inventing seconds the peer was not connected for.
+  useEffect(() => {
+    setUptimeTickMs(0);
+    if (linkLost) return;
+    const startedAtMs = Date.now();
+    const interval = window.setInterval(
+      () => setUptimeTickMs(Date.now() - startedAtMs),
+      1000,
+    );
+    return () => window.clearInterval(interval);
+  }, [peer.node_id, instrument.uptimeMs, linkLost]);
+
+  const activeClock = scanClock.nodeId === peer.node_id
+    ? scanClock
+    : { nodeId: peer.node_id, epochMs: scanClock.nowMs, nowMs: scanClock.nowMs };
+  const scan = probeScan(
+    activeClock.epochMs,
+    reduced ? 0 : activeClock.nowMs,
+    revealSteps,
+    reduced,
+  );
+
+  const activateFacet = (facet: PeerLinkFacet) => {
+    if (!scan.classified) return;
+    setSelectedFacetState((current) => ({
+      nodeId: peer.node_id,
+      facet: current.nodeId === peer.node_id && current.facet === facet ? null : facet,
+    }));
+  };
+
+  const factByFacet = useMemo(() => {
+    const map = new Map<PeerLinkFacet, PeerLinkFactRow>();
+    instrument.facts.forEach((fact) => map.set(fact.facet, fact));
+    return map;
+  }, [instrument]);
+
+  const pingSamples = pings.nodeId === peer.node_id ? pings.samples : [];
+  const liveUptime = formatLinkUptime(instrument.uptimeMs + uptimeTickMs);
+  const verticalLayout = layoutSide === 'above' || layoutSide === 'below';
+  const satelliteBase: CSSProperties = {
+    position: 'relative',
+    zIndex: 1,
+    minWidth: 0,
+    boxSizing: 'border-box',
+    pointerEvents: 'auto',
+  };
+
+  return (
+    <div
+      data-peer-probe-card
+      data-peer-probe-layout={verticalLayout ? 'vertical' : layoutSide}
+      data-peer-probe-link={linkLost ? 'lost' : 'live'}
+      role="region"
+      aria-label={`Peer ${instrument.id8} link probe`}
+      style={{
+        position: 'relative',
+        display: 'grid',
+        gridTemplateColumns: 'minmax(0, 1fr)',
+        rowGap: 8,
+        alignItems: 'start',
+        width: CARD_WIDTH_PX,
+        maxWidth: 'calc(100vw - 28px)',
+        boxSizing: 'border-box',
+        pointerEvents: 'none',
+        color: HUD_COLORS.ink,
+        fontFamily: HUD_FONTS.mono,
+        // One composited shadow for the whole constellation, as on the Cell
+        // card — never a filter surface per plate.
+        filter: `drop-shadow(0 8px 16px rgba(0,0,0,.56)) drop-shadow(0 0 14px ${rgba(accent, 0.06)})`,
+        ...style,
+      }}
+    >
+      <section
+        data-peer-probe-module="header"
+        style={{
+          ...satelliteBase,
+          display: 'flex',
+          alignItems: 'baseline',
+          flexWrap: 'wrap',
+          gap: '3px 8px',
+          padding: linkLost ? '22px 34px 8px 14px' : '9px 34px 8px 14px',
+          ...spatialPlate(accent),
+        }}
+      >
+        {linkLost ? (
+          <span
+            data-peer-probe-banner="link-lost"
+            style={{
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              top: 0,
+              padding: '2px 10px',
+              background: rgba(HUD_COLORS.caution, 0.16),
+              borderBottom: `1px solid ${rgba(HUD_COLORS.caution, 0.5)}`,
+              color: HUD_COLORS.caution,
+              fontFamily: HUD_FONTS.tech,
+              fontSize: HUD_TYPE.label,
+              fontWeight: 700,
+              letterSpacing: 2.2,
+            }}
+          >
+            LINK LOST
+          </span>
+        ) : null}
+        <span
+          title={peer.node_id}
+          style={{
+            color: accent,
+            fontFamily: HUD_FONTS.display,
+            fontSize: HUD_TYPE.title,
+            fontWeight: 600,
+            letterSpacing: 1.6,
+            textShadow: `0 0 9px ${rgba(accent, 0.45)}`,
+          }}
+        >
+          PEER // {instrument.id8}
+        </span>
+        <span style={{ color: accent, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: 0.72 }}>
+          对端
+        </span>
+        <span
+          data-peer-probe-direction={instrument.directionBadge.toLowerCase()}
+          style={{
+            padding: '1px 5px',
+            border: `1px solid ${rgba(accent, 0.55)}`,
+            color: accent,
+            fontFamily: HUD_FONTS.tech,
+            fontSize: HUD_TYPE.micro,
+            fontWeight: 700,
+            letterSpacing: 1.4,
+          }}
+        >
+          {instrument.directionBadge}
+        </span>
+        <span
+          data-peer-probe-uptime
+          style={{
+            marginLeft: 'auto',
+            color: linkLost ? HUD_COLORS.caution : HUD_COLORS.dim,
+            fontSize: HUD_TYPE.label,
+            letterSpacing: 0.9,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          LINKED · {liveUptime}
+        </span>
+        <span style={{ position: 'absolute', top: linkLost ? 20 : 7, right: 28 }}>
+          {moduleTag('LINK·01')}
+        </span>
+        <CloseButton onClose={onClose} title="Close · ESC or click outside" />
+      </section>
+
+      <section
+        aria-label="Colony signal compass"
+        data-peer-probe-module="signal"
+        style={{
+          ...satelliteBase,
+          padding: '9px 12px 10px 14px',
+          ...spatialPlate(HUD_COLORS.peerWire),
+        }}
+      >
+        <SpatialPlateHeader
+          en="SIGNAL"
+          accent={HUD_COLORS.peerWire}
+          status={moduleTag('LINK·02')}
+        />
+        <ColonyCompass
+          ring01={instrument.ring01}
+          bearingRad={instrument.bearingRad}
+          inbound={instrument.direction === 'inbound'}
+          measured={instrument.latencyKnown}
+          accent={accent}
+          dimmed={linkLost}
+        />
+        <div style={{ marginTop: 6 }}>
+          <PingStrip samples={pingSamples} accent={accent} flatlined={linkLost} />
+        </div>
+      </section>
+
+      <section
+        aria-label="Sync ladder"
+        data-peer-probe-module="sync"
+        style={{
+          ...satelliteBase,
+          padding: '9px 12px 10px 14px',
+          ...spatialPlate(instrument.sync.color),
+        }}
+      >
+        <SpatialPlateHeader
+          en="SYNC LADDER"
+          accent={instrument.sync.color}
+          status={moduleTag('LINK·03')}
+        />
+        <div
+          style={{
+            position: 'relative',
+            paddingLeft: 11,
+            borderLeft: `1px solid ${rgba(instrument.sync.color, 0.28)}`,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+            <span style={{ fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, letterSpacing: 1.4, color: HUD_COLORS.dim }}>
+              LOCAL
+            </span>
+            <span data-peer-probe-sync-local style={{ marginLeft: 'auto', fontSize: HUD_TYPE.value, color: HUD_COLORS.cyanInk }}>
+              #{blocks(instrument.localTip)}
+            </span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0, marginTop: 2 }}>
+            <span style={{ fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, letterSpacing: 1.4, color: HUD_COLORS.dim }}>
+              PEER
+            </span>
+            <span data-peer-probe-sync-peer style={{ marginLeft: 'auto', fontSize: HUD_TYPE.value, color: instrument.sync.color }}>
+              {instrument.peerBest == null ? PEER_LINK_UNKNOWN : `#${blocks(instrument.peerBest)}`}
+            </span>
+          </div>
+          <span
+            aria-hidden="true"
+            style={{ position: 'absolute', left: -3.5, top: 4, width: 6, height: 6, background: HUD_COLORS.cyanWire, transform: 'rotate(45deg)' }}
+          />
+          <span
+            aria-hidden="true"
+            style={{ position: 'absolute', left: -3.5, top: 21, width: 6, height: 6, background: instrument.sync.color, transform: 'rotate(45deg)' }}
+          />
+        </div>
+        <div
+          data-peer-probe-sync-state={instrument.sync.state}
+          style={{
+            marginTop: 7,
+            padding: '2px 7px',
+            border: `1px solid ${rgba(instrument.sync.color, 0.6)}`,
+            background: rgba(instrument.sync.color, instrument.sync.state === 'ahead' ? 0.2 : 0.09),
+            color: instrument.sync.color,
+            fontFamily: HUD_FONTS.tech,
+            fontSize: HUD_TYPE.label,
+            fontWeight: 700,
+            letterSpacing: 1.6,
+            textAlign: 'center',
+            // AHEAD is the loudest rung: the peer is past us, so WE are the
+            // node that lags. Re-locking to the tip is a colour/box change,
+            // never an animation loop.
+            boxShadow: instrument.sync.state === 'ahead'
+              ? `0 0 12px ${rgba(instrument.sync.color, 0.45)}`
+              : undefined,
+            transition: 'background 240ms ease, box-shadow 240ms ease, color 240ms ease',
+          }}
+        >
+          {instrument.sync.label}
+        </div>
+      </section>
+
+      <section
+        aria-label="Link facts"
+        data-peer-probe-module="facts"
+        data-peer-probe-scan-state={scan.classified ? 'locked' : 'scanning'}
+        data-peer-probe-scan-progress={scan.pct}
+        style={{
+          ...satelliteBase,
+          padding: '9px 10px 9px 14px',
+          ...spatialPlate(HUD_COLORS.cyanWire),
+        }}
+      >
+        <SpatialPlateHeader
+          en="LINE FACTS"
+          accent={HUD_COLORS.cyanWire}
+          status={(
+            <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6 }}>
+              <span style={{ color: scan.classified ? HUD_COLORS.nominal : HUD_COLORS.cyanWire, fontSize: HUD_TYPE.micro, letterSpacing: 0.72 }}>
+                {scan.classified ? 'LOCKED' : `SCANNING ${scan.pct}%`}
+              </span>
+              {moduleTag('LINK·04')}
+            </span>
+          )}
+        />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '3px 9px' }}>
+          {PEER_LINK_FACETS.map((facet, index) => {
+            const fact = factByFacet.get(facet);
+            if (!fact) return null;
+            return (
+              <PeerScanFact
+                key={facet}
+                {...fact}
+                revealed={reduced || index < scan.reveal}
+                selected={facet === selectedFacet}
+                interactive={scan.classified}
+                onActivate={() => activateFacet(facet)}
+              />
+            );
+          })}
+        </div>
+      </section>
+    </div>
+  );
+}
