@@ -6,6 +6,7 @@ import type {
   ChainNode,
   DaoStateRecord,
   EnrichmentSourceStatus,
+  NetworkAtlasRecord,
   Peer,
 } from '@cknerv/types';
 
@@ -57,6 +58,24 @@ const enrichmentSource: EnrichmentSourceStatus = {
   status: 'ready',
   capabilities: ['dao_state'],
   validated_anchor: { block: 100, hash: '0xblock100' },
+};
+const networkAtlas: NetworkAtlasRecord = {
+  source: 'ckbadger',
+  as_of: { block: 100, hash: '0xblock100' },
+  updated_at_ms: Date.now(),
+  crawl_round: 7,
+  crawl_finished_at_s: 1_700_000_000,
+  total_known: 1204,
+  last_round_dialed: 12,
+  last_round_reachable: 9,
+  new_nodes: 3,
+  frontier_drained: true,
+  sample_size: 3,
+  sample_reachable: 2,
+  sample_truncated: true,
+  median_rtt_ms: 18,
+  countries: [{ label: 'SG', count: 2 }, { label: 'US', count: 1 }],
+  versions: [{ label: '0.119.0', count: 2 }, { label: '0.118.0', count: 1 }],
 };
 const daoState: DaoStateRecord = {
   source: 'ckbadger',
@@ -225,6 +244,34 @@ describe('HudOverlay', () => {
     );
     expect((behind.querySelector('[data-hud-panel="peers"]') as HTMLElement).textContent)
       .toContain('97.5% of #16,204,887');
+  });
+
+  it('reads the crawler atlas as more rows of MESH·02, not a panel within it', () => {
+    const { container } = render(
+      <HudOverlay
+        chain={chain}
+        peers={peers}
+        localNode={localNode}
+        cellsStats={cellsStats}
+        enrichmentSource={{
+          ...enrichmentSource,
+          capabilities: ['dao_state', 'network_atlas'],
+        }}
+        networkAtlas={networkAtlas}
+      />,
+    );
+    const mesh = container.querySelector('[data-hud-panel="peers"]') as HTMLElement;
+
+    // The indexed rows sit in the same flow as the measured ones…
+    expect(mesh.textContent).toContain('Head consensus');
+    expect(mesh.textContent).toContain('Known nodes');
+    expect(mesh.textContent).toContain('SAMPLE COUNTRIES · 3 NODES · BOUNDED');
+    // …under one panel title, with no second heading and no scope framing.
+    expect(mesh.textContent).toContain('PEER MESH');
+    expect(mesh.textContent).not.toContain('NETWORK ATLAS');
+    expect(container.textContent).not.toContain('NETWORK ATLAS');
+    expect(mesh.querySelectorAll('[data-scope-stage]')).toHaveLength(0);
+    expect(mesh.querySelector('[data-network-detail-mode="indexed"]')).not.toBeNull();
   });
 
   it('places a validated DAO panel immediately to the right of CKB·01', () => {

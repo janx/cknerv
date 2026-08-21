@@ -501,15 +501,18 @@ addresses never enter the shared wire contract.
 `PEER MESH` always keeps the local CKB node's directly measured peer count and
 head consensus as primary truth, plus a catch-up row that appears only while our
 own tip trails the best known head. Per-peer client version and RTT belong to
-the floating PEER and NODE cards, never to this rail. A valid atlas record
-appends one **NETWORK ATLAS** stage carrying known-node count, median RTT, and
-country and client-version strips whose labels state the sample size and
-`BOUNDED` when the crawl sample was capped; crawler run counters stay in
-ckbadger's own operational view. Enrichment is strictly additive: when the
-crawler is unconfigured, empty, disabled, or canonically unusable the stage is
-simply absent and the panel is its measured rows alone. It creates no scene
-nodes or edges, and staleness dims only the atlas stage after three missed
-minute refreshes.
+the floating PEER and NODE cards, never to this rail. A valid atlas record adds
+its known-node count, median RTT, and country and client-version strips as more
+rows of that same panel rather than a titled sub-section — one network read at
+two distances, near rows measured over our own links and far rows indexed by the
+crawl. The strip labels state the sample size and `BOUNDED` when the crawl
+sample was capped, the shared `Crawler atlas · round N · as of #block`
+provenance waits on hover instead of spending a line, and crawler run counters
+stay in ckbadger's own operational view. Enrichment is strictly additive: when
+the crawler is unconfigured, empty, disabled, or canonically unusable those rows
+are simply absent and the panel is its measured rows alone. It creates no scene
+nodes or edges, and staleness dims the indexed rows and adds a single
+`ATLAS STALE` line after three missed minute refreshes.
 
 ### Peer Sighting
 

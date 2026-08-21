@@ -73,7 +73,7 @@ describe('NetworkPanel', () => {
   });
 
   it('keeps the atlas to network shape, not crawler operations', () => {
-    const { getByLabelText, container } = render(
+    const { container } = render(
       <NetworkPanel
         {...props}
         enrichmentSource={enrichmentSource}
@@ -81,12 +81,9 @@ describe('NetworkPanel', () => {
       />,
     );
 
-    expect(getByLabelText('Network atlas').getAttribute(
-      'data-network-atlas-state',
-    )).toBe('ready');
+    expect(container.querySelector('[data-network-detail-mode="indexed"]')
+      ?.getAttribute('data-network-atlas-state')).toBe('ready');
     const text = container.textContent ?? '';
-    expect(text).toContain('NETWORK ATLAS');
-    expect(text).toContain('ROUND 7 · AS OF #100');
     expect(text).toContain('Known nodes');
     expect(text).toContain('Median RTT');
     expect(text).toContain('18ms');
@@ -103,9 +100,42 @@ describe('NetworkPanel', () => {
     expect(text).not.toContain('NEW');
     expect(text).not.toContain('INDEXED');
     expect(text).not.toContain('CKBADGER');
-    expect(Array.from(container.querySelectorAll('[data-scope-stage]')).map(
-      (stage) => stage.getAttribute('data-scope-stage'),
-    )).toEqual(['indexed-atlas']);
+  });
+
+  it('folds the atlas into the panel flow instead of framing a sub-section', () => {
+    const { container, queryByLabelText } = render(
+      <NetworkPanel
+        {...props}
+        enrichmentSource={enrichmentSource}
+        networkAtlas={networkAtlas}
+      />,
+    );
+
+    // One subject, one flow: no title, no rail, no framed stage of its own.
+    const text = container.textContent ?? '';
+    expect(text).not.toContain('NETWORK ATLAS');
+    expect(text).not.toContain('ATLAS');
+    expect(queryByLabelText('Network atlas')).toBeNull();
+    expect(container.querySelectorAll('[data-scope-stage]')).toHaveLength(0);
+    expect(container.querySelectorAll('[data-scope-connector]')).toHaveLength(0);
+    const atlas = container.querySelector('[data-network-detail-mode="indexed"]') as HTMLElement;
+    expect(atlas.tagName).toBe('DIV');
+    expect(atlas.style.borderTop).toBe('');
+
+    // Provenance stopped spending a line and moved onto hover — every atlas
+    // element can still answer where its numbers came from.
+    expect(text).not.toContain('ROUND 7');
+    expect(text).not.toContain('AS OF #100');
+    const rows = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-network-atlas-rows] > *'),
+    );
+    expect(rows).toHaveLength(4);
+    for (const row of rows) {
+      expect(row.title).toContain('Crawler atlas · round 7 · as of #100');
+    }
+    // The strips keep their bucket detail behind the same provenance.
+    expect(rows[2]?.title).toContain('SG 2 · US 1');
+    expect(rows[3]?.title).toContain('0.119.0 2 · 0.118.0 1');
   });
 
   it('speaks measured network truth only — the scene colony is STAGE·07\'s', () => {
@@ -140,16 +170,30 @@ describe('NetworkPanel', () => {
   });
 
   it('adds nothing at all without a usable atlas record', () => {
-    const { queryByLabelText, container } = render(
+    const { container } = render(
       <NetworkPanel {...props} enrichmentSource={enrichmentSource} />,
     );
-    expect(queryByLabelText('Network atlas')).toBeNull();
     expect(container.querySelectorAll('[data-network-detail-mode]')).toHaveLength(0);
     expect(container.querySelectorAll('[data-scope-stage]')).toHaveLength(0);
     expect(container.textContent).toContain('Head consensus');
   });
 
-  it('dims a stale atlas stage', () => {
+  it('says nothing about freshness until the atlas is actually stale', () => {
+    const { container } = render(
+      <NetworkPanel
+        {...props}
+        enrichmentSource={enrichmentSource}
+        networkAtlas={networkAtlas}
+      />,
+    );
+
+    expect(container.textContent).not.toContain('STALE');
+    expect(container.querySelector('[data-network-atlas-caution]')).toBeNull();
+    expect((container.querySelector('[data-network-atlas-rows]') as HTMLElement)
+      .style.opacity).toBe('1');
+  });
+
+  it('dims a stale atlas and marks it with one caution line', () => {
     const { container } = render(
       <NetworkPanel
         {...props}
@@ -158,7 +202,14 @@ describe('NetworkPanel', () => {
       />,
     );
 
-    expect(container.textContent).toContain('STALE');
-    expect((container.querySelector('[data-scope-stage="indexed-atlas"]') as HTMLElement).style.opacity).toBe('0.68');
+    expect(container.querySelector('[data-network-detail-mode="indexed"]')
+      ?.getAttribute('data-network-atlas-state')).toBe('stale');
+    const caution = container.querySelectorAll('[data-network-atlas-caution]');
+    expect(caution).toHaveLength(1);
+    expect(caution[0]?.textContent).toBe('ATLAS STALE · AS OF #100');
+    // The rows dim; the exception itself stays at full strength.
+    expect((container.querySelector('[data-network-atlas-rows]') as HTMLElement)
+      .style.opacity).toBe('0.68');
+    expect((caution[0] as HTMLElement).style.opacity).toBe('');
   });
 });

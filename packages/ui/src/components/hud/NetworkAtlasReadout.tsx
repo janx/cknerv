@@ -8,7 +8,7 @@ import {
   networkAtlasVisualState,
 } from '../../derives/networkAtlas.derive';
 import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
-import { ScopeStage, StatRow } from './primitives';
+import { StatRow } from './primitives';
 
 const fmt = (value: number) => value.toLocaleString('en-US');
 
@@ -18,21 +18,20 @@ function legend(buckets: NetworkAtlasBucket[]): string {
   return visible.join(' · ');
 }
 
-function BucketStrip({ label, buckets, total }: {
+function BucketStrip({ label, buckets, total, provenance }: {
   label: string;
   buckets: Array<NetworkAtlasBucket & { color: string }>;
   total: number;
+  provenance: string;
 }) {
   if (total === 0) return null;
+  const detail = buckets.map((bucket) => `${bucket.label} ${bucket.count}`).join(' · ');
   return (
-    <div style={{ marginTop: 6 }}>
+    <div style={{ marginTop: 6 }} title={`${provenance} · ${detail}`}>
       <div style={{ fontFamily: HUD_FONTS.tech, fontSize: 7.5, letterSpacing: 1.2, color: HUD_COLORS.dim, marginBottom: 2 }}>
         {label}
       </div>
-      <div
-        title={buckets.map((bucket) => `${bucket.label} ${bucket.count}`).join(' · ')}
-        style={{ display: 'flex', height: 6, background: '#0a0a0a', border: `1px solid ${rgba(HUD_COLORS.peerWire, 0.14)}` }}
-      >
+      <div style={{ display: 'flex', height: 6, background: '#0a0a0a', border: `1px solid ${rgba(HUD_COLORS.peerWire, 0.14)}` }}>
         {buckets.map((bucket) => (
           <span
             key={bucket.label}
@@ -51,6 +50,13 @@ function BucketStrip({ label, buckets, total }: {
   );
 }
 
+// MESH·02 has one subject, seen from two distances: the rows above are measured
+// over our own links, these are indexed by the crawler's last round. Same
+// network, so they join the panel flow as ordinary rows — a titled sub-frame
+// would only split one subject into two instruments. The provenance every
+// indexed number shares waits on hover instead of spending a line, and
+// staleness speaks only when it is true.
+//
 // Strictly additive: with no usable crawler record the panel's own measured
 // rows are the whole story, so absence renders nothing rather than a substitute
 // readout. Crawler run telemetry (dial counts, frontier state, new nodes) is
@@ -65,36 +71,40 @@ export default function NetworkAtlasReadout({ source, record }: {
   const visual = deriveNetworkAtlasVisual(record);
   if (!visualState || !visual) return null;
   const stale = visualState === 'stale';
-  const accent = stale ? HUD_COLORS.caution : HUD_COLORS.peerWire;
+  const provenance = `Crawler atlas · round ${fmt(record.crawl_round)} · as of #${fmt(record.as_of.block)}`;
 
   return (
-    <section
-      aria-label="Network atlas"
+    <div
       data-network-detail-mode="indexed"
       data-network-atlas-state={visualState}
-      style={{
-        marginTop: 11,
-        paddingTop: 9,
-        borderTop: `1px solid ${rgba(HUD_COLORS.peerWire, 0.14)}`,
-      }}
+      style={{ marginTop: 6 }}
     >
-      <ScopeStage
-        id="indexed-atlas"
-        label="NETWORK ATLAS"
-        meta={`ROUND ${fmt(record.crawl_round)} · AS OF #${fmt(record.as_of.block)}${stale ? ' · STALE' : ''}`}
-        accent={accent}
-        terminal
-        style={{ opacity: stale ? 0.68 : 1 }}
-      >
-        <StatRow label="Known nodes">{fmt(record.total_known)}</StatRow>
-        <StatRow label="Median RTT">{record.median_rtt_ms == null ? '—' : `${fmt(record.median_rtt_ms)}ms`}</StatRow>
+      <div data-network-atlas-rows style={{ opacity: stale ? 0.68 : 1 }}>
+        <StatRow label="Known nodes" title={provenance}>{fmt(record.total_known)}</StatRow>
+        <StatRow label="Median RTT" title={provenance}>
+          {record.median_rtt_ms == null ? '—' : `${fmt(record.median_rtt_ms)}ms`}
+        </StatRow>
         <BucketStrip
           label={`SAMPLE COUNTRIES · ${fmt(record.sample_size)} NODES${record.sample_truncated ? ' · BOUNDED' : ''}`}
           buckets={visual.countries}
           total={record.sample_size}
+          provenance={provenance}
         />
-        <BucketStrip label="SAMPLE CLIENT VERSIONS" buckets={visual.versions} total={record.sample_size} />
-      </ScopeStage>
-    </section>
+        <BucketStrip
+          label="SAMPLE CLIENT VERSIONS"
+          buckets={visual.versions}
+          total={record.sample_size}
+          provenance={provenance}
+        />
+      </div>
+      {stale ? (
+        <div
+          data-network-atlas-caution
+          style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, letterSpacing: 0.4, color: HUD_COLORS.caution, marginTop: 5 }}
+        >
+          ATLAS STALE · AS OF #{fmt(record.as_of.block)}
+        </div>
+      ) : null}
+    </div>
   );
 }

@@ -36,9 +36,13 @@ export function PanelHeader({ en, cjk, idx, accent, compact = false }: {
   );
 }
 
-export function StatRow({ label, children, valueColor }: { label: string; children: ReactNode; valueColor?: string }) {
+export function StatRow({ label, children, valueColor, title }: {
+  label: string; children: ReactNode; valueColor?: string;
+  /** Hover-only provenance for rows whose source differs from the panel's own. */
+  title?: string;
+}) {
   return (
-    <div style={{ display: 'flex', alignItems: 'baseline', height: 17, whiteSpace: 'nowrap' }}>
+    <div title={title} style={{ display: 'flex', alignItems: 'baseline', height: 17, whiteSpace: 'nowrap' }}>
       <span style={{ fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: 8.5, letterSpacing: 1.6, color: HUD_COLORS.dim, textTransform: 'uppercase' }}>{label}</span>
       <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: 11, color: valueColor ?? HUD_COLORS.ink }}>{children}</span>
     </div>

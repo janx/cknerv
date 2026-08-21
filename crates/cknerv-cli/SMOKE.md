@@ -296,9 +296,10 @@ With a local ckbadger service configured:
 - [ ] `CELL MESH` replaces its retained-capacity detail with a labeled
       `INDEXED CHAIN CAPACITY` bar and bounded top-asset list, without showing
       duplicate capacity views
-- [ ] `PEER MESH` appends a `NETWORK ATLAS` stage of known nodes, median RTT,
-      and sample-size-labeled country/version strips while retaining direct
-      peer count and head consensus and adding no crawler scene objects
+- [ ] `PEER MESH` appends known nodes, median RTT, and sample-size-labeled
+      country/version strips as plain rows of the panel — no `NETWORK ATLAS`
+      heading, provenance on hover — while retaining direct peer count and head
+      consensus and adding no crawler scene objects
 - [ ] A same-height block hash mismatch shows `INCOMPATIBLE`; chain/cells keep moving
 - [ ] A same-height replacement that occurs after an enrichment payload is
       fetched is rejected by the final anchor check and never appears in the
