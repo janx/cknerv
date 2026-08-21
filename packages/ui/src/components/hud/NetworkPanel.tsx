@@ -8,10 +8,9 @@ import NetworkAtlasReadout from './NetworkAtlasReadout';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
 
-function LocalPeerDetails({ ping, vers, colonyCount, embedded = false }: {
+function LocalPeerDetails({ ping, vers, embedded = false }: {
   ping: PingStats | null;
   vers: VersionSpread;
-  colonyCount?: number;
   embedded?: boolean;
 }) {
   const version = <>{vers.majorityVersion} ×{vers.majorityCount}{vers.otherCount > 0 ? ` · ×${vers.otherCount} other` : ''}</>;
@@ -21,7 +20,6 @@ function LocalPeerDetails({ ping, vers, colonyCount, embedded = false }: {
       <div aria-label="Direct peer details" data-network-local-context>
         <StatRow label="Client">{version}</StatRow>
         <StatRow label="Peer RTT">{latency}</StatRow>
-        {colonyCount != null ? <StatRow label="Scene colony">~{fmt(colonyCount)} nodes · inferred</StatRow> : null}
       </div>
     );
   }
@@ -29,20 +27,16 @@ function LocalPeerDetails({ ping, vers, colonyCount, embedded = false }: {
     <section data-network-detail-mode="local" aria-label="Direct peer details">
       <StatRow label="Version">{version}</StatRow>
       <StatRow label="Ping">{latency}</StatRow>
-      {colonyCount != null && (
-        <div style={{ marginTop: 5, fontFamily: HUD_FONTS.mono, fontSize: 8.5, letterSpacing: 0.4, color: HUD_COLORS.peerWire, opacity: 0.85 }}>
-          colony ~ {fmt(colonyCount)} nodes (inferred)
-        </div>
-      )}
     </section>
   );
 }
 
-export default function NetworkPanel({ summary, consensus, ping, vers, syncRatio, colonyCount, enrichmentSource, networkAtlas, style }: {
+// MESH·02 reports the network, never the scene: every number here is either
+// measured by the local node or indexed by the crawler. The colony count the
+// stage draws (measured peers + inferred ghosts + us) is a rendering fact and
+// lives with the other stage readouts, in STAGE·07.
+export default function NetworkPanel({ summary, consensus, ping, vers, syncRatio, enrichmentSource, networkAtlas, style }: {
   summary: NetworkSummary; consensus: FleetConsensus; ping: PingStats | null; vers: VersionSpread; syncRatio: number;
-  /** Whole-colony node count (measured + inferred + local) for the honest
-   *  "inferred" footnote below the measured stats. Omitted ⇒ line not shown. */
-  colonyCount?: number;
   enrichmentSource?: EnrichmentSourceStatus;
   networkAtlas?: NetworkAtlasRecord | null;
   style?: CSSProperties;
@@ -70,7 +64,7 @@ export default function NetworkPanel({ summary, consensus, ping, vers, syncRatio
       <NetworkAtlasReadout
         source={enrichmentSource}
         record={networkAtlas}
-        fallback={<LocalPeerDetails ping={ping} vers={vers} colonyCount={colonyCount} />}
+        fallback={<LocalPeerDetails ping={ping} vers={vers} />}
         localContext={(
           <ScopeStage
             id="local-node"
@@ -78,7 +72,7 @@ export default function NetworkPanel({ summary, consensus, ping, vers, syncRatio
             meta="DIRECT CKB"
             accent={HUD_COLORS.peerWire}
           >
-            <LocalPeerDetails ping={ping} vers={vers} colonyCount={colonyCount} embedded />
+            <LocalPeerDetails ping={ping} vers={vers} embedded />
           </ScopeStage>
         )}
       />

@@ -59,7 +59,6 @@ describe('NetworkPanel', () => {
     const { getByLabelText, container } = render(
       <NetworkPanel
         {...props}
-        colonyCount={128}
         enrichmentSource={enrichmentSource}
         networkAtlas={networkAtlas}
       />,
@@ -79,7 +78,6 @@ describe('NetworkPanel', () => {
     expect(text).toContain('×3 other');
     expect(text).toContain('84ms');
     expect(text).toContain('12–210');
-    expect(text).toContain('~128 nodes · inferred');
     expect(text).not.toContain('INDEXED');
     expect(text).not.toContain('CKBADGER');
     expect(container.querySelector('[data-network-local-context]')).not.toBeNull();
@@ -88,6 +86,20 @@ describe('NetworkPanel', () => {
     expect(Array.from(container.querySelectorAll('[data-scope-stage]')).map(
       (stage) => stage.getAttribute('data-scope-stage'),
     )).toEqual(['local-node', 'indexed-atlas']);
+  });
+
+  it('speaks measured network truth only — the scene colony is STAGE·07\'s', () => {
+    const { container } = render(
+      <NetworkPanel
+        {...props}
+        enrichmentSource={enrichmentSource}
+        networkAtlas={networkAtlas}
+      />,
+    );
+    const text = container.textContent ?? '';
+    expect(text).not.toContain('colony');
+    expect(text).not.toContain('Colony');
+    expect(text).not.toContain('inferred');
   });
 
   it('keeps direct peer diagnostics without a usable atlas record', () => {

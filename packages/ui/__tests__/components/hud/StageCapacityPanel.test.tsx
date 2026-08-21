@@ -403,6 +403,21 @@ describe('the block', () => {
     expect(container.querySelector('[data-population-medium]')).toBeNull();
     expect(container.querySelector('[data-population-mix]')).toBeNull();
   });
+
+  it('reads the drawn colony as an inference, never as a census', () => {
+    const { container } = render(
+      <StageCapacityPanel stats={stats} model={null} colonyCount={277} />,
+    );
+    const text = container.textContent ?? '';
+
+    expect(text).toContain('Colony');
+    expect(text).toContain('~277 nodes · inferred');
+  });
+
+  it('prints no colony row for a consumer that stands up no scene', () => {
+    const { container } = render(<StageCapacityPanel stats={stats} model={null} />);
+    expect(container.textContent).not.toContain('Colony');
+  });
 });
 
 describe('the review scenarios', () => {

@@ -133,7 +133,8 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
   build?: BuildInfo;
   /** Product-owned controls inserted into the shared status strip. */
   topBarActions?: ReactNode;
-  /** Whole inferred-colony node count for NetworkPanel's honest footnote. */
+  /** Whole inferred-colony node count — a count of what the scene draws, so
+   *  it reads in the stage instrument and not in the peer mesh summary. */
   colonyCount?: number;
 }) {
   useEffect(() => { injectHudTheme(document); }, []);
@@ -365,6 +366,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
                     stats={cellsStats}
                     scriptRegistry={scriptRegistry}
                     model={cellPopulation}
+                    colonyCount={colonyCount}
                     style={PANEL_FLOW}
                   />
                 </div>
@@ -440,7 +442,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
           ) : null}
           {panelVisibility.peers ? (
             <div data-hud-panel="peers">
-              <NetworkPanel summary={summary} consensus={consensus} ping={ping} vers={vers} syncRatio={syncRatio} colonyCount={colonyCount} enrichmentSource={enrichmentSource} networkAtlas={networkAtlas} style={PANEL_FLOW} />
+              <NetworkPanel summary={summary} consensus={consensus} ping={ping} vers={vers} syncRatio={syncRatio} enrichmentSource={enrichmentSource} networkAtlas={networkAtlas} style={PANEL_FLOW} />
             </div>
           ) : null}
         </div>

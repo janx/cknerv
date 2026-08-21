@@ -188,14 +188,22 @@ function MixBar({ mix }: { mix: CompositionMix }) {
  * count carries the scope it is true in, the mix rows disclose the stage's
  * curation beside the chain's real composition, and the medium legend
  * explains the swarm before anyone tries to click it.
+ *
+ * Cells are not the only population on stage: the node colony the scene
+ * stands up is counted here too, because that count is a rendering fact.
+ * MESH·02 is thereby left free to speak measured network truth alone.
  */
-export default function StageCapacityPanel({ stats, scriptRegistry, model, style }: {
+export default function StageCapacityPanel({ stats, scriptRegistry, model, colonyCount, style }: {
   stats: CellsStats;
   scriptRegistry?: ScriptRegistryRecord | null;
   /** Population model, or null for a consumer that derives none. The funnel,
    *  mixes, and medium legend then stay absent — the panel never guesses a
    *  scope. */
   model?: CellPopulationFieldModel | null;
+  /** Node count of the colony the scene draws — measured peers, the ghosts
+   *  inferred around them, and our own node. Omitted ⇒ row not shown; the
+   *  panel never infers a population the scene did not build. */
+  colonyCount?: number;
   style?: CSSProperties;
 }) {
   // The backend counts the retained set by script identity; those bars are
@@ -220,6 +228,16 @@ export default function StageCapacityPanel({ stats, scriptRegistry, model, style
             {formatCkb(stats.capacityShannons)}
           </span>
         </StatRow>
+        {/* Only the peers in `peers[]` were measured; the rest of the colony
+            is the scene's own inference from the flood graph. The tilde and
+            the word carry that — a bare count would read as a census. */}
+        {colonyCount != null ? (
+          <StatRow label="Colony">
+            <span title="Nodes the scene draws · measured peers, inferred ghosts, and this node">
+              ~{formatPopulationCount(colonyCount)} nodes · inferred
+            </span>
+          </StatRow>
+        ) : null}
 
         <div style={{ marginTop: 4 }}>
           {rows.length > 0 ? rows.map((row, index) => (

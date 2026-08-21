@@ -182,6 +182,28 @@ describe('HudOverlay', () => {
     expect(container.textContent).toContain('CKNERV');
   });
 
+  it('hands the scene colony count to the stage instrument, not the peer mesh', () => {
+    const { container, getByRole } = render(
+      <HudOverlay
+        chain={chain}
+        peers={peers}
+        localNode={localNode}
+        cellsStats={cellsStats}
+        colonyCount={277}
+      />,
+    );
+    // MESH·02 is visible from the start and reports the network only.
+    expect(container.querySelector('[data-hud-panel="peers"]')?.textContent)
+      .not.toContain('inferred');
+
+    fireEvent.click(getByRole('button', {
+      name: 'Configure HUD panels, 4 of 6 visible',
+    }));
+    fireEvent.click(getByRole('menuitemcheckbox', { name: 'STAGE SAMPLE panel' }));
+    expect(container.querySelector('[data-hud-panel="stage"]')?.textContent)
+      .toContain('~277 nodes · inferred');
+  });
+
   it('places a validated DAO panel immediately to the right of CKB·01', () => {
     const { container, getByRole } = render(
       <HudOverlay
