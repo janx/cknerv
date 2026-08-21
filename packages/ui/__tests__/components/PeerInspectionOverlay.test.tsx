@@ -23,7 +23,8 @@ function peer(overrides: Partial<Peer> = {}): Peer {
   };
 }
 
-/** Reduced motion freezes the probe walk, so the card mounts without timers. */
+/** Reduced motion keeps the connector's entry dot static — the overlay is
+ *  the only thing on screen that consults it. */
 beforeEach(() => {
   vi.stubGlobal('matchMedia', () => ({
     matches: true,

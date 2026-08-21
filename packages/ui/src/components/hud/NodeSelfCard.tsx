@@ -8,8 +8,9 @@
 // the colony around it is sitting relative to that head.
 //
 // DOM/SVG only, rendered as a Canvas sibling: nothing here may touch three.js.
-// The accent is the chain anchor's own cyan and never moves, so the card has
-// no facet machinery: the probe walk is a reveal, not a selector.
+// The accent is the chain anchor's own cyan and never moves, and every vital
+// is already known when the card opens, so there is nothing to select and
+// nothing to wait for: the plates print at once.
 import {
   type CSSProperties,
   type ReactNode,
@@ -27,8 +28,6 @@ import {
   spatialPlate,
 } from './primitives';
 import PeerSightingPlate, { type PeerSightingState } from './PeerSightingPlate';
-import { PROBE_STEP_S, probeScan } from './probeScan';
-import { useReducedMotion } from './useReducedMotion';
 import { fleetConsensus } from '../../derives/fleetTelemetry';
 import { summarizeNetwork } from '../../derives/peers.derive';
 import { CHAIN_ANCHOR_HEX } from '../../visualPalette';
@@ -42,10 +41,9 @@ const CARD_WIDTH_PX = 340;
  *  `CkbNodeAnchor` is drawn with. Card and icosahedron cannot drift. */
 export const NODE_SELF_ACCENT = CHAIN_ANCHOR_HEX.edge;
 
-/** Reveal order of the probe walk — the node's own body first, then the
- *  colony it is standing in. */
-const NODE_SELF_ROWS = ['tip', 'epoch', 'version', 'peers', 'consensus'] as const;
-export type NodeSelfRow = typeof NODE_SELF_ROWS[number];
+/** The vitals this card prints — the node's own body first, then the colony
+ *  it is standing in. */
+export type NodeSelfRow = 'tip' | 'epoch' | 'version' | 'peers' | 'consensus';
 
 export type NodeSelfLayoutSide = SceneInspectorPlacementSide;
 
@@ -64,39 +62,32 @@ export interface NodeSelfCardProps {
   style?: CSSProperties;
 }
 
-const nowPerf = () => (typeof performance !== 'undefined' ? performance.now() : 0);
-
 function blocks(n: number): string {
   return n.toLocaleString('en-US');
 }
 
-/** One vital. Dark until the probe reaches it, then held — the node card has
- *  nothing to select, so a row is a readout and never a button. */
+/** One vital, printed the moment the card opens — the node card has nothing
+ *  to select, so a row is a readout and never a button. */
 function SelfReadout({
   row,
   label,
   value,
   valueColor,
-  revealed,
   children,
 }: {
   row: NodeSelfRow;
   label: string;
   value: string;
   valueColor?: string;
-  revealed: boolean;
   children?: ReactNode;
 }) {
   return (
     <div
       data-node-probe-fact={row}
-      data-node-probe-fact-state={revealed ? 'resolved' : 'scanning'}
       style={{
         minWidth: 0,
         padding: '3px 0 4px 9px',
-        borderLeft: `1px solid ${rgba(NODE_SELF_ACCENT, revealed ? 0.34 : 0.1)}`,
-        opacity: revealed ? 1 : 0.18,
-        transition: 'opacity 260ms ease, border-color 260ms ease',
+        borderLeft: `1px solid ${rgba(NODE_SELF_ACCENT, 0.34)}`,
       }}
     >
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
@@ -152,7 +143,6 @@ export default function NodeSelfCard({
   onClose,
   style,
 }: NodeSelfCardProps) {
-  const reduced = useReducedMotion();
   const accent = NODE_SELF_ACCENT;
   const epoch = useMemo(() => formatEpochReadout(chain.epoch), [chain.epoch]);
   const epochRatio = chain.epoch.length > 0
@@ -169,32 +159,6 @@ export default function NodeSelfCard({
     [peers, chain.tip],
   );
 
-  const revealSteps = NODE_SELF_ROWS.length;
-  const [scanClock, setScanClock] = useState(() => {
-    const atMs = nowPerf();
-    return { nodeId: node.id, epochMs: atMs, nowMs: atMs };
-  });
-
-  useEffect(() => {
-    if (reduced) return;
-    const epochMs = nowPerf();
-    const update = () => setScanClock({
-      nodeId: node.id,
-      epochMs,
-      nowMs: nowPerf(),
-    });
-    setScanClock({ nodeId: node.id, epochMs, nowMs: epochMs });
-    const interval = window.setInterval(update, 80);
-    const stop = window.setTimeout(() => {
-      window.clearInterval(interval);
-      update();
-    }, revealSteps * PROBE_STEP_S * 1000 + 80);
-    return () => {
-      window.clearInterval(interval);
-      window.clearTimeout(stop);
-    };
-  }, [node.id, reduced, revealSteps]);
-
   // The self probe counts no duration of its own — a node holds no link to
   // itself — so it runs no wall clock until the dossier brings ages that have
   // to keep moving. The tick lives exactly as long as one is on screen.
@@ -206,18 +170,6 @@ export default function NodeSelfCard({
     const interval = window.setInterval(() => setDossierNowMs(Date.now()), 1000);
     return () => window.clearInterval(interval);
   }, [sightingRecord]);
-
-  const activeClock = scanClock.nodeId === node.id
-    ? scanClock
-    : { nodeId: node.id, epochMs: scanClock.nowMs, nowMs: scanClock.nowMs };
-  const scan = probeScan(
-    activeClock.epochMs,
-    reduced ? 0 : activeClock.nowMs,
-    revealSteps,
-    reduced,
-  );
-  const revealed = (row: NodeSelfRow): boolean =>
-    reduced || NODE_SELF_ROWS.indexOf(row) < scan.reveal;
 
   // Peers past our head are the one reading on this card that indicts us: it
   // is the local node that lags. The link probe gives AHEAD the same danger
@@ -239,8 +191,6 @@ export default function NodeSelfCard({
     <div
       data-node-probe-card
       data-node-probe-layout={verticalLayout ? 'vertical' : layoutSide}
-      data-node-probe-scan-state={scan.classified ? 'locked' : 'scanning'}
-      data-node-probe-scan-progress={scan.pct}
       role="region"
       aria-label={`Node ${node.label} self probe`}
       style={{
@@ -321,6 +271,9 @@ export default function NodeSelfCard({
         <CloseButton onClose={onClose} title="Close · ESC or click outside" />
       </section>
 
+      {/* Local RPC already answered every one of these before the card
+          mounted, so the vitals print at once — a progress meter over data
+          we are holding would be theatre. */}
       <section
         aria-label="Node vitals"
         data-node-probe-module="vitals"
@@ -333,14 +286,7 @@ export default function NodeSelfCard({
         <SpatialPlateHeader
           en="VITALS"
           accent={accent}
-          status={(
-            <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6 }}>
-              <span style={{ color: scan.classified ? HUD_COLORS.nominal : HUD_COLORS.cyanWire, fontSize: HUD_TYPE.micro, letterSpacing: 0.72 }}>
-                {scan.classified ? 'LOCKED' : `SCANNING ${scan.pct}%`}
-              </span>
-              {moduleTag('SELF·02')}
-            </span>
-          )}
+          status={moduleTag('SELF·02')}
         />
         <div style={{ display: 'grid', rowGap: 3 }}>
           <SelfReadout
@@ -350,13 +296,11 @@ export default function NodeSelfCard({
             // is the node's own pulse rather than a snapshot taken on open.
             value={`#${blocks(chain.tip)}`}
             valueColor={HUD_COLORS.cyanInk}
-            revealed={revealed('tip')}
           />
           <SelfReadout
             row="epoch"
             label="EPOCH"
             value={epoch.number}
-            revealed={revealed('epoch')}
           >
             <div
               data-node-probe-epoch-bar
@@ -384,7 +328,6 @@ export default function NodeSelfCard({
             row="version"
             label="VERSION"
             value={node.version || '—'}
-            revealed={revealed('version')}
           >
             <ReadoutCaption>
               THE REFERENCE — PEER MISMATCHES ARE JUDGED AGAINST IT
@@ -413,7 +356,6 @@ export default function NodeSelfCard({
             label="PEERS"
             value={blocks(summary.peerCount)}
             valueColor={HUD_COLORS.peerWire}
-            revealed={revealed('peers')}
           >
             <div
               data-node-probe-peer-split
@@ -435,7 +377,6 @@ export default function NodeSelfCard({
             label="COLONY HEAD"
             value={`${blocks(consensus.atTip)} / ${blocks(consensus.total)} AT TIP`}
             valueColor={lagging ? HUD_COLORS.danger : HUD_COLORS.nominal}
-            revealed={revealed('consensus')}
           >
             <div
               data-node-probe-consensus-bar

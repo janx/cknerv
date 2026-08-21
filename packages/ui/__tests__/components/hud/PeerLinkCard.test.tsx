@@ -1,9 +1,8 @@
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Peer, PeerSightingRecord } from '@cknerv/types';
 import PeerLinkCard from '../../../src/components/hud/PeerLinkCard';
 import type { PeerSightingState } from '../../../src/components/hud/PeerSightingPlate';
-import { PROBE_STEP_S } from '../../../src/components/hud/probeScan';
 import { PEER_LATENCY_CAP_MS } from '../../../src/derives/peers.derive';
 import { PEER_NETWORK_HEX } from '../../../src/visualPalette';
 
@@ -23,21 +22,9 @@ function peer(overrides: Partial<Peer> = {}): Peer {
   };
 }
 
-/** Reduced motion freezes the probe walk at CLASSIFIED, so the facts are
- *  interactive on the first frame — no timer choreography in the assertions. */
-function stubReducedMotion(matches: boolean): void {
-  vi.stubGlobal('matchMedia', () => ({
-    matches,
-    addEventListener: () => {},
-    removeEventListener: () => {},
-  }));
-}
-
-beforeEach(() => stubReducedMotion(true));
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
-  vi.unstubAllGlobals();
 });
 
 function renderCard(props: Partial<Parameters<typeof PeerLinkCard>[0]> = {}) {
@@ -189,25 +176,34 @@ describe('PeerLinkCard line facts', () => {
     expect(onFacetChange).toHaveBeenLastCalledWith(null);
   });
 
-  it('holds the facts inert until the probe walk classifies the link', () => {
-    stubReducedMotion(false);
-    vi.useFakeTimers();
-    const performanceNow = vi.spyOn(performance, 'now').mockReturnValue(0);
+  it('resolves and arms every fact on the first frame, with no clock to wait on', () => {
     const onFacetChange = vi.fn();
     const { container } = renderCard({ onFacetChange });
-    const fact = () => container.querySelector('[data-peer-probe-fact="addr"]')!;
-    expect(container.querySelector('[data-peer-probe-scan-state="scanning"]')).not.toBeNull();
-    expect(fact().hasAttribute('disabled')).toBe(true);
-    fireEvent.click(fact());
-    expect(onFacetChange).toHaveBeenLastCalledWith(null);
-
-    performanceNow.mockReturnValue(PROBE_STEP_S * 6 * 1000);
-    act(() => { vi.advanceTimersByTime(80); });
-    expect(container.querySelector('[data-peer-probe-scan-state="locked"]')).not.toBeNull();
-    expect(fact().hasAttribute('disabled')).toBe(false);
-    fireEvent.click(fact());
+    const facts = Array.from(container.querySelectorAll('[data-peer-probe-fact]'));
+    expect(facts).toHaveLength(6);
+    for (const fact of facts) {
+      const facet = fact.getAttribute('data-peer-probe-fact') ?? '';
+      expect(fact.getAttribute('data-peer-probe-fact-state'), facet).toBe('resolved');
+      expect(fact.hasAttribute('disabled'), facet).toBe(false);
+      // The value carries its own title from the start — a hover on a
+      // truncated address never has to wait for a walk to reach it.
+      const value = fact.lastElementChild as HTMLElement;
+      expect(value.getAttribute('title'), facet).toBe(value.textContent);
+      expect(value.textContent, facet).not.toBe('');
+    }
+    // No timer advanced: the poll that opened the card already held these.
+    fireEvent.click(container.querySelector('[data-peer-probe-fact="addr"]')!);
     expect(onFacetChange).toHaveBeenLastCalledWith('addr');
-    performanceNow.mockRestore();
+  });
+
+  it('claims no scan state and counts no progress in the plate header', () => {
+    const { container } = renderCard();
+    expect(container.querySelector('[data-peer-probe-scan-state]')).toBeNull();
+    expect(container.querySelector('[data-peer-probe-scan-progress]')).toBeNull();
+    expect(container.querySelector('[data-peer-probe-fact-state="scanning"]')).toBeNull();
+    const text = container.textContent ?? '';
+    expect(text).not.toContain('SCANNING');
+    expect(text).toContain('LINK·04');
   });
 });
 

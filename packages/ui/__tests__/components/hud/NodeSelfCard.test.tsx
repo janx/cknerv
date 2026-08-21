@@ -1,9 +1,8 @@
 import { act, cleanup, render } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ChainEntry, ChainNode, Peer, PeerSightingRecord } from '@cknerv/types';
 import NodeSelfCard from '../../../src/components/hud/NodeSelfCard';
 import type { PeerSightingState } from '../../../src/components/hud/PeerSightingPlate';
-import { PROBE_STEP_S } from '../../../src/components/hud/probeScan';
 import { CHAIN_ANCHOR_HEX } from '../../../src/visualPalette';
 
 const LOCAL_VERSION = '0.201.0';
@@ -55,21 +54,9 @@ function rgbOf(hex: string): string {
   return `rgb(${channel(0)}, ${channel(2)}, ${channel(4)})`;
 }
 
-/** Reduced motion freezes the probe walk at CLASSIFIED, so every vital is
- *  revealed on the first frame — no timer choreography in the assertions. */
-function stubReducedMotion(matches: boolean): void {
-  vi.stubGlobal('matchMedia', () => ({
-    matches,
-    addEventListener: () => {},
-    removeEventListener: () => {},
-  }));
-}
-
-beforeEach(() => stubReducedMotion(true));
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
-  vi.unstubAllGlobals();
 });
 
 function renderCard(props: Partial<Parameters<typeof NodeSelfCard>[0]> = {}) {
@@ -195,28 +182,21 @@ describe('NodeSelfCard stance', () => {
   });
 });
 
-describe('NodeSelfCard probe walk', () => {
-  it('reveals the vitals in order and holds them once the walk lands', () => {
-    stubReducedMotion(false);
-    vi.useFakeTimers();
-    const performanceNow = vi.spyOn(performance, 'now').mockReturnValue(0);
+describe('NodeSelfCard first frame', () => {
+  it('prints every vital on the first frame, with no clock to wait on', () => {
     const { container } = renderCard();
-    const row = (name: string) => container
-      .querySelector(`[data-node-probe-fact="${name}"]`)
-      ?.getAttribute('data-node-probe-fact-state');
-
-    expect(container.querySelector('[data-node-probe-scan-state="scanning"]'))
-      .not.toBeNull();
-    expect(row('tip')).toBe('scanning');
-    expect(row('consensus')).toBe('scanning');
-
-    performanceNow.mockReturnValue(PROBE_STEP_S * 5 * 1000);
-    act(() => { vi.advanceTimersByTime(80); });
-    expect(container.querySelector('[data-node-probe-scan-state="locked"]'))
-      .not.toBeNull();
-    expect(row('tip')).toBe('resolved');
-    expect(row('consensus')).toBe('resolved');
-    performanceNow.mockRestore();
+    for (const row of ['tip', 'epoch', 'version', 'peers', 'consensus']) {
+      const value = container.querySelector(`[data-node-probe-value="${row}"]`);
+      expect(value, row).not.toBeNull();
+      expect(value?.textContent, row).not.toBe('');
+    }
+    // No reveal state to carry, so no reveal vocabulary in the DOM either.
+    expect(container.querySelector('[data-node-probe-scan-state]')).toBeNull();
+    expect(container.querySelector('[data-node-probe-scan-progress]')).toBeNull();
+    expect(container.querySelector('[data-node-probe-fact-state]')).toBeNull();
+    const text = container.textContent ?? '';
+    expect(text).not.toContain('SCANNING');
+    expect(text).toContain('SELF·02');
   });
 });
 

@@ -26,8 +26,6 @@ import {
   spatialPlate,
 } from './primitives';
 import PeerSightingPlate, { type PeerSightingState } from './PeerSightingPlate';
-import { PROBE_STEP_S, probeScan } from './probeScan';
-import { useReducedMotion } from './useReducedMotion';
 import { PEER_LATENCY_CAP_MS } from '../../derives/peers.derive';
 import {
   derivePeerLinkInstrument,
@@ -78,29 +76,24 @@ export interface PeerLinkCardProps {
   style?: CSSProperties;
 }
 
-const nowPerf = () => (typeof performance !== 'undefined' ? performance.now() : 0);
-
 function blocks(n: number): string {
   return n.toLocaleString('en-US');
 }
 
 type PeerScanFactProps = PeerLinkFactRow & {
-  revealed: boolean;
   selected: boolean;
-  interactive: boolean;
   onActivate: () => void;
 };
 
-/** The peer twin of the Cell card's scan fact: same affordances (dark until
- *  the probe reaches it, inert until classified), peer-typed identity. */
+/** One line fact. A link reading is already true when the card opens, so the
+ *  row is resolved and selectable from the first frame — the only state it
+ *  carries is whether the scene connector is currently tinted by it. */
 const PeerScanFact = memo(function PeerScanFact({
   facet,
   label,
   value,
   color,
-  revealed,
   selected,
-  interactive,
   onActivate,
 }: PeerScanFactProps) {
   const accent = color ?? HUD_COLORS.cyanWire;
@@ -108,9 +101,8 @@ const PeerScanFact = memo(function PeerScanFact({
     <button
       type="button"
       data-peer-probe-fact={facet}
-      data-peer-probe-fact-state={selected ? 'focused' : revealed ? 'resolved' : 'scanning'}
+      data-peer-probe-fact-state={selected ? 'focused' : 'resolved'}
       aria-pressed={selected}
-      disabled={!interactive}
       onClick={onActivate}
       style={{
         position: 'relative',
@@ -127,17 +119,15 @@ const PeerScanFact = memo(function PeerScanFact({
         color: accent,
         font: 'inherit',
         textAlign: 'left',
-        cursor: interactive ? 'crosshair' : 'default',
-        opacity: revealed ? 1 : 0.18,
-        transition: 'opacity 260ms ease, background 160ms ease, box-shadow 160ms ease',
-        pointerEvents: interactive ? 'auto' : 'none',
+        cursor: 'crosshair',
+        transition: 'background 160ms ease, box-shadow 160ms ease',
       }}
     >
       <span style={{ display: 'block', fontSize: HUD_TYPE.micro, letterSpacing: 1.2, color: HUD_COLORS.dim }}>
         {label}
       </span>
       <span
-        title={revealed ? value : undefined}
+        title={value}
         style={{
           display: 'block',
           marginTop: 2,
@@ -147,8 +137,6 @@ const PeerScanFact = memo(function PeerScanFact({
           fontSize: HUD_TYPE.label,
           lineHeight: 1.25,
           color: selected ? accent : color ?? HUD_COLORS.ink,
-          opacity: revealed ? 1 : 0,
-          transition: 'opacity 260ms ease',
         }}
       >
         {value}
@@ -160,9 +148,7 @@ const PeerScanFact = memo(function PeerScanFact({
   && previous.label === next.label
   && previous.value === next.value
   && previous.color === next.color
-  && previous.revealed === next.revealed
   && previous.selected === next.selected
-  && previous.interactive === next.interactive
 ));
 
 /** The colony compass: our node at the center, the peer on its true latency
@@ -367,7 +353,6 @@ export default function PeerLinkCard({
   onClose,
   style,
 }: PeerLinkCardProps) {
-  const reduced = useReducedMotion();
   const instrument = useMemo(
     () => derivePeerLinkInstrument(peer, tip, localVersion),
     [peer, tip, localVersion],
@@ -384,11 +369,6 @@ export default function PeerLinkCard({
     ? selectedFacetState.facet
     : null;
 
-  const [scanClock, setScanClock] = useState(() => {
-    const atMs = nowPerf();
-    return { nodeId: peer.node_id, epochMs: atMs, nowMs: atMs };
-  });
-
   const [pings, setPings] = useState<{ nodeId: string; samples: number[] }>(
     () => ({
       nodeId: peer.node_id,
@@ -397,31 +377,9 @@ export default function PeerLinkCard({
   );
   const [uptimeTick, setUptimeTick] = useState(() => ({ elapsedMs: 0, nowMs: Date.now() }));
 
-  const revealSteps = PEER_LINK_FACETS.length;
-
   useEffect(() => {
     onFacetChange?.(selectedFacet);
   }, [onFacetChange, selectedFacet]);
-
-  useEffect(() => {
-    if (reduced) return;
-    const epochMs = nowPerf();
-    const update = () => setScanClock({
-      nodeId: peer.node_id,
-      epochMs,
-      nowMs: nowPerf(),
-    });
-    setScanClock({ nodeId: peer.node_id, epochMs, nowMs: epochMs });
-    const interval = window.setInterval(update, 80);
-    const stop = window.setTimeout(() => {
-      window.clearInterval(interval);
-      update();
-    }, revealSteps * PROBE_STEP_S * 1000 + 80);
-    return () => {
-      window.clearInterval(interval);
-      window.clearTimeout(stop);
-    };
-  }, [peer.node_id, reduced, revealSteps]);
 
   // One sample per observed latency change. The effect's own dependencies are
   // the dedupe: an unchanged reading is not a new measurement, and a peer swap
@@ -462,18 +420,7 @@ export default function PeerLinkCard({
     return () => window.clearInterval(interval);
   }, [peer.node_id, instrument.uptimeMs, linkLost]);
 
-  const activeClock = scanClock.nodeId === peer.node_id
-    ? scanClock
-    : { nodeId: peer.node_id, epochMs: scanClock.nowMs, nowMs: scanClock.nowMs };
-  const scan = probeScan(
-    activeClock.epochMs,
-    reduced ? 0 : activeClock.nowMs,
-    revealSteps,
-    reduced,
-  );
-
   const activateFacet = (facet: PeerLinkFacet) => {
-    if (!scan.classified) return;
     setSelectedFacetState((current) => ({
       nodeId: peer.node_id,
       facet: current.nodeId === peer.node_id && current.facet === facet ? null : facet,
@@ -703,11 +650,12 @@ export default function PeerLinkCard({
         </div>
       </section>
 
+      {/* The poll that opened this card already carried every reading here,
+          so the facts stand at once — a progress meter over data we hold
+          would be a fiction, and it would gate the selector behind it. */}
       <section
         aria-label="Link facts"
         data-peer-probe-module="facts"
-        data-peer-probe-scan-state={scan.classified ? 'locked' : 'scanning'}
-        data-peer-probe-scan-progress={scan.pct}
         style={{
           ...satelliteBase,
           padding: '9px 10px 9px 14px',
@@ -717,26 +665,17 @@ export default function PeerLinkCard({
         <SpatialPlateHeader
           en="LINE FACTS"
           accent={HUD_COLORS.cyanWire}
-          status={(
-            <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6 }}>
-              <span style={{ color: scan.classified ? HUD_COLORS.nominal : HUD_COLORS.cyanWire, fontSize: HUD_TYPE.micro, letterSpacing: 0.72 }}>
-                {scan.classified ? 'LOCKED' : `SCANNING ${scan.pct}%`}
-              </span>
-              {moduleTag('LINK·04')}
-            </span>
-          )}
+          status={moduleTag('LINK·04')}
         />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '3px 9px' }}>
-          {PEER_LINK_FACETS.map((facet, index) => {
+          {PEER_LINK_FACETS.map((facet) => {
             const fact = factByFacet.get(facet);
             if (!fact) return null;
             return (
               <PeerScanFact
                 key={facet}
                 {...fact}
-                revealed={reduced || index < scan.reveal}
                 selected={facet === selectedFacet}
-                interactive={scan.classified}
                 onActivate={() => activateFacet(facet)}
               />
             );
