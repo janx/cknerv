@@ -1,0 +1,121 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import { render } from '@testing-library/react';
+import { Canvas } from '@react-three/fiber';
+import ColonyNodes from '../../src/components/ColonyNodes';
+import { inferredTopology } from '../../src/derives/networkTopology.derive';
+import { colonyFlood } from '../../src/derives/networkFlood.derive';
+import type { NetworkRosterRecord, Peer, RosterNode } from '@cknerv/types';
+
+function source(file: string): string {
+  return readFileSync(resolve(process.cwd(), `src/components/${file}`), 'utf8');
+}
+
+function peer(node_id: string): Peer {
+  return {
+    node_id, addr: '1.2.3.4:8115', direction: 'outbound', version: '0.116.1', connected_ms: 0,
+  };
+}
+
+function rosterNode(node_id: string, reachable: boolean): RosterNode {
+  return {
+    node_id,
+    addr: '/ip4/10.0.0.1/tcp/8115',
+    version: '0.116.1',
+    country: 'Unknown',
+    asn: 'Unknown',
+    reachable,
+    last_seen_ms: 1_700_000_000_000,
+  };
+}
+
+const ROSTER: NetworkRosterRecord = {
+  source: 'ckbadger',
+  as_of: { block: 12_000_000, hash: '0xabc' },
+  updated_at_ms: 1_700_000_000_000,
+  crawl_round: 3,
+  truncated: true,
+  entries: Array.from({ length: 12 }, (_, i) => rosterNode(
+    `Qm${String(i).padStart(4, '0')}`, i % 3 !== 0,
+  )),
+};
+
+describe('ColonyNodes sighted tier', () => {
+  const peers = [peer('A'), peer('B')];
+  const topology = inferredTopology(peers, 0xc0ffee, 'ckb:local', undefined, ROSTER);
+  const cf = colonyFlood(topology, 1);
+
+  it('mounts a staged roster inside an r3f Canvas without throwing', () => {
+    expect(() => render(
+      <Canvas>
+        <ColonyNodes
+          topology={topology}
+          cf={cf}
+          blockPulseAtMs={0}
+          selectedId={`sighted:${ROSTER.entries[1].node_id}`}
+          onSelect={() => {}}
+          localVersion="0.116.1"
+        />
+      </Canvas>,
+    )).not.toThrow();
+  });
+
+  it('mounts unchanged when no crawler ever spoke', () => {
+    const bare = inferredTopology(peers, 0xc0ffee, 'ckb:local');
+    expect(() => render(
+      <Canvas>
+        <ColonyNodes
+          topology={bare}
+          cf={colonyFlood(bare, 1)}
+          blockPulseAtMs={0}
+          selectedId={null}
+          onSelect={() => {}}
+          localVersion="0.116.1"
+        />
+      </Canvas>,
+    )).not.toThrow();
+  });
+
+  it('draws the tier as point clouds only — ZERO new vertex attributes', () => {
+    const nodes = source('ColonyNodes.tsx');
+    // Cloned from the ghost cloud: one `position` buffer per draw, and the
+    // reachable/unreachable split is two draws off one factory rather than a
+    // per-point attribute. The attribute budget is at a cliff (13 custom slots)
+    // and this tier must never spend one.
+    expect(nodes).toContain("g.setAttribute('position', new THREE.BufferAttribute(pos, 3))");
+    expect(nodes).toContain('makePeerCloudMaterial(shockwaveUniforms, tone)');
+    expect(nodes).toContain('tone={PEER_CLOUD_SIGHTED_TONE}');
+    expect(nodes).toContain('tone={PEER_CLOUD_SIGHTED_DARK_TONE}');
+    expect(nodes).not.toContain('InstancedBufferAttribute(sighted');
+    // …and it rides the same wave + context damping the ghost cloud gets.
+    expect(nodes).toContain('mat.uniforms.uContextEnergy.value = contextEnergyRef?.current ?? 1');
+  });
+
+  it('picks through ONE instanced hit mesh on the existing arbitration path', () => {
+    const nodes = source('ColonyNodes.tsx');
+    // One instanced raycast target for the whole tier, flagged so the Cell
+    // picker yields the pixel — no second arbitration path.
+    expect(nodes).toContain('const hitUserData = useMemo(() => ({ [NETWORK_PEER_PICK_FLAG]: true }), [])');
+    expect(nodes).toContain('<instancedMesh');
+    expect(nodes).toContain('new THREE.MeshBasicMaterial({ visible: false })');
+    expect(nodes).toContain('mesh.computeBoundingSphere()');
+    expect(nodes).toContain('onSelect(`${SIGHTED_SELECTION_PREFIX}${id}`)');
+    expect(nodes).toContain('e.stopPropagation()');
+  });
+
+  it('keeps the shared hover word instance-aware in both directions', () => {
+    const nodes = source('ColonyNodes.tsx');
+    // Every hover write and retraction is resolved from e.instanceId, and a
+    // word that is no longer ours is left alone — r3f cancels the stale
+    // instance before entering the next one, so it belongs to a live target.
+    expect(nodes).toContain('const id = idAt(e.instanceId)');
+    expect(nodes).toContain('gl.domElement.dataset.peerNodeHover = id');
+    expect(nodes).toContain(
+      'if (id !== undefined && gl.domElement.dataset.peerNodeHover === id)',
+    );
+    // churn + unmount guards: a retired or unmounted node never strands a hand.
+    expect(nodes).toContain('ownedRef.current.has(hovered)');
+    expect(nodes).toContain('!previous.has(hovered)');
+  });
+});

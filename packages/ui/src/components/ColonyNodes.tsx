@@ -1,9 +1,14 @@
-// ColonyNodes — the P2P "colony" rendered as ONE glow-node primitive across two
-// honesty classes, separated only by a confidence gradient (never two visual
-// languages):
-//   • inferred ghosts   — ONE faint additive <points> cloud (~240): a "possible
-//     network" haze. Each point is the SAME soft core+halo radial as the measured
-//     halo, drawn small and dim. Non-selectable.
+// ColonyNodes — the P2P "colony" rendered as ONE glow-node primitive across
+// three honesty classes, separated only by a confidence gradient (never three
+// visual languages):
+//   • inferred ghosts   — ONE faint additive <points> cloud (~240 minus the
+//     sighted count): a "possible network" haze. Each point is the SAME soft
+//     core+halo radial as the measured halo, drawn small and dim. Non-selectable.
+//   • sighted nodes     — TWO more <points> draws off the same factory (the
+//     crawler reached it / only remembers it), a stop brighter than the ghosts
+//     and a stop below the measured core. Real identity, invented position, no
+//     link of ours — so they are clickable through ONE instanced invisible hit
+//     mesh, and every edge they carry stays inferred fiction.
 //   • measured nodes    — one bright, saturated, larger glow-halo per real peer:
 //     a billboarded plane carrying that same core+halo shader,
 //     gently breathing, with an invisible solid sphere hit-target so it stays
@@ -42,10 +47,22 @@ import {
 import {
   makeMeasuredPeerHalosMaterial,
   makePeerCloudMaterial,
+  PEER_CLOUD_SIGHTED_DARK_TONE,
+  PEER_CLOUD_SIGHTED_TONE,
+  type PeerCloudTone,
 } from '../materials/peerNodeMaterial';
 
 // Measured core: bright, saturated, larger than the ghost haze.
 const MEASURED_SIZE = 1.4;
+
+/** Selection id prefix for a sighted node — the colony's third dialect beside
+ *  `peer:` (measured) and the bare chain-node id. */
+const SIGHTED_SELECTION_PREFIX = 'sighted:';
+/** World radius of a sighted node's invisible hit sphere. A sighted sprite is
+ *  screen-space sized (≈14px at colony distance) and this sphere subtends about
+ *  the same there: the target is the footprint, not a generous pick disc — the
+ *  Cell canopy already yields the pixel through NETWORK_PEER_PICK_FLAG. */
+const SIGHTED_SIZE = 1;
 
 // Measured node tint = the real peer palette: version-mismatch (violet) wins,
 // else connection direction — single-sourced via peerColorKind (see the
@@ -105,6 +122,224 @@ function InferredCloud({
   // plain Object3D — THREE.Points ships a real default raycast, so guard it
   // defensively. Only the measured nodes carry onClick → onSelect('peer:…').
   return <points geometry={geom} material={mat} frustumCulled={false} raycast={() => null} />;
+}
+
+/**
+ * One tone's worth of sighted nodes as a single additive point cloud — the
+ * ghost cloud's pattern, cloned: `position` only, one shared material, the same
+ * wave uniforms and the same context-energy damping. The tone (brightness,
+ * size) is a creation-time uniform rather than a per-point attribute, because
+ * the vertex-attribute budget sits at a cliff and a second Points draw is
+ * cheaper than a slot.
+ *
+ * Its raycast is a no-op too: the pixel belongs to the instanced hit mesh below,
+ * so the visible sprite never competes with it.
+ */
+function SightedCloud({
+  nodes,
+  tone,
+  contextEnergyRef,
+  shockwaveUniforms,
+}: {
+  nodes: NetworkNode[];
+  tone: PeerCloudTone;
+  contextEnergyRef?: { readonly current: number };
+  shockwaveUniforms: ShockwaveUniforms;
+}) {
+  const simClock = useSimClock();
+
+  const geom = useMemo(() => {
+    const g = new THREE.BufferGeometry();
+    const pos = new Float32Array(nodes.length * 3);
+    nodes.forEach((n, i) => {
+      pos[i * 3] = n.pos[0];
+      pos[i * 3 + 1] = n.pos[1];
+      pos[i * 3 + 2] = n.pos[2];
+    });
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    return g;
+  }, [nodes]);
+
+  const mat = useMemo(
+    () => makePeerCloudMaterial(shockwaveUniforms, tone),
+    [shockwaveUniforms, tone],
+  );
+
+  useEffect(() => () => geom.dispose(), [geom]);
+  useEffect(() => () => mat.dispose(), [mat]);
+  useSimFrame(() => {
+    mat.uniforms.uTime.value = simClock.elapsedSec;
+    mat.uniforms.uContextEnergy.value = contextEnergyRef?.current ?? 1;
+  });
+
+  return <points geometry={geom} material={mat} frustumCulled={false} raycast={() => null} />;
+}
+
+/**
+ * The sighted tier: two point clouds (reached / only remembered) plus ONE
+ * instanced invisible hit mesh covering every sighted node, and the reticle for
+ * the selected one.
+ *
+ * Hundreds of one-mesh-per-node targets would be the wrong shape for the
+ * raycaster, so a single InstancedMesh answers once and hands back
+ * `e.instanceId`. The invisible MATERIAL keeps that raycast alive while the
+ * renderer skips the draw (the MeasuredNode/anchor trick), and the mesh carries
+ * NETWORK_PEER_PICK_FLAG so the Cell picker yields the pixel — the existing
+ * arbitration path, not a new one.
+ */
+function SightedNodes({
+  sighted,
+  selectedId,
+  onSelect,
+  contextEnergyRef,
+  shockwaveUniforms,
+}: {
+  sighted: NetworkNode[];
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
+  contextEnergyRef?: { readonly current: number };
+  shockwaveUniforms: ShockwaveUniforms;
+}) {
+  const gl = useThree((state) => state.gl);
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const hitUserData = useMemo(() => ({ [NETWORK_PEER_PICK_FLAG]: true }), []);
+  // A crawler that could not reach a node this round still knows it exists;
+  // that is real, dimmer information, and it costs one extra draw, not a slot.
+  const reached = useMemo(
+    () => sighted.filter((n) => n.sighted?.reachable !== false),
+    [sighted],
+  );
+  const remembered = useMemo(
+    () => sighted.filter((n) => n.sighted?.reachable === false),
+    [sighted],
+  );
+  const selected = useMemo(() => {
+    if (selectedId === null || !selectedId.startsWith(SIGHTED_SELECTION_PREFIX)) return null;
+    const id = selectedId.slice(SIGHTED_SELECTION_PREFIX.length);
+    return sighted.find((n) => n.id === id) ?? null;
+  }, [selectedId, sighted]);
+
+  const geometry = useMemo(() => new THREE.SphereGeometry(SIGHTED_SIZE, 8, 8), []);
+  const material = useMemo(() => new THREE.MeshBasicMaterial({ visible: false }), []);
+  useEffect(() => () => {
+    geometry.dispose();
+    material.dispose();
+  }, [geometry, material]);
+
+  // Per-instance placement, written once per topology (never per frame).
+  const capacity = Math.max(1, sighted.length);
+  useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    mesh.count = sighted.length;
+    sighted.forEach((node, index) => {
+      SCRATCH_MATRIX.makeTranslation(node.pos[0], node.pos[1], node.pos[2]);
+      mesh.setMatrixAt(index, SCRATCH_MATRIX);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    // An instanced raycast rejects on the bounding sphere first, and the one
+    // three computed for the previous matrices would answer for the wrong
+    // volume — recompute it or the whole tier silently stops being clickable.
+    mesh.computeBoundingSphere();
+  }, [sighted, capacity]);
+
+  const syncCursor = () => {
+    const canvas = gl.domElement;
+    canvas.style.cursor = cellCanvasCursor(
+      canvas.dataset.cellPickerHover !== undefined,
+      canvas.dataset.cellCausalNavigationHover !== undefined,
+      canvas.dataset.peerNodeHover !== undefined,
+    );
+  };
+
+  // Which ids this layer is allowed to clear: the hover word is shared with the
+  // measured peers and the chain anchor, so we only ever retract our own.
+  const ownedRef = useRef<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    const canvas = gl.domElement;
+    const previous = ownedRef.current;
+    ownedRef.current = new Set(sighted.map((n) => n.id));
+    // A roster round can retire a node while the pointer is still on it, and no
+    // pointer-out ever fires for a node that stopped existing.
+    const hovered = canvas.dataset.peerNodeHover;
+    if (hovered === undefined || ownedRef.current.has(hovered) || !previous.has(hovered)) return;
+    delete canvas.dataset.peerNodeHover;
+    syncCursor();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gl, sighted]);
+  // …and the same guard for the layer's own unmount (gl is stable for the
+  // canvas's life, so this cleanup runs on unmount only).
+  useEffect(() => () => {
+    const canvas = gl.domElement;
+    const hovered = canvas.dataset.peerNodeHover;
+    if (hovered === undefined || !ownedRef.current.has(hovered)) return;
+    delete canvas.dataset.peerNodeHover;
+    canvas.style.cursor = cellCanvasCursor(
+      canvas.dataset.cellPickerHover !== undefined,
+      canvas.dataset.cellCausalNavigationHover !== undefined,
+      false,
+    );
+  }, [gl]);
+
+  const idAt = (instanceId: number | undefined): string | undefined => (
+    instanceId === undefined ? undefined : sighted[instanceId]?.id
+  );
+
+  return (
+    <group>
+      {/* A tone with nobody in it is not drawn at all: an all-reachable roster
+          costs one cloud, not two empty ones. */}
+      {reached.length > 0 ? (
+        <SightedCloud
+          nodes={reached}
+          tone={PEER_CLOUD_SIGHTED_TONE}
+          contextEnergyRef={contextEnergyRef}
+          shockwaveUniforms={shockwaveUniforms}
+        />
+      ) : null}
+      {remembered.length > 0 ? (
+        <SightedCloud
+          nodes={remembered}
+          tone={PEER_CLOUD_SIGHTED_DARK_TONE}
+          contextEnergyRef={contextEnergyRef}
+          shockwaveUniforms={shockwaveUniforms}
+        />
+      ) : null}
+      <instancedMesh
+        ref={meshRef}
+        args={[geometry, material, capacity]}
+        frustumCulled={false}
+        userData={hitUserData}
+        onClick={(e) => {
+          const id = idAt(e.instanceId);
+          if (id === undefined) return;
+          e.stopPropagation();
+          onSelect(`${SIGHTED_SELECTION_PREFIX}${id}`);
+        }}
+        onPointerOver={(e) => {
+          const id = idAt(e.instanceId);
+          if (id === undefined) return;
+          gl.domElement.dataset.peerNodeHover = id;
+          syncCursor();
+        }}
+        onPointerOut={(e) => {
+          // r3f v8 cancels the stale instance BEFORE it enters the new one, so
+          // by the time a word belongs to somebody else it is somebody else's
+          // hand — retracting it here would strand the cursor on a live target.
+          const id = idAt(e.instanceId);
+          if (id !== undefined && gl.domElement.dataset.peerNodeHover === id) {
+            delete gl.domElement.dataset.peerNodeHover;
+          }
+          syncCursor();
+        }}
+      />
+      {selected ? (
+        <group position={selected.pos}>
+          <CkbSelectionReticle size={SIGHTED_SIZE * 2.4} />
+        </group>
+      ) : null}
+    </group>
+  );
 }
 
 /**
@@ -294,8 +529,9 @@ function MeasuredNode({
 }
 
 /**
- * Composes the colony: the inferred ghost cloud + one measured glow-node per real
- * peer, unified as a single glow primitive on a confidence gradient. The local
+ * Composes the colony: the inferred ghost cloud + the sighted tier + one
+ * measured glow-node per real peer, unified as a single glow primitive on a
+ * confidence gradient. The local
  * "you" is drawn by the galaxy (its labeled CkbNodeAnchor), NOT here. This owner
  * stamps one shared ring-buffer slot per block so inferred and measured nodes
  * cannot drift or cancel an older in-flight wave.
@@ -322,6 +558,10 @@ export default function ColonyNodes({
   const simClock = useSimClock();
   const measured = useMemo(
     () => topology.nodes.filter((n) => n.kind === 'measured'),
+    [topology],
+  );
+  const sighted = useMemo(
+    () => topology.nodes.filter((n) => n.kind === 'sighted'),
     [topology],
   );
   const shockwaveUniforms = useMemo(() => makeShockwaveUniforms(), []);
@@ -377,6 +617,17 @@ export default function ColonyNodes({
         contextEnergyRef={contextEnergyRef}
         shockwaveUniforms={shockwaveUniforms}
       />
+      {/* No crawler, or a crawler that knows nobody: the tier costs the scene
+          nothing at all — not an empty draw, not an idle hit mesh. */}
+      {sighted.length > 0 ? (
+        <SightedNodes
+          sighted={sighted}
+          selectedId={selectedId}
+          onSelect={onSelect}
+          contextEnergyRef={contextEnergyRef}
+          shockwaveUniforms={shockwaveUniforms}
+        />
+      ) : null}
       <MeasuredPeerHalos
         measured={measured}
         localVersion={localVersion}

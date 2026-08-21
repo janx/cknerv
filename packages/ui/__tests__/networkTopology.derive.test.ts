@@ -2,14 +2,52 @@ import { describe, it, expect } from 'vitest';
 import {
   localAnchor, measuredPeerPos, COLONY_Y, LOCAL_ANCHOR_OFFSET, COLONY_ELLIPSE_X, COLONY_ELLIPSE_Z,
   scatterInferred, COLONY_INFERRED_COUNT, COLONY_INFERRED_JITTER, COLONY_MIN_SPACING,
-  inferredTopology, ensureConnectedFrom,
+  COLONY_RADIUS, COLONY_Y_THICKNESS, inferredTopology, ensureConnectedFrom, sightedPos,
 } from '../src/derives/networkTopology.derive';
-import { latencyToRadius01, PEER_INNER_RADIUS, PEER_OUTER_RADIUS } from '../src/derives/peers.derive';
-import type { Peer } from '@cknerv/types';
+import { colonyFlood } from '../src/derives/networkFlood.derive';
+import {
+  latencyToRadius01, peerAngle, PEER_INNER_RADIUS, PEER_OUTER_RADIUS,
+} from '../src/derives/peers.derive';
+import type { NetworkRosterRecord, Peer, RosterNode } from '@cknerv/types';
 import type { NetworkNode, Vec3 } from '../src/types';
 
 function peer(p: Partial<Peer>): Peer {
   return { node_id: 'Qm', addr: '1.2.3.4:8115', direction: 'outbound', version: '0.116.1', connected_ms: 0, ...p };
+}
+
+function rosterNode(p: Partial<RosterNode> & { node_id: string }): RosterNode {
+  return {
+    addr: '/ip4/10.0.0.1/tcp/8115',
+    version: '0.116.1',
+    country: 'Unknown',
+    asn: 'Unknown',
+    reachable: true,
+    last_seen_ms: 1_700_000_000_000,
+    ...p,
+  };
+}
+
+/** A roster record around `entries`, in the ascending-node_id order the wire
+ *  contract pins (the derive must not depend on it — see the order test). */
+function roster(
+  entries: RosterNode[], over: Partial<NetworkRosterRecord> = {},
+): NetworkRosterRecord {
+  return {
+    source: 'ckbadger',
+    as_of: { block: 12_000_000, hash: '0xabc' },
+    updated_at_ms: 1_700_000_000_000,
+    crawl_round: 1,
+    truncated: false,
+    entries,
+    ...over,
+  };
+}
+
+/** N sighted rows with ids that sort ascending, as the crawler sends them. */
+function sightedRoster(n: number, over: Partial<RosterNode> = {}): RosterNode[] {
+  return Array.from({ length: n }, (_, i) => rosterNode({
+    node_id: `Qm${String(i).padStart(4, '0')}`, ...over,
+  }));
 }
 
 describe('networkTopology placement', () => {
@@ -266,5 +304,180 @@ describe('scaffold reuse across measured-overlay rebuilds', () => {
     // …while the measured overlay genuinely moved with the new latency.
     expect(before.nodes.find((n) => n.id === 'A')!.pos)
       .not.toEqual(after.nodes.find((n) => n.id === 'A')!.pos);
+  });
+});
+
+describe('sighted nodes (the crawler names a bounded few)', () => {
+  const seed = 0xc0ffee;
+  const peers = [
+    peer({ node_id: 'A', latency_ms: 40, direction: 'outbound' }),
+    peer({ node_id: 'B', latency_ms: 180, direction: 'inbound' }),
+  ];
+  type Topology = ReturnType<typeof inferredTopology>;
+  const ghostsOf = (t: Topology) => t.nodes.filter((n) => n.kind === 'inferred');
+  const sightedOf = (t: Topology) => t.nodes.filter((n) => n.kind === 'sighted');
+
+  it('stages every roster row as a sighted node carrying that row', () => {
+    const rows = sightedRoster(5);
+    const t = inferredTopology(peers, seed, 'ckb:local', undefined, roster(rows));
+    const sighted = sightedOf(t);
+    expect(sighted.map((n) => n.id)).toEqual(rows.map((r) => r.node_id));
+    for (const n of sighted) {
+      // the crawler's own row, by reference — no copy to go stale
+      expect(n.sighted).toBe(rows.find((r) => r.node_id === n.id));
+      expect(n.peer).toBeUndefined();       // identity is real, the link is not
+    }
+    for (const g of ghostsOf(t)) expect(g.sighted).toBeUndefined(); // ghosts stay anonymous
+  });
+
+  it('dedupe: measured wins, local is excluded, and a repeat is staged once', () => {
+    const rows = [
+      rosterNode({ node_id: 'A' }),          // already on stage as a measured peer
+      rosterNode({ node_id: 'ckb:local' }),  // that is us
+      ...sightedRoster(3),
+      rosterNode({ node_id: 'Qm0001' }),     // a duplicate inside one roster
+    ];
+    const t = inferredTopology(peers, seed, 'ckb:local', undefined, roster(rows));
+    expect(sightedOf(t).map((n) => n.id)).toEqual(['Qm0000', 'Qm0001', 'Qm0002']);
+    expect(t.nodes.filter((n) => n.id === 'A')).toHaveLength(1);
+    expect(t.nodes.find((n) => n.id === 'A')!.kind).toBe('measured');
+    expect(t.nodes.filter((n) => n.id === 'ckb:local')).toHaveLength(1);
+    expect(t.nodes.find((n) => n.id === 'ckb:local')!.kind).toBe('local');
+  });
+
+  it('places a sighted node purely from its id — roster order and round cannot move it', () => {
+    const rows = sightedRoster(6);
+    const forward = inferredTopology(peers, seed, 'ckb:local', undefined, roster(rows));
+    const reversed = inferredTopology(
+      peers, seed, 'ckb:local', undefined,
+      roster([...rows].reverse(), { crawl_round: 9, updated_at_ms: 42 }),
+    );
+    const placed = (t: Topology) => new Map(sightedOf(t).map((n) => [n.id, n.pos]));
+    expect(placed(reversed)).toEqual(placed(forward));
+
+    const one = forward.nodes.find((n) => n.id === rows[0].node_id)!;
+    expect(one.pos).toEqual(sightedPos(rows[0].node_id));
+    // angle is the measured belt's own id hash; radius sits inside the disc and
+    // height inside the colony's shallow slab.
+    const angle = peerAngle(rows[0].node_id);
+    const x = one.pos[0] / COLONY_ELLIPSE_X;
+    const z = one.pos[2] / COLONY_ELLIPSE_Z;
+    expect(Math.atan2(z, x)).toBeCloseTo(Math.atan2(Math.sin(angle), Math.cos(angle)), 6);
+    expect(Math.hypot(x, z)).toBeLessThanOrEqual(COLONY_RADIUS);
+    expect(Math.abs(one.pos[1] - COLONY_Y)).toBeLessThanOrEqual(COLONY_Y_THICKNESS / 2);
+  });
+
+  it('angle and radius are drawn from different mixes (no id spiral)', () => {
+    // Reusing peerAngle's stream for the radius would stand every sighted node
+    // on one spiral arm; a shared hash shows up as correlation here.
+    const ids = Array.from({ length: 400 }, (_, i) => `Qm${String(i).padStart(4, '0')}`);
+    const angles = ids.map((id) => peerAngle(id));
+    const radii01 = ids.map((id) => {
+      const pos = sightedPos(id);
+      const r = Math.hypot(pos[0] / COLONY_ELLIPSE_X, pos[2] / COLONY_ELLIPSE_Z) / COLONY_RADIUS;
+      return r * r;  // undo the sqrt: this is the raw hash
+    });
+    const mean = (xs: number[]) => xs.reduce((s, v) => s + v, 0) / xs.length;
+    const ma = mean(angles);
+    const mr = mean(radii01);
+    let cov = 0, va = 0, vr = 0;
+    for (let i = 0; i < ids.length; i++) {
+      const da = angles[i] - ma, dr = radii01[i] - mr;
+      cov += da * dr; va += da * da; vr += dr * dr;
+    }
+    expect(Math.abs(cov / Math.sqrt(va * vr))).toBeLessThan(0.15);
+  });
+
+  it('⭐ ghost fill is a prefix of the untouched scatter, and 256 leaves none', () => {
+    const scatter = scatterInferred(seed);           // the seed's own target, never re-rolled
+    expect(ghostsOf(inferredTopology(peers, seed, 'ckb:local'))).toHaveLength(scatter.length);
+
+    const some = inferredTopology(peers, seed, 'ckb:local', undefined, roster(sightedRoster(40)));
+    const kept = ghostsOf(some);
+    expect(kept).toHaveLength(scatter.length - 40);  // one for one
+    kept.forEach((g, i) => {
+      expect(g.id).toBe(`inf:${i}`);                 // prefix, not a reshuffle
+      expect(g.pos).toEqual(scatter[i]);             // and nobody moved
+    });
+    expect(kept.length + sightedOf(some).length).toBe(scatter.length);
+
+    // At the 256 cap the ghosts are nearly spent (this seed's target is 264).
+    const capped = inferredTopology(peers, seed, 'ckb:local', undefined, roster(sightedRoster(256)));
+    expect(ghostsOf(capped)).toHaveLength(scatter.length - 256);
+    expect(sightedOf(capped)).toHaveLength(256);
+
+    // Past the target the ghosts run out and the cloud is all sighted: total
+    // population is max(target, sightedCount), never the sum. The cap lives
+    // upstream, so the derive simply tolerates a longer roster.
+    const many = inferredTopology(peers, seed, 'ckb:local', undefined, roster(sightedRoster(300)));
+    expect(ghostsOf(many)).toHaveLength(0);
+    expect(sightedOf(many)).toHaveLength(300);
+    expect(many.nodes).toHaveLength(300 + peers.length + 1);  // sighted + measured + local
+  });
+
+  it('no roster and a roster of nobody both yield exactly today’s topology', () => {
+    const base = inferredTopology(peers, seed, 'ckb:local');
+    // bust the single-slot scaffold cache so the comparisons below are genuine
+    // rebuilds rather than the same objects handed back.
+    inferredTopology(peers, seed, 'ckb:local', undefined, roster(sightedRoster(40)));
+
+    for (const record of [null, roster([])]) {
+      const t = inferredTopology(peers, seed, 'ckb:local', undefined, record);
+      expect(t.nodes).toEqual(base.nodes);
+      expect(t.edges).toEqual(base.edges);
+      expect(sightedOf(t)).toHaveLength(0);
+    }
+  });
+
+  it('emergent demotion: a dropped link reappears as its crawler ghost, in place', () => {
+    const id = 'Qm0002';
+    const rows = sightedRoster(5);
+    const linked = inferredTopology(
+      [...peers, peer({ node_id: id, latency_ms: 60 })], seed, 'ckb:local', undefined, roster(rows),
+    );
+    expect(linked.nodes.filter((n) => n.id === id)).toHaveLength(1);   // never two markers
+    expect(linked.nodes.find((n) => n.id === id)!.kind).toBe('measured');
+
+    const dropped = inferredTopology(peers, seed, 'ckb:local', undefined, roster(rows));
+    const node = dropped.nodes.find((n) => n.id === id)!;
+    expect(node.kind).toBe('sighted');
+    expect(node.peer).toBeUndefined();
+    expect(node.pos).toEqual(sightedPos(id));        // its hash place, waiting for it
+  });
+
+  it('every edge a sighted node carries stays inferred fiction', () => {
+    const rows = sightedRoster(30);
+    const t = inferredTopology(peers, seed, 'ckb:local', undefined, roster(rows));
+    const ids = new Set(rows.map((r) => r.node_id));
+    const touching = t.edges.filter((e) => ids.has(e.a) || ids.has(e.b));
+    expect(touching.length).toBeGreaterThan(0);
+    for (const e of touching) expect(e.kind).toBe('inferred');  // we never observed a link
+    for (const id of ids) expect((t.adjacency.get(id) ?? []).length).toBeGreaterThan(0);
+  });
+
+  it('the flood reaches the sighted tier and relays through it', () => {
+    const rows = sightedRoster(30);
+    const t = inferredTopology(peers, seed, 'ckb:local', undefined, roster(rows));
+    const cf = colonyFlood(t, 7);
+    for (const r of rows) {
+      expect(Number.isFinite(cf.colonyArrivalS[r.node_id])).toBe(true);
+    }
+    // …and they are not leaves-only: at least one sighted node passes the front on.
+    const predecessors = new Set(Object.values(cf.colonyPredecessor));
+    expect(rows.some((r) => predecessors.has(r.node_id))).toBe(true);
+  });
+
+  it('a fresh crawl round updates the staged rows without moving anybody', () => {
+    const first = sightedRoster(8);
+    const before = inferredTopology(peers, seed, 'ckb:local', undefined, roster(first));
+    const second = sightedRoster(8, { reachable: false, last_seen_ms: 9 });
+    const after = inferredTopology(
+      peers, seed, 'ckb:local', undefined, roster(second, { crawl_round: 2 }),
+    );
+    // The scaffold cache holds geometry, not the crawler's report: a node going
+    // dark has to cross even though the id set (and the cache key) is unchanged.
+    expect(sightedOf(after).every((n) => n.sighted!.reachable === false)).toBe(true);
+    expect(sightedOf(before).every((n) => n.sighted!.reachable === true)).toBe(true);
+    expect(sightedOf(after).map((n) => n.pos)).toEqual(sightedOf(before).map((n) => n.pos));
   });
 });

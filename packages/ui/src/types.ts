@@ -5,7 +5,7 @@
 // component layer (geometry vectors, graph-node shapes, animation
 // hints) that are not part of the cknerv-core wire contract.
 
-import type { Cell, Peer } from '@cknerv/types';
+import type { Cell, Peer, RosterNode } from '@cknerv/types';
 
 export type Vec3 = [number, number, number];
 
@@ -50,15 +50,21 @@ export type AnimationHint =
   | { type: 'flash_green' }
   | { type: 'flash_red' };
 
-export type NodeKind = 'local' | 'measured' | 'inferred';
+/** The colony's honesty ladder, in descending order of what we actually know:
+ *  `local`/`measured` are nodes we hold a live link to, `sighted` are nodes a
+ *  crawler named for us (real identity, no link of ours), and `inferred` are
+ *  the anonymous scatter that keeps the network's shape plausible. */
+export type NodeKind = 'local' | 'measured' | 'inferred' | 'sighted';
 export type EdgeKind = 'measured' | 'inferred';
 
-/** One node in the P2P colony. Only `measured`/`local` carry real data. */
+/** One node in the P2P colony. `measured`/`local` carry real data and a real
+ *  link; `sighted` carries a real identity on a placement we invented. */
 export interface NetworkNode {
-  id: string;            // real node_id (local/measured) | 'inf:<n>' (inferred)
+  id: string;            // real node_id (local/measured/sighted) | 'inf:<n>' (inferred)
   kind: NodeKind;
   pos: Vec3;
   peer?: Peer;           // present ONLY on measured nodes
+  sighted?: RosterNode;  // present ONLY on sighted nodes
 }
 
 /** One colony edge. Only local↔peer edges are truly observed (`measured`). */

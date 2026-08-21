@@ -612,12 +612,18 @@ export default function App({
         .join(';'),
     [peers],
   );
+  // The crawler's bounded roster stages the sighted tier. Its identity changes
+  // only when a crawl round actually lands (the reducer replaces the record),
+  // so keying on the reference rebuilds the colony per round, not per poll.
+  const networkRoster = enrichmentConfig.enabled ? semanticsCache.networkRoster : null;
   const topology = useMemo(
-    () => inferredTopology(peers, universeSeed, localNode?.id ?? 'ckb:local', localCkbPos),
+    () => inferredTopology(
+      peers, universeSeed, localNode?.id ?? 'ckb:local', localCkbPos, networkRoster,
+    ),
     // peers is read via the stable peersSig; keying on `peers` directly would
     // rebuild the geometry every poll. localCkbPos is stably memoized (no churn).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [peersSig, universeSeed, localNode?.id, localCkbPos],
+    [peersSig, universeSeed, localNode?.id, localCkbPos, networkRoster],
   );
   const cf = useMemo(
     () => colonyFlood(topology, cellsCache.lastPulseAtMs),

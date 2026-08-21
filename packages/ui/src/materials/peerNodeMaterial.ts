@@ -60,21 +60,52 @@ function sharedShockwave(
 }
 
 /**
- * One draw for every inferred peer node. The point itself is the topology
- * record; the wave only changes its size/brightness and never emits decorative
- * particles beside it.
+ * Where one cloud draw sits on the confidence axis.
+ *
+ * A node we can name is worth more light than an anonymous one, and a node the
+ * crawler could still reach is worth more than one it only remembers — but that
+ * is THREE stops of one gradient, not three visual languages, so the tone rides
+ * creation-time UNIFORMS on the shared factory. Splitting it per point would
+ * cost a vertex attribute, and the attribute budget has no room to sell.
+ */
+export interface PeerCloudTone {
+  /** Passive brightness (`uDim`); the ghost cloud's 0.9 is the floor. */
+  dim?: number;
+  /** Sprite size in the same screen-space units the ghost cloud uses. */
+  size?: number;
+  /** Tint — same cyan family. Defaults to the ghost scaffold hue. */
+  color?: readonly [number, number, number];
+}
+
+/** The three stops, faintest first. One hue, one axis: a sighted node reads as
+ *  "the same kind of thing, better known", never as a different species. The
+ *  measured core sits above all three with its own (brighter, tinted) halo. */
+export const PEER_CLOUD_GHOST_TONE = { dim: 0.9, size: 5.5 } satisfies PeerCloudTone;
+/** Named by the crawler, but it could not reach the node this round. */
+export const PEER_CLOUD_SIGHTED_DARK_TONE = { dim: 1.35, size: 6.4 } satisfies PeerCloudTone;
+/** Named by the crawler and answering it. */
+export const PEER_CLOUD_SIGHTED_TONE = { dim: 1.95, size: 7.2 } satisfies PeerCloudTone;
+
+/**
+ * One draw for every peer node in a linkless cloud — the inferred ghosts, and
+ * (at a brighter `tone`) the sighted nodes the crawler named. The point itself
+ * is the topology record; the wave only changes its size/brightness and never
+ * emits decorative particles beside it.
  */
 export function makePeerCloudMaterial(
   uniforms?: ShockwaveUniforms,
+  tone?: PeerCloudTone,
 ): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
       uTime: { value: 0 },
       uColor: {
-        value: new THREE.Color().setRGB(...PEER_NETWORK_PALETTE.scaffold),
+        value: new THREE.Color().setRGB(
+          ...(tone?.color ?? PEER_NETWORK_PALETTE.scaffold),
+        ),
       },
-      uDim: { value: 0.9 },
-      uSize: { value: 5.5 },
+      uDim: { value: tone?.dim ?? PEER_CLOUD_GHOST_TONE.dim },
+      uSize: { value: tone?.size ?? PEER_CLOUD_GHOST_TONE.size },
       uContextEnergy: { value: 1 },
       ...sharedShockwave(uniforms),
     },
