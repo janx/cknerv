@@ -51,6 +51,10 @@ import {
   useCellDisplayRuntime,
   NetworkColony,
   NeuralNetwork,
+  PeerInspectionAnchor,
+  PeerInspectionOverlay,
+  createPeerInspectionHandles,
+  usePeerInspectionRetention,
   QUALITY_PRESETS,
   RenderStatsPanel,
   RenderStatsSampler,
@@ -66,6 +70,7 @@ import {
   type ConsensusMemoryTargetResponse,
   type CellInspectionField,
   type CellInspectionHandles,
+  type PeerInspectionHandles,
   type CellIdentityProofEvent,
   type CellIdentityProofKind,
 } from '@cknerv/ui';
@@ -223,6 +228,14 @@ export default function App({
     cellInspectionHandlesRef.current = createCellInspectionHandles();
   }
   const cellInspectionHandles = cellInspectionHandlesRef.current;
+  // The same split-inspector channel for the peer link probe. Selection axes
+  // are mutually exclusive, but each dialect keeps its own channel so a card
+  // swap never inherits the other's measured box.
+  const peerInspectionHandlesRef = useRef<PeerInspectionHandles | null>(null);
+  if (peerInspectionHandlesRef.current === null) {
+    peerInspectionHandlesRef.current = createPeerInspectionHandles();
+  }
+  const peerInspectionHandles = peerInspectionHandlesRef.current;
   const [orbitInteractionRevision, noteOrbitInteraction] = useReducer(
     (revision: number) => revision + 1,
     0,
@@ -1131,6 +1144,13 @@ export default function App({
     const id = selectedNetId.slice('peer:'.length);
     return peers.find((p) => p.node_id === id) ?? null;
   }, [selectedNetId, peers]);
+  // Where that peer currently stands in the colony. Latency drives the ring
+  // radius, so the node moves between polls and the probe follows it.
+  const selectedPeerAnchor = useMemo(() => {
+    if (!selectedNetId || !selectedNetId.startsWith('peer:')) return null;
+    const id = selectedNetId.slice('peer:'.length);
+    return topology.nodes.find((n) => n.id === id)?.pos ?? null;
+  }, [selectedNetId, topology]);
 
   // Stable identities: HudOverlay is memoized, so its object/callback props
   // must not be re-created per App render.
@@ -1154,6 +1174,16 @@ export default function App({
     ],
   );
   const clearNetSelection = useCallback(() => setSelectedNetId(null), []);
+  // A dropped link is the peer's own ending: the probe holds its last snapshot
+  // and anchor long enough to say so, then retires the selection itself.
+  const peerInspection = usePeerInspectionRetention({
+    selectionKey: selectedNetId?.startsWith('peer:') ? selectedNetId : null,
+    peer: selectedPeer,
+    position: selectedPeerAnchor,
+    onExpire: clearNetSelection,
+  });
+  const inspectedPeer = peerInspection.peer;
+  const inspectedPeerAnchor = peerInspection.position;
 
   return (
     <>
@@ -1191,7 +1221,6 @@ export default function App({
           : undefined}
         cellInspectionActive={selectedCell !== null}
         selectedNode={selectedNode}
-        selectedPeer={selectedPeer}
         onClearNet={clearNetSelection}
         backfill={cellsCache.backfill}
         streamHealth={hudStreamHealth}
@@ -1352,6 +1381,13 @@ export default function App({
             localVersion={localNode?.version ?? ''}
             cellInspectionActive={selectedCell !== null}
             cellDetailViewFocusRef={cellDetailViewFocusRef}
+            overlay={inspectedPeer && inspectedPeerAnchor ? (
+              <PeerInspectionAnchor
+                key={inspectedPeer.node_id}
+                position={inspectedPeerAnchor}
+                handles={peerInspectionHandles}
+              />
+            ) : null}
           />
 
           {/* Opening or switching Cell detail is camera-passive. Only explicit
@@ -1430,6 +1466,20 @@ export default function App({
           semanticTransactionMessage={selectedTransactionLookup.message}
           onScanInteractionChange={setCellScanInteractionActive}
           onClose={clearCellSelection}
+        />
+      ) : null}
+
+      {/* DOM half of the peer link probe — the same chassis in its own
+          dialect, positioned each frame by the anchor inside the colony. */}
+      {inspectedPeer && inspectedPeerAnchor ? (
+        <PeerInspectionOverlay
+          key={inspectedPeer.node_id}
+          handles={peerInspectionHandles}
+          peer={inspectedPeer}
+          tip={chain.tip}
+          localVersion={localNode?.version ?? ''}
+          linkLost={peerInspection.linkLost}
+          onClose={clearNetSelection}
         />
       ) : null}
     </>

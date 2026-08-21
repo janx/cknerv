@@ -39,7 +39,7 @@
 // `blockPulseAtMs` and gates on `backfillActive` (consume-then-bail);
 // NetworkColony keeps `cf`/`blockPulseAtMs`/`backfillActive` to feed the peer
 // effects and to stamp its own `pulseRef` for delivery into the Cell field.
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { useCellGalaxyOptional } from '../hooks/cellGalaxyContext';
@@ -79,6 +79,10 @@ interface NetworkColonyProps {
   cellInspectionActive?: boolean;
   /** Shared camera-distance focus. Optional keeps standalone scenes unchanged. */
   cellDetailViewFocusRef?: { readonly current: number };
+  /** Optional overlay rendered inside the colony's group, so consumer layers
+   *  (e.g. the peer inspection anchor) sit in colony space without coupling
+   *  NetworkColony to them. Passive: the colony reads nothing from it. */
+  overlay?: ReactNode;
 }
 
 export default function NetworkColony({
@@ -93,6 +97,7 @@ export default function NetworkColony({
   localVersion,
   cellInspectionActive = false,
   cellDetailViewFocusRef,
+  overlay,
 }: NetworkColonyProps) {
   const simClock = useSimClock();
   // Calm catch-up signal (same flag beams/nerves already respect). Read via the
@@ -212,6 +217,7 @@ export default function NetworkColony({
         flashDirtyRef={flashDirtyRef}
         flashDirtyIdsRef={flashDirtyIdsRef}
       />
+      {overlay}
     </group>
   );
 }

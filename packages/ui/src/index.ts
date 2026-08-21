@@ -192,6 +192,26 @@ export { default as ColonyEdges } from './components/ColonyEdges';
 export { default as ColonyNodes } from './components/ColonyNodes';
 export { default as ColonyCourierLayer } from './components/ColonyCourierLayer';
 export { default as NetworkColony } from './components/NetworkColony';
+export {
+  default as PeerInspectionOverlay,
+  PeerInspectionAnchor,
+  createPeerInspectionHandles,
+  type PeerInspectionHandles,
+  type PeerInspectionOverlayProps,
+} from './components/PeerInspectionOverlay';
+export {
+  default as PeerLinkCard,
+  type PeerLinkCardProps,
+} from './components/hud/PeerLinkCard';
+export {
+  selectedPeerLinkAccent,
+  type PeerLinkFacet,
+} from './derives/peerLinkInstrument.derive';
+export {
+  PEER_LINK_LOST_HOLD_MS,
+  usePeerInspectionRetention,
+  type PeerInspectionRetention,
+} from './hooks/usePeerInspectionRetention';
 
 // ── Consensus flow overlay (Cell→Cell protocol writes) ──────────────
 export { default as NeuralNetwork, MAX_ACTIVE_PULSES } from './nerve/NeuralNetwork';

@@ -32,7 +32,6 @@ import DaoStatePanel from './DaoStatePanel';
 import { canRenderDaoStateReadout } from './DaoStateReadout';
 import NetworkPanel from './NetworkPanel';
 import NodeDetailPanel from './NodeDetailPanel';
-import PeerDetailPanel from './PeerDetailPanel';
 import BackfillBar from './BackfillBar';
 import CellsPanel from './CellsPanel';
 import StageCapacityPanel from './StageCapacityPanel';
@@ -110,7 +109,7 @@ function isHudPanelId(id: string): id is HudPanelId {
   return (HUD_PANEL_IDS as readonly string[]).includes(id);
 }
 
-function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, scriptRegistry, cellInspectionActive = false, selectedNode, selectedPeer, onClearSelection, onClearNet, backfill, streamHealth, build, topBarActions, colonyCount }: {
+function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, scriptRegistry, cellInspectionActive = false, selectedNode, onClearSelection, onClearNet, backfill, streamHealth, build, topBarActions, colonyCount }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
   /** How much of the Cell set this dashboard has individualized, and at what
    *  scope. Omitted by a consumer that derives none; the panel is then absent
@@ -130,7 +129,10 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
   networkAtlas?: NetworkAtlasRecord | null;
   /** Lets the scene scan become the visual focus without hiding telemetry. */
   cellInspectionActive?: boolean;
-  selectedNode?: ChainNode | null; selectedPeer?: Peer | null;
+  /** The local node's detail is still a rail card; a selected peer is not —
+   *  it opens the scene-tethered link probe, so peer selects no longer
+   *  re-render the whole HUD. */
+  selectedNode?: ChainNode | null;
   /** Clear-all fallback for shared consumers with one network selection axis. */
   onClearSelection?: () => void;
   onClearNet?: () => void;
@@ -278,7 +280,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
   useEffect(() => {
     const el = railRef.current;
     setRailScrolls(!!el && narrowRail && el.scrollHeight > el.clientHeight + 1);
-  }, [narrowRail, panelVisibility.cells, panelVisibility.peers, selectedNode, selectedPeer, now]);
+  }, [narrowRail, panelVisibility.cells, panelVisibility.peers, selectedNode, now]);
 
   // reorg delta across renders
   const prevReorgs = useRef(chain.reorgs);
@@ -444,9 +446,9 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
           ) : null}
         </div>
       ) : null}
-      {/* MESH RAIL — fixed summary telemetry only. Cell inspection now follows
-          the selected Cell in scene space; node / peer detail stays with the
-          PEER zone because those entities belong to the network rail. */}
+      {/* MESH RAIL — fixed summary telemetry only. Cell inspection and the
+          peer link probe both follow their entity in scene space; only the
+          local node's detail is still docked in the PEER zone. */}
       {panelVisibility.cells || panelVisibility.peers ? (
         <div ref={railRef} className="cknerv-mesh-rail" style={railStyle}>
           {panelVisibility.cells ? meshZone(
@@ -461,9 +463,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
             </div>,
           ) : null}
           {panelVisibility.peers ? meshZone(
-            selectedNode ? <NodeDetailPanel node={selectedNode} chain={chain} onClose={clearNet} style={PANEL_FLOW} />
-              : selectedPeer ? <PeerDetailPanel peer={selectedPeer} chain={chain} onClose={clearNet} style={PANEL_FLOW} />
-              : null,
+            selectedNode ? <NodeDetailPanel node={selectedNode} chain={chain} onClose={clearNet} style={PANEL_FLOW} /> : null,
             <div data-hud-panel="peers">
               <NetworkPanel summary={summary} consensus={consensus} ping={ping} vers={vers} syncRatio={syncRatio} colonyCount={colonyCount} enrichmentSource={enrichmentSource} networkAtlas={networkAtlas} style={PANEL_FLOW} />
             </div>,
