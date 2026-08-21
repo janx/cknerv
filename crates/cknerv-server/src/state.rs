@@ -741,6 +741,10 @@ fn apply_entity_mutation(store: &mut EntityStore, m: &Mutation) {
                     is_miner: *is_miner,
                     version: String::new(),
                     connections: 0,
+                    // Registration happens before the node has been asked
+                    // anything about itself; the identity arrives with the
+                    // first info poll.
+                    p2p_node_id: None,
                 });
             }
         }
@@ -748,10 +752,12 @@ fn apply_entity_mutation(store: &mut EntityStore, m: &Mutation) {
             id,
             version,
             connections,
+            p2p_node_id,
         } => {
             if let Some(existing) = store.chain_nodes.iter_mut().find(|n| n.id == *id) {
                 existing.version = version.clone();
                 existing.connections = *connections;
+                existing.p2p_node_id = p2p_node_id.clone();
             }
         }
         Mutation::PeersUpdated { peers } => {
@@ -1501,14 +1507,26 @@ mod tests {
             is_miner: false,
             at: 1,
         });
+        // Registration knows cknerv's key for the endpoint; only the info
+        // poll can learn the name the network knows it by.
+        assert_eq!(
+            s.entity_store.read().unwrap().chain_nodes[0].p2p_node_id,
+            None
+        );
         s.apply_mutation(Mutation::ChainNodeInfoUpdated {
             id: "ckb:local".into(),
             version: "0.116.1".into(),
             connections: 24,
+            p2p_node_id: Some("QmP61JintcHEXkVFq8RGBKA8L7Fq1rfMRvj4eQQn7YsCwd".into()),
         });
         let nodes = &s.entity_store.read().unwrap().chain_nodes;
         assert_eq!(nodes[0].version, "0.116.1");
         assert_eq!(nodes[0].connections, 24);
+        assert_eq!(nodes[0].id, "ckb:local", "the local key is never rewritten");
+        assert_eq!(
+            nodes[0].p2p_node_id.as_deref(),
+            Some("QmP61JintcHEXkVFq8RGBKA8L7Fq1rfMRvj4eQQn7YsCwd")
+        );
     }
 
     #[test]
@@ -1581,6 +1599,56 @@ mod tests {
         assert_eq!(snap["chain"]["tip"], 99);
         assert_eq!(snap["chain"]["total_blocks"], 1);
         assert_eq!(snap["revision"], 1);
+    }
+
+    /// A save written before nodes carried a network identity still loads,
+    /// and loads as silence rather than as a failure: cross-restart
+    /// compatibility is the constraint the field was added under.
+    #[test]
+    fn a_pre_identity_save_restores_with_an_unnamed_node() {
+        let s = ServerState::new();
+        s.load_entities(serde_json::json!({
+            "revision": 7,
+            "chain": {},
+            "chain_nodes": [{
+                "id": "ckb:local",
+                "label": "ckb-local",
+                "is_miner": false,
+                "version": "0.116.1",
+                "connections": 24
+            }]
+        }))
+        .expect("an older save is still readable");
+        let nodes = &s.entity_store.read().unwrap().chain_nodes;
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].p2p_node_id, None);
+    }
+
+    /// …and once a poll has learned it, the identity survives the restart it
+    /// was saved across.
+    #[test]
+    fn a_known_network_identity_survives_save_and_load() {
+        let s = ServerState::new();
+        s.apply_mutation(Mutation::ChainNodeRegistered {
+            id: "ckb:local".into(),
+            label: "ckb-local".into(),
+            is_miner: false,
+            at: 1,
+        });
+        s.apply_mutation(Mutation::ChainNodeInfoUpdated {
+            id: "ckb:local".into(),
+            version: "0.116.1".into(),
+            connections: 24,
+            p2p_node_id: Some("QmP61JintcHEXkVFq8RGBKA8L7Fq1rfMRvj4eQQn7YsCwd".into()),
+        });
+
+        let s2 = ServerState::new();
+        s2.load_entities(s.save_entities()).expect("load");
+        let snap = s2.snapshot();
+        assert_eq!(
+            snap["chain_nodes"][0]["p2p_node_id"],
+            "QmP61JintcHEXkVFq8RGBKA8L7Fq1rfMRvj4eQQn7YsCwd"
+        );
     }
 
     /// Anchor-stale enrichment is rejected; anchored semantics records

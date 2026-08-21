@@ -66,6 +66,15 @@ pub struct ChainNode {
     /// Active peer connection count (`local_node_info.connections`).
     #[serde(default)]
     pub connections: u64,
+    /// How the network knows this node: its own base58 peer id
+    /// (`local_node_info.node_id`), the same vocabulary `get_peers` names
+    /// every other node in. Distinct from [`ChainNode::id`], which is
+    /// cknerv's stable local key for the endpoint (`"ckb:local"`) and means
+    /// nothing outside this process. `None` when the node reported no id —
+    /// and when the state was restored from a save written before this
+    /// field existed, which is the same honest silence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub p2p_node_id: Option<String>,
 }
 
 /// Direction of a P2P connection relative to the observed local node.
@@ -224,10 +233,36 @@ mod tests {
             is_miner: false,
             version: "0.116.1".into(),
             connections: 24,
+            p2p_node_id: Some("QmP61JintcHEXkVFq8RGBKA8L7Fq1rfMRvj4eQQn7YsCwd".into()),
         };
         let v = serde_json::to_value(&n).expect("serialize");
         assert_eq!(v["version"], "0.116.1");
         assert_eq!(v["connections"], 24);
+        assert_eq!(
+            v["p2p_node_id"],
+            "QmP61JintcHEXkVFq8RGBKA8L7Fq1rfMRvj4eQQn7YsCwd"
+        );
+    }
+
+    /// A node restored from a save written before the network identity was
+    /// carried — and a node that never reported one — read the same: absent,
+    /// never a fabricated id, and never a failed load.
+    #[test]
+    fn chain_node_without_a_network_identity_round_trips_absent() {
+        let n: ChainNode = serde_json::from_value(serde_json::json!({
+            "id": "ckb:local",
+            "label": "ckb-local",
+            "is_miner": false,
+            "version": "0.116.1",
+            "connections": 24
+        }))
+        .expect("a pre-field save still loads");
+        assert_eq!(n.p2p_node_id, None);
+        let v = serde_json::to_value(&n).expect("serialize");
+        assert!(
+            v.get("p2p_node_id").is_none(),
+            "an unknown network identity must be omitted, not emitted empty"
+        );
     }
 
     #[test]

@@ -44,11 +44,68 @@ describe('entity stream peer handling', () => {
     cache = applyEntityDelta(cache, [
       {
         revision: 2,
-        mutation: { type: 'chain_node_info_updated', id: 'ckb:local', version: '0.116.1', connections: 24 },
+        mutation: {
+          type: 'chain_node_info_updated',
+          id: 'ckb:local',
+          version: '0.116.1',
+          connections: 24,
+          p2p_node_id: 'QmP61JintcHEXkVFq8RGBKA8L7Fq1rfMRvj4eQQn7YsCwd',
+        },
       },
     ]);
     expect(cache.chainNodes[0].version).toBe('0.116.1');
     expect(cache.chainNodes[0].connections).toBe(24);
+    // cknerv's key for the endpoint is untouched; the name the network knows
+    // it by arrives beside it.
+    expect(cache.chainNodes[0].id).toBe('ckb:local');
+    expect(cache.chainNodes[0].p2p_node_id).toBe(
+      'QmP61JintcHEXkVFq8RGBKA8L7Fq1rfMRvj4eQQn7YsCwd',
+    );
+
+    // A re-registration (the adapter re-registers whenever the label or
+    // miner flag moves) must not forget the identity only the info poll can
+    // learn.
+    cache = applyEntityDelta(cache, [
+      {
+        revision: 3,
+        mutation: {
+          type: 'chain_node_registered',
+          id: 'ckb:local',
+          label: 'ckb-local-renamed',
+          is_miner: false,
+          at: 3,
+        },
+      },
+    ]);
+    expect(cache.chainNodes[0].label).toBe('ckb-local-renamed');
+    expect(cache.chainNodes[0].p2p_node_id).toBe(
+      'QmP61JintcHEXkVFq8RGBKA8L7Fq1rfMRvj4eQQn7YsCwd',
+    );
+  });
+
+  it('a server that carries no network identity leaves the node unnamed', () => {
+    let cache = fromEntitiesSnapshot(1, {
+      chain: emptyChainEntityCache().chain,
+      chain_nodes: [
+        { id: 'ckb:local', label: 'ckb-local', is_miner: false, version: '', connections: 0 },
+      ],
+      peers: [],
+    });
+    // The pre-field wire shape: no `p2p_node_id` key at all. Reading it as
+    // absent is what keeps the node card's dossier honest on an old server.
+    cache = applyEntityDelta(cache, [
+      {
+        revision: 2,
+        mutation: {
+          type: 'chain_node_info_updated',
+          id: 'ckb:local',
+          version: '0.116.1',
+          connections: 24,
+        },
+      },
+    ]);
+    expect(cache.chainNodes[0].version).toBe('0.116.1');
+    expect(cache.chainNodes[0].p2p_node_id).toBeUndefined();
   });
 
   it('preserves chainNodes/peers references when a batch touches neither', () => {

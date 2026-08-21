@@ -102,6 +102,9 @@ export type Mutation =
       id: string;
       version: string;
       connections: number;
+      /** The node's own base58 peer id, as the network knows it. Omitted by
+       *  a node that reported none — and by every server older than it. */
+      p2p_node_id?: string | null;
     };
 
 /** Mutation paired with the EntityStore revision that produced it. Matches

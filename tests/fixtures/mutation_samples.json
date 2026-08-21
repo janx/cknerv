@@ -103,6 +103,13 @@
     "type": "chain_node_info_updated",
     "id": "ckb:local",
     "version": "0.116.1",
+    "connections": 24,
+    "p2p_node_id": "QmP61JintcHEXkVFq8RGBKA8L7Fq1rfMRvj4eQQn7YsCwd"
+  },
+  "ChainNodeInfoUpdatedWithoutP2pNodeId": {
+    "type": "chain_node_info_updated",
+    "id": "ckb:local",
+    "version": "0.116.1",
     "connections": 24
   }
 }

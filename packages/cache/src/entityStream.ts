@@ -100,19 +100,34 @@ function applyNodePeerDeltas(
         is_miner: m.is_miner,
         version: i >= 0 ? nodes[i].version : '',
         connections: i >= 0 ? nodes[i].connections : 0,
+        // Registration says nothing about the node's own network identity;
+        // only the info poll learns it, so a re-registration must not
+        // forget what the last one carried.
+        p2p_node_id: i >= 0 ? nodes[i].p2p_node_id : undefined,
       };
       nodes = i >= 0
         ? nodes.map((n, j) => (j === i ? row : n))
         : [...nodes, row];
     } else if (m.type === 'chain_node_info_updated') {
       const i = nodes.findIndex((n) => n.id === m.id);
+      // An identity the node stopped reporting is absent, not remembered:
+      // this mutation is a whole refresh of what the node says about itself.
+      const p2pNodeId = m.p2p_node_id ?? undefined;
       if (
         i >= 0
         && (nodes[i].version !== m.version
-          || nodes[i].connections !== m.connections)
+          || nodes[i].connections !== m.connections
+          || (nodes[i].p2p_node_id ?? undefined) !== p2pNodeId)
       ) {
         nodes = nodes.map((n, j) =>
-          j === i ? { ...n, version: m.version, connections: m.connections } : n,
+          j === i
+            ? {
+              ...n,
+              version: m.version,
+              connections: m.connections,
+              p2p_node_id: p2pNodeId,
+            }
+            : n,
         );
       }
     }

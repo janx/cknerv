@@ -91,11 +91,20 @@ pub(crate) fn parse_sync_state(result: &Value) -> (bool, u64) {
     (ibd, best)
 }
 
-/// Parse `local_node_info` → (version, connections).
-pub(crate) fn parse_local_node_info(result: &Value) -> (String, u64) {
+/// Parse `local_node_info` → (version, connections, p2p node id).
+///
+/// The node id is the base58 peer id the network knows this node by — the
+/// same vocabulary `get_peers` reports its peers in. It is optional here:
+/// a node that names none stays unnamed rather than being given an id we
+/// invented.
+pub(crate) fn parse_local_node_info(result: &Value) -> (String, u64, Option<String>) {
     let version = result["version"].as_str().unwrap_or("").to_string();
     let connections = opt_u64(&result["connections"]).unwrap_or(0);
-    (version, connections)
+    let p2p_node_id = result["node_id"]
+        .as_str()
+        .filter(|id| !id.is_empty())
+        .map(str::to_string);
+    (version, connections, p2p_node_id)
 }
 
 /// Build the mutation set for one network poll from already-fetched
@@ -109,7 +118,7 @@ pub(crate) fn network_mutations(
 ) -> Result<Vec<Mutation>> {
     let peers = parse_peers(peers_json)?;
     let (ibd, best_known_block) = parse_sync_state(sync_json);
-    let (version, connections) = parse_local_node_info(lni_json);
+    let (version, connections, p2p_node_id) = parse_local_node_info(lni_json);
     Ok(vec![
         Mutation::PeersUpdated { peers },
         Mutation::ChainSyncUpdated {
@@ -120,6 +129,7 @@ pub(crate) fn network_mutations(
             id: node_id.to_string(),
             version,
             connections,
+            p2p_node_id,
         },
     ])
 }
@@ -153,6 +163,11 @@ fn peers_structural_key(peers: &[Peer]) -> Vec<PeerStructuralKey> {
     key
 }
 
+/// Everything the observed node reports about itself: version, connection
+/// count, and the peer id the network knows it by. The cknerv-side node id
+/// is constant per adapter and so cannot key anything.
+type NodeInfoKey = (String, u64, Option<String>);
+
 fn refresh_due(tick: u64, emitted_at: u64) -> bool {
     tick.saturating_sub(emitted_at) >= NETWORK_TELEMETRY_REFRESH_TICKS
 }
@@ -165,8 +180,10 @@ pub(crate) struct NetworkPollDedupe {
     tick: u64,
     peers: Option<(Vec<PeerStructuralKey>, u64)>,
     sync: Option<((bool, u64), u64)>,
-    // Keyed by (version, connections); the id is constant per adapter.
-    node_info: Option<((String, u64), u64)>,
+    // The network identity is part of the key, not telemetry: the first poll
+    // that learns it must reach clients now, rather than at the end of a
+    // refresh window.
+    node_info: Option<(NodeInfoKey, u64)>,
 }
 
 impl NetworkPollDedupe {
@@ -206,9 +223,10 @@ impl NetworkPollDedupe {
                 Mutation::ChainNodeInfoUpdated {
                     version,
                     connections,
+                    p2p_node_id,
                     ..
                 } => {
-                    let key = (version.clone(), *connections);
+                    let key = (version.clone(), *connections, p2p_node_id.clone());
                     let admit = self
                         .node_info
                         .as_ref()
@@ -302,9 +320,32 @@ mod tests {
     }
 
     #[test]
-    fn parse_local_node_info_reads_version_connections() {
-        let v = serde_json::json!({ "version": "0.116.1", "connections": "0x18" });
-        assert_eq!(parse_local_node_info(&v), ("0.116.1".to_string(), 24));
+    fn parse_local_node_info_reads_version_connections_and_network_identity() {
+        let v = serde_json::json!({
+            "version": "0.116.1",
+            "connections": "0x18",
+            "node_id": "QmP61JintcHEXkVFq8RGBKA8L7Fq1rfMRvj4eQQn7YsCwd"
+        });
+        assert_eq!(
+            parse_local_node_info(&v),
+            (
+                "0.116.1".to_string(),
+                24,
+                Some("QmP61JintcHEXkVFq8RGBKA8L7Fq1rfMRvj4eQQn7YsCwd".to_string())
+            )
+        );
+    }
+
+    #[test]
+    fn parse_local_node_info_leaves_a_missing_or_empty_identity_absent() {
+        let missing = serde_json::json!({ "version": "0.116.1", "connections": "0x18" });
+        assert_eq!(parse_local_node_info(&missing).2, None);
+        let empty = serde_json::json!({
+            "version": "0.116.1",
+            "connections": "0x18",
+            "node_id": ""
+        });
+        assert_eq!(parse_local_node_info(&empty).2, None);
     }
 
     fn poll(latency: &str, tip: u64, peer_ids: &[&str]) -> Vec<Mutation> {
@@ -376,11 +417,40 @@ mod tests {
         assert_eq!(refreshed, 3);
     }
 
+    /// The identity the node reports is the only one the wider network can
+    /// use to look this node up, so a poll that learns it must not wait for
+    /// the telemetry refresh window to pass it on.
+    #[test]
+    fn dedupe_admits_a_newly_learned_network_identity() {
+        let peers = serde_json::json!([]);
+        let sync = serde_json::json!({ "ibd": false, "best_known_block_number": "0x5" });
+        let anonymous = serde_json::json!({ "version": "0.116.1", "connections": "0x2" });
+        let named = serde_json::json!({
+            "version": "0.116.1",
+            "connections": "0x2",
+            "node_id": "QmA"
+        });
+        let mut dedupe = NetworkPollDedupe::default();
+        dedupe.filter(network_mutations(&peers, &sync, &anonymous, "ckb:local").expect("ok"));
+        let admitted =
+            dedupe.filter(network_mutations(&peers, &sync, &named, "ckb:local").expect("ok"));
+        assert_eq!(admitted.len(), 1);
+        assert!(matches!(
+            &admitted[0],
+            Mutation::ChainNodeInfoUpdated { p2p_node_id, .. }
+                if p2p_node_id.as_deref() == Some("QmA")
+        ));
+    }
+
     #[test]
     fn network_mutations_emits_three() {
         let peers = serde_json::json!([]);
         let sync = serde_json::json!({ "ibd": false, "best_known_block_number": "0x5" });
-        let lni = serde_json::json!({ "version": "0.116.1", "connections": "0x2" });
+        let lni = serde_json::json!({
+            "version": "0.116.1",
+            "connections": "0x2",
+            "node_id": "QmLocal"
+        });
         let muts = network_mutations(&peers, &sync, &lni, "ckb:local").expect("ok");
         assert_eq!(muts.len(), 3);
         assert!(matches!(muts[0], Mutation::PeersUpdated { .. }));
@@ -396,10 +466,14 @@ mod tests {
                 id,
                 version,
                 connections,
+                p2p_node_id,
             } => {
+                // cknerv's own key for the endpoint, and the name the network
+                // knows it by, travel side by side and are never confused.
                 assert_eq!(id, "ckb:local");
                 assert_eq!(version, "0.116.1");
                 assert_eq!(*connections, 2);
+                assert_eq!(p2p_node_id.as_deref(), Some("QmLocal"));
             }
             _ => panic!("expected ChainNodeInfoUpdated"),
         }

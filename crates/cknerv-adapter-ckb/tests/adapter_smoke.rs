@@ -1194,13 +1194,18 @@ async fn adapter_polls_network_and_emits_peer_sync_and_node_info() {
         "ChainSyncUpdated not emitted with ibd=false/best=100; emitted: {emitted:#?}"
     );
 
-    // ChainNodeInfoUpdated: id == adapter node id, version, connections 0x8 == 8.
+    // ChainNodeInfoUpdated: id == adapter node id, version, connections 0x8 == 8,
+    // and the node's own peer id carried through from `local_node_info` — the
+    // cknerv-side key and the network's name for the same node, side by side.
     assert!(
         emitted.iter().any(|m| matches!(
             m,
-            Mutation::ChainNodeInfoUpdated { id, version, connections: 8 }
-                if id == "ckb:test" && version == "0.116.1"
+            Mutation::ChainNodeInfoUpdated { id, version, connections: 8, p2p_node_id }
+                if id == "ckb:test"
+                    && version == "0.116.1"
+                    && p2p_node_id.as_deref() == Some("QmTest")
         )),
-        "ChainNodeInfoUpdated not emitted with id/version/connections; emitted: {emitted:#?}"
+        "ChainNodeInfoUpdated not emitted with id/version/connections/p2p_node_id; \
+         emitted: {emitted:#?}"
     );
 }

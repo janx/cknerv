@@ -74,6 +74,12 @@ export interface ChainNode {
   version: string;
   /** Active peer connection count. */
   connections: number;
+  /** How the network knows this node: its own base58 peer id
+   *  (`local_node_info.node_id`), the same vocabulary every `Peer.node_id`
+   *  is written in. `id` above is cknerv's local key for the endpoint and
+   *  means nothing outside the server. Omitted by a node that reported no
+   *  identity, and by every server older than this field. */
+  p2p_node_id?: string | null;
 }
 
 export type PeerDirection = 'inbound' | 'outbound';

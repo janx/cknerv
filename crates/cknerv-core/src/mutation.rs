@@ -168,6 +168,11 @@ pub enum Mutation {
         id: String,
         version: String,
         connections: u64,
+        /// The node's own base58 peer id, as the network knows it
+        /// (`local_node_info.node_id`). Optional: absent from every server
+        /// that predates the field, and from any node that reported none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        p2p_node_id: Option<String>,
     },
 
     /// SERVER-INTERNAL (D6): curated display-reservoir handoff. Synthesized
@@ -334,9 +339,26 @@ mod tests {
             id: "ckb:local".into(),
             version: "0.116.1".into(),
             connections: 24,
+            p2p_node_id: Some("QmP61JintcHEXkVFq8RGBKA8L7Fq1rfMRvj4eQQn7YsCwd".into()),
         };
         let nv = serde_json::to_value(&n).expect("ser");
         assert_eq!(nv["type"], "chain_node_info_updated");
+        assert_eq!(
+            nv["p2p_node_id"],
+            "QmP61JintcHEXkVFq8RGBKA8L7Fq1rfMRvj4eQQn7YsCwd"
+        );
         assert_eq!(serde_json::from_value::<Mutation>(nv).unwrap(), n);
+
+        // A node that named no network identity: the key never reaches the
+        // wire, and a frame without it is still a whole mutation.
+        let anonymous = Mutation::ChainNodeInfoUpdated {
+            id: "ckb:local".into(),
+            version: "0.116.1".into(),
+            connections: 24,
+            p2p_node_id: None,
+        };
+        let av = serde_json::to_value(&anonymous).expect("ser");
+        assert!(av.get("p2p_node_id").is_none());
+        assert_eq!(serde_json::from_value::<Mutation>(av).unwrap(), anonymous);
     }
 }

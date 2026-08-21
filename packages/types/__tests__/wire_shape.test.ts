@@ -60,6 +60,24 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
         'chain_node_info_updated',
       ]),
     );
+    // The observed node's own network identity is optional on the wire, so
+    // the fixture carries both halves: a node that named itself, and one
+    // that did not (which is also every server older than the field). The
+    // second must read as absent — never as an id, never as an empty one.
+    const named = samples.ChainNodeInfoUpdated as Extract<
+      Mutation,
+      { type: 'chain_node_info_updated' }
+    >;
+    const unnamed = samples.ChainNodeInfoUpdatedWithoutP2pNodeId as Extract<
+      Mutation,
+      { type: 'chain_node_info_updated' }
+    >;
+    // `id` is cknerv's key for the endpoint; `p2p_node_id` is the name the
+    // network knows it by, in the same base58 vocabulary as every peer id.
+    expect(named.id).toBe('ckb:local');
+    expect(named.p2p_node_id).toMatch(/^Qm/);
+    expect(unnamed.id).toBe(named.id);
+    expect(unnamed.p2p_node_id).toBeUndefined();
   });
 
   it('snapshot_chain.json has ChainEntry shape', () => {

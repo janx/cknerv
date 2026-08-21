@@ -1224,7 +1224,14 @@ export default function App({
   // the dossier describes the node at the far end, not the link that dropped.
   const peerSightingEnabled = enrichmentConfig.enabled
     && semanticsCache.source.capabilities.includes('peer_sighting');
-  const inspectedNetNodeId = inspectedPeer?.node_id ?? selectedNode?.id ?? null;
+  // The crawler indexes nodes by their peer id, so the local node has to be
+  // asked about under the name the network knows it by — never under
+  // cknerv's own key for the endpoint. A server that carries no identity for
+  // it leaves that key in place, where the plate still says the honest thing.
+  const inspectedNetNodeId = inspectedPeer?.node_id
+    ?? selectedNode?.p2p_node_id
+    ?? selectedNode?.id
+    ?? null;
   // The memo's horizon. A source that reconnected, went stale or was swapped
   // out is a different observer, and its predecessor's sightings are not its.
   const sightingSourceIdentity =
