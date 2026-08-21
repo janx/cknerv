@@ -36,6 +36,7 @@ import PeerDetailPanel from './PeerDetailPanel';
 import BackfillBar from './BackfillBar';
 import CellsPanel from './CellsPanel';
 import StageCapacityPanel from './StageCapacityPanel';
+import RenderStatsPanel from './RenderStatsPanel';
 import { useCellChurn } from './useCellChurn';
 import WarningBar from './WarningBar';
 import { useReducedMotion } from './useReducedMotion';
@@ -62,7 +63,6 @@ const SCAN_STYLE: CSSProperties = { position: 'absolute', inset: 0, pointerEvent
 const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 14, display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
 const LEFT_PANEL_GAP_PX = 12;
 const CHAIN_PANEL_WIDTH_PX = 340;
-const DAO_PANEL_WIDTH_PX = 300;
 // Left HUD layout: the upper information cluster may scroll, while PULSE uses an
 // auto margin as a true bottom-left anchor. The two regions share one bounded
 // flex column, so an unusually tall CKB/DAO readout can never overlap ECG·04.
@@ -71,20 +71,37 @@ const LEFT_HUD_STYLE: CSSProperties = { position: 'absolute', left: 14, bottom: 
 // stay click-through: otherwise its transparent tail intercepts CellGalaxy
 // pointer events far below the actual CKB / DAO panels. The concrete scroll
 // panes opt back into pointer input individually.
+/** One scrollable column per cluster panel, so a short viewport scrolls the
+ *  panel instead of clipping it. */
+const PANEL_SCROLL_STYLE: CSSProperties = {
+  flex: '0 0 auto',
+  minHeight: 0,
+  maxHeight: '100%',
+  overflowX: 'hidden',
+  overflowY: 'auto',
+  overscrollBehavior: 'contain',
+  scrollbarWidth: 'thin',
+  scrollbarColor: 'rgba(255,152,48,.35) transparent',
+  pointerEvents: 'auto',
+};
+
 const CHAIN_CLUSTER_STYLE: CSSProperties = { display: 'flex', flex: '1 1 auto', flexDirection: 'row', gap: LEFT_PANEL_GAP_PX, alignItems: 'flex-start', minHeight: 0, maxWidth: '100%', overflowX: 'auto', overflowY: 'hidden', overscrollBehavior: 'contain', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,152,48,.35) transparent', pointerEvents: 'none' };
 // Narrow: the selected network detail owns the immediately visible rail area;
 // its mesh follows below.
 const MESH_ZONE_COL: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
 const PANEL_FLOW: CSSProperties = { position: 'relative' };
 
-const HUD_PANEL_IDS = ['chain', 'dao', 'pulse', 'stage', 'cells', 'peers'] as const;
+const HUD_PANEL_IDS = ['chain', 'stage', 'render', 'dao', 'pulse', 'cells', 'peers'] as const;
 type HudPanelId = typeof HUD_PANEL_IDS[number];
 type HudPanelVisibility = Record<HudPanelId, boolean>;
 const DEFAULT_PANEL_VISIBILITY: HudPanelVisibility = {
   chain: true,
+  // The two dev instruments are opt-in: they dock beside CKB·01 when asked
+  // for and cost nothing when not.
+  stage: false,
+  render: false,
   dao: true,
   pulse: true,
-  stage: true,
   cells: true,
   peers: true,
 };
@@ -145,10 +162,6 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
   const mobileTopBar = useMediaQuery('(max-width: 560px)');
   const compactTopBar = mobileTopBar || narrowRail || compactTopBarWidth;
   const shortViewport = useMediaQuery('(max-height: 860px)');
-  // The mesh rail stacks (details below their mesh, rail scrollable) whenever
-  // space is tight in EITHER axis: narrow windows as before, and now short
-  // ones, where three summary panels outgrow the viewport at any width.
-  const stackedRail = narrowRail || shortViewport;
   const [panelVisibility, setPanelVisibility] = useState<HudPanelVisibility>(
     DEFAULT_PANEL_VISIBILITY,
   );
@@ -166,6 +179,18 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
       label: 'COMMON KNOWLEDGE BASE',
       visible: panelVisibility.chain,
     },
+    {
+      id: 'stage',
+      code: 'STAGE·07',
+      label: 'STAGE SAMPLE',
+      visible: panelVisibility.stage,
+    },
+    {
+      id: 'render',
+      code: 'GL·08',
+      label: 'RENDER STATS',
+      visible: panelVisibility.render,
+    },
     ...(daoPanelAvailable ? [{
       id: 'dao',
       code: 'DAO·05',
@@ -177,12 +202,6 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
       code: 'ECG·04',
       label: 'PULSE',
       visible: panelVisibility.pulse,
-    },
-    {
-      id: 'stage',
-      code: 'STAGE·06',
-      label: 'STAGE CAPACITY',
-      visible: panelVisibility.stage,
     },
     {
       id: 'cells',
@@ -205,7 +224,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
   // fans left via absolute positioning. NARROW — detail comes first, then its
   // mesh, and the rail scrolls only when needed.
   const meshZone = (detail: ReactNode, mesh: ReactNode): ReactNode =>
-    stackedRail ? (
+    narrowRail ? (
       <div style={MESH_ZONE_COL}>{detail}{mesh}</div>
     ) : (
       <div style={{ position: 'relative' }}>
@@ -246,7 +265,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
     filter: cellInspectionActive ? 'saturate(0.55) brightness(0.72)' : undefined,
     transition: reduced ? undefined : 'opacity 180ms ease, filter 180ms ease',
   };
-  const railStyle: CSSProperties = stackedRail
+  const railStyle: CSSProperties = narrowRail
     ? { ...MESH_RAIL_STYLE, ...ambientHudStyle, top: contentTop, maxHeight: `calc(100vh - ${contentTop + 14}px)`, overflowX: 'hidden', overflowY: 'auto', pointerEvents: railScrolls ? 'auto' : 'none', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,152,48,.35) transparent' }
     : { ...MESH_RAIL_STYLE, ...ambientHudStyle, top: contentTop };
 
@@ -255,8 +274,8 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
   // unchanged, so this doesn't churn renders.
   useEffect(() => {
     const el = railRef.current;
-    setRailScrolls(!!el && stackedRail && el.scrollHeight > el.clientHeight + 1);
-  }, [stackedRail, panelVisibility.stage, panelVisibility.cells, panelVisibility.peers, selectedNode, selectedPeer, now]);
+    setRailScrolls(!!el && narrowRail && el.scrollHeight > el.clientHeight + 1);
+  }, [narrowRail, panelVisibility.cells, panelVisibility.peers, selectedNode, selectedPeer, now]);
 
   // reorg delta across renders
   const prevReorgs = useRef(chain.reorgs);
@@ -318,13 +337,15 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
       ) : null}
       <WarningBar level={alert.level} trigger={alert.trigger} reducedMotion={reduced} top={topBarHeight + (streamInterrupted ? 30 : 0)} />
       {chainPanelVisible
+      || panelVisibility.stage
+      || panelVisibility.render
       || daoPanelVisible
       || panelVisibility.pulse ? (
         <div
           data-hud-left-rail
           style={{ ...LEFT_HUD_STYLE, ...ambientHudStyle, top: contentTop, maxWidth: 'calc(100vw - 28px)' }}
         >
-          {chainPanelVisible || daoPanelVisible ? (
+          {chainPanelVisible || panelVisibility.stage || panelVisibility.render ? (
             <div
               className="cknerv-chain-cluster"
               data-hud-chain-cluster
@@ -335,17 +356,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
                   className="cknerv-chain-panel-scroll"
                   data-hud-panel="chain"
                   data-chain-panel-scroll
-                  style={{
-                    flex: '0 0 auto',
-                    minHeight: 0,
-                    maxHeight: '100%',
-                    overflowX: 'hidden',
-                    overflowY: 'auto',
-                    overscrollBehavior: 'contain',
-                    scrollbarWidth: 'thin',
-                    scrollbarColor: 'rgba(255,152,48,.35) transparent',
-                    pointerEvents: 'auto',
-                  }}
+                  style={PANEL_SCROLL_STYLE}
                 >
                   <BlockchainReadout
                     chain={chain}
@@ -360,50 +371,72 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
                   />
                 </div>
               ) : null}
+              {/* The two opt-in dev instruments dock in a row beside CKB·01,
+                  keeping the bottom-right corner free for the Jukebox chip. */}
+              {panelVisibility.stage ? (
+                <div
+                  className="cknerv-chain-panel-scroll"
+                  data-hud-panel="stage"
+                  style={PANEL_SCROLL_STYLE}
+                >
+                  <StageCapacityPanel
+                    stats={cellsStats}
+                    scriptRegistry={scriptRegistry}
+                    model={cellPopulation}
+                    style={PANEL_FLOW}
+                  />
+                </div>
+              ) : null}
+              {panelVisibility.render ? (
+                <div
+                  className="cknerv-chain-panel-scroll"
+                  data-hud-panel="render"
+                  style={PANEL_SCROLL_STYLE}
+                >
+                  <RenderStatsPanel style={PANEL_FLOW} />
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          {daoPanelVisible || panelVisibility.pulse ? (
+            <div
+              data-hud-bottom-stack
+              style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: LEFT_PANEL_GAP_PX, alignItems: 'flex-start', minHeight: 0, maxWidth: '100%', flex: '0 0 auto' }}
+            >
               {daoPanelVisible ? (
                 <div
                   className="cknerv-chain-panel-scroll"
                   data-hud-panel="dao"
-                  style={{
-                    flex: '0 0 auto',
-                    minHeight: 0,
-                    maxHeight: '100%',
-                    overflowX: 'hidden',
-                    overflowY: 'auto',
-                    overscrollBehavior: 'contain',
-                    scrollbarWidth: 'thin',
-                    scrollbarColor: 'rgba(255,152,48,.35) transparent',
-                    pointerEvents: 'auto',
-                  }}
+                  style={PANEL_SCROLL_STYLE}
                 >
                   <DaoStatePanel
                     source={enrichmentSource}
                     record={daoState}
                     nowMs={now}
-                    style={{ ...PANEL_FLOW, width: `min(${DAO_PANEL_WIDTH_PX}px, calc(100vw - 58px))` }}
+                    style={{ ...PANEL_FLOW, width: pulsePanelWidth }}
                   />
                 </div>
               ) : null}
-            </div>
-          ) : null}
-          {panelVisibility.pulse ? (
-            <div
-              data-hud-panel="pulse"
-              data-hud-pulse-anchor
-              style={{ position: 'relative', flex: '0 0 auto', marginTop: 'auto', maxWidth: '100%' }}
-            >
-              <BlockCadenceEcg
-                intervalsMs={chain.recent_block_intervals_ms}
-                sizes={chain.recent_block_sizes}
-                txCounts={chain.recent_block_tx_counts}
-                lastBlockTsMs={chain.last_block_ts_ms ?? null}
-                targetMs={targetMs}
-                avgMs={avgMs}
-                gapMs={msSinceLast}
-                condition={condition}
-                reducedMotion={reduced}
-                style={{ ...PANEL_FLOW, width: pulsePanelWidth }}
-              />
+              {panelVisibility.pulse ? (
+                <div
+                  data-hud-panel="pulse"
+                  data-hud-pulse-anchor
+                  style={{ position: 'relative', flex: '0 0 auto', maxWidth: '100%' }}
+                >
+                  <BlockCadenceEcg
+                    intervalsMs={chain.recent_block_intervals_ms}
+                    sizes={chain.recent_block_sizes}
+                    txCounts={chain.recent_block_tx_counts}
+                    lastBlockTsMs={chain.last_block_ts_ms ?? null}
+                    targetMs={targetMs}
+                    avgMs={avgMs}
+                    gapMs={msSinceLast}
+                    condition={condition}
+                    reducedMotion={reduced}
+                    style={{ ...PANEL_FLOW, width: pulsePanelWidth }}
+                  />
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -411,19 +444,8 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
       {/* MESH RAIL — fixed summary telemetry only. Cell inspection now follows
           the selected Cell in scene space; node / peer detail stays with the
           PEER zone because those entities belong to the network rail. */}
-      {panelVisibility.stage || panelVisibility.cells || panelVisibility.peers ? (
+      {panelVisibility.cells || panelVisibility.peers ? (
         <div ref={railRef} className="cknerv-mesh-rail" style={railStyle}>
-          {panelVisibility.stage ? meshZone(
-            null,
-            <div data-hud-panel="stage">
-              <StageCapacityPanel
-                stats={cellsStats}
-                scriptRegistry={scriptRegistry}
-                model={cellPopulation}
-                style={PANEL_FLOW}
-              />
-            </div>,
-          ) : null}
           {panelVisibility.cells ? meshZone(
             null,
             <div data-hud-panel="cells">

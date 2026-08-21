@@ -1,25 +1,28 @@
 import { useEffect, useRef } from 'react';
+import { useSyncExternalStore } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
-import { useControls } from 'leva';
-import { RENDER_STATS_TOGGLE, computeRuntimeStats, setStats } from './renderStatsStore';
+import {
+  computeRuntimeStats, getStatsDemand, setStats, subscribeStatsDemand,
+} from './renderStatsStore';
 
 const UPDATE_INTERVAL_MS = 250;
 
 export interface RenderStatsSamplerProps {
-  /** Enable sampling independently of the Leva toggle. Intended for deterministic
-   *  review/performance routes; ordinary dashboards keep the toggle as the gate. */
+  /** Enable sampling independently of panel demand. Intended for deterministic
+   *  review/performance routes; ordinary dashboards sample while GL·08 is mounted. */
   forceEnabled?: boolean;
 }
 
-/** Samples gl.info every 250ms into the render-stats store when the ` panel's
- *  "render stats" toggle is on (or a review route explicitly forces it).
+/** Samples gl.info every 250ms into the render-stats store while a reader
+ *  demands it — the GL·08 panel retains a demand for exactly its lifetime —
+ *  or while a review route explicitly forces it.
  *  Mount once inside <Canvas>. Off by default:
  *  useFrame early-returns and gl.info.autoReset is left at R3F's default, so
  *  it costs nothing and mutates no renderer state until enabled. Uses raw
  *  useFrame (not useSimFrame) — perf must ignore pause/time-scale. */
 export default function RenderStatsSampler({ forceEnabled = false }: RenderStatsSamplerProps): null {
-  const { renderStats } = useControls(RENDER_STATS_TOGGLE);
-  const enabled = forceEnabled || renderStats;
+  const demanded = useSyncExternalStore(subscribeStatsDemand, getStatsDemand, getStatsDemand);
+  const enabled = forceEnabled || demanded;
   const gl = useThree((s) => s.gl);
   const frames = useRef(0);
   const lastAt = useRef(0);

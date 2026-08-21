@@ -275,12 +275,12 @@ describe('the block', () => {
   it('holds local truth only, with the chain mix present as a labeled comparison', () => {
     const text = textOf('chain-scope-mainnet');
 
-    expect(text).toContain('STAGE CAPACITY');
+    expect(text).toContain('STAGE SAMPLE');
     // Its own panel identity, in the shared header system.
     expect(text).toContain('样本');
-    expect(text).toContain('STAGE·06');
-    // Capacity is state, so it is spelled in CK-bytes like the chain side.
-    expect(text).toContain('1.21 CK-GB');
+    expect(text).toContain('STAGE·07');
+    // Capacity is a CKB amount, so it reads in the HUD-wide K/M/G family.
+    expect(text).toContain('1.21 G CKB');
     expect(text).not.toContain('CHAIN CAPACITY');
     expect(text).not.toContain('Live capacity');
     expect(text).not.toContain('Chain live');
@@ -411,7 +411,7 @@ describe('the review scenarios', () => {
       const { container, unmount } = render(
         <StageCapacityPanel stats={stats} model={entry.model} />,
       );
-      expect(container.textContent, entry.id).toContain('STAGE CAPACITY');
+      expect(container.textContent, entry.id).toContain('STAGE SAMPLE');
       expect(
         container.querySelector('[data-population-scope-claim]'),
         entry.id,

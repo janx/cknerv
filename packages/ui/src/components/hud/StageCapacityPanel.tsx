@@ -8,7 +8,7 @@ import {
   lockFamilyBuckets,
   type ScriptFamilyBucket,
 } from '../../derives/scriptFamilies.derive';
-import { ASSET_COLORS, CLASS_MIX_COLORS, LOCK_COLORS, formatCkBytes } from './cellFormat';
+import { ASSET_COLORS, CLASS_MIX_COLORS, LOCK_COLORS, formatCkb } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
 import { HudPanel, PanelHeader, StatRow } from './primitives';
 import {
@@ -209,15 +209,15 @@ export default function StageCapacityPanel({ stats, scriptRegistry, model, style
 
   return (
     <HudPanel style={{ width: 302, ...style }}>
-      <PanelHeader en="STAGE CAPACITY" cjk="样本" idx="STAGE·06" accent={HUD_COLORS.cyanWire} />
+      <PanelHeader en="STAGE SAMPLE" cjk="样本" idx="STAGE·07" accent={HUD_COLORS.cyanWire} />
       <div
         aria-label="Stage capacity"
         data-stage-capacity
         data-population-scope-claim={model ? model.scope : undefined}
       >
         <StatRow label="Capacity">
-          <span title="Sum of capacity over retained live Cells. 1 CKB buys 1 byte of state.">
-            {formatCkBytes(stats.capacityShannons / 1e8)}
+          <span title="Sum of capacity over retained live Cells · 1 CKB = 1 CKByte of state">
+            {formatCkb(stats.capacityShannons)}
           </span>
         </StatRow>
 

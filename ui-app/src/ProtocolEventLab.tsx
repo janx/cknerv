@@ -615,7 +615,7 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
           mixBlendMode: 'screen',
         }}
       />
-      {showRenderStats ? <RenderStatsPanel forceVisible /> : null}
+      {showRenderStats ? <RenderStatsPanel /> : null}
       <header style={{
         position: 'absolute',
         zIndex: 5,

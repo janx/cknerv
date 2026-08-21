@@ -9,13 +9,12 @@
 
 import { useEffect, useState } from 'react';
 import { Leva, useControls } from 'leva';
-import { QUALITY_MODE_CONTROL, RENDER_STATS_TOGGLE } from '@cknerv/ui';
+import { QUALITY_MODE_CONTROL } from '@cknerv/ui';
 
 export default function Tweaks() {
   // Registered here (before <Canvas>) so this top-level control lands at the
   // TOP of the leva panel, above the tweak folders. The sampler + panel read
   // the same control (leva dedups by key).
-  useControls(RENDER_STATS_TOGGLE);
   useControls('Time', QUALITY_MODE_CONTROL);
 
   const [shown, setShown] = useState(() => {

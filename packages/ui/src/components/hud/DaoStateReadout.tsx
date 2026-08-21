@@ -7,7 +7,7 @@ import {
   daoStateVisualState,
   deriveDaoStateVisual,
 } from '../../derives/daoState.derive';
-import { formatAge } from './cellFormat';
+import { formatAge, formatCkb } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
 import { ReadoutHeader } from './primitives';
 
@@ -22,29 +22,6 @@ function exactCkb(amount: bigint): string {
   return `${whole.toLocaleString('en-US')}${fraction ? `.${fraction}` : ''} CKB`;
 }
 
-function formatCkb(amount: bigint, signed = false): string {
-  const negative = amount < 0n;
-  const absolute = negative ? -amount : amount;
-  const units = [
-    { threshold: 1_000_000_000n * SHANNONS_PER_CKB, suffix: 'B CKB' },
-    { threshold: 1_000_000n * SHANNONS_PER_CKB, suffix: 'M CKB' },
-    { threshold: 1_000n * SHANNONS_PER_CKB, suffix: 'K CKB' },
-  ];
-  const unit = units.find((candidate) => absolute >= candidate.threshold);
-  const body = unit
-    ? (() => {
-      const hundredths = (absolute * 100n + unit.threshold / 2n) / unit.threshold;
-      const whole = hundredths / 100n;
-      const fraction = (hundredths % 100n)
-        .toString()
-        .padStart(2, '0')
-        .replace(/0+$/, '');
-      return `${whole.toLocaleString('en-US')}${fraction ? `.${fraction}` : ''} ${unit.suffix}`;
-    })()
-    : exactCkb(absolute);
-  const sign = negative ? '−' : signed && amount > 0n ? '+' : '';
-  return `${sign}${body}`;
-}
 
 function formatApc(bps: number): string {
   return `${(bps / 100).toFixed(2)}%`;

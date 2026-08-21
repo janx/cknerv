@@ -6,7 +6,7 @@ import type {
   SemanticScript,
   TransactionSemanticRecord,
 } from '@cknerv/types';
-import { formatBlockRef, formatSemanticAssetAmount } from './cellFormat';
+import { formatBlockRef, formatSemanticAssetAmount , formatCkb } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS, rgba, HUD_TYPE } from './hudTheme';
 
 export { formatSemanticAssetAmount } from './cellFormat';
@@ -536,6 +536,10 @@ function formatShannons(value: string, signed = false): string {
     const sign = amount < 0n ? '−' : signed && amount > 0n ? '+' : '';
     const absolute = amount < 0n ? -amount : amount;
     if (absolute < 1_000_000n) return `${sign}${absolute} sh`;
+    // Above dust, amounts join the HUD-wide K/M/G CKB family; below the K
+    // tier they keep more of their fraction than the shared two-hundredth
+    // rounding, because semantic facets are read for exactness.
+    if (absolute >= 1_000n * 100_000_000n) return formatCkb(amount, signed);
     const whole = absolute / 100_000_000n;
     const fraction = ((absolute % 100_000_000n) / 1_000n)
       .toString()

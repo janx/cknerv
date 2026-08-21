@@ -105,10 +105,10 @@ describe('BlockchainReadout', () => {
     expect(container.textContent).toContain('共识基');
     // Capacity is a different scope per surface now: the chain section
     // appears only with a proven chain measurement, and the local slice
-    // lives on the mesh rail as its own STAGE CAPACITY panel — never as a
+    // lives on the mesh rail as its own STAGE SAMPLE panel — never as a
     // section of this one.
     expect(container.textContent).not.toContain('CHAIN CAPACITY');
-    expect(container.textContent).not.toContain('STAGE CAPACITY');
+    expect(container.textContent).not.toContain('STAGE SAMPLE');
     expect(container.textContent).not.toContain('Interval');
     expect(container.textContent).not.toContain('NERVOS DAO');
     expect(container.textContent).not.toContain('ACTIVITY');
@@ -230,7 +230,7 @@ describe('BlockchainReadout', () => {
     expect(canonicalAt).toBeLessThan(chainCapacityAt);
     expect(chainCapacityAt).toBeLessThan(horizonAt);
     expect(horizonAt).toBeLessThan(activityAt);
-    expect(text).not.toContain('STAGE CAPACITY');
+    expect(text).not.toContain('STAGE SAMPLE');
     expect(text).not.toContain('NERVOS DAO');
   });
 });

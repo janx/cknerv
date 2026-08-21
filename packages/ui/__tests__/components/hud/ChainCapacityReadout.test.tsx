@@ -68,11 +68,13 @@ describe('ChainCapacityReadout', () => {
 
     expect(text).toContain('CHAIN CAPACITY');
     expect(text).toContain('AS OF #100');
-    // 1 CKB buys 1 byte of state, so live capacity reads in CK-bytes; the
-    // exact CKB figure stays reachable on the value's tooltip.
-    expect(text).toContain('57.76 CK-GB');
+    // Live capacity reads in the HUD-wide K/M/G CKB family; the exact CKB
+    // figure — and the CKByte equivalence — stay on the value's tooltip.
+    expect(text).toContain('57.76 G CKB');
     expect(text).not.toContain('57,763,209,638.48 CKB');
-    expect(container.querySelector('[title="57,763,209,638.48 CKB"]')).not.toBeNull();
+    expect(container.querySelector(
+      '[title="57,763,209,638.48 CKB · 1 CKB = 1 CKByte of state"]',
+    )).not.toBeNull();
     expect(text).toContain('159.9 MB');
     // Same header system as the panel's other fused readouts.
     expect(container.querySelector('[data-readout-title]')?.textContent).toBe('CHAIN CAPACITY');
@@ -87,7 +89,7 @@ describe('ChainCapacityReadout', () => {
     )?.style.width).toBe('14.5%');
     // The chain block holds no local vocabulary — the stage block is the
     // other stage on this rail, not a nested child of this one.
-    expect(text).not.toContain('STAGE CAPACITY');
+    expect(text).not.toContain('STAGE SAMPLE');
     expect(text).not.toContain('RETAINED');
     expect(text).not.toContain('Rendered');
   });

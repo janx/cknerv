@@ -270,7 +270,7 @@ With a local ckbadger service configured:
       `network_atlas` whose sample is at most 64 and contains no peer identities
 - [ ] The semantics snapshot gains an anchored `script_registry` naming only the
       identities the cells projection's census reports, with `unresolved`
-      counting the rest; `STAGE CAPACITY` then spells its lock/asset bars with
+      counting the rest; `STAGE SAMPLE` then spells its lock/asset bars with
       those names instead of the four pinned families
 - [ ] With the crawler disabled, `network_atlas` remains absent while source
       health, Cell detail, ecosystem, DAO, and activity enrichment still work

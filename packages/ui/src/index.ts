@@ -28,7 +28,6 @@ export { default as SimClockTicker } from './tweaks/SimClockTicker';
 export { default as TweakSync } from './tweaks/TweakSync';
 export { LIVE } from './tweaks/liveTweaks';
 export type { LiveTweaks } from './tweaks/liveTweaks';
-export { RENDER_STATS_TOGGLE } from './tweaks/renderStatsStore';
 export { default as RenderStatsSampler } from './tweaks/RenderStatsSampler';
 
 // ── UI chrome (topology constants) ──────────────────────────────────

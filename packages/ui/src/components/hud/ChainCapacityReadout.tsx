@@ -7,7 +7,7 @@ import {
   assetEcosystemVisualState,
   deriveAssetEcosystemBuckets,
 } from '../../derives/assetEcosystem.derive';
-import { formatCkBytes } from './cellFormat';
+import { formatCkb } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
 import { ReadoutHeader, StatRow } from './primitives';
 import { chainLiveRow } from './cellPopulation.presentation';
@@ -34,13 +34,11 @@ function formatExactCkb(shannons: string): string {
   }
 }
 
-/** 1 CKB = 1 byte of purchasable state, so a capacity in shannons is a byte
- *  count times 10^8. Exact: shannon amounts are integers. */
-function capacityBytes(shannons: string): number {
+function formatCkbAmount(shannons: string): string {
   try {
-    return Number(BigInt(shannons) / 100_000_000n);
+    return formatCkb(BigInt(shannons));
   } catch {
-    return Number.NaN;
+    return `${shannons} sh`;
   }
 }
 
@@ -105,8 +103,8 @@ export default function ChainCapacityReadout({ source, record, census = null, ce
       {usableRecord ? (
         <div data-indexed-context style={{ opacity: stale ? 0.68 : 1 }}>
           <StatRow label="Live capacity">
-            <span title={formatExactCkb(usableRecord.total_live_capacity_shannons)}>
-              {formatCkBytes(capacityBytes(usableRecord.total_live_capacity_shannons))}
+            <span title={`${formatExactCkb(usableRecord.total_live_capacity_shannons)} · 1 CKB = 1 CKByte of state`}>
+              {formatCkbAmount(usableRecord.total_live_capacity_shannons)}
             </span>
           </StatRow>
           <StatRow label="Knowledge">{formatBytes(usableRecord.total_knowledge_bytes)}</StatRow>

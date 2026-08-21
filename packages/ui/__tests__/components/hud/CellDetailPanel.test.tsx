@@ -143,7 +143,7 @@ describe('CellDetailPanel', () => {
     expect(t).not.toContain('共识细胞');   // Cell detail titles stay English-only
     expect(t).toContain('OMNI Lock');       // LOCK
     expect(t).toContain('xUDT');           // ASSET
-    expect(t).toContain('123.00 CKB');     // CAPACITY
+    expect(t).toContain('123 CKB');     // CAPACITY
     expect(t).toContain('LIVE');           // STATE
     // born_at_ms 0 is the composition-backfill sentinel — the header falls
     // back to the birth block instead of an epoch-relative age.
@@ -154,7 +154,7 @@ describe('CellDetailPanel', () => {
     expect(t).not.toContain('paths');      // portrait strands stay visual-only
     expect(t).not.toContain('knots');      // portrait joins stay visual-only
     expect(container.querySelector('[data-cell-detail-field="capacity"]')
-      ?.textContent).toBe('CAPACITY123.00 CKB');
+      ?.textContent).toBe('CAPACITY123 CKB');
     expect(t).toContain('CONSENSUS MEMORY');
     expect(t).not.toContain('共识记忆');
     expect(t).not.toContain('CELL CONTENT');

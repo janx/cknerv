@@ -44,7 +44,7 @@ describe('DaoStatePanel', () => {
     expect(text).toContain('DAO·05');
     expect(text).toContain('LIVE · UPDATED 38s AGO');
     expect(text).toContain('Total deposited');
-    expect(text).toContain('8.38 B CKB');
+    expect(text).toContain('8.38 G CKB');
     expect(text).toContain('+1.42 M CKB · +0.017% / 24H');
     expect(text).toContain('Est. APC');
     expect(text).toContain('2.01%');

@@ -89,7 +89,7 @@ describe('HudOverlay', () => {
     const pulse = container.querySelector('[data-hud-pulse-anchor]') as HTMLElement;
     const meshRail = container.querySelector('.cknerv-mesh-rail') as HTMLElement;
     expect(leftRail.textContent).toContain('COMMON KNOWLEDGE BASE');
-    expect(leftRail.textContent).not.toContain('STAGE CAPACITY');
+    expect(leftRail.textContent).not.toContain('STAGE SAMPLE');
     expect(leftRail.textContent).toContain('PULSE');
     expect(leftRail.style.flexDirection).toBe('column');
     expect(leftRail.style.bottom).toBe('14px');
@@ -99,11 +99,12 @@ describe('HudOverlay', () => {
     expect(chainScroll.style.flex).toBe('0 0 auto');
     expect(chainScroll.style.overflowY).toBe('auto');
     expect(chainScroll.style.pointerEvents).toBe('auto');
-    expect(pulse.style.marginTop).toBe('auto');
+    // The bottom stack (DAO over PULSE) is what pins to the rail's floor now.
+    expect((container.querySelector('[data-hud-bottom-stack]') as HTMLElement)
+      .style.marginTop).toBe('auto');
     expect((pulse.firstElementChild as HTMLElement).style.width)
       .toMatch(/340px.*58px/);
-    expect(meshRail.textContent).toContain('STAGE CAPACITY');
-    expect(meshRail.textContent).toContain('样本');
+    expect(meshRail.textContent).not.toContain('STAGE SAMPLE');
     expect(meshRail.style.top).toBe('48px');
     expect(meshRail.style.bottom).toBe('');
   });
@@ -131,7 +132,7 @@ describe('HudOverlay', () => {
       <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
     );
     const menuToggle = getByRole('button', {
-      name: 'Configure HUD panels, 5 of 5 visible',
+      name: 'Configure HUD panels, 4 of 6 visible',
     });
 
     fireEvent.click(menuToggle);
@@ -150,12 +151,11 @@ describe('HudOverlay', () => {
     expect(container.querySelector('[data-hud-chain-cluster]')).toBeNull();
     expect((container.querySelector('[data-hud-left-rail]') as HTMLElement).style.bottom).toBe('14px');
     expect(getByRole('button', {
-      name: 'Configure HUD panels, 4 of 5 visible',
+      name: 'Configure HUD panels, 3 of 6 visible',
     })).not.toBeNull();
 
     fireEvent.click(getByRole('menuitemcheckbox', { name: 'CELL MESH panel' }));
     expect(container.querySelector('[data-hud-panel="cells"]')).toBeNull();
-    expect(container.querySelector('[data-hud-panel="stage"]')).not.toBeNull();
     expect(container.querySelector('[data-hud-panel="peers"]')).not.toBeNull();
     expect(container.querySelector('.cknerv-mesh-rail')).not.toBeNull();
 
@@ -163,9 +163,18 @@ describe('HudOverlay', () => {
     expect(container.querySelector('[data-hud-left-rail]')).toBeNull();
     expect(container.querySelector('[data-hud-panel="peers"]')).not.toBeNull();
 
-    fireEvent.click(getByRole('menuitemcheckbox', { name: 'STAGE CAPACITY panel' }));
+    // The dev instruments start hidden and dock into the left cluster when
+    // summoned — never onto the mesh rail, whose corner belongs to the
+    // Jukebox chip.
+    fireEvent.click(getByRole('menuitemcheckbox', { name: 'STAGE SAMPLE panel' }));
+    expect(container.querySelector('[data-hud-panel="stage"]')).not.toBeNull();
+    expect(container.querySelector('[data-hud-left-rail]')).not.toBeNull();
+    fireEvent.click(getByRole('menuitemcheckbox', { name: 'RENDER STATS panel' }));
+    expect(container.querySelector('[data-hud-panel="render"]')).not.toBeNull();
+    fireEvent.click(getByRole('menuitemcheckbox', { name: 'STAGE SAMPLE panel' }));
     expect(container.querySelector('[data-hud-panel="stage"]')).toBeNull();
-    expect(container.querySelector('.cknerv-mesh-rail')).not.toBeNull();
+    fireEvent.click(getByRole('menuitemcheckbox', { name: 'RENDER STATS panel' }));
+    expect(container.querySelector('[data-hud-left-rail]')).toBeNull();
 
     fireEvent.click(getByRole('menuitemcheckbox', { name: 'PEER MESH panel' }));
     expect(container.querySelector('.cknerv-mesh-rail')).toBeNull();
@@ -185,24 +194,25 @@ describe('HudOverlay', () => {
       />,
     );
     const cluster = container.querySelector('[data-hud-chain-cluster]') as HTMLElement;
-    const chainPanel = cluster.querySelector('[data-hud-panel="chain"]') as HTMLElement;
-    const daoPanel = cluster.querySelector('[data-hud-panel="dao"]') as HTMLElement;
+    const stack = container.querySelector('[data-hud-bottom-stack]') as HTMLElement;
+    const daoPanel = stack.querySelector('[data-hud-panel="dao"]') as HTMLElement;
+    const pulseAnchor = stack.querySelector('[data-hud-pulse-anchor]') as HTMLElement;
 
-    expect(cluster.style.flexDirection).toBe('row');
-    expect(cluster.children[0]).toBe(chainPanel);
-    expect(cluster.children[1]).toBe(daoPanel);
-    expect(cluster.style.pointerEvents).toBe('none');
-    expect(chainPanel.style.pointerEvents).toBe('auto');
+    // DAO·05 belongs to the bottom stack, directly over ECG·04 — the cluster
+    // row beside CKB·01 is reserved for the opt-in dev instruments.
+    expect(cluster.querySelector('[data-hud-panel="dao"]')).toBeNull();
+    expect(stack.style.marginTop).toBe('auto');
+    expect(stack.children[0]).toBe(daoPanel);
+    expect(stack.children[1]).toBe(pulseAnchor);
     expect(daoPanel.style.pointerEvents).toBe('auto');
-    expect(chainPanel.textContent).not.toContain('NERVOS DAO');
+    expect(cluster.textContent).not.toContain('NERVOS DAO');
     expect(daoPanel.textContent).toContain('NERVOS DAO');
     expect(daoPanel.textContent).toContain('DAO·05');
-    expect((container.querySelector('[data-hud-pulse-anchor]')
-      ?.firstElementChild as HTMLElement).style.width)
+    expect((pulseAnchor.firstElementChild as HTMLElement).style.width)
       .toMatch(/340px.*58px/);
 
     fireEvent.click(getByRole('button', {
-      name: 'Configure HUD panels, 6 of 6 visible',
+      name: 'Configure HUD panels, 5 of 7 visible',
     }));
     fireEvent.click(getByRole('menuitemcheckbox', { name: 'NERVOS DAO panel' }));
     expect(container.querySelector('[data-hud-panel="dao"]')).toBeNull();
@@ -391,10 +401,7 @@ describe('HudOverlay', () => {
       />,
     );
     const rail = container.querySelector('.cknerv-mesh-rail')!;
-    // STAGE·06 heads the rail now; the Cell zone is the one holding CELL MESH.
-    expect((rail.firstElementChild as HTMLElement).textContent).toContain('STAGE CAPACITY');
-    const cellZone = Array.from(rail.children).find((zone) =>
-      zone.textContent?.includes('CELL MESH')) as HTMLElement;
+    const cellZone = rail.firstElementChild as HTMLElement;
 
     expect(cellZone.style.flexDirection).toBe('column');
     expect(cellZone.children).toHaveLength(1);

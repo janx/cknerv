@@ -1201,7 +1201,7 @@ export default function App({
       <Jukebox blockPulseAtMs={cellsCache.lastPulseAtMs} />
       {/* Render-stats HUD overlay (DOM sibling of HudOverlay, NOT in-Canvas):
           visible through the ` panel toggle or ?render-stats=1. */}
-      <RenderStatsPanel forceVisible={forceRenderStats} />
+      {forceRenderStats ? <RenderStatsPanel /> : null}
 
       <CellGalaxyProvider value={cellsCache}>
         <Canvas

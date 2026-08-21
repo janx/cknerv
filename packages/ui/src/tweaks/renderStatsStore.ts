@@ -25,12 +25,34 @@ export const ZERO_STATS: RuntimeStats = {
   fps: 0, msPerFrame: 0, drawCalls: 0, triangles: 0, geometries: 0, textures: 0, programs: 0,
 };
 
-// Single leva schema for the top-level "render stats" toggle. Imported by
-// Tweaks (registers it first → top of the ` panel), the sampler (gates), and
-// the panel (show/hide). Same key+shape → leva dedups into ONE control.
-export const RENDER_STATS_TOGGLE = {
-  renderStats: { value: false, label: 'render stats' },
-} as const;
+// Sampling demand: the GL·08 panel (and any lab that mounts it) retains a
+// demand while mounted, and the sampler follows. Ref-counted so two mounted
+// readers never release each other's demand. This replaced the leva
+// "render stats" toggle when the panel joined the HUD's own panel menu.
+let statsDemand = 0;
+const demandListeners = new Set<() => void>();
+
+/** Declare a mounted reader. Returns the matching release; idempotent. */
+export function retainStatsDemand(): () => void {
+  statsDemand += 1;
+  demandListeners.forEach((listener) => listener());
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    statsDemand -= 1;
+    demandListeners.forEach((listener) => listener());
+  };
+}
+
+export function subscribeStatsDemand(listener: () => void): () => void {
+  demandListeners.add(listener);
+  return () => demandListeners.delete(listener);
+}
+
+export function getStatsDemand(): boolean {
+  return statsDemand > 0;
+}
 
 /** Per-frame-average render metrics from a sampling window. render.calls /
  *  render.triangles accumulate across the frame's passes while autoReset is

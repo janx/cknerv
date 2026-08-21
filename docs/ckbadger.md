@@ -374,14 +374,16 @@ fused readout inside `COMMON KNOWLEDGE BASE`, in the same header system as
 `TX HORIZON` and `ACTIVITY`: everything true of the whole chain — indexed
 live capacity, knowledge bytes, the validated live-Cell census, category
 shares, top assets — under one stated anchor, with the census row carrying
-its own anchor whenever it differs. **STAGE CAPACITY** (`STAGE·06`) is an
-independent mesh-rail panel holding everything true of this dashboard's
-local slice: retained capacity, the rendered→retained→observed population
-funnel, the stage-versus-chain composition disclosure, the asset/lock
-taxonomy, and the medium legend. Live capacity is spelled in CK-bytes
-(CK-MB/CK-GB — 1 CKB buys exactly 1 byte of state) on both surfaces, with
-the exact CKB figure on the value's tooltip. In CKB-only mode the chain
-readout is simply absent; the stage panel never wears the chain's header.
+its own anchor whenever it differs. **STAGE SAMPLE** (`STAGE·07`) is an
+independent panel holding everything true of this dashboard's local slice:
+retained capacity, the rendered→retained→observed population funnel, the
+stage-versus-chain composition disclosure, the asset/lock taxonomy, and the
+medium legend. It is hidden by default and docks beside `CKB·01` when
+summoned from the panel menu, as does the `RENDER STATS` (`GL·08`) panel.
+Every CKB quantity on the HUD reads in one `K/M/G CKB` family (`12.5 K CKB`,
+`57.86 G CKB` — byte prefixes, since 1 CKB buys exactly 1 CKByte of state),
+with exact figures on value tooltips. In CKB-only mode the chain readout is
+simply absent; the stage panel never wears the chain's header.
 Indexed totals are never extrapolated from the retained Cell reservoir.
 Only whole-chain context dims when the source is stale or its own refresh
 is more than 90 seconds old; direct-node stage data remains at full
@@ -572,7 +574,7 @@ identities the index had no name for. They are counted rather than listed: the
 panel already holds those code hashes from the cells projection's census, so the
 record only has to say that asking produced nothing.
 
-`STAGE CAPACITY` joins the two planes in the browser on `(code_hash, hash_type)`
+`STAGE SAMPLE` joins the two planes in the browser on `(code_hash, hash_type)`
 and renders the real families in its **ASSETS** and **LOCKS** bars in place
 of the four lock and five asset families cknerv pins itself — never beside them.
 Without a census at all, from a backend predating it or a galaxy restored from

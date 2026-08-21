@@ -2,8 +2,37 @@ import { DATA_HEX_TRUNCATION_MARKER } from '@cknerv/types';
 import type { Cell } from '@cknerv/types';
 import { HUD_COLORS } from './hudTheme';
 
-export function formatCkb(shannons: number): string {
-  return `${(shannons / 100_000_000).toFixed(2)} CKB`;
+const SHANNONS_PER_CKB = 100_000_000n;
+
+const CKB_TIERS: ReadonlyArray<{ threshold: bigint; suffix: string }> = [
+  { threshold: 1_000_000_000n * SHANNONS_PER_CKB, suffix: 'G CKB' },
+  { threshold: 1_000_000n * SHANNONS_PER_CKB, suffix: 'M CKB' },
+  { threshold: 1_000n * SHANNONS_PER_CKB, suffix: 'K CKB' },
+];
+
+/** Every CKB quantity on the HUD reads in one family — `61 CKB`,
+ *  `12.5 K CKB`, `57.86 G CKB` — so a Cell, a DAO total, and the whole
+ *  chain's live capacity are the same unit at different magnitudes. Byte
+ *  prefixes, not finance ones: 1 CKB is 1 CKByte of purchasable state, so
+ *  these double as state sizes. Amounts under 1,000 CKB keep their exact
+ *  figure to the hundredth. */
+export function formatCkb(shannons: number | bigint, signed = false): string {
+  const amount = typeof shannons === 'bigint'
+    ? shannons
+    : BigInt(Math.round(shannons));
+  const negative = amount < 0n;
+  const absolute = negative ? -amount : amount;
+  const tier = CKB_TIERS.find((candidate) => absolute >= candidate.threshold)
+    ?? { threshold: SHANNONS_PER_CKB, suffix: 'CKB' };
+  const hundredths = (absolute * 100n + tier.threshold / 2n) / tier.threshold;
+  const whole = hundredths / 100n;
+  const fraction = (hundredths % 100n)
+    .toString()
+    .padStart(2, '0')
+    .replace(/0+$/, '');
+  const body = `${whole.toLocaleString('en-US')}${fraction ? `.${fraction}` : ''} ${tier.suffix}`;
+  const sign = negative ? '−' : signed && amount > 0n ? '+' : '';
+  return `${sign}${body}`;
 }
 
 export function midTruncate(s: string, head: number, tail: number): string {
@@ -160,18 +189,6 @@ export const ASSET_COLORS: Record<string, string> = {
 export const CLASS_MIX_COLORS = {
   dao: '#ff9d52', typed: '#78f2b3', plain: '#607789',
 } as const;
-
-/** Capacity in CKBytes. 1 CKB buys exactly 1 byte of on-chain state, so a
- *  capacity is a byte count and both capacity ledgers spell it in one unit
- *  family — CK-KB/CK-MB/CK-GB — instead of the chain side counting coins
- *  while the stage side counts bytes. */
-export function formatCkBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return `${bytes} CK-B`;
-  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(2)} CK-GB`;
-  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} CK-MB`;
-  if (bytes >= 1e3) return `${(bytes / 1e3).toFixed(1)} CK-KB`;
-  return `${Math.round(bytes)} CK-B`;
-}
 
 /** Palette colour for a script identity. A script the index named is a known
  *  script even when cknerv's own table could not place it, so it drops the
