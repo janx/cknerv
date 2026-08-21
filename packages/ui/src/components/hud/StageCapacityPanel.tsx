@@ -8,9 +8,9 @@ import {
   lockFamilyBuckets,
   type ScriptFamilyBucket,
 } from '../../derives/scriptFamilies.derive';
-import { ASSET_COLORS, CLASS_MIX_COLORS, LOCK_COLORS } from './cellFormat';
+import { ASSET_COLORS, CLASS_MIX_COLORS, LOCK_COLORS, formatCkBytes } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
-import { ScopeStage, StatRow } from './primitives';
+import { HudPanel, PanelHeader, StatRow } from './primitives';
 import {
   formatPopulationCount,
   populationCompositionMixes,
@@ -18,14 +18,6 @@ import {
   populationRows,
   type CompositionMix,
 } from './cellPopulation.presentation';
-
-function formatStateBytes(shannons: number): string {
-  const bytes = shannons / 1e8; // 1 CKByte of capacity = 1 byte of on-chain state
-  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(2)} GB`;
-  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} MB`;
-  if (bytes >= 1e3) return `${(bytes / 1e3).toFixed(1)} KB`;
-  return `${Math.round(bytes)} B`;
-}
 
 /** Mainnet is 99% one lock family, so every other family rounds to zero and a
  *  bar naming 120 real cells would read "JoyID 0%" — present in the legend and
@@ -37,7 +29,7 @@ function share(count: number, total: number): string {
 
 /** Scope qualifiers sit right after their labels, never in a third column:
  *  a trailing column of tags gives every value its own right edge, and the
- *  block stops reading as one table. */
+ *  panel stops reading as one table. */
 const SCOPE_TAG: CSSProperties = {
   fontFamily: HUD_FONTS.tech,
   fontSize: 7,
@@ -45,6 +37,15 @@ const SCOPE_TAG: CSSProperties = {
   color: HUD_COLORS.dim,
   textTransform: 'uppercase',
   opacity: 0.8,
+};
+
+const SUBHEAD: CSSProperties = {
+  fontFamily: HUD_FONTS.tech,
+  fontSize: 7.5,
+  letterSpacing: 1.5,
+  color: '#6b7f8e',
+  textTransform: 'uppercase',
+  marginBottom: 4,
 };
 
 /** One bar over the retained set's families, legend naming only what a
@@ -67,9 +68,7 @@ function TaxonomyBar({ title, buckets }: { title: string; buckets: ScriptFamilyB
     .join(' · ');
   return (
     <div style={{ marginTop: 7 }} title={full}>
-      <div style={{ fontFamily: HUD_FONTS.tech, fontSize: 7.5, letterSpacing: 1.5, color: '#6b7f8e', textTransform: 'uppercase', marginBottom: 4 }}>
-        {title}
-      </div>
+      <div style={SUBHEAD}>{title}</div>
       <div style={{ display: 'flex', height: 6, border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.14)}`, background: '#0a0a0a' }}>
         {nonZero.map((bucket) => (
           <span
@@ -128,10 +127,11 @@ function FunnelRow({ label, value, scope, widthPct, alpha }: {
 }
 
 /** One composition row: the class shares as text, then the same shares as a
- *  tri-segment bar. Bar hues repeat the chain block's category hues — DAO,
- *  token-like, bare CKB — so the two blocks read as one color system. A
- *  segment holding real Cells keeps a visible sliver even when its share
- *  rounds below a pixel. */
+ *  tri-segment bar with the measurement's own tag beside it. Bar hues repeat
+ *  the chain capacity bar's category hues — DAO, token-like, bare CKB — so
+ *  the two capacity surfaces read as one color system. A segment holding
+ *  real Cells keeps a visible sliver even when its share rounds below a
+ *  pixel. */
 function MixBar({ mix }: { mix: CompositionMix }) {
   const total = mix.counts.dao + mix.counts.typed + mix.counts.plain;
   const segments = [
@@ -145,7 +145,6 @@ function MixBar({ mix }: { mix: CompositionMix }) {
         <span style={{ fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: 8, letterSpacing: 1.4, color: HUD_COLORS.dim, textTransform: 'uppercase' }}>
           {mix.label}
         </span>
-        <span style={SCOPE_TAG}>{mix.scope}</span>
         <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: 8.5 }}>
           {segments.map((segment, index) => (
             <span key={segment.key}>
@@ -155,41 +154,49 @@ function MixBar({ mix }: { mix: CompositionMix }) {
           ))}
         </span>
       </div>
-      <div style={{ display: 'flex', height: 4, background: '#0a0a0a', border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.1)}`, margin: '1px 0 5px' }}>
-        {segments.map((segment) => segment.count > 0 ? (
-          <span
-            key={segment.key}
-            data-mix-segment={segment.key}
-            style={{
-              width: `${total > 0 ? (segment.count / total) * 100 : 0}%`,
-              minWidth: 1,
-              background: segment.color,
-            }}
-          />
-        ) : null)}
+      {/* The tag slot is fixed-width so the two bars share both edges —
+          comparing the mixes IS this block's job, and bars of different
+          lengths would turn a proportion contrast into a length artifact. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '1px 0 5px' }}>
+        <div style={{ flex: 1, display: 'flex', height: 4, background: '#0a0a0a', border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.1)}` }}>
+          {segments.map((segment) => segment.count > 0 ? (
+            <span
+              key={segment.key}
+              data-mix-segment={segment.key}
+              style={{
+                width: `${total > 0 ? (segment.count / total) * 100 : 0}%`,
+                minWidth: 1,
+                background: segment.color,
+              }}
+            />
+          ) : null)}
+        </div>
+        <span style={{ ...SCOPE_TAG, flex: '0 0 84px', textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis' }}>{mix.scope}</span>
       </div>
     </div>
   );
 }
 
 /**
- * Everything true of this dashboard's local slice, and nothing true of the
- * chain — the chain block is the other stage on this rail.
+ * The dashboard's own aperture: everything true of the local slice on stage,
+ * as its own instrument beside CELL MESH — never a nested child of the chain
+ * panel, whose numbers are a different scope.
  *
  * The Galaxy renders as a whole organism, so a viewer reasonably reads it as
- * CKB's Cell set. This block is where that reading is corrected: the funnel
+ * CKB's Cell set. This panel is where that reading is corrected: the funnel
  * shows how the local windows narrow down to the addressable bodies, every
  * count carries the scope it is true in, the mix rows disclose the stage's
  * curation beside the chain's real composition, and the medium legend
  * explains the swarm before anyone tries to click it.
  */
-export default function StageCapacityReadout({ stats, scriptRegistry, model }: {
+export default function StageCapacityPanel({ stats, scriptRegistry, model, style }: {
   stats: CellsStats;
   scriptRegistry?: ScriptRegistryRecord | null;
   /** Population model, or null for a consumer that derives none. The funnel,
-   *  mixes, and medium legend then stay absent — the block never guesses a
+   *  mixes, and medium legend then stay absent — the panel never guesses a
    *  scope. */
   model?: CellPopulationFieldModel | null;
+  style?: CSSProperties;
 }) {
   // The backend counts the retained set by script identity; those bars are
   // the real distribution. The four-family bars below them are what cknerv
@@ -201,21 +208,17 @@ export default function StageCapacityReadout({ stats, scriptRegistry, model }: {
   const mixes = model ? populationCompositionMixes(model) : [];
 
   return (
-    <ScopeStage
-      id="stage-capacity"
-      label="STAGE CAPACITY"
-      accent={HUD_COLORS.cyanWire}
-      terminal
-      flush
-    >
+    <HudPanel style={{ width: 302, ...style }}>
+      <PanelHeader en="STAGE CAPACITY" cjk="样本" idx="STAGE·06" accent={HUD_COLORS.cyanWire} />
       <div
         aria-label="Stage capacity"
         data-stage-capacity
         data-population-scope-claim={model ? model.scope : undefined}
       >
         <StatRow label="Capacity">
-          {formatStateBytes(stats.capacityShannons)}
-          <span style={{ fontFamily: HUD_FONTS.tech, fontSize: 7.5, letterSpacing: 1.1, color: HUD_COLORS.dim, marginLeft: 5 }}>STATE</span>
+          <span title="Sum of capacity over retained live Cells. 1 CKB buys 1 byte of state.">
+            {formatCkBytes(stats.capacityShannons / 1e8)}
+          </span>
         </StatRow>
 
         <div style={{ marginTop: 4 }}>
@@ -249,7 +252,7 @@ export default function StageCapacityReadout({ stats, scriptRegistry, model }: {
           </div>
         ) : null}
 
-        <TaxonomyBar title="STAGE ASSETS" buckets={census
+        <TaxonomyBar title="ASSETS" buckets={census
           ? assetFamilyBuckets(census, scriptRegistry)
           : [
             { key: 'native', label: 'CKB', color: ASSET_COLORS.native, count: stats.byAsset.native, named: true, families: 1 },
@@ -259,7 +262,7 @@ export default function StageCapacityReadout({ stats, scriptRegistry, model }: {
             { key: 'spore', label: 'NFT', color: ASSET_COLORS.spore, count: stats.byAsset.spore, named: true, families: 1 },
             { key: 'other', label: '?', color: ASSET_COLORS.other, count: stats.byAsset.other, named: false, families: 1 },
           ]} />
-        <TaxonomyBar title="STAGE LOCKS" buckets={census
+        <TaxonomyBar title="LOCKS" buckets={census
           ? lockFamilyBuckets(census, scriptRegistry)
           : [
             { key: 'sighash', label: 'default', color: LOCK_COLORS.sighash, count: stats.byLock.sighash, named: true, families: 1 },
@@ -285,6 +288,6 @@ export default function StageCapacityReadout({ stats, scriptRegistry, model }: {
           </div>
         ) : null}
       </div>
-    </ScopeStage>
+    </HudPanel>
   );
 }

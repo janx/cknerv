@@ -161,6 +161,18 @@ export const CLASS_MIX_COLORS = {
   dao: '#ff9d52', typed: '#78f2b3', plain: '#607789',
 } as const;
 
+/** Capacity in CKBytes. 1 CKB buys exactly 1 byte of on-chain state, so a
+ *  capacity is a byte count and both capacity ledgers spell it in one unit
+ *  family — CK-KB/CK-MB/CK-GB — instead of the chain side counting coins
+ *  while the stage side counts bytes. */
+export function formatCkBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return `${bytes} CK-B`;
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(2)} CK-GB`;
+  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} CK-MB`;
+  if (bytes >= 1e3) return `${(bytes / 1e3).toFixed(1)} CK-KB`;
+  return `${Math.round(bytes)} CK-B`;
+}
+
 /** Palette colour for a script identity. A script the index named is a known
  *  script even when cknerv's own table could not place it, so it drops the
  *  near-black unrecognized-family swatch for plain ink — present, but

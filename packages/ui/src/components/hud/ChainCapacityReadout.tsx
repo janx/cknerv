@@ -7,8 +7,9 @@ import {
   assetEcosystemVisualState,
   deriveAssetEcosystemBuckets,
 } from '../../derives/assetEcosystem.derive';
+import { formatCkBytes } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
-import { ScopeStage, StatRow } from './primitives';
+import { ReadoutHeader, StatRow } from './primitives';
 import { chainLiveRow } from './cellPopulation.presentation';
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -18,7 +19,9 @@ const CATEGORY_LABELS: Record<string, string> = {
   other: 'OTHER',
 };
 
-function formatCapacity(shannons: string): string {
+/** Exact CKB reading of a shannon amount, for the tooltip under the rounded
+ *  CK-byte figure. */
+function formatExactCkb(shannons: string): string {
   try {
     const amount = BigInt(shannons);
     const whole = amount / 100_000_000n;
@@ -28,6 +31,16 @@ function formatCapacity(shannons: string): string {
     } CKB`;
   } catch {
     return `${shannons} sh`;
+  }
+}
+
+/** 1 CKB = 1 byte of purchasable state, so a capacity in shannons is a byte
+ *  count times 10^8. Exact: shannon amounts are integers. */
+function capacityBytes(shannons: string): number {
+  try {
+    return Number(BigInt(shannons) / 100_000_000n);
+  } catch {
+    return Number.NaN;
   }
 }
 
@@ -46,15 +59,15 @@ function shareLabel(bps: number): string {
 
 /**
  * Everything true of the whole chain, and nothing true of this dashboard's
- * local slice — the stage block is the other stage on this rail.
+ * local slice — that slice is the STAGE CAPACITY panel's whole subject.
  *
  * Two independent measurements meet here: the indexed asset-ecosystem record
- * and the validated Cell census. Each is exact at its own anchor. The block
+ * and the validated Cell census. Each is exact at its own anchor. The section
  * header states the record's anchor once for every record row; the census row
  * carries its own anchor whenever it differs, because a count must never
  * inherit an anchor that is not its own. Either measurement can be missing;
- * the block renders when at least one exists, and renders nothing sooner than
- * a number it cannot prove.
+ * the section renders when at least one exists, and renders nothing sooner
+ * than a number it cannot prove.
  */
 export default function ChainCapacityReadout({ source, record, census = null, censusStale = false }: {
   source?: EnrichmentSourceStatus;
@@ -73,89 +86,100 @@ export default function ChainCapacityReadout({ source, record, census = null, ce
   const liveCells = chainLiveRow(census, censusStale, headerAnchor.block);
 
   return (
-    <ScopeStage
-      id="chain-capacity"
-      label="CHAIN CAPACITY"
-      meta={`AS OF #${headerAnchor.block.toLocaleString('en-US')}${stale ? ' · STALE' : ''}`}
-      accent={accent}
-      flush
+    <section
+      aria-label="Chain capacity"
+      data-chain-capacity
+      data-asset-ecosystem-state={visualState ?? undefined}
+      style={{
+        marginTop: 10,
+        paddingTop: 8,
+        borderTop: `1px solid ${rgba(accent, 0.16)}`,
+      }}
     >
-      <div aria-label="Chain capacity" data-chain-capacity data-asset-ecosystem-state={visualState ?? undefined}>
-        {usableRecord ? (
-          <div data-indexed-context style={{ opacity: stale ? 0.68 : 1 }}>
-            <StatRow label="Live capacity">{formatCapacity(usableRecord.total_live_capacity_shannons)}</StatRow>
-            <StatRow label="Knowledge">{formatBytes(usableRecord.total_knowledge_bytes)}</StatRow>
-          </div>
-        ) : null}
-        <div
-          data-population-row="Chain live"
-          style={{ display: 'flex', alignItems: 'baseline', gap: 6, height: 17, whiteSpace: 'nowrap', opacity: liveCells.dim ? 0.6 : 1 }}
-        >
-          <span style={{ fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: 8.5, letterSpacing: 1.6, color: HUD_COLORS.dim, textTransform: 'uppercase' }}>
-            Live cells
-          </span>
-          {liveCells.tag ? (
-            <span
-              data-population-scope
-              style={{ fontFamily: HUD_FONTS.tech, fontSize: 7, letterSpacing: 1.1, color: HUD_COLORS.dim, textTransform: 'uppercase', opacity: 0.8 }}
-            >
-              {liveCells.tag}
+      <ReadoutHeader
+        title="CHAIN CAPACITY"
+        meta={`AS OF #${headerAnchor.block.toLocaleString('en-US')}`}
+        accent={accent}
+        stale={stale}
+      />
+      {usableRecord ? (
+        <div data-indexed-context style={{ opacity: stale ? 0.68 : 1 }}>
+          <StatRow label="Live capacity">
+            <span title={formatExactCkb(usableRecord.total_live_capacity_shannons)}>
+              {formatCkBytes(capacityBytes(usableRecord.total_live_capacity_shannons))}
             </span>
-          ) : null}
-          <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: 11, color: HUD_COLORS.ink }}>
-            {liveCells.value}
-          </span>
+          </StatRow>
+          <StatRow label="Knowledge">{formatBytes(usableRecord.total_knowledge_bytes)}</StatRow>
         </div>
-        {usableRecord && buckets && buckets.length > 0 ? (
-          <div data-indexed-context style={{ marginTop: 6, opacity: stale ? 0.68 : 1 }}>
-            <div
-              title={buckets.map((bucket) => `${bucket.category} ${shareLabel(bucket.shareBps)}`).join(' · ')}
-              style={{ display: 'flex', height: 6, background: '#0a0a0a', border: `1px solid ${rgba(accent, 0.14)}` }}
-            >
-              {buckets.map((bucket) => bucket.shareBps > 0 ? (
-                <span
-                  key={bucket.category}
-                  data-asset-capacity-category={bucket.category}
-                  style={{
-                    width: `${bucket.shareBps / 100}%`,
-                    background: bucket.color,
-                    boxShadow: `0 0 5px ${rgba(bucket.color, 0.28)}`,
-                  }}
-                />
-              ) : null)}
-            </div>
-            <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, color: '#9fb0bd', marginTop: 3, lineHeight: 1.45 }}>
-              {buckets
-                .filter((bucket) => bucket.shareBps > 0)
-                .map((bucket) => `${CATEGORY_LABELS[bucket.category.toLowerCase()] ?? bucket.category.toUpperCase()} ${shareLabel(bucket.shareBps)}`)
-                .join(' · ')}
-            </div>
-          </div>
+      ) : null}
+      <div
+        data-population-row="Chain live"
+        style={{ display: 'flex', alignItems: 'baseline', gap: 6, height: 17, whiteSpace: 'nowrap', opacity: liveCells.dim ? 0.6 : 1 }}
+      >
+        <span style={{ fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: 8.5, letterSpacing: 1.6, color: HUD_COLORS.dim, textTransform: 'uppercase' }}>
+          Live cells
+        </span>
+        {liveCells.tag ? (
+          <span
+            data-population-scope
+            style={{ fontFamily: HUD_FONTS.tech, fontSize: 7, letterSpacing: 1.1, color: HUD_COLORS.dim, textTransform: 'uppercase', opacity: 0.8 }}
+          >
+            {liveCells.tag}
+          </span>
         ) : null}
-        {usableRecord && usableRecord.top_assets.length > 0 ? (
-          <div data-indexed-context style={{ marginTop: 6, opacity: stale ? 0.68 : 1 }}>
-            <div style={{ fontFamily: HUD_FONTS.tech, fontSize: 7.5, letterSpacing: 1.2, color: HUD_COLORS.dim, marginBottom: 2 }}>
-              TOP ASSETS
-            </div>
-            {usableRecord.top_assets.slice(0, 3).map((asset) => (
-              <div
-                key={asset.type_script_hash}
-                title={asset.type_script_hash}
-                style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 6, fontFamily: HUD_FONTS.mono, fontSize: 8, padding: '1px 0' }}
-              >
-                <span style={{ color: HUD_COLORS.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {asset.symbol ?? asset.name ?? `${asset.type_script_hash.slice(0, 10)}…`}
-                </span>
-                <span style={{ color: HUD_COLORS.dim }}>
-                  {Number.isSafeInteger(asset.holders_count)
-                    ? `${asset.holders_count.toLocaleString('en-US')} HOLDERS`
-                    : 'HOLDERS ?'}
-                </span>
-              </div>
-            ))}
-          </div>
-        ) : null}
+        <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: 11, color: HUD_COLORS.ink }}>
+          {liveCells.value}
+        </span>
       </div>
-    </ScopeStage>
+      {usableRecord && buckets && buckets.length > 0 ? (
+        <div data-indexed-context style={{ marginTop: 6, opacity: stale ? 0.68 : 1 }}>
+          <div
+            title={buckets.map((bucket) => `${bucket.category} ${shareLabel(bucket.shareBps)}`).join(' · ')}
+            style={{ display: 'flex', height: 6, background: '#0a0a0a', border: `1px solid ${rgba(accent, 0.14)}` }}
+          >
+            {buckets.map((bucket) => bucket.shareBps > 0 ? (
+              <span
+                key={bucket.category}
+                data-asset-capacity-category={bucket.category}
+                style={{
+                  width: `${bucket.shareBps / 100}%`,
+                  background: bucket.color,
+                  boxShadow: `0 0 5px ${rgba(bucket.color, 0.28)}`,
+                }}
+              />
+            ) : null)}
+          </div>
+          <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, color: '#9fb0bd', marginTop: 3, lineHeight: 1.45 }}>
+            {buckets
+              .filter((bucket) => bucket.shareBps > 0)
+              .map((bucket) => `${CATEGORY_LABELS[bucket.category.toLowerCase()] ?? bucket.category.toUpperCase()} ${shareLabel(bucket.shareBps)}`)
+              .join(' · ')}
+          </div>
+        </div>
+      ) : null}
+      {usableRecord && usableRecord.top_assets.length > 0 ? (
+        <div data-indexed-context style={{ marginTop: 6, opacity: stale ? 0.68 : 1 }}>
+          <div style={{ fontFamily: HUD_FONTS.tech, fontSize: 7.5, letterSpacing: 1.2, color: HUD_COLORS.dim, marginBottom: 2 }}>
+            TOP ASSETS
+          </div>
+          {usableRecord.top_assets.slice(0, 3).map((asset) => (
+            <div
+              key={asset.type_script_hash}
+              title={asset.type_script_hash}
+              style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 6, fontFamily: HUD_FONTS.mono, fontSize: 8, padding: '1px 0' }}
+            >
+              <span style={{ color: HUD_COLORS.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {asset.symbol ?? asset.name ?? `${asset.type_script_hash.slice(0, 10)}…`}
+              </span>
+              <span style={{ color: HUD_COLORS.dim }}>
+                {Number.isSafeInteger(asset.holders_count)
+                  ? `${asset.holders_count.toLocaleString('en-US')} HOLDERS`
+                  : 'HOLDERS ?'}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
   );
 }

@@ -164,7 +164,7 @@ export { default as ProtocolEraBadge } from './components/hud/ProtocolEraBadge';
 export { default as ActivityFeedReadout } from './components/hud/ActivityFeedReadout';
 export { default as TransactionHorizonReadout } from './components/hud/TransactionHorizonReadout';
 export { default as NetworkAtlasReadout } from './components/hud/NetworkAtlasReadout';
-export { default as StageCapacityReadout } from './components/hud/StageCapacityReadout';
+export { default as StageCapacityPanel } from './components/hud/StageCapacityPanel';
 export { useReducedMotion } from './components/hud/useReducedMotion';
 export * from './components/hud/cellPopulation.presentation';
 export type {

@@ -1,4 +1,3 @@
-import { emptyScriptCensus } from '@cknerv/cache';
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, it, expect } from 'vitest';
 import type {
@@ -10,7 +9,6 @@ import type {
   TransactionHorizonRecord,
 } from '@cknerv/types';
 import BlockchainReadout from '../../../src/components/hud/BlockchainReadout';
-import type { CellsStats } from '../../../src/derives/cellsStats.derive';
 
 afterEach(cleanup);
 
@@ -20,19 +18,6 @@ const chain: ChainEntry = {
   epoch: { number: 11042, index: 842, length: 1800 }, median_time_ms: 0, difficulty: '0x0',
   chain_name: 'ckb', reorgs: 0, recent_block_intervals_ms: [8000, 7000], recent_block_tx_counts: [2, 3], recent_block_sizes: [500, 800],
   ibd: false, best_known_block: 16204887,
-};
-
-const cellsStats: CellsStats = {
-  born: 28_431,
-  live: 19_204,
-  dead: 9_227,
-  byKind: { wallet: 0, dex: 0, cf: 0, ckbloom: 0, generic: 19_204 },
-  capacityShannons: 121_000_000_000_000_000,
-  inView: 4_983,
-  dataBearing: 1_545,
-  byLock: { sighash: 3_200, multisig: 1_100, acp: 450, omnilock: 0, other: 233 },
-  byAsset: { native: 3_500, sudt: 900, xudt: 350, dao: 200, spore: 33, other: 0 },
-  scripts: emptyScriptCensus(),
 };
 
 const source: EnrichmentSourceStatus = {
@@ -106,7 +91,7 @@ const transactionHorizon: TransactionHorizonRecord = {
 describe('BlockchainReadout', () => {
   it('renders the tip and key chain stats', () => {
     const { container } = render(
-      <BlockchainReadout chain={chain} cellsStats={cellsStats} />,
+      <BlockchainReadout chain={chain} />,
     );
     expect(container.textContent).toContain('#16,204,887');
     expect(container.querySelector('[data-epoch-number]')?.textContent).toBe('#11,042');
@@ -118,11 +103,12 @@ describe('BlockchainReadout', () => {
     expect(container.textContent).toContain('312 · 64');
     expect(container.textContent).toContain('COMMON KNOWLEDGE BASE');
     expect(container.textContent).toContain('共识基');
-    expect(container.textContent).toContain('STAGE CAPACITY');
-    expect(container.textContent).toContain('1.21 GB');
-    // Without a proven chain measurement there is no chain block at all —
-    // the stage block never wears the chain's header.
+    // Capacity is a different scope per surface now: the chain section
+    // appears only with a proven chain measurement, and the local slice
+    // lives on the mesh rail as its own STAGE CAPACITY panel — never as a
+    // section of this one.
     expect(container.textContent).not.toContain('CHAIN CAPACITY');
+    expect(container.textContent).not.toContain('STAGE CAPACITY');
     expect(container.textContent).not.toContain('Interval');
     expect(container.textContent).not.toContain('NERVOS DAO');
     expect(container.textContent).not.toContain('ACTIVITY');
@@ -134,7 +120,6 @@ describe('BlockchainReadout', () => {
     const { container } = render(
       <BlockchainReadout
         chain={chain}
-        cellsStats={cellsStats}
         enrichmentSource={source}
         protocolEra={protocolEra}
       />,
@@ -152,7 +137,6 @@ describe('BlockchainReadout', () => {
     const { container } = render(
       <BlockchainReadout
         chain={chain}
-        cellsStats={cellsStats}
         enrichmentSource={source}
         activityFeed={activityFeed}
       />,
@@ -172,7 +156,6 @@ describe('BlockchainReadout', () => {
     const { container } = render(
       <BlockchainReadout
         chain={chain}
-        cellsStats={cellsStats}
         enrichmentSource={source}
         activityFeed={activityFeed}
         compactActivity
@@ -190,7 +173,6 @@ describe('BlockchainReadout', () => {
     const { container } = render(
       <BlockchainReadout
         chain={chain}
-        cellsStats={cellsStats}
         enrichmentSource={source}
         transactionHorizon={transactionHorizon}
       />,
@@ -209,7 +191,6 @@ describe('BlockchainReadout', () => {
     const { container } = render(
       <BlockchainReadout
         chain={chain}
-        cellsStats={cellsStats}
         enrichmentSource={source}
         transactionHorizon={transactionHorizon}
         activityFeed={activityFeed}
@@ -233,7 +214,6 @@ describe('BlockchainReadout', () => {
     const { container } = render(
       <BlockchainReadout
         chain={chain}
-        cellsStats={cellsStats}
         enrichmentSource={source}
         assetEcosystem={assetEcosystem}
         transactionHorizon={transactionHorizon}
@@ -243,15 +223,14 @@ describe('BlockchainReadout', () => {
     const text = container.textContent ?? '';
     const canonicalAt = text.indexOf('Reorgs');
     const chainCapacityAt = text.indexOf('CHAIN CAPACITY');
-    const stageCapacityAt = text.indexOf('STAGE CAPACITY');
     const horizonAt = text.indexOf('TX HORIZON');
     const activityAt = text.indexOf('ACTIVITY');
 
     expect(canonicalAt).toBeGreaterThanOrEqual(0);
     expect(canonicalAt).toBeLessThan(chainCapacityAt);
-    expect(chainCapacityAt).toBeLessThan(stageCapacityAt);
-    expect(stageCapacityAt).toBeLessThan(horizonAt);
+    expect(chainCapacityAt).toBeLessThan(horizonAt);
     expect(horizonAt).toBeLessThan(activityAt);
+    expect(text).not.toContain('STAGE CAPACITY');
     expect(text).not.toContain('NERVOS DAO');
   });
 });

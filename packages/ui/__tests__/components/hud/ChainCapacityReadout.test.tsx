@@ -68,8 +68,14 @@ describe('ChainCapacityReadout', () => {
 
     expect(text).toContain('CHAIN CAPACITY');
     expect(text).toContain('AS OF #100');
-    expect(text).toContain('57,763,209,638.48 CKB');
+    // 1 CKB buys 1 byte of state, so live capacity reads in CK-bytes; the
+    // exact CKB figure stays reachable on the value's tooltip.
+    expect(text).toContain('57.76 CK-GB');
+    expect(text).not.toContain('57,763,209,638.48 CKB');
+    expect(container.querySelector('[title="57,763,209,638.48 CKB"]')).not.toBeNull();
     expect(text).toContain('159.9 MB');
+    // Same header system as the panel's other fused readouts.
+    expect(container.querySelector('[data-readout-title]')?.textContent).toBe('CHAIN CAPACITY');
     expect(text).toContain('Live cells');
     expect(text).toContain('1,471,373');
     expect(text).toContain('OTTER');

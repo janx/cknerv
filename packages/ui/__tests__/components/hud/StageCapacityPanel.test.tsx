@@ -2,7 +2,7 @@ import { emptyScriptCensus } from '@cknerv/cache';
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import StageCapacityReadout from '../../../src/components/hud/StageCapacityReadout';
+import StageCapacityPanel from '../../../src/components/hud/StageCapacityPanel';
 import {
   chainLiveRow,
   formatPopulationRatio,
@@ -41,7 +41,7 @@ function scenario(id: string): PopulationReviewScenario {
 
 function renderScenario(id: string) {
   return render(
-    <StageCapacityReadout stats={stats} model={scenario(id).model} />,
+    <StageCapacityPanel stats={stats} model={scenario(id).model} />,
   );
 }
 
@@ -276,8 +276,11 @@ describe('the block', () => {
     const text = textOf('chain-scope-mainnet');
 
     expect(text).toContain('STAGE CAPACITY');
-    expect(text).toContain('1.21 GB');
-    expect(text).toContain('STATE');
+    // Its own panel identity, in the shared header system.
+    expect(text).toContain('样本');
+    expect(text).toContain('STAGE·06');
+    // Capacity is state, so it is spelled in CK-bytes like the chain side.
+    expect(text).toContain('1.21 CK-GB');
     expect(text).not.toContain('CHAIN CAPACITY');
     expect(text).not.toContain('Live capacity');
     expect(text).not.toContain('Chain live');
@@ -290,10 +293,10 @@ describe('the block', () => {
   it('keeps the four-family bars while the backend has counted nothing', () => {
     // A backend predating the census, or a galaxy restored from state written
     // before script identities existed: an empty census is not a distribution.
-    const { container } = render(<StageCapacityReadout stats={stats} model={null} />);
+    const { container } = render(<StageCapacityPanel stats={stats} model={null} />);
     const text = container.textContent ?? '';
-    expect(text).toContain('STAGE ASSETS');
-    expect(text).toContain('STAGE LOCKS');
+    expect(text).toContain('ASSETS');
+    expect(text).toContain('LOCKS');
     expect(text).toContain('default 64%');
     expect(text).toContain('multisig 22%');
   });
@@ -317,7 +320,7 @@ describe('the block', () => {
       },
     };
     const { container } = render(
-      <StageCapacityReadout
+      <StageCapacityPanel
         stats={counted}
         model={null}
         scriptRegistry={{
@@ -364,7 +367,7 @@ describe('the block', () => {
       },
     };
     const { container } = render(
-      <StageCapacityReadout
+      <StageCapacityPanel
         stats={dominated}
         model={null}
         scriptRegistry={{
@@ -391,7 +394,7 @@ describe('the block', () => {
   });
 
   it('shows the plain retained count for a consumer that derives no model', () => {
-    const { container } = render(<StageCapacityReadout stats={stats} model={null} />);
+    const { container } = render(<StageCapacityPanel stats={stats} model={null} />);
     const text = container.textContent ?? '';
 
     expect(text).toContain('4,983');
@@ -406,7 +409,7 @@ describe('the review scenarios', () => {
   it('renders every one of them without throwing', () => {
     for (const entry of scenarios) {
       const { container, unmount } = render(
-        <StageCapacityReadout stats={stats} model={entry.model} />,
+        <StageCapacityPanel stats={stats} model={entry.model} />,
       );
       expect(container.textContent, entry.id).toContain('STAGE CAPACITY');
       expect(
