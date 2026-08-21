@@ -65,6 +65,10 @@ const IDENTITY_BINDING_GLYPH_SOURCE = resolve(
   process.cwd(),
   'src/components/CellIdentityBindingGlyph.tsx',
 );
+const COLONY_NODES_SOURCE = resolve(
+  process.cwd(),
+  'src/components/ColonyNodes.tsx',
+);
 
 describe('CellGalaxy', () => {
   it('mounts inside an r3f Canvas without throwing', () => {
@@ -350,6 +354,33 @@ describe('CKB node anchor emphasis', () => {
     expect(ckbNodeAnchorHaloTarget(false, true)).toBeGreaterThan(
       selected.haloIntensity,
     );
+  });
+
+  it('owns its pixel through the peers\' arbitration, not a second one', () => {
+    const galaxySource = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
+    const colonySource = readFileSync(COLONY_NODES_SOURCE, 'utf8');
+
+    // ONE flag and ONE dataset word for every network node: the Cell picker's
+    // existing yield then covers the labeled local anchor with no new branch,
+    // and the shared cursor arbitration stays three-writer.
+    expect(galaxySource).toContain(
+      'const hitUserData = useMemo(() => ({ [NETWORK_PEER_PICK_FLAG]: true }), []);',
+    );
+    expect(colonySource).toContain(
+      'const hitUserData = useMemo(() => ({ [NETWORK_PEER_PICK_FLAG]: true }), []);',
+    );
+    expect(galaxySource).toContain('userData={hitUserData}');
+    // Hover affordance: the anchor offers the same hand a measured peer does.
+    expect(galaxySource).toContain('gl.domElement.dataset.peerNodeHover = id;');
+    expect(galaxySource).toContain(
+      'if (gl.domElement.dataset.peerNodeHover === id) {',
+    );
+    // ... and the remount guard, so no stale hand outlives the anchor.
+    expect(galaxySource).toContain(
+      'if (canvas.dataset.peerNodeHover !== id) return;',
+    );
+    // Selection itself is untouched: the click still names the anchor.
+    expect(galaxySource).toContain('onSelect(id);');
   });
 });
 

@@ -65,6 +65,7 @@ import {
 } from '../derives/consensusMemoryCoreIdentity.derive';
 import {
   CONSENSUS_BRAID_LOCAL_RADIUS,
+  NETWORK_PEER_PICK_FLAG,
   cellCanvasCursor,
   pointerRayOwnedByNetworkPeer,
   cellGalaxyRotationScaleTarget,
@@ -544,8 +545,39 @@ function CkbNodeAnchor({
   flashRef?: { current: { firedAt: number; color: [number, number, number] } | null };
 }) {
   const simClock = useSimClock();
+  const gl = useThree((state) => state.gl);
   const bodyRef = useRef<THREE.Group>(null);
   const presentation = ckbNodeAnchorPresentation(selected);
+  // DESIGN: the anchor joins the measured peers' EXISTING arbitration instead
+  // of minting a second one. NETWORK_PEER_PICK_FLAG reads as "a network-layer
+  // node owns this pixel", and the labeled anchor IS the local network node
+  // (inferredTopology pins the colony's local node onto this very position) —
+  // so one flag, one `peerNodeHover` dataset word, and the shared cursor
+  // contract stays three-writer rather than four.
+  const hitUserData = useMemo(() => ({ [NETWORK_PEER_PICK_FLAG]: true }), []);
+
+  const syncCursor = () => {
+    const canvas = gl.domElement;
+    canvas.style.cursor = cellCanvasCursor(
+      canvas.dataset.cellPickerHover !== undefined,
+      canvas.dataset.cellCausalNavigationHover !== undefined,
+      canvas.dataset.peerNodeHover !== undefined,
+    );
+  };
+
+  // Anchors do not churn the way peers do, but a StrictMode remount can still
+  // unmount a hovered one without a pointer-out; never leave the canvas
+  // advertising a hand for a node that no longer exists.
+  useEffect(() => () => {
+    const canvas = gl.domElement;
+    if (canvas.dataset.peerNodeHover !== id) return;
+    delete canvas.dataset.peerNodeHover;
+    canvas.style.cursor = cellCanvasCursor(
+      canvas.dataset.cellPickerHover !== undefined,
+      canvas.dataset.cellCausalNavigationHover !== undefined,
+      false,
+    );
+  }, [gl, id]);
   // The event carrier lives in the halo. An intensity ref eases between the
   // subdued rest/selection levels and a short block-arrival peak, while the
   // shader supplies the single shared breathing envelope.
@@ -644,9 +676,20 @@ function CkbNodeAnchor({
           invisible MATERIAL keeps the raycast (the Raycaster never consults
           material.visible) while the renderer skips the draw entirely. */}
       <mesh
+        userData={hitUserData}
         onClick={(e) => {
           e.stopPropagation();
           onSelect(id);
+        }}
+        onPointerOver={() => {
+          gl.domElement.dataset.peerNodeHover = id;
+          syncCursor();
+        }}
+        onPointerOut={() => {
+          if (gl.domElement.dataset.peerNodeHover === id) {
+            delete gl.domElement.dataset.peerNodeHover;
+          }
+          syncCursor();
         }}
       >
         <sphereGeometry args={[ANCHOR_HIT_RADIUS, 8, 8]} />
@@ -1076,9 +1119,10 @@ function CellPicker({
       }}
       onPointerOut={() => setHovered(null)}
       onClick={(e) => {
-        // A measured peer's hit sphere on this same ray owns the pixel: the
-        // Cell is nearer and would win the distance sort, so returning
-        // WITHOUT stopping propagation lets the event walk on to the peer.
+        // A network node's hit sphere on this same ray owns the pixel — a
+        // measured peer or the labeled chain anchor alike: the Cell would win
+        // the distance sort, so returning WITHOUT stopping propagation lets
+        // the event walk on to the node.
         if (pointerRayOwnedByNetworkPeer(e.intersections)) return;
         e.stopPropagation();
         if (!cellPointerGestureIsClick(e.delta)) return;

@@ -82,16 +82,19 @@ export function cellCanvasCursor(
     : 'pointer';
 }
 
-/** Stamped on a measured peer's invisible hit mesh (`object.userData`) so the
- * Cell picker can recognise the peer on its own pointer ray without either
- * layer importing the other's scene graph. */
+/** Stamped on a network-layer node's invisible hit mesh (`object.userData`) so
+ * the Cell picker can recognise it on its own pointer ray without either layer
+ * importing the other's scene graph. ONE flag covers every such node — the
+ * measured peers and the labeled local chain anchor alike — so the arbitration
+ * stays a single path instead of one branch per node kind. */
 export const NETWORK_PEER_PICK_FLAG = 'networkPeerPick';
 
-/** True when the pointer ray also passes through a measured peer's hit sphere.
- * The peer sits farther along the ray than the Cell canopy, so distance-sorted
- * picking alone would always hand the pixel to an ambient Cell; but the twelve
- * measured landmarks are deliberate targets, so the Cell layer yields — it
- * neither selects nor stops propagation, and the event walks on to the peer. */
+/** True when the pointer ray also passes through a network node's hit sphere.
+ * Those hit spheres are small and the Cell canopy's screen-space pick discs are
+ * generous, so distance-sorted picking alone hands the pixel to an ambient Cell
+ * almost every time; but the network nodes are deliberate, labeled targets, so
+ * the Cell layer yields — it neither selects nor stops propagation, and the
+ * event walks on to the node. */
 export function pointerRayOwnedByNetworkPeer(
   intersections: ReadonlyArray<{
     object: { userData?: Record<string, unknown> };

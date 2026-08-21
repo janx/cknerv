@@ -63,6 +63,18 @@ describe('cell interaction derivation', () => {
     expect(pointerRayOwnedByNetworkPeer([impostor])).toBe(false);
   });
 
+  it('yields the ray to the labeled chain anchor on that same one flag', () => {
+    // The labeled local anchor IS the local network node, so it stamps the
+    // peers' flag rather than opening a second arbitration path — and the
+    // yield must not depend on where the node lands in the distance sort.
+    const nearCell = { object: { userData: {} } };
+    const farCell = { object: { userData: { someOtherLayer: true } } };
+    const anchor = { object: { userData: { [NETWORK_PEER_PICK_FLAG]: true } } };
+    expect(pointerRayOwnedByNetworkPeer([nearCell, anchor, farCell])).toBe(true);
+    expect(pointerRayOwnedByNetworkPeer([anchor, nearCell])).toBe(true);
+    expect(pointerRayOwnedByNetworkPeer([nearCell, farCell])).toBe(false);
+  });
+
   it('adds bounded acquisition room only after the real braid expands', () => {
     expect(cellPickRadiusPx(4, 6, 0)).toBe(6);
     expect(cellPickRadiusPx(4, 6, CELL_EXPANDED_DETAIL_THRESHOLD)).toBe(6);
