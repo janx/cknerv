@@ -204,6 +204,13 @@ export {
   type PeerLinkCardProps,
 } from './components/hud/PeerLinkCard';
 export {
+  default as PeerSightingPlate,
+  formatNetworkSpan,
+  type PeerSightingPhase,
+  type PeerSightingPlateProps,
+  type PeerSightingState,
+} from './components/hud/PeerSightingPlate';
+export {
   selectedPeerLinkAccent,
   type PeerLinkFacet,
 } from './derives/peerLinkInstrument.derive';

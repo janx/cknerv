@@ -1,7 +1,8 @@
 import { act, cleanup, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChainEntry, ChainNode, Peer } from '@cknerv/types';
+import type { ChainEntry, ChainNode, Peer, PeerSightingRecord } from '@cknerv/types';
 import NodeSelfCard from '../../../src/components/hud/NodeSelfCard';
+import type { PeerSightingState } from '../../../src/components/hud/PeerSightingPlate';
 import { PROBE_STEP_S } from '../../../src/components/hud/probeScan';
 import { CHAIN_ANCHOR_HEX } from '../../../src/visualPalette';
 
@@ -247,5 +248,69 @@ describe('NodeSelfCard identity', () => {
     const { container } = renderCard({ layoutSide: 'below' });
     expect(container.querySelector('[data-node-probe-layout="vertical"]'))
       .not.toBeNull();
+  });
+});
+
+/** How the outside world last saw this node, as the App hands it down. */
+function sighting(overrides: Partial<PeerSightingRecord> = {}): PeerSightingState {
+  return {
+    phase: 'ready',
+    record: {
+      source: 'ckbadger',
+      as_of: { block: TIP, hash: '0xanchor' },
+      updated_at_ms: Date.now(),
+      node_id: 'QmLocalNode0123456789',
+      country: 'DE',
+      asn: 'AS24940 Hetzner Online GmbH',
+      client_version: LOCAL_VERSION,
+      protocols: ['/ckb/syn'],
+      first_seen_ms: Date.now() - 400 * 86_400_000,
+      last_seen_ms: Date.now() - 60_000,
+      reachable: false,
+      known_peers_count: 45,
+      ...overrides,
+    },
+  };
+}
+
+describe('NodeSelfCard dossier', () => {
+  it('carries no dossier plate when the source cannot offer one', () => {
+    const { container } = renderCard();
+    expect(container.querySelector('[data-sighting-plate]')).toBeNull();
+  });
+
+  it('closes the card with the one account of itself it cannot write', () => {
+    const { container } = renderCard({ sighting: sighting() });
+    const modules = Array.from(container.querySelectorAll('[data-node-probe-module],[data-sighting-plate]'))
+      .map((node) => node.getAttribute('data-node-probe-module') ?? 'dossier');
+    expect(modules).toEqual(['header', 'vitals', 'stance', 'dossier']);
+    expect(container.textContent).toContain('SELF·04');
+    expect(container.querySelector('[data-sighting-caption]')?.textContent)
+      .toBe('HOW THE NETWORK SEES YOU');
+  });
+
+  it('leads with reachability — the question local RPC cannot ask', () => {
+    const { container } = renderCard({ sighting: sighting() });
+    const first = container.querySelector('[data-sighting-row]');
+    expect(first?.getAttribute('data-sighting-row')).toBe('exposure');
+    expect(first?.textContent).toContain('UNREACHABLE FROM OUTSIDE');
+  });
+
+  it('ages the crawler stamp on a clock of its own', () => {
+    vi.useFakeTimers();
+    const { container } = renderCard({ sighting: sighting() });
+    const stamp = () => container.querySelector('[data-sighting-stamp]')?.textContent;
+    expect(stamp()).toBe('SIGHTED 1m 0s AGO');
+    act(() => { vi.advanceTimersByTime(60_000); });
+    expect(stamp()).toBe('SIGHTED 2m 0s AGO');
+  });
+
+  it('states the crawler\'s silence about us as an answer', () => {
+    const { container } = renderCard({
+      sighting: { phase: 'unsighted', record: null, reason: 'never_sighted' },
+    });
+    expect(container.textContent).toContain('NO CRAWLER SIGHTING');
+    // Still no peer vocabulary: the plate speaks its own namespace.
+    expect(container.innerHTML).not.toContain('data-peer-');
   });
 });

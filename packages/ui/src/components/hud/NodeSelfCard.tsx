@@ -20,7 +20,13 @@ import {
 import type { ChainEntry, ChainNode, Peer } from '@cknerv/types';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import { formatEpochReadout } from './epochReadout';
-import { CloseButton, SpatialPlateHeader, spatialPlate } from './primitives';
+import {
+  CloseButton,
+  moduleTag,
+  SpatialPlateHeader,
+  spatialPlate,
+} from './primitives';
+import PeerSightingPlate, { type PeerSightingState } from './PeerSightingPlate';
 import { PROBE_STEP_S, probeScan } from './probeScan';
 import { useReducedMotion } from './useReducedMotion';
 import { fleetConsensus } from '../../derives/fleetTelemetry';
@@ -50,6 +56,10 @@ export interface NodeSelfCardProps {
   peers: Peer[];
   /** Spatial fan direction chosen by the scene-anchor placement solver. */
   layoutSide?: NodeSelfLayoutSide;
+  /** How the source's crawler last saw this node — the one account of it that
+   *  comes from outside. Omitted whenever the source advertises no
+   *  `peer_sighting` capability; the self probe is complete without it. */
+  sighting?: PeerSightingState;
   onClose: () => void;
   style?: CSSProperties;
 }
@@ -58,14 +68,6 @@ const nowPerf = () => (typeof performance !== 'undefined' ? performance.now() : 
 
 function blocks(n: number): string {
   return n.toLocaleString('en-US');
-}
-
-function moduleTag(tag: string) {
-  return (
-    <span style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 1, color: '#5a6470' }}>
-      {tag}
-    </span>
-  );
 }
 
 /** One vital. Dark until the probe reaches it, then held — the node card has
@@ -146,6 +148,7 @@ export default function NodeSelfCard({
   chain,
   peers,
   layoutSide = 'left',
+  sighting,
   onClose,
   style,
 }: NodeSelfCardProps) {
@@ -191,6 +194,18 @@ export default function NodeSelfCard({
       window.clearTimeout(stop);
     };
   }, [node.id, reduced, revealSteps]);
+
+  // The self probe counts no duration of its own — a node holds no link to
+  // itself — so it runs no wall clock until the dossier brings ages that have
+  // to keep moving. The tick lives exactly as long as one is on screen.
+  const sightingRecord = sighting?.phase === 'ready' ? sighting.record ?? null : null;
+  const [dossierNowMs, setDossierNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!sightingRecord) return;
+    setDossierNowMs(Date.now());
+    const interval = window.setInterval(() => setDossierNowMs(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [sightingRecord]);
 
   const activeClock = scanClock.nodeId === node.id
     ? scanClock
@@ -476,6 +491,19 @@ export default function NodeSelfCard({
           </SelfReadout>
         </div>
       </section>
+
+      {/* The vitals above are what this node knows about itself. This plate is
+          the only thing on the card it cannot know: whether anyone outside can
+          reach it, and how long the network has carried it. */}
+      {sighting ? (
+        <PeerSightingPlate
+          {...sighting}
+          module="SELF·04"
+          variant="self"
+          nowMs={dossierNowMs}
+          liveVersion={node.version}
+        />
+      ) : null}
     </div>
   );
 }

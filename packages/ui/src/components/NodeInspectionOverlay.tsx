@@ -4,6 +4,7 @@ import {
 } from 'react';
 import type { ChainEntry, ChainNode, Peer } from '@cknerv/types';
 import NodeSelfCard, { NODE_SELF_ACCENT } from './hud/NodeSelfCard';
+import type { PeerSightingState } from './hud/PeerSightingPlate';
 import { useReducedMotion } from './hud/useReducedMotion';
 import type { Vec3 } from '../types';
 import {
@@ -66,6 +67,9 @@ export interface NodeInspectionOverlayProps {
   chain: ChainEntry;
   /** The colony this node stands in, for the STANCE plate. */
   peers: Peer[];
+  /** How the network's own crawler last saw this node, when the source can
+   *  offer it — the one account of the local node from outside. */
+  sighting?: PeerSightingState;
   onClose: () => void;
 }
 
@@ -81,6 +85,7 @@ export default function NodeInspectionOverlay({
   node,
   chain,
   peers,
+  sighting,
   onClose,
 }: NodeInspectionOverlayProps) {
   const reduced = useReducedMotion();
@@ -140,6 +145,7 @@ export default function NodeInspectionOverlay({
           chain={chain}
           peers={peers}
           layoutSide={layoutSide}
+          sighting={sighting}
           onClose={onClose}
         />
       </div>

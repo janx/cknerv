@@ -1,7 +1,8 @@
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Peer } from '@cknerv/types';
+import type { Peer, PeerSightingRecord } from '@cknerv/types';
 import PeerLinkCard from '../../../src/components/hud/PeerLinkCard';
+import type { PeerSightingState } from '../../../src/components/hud/PeerSightingPlate';
 import { PROBE_STEP_S } from '../../../src/components/hud/probeScan';
 import { PEER_LATENCY_CAP_MS } from '../../../src/derives/peers.derive';
 import { PEER_NETWORK_HEX } from '../../../src/visualPalette';
@@ -258,5 +259,75 @@ describe('PeerLinkCard identity', () => {
     const { container } = renderCard({ peer: peer({ version: '0.114.0' }) });
     const blip = container.querySelector('[data-peer-probe-blip]');
     expect(blip?.getAttribute('fill')).toBe(PEER_NETWORK_HEX.version);
+  });
+});
+
+/** The crawler's account of the same node, as the App hands it down. */
+function sighting(overrides: Partial<PeerSightingRecord> = {}): PeerSightingState {
+  return {
+    phase: 'ready',
+    record: {
+      source: 'ckbadger',
+      as_of: { block: TIP, hash: '0xanchor' },
+      updated_at_ms: Date.now(),
+      node_id: 'QmPeerAlpha0123456789',
+      country: 'DE',
+      asn: 'AS24940 Hetzner Online GmbH',
+      client_version: LOCAL_VERSION,
+      protocols: ['/ckb/syn'],
+      first_seen_ms: Date.now() - 400 * 86_400_000,
+      last_seen_ms: Date.now() - 60_000,
+      last_reachable_at_ms: Date.now() - 60_000,
+      reachable: true,
+      rtt_ms: 41,
+      known_peers_count: 45,
+      ...overrides,
+    },
+  };
+}
+
+describe('PeerLinkCard dossier', () => {
+  it('carries no dossier plate when the source cannot offer one', () => {
+    const { container } = renderCard();
+    expect(container.querySelector('[data-sighting-plate]')).toBeNull();
+    expect(container.textContent).not.toContain('DOSSIER');
+  });
+
+  it('hangs the dossier below the line facts as the fifth module', () => {
+    const { container } = renderCard({ sighting: sighting() });
+    const modules = Array.from(container.querySelectorAll('[data-peer-probe-module],[data-sighting-plate]'))
+      .map((node) => node.getAttribute('data-peer-probe-module') ?? 'dossier');
+    expect(modules).toEqual(['header', 'signal', 'sync', 'facts', 'dossier']);
+    expect(container.textContent).toContain('LINK·05');
+    // The card's own live readings are the other half of the cross-check.
+    expect(container.querySelector('[data-sighting-row="identify"]')?.textContent)
+      .toContain('AGREES WITH THE LIVE RPC VERSION');
+    expect(container.querySelector('[data-sighting-row="exposure"]')?.textContent)
+      .toContain('OUR PING 84 MS');
+  });
+
+  it('ages the crawler stamp on the same 1 Hz tick as the link', () => {
+    vi.useFakeTimers();
+    const { container } = renderCard({ sighting: sighting() });
+    const stamp = () => container.querySelector('[data-sighting-stamp]')?.textContent;
+    expect(stamp()).toBe('SIGHTED 1m 0s AGO');
+    act(() => { vi.advanceTimersByTime(60_000); });
+    expect(stamp()).toBe('SIGHTED 2m 0s AGO');
+  });
+
+  it('keeps the dossier through the link\'s ending', () => {
+    // The connection dropped; the node it reached did not stop existing, and
+    // neither did the crawler's account of it.
+    const { container } = renderCard({ linkLost: true, sighting: sighting() });
+    expect(container.querySelector('[data-sighting-plate]')).not.toBeNull();
+    expect(container.querySelector('[data-sighting-row="whereabouts"]')?.textContent)
+      .toContain('DE');
+  });
+
+  it('prints the crawler\'s silence rather than dropping the plate', () => {
+    const { container } = renderCard({
+      sighting: { phase: 'unsighted', record: null, reason: 'no_crawler' },
+    });
+    expect(container.textContent).toContain('NO CRAWLER ON SOURCE');
   });
 });

@@ -19,7 +19,13 @@ import {
 } from 'react';
 import type { Peer } from '@cknerv/types';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
-import { CloseButton, SpatialPlateHeader, spatialPlate } from './primitives';
+import {
+  CloseButton,
+  moduleTag,
+  SpatialPlateHeader,
+  spatialPlate,
+} from './primitives';
+import PeerSightingPlate, { type PeerSightingState } from './PeerSightingPlate';
 import { PROBE_STEP_S, probeScan } from './probeScan';
 import { useReducedMotion } from './useReducedMotion';
 import { PEER_LATENCY_CAP_MS } from '../../derives/peers.derive';
@@ -62,6 +68,10 @@ export interface PeerLinkCardProps {
   /** The peer has left `peers[]`; the card is showing a retained snapshot.
    *  Presentation only — retention and dismissal live with the overlay. */
   linkLost?: boolean;
+  /** How the source's crawler last saw this peer. Omitted whenever the source
+   *  advertises no `peer_sighting` capability — the dossier is additive, and a
+   *  CKB-only probe is a complete card without it. */
+  sighting?: PeerSightingState;
   /** Mirrors the selected fact into the scene-to-card connector tint. */
   onFacetChange?: (facet: PeerLinkFacet | null) => void;
   onClose: () => void;
@@ -72,14 +82,6 @@ const nowPerf = () => (typeof performance !== 'undefined' ? performance.now() : 
 
 function blocks(n: number): string {
   return n.toLocaleString('en-US');
-}
-
-function moduleTag(tag: string) {
-  return (
-    <span style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 1, color: '#5a6470' }}>
-      {tag}
-    </span>
-  );
 }
 
 type PeerScanFactProps = PeerLinkFactRow & {
@@ -360,6 +362,7 @@ export default function PeerLinkCard({
   localVersion,
   layoutSide = 'left',
   linkLost = false,
+  sighting,
   onFacetChange,
   onClose,
   style,
@@ -392,7 +395,7 @@ export default function PeerLinkCard({
       samples: instrument.latencyMs == null ? [] : [instrument.latencyMs],
     }),
   );
-  const [uptimeTickMs, setUptimeTickMs] = useState(0);
+  const [uptimeTick, setUptimeTick] = useState(() => ({ elapsedMs: 0, nowMs: Date.now() }));
 
   const revealSteps = PEER_LINK_FACETS.length;
 
@@ -443,12 +446,17 @@ export default function PeerLinkCard({
 
   // The uptime clock advances from the last poll's snapshot; a lost link stops
   // the clock rather than inventing seconds the peer was not connected for.
+  // The same beat carries the wall clock the dossier stamps its crawler ages
+  // from — one interval for both, since both are the same second passing.
   useEffect(() => {
-    setUptimeTickMs(0);
-    if (linkLost) return;
     const startedAtMs = Date.now();
+    setUptimeTick({ elapsedMs: 0, nowMs: startedAtMs });
+    if (linkLost) return;
     const interval = window.setInterval(
-      () => setUptimeTickMs(Date.now() - startedAtMs),
+      () => {
+        const atMs = Date.now();
+        setUptimeTick({ elapsedMs: atMs - startedAtMs, nowMs: atMs });
+      },
       1000,
     );
     return () => window.clearInterval(interval);
@@ -479,7 +487,8 @@ export default function PeerLinkCard({
   }, [instrument]);
 
   const pingSamples = pings.nodeId === peer.node_id ? pings.samples : [];
-  const liveUptime = formatLinkUptime(instrument.uptimeMs + uptimeTickMs);
+  const linkAgeMs = instrument.uptimeMs + uptimeTick.elapsedMs;
+  const liveUptime = formatLinkUptime(linkAgeMs);
   const verticalLayout = layoutSide === 'above' || layoutSide === 'below';
   const satelliteBase: CSSProperties = {
     position: 'relative',
@@ -734,6 +743,20 @@ export default function PeerLinkCard({
           })}
         </div>
       </section>
+
+      {/* The link ends at LINE FACTS; everything below it was observed by
+          someone else, from outside, at another time. A lost link keeps it:
+          the dossier describes the node, not the connection that dropped. */}
+      {sighting ? (
+        <PeerSightingPlate
+          {...sighting}
+          module="LINK·05"
+          nowMs={uptimeTick.nowMs}
+          liveVersion={peer.version}
+          linkAgeMs={linkAgeMs}
+          liveRttMs={instrument.latencyMs}
+        />
+      ) : null}
     </div>
   );
 }

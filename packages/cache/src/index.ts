@@ -102,7 +102,15 @@ export {
   type SemanticsCache,
 } from './semanticsReducer';
 
-export { fetchCellSemantics, fetchTransactionSemantics } from './semanticsClient';
+export {
+  cachedPeerSighting,
+  clearPeerSightingMemo,
+  fetchCellSemantics,
+  fetchPeerSighting,
+  fetchTransactionSemantics,
+  rememberPeerSighting,
+  type PeerSightingOutcome,
+} from './semanticsClient';
 
 export {
   createStreamHealthTracker,

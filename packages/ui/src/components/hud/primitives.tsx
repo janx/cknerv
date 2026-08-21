@@ -239,6 +239,17 @@ export function spatialPlate(accent: string): CSSProperties {
   };
 }
 
+/** The `LINK·05` / `SELF·04` stamp a floating card's plates count off in.
+ *  Single-sourced so the two dialects and the shared dossier plate can never
+ *  print their module numbers in different type. */
+export function moduleTag(tag: string) {
+  return (
+    <span style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 1, color: '#5a6470' }}>
+      {tag}
+    </span>
+  );
+}
+
 /** Header row shared by the spatial plates: EN title, CJK companion, and a
  *  right-aligned live status the caller renders (keeps its data attributes). */
 export function SpatialPlateHeader({ en, cjk, accent, titleColor = HUD_COLORS.cyanInk, status, marginBottom = 7 }: {

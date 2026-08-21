@@ -68,6 +68,7 @@ function mount(props: Partial<Parameters<typeof NodeInspectionOverlay>[0]> = {})
       node={props.node ?? node}
       chain={props.chain ?? chain}
       peers={props.peers ?? peers}
+      sighting={props.sighting}
       onClose={onClose}
     />,
   );
@@ -144,5 +145,21 @@ describe('NodeInspectionOverlay', () => {
     expect(text).toContain('#16,204,887');
     expect(view.container.querySelector('[data-node-probe-value="peers"]')?.textContent)
       .toBe('1');
+  });
+});
+
+describe('NodeInspectionOverlay dossier', () => {
+  it('hands the crawler\'s account of us down to the self probe', () => {
+    const { view } = mount({
+      sighting: { phase: 'unsighted', record: null, reason: 'no_crawler' },
+    });
+    expect(view.container.querySelector('[data-sighting-variant="self"]')).not.toBeNull();
+    expect(view.container.textContent).toContain('HOW THE NETWORK SEES YOU');
+    expect(view.container.textContent).toContain('NO CRAWLER ON SOURCE');
+  });
+
+  it('draws no dossier when the source offered none', () => {
+    const { view } = mount();
+    expect(view.container.querySelector('[data-sighting-plate]')).toBeNull();
   });
 });

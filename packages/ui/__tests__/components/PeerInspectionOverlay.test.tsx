@@ -54,6 +54,7 @@ function mount(props: Partial<Parameters<typeof PeerInspectionOverlay>[0]> = {})
       tip={props.tip ?? TIP}
       localVersion={props.localVersion ?? LOCAL_VERSION}
       linkLost={props.linkLost ?? false}
+      sighting={props.sighting}
       onClose={onClose}
     />,
   );
@@ -131,5 +132,20 @@ describe('PeerInspectionOverlay', () => {
     expect(layer?.style.pointerEvents).toBe('none');
     // No honest screen position until the anchor has projected the node once.
     expect(card?.style.opacity).toBe('0');
+  });
+});
+
+describe('PeerInspectionOverlay dossier', () => {
+  it('hands the crawler dossier down to the card it belongs on', () => {
+    const { view } = mount({
+      sighting: { phase: 'unsighted', record: null, reason: 'never_sighted' },
+    });
+    expect(view.container.querySelector('[data-sighting-plate]')).not.toBeNull();
+    expect(view.container.textContent).toContain('NO CRAWLER SIGHTING');
+  });
+
+  it('draws no dossier when the source offered none', () => {
+    const { view } = mount();
+    expect(view.container.querySelector('[data-sighting-plate]')).toBeNull();
   });
 });

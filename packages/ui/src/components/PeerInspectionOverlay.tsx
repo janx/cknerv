@@ -6,6 +6,7 @@ import {
 } from 'react';
 import type { Peer } from '@cknerv/types';
 import PeerLinkCard from './hud/PeerLinkCard';
+import type { PeerSightingState } from './hud/PeerSightingPlate';
 import { HUD_COLORS } from './hud/hudTheme';
 import { useReducedMotion } from './hud/useReducedMotion';
 import {
@@ -74,6 +75,10 @@ export interface PeerInspectionOverlayProps {
   localVersion: string;
   /** The peer has left `peers[]`; this is a retained snapshot in its epilogue. */
   linkLost: boolean;
+  /** The crawler's dossier on this node, when the source can offer one. It
+   *  outlives the link: a dropped connection says nothing about how the rest
+   *  of the network last saw the node at the other end. */
+  sighting?: PeerSightingState;
   onClose: () => void;
 }
 
@@ -90,6 +95,7 @@ export default function PeerInspectionOverlay({
   tip,
   localVersion,
   linkLost,
+  sighting,
   onClose,
 }: PeerInspectionOverlayProps) {
   const reduced = useReducedMotion();
@@ -158,6 +164,7 @@ export default function PeerInspectionOverlay({
           localVersion={localVersion}
           layoutSide={layoutSide}
           linkLost={linkLost}
+          sighting={sighting}
           onFacetChange={handleFacetChange}
           onClose={onClose}
         />

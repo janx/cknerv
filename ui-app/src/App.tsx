@@ -77,18 +77,23 @@ import {
   type PeerInspectionHandles,
   type CellIdentityProofEvent,
   type CellIdentityProofKind,
+  type PeerSightingPhase,
+  type PeerSightingState,
 } from '@cknerv/ui';
 import {
+  cachedPeerSighting,
   connectCellsStream,
   connectEntityStream,
   connectSemanticsStream,
   emptySemanticsCache,
   fetchCellSemantics,
+  fetchPeerSighting,
   fetchTransactionSemantics,
   fromCellsSnapshot,
   outPointKey,
   type CellGalaxyCache,
   type ChainCache,
+  type PeerSightingOutcome,
   type SemanticsCache,
   type StreamHealth,
 } from '@cknerv/cache';
@@ -99,6 +104,8 @@ import type {
   ChainNode,
   Peer,
   CellSemanticRecord,
+  PeerSightingAbsence,
+  PeerSightingRecord,
   TransactionSemanticRecord,
 } from '@cknerv/types';
 import Tweaks from './Tweaks';
@@ -1210,6 +1217,112 @@ export default function App({
   const inspectedPeer = peerInspection.peer;
   const inspectedPeerAnchor = peerInspection.position;
 
+  // The crawler's dossier on whichever network node is open — the only
+  // enrichment lookup keyed by a node id rather than a chain object. Nothing
+  // pushes it and nothing holds a projection slot for it, so it is asked once
+  // per selection and remembered for the session. A lost link keeps asking:
+  // the dossier describes the node at the far end, not the link that dropped.
+  const peerSightingEnabled = enrichmentConfig.enabled
+    && semanticsCache.source.capabilities.includes('peer_sighting');
+  const inspectedNetNodeId = inspectedPeer?.node_id ?? selectedNode?.id ?? null;
+  // The memo's horizon. A source that reconnected, went stale or was swapped
+  // out is a different observer, and its predecessor's sightings are not its.
+  const sightingSourceIdentity =
+    `${semanticsCache.source.source}:${semanticsCache.source.status}`;
+  const [peerSightingLookup, setPeerSightingLookup] = useState<{
+    key: string | null;
+    phase: PeerSightingPhase;
+    record: PeerSightingRecord | null;
+    reason: PeerSightingAbsence | null;
+    message: string | null;
+  }>({ key: null, phase: 'waiting', record: null, reason: null, message: null });
+  useEffect(() => {
+    if (!peerSightingEnabled || !inspectedNetNodeId) {
+      setPeerSightingLookup({
+        key: null,
+        phase: 'waiting',
+        record: null,
+        reason: null,
+        message: null,
+      });
+      return;
+    }
+    const settle = (outcome: PeerSightingOutcome) => setPeerSightingLookup({
+      key: inspectedNetNodeId,
+      phase: outcome.state === 'sighted'
+        ? 'ready'
+        : outcome.state === 'unsighted' ? 'unsighted' : 'disabled',
+      record: outcome.state === 'sighted' ? outcome.sighting : null,
+      reason: outcome.state === 'unsighted' ? outcome.reason : null,
+      message: null,
+    });
+    const remembered = cachedPeerSighting(inspectedNetNodeId, sightingSourceIdentity);
+    if (remembered) {
+      settle(remembered);
+      return;
+    }
+    const source = semanticsCache.source;
+    if (!source.validated_anchor) {
+      const hardFailure = source.status === 'error'
+        || source.status === 'incompatible';
+      setPeerSightingLookup({
+        key: inspectedNetNodeId,
+        phase: hardFailure ? 'error' : 'waiting',
+        record: null,
+        reason: null,
+        message: source.message ?? null,
+      });
+      return;
+    }
+
+    const controller = new AbortController();
+    setPeerSightingLookup({
+      key: inspectedNetNodeId,
+      phase: 'loading',
+      record: null,
+      reason: null,
+      message: null,
+    });
+    void fetchPeerSighting(inspectedNetNodeId, {
+      signal: controller.signal,
+      cacheIdentity: sightingSourceIdentity,
+    }).then((outcome) => {
+      if (controller.signal.aborted) return;
+      settle(outcome);
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return;
+      setPeerSightingLookup({
+        key: inspectedNetNodeId,
+        phase: 'error',
+        record: null,
+        reason: null,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    });
+    return () => controller.abort();
+  }, [
+    inspectedNetNodeId,
+    peerSightingEnabled,
+    semanticsCache.source.message,
+    semanticsCache.source.status,
+    semanticsCache.source.validated_anchor,
+    sightingSourceIdentity,
+  ]);
+  // Keyed to the node on screen, so an answer that arrived for the previous
+  // selection can never land on this one.
+  const inspectedNetSighting = useMemo<PeerSightingState | undefined>(() => {
+    if (!peerSightingEnabled || !inspectedNetNodeId) return undefined;
+    if (peerSightingLookup.key !== inspectedNetNodeId) {
+      return { phase: 'waiting', record: null, reason: null, message: null };
+    }
+    return {
+      phase: peerSightingLookup.phase,
+      record: peerSightingLookup.record,
+      reason: peerSightingLookup.reason,
+      message: peerSightingLookup.message,
+    };
+  }, [inspectedNetNodeId, peerSightingEnabled, peerSightingLookup]);
+
   return (
     <>
       {/* Leva knobs panel (DOM overlay) — hidden by default, backtick toggles. */}
@@ -1517,6 +1630,7 @@ export default function App({
           tip={chain.tip}
           localVersion={localNode?.version ?? ''}
           linkLost={peerInspection.linkLost}
+          sighting={inspectedNetSighting}
           onClose={clearNetSelection}
         />
       ) : null}
@@ -1531,6 +1645,7 @@ export default function App({
           node={selectedNode}
           chain={chain}
           peers={peers}
+          sighting={inspectedNetSighting}
           onClose={clearNetSelection}
         />
       ) : null}
