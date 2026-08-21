@@ -212,6 +212,18 @@ export {
   usePeerInspectionRetention,
   type PeerInspectionRetention,
 } from './hooks/usePeerInspectionRetention';
+export {
+  default as NodeInspectionOverlay,
+  NodeInspectionAnchor,
+  createNodeInspectionHandles,
+  type NodeInspectionHandles,
+  type NodeInspectionOverlayProps,
+} from './components/NodeInspectionOverlay';
+export {
+  default as NodeSelfCard,
+  NODE_SELF_ACCENT,
+  type NodeSelfCardProps,
+} from './components/hud/NodeSelfCard';
 
 // ── Consensus flow overlay (Cell→Cell protocol writes) ──────────────
 export { default as NeuralNetwork, MAX_ACTIVE_PULSES } from './nerve/NeuralNetwork';

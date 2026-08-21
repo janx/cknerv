@@ -119,16 +119,10 @@ import {
 import { markPopulatedBufferUpdate } from '../geometry/populatedBufferAttribute';
 import CellPopulationField from './CellPopulationField';
 
-/** Cyan palette for the structural chain anchor (CKB icosahedron).
- *  The chain anchor reads as "structural backbone / chain truth" and
- *  stays visually distinct from the Cell consensus field. Its resting
- *  structure remains cyan while a block event temporarily carries that
- *  block's A-lane hue. Kept in sync with the `ckb`
- *  entry of `_rcg/glowNodePalette.ts` — tune both together. */
-const CHAIN_ANCHOR_PALETTE = { edge: '#7df9ff', halo: '#22d3ee', fill: '#0e7490' };
+import { CHAIN_ANCHOR_HEX } from '../visualPalette';
 // Pre-parsed rest halo: the anchor frame loop re-asserts uColor every frame,
 // and THREE's CSS-string parse is measurable at that rate.
-const CHAIN_ANCHOR_HALO_COLOR = new THREE.Color(CHAIN_ANCHOR_PALETTE.halo);
+const CHAIN_ANCHOR_HALO_COLOR = new THREE.Color(CHAIN_ANCHOR_HEX.halo);
 import CellNucleus from './CellNucleus';
 
 // ---------------------------------------------------------------------------
@@ -555,7 +549,7 @@ function CkbNodeAnchor({
   // The event carrier lives in the halo. An intensity ref eases between the
   // subdued rest/selection levels and a short block-arrival peak, while the
   // shader supplies the single shared breathing envelope.
-  const palette = CHAIN_ANCHOR_PALETTE;
+  const palette = CHAIN_ANCHOR_HEX;
   const haloMat = useMemo(() => {
     const m = makeHaloMaterial(palette);
     m.uniforms.uPhase.value = phaseFor(id);

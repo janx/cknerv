@@ -46,3 +46,18 @@ export const PEER_NETWORK_PALETTE = {
   version: rgbFromHex(PEER_NETWORK_HEX.version),
   coldWhite: rgbFromHex(PEER_NETWORK_HEX.coldWhite),
 } as const satisfies Record<string, SceneColor>;
+
+/**
+ * Cyan family for the structural chain anchor (the CKB icosahedron). The
+ * anchor reads as "structural backbone / chain truth" and stays visually
+ * distinct from the Cell consensus field. Its resting structure remains cyan
+ * while a block event temporarily carries that block's A-lane hue. Kept in
+ * sync with the `ckb` entry of `_rcg/glowNodePalette.ts` — tune both together.
+ * It lives here rather than beside the anchor because the floating NODE card
+ * tints itself from the same constant: card and icosahedron cannot drift.
+ */
+export const CHAIN_ANCHOR_HEX = {
+  edge: '#7df9ff',
+  halo: '#22d3ee',
+  fill: '#0e7490',
+} as const;

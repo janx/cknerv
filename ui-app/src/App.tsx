@@ -51,6 +51,9 @@ import {
   useCellDisplayRuntime,
   NetworkColony,
   NeuralNetwork,
+  NodeInspectionAnchor,
+  NodeInspectionOverlay,
+  createNodeInspectionHandles,
   PeerInspectionAnchor,
   PeerInspectionOverlay,
   createPeerInspectionHandles,
@@ -70,6 +73,7 @@ import {
   type ConsensusMemoryTargetResponse,
   type CellInspectionField,
   type CellInspectionHandles,
+  type NodeInspectionHandles,
   type PeerInspectionHandles,
   type CellIdentityProofEvent,
   type CellIdentityProofKind,
@@ -236,6 +240,13 @@ export default function App({
     peerInspectionHandlesRef.current = createPeerInspectionHandles();
   }
   const peerInspectionHandles = peerInspectionHandlesRef.current;
+  // …and one more for the local node's self probe. It reads the galaxy's own
+  // anchor rather than the colony's, so it keeps its own measured box too.
+  const nodeInspectionHandlesRef = useRef<NodeInspectionHandles | null>(null);
+  if (nodeInspectionHandlesRef.current === null) {
+    nodeInspectionHandlesRef.current = createNodeInspectionHandles();
+  }
+  const nodeInspectionHandles = nodeInspectionHandlesRef.current;
   const [orbitInteractionRevision, noteOrbitInteraction] = useReducer(
     (revision: number) => revision + 1,
     0,
@@ -1139,6 +1150,20 @@ export default function App({
     if (!selectedNetId || selectedNetId.startsWith('peer:')) return null;
     return chainNodes.find((n) => n.id === selectedNetId) ?? null;
   }, [selectedNetId, chainNodes]);
+  // Where that node's labeled icosahedron stands in the galaxy. Placement is a
+  // pure function of (index, count, seed), so this resolves the SAME point
+  // CellGalaxy draws the anchor at — the card tethers to the thing clicked,
+  // not to a second guess at where it is.
+  const selectedNodeAnchor = useMemo(() => {
+    if (!selectedNode) return null;
+    const index = ckbNodeIds.indexOf(selectedNode.id);
+    if (index < 0) return null;
+    return chainNodeWorldPosition(
+      index,
+      Math.max(1, ckbNodeIds.length),
+      universeSeed,
+    );
+  }, [selectedNode, ckbNodeIds, universeSeed]);
   const selectedPeer = useMemo(() => {
     if (!selectedNetId || !selectedNetId.startsWith('peer:')) return null;
     const id = selectedNetId.slice('peer:'.length);
@@ -1220,8 +1245,6 @@ export default function App({
           ? semanticsCache.networkAtlas
           : undefined}
         cellInspectionActive={selectedCell !== null}
-        selectedNode={selectedNode}
-        onClearNet={clearNetSelection}
         backfill={cellsCache.backfill}
         streamHealth={hudStreamHealth}
         build={build}
@@ -1363,6 +1386,21 @@ export default function App({
             }
           />
 
+          {/* Scene half of the local node's self probe. It sits beside
+              CellGalaxy rather than inside its `overlay` slot: that slot lives
+              within the canopy's rotating, CELLS_Y-lifted group, while the
+              labeled CkbNodeAnchor is drawn in plain world space outside it.
+              Untransformed here is EXACTLY the anchor's own frame, so the same
+              chainNodeWorldPosition lands the tether on the icosahedron and
+              keeps it there while the canopy turns. */}
+          {selectedNode && selectedNodeAnchor ? (
+            <NodeInspectionAnchor
+              key={selectedNode.id}
+              position={selectedNodeAnchor}
+              handles={nodeInspectionHandles}
+            />
+          ) : null}
+
           {/* The P2P colony: a broad inferred glow-node cloud + gossamer glow-line
               mesh, the bright measured glow-nodes set within it (one confidence
               gradient; the local node is the galaxy's labeled anchor, not drawn
@@ -1479,6 +1517,20 @@ export default function App({
           tip={chain.tip}
           localVersion={localNode?.version ?? ''}
           linkLost={peerInspection.linkLost}
+          onClose={clearNetSelection}
+        />
+      ) : null}
+
+      {/* DOM half of the local node's self probe — the last detail card to
+          leave the rail. No retention epilogue: the local node cannot churn
+          out of the list the way a peer link can. */}
+      {selectedNode && selectedNodeAnchor ? (
+        <NodeInspectionOverlay
+          key={selectedNode.id}
+          handles={nodeInspectionHandles}
+          node={selectedNode}
+          chain={chain}
+          peers={peers}
           onClose={clearNetSelection}
         />
       ) : null}

@@ -368,21 +368,23 @@ describe('HudOverlay', () => {
     expect(meshRail.style.maxHeight).toBe('calc(100vh - 120px)');
   });
 
-  it('keeps Cell inspection out of the fixed HUD while network detail remains', () => {
+  it('keeps every scene-tethered detail out of the fixed HUD', () => {
     const { container } = render(
       <HudOverlay
         chain={chain}
         peers={peers}
         localNode={localNode}
         cellsStats={cellsStats}
-        selectedNode={localNode}
       />,
     );
     const meshRail = container.querySelector('.cknerv-mesh-rail')!;
 
+    // Summaries only: the rail names the meshes, never a single entity.
     expect(meshRail.textContent).toContain('CELL MESH');
-    expect(meshRail.textContent).toContain('OBSERVER');
+    expect(meshRail.textContent).toContain('PEER MESH');
     expect(meshRail.textContent).not.toContain('CONSENSUS MEMORY');
+    expect(meshRail.querySelector('[data-node-probe-card]')).toBeNull();
+    expect(meshRail.querySelector('[data-peer-probe-card]')).toBeNull();
     expect(container.querySelector('[data-cell-inspection-overlay]')).toBeNull();
   });
 
@@ -403,9 +405,10 @@ describe('HudOverlay', () => {
     const rail = container.querySelector('.cknerv-mesh-rail')!;
     const cellZone = rail.firstElementChild as HTMLElement;
 
-    expect(cellZone.style.flexDirection).toBe('column');
-    expect(cellZone.children).toHaveLength(1);
-    expect(cellZone.firstElementChild?.textContent).toContain('CELL MESH');
+    // No zone wrapper survives the detail cards: the summary IS the rail child.
+    expect(cellZone.dataset.hudPanel).toBe('cells');
+    expect(cellZone.textContent).toContain('CELL MESH');
+    expect(rail.children).toHaveLength(2);
   });
 
   it('does not raise CAUTION when blocks merely run slower than the 8s target', () => {
