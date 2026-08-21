@@ -19,6 +19,11 @@
 // field keeps only delivery/commit feedback; the broad wave belongs here.
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
+import { useThree } from '@react-three/fiber';
+import {
+  cellCanvasCursor,
+  NETWORK_PEER_PICK_FLAG,
+} from '../derives/cellInteraction.derive';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { LIVE } from '../tweaks/liveTweaks';
@@ -218,6 +223,11 @@ const SCRATCH_MATRIX = new THREE.Matrix4();
  * One measured peer's INTERACTION surface: the invisible solid hit-target
  * (a camera-facing plane raycasts poorly) and the selection reticle. The
  * visible halo itself is drawn by MeasuredPeerHalos in one instanced pass.
+ *
+ * The hit mesh carries NETWORK_PEER_PICK_FLAG so the Cell picker can yield
+ * the pixel (a nearer Cell would otherwise win every distance sort), and it
+ * advertises itself through the shared canvas-cursor arbitration — the same
+ * dataset-flag contract the Cell picker and causal lens already follow.
  */
 function MeasuredNode({
   node,
@@ -228,14 +238,51 @@ function MeasuredNode({
   selected: boolean;
   onSelect: (id: string | null) => void;
 }) {
+  const gl = useThree((state) => state.gl);
+  const peerId = node.peer!.node_id;
+  const hitUserData = useMemo(() => ({ [NETWORK_PEER_PICK_FLAG]: true }), []);
+
+  const syncCursor = () => {
+    const canvas = gl.domElement;
+    canvas.style.cursor = cellCanvasCursor(
+      canvas.dataset.cellPickerHover !== undefined,
+      canvas.dataset.cellCausalNavigationHover !== undefined,
+      canvas.dataset.peerNodeHover !== undefined,
+    );
+  };
+
+  // Churn can unmount a hovered peer without a pointer-out; never leave the
+  // canvas advertising a hand for a node that no longer exists.
+  useEffect(() => () => {
+    const canvas = gl.domElement;
+    if (canvas.dataset.peerNodeHover !== peerId) return;
+    delete canvas.dataset.peerNodeHover;
+    canvas.style.cursor = cellCanvasCursor(
+      canvas.dataset.cellPickerHover !== undefined,
+      canvas.dataset.cellCausalNavigationHover !== undefined,
+      false,
+    );
+  }, [gl, peerId]);
+
   return (
     <group position={node.pos}>
       {/* An invisible MATERIAL keeps the raycast (the Raycaster never
           consults material.visible) while the renderer skips the draw. */}
       <mesh
+        userData={hitUserData}
         onClick={(e) => {
           e.stopPropagation();
-          onSelect(`peer:${node.peer!.node_id}`);
+          onSelect(`peer:${peerId}`);
+        }}
+        onPointerOver={() => {
+          gl.domElement.dataset.peerNodeHover = peerId;
+          syncCursor();
+        }}
+        onPointerOut={() => {
+          if (gl.domElement.dataset.peerNodeHover === peerId) {
+            delete gl.domElement.dataset.peerNodeHover;
+          }
+          syncCursor();
         }}
       >
         <sphereGeometry args={[MEASURED_SIZE, 8, 8]} />

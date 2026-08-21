@@ -14,6 +14,8 @@ import {
   cellPickRadiusPx,
   cellNucleusLodRefreshDue,
   consensusBraidRenderScale,
+  NETWORK_PEER_PICK_FLAG,
+  pointerRayOwnedByNetworkPeer,
   dampCellGalaxyRotationScale,
   dampCellFocus,
   focusedBraidScale,
@@ -37,10 +39,28 @@ describe('cell interaction derivation', () => {
   });
 
   it('does not clear a nearer causal endpoint cursor', () => {
-    expect(cellCanvasCursor(false, false)).toBe('');
-    expect(cellCanvasCursor(true, false)).toBe('pointer');
-    expect(cellCanvasCursor(false, true)).toBe('pointer');
-    expect(cellCanvasCursor(true, true)).toBe('pointer');
+    expect(cellCanvasCursor(false, false, false)).toBe('');
+    expect(cellCanvasCursor(true, false, false)).toBe('pointer');
+    expect(cellCanvasCursor(false, true, false)).toBe('pointer');
+    expect(cellCanvasCursor(true, true, false)).toBe('pointer');
+  });
+
+  it('keeps the hand while a measured peer owns the hover', () => {
+    expect(cellCanvasCursor(false, false, true)).toBe('pointer');
+    expect(cellCanvasCursor(true, false, true)).toBe('pointer');
+  });
+
+  it('yields the pointer ray only to flagged peer hit meshes', () => {
+    const cell = { object: { userData: {} } };
+    const peer = { object: { userData: { [NETWORK_PEER_PICK_FLAG]: true } } };
+    const impostor = { object: { userData: { [NETWORK_PEER_PICK_FLAG]: 1 } } };
+    const bare = { object: {} };
+    expect(pointerRayOwnedByNetworkPeer([])).toBe(false);
+    expect(pointerRayOwnedByNetworkPeer([cell, bare])).toBe(false);
+    expect(pointerRayOwnedByNetworkPeer([cell, peer])).toBe(true);
+    expect(pointerRayOwnedByNetworkPeer([peer])).toBe(true);
+    // Non-boolean truthy values do not count: the flag is a contract, not a bag.
+    expect(pointerRayOwnedByNetworkPeer([impostor])).toBe(false);
   });
 
   it('adds bounded acquisition room only after the real braid expands', () => {

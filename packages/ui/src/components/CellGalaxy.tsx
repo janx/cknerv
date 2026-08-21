@@ -66,6 +66,7 @@ import {
 import {
   CONSENSUS_BRAID_LOCAL_RADIUS,
   cellCanvasCursor,
+  pointerRayOwnedByNetworkPeer,
   cellGalaxyRotationScaleTarget,
   cellFocusTarget,
   cellPickRadiusPx,
@@ -1040,6 +1041,7 @@ function CellPicker({
     gl.domElement.style.cursor = cellCanvasCursor(
       false,
       gl.domElement.dataset.cellCausalNavigationHover !== undefined,
+      gl.domElement.dataset.peerNodeHover !== undefined,
     );
   }, [gl]);
 
@@ -1058,6 +1060,7 @@ function CellPicker({
     gl.domElement.style.cursor = cellCanvasCursor(
       id !== null,
       causalNavigationOwnsCursor,
+      gl.domElement.dataset.peerNodeHover !== undefined,
     );
   };
 
@@ -1066,7 +1069,8 @@ function CellPicker({
       ref={ref}
       onPointerMove={(e) => {
         if (
-          typeof e.instanceId !== 'number'
+          pointerRayOwnedByNetworkPeer(e.intersections)
+          || typeof e.instanceId !== 'number'
           || e.instanceId < 0
           || e.instanceId >= drawCountRef.current
         ) {
@@ -1078,6 +1082,10 @@ function CellPicker({
       }}
       onPointerOut={() => setHovered(null)}
       onClick={(e) => {
+        // A measured peer's hit sphere on this same ray owns the pixel: the
+        // Cell is nearer and would win the distance sort, so returning
+        // WITHOUT stopping propagation lets the event walk on to the peer.
+        if (pointerRayOwnedByNetworkPeer(e.intersections)) return;
         e.stopPropagation();
         if (!cellPointerGestureIsClick(e.delta)) return;
         if (

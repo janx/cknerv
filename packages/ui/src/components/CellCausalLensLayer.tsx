@@ -40,6 +40,7 @@ function syncCanvasPointerCursor(canvas: HTMLCanvasElement): void {
   canvas.style.cursor = cellCanvasCursor(
     canvas.dataset.cellPickerHover !== undefined,
     canvas.dataset.cellCausalNavigationHover !== undefined,
+    canvas.dataset.peerNodeHover !== undefined,
   );
 }
 

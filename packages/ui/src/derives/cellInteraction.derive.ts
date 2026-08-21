@@ -73,10 +73,33 @@ export function cellFocusTarget(
 export function cellCanvasCursor(
   cellPickerOwnsCursor: boolean,
   causalNavigationOwnsCursor: boolean,
+  networkPeerOwnsCursor: boolean,
 ): '' | 'pointer' {
-  return !cellPickerOwnsCursor && !causalNavigationOwnsCursor
+  return !cellPickerOwnsCursor
+    && !causalNavigationOwnsCursor
+    && !networkPeerOwnsCursor
     ? ''
     : 'pointer';
+}
+
+/** Stamped on a measured peer's invisible hit mesh (`object.userData`) so the
+ * Cell picker can recognise the peer on its own pointer ray without either
+ * layer importing the other's scene graph. */
+export const NETWORK_PEER_PICK_FLAG = 'networkPeerPick';
+
+/** True when the pointer ray also passes through a measured peer's hit sphere.
+ * The peer sits farther along the ray than the Cell canopy, so distance-sorted
+ * picking alone would always hand the pixel to an ambient Cell; but the twelve
+ * measured landmarks are deliberate targets, so the Cell layer yields — it
+ * neither selects nor stops propagation, and the event walks on to the peer. */
+export function pointerRayOwnedByNetworkPeer(
+  intersections: ReadonlyArray<{
+    object: { userData?: Record<string, unknown> };
+  }>,
+): boolean {
+  return intersections.some(
+    (hit) => hit.object.userData?.[NETWORK_PEER_PICK_FLAG] === true,
+  );
 }
 
 /**
