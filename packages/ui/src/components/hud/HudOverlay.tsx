@@ -172,6 +172,9 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
   // CKB + DAO cluster. Keep their outer edges aligned even when DAO·05 is
   // visible or CKB·01 is temporarily hidden from the panel menu.
   const pulsePanelWidth = `min(${CHAIN_PANEL_WIDTH_PX}px, calc(100vw - 58px))`;
+  // Menu order is module-number order — the codes ARE the registry, so the
+  // list reads 01→08 regardless of which rail a panel docks on. ·06 is the
+  // app-side Jukebox chip, which has no HUD visibility entry.
   const panelControls: HudPanelControl[] = [
     {
       id: 'chain',
@@ -179,6 +182,30 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
       label: 'COMMON KNOWLEDGE BASE',
       visible: panelVisibility.chain,
     },
+    {
+      id: 'peers',
+      code: 'MESH·02',
+      label: 'PEER MESH',
+      visible: panelVisibility.peers,
+    },
+    {
+      id: 'cells',
+      code: 'MESH·03',
+      label: 'CELL MESH',
+      visible: panelVisibility.cells,
+    },
+    {
+      id: 'pulse',
+      code: 'ECG·04',
+      label: 'PULSE',
+      visible: panelVisibility.pulse,
+    },
+    ...(daoPanelAvailable ? [{
+      id: 'dao',
+      code: 'DAO·05',
+      label: 'NERVOS DAO',
+      visible: panelVisibility.dao,
+    }] : []),
     {
       id: 'stage',
       code: 'STAGE·07',
@@ -190,30 +217,6 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
       code: 'GL·08',
       label: 'RENDER STATS',
       visible: panelVisibility.render,
-    },
-    ...(daoPanelAvailable ? [{
-      id: 'dao',
-      code: 'DAO·05',
-      label: 'NERVOS DAO',
-      visible: panelVisibility.dao,
-    }] : []),
-    {
-      id: 'pulse',
-      code: 'ECG·04',
-      label: 'PULSE',
-      visible: panelVisibility.pulse,
-    },
-    {
-      id: 'cells',
-      code: 'MESH·03',
-      label: 'CELL MESH',
-      visible: panelVisibility.cells,
-    },
-    {
-      id: 'peers',
-      code: 'MESH·02',
-      label: 'PEER MESH',
-      visible: panelVisibility.peers,
     },
   ];
   const setPanelVisible = (id: string, visible: boolean) => {

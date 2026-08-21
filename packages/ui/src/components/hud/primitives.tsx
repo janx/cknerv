@@ -20,13 +20,15 @@ function bracket(corner: 'tl' | 'br'): CSSProperties {
     : { ...base, bottom: 0, right: 0, borderWidth: '0 1px 1px 0' };
 }
 
-export function PanelHeader({ en, cjk, idx, accent }: {
+export function PanelHeader({ en, cjk, idx, accent, compact = false }: {
   en: string; cjk: string; idx: string;
   /** Mesh identity color — tints the index tag. */
   accent?: string;
+  /** Tighter header-to-content gap for short instrument panels. */
+  compact?: boolean;
 }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 11 }}>
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: compact ? 6 : 11 }}>
       <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 600, fontSize: 12, letterSpacing: 3, color: HUD_COLORS.orange, textTransform: 'uppercase', textShadow: '0 0 9px rgba(255,152,48,.45)' }}>{en}</span>
       <span style={{ fontFamily: HUD_FONTS.cjk, fontSize: 10, color: HUD_COLORS.orangeDeep, opacity: 0.7 }}>{cjk}</span>
       <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: 8.5, color: accent ?? '#5a6470', letterSpacing: 1, textShadow: accent ? `0 0 7px ${accent}66` : undefined }}>{idx}</span>

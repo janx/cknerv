@@ -92,19 +92,21 @@ export default function BlockCadenceEcg({
     return () => clearInterval(id);
   }, [reducedMotion]);
 
+  // Compact by design: ECG·04 shares the left rail's fixed floor with
+  // DAO·05, and every pixel it gives up is scroll-free room for CKB·01.
   return (
-    <HudPanel style={{ width: 430, zIndex: 12, ...style }}>
-      <PanelHeader en="PULSE" cjk="脉搏" idx="ECG·04" />
+    <HudPanel style={{ width: 430, zIndex: 12, padding: '10px 15px 9px', ...style }}>
+      <PanelHeader en="PULSE" cjk="脉搏" idx="ECG·04" compact />
       <div style={{ display: 'flex', gap: 12 }}>
-        <div style={{ flex: '0 0 96px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+        <div style={{ flex: '0 0 86px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
           {/* hero ticks at 0.1s via the timer above (direct textContent writes);
               a data re-render repaints the same live value here. */}
-          <span ref={heroRef} style={{ fontFamily: HUD_FONTS.mono, fontWeight: 700, fontSize: 26, lineHeight: 1, color, textShadow: `0 0 11px ${color}` }}>{fmtS(Math.max(0, lastBlockTsMs != null ? Date.now() - lastBlockTsMs : gapMs))}</span>
-          <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, letterSpacing: 2, color: HUD_COLORS.dim, marginTop: 4 }}>SINCE LAST</span>
+          <span ref={heroRef} style={{ fontFamily: HUD_FONTS.mono, fontWeight: 700, fontSize: 22, lineHeight: 1, color, textShadow: `0 0 11px ${color}` }}>{fmtS(Math.max(0, lastBlockTsMs != null ? Date.now() - lastBlockTsMs : gapMs))}</span>
+          <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, letterSpacing: 2, color: HUD_COLORS.dim, marginTop: 3 }}>SINCE LAST</span>
         </div>
-        <canvas ref={cvs} width={300} height={58} style={{ display: 'block', flex: 1, minWidth: 0, width: '100%', height: 58, background: '#0a0a0a', border: `1px solid ${rgba(HUD_COLORS.orange, 0.2)}` }} />
+        <canvas ref={cvs} width={300} height={46} style={{ display: 'block', flex: 1, minWidth: 0, width: '100%', height: 46, background: '#0a0a0a', border: `1px solid ${rgba(HUD_COLORS.orange, 0.2)}` }} />
       </div>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, marginTop: 8, fontFamily: HUD_FONTS.mono, fontSize: 8.5, color: HUD_COLORS.dim, letterSpacing: 1 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, marginTop: 6, fontFamily: HUD_FONTS.mono, fontSize: 8.5, color: HUD_COLORS.dim, letterSpacing: 1 }}>
         <span style={{ color, letterSpacing: 2, textShadow: `0 0 7px ${color}` }}>● {condition}</span>
         <span>TGT {fmtS(targetMs)}</span><span>AVG {fmtS(avgMs)}</span><span>RATE {rate != null ? `${rate}/min` : '—'}</span>
       </div>
