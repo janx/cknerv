@@ -1411,16 +1411,20 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         // the bounded discovery requests were in flight.
         self.revalidate_anchor(&anchor, "CellGalaxy composition discovery")
             .await?;
-        // The tail resumes past whatever this discovery hands out, so a
-        // later top-up walks deeper instead of re-offering the head.
-        self.candidate_tail.lock().await.note_emitted(
-            candidates
-                .dao
-                .iter()
-                .chain(&candidates.typed)
-                .chain(&candidates.plain)
-                .map(|candidate| &candidate.out_point),
-        );
+        // What the tail must resume past — captured before the hydrator
+        // consumes the batch, but not CLAIMED until this discovery actually
+        // produced a record. Marking first meant a hydration failure, or an
+        // anchor that moved under the node batch, burned a composition's
+        // worth of tail depth on cells nobody was ever handed: the retry
+        // re-discovered the same head, the tail skipped it as already
+        // emitted, and the shortfall never closed.
+        let claimed: Vec<OutPoint> = candidates
+            .dao
+            .iter()
+            .chain(&candidates.typed)
+            .chain(&candidates.plain)
+            .map(|candidate| candidate.out_point.clone())
+            .collect();
         let record = hydrator.hydrate_galaxy_composition(candidates).await?;
         if record.source != self.name() || record.as_of != anchor {
             return Err(anyhow!(
@@ -1429,6 +1433,10 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         }
         self.revalidate_anchor(&anchor, "CellGalaxy composition")
             .await?;
+        self.candidate_tail
+            .lock()
+            .await
+            .note_emitted(claimed.iter());
         Ok(Some(record))
     }
 
@@ -3500,7 +3508,7 @@ mod tests {
     use super::*;
     use axum::routing::{get, post};
     use axum::{Json, Router};
-    use cknerv_core::{RecentBlock, ScriptId};
+    use cknerv_core::{GalaxyCompositionCandidates, RecentBlock, ScriptId};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
@@ -5029,6 +5037,108 @@ mod tests {
         // nodes already on stage. An empty one would say the opposite.
         assert!(roster.is_none());
         assert_eq!(node_requests.load(Ordering::Relaxed), 0);
+        server.abort();
+    }
+
+    /// A hydrator that fails a stated number of times before answering, so a
+    /// test can ask what the source did with the batch it never delivered.
+    struct FlakyHydrator {
+        failures_left: std::sync::atomic::AtomicUsize,
+        hydrated: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl GalaxyCompositionHydrator for FlakyHydrator {
+        async fn hydrate_galaxy_composition(
+            &self,
+            candidates: GalaxyCompositionCandidates,
+        ) -> anyhow::Result<GalaxyCompositionRecord> {
+            self.hydrated.fetch_add(
+                candidates.dao.len() + candidates.typed.len() + candidates.plain.len(),
+                Ordering::Relaxed,
+            );
+            if self
+                .failures_left
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
+                    left.checked_sub(1)
+                })
+                .is_ok()
+            {
+                return Err(anyhow!("the local node was not answering"));
+            }
+            Ok(GalaxyCompositionRecord {
+                source: "ckbadger".to_string(),
+                as_of: candidates.as_of,
+                updated_at_ms: candidates.updated_at_ms,
+                dao: Vec::new(),
+                typed: Vec::new(),
+                plain: Vec::new(),
+            })
+        }
+
+        async fn hydrate_galaxy_top_up(
+            &self,
+            _candidates: GalaxyCompositionCandidates,
+        ) -> anyhow::Result<GalaxyCompositionTopUp> {
+            unreachable!("this test never tops up")
+        }
+    }
+
+    /// A discovery whose hydration fails must leave the batch UNCLAIMED.
+    ///
+    /// The tail was marked the moment discovery returned, before the node
+    /// batch that turns candidates into cells had answered. A hydration
+    /// failure — or an anchor that moved under it — therefore burned a whole
+    /// composition's worth of tail depth on cells nobody was ever handed:
+    /// the retry re-discovered the same head, and every later top-up skipped
+    /// it as already emitted, so the shortfall never closed.
+    #[tokio::test]
+    async fn a_failed_hydration_leaves_the_batch_for_the_retry() {
+        let (api_base, server) =
+            crate::galaxy_composition::tests::spawn_composition_index(1, true).await;
+        let hydrated = Arc::new(AtomicUsize::new(0));
+        let source = CkbadgerEnrichmentSource::new(api_base)
+            .unwrap()
+            .with_galaxy_composition_hydrator(
+                FlakyHydrator {
+                    failures_left: std::sync::atomic::AtomicUsize::new(1),
+                    hydrated: hydrated.clone(),
+                },
+                64,
+            );
+        assert_eq!(
+            source.probe(&context()).await.status,
+            EnrichmentSourceState::Ready
+        );
+
+        let failed = source.enrich_galaxy_composition(&context()).await;
+        assert!(failed.is_err(), "the hydrator refused this batch");
+        let offered = hydrated.load(Ordering::Relaxed);
+        assert!(offered > 0, "the discovery did find candidates to offer");
+        assert_eq!(
+            source.candidate_tail.lock().await.claimed(),
+            0,
+            "a batch that never became a record claims no tail depth"
+        );
+
+        // The retry takes the very same candidates, and only now are they
+        // claimed — so the tail resumes past what a client actually received.
+        let record = source
+            .enrich_galaxy_composition(&context())
+            .await
+            .expect("the second attempt hydrates")
+            .expect("a composition record");
+        assert_eq!(record.as_of.block, 100);
+        assert_eq!(
+            hydrated.load(Ordering::Relaxed),
+            offered * 2,
+            "the retry re-offered the batch the failure did not consume"
+        );
+        assert_eq!(
+            source.candidate_tail.lock().await.claimed(),
+            offered,
+            "the claim lands once the record exists, and not before"
+        );
         server.abort();
     }
 

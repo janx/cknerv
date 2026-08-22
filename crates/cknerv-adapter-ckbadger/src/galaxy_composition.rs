@@ -157,6 +157,14 @@ impl CandidateTail {
             self.emitted.insert(out_point.clone());
         }
     }
+
+    /// How many outpoints this tail has claimed. A claim is what makes a
+    /// candidate invisible to every later top-up, so "was it claimed" is the
+    /// question an ordering test has to be able to ask.
+    #[cfg(test)]
+    pub(crate) fn claimed(&self) -> usize {
+        self.emitted.len()
+    }
 }
 
 /// Walk deeper for `want_dao` / `want_typed` more candidates of each
@@ -175,22 +183,22 @@ pub(crate) async fn top_up(
     want_typed: usize,
     updated_at_ms: u64,
 ) -> anyhow::Result<GalaxyCompositionCandidates> {
+    // Same rule as discovery — never attach a Cell born beyond the block that
+    // proves this record — enforced INSIDE the walk, because the anchor is
+    // known before the walk starts and the tail claims a candidate the moment
+    // it takes one. Rejecting after the walk marked young cells emitted and
+    // then dropped them, which made them invisible to every later top-up until
+    // a full re-discovery reset the tail.
     let mut dao = if want_dao > 0 {
-        top_up_dao(client, api_base, tail, want_dao).await
+        top_up_dao(client, api_base, tail, want_dao, anchor.block).await
     } else {
         ClassWalk::default()
     };
     let mut typed = if want_typed > 0 {
-        top_up_typed(client, api_base, tail, want_typed).await
+        top_up_typed(client, api_base, tail, want_typed, anchor.block).await
     } else {
         ClassWalk::default()
     };
-    // Same rule as discovery: never attach a Cell born beyond the block
-    // that proves this record.
-    for walk in [&mut dao, &mut typed] {
-        walk.candidates
-            .retain(|candidate| candidate.birth_block <= anchor.block);
-    }
 
     for (class, walk) in [("dao", &dao), ("typed", &typed)] {
         if let Some(error) = walk.stopped_by.as_ref() {
@@ -233,9 +241,10 @@ async fn top_up_dao(
     api_base: &Url,
     tail: &mut CandidateTail,
     want: usize,
+    max_birth_block: u64,
 ) -> ClassWalk {
     let mut found = Vec::with_capacity(want);
-    let stopped_by = walk_dao_tail(client, api_base, tail, want, &mut found)
+    let stopped_by = walk_dao_tail(client, api_base, tail, want, max_birth_block, &mut found)
         .await
         .err();
     ClassWalk {
@@ -249,6 +258,7 @@ async fn walk_dao_tail(
     api_base: &Url,
     tail: &mut CandidateTail,
     want: usize,
+    max_birth_block: u64,
     found: &mut Vec<GalaxyCellCandidate>,
 ) -> anyhow::Result<()> {
     for _ in 0..MAX_PAGES_PER_TOP_UP {
@@ -287,6 +297,13 @@ async fn walk_dao_tail(
                 deposit.deposit_block_number,
                 "DAO deposit",
             )?;
+            // Before the claim, never after it: a candidate the anchor
+            // rejects must stay UNCLAIMED, or it is lost to every later
+            // top-up while the record that would have carried it is proven
+            // by an older block.
+            if candidate.birth_block > max_birth_block {
+                continue;
+            }
             if found.len() >= want {
                 // Past the ask. Leave the rest of this page UNCLAIMED —
                 // marking a candidate emitted without delivering it would
@@ -312,9 +329,10 @@ async fn top_up_typed(
     api_base: &Url,
     tail: &mut CandidateTail,
     want: usize,
+    max_birth_block: u64,
 ) -> ClassWalk {
     let mut found = Vec::with_capacity(want);
-    let stopped_by = walk_typed_tail(client, api_base, tail, want, &mut found)
+    let stopped_by = walk_typed_tail(client, api_base, tail, want, max_birth_block, &mut found)
         .await
         .err();
     ClassWalk {
@@ -328,6 +346,7 @@ async fn walk_typed_tail(
     api_base: &Url,
     tail: &mut CandidateTail,
     want: usize,
+    max_birth_block: u64,
     found: &mut Vec<GalaxyCellCandidate>,
 ) -> anyhow::Result<()> {
     if tail.typed_groups.is_empty() {
@@ -402,6 +421,10 @@ async fn walk_typed_tail(
                 cell.created_at_block,
                 "live Cell",
             )?;
+            // As above: the anchor rejects before the tail claims.
+            if candidate.birth_block > max_birth_block {
+                continue;
+            }
             if found.len() >= want {
                 break; // as above: never claim what is not delivered
             }
@@ -882,7 +905,7 @@ struct GalaxyCellResponse {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn candidate_at(group: u8, rank: u32, capacity: u64) -> GalaxyCellCandidate {
@@ -1169,6 +1192,49 @@ mod tests {
         server.abort();
     }
 
+    /// …and a candidate the anchor rejects is never CLAIMED on the way out.
+    ///
+    /// The tail marks a candidate emitted the moment the walk takes one, so
+    /// rejecting after the walk spent the claim on a cell nobody was handed:
+    /// once the tail wrapped back to the head, `emitted` skipped every one of
+    /// them and they stayed invisible until a full re-discovery reset it.
+    /// Here the anchor catches up between turns and the same deposits must
+    /// still be on offer.
+    #[tokio::test]
+    async fn a_candidate_the_anchor_rejects_is_not_claimed() {
+        let (api, server, _) = spawn_index(100, 0).await;
+        let client = reqwest::Client::new();
+        let mut tail = CandidateTail::default();
+        let early = ChainAnchor {
+            block: 5,
+            hash: "0xearly".into(),
+        };
+
+        let rejected = top_up(&client, &api, early, &mut tail, 100, 0, 1)
+            .await
+            .unwrap();
+        assert!(rejected.dao.is_empty(), "every mock deposit is at block 10");
+
+        // One page was the whole index, so the tail is exhausted; the next
+        // turn only rewinds (it never re-reads within the same call).
+        let rewind = top_up(&client, &api, anchor(), &mut tail, 100, 0, 1)
+            .await
+            .unwrap();
+        assert!(rewind.dao.is_empty(), "the rewind turn hands out nothing");
+
+        // The anchor has caught up. Nothing was claimed by the walk that
+        // rejected them, so the whole index is offerable again.
+        let taken = top_up(&client, &api, anchor(), &mut tail, 100, 0, 1)
+            .await
+            .unwrap();
+        assert_eq!(
+            taken.dao.len(),
+            100,
+            "a rejected candidate must survive for the anchor that accepts it"
+        );
+        server.abort();
+    }
+
     #[test]
     fn interleaving_preserves_group_diversity_and_deduplicates() {
         let duplicate = candidate_at(1, 0, 100);
@@ -1197,7 +1263,7 @@ mod tests {
     /// secondary index takes when the server refuses to serve the row
     /// rather than skipping it. `serve_assets` switches the typed
     /// class's head request off the same way.
-    async fn spawn_composition_index(
+    pub(crate) async fn spawn_composition_index(
         dao_ok_pages: usize,
         serve_assets: bool,
     ) -> (Url, tokio::task::JoinHandle<()>) {
@@ -1218,6 +1284,30 @@ mod tests {
         }
 
         let app = Router::new()
+            // The two the SOURCE needs around a composition — `probe` sets the
+            // validated anchor from them, and every enrichment rechecks the
+            // anchor through `blocks/{n}`. The composition walks below ignore
+            // them; `source.rs`'s tests drive the whole `enrich_*` path
+            // against this same index.
+            .route(
+                "/api/v1/statistics/network",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "syncStatus": { "isSyncing": false, "syncedBlock": 100 }
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/blocks/:number",
+                get(
+                    |axum::extract::Path(number): axum::extract::Path<u64>| async move {
+                        Json(serde_json::json!({
+                            "number": number,
+                            "hash": format!("0xblock{number}"),
+                        }))
+                    },
+                ),
+            )
             .route(
                 "/api/v1/dao/deposits",
                 get(
