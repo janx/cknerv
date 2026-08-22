@@ -19,5 +19,10 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+# `connect` is what the smoke test needs: a real client handshake against the
+# bound listener, so the reconnect arms in `ws.rs` are exercised through the
+# router rather than called directly.
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
+tokio-tungstenite.workspace = true
 tower = "0.5"

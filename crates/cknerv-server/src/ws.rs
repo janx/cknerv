@@ -20,11 +20,14 @@
 //! Catch-up policy:
 //!   1. Subscribe FIRST so any mutation emitted while we read the ring
 //!      lands in our buffer rather than being dropped.
-//!   2. Snapshot the ring; pick `FullSnapshot` / `ReplayDelta` /
-//!      `NothingToReplay` per [`decide_action`].
+//!   2. Snapshot the ring, read the current revision beside it; pick
+//!      `FullSnapshot` / `ReplayDelta` / `NothingToReplay` per
+//!      [`decide_action`]. A `since` past the current revision belongs to a
+//!      previous life of this process and is always snapshotted.
 //!   3. Live loop dedupes against `last_sent_*` so the racy ring/broadcast
 //!      boundary doesn't produce double-sent frames.
 
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -117,12 +120,31 @@ enum StreamAction {
 /// pending entries the snapshot is strictly cheaper for both sides.
 const REPLAY_MAX_ENTRIES: usize = 2048;
 
+/// Pick the catch-up action for a client arriving with `since`.
+///
+/// `current` is the newest revision this server has assigned, and it is NOT
+/// the ring tail. The two differ routinely: a mutation the entity wire hides
+/// (`Mutation::entity_wire_visible`) and a mutation a projection had no delta
+/// for both consume a revision without leaving a ring entry, so a perfectly
+/// caught-up client's cursor normally sits ABOVE `ring_last` — which is why
+/// the ring arms below still treat `since >= last` as quiet.
+///
+/// A cursor past `current` is the one thing this process cannot have issued.
+/// A restart closes every socket, so a tab holding such a cursor was talking
+/// to a PREVIOUS life of the server, whose revisions this one has reset or is
+/// re-issuing. Replaying from it would splice two timelines together (or,
+/// worse, say nothing at all and leave the tab frozen with a green HUD), so
+/// the client is handed the present as a full snapshot instead.
 fn decide_action(
     since: u64,
+    current: u64,
     ring_first: Option<u64>,
     ring_last: Option<u64>,
     pending: usize,
 ) -> StreamAction {
+    if since > current {
+        return StreamAction::FullSnapshot;
+    }
     match (ring_first, ring_last) {
         (None, _) | (_, None) => {
             // Empty ring. If the client has nothing yet (since=0) and the
@@ -192,9 +214,15 @@ pub async fn handle_chain_stream(
     // Subscribe BEFORE the ring snapshot so any mutation emitted while
     // we read the ring lands in our rx queue.
     let mut rx = state.subscribe_mutations();
-    let ring_snapshot = {
+    // The coord read lock is what makes (revision, ring) one observation:
+    // `apply_mutation` holds the write side across the bump and the push, so
+    // the revision read here can never be older than the ring beside it.
+    let (current_revision, ring_snapshot) = {
         let _coord = state.coord.read().unwrap();
-        state.mutation_ring_snapshot()
+        (
+            state.revision.load(Ordering::Relaxed),
+            state.mutation_ring_snapshot(),
+        )
     };
 
     let ring_first = ring_snapshot.first().map(|r| r.revision);
@@ -202,7 +230,7 @@ pub async fn handle_chain_stream(
     let pending = ring_snapshot.iter().filter(|r| r.revision > since).count();
 
     let mut last_sent_revision = since;
-    let action = decide_action(since, ring_first, ring_last, pending);
+    let action = decide_action(since, current_revision, ring_first, ring_last, pending);
 
     match action {
         StreamAction::FullSnapshot => {
@@ -296,6 +324,10 @@ pub async fn handle_projection_stream(
     // exposing rev to the client.
     let mut rx = runner.subscribe();
     let ring_snapshot = runner.delta_ring_snapshot();
+    // Read AFTER the ring: `apply` stores the revision before it pushes the
+    // deltas, so this ordering is the one that cannot observe a ring tail
+    // ahead of the revision and mistake a caught-up client for a foreign one.
+    let current_revision = runner.revision();
 
     let ring_first = ring_snapshot.first().map(|d| d.rev);
     let ring_last = ring_snapshot.last().map(|d| d.rev);
@@ -303,7 +335,7 @@ pub async fn handle_projection_stream(
 
     let mut last_sent_seq: u64 = 0;
     let mut last_sent_revision = since;
-    let action = decide_action(since, ring_first, ring_last, pending);
+    let action = decide_action(since, current_revision, ring_first, ring_last, pending);
 
     match action {
         StreamAction::FullSnapshot => {
@@ -575,7 +607,7 @@ mod tests {
     #[test]
     fn decide_action_empty_ring_fresh_client() {
         assert_eq!(
-            decide_action(0, None, None, 0),
+            decide_action(0, 0, None, None, 0),
             StreamAction::NothingToReplay
         );
     }
@@ -590,21 +622,57 @@ mod tests {
 
     #[test]
     fn decide_action_empty_ring_stale_client() {
-        assert_eq!(decide_action(5, None, None, 0), StreamAction::FullSnapshot);
+        // A backfill cleared the ring under a server that has long since
+        // passed revision 5: nothing to replay from, so resnap.
+        assert_eq!(
+            decide_action(5, 12, None, None, 0),
+            StreamAction::FullSnapshot
+        );
     }
 
     #[test]
     fn decide_action_caught_up() {
         assert_eq!(
-            decide_action(10, Some(1), Some(10), 0),
+            decide_action(10, 10, Some(1), Some(10), 0),
             StreamAction::NothingToReplay
+        );
+    }
+
+    /// The cursor of a caught-up client normally sits ABOVE the ring tail:
+    /// revisions are consumed by mutations the entity wire hides and by
+    /// mutations a projection emitted no delta for, and neither leaves a ring
+    /// entry. Treating "past the ring tail" as evidence of a foreign timeline
+    /// would hand a resync — for the cells projection, several megabytes of
+    /// columnar snapshot — to every ordinary reconnect on a quiet chain.
+    #[test]
+    fn decide_action_a_caught_up_client_above_a_sparse_ring_stays_quiet() {
+        assert_eq!(
+            decide_action(1_000, 1_000, Some(1), Some(950), 0),
+            StreamAction::NothingToReplay
+        );
+    }
+
+    /// The deploy cliff: the tab held revision 50_000 from the server life
+    /// that just exited, and the one that replaced it is at 12. Silence here
+    /// used to freeze the tab's HUD at a dead tip while the transport read
+    /// perfectly healthy.
+    #[test]
+    fn decide_action_a_cursor_from_a_previous_server_life_is_snapshotted() {
+        assert_eq!(
+            decide_action(50_000, 12, Some(1), Some(12), 0),
+            StreamAction::FullSnapshot
+        );
+        // Same client, arriving before the new process has applied anything.
+        assert_eq!(
+            decide_action(50_000, 0, None, None, 0),
+            StreamAction::FullSnapshot
         );
     }
 
     #[test]
     fn decide_action_replayable() {
         assert_eq!(
-            decide_action(5, Some(1), Some(10), 5),
+            decide_action(5, 10, Some(1), Some(10), 5),
             StreamAction::ReplayDelta
         );
     }
@@ -612,7 +680,7 @@ mod tests {
     #[test]
     fn decide_action_gap_too_wide() {
         assert_eq!(
-            decide_action(5, Some(100), Some(200), 100),
+            decide_action(5, 200, Some(100), Some(200), 100),
             StreamAction::FullSnapshot
         );
     }
@@ -622,11 +690,11 @@ mod tests {
         // The ring covers the gap, but replaying it as one frame would
         // dwarf the cached snapshot — the budget flips it to FullSnapshot.
         assert_eq!(
-            decide_action(5, Some(1), Some(60_000), REPLAY_MAX_ENTRIES + 1),
+            decide_action(5, 60_000, Some(1), Some(60_000), REPLAY_MAX_ENTRIES + 1),
             StreamAction::FullSnapshot
         );
         assert_eq!(
-            decide_action(5, Some(1), Some(60_000), REPLAY_MAX_ENTRIES),
+            decide_action(5, 60_000, Some(1), Some(60_000), REPLAY_MAX_ENTRIES),
             StreamAction::ReplayDelta
         );
     }

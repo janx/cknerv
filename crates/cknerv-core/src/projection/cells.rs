@@ -2624,7 +2624,10 @@ mod tests {
         g.apply_mutation(&reservoir(1, (rid, rid + 1, rid + 2)));
         g.apply_mutation(&mined(1, "0xblock1", 1_100));
         let staged = g.snapshot().display.expect("display section");
-        assert!(staged.members.contains(&rid), "the dao resident is on stage");
+        assert!(
+            staged.members.contains(&rid),
+            "the dao resident is on stage"
+        );
 
         // `reservoir_record` gives a resident the outpoint `0xr<id>:0`,
         // which the canonical index deliberately does not hold.

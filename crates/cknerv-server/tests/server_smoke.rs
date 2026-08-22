@@ -6,12 +6,13 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use cknerv_core::{
-    ActivityFeedItem, ActivityFeedRecord, AssetEcosystemCategory, AssetEcosystemRecord, CellGalaxy,
-    CellSemanticRecord, ChainAnchor, EnrichmentSourceState, EnrichmentSourceStatus, Mutation,
-    OutPoint, PeerSightingAbsence, PeerSightingLookup, PeerSightingRecord, ReplayPhase,
-    SemanticsProjection, TransactionSemanticRecord,
+    ActivityFeedItem, ActivityFeedRecord, AssetEcosystemCategory, AssetEcosystemRecord, CellDelta,
+    CellGalaxy, CellSemanticRecord, ChainAnchor, EnrichmentSourceState, EnrichmentSourceStatus,
+    Mutation, OutPoint, PeerSightingAbsence, PeerSightingLookup, PeerSightingRecord, Projection,
+    ReplayPhase, SemanticsProjection, TransactionSemanticRecord,
 };
 use cknerv_server::{Adapter, CanonicalContext, EnrichmentSource, ServerBuilder};
+use futures_util::StreamExt;
 use tokio::sync::{mpsc, watch};
 
 /// A live `get_peers` id, base58 as CKB prints it. The fixture source knows
@@ -211,6 +212,78 @@ impl Adapter for CompletedBootReplayAdapter {
         let _ = shutdown.changed().await;
         Ok(())
     }
+}
+
+/// Two blocks and no replay marker. Nothing here clears a ring, so both the
+/// mutation ring and the projection delta ring still hold their entries when
+/// a reconnecting client arrives — the state in which a cursor from a
+/// previous server life used to be answered with silence.
+struct TwoBlockAdapter;
+
+#[async_trait]
+impl Adapter for TwoBlockAdapter {
+    fn name(&self) -> &'static str {
+        "two-block"
+    }
+
+    async fn run(
+        &self,
+        out: mpsc::Sender<Mutation>,
+        mut shutdown: watch::Receiver<bool>,
+    ) -> anyhow::Result<()> {
+        for number in 1..=2u64 {
+            let _ = out
+                .send(Mutation::BlockMined {
+                    number,
+                    hash: format!("0x{number}"),
+                    tx_count: 0,
+                    size: 0,
+                    at: number,
+                })
+                .await;
+        }
+        let _ = shutdown.changed().await;
+        Ok(())
+    }
+}
+
+/// A projection that answers every mutation with a delta, so its ring is
+/// provably non-empty by the time the test connects. That matters: an EMPTY
+/// ring already resnapped a non-zero cursor, so a projection that stayed
+/// quiet would let this test pass against the very bug it is pinning.
+struct EveryMutationPulses;
+
+impl Projection for EveryMutationPulses {
+    type Snapshot = serde_json::Value;
+    type Delta = CellDelta;
+
+    fn name(&self) -> &'static str {
+        "pulses"
+    }
+
+    fn snapshot(&self) -> serde_json::Value {
+        serde_json::json!({ "pulses": true })
+    }
+
+    fn apply_mutation(&mut self, _m: &Mutation) -> Vec<CellDelta> {
+        vec![CellDelta::Pulse { at_ms: 1 }]
+    }
+}
+
+/// The first frame a stream sends, parsed. Silence is the failure this is
+/// looking for, so the timeout IS the assertion — and it is kept well under
+/// the 5s application heartbeat, whose arrival must never be mistaken for an
+/// answer to the catch-up request.
+async fn first_frame(url: &str) -> serde_json::Value {
+    let (mut socket, _) = tokio_tungstenite::connect_async(url)
+        .await
+        .expect("the stream accepts the upgrade");
+    let message = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .expect("the stream met a foreign cursor with silence")
+        .expect("the stream closed without sending a frame")
+        .expect("the frame is readable");
+    serde_json::from_str(message.to_text().expect("the frame is text")).expect("the frame is JSON")
 }
 
 /// An adapter that returns the instant it is spawned — a source that died
@@ -428,6 +501,56 @@ async fn server_boots_and_serves_chain_snapshot() {
     assert!(
         body.get("revision").is_some(),
         "snapshot should carry a revision cursor: {body}"
+    );
+
+    handle.shutdown().await;
+    server_task.abort();
+}
+
+/// A restart closes every socket but not every tab. The one that comes back
+/// is still holding the revision it reached against the server that exited —
+/// a number the new process has reset past. Both stream families used to read
+/// that as "caught up" and say nothing at all: a live transport, a green HUD,
+/// and a chain frozen at a tip that no longer exists.
+#[tokio::test]
+async fn a_cursor_from_a_previous_server_life_is_answered_with_a_snapshot() {
+    let (router, handle) = ServerBuilder::new()
+        .add_projection(EveryMutationPulses)
+        .add_adapter(TwoBlockAdapter)
+        .build()
+        .expect("build");
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    // Both blocks applied: the rings hold revisions 1 and 2, and 2 is the
+    // newest revision this life of the server has ever assigned.
+    health_until(addr, |body| body["revision"] == 2).await;
+
+    let since = 50_000_000u64;
+    let chain = first_frame(&format!(
+        "ws://{addr}/api/entities/chain/stream?since={since}"
+    ))
+    .await;
+    assert_eq!(chain["kind"], "snapshot", "chain frame: {chain}");
+    assert_eq!(chain["revision"], 2, "chain frame: {chain}");
+    assert_eq!(chain["entities"]["chain"]["tip"], 2, "chain frame: {chain}");
+
+    let projection = first_frame(&format!(
+        "ws://{addr}/api/projections/pulses/stream?since={since}"
+    ))
+    .await;
+    assert_eq!(
+        projection["kind"], "snapshot",
+        "projection frame: {projection}"
+    );
+    assert_eq!(projection["revision"], 2, "projection frame: {projection}");
+    assert_eq!(
+        projection["snapshot"]["pulses"], true,
+        "projection frame: {projection}"
     );
 
     handle.shutdown().await;
