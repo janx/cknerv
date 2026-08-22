@@ -90,6 +90,13 @@ function sceneHex(color: readonly [number, number, number]): string {
     .join('')}`;
 }
 
+/** A source with its comments taken out. This file is a text oracle, and a
+ *  file's prose talks about the same tokens its code reads — so any question of
+ *  the form "does anything actually USE this" has to be asked of what runs. */
+function code(text: string): string {
+  return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+}
+
 type HudSource = { name: string; text: string };
 
 function readHudSources(): HudSource[] {
@@ -190,6 +197,28 @@ describe('hud discipline', () => {
     // Whatever the cell identity is retuned to, it has to clear the peer plane.
     expect(rgbDistance(HUD_COLORS.cellRose, HUD_COLORS.peerWire))
       .toBeGreaterThan(SEPARATION_FLOOR);
+  });
+
+  it('the two greens are deliberate siblings, not one green typed twice', () => {
+    // A3, inverted. `termGreen` shipped as an orphan — a hex in the palette
+    // with no reader — and now it has exactly one: the ECG strokes its canvas
+    // in phosphor while the cadence is FINE, with the `● FINE` lamp beside it
+    // still lit in `nominal`. The two sit on the same panel at the same moment,
+    // which only works if a person can see they are two different greens:
+    // phosphor is an instrument's INK, `nominal` is a status LAMP. Held to the
+    // same floor as any other pair of tokens that mean different things.
+    expect(rgbDistance(HUD_COLORS.termGreen, HUD_COLORS.nominal))
+      .toBeGreaterThan(SEPARATION_FLOOR);
+
+    // And the other half of the bargain: if the phosphor is ever judged a
+    // mistake at the running panel, the token leaves with it. An unread
+    // `termGreen` is how this whole finding started. Asked of the CODE, because
+    // the prose around it — here and in `hudTheme.ts` — says the token's name
+    // out loud, and a doc comment is not a reader.
+    const readers = SOURCES.filter(
+      (source) => source.name !== PALETTE_SOURCE && code(source.text).includes('HUD_COLORS.termGreen'),
+    );
+    expect(readers.map((source) => source.name)).toEqual(['BlockCadenceEcg.tsx']);
   });
 
   it('the metabolism panel raises no alarms', () => {

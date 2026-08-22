@@ -59,6 +59,12 @@ export interface StripOpts {
   nowMs: number;
   targetMs: number;
   gapMs: number;
+  /** The trace's ink — stroke and glow, and nothing else in here. The
+   *  graticule (grid, baseline, target ticks, the "now" edge) is fixed green
+   *  on purpose: it is the tube's own ruling, so it stays put while the signal
+   *  drawn on it turns yellow, then red. Callers pass `COND_COLOR_TRACE`,
+   *  which is the condition color everywhere except FINE — see the split in
+   *  `BlockCadenceEcg`. */
   color: string;
   sizes?: number[];
   txCounts?: number[];
@@ -94,7 +100,7 @@ export function drawStripChart(ctx: CanvasRenderingContext2D, o: StripOpts): voi
   }
 
   // trace — fixed-pixel spikes, each scaled: WIDTH by block size, HEIGHT by tx count.
-  // (Hue stays the condition color; only the glyph's width/height vary, so it stays
+  // (Hue stays the trace color; only the glyph's width/height vary, so it stays
   // alias-safe — no sub-pixel time-domain sampling.) Rationale: a time-domain PQRST is
   // sub-pixel at this window and aliases into peak<->trough flicker as the trace
   // scrolls, so we sum resolvable spike profiles in pixel space centred on each

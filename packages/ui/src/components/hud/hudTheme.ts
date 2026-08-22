@@ -95,6 +95,20 @@ export const HUD_COLORS = {
   warning: '#FFB000',
   danger: '#FF3030',
   crit: '#8B0000',
+  // CRT phosphor. Not a fourth semantic green — the light a cathode tube
+  // glows, which is why it is harder and more saturated than any state token.
+  // It has exactly one reader: `BlockCadenceEcg`'s `COND_COLOR_TRACE`, which
+  // strokes the ECG canvas in this while the chain's cadence is FINE, with the
+  // `● FINE` lamp beside it still lit in `nominal`. Two greens on one panel is
+  // deliberate and `hudDiscipline.test.ts` holds them apart: one is an
+  // instrument's ink, the other is a status lamp, and they look like different
+  // things because they are different things.
+  //
+  // The escape hatch, because the phosphor is a judgement a person makes at
+  // the running panel and not one this file can make: if it reads as a
+  // mistake, this token and `COND_COLOR_TRACE` are deleted together. There is
+  // no second use — the token shipped as an orphan for months, and a palette
+  // carrying hexes nobody reads is exactly how this one drifted.
   termGreen: '#00F700',
 } as const;
 
