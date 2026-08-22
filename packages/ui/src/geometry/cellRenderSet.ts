@@ -43,6 +43,12 @@ export interface CellRenderSetState {
 
 export interface CellRenderSetUpdate {
   cells: Cell[];
+  /** The published list this update was computed AGAINST. `ranges`,
+   * `entered` and `exited` all describe the move from THIS array to `cells`,
+   * so a journal-shaped derivative of the list (see `syncCellRenderMap`) can
+   * prove it holds the same base before patching — and fall back to a full
+   * resolve when it skipped a generation instead of patching the wrong one. */
+  previousCells: readonly Cell[];
   ranges: CellRenderRange[];
   membershipChanged: boolean;
   /** NET stage arrivals/departures of this sync, in journal order. An id
@@ -199,6 +205,58 @@ export function cellRenderMap(cells: readonly Cell[]): Map<number, Cell> {
   return new Map(cells.map((cell) => [cell.id, cell]));
 }
 
+/** A render list's id→Cell view, carried across syncs. */
+export interface CellRenderMapState {
+  map: Map<number, Cell>;
+  /** The list `map` currently mirrors, or null before the first resolve. */
+  cells: readonly Cell[] | null;
+}
+
+export function createCellRenderMapState(): CellRenderMapState {
+  return { map: new Map(), cells: null };
+}
+
+/** Keep an id→Cell view of the render list in step with one cursor at
+ * O(churn), instead of rebuilding the whole map every time the list moves.
+ * `ranges` already names every slot whose Cell object changed and `exited`
+ * every id that left, so the patch is exactly the journal the sync applied.
+ *
+ * The map is patched IN PLACE: its identity is a handle, never a change
+ * signal. Consumers read it at use time (per frame, per batch, or through
+ * the request/response generation guards that actually prove which build a
+ * map belongs to) — nothing memoizes on it, which is what makes O(churn)
+ * possible at all.
+ *
+ * Advance this with EVERY update the cursor publishes: a skipped generation
+ * leaves the patch describing a base the map no longer holds. That is
+ * detected, not trusted — `previousCells` must be the array the map mirrors,
+ * and any mismatch resolves through one full rebuild.
+ */
+export function syncCellRenderMap(
+  state: CellRenderMapState,
+  update: CellRenderSetUpdate,
+): Map<number, Cell> {
+  if (state.cells === update.cells) return state.map;
+  if (state.cells !== update.previousCells) {
+    state.map = cellRenderMap(update.cells);
+    state.cells = update.cells;
+    return state.map;
+  }
+  const { map } = state;
+  // Departures first: an id the same patch removed and re-added is in
+  // neither list, and a slot a departure freed is republished as a range.
+  for (const id of update.exited) map.delete(id);
+  for (const range of update.ranges) {
+    const end = range.start + range.count;
+    for (let slot = range.start; slot < end; slot += 1) {
+      const cell = update.cells[slot];
+      map.set(cell.id, cell);
+    }
+  }
+  state.cells = update.cells;
+  return map;
+}
+
 /** Compare two resolved display lists by immutable Cell identity and
  * coalesce adjacent changes into upload-friendly ranges. Full comparison is
  * retained as the canonical fallback for snapshots, skipped journals, and
@@ -297,6 +355,7 @@ function rebuildCellRenderSet(
 
   return {
     cells,
+    previousCells: previous,
     ranges: diff.ranges,
     membershipChanged: diff.membershipChanged,
     entered,
@@ -332,6 +391,7 @@ export function syncCellRenderSet(
   ) {
     return {
       cells: state.cells,
+      previousCells: state.cells,
       ranges: EMPTY_RENDER_RANGES,
       membershipChanged: false,
       entered: EMPTY_RENDER_MEMBERS,
@@ -373,10 +433,17 @@ export function syncCellRenderSet(
   // while a re-entry in the same patch can still cancel its own exit.
   const exited = new Set<number>();
   const entered: number[] = [];
-  let cells = state.cells;
-  let indexById = state.indexById;
+  const previousCells = state.cells;
+  // The slot index is patched IN PLACE. Unlike the `cells` array — whose
+  // identity is published for prev/next diffing, so it must copy on write —
+  // the index is never handed across a sync: the one outside reader
+  // (`cellRenderOverlay`, via CellGalaxy) asks the LIVE cursor a membership
+  // question and keeps nothing, and each cursor owns its own state object.
+  // Cloning it bought no isolation and cost one 12K-entry Map per block.
+  const indexById = state.indexById;
+  let cells = previousCells;
   let cellsOwned = false;
-  let indexOwned = false;
+  let indexPatched = false;
   let membershipChanged = false;
   let topologyChanged = false;
 
@@ -387,12 +454,15 @@ export function syncCellRenderSet(
     }
     return cells;
   };
-  const writableIndex = () => {
-    if (!indexOwned) {
-      indexById = new Map(indexById);
-      indexOwned = true;
-    }
-    return indexById;
+  // Bailing out mid-patch is the one thing the clone used to cover: the
+  // rebuild recovers `entered`/`exited` by diffing against `state.indexById`,
+  // which a half-applied patch no longer matches. `state.cells` is still
+  // pristine (copy-on-write), so re-deriving the index from it restores
+  // exactly the pre-sync pair — at the cost of one O(list) pass on a path
+  // that was already rebuilding the whole list.
+  const bailToRebuild = () => {
+    if (indexPatched) state.indexById = cellRenderIndex(previousCells);
+    return rebuildCellRenderSet(state, cache, displayBudget);
   };
 
   // Exits leave the list by swap-from-tail: the moved cell's slot dirties
@@ -402,13 +472,13 @@ export function syncCellRenderSet(
     if (slot === undefined) continue;
     exited.add(id);
     const list = writableCells();
-    const index = writableIndex();
-    index.delete(id);
+    indexPatched = true;
+    indexById.delete(id);
     const last = list.length - 1;
     if (slot !== last) {
       const moved = list[last];
       list[slot] = moved;
-      index.set(moved.id, slot);
+      indexById.set(moved.id, slot);
       dirtySlots.add(slot);
     }
     list.pop();
@@ -423,7 +493,7 @@ export function syncCellRenderSet(
     if (slot === undefined) continue;
     const after = resolveStagedCell(cache, id);
     if (!after) {
-      return rebuildCellRenderSet(state, cache, displayBudget);
+      return bailToRebuild();
     }
     const before = cells[slot];
     if (before === after) continue;
@@ -438,11 +508,12 @@ export function syncCellRenderSet(
     if (!cell) {
       // An enter referencing an unknown record violates the same-stream
       // ordering contract; recover through one canonical rebuild.
-      return rebuildCellRenderSet(state, cache, displayBudget);
+      return bailToRebuild();
     }
     const slot = cells.length;
     writableCells().push(cell);
-    writableIndex().set(id, slot);
+    indexPatched = true;
+    indexById.set(id, slot);
     dirtySlots.add(slot);
     // Removed and re-added inside one patch: the stage never lost it, so it
     // is neither an arrival nor a departure.
@@ -452,13 +523,13 @@ export function syncCellRenderSet(
   }
 
   state.cells = cells;
-  state.indexById = indexById;
   state.cellsToken = cache.cellsToken;
   state.displayToken = cache.displayToken;
   if (topologyChanged) state.topologyVersion += 1;
 
   return {
     cells,
+    previousCells,
     ranges: cellRenderRanges(dirtySlots),
     membershipChanged,
     entered,
@@ -493,10 +564,13 @@ function syncFallbackPrefix(
   const targetCount = Math.min(cache.cells.size, displayBudget);
   const dirtySlots = new Set<number>();
   const entered: number[] = [];
-  let cells = state.cells;
-  let indexById = state.indexById;
+  const previousCells = state.cells;
+  // Patched in place for the same reason the display-journal path is; see
+  // the note there.
+  const indexById = state.indexById;
+  let cells = previousCells;
   let cellsOwned = false;
-  let indexOwned = false;
+  let indexPatched = false;
   let membershipChanged = false;
   let topologyChanged = false;
 
@@ -507,12 +581,9 @@ function syncFallbackPrefix(
     }
     return cells;
   };
-  const writableIndex = () => {
-    if (!indexOwned) {
-      indexById = new Map(indexById);
-      indexOwned = true;
-    }
-    return indexById;
+  const bailToRebuild = () => {
+    if (indexPatched) state.indexById = cellRenderIndex(previousCells);
+    return rebuildCellRenderSet(state, cache, displayBudget);
   };
 
   for (const id of changes.updated) {
@@ -520,7 +591,7 @@ function syncFallbackPrefix(
     if (slot === undefined) continue;
     const after = cache.cells.get(id);
     if (!after) {
-      return rebuildCellRenderSet(state, cache, displayBudget);
+      return bailToRebuild();
     }
     const before = cells[slot];
     if (before === after) continue;
@@ -537,7 +608,8 @@ function syncFallbackPrefix(
       if (!cell) continue;
       const slot = cells.length;
       writableCells().push(cell);
-      writableIndex().set(id, slot);
+      indexPatched = true;
+      indexById.set(id, slot);
       dirtySlots.add(slot);
       entered.push(id);
       membershipChanged = true;
@@ -548,17 +620,17 @@ function syncFallbackPrefix(
   // A missing slot means the journal cannot explain the authoritative prefix
   // (for example, a skipped external-store state).
   if (cells.length !== targetCount) {
-    return rebuildCellRenderSet(state, cache, displayBudget);
+    return bailToRebuild();
   }
 
   state.cells = cells;
-  state.indexById = indexById;
   state.cellsToken = cache.cellsToken;
   state.displayToken = cache.displayToken;
   if (topologyChanged) state.topologyVersion += 1;
 
   return {
     cells,
+    previousCells,
     ranges: cellRenderRanges(dirtySlots),
     membershipChanged,
     entered,

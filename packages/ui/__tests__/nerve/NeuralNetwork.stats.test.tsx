@@ -104,6 +104,21 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
     expect(NETWORK_SOURCE).toContain('cellsCache.displayBudget?.nerveEdges');
   });
 
+  it('patches the staged map from the same update, above the build gates', () => {
+    // The map the builder packs is maintained at O(churn), never rebuilt per
+    // block — and it is resolved BEFORE the gates that skip a generation,
+    // because the patch has to see every update the cursor publishes or it
+    // pays for a rebuild it existed to avoid.
+    expect(NETWORK_SOURCE).toContain(
+      'syncCellRenderMap(displayCellMapRef.current, renderUpdate)',
+    );
+    expect(NETWORK_SOURCE).not.toContain('cellRenderMap(visibleCells)');
+    const resolvedAt = NETWORK_SOURCE.indexOf('syncCellRenderMap(');
+    const gatedAt = NETWORK_SOURCE.indexOf('if (!topologyChanged) return;');
+    expect(resolvedAt).toBeGreaterThan(-1);
+    expect(gatedAt).toBeGreaterThan(resolvedAt);
+  });
+
   // Integration mount-safety test — the level this jsdom harness supports
   // (same precedent as __tests__/components/CellGalaxy.test.tsx). r3f v8's
   // <Canvas> never mounts its children at 0×0 (the no-op ResizeObserver in

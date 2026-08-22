@@ -62,9 +62,10 @@ import { emptyNeighborGraph, type NeighborGraph } from '../geometry/neighborGrap
 import { createNeighborGraphBuilder } from '../geometry/neighborGraphBuilder';
 import {
   cellRenderClampActive,
-  cellRenderMap,
+  createCellRenderMapState,
   createCellRenderSetState,
   resolveStagedCell,
+  syncCellRenderMap,
   syncCellRenderSet,
 } from '../geometry/cellRenderSet';
 import {
@@ -458,6 +459,11 @@ export default function NeuralNetwork({
   const displayGraphRef = useRef<NeighborGraph>(emptyNeighborGraph());
   const displayCellsRef = useRef<Map<number, Cell>>(new Map());
   const displayRenderSetRef = useRef(createCellRenderSetState());
+  /** The staged id→Cell map the topology builder packs, kept in step with
+   * the cursor above at O(churn). Only used while the staged list is not
+   * simply the retained canonical map (see the resolve below); a generation
+   * spent in that regime resolves through one rebuild on the way back. */
+  const displayCellMapRef = useRef(createCellRenderMapState());
   const fabricHandlesRef = useRef<NeuralFabricHandles | null>(null);
   const displayTopologyRef = useRef('');
   const displayTopologyVersionRef = useRef(-1);
@@ -537,6 +543,19 @@ export default function NeuralNetwork({
       cellDisplayLimit,
     );
     const visibleCells = renderUpdate.cells;
+    // Fallback full coverage: the display list IS the canonical map's cells,
+    // so reuse the retained Map instead of materialising a copy per block.
+    // Under a display plane membership mixes residents in, so the staged
+    // list keeps its own map — PATCHED from the update above rather than
+    // rebuilt, which is why it is resolved here and not past the gates
+    // below: those skip generations whose list still moved, and the patch
+    // has to see every one of them (a skipped generation is detected and
+    // costs one rebuild, but that is the cost this exists to avoid).
+    const displayPlaneActive = cellsCache.displayBudget !== null;
+    const displayCells =
+      !displayPlaneActive && visibleCells.length === cellsCache.cells.size
+        ? cellsCache.cells
+        : syncCellRenderMap(displayCellMapRef.current, renderUpdate);
     const topologyChanged = (
       !displayBootstrappedRef.current
       || displayTopologyRef.current !== displaySelectionKey
@@ -557,20 +576,10 @@ export default function NeuralNetwork({
     );
     if (requestMatches) return;
 
-    // Fallback full coverage: the display list IS the canonical map's
-    // cells, so reuse the retained Map instead of materialising a copy
-    // per block. Under a display plane membership mixes residents in, so
-    // the staged list always materialises its own map (identity frozen
-    // per request for the completion-time guards below).
-    const displayPlaneActive = cellsCache.displayBudget !== null;
     // The manual display-limit clamp truncates the staged list, so the
     // journal below describes churn this build cannot express (see the
     // cellsJournal branch).
     const clampActive = cellRenderClampActive(cellsCache, cellDisplayLimit);
-    const displayCells =
-      !displayPlaneActive && visibleCells.length === cellsCache.cells.size
-        ? cellsCache.cells
-        : cellRenderMap(visibleCells);
     // Admit this generation's newborns into the display graph on the exact
     // map the build below packs, closing the window between the delta and
     // the worker completion. Graph-only: resting fibres still grow from the
@@ -598,6 +607,10 @@ export default function NeuralNetwork({
     // at completion. A pulse planned this tick targets cells born this tick,
     // and its hops resolve their geometry from here — waiting for the worker
     // would extinguish exactly the pulses a new block just created.
+    // Membership only ever moves here: a generation the gates above skipped
+    // could not have changed the staged ids (that is what versions the
+    // topology), so the patch it applied to the map replaced Cell VALUES
+    // whose id and pos_seed are unchanged by construction.
     displayCellsRef.current = displayCells;
     const requestedTopologyVersion = renderUpdate.topologyVersion;
     displayRequestedCellsRef.current = displayCells;

@@ -5,15 +5,18 @@
 // resolution, rebuild fallbacks, the presentation clamp, and the D4
 // selected-cell overlay pool.
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Cell, CellDelta, CellGalaxySnapshot } from '@cknerv/types';
 import {
   cellRenderClampActive,
   cellRenderMap,
   cellRenderOverlay,
+  createCellRenderMapState,
   createCellRenderSetState,
   OVERLAY_SLOT_POOL,
+  syncCellRenderMap,
   syncCellRenderSet,
+  type CellRenderSetState,
 } from '../../src/geometry/cellRenderSet';
 import {
   applyCellDelta,
@@ -669,5 +672,237 @@ describe('cellRenderOverlay (D4 selected-cell pool)', () => {
     expect(cellRenderOverlay(cache, new Map(), 1, 0)).toEqual([]);
     expect(cellRenderOverlay(cache, new Map(), 1, OVERLAY_SLOT_POOL))
       .toHaveLength(1);
+  });
+});
+
+/** The slot index is renderer-local and single-writer, so a patch writes it
+ *  in place instead of photocopying 12K entries per block. What that costs
+ *  is the free undo a clone used to provide: these pin that the in-place
+ *  index still matches its published list after every path, including the
+ *  one that abandons a half-applied patch. */
+describe('syncCellRenderSet — the in-place slot index', () => {
+  const expectIndexMirrors = (
+    state: CellRenderSetState,
+    cells: readonly Cell[],
+  ) => {
+    expect(state.indexById.size).toBe(cells.length);
+    for (const [slot, entry] of cells.entries()) {
+      expect(state.indexById.get(entry.id)).toBe(slot);
+    }
+  };
+
+  it('follows a birth, a death and a departure through one cursor', () => {
+    const start = fromCellsSnapshot(
+      1,
+      snapshotWithDisplay([cell(1), cell(2), cell(3), cell(4)], [1, 2, 3, 4]),
+    );
+    const state = createCellRenderSetState();
+    expectIndexMirrors(state, syncCellRenderSet(state, start, 12_000).cells);
+
+    const grown = applyRevisionedCellDeltas(start, [
+      { revision: 2, delta: { type: 'birth', cell: cell(9) } },
+      { revision: 2, delta: displayDelta({ enter_ids: [9] }) },
+    ]);
+    const birth = syncCellRenderSet(state, grown, 12_000);
+    expect(birth.mode).toBe('incremental');
+    expectIndexMirrors(state, birth.cells);
+
+    const died = applyCellDelta(grown, { type: 'death', id: 3, at_ms: 5000 });
+    const death = syncCellRenderSet(state, died, 12_000);
+    expect(death.mode).toBe('incremental');
+    expect(death.cells[2]).toBe(died.cells.get(3));
+    expectIndexMirrors(state, death.cells);
+
+    const left = applyCellDelta(died, displayDelta({ exit_ids: [2] }));
+    const exit = syncCellRenderSet(state, left, 12_000);
+    expect(exit.mode).toBe('incremental');
+    expect(exit.cells.map(({ id }) => id)).toEqual([1, 9, 3, 4]);
+    expectIndexMirrors(state, exit.cells);
+  });
+
+  it('leaves nothing of the first patch behind for the second', () => {
+    const start = fromCellsSnapshot(
+      1,
+      snapshotWithDisplay([cell(1), cell(2), cell(3)], [1, 2, 3]),
+    );
+    const state = createCellRenderSetState();
+    syncCellRenderSet(state, start, 12_000);
+
+    // Two patches on one cursor, each swapping a departure out of the middle
+    // and appending an arrival: the second reads the index the first wrote.
+    const first = applyRevisionedCellDeltas(start, [
+      { revision: 2, delta: { type: 'birth', cell: cell(8) } },
+      { revision: 2, delta: displayDelta({ exit_ids: [1], enter_ids: [8] }) },
+    ]);
+    const one = syncCellRenderSet(state, first, 12_000);
+    expect(one.mode).toBe('incremental');
+    expectIndexMirrors(state, one.cells);
+
+    const second = applyRevisionedCellDeltas(first, [
+      { revision: 3, delta: { type: 'birth', cell: cell(9) } },
+      { revision: 3, delta: displayDelta({ exit_ids: [2], enter_ids: [9] }) },
+    ]);
+    const two = syncCellRenderSet(state, second, 12_000);
+    expect(two.mode).toBe('incremental');
+    expect([...two.exited]).toEqual([2]);
+    expect([...two.entered]).toEqual([9]);
+    expectIndexMirrors(state, two.cells);
+    // Every surviving id still resolves to the slot it actually occupies.
+    for (const entry of two.cells) {
+      expect(two.cells[state.indexById.get(entry.id) as number]).toBe(entry);
+    }
+  });
+
+  it('rewinds a half-applied patch before the rebuild reads it', () => {
+    // The unresolved-enter warning is once per session and this file spends
+    // it earlier; silence the channel either way.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const before = fromCellsSnapshot(
+      1,
+      snapshotWithDisplay([cell(1), cell(2), cell(3), cell(4)], [1, 2, 3, 4]),
+    );
+    const state = createCellRenderSetState();
+    syncCellRenderSet(state, before, 12_000);
+
+    // One patch, two halves: the exit lands on the index, then an enter no
+    // record resolves aborts to a rebuild — which recovers the membership
+    // diff from that same index. A half-applied index would swallow the
+    // departure and nothing downstream would fade cell 2 out.
+    const after = applyCellDelta(
+      before,
+      displayDelta({ exit_ids: [2], enter_ids: [777] }),
+    );
+    const update = syncCellRenderSet(state, after, 12_000);
+
+    expect(update.mode).toBe('rebuild');
+    expect(update.cells.map(({ id }) => id)).toEqual([1, 3, 4]);
+    expect([...update.exited]).toEqual([2]);
+    expect([...update.entered]).toEqual([]);
+    expectIndexMirrors(state, update.cells);
+    warn.mockRestore();
+  });
+});
+
+/** The id→Cell view the display topology builder packs. It used to be a
+ *  fresh 12K-entry Map per membership-changing block; it is now patched from
+ *  the same update that moved the list. */
+describe('syncCellRenderMap', () => {
+  const expectMapMirrors = (
+    map: ReadonlyMap<number, Cell>,
+    cells: readonly Cell[],
+  ) => {
+    expect(map.size).toBe(cells.length);
+    for (const entry of cells) expect(map.get(entry.id)).toBe(entry);
+  };
+
+  it('hands back the very same map while the list holds still', () => {
+    const cache = fromCellsSnapshot(
+      1,
+      snapshotWithDisplay([cell(1), cell(2)], [1, 2]),
+    );
+    const cursor = createCellRenderSetState();
+    const mapState = createCellRenderMapState();
+    const bootstrap = syncCellRenderSet(cursor, cache, 12_000);
+    const map = syncCellRenderMap(mapState, bootstrap);
+    expectMapMirrors(map, bootstrap.cells);
+
+    const replay = syncCellRenderSet(cursor, cache, 12_000);
+    expect(replay.mode).toBe('unchanged');
+    expect(syncCellRenderMap(mapState, replay)).toBe(map);
+
+    // Same membership, new value: still a patch, never a rebuild.
+    const tagged = applyCellDelta(cache, { type: 'tag', id: 2, tag: 'dex' });
+    const update = syncCellRenderSet(cursor, tagged, 12_000);
+    expect(update.mode).toBe('incremental');
+    expect(syncCellRenderMap(mapState, update)).toBe(map);
+    expect(map.get(2)).toBe(tagged.cells.get(2));
+    expectMapMirrors(map, update.cells);
+  });
+
+  it('patches arrivals, departures and deaths into the map it already has', () => {
+    const start = fromCellsSnapshot(
+      1,
+      snapshotWithDisplay([cell(1), cell(2), cell(3)], [1, 2, 3]),
+    );
+    const cursor = createCellRenderSetState();
+    const mapState = createCellRenderMapState();
+    const map = syncCellRenderMap(
+      mapState,
+      syncCellRenderSet(cursor, start, 12_000),
+    );
+
+    const after = applyRevisionedCellDeltas(start, [
+      { revision: 2, delta: { type: 'birth', cell: cell(9) } },
+      { revision: 2, delta: { type: 'death', id: 3, at_ms: 5000 } },
+      {
+        revision: 2,
+        delta: displayDelta({
+          enter_ids: [9],
+          enter_cells: [cell(700)],
+          exit_ids: [1],
+        }),
+      },
+    ]);
+    const update = syncCellRenderSet(cursor, after, 12_000);
+    expect(update.mode).toBe('incremental');
+
+    const patched = syncCellRenderMap(mapState, update);
+    expect(patched).toBe(map);
+    expectMapMirrors(patched, update.cells);
+    expect(patched.has(1)).toBe(false);
+    expect(patched.get(3)).toBe(after.cells.get(3));
+    expect(patched.get(700)).toBe(after.displayResidents.get(700));
+  });
+
+  it('converges on the rebuild path too', () => {
+    const start = fromCellsSnapshot(
+      1,
+      snapshotWithDisplay([cell(1), cell(2), cell(3)], [1, 2]),
+    );
+    const cursor = createCellRenderSetState();
+    const mapState = createCellRenderMapState();
+    syncCellRenderMap(mapState, syncCellRenderSet(cursor, start, 12_000));
+
+    // A snapshot reset re-stages a different membership: the update is a
+    // rebuild, but its ranges/departures still describe the same base.
+    const resync = fromCellsSnapshot(
+      9,
+      snapshotWithDisplay([cell(2), cell(3)], [3, 2]),
+      {},
+      start,
+    );
+    const update = syncCellRenderSet(cursor, resync, 12_000);
+    expect(update.mode).toBe('rebuild');
+    const patched = syncCellRenderMap(mapState, update);
+    expectMapMirrors(patched, update.cells);
+    expect(patched.has(1)).toBe(false);
+  });
+
+  it('rebuilds rather than mispatch a generation it never saw', () => {
+    const start = fromCellsSnapshot(
+      1,
+      snapshotWithDisplay([cell(1), cell(2), cell(3)], [1, 2]),
+    );
+    const cursor = createCellRenderSetState();
+    const mapState = createCellRenderMapState();
+    const map = syncCellRenderMap(
+      mapState,
+      syncCellRenderSet(cursor, start, 12_000),
+    );
+
+    // The cursor advances twice; the map is only shown the second update,
+    // whose ranges describe a list it never held.
+    const grown = applyRevisionedCellDeltas(start, [
+      { revision: 2, delta: displayDelta({ enter_ids: [3] }) },
+    ]);
+    const skipped = syncCellRenderSet(cursor, grown, 12_000);
+    expect(skipped.mode).toBe('incremental');
+    const thinned = applyCellDelta(grown, displayDelta({ exit_ids: [1] }));
+    const latest = syncCellRenderSet(cursor, thinned, 12_000);
+
+    const rebuilt = syncCellRenderMap(mapState, latest);
+    expect(rebuilt).not.toBe(map);
+    expectMapMirrors(rebuilt, latest.cells);
+    expect(rebuilt.has(1)).toBe(false);
   });
 });

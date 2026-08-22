@@ -111,6 +111,38 @@ describe('syncCellSlots', () => {
     expectMirrorsMembership(state, [a[0], a[1]]);
   });
 
+  /** The published snapshot is the one copy in this module that cannot be
+   *  traded away for a reference. `state.cells` is mutated in place by every
+   *  sync, and the screen-space hit index rebuilds on the published array's
+   *  identity — so a shared reference would both leak live mutation and
+   *  freeze the raycast index against stale contents. */
+  it('publishes a copy that turns over exactly when the slots did', () => {
+    const state = createCellSlotState();
+    const a = [cell(1), cell(2), cell(3)];
+    const first = syncCellSlots(state, a).cells;
+    expect(first).not.toBe(state.cells);
+    expect(first).not.toBe(a);
+    expect(first.map(({ id }) => id)).toEqual([1, 2, 3]);
+
+    // A pure reorder moves nothing: the same snapshot stands, so the hit
+    // index built on it stays valid.
+    expect(syncCellSlots(state, [a[2], a[0], a[1]]).cells).toBe(first);
+
+    // A value replacement moves a slot, so the snapshot has to turn over —
+    // and the retired one must still read as it did when it was handed out.
+    const replaced = cell(2, 'dex');
+    const next = syncCellSlots(state, [a[0], replaced, a[2]]).cells;
+    expect(next).not.toBe(first);
+    expect(first[1]).toBe(a[1]);
+    expect(next[1]).toBe(replaced);
+
+    // And the live slot array keeps moving underneath, which is exactly what
+    // the snapshot exists to stand apart from.
+    syncCellSlots(state, [a[0]]);
+    expect(next).toHaveLength(3);
+    expect(state.cells).toHaveLength(1);
+  });
+
   it('mirrors membership exactly through a randomized churn soak', () => {
     let seed = 4242;
     const rand = () => {
