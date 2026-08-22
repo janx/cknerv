@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   formatCkb, midTruncate, formatOutpoint, formatDataHex, formatCellKind,
-  formatAge, formatBlockRef, formatDataSize, formatExactCkb, formatLockKind, formatAssetKind,
+  formatAge, formatBlockRef, formatDataSize, formatExactCkb, formatFeeShannons,
+  formatLockKind, formatAssetKind,
   formatScriptIdentity, formatWallClock, scriptIdentityColor,
   LOCK_COLORS, ASSET_COLORS,
 } from '../../../src/components/hud/cellFormat';
@@ -83,6 +84,23 @@ describe('cellFormat — new helpers', () => {
     expect(formatExactCkb(-100_000_000n)).toBe('−1 CKB');
     // Not a shannon count at all: the raw figure, still said out loud.
     expect(formatExactCkb('not-a-number')).toBe('not-a-number sh');
+  });
+  it('formatFeeShannons reads a fee at the magnitude it actually has', () => {
+    // Real CKB fees live four orders of magnitude below one CKB: rounding
+    // them into the house CKB family prints `0 CKB`, which is a claim, not a
+    // rounding. Below one CKB the shannon count IS the reading.
+    expect(formatFeeShannons('1000')).toBe('1,000 SHANNONS');
+    expect(formatFeeShannons('1')).toBe('1 SHANNON');
+    expect(formatFeeShannons('0')).toBe('0 SHANNONS');
+    expect(formatFeeShannons('99999999')).toBe('99,999,999 SHANNONS');
+    // At one CKB and above the house capacity grammar takes over, so a fee
+    // and a capacity never disagree about units.
+    expect(formatFeeShannons('100000000')).toBe('1 CKB');
+    expect(formatFeeShannons('250000000')).toBe('2.5 CKB');
+    // Not a plain unsigned decimal: nothing is printed as if it were one.
+    expect(formatFeeShannons('0x3e8')).toBeNull();
+    expect(formatFeeShannons('-1000')).toBeNull();
+    expect(formatFeeShannons('')).toBeNull();
   });
   it('formatLockKind / formatAssetKind label families the way the index does', () => {
     // The built-in table spells its families exactly as the script index

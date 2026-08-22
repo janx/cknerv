@@ -1,11 +1,24 @@
-import type { CSSProperties } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
+import type {
+  SemanticCellConsumption,
+  TransactionSemanticRecord,
+} from '@cknerv/types';
 import type { CellCausalLens } from '../../derives/cellCausalLens.derive';
-import { formatBlockRef } from './cellFormat';
+import { formatBlockRef, formatFeeShannons, midTruncate } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE } from './hudTheme';
+import { PlateReadoutCaption, PlateReadoutRow } from './primitives';
 
 const EXACT = HUD_COLORS.cyanInk;
 const PARTIAL = HUD_COLORS.goldInk;
 const UNAVAILABLE = HUD_COLORS.memory;
+
+/** What the reader is actually looking at, in words nobody has to be taught.
+ *  The module keeps its internal name — the derive, the props and every
+ *  `data-causal-*` attribute still say causal lens — but the surface states
+ *  the only thing this row has ever meant. */
+const ORIGIN_TITLE = 'ORIGIN TX';
+const ORIGIN_CAPTION = 'THE TRANSACTION THAT CREATED THIS CELL';
+const CONSUMED_CAPTION = 'THE TRANSACTION THAT SPENT THIS CELL';
 
 export interface CellCausalNavigationReadout {
   position: number;
@@ -25,6 +38,12 @@ function shortHash(value: string): string {
   return `${value.slice(0, 10)}…${value.slice(-6)}`;
 }
 
+/** One vocabulary for what we hold, spelled in plain words and shared by both
+ *  densities — the summary line and the full plate can no longer describe the
+ *  same evidence in two different dialects. "Retained" is the whole claim: the
+ *  creating link is still in memory, its endpoint anchors either all proved or
+ *  some of them did not; an archived endpoint proved its anchor while its full
+ *  record has already left the live cache. */
 function statusMeta(lens: CellCausalLens): {
   color: string;
   label: string;
@@ -40,8 +59,8 @@ function statusMeta(lens: CellCausalLens): {
       label: 'EXACT',
       provenance: 'observed',
       note: archived > 0
-        ? `OBSERVED LINK · ${archived} ARCHIVED ANCHOR${archived === 1 ? '' : 'S'}`
-        : 'OBSERVED LINK · ALL ENDPOINT RECORDS LIVE',
+        ? `LINK RETAINED · ALL ENDPOINTS PROVEN · ${archived} FROM ARCHIVE`
+        : 'LINK RETAINED · ALL ENDPOINTS PROVEN',
     };
   }
   if (lens.status === 'partial') {
@@ -50,14 +69,14 @@ function statusMeta(lens: CellCausalLens): {
       color: PARTIAL,
       label: 'PARTIAL',
       provenance: 'observed',
-      note: `OBSERVED LINK · ${missing} ENDPOINT ANCHOR${missing === 1 ? '' : 'S'} MISSING`,
+      note: `LINK RETAINED · ${missing} ANCHOR${missing === 1 ? '' : 'S'} MISSING`,
     };
   }
   return {
     color: UNAVAILABLE,
     label: 'UNAVAILABLE',
     provenance: 'identity-only',
-    note: 'IDENTITY ONLY · LINK OUTSIDE RETAINED WINDOW',
+    note: 'IDENTITY ONLY · ORIGIN LINK NO LONGER IN MEMORY',
   };
 }
 
@@ -82,6 +101,8 @@ export default function CellCausalLensReadout({
   navigation = null,
   compact = false,
   summary = false,
+  transaction = null,
+  consumed = null,
 }: {
   lens: CellCausalLens;
   reveal?: number;
@@ -89,6 +110,16 @@ export default function CellCausalLensReadout({
   compact?: boolean;
   /** One-glance origin evidence used by the no-scroll Cell detail satellite. */
   summary?: boolean;
+  /**
+   * Index evidence about the origin transaction ITSELF — what it paid and
+   * what it burned. Absent until the source answers, and no row is reserved
+   * for it: an origin block that grows a line is honest, one that holds two
+   * empty rails for evidence nobody promised is not.
+   */
+  transaction?: TransactionSemanticRecord | null;
+  /** The transaction that SPENT this cell, when the source named one. Printed
+   *  only for a cell the projection already knows is dead. */
+  consumed?: SemanticCellConsumption | null;
 }) {
   const meta = statusMeta(lens);
   const anchoredInputs = lens.inputs.filter((item) => item.anchor).length;
@@ -100,15 +131,83 @@ export default function CellCausalLensReadout({
     ? null
     : Math.max(0, lens.outputCount - 1);
   const opacity = 0.68 + clampUnit(reveal) * 0.32;
-  const missingAnchors = lens.missingInputIds.length
-    + lens.missingOutputIds.length;
-  const summaryNote = lens.status === 'unavailable'
-    ? 'IDENTITY ONLY · LINK NOT RETAINED'
-    : lens.status === 'partial'
-      ? `${missingAnchors} ANCHOR${missingAnchors === 1 ? '' : 'S'} MISSING`
-      : archivedEndpoints > 0
-        ? `${archivedEndpoints} ARCHIVED · ANCHORS PROVEN`
-        : 'ALL ENDPOINTS PROVEN';
+  // The plain sentence under the title, carrying the transaction's shape when
+  // the retained link states it. Outside the window there is no shape to
+  // state — the caption says what the row is and stops there.
+  const originCaption = lens.inputCount !== null && lens.outputCount !== null
+    ? `${ORIGIN_CAPTION} · ${lens.inputCount} IN → ${lens.outputCount} OUT`
+    : ORIGIN_CAPTION;
+  const caption = (
+    <div data-causal-origin-caption="true">
+      <PlateReadoutCaption>{originCaption}</PlateReadoutCaption>
+    </div>
+  );
+  const fee = transaction?.fee ?? null;
+  const feeReadout = fee === null ? null : formatFeeShannons(fee);
+  const feeTitle = fee === null ? undefined : `${fee} shannons`;
+  const cycles = transaction?.cycles ?? null;
+  const cyclesReadout = cycles !== null && cycles > 0
+    ? cycles.toLocaleString('en-US')
+    : null;
+  // A spender is evidence about a DEAD cell. The projection's own lifecycle
+  // decides that, never the enrichment record: a stale `consumed` under a
+  // live cell would announce a death that has not happened.
+  const spender = lens.selectedCell.death_at_ms !== null ? consumed : null;
+  const originRow = (
+    key: string,
+    label: string,
+    value: string,
+    options: {
+      title?: string;
+      valueColor?: string;
+      caption?: string;
+    } = {},
+  ): ReactNode => (
+    <PlateReadoutRow
+      key={key}
+      accent={meta.color}
+      label={label}
+      value={value}
+      valueColor={options.valueColor}
+      valueSize={HUD_TYPE.label}
+      title={options.title}
+      rowAttributes={{ 'data-causal-origin-row': key }}
+      valueAttributes={{ 'data-causal-origin-value': key }}
+    >
+      {options.caption
+        ? <PlateReadoutCaption>{options.caption}</PlateReadoutCaption>
+        : null}
+    </PlateReadoutRow>
+  );
+  const originFacts = feeReadout || cyclesReadout || spender ? (
+    <div
+      data-causal-origin-facts="true"
+      style={{ minWidth: 0, marginTop: 4, fontFamily: HUD_FONTS.mono }}
+    >
+      {feeReadout
+        ? originRow('fee', 'FEE', feeReadout, { title: feeTitle })
+        : null}
+      {cyclesReadout
+        ? originRow('cycles', 'CYCLES', cyclesReadout, {
+          title: `${cycles} cycles executed`,
+        })
+        : null}
+      {spender
+        ? originRow(
+          'consumed',
+          'CONSUMED BY',
+          typeof spender.block === 'number'
+            ? `${midTruncate(spender.tx_hash, 12, 9)} · ${formatBlockRef(spender.block)}`
+            : midTruncate(spender.tx_hash, 12, 9),
+          {
+            title: spender.tx_hash,
+            valueColor: HUD_COLORS.caution,
+            caption: CONSUMED_CAPTION,
+          },
+        )
+        : null}
+    </div>
+  ) : null;
   const flowCell: CSSProperties = {
     minWidth: 0,
     fontFamily: HUD_FONTS.mono,
@@ -187,25 +286,28 @@ export default function CellCausalLensReadout({
         {lens.status === 'unavailable' ? (
           // No retained link, no endpoint counts worth printing — one line
           // states the identity-only situation instead of a plate of "?"s.
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0, fontFamily: HUD_FONTS.mono }}>
-            <span style={{ color: HUD_COLORS.cyanInk, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.label, fontWeight: 700, letterSpacing: 1.05 }}>
-              CAUSAL LENS
-            </span>
-            <span title={lens.txHash} style={{ minWidth: 0, color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              TX {shortHash(lens.txHash)} · {formatBlockRef(lens.block)}
-            </span>
-            <span
-              data-causal-summary-note="true"
-              style={{ marginLeft: 'auto', color: meta.color, fontSize: HUD_TYPE.micro, letterSpacing: 0.34, whiteSpace: 'nowrap' }}
-            >
-              {summaryNote}
-            </span>
-          </div>
+          <>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0, fontFamily: HUD_FONTS.mono }}>
+              <span style={{ color: HUD_COLORS.cyanInk, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.label, fontWeight: 700, letterSpacing: 1.05 }}>
+                {ORIGIN_TITLE}
+              </span>
+              <span title={lens.txHash} style={{ minWidth: 0, color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                TX {shortHash(lens.txHash)} · {formatBlockRef(lens.block)}
+              </span>
+              <span
+                data-causal-summary-note="true"
+                style={{ marginLeft: 'auto', color: meta.color, fontSize: HUD_TYPE.micro, letterSpacing: 0.34, whiteSpace: 'nowrap' }}
+              >
+                {meta.note}
+              </span>
+            </div>
+            {caption}
+          </>
         ) : (
           <>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
               <span style={{ color: HUD_COLORS.cyanInk, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.label, fontWeight: 700, letterSpacing: 1.05 }}>
-                CAUSAL LENS
+                {ORIGIN_TITLE}
               </span>
               <span style={{ color: meta.color, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.66 }}>
                 {meta.label}
@@ -214,6 +316,7 @@ export default function CellCausalLensReadout({
                 {endpointCount(anchoredInputs, lens.inputCount, 'IN')} · {endpointCount(anchoredOutputs, lens.outputCount, 'OUT')}
               </span>
             </div>
+            {caption}
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', alignItems: 'baseline', gap: 7, marginTop: 3, fontFamily: HUD_FONTS.mono }}>
               <span title={lens.txHash} style={{ minWidth: 0, color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 TX {shortHash(lens.txHash)} · {formatBlockRef(lens.block)}
@@ -222,11 +325,12 @@ export default function CellCausalLensReadout({
                 data-causal-summary-note="true"
                 style={{ color: meta.color, fontSize: HUD_TYPE.micro, letterSpacing: 0.34, whiteSpace: 'nowrap' }}
               >
-                {summaryNote}
+                {meta.note}
               </span>
             </div>
           </>
         )}
+        {originFacts}
         {navigation && navigation.total > 1 ? (
           <div
             data-causal-navigation="true"
@@ -296,7 +400,7 @@ export default function CellCausalLensReadout({
           fontWeight: 700,
           letterSpacing: 1.18,
         }}>
-          CAUSAL LENS
+          {ORIGIN_TITLE}
         </span>
         <span style={{
           marginLeft: 'auto',
@@ -309,6 +413,7 @@ export default function CellCausalLensReadout({
           {meta.label}
         </span>
       </div>
+      {caption}
 
       <div
         title={lens.txHash}
@@ -342,7 +447,7 @@ export default function CellCausalLensReadout({
           }}
         >
           <span style={{ minWidth: 0, color: meta.color, fontSize: HUD_TYPE.label, letterSpacing: 0.48 }}>
-            IDENTITY ONLY · LINK NOT RETAINED
+            {meta.note}
           </span>
           <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, letterSpacing: 0.36, whiteSpace: 'nowrap' }}>
             {endpointCount(anchoredInputs, lens.inputCount, 'INPUTS')} · {endpointCount(anchoredOutputs, lens.outputCount, 'OUTPUTS')}
@@ -401,6 +506,7 @@ export default function CellCausalLensReadout({
           </div>
         </>
       )}
+      {originFacts}
 
       {navigation && navigation.total > 1 ? (
         <div

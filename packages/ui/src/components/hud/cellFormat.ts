@@ -120,6 +120,21 @@ export function formatExactCkb(shannons: number | bigint | string): string {
   }
 }
 
+/** A transaction fee sits three to five orders of magnitude below the CKB the
+ *  rest of the HUD counts in: `formatCkb` renders a 1,000-shannon fee as
+ *  `0 CKB`, which is not a rounding, it is a different claim. Below one CKB
+ *  the shannon count itself IS the reading; at or above it the house CKB
+ *  grammar takes over, so a fee and a capacity never disagree about units.
+ *  Returns null when the source stated something that is not a plain unsigned
+ *  decimal — an unparsed figure is never printed as if it were a number. */
+export function formatFeeShannons(value: string): string | null {
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const amount = BigInt(trimmed);
+  if (amount >= SHANNONS_PER_CKB) return formatCkb(amount);
+  return `${amount.toLocaleString('en-US')} SHANNON${amount === 1n ? '' : 'S'}`;
+}
+
 /** Format one exact integer token amount with validated decimal places. */
 export function formatSemanticAssetAmount(
   value: string,

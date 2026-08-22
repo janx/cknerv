@@ -899,9 +899,18 @@ describe('CellDetailPanel', () => {
     expect(analysis.textContent).not.toContain('INDEX LAYER');
     expect(analysis.textContent).not.toContain('CELL CONTEXT');
     expect(analysis.textContent).not.toContain('CKBADGER');
-    // Transaction-level semantics stay out of the merged window (they were
-    // suppressed in the scan dialect before the merge too).
+    // The transaction record gets no plate of its own — its two facts join
+    // the provenance footer's ORIGIN TX row, where the reader is already
+    // looking at the transaction that made this Cell.
     expect(analysis.textContent).not.toContain('ORIGIN TRANSACTION');
+    expect(analysis.querySelector('[data-causal-origin-value="fee"]')?.textContent)
+      .toBe('1,000 SHANNONS');
+    expect(analysis.querySelector('[data-causal-origin-value="cycles"]')?.textContent)
+      .toBe('12,345');
+    // The enrichment anchor no longer expects the reader to know what an
+    // anchor block is.
+    expect(proofChip.textContent)
+      .toContain('ENRICHMENT ANCHOR · EVERY INDEXED FACT ABOVE IS AS OF THIS BLOCK');
 
     expect(container.textContent).toContain('SINCE #16,204,800');
     expect(Array.from(container.querySelectorAll('span')).filter(
@@ -1426,6 +1435,114 @@ describe('CellDetailPanel', () => {
     const { container } = render(<CellDetailPanel cell={dead} onClose={() => {}} />);
     expect(container.textContent ?? '').toContain('SPENT');
     expect(container.textContent ?? '').not.toContain('DYING');
+  });
+
+  it('names the origin transaction, what it cost, and who spent the Cell', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    const dead = { ...base, death_at_ms: 5000 };
+    const origin: CellLink = {
+      seq: 18,
+      tx_hash: base.out_point.tx_hash,
+      block: base.birth_block,
+      from_ids: [1, 2],
+      to_ids: [base.id],
+      endpoint_anchors: [],
+      parents: [],
+      tag: base.tag,
+      at_ms: 12_000,
+    };
+    const { container } = render(
+      <CellDetailPanel
+        cell={dead}
+        recentLinks={[origin]}
+        onClose={() => {}}
+        semanticSource={{
+          source: 'ckbadger',
+          status: 'ready',
+          capabilities: ['cell_detail'],
+        }}
+        semanticPhase="ready"
+        semanticRecord={{
+          out_point: dead.out_point,
+          source: 'ckbadger',
+          as_of: { block: dead.birth_block, hash: '0xanchor' },
+          observed_at_block: dead.birth_block,
+          updated_at_ms: 1,
+          consumed: { tx_hash: `0x${'9e'.repeat(32)}`, block: 16204999 },
+          facets: [],
+        }}
+        semanticTransactionPhase="ready"
+        semanticTransactionRecord={{
+          tx_hash: base.out_point.tx_hash,
+          block: base.birth_block,
+          source: 'ckbadger',
+          as_of: { block: base.birth_block, hash: '0xanchor' },
+          updated_at_ms: 1,
+          actions: [],
+          participants: [],
+          fee: '2680',
+          cycles: 1_263_540,
+        }}
+      />,
+    );
+    const footer = container.querySelector(
+      '[data-cell-provenance-footer]',
+    ) as HTMLElement;
+
+    // The row the user could not read is now the row it always was.
+    expect(footer.textContent).toContain('ORIGIN TX');
+    expect(footer.textContent).not.toContain('CAUSAL LENS');
+    expect(footer.querySelector('[data-causal-origin-caption]')?.textContent)
+      .toBe('THE TRANSACTION THAT CREATED THIS CELL · 2 IN → 1 OUT');
+    // Fee and cycles were fetched and thrown away before this: the panel took
+    // the transaction record as a prop and never destructured it.
+    expect(footer.querySelector('[data-causal-origin-value="fee"]')?.textContent)
+      .toBe('2,680 SHANNONS');
+    expect(footer.querySelector('[data-causal-origin-value="cycles"]')?.textContent)
+      .toBe('1,263,540');
+    expect(footer.querySelector('[data-causal-origin-value="consumed"]')?.textContent)
+      .toBe('0x9e9e9e9e9e…e9e9e9e9e · #16,204,999');
+    expect(footer.textContent)
+      .toContain('THE CREATING WRITE THIS SESSION STILL HOLDS IN MEMORY');
+    const causal = container.querySelector(
+      '[data-consensus-memory-reveal="causal"]',
+    ) as HTMLElement;
+    expect(causal.getAttribute('data-cell-origin-tx-phase')).toBe('ready');
+    expect(causal.getAttribute('data-cell-origin-tx-state')).toBe('resolved');
+  });
+
+  it('refuses origin-transaction evidence that names another transaction', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    const { container } = render(
+      <CellDetailPanel
+        cell={base}
+        onClose={() => {}}
+        semanticTransactionPhase="ready"
+        semanticTransactionMessage="transaction detail is still resolving"
+        semanticTransactionRecord={{
+          tx_hash: `0x${'cd'.repeat(32)}`,
+          block: base.birth_block,
+          source: 'ckbadger',
+          as_of: { block: base.birth_block, hash: '0xanchor' },
+          updated_at_ms: 1,
+          actions: [],
+          participants: [],
+          fee: '2680',
+          cycles: 1_263_540,
+        }}
+      />,
+    );
+    const causal = container.querySelector(
+      '[data-consensus-memory-reveal="causal"]',
+    ) as HTMLElement;
+
+    // A lookup still answering the PREVIOUS selection would print its fee
+    // under this Cell — a false fact, not a slow one.
+    expect(causal.getAttribute('data-cell-origin-tx-state')).toBe('mismatch');
+    expect(causal.getAttribute('data-cell-origin-tx-note'))
+      .toBe('transaction detail is still resolving');
+    expect(container.querySelector('[data-causal-origin-facts]')).toBeNull();
+    expect(container.textContent).not.toContain('2,680 SHANNONS');
   });
 
   it('shows retained write evidence only for the exact Cell origin', () => {

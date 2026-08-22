@@ -361,9 +361,12 @@ export function PlateReadoutRow({
   );
 }
 
-/** A sentence under a value, in the micro tier — never a second number. */
-export function PlateReadoutCaption({ tone, children }: {
+/** A sentence under a value, in the micro tier — never a second number. The
+ *  optional style is for PLACEMENT only (a caption that has to span its
+ *  parent's columns or claim a flex line); the type stays the house's. */
+export function PlateReadoutCaption({ tone, style, children }: {
   tone?: string;
+  style?: CSSProperties;
   children: ReactNode;
 }) {
   return (
@@ -375,6 +378,7 @@ export function PlateReadoutCaption({ tone, children }: {
         letterSpacing: 0.9,
         lineHeight: 1.35,
         color: tone ?? HUD_COLORS.dim,
+        ...style,
       }}
     >
       {children}

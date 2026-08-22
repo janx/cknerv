@@ -136,6 +136,18 @@ const CYAN = HUD_COLORS.cyanWire;
 const VIOLET = HUD_COLORS.memory;
 const GOLD = HUD_COLORS.orange;
 
+// ——— Provenance footer captions ——————————————————————————————————————
+// Every row down here names a piece of record-keeping, and a label alone
+// leaves the reader to guess which one. One short sentence each, in the house
+// caption grammar: what the row is, never a second number.
+/** MEMORY TRACE exists only while the creating link is still in the retained
+ *  causal ring — that retention IS the row. */
+const TRACE_CAPTION = 'THE CREATING WRITE THIS SESSION STILL HOLDS IN MEMORY';
+const TRACE_CAPTION_RECALL = `${TRACE_CAPTION} · SELECT TO REPLAY ITS INPUTS`;
+/** PROOF is the index's anchor block: the height everything the index added
+ *  above was true at. */
+const PROOF_CAPTION = 'ENRICHMENT ANCHOR · EVERY INDEXED FACT ABOVE IS AS OF THIS BLOCK';
+
 type RowDecode = { label: string; value: string; color?: string };
 export type CellInspectionFacet = ConsensusBraidField;
 export type CellDetailLayoutSide = 'left' | 'right' | 'above' | 'below';
@@ -463,6 +475,9 @@ export default function CellDetailPanel({
   semanticPhase,
   semanticRecord,
   semanticMessage,
+  semanticTransactionPhase,
+  semanticTransactionRecord,
+  semanticTransactionMessage,
   onInspectionFieldChange,
   layoutSide = 'left',
   portraitStandalone = false,
@@ -490,6 +505,17 @@ export default function CellDetailPanel({
     ? null
     : semanticRecord;
   const presentedSemanticMessage = semanticValidation.message ?? semanticMessage;
+  // The origin-transaction record is looked up by tx hash and may still be the
+  // answer to the PREVIOUS selection. A fee printed under the wrong Cell is
+  // not a slower fact, it is a false one — so it counts only when the record
+  // names this Cell's own creating transaction.
+  const originTransaction = useMemo(() => {
+    if (!semanticTransactionRecord) return null;
+    return semanticTransactionRecord.tx_hash.toLowerCase()
+      === cell.out_point.tx_hash.toLowerCase()
+      ? semanticTransactionRecord
+      : null;
+  }, [cell.out_point.tx_hash, semanticTransactionRecord]);
   const enhancedDetail = Boolean(semanticSource && semanticPhase);
   // Composition backfill emits born_at_ms 0 for records born before the
   // retained window — an epoch-relative age would read as decades.
@@ -1273,12 +1299,23 @@ export default function CellDetailPanel({
               data-consensus-memory-reveal-state={causalRevealed
                 ? 'resolved'
                 : 'scanning'}
+              // The origin transaction's own evidence has a second source
+              // behind it, on its own clock. Its state is stamped, never
+              // reserved: the footer sits below the fold of the reveal, so a
+              // fee that arrives late costs the reader nothing.
+              data-cell-origin-tx-phase={semanticTransactionPhase ?? 'none'}
+              data-cell-origin-tx-state={originTransaction
+                ? 'resolved'
+                : semanticTransactionRecord ? 'mismatch' : 'absent'}
+              data-cell-origin-tx-note={semanticTransactionMessage ?? undefined}
               style={{ display: causalRevealed ? 'block' : 'none' }}
             >
               <CellCausalLensReadout
                 lens={resolvedCausalLens}
                 reveal={memoryProgress}
                 navigation={causalNavigation}
+                transaction={originTransaction}
+                consumed={presentedSemanticRecord?.consumed ?? null}
                 compact
                 summary
               />
@@ -1313,17 +1350,23 @@ export default function CellDetailPanel({
                   <span style={{ marginLeft: 'auto', color: HUD_COLORS.goldInk }}>
                     {formatBlockRef(observed.block)} · {observed.inputCount}→{observed.outputCount} · {traceStateReadout}
                   </span>
+                  <PlateReadoutCaption style={{ gridColumn: '1 / -1', whiteSpace: 'normal' }}>
+                    {TRACE_CAPTION_RECALL}
+                  </PlateReadoutCaption>
                 </button>
               ) : (
                 <div
                   data-write-observed="true"
                   title={observed.txHash}
-                  style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.35, color: GOLD, textShadow: `0 0 6px ${GOLD}55`, whiteSpace: 'nowrap' }}
+                  style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 8, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.35, color: GOLD, textShadow: `0 0 6px ${GOLD}55`, whiteSpace: 'nowrap' }}
                 >
                   <span>MEMORY TRACE</span>
                   <span style={{ marginLeft: 'auto', color: HUD_COLORS.goldInk }}>
                     {formatBlockRef(observed.block)} · {observed.inputCount}→{observed.outputCount}
                   </span>
+                  <PlateReadoutCaption style={{ flexBasis: '100%', whiteSpace: 'normal' }}>
+                    {TRACE_CAPTION}
+                  </PlateReadoutCaption>
                 </div>
               )}
             </div>
@@ -1346,6 +1389,9 @@ export default function CellDetailPanel({
                   )}
                 />
               ) : null}
+              <PlateReadoutCaption style={{ flexBasis: '100%' }}>
+                {PROOF_CAPTION}
+              </PlateReadoutCaption>
             </div>
           ) : null}
         </div>
