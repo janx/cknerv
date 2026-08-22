@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   formatCkb, midTruncate, formatOutpoint, formatDataHex, formatCellKind,
-  formatAge, formatBlockRef, formatDataSize, formatLockKind, formatAssetKind,
+  formatAge, formatBlockRef, formatDataSize, formatExactCkb, formatLockKind, formatAssetKind,
   formatScriptIdentity, formatWallClock, scriptIdentityColor,
   LOCK_COLORS, ASSET_COLORS,
 } from '../../../src/components/hud/cellFormat';
@@ -61,10 +61,28 @@ describe('cellFormat — new helpers', () => {
     expect(formatAge(0, 2 * 86400_000 + 5 * 3600_000)).toBe('2d 5h');
     expect(formatAge(100, 50)).toBe('0s'); // clamps negatives
   });
-  it('formatDataSize reports byte count, ellipsis-aware', () => {
-    expect(formatDataSize('0x')).toBe('0 B');
-    expect(formatDataSize('0xdeadbeef')).toBe('4 B');
-    expect(formatDataSize('0xdeadbeef~')).toBe('4 B+'); // upstream-truncated
+  it('formatDataSize states an exact byte count, grouped and locale-pinned', () => {
+    expect(formatDataSize(0)).toBe('0 B');
+    expect(formatDataSize(4)).toBe('4 B');
+    // The size of a Cell whose hex preview stopped at 1 KiB: the window was
+    // clipped, the number is not, and no `+` is left to suggest otherwise.
+    expect(formatDataSize(6947)).toBe('6,947 B');
+    expect(formatDataSize(102400)).toBe('102,400 B');
+  });
+
+  it('formatDataSize never prints a non-number at a viewer', () => {
+    expect(formatDataSize(Number.NaN)).toBe('0 B');
+    expect(formatDataSize(-12)).toBe('0 B');
+    expect(formatDataSize(11.7)).toBe('11 B');
+  });
+
+  it('formatExactCkb keeps the unrounded reading for the hover', () => {
+    expect(formatExactCkb('5776320963848000000')).toBe('57,763,209,638.48 CKB');
+    expect(formatExactCkb(12300000000n)).toBe('123 CKB');
+    expect(formatExactCkb(0n)).toBe('0 CKB');
+    expect(formatExactCkb(-100_000_000n)).toBe('−1 CKB');
+    // Not a shannon count at all: the raw figure, still said out loud.
+    expect(formatExactCkb('not-a-number')).toBe('not-a-number sh');
   });
   it('formatLockKind / formatAssetKind label families the way the index does', () => {
     // The built-in table spells its families exactly as the script index

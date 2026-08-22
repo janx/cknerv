@@ -1106,6 +1106,33 @@ describe('CellDetailPanel', () => {
       ?.getAttribute('data-byte-budget-segment-observed')).toBe('partial');
   });
 
+  it('states the data size a clipped hex preview cannot count', () => {
+    // The wire bounds `data_hex` at 1 KiB and marks the cut. Counting THAT
+    // used to turn a 6,947-byte Cell into `1024 B+`; the exact size rides
+    // beside the preview and is what the fact says. The preview's clipping is
+    // a fact about our window, and the content memory is where it is admitted.
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    const { container } = render(
+      <CellDetailPanel
+        cell={{
+          ...base,
+          data_hex: `0x${'ab'.repeat(1024)}${DATA_HEX_TRUNCATION_MARKER}`,
+          data_bytes: 6947,
+        }}
+        onClose={() => {}}
+      />,
+    );
+    // `◇` is the facet's unread identity-proof mark, between label and value.
+    expect(container.querySelector('[data-cell-detail-field="data"]')?.textContent)
+      .toBe('DATA◇6,947 B');
+    const text = container.textContent ?? '';
+    expect(text).not.toContain('1024 B+');
+    expect(text).not.toContain(' observed');
+    // The window still says exactly what it could see, and that it is a
+    // window: the honesty moved here, where the clipping actually happened.
+    expect(text).toContain('1,024 B+ OBSERVED');
+  });
+
   it('keeps enrichment on the probe timeline instead of lighting it early', () => {
     const performanceNow = vi.spyOn(performance, 'now').mockReturnValue(0);
     const { container } = render(

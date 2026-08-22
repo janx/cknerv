@@ -1,4 +1,3 @@
-import { DATA_HEX_TRUNCATION_MARKER } from '@cknerv/types';
 import type { Cell } from '@cknerv/types';
 import { HUD_COLORS } from './hudTheme';
 
@@ -88,15 +87,37 @@ export function formatAge(bornAtMs: number, nowMs: number): string {
   return `${sec}s`;
 }
 
-/** Byte count of a `0x` hex string. A trailing DATA_HEX_TRUNCATION_MARKER
- *  (upstream truncation) yields an `N B+` marker so the user knows it was
- *  clipped. The `…` this function's display siblings append is a separate,
- *  UI-side elision. */
-export function formatDataSize(hex: string): string {
-  const truncated = hex.endsWith(DATA_HEX_TRUNCATION_MARKER);
-  const body = (truncated ? hex.slice(0, -1) : hex).replace(/^0x/, '');
-  const bytes = Math.floor(body.length / 2);
-  return `${bytes} B${truncated ? '+' : ''}`;
+/** The HUD's one byte-size family — `102 B`, `6,947 B` — grouped with the
+ *  locale pinned so the figure cannot drift with the viewer's runtime.
+ *
+ *  It takes an EXACT count, never a hex window. A `data_hex` that ends in
+ *  DATA_HEX_TRUNCATION_MARKER is a bounded PREVIEW of the bytes; the size of
+ *  the data is carried separately and in full (`Cell.data_bytes`), so a
+ *  clipped preview never clips the number beside it. What is partial is the
+ *  observation, and the content window is where that is said. */
+export function formatDataSize(bytes: number): string {
+  const exact = Number.isFinite(bytes) ? Math.max(0, Math.trunc(bytes)) : 0;
+  return `${exact.toLocaleString('en-US')} B`;
+}
+
+/** The unrounded CKB reading of a shannon amount, for the `title` under a
+ *  `formatCkb` figure that had to round. Two decimals is where CKB stops
+ *  being interesting; below that the shannon count itself is the evidence,
+ *  which is what the fallback prints when the amount is not a number at
+ *  all. */
+export function formatExactCkb(shannons: number | bigint | string): string {
+  try {
+    const amount = BigInt(shannons);
+    const negative = amount < 0n;
+    const absolute = negative ? -amount : amount;
+    const whole = absolute / SHANNONS_PER_CKB;
+    const hundredths = (absolute % SHANNONS_PER_CKB) / 1_000_000n;
+    return `${negative ? '−' : ''}${whole.toLocaleString('en-US')}${
+      hundredths === 0n ? '' : `.${hundredths.toString().padStart(2, '0')}`
+    } CKB`;
+  } catch {
+    return `${shannons} sh`;
+  }
 }
 
 /** Format one exact integer token amount with validated decimal places. */

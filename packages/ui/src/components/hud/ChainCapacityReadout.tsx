@@ -7,7 +7,7 @@ import {
   assetEcosystemVisualState,
   deriveAssetEcosystemBuckets,
 } from '../../derives/assetEcosystem.derive';
-import { formatCkb } from './cellFormat';
+import { formatCkb, formatExactCkb } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
 import { ReadoutHeader, StatRow } from './primitives';
 import { chainLiveRow } from './cellPopulation.presentation';
@@ -18,21 +18,6 @@ const CATEGORY_LABELS: Record<string, string> = {
   objects: 'OBJECTS',
   other: 'OTHER',
 };
-
-/** Exact CKB reading of a shannon amount, for the tooltip under the rounded
- *  CK-byte figure. */
-function formatExactCkb(shannons: string): string {
-  try {
-    const amount = BigInt(shannons);
-    const whole = amount / 100_000_000n;
-    const hundredths = (amount % 100_000_000n) / 1_000_000n;
-    return `${whole.toLocaleString('en-US')}${
-      hundredths === 0n ? '' : `.${hundredths.toString().padStart(2, '0')}`
-    } CKB`;
-  } catch {
-    return `${shannons} sh`;
-  }
-}
 
 function formatCkbAmount(shannons: string): string {
   try {

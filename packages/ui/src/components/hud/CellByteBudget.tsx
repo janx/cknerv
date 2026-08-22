@@ -2,11 +2,10 @@ import type { CSSProperties } from 'react';
 import type { CommonKnowledgeBreakdown } from '@cknerv/types';
 import {
   deriveCellByteBudget,
-  formatByteCount,
   formatUtilizationPercent,
   type ByteBudgetSegmentKey,
 } from '../../derives/cellByteBudget.derive';
-import { formatCkb } from './cellFormat';
+import { formatCkb, formatDataSize, formatExactCkb } from './cellFormat';
 import { HUD_COLORS, HUD_TYPE, rgba } from './hudTheme';
 
 // KnowledgeBar's segment palette, unchanged, so the budget bar reads as the
@@ -35,8 +34,8 @@ export interface CellByteBudgetProps {
 /** The CKBytes equivalence made visible: 1 CKB of capacity is 1 byte of
  *  state budget. The composition bar decomposes the OCCUPIED bytes
  *  (CAP·LOCK·TYPE·DATA) against themselves so tiny occupancy stays legible;
- *  the ratio strip below tells the other half of the story — how much of the
- *  purchased budget those bytes actually use. */
+ *  the ratio strip below tells the rest of the story — how much of the
+ *  purchased budget is spent, and how much of it is still FREE. */
 export default function CellByteBudget({
   capacityShannons,
   knowledge,
@@ -53,6 +52,7 @@ export default function CellByteBudget({
     <div
       data-cell-byte-budget="true"
       data-byte-budget-total-bytes={model.totalBytes}
+      data-byte-budget-occupied-source={model.occupiedExact ? 'exact' : 'bytes'}
       data-byte-budget-reveal-state={revealed ? 'resolved' : 'scanning'}
       style={{
         minWidth: 0,
@@ -70,7 +70,7 @@ export default function CellByteBudget({
             data-byte-budget-occupied="true"
             style={{ color: HUD_COLORS.ink, fontSize: HUD_TYPE.label }}
           >
-            {formatByteCount(model.totalBytes)}
+            {formatDataSize(model.totalBytes)}
           </span>
           <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.9 }}>
             {' OCCUPIED'}
@@ -123,7 +123,7 @@ export default function CellByteBudget({
                 style={{ width: 5, height: 5, background: color, boxShadow: `0 0 4px ${rgba(color, 0.45)}`, opacity: partial ? 0.6 : 1 }}
               />
               <span style={{ color }}>{segment.label}</span>
-              <span style={{ color: HUD_COLORS.ink }}>{formatByteCount(segment.bytes)}</span>
+              <span style={{ color: HUD_COLORS.ink }}>{formatDataSize(segment.bytes)}</span>
               {partial ? (
                 <span
                   data-byte-budget-legend-observed="partial"
@@ -136,14 +136,32 @@ export default function CellByteBudget({
             </span>
           );
         })}
+        {/* Occupied capacity the breakdown never itemized — script args, which
+          * ckbadger calls Unindexed Script Args. It gets no swatch on purpose:
+          * nothing in the bar above corresponds to it, and pretending
+          * otherwise would make the composition lie about what it can name. */}
+        {model.residualBytes > 0 ? (
+          <span
+            data-byte-budget-residual="true"
+            data-byte-budget-residual-bytes={model.residualBytes}
+            title="Unindexed Script Args — occupied capacity beyond the itemized bytes"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+          >
+            <span style={{ color: HUD_COLORS.ink }}>
+              {`+${formatDataSize(model.residualBytes)}`}
+            </span>
+            <span style={{ color: HUD_COLORS.dim }}>ARGS</span>
+          </span>
+        ) : null}
       </div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 5, marginTop: 5, whiteSpace: 'nowrap' }}>
         <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.9 }}>OF</span>
         <span
           data-byte-budget-capacity="true"
+          title={formatExactCkb(model.capacityShannons)}
           style={{ color: HUD_COLORS.ink, fontSize: HUD_TYPE.label }}
         >
-          {formatCkb(capacityShannons)}
+          {formatCkb(model.capacityShannons)}
         </span>
         <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro }}>·</span>
         <span
@@ -151,6 +169,20 @@ export default function CellByteBudget({
           style={{ color: HUD_COLORS.ink, fontSize: HUD_TYPE.label }}
         >
           {formatUtilizationPercent(model.utilization)}
+        </span>
+        {/* What the Cell bought and nobody is standing on. The bar below
+          * measures the spent side; this is the same reading from the other
+          * end, and the only one that answers how much more could fit. */}
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'baseline', gap: 5 }}>
+          <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.9 }}>FREE</span>
+          <span
+            data-byte-budget-free="true"
+            data-byte-budget-free-shannons={model.freeShannons.toString()}
+            title={`${formatExactCkb(model.freeShannons)} unspent · ${formatExactCkb(model.occupiedShannons)} occupied`}
+            style={{ color: HUD_COLORS.ink, fontSize: HUD_TYPE.label }}
+          >
+            {formatCkb(model.freeShannons)}
+          </span>
         </span>
       </div>
       {/* Occupied over capacity, clamped — a 1M-CKB cell holding 102 B must

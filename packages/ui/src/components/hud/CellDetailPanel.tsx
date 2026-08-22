@@ -227,10 +227,13 @@ export interface CellDetailPanelProps {
 
 const nowPerf = () => (typeof performance !== 'undefined' ? performance.now() : 0);
 
-function formatCellData(dataHex: string): string {
-  const size = formatDataSize(dataHex);
-  if (size === '0 B') return 'Empty';
-  return dataHex.endsWith(DATA_HEX_TRUNCATION_MARKER) ? `${size} observed` : size;
+/** The DATA fact states how big the output data IS, from the exact count the
+ *  Cell carries — never from the bounded hex preview beside it, which stops
+ *  at 1 KiB and used to turn a 100 KB Cell into `1024 B+`. The preview's
+ *  truncation is a fact about our window, and the content memory below is
+ *  where that window admits it. */
+function formatCellData(dataBytes: number): string {
+  return dataBytes > 0 ? formatDataSize(dataBytes) : 'Empty';
 }
 
 /** A script's identity as the CELL itself carries it — the code it runs and
@@ -604,7 +607,7 @@ export default function CellDetailPanel({
     },
     data: {
       label: 'DATA',
-      value: formatCellData(cell.data_hex),
+      value: formatCellData(cell.data_bytes),
       color: HUD_COLORS.nominal,
     },
     state: {

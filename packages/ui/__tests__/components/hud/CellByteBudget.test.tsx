@@ -190,6 +190,81 @@ describe('CellByteBudget', () => {
     expect(lit.getAttribute('data-byte-budget-reveal-state')).toBe('resolved');
     expect(lit.style.opacity).toBe('1');
   });
+
+  it('states the capacity nobody is occupying, beside the ratio it fills', () => {
+    const { container } = render(
+      <CellByteBudget capacityShannons={400 * CKB} knowledge={knowledge()} />,
+    );
+    const free = container.querySelector<HTMLElement>('[data-byte-budget-free]')!;
+    expect(free.textContent).toBe('246 CKB');
+    expect(free.getAttribute('data-byte-budget-free-shannons')).toBe('24600000000');
+    expect(free.getAttribute('title')).toBe('246 CKB unspent · 154 CKB occupied');
+    expect(container.textContent).toContain('FREE');
+    // Rounded in the readout, unrounded in the hover — the house pattern.
+    expect(container.querySelector('[data-byte-budget-capacity]')
+      ?.getAttribute('title')).toBe('400 CKB');
+    expect(container.querySelector('[data-cell-byte-budget]')
+      ?.getAttribute('data-byte-budget-occupied-source')).toBe('bytes');
+    expect(container.querySelector('[data-byte-budget-residual]')).toBeNull();
+  });
+
+  it('lets the source’s exact figure set FREE and the percentage, and names the residual', () => {
+    // 174 CKB occupied against 154 itemized bytes: 20 bytes of script args
+    // the breakdown never itemized.
+    const { container } = render(
+      <CellByteBudget
+        capacityShannons={400 * CKB}
+        knowledge={knowledge({ occupied_shannons: '17400000000' })}
+      />,
+    );
+    expect(container.querySelector('[data-cell-byte-budget]')
+      ?.getAttribute('data-byte-budget-occupied-source')).toBe('exact');
+    const free = container.querySelector<HTMLElement>('[data-byte-budget-free]')!;
+    expect(free.textContent).toBe('226 CKB');
+    expect(free.getAttribute('title')).toBe('226 CKB unspent · 174 CKB occupied');
+    expect(container.querySelector('[data-byte-budget-percent]')?.textContent)
+      .toBe('44%');
+    const residual = container.querySelector<HTMLElement>(
+      '[data-byte-budget-residual]',
+    )!;
+    expect(residual.textContent).toBe('+20 BARGS');
+    expect(residual.getAttribute('data-byte-budget-residual-bytes')).toBe('20');
+    expect(residual.getAttribute('title'))
+      .toBe('Unindexed Script Args — occupied capacity beyond the itemized bytes');
+    // The bar and its legend keep itemizing ONLY the bytes they can name.
+    expect(container.querySelector('[data-byte-budget-occupied]')?.textContent)
+      .toBe('154 B');
+    expect(container.querySelectorAll('[data-byte-budget-legend]')).toHaveLength(4);
+    expect(segment(container, 'lock')!.style.width).toBe(`${(65 / 154) * 100}%`);
+  });
+
+  it('names no residual when the exact figure does not outrun the bytes', () => {
+    const { container } = render(
+      <CellByteBudget
+        capacityShannons={400 * CKB}
+        knowledge={knowledge({ occupied_shannons: '15400000000' })}
+      />,
+    );
+    expect(container.querySelector('[data-byte-budget-residual]')).toBeNull();
+    expect(container.textContent).not.toContain('ARGS');
+    expect(container.querySelector('[data-byte-budget-free]')?.textContent)
+      .toBe('246 CKB');
+  });
+
+  it('falls back to the bytes when the exact figure arrives malformed', () => {
+    const { container } = render(
+      <CellByteBudget
+        capacityShannons={400 * CKB}
+        knowledge={knowledge({ occupied_shannons: 'not-a-number' })}
+      />,
+    );
+    expect(container.querySelector('[data-cell-byte-budget]')
+      ?.getAttribute('data-byte-budget-occupied-source')).toBe('bytes');
+    expect(container.querySelector('[data-byte-budget-free]')?.textContent)
+      .toBe('246 CKB');
+    expect(container.querySelector('[data-byte-budget-residual]')).toBeNull();
+    expect(container.textContent).not.toContain('NaN');
+  });
 });
 
 describe('formatUtilizationPercent', () => {

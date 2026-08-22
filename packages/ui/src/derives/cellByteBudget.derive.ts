@@ -15,12 +15,49 @@ export interface CellByteBudgetModel {
   totalBytes: number;
   /** Zero-byte components carry no segment. */
   segments: ByteBudgetSegment[];
-  /** Occupied bytes over the capacity's byte budget (1 CKB of capacity buys
-   *  1 byte of state), clamped [0,1]. */
+  /** Occupied capacity over total capacity (1 CKB of capacity buys 1 byte of
+   *  state), clamped [0,1]. Measured against `occupiedShannons`, so an exact
+   *  figure sets the percentage even where the itemized bytes cannot. */
   utilization: number;
+  /** Capacity exactly as the Cell carries it. */
+  capacityShannons: bigint;
+  /** Occupied capacity: the source's own exact figure when it stated one,
+   *  else the itemized bytes priced at 1 CKB each. */
+  occupiedShannons: bigint;
+  /** True when `occupiedShannons` is the source's figure rather than our sum
+   *  of the bytes it itemized. */
+  occupiedExact: boolean;
+  /** Capacity nobody is occupying — the third figure of the triple, and the
+   *  only one that answers "how much more could this Cell hold". Negative
+   *  would mean capacity and occupancy disagree; it is not hidden. */
+  freeShannons: bigint;
+  /** Whole bytes of occupied capacity the breakdown never itemized — script
+   *  args, in practice. Zero when there is no exact figure to disagree, or
+   *  when it does not outrun the bytes. */
+  residualBytes: number;
 }
 
-const SHANNONS_PER_CKB = 100_000_000;
+const SHANNONS_PER_BYTE = 100_000_000n;
+
+/** The exact occupied figure, or null when the source stated none — or
+ *  stated something that is not a plain decimal shannon count. A malformed
+ *  string falls back to the bytes we can add up ourselves; it never becomes
+ *  NaN, and never throws out of a render. */
+function parseExactShannons(value: string | undefined): bigint | null {
+  if (typeof value !== 'string') return null;
+  const digits = value.trim();
+  if (!/^\d+$/.test(digits)) return null;
+  try {
+    return BigInt(digits);
+  } catch {
+    return null;
+  }
+}
+
+function toShannons(capacity: number | bigint): bigint {
+  if (typeof capacity === 'bigint') return capacity;
+  return Number.isFinite(capacity) ? BigInt(Math.round(capacity)) : 0n;
+}
 
 export function deriveCellByteBudget(
   knowledge: CommonKnowledgeBreakdown | null | undefined,
@@ -36,17 +73,31 @@ export function deriveCellByteBudget(
   ] as const)
     .filter(([, , bytes]) => bytes > 0)
     .map(([key, label, bytes]) => ({ key, label, bytes, share: bytes / total }));
-  const capacityBytes = Number(capacityShannons) / SHANNONS_PER_CKB;
-  const utilization = capacityBytes > 0
-    ? Math.min(1, Math.max(0, total / capacityBytes))
+  const capacity = toShannons(capacityShannons);
+  // The two occupancy figures answer different questions and are allowed to
+  // disagree: the bytes itemize what the breakdown can name, the exact figure
+  // counts everything the Cell actually pays for. Where they differ the
+  // difference IS the evidence — unindexed script args — so it is carried out
+  // of here as its own number rather than averaged away.
+  const byteDerived = BigInt(total) * SHANNONS_PER_BYTE;
+  const exact = parseExactShannons(knowledge.occupied_shannons);
+  const occupiedShannons = exact ?? byteDerived;
+  const residual = exact !== null && exact > byteDerived
+    ? exact - byteDerived
+    : 0n;
+  const utilization = capacity > 0n
+    ? Math.min(1, Math.max(0, Number(occupiedShannons) / Number(capacity)))
     : 0;
-  return { totalBytes: total, segments, utilization };
-}
-
-/** Byte totals in the `formatDataSize` family (`102 B`), grouping pinned so
- *  it cannot drift with the viewer's locale. */
-export function formatByteCount(bytes: number): string {
-  return `${bytes.toLocaleString('en-US')} B`;
+  return {
+    totalBytes: total,
+    segments,
+    utilization,
+    capacityShannons: capacity,
+    occupiedShannons,
+    occupiedExact: exact !== null,
+    freeShannons: capacity - occupiedShannons,
+    residualBytes: Number(residual / SHANNONS_PER_BYTE),
+  };
 }
 
 /** Occupancy percentage at honest precision: anything real but under one
