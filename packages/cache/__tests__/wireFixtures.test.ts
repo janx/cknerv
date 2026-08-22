@@ -357,4 +357,36 @@ describe('enrichment fixtures drive the real semantics reducer', () => {
       expect(next[slot], `clear left ${slot} standing`).toBeNull();
     }
   });
+
+  /** Every capability string the CLIENT tests by literal name. A capability
+   *  is a feature switch: `peer_sighting` alone gates the entire crawler
+   *  dossier, so a rename on the Rust side turns the feature off here with
+   *  every type check and every test still green. The fixture is the pinned
+   *  spelling — `crates/cknerv-adapter-ckbadger/src/source.rs` asserts it
+   *  equals what that crate declares, and this asserts the client only asks
+   *  for strings that are in it.
+   *
+   *  ADD TO THIS LIST whenever new client code reads a capability by name.
+   *  Grep for `capabilities.includes(` to find them all. */
+  const CONSUMED_CAPABILITIES = [
+    // ui-app/src/App.tsx — the transaction reader and the crawler dossier.
+    'transaction_detail',
+    'peer_sighting',
+    // packages/ui/src/derives/*.derive.ts — one gate each.
+    'protocol_era',
+    'transaction_horizon',
+    'dao_state',
+    'network_atlas',
+  ] as const;
+
+  it('pins every capability string the client gates a feature on', () => {
+    for (const capability of CONSUMED_CAPABILITIES) {
+      expect(
+        snapshot.source.capabilities,
+        `the client gates on "${capability}" but no source declares it — ` +
+          'if it was renamed in crates/cknerv-adapter-ckbadger, the feature ' +
+          'is silently off',
+      ).toContain(capability);
+    }
+  });
 });

@@ -15,6 +15,10 @@
         "transaction_horizon",
         "fork_watch",
         "network_atlas",
+        "network_roster",
+        "peer_sighting",
+        "chain_census",
+        "script_registry",
         "transaction_detail",
         "transaction_lifecycle",
         "galaxy_composition"
@@ -940,6 +944,10 @@
           "transaction_horizon",
           "fork_watch",
           "network_atlas",
+          "network_roster",
+          "peer_sighting",
+          "chain_census",
+          "script_registry",
           "transaction_detail",
           "transaction_lifecycle",
           "galaxy_composition"

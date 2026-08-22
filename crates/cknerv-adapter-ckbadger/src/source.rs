@@ -36,6 +36,14 @@ use crate::galaxy_composition::{
     discover as discover_galaxy_composition, top_up as top_up_galaxy_composition, CandidateTail,
 };
 
+/// Everything this source can answer, unconditionally. These strings are the
+/// feature switches the browser reads: `ui-app/src/App.tsx` gates the whole
+/// crawler dossier on `peer_sighting` and the transaction reader on
+/// `transaction_detail`, and four derives in `packages/ui/src/derives/` gate
+/// on one each. A rename here is a silent feature removal there, so the list
+/// is pinned in `tests/fixtures/enrichment_samples.json` — this crate asserts
+/// the fixture equals what it declares, and the TS side asserts every string
+/// its own code consumes is in the fixture.
 const CAPABILITIES: &[&str] = &[
     "cell_detail",
     "script_identity",
@@ -55,6 +63,10 @@ const CAPABILITIES: &[&str] = &[
     "transaction_detail",
     "transaction_lifecycle",
 ];
+/// The one conditional capability: announced only when a composition hydrator
+/// is wired with a non-zero target. Spelled once so the fixture pin below can
+/// name it rather than re-typing it.
+const GALAXY_COMPOSITION_CAPABILITY: &str = "galaxy_composition";
 const DEFAULT_MAX_LAG_BLOCKS: u64 = 12;
 const MAX_ECOSYSTEM_CATEGORIES: usize = 16;
 const MAX_ECOSYSTEM_ASSETS: usize = 16;
@@ -725,7 +737,7 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
             .map(|value| (*value).to_string())
             .collect();
         if self.galaxy_hydrator.is_some() && self.galaxy_composition_target > 0 {
-            capabilities.push("galaxy_composition".to_string());
+            capabilities.push(GALAXY_COMPOSITION_CAPABILITY.to_string());
         }
         capabilities
     }
@@ -3499,6 +3511,57 @@ mod tests {
         "0x2222222222222222222222222222222222222222222222222222222222222222";
     const TX_BLOCK_HASH: &str =
         "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    /// Capability strings are feature switches the browser reads by literal
+    /// name, so a rename here removes a feature there with every gate green —
+    /// `peer_sighting` alone gates the entire crawler dossier
+    /// (`ui-app/src/App.tsx`). The shared fixture is where the two sides agree
+    /// on the spelling; the TS twin
+    /// (`packages/cache/__tests__/wireFixtures.test.ts`) asserts every string
+    /// its own code consumes appears in this same list.
+    ///
+    /// Order-sensitive, matching the house style for authored fixtures: the
+    /// wire array is `CAPABILITIES` in declaration order, then the one
+    /// conditional capability the fixture's source has enabled.
+    ///
+    /// If this fails after an intended change, regenerate with
+    /// `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-core --test wire_shape`
+    /// — but note the fixture's `source` round-trips through its own committed
+    /// bytes, so the capability list must be hand-corrected there first.
+    #[test]
+    fn declared_capabilities_are_spelled_the_same_in_the_shared_fixture() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/enrichment_samples.json"
+        );
+        let raw =
+            std::fs::read_to_string(path).expect("read tests/fixtures/enrichment_samples.json");
+        let fixture: serde_json::Value =
+            serde_json::from_str(&raw).expect("parse tests/fixtures/enrichment_samples.json");
+
+        let expected: Vec<&str> = CAPABILITIES
+            .iter()
+            .copied()
+            .chain(std::iter::once(GALAXY_COMPOSITION_CAPABILITY))
+            .collect();
+
+        for pointer in [
+            "/snapshot/source/capabilities",
+            "/deltas/source_status/source/capabilities",
+        ] {
+            let listed: Vec<&str> = fixture
+                .pointer(pointer)
+                .and_then(|value| value.as_array())
+                .unwrap_or_else(|| panic!("{pointer} is missing from the fixture"))
+                .iter()
+                .map(|value| value.as_str().expect("capability is a string"))
+                .collect();
+            assert_eq!(
+                listed, expected,
+                "{pointer} drifted from what this crate declares"
+            );
+        }
+    }
 
     async fn spawn_mock_api(block_hash: &str) -> (Url, tokio::task::JoinHandle<()>) {
         let response_hash = block_hash.to_string();
