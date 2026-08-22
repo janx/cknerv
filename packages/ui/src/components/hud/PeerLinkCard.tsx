@@ -492,7 +492,7 @@ export default function PeerLinkCard({
           alignItems: 'baseline',
           flexWrap: 'wrap',
           gap: '3px 8px',
-          padding: linkLost ? '22px 34px 8px 14px' : '9px 34px 8px 14px',
+          padding: linkLost ? '22px 20px 8px 14px' : '9px 20px 8px 14px',
           ...spatialPlate(accent),
         }}
       >
@@ -539,19 +539,25 @@ export default function PeerLinkCard({
         >
           {instrument.directionBadge}
         </span>
-        <span
-          data-peer-probe-uptime
-          style={{
-            marginLeft: 'auto',
-            color: linkLost ? HUD_COLORS.caution : HUD_COLORS.dim,
-            fontSize: HUD_TYPE.label,
-            letterSpacing: 0.9,
-            whiteSpace: 'nowrap',
-          }}
-        >
-          LINKED · {liveUptime}
-        </span>
-        <span style={{ position: 'absolute', top: linkLost ? 20 : 7, right: 28 }}>
+        {/* Status and module stamp travel as ONE right-hand group, in flow —
+          * the CELL masthead's grammar (`CellDetailPanel.tsx`), and for the
+          * reason it adopted it. The stamp used to be absolutely placed while
+          * the uptime beside it was a flow span pushed right by `marginLeft`,
+          * so the two were laid out by different mechanisms and a long enough
+          * age simply slid underneath the tag. In one group they push each
+          * other, and wrap together when the card runs out of measure. Only
+          * the × stays absolute, and the padding clears only the ×. */}
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'baseline', gap: 6, whiteSpace: 'nowrap' }}>
+          <span
+            data-peer-probe-uptime
+            style={{
+              color: linkLost ? HUD_COLORS.caution : HUD_COLORS.dim,
+              fontSize: HUD_TYPE.label,
+              letterSpacing: 0.9,
+            }}
+          >
+            LINKED · {liveUptime}
+          </span>
           {moduleTag('LINK·01')}
         </span>
         <CloseButton onClose={onClose} title="Close · ESC or click outside" />

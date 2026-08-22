@@ -1,6 +1,41 @@
 import type { CSSProperties, ReactNode } from 'react';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 
+// ——— The shape grammar ————————————————————————————————————————————————
+//
+// A HUD surface announces what KIND of thing it is with its corners, before a
+// reader has taken in a single word of it. Four forms, and every surface in the
+// overlay belongs to exactly one:
+//
+//   DOCKED PANEL — two corner brackets, top-left and bottom-right. The rails
+//     are furniture: bolted to an edge of the frame, present the whole session,
+//     read at rest. `HudPanel` below is the only way to draw one.
+//
+//   FLOATING / TRANSIENT OBJECT — one cut corner at the top right, `PLATE_CUT_PX`
+//     deep, over an accent left edge. Anything that arrived because something
+//     happened and leaves when it stops: the scene-anchored inspection plates
+//     (`spatialPlate` further down), the replay banner (`BackfillBar.tsx`). The
+//     cut is the whole tell — a clipped corner reads as a card laid ON the
+//     instrument, where brackets read as part of it.
+//
+//   LIVE VIEWPORT / RETICLE — FOUR corner brackets. Not a panel at all but a
+//     viewfinder: the CELL SCAN square in `CellDetailPanel.tsx`
+//     (`portraitBracket`), which frames a live render you can drag. Two brackets
+//     say "this is a surface"; four say "you are looking THROUGH this at
+//     something". They are two idioms on purpose — nobody should ever "fix"
+//     either one into the other.
+//
+//   EDGE-BOUND BAR — no corner treatment at all, because it owns no corners to
+//     treat: it spans the viewport and is cut off by it (`StreamHealthBanner.tsx`).
+//     Neither docked nor floating; it is the frame itself raising its voice.
+//
+// One cut, one number, written once. Every clipped corner in the HUD comes from
+// here, so a banner and a satellite plate can never disagree about the angle.
+
+export const PLATE_CUT_PX = 12;
+
+export const PLATE_CUT_CLIP = `polygon(0 0,calc(100% - ${PLATE_CUT_PX}px) 0,100% ${PLATE_CUT_PX}px,100% 100%,0 100%)`;
+
 export function HudPanel({ style, children }: { style?: CSSProperties; children: ReactNode }) {
   return (
     <div
@@ -216,13 +251,13 @@ export function CloseButton({ onClose, title }: { onClose: () => void; title?: s
 
 // ——— Spatial instrument grammar ————————————————————————————————————————
 // The scene-anchored inspection satellites speak a directional-plate dialect
-// of the house language: a leading accent edge, a ~100° near-opaque gradient,
-// one cut corner. Single-sourced so every plate agrees — and so the trailing
-// edge can never thin out enough to let a full-brightness HUD panel print
-// through the plate (the tail alpha floor is the load-bearing part: the rails
-// no longer dim for an open card, so a plate may sit directly over lit text).
-
-const SPATIAL_PLATE_CUT_PX = 12;
+// of the floating form above: the house cut corner, plus a leading accent edge
+// and a ~100° near-opaque gradient. Single-sourced so every plate agrees — and
+// so the trailing edge can never thin out enough to let a full-brightness HUD
+// panel print through the plate (the tail alpha floor is the load-bearing part:
+// the rails no longer dim for an open card, so a plate may sit directly over
+// lit text). A floating object that is NOT anchored in the scene wears the cut
+// without the gradient — see `BackfillBar.tsx`.
 
 /** Dark tail tinted faintly toward the accent — directional, never sheer. */
 export function spatialPlateTail(accent: string): string {
@@ -243,7 +278,7 @@ export function spatialPlate(accent: string): CSSProperties {
     borderTop: `1px solid ${rgba(accent, 0.15)}`,
     borderBottom: `1px solid ${rgba(accent, 0.09)}`,
     background: spatialPlateBackground(accent),
-    clipPath: `polygon(0 0,calc(100% - ${SPATIAL_PLATE_CUT_PX}px) 0,100% ${SPATIAL_PLATE_CUT_PX}px,100% 100%,0 100%)`,
+    clipPath: PLATE_CUT_CLIP,
   };
 }
 

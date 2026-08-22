@@ -22,6 +22,10 @@ import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { HUD_COLORS, HUD_TYPE } from '../../../src/components/hud/hudTheme';
 import {
+  PLATE_CUT_CLIP,
+  PLATE_CUT_PX,
+} from '../../../src/components/hud/primitives';
+import {
   ASSET_COLORS,
   CLASS_MIX_COLORS,
   LOCK_COLORS,
@@ -34,6 +38,10 @@ const HUD_DIR = resolve(process.cwd(), 'src/components/hud');
 /** The one file allowed to write a hex down: that is what a palette IS.
  *  Everything else in the directory reads it. */
 const PALETTE_SOURCE = 'hudTheme.ts';
+
+/** The same arrangement one axis over: the one file allowed to describe a
+ *  shape. Everything else in the directory wears one. */
+const SHAPE_SOURCE = 'primitives.tsx';
 
 const BANNED: ReadonlyArray<{
   /** How the value used to be spelled. Case-insensitive — `#0A0A0A` is the
@@ -231,6 +239,60 @@ describe('hud discipline', () => {
     expect(panel).toBeDefined();
     expect(panel?.text).toContain('HUD_COLORS.ember');
     expect(panel?.text).not.toContain('HUD_COLORS.danger');
+  });
+});
+
+// ——— One cut ————————————————————————————————————————————————————————————
+//
+// The corners are a language too, and it had drifted into three dialects: the
+// docked panels' two brackets, the floating plates' single 12px cut, and the
+// replay banner cutting BOTH diagonals at 9px — a shape nothing else in the
+// HUD spoke, which is exactly how a reader stops being able to tell a card
+// from a panel at a glance. `primitives.tsx` now writes the grammar down and
+// owns the number; this is the oracle that keeps the number in one place.
+//
+// It says nothing about which form a surface should wear — that is a judgement
+// about what the surface IS, and the comment in `primitives.tsx` is where it is
+// argued. This only says that whatever wears the cut, wears the same cut.
+
+/** `clipPath:` and enough of the value to tell a shared constant from a
+ *  hand-typed polygon. An SVG `<polygon>` is geometry, not a corner
+ *  treatment, so the property — not the function — is what is matched. */
+const CLIP_PATH_PROP = /clipPath:\s*([A-Za-z_$][\w$]*|['"`])/g;
+
+describe('one shape grammar', () => {
+  it('one cut, one number, and the number is in the shape', () => {
+    expect(PLATE_CUT_PX).toBe(12);
+    expect(PLATE_CUT_CLIP).toContain(`${PLATE_CUT_PX}px`);
+  });
+
+  it('nothing in the HUD cuts its own corner', () => {
+    const offenders: string[] = [];
+    for (const source of SOURCES) {
+      if (source.name === SHAPE_SOURCE) continue;
+      const text = code(source.text);
+      CLIP_PATH_PROP.lastIndex = 0;
+      let clip = CLIP_PATH_PROP.exec(text);
+      while (clip !== null) {
+        if (clip[1] !== 'PLATE_CUT_CLIP') {
+          offenders.push(`${source.name}: clipPath ${clip[1]}… → say PLATE_CUT_CLIP`);
+        }
+        clip = CLIP_PATH_PROP.exec(text);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('the shared cut is worn outside the file that describes it', () => {
+    // Same bargain the promoted colour tokens make: a shape nobody wears is a
+    // rule with no subjects, and the assertion above would be guarding nothing.
+    const wearers = SOURCES.filter(
+      (source) => source.name !== SHAPE_SOURCE
+        && code(source.text).includes('PLATE_CUT_CLIP'),
+    );
+
+    expect(wearers.map((source) => source.name)).toContain('BackfillBar.tsx');
   });
 });
 

@@ -183,7 +183,7 @@ export default function NodeSelfCard({
           alignItems: 'baseline',
           flexWrap: 'wrap',
           gap: '3px 8px',
-          padding: '9px 34px 8px 14px',
+          padding: '9px 20px 8px 14px',
           ...spatialPlate(accent),
         }}
       >
@@ -211,19 +211,21 @@ export default function NodeSelfCard({
         >
           {node.is_miner ? 'MINER' : 'OBSERVER'}
         </span>
-        <span
-          data-node-probe-chain
-          style={{
-            marginLeft: 'auto',
-            color: HUD_COLORS.dim,
-            fontSize: HUD_TYPE.label,
-            letterSpacing: 0.9,
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {chain.chain_name.toUpperCase()}
-        </span>
-        <span style={{ position: 'absolute', top: 7, right: 28 }}>
+        {/* One right-hand group in flow, as the CELL and PEER mastheads carry
+          * theirs: an absolutely-placed stamp beside a `marginLeft: auto` span
+          * is two layout mechanisms competing for the same corner, and a chain
+          * named at any length slid straight under it. */}
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'baseline', gap: 6, whiteSpace: 'nowrap' }}>
+          <span
+            data-node-probe-chain
+            style={{
+              color: HUD_COLORS.dim,
+              fontSize: HUD_TYPE.label,
+              letterSpacing: 0.9,
+            }}
+          >
+            {chain.chain_name.toUpperCase()}
+          </span>
           {moduleTag('SELF·01')}
         </span>
         <CloseButton onClose={onClose} title="Close · ESC or click outside" />

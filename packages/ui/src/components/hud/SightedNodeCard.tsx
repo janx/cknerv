@@ -172,7 +172,7 @@ export default function SightedNodeCard({
           alignItems: 'baseline',
           flexWrap: 'wrap',
           gap: '3px 8px',
-          padding: '9px 34px 8px 14px',
+          padding: '9px 20px 8px 14px',
           ...spatialPlate(accent),
         }}
       >
@@ -198,19 +198,22 @@ export default function SightedNodeCard({
         >
           NOT LINKED
         </span>
-        <span
-          data-sighted-probe-last-seen
-          style={{
-            marginLeft: 'auto',
-            color: HUD_COLORS.dim,
-            fontSize: HUD_TYPE.label,
-            letterSpacing: 0.9,
-            whiteSpace: 'nowrap',
-          }}
-        >
-          LAST SEEN {formatAge(node.last_seen_ms, atMs)}
-        </span>
-        <span style={{ position: 'absolute', top: 7, right: 28 }}>
+        {/* One right-hand group in flow, as the CELL and PEER mastheads carry
+          * theirs. An age is the longest thing this line can say — a node the
+          * crawler last named days ago prints a whole phrase — and a flow span
+          * pushed right by `marginLeft` used to run under an absolutely-placed
+          * stamp instead of pushing it. */}
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'baseline', gap: 6, whiteSpace: 'nowrap' }}>
+          <span
+            data-sighted-probe-last-seen
+            style={{
+              color: HUD_COLORS.dim,
+              fontSize: HUD_TYPE.label,
+              letterSpacing: 0.9,
+            }}
+          >
+            LAST SEEN {formatAge(node.last_seen_ms, atMs)}
+          </span>
           {moduleTag('SGHT·01')}
         </span>
         <CloseButton onClose={onClose} title="Close · ESC or click outside" />

@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react';
 import type { ActiveReplayProgress } from '@cknerv/cache';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
-import { Gauge } from './primitives';
+import { Gauge, PLATE_CUT_CLIP } from './primitives';
 import { replayPresentation } from './replayPresentation';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
@@ -27,11 +27,22 @@ export default function BackfillBar({ backfill, style }: {
         width: 'min(320px, calc(100vw - 24px))',
         boxSizing: 'border-box',
         padding: '9px 13px 10px',
+        // A replay banner is a floating object — it arrives because something
+        // happened to the chain and leaves when the catch-up ends — so it wears
+        // the house floating shape: the single top-right cut, over the accent
+        // left rail it already had. It used to cut BOTH diagonals at 9px, which
+        // was a third corner dialect nothing else in the HUD spoke.
+        //
+        // Only the shape is shared with `spatialPlate`. The satellite plates are
+        // anchored IN the scene and have to be near-opaque so lit HUD text
+        // cannot print through them; this one floats over the stage at the top
+        // centre, and a banner that heavy would read as a panel that had grown
+        // there. So it keeps its own flat, translucent ground.
         background: `linear-gradient(90deg,${rgba(visual.color, 0.11)},${HUD_COLORS.panel} 34%,rgba(0,0,0,.68))`,
         border: `1px solid ${rgba(visual.color, 0.32)}`,
         borderLeft: `3px solid ${visual.color}`,
         boxShadow: `inset 0 0 18px ${rgba(visual.color, 0.05)}`,
-        clipPath: 'polygon(0 0,calc(100% - 9px) 0,100% 9px,100% 100%,9px 100%,0 calc(100% - 9px))',
+        clipPath: PLATE_CUT_CLIP,
         ...style,
       }}
     >

@@ -36,6 +36,12 @@ export default function StreamHealthBanner({
     : '';
   return (
     <>
+      {/* The third form in the house shape grammar (`primitives.tsx`): an
+          edge-bound bar. It is neither docked nor floating, so it takes neither
+          the panels' corner brackets nor the plates' cut corner — it runs the
+          full width and the viewport ends it. Nothing about the data plane
+          being unwell is a card you could have opened; this is the frame
+          itself raising its voice. */}
       <div
         role="status"
         aria-live="polite"
