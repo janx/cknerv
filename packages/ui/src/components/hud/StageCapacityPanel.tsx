@@ -9,7 +9,7 @@ import {
   type ScriptFamilyBucket,
 } from '../../derives/scriptFamilies.derive';
 import { ASSET_COLORS, CLASS_MIX_COLORS, LOCK_COLORS, formatCkb } from './cellFormat';
-import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import { HudPanel, PanelHeader, StatRow } from './primitives';
 import {
   formatPopulationCount,
@@ -32,8 +32,8 @@ function share(count: number, total: number): string {
  *  panel stops reading as one table. */
 const SCOPE_TAG: CSSProperties = {
   fontFamily: HUD_FONTS.tech,
-  fontSize: 7,
-  letterSpacing: 1.1,
+  fontSize: HUD_TYPE.micro,
+  letterSpacing: 1.2,
   color: HUD_COLORS.dim,
   textTransform: 'uppercase',
   opacity: 0.8,
@@ -41,8 +41,8 @@ const SCOPE_TAG: CSSProperties = {
 
 const SUBHEAD: CSSProperties = {
   fontFamily: HUD_FONTS.tech,
-  fontSize: 7.5,
-  letterSpacing: 1.5,
+  fontSize: HUD_TYPE.micro,
+  letterSpacing: 1.4,
   color: '#6b7f8e',
   textTransform: 'uppercase',
   marginBottom: 4,
@@ -77,7 +77,7 @@ function TaxonomyBar({ title, buckets }: { title: string; buckets: ScriptFamilyB
           />
         ))}
       </div>
-      <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 8.5, color: '#9fb0bd', marginTop: 3, lineHeight: 1.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+      <div style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.tech, color: '#9fb0bd', marginTop: 3, lineHeight: 1.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
         {named.map((bucket) => `${bucket.label} ${share(bucket.count, total)}`).join(' · ')}
         {tailFamilies > 0 ? (
           <span style={{ color: HUD_COLORS.dim }}>{` · +${tailFamilies} <1%`}</span>
@@ -100,11 +100,11 @@ function FunnelRow({ label, value, scope, widthPct, alpha }: {
   return (
     <div data-population-row={label}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, height: 15, whiteSpace: 'nowrap' }}>
-        <span style={{ fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: 8.5, letterSpacing: 1.6, color: HUD_COLORS.dim, textTransform: 'uppercase' }}>
+        <span style={{ fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: HUD_TYPE.tech, letterSpacing: 1.6, color: HUD_COLORS.dim, textTransform: 'uppercase' }}>
           {label}
         </span>
         <span data-population-scope style={SCOPE_TAG}>{scope}</span>
-        <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: 11, color: HUD_COLORS.ink }}>
+        <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.value, color: HUD_COLORS.ink }}>
           {value}
         </span>
       </div>
@@ -142,10 +142,10 @@ function MixBar({ mix }: { mix: CompositionMix }) {
   return (
     <div data-population-mix={mix.label} style={{ opacity: mix.dim ? 0.6 : 1 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, height: 14, whiteSpace: 'nowrap' }}>
-        <span style={{ fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: 8, letterSpacing: 1.4, color: HUD_COLORS.dim, textTransform: 'uppercase' }}>
+        <span style={{ fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: HUD_TYPE.nav, letterSpacing: 1.4, color: HUD_COLORS.dim, textTransform: 'uppercase' }}>
           {mix.label}
         </span>
-        <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: 8.5 }}>
+        <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.tech }}>
           {segments.map((segment, index) => (
             <span key={segment.key}>
               {index > 0 ? <span style={{ color: HUD_COLORS.dim }}>{' · '}</span> : null}
@@ -254,11 +254,11 @@ export default function StageCapacityPanel({ stats, scriptRegistry, model, colon
             />
           )) : (
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, height: 15, whiteSpace: 'nowrap' }}>
-              <span style={{ fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: 8.5, letterSpacing: 1.6, color: HUD_COLORS.dim, textTransform: 'uppercase' }}>
+              <span style={{ fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: HUD_TYPE.tech, letterSpacing: 1.6, color: HUD_COLORS.dim, textTransform: 'uppercase' }}>
                 Retained
               </span>
               <span data-population-scope style={SCOPE_TAG}>LOCAL WINDOW</span>
-              <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: 11, color: HUD_COLORS.ink }}>
+              <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.value, color: HUD_COLORS.ink }}>
                 {formatPopulationCount(stats.inView)}
               </span>
             </div>
@@ -294,11 +294,11 @@ export default function StageCapacityPanel({ stats, scriptRegistry, model, colon
         {model ? (
           <div
             data-population-medium
-            style={{ marginTop: 7, fontFamily: HUD_FONTS.mono, fontSize: 8, lineHeight: 1.6, color: HUD_COLORS.dim }}
+            style={{ marginTop: 7, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, lineHeight: 1.6, color: HUD_COLORS.dim }}
           >
             {populationMediumRows(model).map((entry) => (
               <div key={entry.term} style={{ display: 'flex', gap: 6 }}>
-                <span style={{ fontFamily: HUD_FONTS.tech, fontSize: 7.5, letterSpacing: 1.2, textTransform: 'uppercase', minWidth: 84 }}>
+                <span style={{ fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, letterSpacing: 1.2, textTransform: 'uppercase', minWidth: 84 }}>
                   {entry.term}
                 </span>
                 <span>{entry.meaning}</span>

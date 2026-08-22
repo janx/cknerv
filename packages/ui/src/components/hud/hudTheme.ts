@@ -66,17 +66,86 @@ export const HUD_FONTS = {
   cjk: "'Huiwen-mincho', 'Noto Serif CJK SC', 'Noto Serif SC', 'Songti SC', SimSun, serif",
 } as const;
 
-/** The five-step type scale for detail/inspection surfaces. Every rendered
- *  fontSize on those surfaces must be one of these steps — micro (7.5) is the
- *  legibility floor, full stop; depth is expressed by stepping down the scale,
- *  never by inventing sizes between its rungs. */
+/** The type scale for the WHOLE DOM HUD — top bar, rails, banners, floating
+ *  cards, every panel. It used to describe only the detail/inspection surfaces
+ *  while the panels ran a freelance dialect beside it, which is how the HUD
+ *  ended up with five hero sizes nobody had ranked and a 6.8px caption. Every
+ *  rendered fontSize out here must be one of these rungs; depth is expressed by
+ *  stepping down the scale, never by inventing a size between its steps.
+ *
+ *  `micro` (7.5) is the legibility floor, full stop. Below it the Chakra/Share
+ *  Tech faces stop resolving their counters on a normal display, so "make it
+ *  smaller" stops being a design decision and becomes a thing you cannot read.
+ *  Anything that will not fit at 7.5 needs fewer words, not smaller ones.
+ *
+ *  Hero tiers are named so a panel can only have one: `hero` is the single
+ *  numeral a panel exists to show, `heroSub` is a second reading standing
+ *  beside it (DAO's APC next to its deposit total, the alarm's 警告), and
+ *  `emphasis` is a value lifted out of a stat row without leaving the row.
+ *
+ *  EXEMPT: the in-scene label dialect — the files that draw INSIDE the three.js
+ *  canvas rather than in DOM overlay (`ConsensusMemory`,
+ *  `CellSemanticMorphologyOverlay`, the portrait/artwork components). Those
+ *  render at 6–6.4px under a camera and a bloom pass; they are a different
+ *  medium with a different legibility floor, and `hudDiscipline.test.ts`
+ *  recognises them by their imports rather than by a hand-kept list. */
 export const HUD_TYPE = {
+  hero: 22,
+  heroSub: 19,
+  emphasis: 14,
   title: 13,
+  panelTitle: 12,
   value: 11.5,
   section: 10.5,
   label: 9,
+  tech: 8.5,
+  nav: 8,
   micro: 7.5,
 } as const;
+
+// ——— Tracking ————————————————————————————————————————————————————————————
+//
+// Letter-spacing had drifted to 45 distinct values across the HUD — 0.28 and
+// 0.3 and 0.32 and 0.34 and 0.35 all living in the same card, none of them
+// telling a reader anything the others did not. They are now snapped to one
+// eight-rung table, nearest wins, ties going to the TIGHTER rung because that
+// is the direction that cannot make a line wrap:
+//
+//   0.35  running text and hex strings (mono, no shouting)
+//   0.6   dense chrome readouts, menu rows
+//   0.9   captions and small state words
+//   1.2   the standard uppercase label
+//   1.4   chips — both the outline kind and the inverted severity block
+//   1.6   stat-row labels, plate titles
+//   2     banner titles, condition words
+//   3     panel titles
+//
+// An explicit `0` is not a rung — it is the absence of tracking, which a run of
+// mono digits sometimes genuinely wants.
+//
+// Declared exceptions, each one a place where the rung would be wrong rather
+// than merely different:
+//
+//   4.2 / 2.6   `StatusStrip` CKNERV wordmark, wide and dense. The brand is not
+//               a label; the spacing IS the logotype, and the dense variant is
+//               the same logotype fitted to a narrow bar.
+//   4           `WarningBar` 警告. Two mincho glyphs at 19px need air between
+//               them or they read as one dense block instead of a siren.
+//   −0.25       `DaoStateReadout` deposit hero. The only NEGATIVE tracking in
+//               the HUD, and it is there to keep a long CKB figure inside its
+//               column at the `hero` rung — tightening a hero is how you avoid
+//               demoting it.
+//
+// And one exception that is about SIZE rather than tracking, recorded here
+// because it is the same kind of declared divergence — the dense register:
+//
+//   dense register  `PeerLinkCard`'s `PeerScanFact` sizes a fact one rung below
+//               `CellDetailPanel`'s `CellScanFact` (micro/label vs
+//               label/value). Not drift: the peer card is 340px wide and lays
+//               its facts out two to a row, so cell-card type would ellipsis
+//               away the ends of the values that matter most. The two files
+//               name each other in a comment so neither gets "fixed" into the
+//               other.
 
 /** A `#RRGGBB` palette color as an `rgba(r,g,b,a)` string — single source for
  *  canvas/border tints that need an alpha the hex form can't carry. */

@@ -488,6 +488,12 @@ const CellScanFact = memo(function CellScanFact({
         pointerEvents: interactive ? 'auto' : 'none',
       }}
     >
+      {/* THE ROOMY REGISTER. `PeerLinkCard`'s `PeerScanFact` prints the same
+          sentence one rung tighter (micro/label to this one's label/value);
+          both are declared in the tracking ledger in `hudTheme.ts`. This card
+          is 440px in a single column, so it can afford the larger pair — the
+          peer card, at 340px and two facts to a row, cannot. Neither size is
+          the "right" one to standardise on. */}
       <span style={{ display: 'block', fontSize: HUD_TYPE.label, letterSpacing: 1.2, color: HUD_COLORS.dim }}>
         {label}
         {proof ? (
@@ -576,7 +582,7 @@ function CellScanStatusReadout({ landmarks }: { landmarks: number }) {
       data-cell-identity-scan-status="true"
       data-cell-scan-lattice={`${Math.min(frame.lit, landmarks)}/${landmarks}`}
       data-cell-scan-classified={frame.classified ? 'true' : 'false'}
-      style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.7, whiteSpace: 'nowrap' }}
+      style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.6, whiteSpace: 'nowrap' }}
     >
       {frame.classified ? '' : `SCANNING ${frame.pct}%`}
     </span>
@@ -1245,7 +1251,7 @@ export default function CellDetailPanel({
             {/* The outpoint, which is what a viewer can look up anywhere else —
               * the old head of the content hash beside an output index read
               * like an outpoint and was not one. */}
-            <span title={cell.out_point.tx_hash} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, letterSpacing: 0.8 }}>
+            <span title={cell.out_point.tx_hash} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, letterSpacing: 0.9 }}>
               {formatOutpoint(cell.out_point.tx_hash, cell.out_point.index)}
             </span>
             <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'baseline', gap: 6, whiteSpace: 'nowrap' }}>
@@ -1619,11 +1625,11 @@ export default function CellDetailPanel({
               {semanticSource && semanticPhase ? (
                 <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'baseline', gap: 5, minWidth: 0 }}>
                   <span aria-hidden="true" style={{ alignSelf: 'center', width: 4, height: 4, borderRadius: '50%', background: enrichmentSourceColor(semanticSource.status), boxShadow: `0 0 6px ${enrichmentSourceColor(semanticSource.status)}` }} />
-                  <span style={{ color: enrichmentSourceColor(semanticSource.status), fontSize: HUD_TYPE.micro, letterSpacing: 0.85, whiteSpace: 'nowrap' }}>
+                  <span style={{ color: enrichmentSourceColor(semanticSource.status), fontSize: HUD_TYPE.micro, letterSpacing: 0.9, whiteSpace: 'nowrap' }}>
                     {semanticSource.status.toUpperCase()}
                   </span>
                   {semanticSource.lag_blocks != null ? (
-                    <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.7, whiteSpace: 'nowrap' }}>
+                    <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.6, whiteSpace: 'nowrap' }}>
                       · {semanticSource.lag_blocks} BLOCK LAG
                     </span>
                   ) : null}
@@ -1667,8 +1673,8 @@ export default function CellDetailPanel({
         }}
       >
         <div style={{ position: 'absolute', zIndex: 3, left: 12, top: 10, right: 12, display: 'flex', alignItems: 'baseline', gap: 8, pointerEvents: 'none' }}>
-          <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.section, fontWeight: 700, letterSpacing: 1.45, whiteSpace: 'nowrap' }}>CELL SCAN</span>
-          <span data-cell-scan-drag-affordance style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.8, whiteSpace: 'nowrap' }}>{verticalLayout ? 'ORBIT ↔' : 'DRAG TO ORBIT ↔'}</span>
+          <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.section, fontWeight: 700, letterSpacing: 1.4, whiteSpace: 'nowrap' }}>CELL SCAN</span>
+          <span data-cell-scan-drag-affordance style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.9, whiteSpace: 'nowrap' }}>{verticalLayout ? 'ORBIT ↔' : 'DRAG TO ORBIT ↔'}</span>
         </div>
         <CellNucleusPortrait
           cell={cell}
@@ -1731,7 +1737,7 @@ export default function CellDetailPanel({
               marginBottom={0}
               status={(
                 <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6 }}>
-                  <span style={{ color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.55 }}>
+                  <span style={{ color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.6 }}>
                     LIVE EVIDENCE
                   </span>
                   {moduleTag('SCAN·02')}

@@ -331,7 +331,7 @@ export default function PeerSightingPlate({
             {sighting ? (
               <span
                 data-sighting-stamp
-                style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.72 }}
+                style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.6 }}
               >
                 SIGHTED {formatAge(sighting.last_seen_ms, nowMs)} AGO
               </span>

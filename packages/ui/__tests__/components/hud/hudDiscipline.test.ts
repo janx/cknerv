@@ -20,7 +20,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { HUD_COLORS } from '../../../src/components/hud/hudTheme';
+import { HUD_COLORS, HUD_TYPE } from '../../../src/components/hud/hudTheme';
 import {
   ASSET_COLORS,
   CLASS_MIX_COLORS,
@@ -268,5 +268,112 @@ describe('the colour reserve', () => {
     }
 
     expect(collisions).toEqual([]);
+  });
+});
+
+// ——— One scale ——————————————————————————————————————————————————————————
+//
+// The HUD used to run two type systems side by side: the declared five-step
+// scale on the inspection surfaces, and a freelance dialect in the panels that
+// had drifted to 9.5, 6.8, and five unranked hero sizes. `HUD_TYPE` now covers
+// the whole DOM overlay, and this is the oracle that keeps it that way — every
+// size a DOM-dialect file renders has to be one of the declared rungs.
+//
+// The exemption is PROGRAMMATIC on purpose. A file that imports from `three` or
+// `@react-three/*` is drawing inside the canvas, under a camera and a bloom
+// pass — a different medium with a different legibility floor, where 6.4px is a
+// marker rather than a caption. Deciding that by imports rather than by a
+// hand-kept filename list means the rule maintains itself: a new in-scene
+// overlay is exempt the day it is written, and a scene file that stops
+// importing three has stopped being scene dialect and starts being checked.
+
+const SCENE_DIALECT = /from '(three|@react-three\/[a-z-]+)'/;
+
+/** The React style prop — the way most of the HUD writes a size down. */
+const FONT_SIZE_PROP = /fontSize:\s*(\d+(?:\.\d+)?)/g;
+
+/** …and the CSS `font:` shorthand the top bar's controls use to carry a line
+ *  height along with their size. Missing this form is how four 8.5px controls
+ *  hid from an earlier sweep. */
+const FONT_SHORTHAND = /font:\s*`([^`]*)`/g;
+
+/** Inside a shorthand, only the SIZE is a type size: `400 8.5px/20px …` also
+ *  contains a 20px line height, which belongs to no scale and must not be
+ *  checked against one. The size is the length before the slash — or, when the
+ *  shorthand omits the line height, the only length there is. A size written as
+ *  a `${HUD_TYPE.x}` interpolation yields nothing to check, which is the point
+ *  of writing it that way. */
+const SHORTHAND_SIZE_BEFORE_SLASH = /(\d+(?:\.\d+)?)px\s*\//;
+const SHORTHAND_FIRST_LENGTH = /(\d+(?:\.\d+)?)px/;
+
+const DECLARED_SIZES: ReadonlySet<number> = new Set(Object.values(HUD_TYPE));
+
+function domDialect(): HudSource[] {
+  return SOURCES.filter((source) => !SCENE_DIALECT.test(source.text));
+}
+
+function sizesIn(text: string): number[] {
+  const found: number[] = [];
+
+  FONT_SIZE_PROP.lastIndex = 0;
+  let prop = FONT_SIZE_PROP.exec(text);
+  while (prop !== null) {
+    found.push(Number(prop[1]));
+    prop = FONT_SIZE_PROP.exec(text);
+  }
+
+  FONT_SHORTHAND.lastIndex = 0;
+  let shorthand = FONT_SHORTHAND.exec(text);
+  while (shorthand !== null) {
+    const value = shorthand[1];
+    const size = value.includes('/')
+      ? SHORTHAND_SIZE_BEFORE_SLASH.exec(value)
+      : SHORTHAND_FIRST_LENGTH.exec(value);
+    if (size) found.push(Number(size[1]));
+    shorthand = FONT_SHORTHAND.exec(text);
+  }
+
+  return found;
+}
+
+describe('one type scale', () => {
+  it('sorts the HUD into dialects, and finds both of them', () => {
+    // The pin again: if the scene filter ever matched everything, the
+    // membership assertion below would be checking an empty list.
+    const dom = domDialect();
+    const scene = SOURCES.filter((source) => SCENE_DIALECT.test(source.text));
+    expect(dom.length).toBeGreaterThan(30);
+    expect(scene.length).toBeGreaterThan(0);
+    expect(scene.map((source) => source.name)).toContain('ConsensusMemory.tsx');
+  });
+
+  it('the scale is a ladder — every rung distinct, micro at the floor', () => {
+    const rungs = Object.values(HUD_TYPE);
+    expect(new Set(rungs).size).toBe(rungs.length);
+    expect(Math.min(...rungs)).toBe(HUD_TYPE.micro);
+    expect(HUD_TYPE.micro).toBe(7.5);
+  });
+
+  it('every DOM-dialect size is a declared rung', () => {
+    const offenders: string[] = [];
+    for (const source of domDialect()) {
+      for (const size of sizesIn(source.text)) {
+        if (DECLARED_SIZES.has(size)) continue;
+        offenders.push(`${source.name}: ${size}px is not a rung of HUD_TYPE`);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('nothing in the DOM overlay is written below the legibility floor', () => {
+    // Stated separately from membership because it is a different promise. A
+    // future rung could be added below 7.5 and pass the test above; this one
+    // says that would itself be the mistake.
+    const belowFloor = domDialect().flatMap((source) => sizesIn(source.text)
+      .filter((size) => size < HUD_TYPE.micro)
+      .map((size) => `${source.name}: ${size}px`));
+
+    expect(belowFloor).toEqual([]);
   });
 });

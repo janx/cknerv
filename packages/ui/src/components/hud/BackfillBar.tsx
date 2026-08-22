@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 import type { ActiveReplayProgress } from '@cknerv/cache';
-import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import { Gauge } from './primitives';
 import { replayPresentation } from './replayPresentation';
 
@@ -36,19 +36,22 @@ export default function BackfillBar({ backfill, style }: {
       }}
     >
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
-        <span aria-hidden style={{ color: visual.color, fontSize: 10 }}>◇</span>
-        <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 600, fontSize: 10, letterSpacing: 1.7, color: visual.color, textTransform: 'uppercase' }}>{visual.title}</span>
-        <span style={{ marginLeft: 'auto', padding: '1px 4px', border: `1px solid ${rgba(visual.color, 0.36)}`, fontFamily: HUD_FONTS.mono, fontSize: 8, letterSpacing: 1, color: visual.color }}>{visual.tag}</span>
+        <span aria-hidden style={{ color: visual.color, fontSize: HUD_TYPE.section }}>◇</span>
+        <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 600, fontSize: HUD_TYPE.section, letterSpacing: 1.6, color: visual.color, textTransform: 'uppercase' }}>{visual.title}</span>
+        <span style={{ marginLeft: 'auto', padding: '1px 4px', border: `1px solid ${rgba(visual.color, 0.36)}`, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, letterSpacing: 0.9, color: visual.color }}>{visual.tag}</span>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 5 }}>
         {visual.subtitle && (
-          <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, letterSpacing: 1, color: rgba(visual.color, 0.78) }}>{visual.subtitle}</span>
+          <span style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, letterSpacing: 0.9, color: rgba(visual.color, 0.78) }}>{visual.subtitle}</span>
         )}
-        <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: 9, letterSpacing: waiting ? 0.7 : 0, color: waiting ? visual.color : HUD_COLORS.dim }}>
+        {/* The counted form wants NO tracking — a run of mono digits either
+            side of a slash reads as one measurement, and spacing it out turns
+            it into two. The waiting sentence is words, so it gets a rung. */}
+        <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: waiting ? 0.6 : 0, color: waiting ? visual.color : HUD_COLORS.dim }}>
           {waiting ? visual.waiting : `${fmt(done)} / ${fmt(total)} blocks`}
         </span>
         {!waiting && (
-          <span style={{ marginLeft: 8, fontFamily: HUD_FONTS.mono, fontSize: 8, color: rgba(visual.color, 0.7) }}>
+          <span style={{ marginLeft: 8, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, color: rgba(visual.color, 0.7) }}>
             {`${Math.round(Math.min(1, Math.max(0, ratio)) * 100)}%`}
           </span>
         )}

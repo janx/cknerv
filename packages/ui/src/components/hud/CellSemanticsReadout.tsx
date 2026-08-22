@@ -82,7 +82,7 @@ export function EvidenceFact({
         ...style,
       }}
     >
-      <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.72, whiteSpace: 'nowrap' }}>
+      <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.6, whiteSpace: 'nowrap' }}>
         {label}
       </span>
       <span title={value} style={{ minWidth: 0, color: color ?? HUD_COLORS.ink, fontSize: valueSize, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -135,7 +135,7 @@ export function FacetEvidenceRow({ facet, style }: {
       style={{ minWidth: 0, padding: '2px 6px 3px', borderLeft: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.22)}`, ...style }}
     >
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
-        <span style={{ color: HUD_COLORS.cyanWire, fontSize: HUD_TYPE.micro, letterSpacing: 0.75, whiteSpace: 'nowrap' }}>
+        <span style={{ color: HUD_COLORS.cyanWire, fontSize: HUD_TYPE.micro, letterSpacing: 0.6, whiteSpace: 'nowrap' }}>
           {facetTitle(facet).toUpperCase()}
         </span>
         {facet.state ? (

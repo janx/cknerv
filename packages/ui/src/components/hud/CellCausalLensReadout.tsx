@@ -212,7 +212,7 @@ export default function CellCausalLensReadout({
     minWidth: 0,
     fontFamily: HUD_FONTS.mono,
     fontSize: HUD_TYPE.label,
-    letterSpacing: 0.42,
+    letterSpacing: 0.35,
     whiteSpace: 'nowrap',
   };
   const navigationButton = (
@@ -241,7 +241,7 @@ export default function CellCausalLensReadout({
           color: enabled ? meta.color : HUD_COLORS.dim,
           fontFamily: HUD_FONTS.mono,
           fontSize: HUD_TYPE.micro,
-          letterSpacing: 0.32,
+          letterSpacing: 0.35,
           lineHeight: 1.2,
           textAlign: isBack ? 'left' : 'right',
           whiteSpace: 'nowrap',
@@ -296,12 +296,12 @@ export default function CellCausalLensReadout({
               {/* A two-word title is one word for wrapping purposes: left to
                 * shrink, `ORIGIN TX` breaks across two lines the moment the
                 * plate is narrow enough that the row beside it wants room. */}
-              <span style={{ flex: '0 0 auto', whiteSpace: 'nowrap', color: HUD_COLORS.cyanInk, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.label, fontWeight: 700, letterSpacing: 1.05 }}>
+              <span style={{ flex: '0 0 auto', whiteSpace: 'nowrap', color: HUD_COLORS.cyanInk, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.label, fontWeight: 700, letterSpacing: 1.2 }}>
                 {ORIGIN_TITLE}
               </span>
               <span
                 data-causal-summary-note="true"
-                style={{ marginLeft: 'auto', minWidth: 0, color: meta.color, fontSize: HUD_TYPE.micro, letterSpacing: 0.34, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                style={{ marginLeft: 'auto', minWidth: 0, color: meta.color, fontSize: HUD_TYPE.micro, letterSpacing: 0.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
               >
                 {meta.note}
               </span>
@@ -319,10 +319,10 @@ export default function CellCausalLensReadout({
               {/* A two-word title is one word for wrapping purposes: left to
                 * shrink, `ORIGIN TX` breaks across two lines the moment the
                 * plate is narrow enough that the row beside it wants room. */}
-              <span style={{ flex: '0 0 auto', whiteSpace: 'nowrap', color: HUD_COLORS.cyanInk, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.label, fontWeight: 700, letterSpacing: 1.05 }}>
+              <span style={{ flex: '0 0 auto', whiteSpace: 'nowrap', color: HUD_COLORS.cyanInk, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.label, fontWeight: 700, letterSpacing: 1.2 }}>
                 {ORIGIN_TITLE}
               </span>
-              <span style={{ color: meta.color, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.66 }}>
+              <span style={{ color: meta.color, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.6 }}>
                 {meta.label}
               </span>
               <span style={{ marginLeft: 'auto', color: HUD_COLORS.ink, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, whiteSpace: 'nowrap' }}>
@@ -336,7 +336,7 @@ export default function CellCausalLensReadout({
               </span>
               <span
                 data-causal-summary-note="true"
-                style={{ color: meta.color, fontSize: HUD_TYPE.micro, letterSpacing: 0.34, whiteSpace: 'nowrap' }}
+                style={{ color: meta.color, fontSize: HUD_TYPE.micro, letterSpacing: 0.35, whiteSpace: 'nowrap' }}
               >
                 {meta.note}
               </span>
@@ -411,7 +411,7 @@ export default function CellCausalLensReadout({
           color: HUD_COLORS.cyanInk,
           fontSize: HUD_TYPE.micro,
           fontWeight: 700,
-          letterSpacing: 1.18,
+          letterSpacing: 1.2,
         }}>
           {ORIGIN_TITLE}
         </span>
@@ -420,7 +420,7 @@ export default function CellCausalLensReadout({
           color: meta.color,
           fontFamily: HUD_FONTS.mono,
           fontSize: HUD_TYPE.micro,
-          letterSpacing: 0.72,
+          letterSpacing: 0.6,
           textShadow: `0 0 6px ${meta.color}66`,
         }}>
           {meta.label}
@@ -435,7 +435,7 @@ export default function CellCausalLensReadout({
           color: HUD_COLORS.ink,
           fontFamily: HUD_FONTS.mono,
           fontSize: HUD_TYPE.label,
-          letterSpacing: 0.28,
+          letterSpacing: 0.35,
           whiteSpace: 'nowrap',
           overflow: 'hidden',
           textOverflow: 'ellipsis',
@@ -459,10 +459,10 @@ export default function CellCausalLensReadout({
             fontFamily: HUD_FONTS.mono,
           }}
         >
-          <span style={{ minWidth: 0, color: meta.color, fontSize: HUD_TYPE.label, letterSpacing: 0.48 }}>
+          <span style={{ minWidth: 0, color: meta.color, fontSize: HUD_TYPE.label, letterSpacing: 0.6 }}>
             {meta.note}
           </span>
-          <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, letterSpacing: 0.36, whiteSpace: 'nowrap' }}>
+          <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, letterSpacing: 0.35, whiteSpace: 'nowrap' }}>
             {endpointCount(anchoredInputs, lens.inputCount, 'INPUTS')} · {endpointCount(anchoredOutputs, lens.outputCount, 'OUTPUTS')}
           </span>
         </div>
@@ -504,7 +504,7 @@ export default function CellCausalLensReadout({
             color: meta.color,
             fontFamily: HUD_FONTS.mono,
             fontSize: HUD_TYPE.micro,
-            letterSpacing: 0.4,
+            letterSpacing: 0.35,
           }}>
             <span>{meta.note}</span>
             <span style={{
@@ -547,7 +547,7 @@ export default function CellCausalLensReadout({
             color: HUD_COLORS.dim,
             fontFamily: HUD_FONTS.mono,
             fontSize: HUD_TYPE.micro,
-            letterSpacing: 0.48,
+            letterSpacing: 0.6,
             whiteSpace: 'nowrap',
           }}>
             PATH {navigation.position}/{navigation.total}

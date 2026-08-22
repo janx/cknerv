@@ -8,7 +8,7 @@ import type {
   TransactionHorizonRecord,
 } from '@cknerv/types';
 import type { CellPopulationFieldModel } from '../../derives/cellPopulationField.derive';
-import { HUD_COLORS, HUD_FONTS } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE } from './hudTheme';
 import { HudPanel, PanelHeader, StatRow } from './primitives';
 import ActivityFeedReadout from './ActivityFeedReadout';
 import ProtocolEraBadge from './ProtocolEraBadge';
@@ -35,7 +35,11 @@ export default function BlockchainReadout({ chain, cellPopulation, enrichmentSou
   return (
     <HudPanel style={{ width: 340, ...style }}>
       <PanelHeader en="COMMON KNOWLEDGE BASE" cjk="共识基" idx="CKB·01" />
-      <StatRow label="Tip"><span style={{ fontFamily: HUD_FONTS.display, fontWeight: 600, fontSize: 13, color: HUD_COLORS.heroInk }}>#{fmt(chain.tip)}</span></StatRow>
+      {/* The tip is a display-family number that changes every few seconds, so
+          it asks for tabular figures — otherwise the `#` and everything after
+          it shifts a pixel or two at each block and the panel's top line never
+          quite settles. */}
+      <StatRow label="Tip"><span style={{ fontFamily: HUD_FONTS.display, fontWeight: 600, fontSize: HUD_TYPE.emphasis, fontVariantNumeric: 'tabular-nums', color: HUD_COLORS.heroInk }}>#{fmt(chain.tip)}</span></StatRow>
       <StatRow label="Epoch">
         <span data-epoch-number>{epoch.number}</span>
         <ProtocolEraBadge chain={chain} source={enrichmentSource} record={protocolEra} />

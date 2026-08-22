@@ -109,7 +109,7 @@ function navButtonStyle(enabled: boolean): CSSProperties {
     border: `1px solid ${enabled ? rgba(HUD_COLORS.cyanWire, 0.28) : rgba(HUD_COLORS.dim, 0.12)}`,
     background: enabled ? rgba(HUD_COLORS.cyanWire, 0.06) : 'transparent',
     color: enabled ? HUD_COLORS.cyanWire : HUD_COLORS.dim,
-    font: `9px ${HUD_FONTS.mono}`,
+    font: `${HUD_TYPE.label}px ${HUD_FONTS.mono}`,
     lineHeight: 1,
     cursor: enabled ? 'pointer' : 'default',
     pointerEvents: enabled ? 'auto' : 'none',
@@ -164,7 +164,7 @@ function SegmentReadout({
         >
           ‹
         </button>
-        <span style={{ color, fontSize: HUD_TYPE.micro, letterSpacing: 0.42, whiteSpace: 'nowrap' }}>
+        <span style={{ color, fontSize: HUD_TYPE.micro, letterSpacing: 0.35, whiteSpace: 'nowrap' }}>
           S{String(index + 1).padStart(2, '0')}/{String(count).padStart(2, '0')}
         </span>
         <span title={segment.label} style={{ minWidth: 0, color: HUD_COLORS.cyanInk, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -461,7 +461,7 @@ export default function CellContentMemory({
             {...revealStageAttributes(summaryRevealed)}
             style={{ display: 'flex', alignItems: 'baseline', gap: 5, ...revealStageStyle(summaryRevealed) }}
           >
-            <span style={{ minWidth: 0, color: model.origin === 'indexed' ? tone : HUD_COLORS.cyanWire, fontSize: HUD_TYPE.micro, letterSpacing: 0.52, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ minWidth: 0, color: model.origin === 'indexed' ? tone : HUD_COLORS.cyanWire, fontSize: HUD_TYPE.micro, letterSpacing: 0.6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {contentStatus}
             </span>
             {bytePageCount > 1 ? (
@@ -496,7 +496,7 @@ export default function CellContentMemory({
               INVALID CONTENT HEX
             </div>
           ) : previewBytes.length === 0 ? (
-            <div data-cell-content-empty="true" data-cell-content-reveal-item="bytes" data-cell-content-reveal-item-state={bytesRevealed ? 'resolved' : 'scanning'} {...revealStageAttributes(bytesRevealed)} style={{ display: 'block', marginTop: 4, padding: '3px 5px', border: `1px solid ${rgba(HUD_COLORS.dim, 0.14)}`, color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.7, ...revealStageStyle(bytesRevealed) }}>
+            <div data-cell-content-empty="true" data-cell-content-reveal-item="bytes" data-cell-content-reveal-item-state={bytesRevealed ? 'resolved' : 'scanning'} {...revealStageAttributes(bytesRevealed)} style={{ display: 'block', marginTop: 4, padding: '3px 5px', border: `1px solid ${rgba(HUD_COLORS.dim, 0.14)}`, color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.6, ...revealStageStyle(bytesRevealed) }}>
               ∅ NO OUTPUT DATA
             </div>
           ) : (
@@ -536,7 +536,7 @@ export default function CellContentMemory({
                   <span style={{ gridColumn: '1 / -1', justifySelf: 'end', color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro }}>…</span>
                 ) : null}
               </div>
-              <div data-cell-content-ascii="true" data-cell-content-reveal-item="ascii" data-cell-content-reveal-item-state={asciiRevealed ? 'resolved' : 'scanning'} title={model.ascii} {...revealStageAttributes(asciiRevealed)} style={{ display: 'block', ...revealStageStyle(asciiRevealed), minWidth: 0, marginTop: 2, color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, letterSpacing: 0.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <div data-cell-content-ascii="true" data-cell-content-reveal-item="ascii" data-cell-content-reveal-item-state={asciiRevealed ? 'resolved' : 'scanning'} title={model.ascii} {...revealStageAttributes(asciiRevealed)} style={{ display: 'block', ...revealStageStyle(asciiRevealed), minWidth: 0, marginTop: 2, color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, letterSpacing: 0.6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 ASCII [{previewStart}..{previewEnd}) · {model.ascii.slice(previewStart, previewEnd)}
                 {selectedRangeOutsidePreview ? ' · DECODE RANGE OUTSIDE RETAINED BYTES' : ''}
               </div>
@@ -565,7 +565,7 @@ export default function CellContentMemory({
             {content?.deterministic ? (
               <div data-cell-content-deterministic="true" data-cell-content-reveal-item="decode" data-cell-content-reveal-item-state={decodeRevealed ? 'resolved' : 'scanning'} {...revealStageAttributes(decodeRevealed)} style={{ display: 'block', minWidth: 0, marginTop: record?.asset ? 2 : 0, ...revealStageStyle(decodeRevealed) }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 5, minWidth: 0 }}>
-                  <span style={{ color: HUD_COLORS.nominal, fontSize: HUD_TYPE.micro, letterSpacing: 0.56, whiteSpace: 'nowrap' }}>
+                  <span style={{ color: HUD_COLORS.nominal, fontSize: HUD_TYPE.micro, letterSpacing: 0.6, whiteSpace: 'nowrap' }}>
                     DECODE · {readableKind(content.deterministic.kind)}
                   </span>
                   <span title={content.deterministic.summary} style={{ minWidth: 0, marginLeft: 'auto', color: HUD_COLORS.ink, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

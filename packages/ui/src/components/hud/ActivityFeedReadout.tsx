@@ -7,7 +7,7 @@ import {
   activityFeedVisualState,
   deriveActivityFeedVisual,
 } from '../../derives/activityFeed.derive';
-import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import { ReadoutHeader } from './primitives';
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -75,7 +75,7 @@ export default function ActivityFeedReadout({ source, record, compact = false }:
               />
             ))}
           </div>
-          <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, color: '#9fb0bd', marginTop: compact ? 2 : 3, lineHeight: 1.45 }}>
+          <div style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, color: '#9fb0bd', marginTop: compact ? 2 : 3, lineHeight: 1.45 }}>
             {visual.buckets
               .map((bucket) => `${CATEGORY_LABELS[bucket.category] ?? bucket.category.toUpperCase()} ${bucket.count}`)
               .join(' · ')}
@@ -94,7 +94,7 @@ export default function ActivityFeedReadout({ source, record, compact = false }:
                     gap: 5,
                     alignItems: 'baseline',
                     fontFamily: HUD_FONTS.mono,
-                    fontSize: 8,
+                    fontSize: HUD_TYPE.nav,
                     padding: '1px 0',
                   }}
                 >
@@ -110,7 +110,7 @@ export default function ActivityFeedReadout({ source, record, compact = false }:
           </div> : null}
         </>
       ) : (
-        <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, color: HUD_COLORS.dim }}>
+        <div style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, color: HUD_COLORS.dim }}>
           NO RECENT ACTIVITY
         </div>
       )}

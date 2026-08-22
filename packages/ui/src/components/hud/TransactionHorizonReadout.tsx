@@ -6,7 +6,7 @@ import {
   deriveTransactionHorizonVisual,
   transactionHorizonVisualState,
 } from '../../derives/transactionHorizon.derive';
-import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import { ReadoutHeader } from './primitives';
 
 function compactCount(value: number): string {
@@ -105,7 +105,7 @@ export default function TransactionHorizonReadout({ source, record, compact = fa
         justifyContent: 'space-between',
         marginTop: 3,
         fontFamily: HUD_FONTS.mono,
-        fontSize: 8,
+        fontSize: HUD_TYPE.nav,
         color: HUD_COLORS.dim,
       }}>
         <span>HOUR <b style={{ color: HUD_COLORS.ink, fontWeight: 400 }}>{visual.currentHour.toLocaleString('en-US')}</b></span>

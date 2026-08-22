@@ -7,7 +7,7 @@ import {
   deriveNetworkAtlasVisual,
   networkAtlasVisualState,
 } from '../../derives/networkAtlas.derive';
-import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import { StatRow } from './primitives';
 
 const fmt = (value: number) => value.toLocaleString('en-US');
@@ -28,7 +28,7 @@ function BucketStrip({ label, buckets, total, provenance }: {
   const detail = buckets.map((bucket) => `${bucket.label} ${bucket.count}`).join(' · ');
   return (
     <div style={{ marginTop: 6 }} title={`${provenance} · ${detail}`}>
-      <div style={{ fontFamily: HUD_FONTS.tech, fontSize: 7.5, letterSpacing: 1.2, color: HUD_COLORS.dim, marginBottom: 2 }}>
+      <div style={{ fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, letterSpacing: 1.2, color: HUD_COLORS.dim, marginBottom: 2 }}>
         {label}
       </div>
       <div style={{ display: 'flex', height: 6, background: HUD_COLORS.trackGround, border: `1px solid ${rgba(HUD_COLORS.peerWire, 0.14)}` }}>
@@ -43,7 +43,7 @@ function BucketStrip({ label, buckets, total, provenance }: {
           />
         ))}
       </div>
-      <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, color: '#9fb0bd', marginTop: 3, lineHeight: 1.45 }}>
+      <div style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, color: '#9fb0bd', marginTop: 3, lineHeight: 1.45 }}>
         {legend(buckets)}
       </div>
     </div>
@@ -100,7 +100,7 @@ export default function NetworkAtlasReadout({ source, record }: {
       {stale ? (
         <div
           data-network-atlas-caution
-          style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, letterSpacing: 0.4, color: HUD_COLORS.caution, marginTop: 5 }}
+          style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, letterSpacing: 0.35, color: HUD_COLORS.caution, marginTop: 5 }}
         >
           ATLAS STALE · AS OF #{fmt(record.as_of.block)}
         </div>

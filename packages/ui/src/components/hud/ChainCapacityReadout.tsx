@@ -8,7 +8,7 @@ import {
   deriveAssetEcosystemBuckets,
 } from '../../derives/assetEcosystem.derive';
 import { formatCkb, formatExactCkb } from './cellFormat';
-import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import { ReadoutHeader, StatRow } from './primitives';
 import { chainLiveRow } from './cellPopulation.presentation';
 
@@ -99,18 +99,18 @@ export default function ChainCapacityReadout({ source, record, census = null, ce
         data-population-row="Chain live"
         style={{ display: 'flex', alignItems: 'baseline', gap: 6, height: 17, whiteSpace: 'nowrap', opacity: liveCells.dim ? 0.6 : 1 }}
       >
-        <span style={{ fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: 8.5, letterSpacing: 1.6, color: HUD_COLORS.dim, textTransform: 'uppercase' }}>
+        <span style={{ fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: HUD_TYPE.tech, letterSpacing: 1.6, color: HUD_COLORS.dim, textTransform: 'uppercase' }}>
           Live cells
         </span>
         {liveCells.tag ? (
           <span
             data-population-scope
-            style={{ fontFamily: HUD_FONTS.tech, fontSize: 7, letterSpacing: 1.1, color: HUD_COLORS.dim, textTransform: 'uppercase', opacity: 0.8 }}
+            style={{ fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, letterSpacing: 1.2, color: HUD_COLORS.dim, textTransform: 'uppercase', opacity: 0.8 }}
           >
             {liveCells.tag}
           </span>
         ) : null}
-        <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: 11, color: HUD_COLORS.ink }}>
+        <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.value, color: HUD_COLORS.ink }}>
           {liveCells.value}
         </span>
       </div>
@@ -132,7 +132,7 @@ export default function ChainCapacityReadout({ source, record, census = null, ce
               />
             ) : null)}
           </div>
-          <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, color: '#9fb0bd', marginTop: 3, lineHeight: 1.45 }}>
+          <div style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, color: '#9fb0bd', marginTop: 3, lineHeight: 1.45 }}>
             {buckets
               .filter((bucket) => bucket.shareBps > 0)
               .map((bucket) => `${CATEGORY_LABELS[bucket.category.toLowerCase()] ?? bucket.category.toUpperCase()} ${shareLabel(bucket.shareBps)}`)
@@ -142,14 +142,14 @@ export default function ChainCapacityReadout({ source, record, census = null, ce
       ) : null}
       {usableRecord && usableRecord.top_assets.length > 0 ? (
         <div data-indexed-context style={{ marginTop: 6, opacity: stale ? 0.68 : 1 }}>
-          <div style={{ fontFamily: HUD_FONTS.tech, fontSize: 7.5, letterSpacing: 1.2, color: HUD_COLORS.dim, marginBottom: 2 }}>
+          <div style={{ fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, letterSpacing: 1.2, color: HUD_COLORS.dim, marginBottom: 2 }}>
             TOP ASSETS
           </div>
           {usableRecord.top_assets.slice(0, 3).map((asset) => (
             <div
               key={asset.type_script_hash}
               title={asset.type_script_hash}
-              style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 6, fontFamily: HUD_FONTS.mono, fontSize: 8, padding: '1px 0' }}
+              style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 6, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, padding: '1px 0' }}
             >
               <span style={{ color: HUD_COLORS.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {asset.symbol ?? asset.name ?? `${asset.type_script_hash.slice(0, 10)}…`}

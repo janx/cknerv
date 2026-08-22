@@ -8,7 +8,7 @@ import {
   deriveDaoStateVisual,
 } from '../../derives/daoState.derive';
 import { formatAge, formatCkb } from './cellFormat';
-import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import { ReadoutHeader } from './primitives';
 
 const SHANNONS_PER_CKB = 100_000_000n;
@@ -64,8 +64,8 @@ function MetricLabel({ children }: { children: ReactNode }) {
     <div style={{
       fontFamily: HUD_FONTS.tech,
       fontWeight: 500,
-      fontSize: 7.5,
-      letterSpacing: 1.25,
+      fontSize: HUD_TYPE.micro,
+      letterSpacing: 1.2,
       color: HUD_COLORS.dim,
       lineHeight: 1.25,
       textTransform: 'uppercase',
@@ -91,7 +91,7 @@ function CompactMetric({ label, children, title }: {
           overflow: 'hidden',
           color: HUD_COLORS.ink,
           fontFamily: HUD_FONTS.mono,
-          fontSize: 11.5,
+          fontSize: HUD_TYPE.value,
           fontVariantNumeric: 'tabular-nums',
           lineHeight: 1.15,
           textOverflow: 'ellipsis',
@@ -167,8 +167,8 @@ export default function DaoStateReadout({ source, record, variant = 'section', n
           marginBottom: 9,
           color: stale ? HUD_COLORS.caution : HUD_COLORS.nominal,
           fontFamily: HUD_FONTS.tech,
-          fontSize: 7.5,
-          letterSpacing: 1.1,
+          fontSize: HUD_TYPE.micro,
+          letterSpacing: 1.2,
           lineHeight: 1,
           textTransform: 'uppercase',
         }}
@@ -207,9 +207,13 @@ export default function DaoStateReadout({ source, record, variant = 'section', n
                 overflow: 'hidden',
                 color: HUD_COLORS.heroInk,
                 fontFamily: HUD_FONTS.display,
-                fontSize: 21,
+                fontSize: HUD_TYPE.hero,
                 fontWeight: 700,
                 fontVariantNumeric: 'tabular-nums',
+                // The HUD's only negative tracking, and a declared exception in
+                // `hudTheme.ts`: a twelve-digit CKB figure has to stay inside
+                // this column, and pulling the letters together is how a hero
+                // earns the room without being demoted to a smaller rung.
                 letterSpacing: -0.25,
                 lineHeight: 1.1,
                 textOverflow: 'ellipsis',
@@ -228,9 +232,9 @@ export default function DaoStateReadout({ source, record, variant = 'section', n
                   ? HUD_COLORS.dim
                   : deltaColor(visual.depositChange24hShannons),
                 fontFamily: HUD_FONTS.mono,
-                fontSize: 8.5,
+                fontSize: HUD_TYPE.tech,
                 fontVariantNumeric: 'tabular-nums',
-                letterSpacing: 0.25,
+                letterSpacing: 0.35,
                 lineHeight: 1.2,
                 whiteSpace: 'nowrap',
               }}
@@ -257,7 +261,7 @@ export default function DaoStateReadout({ source, record, variant = 'section', n
               marginTop: 4,
               color: accent,
               fontFamily: HUD_FONTS.display,
-              fontSize: 19,
+              fontSize: HUD_TYPE.heroSub,
               fontWeight: 700,
               fontVariantNumeric: 'tabular-nums',
               lineHeight: 1,
@@ -270,8 +274,8 @@ export default function DaoStateReadout({ source, record, variant = 'section', n
               marginTop: 5,
               color: HUD_COLORS.dim,
               fontFamily: HUD_FONTS.tech,
-              fontSize: 6.8,
-              letterSpacing: 0.85,
+              fontSize: HUD_TYPE.micro,
+              letterSpacing: 0.9,
               textTransform: 'uppercase',
             }}>
               annualized
@@ -325,7 +329,7 @@ export default function DaoStateReadout({ source, record, variant = 'section', n
               <span style={{
                 color: HUD_COLORS.ink,
                 fontFamily: HUD_FONTS.mono,
-                fontSize: 12,
+                fontSize: HUD_TYPE.panelTitle,
                 fontVariantNumeric: 'tabular-nums',
               }}>
                 {record.total_depositors.toLocaleString('en-US')}
@@ -336,7 +340,7 @@ export default function DaoStateReadout({ source, record, variant = 'section', n
                   style={{
                     color: deltaColor(record.depositors_change_24h),
                     fontFamily: HUD_FONTS.mono,
-                    fontSize: 8,
+                    fontSize: HUD_TYPE.nav,
                     fontVariantNumeric: 'tabular-nums',
                   }}
                 >
@@ -358,9 +362,9 @@ export default function DaoStateReadout({ source, record, variant = 'section', n
           marginTop: 9,
           color: stale ? HUD_COLORS.caution : HUD_COLORS.dim,
           fontFamily: HUD_FONTS.mono,
-          fontSize: 7.5,
+          fontSize: HUD_TYPE.micro,
           fontVariantNumeric: 'tabular-nums',
-          letterSpacing: 0.4,
+          letterSpacing: 0.35,
           lineHeight: 1,
           whiteSpace: 'nowrap',
         }}

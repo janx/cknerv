@@ -4,7 +4,7 @@ import {
   formatStreamAge,
   formatStreamChannels,
 } from '../../derives/streamHealth.derive';
-import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 
 const PRESENTATION: Record<
   Exclude<StreamHealthPhase, 'live'>,
@@ -61,11 +61,11 @@ export default function StreamHealthBanner({
             : 'cknerv-hud-breathe 1.4s ease-in-out infinite',
         }}
       >
-        <span aria-hidden style={{ fontSize: 9 }}>◇</span>
-        <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: 10, letterSpacing: 2.1 }}>
+        <span aria-hidden style={{ fontSize: HUD_TYPE.label }}>◇</span>
+        <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: HUD_TYPE.section, letterSpacing: 2 }}>
           {visual.title}
         </span>
-        <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 9, letterSpacing: 1.2, color: rgba(visual.color, 0.82) }}>
+        <span style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 1.2, color: rgba(visual.color, 0.82) }}>
           {channel}{retry}{age}
         </span>
       </div>

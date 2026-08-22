@@ -120,7 +120,7 @@ export default function CellByteBudget({
         })}
       </div>
       <div
-        style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 9px', marginTop: 3, fontSize: HUD_TYPE.micro, letterSpacing: 0.7, whiteSpace: 'nowrap' }}
+        style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 9px', marginTop: 3, fontSize: HUD_TYPE.micro, letterSpacing: 0.6, whiteSpace: 'nowrap' }}
       >
         {model.segments.map((segment) => {
           const color = SEGMENT_COLORS[segment.key];

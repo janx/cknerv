@@ -2,7 +2,7 @@ import type { CSSProperties } from 'react';
 import type { EnrichmentSourceStatus, NetworkAtlasRecord } from '@cknerv/types';
 import type { NetworkSummary } from '../../derives/peers.derive';
 import type { FleetConsensus } from '../../derives/fleetTelemetry';
-import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import { HudPanel, PanelHeader, StatRow } from './primitives';
 import NetworkAtlasReadout from './NetworkAtlasReadout';
 
@@ -40,7 +40,7 @@ export default function NetworkPanel({ summary, consensus, syncRatio, enrichment
         <span style={{ width: seg(consensus.behind), background: HUD_COLORS.dim }} />
         <span style={{ width: seg(consensus.ahead), background: HUD_COLORS.caution }} />
       </div>
-      <div style={{ display: 'flex', gap: 11, fontFamily: HUD_FONTS.mono, fontSize: 8, letterSpacing: 0.4, marginBottom: 8 }}>
+      <div style={{ display: 'flex', gap: 11, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, letterSpacing: 0.35, marginBottom: 8 }}>
         <span style={{ color: HUD_COLORS.nominal }}>▲{consensus.atTip} at-tip</span>
         <span style={{ color: HUD_COLORS.dim }}>{consensus.behind} behind</span>
         <span style={{ color: HUD_COLORS.caution }}>{consensus.ahead} ahead</span>

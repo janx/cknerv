@@ -125,6 +125,13 @@ const PeerScanFact = memo(function PeerScanFact({
         transition: 'background 160ms ease, box-shadow 160ms ease',
       }}
     >
+      {/* THE DENSE REGISTER. This fact sits one rung below the same sentence in
+          `CellDetailPanel`'s `CellScanFact` (micro/label here, label/value
+          there) and that gap is declared, not drift — see the tracking ledger
+          in `hudTheme.ts`. The peer card is 340px wide and lays its facts out
+          two to a row, so cell-card type would ellipsis away the tail of every
+          address and latency it exists to show. Flattening the two into one
+          register makes THIS card worse. */}
       <span style={{ display: 'block', fontSize: HUD_TYPE.micro, letterSpacing: 1.2, color: HUD_COLORS.dim }}>
         {label}
       </span>
@@ -492,7 +499,7 @@ export default function PeerLinkCard({
               fontFamily: HUD_FONTS.tech,
               fontSize: HUD_TYPE.label,
               fontWeight: 700,
-              letterSpacing: 2.2,
+              letterSpacing: 2,
             }}
           >
             LINK LOST

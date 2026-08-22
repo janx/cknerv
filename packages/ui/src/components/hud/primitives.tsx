@@ -29,9 +29,9 @@ export function PanelHeader({ en, cjk, idx, accent, compact = false }: {
 }) {
   return (
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: compact ? 6 : 11 }}>
-      <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 600, fontSize: 12, letterSpacing: 3, color: HUD_COLORS.orange, textTransform: 'uppercase', textShadow: '0 0 9px rgba(255,152,48,.45)' }}>{en}</span>
-      <span style={{ fontFamily: HUD_FONTS.cjk, fontSize: 10, color: HUD_COLORS.orangeDeep, opacity: 0.7 }}>{cjk}</span>
-      <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: 8.5, color: accent ?? HUD_COLORS.moduleSlate, letterSpacing: 1, textShadow: accent ? `0 0 7px ${accent}66` : undefined }}>{idx}</span>
+      <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 600, fontSize: HUD_TYPE.panelTitle, letterSpacing: 3, color: HUD_COLORS.orange, textTransform: 'uppercase', textShadow: '0 0 9px rgba(255,152,48,.45)' }}>{en}</span>
+      <span style={{ fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.section, color: HUD_COLORS.orangeDeep, opacity: 0.7 }}>{cjk}</span>
+      <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.tech, color: accent ?? HUD_COLORS.moduleSlate, letterSpacing: 0.9, textShadow: accent ? `0 0 7px ${accent}66` : undefined }}>{idx}</span>
     </div>
   );
 }
@@ -43,8 +43,8 @@ export function StatRow({ label, children, valueColor, title }: {
 }) {
   return (
     <div title={title} style={{ display: 'flex', alignItems: 'baseline', height: 17, whiteSpace: 'nowrap' }}>
-      <span style={{ fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: 8.5, letterSpacing: 1.6, color: HUD_COLORS.dim, textTransform: 'uppercase' }}>{label}</span>
-      <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: 11, color: valueColor ?? HUD_COLORS.ink }}>{children}</span>
+      <span style={{ fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: HUD_TYPE.tech, letterSpacing: 1.6, color: HUD_COLORS.dim, textTransform: 'uppercase' }}>{label}</span>
+      <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.value, color: valueColor ?? HUD_COLORS.ink }}>{children}</span>
     </div>
   );
 }
@@ -67,8 +67,8 @@ export function ReadoutHeader({ title, meta, accent, stale = false, compact = fa
         columnGap: 5,
         rowGap: 1,
         fontFamily: HUD_FONTS.tech,
-        fontSize: 7.5,
-        letterSpacing: 1.25,
+        fontSize: HUD_TYPE.micro,
+        letterSpacing: 1.2,
         color: accent,
         textTransform: 'uppercase',
         marginBottom: compact ? 3 : 5,
@@ -141,14 +141,14 @@ export function ScopeStage({ id, label, meta, accent, terminal = false, flush = 
             minWidth: 0,
             marginBottom: 4,
             fontFamily: HUD_FONTS.tech,
-            fontSize: 7.5,
+            fontSize: HUD_TYPE.micro,
             letterSpacing: 1.2,
             textTransform: 'uppercase',
           }}
         >
           <span style={{ color: accent, whiteSpace: 'nowrap' }}>{label}</span>
           {meta != null ? (
-            <span style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: 7.5, letterSpacing: 0.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {meta}
             </span>
           ) : null}
@@ -170,10 +170,10 @@ export function ScopeStage({ id, label, meta, accent, terminal = false, flush = 
         ) : null}
       </span>
       <div style={{ minWidth: 0, paddingBottom: terminal ? 0 : 9 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0, marginBottom: 4, fontFamily: HUD_FONTS.tech, fontSize: 7.5, letterSpacing: 1.2, textTransform: 'uppercase' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0, marginBottom: 4, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, letterSpacing: 1.2, textTransform: 'uppercase' }}>
           <span style={{ color: accent, whiteSpace: 'nowrap' }}>{label}</span>
           {meta != null ? (
-            <span style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: 7.5, letterSpacing: 0.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {meta}
             </span>
           ) : null}
@@ -208,7 +208,7 @@ export function CloseButton({ onClose, title }: { onClose: () => void; title?: s
       onMouseOut={(e) => { (e.currentTarget as HTMLElement).style.color = HUD_COLORS.dim; }}
       style={{
         position: 'absolute', top: 6, right: 11, cursor: 'pointer', pointerEvents: 'auto',
-        fontFamily: HUD_FONTS.mono, fontSize: 14, lineHeight: 1, color: HUD_COLORS.dim,
+        fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.emphasis, lineHeight: 1, color: HUD_COLORS.dim,
       }}
     >×</span>
   );
@@ -272,7 +272,7 @@ export const stackedSatelliteBase: CSSProperties = {
  *  out through its letters. Severity is the only thing allowed to fill (see the
  *  layer rule in `hudTheme.ts`) — chrome and identity wear the outline chip
  *  below. Type is left to the caller so the block can sit inside a strip's
- *  8.5px register or a banner's 12px one without changing its voice. */
+ *  `tech` register or a banner's `panelTitle` one without changing its voice. */
 export function severityChip(color: string): CSSProperties {
   return {
     padding: '1px 6px',
@@ -440,7 +440,7 @@ export function revealStageAttributes(
  *  print their module numbers in different type. */
 export function moduleTag(tag: string) {
   return (
-    <span style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 1, color: HUD_COLORS.moduleSlate }}>
+    <span style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.9, color: HUD_COLORS.moduleSlate }}>
       {tag}
     </span>
   );
@@ -459,7 +459,7 @@ export function SpatialPlateHeader({ en, cjk, accent, titleColor = HUD_COLORS.cy
 }) {
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '3px 7px', marginBottom }}>
-      <span style={{ flex: '0 0 auto', whiteSpace: 'nowrap', color: titleColor, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.section, fontWeight: 700, letterSpacing: 1.35 }}>
+      <span style={{ flex: '0 0 auto', whiteSpace: 'nowrap', color: titleColor, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.section, fontWeight: 700, letterSpacing: 1.4 }}>
         {en}
       </span>
       {cjk ? (

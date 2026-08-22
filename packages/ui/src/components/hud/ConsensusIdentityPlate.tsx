@@ -242,10 +242,10 @@ function RouteHopInspector({
             transform: 'rotate(45deg)',
           }}
         />
-        <span style={{ fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, fontWeight: 700, letterSpacing: 0.82, color: roleCopy.color }}>
+        <span style={{ fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, fontWeight: 700, letterSpacing: 0.9, color: roleCopy.color }}>
           HOP SEMANTICS
         </span>
-        <span style={{ marginLeft: 'auto', fontSize: HUD_TYPE.micro, letterSpacing: 0.48, color: roleCopy.color }}>
+        <span style={{ marginLeft: 'auto', fontSize: HUD_TYPE.micro, letterSpacing: 0.6, color: roleCopy.color }}>
           {roleCopy.label}
         </span>
       </div>
@@ -256,7 +256,7 @@ function RouteHopInspector({
           gap: '2px 6px',
           marginTop: 4,
           fontSize: HUD_TYPE.micro,
-          letterSpacing: 0.34,
+          letterSpacing: 0.35,
         }}
       >
         <span style={{ color: HUD_COLORS.dim }}>OWN CONTENT</span>
@@ -279,7 +279,7 @@ function RouteHopInspector({
           paddingTop: 3,
           borderTop: `1px solid ${roleCopy.color}22`,
           fontSize: HUD_TYPE.micro,
-          letterSpacing: 0.28,
+          letterSpacing: 0.35,
         }}
       >
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: HUD_COLORS.dim }}>
@@ -296,7 +296,7 @@ function RouteHopInspector({
             : `#${inspection.nextCellId} →`}
         </span>
       </div>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 3, fontSize: HUD_TYPE.micro, letterSpacing: 0.32 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 3, fontSize: HUD_TYPE.micro, letterSpacing: 0.35 }}>
         <span style={{ color: roleCopy.color }}>{roleCopy.note}</span>
         <span style={{ marginLeft: 'auto', color: HUD_COLORS.dim }}>
           {inspection.distanceFromSource} FROM SOURCE · {inspection.distanceToTarget} TO TARGET
@@ -480,7 +480,7 @@ function EvidenceRouteLedger({
               display: 'flex',
               alignItems: 'baseline',
               fontSize: HUD_TYPE.micro,
-              letterSpacing: 0.42,
+              letterSpacing: 0.35,
               color: HUD_COLORS.dim,
             }}
           >
@@ -558,7 +558,7 @@ function EvidenceRouteLedger({
               alignItems: 'baseline',
               marginBottom: 2,
               fontSize: HUD_TYPE.micro,
-              letterSpacing: 0.38,
+              letterSpacing: 0.35,
               color: HUD_COLORS.dim,
             }}
           >
@@ -742,7 +742,7 @@ function EvidenceRouteLedger({
               borderTop: `1px solid ${LOCKED_GOLD}28`,
               fontFamily: HUD_FONTS.mono,
               fontSize: HUD_TYPE.micro,
-              letterSpacing: 0.42,
+              letterSpacing: 0.35,
               color: LOCKED_GOLD,
             }}
           >
@@ -843,10 +843,10 @@ function EvidenceLedger({
       style={{ marginTop: 5, paddingTop: 4, borderTop: `1px solid ${CYAN}18` }}
     >
       <div style={{ display: 'flex', alignItems: 'baseline', marginBottom: 2 }}>
-        <span style={{ fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, letterSpacing: 0.85, color: HUD_COLORS.dim }}>
+        <span style={{ fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, letterSpacing: 0.9, color: HUD_COLORS.dim }}>
           {evidenceLabel}
         </span>
-        <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.45, color: CYAN, opacity: 0.68 }}>
+        <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.35, color: CYAN, opacity: 0.68 }}>
           EVIDENCE → AGREEMENT
         </span>
       </div>
@@ -862,10 +862,10 @@ function EvidenceLedger({
             marginBottom: 3,
             fontFamily: HUD_FONTS.mono,
             fontSize: HUD_TYPE.micro,
-            letterSpacing: 0.4,
+            letterSpacing: 0.35,
           }}
         >
-          <span style={{ fontFamily: HUD_FONTS.tech, letterSpacing: 0.85, color: HUD_COLORS.dim, whiteSpace: 'nowrap' }}>
+          <span style={{ fontFamily: HUD_FONTS.tech, letterSpacing: 0.9, color: HUD_COLORS.dim, whiteSpace: 'nowrap' }}>
             SPENT INPUTS
           </span>
           <span
@@ -1058,7 +1058,7 @@ function EvidenceLedger({
               <span style={{ fontSize: HUD_TYPE.micro, color: sourceColor }}>
                 E{String(evidence.ordinal).padStart(2, '0')}
               </span>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', fontSize: HUD_TYPE.micro, letterSpacing: 0.22, color: HUD_COLORS.ink }}>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', fontSize: HUD_TYPE.micro, letterSpacing: 0.35, color: HUD_COLORS.ink }}>
                 {consensusMemoryEvidenceFingerprint(evidence.contentHash)}
               </span>
               <span style={{ display: 'flex', alignItems: 'baseline', gap: 4, fontSize: HUD_TYPE.micro, letterSpacing: 0.35 }}>
@@ -1082,7 +1082,7 @@ function EvidenceLedger({
                     paddingTop: 3,
                     borderTop: `1px solid ${sourceColor}2e`,
                     fontSize: HUD_TYPE.micro,
-                    letterSpacing: 0.3,
+                    letterSpacing: 0.35,
                     color: HUD_COLORS.dim,
                   }}
                 >
@@ -1219,7 +1219,7 @@ export function ConsensusMemoryTracePlate({
                 <span style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, opacity: 0.58 }}>
                   {item.code}
                 </span>
-                <span style={{ fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, fontWeight: active ? 700 : 500, letterSpacing: active ? 0.78 : 0.48 }}>
+                <span style={{ fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, fontWeight: active ? 700 : 500, letterSpacing: active ? 0.9 : 0.6 }}>
                   {item.label}
                 </span>
               </div>
@@ -1227,7 +1227,7 @@ export function ConsensusMemoryTracePlate({
           );
         })}
       </div>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 5, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.45 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 5, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.35 }}>
         <span style={{ color: MEMORY_READ_STAGES[activeIndex]?.color ?? CYAN }}>
           {summary[0]}
         </span>

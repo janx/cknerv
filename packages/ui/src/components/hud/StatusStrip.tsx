@@ -20,7 +20,7 @@ import {
   setCellDisplayMode,
   useCellDisplayRuntime,
 } from '../../tweaks/cellDisplay';
-import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import { severityChip } from './primitives';
 
 export type BuildInfo = { version: string; href: string };
@@ -98,12 +98,12 @@ function BuildChip({ build, compact = false }: { build: BuildInfo; compact?: boo
         borderBottom: `1px solid ${rgba(HUD_COLORS.orange, hot ? 0.34 : 0.1)}`,
         background: `linear-gradient(90deg,${rgba(HUD_COLORS.orange, hot ? 0.09 : 0.035)},transparent)`,
         boxShadow: hot ? `inset 0 -1px 8px ${rgba(HUD_COLORS.orange, 0.1)}` : 'none',
-        fontFamily: HUD_FONTS.mono, fontSize: 9, letterSpacing: 0.55, lineHeight: 1,
+        fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.6, lineHeight: 1,
         textDecoration: 'none', pointerEvents: 'auto',
         transition: 'border-color .18s, background .18s, box-shadow .18s',
       }}
     >
-      <span className="cknerv-build-label" style={{ color: HUD_COLORS.dim, fontSize: 7, letterSpacing: 1 }}>BUILD</span>
+      <span className="cknerv-build-label" style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.9 }}>BUILD</span>
       <span style={{ color: hot ? HUD_COLORS.orange : HUD_COLORS.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textShadow: hot ? `0 0 6px ${rgba(HUD_COLORS.orange, 0.5)}` : 'none', transition: 'color .18s, text-shadow .18s' }}>{head}</span>
     </a>
   );
@@ -182,16 +182,20 @@ function PanelVisibilityControl({ panels, onChange, compact = false, menuOffset 
           borderBottom: `1px solid ${rgba(color, 0.12)}`,
           background: `linear-gradient(90deg,${rgba(color, 0.055)},transparent)`,
           color,
-          font: `400 ${compact ? 8 : 8.5}px/20px ${HUD_FONTS.mono}`,
-          letterSpacing: compact ? 0.45 : 0.7,
+          // The `font:` shorthand is how the top bar's controls carry a line
+          // height with their size; the px values inside it are on the same
+          // scale as every `fontSize:` prop and `hudDiscipline.test.ts` parses
+          // them the same way.
+          font: `400 ${compact ? HUD_TYPE.nav : HUD_TYPE.tech}px/20px ${HUD_FONTS.mono}`,
+          letterSpacing: compact ? 0.35 : 0.6,
           textShadow: `0 0 6px ${rgba(color, 0.38)}`,
           cursor: 'pointer',
         }}
       >
-        <span aria-hidden style={{ fontSize: 9 }}>▦</span>
+        <span aria-hidden style={{ fontSize: HUD_TYPE.label }}>▦</span>
         <span className="cknerv-panel-toggle-label">PANELS</span>
         <span>{visibleCount}/{panels.length}</span>
-        <span aria-hidden style={{ color: HUD_COLORS.dim, fontSize: 7 }}>{open ? '▲' : '▼'}</span>
+        <span aria-hidden style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro }}>{open ? '▲' : '▼'}</span>
       </button>
       {open ? (
         <div
@@ -222,7 +226,7 @@ function PanelVisibilityControl({ panels, onChange, compact = false, menuOffset 
               alignItems: 'baseline',
               margin: '0 3px 5px',
               color: HUD_COLORS.orange,
-              fontSize: 8,
+              fontSize: HUD_TYPE.nav,
               letterSpacing: 1.4,
             }}
           >
@@ -258,7 +262,7 @@ function PanelVisibilityControl({ panels, onChange, compact = false, menuOffset 
                   borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.08)}`,
                   background: panel.visible ? rgba(HUD_COLORS.cyanWire, 0.035) : 'transparent',
                   color: panelColor,
-                  font: `400 8.5px/1 ${HUD_FONTS.mono}`,
+                  font: `400 ${HUD_TYPE.tech}px/1 ${HUD_FONTS.mono}`,
                   textAlign: 'left',
                   cursor: 'pointer',
                 }}
@@ -266,7 +270,7 @@ function PanelVisibilityControl({ panels, onChange, compact = false, menuOffset 
                 <span style={{ color: panel.visible ? panelColor : HUD_COLORS.dim, letterSpacing: 0.6 }}>
                   {panel.code}
                 </span>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: 0.8 }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: 0.9 }}>
                   {panel.label}
                 </span>
                 <span
@@ -274,8 +278,8 @@ function PanelVisibilityControl({ panels, onChange, compact = false, menuOffset 
                     // ON is a switch position, not a healthy chain — cyan, the
                     // house color for "this setting is active". OFF stays dim.
                     color: panel.visible ? HUD_COLORS.cyanWire : HUD_COLORS.dim,
-                    fontSize: 7.5,
-                    letterSpacing: 0.7,
+                    fontSize: HUD_TYPE.micro,
+                    letterSpacing: 0.6,
                   }}
                 >
                   {panel.visible ? 'ON' : 'OFF'}
@@ -320,8 +324,8 @@ function EnrichmentChip({ source, compact = false }: {
         padding: compact ? '0 7px' : '0 9px',
         borderLeftColor: rgba(color, 0.25),
         fontFamily: HUD_FONTS.mono,
-        fontSize: 8.5,
-        letterSpacing: 0.75,
+        fontSize: HUD_TYPE.tech,
+        letterSpacing: 0.6,
         whiteSpace: 'nowrap',
       }}
     >
@@ -418,7 +422,7 @@ function CellDisplayControl({
         className="cknerv-cell-display-label"
         style={{
           color: HUD_COLORS.dim,
-          fontSize: 8.5,
+          fontSize: HUD_TYPE.tech,
           letterSpacing: 1.2,
           lineHeight: 1,
         }}
@@ -433,9 +437,9 @@ function CellDisplayControl({
           alignItems: 'baseline',
           minWidth: compact ? 27 : 34,
           color: HUD_COLORS.cyanWire,
-          fontSize: 10,
+          fontSize: HUD_TYPE.section,
           fontVariantNumeric: 'tabular-nums',
-          letterSpacing: 0.55,
+          letterSpacing: 0.6,
           whiteSpace: 'nowrap',
           textShadow: `0 0 6px ${rgba(HUD_COLORS.cyanWire, 0.34)}`,
         }}
@@ -464,8 +468,8 @@ function CellDisplayControl({
           border: 0,
           background: 'transparent',
           color: accent,
-          font: `400 8.5px/18px ${HUD_FONTS.mono}`,
-          letterSpacing: 0.65,
+          font: `400 ${HUD_TYPE.tech}px/18px ${HUD_FONTS.mono}`,
+          letterSpacing: 0.6,
           textShadow: `0 0 7px ${rgba(accent, 0.45)}`,
           cursor: 'pointer',
           transition: 'color .14s, text-shadow .14s',
@@ -628,8 +632,8 @@ function CellDisplayControl({
           aria-hidden="true"
           style={{
             color: HUD_COLORS.dim,
-            fontSize: 7,
-            letterSpacing: 0.8,
+            fontSize: HUD_TYPE.micro,
+            letterSpacing: 0.9,
           }}
         >
           /
@@ -637,8 +641,8 @@ function CellDisplayControl({
         <span
           style={{
             color: accent,
-            fontSize: 9,
-            letterSpacing: 0.65,
+            fontSize: HUD_TYPE.label,
+            letterSpacing: 0.6,
             textShadow: `0 0 6px ${rgba(accent, 0.38)}`,
           }}
         >
@@ -684,7 +688,7 @@ function RenderQualityControl({ compact = false }: { compact?: boolean }) {
         className="cknerv-quality-label"
         style={{
           color: HUD_COLORS.dim,
-          fontSize: 8.5,
+          fontSize: HUD_TYPE.tech,
           letterSpacing: 1.2,
           lineHeight: 1,
         }}
@@ -732,8 +736,8 @@ function RenderQualityControl({ compact = false }: { compact?: boolean }) {
                 border: 0,
                 background: 'transparent',
                 color: active ? accent : HUD_COLORS.dim,
-                font: `400 8.5px/16px ${HUD_FONTS.mono}`,
-                letterSpacing: 0.65,
+                font: `400 ${HUD_TYPE.tech}px/16px ${HUD_FONTS.mono}`,
+                letterSpacing: 0.6,
                 textAlign: 'center',
                 textShadow: active
                   ? `0 0 7px ${rgba(accent, 0.5)}`
@@ -856,7 +860,10 @@ export default function StatusStrip({
           paddingRight: dense ? 3 : 7,
           fontFamily: HUD_FONTS.display,
           fontWeight: 700,
-          fontSize: dense ? 10.5 : 12,
+          fontSize: dense ? HUD_TYPE.section : HUD_TYPE.panelTitle,
+          // Declared exception to the tracking table in `hudTheme.ts`: the
+          // spacing here IS the wordmark. Snapping it to a rung would not make
+          // the bar more coherent, it would make the logotype a label.
           letterSpacing: dense ? 2.6 : 4.2,
           color: HUD_COLORS.orange,
           textShadow: `0 0 9px ${rgba(HUD_COLORS.orange, 0.46)}`,
@@ -891,7 +898,7 @@ export default function StatusStrip({
   const statusIndicator = (
     <span
       data-status-indicator
-      style={{ display: 'flex', flexShrink: 0, alignItems: 'center', gap: dense ? 5 : 7, fontFamily: HUD_FONTS.tech, fontWeight: 600, fontSize: dense ? 8.5 : 9.5, letterSpacing: dense ? 1 : 1.6, color }}
+      style={{ display: 'flex', flexShrink: 0, alignItems: 'center', gap: dense ? 5 : 7, fontFamily: HUD_FONTS.tech, fontWeight: 600, fontSize: dense ? HUD_TYPE.tech : HUD_TYPE.label, letterSpacing: dense ? 0.9 : 1.6, color }}
     >
       {!dense ? <span style={{ fontFamily: HUD_FONTS.cjk, color: HUD_COLORS.dim }}>状态</span> : null}
       {/* The lamp is the constant across all six levels — it is what you find
@@ -1058,7 +1065,7 @@ export default function StatusStrip({
         style={{ ...NAV_MODULE_STYLE, gap: 9, padding: '0 1px 0 10px' }}
       >
         {statusIndicator}
-        <span style={{ flexShrink: 0, fontFamily: HUD_FONTS.mono, fontSize: 8.5, color: HUD_COLORS.dim, letterSpacing: 0.7 }}>{fmtUptime(uptimeMs)}</span>
+        <span style={{ flexShrink: 0, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.tech, color: HUD_COLORS.dim, letterSpacing: 0.6 }}>{fmtUptime(uptimeMs)}</span>
       </span>
       {accentRail}
     </div>

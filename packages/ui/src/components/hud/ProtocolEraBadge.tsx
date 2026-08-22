@@ -7,7 +7,7 @@ import {
   deriveProtocolEraVisual,
   protocolEraVisualState,
 } from '../../derives/protocolEra.derive';
-import { HUD_COLORS } from './hudTheme';
+import { HUD_COLORS, HUD_TYPE } from './hudTheme';
 
 export default function ProtocolEraBadge({ chain, source, record }: {
   chain: ChainEntry;
@@ -35,7 +35,7 @@ export default function ProtocolEraBadge({ chain, source, record }: {
         textOverflow: 'ellipsis',
         verticalAlign: 'bottom',
         color: stale ? HUD_COLORS.caution : HUD_COLORS.orange,
-        fontSize: 9,
+        fontSize: HUD_TYPE.label,
         letterSpacing: 0.35,
         opacity: stale ? 0.68 : 1,
       }}

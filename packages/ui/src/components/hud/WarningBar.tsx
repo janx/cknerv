@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 import type { AlertLevel } from '../../derives/alertLevel';
-import { HUD_COLORS, HUD_FONTS } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE } from './hudTheme';
 import { severityChip } from './primitives';
 
 const SHOWN: AlertLevel[] = ['warning', 'danger', 'crit'];
@@ -43,9 +43,13 @@ export default function WarningBar({ level, trigger, reducedMotion = false, top 
         *
         * The CJK stays outline on purpose. It is the siren — it says only that
         * something happened — and the filled block beside it says what, in the
-        * same inverted grammar the status strip escalates into. */}
-      <span style={{ fontFamily: HUD_FONTS.cjk, fontSize: 18, color, letterSpacing: 4, textShadow: `0 0 12px ${color}` }}>警告</span>
-      <span data-warning-trigger style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: 12, textTransform: 'uppercase', ...severityChip(color) }}>{(trigger ?? level).toUpperCase()}</span>
+        * same inverted grammar the status strip escalates into.
+        *
+        * The 4 of tracking is a declared exception to the tracking table in
+        * `hudTheme.ts`: two mincho glyphs sitting on the top rung need air
+        * between them or they fuse into one dense mark. */}
+      <span style={{ fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.heroSub, color, letterSpacing: 4, textShadow: `0 0 12px ${color}` }}>警告</span>
+      <span data-warning-trigger style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: HUD_TYPE.panelTitle, textTransform: 'uppercase', ...severityChip(color) }}>{(trigger ?? level).toUpperCase()}</span>
     </div>
   );
 }
