@@ -22,6 +22,10 @@ authors = ["janx@users.noreply.github.com"]
 anyhow = "1"
 async-trait = "0.1"
 axum = { version = "0.7", features = ["ws"] }
+# Only the ckbadger adapter needs it today — the crawler is keyed by PeerId
+# bytes and CKB's RPC prints them base58 — but a version belongs with the other
+# cross-crate pins rather than alone in one manifest.
+bs58 = { version = "0.5", default-features = false }
 ckb-types = "1.1"
 ckb-hash = "1.1"
 ckb-jsonrpc-types = "1.1"
