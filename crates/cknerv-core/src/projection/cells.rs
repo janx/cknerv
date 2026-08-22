@@ -646,6 +646,18 @@ impl CellGalaxy {
         self
     }
 
+    /// Test seam mirroring [`DisplayPlane::with_limits`]: a galaxy whose
+    /// stage is smaller than its map. That gap is the ordinary mainnet
+    /// shape — 12k staged out of ~50k retained — and reaching it honestly
+    /// would mean minting twelve thousand cells per test.
+    #[cfg(test)]
+    pub(crate) fn with_display_limits(budget: DisplayBudget, activity_quota: usize) -> Self {
+        Self {
+            display: DisplayPlane::with_limits(budget, activity_quota),
+            ..Self::new()
+        }
+    }
+
     pub fn with_config(config: CellGalaxyConfig) -> Self {
         Self {
             config,
@@ -5701,5 +5713,279 @@ mod tests {
                 },
             )
         );
+    }
+
+    // ── the compositional gate: a snapshot and the deltas after it ────
+
+    /// A stream frame's payload, as the runner ships it: several deltas can
+    /// share one revision (a tx births, kills and restages in one go).
+    #[derive(Serialize)]
+    struct FixtureDelta {
+        revision: u64,
+        delta: CellDelta,
+    }
+
+    /// The member whose record exists on a client for one reason only:
+    /// its enter carried it. Named in the fixture so the TS twin asserts
+    /// the same two cells this side does.
+    #[derive(Serialize)]
+    struct FixtureWitness {
+        id: u64,
+        death_at_ms: u64,
+    }
+
+    #[derive(Serialize)]
+    struct FixtureWitnesses {
+        /// Staged by its own spend — an ordinary block's activity endpoint,
+        /// older than the connect that never carried it.
+        corpse: FixtureWitness,
+        /// Staged ALIVE by a vacancy refill, spent blocks later: the death
+        /// has to reach a record the canonical lane never delivered.
+        refilled: FixtureWitness,
+    }
+
+    #[derive(Serialize)]
+    struct StagedRecordsFixture {
+        revision: u64,
+        snapshot: CellGalaxySnapshot,
+        deltas: Vec<FixtureDelta>,
+        /// What a client connecting after the last delta is handed. A
+        /// follower of the deltas must hold exactly this.
+        final_revision: u64,
+        final_snapshot: CellGalaxySnapshot,
+        witnesses: FixtureWitnesses,
+    }
+
+    /// ⭐ The gate R1 left open: **a snapshot plus the deltas that follow
+    /// it keeps every staged member resolvable.**
+    ///
+    /// Since snapshots carry the stage rather than the retained map, a
+    /// client's records are staged-at-connect ∪ what the wire hands it
+    /// after. This scenario stages cells that were in neither — the two
+    /// `witnesses` — through the paths every mainnet block uses, and pins
+    /// that a delta follower ends up holding what a fresh connect is
+    /// handed. The fixture it writes is replayed by the TS reducer in
+    /// `packages/cache/__tests__/stagedRecords.test.ts`, so the claim is
+    /// checked against the real client, not a Rust idea of one.
+    ///
+    /// Regenerate with
+    /// `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-core staged_records`.
+    #[test]
+    fn staged_records_survive_a_snapshot_and_the_deltas_after_it() {
+        use crate::projection::cells_columnar::assert_matches_text_fixture;
+
+        // A stage smaller than the map — mainnet's ordinary shape.
+        let mut g = CellGalaxy::with_display_limits(
+            DisplayBudget {
+                cells: 8,
+                nerve_edges: 8,
+            },
+            4,
+        );
+
+        // Block 1: ten cells, eight seats. Two of these never reach the
+        // stage, so no snapshot from here on carries them.
+        g.apply_mutation(&mined(1, "0xblock1", 1_000));
+        let outs: Vec<TxOutputInfo> = (0..10).map(|i| out(100 + i, "0x")).collect();
+        g.apply_mutation(&landed("0xa", 1, 1_000, vec![], outs));
+
+        // The client connects here.
+        let connect_revision = 2;
+        let snapshot = g.snapshot();
+        let staged_at_connect: std::collections::BTreeSet<u64> = snapshot
+            .display
+            .as_ref()
+            .expect("display section")
+            .members
+            .iter()
+            .copied()
+            .collect();
+        let unstaged: Vec<u64> = (0..10)
+            .filter(|id| !staged_at_connect.contains(id))
+            .collect();
+        assert_eq!(
+            unstaged.len(),
+            2,
+            "the scenario needs cells the connect snapshot never carried"
+        );
+        let corpse = unstaged[0];
+        let refilled = unstaged[1];
+        let mut shadow = ShadowClient::connect(&snapshot);
+        assert!(
+            shadow.resolve(corpse).is_none() && shadow.resolve(refilled).is_none(),
+            "the witnesses must be strangers to this client"
+        );
+
+        let mut deltas: Vec<FixtureDelta> = Vec::new();
+        let mut revision = connect_revision;
+        let step = |g: &mut CellGalaxy,
+                    shadow: &mut ShadowClient,
+                    deltas: &mut Vec<FixtureDelta>,
+                    revision: &mut u64,
+                    mutation: Mutation| {
+            *revision += 1;
+            for delta in g.apply_mutation(&mutation) {
+                shadow.apply(&delta);
+                deltas.push(FixtureDelta {
+                    revision: *revision,
+                    delta,
+                });
+            }
+            // Every step, the whole claim: a delta follower holds what a
+            // fresh connect would be handed.
+            let fresh = g.snapshot();
+            let section = fresh.display.as_ref().expect("display section");
+            assert_eq!(
+                shadow.members.iter().copied().collect::<Vec<_>>(),
+                section.members,
+                "revision {revision}: membership diverged"
+            );
+            let handed: std::collections::BTreeMap<u64, &Cell> = fresh
+                .cells
+                .iter()
+                .chain(section.residents.iter())
+                .map(|cell| (cell.id, cell))
+                .collect();
+            for id in &section.members {
+                let held = shadow.resolve(*id).unwrap_or_else(|| {
+                    panic!("revision {revision}: staged member {id} resolves to no record")
+                });
+                assert_eq!(Some(held), handed.get(id).copied());
+            }
+        };
+
+        // Block 2: a transaction spends the first stranger. Its death and
+        // its staging are the same mutation — the corpse arrives already
+        // dead, which is the only reason its death rite can run at all.
+        step(
+            &mut g,
+            &mut shadow,
+            &mut deltas,
+            &mut revision,
+            mined(2, "0xblock2", 2_000),
+        );
+        step(
+            &mut g,
+            &mut shadow,
+            &mut deltas,
+            &mut revision,
+            landed(
+                "0xb",
+                2,
+                2_000,
+                vec![op("0xa", corpse as u32)],
+                vec![out(200, "0x")],
+            ),
+        );
+        assert!(shadow.members.contains(&corpse), "the spend staged it");
+        assert_eq!(
+            shadow.resolve(corpse).expect("corpse record").death_at_ms,
+            Some(2_000),
+            "a corpse the client learned of on its enter still has to be dead"
+        );
+
+        // Block 3: kill a resting member, so its GC opens a seat.
+        step(
+            &mut g,
+            &mut shadow,
+            &mut deltas,
+            &mut revision,
+            mined(3, "0xblock3", 3_000),
+        );
+        step(
+            &mut g,
+            &mut shadow,
+            &mut deltas,
+            &mut revision,
+            landed("0xc", 3, 3_000, vec![op("0xa", 0)], vec![out(300, "0x")]),
+        );
+
+        // Block 4: past the corpse hold, so the GC sweep runs and the
+        // vacancy refills — with the second stranger, alive.
+        step(
+            &mut g,
+            &mut shadow,
+            &mut deltas,
+            &mut revision,
+            mined(4, "0xblock4", 8_000),
+        );
+        assert!(
+            shadow.members.contains(&refilled),
+            "the vacancy refill staged the second stranger"
+        );
+        assert_eq!(
+            shadow
+                .resolve(refilled)
+                .expect("refilled record")
+                .death_at_ms,
+            None
+        );
+
+        // Block 5: spend it. Nothing but the `death` delta says so, and the
+        // only copy of that record came in on a display enter.
+        step(
+            &mut g,
+            &mut shadow,
+            &mut deltas,
+            &mut revision,
+            mined(5, "0xblock5", 9_000),
+        );
+        step(
+            &mut g,
+            &mut shadow,
+            &mut deltas,
+            &mut revision,
+            landed(
+                "0xd",
+                5,
+                9_000,
+                vec![op("0xa", refilled as u32)],
+                vec![out(500, "0x")],
+            ),
+        );
+        assert_eq!(
+            shadow
+                .resolve(refilled)
+                .expect("refilled record")
+                .death_at_ms,
+            Some(9_000),
+            "the death has to reach a record the canonical lane never sent"
+        );
+
+        // Block 6: composed mode — residents arrive with their payloads and
+        // canonical members are promoted into curated seats. The third way
+        // a cell reaches the stage without a birth of its own.
+        step(
+            &mut g,
+            &mut shadow,
+            &mut deltas,
+            &mut revision,
+            reservoir(6, (900, 901, 902)),
+        );
+        assert!(
+            g.display.resident_ids_sorted().len() == 3,
+            "the record's three residents are on stage"
+        );
+
+        let final_snapshot = g.snapshot();
+        let fixture = StagedRecordsFixture {
+            revision: connect_revision,
+            snapshot,
+            deltas,
+            final_revision: revision,
+            final_snapshot,
+            witnesses: FixtureWitnesses {
+                corpse: FixtureWitness {
+                    id: corpse,
+                    death_at_ms: 2_000,
+                },
+                refilled: FixtureWitness {
+                    id: refilled,
+                    death_at_ms: 9_000,
+                },
+            },
+        };
+        let json = serde_json::to_string_pretty(&fixture).expect("serialize fixture") + "\n";
+        assert_matches_text_fixture("display_staged_records.json", &json);
     }
 }
