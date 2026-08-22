@@ -40,6 +40,7 @@ const STACKED = {
 function makeHandles(): SceneInspectionHandles {
   return createSceneInspectionHandles({
     defaultSize: { width: 500, height: 300 },
+    accent: '#ABCDEF',
     placementDataKey: 'probePlacement',
     connectorDataKey: 'probeConnectorDirection',
   });
@@ -154,6 +155,7 @@ describe('sticky placement lock', () => {
   it('holds the stacked x while the card grows on a narrow canvas', () => {
     const handles = createSceneInspectionHandles({
       defaultSize: { width: 300, height: 300 },
+      accent: '#ABCDEF',
       placementDataKey: 'probePlacement',
       connectorDataKey: 'probeConnectorDirection',
     });

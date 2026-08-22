@@ -25,6 +25,20 @@ export const HUD_COLORS = {
   orangeDeep: '#EC7420',
   cyanWire: '#20F0FF',
   peerWire: PEER_NETWORK_HEX.scaffold,
+  // The Cell organism's own blood. `CELL_GALAXY_PALETTE.tissueRose` is
+  // [1.0, 0.40, 0.44] — #FF666F — and the whole galaxy on stage is painted out
+  // of that rose/crimson/amber family, while the CELL MESH panel and the cell
+  // card wore a cyan eight degrees off the PEER plane's `peerWire`. Two things
+  // went wrong at once: the twin-mesh pair stopped reading as a warm/cold pair,
+  // and the cell surfaces pointed at the wrong creature. This is the raw tissue
+  // hue opened toward white until it survives being 8.5px of module tag on
+  // black — the scene value itself is body-lit and goes muddy at type sizes.
+  //
+  // Hard requirement, checked in `hudDiscipline.test.ts`: it must stay in the
+  // tissue's own neighbourhood AND read apart from `danger #FF3030` at 8.5px.
+  // A rose that drifts red stops naming the organism and starts looking like a
+  // small alarm, which is the one failure mode this token cannot have.
+  cellRose: '#FF7A85',
   rebuild: '#AE86FF',
   // Consensus-memory family (the inspection surface's violet) — deliberately
   // distinct from `rebuild`, which is the scene's replay/rebuild semantic.
@@ -58,6 +72,46 @@ export const HUD_COLORS = {
   crit: '#8B0000',
   termGreen: '#00F700',
 } as const;
+
+// ——— Cell identity ———————————————————————————————————————————————————————
+//
+// Which colour the CELL surfaces wear, on one line, because this is a question
+// only a person looking at the running stage can answer:
+//
+//   'rose-full'   panel AND card frame carry the organism's blood
+//   'rose-panel'  only the CELL MESH panel turns; the card keeps its cyan chrome
+//   'cyan'        nothing turns — the pre-rebind HUD, kept revertible
+//
+// The two derived constants below are what every surface reads, so no file
+// downstream ever re-asks the question. The rule they encode: the FRAME carries
+// identity — a panel header's module tag, a card's plate border, the tether
+// that ties the card to the thing it is about. The CONTENT keeps its own
+// vocabulary — the braid's cyan, the memory violet, the value golds, the fact
+// accents that name a lock or an asset. So a rose card frame around a cyan
+// register is not a clash; it is the card saying "this is a Cell" in its
+// border and "here is what the Cell holds" in its body.
+export type CellMeshIdentity = 'rose-full' | 'rose-panel' | 'cyan';
+
+export const CELL_MESH_IDENTITY: CellMeshIdentity = 'rose-full';
+
+/** The three variants spelled out, so flipping the line above is the whole
+ *  edit and nobody has to re-derive what each one meant. */
+const CELL_IDENTITY_SURFACES: Readonly<Record<CellMeshIdentity, {
+  /** The CELL MESH panel's own colour — its module tag, and any chrome that
+   *  exists to say which organism the panel is counting. */
+  panel: string;
+  /** The cell dossier's frame colour: plate border, card glow, scan beam, and
+   *  the tether back to the Cell on stage while no fact is selected. A fact IS
+   *  selected → that fact's own colour wins, as it always did. */
+  card: string;
+}>> = {
+  'rose-full': { panel: HUD_COLORS.cellRose, card: HUD_COLORS.cellRose },
+  'rose-panel': { panel: HUD_COLORS.cellRose, card: HUD_COLORS.cyanWire },
+  cyan: { panel: HUD_COLORS.cyanWire, card: HUD_COLORS.cyanWire },
+};
+
+export const CELL_PANEL_ACCENT = CELL_IDENTITY_SURFACES[CELL_MESH_IDENTITY].panel;
+export const CELL_CARD_ACCENT = CELL_IDENTITY_SURFACES[CELL_MESH_IDENTITY].card;
 
 export const HUD_FONTS = {
   display: "'Saira', system-ui, sans-serif",

@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Peer, PeerSightingRecord } from '@cknerv/types';
 import PeerLinkCard from '../../../src/components/hud/PeerLinkCard';
+import { NODE_SELF_ACCENT } from '../../../src/components/hud/NodeSelfCard';
 import type { PeerSightingState } from '../../../src/components/hud/PeerSightingPlate';
 import { PEER_LATENCY_CAP_MS } from '../../../src/derives/peers.derive';
 import { PEER_NETWORK_HEX } from '../../../src/visualPalette';
@@ -110,6 +111,30 @@ describe('PeerLinkCard signal compass', () => {
     const { container } = renderCard({ peer: peer({ latency_ms: null }) });
     expect(container.querySelector('[data-peer-probe-ping-state="empty"]')).not.toBeNull();
     expect(container.textContent).toContain('AWAITING SAMPLES');
+  });
+
+  it('draws US in the anchor colour wherever this card draws us', () => {
+    // E5: our own node appears twice on this card — the compass centre and the
+    // LOCAL rung of the sync ladder — and it is the same entity the NODE card
+    // is a whole dossier of. All three used to disagree. One entity, one
+    // colour, and it survives whatever the cell/peer cyan question settles on.
+    // SVG keeps the hex on its `fill` attribute; jsdom rewrites an inline
+    // background to `rgb(…)`. Compare on the channels, not the spelling.
+    const channels = (paint: string): number[] => {
+      const rgb = /rgb\((\d+),\s*(\d+),\s*(\d+)\)/.exec(paint);
+      if (rgb) return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])];
+      const hex = paint.replace('#', '');
+      return [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16));
+    };
+
+    const { container } = renderCard();
+    const marks = Array.from(container.querySelectorAll('[data-peer-probe-self]'));
+    expect(marks).toHaveLength(2);
+    for (const mark of marks) {
+      const painted = mark.getAttribute('fill')
+        ?? (mark as HTMLElement).style.background;
+      expect(channels(painted)).toEqual(channels(NODE_SELF_ACCENT));
+    }
   });
 });
 

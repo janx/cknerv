@@ -28,6 +28,7 @@ import {
   stackedSatelliteBase,
 } from './primitives';
 import PeerSightingPlate, { type PeerSightingState } from './PeerSightingPlate';
+import { NODE_SELF_ACCENT } from './NodeSelfCard';
 import { PEER_LATENCY_CAP_MS } from '../../derives/peers.derive';
 import {
   derivePeerLinkInstrument,
@@ -98,7 +99,13 @@ const PeerScanFact = memo(function PeerScanFact({
   selected,
   onActivate,
 }: PeerScanFactProps) {
-  const accent = color ?? HUD_COLORS.cyanWire;
+  // A fact with no colour of its own — ADDR, PING, UPTIME — is still a
+  // reading off this link, so it falls back to the peer plane's own wire
+  // rather than to a neutral cyan fifteen units away from it. That "neutral"
+  // was indistinguishable from the family it sat inside, which made it drift
+  // wearing a rule's clothes. Facts that DO carry a colour (direction,
+  // version mismatch, sync state) keep speaking for themselves.
+  const accent = color ?? HUD_COLORS.peerWire;
   return (
     <button
       type="button"
@@ -223,13 +230,18 @@ function ColonyCompass({
           strokeDasharray="3 4"
         />
       )}
-      <circle cx={COMPASS_CENTER} cy={COMPASS_CENTER} r={3} fill={HUD_COLORS.cyanWire} />
+      {/* US. The dot at the middle of the compass is this node, the same
+          entity the NODE card is a dossier of and the same icosahedron the
+          scene draws — so it wears `NODE_SELF_ACCENT`, the chain anchor's own
+          edge, rather than a generic instrument cyan. One entity, one colour,
+          across every card that draws it. */}
+      <circle data-peer-probe-self cx={COMPASS_CENTER} cy={COMPASS_CENTER} r={3} fill={NODE_SELF_ACCENT} />
       <circle
         cx={COMPASS_CENTER}
         cy={COMPASS_CENTER}
         r={6.5}
         fill="none"
-        stroke={rgba(HUD_COLORS.cyanWire, 0.4)}
+        stroke={rgba(NODE_SELF_ACCENT, 0.4)}
         strokeWidth={0.7}
       />
       {measured ? (
@@ -609,9 +621,12 @@ export default function PeerLinkCard({
               {instrument.peerBest == null ? PEER_LINK_UNKNOWN : `#${blocks(instrument.peerBest)}`}
             </span>
           </div>
+          {/* The LOCAL rung of the ladder is us again — same entity, same
+              anchor colour as the compass centre and the NODE card. */}
           <span
             aria-hidden="true"
-            style={{ position: 'absolute', left: -3.5, top: 4, width: 6, height: 6, background: HUD_COLORS.cyanWire, transform: 'rotate(45deg)' }}
+            data-peer-probe-self
+            style={{ position: 'absolute', left: -3.5, top: 4, width: 6, height: 6, background: NODE_SELF_ACCENT, transform: 'rotate(45deg)' }}
           />
           <span
             aria-hidden="true"
@@ -653,12 +668,16 @@ export default function PeerLinkCard({
         style={{
           ...stackedSatelliteBase,
           padding: '9px 10px 9px 14px',
-          ...spatialPlate(HUD_COLORS.cyanWire),
+          // LINE FACTS are network readings, so the plate joins SIGNAL and the
+          // sighting dossier on `peerWire`. Three of this card's four plates
+          // now speak the peer plane's colour and the fourth is the sync
+          // ladder, which is coloured by a state on purpose.
+          ...spatialPlate(HUD_COLORS.peerWire),
         }}
       >
         <SpatialPlateHeader
           en="LINE FACTS"
-          accent={HUD_COLORS.cyanWire}
+          accent={HUD_COLORS.peerWire}
           status={moduleTag('LINK·04')}
         />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '3px 9px' }}>

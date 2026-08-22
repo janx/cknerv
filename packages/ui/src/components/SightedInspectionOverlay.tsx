@@ -41,6 +41,9 @@ export function createSightedInspectionHandles(): SightedInspectionHandles {
       width: DEFAULT_CARD_WIDTH_PX,
       height: DEFAULT_CARD_HEIGHT_PX,
     },
+    // No facets and no lost state on this dialect either — the roster tier's
+    // own scaffold cyan holds for as long as the card is open.
+    accent: SIGHTED_NODE_ACCENT,
     placementDataKey: 'sightedProbePlacement',
     connectorDataKey: 'sightedProbeConnectorDirection',
   });

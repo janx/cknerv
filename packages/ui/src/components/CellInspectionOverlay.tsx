@@ -11,7 +11,7 @@ import CellDetailPanel, {
   type CellDetailPanelProps,
 } from './hud/CellDetailPanel';
 import { ASSET_COLORS, LOCK_COLORS } from './hud/cellFormat';
-import { HUD_COLORS } from './hud/hudTheme';
+import { CELL_CARD_ACCENT, HUD_COLORS } from './hud/hudTheme';
 import { useReducedMotion } from './hud/useReducedMotion';
 import {
   clearCellPortraitCardOrigin,
@@ -56,6 +56,7 @@ export function createCellInspectionHandles(): CellInspectionHandles {
       width: DEFAULT_PANEL_WIDTH_PX,
       height: DEFAULT_PANEL_HEIGHT_PX,
     },
+    accent: CELL_CARD_ACCENT,
     placementDataKey: 'cellInspectorPlacement',
     connectorDataKey: 'cellInspectorConnectorDirection',
   });
@@ -84,7 +85,10 @@ export function selectedCellScanAccent(
     return cell.death_at_ms === null ? HUD_COLORS.nominal : HUD_COLORS.caution;
   }
   if (field === 'born') return HUD_COLORS.orange;
-  return cell.asset_kind ? ASSET_COLORS[cell.asset_kind] : HUD_COLORS.cyanWire;
+  // Nothing selected and no asset family to speak for the Cell: the card falls
+  // back to saying what it IS rather than what it holds, so the frame and the
+  // tether take the organism's own colour (`CELL_CARD_ACCENT`).
+  return cell.asset_kind ? ASSET_COLORS[cell.asset_kind] : CELL_CARD_ACCENT;
 }
 
 /** The braid inset draws inside the card, so the portrait channel needs the

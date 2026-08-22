@@ -47,6 +47,9 @@ export function createPeerInspectionHandles(): PeerInspectionHandles {
       width: DEFAULT_CARD_WIDTH_PX,
       height: DEFAULT_CARD_HEIGHT_PX,
     },
+    // The link's own plane. The render pass replaces it with the measured
+    // node's tint (or caution, on a lost link) as soon as the card mounts.
+    accent: HUD_COLORS.peerWire,
     placementDataKey: 'peerProbePlacement',
     connectorDataKey: 'peerProbeConnectorDirection',
   });

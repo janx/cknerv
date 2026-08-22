@@ -40,6 +40,9 @@ export function createNodeInspectionHandles(): NodeInspectionHandles {
       width: DEFAULT_CARD_WIDTH_PX,
       height: DEFAULT_CARD_HEIGHT_PX,
     },
+    // The self probe never re-tints, so this is the tether's colour for the
+    // whole life of the card: the chain anchor's own edge cyan.
+    accent: NODE_SELF_ACCENT,
     placementDataKey: 'nodeProbePlacement',
     connectorDataKey: 'nodeProbeConnectorDirection',
   });

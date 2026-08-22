@@ -4,7 +4,6 @@ import type {
   EnrichmentSourceStatus,
 } from '@cknerv/types';
 import DaoStateReadout, { canRenderDaoStateReadout } from './DaoStateReadout';
-import { HUD_COLORS } from './hudTheme';
 import { HudPanel, PanelHeader } from './primitives';
 
 export default function DaoStatePanel({ source, record, style, nowMs = Date.now() }: {
@@ -18,7 +17,10 @@ export default function DaoStatePanel({ source, record, style, nowMs = Date.now(
 
   return (
     <HudPanel style={{ width: 300, ...style }}>
-      <PanelHeader en="NERVOS DAO" cjk="道" idx="DAO·05" accent={HUD_COLORS.orange} />
+      {/* No accent: a tinted module tag is how a panel says "I am one half of
+          the mesh pair", and it means nothing once every panel does it. DAO·05
+          falls back to the registry's slate with CKB·01, ECG·04 and GL·08. */}
+      <PanelHeader en="NERVOS DAO" cjk="道" idx="DAO·05" />
       <DaoStateReadout source={source} record={record} variant="panel" nowMs={nowMs} />
     </HudPanel>
   );

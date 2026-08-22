@@ -35,7 +35,7 @@ import {
   ASSET_COLORS,
 } from './cellFormat';
 import type { CellById } from '../../types';
-import { HUD_COLORS, HUD_FONTS, rgba, HUD_TYPE } from './hudTheme';
+import { CELL_CARD_ACCENT, HUD_COLORS, HUD_FONTS, rgba, HUD_TYPE } from './hudTheme';
 import {
   CloseButton,
   moduleTag,
@@ -172,6 +172,12 @@ function reservedEvidenceHeight(rows: number, captions = 0): number {
     + captions * EVIDENCE_CAPTION_PX;
 }
 
+// The card INTERIOR's vocabulary, and deliberately not the card's identity:
+// cyan is what plain consensus content looks like everywhere in this HUD (the
+// DATA fact, the DATA byte segment, the default lock), violet is the
+// consensus-memory family. The frame around all of it is `CELL_CARD_ACCENT` —
+// see the identity note in `hudTheme.ts`. Do not collapse the two: the border
+// says which organism this window is about, the body says what it holds.
 const CYAN = HUD_COLORS.cyanWire;
 const VIOLET = HUD_COLORS.memory;
 // Chrome orange, and named for what it is. The palette carries two real golds
@@ -625,7 +631,9 @@ function CellScanSweep({ plateRef, reduced }: {
       data-cellular-scan-beam
       style={{ position: 'absolute', zIndex: 2, left: 0, top: 0, bottom: 0, width: '100%', transform: 'translate3d(0%,0,0)', opacity: 0.7, transition: reduced ? undefined : 'transform 80ms linear, opacity 220ms ease', pointerEvents: 'none', willChange: reduced ? undefined : 'transform, opacity' }}
     >
-      <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 1, background: `linear-gradient(180deg,transparent,${HUD_COLORS.cyanWire},transparent)`, boxShadow: `0 0 12px ${HUD_COLORS.cyanWire}` }} />
+      {/* The beam is the plate's own instrument light sweeping the specimen,
+          so it is drawn in the plate's colour rather than a fixed cyan. */}
+      <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 1, background: `linear-gradient(180deg,transparent,${CELL_CARD_ACCENT},transparent)`, boxShadow: `0 0 12px ${CELL_CARD_ACCENT}` }} />
     </span>
   );
 }
@@ -1185,10 +1193,11 @@ export default function CellDetailPanel({
         // One composited shadow around the constellation replaces a separate
         // filter surface for every satellite. It follows the silhouette, so
         // the scan square and the plate beside it cast one shadow instead of
-        // two stacked ones. The cyanWire here is a deliberate pin: the peer
-        // cards derive this glow from a live accent, and the cell card has no
-        // card-level accent to derive it from — its chrome is cyan, full stop.
-        filter: `drop-shadow(0 8px 16px rgba(0,0,0,.56)) drop-shadow(0 0 14px ${rgba(HUD_COLORS.cyanWire, 0.06)})`,
+        // two stacked ones. The peer cards derive this glow from a live accent;
+        // the cell card has no per-fact accent at card level, so it derives it
+        // from the dialect's identity instead — the same colour the frame,
+        // the beam and the tether are drawn in.
+        filter: `drop-shadow(0 8px 16px rgba(0,0,0,.56)) drop-shadow(0 0 14px ${rgba(CELL_CARD_ACCENT, 0.06)})`,
         animation: reduced
           ? undefined
           : 'cknerv-cell-consensus-enter 280ms cubic-bezier(.2,.82,.2,1) both',
@@ -1221,7 +1230,12 @@ export default function CellDetailPanel({
           rowGap: 8,
           alignContent: 'start',
           padding: '9px 12px 10px 14px',
-          ...spatialPlate(HUD_COLORS.cyanWire),
+          // The dossier's one frame, and the only place identity is spoken on
+          // this card: the rail, the border and the tinted tail. Everything
+          // inside keeps its own vocabulary — consensus cyan, memory violet,
+          // the value golds — because the plate says WHAT this window is about
+          // and the register says what the Cell holds.
+          ...spatialPlate(CELL_CARD_ACCENT),
         }}
       >
         <CellScanSweep plateRef={analysisPlateRef} reduced={reduced} />
@@ -1669,7 +1683,10 @@ export default function CellDetailPanel({
           // circular idiom in this viewport still belongs to the content
           // address halo (the one ring that reads as data).
           background: 'transparent',
-          boxShadow: `inset 0 0 26px ${rgba(HUD_COLORS.cyanWire, 0.08)},0 0 20px ${rgba(HUD_COLORS.orange, 0.06)}`,
+          // Viewport chrome: the inset breath is the card's identity, the
+          // outer one is house orange. The braid inside keeps the consensus
+          // cyan it is rendered in — that is content, and it is in the scene.
+          boxShadow: `inset 0 0 26px ${rgba(CELL_CARD_ACCENT, 0.08)},0 0 20px ${rgba(HUD_COLORS.orange, 0.06)}`,
         }}
       >
         <div style={{ position: 'absolute', zIndex: 3, left: 12, top: 10, right: 12, display: 'flex', alignItems: 'baseline', gap: 8, pointerEvents: 'none' }}>
@@ -1706,7 +1723,7 @@ export default function CellDetailPanel({
           data-cell-specimen-scan-light
           style={{ position: 'absolute', zIndex: 2, left: 5, right: 5, top: '9%', height: '82%', opacity: 0.8, animation: reduced ? undefined : 'cknerv-cell-specimen-sweep 2.8s linear infinite', pointerEvents: 'none', willChange: reduced ? undefined : 'transform, opacity' }}
         >
-          <span style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 1, background: `linear-gradient(90deg,transparent,${rgba(HUD_COLORS.cyanWire, 0.85)},${rgba(HUD_COLORS.orange, 0.46)},transparent)`, boxShadow: `0 0 9px ${rgba(HUD_COLORS.cyanWire, 0.7)}` }} />
+          <span style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 1, background: `linear-gradient(90deg,transparent,${rgba(CELL_CARD_ACCENT, 0.85)},${rgba(HUD_COLORS.orange, 0.46)},transparent)`, boxShadow: `0 0 9px ${rgba(CELL_CARD_ACCENT, 0.7)}` }} />
         </span>
         <span style={portraitBracket('tl')} /><span style={portraitBracket('tr')} />
         <span style={portraitBracket('bl')} /><span style={portraitBracket('br')} />

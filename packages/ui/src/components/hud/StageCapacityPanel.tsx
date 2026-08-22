@@ -218,7 +218,10 @@ export default function StageCapacityPanel({ stats, scriptRegistry, model, colon
 
   return (
     <HudPanel style={{ width: 302, ...style }}>
-      <PanelHeader en="STAGE SAMPLE" cjk="样本" idx="STAGE·07" accent={HUD_COLORS.cyanWire} />
+      {/* Untinted, with DAO·05 and the rest: only MESH·02 and MESH·03 spend an
+          accent on their module tag, because only they are naming which of the
+          two meshes you are looking at. */}
+      <PanelHeader en="STAGE SAMPLE" cjk="样本" idx="STAGE·07" />
       <div
         aria-label="Stage capacity"
         data-stage-capacity

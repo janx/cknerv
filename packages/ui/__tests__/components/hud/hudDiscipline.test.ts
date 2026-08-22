@@ -27,6 +27,7 @@ import {
   LOCK_COLORS,
 } from '../../../src/components/hud/cellFormat';
 import { SEGMENT_COLORS } from '../../../src/components/hud/CellByteBudget';
+import { CELL_GALAXY_PALETTE } from '../../../src/visualPalette';
 
 const HUD_DIR = resolve(process.cwd(), 'src/components/hud');
 
@@ -79,6 +80,15 @@ function rgbDistance(a: string, b: string): number {
 
 /** Below this, two colors are the same color wearing two names. */
 const SEPARATION_FLOOR = 40;
+
+/** A scene colour written the way the HUD writes colours. The stage palette
+ *  keeps float triples for three.js; a HUD token derived from one has to be
+ *  comparable to the hexes it will sit beside. */
+function sceneHex(color: readonly [number, number, number]): string {
+  return `#${color
+    .map((channel) => Math.round(channel * 255).toString(16).padStart(2, '0'))
+    .join('')}`;
+}
 
 type HudSource = { name: string; text: string };
 
@@ -149,6 +159,38 @@ describe('hud discipline', () => {
     expect(rgbDistance(HUD_COLORS.warning, HUD_COLORS.caution))
       .toBeGreaterThan(SEPARATION_FLOOR);
   });
+
+  it('cellRose is the stage organism brightened, not a second rose', () => {
+    // The whole point of the token: the panel that counts Cells and the Cells
+    // themselves are the same colour. Brightening for 8.5px legibility is
+    // expected and is why this is a neighbourhood rather than an equality;
+    // re-hueing is the regression, because then the HUD is pointing at a
+    // creature the stage does not have.
+    expect(rgbDistance(HUD_COLORS.cellRose, sceneHex(CELL_GALAXY_PALETTE.tissueRose)))
+      .toBeLessThanOrEqual(45);
+  });
+
+  it('cellRose cannot be read as a small alarm', () => {
+    // Both are reds, and one of them means something is wrong. The bar is not
+    // just the floor: the identity has to sit FARTHER from danger than it does
+    // from the tissue it was lifted out of, or it has stopped naming the
+    // organism and started looking like a warning nobody raised.
+    const toDanger = rgbDistance(HUD_COLORS.cellRose, HUD_COLORS.danger);
+    const toTissue = rgbDistance(
+      HUD_COLORS.cellRose,
+      sceneHex(CELL_GALAXY_PALETTE.tissueRose),
+    );
+    expect(toDanger).toBeGreaterThan(SEPARATION_FLOOR);
+    expect(toDanger).toBeGreaterThan(toTissue);
+  });
+
+  it('the two mesh identities are a pair, not a shade', () => {
+    // A2, pinned: `cyanWire` and `peerWire` sit ~15 apart, which is why MESH·02
+    // and MESH·03 stopped reading as two panels about two different things.
+    // Whatever the cell identity is retuned to, it has to clear the peer plane.
+    expect(rgbDistance(HUD_COLORS.cellRose, HUD_COLORS.peerWire))
+      .toBeGreaterThan(SEPARATION_FLOOR);
+  });
 });
 
 // ——— The reserve ————————————————————————————————————————————————————————
@@ -175,6 +217,7 @@ const RESERVED: Readonly<Record<string, string>> = {
   orangeDeep: HUD_COLORS.orangeDeep,
   cyanWire: HUD_COLORS.cyanWire,
   peerWire: HUD_COLORS.peerWire,
+  cellRose: HUD_COLORS.cellRose,
 };
 
 /** Every palette that colours content, by the surface it paints. */

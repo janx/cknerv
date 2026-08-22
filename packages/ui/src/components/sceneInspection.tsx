@@ -117,10 +117,17 @@ export interface SceneInspectionHandles {
 
 export function createSceneInspectionHandles({
   defaultSize,
+  accent,
   placementDataKey,
   connectorDataKey,
 }: {
   defaultSize: InspectionCardSize;
+  /** The dialect's resting tint — what the tether is drawn in before any fact
+   *  is selected, and the colour the connector is born with. Told to the
+   *  chassis rather than assumed here for the same reason the dataset keys are:
+   *  the chassis does not know which organism it is tethering, and a shared
+   *  default is how the cell card ended up wearing the peer plane's cyan. */
+  accent: string;
   placementDataKey: string;
   connectorDataKey: string;
 }): SceneInspectionHandles {
@@ -128,7 +135,7 @@ export function createSceneInspectionHandles({
     card: null,
     leader: null,
     leaderDot: null,
-    accent: HUD_COLORS.cyanWire,
+    accent,
     measured: { width: defaultSize.width, height: defaultSize.height },
     defaultSize,
     frameKey: '',
@@ -477,20 +484,26 @@ function restyleLeader(
   line.style.boxShadow = `0 0 7px ${accent}55`;
   line.dataset[directionDataKey] = side;
 
+  // Both stops are the accent: near-opaque at the entity end, `38` as it
+  // reaches the card. The faint end used to be a hardcoded `cyanWire`, which
+  // was invisible on the cell dialect only because the cell dialect was cyan
+  // too — every other card drew a tether that changed hue halfway across for
+  // no reason anyone could state. A tether belongs to one thing, so it is one
+  // colour fading out, and it follows whichever dialect is doing the pointing.
   if (side === 'right') {
-    line.style.background = `linear-gradient(90deg,${accent}dd,${HUD_COLORS.cyanWire}38)`;
+    line.style.background = `linear-gradient(90deg,${accent}dd,${accent}38)`;
     line.style.left = `${-gap}px`;
     anchor.style.left = `${-gap - 4}px`;
   } else if (side === 'left') {
-    line.style.background = `linear-gradient(90deg,${HUD_COLORS.cyanWire}38,${accent}dd)`;
+    line.style.background = `linear-gradient(90deg,${accent}38,${accent}dd)`;
     line.style.right = `${-gap}px`;
     anchor.style.right = `${-gap - 4}px`;
   } else if (side === 'below') {
-    line.style.background = `linear-gradient(180deg,${accent}dd,${HUD_COLORS.cyanWire}38)`;
+    line.style.background = `linear-gradient(180deg,${accent}dd,${accent}38)`;
     line.style.top = `${-gap}px`;
     anchor.style.top = `${-gap - 4}px`;
   } else {
-    line.style.background = `linear-gradient(180deg,${HUD_COLORS.cyanWire}38,${accent}dd)`;
+    line.style.background = `linear-gradient(180deg,${accent}38,${accent}dd)`;
     line.style.bottom = `${-gap}px`;
     anchor.style.bottom = `${-gap - 4}px`;
   }
@@ -675,13 +688,19 @@ export const INSPECTION_CARD_STYLE: CSSProperties = {
   transition: 'opacity 120ms ease',
 };
 
-const INSPECTION_LEADER_STYLE: CSSProperties = {
-  position: 'absolute',
-  zIndex: 2,
-  background: `linear-gradient(90deg,${HUD_COLORS.cyanWire}24,${HUD_COLORS.orange}bb)`,
-  boxShadow: `0 0 7px ${HUD_COLORS.cyanWire}55`,
-  pointerEvents: 'none',
-};
+/** The tether's appearance for the one frame before the anchor has projected
+ *  the entity and `restyleLeader` has taken the element over. It is still the
+ *  dialect's own accent: the chassis has no colour of its own, and a first
+ *  frame painted in somebody else's cyan is a flash of the wrong organism. */
+function inspectionLeaderStyle(accent: string): CSSProperties {
+  return {
+    position: 'absolute',
+    zIndex: 2,
+    background: `linear-gradient(90deg,${accent}24,${HUD_COLORS.orange}bb)`,
+    boxShadow: `0 0 7px ${accent}55`,
+    pointerEvents: 'none',
+  };
+}
 
 function inspectionLeaderDotStyle(enterAnimation?: string): CSSProperties {
   return {
@@ -729,7 +748,7 @@ export function SceneInspectionConnector({
         }}
         aria-hidden="true"
         {...leaderAttributes}
-        style={INSPECTION_LEADER_STYLE}
+        style={inspectionLeaderStyle(handles.accent)}
       />
       <span
         ref={(node) => {

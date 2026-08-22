@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react';
 import type { CellsStats } from '../../derives/cellsStats.derive';
 import type { ChurnRates } from '../../derives/cellChurn';
-import { HUD_COLORS, HUD_FONTS, HUD_TYPE } from './hudTheme';
+import { CELL_PANEL_ACCENT, HUD_COLORS, HUD_FONTS, HUD_TYPE } from './hudTheme';
 import { HudPanel, PanelHeader, StatRow } from './primitives';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
@@ -31,7 +31,12 @@ export default function CellsPanel({ stats, churn, reducedMotion = false, style 
   const netColor = churn.netPerBlock >= 0 ? HUD_COLORS.cyanWire : HUD_COLORS.caution;
   return (
     <HudPanel style={{ width: 302, ...style }}>
-      <PanelHeader en="CELL MESH" cjk="神经元" idx="MESH·03" accent={HUD_COLORS.cyanWire} />
+      {/* MESH·02 is the peer plane and MESH·03 is this one; they are a pair,
+          and a pair has to be two colours. The cyan that used to sit here was
+          eight degrees off `peerWire`, so the two panels read as one — and it
+          pointed at a cyan organism the stage does not have. The Cells out
+          there are rose. */}
+      <PanelHeader en="CELL MESH" cjk="神经元" idx="MESH·03" accent={CELL_PANEL_ACCENT} />
       <div style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.tech, color: HUD_COLORS.dim, letterSpacing: 1.2, marginBottom: 2 }}>METABOLISM · per block</div>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, marginBottom: 9 }}>
         {/* Tabular figures on every display-family number that ticks: Saira's
