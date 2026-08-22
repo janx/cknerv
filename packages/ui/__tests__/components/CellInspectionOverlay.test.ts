@@ -20,10 +20,31 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-function pointerDown(target: Element, button: number): void {
-  const event = new Event('pointerdown', { bubbles: true, cancelable: true });
+function pointerEvent(
+  type: string,
+  target: Element,
+  { button = 0, x = 0, y = 0 }: { button?: number; x?: number; y?: number } = {},
+): void {
+  const event = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperty(event, 'button', { value: button });
+  Object.defineProperty(event, 'pointerId', { value: 1 });
+  Object.defineProperty(event, 'clientX', { value: x });
+  Object.defineProperty(event, 'clientY', { value: y });
   target.dispatchEvent(event);
+}
+
+/** A click: pressed and released on the same spot. */
+function pointerClick(target: Element, button = 0): void {
+  pointerEvent('pointerdown', target, { button });
+  pointerEvent('pointerup', target, { button });
+}
+
+/** A drag: pressed, travelled, released — what reframing the camera looks
+ *  like from outside the card. */
+function pointerDrag(target: Element, distance: number): void {
+  pointerEvent('pointerdown', target);
+  pointerEvent('pointermove', target, { x: distance });
+  pointerEvent('pointerup', target, { x: distance });
 }
 
 const selected: Cell = {
@@ -176,12 +197,72 @@ describe('Cell inspection dismissal', () => {
 
     renderHook(() => useCellInspectionDismiss({ current: boundary }, onDismiss));
 
-    pointerDown(inside, 0);
+    pointerClick(inside, 0);
     expect(onDismiss).not.toHaveBeenCalled();
-    pointerDown(outside, 2);
+    pointerClick(outside, 2);
     expect(onDismiss).not.toHaveBeenCalled();
-    pointerDown(outside, 0);
+    pointerClick(outside, 0);
     expect(onDismiss).toHaveBeenCalledOnce();
+  });
+
+  it('lets a drag outside reframe the view instead of closing the card', () => {
+    const boundary = document.createElement('div');
+    const outside = document.createElement('button');
+    document.body.append(boundary, outside);
+    const onDismiss = vi.fn();
+
+    renderHook(() => useCellInspectionDismiss({ current: boundary }, onDismiss));
+
+    // The camera lies under every pixel outside the card, so an orbit drag
+    // starts outside it by definition. Closing on the press would close the
+    // card the moment the reader reached for the view behind it.
+    pointerDrag(outside, 40);
+    expect(onDismiss).not.toHaveBeenCalled();
+
+    // A hand that is not quite still is still clicking.
+    pointerEvent('pointerdown', outside);
+    pointerEvent('pointermove', outside, { x: 2 });
+    pointerEvent('pointerup', outside, { x: 2 });
+    expect(onDismiss).toHaveBeenCalledOnce();
+  });
+
+  it('reads a drag by how far it got, not by where it ended', () => {
+    const boundary = document.createElement('div');
+    const outside = document.createElement('button');
+    document.body.append(boundary, outside);
+    const onDismiss = vi.fn();
+
+    renderHook(() => useCellInspectionDismiss({ current: boundary }, onDismiss));
+
+    pointerEvent('pointerdown', outside);
+    pointerEvent('pointermove', outside, { x: 60 });
+    pointerEvent('pointerup', outside, { x: 0 });
+
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+
+  it('forgets a press the pointer never released', () => {
+    const boundary = document.createElement('div');
+    const inside = document.createElement('button');
+    const outside = document.createElement('button');
+    boundary.append(inside);
+    document.body.append(boundary, outside);
+    const onDismiss = vi.fn();
+
+    renderHook(() => useCellInspectionDismiss({ current: boundary }, onDismiss));
+
+    // Cancelled by the browser (gesture stolen, window blurred): no release
+    // may collect on it later.
+    pointerEvent('pointerdown', outside);
+    pointerEvent('pointercancel', outside);
+    pointerEvent('pointerup', outside);
+    expect(onDismiss).not.toHaveBeenCalled();
+
+    // Released over the card it started outside of: the reader dragged INTO
+    // the window, which is not a request to close it.
+    pointerEvent('pointerdown', outside);
+    pointerEvent('pointerup', inside);
+    expect(onDismiss).not.toHaveBeenCalled();
   });
 
   it('closes the complete details view on Escape', () => {

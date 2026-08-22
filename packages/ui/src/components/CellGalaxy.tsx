@@ -64,6 +64,7 @@ import {
   consensusMemoryCoreIdentity,
 } from '../derives/consensusMemoryCoreIdentity.derive';
 import {
+  CELL_CLICK_MAX_POINTER_DELTA_PX,
   CONSENSUS_BRAID_LOCAL_RADIUS,
   NETWORK_PEER_PICK_FLAG,
   cellCanvasCursor,
@@ -757,11 +758,6 @@ interface CellPickerProps {
   pickingSuspendedRef?: React.RefObject<boolean>;
   onSelect: (id: string | null) => void;
 }
-
-/** Match R3F's stationary-click tolerance, which it otherwise applies only
- * to missed clicks. Successful raycast hits must reject drag-generated clicks
- * explicitly. */
-export const CELL_CLICK_MAX_POINTER_DELTA_PX = 2;
 
 export function cellPointerGestureIsClick(delta: number): boolean {
   return Number.isFinite(delta)

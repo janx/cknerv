@@ -39,10 +39,23 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function pointerDown(target: Element, button = 0): void {
-  const event = new Event('pointerdown', { bubbles: true, cancelable: true });
+function pointerEvent(
+  type: string,
+  target: Element,
+  { button = 0, x = 0, y = 0 }: { button?: number; x?: number; y?: number } = {},
+): void {
+  const event = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperty(event, 'button', { value: button });
+  Object.defineProperty(event, 'pointerId', { value: 1 });
+  Object.defineProperty(event, 'clientX', { value: x });
+  Object.defineProperty(event, 'clientY', { value: y });
   target.dispatchEvent(event);
+}
+
+/** A click: pressed and released on the same spot. */
+function pointerClick(target: Element, button = 0): void {
+  pointerEvent('pointerdown', target, { button });
+  pointerEvent('pointerup', target, { button });
 }
 
 function mount(props: Partial<Parameters<typeof PeerInspectionOverlay>[0]> = {}) {
@@ -137,14 +150,27 @@ describe('PeerInspectionOverlay', () => {
   it('keeps pointer interaction inside the card and dismisses outside it', () => {
     const { onClose, view } = mount();
     const card = view.container.querySelector('[data-peer-probe-overlay]');
-    pointerDown(card as Element);
+    pointerClick(card as Element);
     expect(onClose).not.toHaveBeenCalled();
-    pointerDown(document.body);
+    pointerClick(document.body);
     expect(onClose).toHaveBeenCalledTimes(1);
     document.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
     );
     expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it('survives a camera drag started outside it', () => {
+    const { onClose } = mount();
+
+    // The PING STRIP fills over ~96s. A reader cannot watch it fill and
+    // reframe the constellation around it if the first pixel of the drag
+    // closes the card — and the close button promises a CLICK outside.
+    pointerEvent('pointerdown', document.body);
+    pointerEvent('pointermove', document.body, { x: 90, y: 30 });
+    pointerEvent('pointerup', document.body, { x: 90, y: 30 });
+
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it('keeps the card DOM outside the Canvas and off the scene pointer path', () => {

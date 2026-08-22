@@ -8,6 +8,7 @@ import {
 } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import { CELL_CLICK_MAX_POINTER_DELTA_PX } from '../derives/cellInteraction.derive';
 import { HUD_COLORS } from './hud/hudTheme';
 
 /**
@@ -202,21 +203,78 @@ export function useSceneInspectionLayoutSide(
   return useSyncExternalStore(subscribe, read, read);
 }
 
-/** Treat only the rendered detail satellites as the active inspection region.
- * Gaps between them remain part of the scene and dismiss the inspection. */
+/**
+ * Movement a dismissing gesture is allowed and still counted as a click. The
+ * same tolerance the galaxy grants a cell click, because it is the same
+ * question: the camera lies under every pixel outside the card, so a press
+ * that travels is the reader reframing the view, not closing the window they
+ * are reframing it to read.
+ */
+export const SCENE_INSPECTION_DISMISS_MAX_TRAVEL_PX =
+  CELL_CLICK_MAX_POINTER_DELTA_PX;
+
+/** Screen coordinate of a pointer event, or 0 where the environment gives
+ * none — a gesture with no coordinates at all has travelled nowhere. */
+function pointerCoordinate(value: number | undefined): number {
+  return Number.isFinite(value) ? (value as number) : 0;
+}
+
+/**
+ * Treat only the rendered detail satellites as the active inspection region.
+ * Gaps between them remain part of the scene and dismiss the inspection.
+ *
+ * Dismissal is a CLICK outside, not a press outside: the press is remembered,
+ * and only a release that is also outside the card and has stayed within
+ * `SCENE_INSPECTION_DISMISS_MAX_TRAVEL_PX` of where it started closes the
+ * card. That is what the close button has always promised, and it is what
+ * lets a reader orbit the galaxy — a drag begins outside the card by
+ * definition — while a ~96s instrument fills in front of them. Escape is
+ * unconditional as before.
+ */
 export function useSceneInspectionDismiss(
   boundaryRef: RefObject<HTMLElement>,
   onDismiss: () => void,
 ): void {
   useEffect(() => {
     if (typeof document === 'undefined') return;
-    const dismissOutside = (event: PointerEvent) => {
-      if (event.button !== 0) return;
+    // The press that may still become a dismissal. `pressed` is the whole
+    // arming state; the rest is only meaningful while it is true.
+    let pressed = false;
+    let pressId = 0;
+    let pressX = 0;
+    let pressY = 0;
+    let travelled = 0;
+    const outside = (target: EventTarget | null): boolean => {
       const boundary = boundaryRef.current;
-      const target = event.target;
-      if (boundary && target instanceof Node && boundary.contains(target)) {
-        return;
-      }
+      return !(boundary && target instanceof Node && boundary.contains(target));
+    };
+    const travelFrom = (event: PointerEvent): number => Math.hypot(
+      pointerCoordinate(event.clientX) - pressX,
+      pointerCoordinate(event.clientY) - pressY,
+    );
+    const forget = () => { pressed = false; };
+    const press = (event: PointerEvent) => {
+      pressed = false;
+      if (event.button !== 0) return;
+      if (!outside(event.target)) return;
+      pressed = true;
+      pressId = pointerCoordinate(event.pointerId);
+      pressX = pointerCoordinate(event.clientX);
+      pressY = pointerCoordinate(event.clientY);
+      travelled = 0;
+    };
+    const travel = (event: PointerEvent) => {
+      if (!pressed || pointerCoordinate(event.pointerId) !== pressId) return;
+      // The furthest the gesture ever got, not where it happened to end: a
+      // drag that wanders back to its origin was still a drag.
+      travelled = Math.max(travelled, travelFrom(event));
+    };
+    const release = (event: PointerEvent) => {
+      if (!pressed || pointerCoordinate(event.pointerId) !== pressId) return;
+      pressed = false;
+      if (!outside(event.target)) return;
+      const reach = Math.max(travelled, travelFrom(event));
+      if (reach > SCENE_INSPECTION_DISMISS_MAX_TRAVEL_PX) return;
       onDismiss();
     };
     const dismissOnEscape = (event: KeyboardEvent) => {
@@ -225,10 +283,18 @@ export function useSceneInspectionDismiss(
       event.stopPropagation();
       onDismiss();
     };
-    document.addEventListener('pointerdown', dismissOutside, true);
+    document.addEventListener('pointerdown', press, true);
+    document.addEventListener('pointermove', travel, true);
+    document.addEventListener('pointerup', release, true);
+    document.addEventListener('pointercancel', forget, true);
+    window.addEventListener('blur', forget);
     document.addEventListener('keydown', dismissOnEscape, true);
     return () => {
-      document.removeEventListener('pointerdown', dismissOutside, true);
+      document.removeEventListener('pointerdown', press, true);
+      document.removeEventListener('pointermove', travel, true);
+      document.removeEventListener('pointerup', release, true);
+      document.removeEventListener('pointercancel', forget, true);
+      window.removeEventListener('blur', forget);
       document.removeEventListener('keydown', dismissOnEscape, true);
     };
   }, [boundaryRef, onDismiss]);

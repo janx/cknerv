@@ -1,4 +1,9 @@
 export const CELL_SELECTION_PREFIX = 'cell:';
+/** Match R3F's stationary-click tolerance, which it otherwise applies only
+ * to missed clicks. Successful raycast hits must reject drag-generated clicks
+ * explicitly — and so must every other surface that has to tell a click from
+ * the start of a camera drag, since the camera lives under all of them. */
+export const CELL_CLICK_MAX_POINTER_DELTA_PX = 2;
 export const CELL_HOVER_FOCUS = 0.46;
 export const CELL_SELECTED_FOCUS = 1;
 export const CELL_INSPECTION_GALAXY_ROTATION_SCALE = 0.12;
