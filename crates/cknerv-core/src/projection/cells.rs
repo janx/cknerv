@@ -1117,19 +1117,70 @@ impl CellGalaxy {
         let orphan_tip = *heights.last().expect("checked non-empty above");
         let mut counters_touched = false;
         for height in heights.into_iter().rev() {
+            // Unwind each height in LIFO of the order it was applied. An
+            // outpoint has to exist before it can be spent, so within one
+            // block births land before deaths — and the undo therefore takes
+            // that block's DEATHS first. This only shows for an outpoint born
+            // AND spent inside the same rolled-back block (routine in DEX and
+            // mint batches): undoing its death first finds the corpse row it
+            // still occupies and resurrects in place, so the birth pass below
+            // parks that single identity. Parking first instead left the
+            // resurrection with nothing to update — it appended a second,
+            // phantom row (and shipped its Birth) for an identity already
+            // sitting in `reorg_limbo`, which the replacement chain's revival
+            // then duplicated.
+            //
+            // Every other height is untouched by the order: its births and
+            // deaths name disjoint outpoints, the birth pass emits no deltas
+            // of its own, and removals preserve relative order while
+            // resurrections append — so the delta stream and the final
+            // container sequence are identical either way.
+            if let Some(deaths) = self.block_deaths.remove(&height) {
+                for mut cell in deaths.into_iter().rev() {
+                    cell.death_at_ms = None;
+                    let id = cell.id;
+                    // Re-derive pos_seed from id (see snapshot()): the stored death
+                    // snapshot froze it at the original birth's helix, so recompute
+                    // so a resurrected cell matches the current helix too.
+                    cell.pos_seed = helix_seed_for(id);
+                    // In-place at the same slot when the corpse is still
+                    // retained (keeps ids unique in the container and the
+                    // index untouched); otherwise a fresh append.
+                    if let Some(pos) = self.slot_of(id) {
+                        self.cells[pos] = cell.clone();
+                    } else {
+                        self.push_cell(cell.clone());
+                    }
+                    self.outpoint_index.insert(cell.out_point.clone(), id);
+                    // Resurrections re-enter the map; note_birth is
+                    // idempotent for the in-place-update case above.
+                    self.display.note_birth(&cell);
+                    deltas.push(CellDelta::Birth { cell });
+                    // Mirror image of the birth-rollback below: every recorded
+                    // death bumped `total_deaths` exactly once. The
+                    // resurrection emits a Birth delta to the frontend (so the
+                    // cell reappears) but it is NOT a fresh birth — only the
+                    // death is undone, so `total_births` stays put.
+                    self.total_deaths -= 1;
+                    counters_touched = true;
+                }
+            }
+
             if let Some(births) = self.block_births.remove(&height) {
                 for outpoint in births {
                     // `outpoint_index` is the fast path but is NOT
-                    // authoritative for retention: the death pass and
-                    // `enforce_cap` drop an outpoint the moment the cell
-                    // stops being spendable, while the cell itself stays
-                    // in the container for its corpse hold. A
-                    // birth being rolled back may already be in that
-                    // state, so an index miss falls back to the scan
+                    // authoritative for retention: `enforce_cap` drops an
+                    // outpoint the moment the cell stops being spendable,
+                    // while the cell itself stays in the container for its
+                    // corpse hold. A birth being rolled back may already be
+                    // in that state, so an index miss falls back to the scan
                     // rather than skipping the park. (An outpoint is
                     // created once on any real chain, so the container
                     // holds at most one cell per outpoint and the two
-                    // paths resolve the same slot.)
+                    // paths resolve the same slot.) A spend from this same
+                    // block already handed the outpoint back to the index in
+                    // the death pass above, so that case keeps the O(1)
+                    // path instead of paying a container scan per mint.
                     let indexed_slot = self
                         .outpoint_index
                         .remove(&outpoint)
@@ -1167,37 +1218,6 @@ impl CellGalaxy {
                     // decrement too: their revival in `handle_tx_landed`
                     // re-increments, so a survivor nets zero.
                     self.total_births -= 1;
-                    counters_touched = true;
-                }
-            }
-
-            if let Some(deaths) = self.block_deaths.remove(&height) {
-                for mut cell in deaths.into_iter().rev() {
-                    cell.death_at_ms = None;
-                    let id = cell.id;
-                    // Re-derive pos_seed from id (see snapshot()): the stored death
-                    // snapshot froze it at the original birth's helix, so recompute
-                    // so a resurrected cell matches the current helix too.
-                    cell.pos_seed = helix_seed_for(id);
-                    // In-place at the same slot when the corpse is still
-                    // retained (keeps ids unique in the container and the
-                    // index untouched); otherwise a fresh append.
-                    if let Some(pos) = self.slot_of(id) {
-                        self.cells[pos] = cell.clone();
-                    } else {
-                        self.push_cell(cell.clone());
-                    }
-                    self.outpoint_index.insert(cell.out_point.clone(), id);
-                    // Resurrections re-enter the map; note_birth is
-                    // idempotent for the in-place-update case above.
-                    self.display.note_birth(&cell);
-                    deltas.push(CellDelta::Birth { cell });
-                    // Mirror image of the birth-rollback above: every recorded
-                    // death bumped `total_deaths` exactly once. The
-                    // resurrection emits a Birth delta to the frontend (so the
-                    // cell reappears) but it is NOT a fresh birth — only the
-                    // death is undone, so `total_births` stays put.
-                    self.total_deaths -= 1;
                     counters_touched = true;
                 }
             }
@@ -3103,6 +3123,149 @@ mod tests {
         assert!(deltas
             .iter()
             .any(|d| matches!(d, CellDelta::Birth { cell } if cell.out_point == base)));
+    }
+
+    /// Apply a block that mints an outpoint and spends it in the same block —
+    /// the routine DEX/mint-batch shape — and hand back the minted outpoint
+    /// plus its identity. Height 2, hash `0xbbb`, on top of a `0xbase` cell
+    /// at height 1.
+    fn galaxy_with_a_same_block_mint_and_burn() -> (CellGalaxy, OutPoint, u64) {
+        let mut g = make_galaxy();
+        g.handle_block_mined(1, "0xaaa", 1, 1_000);
+        g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
+
+        g.handle_block_mined(2, "0xbbb", 2, 2_000);
+        g.handle_tx_landed("0xmint", 2, 2_000, &[], &[out(200, "0xdd")]);
+        let minted = op("0xmint", 0);
+        let minted_id = g.outpoint_index[&minted];
+        g.handle_tx_landed(
+            "0xburn",
+            2,
+            2_050,
+            std::slice::from_ref(&minted),
+            &[out(150, "0xee")],
+        );
+        assert!(
+            g.cells
+                .iter()
+                .any(|c| c.id == minted_id && c.death_at_ms.is_some()),
+            "the mint is a corpse in its own block before the rollback"
+        );
+        (g, minted, minted_id)
+    }
+
+    #[test]
+    fn a_cell_born_and_spent_in_one_rolled_back_block_parks_exactly_once() {
+        let (mut g, minted, minted_id) = galaxy_with_a_same_block_mint_and_burn();
+
+        // Same-height replacement block: the whole of height 2 unwinds.
+        let rollback = g.handle_block_mined(2, "0xccc", 0, 3_000);
+
+        // The identity leaves the canonical container entirely — it belongs
+        // to a block that never happened.
+        assert!(
+            g.cells.iter().all(|c| c.out_point != minted),
+            "the rolled-back mint must not keep a row; got {:?}",
+            g.cells.iter().map(|c| &c.out_point).collect::<Vec<_>>()
+        );
+        assert!(!g.outpoint_index.contains_key(&minted));
+
+        // …and it parks under its own outpoint exactly once, alive, ready for
+        // the replacement suffix to revive in place.
+        assert_eq!(
+            g.reorg_limbo.get(&minted).map(|cell| cell.id),
+            Some(minted_id),
+            "the mint parks under its own outpoint"
+        );
+        assert!(
+            g.reorg_limbo[&minted].death_at_ms.is_none(),
+            "the park undoes the same block's spend before it undoes the birth"
+        );
+
+        // The bug this pins: the identity sat in `reorg_limbo` AND as a live
+        // container row at the same time, so the replacement's revival
+        // appended a duplicate.
+        let parked: std::collections::HashSet<u64> =
+            g.reorg_limbo.values().map(|cell| cell.id).collect();
+        assert!(
+            g.cells.iter().all(|c| !parked.contains(&c.id)),
+            "no identity may be parked and resident at once"
+        );
+        g.assert_cell_index_consistent();
+
+        // Parking stays silent, and the one Birth the unwind emits is the
+        // park handshake for the mint (the same one a cross-height rollback
+        // emits): the client keeps that identity alive in place until the
+        // replacement either revives it or `settle_reorg_limbo` retires it.
+        assert!(
+            !rollback.iter().any(|d| matches!(d, CellDelta::Gc { .. })),
+            "rollback must defer every park's GC; got {rollback:?}"
+        );
+        let births: Vec<u64> = rollback
+            .iter()
+            .filter_map(|d| match d {
+                CellDelta::Birth { cell } => Some(cell.id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            births,
+            vec![minted_id],
+            "exactly one Birth, and it is the parked identity's — not a \
+             phantom row's; got {rollback:?}"
+        );
+
+        // Counters return to the pre-block reality: one birth (the base
+        // cell), no deaths.
+        assert_eq!(g.total_births, 1);
+        assert_eq!(g.total_deaths, 0);
+    }
+
+    #[test]
+    fn a_replacement_re_including_a_same_block_mint_revives_it_once() {
+        let (mut g, minted, minted_id) = galaxy_with_a_same_block_mint_and_burn();
+        g.handle_block_mined(2, "0xccc", 2, 3_000);
+        let next_id_before = g.next_id;
+
+        // The replacement re-includes the mint: the parked identity revives in
+        // place instead of duplicating the row the old unwind left behind.
+        let replay = g.handle_tx_landed("0xmint", 2, 3_100, &[], &[out(200, "0xdd")]);
+        assert!(replay
+            .iter()
+            .any(|d| matches!(d, CellDelta::Birth { cell } if cell.id == minted_id)));
+        assert_eq!(g.next_id, next_id_before, "no fresh identity allocated");
+        assert_eq!(
+            g.cells.iter().filter(|c| c.id == minted_id).count(),
+            1,
+            "the revived mint holds exactly one row"
+        );
+        assert!(g
+            .cells
+            .iter()
+            .any(|c| c.id == minted_id && c.death_at_ms.is_none()));
+        assert!(!g.reorg_limbo.contains_key(&minted));
+        assert_eq!(g.outpoint_index.get(&minted), Some(&minted_id));
+        g.assert_cell_index_consistent();
+
+        // …and the replacement's own spend still resolves to that one row.
+        let respend = g.handle_tx_landed(
+            "0xburn",
+            2,
+            3_150,
+            std::slice::from_ref(&minted),
+            &[out(150, "0xee")],
+        );
+        assert!(respend
+            .iter()
+            .any(|d| matches!(d, CellDelta::Death { id, .. } if *id == minted_id)));
+        assert_eq!(
+            g.cells
+                .iter()
+                .filter(|c| c.id == minted_id && c.death_at_ms.is_some())
+                .count(),
+            1
+        );
+        g.assert_cell_index_consistent();
     }
 
     #[test]
