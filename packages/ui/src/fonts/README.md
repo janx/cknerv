@@ -1,21 +1,21 @@
 # HUD font subsets
 
-`HuiwenMincho-subset.woff2` is a 21-glyph subset of 汇文明朝体
+`HuiwenMincho-subset.woff2` is a 22-glyph subset of 汇文明朝体
 (`Huiwen-mincho`) for the Chinese text used by the HUD:
 
 ```text
-共识基神经脉搏节点场对端状态警告道样本细胞
+共识基神经元脉搏节点场对端状态警告道样本细胞
 ```
 
 That list is exactly the glyphs rendered in `HUD_FONTS.cjk` today — the `cjk`
-props of `PanelHeader` (including `StageCapacityPanel`'s 样本), `WarningBar`'s
-警告, `StatusStrip`'s 状态, and the inspector cards' title companions:
-`PeerLinkCard`'s 对端, `NodeSelfCard`'s 节点, `CellDetailPanel`'s 细胞.
-(`SightedNodeCard` documents in-file why it deliberately wears none.) Any new
-Chinese in a panel falls back to a system serif until the subset is regenerated,
-so re-subset in the same commit as the rename — 样本 once shipped a release ahead
-of this list, which is why the inventory is now stated as the whole truth
-rather than a delta.
+props of `PanelHeader` (including `StageCapacityPanel`'s 样本 and `CellsPanel`'s
+神经元, whose 元 is the newest arrival), `WarningBar`'s 警告, `StatusStrip`'s
+状态, and the inspector cards' title companions: `PeerLinkCard`'s 对端,
+`NodeSelfCard`'s 节点, `CellDetailPanel`'s 细胞. (`SightedNodeCard` documents
+in-file why it deliberately wears none.) Any new Chinese in a panel falls back
+to a system serif until the subset is regenerated, so re-subset in the same
+commit as the rename — 样本 once shipped a release ahead of this list, which is
+why the inventory is now stated as the whole truth rather than a delta.
 
 The source font comes from the Chinese Webfont Project package
 [`@chinese-fonts/hwmct`](https://github.com/KonghaYao/chinese-free-web-font-storage/tree/branch/packages/hwmct).
@@ -30,14 +30,14 @@ Regenerate with FontTools 4.63 or later:
 
 ```bash
 pyftsubset /path/to/汇文明朝体.ttf \
-  --text='共识基神经脉搏节点场对端状态警告道样本细胞' \
+  --text='共识基神经元脉搏节点场对端状态警告道样本细胞' \
   --no-ignore-missing-unicodes \
   --flavor=woff2 \
   --output-file=HuiwenMincho-subset.woff2
 ```
 
 The expected SHA-256 for the checked-in subset is
-`a26b871092f00a9aaa4892bab501a1b5f2e7335f01cf9cce05458bcf27be0f1c`.
+`0e264d7951eabf67a152b7e17a30bd62fbd374ad1caef9f16179138257a2c1bf`.
 
 ## `JetBrains Mono Local` / `Orbitron Local`
 

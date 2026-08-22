@@ -31,7 +31,7 @@ export default function CellsPanel({ stats, churn, reducedMotion = false, style 
   const netColor = churn.netPerBlock >= 0 ? HUD_COLORS.cyanWire : HUD_COLORS.caution;
   return (
     <HudPanel style={{ width: 302, ...style }}>
-      <PanelHeader en="CELL MESH" cjk="共识神经" idx="MESH·03" accent={HUD_COLORS.cyanWire} />
+      <PanelHeader en="CELL MESH" cjk="神经元" idx="MESH·03" accent={HUD_COLORS.cyanWire} />
       <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 8.5, color: HUD_COLORS.dim, letterSpacing: 1.2, marginBottom: 2 }}>METABOLISM · per block</div>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, marginBottom: 9 }}>
         <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: 24, color: netColor, lineHeight: 1, textShadow: `0 0 12px ${netColor}66`, animation: reducedMotion ? undefined : 'cknerv-hud-breathe 3.2s ease-in-out infinite' }}>{fmtSigned(churn.netPerBlock)}</span>
