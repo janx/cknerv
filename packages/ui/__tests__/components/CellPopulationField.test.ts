@@ -132,7 +132,7 @@ describe('the halo is not an object', () => {
     // And the indices come from the WALK — consecutive points on one
     // filament — so there is no neighbour search to accidentally reach across
     // populations, and nothing to search over if there were.
-    expect(PLACEMENT_CODE).toContain('segments[pair] = walk.previous;');
+    expect(PLACEMENT_CODE).toContain('writeSegment(walk.previous, index)');
     expect(PLACEMENT_CODE).not.toMatch(/kNearest|knn|nearestNeighbou?r/i);
   });
 

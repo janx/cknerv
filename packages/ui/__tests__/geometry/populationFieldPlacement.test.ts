@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   advancePopulationPlacement,
   createPopulationPlacement,
+  resetPopulationSegmentOverflowWarning,
   inverseStandardNormal,
   placePopulationField,
   populationComplementAcceptance,
@@ -1230,6 +1231,72 @@ describe('a walk closes onto strands it passes, so the layer stops being a fores
       placed.segmentCount * 2,
     );
     expect(POPULATION_JOIN_PER_FILAMENT).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// The sizing above is an ARGUMENT resting on tuned constants — the join
+// ceiling and the strand-length bound — and it miscounts a forked filament's
+// reach segment. At the shipped constants there is ~8K of headroom, so nothing
+// here ever fires; what these pin is the SHAPE of the failure if a retune
+// spends it. A typed-array write past the end is dropped rather than thrown,
+// so an unguarded writer would leave `segmentCount` counting segments that are
+// not in the buffer and every consumer downstream reading indices that were
+// never written.
+describe('the segment writer refuses what the buffer cannot hold', () => {
+  let warn: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    resetPopulationSegmentOverflowWarning();
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => { warn.mockRestore(); });
+
+  it('places on past a full segment buffer instead of writing past its end', () => {
+    const state = createPopulationPlacement(600, POPULATION_FIELD_SEED);
+    // A buffer the sizing argument would never produce, which is the point:
+    // this is the retune that spent the headroom, arrived at early.
+    const pairs = 4;
+    state.segments = new Uint32Array(pairs * 2);
+    advancePopulationPlacement(state, 200_000);
+
+    expect(state.segmentCount).toBe(pairs);
+    // A refusal, not a stall: the walk kept placing points.
+    expect(state.count).toBeGreaterThan(pairs);
+    // And every index that IS in the buffer addresses a point that exists —
+    // no half-written pair, no zero-filled tail counted as a segment.
+    for (let i = 0; i < state.segmentCount * 2; i += 1) {
+      expect(state.segments[i]).toBeGreaterThanOrEqual(0);
+      expect(state.segments[i]).toBeLessThan(state.count);
+    }
+    // A refused join is not a join.
+    expect(state.joins).toBeLessThanOrEqual(pairs);
+  });
+
+  it('says so once, not once per dropped segment', () => {
+    const state = createPopulationPlacement(600, POPULATION_FIELD_SEED);
+    state.segments = new Uint32Array(4);
+    advancePopulationPlacement(state, 200_000);
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    const [message] = warn.mock.calls[0] as [string];
+    expect(message).toContain('segment buffer is full');
+    expect(message).toContain('createPopulationPlacement');
+
+    // A second pass in the same session adds no further noise.
+    const again = createPopulationPlacement(600, POPULATION_FIELD_SEED);
+    again.segments = new Uint32Array(4);
+    advancePopulationPlacement(again, 200_000);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('is silent at the shipped sizing — the guard changes no behaviour today', () => {
+    const state = createPopulationPlacement(4_000, POPULATION_FIELD_SEED);
+    advancePopulationPlacement(state, 4_000 * 64);
+
+    expect(warn).not.toHaveBeenCalled();
+    expect(state.segmentCount).toBeLessThanOrEqual(state.capacity);
+    expect(state.segmentCount).toBeGreaterThan(0);
   });
 });
 

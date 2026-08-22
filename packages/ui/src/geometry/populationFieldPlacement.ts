@@ -1814,6 +1814,11 @@ export function createPopulationPlacement(
     // point in every 26 starts a strand and reaches back to nothing, and that
     // slack is precisely what the joins are spent from. See the join ceiling
     // in `advancePopulationPlacement`.
+    //
+    // That is an ARGUMENT resting on tuned constants, not a proof, so the
+    // writer guards it: `writeSegment` refuses a segment it cannot hold and
+    // says so once, rather than letting the typed array drop the write while
+    // `segmentCount` keeps counting it.
     segments: new Uint32Array(size * 2),
     weights: new Float32Array(size),
     joins: 0,
@@ -1858,6 +1863,42 @@ export function createPopulationPlacement(
       .fill(JOIN_GRID_EMPTY),
     joinCursor: new Uint8Array(JOIN_GRID_COLS * JOIN_GRID_ROWS),
   };
+}
+
+/**
+ * The segment buffer is sized one segment per point, and
+ * `createPopulationPlacement` argues that is exact. The argument counts a
+ * forked filament's reach segment against the fork's own point, which is a
+ * step short of a proof: it is the JOIN CEILING plus the strand-length bound
+ * that buy the slack, and both are tuned constants. At the shipped constants
+ * there is roughly 8K of headroom and nothing below ever fires.
+ *
+ * What this exists for is the shape of the failure if a retune spends that
+ * headroom. A typed-array write past the end is DROPPED, not thrown, so
+ * `segmentCount` would keep counting segments that are not in the buffer;
+ * every consumer downstream — the draw ranges, the backbone partition, the
+ * bridge layer's component walk — would read indices that were never written
+ * and produce NaN geometry, with nothing anywhere saying why. A refused write
+ * and one loud line is the better failure.
+ */
+let segmentOverflowWarned = false;
+
+function noteSegmentOverflow(segmentCapacity: number): void {
+  if (segmentOverflowWarned) return;
+  segmentOverflowWarned = true;
+  console.warn(
+    `populationFieldPlacement: the segment buffer is full at ${segmentCapacity} `
+    + 'segments; further filament segments are being dropped. The '
+    + 'one-segment-per-point sizing in `createPopulationPlacement` no longer '
+    + 'holds for the current constants — widen the buffer, or lower the join '
+    + 'ceiling / branch rate that spent its slack.',
+  );
+}
+
+/** Test seam for the warn-once latch. Production never resets: one line per
+ *  session is the whole point. */
+export function resetPopulationSegmentOverflowWarning(): void {
+  segmentOverflowWarned = false;
 }
 
 /**
@@ -2006,6 +2047,23 @@ export function advancePopulationPlacement(
   let work = state.work;
   let branchWritten = state.branchWritten;
   const limit = work + budget;
+
+  // Taken from the buffer rather than from `capacity`, so the guard is about
+  // what can actually be written and not about what the sizing argument
+  // believes. Returns whether the segment landed: a join that was refused is
+  // not a join, and must not be counted as one.
+  const segmentCapacity = segments.length >> 1;
+  const writeSegment = (from: number, to: number): boolean => {
+    if (segmentCount >= segmentCapacity) {
+      noteSegmentOverflow(segmentCapacity);
+      return false;
+    }
+    const pair = segmentCount * 2;
+    segments[pair] = from;
+    segments[pair + 1] = to;
+    segmentCount += 1;
+    return true;
+  };
 
   while (count < capacity && work < limit && work < ceiling) {
     // ---- Seed a new filament ------------------------------------------
@@ -2211,12 +2269,7 @@ export function advancePopulationPlacement(
       );
       count += 1;
 
-      if (walk.previous >= 0) {
-        const pair = segmentCount * 2;
-        segments[pair] = walk.previous;
-        segments[pair + 1] = index;
-        segmentCount += 1;
-      }
+      if (walk.previous >= 0) writeSegment(walk.previous, index);
       walk.previous = index;
       if (walk.firstPoint < 0) walk.firstPoint = index;
       walk.tip2 = walk.tip1;
@@ -2237,11 +2290,7 @@ export function advancePopulationPlacement(
         && next() < populationJoinChance(sample.resolvedCoverage)
       ) {
         const target = closeOntoStrand(walk.x, y, walk.z, walk.firstPoint);
-        if (target >= 0) {
-          const pair = segmentCount * 2;
-          segments[pair] = target;
-          segments[pair + 1] = index;
-          segmentCount += 1;
+        if (target >= 0 && writeSegment(target, index)) {
           joins += 1;
           walk.joins += 1;
         }
