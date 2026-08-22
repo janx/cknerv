@@ -386,6 +386,37 @@ export function PlateReadoutCaption({ tone, style, children }: {
   );
 }
 
+// ——— Staged reveal —————————————————————————————————————————
+// A card that reveals itself does it in INK, never in layout: everything the
+// walk will light is mounted at final geometry on the first frame and only
+// changes opacity from there. That is what keeps the window the same size and
+// in the same place while it fills — a row that mounts late is a row that
+// pushed everything under it down while somebody was reading it.
+
+/** The ghost every unreached stage wears — present, placed, and plainly not
+ *  read yet. One number so no two stages can disagree about what dark means. */
+export const REVEAL_GHOST_OPACITY = 0.18;
+
+/** The style of one staged reveal step. Ghosted stages are pointer-inert:
+ *  nothing under the probe can be clicked before the probe reaches it. */
+export function revealStageStyle(revealed: boolean): CSSProperties {
+  return {
+    opacity: revealed ? 1 : REVEAL_GHOST_OPACITY,
+    transition: 'opacity 260ms ease',
+    pointerEvents: revealed ? 'auto' : 'none',
+  };
+}
+
+/** The attributes that take a ghosted stage out of the tab order and out of
+ *  the accessibility tree. `inert` does both wherever it is supported (and is
+ *  spread rather than typed, since React 18's DOM types predate it);
+ *  `aria-hidden` states the same thing for everything that does not. */
+export function revealStageAttributes(
+  revealed: boolean,
+): Record<string, string> {
+  return revealed ? {} : { inert: '', 'aria-hidden': 'true' };
+}
+
 /** The `LINK·05` / `SELF·04` stamp a floating card's plates count off in.
  *  Single-sourced so the two dialects and the shared dossier plate can never
  *  print their module numbers in different type. */

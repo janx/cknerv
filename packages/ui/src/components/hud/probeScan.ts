@@ -1,4 +1,8 @@
-export const PROBE_STEP_S = 0.72;   // travel(0.22) + dwell(0.5) per landmark
+/** Seconds the probe spends on one landmark: a short travel to it, then a
+ *  dwell while it reads. The whole six-landmark walk is 1.8s — the reveal is
+ *  a discovery, not a loading bar, and every downstream gate is expressed in
+ *  steps or in scan percent so this number is the only dial. */
+export const PROBE_STEP_S = 0.30;  // travel(0.09) + dwell(0.21) per landmark
 const TRAVEL_FRAC = 0.30;
 
 export interface ProbeState {

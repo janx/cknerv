@@ -121,6 +121,17 @@ function traceReadout(
   };
 }
 
+/** Walk the probe past its last landmark. Everything the reveal stages is
+ *  mounted from the first frame and merely ghosted, so a stepper inside an
+ *  unreached stage is deliberately inert — a test that wants to drive one has
+ *  to let the scan finish first, exactly as a viewer does. */
+function settleScan(performanceNow: { mockReturnValue: (value: number) => void }) {
+  // One step past the deepest enrichment gate (order + 2), which classifies
+  // the lattice and lights every staged row.
+  performanceNow.mockReturnValue(PROBE_STEP_S * 9 * 1000);
+  act(() => { vi.advanceTimersByTime(80); });
+}
+
 describe('CellDetailPanel', () => {
   beforeEach(() => {
     portraitRender.mockClear();
@@ -505,6 +516,7 @@ describe('CellDetailPanel', () => {
   });
 
   it('keeps every retained direct byte inspectable through bounded windows', () => {
+    const performanceNow = vi.spyOn(performance, 'now').mockReturnValue(0);
     const longData = Array.from(
       { length: 40 },
       (_, index) => index.toString(16).padStart(2, '0'),
@@ -525,11 +537,23 @@ describe('CellDetailPanel', () => {
     expect(container.querySelector('[data-cell-content-byte="0"]')?.textContent)
       .toBe('00');
     expect(container.textContent).toContain('W 1/2');
-    fireEvent.click(container.querySelector('[aria-label="next raw byte window"]')!);
+    // While the summary is still ghosted the window stepper is inert — the
+    // reveal hands a control over only once it has been read.
+    const nextWindow = () => container.querySelector(
+      '[aria-label="next raw byte window"]',
+    ) as HTMLButtonElement;
+    expect(nextWindow().disabled).toBe(true);
+    fireEvent.click(nextWindow());
+    expect(container.textContent).toContain('W 1/2');
+
+    settleScan(performanceNow);
+    expect(nextWindow().disabled).toBe(false);
+    fireEvent.click(nextWindow());
     expect(container.querySelectorAll('[data-cell-content-byte]')).toHaveLength(8);
     expect(container.querySelector('[data-cell-content-byte="32"]')?.textContent)
       .toBe('20');
     expect(container.textContent).toContain('W 2/2');
+    performanceNow.mockRestore();
   });
 
   it('keeps scan and memory in one merged analysis window', () => {
@@ -598,6 +622,7 @@ describe('CellDetailPanel', () => {
   });
 
   it('clusters indexed semantics by subject under their fact leads', () => {
+    const performanceNow = vi.spyOn(performance, 'now').mockReturnValue(0);
     const indexedData = `0x7b2261223a317d${'00'.repeat(33)}`;
     const { container } = render(
       <CellDetailPanel
@@ -872,6 +897,8 @@ describe('CellDetailPanel', () => {
     expect(contentMemory?.textContent).toContain('DAO · DEPOSIT');
     expect(contentMemory?.querySelector('[data-cell-content-byte="0"]')?.textContent)
       .toBe('7B');
+    // Segment stepping is a control, and controls belong to revealed rows.
+    settleScan(performanceNow);
     fireEvent.click(container.querySelector('[aria-label="next decoded segment"]')!);
     expect(contentMemory?.textContent).toContain('DOCUMENT BODY');
     expect(contentMemory?.textContent).toContain('[1..7)');
@@ -916,6 +943,7 @@ describe('CellDetailPanel', () => {
     expect(Array.from(container.querySelectorAll('span')).filter(
       (span) => span.textContent === 'AGE',
     )).toHaveLength(0);
+    performanceNow.mockRestore();
   });
 
   it('names what an inventory Cell holds, beside the script that governs it', () => {
@@ -1010,9 +1038,14 @@ describe('CellDetailPanel', () => {
     ) as HTMLElement;
 
     // A record is on its way: the rows it will fill already hold their height.
-    expect(slot('lock').style.minHeight).toBe('66px');
+    // LOCK reserves an extra caption line — OWNER carries one, and a row with
+    // a sentence under it is taller than the three bare rails beside it.
+    expect(slot('lock').style.minHeight).toBe('78px');
     expect(slot('type').style.minHeight).toBe('66px');
-    expect(slot('capacity').style.minHeight).toBe('62px');
+    // The BYTE BUDGET's reservation is EXACTLY the ghost stack that fills it;
+    // a slot that reserves one number and renders another settles by the
+    // difference the moment the record lands.
+    expect(slot('capacity').style.minHeight).toBe('66px');
     const ghosts = container.querySelectorAll('[data-cell-evidence-ghost]');
     expect(ghosts).toHaveLength(3);
     expect((ghosts[0] as HTMLElement).style.opacity).toBe('0.18');
@@ -1063,7 +1096,7 @@ describe('CellDetailPanel', () => {
       />,
     );
     expect((container.querySelector('[data-cell-evidence-slot="lock"]') as HTMLElement)
-      .style.minHeight).toBe('66px');
+      .style.minHeight).toBe('78px');
 
     rerender(
       <CellDetailPanel
@@ -1220,7 +1253,18 @@ describe('CellDetailPanel', () => {
     expect(analysis.getAttribute('data-cellular-scan-state')).toBe('scanning');
     const content = container.querySelector('[data-cell-content-memory]') as HTMLElement;
     expect(content.dataset.cellContentRevealCount).toBe('0');
-    expect(content.style.display).toBe('none');
+    // The window is there at full size from the first frame — the walk lights
+    // it, it never mounts it. Nothing below can be pushed down by a reveal.
+    expect(content.style.display).toBe('block');
+    const ascii = () => container.querySelector(
+      '[data-cell-content-reveal-item="ascii"]',
+    ) as HTMLElement;
+    const causal = () => container.querySelector(
+      '[data-consensus-memory-reveal="causal"]',
+    ) as HTMLElement;
+    expect(ascii().style.display).toBe('block');
+    expect(ascii().style.opacity).toBe('0.18');
+    expect(ascii().style.pointerEvents).toBe('none');
     performanceNow.mockReturnValue(PROBE_STEP_S * 2.5 * 1000);
     act(() => {
       vi.advanceTimersByTime(80);
@@ -1231,14 +1275,16 @@ describe('CellDetailPanel', () => {
     expect(Number(content.dataset.cellContentRevealCount)).toBeLessThan(
       Number(content.dataset.cellContentRevealTotal),
     );
-    expect(content.style.display).toBe('block');
     expect((container.querySelector('[data-cell-content-reveal-item="bytes"]') as HTMLElement)
-      .style.display).not.toBe('none');
-    expect((container.querySelector('[data-cell-content-reveal-item="ascii"]') as HTMLElement)
-      .style.display).toBe('none');
-    // Mid-scan the causal lens is still resolving.
-    expect((container.querySelector('[data-consensus-memory-reveal="causal"]') as HTMLElement)
-      .style.display).toBe('none');
+      .style.opacity).toBe('1');
+    // Still ghosted: dark, inert, and holding its place.
+    expect(ascii().style.opacity).toBe('0.18');
+    expect(ascii().style.pointerEvents).toBe('none');
+    expect(ascii().getAttribute('aria-hidden')).toBe('true');
+    // Mid-scan the causal lens is still resolving — and still laid out.
+    expect(causal().style.display).toBe('block');
+    expect(causal().style.opacity).toBe('0.18');
+    expect(causal().style.pointerEvents).toBe('none');
 
     performanceNow.mockReturnValue(PROBE_STEP_S * 6 * 1000);
     act(() => {
@@ -1255,8 +1301,228 @@ describe('CellDetailPanel', () => {
     );
     expect(settledSpecimenScan.style.willChange).toContain('transform');
     expect(settledSpecimenScan.style.opacity).toBe('0.8');
-    expect((container.querySelector('[data-consensus-memory-reveal="causal"]') as HTMLElement)
-      .style.display).toBe('block');
+    expect(causal().style.display).toBe('block');
+    expect(causal().style.opacity).toBe('1');
+    expect(causal().style.pointerEvents).toBe('auto');
+    expect(causal().getAttribute('aria-hidden')).toBeNull();
+    expect(ascii().style.opacity).toBe('1');
+    performanceNow.mockRestore();
+  });
+
+  // ——— The acceptance oracle ————————————————————————————————————————
+  // The complaint this whole reveal rework answers: the window changed size
+  // while it filled in. jsdom has no layout engine, so a height cannot be
+  // measured here — what CAN be pinned is every mechanism that produces one.
+  // If no element ever appears, disappears, or changes a geometry property
+  // between two frames of the reveal clock, the card cannot have changed
+  // height between them either.
+  const GEOMETRY_PROPERTIES = [
+    'display', 'position', 'width', 'height', 'minWidth', 'minHeight',
+    'maxWidth', 'maxHeight', 'margin', 'marginTop', 'marginBottom',
+    'padding', 'paddingTop', 'paddingBottom', 'gap', 'rowGap', 'columnGap',
+    'gridTemplateAreas', 'gridTemplateColumns', 'gridTemplateRows',
+    'gridArea', 'gridColumn', 'flexBasis', 'flexWrap', 'aspectRatio',
+    'borderTopWidth', 'borderBottomWidth', 'fontSize', 'lineHeight',
+    'whiteSpace',
+  ] as const;
+
+  /** One frame of the card's layout: every element, in document order, with
+   *  every property that decides how much room it takes. Ink — opacity,
+   *  colour, transform, shadow — is deliberately absent: that is the entire
+   *  vocabulary the reveal is allowed to speak in. */
+  function layoutFrame(root: HTMLElement): string {
+    const nodes = [root, ...Array.from(root.querySelectorAll('*'))];
+    return (nodes as HTMLElement[])
+      .map((node) => [
+        node.tagName,
+        ...GEOMETRY_PROPERTIES.map((property) => node.style[property]),
+      ].join('|'))
+      .join('\n');
+  }
+
+  /** Every element the reveal stages, ghosted or lit. */
+  function stagedRows(container: HTMLElement): HTMLElement[] {
+    return Array.from(container.querySelectorAll(
+      '[data-cell-content-reveal-item],[data-consensus-memory-reveal],[data-cell-detail-field]',
+    )) as HTMLElement[];
+  }
+
+  /** Drive the reveal clock frame by frame the way the panel's own interval
+   *  does, and hand back the layout of every frame it passed through. */
+  function sweepReveal(root: HTMLElement, performanceNow: {
+    mockReturnValue: (value: number) => void;
+  }): string[] {
+    const frames = [layoutFrame(root)];
+    // Past the last enrichment step (8 × 300ms) and the clock's own stop.
+    for (let atMs = 80; atMs <= 2720; atMs += 80) {
+      performanceNow.mockReturnValue(atMs);
+      act(() => { vi.advanceTimersByTime(80); });
+      frames.push(layoutFrame(root));
+    }
+    return frames;
+  }
+
+  it('never changes its layout while the reveal clock walks a bare Cell', () => {
+    const performanceNow = vi.spyOn(performance, 'now').mockReturnValue(0);
+    const origin: CellLink = {
+      seq: 18,
+      tx_hash: base.out_point.tx_hash,
+      block: base.birth_block,
+      from_ids: [1, 2],
+      to_ids: [base.id],
+      endpoint_anchors: [],
+      parents: [],
+      tag: base.tag,
+      at_ms: 12_000,
+    };
+    const { container } = render(
+      <CellDetailPanel
+        cell={base}
+        recentLinks={[origin]}
+        onTraceWrite={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    const root = container.firstElementChild as HTMLElement;
+    const analysis = container.querySelector(
+      '[data-cell-inspection-satellite="analysis"]',
+    ) as HTMLElement;
+    const content = container.querySelector(
+      '[data-cell-content-memory]',
+    ) as HTMLElement;
+
+    // Everything the walk will light is standing there, dark and untouchable,
+    // before the walk starts.
+    expect(analysis.getAttribute('data-cellular-scan-state')).toBe('scanning');
+    expect(content.dataset.cellContentRevealCount).toBe('0');
+    const ghosted = stagedRows(container);
+    expect(ghosted.length).toBeGreaterThan(8);
+    for (const row of ghosted) {
+      expect(row.style.display).not.toBe('none');
+      expect(row.style.opacity).toBe('0.18');
+      expect(row.style.pointerEvents).toBe('none');
+    }
+    // The trace row is a grid row of the card, and it exists from the start.
+    expect(root.style.gridTemplateAreas)
+      .toBe('"header header" "analysis scan"');
+
+    const frames = sweepReveal(root, performanceNow);
+
+    // The reveal genuinely happened…
+    expect(analysis.getAttribute('data-cellular-scan-state')).toBe('locked');
+    expect(content.dataset.cellContentRevealState).toBe('resolved');
+    for (const row of stagedRows(container)) {
+      expect(row.style.opacity).toBe('1');
+      expect(row.style.pointerEvents).not.toBe('none');
+    }
+    // …and every frame of it laid out exactly like the frame before it.
+    expect(frames.length).toBeGreaterThan(30);
+    for (const frame of frames) expect(frame).toBe(frames[0]);
+    expect(frames[0]).not.toContain('|none|');
+    performanceNow.mockRestore();
+  });
+
+  it('never changes its layout while the reveal clock walks an enriched Cell', () => {
+    const performanceNow = vi.spyOn(performance, 'now').mockReturnValue(0);
+    const semanticRecord: CellSemanticRecord = {
+      out_point: base.out_point,
+      source: 'ckbadger',
+      as_of: { block: 19000001, hash: '0xanchor' },
+      observed_at_block: 19000000,
+      updated_at_ms: 1,
+      address: 'ckt1qgatedaddress000000000000000',
+      lock_script: {
+        script_hash: '0xlock',
+        code_hash: '0xcode',
+        hash_type: 'type',
+        args: '0x1234',
+        name: 'Default Lock',
+        family: 'lock',
+        deprecated: false,
+      },
+      common_knowledge: {
+        total_bytes: 133,
+        capacity_field_bytes: 8,
+        lock_script_bytes: 53,
+        type_script_bytes: 61,
+        data_bytes: 11,
+      },
+      content: {
+        data_hex: base.data_hex,
+        total_bytes: 11,
+        deterministic: {
+          kind: 'json_document',
+          summary: 'UTF-8 JSON object decoded from Cell data',
+          segments: [
+            {
+              start_byte: 0,
+              end_byte: 1,
+              label: 'object_start',
+              value: '{',
+              meaning: 'JSON object opening delimiter',
+            },
+          ],
+        },
+        heuristics: [
+          {
+            kind: 'text_encoding',
+            confidence: 'high',
+            reason: 'valid UTF-8',
+            mime_type: 'application/json',
+          },
+        ],
+      },
+      facets: [
+        {
+          namespace: 'ckb',
+          kind: 'dao',
+          state: 'deposit',
+          attributes: [
+            { key: 'deposit_block', value: '16204800', unit: 'block' },
+          ],
+        },
+      ],
+    } as CellSemanticRecord;
+
+    const { container } = render(
+      <CellDetailPanel
+        cell={typed}
+        semanticSource={{
+          source: 'ckbadger',
+          status: 'ready',
+          capabilities: ['cell_detail'],
+          lag_blocks: 0,
+        }}
+        semanticPhase="ready"
+        semanticRecord={semanticRecord}
+        onClose={() => {}}
+      />,
+    );
+    const root = container.firstElementChild as HTMLElement;
+    const owner = container.querySelector(
+      '[data-cell-evidence-row="owner"]',
+    ) as HTMLElement;
+    const budget = container.querySelector(
+      '[data-cell-byte-budget]',
+    ) as HTMLElement;
+
+    // Enrichment is present from the first frame and still waits its turn —
+    // in ink. A record that is already in hand never re-lays the card out.
+    expect(owner.style.opacity).toBe('0');
+    expect(budget.getAttribute('data-byte-budget-reveal-state')).toBe('scanning');
+    // Nothing is reserved: the rows themselves are the reservation.
+    expect(container.querySelector('[data-cell-evidence-ghost]')).toBeNull();
+    expect((container.querySelector('[data-cell-evidence-slot="lock"]') as HTMLElement)
+      .style.minHeight).toBe('');
+
+    const frames = sweepReveal(root, performanceNow);
+
+    expect(owner.style.opacity).toBe('1');
+    expect(budget.getAttribute('data-byte-budget-reveal-state')).toBe('resolved');
+    expect(container.querySelector('[data-cell-content-deterministic]')
+      ?.getAttribute('style')).toContain('opacity: 1');
+    for (const frame of frames) expect(frame).toBe(frames[0]);
+    expect(frames[0]).not.toContain('|none|');
     performanceNow.mockRestore();
   });
 
@@ -1271,6 +1537,16 @@ describe('CellDetailPanel', () => {
     expect(t).toContain('OMNI Lock');                              // decoded rows still present
     expect(t).toContain('11 B');
     expect((container.firstElementChild as HTMLElement).style.animation).toBe('');
+    // No walk, so no ghosts: reduced motion hands the whole card over at
+    // once, lit and live, with nothing waiting its turn.
+    const rows = stagedRows(container);
+    expect(rows.length).toBeGreaterThan(8);
+    for (const row of rows) {
+      expect(row.style.display).not.toBe('none');
+      expect(row.style.opacity).toBe('1');
+      expect(row.style.pointerEvents).not.toBe('none');
+      expect(row.getAttribute('aria-hidden')).toBeNull();
+    }
   });
 
   it('lets decoded rows focus the real scene scan field', () => {

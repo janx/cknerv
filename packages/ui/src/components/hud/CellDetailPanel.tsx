@@ -42,6 +42,9 @@ import {
   PlateReadoutRow,
   plateStateChip,
   PLATE_ROW_RAIL_ALPHA,
+  REVEAL_GHOST_OPACITY,
+  revealStageAttributes,
+  revealStageStyle,
   satelliteBase,
   SpatialPlateHeader,
   spatialPlate,
@@ -117,19 +120,41 @@ const CKBYTES_REVEAL_ORDER: readonly ConsensusBraidField[] = [
 /** Evidence hangs under the fact it explains, in every cluster. */
 const CLUSTER_EVIDENCE_INDENT = '3px 0 0 11px';
 
+// ——— Where the memory pieces join the walk —————————————————————————————
+// Fractions of the SCAN, not seconds: the probe's step length is the single
+// speed dial (`PROBE_STEP_S`), and every gate below rides on its percentage
+// so changing the pace moves all of them together.
+/** Content memory finishes decoding a little before the lattice locks. */
+const CONTENT_DECODED_AT = 0.72;
+/** ORIGIN resolves once the register is essentially read. */
+const CAUSAL_REVEALED_AT = 0.76;
+/** The MEMORY TRACE affordance arms last, just under the lock. */
+const TRACE_REVEALED_AT = 0.9;
+
 /** One rail-hung evidence row: a 3px lead, a 9px value line, a 4px tail.
  *  Reservation math only — the browser lays the real rows out. */
 const EVIDENCE_ROW_PX = 20;
 const EVIDENCE_ROW_GAP_PX = 3;
-/** The BYTE BUDGET's own resting height (header, bar, legend, ratio strip). */
-const BYTE_BUDGET_RESERVE_PX = 62;
-/** OWNER · SCRIPT · ARGS — what the index adds to a lock, every time. */
+/** A micro caption under a value is a SECOND line in its row. OWNER carries
+ *  one, so its reservation has to carry one too — otherwise the slot grows a
+ *  caption's worth of height the moment the record lands in it. */
+const EVIDENCE_CAPTION_PX = 12;
+/** OWNER · SCRIPT · ARGS — what the index adds to a lock, every time — and
+ *  the one caption among them (OWNER explains where the address came from). */
 const LOCK_ENRICHMENT_ROWS = 3;
+const LOCK_ENRICHMENT_CAPTIONS = 1;
 /** The typical asset block: two of amount/identity/object plus script hash. */
 const ASSET_ENRICHMENT_ROWS = 3;
+/** The BYTE BUDGET is one instrument (header, bar, legend, ratio strip), not
+ *  a row stack — but three ghost rows is what stands in for it, and a slot
+ *  must reserve EXACTLY the ghost that fills it or it settles by the
+ *  difference the moment the record arrives. One number, one function. */
+const BYTE_BUDGET_GHOST_ROWS = 3;
 
-function reservedEvidenceHeight(rows: number): number {
-  return rows * EVIDENCE_ROW_PX + Math.max(0, rows - 1) * EVIDENCE_ROW_GAP_PX;
+function reservedEvidenceHeight(rows: number, captions = 0): number {
+  return rows * EVIDENCE_ROW_PX
+    + Math.max(0, rows - 1) * EVIDENCE_ROW_GAP_PX
+    + captions * EVIDENCE_CAPTION_PX;
 }
 
 const CYAN = HUD_COLORS.cyanWire;
@@ -339,22 +364,34 @@ function ClusterRow({
 
 /** The slot an expected record will fill, holding its height in advance. A
  *  card that grows a row under the reader's eyes is a card that moved while
- *  they were reading it. */
-function GhostRows({ rows, accent }: { rows: number; accent: string }) {
+ *  they were reading it. The first `captions` ghosts wear the second line a
+ *  captioned row carries, so the stack measures exactly what the slot
+ *  reserved for it. */
+function GhostRows({ rows, captions = 0, accent }: {
+  rows: number;
+  captions?: number;
+  accent: string;
+}) {
   return (
     <div
       aria-hidden="true"
       data-cell-evidence-ghost={rows}
-      style={{ display: 'grid', gap: EVIDENCE_ROW_GAP_PX, minWidth: 0, opacity: 0.18 }}
+      style={{ display: 'grid', alignContent: 'start', gap: EVIDENCE_ROW_GAP_PX, minWidth: 0, opacity: REVEAL_GHOST_OPACITY }}
     >
-      {Array.from({ length: rows }, (_, index) => (
-        <span
-          key={index}
-          style={{ display: 'block', height: EVIDENCE_ROW_PX, borderLeft: `1px solid ${rgba(accent, PLATE_ROW_RAIL_ALPHA)}` }}
-        >
-          <span style={{ display: 'block', height: 1, margin: '9px 0 0 9px', background: HUD_COLORS.dim }} />
-        </span>
-      ))}
+      {Array.from({ length: rows }, (_, index) => {
+        const captioned = index < captions;
+        return (
+          <span
+            key={index}
+            style={{ display: 'block', height: EVIDENCE_ROW_PX + (captioned ? EVIDENCE_CAPTION_PX : 0), borderLeft: `1px solid ${rgba(accent, PLATE_ROW_RAIL_ALPHA)}` }}
+          >
+            <span style={{ display: 'block', height: 1, margin: '9px 0 0 9px', background: HUD_COLORS.dim }} />
+            {captioned ? (
+              <span style={{ display: 'block', width: '46%', height: 1, margin: '7px 0 0 9px', background: HUD_COLORS.dim, opacity: 0.6 }} />
+            ) : null}
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -678,13 +715,14 @@ export default function CellDetailPanel({
   // ——— Consensus-memory reveal math, absorbed from the old plate ——————
   // The memory pieces (content, causal lens, trace row) join the probe walk
   // late: content decodes through the walk, the causal lens resolves at 76%,
-  // the trace affordance arms at 90%.
+  // the trace affordance arms at 90%. All three are already mounted at their
+  // final size — passing these gates only turns their ink up.
   const memoryProgress = reduced
     ? 1
     : clampUnit(scan.classified ? 1 : scan.pct / 100);
-  const contentReveal = clampUnit(memoryProgress / 0.72);
-  const causalRevealed = memoryProgress >= 0.76;
-  const traceRevealed = memoryProgress >= 0.9;
+  const contentReveal = clampUnit(memoryProgress / CONTENT_DECODED_AT);
+  const causalRevealed = memoryProgress >= CAUSAL_REVEALED_AT;
+  const traceRevealed = memoryProgress >= TRACE_REVEALED_AT;
   const observed = identity.observedWrite;
   const recallEnabled = scan.classified && identityProofComplete;
   // WHERE / WHAT / WHEN read-marks in proof order — the same ◆/◇ the scan
@@ -1022,7 +1060,7 @@ export default function CellDetailPanel({
                 ) : null}
                 <div
                   data-cell-evidence-slot="lock"
-                  style={{ display: 'grid', gap: EVIDENCE_ROW_GAP_PX, minWidth: 0, minHeight: enrichmentPending ? reservedEvidenceHeight(LOCK_ENRICHMENT_ROWS) : undefined }}
+                  style={{ display: 'grid', gap: EVIDENCE_ROW_GAP_PX, minWidth: 0, minHeight: enrichmentPending ? reservedEvidenceHeight(LOCK_ENRICHMENT_ROWS, LOCK_ENRICHMENT_CAPTIONS) : undefined }}
                 >
                   {presentedSemanticRecord?.address ? (
                     <ClusterRow
@@ -1056,7 +1094,11 @@ export default function CellDetailPanel({
                     />
                   ) : null}
                   {enrichmentPending ? (
-                    <GhostRows rows={LOCK_ENRICHMENT_ROWS} accent={lockAccent} />
+                    <GhostRows
+                      rows={LOCK_ENRICHMENT_ROWS}
+                      captions={LOCK_ENRICHMENT_CAPTIONS}
+                      accent={lockAccent}
+                    />
                   ) : null}
                 </div>
               </div>
@@ -1261,7 +1303,7 @@ export default function CellDetailPanel({
             {scanFact('capacity')}
             <div
               data-cell-evidence-slot="capacity"
-              style={{ minWidth: 0, margin: CLUSTER_EVIDENCE_INDENT, minHeight: enrichmentPending ? BYTE_BUDGET_RESERVE_PX : undefined }}
+              style={{ minWidth: 0, margin: CLUSTER_EVIDENCE_INDENT, minHeight: enrichmentPending ? reservedEvidenceHeight(BYTE_BUDGET_GHOST_ROWS) : undefined }}
             >
               {hasKnowledge ? (
                 <CellByteBudget
@@ -1271,7 +1313,7 @@ export default function CellDetailPanel({
                   reveal={semanticsReveal >= 1 ? 1 : 0}
                 />
               ) : enrichmentPending ? (
-                <GhostRows rows={3} accent={GOLD} />
+                <GhostRows rows={BYTE_BUDGET_GHOST_ROWS} accent={GOLD} />
               ) : null}
             </div>
           </div>
@@ -1308,7 +1350,10 @@ export default function CellDetailPanel({
                 ? 'resolved'
                 : semanticTransactionRecord ? 'mismatch' : 'absent'}
               data-cell-origin-tx-note={semanticTransactionMessage ?? undefined}
-              style={{ display: causalRevealed ? 'block' : 'none' }}
+              {...revealStageAttributes(causalRevealed)}
+              // Mounted at full height from the first frame: the walk turns
+              // its ink up, it never pushes the footer down.
+              style={{ display: 'block', ...revealStageStyle(causalRevealed) }}
             >
               <CellCausalLensReadout
                 lens={resolvedCausalLens}
@@ -1327,7 +1372,8 @@ export default function CellDetailPanel({
               data-consensus-memory-reveal-state={traceRevealed
                 ? 'resolved'
                 : 'scanning'}
-              style={{ display: traceRevealed ? 'block' : 'none', marginTop: 4, paddingTop: 2, borderTop: `1px solid ${rgba(CYAN, 0.09)}` }}
+              {...revealStageAttributes(traceRevealed)}
+              style={{ display: 'block', marginTop: 4, paddingTop: 2, borderTop: `1px solid ${rgba(CYAN, 0.09)}`, ...revealStageStyle(traceRevealed) }}
             >
               {onTraceWrite ? (
                 <button
