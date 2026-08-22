@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   commitInspectionCardSize,
+  commitInspectionFrame,
   createSceneInspectionHandles,
   detachInspectionCard,
+  inspectionConnectorRestyleKey,
+  inspectionFrameKey,
   resetInspectionPlacementLock,
   resolveStickyInspectorPlacement,
   sceneInspectorPlacement,
@@ -194,5 +197,173 @@ describe('sticky placement lock', () => {
     expect(handles.card).toBeNull();
     expect(handles.placementLock)
       .toEqual({ family: null, y: null, x: null });
+  });
+});
+
+describe('frame write gates', () => {
+  it('ignores drift under half a pixel and admits drift over it', () => {
+    const at = (x: number, y: number) => inspectionFrameKey(
+      'right', x, y, 808, 668, '#71ECFF',
+    );
+    // The galaxy spins for hours: sub-pixel drift is what a tethered card
+    // does EVERY frame, and it is not what a reader can see.
+    expect(at(300, 400)).toBe(at(300.2, 400.2));
+    expect(at(300, 400)).not.toBe(at(300.6, 400));
+    expect(at(300, 400)).not.toBe(at(300, 400.6));
+  });
+
+  it('still admits a side, a size or an accent change', () => {
+    const key = inspectionFrameKey('right', 300, 400, 808, 668, '#71ECFF');
+    expect(inspectionFrameKey('left', 300, 400, 808, 668, '#71ECFF'))
+      .not.toBe(key);
+    expect(inspectionFrameKey('right', 300, 400, 808, 760, '#71ECFF'))
+      .not.toBe(key);
+    expect(inspectionFrameKey('right', 300, 400, 808, 668, '#FFB347'))
+      .not.toBe(key);
+  });
+
+  it('keeps the connector appearance deaf to where the card sits', () => {
+    // The restyle key takes no position at all: side, accent and card box are
+    // the only things that change what the connector LOOKS like.
+    const key = inspectionConnectorRestyleKey('right', '#71ECFF', 808, 668);
+    expect(inspectionConnectorRestyleKey('right', '#71ECFF', 808.4, 668.4))
+      .toBe(key);
+    expect(inspectionConnectorRestyleKey('left', '#71ECFF', 808, 668))
+      .not.toBe(key);
+    expect(inspectionConnectorRestyleKey('right', '#FFB347', 808, 668))
+      .not.toBe(key);
+    expect(inspectionConnectorRestyleKey('right', '#71ECFF', 808, 760))
+      .not.toBe(key);
+  });
+});
+
+/** A card wired to real DOM, the way the frame loop finds it. */
+function makeWiredHandles(): SceneInspectionHandles {
+  const handles = makeHandles();
+  handles.card = document.createElement('div');
+  handles.leader = document.createElement('span');
+  handles.leaderDot = document.createElement('span');
+  handles.accent = '#71ECFF';
+  return handles;
+}
+
+describe('commitInspectionFrame', () => {
+  const RIGHT = { side: 'right', x: 42, y: -150 } as const;
+
+  it('writes the whole connector on the first frame', () => {
+    const handles = makeWiredHandles();
+
+    commitInspectionFrame(handles, RIGHT, 342, 250);
+
+    expect(handles.card?.style.transform)
+      .toBe('translate3d(342px, 250px, 0)');
+    expect(handles.card?.dataset.probePlacement).toBe('right');
+    expect(handles.leader?.dataset.probeConnectorDirection).toBe('right');
+    expect(handles.leader?.style.width).toBe('42px');
+    expect(handles.leader?.style.height).toBe('2px');
+    expect(handles.leader?.style.left).toBe('-42px');
+    expect(handles.leader?.style.background)
+      .toContain('linear-gradient(90deg,');
+    expect(handles.leader?.style.boxShadow).toBe('0 0 7px #71ECFF55');
+    expect(handles.leaderDot?.style.borderColor).toBe('rgb(113, 236, 255)');
+    expect(handles.leaderDot?.style.boxShadow).toBe('0 0 9px #71ECFF99');
+    // The free coordinate: 15px clear of the card corner, else -placement.y.
+    expect(handles.leader?.style.top).toBe('150px');
+    expect(handles.leaderDot?.style.top).toBe('146px');
+  });
+
+  it('re-places a drifting card without repainting its connector', () => {
+    const handles = makeWiredHandles();
+    commitInspectionFrame(handles, RIGHT, 342, 250);
+
+    // Scribble over everything the appearance pass owns. A drift frame must
+    // not restore any of it — that is the whole point of the second gate.
+    const leader = handles.leader as HTMLSpanElement;
+    const dot = handles.leaderDot as HTMLSpanElement;
+    leader.style.background = 'none';
+    leader.style.boxShadow = 'none';
+    leader.style.width = '0px';
+    dot.style.borderColor = 'transparent';
+
+    commitInspectionFrame(handles, { side: 'right', x: 42, y: -158 }, 349, 242);
+
+    expect(leader.style.background).toBe('none');
+    expect(leader.style.boxShadow).toBe('none');
+    expect(leader.style.width).toBe('0px');
+    expect(dot.style.borderColor).toBe('transparent');
+    // ...while the two things that actually moved did move.
+    expect(handles.card?.style.transform)
+      .toBe('translate3d(349px, 242px, 0)');
+    expect(leader.style.top).toBe('158px');
+    expect(dot.style.top).toBe('154px');
+  });
+
+  it('skips the frame entirely when the drift is sub-quantum', () => {
+    const handles = makeWiredHandles();
+    commitInspectionFrame(handles, RIGHT, 342, 250);
+    (handles.card as HTMLDivElement).style.transform = 'scribble';
+
+    commitInspectionFrame(handles, RIGHT, 342.2, 250.2);
+
+    expect(handles.card?.style.transform).toBe('scribble');
+  });
+
+  it('repaints the connector when the side flips', () => {
+    const handles = makeWiredHandles();
+    commitInspectionFrame(handles, RIGHT, 342, 250);
+
+    commitInspectionFrame(handles, { side: 'left', x: -542, y: -150 }, 200, 250);
+
+    const leader = handles.leader as HTMLSpanElement;
+    // The right-hand edge offsets are cleared, not left behind to fight the
+    // new ones: a flipped connector hangs off one side only.
+    expect(leader.style.left).toBe('');
+    expect(leader.style.right).toBe('-42px');
+    expect((handles.leaderDot as HTMLSpanElement).style.left).toBe('');
+    expect((handles.leaderDot as HTMLSpanElement).style.right).toBe('-46px');
+    expect(handles.card?.dataset.probePlacement).toBe('left');
+  });
+
+  it('repaints the connector when the accent changes under a still card', () => {
+    const handles = makeWiredHandles();
+    commitInspectionFrame(handles, RIGHT, 342, 250);
+
+    handles.accent = '#FFB347';
+    commitInspectionFrame(handles, RIGHT, 342, 250);
+
+    expect(handles.leader?.style.boxShadow).toBe('0 0 7px #FFB34755');
+    expect(handles.leaderDot?.style.borderColor).toBe('rgb(255, 179, 71)');
+  });
+
+  it('repaints a connector that a re-measure or a detach invalidated', () => {
+    const handles = makeWiredHandles();
+    commitInspectionFrame(handles, RIGHT, 342, 250);
+    (handles.leader as HTMLSpanElement).style.background = 'none';
+
+    // A fresh card element inherits none of the connector's appearance, and
+    // both invalidation paths clear the signature that would have vouched
+    // for it.
+    commitInspectionCardSize(handles, 500, 300);
+    expect(handles.restyleKey).toBe('');
+    commitInspectionFrame(handles, RIGHT, 342, 250);
+    expect(handles.leader?.style.background).toContain('linear-gradient(90deg,');
+
+    detachInspectionCard(handles, handles.card as HTMLDivElement);
+    expect(handles.restyleKey).toBe('');
+  });
+
+  it('slides the connector along the card edge in the stacked family', () => {
+    const handles = makeWiredHandles();
+    commitInspectionCardSize(handles, 300, 300);
+
+    commitInspectionFrame(handles, { side: 'below', x: -150, y: 42 }, 45, 442);
+    expect(handles.leader?.style.top).toBe('-42px');
+    expect(handles.leader?.style.left).toBe('150px');
+    expect(handles.leaderDot?.style.left).toBe('146px');
+
+    (handles.leader as HTMLSpanElement).style.background = 'none';
+    commitInspectionFrame(handles, { side: 'below', x: -130, y: 42 }, 65, 442);
+    expect(handles.leader?.style.left).toBe('130px');
+    expect(handles.leader?.style.background).toBe('none');
   });
 });

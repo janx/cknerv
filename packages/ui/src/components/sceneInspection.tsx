@@ -24,6 +24,21 @@ const INSPECTOR_GAP_PX = 42;
 const INSPECTOR_EDGE_PX = 14;
 const INSPECTOR_SAFE_TOP_PX = 104;
 
+/**
+ * Sub-pixel the frame writer refuses to chase. The galaxy autorotates, so a
+ * tethered card drifts a fraction of a pixel every frame forever; a gate finer
+ * than the eye can read turns that drift into a DOM write per frame for as
+ * long as the card is open. Half a pixel is under the rounding the compositor
+ * applies anyway.
+ */
+const INSPECTOR_FRAME_QUANTUM_PX = 0.5;
+
+/** Half-pixel bucket a screen coordinate falls in — an integer, so the frame
+ * signature can be built without a `toFixed` allocation per axis per frame. */
+function inspectorFrameBucket(value: number): number {
+  return Math.round(value / INSPECTOR_FRAME_QUANTUM_PX);
+}
+
 export type SceneInspectorPlacementSide = 'left' | 'right' | 'above' | 'below';
 
 export interface SceneInspectorPlacement {
@@ -82,6 +97,11 @@ export interface SceneInspectionHandles {
   defaultSize: InspectionCardSize;
   /** Last committed frame signature — clearing forces a re-write. */
   frameKey: string;
+  /** Last committed connector *appearance* signature. The frame signature
+   * moves with the card; this one only moves when what the connector looks
+   * like changes, and clearing it forces the next frame to repaint the
+   * connector whole (a fresh card element inherits none of it). */
+  restyleKey: string;
   /** Sticky per-selection offsets, mutated in place — never reallocated in
    * the frame loop. See SceneInspectorPlacementLock. */
   placementLock: SceneInspectorPlacementLock;
@@ -111,6 +131,7 @@ export function createSceneInspectionHandles({
     measured: { width: defaultSize.width, height: defaultSize.height },
     defaultSize,
     frameKey: '',
+    restyleKey: '',
     placementLock: { family: null, y: null, x: null },
     visible: false,
     layoutSide: 'left',
@@ -132,6 +153,7 @@ export function commitInspectionCardSize(
     height: height || handles.defaultSize.height,
   };
   handles.frameKey = '';
+  handles.restyleKey = '';
 }
 
 /** Forget the sticky offsets. Called when the inspected entity changes and
@@ -153,6 +175,7 @@ export function detachInspectionCard(
 ): void {
   if (handles.card === card) handles.card = null;
   handles.frameKey = '';
+  handles.restyleKey = '';
   handles.visible = false;
   resetInspectionPlacementLock(handles);
 }
@@ -328,17 +351,51 @@ export function resolveStickyInspectorPlacement(
   return placement;
 }
 
-function updateLeader(
+/**
+ * What the frame writer commits when the card has merely moved: the card's own
+ * translation and the connector's one free coordinate. Two properties, both
+ * genuinely different every time the gate opens.
+ */
+export function inspectionFrameKey(
+  side: SceneInspectorPlacementSide,
+  cardX: number,
+  cardY: number,
+  width: number,
+  height: number,
+  accent: string,
+): string {
+  return `${side}:${inspectorFrameBucket(cardX)}:${inspectorFrameBucket(cardY)}`
+    + `:${Math.round(width)}:${Math.round(height)}:${accent}`;
+}
+
+/**
+ * What the frame writer commits when the connector has changed *character*:
+ * the side it leaves the card from decides its axis, its gradient direction
+ * and which four edges are cleared; the accent decides every colour it paints;
+ * the card box decides the measure its free coordinate is clamped into. A card
+ * that is only drifting shares all three with the frame before it, so the
+ * gradients, shadows and dataset it already carries are already correct.
+ */
+export function inspectionConnectorRestyleKey(
+  side: SceneInspectorPlacementSide,
+  accent: string,
+  width: number,
+  height: number,
+): string {
+  return `${side}:${accent}:${Math.round(width)}x${Math.round(height)}`;
+}
+
+/** Everything about the connector that does not depend on where the card
+ * currently sits: axis, cleared edges, gradient, glow, accent, direction. */
+function restyleLeader(
   line: HTMLSpanElement,
   anchor: HTMLSpanElement,
-  placement: SceneInspectorPlacement,
-  panelWidth: number,
-  panelHeight: number,
+  side: SceneInspectorPlacementSide,
   gap: number,
   accent: string,
   directionDataKey: string,
 ): void {
-  const horizontal = placement.side === 'left' || placement.side === 'right';
+  const horizontal = side === 'left' || side === 'right';
   line.style.width = horizontal ? `${gap}px` : '2px';
   line.style.height = horizontal ? '2px' : `${gap}px`;
   line.style.left = '';
@@ -352,37 +409,102 @@ function updateLeader(
   anchor.style.borderColor = accent;
   anchor.style.boxShadow = `0 0 9px ${accent}99`;
   line.style.boxShadow = `0 0 7px ${accent}55`;
-  line.dataset[directionDataKey] = placement.side;
+  line.dataset[directionDataKey] = side;
 
-  if (placement.side === 'right') {
+  if (side === 'right') {
     line.style.background = `linear-gradient(90deg,${accent}dd,${HUD_COLORS.cyanWire}38)`;
-    const top = Math.max(15, Math.min(panelHeight - 15, -placement.y));
     line.style.left = `${-gap}px`;
-    line.style.top = `${top}px`;
     anchor.style.left = `${-gap - 4}px`;
-    anchor.style.top = `${top - 4}px`;
-  } else if (placement.side === 'left') {
+  } else if (side === 'left') {
     line.style.background = `linear-gradient(90deg,${HUD_COLORS.cyanWire}38,${accent}dd)`;
-    const top = Math.max(15, Math.min(panelHeight - 15, -placement.y));
     line.style.right = `${-gap}px`;
-    line.style.top = `${top}px`;
     anchor.style.right = `${-gap - 4}px`;
-    anchor.style.top = `${top - 4}px`;
-  } else if (placement.side === 'below') {
+  } else if (side === 'below') {
     line.style.background = `linear-gradient(180deg,${accent}dd,${HUD_COLORS.cyanWire}38)`;
-    const left = Math.max(15, Math.min(panelWidth - 15, -placement.x));
-    line.style.left = `${left}px`;
     line.style.top = `${-gap}px`;
-    anchor.style.left = `${left - 4}px`;
     anchor.style.top = `${-gap - 4}px`;
   } else {
     line.style.background = `linear-gradient(180deg,${HUD_COLORS.cyanWire}38,${accent}dd)`;
-    const left = Math.max(15, Math.min(panelWidth - 15, -placement.x));
-    line.style.left = `${left}px`;
     line.style.bottom = `${-gap}px`;
-    anchor.style.left = `${left - 4}px`;
     anchor.style.bottom = `${-gap - 4}px`;
   }
+}
+
+/** The connector's one free coordinate: where along the card's near edge the
+ * line meets it. The beside family slides it vertically, the stacked family
+ * horizontally, and both keep it 15px clear of the card's corners. */
+function positionLeader(
+  line: HTMLSpanElement,
+  anchor: HTMLSpanElement,
+  placement: SceneInspectorPlacement,
+  panelWidth: number,
+  panelHeight: number,
+): void {
+  if (placement.side === 'left' || placement.side === 'right') {
+    const top = Math.max(15, Math.min(panelHeight - 15, -placement.y));
+    line.style.top = `${top}px`;
+    anchor.style.top = `${top - 4}px`;
+    return;
+  }
+  const left = Math.max(15, Math.min(panelWidth - 15, -placement.x));
+  line.style.left = `${left}px`;
+  anchor.style.left = `${left - 4}px`;
+}
+
+/**
+ * The whole DOM side of one frame, behind two gates. The outer gate asks
+ * whether the card has moved far enough to be worth a write at all; the inner
+ * one asks whether the connector would come out looking any different. A card
+ * that is merely drifting under the galaxy's spin passes the first and fails
+ * the second, so it costs three property writes instead of twenty-one.
+ *
+ * DOM-only and mutation-only over the handles, so the frame loop calls it
+ * directly and jsdom can exercise the contract without R3F.
+ */
+export function commitInspectionFrame(
+  handles: SceneInspectionHandles,
+  placement: SceneInspectorPlacement,
+  cardX: number,
+  cardY: number,
+): void {
+  const card = handles.card;
+  const leader = handles.leader;
+  const leaderDot = handles.leaderDot;
+  if (!card || !leader || !leaderDot) return;
+  const { width, height } = handles.measured;
+  const frameKey = inspectionFrameKey(
+    placement.side,
+    cardX,
+    cardY,
+    width,
+    height,
+    handles.accent,
+  );
+  if (frameKey === handles.frameKey) return;
+  handles.frameKey = frameKey;
+  // Repaint the connector only when it would come out different. A drifting
+  // card keeps its gradient, its two glows, its cleared edges and both dataset
+  // words; all that has actually changed is where it is.
+  const restyleKey = inspectionConnectorRestyleKey(
+    placement.side,
+    handles.accent,
+    width,
+    height,
+  );
+  if (restyleKey !== handles.restyleKey) {
+    handles.restyleKey = restyleKey;
+    card.dataset[handles.placementDataKey] = placement.side;
+    restyleLeader(
+      leader,
+      leaderDot,
+      placement.side,
+      INSPECTOR_GAP_PX,
+      handles.accent,
+      handles.connectorDataKey,
+    );
+  }
+  card.style.transform = `translate3d(${cardX}px, ${cardY}px, 0)`;
+  positionLeader(leader, leaderDot, placement, width, height);
 }
 
 /**
@@ -442,7 +564,6 @@ export function SceneInspectionAnchor({
     // App keeps the Canvas full-viewport, so the two coordinate spaces match.
     const anchorX = (projected.current.x * 0.5 + 0.5) * size.width;
     const anchorY = (-projected.current.y * 0.5 + 0.5) * size.height;
-    const { width, height } = handles.measured;
     const placement = resolveStickyInspectorPlacement(
       handles,
       anchorX,
@@ -451,30 +572,15 @@ export function SceneInspectionAnchor({
       size.height,
     );
     setInspectionLayoutSide(handles, placement.side);
+    // Ahead of the write gate on purpose: the dialect's own screen-space
+    // channels are mutation-only and must see every frame the entity is on
+    // screen for, gate or no gate.
     onCardFrame?.(anchorX, anchorY, placement);
-    const cardX = anchorX + placement.x;
-    const cardY = anchorY + placement.y;
-    const frameKey = [
-      placement.side,
-      cardX.toFixed(1),
-      cardY.toFixed(1),
-      width,
-      height,
-      handles.accent,
-    ].join(':');
-    if (frameKey === handles.frameKey) return;
-    handles.frameKey = frameKey;
-    card.dataset[handles.placementDataKey] = placement.side;
-    card.style.transform = `translate3d(${cardX}px, ${cardY}px, 0)`;
-    updateLeader(
-      leader,
-      leaderDot,
+    commitInspectionFrame(
+      handles,
       placement,
-      width,
-      height,
-      INSPECTOR_GAP_PX,
-      handles.accent,
-      handles.connectorDataKey,
+      anchorX + placement.x,
+      anchorY + placement.y,
     );
   });
 
@@ -547,13 +653,24 @@ export function SceneInspectionConnector({
   return (
     <>
       <span
-        ref={(node) => { handles.leader = node; }}
+        ref={(node) => {
+          handles.leader = node;
+          // A connector element the frame writer has never painted carries
+          // none of the appearance the restyle gate assumes it kept, so the
+          // next frame owes it both passes.
+          handles.frameKey = '';
+          handles.restyleKey = '';
+        }}
         aria-hidden="true"
         {...leaderAttributes}
         style={INSPECTION_LEADER_STYLE}
       />
       <span
-        ref={(node) => { handles.leaderDot = node; }}
+        ref={(node) => {
+          handles.leaderDot = node;
+          handles.frameKey = '';
+          handles.restyleKey = '';
+        }}
         aria-hidden="true"
         {...dotAttributes}
         style={inspectionLeaderDotStyle(dotEnterAnimation)}
