@@ -66,6 +66,13 @@
     "is_miner": false,
     "at": 1700000000000
   },
+  "BackfillProgress": {
+    "type": "backfill_progress",
+    "done": 250,
+    "total": 1000,
+    "active": true,
+    "phase": "catchup"
+  },
   "CellHydrationCompleted": {
     "type": "cell_hydration_completed",
     "target": 20000,

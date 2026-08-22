@@ -432,6 +432,21 @@ describe('cross-language wire-shape parity', () => {
     expect(c.total_txs).toBe(1);
     expect(c.mempool.min_fee_rate).toBe(1000);
   });
+
+  /** `backfill_progress` is on the entity wire and deliberately NOT in this
+   *  reducer: the SPA reads replay progress off the cells projection stream
+   *  (`CellDelta.backfill`). The silence is the design, so pin it — the
+   *  `default:` arm that produces it is the same arm a genuinely new variant
+   *  would fall into, and the only thing separating "correctly ignored" from
+   *  "silently swallowed" is a test that says which one this is. */
+  it('ignores backfill_progress without touching the chain entry', () => {
+    const samples = fixture<Record<string, Mutation>>('mutation_samples.json');
+    const before = emptyChainCache();
+    const sample = samples.BackfillProgress;
+    expect((sample as unknown as { type: string }).type).toBe('backfill_progress');
+    // Identity, not merely equality: a no-op must not even clone.
+    expect(applyChainMutation(before, sample)).toBe(before);
+  });
 });
 
 describe('ring identity preservation', () => {

@@ -28,6 +28,24 @@ const fixturePath = (name: string) =>
 const fixture = <T>(name: string): T =>
   JSON.parse(readFileSync(fixturePath(name), 'utf8')) as T;
 
+/** Wire-visible tags the SPA's `Mutation` union deliberately does NOT model.
+ *
+ *  `backfill_progress` rides the entity mutation broadcast like any other
+ *  mutation, but the SPA acts on replay progress through the CELLS projection
+ *  stream (`CellDelta.backfill`) — see the doc on `Mutation::BackfillProgress`
+ *  in `crates/cknerv-core/src/mutation.rs`. The fixture still has to carry it,
+ *  because the fixture pins the wire and this is on the wire; what must not
+ *  happen is the chain reducer growing an arm for it by accident, which
+ *  `chainReducer.test.ts` pins from the other side. */
+const OUTSIDE_THE_TS_UNION = ['backfill_progress'] as const;
+
+/** Type-level pin for the sentence above: if the union ever grows the tag,
+ *  `Extract` stops being `never` and this assignment fails to compile — so
+ *  the exclusion cannot rot into a lie. */
+type BackfillArm = Extract<Mutation, { type: 'backfill_progress' }>;
+const _backfillIsNotAChainMutation: [BackfillArm] extends [never] ? true : false = true;
+void _backfillIsNotAChainMutation;
+
 describe('wire-shape parity (TS twin of cknerv-core)', () => {
   it('mutation_samples.json parses into Mutation type', () => {
     const samples = fixture<Record<string, Mutation>>('mutation_samples.json');
@@ -37,13 +55,18 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
       const m = sample as { type: string };
       expect(m.type, `sample ${name} missing 'type' discriminant`).toBeTruthy();
       expect(m.type).toMatch(
-        /^(block_mined|chain_reorganized|chain_rebuild|tx_landed|chain_mempool_updated|chain_info_updated|cell_tagged|chain_node_registered|cell_hydration_completed|peers_updated|chain_sync_updated|chain_node_info_updated)$/,
+        /^(block_mined|chain_reorganized|chain_rebuild|tx_landed|chain_mempool_updated|chain_info_updated|cell_tagged|chain_node_registered|backfill_progress|cell_hydration_completed|peers_updated|chain_sync_updated|chain_node_info_updated)$/,
       );
       variantTypes.add(m.type);
     }
-    // Confirm we covered every cknerv-core variant exactly once. Drift
-    // here means either the fixture lost a variant or a new variant was
-    // added and the test wasn't updated.
+    // Confirm we covered every wire-visible cknerv-core variant exactly once.
+    // Drift here means either the fixture lost a variant or a new variant was
+    // added and the test wasn't updated. The Rust twin
+    // (`mutation_samples_cover_every_wire_visible_variant`) holds the same
+    // set against a total match over the enum, so neither side can drift
+    // alone; the two server-internal `galaxy_reservoir_*` variants are absent
+    // from both, because `Mutation::entity_wire_visible` keeps them off the
+    // wire entirely.
     expect(variantTypes).toEqual(
       new Set([
         'block_mined',
@@ -58,6 +81,7 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
         'peers_updated',
         'chain_sync_updated',
         'chain_node_info_updated',
+        ...OUTSIDE_THE_TS_UNION,
       ]),
     );
     // The observed node's own network identity is optional on the wire, so

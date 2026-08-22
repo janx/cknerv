@@ -99,6 +99,111 @@ fn mutation_samples_round_trip() {
     }
 }
 
+/// Which variant a sample is. Total by construction: a new `Mutation` stops
+/// compiling here until it is named, and the coverage assertion in
+/// [`mutation_samples_cover_every_wire_visible_variant`] then demands a
+/// fixture entry for it.
+fn mutation_variant(mutation: &Mutation) -> &'static str {
+    match mutation {
+        Mutation::BlockMined { .. } => "block_mined",
+        Mutation::ChainReorganized { .. } => "chain_reorganized",
+        Mutation::ChainRebuild { .. } => "chain_rebuild",
+        Mutation::TxLanded { .. } => "tx_landed",
+        Mutation::ChainMempoolUpdated { .. } => "chain_mempool_updated",
+        Mutation::ChainInfoUpdated { .. } => "chain_info_updated",
+        Mutation::CellTagged { .. } => "cell_tagged",
+        Mutation::ChainNodeRegistered { .. } => "chain_node_registered",
+        Mutation::BackfillProgress { .. } => "backfill_progress",
+        Mutation::CellHydrationCompleted { .. } => "cell_hydration_completed",
+        Mutation::PeersUpdated { .. } => "peers_updated",
+        Mutation::ChainSyncUpdated { .. } => "chain_sync_updated",
+        Mutation::ChainNodeInfoUpdated { .. } => "chain_node_info_updated",
+        Mutation::GalaxyReservoirReplaced { .. } => "galaxy_reservoir_replaced",
+        Mutation::GalaxyReservoirToppedUp { .. } => "galaxy_reservoir_topped_up",
+    }
+}
+
+/// The variants that deliberately never reach a client, so a fixture sample
+/// for them would pin a wire shape nothing reads.
+///
+/// These are exactly the two `Mutation::entity_wire_visible` excludes: the
+/// server synthesizes them so the curated display reservoir can ride the
+/// canonical mutation channel, and both the entity ring and the broadcast
+/// drop them. `cknerv-server`'s R5 pin
+/// (`galaxy_reservoir_mutation_never_reaches_the_entity_wire`, with
+/// `galaxy_top_up_closes_demand_over_the_internal_channel_only` for the
+/// additive twin, in `crates/cknerv-server/src/state.rs`) proves the claim;
+/// this list is the reason no fixture pins their shape. If that pin ever
+/// stops holding, these two belong back in the fixture — the two tests guard
+/// each other.
+const OFF_THE_WIRE_MUTATIONS: &[&str] =
+    &["galaxy_reservoir_replaced", "galaxy_reservoir_topped_up"];
+
+/// Every wire-visible `Mutation` needs a sample, the same contract
+/// `CellDelta` and `SemanticsDelta` already hold. Without this, a new
+/// variant reaches the browser and the TS chain reducer's `default:` arm
+/// swallows it — no fixture, no failure, no readout.
+#[test]
+fn mutation_samples_cover_every_wire_visible_variant() {
+    let samples = fixture("mutation_samples.json");
+    let covered: std::collections::BTreeSet<String> = samples
+        .as_object()
+        .expect("mutation_samples.json must be a JSON object")
+        .values()
+        .map(|sample| {
+            let m: Mutation = serde_json::from_value(sample.clone()).expect("deserialize Mutation");
+            // The fixture pins the wire, so everything in it must BE on the
+            // wire — read from the predicate the server itself filters by.
+            assert!(
+                m.entity_wire_visible(),
+                "{} is server-internal and has no wire shape to pin",
+                mutation_variant(&m)
+            );
+            mutation_variant(&m).to_string()
+        })
+        .collect();
+    let expected: std::collections::BTreeSet<String> = [
+        "block_mined",
+        "chain_reorganized",
+        "chain_rebuild",
+        "tx_landed",
+        "chain_mempool_updated",
+        "chain_info_updated",
+        "cell_tagged",
+        "chain_node_registered",
+        "backfill_progress",
+        "cell_hydration_completed",
+        "peers_updated",
+        "chain_sync_updated",
+        "chain_node_info_updated",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
+    assert_eq!(
+        covered, expected,
+        "every wire-visible Mutation variant needs a sample in \
+         mutation_samples.json — the TS chain reducer's default arm is silent, \
+         so an unsampled variant fails nowhere"
+    );
+
+    // The exclusion has to stay honest in both directions. `mutation_variant`
+    // is total, so a new variant cannot compile without a name — but nothing
+    // yet forces that name to appear in either list, and a variant named only
+    // there would be as unsampled as before. The count closes it: adding a
+    // variant makes this fail until its name joins one of the two lists.
+    let named: std::collections::BTreeSet<String> = expected
+        .iter()
+        .cloned()
+        .chain(OFF_THE_WIRE_MUTATIONS.iter().map(|s| s.to_string()))
+        .collect();
+    assert_eq!(
+        named.len(),
+        15,
+        "every Mutation variant belongs to exactly one of the two lists above"
+    );
+}
+
 /// Which variant a sample is. Total by construction: a new `CellDelta`
 /// stops compiling here until it is named, and the coverage assertion in
 /// [`cell_delta_samples_cover_every_variant`] then demands a sample for it.
