@@ -195,10 +195,15 @@ describe('CellGalaxy', () => {
 
   it('reuses one exact screen index until a projection input changes', () => {
     const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
+    // The galaxy root is `memo(CellGalaxy)` now, so the slice ends at the
+    // declaration rather than at an `export default function` that no longer
+    // exists — an indexOf miss here would silently widen the window to the end
+    // of the file and let the negative assertions below pass for free.
     const picker = source.slice(
       source.indexOf('function CellPicker('),
-      source.indexOf('export default function CellGalaxy'),
+      source.indexOf('function CellGalaxy('),
     );
+    expect(source.indexOf('function CellGalaxy(')).toBeGreaterThan(-1);
 
     expect(picker).toContain('ScreenSpaceHitIndex');
     expect(picker).toContain('indexedMatrixWorld.equals(matrix)');

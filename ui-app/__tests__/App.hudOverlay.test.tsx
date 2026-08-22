@@ -106,13 +106,18 @@ describe('HudOverlay wiring', () => {
     expect(hudWiring).not.toContain('onClearCell=');
     // A Cell selection never reaches the HUD, not even as a dimmer flag.
     expect(hudWiring).not.toContain('cellInspectionActive');
-    // The scene half projects from inside the Galaxy overlay…
+    // The scene half projects from inside the Galaxy overlay. That overlay is
+    // now hoisted into a memo — a fragment rebuilt at the call site would hand
+    // the memoized CellGalaxy a fresh prop every App render — so the anchor
+    // lives in `galaxyOverlay`, and `galaxyOverlay` is what the galaxy's
+    // `overlay` slot receives, still inside the Canvas.
     expect(anchorWiring).toBeDefined();
     expect(anchorWiring).toContain('cell={selectedCell}');
     expect(anchorWiring).toContain('handles={cellInspectionHandles}');
     expect(APP_SOURCE.indexOf('<CellInspectionAnchor')).toBeGreaterThan(
-      APP_SOURCE.indexOf('overlay={'),
+      APP_SOURCE.indexOf('const galaxyOverlay = useMemo('),
     );
+    expect(APP_SOURCE).toContain('overlay={galaxyOverlay}');
     expect(APP_SOURCE.indexOf('<CellInspectionAnchor')).toBeLessThan(
       APP_SOURCE.indexOf('</Canvas>'),
     );

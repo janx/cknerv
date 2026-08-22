@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { memo, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useThree } from '@react-three/fiber';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { useSimClock } from '../tweaks/SimClockScope';
@@ -1084,7 +1084,7 @@ function CellPicker({
  * objects. Exact delivery/commit flashes remain anchored to real Cells; the
  * broad new-block brightness wave renders in the peer network.
  */
-export default function CellGalaxy({
+function CellGalaxy({
   ckbNodeIds,
   cellCapacity,
   minerCkbNodeIds,
@@ -1964,3 +1964,12 @@ export default function CellGalaxy({
     </>
   );
 }
+
+// Memoized: the consumer holds the whole dashboard's state in one component, so
+// a chain poll, a stream-health flip or a note about an orbit gesture used to
+// re-run this entire body — forty-odd hook slots and their dep compares — for a
+// frame in which not one cell had moved. Cells arrive by CONTEXT
+// (`useCellGalaxy`), and React propagates a context change to its consumers
+// straight through a memo bail-out, so the live data path is untouched: this
+// only drops the renders that were never about the galaxy.
+export default memo(CellGalaxy);

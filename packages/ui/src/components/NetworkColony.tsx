@@ -39,7 +39,7 @@
 // `blockPulseAtMs` and gates on `backfillActive` (consume-then-bail);
 // NetworkColony keeps `cf`/`blockPulseAtMs`/`backfillActive` to feed the peer
 // effects and to stamp its own `pulseRef` for delivery into the Cell field.
-import { useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { memo, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { useCellGalaxyOptional } from '../hooks/cellGalaxyContext';
@@ -80,7 +80,7 @@ interface NetworkColonyProps {
   overlay?: ReactNode;
 }
 
-export default function NetworkColony({
+function NetworkColony({
   topology,
   cf,
   blockPulseAtMs,
@@ -203,3 +203,10 @@ export default function NetworkColony({
     </group>
   );
 }
+
+// Memoized alongside the other two scene roots. This body is short, but the
+// four layers it mounts are not, and reconciling them cost a render apiece for
+// every App state change that never touched the colony. `topology` and `cf` are
+// already memoized upstream on a peer content signature, so a poll that finds
+// the same peers now stops here. The backfill flag still arrives by context.
+export default memo(NetworkColony);

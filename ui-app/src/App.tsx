@@ -216,7 +216,17 @@ export default function App({
   initialCells,
   initialCellsRevision,
 }: AppProps) {
-  const galaxyConfig = resolveGalaxyConfig();
+  // `window.__CKNERV_RUNTIME_CONFIG__` is written once into the served HTML
+  // (cknerv-cli assets.rs) before the bundle boots and nothing ever assigns it
+  // again, so resolving it once is resolving it for the page's life. Resolving
+  // it per render was not merely wasteful: with a config injected, the resolver
+  // builds FRESH `topology` / `pulses` objects each call, and those are handed
+  // straight to NeuralNetwork as props — new identities every App render, which
+  // would defeat the memo on every scene root below.
+  const galaxyConfig = useMemo(() => resolveGalaxyConfig(), []);
+  // Deliberately NOT memoized: only its scalar fields are ever read
+  // (`.enabled`, `.source`), never its identity, so a fresh object costs
+  // nothing downstream.
   const enrichmentConfig = resolveEnrichmentConfig();
   const qualityOverride = useMemo(() => (
     typeof window === 'undefined'
@@ -1388,6 +1398,127 @@ export default function App({
     };
   }, [inspectedNetNodeId, peerSightingEnabled, peerSightingLookup]);
 
+  // ── Scene-root overlays ────────────────────────────────────────────────────
+  // CellGalaxy and NetworkColony are memoized, and a fragment written inline at
+  // the call site is a NEW element every App render. A shallow compare needs
+  // ALL props equal, so that single fresh child would have defeated the memo
+  // outright and kept dragging both roots — and every layer beneath them —
+  // through a full re-render for each chain poll, stream-health flip, semantics
+  // round and orbit gesture. Hoisted here, the element identity turns over only
+  // when something the overlay actually draws from turns over.
+  //
+  // DEP DISCIPLINE: each list mirrors EVERY component-scope binding its body
+  // reads — refs and state setters included, though React already guarantees
+  // those never change — so the list can be read against the body one line at a
+  // time instead of trusting a lint rule this repo does not run in CI. Add a
+  // prop below, add its source to the list; `__tests__/App.sceneRoots.test.tsx`
+  // fails if you don't.
+  const galaxyOverlay = useMemo(() => (
+    <>
+      {selectedCell ? (
+        <CellInspectionAnchor
+          key={selectedCell.id}
+          cell={selectedCell}
+          handles={cellInspectionHandles}
+        />
+      ) : null}
+      {selectedCell && selectedCellSemantics ? (
+        <CellSemanticOrbit
+          cell={selectedCell}
+          record={selectedCellSemantics}
+          source={semanticsCache.source}
+        />
+      ) : null}
+      {selectedCausalLens ? (
+        <CellCausalLensLayer
+          key={selectedCausalLens.key}
+          lens={selectedCausalLens}
+          onNavigateCell={navigateCausalCell}
+        />
+      ) : null}
+      {/* Cell→cell consensus packets: each observed transaction routes its
+          carrier from input cells to outputs through the shared neighbour
+          graph, illuminating the maintained data structure before the terminal
+          write seal resolves. */}
+      <NeuralNetwork
+        cellCapacity={galaxyConfig.cellCap}
+        cellFlashRef={cellFlashRef}
+        flashDirtyRef={flashDirtyRef}
+        flashDirtyIdsRef={flashDirtyIdsRef}
+        burstArrivalRef={burstArrivalRef}
+        topology={galaxyConfig.topology}
+        pulses={galaxyConfig.pulses}
+        livePulseDelayS={livePulseDelayS}
+        cellDetailViewFocusRef={cellDetailViewFocusRef}
+        traceRequest={memoryTraceRequest}
+        traceMaxPulses={CELL_MEMORY_RECALL_MAX_PULSES}
+        traceHoldForRecordSwitch={memoryRecordSwitchPending}
+        onTraceComplete={completeMemoryRecall}
+        onTraceReadoutChange={setMemoryTraceReadout}
+        traceTargetResponseRef={memoryTraceTargetResponseRef}
+        traceEvidenceFocusSourceId={memoryEvidenceFocusSourceId}
+        traceRouteHopFocus={memoryRouteHopFocus}
+        traceRouteHopLock={memoryRouteHopLock}
+        onTraceAgreementPreviewChange={previewMemoryTraceAgreement}
+        onTraceRouteHopLockChange={lockMemoryTraceRouteHop}
+      />
+      <ConsensusWriteSeal arrivalRef={burstArrivalRef} />
+    </>
+  ), [
+    burstArrivalRef,
+    cellDetailViewFocusRef,
+    cellFlashRef,
+    cellInspectionHandles,
+    completeMemoryRecall,
+    flashDirtyIdsRef,
+    flashDirtyRef,
+    galaxyConfig.cellCap,
+    galaxyConfig.pulses,
+    galaxyConfig.topology,
+    livePulseDelayS,
+    lockMemoryTraceRouteHop,
+    memoryEvidenceFocusSourceId,
+    memoryRecordSwitchPending,
+    memoryRouteHopFocus,
+    memoryRouteHopLock,
+    memoryTraceRequest,
+    memoryTraceTargetResponseRef,
+    navigateCausalCell,
+    previewMemoryTraceAgreement,
+    selectedCausalLens,
+    selectedCell,
+    selectedCellSemantics,
+    semanticsCache.source,
+    setMemoryTraceReadout,
+  ]);
+  // Both probes tether from colony space, and the colony's one selection means
+  // only ever one of them is mounted.
+  const colonyOverlay = useMemo(() => (
+    <>
+      {inspectedPeer && inspectedPeerAnchor ? (
+        <PeerInspectionAnchor
+          key={inspectedPeer.node_id}
+          position={inspectedPeerAnchor}
+          handles={peerInspectionHandles}
+        />
+      ) : null}
+      {selectedSighted && selectedSightedAnchor ? (
+        <SightedInspectionAnchor
+          key={selectedSighted.node_id}
+          position={selectedSightedAnchor}
+          handles={sightedInspectionHandles}
+        />
+      ) : null}
+    </>
+  ), [
+    inspectedPeer,
+    inspectedPeerAnchor,
+    peerInspectionHandles,
+    selectedSighted,
+    selectedSightedAnchor,
+    sightedInspectionHandles,
+  ]);
+
   return (
     <>
       {/* Leva knobs panel (DOM overlay) — hidden by default, backtick toggles. */}
@@ -1506,58 +1637,7 @@ export default function App({
             flashDirtyRef={flashDirtyRef}
             flashDirtyIdsRef={flashDirtyIdsRef}
             pickingSuspendedRef={orbitPickingSuspendedRef}
-            overlay={
-              <>
-                {selectedCell ? (
-                  <CellInspectionAnchor
-                    key={selectedCell.id}
-                    cell={selectedCell}
-                    handles={cellInspectionHandles}
-                  />
-                ) : null}
-                {selectedCell && selectedCellSemantics ? (
-                  <CellSemanticOrbit
-                    cell={selectedCell}
-                    record={selectedCellSemantics}
-                    source={semanticsCache.source}
-                  />
-                ) : null}
-                {selectedCausalLens ? (
-                  <CellCausalLensLayer
-                    key={selectedCausalLens.key}
-                    lens={selectedCausalLens}
-                    onNavigateCell={navigateCausalCell}
-                  />
-                ) : null}
-                {/* Cell→cell consensus packets: each observed transaction
-                    routes its carrier from input cells to outputs through the
-                    shared neighbour graph, illuminating the maintained data
-                    structure before the terminal write seal resolves. */}
-                <NeuralNetwork
-                  cellCapacity={galaxyConfig.cellCap}
-                  cellFlashRef={cellFlashRef}
-                  flashDirtyRef={flashDirtyRef}
-                  flashDirtyIdsRef={flashDirtyIdsRef}
-                  burstArrivalRef={burstArrivalRef}
-                  topology={galaxyConfig.topology}
-                  pulses={galaxyConfig.pulses}
-                  livePulseDelayS={livePulseDelayS}
-                  cellDetailViewFocusRef={cellDetailViewFocusRef}
-                  traceRequest={memoryTraceRequest}
-                  traceMaxPulses={CELL_MEMORY_RECALL_MAX_PULSES}
-                  traceHoldForRecordSwitch={memoryRecordSwitchPending}
-                  onTraceComplete={completeMemoryRecall}
-                  onTraceReadoutChange={setMemoryTraceReadout}
-                  traceTargetResponseRef={memoryTraceTargetResponseRef}
-                  traceEvidenceFocusSourceId={memoryEvidenceFocusSourceId}
-                  traceRouteHopFocus={memoryRouteHopFocus}
-                  traceRouteHopLock={memoryRouteHopLock}
-                  onTraceAgreementPreviewChange={previewMemoryTraceAgreement}
-                  onTraceRouteHopLockChange={lockMemoryTraceRouteHop}
-                />
-                <ConsensusWriteSeal arrivalRef={burstArrivalRef} />
-              </>
-            }
+            overlay={galaxyOverlay}
           />
 
           {/* Scene half of the local node's self probe. It sits beside
@@ -1592,26 +1672,7 @@ export default function App({
             flashDirtyIdsRef={flashDirtyIdsRef}
             localVersion={localNode?.version ?? ''}
             cellDetailViewFocusRef={cellDetailViewFocusRef}
-            overlay={(
-              <>
-                {/* Both probes tether from colony space, and the colony's one
-                    selection means only ever one of them is mounted. */}
-                {inspectedPeer && inspectedPeerAnchor ? (
-                  <PeerInspectionAnchor
-                    key={inspectedPeer.node_id}
-                    position={inspectedPeerAnchor}
-                    handles={peerInspectionHandles}
-                  />
-                ) : null}
-                {selectedSighted && selectedSightedAnchor ? (
-                  <SightedInspectionAnchor
-                    key={selectedSighted.node_id}
-                    position={selectedSightedAnchor}
-                    handles={sightedInspectionHandles}
-                  />
-                ) : null}
-              </>
-            )}
+            overlay={colonyOverlay}
           />
 
           {/* Opening or switching Cell detail is camera-passive. Only explicit

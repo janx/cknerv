@@ -15,6 +15,7 @@
 //      and stamps a write seal when it lands on the terminal.
 
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -333,7 +334,7 @@ function resolvePulseGhost(
   return { ms: ghostLegDurationMs(pulse.hopMs, ghostLen), origin, to };
 }
 
-export default function NeuralNetwork({
+function NeuralNetwork({
   cellCapacity,
   cellFlashRef,
   flashDirtyRef,
@@ -2031,3 +2032,10 @@ export default function NeuralNetwork({
     </>
   );
 }
+
+// Memoized for the same reason as CellGalaxy: every prop here is a ref, a
+// module constant, a scalar or a memoized value in the dashboard, so a chain
+// poll or a stream-health flip changes none of them — and this body is the
+// longest of the three roots. Cells still arrive by context, which reaches a
+// bailed-out consumer unchanged.
+export default memo(NeuralNetwork);
