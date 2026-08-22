@@ -80,9 +80,13 @@ import {
 
 const EMPTY_RECENT_LINKS: readonly CellLink[] = [];
 const PORTRAIT_BRACKET_PX = 12;
-/** 8px seam between the CELL SCAN square and the analysis plate around it. */
-const ANALYSIS_NOTCH_SEAM_PX = 8;
-const ANALYSIS_CUT_PX = 12;
+/** The CELL SCAN square is an independent column beside the analysis plate:
+ * 520 of analysis + an 8px seam + the 280 square, one constant geometry for
+ * bare and enriched Cells alike. */
+const PORTRAIT_COLUMN_PX = 280;
+const CARD_SEAM_PX = 8;
+const ANALYSIS_COLUMN_PX = 520;
+const CARD_WIDTH_PX = ANALYSIS_COLUMN_PX + CARD_SEAM_PX + PORTRAIT_COLUMN_PX;
 
 /** Panel-local display order — the vertical order the six facts occupy in the
  * merged CKBYTES ANALYSIS layout, used ONLY for probe-reveal indexing so the
@@ -96,6 +100,9 @@ const CKBYTES_REVEAL_ORDER: readonly ConsensusBraidField[] = [
   'capacity',
   'data',
 ];
+
+/** Evidence hangs under the fact it explains, in every cluster. */
+const CLUSTER_EVIDENCE_INDENT = '3px 0 0 11px';
 
 const CYAN = HUD_COLORS.cyanWire;
 const VIOLET = HUD_COLORS.memory;
@@ -530,31 +537,22 @@ export default function CellDetailPanel({
         : (traceReadout?.stage ?? 'PLANNING').toUpperCase();
 
   const verticalLayout = layoutSide === 'above' || layoutSide === 'below';
-  // Peer-card rhythm: the analysis plate wraps the specimen square through an
-  // L-notch, so the card silhouette stays one flush rectangle in every fan.
-  const portraitWidth = enhancedDetail ? 280 : 260;
-  const rootWidth = portraitWidth + 8 + (enhancedDetail ? 520 : 420);
   const satelliteBase: CSSProperties = {
     position: 'relative',
-    zIndex: 1,
     minWidth: 0,
     boxSizing: 'border-box',
     pointerEvents: 'auto',
   };
   // The specimen column always sits on the edge nearest the inspected Cell —
-  // mirroring for a right or vertical fan flips the notch corner and the
-  // internal register/notch columns, never per-satellite coordinate math.
+  // mirroring for a right or vertical fan swaps the two columns, never any
+  // per-satellite coordinate math. The plate can no longer paint behind the
+  // transparent scan square (the braid lives there): they are siblings now,
+  // not one plate notched around the other.
   const portraitFirst = verticalLayout || layoutSide === 'right';
-  const notchPx = portraitWidth + ANALYSIS_NOTCH_SEAM_PX;
-  const analysisPaddingTopPx = 12;
-  // The plate never paints behind the CELL SCAN square: that square is a
-  // transparent hole down to the canvas braid, so the plate background (and
-  // its borders — correct: the top border then only runs along the register
-  // zone) is clipped out of the (280+8)² notch. One 12px cut corner stays in
-  // the house idiom on an outer corner that is not the notch.
-  const analysisClip = portraitFirst
-    ? `polygon(${notchPx}px 0, calc(100% - ${ANALYSIS_CUT_PX}px) 0, 100% ${ANALYSIS_CUT_PX}px, 100% 100%, 0 100%, 0 ${notchPx}px, ${notchPx}px ${notchPx}px)`
-    : `polygon(0 0, calc(100% - ${notchPx}px) 0, calc(100% - ${notchPx}px) ${notchPx}px, 100% ${notchPx}px, 100% calc(100% - ${ANALYSIS_CUT_PX}px), calc(100% - ${ANALYSIS_CUT_PX}px) 100%, 0 100%)`;
+  const cardRows = portraitFirst
+    ? '"header header" "scan analysis"'
+    : '"header header" "analysis scan"';
+  const cardAreas = showTracePlate ? `${cardRows} "trace trace"` : cardRows;
 
   // ——— Register cluster evidence ————————————————————————————————————
   const facet = presentedSemanticRecord
@@ -614,7 +612,7 @@ export default function CellDetailPanel({
     display: 'grid',
     gap: 3,
     minWidth: 0,
-    margin: '3px 0 0 11px',
+    margin: CLUSTER_EVIDENCE_INDENT,
   };
 
   return (
@@ -626,16 +624,17 @@ export default function CellDetailPanel({
       style={{
         position: 'relative',
         display: 'grid',
-        gridTemplateColumns: 'minmax(0, 1fr)',
-        // The bottom row exists only while the armed MEMORY TRACE window is
+        gridTemplateColumns: portraitFirst
+          ? `${PORTRAIT_COLUMN_PX}px minmax(0, 1fr)`
+          : `minmax(0, 1fr) ${PORTRAIT_COLUMN_PX}px`,
+        // The trace row exists only while the armed MEMORY TRACE window is
         // appended — an always-there empty row would trail an 8px phantom gap
         // under the analysis plate.
-        gridTemplateAreas: showTracePlate
-          ? '"header" "analysis" "bottom"'
-          : '"header" "analysis"',
+        gridTemplateAreas: cardAreas,
+        columnGap: CARD_SEAM_PX,
         rowGap: 8,
         alignItems: 'start',
-        width: rootWidth,
+        width: CARD_WIDTH_PX,
         maxWidth: 'calc(100vw - 28px)',
         boxSizing: 'border-box',
         pointerEvents: 'none',
@@ -643,8 +642,8 @@ export default function CellDetailPanel({
         fontFamily: HUD_FONTS.mono,
         // One composited shadow around the constellation replaces a separate
         // filter surface for every satellite. It follows the silhouette, so
-        // the notch edges cast the same soft shadow as the card's outline —
-        // reading as the plate's real depth around the transparent square.
+        // the scan square and the plate beside it cast one shadow instead of
+        // two stacked ones.
         filter: `drop-shadow(0 8px 16px rgba(0,0,0,.56)) drop-shadow(0 0 14px ${rgba(HUD_COLORS.cyanWire, 0.06)})`,
         animation: reduced
           ? undefined
@@ -692,11 +691,9 @@ export default function CellDetailPanel({
         data-cell-portrait-frame
         style={{
           ...satelliteBase,
-          zIndex: 2,
-          gridArea: 'analysis',
-          justifySelf: portraitFirst ? 'start' : 'end',
+          gridArea: 'scan',
           alignSelf: 'start',
-          width: portraitWidth,
+          width: PORTRAIT_COLUMN_PX,
           aspectRatio: '1 / 1',
           overflow: 'hidden',
           border: `1px solid ${rgba(HUD_COLORS.orange, 0.24)}`,
@@ -762,23 +759,15 @@ export default function CellDetailPanel({
           ...satelliteBase,
           gridArea: 'analysis',
           overflow: 'hidden',
+          // One rectangle, one column: plate header, register clusters, bytes
+          // zone, provenance footer — the house plate's own 12px cut corner is
+          // the only shape it wears.
           display: 'grid',
-          gridTemplateColumns: portraitFirst
-            ? `${notchPx}px minmax(0, 1fr)`
-            : `minmax(0, 1fr) ${notchPx}px`,
-          // The register row must clear the notch even when its clusters are
-          // short — the bytes zone always starts below the specimen square.
-          gridTemplateRows: `minmax(${notchPx - analysisPaddingTopPx}px, auto) auto`,
-          gridTemplateAreas: portraitFirst
-            ? '"notch register" "bytes bytes"'
-            : '"register notch" "bytes bytes"',
-          columnGap: 10,
-          alignItems: 'start',
-          padding: portraitFirst
-            ? `${analysisPaddingTopPx}px 14px 11px 0`
-            : `${analysisPaddingTopPx}px 0 11px 16px`,
+          gridTemplateColumns: 'minmax(0, 1fr)',
+          rowGap: 8,
+          alignContent: 'start',
+          padding: '9px 12px 10px 14px',
           ...spatialPlate(HUD_COLORS.cyanWire),
-          clipPath: analysisClip,
         }}
       >
         <span
@@ -789,28 +778,28 @@ export default function CellDetailPanel({
           <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 1, background: `linear-gradient(180deg,transparent,${HUD_COLORS.cyanWire},transparent)`, boxShadow: `0 0 12px ${HUD_COLORS.cyanWire}` }} />
         </span>
 
+        <SpatialPlateHeader
+          en="CKBYTES ANALYSIS"
+          accent={HUD_COLORS.cyanWire}
+          marginBottom={0}
+          status={(
+            <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6 }}>
+              <span
+                data-cell-identity-scan-status="true"
+                style={{ color: statusColor, fontSize: HUD_TYPE.label, letterSpacing: 0.72, textShadow: `0 0 7px ${rgba(statusColor, 0.42)}` }}
+              >
+                {scan.classified ? 'LOCKED' : `SCANNING ${scan.pct}%`}
+                {' · '}A-LATTICE {scan.reveal}/{order.length}
+              </span>
+              {moduleTag('SCAN·02')}
+            </span>
+          )}
+        />
+
         <div
           data-cell-analysis-register="true"
-          style={{ gridArea: 'register', minWidth: 0, display: 'grid', gap: 6, alignContent: 'start' }}
+          style={{ minWidth: 0, display: 'grid', gap: 6, alignContent: 'start' }}
         >
-          <SpatialPlateHeader
-            en="CKBYTES ANALYSIS"
-            accent={HUD_COLORS.cyanWire}
-            marginBottom={2}
-            status={(
-              <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6 }}>
-                <span
-                  data-cell-identity-scan-status="true"
-                  style={{ color: statusColor, fontSize: HUD_TYPE.label, letterSpacing: 0.72, textShadow: `0 0 7px ${rgba(statusColor, 0.42)}` }}
-                >
-                  {scan.classified ? 'LOCKED' : `SCANNING ${scan.pct}%`}
-                  {' · '}A-LATTICE {scan.reveal}/{order.length}
-                </span>
-                {moduleTag('SCAN·02')}
-              </span>
-            )}
-          />
-
           <div data-cell-cluster="lock" style={{ minWidth: 0 }}>
             {scanFact('lock')}
             {presentedSemanticRecord
@@ -910,29 +899,17 @@ export default function CellDetailPanel({
         <div
           data-cell-analysis-bytes="true"
           style={{
-            gridArea: 'bytes',
             minWidth: 0,
-            marginTop: 8,
             paddingTop: 7,
-            paddingRight: portraitFirst ? 0 : 14,
-            paddingLeft: portraitFirst ? 16 : 0,
             borderTop: `1px solid ${rgba(CYAN, 0.12)}`,
             display: 'grid',
             gap: 7,
           }}
         >
-          <div
-            data-cell-cluster="capacity"
-            style={{
-              display: 'grid',
-              gridTemplateColumns: hasKnowledge
-                ? 'minmax(0, .72fr) minmax(0, 1.28fr)'
-                : 'minmax(0, 1fr)',
-              gap: '4px 14px',
-              alignItems: 'start',
-              minWidth: 0,
-            }}
-          >
+          {/* The budget reads as the CAPACITY fact's evidence, under it in
+            * the same indent every other cluster's evidence uses — arriving
+            * knowledge must never reflow the fact beside it. */}
+          <div data-cell-cluster="capacity" style={{ minWidth: 0 }}>
             {scanFact('capacity')}
             {hasKnowledge ? (
               <CellByteBudget
@@ -940,6 +917,7 @@ export default function CellDetailPanel({
                 knowledge={knowledge}
                 dataTruncated={dataTruncated}
                 reveal={semanticsReveal >= 1 ? 1 : 0}
+                style={{ margin: CLUSTER_EVIDENCE_INDENT }}
               />
             ) : null}
           </div>
@@ -952,103 +930,102 @@ export default function CellDetailPanel({
               phase={presentedSemanticPhase}
               record={presentedSemanticRecord}
               message={presentedSemanticMessage}
-              wide
               reveal={contentReveal}
             />
           </div>
+        </div>
 
-          <div
-            data-cell-provenance-footer="true"
-            style={{ minWidth: 0, paddingTop: 4, borderTop: `1px solid ${rgba(VIOLET, 0.18)}` }}
-          >
-            {resolvedCausalLens ? (
-              <div
-                data-consensus-memory-reveal="causal"
-                data-consensus-memory-reveal-state={causalRevealed
-                  ? 'resolved'
-                  : 'scanning'}
-                style={{ display: causalRevealed ? 'block' : 'none' }}
-              >
-                <CellCausalLensReadout
-                  lens={resolvedCausalLens}
-                  reveal={memoryProgress}
-                  navigation={causalNavigation}
-                  compact
-                  summary
-                />
-              </div>
-            ) : null}
-            {observed ? (
-              <div
-                data-consensus-memory-reveal="trace"
-                data-consensus-memory-reveal-state={traceRevealed
-                  ? 'resolved'
-                  : 'scanning'}
-                style={{ display: traceRevealed ? 'block' : 'none', marginTop: 4, paddingTop: 2, borderTop: `1px solid ${rgba(CYAN, 0.09)}` }}
-              >
-                {onTraceWrite ? (
-                  <button
-                    type="button"
-                    aria-label={traceSelected ? 'exit causal recall' : 'recall causal path'}
-                    data-write-observed="true"
-                    data-trace-available="true"
-                    data-trace-source={traceSource}
-                    data-trace-selected={traceSelected ? 'true' : 'false'}
-                    data-trace-state={traceSelected ? 'active' : 'ready'}
-                    data-trace-stage={traceSelected ? traceReadout?.stage ?? 'planning' : 'ready'}
-                    title={!identityProofComplete
-                      ? 'ARM MEMORY TRACE · read the three identity proofs by selecting STATE (WHERE), DATA (WHAT) and COMMIT (WHEN) in the register above'
-                      : observed.txHash}
-                    onClick={() => onTraceWrite(observed.seq)}
-                    disabled={!recallEnabled}
-                    style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'baseline', gap: '2px 8px', width: '100%', margin: 0, padding: '3px 2px', border: 0, background: traceSelected ? `${VIOLET}12` : 'transparent', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.35, color: traceSelected ? HUD_COLORS.memoryInk : GOLD, textShadow: `0 0 6px ${traceSelected ? VIOLET : GOLD}55`, whiteSpace: 'nowrap', cursor: recallEnabled ? 'pointer' : 'default', textAlign: 'left', opacity: recallEnabled ? 1 : 0.62 }}
-                  >
-                    <span>MEMORY TRACE</span>
-                    <span style={{ marginLeft: 'auto', color: HUD_COLORS.goldInk }}>
-                      {formatBlockRef(observed.block)} · {observed.inputCount}→{observed.outputCount} · {traceStateReadout}
-                    </span>
-                  </button>
-                ) : (
-                  <div
-                    data-write-observed="true"
-                    title={observed.txHash}
-                    style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.35, color: GOLD, textShadow: `0 0 6px ${GOLD}55`, whiteSpace: 'nowrap' }}
-                  >
-                    <span>MEMORY TRACE</span>
-                    <span style={{ marginLeft: 'auto', color: HUD_COLORS.goldInk }}>
-                      {formatBlockRef(observed.block)} · {observed.inputCount}→{observed.outputCount}
-                    </span>
-                  </div>
-                )}
-              </div>
-            ) : null}
-            {presentedSemanticRecord ? (
-              <div
-                data-cell-provenance-proof="true"
-                style={{ display: 'flex', flexWrap: 'wrap', columnGap: 14, rowGap: 2, marginTop: 4, minWidth: 0, ...semanticsStage(1) }}
-              >
+        <div
+          data-cell-provenance-footer="true"
+          style={{ minWidth: 0, paddingTop: 4, borderTop: `1px solid ${rgba(VIOLET, 0.18)}` }}
+        >
+          {resolvedCausalLens ? (
+            <div
+              data-consensus-memory-reveal="causal"
+              data-consensus-memory-reveal-state={causalRevealed
+                ? 'resolved'
+                : 'scanning'}
+              style={{ display: causalRevealed ? 'block' : 'none' }}
+            >
+              <CellCausalLensReadout
+                lens={resolvedCausalLens}
+                reveal={memoryProgress}
+                navigation={causalNavigation}
+                compact
+                summary
+              />
+            </div>
+          ) : null}
+          {observed ? (
+            <div
+              data-consensus-memory-reveal="trace"
+              data-consensus-memory-reveal-state={traceRevealed
+                ? 'resolved'
+                : 'scanning'}
+              style={{ display: traceRevealed ? 'block' : 'none', marginTop: 4, paddingTop: 2, borderTop: `1px solid ${rgba(CYAN, 0.09)}` }}
+            >
+              {onTraceWrite ? (
+                <button
+                  type="button"
+                  aria-label={traceSelected ? 'exit causal recall' : 'recall causal path'}
+                  data-write-observed="true"
+                  data-trace-available="true"
+                  data-trace-source={traceSource}
+                  data-trace-selected={traceSelected ? 'true' : 'false'}
+                  data-trace-state={traceSelected ? 'active' : 'ready'}
+                  data-trace-stage={traceSelected ? traceReadout?.stage ?? 'planning' : 'ready'}
+                  title={!identityProofComplete
+                    ? 'ARM MEMORY TRACE · read the three identity proofs by selecting STATE (WHERE), DATA (WHAT) and COMMIT (WHEN) in the register above'
+                    : observed.txHash}
+                  onClick={() => onTraceWrite(observed.seq)}
+                  disabled={!recallEnabled}
+                  style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'baseline', gap: '2px 8px', width: '100%', margin: 0, padding: '3px 2px', border: 0, background: traceSelected ? `${VIOLET}12` : 'transparent', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.35, color: traceSelected ? HUD_COLORS.memoryInk : GOLD, textShadow: `0 0 6px ${traceSelected ? VIOLET : GOLD}55`, whiteSpace: 'nowrap', cursor: recallEnabled ? 'pointer' : 'default', textAlign: 'left', opacity: recallEnabled ? 1 : 0.62 }}
+                >
+                  <span>MEMORY TRACE</span>
+                  <span style={{ marginLeft: 'auto', color: HUD_COLORS.goldInk }}>
+                    {formatBlockRef(observed.block)} · {observed.inputCount}→{observed.outputCount} · {traceStateReadout}
+                  </span>
+                </button>
+              ) : (
+                <div
+                  data-write-observed="true"
+                  title={observed.txHash}
+                  style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.35, color: GOLD, textShadow: `0 0 6px ${GOLD}55`, whiteSpace: 'nowrap' }}
+                >
+                  <span>MEMORY TRACE</span>
+                  <span style={{ marginLeft: 'auto', color: HUD_COLORS.goldInk }}>
+                    {formatBlockRef(observed.block)} · {observed.inputCount}→{observed.outputCount}
+                  </span>
+                </div>
+              )}
+            </div>
+          ) : null}
+          {presentedSemanticRecord ? (
+            <div
+              data-cell-provenance-proof="true"
+              style={{ display: 'flex', flexWrap: 'wrap', columnGap: 14, rowGap: 2, marginTop: 4, minWidth: 0, ...semanticsStage(1) }}
+            >
+              <EvidenceFact
+                label="PROOF"
+                value={formatBlockRef(presentedSemanticRecord.as_of.block)}
+                color={HUD_COLORS.cyanWire}
+              />
+              {createdDiffers ? (
                 <EvidenceFact
-                  label="PROOF"
-                  value={formatBlockRef(presentedSemanticRecord.as_of.block)}
-                  color={HUD_COLORS.cyanWire}
+                  label="CREATED"
+                  value={formatBlockRef(
+                    presentedSemanticRecord.observed_at_block,
+                  )}
                 />
-                {createdDiffers ? (
-                  <EvidenceFact
-                    label="CREATED"
-                    value={formatBlockRef(
-                      presentedSemanticRecord.observed_at_block,
-                    )}
-                  />
-                ) : null}
-              </div>
-            ) : null}
-          </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </section>
 
       {/* Growth is strictly vertical: an arming trace appends a full-width
-        * row below the analysis plate instead of splitting a column, and the
-        * analysis plate's own geometry never moves. */}
+        * row below both columns instead of splitting one, and the analysis
+        * plate's own geometry never moves. */}
       {showTracePlate && traceReadout ? (
           <section
             aria-label="Consensus memory trace"
@@ -1057,7 +1034,7 @@ export default function CellDetailPanel({
             data-cell-detail-size="content"
             style={{
               ...satelliteBase,
-              gridArea: 'bottom',
+              gridArea: 'trace',
               width: 'auto',
               overflow: 'visible',
               padding: '8px 10px 10px 12px',

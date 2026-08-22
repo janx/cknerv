@@ -14,6 +14,12 @@ import { HUD_COLORS, HUD_FONTS, rgba, HUD_TYPE } from './hudTheme';
 import { formatSemanticAssetAmount } from './cellFormat';
 import type { CellSemanticsPhase } from './CellSemanticsReadout';
 
+/** Hex-dump grammar: 16 bytes to a row, two rows to a window. The DATA
+ *  cluster is one fixed column wide now, so the window never changes size
+ *  with the record that arrives in it. */
+const HEX_ROW_BYTES = 16;
+const HEX_WINDOW_BYTES = HEX_ROW_BYTES * 2;
+
 const SEGMENT_COLORS = [
   '#71ECFF',
   '#C5A8FF',
@@ -252,7 +258,6 @@ export default function CellContentMemory({
   phase,
   record,
   message,
-  wide = false,
   reveal = 1,
 }: {
   dataHex: string;
@@ -260,7 +265,6 @@ export default function CellContentMemory({
   phase?: CellSemanticsPhase;
   record?: CellSemanticRecord | null;
   message?: string | null;
-  wide?: boolean;
   /** Shared Cell scan progress; present content is decoded in source order. */
   reveal?: number;
 }) {
@@ -273,7 +277,7 @@ export default function CellContentMemory({
   const segments = content?.deterministic?.segments ?? [];
   const guesses = content?.heuristics ?? [];
   const roles = record?.facets ?? [];
-  const previewLimit = wide ? 32 : enhanced ? 24 : 28;
+  const previewLimit = HEX_WINDOW_BYTES;
   const [segmentIndex, setSegmentIndex] = useState(0);
   const [guessIndex, setGuessIndex] = useState(0);
   const [roleIndex, setRoleIndex] = useState(0);
@@ -421,7 +425,7 @@ export default function CellContentMemory({
         fontFamily: HUD_FONTS.mono,
       }}
     >
-      <div style={{ display: 'grid', gridTemplateColumns: wide && enhanced && analysisRevealed ? 'minmax(0,1.02fr) minmax(0,.98fr)' : 'minmax(0,1fr)', gap: wide && enhanced && analysisRevealed ? 8 : 3, minWidth: 0 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr)', gap: 3, minWidth: 0 }}>
         <div data-cell-content-raw="true" style={{ display: summaryRevealed || bytesRevealed || asciiRevealed ? 'block' : 'none', minWidth: 0 }}>
           <div
             data-cell-content-reveal-item="summary"
@@ -473,7 +477,7 @@ export default function CellContentMemory({
                 data-cell-content-reveal-item="bytes"
                 data-cell-content-reveal-item-state={bytesRevealed ? 'resolved' : 'scanning'}
                 title={content?.data_hex ?? dataHex}
-                style={{ display: bytesRevealed ? 'flex' : 'none', flexWrap: 'wrap', gap: '1px 3px', minWidth: 0, marginTop: 3, padding: '3px 4px', border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.12)}`, background: 'rgba(0,3,10,.38)' }}
+                style={{ display: bytesRevealed ? 'grid' : 'none', gridTemplateColumns: `repeat(${HEX_ROW_BYTES}, minmax(0, 1fr))`, justifyItems: 'center', gap: '2px 3px', minWidth: 0, marginTop: 3, padding: '3px 4px', border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.12)}`, background: 'rgba(0,3,10,.38)' }}
               >
                 {previewBytes.map((byte, localIndex) => {
                   const index = previewStart + localIndex;
@@ -499,7 +503,7 @@ export default function CellContentMemory({
                   );
                 })}
                 {previewStart > 0 || previewEnd < model.observedBytes || model.truncated ? (
-                  <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro }}>…</span>
+                  <span style={{ gridColumn: '1 / -1', justifySelf: 'end', color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro }}>…</span>
                 ) : null}
               </div>
               <div data-cell-content-ascii="true" data-cell-content-reveal-item="ascii" data-cell-content-reveal-item-state={asciiRevealed ? 'resolved' : 'scanning'} title={model.ascii} style={{ display: asciiRevealed ? 'block' : 'none', minWidth: 0, marginTop: 2, color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -511,7 +515,7 @@ export default function CellContentMemory({
         </div>
 
         {enhanced ? (
-          <div data-cell-content-analysis="true" style={{ display: analysisRevealed ? 'block' : 'none', minWidth: 0, paddingTop: wide ? 0 : 2, borderTop: wide ? 0 : `1px solid ${rgba(tone, 0.13)}`, borderLeft: wide ? `1px solid ${rgba(tone, 0.16)}` : 0, paddingLeft: wide ? 7 : 0 }}>
+          <div data-cell-content-analysis="true" style={{ display: analysisRevealed ? 'block' : 'none', minWidth: 0, paddingTop: 2, borderTop: `1px solid ${rgba(tone, 0.13)}` }}>
             {record?.asset ? (
               <div data-cell-content-asset="true" data-cell-content-reveal-item="asset" data-cell-content-reveal-item-state={stageRevealed('asset') ? 'resolved' : 'scanning'} title={record.asset.type_script_hash} style={{ display: stageRevealed('asset') ? 'flex' : 'none', alignItems: 'baseline', gap: 5, minWidth: 0, color: HUD_COLORS.caution, fontSize: HUD_TYPE.micro }}>
                 <span style={{ color: HUD_COLORS.dim }}>VALUE</span>

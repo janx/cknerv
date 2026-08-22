@@ -137,7 +137,7 @@ describe('CellDetailPanel', () => {
     expect(container.textContent).not.toContain('SINCE #');
   });
 
-  it('renders one CKBYTES ANALYSIS window notched around the specimen square', () => {
+  it('renders one CKBYTES ANALYSIS column beside the specimen square', () => {
     const { container } = render(<CellDetailPanel cell={base} onClose={() => {}} />);
     const t = container.textContent ?? '';
     expect(t).toContain('CELL');
@@ -171,22 +171,24 @@ describe('CellDetailPanel', () => {
     expect(t).toContain('DEADBEEFCAFE1234567890');
     expect(t).not.toContain('WRITE OBSERVED');
     expect(t).not.toContain('MEMORY TRACE');   // no observed origin write
-    expect((container.firstElementChild as HTMLElement).style.animation)
-      .toContain('cknerv-cell-consensus-enter');
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.style.animation).toContain('cknerv-cell-consensus-enter');
     expect(container.querySelector('[data-cell-detail-scan-field="true"]')).not.toBeNull();
-    // The specimen square keeps its own window, overlaid at the analysis
-    // area's top-outer corner — nearest the inspected Cell.
+    // The specimen square is an independent column on the anchor side, top
+    // aligned — the scene shows through beneath it and nothing overlays it.
     const portrait = container.querySelector('[data-cell-portrait-frame]') as HTMLElement;
     expect(portrait).not.toBeNull();
-    expect(portrait.style.gridArea).toBe('analysis');
-    expect(portrait.style.justifySelf).toBe('end');
-    expect(portrait.style.width).toBe('260px');
-    // One column; the analysis area spans the full card width.
-    expect((container.firstElementChild as HTMLElement).style.gridTemplateColumns)
-      .toBe('minmax(0, 1fr)');
-    expect((container.firstElementChild as HTMLElement).style.gridTemplateAreas)
-      .toBe('"header" "analysis"');
-    expect((container.firstElementChild as HTMLElement).style.rowGap).toBe('8px');
+    expect(portrait.style.gridArea).toBe('scan');
+    expect(portrait.style.alignSelf).toBe('start');
+    expect(portrait.style.width).toBe('280px');
+    expect(portrait.style.justifySelf).toBe('');
+    // 808 = 520 analysis column + 8 seam + 280 scan column — one geometry for
+    // every fan side and for bare and enriched Cells alike.
+    expect(root.style.width).toBe('808px');
+    expect(root.style.gridTemplateColumns).toBe('minmax(0, 1fr) 280px');
+    expect(root.style.gridTemplateAreas).toBe('"header header" "analysis scan"');
+    expect(root.style.columnGap).toBe('8px');
+    expect(root.style.rowGap).toBe('8px');
     expect(container.querySelector('[data-testid="cell-nucleus-portrait"]')).not.toBeNull();
     expect(container.querySelector('[data-cell-specimen-scan-light]')).not.toBeNull();
     const specimenScan = container.querySelector(
@@ -214,14 +216,20 @@ describe('CellDetailPanel', () => {
     ) as HTMLElement;
     expect(analysis.getAttribute('data-cell-detail-module')).toBe('ckbytes');
     expect(analysis.contains(cellularBeam)).toBe(true);
-    // The plate is clipped around the square's (260+8)² notch — it must never
-    // paint behind the transparent specimen viewport (the braid lives there).
-    expect(analysis.style.clipPath).toContain('polygon(0 0');
-    expect(analysis.style.clipPath).toContain('calc(100% - 268px) 268px');
-    expect(analysis.style.gridTemplateAreas).toBe('"register notch" "bytes bytes"');
-    expect(analysis.style.gridTemplateColumns).toBe('minmax(0, 1fr) 268px');
-    // The register row clears the notch even with short clusters.
-    expect(analysis.style.gridTemplateRows).toBe('minmax(256px, auto) auto');
+    // No notch and no clip-path override: the plate is a plain rectangle
+    // wearing spatialPlate()'s stock 12px cut corner. It cannot paint behind
+    // the transparent specimen viewport (the braid lives there) because it is
+    // the square's sibling column, not a plate wrapped around it.
+    expect(analysis.style.clipPath).toBe('polygon(0 0,calc(100% - 12px) 0,100% 12px,100% 100%,0 100%)');
+    expect(analysis.contains(portrait)).toBe(false);
+    expect(analysis.style.gridArea).toBe('analysis');
+    // One vertical stack in house padding: plate header, register clusters,
+    // bytes zone, provenance footer.
+    expect(analysis.style.gridTemplateColumns).toBe('minmax(0, 1fr)');
+    expect(analysis.style.gridTemplateAreas).toBe('');
+    expect(analysis.style.gridTemplateRows).toBe('');
+    expect(analysis.style.padding).toBe('9px 12px 10px 14px');
+    expect(analysis.style.rowGap).toBe('8px');
     // Identity-proof binding attributes live on the merged section now.
     expect(analysis.getAttribute('data-memory-identity-binding')).toBe('true');
     expect(analysis.getAttribute('data-memory-identity-phase')).toBe('collecting');
@@ -254,7 +262,7 @@ describe('CellDetailPanel', () => {
     expect(memoryContent.style.background).toBe('');
     expect(container.querySelector('[data-cell-content-byte-origin="direct"]')).not.toBeNull();
     expect(container.querySelectorAll('[data-cell-content-byte]')).toHaveLength(11);
-    expect((container.firstElementChild as HTMLElement).style.height).toBe('');
+    expect(root.style.height).toBe('');
     expect(analysis.style.height).toBe('');
   });
 
@@ -462,7 +470,11 @@ describe('CellDetailPanel', () => {
       />,
     );
 
-    // The full-width bytes zone reads with the wide 32-byte window.
+    // Two 16-byte hex rows to a window, in the fixed-width data column.
+    const byteGrid = container.querySelector(
+      '[data-cell-content-bytes="true"]',
+    ) as HTMLElement;
+    expect(byteGrid.style.gridTemplateColumns).toBe('repeat(16, minmax(0, 1fr))');
     expect(container.querySelectorAll('[data-cell-content-byte]')).toHaveLength(32);
     expect(container.querySelector('[data-cell-content-byte="0"]')?.textContent)
       .toBe('00');
@@ -487,7 +499,7 @@ describe('CellDetailPanel', () => {
     expect(container.querySelector('[data-cell-detail-module="context"]')).toBeNull();
   });
 
-  it('mirrors the notch for a vertical fan, specimen column leading', () => {
+  it('mirrors the two columns for a vertical fan, specimen column leading', () => {
     const { container } = render(
       <CellDetailPanel
         cell={base}
@@ -511,16 +523,20 @@ describe('CellDetailPanel', () => {
     ) as HTMLElement;
 
     expect(root.style.height).toBe('');
-    // An above/below fan mirrors the same merged window — the specimen square
-    // moves to the top-left corner, nearest the inspected Cell.
+    // An above/below fan mirrors the same two columns — the specimen square
+    // leads, nearest the inspected Cell.
     expect(root.getAttribute('data-cell-detail-layout')).toBe('vertical');
-    expect(root.style.gridTemplateColumns).toBe('minmax(0, 1fr)');
-    expect(portrait.style.justifySelf).toBe('start');
+    expect(root.style.width).toBe('808px');
+    expect(root.style.gridTemplateColumns).toBe('280px minmax(0, 1fr)');
+    expect(root.style.gridTemplateAreas).toBe('"header header" "scan analysis"');
+    expect(portrait.style.gridArea).toBe('scan');
     expect(portrait.style.width).toBe('280px');
-    expect(analysis.style.gridTemplateAreas).toBe('"notch register" "bytes bytes"');
-    expect(analysis.style.gridTemplateColumns).toBe('288px minmax(0, 1fr)');
-    expect(analysis.style.clipPath).toContain('polygon(288px 0');
-    expect(analysis.style.clipPath).toContain('288px 288px');
+    expect(portrait.style.justifySelf).toBe('');
+    // Mirrored or not, enriched or bare, the plate keeps one rectangle and
+    // the stock cut corner — an arriving record never re-cuts the card.
+    expect(analysis.style.gridTemplateColumns).toBe('minmax(0, 1fr)');
+    expect(analysis.style.clipPath).toBe('polygon(0 0,calc(100% - 12px) 0,100% 12px,100% 100%,0 100%)');
+    expect(analysis.style.padding).toBe('9px 12px 10px 14px');
     expect(analysis.style.height).toBe('');
     expect(container.querySelector('[data-cell-semantics-phase="loading"]'))
       .not.toBeNull();
@@ -692,9 +708,11 @@ describe('CellDetailPanel', () => {
     const root = container.firstElementChild as HTMLElement;
     expect(root.style.width).toBe('808px');
     expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(3);
-    // Enhanced notch: (280+8)².
-    expect(analysis.style.clipPath).toContain('calc(100% - 288px) 288px');
-    expect(analysis.style.gridTemplateColumns).toBe('minmax(0, 1fr) 288px');
+    // Enrichment adds evidence, never geometry: the same 808 card, the same
+    // two columns, the same rectangular plate.
+    expect(root.style.gridTemplateColumns).toBe('minmax(0, 1fr) 280px');
+    expect(analysis.style.gridTemplateColumns).toBe('minmax(0, 1fr)');
+    expect(analysis.style.clipPath).toBe('polygon(0 0,calc(100% - 12px) 0,100% 12px,100% 100%,0 100%)');
 
     // LOCK cluster: fact lead + owner + script evidence, name never repeated.
     const lockCluster = container.querySelector('[data-cell-cluster="lock"]') as HTMLElement;
@@ -754,6 +772,11 @@ describe('CellDetailPanel', () => {
     expect(contentMemory?.textContent).toContain('INDEX ANALYSIS · DETERMINISTIC');
     expect(contentMemory?.textContent).toContain('123.45 NTT');
     expect(contentMemory?.textContent).toContain('DECODE · JSON DOCUMENT');
+    // Raw bytes and decoded analysis stack; arriving analysis never splits
+    // the content window into two columns.
+    expect((contentMemory?.querySelector('[data-cell-content-raw="true"]')
+      ?.parentElement as HTMLElement).style.gridTemplateColumns)
+      .toBe('minmax(0,1fr)');
     expect(contentMemory?.textContent).toContain('UTF-8 JSON object decoded from Cell data');
     expect(contentMemory?.textContent).toContain('OBJECT START');
     expect(contentMemory?.textContent).toContain('[0..1)');
@@ -770,7 +793,7 @@ describe('CellDetailPanel', () => {
     fireEvent.click(container.querySelector('[aria-label="next decoded segment"]')!);
     expect(contentMemory?.textContent).toContain('EXTENSION PAYLOAD');
     expect(contentMemory?.textContent).toContain('[28..40)');
-    // The wide 32-byte window already holds the segment start.
+    // The 32-byte window (two 16-byte rows) already holds the segment start.
     expect(contentMemory?.textContent).toContain('W 1/2');
     expect(contentMemory?.querySelector('[data-cell-content-byte="28"]')?.textContent)
       .toBe('00');
@@ -1260,8 +1283,8 @@ describe('CellDetailPanel', () => {
     // Arming appends a full-width row below the analysis plate — the column
     // never splits and the analysis plate's geometry does not move.
     expect((container.firstElementChild as HTMLElement).style.gridTemplateAreas)
-      .toBe('"header" "analysis" "bottom"');
-    expect(trace.style.gridArea).toBe('bottom');
+      .toBe('"header header" "analysis scan" "trace trace"');
+    expect(trace.style.gridArea).toBe('trace');
     expect(analysis().style.cssText).toBe(restingAnalysisStyle);
     expect(trace.previousElementSibling).toBe(analysis());
     expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(4);
