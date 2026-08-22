@@ -1,6 +1,7 @@
 import { emptyScriptCensus } from '@cknerv/cache';
-import { cleanup, fireEvent, render } from '@testing-library/react';
+import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, it, expect, vi } from 'vitest';
+import { REVEAL_GHOST_OPACITY } from '../../../src/components/hud/primitives';
 import type {
   ChainEntry,
   ChainNode,
@@ -41,7 +42,26 @@ vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
 import HudOverlay from '../../../src/components/hud/HudOverlay';
 import type { CellsStats } from '../../../src/derives/cellsStats.derive';
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+// ——— Boot count-off helpers —————————————————————————————————
+/** One module's beat of the boot count-off. */
+const BOOT_BEAT_MS = 130;
+/** Comfortably past the longest possible ritual, for tests that want the HUD
+ *  as the user finds it a second in rather than mid-count. */
+const BOOT_SETTLED_MS = 1_200;
+const BOOT_GHOST = String(REVEAL_GHOST_OPACITY);
+const wrapper = (root: HTMLElement, id: string) =>
+  root.querySelector(`[data-hud-panel="${id}"]`) as HTMLElement;
+/** Advance the fake clock in whole beats, flushing React between each. The
+ *  ritual re-arms itself from an effect, so the next beat only exists once the
+ *  previous one has rendered — one big `advanceTimersByTime` would count once
+ *  and then sit there looking finished. */
+const tick = (ms: number) => {
+  for (let left = ms; left > 0; left -= BOOT_BEAT_MS) {
+    act(() => { vi.advanceTimersByTime(Math.min(left, BOOT_BEAT_MS)); });
+  }
+};
 
 const chain: ChainEntry = {
   tip: 16204887, recent_blocks: [], recent_tx_hashes: [], total_blocks: 4217, total_txs: 9338,
@@ -92,7 +112,11 @@ const daoState: DaoStateRecord = {
 
 describe('HudOverlay', () => {
   it('mounts a non-interactive overlay containing every panel', () => {
+    // Past the boot count-off: this test is about the HUD the user settles
+    // into, not the half-second in which it lights itself up.
+    vi.useFakeTimers();
     const { container } = render(<HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />);
+    tick(BOOT_SETTLED_MS);
     const root = container.firstElementChild as HTMLElement;
     expect(root.style.pointerEvents).toBe('none');
     expect(root.style.userSelect).toBe('none');
@@ -143,6 +167,177 @@ describe('HudOverlay', () => {
     expect(meshRail.style.opacity).toBe('');
     expect(leftRail.style.filter).toBe('');
     expect(meshRail.style.filter).toBe('');
+  });
+
+  it('counts the modules in at boot, in module order and in ink only', () => {
+    vi.useFakeTimers();
+    const { container } = render(
+      <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
+    );
+    const root = container.firstElementChild as HTMLElement;
+    const roster = ['chain', 'peers', 'cells', 'pulse'];
+
+    // t=0 — the whole registry is already mounted at its final geometry and
+    // every module of it is dark. Structure first, ink after.
+    expect(root.dataset.hudBoot).toBe('counting');
+    for (const id of roster) {
+      expect(wrapper(container, id).style.opacity).toBe(BOOT_GHOST);
+      expect(wrapper(container, id).style.transition).toBe('opacity 260ms ease');
+      expect(wrapper(container, id).style.pointerEvents).toBe('none');
+    }
+    // Geometry is untouched throughout: a reveal never moves layout.
+    expect(wrapper(container, 'chain').style.flex).toBe('0 0 auto');
+    expect(wrapper(container, 'chain').style.overflowY).toBe('auto');
+    expect(wrapper(container, 'pulse').style.position).toBe('relative');
+    // Chrome and safety surfaces never wait their turn.
+    expect((container.querySelector('.cknerv-status-strip') as HTMLElement).style.opacity)
+      .toBe('');
+
+    tick(BOOT_BEAT_MS); // CKB·01
+    expect(wrapper(container, 'chain').style.opacity).toBe('1');
+    expect(wrapper(container, 'chain').style.pointerEvents).toBe('auto');
+    expect(wrapper(container, 'peers').style.opacity).toBe(BOOT_GHOST);
+    expect(root.dataset.hudBoot).toBe('counting');
+
+    tick(BOOT_BEAT_MS); // MESH·02
+    expect(wrapper(container, 'peers').style.opacity).toBe('1');
+    expect(wrapper(container, 'cells').style.opacity).toBe(BOOT_GHOST);
+
+    tick(BOOT_BEAT_MS); // MESH·03
+    expect(wrapper(container, 'cells').style.opacity).toBe('1');
+    expect(wrapper(container, 'pulse').style.opacity).toBe(BOOT_GHOST);
+    expect(root.dataset.hudBoot).toBe('counting');
+
+    tick(BOOT_BEAT_MS); // ECG·04 — the last module on a default stage
+    expect(wrapper(container, 'pulse').style.opacity).toBe('1');
+    // The pulse anchor never claimed pointer input; lighting it hands back
+    // exactly what it had, not a blanket `auto`.
+    expect(wrapper(container, 'pulse').style.pointerEvents).toBe('');
+    expect(root.dataset.hudBoot).toBe('done');
+    for (const id of roster) {
+      expect(wrapper(container, id).style.opacity).toBe('1');
+    }
+  });
+
+  it('skips the count-off entirely when motion has been asked to stop', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('prefers-reduced-motion'),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    vi.useFakeTimers();
+    const { container } = render(
+      <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
+    );
+    const root = container.firstElementChild as HTMLElement;
+
+    // No ghost frame, not even the first one: the ritual is never armed.
+    expect(root.dataset.hudBoot).toBe('done');
+    for (const id of ['chain', 'peers', 'cells', 'pulse']) {
+      expect(wrapper(container, id).style.opacity).toBe('');
+      expect(wrapper(container, id).style.transition).toBe('');
+    }
+    expect(wrapper(container, 'chain').style.pointerEvents).toBe('auto');
+
+    // …and nothing arrives late either — there was nothing scheduled.
+    tick(BOOT_SETTLED_MS);
+    expect(root.dataset.hudBoot).toBe('done');
+    expect(wrapper(container, 'pulse').style.opacity).toBe('');
+  });
+
+  it('compresses the count-off around modules that are not on stage', () => {
+    vi.useFakeTimers();
+    const { container } = render(
+      <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
+    );
+    const root = container.firstElementChild as HTMLElement;
+
+    // STAGE·07 and GL·08 are off by default and leave no dead slot behind:
+    // four modules, four beats, done — not seven.
+    tick(3 * BOOT_BEAT_MS);
+    expect(root.dataset.hudBoot).toBe('counting');
+    tick(BOOT_BEAT_MS);
+    expect(root.dataset.hudBoot).toBe('done');
+    cleanup();
+
+    // A DAO record already validated at mount puts DAO·05 on the roster, and
+    // the ritual grows by exactly its one beat.
+    const { container: withDao } = render(
+      <HudOverlay
+        chain={chain}
+        peers={peers}
+        localNode={localNode}
+        cellsStats={cellsStats}
+        enrichmentSource={enrichmentSource}
+        daoState={daoState}
+      />,
+    );
+    const daoRoot = withDao.firstElementChild as HTMLElement;
+    tick(4 * BOOT_BEAT_MS);
+    expect(daoRoot.dataset.hudBoot).toBe('counting');
+    expect(wrapper(withDao, 'dao').style.opacity).toBe(BOOT_GHOST);
+    tick(BOOT_BEAT_MS);
+    expect(daoRoot.dataset.hudBoot).toBe('done');
+    expect(wrapper(withDao, 'dao').style.opacity).toBe('1');
+  });
+
+  it('lets a module that missed the boot roster arrive already lit', () => {
+    vi.useFakeTimers();
+    const { container, rerender, getByRole } = render(
+      <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
+    );
+    const root = container.firstElementChild as HTMLElement;
+    tick(BOOT_SETTLED_MS);
+    expect(root.dataset.hudBoot).toBe('done');
+
+    // A dev instrument summoned from the menu long after the count.
+    fireEvent.click(getByRole('button', { name: 'Configure HUD panels, 4 of 6 visible' }));
+    fireEvent.click(getByRole('menuitemcheckbox', { name: 'STAGE SAMPLE panel' }));
+    expect(wrapper(container, 'stage').style.opacity).toBe('1');
+    expect(wrapper(container, 'stage').style.pointerEvents).toBe('auto');
+
+    // DAO·05 mounting when its record finally validates — news, not ritual.
+    rerender(
+      <HudOverlay
+        chain={chain}
+        peers={peers}
+        localNode={localNode}
+        cellsStats={cellsStats}
+        enrichmentSource={enrichmentSource}
+        daoState={daoState}
+      />,
+    );
+    expect(wrapper(container, 'dao').style.opacity).toBe('1');
+  });
+
+  it('lights a module that arrives mid-count immediately, never retroactively', () => {
+    vi.useFakeTimers();
+    const { container, rerender } = render(
+      <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
+    );
+    const root = container.firstElementChild as HTMLElement;
+
+    tick(BOOT_BEAT_MS); // only CKB·01 has lit so far
+    expect(root.dataset.hudBoot).toBe('counting');
+    rerender(
+      <HudOverlay
+        chain={chain}
+        peers={peers}
+        localNode={localNode}
+        cellsStats={cellsStats}
+        enrichmentSource={enrichmentSource}
+        daoState={daoState}
+      />,
+    );
+
+    // The roster was taken when the session opened; DAO·05 was not on it, so
+    // it takes no slot and renumbers nobody — it simply appears, lit, while
+    // MESH·02 is still waiting its turn.
+    expect(wrapper(container, 'dao').style.opacity).toBe('1');
+    expect(wrapper(container, 'peers').style.opacity).toBe(BOOT_GHOST);
+    // …and the ritual still ends on its original four beats.
+    tick(3 * BOOT_BEAT_MS);
+    expect(root.dataset.hudBoot).toBe('done');
   });
 
   it('controls each main panel independently from the top-bar menu', () => {
@@ -274,6 +469,7 @@ describe('HudOverlay', () => {
   });
 
   it('places a validated DAO panel immediately to the right of CKB·01', () => {
+    vi.useFakeTimers();
     const { container, getByRole } = render(
       <HudOverlay
         chain={chain}
@@ -284,6 +480,7 @@ describe('HudOverlay', () => {
         daoState={daoState}
       />,
     );
+    tick(BOOT_SETTLED_MS);
     const cluster = container.querySelector('[data-hud-chain-cluster]') as HTMLElement;
     const stack = container.querySelector('[data-hud-bottom-stack]') as HTMLElement;
     const daoPanel = stack.querySelector('[data-hud-panel="dao"]') as HTMLElement;

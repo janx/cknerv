@@ -21,6 +21,7 @@ import { alertLevel } from '../../derives/alertLevel';
 import type { CellsStats } from '../../derives/cellsStats.derive';
 import type { CellPopulationFieldModel } from '../../derives/cellPopulationField.derive';
 import { injectHudTheme } from './hudTheme';
+import { revealStageStyle } from './primitives';
 import StatusStrip, {
   STATUS_STRIP_HEIGHTS,
   type BuildInfo,
@@ -85,6 +86,7 @@ const PANEL_SCROLL_STYLE: CSSProperties = {
 
 const CHAIN_CLUSTER_STYLE: CSSProperties = { display: 'flex', flex: '1 1 auto', flexDirection: 'row', gap: LEFT_PANEL_GAP_PX, alignItems: 'flex-start', minHeight: 0, maxWidth: '100%', overflowX: 'auto', overflowY: 'hidden', overscrollBehavior: 'contain', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,152,48,.35) transparent', pointerEvents: 'none' };
 const PANEL_FLOW: CSSProperties = { position: 'relative' };
+const PULSE_ANCHOR_STYLE: CSSProperties = { position: 'relative', flex: '0 0 auto', maxWidth: '100%' };
 
 const HUD_PANEL_IDS = ['chain', 'stage', 'render', 'dao', 'pulse', 'cells', 'peers'] as const;
 type HudPanelId = typeof HUD_PANEL_IDS[number];
@@ -103,6 +105,33 @@ const DEFAULT_PANEL_VISIBILITY: HudPanelVisibility = {
 
 function isHudPanelId(id: string): id is HudPanelId {
   return (HUD_PANEL_IDS as readonly string[]).includes(id);
+}
+
+// ——— Boot count-off —————————————————————————————————————————
+// A module registry is a list of numbers until you watch it come up. Once per
+// session the panels light in module order — CKB·01 → MESH·02 → MESH·03 →
+// ECG·04 → DAO·05 → STAGE·07 → GL·08 — so the codes stop being decoration and
+// become the order the instrument boots in. It is the same reveal the
+// inspection cards perform: every panel is mounted at final geometry on the
+// first frame and only the ink arrives, because a reveal that moves layout is
+// a reveal that shoves whatever you had started reading.
+const BOOT_MODULE_ORDER: readonly HudPanelId[] = [
+  'chain', 'peers', 'cells', 'pulse', 'dao', 'stage', 'render',
+];
+/** One module per beat. Seven beats plus the 260ms the last one takes to
+ *  finish arriving lands the whole ritual just inside 1.2s; a default boot
+ *  (STAGE·07 / GL·08 off) counts to four and is done in well under a second. */
+const BOOT_SLOT_MS = 130;
+
+/** Does this session want the ritual at all? Read once, synchronously, because
+ *  `useReducedMotion` is mount-safe by design and cannot answer before the
+ *  first paint — and someone who asked motion to stop must not be shown even
+ *  one ghosted frame. No `matchMedia` at all (jsdom, an ancient browser) is
+ *  not a request for stillness, so the ritual runs. */
+function prefersFullMotion(): boolean {
+  if (typeof window === 'undefined') return false;
+  if (typeof window.matchMedia !== 'function') return true;
+  return !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
 function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, scriptRegistry, backfill, streamHealth, build, topBarActions, colonyCount }: {
@@ -155,6 +184,49 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
   const daoPanelAvailable = canRenderDaoStateReadout(enrichmentSource, daoState);
   const chainPanelVisible = panelVisibility.chain;
   const daoPanelVisible = panelVisibility.dao && daoPanelAvailable;
+
+  // Whether this session performs the boot count-off is settled on the first
+  // render (see `prefersFullMotion`); `reduced` then keeps it honest if the OS
+  // setting flips mid-session.
+  const [bootRitualArmed] = useState(prefersFullMotion);
+  const bootRitual = bootRitualArmed && !reduced;
+  // The roster is exactly the modules that were on stage when the session
+  // opened, in module order. Hidden panels leave no dead slot behind: with
+  // STAGE·07 and GL·08 off by default a normal boot counts to four — five once
+  // DAO·05 has already validated — and finishes that much sooner. Captured
+  // once, so nothing that arrives later can renumber a module mid-count.
+  const [bootRoster] = useState<readonly HudPanelId[]>(() => BOOT_MODULE_ORDER
+    .filter((id) => (id === 'dao' ? daoPanelVisible : panelVisibility[id])));
+  const [bootLit, setBootLit] = useState(0);
+  const bootCounting = bootRitual && bootLit < bootRoster.length;
+  // One timeout alive at a time, re-armed by its own result: the ritual costs
+  // exactly one re-render per module and stops re-arming when the roster runs
+  // out, leaving the 1 Hz uptime tick as the HUD's only steady-state heartbeat.
+  useEffect(() => {
+    if (!bootCounting) return;
+    const id = setTimeout(() => setBootLit((lit) => lit + 1), BOOT_SLOT_MS);
+    return () => clearTimeout(id);
+  }, [bootCounting, bootLit]);
+  /** One panel wrapper's dress during the count-off. Opacity and pointer-events
+   *  only — the wrapper keeps its own geometry and its own pointer contract and
+   *  merely borrows the house ghost, so nothing moves while the HUD fills in.
+   *  Deliberately *not* `revealStageAttributes`: a card's ghost is a fact the
+   *  probe has not read yet and belongs out of the accessibility tree, but a
+   *  booting panel is fully readable — flickering it out of that tree for half
+   *  a second would be pure hostility. A module absent from the roster (DAO·05
+   *  arriving with its record, a dev instrument summoned from the menu) was
+   *  never part of this count and simply appears, lit. */
+  const bootPanelStyle = (
+    id: HudPanelId,
+    base?: CSSProperties,
+  ): CSSProperties | undefined => {
+    if (!bootRitual) return base;
+    const slot = bootRoster.indexOf(id);
+    const lit = !bootCounting || slot < 0 || slot < bootLit;
+    const { opacity, transition } = revealStageStyle(lit);
+    return { ...base, opacity, transition, pointerEvents: lit ? base?.pointerEvents : 'none' };
+  };
+
   // ECG·04 is the lower companion to CKB·01, not a footer for the whole
   // CKB + DAO cluster. Keep their outer edges aligned even when DAO·05 is
   // visible or CKB·01 is temporarily hidden from the panel menu.
@@ -287,8 +359,13 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
     <div
       style={ROOT_STYLE}
       data-stream-phase={streamSummary?.phase}
+      data-hud-boot={bootCounting ? 'counting' : 'done'}
     >
       {!reduced && <div style={SCAN_STYLE} />}
+      {/* Chrome and safety surfaces are exempt from the ritual: a status
+          strip, an alert, a frozen-stream banner and a backfill readout are
+          how you find out something is wrong, and nothing that reports a
+          fault may be dimmed for style. */}
       <StatusStrip
         level={alert.level}
         uptimeMs={now - mountAt.current}
@@ -330,7 +407,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
                   className="cknerv-chain-panel-scroll"
                   data-hud-panel="chain"
                   data-chain-panel-scroll
-                  style={PANEL_SCROLL_STYLE}
+                  style={bootPanelStyle('chain', PANEL_SCROLL_STYLE)}
                 >
                   <BlockchainReadout
                     chain={chain}
@@ -351,7 +428,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
                 <div
                   className="cknerv-chain-panel-scroll"
                   data-hud-panel="stage"
-                  style={PANEL_SCROLL_STYLE}
+                  style={bootPanelStyle('stage', PANEL_SCROLL_STYLE)}
                 >
                   <StageCapacityPanel
                     stats={cellsStats}
@@ -366,7 +443,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
                 <div
                   className="cknerv-chain-panel-scroll"
                   data-hud-panel="render"
-                  style={PANEL_SCROLL_STYLE}
+                  style={bootPanelStyle('render', PANEL_SCROLL_STYLE)}
                 >
                   <RenderStatsPanel style={PANEL_FLOW} />
                 </div>
@@ -382,7 +459,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
                 <div
                   className="cknerv-chain-panel-scroll"
                   data-hud-panel="dao"
-                  style={PANEL_SCROLL_STYLE}
+                  style={bootPanelStyle('dao', PANEL_SCROLL_STYLE)}
                 >
                   <DaoStatePanel
                     source={enrichmentSource}
@@ -396,7 +473,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
                 <div
                   data-hud-panel="pulse"
                   data-hud-pulse-anchor
-                  style={{ position: 'relative', flex: '0 0 auto', maxWidth: '100%' }}
+                  style={bootPanelStyle('pulse', PULSE_ANCHOR_STYLE)}
                 >
                   <BlockCadenceEcg
                     intervalsMs={chain.recent_block_intervals_ms}
@@ -422,7 +499,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
       {panelVisibility.cells || panelVisibility.peers ? (
         <div ref={railRef} className="cknerv-mesh-rail" style={railStyle}>
           {panelVisibility.cells ? (
-            <div data-hud-panel="cells">
+            <div data-hud-panel="cells" style={bootPanelStyle('cells')}>
               <CellsPanel
                 stats={cellsStats}
                 churn={churn}
@@ -432,7 +509,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
             </div>
           ) : null}
           {panelVisibility.peers ? (
-            <div data-hud-panel="peers">
+            <div data-hud-panel="peers" style={bootPanelStyle('peers')}>
               <NetworkPanel summary={summary} consensus={consensus} syncRatio={syncRatio} enrichmentSource={enrichmentSource} networkAtlas={networkAtlas} style={PANEL_FLOW} />
             </div>
           ) : null}
