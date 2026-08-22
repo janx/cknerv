@@ -47,6 +47,7 @@ import {
 import {
   writeSparseScalarAttribute,
   type ScalarAttributeSlotWrite,
+  type ScalarThresholdEpoch,
 } from '../geometry/sparseScalarAttribute';
 import { markPopulatedBufferUpdate } from '../geometry/populatedBufferAttribute';
 
@@ -71,6 +72,11 @@ interface Props {
   drawCountRef: { readonly current: number };
   groupRef: { readonly current: THREE.Group | null };
   detailAttr: THREE.BufferAttribute;
+  /** Owned by CellGalaxy, shared with its picker. The detail lane is written
+   *  every frame an envelope eases, but the picker only reads it across
+   *  `CELL_EXPANDED_DETAIL_THRESHOLD`, so this counter — not the attribute
+   *  version — is what tells the picker its screen index went stale. */
+  detailPickEpoch: ScalarThresholdEpoch;
   focusAttr: THREE.BufferAttribute;
   recallAttr: THREE.BufferAttribute;
   recallStateAttr: THREE.BufferAttribute;
@@ -125,6 +131,7 @@ export default function CellNucleus({
   drawCountRef,
   groupRef,
   detailAttr,
+  detailPickEpoch,
   focusAttr,
   recallAttr,
   recallStateAttr,
@@ -560,7 +567,16 @@ export default function CellNucleus({
           writes.push({ index: entry.index, value: entry.detail });
         }
       }
-      writeSparseScalarAttribute(detailAttr, detailSlots.current, writes);
+      // Both paths converge here: the LOD walk changes WHICH slots are
+      // expanded, the envelope path changes how expanded they already are.
+      // The per-slot crossing test the epoch adds tells those apart for free,
+      // so the picker rebuilds for the first and sleeps through the second.
+      writeSparseScalarAttribute(
+        detailAttr,
+        detailSlots.current,
+        writes,
+        detailPickEpoch,
+      );
     }
 
     // The focus buffer is entirely idle in the resting state. Clear and upload

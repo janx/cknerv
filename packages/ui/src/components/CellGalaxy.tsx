@@ -47,6 +47,7 @@ import {
   syncCellSlots,
 } from '../geometry/cellSlotAssignment';
 import { ScreenSpaceHitIndex } from '../geometry/screenSpaceHitIndex';
+import type { ScalarThresholdEpoch } from '../geometry/sparseScalarAttribute';
 import type { Cell } from '@cknerv/types';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { ConsensusMemoryFocusScope } from '../hooks/consensusMemoryFocusContext';
@@ -65,6 +66,7 @@ import {
 } from '../derives/consensusMemoryCoreIdentity.derive';
 import {
   CELL_CLICK_MAX_POINTER_DELTA_PX,
+  CELL_EXPANDED_DETAIL_THRESHOLD,
   CONSENSUS_BRAID_LOCAL_RADIUS,
   NETWORK_PEER_PICK_FLAG,
   cellCanvasCursor,
@@ -753,6 +755,7 @@ interface CellPickerProps {
   cellsListRef: React.MutableRefObject<Cell[]>;
   drawCountRef: React.MutableRefObject<number>;
   detailAttr: THREE.BufferAttribute;
+  detailPickEpoch: ScalarThresholdEpoch;
   selectedCellIdRef: React.MutableRefObject<number | null>;
   hoveredCellIdRef: React.MutableRefObject<number | null>;
   pickingSuspendedRef?: React.RefObject<boolean>;
@@ -796,6 +799,7 @@ function CellPicker({
   cellsListRef,
   drawCountRef,
   detailAttr,
+  detailPickEpoch,
   selectedCellIdRef,
   hoveredCellIdRef,
   pickingSuspendedRef,
@@ -827,7 +831,7 @@ function CellPicker({
     let indexedCount = -1;
     let indexedSelectedCellId: number | null = null;
     let indexedHoveredCellId: number | null = null;
-    let indexedDetailVersion = -1;
+    let indexedDetailEpoch = -1;
     let indexedWidth = -1;
     let indexedHeight = -1;
     let indexedRotationY = 0;
@@ -868,7 +872,14 @@ function CellPicker({
         || indexedCount !== count
         || indexedSelectedCellId !== selectedCellIdRef.current
         || indexedHoveredCellId !== hoveredCellIdRef.current
-        || indexedDetailVersion !== detailAttr.version
+        // Detail reaches the index ONLY through cellPickRadiusPx's expanded
+        // branch, which is a threshold test — so the attribute's version is
+        // the wrong signal. A hover envelope eases for 0.3–0.7s and rewrites
+        // its slots on every frame of it, and gating on the version made every
+        // pointermove of a sweep re-project the whole field for magnitudes no
+        // pick answer reads. The epoch counts crossings, so it moves exactly
+        // when a cell's pick disc changes width.
+        || indexedDetailEpoch !== detailPickEpoch.epoch
         || indexedWidth !== width
         || indexedHeight !== height
         || matrixStale
@@ -939,7 +950,7 @@ function CellPicker({
         indexedCount = count;
         indexedSelectedCellId = selectedCellIdRef.current;
         indexedHoveredCellId = hoveredCellIdRef.current;
-        indexedDetailVersion = detailAttr.version;
+        indexedDetailEpoch = detailPickEpoch.epoch;
         indexedWidth = width;
         indexedHeight = height;
         indexedRotationY = galaxyFrame.rotationY;
@@ -981,6 +992,7 @@ function CellPicker({
   }, [
     cellsListRef,
     detailAttr,
+    detailPickEpoch,
     drawCountRef,
     hoveredCellIdRef,
     pickingSuspendedRef,
@@ -994,7 +1006,7 @@ function CellPicker({
     };
     // Capture runs before R3F's delegated bubble handler. Pointer-down starts
     // from a precise snapshot; pointer-up/click then reuse it unless the camera,
-    // Cell field, focus, viewport, or detail buffers actually changed.
+    // Cell field, focus, viewport, or expanded-detail membership changed.
     canvas.addEventListener('pointerdown', forcePreciseRaycast, true);
     return () => {
       canvas.removeEventListener('pointerdown', forcePreciseRaycast, true);
@@ -1284,6 +1296,15 @@ function CellGalaxy({
   const cellDetailAttr = useMemo(
     () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1)
       .setUsage(THREE.DynamicDrawUsage),
+    [],
+  );
+  // The shaders read that lane as a continuous magnitude; the picker reads it
+  // as one line — expanded braids get a padded pick disc, compact lights keep
+  // their exact footprint. So the writer counts crossings of that line here,
+  // and the picker's screen index goes stale on this counter rather than on
+  // every frame of every hover envelope that ever eased.
+  const cellDetailPickEpoch = useMemo<ScalarThresholdEpoch>(
+    () => ({ threshold: CELL_EXPANDED_DETAIL_THRESHOLD, epoch: 0 }),
     [],
   );
   // Smooth hover/selection envelope. CellNucleus owns the easing and writes
@@ -1909,6 +1930,7 @@ function CellGalaxy({
             drawCountRef={drawCountRef}
             groupRef={groupRef}
             detailAttr={cellDetailAttr}
+            detailPickEpoch={cellDetailPickEpoch}
             focusAttr={cellFocusAttr}
             recallAttr={cellRecallAttr}
             recallStateAttr={cellRecallStateAttr}
@@ -1937,6 +1959,7 @@ function CellGalaxy({
           cellsListRef={cellsListRef}
           drawCountRef={drawCountRef}
           detailAttr={cellDetailAttr}
+          detailPickEpoch={cellDetailPickEpoch}
           selectedCellIdRef={selectedCellIdRef}
           hoveredCellIdRef={hoveredCellIdRef}
           pickingSuspendedRef={pickingSuspendedRef}

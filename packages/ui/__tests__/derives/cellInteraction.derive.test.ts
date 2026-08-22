@@ -93,6 +93,37 @@ describe('cell interaction derivation', () => {
     );
   });
 
+  it('reads detail as one line, never as a magnitude', () => {
+    // The whole licence for the picker's crossing epoch: an easing envelope
+    // moves a slot's detail on every frame of its 0.3–0.7 s run, and NONE of
+    // that motion is a new pick answer — only the frame that changes sides is.
+    // If a continuous term ever enters this function, the epoch under-rebuilds
+    // and this test is the thing that says so.
+    const eased = [0.03, 0.08, 0.1755, 0.24, 0.3128, 0.46, 0.72, 1];
+    const wide = new Set(eased.map((detail) => cellPickRadiusPx(4, 6, detail)));
+    expect(wide.size).toBe(1);
+    expect([...wide]).toEqual([CELL_EXPANDED_PICK_MIN_RADIUS_PX]);
+
+    const collapsing = [0.0199, 0.011, 0.004, 0.0009, 0];
+    const narrow = new Set(
+      collapsing.map((detail) => cellPickRadiusPx(4, 6, detail)),
+    );
+    expect(narrow.size).toBe(1);
+    expect([...narrow]).toEqual([6]);
+
+    // Teeth on the line itself, in the float32 the attribute actually stores:
+    // at the line the disc is the exact visible footprint, a hair over it the
+    // padded target — and `Math.fround` of the constant lands just UNDER the
+    // double it is compared against, which the crossing test must agree with
+    // because both read the same stored value.
+    const stored = Math.fround(CELL_EXPANDED_DETAIL_THRESHOLD);
+    expect(stored > CELL_EXPANDED_DETAIL_THRESHOLD).toBe(false);
+    expect(cellPickRadiusPx(4, 18, stored)).toBe(18);
+    expect(cellPickRadiusPx(4, 18, Math.fround(0.0201))).toBe(
+      18 + CELL_EXPANDED_PICK_PADDING_PX,
+    );
+  });
+
   it('eases the galaxy into a slower inspection tempo and back out', () => {
     expect(cellGalaxyRotationScaleTarget(null)).toBe(1);
     expect(cellGalaxyRotationScaleTarget(7))

@@ -29,6 +29,10 @@ const CELL_GALAXY_SOURCE = resolve(
   process.cwd(),
   'src/components/CellGalaxy.tsx',
 );
+const CELL_NUCLEUS_SOURCE = resolve(
+  process.cwd(),
+  'src/components/CellNucleus.tsx',
+);
 const CONTENT_ADDRESS_ECHO_SOURCE = resolve(
   process.cwd(),
   'src/components/CellContentAddressEchoMarker.tsx',
@@ -209,7 +213,7 @@ describe('CellGalaxy', () => {
     expect(picker).toContain('indexedMatrixWorld.equals(matrix)');
     expect(picker).toContain('indexedCameraView.equals(camera.matrixWorldInverse)');
     expect(picker).toContain('indexedProjection.equals(camera.projectionMatrix)');
-    expect(picker).toContain('indexedDetailVersion !== detailAttr.version');
+    expect(picker).toContain('indexedDetailEpoch !== detailPickEpoch.epoch');
     expect(picker).toContain('screenIndex.find(');
     expect(picker).toContain("canvas.addEventListener('pointerdown'");
     expect(picker).not.toContain("canvas.addEventListener('pointerup'");
@@ -217,6 +221,38 @@ describe('CellGalaxy', () => {
     expect(picker).not.toContain('window.requestAnimationFrame');
     expect(picker).not.toContain('indexFreshThisFrame');
     expect(picker).toContain('forcePreciseRaycastRef.current');
+  });
+
+  it('goes stale on the detail line being crossed, not on detail moving', () => {
+    const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
+    const nucleusSource = readFileSync(CELL_NUCLEUS_SOURCE, 'utf8');
+
+    // One epoch object, owned beside the attribute it describes, seeded with
+    // the ONE line the picker reads the lane across.
+    expect(source).toMatch(
+      /const cellDetailPickEpoch = useMemo<ScalarThresholdEpoch>\(\s*\(\) => \(\{ threshold: CELL_EXPANDED_DETAIL_THRESHOLD, epoch: 0 \}\),/,
+    );
+    // Handed to the writer and to the reader — same object, no module global.
+    expect(source.match(/detailPickEpoch=\{cellDetailPickEpoch\}/g))
+      .toHaveLength(2);
+    // The raw attribute version is gone from the gate for good: it moves on
+    // every frame of a 0.3-0.7s hover ease, and the pick answer does not.
+    expect(source).not.toContain('detailAttr.version');
+    expect(source).not.toContain('indexedDetailVersion');
+
+    // Exactly one detail writer, and it is the one that carries the epoch.
+    // The focus and recall lanes must NOT — they are not in the pick gate,
+    // and epoch-ing them would put the rebuild back on every eased frame.
+    expect(nucleusSource).toMatch(
+      /writeSparseScalarAttribute\(\s*detailAttr,\s*detailSlots\.current,\s*writes,\s*detailPickEpoch,\s*\)/,
+    );
+    expect(nucleusSource.match(/detailPickEpoch/g)).toHaveLength(3);
+    expect(nucleusSource).toContain(
+      'writeSparseScalarAttribute(focusAttr, focusSlots.current, writes)',
+    );
+    expect(nucleusSource).toMatch(
+      /writeSparseScalarAttribute\(\s*recallAttr,\s*recallSlots\.current,\s*recallWrites,\s*\)/,
+    );
   });
 
   it('consumes only the server display plane — zero composition policy', () => {
