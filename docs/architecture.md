@@ -557,8 +557,9 @@ half-applying it is not something to keep serving.
 | Enrichment event mpsc | 256 |
 | Projection channel | 4,096 |
 | Entity broadcast | 4,096 |
-| Entity replay ring | 50,000 mutations |
-| Per-projection replay ring | 50,000 deltas |
+| Entity replay ring | 4,096 mutations (2 × replay budget) |
+| Per-projection replay ring | 4,096 deltas (2 × replay budget) |
+| One-frame reconnect replay budget | 2,048 entries |
 | Chain recent-block evidence | 50 blocks |
 
 Bounded mpsc channels backpressure producers. A slow broadcast consumer gets a
@@ -1276,7 +1277,8 @@ tip advancement, Ctrl-C persistence, and port release.
 | Script registry entries | 256 | Core wire contract |
 | Curated composition candidates | 6,000 | ckbadger source |
 | Composition top-up | 256 per class per tick | ckbadger source |
-| Entity/projection replay ring | 50,000 entries | Server |
+| Entity/projection replay ring | 4,096 entries | Server |
+| One-frame reconnect replay budget | 2,048 entries | Server |
 | Canonical/enrichment channel | 4,096 / 256 | Server |
 | WebSocket heartbeat | 5 s | Server |
 | Browser stale threshold | 15 s | ui-app/cache |

@@ -113,12 +113,20 @@ enum StreamAction {
 }
 
 /// Longest gap the reconnect path will replay as one delta frame. A
-/// display/link delta can carry hundreds of cell payloads and the rings
-/// hold up to 50K entries, so a `since` just above the ring floor (an
-/// overnight tab) once meant a single tens-of-MB Text frame — dwarfing
-/// the cached columnar snapshot it was trying to avoid. Past this many
-/// pending entries the snapshot is strictly cheaper for both sides.
-const REPLAY_MAX_ENTRIES: usize = 2048;
+/// display/link delta can carry hundreds of cell payloads, so a `since`
+/// far enough below the ring tail (an overnight tab) once meant a single
+/// tens-of-MB Text frame — dwarfing the cached columnar snapshot it was
+/// trying to avoid. Past this many pending entries the snapshot is
+/// strictly cheaper for both sides.
+///
+/// This is the ONLY thing that reads ring depth in production, which makes
+/// it the budget both replay rings are sized from:
+/// [`crate::state::MUTATION_RING_CAP`] and
+/// [`crate::projection_registry::PROJECTION_DELTA_RING_CAP`] are each two
+/// of these. Raising it therefore costs retained memory in two places;
+/// raising a ring cap without raising this buys nothing, because entries
+/// deeper than this budget can never appear in any frame.
+pub(crate) const REPLAY_MAX_ENTRIES: usize = 2048;
 
 /// Pick the catch-up action for a client arriving with `since`.
 ///
@@ -682,6 +690,37 @@ mod tests {
         assert_eq!(
             decide_action(5, 200, Some(100), Some(200), 100),
             StreamAction::FullSnapshot
+        );
+    }
+
+    /// The rings exist to serve `decide_action`, and nothing else in
+    /// production reads their depth. So the two caps are not independent
+    /// numbers to be tuned — they are this budget, doubled. The disease
+    /// this pins against is the one that produced them: `REPLAY_MAX_ENTRIES`
+    /// was introduced long after `MUTATION_RING_CAP` /
+    /// `PROJECTION_DELTA_RING_CAP` were set at 50_000, and nobody went back
+    /// to re-derive them, so 47,952 slots per ring held entries that no
+    /// frame could ever carry.
+    #[test]
+    fn the_rings_are_sized_from_the_replay_budget_they_serve() {
+        assert_eq!(crate::state::MUTATION_RING_CAP, 2 * REPLAY_MAX_ENTRIES);
+        assert_eq!(
+            crate::projection_registry::PROJECTION_DELTA_RING_CAP,
+            2 * REPLAY_MAX_ENTRIES
+        );
+
+        // The headroom is real, not decorative: a client sitting exactly at
+        // the ring floor still replays rather than resyncing, because the
+        // gap it has to cover is half of what the ring retains.
+        assert_eq!(
+            decide_action(
+                1,
+                crate::state::MUTATION_RING_CAP as u64,
+                Some(1),
+                Some(crate::state::MUTATION_RING_CAP as u64),
+                REPLAY_MAX_ENTRIES,
+            ),
+            StreamAction::ReplayDelta
         );
     }
 

@@ -137,8 +137,8 @@ pub(crate) fn network_mutations(
 /// Ticks between unconditional re-emits of an unchanged network mutation.
 /// Telemetry fields (per-peer latency / connected duration / best-known
 /// header) move on nearly every 4s poll; re-emitting full snapshots for
-/// them filled the 50K entity ring with redundant peer lists in under a
-/// day and pushed a frame to every client each tick. Structural change
+/// them filled the whole entity replay ring with redundant peer lists in
+/// hours and pushed a frame to every client each tick. Structural change
 /// still emits immediately; telemetry drift batches into one refresh per
 /// this many ticks (8 × 4s = 32s).
 pub(crate) const NETWORK_TELEMETRY_REFRESH_TICKS: u64 = 8;

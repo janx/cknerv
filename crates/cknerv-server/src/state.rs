@@ -33,6 +33,7 @@ use cknerv_core::{
 use crate::enrichment::CanonicalContext;
 use crate::health::ServerHealth;
 use crate::projection_registry::{past_poison, Quarantinable, Registry};
+use crate::ws;
 
 /// One structural mutation as both readers of it want it: the typed form
 /// the projections reduce, and the wire text every entity-stream client
@@ -77,16 +78,27 @@ impl std::ops::Deref for SharedMutationEntry {
     }
 }
 
-/// Reference-counted structural mutation. The ring holds up to 50k of them
-/// and every connecting client snapshots it, so entries are shared rather
-/// than deep-copied — same reason the projection deltas are.
+/// Reference-counted structural mutation. Every connecting client
+/// snapshots the whole ring, so entries are shared rather than deep-copied
+/// — same reason the projection deltas are.
 pub type SharedMutation = Arc<SharedMutationEntry>;
 
-/// Capacity of the structural mutation ring. Sized to cover dozens of
-/// minutes of real activity so a reconnecting client at a stale revision
-/// can still catch up via deltas instead of pulling a full snapshot.
-/// Matches simulator's `MUTATION_RING_CAP`.
-const MUTATION_RING_CAP: usize = 50_000;
+/// Capacity of the structural mutation ring.
+///
+/// Derived from the replay budget, not chosen: [`ws::REPLAY_MAX_ENTRIES`]
+/// is the only production reader of ring depth, and a reconnect whose gap
+/// exceeds it takes the full-snapshot path regardless of how much history
+/// the ring still holds. Two budgets is honest headroom — the second is
+/// there so the floor a replay may start from is never the entry that is
+/// about to be evicted — and every slot past it is memory that can never
+/// reach a frame. The ring used to hold 50_000, of which 47_952 were
+/// exactly that: unreachable retained bytes, each memoizing its own wire
+/// text.
+pub(crate) const MUTATION_RING_CAP: usize = 4_096;
+const _: () = assert!(
+    MUTATION_RING_CAP >= 2 * ws::REPLAY_MAX_ENTRIES,
+    "the mutation ring must hold at least twice what one reconnect can replay"
+);
 
 /// Capacity of the broadcast channel for live mutation fan-out. Slow
 /// consumers exceeding this lag get a `Lagged(n)` error and resync.
@@ -1124,7 +1136,8 @@ mod tests {
 
     /// The entities stream snapshots this ring on every connect, exactly
     /// like the projection stream does with its deltas — so it has to share
-    /// entries too, or a reconnect copies 50k mutations to read a handful.
+    /// entries too, or a reconnect deep-copies the whole ring to read a
+    /// handful.
     #[test]
     fn the_mutation_ring_shares_entries_with_every_reader() {
         let state = ServerState::new();

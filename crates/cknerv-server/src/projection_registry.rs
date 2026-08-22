@@ -36,19 +36,30 @@ const PROJECTION_CHANNEL_CAPACITY: usize = 4096;
 /// Per-projection delta ring capacity. Reconnecting clients with a `since`
 /// revision inside this ring catch up via deltas; older `since` values
 /// force a snapshot.
-const PROJECTION_DELTA_RING_CAP: usize = 50_000;
+///
+/// Derived from the replay budget, not chosen: [`crate::ws`]'s
+/// `REPLAY_MAX_ENTRIES` is the only production reader of ring depth, and a
+/// reconnect whose gap exceeds it takes the snapshot path however much
+/// history the ring still holds. Two budgets is honest headroom; every
+/// slot past it retains a finished wire payload that can never reach a
+/// frame. The ring used to hold 50_000, of which 47_952 were exactly that.
+pub(crate) const PROJECTION_DELTA_RING_CAP: usize = 4_096;
+const _: () = assert!(
+    PROJECTION_DELTA_RING_CAP >= 2 * crate::ws::REPLAY_MAX_ENTRIES,
+    "a projection ring must hold at least twice what one reconnect can replay"
+);
 
 /// One emitted delta. Carries both a per-delta global sequence number
 /// (used internally for dedup against `since`) and the revision of the
 /// mutation that produced it (surfaced to the client). Multiple deltas
 /// from the same mutation share `rev` but each gets a unique `seq`.
 ///
-/// Always handed around as [`SharedDelta`]. The ring holds up to 50k of
-/// these and a display delta can carry hundreds of full Cell payloads, so
-/// a connecting client that deep-copied the backlog would stall the
-/// server for as long as the copy took — measured at 87–750ms even when
-/// it had nothing to replay. Broadcast delivery has the same shape: one
-/// entry, N subscribers.
+/// Always handed around as [`SharedDelta`]. The ring holds
+/// [`PROJECTION_DELTA_RING_CAP`] of these and a display delta can carry
+/// hundreds of full Cell payloads, so a connecting client that deep-copied
+/// the backlog would stall the server for as long as the copy took —
+/// measured at 87–750ms even when it had nothing to replay. Broadcast
+/// delivery has the same shape: one entry, N subscribers.
 ///
 /// `value` is the delta's FINISHED wire text, not a tree: it is produced
 /// once by [`delta_to_wire`] at apply and every frame — live fan-out and
@@ -791,9 +802,9 @@ mod tests {
     }
 
     /// Replay and fan-out must hand out the SAME entries, not copies. The
-    /// ring holds up to 50k deltas and a display delta can carry hundreds
-    /// of Cell payloads, so a client that deep-copied the backlog stalled
-    /// the server just by connecting — even with nothing to replay.
+    /// ring holds thousands of deltas and a display delta can carry
+    /// hundreds of Cell payloads, so a client that deep-copied the backlog
+    /// stalled the server just by connecting — even with nothing to replay.
     #[test]
     fn replaying_the_ring_shares_entries_instead_of_copying_them() {
         let mut registry = Registry::new();
