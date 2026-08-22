@@ -202,20 +202,21 @@ describe('CellContentMemory reveal staging', () => {
     expect(container.textContent).toContain('DOCUMENT BODY');
   });
 
-  it('states an empty output in one ghosted line that never restacks', () => {
+  // An empty output renders NOTHING here. The window's job is to say what the
+  // bytes are; with no bytes, the DATA fact above it in the dossier already
+  // reads `Empty`, and a `CONTENT · EMPTY  0 B` line under it was the same
+  // absence stated a second and third time. Nothing to reveal means nothing
+  // to restack either, at either end of the walk.
+  it('renders no window at all for a validly empty output', () => {
     const { container, rerender } = render(
       <CellContentMemory dataHex="0x" reveal={0} />,
     );
-    const line = container.querySelector(
-      '[data-cell-content-empty="true"]',
-    ) as HTMLElement;
-    expect(line.style.display).toBe('flex');
-    expect(line.style.opacity).toBe('0.18');
-    expect(line.textContent).toContain('CONTENT · EMPTY');
+    expect(container.querySelector('[data-cell-content-memory]')).toBeNull();
+    expect(container.textContent).toBe('');
 
     rerender(<CellContentMemory dataHex="0x" reveal={1} />);
-    expect(line.style.display).toBe('flex');
-    expect(line.style.opacity).toBe('1');
+    expect(container.querySelector('[data-cell-content-memory]')).toBeNull();
+    expect(container.textContent).toBe('');
   });
 
   it('holds the analysis rows\' height while the record is still on its way', () => {

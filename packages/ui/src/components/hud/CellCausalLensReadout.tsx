@@ -284,8 +284,13 @@ export default function CellCausalLensReadout({
         }}
       >
         {lens.status === 'unavailable' ? (
-          // No retained link, no endpoint counts worth printing — one line
-          // states the identity-only situation instead of a plate of "?"s.
+          // No retained link, no endpoint counts worth printing — the
+          // identity-only situation is stated instead of a plate of "?"s.
+          // It takes the SAME two-line shape as the resolved branch below:
+          // title and standing on one line, the transaction on the next.
+          // Crammed onto one line, the block ref was the span that lost the
+          // shrink fight and ellipsized down to `#1…` — a reference to
+          // nothing, printed where a block number belongs.
           <>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0, fontFamily: HUD_FONTS.mono }}>
               {/* A two-word title is one word for wrapping purposes: left to
@@ -294,17 +299,19 @@ export default function CellCausalLensReadout({
               <span style={{ flex: '0 0 auto', whiteSpace: 'nowrap', color: HUD_COLORS.cyanInk, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.label, fontWeight: 700, letterSpacing: 1.05 }}>
                 {ORIGIN_TITLE}
               </span>
-              <span title={lens.txHash} style={{ minWidth: 0, color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                TX {shortHash(lens.txHash)} · {formatBlockRef(lens.block)}
-              </span>
               <span
                 data-causal-summary-note="true"
-                style={{ marginLeft: 'auto', color: meta.color, fontSize: HUD_TYPE.micro, letterSpacing: 0.34, whiteSpace: 'nowrap' }}
+                style={{ marginLeft: 'auto', minWidth: 0, color: meta.color, fontSize: HUD_TYPE.micro, letterSpacing: 0.34, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
               >
                 {meta.note}
               </span>
             </div>
             {caption}
+            <div style={{ display: 'flex', alignItems: 'baseline', minWidth: 0, marginTop: 3, fontFamily: HUD_FONTS.mono }}>
+              <span title={lens.txHash} style={{ minWidth: 0, color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                TX {shortHash(lens.txHash)} · {formatBlockRef(lens.block)}
+              </span>
+            </div>
           </>
         ) : (
           <>

@@ -81,11 +81,18 @@ describe('CellByteBudget', () => {
     expect(
       container.querySelector('[data-byte-budget-occupied]')!.textContent,
     ).toBe('154 B');
+    // The capacity is NOT restated here — the CAPACITY fact this instrument
+    // hangs under prints the identical formatted figure three lines up. It is
+    // named on the hover title, where a restatement costs nothing.
+    expect(container.textContent).not.toContain('OF');
     expect(
-      container.querySelector('[data-byte-budget-capacity]')!.textContent,
-    ).toBe('400 CKB');
+      container.querySelector('[data-byte-budget-ratio]')!.getAttribute('title'),
+    ).toBe('39% of 400 CKB');
+    expect(
+      container.querySelector('[data-byte-budget-ratio]')!
+        .getAttribute('data-byte-budget-capacity-shannons'),
+    ).toBe(String(400 * CKB));
     expect(container.textContent).toContain('OCCUPIED');
-    expect(container.textContent).toContain('OF');
     expect(container.querySelectorAll('[data-byte-budget-legend]')).toHaveLength(4);
     const legend = container.querySelector<HTMLElement>(
       '[data-byte-budget-legend="lock"]',
@@ -101,8 +108,8 @@ describe('CellByteBudget', () => {
       />,
     );
     expect(
-      container.querySelector('[data-byte-budget-capacity]')!.textContent,
-    ).toBe('1 M CKB');
+      container.querySelector('[data-byte-budget-ratio]')!.getAttribute('title'),
+    ).toBe('<1% of 1,000,000 CKB');
     expect(
       container.querySelector('[data-byte-budget-percent]')!.textContent,
     ).toBe('<1%');
@@ -136,8 +143,11 @@ describe('CellByteBudget', () => {
       <CellByteBudget capacityShannons={40_000_000_000n} knowledge={knowledge()} />,
     );
     expect(
-      container.querySelector('[data-byte-budget-capacity]')!.textContent,
-    ).toBe('400 CKB');
+      container.querySelector('[data-byte-budget-ratio]')!.getAttribute('title'),
+    ).toBe('39% of 400 CKB');
+    expect(
+      container.querySelector('[data-byte-budget-free]')!.textContent,
+    ).toBe('246 CKB');
   });
 
   it('marks the DATA segment observed-partial when the data hex is truncated', () => {
@@ -201,8 +211,8 @@ describe('CellByteBudget', () => {
     expect(free.getAttribute('title')).toBe('246 CKB unspent · 154 CKB occupied');
     expect(container.textContent).toContain('FREE');
     // Rounded in the readout, unrounded in the hover — the house pattern.
-    expect(container.querySelector('[data-byte-budget-capacity]')
-      ?.getAttribute('title')).toBe('400 CKB');
+    expect(container.querySelector('[data-byte-budget-ratio]')
+      ?.getAttribute('title')).toBe('39% of 400 CKB');
     expect(container.querySelector('[data-cell-byte-budget]')
       ?.getAttribute('data-byte-budget-occupied-source')).toBe('bytes');
     expect(container.querySelector('[data-byte-budget-residual]')).toBeNull();

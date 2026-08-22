@@ -58,12 +58,22 @@ const source: EnrichmentSourceStatus = {
   lag_blocks: 1,
 };
 
-/** The lattice count the plate header prints, as a number. */
+/** The lattice count the plate header tracks, as a number. It stopped being
+ *  printed — `LOCKED · A-LATTICE 6/6` in nominal green sat directly under the
+ *  live flag, telemetry in the colour of a chain fact — but the walk still
+ *  publishes it on the status node for anything watching. */
 function latticeLit(container: HTMLElement): number {
   const status = container.querySelector(
     '[data-cell-identity-scan-status="true"]',
   ) as HTMLElement;
-  return Number(/A-LATTICE (\d+)\//.exec(status.textContent ?? '')?.[1] ?? -1);
+  return Number(/^(\d+)\//.exec(status.dataset.cellScanLattice ?? '')?.[1] ?? -1);
+}
+
+/** Whether the walk has locked, from the same node. */
+function latticeClassified(container: HTMLElement): boolean {
+  return container.querySelector<HTMLElement>(
+    '[data-cell-identity-scan-status="true"]',
+  )?.dataset.cellScanClassified === 'true';
 }
 
 function factState(container: HTMLElement, field: string): string | null {
@@ -127,7 +137,9 @@ describe('the scan reveal runs on a clock the leaves hold', () => {
     // The reveal genuinely happened, in ink and in the sweep…
     expect(latticeLit(container)).toBe(6);
     expect(factState(container, 'data')).toBe('resolved');
-    expect(container.textContent).toContain('LOCKED');
+    expect(latticeClassified(container)).toBe(true);
+    // …and the progress readout retired with the walk it was reporting on.
+    expect(container.textContent).not.toContain('SCANNING');
     expect(analysis.getAttribute('data-cellular-scan-state')).toBe('locked');
     expect(progressSeen.size).toBeGreaterThan(10);
     const beam = container.querySelector(
@@ -152,7 +164,9 @@ describe('the scan reveal runs on a clock the leaves hold', () => {
     );
 
     expect(vi.getTimerCount()).toBe(0);
-    expect(container.textContent).toContain('LOCKED · A-LATTICE 6/6');
+    expect(latticeLit(container)).toBe(6);
+    expect(latticeClassified(container)).toBe(true);
+    expect(container.textContent).not.toContain('SCANNING');
     expect(factState(container, 'lock')).toBe('resolved');
     expect(factState(container, 'data')).toBe('resolved');
     const analysis = container.querySelector(
@@ -232,7 +246,7 @@ describe('the scan reveal runs on a clock the leaves hold', () => {
     performanceNow.mockReturnValue(PROBE_STEP_S * 6.6 * 1000);
     act(() => { vi.advanceTimersByTime(SCAN_TICK_MS); });
     expect(latticeLit(container)).toBe(6);
-    expect(container.textContent).toContain('LOCKED');
+    expect(latticeClassified(container)).toBe(true);
     expect(semantics().style.opacity).toBe('1');
     performanceNow.mockRestore();
   });

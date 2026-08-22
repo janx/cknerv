@@ -421,39 +421,13 @@ export default function CellContentMemory({
   // replaces a reservation instead of pushing the footer beneath it down.
   const analysisPending = enhanced && pending && !record;
 
-  // A validly-empty output earns one honest line — not the stack of negatives
-  // (∅ box, byte count, decode fallbacks) that all restate the same absence.
+  // A validly-empty output earns NO line. It used to earn one — down from the
+  // stack of negatives (∅ box, byte count, decode fallbacks) that all restate
+  // the same absence — but the DATA fact directly above this window already
+  // reads `Empty`, so even the one line was the third statement of nothing in
+  // four lines. Absence is stated once, by the fact whose subject it is.
   // Most Cells in view are plain transfers, so this is the common case.
-  if (model.valid && model.complete && model.observedBytes === 0) {
-    return (
-      <section
-        aria-label="Consensus memory content"
-        data-cell-content-memory="true"
-        data-cell-content-memory-mode={enhanced ? 'indexed' : 'direct'}
-        data-cell-content-empty="true"
-        data-cell-content-reveal-state={summaryRevealed ? 'resolved' : 'scanning'}
-        {...revealStageAttributes(summaryRevealed)}
-        style={{
-          display: 'flex',
-          ...revealStageStyle(summaryRevealed),
-          alignItems: 'baseline',
-          gap: 6,
-          minWidth: 0,
-          marginTop: 6,
-          padding: '3px 5px',
-          border: `1px solid ${rgba(HUD_COLORS.dim, 0.14)}`,
-          fontFamily: HUD_FONTS.mono,
-        }}
-      >
-        <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.7 }}>
-          CONTENT · EMPTY
-        </span>
-        <span style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, whiteSpace: 'nowrap' }}>
-          0 B
-        </span>
-      </section>
-    );
-  }
+  if (model.valid && model.complete && model.observedBytes === 0) return null;
 
   return (
     <section

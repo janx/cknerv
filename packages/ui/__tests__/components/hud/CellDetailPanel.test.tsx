@@ -294,7 +294,12 @@ describe('CellDetailPanel', () => {
     expect(container.querySelector('[role="tablist"]')).toBeNull();
     expect(t).toContain('CELL SCAN');
     expect(t).toContain('DRAG TO ORBIT');
-    expect(t).toContain('A-LATTICE');
+    // The lattice count is tracked, never printed: a green `LOCKED · A-LATTICE
+    // 6/6` under the live flag was UI telemetry in a chain fact's colour, and
+    // permanent decoration once the walk it reported on had finished.
+    expect(t).not.toContain('A-LATTICE');
+    expect(container.querySelector<HTMLElement>('[data-cell-identity-scan-status="true"]')
+      ?.dataset.cellScanLattice).toBe('0/6');
     // Bare mode — ~98% of clicks — still gets real evidence: the Cell's own
     // account of which script guards it, with no index in the picture.
     const lockCode = container.querySelector(
@@ -372,7 +377,10 @@ describe('CellDetailPanel', () => {
     expect(factState('lock')).toBe('resolved');
     expect(factState('asset')).toBe('scanning');
     expect(factState('capacity')).toBe('scanning');
-    expect(container.textContent).toContain('A-LATTICE 1/6');
+    expect(container.querySelector<HTMLElement>('[data-cell-identity-scan-status="true"]')
+      ?.dataset.cellScanLattice).toBe('1/6');
+    // While the walk runs it says so, in instrument grey, not chain green.
+    expect(container.textContent).toContain('SCANNING');
 
     // Five landmarks in: everything except the DATA fact at the bottom.
     performanceNow.mockReturnValue(PROBE_STEP_S * 4.6 * 1000);
@@ -381,7 +389,8 @@ describe('CellDetailPanel', () => {
     expect(factState('born')).toBe('resolved');
     expect(factState('capacity')).toBe('resolved');
     expect(factState('data')).toBe('scanning');
-    expect(container.textContent).toContain('A-LATTICE 5/6');
+    expect(container.querySelector<HTMLElement>('[data-cell-identity-scan-status="true"]')
+      ?.dataset.cellScanLattice).toBe('5/6');
     performanceNow.mockRestore();
   });
 
@@ -401,12 +410,13 @@ describe('CellDetailPanel', () => {
     expect(text).toContain('Native CKB');
     expect(text).toContain('Default Lock');
     expect(text).toContain('Empty');
-    // A validly-empty output collapses to one line instead of a negatives
-    // stack (∅ box + byte count + decode fallbacks).
-    expect(text).toContain('CONTENT · EMPTY');
+    // A validly-empty output collapses to NOTHING: the DATA fact right above
+    // the window already reads `Empty`, so the window's own one-liner was the
+    // third statement of the same absence inside four lines.
+    expect(text).not.toContain('CONTENT · EMPTY');
     expect(text).not.toContain('NO OUTPUT DATA');
     expect(text).not.toContain('NO DETERMINISTIC DECODE');
-    expect(container.querySelector('[data-cell-content-empty="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-cell-content-memory]')).toBeNull();
     expect(container.querySelector('[data-cell-content-bytes="true"]')).toBeNull();
     expect(text).not.toMatch(/ƒ\d|\d+ paths|\d+ knots|\d\.\d{2}×/);
   });
@@ -880,8 +890,12 @@ describe('CellDetailPanel', () => {
     expect(budget.getAttribute('data-byte-budget-total-bytes')).toBe('133');
     expect(budget.textContent).toContain('133 B');
     expect(budget.textContent).toContain('OCCUPIED');
-    expect(container.querySelector('[data-byte-budget-capacity="true"]')?.textContent)
-      .toBe('123 CKB');
+    // The budget no longer restates the capacity: `OF 123 CKB` sat three
+    // lines under the CAPACITY fact printing the identical formatted figure.
+    // It survives exactly where a restatement is free — the hover title.
+    expect(budget.textContent).not.toContain('OF');
+    expect(container.querySelector('[data-byte-budget-ratio]')?.getAttribute('title'))
+      .toContain('123');
     expect(container.querySelector('[data-cell-cluster="capacity"]')
       ?.contains(budget)).toBe(true);
     // The old 3px KnowledgeBar is gone — never two byte bars.
@@ -1636,7 +1650,12 @@ describe('CellDetailPanel', () => {
     const { container } = render(<CellDetailPanel cell={base} onClose={() => {}} />);
     const t = container.textContent ?? '';
     expect(t).toContain('CELL // #4242');
-    expect(t).toContain('LOCKED · A-LATTICE 6/6');
+    // Reduced motion hands over a card that has already locked, so the walk's
+    // progress readout was never on screen at all.
+    expect(t).not.toContain('SCANNING');
+    expect(t).not.toContain('A-LATTICE');
+    expect(container.querySelector<HTMLElement>('[data-cell-identity-scan-status="true"]')
+      ?.dataset.cellScanClassified).toBe('true');
     expect(t).not.toContain('1111111111111111 · 1111111111');
     expect(t).toContain('OMNI Lock');                              // decoded rows still present
     expect(t).toContain('11 B');

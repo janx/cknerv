@@ -77,12 +77,18 @@ export default function CellByteBudget({
           </span>
         </span>
       </div>
+      {/* The composition bar decomposes OCCUPIED against itself, so a Cell
+        * using 4% of its budget still draws a full-width bar — at 9px of
+        * saturated, glowing colour that made it the loudest object on a card
+        * whose actual headline is the fact above it. Thin and quiet: it is
+        * evidence for CAPACITY, and the reading that answers "how full" is
+        * the utilisation strip below, which now carries the weight. */}
       <div
         data-byte-budget-composition="true"
         title={model.segments
           .map((segment) => `${segment.label} ${segment.bytes}B`)
           .join(' · ')}
-        style={{ display: 'flex', height: 9, gap: 1, marginTop: 3 }}
+        style={{ display: 'flex', height: 5, gap: 1, marginTop: 3 }}
       >
         {model.segments.map((segment) => {
           const color = SEGMENT_COLORS[segment.key];
@@ -97,8 +103,7 @@ export default function CellByteBudget({
                 boxSizing: 'border-box',
                 width: `${segment.share * 100}%`,
                 minWidth: 2,
-                background: color,
-                boxShadow: `0 0 6px ${rgba(color, 0.5)}`,
+                background: rgba(color, 0.62),
                 opacity: partial ? 0.6 : 1,
                 borderTop: partial ? `1px dashed ${rgba(color, 0.9)}` : undefined,
               }}
@@ -154,23 +159,42 @@ export default function CellByteBudget({
           </span>
         ) : null}
       </div>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 5, marginTop: 5, whiteSpace: 'nowrap' }}>
-        <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.9 }}>OF</span>
+      {/* Occupied over capacity, clamped — a 1M-CKB cell holding 102 B shows
+        * a hairline of fill here while the composition bar above stays full.
+        * This is the reading that answers "how full is it", so it leads the
+        * line instead of trailing under it as a 2px afterthought — and the
+        * capacity it is a percentage OF is the CAPACITY fact three lines up,
+        * which is why this no longer prints the same figure again. It stays
+        * on the hover title, exact, where a restatement costs nothing. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 6, whiteSpace: 'nowrap' }}>
         <span
-          data-byte-budget-capacity="true"
-          title={formatExactCkb(model.capacityShannons)}
-          style={{ color: HUD_COLORS.ink, fontSize: HUD_TYPE.label }}
+          data-byte-budget-ratio="true"
+          data-byte-budget-capacity-shannons={model.capacityShannons.toString()}
+          title={`${formatUtilizationPercent(model.utilization)} of ${formatExactCkb(model.capacityShannons)}`}
+          style={{ position: 'relative', display: 'block', flex: '0 1 108px', height: 4, background: rgba(HUD_COLORS.orange, 0.13) }}
         >
-          {formatCkb(model.capacityShannons)}
+          <span
+            data-byte-budget-ratio-fill="true"
+            style={{
+              position: 'absolute',
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: `${model.utilization * 100}%`,
+              minWidth: model.utilization > 0 ? 1 : 0,
+              background: HUD_COLORS.orange,
+              boxShadow: `0 0 6px ${rgba(HUD_COLORS.orange, 0.55)}`,
+            }}
+          />
         </span>
-        <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro }}>·</span>
         <span
           data-byte-budget-percent="true"
+          title={`${formatUtilizationPercent(model.utilization)} of ${formatExactCkb(model.capacityShannons)}`}
           style={{ color: HUD_COLORS.ink, fontSize: HUD_TYPE.label }}
         >
           {formatUtilizationPercent(model.utilization)}
         </span>
-        {/* What the Cell bought and nobody is standing on. The bar below
+        {/* What the Cell bought and nobody is standing on. The bar above
           * measures the spent side; this is the same reading from the other
           * end, and the only one that answers how much more could fit. */}
         <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'baseline', gap: 5 }}>
@@ -184,26 +208,6 @@ export default function CellByteBudget({
             {formatCkb(model.freeShannons)}
           </span>
         </span>
-      </div>
-      {/* Occupied over capacity, clamped — a 1M-CKB cell holding 102 B must
-        * show a hairline here while the composition bar above stays full. */}
-      <div
-        data-byte-budget-ratio="true"
-        style={{ position: 'relative', height: 2, marginTop: 2, background: rgba(HUD_COLORS.orange, 0.1) }}
-      >
-        <span
-          data-byte-budget-ratio-fill="true"
-          style={{
-            position: 'absolute',
-            left: 0,
-            top: 0,
-            bottom: 0,
-            width: `${model.utilization * 100}%`,
-            minWidth: model.utilization > 0 ? 1 : 0,
-            background: HUD_COLORS.orange,
-            boxShadow: `0 0 6px ${rgba(HUD_COLORS.orange, 0.55)}`,
-          }}
-        />
       </div>
     </div>
   );

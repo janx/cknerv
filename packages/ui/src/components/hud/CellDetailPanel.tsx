@@ -462,9 +462,13 @@ const CellScanFact = memo(function CellScanFact({
       style={{
         position: 'relative',
         minWidth: 0,
-        minHeight: 43,
+        // A register of six two-line facts is a quarter of the column; the
+        // slack inside each one bought nothing but height. The fact still
+        // outranks the evidence under it — label over value, its own rail —
+        // it just stops reserving a row it does not fill.
+        minHeight: 36,
         margin: 0,
-        padding: '6px 7px 5px 10px',
+        padding: '4px 7px 4px 10px',
         border: 0,
         borderLeft: `1px solid ${selected ? accent : rgba(accent, 0.34)}`,
         background: selected
@@ -552,18 +556,25 @@ function CellScanFacetRow({ facet, revealAt }: {
   return <FacetEvidenceRow facet={facet} style={revealInk(revealed)} />;
 }
 
-/** SCANNING nn% → LOCKED, and the lattice count beside it. One span of text
- *  is the only thing in the card that has anything new to say every 80ms. */
+/** The walk's own progress, and only while there is a walk. One span of text
+ *  is the only thing in the card that has anything new to say every 80ms.
+ *
+ *  It used to print `LOCKED · A-LATTICE 6/6` in nominal green directly under
+ *  the live flag: UI telemetry in the colour of a chain fact, and — once the
+ *  walk it reported on was over — permanent decoration in the card's most
+ *  valuable corner. The lit facts are that readout. So it says `SCANNING nn%`
+ *  in instrument grey and retires on the lock, and the lattice count lives on
+ *  as an attribute for anything that needs to watch the walk. */
 function CellScanStatusReadout({ landmarks }: { landmarks: number }) {
   const frame = useCellScanFrame();
-  const color = frame.classified ? HUD_COLORS.nominal : HUD_COLORS.cyanWire;
   return (
     <span
       data-cell-identity-scan-status="true"
-      style={{ color, fontSize: HUD_TYPE.label, letterSpacing: 0.72, textShadow: `0 0 7px ${rgba(color, 0.42)}` }}
+      data-cell-scan-lattice={`${Math.min(frame.lit, landmarks)}/${landmarks}`}
+      data-cell-scan-classified={frame.classified ? 'true' : 'false'}
+      style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.7, whiteSpace: 'nowrap' }}
     >
-      {frame.classified ? 'LOCKED' : `SCANNING ${frame.pct}%`}
-      {' · '}A-LATTICE {Math.min(frame.lit, landmarks)}/{landmarks}
+      {frame.classified ? '' : `SCANNING ${frame.pct}%`}
     </span>
   );
 }
@@ -969,9 +980,12 @@ export default function CellDetailPanel({
       value: formatCellData(cell.data_bytes),
       color: HUD_COLORS.nominal,
     },
+    // The masthead carries the indicator glyph; twinning it here printed the
+    // same green `● LIVE` twice in one column. The register states the word,
+    // in the colour that already says which word it is.
     state: {
       label: 'STATE',
-      value: live ? '● LIVE' : '◇ SPENT',
+      value: live ? 'LIVE' : 'SPENT',
       color: live ? HUD_COLORS.nominal : HUD_COLORS.caution,
     },
     born: { label: 'COMMIT', value: formatBlockRef(cell.birth_block) },
@@ -1236,7 +1250,7 @@ export default function CellDetailPanel({
 
         <div
           data-cell-analysis-register="true"
-          style={{ minWidth: 0, display: 'grid', gap: 6, alignContent: 'start' }}
+          style={{ minWidth: 0, display: 'grid', gap: 4, alignContent: 'start' }}
         >
           <div data-cell-cluster="lock" style={{ minWidth: 0 }}>
             {scanFact('lock')}
@@ -1459,43 +1473,22 @@ export default function CellDetailPanel({
             ) : null}
           </div>
 
-          {semanticSource && semanticPhase ? (
-            <CellScanStagedBlock
-              revealAt={semanticsRevealAt(1)}
-              attributes={{
-                'data-cell-semantics-phase': presentedSemanticPhase ?? semanticPhase,
-                'data-cell-semantics-source': semanticSource.status,
-              }}
-              style={{ minWidth: 0, marginTop: 1 }}
-            >
-              {statusLine ? (
-                <div title={statusLine} style={{ color: (presentedSemanticPhase ?? semanticPhase) === 'error' ? HUD_COLORS.danger : HUD_COLORS.dim, fontSize: HUD_TYPE.label, lineHeight: 1.45 }}>
-                  {statusLine}
-                </div>
-              ) : null}
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 5, minWidth: 0 }}>
-                <span aria-hidden="true" style={{ alignSelf: 'center', width: 4, height: 4, borderRadius: '50%', background: enrichmentSourceColor(semanticSource.status), boxShadow: `0 0 6px ${enrichmentSourceColor(semanticSource.status)}` }} />
-                <span style={{ color: enrichmentSourceColor(semanticSource.status), fontSize: HUD_TYPE.micro, letterSpacing: 0.85, whiteSpace: 'nowrap' }}>
-                  {semanticSource.status.toUpperCase()}
-                </span>
-                {semanticSource.lag_blocks != null ? (
-                  <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.7, whiteSpace: 'nowrap' }}>
-                    · {semanticSource.lag_blocks} BLOCK LAG
-                  </span>
-                ) : null}
-              </div>
-            </CellScanStagedBlock>
-          ) : null}
         </div>
 
+        {/* Zone break. The rules between the three ranks were drawn at 0.12
+          * and 0.18 alpha — under this background that is no rule at all —
+          * while the gap INSIDE the register (6) all but matched the gap
+          * BETWEEN ranks (7). Fourteen bands of equal weight read as one
+          * undifferentiated column, which is the clutter. Ranks separate
+          * wide and visibly; clusters inside a rank sit close. */}
         <div
           data-cell-analysis-bytes="true"
           style={{
             minWidth: 0,
-            paddingTop: 7,
-            borderTop: `1px solid ${rgba(CYAN, 0.12)}`,
+            paddingTop: 11,
+            borderTop: `1px solid ${rgba(CYAN, 0.24)}`,
             display: 'grid',
-            gap: 7,
+            gap: 6,
           }}
         >
           {/* The budget reads as the CAPACITY fact's evidence, under it in
@@ -1540,7 +1533,7 @@ export default function CellDetailPanel({
 
         <div
           data-cell-provenance-footer="true"
-          style={{ minWidth: 0, paddingTop: 4, borderTop: `1px solid ${rgba(VIOLET, 0.18)}` }}
+          style={{ minWidth: 0, paddingTop: 11, borderTop: `1px solid ${rgba(VIOLET, 0.32)}` }}
         >
           {resolvedCausalLens ? (
             <CellScanCausalBlock
@@ -1572,18 +1565,35 @@ export default function CellDetailPanel({
               identityProofComplete={identityProofComplete}
             />
           ) : null}
-          {presentedSemanticRecord ? (
+          {/* Which block the index's answer is true at, and how healthy the
+            * index behind it is — one line, because they are one subject.
+            * The source strip used to hang off the bottom of the REGISTER,
+            * railless and unaligned between the consensus pair and CAPACITY,
+            * which is the middle of a column of chain facts stating something
+            * about our own record-keeping. It belongs down here with the
+            * anchor it qualifies. */}
+          {presentedSemanticRecord || (semanticSource && semanticPhase) ? (
             <CellScanStagedBlock
               revealAt={semanticsRevealAt(1)}
-              attributes={{ 'data-cell-provenance-proof': 'true' }}
-              style={{ display: 'flex', flexWrap: 'wrap', columnGap: 14, rowGap: 2, marginTop: 4, minWidth: 0 }}
+              attributes={{
+                'data-cell-provenance-proof': presentedSemanticRecord
+                  ? 'true'
+                  : undefined,
+                'data-cell-semantics-phase': semanticPhase
+                  ? presentedSemanticPhase ?? semanticPhase
+                  : undefined,
+                'data-cell-semantics-source': semanticSource?.status,
+              }}
+              style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', columnGap: 14, rowGap: 2, marginTop: 4, minWidth: 0 }}
             >
-              <EvidenceFact
-                label="PROOF"
-                value={formatBlockRef(presentedSemanticRecord.as_of.block)}
-                color={HUD_COLORS.cyanWire}
-              />
-              {createdDiffers ? (
+              {presentedSemanticRecord ? (
+                <EvidenceFact
+                  label="PROOF"
+                  value={formatBlockRef(presentedSemanticRecord.as_of.block)}
+                  color={HUD_COLORS.cyanWire}
+                />
+              ) : null}
+              {createdDiffers && presentedSemanticRecord ? (
                 <EvidenceFact
                   label="CREATED"
                   value={formatBlockRef(
@@ -1591,9 +1601,29 @@ export default function CellDetailPanel({
                   )}
                 />
               ) : null}
-              <PlateReadoutCaption style={{ flexBasis: '100%' }}>
-                {PROOF_CAPTION}
-              </PlateReadoutCaption>
+              {semanticSource && semanticPhase ? (
+                <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'baseline', gap: 5, minWidth: 0 }}>
+                  <span aria-hidden="true" style={{ alignSelf: 'center', width: 4, height: 4, borderRadius: '50%', background: enrichmentSourceColor(semanticSource.status), boxShadow: `0 0 6px ${enrichmentSourceColor(semanticSource.status)}` }} />
+                  <span style={{ color: enrichmentSourceColor(semanticSource.status), fontSize: HUD_TYPE.micro, letterSpacing: 0.85, whiteSpace: 'nowrap' }}>
+                    {semanticSource.status.toUpperCase()}
+                  </span>
+                  {semanticSource.lag_blocks != null ? (
+                    <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.7, whiteSpace: 'nowrap' }}>
+                      · {semanticSource.lag_blocks} BLOCK LAG
+                    </span>
+                  ) : null}
+                </span>
+              ) : null}
+              {presentedSemanticRecord ? (
+                <PlateReadoutCaption style={{ flexBasis: '100%' }}>
+                  {PROOF_CAPTION}
+                </PlateReadoutCaption>
+              ) : null}
+              {statusLine ? (
+                <div title={statusLine} style={{ flexBasis: '100%', minWidth: 0, color: (presentedSemanticPhase ?? semanticPhase) === 'error' ? HUD_COLORS.danger : HUD_COLORS.dim, fontSize: HUD_TYPE.label, lineHeight: 1.45 }}>
+                  {statusLine}
+                </div>
+              ) : null}
             </CellScanStagedBlock>
           ) : null}
         </div>
