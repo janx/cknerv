@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import { DATA_HEX_TRUNCATION_MARKER } from '@cknerv/types';
@@ -57,8 +58,20 @@ import CellCausalLensReadout, {
   type CellCausalNavigationReadout,
 } from './CellCausalLensReadout';
 import CellByteBudget from './CellByteBudget';
-import { PROBE_STEP_S, probeScan } from './probeScan';
-import { deriveCellConsensusIdentity } from '../../derives/cellConsensusIdentity.derive';
+import {
+  CellScanClockContext,
+  createCellScanClock,
+  useCellScanClassified,
+  useCellScanClock,
+  useCellScanFrame,
+  useCellScanMemoryProgress,
+  useCellScanSelector,
+  useCellScanStepLit,
+} from './cellScanClock';
+import {
+  deriveCellConsensusIdentity,
+  type CellWriteEvidence,
+} from '../../derives/cellConsensusIdentity.derive';
 import { validateCellSemanticRecordForMorphology } from '../../derives/cellSemanticMorphology.derive';
 import {
   deriveCellCausalLens,
@@ -180,6 +193,12 @@ export type CellDetailLayoutSide = 'left' | 'right' | 'above' | 'below';
 function clampUnit(value: number): number {
   if (!Number.isFinite(value)) return 1;
   return Math.max(0, Math.min(1, value));
+}
+
+/** What one staged step of the walk does to a row: ink, and only ink. The row
+ *  is already standing at its final size — this turns it up. */
+function revealInk(revealed: boolean): CSSProperties {
+  return { opacity: revealed ? 1 : 0, transition: 'opacity 260ms ease' };
 }
 
 function portraitBracket(corner: 'tl' | 'tr' | 'bl' | 'br'): CSSProperties {
@@ -327,6 +346,9 @@ type ClusterRowProps = {
   title?: string;
   badge?: ReactNode;
   caption?: string;
+  /** The walk step this row's ink waits for. Omitted, the row is simply lit:
+   *  every row is mounted at final geometry either way. */
+  revealAt?: number;
   style?: CSSProperties;
 };
 
@@ -342,8 +364,13 @@ function ClusterRow({
   title,
   badge,
   caption,
+  revealAt,
   style,
 }: ClusterRowProps) {
+  const revealed = useCellScanStepLit(revealAt ?? 0);
+  const inkStyle = revealAt === undefined
+    ? style
+    : { ...style, ...revealInk(revealed) };
   return (
     <PlateReadoutRow
       accent={accent}
@@ -355,7 +382,7 @@ function ClusterRow({
       badge={badge}
       rowAttributes={{ 'data-cell-evidence-row': row }}
       valueAttributes={{ 'data-cell-evidence-value': row }}
-      style={style}
+      style={inkStyle}
     >
       {caption ? <PlateReadoutCaption>{caption}</PlateReadoutCaption> : null}
     </PlateReadoutRow>
@@ -398,12 +425,12 @@ function GhostRows({ rows, captions = 0, accent }: {
 
 type CellScanFactProps = RowDecode & {
   field: CellInspectionFacet;
-  revealed: boolean;
+  /** The walk step that lights this fact, 1-based in panel display order. */
+  revealAt: number;
   selected: boolean;
-  interactive: boolean;
   /** Identity-proof carrier state — only STATE / DATA / COMMIT bear one. */
   proof?: { read: boolean };
-  onActivate: () => void;
+  onActivate: (field: CellInspectionFacet) => void;
 };
 
 const CellScanFact = memo(function CellScanFact({
@@ -411,12 +438,16 @@ const CellScanFact = memo(function CellScanFact({
   label,
   value,
   color,
-  revealed,
+  revealAt,
   selected,
-  interactive,
   proof,
   onActivate,
 }: CellScanFactProps) {
+  // Each fact watches its own step of the walk and the lock at the end of it,
+  // so a tick wakes six buttons at most — and only on the tick that changed
+  // one of their two booleans.
+  const revealed = useCellScanStepLit(revealAt);
+  const interactive = useCellScanClassified();
   const accent = color ?? HUD_COLORS.cyanWire;
   return (
     <button
@@ -425,7 +456,7 @@ const CellScanFact = memo(function CellScanFact({
       data-cell-detail-field-state={selected ? 'focused' : revealed ? 'resolved' : 'scanning'}
       aria-pressed={selected}
       disabled={!interactive}
-      onClick={onActivate}
+      onClick={() => onActivate(field)}
       style={{
         position: 'relative',
         minWidth: 0,
@@ -481,11 +512,247 @@ const CellScanFact = memo(function CellScanFact({
   && previous.label === next.label
   && previous.value === next.value
   && previous.color === next.color
-  && previous.revealed === next.revealed
+  && previous.revealAt === next.revealAt
   && previous.selected === next.selected
-  && previous.interactive === next.interactive
   && previous.proof?.read === next.proof?.read
+  // The handler carries the reduced-motion answer the proof read reports, so
+  // it is a value here, not plumbing to be skipped.
+  && previous.onActivate === next.onActivate
 ));
+
+// ——— The leaves the walk wakes ————————————————————————————————————————
+// Everything below subscribes to the scan clock on its own account. That is
+// the whole point: the card body is rendered once per selection, and a tick
+// re-renders only the handful of leaves whose own slice of the walk moved.
+
+/** A block of evidence whose ink waits for a step of the walk. Same div, same
+ *  attributes, same place in the grid — it was never anything but opacity. */
+function CellScanStagedBlock({ revealAt, attributes, style, children }: {
+  revealAt: number;
+  attributes?: Record<string, string | undefined>;
+  style?: CSSProperties;
+  children: ReactNode;
+}) {
+  const revealed = useCellScanStepLit(revealAt);
+  return (
+    <div {...attributes} style={{ ...style, ...revealInk(revealed) }}>
+      {children}
+    </div>
+  );
+}
+
+/** The generic facet row, on the deep-enrichment step. */
+function CellScanFacetRow({ facet, revealAt }: {
+  facet: SemanticFacet;
+  revealAt: number;
+}) {
+  const revealed = useCellScanStepLit(revealAt);
+  return <FacetEvidenceRow facet={facet} style={revealInk(revealed)} />;
+}
+
+/** SCANNING nn% → LOCKED, and the lattice count beside it. One span of text
+ *  is the only thing in the card that has anything new to say every 80ms. */
+function CellScanStatusReadout({ landmarks }: { landmarks: number }) {
+  const frame = useCellScanFrame();
+  const color = frame.classified ? HUD_COLORS.nominal : HUD_COLORS.cyanWire;
+  return (
+    <span
+      data-cell-identity-scan-status="true"
+      style={{ color, fontSize: HUD_TYPE.label, letterSpacing: 0.72, textShadow: `0 0 7px ${rgba(color, 0.42)}` }}
+    >
+      {frame.classified ? 'LOCKED' : `SCANNING ${frame.pct}%`}
+      {' · '}A-LATTICE {Math.min(frame.lit, landmarks)}/{landmarks}
+    </span>
+  );
+}
+
+/** The sweep itself — the one piece of the reveal that genuinely wants all
+ *  12.5 frames a second. It writes its position and the plate's scan state
+ *  straight to the DOM (the PULSE hero's idiom), because the alternative is
+ *  re-rendering the plate that owns those attributes 30 times a click. React
+ *  never re-renders these two nodes, so it never fights the writer for them. */
+function CellScanSweep({ plateRef, reduced }: {
+  plateRef: { current: HTMLElement | null };
+  reduced: boolean;
+}) {
+  const clock = useCellScanClock();
+  const beamRef = useRef<HTMLSpanElement | null>(null);
+  useEffect(() => {
+    const write = () => {
+      const { pct, classified } = clock.frame;
+      const plate = plateRef.current;
+      if (plate) {
+        plate.dataset.cellularScanState = classified ? 'locked' : 'scanning';
+        plate.dataset.cellularScanProgress = String(pct);
+      }
+      const beam = beamRef.current;
+      if (beam) {
+        beam.style.transform = `translate3d(${pct}%,0,0)`;
+        beam.style.opacity = classified ? '0.18' : '0.7';
+        if (classified) beam.style.willChange = '';
+      }
+    };
+    write();
+    return clock.subscribe(write);
+  }, [clock, plateRef]);
+  return (
+    <span
+      ref={beamRef}
+      aria-hidden="true"
+      data-cellular-scan-beam
+      style={{ position: 'absolute', zIndex: 2, left: 0, top: 0, bottom: 0, width: '100%', transform: 'translate3d(0%,0,0)', opacity: 0.7, transition: reduced ? undefined : 'transform 80ms linear, opacity 220ms ease', pointerEvents: 'none', willChange: reduced ? undefined : 'transform, opacity' }}
+    >
+      <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 1, background: `linear-gradient(180deg,transparent,${HUD_COLORS.cyanWire},transparent)`, boxShadow: `0 0 12px ${HUD_COLORS.cyanWire}` }} />
+    </span>
+  );
+}
+
+/** The byte budget joins on the enrichment-context step. */
+function CellScanByteBudget({ capacityShannons, knowledge, dataTruncated, revealAt }: {
+  capacityShannons: number;
+  knowledge: CellSemanticRecord['common_knowledge'] | null;
+  dataTruncated: boolean;
+  revealAt: number;
+}) {
+  const revealed = useCellScanStepLit(revealAt);
+  return (
+    <CellByteBudget
+      capacityShannons={capacityShannons}
+      knowledge={knowledge}
+      dataTruncated={dataTruncated}
+      reveal={revealed ? 1 : 0}
+    />
+  );
+}
+
+type CellScanContentMemoryProps = {
+  dataHex: string;
+  source?: EnrichmentSourceStatus;
+  phase?: CellSemanticsPhase;
+  record?: CellSemanticRecord | null;
+  message?: string | null;
+  pending: boolean;
+};
+
+/** Content memory decodes THROUGH the walk rather than at a step of it, so it
+ *  is one of the two leaves that ride the clock the whole way down. */
+function CellScanContentMemory(props: CellScanContentMemoryProps) {
+  const progress = useCellScanMemoryProgress();
+  return (
+    <CellContentMemory
+      {...props}
+      reveal={clampUnit(progress / CONTENT_DECODED_AT)}
+    />
+  );
+}
+
+/** ORIGIN: the lens ramps with the walk, the block around it resolves at 76%. */
+function CellScanCausalBlock({ lens, navigation, transaction, consumed, attributes }: {
+  lens: CellCausalLens;
+  navigation: CellCausalNavigationReadout | null;
+  transaction: TransactionSemanticRecord | null;
+  consumed: CellSemanticRecord['consumed'] | null;
+  attributes: Record<string, string | undefined>;
+}) {
+  const progress = useCellScanMemoryProgress();
+  const revealed = progress >= CAUSAL_REVEALED_AT;
+  return (
+    <div
+      data-consensus-memory-reveal="causal"
+      data-consensus-memory-reveal-state={revealed ? 'resolved' : 'scanning'}
+      {...attributes}
+      {...revealStageAttributes(revealed)}
+      // Mounted at full height from the first frame: the walk turns
+      // its ink up, it never pushes the footer down.
+      style={{ display: 'block', ...revealStageStyle(revealed) }}
+    >
+      <CellCausalLensReadout
+        lens={lens}
+        reveal={progress}
+        navigation={navigation}
+        transaction={transaction}
+        consumed={consumed}
+        compact
+        summary
+      />
+    </div>
+  );
+}
+
+/** The MEMORY TRACE affordance arms at 90% of the walk and turns clickable
+ *  when the lattice locks — two booleans, and nothing that ticks. */
+function CellScanTraceBlock({
+  observed,
+  onTraceWrite,
+  traceSource,
+  traceSelected,
+  traceStage,
+  traceStateReadout,
+  identityProofComplete,
+}: {
+  observed: CellWriteEvidence;
+  onTraceWrite?: (linkSeq: number) => void;
+  traceSource: ConsensusMemoryTraceSource;
+  traceSelected: boolean;
+  traceStage: string | undefined;
+  traceStateReadout: string;
+  identityProofComplete: boolean;
+}) {
+  const revealed = useCellScanSelector(
+    (frame) => frame.memoryProgress >= TRACE_REVEALED_AT,
+  );
+  const classified = useCellScanClassified();
+  const recallEnabled = classified && identityProofComplete;
+  return (
+    <div
+      data-consensus-memory-reveal="trace"
+      data-consensus-memory-reveal-state={revealed ? 'resolved' : 'scanning'}
+      {...revealStageAttributes(revealed)}
+      style={{ display: 'block', marginTop: 4, paddingTop: 2, borderTop: `1px solid ${rgba(CYAN, 0.09)}`, ...revealStageStyle(revealed) }}
+    >
+      {onTraceWrite ? (
+        <button
+          type="button"
+          aria-label={traceSelected ? 'exit causal recall' : 'recall causal path'}
+          data-write-observed="true"
+          data-trace-available="true"
+          data-trace-source={traceSource}
+          data-trace-selected={traceSelected ? 'true' : 'false'}
+          data-trace-state={traceSelected ? 'active' : 'ready'}
+          data-trace-stage={traceSelected ? traceStage ?? 'planning' : 'ready'}
+          title={!identityProofComplete
+            ? 'ARM MEMORY TRACE · read the three identity proofs by selecting STATE (WHERE), DATA (WHAT) and COMMIT (WHEN) in the register above'
+            : observed.txHash}
+          onClick={() => onTraceWrite(observed.seq)}
+          disabled={!recallEnabled}
+          style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'baseline', gap: '2px 8px', width: '100%', margin: 0, padding: '3px 2px', border: 0, background: traceSelected ? `${VIOLET}12` : 'transparent', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.35, color: traceSelected ? HUD_COLORS.memoryInk : GOLD, textShadow: `0 0 6px ${traceSelected ? VIOLET : GOLD}55`, whiteSpace: 'nowrap', cursor: recallEnabled ? 'pointer' : 'default', textAlign: 'left', opacity: recallEnabled ? 1 : 0.62 }}
+        >
+          <span>MEMORY TRACE</span>
+          <span style={{ marginLeft: 'auto', color: HUD_COLORS.goldInk }}>
+            {formatBlockRef(observed.block)} · {observed.inputCount}→{observed.outputCount} · {traceStateReadout}
+          </span>
+          <PlateReadoutCaption style={{ gridColumn: '1 / -1', whiteSpace: 'normal' }}>
+            {TRACE_CAPTION_RECALL}
+          </PlateReadoutCaption>
+        </button>
+      ) : (
+        <div
+          data-write-observed="true"
+          title={observed.txHash}
+          style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 8, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.35, color: GOLD, textShadow: `0 0 6px ${GOLD}55`, whiteSpace: 'nowrap' }}
+        >
+          <span>MEMORY TRACE</span>
+          <span style={{ marginLeft: 'auto', color: HUD_COLORS.goldInk }}>
+            {formatBlockRef(observed.block)} · {observed.inputCount}→{observed.outputCount}
+          </span>
+          <PlateReadoutCaption style={{ flexBasis: '100%', whiteSpace: 'normal' }}>
+            {TRACE_CAPTION}
+          </PlateReadoutCaption>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function CellDetailPanel({
   cell,
@@ -559,10 +826,37 @@ export default function CellDetailPanel({
   const lifetime = cell.born_at_ms > 0
     ? `AGE ${formatAge(cell.born_at_ms, Date.now())}`
     : `SINCE ${formatBlockRef(cell.birth_block)}`;
-  const [scanClock, setScanClock] = useState(() => {
-    const atMs = nowPerf();
-    return { cellId: cell.id, epochMs: atMs, nowMs: atMs };
-  });
+  const order = CONSENSUS_BRAID_FIELDS;
+  // The walk's start, not its state: the clock owns the walking, and the card
+  // only has to know which instant this selection began at. Reading the
+  // performance clock here is the same thing a `useState` initialiser did —
+  // one epoch per Cell, taken the moment that Cell became the subject.
+  const scanEpochRef = useRef<{
+    cellId: number;
+    reduced: boolean;
+    epochMs: number;
+  } | null>(null);
+  const scanClockRef = useRef<ReturnType<typeof createCellScanClock> | null>(
+    null,
+  );
+  if (scanClockRef.current === null) {
+    scanClockRef.current = createCellScanClock();
+  }
+  const scanClock = scanClockRef.current;
+  if (
+    scanEpochRef.current === null
+    || scanEpochRef.current.cellId !== cell.id
+    || scanEpochRef.current.reduced !== reduced
+  ) {
+    scanEpochRef.current = { cellId: cell.id, reduced, epochMs: nowPerf() };
+    // Primed here, walked from the effect below: this render is what carries
+    // the first frame down to the leaves, so a new subject's card is painted
+    // scanning from zero instead of wearing the last one's finished lattice
+    // until the first tick.
+    scanClock.prime(scanEpochRef.current.epochMs, order.length, reduced);
+  }
+  const scanEpochMs = scanEpochRef.current.epochMs;
+  const analysisPlateRef = useRef<HTMLElement | null>(null);
   const [selectedFieldState, setSelectedFieldState] = useState<{
     cellId: number;
     field: CellInspectionFacet | null;
@@ -607,7 +901,6 @@ export default function CellDetailPanel({
     ),
     [causalLens, cell, inspectedCellById, recentLinks],
   );
-  const order = CONSENSUS_BRAID_FIELDS;
   const agreementTarget = useMemo(
     () => consensusBraidAgreementTarget(cell),
     [cell],
@@ -621,26 +914,23 @@ export default function CellDetailPanel({
   // facts — two extra steps after the lattice locks, so nothing deep is lit
   // while something shallow still reads as undiscovered.
   const revealSteps = order.length + (enhancedDetail ? 2 : 0);
+  // Where the identity facts end and enrichment begins, in walk steps. Every
+  // gate in the card is one of these numbers, so a stage can never disagree
+  // with the fact above it about which step it belongs to.
+  const semanticsRevealAt = (stage: number) => order.length + stage;
 
+  // Start the walk when the subject changes (the epoch is what says it did,
+  // reduced motion included); move only its END when late enrichment adds its
+  // two steps. Splitting those is what stops a record arriving mid-walk from
+  // resetting the epoch and replaying a lattice the reader already watched
+  // light.
   useEffect(() => {
-    if (reduced) return;
-    const epochMs = nowPerf();
-    const update = () => setScanClock({
-      cellId: cell.id,
-      epochMs,
-      nowMs: nowPerf(),
-    });
-    setScanClock({ cellId: cell.id, epochMs, nowMs: epochMs });
-    const interval = window.setInterval(update, 80);
-    const stop = window.setTimeout(() => {
-      window.clearInterval(interval);
-      update();
-    }, revealSteps * PROBE_STEP_S * 1000 + 80);
-    return () => {
-      window.clearInterval(interval);
-      window.clearTimeout(stop);
-    };
-  }, [cell.id, reduced, revealSteps]);
+    scanClock.run();
+    return () => scanClock.stop();
+  }, [scanClock, scanEpochMs]);
+  useEffect(() => {
+    scanClock.setSteps(revealSteps);
+  }, [revealSteps, scanClock]);
 
   const DECODE: Record<CellInspectionFacet, RowDecode> = {
     capacity: { label: 'CAPACITY', value: formatCkb(cell.capacity) },
@@ -680,24 +970,14 @@ export default function CellDetailPanel({
     },
     born: { label: 'COMMIT', value: formatBlockRef(cell.birth_block) },
   };
-  const activeClock = scanClock.cellId === cell.id
-    ? scanClock
-    : { cellId: cell.id, epochMs: scanClock.nowMs, nowMs: scanClock.nowMs };
-  const scan = probeScan(
-    activeClock.epochMs,
-    reduced ? 0 : activeClock.nowMs,
-    order.length,
-    reduced,
-  );
-  // 0 = still scanning identity, 1 = context facts lit, 2 = full enrichment.
-  const semanticsReveal = reduced
-    ? 2
-    : Math.max(0, Math.min(2, Math.floor(
-      ((activeClock.nowMs - activeClock.epochMs) / 1000) / PROBE_STEP_S + 0.45,
-    ) - order.length));
-  const statusColor = scan.classified ? HUD_COLORS.nominal : HUD_COLORS.cyanWire;
-  const activateField = (field: CellInspectionFacet) => {
-    if (!scan.classified) return;
+  // One handler for all six facts, carried by identity: the facts are memoized
+  // and no longer take a per-frame prop, so this callback is the ONLY thing
+  // that can tell them the reduced-motion answer they report changed.
+  const activateField = useCallback((field: CellInspectionFacet) => {
+    // Read, not subscribe: a handler that fires on a click already knows the
+    // walk is over (the fact it fired from is disabled until then), and the
+    // card has no business re-rendering to learn it.
+    if (!scanClock.frame.classified) return;
     setSelectedFieldState((current) => ({
       cellId: cell.id,
       field: current.cellId === cell.id && current.field === field ? null : field,
@@ -710,21 +990,15 @@ export default function CellDetailPanel({
           ? 'anchor'
           : null;
     if (proofKind) onIdentityProofRead?.(proofKind, cell.id, reduced);
-  };
+  }, [cell.id, onIdentityProofRead, reduced, scanClock]);
 
   // ——— Consensus-memory reveal math, absorbed from the old plate ——————
   // The memory pieces (content, causal lens, trace row) join the probe walk
   // late: content decodes through the walk, the causal lens resolves at 76%,
   // the trace affordance arms at 90%. All three are already mounted at their
-  // final size — passing these gates only turns their ink up.
-  const memoryProgress = reduced
-    ? 1
-    : clampUnit(scan.classified ? 1 : scan.pct / 100);
-  const contentReveal = clampUnit(memoryProgress / CONTENT_DECODED_AT);
-  const causalRevealed = memoryProgress >= CAUSAL_REVEALED_AT;
-  const traceRevealed = memoryProgress >= TRACE_REVEALED_AT;
+  // final size — passing these gates only turns their ink up, and each one
+  // watches the clock from inside its own block (above) rather than from here.
   const observed = identity.observedWrite;
-  const recallEnabled = scan.classified && identityProofComplete;
   // WHERE / WHAT / WHEN read-marks in proof order — the same ◆/◇ the scan
   // facts wear, so the unlock is legible instead of an unexplained ritual.
   const proofGlyphs = (['address', 'content', 'anchor'] as const)
@@ -805,21 +1079,11 @@ export default function CellDetailPanel({
   const createdDiffers = presentedSemanticRecord
     ? presentedSemanticRecord.observed_at_block !== cell.birth_block
     : false;
-  // Enrichment evidence joins the probe timeline: context rows at step 1,
-  // deeper script/facet evidence at step 2 — same gate the old readout used.
-  const semanticsStage = (stage: number): CSSProperties => ({
-    opacity: reduced || semanticsReveal >= stage ? 1 : 0,
-    transition: 'opacity 260ms ease',
-  });
-  const factRevealed = (field: CellInspectionFacet): boolean => (
-    reduced || CKBYTES_REVEAL_ORDER.indexOf(field) < scan.reveal
-  );
   // Canonical evidence — what the Cell itself carries — lights with the fact
   // it hangs under, not with the index's timeline.
-  const canonicalStage = (field: CellInspectionFacet): CSSProperties => ({
-    opacity: factRevealed(field) ? 1 : 0,
-    transition: 'opacity 260ms ease',
-  });
+  const factRevealAt = (field: CellInspectionFacet): number => (
+    CKBYTES_REVEAL_ORDER.indexOf(field) + 1
+  );
   const scanFact = (field: CellInspectionFacet) => {
     const proofKind = field === 'state'
       ? 'address'
@@ -832,16 +1096,15 @@ export default function CellDetailPanel({
       <CellScanFact
         field={field}
         {...DECODE[field]}
-        revealed={factRevealed(field)}
+        revealAt={factRevealAt(field)}
         selected={field === selectedField}
-        interactive={scan.classified}
         proof={proofKind
           ? {
             read: selectedIdentityProofBinding?.resolvedKinds
               .includes(proofKind) ?? false,
           }
           : undefined}
-        onActivate={() => activateField(field)}
+        onActivate={activateField}
       />
     );
   };
@@ -852,7 +1115,12 @@ export default function CellDetailPanel({
     margin: CLUSTER_EVIDENCE_INDENT,
   };
 
+  // The clock is handed DOWN, never read here: the card below is rendered by
+  // this body once per selection, and the leaves inside it subscribe to the
+  // walk on their own account. That is the whole fix — a tick can no longer
+  // reach this function.
   return (
+    <CellScanClockContext.Provider value={scanClock}>
     <div
       data-cell-detail-scan-field="true"
       data-cell-detail-enhanced={enhancedDetail ? 'true' : 'false'}
@@ -961,10 +1229,13 @@ export default function CellDetailPanel({
         <CellNucleusPortrait
           cell={cell}
           reducedMotion={reduced}
-          scanEpochMs={activeClock.epochMs}
+          scanEpochMs={scanEpochMs}
           layoutSide={layoutSide}
           standalone={portraitStandalone}
-          focusField={scan.classified ? selectedField : null}
+          // A field can only be selected once the lattice has locked (the
+          // facts are disabled until then) and the selection is cleared with
+          // the Cell, so a set field IS a classified scan.
+          focusField={selectedField}
           traceReadout={traceReadout}
           traceResponseRef={traceResponseRef}
           traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
@@ -992,11 +1263,13 @@ export default function CellDetailPanel({
       </section>
 
       <section
+        ref={analysisPlateRef}
         aria-label="CKBytes analysis"
         data-cell-detail-module="ckbytes"
         data-cell-inspection-satellite="analysis"
-        data-cellular-scan-state={scan.classified ? 'locked' : 'scanning'}
-        data-cellular-scan-progress={scan.pct}
+        // data-cellular-scan-state / -progress are written by CellScanSweep
+        // below, straight to this node: they change 12.5 times a second and
+        // this plate holds the whole dossier.
         data-memory-identity-binding="true"
         data-memory-identity-phase={
           selectedIdentityProofBinding?.phase ?? 'collecting'
@@ -1018,13 +1291,7 @@ export default function CellDetailPanel({
           ...spatialPlate(HUD_COLORS.cyanWire),
         }}
       >
-        <span
-          aria-hidden="true"
-          data-cellular-scan-beam
-          style={{ position: 'absolute', zIndex: 2, left: 0, top: 0, bottom: 0, width: '100%', transform: `translate3d(${scan.pct}%,0,0)`, opacity: scan.classified ? 0.18 : 0.7, transition: reduced ? undefined : 'transform 80ms linear, opacity 220ms ease', pointerEvents: 'none', willChange: reduced || scan.classified ? undefined : 'transform, opacity' }}
-        >
-          <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 1, background: `linear-gradient(180deg,transparent,${HUD_COLORS.cyanWire},transparent)`, boxShadow: `0 0 12px ${HUD_COLORS.cyanWire}` }} />
-        </span>
+        <CellScanSweep plateRef={analysisPlateRef} reduced={reduced} />
 
         <SpatialPlateHeader
           en="CKBYTES ANALYSIS"
@@ -1032,13 +1299,7 @@ export default function CellDetailPanel({
           marginBottom={0}
           status={(
             <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6 }}>
-              <span
-                data-cell-identity-scan-status="true"
-                style={{ color: statusColor, fontSize: HUD_TYPE.label, letterSpacing: 0.72, textShadow: `0 0 7px ${rgba(statusColor, 0.42)}` }}
-              >
-                {scan.classified ? 'LOCKED' : `SCANNING ${scan.pct}%`}
-                {' · '}A-LATTICE {scan.reveal}/{order.length}
-              </span>
+              <CellScanStatusReadout landmarks={order.length} />
               {moduleTag('SCAN·02')}
             </span>
           )}
@@ -1063,7 +1324,7 @@ export default function CellDetailPanel({
                     value={scriptCodeReadout(cell.lock_script)}
                     title={cell.lock_script.code_hash}
                     badge={scriptStateChip(lockScript)}
-                    style={canonicalStage('lock')}
+                    revealAt={factRevealAt('lock')}
                   />
                 ) : null}
                 <div
@@ -1078,7 +1339,7 @@ export default function CellDetailPanel({
                       value={midTruncate(presentedSemanticRecord.address, 14, 12)}
                       title={presentedSemanticRecord.address}
                       caption="ADDRESS ENCODED FROM THE LOCK SCRIPT"
-                      style={semanticsStage(1)}
+                      revealAt={semanticsRevealAt(1)}
                     />
                   ) : null}
                   {lockScript ? (
@@ -1088,7 +1349,7 @@ export default function CellDetailPanel({
                       label="SCRIPT"
                       value={midTruncate(lockScript.script_hash, 12, 9)}
                       title={lockScript.script_hash}
-                      style={semanticsStage(2)}
+                      revealAt={semanticsRevealAt(2)}
                     />
                   ) : null}
                   {lockScript ? (
@@ -1098,7 +1359,7 @@ export default function CellDetailPanel({
                       label="ARGS"
                       value={scriptArgsReadout(lockScript.args)}
                       title={lockScript.args}
-                      style={semanticsStage(2)}
+                      revealAt={semanticsRevealAt(2)}
                     />
                   ) : null}
                   {enrichmentPending ? (
@@ -1127,7 +1388,7 @@ export default function CellDetailPanel({
                     value={scriptCodeReadout(cell.type_script)}
                     title={cell.type_script.code_hash}
                     badge={scriptStateChip(typeScript)}
-                    style={canonicalStage('asset')}
+                    revealAt={factRevealAt('asset')}
                   />
                 ) : null}
                 <div
@@ -1142,7 +1403,7 @@ export default function CellDetailPanel({
                       value={assetAmount}
                       valueColor={HUD_COLORS.caution}
                       valueSize={HUD_TYPE.value}
-                      style={semanticsStage(1)}
+                      revealAt={semanticsRevealAt(1)}
                     />
                   ) : null}
                   {assetIdentity ? (
@@ -1152,7 +1413,7 @@ export default function CellDetailPanel({
                       label="IDENTITY"
                       value={assetIdentity}
                       valueColor={HUD_COLORS.caution}
-                      style={semanticsStage(1)}
+                      revealAt={semanticsRevealAt(1)}
                     />
                   ) : null}
                   {assetObject ? (
@@ -1161,7 +1422,7 @@ export default function CellDetailPanel({
                       accent={assetAccent}
                       label="OBJECT"
                       value={assetObject}
-                      style={semanticsStage(1)}
+                      revealAt={semanticsRevealAt(1)}
                     />
                   ) : null}
                   {typeScript ? (
@@ -1171,7 +1432,7 @@ export default function CellDetailPanel({
                       label="SCRIPT"
                       value={midTruncate(typeScript.script_hash, 12, 9)}
                       title={typeScript.script_hash}
-                      style={semanticsStage(2)}
+                      revealAt={semanticsRevealAt(2)}
                     />
                   ) : null}
                   {typeScript ? (
@@ -1181,7 +1442,7 @@ export default function CellDetailPanel({
                       label="ARGS"
                       value={scriptArgsReadout(typeScript.args)}
                       title={typeScript.args}
-                      style={semanticsStage(2)}
+                      revealAt={semanticsRevealAt(2)}
                     />
                   ) : null}
                   {/* The DAO position, read BY KEY: upstream appends attributes,
@@ -1194,7 +1455,7 @@ export default function CellDetailPanel({
                       label="POSITION"
                       value={daoFacet.state.toUpperCase()}
                       valueColor={HUD_COLORS.caution}
-                      style={semanticsStage(1)}
+                      revealAt={semanticsRevealAt(1)}
                     />
                   ) : null}
                   {daoFacet ? [
@@ -1210,7 +1471,7 @@ export default function CellDetailPanel({
                         accent={assetAccent}
                         label={label}
                         value={value}
-                        style={semanticsStage(1)}
+                        revealAt={semanticsRevealAt(1)}
                       />
                     ) : null;
                   }) : null}
@@ -1220,7 +1481,7 @@ export default function CellDetailPanel({
                       accent={assetAccent}
                       label="EST APC"
                       value={semanticFacetValue(daoFacet, 'estimated_apc') ?? ''}
-                      style={semanticsStage(1)}
+                      revealAt={semanticsRevealAt(1)}
                     />
                   ) : null}
                   {semanticFacetValue(daoFacet, 'compensation') ? (
@@ -1230,13 +1491,13 @@ export default function CellDetailPanel({
                       label="COMPENSATION"
                       value={semanticFacetValue(daoFacet, 'compensation') ?? ''}
                       valueColor={HUD_COLORS.caution}
-                      style={semanticsStage(1)}
+                      revealAt={semanticsRevealAt(1)}
                     />
                   ) : null}
                   {genericFacet ? (
-                    <FacetEvidenceRow
+                    <CellScanFacetRow
                       facet={genericFacet}
-                      style={semanticsStage(2)}
+                      revealAt={semanticsRevealAt(2)}
                     />
                   ) : null}
                   {enrichmentPending ? (
@@ -1263,16 +1524,20 @@ export default function CellDetailPanel({
                 accent={CYAN}
                 label="BORN"
                 value={`${formatWallClock(cell.born_at_ms)} · ${formatBlockRef(cell.birth_block)}`}
-                style={{ gridColumn: '1 / -1', margin: CLUSTER_EVIDENCE_INDENT, ...canonicalStage('born') }}
+                revealAt={factRevealAt('born')}
+                style={{ gridColumn: '1 / -1', margin: CLUSTER_EVIDENCE_INDENT }}
               />
             ) : null}
           </div>
 
           {semanticSource && semanticPhase ? (
-            <div
-              data-cell-semantics-phase={presentedSemanticPhase ?? semanticPhase}
-              data-cell-semantics-source={semanticSource.status}
-              style={{ minWidth: 0, marginTop: 1, ...semanticsStage(1) }}
+            <CellScanStagedBlock
+              revealAt={semanticsRevealAt(1)}
+              attributes={{
+                'data-cell-semantics-phase': presentedSemanticPhase ?? semanticPhase,
+                'data-cell-semantics-source': semanticSource.status,
+              }}
+              style={{ minWidth: 0, marginTop: 1 }}
             >
               {statusLine ? (
                 <div title={statusLine} style={{ color: (presentedSemanticPhase ?? semanticPhase) === 'error' ? HUD_COLORS.danger : HUD_COLORS.dim, fontSize: HUD_TYPE.label, lineHeight: 1.45 }}>
@@ -1290,7 +1555,7 @@ export default function CellDetailPanel({
                   </span>
                 ) : null}
               </div>
-            </div>
+            </CellScanStagedBlock>
           ) : null}
         </div>
 
@@ -1314,11 +1579,11 @@ export default function CellDetailPanel({
               style={{ minWidth: 0, margin: CLUSTER_EVIDENCE_INDENT, minHeight: enrichmentPending ? reservedEvidenceHeight(BYTE_BUDGET_GHOST_ROWS) : undefined }}
             >
               {hasKnowledge ? (
-                <CellByteBudget
+                <CellScanByteBudget
                   capacityShannons={cell.capacity}
                   knowledge={knowledge}
                   dataTruncated={dataTruncated}
-                  reveal={semanticsReveal >= 1 ? 1 : 0}
+                  revealAt={semanticsRevealAt(1)}
                 />
               ) : enrichmentPending ? (
                 <GhostRows rows={BYTE_BUDGET_GHOST_ROWS} accent={GOLD} />
@@ -1333,13 +1598,12 @@ export default function CellDetailPanel({
               * pending reservation every other cluster's evidence takes.
               * This is the LAST cluster before the provenance footer: rows
               * that arrive tall here move the footer and the MEMORY TRACE. */}
-            <CellContentMemory
+            <CellScanContentMemory
               dataHex={cell.data_hex}
               source={semanticSource}
               phase={presentedSemanticPhase}
               record={presentedSemanticRecord}
               message={presentedSemanticMessage}
-              reveal={contentReveal}
               pending={enrichmentPending}
             />
           </div>
@@ -1350,91 +1614,40 @@ export default function CellDetailPanel({
           style={{ minWidth: 0, paddingTop: 4, borderTop: `1px solid ${rgba(VIOLET, 0.18)}` }}
         >
           {resolvedCausalLens ? (
-            <div
-              data-consensus-memory-reveal="causal"
-              data-consensus-memory-reveal-state={causalRevealed
-                ? 'resolved'
-                : 'scanning'}
+            <CellScanCausalBlock
+              lens={resolvedCausalLens}
+              navigation={causalNavigation}
+              transaction={originTransaction}
+              consumed={presentedSemanticRecord?.consumed ?? null}
               // The origin transaction's own evidence has a second source
               // behind it, on its own clock. Its state is stamped, never
               // reserved: the footer sits below the fold of the reveal, so a
               // fee that arrives late costs the reader nothing.
-              data-cell-origin-tx-phase={semanticTransactionPhase ?? 'none'}
-              data-cell-origin-tx-state={originTransaction
-                ? 'resolved'
-                : semanticTransactionRecord ? 'mismatch' : 'absent'}
-              data-cell-origin-tx-note={semanticTransactionMessage ?? undefined}
-              {...revealStageAttributes(causalRevealed)}
-              // Mounted at full height from the first frame: the walk turns
-              // its ink up, it never pushes the footer down.
-              style={{ display: 'block', ...revealStageStyle(causalRevealed) }}
-            >
-              <CellCausalLensReadout
-                lens={resolvedCausalLens}
-                reveal={memoryProgress}
-                navigation={causalNavigation}
-                transaction={originTransaction}
-                consumed={presentedSemanticRecord?.consumed ?? null}
-                compact
-                summary
-              />
-            </div>
+              attributes={{
+                'data-cell-origin-tx-phase': semanticTransactionPhase ?? 'none',
+                'data-cell-origin-tx-state': originTransaction
+                  ? 'resolved'
+                  : semanticTransactionRecord ? 'mismatch' : 'absent',
+                'data-cell-origin-tx-note': semanticTransactionMessage ?? undefined,
+              }}
+            />
           ) : null}
           {observed ? (
-            <div
-              data-consensus-memory-reveal="trace"
-              data-consensus-memory-reveal-state={traceRevealed
-                ? 'resolved'
-                : 'scanning'}
-              {...revealStageAttributes(traceRevealed)}
-              style={{ display: 'block', marginTop: 4, paddingTop: 2, borderTop: `1px solid ${rgba(CYAN, 0.09)}`, ...revealStageStyle(traceRevealed) }}
-            >
-              {onTraceWrite ? (
-                <button
-                  type="button"
-                  aria-label={traceSelected ? 'exit causal recall' : 'recall causal path'}
-                  data-write-observed="true"
-                  data-trace-available="true"
-                  data-trace-source={traceSource}
-                  data-trace-selected={traceSelected ? 'true' : 'false'}
-                  data-trace-state={traceSelected ? 'active' : 'ready'}
-                  data-trace-stage={traceSelected ? traceReadout?.stage ?? 'planning' : 'ready'}
-                  title={!identityProofComplete
-                    ? 'ARM MEMORY TRACE · read the three identity proofs by selecting STATE (WHERE), DATA (WHAT) and COMMIT (WHEN) in the register above'
-                    : observed.txHash}
-                  onClick={() => onTraceWrite(observed.seq)}
-                  disabled={!recallEnabled}
-                  style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'baseline', gap: '2px 8px', width: '100%', margin: 0, padding: '3px 2px', border: 0, background: traceSelected ? `${VIOLET}12` : 'transparent', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.35, color: traceSelected ? HUD_COLORS.memoryInk : GOLD, textShadow: `0 0 6px ${traceSelected ? VIOLET : GOLD}55`, whiteSpace: 'nowrap', cursor: recallEnabled ? 'pointer' : 'default', textAlign: 'left', opacity: recallEnabled ? 1 : 0.62 }}
-                >
-                  <span>MEMORY TRACE</span>
-                  <span style={{ marginLeft: 'auto', color: HUD_COLORS.goldInk }}>
-                    {formatBlockRef(observed.block)} · {observed.inputCount}→{observed.outputCount} · {traceStateReadout}
-                  </span>
-                  <PlateReadoutCaption style={{ gridColumn: '1 / -1', whiteSpace: 'normal' }}>
-                    {TRACE_CAPTION_RECALL}
-                  </PlateReadoutCaption>
-                </button>
-              ) : (
-                <div
-                  data-write-observed="true"
-                  title={observed.txHash}
-                  style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 8, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.35, color: GOLD, textShadow: `0 0 6px ${GOLD}55`, whiteSpace: 'nowrap' }}
-                >
-                  <span>MEMORY TRACE</span>
-                  <span style={{ marginLeft: 'auto', color: HUD_COLORS.goldInk }}>
-                    {formatBlockRef(observed.block)} · {observed.inputCount}→{observed.outputCount}
-                  </span>
-                  <PlateReadoutCaption style={{ flexBasis: '100%', whiteSpace: 'normal' }}>
-                    {TRACE_CAPTION}
-                  </PlateReadoutCaption>
-                </div>
-              )}
-            </div>
+            <CellScanTraceBlock
+              observed={observed}
+              onTraceWrite={onTraceWrite}
+              traceSource={traceSource}
+              traceSelected={traceSelected}
+              traceStage={traceReadout?.stage}
+              traceStateReadout={traceStateReadout}
+              identityProofComplete={identityProofComplete}
+            />
           ) : null}
           {presentedSemanticRecord ? (
-            <div
-              data-cell-provenance-proof="true"
-              style={{ display: 'flex', flexWrap: 'wrap', columnGap: 14, rowGap: 2, marginTop: 4, minWidth: 0, ...semanticsStage(1) }}
+            <CellScanStagedBlock
+              revealAt={semanticsRevealAt(1)}
+              attributes={{ 'data-cell-provenance-proof': 'true' }}
+              style={{ display: 'flex', flexWrap: 'wrap', columnGap: 14, rowGap: 2, marginTop: 4, minWidth: 0 }}
             >
               <EvidenceFact
                 label="PROOF"
@@ -1452,7 +1665,7 @@ export default function CellDetailPanel({
               <PlateReadoutCaption style={{ flexBasis: '100%' }}>
                 {PROOF_CAPTION}
               </PlateReadoutCaption>
-            </div>
+            </CellScanStagedBlock>
           ) : null}
         </div>
       </section>
@@ -1512,5 +1725,6 @@ export default function CellDetailPanel({
       ) : null}
 
     </div>
+    </CellScanClockContext.Provider>
   );
 }
