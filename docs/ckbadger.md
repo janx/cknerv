@@ -131,6 +131,18 @@ degrade canonical routes. Work that cannot start within the bound waits for a
 later probe so it receives fresh canonical context rather than queueing a stale
 one.
 
+A refresh that returns the answer already published is not republished.
+ckbadger re-stamps `as_of` and `updated_at_ms` on every successful fetch
+whether or not the underlying fact moved, so the semantics projection compares
+each aggregate against the copy it holds — ignoring exactly those two stamps —
+and withholds the delta when the content matches. An idle chain therefore costs
+no revisions, no replay-ring entries, and no broadcast frames for the
+whole-chain aggregates. Records the HUD ages on a wall clock re-stamp anyway on
+a refresh floor set at half the browser's own stale threshold, so a panel that
+prints `LIVE · UPDATED Xs AGO` never dims merely because the answer was stable.
+The network roster keeps its stricter gate: it publishes only when its crawl
+round advances.
+
 ## Capabilities
 
 Capabilities are used only when ckbadger advertises them. The dashboard fuses

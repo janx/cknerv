@@ -853,6 +853,182 @@ impl PeerSightingLookup {
     }
 }
 
+/// One of the whole-chain aggregates the semantics projection holds a
+/// single copy of.
+///
+/// Every one is re-fetched on its own fixed cadence and re-stamped with a
+/// fresh `as_of` / `updated_at_ms` whether or not the answer moved. An arm
+/// that publishes each refresh unconditionally therefore publishes
+/// mutually-superseding copies of the same record forever — a revision, a
+/// replay-ring entry and a broadcast frame per copy — on a chain that is
+/// doing nothing at all.
+///
+/// Two producers learned this separately: [`NetworkRosterRecord`] gates on
+/// `crawl_round` in the arm below, and
+/// [`GalaxyCompositionRecord::content_matches`] compares content in the
+/// display plane. Everything added after them forgot, the census most
+/// recently — two hundred lines from the roster's documented gate, in this
+/// same file. That is why the rule is a trait rather than a habit: a new
+/// aggregate cannot reach `apply_enrichment` without answering both halves
+/// of it, and nothing writes one of these holders except [`accept_refresh`]
+/// and the clears that empty them.
+pub trait ChainAggregate: Clone + PartialEq {
+    /// How long an unchanged answer may stay off the wire.
+    ///
+    /// `None` means silence is free: no browser derive ages this record
+    /// against a wall clock, so a stamp frozen at the last real change can
+    /// never become a verdict about the source's health. Anything a HUD
+    /// derive dims on age must name a floor instead — see
+    /// [`floor_under_client_patience`].
+    const REFRESH_FLOOR_MS: Option<u64>;
+
+    /// The fetch clock this record carries, which is the same one the
+    /// browser subtracts from `now` when it decides whether to print STALE.
+    fn updated_at_ms(&self) -> u64;
+
+    /// Take `published`'s freshness stamps, so what remains to compare is
+    /// content.
+    ///
+    /// The stamps are enumerated here rather than the content fields
+    /// deliberately: a record that grows a field gets it compared for free,
+    /// where an enumeration of content would silently start swallowing real
+    /// changes. `packages/cache/src/semanticsReducer.ts` ignores exactly the
+    /// same two keys (`IGNORED_ANCHOR_KEYS`) for exactly this reason, and
+    /// its comment carries the audit of what is content and not freshness:
+    /// `statistics_block`, `detected_at_ms`, `timestamp_ms`,
+    /// `crawl_finished_at_s`, `observed_at_block`.
+    fn adopt_freshness(&mut self, published: &Self);
+
+    /// Whether this refresh says the same thing the published copy does.
+    fn content_matches(&self, published: &Self) -> bool {
+        let mut probe = self.clone();
+        probe.adopt_freshness(published);
+        probe == *published
+    }
+}
+
+/// The floor for a record whose HUD derive dims its panel once
+/// `now - updated_at_ms` passes `stale_after_ms`: half of that patience.
+///
+/// Every one of these capabilities refreshes at a third of its own client
+/// threshold, so a floor at half publishes every SECOND refresh and the
+/// stamp a browser reads is never older than two refresh periods against a
+/// patience of three — one full refresh period of margin, uniformly,
+/// without this file having to know any capability's cadence. A source that
+/// misses a refresh spends that margin, which is the correct outcome: a
+/// panel one missed refresh away from dimming is a panel that should dim.
+const fn floor_under_client_patience(stale_after_ms: u64) -> u64 {
+    stale_after_ms / 2
+}
+
+// What each HUD derive spends before it prints STALE over a record.
+// Mirrored from `packages/ui/src/derives/`, one file per line:
+// `ACTIVITY_FEED_STALE_AFTER_MS` (activityFeed), `ASSET_ECOSYSTEM_…`
+// (assetEcosystem), `DAO_STATE_…` (daoState), `NETWORK_ATLAS_…`
+// (networkAtlas), `TRANSACTION_HORIZON_…` (transactionHorizon),
+// `PROTOCOL_ERA_…` (protocolEra). Lowering one of those without lowering
+// its twin here is what turns a floor into a false STALE, which is why the
+// test below names both numbers.
+const ACTIVITY_FEED_CLIENT_PATIENCE_MS: u64 = 45_000;
+const ASSET_ECOSYSTEM_CLIENT_PATIENCE_MS: u64 = 90_000;
+const DAO_STATE_CLIENT_PATIENCE_MS: u64 = 180_000;
+const NETWORK_ATLAS_CLIENT_PATIENCE_MS: u64 = 180_000;
+const TRANSACTION_HORIZON_CLIENT_PATIENCE_MS: u64 = 180_000;
+const PROTOCOL_ERA_CLIENT_PATIENCE_MS: u64 = 900_000;
+
+macro_rules! chain_aggregate {
+    ($record:ty, $floor:expr) => {
+        impl ChainAggregate for $record {
+            const REFRESH_FLOOR_MS: Option<u64> = $floor;
+
+            fn updated_at_ms(&self) -> u64 {
+                self.updated_at_ms
+            }
+
+            fn adopt_freshness(&mut self, published: &Self) {
+                self.as_of = published.as_of.clone();
+                self.updated_at_ms = published.updated_at_ms;
+            }
+        }
+    };
+}
+
+// The census has no wall-clock verdict anywhere in the browser: it is aged
+// in BLOCKS against the canonical tip (`CENSUS_STALE_BLOCKS = 24` in
+// `cellPopulationField.derive.ts`) and its panel prints `AS OF #block`. On
+// a chain that is moving, `live_cells` moves with it and every refresh is
+// news on its own merits; on a chain that is not, the height a frozen
+// anchor names is still the current one. Silence is free in both cases.
+chain_aggregate!(ChainCensus, None);
+// Fork watch has no browser reader at all — the default dashboard
+// deliberately does not route it, and `ui-app/__tests__/App.hudOverlay`
+// asserts that absence. It is also the record most likely to say the same
+// thing for days at a time.
+chain_aggregate!(ForkWatchRecord, None);
+// The script registry is a name lookup joined on `code_hash`; no panel
+// prints its anchor and nothing ages it. It changes when the census
+// discovers an identity this galaxy had not seen, and that is content.
+chain_aggregate!(ScriptRegistryRecord, None);
+chain_aggregate!(
+    ActivityFeedRecord,
+    Some(floor_under_client_patience(
+        ACTIVITY_FEED_CLIENT_PATIENCE_MS
+    ))
+);
+chain_aggregate!(
+    AssetEcosystemRecord,
+    Some(floor_under_client_patience(
+        ASSET_ECOSYSTEM_CLIENT_PATIENCE_MS
+    ))
+);
+chain_aggregate!(
+    DaoStateRecord,
+    Some(floor_under_client_patience(DAO_STATE_CLIENT_PATIENCE_MS))
+);
+chain_aggregate!(
+    NetworkAtlasRecord,
+    Some(floor_under_client_patience(
+        NETWORK_ATLAS_CLIENT_PATIENCE_MS
+    ))
+);
+chain_aggregate!(
+    TransactionHorizonRecord,
+    Some(floor_under_client_patience(
+        TRANSACTION_HORIZON_CLIENT_PATIENCE_MS
+    ))
+);
+chain_aggregate!(
+    ProtocolEraRecord,
+    Some(floor_under_client_patience(PROTOCOL_ERA_CLIENT_PATIENCE_MS))
+);
+
+/// Install a refreshed aggregate into the holder it replaces, and say
+/// whether the wire has to hear about it.
+///
+/// A duplicate leaves the holder untouched rather than quietly re-stamping
+/// it. That is what keeps the SNAPSHOT a late-connecting client reads and
+/// the deltas a connected one received telling the same story: both hold
+/// the record as it stood at the last refresh that was actually published,
+/// anchor included. Re-stamping in place would make the two disagree about
+/// a refresh neither of them ever saw described.
+fn accept_refresh<T: ChainAggregate>(held: &mut Option<T>, incoming: &T) -> bool {
+    if let Some(published) = held.as_ref() {
+        if incoming.content_matches(published) {
+            let floor_passed = T::REFRESH_FLOOR_MS.is_some_and(|floor| {
+                incoming
+                    .updated_at_ms()
+                    .saturating_sub(published.updated_at_ms())
+                    >= floor
+            });
+            if !floor_passed {
+                return false;
+            }
+        }
+    }
+    *held = Some(incoming.clone());
+    true
+}
+
 /// Source events entering the semantics projection.  They use a separate
 /// server-side pipeline from canonical [`crate::Mutation`] values.
 #[derive(Clone, Debug, PartialEq)]
@@ -1287,50 +1463,73 @@ impl EnrichmentProjection for SemanticsProjection {
                 );
                 deltas
             }
+            // Every aggregate arm from here down — the eight below, plus the
+            // script registry past the roster — shares one gate,
+            // [`accept_refresh`]: a refresh that says what the published copy
+            // already says is not news, and stays off the wire until that
+            // record's floor says a browser would otherwise start calling it
+            // stale. Nothing else writes these holders except a clear, which
+            // empties them.
             EnrichmentEvent::CensusReplace(census) => {
-                self.census = Some(census.clone());
+                if !accept_refresh(&mut self.census, census) {
+                    return Vec::new();
+                }
                 vec![SemanticsDelta::CensusReplace {
                     census: census.clone(),
                 }]
             }
             EnrichmentEvent::AssetEcosystemReplace(asset_ecosystem) => {
-                self.asset_ecosystem = Some(asset_ecosystem.clone());
+                if !accept_refresh(&mut self.asset_ecosystem, asset_ecosystem) {
+                    return Vec::new();
+                }
                 vec![SemanticsDelta::AssetEcosystemReplace {
                     asset_ecosystem: asset_ecosystem.clone(),
                 }]
             }
             EnrichmentEvent::DaoStateReplace(dao_state) => {
-                self.dao_state = Some(dao_state.clone());
+                if !accept_refresh(&mut self.dao_state, dao_state) {
+                    return Vec::new();
+                }
                 vec![SemanticsDelta::DaoStateReplace {
                     dao_state: dao_state.clone(),
                 }]
             }
             EnrichmentEvent::ProtocolEraReplace(protocol_era) => {
-                self.protocol_era = Some(protocol_era.clone());
+                if !accept_refresh(&mut self.protocol_era, protocol_era) {
+                    return Vec::new();
+                }
                 vec![SemanticsDelta::ProtocolEraReplace {
                     protocol_era: protocol_era.clone(),
                 }]
             }
             EnrichmentEvent::ForkWatchReplace(fork_watch) => {
-                self.fork_watch = Some(fork_watch.clone());
+                if !accept_refresh(&mut self.fork_watch, fork_watch) {
+                    return Vec::new();
+                }
                 vec![SemanticsDelta::ForkWatchReplace {
                     fork_watch: fork_watch.clone(),
                 }]
             }
             EnrichmentEvent::ActivityFeedReplace(activity_feed) => {
-                self.activity_feed = Some(activity_feed.clone());
+                if !accept_refresh(&mut self.activity_feed, activity_feed) {
+                    return Vec::new();
+                }
                 vec![SemanticsDelta::ActivityFeedReplace {
                     activity_feed: activity_feed.clone(),
                 }]
             }
             EnrichmentEvent::TransactionHorizonReplace(transaction_horizon) => {
-                self.transaction_horizon = Some(transaction_horizon.clone());
+                if !accept_refresh(&mut self.transaction_horizon, transaction_horizon) {
+                    return Vec::new();
+                }
                 vec![SemanticsDelta::TransactionHorizonReplace {
                     transaction_horizon: transaction_horizon.clone(),
                 }]
             }
             EnrichmentEvent::NetworkAtlasReplace(network_atlas) => {
-                self.network_atlas = Some(network_atlas.clone());
+                if !accept_refresh(&mut self.network_atlas, network_atlas) {
+                    return Vec::new();
+                }
                 vec![SemanticsDelta::NetworkAtlasReplace {
                     network_atlas: network_atlas.clone(),
                 }]
@@ -1352,6 +1551,11 @@ impl EnrichmentProjection for SemanticsProjection {
                 // published again at the very next refresh, instead of the
                 // stage waiting out a whole crawl round for a set it already
                 // had.
+                //
+                // This is [`ChainAggregate`]'s rule in a stricter form, not an
+                // exception to it: the round is a cheap proof that the content
+                // is unchanged, and no browser derive ages a roster, so the
+                // gate needs no refresh floor underneath it.
                 if self
                     .network_roster
                     .as_ref()
@@ -1369,7 +1573,9 @@ impl EnrichmentProjection for SemanticsProjection {
                 vec![SemanticsDelta::NetworkRosterClear]
             }
             EnrichmentEvent::ScriptRegistryReplace(script_registry) => {
-                self.script_registry = Some(*script_registry.clone());
+                if !accept_refresh(&mut self.script_registry, script_registry.as_ref()) {
+                    return Vec::new();
+                }
                 vec![SemanticsDelta::ScriptRegistryReplace {
                     script_registry: script_registry.clone(),
                 }]
@@ -1607,6 +1813,64 @@ mod tests {
                 count: 2,
             }],
         }
+    }
+
+    fn script_registry(block: u64) -> ScriptRegistryRecord {
+        ScriptRegistryRecord {
+            source: "ckbadger".into(),
+            as_of: ChainAnchor {
+                block,
+                hash: format!("0xblock{block}"),
+            },
+            updated_at_ms: block,
+            entries: vec![ScriptNameRecord {
+                code_hash: "0xcode".into(),
+                hash_type: "type".into(),
+                name: "Default Lock".into(),
+                description: None,
+                kind: Some("lock".into()),
+                website: None,
+                deprecated: false,
+            }],
+            unresolved: 2,
+        }
+    }
+
+    /// The same answer, asked again at `at_ms`. Every aggregate spells its
+    /// fetch clock `updated_at_ms`, which is the whole reason a re-fetch of
+    /// an unchanged fact is not automatically an unchanged record.
+    macro_rules! restamped {
+        ($record:expr, $at_ms:expr) => {{
+            let mut record = $record;
+            record.updated_at_ms = $at_ms;
+            record
+        }};
+    }
+
+    /// One full round of aggregate refreshes: every capability answering at
+    /// canonical anchor `block` with fetch clock `at_ms`. Returns how many
+    /// deltas reached the wire.
+    fn refresh_round(projection: &mut SemanticsProjection, block: u64, at_ms: u64) -> usize {
+        [
+            EnrichmentEvent::CensusReplace(restamped!(census(block), at_ms)),
+            EnrichmentEvent::AssetEcosystemReplace(restamped!(ecosystem(block), at_ms)),
+            EnrichmentEvent::DaoStateReplace(restamped!(dao_state(block), at_ms)),
+            EnrichmentEvent::ProtocolEraReplace(restamped!(protocol_era(block), at_ms)),
+            EnrichmentEvent::ForkWatchReplace(restamped!(fork_watch(block), at_ms)),
+            EnrichmentEvent::ActivityFeedReplace(restamped!(activity_feed(block), at_ms)),
+            EnrichmentEvent::TransactionHorizonReplace(restamped!(
+                transaction_horizon(block),
+                at_ms
+            )),
+            EnrichmentEvent::NetworkAtlasReplace(restamped!(network_atlas(block), at_ms)),
+            EnrichmentEvent::ScriptRegistryReplace(Box::new(restamped!(
+                script_registry(block),
+                at_ms
+            ))),
+        ]
+        .iter()
+        .map(|event| projection.apply_enrichment(event).len())
+        .sum()
     }
 
     fn network_roster(block: u64, round: u64) -> NetworkRosterRecord {
@@ -1882,14 +2146,184 @@ mod tests {
     }
 
     #[test]
-    fn a_re_anchored_census_replaces_the_held_record() {
+    fn a_re_counted_census_replaces_the_held_record() {
+        let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
+        projection.apply_enrichment(&EnrichmentEvent::CensusReplace(census(10)));
+
+        let mut counted = census(20);
+        counted.live_cells += 1;
+        counted.classes.as_mut().expect("classes").plain += 1;
+        let deltas = projection.apply_enrichment(&EnrichmentEvent::CensusReplace(counted.clone()));
+
+        assert_eq!(projection.snapshot().census, Some(counted));
+        assert!(matches!(deltas[0], SemanticsDelta::CensusReplace { .. }));
+    }
+
+    /// A re-anchored census carrying the SAME count is a fetch timestamp,
+    /// not news. The held copy keeps the anchor it was actually published
+    /// at, so the snapshot a late client reads and the deltas a connected
+    /// one received describe one record rather than two.
+    #[test]
+    fn a_census_that_says_what_the_last_one_said_is_not_news() {
         let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
         projection.apply_enrichment(&EnrichmentEvent::CensusReplace(census(10)));
 
         let deltas = projection.apply_enrichment(&EnrichmentEvent::CensusReplace(census(20)));
 
-        assert_eq!(projection.snapshot().census, Some(census(20)));
-        assert!(matches!(deltas[0], SemanticsDelta::CensusReplace { .. }));
+        assert!(deltas.is_empty());
+        assert_eq!(projection.snapshot().census, Some(census(10)));
+    }
+
+    /// The whole point, stated once. On a chain that is doing nothing, a
+    /// full round of enrichment refreshes has to leave the wire silent.
+    /// Before this gate the same round cost nine deltas — nine revisions,
+    /// nine replay-ring entries and nine broadcast frames to every attached
+    /// client — each superseded by the identical round seconds later,
+    /// forever.
+    #[test]
+    fn an_idle_refresh_round_leaves_the_wire_silent() {
+        let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
+
+        assert_eq!(
+            refresh_round(&mut projection, 10, 1_000_000),
+            9,
+            "the first round of answers is all news"
+        );
+
+        // The same answers at the same tip, ten seconds later: only the
+        // fetch clock moved, and no floor is anywhere near spent.
+        assert_eq!(refresh_round(&mut projection, 10, 1_005_000), 0);
+        assert_eq!(refresh_round(&mut projection, 10, 1_010_000), 0);
+
+        // Past the tightest floor in the table — the activity feed's, 22.5s
+        // under a panel that dims at 45s — exactly that one record
+        // re-stamps, and everything else stays quiet.
+        assert_eq!(refresh_round(&mut projection, 10, 1_030_000), 1);
+    }
+
+    /// An unchanged answer is not silent forever: it re-stamps on its floor,
+    /// once, and the floor re-arms from the refresh that was PUBLISHED
+    /// rather than from the last one asked for. Otherwise a fast poll would
+    /// keep pushing the deadline out and the panel would dim anyway.
+    #[test]
+    fn an_unchanged_aggregate_re_stamps_once_its_floor_has_passed() {
+        let floor = AssetEcosystemRecord::REFRESH_FLOOR_MS.expect("the ecosystem panel ages");
+        let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
+        let first = restamped!(ecosystem(10), 1_000_000);
+        projection.apply_enrichment(&EnrichmentEvent::AssetEcosystemReplace(first));
+
+        let inside = restamped!(ecosystem(10), 1_000_000 + floor - 1);
+        assert!(projection
+            .apply_enrichment(&EnrichmentEvent::AssetEcosystemReplace(inside))
+            .is_empty());
+
+        let on_the_floor = restamped!(ecosystem(10), 1_000_000 + floor);
+        let deltas = projection.apply_enrichment(&EnrichmentEvent::AssetEcosystemReplace(
+            on_the_floor.clone(),
+        ));
+        assert!(matches!(
+            deltas[0],
+            SemanticsDelta::AssetEcosystemReplace { .. }
+        ));
+        assert_eq!(
+            projection.snapshot().asset_ecosystem,
+            Some(on_the_floor),
+            "the re-stamp is what the browser now ages against"
+        );
+
+        // Re-armed from the publish, not from the poll: one floor past the
+        // FIRST refresh is not one floor past the last published one.
+        let after = restamped!(ecosystem(10), 1_000_000 + floor + 1);
+        assert!(projection
+            .apply_enrichment(&EnrichmentEvent::AssetEcosystemReplace(after))
+            .is_empty());
+    }
+
+    /// A refresh floor is what keeps a dedupe from becoming a lie. Each HUD
+    /// derive dims its panel once `now - updated_at_ms` passes its own
+    /// threshold — `DaoStateReadout` prints "STALE · UPDATED Xs AGO" off
+    /// exactly that subtraction — so an unchanged answer must re-stamp well
+    /// inside that patience. Half of it lands on every second refresh,
+    /// because each capability polls at a third of its own threshold, which
+    /// leaves one whole refresh period of margin.
+    ///
+    /// Both numbers are named here on purpose: lowering a
+    /// `*_STALE_AFTER_MS` in `packages/ui/src/derives/` without lowering its
+    /// twin above is what would turn this gate into a false STALE verdict,
+    /// and this is the test that says so.
+    #[test]
+    fn every_floor_is_half_the_patience_its_panel_spends() {
+        for (capability, floor, patience) in [
+            (
+                "activity_feed",
+                ActivityFeedRecord::REFRESH_FLOOR_MS,
+                ACTIVITY_FEED_CLIENT_PATIENCE_MS,
+            ),
+            (
+                "asset_ecosystem",
+                AssetEcosystemRecord::REFRESH_FLOOR_MS,
+                ASSET_ECOSYSTEM_CLIENT_PATIENCE_MS,
+            ),
+            (
+                "dao_state",
+                DaoStateRecord::REFRESH_FLOOR_MS,
+                DAO_STATE_CLIENT_PATIENCE_MS,
+            ),
+            (
+                "network_atlas",
+                NetworkAtlasRecord::REFRESH_FLOOR_MS,
+                NETWORK_ATLAS_CLIENT_PATIENCE_MS,
+            ),
+            (
+                "transaction_horizon",
+                TransactionHorizonRecord::REFRESH_FLOOR_MS,
+                TRANSACTION_HORIZON_CLIENT_PATIENCE_MS,
+            ),
+            (
+                "protocol_era",
+                ProtocolEraRecord::REFRESH_FLOOR_MS,
+                PROTOCOL_ERA_CLIENT_PATIENCE_MS,
+            ),
+        ] {
+            let floor =
+                floor.unwrap_or_else(|| panic!("{capability} is aged on a browser wall clock"));
+            assert_eq!(floor, floor_under_client_patience(patience), "{capability}");
+            assert!(
+                floor * 2 <= patience,
+                "{capability}: two floors must fit inside the panel's patience"
+            );
+        }
+        assert_eq!(ActivityFeedRecord::REFRESH_FLOOR_MS, Some(22_500));
+
+        // No wall clock anywhere in the browser reaches these three, so an
+        // unchanged answer stays off the wire for as long as it stays
+        // unchanged: the census is aged in BLOCKS against the canonical tip,
+        // fork watch is not routed into the dashboard at all, and the script
+        // registry is a name lookup joined on `code_hash`.
+        assert_eq!(ChainCensus::REFRESH_FLOOR_MS, None);
+        assert_eq!(ForkWatchRecord::REFRESH_FLOOR_MS, None);
+        assert_eq!(ScriptRegistryRecord::REFRESH_FLOOR_MS, None);
+    }
+
+    /// The comparison enumerates the FRESHNESS fields, never the content
+    /// ones, so a record that grows a field is compared on it for free. The
+    /// audit of what is freshness and what only looks like it is shared with
+    /// `packages/cache/src/semanticsReducer.ts`: a DAO record's
+    /// `statistics_block` is the height its numbers were computed at, and
+    /// moving it is a different answer even when every shannon matches.
+    #[test]
+    fn a_stamp_that_only_looks_like_freshness_is_still_content() {
+        let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
+        let first = restamped!(dao_state(10), 1_000_000);
+        projection.apply_enrichment(&EnrichmentEvent::DaoStateReplace(first.clone()));
+
+        let mut recomputed = restamped!(dao_state(10), 1_000_100);
+        recomputed.statistics_block += 1;
+        let deltas =
+            projection.apply_enrichment(&EnrichmentEvent::DaoStateReplace(recomputed.clone()));
+
+        assert!(matches!(deltas[0], SemanticsDelta::DaoStateReplace { .. }));
+        assert!(!recomputed.content_matches(&first));
     }
 
     #[test]
