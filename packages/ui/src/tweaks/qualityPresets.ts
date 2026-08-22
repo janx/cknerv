@@ -90,7 +90,20 @@ export interface QualityCascade {
    * by construction — the halo visibly doubles and halves across every
    * transition. That is what retired the climb back: the tier is now
    * calibrated once at open and then locked (`QUALITY_LOCK_STABLE_MS`), so a
-   * page that dips to `med` at this geometry holds `med` until reload. */
+   * page that dips to `med` at this geometry holds `med` until reload.
+   *
+   * ⚠️ Amended 2026-08-22: the sentence above records why the climb back was
+   * retired, not what the lock does now. It keeps the no-upshift rule and
+   * gives up the closed downshift. Calibration finishes ~34 s after open,
+   * entirely inside a laptop GPU's cold-boost window, while thermal
+   * steady-state arrives minutes later — measured that day on a 30 W iGPU at
+   * dPR 2: AUTO latched `high` at 59 fps on cold silicon, then ran 26-43 fps
+   * (frame times 23-37 ms, well past `DOWN_FRAME_MS.high`) at 92 °C with sclk
+   * pinned to 1.7 of 2.9 GHz, while `med` held 57-60 on that same hot GPU. So
+   * a locked tier may now still step DOWN, on a hold twice as long
+   * (`POST_LOCK_DOWN_HOLD_MUL`). Only down: a monotone-down page cannot
+   * limit-cycle, so the oscillation above stays retired, and a page that dips
+   * to `med` still holds `med` until reload. */
   populationCapMul: number;
   /** Semantic memory marks retain one CSS-space footprint at every preset.
    * Lower sample density gets a slightly broader, dimmer filter rather than
@@ -150,12 +163,14 @@ export interface QualityRuntimeSnapshot {
   mode: QualityMode;
   effective: QualityPreset;
   source: 'startup' | 'adaptive' | 'manual';
-  /** Automatic calibration has finished: the tier holds until the page is
-   * reloaded. Manual modes are never locked — the user owns the setting. */
+  /** Automatic calibration has finished: this tier is the page's ceiling and
+   * nothing measured afterwards may raise it. Sustained pressure can still
+   * lower it. Manual modes are never locked — the user owns the setting. */
   locked: boolean;
   /** Automatic tier switches since page open, monotone across mode changes.
-   * A probe reads it twice and compares — after the lock the two readings
-   * must be equal, whatever load arrives in between. */
+   * A probe reads it twice and compares — after the lock `effective` is
+   * monotone non-increasing, so any growth between the two readings is a step
+   * down and never a step back up. */
   switches: number;
 }
 
@@ -196,7 +211,8 @@ export function setQualityMode(mode: QualityMode): void {
 
 /** Publish a state-machine transition only while auto still owns the setting.
  * The store is transport, not policy — the lock lives in the state machine,
- * which stops calling this once calibration ends. */
+ * which keeps calling this after calibration ends, but from then on only ever
+ * with a lower tier than the one it published last. */
 export function setAdaptiveQuality(effective: QualityPreset): void {
   if (runtimeSnapshot.mode !== 'auto') return;
   publish({

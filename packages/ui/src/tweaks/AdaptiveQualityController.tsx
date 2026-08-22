@@ -13,6 +13,7 @@ import {
   ADAPTIVE_SAMPLE_WINDOW_MS,
   advanceAdaptiveQuality,
   createAdaptiveQualityState,
+  restartAdaptiveQualityState,
 } from './adaptiveQuality';
 
 const MAX_VALID_WINDOW_MS = ADAPTIVE_SAMPLE_WINDOW_MS * 4;
@@ -25,11 +26,14 @@ export interface AdaptiveQualityControllerProps {
   hydrationActiveRef?: { readonly current: boolean };
 }
 
-/** Frame-time controller for the page's first seconds. It samples window
+/** Frame-time controller for the page's whole life. It samples window
  * averages, never gl.info, and runs on raw render time so pause/time-scale
- * cannot disguise performance. Quality is measured once at the door: the state
- * machine locks after calibration and the sampler goes silent for the rest of
- * the page's life. React state changes only when the preset or the lock does. */
+ * cannot disguise performance. The opening seconds calibrate a ceiling, and the
+ * lock ends calibration but not sampling: the tier a cold GPU carries is not
+ * the tier it carries once the silicon is hot, so the sampler keeps listening
+ * for the one move still open to it, which is downward. The cost of listening
+ * is a clock read per frame. React state changes only when the preset or the
+ * lock does. */
 export default function AdaptiveQualityController({
   hydrationActiveRef,
 }: AdaptiveQualityControllerProps = {}): null {
@@ -42,7 +46,8 @@ export default function AdaptiveQualityController({
 
   // Changing the Leva mode is a deliberate user act, so auto -> manual -> auto
   // starts a fresh calibration exactly as reopening the page would. This is
-  // the ONLY way back into sampling once the tier is locked.
+  // the ONLY way a page gets its ceiling back: nothing the sampler measures
+  // can raise a tier.
   useEffect(() => {
     setQualityMode(mode);
     adaptiveState.current = createAdaptiveQualityState(
@@ -54,12 +59,10 @@ export default function AdaptiveQualityController({
 
   useFrame(() => {
     if (mode !== 'auto') return;
-    // Calibration is over, so the sampler owes this page nothing further —
-    // not even a clock read. Everything below (including the hydration
-    // restart) is therefore unreachable after the lock: a late replay or lag
-    // storm cannot reopen calibration, by directive the tier is fixed until
-    // the next reload.
-    if (adaptiveState.current.locked) return;
+    // Both rejections below outlive the lock, because the sampler does: a
+    // hidden tab's frames and a replay storm's frames are not renderer
+    // evidence at minute forty either, and a downshift bought with them would
+    // be as wrong as a locked-in tier bought with them.
     if (typeof document !== 'undefined' && document.hidden) {
       frames.current = 0;
       lastAt.current = 0;
@@ -73,9 +76,12 @@ export default function AdaptiveQualityController({
     }
     if (hydrationSeen.current) {
       // Replay just finished: restart with a fresh warmup so the settle
-      // frames right after hydration do not count as evidence either.
+      // frames right after hydration do not count as evidence either. The
+      // restart drops evidence, never the lock — a late replay must not hand
+      // a settled page a ceiling it has already been measured out of.
       hydrationSeen.current = false;
-      adaptiveState.current = createAdaptiveQualityState(
+      adaptiveState.current = restartAdaptiveQualityState(
+        adaptiveState.current,
         getQualityRuntimeSnapshot().effective,
       );
       frames.current = 0;

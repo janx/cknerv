@@ -7,8 +7,10 @@
 //   window.__fabricStats()       → { diffCalls, recentDiffs, frames, fullWalkReasons, animating* }
 //   window.__fabricStatsReset()  → zero the fabric-churn counters
 //   window.__qualityStats()      → { mode, effective, source, locked, switches }
-//                                  — read `switches` twice around a load spike:
-//                                    after `locked` the two must be equal.
+//                                  — after `locked` the tier is monotone
+//                                    non-increasing: read `switches` twice
+//                                    around a load spike and any growth is a
+//                                    step down, never a climb back.
 // Read-only; safe to leave attached. The library itself stays window-free.
 import {
   getQualityRuntimeSnapshot,
