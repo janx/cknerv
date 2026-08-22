@@ -18,7 +18,8 @@ const PEER_SHOCKWAVE_RESPONSE_GLSL = /* glsl */ `
     float shape,
     float halo,
     float passiveEnergy,
-    float eventScale
+    float eventScale,
+    float restScale
   ) {
     float shock = vShockwave;
     vec3 waveColor = shock > 0.0001
@@ -40,7 +41,10 @@ const PEER_SHOCKWAVE_RESPONSE_GLSL = /* glsl */ `
       min(1.0, shock * 0.85)
     );
     float wash = halo * shock * uShockwaveTrailBoost * eventScale;
-    float passiveShape = shape * eventScale;
+    // restScale is how loudly this draw sits there; eventScale is how loudly
+    // it answers a block. They are one number for every caller but the ghost
+    // haze, which had to recede at rest without going quiet on a wave.
+    float passiveShape = shape * restScale;
     float passive = shape * passiveEnergy;
     float eventAlpha = shape * alphaExtra * eventScale + wash;
     vec3 color = baseColor * passive
@@ -69,22 +73,55 @@ function sharedShockwave(
  * cost a vertex attribute, and the attribute budget has no room to sell.
  */
 export interface PeerCloudTone {
-  /** Passive brightness (`uDim`); the ghost cloud's 0.9 is the floor. */
+  /** Passive brightness (`uDim`); the ghost haze's 0.62 is the floor. */
   dim?: number;
-  /** Sprite size in the same screen-space units the ghost cloud uses. */
+  /**
+   * Sprite DIAMETER in world units — the same units the rest of the scene is
+   * measured in, so a stop's mark can be handed straight to its pick target
+   * (`peerCloudHitRadius`) and neither display density nor window height can
+   * drift the two apart.
+   */
   size?: number;
+  /** How loudly this stop answers a block wave. Defaults to `dim`: only the
+   *  ghost haze, which sits far below its own event, ever separates them. */
+  event?: number;
   /** Tint — same cyan family. Defaults to the ghost scaffold hue. */
   color?: readonly [number, number, number];
 }
 
-/** The three stops, faintest first. One hue, one axis: a sighted node reads as
- *  "the same kind of thing, better known", never as a different species. The
- *  measured core sits above all three with its own (brighter, tinted) halo. */
-export const PEER_CLOUD_GHOST_TONE = { dim: 0.9, size: 5.5 } satisfies PeerCloudTone;
+/**
+ * The three stops, faintest first. One hue, one axis: a sighted node reads as
+ * "the same kind of thing, better known", never as a different species. The
+ * measured core sits above all three with its own (brighter, tinted) halo.
+ *
+ * The axis has to survive ADDITIVE blending, which is where the first cut of it
+ * failed: every stop drove its core past 1.0, so all three clipped to the same
+ * white-cyan pixel and the gradient existed only in the source. A ghost now
+ * rests well under the clip — it is haze, and only a wave lights it — while the
+ * two sighted stops keep both the light AND the footprint the eye actually
+ * sorts on. Ghost → reached is 3x the diameter and ~10x the resting light
+ * (which goes as dim SQUARED — additive blending applies alpha to colour).
+ */
+export const PEER_CLOUD_GHOST_TONE = {
+  dim: 0.62, size: 0.8, event: 0.9,
+} satisfies PeerCloudTone;
 /** Named by the crawler, but it could not reach the node this round. */
-export const PEER_CLOUD_SIGHTED_DARK_TONE = { dim: 1.35, size: 6.4 } satisfies PeerCloudTone;
+export const PEER_CLOUD_SIGHTED_DARK_TONE = { dim: 1.3, size: 1.85 } satisfies PeerCloudTone;
 /** Named by the crawler and answering it. */
-export const PEER_CLOUD_SIGHTED_TONE = { dim: 1.95, size: 7.2 } satisfies PeerCloudTone;
+export const PEER_CLOUD_SIGHTED_TONE = { dim: 1.95, size: 2.45 } satisfies PeerCloudTone;
+
+/**
+ * The pick target for one cloud stop: its own mark, and no more.
+ *
+ * `size` is a world diameter, so this is the whole conversion — no viewport
+ * height, no device pixel ratio, nothing that can drift between what is drawn
+ * and what can be clicked. Generosity here is not free: the Cell canopy yields
+ * this pixel through NETWORK_PEER_PICK_FLAG, so every pixel a peer target takes
+ * beyond its own glow is one stolen from the layer above.
+ */
+export function peerCloudHitRadius(tone: PeerCloudTone): number {
+  return (tone.size ?? PEER_CLOUD_GHOST_TONE.size) / 2;
+}
 
 /**
  * One draw for every peer node in a linkless cloud — the inferred ghosts, and
@@ -96,16 +133,24 @@ export function makePeerCloudMaterial(
   uniforms?: ShockwaveUniforms,
   tone?: PeerCloudTone,
 ): THREE.ShaderMaterial {
+  // No tone IS the ghost stop, whole: reading each field's own fallback
+  // instead would have handed the ghost cloud everything but its `event`, and
+  // the haze would have gone quiet on exactly the block wave it exists to show.
+  const stop: PeerCloudTone = tone ?? PEER_CLOUD_GHOST_TONE;
   return new THREE.ShaderMaterial({
     uniforms: {
       uTime: { value: 0 },
       uColor: {
         value: new THREE.Color().setRGB(
-          ...(tone?.color ?? PEER_NETWORK_PALETTE.scaffold),
+          ...(stop.color ?? PEER_NETWORK_PALETTE.scaffold),
         ),
       },
-      uDim: { value: tone?.dim ?? PEER_CLOUD_GHOST_TONE.dim },
-      uSize: { value: tone?.size ?? PEER_CLOUD_GHOST_TONE.size },
+      uDim: { value: stop.dim ?? PEER_CLOUD_GHOST_TONE.dim },
+      uEvent: { value: stop.event ?? stop.dim ?? PEER_CLOUD_GHOST_TONE.dim },
+      uSize: { value: stop.size ?? PEER_CLOUD_GHOST_TONE.size },
+      // Drawing-buffer height in device pixels; the owner refreshes it, because
+      // a resize or a quality-tier DPR change moves it under a live material.
+      uViewportHeight: { value: 1080 },
       uContextEnergy: { value: 1 },
       ...sharedShockwave(uniforms),
     },
@@ -116,6 +161,7 @@ export function makePeerCloudMaterial(
     vertexShader: /* glsl */ `
       uniform float uTime;
       uniform float uSize;
+      uniform float uViewportHeight;
       ${SHOCKWAVE_UNIFORMS_GLSL}
 
       varying float vShockwave;
@@ -129,9 +175,15 @@ export function makePeerCloudMaterial(
         vShockwave = wave.a;
         vShockwaveCarrier = wave.rgb;
         vec4 view = viewMatrix * world;
+        // uSize is a WORLD diameter, projected the way every other object in
+        // the scene is: half the drawing buffer times the projection's own
+        // 1/tan(fov/2), over view depth. A hard-coded pixel scale (the shape
+        // this had) drifts with display density and window height, so the mark
+        // and the pick sphere derived from it could never stay the same size.
         gl_PointSize = uSize
           * (1.0 + min(1.0, vShockwave) * uShockwaveSizeBoost)
-          * (300.0 / max(-view.z, 0.001));
+          * 0.5 * uViewportHeight * projectionMatrix[1][1]
+          / max(-view.z, 0.001);
         gl_Position = projectionMatrix * view;
       }
     `,
@@ -140,6 +192,7 @@ export function makePeerCloudMaterial(
 
       uniform vec3 uColor;
       uniform float uDim;
+      uniform float uEvent;
       uniform float uContextEnergy;
       ${SHOCKWAVE_UNIFORMS_GLSL}
 
@@ -158,6 +211,7 @@ export function makePeerCloudMaterial(
           core + halo,
           halo,
           uDim * uContextEnergy,
+          uEvent,
           uDim
         );
         gl_FragColor = signal;
@@ -239,6 +293,7 @@ export function makePeerHaloMaterial(
           core + halo,
           halo,
           intensity * uContextEnergy,
+          intensity,
           intensity
         );
         gl_FragColor = signal;
@@ -353,6 +408,7 @@ export function makeMeasuredPeerHalosMaterial(
           core + halo,
           halo,
           intensity * contextEnergy,
+          intensity,
           intensity
         );
         gl_FragColor = signal;

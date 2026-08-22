@@ -48,7 +48,10 @@ describe('NetworkColony close-view context', () => {
     const material = materialSource('peerNodeMaterial.ts');
 
     expect(material).toContain('uDim * uContextEnergy');
-    expect(material).toContain('float passiveShape = shape * eventScale');
+    // The passive weight rides the stop's RESTING scale (one number with the
+    // event scale for every caller but the ghost haze, which rests below its
+    // own wave); the event terms still ride eventScale, asserted below.
+    expect(material).toContain('float passiveShape = shape * restScale');
     expect(material).toContain(
       'return vec4(color, passiveShape + eventAlpha)',
     );

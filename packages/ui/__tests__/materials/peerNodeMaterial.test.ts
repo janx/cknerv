@@ -3,9 +3,11 @@ import * as THREE from 'three';
 import {
   makePeerCloudMaterial,
   makePeerHaloMaterial,
+  peerCloudHitRadius,
   PEER_CLOUD_GHOST_TONE,
   PEER_CLOUD_SIGHTED_DARK_TONE,
   PEER_CLOUD_SIGHTED_TONE,
+  type PeerCloudTone,
 } from '../../src/materials/peerNodeMaterial';
 import {
   makeShockwaveUniforms,
@@ -84,11 +86,60 @@ describe('peer cloud tones (the confidence axis)', () => {
       .toBe(ghost.uniforms.uColor.value.getHex());
   });
 
-  it('leaves the ghost cloud exactly where it was', () => {
+  it('reads the ghost cloud off its own tone', () => {
     const ghost = makePeerCloudMaterial();
     expect(ghost.uniforms.uDim.value).toBe(PEER_CLOUD_GHOST_TONE.dim);
     expect(ghost.uniforms.uSize.value).toBe(PEER_CLOUD_GHOST_TONE.size);
-    expect(PEER_CLOUD_GHOST_TONE).toEqual({ dim: 0.9, size: 5.5 });
+    expect(ghost.uniforms.uEvent.value).toBe(PEER_CLOUD_GHOST_TONE.event);
+  });
+
+  it('keeps the ghost stop UNDER the additive clip the sighted stops pass', () => {
+    // What the first cut of this axis got wrong: additive blending applies
+    // alpha to colour a second time, so one point's resting centre lands at
+    // shape^2 * dim^2 (shape at r=0 is core+halo = 1.42). Every stop drove that
+    // past 1.0, so all three clipped to the same white-cyan pixel and the
+    // gradient existed only in the source — a ghost was indistinguishable from
+    // a node you could open. The ghost must rest BELOW the clip.
+    const restPeak = (tone: PeerCloudTone): number => (
+      1.42 * 1.42 * (tone.dim ?? 0) ** 2
+    );
+    expect(restPeak(PEER_CLOUD_GHOST_TONE)).toBeLessThan(1);
+    expect(restPeak(PEER_CLOUD_SIGHTED_DARK_TONE)).toBeGreaterThan(1);
+    expect(restPeak(PEER_CLOUD_SIGHTED_TONE)).toBeGreaterThan(1);
+  });
+
+  it('lets the ghost recede at rest without going quiet on a block wave', () => {
+    // The haze is faint BECAUSE it is haze, but a block still crosses it at
+    // full strength: uDim carries the resting level, uEvent the wave answer.
+    expect(PEER_CLOUD_GHOST_TONE.event)
+      .toBeGreaterThan(PEER_CLOUD_GHOST_TONE.dim);
+    const ghost = makePeerCloudMaterial();
+    expect(ghost.fragmentShader).toContain('uDim * uContextEnergy');
+    expect(ghost.fragmentShader).toContain('uEvent,');
+    expect(ghost.fragmentShader).toContain('float passiveShape = shape * restScale');
+
+    // A stop that never separates them behaves exactly as it always did.
+    const sighted = makePeerCloudMaterial(undefined, PEER_CLOUD_SIGHTED_TONE);
+    expect(sighted.uniforms.uEvent.value).toBe(PEER_CLOUD_SIGHTED_TONE.dim);
+  });
+
+  it('sizes a sprite in world units, projected like everything else', () => {
+    // A hard-coded pixel scale drifts with display density and window height,
+    // so the mark and any pick target derived from it could never hold the
+    // same size. uSize is a world DIAMETER; hit radius is simply half of it.
+    const ghost = makePeerCloudMaterial();
+    expect(ghost.vertexShader).toContain('uViewportHeight');
+    expect(ghost.vertexShader).toContain('projectionMatrix[1][1]');
+    expect(ghost.vertexShader).not.toContain('300.0');
+
+    expect(peerCloudHitRadius(PEER_CLOUD_SIGHTED_TONE))
+      .toBe(PEER_CLOUD_SIGHTED_TONE.size / 2);
+    expect(peerCloudHitRadius(PEER_CLOUD_SIGHTED_DARK_TONE))
+      .toBeLessThan(peerCloudHitRadius(PEER_CLOUD_SIGHTED_TONE));
+    // The eye sorts on footprint before brightness, and brightness clips —
+    // so the axis has to be legible in size alone: 3x, ghost to reached.
+    expect(PEER_CLOUD_SIGHTED_TONE.size)
+      .toBeGreaterThanOrEqual(PEER_CLOUD_GHOST_TONE.size * 3);
   });
 
   it('shares one in-flight wave and the same context damping as the ghosts', () => {

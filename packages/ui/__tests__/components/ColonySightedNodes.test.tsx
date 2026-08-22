@@ -104,6 +104,21 @@ describe('ColonyNodes sighted tier', () => {
     expect(nodes).toContain('e.stopPropagation()');
   });
 
+  it('sizes every hit sphere from the mark its own stop draws', () => {
+    const nodes = source('ColonyNodes.tsx');
+    // A pick target that does not track the sprite is a target the user cannot
+    // see: they aim at the glow and press on nothing. One unit sphere, scaled
+    // per instance out of the same tone the cloud draws, so retuning a stop
+    // moves its target with it — and the reachable stop's larger glow carries
+    // the larger sphere rather than one flat radius for the whole tier.
+    expect(nodes).toContain('peerCloudHitRadius(PEER_CLOUD_SIGHTED_TONE)');
+    expect(nodes).toContain('peerCloudHitRadius(PEER_CLOUD_SIGHTED_DARK_TONE)');
+    expect(nodes).toContain('new THREE.SphereGeometry(1, 8, 8)');
+    expect(nodes).toContain('SCRATCH_MATRIX.makeScale(radius, radius, radius)');
+    expect(nodes).toContain('SCRATCH_MATRIX.setPosition(');
+    expect(nodes).not.toContain('const SIGHTED_SIZE');
+  });
+
   it('keeps the shared hover word instance-aware in both directions', () => {
     const nodes = source('ColonyNodes.tsx');
     // Every hover write and retraction is resolved from e.instanceId, and a

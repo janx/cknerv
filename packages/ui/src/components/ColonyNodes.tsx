@@ -3,12 +3,17 @@
 // visual languages):
 //   • inferred ghosts   — ONE faint additive <points> cloud (~240 minus the
 //     sighted count): a "possible network" haze. Each point is the SAME soft
-//     core+halo radial as the measured halo, drawn small and dim. Non-selectable.
+//     core+halo radial as the measured halo, drawn small and — this is the
+//     part that has to hold — under the additive clip, so it stays haze
+//     instead of a white speck the eye reads as a node. Non-selectable.
 //   • sighted nodes     — TWO more <points> draws off the same factory (the
 //     crawler reached it / only remembers it), a stop brighter than the ghosts
-//     and a stop below the measured core. Real identity, invented position, no
-//     link of ours — so they are clickable through ONE instanced invisible hit
-//     mesh, and every edge they carry stays inferred fiction.
+//     and a stop below the measured core, and ~3x their diameter: the tiers
+//     have to separate in FOOTPRINT, because brightness clips and the inferred
+//     edges pile light onto every junction they cross. Real identity, invented
+//     position, no link of ours — so they are clickable through ONE instanced
+//     invisible hit mesh sized from those same marks, and every edge they
+//     carry stays inferred fiction.
 //   • measured nodes    — one bright, saturated, larger glow-halo per real peer:
 //     a billboarded plane carrying that same core+halo shader,
 //     gently breathing, with an invisible solid sphere hit-target so it stays
@@ -47,6 +52,7 @@ import {
 import {
   makeMeasuredPeerHalosMaterial,
   makePeerCloudMaterial,
+  peerCloudHitRadius,
   PEER_CLOUD_SIGHTED_DARK_TONE,
   PEER_CLOUD_SIGHTED_TONE,
   type PeerCloudTone,
@@ -58,11 +64,19 @@ const MEASURED_SIZE = 1.4;
 /** Selection id prefix for a sighted node — the colony's third dialect beside
  *  `peer:` (measured) and the bare chain-node id. */
 const SIGHTED_SELECTION_PREFIX = 'sighted:';
-/** World radius of a sighted node's invisible hit sphere. A sighted sprite is
- *  screen-space sized (≈14px at colony distance) and this sphere subtends about
- *  the same there: the target is the footprint, not a generous pick disc — the
- *  Cell canopy already yields the pixel through NETWORK_PEER_PICK_FLAG. */
-const SIGHTED_SIZE = 1;
+/** A sighted node's invisible hit sphere IS its mark: both stops hand their own
+ *  world diameter to `peerCloudHitRadius`, so the reachable stop's larger glow
+ *  carries the larger target and a retune of one moves the other with it. The
+ *  target is the footprint, never a generous pick disc — the Cell canopy yields
+ *  this pixel through NETWORK_PEER_PICK_FLAG, so it is taken from that layer. */
+const SIGHTED_HIT_RADIUS = peerCloudHitRadius(PEER_CLOUD_SIGHTED_TONE);
+const SIGHTED_DARK_HIT_RADIUS = peerCloudHitRadius(PEER_CLOUD_SIGHTED_DARK_TONE);
+
+function sightedHitRadius(node: NetworkNode): number {
+  return node.sighted?.reachable === false
+    ? SIGHTED_DARK_HIT_RADIUS
+    : SIGHTED_HIT_RADIUS;
+}
 
 // Measured node tint = the real peer palette: version-mismatch (violet) wins,
 // else connection direction — single-sourced via peerColorKind (see the
@@ -84,6 +98,7 @@ function InferredCloud({
   shockwaveUniforms: ShockwaveUniforms;
 }) {
   const simClock = useSimClock();
+  const gl = useThree((state) => state.gl);
   const inferred = useMemo(
     () => topology.nodes.filter((n) => n.kind === 'inferred'),
     [topology],
@@ -115,6 +130,9 @@ function InferredCloud({
   useSimFrame(() => {
     mat.uniforms.uTime.value = simClock.elapsedSec;
     mat.uniforms.uContextEnergy.value = contextEnergyRef?.current ?? 1;
+    // The sprite is sized in world units, so it needs the live drawing buffer:
+    // a window resize or a quality-tier DPR change moves it under the material.
+    mat.uniforms.uViewportHeight.value = gl.domElement.height;
   });
 
   // Non-selectable: an explicit no-op raycast so the ghost cloud can NEVER be
@@ -147,6 +165,7 @@ function SightedCloud({
   shockwaveUniforms: ShockwaveUniforms;
 }) {
   const simClock = useSimClock();
+  const gl = useThree((state) => state.gl);
 
   const geom = useMemo(() => {
     const g = new THREE.BufferGeometry();
@@ -170,6 +189,7 @@ function SightedCloud({
   useSimFrame(() => {
     mat.uniforms.uTime.value = simClock.elapsedSec;
     mat.uniforms.uContextEnergy.value = contextEnergyRef?.current ?? 1;
+    mat.uniforms.uViewportHeight.value = gl.domElement.height;
   });
 
   return <points geometry={geom} material={mat} frustumCulled={false} raycast={() => null} />;
@@ -219,7 +239,8 @@ function SightedNodes({
     return sighted.find((n) => n.id === id) ?? null;
   }, [selectedId, sighted]);
 
-  const geometry = useMemo(() => new THREE.SphereGeometry(SIGHTED_SIZE, 8, 8), []);
+  // A UNIT sphere: each instance is scaled to its own stop's mark below.
+  const geometry = useMemo(() => new THREE.SphereGeometry(1, 8, 8), []);
   const material = useMemo(() => new THREE.MeshBasicMaterial({ visible: false }), []);
   useEffect(() => () => {
     geometry.dispose();
@@ -233,7 +254,9 @@ function SightedNodes({
     if (!mesh) return;
     mesh.count = sighted.length;
     sighted.forEach((node, index) => {
-      SCRATCH_MATRIX.makeTranslation(node.pos[0], node.pos[1], node.pos[2]);
+      const radius = sightedHitRadius(node);
+      SCRATCH_MATRIX.makeScale(radius, radius, radius);
+      SCRATCH_MATRIX.setPosition(node.pos[0], node.pos[1], node.pos[2]);
       mesh.setMatrixAt(index, SCRATCH_MATRIX);
     });
     mesh.instanceMatrix.needsUpdate = true;
@@ -335,7 +358,7 @@ function SightedNodes({
       />
       {selected ? (
         <group position={selected.pos}>
-          <CkbSelectionReticle size={SIGHTED_SIZE * 2.4} />
+          <CkbSelectionReticle size={sightedHitRadius(selected) * 2.4} />
         </group>
       ) : null}
     </group>
