@@ -345,6 +345,31 @@ describe('sighted nodes (the crawler names a bounded few)', () => {
     expect(t.nodes.find((n) => n.id === 'ckb:local')!.kind).toBe('local');
   });
 
+  // `ckb:local` is cknerv's server-local key, not a name the crawler speaks:
+  // a roster row naming US carries our base58 p2p id. A publicly crawlable
+  // cknerv node therefore finds ITSELF in the roster and — before
+  // `localP2pId` — stood a sighted marker for itself, with a card saying we
+  // have never spoken to it.
+  it('excludes the local node under the p2p id the crawler files it by', () => {
+    const localP2pId = 'QmSelf';
+    const rows = [...sightedRoster(2), rosterNode({ node_id: localP2pId })];
+    const t = inferredTopology(
+      peers, seed, 'ckb:local', undefined, roster(rows), localP2pId,
+    );
+    expect(sightedOf(t).map((n) => n.id)).toEqual(['Qm0000', 'Qm0001']);
+    expect(t.nodes.filter((n) => n.id === localP2pId)).toHaveLength(0);
+  });
+
+  // The other half of the pin: without the argument the same roster still
+  // stages the row, so it is the parameter doing the work above and not the
+  // `ckb:local` exclusion that was already there.
+  it('stages that same row when no local p2p id is supplied', () => {
+    const localP2pId = 'QmSelf';
+    const rows = [...sightedRoster(2), rosterNode({ node_id: localP2pId })];
+    const t = inferredTopology(peers, seed, 'ckb:local', undefined, roster(rows));
+    expect(sightedOf(t).map((n) => n.id)).toEqual(['Qm0000', 'Qm0001', localP2pId]);
+  });
+
   it('places a sighted node purely from its id — roster order and round cannot move it', () => {
     const rows = sightedRoster(6);
     const forward = inferredTopology(peers, seed, 'ckb:local', undefined, roster(rows));

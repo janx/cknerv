@@ -630,11 +630,14 @@ export default function App({
   const topology = useMemo(
     () => inferredTopology(
       peers, universeSeed, localNode?.id ?? 'ckb:local', localCkbPos, networkRoster,
+      // `localNode.id` is cknerv's own key for the endpoint; the crawler files
+      // us under our base58 p2p id. Only this excludes us from our own roster.
+      localNode?.p2p_node_id,
     ),
     // peers is read via the stable peersSig; keying on `peers` directly would
     // rebuild the geometry every poll. localCkbPos is stably memoized (no churn).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [peersSig, universeSeed, localNode?.id, localCkbPos, networkRoster],
+    [peersSig, universeSeed, localNode?.id, localNode?.p2p_node_id, localCkbPos, networkRoster],
   );
   const cf = useMemo(
     () => colonyFlood(topology, cellsCache.lastPulseAtMs),

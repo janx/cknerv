@@ -130,14 +130,23 @@ export function sightedPos(nodeId: string): Vec3 {
  * same reason. A repeated id inside one roster is dropped too — the cap and
  * the ordering are the server's contract, but a duplicate would double-book an
  * instance in the hit mesh, so tolerate it here.
+ *
+ * `localId` is cknerv's own key for the endpoint (`ckb:local`), which is not a
+ * vocabulary the crawler speaks: roster rows carry base58 p2p ids, the same
+ * ones `Peer.node_id` uses. So `localP2pId` — the local node's
+ * `p2p_node_id` — is what actually excludes us. Without it, a publicly
+ * crawlable cknerv node stands a SIGHTED marker for ITSELF, with a card that
+ * says we have never spoken to it.
  */
 export function stageSighted(
   roster: NetworkRosterRecord | null | undefined,
   peers: Peer[],
   localId: string,
+  localP2pId?: string | null,
 ): NetworkNode[] {
   if (!roster || roster.entries.length === 0) return [];
   const linked = new Set<string>([localId]);
+  if (localP2pId) linked.add(localP2pId);
   for (const p of peers) linked.add(p.node_id);
   const out: NetworkNode[] = [];
   const staged = new Set<string>();
@@ -251,9 +260,14 @@ function inferredScaffold(seed: number, sighted: readonly NetworkNode[]): Inferr
   return scaffoldCache;
 }
 
+/** `localP2pId` is the local node's base58 `p2p_node_id`, the name the crawler
+ *  would file US under. It is only ever used to exclude ourselves from the
+ *  sighted tier — `localId` is cknerv's server-local key and never matches a
+ *  roster row. Optional so every existing caller keeps working; a node whose
+ *  server reported no identity simply has no id to be excluded by. */
 export function inferredTopology(
   peers: Peer[], seed: number, localId: string = LOCAL_ID_FALLBACK, localPos?: Vec3,
-  roster?: NetworkRosterRecord | null,
+  roster?: NetworkRosterRecord | null, localP2pId?: string | null,
 ): NetworkTopology {
   // 1) local anchor. When a `localPos` is supplied (App pins it onto the galaxy's
   //    labeled CkbNodeAnchor so there's a single "you"), it IS the local node's
@@ -279,7 +293,7 @@ export function inferredTopology(
   //    then measured spokes, then relay stitches). Sighted nodes are staged
   //    from the roster the crawler sent, minus anyone we already hold a link to.
   const infStart = nodes.length;
-  const sighted = stageSighted(roster, peers, localId);
+  const sighted = stageSighted(roster, peers, localId, localP2pId);
   const scaffold = inferredScaffold(seed, sighted);
   for (let i = 0; i < scaffold.ghostCount; i += 1) nodes.push(scaffold.nodes[i]);
   // The cache holds GEOMETRY, not the crawler's report: the sighted tail is
