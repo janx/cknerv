@@ -16,7 +16,7 @@ export default function DaoStatePanel({ source, record, style, nowMs = Date.now(
   if (!canRenderDaoStateReadout(source, record, nowMs)) return null;
 
   return (
-    <HudPanel style={{ width: 300, ...style }}>
+    <HudPanel watermark="道" style={{ width: 300, ...style }}>
       {/* No accent: a tinted module tag is how a panel says "I am one half of
           the mesh pair", and it means nothing once every panel does it. DAO·05
           falls back to the registry's slate with CKB·01, ECG·04 and GL·08. */}

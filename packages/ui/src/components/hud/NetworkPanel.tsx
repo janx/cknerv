@@ -31,7 +31,7 @@ export default function NetworkPanel({ summary, consensus, syncRatio, enrichment
   const total = Math.max(1, consensus.total);
   const seg = (n: number) => `${(n / total) * 100}%`;
   return (
-    <HudPanel style={{ width: 302, paddingTop: 14, ...style }}>
+    <HudPanel watermark="节点场" style={{ width: 302, paddingTop: 14, ...style }}>
       <PanelHeader en="PEER MESH" cjk="节点场" idx="MESH·02" accent={HUD_COLORS.peerWire} />
       <StatRow label="Peers"><span style={{ color: HUD_COLORS.peerWire }}>{summary.peerCount}</span> &nbsp; <span style={{ color: HUD_COLORS.dim }}>out</span> {summary.outbound} / <span style={{ color: HUD_COLORS.dim }}>in</span> {summary.inbound}</StatRow>
       <StatRow label="Head consensus">{consensus.atTip} / {consensus.total}</StatRow>

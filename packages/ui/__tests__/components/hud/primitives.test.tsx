@@ -11,6 +11,26 @@ describe('hud primitives', () => {
     expect(box.style.position).toBe('absolute');
     expect(box.textContent).toContain('x');
   });
+  it('HudPanel prints its watermark under the telemetry and out of the way', () => {
+    const { container } = render(<HudPanel watermark="神经元"><span>x</span></HudPanel>);
+    const box = container.firstElementChild as HTMLElement;
+    const mark = box.querySelector('[data-hud-watermark]') as HTMLElement;
+
+    // First in the DOM and beneath everything by z-index — the two halves of
+    // "this never sits on top of a reading" — and cropped by the panel edge.
+    expect(box.firstElementChild).toBe(mark);
+    expect(mark.style.zIndex).toBe('-1');
+    expect(box.style.overflow).toBe('hidden');
+    // Decoration: no pointer, no selection, no place in the accessibility tree,
+    // where it would otherwise read out the panel's name a second time.
+    expect(mark.getAttribute('aria-hidden')).toBe('true');
+    expect(mark.style.pointerEvents).toBe('none');
+    expect(mark.style.userSelect).toBe('none');
+  });
+  it('HudPanel without a watermark draws none', () => {
+    const { container } = render(<HudPanel><span>x</span></HudPanel>);
+    expect(container.querySelector('[data-hud-watermark]')).toBeNull();
+  });
   it('PanelHeader shows english + cjk + index', () => {
     const { container } = render(<PanelHeader en="Network" cjk="网络" idx="NET-02" />);
     expect(container.textContent).toContain('Network');

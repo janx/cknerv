@@ -22,6 +22,7 @@ import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { HUD_COLORS, HUD_TYPE } from '../../../src/components/hud/hudTheme';
 import {
+  PANEL_WATERMARK_PX,
   PLATE_CUT_CLIP,
   PLATE_CUT_PX,
 } from '../../../src/components/hud/primitives';
@@ -535,5 +536,84 @@ describe('one type scale', () => {
       .map((size) => `${source.name}: ${size}px`));
 
     expect(belowFloor).toEqual([]);
+  });
+});
+
+// ——— Twenty-two glyphs ——————————————————————————————————————————————————
+//
+// The HUD's Chinese face is not a font, it is a HAND-CUT SUBSET: 22 glyphs and
+// no more, so the page ships a few kilobytes instead of a few megabytes. That
+// makes every Chinese string in the overlay a load-bearing inventory entry, and
+// makes the failure mode invisible — a glyph outside the set does not error, it
+// renders in whatever serif the machine happens to have, so the panel simply
+// looks slightly wrong to somebody who is not looking for it. 样本 once shipped
+// a release ahead of the subset exactly this way.
+//
+// The watermark makes it worse by making it bigger: the same silent fallback at
+// 76px is a mismatched face across a whole corner of a panel. So this is the
+// oracle. The inventory is written out here rather than imported, on purpose —
+// it is a claim about a binary file, and the copy that matters is the one in
+// `src/fonts/README.md` beside the `pyftsubset` command that produced it. If
+// this list and that list ever disagree, one of them is lying and the test
+// should be the loud one.
+
+/** Exactly the glyphs in `src/fonts/HuiwenMincho-subset.woff2`. Adding Chinese
+ *  to the HUD means re-subsetting the face IN THE SAME COMMIT and updating both
+ *  this string and the README's. */
+const CJK_SUBSET = '共识基神经元脉搏节点场对端状态警告道样本细胞';
+
+/** Every Chinese literal the HUD hands to the subset face: a panel's CJK
+ *  companion, a plate's, and now the watermark under a panel's telemetry.
+ *  Interpolated values yield nothing to check, which is why every one of these
+ *  is written as a literal at its call site. */
+const CJK_PROP = /(?:watermark|cjk)="([^"]*)"/g;
+
+function cjkLiterals(): Array<{ source: string; text: string }> {
+  const found: Array<{ source: string; text: string }> = [];
+  for (const source of SOURCES) {
+    const text = code(source.text);
+    CJK_PROP.lastIndex = 0;
+    let match = CJK_PROP.exec(text);
+    while (match !== null) {
+      if (match[1].length > 0) found.push({ source: source.name, text: match[1] });
+      match = CJK_PROP.exec(text);
+    }
+  }
+  return found;
+}
+
+describe('the hand-cut face', () => {
+  it('is 22 glyphs, each of them once', () => {
+    // The subset is a set. A duplicate here would mean the README's
+    // `--text=` argument is describing a smaller font than the name claims.
+    expect(CJK_SUBSET.length).toBe(22);
+    expect(new Set(CJK_SUBSET).size).toBe(22);
+  });
+
+  it('finds the strings it is supposed to be checking', () => {
+    // The pin. A regex that stopped matching would pass this file silently,
+    // which is the same failure as the one it exists to catch.
+    const literals = cjkLiterals();
+    expect(literals.length).toBeGreaterThanOrEqual(11);
+    expect(literals.filter((literal) => literal.text === '神经元').length)
+      .toBeGreaterThanOrEqual(2);
+  });
+
+  it('every glyph the HUD renders is one the face carries', () => {
+    const inventory = new Set(CJK_SUBSET);
+    const strays = cjkLiterals().flatMap(({ source, text }) => [...text]
+      .filter((glyph) => !inventory.has(glyph))
+      .map((glyph) => `${source}: "${text}" uses ${glyph} — re-subset the face (src/fonts/README.md)`));
+
+    expect(strays).toEqual([]);
+  });
+
+  it('the watermark is off the type ladder on purpose, not by drift', () => {
+    // The one DOM size in the overlay that is not a rung of `HUD_TYPE`, and the
+    // only reason it is allowed to be: the ladder ranks reading sizes, and the
+    // watermark is a graphic. Declared here so the exception is a decision on
+    // the record rather than a constant that happened to dodge the regex.
+    expect(DECLARED_SIZES.has(PANEL_WATERMARK_PX)).toBe(false);
+    expect(PANEL_WATERMARK_PX).toBeGreaterThan(HUD_TYPE.hero * 2);
   });
 });

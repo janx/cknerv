@@ -35,7 +35,7 @@ export default function CellsPanel({ stats, churn, reducedMotion = false, style 
   // rows wear; the hero only says which side won this block.
   const netColor = churn.netPerBlock >= 0 ? HUD_COLORS.nominal : HUD_COLORS.ember;
   return (
-    <HudPanel style={{ width: 302, ...style }}>
+    <HudPanel watermark="神经元" style={{ width: 302, ...style }}>
       {/* MESH·02 is the peer plane and MESH·03 is this one; they are a pair,
           and a pair has to be two colours. The cyan that used to sit here was
           eight degrees off `peerWire`, so the two panels read as one — and it

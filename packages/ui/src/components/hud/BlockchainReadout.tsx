@@ -33,7 +33,7 @@ export default function BlockchainReadout({ chain, cellPopulation, enrichmentSou
 }) {
   const epoch = formatEpochReadout(chain.epoch);
   return (
-    <HudPanel style={{ width: 340, ...style }}>
+    <HudPanel watermark="共识基" style={{ width: 340, ...style }}>
       <PanelHeader en="COMMON KNOWLEDGE BASE" cjk="共识基" idx="CKB·01" />
       {/* The tip is a display-family number that changes every few seconds, so
           it asks for tabular figures — otherwise the `#` and everything after
