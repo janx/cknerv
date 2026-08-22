@@ -244,6 +244,144 @@ export function spatialPlate(accent: string): CSSProperties {
   };
 }
 
+/** Base box for one plate of a scene-anchored card. The cell card's plates
+ *  are siblings in a grid and stack in source order; the peer dialects lift
+ *  theirs onto a paint layer of their own. */
+export const satelliteBase: CSSProperties = {
+  position: 'relative',
+  minWidth: 0,
+  boxSizing: 'border-box',
+  pointerEvents: 'auto',
+};
+
+/** The same plate, one layer up — kept property-for-property as the peer
+ *  dialects wrote it so a shared base cannot re-order their inline style. */
+export const stackedSatelliteBase: CSSProperties = {
+  position: 'relative',
+  zIndex: 1,
+  minWidth: 0,
+  boxSizing: 'border-box',
+  pointerEvents: 'auto',
+};
+
+/** The bordered state word a card sets beside an identity — MINER, INBOUND,
+ *  NOT LINKED, ACTIVE, DEPRECATED. One chip grammar, tinted by the caller. */
+export function plateStateChip(color: string): CSSProperties {
+  return {
+    padding: '1px 5px',
+    border: `1px solid ${rgba(color, 0.55)}`,
+    color,
+    fontFamily: HUD_FONTS.tech,
+    fontSize: HUD_TYPE.micro,
+    fontWeight: 700,
+    letterSpacing: 1.4,
+  };
+}
+
+// ——— Rail-hung readout rows ——————————————————————————————————————————
+// Every floating card states a fact the same way: a hairline rail in the
+// plate's accent, a micro label at the left, the value pushed all the way to
+// the right edge of the measure, and an optional micro caption underneath.
+// The self probe, the crawler dossier, the sighted-node card and the Cell
+// register all speak this one row — it is the house's readout sentence.
+
+/** Rail alpha the probe dialects draw; the dossier goes one step fainter. */
+export const PLATE_ROW_RAIL_ALPHA = 0.34;
+
+export interface PlateReadoutRowProps {
+  /** Plate accent — the rail's colour. */
+  accent: string;
+  railAlpha?: number;
+  label: string;
+  /** Right-aligned value. A node lets a row carry a chip beside its text. */
+  value: ReactNode;
+  valueColor?: string;
+  /** House default is the probe tier; evidence rows step down to `label`. */
+  valueSize?: number;
+  /** Hover provenance — defaults to the value whenever it is plain text. */
+  title?: string;
+  /** State chip between the label and the value, filling the middle instead
+   *  of floating off at the far edge. */
+  badge?: ReactNode;
+  /** `data-*` attributes this dialect stamps on the row and on its value. */
+  rowAttributes?: Record<string, string>;
+  valueAttributes?: Record<string, string>;
+  style?: CSSProperties;
+  /** Caption(s) under the value. */
+  children?: ReactNode;
+}
+
+export function PlateReadoutRow({
+  accent,
+  railAlpha = PLATE_ROW_RAIL_ALPHA,
+  label,
+  value,
+  valueColor,
+  valueSize = HUD_TYPE.value,
+  title,
+  badge,
+  rowAttributes,
+  valueAttributes,
+  style,
+  children,
+}: PlateReadoutRowProps) {
+  return (
+    <div
+      {...rowAttributes}
+      style={{
+        minWidth: 0,
+        padding: '3px 0 4px 9px',
+        borderLeft: `1px solid ${rgba(accent, railAlpha)}`,
+        ...style,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+        <span style={{ flex: '0 0 auto', fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, letterSpacing: 1.4, color: HUD_COLORS.dim }}>
+          {label}
+        </span>
+        {badge}
+        <span
+          {...valueAttributes}
+          title={title ?? (typeof value === 'string' ? value : undefined)}
+          style={{
+            marginLeft: 'auto',
+            minWidth: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            fontSize: valueSize,
+            color: valueColor ?? HUD_COLORS.ink,
+          }}
+        >
+          {value}
+        </span>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** A sentence under a value, in the micro tier — never a second number. */
+export function PlateReadoutCaption({ tone, children }: {
+  tone?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        marginTop: 2,
+        fontFamily: HUD_FONTS.tech,
+        fontSize: HUD_TYPE.micro,
+        letterSpacing: 0.9,
+        lineHeight: 1.35,
+        color: tone ?? HUD_COLORS.dim,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 /** The `LINK·05` / `SELF·04` stamp a floating card's plates count off in.
  *  Single-sourced so the two dialects and the shared dossier plate can never
  *  print their module numbers in different type. */

@@ -11,11 +11,18 @@
 // One component, two dialects: the peer card reads it as a foreign dossier,
 // the node card as a mirror, which promotes EXPOSURE to the headline. DOM only
 // — nothing here may touch three.js.
-import type { CSSProperties, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import type { PeerSightingAbsence, PeerSightingRecord } from '@cknerv/types';
 import { formatAge } from './cellFormat';
-import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
-import { moduleTag, SpatialPlateHeader, spatialPlate } from './primitives';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE } from './hudTheme';
+import {
+  moduleTag,
+  PlateReadoutCaption,
+  PlateReadoutRow,
+  SpatialPlateHeader,
+  spatialPlate,
+  stackedSatelliteBase,
+} from './primitives';
 import { formatLinkUptime } from '../../derives/peerLinkInstrument.derive';
 
 /** The lookup's phases, in the vocabulary the Cell context readout already
@@ -112,56 +119,25 @@ function SightingRow({
   children?: ReactNode;
 }) {
   return (
-    <div
-      data-sighting-row={row}
-      style={{
-        minWidth: 0,
-        padding: '3px 0 4px 9px',
-        borderLeft: `1px solid ${rgba(SIGHTING_ACCENT, 0.3)}`,
-      }}
+    <PlateReadoutRow
+      accent={SIGHTING_ACCENT}
+      railAlpha={0.3}
+      label={label}
+      value={value}
+      valueColor={valueColor}
+      valueSize={HUD_TYPE.label}
+      rowAttributes={{ 'data-sighting-row': row }}
+      valueAttributes={{ 'data-sighting-value': row }}
     >
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
-        <span style={{ flex: '0 0 auto', fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, letterSpacing: 1.4, color: HUD_COLORS.dim }}>
-          {label}
-        </span>
-        <span
-          data-sighting-value={row}
-          title={value}
-          style={{
-            marginLeft: 'auto',
-            minWidth: 0,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            fontSize: HUD_TYPE.label,
-            color: valueColor ?? HUD_COLORS.ink,
-          }}
-        >
-          {value}
-        </span>
-      </div>
       {children}
-    </div>
+    </PlateReadoutRow>
   );
 }
 
 /** A sentence under a value, in the micro tier — the same caption grammar the
  *  self probe's vitals use. */
 function SightingCaption({ tone, children }: { tone?: string; children: ReactNode }) {
-  return (
-    <div
-      style={{
-        marginTop: 2,
-        fontFamily: HUD_FONTS.tech,
-        fontSize: HUD_TYPE.micro,
-        letterSpacing: 0.9,
-        lineHeight: 1.35,
-        color: tone ?? HUD_COLORS.dim,
-      }}
-    >
-      {children}
-    </div>
-  );
+  return <PlateReadoutCaption tone={tone}>{children}</PlateReadoutCaption>;
 }
 
 /** Every phase that has no record to print resolves to one quiet line, the
@@ -334,14 +310,6 @@ export default function PeerSightingPlate({
       ? [whereabouts, exposure, networkAge, crowd]
       : [whereabouts, exposure, networkAge, identify, crowd];
 
-  const satelliteBase: CSSProperties = {
-    position: 'relative',
-    zIndex: 1,
-    minWidth: 0,
-    boxSizing: 'border-box',
-    pointerEvents: 'auto',
-  };
-
   return (
     <section
       aria-label="Crawler dossier"
@@ -350,7 +318,7 @@ export default function PeerSightingPlate({
       data-sighting-variant={variant}
       {...(phase === 'unsighted' && reason ? { 'data-sighting-reason': reason } : {})}
       style={{
-        ...satelliteBase,
+        ...stackedSatelliteBase,
         padding: '9px 12px 10px 14px',
         ...spatialPlate(SIGHTING_ACCENT),
       }}

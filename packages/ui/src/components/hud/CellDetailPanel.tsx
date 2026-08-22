@@ -1,5 +1,6 @@
 import {
   type CSSProperties,
+  type ReactNode,
   memo,
   useCallback,
   useEffect,
@@ -12,6 +13,9 @@ import type {
   CellLink,
   CellSemanticRecord,
   EnrichmentSourceStatus,
+  ScriptId,
+  SemanticFacet,
+  SemanticScript,
   TransactionSemanticRecord,
 } from '@cknerv/types';
 import {
@@ -21,7 +25,10 @@ import {
   formatDataSize,
   formatLockKind,
   formatAssetKind,
+  formatOutpoint,
   formatScriptIdentity,
+  formatWallClock,
+  midTruncate,
   scriptIdentityColor,
   LOCK_COLORS,
   ASSET_COLORS,
@@ -31,6 +38,11 @@ import { HUD_COLORS, HUD_FONTS, rgba, HUD_TYPE } from './hudTheme';
 import {
   CloseButton,
   moduleTag,
+  PlateReadoutCaption,
+  PlateReadoutRow,
+  plateStateChip,
+  PLATE_ROW_RAIL_ALPHA,
+  satelliteBase,
   SpatialPlateHeader,
   spatialPlate,
 } from './primitives';
@@ -66,15 +78,16 @@ import {
   type CellIdentityProofKind,
 } from '../../derives/cellIdentityProof.derive';
 import {
-  compactMiddle,
   enrichmentSourceColor,
   enrichmentStatusMessage,
   EvidenceFact,
   FacetEvidenceRow,
   primarySemanticFacet,
-  ScriptEvidence,
   semanticAssetAmountReadout,
   semanticAssetIdentityReadout,
+  semanticFacetNumber,
+  semanticFacetValue,
+  semanticObjectReadout,
   type CellSemanticsPhase,
 } from './CellSemanticsReadout';
 
@@ -103,6 +116,21 @@ const CKBYTES_REVEAL_ORDER: readonly ConsensusBraidField[] = [
 
 /** Evidence hangs under the fact it explains, in every cluster. */
 const CLUSTER_EVIDENCE_INDENT = '3px 0 0 11px';
+
+/** One rail-hung evidence row: a 3px lead, a 9px value line, a 4px tail.
+ *  Reservation math only — the browser lays the real rows out. */
+const EVIDENCE_ROW_PX = 20;
+const EVIDENCE_ROW_GAP_PX = 3;
+/** The BYTE BUDGET's own resting height (header, bar, legend, ratio strip). */
+const BYTE_BUDGET_RESERVE_PX = 62;
+/** OWNER · SCRIPT · ARGS — what the index adds to a lock, every time. */
+const LOCK_ENRICHMENT_ROWS = 3;
+/** The typical asset block: two of amount/identity/object plus script hash. */
+const ASSET_ENRICHMENT_ROWS = 3;
+
+function reservedEvidenceHeight(rows: number): number {
+  return rows * EVIDENCE_ROW_PX + Math.max(0, rows - 1) * EVIDENCE_ROW_GAP_PX;
+}
 
 const CYAN = HUD_COLORS.cyanWire;
 const VIOLET = HUD_COLORS.memory;
@@ -203,6 +231,117 @@ function formatCellData(dataHex: string): string {
   const size = formatDataSize(dataHex);
   if (size === '0 B') return 'Empty';
   return dataHex.endsWith(DATA_HEX_TRUNCATION_MARKER) ? `${size} observed` : size;
+}
+
+/** A script's identity as the CELL itself carries it — the code it runs and
+ *  the rule that matches it. No index required: this is canonical. */
+function scriptCodeReadout(script: ScriptId): string {
+  return `${midTruncate(script.code_hash, 12, 9)} · ${script.hash_type.toUpperCase()}`;
+}
+
+/** Args, or the honest word for none. `0x` beside a label reads as a bug. */
+function scriptArgsReadout(args: string): string {
+  const trimmed = args.trim();
+  return trimmed === '' || trimmed === '0x' ? 'EMPTY' : midTruncate(trimmed, 14, 10);
+}
+
+/** The lifecycle word the index attaches to a script, as a chip beside the
+ *  CODE row's label — the state belongs to the script it qualifies, not to a
+ *  stamp floating at the far edge of the plate. */
+function scriptStateChip(script: SemanticScript | null | undefined): ReactNode {
+  if (!script || script.deprecated == null) return undefined;
+  const deprecated = script.deprecated === true;
+  const color = deprecated ? HUD_COLORS.danger : HUD_COLORS.nominal;
+  return (
+    <span
+      data-cell-script-state={deprecated ? 'deprecated' : 'active'}
+      style={{ flex: '0 0 auto', ...plateStateChip(color) }}
+    >
+      {deprecated ? 'DEPRECATED' : 'ACTIVE'}
+    </span>
+  );
+}
+
+/** A DAO moment: the block it happened in, and — once the source states the
+ *  timestamp — the wall clock a human remembers it by. */
+function daoMomentReadout(
+  facet: SemanticFacet,
+  blockKey: string,
+  atMsKey: string,
+): string | null {
+  const block = semanticFacetNumber(facet, blockKey);
+  if (block === null) return null;
+  const atMs = semanticFacetNumber(facet, atMsKey);
+  return atMs !== null && atMs > 0
+    ? `${formatBlockRef(block)} · ${formatWallClock(atMs)}`
+    : formatBlockRef(block);
+}
+
+type ClusterRowProps = {
+  row: string;
+  accent: string;
+  label: string;
+  value: string;
+  valueColor?: string;
+  valueSize?: number;
+  title?: string;
+  badge?: ReactNode;
+  caption?: string;
+  style?: CSSProperties;
+};
+
+/** One line of cluster evidence in the house row grammar: rail, micro label,
+ *  value hard against the right edge of the plate's measure. */
+function ClusterRow({
+  row,
+  accent,
+  label,
+  value,
+  valueColor,
+  valueSize = HUD_TYPE.label,
+  title,
+  badge,
+  caption,
+  style,
+}: ClusterRowProps) {
+  return (
+    <PlateReadoutRow
+      accent={accent}
+      label={label}
+      value={value}
+      valueColor={valueColor}
+      valueSize={valueSize}
+      title={title}
+      badge={badge}
+      rowAttributes={{ 'data-cell-evidence-row': row }}
+      valueAttributes={{ 'data-cell-evidence-value': row }}
+      style={style}
+    >
+      {caption ? <PlateReadoutCaption>{caption}</PlateReadoutCaption> : null}
+    </PlateReadoutRow>
+  );
+}
+
+/** The slot an expected record will fill, holding its height in advance. A
+ *  card that grows a row under the reader's eyes is a card that moved while
+ *  they were reading it. */
+function GhostRows({ rows, accent }: { rows: number; accent: string }) {
+  return (
+    <div
+      aria-hidden="true"
+      data-cell-evidence-ghost={rows}
+      style={{ display: 'grid', gap: EVIDENCE_ROW_GAP_PX, minWidth: 0, opacity: 0.18 }}
+    >
+      {Array.from({ length: rows }, (_, index) => (
+        <span
+          key={index}
+          style={{ display: 'block', height: EVIDENCE_ROW_PX, borderLeft: `1px solid ${rgba(accent, PLATE_ROW_RAIL_ALPHA)}` }}
+        >
+          <span style={{ display: 'block', height: 1, margin: '9px 0 0 9px', background: HUD_COLORS.dim }} />
+        </span>
+      ))}
+    </div>
+  );
 }
 
 type CellScanFactProps = RowDecode & {
@@ -537,12 +676,6 @@ export default function CellDetailPanel({
         : (traceReadout?.stage ?? 'PLANNING').toUpperCase();
 
   const verticalLayout = layoutSide === 'above' || layoutSide === 'below';
-  const satelliteBase: CSSProperties = {
-    position: 'relative',
-    minWidth: 0,
-    boxSizing: 'border-box',
-    pointerEvents: 'auto',
-  };
   // The specimen column always sits on the edge nearest the inspected Cell —
   // mirroring for a right or vertical fan swaps the two columns, never any
   // per-satellite coordinate math. The plate can no longer paint behind the
@@ -558,12 +691,40 @@ export default function CellDetailPanel({
   const facet = presentedSemanticRecord
     ? primarySemanticFacet(presentedSemanticRecord)
     : null;
+  // The DAO position is spelled out row by row below; every other facet keeps
+  // the generic one-line summary.
+  const daoFacet = presentedSemanticRecord?.facets.find(
+    (candidate) => candidate.kind === 'dao',
+  ) ?? null;
+  const genericFacet = facet && facet.kind !== 'dao' ? facet : null;
   const assetAmount = presentedSemanticRecord
     ? semanticAssetAmountReadout(presentedSemanticRecord)
     : null;
   const assetIdentity = presentedSemanticRecord
     ? semanticAssetIdentityReadout(presentedSemanticRecord)
     : null;
+  const assetObject = semanticObjectReadout(presentedSemanticRecord);
+  const lockScript = presentedSemanticRecord?.lock_script ?? null;
+  const typeScript = presentedSemanticRecord?.type_script ?? null;
+  const lockAccent = DECODE.lock.color ?? CYAN;
+  const assetAccent = DECODE.asset.color ?? CYAN;
+  // A record is on its way: hold the rows it will fill at their final height
+  // so the arrival replaces ghosts instead of pushing the card down. When it
+  // resolves — record, absence or failure — the reservation drops ONCE.
+  const enrichmentPending = Boolean(semanticSource)
+    && !presentedSemanticRecord
+    && (semanticPhase === 'loading' || semanticPhase === 'waiting');
+  // A cluster prints its evidence rail only when it has something to hang on
+  // it: an empty rail under a bare fact is the sparseness this layout exists
+  // to kill.
+  const lockEvidencePresent = Boolean(
+    cell.lock_script || presentedSemanticRecord?.address || lockScript
+      || enrichmentPending,
+  );
+  const assetEvidencePresent = Boolean(
+    cell.type_script || assetAmount || assetIdentity || assetObject
+      || typeScript || daoFacet || genericFacet || enrichmentPending,
+  );
   const knowledge = presentedSemanticRecord?.common_knowledge ?? null;
   const hasKnowledge = Boolean(knowledge && knowledge.total_bytes > 0);
   const dataTruncated = cell.data_hex.endsWith(DATA_HEX_TRUNCATION_MARKER);
@@ -583,6 +744,15 @@ export default function CellDetailPanel({
     opacity: reduced || semanticsReveal >= stage ? 1 : 0,
     transition: 'opacity 260ms ease',
   });
+  const factRevealed = (field: CellInspectionFacet): boolean => (
+    reduced || CKBYTES_REVEAL_ORDER.indexOf(field) < scan.reveal
+  );
+  // Canonical evidence — what the Cell itself carries — lights with the fact
+  // it hangs under, not with the index's timeline.
+  const canonicalStage = (field: CellInspectionFacet): CSSProperties => ({
+    opacity: factRevealed(field) ? 1 : 0,
+    transition: 'opacity 260ms ease',
+  });
   const scanFact = (field: CellInspectionFacet) => {
     const proofKind = field === 'state'
       ? 'address'
@@ -595,7 +765,7 @@ export default function CellDetailPanel({
       <CellScanFact
         field={field}
         {...DECODE[field]}
-        revealed={reduced || CKBYTES_REVEAL_ORDER.indexOf(field) < scan.reveal}
+        revealed={factRevealed(field)}
         selected={field === selectedField}
         interactive={scan.classified}
         proof={proofKind
@@ -670,8 +840,11 @@ export default function CellDetailPanel({
         <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.display, fontSize: HUD_TYPE.title, fontWeight: 600, letterSpacing: 2, textShadow: '0 0 9px rgba(255,152,48,.45)' }}>
           CELL // #{cell.id}
         </span>
-        <span title={cell.content_hash} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, letterSpacing: 0.8 }}>
-          {cell.content_hash.slice(2, 10)}:{cell.out_point.index}
+        {/* The outpoint, which is what a viewer can look up anywhere else —
+          * the old head of the content hash beside an output index read like
+          * an outpoint and was not one. */}
+        <span title={cell.out_point.tx_hash} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, letterSpacing: 0.8 }}>
+          {formatOutpoint(cell.out_point.tx_hash, cell.out_point.index)}
         </span>
         <span style={{ marginLeft: 'auto', color: live ? HUD_COLORS.nominal : HUD_COLORS.caution, fontSize: HUD_TYPE.section, letterSpacing: 0.9 }}>
           {live ? '● LIVE' : '◇ SPENT'} · {lifetime}
@@ -802,62 +975,195 @@ export default function CellDetailPanel({
         >
           <div data-cell-cluster="lock" style={{ minWidth: 0 }}>
             {scanFact('lock')}
-            {presentedSemanticRecord
-              && (presentedSemanticRecord.address
-                || presentedSemanticRecord.lock_script) ? (
+            {lockEvidencePresent ? (
               <div data-cell-cluster-evidence="lock" style={clusterEvidenceStyle}>
-                {presentedSemanticRecord.address ? (
-                  <EvidenceFact
-                    label="OWNER"
-                    value={presentedSemanticRecord.address}
-                    displayValue={compactMiddle(presentedSemanticRecord.address, 15, 10)}
-                    style={semanticsStage(1)}
+                {/* CODE is the Cell's own account of which script guards it —
+                  * it needs no index, so ~98% of clicks (bare Cells) still get
+                  * a real row under the LOCK fact. */}
+                {cell.lock_script ? (
+                  <ClusterRow
+                    row="lock-code"
+                    accent={lockAccent}
+                    label="CODE"
+                    value={scriptCodeReadout(cell.lock_script)}
+                    title={cell.lock_script.code_hash}
+                    badge={scriptStateChip(lockScript)}
+                    style={canonicalStage('lock')}
                   />
                 ) : null}
-                {presentedSemanticRecord.lock_script ? (
-                  <ScriptEvidence
-                    role="LOCK"
-                    script={presentedSemanticRecord.lock_script}
-                    style={semanticsStage(2)}
-                  />
-                ) : null}
+                <div
+                  data-cell-evidence-slot="lock"
+                  style={{ display: 'grid', gap: EVIDENCE_ROW_GAP_PX, minWidth: 0, minHeight: enrichmentPending ? reservedEvidenceHeight(LOCK_ENRICHMENT_ROWS) : undefined }}
+                >
+                  {presentedSemanticRecord?.address ? (
+                    <ClusterRow
+                      row="owner"
+                      accent={lockAccent}
+                      label="OWNER"
+                      value={midTruncate(presentedSemanticRecord.address, 14, 12)}
+                      title={presentedSemanticRecord.address}
+                      caption="ADDRESS ENCODED FROM THE LOCK SCRIPT"
+                      style={semanticsStage(1)}
+                    />
+                  ) : null}
+                  {lockScript ? (
+                    <ClusterRow
+                      row="lock-script"
+                      accent={lockAccent}
+                      label="SCRIPT"
+                      value={midTruncate(lockScript.script_hash, 12, 9)}
+                      title={lockScript.script_hash}
+                      style={semanticsStage(2)}
+                    />
+                  ) : null}
+                  {lockScript ? (
+                    <ClusterRow
+                      row="lock-args"
+                      accent={lockAccent}
+                      label="ARGS"
+                      value={scriptArgsReadout(lockScript.args)}
+                      title={lockScript.args}
+                      style={semanticsStage(2)}
+                    />
+                  ) : null}
+                  {enrichmentPending ? (
+                    <GhostRows rows={LOCK_ENRICHMENT_ROWS} accent={lockAccent} />
+                  ) : null}
+                </div>
               </div>
             ) : null}
           </div>
 
           <div data-cell-cluster="type" style={{ minWidth: 0 }}>
             {scanFact('asset')}
-            {presentedSemanticRecord
-              && (assetAmount || assetIdentity
-                || presentedSemanticRecord.type_script || facet) ? (
+            {assetEvidencePresent ? (
               <div data-cell-cluster-evidence="type" style={clusterEvidenceStyle}>
-                {assetAmount ? (
-                  <EvidenceFact
-                    label="AMOUNT"
-                    value={assetAmount}
-                    color={HUD_COLORS.caution}
-                    valueSize={HUD_TYPE.value}
-                    style={semanticsStage(1)}
+                {/* A plain Cell carries no type script at all, and says so by
+                  * having no CODE row — absence is the fact. */}
+                {cell.type_script ? (
+                  <ClusterRow
+                    row="type-code"
+                    accent={assetAccent}
+                    label="CODE"
+                    value={scriptCodeReadout(cell.type_script)}
+                    title={cell.type_script.code_hash}
+                    badge={scriptStateChip(typeScript)}
+                    style={canonicalStage('asset')}
                   />
                 ) : null}
-                {assetIdentity ? (
-                  <EvidenceFact
-                    label="ASSET"
-                    value={assetIdentity}
-                    color={HUD_COLORS.caution}
-                    style={semanticsStage(1)}
-                  />
-                ) : null}
-                {presentedSemanticRecord.type_script ? (
-                  <ScriptEvidence
-                    role="TYPE"
-                    script={presentedSemanticRecord.type_script}
-                    style={semanticsStage(2)}
-                  />
-                ) : null}
-                {facet ? (
-                  <FacetEvidenceRow facet={facet} style={semanticsStage(2)} />
-                ) : null}
+                <div
+                  data-cell-evidence-slot="type"
+                  style={{ display: 'grid', gap: EVIDENCE_ROW_GAP_PX, minWidth: 0, minHeight: enrichmentPending ? reservedEvidenceHeight(ASSET_ENRICHMENT_ROWS) : undefined }}
+                >
+                  {assetAmount ? (
+                    <ClusterRow
+                      row="amount"
+                      accent={assetAccent}
+                      label="AMOUNT"
+                      value={assetAmount}
+                      valueColor={HUD_COLORS.caution}
+                      valueSize={HUD_TYPE.value}
+                      style={semanticsStage(1)}
+                    />
+                  ) : null}
+                  {assetIdentity ? (
+                    <ClusterRow
+                      row="identity"
+                      accent={assetAccent}
+                      label="IDENTITY"
+                      value={assetIdentity}
+                      valueColor={HUD_COLORS.caution}
+                      style={semanticsStage(1)}
+                    />
+                  ) : null}
+                  {assetObject ? (
+                    <ClusterRow
+                      row="object"
+                      accent={assetAccent}
+                      label="OBJECT"
+                      value={assetObject}
+                      style={semanticsStage(1)}
+                    />
+                  ) : null}
+                  {typeScript ? (
+                    <ClusterRow
+                      row="type-script"
+                      accent={assetAccent}
+                      label="SCRIPT"
+                      value={midTruncate(typeScript.script_hash, 12, 9)}
+                      title={typeScript.script_hash}
+                      style={semanticsStage(2)}
+                    />
+                  ) : null}
+                  {typeScript ? (
+                    <ClusterRow
+                      row="type-args"
+                      accent={assetAccent}
+                      label="ARGS"
+                      value={scriptArgsReadout(typeScript.args)}
+                      title={typeScript.args}
+                      style={semanticsStage(2)}
+                    />
+                  ) : null}
+                  {/* The DAO position, read BY KEY: upstream appends attributes,
+                    * so a positional read would print a timestamp under a label
+                    * that means compensation. */}
+                  {daoFacet?.state ? (
+                    <ClusterRow
+                      row="dao-position"
+                      accent={assetAccent}
+                      label="POSITION"
+                      value={daoFacet.state.toUpperCase()}
+                      valueColor={HUD_COLORS.caution}
+                      style={semanticsStage(1)}
+                    />
+                  ) : null}
+                  {daoFacet ? [
+                    ['dao-deposited', 'DEPOSITED', 'deposit_block', 'deposit_at_ms'],
+                    ['dao-withdraw-request', 'WITHDRAW REQ', 'withdraw_request_block', 'withdraw_request_at_ms'],
+                    ['dao-withdrawn', 'WITHDRAWN', 'withdraw_block', 'withdraw_at_ms'],
+                  ].map(([row, label, blockKey, atMsKey]) => {
+                    const value = daoMomentReadout(daoFacet, blockKey, atMsKey);
+                    return value ? (
+                      <ClusterRow
+                        key={row}
+                        row={row}
+                        accent={assetAccent}
+                        label={label}
+                        value={value}
+                        style={semanticsStage(1)}
+                      />
+                    ) : null;
+                  }) : null}
+                  {semanticFacetValue(daoFacet, 'estimated_apc') ? (
+                    <ClusterRow
+                      row="dao-apc"
+                      accent={assetAccent}
+                      label="EST APC"
+                      value={semanticFacetValue(daoFacet, 'estimated_apc') ?? ''}
+                      style={semanticsStage(1)}
+                    />
+                  ) : null}
+                  {semanticFacetValue(daoFacet, 'compensation') ? (
+                    <ClusterRow
+                      row="dao-compensation"
+                      accent={assetAccent}
+                      label="COMPENSATION"
+                      value={semanticFacetValue(daoFacet, 'compensation') ?? ''}
+                      valueColor={HUD_COLORS.caution}
+                      style={semanticsStage(1)}
+                    />
+                  ) : null}
+                  {genericFacet ? (
+                    <FacetEvidenceRow
+                      facet={genericFacet}
+                      style={semanticsStage(2)}
+                    />
+                  ) : null}
+                  {enrichmentPending ? (
+                    <GhostRows rows={ASSET_ENRICHMENT_ROWS} accent={assetAccent} />
+                  ) : null}
+                </div>
               </div>
             ) : null}
           </div>
@@ -868,6 +1174,19 @@ export default function CellDetailPanel({
           >
             {scanFact('state')}
             {scanFact('born')}
+            {/* When the Cell was written, in a clock a human keeps. Composition
+              * backfill emits born_at_ms 0 for Cells born before the retained
+              * window, and an epoch-relative date would be a lie — those keep
+              * the block anchor alone, which the COMMIT fact already states. */}
+            {cell.born_at_ms > 0 ? (
+              <ClusterRow
+                row="born"
+                accent={CYAN}
+                label="BORN"
+                value={`${formatWallClock(cell.born_at_ms)} · ${formatBlockRef(cell.birth_block)}`}
+                style={{ gridColumn: '1 / -1', margin: CLUSTER_EVIDENCE_INDENT, ...canonicalStage('born') }}
+              />
+            ) : null}
           </div>
 
           {semanticSource && semanticPhase ? (
@@ -911,15 +1230,21 @@ export default function CellDetailPanel({
             * knowledge must never reflow the fact beside it. */}
           <div data-cell-cluster="capacity" style={{ minWidth: 0 }}>
             {scanFact('capacity')}
-            {hasKnowledge ? (
-              <CellByteBudget
-                capacityShannons={cell.capacity}
-                knowledge={knowledge}
-                dataTruncated={dataTruncated}
-                reveal={semanticsReveal >= 1 ? 1 : 0}
-                style={{ margin: CLUSTER_EVIDENCE_INDENT }}
-              />
-            ) : null}
+            <div
+              data-cell-evidence-slot="capacity"
+              style={{ minWidth: 0, margin: CLUSTER_EVIDENCE_INDENT, minHeight: enrichmentPending ? BYTE_BUDGET_RESERVE_PX : undefined }}
+            >
+              {hasKnowledge ? (
+                <CellByteBudget
+                  capacityShannons={cell.capacity}
+                  knowledge={knowledge}
+                  dataTruncated={dataTruncated}
+                  reveal={semanticsReveal >= 1 ? 1 : 0}
+                />
+              ) : enrichmentPending ? (
+                <GhostRows rows={3} accent={GOLD} />
+              ) : null}
+            </div>
           </div>
 
           <div data-cell-cluster="data" style={{ minWidth: 0 }}>

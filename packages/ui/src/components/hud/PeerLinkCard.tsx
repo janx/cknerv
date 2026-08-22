@@ -22,8 +22,10 @@ import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import {
   CloseButton,
   moduleTag,
+  plateStateChip,
   SpatialPlateHeader,
   spatialPlate,
+  stackedSatelliteBase,
 } from './primitives';
 import PeerSightingPlate, { type PeerSightingState } from './PeerSightingPlate';
 import { PEER_LATENCY_CAP_MS } from '../../derives/peers.derive';
@@ -437,13 +439,6 @@ export default function PeerLinkCard({
   const linkAgeMs = instrument.uptimeMs + uptimeTick.elapsedMs;
   const liveUptime = formatLinkUptime(linkAgeMs);
   const verticalLayout = layoutSide === 'above' || layoutSide === 'below';
-  const satelliteBase: CSSProperties = {
-    position: 'relative',
-    zIndex: 1,
-    minWidth: 0,
-    boxSizing: 'border-box',
-    pointerEvents: 'auto',
-  };
 
   return (
     <div
@@ -473,7 +468,7 @@ export default function PeerLinkCard({
       <section
         data-peer-probe-module="header"
         style={{
-          ...satelliteBase,
+          ...stackedSatelliteBase,
           display: 'flex',
           alignItems: 'baseline',
           flexWrap: 'wrap',
@@ -521,15 +516,7 @@ export default function PeerLinkCard({
         </span>
         <span
           data-peer-probe-direction={instrument.directionBadge.toLowerCase()}
-          style={{
-            padding: '1px 5px',
-            border: `1px solid ${rgba(accent, 0.55)}`,
-            color: accent,
-            fontFamily: HUD_FONTS.tech,
-            fontSize: HUD_TYPE.micro,
-            fontWeight: 700,
-            letterSpacing: 1.4,
-          }}
+          style={plateStateChip(accent)}
         >
           {instrument.directionBadge}
         </span>
@@ -555,7 +542,7 @@ export default function PeerLinkCard({
         aria-label="Colony signal compass"
         data-peer-probe-module="signal"
         style={{
-          ...satelliteBase,
+          ...stackedSatelliteBase,
           padding: '9px 12px 10px 14px',
           ...spatialPlate(HUD_COLORS.peerWire),
         }}
@@ -582,7 +569,7 @@ export default function PeerLinkCard({
         aria-label="Sync ladder"
         data-peer-probe-module="sync"
         style={{
-          ...satelliteBase,
+          ...stackedSatelliteBase,
           padding: '9px 12px 10px 14px',
           ...spatialPlate(instrument.sync.color),
         }}
@@ -657,7 +644,7 @@ export default function PeerLinkCard({
         aria-label="Link facts"
         data-peer-probe-module="facts"
         style={{
-          ...satelliteBase,
+          ...stackedSatelliteBase,
           padding: '9px 10px 9px 14px',
           ...spatialPlate(HUD_COLORS.cyanWire),
         }}

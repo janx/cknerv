@@ -24,8 +24,12 @@ import { formatEpochReadout } from './epochReadout';
 import {
   CloseButton,
   moduleTag,
+  PlateReadoutCaption,
+  PlateReadoutRow,
+  plateStateChip,
   SpatialPlateHeader,
   spatialPlate,
+  stackedSatelliteBase,
 } from './primitives';
 import PeerSightingPlate, { type PeerSightingState } from './PeerSightingPlate';
 import { fleetConsensus } from '../../derives/fleetTelemetry';
@@ -82,56 +86,23 @@ function SelfReadout({
   children?: ReactNode;
 }) {
   return (
-    <div
-      data-node-probe-fact={row}
-      style={{
-        minWidth: 0,
-        padding: '3px 0 4px 9px',
-        borderLeft: `1px solid ${rgba(NODE_SELF_ACCENT, 0.34)}`,
-      }}
+    <PlateReadoutRow
+      accent={NODE_SELF_ACCENT}
+      label={label}
+      value={value}
+      valueColor={valueColor}
+      rowAttributes={{ 'data-node-probe-fact': row }}
+      valueAttributes={{ 'data-node-probe-value': row }}
     >
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
-        <span style={{ flex: '0 0 auto', fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, letterSpacing: 1.4, color: HUD_COLORS.dim }}>
-          {label}
-        </span>
-        <span
-          data-node-probe-value={row}
-          title={value}
-          style={{
-            marginLeft: 'auto',
-            minWidth: 0,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            fontSize: HUD_TYPE.value,
-            color: valueColor ?? HUD_COLORS.ink,
-          }}
-        >
-          {value}
-        </span>
-      </div>
       {children}
-    </div>
+    </PlateReadoutRow>
   );
 }
 
 /** A caption in the micro tier — used where a value needs a sentence, not a
  *  second number. */
 function ReadoutCaption({ children }: { children: ReactNode }) {
-  return (
-    <div
-      style={{
-        marginTop: 2,
-        fontFamily: HUD_FONTS.tech,
-        fontSize: HUD_TYPE.micro,
-        letterSpacing: 0.9,
-        lineHeight: 1.35,
-        color: HUD_COLORS.dim,
-      }}
-    >
-      {children}
-    </div>
-  );
+  return <PlateReadoutCaption>{children}</PlateReadoutCaption>;
 }
 
 export default function NodeSelfCard({
@@ -179,13 +150,6 @@ export default function NodeSelfCard({
   const segment = (n: number) => `${(n / consensusTotal) * 100}%`;
 
   const verticalLayout = layoutSide === 'above' || layoutSide === 'below';
-  const satelliteBase: CSSProperties = {
-    position: 'relative',
-    zIndex: 1,
-    minWidth: 0,
-    boxSizing: 'border-box',
-    pointerEvents: 'auto',
-  };
 
   return (
     <div
@@ -214,7 +178,7 @@ export default function NodeSelfCard({
       <section
         data-node-probe-module="header"
         style={{
-          ...satelliteBase,
+          ...stackedSatelliteBase,
           display: 'flex',
           alignItems: 'baseline',
           flexWrap: 'wrap',
@@ -241,15 +205,9 @@ export default function NodeSelfCard({
         </span>
         <span
           data-node-probe-role={node.is_miner ? 'miner' : 'observer'}
-          style={{
-            padding: '1px 5px',
-            border: `1px solid ${rgba(node.is_miner ? HUD_COLORS.lockedGold : accent, 0.55)}`,
-            color: node.is_miner ? HUD_COLORS.lockedGold : accent,
-            fontFamily: HUD_FONTS.tech,
-            fontSize: HUD_TYPE.micro,
-            fontWeight: 700,
-            letterSpacing: 1.4,
-          }}
+          style={plateStateChip(
+            node.is_miner ? HUD_COLORS.lockedGold : accent,
+          )}
         >
           {node.is_miner ? 'MINER' : 'OBSERVER'}
         </span>
@@ -278,7 +236,7 @@ export default function NodeSelfCard({
         aria-label="Node vitals"
         data-node-probe-module="vitals"
         style={{
-          ...satelliteBase,
+          ...stackedSatelliteBase,
           padding: '9px 12px 10px 14px',
           ...spatialPlate(accent),
         }}
@@ -340,7 +298,7 @@ export default function NodeSelfCard({
         aria-label="Colony stance"
         data-node-probe-module="stance"
         style={{
-          ...satelliteBase,
+          ...stackedSatelliteBase,
           padding: '9px 12px 10px 14px',
           ...spatialPlate(HUD_COLORS.peerWire),
         }}

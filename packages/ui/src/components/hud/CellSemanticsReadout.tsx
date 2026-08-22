@@ -2,8 +2,9 @@ import type { CSSProperties } from 'react';
 import type {
   CellSemanticRecord,
   EnrichmentSourceStatus,
+  SemanticAttribute,
+  SemanticContentDecode,
   SemanticFacet,
-  SemanticScript,
 } from '@cknerv/types';
 import { formatSemanticAssetAmount } from './cellFormat';
 import { HUD_COLORS, HUD_TYPE, rgba } from './hudTheme';
@@ -97,49 +98,6 @@ export function EvidenceFact({
   );
 }
 
-/** Script evidence WITHOUT the display-name headline — in the cluster IA the
- *  interactive fact button above already says the name, so the evidence only
- *  carries what the button cannot: hashes, args and the lifecycle chip. */
-export function ScriptEvidence({ role, script, style }: {
-  role: 'LOCK' | 'TYPE';
-  script: SemanticScript;
-  style?: CSSProperties;
-}) {
-  const state = script.deprecated === true
-    ? 'DEPRECATED'
-    : script.deprecated === false
-      ? 'ACTIVE'
-      : null;
-  const stateColor = script.deprecated ? HUD_COLORS.danger : HUD_COLORS.nominal;
-  return (
-    <div
-      data-cell-context-script={role.toLowerCase()}
-      style={{
-        minWidth: 0,
-        padding: '3px 6px 4px',
-        borderLeft: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.22)}`,
-        background: `linear-gradient(90deg,${rgba(HUD_COLORS.cyanWire, 0.035)},transparent)`,
-        ...style,
-      }}
-    >
-      <div
-        data-cell-context-script-evidence
-        style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0,1fr) auto', gap: '2px 7px', minWidth: 0, fontSize: HUD_TYPE.micro, lineHeight: 1.4 }}
-      >
-        <span style={{ color: HUD_COLORS.dim }}>IDENTITY</span>
-        <span title={script.script_hash} style={{ color: HUD_COLORS.cyanWire, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{compactMiddle(script.script_hash, 12, 9)}</span>
-        {state ? (
-          <span style={{ color: stateColor, letterSpacing: 0.62, textAlign: 'right' }}>{state}</span>
-        ) : <span />}
-        <span style={{ color: HUD_COLORS.dim }}>CODE·{script.hash_type.toUpperCase()}</span>
-        <span title={script.code_hash} style={{ gridColumn: '2 / -1', color: HUD_COLORS.cyanWire, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{compactMiddle(script.code_hash, 12, 9)}</span>
-        <span style={{ color: HUD_COLORS.dim }}>ARGS</span>
-        <span title={script.args} style={{ gridColumn: '2 / -1', color: HUD_COLORS.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{compactMiddle(script.args, 14, 10)}</span>
-      </div>
-    </div>
-  );
-}
-
 function facetTitle(facet: SemanticFacet): string {
   switch (facet.kind) {
     case 'dao': return 'DAO POSITION';
@@ -195,8 +153,8 @@ export function FacetEvidenceRow({ facet, style }: {
       {attributes.length > 0 ? (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(0,1fr))', gap: 7, marginTop: 1, minWidth: 0 }}>
           {attributes.map((attribute) => (
-            <span key={attribute.key} title={`${facetAttributeLabel(attribute.key)} · ${attribute.value}${attribute.unit ? ` ${attribute.unit}` : ''}`} style={{ minWidth: 0, color: HUD_COLORS.ink, fontSize: HUD_TYPE.micro, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              <span style={{ color: HUD_COLORS.dim }}>{facetAttributeLabel(attribute.key)} </span>
+            <span key={attribute.key} title={`${facetAttributeLabel(attribute.key)} · ${attribute.value}${attribute.unit ? ` ${attribute.unit}` : ''}`} style={{ minWidth: 0, color: HUD_COLORS.ink, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro }}>{facetAttributeLabel(attribute.key)} </span>
               {attribute.value}{attribute.unit ? ` ${attribute.unit}` : ''}
             </span>
           ))}
@@ -204,6 +162,104 @@ export function FacetEvidenceRow({ facet, style }: {
       ) : null}
     </div>
   );
+}
+
+/** One facet attribute, read BY KEY. Facets grow: the DAO facet gained three
+ *  timestamp keys AFTER the five it shipped with, so anything that reads an
+ *  attribute by position is reading a different fact the day upstream appends
+ *  one. */
+export function semanticFacetAttribute(
+  facet: SemanticFacet | null | undefined,
+  key: string,
+): SemanticAttribute | null {
+  return facet?.attributes.find((attribute) => attribute.key === key) ?? null;
+}
+
+/** A facet attribute's value with its unit, or null when the key is absent. */
+export function semanticFacetValue(
+  facet: SemanticFacet | null | undefined,
+  key: string,
+): string | null {
+  const attribute = semanticFacetAttribute(facet, key);
+  if (!attribute) return null;
+  return attribute.unit
+    ? `${attribute.value} ${attribute.unit}`
+    : attribute.value;
+}
+
+/** A facet attribute parsed as a finite number, or null. Attribute values are
+ *  strings on the wire; a block height that fails to parse is unknown, never
+ *  zero. */
+export function semanticFacetNumber(
+  facet: SemanticFacet | null | undefined,
+  key: string,
+): number | null {
+  const attribute = semanticFacetAttribute(facet, key);
+  if (!attribute) return null;
+  const value = Number(attribute.value);
+  return Number.isFinite(value) ? value : null;
+}
+
+/** Segment labels an inventory decode may spell its payload with. ckbadger
+ *  owns the vocabulary, so each fact lists the spellings we know and any
+ *  decode that uses none of them falls back to its own summary rather than
+ *  letting us invent a reading. */
+const OBJECT_SEGMENT_LABELS = {
+  contentType: ['content_type', 'contenttype', 'content-type', 'mime_type', 'mime'],
+  clusterName: ['cluster_name', 'name', 'cluster'],
+  account: ['account', 'account_name', 'domain', 'name'],
+  token: ['token_index', 'token_id', 'index', 'token'],
+} as const;
+
+function decodeSegmentValue(
+  decode: SemanticContentDecode,
+  labels: readonly string[],
+): string | null {
+  for (const label of labels) {
+    const segment = decode.segments.find((candidate) => (
+      candidate.label.toLowerCase().replaceAll('-', '_') === label
+        .replaceAll('-', '_')
+    ));
+    const value = segment?.value.trim();
+    if (value) return value;
+  }
+  return null;
+}
+
+/** One line naming WHAT an inventory Cell holds — `image/png · 6,878 B`, a
+ *  cluster's name, a .bit account, an mNFT's token index. Only the kinds that
+ *  actually carry an object answer; a DAO deposit or a plain transfer has no
+ *  object and says nothing here rather than restating its decode. */
+export function semanticObjectReadout(
+  record: CellSemanticRecord | null | undefined,
+): string | null {
+  const decode = record?.content?.deterministic;
+  if (!decode) return null;
+  const kind = decode.kind.toLowerCase();
+  const summary = decode.summary.trim() || null;
+  const totalBytes = record?.content?.total_bytes;
+  const bytes = typeof totalBytes === 'number' && totalBytes > 0
+    ? `${totalBytes.toLocaleString('en-US')} B`
+    : null;
+  if (kind.includes('cluster')) {
+    return decodeSegmentValue(decode, OBJECT_SEGMENT_LABELS.clusterName)
+      ?? summary;
+  }
+  if (kind.startsWith('spore') || kind.includes('dob')) {
+    const contentType = decodeSegmentValue(
+      decode,
+      OBJECT_SEGMENT_LABELS.contentType,
+    );
+    return [contentType, bytes].filter(Boolean).join(' · ') || summary;
+  }
+  if (kind.includes('dotbit') || kind.includes('bit_account')) {
+    return decodeSegmentValue(decode, OBJECT_SEGMENT_LABELS.account) ?? summary;
+  }
+  if (kind.includes('nft')) {
+    const token = decodeSegmentValue(decode, OBJECT_SEGMENT_LABELS.token);
+    return token ? `#${token.replace(/^#/, '')}` : summary;
+  }
+  return null;
 }
 
 /** Decoded asset amount headline — `123.45 NTT` — or null when unknown. */

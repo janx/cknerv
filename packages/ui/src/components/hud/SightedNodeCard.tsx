@@ -24,8 +24,12 @@ import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import {
   CloseButton,
   moduleTag,
+  PlateReadoutCaption,
+  PlateReadoutRow,
+  plateStateChip,
   SpatialPlateHeader,
   spatialPlate,
+  stackedSatelliteBase,
 } from './primitives';
 import PeerSightingPlate, { type PeerSightingState } from './PeerSightingPlate';
 import { PEER_NETWORK_HEX } from '../../visualPalette';
@@ -87,56 +91,23 @@ function SightedReadout({
   children?: ReactNode;
 }) {
   return (
-    <div
-      data-sighted-probe-fact={row}
-      style={{
-        minWidth: 0,
-        padding: '3px 0 4px 9px',
-        borderLeft: `1px solid ${rgba(SIGHTED_NODE_ACCENT, 0.34)}`,
-      }}
+    <PlateReadoutRow
+      accent={SIGHTED_NODE_ACCENT}
+      label={label}
+      value={value}
+      title={title ?? value}
+      rowAttributes={{ 'data-sighted-probe-fact': row }}
+      valueAttributes={{ 'data-sighted-probe-value': row }}
     >
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
-        <span style={{ flex: '0 0 auto', fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, letterSpacing: 1.4, color: HUD_COLORS.dim }}>
-          {label}
-        </span>
-        <span
-          data-sighted-probe-value={row}
-          title={title ?? value}
-          style={{
-            marginLeft: 'auto',
-            minWidth: 0,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            fontSize: HUD_TYPE.value,
-            color: HUD_COLORS.ink,
-          }}
-        >
-          {value}
-        </span>
-      </div>
       {children}
-    </div>
+    </PlateReadoutRow>
   );
 }
 
 /** A sentence under a value, in the micro tier — the caption grammar the other
  *  two dialects already use. */
 function ReadoutCaption({ children }: { children: ReactNode }) {
-  return (
-    <div
-      style={{
-        marginTop: 2,
-        fontFamily: HUD_FONTS.tech,
-        fontSize: HUD_TYPE.micro,
-        letterSpacing: 0.9,
-        lineHeight: 1.35,
-        color: HUD_COLORS.dim,
-      }}
-    >
-      {children}
-    </div>
-  );
+  return <PlateReadoutCaption>{children}</PlateReadoutCaption>;
 }
 
 export default function SightedNodeCard({
@@ -164,13 +135,6 @@ export default function SightedNodeCard({
   const atMs = nowMs ?? tickNowMs;
 
   const verticalLayout = layoutSide === 'above' || layoutSide === 'below';
-  const satelliteBase: CSSProperties = {
-    position: 'relative',
-    zIndex: 1,
-    minWidth: 0,
-    boxSizing: 'border-box',
-    pointerEvents: 'auto',
-  };
 
   return (
     <div
@@ -203,7 +167,7 @@ export default function SightedNodeCard({
       <section
         data-sighted-probe-module="header"
         style={{
-          ...satelliteBase,
+          ...stackedSatelliteBase,
           display: 'flex',
           alignItems: 'baseline',
           flexWrap: 'wrap',
@@ -230,15 +194,7 @@ export default function SightedNodeCard({
             colours belong to links that broke. */}
         <span
           data-sighted-probe-link="none"
-          style={{
-            padding: '1px 5px',
-            border: `1px solid ${rgba(HUD_COLORS.dim, 0.55)}`,
-            color: HUD_COLORS.dim,
-            fontFamily: HUD_FONTS.tech,
-            fontSize: HUD_TYPE.micro,
-            fontWeight: 700,
-            letterSpacing: 1.4,
-          }}
+          style={plateStateChip(HUD_COLORS.dim)}
         >
           NOT LINKED
         </span>
@@ -268,7 +224,7 @@ export default function SightedNodeCard({
         aria-label="Crawler record"
         data-sighted-probe-module="record"
         style={{
-          ...satelliteBase,
+          ...stackedSatelliteBase,
           padding: '9px 12px 10px 14px',
           ...spatialPlate(accent),
         }}
@@ -327,7 +283,7 @@ export default function SightedNodeCard({
       <div
         data-sighted-probe-footer
         style={{
-          ...satelliteBase,
+          ...stackedSatelliteBase,
           padding: '5px 12px 6px 14px',
           fontFamily: HUD_FONTS.tech,
           fontSize: HUD_TYPE.micro,

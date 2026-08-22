@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   formatCkb, midTruncate, formatOutpoint, formatDataHex, formatCellKind,
   formatAge, formatBlockRef, formatDataSize, formatLockKind, formatAssetKind,
-  formatScriptIdentity, scriptIdentityColor,
+  formatScriptIdentity, formatWallClock, scriptIdentityColor,
   LOCK_COLORS, ASSET_COLORS,
 } from '../../../src/components/hud/cellFormat';
 import { HUD_COLORS } from '../../../src/components/hud/hudTheme';
@@ -39,6 +39,21 @@ describe('cellFormat — new helpers', () => {
   it('formatBlockRef groups block numbers in the pinned en-US style', () => {
     expect(formatBlockRef(16204800)).toBe('#16,204,800');
     expect(formatBlockRef(42)).toBe('#42');
+  });
+  it('formatWallClock states one UTC instant every machine reads alike', () => {
+    expect(formatWallClock(1755238020000)).toBe('2025-08-15 06:07 UTC');
+    // Zero-padded through the whole stamp, epoch included.
+    expect(formatWallClock(0)).toBe('1970-01-01 00:00 UTC');
+    expect(formatWallClock(720000)).toBe('1970-01-01 00:12 UTC');
+    // Seconds are below the resolution of anything on this surface.
+    expect(formatWallClock(1755238020999)).toBe('2025-08-15 06:07 UTC');
+    // UTC, never the viewer's zone: the same millisecond reads the same way
+    // whichever machine the HUD is open on.
+    expect(formatWallClock(1767225599000)).toBe('2025-12-31 23:59 UTC');
+    // Nothing to state is stated as nothing, never as 1970.
+    expect(formatWallClock(Number.NaN)).toBe('UNKNOWN');
+    expect(formatWallClock(Number.POSITIVE_INFINITY)).toBe('UNKNOWN');
+    expect(formatWallClock(8.64e15 + 1)).toBe('UNKNOWN');
   });
   it('formatAge humanizes an elapsed span', () => {
     expect(formatAge(0, 3 * 3600_000 + 12 * 60_000)).toBe('3h 12m');

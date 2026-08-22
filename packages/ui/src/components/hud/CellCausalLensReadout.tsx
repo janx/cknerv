@@ -112,7 +112,7 @@ export default function CellCausalLensReadout({
   const flowCell: CSSProperties = {
     minWidth: 0,
     fontFamily: HUD_FONTS.mono,
-    fontSize: HUD_TYPE.micro,
+    fontSize: HUD_TYPE.label,
     letterSpacing: 0.42,
     whiteSpace: 'nowrap',
   };
@@ -191,7 +191,7 @@ export default function CellCausalLensReadout({
             <span style={{ color: HUD_COLORS.cyanInk, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.label, fontWeight: 700, letterSpacing: 1.05 }}>
               CAUSAL LENS
             </span>
-            <span title={lens.txHash} style={{ minWidth: 0, color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span title={lens.txHash} style={{ minWidth: 0, color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               TX {shortHash(lens.txHash)} · {formatBlockRef(lens.block)}
             </span>
             <span
@@ -210,12 +210,12 @@ export default function CellCausalLensReadout({
               <span style={{ color: meta.color, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.66 }}>
                 {meta.label}
               </span>
-              <span style={{ marginLeft: 'auto', color: HUD_COLORS.ink, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, whiteSpace: 'nowrap' }}>
+              <span style={{ marginLeft: 'auto', color: HUD_COLORS.ink, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, whiteSpace: 'nowrap' }}>
                 {endpointCount(anchoredInputs, lens.inputCount, 'IN')} · {endpointCount(anchoredOutputs, lens.outputCount, 'OUT')}
               </span>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', alignItems: 'baseline', gap: 7, marginTop: 3, fontFamily: HUD_FONTS.mono }}>
-              <span title={lens.txHash} style={{ minWidth: 0, color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span title={lens.txHash} style={{ minWidth: 0, color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 TX {shortHash(lens.txHash)} · {formatBlockRef(lens.block)}
               </span>
               <span
@@ -316,7 +316,7 @@ export default function CellCausalLensReadout({
           marginTop: compact ? 2 : 3,
           color: HUD_COLORS.ink,
           fontFamily: HUD_FONTS.mono,
-          fontSize: HUD_TYPE.micro,
+          fontSize: HUD_TYPE.label,
           letterSpacing: 0.28,
           whiteSpace: 'nowrap',
           overflow: 'hidden',
@@ -341,10 +341,10 @@ export default function CellCausalLensReadout({
             fontFamily: HUD_FONTS.mono,
           }}
         >
-          <span style={{ minWidth: 0, color: meta.color, fontSize: HUD_TYPE.micro, letterSpacing: 0.48 }}>
+          <span style={{ minWidth: 0, color: meta.color, fontSize: HUD_TYPE.label, letterSpacing: 0.48 }}>
             IDENTITY ONLY · LINK NOT RETAINED
           </span>
-          <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.36, whiteSpace: 'nowrap' }}>
+          <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, letterSpacing: 0.36, whiteSpace: 'nowrap' }}>
             {endpointCount(anchoredInputs, lens.inputCount, 'INPUTS')} · {endpointCount(anchoredOutputs, lens.outputCount, 'OUTPUTS')}
           </span>
         </div>

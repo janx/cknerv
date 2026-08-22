@@ -62,6 +62,19 @@ export function formatBlockRef(block: number): string {
   return `#${block.toLocaleString('en-US')}`;
 }
 
+/** A wall-clock instant, in UTC, spelled `2026-08-15 05:47 UTC`. Assembled
+ *  from the epoch parts by hand: every locale prints this differently and a
+ *  HUD that says when a deposit happened must say the same thing on every
+ *  machine. Minutes are the floor — nothing on this surface is a stopwatch. */
+export function formatWallClock(ms: number): string {
+  if (!Number.isFinite(ms)) return 'UNKNOWN';
+  const at = new Date(ms);
+  const stamp = at.getTime();
+  if (Number.isNaN(stamp)) return 'UNKNOWN';
+  const pad = (value: number, width = 2) => String(value).padStart(width, '0');
+  return `${pad(at.getUTCFullYear(), 4)}-${pad(at.getUTCMonth() + 1)}-${pad(at.getUTCDate())} ${pad(at.getUTCHours())}:${pad(at.getUTCMinutes())} UTC`;
+}
+
 export function formatAge(bornAtMs: number, nowMs: number): string {
   const ms = Math.max(0, nowMs - bornAtMs);
   const s = Math.floor(ms / 1000);

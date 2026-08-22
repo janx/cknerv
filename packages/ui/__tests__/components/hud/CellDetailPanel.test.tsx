@@ -54,6 +54,17 @@ const base: Cell = {
   data_bytes: 11,
   content_hash: '0x' + '11'.repeat(32), lock_kind: 'omnilock', asset_kind: 'xudt',
   lock_shape_seed: [1, 2], type_shape_seed: null, data_shape_seed: [3, 4],
+  // Canonical script identity: which script guards the Cell arrives from the
+  // node itself, so the LOCK cluster has a real row with no index at all.
+  lock_script: { code_hash: `0x${'7c'.repeat(32)}`, hash_type: 'type' },
+};
+
+/** A Cell that carries a type script — the ASSET cluster's canonical CODE
+ *  row exists only for these; a plain transfer says so by having none. */
+const typed: Cell = {
+  ...base,
+  type_shape_seed: [5, 6],
+  type_script: { code_hash: `0x${'5d'.repeat(32)}`, hash_type: 'data1' },
 };
 
 function identityBinding(
@@ -135,6 +146,13 @@ describe('CellDetailPanel', () => {
     );
     expect(container.textContent).toContain('AGE 3h 0m');
     expect(container.textContent).not.toContain('SINCE #');
+    // Age is the header's business; the register states the date itself, in
+    // UTC, so two viewers in two time zones read the same instant.
+    const born = container.querySelector(
+      '[data-cell-evidence-row="born"]',
+    ) as HTMLElement;
+    expect(born.textContent).toBe('BORN1970-01-01 00:12 UTC · #16,204,800');
+    expect(born.style.gridColumn).toBe('1 / -1');
   });
 
   it('renders one CKBYTES ANALYSIS column beside the specimen square', () => {
@@ -142,6 +160,12 @@ describe('CellDetailPanel', () => {
     const t = container.textContent ?? '';
     expect(t).toContain('CELL');
     expect(t).not.toContain('共识细胞');   // Cell detail titles stay English-only
+    // The header names the OUTPOINT — a viewer can look that up anywhere.
+    // The old content-hash head beside an output index only looked like one.
+    expect(t).toContain('0xabab…abababab#2');
+    expect(t).not.toContain('11111111:2');
+    expect(container.querySelector('[data-cell-detail-scan-field] span[title]')
+      ?.getAttribute('title')).toBe(base.out_point.tx_hash);
     expect(t).toContain('OMNI Lock');       // LOCK
     expect(t).toContain('xUDT');           // ASSET
     expect(t).toContain('123 CKB');     // CAPACITY
@@ -246,6 +270,28 @@ describe('CellDetailPanel', () => {
     expect(t).toContain('CELL SCAN');
     expect(t).toContain('DRAG TO ORBIT');
     expect(t).toContain('A-LATTICE');
+    // Bare mode — ~98% of clicks — still gets real evidence: the Cell's own
+    // account of which script guards it, with no index in the picture.
+    const lockCode = container.querySelector(
+      '[data-cell-evidence-row="lock-code"]',
+    ) as HTMLElement;
+    expect(lockCode).not.toBeNull();
+    expect(lockCode.textContent).toBe('CODE0x7c7c7c7c7c…c7c7c7c7c · TYPE');
+    expect(container.querySelector('[data-cell-evidence-value="lock-code"]')
+      ?.getAttribute('title')).toBe(base.lock_script?.code_hash);
+    expect(lockCode.style.borderLeft).toContain('157, 123, 216, 0.34');
+    // Nothing the index would have said, and no lifecycle chip to say it with.
+    expect(container.querySelector('[data-cell-evidence-row="owner"]')).toBeNull();
+    expect(container.querySelector('[data-cell-evidence-row="lock-script"]')).toBeNull();
+    expect(container.querySelector('[data-cell-script-state]')).toBeNull();
+    // A plain Cell carries no type script, so the ASSET cluster has no CODE.
+    expect(container.querySelector('[data-cell-evidence-row="type-code"]')).toBeNull();
+    // born_at_ms 0 is the backfill sentinel — no wall clock is honest here.
+    expect(container.querySelector('[data-cell-evidence-row="born"]')).toBeNull();
+    // No source configured: nothing is expected, so nothing is reserved.
+    expect(container.querySelector('[data-cell-evidence-ghost]')).toBeNull();
+    expect((container.querySelector('[data-cell-evidence-slot="lock"]') as HTMLElement)
+      .style.minHeight).toBe('');
     // Bare mode: no byte budget without a validated knowledge breakdown.
     expect(container.querySelector('[data-cell-byte-budget]')).toBeNull();
     // The bytes zone still carries the direct content memory.
@@ -651,10 +697,16 @@ describe('CellDetailPanel', () => {
               namespace: 'ckb',
               kind: 'dao',
               state: 'deposit',
+              // Wire order on purpose: the timestamps were APPENDED after the
+              // keys this facet shipped with, so anything reading attributes
+              // by position prints a millisecond count under COMPENSATION.
               attributes: [
                 { key: 'deposit_block', value: '16204800', unit: 'block' },
                 { key: 'compensation', value: '1.25', unit: 'CKB' },
                 { key: 'estimated_apc', value: '2.01%' },
+                { key: 'withdraw_request_block', value: '16210000', unit: 'block' },
+                { key: 'deposit_at_ms', value: '1755238020000', unit: 'ms' },
+                { key: 'withdraw_request_at_ms', value: '1755324420000', unit: 'ms' },
               ],
             },
             {
@@ -714,38 +766,71 @@ describe('CellDetailPanel', () => {
     expect(analysis.style.gridTemplateColumns).toBe('minmax(0, 1fr)');
     expect(analysis.style.clipPath).toBe('polygon(0 0,calc(100% - 12px) 0,100% 12px,100% 100%,0 100%)');
 
-    // LOCK cluster: fact lead + owner + script evidence, name never repeated.
+    // LOCK cluster: fact lead, then full-width rows in the house grammar —
+    // the Cell's own CODE first, then what the index adds. The evidence never
+    // repeats the fact button's headline name.
     const lockCluster = container.querySelector('[data-cell-cluster="lock"]') as HTMLElement;
     expect(lockCluster.querySelector('[data-cell-detail-field="lock"]')?.textContent)
       .toContain('Default Lock');
     const lockEvidence = lockCluster.querySelector('[data-cell-cluster-evidence="lock"]') as HTMLElement;
-    expect(lockEvidence.querySelector('[data-cell-context-fact="owner"]')?.textContent)
-      .toContain('ckt1qyqindexe');
-    const lockScript = lockEvidence.querySelector('[data-cell-context-script="lock"]') as HTMLElement;
-    expect(lockScript.textContent).toContain('CODE·TYPE');
-    expect(lockScript.textContent).toContain('0x1234');
-    expect(lockScript.textContent).toContain('ACTIVE');
-    expect(lockScript.textContent).toContain('IDENTITY');
+    expect(Array.from(lockEvidence.querySelectorAll('[data-cell-evidence-row]'))
+      .map((row) => row.getAttribute('data-cell-evidence-row')))
+      .toEqual(['lock-code', 'owner', 'lock-script', 'lock-args']);
+    expect(lockEvidence.querySelector('[data-cell-evidence-row="lock-code"]')
+      ?.textContent).toBe('CODEACTIVE0x7c7c7c7c7c…c7c7c7c7c · TYPE');
+    // The lifecycle state is a chip ON the row it qualifies, never a stamp
+    // floating off at the far right of the plate.
+    expect(lockEvidence.querySelector('[data-cell-script-state="active"]')).not.toBeNull();
+    const owner = lockEvidence.querySelector('[data-cell-evidence-row="owner"]') as HTMLElement;
+    expect(owner.textContent).toContain('ckt1qyqindexe');
+    expect(owner.textContent).toContain('ADDRESS ENCODED FROM THE LOCK SCRIPT');
+    expect(owner.querySelector('[data-cell-evidence-value="owner"]')
+      ?.getAttribute('title')).toBe('ckt1qyqindexedaddress0000000000');
+    expect(lockEvidence.querySelector('[data-cell-evidence-row="lock-script"]')
+      ?.textContent).toBe('SCRIPT0xlock');
+    expect(lockEvidence.querySelector('[data-cell-evidence-row="lock-args"]')
+      ?.textContent).toBe('ARGS0x1234');
     expect(lockEvidence.textContent).not.toContain('Default Lock');
+    // The old cramped script block is gone — one grammar, not two.
+    expect(container.querySelector('[data-cell-context-script="lock"]')).toBeNull();
 
-    // TYPE cluster: asset fact + decoded amount + identity + type evidence +
-    // DAO position.
+    // TYPE cluster: decoded amount, asset identity, the type script's own
+    // rows and the DAO position spelled out one fact to a line.
     const typeCluster = container.querySelector('[data-cell-cluster="type"]') as HTMLElement;
     expect(typeCluster.querySelector('[data-cell-detail-field="asset"]')?.textContent)
       .toContain('Legacy DAO Script');
     const typeEvidence = typeCluster.querySelector('[data-cell-cluster-evidence="type"]') as HTMLElement;
-    expect(typeEvidence.querySelector('[data-cell-context-fact="amount"]')?.textContent)
+    expect(typeEvidence.querySelector('[data-cell-evidence-row="amount"]')?.textContent)
       .toContain('123.45 NTT');
-    expect(typeEvidence.querySelector('[data-cell-context-fact="asset"]')?.textContent)
+    expect((typeEvidence.querySelector('[data-cell-evidence-value="amount"]') as HTMLElement)
+      .style.fontSize).toBe('11.5px');
+    expect(typeEvidence.querySelector('[data-cell-evidence-row="identity"]')?.textContent)
       .toContain('NTT · Nervos Test Token · xUDT');
-    const typeScript = typeEvidence.querySelector('[data-cell-context-script="type"]') as HTMLElement;
-    expect(typeScript.textContent).toContain('CODE·DATA1');
-    expect(typeScript.textContent).toContain('0xabcd');
-    expect(typeScript.textContent).toContain('DEPRECATED');
-    const dao = typeEvidence.querySelector('[data-cell-context-facet="ckb:dao"]') as HTMLElement;
-    expect(dao.textContent).toContain('DAO POSITION');
-    expect(dao.textContent).toContain('DEPOSIT');
-    expect(dao.textContent).toContain('1.25 CKB');
+    expect(typeEvidence.querySelector('[data-cell-evidence-row="type-script"]')
+      ?.textContent).toBe('SCRIPT0xtype');
+    expect(typeEvidence.querySelector('[data-cell-evidence-row="type-args"]')
+      ?.textContent).toBe('ARGS0xabcd');
+    expect(typeEvidence.querySelector('[data-cell-script-state="deprecated"]'))
+      .toBeNull();   // no canonical type script on this Cell, so no CODE row
+    expect(typeEvidence.querySelector('[data-cell-evidence-row="type-code"]')).toBeNull();
+
+    // DAO rows read the facet BY KEY, including the timestamps appended after
+    // the keys it shipped with.
+    expect(typeEvidence.querySelector('[data-cell-evidence-row="dao-position"]')
+      ?.textContent).toBe('POSITIONDEPOSIT');
+    expect(typeEvidence.querySelector('[data-cell-evidence-row="dao-deposited"]')
+      ?.textContent).toBe('DEPOSITED#16,204,800 · 2025-08-15 06:07 UTC');
+    expect(typeEvidence.querySelector('[data-cell-evidence-row="dao-withdraw-request"]')
+      ?.textContent).toBe('WITHDRAW REQ#16,210,000 · 2025-08-16 06:07 UTC');
+    expect(typeEvidence.querySelector('[data-cell-evidence-row="dao-apc"]')
+      ?.textContent).toBe('EST APC2.01%');
+    expect(typeEvidence.querySelector('[data-cell-evidence-row="dao-compensation"]')
+      ?.textContent).toBe('COMPENSATION1.25 CKB');
+    // Nothing withdrew, so no row claims it did.
+    expect(typeEvidence.querySelector('[data-cell-evidence-row="dao-withdrawn"]'))
+      .toBeNull();
+    // The generic one-line facet summary no longer speaks for the DAO.
+    expect(container.querySelector('[data-cell-context-facet="ckb:dao"]')).toBeNull();
     // Only the primary facet joins the cluster.
     expect(analysis.textContent).not.toContain('DEP GROUP');
     expect(analysis.textContent).not.toContain('CODE CELL');
@@ -824,6 +909,170 @@ describe('CellDetailPanel', () => {
     )).toHaveLength(0);
   });
 
+  it('names what an inventory Cell holds, beside the script that governs it', () => {
+    const { container } = render(
+      <CellDetailPanel
+        cell={typed}
+        onClose={() => {}}
+        semanticSource={{
+          source: 'ckbadger',
+          status: 'ready',
+          capabilities: ['cell_detail'],
+        }}
+        semanticPhase="ready"
+        semanticRecord={{
+          out_point: typed.out_point,
+          source: 'ckbadger',
+          as_of: { block: typed.birth_block, hash: '0xanchor' },
+          observed_at_block: typed.birth_block,
+          updated_at_ms: 1,
+          type_script: {
+            script_hash: '0xspore',
+            code_hash: typed.type_script!.code_hash,
+            hash_type: 'data1',
+            args: '0x',
+            name: 'Spore',
+            deprecated: true,
+          },
+          content: {
+            total_bytes: 11,
+            data_complete: true,
+            deterministic: {
+              kind: 'spore_cell',
+              summary: 'Spore DOB content payload',
+              segments: [
+                {
+                  label: 'content_type',
+                  start_byte: 0,
+                  end_byte: 9,
+                  meaning: 'Declared MIME type',
+                  value: 'image/png',
+                },
+                {
+                  label: 'content',
+                  start_byte: 9,
+                  end_byte: 11,
+                  meaning: 'Encoded payload',
+                  value: '2 bytes',
+                },
+              ],
+            },
+            heuristics: [],
+          },
+          facets: [],
+        }}
+      />,
+    );
+
+    const typeEvidence = container.querySelector(
+      '[data-cell-cluster-evidence="type"]',
+    ) as HTMLElement;
+    // The type script's code hash comes from the CELL, so this row would be
+    // here for a bare Spore too; the index only adds the lifecycle chip.
+    expect(typeEvidence.querySelector('[data-cell-evidence-row="type-code"]')
+      ?.textContent).toBe('CODEDEPRECATED0x5d5d5d5d5d…d5d5d5d5d · DATA1');
+    expect(typeEvidence.querySelector('[data-cell-script-state="deprecated"]'))
+      .not.toBeNull();
+    // One line saying WHAT is in the Cell, pulled from the decode's own
+    // segments rather than restating its summary.
+    expect(typeEvidence.querySelector('[data-cell-evidence-row="object"]')
+      ?.textContent).toBe('OBJECTimage/png · 11 B');
+    // Empty args say EMPTY: `0x` beside a label reads as a broken row.
+    expect(typeEvidence.querySelector('[data-cell-evidence-row="type-args"]')
+      ?.textContent).toBe('ARGSEMPTY');
+  });
+
+  it('reserves an expected record\'s rows, then settles exactly once', () => {
+    const source: EnrichmentSourceStatus = {
+      source: 'ckbadger',
+      status: 'syncing',
+      capabilities: ['cell_detail'],
+    };
+    const { container, rerender } = render(
+      <CellDetailPanel
+        cell={base}
+        semanticSource={source}
+        semanticPhase="loading"
+        onClose={() => {}}
+      />,
+    );
+    const slot = (name: string) => container.querySelector(
+      `[data-cell-evidence-slot="${name}"]`,
+    ) as HTMLElement;
+
+    // A record is on its way: the rows it will fill already hold their height.
+    expect(slot('lock').style.minHeight).toBe('66px');
+    expect(slot('type').style.minHeight).toBe('66px');
+    expect(slot('capacity').style.minHeight).toBe('62px');
+    const ghosts = container.querySelectorAll('[data-cell-evidence-ghost]');
+    expect(ghosts).toHaveLength(3);
+    expect((ghosts[0] as HTMLElement).style.opacity).toBe('0.18');
+    expect(ghosts[0].getAttribute('aria-hidden')).toBe('true');
+
+    // It arrives: real rows take the reserved height, ghosts leave.
+    rerender(
+      <CellDetailPanel
+        cell={base}
+        semanticSource={{ ...source, status: 'ready' }}
+        semanticPhase="ready"
+        semanticRecord={{
+          out_point: base.out_point,
+          source: 'ckbadger',
+          as_of: { block: base.birth_block, hash: '0xanchor' },
+          observed_at_block: base.birth_block,
+          updated_at_ms: 1,
+          address: 'ckt1qyqarrived0000000000',
+          lock_script: {
+            script_hash: '0xlock',
+            code_hash: '0xcode',
+            hash_type: 'type',
+            args: '0x1234',
+          },
+          facets: [],
+        }}
+        onClose={() => {}}
+      />,
+    );
+    expect(container.querySelector('[data-cell-evidence-ghost]')).toBeNull();
+    expect(slot('lock').style.minHeight).toBe('');
+    expect(container.querySelectorAll('[data-cell-evidence-slot="lock"] [data-cell-evidence-row]'))
+      .toHaveLength(3);
+  });
+
+  it('collapses the reservation once when the record resolves absent', () => {
+    const source: EnrichmentSourceStatus = {
+      source: 'ckbadger',
+      status: 'syncing',
+      capabilities: ['cell_detail'],
+    };
+    const { container, rerender } = render(
+      <CellDetailPanel
+        cell={base}
+        semanticSource={source}
+        semanticPhase="waiting"
+        onClose={() => {}}
+      />,
+    );
+    expect((container.querySelector('[data-cell-evidence-slot="lock"]') as HTMLElement)
+      .style.minHeight).toBe('66px');
+
+    rerender(
+      <CellDetailPanel
+        cell={base}
+        semanticSource={{ ...source, status: 'ready' }}
+        semanticPhase="unavailable"
+        onClose={() => {}}
+      />,
+    );
+    // One settle, not a creep: nothing is expected any more, so nothing is
+    // held — and the canonical CODE row never moved through any of it.
+    expect((container.querySelector('[data-cell-evidence-slot="lock"]') as HTMLElement)
+      .style.minHeight).toBe('');
+    expect(container.querySelector('[data-cell-evidence-ghost]')).toBeNull();
+    expect(container.querySelector('[data-cell-evidence-row="lock-code"]')).not.toBeNull();
+    expect(container.textContent).toContain('NO VALIDATED RECORD FOR THIS CELL');
+  });
+
   it('admits a truncated data window on the byte budget', () => {
     vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
     const { container } = render(
@@ -898,8 +1147,8 @@ describe('CellDetailPanel', () => {
       />,
     );
 
-    const owner = () => container.querySelector('[data-cell-context-fact="owner"]') as HTMLElement;
-    const scripts = () => container.querySelector('[data-cell-context-script="lock"]') as HTMLElement;
+    const owner = () => container.querySelector('[data-cell-evidence-row="owner"]') as HTMLElement;
+    const scripts = () => container.querySelector('[data-cell-evidence-row="lock-args"]') as HTMLElement;
     const budget = () => container.querySelector('[data-cell-byte-budget]') as HTMLElement;
     // While the lattice is still scanning, the deeper enrichment stays dark.
     expect(owner().style.opacity).toBe('0');
@@ -2062,12 +2311,20 @@ describe('CellDetailPanel', () => {
   });
 
   it('labels missing lock/asset taxonomy as unknown', () => {
-    const bare = { ...base, lock_kind: undefined, asset_kind: undefined };
+    const bare = {
+      ...base,
+      lock_kind: undefined,
+      asset_kind: undefined,
+      lock_script: undefined,
+    };
     const { container } = render(<CellDetailPanel cell={bare} onClose={() => {}} />);
     expect(container.querySelector('[data-cell-detail-field="asset"]')
       ?.textContent).toBe('ASSETUNKNOWN');
     expect(container.querySelector('[data-cell-detail-field="lock"]')
       ?.textContent).toBe('LOCKUNKNOWN');
+    // A Cell restored from pre-identity state carries no script identity at
+    // all — no CODE row invents one for it.
+    expect(container.querySelector('[data-cell-evidence-row="lock-code"]')).toBeNull();
   });
 
   it('close button fires onClose', () => {
