@@ -11,6 +11,11 @@
 //
 // The list is meant to grow. Every time a value earns a name in `hudTheme.ts`,
 // ban the hex it used to be spelled as.
+//
+// The palette degrades a second way too, and this file guards that as well: two
+// tokens quietly holding the SAME value. `warning` was chrome orange to the
+// digit, which meant the middle severity had a name, a doc comment, and no
+// color — every warning the HUD ever raised looked like part of the frame.
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -52,6 +57,22 @@ const BANNED: ReadonlyArray<{
 /** Tokens promoted out of inline literals — each has to be read by somebody,
  *  or the ban above is guarding a value nothing uses. */
 const PROMOTED = ['heroInk', 'moduleSlate', 'trackGround'] as const;
+
+/** Straight euclidean distance across the RGB cube. A crude stand-in for "a
+ *  person can tell these apart" — crude on purpose, because the job here is to
+ *  catch one token being retyped as another's value, not to model vision. */
+function rgbDistance(a: string, b: string): number {
+  const channels = (hex: string): number[] => {
+    const h = hex.replace('#', '');
+    return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
+  };
+  const [ar, ag, ab] = channels(a);
+  const [br, bg, bb] = channels(b);
+  return Math.hypot(ar - br, ag - bg, ab - bb);
+}
+
+/** Below this, two colors are the same color wearing two names. */
+const SEPARATION_FLOOR = 40;
 
 type HudSource = { name: string; text: string };
 
@@ -105,5 +126,21 @@ describe('hud discipline', () => {
     // ban that protects it is guarding an empty room.
     expect(readers.length).toBeGreaterThan(0);
     expect(HUD_COLORS[token]).toMatch(/^#[0-9A-F]{6}$/);
+  });
+
+  it('warning is its own color, not chrome orange wearing a semantic name', () => {
+    // The finding this pins: `warning` shipped as `#FF9830` — the exact hex the
+    // entire HUD frame is painted in. Retuning the amber is fine and expected;
+    // sliding it back onto the chrome hue is the regression.
+    expect(HUD_COLORS.warning).not.toBe(HUD_COLORS.orange);
+    expect(rgbDistance(HUD_COLORS.warning, HUD_COLORS.orange))
+      .toBeGreaterThan(SEPARATION_FLOOR);
+  });
+
+  it('warning does not collapse into caution on the other side', () => {
+    // Amber only buys a rung if it is a rung: the ramp needs daylight between
+    // caution yellow and warning amber as much as between amber and chrome.
+    expect(rgbDistance(HUD_COLORS.warning, HUD_COLORS.caution))
+      .toBeGreaterThan(SEPARATION_FLOOR);
   });
 });

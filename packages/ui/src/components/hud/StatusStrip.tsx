@@ -21,6 +21,7 @@ import {
   useCellDisplayRuntime,
 } from '../../tweaks/cellDisplay';
 import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
+import { severityChip } from './primitives';
 
 export type BuildInfo = { version: string; href: string };
 export type HudPanelControl = {
@@ -51,6 +52,13 @@ const LEVEL_COLOR: Record<AlertLevel, string> = {
   nominal: HUD_COLORS.nominal, syncing: HUD_COLORS.cyanWire, caution: HUD_COLORS.caution,
   warning: HUD_COLORS.warning, danger: HUD_COLORS.danger, crit: HUD_COLORS.danger,
 };
+
+// Where the strip stops speaking in outline. Below this line the level is a
+// reading — the lamp says it, the word states it, and the bar stays furniture.
+// At and above it the word inverts into a filled block, so escalation is
+// legible as a change of TREATMENT and not only of hue. On a frame this warm,
+// hue alone was never going to carry the middle of the ramp.
+const FILLED_LEVELS: readonly AlertLevel[] = ['warning', 'danger', 'crit'];
 
 function fmtUptime(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -886,8 +894,12 @@ export default function StatusStrip({
       style={{ display: 'flex', flexShrink: 0, alignItems: 'center', gap: dense ? 5 : 7, fontFamily: HUD_FONTS.tech, fontWeight: 600, fontSize: dense ? 8.5 : 9.5, letterSpacing: dense ? 1 : 1.6, color }}
     >
       {!dense ? <span style={{ fontFamily: HUD_FONTS.cjk, color: HUD_COLORS.dim }}>状态</span> : null}
+      {/* The lamp is the constant across all six levels — it is what you find
+        * in the corner of your eye. Only the word escalates. */}
       <span data-dot data-level={level} style={{ width: 6, height: 6, borderRadius: '50%', background: color, boxShadow: `0 0 8px ${color}` }} />
-      {level.toUpperCase()}
+      {FILLED_LEVELS.includes(level)
+        ? <span data-status-level-chip style={severityChip(color)}>{level.toUpperCase()}</span>
+        : level.toUpperCase()}
     </span>
   );
   const performanceControls = (

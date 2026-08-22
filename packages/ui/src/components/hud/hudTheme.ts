@@ -7,6 +7,13 @@ import jbmUrl from '../../fonts/JetBrainsMono-400-subset.woff2';
 import orbitronUrl from '../../fonts/Orbitron-500-subset.woff2';
 import { PEER_NETWORK_HEX } from '../../visualPalette';
 
+// Three color layers, and one rule about how a surface is allowed to wear them.
+// Chrome (orange / cyanWire) is the instrument's own frame. Identity colors name
+// a thing — a mesh, a peer, a cell. Semantics name a state, and only a state.
+// Severity may FILL: at warning and above the level word inverts into a solid
+// block of its own color with `ground` punched through the letters. Chrome and
+// identity only ever outline. So a filled block anywhere in the HUD means
+// something is wrong — never "this panel matters more than its neighbours".
 export const HUD_COLORS = {
   ground: '#000000',
   panel: 'rgba(0,0,0,0.45)',
@@ -39,7 +46,14 @@ export const HUD_COLORS = {
   moduleSlate: '#5A6470',
   nominal: '#27FF5A',
   caution: '#F6E201',
-  warning: '#FF9830',
+  // Amber, and deliberately decoupled from chrome. `warning` used to be the
+  // exact `#FF9830` the whole frame is painted in, so the middle severity was
+  // chromatically invisible — a warning read as more furniture. Pulled off the
+  // chrome hue the ramp nominal → caution → warning → danger → crit has four
+  // real steps. Any retune stays inside the amber band and stays legibly apart
+  // from BOTH `orange` and `caution` at a 6px dot; hue alone is thin work here,
+  // which is why severity also changes treatment (see the fill rule above).
+  warning: '#FFB000',
   danger: '#FF3030',
   crit: '#8B0000',
   termGreen: '#00F700',

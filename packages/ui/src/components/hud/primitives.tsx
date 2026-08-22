@@ -267,6 +267,21 @@ export const stackedSatelliteBase: CSSProperties = {
   pointerEvents: 'auto',
 };
 
+/** The same word with the color behind it instead of around it: at warning and
+ *  above, a severity inverts into a solid block and reads the panel ground back
+ *  out through its letters. Severity is the only thing allowed to fill (see the
+ *  layer rule in `hudTheme.ts`) — chrome and identity wear the outline chip
+ *  below. Type is left to the caller so the block can sit inside a strip's
+ *  8.5px register or a banner's 12px one without changing its voice. */
+export function severityChip(color: string): CSSProperties {
+  return {
+    padding: '1px 6px',
+    background: color,
+    color: HUD_COLORS.ground,
+    letterSpacing: 1.4,
+  };
+}
+
 /** The bordered state word a card sets beside an identity — MINER, INBOUND,
  *  NOT LINKED, ACTIVE, DEPRECATED. One chip grammar, tinted by the caller. */
 export function plateStateChip(color: string): CSSProperties {

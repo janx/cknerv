@@ -64,6 +64,24 @@ describe('StatusStrip', () => {
     expect(dot.getAttribute('data-level')).toBe('danger');
     expect(container.textContent).toContain('DANGER');
   });
+  // The calm half of the ramp states itself and stops. Only warning and above
+  // invert into a filled block — escalation you can read without matching two
+  // warm hues against each other.
+  it.each(['nominal', 'syncing', 'caution'] as const)('keeps %s in outline', (level) => {
+    const { container } = render(<StatusStrip level={level} uptimeMs={0} />);
+    expect(container.querySelector('[data-status-level-chip]')).toBeNull();
+    expect(container.textContent).toContain(level.toUpperCase());
+  });
+  it.each(['warning', 'danger', 'crit'] as const)('fills the %s word into a chip', (level) => {
+    const { container } = render(<StatusStrip level={level} uptimeMs={0} />);
+    const chip = container.querySelector('[data-status-level-chip]') as HTMLElement;
+    expect(chip.textContent).toBe(level.toUpperCase());
+    // Inverted: the level's color is behind the word, the ground is in it.
+    expect(chip.style.backgroundColor).not.toBe('');
+    expect(chip.style.color).toBe('rgb(0, 0, 0)');
+    // The lamp survives the escalation — it is the constant across all six.
+    expect(container.querySelector('[data-dot]')).not.toBeNull();
+  });
   it('renders the build version as a commit link before the status chip', () => {
     render(
       <StatusStrip
