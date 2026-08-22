@@ -128,6 +128,8 @@ import {
   changeOrbitGesture,
   createOrbitGestureState,
   endOrbitGesture,
+  noteOrbitPointerDown,
+  noteOrbitPointerMove,
   orbitGestureSuppressesPointerAction,
 } from './orbit-gesture-state';
 import {
@@ -299,6 +301,60 @@ export default function App({
     orbitPickingSuspendedRef.current = false;
     endOrbitGesture(orbitGestureRef.current, performance.now());
   }, []);
+  // A click must not move the camera. OrbitControls rotates on the FIRST pixel
+  // of travel, and that pixel moves the very target the press landed on out
+  // from under the release — R3F only fires a click when the same object
+  // answers both rays, so an ordinary hand-wobble click silently does nothing.
+  // Hold rotate/pan at zero until the gesture is a real drag: zeroed speed
+  // still advances OrbitControls' own rotateStart, so the drag, when it comes,
+  // resumes from where the pointer is with no jump.
+  const orbitDeadZoneRef = useRef<{ rotate: number; pan: number } | null>(null);
+  const holdOrbitDeadZone = useCallback(() => {
+    const controls = orbitControlsRef.current;
+    if (!controls || orbitDeadZoneRef.current !== null) return;
+    orbitDeadZoneRef.current = {
+      rotate: controls.rotateSpeed,
+      pan: controls.panSpeed,
+    };
+    controls.rotateSpeed = 0;
+    controls.panSpeed = 0;
+  }, []);
+  const releaseOrbitDeadZone = useCallback(() => {
+    const held = orbitDeadZoneRef.current;
+    orbitDeadZoneRef.current = null;
+    const controls = orbitControlsRef.current;
+    if (held === null || !controls) return;
+    controls.rotateSpeed = held.rotate;
+    controls.panSpeed = held.pan;
+  }, []);
+  // OrbitControls answers "did the camera move"; a selection needs "did the
+  // user drag", and the click tolerance is the difference. Read the pointer
+  // itself, on the window: OrbitControls captures the pointer on its own
+  // element, so a canvas listener stops hearing a drag the moment it starts.
+  useEffect(() => {
+    const gesture = orbitGestureRef.current;
+    const notePress = (event: PointerEvent) => {
+      noteOrbitPointerDown(gesture, event.clientX, event.clientY);
+      holdOrbitDeadZone();
+    };
+    const noteTravel = (event: PointerEvent) => {
+      if (noteOrbitPointerMove(gesture, event.clientX, event.clientY)) {
+        releaseOrbitDeadZone();
+      }
+    };
+    // A press that never reached the scene still has to give the camera back:
+    // OrbitControls reports no gesture end for one, so the pointer does.
+    window.addEventListener('pointerdown', notePress, true);
+    window.addEventListener('pointermove', noteTravel, true);
+    window.addEventListener('pointerup', releaseOrbitDeadZone, true);
+    window.addEventListener('pointercancel', releaseOrbitDeadZone, true);
+    return () => {
+      window.removeEventListener('pointerdown', notePress, true);
+      window.removeEventListener('pointermove', noteTravel, true);
+      window.removeEventListener('pointerup', releaseOrbitDeadZone, true);
+      window.removeEventListener('pointercancel', releaseOrbitDeadZone, true);
+    };
+  }, [holdOrbitDeadZone, releaseOrbitDeadZone]);
   const forceRenderStats = useMemo(() => (
     typeof window !== 'undefined'
     && hasQuerySwitch(window.location.search, 'render-stats')
