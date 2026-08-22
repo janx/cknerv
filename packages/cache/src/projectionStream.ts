@@ -53,7 +53,9 @@ export interface ProjectionStreamOptions extends StreamHealthOptions {
 /** Decoder for a binary resync frame. Supplying one opts the socket into
  *  `?bin=1`; the server keeps sending JSON text to anyone who does not,
  *  because a binary frame carries no `kind` to recognise it by. A throw
- *  forces a reconnect rather than a wrong cache. */
+ *  forces a reconnect rather than a wrong cache — and retires `bin=1` for
+ *  the rest of the session, because the throw is almost always a format
+ *  version this build will never learn. */
 export type BinarySnapshotDecoder<Snapshot> = (
   buffer: ArrayBuffer,
 ) => { revision: number; snapshot: Snapshot };
@@ -101,6 +103,9 @@ export function connectProjectionStream<Cache, Snapshot, Delta>(
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let cache: Cache = initial;
   let needsResync = false;
+  /** One-way latch. Once this build has proved it cannot read the server's
+   *  columnar frame, every remaining attempt in this session asks for JSON. */
+  let binaryRetired = false;
   let pendingDeltas: { revision: number; delta: Delta }[] = [];
   let cancelDeltaFlush: (() => void) | null = null;
 
@@ -192,7 +197,7 @@ export function connectProjectionStream<Cache, Snapshot, Delta>(
     health.startAttempt(needsResync);
     const base = resolveWsUrl(streamUrl);
     const sep = base.includes('?') ? '&' : '?';
-    const binary = hooks.decodeBinarySnapshot;
+    const binary = binaryRetired ? undefined : hooks.decodeBinarySnapshot;
     const url = `${base}${sep}since=${hooks.getRevision(cache)}${binary ? '&bin=1' : ''}`;
     const ws = new WebSocket(url);
     if (binary) ws.binaryType = 'arraybuffer';
@@ -209,9 +214,21 @@ export function connectProjectionStream<Cache, Snapshot, Delta>(
           decoded = binary(msg.data);
         } catch (error) {
           // A frame we cannot read is worse than no frame: drop the socket
-          // and let the reconnect ask again (without `bin=1` it would take
-          // the JSON path, but the cursor is what matters here).
-          console.warn('binary snapshot frame unusable; resyncing', error);
+          // and let the reconnect ask again. But asking again the SAME way
+          // is how a version skew becomes a loop — the columnar format is
+          // versioned, so a server this build could not decode once will not
+          // become decodable on retry, and a tab holding the old SPA across a
+          // deploy spent every reconnect re-downloading megabytes it was
+          // always going to throw away. Retire `bin=1` for the session and
+          // take the JSON snapshot instead, the same fallback the HTTP boot
+          // path already has (`ui-app/src/connect.ts`).
+          binaryRetired = true;
+          console.warn(
+            'binary snapshot frame unusable — this build cannot read the '
+              + "server's columnar format; falling back to JSON for the rest "
+              + 'of this stream session',
+            error,
+          );
           ws.close();
           return;
         }

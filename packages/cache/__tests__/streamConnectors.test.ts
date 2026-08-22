@@ -525,6 +525,10 @@ describe('unusable text frames', () => {
 });
 
 describe('binary resync frames', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   /** The very bytes the Rust encoder produced — the same fixture the
    *  decoder tests read, so this exercises the real frame, not a mock of
    *  one. */
@@ -575,6 +579,54 @@ describe('binary resync frames', () => {
     socket.binaryMessage(new ArrayBuffer(16));
     expect(cache.cells.size).toBe(0);
     expect(warn).toHaveBeenCalled();
+    handle.disconnect();
+    warn.mockRestore();
+  });
+
+  /** A deploy moves the columnar format forward under a tab still running the
+   *  previous SPA. Its decoder will never read the new frame — so re-asking
+   *  for `bin=1` every 2s just re-downloaded multiple megabytes forever, and
+   *  the tab never caught up. The failure retires binary for the session and
+   *  the JSON snapshot, which the same server is always willing to send,
+   *  brings the tab back. */
+  it('retires binary for the session and catches up on JSON instead', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', MockWebSocket);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let cache: CellGalaxyCache = emptyCellsCache();
+    const handle = connectCellsStream('/api/projections/cells/stream', undefined, (next) => {
+      cache = next;
+    });
+    const first = MockWebSocket.instances[0];
+    expect(first.url).toContain('bin=1');
+    first.open();
+    first.binaryMessage(new ArrayBuffer(16));
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(first.closeCalls).toBeGreaterThan(0);
+
+    vi.advanceTimersByTime(2100);
+    expect(MockWebSocket.instances).toHaveLength(2);
+    const second = MockWebSocket.instances[1];
+    expect(second.url).not.toContain('bin=1');
+    expect(second.binaryType).toBe('blob');
+
+    second.open();
+    second.message({
+      kind: 'snapshot',
+      revision: 5,
+      snapshot: { cells: [cell(1), cell(2)], last_pulse_at_ms: 0 },
+    });
+    expect(cache.revision).toBe(5);
+    expect(cache.cells.size).toBe(2);
+
+    // The latch is one-way: an ordinary transport close later in the same
+    // session must not re-arm the format this build already failed on.
+    second.close();
+    vi.advanceTimersByTime(2100);
+    expect(MockWebSocket.instances).toHaveLength(3);
+    expect(MockWebSocket.instances[2].url).not.toContain('bin=1');
+    expect(MockWebSocket.instances[2].url).toContain('since=5');
+
     handle.disconnect();
     warn.mockRestore();
   });
