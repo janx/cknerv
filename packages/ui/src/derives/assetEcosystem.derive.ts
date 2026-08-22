@@ -2,6 +2,7 @@ import type {
   AssetEcosystemRecord,
   EnrichmentSourceStatus,
 } from '@cknerv/types';
+import { ASSET_COLORS, CLASS_MIX_COLORS } from '../components/hud/cellFormat';
 
 export type AssetEcosystemVisualState = 'ready' | 'stale';
 
@@ -14,11 +15,15 @@ export interface AssetEcosystemBucketVisual {
   color: string;
 }
 
+/** The whole-chain capacity bar and the stage's class-mix bars are one reading
+ *  split in two places, so they are one palette read from one table: the
+ *  content bands in `cellFormat.ts`. Objects take the same violet a spore
+ *  asset chip wears, because they are the same thing counted differently. */
 const CATEGORY_COLORS: Record<string, string> = {
-  dao: '#ff9d52',
-  tokens: '#78f2b3',
-  objects: '#d8b4ff',
-  other: '#607789',
+  dao: CLASS_MIX_COLORS.dao,
+  tokens: CLASS_MIX_COLORS.typed,
+  objects: ASSET_COLORS.spore,
+  other: CLASS_MIX_COLORS.plain,
 };
 
 /** Only expose a sample while its source still has a compatible anchor. */

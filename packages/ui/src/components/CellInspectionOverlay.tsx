@@ -61,6 +61,17 @@ export function createCellInspectionHandles(): CellInspectionHandles {
   });
 }
 
+/** The colour the card frame and its connector take while one fact is open.
+ *
+ *  The rule, because it was being broken in three places at once: a semantic
+ *  accent only when the fact IS a state. `state` is the whole of that — live
+ *  or spent is a genuine state axis, so it keeps green and yellow and is the
+ *  sanctioned exception. Everything else is content and draws from the content
+ *  bands: `data` is knowledge, not health, so it wears the consensus cyan the
+ *  DATA fact button and the DATA byte segment wear; lock and asset inherit
+ *  their family colour from the re-cut tables. `born` stays chrome orange —
+ *  an anchor is a house fact, and orange accent on orange chrome is the
+ *  instrument's own colour rather than a borrow from anywhere. */
 export function selectedCellScanAccent(
   props: Pick<CellDetailPanelProps, 'cell'>,
   field: CellInspectionFacet | null,
@@ -68,7 +79,7 @@ export function selectedCellScanAccent(
   const { cell } = props;
   if (field === 'lock' && cell.lock_kind) return LOCK_COLORS[cell.lock_kind];
   if (field === 'asset' && cell.asset_kind) return ASSET_COLORS[cell.asset_kind];
-  if (field === 'data') return HUD_COLORS.nominal;
+  if (field === 'data') return HUD_COLORS.cyanWire;
   if (field === 'state') {
     return cell.death_at_ms === null ? HUD_COLORS.nominal : HUD_COLORS.caution;
   }

@@ -5,16 +5,24 @@ import {
   formatUtilizationPercent,
   type ByteBudgetSegmentKey,
 } from '../../derives/cellByteBudget.derive';
-import { formatCkb, formatDataSize, formatExactCkb } from './cellFormat';
+import { CONTENT_BANDS, formatCkb, formatDataSize, formatExactCkb } from './cellFormat';
 import { HUD_COLORS, HUD_TYPE, rgba } from './hudTheme';
 
-// KnowledgeBar's segment palette, unchanged, so the budget bar reads as the
-// same instrument the 3px afterthought was.
-const SEGMENT_COLORS: Record<ByteBudgetSegmentKey, string> = {
-  cap: HUD_COLORS.orange,
-  lock: HUD_COLORS.cyanWire,
-  type: HUD_COLORS.nominal,
-  data: HUD_COLORS.caution,
+// Each segment wears the content band of the axis it measures, so the bar
+// says the same four words the register above it does: CAP is value, LOCK is
+// authorization, TYPE is the token family, DATA is knowledge. It used to wear
+// chrome orange, nominal green and caution yellow at once — a four-segment bar
+// carrying three reserved layers, which made every cell's byte composition
+// look like a status readout with an opinion about the Cell's health.
+//
+// The LOCK segment takes the authority BAND rather than the cyan the default
+// lock borrows: cyan belongs to the DATA segment here, and one bar cannot
+// spend the same color twice.
+export const SEGMENT_COLORS: Record<ByteBudgetSegmentKey, string> = {
+  cap: CONTENT_BANDS.value,
+  lock: CONTENT_BANDS.authority,
+  type: CONTENT_BANDS.token,
+  data: CONTENT_BANDS.consensus,
 };
 
 export interface CellByteBudgetProps {

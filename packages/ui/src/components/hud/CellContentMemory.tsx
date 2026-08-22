@@ -548,8 +548,13 @@ export default function CellContentMemory({
           * drawn from the first frame, and only the rows below it stage. */}
         {enhanced ? (
           <div data-cell-content-analysis="true" data-cell-content-analysis-state={analysisRevealed ? 'resolved' : 'scanning'} data-cell-content-analysis-reserved={analysisPending ? 'true' : undefined} style={{ display: 'block', minWidth: 0, paddingTop: 2, borderTop: `1px solid ${rgba(tone, 0.13)}`, minHeight: analysisPending ? CELL_CONTENT_ANALYSIS_RESERVED_PX : undefined }}>
+            {/* The asset line is a VALUE reading, so it wears the house's
+              * value-emphasis gold rather than the caution yellow it used to —
+              * the same gold the register's AMOUNT row two columns over uses.
+              * The complete/incomplete chip below stays semantic: that one
+              * really is a state. */}
             {record?.asset ? (
-              <div data-cell-content-asset="true" data-cell-content-reveal-item="asset" data-cell-content-reveal-item-state={assetRevealed ? 'resolved' : 'scanning'} title={record.asset.type_script_hash} {...revealStageAttributes(assetRevealed)} style={{ display: 'flex', alignItems: 'baseline', gap: 5, minWidth: 0, color: HUD_COLORS.caution, fontSize: HUD_TYPE.label, ...revealStageStyle(assetRevealed) }}>
+              <div data-cell-content-asset="true" data-cell-content-reveal-item="asset" data-cell-content-reveal-item-state={assetRevealed ? 'resolved' : 'scanning'} title={record.asset.type_script_hash} {...revealStageAttributes(assetRevealed)} style={{ display: 'flex', alignItems: 'baseline', gap: 5, minWidth: 0, color: HUD_COLORS.goldInk, fontSize: HUD_TYPE.label, ...revealStageStyle(assetRevealed) }}>
                 <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro }}>VALUE</span>
                 <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {[record.asset.symbol, record.asset.name, record.asset.standard].filter(Boolean).join(' · ') || record.asset.type_script_hash}

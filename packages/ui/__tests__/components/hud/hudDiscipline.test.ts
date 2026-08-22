@@ -21,6 +21,12 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { HUD_COLORS } from '../../../src/components/hud/hudTheme';
+import {
+  ASSET_COLORS,
+  CLASS_MIX_COLORS,
+  LOCK_COLORS,
+} from '../../../src/components/hud/cellFormat';
+import { SEGMENT_COLORS } from '../../../src/components/hud/CellByteBudget';
 
 const HUD_DIR = resolve(process.cwd(), 'src/components/hud');
 
@@ -142,5 +148,125 @@ describe('hud discipline', () => {
     // caution yellow and warning amber as much as between amber and chrome.
     expect(rgbDistance(HUD_COLORS.warning, HUD_COLORS.caution))
       .toBeGreaterThan(SEPARATION_FLOOR);
+  });
+});
+
+// ——— The reserve ————————————————————————————————————————————————————————
+//
+// Three layers, and only one of them may name a state. Semantics
+// (nominal/caution/warning/danger/crit) mean health and nothing else; chrome
+// orange is the instrument's own frame; the two mesh wires are identity. A
+// content category — a lock family, an asset family, a class of the census, a
+// byte segment — is none of those: it names WHAT a thing is, so borrowing a
+// reserved hue makes an ordinary cell look like a raised alarm.
+//
+// The tables are walked programmatically rather than listed, so a seventh
+// lock kind or a fifth byte segment added next year is checked the day it
+// lands, without anyone remembering this file exists.
+
+/** Every reserved hue a content category has to stay clear of. */
+const RESERVED: Readonly<Record<string, string>> = {
+  nominal: HUD_COLORS.nominal,
+  caution: HUD_COLORS.caution,
+  warning: HUD_COLORS.warning,
+  danger: HUD_COLORS.danger,
+  crit: HUD_COLORS.crit,
+  orange: HUD_COLORS.orange,
+  orangeDeep: HUD_COLORS.orangeDeep,
+  cyanWire: HUD_COLORS.cyanWire,
+  peerWire: HUD_COLORS.peerWire,
+};
+
+/** Every palette that colours content, by the surface it paints. */
+const CATEGORY_PALETTES: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  lock: LOCK_COLORS,
+  asset: ASSET_COLORS,
+  classMix: CLASS_MIX_COLORS,
+  byteSegment: SEGMENT_COLORS,
+};
+
+/** The sanctioned borrows, each `<palette>.<key> → <reserved>`, and each one
+ *  argued rather than grandfathered.
+ *
+ *  Only one borrow is allowed and it is from the identity layer, never from
+ *  the semantics: the default lock and bare CKB ARE plain consensus content,
+ *  so they take the colour consensus already wears, and the byte bar's DATA
+ *  segment joins them because a Cell's own bytes are the same kind of fact.
+ *  `state` is the one place a semantic tone is still correct on these
+ *  surfaces, and it is a branch in `selectedCellScanAccent` rather than a
+ *  token, so it needs no row here.
+ *
+ *  Each borrow costs two rows because `cyanWire` and `peerWire` are ~15 apart
+ *  — the twin-mesh collapse the palette review filed as A2. Borrow one and you
+ *  have borrowed both. When that pair separates, the peerWire rows here start
+ *  failing as stale permission slips, which is exactly the reminder we want. */
+const SANCTIONED_BORROWS: ReadonlySet<string> = new Set([
+  'lock.sighash → cyanWire',
+  'lock.sighash → peerWire',
+  'asset.native → cyanWire',
+  'asset.native → peerWire',
+  'byteSegment.data → cyanWire',
+  'byteSegment.data → peerWire',
+]);
+
+describe('the colour reserve', () => {
+  it('has palettes to check at all', () => {
+    // Same pin as the source oracle above: an empty matrix asserts nothing.
+    const tokens = Object.values(CATEGORY_PALETTES)
+      .flatMap((palette) => Object.keys(palette));
+    expect(tokens.length).toBeGreaterThanOrEqual(18);
+    expect(Object.keys(RESERVED).length).toBeGreaterThanOrEqual(9);
+  });
+
+  it.each(Object.keys(CATEGORY_PALETTES))(
+    'no %s category wears a reserved colour',
+    (surface) => {
+      const palette = CATEGORY_PALETTES[surface];
+      const collisions: string[] = [];
+      for (const [key, value] of Object.entries(palette)) {
+        for (const [reservedName, reservedValue] of Object.entries(RESERVED)) {
+          const pair = `${surface}.${key} → ${reservedName}`;
+          if (SANCTIONED_BORROWS.has(pair)) continue;
+          if (rgbDistance(value, reservedValue) > SEPARATION_FLOOR) continue;
+          collisions.push(`${pair} (${value} vs ${reservedValue})`);
+        }
+      }
+
+      expect(collisions).toEqual([]);
+    },
+  );
+
+  it.each([...SANCTIONED_BORROWS])('%s is a borrow, not an accident', (pair) => {
+    // An allowlist entry for a borrow nobody makes any more is a permission
+    // slip for a rule that already holds — it should be deleted, and this
+    // says so the moment the borrow ends.
+    const [left, reservedName] = pair.split(' → ');
+    const [surface, key] = left.split('.');
+    const value = CATEGORY_PALETTES[surface][key];
+    expect(value).toBeTypeOf('string');
+    expect(rgbDistance(value, RESERVED[reservedName]))
+      .toBeLessThanOrEqual(SEPARATION_FLOOR);
+  });
+
+  it('categories that share a bar stay apart from each other', () => {
+    // Reserved-layer discipline is only half of legibility: two members of the
+    // SAME bar landing on one hue makes a stacked bar unreadable no matter how
+    // far both sit from the semantics. Across bars is fine and deliberate —
+    // kinds that share a nature share a band.
+    const collisions: string[] = [];
+    for (const [surface, palette] of Object.entries(CATEGORY_PALETTES)) {
+      const entries = Object.entries(palette);
+      for (let i = 0; i < entries.length; i += 1) {
+        for (let j = i + 1; j < entries.length; j += 1) {
+          const distance = rgbDistance(entries[i][1], entries[j][1]);
+          if (distance > SEPARATION_FLOOR) continue;
+          collisions.push(
+            `${surface}.${entries[i][0]} ~ ${surface}.${entries[j][0]} (${distance.toFixed(1)})`,
+          );
+        }
+      }
+    }
+
+    expect(collisions).toEqual([]);
   });
 });

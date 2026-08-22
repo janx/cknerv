@@ -220,23 +220,75 @@ export function isScriptNamed(
   return Boolean(script?.name?.trim()) || (Boolean(kind) && kind !== 'other');
 }
 
+// ——— The content palette ———————————————————————————————————————————————
+//
+// A lock family, an asset family and the census's class mix are CONTENT: they
+// name what a thing IS and say nothing about whether it is well. So they draw
+// from their own bands and never from the reserved layers — semantics
+// (`nominal`/`caution`/`warning`/`danger`/`crit`, which name a state and only
+// a state) or chrome (`orange`, the instrument's own frame). Half this table
+// used to be borrowed: multisig and sUDT wore chrome orange, ACP and DAO wore
+// caution yellow, so an ordinary wallet cell lit its whole card in the two
+// colors the HUD raises alarms with.
+//
+// Six bands, and the band names the nature of the thing:
+//   consensus  cyanWire   the default lock, bare CKB, a Cell's own data
+//   authority  #6E7CFF    authorization past the default signature
+//   script     #9D7BD8    script-defined identity (omnilock, spore objects)
+//   token      #3FC9A6    an issued fungible token
+//   value      lockedGold value held under lock — DAO, capacity, amounts
+//   unlisted   #33424F    a family nothing could name
+//
+// A band carries at most two steps, and kinds that share a nature share a band
+// across axes on purpose: the plainest lock and the plainest asset are both
+// cyan, the most programmable of each is both violet. That is what keeps this
+// a house palette instead of a rainbow with one hue per key.
+//
+// Every member clears an RGB distance of 40 from every semantic tone, from
+// chrome orange and from both mesh identity wires. `hudDiscipline.test.ts`
+// walks these tables and fails any future member that slides back onto a
+// reserved hue; `sighash`/`native` are the one allowlisted borrow, because
+// plain consensus content IS the consensus's own color.
+export const CONTENT_BANDS = {
+  consensus: HUD_COLORS.cyanWire,
+  authority: '#6E7CFF',
+  /** Second step of the authority band: a signature lock anyone may pay into. */
+  authorityOpen: '#9FC4FF',
+  script: '#9D7BD8',
+  token: '#3FC9A6',
+  /** Second step of the token band: the extensible standard beside the simple
+   *  one. Held a long way up the band because sUDT and xUDT are adjacent
+   *  segments in the CELLS asset bar, where two neighbouring steps have to be
+   *  told apart with no label between them. */
+  tokenExtended: '#95EAD3',
+  value: HUD_COLORS.lockedGold,
+  /** The unremarkable majority in a mix bar — quiet by design, near the HUD's
+   *  own dim, because "bare CKB" is the background against which the rest reads. */
+  plain: '#607789',
+  unlisted: '#33424F',
+} as const;
+
 // Shared lock/asset family palette — the SINGLE source used by BOTH the CELLS
 // panel (CellsPanel byAsset/byLock bars) and the cell-detail panel, so a given
 // lock/asset family renders the same color in either place.
 export const LOCK_COLORS: Record<string, string> = {
-  sighash: HUD_COLORS.cyanWire, multisig: HUD_COLORS.orange, acp: HUD_COLORS.caution,
-  omnilock: '#9d7bd8', other: '#33424f',
+  sighash: CONTENT_BANDS.consensus, multisig: CONTENT_BANDS.authority,
+  acp: CONTENT_BANDS.authorityOpen, omnilock: CONTENT_BANDS.script,
+  other: CONTENT_BANDS.unlisted,
 };
 export const ASSET_COLORS: Record<string, string> = {
-  native: HUD_COLORS.cyanWire, sudt: HUD_COLORS.orange, xudt: '#ffb84d',
-  dao: HUD_COLORS.caution, spore: '#9d7bd8', other: '#33424f',
+  native: CONTENT_BANDS.consensus, sudt: CONTENT_BANDS.token,
+  xudt: CONTENT_BANDS.tokenExtended, dao: CONTENT_BANDS.value,
+  spore: CONTENT_BANDS.script, other: CONTENT_BANDS.unlisted,
 };
 
 /** The census's three-class partition, in the chain-capacity bar's category
  *  hues (DAO, token-like, bare CKB) so the stage-versus-chain mix bars and
- *  the whole-chain capacity bar read as one color system. */
+ *  the whole-chain capacity bar read as one color system —
+ *  `assetEcosystem.derive.ts` reads these very values rather than keeping a
+ *  second copy that could drift. */
 export const CLASS_MIX_COLORS = {
-  dao: '#ff9d52', typed: '#78f2b3', plain: '#607789',
+  dao: CONTENT_BANDS.value, typed: CONTENT_BANDS.token, plain: CONTENT_BANDS.plain,
 } as const;
 
 /** Palette colour for a script identity. A script the index named is a known

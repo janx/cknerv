@@ -8,6 +8,7 @@ import {
   assetEcosystemVisualState,
   deriveAssetEcosystemBuckets,
 } from '../../src/derives/assetEcosystem.derive';
+import { CLASS_MIX_COLORS } from '../../src/components/hud/cellFormat';
 
 const record: AssetEcosystemRecord = {
   source: 'ckbadger',
@@ -34,10 +35,13 @@ describe('asset ecosystem visual derivation', () => {
   it('preserves exact indexed basis-point proportions', () => {
     const buckets = deriveAssetEcosystemBuckets(record);
     expect(buckets?.map((bucket) => bucket.shareBps)).toEqual([2500, 100, 7400]);
+    // Named, not spelled: the chain-capacity bar and the stage's class-mix
+    // bars are one reading in two places, so a hex typed here would be the
+    // exact drift the shared table exists to prevent.
     expect(buckets?.map((bucket) => bucket.color)).toEqual([
-      '#ff9d52',
-      '#78f2b3',
-      '#607789',
+      CLASS_MIX_COLORS.dao,
+      CLASS_MIX_COLORS.typed,
+      CLASS_MIX_COLORS.plain,
     ]);
   });
 

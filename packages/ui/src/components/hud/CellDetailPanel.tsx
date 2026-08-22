@@ -979,10 +979,14 @@ export default function CellDetailPanel({
         presentedSemanticRecord?.lock_script,
       ),
     },
+    // Content, not condition: what a Cell carries is knowledge, and knowledge
+    // is cyan here — the same cyan the DATA byte segment and the open-DATA
+    // card frame wear. It used to be nominal green, which said "healthy"
+    // about a byte count that cannot be healthy or otherwise.
     data: {
       label: 'DATA',
       value: formatCellData(cell.data_bytes),
-      color: HUD_COLORS.nominal,
+      color: CYAN,
     },
     // The masthead carries the indicator glyph; twinning it here printed the
     // same green `● LIVE` twice in one column. The register states the word,
@@ -1342,13 +1346,17 @@ export default function CellDetailPanel({
                   data-cell-evidence-slot="type"
                   style={{ display: 'grid', gap: EVIDENCE_ROW_GAP_PX, minWidth: 0, minHeight: enrichmentPending ? reservedEvidenceHeight(ASSET_ENRICHMENT_ROWS) : undefined }}
                 >
+                  {/* The value rows — how much, of what, where in the DAO,
+                    * earning what — read in `goldInk`, the house's
+                    * value-emphasis tier. They used to read in caution yellow,
+                    * which said "watch out" about somebody's token balance. */}
                   {assetAmount ? (
                     <ClusterRow
                       row="amount"
                       accent={assetAccent}
                       label="AMOUNT"
                       value={assetAmount}
-                      valueColor={HUD_COLORS.caution}
+                      valueColor={HUD_COLORS.goldInk}
                       valueSize={HUD_TYPE.value}
                       revealAt={semanticsRevealAt(1)}
                     />
@@ -1359,7 +1367,7 @@ export default function CellDetailPanel({
                       accent={assetAccent}
                       label="IDENTITY"
                       value={assetIdentity}
-                      valueColor={HUD_COLORS.caution}
+                      valueColor={HUD_COLORS.goldInk}
                       revealAt={semanticsRevealAt(1)}
                     />
                   ) : null}
@@ -1401,7 +1409,7 @@ export default function CellDetailPanel({
                       accent={assetAccent}
                       label="POSITION"
                       value={daoFacet.state.toUpperCase()}
-                      valueColor={HUD_COLORS.caution}
+                      valueColor={HUD_COLORS.goldInk}
                       revealAt={semanticsRevealAt(1)}
                     />
                   ) : null}
@@ -1437,7 +1445,7 @@ export default function CellDetailPanel({
                       accent={assetAccent}
                       label="COMPENSATION"
                       value={semanticFacetValue(daoFacet, 'compensation') ?? ''}
-                      valueColor={HUD_COLORS.caution}
+                      valueColor={HUD_COLORS.goldInk}
                       revealAt={semanticsRevealAt(1)}
                     />
                   ) : null}
