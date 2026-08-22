@@ -151,8 +151,9 @@ impl Adapter for CkbDirectAdapter {
         let mut state = PollState::default();
 
         // Boot backfill: seed the recent live-cell set, then resume the
-        // forward poll from the anchor tip. On failure, fall through to
-        // the legacy tip-1 anchor (poll loop handles last_tip == None).
+        // forward poll from the anchor tip. On failure the poll loop re-runs
+        // the hydration for a bounded number of cycles before falling through
+        // to the legacy tip-1 anchor (poll loop handles last_tip == None).
         if let Some(resume_tip) = self.resume_from {
             // Restored from persisted state: resume the forward poll from the
             // saved tip. A small gap replays live; a large one is caught up
@@ -172,10 +173,17 @@ impl Adapter for CkbDirectAdapter {
                     state.last_tip = Some(backfill.tip);
                     state.seed_canonical(backfill.anchors);
                 }
-                Err(e) => tracing::warn!(
-                    target: "cknerv-adapter-ckb",
-                    "cell hydration failed: {e}; starting live-only"
-                ),
+                Err(e) => {
+                    // Not live-only forever: hand the failure to the poller,
+                    // which re-runs the hydration on its next cycles. A
+                    // single lagging answer at the anchored tip must not cost
+                    // the stage for the whole run.
+                    tracing::warn!(
+                        target: "cknerv-adapter-ckb",
+                        "cell hydration failed: {e}; retrying on the next polls"
+                    );
+                    state.arm_hydration_retry();
+                }
             }
         }
 

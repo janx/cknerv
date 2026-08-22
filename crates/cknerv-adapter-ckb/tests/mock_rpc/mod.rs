@@ -19,6 +19,10 @@ pub struct CannedResponses {
     /// Heights whose hash is canonical but whose full block is temporarily
     /// unavailable, modelling the node RPC visibility race seen by the poller.
     pub unavailable_blocks: HashSet<u64>,
+    /// Heights that answer `get_block_by_number` with `null` for a bounded
+    /// number of requests and then serve normally, modelling a load-balanced
+    /// endpoint whose backend briefly lags the anchored tip.
+    pub transient_unavailable: HashMap<u64, u32>,
     /// Packed `EpochNumberWithFraction` u64 (see
     /// `cknerv_adapter_ckb::poll::parse_epoch_packed`).
     pub epoch_packed: u64,
@@ -40,6 +44,7 @@ impl Default for CannedResponses {
             tip: 0,
             blocks: HashMap::new(),
             unavailable_blocks: HashSet::new(),
+            transient_unavailable: HashMap::new(),
             // length=1800, index=0, number=1
             epoch_packed: (1800u64 << 40) | 1u64,
             mempool_pending: 0,
@@ -142,7 +147,7 @@ async fn handle(
         .to_string();
     let id = req.get("id").cloned().unwrap_or(json!(0));
 
-    let canned = canned.lock().unwrap();
+    let mut canned = canned.lock().unwrap();
     let result = match method.as_str() {
         "get_tip_block_number" => json!(format!("0x{:x}", canned.tip)),
         "get_block_hash" => {
@@ -166,7 +171,14 @@ async fn handle(
                 .unwrap_or_default();
             let num_str = params.first().and_then(|v| v.as_str()).unwrap_or("0x0");
             let num = u64::from_str_radix(num_str.trim_start_matches("0x"), 16).unwrap_or(0);
-            if canned.unavailable_blocks.contains(&num) {
+            let lagging = match canned.transient_unavailable.get_mut(&num) {
+                Some(remaining) if *remaining > 0 => {
+                    *remaining -= 1;
+                    true
+                }
+                _ => false,
+            };
+            if lagging || canned.unavailable_blocks.contains(&num) {
                 Value::Null
             } else {
                 canned.blocks.get(&num).cloned().unwrap_or(Value::Null)

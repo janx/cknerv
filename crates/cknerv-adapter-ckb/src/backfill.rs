@@ -12,6 +12,7 @@
 //! diagnostic escape hatch, not the default reservoir policy.
 
 use std::collections::HashSet;
+use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use futures::stream::{self, StreamExt};
@@ -34,6 +35,18 @@ const DISCOVERY_PROGRESS_EVERY: u64 = 256;
 
 /// Ordered replay progress cadence.
 const REPLAY_PROGRESS_EVERY: u64 = 25;
+
+/// Attempts spent on a single block before the discovery walk gives up on it.
+/// A load-balanced RPC endpoint answers from whichever backend the request
+/// lands on, and one that lags the anchored tip reports a canonical block as
+/// not-yet-visible. The walk costs minutes and publishes nothing until it
+/// completes, so a single such answer must not discard all of it.
+const BLOCK_FETCH_ATTEMPTS: u32 = 3;
+
+/// Backoff before the first in-place block retry, doubled for each further
+/// attempt. With three attempts a genuinely missing block costs the walk 1.5s
+/// before it fails honestly.
+const BLOCK_FETCH_RETRY_BACKOFF: Duration = Duration::from_millis(500);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct HydrationPolicy {
@@ -164,10 +177,7 @@ async fn discover_window(
     let mut stream = stream::iter((floor_limit..=tip).rev())
         .map(|number| async move {
             let exact_size = tip.saturating_sub(number) < RECENT_INTERVAL_CAP as u64;
-            (
-                number,
-                fetch_and_translate_replay_with_size(rpc, number, exact_size).await,
-            )
+            (number, fetch_hydration_block(rpc, number, exact_size).await)
         })
         .buffered(FETCH_CONCURRENCY);
 
@@ -178,8 +188,7 @@ async fn discover_window(
     let mut scanned = 0u64;
 
     while let Some((number, fetched)) = stream.next().await {
-        let block =
-            fetched?.ok_or_else(|| anyhow!("canonical hydration block {number} is not visible"))?;
+        let block = fetched?;
 
         if let Some(expected) = expected_hash.as_deref() {
             if block.hash != expected {
@@ -239,6 +248,41 @@ async fn discover_window(
         complete,
         blocks_descending,
     })
+}
+
+/// Fetch one canonical block for the discovery walk, absorbing the transient
+/// answers an endpoint gives while it catches up: both a fetch error and a
+/// not-yet-visible block are retried in place with a short backoff.
+///
+/// Retries are bounded and the walk stays honest — a block that is still
+/// invisible after the last attempt fails the walk, because nothing may be
+/// published until the whole window is proven canonical.
+async fn fetch_hydration_block(
+    rpc: &RpcClient,
+    number: u64,
+    exact_size: bool,
+) -> Result<FetchedBlock> {
+    let mut attempt = 1u32;
+    let mut backoff = BLOCK_FETCH_RETRY_BACKOFF;
+    loop {
+        let failure = match fetch_and_translate_replay_with_size(rpc, number, exact_size).await {
+            Ok(Some(block)) => return Ok(block),
+            Ok(None) => anyhow!("canonical hydration block {number} is not visible"),
+            Err(error) => error,
+        };
+        if attempt >= BLOCK_FETCH_ATTEMPTS {
+            return Err(failure);
+        }
+        tracing::debug!(
+            target: "cknerv-adapter-ckb",
+            block = number,
+            attempt,
+            "cell hydration block fetch failed: {failure}; retrying in {backoff:?}"
+        );
+        tokio::time::sleep(backoff).await;
+        attempt = attempt.saturating_add(1);
+        backoff = backoff.saturating_mul(2);
+    }
 }
 
 /// Update the live-output estimate for one block while walking backwards.

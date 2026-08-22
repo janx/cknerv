@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 
 use cknerv_core::{EpochInfo, MempoolStats, Mutation, ReplayPhase};
 
-use crate::backfill::{hydrate_at_tip, HydrationPolicy};
+use crate::backfill::{hydrate_at_tip, BackfillOutcome, HydrationPolicy};
 use crate::block_fetch::{fetch_and_translate, fetch_and_translate_replay};
 use crate::rpc::RpcClient;
 
@@ -21,6 +21,14 @@ use crate::rpc::RpcClient;
 /// and exactly replay the common one-block reorg case. One additional parent
 /// anchor is retained by [`PollState::prune_canonical_history`].
 const MIN_REORG_WINDOW_BLOCKS: u64 = 2;
+
+/// Poll cycles that re-run a boot hydration the adapter could not complete at
+/// startup, before it accepts the historical live-only fallback. The discovery
+/// walk already absorbs single-block flakiness; these cover a whole attempt
+/// lost to a transport failure or to a reorg at the anchored tip. Bounded, so a
+/// node that can never satisfy the walk still gets a live stage instead of an
+/// empty one.
+const BOOT_HYDRATION_RETRY_ATTEMPTS: u32 = 3;
 
 /// Mutable state threaded across `poll_once` invocations.
 #[derive(Default)]
@@ -40,6 +48,10 @@ pub struct PollState {
     /// Keeps the cause stable across transient block-visibility gaps even if
     /// the remaining gap falls below the initial catch-up threshold.
     catching_up: bool,
+    /// Boot hydration attempts the poller still owes. Startup hydration is
+    /// single-shot; without this the first failure would leave the stage empty
+    /// for the life of the process.
+    hydration_attempts_left: u32,
     pub last_chain_info: Option<(EpochInfo, u64, String, String)>,
     pub last_mempool: Option<MempoolStats>,
 }
@@ -56,6 +68,24 @@ impl PollState {
 
     pub fn canonical_hash(&self, number: u64) -> Option<&str> {
         self.canonical_blocks.get(&number).map(String::as_str)
+    }
+
+    /// Ask the poller to re-run a boot hydration that failed at startup. Until
+    /// the attempts are spent the poller re-discovers the window instead of
+    /// following the tip, so a landing hydration never has to discard a live
+    /// sliver it would otherwise duplicate.
+    pub(crate) fn arm_hydration_retry(&mut self) {
+        self.hydration_attempts_left = BOOT_HYDRATION_RETRY_ATTEMPTS;
+    }
+
+    /// Adopt a freshly discovered canonical window as the poller's cursor.
+    fn adopt_hydrated_window(&mut self, hydrated: BackfillOutcome, reorg_window_blocks: u64) {
+        self.canonical_blocks.clear();
+        self.seed_canonical(hydrated.anchors);
+        self.last_tip = Some(hydrated.tip);
+        self.prune_canonical_history(reorg_window_blocks);
+        self.replaying_reorg = false;
+        self.catching_up = false;
     }
 
     fn prune_canonical_history(&mut self, reorg_window_blocks: u64) {
@@ -224,6 +254,40 @@ async fn sync_canonical_blocks(
     hydration_policy: HydrationPolicy,
     reorg_window_blocks: u64,
 ) -> Result<()> {
+    if state.hydration_attempts_left > 0 {
+        // A boot hydration failed at startup. Re-discover the window at the
+        // *current* tip — the anchor that failed is stale by now — instead of
+        // settling into live-only for the life of the process. `reset` stays
+        // false because this branch owns the cursor until a window lands: no
+        // canonical block has been emitted, so there is nothing to discard and
+        // no way to double-apply a hydration that eventually succeeds.
+        //
+        // `hydration_policy` is already `for_rebuild()`-normalized, which is
+        // the identity for every policy that reaches boot hydration (that path
+        // requires a non-zero Cell target and a non-zero block limit).
+        state.hydration_attempts_left = state.hydration_attempts_left.saturating_sub(1);
+        match hydrate_at_tip(rpc, tip, hydration_policy, ReplayPhase::Boot, false, out).await {
+            Ok(hydrated) => {
+                state.hydration_attempts_left = 0;
+                state.adopt_hydrated_window(hydrated, reorg_window_blocks);
+                return Ok(());
+            }
+            Err(error) if state.hydration_attempts_left > 0 => {
+                tracing::warn!(
+                    target: "cknerv-adapter-ckb",
+                    attempts_left = state.hydration_attempts_left,
+                    "cell hydration retry failed: {error}; retrying on the next poll"
+                );
+                // Chain info and mempool polling continue around this branch.
+                return Ok(());
+            }
+            Err(error) => tracing::warn!(
+                target: "cknerv-adapter-ckb",
+                "cell hydration retry failed: {error}; starting live-only"
+            ),
+        }
+    }
+
     if state.last_tip.is_none() {
         // Preserve the legacy live-only boot behavior: establish the block
         // immediately before the current tip as an anchor, then emit only the
@@ -321,12 +385,7 @@ async fn rebuild_canonical_window(
     // and the next poll can retry cleanly.
     let rebuilt =
         hydrate_at_tip(rpc, tip, hydration_policy, ReplayPhase::Rebuild, true, out).await?;
-    state.canonical_blocks.clear();
-    state.seed_canonical(rebuilt.anchors);
-    state.last_tip = Some(rebuilt.tip);
-    state.prune_canonical_history(reorg_window_blocks);
-    state.replaying_reorg = false;
-    state.catching_up = false;
+    state.adopt_hydrated_window(rebuilt, reorg_window_blocks);
     Ok(())
 }
 

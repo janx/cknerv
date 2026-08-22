@@ -39,6 +39,17 @@ async fn drive_for(adapter: CkbDirectAdapter, deadline: Duration, idle: Duration
     emitted
 }
 
+/// Canonical block heights the adapter published, in emission order.
+fn block_numbers(emitted: &[Mutation]) -> Vec<u64> {
+    emitted
+        .iter()
+        .filter_map(|mutation| match mutation {
+            Mutation::BlockMined { number, .. } => Some(*number),
+            _ => None,
+        })
+        .collect()
+}
+
 async fn poll_cycle(
     rpc: &RpcClient,
     state: &mut PollState,
@@ -954,42 +965,274 @@ async fn adapter_discards_incomplete_discovery_instead_of_partial_replay() {
             mock_rpc::simple_block(number, &format!("0xblock{number}")),
         );
     }
+    // Never visible: the walk's in-place retries are spent and the block is
+    // still missing, which stays a walk failure.
     canned.unavailable_blocks.insert(3);
     let (rpc_url, _handle) = mock_rpc::start(canned).await;
 
     let adapter = CkbDirectAdapter::new(rpc_url)
         .with_backfill_blocks(5)
         .with_poll_interval(Duration::from_millis(40));
+    // Long enough for the boot attempt to spend its per-block retries and
+    // close its envelope.
     let emitted = drive_for(
         adapter,
-        Duration::from_millis(250),
-        Duration::from_millis(60),
+        Duration::from_millis(2_000),
+        Duration::from_millis(400),
     )
     .await;
 
-    let numbers: Vec<u64> = emitted
-        .iter()
-        .filter_map(|mutation| match mutation {
-            Mutation::BlockMined { number, .. } => Some(*number),
-            _ => None,
-        })
-        .collect();
     // Discovery runs newest -> oldest and publishes no blocks until the whole
-    // candidate window is canonical. The failed boot attempt is discarded;
-    // ordinary live polling then emits only the current tip.
-    assert_eq!(numbers, vec![5]);
+    // candidate window is canonical, so the attempt that gave up on block 3
+    // published none of the four it had already fetched.
+    let gave_up = emitted
+        .iter()
+        .position(|mutation| {
+            matches!(
+                mutation,
+                Mutation::BackfillProgress {
+                    done: 0,
+                    total: 0,
+                    active: false,
+                    phase: ReplayPhase::Boot
+                }
+            )
+        })
+        .expect("the boot attempt must close its empty envelope");
+    assert!(
+        block_numbers(&emitted[..gave_up]).is_empty(),
+        "a failed discovery must publish nothing; emitted: {emitted:#?}"
+    );
     assert!(!emitted
         .iter()
         .any(|mutation| matches!(mutation, Mutation::CellHydrationCompleted { .. })));
-    assert!(emitted.iter().any(|mutation| matches!(
-        mutation,
-        Mutation::BackfillProgress {
-            done: 0,
-            total: 0,
-            active: false,
-            phase: ReplayPhase::Boot
+}
+
+#[tokio::test]
+async fn hydration_walk_survives_a_transient_block_visibility_gap() {
+    let mut canned = mock_rpc::CannedResponses {
+        tip: 5,
+        ..Default::default()
+    };
+    for number in 1..=5 {
+        canned.blocks.insert(
+            number,
+            mock_rpc::simple_block(number, &format!("0xblock{number}")),
+        );
+    }
+    // One lagging answer: the backend this request lands on has not seen the
+    // block the anchored tip already proves canonical.
+    canned.transient_unavailable.insert(3, 1);
+    let (rpc_url, _handle) = mock_rpc::start(canned).await;
+
+    let adapter = CkbDirectAdapter::new(rpc_url)
+        .with_cell_target(3)
+        .with_poll_interval(Duration::from_millis(50));
+    let emitted = drive_for(
+        adapter,
+        Duration::from_millis(1_500),
+        Duration::from_millis(400),
+    )
+    .await;
+
+    // The walk retries block 3 in place and completes the whole window, rather
+    // than losing a minutes-long discovery to one null.
+    assert_eq!(
+        block_numbers(&emitted),
+        vec![3, 4, 5],
+        "expected the full discovered window; emitted: {emitted:#?}"
+    );
+    assert!(
+        emitted.iter().any(|mutation| matches!(
+            mutation,
+            Mutation::CellHydrationCompleted {
+                target: 3,
+                available: 3,
+                from_block: 3,
+                at_tip: 5,
+            }
+        )),
+        "expected a completed hydration; emitted: {emitted:#?}"
+    );
+    // In place, inside the boot attempt: no attempt was lost and re-armed.
+    assert!(
+        !emitted.iter().any(|mutation| matches!(
+            mutation,
+            Mutation::BackfillProgress {
+                done: 0,
+                total: 0,
+                active: false,
+                phase: ReplayPhase::Boot
+            }
+        )),
+        "the boot attempt must absorb the gap itself; emitted: {emitted:#?}"
+    );
+}
+
+#[tokio::test]
+async fn failed_boot_hydration_is_retried_until_the_window_lands() {
+    // Block 4 claims a parent no canonical block has: the walk fails its
+    // linkage check, which no per-block retry can repair. Every fetch here
+    // succeeds, so the boot attempt fails immediately.
+    let mut canned = mock_rpc::CannedResponses {
+        tip: 5,
+        ..Default::default()
+    };
+    for number in 1..=5 {
+        canned.blocks.insert(
+            number,
+            mock_rpc::simple_block(number, &format!("0xblock{number}")),
+        );
+    }
+    canned.blocks.insert(
+        4,
+        mock_rpc::simple_block_with_parent(4, "0xblock4", "0xorphaned"),
+    );
+    let (rpc_url, _handle, canned) = mock_rpc::start_mutable(canned).await;
+
+    let adapter = CkbDirectAdapter::new(rpc_url)
+        .with_cell_target(3)
+        .with_poll_interval(Duration::from_millis(200));
+
+    let (tx, mut rx) = mpsc::channel::<Mutation>(128);
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let task = tokio::spawn(async move { adapter.run(tx, shutdown_rx).await });
+
+    // Wait for the boot attempt to close its empty envelope, then let the node
+    // answer canonically: the poller must ask again instead of settling for
+    // live-only.
+    let mut emitted = Vec::new();
+    loop {
+        let mutation = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("boot hydration must fail within 2s")
+            .expect("adapter still running");
+        let failed_boot = matches!(
+            mutation,
+            Mutation::BackfillProgress {
+                done: 0,
+                total: 0,
+                active: false,
+                phase: ReplayPhase::Boot
+            }
+        );
+        emitted.push(mutation);
+        if failed_boot {
+            break;
         }
-    )));
+    }
+    assert!(
+        block_numbers(&emitted).is_empty(),
+        "the failed boot attempt must publish nothing; emitted: {emitted:#?}"
+    );
+    canned
+        .lock()
+        .unwrap()
+        .blocks
+        .insert(4, mock_rpc::simple_block(4, "0xblock4"));
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while std::time::Instant::now() < deadline {
+        match tokio::time::timeout(Duration::from_millis(100), rx.recv()).await {
+            Ok(Some(mutation)) => emitted.push(mutation),
+            Ok(None) => break,
+            Err(_) => {}
+        }
+        if emitted
+            .iter()
+            .any(|mutation| matches!(mutation, Mutation::CellHydrationCompleted { .. }))
+        {
+            break;
+        }
+    }
+    let _ = shutdown_tx.send(true);
+    let _ = tokio::time::timeout(Duration::from_secs(2), task).await;
+
+    assert!(
+        emitted.iter().any(|mutation| matches!(
+            mutation,
+            Mutation::CellHydrationCompleted {
+                target: 3,
+                available: 3,
+                from_block: 3,
+                at_tip: 5,
+            }
+        )),
+        "a re-armed hydration must complete; emitted: {emitted:#?}"
+    );
+    // The retry owns the cursor until its window lands, so the whole window is
+    // published once, in order, with nothing to discard first.
+    assert_eq!(
+        block_numbers(&emitted),
+        vec![3, 4, 5],
+        "expected one ascending replay; emitted: {emitted:#?}"
+    );
+    assert!(
+        !emitted
+            .iter()
+            .any(|mutation| matches!(mutation, Mutation::ChainRebuild { .. })),
+        "a re-armed boot hydration has nothing to reset; emitted: {emitted:#?}"
+    );
+}
+
+#[tokio::test]
+async fn boot_hydration_retries_are_bounded_before_live_only() {
+    // A linkage the node never repairs: every hydration attempt fails, so the
+    // adapter must stop asking and give the stage a live tip instead.
+    let mut canned = mock_rpc::CannedResponses {
+        tip: 5,
+        ..Default::default()
+    };
+    for number in 1..=5 {
+        canned.blocks.insert(
+            number,
+            mock_rpc::simple_block(number, &format!("0xblock{number}")),
+        );
+    }
+    canned.blocks.insert(
+        4,
+        mock_rpc::simple_block_with_parent(4, "0xblock4", "0xorphaned"),
+    );
+    let (rpc_url, _handle) = mock_rpc::start(canned).await;
+
+    let adapter = CkbDirectAdapter::new(rpc_url)
+        .with_cell_target(3)
+        .with_poll_interval(Duration::from_millis(40));
+    let emitted = drive_for(
+        adapter,
+        Duration::from_millis(600),
+        Duration::from_millis(200),
+    )
+    .await;
+
+    // One boot attempt plus a bounded handful of retries, then live-only —
+    // never an unbounded rediscovery loop against the node.
+    let boot_attempts = emitted
+        .iter()
+        .filter(|mutation| {
+            matches!(
+                mutation,
+                Mutation::BackfillProgress {
+                    done: 0,
+                    total: 0,
+                    active: false,
+                    phase: ReplayPhase::Boot
+                }
+            )
+        })
+        .count();
+    assert_eq!(
+        boot_attempts, 4,
+        "expected one boot attempt plus three retries; emitted: {emitted:#?}"
+    );
+    assert!(!emitted
+        .iter()
+        .any(|mutation| matches!(mutation, Mutation::CellHydrationCompleted { .. })));
+    assert_eq!(
+        block_numbers(&emitted),
+        vec![5],
+        "spent retries degrade to the historical live-only tip; emitted: {emitted:#?}"
+    );
 }
 
 #[tokio::test]
