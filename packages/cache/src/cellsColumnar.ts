@@ -155,6 +155,34 @@ function fail(reason: string): never {
   throw new Error(`cells columnar snapshot: ${reason}`);
 }
 
+/** Read `code` out of a wire dictionary or code table, or FAIL.
+ *
+ *  A code this build's table does not hold means the encoder and the decoder
+ *  no longer agree about an enum — a variant was added, or the declaration
+ *  order moved. Aliasing it to a valid neighbour (`?? 'other'`, `?? 'data'`)
+ *  does not degrade gracefully: it MINTS a different classification, and for
+ *  a script a different `ScriptId`, which is the key the script-identity join
+ *  and `cellContentEquals` compare. The galaxy then looks plausible and is
+ *  wrong, and BIN and JSON disagree about the same cell.
+ *
+ *  Throwing is affordable because every caller decodes inside the binary
+ *  path, whose contract is "any throw ⇒ use the JSON snapshot": the HTTP boot
+ *  falls back per request, and the stream latches the fallback for the whole
+ *  session. Words instead of a wrong galaxy. */
+function codeAt<T>(
+  table: readonly T[],
+  code: number,
+  field: string,
+  row?: number,
+): T {
+  const value = table[code];
+  if (value === undefined) {
+    const at = row === undefined ? '' : ` at row ${row}`;
+    fail(`${field} code ${code} outside 0..${table.length - 1}${at}`);
+  }
+  return value;
+}
+
 /** Decode a columnar snapshot buffer into typed-array column views.
  *  Throws on malformed input — callers treat any throw as "fall back to the
  *  JSON snapshot path". */
@@ -234,7 +262,7 @@ export function decodeCellsColumnar(buffer: ArrayBuffer): CellsColumnarView {
   const scriptCount = tail.getUint16(cursor, true);
   cursor += 2;
   for (let i = 0; i < scriptCount; i += 1) {
-    const hashType = COLUMNAR_HASH_TYPES[bytes[cursor]] ?? 'data';
+    const hashType = codeAt(COLUMNAR_HASH_TYPES, bytes[cursor], 'hash_type');
     cursor += 1;
     scripts.push({ code_hash: shortString(), hash_type: hashType });
   }
@@ -321,17 +349,27 @@ export function decodeCellsColumnar(buffer: ArrayBuffer): CellsColumnarView {
 export function columnarCellAt(view: CellsColumnarView, i: number): Cell {
   const death = view.deathAtMs[i];
   const tagCode = view.tagIndex[i];
-  // A ref past the dictionary can only come from a buffer that is already
-  // wrong; read it as absent rather than as a key holding undefined, the
-  // same way the enum columns fall back to 'other'.
-  const lockScript = view.scripts[view.lockScriptRef[i] - 1];
-  const typeScript = view.scripts[view.typeScriptRef[i] - 1];
+  // A ref past the dictionary can only come from a buffer this build does not
+  // understand. Reading it as ABSENT was as much of an invention as reading it
+  // as the wrong script: `cellContentEquals` compares these keys, so a cell
+  // that JSON says is scripted and BIN says is bare is not a degraded read, it
+  // is a different cell. Zero still means absent; anything past the end fails.
+  const lockRef = view.lockScriptRef[i];
+  const typeRef = view.typeScriptRef[i];
+  const lockScript = lockRef === CELLS_COLUMNAR_NO_SCRIPT
+    ? undefined
+    : codeAt(view.scripts, lockRef - 1, 'lock_script ref', i);
+  const typeScript = typeRef === CELLS_COLUMNAR_NO_SCRIPT
+    ? undefined
+    : codeAt(view.scripts, typeRef - 1, 'type_script ref', i);
   return {
     id: view.id[i],
     born_at_ms: view.bornAtMs[i],
     death_at_ms: Number.isNaN(death) ? null : death,
     birth_block: view.birthBlock[i],
-    tag: tagCode === CELLS_COLUMNAR_NO_TAG ? null : view.tags[tagCode],
+    tag: tagCode === CELLS_COLUMNAR_NO_TAG
+      ? null
+      : codeAt(view.tags, tagCode, 'tag', i),
     pos_seed: [view.posX[i], view.posY[i], view.posZ[i]],
     out_point: { tx_hash: view.txHash(i), index: view.outPointIndex[i] },
     capacity: view.capacity[i],
@@ -343,8 +381,8 @@ export function columnarCellAt(view: CellsColumnarView, i: number): Cell {
       ? null
       : [view.typeShapeSeed0[i], view.typeShapeSeed1[i]],
     data_shape_seed: [view.dataShapeSeed0[i], view.dataShapeSeed1[i]],
-    lock_kind: COLUMNAR_LOCK_KINDS[view.lockKind[i]] ?? 'other',
-    asset_kind: COLUMNAR_ASSET_KINDS[view.assetKind[i]] ?? 'other',
+    lock_kind: codeAt(COLUMNAR_LOCK_KINDS, view.lockKind[i], 'lock_kind', i),
+    asset_kind: codeAt(COLUMNAR_ASSET_KINDS, view.assetKind[i], 'asset_kind', i),
     // Absent stays ABSENT rather than becoming an undefined-valued key: the
     // JSON twin omits these entirely, and `cellContentEquals` compares them,
     // so a key that exists on one path and not the other would false-negative

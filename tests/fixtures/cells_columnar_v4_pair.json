@@ -110,14 +110,133 @@
     },
     {
       "id": 3,
-      "born_at_ms": 2000,
+      "born_at_ms": 1000,
       "death_at_ms": null,
-      "birth_block": 8,
+      "birth_block": 7,
       "tag": null,
       "pos_seed": [
         -1.7693411111831665,
         0.7402845621109009,
         -34.50374221801758
+      ],
+      "out_point": {
+        "tx_hash": "0xtx1",
+        "index": 3
+      },
+      "capacity": 7000000000,
+      "data_hex": "0x01",
+      "data_bytes": 1,
+      "content_hash": "0x00000000000000000000000000000000000000000000000000000001a13b8604",
+      "lock_shape_seed": [
+        2705032704,
+        1
+      ],
+      "type_shape_seed": [
+        572662306,
+        572662306
+      ],
+      "data_shape_seed": [
+        4,
+        2
+      ],
+      "lock_kind": "multisig",
+      "asset_kind": "sudt",
+      "lock_script": {
+        "code_hash": "0x0000000000000000000000000000000000000000000000000000000011111111",
+        "hash_type": "data"
+      },
+      "type_script": {
+        "code_hash": "0x0000000000000000000000000000000000000000000000000000000022222222",
+        "hash_type": "data"
+      }
+    },
+    {
+      "id": 4,
+      "born_at_ms": 1000,
+      "death_at_ms": null,
+      "birth_block": 7,
+      "tag": null,
+      "pos_seed": [
+        -25.18841552734375,
+        1.2053253650665283,
+        4.016536235809326
+      ],
+      "out_point": {
+        "tx_hash": "0xtx1",
+        "index": 4
+      },
+      "capacity": 7500000000,
+      "data_hex": "0x02",
+      "data_bytes": 1,
+      "content_hash": "0x00000000000000000000000000000000000000000000000000000001bf08eb04",
+      "lock_shape_seed": [
+        3205032704,
+        1
+      ],
+      "type_shape_seed": [
+        1145324612,
+        1145324612
+      ],
+      "data_shape_seed": [
+        4,
+        2
+      ],
+      "lock_kind": "acp",
+      "asset_kind": "spore",
+      "lock_script": {
+        "code_hash": "0x0000000000000000000000000000000000000000000000000000000033333333",
+        "hash_type": "data2"
+      },
+      "type_script": {
+        "code_hash": "0x0000000000000000000000000000000000000000000000000000000044444444",
+        "hash_type": "data2"
+      }
+    },
+    {
+      "id": 5,
+      "born_at_ms": 1000,
+      "death_at_ms": null,
+      "birth_block": 7,
+      "tag": null,
+      "pos_seed": [
+        10.266837120056152,
+        4.467949867248535,
+        35.198211669921875
+      ],
+      "out_point": {
+        "tx_hash": "0xtx1",
+        "index": 5
+      },
+      "capacity": 6600000000,
+      "data_hex": "0x",
+      "data_bytes": 0,
+      "content_hash": "0x0000000000000000000000000000000000000000000000000000000189640202",
+      "lock_shape_seed": [
+        2305032704,
+        1
+      ],
+      "type_shape_seed": null,
+      "data_shape_seed": [
+        2,
+        2
+      ],
+      "lock_kind": "omnilock",
+      "asset_kind": "native",
+      "lock_script": {
+        "code_hash": "0x0000000000000000000000000000000000000000000000000000000055555555",
+        "hash_type": "type"
+      }
+    },
+    {
+      "id": 6,
+      "born_at_ms": 2000,
+      "death_at_ms": null,
+      "birth_block": 8,
+      "tag": null,
+      "pos_seed": [
+        -37.63455581665039,
+        -1.1969106197357178,
+        -9.31506633758545
       ],
       "out_point": {
         "tx_hash": "0xtx2",
@@ -149,7 +268,10 @@
       "to_ids": [
         0,
         1,
-        2
+        2,
+        3,
+        4,
+        5
       ],
       "endpoint_anchors": [
         {
@@ -181,6 +303,36 @@
           ],
           "content_hash": "0x0000000000000000000000000000000000000000000000000000000218711a06",
           "resolved": true
+        },
+        {
+          "id": 3,
+          "pos_seed": [
+            -1.7693411111831665,
+            0.7402845621109009,
+            -34.50374221801758
+          ],
+          "content_hash": "0x00000000000000000000000000000000000000000000000000000001a13b8604",
+          "resolved": true
+        },
+        {
+          "id": 4,
+          "pos_seed": [
+            -25.18841552734375,
+            1.2053253650665283,
+            4.016536235809326
+          ],
+          "content_hash": "0x00000000000000000000000000000000000000000000000000000001bf08eb04",
+          "resolved": true
+        },
+        {
+          "id": 5,
+          "pos_seed": [
+            10.266837120056152,
+            4.467949867248535,
+            35.198211669921875
+          ],
+          "content_hash": "0x0000000000000000000000000000000000000000000000000000000189640202",
+          "resolved": true
         }
       ],
       "parents": [],
@@ -194,7 +346,7 @@
         2
       ],
       "to_ids": [
-        3
+        6
       ],
       "endpoint_anchors": [
         {
@@ -218,11 +370,11 @@
           "resolved": false
         },
         {
-          "id": 3,
+          "id": 6,
           "pos_seed": [
-            -1.7693411111831665,
-            0.7402845621109009,
-            -34.50374221801758
+            -37.63455581665039,
+            -1.1969106197357178,
+            -9.31506633758545
           ],
           "content_hash": "0x00000000000000000000000000000000000000000000000000000001dcd65002",
           "resolved": true
@@ -236,32 +388,32 @@
       "at_ms": 2000
     }
   ],
-  "total_births": 4,
+  "total_births": 7,
   "total_deaths": 1,
   "stats": {
-    "in_view": 3,
-    "data_bearing": 1,
-    "capacity_shannons": 26100000000,
+    "in_view": 6,
+    "data_bearing": 3,
+    "capacity_shannons": 47200000000,
     "by_kind": {
       "wallet": 1,
       "dex": 0,
       "cf": 0,
       "ckbloom": 0,
-      "generic": 2
+      "generic": 5
     },
     "by_lock": {
       "sighash": 2,
-      "multisig": 0,
-      "acp": 0,
-      "omnilock": 0,
+      "multisig": 1,
+      "acp": 1,
+      "omnilock": 1,
       "other": 1
     },
     "by_asset": {
-      "native": 0,
-      "sudt": 0,
+      "native": 1,
+      "sudt": 1,
       "xudt": 1,
       "dao": 0,
-      "spore": 0,
+      "spore": 1,
       "other": 2
     },
     "scripts": {
@@ -272,11 +424,46 @@
             "hash_type": "type"
           },
           "count": 2
+        },
+        {
+          "script": {
+            "code_hash": "0x0000000000000000000000000000000000000000000000000000000011111111",
+            "hash_type": "data"
+          },
+          "count": 1
+        },
+        {
+          "script": {
+            "code_hash": "0x0000000000000000000000000000000000000000000000000000000033333333",
+            "hash_type": "data2"
+          },
+          "count": 1
+        },
+        {
+          "script": {
+            "code_hash": "0x0000000000000000000000000000000000000000000000000000000055555555",
+            "hash_type": "type"
+          },
+          "count": 1
         }
       ],
       "locks_tail_cells": 0,
       "locks_tail_scripts": 0,
       "types": [
+        {
+          "script": {
+            "code_hash": "0x0000000000000000000000000000000000000000000000000000000022222222",
+            "hash_type": "data"
+          },
+          "count": 1
+        },
+        {
+          "script": {
+            "code_hash": "0x0000000000000000000000000000000000000000000000000000000044444444",
+            "hash_type": "data2"
+          },
+          "count": 1
+        },
         {
           "script": {
             "code_hash": "0x50bd8d6680b8b9cf98b73f3c08faf8b2a21914311954118ad6609be6e78a1b95",
@@ -287,7 +474,7 @@
       ],
       "types_tail_cells": 0,
       "types_tail_scripts": 0,
-      "types_absent": 2,
+      "types_absent": 3,
       "unidentified": 1
     }
   },
@@ -301,6 +488,9 @@
       1,
       2,
       3,
+      4,
+      5,
+      6,
       900,
       901,
       902

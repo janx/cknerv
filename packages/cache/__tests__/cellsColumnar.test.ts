@@ -9,6 +9,9 @@ import {
   CELLS_COLUMNAR_NO_TAG,
   CELLS_COLUMNAR_REVISION_OFFSET,
   CELLS_COLUMNAR_VERSION,
+  COLUMNAR_ASSET_KINDS,
+  COLUMNAR_HASH_TYPES,
+  COLUMNAR_LOCK_KINDS,
   cellsSnapshotFromColumnar,
   columnarCellAt,
   decodeCellsColumnar,
@@ -217,6 +220,71 @@ describe('decodeCellsColumnar', () => {
     expect(() => decodeCellsColumnar(good.slice(0, 40))).toThrow(/too small/);
     expect(() => decodeCellsColumnar(new ArrayBuffer(8))).toThrow(/too small/);
   });
+
+  /** A code past the end of a table means the encoder and this decoder no
+   *  longer agree about an enum. Aliasing it to a valid neighbour — which is
+   *  what `?? 'other'` and `?? 'data'` did — MINTS a classification the chain
+   *  never said, and for a script a `ScriptId` that no census or join will
+   *  ever match. The whole binary path's contract is "any throw ⇒ read the
+   *  JSON snapshot instead", so failing costs one slower boot and buys a
+   *  galaxy that is not quietly wrong.
+   *
+   *  Each case pokes ONE byte of the real fixture through the column view's
+   *  own `byteOffset`, so the test needs no copy of the layout arithmetic. */
+  describe('a code the tables do not hold', () => {
+    function poked(column: 'lockKind' | 'assetKind' | 'tagIndex', code: number) {
+      const buffer = fixture();
+      const view = decodeCellsColumnar(buffer);
+      new Uint8Array(buffer)[view[column].byteOffset] = code;
+      return view;
+    }
+
+    it('fails on an out-of-range lock_kind rather than calling it other', () => {
+      const code = COLUMNAR_LOCK_KINDS.length;
+      expect(() => columnarCellAt(poked('lockKind', code), 0))
+        .toThrow(new RegExp(`lock_kind code ${code} outside 0\\.\\.4 at row 0`));
+    });
+
+    it('fails on an out-of-range asset_kind rather than calling it other', () => {
+      const code = COLUMNAR_ASSET_KINDS.length;
+      expect(() => columnarCellAt(poked('assetKind', code), 0))
+        .toThrow(new RegExp(`asset_kind code ${code} outside 0\\.\\.5 at row 0`));
+    });
+
+    it('fails on a tag code past the dictionary', () => {
+      const view = decodeCellsColumnar(fixture());
+      const code = view.tags.length;
+      expect(code).toBeLessThan(CELLS_COLUMNAR_NO_TAG);
+      expect(() => columnarCellAt(poked('tagIndex', code), 0))
+        .toThrow(new RegExp(`tag code ${code} outside 0\\.\\.1 at row 0`));
+    });
+
+    it('fails on a script ref past the dictionary rather than dropping it', () => {
+      const buffer = fixture();
+      const view = decodeCellsColumnar(buffer);
+      // Refs are `index + 1`, so one past the last entry is `length + 1`.
+      const ref = view.scripts.length + 1;
+      new DataView(buffer).setUint16(view.lockScriptRef.byteOffset, ref, true);
+      expect(() => columnarCellAt(view, 0))
+        .toThrow(new RegExp(`lock_script ref code ${ref - 1} outside 0\\.\\.1 at row 0`));
+    });
+
+    it('fails on a hash_type code in the script dictionary', () => {
+      const buffer = fixture();
+      const bytes = new Uint8Array(buffer);
+      // Walk the tail to the first script's hash_type byte: the tail begins at
+      // the u32 the header carries at offset 64, then the tag dictionary
+      // (count, then length-prefixed strings), then the u16 script count.
+      let cursor = new DataView(buffer).getUint32(64, true);
+      const tagCount = bytes[cursor];
+      cursor += 1;
+      for (let i = 0; i < tagCount; i += 1) cursor += 1 + bytes[cursor];
+      const code = COLUMNAR_HASH_TYPES.length;
+      bytes[cursor + 2] = code;
+      expect(() => decodeCellsColumnar(buffer))
+        .toThrow(new RegExp(`hash_type code ${code} outside 0\\.\\.3`));
+    });
+  });
 });
 
 // ── THE differential gate ────────────────────────────────────────────
@@ -306,6 +374,27 @@ describe('decode(BIN) ≡ JSON', () => {
     const anchors = (fromJson.recent_links ?? []).flatMap((l) => l.endpoint_anchors);
     expect(anchors.some((a) => a.resolved)).toBe(true);
     expect(anchors.some((a) => !a.resolved)).toBe(true);
+  });
+
+  /** Every enum CODE, not just the handful a sample happens to reach. The
+   *  three tables below are index-addressed by the wire, so a variant added
+   *  or reordered on the Rust side shifts the meaning of a byte — and since
+   *  an unknown code is now a decode error, the codes this fixture does not
+   *  carry are precisely the ones such a move would break in silence. The
+   *  Rust generator holds the same three sets with a total match, so the two
+   *  sides fail together. */
+  it('carries one cell for every lock, asset and hash-type code', () => {
+    const { fromJson } = pair();
+    const all = [...fromJson.cells, ...(fromJson.display?.residents ?? [])];
+    expect([...new Set(all.map((c) => c.lock_kind))].sort())
+      .toEqual([...COLUMNAR_LOCK_KINDS].sort());
+    expect([...new Set(all.map((c) => c.asset_kind))].sort())
+      .toEqual([...COLUMNAR_ASSET_KINDS].sort());
+    const hashTypes = all
+      .flatMap((c) => [c.lock_script, c.type_script])
+      .filter((s): s is ScriptId => s !== undefined)
+      .map((s) => s.hash_type);
+    expect([...new Set(hashTypes)].sort()).toEqual([...COLUMNAR_HASH_TYPES].sort());
   });
 
   it('agrees field by field on every canonical cell', () => {

@@ -5615,6 +5615,15 @@ mod tests {
             "data1",
         )
         .expect("well-formed type code hash");
+        // Synthetic code hashes: the well-known ones are the CKB adapter's to
+        // know, and what has to cross here is the CODE, not the identity.
+        let script = |byte: u8, hash_type: &str| {
+            crate::ScriptId::parse(
+                &format!("0x{:064x}", u128::from(byte) * 0x0101_0101),
+                hash_type,
+            )
+            .expect("well-formed code hash")
+        };
 
         let mut g = make_galaxy();
         // Lock-only, lock+type sharing that lock, and a cell with no script
@@ -5634,12 +5643,43 @@ mod tests {
         lock_and_type.type_script = Some(type_script);
         lock_and_type.type_shape_seed = Some([0x50bd_8d66, 0x80b8_b9cf]);
         let unidentified = out(90_00000000, "0xbeef");
+        // One cell per enum code the three shapes above do not reach. Every
+        // lock kind, asset kind and hash type has to CROSS the boundary: a
+        // code the decoder's table does not hold is now a decode error, and
+        // an unpinned code is exactly the one a reordering would break in
+        // silence. The assertions below hold this sample total.
+        let mut multisig_sudt = out(70_00000000, "0x01");
+        multisig_sudt.lock_kind = LockKind::Multisig;
+        multisig_sudt.asset_kind = AssetKind::Sudt;
+        multisig_sudt.lock_script = script(0x11, "data");
+        multisig_sudt.type_script = Some(script(0x22, "data"));
+        multisig_sudt.type_shape_seed = Some([0x2222_2222, 0x2222_2222]);
+        let mut acp_spore = out(75_00000000, "0x02");
+        acp_spore.lock_kind = LockKind::Acp;
+        acp_spore.asset_kind = AssetKind::Spore;
+        acp_spore.lock_script = script(0x33, "data2");
+        acp_spore.type_script = Some(script(0x44, "data2"));
+        acp_spore.type_shape_seed = Some([0x4444_4444, 0x4444_4444]);
+        // Native means "no type script", so this one says its kind and
+        // carries nothing to say it with — which is the pairing the wire has
+        // to keep separable from a cell with no identity at all.
+        let mut omnilock_native = out(66_00000000, "0x");
+        omnilock_native.lock_kind = LockKind::Omnilock;
+        omnilock_native.asset_kind = AssetKind::Native;
+        omnilock_native.lock_script = script(0x55, "type");
         g.apply_mutation(&landed(
             "0xtx1",
             7,
             1_000,
             vec![],
-            vec![lock_only, lock_and_type, unidentified],
+            vec![
+                lock_only,
+                lock_and_type,
+                unidentified,
+                multisig_sudt,
+                acp_spore,
+                omnilock_native,
+            ],
         ));
         g.apply_mutation(&Mutation::CellTagged {
             out_point: op("0xtx1", 0),
@@ -5668,7 +5708,72 @@ mod tests {
         g.apply_mutation(&Mutation::GalaxyReservoirReplaced { record });
         g.apply_mutation(&mined(8, "0xblock8", 2_100));
 
-        let json = serde_json::to_string_pretty(&g.snapshot()).expect("serialize snapshot");
+        // Total by construction: a new variant fails to COMPILE here, and
+        // then fails the set assertion below until a cell above carries it.
+        // These names are the wire spellings, which is what the TS decoder's
+        // `COLUMNAR_*` tables hold at the matching index.
+        fn lock_kind_name(kind: LockKind) -> &'static str {
+            match kind {
+                LockKind::Sighash => "sighash",
+                LockKind::Multisig => "multisig",
+                LockKind::Acp => "acp",
+                LockKind::Omnilock => "omnilock",
+                LockKind::Other => "other",
+            }
+        }
+        fn asset_kind_name(kind: AssetKind) -> &'static str {
+            match kind {
+                AssetKind::Native => "native",
+                AssetKind::Sudt => "sudt",
+                AssetKind::Xudt => "xudt",
+                AssetKind::Dao => "dao",
+                AssetKind::Spore => "spore",
+                AssetKind::Other => "other",
+            }
+        }
+        fn hash_type_name(hash_type: crate::HashType) -> &'static str {
+            match hash_type {
+                crate::HashType::Data => "data",
+                crate::HashType::Type => "type",
+                crate::HashType::Data1 => "data1",
+                crate::HashType::Data2 => "data2",
+            }
+        }
+
+        let snapshot = g.snapshot();
+        let rows: Vec<&Cell> = snapshot
+            .cells
+            .iter()
+            .chain(snapshot.display.iter().flat_map(|d| d.residents.iter()))
+            .collect();
+        let named = |mut have: Vec<&'static str>| {
+            have.sort_unstable();
+            have.dedup();
+            have
+        };
+        assert_eq!(
+            named(rows.iter().map(|c| lock_kind_name(c.lock_kind)).collect()),
+            named(vec!["sighash", "multisig", "acp", "omnilock", "other"]),
+            "every LockKind code must ride this fixture across the boundary"
+        );
+        assert_eq!(
+            named(rows.iter().map(|c| asset_kind_name(c.asset_kind)).collect()),
+            named(vec!["native", "sudt", "xudt", "dao", "spore", "other"]),
+            "every AssetKind code must ride this fixture across the boundary"
+        );
+        assert_eq!(
+            named(
+                rows.iter()
+                    .flat_map(|c| [Some(c.lock_script).filter(|s| !s.is_unset()), c.type_script])
+                    .flatten()
+                    .map(|s| hash_type_name(s.hash_type))
+                    .collect()
+            ),
+            named(vec!["data", "type", "data1", "data2"]),
+            "every HashType code must ride this fixture's script dictionary"
+        );
+
+        let json = serde_json::to_string_pretty(&snapshot).expect("serialize snapshot");
         assert_matches_text_fixture("cells_columnar_v4_pair.json", &json);
         assert_matches_fixture(
             "cells_columnar_v4_pair.bin",
