@@ -111,9 +111,9 @@ export interface DisplayBudgetView {
  *
  * `updated` lists payload replacements of on-stage cells: canonical
  * `cellChanges.updated` ids that are currently staged members (death/tag of
- * a member) plus residents re-shipped via `enter_cells` while already
- * members. Ids also in `entered` are excluded — the enter itself carries the
- * final payload. */
+ * a member) plus display-lane records re-shipped or patched while their
+ * member stayed on stage. Ids also in `entered` are excluded — the enter
+ * itself carries the final payload. */
 export interface DisplayChangeSet {
   /** Opaque identity of the display membership this journal applies AFTER
    * the previous cache. A renderer that skipped an intermediate state
@@ -251,9 +251,13 @@ export interface CellGalaxyCache {
    *  canonical ids with resident ids; resolve canonical-first at read time
    *  (`resolveDisplayCell`). */
   displayMembers: Set<number>;
-  /** Full payloads for staged members outside the canonical retained set.
-   *  A resident id that also appears in the canonical map (post-reorg
-   *  overlap) keeps both records — canonical wins on lookup. */
+  /** Records delivered by the display lane: every enter carries its own
+   *  (server invariant I3), and the ones this cache does not already hold
+   *  canonically are kept here — composed-mode residents, which live
+   *  outside the retained map entirely, and canonical cells older than this
+   *  session, whose records no snapshot of the stage ever contained.
+   *  Canonical patches (death, tag) reach both homes; an id in both
+   *  (post-reorg overlap) resolves canonical-first. */
   displayResidents: Map<number, Cell>;
   /** Server-owned product budgets, or null when the server ships no display
    *  plane. */
@@ -734,22 +738,47 @@ function mutateCellDelta(
       return true;
     }
     case 'death': {
+      // A staged member's record lives in whichever map delivered it: `cells`
+      // when the canonical lane did, `displayResidents` when the display lane
+      // did. Since snapshots ship the stage rather than the map, a cell older
+      // than this session reaches the client on its display enter — patch
+      // both, or its corpse renders alive until a resync (`resolveDisplayCell`
+      // reads the union, so a copy frozen at arrival is never corrected).
       const existing = c.cells.get(d.id);
-      if (!existing) return false;
+      const staged = c.displayResidents.get(d.id);
+      let changed = false;
       // Replayed death already recorded at this exact timestamp: no-op.
-      if (existing.death_at_ms === d.at_ms) return false;
-      touchCell(draft, d.id);
-      writableCells(draft).set(d.id, { ...existing, death_at_ms: d.at_ms });
-      return true;
+      if (existing !== undefined && existing.death_at_ms !== d.at_ms) {
+        touchCell(draft, d.id);
+        writableCells(draft).set(d.id, { ...existing, death_at_ms: d.at_ms });
+        changed = true;
+      }
+      if (staged !== undefined && staged.death_at_ms !== d.at_ms) {
+        writableDisplay(draft);
+        c.displayResidents.set(d.id, { ...staged, death_at_ms: d.at_ms });
+        draft.residentUpdatedIds.add(d.id);
+        changed = true;
+      }
+      return changed;
     }
     case 'tag': {
+      // Same two homes as `death` above.
       const existing = c.cells.get(d.id);
-      if (!existing) return false;
+      const staged = c.displayResidents.get(d.id);
+      let changed = false;
       // Replayed tag with the value already applied: no-op.
-      if (existing.tag === d.tag) return false;
-      touchCell(draft, d.id);
-      writableCells(draft).set(d.id, { ...existing, tag: d.tag });
-      return true;
+      if (existing !== undefined && existing.tag !== d.tag) {
+        touchCell(draft, d.id);
+        writableCells(draft).set(d.id, { ...existing, tag: d.tag });
+        changed = true;
+      }
+      if (staged !== undefined && staged.tag !== d.tag) {
+        writableDisplay(draft);
+        c.displayResidents.set(d.id, { ...staged, tag: d.tag });
+        draft.residentUpdatedIds.add(d.id);
+        changed = true;
+      }
+      return changed;
     }
     case 'gc': {
       // Replayed GC for ids this cache never retained (or already removed)
@@ -839,6 +868,21 @@ function mutateCellDelta(
       let changed = false;
       for (const cell of d.enter_cells) {
         const isMember = c.displayMembers.has(cell.id);
+        // Every enter carries its record (server invariant I3), so a member
+        // this cache already holds canonically — a fresh birth entering in
+        // the same batch as its own `birth` delta, the common case — ships a
+        // record `cells` just stored. Take the membership and drop the
+        // duplicate: keeping it would mirror the entire stage into the
+        // resident map and copy that map on every block.
+        const canonical = c.cells.get(cell.id);
+        if (canonical !== undefined && cellContentEquals(canonical, cell)) {
+          if (isMember) continue;
+          writableDisplay(draft);
+          c.displayMembers.add(cell.id);
+          draft.touchedDisplayIds.add(cell.id);
+          changed = true;
+          continue;
+        }
         const retained = c.displayResidents.get(cell.id);
         const identical =
           retained !== undefined && cellContentEquals(retained, cell);
@@ -856,6 +900,11 @@ function mutateCellDelta(
         }
         changed = true;
       }
+      // Bare ids: an enter whose record the server assumed this client
+      // already held. A same-version server never sends one — every enter
+      // carries its record — so this lane exists for a stream from an older
+      // build: stage the id and let `resolveDisplayCell` come up empty for
+      // the ones this cache was never sent.
       for (const id of d.enter_ids) {
         if (c.displayMembers.has(id)) continue;
         writableDisplay(draft);

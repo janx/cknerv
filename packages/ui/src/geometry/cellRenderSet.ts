@@ -158,6 +158,33 @@ function cellRenderRanges(indices: ReadonlySet<number>): CellRenderRange[] {
   return ranges;
 }
 
+/** Dev-observable counter for the one contract this module cannot repair: a
+ * staged member with no record in the cache. The server ships a record with
+ * every enter and the whole staged set in every snapshot, so a member that
+ * resolves to nothing means the wire and the stage disagree — the cell is
+ * silently absent from the galaxy until a resync. */
+export const cellRenderSetStats = {
+  /** Staged members skipped for want of a record, over the session. */
+  unresolvedStagedMembers: 0,
+};
+
+let unresolvedStagedMemberWarned = false;
+
+function noteUnresolvedStagedMember(id: number): void {
+  cellRenderSetStats.unresolvedStagedMembers += 1;
+  if (unresolvedStagedMemberWarned) return;
+  unresolvedStagedMemberWarned = true;
+  // Once per session: a thinning stage produces one of these per missing
+  // member per rebuild, and the first one already names the fault.
+  console.warn(
+    `cellRenderSet: staged member ${id} has no record in the cache — dropping `
+    + 'it from the galaxy. The server ships a record with every display enter '
+    + '(and the whole stage in every snapshot), so this is a wire/stage '
+    + 'disagreement, not a routine miss (counted in '
+    + 'cellRenderSetStats.unresolvedStagedMembers).',
+  );
+}
+
 /** Canonical-first resolution of a staged member id. Post-reorg overlap may
  * keep a resident payload beside a canonical record with the same id — the
  * canonical retained object always wins. */
@@ -218,7 +245,10 @@ function rebuildCellRenderSet(
     if (count > 0) {
       for (const id of cache.displayMembers) {
         const cell = resolveStagedCell(cache, id);
-        if (!cell) continue;
+        if (!cell) {
+          noteUnresolvedStagedMember(id);
+          continue;
+        }
         resolved.push(cell);
         if (resolved.length >= count) break;
       }

@@ -87,7 +87,7 @@ Cell.
 |---|---|
 | I1: one structural truth | Only read-only observations from the CKB node may determine structural entities, Cell lifecycle, and causal links |
 | I2: display isolation | The display plane never writes the canonical map or counters and is not persisted |
-| I3: ordered commit | Canonical deltas at a revision precede any display delta that references them |
+| I3: self-contained enters | A snapshot carries the staged rows, and every display enter carries its Cell record — the wire never asks a client to remember a cell it was not sent. Canonical deltas at a revision still precede the display delta that follows them |
 | I4: OutPoint uniqueness | One outpoint cannot be staged simultaneously under canonical and resident identities |
 | I5: anchor validation | External semantic records must still match retained canonical evidence after loading and immediately before commit |
 | I6: determinism | Wire-visible order, positions, and timestamps come from ordered state and mutations, not reducer wall-clock reads |
@@ -448,6 +448,13 @@ it travels as rows. Dead-but-staged rows come along too; their death animation
 is exactly what the stage is holding them for. The two wire forms must agree on
 which rows they carry: a client booting from the columnar buffer and one
 booting from JSON must not start from different galaxies.
+
+Narrowing the snapshot also decides what the delta stream owes (invariant I3).
+A client's records are the stage it connected with plus whatever the wire has
+handed it since — never the retained map — so every display enter carries its
+record, canonical members included. Naming an old cell by id alone, which every
+block would do because a spent input is an activity endpoint, would stage a
+cell that client was never sent: unrendered, and deaf to its own death delta.
 
 `CellViewStats` is what makes the narrowing safe to read. It is computed where
 the cells live and covers the **full** retained set by construction, never the

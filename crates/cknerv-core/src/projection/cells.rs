@@ -432,16 +432,21 @@ pub enum CellDelta {
         tag: Option<String>,
         at_ms: u64,
     },
-    /// Display-plane membership patch ("who is on stage"). `enter_ids`
-    /// reference cells inside the canonical retained set — same-stream
-    /// revision ordering guarantees their `Birth` deltas already arrived;
-    /// `enter_cells` carry full payloads for resident members outside that
-    /// set; `exit_ids` leave the stage. `provenance` rides along only when
-    /// mode/source health changes and is omitted from the wire when
-    /// `None`. Display membership is presentation policy, never canonical
-    /// truth: this delta moves no counters, persists nothing, and implies
-    /// no birth/death semantics. Contract-only in S0 — nothing emits it
-    /// yet; server emission lands in S1.
+    /// Display-plane membership patch ("who is on stage"). `enter_cells`
+    /// carry the full record of every member joining the stage — invariant
+    /// I3, *the wire never asks the client to remember*: a snapshot ships
+    /// the staged rows and nothing else, so a client's record coverage is
+    /// "staged at connect ∪ what the wire has handed it since", never the
+    /// server's whole retained map. `exit_ids` leave the stage.
+    /// `enter_ids` is the pre-I3 bare-id form — an enter whose record the
+    /// client was assumed to already hold. This build never emits one
+    /// (`carry_enter_records` converts them all); the field stays on the
+    /// wire, and the client's tolerance lane with it, so a stream from an
+    /// older server still stages what it names. `provenance` rides along
+    /// only when mode/source health changes and is omitted from the wire
+    /// when `None`. Display membership is presentation policy, never
+    /// canonical truth: this delta moves no counters, persists nothing,
+    /// and implies no birth/death semantics.
     Display {
         enter_ids: Vec<u64>,
         enter_cells: Vec<Cell>,
@@ -890,6 +895,69 @@ impl CellGalaxy {
             .filter(|cell| self.display.is_staged(cell.id))
             .cloned()
             .collect()
+    }
+
+    /// Invariant I3, the delta twin of [`Self::staged_rows`]: **every
+    /// entering member carries its record**, so the wire never asks a
+    /// client to remember a cell it was never sent.
+    ///
+    /// The plane decides WHO enters; only the projection holds the map, so
+    /// attaching WHAT the wire carries for them belongs here. The plane
+    /// names canonical enters by id (it keeps no canonical payloads — that
+    /// would be a second copy of the map to keep in step with every death
+    /// and every tag); this pass swaps each of those ids for the record as
+    /// the map holds it *now*, death timestamp included, which is why it
+    /// runs after the mutation's canonical handlers rather than inside the
+    /// plane.
+    ///
+    /// The old rule shipped a bare id whenever the map held the cell, on
+    /// the premise that the client already had the record. Snapshots
+    /// carrying only staged rows killed that premise: a client's coverage
+    /// is staged-at-connect ∪ births-since-connect, and every block stages
+    /// old cells by id (spent inputs are activity endpoints, evictions
+    /// refill from the prefix, composed mode promotes). Those members
+    /// landed on a client with no record: unrendered, and their deaths
+    /// no-ops — a resting stage that thinned all session and healed only
+    /// on resync.
+    ///
+    /// Cost: one cloned record per enter that used to be bare — ~500 B of
+    /// JSON for a plain cell, ~620 B typed, up to ~1.6 KB for one carrying
+    /// the data cap. Bounded per mutation by the activity quota, not by the
+    /// block: a consolidation sweep staging thousands of spent inputs
+    /// evicts all but `DISPLAY_ACTIVITY_QUOTA` of them inside the same
+    /// flush, and the touched log coalesces an enter-then-exit away. So the
+    /// ceiling is a few hundred KB in one delta of a monstrous block, and
+    /// tens of KB in an ordinary one. Snapshots are unchanged.
+    fn carry_enter_records(&self, delta: &mut CellDelta) {
+        let CellDelta::Display {
+            enter_ids,
+            enter_cells,
+            ..
+        } = delta
+        else {
+            return;
+        };
+        if enter_ids.is_empty() {
+            return;
+        }
+        enter_cells.reserve(enter_ids.len());
+        for id in std::mem::take(enter_ids) {
+            match self.slot_of(id) {
+                Some(slot) => enter_cells.push(self.cells[slot].clone()),
+                // Unreachable by construction: an enter is either a staged
+                // resident (payload already in `enter_cells`) or an id the
+                // plane's presence mirror took from this map. A mirror that
+                // ever drifted would degrade to the pre-I3 wire form here
+                // rather than drop a member off the stage.
+                None => {
+                    debug_assert!(false, "staged member {id} has no record in the map");
+                    enter_ids.push(id);
+                }
+            }
+        }
+        // The plane emits `enter_cells` sorted by id; keep that after the
+        // canonical records join them, so the bytes stay deterministic.
+        enter_cells.sort_unstable_by_key(|cell| cell.id);
     }
 
     fn enforce_cap(&mut self, at_ms: u64) -> Vec<u64> {
@@ -1869,9 +1937,11 @@ impl Projection for CellGalaxy {
         };
         // Single display-plane settle point: at most ONE coalesced
         // `CellDelta::Display` per mutation, appended after the canonical
-        // deltas so `enter_ids` always reference cells whose Birth deltas
-        // precede them at the same revision (invariant I3).
-        if let Some(display_delta) = self.display.flush(mutation_at_ms(m)) {
+        // deltas so every enter carries the record as this mutation leaves
+        // it — a spend staged as an activity endpoint rides out already
+        // holding its own death timestamp (invariant I3).
+        if let Some(mut display_delta) = self.display.flush(mutation_at_ms(m)) {
+            self.carry_enter_records(&mut display_delta);
             deltas.push(display_delta);
         }
         // Every container-touching path funnels through here (the direct
@@ -4268,18 +4338,28 @@ mod tests {
             .count()
     }
 
-    /// Extract THE display delta of a mutation (pinning "at most one per
-    /// mutation" and "no resident payloads in prefix mode" on the way).
+    /// Extract THE display delta of a mutation as (entered ids, exited
+    /// ids, provenance), pinning on the way: at most one delta per
+    /// mutation, every enter carries its record (invariant I3 — nothing
+    /// leaves as a bare id), and no resident payload rides a prefix-mode
+    /// delta (residents are the only enters with composition ids).
     #[allow(clippy::type_complexity)]
     fn display_delta(
         deltas: &[CellDelta],
-    ) -> Option<(&Vec<u64>, &Vec<u64>, Option<&DisplayProvenance>)> {
+    ) -> Option<(Vec<u64>, &Vec<u64>, Option<&DisplayProvenance>)> {
         display_delta_full(deltas).map(|(enter_ids, enter_cells, exit_ids, provenance)| {
             assert!(
-                enter_cells.is_empty(),
-                "prefix mode never ships resident payloads"
+                enter_ids.is_empty(),
+                "an enter must carry its record, not a bare id: {enter_ids:?}"
             );
-            (enter_ids, exit_ids, provenance)
+            let entered: Vec<u64> = enter_cells.iter().map(|cell| cell.id).collect();
+            assert!(
+                entered
+                    .iter()
+                    .all(|id| *id < crate::identity::COMPOSITION_ID_PREFIX),
+                "prefix mode never ships resident payloads: {entered:?}"
+            );
+            (entered, exit_ids, provenance)
         })
     }
 
@@ -4348,7 +4428,7 @@ mod tests {
         let (enter, exit, provenance) = display_delta(&deltas).expect("bootstrap fill delta");
         // First RESTING_TARGET ids fill the resting set; the 3 overflow
         // births enter as activity endpoints of their own birth tx.
-        assert_eq!(enter, &(0..(RESTING_TARGET as u64 + 3)).collect::<Vec<_>>());
+        assert_eq!(enter, (0..(RESTING_TARGET as u64 + 3)).collect::<Vec<_>>());
         assert!(exit.is_empty());
         let provenance = provenance.expect("first fill rides provenance");
         assert_eq!(provenance.mode, DisplayMode::Canonical);
@@ -4364,7 +4444,7 @@ mod tests {
         let late_id = RESTING_TARGET as u64 + 3;
         let deltas = g.apply_mutation(&landed("0xlate", 2, 2_000, vec![], vec![out(7, "0x")]));
         let (enter, exit, provenance) = display_delta(&deltas).expect("late birth enters");
-        assert_eq!(enter, &vec![late_id]);
+        assert_eq!(enter, vec![late_id]);
         assert!(exit.is_empty());
         assert!(
             provenance.is_none(),
@@ -4403,7 +4483,7 @@ mod tests {
             vec![out(9, "0x")],
         ));
         let (enter, exit, _) = display_delta(&deltas).expect("endpoint entry");
-        assert_eq!(enter, &vec![new_id]);
+        assert_eq!(enter, vec![new_id]);
         assert!(exit.is_empty(), "the consumed member keeps its seat");
         assert!(g.display.is_activity_member(new_id));
         assert!(g.display.member_ids_sorted().contains(&5));
@@ -4492,7 +4572,7 @@ mod tests {
             vec![out(9, "0x")],
         ));
         let (enter, exit, _) = display_delta(&deltas).expect("vacancy refill");
-        assert_eq!(enter, &vec![fresh_id]);
+        assert_eq!(enter, vec![fresh_id]);
         assert!(exit.is_empty());
         assert!(!g.display.is_activity_member(fresh_id));
         assert_eq!(g.display.resting_len(), RESTING_TARGET);
@@ -4564,7 +4644,7 @@ mod tests {
             vec![out(200, "0xdd"), out(300, "0xee")],
         ));
         let (enter, exit, _) = display_delta(&deltas).expect("revival re-enters");
-        assert_eq!(enter, &vec![1, 2]);
+        assert_eq!(enter, vec![1, 2]);
         assert!(exit.is_empty());
         assert_display_invariants(&g);
 
@@ -4638,7 +4718,7 @@ mod tests {
             phase: ReplayPhase::Boot,
         });
         let (enter, exit, provenance) = display_delta(&terminal).expect("terminal resettle");
-        assert_eq!(enter, &vec![0, 1, 2]);
+        assert_eq!(enter, vec![0, 1, 2]);
         assert!(exit.is_empty());
         assert!(
             provenance.is_some(),
@@ -4802,25 +4882,121 @@ mod tests {
         ]
     }
 
-    /// Shared assertion: applying ONLY the emitted Display deltas on top
-    /// of the initial snapshot's display section reproduces
-    /// snapshot().display — members AND residents — at every step, except
-    /// inside an active replay window, where per-mutation deltas are
-    /// suppressed BY DESIGN (the runner clears the ring; reconnecting
-    /// clients get a FullSnapshot) and the shadow simply stays frozen
-    /// until the terminal resettle re-converges it.
+    /// A client, as `packages/cache/src/cellsReducer.ts` keeps one: the
+    /// records it was handed (canonically, and by the display lane) and
+    /// who it believes is on stage. Boots from a snapshot — which since R1
+    /// carries the staged rows and nothing else — and then only ever
+    /// learns what the deltas tell it.
+    #[derive(Default)]
+    struct ShadowClient {
+        /// Canonical records: snapshot rows + `Birth`, patched by
+        /// `Death`/`Tag`, dropped by `Gc`.
+        cells: std::collections::BTreeMap<u64, Cell>,
+        /// Records delivered by the display lane, for members this client
+        /// does not already hold canonically. Dropped at exit.
+        staged_records: std::collections::BTreeMap<u64, Cell>,
+        members: std::collections::BTreeSet<u64>,
+    }
+
+    impl ShadowClient {
+        fn connect(snapshot: &CellGalaxySnapshot) -> Self {
+            let section = snapshot
+                .display
+                .as_ref()
+                .expect("display section always present");
+            Self {
+                cells: snapshot
+                    .cells
+                    .iter()
+                    .map(|cell| (cell.id, cell.clone()))
+                    .collect(),
+                staged_records: section
+                    .residents
+                    .iter()
+                    .map(|cell| (cell.id, cell.clone()))
+                    .collect(),
+                members: section.members.iter().copied().collect(),
+            }
+        }
+
+        /// Canonical-first, exactly like `resolveDisplayCell`.
+        fn resolve(&self, id: u64) -> Option<&Cell> {
+            self.cells.get(&id).or_else(|| self.staged_records.get(&id))
+        }
+
+        fn apply(&mut self, delta: &CellDelta) {
+            match delta {
+                CellDelta::Birth { cell } => {
+                    self.cells.insert(cell.id, cell.clone());
+                }
+                CellDelta::Death { id, at_ms } => {
+                    // Both homes, as the reducer does: a record that
+                    // arrived on the display lane still has to hear that
+                    // its cell died.
+                    if let Some(cell) = self.cells.get_mut(id) {
+                        cell.death_at_ms = Some(*at_ms);
+                    }
+                    if let Some(cell) = self.staged_records.get_mut(id) {
+                        cell.death_at_ms = Some(*at_ms);
+                    }
+                }
+                CellDelta::Tag { id, tag } => {
+                    if let Some(cell) = self.cells.get_mut(id) {
+                        cell.tag = Some(tag.clone());
+                    }
+                    if let Some(cell) = self.staged_records.get_mut(id) {
+                        cell.tag = Some(tag.clone());
+                    }
+                }
+                CellDelta::Gc { ids } => {
+                    for id in ids {
+                        self.cells.remove(id);
+                    }
+                }
+                CellDelta::Display {
+                    enter_ids,
+                    enter_cells,
+                    exit_ids,
+                    ..
+                } => {
+                    for id in exit_ids {
+                        self.members.remove(id);
+                        self.staged_records.remove(id);
+                    }
+                    for id in enter_ids {
+                        self.members.insert(*id);
+                    }
+                    for cell in enter_cells {
+                        self.members.insert(cell.id);
+                        // A record this client already holds canonically
+                        // (a birth entering in its own batch) is the same
+                        // record; keeping a second copy would mirror the
+                        // whole stage.
+                        if self.cells.get(&cell.id) != Some(cell) {
+                            self.staged_records.insert(cell.id, cell.clone());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Shared assertion (invariant I3 + I5): a client that connected at
+    /// step 0 and then only followed deltas holds, at every step, exactly
+    /// what a client connecting fresh at that step would be handed — same
+    /// membership, and the same record for every member. That is the whole
+    /// claim of "the wire never asks the client to remember": the snapshot
+    /// carries the stage, so any member whose record the deltas failed to
+    /// deliver is a cell this client can never draw.
+    ///
+    /// Inside an active replay window per-mutation deltas are suppressed BY
+    /// DESIGN (the runner clears the ring; reconnecting clients get a
+    /// FullSnapshot), so the shadow simply stays frozen until the terminal
+    /// resettle re-converges it.
     fn assert_display_replay_consistency(scenario: Vec<Mutation>) {
         let mut g = make_galaxy();
-        let initial = g
-            .snapshot()
-            .display
-            .expect("display section always present");
-        let mut shadow: std::collections::BTreeSet<u64> = initial.members.into_iter().collect();
-        let mut shadow_residents: std::collections::BTreeMap<u64, Cell> = initial
-            .residents
-            .into_iter()
-            .map(|cell| (cell.id, cell))
-            .collect();
+        let mut shadow = ShadowClient::connect(&g.snapshot());
         for (step, mutation) in scenario.into_iter().enumerate() {
             let deltas = g.apply_mutation(&mutation);
             let snapshot = g.snapshot();
@@ -4832,32 +5008,32 @@ mod tests {
                 assert_display_invariants(&g);
                 continue;
             }
-            if let Some((enter_ids, enter_cells, exit_ids, _)) = display_delta_full(&deltas) {
-                for id in exit_ids {
-                    assert!(shadow.remove(id), "step {step}: exit {id} not in shadow");
-                    shadow_residents.remove(id);
-                }
-                for id in enter_ids {
-                    assert!(shadow.insert(*id), "step {step}: enter {id} already staged");
-                }
-                for cell in enter_cells {
-                    // Payload re-enters are upserts (a refresh may re-ship
-                    // a changed resident without membership churn).
-                    shadow.insert(cell.id);
-                    shadow_residents.insert(cell.id, cell.clone());
-                }
+            for delta in &deltas {
+                shadow.apply(delta);
             }
             let section = snapshot.display.expect("display section");
             assert_eq!(
-                shadow.iter().copied().collect::<Vec<_>>(),
+                shadow.members.iter().copied().collect::<Vec<_>>(),
                 section.members,
-                "step {step}: delta-replayed shadow diverged from the snapshot"
+                "step {step}: delta-replayed membership diverged from the snapshot"
             );
-            assert_eq!(
-                shadow_residents.values().cloned().collect::<Vec<_>>(),
-                section.residents,
-                "step {step}: delta-replayed residents diverged from the snapshot"
-            );
+            // What a client connecting right now would receive, by id.
+            let fresh: std::collections::BTreeMap<u64, &Cell> = snapshot
+                .cells
+                .iter()
+                .chain(section.residents.iter())
+                .map(|cell| (cell.id, cell))
+                .collect();
+            for id in &section.members {
+                let held = shadow.resolve(*id).unwrap_or_else(|| {
+                    panic!("step {step}: staged member {id} resolves to no record on a client that followed every delta")
+                });
+                assert_eq!(
+                    Some(held),
+                    fresh.get(id).copied(),
+                    "step {step}: member {id}'s replayed record diverged from the one a fresh connect is handed"
+                );
+            }
             assert_display_invariants(&g);
         }
     }
@@ -5113,9 +5289,10 @@ mod tests {
     }
 
     /// Pin 11 — a refresh landing mid-replay stays silent and the
-    /// terminal resettle presents it whole: canonical enters ride
-    /// enter_ids, residents ride enter_cells, Composed provenance rides
-    /// the resettle.
+    /// terminal resettle presents it whole: canonical and resident enters
+    /// alike ride enter_cells with their records (a client that sat
+    /// through the replay was told nothing until now, so the resettle is
+    /// the only thing it has), Composed provenance rides the resettle.
     #[test]
     fn display_reservoir_refresh_during_backfill_lands_at_the_resettle() {
         let mut g = make_galaxy();
@@ -5144,10 +5321,10 @@ mod tests {
         });
         let (enter_ids, enter_cells, exit, provenance) =
             display_delta_full(&terminal).expect("terminal resettle");
-        assert_eq!(enter_ids, &vec![0, 1]);
+        assert!(enter_ids.is_empty(), "no enter leaves as a bare id");
         assert_eq!(
             enter_cells.iter().map(|c| c.id).collect::<Vec<_>>(),
-            vec![500_000, 500_001, 500_002]
+            vec![0, 1, 500_000, 500_001, 500_002]
         );
         assert!(exit.is_empty());
         assert_eq!(

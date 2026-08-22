@@ -201,10 +201,11 @@ Cell whose outpoint is also retained canonically is staged under its canonical
 identity, so one outpoint is never on stage twice.
 
 Membership reaches the browser as the cells projection's `display` section plus
-`display` deltas carrying `enter_ids` (canonical Cells, whose births the same
-revision order has already delivered), `enter_cells` (full payloads for staged
-Cells outside the retained map), and `exit_ids`. Ordinary churn is a handful of
-ids; only a refresh or a mode change ships payloads. The plane changes only the
+`display` deltas carrying `enter_cells` (the full record of every Cell joining
+the stage, canonical and resident alike — a snapshot ships the stage rather
+than the retained map, so a client holds no record it was not sent) and
+`exit_ids`. Ordinary churn is a handful of records; a refresh or a mode change
+ships the transition whole. The plane changes only the
 shared Cell/body and passive-fibre display subset: it never enters the canonical
 Cell map, never increments Cell counters, and never emits `birth`, `death`,
 `link`, or `pulse` deltas. The complete canonical Cell map and neighbour graph

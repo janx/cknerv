@@ -342,6 +342,103 @@ describe('display provenance transitions', () => {
   });
 });
 
+/** Since snapshots carry the stage rather than the retained map, a client
+ *  mid-session has never seen most of the map — so the server ships a record
+ *  with every enter, and these are the members whose records arrive here and
+ *  nowhere else. */
+describe('display delta — records for members the canonical lane never sent', () => {
+  /** A cell older than this session: not in the snapshot, no birth delta,
+   *  staged today because a transaction spent it. */
+  const elder = cell(4242);
+
+  it('an enter for a cell the cache never held resolves through the display lane', () => {
+    const cache = applyCellDelta(
+      cacheWithCanonical([1]),
+      displayDelta({ enter_cells: [elder] }),
+    );
+
+    expect(cache.displayMembers.has(elder.id)).toBe(true);
+    expect(resolveDisplayCell(cache, elder.id)).toBe(elder);
+    expect(cache.displayChanges.entered).toEqual([elder.id]);
+  });
+
+  it('a later death reaches that record instead of no-oping', () => {
+    const staged = applyCellDelta(
+      cacheWithCanonical([1]),
+      displayDelta({ enter_cells: [elder] }),
+    );
+    const after = applyCellDelta(staged, {
+      type: 'death',
+      id: elder.id,
+      at_ms: 9_000,
+    });
+
+    // The corpse is what the stage is holding it for: a record frozen at the
+    // moment it arrived would render alive until the next resync.
+    expect(resolveDisplayCell(after, elder.id)?.death_at_ms).toBe(9_000);
+    expect(after.displayChanges.updated).toEqual([elder.id]);
+    expect(after.cells).toBe(staged.cells);
+    // Replaying the same death is still a pure no-op.
+    expect(applyCellDelta(after, { type: 'death', id: elder.id, at_ms: 9_000 }))
+      .toBe(after);
+  });
+
+  it('a later tag reaches that record too', () => {
+    const staged = applyCellDelta(
+      emptyCellsCache(),
+      displayDelta({ enter_cells: [elder] }),
+    );
+    const after = applyCellDelta(staged, {
+      type: 'tag',
+      id: elder.id,
+      tag: 'dex',
+    });
+
+    expect(resolveDisplayCell(after, elder.id)?.tag).toBe('dex');
+    expect(applyCellDelta(after, { type: 'tag', id: elder.id, tag: 'dex' }))
+      .toBe(after);
+  });
+
+  it('a re-enter after an exit lands the record again', () => {
+    const staged = applyCellDelta(
+      emptyCellsCache(),
+      displayDelta({ enter_cells: [elder] }),
+    );
+    const gone = applyCellDelta(staged, displayDelta({ exit_ids: [elder.id] }));
+    expect(resolveDisplayCell(gone, elder.id)).toBeUndefined();
+
+    const again = applyCellDelta(gone, displayDelta({ enter_cells: [elder] }));
+    expect(again.displayMembers.has(elder.id)).toBe(true);
+    expect(resolveDisplayCell(again, elder.id)).toBe(elder);
+  });
+
+  it('a record the cache already holds canonically is not stored twice', () => {
+    // The common case: a birth entering the stage in the batch that bore it.
+    const born = cell(9);
+    const after = applyRevisionedCellDeltas(cacheWithCanonical([1]), [
+      { revision: 2, delta: { type: 'birth', cell: born } },
+      { revision: 2, delta: displayDelta({ enter_cells: [{ ...born }] }) },
+    ]);
+
+    expect(after.displayMembers.has(9)).toBe(true);
+    expect(after.displayResidents.size).toBe(0);
+    expect(resolveDisplayCell(after, 9)).toBe(after.cells.get(9));
+    expect(after.displayChanges.entered).toEqual([9]);
+    expect(after.displayChanges.updated).toEqual([]);
+  });
+
+  it('a bare id still stages, for a stream from a server that predates I3', () => {
+    const cache = applyCellDelta(
+      cacheWithCanonical([1]),
+      displayDelta({ enter_ids: [1, 77] }),
+    );
+
+    expect([...cache.displayMembers]).toEqual([1, 77]);
+    // Nothing was ever sent for 77; the render set drops it, loudly.
+    expect(resolveDisplayCell(cache, 77)).toBeUndefined();
+  });
+});
+
 describe('snapshot seeding', () => {
   const resident = cell(501, { tag: 'wallet' });
 

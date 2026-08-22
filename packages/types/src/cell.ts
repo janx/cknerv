@@ -295,11 +295,15 @@ export type CellDelta =
       tag: CellTag | null;
       at_ms: number;
     }
-  /** Display-plane membership patch ("who is on stage"). `enter_ids`
-   *  reference canonical retained cells (same-stream ordering guarantees
-   *  their births already arrived); `enter_cells` carry full payloads for
-   *  resident members outside that set; `provenance` rides along only on
-   *  mode/health changes. Presentation policy, never canonical truth. */
+  /** Display-plane membership patch ("who is on stage"). `enter_cells`
+   *  carry the full record of every member joining the stage — server
+   *  invariant I3, *the wire never asks the client to remember*: a snapshot
+   *  ships the staged rows and nothing else, so a client's records are
+   *  "staged at connect ∪ what the wire has handed it since". `enter_ids`
+   *  is the pre-I3 bare-id form, which a current server never emits; the
+   *  reducer still stages what it names so a stream from an older build
+   *  works. `provenance` rides along only on mode/health changes.
+   *  Presentation policy, never canonical truth. */
   | {
       type: 'display';
       enter_ids: number[];

@@ -962,6 +962,12 @@ impl DisplayPlane {
     /// Settle this mutation's membership consequences and emit the one
     /// coalesced `Display` delta, if membership (or provenance) changed.
     /// `at_ms` is the mutation-carried timestamp when it has one.
+    ///
+    /// Canonical enters leave here as bare ids and reach the wire as
+    /// records: `CellGalaxy::carry_enter_records` swaps each one for the
+    /// map's copy (invariant I3). Read an `enter_ids` from this function as
+    /// "who entered", never as "what the client is expected to already
+    /// know".
     pub(crate) fn flush(&mut self, at_ms: Option<u64>) -> Option<CellDelta> {
         if let Some(at) = at_ms {
             self.last_at_ms = at;
@@ -1064,8 +1070,14 @@ impl DisplayPlane {
             return None;
         }
 
-        // Split enters into canonical references vs resident payloads
-        // (I3: an id is shipped as payload iff it is NOT in the map).
+        // Split enters into canonical names vs resident payloads. A
+        // resident's payload lives here (the map does not hold it); a
+        // canonical enter leaves as a bare id and the projection swaps in
+        // the record from the map before the delta reaches the wire
+        // (`CellGalaxy::carry_enter_records`, invariant I3 — every enter
+        // carries its record). The plane deliberately keeps no canonical
+        // payloads: a second copy of the map would have to be re-synced on
+        // every death and every tag to stay shippable.
         let mut enter_ids: Vec<u64> = Vec::new();
         let mut enter_cells: Vec<Cell> = Vec::new();
         let mut carried: HashSet<u64> = HashSet::new();
