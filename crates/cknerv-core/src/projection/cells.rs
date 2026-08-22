@@ -1020,9 +1020,15 @@ impl CellGalaxy {
             // (nothing retired) pays nothing.
             self.reindex_cells();
         }
+        // Membership, asked once. The guard below runs per retired outpoint,
+        // and putting a `Vec::contains` there made the sweep quadratic in the
+        // size of its own batch — which is exactly the wrong shape for the
+        // batch that matters: a replay terminal retires the whole expired
+        // reservoir at once, and the corpse hold sizes those batches.
+        let removed: std::collections::HashSet<u64> = removed_ids.iter().copied().collect();
         for op in removed_outpoints {
             if let Some(id) = self.outpoint_index.get(&op) {
-                if removed_ids.contains(id) {
+                if removed.contains(id) {
                     self.outpoint_index.remove(&op);
                 }
             }
