@@ -15,13 +15,8 @@ import {
   setPopulationPlacement,
   type PopulationPlacementSnapshot,
 } from '../geometry/populationPlacementStore';
+import { beginPopulationFieldPlacement } from '../geometry/populationFieldSession';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
-// Type-only, so the worker module's body never lands in the main bundle —
-// it is reached exclusively through `new URL(...)` below.
-import type {
-  PopulationFieldWorkerRequest,
-  PopulationFieldWorkerResponse,
-} from '../geometry/populationField.worker';
 import {
   makeScreenSpaceCapsuleGeometry,
   syncScreenSpaceCapsuleViewport,
@@ -361,40 +356,28 @@ export default function CellPopulationField({
       new URL('../geometry/populationField.worker.ts', import.meta.url),
       { type: 'module', name: 'cknerv-population-field' },
     );
-    let cancelled = false;
-    worker.onmessage = (event: MessageEvent<PopulationFieldWorkerResponse>) => {
-      const response = event.data;
-      worker.terminate();
-      if (cancelled || response?.kind !== 'placed') return;
-      const placement: PopulationPlacementSnapshot = {
-        positions: response.positions,
-        segments: response.segments,
-        backboneSegments: response.backboneSegments,
-        backboneSegmentCount: response.backboneSegmentCount,
-        residualSegments: response.residualSegments,
-        residualSegmentCount: response.residualSegmentCount,
-        backboneComponents: response.backboneComponents,
-        weights: response.weights,
-        count: response.count,
-        segmentCount: response.segmentCount,
-        streamlines: response.streamlines,
-        work: response.work,
-      };
-      // Published BEFORE this layer builds its geometries, so the bridge
-      // layer and this one can never be looking at different buffers even for
-      // one frame.
-      setPopulationPlacement(placement);
-      adopt(placement);
-    };
-    const request: PopulationFieldWorkerRequest = {
-      kind: 'place',
-      points: POPULATION_FIELD_POINTS,
-      seed: POPULATION_FIELD_SEED,
-    };
-    worker.postMessage(request);
+    // The conversation — including every failure path — lives in
+    // `populationFieldSession`, which is testable where an R3F layer is not.
+    // A worker that never answers used to leave the placement store null for
+    // the life of the tab, taking the bridge nerve tier down with the halo.
+    const session = beginPopulationFieldPlacement({
+      worker,
+      request: {
+        kind: 'place',
+        points: POPULATION_FIELD_POINTS,
+        seed: POPULATION_FIELD_SEED,
+      },
+      onPlaced: (placement) => {
+        // Published BEFORE this layer builds its geometries, so the bridge
+        // layer and this one can never be looking at different buffers even
+        // for one frame.
+        setPopulationPlacement(placement);
+        adopt(placement);
+      },
+    });
 
     return () => {
-      cancelled = true;
+      session.cancel();
       worker.terminate();
     };
   }, [wanted, backboneMaterial]);

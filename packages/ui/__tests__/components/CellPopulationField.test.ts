@@ -320,6 +320,11 @@ describe('two static buffers and three draws', () => {
     // entry point is reached only from inside the worker.
     expect(FIELD_CODE).not.toContain('placePopulationField');
     expect(FIELD_CODE).not.toContain('advancePopulationPlacement');
+    // The conversation with that worker — and the ONE main-thread exception,
+    // a warned fallback when the worker cannot deliver at all — lives in
+    // `populationFieldSession`, which is testable where this layer is not.
+    // See `populationFieldSession.test.ts`.
+    expect(FIELD_CODE).toContain('beginPopulationFieldPlacement');
   });
 });
 
