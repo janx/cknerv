@@ -6,7 +6,7 @@ import type {
   SemanticContentDecode,
   SemanticFacet,
 } from '@cknerv/types';
-import { formatSemanticAssetAmount } from './cellFormat';
+import { formatSemanticAssetAmount, midTruncate } from './cellFormat';
 import { HUD_COLORS, HUD_TYPE, rgba } from './hudTheme';
 
 export { formatSemanticAssetAmount } from './cellFormat';
@@ -24,12 +24,6 @@ export type CellSemanticsPhase =
 // beneath it. The old source-organized readout assemblies (scanIntegrated /
 // spatial / complete) died with the CELL IDENTITY window; what survives here
 // is exactly what the clusters mount.
-
-export function compactMiddle(value: string, head = 10, tail = 8): string {
-  return value.length <= head + tail + 1
-    ? value
-    : `${value.slice(0, head)}…${value.slice(-tail)}`;
-}
 
 export function enrichmentSourceColor(
   status: EnrichmentSourceStatus['status'],
@@ -280,5 +274,5 @@ export function semanticAssetIdentityReadout(
   if (!record.asset) return null;
   return [record.asset.symbol, record.asset.name, record.asset.standard]
     .filter(Boolean)
-    .join(' · ') || compactMiddle(record.asset.type_script_hash);
+    .join(' · ') || midTruncate(record.asset.type_script_hash, 10, 8);
 }

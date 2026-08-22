@@ -880,7 +880,9 @@ export default function CellDetailPanel({
         // One composited shadow around the constellation replaces a separate
         // filter surface for every satellite. It follows the silhouette, so
         // the scan square and the plate beside it cast one shadow instead of
-        // two stacked ones.
+        // two stacked ones. The cyanWire here is a deliberate pin: the peer
+        // cards derive this glow from a live accent, and the cell card has no
+        // card-level accent to derive it from — its chrome is cyan, full stop.
         filter: `drop-shadow(0 8px 16px rgba(0,0,0,.56)) drop-shadow(0 0 14px ${rgba(HUD_COLORS.cyanWire, 0.06)})`,
         animation: reduced
           ? undefined
@@ -904,8 +906,14 @@ export default function CellDetailPanel({
           ...spatialPlate(HUD_COLORS.orange),
         }}
       >
-        <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.display, fontSize: HUD_TYPE.title, fontWeight: 600, letterSpacing: 2, textShadow: '0 0 9px rgba(255,152,48,.45)' }}>
+        <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.display, fontSize: HUD_TYPE.title, fontWeight: 600, letterSpacing: 2, textShadow: `0 0 9px ${rgba(HUD_COLORS.orange, 0.45)}` }}>
           CELL // #{cell.id}
+        </span>
+        {/* The house CJK companion, as PEER wears 对端 and NODE wears 节点.
+          * 细胞 is in the hand-subset woff2 (fonts/README.md) — deliberate
+          * presence, where SightedNodeCard documents a deliberate absence. */}
+        <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: 0.72 }}>
+          细胞
         </span>
         {/* The outpoint, which is what a viewer can look up anywhere else —
           * the old head of the content hash beside an output index read like
