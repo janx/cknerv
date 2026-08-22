@@ -60,6 +60,9 @@ describe('fabric lifecycle shader patch', () => {
     // Source-level declarations include ifdef'd-out dash attributes; the
     // ACTIVE set is 6 lifecycle (+ position/uv from three's prefix), safely
     // under the 16-location floor the old 19-attribute stack overflowed.
+    // This counts THIS stack's declarations exactly; the whole package's
+    // slot ledger — every family, with its injected and instanced charges —
+    // is `__tests__/materials/vertexAttributeBudget.test.ts`.
     const attributeCount = (vertex.match(/attribute /g) ?? []).length;
     expect(attributeCount).toBeLessThanOrEqual(13);
     expect(material.uniforms.fabricSimTimeSec).toBeDefined();

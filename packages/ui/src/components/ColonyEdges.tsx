@@ -46,6 +46,124 @@ function edgePhase(a: string, b: string): number {
 }
 
 /**
+ * The link layer's one additive glow-line program — base + ambient drift +
+ * block surge folded into an additive current (rgb premultiplied by intensity
+ * in the alpha, so with ambient=surge=0 it is byte-identical to the old static
+ * `vec4(uColor*vB, vB)`). Module level, not inline in the component, so the
+ * vertex-attribute budget table can weigh the real material rather than a copy
+ * of its source; `uTime`/surge live in mutable uniforms.
+ */
+export function makeColonyEdgeMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+    uniforms: {
+      uColor: {
+        value: new THREE.Color().setRGB(...PEER_NETWORK_PALETTE.scaffold),
+      },
+      uSurgeColor: {
+        value: new THREE.Color().setRGB(...PEER_NETWORK_PALETTE.coldWhite),
+      },
+      uTime: { value: 0 },
+      // Zero-drift defaults (seeded once; refreshed per-frame from LIVE.peer.* below).
+      uAmbientAmp: { value: 0.22 },
+      uAmbientSpeed: { value: 0.05 },
+      uAmbientSigma: { value: 0.17 },
+      uSurgeAmp: { value: 1.1 },
+      uSurgeSigma: { value: 0.13 },
+      uSurgeEase: { value: 0.12 },
+      uContextEnergy: { value: 1 },
+    },
+    vertexShader: /* glsl */ `
+      attribute float aBright;
+      attribute float aEdgeParam;
+      attribute float aPhase;
+      attribute float aSurgeT0;
+      attribute float aSurgeT1;
+      attribute float aSurgeP0;
+      varying float vB;
+      varying float vParam;
+      varying float vPhase;
+      varying float vS0;
+      varying float vS1;
+      varying float vSP0;
+      void main() {
+        vB = aBright;
+        vParam = aEdgeParam;
+        vPhase = aPhase;
+        vS0 = aSurgeT0;
+        vS1 = aSurgeT1;
+        vSP0 = aSurgeP0;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      precision highp float;
+      uniform vec3 uColor;
+      uniform vec3 uSurgeColor;
+      uniform float uTime;
+      uniform float uAmbientAmp;
+      uniform float uAmbientSpeed;
+      uniform float uAmbientSigma;
+      uniform float uSurgeAmp;
+      uniform float uSurgeSigma;
+      uniform float uSurgeEase;
+      uniform float uContextEnergy;
+      varying float vB;
+      varying float vParam;
+      varying float vPhase;
+      varying float vS0;
+      varying float vS1;
+      varying float vSP0;
+
+      // Looping band: wrap-around distance so a link's drift never seams at 0/1.
+      float wrapBump(float p, float center, float sigma) {
+        float d = abs(p - center);
+        d = min(d, 1.0 - d);
+        return exp(-(d * d) / (2.0 * sigma * sigma));
+      }
+      // One-shot band (no wrap): the surge travels the link exactly once.
+      float bump(float p, float center, float sigma) {
+        float d = p - center;
+        return exp(-(d * d) / (2.0 * sigma * sigma));
+      }
+
+      void main() {
+        float base = vB;
+
+        // Ambient current — a soft band drifting along the link, scaled by base
+        // (honesty) with a floor so even inferred links visibly flow.
+        float ac = fract(uTime * uAmbientSpeed + vPhase);
+        float ambient = uAmbientAmp * wrapBump(vParam, ac, uAmbientSigma) * (0.45 + 0.55 * vB);
+
+        // Block surge — bright band flowing parent→child over [vS0, vS1]. Only
+        // tree edges carry a real window (sentinel vS1 <= vS0 disables it).
+        float surge = 0.0;
+        if (vS1 > vS0) {
+          float frac = clamp((uTime - vS0) / (vS1 - vS0), 0.0, 1.0);
+          // parent at param 0 → band travels 0→1; parent at 1 → travels 1→0.
+          float center = vSP0 + frac * (1.0 - 2.0 * vSP0);
+          float env = smoothstep(vS0 - uSurgeEase, vS0, uTime)
+                    * (1.0 - smoothstep(vS1, vS1 + uSurgeEase * 2.0, uTime));
+          surge = uSurgeAmp * bump(vParam, center, uSurgeSigma) * env;
+        }
+
+        // AdditiveBlending applies source alpha to RGB once more. Keep the
+        // unscaled passive shape in alpha so uContextEnergy controls screen
+        // contribution linearly instead of being squared into invisibility.
+        float passiveShape = base + ambient;
+        float passive = passiveShape * uContextEnergy;
+        float intensity = passiveShape + surge;
+        vec3 col = uColor * passive + uSurgeColor * surge;
+        gl_FragColor = vec4(col, intensity);
+      }
+    `,
+  });
+}
+
+/**
  * The colony's links as a single additive <lineSegments> over ALL edges (measured
  * + inferred). Static confidence/geometry attributes are built once off the
  * topology (this component owns the geometry); the surge attributes are rewritten
@@ -123,117 +241,7 @@ export default function ColonyEdges({
   // ambient=surge=0 it is byte-identical to the old static `vec4(uColor*vB, vB)`).
   // Memoized on [] (stable for the component's life) so it survives topology
   // re-clones without a shader recompile; uTime/surge live in mutable uniforms.
-  const mat = useMemo(
-    () =>
-      new THREE.ShaderMaterial({
-        transparent: true,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-        toneMapped: false,
-        uniforms: {
-          uColor: {
-            value: new THREE.Color().setRGB(...PEER_NETWORK_PALETTE.scaffold),
-          },
-          uSurgeColor: {
-            value: new THREE.Color().setRGB(...PEER_NETWORK_PALETTE.coldWhite),
-          },
-          uTime: { value: 0 },
-          // Zero-drift defaults (seeded once; refreshed per-frame from LIVE.peer.* below).
-          uAmbientAmp: { value: 0.22 },
-          uAmbientSpeed: { value: 0.05 },
-          uAmbientSigma: { value: 0.17 },
-          uSurgeAmp: { value: 1.1 },
-          uSurgeSigma: { value: 0.13 },
-          uSurgeEase: { value: 0.12 },
-          uContextEnergy: { value: 1 },
-        },
-        vertexShader: /* glsl */ `
-          attribute float aBright;
-          attribute float aEdgeParam;
-          attribute float aPhase;
-          attribute float aSurgeT0;
-          attribute float aSurgeT1;
-          attribute float aSurgeP0;
-          varying float vB;
-          varying float vParam;
-          varying float vPhase;
-          varying float vS0;
-          varying float vS1;
-          varying float vSP0;
-          void main() {
-            vB = aBright;
-            vParam = aEdgeParam;
-            vPhase = aPhase;
-            vS0 = aSurgeT0;
-            vS1 = aSurgeT1;
-            vSP0 = aSurgeP0;
-            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-          }
-        `,
-        fragmentShader: /* glsl */ `
-          precision highp float;
-          uniform vec3 uColor;
-          uniform vec3 uSurgeColor;
-          uniform float uTime;
-          uniform float uAmbientAmp;
-          uniform float uAmbientSpeed;
-          uniform float uAmbientSigma;
-          uniform float uSurgeAmp;
-          uniform float uSurgeSigma;
-          uniform float uSurgeEase;
-          uniform float uContextEnergy;
-          varying float vB;
-          varying float vParam;
-          varying float vPhase;
-          varying float vS0;
-          varying float vS1;
-          varying float vSP0;
-
-          // Looping band: wrap-around distance so a link's drift never seams at 0/1.
-          float wrapBump(float p, float center, float sigma) {
-            float d = abs(p - center);
-            d = min(d, 1.0 - d);
-            return exp(-(d * d) / (2.0 * sigma * sigma));
-          }
-          // One-shot band (no wrap): the surge travels the link exactly once.
-          float bump(float p, float center, float sigma) {
-            float d = p - center;
-            return exp(-(d * d) / (2.0 * sigma * sigma));
-          }
-
-          void main() {
-            float base = vB;
-
-            // Ambient current — a soft band drifting along the link, scaled by base
-            // (honesty) with a floor so even inferred links visibly flow.
-            float ac = fract(uTime * uAmbientSpeed + vPhase);
-            float ambient = uAmbientAmp * wrapBump(vParam, ac, uAmbientSigma) * (0.45 + 0.55 * vB);
-
-            // Block surge — bright band flowing parent→child over [vS0, vS1]. Only
-            // tree edges carry a real window (sentinel vS1 <= vS0 disables it).
-            float surge = 0.0;
-            if (vS1 > vS0) {
-              float frac = clamp((uTime - vS0) / (vS1 - vS0), 0.0, 1.0);
-              // parent at param 0 → band travels 0→1; parent at 1 → travels 1→0.
-              float center = vSP0 + frac * (1.0 - 2.0 * vSP0);
-              float env = smoothstep(vS0 - uSurgeEase, vS0, uTime)
-                        * (1.0 - smoothstep(vS1, vS1 + uSurgeEase * 2.0, uTime));
-              surge = uSurgeAmp * bump(vParam, center, uSurgeSigma) * env;
-            }
-
-            // AdditiveBlending applies source alpha to RGB once more. Keep the
-            // unscaled passive shape in alpha so uContextEnergy controls screen
-            // contribution linearly instead of being squared into invisibility.
-            float passiveShape = base + ambient;
-            float passive = passiveShape * uContextEnergy;
-            float intensity = passiveShape + surge;
-            vec3 col = uColor * passive + uSurgeColor * surge;
-            gl_FragColor = vec4(col, intensity);
-          }
-        `,
-      }),
-    [],
-  );
+  const mat = useMemo(() => makeColonyEdgeMaterial(), []);
 
   // Drive the ambient current every frame (surge reads the same uTime vs its stamps).
   // Ambient/surge tunables are refreshed from LIVE.peer.* each frame (panel drags

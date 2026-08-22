@@ -57,6 +57,108 @@ export interface ConsensusWriteSealProps {
   consumedCellIdsRef?: React.RefObject<Set<number>>;
 }
 
+/**
+ * The seal's one additive point program. Module level, not inline in the
+ * component, so the vertex-attribute budget table can weigh the real
+ * material rather than a copy of its source.
+ */
+export function makeDendriticBurstMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uPeakRadius:    { value: BURST_PEAK_RADIUS },
+      uViewportHeight:{ value: 1 },
+      uPixelRatio:    { value: 1 },
+    },
+    transparent: true,
+    depthWrite:  false,
+    blending:    THREE.AdditiveBlending,
+    toneMapped:  false,
+    vertexShader: /* glsl */ `
+      attribute vec3  aColor;
+      attribute float aRadius;
+      attribute float aAlpha;
+      attribute float aCore;
+      attribute float aSpin;
+      attribute float aMemory;
+      uniform float uPeakRadius;
+      uniform float uViewportHeight;
+      uniform float uPixelRatio;
+      varying float vAlpha;
+      varying float vCore;
+      varying float vSpin;
+      varying float vMemory;
+      varying vec3  vColor;
+      void main() {
+        vAlpha = aAlpha;
+        vCore = aCore;
+        vSpin = aSpin;
+        vMemory = aMemory;
+        vColor = aColor;
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        gl_Position = projectionMatrix * mv;
+        // Pure CPU lifecycle supplies an eased radius in [0, 1].
+        float radius = uPeakRadius * aRadius;
+        float pixelSize = radius * (uViewportHeight * 0.5) / -mv.z;
+        float memoryFloorPx = 34.0 * vMemory * uPixelRatio;
+        gl_PointSize = max(2.0, max(pixelSize * 2.0 * uPixelRatio, memoryFloorPx));
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      precision highp float;
+      varying float vAlpha;
+      varying float vCore;
+      varying float vSpin;
+      varying float vMemory;
+      varying vec3  vColor;
+      void main() {
+        if (vAlpha <= 0.001) discard;
+        vec2 p = (gl_PointCoord - 0.5) * 2.0;
+        float r = length(p);
+        if (r > 1.0) discard;
+        float theta = atan(p.y, p.x);
+
+        // Two interrupted contributor rings rotate against one another.
+        float outerGate = smoothstep(0.18, 0.48,
+          abs(sin((theta + vSpin) * 3.0)));
+        float innerGate = smoothstep(0.16, 0.44,
+          abs(sin((theta - vSpin * 0.72) * 3.0 + 1.05)));
+        float outerWidth = mix(0.035, 0.065, vMemory);
+        float innerWidth = mix(0.028, 0.052, vMemory);
+        float outer = exp(-pow((r - 0.78) / outerWidth, 2.0)) * outerGate;
+        float inner = exp(-pow((r - 0.57) / innerWidth, 2.0)) * innerGate * 0.62;
+
+        // Six compact agreement nodes bridge the two contributor rings.
+        // Their tangential footprint avoids the visual grammar of a
+        // cardinal targeting reticle.
+        float agreementAngle = exp(-pow(abs(sin((theta + 0.37) * 3.0)) / 0.075, 2.0));
+        float agreementBand = exp(-pow((r - 0.68) / 0.045, 2.0));
+        float agreements = agreementAngle * agreementBand * 0.92;
+
+        // The central knot announces write completion, then returns at a
+        // lower intensity inside the contracted memory latch.
+        float diamond = 1.0 - smoothstep(0.07, 0.15, abs(p.x) + abs(p.y));
+        float knot = diamond * vCore;
+        float halo = exp(-pow((r - 0.70) / 0.17, 2.0)) * 0.07;
+        float glyph = outer + inner + agreements + knot + halo;
+        float intensity = min(1.35, glyph) * vAlpha;
+        if (intensity < 0.008) discard;
+
+        vec3 pale = vec3(0.72, 0.96, 1.0);
+        // Agreement nodes and the early knot resolve locally; once the
+        // write contracts into persistent memory, the full seal becomes
+        // pale consensus light rather than retaining the moving gold hue.
+        float paleMix = clamp(
+          inner * 0.35 + agreements * 0.55 + knot + vMemory * 0.72,
+          0.0,
+          1.0
+        );
+        vec3 color = mix(vColor, pale, paleMix);
+        gl_FragColor = vec4(color * intensity, intensity);
+      }
+    `,
+  });
+}
+
 export default function ConsensusWriteSeal({
   arrivalRef,
   consumedCellIdsRef,
@@ -80,104 +182,7 @@ export default function ConsensusWriteSeal({
     return g;
   }, []);
 
-  const material = useMemo(
-    () =>
-      new THREE.ShaderMaterial({
-        uniforms: {
-          uPeakRadius:    { value: BURST_PEAK_RADIUS },
-          uViewportHeight:{ value: 1 },
-          uPixelRatio:    { value: 1 },
-        },
-        transparent: true,
-        depthWrite:  false,
-        blending:    THREE.AdditiveBlending,
-        toneMapped:  false,
-        vertexShader: /* glsl */ `
-          attribute vec3  aColor;
-          attribute float aRadius;
-          attribute float aAlpha;
-          attribute float aCore;
-          attribute float aSpin;
-          attribute float aMemory;
-          uniform float uPeakRadius;
-          uniform float uViewportHeight;
-          uniform float uPixelRatio;
-          varying float vAlpha;
-          varying float vCore;
-          varying float vSpin;
-          varying float vMemory;
-          varying vec3  vColor;
-          void main() {
-            vAlpha = aAlpha;
-            vCore = aCore;
-            vSpin = aSpin;
-            vMemory = aMemory;
-            vColor = aColor;
-            vec4 mv = modelViewMatrix * vec4(position, 1.0);
-            gl_Position = projectionMatrix * mv;
-            // Pure CPU lifecycle supplies an eased radius in [0, 1].
-            float radius = uPeakRadius * aRadius;
-            float pixelSize = radius * (uViewportHeight * 0.5) / -mv.z;
-            float memoryFloorPx = 34.0 * vMemory * uPixelRatio;
-            gl_PointSize = max(2.0, max(pixelSize * 2.0 * uPixelRatio, memoryFloorPx));
-          }
-        `,
-        fragmentShader: /* glsl */ `
-          precision highp float;
-          varying float vAlpha;
-          varying float vCore;
-          varying float vSpin;
-          varying float vMemory;
-          varying vec3  vColor;
-          void main() {
-            if (vAlpha <= 0.001) discard;
-            vec2 p = (gl_PointCoord - 0.5) * 2.0;
-            float r = length(p);
-            if (r > 1.0) discard;
-            float theta = atan(p.y, p.x);
-
-            // Two interrupted contributor rings rotate against one another.
-            float outerGate = smoothstep(0.18, 0.48,
-              abs(sin((theta + vSpin) * 3.0)));
-            float innerGate = smoothstep(0.16, 0.44,
-              abs(sin((theta - vSpin * 0.72) * 3.0 + 1.05)));
-            float outerWidth = mix(0.035, 0.065, vMemory);
-            float innerWidth = mix(0.028, 0.052, vMemory);
-            float outer = exp(-pow((r - 0.78) / outerWidth, 2.0)) * outerGate;
-            float inner = exp(-pow((r - 0.57) / innerWidth, 2.0)) * innerGate * 0.62;
-
-            // Six compact agreement nodes bridge the two contributor rings.
-            // Their tangential footprint avoids the visual grammar of a
-            // cardinal targeting reticle.
-            float agreementAngle = exp(-pow(abs(sin((theta + 0.37) * 3.0)) / 0.075, 2.0));
-            float agreementBand = exp(-pow((r - 0.68) / 0.045, 2.0));
-            float agreements = agreementAngle * agreementBand * 0.92;
-
-            // The central knot announces write completion, then returns at a
-            // lower intensity inside the contracted memory latch.
-            float diamond = 1.0 - smoothstep(0.07, 0.15, abs(p.x) + abs(p.y));
-            float knot = diamond * vCore;
-            float halo = exp(-pow((r - 0.70) / 0.17, 2.0)) * 0.07;
-            float glyph = outer + inner + agreements + knot + halo;
-            float intensity = min(1.35, glyph) * vAlpha;
-            if (intensity < 0.008) discard;
-
-            vec3 pale = vec3(0.72, 0.96, 1.0);
-            // Agreement nodes and the early knot resolve locally; once the
-            // write contracts into persistent memory, the full seal becomes
-            // pale consensus light rather than retaining the moving gold hue.
-            float paleMix = clamp(
-              inner * 0.35 + agreements * 0.55 + knot + vMemory * 0.72,
-              0.0,
-              1.0
-            );
-            vec3 color = mix(vColor, pale, paleMix);
-            gl_FragColor = vec4(color * intensity, intensity);
-          }
-        `,
-      }),
-    [],
-  );
+  const material = useMemo(() => makeDendriticBurstMaterial(), []);
 
   useEffect(
     () => () => {
