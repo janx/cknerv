@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -20,6 +21,7 @@ import {
   detachInspectionCard,
   INSPECTION_CARD_STYLE,
   INSPECTION_LAYER_STYLE,
+  resetInspectionPlacementLock,
   SceneInspectionAnchor,
   SceneInspectionConnector,
   useSceneInspectionDismiss,
@@ -114,6 +116,12 @@ export default function PeerInspectionOverlay({
     setFocusFacet(facet);
   }, []);
   useSceneInspectionDismiss(cardRef, onClose);
+
+  // The sticky offset belongs to one selection: probing a different peer
+  // clears the lock, so its card centres itself afresh beside its own node.
+  useEffect(() => {
+    resetInspectionPlacementLock(handles);
+  }, [peer.node_id, handles]);
 
   useLayoutEffect(() => {
     const card = cardRef.current;

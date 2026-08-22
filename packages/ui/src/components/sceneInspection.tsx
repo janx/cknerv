@@ -32,6 +32,31 @@ export interface SceneInspectorPlacement {
   y: number;
 }
 
+/** The solver's two vocabularies: 'beside' places left/right of the anchor
+ * (x is width-derived, y is the free axis), 'stacked' places above/below
+ * (y is side-derived, x is the free axis). */
+export type SceneInspectorPlacementFamily = 'beside' | 'stacked';
+
+/**
+ * Sticky per-selection placement offsets. A card keeps the offset it opened
+ * with — content growth extends it downward instead of re-centring on every
+ * height change — so the first visible solve is remembered here and replayed
+ * as the pre-clamp preference until the selection changes. Offsets are
+ * anchor-relative, so a locked card still tracks its entity across the
+ * screen; the lock freezes the preference, never the absolute position.
+ */
+export interface SceneInspectorPlacementLock {
+  /** Family the offsets were captured in. The two families measure
+   * different free axes, so a flip between them recaptures; a flip within
+   * the beside family (left↔right) keeps the same y offset. Null between
+   * selections. */
+  family: SceneInspectorPlacementFamily | null;
+  /** Sticky vertical offset (beside family's free axis). */
+  y: number | null;
+  /** Sticky horizontal offset (stacked family's free axis). */
+  x: number | null;
+}
+
 export interface InspectionCardSize {
   width: number;
   height: number;
@@ -57,6 +82,9 @@ export interface SceneInspectionHandles {
   defaultSize: InspectionCardSize;
   /** Last committed frame signature — clearing forces a re-write. */
   frameKey: string;
+  /** Sticky per-selection offsets, mutated in place — never reallocated in
+   * the frame loop. See SceneInspectorPlacementLock. */
+  placementLock: SceneInspectorPlacementLock;
   visible: boolean;
   layoutSide: SceneInspectorPlacementSide;
   layoutListeners: Set<() => void>;
@@ -83,6 +111,7 @@ export function createSceneInspectionHandles({
     measured: { width: defaultSize.width, height: defaultSize.height },
     defaultSize,
     frameKey: '',
+    placementLock: { family: null, y: null, x: null },
     visible: false,
     layoutSide: 'left',
     layoutListeners: new Set(),
@@ -105,6 +134,18 @@ export function commitInspectionCardSize(
   handles.frameKey = '';
 }
 
+/** Forget the sticky offsets. Called when the inspected entity changes and
+ * when the card detaches, so the next selection centres itself afresh
+ * instead of inheriting where the previous card happened to sit. */
+export function resetInspectionPlacementLock(
+  handles: SceneInspectionHandles,
+): void {
+  const lock = handles.placementLock;
+  lock.family = null;
+  lock.y = null;
+  lock.x = null;
+}
+
 /** Release a card the dialect is unmounting, so no frame can write into it. */
 export function detachInspectionCard(
   handles: SceneInspectionHandles,
@@ -113,6 +154,7 @@ export function detachInspectionCard(
   if (handles.card === card) handles.card = null;
   handles.frameKey = '';
   handles.visible = false;
+  resetInspectionPlacementLock(handles);
 }
 
 function setInspectionLayoutSide(
@@ -179,6 +221,8 @@ export function sceneInspectorPlacement({
   gap = INSPECTOR_GAP_PX,
   edge = INSPECTOR_EDGE_PX,
   safeTop = INSPECTOR_SAFE_TOP_PX,
+  preferredY,
+  preferredX,
 }: {
   anchorX: number;
   anchorY: number;
@@ -189,6 +233,15 @@ export function sceneInspectorPlacement({
   gap?: number;
   edge?: number;
   safeTop?: number;
+  /** Sticky vertical offset for the beside family: replaces the centring
+   * preference (still clamped to the viewport band, still overruled by minY
+   * when the band is inverted). The stacked family ignores it — its y is
+   * side-derived and already grows away from the anchor. */
+  preferredY?: number;
+  /** Sticky horizontal offset for the stacked family: replaces the centring
+   * preference, still clamped. The beside family ignores it — its x is
+   * width-derived. */
+  preferredX?: number;
 }): SceneInspectorPlacement {
   const roomRight = viewportWidth - edge - anchorX;
   const roomLeft = anchorX - edge;
@@ -196,9 +249,11 @@ export function sceneInspectorPlacement({
   const canLeft = roomLeft >= panelWidth + gap;
   const minY = safeTop - anchorY;
   const maxY = viewportHeight - edge - panelHeight - anchorY;
-  const centeredY = -panelHeight / 2;
+  const besideY = typeof preferredY === 'number'
+    ? preferredY
+    : -panelHeight / 2;
   const y = minY <= maxY
-    ? Math.max(minY, Math.min(maxY, centeredY))
+    ? Math.max(minY, Math.min(maxY, besideY))
     : minY;
 
   if (canRight || canLeft) {
@@ -219,15 +274,58 @@ export function sceneInspectorPlacement({
   const side = roomBelow >= roomAbove ? 'below' : 'above';
   const minX = edge - anchorX;
   const maxX = viewportWidth - edge - panelWidth - anchorX;
-  const x = Math.max(minX, Math.min(maxX, -panelWidth / 2));
-  const preferredY = side === 'below' ? gap : -panelHeight - gap;
+  const stackedX = typeof preferredX === 'number'
+    ? preferredX
+    : -panelWidth / 2;
+  const x = Math.max(minX, Math.min(maxX, stackedX));
+  const stackedY = side === 'below' ? gap : -panelHeight - gap;
   return {
     side,
     x,
     y: minY <= maxY
-      ? Math.max(minY, Math.min(maxY, preferredY))
+      ? Math.max(minY, Math.min(maxY, stackedY))
       : minY,
   };
+}
+
+/**
+ * Placement under the sticky lock: solve with the remembered per-selection
+ * offsets as the preference, and on the first visible solve of a family —
+ * a fresh selection, or a flip between families whose offsets measure
+ * different axes — commit the solved offsets as that selection's own. A
+ * left↔right flip stays inside the beside family, so the y offset survives
+ * it. DOM-free and mutation-only over the handles (no per-frame allocation
+ * beyond the solve itself), so the frame loop calls it directly and jsdom
+ * can exercise the contract without R3F.
+ */
+export function resolveStickyInspectorPlacement(
+  handles: SceneInspectionHandles,
+  anchorX: number,
+  anchorY: number,
+  viewportWidth: number,
+  viewportHeight: number,
+): SceneInspectorPlacement {
+  const lock = handles.placementLock;
+  const placement = sceneInspectorPlacement({
+    anchorX,
+    anchorY,
+    panelWidth: handles.measured.width,
+    panelHeight: handles.measured.height,
+    viewportWidth,
+    viewportHeight,
+    preferredY: lock.y ?? undefined,
+    preferredX: lock.x ?? undefined,
+  });
+  const family: SceneInspectorPlacementFamily =
+    placement.side === 'left' || placement.side === 'right'
+      ? 'beside'
+      : 'stacked';
+  if (lock.family !== family) {
+    lock.family = family;
+    lock.y = family === 'beside' ? placement.y : null;
+    lock.x = family === 'stacked' ? placement.x : null;
+  }
+  return placement;
 }
 
 function updateLeader(
@@ -345,14 +443,13 @@ export function SceneInspectionAnchor({
     const anchorX = (projected.current.x * 0.5 + 0.5) * size.width;
     const anchorY = (-projected.current.y * 0.5 + 0.5) * size.height;
     const { width, height } = handles.measured;
-    const placement = sceneInspectorPlacement({
+    const placement = resolveStickyInspectorPlacement(
+      handles,
       anchorX,
       anchorY,
-      panelWidth: width,
-      panelHeight: height,
-      viewportWidth: size.width,
-      viewportHeight: size.height,
-    });
+      size.width,
+      size.height,
+    );
     setInspectionLayoutSide(handles, placement.side);
     onCardFrame?.(anchorX, anchorY, placement);
     const cardX = anchorX + placement.x;

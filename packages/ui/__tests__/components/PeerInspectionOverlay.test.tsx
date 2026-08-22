@@ -96,6 +96,28 @@ describe('PeerInspectionOverlay', () => {
     expect(handles.visible).toBe(false);
   });
 
+  it('forgets the sticky placement offset when the probed peer changes', () => {
+    const { handles, view } = mount();
+    // A frame has already locked where this card opened...
+    handles.placementLock.family = 'beside';
+    handles.placementLock.y = -150;
+
+    view.rerender(
+      <PeerInspectionOverlay
+        handles={handles}
+        peer={peer({ node_id: 'QmPeerBeta9876543210' })}
+        tip={TIP}
+        localVersion={LOCAL_VERSION}
+        linkLost={false}
+        onClose={vi.fn()}
+      />,
+    );
+
+    // ...and probing a different peer clears it, so the next card centres
+    // itself beside its own node instead of inheriting this one's offset.
+    expect(handles.placementLock).toEqual({ family: null, y: null, x: null });
+  });
+
   it('tints the connector with the peer the card is reading', () => {
     const { handles } = mount();
     expect(handles.accent).toBe(PEER_NETWORK_HEX.outbound);

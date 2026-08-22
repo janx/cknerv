@@ -23,6 +23,7 @@ import {
   detachInspectionCard,
   INSPECTION_CARD_STYLE,
   INSPECTION_LAYER_STYLE,
+  resetInspectionPlacementLock,
   SceneInspectionAnchor,
   SceneInspectionConnector,
   useSceneInspectionDismiss,
@@ -149,6 +150,13 @@ export default function CellInspectionOverlay(props: CellInspectionOverlayProps)
     onInspectionFieldChange?.(field);
   }, [onInspectionFieldChange]);
   useSceneInspectionDismiss(cardRef, onClose);
+
+  // The sticky offset belongs to one selection: a different Cell may open
+  // anywhere on screen, so the lock clears whenever the inspected id changes
+  // — and the card it grows for centres itself once, then holds its ground.
+  useEffect(() => {
+    resetInspectionPlacementLock(handles);
+  }, [cell.id, handles]);
 
   // The portrait owns a second pointer boundary. Reset the parent interaction
   // lock at the overlay boundary as well as inside the portrait, so a close

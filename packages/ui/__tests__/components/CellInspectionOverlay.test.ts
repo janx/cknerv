@@ -132,6 +132,15 @@ describe('cellInspectorPlacement', () => {
     expect(INSPECTION_OVERLAY_SOURCE).not.toContain('<octahedronGeometry');
   });
 
+  it('clears the sticky placement lock whenever the inspected cell changes', () => {
+    // The per-selection offset itself lives in the chassis (sceneInspection
+    // owns and tests the sticky contract); the overlay's one duty is to
+    // forget it when a different cell is selected, so growth extends the
+    // open card downward while a fresh card still centres itself.
+    expect(INSPECTION_OVERLAY_SOURCE).toContain('resetInspectionPlacementLock');
+    expect(INSPECTION_OVERLAY_SOURCE).toContain('[cell.id, handles]');
+  });
+
   it('projects once from cached ResizeObserver measurements', () => {
     expect(INSPECTION_OVERLAY_SOURCE).toContain('new ResizeObserver');
     expect(INSPECTION_OVERLAY_SOURCE).toContain(

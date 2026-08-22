@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useLayoutEffect,
   useRef,
 } from 'react';
@@ -13,6 +14,7 @@ import {
   detachInspectionCard,
   INSPECTION_CARD_STYLE,
   INSPECTION_LAYER_STYLE,
+  resetInspectionPlacementLock,
   SceneInspectionAnchor,
   SceneInspectionConnector,
   useSceneInspectionDismiss,
@@ -98,6 +100,12 @@ export default function SightedInspectionOverlay({
   handles.accent = SIGHTED_NODE_ACCENT;
   const layoutSide = useSceneInspectionLayoutSide(handles);
   useSceneInspectionDismiss(cardRef, onClose);
+
+  // The sticky offset belongs to one selection: sighting a different roster
+  // node clears the lock, so its card centres itself afresh beside it.
+  useEffect(() => {
+    resetInspectionPlacementLock(handles);
+  }, [node.node_id, handles]);
 
   useLayoutEffect(() => {
     const card = cardRef.current;

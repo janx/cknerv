@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useLayoutEffect,
   useRef,
 } from 'react';
@@ -13,6 +14,7 @@ import {
   detachInspectionCard,
   INSPECTION_CARD_STYLE,
   INSPECTION_LAYER_STYLE,
+  resetInspectionPlacementLock,
   SceneInspectionAnchor,
   SceneInspectionConnector,
   useSceneInspectionDismiss,
@@ -96,6 +98,12 @@ export default function NodeInspectionOverlay({
   handles.accent = NODE_SELF_ACCENT;
   const layoutSide = useSceneInspectionLayoutSide(handles);
   useSceneInspectionDismiss(cardRef, onClose);
+
+  // There is only ever one self node, but each opening of its card is its
+  // own selection: clear the sticky offset so it centres itself afresh.
+  useEffect(() => {
+    resetInspectionPlacementLock(handles);
+  }, [node.id, handles]);
 
   useLayoutEffect(() => {
     const card = cardRef.current;
