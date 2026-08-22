@@ -39,6 +39,31 @@ export const HUD_COLORS = {
   // A rose that drifts red stops naming the organism and starts looking like a
   // small alarm, which is the one failure mode this token cannot have.
   cellRose: '#FF7A85',
+  // What a Cell turns into while it burns down. The stage already has this
+  // colour: `CELL_GALAXY_PALETTE.ember` is what `cellHybridMaterial`'s wither
+  // ramp drains a consumed body toward — chroma cooled to ash, then tinted
+  // back 0.6 of the way to ember — so the panel that counts deaths and the
+  // corpses out there finally name the same event. It is that hue taken
+  // darker and redder than the scene's raw [1.0, 0.52, 0.28], because at full
+  // brightness the ember IS chrome orange, and a reading may never be painted
+  // in the instrument's own frame colour. The gate found the whole corridor:
+  // this sits at hue 11°, between `danger` at 0° and `orangeDeep` at 25°, and
+  // is cooled and dimmed off both — which is what a coal that has burned down
+  // actually looks like beside a flame.
+  //
+  // Which layer it belongs to: DATA, not identity. `cellRose` says "this
+  // surface is about Cells"; `ember` says "this number is cells being spent".
+  // It is never a panel accent, never a border, only ever a reading — and
+  // `hudDiscipline.test.ts` walks it through the same reserve matrix as the
+  // lock and asset families for exactly that reason.
+  //
+  // What it replaced matters more than what it is. BORN/DIED used to be
+  // nominal green over danger red, which said that a Cell being consumed is a
+  // FAULT. In this organism it is not: cells dying IS metabolism, and a chain
+  // that stopped spending its outputs would be the emergency. Red stays
+  // reserved for pathology — reorg, stall, decode error, crit — so ember has
+  // to read as "consumed" from across the room and never as a small alarm.
+  ember: '#D25234',
   rebuild: '#AE86FF',
   // Consensus-memory family (the inspection surface's violet) — deliberately
   // distinct from `rebuild`, which is the scene's replay/rebuild semantic.

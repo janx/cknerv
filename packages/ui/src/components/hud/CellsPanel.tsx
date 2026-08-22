@@ -28,7 +28,12 @@ export default function CellsPanel({ stats, churn, reducedMotion = false, style 
   const maxRate = Math.max(churn.bornPerBlock, churn.spentPerBlock, 0.001);
   const bornW = `${Math.min(100, (churn.bornPerBlock / maxRate) * 100)}%`;
   const spentW = `${Math.min(100, (churn.spentPerBlock / maxRate) * 100)}%`;
-  const netColor = churn.netPerBlock >= 0 ? HUD_COLORS.cyanWire : HUD_COLORS.caution;
+  // One axis, one code. The hero and the two rows 20px under it are the same
+  // reading at two resolutions — net IS born minus died — and they used to
+  // speak two colour languages about it: cyan/yellow up here, green/red down
+  // there. Growth is `nominal` and decline is `ember`, the exact pair the flow
+  // rows wear; the hero only says which side won this block.
+  const netColor = churn.netPerBlock >= 0 ? HUD_COLORS.nominal : HUD_COLORS.ember;
   return (
     <HudPanel style={{ width: 302, ...style }}>
       {/* MESH·02 is the peer plane and MESH·03 is this one; they are a pair,
@@ -46,9 +51,14 @@ export default function CellsPanel({ stats, churn, reducedMotion = false, style 
         <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: HUD_TYPE.hero, fontVariantNumeric: 'tabular-nums', color: netColor, lineHeight: 1, textShadow: `0 0 12px ${netColor}66`, animation: reducedMotion ? undefined : 'cknerv-hud-breathe 3.2s ease-in-out infinite' }}>{fmtSigned(churn.netPerBlock)}</span>
         <span style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, color: HUD_COLORS.dim, marginBottom: 4 }}>net /blk</span>
       </div>
+      {/* Born green, died ember — a metabolism, not a fault report. DIED wore
+          `danger`, the same red the HUD raises for a reorg, so every ordinary
+          block of spent outputs read as a small emergency. Cells being
+          consumed is what a living chain looks like; the alarming number
+          would be this row at zero. */}
       <FlowRow label="▲ BORN" color={HUD_COLORS.nominal} width={bornW} value={churn.bornPerBlock} />
       <div style={{ height: 5 }} />
-      <FlowRow label="▼ DIED" color={HUD_COLORS.danger} width={spentW} value={churn.spentPerBlock} />
+      <FlowRow label="▼ DIED" color={HUD_COLORS.ember} width={spentW} value={churn.spentPerBlock} />
       {/* `stats.live` is births minus deaths in the BACKEND'S OBSERVATION
           WINDOW — never a live-chain total. That was merely imprecise while
           nothing else on screen implied a chain-wide number; with a medium
@@ -58,7 +68,7 @@ export default function CellsPanel({ stats, churn, reducedMotion = false, style 
       <div style={{ marginTop: 11 }}>
         <StatRow label="Observed live"><span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: HUD_TYPE.emphasis, fontVariantNumeric: 'tabular-nums', color: HUD_COLORS.heroInk }}>{fmt(stats.live)}</span></StatRow>
         <StatRow label="Total observed">{fmt(stats.born)}</StatRow>
-        <StatRow label="Dead" valueColor={HUD_COLORS.danger}>{fmt(stats.dead)}</StatRow>
+        <StatRow label="Dead" valueColor={HUD_COLORS.ember}>{fmt(stats.dead)}</StatRow>
       </div>
     </HudPanel>
   );

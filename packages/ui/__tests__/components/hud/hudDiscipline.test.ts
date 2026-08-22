@@ -191,6 +191,18 @@ describe('hud discipline', () => {
     expect(rgbDistance(HUD_COLORS.cellRose, HUD_COLORS.peerWire))
       .toBeGreaterThan(SEPARATION_FLOOR);
   });
+
+  it('the metabolism panel raises no alarms', () => {
+    // B6, pinned where it happened. CELL MESH counts births and deaths per
+    // block; both are what a living chain does and neither is a fault. The
+    // panel painted DIED and the dead tally in `danger` — the same red the HUD
+    // raises for a reorg — so an ordinary block read as a small emergency, and
+    // the hero above them told the same story in a third colour again.
+    const panel = SOURCES.find((source) => source.name === 'CellsPanel.tsx');
+    expect(panel).toBeDefined();
+    expect(panel?.text).toContain('HUD_COLORS.ember');
+    expect(panel?.text).not.toContain('HUD_COLORS.danger');
+  });
 });
 
 // ——— The reserve ————————————————————————————————————————————————————————
@@ -200,7 +212,9 @@ describe('hud discipline', () => {
 // orange is the instrument's own frame; the two mesh wires are identity. A
 // content category — a lock family, an asset family, a class of the census, a
 // byte segment — is none of those: it names WHAT a thing is, so borrowing a
-// reserved hue makes an ordinary cell look like a raised alarm.
+// reserved hue makes an ordinary cell look like a raised alarm. A metabolic
+// rate is the same kind of thing one step further out: cells being spent is a
+// reading about the organism, never a verdict on it.
 //
 // The tables are walked programmatically rather than listed, so a seventh
 // lock kind or a fifth byte segment added next year is checked the day it
@@ -220,12 +234,24 @@ const RESERVED: Readonly<Record<string, string>> = {
   cellRose: HUD_COLORS.cellRose,
 };
 
-/** Every palette that colours content, by the surface it paints. */
+/** Metabolism is data too, so it is checked as data. `ember` is written here
+ *  as a one-member palette rather than as a hand-rolled assertion, so it walks
+ *  the whole matrix below — including against reserved hues nobody thought to
+ *  name while tuning it, and including the day a second metabolic tone is
+ *  added beside it. */
+const METABOLIC_COLORS: Readonly<Record<string, string>> = {
+  ember: HUD_COLORS.ember,
+};
+
+/** Every palette that colours DATA rather than state, by the surface it
+ *  paints: a lock family, an asset family, a class of the census, a byte
+ *  segment, a rate of cells being spent. */
 const CATEGORY_PALETTES: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   lock: LOCK_COLORS,
   asset: ASSET_COLORS,
   classMix: CLASS_MIX_COLORS,
   byteSegment: SEGMENT_COLORS,
+  metabolic: METABOLIC_COLORS,
 };
 
 /** The sanctioned borrows, each `<palette>.<key> → <reserved>`, and each one
