@@ -73,7 +73,8 @@
           "capacity_field_bytes": 8,
           "lock_script_bytes": 54,
           "type_script_bytes": 33,
-          "data_bytes": 7
+          "data_bytes": 7,
+          "occupied_shannons": "12200000000"
         },
         "content": {
           "total_bytes": 7,
@@ -101,6 +102,105 @@
             }
           ]
         },
+        "consumed": {
+          "tx_hash": "0xspendtx",
+          "block": 99
+        },
+        "facets": [
+          {
+            "namespace": "ckb",
+            "kind": "dao",
+            "state": "withdrawing",
+            "attributes": [
+              {
+                "key": "deposit_block",
+                "value": "92",
+                "unit": "block"
+              },
+              {
+                "key": "withdraw_request_block",
+                "value": "96",
+                "unit": "block"
+              },
+              {
+                "key": "deposit_at_ms",
+                "value": "1709618828000",
+                "unit": "ms"
+              },
+              {
+                "key": "withdraw_request_at_ms",
+                "value": "1709705228000",
+                "unit": "ms"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "out_point": {
+          "tx_hash": "0xlegacycelltx",
+          "index": 0
+        },
+        "source": "ckbadger",
+        "as_of": {
+          "block": 100,
+          "hash": "0xblock100"
+        },
+        "observed_at_block": 88,
+        "updated_at_ms": 1700000000002,
+        "address": "ckt1qyqlegacy",
+        "cell_type": "dao",
+        "lock_script": {
+          "script_hash": "0xlockscript",
+          "code_hash": "0xlockcode",
+          "hash_type": "type",
+          "args": "0x01",
+          "name": "Default Lock",
+          "family": "lock",
+          "deprecated": false
+        },
+        "type_script": {
+          "script_hash": "0xtypescript",
+          "code_hash": "0xdaocode",
+          "hash_type": "type",
+          "args": "0x",
+          "name": "Nervos DAO",
+          "family": "dao",
+          "deprecated": false
+        },
+        "common_knowledge": {
+          "total_bytes": 102,
+          "capacity_field_bytes": 8,
+          "lock_script_bytes": 54,
+          "type_script_bytes": 33,
+          "data_bytes": 7
+        },
+        "content": {
+          "total_bytes": 7,
+          "data_hex": "0x58000000000000",
+          "data_complete": true,
+          "deterministic": {
+            "kind": "dao_cell",
+            "summary": "DAO deposit block encoded in Cell data",
+            "segments": [
+              {
+                "label": "deposit_block",
+                "start_byte": 0,
+                "end_byte": 7,
+                "meaning": "DAO deposit block marker",
+                "value": "88"
+              }
+            ]
+          },
+          "heuristics": [
+            {
+              "kind": "numeric_pattern",
+              "confidence": "medium",
+              "reason": "Payload resembles a little-endian integer",
+              "value": "88"
+            }
+          ]
+        },
         "facets": [
           {
             "namespace": "ckb",
@@ -109,7 +209,7 @@
             "attributes": [
               {
                 "key": "deposit_block",
-                "value": "92",
+                "value": "88",
                 "unit": "block"
               }
             ]
@@ -527,7 +627,8 @@
           "capacity_field_bytes": 8,
           "lock_script_bytes": 54,
           "type_script_bytes": 33,
-          "data_bytes": 7
+          "data_bytes": 7,
+          "occupied_shannons": "12200000000"
         },
         "content": {
           "total_bytes": 7,
@@ -555,16 +656,35 @@
             }
           ]
         },
+        "consumed": {
+          "tx_hash": "0xspendtx",
+          "block": 99
+        },
         "facets": [
           {
             "namespace": "ckb",
             "kind": "dao",
-            "state": "deposit",
+            "state": "withdrawing",
             "attributes": [
               {
                 "key": "deposit_block",
                 "value": "92",
                 "unit": "block"
+              },
+              {
+                "key": "withdraw_request_block",
+                "value": "96",
+                "unit": "block"
+              },
+              {
+                "key": "deposit_at_ms",
+                "value": "1709618828000",
+                "unit": "ms"
+              },
+              {
+                "key": "withdraw_request_at_ms",
+                "value": "1709705228000",
+                "unit": "ms"
               }
             ]
           }

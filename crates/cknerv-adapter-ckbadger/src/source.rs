@@ -15,9 +15,9 @@ use cknerv_core::{
     GalaxyCompositionRecord, GalaxyCompositionTopUp, HashType, NetworkAtlasBucket,
     NetworkAtlasRecord, NetworkRosterRecord, OutPoint, PeerSightingAbsence, PeerSightingLookup,
     PeerSightingRecord, ProtocolEra, ProtocolEraRecord, RosterNode, ScriptNameRecord,
-    ScriptRegistryRecord, SemanticAsset, SemanticAttribute, SemanticCellContent,
-    SemanticContentDecode, SemanticContentGuess, SemanticContentSegment, SemanticFacet,
-    SemanticScript, TransactionHorizonRecord, TransactionParticipantSemantic,
+    ScriptRegistryRecord, SemanticAsset, SemanticAttribute, SemanticCellConsumption,
+    SemanticCellContent, SemanticContentDecode, SemanticContentGuess, SemanticContentSegment,
+    SemanticFacet, SemanticScript, TransactionHorizonRecord, TransactionParticipantSemantic,
     TransactionSemanticRecord, DATA_HEX_TRUNCATION_MARKER, MAX_SCRIPT_REGISTRY_ENTRIES,
 };
 use cknerv_server::{CanonicalContext, EnrichmentSource, GalaxyCompositionHydrator};
@@ -569,8 +569,16 @@ impl CkbadgerEnrichmentSource {
             .type_script
             .zip(cell.type_script_hash)
             .map(|(script, script_hash)| map_script(script, script_hash, lookups));
-        let common_knowledge = map_common_knowledge(cell.common_knowledge_size_breakdown)?;
+        let common_knowledge = map_common_knowledge(
+            cell.common_knowledge_size_breakdown,
+            cell.common_knowledge_size,
+        )?;
         let content = map_cell_content(cell.data_size, cell.data, cell.data_analysis)?;
+        let consumed = map_consumption(
+            cell.status.as_deref(),
+            cell.consumed_at_block,
+            cell.consumed_by_tx,
+        )?;
         if common_knowledge.data_bytes != content.total_bytes {
             return Err(anyhow!(
                 "ckbadger Cell dataSize is {} bytes, but occupied-capacity dataBytes is {}",
@@ -640,6 +648,7 @@ impl CkbadgerEnrichmentSource {
             asset,
             common_knowledge: Some(common_knowledge),
             content: Some(content),
+            consumed,
             facets,
         })
     }
@@ -3077,15 +3086,34 @@ fn udt_asset_request(cell: &CellDetailResponse) -> anyhow::Result<Option<(String
     Ok(Some((type_script_hash, amount)))
 }
 
+/// Maps the itemized byte breakdown, plus the source's own exact occupied
+/// capacity when it stated one.
+///
+/// The two are checked against DIFFERENT invariants on purpose. The four
+/// component byte counts must add up to `total_bytes` — a breakdown that does
+/// not explain its own total is broken. `commonKnowledgeSize` is computed
+/// upstream from the Cell's stored occupied capacity, which counts script args
+/// the byte breakdown never itemizes, so it routinely exceeds
+/// `total_bytes * SHANNONS_PER_BYTE`. That residual is the whole reason to
+/// carry it: cross-checking the two would reject exactly the cells whose
+/// unindexed args this figure exists to reveal.
 fn map_common_knowledge(
     breakdown: CommonKnowledgeSizeBreakdown,
+    occupied_shannons: Option<i64>,
 ) -> anyhow::Result<CommonKnowledgeBreakdown> {
+    let occupied_shannons = occupied_shannons
+        .map(|value| {
+            let shannons = nonnegative(value, "commonKnowledgeSize")?;
+            Ok::<_, anyhow::Error>(shannons.to_string())
+        })
+        .transpose()?;
     let mapped = CommonKnowledgeBreakdown {
         total_bytes: nonnegative(breakdown.total_bytes, "totalBytes")?,
         capacity_field_bytes: nonnegative(breakdown.capacity_field_bytes, "capacityFieldBytes")?,
         lock_script_bytes: nonnegative(breakdown.lock_script_bytes, "lockScriptBytes")?,
         type_script_bytes: nonnegative(breakdown.type_script_bytes, "typeScriptBytes")?,
         data_bytes: nonnegative(breakdown.data_bytes, "dataBytes")?,
+        occupied_shannons,
     };
     let component_total = mapped
         .capacity_field_bytes
@@ -3238,6 +3266,14 @@ fn map_cell_data_preview(
     ))
 }
 
+/// Builds the DAO position facet.
+///
+/// Blocks lead, wall clocks follow: the timestamp rows are APPENDED after every
+/// existing attribute so a reader that shows only the leading few keeps showing
+/// the same leading few. A timestamp the source could not resolve — an empty
+/// string upstream substitutes for a missing block header, or any instant this
+/// parser does not recognise — is simply absent, because a DAO position with an
+/// unreadable deposit date is still a DAO position worth reading.
 fn dao_facet(dao: DaoInfo) -> anyhow::Result<SemanticFacet> {
     let mut attributes = vec![SemanticAttribute {
         key: "deposit_block".to_string(),
@@ -3272,12 +3308,154 @@ fn dao_facet(dao: DaoInfo) -> anyhow::Result<SemanticFacet> {
             unit: None,
         });
     }
+    for (key, timestamp) in [
+        ("deposit_at_ms", dao.deposit_timestamp),
+        ("withdraw_request_at_ms", dao.withdraw_request_timestamp),
+        ("withdraw_at_ms", dao.withdraw_timestamp),
+    ] {
+        let Some(at_ms) = timestamp.as_deref().and_then(rfc3339_to_ms) else {
+            continue;
+        };
+        attributes.push(SemanticAttribute {
+            key: key.to_string(),
+            value: at_ms.to_string(),
+            unit: Some("ms".to_string()),
+        });
+    }
     Ok(SemanticFacet {
         namespace: "ckb".to_string(),
         kind: "dao".to_string(),
         state: Some(dao.dao_status),
         attributes,
     })
+}
+
+/// Milliseconds since the Unix epoch for an RFC 3339 instant, or `None` when
+/// the text is not one this parser can read exactly.
+///
+/// ckbadger prints DAO instants with `chrono`'s `to_rfc3339` over a UTC
+/// second-precision value, so the shapes that actually arrive are
+/// `1970-01-01T00:00:00+00:00` and the `Z` spelling of the same. Rather than
+/// take a date-time dependency for three optional rows, this reads the fixed
+/// layout directly: any offset is honoured, a fractional second is truncated
+/// toward the second it belongs to, and anything else — including the empty
+/// string upstream substitutes for a missing block header — is unknown rather
+/// than guessed.
+fn rfc3339_to_ms(value: &str) -> Option<u64> {
+    let bytes = value.as_bytes();
+    if bytes.len() < 19 || !bytes[10].eq_ignore_ascii_case(&b'T') {
+        return None;
+    }
+    let number = |range: std::ops::Range<usize>| -> Option<i64> {
+        let text = value.get(range)?;
+        text.bytes()
+            .all(|digit| digit.is_ascii_digit())
+            .then(|| text.parse::<i64>().ok())
+            .flatten()
+    };
+    if bytes[4] != b'-' || bytes[7] != b'-' || bytes[13] != b':' || bytes[16] != b':' {
+        return None;
+    }
+    let (year, month, day) = (number(0..4)?, number(5..7)?, number(8..10)?);
+    let (hour, minute, second) = (number(11..13)?, number(14..16)?, number(17..19)?);
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    if hour > 23 || minute > 59 || second > 60 {
+        return None;
+    }
+
+    let mut rest = &value[19..];
+    if let Some(fraction) = rest.strip_prefix('.') {
+        let digits = fraction.bytes().take_while(u8::is_ascii_digit).count();
+        if digits == 0 {
+            return None;
+        }
+        rest = &fraction[digits..];
+    }
+    // Offsets are subtracted because the printed wall clock is local to them.
+    let offset_seconds = if rest.eq_ignore_ascii_case("Z") || rest.is_empty() {
+        0
+    } else {
+        let sign = match rest.as_bytes().first() {
+            Some(b'+') => 1,
+            Some(b'-') => -1,
+            _ => return None,
+        };
+        // Sliced through `get` rather than `[..]`: this text arrives off the
+        // wire, and a multi-byte character mid-offset would panic an index.
+        let body = &rest[1..];
+        let (offset_hours, offset_minutes) = match body.len() {
+            5 if body.as_bytes()[2] == b':' => (
+                rfc3339_offset_part(body.get(0..2))?,
+                rfc3339_offset_part(body.get(3..5))?,
+            ),
+            4 => (
+                rfc3339_offset_part(body.get(0..2))?,
+                rfc3339_offset_part(body.get(2..4))?,
+            ),
+            _ => return None,
+        };
+        if offset_hours > 23 || offset_minutes > 59 {
+            return None;
+        }
+        sign * (offset_hours * 3600 + offset_minutes * 60)
+    };
+
+    // Howard Hinnant's `days_from_civil`, shifting the era so March leads the
+    // year and the leap day lands last.
+    let year = year - i64::from(month <= 2);
+    let era = year.div_euclid(400);
+    let year_of_era = year - era * 400;
+    let day_of_year = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let days = era * 146_097 + day_of_era - 719_468;
+
+    let seconds = days
+        .checked_mul(86_400)?
+        .checked_add(hour * 3600 + minute * 60 + second)?
+        .checked_sub(offset_seconds)?;
+    u64::try_from(seconds).ok()?.checked_mul(1_000)
+}
+
+fn rfc3339_offset_part(text: Option<&str>) -> Option<i64> {
+    let text = text?;
+    text.bytes()
+        .all(|digit| digit.is_ascii_digit())
+        .then(|| text.parse::<i64>().ok())
+        .flatten()
+}
+
+/// The end of a Cell's life, when the source both calls it dead and names the
+/// transaction that spent it.
+///
+/// A dead Cell whose consumer the index never recorded yields nothing: the
+/// record would then assert a death it cannot attribute, and the absent field
+/// already says "not stated". A malformed hash is a different thing entirely —
+/// the source contradicting its own format — and is refused.
+fn map_consumption(
+    status: Option<&str>,
+    consumed_at_block: Option<i64>,
+    consumed_by_tx: Option<String>,
+) -> anyhow::Result<Option<SemanticCellConsumption>> {
+    if status != Some("dead") {
+        return Ok(None);
+    }
+    let Some(tx_hash) = consumed_by_tx else {
+        return Ok(None);
+    };
+    if !is_hash32(&tx_hash) {
+        return Err(anyhow!(
+            "ckbadger Cell consumedByTx is not a 0x-prefixed 32-byte hash"
+        ));
+    }
+    let block = consumed_at_block
+        .map(|block| {
+            let block = nonnegative(block, "consumedAtBlock")?;
+            wire_safe_u64(block, "consumedAtBlock")
+        })
+        .transpose()?;
+    Ok(Some(SemanticCellConsumption { tx_hash, block }))
 }
 
 fn nonnegative(value: i64, field: &str) -> anyhow::Result<u64> {
@@ -4991,16 +5169,315 @@ mod tests {
 
     #[test]
     fn inconsistent_common_knowledge_breakdown_is_rejected() {
-        let error = map_common_knowledge(CommonKnowledgeSizeBreakdown {
+        let error = map_common_knowledge(
+            CommonKnowledgeSizeBreakdown {
+                capacity_field_bytes: 8,
+                lock_script_bytes: 54,
+                type_script_bytes: 33,
+                data_bytes: 7,
+                total_bytes: 101,
+            },
+            None,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("totals 102 bytes, expected 101"));
+    }
+
+    /// The exact shannon figure counts script args the byte breakdown never
+    /// itemizes, so it OUTRUNS `total_bytes * 100_000_000` on any cell with
+    /// args — which is nearly all of them. Cross-checking the two would reject
+    /// precisely the cells this figure exists to explain, so the residual is
+    /// carried, not judged.
+    #[test]
+    fn the_exact_occupied_capacity_may_outrun_the_bytes_it_is_shipped_beside() {
+        let breakdown = || CommonKnowledgeSizeBreakdown {
             capacity_field_bytes: 8,
             lock_script_bytes: 54,
             type_script_bytes: 33,
             data_bytes: 7,
-            total_bytes: 101,
-        })
-        .unwrap_err();
+            total_bytes: 102,
+        };
 
-        assert!(error.to_string().contains("totals 102 bytes, expected 101"));
+        let residual = map_common_knowledge(breakdown(), Some(10_300_000_000)).unwrap();
+        assert_eq!(residual.total_bytes, 102);
+        assert_eq!(
+            residual.occupied_shannons.as_deref(),
+            Some("10300000000"),
+            "an extra byte of unindexed args must survive as evidence"
+        );
+
+        let unstated = map_common_knowledge(breakdown(), None).unwrap();
+        assert_eq!(unstated.occupied_shannons, None);
+
+        let error = map_common_knowledge(breakdown(), Some(-1)).unwrap_err();
+        assert!(error.to_string().contains("negative commonKnowledgeSize"));
+    }
+
+    /// The DAO wall clocks are three optional rows on a facet that is useful
+    /// without them, so an instant this parser cannot read exactly is dropped
+    /// rather than allowed to sink the whole position.
+    #[test]
+    fn dao_wall_clocks_follow_the_blocks_and_an_unreadable_one_just_goes_missing() {
+        let facet = dao_facet(crate::dto::DaoInfo {
+            dao_status: "withdrawing".to_string(),
+            deposit_block_number: 16_204_800,
+            // Upstream leaves an empty string where a block header is missing.
+            deposit_timestamp: Some(String::new()),
+            withdraw_request_block: Some(16_300_000),
+            withdraw_request_timestamp: Some("2024-03-05T06:07:08+00:00".to_string()),
+            withdraw_block: None,
+            withdraw_timestamp: Some("yesterday".to_string()),
+            compensation_ckb: Some("1.25".to_string()),
+            estimated_apc: None,
+        })
+        .unwrap();
+
+        let keys: Vec<&str> = facet
+            .attributes
+            .iter()
+            .map(|attribute| attribute.key.as_str())
+            .collect();
+        assert_eq!(
+            keys,
+            vec![
+                "deposit_block",
+                "withdraw_request_block",
+                "compensation",
+                "withdraw_request_at_ms",
+            ],
+            "blocks keep the lead; only the readable wall clock is appended"
+        );
+        let at_ms = facet
+            .attributes
+            .iter()
+            .find(|attribute| attribute.key == "withdraw_request_at_ms")
+            .unwrap();
+        assert_eq!(at_ms.value, "1709618828000");
+        assert_eq!(at_ms.unit.as_deref(), Some("ms"));
+    }
+
+    #[test]
+    fn rfc3339_instants_convert_without_a_date_time_dependency() {
+        for (text, expected) in [
+            ("1970-01-01T00:00:00+00:00", Some(0)),
+            ("1970-01-01T00:00:00Z", Some(0)),
+            ("2024-03-05T06:07:08+00:00", Some(1_709_618_828_000)),
+            // A fraction belongs to the second it is printed inside.
+            ("2024-03-05T06:07:08.999Z", Some(1_709_618_828_000)),
+            // Offsets are subtracted: the same instant, two wall clocks.
+            ("2024-03-05T14:07:08+08:00", Some(1_709_618_828_000)),
+            ("2024-03-05T01:07:08-05:00", Some(1_709_618_828_000)),
+            // Leap day and century-leap arithmetic, the two places a
+            // hand-rolled civil-days conversion goes wrong.
+            ("2024-02-29T00:00:00Z", Some(1_709_164_800_000)),
+            ("2000-02-29T00:00:00Z", Some(951_782_400_000)),
+            ("2100-03-01T00:00:00Z", Some(4_107_542_400_000)),
+            // Upstream's stand-in for a block header it does not have.
+            ("", None),
+            ("2024-03-05", None),
+            ("2024-13-05T06:07:08Z", None),
+            ("2024-03-05T06:07:08+0y:00", None),
+            ("2024-03-05T06:07:08.Z", None),
+            // A multi-byte character mid-offset must answer, not panic.
+            ("2024-03-05T06:07:08+a\u{e9}0", None),
+            ("2024-03-05T06:07:08+\u{e9}:00", None),
+            ("1969-12-31T23:59:59Z", None),
+        ] {
+            assert_eq!(rfc3339_to_ms(text), expected, "{text}");
+        }
+    }
+
+    /// A death the source cannot attribute is not carried: the record would
+    /// otherwise assert an ending it has no spender for.
+    #[test]
+    fn only_a_death_with_a_named_spender_becomes_a_consumption() {
+        let spender = format!("0x{}", "1c".repeat(32));
+
+        let consumed = map_consumption(Some("dead"), Some(16_400_000), Some(spender.clone()))
+            .unwrap()
+            .expect("a named spender is a consumption");
+        assert_eq!(consumed.tx_hash, spender);
+        assert_eq!(consumed.block, Some(16_400_000));
+
+        // Upstream nulls the block when it stored a zero, and the death is
+        // still a death.
+        assert_eq!(
+            map_consumption(Some("dead"), None, Some(spender.clone()))
+                .unwrap()
+                .and_then(|consumed| consumed.block),
+            None
+        );
+        assert!(map_consumption(Some("dead"), Some(16_400_000), None)
+            .unwrap()
+            .is_none());
+        assert!(map_consumption(Some("live"), None, None).unwrap().is_none());
+        // An older ckbadger states no status at all.
+        assert!(map_consumption(None, Some(16_400_000), Some(spender))
+            .unwrap()
+            .is_none());
+
+        let error = map_consumption(Some("dead"), None, Some("0xdead".to_string())).unwrap_err();
+        assert!(error.to_string().contains("consumedByTx"));
+    }
+
+    fn cell_detail_body(tx_hash: &str) -> serde_json::Value {
+        serde_json::json!({
+            "txHash": tx_hash,
+            "outputIndex": 1,
+            "capacity": "10400000000",
+            "dataSize": 8,
+            "data": "0x5c00000000000000",
+            "lockScriptHash": format!("0x{}", "11".repeat(32)),
+            "typeScriptHash": format!("0x{}", "22".repeat(32)),
+            "address": "ckt1qyqexample",
+            "createdAtBlock": 16_204_800,
+            "lock": {
+                "codeHash": format!("0x{}", "33".repeat(32)),
+                "hashType": "type",
+                "args": format!("0x{}", "44".repeat(20)),
+            },
+            "type": {
+                "codeHash": format!("0x{}", "55".repeat(32)),
+                "hashType": "type",
+                "args": "0x",
+            },
+            "commonKnowledgeSizeBreakdown": {
+                "capacityFieldBytes": 8,
+                "lockScriptBytes": 53,
+                "typeScriptBytes": 33,
+                "dataBytes": 8,
+                "totalBytes": 102,
+            },
+            "isDepGroup": false,
+        })
+    }
+
+    /// The three facts this DTO learned in one payload, decoded the way the
+    /// live path decodes it — `serde_json` straight off the response body.
+    #[test]
+    fn cell_detail_decodes_the_exact_capacity_the_wall_clocks_and_the_spender() {
+        let spender = format!("0x{}", "1c".repeat(32));
+        let mut body = cell_detail_body(&format!("0x{}", "0a".repeat(32)));
+        body["commonKnowledgeSize"] = serde_json::json!(10_320_000_000_i64);
+        body["status"] = serde_json::json!("dead");
+        body["consumedAtBlock"] = serde_json::json!(16_400_000);
+        body["consumedByTx"] = serde_json::json!(spender);
+        body["daoInfo"] = serde_json::json!({
+            "isDaoCell": true,
+            "daoStatus": "withdrawing",
+            "depositBlockNumber": 16_204_800,
+            "depositTimestamp": "2024-03-05T06:07:08+00:00",
+            "withdrawRequestBlock": 16_300_000,
+            "withdrawRequestTimestamp": "2024-03-06T06:07:08+00:00",
+            "withdrawTimestamp": "2024-03-07T06:07:08+00:00",
+            "compensation": "125000000",
+            "compensationCkb": "1.25",
+        });
+
+        let cell: CellDetailResponse =
+            serde_json::from_value(body).expect("decode cell detail fixture");
+
+        assert_eq!(cell.common_knowledge_size, Some(10_320_000_000));
+        assert_eq!(cell.status.as_deref(), Some("dead"));
+        assert_eq!(cell.consumed_at_block, Some(16_400_000));
+        assert_eq!(cell.consumed_by_tx.as_deref(), Some(spender.as_str()));
+        let dao = cell.dao_info.expect("daoInfo");
+        assert_eq!(
+            dao.deposit_timestamp.as_deref(),
+            Some("2024-03-05T06:07:08+00:00")
+        );
+        assert_eq!(
+            dao.withdraw_request_timestamp.as_deref(),
+            Some("2024-03-06T06:07:08+00:00")
+        );
+        assert_eq!(
+            dao.withdraw_timestamp.as_deref(),
+            Some("2024-03-07T06:07:08+00:00")
+        );
+        // The exact figure exceeds 102 * 100_000_000 by 20 bytes of lock args
+        // the breakdown does not itemize — and the mapping keeps both.
+        let common_knowledge = map_common_knowledge(
+            cell.common_knowledge_size_breakdown,
+            cell.common_knowledge_size,
+        )
+        .expect("a residual is evidence, not a contradiction");
+        assert_eq!(common_knowledge.total_bytes, 102);
+        assert_eq!(
+            common_knowledge.occupied_shannons.as_deref(),
+            Some("10320000000")
+        );
+        let consumed = map_consumption(
+            cell.status.as_deref(),
+            cell.consumed_at_block,
+            cell.consumed_by_tx,
+        )
+        .expect("a named spender")
+        .expect("a dead cell with a spender is consumed");
+        assert_eq!(consumed.tx_hash, spender);
+        assert_eq!(consumed.block, Some(16_400_000));
+        let facet = dao_facet(dao).expect("dao facet");
+        assert_eq!(
+            facet
+                .attributes
+                .iter()
+                .filter(|attribute| attribute.key.ends_with("_at_ms"))
+                .map(|attribute| (attribute.key.as_str(), attribute.value.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("deposit_at_ms", "1709618828000"),
+                ("withdraw_request_at_ms", "1709705228000"),
+                ("withdraw_at_ms", "1709791628000"),
+            ]
+        );
+    }
+
+    /// The same endpoint on a ckbadger that predates all three facts. Every
+    /// new field is absent rather than defaulted to a number, so nothing in
+    /// the record claims an exact capacity, a date, or a death.
+    #[test]
+    fn a_cell_detail_without_the_new_facts_still_decodes_and_claims_nothing() {
+        let mut body = cell_detail_body(&format!("0x{}", "0b".repeat(32)));
+        body["daoInfo"] = serde_json::json!({
+            "isDaoCell": true,
+            "daoStatus": "deposited",
+            "depositBlockNumber": 16_204_800,
+        });
+
+        let cell: CellDetailResponse =
+            serde_json::from_value(body).expect("a legacy payload must still decode");
+
+        assert_eq!(cell.common_knowledge_size, None);
+        assert_eq!(cell.status, None);
+        assert_eq!(cell.consumed_at_block, None);
+        assert_eq!(cell.consumed_by_tx, None);
+        let dao = cell.dao_info.expect("daoInfo");
+        assert_eq!(dao.deposit_timestamp, None);
+        assert_eq!(dao.withdraw_request_timestamp, None);
+        assert_eq!(dao.withdraw_timestamp, None);
+
+        let common_knowledge = map_common_knowledge(
+            cell.common_knowledge_size_breakdown,
+            cell.common_knowledge_size,
+        )
+        .expect("the byte breakdown still stands on its own");
+        assert_eq!(common_knowledge.total_bytes, 102);
+        assert_eq!(common_knowledge.occupied_shannons, None);
+        assert!(map_consumption(
+            cell.status.as_deref(),
+            cell.consumed_at_block,
+            cell.consumed_by_tx
+        )
+        .unwrap()
+        .is_none());
+        let facet = dao_facet(dao).expect("dao facet");
+        assert!(
+            !facet
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key.ends_with("_at_ms")),
+            "no source clock means no wall-clock row"
+        );
     }
 
     #[test]

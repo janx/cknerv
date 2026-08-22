@@ -67,6 +67,14 @@ export interface CommonKnowledgeBreakdown {
   lock_script_bytes: number;
   type_script_bytes: number;
   data_bytes: number;
+  /**
+   * Exact occupied capacity in shannons, from the source's stored figure
+   * rather than the itemized bytes beside it. It counts script args the
+   * breakdown never itemizes, so it usually EXCEEDS
+   * `total_bytes * 100_000_000`; that residual is the evidence, not a
+   * mismatch. Absent when the source stated none.
+   */
+  occupied_shannons?: string;
 }
 
 /** Half-open byte range inside a deterministic interpretation. */
@@ -105,6 +113,18 @@ export interface SemanticCellContent {
   heuristics: SemanticContentGuess[];
 }
 
+/**
+ * Where a Cell's life ended, when the source reports it spent AND can name the
+ * spender. Absence says only that the source did not state it: a live Cell and
+ * a dead Cell whose consumer was never recorded both arrive without this.
+ */
+export interface SemanticCellConsumption {
+  /** Transaction that spent the outpoint. */
+  tx_hash: string;
+  /** Block the spending transaction landed in, when the source knows it. */
+  block?: number;
+}
+
 export interface CellSemanticRecord {
   out_point: OutPoint;
   source: string;
@@ -118,6 +138,8 @@ export interface CellSemanticRecord {
   asset?: SemanticAsset;
   common_knowledge?: CommonKnowledgeBreakdown;
   content?: SemanticCellContent;
+  /** Set only when the source reports the outpoint spent by a named tx. */
+  consumed?: SemanticCellConsumption;
   facets: SemanticFacet[];
 }
 

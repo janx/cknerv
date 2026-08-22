@@ -308,9 +308,21 @@ pub(crate) struct CellDetailResponse {
     pub address: Option<String>,
     pub cell_type: Option<String>,
     pub created_at_block: i64,
+    /// `live` or `dead`. Older ckbadger builds omit it; absence is not death.
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub consumed_at_block: Option<i64>,
+    #[serde(default)]
+    pub consumed_by_tx: Option<String>,
     pub lock: ScriptResponse,
     #[serde(rename = "type")]
     pub type_script: Option<ScriptResponse>,
+    /// Occupied capacity in shannons, computed upstream from the Cell's stored
+    /// occupied capacity rather than from the itemized byte breakdown beside
+    /// it — the two are allowed to disagree.
+    #[serde(default)]
+    pub common_knowledge_size: Option<i64>,
     pub common_knowledge_size_breakdown: CommonKnowledgeSizeBreakdown,
     #[serde(default)]
     pub data_analysis: Option<CellDataAnalysis>,
@@ -399,8 +411,14 @@ pub(crate) struct CodeCellScript {
 pub(crate) struct DaoInfo {
     pub dao_status: String,
     pub deposit_block_number: i64,
+    /// RFC 3339 instants derived upstream from each block's header timestamp,
+    /// second precision, always UTC. Upstream substitutes an empty string when
+    /// the header is missing, so "present" is not the same as "known".
+    pub deposit_timestamp: Option<String>,
     pub withdraw_request_block: Option<i64>,
+    pub withdraw_request_timestamp: Option<String>,
     pub withdraw_block: Option<i64>,
+    pub withdraw_timestamp: Option<String>,
     pub compensation_ckb: Option<String>,
     pub estimated_apc: Option<String>,
 }

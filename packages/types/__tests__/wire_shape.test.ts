@@ -315,6 +315,48 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
         value: '92',
       });
     expect(sample.snapshot.cells[0].content?.heuristics[0].confidence).toBe('medium');
+    // The exact occupied capacity is NOT `total_bytes * 100_000_000`: it comes
+    // from the source's stored figure, which counts script args the byte
+    // breakdown never itemized. The two are shipped side by side precisely so
+    // the residual stays visible — a parity test that recomputed one from the
+    // other would be asserting the bug this field exists to expose.
+    expect(sample.snapshot.cells[0].common_knowledge?.occupied_shannons).toBe(
+      '12200000000',
+    );
+    expect(
+      Number(sample.snapshot.cells[0].common_knowledge?.occupied_shannons),
+    ).toBeGreaterThan(
+      (sample.snapshot.cells[0].common_knowledge?.total_bytes ?? 0) * 100_000_000,
+    );
+    // A death the source can attribute: outpoint spent, spender named.
+    expect(sample.snapshot.cells[0].consumed?.tx_hash).toBe('0xspendtx');
+    expect(sample.snapshot.cells[0].consumed?.block).toBe(99);
+    // DAO wall clocks ride the facet as ms-epoch rows APPENDED after the block
+    // rows, so a reader that shows only the leading attributes still leads
+    // with blocks.
+    const daoFacet = sample.snapshot.cells[0].facets.find(
+      (facet) => facet.kind === 'dao',
+    );
+    expect(daoFacet?.attributes.map((attribute) => attribute.key)).toEqual([
+      'deposit_block',
+      'withdraw_request_block',
+      'deposit_at_ms',
+      'withdraw_request_at_ms',
+    ]);
+    expect(
+      daoFacet?.attributes.find((a) => a.key === 'deposit_at_ms'),
+    ).toMatchObject({ value: '1709618828000', unit: 'ms' });
+    // The second cell is the same shape from a source that stated none of the
+    // three: every one of them is ABSENT, never a zero or an empty string.
+    const legacy = sample.snapshot.cells[1];
+    expect(legacy.common_knowledge?.total_bytes).toBe(102);
+    expect(legacy.common_knowledge?.occupied_shannons).toBeUndefined();
+    expect(legacy.consumed).toBeUndefined();
+    expect(
+      legacy.facets
+        .flatMap((facet) => facet.attributes)
+        .filter((attribute) => attribute.key.endsWith('_at_ms')),
+    ).toEqual([]);
     expect(sample.snapshot.asset_ecosystem?.capacity_breakdown[0].share_bps).toBe(2500);
     expect(sample.snapshot.asset_ecosystem?.top_assets[0].symbol).toBe('NTT');
     expect(sample.snapshot.dao_state?.statistics_block).toBe(99);

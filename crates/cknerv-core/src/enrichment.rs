@@ -141,7 +141,10 @@ pub struct SemanticAsset {
     pub decimals: Option<u8>,
 }
 
-/// Indexed occupied-capacity explanation.  Values are bytes, not shannons.
+/// Indexed occupied-capacity explanation.  The four component counts and
+/// `total_bytes` are bytes and add up exactly; `occupied_shannons` is the
+/// source's own stored figure and deliberately need not agree with
+/// `total_bytes * 100_000_000`.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CommonKnowledgeBreakdown {
     pub total_bytes: u64,
@@ -149,6 +152,13 @@ pub struct CommonKnowledgeBreakdown {
     pub lock_script_bytes: u64,
     pub type_script_bytes: u64,
     pub data_bytes: u64,
+    /// Exact occupied capacity in shannons, as the source computed it from the
+    /// Cell's stored occupied capacity.  It counts bytes the byte breakdown
+    /// cannot see — script args the index does not itemize — so the residual
+    /// against `total_bytes * 100_000_000` is itself the evidence and never a
+    /// contradiction to reject.  Absent when the source did not state one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occupied_shannons: Option<String>,
 }
 
 /// One exact byte range inside a deterministic Cell-data interpretation.
@@ -202,6 +212,19 @@ pub struct SemanticCellContent {
     pub heuristics: Vec<SemanticContentGuess>,
 }
 
+/// Where a Cell's life ended, when the source reports it spent and can name
+/// the spender.  Absence means only that the source did not say so — a live
+/// Cell and a dead Cell whose consumer the index never recorded both arrive
+/// without this.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SemanticCellConsumption {
+    /// Transaction that spent the outpoint.
+    pub tx_hash: String,
+    /// Block the spending transaction landed in, when the source knows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block: Option<u64>,
+}
+
 /// Additive context for one canonical outpoint.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CellSemanticRecord {
@@ -224,6 +247,10 @@ pub struct CellSemanticRecord {
     pub common_knowledge: Option<CommonKnowledgeBreakdown>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<SemanticCellContent>,
+    /// Set only when the source reports the outpoint spent by a named
+    /// transaction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consumed: Option<SemanticCellConsumption>,
     #[serde(default)]
     pub facets: Vec<SemanticFacet>,
 }
@@ -1404,6 +1431,7 @@ mod tests {
             asset: None,
             common_knowledge: None,
             content: None,
+            consumed: None,
             facets: Vec::new(),
         }
     }

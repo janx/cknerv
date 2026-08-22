@@ -34,9 +34,9 @@ pub use enrichment::{
     GalaxyCompositionRecord, GalaxyCompositionTarget, GalaxyCompositionTopUp, NetworkAtlasBucket,
     NetworkAtlasRecord, NetworkRosterRecord, PeerSightingAbsence, PeerSightingLookup,
     PeerSightingRecord, ProtocolEra, ProtocolEraRecord, RosterNode, ScriptNameRecord,
-    ScriptRegistryRecord, SemanticAsset, SemanticAttribute, SemanticCellContent,
-    SemanticContentDecode, SemanticContentGuess, SemanticContentSegment, SemanticFacet,
-    SemanticScript, SemanticsDelta, SemanticsProjection, SemanticsSnapshot,
+    ScriptRegistryRecord, SemanticAsset, SemanticAttribute, SemanticCellConsumption,
+    SemanticCellContent, SemanticContentDecode, SemanticContentGuess, SemanticContentSegment,
+    SemanticFacet, SemanticScript, SemanticsDelta, SemanticsProjection, SemanticsSnapshot,
     TransactionHorizonRecord, TransactionParticipantSemantic, TransactionSemanticRecord,
     MAX_SCRIPT_REGISTRY_ENTRIES,
 };

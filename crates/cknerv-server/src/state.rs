@@ -1692,6 +1692,7 @@ mod tests {
             asset: None,
             common_knowledge: None,
             content: None,
+            consumed: None,
             facets: Vec::new(),
         };
 
