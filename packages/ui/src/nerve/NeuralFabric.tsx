@@ -112,6 +112,7 @@ import { CONSENSUS_BRAID_PALETTE } from '../derives/consensusBraid.derive';
 import type { Vec3 } from '../types';
 import {
   consensusMemoryApertureAnimating,
+  consensusMemoryApertureBounds,
   consensusMemoryApertureScale,
   type ConsensusMemoryAperture,
 } from './consensusMemoryAperture';
@@ -1194,6 +1195,17 @@ export default function NeuralFabric({
     departingStrength: 0,
   });
   const apertureAnimationRef = useRef(false);
+  /** What the previous COMPLETED bake read, so a frame whose recall state is
+   *  identical can conclude its own output would be too. `dimmed` is the
+   *  load-bearing member: false means that bake wrote the flat 1.0 baseline
+   *  into every slot it visited, which is what lets a later quiet frame skip. */
+  const apertureBakedRef = useRef({
+    active: null as ConsensusMemoryAperture | null,
+    activeStrength: 0,
+    departing: null as ConsensusMemoryAperture | null,
+    departingStrength: 0,
+    dimmed: false,
+  });
 
   useEffect(() => {
     fabric.material.resolution.set(size.width, size.height);
@@ -1940,33 +1952,114 @@ export default function NeuralFabric({
         // pass after release restores the exact 1.0 baseline everywhere.
         const apertureActive = recallAperture.activeStrength > 0.001
           || recallAperture.departingStrength > 0.001;
+        // Most of a hold is a plateau: the recall is up, the trace clock has
+        // left both fields' temporal windows, and the bake grinds the whole
+        // population into the same answer it ground last frame. Two facts end
+        // that. First, a field whose window `now` sits outside contributes
+        // zero temporal strength at EVERY point — before its start nothing has
+        // opened, after its end everything has collapsed — so the bake's
+        // output degenerates to a flat 1.0 for every slot, present or future.
+        // Second, the only other writer of these lanes is the slot-record
+        // writer, and it writes exactly that same 1.0. So when neither field
+        // can dim and the last bake could not either, every slot already holds
+        // what a bake would write — including slots admitted, revived or
+        // compacted since, which is why churn does not force a re-bake.
+        //
+        // Asked per field, the way recallApertureScaleAt dispatches: zero
+        // strength returns 1 whatever the geometry, a closed window returns 1
+        // whatever the strength. A resting fabric never reaches the question.
+        const apertureDimming = apertureActive && (
+          (recallAperture.activeStrength > 0
+            && consensusMemoryApertureAnimating(recallAperture.active, now))
+          || (recallAperture.departingStrength > 0
+            && consensusMemoryApertureAnimating(recallAperture.departing, now))
+        );
+        const baked = apertureBakedRef.current;
+        // The identity/strength half is not needed for the proof above; it is
+        // a freshness rule, so the frame a recall's state actually moves
+        // always re-evaluates instead of trusting a whole-history argument.
+        const apertureBakeSettled = !apertureDimming
+          && !baked.dimmed
+          && baked.active === recallAperture.active
+          && baked.departing === recallAperture.departing
+          && baked.activeStrength === recallAperture.activeStrength
+          && baked.departingStrength === recallAperture.departingStrength;
         /** The colour buffer is the one lane two commits can reach in a single
          *  frame: the bake below and the event flush further down. The bake
          *  goes first and marks the whole populated prefix, so it takes
          *  ownership for the rest of the frame — a recall holding through a
-         *  block's admit/kill burst is the ordinary case, not a corner. */
+         *  block's admit/kill burst is the ordinary case, not a corner. A
+         *  frame that skips the bake claims nothing, and the flush owns the
+         *  colour buffer again exactly as on any non-recall frame. */
         let apertureMarkedColorPrefix = false;
-        if (apertureActive || apertureAnimationRef.current) {
+        if (
+          (apertureActive || apertureAnimationRef.current)
+          && !apertureBakeSettled
+        ) {
           const colorArray = lifecycleArrays.color;
           const slots = slotByKeyRef.current;
           const apertureStates = edgeStatesRef.current;
+          // The dim is a bounded disc around one route inside a field ~4×
+          // wider, so most edges cannot be touched at any distance. Union the
+          // live fields' reach once, then reject a whole curve on four
+          // compares. Rejected curves still WRITE the 1.0 baseline: that —
+          // not skipping them — is what restores a slot the aperture has
+          // shrunk or moved away from, with no per-slot history to keep.
+          let boxMinX = Infinity;
+          let boxMaxX = -Infinity;
+          let boxMinZ = Infinity;
+          let boxMaxZ = -Infinity;
+          const widenApertureBox = (
+            field: ConsensusMemoryAperture | null,
+            strength: number,
+          ): void => {
+            // Mirrors recallApertureScaleAt: a field at zero strength returns
+            // 1 everywhere, so it contributes no reach.
+            if (!(strength > 0)) return;
+            const bounds = consensusMemoryApertureBounds(field);
+            if (!bounds) return;
+            if (bounds.minX < boxMinX) boxMinX = bounds.minX;
+            if (bounds.maxX > boxMaxX) boxMaxX = bounds.maxX;
+            if (bounds.minZ < boxMinZ) boxMinZ = bounds.minZ;
+            if (bounds.maxZ > boxMaxZ) boxMaxZ = bounds.maxZ;
+          };
+          if (apertureActive) {
+            widenApertureBox(
+              recallAperture.active,
+              recallAperture.activeStrength,
+            );
+            widenApertureBox(
+              recallAperture.departing,
+              recallAperture.departingStrength,
+            );
+          }
           for (const [key, slot] of slots) {
             const st = apertureStates.get(key);
             if (!st) continue;
             const baseSegment = slot * FABRIC_SLOT_SEGMENTS;
-            let prevScale = apertureActive
+            // A quadratic Bezier is a convex combination of its three control
+            // points, so no sample can leave their box — testing the box can
+            // over-approximate the curve, never miss it. On a release frame
+            // the union box is empty and every slot takes this branch, which
+            // is exactly the whole-population restore that path always was.
+            const curveMinX = Math.min(st.fromX, st.ctrlX, st.toX);
+            const curveMaxX = Math.max(st.fromX, st.ctrlX, st.toX);
+            const curveMinZ = Math.min(st.fromZ, st.ctrlZ, st.toZ);
+            const curveMaxZ = Math.max(st.fromZ, st.ctrlZ, st.toZ);
+            const reaches = curveMaxX >= boxMinX && curveMinX <= boxMaxX
+              && curveMaxZ >= boxMinZ && curveMinZ <= boxMaxZ;
+            let prevScale = reaches
               ? recallApertureScaleAt(recallAperture, st.fromX, st.fromZ, 0, now)
               : 1;
             for (let seg = 0; seg < FABRIC_SLOT_SEGMENTS; seg += 1) {
-              const t = (seg + 1) / FABRIC_SLOT_SEGMENTS;
               let endScale = 1;
-              if (apertureActive) {
+              if (reaches) {
                 bezierAtInto(
                   sample,
                   st.fromX, st.fromY, st.fromZ,
                   st.ctrlX, st.ctrlY, st.ctrlZ,
                   st.toX, st.toY, st.toZ,
-                  t,
+                  (seg + 1) / FABRIC_SLOT_SEGMENTS,
                 );
                 endScale = recallApertureScaleAt(
                   recallAperture, sample[0], sample[2], 0, now,
@@ -1980,6 +2073,11 @@ export default function NeuralFabric({
           }
           fabric.count = usedSlotCountRef.current * FABRIC_SLOT_SEGMENTS;
           apertureMarkedColorPrefix = commitFabricApertureLanes(fabric);
+          baked.active = recallAperture.active;
+          baked.activeStrength = recallAperture.activeStrength;
+          baked.departing = recallAperture.departing;
+          baked.departingStrength = recallAperture.departingStrength;
+          baked.dimmed = apertureDimming;
         }
         apertureAnimationRef.current = apertureActive;
 

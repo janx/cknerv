@@ -384,6 +384,62 @@ export function consensusMemoryApertureAnimating(
     && nowSec <= field.temporalEndsAtSec;
 }
 
+/** The XZ rectangle outside which a field's scale is provably exactly 1. */
+export interface ConsensusMemoryApertureBounds {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+}
+
+/** A derived field is immutable, so one walk answers for every frame that
+ *  ever asks about it. */
+const apertureBoundsByField = new WeakMap<
+  ConsensusMemoryAperture,
+  ConsensusMemoryApertureBounds
+>();
+
+/**
+ * The whole reach of a field as one axis-aligned XZ box: the extent of its
+ * tessellated segments dilated by `outerRadius`, the only distance at which a
+ * sample still counts as inside anything. Every query from outside it falls
+ * through to `return 1`, so a caller baking many samples against one field can
+ * reject entire curves on four compares instead of paying a spatial-hash query
+ * per sample. The temporal terms only ever attenuate, so this bounds the
+ * aperture for all time and not merely at one `nowSec`. Null when there is no
+ * field: nothing can be dimmed, so nothing needs a box.
+ */
+export function consensusMemoryApertureBounds(
+  field: ConsensusMemoryAperture | null | undefined,
+): ConsensusMemoryApertureBounds | null {
+  if (!field || field.segments.length === 0) return null;
+  const cached = apertureBoundsByField.get(field);
+  if (cached) return cached;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (const segment of field.segments) {
+    if (segment.ax < minX) minX = segment.ax;
+    if (segment.bx < minX) minX = segment.bx;
+    if (segment.ax > maxX) maxX = segment.ax;
+    if (segment.bx > maxX) maxX = segment.bx;
+    if (segment.az < minZ) minZ = segment.az;
+    if (segment.bz < minZ) minZ = segment.bz;
+    if (segment.az > maxZ) maxZ = segment.az;
+    if (segment.bz > maxZ) maxZ = segment.bz;
+  }
+  if (!Number.isFinite(minX) || !Number.isFinite(minZ)) return null;
+  const bounds: ConsensusMemoryApertureBounds = {
+    minX: minX - field.outerRadius,
+    maxX: maxX + field.outerRadius,
+    minZ: minZ - field.outerRadius,
+    maxZ: maxZ + field.outerRadius,
+  };
+  apertureBoundsByField.set(field, bounds);
+  return bounds;
+}
+
 /**
  * Passive-fabric scale at one world-space sample. Outside the route aperture
  * this is exactly 1. When `nowSec` is supplied, a point opens only after the

@@ -25,12 +25,19 @@ import {
 } from '../../src/geometry/neighborGraph';
 import { fabricEdgeKey } from '../../src/nerve/fabricOrder';
 import {
+  CONSENSUS_MEMORY_APERTURE_INNER_RADIUS,
+  CONSENSUS_MEMORY_APERTURE_OUTER_RADIUS,
+  type ConsensusMemoryAperture,
+} from '../../src/nerve/consensusMemoryAperture';
+import {
+  FABRIC_LIFE_APERTURE_END_OFFSET,
+  FABRIC_LIFE_APERTURE_START_OFFSET,
   FABRIC_LIFE_COLOR_STRIDE,
   FABRIC_LIFE_CURVE_STRIDE,
   FABRIC_LIFE_SCALAR_STRIDE,
 } from '../../src/nerve/fabricLifecycleSlots';
 import { FABRIC_SLOT_SEGMENTS } from '../../src/nerve/fabricSlots';
-import { resetFabricStats } from '../../src/nerve/fabricStats';
+import { fabricStats, resetFabricStats } from '../../src/nerve/fabricStats';
 import { resetSimClock } from '../../src/tweaks/simClock';
 import NeuralFabric, {
   type NeuralFabricHandles,
@@ -161,6 +168,99 @@ const CHURNED_EDGE = fabricEdgeKey(2, 3);
 const CHURNED_SLOT: SlotRange = { start: 1, count: 1 };
 const FULL_PREFIX: SlotRange = { start: 0, count: SLOTS };
 
+/** Both aperture lanes of every segment of one slot, undimmed. */
+const BASELINE_LANES = new Array(FABRIC_SLOT_SEGMENTS * 2).fill(1);
+
+/** The recall dim as the shader will read it: each segment's start and end
+ *  aperture lane, in slot order. 1 is untouched passive fabric. */
+function apertureLanes(
+  buffers: LifecycleBuffers,
+  slot: number,
+): number[] {
+  const array = buffers.color.array;
+  const lanes: number[] = [];
+  for (let segment = 0; segment < FABRIC_SLOT_SEGMENTS; segment += 1) {
+    const offset = (slot * FABRIC_SLOT_SEGMENTS + segment)
+      * FABRIC_LIFE_COLOR_STRIDE;
+    lanes.push(array[offset + FABRIC_LIFE_APERTURE_START_OFFSET]);
+    lanes.push(array[offset + FABRIC_LIFE_APERTURE_END_OFFSET]);
+  }
+  return lanes;
+}
+
+interface ProbedAperture {
+  field: ConsensusMemoryAperture;
+  /** Spatial-hash lookups this field has served. One per sample that survives
+   *  the bounding-box prefilter — so it reads the prefilter directly. */
+  queries: () => number;
+}
+
+/**
+ * One straight tessellated segment along z = 0, bucketed exactly the way
+ * `deriveConsensusMemoryAperture` buckets its own: every grid column the
+ * segment's extent reaches once dilated by the outer radius. Hand-building it
+ * is what lets a test place the aperture's reach and slide its temporal window
+ * across the frame clock, and what lets it count the queries it serves.
+ */
+function straightAperture(
+  ax: number,
+  bx: number,
+  opensAtSec: number,
+  closesAtSec: number,
+): ProbedAperture {
+  const grid = CONSENSUS_MEMORY_APERTURE_OUTER_RADIUS;
+  const buckets = new Map<number, ReadonlyMap<number, readonly number[]>>();
+  const minGridX = Math.floor((Math.min(ax, bx) - grid) / grid);
+  const maxGridX = Math.floor((Math.max(ax, bx) + grid) / grid);
+  for (let gridX = minGridX; gridX <= maxGridX; gridX += 1) {
+    const zBuckets = new Map<number, readonly number[]>();
+    for (let gridZ = -1; gridZ <= 1; gridZ += 1) zBuckets.set(gridZ, [0]);
+    buckets.set(gridX, zBuckets);
+  }
+  let queries = 0;
+  const lookUp = buckets.get.bind(buckets);
+  buckets.get = (key: number) => {
+    queries += 1;
+    return lookUp(key);
+  };
+  return {
+    field: {
+      segments: [{
+        ax,
+        az: 0,
+        bx,
+        bz: 0,
+        traversals: [{
+          opensAtStartSec: opensAtSec,
+          opensAtEndSec: opensAtSec,
+          routeProgressStart: 0,
+          routeProgressEnd: 1,
+          routeProgressFeather: 1,
+          collapseStartsAtSec: closesAtSec,
+          collapseEndsAtSec: closesAtSec,
+        }],
+      }],
+      buckets,
+      edgeCount: 1,
+      gridSize: grid,
+      innerRadius: CONSENSUS_MEMORY_APERTURE_INNER_RADIUS,
+      outerRadius: CONSENSUS_MEMORY_APERTURE_OUTER_RADIUS,
+      temporalStartsAtSec: opensAtSec,
+      temporalEndsAtSec: closesAtSec,
+    },
+    queries: () => queries,
+  };
+}
+
+/** Two edges the width of the galaxy apart: an aperture can only ever reach
+ *  one of them, which is what the prefilter is for. */
+const SPAN_GRAPH = graphOf([[1, 2], [900, 901]]);
+const SPAN_CELLS = cellsFor([1, 2, 900, 901]);
+const NEAR_SLOT = 0;
+const FAR_SLOT = 1;
+/** Every sample of one reachable slot: its start point plus each segment end. */
+const SAMPLES_PER_SLOT = FABRIC_SLOT_SEGMENTS + 1;
+
 /** A settled fabric: slots assigned by the boot full walk, nothing pending. */
 function bootedFabric(): { handles: NeuralFabricHandles; buffers: LifecycleBuffers } {
   const handles = mountFabric();
@@ -247,5 +347,177 @@ describe('fabric lifecycle update ranges — one frame, two commits', () => {
       .toEqual([FULL_PREFIX]);
     expect(slotRanges(buffers.curve, FABRIC_LIFE_CURVE_STRIDE))
       .toEqual([CHURNED_SLOT]);
+  });
+});
+
+// A recall is one moving edge and a long stillness. The bake has to follow the
+// first exactly; on the second the lanes it would write are the lanes already
+// there, and a frame that re-derives them re-derives ~32 k Bezier samples and
+// re-uploads the whole colour prefix to say nothing.
+describe('recall aperture bake — what a still frame owes', () => {
+  it('a hold the trace clock has left stops baking and stops uploading', () => {
+    const { handles, buffers } = bootedFabric();
+    // A window that closed before the frames below: the recall is still up,
+    // but no point in the world can be dimmed by it any more.
+    const recall = straightAperture(0, 20, 41, 42);
+
+    // Frame 1: the recall state moved, so it is evaluated once.
+    handles.setRecallAperture(recall.field, 0.6, null, 0);
+    handles.emitFabric(45);
+    expect(slotRanges(buffers.color, FABRIC_LIFE_COLOR_STRIDE))
+      .toEqual([FULL_PREFIX]);
+    consumeUploads(buffers);
+
+    // Frame 2: nothing moved and nothing can. Not one mark, not one byte.
+    const uploaded = fabricStats.uploadedBytes;
+    handles.emitFabric(45.1);
+    expect(buffers.color.updateRanges).toEqual([]);
+    expect(buffers.curve.updateRanges).toEqual([]);
+    expect(buffers.scalar.updateRanges).toEqual([]);
+    expect(fabricStats.uploadedBytes).toBe(uploaded);
+
+    // Frame 3: churn during the same stillness. The bake never ran, so it
+    // never claimed the colour prefix, and the flush owns that buffer again
+    // exactly as it does on any frame with no recall at all.
+    handles.killEdges([CHURNED_EDGE], 45.2, 'gc');
+    handles.emitFabric(45.2);
+    expect(slotRanges(buffers.color, FABRIC_LIFE_COLOR_STRIDE))
+      .toEqual([CHURNED_SLOT]);
+    expect(slotRanges(buffers.curve, FABRIC_LIFE_CURVE_STRIDE))
+      .toEqual([CHURNED_SLOT]);
+    expect(slotRanges(buffers.scalar, FABRIC_LIFE_SCALAR_STRIDE))
+      .toEqual([CHURNED_SLOT]);
+  });
+
+  it('a frame inside the trace window bakes even when the caller passed nothing new', () => {
+    const { handles, buffers } = bootedFabric();
+    const recall = straightAperture(0, 20, 44, 48);
+
+    handles.setRecallAperture(recall.field, 0.6, null, 0);
+    handles.emitFabric(45);
+    consumeUploads(buffers);
+
+    // Same fields, same strengths — but the wavefront is inside its window, so
+    // the output is the clock's to move and the bake must follow it.
+    handles.emitFabric(45.1);
+    expect(slotRanges(buffers.color, FABRIC_LIFE_COLOR_STRIDE))
+      .toEqual([FULL_PREFIX]);
+  });
+
+  it('a strength that moves wakes the bake back up', () => {
+    const { handles, buffers } = bootedFabric();
+    const recall = straightAperture(0, 20, 41, 42);
+
+    handles.setRecallAperture(recall.field, 0.6, null, 0);
+    handles.emitFabric(45);
+    consumeUploads(buffers);
+    handles.emitFabric(45.1);
+    expect(buffers.color.updateRanges).toEqual([]);
+
+    handles.setRecallAperture(recall.field, 0.9, null, 0);
+    handles.emitFabric(45.2);
+    expect(slotRanges(buffers.color, FABRIC_LIFE_COLOR_STRIDE))
+      .toEqual([FULL_PREFIX]);
+  });
+
+  it('a slot admitted mid-hold carries the lanes a bake would have given it', () => {
+    const { handles, buffers } = bootedFabric();
+    const recall = straightAperture(0, 20, 41, 42);
+
+    handles.setRecallAperture(recall.field, 0.6, null, 0);
+    handles.emitFabric(45);
+    consumeUploads(buffers);
+
+    // The new edge's record write puts the 1.0 baseline in its aperture lanes,
+    // and with the aperture unable to dim anything that IS the bake's answer —
+    // which is why the skip survives a slot arriving under it.
+    const grown = fabricEdgeKey(5, 6);
+    handles.growEdges(
+      [{ from: 5, to: 6, d: 1, w: 0.5 }],
+      cellsFor([5, 6]),
+      new Map([[grown, 45.1]]),
+      new Map(),
+    );
+    handles.emitFabric(45.1);
+
+    expect(apertureLanes(buffers, SLOTS)).toEqual(BASELINE_LANES);
+    expect(slotRanges(buffers.color, FABRIC_LIFE_COLOR_STRIDE))
+      .toEqual([{ start: SLOTS, count: 1 }]);
+  });
+
+  it('a release restores the baseline exactly once, then says nothing', () => {
+    const { handles, buffers } = bootedFabric();
+    const recall = straightAperture(0, 20, 44, 48);
+
+    // Every booted cell sits on the route, so every slot is genuinely dimmed.
+    handles.setRecallAperture(recall.field, 1, null, 0);
+    handles.emitFabric(45);
+    expect(Math.max(...apertureLanes(buffers, 0))).toBeLessThan(1);
+    consumeUploads(buffers);
+
+    handles.setRecallAperture(null, 0, null, 0);
+    handles.emitFabric(45.1);
+    expect(slotRanges(buffers.color, FABRIC_LIFE_COLOR_STRIDE))
+      .toEqual([FULL_PREFIX]);
+    expect(apertureLanes(buffers, 0)).toEqual(BASELINE_LANES);
+    consumeUploads(buffers);
+
+    const uploaded = fabricStats.uploadedBytes;
+    handles.emitFabric(45.2);
+    handles.emitFabric(45.3);
+    expect(buffers.color.updateRanges).toEqual([]);
+    expect(fabricStats.uploadedBytes).toBe(uploaded);
+  });
+
+  it('a dim the trace clock outlives is lifted once, by the frame after the window', () => {
+    const { handles, buffers } = bootedFabric();
+    // The recall stays up across all three frames; only the window closes.
+    const recall = straightAperture(0, 20, 44, 46);
+
+    handles.setRecallAperture(recall.field, 1, null, 0);
+    handles.emitFabric(45);
+    expect(Math.max(...apertureLanes(buffers, 0))).toBeLessThan(1);
+    consumeUploads(buffers);
+
+    // Past the window nothing is dimmed any more, so the lanes owe one last
+    // pass back to the baseline — the caller passed nothing new to say so.
+    handles.emitFabric(47);
+    expect(slotRanges(buffers.color, FABRIC_LIFE_COLOR_STRIDE))
+      .toEqual([FULL_PREFIX]);
+    expect(apertureLanes(buffers, 0)).toEqual(BASELINE_LANES);
+    consumeUploads(buffers);
+
+    const uploaded = fabricStats.uploadedBytes;
+    handles.emitFabric(47.1);
+    expect(buffers.color.updateRanges).toEqual([]);
+    expect(fabricStats.uploadedBytes).toBe(uploaded);
+  });
+
+  it('only slots the aperture can reach are sampled; the rest go to baseline', () => {
+    const handles = mountFabric();
+    handles.setFabric(SPAN_GRAPH, SPAN_CELLS, 40);
+    handles.emitFabric(40);
+    const buffers = lifecycleBuffers();
+    consumeUploads(buffers);
+
+    // Frame 1: an aperture around the far pair only.
+    const far = straightAperture(890, 910, 39, 60);
+    handles.setRecallAperture(far.field, 1, null, 0);
+    handles.emitFabric(41);
+    expect(Math.max(...apertureLanes(buffers, FAR_SLOT))).toBeLessThan(1);
+    expect(apertureLanes(buffers, NEAR_SLOT)).toEqual(BASELINE_LANES);
+    // The rejected slot cost four compares, not five spatial-hash queries.
+    expect(far.queries()).toBe(SAMPLES_PER_SLOT);
+
+    // Frame 2: the aperture is now around the near pair. The far slot has to
+    // come back to the baseline, and nothing remembers that it was dimmed —
+    // writing baseline for everything outside the box is what restores it.
+    const near = straightAperture(0, 20, 39, 60);
+    handles.setRecallAperture(near.field, 1, null, 0);
+    handles.emitFabric(41.1);
+    expect(apertureLanes(buffers, FAR_SLOT)).toEqual(BASELINE_LANES);
+    expect(Math.max(...apertureLanes(buffers, NEAR_SLOT))).toBeLessThan(1);
+    expect(near.queries()).toBe(SAMPLES_PER_SLOT);
+    expect(far.queries()).toBe(SAMPLES_PER_SLOT);
   });
 });
