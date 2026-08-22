@@ -2133,18 +2133,44 @@ fn map_network_roster(
     // roster every round. Membership within the cap is upstream's recency
     // call, but the order cknerv publishes is its own, and it is the id — a
     // node's only fact that a crawl cannot change.
-    let mut entries: Vec<RosterNode> = Vec::with_capacity(nodes.items.len());
+    let received = nodes.items.len();
+    let mut entries: Vec<RosterNode> = Vec::with_capacity(received);
     let mut staged = HashSet::new();
+    let mut unreadable = 0usize;
+    let mut duplicate = 0usize;
     for node in nodes.items {
         let Some(entry) = roster_node(node) else {
+            unreadable += 1;
             continue;
         };
         if !staged.insert(entry.node_id.clone()) {
+            duplicate += 1;
             continue;
         }
         entries.push(entry);
     }
     entries.sort_by(|left, right| left.node_id.cmp(&right.node_id));
+    // Dropping a row is correct — a roster is a sample, and an unreadable node
+    // is one cknerv will not stage — but doing it in silence made "the crawler
+    // knows 56 nodes" indistinguishable from "the crawler answered with 200
+    // and validation ate 144". One line per page, only when something was
+    // dropped, so the shortfall has a place to be read from.
+    //
+    // Deliberately NOT on the wire: `NetworkRosterRecord` carries `truncated`
+    // (upstream had more than the cap) and nothing else about size, so an
+    // honest dropped-row count would be a new field on a shared record — a
+    // wire change, and this is an observability fix.
+    if unreadable > 0 || duplicate > 0 {
+        tracing::debug!(
+            target: "cknerv-adapter-ckbadger",
+            crawl_round = round.round_id,
+            received,
+            staged = entries.len(),
+            unreadable,
+            duplicate,
+            "the roster dropped rows it could not stage"
+        );
+    }
 
     Ok(NetworkRosterRecord {
         source: "ckbadger".to_string(),
