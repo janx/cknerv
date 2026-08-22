@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Billboard } from '@react-three/drei';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
@@ -16,6 +16,7 @@ import {
   deriveCellIdentityProofLabel,
 } from '../derives/cellIdentityProofLabel.derive';
 import { CELLS_Y, CHAIN_Y } from '../layout';
+import { makeFrameDatasetLedger } from '../nerve/frameDatasetLedger';
 import {
   presentCellIdentityProofLabel,
 } from './cellIdentityProofLabel.presentation';
@@ -61,9 +62,17 @@ export default function CellBirthAnchorMarker({
   const lineGroupRef = useRef<THREE.Group>(null);
   const terminalRef = useRef<THREE.Group>(null);
   const labelRef = useRef<HTMLDivElement>(null);
+  const labelLedgerRef = useRef(makeFrameDatasetLedger());
   const terminalRingMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
   const terminalCoreMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
   const settledSequenceRef = useRef<number | null>(null);
+  // A settled proof has nothing left to say. `visible` retires the draws, but
+  // the terminal is a billboard that keeps re-orienting, and its label is DOM
+  // that a drei Html keeps re-projecting — both for as long as the galaxy
+  // turns, so the only way they stop costing frames is to leave. A later
+  // sequence brings the whole terminal straight back.
+  const [settledSequence, setSettledSequence] = useState<number | null>(null);
+  const settled = settledSequence === event.sequence;
   const encoding = useMemo(
     () => deriveCellBirthAnchorEncoding(cell.birth_block),
     [cell.birth_block],
@@ -186,9 +195,12 @@ export default function CellBirthAnchorMarker({
         viewportWidth: state.size.width,
         viewportHeight: state.size.height,
         radiusPx: 12,
-      });
+      }, labelLedgerRef.current);
       if (frame.state === 'settled') {
         settledSequenceRef.current = event.sequence;
+        // Once per event, never per frame: this is the render that retires
+        // the terminal's own frame loop along with the terminal.
+        setSettledSequence(event.sequence);
       }
       return;
     }
@@ -223,7 +235,7 @@ export default function CellBirthAnchorMarker({
         viewportWidth: state.size.width,
         viewportHeight: state.size.height,
         radiusPx: 12,
-      });
+      }, labelLedgerRef.current);
     }
     if (terminalRingMaterialRef.current) {
       terminalRingMaterialRef.current.opacity = frame.strength * 0.94;
@@ -257,35 +269,37 @@ export default function CellBirthAnchorMarker({
         <primitive object={built.glow} />
         <primitive object={built.core} />
       </group>
-      <Billboard ref={terminalRef} follow>
-        <mesh rotation={[0, 0, Math.PI / 4]} renderOrder={17}>
-          <ringGeometry args={[0.19, 0.245, 4]} />
-          <meshBasicMaterial
-            ref={terminalRingMaterialRef}
-            color="#FFD48C"
-            transparent
-            opacity={0}
-            blending={THREE.NormalBlending}
-            depthTest={false}
-            depthWrite={false}
-            toneMapped={false}
-          />
-        </mesh>
-        <mesh rotation={[0, 0, Math.PI / 4]} renderOrder={18}>
-          <planeGeometry args={[0.105, 0.105]} />
-          <meshBasicMaterial
-            ref={terminalCoreMaterialRef}
-            color="#FFF1C7"
-            transparent
-            opacity={0}
-            blending={THREE.AdditiveBlending}
-            depthTest={false}
-            depthWrite={false}
-            toneMapped={false}
-          />
-        </mesh>
-        <CellIdentityProofLabel ref={labelRef} label={label} />
-      </Billboard>
+      {settled ? null : (
+        <Billboard ref={terminalRef} follow>
+          <mesh rotation={[0, 0, Math.PI / 4]} renderOrder={17}>
+            <ringGeometry args={[0.19, 0.245, 4]} />
+            <meshBasicMaterial
+              ref={terminalRingMaterialRef}
+              color="#FFD48C"
+              transparent
+              opacity={0}
+              blending={THREE.NormalBlending}
+              depthTest={false}
+              depthWrite={false}
+              toneMapped={false}
+            />
+          </mesh>
+          <mesh rotation={[0, 0, Math.PI / 4]} renderOrder={18}>
+            <planeGeometry args={[0.105, 0.105]} />
+            <meshBasicMaterial
+              ref={terminalCoreMaterialRef}
+              color="#FFF1C7"
+              transparent
+              opacity={0}
+              blending={THREE.AdditiveBlending}
+              depthTest={false}
+              depthWrite={false}
+              toneMapped={false}
+            />
+          </mesh>
+          <CellIdentityProofLabel ref={labelRef} label={label} />
+        </Billboard>
+      )}
     </group>
   );
 }

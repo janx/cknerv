@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import {
   CELL_IDENTITY_PROOF_KINDS,
   cellIdentityProofBindingComplete,
+  type CellIdentityBindingPhase,
   type CellIdentityProofBinding,
   type CellIdentityProofKind,
 } from '../derives/cellIdentityProof.derive';
@@ -16,6 +17,15 @@ const GLYPH_META: Record<CellIdentityProofKind, {
   address: { angle: Math.PI / 6, color: '#9DF7FF' },
   content: { angle: Math.PI * 5 / 6, color: '#C7A7FF' },
   anchor: { angle: Math.PI * 3 / 2, color: '#FFD48C' },
+};
+
+/** The knot's centre reads its phase back as colour. Parsed once, at module
+ *  load: a hex string in the frame loop is a parse per frame per material. */
+const CENTRE_COLORS: Record<CellIdentityBindingPhase, THREE.Color> = {
+  collecting: new THREE.Color('#D9F8FF'),
+  verified: new THREE.Color('#D9F8FF'),
+  recalling: new THREE.Color('#C7A7FF'),
+  retained: new THREE.Color('#FFD48C'),
 };
 
 function smoothstep(value: number): number {
@@ -42,8 +52,17 @@ export default function CellIdentityBindingGlyph({
   );
   const centreRingMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
   const centreCoreMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
+  // The binding this glyph has finished painting. `retained` is the terminal
+  // phase: nothing below it moves once the arrival has eased home, so the
+  // frame that finishes it is the last one worth spending. Only a different
+  // binding — a new proof, a recall, another Cell — un-latches it.
+  const latchedBindingRef = useRef<CellIdentityProofBinding | null>(null);
   const resolved = useMemo(
     () => new Set(binding.resolvedKinds),
+    [binding.resolvedKinds],
+  );
+  const resolvedText = useMemo(
+    () => binding.resolvedKinds.join(','),
     [binding.resolvedKinds],
   );
   const complete = cellIdentityProofBindingComplete(binding);
@@ -55,6 +74,7 @@ export default function CellIdentityBindingGlyph({
   useFrame((state) => {
     const root = rootRef.current;
     if (!root) return;
+    if (latchedBindingRef.current === binding) return;
     const elapsedSeconds = Math.max(
       0,
       (performance.now() - binding.changedAtMs) / 1000,
@@ -125,13 +145,9 @@ export default function CellIdentityBindingGlyph({
     const centreStrength = complete
       ? THREE.MathUtils.lerp(0.08, 1, transition)
       : 0.035;
-    const centreColor = binding.phase === 'retained'
-      ? '#FFD48C'
-      : binding.phase === 'recalling'
-        ? '#C7A7FF'
-        : '#D9F8FF';
+    const centreColor = CENTRE_COLORS[binding.phase];
     if (centreRingMaterialRef.current) {
-      centreRingMaterialRef.current.color.set(centreColor);
+      centreRingMaterialRef.current.color.copy(centreColor);
       centreRingMaterialRef.current.opacity = centreStrength * (
         binding.phase === 'recalling'
           ? 0.72 + phasePulse * 0.26
@@ -139,7 +155,7 @@ export default function CellIdentityBindingGlyph({
       );
     }
     if (centreCoreMaterialRef.current) {
-      centreCoreMaterialRef.current.color.set(centreColor);
+      centreCoreMaterialRef.current.color.copy(centreColor);
       centreCoreMaterialRef.current.opacity = centreStrength * (
         binding.phase === 'retained'
           ? 0.62
@@ -147,11 +163,17 @@ export default function CellIdentityBindingGlyph({
       );
     }
     root.userData.memoryIdentityBindingPhase = binding.phase;
-    root.userData.memoryIdentityBindingResolved =
-      binding.resolvedKinds.join(',');
+    root.userData.memoryIdentityBindingResolved = resolvedText;
     root.userData.memoryIdentityBindingCount = binding.resolvedKinds.length;
     root.userData.memoryIdentityBindingComplete = complete;
     root.userData.memoryIdentityBindingRevision = binding.revision;
+
+    // Everything above is now a constant of this binding: the pulse rests at
+    // a half, the rotation has stopped, and the arrival transition has
+    // reached its end. Sign off on it and let the frame loop walk past.
+    if (binding.phase === 'retained' && transition >= 1) {
+      latchedBindingRef.current = binding;
+    }
   });
 
   return (
@@ -162,7 +184,7 @@ export default function CellIdentityBindingGlyph({
         memoryIdentityBindingCell: binding.cellId,
         memoryIdentityBindingMode: mode,
         memoryIdentityBindingPhase: binding.phase,
-        memoryIdentityBindingResolved: binding.resolvedKinds.join(','),
+        memoryIdentityBindingResolved: resolvedText,
         memoryIdentityBindingCount: binding.resolvedKinds.length,
         memoryIdentityBindingComplete: complete,
         memoryIdentityBindingRevision: binding.revision,

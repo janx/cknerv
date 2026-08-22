@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
@@ -18,6 +18,7 @@ import type {
 import {
   deriveCellIdentityProofLabel,
 } from '../derives/cellIdentityProofLabel.derive';
+import { makeFrameDatasetLedger } from '../nerve/frameDatasetLedger';
 import {
   presentCellIdentityProofLabel,
 } from './cellIdentityProofLabel.presentation';
@@ -61,7 +62,14 @@ export default function CellContentAddressEchoMarker({
   const size = useThree((state) => state.size);
   const groupRef = useRef<THREE.Group>(null);
   const labelRef = useRef<HTMLDivElement>(null);
+  const labelLedgerRef = useRef(makeFrameDatasetLedger());
   const settledSequenceRef = useRef<number | null>(null);
+  // A settled proof has nothing left to say. `visible` retires the draws, but
+  // the label is DOM: a mounted drei Html re-projects itself and rewrites its
+  // transform for as long as the galaxy turns, so the only way it stops
+  // costing frames is to leave. A later sequence brings it straight back.
+  const [settledSequence, setSettledSequence] = useState<number | null>(null);
+  const settled = settledSequence === event.sequence;
   const encoding = useMemo(
     () => deriveCellContentAddressEncoding(cell.content_hash),
     [cell.content_hash],
@@ -214,9 +222,12 @@ export default function CellContentAddressEchoMarker({
         viewportWidth: state.size.width,
         viewportHeight: state.size.height,
         radiusPx: frame.radiusPx,
-      });
+      }, labelLedgerRef.current);
       if (frame.state === 'settled') {
         settledSequenceRef.current = event.sequence;
+        // Once per event, never per frame: this is the render that retires
+        // the label's own frame loop along with the label.
+        setSettledSequence(event.sequence);
       }
       return;
     }
@@ -265,7 +276,7 @@ export default function CellContentAddressEchoMarker({
       viewportWidth: state.size.width,
       viewportHeight: state.size.height,
       radiusPx: frame.radiusPx,
-    });
+    }, labelLedgerRef.current);
   });
 
   useEffect(() => () => {
@@ -286,7 +297,9 @@ export default function CellContentAddressEchoMarker({
       <primitive object={built.horizon} />
       <primitive object={built.glow} />
       <primitive object={built.core} />
-      <CellIdentityProofLabel ref={labelRef} label={label} />
+      {settled ? null : (
+        <CellIdentityProofLabel ref={labelRef} label={label} />
+      )}
     </group>
   );
 }
