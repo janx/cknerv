@@ -68,10 +68,10 @@ const selected: Cell = {
 
 describe('cellInspectorPlacement', () => {
   it('places by the squared cell-card box until the card is measured', () => {
-    // 808 = 520px analysis column + 8px seam + 280px specimen column; 668 is
-    // the live-measured CKBYTES ANALYSIS card at open, enriched, no trace.
+    // 728 = 440px analysis column + 8px seam + 280px specimen column; 620 is
+    // the live-measured dossier card at open, enriched, no trace.
     expect(createCellInspectionHandles().defaultSize)
-      .toEqual({ width: 808, height: 668 });
+      .toEqual({ width: 728, height: 620 });
   });
 
   it('opens beside the selected Cell when there is room', () => {

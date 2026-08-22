@@ -33,11 +33,11 @@ import {
   type SceneInspectorPlacementSide,
 } from './sceneInspection';
 
-const DEFAULT_PANEL_WIDTH_PX = 808;
-// Estimated CKBYTES ANALYSIS card at open (header + the analysis column
+const DEFAULT_PANEL_WIDTH_PX = 728;
+// Estimated dossier card at open (the analysis column, masthead included,
 // before enrichment evidence fills in); the ResizeObserver corrects it on the
 // first measured frame.
-const DEFAULT_PANEL_HEIGHT_PX = 668;
+const DEFAULT_PANEL_HEIGHT_PX = 620;
 
 export type CellInspectorPlacementSide = SceneInspectorPlacementSide;
 export type CellInspectorPlacement = SceneInspectorPlacement;

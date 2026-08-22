@@ -182,9 +182,12 @@ describe('CellDetailPanel', () => {
     expect(t).toContain('xUDT');           // ASSET
     expect(t).toContain('123 CKB');     // CAPACITY
     expect(t).toContain('LIVE');           // STATE
-    // born_at_ms 0 is the composition-backfill sentinel — the header falls
-    // back to the birth block instead of an epoch-relative age.
-    expect(t).toContain('SINCE #16,204,800');
+    // born_at_ms 0 is the composition-backfill sentinel — with no real birth
+    // timestamp the masthead states the live flag and stops. The birth block
+    // it used to fall back to is the COMMIT fact below, and one plate must
+    // not print the same anchor twice.
+    expect(t).not.toContain('SINCE #');
+    expect(t).toContain('● LIVE');
     expect(t).toContain('#16,204,800');    // COMMIT / block anchor (grouped)
     expect(t).toContain('11 B');           // DATA — 22 hex chars = 11 bytes
     expect(t).not.toContain('ƒ');          // portrait frequencies stay visual-only
@@ -192,16 +195,19 @@ describe('CellDetailPanel', () => {
     expect(t).not.toContain('knots');      // portrait joins stay visual-only
     expect(container.querySelector('[data-cell-detail-field="capacity"]')
       ?.textContent).toBe('CAPACITY123 CKB');
-    // ONE merged window replaces CELL IDENTITY + CONSENSUS MEMORY.
-    expect(t).toContain('CKBYTES ANALYSIS');
+    // ONE window, and the Cell it is about is its masthead: the standalone
+    // identity plate is gone and the plate's own name went with it, because a
+    // dossier titled after its subject needs no second heading.
+    expect(t).toContain('CELL // #4242');
+    expect(t).toContain('细胞');
+    expect(t).not.toContain('CKBYTES ANALYSIS');
     expect(t).not.toContain('CELL IDENTITY');
     expect(t).not.toContain('CONSENSUS MEMORY');
-    // Plate count-off: header SCAN·01, analysis SCAN·02; SCAN·03 belongs to
-    // the MEMORY TRACE window and only joins once a recall arms it.
+    // Plate count-off: the dossier is SCAN·01; SCAN·02 belongs to the MEMORY
+    // TRACE window and only joins once a recall arms it.
     expect(t).toContain('SCAN·01');
-    expect(t).toContain('SCAN·02');
+    expect(t).not.toContain('SCAN·02');
     expect(t).not.toContain('SCAN·03');
-    expect(t).not.toContain('SCAN·04');
     expect(t).not.toContain('CELL CONTENT');
     expect(t).toContain('DIRECT NODE · RAW');
     expect(t).toContain('DEADBEEFCAFE1234567890');
@@ -218,11 +224,12 @@ describe('CellDetailPanel', () => {
     expect(portrait.style.alignSelf).toBe('start');
     expect(portrait.style.width).toBe('280px');
     expect(portrait.style.justifySelf).toBe('');
-    // 808 = 520 analysis column + 8 seam + 280 scan column — one geometry for
-    // every fan side and for bare and enriched Cells alike.
-    expect(root.style.width).toBe('808px');
+    // 728 = 440 analysis column + 8 seam + 280 scan column — one geometry for
+    // every fan side and for bare and enriched Cells alike. No header row:
+    // the dossier plate carries the masthead itself.
+    expect(root.style.width).toBe('728px');
     expect(root.style.gridTemplateColumns).toBe('minmax(0, 1fr) 280px');
-    expect(root.style.gridTemplateAreas).toBe('"header header" "analysis scan"');
+    expect(root.style.gridTemplateAreas).toBe('"analysis scan"');
     expect(root.style.columnGap).toBe('8px');
     expect(root.style.rowGap).toBe('8px');
     expect(container.querySelector('[data-testid="cell-nucleus-portrait"]')).not.toBeNull();
@@ -245,8 +252,14 @@ describe('CellDetailPanel', () => {
     expect(cellularBeam.style.transition).toContain('transform 80ms linear');
     expect(cellularBeam.style.transition).not.toContain('left 80ms linear');
     expect(container.querySelector('[aria-label="Interactive Cell scan"]')).not.toBeNull();
-    // identity / specimen / analysis — the trace satellite appends later.
-    expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(3);
+    // analysis / specimen — the trace satellite appends later. The identity
+    // satellite is gone: it lives inside the analysis plate now.
+    expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(2);
+    expect(container.querySelector('[data-cell-inspection-satellite="identity"]'))
+      .toBeNull();
+    // The masthead leads the card: title, then close, then the scan square.
+    expect((container.firstElementChild as HTMLElement).firstElementChild
+      ?.getAttribute('data-cell-inspection-satellite')).toBe('analysis');
     const analysis = container.querySelector(
       '[data-cell-inspection-satellite="analysis"]',
     ) as HTMLElement;
@@ -597,9 +610,9 @@ describe('CellDetailPanel', () => {
     // An above/below fan mirrors the same two columns — the specimen square
     // leads, nearest the inspected Cell.
     expect(root.getAttribute('data-cell-detail-layout')).toBe('vertical');
-    expect(root.style.width).toBe('808px');
+    expect(root.style.width).toBe('728px');
     expect(root.style.gridTemplateColumns).toBe('280px minmax(0, 1fr)');
-    expect(root.style.gridTemplateAreas).toBe('"header header" "scan analysis"');
+    expect(root.style.gridTemplateAreas).toBe('"scan analysis"');
     expect(portrait.style.gridArea).toBe('scan');
     expect(portrait.style.width).toBe('280px');
     expect(portrait.style.justifySelf).toBe('');
@@ -784,9 +797,9 @@ describe('CellDetailPanel', () => {
       '[data-cell-inspection-satellite="analysis"]',
     ) as HTMLElement;
     const root = container.firstElementChild as HTMLElement;
-    expect(root.style.width).toBe('808px');
-    expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(3);
-    // Enrichment adds evidence, never geometry: the same 808 card, the same
+    expect(root.style.width).toBe('728px');
+    expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(2);
+    // Enrichment adds evidence, never geometry: the same 728 card, the same
     // two columns, the same rectangular plate.
     expect(root.style.gridTemplateColumns).toBe('minmax(0, 1fr) 280px');
     expect(analysis.style.gridTemplateColumns).toBe('minmax(0, 1fr)');
@@ -940,7 +953,7 @@ describe('CellDetailPanel', () => {
     expect(proofChip.textContent)
       .toContain('ENRICHMENT ANCHOR · EVERY INDEXED FACT ABOVE IS AS OF THIS BLOCK');
 
-    expect(container.textContent).toContain('SINCE #16,204,800');
+    expect(container.textContent).not.toContain('SINCE #');
     expect(Array.from(container.querySelectorAll('span')).filter(
       (span) => span.textContent === 'AGE',
     )).toHaveLength(0);
@@ -1360,7 +1373,7 @@ describe('CellDetailPanel', () => {
     act(() => {
       vi.advanceTimersByTime(80);
     });
-    expect(container.textContent).toContain('CKBYTES ANALYSIS');
+    expect(container.textContent).toContain('CELL // #4242');
     expect(Number(analysis.getAttribute('data-cellular-scan-progress'))).toBeGreaterThan(0);
     expect(Number(content.dataset.cellContentRevealCount)).toBeGreaterThan(0);
     expect(Number(content.dataset.cellContentRevealCount)).toBeLessThan(
@@ -1495,7 +1508,7 @@ describe('CellDetailPanel', () => {
     }
     // The trace row is a grid row of the card, and it exists from the start.
     expect(root.style.gridTemplateAreas)
-      .toBe('"header header" "analysis scan"');
+      .toBe('"analysis scan"');
 
     const frames = sweepReveal(root, performanceNow);
 
@@ -1622,7 +1635,7 @@ describe('CellDetailPanel', () => {
     vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
     const { container } = render(<CellDetailPanel cell={base} onClose={() => {}} />);
     const t = container.textContent ?? '';
-    expect(t).toContain('CKBYTES ANALYSIS');
+    expect(t).toContain('CELL // #4242');
     expect(t).toContain('LOCKED · A-LATTICE 6/6');
     expect(t).not.toContain('1111111111111111 · 1111111111');
     expect(t).toContain('OMNI Lock');                              // decoded rows still present
@@ -1988,8 +2001,8 @@ describe('CellDetailPanel', () => {
     expect(trace?.getAttribute('data-trace-state')).toBe('active');
     expect(trace?.getAttribute('data-trace-stage')).toBe('reading');
     expect(container.querySelector('[data-cell-detail-module="trace"]')).not.toBeNull();
-    expect(container.textContent).toContain('SCAN·03');
-    expect(container.textContent).not.toContain('SCAN·04');
+    expect(container.textContent).toContain('SCAN·02');
+    expect(container.textContent).not.toContain('SCAN·03');
     expect(container.querySelector('[data-cell-detail-module="context"]')).toBeNull();
     expect(container.querySelector('[data-memory-read-state="reading"]')).not.toBeNull();
     expect(container.querySelectorAll('[data-memory-evidence]')).toHaveLength(2);
@@ -2025,7 +2038,7 @@ describe('CellDetailPanel', () => {
     ) as HTMLElement;
     const restingAnalysisStyle = analysis().style.cssText;
     expect(container.querySelector('[data-cell-detail-module="trace"]')).toBeNull();
-    expect(container.textContent).not.toContain('SCAN·03');
+    expect(container.textContent).not.toContain('SCAN·02');
 
     rerender(
       <CellDetailPanel
@@ -2039,15 +2052,15 @@ describe('CellDetailPanel', () => {
       '[data-cell-detail-module="trace"]',
     ) as HTMLElement;
     expect(trace).not.toBeNull();
-    expect(container.textContent).toContain('SCAN·03');
+    expect(container.textContent).toContain('SCAN·02');
     // Arming appends a full-width row below the analysis plate — the column
     // never splits and the analysis plate's geometry does not move.
     expect((container.firstElementChild as HTMLElement).style.gridTemplateAreas)
-      .toBe('"header header" "analysis scan" "trace trace"');
+      .toBe('"analysis scan" "trace trace"');
     expect(trace.style.gridArea).toBe('trace');
     expect(analysis().style.cssText).toBe(restingAnalysisStyle);
-    expect(trace.previousElementSibling).toBe(analysis());
-    expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(4);
+    expect(trace).toBe(trace.parentElement?.lastElementChild);
+    expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(3);
   });
 
   // The witness-carried case: the ledger lists the carriers, so the inputs the

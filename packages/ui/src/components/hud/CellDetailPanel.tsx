@@ -110,11 +110,13 @@ import {
 const EMPTY_RECENT_LINKS: readonly CellLink[] = [];
 const PORTRAIT_BRACKET_PX = 12;
 /** The CELL SCAN square is an independent column beside the analysis plate:
- * 520 of analysis + an 8px seam + the 280 square, one constant geometry for
- * bare and enriched Cells alike. */
+ * 440 of analysis + an 8px seam + the 280 square, one constant geometry for
+ * bare and enriched Cells alike. The analysis measure is set by its widest
+ * row — a label, a badge and a mid-truncated hash — and every column past
+ * that was empty gutter between a left label and a right-aligned value. */
 const PORTRAIT_COLUMN_PX = 280;
 const CARD_SEAM_PX = 8;
-const ANALYSIS_COLUMN_PX = 520;
+const ANALYSIS_COLUMN_PX = 440;
 const CARD_WIDTH_PX = ANALYSIS_COLUMN_PX + CARD_SEAM_PX + PORTRAIT_COLUMN_PX;
 
 /** Panel-local display order — the vertical order the six facts occupy in the
@@ -821,11 +823,15 @@ export default function CellDetailPanel({
       : null;
   }, [cell.out_point.tx_hash, semanticTransactionRecord]);
   const enhancedDetail = Boolean(semanticSource && semanticPhase);
-  // Composition backfill emits born_at_ms 0 for records born before the
-  // retained window — an epoch-relative age would read as decades.
+  // How long it has stood, which nothing in the register says. Composition
+  // backfill emits born_at_ms 0 for records born before the retained window —
+  // an epoch-relative age would read as decades, and the birth block the
+  // masthead used to fall back to is the COMMIT fact three rows below. Inside
+  // one plate that fallback was the same number printed twice, so the flag
+  // now stands alone for those Cells.
   const lifetime = cell.born_at_ms > 0
-    ? `AGE ${formatAge(cell.born_at_ms, Date.now())}`
-    : `SINCE ${formatBlockRef(cell.birth_block)}`;
+    ? ` · AGE ${formatAge(cell.born_at_ms, Date.now())}`
+    : '';
   const order = CONSENSUS_BRAID_FIELDS;
   // The walk's start, not its state: the clock owns the walking, and the card
   // only has to know which instant this selection began at. Reading the
@@ -1023,9 +1029,12 @@ export default function CellDetailPanel({
   // transparent scan square (the braid lives there): they are siblings now,
   // not one plate notched around the other.
   const portraitFirst = verticalLayout || layoutSide === 'right';
+  // Two columns, one row: the card has no separate identity plate above them
+  // any more — the analysis plate is the dossier, so the Cell it is about is
+  // its masthead rather than a second window stacked over it.
   const cardRows = portraitFirst
-    ? '"header header" "scan analysis"'
-    : '"header header" "analysis scan"';
+    ? '"scan analysis"'
+    : '"analysis scan"';
   const cardAreas = showTracePlate ? `${cardRows} "trace trace"` : cardRows;
 
   // ——— Register cluster evidence ————————————————————————————————————
@@ -1159,110 +1168,6 @@ export default function CellDetailPanel({
       }}
     >
       <section
-        data-cell-inspection-satellite="identity"
-        data-cell-scan-identity
-        style={{
-          ...satelliteBase,
-          gridArea: 'header',
-          minHeight: 58,
-          display: 'flex',
-          alignItems: 'baseline',
-          flexWrap: 'wrap',
-          gap: '3px 10px',
-          minWidth: 0,
-          padding: '9px 38px 8px 16px',
-          ...spatialPlate(HUD_COLORS.orange),
-        }}
-      >
-        <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.display, fontSize: HUD_TYPE.title, fontWeight: 600, letterSpacing: 2, textShadow: `0 0 9px ${rgba(HUD_COLORS.orange, 0.45)}` }}>
-          CELL // #{cell.id}
-        </span>
-        {/* The house CJK companion, as PEER wears 对端 and NODE wears 节点.
-          * 细胞 is in the hand-subset woff2 (fonts/README.md) — deliberate
-          * presence, where SightedNodeCard documents a deliberate absence. */}
-        <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: 0.72 }}>
-          细胞
-        </span>
-        {/* The outpoint, which is what a viewer can look up anywhere else —
-          * the old head of the content hash beside an output index read like
-          * an outpoint and was not one. */}
-        <span title={cell.out_point.tx_hash} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, letterSpacing: 0.8 }}>
-          {formatOutpoint(cell.out_point.tx_hash, cell.out_point.index)}
-        </span>
-        <span style={{ marginLeft: 'auto', color: live ? HUD_COLORS.nominal : HUD_COLORS.caution, fontSize: HUD_TYPE.section, letterSpacing: 0.9 }}>
-          {live ? '● LIVE' : '◇ SPENT'} · {lifetime}
-        </span>
-        {/* In-flow, not corner-stamped: an absolute stamp sat exactly where a
-          * long lifetime readout ends, and the two printed over each other. */}
-        <span style={{ whiteSpace: 'nowrap' }}>
-          {moduleTag('SCAN·01')}
-        </span>
-        <CloseButton onClose={onClose} title="Close · ESC or click outside" />
-      </section>
-
-      <section
-        aria-label="Interactive Cell scan"
-        data-cell-detail-module="specimen"
-        data-cell-inspection-satellite="specimen"
-        data-cell-portrait-frame
-        style={{
-          ...satelliteBase,
-          gridArea: 'scan',
-          alignSelf: 'start',
-          width: PORTRAIT_COLUMN_PX,
-          aspectRatio: '1 / 1',
-          overflow: 'hidden',
-          border: `1px solid ${rgba(HUD_COLORS.orange, 0.24)}`,
-          // The braid renders on the MAIN canvas beneath this card
-          // (CellPortraitInset), so the directional plate lives in that scene
-          // as its backing — a DOM background here would dim the braid. The
-          // circular idiom in this viewport still belongs to the content
-          // address halo (the one ring that reads as data).
-          background: 'transparent',
-          boxShadow: `inset 0 0 26px ${rgba(HUD_COLORS.cyanWire, 0.08)},0 0 20px ${rgba(HUD_COLORS.orange, 0.06)}`,
-        }}
-      >
-        <div style={{ position: 'absolute', zIndex: 3, left: 12, top: 10, right: 12, display: 'flex', alignItems: 'baseline', gap: 8, pointerEvents: 'none' }}>
-          <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.section, fontWeight: 700, letterSpacing: 1.45, whiteSpace: 'nowrap' }}>CELL SCAN</span>
-          <span data-cell-scan-drag-affordance style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.8, whiteSpace: 'nowrap' }}>{verticalLayout ? 'ORBIT ↔' : 'DRAG TO ORBIT ↔'}</span>
-        </div>
-        <CellNucleusPortrait
-          cell={cell}
-          reducedMotion={reduced}
-          scanEpochMs={scanEpochMs}
-          layoutSide={layoutSide}
-          standalone={portraitStandalone}
-          // A field can only be selected once the lattice has locked (the
-          // facts are disabled until then) and the selection is cleared with
-          // the Cell, so a set field IS a classified scan.
-          focusField={selectedField}
-          traceReadout={traceReadout}
-          traceResponseRef={traceResponseRef}
-          traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
-          semanticRecord={semanticValidation.record}
-          identityProofBinding={selectedIdentityProofBinding}
-          onIdentityProofRead={onIdentityProofRead
-            ? handlePortraitIdentityProofRead
-            : undefined}
-          onInteractionChange={onScanInteractionChange}
-        />
-        {/* Ambient specimen sweep — it loops for as long as the panel is open
-          * and deliberately outlives the probe walk, so a classified specimen
-          * still reads as live instrumentation. It animates transform/opacity
-          * only (never `top`), which is what keeps it off the layout path. */}
-        <span
-          key={cell.id}
-          aria-hidden="true"
-          data-cell-specimen-scan-light
-          style={{ position: 'absolute', zIndex: 2, left: 5, right: 5, top: '9%', height: '82%', opacity: 0.8, animation: reduced ? undefined : 'cknerv-cell-specimen-sweep 2.8s linear infinite', pointerEvents: 'none', willChange: reduced ? undefined : 'transform, opacity' }}
-        >
-          <span style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 1, background: `linear-gradient(90deg,transparent,${rgba(HUD_COLORS.cyanWire, 0.85)},${rgba(HUD_COLORS.orange, 0.46)},transparent)`, boxShadow: `0 0 9px ${rgba(HUD_COLORS.cyanWire, 0.7)}` }} />
-        </span>
-        <span style={portraitBracket('tl')} /><span style={portraitBracket('tr')} />
-        <span style={portraitBracket('bl')} /><span style={portraitBracket('br')} />
-      </section>
-
-      <section
         ref={analysisPlateRef}
         aria-label="CKBytes analysis"
         data-cell-detail-module="ckbytes"
@@ -1293,17 +1198,41 @@ export default function CellDetailPanel({
       >
         <CellScanSweep plateRef={analysisPlateRef} reduced={reduced} />
 
-        <SpatialPlateHeader
-          en="CKBYTES ANALYSIS"
-          accent={HUD_COLORS.cyanWire}
-          marginBottom={0}
-          status={(
-            <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6 }}>
-              <CellScanStatusReadout landmarks={order.length} />
-              {moduleTag('SCAN·02')}
+        {/* The masthead the standalone identity plate used to be. The dossier
+          * is ONE window, so the Cell it is about titles it — a second plate
+          * above this one only repeated the subject in a taller frame. Two
+          * lines: WHO the specimen is, then WHERE it lives and how far the
+          * scan has read. The `CLOSE` affordance belongs to the titled plate,
+          * as it does in every other dialect. */}
+        <div data-cell-scan-identity style={{ minWidth: 0, display: 'grid', gap: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: '2px 8px', minWidth: 0, paddingRight: 20 }}>
+            <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.display, fontSize: HUD_TYPE.title, fontWeight: 600, letterSpacing: 1.6, textShadow: `0 0 9px ${rgba(HUD_COLORS.orange, 0.45)}` }}>
+              CELL // #{cell.id}
             </span>
-          )}
-        />
+            {/* The house CJK companion, as PEER wears 对端 and NODE wears 节点.
+              * 细胞 is in the hand-subset woff2 (fonts/README.md) — deliberate
+              * presence, where SightedNodeCard documents a deliberate absence. */}
+            <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: 0.72 }}>
+              细胞
+            </span>
+            <span style={{ marginLeft: 'auto', whiteSpace: 'nowrap', color: live ? HUD_COLORS.nominal : HUD_COLORS.caution, fontSize: HUD_TYPE.section, letterSpacing: 0.9 }}>
+              {live ? '● LIVE' : '◇ SPENT'}{lifetime}
+            </span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: '2px 8px', minWidth: 0 }}>
+            {/* The outpoint, which is what a viewer can look up anywhere else —
+              * the old head of the content hash beside an output index read
+              * like an outpoint and was not one. */}
+            <span title={cell.out_point.tx_hash} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, letterSpacing: 0.8 }}>
+              {formatOutpoint(cell.out_point.tx_hash, cell.out_point.index)}
+            </span>
+            <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'baseline', gap: 6, whiteSpace: 'nowrap' }}>
+              <CellScanStatusReadout landmarks={order.length} />
+              {moduleTag('SCAN·01')}
+            </span>
+          </div>
+        </div>
+        <CloseButton onClose={onClose} title="Close · ESC or click outside" />
 
         <div
           data-cell-analysis-register="true"
@@ -1670,6 +1599,68 @@ export default function CellDetailPanel({
         </div>
       </section>
 
+      <section
+        aria-label="Interactive Cell scan"
+        data-cell-detail-module="specimen"
+        data-cell-inspection-satellite="specimen"
+        data-cell-portrait-frame
+        style={{
+          ...satelliteBase,
+          gridArea: 'scan',
+          alignSelf: 'start',
+          width: PORTRAIT_COLUMN_PX,
+          aspectRatio: '1 / 1',
+          overflow: 'hidden',
+          border: `1px solid ${rgba(HUD_COLORS.orange, 0.24)}`,
+          // The braid renders on the MAIN canvas beneath this card
+          // (CellPortraitInset), so the directional plate lives in that scene
+          // as its backing — a DOM background here would dim the braid. The
+          // circular idiom in this viewport still belongs to the content
+          // address halo (the one ring that reads as data).
+          background: 'transparent',
+          boxShadow: `inset 0 0 26px ${rgba(HUD_COLORS.cyanWire, 0.08)},0 0 20px ${rgba(HUD_COLORS.orange, 0.06)}`,
+        }}
+      >
+        <div style={{ position: 'absolute', zIndex: 3, left: 12, top: 10, right: 12, display: 'flex', alignItems: 'baseline', gap: 8, pointerEvents: 'none' }}>
+          <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.section, fontWeight: 700, letterSpacing: 1.45, whiteSpace: 'nowrap' }}>CELL SCAN</span>
+          <span data-cell-scan-drag-affordance style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.8, whiteSpace: 'nowrap' }}>{verticalLayout ? 'ORBIT ↔' : 'DRAG TO ORBIT ↔'}</span>
+        </div>
+        <CellNucleusPortrait
+          cell={cell}
+          reducedMotion={reduced}
+          scanEpochMs={scanEpochMs}
+          layoutSide={layoutSide}
+          standalone={portraitStandalone}
+          // A field can only be selected once the lattice has locked (the
+          // facts are disabled until then) and the selection is cleared with
+          // the Cell, so a set field IS a classified scan.
+          focusField={selectedField}
+          traceReadout={traceReadout}
+          traceResponseRef={traceResponseRef}
+          traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
+          semanticRecord={semanticValidation.record}
+          identityProofBinding={selectedIdentityProofBinding}
+          onIdentityProofRead={onIdentityProofRead
+            ? handlePortraitIdentityProofRead
+            : undefined}
+          onInteractionChange={onScanInteractionChange}
+        />
+        {/* Ambient specimen sweep — it loops for as long as the panel is open
+          * and deliberately outlives the probe walk, so a classified specimen
+          * still reads as live instrumentation. It animates transform/opacity
+          * only (never `top`), which is what keeps it off the layout path. */}
+        <span
+          key={cell.id}
+          aria-hidden="true"
+          data-cell-specimen-scan-light
+          style={{ position: 'absolute', zIndex: 2, left: 5, right: 5, top: '9%', height: '82%', opacity: 0.8, animation: reduced ? undefined : 'cknerv-cell-specimen-sweep 2.8s linear infinite', pointerEvents: 'none', willChange: reduced ? undefined : 'transform, opacity' }}
+        >
+          <span style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 1, background: `linear-gradient(90deg,transparent,${rgba(HUD_COLORS.cyanWire, 0.85)},${rgba(HUD_COLORS.orange, 0.46)},transparent)`, boxShadow: `0 0 9px ${rgba(HUD_COLORS.cyanWire, 0.7)}` }} />
+        </span>
+        <span style={portraitBracket('tl')} /><span style={portraitBracket('tr')} />
+        <span style={portraitBracket('bl')} /><span style={portraitBracket('br')} />
+      </section>
+
       {/* Growth is strictly vertical: an arming trace appends a full-width
         * row below both columns instead of splitting one, and the analysis
         * plate's own geometry never moves. */}
@@ -1698,7 +1689,7 @@ export default function CellDetailPanel({
                   <span style={{ color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.55 }}>
                     LIVE EVIDENCE
                   </span>
-                  {moduleTag('SCAN·03')}
+                  {moduleTag('SCAN·02')}
                 </span>
               )}
             />

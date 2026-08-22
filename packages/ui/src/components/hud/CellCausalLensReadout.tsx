@@ -288,7 +288,10 @@ export default function CellCausalLensReadout({
           // states the identity-only situation instead of a plate of "?"s.
           <>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0, fontFamily: HUD_FONTS.mono }}>
-              <span style={{ color: HUD_COLORS.cyanInk, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.label, fontWeight: 700, letterSpacing: 1.05 }}>
+              {/* A two-word title is one word for wrapping purposes: left to
+                * shrink, `ORIGIN TX` breaks across two lines the moment the
+                * plate is narrow enough that the row beside it wants room. */}
+              <span style={{ flex: '0 0 auto', whiteSpace: 'nowrap', color: HUD_COLORS.cyanInk, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.label, fontWeight: 700, letterSpacing: 1.05 }}>
                 {ORIGIN_TITLE}
               </span>
               <span title={lens.txHash} style={{ minWidth: 0, color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -306,7 +309,10 @@ export default function CellCausalLensReadout({
         ) : (
           <>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
-              <span style={{ color: HUD_COLORS.cyanInk, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.label, fontWeight: 700, letterSpacing: 1.05 }}>
+              {/* A two-word title is one word for wrapping purposes: left to
+                * shrink, `ORIGIN TX` breaks across two lines the moment the
+                * plate is narrow enough that the row beside it wants room. */}
+              <span style={{ flex: '0 0 auto', whiteSpace: 'nowrap', color: HUD_COLORS.cyanInk, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.label, fontWeight: 700, letterSpacing: 1.05 }}>
                 {ORIGIN_TITLE}
               </span>
               <span style={{ color: meta.color, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.66 }}>
