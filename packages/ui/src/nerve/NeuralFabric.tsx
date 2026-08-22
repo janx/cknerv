@@ -943,17 +943,33 @@ const FABRIC_LIFECYCLE_BYTES_PER_SEGMENT = 4 * (
   + FABRIC_LIFE_SCALAR_STRIDE
 );
 
+/** The same record minus its colours — what a slot commit actually uploads on
+ * a frame the aperture bake already claimed the colour prefix. */
+const FABRIC_LIFECYCLE_CURVE_SCALAR_BYTES_PER_SEGMENT = 4 * (
+  FABRIC_LIFE_CURVE_STRIDE
+  + FABRIC_LIFE_SCALAR_STRIDE
+);
+
 /** Upload only the given SLOT ranges of the static lifecycle records (curve,
  * colors, scalars — aperture has its own recall-window writer). Event-driven:
- * runs when an admit/kill/revival wrote slots, never per animated frame. */
+ * runs when an admit/kill/revival wrote slots, never per animated frame.
+ *
+ * `colorPrefixMarked` says the aperture bake already claimed the colour
+ * buffer this frame. Its range is the WHOLE populated prefix — a superset of
+ * every slot range here — so this pass leaves that buffer alone rather than
+ * clearing a wider upload than it can re-mark. Each buffer is still
+ * cleared-and-marked exactly once per frame; on those frames the colour half
+ * simply belongs to the aperture. */
 function commitFabricLifecycleSlotRanges(
   layer: FatLineLayer,
   ranges: readonly FabricSlotRange[],
+  colorPrefixMarked = false,
 ): void {
   const lifecycle = layer.lifecycle;
   if (!lifecycle || ranges.length === 0) return;
+  const colorBuf = colorPrefixMarked ? null : lifecycle.colorBuf;
   lifecycle.curveBuf.clearUpdateRanges();
-  lifecycle.colorBuf.clearUpdateRanges();
+  colorBuf?.clearUpdateRanges();
   lifecycle.scalarBuf.clearUpdateRanges();
   let rangeSegments = 0;
   // mergeFabricSlotRanges already returns SEGMENT-unit ranges.
@@ -963,7 +979,7 @@ function commitFabricLifecycleSlotRanges(
       range.start * FABRIC_LIFE_CURVE_STRIDE,
       range.count * FABRIC_LIFE_CURVE_STRIDE,
     );
-    lifecycle.colorBuf.addUpdateRange(
+    colorBuf?.addUpdateRange(
       range.start * FABRIC_LIFE_COLOR_STRIDE,
       range.count * FABRIC_LIFE_COLOR_STRIDE,
     );
@@ -973,11 +989,13 @@ function commitFabricLifecycleSlotRanges(
     );
   }
   lifecycle.curveBuf.needsUpdate = true;
-  lifecycle.colorBuf.needsUpdate = true;
+  if (colorBuf) colorBuf.needsUpdate = true;
   lifecycle.scalarBuf.needsUpdate = true;
   layer.geometry.instanceCount = layer.count;
   fabricStats.observeUpload(
-    rangeSegments * FABRIC_LIFECYCLE_BYTES_PER_SEGMENT,
+    rangeSegments * (colorPrefixMarked
+      ? FABRIC_LIFECYCLE_CURVE_SCALAR_BYTES_PER_SEGMENT
+      : FABRIC_LIFECYCLE_BYTES_PER_SEGMENT),
   );
 }
 
@@ -1006,16 +1024,22 @@ function commitFabricLifecycleFull(layer: FatLineLayer): void {
 
 /** Aperture-window upload: recall dims live in the color records' .w lanes,
  * so a recall frame re-uploads the populated color prefix (8 floats per
- * segment — bounded to the interaction window). */
-function commitFabricApertureLanes(layer: FatLineLayer): void {
+ * segment — bounded to the interaction window).
+ *
+ * Returns whether the colour prefix is now marked, i.e. whether this frame's
+ * later commits must keep their hands off that buffer. */
+function commitFabricApertureLanes(layer: FatLineLayer): boolean {
   const lifecycle = layer.lifecycle;
-  if (!lifecycle) return;
+  if (!lifecycle) return false;
   lifecycle.colorBuf.clearUpdateRanges();
+  let marked = false;
   if (layer.count > 0) {
     lifecycle.colorBuf.addUpdateRange(0, layer.count * FABRIC_LIFE_COLOR_STRIDE);
     lifecycle.colorBuf.needsUpdate = true;
+    marked = true;
   }
   fabricStats.observeUpload(layer.count * 4 * FABRIC_LIFE_COLOR_STRIDE);
+  return marked;
 }
 
 export default function NeuralFabric({
@@ -1916,6 +1940,12 @@ export default function NeuralFabric({
         // pass after release restores the exact 1.0 baseline everywhere.
         const apertureActive = recallAperture.activeStrength > 0.001
           || recallAperture.departingStrength > 0.001;
+        /** The colour buffer is the one lane two commits can reach in a single
+         *  frame: the bake below and the event flush further down. The bake
+         *  goes first and marks the whole populated prefix, so it takes
+         *  ownership for the rest of the frame — a recall holding through a
+         *  block's admit/kill burst is the ordinary case, not a corner. */
+        let apertureMarkedColorPrefix = false;
         if (apertureActive || apertureAnimationRef.current) {
           const colorArray = lifecycleArrays.color;
           const slots = slotByKeyRef.current;
@@ -1949,7 +1979,7 @@ export default function NeuralFabric({
             }
           }
           fabric.count = usedSlotCountRef.current * FABRIC_SLOT_SEGMENTS;
-          commitFabricApertureLanes(fabric);
+          apertureMarkedColorPrefix = commitFabricApertureLanes(fabric);
         }
         apertureAnimationRef.current = apertureActive;
 
@@ -2030,6 +2060,7 @@ export default function NeuralFabric({
             commitFabricLifecycleSlotRanges(
               fabric,
               mergeFabricSlotRanges(lifeDirtySlots),
+              apertureMarkedColorPrefix,
             );
             fabricStats.observeIncrementalFrame(lifeDirtySlots.length, 0);
             lifeDirtySlots.length = 0;
@@ -2086,6 +2117,9 @@ export default function NeuralFabric({
           );
           // The slot writer resets the aperture lanes to the 1.0 baseline;
           // the aperture pass re-bakes them next frame while a recall holds.
+          // This walk may follow the same frame's bake — and unlike the event
+          // flush it may take the colour buffer back, because it re-marks the
+          // very prefix the bake marked and overwrites the same lanes.
           slots.set(key, slotIndex);
           slotIndex += 1;
         }
