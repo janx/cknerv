@@ -1328,6 +1328,11 @@ export default function CellDetailPanel({
 
           <div data-cell-cluster="data" style={{ minWidth: 0 }}>
             {scanFact('data')}
+            {/* The window mounts whole, but its analysis rows are the one
+              * part of it that waits on the index — so they take the same
+              * pending reservation every other cluster's evidence takes.
+              * This is the LAST cluster before the provenance footer: rows
+              * that arrive tall here move the footer and the MEMORY TRACE. */}
             <CellContentMemory
               dataHex={cell.data_hex}
               source={semanticSource}
@@ -1335,6 +1340,7 @@ export default function CellDetailPanel({
               record={presentedSemanticRecord}
               message={presentedSemanticMessage}
               reveal={contentReveal}
+              pending={enrichmentPending}
             />
           </div>
         </div>

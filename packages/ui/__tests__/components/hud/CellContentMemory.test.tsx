@@ -1,7 +1,9 @@
 import { cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, it, expect } from 'vitest';
 import type { CellSemanticRecord, EnrichmentSourceStatus } from '@cknerv/types';
-import CellContentMemory from '../../../src/components/hud/CellContentMemory';
+import CellContentMemory, {
+  CELL_CONTENT_ANALYSIS_RESERVED_PX,
+} from '../../../src/components/hud/CellContentMemory';
 
 afterEach(() => { cleanup(); });
 
@@ -214,6 +216,77 @@ describe('CellContentMemory reveal staging', () => {
     rerender(<CellContentMemory dataHex="0x" reveal={1} />);
     expect(line.style.display).toBe('flex');
     expect(line.style.opacity).toBe('1');
+  });
+
+  it('holds the analysis rows\' height while the record is still on its way', () => {
+    const { container, rerender } = render(
+      <CellContentMemory
+        dataHex={DATA_HEX}
+        source={{ ...source, status: 'syncing' }}
+        phase="loading"
+        pending
+        reveal={1}
+      />,
+    );
+    const zone = () => container.querySelector(
+      '[data-cell-content-analysis]',
+    ) as HTMLElement;
+
+    // Pending, the zone shows one status line and holds the rest of the room
+    // VALUE / DECODE / segment / heuristic / role will need.
+    expect(zone().dataset.cellContentAnalysisReserved).toBe('true');
+    expect(zone().style.minHeight)
+      .toBe(`${CELL_CONTENT_ANALYSIS_RESERVED_PX}px`);
+    expect(container.textContent)
+      .toContain('RESOLVING INDEXED CONTENT ANALYSIS');
+
+    // It lands: the rows take the room that was held for them, and the
+    // reservation drops ONCE rather than stacking under them.
+    rerender(
+      <CellContentMemory
+        dataHex={DATA_HEX}
+        source={source}
+        phase="ready"
+        record={record()}
+        reveal={1}
+      />,
+    );
+    expect(zone().dataset.cellContentAnalysisReserved).toBeUndefined();
+    expect(zone().style.minHeight).toBe('');
+    expect(container.querySelector('[data-cell-content-asset]')).not.toBeNull();
+    expect(container.querySelector('[data-cell-content-segment="0"]'))
+      .not.toBeNull();
+  });
+
+  it('reserves nothing once the answer is in, however it came out', () => {
+    // Resolved absent is an answer: nothing more is expected, so nothing is
+    // held. Same for a record that arrived — pending is the parent's verdict,
+    // and a record beside it means the verdict is stale.
+    const { container, rerender } = render(
+      <CellContentMemory
+        dataHex={DATA_HEX}
+        source={source}
+        phase="unavailable"
+        pending={false}
+        reveal={1}
+      />,
+    );
+    const zone = () => container.querySelector(
+      '[data-cell-content-analysis]',
+    ) as HTMLElement;
+    expect(zone().style.minHeight).toBe('');
+
+    rerender(
+      <CellContentMemory
+        dataHex={DATA_HEX}
+        source={source}
+        phase="ready"
+        record={record()}
+        pending
+        reveal={1}
+      />,
+    );
+    expect(zone().style.minHeight).toBe('');
   });
 
   it('shows a bare direct-node window whole the moment the reveal completes', () => {

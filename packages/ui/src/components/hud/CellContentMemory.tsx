@@ -21,6 +21,32 @@ import type { CellSemanticsPhase } from './CellSemanticsReadout';
 const HEX_ROW_BYTES = 16;
 const HEX_WINDOW_BYTES = HEX_ROW_BYTES * 2;
 
+/**
+ * Height the analysis zone holds while the index still owes this window an
+ * answer. Everything above it — the status line, the hex window, the ASCII
+ * line — is mounted at final size from the first frame; the analysis rows are
+ * the one part whose COUNT depends on a record that has not landed, and
+ * growing them under the reader shoves the provenance footer and the MEMORY
+ * TRACE affordance down mid-read.
+ *
+ * Reservation math only — the browser lays the real rows out. The zone's
+ * tallest shape, line by line, at the type it prints:
+ *
+ *     VALUE                          12
+ *     DECODE · kind · summary     2 + 12
+ *     · segment rule              3 + 3 + 1
+ *     · segment steppers             15   (the 15px buttons set the row)
+ *     · segment value · meaning   2 + 12
+ *     HEURISTIC                   3 + 3 + 1 + 15
+ *     ROLE                        3 + 15
+ *
+ * The terms are the generous reading of each line box on purpose: a floor
+ * that is a pixel short is a floor that still shoves the footer. A record
+ * that brings fewer rows than this settles the cluster down ONCE — the same
+ * bargain every other pending slot on this card makes.
+ */
+export const CELL_CONTENT_ANALYSIS_RESERVED_PX = 102;
+
 const SEGMENT_COLORS = [
   '#71ECFF',
   '#C5A8FF',
@@ -271,6 +297,7 @@ export default function CellContentMemory({
   record,
   message,
   reveal = 1,
+  pending = false,
 }: {
   dataHex: string;
   source?: EnrichmentSourceStatus;
@@ -279,6 +306,9 @@ export default function CellContentMemory({
   message?: string | null;
   /** Shared Cell scan progress; present content is decoded in source order. */
   reveal?: number;
+  /** The card's one verdict on whether a record is still on its way. While it
+   *  is, the analysis zone holds the height that record will need. */
+  pending?: boolean;
 }) {
   const enhanced = Boolean(source && phase);
   const content = record?.content;
@@ -387,6 +417,9 @@ export default function CellContentMemory({
     || decodeRevealed
     || heuristicRevealed
     || roleRevealed;
+  // A record is on its way: hold the rows it will fill, so its arrival
+  // replaces a reservation instead of pushing the footer beneath it down.
+  const analysisPending = enhanced && pending && !record;
 
   // A validly-empty output earns one honest line — not the stack of negatives
   // (∅ box, byte count, decode fallbacks) that all restate the same absence.
@@ -436,8 +469,10 @@ export default function CellContentMemory({
       data-cell-content-reveal-total={revealStages.length}
       style={{
         // Mounted whole, at final size, from the first frame: the walk below
-        // only changes ink. A window that grows a row while it decodes is a
-        // window that moved under whoever was reading the row above it.
+        // only changes ink, and the one zone whose row count waits on the
+        // index holds that height in advance. A window that grows a row while
+        // it decodes is a window that moved under whoever was reading the row
+        // above it.
         display: 'block',
         minWidth: 0,
         marginTop: 6,
@@ -538,7 +573,7 @@ export default function CellContentMemory({
         {/* The rule under the raw bytes is structure, not evidence: it is
           * drawn from the first frame, and only the rows below it stage. */}
         {enhanced ? (
-          <div data-cell-content-analysis="true" data-cell-content-analysis-state={analysisRevealed ? 'resolved' : 'scanning'} style={{ display: 'block', minWidth: 0, paddingTop: 2, borderTop: `1px solid ${rgba(tone, 0.13)}` }}>
+          <div data-cell-content-analysis="true" data-cell-content-analysis-state={analysisRevealed ? 'resolved' : 'scanning'} data-cell-content-analysis-reserved={analysisPending ? 'true' : undefined} style={{ display: 'block', minWidth: 0, paddingTop: 2, borderTop: `1px solid ${rgba(tone, 0.13)}`, minHeight: analysisPending ? CELL_CONTENT_ANALYSIS_RESERVED_PX : undefined }}>
             {record?.asset ? (
               <div data-cell-content-asset="true" data-cell-content-reveal-item="asset" data-cell-content-reveal-item-state={assetRevealed ? 'resolved' : 'scanning'} title={record.asset.type_script_hash} {...revealStageAttributes(assetRevealed)} style={{ display: 'flex', alignItems: 'baseline', gap: 5, minWidth: 0, color: HUD_COLORS.caution, fontSize: HUD_TYPE.label, ...revealStageStyle(assetRevealed) }}>
                 <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro }}>VALUE</span>

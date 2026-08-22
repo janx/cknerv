@@ -13,6 +13,7 @@ import type {
   CellIdentityProofBinding,
 } from '../../../src/derives/cellIdentityProof.derive';
 import { PROBE_STEP_S } from '../../../src/components/hud/probeScan';
+import { CELL_CONTENT_ANALYSIS_RESERVED_PX } from '../../../src/components/hud/CellContentMemory';
 
 const { portraitRender, portraitSemanticRecord } = vi.hoisted(() => ({
   portraitRender: vi.fn(),
@@ -1079,6 +1080,96 @@ describe('CellDetailPanel', () => {
     expect(slot('lock').style.minHeight).toBe('');
     expect(container.querySelectorAll('[data-cell-evidence-slot="lock"] [data-cell-evidence-row]'))
       .toHaveLength(3);
+  });
+
+  it('holds the DATA cluster\'s analysis rows too, so the footer never moves', () => {
+    const source: EnrichmentSourceStatus = {
+      source: 'ckbadger',
+      status: 'syncing',
+      capabilities: ['cell_detail'],
+    };
+    const { container, rerender } = render(
+      <CellDetailPanel
+        cell={{ ...base, data_hex: `0x7b2261223a317d${'00'.repeat(20)}` }}
+        semanticSource={source}
+        semanticPhase="loading"
+        onClose={() => {}}
+      />,
+    );
+    const zone = () => container.querySelector(
+      '[data-cell-cluster="data"] [data-cell-content-analysis]',
+    ) as HTMLElement;
+
+    // The DATA cluster is the last one before the provenance footer, and its
+    // analysis rows are the only rows on the card whose COUNT waits on the
+    // index. Held, they cannot shove the footer down mid-read.
+    expect(zone().dataset.cellContentAnalysisReserved).toBe('true');
+    expect(zone().style.minHeight)
+      .toBe(`${CELL_CONTENT_ANALYSIS_RESERVED_PX}px`);
+
+    rerender(
+      <CellDetailPanel
+        cell={{ ...base, data_hex: `0x7b2261223a317d${'00'.repeat(20)}` }}
+        semanticSource={{ ...source, status: 'ready' }}
+        semanticPhase="ready"
+        semanticRecord={{
+          out_point: base.out_point,
+          source: 'ckbadger',
+          as_of: { block: base.birth_block, hash: '0xanchor' },
+          observed_at_block: base.birth_block,
+          updated_at_ms: 1,
+          asset: {
+            type_script_hash: '0xtype',
+            symbol: 'NTT',
+            name: 'Nervos Test Token',
+            standard: 'xUDT',
+            amount: '12345',
+            decimals: 2,
+          },
+          content: {
+            data_hex: `0x7b2261223a317d${'00'.repeat(20)}`,
+            total_bytes: 27,
+            data_complete: true,
+            deterministic: {
+              kind: 'json_document',
+              summary: 'UTF-8 JSON object decoded from Cell data',
+              segments: [{
+                start_byte: 0,
+                end_byte: 7,
+                label: 'document_body',
+                value: '{"a":1}',
+                meaning: 'JSON body',
+              }],
+            },
+            heuristics: [{
+              kind: 'text_encoding',
+              confidence: 'high',
+              reason: 'valid UTF-8',
+              mime_type: 'application/json',
+            }],
+          },
+          facets: [{
+            namespace: 'ckb',
+            kind: 'dao',
+            state: 'deposit',
+            attributes: [{ key: 'deposit_block', value: '16204800' }],
+          }],
+        }}
+        onClose={() => {}}
+      />,
+    );
+
+    // jsdom lays nothing out, so the pin is the SHAPE rather than the pixels:
+    // this arrival is every analysis row the index can send at once — VALUE,
+    // DECODE, a segment, a heuristic and a role — which is exactly the stack
+    // CELL_CONTENT_ANALYSIS_RESERVED_PX is summed from. Nothing taller can
+    // land, so the reservation settles down or not at all, never up.
+    expect(zone().dataset.cellContentAnalysisReserved).toBeUndefined();
+    expect(zone().style.minHeight).toBe('');
+    expect(zone().querySelector('[data-cell-content-asset]')).not.toBeNull();
+    expect(zone().querySelector('[data-cell-content-segment="0"]')).not.toBeNull();
+    expect(zone().querySelector('[data-cell-content-heuristic="0"]')).not.toBeNull();
+    expect(zone().querySelector('[data-cell-content-role="0"]')).not.toBeNull();
   });
 
   it('collapses the reservation once when the record resolves absent', () => {
