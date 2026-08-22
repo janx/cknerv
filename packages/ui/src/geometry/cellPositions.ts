@@ -21,9 +21,13 @@ export const BIRTH_DURATION_MS = 1200;
 /** Chain DEATH: the body cools and gutters at size, then crumbles. The
  * withering starts at `death + BLOCK_HIGHLIGHT_DELAY_S` and runs this long,
  * so the server's dead-cell retention tail
- * (`crates/cknerv-core/src/projection/cells.rs`) must dominate their SUM —
- * a corpse gc'd before the rite ends vanishes mid-wither. `CORPSE_HOLD_MS`
- * there covers it (4500 ms); move it whenever either number here moves. */
+ * (`CORPSE_HOLD_MS` in `crates/cknerv-core/src/projection/cells.rs`) must
+ * dominate their SUM — a corpse gc'd before the rite ends vanishes
+ * mid-wither. The two are pinned against each other in the shared fixture
+ * `tests/fixtures/death_rite.json`: moving this number (or
+ * `BLOCK_HIGHLIGHT_DELAY_S`) fails
+ * `packages/ui/__tests__/geometry/deathRiteFixture.test.ts` until the
+ * fixture — and then the Rust hold — follow. */
 export const DEATH_DURATION_MS = 1800;
 
 // Stage enter/exit are VIEW events — the camera resolving a record that

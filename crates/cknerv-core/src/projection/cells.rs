@@ -56,15 +56,20 @@ const PULSE_THROTTLE_MS: u64 = 800;
 /// the browser is guaranteed to still have the corpse it is mourning.
 ///
 /// The client's rite does not begin at the death timestamp: withering starts
-/// `BLOCK_HIGHLIGHT_DELAY_S` later (2350 ms, `packages/ui/src/ui/
-/// topologyConstants.ts`) and then runs for `DEATH_DURATION_MS` (1800 ms,
-/// `packages/ui/src/geometry/cellPositions.ts`), so the corpse is on screen
-/// until death + 4150 ms. This hold is that sum plus 350 ms of margin and
-/// must keep dominating it: GC is also the moment the display plane exits
+/// `BLOCK_HIGHLIGHT_DELAY_S` later (`packages/ui/src/ui/topologyConstants.ts`)
+/// and then runs for `DEATH_DURATION_MS`
+/// (`packages/ui/src/geometry/cellPositions.ts`), so the corpse is on screen
+/// well past death. That sum and this hold are pinned against each other in
+/// the shared fixture `tests/fixtures/death_rite.json`: the TS side asserts
+/// the sum of the real constants equals `client_rite_ms`, the Rust side
+/// (`a_corpse_outlives_the_client_rite_before_it_is_reaped`) asserts this
+/// constant equals `corpse_hold_ms` and that the hold dominates the rite. The
+/// margin has to stay positive: GC is also the moment the display plane exits
 /// the member, so a hold shorter than the rite makes the corpse vanish
 /// mid-wither — routinely, not rarely, because `gc_cells` runs on every
 /// mined block and fast cadence (testnet, backfill bursts) puts many blocks
-/// inside one rite. Whichever client constant moves next, move this one too.
+/// inside one rite. Whichever client constant moves next, move the fixture
+/// and this one too.
 ///
 /// Bounded cost: the retained set carries at most `deaths_per_second × 4.5 s`
 /// corpses, so even a chain retiring a thousand cells a second spends 4500 of
@@ -2441,12 +2446,49 @@ mod tests {
         assert!(g.outpoint_index.contains_key(&op("0xb", 0)));
     }
 
-    /// The client's death rite ends at death + 4150 ms (2350 ms of delivery
-    /// choreography, then an 1800 ms withering). The corpse hold has to
-    /// outlast it with margin to spare, on the live path and on the replay
-    /// path alike — the two share `gc_cells`, there is no per-mode tail.
+    /// The two halves of the death contract, as pinned in
+    /// `tests/fixtures/death_rite.json`. `client_rite_ms` is the sum the SPA
+    /// actually spends mourning a corpse — `BLOCK_HIGHLIGHT_DELAY_S × 1000 +
+    /// DEATH_DURATION_MS` — asserted against the real exported constants by
+    /// `packages/ui/__tests__/geometry/deathRiteFixture.test.ts`.
+    /// `corpse_hold_ms` is [`CORPSE_HOLD_MS`], asserted below. Whichever side
+    /// a retune touches, exactly one of the two tests fails and names this
+    /// fixture.
+    #[derive(serde::Deserialize)]
+    struct DeathRiteFixture {
+        client_rite_ms: u64,
+        corpse_hold_ms: u64,
+    }
+
+    fn death_rite_fixture() -> DeathRiteFixture {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/death_rite.json"
+        );
+        let raw = std::fs::read_to_string(path).expect("read tests/fixtures/death_rite.json");
+        serde_json::from_str(&raw).expect("parse tests/fixtures/death_rite.json")
+    }
+
+    /// The client's death rite ends at death + `client_rite_ms` (delivery
+    /// choreography, then a withering). The corpse hold has to outlast it with
+    /// margin to spare, on the live path and on the replay path alike — the
+    /// two share `gc_cells`, there is no per-mode tail. Both numbers live in
+    /// `tests/fixtures/death_rite.json`; this test owns the Rust half of it.
     #[test]
     fn a_corpse_outlives_the_client_rite_before_it_is_reaped() {
+        let rite = death_rite_fixture();
+        assert_eq!(
+            CORPSE_HOLD_MS, rite.corpse_hold_ms,
+            "CORPSE_HOLD_MS drifted from tests/fixtures/death_rite.json"
+        );
+        assert!(
+            rite.corpse_hold_ms > rite.client_rite_ms,
+            "the hold ({} ms) must outlast the client rite ({} ms) — a corpse \
+             reaped mid-rite vanishes while the browser is still withering it",
+            rite.corpse_hold_ms,
+            rite.client_rite_ms
+        );
+
         let mut g = make_galaxy();
         g.handle_tx_landed("0xa", 1, 1_000, &[], &[out(100, "0x")]);
         g.handle_tx_landed("0xb", 2, 2_000, &[op("0xa", 0)], &[]);
@@ -2457,6 +2499,14 @@ mod tests {
             .and_then(|c| c.death_at_ms)
             .expect("the consumed cell is dead");
         assert_eq!(death_at, 2_000);
+
+        // The last frame the client draws for this corpse is still inside the
+        // hold, with room to spare.
+        g.gc(death_at + rite.client_rite_ms);
+        assert!(
+            g.cells.iter().any(|c| c.id == 0),
+            "the corpse must survive its own withering"
+        );
 
         // Still 100 ms shy of the hold, i.e. 250 ms after the last frame the
         // client draws for this corpse.

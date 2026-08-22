@@ -40,7 +40,13 @@ export const SHOCKWAVE_FIRE_DELAY_S = BLOCK_COMMIT_DELAY_S;
  *  of readability. Every ledger-visible acknowledgement of a block lands here:
  *  the touched-Cell highlight, the newborn's arrival, and the corpse's fade.
  *  Lives with the timeline it is derived from rather than with the one
- *  component that first needed it — the pulse layer phase-locks to it too. */
+ *  component that first needed it — the pulse layer phase-locks to it too.
+ *
+ *  Cross-language contract: this delay plus `DEATH_DURATION_MS` is the whole
+ *  death rite, and the server's `CORPSE_HOLD_MS` must outlast it. The sum is
+ *  pinned in `tests/fixtures/death_rite.json` by
+ *  `packages/ui/__tests__/geometry/deathRiteFixture.test.ts`; retuning this
+ *  number fails that test until the fixture and the Rust hold follow. */
 export const BLOCK_HIGHLIGHT_DELAY_S = BLOCK_COMMIT_DELAY_S + 0.15;
 
 // Single calculation path: the Cell commit delay is derived, not free.
