@@ -68,6 +68,14 @@ pub struct GalaxyTopologySection {
 pub struct GalaxyPulsesSection {
     pub link_ring_capacity: Option<usize>,
     pub max_pulses_per_link: Option<usize>,
+    /// Renamed from `max_sources_per_parent`. `cknerv init` emitted the old
+    /// spelling into every workdir created before the rename, and serde
+    /// tolerates unknown keys, so without this alias those files keep their
+    /// tuning line and silently fall back to the default. The alias costs
+    /// nothing and keeps existing workdirs honest; if both keys appear serde
+    /// rejects the file as a duplicate field rather than picking a winner,
+    /// which is the loud outcome we want from a half-finished edit.
+    #[serde(alias = "max_sources_per_parent")]
     pub max_origins_per_link: Option<usize>,
     pub max_active_pulses: Option<usize>,
 }
@@ -458,6 +466,50 @@ mod tests {
         assert_eq!(r.galaxy.pulses.max_pulses_per_link, 9);
         assert_eq!(r.galaxy.pulses.max_origins_per_link, 3);
         assert_eq!(r.galaxy.pulses.max_active_pulses, 111);
+    }
+
+    /// `max_origins_per_link` used to be spelled `max_sources_per_parent`, and
+    /// `cknerv init` wrote that spelling into every workdir created before the
+    /// rename. serde tolerates unknown keys here (see `cell_cap`), so without
+    /// the alias those files keep a tuning line that quietly does nothing —
+    /// the knob reads `None` and falls back to the profile default.
+    #[test]
+    fn the_legacy_pulse_knob_name_still_reaches_the_knob() {
+        let file: FileConfig = toml::from_str(
+            "[galaxy]\nprofile = \"mainnet\"\n\
+             [galaxy.pulses]\nmax_sources_per_parent = 5\n",
+        )
+        .unwrap();
+        let r = resolve(None, None, false, None, &file).unwrap();
+
+        assert_eq!(
+            r.galaxy.pulses.max_origins_per_link, 5,
+            "an existing workdir's tuning must survive the rename"
+        );
+        // The default this would have silently fallen back to.
+        assert_ne!(r.galaxy.pulses.max_origins_per_link, 2);
+    }
+
+    /// Both spellings at once is a half-finished edit, not a preference to
+    /// resolve. serde's alias handling treats the second occurrence as a
+    /// duplicate field and refuses the file, which is the loud outcome: the
+    /// operator is told to pick one instead of guessing which one won.
+    #[test]
+    fn both_pulse_knob_names_at_once_is_rejected_rather_than_ranked() {
+        let err = toml::from_str::<FileConfig>(
+            "[galaxy.pulses]\nmax_origins_per_link = 3\nmax_sources_per_parent = 5\n",
+        )
+        .expect_err("both spellings must not silently resolve");
+        assert!(
+            err.to_string().contains("duplicate"),
+            "expected a duplicate-field rejection, got: {err}"
+        );
+
+        // Order-independent: the legacy key first is refused just the same.
+        assert!(toml::from_str::<FileConfig>(
+            "[galaxy.pulses]\nmax_sources_per_parent = 5\nmax_origins_per_link = 3\n",
+        )
+        .is_err());
     }
 
     #[test]
