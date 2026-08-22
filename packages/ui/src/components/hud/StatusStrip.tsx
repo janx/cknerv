@@ -110,11 +110,15 @@ function PanelVisibilityControl({ panels, onChange, compact = false, menuOffset 
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const visibleCount = panels.filter((panel) => panel.visible).length;
+  // A UI preference is not a health reading, so this control speaks the
+  // active-config language AUTO/MAN already uses: cyan = sitting at the
+  // default, orange = you have diverged from it. Partial and none read the
+  // same because both mean "something is hidden" — the menu below says what.
+  // Caution yellow used to sit in the middle and made a personal choice look
+  // like the chain was in trouble.
   const color = visibleCount === panels.length
     ? HUD_COLORS.cyanWire
-    : visibleCount === 0
-      ? HUD_COLORS.orange
-      : HUD_COLORS.caution;
+    : HUD_COLORS.orange;
 
   useEffect(() => {
     if (!open) return;
@@ -259,7 +263,9 @@ function PanelVisibilityControl({ panels, onChange, compact = false, menuOffset 
                 </span>
                 <span
                   style={{
-                    color: panel.visible ? HUD_COLORS.nominal : HUD_COLORS.dim,
+                    // ON is a switch position, not a healthy chain — cyan, the
+                    // house color for "this setting is active". OFF stays dim.
+                    color: panel.visible ? HUD_COLORS.cyanWire : HUD_COLORS.dim,
                     fontSize: 7.5,
                     letterSpacing: 0.7,
                   }}

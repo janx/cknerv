@@ -31,7 +31,7 @@ export function PanelHeader({ en, cjk, idx, accent, compact = false }: {
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: compact ? 6 : 11 }}>
       <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 600, fontSize: 12, letterSpacing: 3, color: HUD_COLORS.orange, textTransform: 'uppercase', textShadow: '0 0 9px rgba(255,152,48,.45)' }}>{en}</span>
       <span style={{ fontFamily: HUD_FONTS.cjk, fontSize: 10, color: HUD_COLORS.orangeDeep, opacity: 0.7 }}>{cjk}</span>
-      <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: 8.5, color: accent ?? '#5a6470', letterSpacing: 1, textShadow: accent ? `0 0 7px ${accent}66` : undefined }}>{idx}</span>
+      <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: 8.5, color: accent ?? HUD_COLORS.moduleSlate, letterSpacing: 1, textShadow: accent ? `0 0 7px ${accent}66` : undefined }}>{idx}</span>
     </div>
   );
 }
@@ -184,10 +184,13 @@ export function ScopeStage({ id, label, meta, accent, terminal = false, flush = 
   );
 }
 
+/** The track is derived from the fill, so a REORG-red or rebuild-violet gauge
+ *  stops sitting inside a green frame — the hardcoded surround was a second,
+ *  contradictory reading of the same bar. */
 export function Gauge({ ratio, color }: { ratio: number; color: string }) {
   const pct = Math.max(0, Math.min(1, ratio)) * 100;
   return (
-    <div style={{ height: 5, background: '#0e1a10', border: '1px solid rgba(39,255,90,.2)', position: 'relative', margin: '2px 0 3px' }}>
+    <div style={{ height: 5, background: HUD_COLORS.trackGround, border: `1px solid ${rgba(color, 0.2)}`, position: 'relative', margin: '2px 0 3px' }}>
       <span data-fill style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${pct}%`, background: color, boxShadow: `0 0 8px ${color}` }} />
     </div>
   );
@@ -422,7 +425,7 @@ export function revealStageAttributes(
  *  print their module numbers in different type. */
 export function moduleTag(tag: string) {
   return (
-    <span style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 1, color: '#5a6470' }}>
+    <span style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 1, color: HUD_COLORS.moduleSlate }}>
       {tag}
     </span>
   );

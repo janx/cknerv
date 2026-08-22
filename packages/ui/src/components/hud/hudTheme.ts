@@ -10,6 +10,10 @@ import { PEER_NETWORK_HEX } from '../../visualPalette';
 export const HUD_COLORS = {
   ground: '#000000',
   panel: 'rgba(0,0,0,0.45)',
+  // The empty half of every gauge, meter and segmented bar. Deliberately one
+  // step off `ground`: a track has to read as a channel carved into the panel's
+  // translucent black, and pure black just dissolves into the stage behind it.
+  trackGround: '#0A0A0A',
   orange: '#FF9830',
   orangeDeep: '#EC7420',
   cyanWire: '#20F0FF',
@@ -24,7 +28,15 @@ export const HUD_COLORS = {
   lockedGold: '#FFD7A1',
   goldInk: '#FFD29A',
   ink: '#E8E8E8',
+  // One tier above `ink`, and the only thing allowed up there: the single hero
+  // numeral a panel exists to show. `ink` stays the body text — if everything
+  // were white, the hero would be nothing.
+  heroInk: '#FFFFFF',
   dim: '#7C8794',
+  // The module registry's own grey, for the CKB·01 / MESH·02 count-off tags.
+  // Below `dim` on purpose: a tag is an address, not a reading. A panel that
+  // owns an identity accent overrides it with that accent instead.
+  moduleSlate: '#5A6470',
   nominal: '#27FF5A',
   caution: '#F6E201',
   warning: '#FF9830',

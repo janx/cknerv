@@ -35,7 +35,7 @@ export default function NetworkPanel({ summary, consensus, syncRatio, enrichment
       <PanelHeader en="PEER MESH" cjk="节点场" idx="MESH·02" accent={HUD_COLORS.peerWire} />
       <StatRow label="Peers"><span style={{ color: HUD_COLORS.peerWire }}>{summary.peerCount}</span> &nbsp; <span style={{ color: HUD_COLORS.dim }}>out</span> {summary.outbound} / <span style={{ color: HUD_COLORS.dim }}>in</span> {summary.inbound}</StatRow>
       <StatRow label="Head consensus">{consensus.atTip} / {consensus.total}</StatRow>
-      <div style={{ display: 'flex', height: 7, border: '1px solid rgba(255,152,48,.2)', background: '#0a0a0a', margin: '4px 0' }}>
+      <div style={{ display: 'flex', height: 7, border: '1px solid rgba(255,152,48,.2)', background: HUD_COLORS.trackGround, margin: '4px 0' }}>
         <span style={{ width: seg(consensus.atTip), background: HUD_COLORS.nominal, boxShadow: '0 0 7px rgba(39,255,90,.55)' }} />
         <span style={{ width: seg(consensus.behind), background: HUD_COLORS.dim }} />
         <span style={{ width: seg(consensus.ahead), background: HUD_COLORS.caution }} />
@@ -44,12 +44,12 @@ export default function NetworkPanel({ summary, consensus, syncRatio, enrichment
         <span style={{ color: HUD_COLORS.nominal }}>▲{consensus.atTip} at-tip</span>
         <span style={{ color: HUD_COLORS.dim }}>{consensus.behind} behind</span>
         <span style={{ color: HUD_COLORS.caution }}>{consensus.ahead} ahead</span>
-        <span style={{ marginLeft: 'auto', color: '#5a6470' }}>#{fmt(summary.bestKnown)}</span>
+        <span style={{ marginLeft: 'auto', color: HUD_COLORS.moduleSlate }}>#{fmt(summary.bestKnown)}</span>
       </div>
       {syncRatio < AT_TIP_SYNC_RATIO ? (
         <div data-network-sync="catching-up">
           <StatRow label="Syncing" valueColor={HUD_COLORS.caution}>{(syncRatio * 100).toFixed(1)}% of #{fmt(summary.bestKnown)}</StatRow>
-          <div style={{ height: 4, background: '#0a0a0a', border: `1px solid ${rgba(HUD_COLORS.caution, 0.22)}`, margin: '2px 0 4px' }}>
+          <div style={{ height: 4, background: HUD_COLORS.trackGround, border: `1px solid ${rgba(HUD_COLORS.caution, 0.22)}`, margin: '2px 0 4px' }}>
             <span style={{ display: 'block', height: '100%', width: `${Math.max(0, syncRatio) * 100}%`, background: HUD_COLORS.caution, boxShadow: `0 0 6px ${rgba(HUD_COLORS.caution, 0.5)}` }} />
           </div>
         </div>

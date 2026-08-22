@@ -61,7 +61,7 @@ export default function ActivityFeedReadout({ source, record, compact = false }:
         <>
           <div
             title={visual.buckets.map((bucket) => `${bucket.category} ${bucket.count}`).join(' · ')}
-            style={{ display: 'flex', height: 6, background: '#0a0a0a', border: `1px solid ${rgba(accent, 0.14)}` }}
+            style={{ display: 'flex', height: 6, background: HUD_COLORS.trackGround, border: `1px solid ${rgba(accent, 0.14)}` }}
           >
             {visual.buckets.map((bucket) => (
               <span

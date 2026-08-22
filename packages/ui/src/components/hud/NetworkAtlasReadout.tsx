@@ -31,7 +31,7 @@ function BucketStrip({ label, buckets, total, provenance }: {
       <div style={{ fontFamily: HUD_FONTS.tech, fontSize: 7.5, letterSpacing: 1.2, color: HUD_COLORS.dim, marginBottom: 2 }}>
         {label}
       </div>
-      <div style={{ display: 'flex', height: 6, background: '#0a0a0a', border: `1px solid ${rgba(HUD_COLORS.peerWire, 0.14)}` }}>
+      <div style={{ display: 'flex', height: 6, background: HUD_COLORS.trackGround, border: `1px solid ${rgba(HUD_COLORS.peerWire, 0.14)}` }}>
         {buckets.map((bucket) => (
           <span
             key={bucket.label}

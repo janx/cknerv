@@ -174,7 +174,11 @@ function reservedEvidenceHeight(rows: number, captions = 0): number {
 
 const CYAN = HUD_COLORS.cyanWire;
 const VIOLET = HUD_COLORS.memory;
-const GOLD = HUD_COLORS.orange;
+// Chrome orange, and named for what it is. The palette carries two real golds
+// (`lockedGold`, `goldInk`) for locked value and value emphasis; the affordance
+// rows down here are neither, and an alias claiming otherwise sent the next
+// reader looking for a gold that was never on screen.
+const ORANGE = HUD_COLORS.orange;
 
 // ——— Provenance footer captions ——————————————————————————————————————
 // Every row down here names a piece of record-keeping, and a label alone
@@ -738,7 +742,7 @@ function CellScanTraceBlock({
             : observed.txHash}
           onClick={() => onTraceWrite(observed.seq)}
           disabled={!recallEnabled}
-          style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'baseline', gap: '2px 8px', width: '100%', margin: 0, padding: '3px 2px', border: 0, background: traceSelected ? `${VIOLET}12` : 'transparent', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.35, color: traceSelected ? HUD_COLORS.memoryInk : GOLD, textShadow: `0 0 6px ${traceSelected ? VIOLET : GOLD}55`, whiteSpace: 'nowrap', cursor: recallEnabled ? 'pointer' : 'default', textAlign: 'left', opacity: recallEnabled ? 1 : 0.62 }}
+          style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'baseline', gap: '2px 8px', width: '100%', margin: 0, padding: '3px 2px', border: 0, background: traceSelected ? `${VIOLET}12` : 'transparent', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.35, color: traceSelected ? HUD_COLORS.memoryInk : ORANGE, textShadow: `0 0 6px ${traceSelected ? VIOLET : ORANGE}55`, whiteSpace: 'nowrap', cursor: recallEnabled ? 'pointer' : 'default', textAlign: 'left', opacity: recallEnabled ? 1 : 0.62 }}
         >
           <span>MEMORY TRACE</span>
           <span style={{ marginLeft: 'auto', color: HUD_COLORS.goldInk }}>
@@ -752,7 +756,7 @@ function CellScanTraceBlock({
         <div
           data-write-observed="true"
           title={observed.txHash}
-          style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 8, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.35, color: GOLD, textShadow: `0 0 6px ${GOLD}55`, whiteSpace: 'nowrap' }}
+          style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 8, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.35, color: ORANGE, textShadow: `0 0 6px ${ORANGE}55`, whiteSpace: 'nowrap' }}
         >
           <span>MEMORY TRACE</span>
           <span style={{ marginLeft: 'auto', color: HUD_COLORS.goldInk }}>
@@ -1457,16 +1461,19 @@ export default function CellDetailPanel({
           >
             {scanFact('state')}
             {scanFact('born')}
-            {/* When the Cell was written, in a clock a human keeps. Composition
-              * backfill emits born_at_ms 0 for Cells born before the retained
-              * window, and an epoch-relative date would be a lie — those keep
-              * the block anchor alone, which the COMMIT fact already states. */}
+            {/* When the Cell was written, in a clock a human keeps — and ONLY
+              * that. The block is the COMMIT fact one row up; printing it
+              * again here made the cluster say the same number twice in the
+              * space of two lines. Composition backfill emits born_at_ms 0 for
+              * Cells born before the retained window, and an epoch-relative
+              * date would be a lie, so those drop the row entirely and let
+              * COMMIT stand alone. */}
             {cell.born_at_ms > 0 ? (
               <ClusterRow
                 row="born"
                 accent={CYAN}
                 label="BORN"
-                value={`${formatWallClock(cell.born_at_ms)} · ${formatBlockRef(cell.birth_block)}`}
+                value={formatWallClock(cell.born_at_ms)}
                 revealAt={factRevealAt('born')}
                 style={{ gridColumn: '1 / -1', margin: CLUSTER_EVIDENCE_INDENT }}
               />
@@ -1508,7 +1515,7 @@ export default function CellDetailPanel({
                   revealAt={semanticsRevealAt(1)}
                 />
               ) : enrichmentPending ? (
-                <GhostRows rows={BYTE_BUDGET_GHOST_ROWS} accent={GOLD} />
+                <GhostRows rows={BYTE_BUDGET_GHOST_ROWS} accent={ORANGE} />
               ) : null}
             </div>
           </div>

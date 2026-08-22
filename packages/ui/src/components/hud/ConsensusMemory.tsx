@@ -51,6 +51,7 @@ import {
   makeConsensusMemoryKnotMaterial,
 } from '../../materials/consensusMemoryKnotMaterial';
 import { CELL_PORTRAIT_LABEL_PORTAL } from './cellPortraitInsetChannel';
+import { HUD_COLORS } from './hudTheme';
 import CellSemanticMorphologyOverlay from './CellSemanticMorphologyOverlay';
 
 const TAU = CONSENSUS_BRAID_TAU;
@@ -936,6 +937,11 @@ export default function ConsensusMemory({
               toneMapped={false}
             />
           </mesh>
+          {/* The focused knot's inner diamond. `#E9FCFF` is deliberately not a
+            * token and not `cyanInk`: it is the canvas dialect's brightest
+            * tier, one step above the DOM's brightest ink, because additive
+            * blending over a lit braid eats the top of the range that text on
+            * black keeps for free. */}
           <mesh rotation={[0, 0, Math.PI / 4]} renderOrder={12}>
             <ringGeometry args={[0.025, 0.032, 4]} />
             <meshBasicMaterial
@@ -999,7 +1005,7 @@ export default function ConsensusMemory({
                 boxShadow: focusState === 'active'
                   ? `0 0 11px ${sourceColor}66`
                   : `0 0 7px ${sourceColor}33`,
-                color: resolved ? '#FFD79A' : '#C9F8FF',
+                color: resolved ? HUD_COLORS.goldInk : HUD_COLORS.cyanInk,
                 fontFamily: '"JetBrains Mono Local", ui-monospace, monospace',
                 fontSize: 6.4,
                 lineHeight: 1.1,
@@ -1013,7 +1019,7 @@ export default function ConsensusMemory({
                 {String(binding.ordinal).padStart(2, '0')}
               </span>
               <span>◇K{String(binding.knotIndex + 1).padStart(2, '0')}</span>
-              <span style={{ color: resolved ? '#FFD79A' : sourceColor }}>
+              <span style={{ color: resolved ? HUD_COLORS.goldInk : sourceColor }}>
                 {stateGlyph}
               </span>
             </div>

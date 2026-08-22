@@ -159,11 +159,12 @@ describe('CellDetailPanel', () => {
     expect(container.textContent).toContain('AGE 3h 0m');
     expect(container.textContent).not.toContain('SINCE #');
     // Age is the header's business; the register states the date itself, in
-    // UTC, so two viewers in two time zones read the same instant.
+    // UTC, so two viewers in two time zones read the same instant. The block
+    // is NOT repeated here — the COMMIT fact one row up already states it.
     const born = container.querySelector(
       '[data-cell-evidence-row="born"]',
     ) as HTMLElement;
-    expect(born.textContent).toBe('BORN1970-01-01 00:12 UTC · #16,204,800');
+    expect(born.textContent).toBe('BORN1970-01-01 00:12 UTC');
     expect(born.style.gridColumn).toBe('1 / -1');
   });
 

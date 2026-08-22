@@ -69,7 +69,7 @@ function TaxonomyBar({ title, buckets }: { title: string; buckets: ScriptFamilyB
   return (
     <div style={{ marginTop: 7 }} title={full}>
       <div style={SUBHEAD}>{title}</div>
-      <div style={{ display: 'flex', height: 6, border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.14)}`, background: '#0a0a0a' }}>
+      <div style={{ display: 'flex', height: 6, border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.14)}`, background: HUD_COLORS.trackGround }}>
         {nonZero.map((bucket) => (
           <span
             key={bucket.key}
@@ -158,7 +158,7 @@ function MixBar({ mix }: { mix: CompositionMix }) {
           comparing the mixes IS this block's job, and bars of different
           lengths would turn a proportion contrast into a length artifact. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '1px 0 5px' }}>
-        <div style={{ flex: 1, display: 'flex', height: 4, background: '#0a0a0a', border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.1)}` }}>
+        <div style={{ flex: 1, display: 'flex', height: 4, background: HUD_COLORS.trackGround, border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.1)}` }}>
           {segments.map((segment) => segment.count > 0 ? (
             <span
               key={segment.key}

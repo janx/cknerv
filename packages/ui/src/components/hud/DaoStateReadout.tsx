@@ -205,7 +205,7 @@ export default function DaoStateReadout({ source, record, variant = 'section', n
               style={{
                 marginTop: 2,
                 overflow: 'hidden',
-                color: '#fff',
+                color: HUD_COLORS.heroInk,
                 fontFamily: HUD_FONTS.display,
                 fontSize: 21,
                 fontWeight: 700,

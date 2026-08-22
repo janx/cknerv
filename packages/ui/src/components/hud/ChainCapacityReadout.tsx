@@ -118,7 +118,7 @@ export default function ChainCapacityReadout({ source, record, census = null, ce
         <div data-indexed-context style={{ marginTop: 6, opacity: stale ? 0.68 : 1 }}>
           <div
             title={buckets.map((bucket) => `${bucket.category} ${shareLabel(bucket.shareBps)}`).join(' · ')}
-            style={{ display: 'flex', height: 6, background: '#0a0a0a', border: `1px solid ${rgba(accent, 0.14)}` }}
+            style={{ display: 'flex', height: 6, background: HUD_COLORS.trackGround, border: `1px solid ${rgba(accent, 0.14)}` }}
           >
             {buckets.map((bucket) => bucket.shareBps > 0 ? (
               <span

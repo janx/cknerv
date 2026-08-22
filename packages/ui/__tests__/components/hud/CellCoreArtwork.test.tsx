@@ -96,7 +96,6 @@ describe('CellCoreArtwork', () => {
     expect(CELL_CORE_DIRECTIONS[0]).toMatchObject({
       id: 'relic',
       name: 'PSIONIC BRAID',
-      cjk: '灵能编织',
       character: 'woven / agreement knots',
     });
   });

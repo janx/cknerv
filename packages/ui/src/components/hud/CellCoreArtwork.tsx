@@ -20,16 +20,19 @@ const InscribedBraidCore = lazy(() => import('./InscribedBraidCore'));
 
 export type CellCoreDirection = 'relic' | 'loom' | 'synthesis';
 
+/** No CJK companion here, unlike the panel headers: the twelve glyphs these
+ *  rows used to carry sit outside the 22-glyph Huiwen subset, so anything that
+ *  rendered them would silently fall back to a system serif. Nothing rendered
+ *  them — but exported and unused is exactly how a landmine waits. */
 export const CELL_CORE_DIRECTIONS: ReadonlyArray<{
   id: CellCoreDirection;
   code: string;
   name: string;
-  cjk: string;
   character: string;
 }> = [
-  { id: 'relic', code: 'A', name: 'PSIONIC BRAID', cjk: '灵能编织', character: 'woven / agreement knots' },
-  { id: 'loom', code: 'C', name: 'CELESTIAL SCRIPT', cjk: '天穹铭文', character: 'inscribed / ceremonial' },
-  { id: 'synthesis', code: 'A+C', name: 'INSCRIBED BRAID', cjk: '铭文织环', character: 'braided / inscribed' },
+  { id: 'relic', code: 'A', name: 'PSIONIC BRAID', character: 'woven / agreement knots' },
+  { id: 'loom', code: 'C', name: 'CELESTIAL SCRIPT', character: 'inscribed / ceremonial' },
+  { id: 'synthesis', code: 'A+C', name: 'INSCRIBED BRAID', character: 'braided / inscribed' },
 ] as const;
 
 export default function CellCoreArtwork({

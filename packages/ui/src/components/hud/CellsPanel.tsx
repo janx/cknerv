@@ -11,7 +11,7 @@ function FlowRow({ label, color, width, value }: { label: string; color: string;
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 7, height: 16 }}>
       <span style={{ fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: 8, letterSpacing: 1, width: 54, color }}>{label}</span>
-      <span style={{ flex: 1, height: 6, background: '#0a0a0a', border: '1px solid rgba(255,152,48,.12)', position: 'relative' }}>
+      <span style={{ flex: 1, height: 6, background: HUD_COLORS.trackGround, border: '1px solid rgba(255,152,48,.12)', position: 'relative' }}>
         <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width, background: color, boxShadow: `0 0 7px ${color}66` }} />
       </span>
       <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 9.5, width: 30, textAlign: 'right', color }}>{value.toFixed(1)}</span>
@@ -47,7 +47,7 @@ export default function CellsPanel({ stats, churn, reducedMotion = false, style 
           "Live cells" becomes actively contradictory. The whole-chain count
           lives in CELL POPULATION, under its own validated anchor. */}
       <div style={{ marginTop: 11 }}>
-        <StatRow label="Observed live"><span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: 14, color: '#fff' }}>{fmt(stats.live)}</span></StatRow>
+        <StatRow label="Observed live"><span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: 14, color: HUD_COLORS.heroInk }}>{fmt(stats.live)}</span></StatRow>
         <StatRow label="Total observed">{fmt(stats.born)}</StatRow>
         <StatRow label="Dead" valueColor={HUD_COLORS.danger}>{fmt(stats.dead)}</StatRow>
       </div>
