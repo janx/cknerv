@@ -268,7 +268,16 @@ export interface BridgeStrokeState {
   bornAt: number;
   /** Sim seconds the host stopped being a host, or null while it is one. */
   dyingAt: number | null;
+  /** The fixed span of the layer's buffers this stroke draws into —
+   *  {@link BRIDGE_NO_SLOT} until a walk hands one over, and again for a
+   *  stroke the allocation could not house. A stroke keeps its slot for as
+   *  long as it lives, which is what lets the layer rewrite the handful that
+   *  are moving and leave the rest of the buffer alone. */
+  slot: number;
 }
+
+/** No residence in the layer's buffers: a stroke that is not drawn at all. */
+export const BRIDGE_NO_SLOT = -1;
 
 export function makeBridgeStrokeState(
   bridge: BridgeEdge,
@@ -302,6 +311,7 @@ export function makeBridgeStrokeState(
     brightnessMul: arborBrightness(undefined, seed),
     bornAt,
     dyingAt: null,
+    slot: BRIDGE_NO_SLOT,
   };
 }
 
@@ -343,10 +353,14 @@ export function bridgeRenderState(
 /**
  * Write one bridge's sub-segments into a fat-line layer's arrays.
  *
- * Returns how many segments were written, which is zero for an invisible
- * stroke and short of `FABRIC_SAMPLES_PER_EDGE` when the allocation runs out.
- * The caller draws living strokes before retracting ones, so an overflow can
- * only clip an afterimage — the fabric's own rule.
+ * Returns how many segments were written: `FABRIC_SAMPLES_PER_EDGE` for a
+ * visible stroke, and zero for an invisible one. There is nothing in between
+ * — a growing or retracting stroke subdivides its DRAWN interval at the full
+ * sample count rather than writing a shorter polyline — which is what makes
+ * the layer's fixed per-stroke span exact rather than generous. `maxSegments`
+ * bounds the write at the end of that span, and the layer hands spans to
+ * living strokes before retracting ones, so an allocation overflow can only
+ * clip an afterimage — the fabric's own rule.
  *
  * `widths` is the per-endpoint width lane ({@link bridgeWidthScale}), stride 2
  * against the stride-6 position and colour arrays. It is the only one of the
