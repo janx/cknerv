@@ -421,7 +421,8 @@ missing block so spends and births in the middle of the gap cannot be lost.
 
 ## Persistence
 
-When boot replay completes, and again on Ctrl-C/SIGINT, `cknerv-server`
+When boot replay completes, and again on any graceful stop — SIGINT (Ctrl-C)
+or the SIGTERM `systemctl stop` and `docker stop` send — `cknerv-server`
 persists the chain entity and registered projections to:
 
 ```text

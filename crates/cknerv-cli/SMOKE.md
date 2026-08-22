@@ -362,8 +362,9 @@ For a correction deeper than the retained canonical-anchor window:
 
 ## Persistence scope
 
-- Derived state is persisted on graceful Ctrl-C and restored on the next boot.
-  Abrupt termination, including SIGKILL, is not a persistence boundary.
+- Derived state is persisted on any graceful stop — SIGINT (Ctrl-C) or the
+  SIGTERM a service manager sends — and restored on the next boot. Abrupt
+  termination, including SIGKILL, is not a persistence boundary.
 - Corrupt or schema-mismatched state is discarded and rebuilt from the
   configured node. For an intentional incompatible schema change, run
   `cknerv purge --confirm` as documented in the repository README.

@@ -1020,8 +1020,10 @@ The server stores one JSON file at
 ```
 
 A write first creates `.json.tmp`, then renames it over the final file. The
-server saves at the boot-replay completion checkpoint and on a normal Ctrl-C
-shutdown. Shutdown saves before stopping background tasks.
+server saves at the boot-replay completion checkpoint and on a graceful
+shutdown — SIGINT (Ctrl-C) or SIGTERM, which a service manager sends and
+which the CLI treats identically. Shutdown saves before stopping background
+tasks.
 
 ### 12.2 Persisted and Ephemeral State
 

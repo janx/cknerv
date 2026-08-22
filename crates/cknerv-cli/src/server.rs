@@ -1,6 +1,7 @@
 //! Boot wiring: assembles `cknerv-server` + `CkbDirectAdapter` +
 //! `CellGalaxy` projection, mounts the SPA fallback, binds the listener,
-//! optionally auto-opens the browser, then waits for Ctrl-C.
+//! optionally auto-opens the browser, then waits to be stopped — by Ctrl-C
+//! or by the SIGTERM a service manager sends, which take the same save path.
 //!
 //! Derived state lives under `<workdir>/data/`; the server is handed that
 //! data dir as its workdir, so `cknerv-server` persistence writes
@@ -169,8 +170,8 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
         }
     });
 
-    tokio::signal::ctrl_c().await?;
-    tracing::info!("Ctrl-C received, shutting down...");
+    let signal = wait_for_stop().await?;
+    tracing::info!("{signal} received, shutting down...");
 
     // Persist BEFORE shutdown: `save` borrows `&self`, `shutdown` consumes
     // `self`. Next boot's peek_restored_tip resumes instead of re-backfilling.
@@ -183,4 +184,32 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
     server_task.abort();
 
     Ok(())
+}
+
+/// Block until something asks the process to stop, and name what did.
+///
+/// Ctrl-C is how a person stops cknerv; SIGTERM is how everything else does —
+/// `systemctl stop`, `docker stop`, a deploy script rolling the binary
+/// forward. Waiting only on the first meant every supervised stop was an
+/// unsaved kill: no checkpoint, so the next boot rebuilt derived state from
+/// zero and re-issued revisions every held tab had already passed. Both
+/// signals take the identical graceful-save path below.
+#[cfg(unix)]
+async fn wait_for_stop() -> Result<&'static str> {
+    use tokio::signal::unix::{signal, SignalKind};
+
+    let mut terminate = signal(SignalKind::terminate())?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => {
+            result?;
+            Ok("Ctrl-C")
+        }
+        _ = terminate.recv() => Ok("SIGTERM"),
+    }
+}
+
+#[cfg(not(unix))]
+async fn wait_for_stop() -> Result<&'static str> {
+    tokio::signal::ctrl_c().await?;
+    Ok("Ctrl-C")
 }
