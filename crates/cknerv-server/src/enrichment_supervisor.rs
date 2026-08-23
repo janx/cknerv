@@ -18,6 +18,7 @@ use cknerv_core::{
     GalaxyCompositionTarget,
 };
 
+use crate::composition_store::CompositionStore;
 use crate::enrichment::{CanonicalContext, EnrichmentSource};
 use crate::state::ServerState;
 
@@ -577,8 +578,16 @@ pub(crate) fn spawn(
     state: Arc<ServerState>,
     out: mpsc::Sender<EnrichmentEvent>,
     shutdown: watch::Receiver<bool>,
+    store: Option<Arc<CompositionStore>>,
 ) -> JoinHandle<()> {
-    tokio::spawn(run(source, state, out, shutdown, RefreshCadence::default()))
+    tokio::spawn(run(
+        source,
+        state,
+        out,
+        shutdown,
+        RefreshCadence::default(),
+        store,
+    ))
 }
 
 async fn run(
@@ -587,6 +596,7 @@ async fn run(
     out: mpsc::Sender<EnrichmentEvent>,
     mut shutdown: watch::Receiver<bool>,
     cadence: RefreshCadence,
+    store: Option<Arc<CompositionStore>>,
 ) {
     let mut interval = tokio::time::interval(cadence.probe);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -656,12 +666,30 @@ async fn run(
                     tracker.started(kind);
                     let source = source.clone();
                     let context = context.clone();
+                    let store = store.clone();
                     refreshes.spawn(async move {
                         let _permit = permit;
-                        RefreshCompletion {
-                            kind,
-                            result: kind.refresh(source.as_ref(), &context, demand).await,
+                        let result = kind.refresh(source.as_ref(), &context, demand).await;
+                        // The one place a whole composition is known to
+                        // exist AND to have been proved: the source
+                        // discovered it, the canonical hydrator validated
+                        // every cell of it through the node, and nothing
+                        // downstream can turn it into anything but this
+                        // same record. Whether the stage then seats it is
+                        // a question about the chain moving under the
+                        // request, not about the record — which is why the
+                        // memory is written here rather than after the
+                        // reducer, and written before the event is handed
+                        // on, so a process that dies in between still
+                        // wakes up remembering. Top-ups are absent on
+                        // purpose: see `CompositionStore::remember`.
+                        if let (Some(store), Ok(Some(EnrichmentEvent::GalaxyCompositionReplace(
+                            record,
+                        )))) = (&store, &result)
+                        {
+                            store.remember(record).await;
                         }
+                        RefreshCompletion { kind, result }
                     });
                 }
             }
@@ -1209,6 +1237,7 @@ mod tests {
             out,
             shutdown_rx,
             composition_cadence(None),
+            None,
         ));
 
         // It lands once…
@@ -1270,6 +1299,7 @@ mod tests {
             out,
             shutdown_rx,
             composition_cadence(None),
+            None,
         ));
 
         tokio::time::timeout(Duration::from_millis(500), async {
@@ -1329,6 +1359,7 @@ mod tests {
             out,
             shutdown_rx,
             composition_cadence(Some(Duration::from_millis(30))),
+            None,
         ));
 
         tokio::time::timeout(Duration::from_millis(800), async {
@@ -1462,6 +1493,7 @@ mod tests {
             out,
             shutdown_rx,
             top_up_cadence(),
+            None,
         ));
 
         // Silent stage: nothing published, so nothing is fetched.
@@ -1657,7 +1689,7 @@ mod tests {
         // thing under test.
         let drain = tokio::spawn(async move { while events.recv().await.is_some() {} });
         let (shutdown, shutdown_rx) = watch::channel(false);
-        let handle = tokio::spawn(run(source, state, out, shutdown_rx, cadence));
+        let handle = tokio::spawn(run(source, state, out, shutdown_rx, cadence, None));
 
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut last = usize::MAX;
@@ -1917,7 +1949,7 @@ mod tests {
             top_up_burst_max_rounds: TOP_UP_BURST_MAX_ROUNDS,
             max_concurrent: 2,
         };
-        let handle = tokio::spawn(run(source, state, out, shutdown_rx, cadence));
+        let handle = tokio::spawn(run(source, state, out, shutdown_rx, cadence, None));
 
         tokio::time::timeout(Duration::from_millis(150), async {
             loop {
@@ -1972,7 +2004,7 @@ mod tests {
             chain_census: Duration::from_millis(20),
             ..top_up_cadence()
         };
-        let handle = tokio::spawn(run(source, state, out, shutdown_rx, cadence));
+        let handle = tokio::spawn(run(source, state, out, shutdown_rx, cadence, None));
 
         let census = tokio::time::timeout(Duration::from_millis(300), async {
             loop {
@@ -2015,6 +2047,7 @@ mod tests {
             out,
             shutdown_rx,
             cold_start_cadence(),
+            None,
         ));
 
         tokio::time::timeout(Duration::from_millis(250), async {
@@ -2102,6 +2135,7 @@ mod tests {
             out,
             shutdown_rx,
             cold_start_cadence(),
+            None,
         ));
 
         tokio::time::timeout(Duration::from_millis(250), async {

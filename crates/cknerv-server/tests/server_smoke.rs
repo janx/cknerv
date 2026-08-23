@@ -6,12 +6,16 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use cknerv_core::{
-    ActivityFeedItem, ActivityFeedRecord, AssetEcosystemCategory, AssetEcosystemRecord, CellDelta,
-    CellGalaxy, CellSemanticRecord, ChainAnchor, EnrichmentSourceState, EnrichmentSourceStatus,
-    Mutation, OutPoint, PeerSightingAbsence, PeerSightingLookup, PeerSightingRecord, Projection,
-    ReplayPhase, SemanticsProjection, TransactionSemanticRecord,
+    ActivityFeedItem, ActivityFeedRecord, AssetEcosystemCategory, AssetEcosystemRecord, AssetKind,
+    Cell, CellDelta, CellGalaxy, CellSemanticRecord, ChainAnchor, EnrichmentSourceState,
+    EnrichmentSourceStatus, GalaxyCellCandidate, GalaxyCompositionCandidates,
+    GalaxyCompositionRecord, GalaxyCompositionTopUp, Mutation, OutPoint, PeerSightingAbsence,
+    PeerSightingLookup, PeerSightingRecord, Projection, ReplayPhase, SemanticsProjection,
+    TransactionSemanticRecord,
 };
-use cknerv_server::{Adapter, CanonicalContext, EnrichmentSource, ServerBuilder};
+use cknerv_server::{
+    Adapter, CanonicalContext, EnrichmentSource, GalaxyCompositionHydrator, ServerBuilder,
+};
 use futures_util::StreamExt;
 use tokio::sync::{mpsc, watch};
 
@@ -785,4 +789,171 @@ async fn peer_sighting_route_separates_a_sighting_from_a_silence() {
 
     handle.shutdown().await;
     server_task.abort();
+}
+
+/// Stands in for the local node during a warm boot: everything the restore
+/// offers is still live except the `0xde…` outpoints, which were spent
+/// while the process was down.
+struct StillLiveNode;
+
+fn hydrated(candidate: &GalaxyCellCandidate, id: u64, asset_kind: AssetKind) -> Cell {
+    Cell {
+        id,
+        born_at_ms: 0,
+        death_at_ms: None,
+        birth_block: candidate.birth_block,
+        tag: None,
+        pos_seed: cknerv_core::helix_seed_for(id),
+        out_point: candidate.out_point.clone(),
+        capacity: candidate.capacity,
+        data_hex: "0x".into(),
+        data_bytes: 0,
+        content_hash: format!("0x{id:064x}"),
+        lock_shape_seed: [id as u32, 1],
+        type_shape_seed: None,
+        data_shape_seed: [id as u32, 2],
+        lock_kind: Default::default(),
+        asset_kind,
+        lock_script: Default::default(),
+        type_script: None,
+    }
+}
+
+fn still_live(bucket: &[GalaxyCellCandidate], asset_kind: AssetKind) -> Vec<Cell> {
+    bucket
+        .iter()
+        .filter(|candidate| !candidate.out_point.tx_hash.starts_with("0xde"))
+        .map(|candidate| {
+            // Same derivation the real hydrator uses, so three buckets
+            // cannot hand three different cells one id.
+            let id = cknerv_core::composition_id_for_outpoint(
+                &candidate.out_point.tx_hash,
+                candidate.out_point.index,
+            );
+            hydrated(candidate, id, asset_kind)
+        })
+        .collect()
+}
+
+#[async_trait]
+impl GalaxyCompositionHydrator for StillLiveNode {
+    async fn hydrate_galaxy_composition(
+        &self,
+        candidates: GalaxyCompositionCandidates,
+    ) -> anyhow::Result<GalaxyCompositionRecord> {
+        Ok(GalaxyCompositionRecord {
+            source: candidates.source.clone(),
+            as_of: candidates.as_of.clone(),
+            updated_at_ms: candidates.updated_at_ms,
+            dao: still_live(&candidates.dao, AssetKind::Dao),
+            typed: still_live(&candidates.typed, AssetKind::Xudt),
+            plain: still_live(&candidates.plain, AssetKind::Native),
+        })
+    }
+
+    async fn hydrate_galaxy_top_up(
+        &self,
+        _candidates: GalaxyCompositionCandidates,
+    ) -> anyhow::Result<GalaxyCompositionTopUp> {
+        unreachable!("the restore never tops up")
+    }
+}
+
+fn remembered_cell(tx_prefix: &str, id: u64, asset_kind: AssetKind) -> Cell {
+    hydrated(
+        &GalaxyCellCandidate {
+            out_point: OutPoint {
+                tx_hash: format!("0x{tx_prefix}{id:062x}"),
+                index: 0,
+            },
+            capacity: 500 + id,
+            birth_block: 3,
+        },
+        id,
+        asset_kind,
+    )
+}
+
+/// The warm boot, end to end through the real wiring: a record left on
+/// disk by a previous run is revalidated through the canonical hydrator
+/// and staged over the ordinary composition channel, with no enrichment
+/// source configured at all. What the stage ends up holding is what the
+/// node just re-affirmed — the spent DAO cell does not come back — and
+/// the provenance says where it came from.
+#[tokio::test]
+async fn a_remembered_composition_stages_the_galaxy_with_no_source_configured() {
+    let workdir = tmpdir();
+    let remembered = GalaxyCompositionRecord {
+        source: "ckbadger".into(),
+        as_of: ChainAnchor {
+            block: 3,
+            hash: "0x3".into(),
+        },
+        updated_at_ms: 5_000,
+        dao: vec![
+            remembered_cell("ab", 1, AssetKind::Dao),
+            remembered_cell("de", 2, AssetKind::Dao),
+        ],
+        typed: vec![remembered_cell("ab", 3, AssetKind::Xudt)],
+        plain: vec![remembered_cell("ab", 4, AssetKind::Native)],
+    };
+    std::fs::write(
+        workdir.join("galaxy-composition.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "record": remembered,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let (router, handle) = ServerBuilder::new()
+        .add_projection(CellGalaxy::new())
+        .add_adapter(CompletedBootReplayAdapter)
+        .galaxy_composition_hydrator(StillLiveNode)
+        .workdir(workdir.clone())
+        .build()
+        .expect("build");
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    let snapshot = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let body: serde_json::Value =
+                reqwest::get(format!("http://{addr}/api/projections/cells/snapshot"))
+                    .await
+                    .expect("GET succeeds")
+                    .json()
+                    .await
+                    .expect("JSON parse");
+            if body["snapshot"]["display"]["provenance"]["mode"] == "composed" {
+                break body["snapshot"].clone();
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the remembered composition should stage the galaxy");
+
+    let provenance = &snapshot["display"]["provenance"];
+    assert_eq!(
+        provenance["source"], "ckbadger (restored)",
+        "a restored record names itself, so a content-identical fresh one is never read as a duplicate"
+    );
+    assert_eq!(
+        provenance["as_of"]["block"], 7,
+        "installed under a block this server can prove, not the one it was curated at"
+    );
+    let residents = snapshot["display"]["residents"]
+        .as_array()
+        .expect("residents");
+    assert_eq!(residents.len(), 3, "the spent DAO cell stayed dead");
+
+    handle.shutdown().await;
+    server_task.abort();
+    std::fs::remove_dir_all(workdir).unwrap();
 }

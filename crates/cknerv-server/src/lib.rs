@@ -31,6 +31,7 @@
 //!     for one peer the local node is linked to.
 
 pub mod adapter;
+mod composition_store;
 pub mod enrichment;
 mod enrichment_supervisor;
 mod health;

@@ -144,7 +144,16 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
         // and `/api/health` name the same commit.
         .build_version(BUILD_VERSION);
     if let Some(source) = ckbadger_source {
-        builder = builder.enrichment_source(source);
+        // The restore reads a file and asks the node about every outpoint
+        // in it — ckbadger is not involved. It is wired here anyway
+        // because it cannot matter anywhere else: the file only exists if
+        // ckbadger curated a composition on some earlier run, and without
+        // ckbadger the stage is meant to be canonical anyway. A second
+        // hydrator rather than the one the source already holds, because
+        // the source owns its copy and this one is a bare RPC client.
+        builder = builder
+            .galaxy_composition_hydrator(CkbGalaxyCompositionHydrator::new(composition_rpc_url))
+            .enrichment_source(source);
     }
     let (cknerv_router, handle) = builder.build()?;
 

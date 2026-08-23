@@ -14,7 +14,9 @@
 //!      conflict with a stale snapshot.
 //!   4. Spawn the reducer task: drains `mutation_rx`, applies into
 //!      `ServerState`.
-//!   5. Arm a one-shot boot-replay persistence checkpoint.
+//!   5. Arm a one-shot boot-replay persistence checkpoint, and — when a
+//!      canonical composition hydrator was configured — a one-shot
+//!      restore of the last remembered CellGalaxy composition.
 //!   6. Spawn each adapter; each one drops a `Sender` clone into the
 //!      shared mpsc; the reducer multiplexes them.
 //!   7. Spawn the supervisor over all of the above, so a task that dies
@@ -33,7 +35,8 @@ use cknerv_core::{
 };
 
 use crate::adapter::Adapter;
-use crate::enrichment::EnrichmentSource;
+use crate::composition_store::CompositionStore;
+use crate::enrichment::{EnrichmentSource, GalaxyCompositionHydrator};
 use crate::health::TaskRole;
 use crate::projection_registry::Registry;
 use crate::state::ServerState;
@@ -96,6 +99,7 @@ pub struct ServerBuilder {
     projections: Vec<ProjectionInstaller>,
     enrichment_projections: Vec<ProjectionInstaller>,
     enrichment_source: Option<Arc<dyn EnrichmentSource>>,
+    galaxy_composition_hydrator: Option<Arc<dyn GalaxyCompositionHydrator>>,
     composition_demand: Option<Arc<CompositionDemandSink>>,
     observed_scripts: Option<Arc<ObservedScriptsSink>>,
     workdir: Option<PathBuf>,
@@ -110,6 +114,7 @@ impl ServerBuilder {
             projections: Vec::new(),
             enrichment_projections: Vec::new(),
             enrichment_source: None,
+            galaxy_composition_hydrator: None,
             composition_demand: None,
             observed_scripts: None,
             workdir: None,
@@ -155,6 +160,24 @@ impl ServerBuilder {
         self
     }
 
+    /// Hand the server the canonical hydrator on its own, so the last
+    /// remembered CellGalaxy composition can be revalidated and staged at
+    /// boot instead of the stage waiting out a fresh discovery.
+    ///
+    /// Deliberately separate from [`Self::enrichment_source`]: restoring
+    /// needs nothing but the node — the outpoints are already known, and
+    /// what has to be decided about them (is this still live, is it still
+    /// this capacity, is it still this class) only the node can answer.
+    /// Omitting the call leaves the file unread and every boot composing
+    /// from discovery, which is what a first boot does anyway.
+    pub fn galaxy_composition_hydrator<H>(mut self, hydrator: H) -> Self
+    where
+        H: GalaxyCompositionHydrator,
+    {
+        self.galaxy_composition_hydrator = Some(Arc::new(hydrator));
+        self
+    }
+
     /// Share the cell galaxy's composition-demand sink with the server,
     /// so the enrichment supervisor can see what the display plane is
     /// short of. Pass the SAME `Arc` given to
@@ -191,6 +214,12 @@ impl ServerBuilder {
     /// adapters start. Callers can disable restoration when lightweight
     /// metadata shows that a derived reservoir no longer satisfies the
     /// configured target; the next boot checkpoint atomically replaces it.
+    ///
+    /// The remembered CellGalaxy composition
+    /// ([`Self::galaxy_composition_hydrator`]) obeys this too: it is the
+    /// same claim about the same life, and a boot that rebuilds one of
+    /// them while restoring the other is a boot that agrees with itself
+    /// about nothing.
     pub fn restore_persisted(mut self, restore: bool) -> Self {
         self.restore_persisted = restore;
         self
@@ -256,6 +285,15 @@ impl ServerBuilder {
         // expressed as source status and never signal canonical shutdown.
         // Bounded aggregate refreshes use their own due times and limited
         // concurrency so a slow capability cannot delay source health.
+        //
+        // The composition store is the stage's memory between runs: the
+        // supervisor writes a composition to it the moment one is proved,
+        // and the restore task below reads it back at the next boot. Both
+        // halves need a workdir and nothing else.
+        let composition_store = self
+            .workdir
+            .as_ref()
+            .map(|workdir| Arc::new(CompositionStore::new(workdir)));
         let enrichment_source = self.enrichment_source.clone();
         let enrichment_source_handle = enrichment_source.as_ref().map(|source| {
             crate::enrichment_supervisor::spawn(
@@ -263,8 +301,39 @@ impl ServerBuilder {
                 state.clone(),
                 enrichment_tx.clone(),
                 shutdown_rx.clone(),
+                composition_store.clone(),
             )
         });
+
+        // 5b. The stage's warm boot. Runs entirely beside canonical boot:
+        //     it waits for canonical evidence rather than holding anything
+        //     up, revalidates every remembered outpoint through the node,
+        //     and delivers what survives on the same event channel a fresh
+        //     composition uses — so the reducer, the display plane and the
+        //     registry cannot tell the two apart, which is the point. Every
+        //     way it can fail ends in the boot it would otherwise have had.
+        //
+        //     Rides `restore_persisted` with the canonical state rather
+        //     than carrying a switch of its own. That flag is the server
+        //     saying "this process is resuming a life it already had", and
+        //     it is the same claim the remembered composition makes; when
+        //     the caller withdraws it — a changed Cell target, an explicit
+        //     replay override — canonical state is rebuilt from the chain
+        //     and the stage rebuilds with it. Two memories on two switches
+        //     is how a boot ends up half restored and half rebuilt.
+        let composition_restore_handle = self
+            .galaxy_composition_hydrator
+            .filter(|_| self.restore_persisted)
+            .zip(self.workdir.clone())
+            .map(|(hydrator, workdir)| {
+                crate::composition_store::spawn_restore(
+                    hydrator,
+                    state.clone(),
+                    workdir,
+                    enrichment_tx.clone(),
+                    shutdown_rx.clone(),
+                )
+            });
 
         // Persist the first usable derived snapshot as soon as boot replay
         // closes. This task listens to a lightweight watch signal rather than
@@ -371,6 +440,7 @@ impl ServerBuilder {
             reducer_handle,
             enrichment_reducer_handle,
             enrichment_source_handle,
+            composition_restore_handle,
             checkpoint_handle,
             supervisor_handle,
         };
@@ -398,6 +468,7 @@ pub struct ServerHandle {
     reducer_handle: tokio::task::JoinHandle<()>,
     enrichment_reducer_handle: tokio::task::JoinHandle<()>,
     enrichment_source_handle: Option<tokio::task::JoinHandle<()>>,
+    composition_restore_handle: Option<tokio::task::JoinHandle<()>>,
     checkpoint_handle: Option<tokio::task::JoinHandle<()>>,
     supervisor_handle: tokio::task::JoinHandle<()>,
 }
@@ -449,6 +520,19 @@ impl ServerHandle {
                 tracing::warn!(
                     target: "cknerv-server",
                     "enrichment source did not exit within 2s; aborting"
+                );
+                abort.abort();
+            }
+        }
+        if let Some(handle) = self.composition_restore_handle {
+            let abort = handle.abort_handle();
+            if tokio::time::timeout(Duration::from_secs(2), handle)
+                .await
+                .is_err()
+            {
+                tracing::warn!(
+                    target: "cknerv-server",
+                    "composition restore did not exit within 2s; aborting"
                 );
                 abort.abort();
             }
