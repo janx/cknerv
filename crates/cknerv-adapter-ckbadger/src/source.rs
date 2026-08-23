@@ -3666,7 +3666,12 @@ fn map_spore_facets(
             {
                 attributes.push(attribute("owned_capacity", capacity, Some("shannons")));
             }
-            if let Some(description) = cluster.description.and_then(nonempty) {
+            if let Some(description) = cluster
+                .description
+                .and_then(nonempty)
+                .as_deref()
+                .and_then(cluster_description_text)
+            {
                 attributes.push(attribute(
                     "description",
                     description
@@ -3701,6 +3706,27 @@ fn spore_count(key: &str, value: i64) -> Option<SemanticAttribute> {
     nonnegative(value, key)
         .ok()
         .map(|count| attribute(key, count.to_string(), None))
+}
+
+/// The sentence inside a cluster's description field.
+///
+/// ClusterData's description is free text by protocol, but DOB clusters pack a
+/// JSON envelope — `{"description": "…", "dob": {decoder, pattern, …}}` —
+/// where only the inner sentence is prose and the rest is decoder
+/// configuration no reader of a Cell card wants. Live mainnet made the cost
+/// concrete: the bounded cut landed mid-JSON and the panel's hover read like a
+/// config file. So exactly that shape is unwrapped; any other text — plain
+/// prose, malformed JSON, an envelope with no inner sentence — passes through
+/// verbatim, because second-guessing free text any further than the one shape
+/// DOB actually mints would be this side inventing a description.
+fn cluster_description_text(raw: &str) -> Option<String> {
+    let inner = serde_json::from_str::<serde_json::Value>(raw)
+        .ok()
+        .as_ref()
+        .and_then(|value| value.get("description"))
+        .and_then(|value| value.as_str())
+        .and_then(nonempty);
+    inner.or_else(|| nonempty(raw))
 }
 
 /// Milliseconds since the Unix epoch for an RFC 3339 instant, or `None` when
@@ -5887,6 +5913,39 @@ mod tests {
             Some(SPORE_NO_CLUSTER)
         );
         assert_eq!(decode(spore_cluster_cell()).kind, "spore_cluster_cell");
+    }
+
+    /// DOB clusters mint their description as a JSON envelope whose only
+    /// prose is the inner sentence; everything else that arrives is free text
+    /// and crosses verbatim. Live mainnet is where the envelope was found:
+    /// the bounded cut landed mid-JSON and the hover read like a config file.
+    #[test]
+    fn a_dob_description_envelope_yields_its_inner_sentence() {
+        assert_eq!(
+            cluster_description_text(
+                r#"{"description":"Handheld gadgets for Nervapes.","dob":{"ver":0}}"#
+            )
+            .as_deref(),
+            Some("Handheld gadgets for Nervapes.")
+        );
+        // Plain prose, malformed JSON, and an envelope with no inner sentence
+        // all cross verbatim — unwrapping any further would be inventing one.
+        assert_eq!(
+            cluster_description_text("Cosmic Repository: www.cosmicrepository.com").as_deref(),
+            Some("Cosmic Repository: www.cosmicrepository.com")
+        );
+        assert_eq!(
+            cluster_description_text(r#"{"description":"broken"#).as_deref(),
+            Some(r#"{"description":"broken"#)
+        );
+        assert_eq!(
+            cluster_description_text(r#"{"dob":{"ver":0}}"#).as_deref(),
+            Some(r#"{"dob":{"ver":0}}"#)
+        );
+        assert_eq!(
+            cluster_description_text(r#"{"description":"   ","dob":{}}"#).as_deref(),
+            Some(r#"{"description":"   ","dob":{}}"#)
+        );
     }
 
     /// Anchor-valid stub carrying a script catalogue and a lookup endpoint.
