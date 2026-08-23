@@ -11,6 +11,7 @@
 // being imported) so that the presentation below can be tested directly.
 
 import {
+  formatBootSnapshotDetail,
   getBootSequence,
   subscribeBootSequence,
   type BootPhaseId,
@@ -64,18 +65,6 @@ export function activeBootShellPhase(
   return last;
 }
 
-/** Streamed bytes, and only ever what was actually measured: a percentage
- *  when the response carried a length, the raw size when it did not. */
-function snapshotDetail(phase: BootPhaseSnapshot): string {
-  const received = phase.receivedBytes ?? 0;
-  const total = phase.totalBytes ?? null;
-  if (total !== null && total > 0) {
-    return `${Math.min(100, Math.floor((received / total) * 100))}%`;
-  }
-  if (received <= 0) return '';
-  return `${(received / 1_000_000).toFixed(1)} MB`;
-}
-
 export function bootShellReadout(
   sequence: BootSequenceSnapshot,
 ): BootShellReadout {
@@ -87,7 +76,12 @@ export function bootShellReadout(
   }
   return {
     label,
-    detail: phase.id === 'snapshot' ? snapshotDetail(phase) : '',
+    // Streamed bytes, formatted by the same function the HUD banner uses: the
+    // shell hands this band over to that banner mid-download on a slow
+    // connection, and the number may not change shape as it crosses.
+    detail: phase.id === 'snapshot'
+      ? formatBootSnapshotDetail(phase.receivedBytes, phase.totalBytes)
+      : '',
     failed: false,
   };
 }

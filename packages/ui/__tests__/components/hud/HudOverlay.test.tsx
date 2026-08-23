@@ -1,7 +1,15 @@
 import { emptyScriptCensus } from '@cknerv/cache';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
-import { afterEach, describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import {
+  completeBootPhase,
+  failBootPhase,
+  reportBootSnapshotProgress,
+  resetBootSequenceForTest,
+  type BootPhaseId,
+} from '../../../src/boot/bootSequence';
 import { REVEAL_GHOST_OPACITY } from '../../../src/components/hud/primitives';
+import type { StreamHealthChannels } from '../../../src/derives/streamHealth.derive';
 import type {
   ChainEntry,
   ChainNode,
@@ -42,7 +50,27 @@ vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
 import HudOverlay from '../../../src/components/hud/HudOverlay';
 import type { CellsStats } from '../../../src/derives/cellsStats.derive';
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+  resetBootSequenceForTest();
+});
+
+// ——— The page's boot record ————————————————————————————————
+// It is a module store, and importing it starts it RUNNING — which is correct
+// for a page and inconvenient for a test file, because a running record takes
+// the top slot away from the stream banner and the replay plate (see the
+// arbitration suite at the bottom). Every test that is not about the boot
+// readout is therefore explicit about standing on the far side of that
+// handover: the HUD as a visitor finds it once the page has come up.
+const BOOT_RECORD_PHASES: readonly Exclude<BootPhaseId, 'seeding'>[] = [
+  'instrument', 'snapshot', 'decode', 'gl', 'first_light', 'fabric', 'data_plane',
+];
+const finishBootRecord = () => {
+  for (const id of BOOT_RECORD_PHASES) completeBootPhase(id);
+};
+beforeEach(() => { resetBootSequenceForTest(); finishBootRecord(); });
 
 // ——— Boot count-off helpers —————————————————————————————————
 /** One module's beat of the boot count-off. */
@@ -744,5 +772,183 @@ describe('HudOverlay', () => {
     );
 
     expect(getByRole('button', { name: 'JUKEBOX' })).not.toBeNull();
+  });
+});
+
+// ——— The top slot, while the page is still coming up ————————————
+//
+// One tenant at a time. The stream banner and the replay plate both report
+// backend conditions the boot sequence already carries as lines of its own
+// (`data_plane`, `seeding`), and the arrangement measured before this suite
+// existed had the slot shouting CONNECTING over a galaxy that had finished
+// rendering half a second earlier.
+
+/** The page's boot record left where it starts: running, nothing finished. */
+const midBoot = () => { resetBootSequenceForTest(); };
+
+/** Neither socket is open yet — the state the old slot spent the whole boot in. */
+const connectingStreams: StreamHealthChannels = {
+  chain: { phase: 'connecting', attempt: 0, lastMessageAtMs: null, reason: null },
+  cells: { phase: 'connecting', attempt: 0, lastMessageAtMs: null, reason: null },
+};
+
+/** Long enough past the linger that the readout has certainly stood down. */
+const BOOT_LINGER_SETTLED_MS = 1_000;
+
+describe('HudOverlay — the boot readout owns the top slot', () => {
+  beforeEach(midBoot);
+
+  const booting = (extra: Record<string, unknown> = {}) => render(
+    <HudOverlay
+      chain={chain}
+      peers={peers}
+      localNode={localNode}
+      cellsStats={cellsStats}
+      streamHealth={connectingStreams}
+      backfill={{ done: 1234, total: 65_829, phase: 'boot' }}
+      {...extra}
+    />,
+  );
+
+  it('speaks with one voice while the instrument is coming up', () => {
+    const { container } = booting();
+
+    const banner = container.querySelector('[data-boot-banner]') as HTMLElement;
+    expect(banner).not.toBeNull();
+    expect(banner.style.top).toBe('36px');
+    expect(banner.textContent).toContain('STAGE POWER-ON');
+    expect(banner.textContent).toContain('INSTRUMENT');
+    expect(banner.textContent).toContain('FIRST LIGHT');
+    // …and the other two tenants hold, backfill prop and all.
+    expect(container.querySelector('[data-stream-health-banner]')).toBeNull();
+    expect(container.querySelector('[data-replay-phase]')).toBeNull();
+    expect(container.textContent).not.toContain('CONNECTING DATA PLANE');
+    expect(container.textContent).not.toContain('SEEDING CONSENSUS CELLS');
+  });
+
+  it('folds the server replay in as its own line, with its own count', () => {
+    const { container } = booting();
+    act(() => { reportBootSnapshotProgress(2_852_000, 4_600_000); });
+
+    expect((container.querySelector('[data-boot-phase="snapshot"]') as HTMLElement)
+      .textContent).toBe('SNAPSHOT 62%');
+  });
+
+  it('hands the slot back once the sequence finishes and its linger runs out', () => {
+    vi.useFakeTimers();
+    const { container } = booting();
+
+    act(() => { finishBootRecord(); });
+    // The whole trail lit is the one frame in which the wait is legible; the
+    // slot is still the sequence's.
+    expect(container.querySelector('[data-boot-banner]')).not.toBeNull();
+    expect(container.querySelector('[data-stream-health-banner]')).toBeNull();
+
+    act(() => { vi.advanceTimersByTime(BOOT_LINGER_SETTLED_MS); });
+    expect(container.querySelector('[data-boot-banner]')).toBeNull();
+    expect(container.querySelector('[data-stream-health-banner]')).not.toBeNull();
+    expect(container.textContent).toContain('CONNECTING DATA PLANE');
+    expect(container.querySelector('[data-replay-phase="boot"]')).not.toBeNull();
+  });
+
+  it('drops the linger when motion has been asked to stop', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('prefers-reduced-motion'),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    vi.useFakeTimers();
+    const { container } = booting();
+    expect(container.querySelector('[data-boot-banner]')).not.toBeNull();
+
+    act(() => { finishBootRecord(); });
+    // No held frame at all: the sequence is over, so it is gone.
+    expect(container.querySelector('[data-boot-banner]')).toBeNull();
+    expect(container.querySelector('[data-stream-health-banner]')).not.toBeNull();
+    act(() => { vi.advanceTimersByTime(BOOT_LINGER_SETTLED_MS); });
+    expect(container.querySelector('[data-boot-banner]')).toBeNull();
+  });
+
+  it('keeps a failed boot in the slot, and keeps the other two out of it', () => {
+    vi.useFakeTimers();
+    const { container } = booting();
+
+    act(() => {
+      failBootPhase('gl', 'context lost');
+      finishBootRecord();
+    });
+    act(() => { vi.advanceTimersByTime(BOOT_LINGER_SETTLED_MS); });
+
+    // A record carrying a fault never completes, so the band never stands
+    // down. Deliberate: a boot that died is the louder fault, and two banners
+    // arguing about which emergency is the emergency teaches a reader to
+    // ignore both.
+    expect(container.querySelector('[data-boot-banner]')).not.toBeNull();
+    expect(container.textContent).toContain('GL FAULT — context lost');
+    expect(container.querySelector('[data-stream-health-banner]')).toBeNull();
+    expect(container.querySelector('[data-replay-phase]')).toBeNull();
+  });
+
+  it('shifts the alert bar by one band, never by two', () => {
+    // A genuine at-tip stall: blocks stopped while the node is caught up.
+    const stalled: ChainEntry = {
+      ...chain,
+      recent_block_intervals_ms: Array.from({ length: 60 }, () => 8000),
+      last_block_ts_ms: Date.now() - 600_000,
+    };
+    const warningBar = (root: HTMLElement) => root
+      .querySelector('[data-warning-trigger]')!
+      .parentElement as HTMLElement;
+
+    vi.useFakeTimers();
+    const { container } = render(
+      <HudOverlay
+        chain={stalled}
+        peers={peers}
+        localNode={localNode}
+        cellsStats={cellsStats}
+        streamHealth={connectingStreams}
+      />,
+    );
+    // The stream is interrupted too — it always is during boot — and the two
+    // must not each claim their 30px, because only one band is on screen.
+    expect(container.querySelector('[data-boot-banner]')).not.toBeNull();
+    expect(warningBar(container).style.top).toBe('66px');
+
+    act(() => { finishBootRecord(); });
+    act(() => { vi.advanceTimersByTime(BOOT_LINGER_SETTLED_MS); });
+    // Handed back: the stream banner is the tenant now, at the same offset.
+    expect(container.querySelector('[data-stream-health-banner]')).not.toBeNull();
+    expect(warningBar(container).style.top).toBe('66px');
+  });
+
+  it('gives a narrow top bar the one line it has room for', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('max-width: 1280px'),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    const { container } = booting();
+    const banner = container.querySelector('[data-boot-banner]') as HTMLElement;
+
+    expect(banner.dataset.bootDense).toBe('true');
+    expect(banner.querySelectorAll('[data-boot-phase]')).toHaveLength(1);
+    expect(banner.textContent).toContain('STAGE POWER-ON');
+    expect(banner.textContent).toContain('INSTRUMENT');
+    expect(banner.textContent).not.toContain('FIRST LIGHT');
+  });
+
+  it('leaves the settled HUD exactly as it was', () => {
+    // The other side of the handover, asserted here rather than trusted: a HUD
+    // mounting after the record closed shows no band and holds nothing back.
+    finishBootRecord();
+    vi.useFakeTimers();
+    const { container } = booting();
+
+    expect(container.querySelector('[data-boot-banner]')).toBeNull();
+    expect(container.querySelector('[data-stream-health-banner]')).not.toBeNull();
+    expect(container.querySelector('[data-replay-phase="boot"]')).not.toBeNull();
+    act(() => { vi.advanceTimersByTime(BOOT_LINGER_SETTLED_MS); });
+    expect(container.querySelector('[data-boot-banner]')).toBeNull();
   });
 });

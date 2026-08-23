@@ -21,6 +21,7 @@ import { ecgCondition, expectedBlockMs, windowMeanMs, ECG_WINDOW, type EcgCondit
 import { alertLevel } from '../../derives/alertLevel';
 import type { CellsStats } from '../../derives/cellsStats.derive';
 import type { CellPopulationFieldModel } from '../../derives/cellPopulationField.derive';
+import { useBootSequence } from '../../boot/bootSequence';
 import { injectHudTheme } from './hudTheme';
 import { revealStageStyle } from './primitives';
 import StatusStrip, {
@@ -34,6 +35,7 @@ import DaoStatePanel from './DaoStatePanel';
 import { canRenderDaoStateReadout } from './DaoStateReadout';
 import NetworkPanel from './NetworkPanel';
 import BackfillBar from './BackfillBar';
+import BootSequenceBanner from './BootSequenceBanner';
 import CellsPanel from './CellsPanel';
 import StageCapacityPanel from './StageCapacityPanel';
 import RenderStatsPanel from './RenderStatsPanel';
@@ -124,6 +126,16 @@ const BOOT_MODULE_ORDER: readonly HudPanelId[] = [
  *  (STAGE·07 / GL·08 off) counts to four and is done in well under a second. */
 const BOOT_SLOT_MS = 130;
 
+// ——— Boot readout linger ————————————————————————————————————
+/** How long the finished boot sequence keeps the top slot after its last line
+ *  ticks over. The whole trail lit is the only frame in which a visitor can see
+ *  what actually happened while they waited, and on a fast local boot that
+ *  frame would otherwise last a few milliseconds. Nothing waits on it — the
+ *  galaxy has been on screen behind the band since `first_light`. Skipped
+ *  entirely under reduced motion, where a banner that outstays its state is
+ *  just a banner that will not leave. */
+const BOOT_READOUT_LINGER_MS = 700;
+
 /** Does this session want the ritual at all? Read once, synchronously, because
  *  `useReducedMotion` is mount-safe by design and cannot answer before the
  *  first paint — and someone who asked motion to stop must not be shown even
@@ -172,6 +184,27 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
   useEffect(() => { injectHudTheme(document); }, []);
 
   const reduced = useReducedMotion();
+
+  // The page's own boot record. The store is module-level and lives in this
+  // package, so the slot arbitration below needs nothing from the app — and one
+  // subscription here serves both the decision and the banner.
+  const boot = useBootSequence();
+  const [bootLingering, setBootLingering] = useState(false);
+  const bootWasActive = useRef(false);
+  useEffect(() => {
+    if (boot.active) { bootWasActive.current = true; return; }
+    // A HUD that mounted after the record closed has nothing to hold: it never
+    // showed the sequence, so there is no last frame of it to let anyone read.
+    if (!bootWasActive.current || reduced) return;
+    setBootLingering(true);
+    const id = setTimeout(() => {
+      bootWasActive.current = false;
+      setBootLingering(false);
+    }, BOOT_READOUT_LINGER_MS);
+    return () => clearTimeout(id);
+  }, [boot.active, reduced]);
+  const bootReadoutVisible = boot.active || bootLingering;
+
   // Below ~1100px the rail's summaries would crowd the left-hand panels, so it
   // narrows and scrolls instead of fanning. Tunable breakpoint.
   const narrowRail = useMediaQuery('(max-width: 1100px)');
@@ -384,14 +417,37 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
         compact={compactTopBar}
         mobile={mobileTopBar}
       />
-      {streamSummary ? (
+      {/* One voice in the top slot. While the page is coming up the boot
+          sequence owns it outright: `CONNECTING DATA PLANE` and the replay
+          plate's block count are already lines INSIDE the sequence
+          (`data_plane`, `seeding`), and the arrangement they replace was
+          measured shouting CONNECTING over a galaxy that had finished
+          rendering half a second earlier.
+          The deliberate edge: a failed boot never completes, so the sequence
+          holds the slot for the session and keeps the other two suppressed. A
+          boot that died is the louder fault, and two banners disagreeing about
+          which emergency is the emergency is how a reader learns to ignore
+          both. Like the chrome above it this band is exempt from the count-off
+          — it reports a state, and nothing that reports a state is dimmed for
+          style. */}
+      {bootReadoutVisible ? (
+        <BootSequenceBanner
+          boot={boot}
+          top={topBarHeight}
+          dense={compactTopBar}
+          reducedMotion={reduced}
+        />
+      ) : null}
+      {streamSummary && !bootReadoutVisible ? (
         <StreamHealthBanner
           summary={streamSummary}
           reducedMotion={reduced}
           top={topBarHeight}
         />
       ) : null}
-      <WarningBar level={alert.level} trigger={alert.trigger} reducedMotion={reduced} top={topBarHeight + (streamInterrupted ? 30 : 0)} />
+      {/* One band, one shift: whichever of the two is standing in the slot
+          moves the alert down by its 30px, and they are never both there. */}
+      <WarningBar level={alert.level} trigger={alert.trigger} reducedMotion={reduced} top={topBarHeight + (bootReadoutVisible || streamInterrupted ? 30 : 0)} />
       {chainPanelVisible
       || panelVisibility.stage
       || panelVisibility.render
@@ -521,10 +577,15 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
           ) : null}
         </div>
       ) : null}
-      <BackfillBar
-        backfill={backfill ?? null}
-        style={{ top: topBarHeight + (streamInterrupted ? 40 : 10) }}
-      />
+      {/* Held while the boot readout is up: the same replay is already the
+          sequence's `seeding` line, with the same done/total off the same
+          mirror. */}
+      {bootReadoutVisible ? null : (
+        <BackfillBar
+          backfill={backfill ?? null}
+          style={{ top: topBarHeight + (streamInterrupted ? 40 : 10) }}
+        />
+      )}
     </div>
   );
 }

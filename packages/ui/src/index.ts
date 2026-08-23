@@ -48,6 +48,10 @@ export {
   type BootSequenceSnapshot,
 } from './boot/bootSequence';
 export { default as BootFrameSentinel } from './boot/BootFrameSentinel';
+// The one piece of the HUD banner's vocabulary the pre-React shell also needs:
+// both readouts print the streamed byte count into the same band, minutes of
+// wall clock apart on a slow connection and milliseconds apart on a fast one.
+export { formatBootSnapshotDetail } from './components/hud/bootSequencePresentation';
 
 // ── Geometry helpers ───────────────────────────────────────────────
 export * from './geometry/cellPositions';
