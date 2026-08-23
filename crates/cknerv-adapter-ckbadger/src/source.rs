@@ -14,7 +14,7 @@ use cknerv_core::{
     EnrichmentSourceStatus, ForkWatchDeepFork, ForkWatchEventKind, ForkWatchRecord, ForkWatchReorg,
     GalaxyCompositionRecord, GalaxyCompositionTopUp, HashType, NetworkAtlasBucket,
     NetworkAtlasRecord, NetworkRosterRecord, OutPoint, PeerSightingAbsence, PeerSightingLookup,
-    PeerSightingRecord, ProtocolEra, ProtocolEraRecord, RosterNode, ScriptNameRecord,
+    PeerSightingRecord, ProtocolEra, ProtocolEraRecord, RosterNode, ScriptId, ScriptNameRecord,
     ScriptRegistryRecord, SemanticAsset, SemanticAttribute, SemanticCellConsumption,
     SemanticCellContent, SemanticContentDecode, SemanticContentGuess, SemanticContentSegment,
     SemanticFacet, SemanticScript, TransactionHorizonRecord, TransactionParticipantSemantic,
@@ -33,7 +33,8 @@ use crate::dto::{
     TransactionLifecycleResponse, TransactionStatsPoint, TransactionStatsResponse,
 };
 use crate::galaxy_composition::{
-    discover as discover_galaxy_composition, top_up as top_up_galaxy_composition, CandidateTail,
+    discover as discover_galaxy_composition, identity_families as galaxy_identity_families,
+    top_up as top_up_galaxy_composition, CandidateTail, IdentityStandard,
 };
 
 /// Everything this source can answer, unconditionally. These strings are the
@@ -723,6 +724,49 @@ impl CkbadgerEnrichmentSource {
             cycles,
         })
     }
+
+    /// Which `(code_hash, hash_type)` each identity collection on the
+    /// inventory ranking stands for.
+    ///
+    /// ckbadger publishes no collection → code-hash route and the identity
+    /// collection ids are synthetic ASCII, so the only thing that knows the
+    /// pair is cknerv's own census joined against the registry's names. One
+    /// lookup, deduped by code hash exactly as the registry enrichment does.
+    ///
+    /// Never fatal. An empty census defers the identity rows by one
+    /// composition (R1), and a lookup that fails costs the same rows — about
+    /// a twentieth of the typed class — rather than the ninety-five percent
+    /// that needed no census at all.
+    async fn identity_families(
+        &self,
+        context: &CanonicalContext,
+    ) -> HashMap<IdentityStandard, ScriptId> {
+        if context.observed_scripts.is_empty() {
+            return HashMap::new();
+        }
+        let mut hashes: Vec<String> = Vec::new();
+        for script in &context.observed_scripts {
+            let hex = script.code_hash_hex();
+            if !hashes.contains(&hex) {
+                hashes.push(hex);
+            }
+        }
+        hashes.truncate(MAX_SCRIPT_REGISTRY_ENTRIES);
+        let named = match self.lookup_script_names(&hashes).await {
+            Ok(named) => named,
+            Err(error) => {
+                tracing::warn!(
+                    target: "cknerv-adapter-ckbadger",
+                    "the script lookup that names identity families failed; \
+                     their ranked collections sit out this composition: {error:#}"
+                );
+                return HashMap::new();
+            }
+        };
+        galaxy_identity_families(&context.observed_scripts, |code_hash| {
+            named.get(code_hash).map(|info| info.name.as_str())
+        })
+    }
 }
 
 #[async_trait]
@@ -1399,11 +1443,13 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         }
 
         let anchor = self.current_anchor(context)?;
+        let identity_families = self.identity_families(context).await;
         let candidates = discover_galaxy_composition(
             &self.client,
             &self.api_base,
             anchor.clone(),
             self.galaxy_composition_target,
+            &identity_families,
             now_ms(),
         )
         .await?;

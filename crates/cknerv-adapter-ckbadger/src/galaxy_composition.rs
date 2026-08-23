@@ -24,10 +24,15 @@ const PAGE_LIMIT: usize = 100;
 const ASSET_GROUP_LIMIT: usize = 64;
 const ADDRESS_GROUP_LIMIT: usize = 48;
 const GROUP_FETCH_CONCURRENCY: usize = 8;
-// `/cells/live` is indexed by script and ordered by creation position, not by
-// capacity. Sampling three bounded pages per high-capacity asset lets cknerv
-// rank the individual Cells by CKBytes without asking ckbadger to change.
-const TYPED_CELL_PAGES_PER_GROUP: usize = 3;
+/// The most index pages one ranked asset may cost a single composition,
+/// whatever share of the class the split says it earned.
+///
+/// `/cells/live` is indexed by script and ordered by creation position, not by
+/// capacity, so sampling a few bounded pages per asset lets cknerv rank the
+/// individual Cells by CKBytes without asking ckbadger to change. It is also
+/// the ceiling on a collection's item list, for the plainer reason that every
+/// item listed there costs a request of its own.
+const MAX_PAGES_PER_ASSET: usize = 3;
 const PLAIN_CELL_PAGES_PER_GROUP: usize = 1;
 const CANDIDATE_OVERFETCH_NUMERATOR: usize = 5;
 const CANDIDATE_OVERFETCH_DENOMINATOR: usize = 4;
@@ -37,13 +42,21 @@ pub(crate) async fn discover(
     api_base: &Url,
     anchor: ChainAnchor,
     target_total: usize,
+    identity_families: &HashMap<IdentityStandard, ScriptId>,
     updated_at_ms: u64,
 ) -> anyhow::Result<GalaxyCompositionCandidates> {
     let target = GalaxyCompositionTarget::for_total(target_total);
     let mut seen = HashSet::with_capacity(target.total().saturating_mul(2));
 
     let mut dao = discover_dao(client, api_base, overfetch(target.dao), &mut seen).await;
-    let mut typed = discover_typed(client, api_base, overfetch(target.typed), &mut seen).await;
+    let mut typed = discover_typed(
+        client,
+        api_base,
+        overfetch(target.typed),
+        identity_families,
+        &mut seen,
+    )
+    .await;
     let mut plain = discover_plain(client, api_base, overfetch(target.plain), &mut seen).await;
     // The index can advance while the validated compatibility anchor remains
     // fixed. Never attach a Cell born beyond the block that proves this record.
@@ -526,25 +539,6 @@ async fn walk_dao(
     Ok(())
 }
 
-/// The typed class's head: the leading assets by owned capacity, which
-/// define the groups the walk then pages through. Without it there are no
-/// groups to walk, so a failure here is a class that collected nothing.
-async fn top_asset_hashes(client: &reqwest::Client, api_base: &Url) -> anyhow::Result<Vec<String>> {
-    let mut url = endpoint(api_base, "assets")?;
-    url.query_pairs_mut()
-        .append_pair("limit", &ASSET_GROUP_LIMIT.to_string())
-        .append_pair("sort_key", "capacity")
-        .append_pair("sort_direction", "desc");
-    let assets: CursorPage<GalaxyAssetResponse> = fetch_json(client, url, "top assets").await?;
-    validate_page_size(assets.data.len(), ASSET_GROUP_LIMIT, "top assets")?;
-    Ok(assets
-        .data
-        .into_iter()
-        .map(|asset| asset.id)
-        .filter(|hash| is_hash32(hash))
-        .collect())
-}
-
 /// One row of ckbadger's capacity-ranked inventory, reduced to the two
 /// things a composition needs from it: where the asset's cells are, and how
 /// much of the typed budget it has earned.
@@ -552,21 +546,19 @@ async fn top_asset_hashes(client: &reqwest::Client, api_base: &Url) -> anyhow::R
 /// The roster IS this ranking (D1) — `GET /assets?sort_key=capacity` is the
 /// same page the inventory UI shows, so the stage's typed class becomes that
 /// page read top to bottom. Rank order is the vector's order.
-// Built here, consumed by the weighted walk (T4).
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RankedAsset {
+struct RankedAsset {
     /// Whatever ckbadger keys this asset by — a type-script hash for a token
     /// contract, a cluster id for spore, a collection id for m-nft and
     /// identity. Only [`AssetStandard`] knows which, and reading every one of
     /// them as a script hash is exactly what starved the old walk: for 40 of
     /// 64 groups `cells/live?type_script_hash=<id>` answered `{"data":[]}`
     /// with HTTP 200, which is a success carrying nothing.
-    pub(crate) id: String,
-    pub(crate) standard: AssetStandard,
+    id: String,
+    standard: AssetStandard,
     /// Shannons of live capacity the asset occupies. The weight the typed
     /// budget is divided by, never a display figure.
-    pub(crate) owned_capacity: u64,
+    owned_capacity: u64,
 }
 
 /// How an asset's live cells are reached (D3). The row's
@@ -576,10 +568,8 @@ pub(crate) struct RankedAsset {
 /// `object` and `identity`. A token standard cknerv has never heard of still
 /// keys its cells by a type-script hash, so routing every `token` row to the
 /// contract pager is the honest reading — not a guess.
-// Built here, consumed by the weighted walk (T4).
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AssetStandard {
+enum AssetStandard {
     /// `args` is the issuer, so one contract is one type script covering
     /// thousands of cells: `cells/live?type_script_hash=<id>` pages it.
     Token,
@@ -604,8 +594,6 @@ pub(crate) enum AssetStandard {
 /// `/assets?type=identity` — it holds zero capacity, so it never reaches the
 /// top-64 page — and its underscore spelling is not the `did` an earlier
 /// draft assumed.
-// Built here, consumed by the weighted walk (T4).
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum IdentityStandard {
     DotBit,
@@ -613,8 +601,6 @@ pub(crate) enum IdentityStandard {
     DidCkb,
 }
 
-// Built here, consumed by the weighted walk (T4).
-#[allow(dead_code)]
 impl AssetStandard {
     /// The routing decision, or `None` for a pair with no mechanism behind
     /// it.
@@ -645,9 +631,7 @@ impl AssetStandard {
 /// filtered eleven m-nft collections through `is_hash32` without a word,
 /// which is why the gap took a live measurement to find rather than a log
 /// line to read.
-// Built here, consumed by the weighted walk (T4).
-#[allow(dead_code)]
-pub(crate) async fn ranked_assets(
+async fn ranked_assets(
     client: &reqwest::Client,
     api_base: &Url,
 ) -> anyhow::Result<Vec<RankedAsset>> {
@@ -717,8 +701,6 @@ pub(crate) async fn ranked_assets(
 /// than "any string" because the id is spliced into a URL **path**, where a
 /// separator or a dot segment would address something other than the
 /// collection.
-// Built here, consumed by the weighted walk (T4).
-#[allow(dead_code)]
 fn is_collection_id(value: &str) -> bool {
     let Some(body) = value.strip_prefix("0x") else {
         return false;
@@ -729,13 +711,145 @@ fn is_collection_id(value: &str) -> bool {
         && body.as_bytes().iter().all(u8::is_ascii_hexdigit)
 }
 
-// ── collections: items, and the cells behind them ─────────────────
+/// One ranked asset's slice of a composition's request budget.
+///
+/// Two numbers because the two families spend differently. A token contract
+/// is a group key: one page buys a hundred cells. A collection is an item
+/// list, and every item on it costs a `cells/live` lookup of its own — so a
+/// collection's real price is counted in ITEMS, and leaving that unbounded
+/// would let one row of the roster spend thousands of requests answering for
+/// a share it was never allocated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GroupBudget {
+    /// Index pages this asset's walk may read.
+    pages: usize,
+    /// Per-item lookups a collection walk may spend inside those pages.
+    items: usize,
+}
 
-/// How many item pages one collection walk may read per call. Bounded like
-/// every other walk here; the cursors that make a later call resume deeper
-/// arrive with the top-up parity work (T5).
-#[allow(dead_code)] // read by the weighted walk (T4)
-const ITEM_PAGES_PER_GROUP: usize = 3;
+impl GroupBudget {
+    /// What one asset's provisional slot count buys it.
+    ///
+    /// Overfetched like the class itself: hydration drops dead outpoints and
+    /// capacity mismatches, so a walk that collects exactly its target
+    /// delivers less than its target.
+    fn for_target(target: usize) -> Self {
+        let items = overfetch(target);
+        Self {
+            pages: items.div_ceil(PAGE_LIMIT).clamp(1, MAX_PAGES_PER_ASSET),
+            items: items.min(MAX_PAGES_PER_ASSET.saturating_mul(PAGE_LIMIT)),
+        }
+    }
+}
+
+// ── the distribution law ──────────────────────────────────────────
+
+/// Divide `total` slots over `weights`, never handing an entry more than its
+/// `supply` (D4).
+///
+/// Largest-remainder proportional targets, then a fixed point: every entry
+/// whose target overshoots what it actually holds is clamped to its supply,
+/// and the shortfall re-normalizes over the entries still open. wCKB is the
+/// case that makes redistribution a law rather than a patch — it ranks first
+/// on the live inventory with 19.4% of the top-64 capacity and exactly twelve
+/// live cells, so without it a fifth of the typed class would simply
+/// evaporate.
+///
+/// Monotone with rank: `floor(total × wᵢ / Σw)` never decreases as `wᵢ` grows,
+/// and where two floors tie the larger weight also carries the larger
+/// remainder — so a higher-ranked asset never receives fewer slots than a
+/// lower-ranked one of no greater weight. Equal weights break by index, which
+/// IS rank order.
+///
+/// **Termination.** Each round either commits — nothing overshot, so every
+/// open entry takes its target and the loop ends — or clamps at least one
+/// entry that was open when the round began. A clamped entry never reopens
+/// and there are only `count` entries to clamp, so at most `count` rounds can
+/// clamp, and the round after the last of them must either commit or find
+/// nothing open. `count + 1` rounds is the proof, not a safety valve.
+fn allocate(weights: &[u64], supply: &[usize], total: usize) -> Vec<usize> {
+    let count = weights.len().min(supply.len());
+    let mut allocation = vec![0usize; count];
+    let mut clamped = vec![false; count];
+    let mut remaining = total;
+
+    for _ in 0..=count {
+        if remaining == 0 {
+            break;
+        }
+        let open: Vec<usize> = (0..count).filter(|index| !clamped[*index]).collect();
+        let pool: u128 = open.iter().map(|index| u128::from(weights[*index])).sum();
+        // A zero-weight entry earns nothing: the weights are occupied
+        // capacity, and an asset occupying none has no claim on a class
+        // divided by capacity. A pool of zero leaves no one to divide by,
+        // which ends the split rather than spreading it evenly.
+        if open.is_empty() || pool == 0 {
+            break;
+        }
+        let targets = largest_remainder(remaining, &open, weights, pool);
+        let overshot: Vec<usize> = open
+            .iter()
+            .copied()
+            .zip(&targets)
+            .filter(|(index, target)| **target > supply[*index])
+            .map(|(index, _)| index)
+            .collect();
+        if overshot.is_empty() {
+            for (index, target) in open.into_iter().zip(targets) {
+                allocation[index] = target;
+            }
+            break;
+        }
+        for index in overshot {
+            // `supply < target` for everything that overshot and the targets
+            // sum to `remaining`, so this subtraction cannot go under.
+            allocation[index] = supply[index];
+            clamped[index] = true;
+            remaining -= supply[index];
+        }
+    }
+    allocation
+}
+
+/// The proportional split with nothing to clamp against — what an asset would
+/// earn if every asset could fill its share. It buys the walk's request
+/// budget; the slots themselves are allocated again, over what was collected.
+fn proportional(weights: &[u64], total: usize) -> Vec<usize> {
+    allocate(weights, &vec![usize::MAX; weights.len()], total)
+}
+
+/// `remaining` shared over `open` in proportion to `weights`: floors first,
+/// then the leftover to the largest remainders, ties to the lower index —
+/// which is the higher rank.
+///
+/// `u128` because the product is a class budget times a mountain of shannons:
+/// today's leading asset alone occupies 3.5 × 10¹⁵, and ten thousand slots of
+/// that overflows a `u64` by an order of magnitude.
+fn largest_remainder(remaining: usize, open: &[usize], weights: &[u64], pool: u128) -> Vec<usize> {
+    let total = remaining as u128;
+    let mut targets = Vec::with_capacity(open.len());
+    let mut remainders: Vec<(u128, usize)> = Vec::with_capacity(open.len());
+    let mut floors: u128 = 0;
+    for (slot, index) in open.iter().enumerate() {
+        let scaled = total * u128::from(weights[*index]);
+        let share = scaled / pool;
+        targets.push(share as usize);
+        remainders.push((scaled % pool, slot));
+        floors += share;
+    }
+    remainders.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    let mut leftover = total - floors;
+    for (_, slot) in remainders {
+        if leftover == 0 {
+            break;
+        }
+        targets[slot] += 1;
+        leftover -= 1;
+    }
+    targets
+}
+
+// ── collections: items, and the cells behind them ─────────────────
 
 /// Molecule `hash_type` discriminants — the chain's own byte, which is what
 /// goes into a script's hash preimage. Not the JSON-RPC spelling
@@ -748,9 +862,8 @@ const MOLECULE_HASH_TYPE_DATA1: u8 = 2;
 ///
 /// `hash_type` is the molecule discriminant rather than [`HashType`] because
 /// this byte is hashed, and a spelling is not a byte.
-#[allow(dead_code)] // read by the weighted walk (T4)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct DeployedScript {
+struct DeployedScript {
     code_hash: &'static str,
     hash_type: u8,
 }
@@ -888,12 +1001,11 @@ fn hash32_bytes(value: &str) -> Option<[u8; 32]> {
 /// answered. `melted` is not an error — it is how many items no longer had a
 /// live cell by the time the walk asked, which is the difference between a
 /// short collection and a broken one.
-#[allow(dead_code)] // read by the weighted walk (T4)
 #[derive(Default)]
-pub(crate) struct GroupWalk {
-    pub(crate) candidates: Vec<GalaxyCellCandidate>,
-    pub(crate) melted: usize,
-    pub(crate) stopped_by: Option<anyhow::Error>,
+struct GroupWalk {
+    candidates: Vec<GalaxyCellCandidate>,
+    melted: usize,
+    stopped_by: Option<anyhow::Error>,
 }
 
 /// One row of a collection's item list, reduced to the `args` of the item's
@@ -1060,13 +1172,12 @@ async fn resolve_collection_items(
 ///
 /// `settled` is the cluster's discovered script version, carried in by the
 /// caller so a second call skips discovery entirely.
-#[allow(dead_code)] // called by the weighted walk (T4)
-pub(crate) async fn fetch_spore_group(
+async fn fetch_spore_group(
     client: &reqwest::Client,
     api_base: &Url,
     cluster_id: &str,
     settled: &mut Option<DeployedScript>,
-    max_pages: usize,
+    budget: GroupBudget,
 ) -> GroupWalk {
     fetch_collection_group(
         client,
@@ -1074,19 +1185,18 @@ pub(crate) async fn fetch_spore_group(
         &format!("spore/clusters/{cluster_id}/spores"),
         SPORE_FAMILY,
         settled,
-        max_pages,
+        budget,
     )
     .await
 }
 
 /// Every live cell the walk can reach for one M-NFT collection.
-#[allow(dead_code)] // called by the weighted walk (T4)
-pub(crate) async fn fetch_mnft_group(
+async fn fetch_mnft_group(
     client: &reqwest::Client,
     api_base: &Url,
     collection_id: &str,
     settled: &mut Option<DeployedScript>,
-    max_pages: usize,
+    budget: GroupBudget,
 ) -> GroupWalk {
     fetch_collection_group(
         client,
@@ -1094,7 +1204,7 @@ pub(crate) async fn fetch_mnft_group(
         &format!("assets/objects/{collection_id}/items"),
         MNFT_FAMILY,
         settled,
-        max_pages,
+        budget,
     )
     .await
 }
@@ -1134,7 +1244,7 @@ async fn fetch_collection_group(
     path: &str,
     family: CollectionFamily,
     settled: &mut Option<DeployedScript>,
-    max_pages: usize,
+    budget: GroupBudget,
 ) -> GroupWalk {
     let CollectionFamily {
         kind,
@@ -1146,13 +1256,23 @@ async fn fetch_collection_group(
     let listed = match kind {
         CollectionKind::Spore => {
             walk_collection_items::<SporeItemResponse>(
-                client, api_base, path, max_pages, subject, &mut args,
+                client,
+                api_base,
+                path,
+                budget.pages,
+                subject,
+                &mut args,
             )
             .await
         }
         CollectionKind::Object => {
             walk_collection_items::<ObjectItemResponse>(
-                client, api_base, path, max_pages, subject, &mut args,
+                client,
+                api_base,
+                path,
+                budget.pages,
+                subject,
+                &mut args,
             )
             .await
         }
@@ -1160,6 +1280,12 @@ async fn fetch_collection_group(
     // Items already listed are still worth resolving even if the page after
     // them failed — the same rule the class walks obey, one level down.
     walk.stopped_by = listed.err();
+    // The item budget bites HERE rather than at the page: a list page is one
+    // request, resolving what it lists is a hundred. An asset allocated a
+    // dozen slots reads its collection's head and stops, and the items past
+    // it stay for the tail (T5) to resume into.
+    let listed_items = args.len();
+    args.truncate(budget.items);
     if let Err(error) = resolve_collection_items(
         client, api_base, &args, versions, settled, subject, &mut walk,
     )
@@ -1167,7 +1293,7 @@ async fn fetch_collection_group(
     {
         walk.stopped_by.get_or_insert(error);
     }
-    report_collection_walk(path, args.len(), &walk);
+    report_collection_walk(path, listed_items, args.len(), &walk);
     walk
 }
 
@@ -1179,12 +1305,13 @@ async fn fetch_collection_group(
 /// one this collection uses — and that is worth a `warn`, because it is the
 /// difference between a collection the stage is sampling thinly and one it
 /// cannot see at all.
-fn report_collection_walk(path: &str, listed: usize, walk: &GroupWalk) {
-    if listed > 0 && walk.candidates.is_empty() {
+fn report_collection_walk(path: &str, listed: usize, resolved_from: usize, walk: &GroupWalk) {
+    if resolved_from > 0 && walk.candidates.is_empty() {
         tracing::warn!(
             target: "cknerv-adapter-ckbadger",
             collection = %path,
             listed,
+            attempted = resolved_from,
             "a collection listed items but not one of them resolved to a live cell; \
              its deployed script version may not be among the pinned ones"
         );
@@ -1219,22 +1346,34 @@ fn identity_standard_for_name(name: &str) -> Option<IdentityStandard> {
     }
 }
 
+/// The same table read the other way, so a deferred collection can be named
+/// in a log rather than counted in one. Exhaustive on purpose: a fourth
+/// identity standard must not be able to reach the roster nameless.
+fn identity_standard_name(standard: IdentityStandard) -> &'static str {
+    match standard {
+        IdentityStandard::DotBit => ".bit Account",
+        IdentityStandard::BitCell => ".bit Cell",
+        IdentityStandard::DidCkb => "did:ckb",
+    }
+}
+
 /// Joins the census against the registry: which `(code_hash, hash_type)` each
 /// identity collection means.
 ///
 /// Pure, and pure on purpose — the census and the name lookup both live in
 /// `source.rs`, and this is the only part of the question worth testing.
-/// `name_of` answers for a `0x`-prefixed code hash.
+/// `name_of` answers for a `0x`-prefixed code hash; its name outlives the
+/// hash it was asked about, because the caller's answers come from a lookup
+/// table rather than from the string it passed in.
 ///
 /// A family with several deployed versions on stage contributes the first the
 /// census reports; the walk pages one version per composition and the others
 /// keep reaching the stage the way they do today, through block-following.
 /// A standard absent from the result is one this composition cannot page —
 /// the cold-start case (R1), where the census has not yet seen the family.
-#[allow(dead_code)] // called by the weighted walk (T4)
-pub(crate) fn identity_families(
+pub(crate) fn identity_families<'name>(
     observed: &[ScriptId],
-    name_of: impl Fn(&str) -> Option<&str>,
+    name_of: impl Fn(&str) -> Option<&'name str>,
 ) -> HashMap<IdentityStandard, ScriptId> {
     let mut families = HashMap::new();
     for script in observed {
@@ -1276,8 +1415,7 @@ struct ByScriptCellResponse {
 /// for AND re-checked per row, alongside the code hash. An index that ignored
 /// the parameter would otherwise hand the typed class a page of lock matches,
 /// and unknown query parameters here are ignored in silence.
-#[allow(dead_code)] // called by the weighted walk (T4)
-pub(crate) async fn fetch_identity_group(
+async fn fetch_identity_group(
     client: &reqwest::Client,
     api_base: &Url,
     family: &ScriptId,
@@ -1340,48 +1478,215 @@ async fn walk_identity_family(
     Ok(())
 }
 
+/// The typed class: ckbadger's inventory page, read top to bottom.
+///
+/// Every ranked asset is walked through the mechanism its standard names
+/// (D3), and the class is then divided among them in proportion to the
+/// capacity they occupy (D4) — twice. The first split is provisional and buys
+/// each asset its request budget; the second runs over what the walks
+/// actually collected, so an asset that ran dry gives its shortfall back to
+/// the rest instead of taking it off the stage.
 async fn discover_typed(
     client: &reqwest::Client,
     api_base: &Url,
     desired: usize,
+    identity_families: &HashMap<IdentityStandard, ScriptId>,
     seen: &mut HashSet<OutPoint>,
 ) -> ClassWalk {
     if desired == 0 {
         return ClassWalk::default();
     }
-    let asset_hashes = match top_asset_hashes(client, api_base).await {
-        Ok(hashes) => hashes,
+    // Without a roster there are no assets to walk, so a failure here is a
+    // class that collected nothing.
+    let roster = match ranked_assets(client, api_base).await {
+        Ok(roster) => roster,
         Err(error) => return ClassWalk::stopped(error),
     };
+    report_roster(&roster, identity_families);
+    if roster.is_empty() {
+        return ClassWalk::default();
+    }
 
-    let results: Vec<_> = stream::iter(asset_hashes.into_iter().enumerate().map(
-        |(rank, type_script_hash)| async move {
-            let cells = fetch_live_group(
+    let weights: Vec<u64> = roster.iter().map(|asset| asset.owned_capacity).collect();
+    let provisional = proportional(&weights, desired);
+    // The futures are built before the stream rather than by it: a closure
+    // that borrows the roster and returns an async block cannot be
+    // higher-ranked over the borrow, and `buffer_unordered` asks for exactly
+    // that.
+    let jobs: Vec<_> = roster
+        .iter()
+        .zip(provisional)
+        .enumerate()
+        .map(|(rank, (asset, target))| async move {
+            let walk = walk_ranked_asset(
+                client,
+                api_base,
+                asset,
+                GroupBudget::for_target(target),
+                identity_families,
+            )
+            .await;
+            (rank, walk)
+        })
+        .collect();
+    let mut walks: Vec<(usize, GroupWalk)> = stream::iter(jobs)
+        .buffer_unordered(GROUP_FETCH_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
+    walks.sort_by_key(|(rank, _)| *rank);
+
+    // The first failure in RANK order, never in completion order: which cause
+    // a class reports must not depend on which request happened to finish
+    // first. One asset stopping short is a thinner class, not a broken one —
+    // the same rule the classes themselves obey, one level down.
+    let stopped_by = walks
+        .iter_mut()
+        .find_map(|(_, walk)| walk.stopped_by.take());
+
+    // Rank decides who keeps an outpoint two assets both offered, and the
+    // shared `seen` keeps the typed class off what DAO already took. Both
+    // happen BEFORE the allocation counts anything, so a duplicate can never
+    // be allocated a slot it then fails to fill.
+    let mut staged: HashSet<OutPoint> = HashSet::with_capacity(desired);
+    for (_, walk) in &mut walks {
+        walk.candidates.retain(|candidate| {
+            !seen.contains(&candidate.out_point) && staged.insert(candidate.out_point.clone())
+        });
+    }
+
+    let collected: Vec<usize> = walks
+        .iter()
+        .map(|(_, walk)| walk.candidates.len())
+        .collect();
+    let allocation = allocate(&weights, &collected, desired);
+
+    let mut candidates = Vec::with_capacity(desired.min(staged.len()));
+    for ((_, walk), take) in walks.into_iter().zip(allocation) {
+        // The pager's own order within an asset: capacity-desc for a token
+        // contract, item order for a collection (D4.3).
+        for candidate in walk.candidates.into_iter().take(take) {
+            seen.insert(candidate.out_point.clone());
+            candidates.push(candidate);
+        }
+    }
+    ClassWalk {
+        candidates,
+        stopped_by,
+    }
+}
+
+/// One ranked asset's live cells, by whichever route its standard makes
+/// reachable (D3).
+async fn walk_ranked_asset(
+    client: &reqwest::Client,
+    api_base: &Url,
+    asset: &RankedAsset,
+    budget: GroupBudget,
+    identity_families: &HashMap<IdentityStandard, ScriptId>,
+) -> GroupWalk {
+    match asset.standard {
+        AssetStandard::Token => {
+            let mut walk = GroupWalk::default();
+            match fetch_live_group(
                 client,
                 api_base,
                 "type_script_hash",
-                &type_script_hash,
-                LiveClass::Typed(&type_script_hash),
-                TYPED_CELL_PAGES_PER_GROUP,
+                &asset.id,
+                LiveClass::Typed(&asset.id),
+                budget.pages,
             )
-            .await?;
-            Ok::<_, anyhow::Error>((rank, cells))
+            .await
+            {
+                Ok(candidates) => walk.candidates = candidates,
+                Err(error) => walk.stopped_by = Some(error),
+            }
+            walk
+        }
+        AssetStandard::Spore => {
+            let mut settled = None;
+            fetch_spore_group(client, api_base, &asset.id, &mut settled, budget).await
+        }
+        AssetStandard::MNft => {
+            let mut settled = None;
+            fetch_mnft_group(client, api_base, &asset.id, &mut settled, budget).await
+        }
+        // An identity collection the census has not resolved yet contributes
+        // nothing and costs nothing. `report_roster` has already named it.
+        AssetStandard::Identity(standard) => match identity_families.get(&standard) {
+            Some(family) => fetch_identity_group(client, api_base, family, budget.pages).await,
+            None => GroupWalk::default(),
         },
-    ))
-    .buffer_unordered(GROUP_FETCH_CONCURRENCY)
-    .collect::<Vec<_>>()
-    .await;
-    let (mut groups, stopped_by) = partition_groups(results);
-    groups.sort_by_key(|(rank, _)| *rank);
-
-    ClassWalk {
-        candidates: interleave_groups(
-            groups.into_iter().map(|(_, group)| group).collect(),
-            desired,
-            seen,
-        ),
-        stopped_by,
     }
+}
+
+/// What the inventory ranking actually offered this composition, said once.
+///
+/// The old head dropped forty of sixty-four groups without a word — eleven
+/// filtered by a hash-shaped guard, twenty-nine answered `{"data":[]}` with
+/// HTTP 200 — so the gap took a live measurement to find rather than a log
+/// line to read. A roster the operator cannot see is a roster nobody can
+/// check, which is why this is `info` and not `debug`.
+fn report_roster(roster: &[RankedAsset], identity_families: &HashMap<IdentityStandard, ScriptId>) {
+    let summary = roster_summary(roster, identity_families);
+    tracing::info!(
+        target: "cknerv-adapter-ckbadger",
+        assets = summary.assets,
+        tokens = summary.tokens,
+        spore = summary.spore,
+        mnft = summary.mnft,
+        identity = summary.identity,
+        "the inventory ranking is this composition's typed roster"
+    );
+    if !summary.deferred.is_empty() {
+        // Cold start (R1). The census is what names identity families and it
+        // has not named these yet, so their collections wait for the next
+        // composition rather than pretending to be empty.
+        tracing::warn!(
+            target: "cknerv-adapter-ckbadger",
+            deferred = %summary.deferred.join(", "),
+            "the census has not yet named these identity families; their \
+             ranked collections contribute nothing to this composition"
+        );
+    }
+}
+
+/// The roster counted by family — what the log line carries, separated from
+/// the logging so the counting can be asserted on without a subscriber.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct RosterSummary {
+    assets: usize,
+    tokens: usize,
+    spore: usize,
+    mnft: usize,
+    identity: usize,
+    /// Identity families on the roster the census cannot name yet, by the
+    /// name the registry gives them.
+    deferred: Vec<&'static str>,
+}
+
+fn roster_summary(
+    roster: &[RankedAsset],
+    identity_families: &HashMap<IdentityStandard, ScriptId>,
+) -> RosterSummary {
+    let mut summary = RosterSummary {
+        assets: roster.len(),
+        ..RosterSummary::default()
+    };
+    for asset in roster {
+        match asset.standard {
+            AssetStandard::Token => summary.tokens += 1,
+            AssetStandard::Spore => summary.spore += 1,
+            AssetStandard::MNft => summary.mnft += 1,
+            AssetStandard::Identity(standard) => {
+                summary.identity += 1;
+                let name = identity_standard_name(standard);
+                if !identity_families.contains_key(&standard) && !summary.deferred.contains(&name) {
+                    summary.deferred.push(name);
+                }
+            }
+        }
+    }
+    summary
 }
 
 /// Keep the groups that answered and remember the first failure. One
@@ -1687,7 +1992,6 @@ struct GalaxyAssetResponse {
 /// One inventory row, in full. Kept apart from [`GalaxyAssetResponse`] — which
 /// reads the same endpoint for `id` alone — because the old walk's group key
 /// stays in service until the weighted walk replaces it (T4).
-#[allow(dead_code)] // read by the weighted walk (T4)
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RankedAssetResponse {
@@ -2396,6 +2700,13 @@ pub(crate) mod tests {
         )
     }
 
+    /// What a pager test wants: the page cap, and no item cap at all, so
+    /// each assertion is about the pager rather than about the budget.
+    const WHOLE_LIST: GroupBudget = GroupBudget {
+        pages: MAX_PAGES_PER_ASSET,
+        items: usize::MAX,
+    };
+
     fn hash_under(version: &DeployedScript, args: &str) -> String {
         type_script_hash_for(
             &hash32_bytes(version.code_hash).unwrap(),
@@ -2462,7 +2773,7 @@ pub(crate) mod tests {
             &api,
             "0xb09a7b74f08afe5246b415f134fcda946207d761ef92f315ca563cc9dd22c315",
             &mut settled,
-            ITEM_PAGES_PER_GROUP,
+            WHOLE_LIST,
         )
         .await;
 
@@ -2525,7 +2836,7 @@ pub(crate) mod tests {
             &api,
             &format!("0x{:064x}", 0xb0),
             &mut settled,
-            ITEM_PAGES_PER_GROUP,
+            WHOLE_LIST,
         )
         .await;
 
@@ -2589,7 +2900,7 @@ pub(crate) mod tests {
             &api,
             "0x8f67efedd50c61c9dd332defd4051f08a02d797700000014",
             &mut settled,
-            ITEM_PAGES_PER_GROUP,
+            WHOLE_LIST,
         )
         .await;
 
@@ -2775,6 +3086,581 @@ pub(crate) mod tests {
         assert_eq!(families[&IdentityStandard::DotBit], first);
     }
 
+    // ── T4: the weighted split, and the walk that obeys it ────────
+
+    /// A clean split: four equal weights over a total that divides, so every
+    /// entry gets exactly its quarter and nothing rides on the remainder.
+    #[test]
+    fn a_clean_split_is_exactly_proportional() {
+        assert_eq!(
+            allocate(&[1, 1, 1, 1], &[100, 100, 100, 100], 40),
+            vec![10, 10, 10, 10]
+        );
+        assert_eq!(
+            allocate(&[6_000, 3_000, 1_000], &[100, 100, 100], 100),
+            vec![60, 30, 10]
+        );
+    }
+
+    /// Monotone with rank, which is what makes "the stage's typed class is
+    /// the inventory page, top to bottom" true of the result and not just of
+    /// the intention. Equal weights break by index, so rank still decides.
+    #[test]
+    fn a_heavier_entry_never_receives_fewer_slots() {
+        let weights = [9_000_u64, 9_000, 5_000, 5_000, 1, 0];
+        let supply = vec![10_000; weights.len()];
+        let allocation = allocate(&weights, &supply, 997);
+        for pair in allocation.windows(2) {
+            assert!(
+                pair[0] >= pair[1],
+                "rank order was broken: {allocation:?} for {weights:?}"
+            );
+        }
+        assert_eq!(
+            allocation.iter().sum::<usize>(),
+            997,
+            "every slot is spent: {allocation:?}"
+        );
+        assert_eq!(*allocation.last().unwrap(), 0, "a zero weight earns zero");
+        // Equal weights are separated by index alone, and the leftover goes
+        // up the ranking.
+        assert!(allocation[0] >= allocation[1]);
+        assert!(allocation[2] >= allocation[3]);
+    }
+
+    /// The wCKB case — the one that makes redistribution a law rather than a
+    /// patch. It ranks FIRST on the live inventory with 19.4% of the top-64
+    /// capacity and holds exactly twelve live cells; without the shortfall
+    /// re-normalizing, a fifth of the typed class would evaporate into an
+    /// asset that cannot fill it.
+    #[test]
+    fn an_exhausted_asset_keeps_what_it_has_and_gives_back_the_rest() {
+        // 19.4% / 80.6%, over the class's 7,800 slots.
+        let weights = [194_u64, 806];
+        let allocation = allocate(&weights, &[12, 100_000], 7_800);
+        assert_eq!(
+            allocation,
+            vec![12, 7_788],
+            "wCKB takes the twelve it has and hands back 1,501 slots"
+        );
+
+        // And the redistribution is itself proportional: three assets, the
+        // first clamped, the other two splitting what it could not take.
+        assert_eq!(
+            allocate(&[500, 300, 200], &[10, 1_000, 1_000], 100),
+            vec![10, 54, 36]
+        );
+    }
+
+    /// Degeneracies, each of which the live roster can produce: an asset
+    /// occupying no capacity, a roster that is empty, an ask of nothing, and
+    /// an ask larger than everything on offer.
+    #[test]
+    fn the_split_survives_its_degenerate_inputs() {
+        assert_eq!(allocate(&[0, 0], &[50, 50], 20), vec![0, 0]);
+        assert_eq!(allocate(&[5, 0], &[50, 50], 20), vec![20, 0]);
+        assert_eq!(allocate(&[], &[], 20), Vec::<usize>::new());
+        assert_eq!(allocate(&[7, 3], &[50, 50], 0), vec![0, 0]);
+
+        let everything = allocate(&[7, 3, 1], &[4, 9, 2], 10_000);
+        assert_eq!(
+            everything,
+            vec![4, 9, 2],
+            "an ask past the supply takes the supply and stops"
+        );
+        assert_eq!(everything.iter().sum::<usize>(), 15);
+    }
+
+    /// The budget an asset's provisional share buys it, and the two ceilings
+    /// that keep one row of the roster from spending a composition.
+    #[test]
+    fn a_group_budget_is_bounded_in_pages_and_in_items() {
+        assert_eq!(
+            GroupBudget::for_target(0),
+            GroupBudget { pages: 1, items: 0 }
+        );
+        assert_eq!(
+            GroupBudget::for_target(12),
+            GroupBudget {
+                pages: 1,
+                items: 15
+            }
+        );
+        assert_eq!(
+            GroupBudget::for_target(120),
+            GroupBudget {
+                pages: 2,
+                items: 150
+            }
+        );
+        assert_eq!(
+            GroupBudget::for_target(100_000),
+            GroupBudget {
+                pages: MAX_PAGES_PER_ASSET,
+                items: MAX_PAGES_PER_ASSET * PAGE_LIMIT,
+            },
+            "no asset outgrows the per-asset ceiling, whatever it is owed"
+        );
+    }
+
+    /// The roster the log line carries, counted. A roster the operator
+    /// cannot see is a roster nobody can check — the old head dropped forty
+    /// of sixty-four groups in silence.
+    #[test]
+    fn the_roster_log_counts_every_family_and_names_what_is_deferred() {
+        let roster = vec![
+            ranked(TOKEN_ID, AssetStandard::Token, 4_000),
+            ranked(CLUSTER_ID, AssetStandard::Spore, 3_000),
+            ranked(
+                DOTBIT_ID,
+                AssetStandard::Identity(IdentityStandard::DotBit),
+                2_000,
+            ),
+            ranked(MNFT_ID, AssetStandard::MNft, 1_000),
+        ];
+        assert_eq!(
+            roster_summary(&roster, &HashMap::new()),
+            RosterSummary {
+                assets: 4,
+                tokens: 1,
+                spore: 1,
+                mnft: 1,
+                identity: 1,
+                deferred: vec![".bit Account"],
+            }
+        );
+
+        let mut families = HashMap::new();
+        families.insert(IdentityStandard::DotBit, identity_family());
+        assert!(
+            roster_summary(&roster, &families).deferred.is_empty(),
+            "a named family is not deferred"
+        );
+    }
+
+    /// Every identity standard can be named, and the name it is given is the
+    /// one the join reads back.
+    #[test]
+    fn an_identity_standard_and_its_registry_name_agree_both_ways() {
+        for standard in [
+            IdentityStandard::DotBit,
+            IdentityStandard::BitCell,
+            IdentityStandard::DidCkb,
+        ] {
+            let name = identity_standard_name(standard);
+            assert_eq!(identity_standard_for_name(name), Some(standard), "{name}");
+        }
+    }
+
+    fn ranked(id: &str, standard: AssetStandard, owned_capacity: u64) -> RankedAsset {
+        RankedAsset {
+            id: id.to_string(),
+            standard,
+            owned_capacity,
+        }
+    }
+
+    fn identity_family() -> ScriptId {
+        ScriptId::parse(&format!("0x{:064x}", 0xbb), "type").unwrap()
+    }
+
+    /// How much of each family the diverse index has to offer.
+    #[derive(Clone, Copy)]
+    struct DiverseShape {
+        token_cells: usize,
+        spore_items: usize,
+        /// When set, the cluster's item list serves this many items on its
+        /// first page and answers HTTP 500 for every page after it.
+        spore_breaks_after: Option<usize>,
+        mnft_items: usize,
+        identity_rows: usize,
+        /// A DAO deposit that IS the first token cell, so the shared `seen`
+        /// has something real to catch.
+        dao_collides_with_token: bool,
+    }
+
+    impl Default for DiverseShape {
+        fn default() -> Self {
+            Self {
+                token_cells: 20,
+                spore_items: 30,
+                spore_breaks_after: None,
+                mnft_items: 2,
+                identity_rows: 8,
+                dao_collides_with_token: false,
+            }
+        }
+    }
+
+    fn spore_arg(index: usize) -> String {
+        format!("0x{index:064x}")
+    }
+
+    /// 28 bytes, the width of an M-NFT id.
+    fn mnft_arg(index: usize) -> String {
+        format!("0x{index:056x}")
+    }
+
+    fn tagged_cell(tag: u8, index: usize, hash: Option<String>, lock: String) -> serde_json::Value {
+        serde_json::json!({
+            "txHash": format!("0x{tag:02x}{index:062x}"),
+            "outputIndex": 0,
+            // Descending, so a capacity-desc pager has a stable order.
+            "capacity": (200_000_000_000_u64 - index as u64).to_string(),
+            "createdAtBlock": 10,
+            "typeScriptHash": hash,
+            "lockScriptHash": lock,
+        })
+    }
+
+    const TOKEN_TAG: u8 = 0xa1;
+    const SPORE_TAG: u8 = 0xb2;
+    const IDENTITY_TAG: u8 = 0xc3;
+    const MNFT_TAG: u8 = 0xd4;
+    const DAO_TAG: u8 = 0xe5;
+    const PLAIN_TAG: u8 = 0xf6;
+    const PLAIN_LOCK: &str = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+
+    /// Which ranked asset each candidate came from, by the tag its mock
+    /// stamped on the transaction hash.
+    fn by_asset(candidates: &[GalaxyCellCandidate]) -> BTreeMap<u8, usize> {
+        let mut tally = BTreeMap::new();
+        for candidate in candidates {
+            let tag = u8::from_str_radix(&candidate.out_point.tx_hash[2..4], 16).unwrap();
+            *tally.entry(tag).or_insert(0) += 1;
+        }
+        tally
+    }
+
+    /// One inventory page carrying all four mechanisms, and every endpoint
+    /// behind them: a token contract, a spore cluster, a `.bit` family and an
+    /// m-nft collection, plus the DAO and plain heads a full composition
+    /// walks.
+    async fn spawn_diverse_index(shape: DiverseShape) -> (Url, tokio::task::JoinHandle<()>) {
+        let mut live: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+        let spore_version = SPORE_VERSIONS[0];
+        for index in 0..shape.spore_items.max(shape.spore_breaks_after.unwrap_or(0)) {
+            let hash = hash_under(&spore_version, &spore_arg(index));
+            live.insert(
+                hash.clone(),
+                tagged_cell(SPORE_TAG, index, Some(hash), PLAIN_LOCK.to_string()),
+            );
+        }
+        for index in 0..shape.mnft_items {
+            let hash = hash_under(&MNFT_VERSIONS[0], &mnft_arg(index));
+            live.insert(
+                hash.clone(),
+                tagged_cell(MNFT_TAG, index, Some(hash), PLAIN_LOCK.to_string()),
+            );
+        }
+
+        let token_cells = shape.token_cells;
+        let app = Router::new()
+            .route(
+                "/api/v1/assets",
+                get(move || async move {
+                    Json(serde_json::json!({
+                        "data": [
+                            asset_row(TOKEN_ID, "token", "xudt", "4000"),
+                            asset_row(CLUSTER_ID, "object", "spore", "3000"),
+                            asset_row(DOTBIT_ID, "identity", "dotbit", "2000"),
+                            asset_row(MNFT_ID, "object", "m-nft", "1000"),
+                        ],
+                        "hasMore": false,
+                        "nextCursor": None::<String>,
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/spore/clusters/:id/spores",
+                get(
+                    move |Query(q): Query<BTreeMap<String, String>>| async move {
+                        let page: usize = q.get("cursor").and_then(|c| c.parse().ok()).unwrap_or(0);
+                        match shape.spore_breaks_after {
+                            Some(first) if page == 0 => (
+                                axum::http::StatusCode::OK,
+                                Json(serde_json::json!({
+                                    "data": (0..first)
+                                        .map(|i| serde_json::json!({ "sporeId": spore_arg(i) }))
+                                        .collect::<Vec<_>>(),
+                                    "hasMore": true,
+                                    "nextCursor": Some("1".to_string()),
+                                })),
+                            ),
+                            Some(_) => (
+                                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(serde_json::json!({ "error": "internal_error" })),
+                            ),
+                            None => (
+                                axum::http::StatusCode::OK,
+                                Json(serde_json::json!({
+                                    "data": (0..shape.spore_items)
+                                        .map(|i| serde_json::json!({ "sporeId": spore_arg(i) }))
+                                        .collect::<Vec<_>>(),
+                                    "hasMore": false,
+                                    "nextCursor": None::<String>,
+                                })),
+                            ),
+                        }
+                    },
+                ),
+            )
+            .route(
+                "/api/v1/assets/objects/:id/items",
+                get(move || async move {
+                    Json(serde_json::json!({
+                        "data": (0..shape.mnft_items)
+                            .map(|i| serde_json::json!({ "nftId": mnft_arg(i), "isLive": true }))
+                            .collect::<Vec<_>>(),
+                        "hasMore": false,
+                        "nextCursor": None::<String>,
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/cells/by-script",
+                get(move || async move {
+                    Json(serde_json::json!({
+                        "data": (0..shape.identity_rows)
+                            .map(|i| serde_json::json!({
+                                "txHash": format!("0x{IDENTITY_TAG:02x}{i:062x}"),
+                                "outputIndex": 0,
+                                "capacity": "23699989753",
+                                "createdAtBlock": 10,
+                                "lockScriptHash": PLAIN_LOCK,
+                                "typeScriptHash": format!("0x{:064x}", 0x51 + i),
+                                "typeCodeHash": identity_family().code_hash_hex(),
+                                "matchedScriptKind": "type",
+                            }))
+                            .collect::<Vec<_>>(),
+                        "hasMore": false,
+                        "nextCursor": None::<String>,
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/dao/deposits",
+                get(move || async move {
+                    let tag = if shape.dao_collides_with_token {
+                        TOKEN_TAG
+                    } else {
+                        DAO_TAG
+                    };
+                    Json(serde_json::json!({
+                        "data": [serde_json::json!({
+                            "txHash": format!("0x{tag:02x}{:062x}", 0),
+                            "outputIndex": 0,
+                            "capacity": "100000000000",
+                            "depositBlockNumber": 10,
+                            "status": "deposited",
+                        })],
+                        "hasMore": false,
+                        "nextCursor": None::<String>,
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/addresses/top",
+                get(|| async { Json(serde_json::json!([{ "lockScriptHash": PLAIN_LOCK }])) }),
+            )
+            .route(
+                "/api/v1/addresses/active",
+                get(|| async { Json(serde_json::json!([])) }),
+            )
+            .route(
+                "/api/v1/cells/live",
+                get(move |Query(q): Query<BTreeMap<String, String>>| {
+                    let live = live.clone();
+                    async move {
+                        if let Some(hash) = q.get("type_script_hash") {
+                            if hash == TOKEN_ID {
+                                return Json(serde_json::json!({
+                                    "data": (0..token_cells)
+                                        .map(|i| tagged_cell(
+                                            TOKEN_TAG,
+                                            i,
+                                            Some(TOKEN_ID.to_string()),
+                                            PLAIN_LOCK.to_string(),
+                                        ))
+                                        .collect::<Vec<_>>(),
+                                    "hasMore": false,
+                                    "nextCursor": None::<String>,
+                                }));
+                            }
+                            return Json(serde_json::json!({
+                                "data": live.get(hash).cloned().into_iter().collect::<Vec<_>>(),
+                                "hasMore": false,
+                                "nextCursor": None::<String>,
+                            }));
+                        }
+                        Json(serde_json::json!({
+                            "data": (0..4)
+                                .map(|i| tagged_cell(PLAIN_TAG, i, None, PLAIN_LOCK.to_string()))
+                                .collect::<Vec<_>>(),
+                            "hasMore": false,
+                            "nextCursor": None::<String>,
+                        }))
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (
+            Url::parse(&format!("http://{address}/api/v1/")).unwrap(),
+            handle,
+        )
+    }
+
+    fn resolved_families() -> HashMap<IdentityStandard, ScriptId> {
+        HashMap::from([(IdentityStandard::DotBit, identity_family())])
+    }
+
+    /// The whole point of the work: a typed class made of four different
+    /// mechanisms, divided by the capacity each asset occupies.
+    ///
+    /// Weights 4000/3000/2000/1000 over 33 slots want 13/10/7/3, but the
+    /// m-nft collection holds only two items — so it takes both and hands
+    /// back its shortfall, which re-normalizes over the three assets still
+    /// holding candidates and lands at 14/10/7/2.
+    #[tokio::test]
+    async fn the_typed_class_is_the_inventory_page_split_by_capacity() {
+        let (api, server) = spawn_diverse_index(DiverseShape::default()).await;
+        let client = reqwest::Client::new();
+        let mut seen = HashSet::new();
+
+        let walk = discover_typed(&client, &api, 33, &resolved_families(), &mut seen).await;
+
+        assert!(walk.stopped_by.is_none(), "every asset answered");
+        assert_eq!(
+            by_asset(&walk.candidates),
+            BTreeMap::from([
+                (TOKEN_TAG, 14),
+                (SPORE_TAG, 10),
+                (IDENTITY_TAG, 7),
+                (MNFT_TAG, 2)
+            ]),
+            "the exhausted collection's shortfall re-normalized over the rest"
+        );
+        assert_eq!(walk.candidates.len(), 33, "and the class is full");
+        // Rank order, asset by asset: the inventory page read top to bottom.
+        assert!(
+            walk.candidates[..14]
+                .iter()
+                .all(|c| c.out_point.tx_hash.starts_with("0xa1")),
+            "the leading asset's cells lead the class"
+        );
+        server.abort();
+    }
+
+    /// Cold start (R1): the census has not named `.bit` yet, so that
+    /// collection contributes nothing — and the class still fills, because
+    /// the slots it could not take re-normalize like any other shortfall.
+    #[tokio::test]
+    async fn an_unresolved_identity_costs_the_class_nothing() {
+        let (api, server) = spawn_diverse_index(DiverseShape::default()).await;
+        let client = reqwest::Client::new();
+        let mut seen = HashSet::new();
+
+        let walk = discover_typed(&client, &api, 33, &HashMap::new(), &mut seen).await;
+
+        assert_eq!(
+            by_asset(&walk.candidates),
+            BTreeMap::from([(TOKEN_TAG, 18), (SPORE_TAG, 13), (MNFT_TAG, 2)]),
+            "no `.bit` cells, and the two assets with supply absorbed its share"
+        );
+        assert_eq!(walk.candidates.len(), 33, "the class is still full");
+        assert!(
+            walk.stopped_by.is_none(),
+            "a deferred family is not a failure"
+        );
+        server.abort();
+    }
+
+    /// A collection whose item list fails partway keeps everything it had
+    /// already listed, and the class reports what stopped it — the same rule
+    /// the classes obey, one level down.
+    #[tokio::test]
+    async fn a_failing_collection_keeps_its_partial_and_says_so() {
+        let (api, server) = spawn_diverse_index(DiverseShape {
+            // Two pages of budget, and the second one answers HTTP 500.
+            spore_breaks_after: Some(4),
+            ..DiverseShape::default()
+        })
+        .await;
+        let client = reqwest::Client::new();
+        let mut seen = HashSet::new();
+
+        // 400 slots buys the cluster a two-page item budget, so the walk
+        // reaches the page that breaks.
+        let walk = discover_typed(&client, &api, 400, &resolved_families(), &mut seen).await;
+
+        let error = walk.stopped_by.expect("the broken page is reported");
+        assert!(
+            error.to_string().contains("spore cluster items"),
+            "got: {error}"
+        );
+        let tally = by_asset(&walk.candidates);
+        assert_eq!(
+            tally.get(&SPORE_TAG),
+            Some(&4),
+            "the four items it listed before the failure are kept: {tally:?}"
+        );
+        assert_eq!(
+            tally.get(&TOKEN_TAG),
+            Some(&20),
+            "the rest answered in full"
+        );
+        assert_eq!(tally.get(&IDENTITY_TAG), Some(&8));
+        assert_eq!(tally.get(&MNFT_TAG), Some(&2));
+        server.abort();
+    }
+
+    /// The shared `seen` spans the classes, so a Cell that is both a DAO
+    /// deposit and a ranked asset's cell is staged once — and the typed
+    /// class's allocation counts what it can actually deliver, not what it
+    /// found.
+    #[tokio::test]
+    async fn one_outpoint_is_staged_once_across_the_whole_composition() {
+        let (api, server) = spawn_diverse_index(DiverseShape {
+            dao_collides_with_token: true,
+            ..DiverseShape::default()
+        })
+        .await;
+        let client = reqwest::Client::new();
+
+        let got = discover(&client, &api, anchor(), 40, &resolved_families(), 7)
+            .await
+            .expect("a composition");
+
+        let shared = OutPoint {
+            tx_hash: format!("0x{TOKEN_TAG:02x}{:062x}", 0),
+            index: 0,
+        };
+        let staged = got
+            .dao
+            .iter()
+            .chain(&got.typed)
+            .chain(&got.plain)
+            .filter(|candidate| candidate.out_point == shared)
+            .count();
+        assert_eq!(staged, 1, "DAO took it first and typed did not repeat it");
+        assert!(
+            got.dao.iter().any(|c| c.out_point == shared),
+            "and DAO is the class that kept it"
+        );
+        assert!(
+            got.typed.len() <= overfetch(got.target.typed),
+            "the class never oversteps its overfetched target: {} > {}",
+            got.typed.len(),
+            overfetch(got.target.typed)
+        );
+        assert!(!got.typed.is_empty() && !got.plain.is_empty());
+        server.abort();
+    }
+
     // ── one class failing ─────────────────────────────────────────
 
     /// A full-composition mock. `dao_ok_pages` deposit pages answer, and
@@ -2876,8 +3762,8 @@ pub(crate) mod tests {
                         axum::http::StatusCode::OK,
                         Json(serde_json::json!({
                             "data": [
-                                { "id": format!("0x{:064x}", 0xaa) },
-                                { "id": format!("0x{:064x}", 0xbb) },
+                                asset_row(&format!("0x{:064x}", 0xaa), "token", "xudt", "600"),
+                                asset_row(&format!("0x{:064x}", 0xbb), "token", "sudt", "400"),
                             ],
                             "hasMore": false,
                             "nextCursor": None::<String>,
@@ -2943,7 +3829,7 @@ pub(crate) mod tests {
         let (api, server) = spawn_composition_index(1, true).await;
         let client = reqwest::Client::new();
 
-        let got = discover(&client, &api, anchor(), 1_000, 7)
+        let got = discover(&client, &api, anchor(), 1_000, &HashMap::new(), 7)
             .await
             .expect("one broken class is not a broken composition");
 
@@ -2977,6 +3863,7 @@ pub(crate) mod tests {
                 hash: "0x0".into(),
             },
             1_000,
+            &HashMap::new(),
             7,
         )
         .await
