@@ -147,9 +147,13 @@ const MAX_PAGES_PER_TOP_UP: usize = 8;
 pub(crate) struct CandidateTail {
     dao_cursor: Option<String>,
     dao_exhausted: bool,
-    typed_groups: Vec<TypedGroup>,
-    /// Round-robin position, so one large asset cannot starve the rest.
-    typed_next: usize,
+    /// The ranked roster this tail is walking, one entry per asset, in the
+    /// inventory's own order — the same ranking, and the same weights, that
+    /// a full composition divides its typed class by (D4).
+    assets: Vec<AssetTail>,
+    /// Set when a full discovery lands. See [`CandidateTail::note_emitted`]
+    /// for what the tail does about it, and why it is not simply a rewind.
+    roster_stale: bool,
     /// Every outpoint this source has already handed to the display
     /// plane — through the initial composition or an earlier top-up.
     /// Offering one twice would spend a node round-trip on a cell the
@@ -157,11 +161,96 @@ pub(crate) struct CandidateTail {
     emitted: HashSet<OutPoint>,
 }
 
-#[derive(Default)]
-struct TypedGroup {
-    type_script_hash: String,
-    cursor: Option<String>,
+/// One ranked asset's place in the tail: where its paging has reached, and
+/// how much of the class it has actually delivered since the roster was
+/// taken.
+struct AssetTail {
+    asset: RankedAsset,
+    cursor: AssetCursor,
+    /// This asset has been walked end to end.
     exhausted: bool,
+    /// Candidates handed out, which is what the next turn's deficit is
+    /// measured against — so the tail converges on the same
+    /// capacity-weighted mix discovery composes.
+    delivered: usize,
+}
+
+/// Where one asset's paging has reached, in whichever terms its standard
+/// pages (D3). Three shapes because the three mechanisms resume differently,
+/// and a cursor into the wrong one addresses nothing.
+enum AssetCursor {
+    /// A token contract: `cells/live` pages the group by its script hash.
+    Contract { cursor: Option<String> },
+    /// A collection: the item list's cursor, the deployed version discovered
+    /// for it, and the items listed but not yet resolved.
+    Collection {
+        cursor: Option<String>,
+        settled: Option<DeployedScript>,
+        /// Items this walk has paid a list request for and not yet spent a
+        /// lookup on. A collection's page costs one request and its contents
+        /// cost a hundred, so a turn that stops mid-page must keep the rest:
+        /// letting the cursor move past them would throw away a request that
+        /// was already made.
+        pending: VecDeque<String>,
+        /// The item list itself has run out. The asset is exhausted once
+        /// this is true AND `pending` has drained.
+        listed_out: bool,
+    },
+    /// An identity family: `cells/by-script` pages its one script.
+    Family { cursor: Option<String> },
+}
+
+impl AssetCursor {
+    fn for_standard(standard: AssetStandard) -> Self {
+        match standard {
+            AssetStandard::Token => Self::Contract { cursor: None },
+            AssetStandard::Spore | AssetStandard::MNft => Self::Collection {
+                cursor: None,
+                settled: None,
+                pending: VecDeque::new(),
+                listed_out: false,
+            },
+            AssetStandard::Identity(_) => Self::Family { cursor: None },
+        }
+    }
+
+    /// Whether this cursor still addresses the standard it was made for. An
+    /// id that changed families across a roster refresh keeps its slot but
+    /// not its position.
+    fn addresses(&self, standard: AssetStandard) -> bool {
+        matches!(
+            (self, standard),
+            (Self::Contract { .. }, AssetStandard::Token)
+                | (
+                    Self::Collection { .. },
+                    AssetStandard::Spore | AssetStandard::MNft
+                )
+                | (Self::Family { .. }, AssetStandard::Identity(_))
+        )
+    }
+}
+
+impl AssetTail {
+    /// Back to this asset's head, keeping what the walk learned about it.
+    ///
+    /// `delivered` is deliberately NOT reset: it measures this asset's share
+    /// of the curated population, which a rewind does not undo. Zeroing it
+    /// would make the tail believe the ranking's head was starving and pour
+    /// the next turn into pages it has already handed out. Nor is a
+    /// collection's discovered version reset — that is a property of the
+    /// collection, not of the walk's position in it.
+    fn rewind(&mut self) {
+        self.exhausted = false;
+        self.cursor = match &self.cursor {
+            AssetCursor::Collection { settled, .. } => AssetCursor::Collection {
+                cursor: None,
+                settled: *settled,
+                pending: VecDeque::new(),
+                listed_out: false,
+            },
+            _ => AssetCursor::for_standard(self.asset.standard),
+        };
+    }
 }
 
 impl CandidateTail {
@@ -171,6 +260,14 @@ impl CandidateTail {
         for out_point in candidates {
             self.emitted.insert(out_point.clone());
         }
+        // A full discovery just re-read the inventory ranking and re-staged
+        // the whole typed class from it, so this is the tail's sync point:
+        // the roster it holds is a composition old, and its delivered counts
+        // measure a population that no longer exists. The next turn re-takes
+        // the ranking and zeroes those counts — but CARRIES EACH CURSOR
+        // ACROSS, because rewinding them would send the tail back over the
+        // very head the discovery has just handed out.
+        self.roster_stale = true;
     }
 
     /// How many outpoints this tail has claimed. A claim is what makes a
@@ -182,6 +279,39 @@ impl CandidateTail {
     }
 }
 
+/// One top-up turn's request budget, counted in CELLS rather than in pages.
+///
+/// An index page buys up to [`PAGE_LIMIT`] candidates for one request; a
+/// collection's item lookup buys exactly one. Pricing both against the same
+/// ceiling is the only way [`MAX_PAGES_PER_TOP_UP`] still bounds a turn that
+/// walks collections as well as contracts — eight pages of item lookups
+/// would be eight hundred requests, not eight.
+struct TurnBudget {
+    spent: usize,
+    limit: usize,
+}
+
+impl TurnBudget {
+    fn new(pages: usize) -> Self {
+        Self {
+            spent: 0,
+            limit: pages.saturating_mul(PAGE_LIMIT),
+        }
+    }
+
+    fn is_spent(&self) -> bool {
+        self.spent >= self.limit
+    }
+
+    fn spend_page(&mut self) {
+        self.spent = self.spent.saturating_add(PAGE_LIMIT);
+    }
+
+    fn spend_lookup(&mut self) {
+        self.spent = self.spent.saturating_add(1);
+    }
+}
+
 /// Walk deeper for `want_dao` / `want_typed` more candidates of each
 /// class, resuming from wherever the last call stopped.
 ///
@@ -189,6 +319,7 @@ impl CandidateTail {
 /// canonical hydrator already speaks, with `target` carrying what was
 /// asked for. The plain bucket stays empty: plain slots are fed by the
 /// canonical fallback stream, not curated (D5).
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn top_up(
     client: &reqwest::Client,
     api_base: &Url,
@@ -196,6 +327,7 @@ pub(crate) async fn top_up(
     tail: &mut CandidateTail,
     want_dao: usize,
     want_typed: usize,
+    identity_families: &HashMap<IdentityStandard, ScriptId>,
     updated_at_ms: u64,
 ) -> anyhow::Result<GalaxyCompositionCandidates> {
     // Same rule as discovery — never attach a Cell born beyond the block that
@@ -210,7 +342,15 @@ pub(crate) async fn top_up(
         ClassWalk::default()
     };
     let mut typed = if want_typed > 0 {
-        top_up_typed(client, api_base, tail, want_typed, anchor.block).await
+        top_up_typed(
+            client,
+            api_base,
+            tail,
+            want_typed,
+            anchor.block,
+            identity_families,
+        )
+        .await
     } else {
         ClassWalk::default()
     };
@@ -345,72 +485,252 @@ async fn top_up_typed(
     tail: &mut CandidateTail,
     want: usize,
     max_birth_block: u64,
+    identity_families: &HashMap<IdentityStandard, ScriptId>,
 ) -> ClassWalk {
     let mut found = Vec::with_capacity(want);
-    let stopped_by = walk_typed_tail(client, api_base, tail, want, max_birth_block, &mut found)
-        .await
-        .err();
+    let stopped_by = walk_typed_tail(
+        client,
+        api_base,
+        tail,
+        want,
+        max_birth_block,
+        identity_families,
+        &mut found,
+    )
+    .await
+    .err();
     ClassWalk {
         candidates: found,
         stopped_by,
     }
 }
 
+/// The typed shortfall, served in rank-priority order.
+///
+/// Each asset's SHARE of the population the class would hold once this turn
+/// lands — `delivered_total + want`, split by the same capacity weights
+/// discovery uses — minus what it has already delivered, is its deficit.
+/// Walking the deficits from the top means a high-ranked asset that has
+/// fallen behind is filled before a low-ranked one that has not, which is
+/// what keeps the tail from drifting away from the mix the composition
+/// established.
+///
+/// Two passes. The first serves deficits, so the mix converges; the second
+/// spends whatever is left of the turn from the top of the ranking, so a
+/// budget is never returned unspent while assets still hold candidates.
 async fn walk_typed_tail(
     client: &reqwest::Client,
     api_base: &Url,
     tail: &mut CandidateTail,
     want: usize,
     max_birth_block: u64,
+    identity_families: &HashMap<IdentityStandard, ScriptId>,
     found: &mut Vec<GalaxyCellCandidate>,
 ) -> anyhow::Result<()> {
-    if tail.typed_groups.is_empty() {
-        let mut url = endpoint(api_base, "assets")?;
-        url.query_pairs_mut()
-            .append_pair("limit", &ASSET_GROUP_LIMIT.to_string())
-            .append_pair("sort_key", "capacity")
-            .append_pair("sort_direction", "desc");
-        let assets: CursorPage<GalaxyAssetResponse> = fetch_json(client, url, "top assets").await?;
-        validate_page_size(assets.data.len(), ASSET_GROUP_LIMIT, "top assets")?;
-        tail.typed_groups = assets
-            .data
-            .into_iter()
-            .map(|asset| asset.id)
-            .filter(|hash| is_hash32(hash))
-            .map(|type_script_hash| TypedGroup {
-                type_script_hash,
-                cursor: None,
-                exhausted: false,
-            })
-            .collect();
-        tail.typed_next = 0;
+    // The roster is re-taken when the tail has none — the first turn of a
+    // process — and again on the first turn after a full discovery.
+    if tail.assets.is_empty() || tail.roster_stale {
+        refresh_roster(client, api_base, tail).await?;
     }
-    if tail.typed_groups.is_empty() {
+    if tail.assets.is_empty() {
+        return Ok(());
+    }
+    if tail.assets.iter().all(|asset| asset.exhausted) {
+        // The ranking has been walked end to end. Start over from the head:
+        // deposits made since are new, and `emitted` skips everything
+        // already handed out. This turn hands out nothing; the next resumes
+        // at the head.
+        for asset in &mut tail.assets {
+            asset.rewind();
+        }
         return Ok(());
     }
 
-    let mut requests = 0;
-    // Round-robin: one page per group per turn, so the shortfall is
-    // spread across assets instead of drained from the largest one. Most
-    // groups run out within a few pages, so a fair walk is also the only
-    // way to reach the long tail at all.
-    while found.len() < want && requests < MAX_PAGES_PER_TOP_UP {
-        if tail.typed_groups.iter().all(|group| group.exhausted) {
-            for group in &mut tail.typed_groups {
-                group.exhausted = false;
-                group.cursor = None;
+    let shares = tail_shares(&tail.assets, want);
+    let mut budget = TurnBudget::new(MAX_PAGES_PER_TOP_UP);
+    for pass in [Pass::Deficit, Pass::Remainder] {
+        // By index, not by iterator: the step below takes `&mut tail`, so
+        // the asset it walks cannot also be borrowed by the loop.
+        #[allow(clippy::needless_range_loop)]
+        for index in 0..tail.assets.len() {
+            if found.len() >= want || budget.is_spent() {
+                break;
             }
+            if tail.assets[index].exhausted {
+                continue;
+            }
+            let take = match pass {
+                Pass::Deficit => shares[index].saturating_sub(tail.assets[index].delivered),
+                Pass::Remainder => want,
+            }
+            .min(want - found.len());
+            if take == 0 {
+                continue;
+            }
+            let until = found.len() + take;
+            step_asset(
+                client,
+                api_base,
+                tail,
+                index,
+                until,
+                max_birth_block,
+                identity_families,
+                &mut budget,
+                found,
+            )
+            .await?;
+        }
+        if found.len() >= want || budget.is_spent() {
             break;
         }
-        let index = tail.typed_next % tail.typed_groups.len();
-        tail.typed_next = index + 1;
-        if tail.typed_groups[index].exhausted {
-            continue;
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum Pass {
+    /// Every asset up to the share its rank has earned.
+    Deficit,
+    /// Whatever is left of the ask, from the top down.
+    Remainder,
+}
+
+/// Re-take the inventory ranking, carrying each surviving asset's cursor
+/// across by id.
+///
+/// The weights are what the split divides by, and they drift as capacity
+/// aggregates move (R4), so a tail that never re-read them would walk a
+/// ranking as old as the process. Cursors survive the refresh because they
+/// address the index, not the ranking; `delivered` does not, because the
+/// composition that triggered the refresh has just replaced the population
+/// those counts measured.
+async fn refresh_roster(
+    client: &reqwest::Client,
+    api_base: &Url,
+    tail: &mut CandidateTail,
+) -> anyhow::Result<()> {
+    let roster = ranked_assets(client, api_base).await?;
+    let mut carried: HashMap<String, AssetCursor> = tail
+        .assets
+        .drain(..)
+        .map(|entry| (entry.asset.id, entry.cursor))
+        .collect();
+    tail.assets = roster
+        .into_iter()
+        .map(|asset| {
+            let cursor = carried
+                .remove(&asset.id)
+                .filter(|cursor| cursor.addresses(asset.standard))
+                .unwrap_or_else(|| AssetCursor::for_standard(asset.standard));
+            AssetTail {
+                asset,
+                cursor,
+                exhausted: false,
+                delivered: 0,
+            }
+        })
+        .collect();
+    tail.roster_stale = false;
+    Ok(())
+}
+
+/// What each asset would hold of the class once this turn lands, by the same
+/// capacity weights discovery composes with.
+fn tail_shares(assets: &[AssetTail], want: usize) -> Vec<usize> {
+    let delivered: usize = assets.iter().map(|asset| asset.delivered).sum();
+    let weights: Vec<u64> = assets
+        .iter()
+        .map(|asset| asset.asset.owned_capacity)
+        .collect();
+    proportional(&weights, delivered.saturating_add(want))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn step_asset(
+    client: &reqwest::Client,
+    api_base: &Url,
+    tail: &mut CandidateTail,
+    index: usize,
+    until: usize,
+    max_birth_block: u64,
+    identity_families: &HashMap<IdentityStandard, ScriptId>,
+    budget: &mut TurnBudget,
+    found: &mut Vec<GalaxyCellCandidate>,
+) -> anyhow::Result<()> {
+    match tail.assets[index].asset.standard {
+        AssetStandard::Token => {
+            step_contract(
+                client,
+                api_base,
+                tail,
+                index,
+                until,
+                max_birth_block,
+                budget,
+                found,
+            )
+            .await
         }
-        let (hash, cursor) = {
-            let group = &tail.typed_groups[index];
-            (group.type_script_hash.clone(), group.cursor.clone())
+        AssetStandard::Spore | AssetStandard::MNft => {
+            step_collection(
+                client,
+                api_base,
+                tail,
+                index,
+                until,
+                max_birth_block,
+                budget,
+                found,
+            )
+            .await
+        }
+        AssetStandard::Identity(standard) => match identity_families.get(&standard).copied() {
+            Some(family) => {
+                step_family(
+                    client,
+                    api_base,
+                    tail,
+                    index,
+                    until,
+                    max_birth_block,
+                    &family,
+                    budget,
+                    found,
+                )
+                .await
+            }
+            None => {
+                // The census cannot name this family yet (R1). Nothing to
+                // page, so the asset has nothing to give this turn — and
+                // saying so is what lets the rewind check see the whole
+                // ranking as spent rather than waiting on a row that can
+                // never answer.
+                tail.assets[index].exhausted = true;
+                Ok(())
+            }
+        },
+    }
+}
+
+/// A token contract, paged by its script hash.
+#[allow(clippy::too_many_arguments)]
+async fn step_contract(
+    client: &reqwest::Client,
+    api_base: &Url,
+    tail: &mut CandidateTail,
+    index: usize,
+    until: usize,
+    max_birth_block: u64,
+    budget: &mut TurnBudget,
+    found: &mut Vec<GalaxyCellCandidate>,
+) -> anyhow::Result<()> {
+    while found.len() < until && !budget.is_spent() {
+        let hash = tail.assets[index].asset.id.clone();
+        let AssetCursor::Contract { cursor } = &tail.assets[index].cursor else {
+            return Ok(());
         };
+        let cursor = cursor.clone();
         let mut url = endpoint(api_base, "cells/live")?;
         {
             let mut query = url.query_pairs_mut();
@@ -424,7 +744,7 @@ async fn walk_typed_tail(
         let page: CursorPage<GalaxyCellResponse> =
             fetch_json(client, url, "live Cell tail").await?;
         validate_page_size(page.data.len(), PAGE_LIMIT, "live Cell tail")?;
-        requests += 1;
+        budget.spend_page();
         for cell in page.data {
             if cell.type_script_hash.as_deref() != Some(hash.as_str()) {
                 continue;
@@ -440,21 +760,221 @@ async fn walk_typed_tail(
             if candidate.birth_block > max_birth_block {
                 continue;
             }
-            if found.len() >= want {
+            if found.len() >= until {
                 break; // as above: never claim what is not delivered
             }
-            if tail.emitted.insert(candidate.out_point.clone()) {
-                found.push(candidate);
-            }
+            take_candidate(tail, index, candidate, found);
         }
-        let group = &mut tail.typed_groups[index];
+        let entry = &mut tail.assets[index];
         if page.has_more {
-            group.cursor = Some(next_cursor(page.next_cursor, "live Cell tail")?);
+            let next = next_cursor(page.next_cursor, "live Cell tail")?;
+            if let AssetCursor::Contract { cursor } = &mut entry.cursor {
+                *cursor = Some(next);
+            }
         } else {
-            group.exhausted = true;
+            entry.exhausted = true;
+            break;
         }
     }
     Ok(())
+}
+
+/// An identity family, paged by its one type script.
+#[allow(clippy::too_many_arguments)]
+async fn step_family(
+    client: &reqwest::Client,
+    api_base: &Url,
+    tail: &mut CandidateTail,
+    index: usize,
+    until: usize,
+    max_birth_block: u64,
+    family: &ScriptId,
+    budget: &mut TurnBudget,
+    found: &mut Vec<GalaxyCellCandidate>,
+) -> anyhow::Result<()> {
+    let code_hash = family.code_hash_hex();
+    while found.len() < until && !budget.is_spent() {
+        let AssetCursor::Family { cursor } = &tail.assets[index].cursor else {
+            return Ok(());
+        };
+        let cursor = cursor.clone();
+        let mut url = endpoint(api_base, "cells/by-script")?;
+        {
+            let mut query = url.query_pairs_mut();
+            query
+                .append_pair("code_hash", &code_hash)
+                .append_pair("hash_type", hash_type_wire(family.hash_type).as_str())
+                .append_pair("script_kind", "type")
+                .append_pair("limit", &PAGE_LIMIT.to_string());
+            if let Some(cursor) = cursor.as_deref() {
+                query.append_pair("cursor", cursor);
+            }
+        }
+        let page: CursorPage<ByScriptCellResponse> =
+            fetch_json(client, url, "identity family tail").await?;
+        validate_page_size(page.data.len(), PAGE_LIMIT, "identity family tail")?;
+        budget.spend_page();
+        for cell in page.data {
+            // The endpoint matches lock OR type and ignores an unknown
+            // parameter in silence, so the filter is re-checked per row.
+            if cell.matched_script_kind.as_deref() != Some("type")
+                || cell.type_code_hash.as_deref() != Some(code_hash.as_str())
+            {
+                continue;
+            }
+            let candidate = candidate(
+                cell.tx_hash,
+                cell.output_index,
+                cell.capacity,
+                cell.created_at_block,
+                "identity family cell",
+            )?;
+            if candidate.birth_block > max_birth_block {
+                continue;
+            }
+            if found.len() >= until {
+                break;
+            }
+            take_candidate(tail, index, candidate, found);
+        }
+        let entry = &mut tail.assets[index];
+        if page.has_more {
+            let next = next_cursor(page.next_cursor, "identity family tail")?;
+            if let AssetCursor::Family { cursor } = &mut entry.cursor {
+                *cursor = Some(next);
+            }
+        } else {
+            entry.exhausted = true;
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// A collection: list items, then resolve them one lookup at a time.
+///
+/// The pending queue is what makes this resume rather than restart. An item
+/// page is one request and its contents are a hundred, so a turn that meets
+/// its ask halfway through a page keeps the rest — the alternative is paying
+/// for a page and moving the cursor past most of it.
+#[allow(clippy::too_many_arguments)]
+async fn step_collection(
+    client: &reqwest::Client,
+    api_base: &Url,
+    tail: &mut CandidateTail,
+    index: usize,
+    until: usize,
+    max_birth_block: u64,
+    budget: &mut TurnBudget,
+    found: &mut Vec<GalaxyCellCandidate>,
+) -> anyhow::Result<()> {
+    let Some(family) = collection_family(tail.assets[index].asset.standard) else {
+        return Ok(());
+    };
+    let path = family.path(&tail.assets[index].asset.id);
+    while found.len() < until && !budget.is_spent() {
+        let AssetCursor::Collection {
+            cursor,
+            settled,
+            pending,
+            listed_out,
+        } = &mut tail.assets[index].cursor
+        else {
+            return Ok(());
+        };
+        let Some(item_args) = pending.pop_front() else {
+            if *listed_out {
+                tail.assets[index].exhausted = true;
+                break;
+            }
+            let next = fetch_collection_item_page(
+                client,
+                api_base,
+                family.kind,
+                &path,
+                cursor.as_deref(),
+                family.subject,
+                pending,
+            )
+            .await?;
+            budget.spend_page();
+            match next {
+                Some(next) => *cursor = Some(next),
+                None => *listed_out = true,
+            }
+            continue;
+        };
+        let settled_now = *settled;
+        let resolved = resolve_one_item(
+            client,
+            api_base,
+            &item_args,
+            family.versions,
+            settled_now,
+            family.subject,
+            budget,
+        )
+        .await?;
+        let Some((version, candidate)) = resolved else {
+            // Melted between the index and the walk, or on a deployment
+            // that is not pinned. Either way there is no cell to offer.
+            continue;
+        };
+        if let AssetCursor::Collection { settled, .. } = &mut tail.assets[index].cursor {
+            *settled = Some(version);
+        }
+        if candidate.birth_block > max_birth_block {
+            continue;
+        }
+        take_candidate(tail, index, candidate, found);
+    }
+    Ok(())
+}
+
+/// One item's current live cell and the version that found it, or `None` if
+/// no pinned deployment answers for it.
+async fn resolve_one_item(
+    client: &reqwest::Client,
+    api_base: &Url,
+    item_args: &str,
+    versions: &[DeployedScript],
+    settled: Option<DeployedScript>,
+    subject: &str,
+    budget: &mut TurnBudget,
+) -> anyhow::Result<Option<(DeployedScript, GalaxyCellCandidate)>> {
+    let Some(item_args) = hex_bytes(item_args) else {
+        return Ok(None);
+    };
+    let attempts: &[DeployedScript] = match settled.as_ref() {
+        Some(version) => std::slice::from_ref(version),
+        None => versions,
+    };
+    for version in attempts {
+        let Some(code_hash) = hash32_bytes(version.code_hash) else {
+            continue;
+        };
+        let hash = type_script_hash_for(&code_hash, version.hash_type, &item_args);
+        budget.spend_lookup();
+        if let Some(found) = resolve_item_cell(client, api_base, &hash, subject).await? {
+            return Ok(Some((*version, found)));
+        }
+    }
+    Ok(None)
+}
+
+/// Claim a candidate for one asset, if the tail has not handed it out
+/// before. The claim and the delivery are the same act — that is the whole
+/// invariant.
+fn take_candidate(
+    tail: &mut CandidateTail,
+    index: usize,
+    candidate: GalaxyCellCandidate,
+    found: &mut Vec<GalaxyCellCandidate>,
+) {
+    if tail.emitted.insert(candidate.out_point.clone()) {
+        found.push(candidate);
+        tail.assets[index].delivered += 1;
+    }
 }
 
 fn overfetch(target: usize) -> usize {
@@ -1047,39 +1567,92 @@ impl CollectionRow for ObjectItemResponse {
     }
 }
 
+/// One page of a collection's item list, appending each live item's `args`
+/// and answering with the cursor that follows it — `None` at the end of the
+/// list.
+///
+/// The unit both callers work in: a composition reads a few of these in a
+/// row, a top-up reads exactly one and keeps the rest of what it bought
+/// (`AssetCursor::Collection::pending`).
+async fn fetch_item_page<T: DeserializeOwned + CollectionRow>(
+    client: &reqwest::Client,
+    api_base: &Url,
+    path: &str,
+    cursor: Option<&str>,
+    subject: &str,
+    args: &mut VecDeque<String>,
+) -> anyhow::Result<Option<String>> {
+    let mut url = endpoint(api_base, path)?;
+    {
+        let mut query = url.query_pairs_mut();
+        query.append_pair("limit", &PAGE_LIMIT.to_string());
+        if let Some(cursor) = cursor {
+            query.append_pair("cursor", cursor);
+        }
+    }
+    let page: CursorPage<T> = fetch_json(client, url, subject).await?;
+    validate_page_size(page.data.len(), PAGE_LIMIT, subject)?;
+    for row in page.data {
+        if let Some(item_args) = row.live_args() {
+            args.push_back(item_args);
+        }
+    }
+    if !page.has_more {
+        return Ok(None);
+    }
+    Ok(Some(next_cursor(page.next_cursor, subject)?))
+}
+
+/// The same page read, with the row shape chosen by the family.
+async fn fetch_collection_item_page(
+    client: &reqwest::Client,
+    api_base: &Url,
+    kind: CollectionKind,
+    path: &str,
+    cursor: Option<&str>,
+    subject: &str,
+    args: &mut VecDeque<String>,
+) -> anyhow::Result<Option<String>> {
+    match kind {
+        CollectionKind::Spore => {
+            fetch_item_page::<SporeItemResponse>(client, api_base, path, cursor, subject, args)
+                .await
+        }
+        CollectionKind::Object => {
+            fetch_item_page::<ObjectItemResponse>(client, api_base, path, cursor, subject, args)
+                .await
+        }
+    }
+}
+
 /// Pages one collection's item list, appending each live item's `args`.
 ///
 /// `Result`-shaped so a failing page stops the collection exactly where it
 /// happened, leaving the caller holding every item read up to that point.
-async fn walk_collection_items<T: DeserializeOwned + CollectionRow>(
+async fn walk_collection_items(
     client: &reqwest::Client,
     api_base: &Url,
+    kind: CollectionKind,
     path: &str,
     max_pages: usize,
     subject: &str,
-    args: &mut Vec<String>,
+    args: &mut VecDeque<String>,
 ) -> anyhow::Result<()> {
     let mut cursor: Option<String> = None;
     for _ in 0..max_pages {
-        let mut url = endpoint(api_base, path)?;
-        {
-            let mut query = url.query_pairs_mut();
-            query.append_pair("limit", &PAGE_LIMIT.to_string());
-            if let Some(cursor) = cursor.as_deref() {
-                query.append_pair("cursor", cursor);
-            }
-        }
-        let page: CursorPage<T> = fetch_json(client, url, subject).await?;
-        validate_page_size(page.data.len(), PAGE_LIMIT, subject)?;
-        for row in page.data {
-            if let Some(item_args) = row.live_args() {
-                args.push(item_args);
-            }
-        }
-        if !page.has_more {
+        cursor = fetch_collection_item_page(
+            client,
+            api_base,
+            kind,
+            path,
+            cursor.as_deref(),
+            subject,
+            args,
+        )
+        .await?;
+        if cursor.is_none() {
             break;
         }
-        cursor = Some(next_cursor(page.next_cursor, subject)?);
     }
     Ok(())
 }
@@ -1182,7 +1755,7 @@ async fn fetch_spore_group(
     fetch_collection_group(
         client,
         api_base,
-        &format!("spore/clusters/{cluster_id}/spores"),
+        &SPORE_FAMILY.path(cluster_id),
         SPORE_FAMILY,
         settled,
         budget,
@@ -1201,7 +1774,7 @@ async fn fetch_mnft_group(
     fetch_collection_group(
         client,
         api_base,
-        &format!("assets/objects/{collection_id}/items"),
+        &MNFT_FAMILY.path(collection_id),
         MNFT_FAMILY,
         settled,
         budget,
@@ -1238,6 +1811,27 @@ const MNFT_FAMILY: CollectionFamily = CollectionFamily {
     subject: "object collection items",
 };
 
+impl CollectionFamily {
+    /// Where this family's item list lives. The routes are nested — a flat
+    /// probe 404s — which is most of why the collections looked unreachable.
+    fn path(&self, id: &str) -> String {
+        match self.kind {
+            CollectionKind::Spore => format!("spore/clusters/{id}/spores"),
+            CollectionKind::Object => format!("assets/objects/{id}/items"),
+        }
+    }
+}
+
+/// The collection family behind a ranked asset, or `None` for a standard
+/// that is not paged through an item list at all.
+fn collection_family(standard: AssetStandard) -> Option<CollectionFamily> {
+    match standard {
+        AssetStandard::Spore => Some(SPORE_FAMILY),
+        AssetStandard::MNft => Some(MNFT_FAMILY),
+        _ => None,
+    }
+}
+
 async fn fetch_collection_group(
     client: &reqwest::Client,
     api_base: &Url,
@@ -1252,40 +1846,27 @@ async fn fetch_collection_group(
         subject,
     } = family;
     let mut walk = GroupWalk::default();
-    let mut args = Vec::new();
-    let listed = match kind {
-        CollectionKind::Spore => {
-            walk_collection_items::<SporeItemResponse>(
-                client,
-                api_base,
-                path,
-                budget.pages,
-                subject,
-                &mut args,
-            )
-            .await
-        }
-        CollectionKind::Object => {
-            walk_collection_items::<ObjectItemResponse>(
-                client,
-                api_base,
-                path,
-                budget.pages,
-                subject,
-                &mut args,
-            )
-            .await
-        }
-    };
+    let mut args = VecDeque::new();
+    let listed = walk_collection_items(
+        client,
+        api_base,
+        kind,
+        path,
+        budget.pages,
+        subject,
+        &mut args,
+    )
+    .await;
     // Items already listed are still worth resolving even if the page after
     // them failed — the same rule the class walks obey, one level down.
     walk.stopped_by = listed.err();
     // The item budget bites HERE rather than at the page: a list page is one
     // request, resolving what it lists is a hundred. An asset allocated a
     // dozen slots reads its collection's head and stops, and the items past
-    // it stay for the tail (T5) to resume into.
+    // it are where the tail resumes.
     let listed_items = args.len();
     args.truncate(budget.items);
+    let args: Vec<String> = args.into();
     if let Err(error) = resolve_collection_items(
         client, api_base, &args, versions, settled, subject, &mut walk,
     )
@@ -1984,14 +2565,8 @@ struct DaoDepositResponse {
     status: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct GalaxyAssetResponse {
-    id: String,
-}
-
-/// One inventory row, in full. Kept apart from [`GalaxyAssetResponse`] — which
-/// reads the same endpoint for `id` alone — because the old walk's group key
-/// stays in service until the weighted walk replaces it (T4).
+/// One inventory row, in full: the whole of what `/assets` says about an
+/// asset that the composition has any use for.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RankedAssetResponse {
@@ -2093,8 +2668,8 @@ pub(crate) mod tests {
                         counted.fetch_add(1, Ordering::Relaxed);
                         Json(serde_json::json!({
                             "data": [
-                                { "id": format!("0x{:064x}", 0xaa) },
-                                { "id": format!("0x{:064x}", 0xbb) },
+                                asset_row(&format!("0x{:064x}", 0xaa), "token", "xudt", "600"),
+                                asset_row(&format!("0x{:064x}", 0xbb), "token", "sudt", "400"),
                             ],
                             "hasMore": false,
                             "nextCursor": None::<String>,
@@ -2165,13 +2740,31 @@ pub(crate) mod tests {
         let client = reqwest::Client::new();
         let mut tail = CandidateTail::default();
 
-        let first = top_up(&client, &api, anchor(), &mut tail, 150, 0, 1)
-            .await
-            .unwrap();
+        let first = top_up(
+            &client,
+            &api,
+            anchor(),
+            &mut tail,
+            150,
+            0,
+            &HashMap::new(),
+            1,
+        )
+        .await
+        .unwrap();
         assert_eq!(first.dao.len(), 150, "exactly the ask, never a page more");
-        let second = top_up(&client, &api, anchor(), &mut tail, 150, 0, 1)
-            .await
-            .unwrap();
+        let second = top_up(
+            &client,
+            &api,
+            anchor(),
+            &mut tail,
+            150,
+            0,
+            &HashMap::new(),
+            1,
+        )
+        .await
+        .unwrap();
         assert_eq!(second.dao.len(), 150);
 
         let overlap = first
@@ -2200,9 +2793,18 @@ pub(crate) mod tests {
                 .iter(),
         );
 
-        let got = top_up(&client, &api, anchor(), &mut tail, 200, 0, 1)
-            .await
-            .unwrap();
+        let got = top_up(
+            &client,
+            &api,
+            anchor(),
+            &mut tail,
+            200,
+            0,
+            &HashMap::new(),
+            1,
+        )
+        .await
+        .unwrap();
         assert!(
             got.dao
                 .iter()
@@ -2226,36 +2828,74 @@ pub(crate) mod tests {
         let client = reqwest::Client::new();
         let mut tail = CandidateTail::default();
 
-        let first = top_up(&client, &api, anchor(), &mut tail, 500, 0, 1)
-            .await
-            .unwrap();
+        let first = top_up(
+            &client,
+            &api,
+            anchor(),
+            &mut tail,
+            500,
+            0,
+            &HashMap::new(),
+            1,
+        )
+        .await
+        .unwrap();
         assert_eq!(first.dao.len(), 150, "the whole index");
         assert!(tail.dao_exhausted);
 
         // Nothing new to give, but the cursor is reset for next time.
-        let second = top_up(&client, &api, anchor(), &mut tail, 500, 0, 1)
-            .await
-            .unwrap();
+        let second = top_up(
+            &client,
+            &api,
+            anchor(),
+            &mut tail,
+            500,
+            0,
+            &HashMap::new(),
+            1,
+        )
+        .await
+        .unwrap();
         assert!(second.dao.is_empty());
         assert!(!tail.dao_exhausted && tail.dao_cursor.is_none(), "rewound");
-        let third = top_up(&client, &api, anchor(), &mut tail, 500, 0, 1)
-            .await
-            .unwrap();
+        let third = top_up(
+            &client,
+            &api,
+            anchor(),
+            &mut tail,
+            500,
+            0,
+            &HashMap::new(),
+            1,
+        )
+        .await
+        .unwrap();
         assert!(third.dao.is_empty(), "everything is already emitted");
         server.abort();
     }
 
-    /// Typed walks the asset groups round-robin, so one large asset can
-    /// never drain the whole turn.
+    /// A typed turn is divided by the SAME capacity weights a full
+    /// composition divides by, so a top-up cannot drift the stage's mix away
+    /// from the one discovery established. Weights 600/400 over 250 slots
+    /// want 150 and 100.
     #[tokio::test]
-    async fn typed_spreads_its_turn_across_groups() {
+    async fn a_typed_turn_serves_each_asset_its_weighted_deficit() {
         let (api, server, requests) = spawn_index(0, 1_000).await;
         let client = reqwest::Client::new();
         let mut tail = CandidateTail::default();
 
-        let got = top_up(&client, &api, anchor(), &mut tail, 0, 250, 1)
-            .await
-            .unwrap();
+        let got = top_up(
+            &client,
+            &api,
+            anchor(),
+            &mut tail,
+            0,
+            250,
+            &HashMap::new(),
+            1,
+        )
+        .await
+        .unwrap();
         assert_eq!(got.typed.len(), 250, "exactly the ask");
         let from_a = got
             .typed
@@ -2267,11 +2907,36 @@ pub(crate) mod tests {
             .iter()
             .filter(|c| c.out_point.tx_hash.starts_with("0xbb"))
             .count();
-        assert!(
-            from_a > 0 && from_b > 0,
-            "both groups contributed: {from_a}/{from_b}"
+        assert_eq!(
+            (from_a, from_b),
+            (150, 100),
+            "three fifths to the heavier asset, two fifths to the lighter"
         );
         assert!(requests.load(Ordering::Relaxed) <= MAX_PAGES_PER_TOP_UP + 1);
+        // A second turn resumes deeper and holds the same proportions, so
+        // the mix is a property of the tail rather than of its first call.
+        let again = top_up(
+            &client,
+            &api,
+            anchor(),
+            &mut tail,
+            0,
+            250,
+            &HashMap::new(),
+            1,
+        )
+        .await
+        .unwrap();
+        assert_eq!(again.typed.len(), 250);
+        assert_eq!(
+            again
+                .typed
+                .iter()
+                .filter(|c| c.out_point.tx_hash.starts_with("0xaa"))
+                .count(),
+            150,
+            "and the roster was taken once, not once per turn"
+        );
         server.abort();
     }
 
@@ -2283,9 +2948,18 @@ pub(crate) mod tests {
         let client = reqwest::Client::new();
         let mut tail = CandidateTail::default();
 
-        let got = top_up(&client, &api, anchor(), &mut tail, 100_000, 0, 1)
-            .await
-            .unwrap();
+        let got = top_up(
+            &client,
+            &api,
+            anchor(),
+            &mut tail,
+            100_000,
+            0,
+            &HashMap::new(),
+            1,
+        )
+        .await
+        .unwrap();
         assert_eq!(got.dao.len(), MAX_PAGES_PER_TOP_UP * PAGE_LIMIT);
         assert_eq!(requests.load(Ordering::Relaxed), MAX_PAGES_PER_TOP_UP);
         server.abort();
@@ -2302,7 +2976,7 @@ pub(crate) mod tests {
             block: 5,
             hash: "0xearly".into(),
         };
-        let got = top_up(&client, &api, early, &mut tail, 50, 0, 1)
+        let got = top_up(&client, &api, early, &mut tail, 50, 0, &HashMap::new(), 1)
             .await
             .unwrap();
         assert!(got.dao.is_empty(), "every mock deposit is at block 10");
@@ -2327,23 +3001,41 @@ pub(crate) mod tests {
             hash: "0xearly".into(),
         };
 
-        let rejected = top_up(&client, &api, early, &mut tail, 100, 0, 1)
+        let rejected = top_up(&client, &api, early, &mut tail, 100, 0, &HashMap::new(), 1)
             .await
             .unwrap();
         assert!(rejected.dao.is_empty(), "every mock deposit is at block 10");
 
         // One page was the whole index, so the tail is exhausted; the next
         // turn only rewinds (it never re-reads within the same call).
-        let rewind = top_up(&client, &api, anchor(), &mut tail, 100, 0, 1)
-            .await
-            .unwrap();
+        let rewind = top_up(
+            &client,
+            &api,
+            anchor(),
+            &mut tail,
+            100,
+            0,
+            &HashMap::new(),
+            1,
+        )
+        .await
+        .unwrap();
         assert!(rewind.dao.is_empty(), "the rewind turn hands out nothing");
 
         // The anchor has caught up. Nothing was claimed by the walk that
         // rejected them, so the whole index is offerable again.
-        let taken = top_up(&client, &api, anchor(), &mut tail, 100, 0, 1)
-            .await
-            .unwrap();
+        let taken = top_up(
+            &client,
+            &api,
+            anchor(),
+            &mut tail,
+            100,
+            0,
+            &HashMap::new(),
+            1,
+        )
+        .await
+        .unwrap();
         assert_eq!(
             taken.dao.len(),
             100,
@@ -3269,6 +3961,8 @@ pub(crate) mod tests {
     struct DiverseShape {
         token_cells: usize,
         spore_items: usize,
+        /// How many items the cluster serves per item-list page.
+        spore_page_size: usize,
         /// When set, the cluster's item list serves this many items on its
         /// first page and answers HTTP 500 for every page after it.
         spore_breaks_after: Option<usize>,
@@ -3284,6 +3978,7 @@ pub(crate) mod tests {
             Self {
                 token_cells: 20,
                 spore_items: 30,
+                spore_page_size: PAGE_LIMIT,
                 spore_breaks_after: None,
                 mnft_items: 2,
                 identity_rows: 8,
@@ -3336,7 +4031,13 @@ pub(crate) mod tests {
     /// behind them: a token contract, a spore cluster, a `.bit` family and an
     /// m-nft collection, plus the DAO and plain heads a full composition
     /// walks.
-    async fn spawn_diverse_index(shape: DiverseShape) -> (Url, tokio::task::JoinHandle<()>) {
+    async fn spawn_diverse_index(
+        shape: DiverseShape,
+    ) -> (Url, tokio::task::JoinHandle<()>, Arc<Mutex<Vec<String>>>) {
+        // Every cursor the cluster's item list was asked with, "head" for
+        // the request that carried none.
+        let listed = Arc::new(Mutex::new(Vec::new()));
+        let logged = listed.clone();
         let mut live: BTreeMap<String, serde_json::Value> = BTreeMap::new();
         let spore_version = SPORE_VERSIONS[0];
         for index in 0..shape.spore_items.max(shape.spore_breaks_after.unwrap_or(0)) {
@@ -3373,11 +4074,22 @@ pub(crate) mod tests {
             )
             .route(
                 "/api/v1/spore/clusters/:id/spores",
-                get(
-                    move |Query(q): Query<BTreeMap<String, String>>| async move {
+                get(move |Query(q): Query<BTreeMap<String, String>>| {
+                    let logged = logged.clone();
+                    async move {
+                        logged
+                            .lock()
+                            .unwrap()
+                            .push(q.get("cursor").cloned().unwrap_or_else(|| "head".into()));
                         let page: usize = q.get("cursor").and_then(|c| c.parse().ok()).unwrap_or(0);
-                        match shape.spore_breaks_after {
-                            Some(first) if page == 0 => (
+                        if let Some(first) = shape.spore_breaks_after {
+                            if page > 0 {
+                                return (
+                                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                                    Json(serde_json::json!({ "error": "internal_error" })),
+                                );
+                            }
+                            return (
                                 axum::http::StatusCode::OK,
                                 Json(serde_json::json!({
                                     "data": (0..first)
@@ -3386,24 +4098,26 @@ pub(crate) mod tests {
                                     "hasMore": true,
                                     "nextCursor": Some("1".to_string()),
                                 })),
-                            ),
-                            Some(_) => (
-                                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                                Json(serde_json::json!({ "error": "internal_error" })),
-                            ),
-                            None => (
-                                axum::http::StatusCode::OK,
-                                Json(serde_json::json!({
-                                    "data": (0..shape.spore_items)
-                                        .map(|i| serde_json::json!({ "sporeId": spore_arg(i) }))
-                                        .collect::<Vec<_>>(),
-                                    "hasMore": false,
-                                    "nextCursor": None::<String>,
-                                })),
-                            ),
+                            );
                         }
-                    },
-                ),
+                        let from = page * shape.spore_page_size;
+                        let to = (from + shape.spore_page_size).min(shape.spore_items);
+                        (
+                            axum::http::StatusCode::OK,
+                            Json(serde_json::json!({
+                                "data": (from..to)
+                                    .map(|i| serde_json::json!({ "sporeId": spore_arg(i) }))
+                                    .collect::<Vec<_>>(),
+                                "hasMore": to < shape.spore_items,
+                                "nextCursor": if to < shape.spore_items {
+                                    Some((page + 1).to_string())
+                                } else {
+                                    None
+                                },
+                            })),
+                        )
+                    }
+                }),
             )
             .route(
                 "/api/v1/assets/objects/:id/items",
@@ -3511,6 +4225,7 @@ pub(crate) mod tests {
         (
             Url::parse(&format!("http://{address}/api/v1/")).unwrap(),
             handle,
+            listed,
         )
     }
 
@@ -3527,7 +4242,7 @@ pub(crate) mod tests {
     /// holding candidates and lands at 14/10/7/2.
     #[tokio::test]
     async fn the_typed_class_is_the_inventory_page_split_by_capacity() {
-        let (api, server) = spawn_diverse_index(DiverseShape::default()).await;
+        let (api, server, _listed) = spawn_diverse_index(DiverseShape::default()).await;
         let client = reqwest::Client::new();
         let mut seen = HashSet::new();
 
@@ -3560,7 +4275,7 @@ pub(crate) mod tests {
     /// the slots it could not take re-normalize like any other shortfall.
     #[tokio::test]
     async fn an_unresolved_identity_costs_the_class_nothing() {
-        let (api, server) = spawn_diverse_index(DiverseShape::default()).await;
+        let (api, server, _listed) = spawn_diverse_index(DiverseShape::default()).await;
         let client = reqwest::Client::new();
         let mut seen = HashSet::new();
 
@@ -3584,7 +4299,7 @@ pub(crate) mod tests {
     /// the classes obey, one level down.
     #[tokio::test]
     async fn a_failing_collection_keeps_its_partial_and_says_so() {
-        let (api, server) = spawn_diverse_index(DiverseShape {
+        let (api, server, _listed) = spawn_diverse_index(DiverseShape {
             // Two pages of budget, and the second one answers HTTP 500.
             spore_breaks_after: Some(4),
             ..DiverseShape::default()
@@ -3624,7 +4339,7 @@ pub(crate) mod tests {
     /// found.
     #[tokio::test]
     async fn one_outpoint_is_staged_once_across_the_whole_composition() {
-        let (api, server) = spawn_diverse_index(DiverseShape {
+        let (api, server, _listed) = spawn_diverse_index(DiverseShape {
             dao_collides_with_token: true,
             ..DiverseShape::default()
         })
@@ -3658,6 +4373,371 @@ pub(crate) mod tests {
             overfetch(got.target.typed)
         );
         assert!(!got.typed.is_empty() && !got.plain.is_empty());
+        server.abort();
+    }
+
+    // ── T5: the tail walks the same ranking ───────────────────────
+
+    /// A row of ranked token contracts, each serving a fixed page of live
+    /// cells tagged with its own rank. What a long ranking looks like from
+    /// the tail's side.
+    async fn spawn_ranked_contracts(
+        weights: Vec<u64>,
+        cells_per_asset: usize,
+    ) -> (Url, tokio::task::JoinHandle<()>, Arc<AtomicUsize>) {
+        let rosters = Arc::new(AtomicUsize::new(0));
+        let counted = rosters.clone();
+        let listed = weights.clone();
+        let app = Router::new()
+            .route(
+                "/api/v1/assets",
+                get(move || {
+                    let counted = counted.clone();
+                    let listed = listed.clone();
+                    async move {
+                        counted.fetch_add(1, Ordering::Relaxed);
+                        Json(serde_json::json!({
+                            "data": listed
+                                .iter()
+                                .enumerate()
+                                .map(|(rank, weight)| asset_row(
+                                    &format!("0x{rank:064x}"),
+                                    "token",
+                                    "xudt",
+                                    &weight.to_string(),
+                                ))
+                                .collect::<Vec<_>>(),
+                            "hasMore": false,
+                            "nextCursor": None::<String>,
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/api/v1/cells/live",
+                get(move |Query(q): Query<BTreeMap<String, String>>| async move {
+                    let hash = q.get("type_script_hash").cloned().unwrap_or_default();
+                    let rank = u8::from_str_radix(&hash[hash.len() - 2..], 16).unwrap_or(0);
+                    let from: usize = q.get("cursor").and_then(|c| c.parse().ok()).unwrap_or(0);
+                    let to = (from + PAGE_LIMIT).min(cells_per_asset);
+                    Json(serde_json::json!({
+                        "data": (from..to)
+                            .map(|i| tagged_cell(rank, i, Some(hash.clone()), PLAIN_LOCK.into()))
+                            .collect::<Vec<_>>(),
+                        "hasMore": to < cells_per_asset,
+                        "nextCursor": if to < cells_per_asset { Some(to.to_string()) } else { None },
+                    }))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (
+            Url::parse(&format!("http://{address}/api/v1/")).unwrap(),
+            handle,
+            rosters,
+        )
+    }
+
+    /// Two heavy assets and thirty-eight almost weightless ones. The
+    /// shortfall of rank #2 is served before rank #40 is looked at, because
+    /// the deficit each asset carries is its share of the ranking — not its
+    /// turn in a round-robin, which is what the tail used to walk.
+    #[tokio::test]
+    async fn a_deficit_at_the_head_is_served_before_the_long_tail() {
+        let mut weights = vec![1_000_u64, 900];
+        weights.extend(std::iter::repeat_n(1, 38));
+        let (api, server, _) = spawn_ranked_contracts(weights, 100).await;
+        let client = reqwest::Client::new();
+        let mut tail = CandidateTail::default();
+
+        let got = top_up(
+            &client,
+            &api,
+            anchor(),
+            &mut tail,
+            0,
+            100,
+            &HashMap::new(),
+            1,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(got.typed.len(), 100, "exactly the ask");
+        assert_eq!(
+            by_asset(&got.typed),
+            BTreeMap::from([(0, 52), (1, 47), (2, 1)]),
+            "the two heavy ranks took the turn; rank #40 has ample supply \
+             and was never reached"
+        );
+        server.abort();
+    }
+
+    /// The tail bootstraps its own roster, so a top-up that arrives before
+    /// any full discovery still walks the ranking rather than nothing. The
+    /// ranking is taken once and then kept — until a discovery replaces the
+    /// population it was measuring.
+    #[tokio::test]
+    async fn the_tail_takes_the_ranking_once_and_keeps_it() {
+        let (api, server, rosters) = spawn_ranked_contracts(vec![600, 400], 1_000).await;
+        let client = reqwest::Client::new();
+        let mut tail = CandidateTail::default();
+        assert!(tail.assets.is_empty(), "nothing has been discovered yet");
+
+        let first = top_up(
+            &client,
+            &api,
+            anchor(),
+            &mut tail,
+            0,
+            50,
+            &HashMap::new(),
+            1,
+        )
+        .await
+        .unwrap();
+        assert_eq!(first.typed.len(), 50);
+        assert_eq!(tail.assets.len(), 2, "the roster bootstrapped itself");
+        assert_eq!(rosters.load(Ordering::Relaxed), 1);
+
+        let second = top_up(
+            &client,
+            &api,
+            anchor(),
+            &mut tail,
+            0,
+            50,
+            &HashMap::new(),
+            1,
+        )
+        .await
+        .unwrap();
+        assert_eq!(second.typed.len(), 50);
+        assert_eq!(
+            rosters.load(Ordering::Relaxed),
+            1,
+            "a second turn resumes; it does not re-read the ranking"
+        );
+
+        // A full composition lands. The ranking is now a composition old and
+        // the delivered counts measure a population that has been replaced,
+        // so the next turn re-takes it — and still walks DEEPER, because the
+        // cursors are carried across rather than rewound.
+        tail.note_emitted(second.typed.iter().map(|c| &c.out_point));
+        let third = top_up(
+            &client,
+            &api,
+            anchor(),
+            &mut tail,
+            0,
+            50,
+            &HashMap::new(),
+            1,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            rosters.load(Ordering::Relaxed),
+            2,
+            "the ranking was re-taken"
+        );
+        assert_eq!(
+            tail.assets.iter().map(|a| a.delivered).sum::<usize>(),
+            third.typed.len(),
+            "the delivered counts restarted from the composition"
+        );
+        let overlap = third
+            .typed
+            .iter()
+            .filter(|c| {
+                first
+                    .typed
+                    .iter()
+                    .chain(&second.typed)
+                    .any(|o| o.out_point == c.out_point)
+            })
+            .count();
+        assert_eq!(overlap, 0, "and the walk is still strictly deeper");
+        server.abort();
+    }
+
+    /// A ranking walked end to end rewinds instead of wedging — the same
+    /// rule the DAO tail obeys, and for the same reason: cells minted since
+    /// are new, and `emitted` keeps the rest from repeating.
+    #[tokio::test]
+    async fn an_exhausted_ranking_rewinds_to_its_head() {
+        let (api, server, _) = spawn_ranked_contracts(vec![1, 1], 3).await;
+        let client = reqwest::Client::new();
+        let mut tail = CandidateTail::default();
+
+        let first = top_up(
+            &client,
+            &api,
+            anchor(),
+            &mut tail,
+            0,
+            100,
+            &HashMap::new(),
+            1,
+        )
+        .await
+        .unwrap();
+        assert_eq!(first.typed.len(), 6, "both assets, end to end");
+        assert!(tail.assets.iter().all(|asset| asset.exhausted));
+
+        let rewind = top_up(
+            &client,
+            &api,
+            anchor(),
+            &mut tail,
+            0,
+            100,
+            &HashMap::new(),
+            1,
+        )
+        .await
+        .unwrap();
+        assert!(rewind.typed.is_empty(), "the rewind turn hands out nothing");
+        assert!(
+            tail.assets.iter().all(|asset| !asset.exhausted),
+            "and every cursor is back at its head"
+        );
+        assert!(
+            tail.assets.iter().all(|asset| asset.delivered == 3),
+            "the delivered counts survive: a rewind does not un-stage a cell"
+        );
+
+        let third = top_up(
+            &client,
+            &api,
+            anchor(),
+            &mut tail,
+            0,
+            100,
+            &HashMap::new(),
+            1,
+        )
+        .await
+        .unwrap();
+        assert!(third.typed.is_empty(), "everything is already emitted");
+        server.abort();
+    }
+
+    /// The claim and the delivery are the same act. A candidate the anchor
+    /// rejects is never claimed, so it survives for the anchor that accepts
+    /// it — and the rows past the ask are not claimed either.
+    #[tokio::test]
+    async fn the_tail_claims_only_what_it_delivered() {
+        let (api, server, _) = spawn_ranked_contracts(vec![600, 400], 100).await;
+        let client = reqwest::Client::new();
+        let mut tail = CandidateTail::default();
+        let early = ChainAnchor {
+            block: 5,
+            hash: "0xearly".into(),
+        };
+
+        let rejected = top_up(&client, &api, early, &mut tail, 0, 100, &HashMap::new(), 1)
+            .await
+            .unwrap();
+        assert!(rejected.typed.is_empty(), "every mock cell is at block 10");
+        assert_eq!(
+            tail.claimed(),
+            0,
+            "an anchor-rejected candidate must survive for the anchor that accepts it"
+        );
+
+        // Two hundred cells are on offer and thirty are asked for. The other
+        // hundred and seventy were read but never handed out, and claiming
+        // them would burn tail depth on cells nobody saw.
+        let mut fresh = CandidateTail::default();
+        let taken = top_up(
+            &client,
+            &api,
+            anchor(),
+            &mut fresh,
+            0,
+            30,
+            &HashMap::new(),
+            1,
+        )
+        .await
+        .unwrap();
+        assert_eq!(taken.typed.len(), 30);
+        assert_eq!(fresh.claimed(), 30, "the claim is exactly the delivery");
+        server.abort();
+    }
+
+    /// A collection resumes rather than restarts: its item list is read from
+    /// where the last turn stopped, and the items a turn paid for but did not
+    /// need are kept for the next one instead of being paged past.
+    #[tokio::test]
+    async fn a_collection_resumes_its_item_list_across_turns() {
+        let (api, server, listed) = spawn_diverse_index(DiverseShape {
+            spore_page_size: 5,
+            ..DiverseShape::default()
+        })
+        .await;
+        let client = reqwest::Client::new();
+        let mut tail = CandidateTail::default();
+
+        let first = top_up(
+            &client,
+            &api,
+            anchor(),
+            &mut tail,
+            0,
+            20,
+            &resolved_families(),
+            1,
+        )
+        .await
+        .unwrap();
+        let after_first = listed.lock().unwrap().clone();
+        let second = top_up(
+            &client,
+            &api,
+            anchor(),
+            &mut tail,
+            0,
+            20,
+            &resolved_families(),
+            1,
+        )
+        .await
+        .unwrap();
+        let after_second = listed.lock().unwrap().clone();
+
+        assert!(
+            by_asset(&first.typed).get(&SPORE_TAG).copied().unwrap_or(0) > 0
+                && by_asset(&second.typed)
+                    .get(&SPORE_TAG)
+                    .copied()
+                    .unwrap_or(0)
+                    > 0,
+            "the cluster contributed to both turns"
+        );
+        assert_eq!(
+            after_second
+                .iter()
+                .filter(|cursor| *cursor == "head")
+                .count(),
+            1,
+            "the head of the item list was read once, on the first turn: \
+             {after_second:?}"
+        );
+        assert!(
+            after_second.len() > after_first.len(),
+            "and the second turn read further into it: {after_first:?} then {after_second:?}"
+        );
+        let overlap = second
+            .typed
+            .iter()
+            .filter(|c| first.typed.iter().any(|o| o.out_point == c.out_point))
+            .count();
+        assert_eq!(overlap, 0, "nothing was offered twice");
         server.abort();
     }
 

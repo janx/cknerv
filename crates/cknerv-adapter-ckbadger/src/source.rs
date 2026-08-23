@@ -1501,6 +1501,7 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         let want_typed = demand.typed.min(TOP_UP_CANDIDATES_PER_CLASS);
 
         let anchor = self.current_anchor(context)?;
+        let identity_families = self.identity_families(context).await;
         let candidates = {
             let mut tail = self.candidate_tail.lock().await;
             top_up_galaxy_composition(
@@ -1510,6 +1511,7 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
                 &mut tail,
                 want_dao,
                 want_typed,
+                &identity_families,
                 now_ms(),
             )
             .await?
