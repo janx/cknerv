@@ -543,6 +543,190 @@ async fn top_asset_hashes(client: &reqwest::Client, api_base: &Url) -> anyhow::R
         .collect())
 }
 
+/// One row of ckbadger's capacity-ranked inventory, reduced to the two
+/// things a composition needs from it: where the asset's cells are, and how
+/// much of the typed budget it has earned.
+///
+/// The roster IS this ranking (D1) — `GET /assets?sort_key=capacity` is the
+/// same page the inventory UI shows, so the stage's typed class becomes that
+/// page read top to bottom. Rank order is the vector's order.
+// Built here, consumed by the weighted walk (T4).
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RankedAsset {
+    /// Whatever ckbadger keys this asset by — a type-script hash for a token
+    /// contract, a cluster id for spore, a collection id for m-nft and
+    /// identity. Only [`AssetStandard`] knows which, and reading every one of
+    /// them as a script hash is exactly what starved the old walk: for 40 of
+    /// 64 groups `cells/live?type_script_hash=<id>` answered `{"data":[]}`
+    /// with HTTP 200, which is a success carrying nothing.
+    pub(crate) id: String,
+    pub(crate) standard: AssetStandard,
+    /// Shannons of live capacity the asset occupies. The weight the typed
+    /// budget is divided by, never a display figure.
+    pub(crate) owned_capacity: u64,
+}
+
+/// How an asset's live cells are reached (D3). The row's
+/// `(assetType, standard)` pair decides it.
+///
+/// `assetType` carries the routing; `standard` only disambiguates inside
+/// `object` and `identity`. A token standard cknerv has never heard of still
+/// keys its cells by a type-script hash, so routing every `token` row to the
+/// contract pager is the honest reading — not a guess.
+// Built here, consumed by the weighted walk (T4).
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AssetStandard {
+    /// `args` is the issuer, so one contract is one type script covering
+    /// thousands of cells: `cells/live?type_script_hash=<id>` pages it.
+    Token,
+    /// `id` is a cluster id. Items come from `/spore/clusters/{id}/spores`
+    /// and each item's `sporeId` is its own script's `args`.
+    Spore,
+    /// `id` is a collection id. Items come from `/assets/objects/{id}/items`
+    /// and each item's `nftId` is its `args`.
+    MNft,
+    /// `id` is a synthetic ASCII collection id addressing nothing on chain
+    /// (`0x646f746269745f…` is `"dotbit_collection"` in hex). What pages the
+    /// cells is the family's `(code_hash, hash_type)`, which only the census
+    /// knows.
+    Identity(IdentityStandard),
+}
+
+/// The three identity collections ckbadger publishes, each 1:1 with one
+/// script family.
+///
+/// Spellings are ckbadger's own, probed live on 2026-08-23: `dotbit`,
+/// `bit_cell`, `did_ckb`. `did_ckb` is only visible through
+/// `/assets?type=identity` — it holds zero capacity, so it never reaches the
+/// top-64 page — and its underscore spelling is not the `did` an earlier
+/// draft assumed.
+// Built here, consumed by the weighted walk (T4).
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum IdentityStandard {
+    DotBit,
+    BitCell,
+    DidCkb,
+}
+
+// Built here, consumed by the weighted walk (T4).
+#[allow(dead_code)]
+impl AssetStandard {
+    /// The routing decision, or `None` for a pair with no mechanism behind
+    /// it.
+    ///
+    /// There is deliberately no `Unsupported` variant: an asset cknerv cannot
+    /// reach must not reach the roster at all, because the roster's whole
+    /// second job is to be the denominator of the weighted split (D4). A row
+    /// that can never yield a cell but still holds capacity would silently
+    /// shrink every other asset's share.
+    fn classify(asset_type: &str, standard: &str) -> Option<Self> {
+        Some(match (asset_type, standard) {
+            ("token", _) => Self::Token,
+            ("object", "spore") => Self::Spore,
+            ("object", "m-nft") => Self::MNft,
+            ("identity", "dotbit") => Self::Identity(IdentityStandard::DotBit),
+            ("identity", "bit_cell") => Self::Identity(IdentityStandard::BitCell),
+            ("identity", "did_ckb") => Self::Identity(IdentityStandard::DidCkb),
+            _ => return None,
+        })
+    }
+}
+
+/// The typed class's head: ckbadger's inventory ranked by occupied capacity,
+/// one page, in the index's own order.
+///
+/// A row cknerv cannot route, cannot address, or whose weight will not parse
+/// is dropped with a `warn!` naming it — never in silence. The old head
+/// filtered eleven m-nft collections through `is_hash32` without a word,
+/// which is why the gap took a live measurement to find rather than a log
+/// line to read.
+// Built here, consumed by the weighted walk (T4).
+#[allow(dead_code)]
+pub(crate) async fn ranked_assets(
+    client: &reqwest::Client,
+    api_base: &Url,
+) -> anyhow::Result<Vec<RankedAsset>> {
+    let mut url = endpoint(api_base, "assets")?;
+    url.query_pairs_mut()
+        .append_pair("limit", &ASSET_GROUP_LIMIT.to_string())
+        .append_pair("sort_key", "capacity")
+        .append_pair("sort_direction", "desc");
+    let assets: CursorPage<RankedAssetResponse> = fetch_json(client, url, "ranked assets").await?;
+    validate_page_size(assets.data.len(), ASSET_GROUP_LIMIT, "ranked assets")?;
+
+    let mut roster = Vec::with_capacity(assets.data.len());
+    for asset in assets.data {
+        let Some(standard) = AssetStandard::classify(&asset.asset_type, &asset.standard) else {
+            tracing::warn!(
+                target: "cknerv-adapter-ckbadger",
+                asset_type = %asset.asset_type,
+                standard = %asset.standard,
+                "the inventory ranked an asset cknerv has no way to reach; \
+                 it is excluded from the roster and from the split"
+            );
+            continue;
+        };
+        // A token's id must be a script hash, because that is the request it
+        // becomes. The other three families are addressed by collection id,
+        // which is 24 bytes for m-nft and ASCII for identity — `is_hash32`
+        // gating the whole roster is what dropped them before the first
+        // request.
+        let addressable = match standard {
+            AssetStandard::Token => is_hash32(&asset.id),
+            _ => is_collection_id(&asset.id),
+        };
+        if !addressable {
+            tracing::warn!(
+                target: "cknerv-adapter-ckbadger",
+                asset_type = %asset.asset_type,
+                standard = %asset.standard,
+                "the inventory ranked an asset with an unusable id; \
+                 it is excluded from the roster and from the split"
+            );
+            continue;
+        }
+        let Ok(owned_capacity) = asset.owned_capacity.parse::<u64>() else {
+            tracing::warn!(
+                target: "cknerv-adapter-ckbadger",
+                asset_type = %asset.asset_type,
+                standard = %asset.standard,
+                owned_capacity = %asset.owned_capacity,
+                "the inventory ranked an asset whose occupied capacity will not \
+                 parse; it is excluded from the roster and from the split"
+            );
+            continue;
+        };
+        roster.push(RankedAsset {
+            id: asset.id,
+            standard,
+            owned_capacity,
+        });
+    }
+    Ok(roster)
+}
+
+/// A collection id is `0x` + an even number of hex digits, at most 32 bytes.
+///
+/// Looser than [`is_hash32`] because these ids are not hashes — an m-nft
+/// collection is 24 bytes, `.bit`'s is a padded ASCII string — and stricter
+/// than "any string" because the id is spliced into a URL **path**, where a
+/// separator or a dot segment would address something other than the
+/// collection.
+// Built here, consumed by the weighted walk (T4).
+#[allow(dead_code)]
+fn is_collection_id(value: &str) -> bool {
+    let Some(body) = value.strip_prefix("0x") else {
+        return false;
+    };
+    !body.is_empty()
+        && body.len() <= 64
+        && body.len() % 2 == 0
+        && body.as_bytes().iter().all(u8::is_ascii_hexdigit)
+}
+
 async fn discover_typed(
     client: &reqwest::Client,
     api_base: &Url,
@@ -885,6 +1069,22 @@ struct DaoDepositResponse {
 #[derive(Debug, Deserialize)]
 struct GalaxyAssetResponse {
     id: String,
+}
+
+/// One inventory row, in full. Kept apart from [`GalaxyAssetResponse`] — which
+/// reads the same endpoint for `id` alone — because the old walk's group key
+/// stays in service until the weighted walk replaces it (T4).
+#[allow(dead_code)] // read by the weighted walk (T4)
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RankedAssetResponse {
+    id: String,
+    asset_type: String,
+    standard: String,
+    /// A decimal string of shannons. ckbadger prints capacity as text
+    /// everywhere, and the totals here run past what a JSON number carries
+    /// exactly.
+    owned_capacity: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1254,6 +1454,205 @@ pub(crate) mod tests {
         assert_eq!(overfetch(0), 0);
         assert_eq!(overfetch(1_200), 1_500);
         assert_eq!(overfetch(3_900), 4_875);
+    }
+
+    // ── T2: the ranked roster ─────────────────────────────────────
+
+    /// Serves one fixed `/assets` page, so a test can state the inventory
+    /// row by row and read back what the roster made of it.
+    async fn spawn_roster(page: serde_json::Value) -> (Url, tokio::task::JoinHandle<()>) {
+        let app = Router::new().route(
+            "/api/v1/assets",
+            get(move || {
+                let page = page.clone();
+                async move { Json(page) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (
+            Url::parse(&format!("http://{address}/api/v1/")).unwrap(),
+            handle,
+        )
+    }
+
+    fn asset_row(
+        id: &str,
+        asset_type: &str,
+        standard: &str,
+        owned_capacity: &str,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "id": id,
+            "assetType": asset_type,
+            "standard": standard,
+            "ownedCapacity": owned_capacity,
+            // Fields the roster ignores, present because ckbadger sends them.
+            "name": "ignored",
+            "holdersCount": 12,
+        })
+    }
+
+    /// The shapes are ckbadger's own, taken from the live top-64 on
+    /// 2026-08-23: a 32-byte token hash, a 32-byte cluster id, a 24-byte
+    /// m-nft collection id, and identity's 32 ASCII bytes in hex
+    /// (`"dotbit_collection…"`).
+    const TOKEN_ID: &str = "0xb5fdb4e8ad52f5e3ed4a294c8d1eb2eb6a4e8f2c3d5a6b7c8d9e0f1a2b3c4d5e";
+    const CLUSTER_ID: &str = "0xb09a7b74f08afe5246b415f134fcda946207d761ef92f315ca563cc9dd22c315";
+    const MNFT_ID: &str = "0x8f67efedd50c61c9dd332defd4051f08a02d797700000014";
+    const DOTBIT_ID: &str = "0x646f746269745f636f6c6c656374696f6e5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f";
+
+    /// The roster is the inventory page: every family it can reach, in
+    /// ckbadger's rank order, carrying the weight that will divide the typed
+    /// budget.
+    #[tokio::test]
+    async fn the_roster_keeps_the_inventory_rank_and_routes_every_family() {
+        let (api, server) = spawn_roster(serde_json::json!({
+            "data": [
+                asset_row(TOKEN_ID, "token", "xudt_compatible", "3466360209983049"),
+                asset_row(DOTBIT_ID, "identity", "dotbit", "138989821996213"),
+                asset_row(CLUSTER_ID, "object", "spore", "109067222027837"),
+                asset_row(MNFT_ID, "object", "m-nft", "4400000000000"),
+            ],
+            "hasMore": false,
+            "nextCursor": None::<String>,
+        }))
+        .await;
+        let client = reqwest::Client::new();
+
+        let roster = ranked_assets(&client, &api).await.unwrap();
+
+        assert_eq!(
+            roster,
+            vec![
+                RankedAsset {
+                    id: TOKEN_ID.to_string(),
+                    standard: AssetStandard::Token,
+                    owned_capacity: 3_466_360_209_983_049,
+                },
+                RankedAsset {
+                    id: DOTBIT_ID.to_string(),
+                    standard: AssetStandard::Identity(IdentityStandard::DotBit),
+                    owned_capacity: 138_989_821_996_213,
+                },
+                RankedAsset {
+                    id: CLUSTER_ID.to_string(),
+                    standard: AssetStandard::Spore,
+                    owned_capacity: 109_067_222_027_837,
+                },
+                RankedAsset {
+                    id: MNFT_ID.to_string(),
+                    standard: AssetStandard::MNft,
+                    owned_capacity: 4_400_000_000_000,
+                },
+            ],
+            "rank order is ckbadger's, and every row routes to a mechanism \
+             that reaches its cells"
+        );
+        server.abort();
+    }
+
+    /// Both `.bit` collections and `did:ckb` route, under ckbadger's own
+    /// spellings. `did_ckb` is the one an earlier draft got wrong — probed
+    /// live, the standard carries the underscore.
+    #[tokio::test]
+    async fn every_identity_collection_routes_to_its_family() {
+        let (api, server) = spawn_roster(serde_json::json!({
+            "data": [
+                asset_row(DOTBIT_ID, "identity", "dotbit", "138989821996213"),
+                asset_row(&format!("0x{:064x}", 0xb1), "identity", "bit_cell", "13932991471586"),
+                asset_row(&format!("0x{:064x}", 0xd1), "identity", "did_ckb", "0"),
+            ],
+            "hasMore": false,
+            "nextCursor": None::<String>,
+        }))
+        .await;
+        let client = reqwest::Client::new();
+
+        let standards: Vec<_> = ranked_assets(&client, &api)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|asset| asset.standard)
+            .collect();
+
+        assert_eq!(
+            standards,
+            vec![
+                AssetStandard::Identity(IdentityStandard::DotBit),
+                AssetStandard::Identity(IdentityStandard::BitCell),
+                AssetStandard::Identity(IdentityStandard::DidCkb),
+            ]
+        );
+        server.abort();
+    }
+
+    /// A row cknerv cannot reach, cannot address, or cannot weigh leaves the
+    /// roster entirely — which is what keeps it out of the denominator the
+    /// weighted split divides by. A malformed row must never cost the walk
+    /// the rows around it either.
+    #[tokio::test]
+    async fn an_unreachable_or_malformed_row_leaves_the_roster() {
+        let (api, server) = spawn_roster(serde_json::json!({
+            "data": [
+                asset_row(TOKEN_ID, "token", "xudt", "100"),
+                // No mechanism reaches a COTA collection today.
+                asset_row(&format!("0x{:064x}", 0xc0), "object", "cota", "999999999"),
+                // An identity standard cknerv has never seen.
+                asset_row(&format!("0x{:064x}", 0xd0), "identity", "ens", "888888888"),
+                // A token id that is not a script hash is not a request.
+                asset_row("0xdeadbeef", "token", "xudt", "777777777"),
+                // An id that would address something other than the collection.
+                asset_row("0x../../secrets", "object", "spore", "666666666"),
+                // Capacity that will not parse is not a weight.
+                asset_row(CLUSTER_ID, "object", "spore", "one hundred"),
+                asset_row(MNFT_ID, "object", "m-nft", "50"),
+            ],
+            "hasMore": false,
+            "nextCursor": None::<String>,
+        }))
+        .await;
+        let client = reqwest::Client::new();
+
+        let roster = ranked_assets(&client, &api).await.unwrap();
+
+        assert_eq!(
+            roster
+                .iter()
+                .map(|asset| (asset.id.as_str(), asset.standard, asset.owned_capacity))
+                .collect::<Vec<_>>(),
+            vec![
+                (TOKEN_ID, AssetStandard::Token, 100),
+                (MNFT_ID, AssetStandard::MNft, 50),
+            ],
+            "the five unusable rows are gone and the two good ones survive them"
+        );
+        server.abort();
+    }
+
+    /// A page longer than what was asked for is an index disagreeing with
+    /// its own limit — the same guard every other walk in this file applies.
+    #[tokio::test]
+    async fn a_roster_page_past_the_limit_is_refused() {
+        let data: Vec<_> = (0..=ASSET_GROUP_LIMIT)
+            .map(|i| asset_row(&format!("0x{i:064x}"), "token", "xudt", "1"))
+            .collect();
+        let (api, server) = spawn_roster(serde_json::json!({
+            "data": data,
+            "hasMore": false,
+            "nextCursor": None::<String>,
+        }))
+        .await;
+        let client = reqwest::Client::new();
+
+        let error = ranked_assets(&client, &api)
+            .await
+            .expect_err("a page past the limit is not a roster");
+        assert!(error.to_string().contains("ranked assets"), "got: {error}");
+        server.abort();
     }
 
     // ── one class failing ─────────────────────────────────────────
