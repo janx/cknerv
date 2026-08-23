@@ -5210,7 +5210,7 @@ mod tests {
         let demand = sink.read();
         assert!(demand.curated);
         assert_eq!(demand.dao, 2_400 - 1, "one dao staged of 2400");
-        assert_eq!(demand.typed, 7_800 - 3, "one resident + the two canonical");
+        assert_eq!(demand.typed, 8_400 - 3, "one resident + the two canonical");
 
         g.apply_mutation(&Mutation::ChainReorganized { from_block: 1 });
         assert_eq!(

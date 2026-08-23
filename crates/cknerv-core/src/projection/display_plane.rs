@@ -1536,7 +1536,7 @@ mod tests {
 
     // ═══ S2 composed mode ════════════════════════════════════════════
 
-    /// Quota math against the shared constant: 20:65:15 with the
+    /// Quota math against the shared constant: 20:70:10 with the
     /// remainder folded into plain.
     #[test]
     fn for_total_matches_the_shared_quota_constant() {
@@ -1544,19 +1544,19 @@ mod tests {
             GalaxyCompositionTarget::for_total(6_000),
             GalaxyCompositionTarget {
                 dao: 1_200,
-                typed: 3_900,
-                plain: 900,
+                typed: 4_200,
+                plain: 600,
             }
         );
         assert_eq!(
             GalaxyCompositionTarget::for_total(12_000),
             GalaxyCompositionTarget {
                 dao: 2_400,
-                typed: 7_800,
-                plain: 1_800,
+                typed: 8_400,
+                plain: 1_200,
             }
         );
-        // Remainder-to-plain (floor(0.20·n) + floor(0.65·n) + rest).
+        // Remainder-to-plain (floor(0.20·n) + floor(0.70·n) + rest).
         assert_eq!(
             GalaxyCompositionTarget::for_total(7),
             GalaxyCompositionTarget {
@@ -1568,18 +1568,18 @@ mod tests {
     }
 
     /// Golden case 1 — the 6000-cell resting field composed at exactly
-    /// 20:65:15: empty canonical map, full reservoir → every record cell
-    /// stages as a resident and the class split is exactly 1200/3900/900.
+    /// 20:70:10: empty canonical map, full reservoir → every record cell
+    /// stages as a resident and the class split is exactly 1200/4200/600.
     #[test]
-    fn golden_full_reservoir_composes_exactly_20_65_15() {
+    fn golden_full_reservoir_composes_exactly_20_70_10() {
         let mut plane = small_plane(6_000, 8);
         let dao: Vec<Cell> = (0..1_200)
             .map(|i| cell_with(10_000 + i, &format!("0xd{i}"), AssetKind::Dao, 0))
             .collect();
-        let typed: Vec<Cell> = (0..3_900)
+        let typed: Vec<Cell> = (0..4_200)
             .map(|i| cell_with(20_000 + i, &format!("0xt{i}"), AssetKind::Xudt, 0))
             .collect();
-        let plain: Vec<Cell> = (0..900)
+        let plain: Vec<Cell> = (0..600)
             .map(|i| cell_with(30_000 + i, &format!("0xp{i}"), AssetKind::Native, 0))
             .collect();
         let rec = record(10, dao.clone(), typed.clone(), plain.clone());
@@ -1596,7 +1596,7 @@ mod tests {
             .map(|c| c.id)
             .collect();
         assert_eq!(member_set(&plane), expected);
-        assert_eq!(plane.class_counts(), [1_200, 3_900, 900]);
+        assert_eq!(plane.class_counts(), [1_200, 4_200, 600]);
         let provenance = provenance.expect("mode transition rides provenance");
         assert_eq!(provenance.mode, DisplayMode::Composed);
         assert_eq!(provenance.source.as_deref(), Some("ckbadger"));
@@ -1638,10 +1638,10 @@ mod tests {
         plane.reservoir_replaced(&rec, &outpoint_index(&canonical), &canonical);
         let (enter_ids, enter_cells, exit, _) = full_delta_parts(plane.flush(Some(1_000)));
 
-        // Expected set (budget 10 → targets {2,6,2}; dao 101 resolves to
+        // Expected set (budget 10 → targets {2,7,1}; dao 101 resolves to
         // canonical 1, so quota dao is [1, 102], typed takes all four it
-        // has, plain [301, 302], and the 2-slot spill adds dao 103 then
-        // plain 303): {1, 102, 103, 201..204, 301..303}.
+        // has, plain [301], and the 3-slot spill adds dao 103 then plain
+        // 302 and 303): {1, 102, 103, 201..204, 301..303}.
         let expected: BTreeSet<u64> = [1, 102, 103, 201, 202, 203, 204, 301, 302, 303].into();
         assert_eq!(member_set(&plane), expected);
         assert!(
@@ -1667,15 +1667,20 @@ mod tests {
     /// "matches the reference when sparse classes force the canonical
     /// fallback", minus selection/activity (server has no selection;
     /// activity is layered separately). Hand-derived from the reference
-    /// algorithm: canonical field ids 0..23 (kind pattern id%7→dao,
+    /// algorithm: canonical field ids 0..24 (kind pattern id%7→dao,
     /// id%3→typed, else plain), one resident per reservoir class, budget
-    /// 12 → targets {2,7,3}; the fallback walk runs to id 18 and stops
+    /// 12 → targets {2,8,2}; the fallback walk runs to id 24 and stops
     /// with every quota satisfied. Expected membership:
-    /// dao [1001, 0] · typed [2001, 3, 6, 9, 12, 15, 18] · plain [3001, 1, 2].
+    /// dao [1001, 0] · typed [2001, 3, 6, 9, 12, 15, 18, 24] · plain [3001, 1].
+    ///
+    /// The field is 25 wide, not 24, because the typed quota now needs an
+    /// eighth typed cell to be satisfiable at all: at 24 the walk would
+    /// run out of map instead of stopping on quota, and the early-stop
+    /// guard this case exists to pin would go untested.
     #[test]
     fn golden_sparse_reservoir_fills_from_canonical_fallback() {
         let mut plane = small_plane(12, 2);
-        let canonical = canonical_field(24);
+        let canonical = canonical_field(25);
         seed_canonical(&mut plane, &canonical, 500);
 
         let rec = record(
@@ -1687,25 +1692,33 @@ mod tests {
         plane.reservoir_replaced(&rec, &outpoint_index(&canonical), &canonical);
         plane.flush(Some(1_000));
 
-        let expected: BTreeSet<u64> = [1_001, 0, 2_001, 3, 6, 9, 12, 15, 18, 3_001, 1, 2].into();
+        let expected: BTreeSet<u64> = [1_001, 0, 2_001, 3, 6, 9, 12, 15, 18, 24, 3_001, 1].into();
         assert_eq!(member_set(&plane), expected);
-        assert_eq!(plane.class_counts(), [2, 7, 3]);
+        assert_eq!(plane.class_counts(), [2, 8, 2]);
         assert_eq!(plane.resident_ids_sorted(), vec![1_001, 2_001, 3_001]);
     }
 
     /// Golden case 4 — the old client's spill loop is a ROUND-ROBIN over
     /// dao → typed → plain (one candidate per class per round), not a
     /// sequential drain (cellRenderSet.ts spill loop). dao tail
-    /// [d3, d4, d5], typed short by 4, plain tail [p3, p4, p5]: the
-    /// 4-slot shortfall takes d3, p3, d4, p4 — a drain would have taken
-    /// d3, d4, d5 and never reached plain.
+    /// [d3, d4, d5], typed short by 2, plain tail [p2..p5]: the 2-slot
+    /// shortfall takes d3 then p2 — a drain would have taken d3 then d4
+    /// and never reached plain.
+    ///
+    /// The typed supply is 5 rather than 2 on purpose. Under the wider
+    /// typed quota a two-cell typed bucket leaves a five-slot shortfall,
+    /// and five slots drain past the dao tail into plain either way —
+    /// round-robin and drain agree, and the case stops discriminating.
+    /// Keeping typed nearly full keeps the shortfall smaller than the
+    /// dao tail, which is the only condition under which the two spill
+    /// orders differ.
     #[test]
     fn golden_spill_is_round_robin_dao_typed_plain() {
         let mut plane = small_plane(10, 2);
         let dao: Vec<Cell> = (1..=5)
             .map(|i| cell_with(100 + i, &format!("0xd{i}"), AssetKind::Dao, 0))
             .collect();
-        let typed: Vec<Cell> = (1..=2)
+        let typed: Vec<Cell> = (1..=5)
             .map(|i| cell_with(200 + i, &format!("0xt{i}"), AssetKind::Xudt, 0))
             .collect();
         let plain: Vec<Cell> = (1..=5)
@@ -1715,11 +1728,11 @@ mod tests {
         plane.reservoir_replaced(&rec, &HashMap::new(), &[]);
         plane.flush(Some(1_000));
 
-        // targets(10) = {2,6,2}; chosen dao 2, typed 2, plain 2 = 6;
-        // spill round 1: dao 103, plain 303; round 2: dao 104, plain 304 → 10.
-        let expected: BTreeSet<u64> = [101, 102, 103, 104, 201, 202, 301, 302, 303, 304].into();
+        // targets(10) = {2,7,1}; chosen dao 2, typed 5, plain 1 = 8;
+        // spill round 1: dao 103, then plain 302 → 10.
+        let expected: BTreeSet<u64> = [101, 102, 103, 201, 202, 203, 204, 205, 301, 302].into();
         assert_eq!(member_set(&plane), expected);
-        assert_eq!(plane.class_counts(), [4, 2, 4]);
+        assert_eq!(plane.class_counts(), [3, 5, 2]);
     }
 
     /// D5 later-collision: a canonical birth claiming a STAGED
@@ -1884,7 +1897,8 @@ mod tests {
     #[test]
     fn composed_activity_displaces_in_class_and_restores_on_eviction() {
         let mut plane = small_plane(6, 1); // quota 1 → immediate FIFO churn
-                                           // Canonical: 2 dao, 3 typed, 2 plain + one extra off-stage typed.
+                                           // Canonical: 2 dao, 5 typed, 2 plain — the fifth typed is the
+                                           // one the quota leaves off stage.
         let canonical = vec![
             cell_with(0, "0xa", AssetKind::Dao, 0),
             cell_with(1, "0xb", AssetKind::Dao, 0),
@@ -1894,40 +1908,41 @@ mod tests {
             cell_with(5, "0xf", AssetKind::Native, 0),
             cell_with(6, "0xg", AssetKind::Xudt, 0),
             cell_with(8, "0xi", AssetKind::Xudt, 0),
+            cell_with(9, "0xj", AssetKind::Xudt, 0),
         ];
         seed_canonical(&mut plane, &canonical, 500);
-        // Budget 6 < 10 → whole-map admission; targets(6) = {1,3,2} ⇒
-        // dao [0] typed [2,3,6] plain [4,5] → members {0,2,3,4,5,6},
-        // all Fallback admits in walk order. Typed 8 and dao 1 are the
-        // off-stage remainder.
+        // Budget 6 < 10 → whole-map admission; targets(6) = {1,4,1} ⇒
+        // dao [0] typed [2,3,6,8] plain [4] → members {0,2,3,4,6,8},
+        // all Fallback admits in walk order. Typed 9, dao 1 and plain 5
+        // are the off-stage remainder.
         let rec = record(10, vec![], vec![], vec![]);
         plane.reservoir_replaced(&rec, &outpoint_index(&canonical), &canonical);
         plane.flush(Some(1_000));
-        assert_eq!(member_set(&plane), [0, 2, 3, 4, 5, 6].into());
-        assert_eq!(plane.class_counts(), [1, 3, 2]);
+        assert_eq!(member_set(&plane), [0, 2, 3, 4, 6, 8].into());
+        assert_eq!(plane.class_counts(), [1, 4, 1]);
 
-        // Off-stage typed endpoint 8 enters: displaces the LATEST
-        // fallback-admitted typed resting member (6), not 2.
-        plane.note_activity(20, [8]);
+        // Off-stage typed endpoint 9 enters: displaces the LATEST
+        // fallback-admitted typed resting member (8), not 2.
+        plane.note_activity(20, [9]);
         let (enter, exit, _) = delta_parts(plane.flush(Some(2_000)));
-        assert_eq!(enter, vec![8]);
-        assert_eq!(exit, vec![6]);
-        assert!(plane.is_activity_member(8));
-        assert_eq!(plane.class_counts(), [1, 3, 2], "in-class swap holds I1");
+        assert_eq!(enter, vec![9]);
+        assert_eq!(exit, vec![8]);
+        assert!(plane.is_activity_member(9));
+        assert_eq!(plane.class_counts(), [1, 4, 1], "in-class swap holds I1");
 
-        // A later-block endpoint overflows the 1-slot quota: 8 evicts
-        // and its benched member 6 returns — one coalesced swap. The
+        // A later-block endpoint overflows the 1-slot quota: 9 evicts
+        // and its benched member 8 returns — one coalesced swap. The
         // new endpoint (a plain birth, 7) displaces in ITS class.
         let extra = cell_with(7, "0xh", AssetKind::Native, 0);
         plane.note_birth(&extra);
         plane.note_activity(21, [7]);
         let (enter, exit, _) = delta_parts(plane.flush(Some(3_000)));
-        assert_eq!(enter, vec![6, 7]);
-        assert_eq!(exit, vec![5, 8]); // 5 = latest plain fallback admit; 8 = quota eviction
+        assert_eq!(enter, vec![7, 8]);
+        assert_eq!(exit, vec![4, 9]); // 4 = the only plain fallback admit; 9 = quota eviction
         assert!(plane.is_activity_member(7));
-        assert!(!plane.is_activity_member(6), "restored as resting");
-        assert_eq!(plane.class_counts(), [1, 3, 2]);
-        assert_eq!(member_set(&plane), [0, 2, 3, 4, 6, 7].into());
+        assert!(!plane.is_activity_member(8), "restored as resting");
+        assert_eq!(plane.class_counts(), [1, 4, 1]);
+        assert_eq!(member_set(&plane), [0, 2, 3, 6, 7, 8].into());
     }
 
     /// Displacement priority: canonical-fallback admits are displaced
@@ -2049,7 +2064,7 @@ mod tests {
 
     /// The mainnet pathology this iteration exists to fix, reproduced at
     /// full budget: a 6K reservoir plus a retained map that is ~99% plain
-    /// composes to roughly 1.8K/2.8K/7.3K instead of 2400/7800/1800,
+    /// composes to roughly 1.8K/2.8K/7.3K instead of 2400/8400/1200,
     /// because dao and typed simply run out of candidates.
     ///
     /// Demand must be measured against the IDEAL quota. Against
@@ -2124,8 +2139,8 @@ mod tests {
         let demand = sink.read();
         assert!(demand.curated);
         assert_eq!(demand.dao, 2_400 - 1_848);
-        assert_eq!(demand.typed, 7_800 - 2_812);
-        assert_eq!(demand.total(), 5_540);
+        assert_eq!(demand.typed, 8_400 - 2_812);
+        assert_eq!(demand.total(), 6_140);
         assert!(!demand.is_empty());
     }
 
@@ -2135,14 +2150,14 @@ mod tests {
     fn demand_tracks_staged_counts_and_ignores_plain() {
         let mut plane = small_plane(10, 2);
         let sink = with_sink(&mut plane);
-        // targets(10) = {2,6,2}. Give dao its full 2 and typed 5 of 6,
+        // targets(10) = {2,7,1}. Give dao its full 2 and typed 6 of 7,
         // plain plenty.
         let rec = record(
             10,
             (1..=2)
                 .map(|i| cell_with(100 + i, &format!("0xd{i}"), AssetKind::Dao, 0))
                 .collect(),
-            (1..=5)
+            (1..=6)
                 .map(|i| cell_with(200 + i, &format!("0xt{i}"), AssetKind::Xudt, 0))
                 .collect(),
             (1..=9)
@@ -2153,7 +2168,7 @@ mod tests {
         plane.flush(Some(1_000));
         assert_eq!(
             plane.class_counts(),
-            [2, 5, 3],
+            [2, 6, 2],
             "typed short by one, plain over"
         );
         assert_eq!(
@@ -2261,7 +2276,7 @@ mod tests {
     #[test]
     fn supply_displaces_an_over_quota_fallback_member() {
         let mut plane = small_plane(10, 2);
-        // targets(10) = {2,6,2}. An all-plain canonical map composes to
+        // targets(10) = {2,7,1}. An all-plain canonical map composes to
         // 10 plain members, every one a fallback admit.
         let canonical: Vec<Cell> = (0..10)
             .map(|id| cell_with(id, &format!("0xc{id}"), AssetKind::Native, 0))
@@ -2279,8 +2294,8 @@ mod tests {
             "plain owns the whole stage"
         );
 
-        // Two dao arrive. Plain is 8 over quota, so it yields twice —
-        // latest-admitted first (9, then 8).
+        // Two dao arrive. Plain sits nine over its quota of one, so it
+        // yields twice — latest-admitted first (member 9, then 8).
         let supply = top_up(
             20,
             vec![
@@ -2364,7 +2379,7 @@ mod tests {
     /// overshoot into someone else's share.
     #[test]
     fn supply_stops_at_the_ideal_quota() {
-        let mut plane = small_plane(10, 2); // targets(10) = {2,6,2}
+        let mut plane = small_plane(10, 2); // targets(10) = {2,7,1}
         let canonical: Vec<Cell> = (0..10)
             .map(|id| cell_with(id, &format!("0xc{id}"), AssetKind::Native, 0))
             .collect();
@@ -2390,12 +2405,91 @@ mod tests {
         assert_eq!(member_set(&plane).len(), 10);
     }
 
-    /// ⭐ Convergence. Starting from the live mainnet shape and feeding
-    /// bounded rounds of supply, the ratio must climb to 2400/7800/1800
-    /// and MUST NOT oscillate on the way — every round is a monotone step
-    /// and the member count never moves.
+    /// Drives the supervisor's bounded top-up loop until the stage stops
+    /// moving, asserting the ratchet's invariants on every round: dao and
+    /// typed only ever climb, plain only ever falls, the stage is always
+    /// exactly full, and neither curated class overshoots its quota.
+    /// Returns the number of rounds the ratchet took to settle.
+    fn drive_ratchet(
+        plane: &mut DisplayPlane,
+        sink: &Arc<CompositionDemandSink>,
+        index: &HashMap<OutPoint, u64>,
+        supplied: &mut u64,
+        base_block: u64,
+    ) -> u64 {
+        const PER_CLASS_PER_TICK: usize = 256;
+        let quota = GalaxyCompositionTarget::for_total(12_000);
+        let mut previous = plane.class_counts();
+        let mut rounds = 0u64;
+        loop {
+            rounds += 1;
+            assert!(rounds < 40, "should settle in ~20 rounds, not spin");
+            let demand = sink.read();
+            let dao: Vec<Cell> = (0..demand.dao.min(PER_CLASS_PER_TICK))
+                .map(|_| {
+                    *supplied += 1;
+                    let n = *supplied;
+                    cell_with(500_000 + n, &format!("0xsd{n}"), AssetKind::Dao, 0)
+                })
+                .collect();
+            let typed: Vec<Cell> = (0..demand.typed.min(PER_CLASS_PER_TICK))
+                .map(|_| {
+                    *supplied += 1;
+                    let n = *supplied;
+                    cell_with(500_000 + n, &format!("0xst{n}"), AssetKind::Xudt, 0)
+                })
+                .collect();
+            plane.reservoir_topped_up(&top_up(base_block + rounds, dao, typed), index);
+            plane.flush(Some(base_block * 100 + rounds * 10));
+
+            let now = plane.class_counts();
+            assert!(
+                now[0] >= previous[0],
+                "dao round {rounds}: {previous:?} -> {now:?}"
+            );
+            assert!(
+                now[1] >= previous[1],
+                "typed round {rounds}: {previous:?} -> {now:?}"
+            );
+            assert!(
+                now[2] <= previous[2],
+                "plain round {rounds}: {previous:?} -> {now:?}"
+            );
+            assert_eq!(
+                now.iter().sum::<usize>(),
+                12_000,
+                "round {rounds}: the stage is always exactly full"
+            );
+            assert!(
+                now[0] <= quota.dao && now[1] <= quota.typed,
+                "never overshoots"
+            );
+            // Nothing moved: nobody is left who is both over quota and
+            // allowed to yield. That is the ratchet's fixed point.
+            if now == previous {
+                return rounds;
+            }
+            previous = now;
+        }
+    }
+
+    /// ⭐ The one-way ratchet, in two acts.
+    ///
+    /// Act 1 — starting from the live mainnet shape, bounded rounds of
+    /// supply climb monotonically until plain has nothing left it is
+    /// ALLOWED to yield. Victims come only from the canonical-fallback
+    /// group, and this reservoir's own 1,800 plain candidates are curated
+    /// members — 600 more than the whole 1,200 plain quota. So plain
+    /// floors at 1,800 rather than 1,200; the stage is exactly full
+    /// throughout, which makes those 600 slots plain will not give up
+    /// exactly the 600 typed the stage ends up short. The residue is
+    /// arithmetic, not a defect, and it stays published as demand.
+    ///
+    /// Act 2 — a refresh carrying the plain share the quota actually asks
+    /// for (which is what the adapter discovers) removes that floor, and
+    /// the same bounded rounds land exactly on 2400/8400/1200.
     #[test]
-    fn bounded_rounds_converge_monotonically_to_the_quota() {
+    fn bounded_rounds_climb_monotonically_and_the_ratchet_floors_on_curated_plain() {
         let mut plane = small_plane(12_000, 512);
         let sink = with_sink(&mut plane);
         let mut canonical: Vec<Cell> = Vec::new();
@@ -2443,65 +2537,55 @@ mod tests {
 
         // Bounded rounds, exactly as the supervisor will drive them:
         // fetch at most 256 per class per tick, sized by the published
-        // demand, until the demand closes.
-        const PER_CLASS_PER_TICK: usize = 256;
-        let mut previous = plane.class_counts();
+        // demand, until the stage stops moving.
         let mut supplied = 0u64;
-        let mut rounds = 0;
-        while !sink.read().is_empty() {
-            rounds += 1;
-            assert!(rounds < 40, "should converge in ~20 rounds, not spin");
-            let demand = sink.read();
-            let dao: Vec<Cell> = (0..demand.dao.min(PER_CLASS_PER_TICK))
-                .map(|_| {
-                    supplied += 1;
-                    cell_with(
-                        500_000 + supplied,
-                        &format!("0xsd{supplied}"),
-                        AssetKind::Dao,
-                        0,
-                    )
-                })
-                .collect();
-            let typed: Vec<Cell> = (0..demand.typed.min(PER_CLASS_PER_TICK))
-                .map(|_| {
-                    supplied += 1;
-                    cell_with(
-                        500_000 + supplied,
-                        &format!("0xst{supplied}"),
-                        AssetKind::Xudt,
-                        0,
-                    )
-                })
-                .collect();
-            plane.reservoir_topped_up(&top_up(20 + rounds, dao, typed), &index);
-            plane.flush(Some(2_000 + rounds * 10));
+        let rounds = drive_ratchet(&mut plane, &sink, &index, &mut supplied, 20);
 
-            let now = plane.class_counts();
-            assert!(
-                now[0] >= previous[0],
-                "dao round {rounds}: {previous:?} -> {now:?}"
-            );
-            assert!(
-                now[1] >= previous[1],
-                "typed round {rounds}: {previous:?} -> {now:?}"
-            );
-            assert!(
-                now[2] <= previous[2],
-                "plain round {rounds}: {previous:?} -> {now:?}"
-            );
-            assert_eq!(
-                now.iter().sum::<usize>(),
-                12_000,
-                "round {rounds}: the stage is always exactly full"
-            );
-            assert!(now[0] <= 2_400 && now[1] <= 7_800, "never overshoots");
-            previous = now;
-        }
         assert_eq!(
             plane.class_counts(),
             [2_400, 7_800, 1_800],
-            "20:65:15, reached"
+            "dao made its quota; plain would not go below its curated members"
+        );
+        assert_eq!(
+            sink.read(),
+            CompositionDemand {
+                curated: true,
+                dao: 0,
+                typed: 600,
+            },
+            "the residue stays a STANDING demand, not a closed one"
+        );
+        assert_eq!(
+            plane.class_counts()[2] - GalaxyCompositionTarget::for_total(12_000).plain,
+            sink.read().typed,
+            "plain's curated surplus IS the typed shortfall, slot for slot"
+        );
+        assert!(rounds >= 8, "the bound really did spread it over rounds");
+
+        // Act 2 — the same reservoir size, now shaped the way the quota
+        // asks for it. Plain brings 600 curated members instead of 1,800,
+        // so the floor is below the quota and the ratchet runs clean.
+        let quota = GalaxyCompositionTarget::for_total(6_000);
+        let shaped = record(
+            500,
+            (0..quota.dao)
+                .map(|i| cell_with(60_000 + i as u64, &format!("0xqd{i}"), AssetKind::Dao, 0))
+                .collect(),
+            (0..quota.typed)
+                .map(|i| cell_with(70_000 + i as u64, &format!("0xqt{i}"), AssetKind::Xudt, 0))
+                .collect(),
+            (0..quota.plain)
+                .map(|i| cell_with(80_000 + i as u64, &format!("0xqp{i}"), AssetKind::Native, 0))
+                .collect(),
+        );
+        plane.reservoir_replaced(&shaped, &index, &canonical);
+        plane.flush(Some(50_000));
+        let rounds = drive_ratchet(&mut plane, &sink, &index, &mut supplied, 1_000);
+
+        assert_eq!(
+            plane.class_counts(),
+            [2_400, 8_400, 1_200],
+            "20:70:10, reached"
         );
         assert!(sink.read().is_empty());
         assert!(rounds >= 8, "the bound really did spread it over rounds");

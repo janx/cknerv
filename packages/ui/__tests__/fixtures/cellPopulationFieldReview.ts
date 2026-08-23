@@ -52,19 +52,19 @@ function cell(id: number, overrides: Partial<Cell> = {}): Cell {
   };
 }
 
-/** A stage of `count` Cells composed 20:65:15 DAO/typed/plain, the way the
+/** A stage of `count` Cells composed 20:70:10 DAO/typed/plain, the way the
  *  curated policy staffs it. The chain is nothing like this mix, which is
  *  exactly what the composition disclosure exists to show.
  *
- *  The quota does not divide by ten, so the cycle is twenty: 4 dao, 13
- *  typed, 3 plain. `REVIEW_STAGE` is a multiple of it, so the fixture
- *  lands on the quota exactly rather than near it. */
+ *  The quota divides by ten now, so the cycle is ten: 2 dao, 7 typed, 1
+ *  plain. `REVIEW_STAGE` is a multiple of it, so the fixture lands on
+ *  the quota exactly rather than near it. */
 function curatedStage(count: number): Cell[] {
   const cells: Cell[] = [];
   for (let i = 0; i < count; i += 1) {
-    const bucket = i % 20;
-    if (bucket < 4) cells.push(cell(i + 1, { asset_kind: 'dao' }));
-    else if (bucket < 17) cells.push(cell(i + 1));
+    const bucket = i % 10;
+    if (bucket < 2) cells.push(cell(i + 1, { asset_kind: 'dao' }));
+    else if (bucket < 9) cells.push(cell(i + 1));
     else cells.push(cell(i + 1, { type_shape_seed: null, asset_kind: 'native' }));
   }
   return cells;

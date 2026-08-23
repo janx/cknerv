@@ -3062,7 +3062,7 @@ pub(crate) mod tests {
     fn composition_overfetch_is_bounded() {
         assert_eq!(overfetch(0), 0);
         assert_eq!(overfetch(1_200), 1_500);
-        assert_eq!(overfetch(3_900), 4_875);
+        assert_eq!(overfetch(4_200), 5_250);
     }
 
     // ── T2: the ranked roster ─────────────────────────────────────

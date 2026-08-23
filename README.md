@@ -482,7 +482,7 @@ twin, the fixtures, and both sides of the tests together.
   the cells projection's display membership, so the browser runs one code path
   whatever the source situation. Without enrichment the server stages the
   canonical insertion-order prefix; with optional ckbadger enrichment it stages
-  DAO:typed:plain = 20:65:15 at the display budget, seeded from a 6,000-record
+  DAO:typed:plain = 20:70:10 at the display budget, seeded from a 6,000-record
   node-revalidated reservoir (canonical retained Cells fill any remainder). The
   composition is held by demand rather than by a timer: the plane publishes what
   it is short of per class, spends of staged Cells are detected exactly, and

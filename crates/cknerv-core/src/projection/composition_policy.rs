@@ -7,7 +7,7 @@
 //! *why* a given cell deserves a slot.
 //!
 //! Everything that answers "why" lives here: the composition classes, the
-//! 20:65:15 quota, admission ordering and dedupe, the displacement
+//! 20:70:10 quota, admission ordering and dedupe, the displacement
 //! ratchet, and the refill queues. The dividing line, stated as a rule:
 //!
 //! > **"who is on stage, and what they look like" belongs to the stage;
@@ -93,8 +93,11 @@ fn class_of(kind: AssetKind) -> CompositionClass {
 /// *not* against the per-class counts a given refresh happened to land
 /// on. Those are what the composition could reach with the candidates it
 /// had; demand is the gap between that and what the product asks for, so
-/// it stays non-zero for as long as the gap is real. On live mainnet the
-/// gap opens at roughly 550 dao and 4,990 typed.
+/// it stays non-zero for as long as the gap is real. On live mainnet a
+/// cold boot opens a wide gap in both classes, but since the typed
+/// sampling rework the candidate supply is ample: the stage fills its
+/// whole typed quota within minutes of boot. What demand reports there
+/// is a boot transient the ratchet closes, not a standing shortfall.
 ///
 /// Plain is deliberately absent (design D5): plain slots keep being
 /// filled by the canonical fallback stream, which is what keeps recent
@@ -409,7 +412,7 @@ impl CuratedPolicy {
     ///
     /// * **Classes**: `asset_kind` dao → Dao, native → Plain, everything
     ///   else → Typed. Quotas come from the shared
-    ///   [`GalaxyCompositionTarget::for_total`] (20:65:15 bps) over the
+    ///   [`GalaxyCompositionTarget::for_total`] (20:70:10 bps) over the
     ///   FULL cell budget.
     /// * **Fill**: each class fills from its reservoir bucket first
     ///   (record rank order), with D5 outpoint dedupe at admission — an
@@ -827,7 +830,7 @@ impl CompositionPolicy for CuratedPolicy {
     /// The displacement rule IS the convergence guarantee. Victims are
     /// drawn only from `FALLBACK_GROUP`, so a curated member can never be
     /// displaced by another curated member — the curated set is a one-way
-    /// ratchet and the ratio climbs monotonically toward 20:65:15 instead
+    /// ratchet and the ratio climbs monotonically toward 20:70:10 instead
     /// of oscillating. A class holding nothing but curated members simply
     /// yields nobody, and the supply stops rather than trade one curated
     /// cell for another.

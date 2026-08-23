@@ -339,8 +339,8 @@ pub struct ChainCensus {
 /// each live outpoint, and they never enter the structural Cell projection or
 /// its Birth/Death/Link/Pulse stream.
 pub const GALAXY_COMPOSITION_DAO_BPS: u16 = 2_000;
-pub const GALAXY_COMPOSITION_TYPED_BPS: u16 = 6_500;
-pub const GALAXY_COMPOSITION_PLAIN_BPS: u16 = 1_500;
+pub const GALAXY_COMPOSITION_TYPED_BPS: u16 = 7_000;
+pub const GALAXY_COMPOSITION_PLAIN_BPS: u16 = 1_000;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GalaxyCompositionTarget {
@@ -1937,13 +1937,13 @@ mod tests {
     }
 
     #[test]
-    fn galaxy_composition_target_is_exact_20_65_15() {
+    fn galaxy_composition_target_is_exact_20_70_10() {
         assert_eq!(
             GalaxyCompositionTarget::for_total(6_000),
             GalaxyCompositionTarget {
                 dao: 1_200,
-                typed: 3_900,
-                plain: 900,
+                typed: 4_200,
+                plain: 600,
             }
         );
         assert_eq!(GalaxyCompositionTarget::for_total(7).total(), 7);
@@ -1956,8 +1956,8 @@ mod tests {
             GalaxyCompositionTarget::for_total(12_000),
             GalaxyCompositionTarget {
                 dao: 2_400,
-                typed: 7_800,
-                plain: 1_800,
+                typed: 8_400,
+                plain: 1_200,
             }
         );
         assert_eq!(
@@ -1965,7 +1965,7 @@ mod tests {
             12_000,
             "the remainder-to-plain rule keeps the quota exactly the budget"
         );
-        // Rounding lands entirely in plain: floor(0.20·7) + floor(0.65·7)
+        // Rounding lands entirely in plain: floor(0.20·7) + floor(0.70·7)
         // + the rest.
         assert_eq!(
             GalaxyCompositionTarget::for_total(7),
