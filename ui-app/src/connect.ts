@@ -10,6 +10,12 @@ import type {
   ChainNode,
   Peer,
 } from '@cknerv/types';
+import {
+  beginBootPhase,
+  completeBootPhase,
+  failBootPhase,
+  reportBootSnapshotProgress,
+} from '@cknerv/ui';
 
 const API_BASE = '';
 
@@ -37,6 +43,55 @@ export async function fetchChainSnapshot(): Promise<ChainSnapshotResponse> {
   return resp.json();
 }
 
+/** A header is a denominator only if it parses to a real byte count. Anything
+ *  else is indeterminate — never zero, because a zero denominator is exactly
+ *  the invented percentage the readout refuses to show. */
+function parseContentLength(header: string | null): number | null {
+  if (header === null) return null;
+  const total = Number(header);
+  return Number.isFinite(total) && total > 0 ? total : null;
+}
+
+/** Read a snapshot body to bytes, reporting the byte count as it arrives.
+ *
+ * This is the only continuous measure in the boot sequence and it is exact:
+ * the snapshot routes send a real `content-length` and no `content-encoding`,
+ * so received/total is the true share of the download rather than an eased
+ * guess. An environment without a streaming body still resolves — it just
+ * reports once, at the end, which is the pre-existing behaviour plus a tick. */
+async function readSnapshotBody(resp: Response): Promise<ArrayBuffer> {
+  const total = parseContentLength(resp.headers.get('content-length'));
+  if (!resp.body) {
+    const whole = await resp.arrayBuffer();
+    reportBootSnapshotProgress(whole.byteLength, total);
+    return whole;
+  }
+  const reader = resp.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  // Headers are in, so the transfer has a size and a starting point; say so
+  // before the first chunk rather than after it.
+  reportBootSnapshotProgress(0, total);
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    chunks.push(value);
+    received += value.byteLength;
+    reportBootSnapshotProgress(received, total);
+  }
+  // One exact-size allocation: the columnar decoder reads an ArrayBuffer, and
+  // a chunk's own buffer may be a window into a larger pooled one.
+  const body = new ArrayBuffer(received);
+  const view = new Uint8Array(body);
+  let offset = 0;
+  for (const chunk of chunks) {
+    view.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
+}
+
 /** The cell galaxy, columnar when the server offers it.
  *
  * The columnar form is the same snapshot in a shape the main thread mostly
@@ -46,20 +101,58 @@ export async function fetchChainSnapshot(): Promise<ChainSnapshotResponse> {
  * results, both hashes included, with no mismatches. Anything at all going
  * wrong — an older server that 404s the route, an unknown format
  * version, a truncated buffer — falls back to JSON, because a slower boot
- * is a cost and a failed boot is a bug. */
+ * is a cost and a failed boot is a bug.
+ *
+ * This download is also the longest thing the visitor waits through — the
+ * whole of it happens before React exists — so both routes stream their body
+ * and report bytes into the boot record, which the static shell in
+ * `index.html` is reading meanwhile. Both routes, because the fallback is the
+ * bigger download: the slow path is where the count matters most. */
 export async function fetchCellsSnapshot(): Promise<
   ProjectionSnapshotResponse<CellGalaxySnapshot>
 > {
+  // The phase covers the request, not just its bytes: on a slow link the
+  // wait for headers is a real part of it and the readout may not go blank.
+  beginBootPhase('snapshot');
   try {
     const resp = await fetch(`${API_BASE}/api/projections/cells/snapshot.bin`);
     if (resp.ok) {
-      const view = decodeCellsColumnar(await resp.arrayBuffer());
-      return { revision: view.revision, snapshot: cellsSnapshotFromColumnar(view) };
+      const body = await readSnapshotBody(resp);
+      completeBootPhase('snapshot');
+      beginBootPhase('decode');
+      const view = decodeCellsColumnar(body);
+      const snapshot = cellsSnapshotFromColumnar(view);
+      completeBootPhase('decode');
+      return { revision: view.revision, snapshot };
     }
   } catch (error) {
     console.warn('columnar cells snapshot unusable; falling back to JSON', error);
   }
-  const resp = await fetch(`${API_BASE}/api/projections/cells/snapshot`);
-  if (!resp.ok) throw new Error(`cells snapshot: ${resp.status}`);
-  return resp.json();
+  // Which line a failure below is charged to: until the bytes are in the
+  // fault belongs to the download, after that to the parse. Either write is a
+  // no-op against a phase that already finished, so a fallback can never
+  // demote what the columnar route got through.
+  let faultedPhase: 'snapshot' | 'decode' = 'snapshot';
+  try {
+    const resp = await fetch(`${API_BASE}/api/projections/cells/snapshot`);
+    if (!resp.ok) throw new Error(`cells snapshot: ${resp.status}`);
+    const body = await readSnapshotBody(resp);
+    completeBootPhase('snapshot');
+    faultedPhase = 'decode';
+    beginBootPhase('decode');
+    // The reader consumed the body, so `resp.json()` is no longer available.
+    const parsed = JSON.parse(
+      new TextDecoder().decode(body),
+    ) as ProjectionSnapshotResponse<CellGalaxySnapshot>;
+    completeBootPhase('decode');
+    return parsed;
+  } catch (error) {
+    // Both routes are dead. The bootstrap catch renders the error text; this
+    // marks the line so a banner already on screen carries the fault too.
+    failBootPhase(
+      faultedPhase,
+      error instanceof Error ? error.message : String(error),
+    );
+    throw error;
+  }
 }

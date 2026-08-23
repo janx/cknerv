@@ -9,7 +9,26 @@
     </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Boot shell. The bundle is a module script and the cells snapshot is
+           several megabytes, so on an ordinary remote connection this markup is
+           the only thing on screen for the first three seconds — measured, and
+           previously three seconds of pure black. It sits INSIDE #root, so
+           `root.render` replaces it atomically and no teardown code exists.
+           Reads correctly with no JS at all: a visitor whose bundle never
+           arrives is looking at INSTRUMENT, which is exactly true.
+           Geometry and voice mirror StreamHealthBanner (edge-bound 30px band);
+           the colours are HUD_COLORS.cyanWire / dim / danger from
+           packages/ui/src/components/hud/hudTheme.ts, spelled out because
+           index.html cannot import. No animation — text state only. -->
+      <div id="cknerv-boot-shell" data-boot-shell role="status" aria-live="polite"
+           style="position:absolute;top:36px;left:0;right:0;height:30px;display:flex;align-items:center;justify-content:center;gap:10px;box-sizing:border-box;font-family:ui-monospace,monospace;font-size:10.5px;color:#20F0FF;background:linear-gradient(90deg,transparent,rgba(32,240,255,.13) 28%,rgba(0,0,0,.78) 50%,rgba(32,240,255,.13) 72%,transparent);border-bottom:1px solid rgba(32,240,255,.45)">
+        <span aria-hidden="true">◇</span>
+        <span style="font-weight:700;letter-spacing:2px">STAGE POWER-ON</span>
+        <span id="cknerv-boot-shell-phase" style="font-size:9px;letter-spacing:1.2px">INSTRUMENT</span>
+        <span id="cknerv-boot-shell-detail" style="font-size:9px;letter-spacing:1.2px;color:#7C8794"></span>
+      </div>
+    </div>
     <script src="/runtime-config.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
