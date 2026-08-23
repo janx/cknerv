@@ -350,7 +350,13 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
     : compactTopBar
       ? STATUS_STRIP_HEIGHTS.compact
       : STATUS_STRIP_HEIGHTS.wide;
-  const contentTop = topBarHeight + (streamInterrupted ? 42 : 12);
+  // Same one-band-one-shift rule as the WarningBar below: whichever banner is
+  // standing in the slot pushes the rails clear of it. Without the boot term
+  // the rails jump up the moment `data_plane` goes live — measured seconds
+  // before `fabric` closes the sequence — and tuck their titles 18px under a
+  // band that is still very much standing.
+  const contentTop = topBarHeight
+    + (bootReadoutVisible || streamInterrupted ? 42 : 12);
   const railStyle: CSSProperties = narrowRail
     ? { ...MESH_RAIL_STYLE, top: contentTop, maxHeight: `calc(100vh - ${contentTop + 14}px)`, overflowX: 'hidden', overflowY: 'auto', pointerEvents: railScrolls ? 'auto' : 'none', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,152,48,.35) transparent' }
     : { ...MESH_RAIL_STYLE, top: contentTop };
