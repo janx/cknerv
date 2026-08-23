@@ -114,43 +114,31 @@ export const HUD_COLORS = {
 
 // ——— Cell identity ———————————————————————————————————————————————————————
 //
-// Which colour the CELL surfaces wear, on one line, because this is a question
-// only a person looking at the running stage can answer:
+// VERDICT, adjudicated at the running stage on 2026-08-23: the cell mesh wears
+// the galaxy's rose on BOTH surfaces — the CELL MESH panel and the cell card's
+// frame — and cyan goes back to belonging to the peer plane. The gate shipped
+// this behind a one-line switch with two alternatives beside it (rose on the
+// panel only, and the pre-rebind all-cyan HUD); they were looked at side by
+// side and lost. A settled decision is documented, not kept as a pair of dead
+// branches waiting for a question nobody is asking any more.
 //
-//   'rose-full'   panel AND card frame carry the organism's blood
-//   'rose-panel'  only the CELL MESH panel turns; the card keeps its cyan chrome
-//   'cyan'        nothing turns — the pre-rebind HUD, kept revertible
-//
-// The two derived constants below are what every surface reads, so no file
-// downstream ever re-asks the question. The rule they encode: the FRAME carries
-// identity — a panel header's module tag, a card's plate border, the tether
-// that ties the card to the thing it is about. The CONTENT keeps its own
-// vocabulary — the braid's cyan, the memory violet, the value golds, the fact
-// accents that name a lock or an asset. So a rose card frame around a cyan
-// register is not a clash; it is the card saying "this is a Cell" in its
-// border and "here is what the Cell holds" in its body.
-export type CellMeshIdentity = 'rose-full' | 'rose-panel' | 'cyan';
+// The two constants below are what every surface reads, so no file downstream
+// ever re-asks the question. The rule they encode: the FRAME carries identity —
+// a panel header's module tag, a card's plate border, the tether that ties the
+// card to the thing it is about. The CONTENT keeps its own vocabulary — the
+// braid's cyan, the memory violet, the value golds, the fact accents that name
+// a lock or an asset. So a rose card frame around a cyan register is not a
+// clash; it is the card saying "this is a Cell" in its border and "here is what
+// the Cell holds" in its body.
 
-export const CELL_MESH_IDENTITY: CellMeshIdentity = 'rose-full';
+/** The CELL MESH panel's own colour — its module tag, and any chrome that
+ *  exists to say which organism the panel is counting. */
+export const CELL_PANEL_ACCENT = HUD_COLORS.cellRose;
 
-/** The three variants spelled out, so flipping the line above is the whole
- *  edit and nobody has to re-derive what each one meant. */
-const CELL_IDENTITY_SURFACES: Readonly<Record<CellMeshIdentity, {
-  /** The CELL MESH panel's own colour — its module tag, and any chrome that
-   *  exists to say which organism the panel is counting. */
-  panel: string;
-  /** The cell dossier's frame colour: plate border, card glow, scan beam, and
-   *  the tether back to the Cell on stage while no fact is selected. A fact IS
-   *  selected → that fact's own colour wins, as it always did. */
-  card: string;
-}>> = {
-  'rose-full': { panel: HUD_COLORS.cellRose, card: HUD_COLORS.cellRose },
-  'rose-panel': { panel: HUD_COLORS.cellRose, card: HUD_COLORS.cyanWire },
-  cyan: { panel: HUD_COLORS.cyanWire, card: HUD_COLORS.cyanWire },
-};
-
-export const CELL_PANEL_ACCENT = CELL_IDENTITY_SURFACES[CELL_MESH_IDENTITY].panel;
-export const CELL_CARD_ACCENT = CELL_IDENTITY_SURFACES[CELL_MESH_IDENTITY].card;
+/** The cell dossier's frame colour: plate border, card glow, scan beam, and the
+ *  tether back to the Cell on stage while no fact is selected. A fact IS
+ *  selected → that fact's own colour wins, as it always did. */
+export const CELL_CARD_ACCENT = HUD_COLORS.cellRose;
 
 export const HUD_FONTS = {
   display: "'Saira', system-ui, sans-serif",

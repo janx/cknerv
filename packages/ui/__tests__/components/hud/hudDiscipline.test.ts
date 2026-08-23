@@ -20,7 +20,12 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { HUD_COLORS, HUD_TYPE } from '../../../src/components/hud/hudTheme';
+import {
+  CELL_CARD_ACCENT,
+  CELL_PANEL_ACCENT,
+  HUD_COLORS,
+  HUD_TYPE,
+} from '../../../src/components/hud/hudTheme';
 import {
   PANEL_WATERMARK_PX,
   PLATE_CUT_CLIP,
@@ -205,6 +210,17 @@ describe('hud discipline', () => {
     // and MESH·03 stopped reading as two panels about two different things.
     // Whatever the cell identity is retuned to, it has to clear the peer plane.
     expect(rgbDistance(HUD_COLORS.cellRose, HUD_COLORS.peerWire))
+      .toBeGreaterThan(SEPARATION_FLOOR);
+
+    // And the verdict the gate settled on, now that the switch that used to
+    // hold three answers is gone: BOTH cell surfaces wear the rose. If either
+    // one drifts back toward the peer plane's cyan, the pair collapses again —
+    // asked of the constants the surfaces actually read, not of the palette.
+    expect(CELL_PANEL_ACCENT).toBe(HUD_COLORS.cellRose);
+    expect(CELL_CARD_ACCENT).toBe(HUD_COLORS.cellRose);
+    expect(rgbDistance(CELL_PANEL_ACCENT, HUD_COLORS.peerWire))
+      .toBeGreaterThan(SEPARATION_FLOOR);
+    expect(rgbDistance(CELL_CARD_ACCENT, HUD_COLORS.peerWire))
       .toBeGreaterThan(SEPARATION_FLOOR);
   });
 
