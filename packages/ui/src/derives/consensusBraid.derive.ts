@@ -3,6 +3,7 @@ import {
   deriveCellMorphologyGenome,
   deriveCellMorphologyTopology,
   type CellMorphologyTopology,
+  type CellMorphologyTopologyOptions,
   type MorphologyPoint3,
 } from './cellMorphology.derive';
 import { CELL_GALAXY_PALETTE } from '../visualPalette';
@@ -210,8 +211,9 @@ export function consensusBraidPathPoint(
  */
 export function deriveConsensusBraidTopology(
   cell: Cell,
+  options: CellMorphologyTopologyOptions = {},
 ): ConsensusBraidTopology {
-  return deriveCellMorphologyTopology(cell);
+  return deriveCellMorphologyTopology(cell, options);
 }
 
 export function consensusBraidContributorColor(

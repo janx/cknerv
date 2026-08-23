@@ -2,6 +2,7 @@ import type {
   Cell,
   CellSemanticRecord,
   EnrichmentSourceStatus,
+  SemanticContentDecode,
   SemanticScript,
   ShapeSeed,
 } from '@cknerv/types';
@@ -288,4 +289,56 @@ export function deriveCellSemanticMorphologyOverlay(
     roleGlyphs,
     fingerprint,
   };
+}
+
+/** Segment labels an inventory decode may spell its payload with. ckbadger
+ *  owns the vocabulary, so each fact lists the spellings we know and any
+ *  decode that uses none of them falls back to its own summary rather than
+ *  letting us invent a reading. Lives here, in the pure layer, because both
+ *  the DOM readout and the portrait's cartouche read the same words — two
+ *  copies would drift the day ckbadger adds a spelling. */
+export const OBJECT_SEGMENT_LABELS = {
+  contentType: ['content_type', 'contenttype', 'content-type', 'mime_type', 'mime'],
+  clusterName: ['cluster_name', 'name', 'cluster'],
+  account: ['account', 'account_name', 'domain', 'name'],
+  token: ['token_index', 'token_id', 'index', 'token'],
+  collection: ['cluster_name', 'cluster', 'collection'],
+} as const;
+
+export function decodeSegmentValue(
+  decode: SemanticContentDecode,
+  labels: readonly string[],
+): string | null {
+  for (const label of labels) {
+    const segment = decode.segments.find((candidate) => (
+      candidate.label.toLowerCase().replaceAll('-', '_') === label
+        .replaceAll('-', '_')
+    ));
+    const value = segment?.value.trim();
+    if (value) return value;
+  }
+  return null;
+}
+
+/** The collection a crafted Cell belongs to, as a stable string, or null.
+ *
+ *  Precedence is deliberate. A decoded cluster/collection segment is the
+ *  collection SAID OUT LOUD by the decode, so it wins. `asset.name` is the
+ *  next best thing an m-nft record carries. `asset.standard` is NOT consulted:
+ *  it names a standard, not a collection, and tinting every COTA item alike
+ *  would assert a kinship the chain never claimed.
+ *
+ *  Namespaced so a cluster called "cota" cannot collide with an asset called
+ *  "cota" and quietly share a tint. */
+export function cellSemanticCollectionIdentity(
+  record: CellSemanticRecord | null | undefined,
+): string | null {
+  const decode = record?.content?.deterministic;
+  if (decode) {
+    const named = decodeSegmentValue(decode, OBJECT_SEGMENT_LABELS.collection);
+    if (named) return `cluster:${named}`;
+  }
+  const assetName = record?.asset?.name?.trim();
+  if (assetName) return `asset:${assetName}`;
+  return null;
 }

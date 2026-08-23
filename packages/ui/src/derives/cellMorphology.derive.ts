@@ -142,6 +142,41 @@ export interface MorphologyAgreement {
   midpoint: MorphologyPoint3;
 }
 
+/** How many collection glyphs a cartouche can wear. Each maps to the harmonic
+ *  order its outline leans on, so items of one collection share a lobe count
+ *  while every item keeps its own amplitudes. */
+export const MINT_MARK_GLYPHS = 4;
+
+/** Bounded hue rotation, in turns. A shift, not a repaint: the cartouche has
+ *  to stay recognisably part of the object palette while separating a handful
+ *  of collections on screen. */
+export const MINT_MARK_MAX_HUE_SHIFT = 0.22;
+
+/** Outline resolution of one cartouche, closing point excluded. */
+export const MINT_MARK_POINTS = 14;
+
+/** The collection tint a detail-view enrichment record buys. Null everywhere
+ *  the collection is unknown — the galaxy, and a panel whose record has not
+ *  landed yet — and a neutral cartouche is the honest answer there. */
+export interface MintMarkAccent {
+  hueShift: number;
+  glyph: number;
+}
+
+/** A maker's mark stamped at the carrier's crown: closed, compact, and
+ *  asymmetric on purpose. Against a token's periodicity and an identity's
+ *  symmetry it has to read as neither — as a thing that was finished. */
+export interface MorphologyMintMark {
+  center: MorphologyPoint3;
+  radius: number;
+  /** Closed by construction: the last point repeats the first exactly. */
+  points: readonly MorphologyPoint3[];
+  /** 0 when no collection is known. */
+  hueShift: number;
+  /** null when no collection is known. */
+  glyph: number | null;
+}
+
 /** Renderer-independent V2 structure shared by production and calibration. */
 export interface CellMorphologyTopology {
   genome: CellMorphologyGenome;
@@ -151,6 +186,8 @@ export interface CellMorphologyTopology {
   crossings: readonly MorphologyBraidCrossing[];
   dataMarks: readonly MorphologyBraidDataMark[];
   agreements: readonly MorphologyAgreement[];
+  /** Present only for the crafted families. */
+  mintMark: MorphologyMintMark | null;
   presenceScale: number;
   birthPhase: number;
   segmentCount: number;
@@ -1071,7 +1108,109 @@ function deriveAgreements(
     ));
 }
 
-export function deriveCellMorphologyTopology(cell: Cell): CellMorphologyTopology {
+/** The families that hold a crafted, individually-minted artifact: spore
+ *  ITEMS are digital objects too, and `object` holds the clusters, M-NFTs,
+ *  COTA and CKBFS cells beside them. */
+const MINT_MARK_FAMILIES: readonly AssetKind[] = ['spore', 'object'];
+
+export function isMintMarkAssetKind(kind: AssetKind | undefined): boolean {
+  return kind !== undefined && MINT_MARK_FAMILIES.includes(kind);
+}
+
+function collectionWord(collection: string): number {
+  // Case- and whitespace-normalised: "Nervape" and "nervape " are one
+  // collection, and two that differ only in case SHOULD collide.
+  const normalized = collection.trim().toLowerCase();
+  let hash = 0x811c_9dc5;
+  for (let index = 0; index < normalized.length; index += 1) {
+    hash ^= normalized.charCodeAt(index);
+    hash = Math.imul(hash, 0x0100_0193);
+  }
+  return hash >>> 0;
+}
+
+/** Stable tint for a named collection, or null when none is known. Pure and
+ *  total: the same collection string always buys the same cartouche accent,
+ *  in the portrait today and anywhere the name reaches later. */
+export function mintMarkCollectionAccent(
+  collection: string | null | undefined,
+): MintMarkAccent | null {
+  if (typeof collection !== 'string' || collection.trim().length === 0) return null;
+  const word = collectionWord(collection);
+  const spread = mix32(word) / UINT32_SCALE;
+  return {
+    hueShift: (spread - 0.5) * 2 * MINT_MARK_MAX_HUE_SHIFT,
+    glyph: mix32(word ^ 0x9e37_79b1) % MINT_MARK_GLYPHS,
+  };
+}
+
+/** Stamp the mark at the carrier's crown — its highest point, which is a
+ *  deterministic place on a closed curve — and lay the ring flat in that
+ *  point's transported frame so it sits ON the body rather than beside it. */
+function deriveMintMark(
+  type: TypeMorphology,
+  carrier: readonly MorphologyPoint3[],
+  frames: readonly CarrierFrame[],
+  accent: MintMarkAccent | null,
+): MorphologyMintMark {
+  const count = carrier.length - 1;
+  let crown = 0;
+  for (let index = 1; index < count; index += 1) {
+    if (carrier[index][1] > carrier[crown][1]) crown = index;
+  }
+  const center = carrier[crown];
+  const frame = frames[crown];
+  // Seeded from the TYPE seed, which hashes the script including args, so the
+  // pattern is this item's and no sibling repeats it.
+  const random = seedStream(type.seed, `type/${type.family}/mint`);
+  const radius = 0.062 + random() * 0.03;
+  const harmonics = [1, 2, 3].map((order) => ({
+    order,
+    // Harmonic 1 is what forbids central symmetry: without it a two-and-three
+    // lobed outline can land back on a shape that reads as a seal.
+    amplitude: (order === 1 ? 0.1 : 0.06) + random() * 0.12,
+    phase: random() * CELL_MORPHOLOGY_TAU,
+  }));
+  if (accent !== null) {
+    harmonics.push({
+      order: 2 + (accent.glyph % MINT_MARK_GLYPHS),
+      amplitude: 0.16,
+      phase: 0,
+    });
+  }
+  const points: MorphologyPoint3[] = [];
+  for (let step = 0; step < MINT_MARK_POINTS; step += 1) {
+    const angle = (step / MINT_MARK_POINTS) * CELL_MORPHOLOGY_TAU;
+    const modulation = harmonics.reduce((total, harmonic) => (
+      total + harmonic.amplitude * Math.cos(harmonic.order * angle + harmonic.phase)
+    ), 0);
+    const local = radius * (1 + clamp(modulation, -0.62, 0.62));
+    points.push(add(center, add(
+      scale(frame.normal, Math.cos(angle) * local),
+      scale(frame.binormal, Math.sin(angle) * local),
+    )));
+  }
+  // Closed: the outline returns to exactly where it started.
+  points.push([...points[0]] as [number, number, number]);
+  return {
+    center,
+    radius,
+    points,
+    hueShift: accent?.hueShift ?? 0,
+    glyph: accent?.glyph ?? null,
+  };
+}
+
+export interface CellMorphologyTopologyOptions {
+  /** Detail-view only. The galaxy never knows a collection and stamps a
+   *  neutral cartouche; so does a panel whose enrichment has not landed. */
+  collection?: string | null;
+}
+
+export function deriveCellMorphologyTopology(
+  cell: Cell,
+  options: CellMorphologyTopologyOptions = {},
+): CellMorphologyTopology {
   const genome = deriveCellMorphologyGenome(cell);
   const carrier = deriveMorphologyCarrier(genome.type);
   const frames = deriveMorphologyFrames(carrier);
@@ -1079,10 +1218,18 @@ export function deriveCellMorphologyTopology(cell: Cell): CellMorphologyTopology
   const crossings = deriveCrossings(strands, genome.lock);
   const dataMarks = deriveTopologyDataMarks(strands, genome);
   const agreements = deriveAgreements(crossings, genome.data, dataMarks);
+  const mintMark = isMintMarkAssetKind(genome.type.family)
+    ? deriveMintMark(
+      genome.type,
+      carrier,
+      frames,
+      mintMarkCollectionAccent(options.collection),
+    )
+    : null;
   const segmentCount = strands.reduce(
     (total, strand) => total + Math.max(0, strand.points.length - 1),
     0,
-  ) + dataMarks.length;
+  ) + dataMarks.length + (mintMark === null ? 0 : mintMark.points.length - 1);
   const nodeCount = agreements.length;
   return {
     genome,
@@ -1092,6 +1239,7 @@ export function deriveCellMorphologyTopology(cell: Cell): CellMorphologyTopology
     crossings,
     dataMarks,
     agreements,
+    mintMark,
     presenceScale: genome.presenceScale,
     birthPhase: ((Math.trunc(cell.birth_block) % 4096) + 4096) % 4096
       / 4096 * CELL_MORPHOLOGY_TAU,

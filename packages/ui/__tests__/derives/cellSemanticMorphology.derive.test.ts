@@ -8,6 +8,7 @@ import type {
 } from '@cknerv/types';
 import { deriveConsensusBraidTopology } from '../../src/derives/consensusBraid.derive';
 import {
+  cellSemanticCollectionIdentity,
   deriveCellSemanticMorphologyOverlay,
   semanticScriptShapeSeed,
   validateCellSemanticRecordForMorphology,
@@ -202,5 +203,79 @@ describe('ckbadger portrait morphology overlay', () => {
       phase: 'ready',
     }).status).toBe('mismatch');
     expect(deriveCellSemanticMorphologyOverlay(CELL, invalidRange)).toBeNull();
+  });
+});
+
+describe('cellSemanticCollectionIdentity', () => {
+  function recordWith(overrides: Partial<CellSemanticRecord>): CellSemanticRecord {
+    return {
+      out_point: { tx_hash: `0x${'ab'.repeat(32)}`, index: 0 },
+      source: 'ckbadger',
+      as_of: { block_number: 1, block_hash: `0x${'11'.repeat(32)}` },
+      observed_at_block: 1,
+      updated_at_ms: 0,
+      facets: [],
+      ...overrides,
+    } as CellSemanticRecord;
+  }
+
+  function decode(label: string, value: string): Partial<CellSemanticRecord> {
+    return {
+      content: {
+        total_bytes: 64,
+        deterministic: {
+          kind: 'spore',
+          summary: 'a spore',
+          segments: [{
+            label,
+            meaning: 'collection',
+            value,
+            start_byte: 0,
+            end_byte: 8,
+          }],
+        },
+      },
+    } as Partial<CellSemanticRecord>;
+  }
+
+  it('reads a named cluster out of the decode, whatever it is spelled', () => {
+    for (const label of ['cluster_name', 'cluster', 'collection', 'Cluster-Name']) {
+      expect(cellSemanticCollectionIdentity(recordWith(decode(label, 'Nervape'))))
+        .toBe('cluster:Nervape');
+    }
+  });
+
+  it('falls back to the asset name and never to the standard', () => {
+    expect(cellSemanticCollectionIdentity(recordWith({
+      asset: { type_script_hash: `0x${'cd'.repeat(32)}`, name: 'Azuki', standard: 'm_nft' },
+    }))).toBe('asset:Azuki');
+
+    // A standard is not a collection: tinting every m-nft alike would claim a
+    // kinship the chain never stated.
+    expect(cellSemanticCollectionIdentity(recordWith({
+      asset: { type_script_hash: `0x${'cd'.repeat(32)}`, standard: 'm_nft' },
+    }))).toBeNull();
+  });
+
+  it('prefers the decoded cluster over the asset name', () => {
+    expect(cellSemanticCollectionIdentity(recordWith({
+      ...decode('cluster_name', 'Nervape'),
+      asset: { type_script_hash: `0x${'cd'.repeat(32)}`, name: 'Azuki' },
+    }))).toBe('cluster:Nervape');
+  });
+
+  it('namespaces so a cluster cannot be confused with an asset', () => {
+    expect(cellSemanticCollectionIdentity(recordWith(decode('cluster', 'cota'))))
+      .not.toBe(cellSemanticCollectionIdentity(recordWith({
+        asset: { type_script_hash: `0x${'cd'.repeat(32)}`, name: 'cota' },
+      })));
+  });
+
+  it('says nothing when there is nothing to say', () => {
+    expect(cellSemanticCollectionIdentity(null)).toBeNull();
+    expect(cellSemanticCollectionIdentity(undefined)).toBeNull();
+    expect(cellSemanticCollectionIdentity(recordWith({}))).toBeNull();
+    expect(cellSemanticCollectionIdentity(recordWith(decode('cluster_name', '   '))))
+      .toBeNull();
   });
 });

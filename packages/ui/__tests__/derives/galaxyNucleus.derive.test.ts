@@ -343,3 +343,63 @@ describe('galaxy consensus braid LOD', () => {
     expect(buffers.nodeResolve[passiveKnot]).toBeLessThan(0.2);
   });
 });
+
+describe('galaxy braid segment budget', () => {
+  // The fixture above is a comfortable case (multisig, 96 bytes). The budget
+  // only bites at the other end: a five-strand lock spends 6 * 60 = 360 of the
+  // 420 on paths alone, leaving 60 for everything else.
+  const LOCK_KINDS = ['sighash', 'multisig', 'acp', 'omnilock', 'other'] as const;
+  const ASSET_KINDS = [
+    'native', 'sudt', 'xudt', 'dao', 'spore', 'other', 'object', 'identity',
+  ] as const;
+
+  it('stays inside the cap for every family at full data density', () => {
+    for (const lock_kind of LOCK_KINDS) {
+      for (const asset_kind of ASSET_KINDS) {
+        for (const data_bytes of [0, 16, 96, 0xffff_ffff]) {
+          const cell: Cell = {
+            ...CELL,
+            lock_kind,
+            asset_kind,
+            data_bytes,
+            data_hex: data_bytes === 0 ? '0x' : `0x${'ff'.repeat(64)}`,
+            type_shape_seed: asset_kind === 'native' ? null : [9, 11],
+          };
+          const braid = deriveGalaxyConsensusBraid(cell);
+          const label = `${lock_kind}/${asset_kind}/${data_bytes}`;
+          expect(`${label}:${braid.detailWeights.length <= CELL_MORPHOLOGY_MAX_SEGMENTS}`)
+            .toBe(`${label}:true`);
+          expect(braid.colors).toHaveLength(braid.segments.length);
+          expect(braid.detailWeights).toHaveLength(braid.segments.length / 6);
+        }
+      }
+    }
+  });
+
+  it('draws the crafted families their maker mark and nobody else', () => {
+    for (const asset_kind of ASSET_KINDS) {
+      const cell: Cell = {
+        ...CELL,
+        asset_kind,
+        type_shape_seed: asset_kind === 'native' ? null : [9, 11],
+      };
+      const topology = deriveConsensusBraidTopology(cell);
+      const crafted = asset_kind === 'spore' || asset_kind === 'object';
+      expect(`${asset_kind}:${topology.mintMark !== null}`)
+        .toBe(`${asset_kind}:${crafted}`);
+
+      // The mark is reserved out of the auxiliary budget, so a crafted cell
+      // spends its outline WITHOUT overrunning — and without silently losing
+      // the knots or the stitches that were already there.
+      const braid = deriveGalaxyConsensusBraid(cell);
+      expect(braid.knots).toHaveLength(topology.agreements.length);
+      expect(braid.detailWeights.length).toBeLessThanOrEqual(
+        CELL_MORPHOLOGY_MAX_SEGMENTS,
+      );
+      if (crafted) {
+        expect(braid.detailWeights.filter((weight) => weight === 0.88))
+          .toHaveLength((topology.mintMark?.points.length ?? 1) - 1);
+      }
+    }
+  });
+});

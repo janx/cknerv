@@ -109,9 +109,17 @@ export function deriveGalaxyConsensusBraid(cell: Cell): GalaxyConsensusBraid {
     (count, mark) => count + (mark.kind === 'double_knot' ? 3 : 2),
     0,
   );
+  // The cartouche is reserved BEFORE the paths are apportioned. A five-strand
+  // lock at full data density already lands on 420 exactly, so an outline
+  // added after this line would throw for the densest crafted cells; taken
+  // out of the reserve it costs three path segments and nobody sees it.
+  const mintMarkSegmentCount = topology.mintMark === null
+    ? 0
+    : topology.mintMark.points.length - 1;
   const auxiliarySegmentCount = topology.crossings.length
     + markSegmentCount
-    + topology.agreements.length;
+    + topology.agreements.length
+    + mintMarkSegmentCount;
   const pathCount = topology.strands.length + 1;
   const pathSegments = Math.max(1, Math.min(
     GALAXY_BRAID_PATH_SEGMENTS,
@@ -172,6 +180,14 @@ export function deriveGalaxyConsensusBraid(cell: Cell): GalaxyConsensusBraid {
       size: 0.045 + topology.genome.data.density * 0.018,
       alpha: 0.9,
     });
+  }
+
+  // The maker's mark rides the same near-LOD fade as the rest of the code.
+  if (topology.mintMark !== null) {
+    const { points } = topology.mintMark;
+    for (let step = 0; step < points.length - 1; step += 1) {
+      addSegment(points[step], points[step + 1], CONSENSUS_BRAID_PALETTE.gold, 0.88);
+    }
   }
 
   if (detailWeights.length > CELL_MORPHOLOGY_MAX_SEGMENTS) {

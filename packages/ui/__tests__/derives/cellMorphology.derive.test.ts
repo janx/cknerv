@@ -4,6 +4,10 @@ import {
   CELL_MORPHOLOGY_DATA_SLOTS,
   CELL_MORPHOLOGY_MAX_NODES,
   CELL_MORPHOLOGY_MAX_SEGMENTS,
+  MINT_MARK_GLYPHS,
+  MINT_MARK_MAX_HUE_SHIFT,
+  MINT_MARK_POINTS,
+  mintMarkCollectionAccent,
   deriveCellMorphologyGenome,
   deriveCellMorphologyTopology,
   morphologyFallbackSeed,
@@ -56,6 +60,12 @@ const round = (value: number): string => value.toFixed(6);
 const pointList = (list: readonly (readonly number[])[]): string =>
   list.map((point) => point.map(round).join(',')).join(';');
 
+function mintMarkSegments(
+  topology: ReturnType<typeof deriveCellMorphologyTopology>,
+): number {
+  return topology.mintMark === null ? 0 : topology.mintMark.points.length - 1;
+}
+
 /** Every geometric field the braid carried BEFORE class signatures existed,
  *  flattened. Deliberately excludes anything a signature commit adds — so one
  *  set of recorded literals stays valid across all three of them. */
@@ -78,8 +88,12 @@ function topologyDigestBody(
       `${round(a.parameter)}|${a.pair}|${a.ordinal}|${a.crossingIndex}`
       + `|${a.dataSlot}|${a.kind}|${pointList([a.pointA, a.pointB, a.midpoint])}`
     )).join('/'),
+    // The cartouche's OWN segments are excluded, so a crafted cell still has
+    // to hash to its recorded value: the mark is additive, and every line the
+    // braid already drew has to be where master left it.
     `${round(topology.presenceScale)}|${round(topology.birthPhase)}`
-    + `|${topology.segmentCount}|${topology.nodeCount}`,
+    + `|${topology.segmentCount - mintMarkSegments(topology)}`
+    + `|${topology.nodeCount}`,
   ].join('\n');
 }
 
@@ -672,5 +686,161 @@ describe('Identity registration seal', () => {
     expect(empty.genome.data.scheme).toBe('generic');
     expect(empty.dataMarks).toEqual([]);
     expect(empty.agreements).toEqual([]);
+  });
+});
+
+describe('Object mint mark cartouche', () => {
+  const crafted = ['spore', 'object'] as const;
+
+  it('stamps a closed mark on the crafted families and nowhere else', () => {
+    for (const family of crafted) {
+      const topology = deriveCellMorphologyTopology(cell({ asset_kind: family }));
+      const mark = topology.mintMark;
+      expect(`${family}:${mark !== null}`).toBe(`${family}:true`);
+      if (mark === null) continue;
+      // Closed: the outline returns to exactly where it started.
+      expect(mark.points.at(-1)).toEqual(mark.points[0]);
+      expect(mark.points.length).toBe(MINT_MARK_POINTS + 1);
+      expect(mark.points.every((point) => point.every(Number.isFinite))).toBe(true);
+      // Compact: the whole stamp lives inside its own neighbourhood.
+      for (const point of mark.points) {
+        const offset = Math.hypot(
+          point[0] - mark.center[0],
+          point[1] - mark.center[1],
+          point[2] - mark.center[2],
+        );
+        expect(offset).toBeLessThan(mark.radius * 2);
+      }
+    }
+
+    for (const family of ['native', 'sudt', 'xudt', 'dao', 'other', 'identity'] as const) {
+      const topology = deriveCellMorphologyTopology(cell({
+        asset_kind: family,
+        type_shape_seed: family === 'native' ? null : TYPE_SEED,
+      }));
+      expect(`${family}:${topology.mintMark}`).toBe(`${family}:null`);
+    }
+  });
+
+  it('is asymmetric — it can be mistaken for neither a train nor a seal', () => {
+    for (const family of crafted) {
+      for (const seed of [TYPE_SEED, [0x0b1e_c701, 0x4ac7_ed02]] as ShapeSeed[]) {
+        const mark = deriveCellMorphologyTopology(cell({
+          asset_kind: family,
+          type_shape_seed: seed,
+        })).mintMark;
+        expect(mark).not.toBeNull();
+        if (mark === null) continue;
+        const radii = mark.points.slice(0, -1).map((point) => Math.hypot(
+          point[0] - mark.center[0],
+          point[1] - mark.center[1],
+          point[2] - mark.center[2],
+        ));
+        // No rotational symmetry of any order the outline could express: a
+        // rotation by k steps never reproduces the radius profile.
+        for (let step = 1; step < radii.length; step += 1) {
+          const rotated = radii.map((_, index) => radii[(index + step) % radii.length]);
+          const matches = rotated.every((value, index) => (
+            Math.abs(value - radii[index]) < 1e-6
+          ));
+          expect(`${family}/${step}:${matches}`).toBe(`${family}/${step}:false`);
+        }
+        // And it is not one constant radius either.
+        expect(Math.max(...radii) - Math.min(...radii)).toBeGreaterThan(1e-3);
+      }
+    }
+  });
+
+  it('is deterministic per cell and individual per item', () => {
+    const sample = cell({ asset_kind: 'spore' });
+    expect(deriveCellMorphologyTopology(sample).mintMark)
+      .toEqual(deriveCellMorphologyTopology(sample).mintMark);
+
+    const sibling = deriveCellMorphologyTopology(cell({
+      asset_kind: 'spore',
+      type_shape_seed: [0x0b1e_c701, 0x4ac7_ed02],
+    })).mintMark;
+    expect(sibling).not.toEqual(deriveCellMorphologyTopology(sample).mintMark);
+  });
+
+  it('stamps a neutral cartouche when no collection is known', () => {
+    for (const collection of [undefined, null, '', '   ']) {
+      const mark = deriveCellMorphologyTopology(
+        cell({ asset_kind: 'object' }),
+        { collection },
+      ).mintMark;
+      expect(mark?.hueShift).toBe(0);
+      expect(mark?.glyph).toBeNull();
+      expect(mintMarkCollectionAccent(collection)).toBeNull();
+    }
+    // The galaxy never passes one, so its cartouche is neutral by default.
+    expect(deriveCellMorphologyTopology(cell({ asset_kind: 'object' })).mintMark?.glyph)
+      .toBeNull();
+  });
+
+  it('derives a stable accent from the collection string', () => {
+    const accent = mintMarkCollectionAccent('cluster:Nervape');
+    expect(accent).not.toBeNull();
+    expect(mintMarkCollectionAccent('cluster:Nervape')).toEqual(accent);
+    // Case and surrounding whitespace are not a different collection.
+    expect(mintMarkCollectionAccent('  cluster:nervape ')).toEqual(accent);
+    expect(mintMarkCollectionAccent('cluster:Azuki')).not.toEqual(accent);
+
+    const names = ['a', 'Nervape', 'cluster:x', '拯救民主', 'CKBFS', 'cota:9'];
+    for (const name of names) {
+      const derived = mintMarkCollectionAccent(name);
+      expect(derived).not.toBeNull();
+      if (derived === null) continue;
+      expect(Math.abs(derived.hueShift)).toBeLessThanOrEqual(MINT_MARK_MAX_HUE_SHIFT);
+      expect(Number.isInteger(derived.glyph)).toBe(true);
+      expect(derived.glyph).toBeGreaterThanOrEqual(0);
+      expect(derived.glyph).toBeLessThan(MINT_MARK_GLYPHS);
+    }
+    // The channel is real: several collections do not all land on one tint.
+    expect(new Set(names.map((name) => mintMarkCollectionAccent(name)?.hueShift)).size)
+      .toBeGreaterThan(1);
+  });
+
+  it('lets a collection change the mark without erasing the item', () => {
+    const sample = cell({ asset_kind: 'spore' });
+    const neutral = deriveCellMorphologyTopology(sample).mintMark;
+    const bound = deriveCellMorphologyTopology(sample, {
+      collection: 'cluster:Nervape',
+    }).mintMark;
+    expect(bound?.hueShift).not.toBe(0);
+    expect(bound?.points).not.toEqual(neutral?.points);
+    // Same stamp position and scale: the collection tints and inflects the
+    // outline, it does not restamp the mark somewhere else.
+    expect(bound?.center).toEqual(neutral?.center);
+    expect(bound?.radius).toBe(neutral?.radius);
+
+    // Two items of one collection differ from each other but agree on glyph.
+    const siblingA = deriveCellMorphologyTopology(cell({
+      asset_kind: 'spore',
+      type_shape_seed: [0x1111_0001, 0x2222_0001],
+    }), { collection: 'cluster:Nervape' }).mintMark;
+    const siblingB = deriveCellMorphologyTopology(cell({
+      asset_kind: 'spore',
+      type_shape_seed: [0x3333_0002, 0x4444_0002],
+    }), { collection: 'cluster:Nervape' }).mintMark;
+    expect(siblingA?.glyph).toBe(siblingB?.glyph);
+    expect(siblingA?.hueShift).toBe(siblingB?.hueShift);
+    expect(siblingA?.points).not.toEqual(siblingB?.points);
+  });
+
+  it('never lets a cartouche push a cell over the render budget', () => {
+    // A five-strand lock at full data density sits ON the cap, so the mark has
+    // to be reserved rather than appended.
+    for (const lock_kind of ['sighash', 'multisig', 'acp', 'omnilock', 'other'] as const) {
+      for (const family of crafted) {
+        const topology = deriveCellMorphologyTopology(cell({
+          asset_kind: family,
+          lock_kind,
+          data_bytes: 0xffff_ffff,
+        }), { collection: 'cluster:Nervape' });
+        expect(`${lock_kind}/${family}:${topology.segmentCount <= CELL_MORPHOLOGY_MAX_SEGMENTS}`)
+          .toBe(`${lock_kind}/${family}:true`);
+      }
+    }
   });
 });

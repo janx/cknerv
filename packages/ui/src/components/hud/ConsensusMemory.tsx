@@ -17,7 +17,10 @@ import {
   deriveMorphologyFrames,
   type MorphologyPoint3,
 } from '../../derives/cellMorphology.derive';
-import { deriveCellSemanticMorphologyOverlay } from '../../derives/cellSemanticMorphology.derive';
+import {
+  cellSemanticCollectionIdentity,
+  deriveCellSemanticMorphologyOverlay,
+} from '../../derives/cellSemanticMorphology.derive';
 import {
   consensusMemoryPortraitLayerOpacity,
   consensusMemoryPortraitResponse,
@@ -213,7 +216,16 @@ export default function ConsensusMemory({
   const recallConvergenceRef = useRef(0);
   const recallPhaseRef = useRef(0);
   const visual = useMemo(() => deriveCellVisual(cell), [cell]);
-  const topology = useMemo(() => deriveConsensusBraidTopology(cell), [
+  // Detail view only. The record is already anchor-validated by the panel, so
+  // a mismatched one never paints a collection onto the wrong Cell; the labs
+  // and the galaxy pass none and get a neutral cartouche. A plain string keeps
+  // the memo below honest where a fresh object would rebuild every tick.
+  const collection = useMemo(
+    () => cellSemanticCollectionIdentity(semanticRecord),
+    [semanticRecord],
+  );
+  const topology = useMemo(() => deriveConsensusBraidTopology(cell, { collection }), [
+    collection,
     cell.asset_kind,
     cell.birth_block,
     cell.capacity,
@@ -328,6 +340,19 @@ export default function ConsensusMemory({
         else color.copy(cyan).lerp(violet, 0.42);
         streamColors.push(color.r, color.g, color.b, color.r, color.g, color.b);
 
+      }
+    }
+
+    // The maker's mark rides the same stitch layer as the data code: one more
+    // closed outline in a buffer that already exists, no extra draw.
+    if (topology.mintMark !== null) {
+      const { points, hueShift } = topology.mintMark;
+      color.copy(gold).offsetHSL(hueShift, 0.06, 0.04);
+      for (let step = 0; step < points.length - 1; step += 1) {
+        stitchPositions.push(...points[step], ...points[step + 1]);
+        stitchColors.push(
+          color.r, color.g, color.b, color.r, color.g, color.b,
+        );
       }
     }
 

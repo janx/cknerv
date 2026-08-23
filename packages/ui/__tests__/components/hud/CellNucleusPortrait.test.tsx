@@ -101,7 +101,7 @@ describe('CellNucleusPortrait production language', () => {
     expect(MEMORY_SOURCE).not.toContain('READ_HEAD_TRAIL');
     expect(MEMORY_SOURCE).toContain('streamFlowGlow.computeLineDistances()');
     expect(MEMORY_SOURCE).toContain(
-      'const topology = useMemo(() => deriveConsensusBraidTopology(cell), [',
+      'const topology = useMemo(() => deriveConsensusBraidTopology(cell, { collection }), [',
     );
     expect(MEMORY_SOURCE).toContain('const curves = topology.strands.map(');
     expect(MEMORY_SOURCE).toContain('for (const mark of topology.dataMarks)');

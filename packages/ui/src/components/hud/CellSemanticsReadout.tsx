@@ -7,6 +7,10 @@ import type {
   SemanticFacet,
 } from '@cknerv/types';
 import { formatSemanticAssetAmount, midTruncate } from './cellFormat';
+import {
+  OBJECT_SEGMENT_LABELS,
+  decodeSegmentValue,
+} from '../../derives/cellSemanticMorphology.derive';
 import { HUD_COLORS, HUD_TYPE, rgba } from './hudTheme';
 
 export { formatSemanticAssetAmount } from './cellFormat';
@@ -192,32 +196,6 @@ export function semanticFacetNumber(
   if (!attribute) return null;
   const value = Number(attribute.value);
   return Number.isFinite(value) ? value : null;
-}
-
-/** Segment labels an inventory decode may spell its payload with. ckbadger
- *  owns the vocabulary, so each fact lists the spellings we know and any
- *  decode that uses none of them falls back to its own summary rather than
- *  letting us invent a reading. */
-const OBJECT_SEGMENT_LABELS = {
-  contentType: ['content_type', 'contenttype', 'content-type', 'mime_type', 'mime'],
-  clusterName: ['cluster_name', 'name', 'cluster'],
-  account: ['account', 'account_name', 'domain', 'name'],
-  token: ['token_index', 'token_id', 'index', 'token'],
-} as const;
-
-function decodeSegmentValue(
-  decode: SemanticContentDecode,
-  labels: readonly string[],
-): string | null {
-  for (const label of labels) {
-    const segment = decode.segments.find((candidate) => (
-      candidate.label.toLowerCase().replaceAll('-', '_') === label
-        .replaceAll('-', '_')
-    ));
-    const value = segment?.value.trim();
-    if (value) return value;
-  }
-  return null;
 }
 
 /** One line naming WHAT an inventory Cell holds — `image/png · 6,878 B`, a
