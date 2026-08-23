@@ -24,14 +24,14 @@ use cknerv_server::{CanonicalContext, EnrichmentSource, GalaxyCompositionHydrato
 
 use crate::dto::{
     AssetEcosystemResponse, BlockResponse, CellDataAnalysis, CellDetailResponse,
-    ClusterDetailResponse, CommonKnowledgeSizeBreakdown, DaoInfo, DaoStatisticsResponse,
-    HardforkEventResponse, HardforkTimelineResponse, LatestActivityResponse,
+    ClusterDetailResponse, CollectionCompositionDto, CommonKnowledgeSizeBreakdown, DaoInfo,
+    DaoStatisticsResponse, HardforkEventResponse, HardforkTimelineResponse, LatestActivityResponse,
     LiveCellSummaryResponse, LookupScriptsRequest, NetworkCrawlerSummaryResponse,
     NetworkNodeDetailResponse, NetworkNodeSummaryResponse, NetworkNodesPageResponse, NetworkStats,
-    RecentReorgResponse, ReorgEventResponse, ScriptCatalogueResponse, ScriptFamilyResponse,
-    ScriptLookupInfo, ScriptLookupResponse, ScriptResponse, SporeItemResponse, TokenResponse,
-    TransactionDetailResponse, TransactionLifecycleResponse, TransactionStatsPoint,
-    TransactionStatsResponse,
+    NftCollectionDetailResponse, RecentReorgResponse, ReorgEventResponse, ScriptCatalogueResponse,
+    ScriptFamilyResponse, ScriptLookupInfo, ScriptLookupResponse, ScriptResponse,
+    SporeItemResponse, TokenResponse, TransactionDetailResponse, TransactionLifecycleResponse,
+    TransactionStatsPoint, TransactionStatsResponse,
 };
 use crate::galaxy_composition::{
     discover as discover_galaxy_composition, identity_families as galaxy_identity_families,
@@ -138,11 +138,16 @@ const MAX_CELL_CONTENT_GUESSES: usize = 16;
 /// for the sentence that says what the collection is, short enough that a
 /// marketing essay cannot dominate a per-Cell record. Counted in characters,
 /// not bytes, so the cut never lands inside one.
-const MAX_SPORE_DESCRIPTION_CHARS: usize = 160;
+const MAX_COLLECTION_DESCRIPTION_CHARS: usize = 160;
 /// The literal ckbadger's spore decode writes into the `cluster_id` segment
 /// for an object minted outside any cluster. It is a stated fact — unlike an
 /// absent segment, which states nothing at all.
 const SPORE_NO_CLUSTER: &str = "none";
+/// How much of an M-NFT type script names its class: a 20-byte issuer id and a
+/// 4-byte class id, before a token's own 4-byte serial. Spelled in hex
+/// characters because that is the form the args arrive in and the form the
+/// lookup path wants back.
+const MNFT_COLLECTION_ID_HEX_CHARS: usize = 48;
 const SHANNONS_PER_CKB: u128 = 100_000_000;
 const MAX_WIRE_SAFE_U64: u64 = 9_007_199_254_740_991;
 const MAX_GALAXY_COMPOSITION_TARGET: usize = 6_000;
@@ -570,20 +575,28 @@ impl CkbadgerEnrichmentSource {
         }))
     }
 
-    /// The two things a spore Cell cannot say about itself: which collection
-    /// it belongs to, and where its content physically lives.
+    /// The two things a digital object's Cell cannot say about itself: which
+    /// collection it belongs to, and where its content physically lives.
     ///
     /// Neither is legible from the Cell alone. SporeData puts the cluster id
     /// after the content bytes, so the bounded `data` prefix never reaches it
     /// and every object's type script looks alike on the wire; the storage
     /// tier is a measurement ckbadger's decode worker makes, not a claim the
-    /// Cell carries. What the Cell does carry is the decode segment naming its
-    /// cluster, and that is precisely what lets the object lookup and the
+    /// Cell carries. What a spore Cell does carry is the decode segment naming
+    /// its cluster, and that is precisely what lets the object lookup and the
     /// cluster lookup run side by side instead of one behind the other.
     ///
-    /// A Cell that is not a spore costs zero requests. Every request that is
-    /// made degrades alone: whichever half answers still becomes a facet.
-    async fn spore_enrichment(&self, cell: &CellDetailResponse) -> Vec<SemanticFacet> {
+    /// M-NFT reaches the same two answers by a shorter road. Its decode
+    /// segments are the token's own fields and name no class at all, but its
+    /// type script does: the first 24 bytes of the args are the issuer and
+    /// class ids that both a token cell and its class cell are keyed by. One
+    /// collection lookup answers both questions, because ckbadger's asset
+    /// index states a collection's composition on the collection itself —
+    /// there is no per-item media profile upstream to ask for.
+    ///
+    /// A Cell that is neither family costs zero requests. Every request that
+    /// is made degrades alone: whichever half answers still becomes a facet.
+    async fn object_enrichment(&self, cell: &CellDetailResponse) -> Vec<SemanticFacet> {
         let Some(decoded) = cell
             .data_analysis
             .as_ref()
@@ -591,11 +604,7 @@ impl CkbadgerEnrichmentSource {
         else {
             return Vec::new();
         };
-        let args = cell
-            .type_script
-            .as_ref()
-            .map(|script| script.args.as_str())
-            .filter(|args| is_hash32(args));
+        let args = cell.type_script.as_ref().map(|script| script.args.as_str());
         match decoded.kind.as_str() {
             "spore_cell" => {
                 let segment = decoded
@@ -612,15 +621,43 @@ impl CkbadgerEnrichmentSource {
                     Some(SPORE_NO_CLUSTER) => (Some("sole_item"), None),
                     _ => (None, None),
                 };
+                let spore_id = args.filter(|args| is_hash32(args));
                 let (item, cluster) =
-                    tokio::join!(self.spore_object(args), self.spore_cluster(cluster_id));
-                map_spore_facets(role, cluster_id, item, cluster)
+                    tokio::join!(self.spore_object(spore_id), self.spore_cluster(cluster_id));
+                map_object_facets("spore", role, cluster_id, item, cluster.map(Into::into))
             }
             // A cluster Cell states its role by being one, so the role holds
             // even when its args are not an id anything can be looked up by.
             "spore_cluster_cell" => {
-                let cluster = self.spore_cluster(args).await;
-                map_spore_facets(Some("cluster"), args, None, cluster)
+                let cluster_id = args.filter(|args| is_hash32(args));
+                let cluster = self.spore_cluster(cluster_id).await;
+                map_object_facets(
+                    "spore",
+                    Some("cluster"),
+                    cluster_id,
+                    None,
+                    cluster.map(Into::into),
+                )
+            }
+            // A token cell descends from its class, a class cell is one; both
+            // are keyed by the same 24 bytes. Args too short to hold them name
+            // no collection, so nothing is claimed and nothing is asked.
+            kind @ ("mnft_token_cell" | "mnft_class_cell") => {
+                let Some(collection_id) = mnft_collection_id(args) else {
+                    return Vec::new();
+                };
+                let role = match kind {
+                    "mnft_token_cell" => "item",
+                    _ => "cluster",
+                };
+                let collection = self.nft_collection(&collection_id).await;
+                map_object_facets(
+                    "mnft",
+                    Some(role),
+                    Some(&collection_id),
+                    None,
+                    collection.map(Into::into),
+                )
             }
             _ => Vec::new(),
         }
@@ -713,13 +750,57 @@ impl CkbadgerEnrichmentSource {
         Ok(Some(cluster))
     }
 
+    /// One M-NFT collection's facts and its population's composition. Unlike
+    /// the spore pair this is a single call, because the asset index answers
+    /// both from the class: an M-NFT token has no media profile of its own to
+    /// measure.
+    async fn nft_collection(&self, collection_id: &str) -> Option<NftCollectionDetailResponse> {
+        match self.fetch_nft_collection(collection_id).await {
+            Ok(collection) => collection,
+            Err(error) => {
+                tracing::debug!(
+                    target: "cknerv-adapter-ckbadger",
+                    "ckbadger nft collection unavailable: {error}"
+                );
+                None
+            }
+        }
+    }
+
+    async fn fetch_nft_collection(
+        &self,
+        collection_id: &str,
+    ) -> anyhow::Result<Option<NftCollectionDetailResponse>> {
+        let url = self.endpoint(&format!("assets/objects/{collection_id}"))?;
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .context("fetch ckbadger nft collection")?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "ckbadger nft collection returned HTTP {}",
+                response.status()
+            ));
+        }
+        let collection: NftCollectionDetailResponse = response
+            .json()
+            .await
+            .context("decode ckbadger nft collection")?;
+        Ok(Some(collection))
+    }
+
     fn to_record(
         &self,
         cell: CellDetailResponse,
         anchor: ChainAnchor,
         lookups: &ScriptLookupResponse,
         asset: Option<SemanticAsset>,
-        spore_facets: Vec<SemanticFacet>,
+        object_facets: Vec<SemanticFacet>,
     ) -> anyhow::Result<CellSemanticRecord> {
         let created_at_block = u64::try_from(cell.created_at_block)
             .map_err(|_| anyhow!("ckbadger returned a negative Cell creation block"))?;
@@ -799,7 +880,7 @@ impl CkbadgerEnrichmentSource {
         if let Some(dao) = cell.dao_info {
             facets.push(dao_facet(dao)?);
         }
-        facets.extend(spore_facets);
+        facets.extend(object_facets);
         Ok(CellSemanticRecord {
             out_point: OutPoint {
                 tx_hash: cell.tx_hash,
@@ -1116,12 +1197,12 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         if cell.tx_hash != out_point.tx_hash || cell.output_index != requested_index {
             return Err(anyhow!("ckbadger returned a different outpoint"));
         }
-        let (lookups, asset, spore_facets) = tokio::join!(
+        let (lookups, asset, object_facets) = tokio::join!(
             self.script_lookups(&cell),
             self.token_asset(&cell),
-            self.spore_enrichment(&cell)
+            self.object_enrichment(&cell)
         );
-        let record = self.to_record(cell, anchor.clone(), &lookups, asset, spore_facets)?;
+        let record = self.to_record(cell, anchor.clone(), &lookups, asset, object_facets)?;
         self.revalidate_anchor(&anchor, "Cell detail").await?;
         Ok(Some(record))
     }
@@ -3583,7 +3664,50 @@ fn dao_facet(dao: DaoInfo) -> anyhow::Result<SemanticFacet> {
     })
 }
 
-/// Assembles the spore facets out of whatever the two lookups established.
+/// The collection facts every object family states, in the one shape the
+/// facets are built from.
+///
+/// Two indexes answer the same questions in two vocabularies — `sporesCount`
+/// against `liveCount`, a description on the cluster itself against one nested
+/// in the class — and there is exactly one set of answers, so the two
+/// spellings are reconciled here at the edge rather than twice inside the
+/// mapper.
+struct CollectionFacts {
+    name: Option<String>,
+    description: Option<String>,
+    live_items: i64,
+    holders: i64,
+    owned_capacity: Option<String>,
+    composition: Option<CollectionCompositionDto>,
+}
+
+impl From<ClusterDetailResponse> for CollectionFacts {
+    fn from(cluster: ClusterDetailResponse) -> Self {
+        Self {
+            name: cluster.name,
+            description: cluster.description,
+            live_items: cluster.spores_count,
+            holders: cluster.holders_count,
+            owned_capacity: cluster.owned_capacity,
+            composition: cluster.composition,
+        }
+    }
+}
+
+impl From<NftCollectionDetailResponse> for CollectionFacts {
+    fn from(collection: NftCollectionDetailResponse) -> Self {
+        Self {
+            name: collection.name,
+            description: collection.class_detail.and_then(|class| class.description),
+            live_items: collection.live_count,
+            holders: collection.holders_count,
+            owned_capacity: collection.owned_capacity,
+            composition: collection.composition,
+        }
+    }
+}
+
+/// Assembles one object's facets out of whatever its lookups established.
 ///
 /// The two are independent by construction, because their sources are: a
 /// collection facet carrying nothing but a role and an id still answers whose
@@ -3593,20 +3717,24 @@ fn dao_facet(dao: DaoInfo) -> anyhow::Result<SemanticFacet> {
 /// than zero — a collection with no stated population is not a collection of
 /// none.
 ///
-/// `role` is `None` for an object whose decode named no cluster either way:
+/// `role` is `None` for an object whose decode named no collection either way:
 /// there is nothing truthful to say about its kin, so no collection facet is
-/// built at all.
-fn map_spore_facets(
+/// built at all. `item` is `None` for a family that publishes no per-item
+/// measurement — M-NFT states composition only for a whole class — and the
+/// composition facet then carries the population's answer alone, which is the
+/// same shape a cluster Cell already produced.
+fn map_object_facets(
+    namespace: &str,
     role: Option<&str>,
-    cluster_id: Option<&str>,
+    collection_id: Option<&str>,
     item: Option<SporeItemResponse>,
-    cluster: Option<ClusterDetailResponse>,
+    collection: Option<CollectionFacts>,
 ) -> Vec<SemanticFacet> {
     let media = item.as_ref().and_then(|item| item.media_profile.as_ref());
     let item_tier = media.and_then(|profile| nonempty(profile.tier.as_str()));
-    let aggregate = cluster
+    let aggregate = collection
         .as_ref()
-        .and_then(|cluster| cluster.composition.as_ref());
+        .and_then(|collection| collection.composition.as_ref());
     let aggregate_tier = aggregate.and_then(|aggregate| nonempty(aggregate.tier.as_str()));
 
     let mut composition = Vec::new();
@@ -3627,11 +3755,11 @@ fn map_spore_facets(
         }
         composition.extend(
             [
-                spore_count("agg_onchain", aggregate.onchain_count),
-                spore_count("agg_pure_ckb", aggregate.pure_ckb_count),
-                spore_count("agg_decentralized", aggregate.decentralized_mixture_count),
-                spore_count("agg_centralized", aggregate.centralized_mixture_count),
-                spore_count("agg_unknown", aggregate.unknown_count),
+                stated_count("agg_onchain", aggregate.onchain_count),
+                stated_count("agg_pure_ckb", aggregate.pure_ckb_count),
+                stated_count("agg_decentralized", aggregate.decentralized_mixture_count),
+                stated_count("agg_centralized", aggregate.centralized_mixture_count),
+                stated_count("agg_unknown", aggregate.unknown_count),
             ]
             .into_iter()
             .flatten(),
@@ -3639,51 +3767,52 @@ fn map_spore_facets(
     }
     // The headline is the object's own tier when it has one — that is the
     // question a reader of one object is asking. A cluster Cell holds no media
-    // of its own, so its headline is the population's.
+    // of its own, and neither does an M-NFT token upstream, so their headline
+    // is the population's.
     let headline = item_tier.or(aggregate_tier);
 
     let mut facets = Vec::new();
     if let Some(role) = role {
         let mut attributes = vec![attribute("role", role, None)];
-        if let Some(cluster_id) = cluster_id {
-            attributes.push(attribute("cluster_id", cluster_id, None));
+        if let Some(collection_id) = collection_id {
+            attributes.push(attribute("collection_id", collection_id, None));
         }
         let mut state = None;
-        if let Some(cluster) = cluster {
-            state = cluster.name.and_then(nonempty);
+        if let Some(collection) = collection {
+            state = collection.name.and_then(nonempty);
             attributes.extend(
                 [
-                    spore_count("live_items", cluster.spores_count),
-                    spore_count("holders", cluster.holders_count),
+                    stated_count("live_items", collection.live_items),
+                    stated_count("holders", collection.holders),
                 ]
                 .into_iter()
                 .flatten(),
             );
-            if let Some(capacity) = cluster
+            if let Some(capacity) = collection
                 .owned_capacity
                 .and_then(nonempty)
-                .filter(|capacity| unsigned_decimal(capacity, "spore ownedCapacity").is_ok())
+                .filter(|capacity| unsigned_decimal(capacity, "collection ownedCapacity").is_ok())
             {
                 attributes.push(attribute("owned_capacity", capacity, Some("shannons")));
             }
-            if let Some(description) = cluster
+            if let Some(description) = collection
                 .description
                 .and_then(nonempty)
                 .as_deref()
-                .and_then(cluster_description_text)
+                .and_then(collection_description_text)
             {
                 attributes.push(attribute(
                     "description",
                     description
                         .chars()
-                        .take(MAX_SPORE_DESCRIPTION_CHARS)
+                        .take(MAX_COLLECTION_DESCRIPTION_CHARS)
                         .collect::<String>(),
                     None,
                 ));
             }
         }
         facets.push(SemanticFacet {
-            namespace: "spore".to_string(),
+            namespace: namespace.to_string(),
             kind: "collection".to_string(),
             state,
             attributes,
@@ -3691,7 +3820,7 @@ fn map_spore_facets(
     }
     if !composition.is_empty() {
         facets.push(SemanticFacet {
-            namespace: "spore".to_string(),
+            namespace: namespace.to_string(),
             kind: "composition".to_string(),
             state: headline,
             attributes: composition,
@@ -3700,15 +3829,37 @@ fn map_spore_facets(
     facets
 }
 
-/// A count a spore index stated about itself. Negative is not a smaller
+/// The class an M-NFT Cell belongs to, read off its own type script.
+///
+/// M-NFT keys everything by the args rather than by cell data: a 20-byte
+/// issuer id and a 4-byte class id name the collection, and a token's own
+/// 4-byte serial follows them — so one derivation serves the token cell and
+/// the class cell alike, and a class cell's trailing bytes are simply not part
+/// of the id. Args too short to hold those 24 bytes, or not hex at all, name
+/// no class: that is unknown, and unknown is never dressed up as an id
+/// something could be looked up by. Lowercased because the id leaves here as a
+/// path segment, and ckbadger's asset index is keyed in lower case.
+fn mnft_collection_id(args: Option<&str>) -> Option<String> {
+    let hex = args?.strip_prefix("0x")?;
+    if hex.len() < MNFT_COLLECTION_ID_HEX_CHARS || !hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return None;
+    }
+    Some(format!(
+        "0x{}",
+        hex[..MNFT_COLLECTION_ID_HEX_CHARS].to_ascii_lowercase()
+    ))
+}
+
+/// A count an object index stated about itself. Negative is not a smaller
 /// number, it is a broken one, so it is withheld rather than printed.
-fn spore_count(key: &str, value: i64) -> Option<SemanticAttribute> {
+fn stated_count(key: &str, value: i64) -> Option<SemanticAttribute> {
     nonnegative(value, key)
         .ok()
         .map(|count| attribute(key, count.to_string(), None))
 }
 
-/// The sentence inside a cluster's description field.
+/// The sentence inside a collection's description field.
 ///
 /// ClusterData's description is free text by protocol, but DOB clusters pack a
 /// JSON envelope — `{"description": "…", "dob": {decoder, pattern, …}}` —
@@ -3718,8 +3869,10 @@ fn spore_count(key: &str, value: i64) -> Option<SemanticAttribute> {
 /// config file. So exactly that shape is unwrapped; any other text — plain
 /// prose, malformed JSON, an envelope with no inner sentence — passes through
 /// verbatim, because second-guessing free text any further than the one shape
-/// DOB actually mints would be this side inventing a description.
-fn cluster_description_text(raw: &str) -> Option<String> {
+/// DOB actually mints would be this side inventing a description. Which is
+/// also why an M-NFT class runs through the same door: its description is
+/// already a sentence, and a sentence crosses unchanged.
+fn collection_description_text(raw: &str) -> Option<String> {
     let inner = serde_json::from_str::<serde_json::Value>(raw)
         .ok()
         .as_ref()
@@ -5164,8 +5317,8 @@ mod tests {
     }
 
     /// The DAO deposit Cell every mock serves for `TX_HASH`. Shared so the
-    /// spore stub can prove a non-spore Cell asks the spore index nothing
-    /// while still being the same Cell the older tests read.
+    /// object stub can prove a Cell that is no kind of object asks the object
+    /// indexes nothing while still being the same Cell the older tests read.
     fn dao_cell_detail(output_index: i32) -> serde_json::Value {
         serde_json::json!({
             "txHash": TX_HASH,
@@ -5242,6 +5395,32 @@ mod tests {
         "0x3030303030303030303030303030303030303030303030303030303030303030";
     const SPORE_CLUSTER_TYPE_HASH: &str =
         "0x4040404040404040404040404040404040404040404040404040404040404040";
+
+    const MNFT_TOKEN_TX_HASH: &str =
+        "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1";
+    const MNFT_CLASS_TX_HASH: &str =
+        "0xa2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2";
+    /// A token cell whose args cannot hold the 24 bytes that name a class —
+    /// the shape that must read as unknown and cost no request.
+    const MNFT_STUNTED_TX_HASH: &str =
+        "0xa3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3";
+    /// A live mainnet collection: 20 bytes of issuer, 4 of class. Every M-NFT
+    /// Cell below is keyed by it, because that is how M-NFT keys itself.
+    const MNFT_COLLECTION_ID: &str = "0x8f67efedd50c61c9dd332defd4051f08a02d797700000014";
+    /// The class id followed by one token's own 4-byte serial: 28 bytes, of
+    /// which only the first 24 name anything a collection can be looked up by.
+    const MNFT_TOKEN_ARGS: &str = "0x8f67efedd50c61c9dd332defd4051f08a02d79770000001400000971";
+    const MNFT_TOKEN_CODE_HASH: &str =
+        "0x5050505050505050505050505050505050505050505050505050505050505050";
+    const MNFT_CLASS_CODE_HASH: &str =
+        "0x6060606060606060606060606060606060606060606060606060606060606060";
+    const MNFT_TOKEN_TYPE_HASH: &str =
+        "0x7070707070707070707070707070707070707070707070707070707070707070";
+    const MNFT_CLASS_TYPE_HASH: &str =
+        "0x8080808080808080808080808080808080808080808080808080808080808080";
+    /// The one prose sentence an M-NFT class states about itself, and the only
+    /// thing this side reads out of `classDetail`.
+    const MNFT_CLASS_DESCRIPTION: &str = "A collection of hand-drawn Santas, minted for Christmas.";
 
     /// A collection description longer than one Cell record carries, arranged
     /// so an em dash occupies the bytes on either side of the bound: a
@@ -5390,6 +5569,142 @@ mod tests {
         })
     }
 
+    /// An M-NFT Cell as ckbadger's Cell detail describes one. The segments are
+    /// the token's own fields and name no class at all — which is the whole
+    /// reason the collection id has to be read off the type script.
+    fn mnft_cell_detail(
+        tx_hash: &str,
+        kind: &str,
+        code_hash: &str,
+        type_script_hash: &str,
+        args: &str,
+        segments: serde_json::Value,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "txHash": tx_hash,
+            "outputIndex": 0,
+            "dataSize": 11,
+            "data": format!("0x{}", "00".repeat(11)),
+            "lockScriptHash": "0xlockscript",
+            "typeScriptHash": type_script_hash,
+            "address": "ckt1qyqmnft",
+            "createdAtBlock": 93,
+            "lock": {
+                "codeHash": "0xlockcode",
+                "hashType": "type",
+                "args": "0x01"
+            },
+            "type": {
+                "codeHash": code_hash,
+                "hashType": "type",
+                "args": args
+            },
+            "commonKnowledgeSizeBreakdown": {
+                "capacityFieldBytes": 8,
+                "lockScriptBytes": 54,
+                "typeScriptBytes": 61,
+                "dataBytes": 11,
+                "totalBytes": 134
+            },
+            "dataAnalysis": {
+                "deterministic": {
+                    "kind": kind,
+                    "summary": "m-NFT",
+                    "segments": segments
+                },
+                "heuristicGuesses": []
+            },
+            "isDepGroup": false
+        })
+    }
+
+    fn mnft_token_cell() -> serde_json::Value {
+        mnft_cell_detail(
+            MNFT_TOKEN_TX_HASH,
+            "mnft_token_cell",
+            MNFT_TOKEN_CODE_HASH,
+            MNFT_TOKEN_TYPE_HASH,
+            MNFT_TOKEN_ARGS,
+            serde_json::json!([{
+                "label": "characteristic",
+                "start": 1,
+                "end": 9,
+                "meaning": "TokenData characteristic",
+                "humanValue": "0x0000000000000000"
+            }]),
+        )
+    }
+
+    /// A class cell's args are the 24 bytes and nothing after them, so the
+    /// class is named by exactly what a token's args begin with.
+    fn mnft_class_cell() -> serde_json::Value {
+        mnft_cell_detail(
+            MNFT_CLASS_TX_HASH,
+            "mnft_class_cell",
+            MNFT_CLASS_CODE_HASH,
+            MNFT_CLASS_TYPE_HASH,
+            MNFT_COLLECTION_ID,
+            serde_json::json!([{
+                "label": "total",
+                "start": 1,
+                "end": 5,
+                "meaning": "ClassData total supply",
+                "humanValue": "2408"
+            }]),
+        )
+    }
+
+    /// Sixteen bytes of args: too few to name a class, and no amount of
+    /// asking upstream would change that.
+    fn mnft_stunted_token_cell() -> serde_json::Value {
+        mnft_cell_detail(
+            MNFT_STUNTED_TX_HASH,
+            "mnft_token_cell",
+            MNFT_TOKEN_CODE_HASH,
+            MNFT_TOKEN_TYPE_HASH,
+            "0x8f67efedd50c61c9dd332defd4051f08",
+            serde_json::json!([]),
+        )
+    }
+
+    /// The M-NFT class and its population's composition, riding one response
+    /// off ckbadger's asset index. The counts are a live mainnet collection's;
+    /// `standard`, `totalCount`, `ownedKnowledge`, `issuerDetail`, the
+    /// renderer and `onchainRatio` are here precisely because nothing reads
+    /// them: an unread field must pass through the deserializer, not break it.
+    fn nft_collection_detail() -> serde_json::Value {
+        serde_json::json!({
+            "collectionId": MNFT_COLLECTION_ID,
+            "standard": "m_nft",
+            "name": "Non-Fungible Santa Claus",
+            "totalCount": 2408,
+            "liveCount": 2408,
+            "holdersCount": 1392,
+            "ownedCapacity": "32285294386739",
+            "ownedKnowledge": "349160",
+            "composition": {
+                "tier": "centralized_mixture",
+                "onchainCount": 0,
+                "pureCkbCount": 0,
+                "decentralizedMixtureCount": 0,
+                "centralizedMixtureCount": 2408,
+                "unknownCount": 0,
+                "onchainRatio": 0.0
+            },
+            "classDetail": {
+                "classId": MNFT_COLLECTION_ID,
+                "issuerId": "0x8f67efedd50c61c9dd332defd4051f08a02d7977",
+                "name": "Non-Fungible Santa Claus",
+                "description": MNFT_CLASS_DESCRIPTION,
+                "renderer": "https://example.invalid/nfsc/token.png"
+            },
+            "issuerDetail": {
+                "issuerId": "0x8f67efedd50c61c9dd332defd4051f08a02d7977",
+                "name": "Non-Fungible Santa Claus"
+            }
+        })
+    }
+
     /// The collection's own facts and its population's composition, riding one
     /// response, spelled as ckbadger spells them. `sources` and `onchainRatio`
     /// are here precisely because nothing reads them: an unread field must
@@ -5414,57 +5729,72 @@ mod tests {
         })
     }
 
-    /// Which halves of ckbadger's spore index answer during one test. A
-    /// degraded half answers 500 rather than vanishing, because the discipline
-    /// under test is that a failing call costs only its own attributes.
+    /// Which routes of ckbadger's two object indexes answer during one test. A
+    /// degraded route answers 500 rather than vanishing, because the
+    /// discipline under test is that a failing call costs only its own
+    /// attributes.
     #[derive(Clone, Copy)]
-    struct SporeIndexHealth {
+    struct ObjectIndexHealth {
         objects: StatusCode,
         clusters: StatusCode,
+        assets: StatusCode,
     }
 
-    impl SporeIndexHealth {
+    impl ObjectIndexHealth {
         const HEALTHY: Self = Self {
             objects: StatusCode::OK,
             clusters: StatusCode::OK,
+            assets: StatusCode::OK,
         };
         const OBJECTS_DOWN: Self = Self {
             objects: StatusCode::INTERNAL_SERVER_ERROR,
             clusters: StatusCode::OK,
+            assets: StatusCode::OK,
         };
         const CLUSTERS_DOWN: Self = Self {
             objects: StatusCode::OK,
             clusters: StatusCode::INTERNAL_SERVER_ERROR,
+            assets: StatusCode::OK,
+        };
+        const ASSETS_DOWN: Self = Self {
+            objects: StatusCode::OK,
+            clusters: StatusCode::OK,
+            assets: StatusCode::INTERNAL_SERVER_ERROR,
         };
     }
 
-    /// What the adapter asked the spore index, per route. Round trips are the
-    /// point of the parallel design, so the tests count them rather than
-    /// trusting them.
+    /// What the adapter asked the object indexes, per route. Round trips are
+    /// the point of the parallel design, so the tests count them rather than
+    /// trusting them — and counting all three at once is what proves each
+    /// family asks only its own index.
     #[derive(Clone)]
-    struct SporeCalls {
+    struct ObjectCalls {
         objects: Arc<AtomicUsize>,
         clusters: Arc<AtomicUsize>,
+        assets: Arc<AtomicUsize>,
     }
 
-    impl SporeCalls {
-        fn counts(&self) -> (usize, usize) {
+    impl ObjectCalls {
+        fn counts(&self) -> (usize, usize, usize) {
             (
                 self.objects.load(Ordering::Relaxed),
                 self.clusters.load(Ordering::Relaxed),
+                self.assets.load(Ordering::Relaxed),
             )
         }
     }
 
-    async fn spawn_spore_api(
-        health: SporeIndexHealth,
-    ) -> (Url, tokio::task::JoinHandle<()>, SporeCalls) {
-        let calls = SporeCalls {
+    async fn spawn_object_api(
+        health: ObjectIndexHealth,
+    ) -> (Url, tokio::task::JoinHandle<()>, ObjectCalls) {
+        let calls = ObjectCalls {
             objects: Arc::new(AtomicUsize::new(0)),
             clusters: Arc::new(AtomicUsize::new(0)),
+            assets: Arc::new(AtomicUsize::new(0)),
         };
         let counted_objects = calls.objects.clone();
         let counted_clusters = calls.clusters.clone();
+        let counted_assets = calls.assets.clone();
         let app = Router::new()
             .route(
                 "/api/v1/statistics/network",
@@ -5502,6 +5832,20 @@ mod tests {
                             "scriptKind": "type",
                             "decoderType": "spore_cluster",
                             "resolutionState": "resolved"
+                        },
+                        (MNFT_TOKEN_CODE_HASH): {
+                            "name": "m-NFT",
+                            "deprecated": false,
+                            "scriptKind": "type",
+                            "decoderType": "mnft_token",
+                            "resolutionState": "resolved"
+                        },
+                        (MNFT_CLASS_CODE_HASH): {
+                            "name": "m-NFT Class",
+                            "deprecated": false,
+                            "scriptKind": "type",
+                            "decoderType": "mnft_class",
+                            "resolutionState": "resolved"
                         }
                     }))
                 }),
@@ -5518,6 +5862,9 @@ mod tests {
                             SOLE_SPORE_TX_HASH => sole_spore_cell(),
                             MUTE_SPORE_TX_HASH => mute_spore_cell(),
                             CLUSTER_TX_HASH => spore_cluster_cell(),
+                            MNFT_TOKEN_TX_HASH => mnft_token_cell(),
+                            MNFT_CLASS_TX_HASH => mnft_class_cell(),
+                            MNFT_STUNTED_TX_HASH => mnft_stunted_token_cell(),
                             _ => dao_cell_detail(output_index),
                         })
                     },
@@ -5587,6 +5934,30 @@ mod tests {
                         }
                     },
                 ),
+            )
+            .route(
+                "/api/v1/assets/objects/:collection_id",
+                get(
+                    move |axum::extract::Path(collection_id): axum::extract::Path<String>| {
+                        let calls = counted_assets.clone();
+                        async move {
+                            calls.fetch_add(1, Ordering::Relaxed);
+                            if health.assets != StatusCode::OK {
+                                return (
+                                    health.assets,
+                                    Json(serde_json::json!({ "error": "asset index down" })),
+                                );
+                            }
+                            if collection_id != MNFT_COLLECTION_ID {
+                                return (
+                                    StatusCode::NOT_FOUND,
+                                    Json(serde_json::json!({ "error": "collection not found" })),
+                                );
+                            }
+                            (StatusCode::OK, Json(nft_collection_detail()))
+                        }
+                    },
+                ),
             );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -5600,7 +5971,7 @@ mod tests {
         )
     }
 
-    async fn enrich_spore_cell(
+    async fn enrich_object_cell(
         source: &CkbadgerEnrichmentSource,
         tx_hash: &str,
     ) -> CellSemanticRecord {
@@ -5614,16 +5985,20 @@ mod tests {
                 &context(),
             )
             .await
-            .expect("enrichment must never fail on a degraded spore index")
+            .expect("enrichment must never fail on a degraded object index")
             .expect("the Cell exists")
     }
 
-    fn spore_facet<'a>(record: &'a CellSemanticRecord, kind: &str) -> &'a SemanticFacet {
+    fn object_facet<'a>(
+        record: &'a CellSemanticRecord,
+        namespace: &str,
+        kind: &str,
+    ) -> &'a SemanticFacet {
         record
             .facets
             .iter()
-            .find(|candidate| candidate.namespace == "spore" && candidate.kind == kind)
-            .unwrap_or_else(|| panic!("record carries no spore {kind} facet"))
+            .find(|candidate| candidate.namespace == namespace && candidate.kind == kind)
+            .unwrap_or_else(|| panic!("record carries no {namespace} {kind} facet"))
     }
 
     fn facet_value<'a>(facet: &'a SemanticFacet, key: &str) -> Option<&'a str> {
@@ -5644,15 +6019,15 @@ mod tests {
 
     #[tokio::test]
     async fn a_clustered_spore_learns_its_kin_and_where_its_content_lives() {
-        let (api_base, server, calls) = spawn_spore_api(SporeIndexHealth::HEALTHY).await;
+        let (api_base, server, calls) = spawn_object_api(ObjectIndexHealth::HEALTHY).await;
         let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
 
-        let record = enrich_spore_cell(&source, SPORE_TX_HASH).await;
+        let record = enrich_object_cell(&source, SPORE_TX_HASH).await;
 
-        let collection = spore_facet(&record, "collection");
+        let collection = object_facet(&record, "spore", "collection");
         assert_eq!(collection.state.as_deref(), Some("Nervape Gen2"));
         assert_eq!(facet_value(collection, "role"), Some("item"));
-        assert_eq!(facet_value(collection, "cluster_id"), Some(CLUSTER_ID));
+        assert_eq!(facet_value(collection, "collection_id"), Some(CLUSTER_ID));
         assert_eq!(facet_value(collection, "live_items"), Some("1024"));
         assert_eq!(facet_value(collection, "holders"), Some("210"));
         assert_eq!(
@@ -5661,19 +6036,22 @@ mod tests {
         );
 
         let description = facet_value(collection, "description").expect("description");
-        assert_eq!(description.chars().count(), MAX_SPORE_DESCRIPTION_CHARS);
+        assert_eq!(
+            description.chars().count(),
+            MAX_COLLECTION_DESCRIPTION_CHARS
+        );
         assert_eq!(
             description,
             long_cluster_description()
                 .chars()
-                .take(MAX_SPORE_DESCRIPTION_CHARS)
+                .take(MAX_COLLECTION_DESCRIPTION_CHARS)
                 .collect::<String>()
         );
         // The bound counts characters because it must: a byte-wise cut at the
         // same number would land inside this description's em dash.
-        assert!(!long_cluster_description().is_char_boundary(MAX_SPORE_DESCRIPTION_CHARS));
+        assert!(!long_cluster_description().is_char_boundary(MAX_COLLECTION_DESCRIPTION_CHARS));
 
-        let composition = spore_facet(&record, "composition");
+        let composition = object_facet(&record, "spore", "composition");
         // The headline a reader of one object wants is that object's own tier,
         // not the collection's worst-dominant verdict.
         assert_eq!(composition.state.as_deref(), Some("pure_ckb"));
@@ -5690,68 +6068,69 @@ mod tests {
         assert_eq!(facet_value(composition, "agg_unknown"), Some("0"));
 
         // Two lookups, side by side, because the decode already named the
-        // cluster.
-        assert_eq!(calls.counts(), (1, 1));
+        // cluster — and none of them to the asset index, which knows nothing
+        // about spores.
+        assert_eq!(calls.counts(), (1, 1, 0));
         server.abort();
     }
 
     #[tokio::test]
     async fn a_sole_spore_states_its_solitude_and_asks_no_collection() {
-        let (api_base, server, calls) = spawn_spore_api(SporeIndexHealth::HEALTHY).await;
+        let (api_base, server, calls) = spawn_object_api(ObjectIndexHealth::HEALTHY).await;
         let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
 
-        let record = enrich_spore_cell(&source, SOLE_SPORE_TX_HASH).await;
+        let record = enrich_object_cell(&source, SOLE_SPORE_TX_HASH).await;
 
-        let collection = spore_facet(&record, "collection");
+        let collection = object_facet(&record, "spore", "collection");
         assert_eq!(collection.state, None);
         assert_eq!(facet_keys(collection), vec!["role"]);
         assert_eq!(facet_value(collection, "role"), Some("sole_item"));
 
-        let composition = spore_facet(&record, "composition");
+        let composition = object_facet(&record, "spore", "composition");
         assert_eq!(composition.state.as_deref(), Some("btc_ckb"));
         // No issues is the ordinary case, and states nothing worth a row.
         assert_eq!(facet_keys(composition), vec!["item_tier"]);
         assert_eq!(facet_value(composition, "item_tier"), Some("btc_ckb"));
 
-        assert_eq!(calls.counts(), (1, 0));
+        assert_eq!(calls.counts(), (1, 0, 0));
         server.abort();
     }
 
     #[tokio::test]
     async fn a_collection_lookup_that_fails_costs_only_its_own_attributes() {
-        let (api_base, server, calls) = spawn_spore_api(SporeIndexHealth::CLUSTERS_DOWN).await;
+        let (api_base, server, calls) = spawn_object_api(ObjectIndexHealth::CLUSTERS_DOWN).await;
         let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
 
-        let record = enrich_spore_cell(&source, SPORE_TX_HASH).await;
+        let record = enrich_object_cell(&source, SPORE_TX_HASH).await;
 
         // Whose kin it is survives the outage: that answer came from the Cell.
-        let collection = spore_facet(&record, "collection");
+        let collection = object_facet(&record, "spore", "collection");
         assert_eq!(collection.state, None);
-        assert_eq!(facet_keys(collection), vec!["role", "cluster_id"]);
-        assert_eq!(facet_value(collection, "cluster_id"), Some(CLUSTER_ID));
+        assert_eq!(facet_keys(collection), vec!["role", "collection_id"]);
+        assert_eq!(facet_value(collection, "collection_id"), Some(CLUSTER_ID));
 
-        let composition = spore_facet(&record, "composition");
+        let composition = object_facet(&record, "spore", "composition");
         assert_eq!(composition.state.as_deref(), Some("pure_ckb"));
         assert_eq!(facet_keys(composition), vec!["item_tier", "item_issues"]);
 
-        assert_eq!(calls.counts(), (1, 1));
+        assert_eq!(calls.counts(), (1, 1, 0));
         server.abort();
     }
 
     #[tokio::test]
     async fn an_object_lookup_that_fails_leaves_the_collection_whole() {
-        let (api_base, server, calls) = spawn_spore_api(SporeIndexHealth::OBJECTS_DOWN).await;
+        let (api_base, server, calls) = spawn_object_api(ObjectIndexHealth::OBJECTS_DOWN).await;
         let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
 
-        let record = enrich_spore_cell(&source, SPORE_TX_HASH).await;
+        let record = enrich_object_cell(&source, SPORE_TX_HASH).await;
 
-        let collection = spore_facet(&record, "collection");
+        let collection = object_facet(&record, "spore", "collection");
         assert_eq!(collection.state.as_deref(), Some("Nervape Gen2"));
         assert_eq!(
             facet_keys(collection),
             vec![
                 "role",
-                "cluster_id",
+                "collection_id",
                 "live_items",
                 "holders",
                 "owned_capacity",
@@ -5761,7 +6140,7 @@ mod tests {
 
         // With no measurement of its own, the object borrows the population's
         // headline rather than showing none.
-        let composition = spore_facet(&record, "composition");
+        let composition = object_facet(&record, "spore", "composition");
         assert_eq!(composition.state.as_deref(), Some("centralized_mixture"));
         assert_eq!(
             facet_keys(composition),
@@ -5775,82 +6154,257 @@ mod tests {
             ]
         );
 
-        assert_eq!(calls.counts(), (1, 1));
+        assert_eq!(calls.counts(), (1, 1, 0));
         server.abort();
     }
 
     #[tokio::test]
     async fn a_spore_whose_decode_names_no_cluster_is_unknown_rather_than_sole() {
-        let (api_base, server, calls) = spawn_spore_api(SporeIndexHealth::HEALTHY).await;
+        let (api_base, server, calls) = spawn_object_api(ObjectIndexHealth::HEALTHY).await;
         let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
 
-        let record = enrich_spore_cell(&source, MUTE_SPORE_TX_HASH).await;
+        let record = enrich_object_cell(&source, MUTE_SPORE_TX_HASH).await;
 
         // Silence is not solitude: with nothing said about kinship, nothing is
         // claimed about it.
         assert!(record.facets.iter().all(|facet| facet.kind != "collection"));
 
         // The storage question is independent, so it is still asked.
-        let composition = spore_facet(&record, "composition");
+        let composition = object_facet(&record, "spore", "composition");
         assert_eq!(composition.state.as_deref(), Some("decentralized_mixture"));
         assert_eq!(
             facet_value(composition, "item_tier"),
             Some("decentralized_mixture")
         );
 
-        assert_eq!(calls.counts(), (1, 0));
+        assert_eq!(calls.counts(), (1, 0, 0));
         server.abort();
     }
 
     #[tokio::test]
     async fn a_cluster_cell_reads_the_population_it_names() {
-        let (api_base, server, calls) = spawn_spore_api(SporeIndexHealth::HEALTHY).await;
+        let (api_base, server, calls) = spawn_object_api(ObjectIndexHealth::HEALTHY).await;
         let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
 
-        let record = enrich_spore_cell(&source, CLUSTER_TX_HASH).await;
+        let record = enrich_object_cell(&source, CLUSTER_TX_HASH).await;
 
-        let collection = spore_facet(&record, "collection");
+        let collection = object_facet(&record, "spore", "collection");
         assert_eq!(collection.state.as_deref(), Some("Nervape Gen2"));
         assert_eq!(facet_value(collection, "role"), Some("cluster"));
         // A cluster is keyed by its own type-script args, not by a segment.
-        assert_eq!(facet_value(collection, "cluster_id"), Some(CLUSTER_ID));
+        assert_eq!(facet_value(collection, "collection_id"), Some(CLUSTER_ID));
         assert_eq!(facet_value(collection, "live_items"), Some("1024"));
         assert_eq!(facet_value(collection, "holders"), Some("210"));
 
         // A cluster Cell holds no media of its own, so the aggregate is the
         // only composition it has.
-        let composition = spore_facet(&record, "composition");
+        let composition = object_facet(&record, "spore", "composition");
         assert_eq!(composition.state.as_deref(), Some("centralized_mixture"));
         assert!(composition
             .attributes
             .iter()
             .all(|attribute| attribute.key.starts_with("agg_")));
 
-        assert_eq!(calls.counts(), (0, 1));
+        assert_eq!(calls.counts(), (0, 1, 0));
+        server.abort();
+    }
+
+    /// M-NFT names its class in the type script rather than in the data, so an
+    /// item's kin is legible before any request is made — and one request is
+    /// all it takes, because the asset index states a class's composition on
+    /// the class itself.
+    #[tokio::test]
+    async fn an_mnft_token_learns_the_class_it_descends_from() {
+        let (api_base, server, calls) = spawn_object_api(ObjectIndexHealth::HEALTHY).await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+
+        let record = enrich_object_cell(&source, MNFT_TOKEN_TX_HASH).await;
+
+        let collection = object_facet(&record, "mnft", "collection");
+        assert_eq!(
+            collection.state.as_deref(),
+            Some("Non-Fungible Santa Claus")
+        );
+        assert_eq!(facet_value(collection, "role"), Some("item"));
+        // The token's own serial is the four bytes past the class id, and no
+        // part of what names the collection.
+        assert_eq!(
+            facet_value(collection, "collection_id"),
+            Some(MNFT_COLLECTION_ID)
+        );
+        assert_eq!(facet_value(collection, "live_items"), Some("2408"));
+        assert_eq!(facet_value(collection, "holders"), Some("1392"));
+        assert_eq!(
+            facet_value(collection, "owned_capacity"),
+            Some("32285294386739")
+        );
+        // M-NFT keeps its prose on the class record, and a sentence needs no
+        // unwrapping to cross.
+        assert_eq!(
+            facet_value(collection, "description"),
+            Some(MNFT_CLASS_DESCRIPTION)
+        );
+
+        // No per-item media profile exists upstream, so the population's
+        // verdict is the only one there is to headline with.
+        let composition = object_facet(&record, "mnft", "composition");
+        assert_eq!(composition.state.as_deref(), Some("centralized_mixture"));
+        assert_eq!(
+            facet_keys(composition),
+            vec![
+                "agg_tier",
+                "agg_onchain",
+                "agg_pure_ckb",
+                "agg_decentralized",
+                "agg_centralized",
+                "agg_unknown"
+            ]
+        );
+        assert_eq!(facet_value(composition, "agg_centralized"), Some("2408"));
+
+        // One call, to the asset index alone: the spore routes know nothing
+        // about m-NFT.
+        assert_eq!(calls.counts(), (0, 0, 1));
         server.abort();
     }
 
     #[tokio::test]
-    async fn a_cell_that_is_not_a_spore_asks_the_spore_index_nothing() {
-        let (api_base, server, calls) = spawn_spore_api(SporeIndexHealth::HEALTHY).await;
+    async fn an_mnft_class_cell_reads_the_population_it_names() {
+        let (api_base, server, calls) = spawn_object_api(ObjectIndexHealth::HEALTHY).await;
         let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
 
-        let record = enrich_spore_cell(&source, TX_HASH).await;
+        let record = enrich_object_cell(&source, MNFT_CLASS_TX_HASH).await;
 
-        assert!(record.facets.iter().any(|facet| facet.kind == "dao"));
-        assert!(record.facets.iter().all(|facet| facet.namespace != "spore"));
-        assert_eq!(calls.counts(), (0, 0));
+        let collection = object_facet(&record, "mnft", "collection");
+        assert_eq!(
+            collection.state.as_deref(),
+            Some("Non-Fungible Santa Claus")
+        );
+        assert_eq!(facet_value(collection, "role"), Some("cluster"));
+        // A class cell and its tokens are keyed by the same 24 bytes, which is
+        // why one derivation and one route serve both.
+        assert_eq!(
+            facet_value(collection, "collection_id"),
+            Some(MNFT_COLLECTION_ID)
+        );
+        assert_eq!(facet_value(collection, "live_items"), Some("2408"));
+
+        let composition = object_facet(&record, "mnft", "composition");
+        assert_eq!(composition.state.as_deref(), Some("centralized_mixture"));
+        assert!(composition
+            .attributes
+            .iter()
+            .all(|attribute| attribute.key.starts_with("agg_")));
+
+        assert_eq!(calls.counts(), (0, 0, 1));
         server.abort();
     }
 
-    /// The vocabulary pin. Every name below is ckbadger's rather than ours —
-    /// the camelCase wire fields, the five tier spellings, the two decode
-    /// kinds, the `cluster_id` segment label and its `"none"` sentinel — and
-    /// this test exists for one purpose: to fail loudly when one of them
-    /// drifts upstream, because a drifted name otherwise reaches the panel as
-    /// a row that quietly stopped appearing.
+    #[tokio::test]
+    async fn an_mnft_token_whose_args_cannot_hold_a_class_id_claims_nothing() {
+        let (api_base, server, calls) = spawn_object_api(ObjectIndexHealth::HEALTHY).await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+
+        let record = enrich_object_cell(&source, MNFT_STUNTED_TX_HASH).await;
+
+        // Sixteen bytes name no class. Unknown is not a collection, and no
+        // request could make it one.
+        assert!(record.facets.iter().all(|facet| facet.namespace != "mnft"));
+        assert_eq!(calls.counts(), (0, 0, 0));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn an_mnft_cell_survives_an_asset_index_outage_still_naming_its_class() {
+        let (api_base, server, calls) = spawn_object_api(ObjectIndexHealth::ASSETS_DOWN).await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+
+        let record = enrich_object_cell(&source, MNFT_TOKEN_TX_HASH).await;
+
+        // The class id came off the Cell's own type script, so it outlives the
+        // index that would have described the class.
+        let collection = object_facet(&record, "mnft", "collection");
+        assert_eq!(collection.state, None);
+        assert_eq!(facet_keys(collection), vec!["role", "collection_id"]);
+        assert_eq!(facet_value(collection, "role"), Some("item"));
+        assert_eq!(
+            facet_value(collection, "collection_id"),
+            Some(MNFT_COLLECTION_ID)
+        );
+        // Nothing was measured, so nothing is composed: a tier this side never
+        // heard is absent rather than unknown.
+        assert!(record
+            .facets
+            .iter()
+            .all(|facet| facet.kind != "composition"));
+
+        assert_eq!(calls.counts(), (0, 0, 1));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_cell_that_is_no_kind_of_object_asks_the_object_indexes_nothing() {
+        let (api_base, server, calls) = spawn_object_api(ObjectIndexHealth::HEALTHY).await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+
+        let record = enrich_object_cell(&source, TX_HASH).await;
+
+        assert!(record.facets.iter().any(|facet| facet.kind == "dao"));
+        assert!(record
+            .facets
+            .iter()
+            .all(|facet| facet.namespace != "spore" && facet.namespace != "mnft"));
+        assert_eq!(calls.counts(), (0, 0, 0));
+        server.abort();
+    }
+
+    /// The derivation itself, in the shapes the wire actually produces and the
+    /// ones it must refuse. An id that names a collection is worth exactly as
+    /// much as the guarantee that a non-id never becomes one.
     #[test]
-    fn the_spore_vocabulary_is_pinned_to_ckbadgers_own_spelling() {
+    fn an_mnft_class_id_is_the_first_twenty_four_bytes_or_nothing() {
+        // A token's args carry a serial past the class id; a class cell's stop
+        // at the class id. Both name the same collection.
+        assert_eq!(
+            mnft_collection_id(Some(MNFT_TOKEN_ARGS)).as_deref(),
+            Some(MNFT_COLLECTION_ID)
+        );
+        assert_eq!(
+            mnft_collection_id(Some(MNFT_COLLECTION_ID)).as_deref(),
+            Some(MNFT_COLLECTION_ID)
+        );
+        // The path segment is lower case because ckbadger's index is.
+        assert_eq!(
+            mnft_collection_id(Some("0x8F67EFEDD50C61C9DD332DEFD4051F08A02D797700000014"))
+                .as_deref(),
+            Some(MNFT_COLLECTION_ID)
+        );
+        // One byte short, no prefix, not hex, nothing at all: each names no
+        // class, and none of them is dressed up as one.
+        assert_eq!(
+            mnft_collection_id(Some("0x8f67efedd50c61c9dd332defd4051f08a02d7977000000")),
+            None
+        );
+        assert_eq!(
+            mnft_collection_id(Some("8f67efedd50c61c9dd332defd4051f08a02d797700000014")),
+            None
+        );
+        assert_eq!(
+            mnft_collection_id(Some("0xzzzzefedd50c61c9dd332defd4051f08a02d797700000014")),
+            None
+        );
+        assert_eq!(mnft_collection_id(Some("0x")), None);
+        assert_eq!(mnft_collection_id(None), None);
+    }
+
+    /// The vocabulary pin. Every name below is ckbadger's rather than ours —
+    /// the camelCase wire fields of both object indexes, the five tier
+    /// spellings, the four decode kinds, the `cluster_id` segment label and
+    /// its `"none"` sentinel — and this test exists for one purpose: to fail
+    /// loudly when one of them drifts upstream, because a drifted name
+    /// otherwise reaches the panel as a row that quietly stopped appearing.
+    #[test]
+    fn the_object_vocabulary_is_pinned_to_ckbadgers_own_spelling() {
         let cluster: ClusterDetailResponse =
             serde_json::from_value(cluster_detail()).expect("cluster detail decodes");
         assert_eq!(cluster.name.as_deref(), Some("Nervape Gen2"));
@@ -5866,6 +6420,28 @@ mod tests {
         assert_eq!(composition.decentralized_mixture_count, 12);
         assert_eq!(composition.centralized_mixture_count, 2);
         assert_eq!(composition.unknown_count, 0);
+
+        // The asset index answers the same two questions in its own spelling:
+        // `liveCount` for a population, `ownedCapacity` for its capacity, and
+        // the collection's prose nested one level down in `classDetail`.
+        let collection: NftCollectionDetailResponse =
+            serde_json::from_value(nft_collection_detail()).expect("nft collection decodes");
+        assert_eq!(collection.name.as_deref(), Some("Non-Fungible Santa Claus"));
+        assert_eq!(collection.live_count, 2408);
+        assert_eq!(collection.holders_count, 1392);
+        assert_eq!(collection.owned_capacity.as_deref(), Some("32285294386739"));
+        assert_eq!(
+            collection
+                .class_detail
+                .and_then(|class| class.description)
+                .as_deref(),
+            Some(MNFT_CLASS_DESCRIPTION)
+        );
+        let collection_composition = collection
+            .composition
+            .expect("composition rides the collection response");
+        assert_eq!(collection_composition.tier, "centralized_mixture");
+        assert_eq!(collection_composition.centralized_mixture_count, 2408);
 
         // The five tiers ckbadger measures, plus a sixth it has not invented
         // yet: an unfamiliar tier must arrive as a string this side does not
@@ -5913,6 +6489,15 @@ mod tests {
             Some(SPORE_NO_CLUSTER)
         );
         assert_eq!(decode(spore_cluster_cell()).kind, "spore_cluster_cell");
+        // M-NFT's decode names the token's own fields and no class, which is
+        // why the kind is all the gate reads off it.
+        let token = decode(mnft_token_cell());
+        assert_eq!(token.kind, "mnft_token_cell");
+        assert!(token
+            .segments
+            .iter()
+            .all(|segment| segment.label != "cluster_id"));
+        assert_eq!(decode(mnft_class_cell()).kind, "mnft_class_cell");
     }
 
     /// DOB clusters mint their description as a JSON envelope whose only
@@ -5922,7 +6507,7 @@ mod tests {
     #[test]
     fn a_dob_description_envelope_yields_its_inner_sentence() {
         assert_eq!(
-            cluster_description_text(
+            collection_description_text(
                 r#"{"description":"Handheld gadgets for Nervapes.","dob":{"ver":0}}"#
             )
             .as_deref(),
@@ -5931,19 +6516,19 @@ mod tests {
         // Plain prose, malformed JSON, and an envelope with no inner sentence
         // all cross verbatim — unwrapping any further would be inventing one.
         assert_eq!(
-            cluster_description_text("Cosmic Repository: www.cosmicrepository.com").as_deref(),
+            collection_description_text("Cosmic Repository: www.cosmicrepository.com").as_deref(),
             Some("Cosmic Repository: www.cosmicrepository.com")
         );
         assert_eq!(
-            cluster_description_text(r#"{"description":"broken"#).as_deref(),
+            collection_description_text(r#"{"description":"broken"#).as_deref(),
             Some(r#"{"description":"broken"#)
         );
         assert_eq!(
-            cluster_description_text(r#"{"dob":{"ver":0}}"#).as_deref(),
+            collection_description_text(r#"{"dob":{"ver":0}}"#).as_deref(),
             Some(r#"{"dob":{"ver":0}}"#)
         );
         assert_eq!(
-            cluster_description_text(r#"{"description":"   ","dob":{}}"#).as_deref(),
+            collection_description_text(r#"{"description":"   ","dob":{}}"#).as_deref(),
             Some(r#"{"description":"   ","dob":{}}"#)
         );
     }

@@ -522,18 +522,56 @@ pub(crate) struct ClusterDetailResponse {
     #[serde(default)]
     pub owned_capacity: Option<String>,
     #[serde(default)]
-    pub composition: Option<ClusterCompositionDto>,
+    pub composition: Option<CollectionCompositionDto>,
 }
 
-/// The population's storage composition. The tier is worst-dominant upstream:
-/// one centralized object colours the whole collection. `onchain_count`
-/// already sums the pure-CKB and BTC+CKB objects — the wire carries no
-/// separate BTC+CKB count, so their difference is the only way to see the BTC
-/// half. `onchainRatio` rides the same object and is deliberately not read:
-/// the panel states tiers and counts, never a percentage.
+/// One M-NFT collection as ckbadger's asset index knows it: the class's own
+/// facts and the storage composition of its whole live population, riding a
+/// single response — the same two answers a spore cluster gives, under the
+/// asset index's own spelling.
+///
+/// `standard`, `totalCount`, `ownedKnowledge` and `issuerDetail` ride the same
+/// object and are deliberately not deserialized. So is `classDetail`'s
+/// everything-else: an M-NFT class states a renderer and an issuer id that no
+/// reader of one Cell is asking about, and the one thing they are asking —
+/// what this collection is — lives in its `description`.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct ClusterCompositionDto {
+pub(crate) struct NftCollectionDetailResponse {
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Live items, not everything ever minted — the asset index's spelling of
+    /// the count a spore cluster calls `sporesCount`.
+    pub live_count: i64,
+    pub holders_count: i64,
+    /// Shannons locked in the collection's live cells.
+    #[serde(default)]
+    pub owned_capacity: Option<String>,
+    #[serde(default)]
+    pub composition: Option<CollectionCompositionDto>,
+    /// The class cell's own record, which is where M-NFT keeps its prose: the
+    /// collection envelope carries a name, the class carries what it is.
+    #[serde(default)]
+    pub class_detail: Option<NftClassDetail>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NftClassDetail {
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+/// The population's storage composition, in the one shape both object indexes
+/// answer with. The tier is worst-dominant upstream: one centralized object
+/// colours the whole collection. `onchain_count` already sums the pure-CKB and
+/// BTC+CKB objects — the wire carries no separate BTC+CKB count, so their
+/// difference is the only way to see the BTC half. `onchainRatio` rides the
+/// same object and is deliberately not read: the panel states tiers and
+/// counts, never a percentage.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CollectionCompositionDto {
     pub tier: String,
     pub onchain_count: i64,
     pub pure_ckb_count: i64,
