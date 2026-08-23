@@ -338,9 +338,9 @@ pub struct ChainCensus {
 /// indexed candidates are admitted only after a canonical adapter validates
 /// each live outpoint, and they never enter the structural Cell projection or
 /// its Birth/Death/Link/Pulse stream.
-pub const GALAXY_COMPOSITION_DAO_BPS: u16 = 3_000;
-pub const GALAXY_COMPOSITION_TYPED_BPS: u16 = 4_000;
-pub const GALAXY_COMPOSITION_PLAIN_BPS: u16 = 3_000;
+pub const GALAXY_COMPOSITION_DAO_BPS: u16 = 2_000;
+pub const GALAXY_COMPOSITION_TYPED_BPS: u16 = 6_500;
+pub const GALAXY_COMPOSITION_PLAIN_BPS: u16 = 1_500;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GalaxyCompositionTarget {
@@ -1937,16 +1937,44 @@ mod tests {
     }
 
     #[test]
-    fn galaxy_composition_target_is_exact_30_40_30() {
+    fn galaxy_composition_target_is_exact_20_65_15() {
         assert_eq!(
             GalaxyCompositionTarget::for_total(6_000),
             GalaxyCompositionTarget {
-                dao: 1_800,
-                typed: 2_400,
-                plain: 1_800,
+                dao: 1_200,
+                typed: 3_900,
+                plain: 900,
             }
         );
         assert_eq!(GalaxyCompositionTarget::for_total(7).total(), 7);
+    }
+
+    /// The product contract at the shipped cell budget, pinned exactly.
+    #[test]
+    fn galaxy_composition_target_at_the_full_budget() {
+        assert_eq!(
+            GalaxyCompositionTarget::for_total(12_000),
+            GalaxyCompositionTarget {
+                dao: 2_400,
+                typed: 7_800,
+                plain: 1_800,
+            }
+        );
+        assert_eq!(
+            GalaxyCompositionTarget::for_total(12_000).total(),
+            12_000,
+            "the remainder-to-plain rule keeps the quota exactly the budget"
+        );
+        // Rounding lands entirely in plain: floor(0.20·7) + floor(0.65·7)
+        // + the rest.
+        assert_eq!(
+            GalaxyCompositionTarget::for_total(7),
+            GalaxyCompositionTarget {
+                dao: 1,
+                typed: 4,
+                plain: 2,
+            }
+        );
     }
 
     /// The composition record is display-plane input, not semantics: the

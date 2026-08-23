@@ -400,7 +400,7 @@ It supports two policies:
 1. **Canonical mode**: without a usable semantic reservoir, fill by canonical
    insertion order while reserving room for recent activity swaps.
 2. **Composed mode**: use a locally hydrated candidate reservoir with target
-   shares of 30% DAO, 40% typed, and 30% plain/native, then fill shortages
+   shares of 20% DAO, 65% typed, and 15% plain/native, then fill shortages
    deterministically from canonical Cells.
 
 Composed mode may include a verified live `resident` that is outside the 50k
@@ -731,7 +731,7 @@ and known-limit details.
 
 ckbadger only discovers and ranks outpoints efficiently:
 
-- Candidate targets are divided 30/40/30 across DAO, typed, and plain, with
+- Candidate targets are divided 20/65/15 across DAO, typed, and plain, with
   125% discovery overfetch.
 - The initial curated reservoir is capped at 6,000 candidates; canonical
   fallback fills the rest of the display stage.

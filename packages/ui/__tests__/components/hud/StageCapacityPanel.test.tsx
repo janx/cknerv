@@ -171,8 +171,8 @@ describe('composition disclosure', () => {
     const mixes = populationCompositionMixes(scenario('chain-scope-mainnet').model);
 
     expect(mixes.map((mix) => mix.label)).toEqual(['Stage mix', 'Chain mix']);
-    // The curated stage is 30:40:30 by policy; mainnet is nothing like it.
-    expect(mixes[0]).toMatchObject({ dao: '30%', typed: '40%', plain: '30%' });
+    // The curated stage is 20:65:15 by policy; mainnet is nothing like it.
+    expect(mixes[0]).toMatchObject({ dao: '20%', typed: '65%', plain: '15%' });
     expect(mixes[1]).toMatchObject({ dao: '2%', typed: '32%', plain: '66%' });
     expect(mixes[0].scope).toBe('CURATED');
     expect(mixes[1].scope).toContain('AS OF #');

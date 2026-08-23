@@ -1252,8 +1252,8 @@ pub(crate) mod tests {
     #[test]
     fn composition_overfetch_is_bounded() {
         assert_eq!(overfetch(0), 0);
-        assert_eq!(overfetch(1_800), 2_250);
-        assert_eq!(overfetch(2_400), 3_000);
+        assert_eq!(overfetch(1_200), 1_500);
+        assert_eq!(overfetch(3_900), 4_875);
     }
 
     // ── one class failing ─────────────────────────────────────────

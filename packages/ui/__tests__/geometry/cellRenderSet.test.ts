@@ -1,5 +1,5 @@
 // Render-set tests for the display-plane journal consumer. Composition
-// policy (30:40:30 quotas, interleave, outpoint dedupe, activity pins) is
+// policy (20:65:15 quotas, interleave, outpoint dedupe, activity pins) is
 // server-side now — its algorithm tests were ported to Rust in S2. What
 // remains here is pure mechanism: journal patching, canonical-first
 // resolution, rebuild fallbacks, the presentation clamp, and the D4

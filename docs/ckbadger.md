@@ -167,7 +167,7 @@ constant.
 Two questions live behind the display plane, and they are answered in different
 places. *Who is on stage, and what do they look like* — the member set, staged
 payloads, the budget, the activity FIFO, the coalesced delta — belongs to the
-stage. *Who should be* — composition classes, the 30:40:30 quota, admission
+stage. *Who should be* — composition classes, the 20:65:15 quota, admission
 ranking, the displacement ratchet, refill queues — belongs to a
 `CompositionPolicy`. There are two policies: prefix staffing (canonical
 insertion order, class-blind) and curated staffing (everything above). The stage
@@ -186,9 +186,9 @@ reservoir. Its target is 6,000 Cells — the curated core of the browser's fixed
 12,000-Cell field, with canonical retained Cells filling the remainder (the
 reservoir itself is far larger). At the default target the requested classes are exactly:
 
-- 1,800 active Nervos DAO deposit Cells (30%).
-- 2,400 non-DAO Cells with a non-empty type script (40%).
-- 1,800 plain Cells without a type script (30%).
+- 1,200 active Nervos DAO deposit Cells (20%).
+- 3,900 non-DAO Cells with a non-empty type script (65%).
+- 900 plain Cells without a type script (15%).
 
 ckbadger's existing APIs provide the bounded discovery work:
 
@@ -208,7 +208,7 @@ perform efficiently. Final Cell materialization deliberately uses the node for
 the authority the index must not own. If one class is sparse after live-cell
 validation, the server fills that shortage from matching canonical retained
 Cells, then spills remaining vacancies toward DAO and typed Cells. With
-sufficient candidates, the visible result remains exactly 30:40:30. A reservoir
+sufficient candidates, the visible result remains exactly 20:65:15. A reservoir
 Cell whose outpoint is also retained canonically is staged under its canonical
 identity, so one outpoint is never on stage twice.
 
@@ -258,7 +258,7 @@ is answered directly:
   a curated Cell entering needs someone to give way, and the giver is drawn only
   from the canonical-fallback members of whichever class is furthest over its
   own quota. A curated Cell can therefore never be displaced by another curated
-  Cell: the ratio climbs monotonically toward 30:40:30 instead of oscillating,
+  Cell: the ratio climbs monotonically toward 20:65:15 instead of oscillating,
   and a class holding nothing but curated members simply yields nobody.
   Displaced members return to the front of their own refill queue.
 
@@ -267,7 +267,7 @@ Three deliberate limits, each visible in the product:
 - **Plain is not curated.** The shortfall covers DAO and typed only; plain
   vacancies keep being filled from the canonical fallback stream. Convergence
   works by DAO and typed displacing plain's over-allocation, so the ratio still
-  reaches 30:40:30 — but that final 30% is canonical membership, which is what
+  reaches 20:65:15 — but that final 15% is canonical membership, which is what
   keeps recent on-chain births and deaths visible in the resting field.
 - **A retired Cell is not revived by a reorg.** Canonical rollback revives
   canonical Cells through the ordinary birth path, but a staged Cell retired by

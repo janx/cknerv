@@ -149,7 +149,7 @@ function share(count: number, total: number): string {
  * The stage's composition beside the chain's.
  *
  * The stage is a deliberately biased sample — mainnet DAO is over-represented
- * about nineteenfold — and that is a curation choice, not a defect. But it
+ * about thirteenfold — and that is a curation choice, not a defect. But it
  * means the medium must never inherit the stage's mix, and it means showing
  * the two side by side is the sharpest single thing this feature can say.
  * Never one presented as the other, and never one without the other.

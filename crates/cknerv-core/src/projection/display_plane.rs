@@ -1536,51 +1536,50 @@ mod tests {
 
     // ═══ S2 composed mode ════════════════════════════════════════════
 
-    /// Quota math parity with the shared constant: 30:40:30 with the
+    /// Quota math against the shared constant: 20:65:15 with the
     /// remainder folded into plain.
     #[test]
-    fn for_total_parity_with_old_client_targets() {
+    fn for_total_matches_the_shared_quota_constant() {
         assert_eq!(
             GalaxyCompositionTarget::for_total(6_000),
             GalaxyCompositionTarget {
-                dao: 1_800,
-                typed: 2_400,
-                plain: 1_800,
+                dao: 1_200,
+                typed: 3_900,
+                plain: 900,
             }
         );
         assert_eq!(
             GalaxyCompositionTarget::for_total(12_000),
             GalaxyCompositionTarget {
-                dao: 3_600,
-                typed: 4_800,
-                plain: 3_600,
+                dao: 2_400,
+                typed: 7_800,
+                plain: 1_800,
             }
         );
-        // Remainder-to-plain (floor(0.3·n) + floor(0.4·n) + rest).
+        // Remainder-to-plain (floor(0.20·n) + floor(0.65·n) + rest).
         assert_eq!(
             GalaxyCompositionTarget::for_total(7),
             GalaxyCompositionTarget {
-                dao: 2,
-                typed: 2,
-                plain: 3,
+                dao: 1,
+                typed: 4,
+                plain: 2,
             }
         );
     }
 
-    /// Golden case 1 — mirrors cellRenderSet.test.ts "composes the
-    /// 6000-cell resting field at exactly 30:40:30": empty canonical
-    /// map, full reservoir → every record cell stages as a resident and
-    /// the class split is exactly 1800/2400/1800.
+    /// Golden case 1 — the 6000-cell resting field composed at exactly
+    /// 20:65:15: empty canonical map, full reservoir → every record cell
+    /// stages as a resident and the class split is exactly 1200/3900/900.
     #[test]
-    fn golden_full_reservoir_composes_exactly_30_40_30() {
+    fn golden_full_reservoir_composes_exactly_20_65_15() {
         let mut plane = small_plane(6_000, 8);
-        let dao: Vec<Cell> = (0..1_800)
+        let dao: Vec<Cell> = (0..1_200)
             .map(|i| cell_with(10_000 + i, &format!("0xd{i}"), AssetKind::Dao, 0))
             .collect();
-        let typed: Vec<Cell> = (0..2_400)
+        let typed: Vec<Cell> = (0..3_900)
             .map(|i| cell_with(20_000 + i, &format!("0xt{i}"), AssetKind::Xudt, 0))
             .collect();
-        let plain: Vec<Cell> = (0..1_800)
+        let plain: Vec<Cell> = (0..900)
             .map(|i| cell_with(30_000 + i, &format!("0xp{i}"), AssetKind::Native, 0))
             .collect();
         let rec = record(10, dao.clone(), typed.clone(), plain.clone());
@@ -1597,7 +1596,7 @@ mod tests {
             .map(|c| c.id)
             .collect();
         assert_eq!(member_set(&plane), expected);
-        assert_eq!(plane.class_counts(), [1_800, 2_400, 1_800]);
+        assert_eq!(plane.class_counts(), [1_200, 3_900, 900]);
         let provenance = provenance.expect("mode transition rides provenance");
         assert_eq!(provenance.mode, DisplayMode::Composed);
         assert_eq!(provenance.source.as_deref(), Some("ckbadger"));
@@ -1639,8 +1638,10 @@ mod tests {
         plane.reservoir_replaced(&rec, &outpoint_index(&canonical), &canonical);
         let (enter_ids, enter_cells, exit, _) = full_delta_parts(plane.flush(Some(1_000)));
 
-        // Expected set (old client, budget 10 → targets {3,4,3}; dao
-        // resolves [1, 102, 103]): {1, 102, 103, 201..204, 301..303}.
+        // Expected set (budget 10 → targets {2,6,2}; dao 101 resolves to
+        // canonical 1, so quota dao is [1, 102], typed takes all four it
+        // has, plain [301, 302], and the 2-slot spill adds dao 103 then
+        // plain 303): {1, 102, 103, 201..204, 301..303}.
         let expected: BTreeSet<u64> = [1, 102, 103, 201, 202, 203, 204, 301, 302, 303].into();
         assert_eq!(member_set(&plane), expected);
         assert!(
@@ -1668,9 +1669,9 @@ mod tests {
     /// activity is layered separately). Hand-derived from the reference
     /// algorithm: canonical field ids 0..23 (kind pattern id%7→dao,
     /// id%3→typed, else plain), one resident per reservoir class, budget
-    /// 12 → targets {3,4,5}; the fallback walk admits ids 0..9 and stops
+    /// 12 → targets {2,7,3}; the fallback walk runs to id 18 and stops
     /// with every quota satisfied. Expected membership:
-    /// dao [1001, 0, 7] · typed [2001, 3, 6, 9] · plain [3001, 1, 2, 4, 5].
+    /// dao [1001, 0] · typed [2001, 3, 6, 9, 12, 15, 18] · plain [3001, 1, 2].
     #[test]
     fn golden_sparse_reservoir_fills_from_canonical_fallback() {
         let mut plane = small_plane(12, 2);
@@ -1686,17 +1687,19 @@ mod tests {
         plane.reservoir_replaced(&rec, &outpoint_index(&canonical), &canonical);
         plane.flush(Some(1_000));
 
-        let expected: BTreeSet<u64> = [1_001, 0, 7, 2_001, 3, 6, 9, 3_001, 1, 2, 4, 5].into();
+        let expected: BTreeSet<u64> =
+            [1_001, 0, 2_001, 3, 6, 9, 12, 15, 18, 3_001, 1, 2].into();
         assert_eq!(member_set(&plane), expected);
-        assert_eq!(plane.class_counts(), [3, 4, 5]);
+        assert_eq!(plane.class_counts(), [2, 7, 3]);
         assert_eq!(plane.resident_ids_sorted(), vec![1_001, 2_001, 3_001]);
     }
 
     /// Golden case 4 — the old client's spill loop is a ROUND-ROBIN over
     /// dao → typed → plain (one candidate per class per round), not a
-    /// sequential drain (cellRenderSet.ts spill loop). dao tail [d4, d5],
-    /// typed short by 2, plain tail [p4, p5]: the 2-slot shortfall takes
-    /// d4 then p4 — a drain would have taken d4 then d5.
+    /// sequential drain (cellRenderSet.ts spill loop). dao tail
+    /// [d3, d4, d5], typed short by 4, plain tail [p3, p4, p5]: the
+    /// 4-slot shortfall takes d3, p3, d4, p4 — a drain would have taken
+    /// d3, d4, d5 and never reached plain.
     #[test]
     fn golden_spill_is_round_robin_dao_typed_plain() {
         let mut plane = small_plane(10, 2);
@@ -1713,8 +1716,8 @@ mod tests {
         plane.reservoir_replaced(&rec, &HashMap::new(), &[]);
         plane.flush(Some(1_000));
 
-        // targets(10) = {3,4,3}; chosen dao 3, typed 2, plain 3 = 8;
-        // spill round 1: dao 104, plain 304 → 10.
+        // targets(10) = {2,6,2}; chosen dao 2, typed 2, plain 2 = 6;
+        // spill round 1: dao 103, plain 303; round 2: dao 104, plain 304 → 10.
         let expected: BTreeSet<u64> = [101, 102, 103, 104, 201, 202, 301, 302, 303, 304].into();
         assert_eq!(member_set(&plane), expected);
         assert_eq!(plane.class_counts(), [4, 2, 4]);
@@ -1882,7 +1885,7 @@ mod tests {
     #[test]
     fn composed_activity_displaces_in_class_and_restores_on_eviction() {
         let mut plane = small_plane(6, 1); // quota 1 → immediate FIFO churn
-                                           // Canonical: 2 dao, 2 typed, 2 plain + one extra off-stage typed.
+                                           // Canonical: 2 dao, 3 typed, 2 plain + one extra off-stage typed.
         let canonical = vec![
             cell_with(0, "0xa", AssetKind::Dao, 0),
             cell_with(1, "0xb", AssetKind::Dao, 0),
@@ -1891,40 +1894,41 @@ mod tests {
             cell_with(4, "0xe", AssetKind::Native, 0),
             cell_with(5, "0xf", AssetKind::Native, 0),
             cell_with(6, "0xg", AssetKind::Xudt, 0),
+            cell_with(8, "0xi", AssetKind::Xudt, 0),
         ];
         seed_canonical(&mut plane, &canonical, 500);
-        // Budget 6 < 10 → whole-map admission; targets(6) = {1,2,3}⇒
-        // dao [0] typed [2,3] plain [4,5] + spill round-robin: dao 1 →
-        // members {0,1,2,3,4,5}, all Fallback admits in walk order.
+        // Budget 6 < 10 → whole-map admission; targets(6) = {1,3,2} ⇒
+        // dao [0] typed [2,3,6] plain [4,5] → members {0,2,3,4,5,6},
+        // all Fallback admits in walk order. Typed 8 and dao 1 are the
+        // off-stage remainder.
         let rec = record(10, vec![], vec![], vec![]);
         plane.reservoir_replaced(&rec, &outpoint_index(&canonical), &canonical);
         plane.flush(Some(1_000));
-        assert_eq!(member_set(&plane), [0, 1, 2, 3, 4, 5].into());
-        assert_eq!(plane.class_counts(), [2, 2, 2]);
+        assert_eq!(member_set(&plane), [0, 2, 3, 4, 5, 6].into());
+        assert_eq!(plane.class_counts(), [1, 3, 2]);
 
-        // Off-stage typed endpoint 6 enters: displaces the LATEST
-        // fallback-admitted typed resting member (3), not 2.
-        plane.note_activity(20, [6]);
+        // Off-stage typed endpoint 8 enters: displaces the LATEST
+        // fallback-admitted typed resting member (6), not 2.
+        plane.note_activity(20, [8]);
         let (enter, exit, _) = delta_parts(plane.flush(Some(2_000)));
-        assert_eq!(enter, vec![6]);
-        assert_eq!(exit, vec![3]);
-        assert!(plane.is_activity_member(6));
-        assert_eq!(plane.class_counts(), [2, 2, 2], "in-class swap holds I1");
+        assert_eq!(enter, vec![8]);
+        assert_eq!(exit, vec![6]);
+        assert!(plane.is_activity_member(8));
+        assert_eq!(plane.class_counts(), [1, 3, 2], "in-class swap holds I1");
 
-        // A later-block endpoint overflows the 1-slot quota: 6 evicts
-        // and its benched member 3 returns — one coalesced swap. The
-        // new endpoint (dao 1 is on stage; use plain 7) displaces in
-        // ITS class.
+        // A later-block endpoint overflows the 1-slot quota: 8 evicts
+        // and its benched member 6 returns — one coalesced swap. The
+        // new endpoint (a plain birth, 7) displaces in ITS class.
         let extra = cell_with(7, "0xh", AssetKind::Native, 0);
         plane.note_birth(&extra);
         plane.note_activity(21, [7]);
         let (enter, exit, _) = delta_parts(plane.flush(Some(3_000)));
-        assert_eq!(enter, vec![3, 7]);
-        assert_eq!(exit, vec![5, 6]); // 5 = latest plain fallback admit; 6 = quota eviction
+        assert_eq!(enter, vec![6, 7]);
+        assert_eq!(exit, vec![5, 8]); // 5 = latest plain fallback admit; 8 = quota eviction
         assert!(plane.is_activity_member(7));
-        assert!(!plane.is_activity_member(3), "restored as resting");
-        assert_eq!(plane.class_counts(), [2, 2, 2]);
-        assert_eq!(member_set(&plane), [0, 1, 2, 3, 4, 7].into());
+        assert!(!plane.is_activity_member(6), "restored as resting");
+        assert_eq!(plane.class_counts(), [1, 3, 2]);
+        assert_eq!(member_set(&plane), [0, 2, 3, 4, 6, 7].into());
     }
 
     /// Displacement priority: canonical-fallback admits are displaced
@@ -1950,8 +1954,8 @@ mod tests {
         );
         plane.reservoir_replaced(&rec, &outpoint_index(&canonical), &canonical);
         plane.flush(Some(1_000));
-        // available 5 > budget 4; targets(4)={1,1,2}: dao [2], typed
-        // [2001], plain [1] + spill: typed 0 → members {2001, 0, 1, 2}.
+        // available 5 > budget 4; targets(4)={0,2,2}: typed [2001, 0],
+        // plain [1] + spill: dao 2 → members {2001, 0, 1, 2}.
         assert_eq!(member_set(&plane), [0, 1, 2, 2_001].into());
 
         // Typed endpoint 3 displaces the FALLBACK typed member 0, never
@@ -1982,8 +1986,9 @@ mod tests {
         plane.flush(Some(600)); // 2 on stage as activity
 
         // Refresh 1 (empty reservoir): fill = {0, 1, 2, 3} (targets(4)
-        // = {1,1,2}, spill takes typed 2). Standing activity 2 is INSIDE
-        // the fill → promoted to resting, quota emptied.
+        // = {0,2,2}: typed [1,2], plain [3], spill takes dao 0).
+        // Standing activity 2 is INSIDE the fill → promoted to resting,
+        // quota emptied.
         let rec1 = record(10, vec![], vec![], vec![]);
         plane.reservoir_replaced(&rec1, &outpoint_index(&canonical), &canonical);
         plane.flush(Some(1_000));
@@ -1998,14 +2003,18 @@ mod tests {
         assert_eq!(exit, vec![2]);
         assert!(plane.is_activity_member(4));
 
-        // Refresh 2 (content differs: a dao resident): new fill =
-        // {901, 0, 1, 3}. Standing activity 4 is OUTSIDE it → it
-        // re-displaces in class against the NEW fill (victim: typed 1),
-        // keeping its activity role; the old bench (2) is superseded.
+        // Refresh 2 (content differs: a typed resident): the typed
+        // quota is [902, 1] — the resident ranks ahead of the canonical
+        // walk — so the new fill is {902, 1, 3, 0} and canonical typed 2
+        // is pushed off into the class queue. Standing activity 4 is
+        // OUTSIDE the new fill → it re-displaces in class against it,
+        // taking the FALLBACK admit 1 rather than the reservoir admit
+        // 902, and keeps its activity role; the old bench (2) is
+        // superseded by the recomposition.
         let rec2 = record(
             20,
-            vec![cell_with(901, "0xrd", AssetKind::Dao, 0)],
             vec![],
+            vec![cell_with(902, "0xrt", AssetKind::Xudt, 0)],
             vec![],
         );
         plane.reservoir_replaced(&rec2, &outpoint_index(&canonical), &canonical);
@@ -2013,7 +2022,7 @@ mod tests {
         assert!(enter_ids.is_empty());
         assert_eq!(
             enter_cells.iter().map(|c| c.id).collect::<Vec<_>>(),
-            vec![901]
+            vec![902]
         );
         assert_eq!(exit, vec![1]);
         assert_eq!(
@@ -2023,12 +2032,12 @@ mod tests {
                 .map(|a| a.block),
             Some(20)
         );
-        assert_eq!(member_set(&plane), [0, 3, 4, 901].into());
+        assert_eq!(member_set(&plane), [0, 3, 4, 902].into());
         assert!(
             plane.is_activity_member(4),
             "activity role survives refresh"
         );
-        assert_eq!(plane.class_counts(), [2, 1, 1]);
+        assert_eq!(plane.class_counts(), [1, 2, 1]);
     }
 
     // ═══ T2 demand ═══════════════════════════════════════════════════
@@ -2041,7 +2050,7 @@ mod tests {
 
     /// The mainnet pathology this iteration exists to fix, reproduced at
     /// full budget: a 6K reservoir plus a retained map that is ~99% plain
-    /// composes to roughly 1.8K/2.8K/7.3K instead of 3600/4800/3600,
+    /// composes to roughly 1.8K/2.8K/7.3K instead of 2400/7800/1800,
     /// because dao and typed simply run out of candidates.
     ///
     /// Demand must be measured against the IDEAL quota. Against
@@ -2086,7 +2095,9 @@ mod tests {
             "a prefix stage asks for nothing"
         );
 
-        // The 6K reservoir, at its 30:40:30 split.
+        // The 6K reservoir, at the old 30:40:30 split it happens to
+        // arrive in — the shortfall is measured against the quota, not
+        // against whatever shape the refresh landed on.
         let rec = record(
             10,
             (0..1_800)
@@ -2113,9 +2124,9 @@ mod tests {
 
         let demand = sink.read();
         assert!(demand.curated);
-        assert_eq!(demand.dao, 3_600 - 1_848);
-        assert_eq!(demand.typed, 4_800 - 2_812);
-        assert_eq!(demand.total(), 3_740);
+        assert_eq!(demand.dao, 2_400 - 1_848);
+        assert_eq!(demand.typed, 7_800 - 2_812);
+        assert_eq!(demand.total(), 5_540);
         assert!(!demand.is_empty());
     }
 
@@ -2125,13 +2136,14 @@ mod tests {
     fn demand_tracks_staged_counts_and_ignores_plain() {
         let mut plane = small_plane(10, 2);
         let sink = with_sink(&mut plane);
-        // targets(10) = {3,4,3}. Give dao 2 and typed 4, plain plenty.
+        // targets(10) = {2,6,2}. Give dao its full 2 and typed 5 of 6,
+        // plain plenty.
         let rec = record(
             10,
             (1..=2)
                 .map(|i| cell_with(100 + i, &format!("0xd{i}"), AssetKind::Dao, 0))
                 .collect(),
-            (1..=4)
+            (1..=5)
                 .map(|i| cell_with(200 + i, &format!("0xt{i}"), AssetKind::Xudt, 0))
                 .collect(),
             (1..=9)
@@ -2142,26 +2154,26 @@ mod tests {
         plane.flush(Some(1_000));
         assert_eq!(
             plane.class_counts(),
-            [2, 4, 4],
-            "dao short by one, plain over"
+            [2, 5, 3],
+            "typed short by one, plain over"
         );
         assert_eq!(
             sink.read(),
             CompositionDemand {
                 curated: true,
-                dao: 1,
-                typed: 0,
+                dao: 0,
+                typed: 1,
             },
-            "typed is satisfied; plain is over quota and still never asked for"
+            "dao is satisfied; plain is over quota and still never asked for"
         );
 
-        // Spending a staged dao widens the gap by exactly one.
+        // Spending a staged typed widens the gap by exactly one.
         plane.note_input_unresolved(&OutPoint {
-            tx_hash: "0xd1".into(),
+            tx_hash: "0xt1".into(),
             index: 0,
         });
         plane.flush(Some(2_000));
-        assert_eq!(sink.read().dao, 2);
+        assert_eq!(sink.read().typed, 2);
     }
 
     /// Falling back to canonical staffing — degrade, or a rebuild reset —
@@ -2250,7 +2262,7 @@ mod tests {
     #[test]
     fn supply_displaces_an_over_quota_fallback_member() {
         let mut plane = small_plane(10, 2);
-        // targets(10) = {3,4,3}. An all-plain canonical map composes to
+        // targets(10) = {2,6,2}. An all-plain canonical map composes to
         // 10 plain members, every one a fallback admit.
         let canonical: Vec<Cell> = (0..10)
             .map(|id| cell_with(id, &format!("0xc{id}"), AssetKind::Native, 0))
@@ -2268,7 +2280,7 @@ mod tests {
             "plain owns the whole stage"
         );
 
-        // Two dao arrive. Plain is 7 over quota, so it yields twice —
+        // Two dao arrive. Plain is 8 over quota, so it yields twice —
         // latest-admitted first (9, then 8).
         let supply = top_up(
             20,
@@ -2328,8 +2340,9 @@ mod tests {
         assert_eq!(member_set(&plane), [1_001, 2_001, 3_001, 3_002].into());
         assert_eq!(plane.class_counts(), [1, 1, 2]);
 
-        // targets(4) = {1,1,2}: plain is at quota, dao is at quota. Even
-        // so, offer more dao — nothing may be displaced for it.
+        // targets(4) = {0,2,2}: plain is at quota and dao is already
+        // over its (zero) share, held there by the spill. Even so, offer
+        // more dao — nothing may be displaced for it.
         let supply = top_up(
             20,
             vec![cell_with(9_001, "0xs1", AssetKind::Dao, 0)],
@@ -2352,7 +2365,7 @@ mod tests {
     /// overshoot into someone else's share.
     #[test]
     fn supply_stops_at_the_ideal_quota() {
-        let mut plane = small_plane(10, 2); // targets(10) = {3,4,3}
+        let mut plane = small_plane(10, 2); // targets(10) = {2,6,2}
         let canonical: Vec<Cell> = (0..10)
             .map(|id| cell_with(id, &format!("0xc{id}"), AssetKind::Native, 0))
             .collect();
@@ -2364,7 +2377,7 @@ mod tests {
         );
         plane.flush(Some(1_000));
 
-        // Five dao offered against a quota of three.
+        // Five dao offered against a quota of two.
         let supply = top_up(
             20,
             (1..=5)
@@ -2374,12 +2387,12 @@ mod tests {
         );
         plane.reservoir_topped_up(&supply, &outpoint_index(&canonical));
         plane.flush(Some(2_000));
-        assert_eq!(plane.class_counts(), [3, 0, 7], "exactly the dao quota");
+        assert_eq!(plane.class_counts(), [2, 0, 8], "exactly the dao quota");
         assert_eq!(member_set(&plane).len(), 10);
     }
 
     /// ⭐ Convergence. Starting from the live mainnet shape and feeding
-    /// bounded rounds of supply, the ratio must climb to 3600/4800/3600
+    /// bounded rounds of supply, the ratio must climb to 2400/7800/1800
     /// and MUST NOT oscillate on the way — every round is a monotone step
     /// and the member count never moves.
     #[test]
@@ -2438,7 +2451,7 @@ mod tests {
         let mut rounds = 0;
         while !sink.read().is_empty() {
             rounds += 1;
-            assert!(rounds < 40, "should converge in ~15 rounds, not spin");
+            assert!(rounds < 40, "should converge in ~20 rounds, not spin");
             let demand = sink.read();
             let dao: Vec<Cell> = (0..demand.dao.min(PER_CLASS_PER_TICK))
                 .map(|_| {
@@ -2483,13 +2496,13 @@ mod tests {
                 12_000,
                 "round {rounds}: the stage is always exactly full"
             );
-            assert!(now[0] <= 3_600 && now[1] <= 4_800, "never overshoots");
+            assert!(now[0] <= 2_400 && now[1] <= 7_800, "never overshoots");
             previous = now;
         }
         assert_eq!(
             plane.class_counts(),
-            [3_600, 4_800, 3_600],
-            "30:40:30, reached"
+            [2_400, 7_800, 1_800],
+            "20:65:15, reached"
         );
         assert!(sink.read().is_empty());
         assert!(rounds >= 8, "the bound really did spread it over rounds");
@@ -2511,8 +2524,8 @@ mod tests {
             cell_with(3, "0xd", AssetKind::Native, 0),
         ];
         seed_canonical(&mut plane, &canonical, 500);
-        // targets(4) = {1,1,2}: dao [0], typed [1], plain [301, 2];
-        // the plain refill queue holds the unchosen canonical 3.
+        // targets(4) = {0,2,2}: typed [1], plain [301, 2] + spill: dao
+        // [0]; the plain refill queue holds the unchosen canonical 3.
         let rec = record(
             10,
             vec![],
@@ -2548,7 +2561,7 @@ mod tests {
             cell_with(2, "0xc", AssetKind::Native, 0),
         ];
         seed_canonical(&mut plane, &canonical, 500);
-        // targets(4) = {1,1,2}: plain stages [301, 302]; the plain queue
+        // targets(4) = {0,2,2}: plain stages [301, 302]; the plain queue
         // holds [303 (pooled resident), 2 (canonical)].
         let rec = record(
             10,
@@ -2723,8 +2736,8 @@ mod tests {
         let rec = record(10, vec![], vec![], vec![]);
         plane.reservoir_replaced(&rec, &outpoint_index(&canonical), &canonical);
         plane.flush(Some(1_000));
-        // targets(4)={1,1,2}: dao [0], typed [1], plain [2,3]; queue
-        // plain holds [4].
+        // targets(4)={0,2,2}: typed [1], plain [2,3] + spill: dao [0];
+        // queue plain holds [4].
         assert_eq!(member_set(&plane), [0, 1, 2, 3].into());
 
         plane.note_removed(3);

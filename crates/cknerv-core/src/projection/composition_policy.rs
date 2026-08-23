@@ -7,7 +7,7 @@
 //! *why* a given cell deserves a slot.
 //!
 //! Everything that answers "why" lives here: the composition classes, the
-//! 30:40:30 quota, admission ordering and dedupe, the displacement
+//! 20:65:15 quota, admission ordering and dedupe, the displacement
 //! ratchet, and the refill queues. The dividing line, stated as a rule:
 //!
 //! > **"who is on stage, and what they look like" belongs to the stage;
@@ -94,7 +94,7 @@ fn class_of(kind: AssetKind) -> CompositionClass {
 /// on. Those are what the composition could reach with the candidates it
 /// had; demand is the gap between that and what the product asks for, so
 /// it stays non-zero for as long as the gap is real. On live mainnet the
-/// gap opens at roughly 1,750 dao and 1,990 typed.
+/// gap opens at roughly 550 dao and 4,990 typed.
 ///
 /// Plain is deliberately absent (design D5): plain slots keep being
 /// filled by the canonical fallback stream, which is what keeps recent
@@ -409,7 +409,7 @@ impl CuratedPolicy {
     ///
     /// * **Classes**: `asset_kind` dao → Dao, native → Plain, everything
     ///   else → Typed. Quotas come from the shared
-    ///   [`GalaxyCompositionTarget::for_total`] (30:40:30 bps) over the
+    ///   [`GalaxyCompositionTarget::for_total`] (20:65:15 bps) over the
     ///   FULL cell budget.
     /// * **Fill**: each class fills from its reservoir bucket first
     ///   (record rank order), with D5 outpoint dedupe at admission — an
@@ -827,7 +827,7 @@ impl CompositionPolicy for CuratedPolicy {
     /// The displacement rule IS the convergence guarantee. Victims are
     /// drawn only from `FALLBACK_GROUP`, so a curated member can never be
     /// displaced by another curated member — the curated set is a one-way
-    /// ratchet and the ratio climbs monotonically toward 30:40:30 instead
+    /// ratchet and the ratio climbs monotonically toward 20:65:15 instead
     /// of oscillating. A class holding nothing but curated members simply
     /// yields nobody, and the supply stops rather than trade one curated
     /// cell for another.
