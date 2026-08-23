@@ -107,7 +107,7 @@ fn is_real_script_name(name: &str) -> bool {
 }
 
 /// CKB's own spelling for a hash type, which is what the wire carries.
-fn hash_type_wire(hash_type: HashType) -> String {
+pub(crate) fn hash_type_wire(hash_type: HashType) -> String {
     match hash_type {
         HashType::Data => "data",
         HashType::Type => "type",

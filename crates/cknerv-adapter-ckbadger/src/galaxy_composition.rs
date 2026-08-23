@@ -4,7 +4,7 @@
 //! truth. The caller passes these candidates to a canonical CKB hydrator
 //! before any Cell crosses the shared enrichment wire boundary.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use anyhow::{anyhow, Context};
 use futures::{stream, StreamExt};
@@ -15,8 +15,10 @@ use url::Url;
 
 use cknerv_core::{
     ChainAnchor, GalaxyCellCandidate, GalaxyCompositionCandidates, GalaxyCompositionTarget,
-    OutPoint,
+    OutPoint, ScriptId,
 };
+
+use crate::source::hash_type_wire;
 
 const PAGE_LIMIT: usize = 100;
 const ASSET_GROUP_LIMIT: usize = 64;
@@ -727,6 +729,617 @@ fn is_collection_id(value: &str) -> bool {
         && body.as_bytes().iter().all(u8::is_ascii_hexdigit)
 }
 
+// ── collections: items, and the cells behind them ─────────────────
+
+/// How many item pages one collection walk may read per call. Bounded like
+/// every other walk here; the cursors that make a later call resume deeper
+/// arrive with the top-up parity work (T5).
+#[allow(dead_code)] // read by the weighted walk (T4)
+const ITEM_PAGES_PER_GROUP: usize = 3;
+
+/// Molecule `hash_type` discriminants — the chain's own byte, which is what
+/// goes into a script's hash preimage. Not the JSON-RPC spelling
+/// (`data`/`type`/`data1`/`data2`) that the same value takes on the wire.
+const MOLECULE_HASH_TYPE_TYPE: u8 = 1;
+const MOLECULE_HASH_TYPE_DATA1: u8 = 2;
+
+/// A deployed script version: the pair an item's own type script is built
+/// from.
+///
+/// `hash_type` is the molecule discriminant rather than [`HashType`] because
+/// this byte is hashed, and a spelling is not a byte.
+#[allow(dead_code)] // read by the weighted walk (T4)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DeployedScript {
+    code_hash: &'static str,
+    hash_type: u8,
+}
+
+/// Every deployed Spore version cknerv knows, newest first.
+///
+/// Duplicated on purpose from `cknerv-adapter-ckb`'s
+/// `script_taxonomy::classify_asset` Spore arm — the two adapters must not
+/// depend on each other, and the cost of the lists drifting apart is bounded:
+/// a version missing here costs one cluster one composition, and its items
+/// still reach the stage through block-following. Keep them in step when
+/// either changes.
+///
+/// A cluster does not say which version its items use, so the walk tries
+/// these against the cluster's first item and caches whichever answers
+/// (D3).
+const SPORE_VERSIONS: &[DeployedScript] = &[
+    DeployedScript {
+        code_hash: "0x4a4dce1df3dffff7f8b2cd7dff7303df3b6150c9788cb75dcf6747247132b9f5",
+        hash_type: MOLECULE_HASH_TYPE_DATA1,
+    },
+    DeployedScript {
+        code_hash: "0x7366a61534fa7c7e6225ecc0d828ea3b5366adec2b58206f2ee84995fe030075",
+        hash_type: MOLECULE_HASH_TYPE_DATA1,
+    },
+    DeployedScript {
+        code_hash: "0xbbad126377d45f90a8ee120da988a2d7332c78ba8fd679aab478a19d6c133494",
+        hash_type: MOLECULE_HASH_TYPE_DATA1,
+    },
+    DeployedScript {
+        code_hash: "0x598d793defef36e2eeba54a9b45130e4ca92822e1d193671f490950c3b856080",
+        hash_type: MOLECULE_HASH_TYPE_DATA1,
+    },
+    DeployedScript {
+        code_hash: "0x685a60219309029d01310311dba953d67029170ca4848a4ff638e57002130a0d",
+        hash_type: MOLECULE_HASH_TYPE_DATA1,
+    },
+    DeployedScript {
+        code_hash: "0x0bbe768b519d8ea7b96d58f1182eb7e6ef96c541fbd9526975077ee09f049058",
+        hash_type: MOLECULE_HASH_TYPE_DATA1,
+    },
+    DeployedScript {
+        code_hash: "0x0b1f412fbae26853ff7d082d422c2bdd9e2ff94ee8aaec11240a5b34cc6e890f",
+        hash_type: MOLECULE_HASH_TYPE_TYPE,
+    },
+    DeployedScript {
+        code_hash: "0xcfba73b58b6f30e70caed8a999748781b164ef9a1e218424a6fb55ebf641cb33",
+        hash_type: MOLECULE_HASH_TYPE_TYPE,
+    },
+];
+
+/// The deployed M-NFT versions. One today, mainnet, verified live on
+/// 2026-08-23; the walk runs the same discovery loop over it, so a testnet
+/// deployment is one entry away.
+const MNFT_VERSIONS: &[DeployedScript] = &[DeployedScript {
+    code_hash: "0x2b24f0d644ccbdd77bbf86b27c8cca02efa0ad051e447c212636d9ee7acaaec9",
+    hash_type: MOLECULE_HASH_TYPE_TYPE,
+}];
+
+/// A script's hash: blake2b-256 under the `ckb-default-hash` personalization
+/// over the molecule-serialized `Script` table.
+///
+/// This is the one piece of chain arithmetic in the adapter, and it earns its
+/// place. For item-keyed families — Spore, M-NFT — the `args` are the item's
+/// own id, so every item has its own type script and its hash addresses that
+/// item's CURRENT live cell through `cells/live`, transfers and all. The
+/// index cannot answer that question: an item row carries the MINT
+/// transaction, and ckbadger stores no output index for spore objects at all.
+///
+/// The table is three fields — `code_hash: Byte32`, `hash_type: byte`,
+/// `args: Bytes` — so the header is a full size and three offsets, and only
+/// the last field's length varies.
+fn type_script_hash_for(code_hash: &[u8; 32], hash_type_molecule: u8, args: &[u8]) -> String {
+    const HEADER: usize = 4 + 4 * 3; // full_size, then one offset per field
+    let offsets = [
+        HEADER,
+        HEADER + code_hash.len(),
+        HEADER + code_hash.len() + 1,
+    ];
+    // A molecule `Bytes` is its own length followed by the raw bytes.
+    let full_size = offsets[2] + 4 + args.len();
+
+    let mut table = Vec::with_capacity(full_size);
+    table.extend_from_slice(&(full_size as u32).to_le_bytes());
+    for offset in offsets {
+        table.extend_from_slice(&(offset as u32).to_le_bytes());
+    }
+    table.extend_from_slice(code_hash);
+    table.push(hash_type_molecule);
+    table.extend_from_slice(&(args.len() as u32).to_le_bytes());
+    table.extend_from_slice(args);
+    debug_assert_eq!(table.len(), full_size);
+
+    let mut digest = [0u8; 32];
+    let mut hasher = blake2b_ref::Blake2bBuilder::new(32)
+        .personal(b"ckb-default-hash")
+        .build();
+    hasher.update(&table);
+    hasher.finalize(&mut digest);
+    hex_with_prefix(&digest)
+}
+
+/// `0x`-prefixed lowercase hex, the form every hash on this wire takes.
+fn hex_with_prefix(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(2 + bytes.len() * 2);
+    out.push_str("0x");
+    for byte in bytes {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
+/// Reads `0x`-prefixed hex into bytes. `None` for anything that is not an
+/// even run of hex digits — the index's strings are input, not truth.
+fn hex_bytes(value: &str) -> Option<Vec<u8>> {
+    let body = value.strip_prefix("0x")?;
+    if body.len() % 2 != 0 {
+        return None;
+    }
+    (0..body.len() / 2)
+        .map(|i| u8::from_str_radix(body.get(i * 2..i * 2 + 2)?, 16).ok())
+        .collect()
+}
+
+fn hash32_bytes(value: &str) -> Option<[u8; 32]> {
+    let bytes = hex_bytes(value)?;
+    <[u8; 32]>::try_from(bytes.as_slice()).ok()
+}
+
+/// What one collection's walk produced, and what stopped it.
+///
+/// [`ClassWalk`]'s shape one level down, for the same reason: a page that
+/// fails stops this collection where it stands, and everything already
+/// resolved is worth exactly what it would have been worth had the next page
+/// answered. `melted` is not an error — it is how many items no longer had a
+/// live cell by the time the walk asked, which is the difference between a
+/// short collection and a broken one.
+#[allow(dead_code)] // read by the weighted walk (T4)
+#[derive(Default)]
+pub(crate) struct GroupWalk {
+    pub(crate) candidates: Vec<GalaxyCellCandidate>,
+    pub(crate) melted: usize,
+    pub(crate) stopped_by: Option<anyhow::Error>,
+}
+
+/// One row of a collection's item list, reduced to the `args` of the item's
+/// own type script. `None` for an item that is no longer live.
+trait CollectionRow {
+    fn live_args(self) -> Option<String>;
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SporeItemResponse {
+    /// The spore's type-script `args`, which is also its identity.
+    spore_id: String,
+}
+
+impl CollectionRow for SporeItemResponse {
+    fn live_args(self) -> Option<String> {
+        // `/spore/clusters/{id}/spores` filters to live spores server-side,
+        // so every row that arrives here is one.
+        Some(self.spore_id)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ObjectItemResponse {
+    /// The item's type-script `args` — 28 bytes for M-NFT.
+    nft_id: String,
+    /// Unlike the spore list, this one serves dead rows too, so the filter
+    /// is this walk's job. A row that does not say defaults to dead: an item
+    /// the index will not call live is not one to spend a lookup on.
+    #[serde(default)]
+    is_live: bool,
+}
+
+impl CollectionRow for ObjectItemResponse {
+    fn live_args(self) -> Option<String> {
+        self.is_live.then_some(self.nft_id)
+    }
+}
+
+/// Pages one collection's item list, appending each live item's `args`.
+///
+/// `Result`-shaped so a failing page stops the collection exactly where it
+/// happened, leaving the caller holding every item read up to that point.
+async fn walk_collection_items<T: DeserializeOwned + CollectionRow>(
+    client: &reqwest::Client,
+    api_base: &Url,
+    path: &str,
+    max_pages: usize,
+    subject: &str,
+    args: &mut Vec<String>,
+) -> anyhow::Result<()> {
+    let mut cursor: Option<String> = None;
+    for _ in 0..max_pages {
+        let mut url = endpoint(api_base, path)?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("limit", &PAGE_LIMIT.to_string());
+            if let Some(cursor) = cursor.as_deref() {
+                query.append_pair("cursor", cursor);
+            }
+        }
+        let page: CursorPage<T> = fetch_json(client, url, subject).await?;
+        validate_page_size(page.data.len(), PAGE_LIMIT, subject)?;
+        for row in page.data {
+            if let Some(item_args) = row.live_args() {
+                args.push(item_args);
+            }
+        }
+        if !page.has_more {
+            break;
+        }
+        cursor = Some(next_cursor(page.next_cursor, subject)?);
+    }
+    Ok(())
+}
+
+/// One item's current live cell, or `None` if the item has melted.
+///
+/// `limit=1` because an item-keyed script addresses exactly one cell: the
+/// hash is a row key, not a group key (D2).
+async fn resolve_item_cell(
+    client: &reqwest::Client,
+    api_base: &Url,
+    type_script_hash: &str,
+    subject: &str,
+) -> anyhow::Result<Option<GalaxyCellCandidate>> {
+    let mut url = endpoint(api_base, "cells/live")?;
+    url.query_pairs_mut()
+        .append_pair("type_script_hash", type_script_hash)
+        .append_pair("limit", "1");
+    let page: CursorPage<GalaxyCellResponse> = fetch_json(client, url, subject).await?;
+    validate_page_size(page.data.len(), 1, subject)?;
+    let Some(cell) = page.data.into_iter().next() else {
+        return Ok(None);
+    };
+    if cell.type_script_hash.as_deref() != Some(type_script_hash) {
+        return Ok(None);
+    }
+    // Everything the candidate carries comes from THIS row. The item row's
+    // own transaction is the mint — measured live on an M-NFT item whose
+    // list entry claimed block 6,140,203 while its live cell was born at
+    // 13,889,070 — and a spore item carries no output index at all.
+    Ok(Some(candidate(
+        cell.tx_hash,
+        cell.output_index,
+        cell.capacity,
+        cell.created_at_block,
+        "collection item cell",
+    )?))
+}
+
+/// Turns a collection's items into candidates, one lookup each, discovering
+/// the collection's deployed script version on the way.
+///
+/// The version is discovered rather than declared: a cluster does not say
+/// which Spore deployment its items use, so the first item that resolves
+/// under any candidate settles it for the rest of the collection. An item
+/// that resolves under none is indistinguishable from one that melted, so
+/// discovery simply moves on to the next item — a collection whose whole
+/// prefix has burned still finds its version at the first survivor.
+async fn resolve_collection_items(
+    client: &reqwest::Client,
+    api_base: &Url,
+    args: &[String],
+    versions: &[DeployedScript],
+    settled: &mut Option<DeployedScript>,
+    subject: &str,
+    walk: &mut GroupWalk,
+) -> anyhow::Result<()> {
+    for item_args in args {
+        let Some(item_args) = hex_bytes(item_args) else {
+            // An id that is not hex is not an `args`; it cannot address a
+            // cell, and one bad row is not a reason to abandon the rest.
+            walk.melted += 1;
+            continue;
+        };
+        let attempts: &[DeployedScript] = match settled.as_ref() {
+            Some(version) => std::slice::from_ref(version),
+            None => versions,
+        };
+        let mut resolved = None;
+        for version in attempts {
+            let Some(code_hash) = hash32_bytes(version.code_hash) else {
+                continue;
+            };
+            let hash = type_script_hash_for(&code_hash, version.hash_type, &item_args);
+            if let Some(found) = resolve_item_cell(client, api_base, &hash, subject).await? {
+                *settled = Some(*version);
+                resolved = Some(found);
+                break;
+            }
+        }
+        match resolved {
+            Some(found) => walk.candidates.push(found),
+            None => walk.melted += 1,
+        }
+    }
+    Ok(())
+}
+
+/// Every live cell the walk can reach for one Spore cluster.
+///
+/// `settled` is the cluster's discovered script version, carried in by the
+/// caller so a second call skips discovery entirely.
+#[allow(dead_code)] // called by the weighted walk (T4)
+pub(crate) async fn fetch_spore_group(
+    client: &reqwest::Client,
+    api_base: &Url,
+    cluster_id: &str,
+    settled: &mut Option<DeployedScript>,
+    max_pages: usize,
+) -> GroupWalk {
+    fetch_collection_group(
+        client,
+        api_base,
+        &format!("spore/clusters/{cluster_id}/spores"),
+        SPORE_FAMILY,
+        settled,
+        max_pages,
+    )
+    .await
+}
+
+/// Every live cell the walk can reach for one M-NFT collection.
+#[allow(dead_code)] // called by the weighted walk (T4)
+pub(crate) async fn fetch_mnft_group(
+    client: &reqwest::Client,
+    api_base: &Url,
+    collection_id: &str,
+    settled: &mut Option<DeployedScript>,
+    max_pages: usize,
+) -> GroupWalk {
+    fetch_collection_group(
+        client,
+        api_base,
+        &format!("assets/objects/{collection_id}/items"),
+        MNFT_FAMILY,
+        settled,
+        max_pages,
+    )
+    .await
+}
+
+/// Which item list a collection is paged through. The row shapes differ; the
+/// per-item resolution after them does not.
+#[derive(Clone, Copy)]
+enum CollectionKind {
+    Spore,
+    Object,
+}
+
+/// Everything that differs between the two collection families, so the walk
+/// below can be written once.
+#[derive(Clone, Copy)]
+struct CollectionFamily {
+    kind: CollectionKind,
+    versions: &'static [DeployedScript],
+    subject: &'static str,
+}
+
+const SPORE_FAMILY: CollectionFamily = CollectionFamily {
+    kind: CollectionKind::Spore,
+    versions: SPORE_VERSIONS,
+    subject: "spore cluster items",
+};
+
+const MNFT_FAMILY: CollectionFamily = CollectionFamily {
+    kind: CollectionKind::Object,
+    versions: MNFT_VERSIONS,
+    subject: "object collection items",
+};
+
+async fn fetch_collection_group(
+    client: &reqwest::Client,
+    api_base: &Url,
+    path: &str,
+    family: CollectionFamily,
+    settled: &mut Option<DeployedScript>,
+    max_pages: usize,
+) -> GroupWalk {
+    let CollectionFamily {
+        kind,
+        versions,
+        subject,
+    } = family;
+    let mut walk = GroupWalk::default();
+    let mut args = Vec::new();
+    let listed = match kind {
+        CollectionKind::Spore => {
+            walk_collection_items::<SporeItemResponse>(
+                client, api_base, path, max_pages, subject, &mut args,
+            )
+            .await
+        }
+        CollectionKind::Object => {
+            walk_collection_items::<ObjectItemResponse>(
+                client, api_base, path, max_pages, subject, &mut args,
+            )
+            .await
+        }
+    };
+    // Items already listed are still worth resolving even if the page after
+    // them failed — the same rule the class walks obey, one level down.
+    walk.stopped_by = listed.err();
+    if let Err(error) = resolve_collection_items(
+        client, api_base, &args, versions, settled, subject, &mut walk,
+    )
+    .await
+    {
+        walk.stopped_by.get_or_insert(error);
+    }
+    report_collection_walk(path, args.len(), &walk);
+    walk
+}
+
+/// What a collection walk found, said once per collection.
+///
+/// A few melted items are ordinary attrition and belong at `debug`. A
+/// collection that listed items and resolved NONE of them is the shape a
+/// stale version list takes — the pinned deployments no longer include the
+/// one this collection uses — and that is worth a `warn`, because it is the
+/// difference between a collection the stage is sampling thinly and one it
+/// cannot see at all.
+fn report_collection_walk(path: &str, listed: usize, walk: &GroupWalk) {
+    if listed > 0 && walk.candidates.is_empty() {
+        tracing::warn!(
+            target: "cknerv-adapter-ckbadger",
+            collection = %path,
+            listed,
+            "a collection listed items but not one of them resolved to a live cell; \
+             its deployed script version may not be among the pinned ones"
+        );
+    } else if walk.melted > 0 {
+        tracing::debug!(
+            target: "cknerv-adapter-ckbadger",
+            collection = %path,
+            listed,
+            resolved = walk.candidates.len(),
+            melted = walk.melted,
+            "collection items that no longer had a live cell were skipped"
+        );
+    }
+}
+
+// ── identity: the family behind a collection ──────────────────────
+
+/// The script family each identity collection stands for, by the name the
+/// registry gives it.
+///
+/// ckbadger has no collection → code hash route (probed: `/scripts/{id}`
+/// 404, `/cells/by-script?family_id=` 400), and the collection ids are
+/// synthetic ASCII. What does know the pair is the census: cknerv has already
+/// observed these scripts on stage, and the registry can name them. Names are
+/// ckbadger's catalogue spellings, read live on 2026-08-23.
+fn identity_standard_for_name(name: &str) -> Option<IdentityStandard> {
+    match name {
+        ".bit Account" => Some(IdentityStandard::DotBit),
+        ".bit Cell" => Some(IdentityStandard::BitCell),
+        "did:ckb" => Some(IdentityStandard::DidCkb),
+        _ => None,
+    }
+}
+
+/// Joins the census against the registry: which `(code_hash, hash_type)` each
+/// identity collection means.
+///
+/// Pure, and pure on purpose — the census and the name lookup both live in
+/// `source.rs`, and this is the only part of the question worth testing.
+/// `name_of` answers for a `0x`-prefixed code hash.
+///
+/// A family with several deployed versions on stage contributes the first the
+/// census reports; the walk pages one version per composition and the others
+/// keep reaching the stage the way they do today, through block-following.
+/// A standard absent from the result is one this composition cannot page —
+/// the cold-start case (R1), where the census has not yet seen the family.
+#[allow(dead_code)] // called by the weighted walk (T4)
+pub(crate) fn identity_families(
+    observed: &[ScriptId],
+    name_of: impl Fn(&str) -> Option<&str>,
+) -> HashMap<IdentityStandard, ScriptId> {
+    let mut families = HashMap::new();
+    for script in observed {
+        if script.is_unset() {
+            continue;
+        }
+        let code_hash = script.code_hash_hex();
+        let Some(name) = name_of(&code_hash) else {
+            continue;
+        };
+        let Some(standard) = identity_standard_for_name(name) else {
+            continue;
+        };
+        families.entry(standard).or_insert(*script);
+    }
+    families
+}
+
+/// One row of `/cells/by-script`. The live-cell shape plus the two fields
+/// that say what actually matched.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ByScriptCellResponse {
+    tx_hash: String,
+    output_index: i32,
+    capacity: String,
+    created_at_block: i64,
+    type_code_hash: Option<String>,
+    matched_script_kind: Option<String>,
+}
+
+/// Every live cell of one identity family, paged by its script.
+///
+/// `.bit Account`'s 6,310 live cells all share ONE type script — `args` is
+/// the account, but the script is the family — so there is no item list to
+/// walk and no hash to compute: these rows ARE the live cells (D2).
+///
+/// `/cells/by-script` matches lock OR type, so `script_kind=type` is asked
+/// for AND re-checked per row, alongside the code hash. An index that ignored
+/// the parameter would otherwise hand the typed class a page of lock matches,
+/// and unknown query parameters here are ignored in silence.
+#[allow(dead_code)] // called by the weighted walk (T4)
+pub(crate) async fn fetch_identity_group(
+    client: &reqwest::Client,
+    api_base: &Url,
+    family: &ScriptId,
+    max_pages: usize,
+) -> GroupWalk {
+    let mut walk = GroupWalk::default();
+    walk.stopped_by =
+        walk_identity_family(client, api_base, family, max_pages, &mut walk.candidates)
+            .await
+            .err();
+    walk
+}
+
+async fn walk_identity_family(
+    client: &reqwest::Client,
+    api_base: &Url,
+    family: &ScriptId,
+    max_pages: usize,
+    candidates: &mut Vec<GalaxyCellCandidate>,
+) -> anyhow::Result<()> {
+    let code_hash = family.code_hash_hex();
+    let mut cursor: Option<String> = None;
+    for _ in 0..max_pages {
+        let mut url = endpoint(api_base, "cells/by-script")?;
+        {
+            let mut query = url.query_pairs_mut();
+            query
+                .append_pair("code_hash", &code_hash)
+                // CKB's JSON-RPC spelling, which is what this endpoint reads
+                // and what `HashType` already serializes to.
+                .append_pair("hash_type", hash_type_wire(family.hash_type).as_str())
+                .append_pair("script_kind", "type")
+                .append_pair("limit", &PAGE_LIMIT.to_string());
+            if let Some(cursor) = cursor.as_deref() {
+                query.append_pair("cursor", cursor);
+            }
+        }
+        let page: CursorPage<ByScriptCellResponse> =
+            fetch_json(client, url, "identity family cells").await?;
+        validate_page_size(page.data.len(), PAGE_LIMIT, "identity family cells")?;
+        for cell in page.data {
+            if cell.matched_script_kind.as_deref() != Some("type")
+                || cell.type_code_hash.as_deref() != Some(code_hash.as_str())
+            {
+                continue;
+            }
+            candidates.push(candidate(
+                cell.tx_hash,
+                cell.output_index,
+                cell.capacity,
+                cell.created_at_block,
+                "identity family cell",
+            )?);
+        }
+        if !page.has_more {
+            break;
+        }
+        cursor = Some(next_cursor(page.next_cursor, "identity family cells")?);
+    }
+    Ok(())
+}
+
 async fn discover_typed(
     client: &reqwest::Client,
     api_base: &Url,
@@ -1122,7 +1735,7 @@ pub(crate) mod tests {
     // ── T3: the candidate tail ────────────────────────────────────
 
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     use axum::extract::Query;
     use axum::routing::get;
@@ -1653,6 +2266,513 @@ pub(crate) mod tests {
             .expect_err("a page past the limit is not a roster");
         assert!(error.to_string().contains("ranked assets"), "got: {error}");
         server.abort();
+    }
+
+    // ── T3: computed hashes, collections, identity families ───────
+
+    /// Live-verified against ckbadger and the CKB node on 2026-08-23.
+    ///
+    /// A Nervape spore: `sporeId` IS the item's type-script `args`, and the
+    /// hash computed from it addressed the item's CURRENT live cell —
+    /// outpoint `0x5b8da118…:0` — even though the item had been transferred
+    /// away from its mint transaction `0xb0f45a8b…`. That transfer is the
+    /// whole argument for computing the hash rather than reading the item
+    /// row's `txHash`.
+    #[test]
+    fn the_spore_script_hash_matches_the_chain() {
+        let code_hash =
+            hash32_bytes("0x4a4dce1df3dffff7f8b2cd7dff7303df3b6150c9788cb75dcf6747247132b9f5")
+                .unwrap();
+        let args = hex_bytes("0x041e9872a9972ab578ff1531035614338efbebe1cc55148cb382d8a7561f1e37")
+            .unwrap();
+        assert_eq!(
+            type_script_hash_for(&code_hash, MOLECULE_HASH_TYPE_DATA1, &args),
+            "0x25bfb1642f6036b461aa58cb410c8429f99bf08257afae94f14125c2dcf6bb2a"
+        );
+    }
+
+    /// The same arithmetic over 28-byte `args`, where the molecule table is
+    /// 81 bytes rather than the spore case's 85.
+    ///
+    /// Obtained on 2026-08-23 by taking the first item of the live M-NFT
+    /// collection `0x8f67efedd50c…00000014` (`nftId` IS the `args`),
+    /// computing this hash, and asking the live index
+    /// `GET /cells/live?type_script_hash=0x42b89d9c…&limit=1`. It answered
+    /// with outpoint `0xcad471ef…:16`, capacity 13400000000, born at block
+    /// 13,889,070, `typeCodeHash` equal to the M-NFT code hash below.
+    ///
+    /// The same probe is why the candidate is built from that row and not
+    /// from the item row: the item list reported `createdAtBlock` 6,140,203
+    /// for this item, while the transaction it names is in block 13,889,070.
+    #[test]
+    fn the_mnft_script_hash_matches_the_chain() {
+        let code_hash =
+            hash32_bytes("0x2b24f0d644ccbdd77bbf86b27c8cca02efa0ad051e447c212636d9ee7acaaec9")
+                .unwrap();
+        let args = hex_bytes("0x8f67efedd50c61c9dd332defd4051f08a02d79770000001400000000").unwrap();
+        assert_eq!(args.len(), 28, "an M-NFT id is 28 bytes, not a hash");
+        assert_eq!(
+            type_script_hash_for(&code_hash, MOLECULE_HASH_TYPE_TYPE, &args),
+            "0x42b89d9c02628401a418ad43fef0076811fca04042d9a2dbfa433d28c0604a13"
+        );
+    }
+
+    /// The pinned M-NFT deployment is the one those live cells carry.
+    #[test]
+    fn the_pinned_mnft_version_is_the_deployed_one() {
+        assert_eq!(
+            MNFT_VERSIONS,
+            &[DeployedScript {
+                code_hash: "0x2b24f0d644ccbdd77bbf86b27c8cca02efa0ad051e447c212636d9ee7acaaec9",
+                hash_type: MOLECULE_HASH_TYPE_TYPE,
+            }]
+        );
+    }
+
+    /// Every pinned code hash must be a code hash. A typo here would spend a
+    /// request per item on a version that can never match.
+    #[test]
+    fn every_pinned_version_is_addressable() {
+        for version in SPORE_VERSIONS.iter().chain(MNFT_VERSIONS) {
+            assert!(
+                hash32_bytes(version.code_hash).is_some(),
+                "unusable pinned code hash: {}",
+                version.code_hash
+            );
+        }
+    }
+
+    /// Serves one collection's item list and a fixed set of live cells keyed
+    /// by type-script hash, recording every hash the walk asked about.
+    async fn spawn_collection(
+        items: serde_json::Value,
+        live: BTreeMap<String, serde_json::Value>,
+    ) -> (Url, tokio::task::JoinHandle<()>, Arc<Mutex<Vec<String>>>) {
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let logged = asked.clone();
+        let spore_items = items.clone();
+        let object_items = items;
+        let app = Router::new()
+            .route(
+                "/api/v1/spore/clusters/:id/spores",
+                get(move || {
+                    let page = spore_items.clone();
+                    async move { Json(page) }
+                }),
+            )
+            .route(
+                "/api/v1/assets/objects/:id/items",
+                get(move || {
+                    let page = object_items.clone();
+                    async move { Json(page) }
+                }),
+            )
+            .route(
+                "/api/v1/cells/live",
+                get(move |Query(q): Query<BTreeMap<String, String>>| {
+                    let live = live.clone();
+                    let logged = logged.clone();
+                    async move {
+                        let hash = q.get("type_script_hash").cloned().unwrap_or_default();
+                        logged.lock().unwrap().push(hash.clone());
+                        let data: Vec<_> = live.get(&hash).cloned().into_iter().collect();
+                        Json(serde_json::json!({
+                            "data": data,
+                            "hasMore": false,
+                            "nextCursor": None::<String>,
+                        }))
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (
+            Url::parse(&format!("http://{address}/api/v1/")).unwrap(),
+            handle,
+            asked,
+        )
+    }
+
+    fn hash_under(version: &DeployedScript, args: &str) -> String {
+        type_script_hash_for(
+            &hash32_bytes(version.code_hash).unwrap(),
+            version.hash_type,
+            &hex_bytes(args).unwrap(),
+        )
+    }
+
+    fn live_cell(hash: &str, tag: u8, capacity: u64, block: u64) -> serde_json::Value {
+        serde_json::json!({
+            "txHash": format!("0x{tag:02x}{:062x}", block),
+            "outputIndex": 3,
+            "capacity": capacity.to_string(),
+            "createdAtBlock": block,
+            "typeScriptHash": hash,
+            "lockScriptHash": format!("0x{:064x}", 0xcc),
+        })
+    }
+
+    const SPORE_A: &str = "0x041e9872a9972ab578ff1531035614338efbebe1cc55148cb382d8a7561f1e37";
+    const SPORE_B: &str = "0x06444024948c8ba0bac5cac96bcf167618b5d1925df54ed8220c20631ac13579";
+    const SPORE_C: &str = "0x5564d32594c100f922c1b4e9014f6be3e4070196ff6da2b40b3c834745d6827e";
+
+    /// The end-to-end shape: cluster items → computed hash → live outpoint.
+    ///
+    /// The cluster's deployed version is discovered on the first item by
+    /// trying the pinned list in order, then cached — so the two items after
+    /// it cost one request each, not eight. An item whose lookup comes back
+    /// empty melted between the index and the walk; it is counted, not
+    /// mourned.
+    #[tokio::test]
+    async fn a_spore_cluster_resolves_its_items_and_settles_on_one_version() {
+        // Third in the pinned list, so discovery has to walk past two.
+        let deployed = SPORE_VERSIONS[2];
+        let mut live = BTreeMap::new();
+        live.insert(
+            hash_under(&deployed, SPORE_A),
+            live_cell(&hash_under(&deployed, SPORE_A), 0xa1, 90_000_000_000, 4_100),
+        );
+        // SPORE_B has no live cell at all: melted.
+        live.insert(
+            hash_under(&deployed, SPORE_C),
+            live_cell(&hash_under(&deployed, SPORE_C), 0xc3, 70_000_000_000, 4_300),
+        );
+        let (api, server, asked) = spawn_collection(
+            serde_json::json!({
+                "data": [
+                    { "sporeId": SPORE_A, "txHash": format!("0x{:064x}", 0xdead), "isLive": true },
+                    { "sporeId": SPORE_B, "txHash": format!("0x{:064x}", 0xdead), "isLive": true },
+                    { "sporeId": SPORE_C, "txHash": format!("0x{:064x}", 0xdead), "isLive": true },
+                ],
+                "total": 3,
+                "hasMore": false,
+                "nextCursor": None::<String>,
+            }),
+            live,
+        )
+        .await;
+        let client = reqwest::Client::new();
+        let mut settled = None;
+
+        let walk = fetch_spore_group(
+            &client,
+            &api,
+            "0xb09a7b74f08afe5246b415f134fcda946207d761ef92f315ca563cc9dd22c315",
+            &mut settled,
+            ITEM_PAGES_PER_GROUP,
+        )
+        .await;
+
+        assert!(walk.stopped_by.is_none());
+        assert_eq!(settled, Some(deployed), "the winning version is cached");
+        assert_eq!(walk.melted, 1, "the item with no live cell is counted");
+        assert_eq!(
+            walk.candidates
+                .iter()
+                .map(|c| (c.capacity, c.birth_block, c.out_point.index))
+                .collect::<Vec<_>>(),
+            vec![(90_000_000_000, 4_100, 3), (70_000_000_000, 4_300, 3)],
+            "capacity, birth and index all come from the live cell row"
+        );
+
+        let asked = asked.lock().unwrap().clone();
+        assert_eq!(
+            asked.len(),
+            5,
+            "three probes to discover the version, then one lookup per item: {asked:?}"
+        );
+        assert_eq!(
+            &asked[..3],
+            &[
+                hash_under(&SPORE_VERSIONS[0], SPORE_A),
+                hash_under(&SPORE_VERSIONS[1], SPORE_A),
+                hash_under(&SPORE_VERSIONS[2], SPORE_A),
+            ],
+            "discovery tries the pinned versions in order"
+        );
+        assert_eq!(
+            &asked[3..],
+            &[
+                hash_under(&deployed, SPORE_B),
+                hash_under(&deployed, SPORE_C),
+            ],
+            "after discovery every item costs exactly one lookup"
+        );
+        server.abort();
+    }
+
+    /// A cluster whose deployment is not in the pinned list resolves nothing
+    /// and says so, rather than looking like an empty cluster.
+    #[tokio::test]
+    async fn a_cluster_on_an_unpinned_version_resolves_nothing() {
+        let (api, server, asked) = spawn_collection(
+            serde_json::json!({
+                "data": [{ "sporeId": SPORE_A }],
+                "hasMore": false,
+                "nextCursor": None::<String>,
+            }),
+            BTreeMap::new(),
+        )
+        .await;
+        let client = reqwest::Client::new();
+        let mut settled = None;
+
+        let walk = fetch_spore_group(
+            &client,
+            &api,
+            &format!("0x{:064x}", 0xb0),
+            &mut settled,
+            ITEM_PAGES_PER_GROUP,
+        )
+        .await;
+
+        assert!(walk.candidates.is_empty());
+        assert_eq!(walk.melted, 1);
+        assert_eq!(settled, None, "nothing answered, so nothing is cached");
+        assert_eq!(
+            asked.lock().unwrap().len(),
+            SPORE_VERSIONS.len(),
+            "every pinned version was tried"
+        );
+        server.abort();
+    }
+
+    const MNFT_A: &str = "0x8f67efedd50c61c9dd332defd4051f08a02d79770000001400000000";
+    const MNFT_DEAD: &str = "0x8f67efedd50c61c9dd332defd4051f08a02d79770000001400000001";
+
+    /// `/assets/objects/{id}/items` serves dead rows too, so the filter is
+    /// this walk's job. A burned item must not even cost a lookup.
+    #[tokio::test]
+    async fn an_object_collection_skips_its_dead_items() {
+        let deployed = MNFT_VERSIONS[0];
+        let mut live = BTreeMap::new();
+        live.insert(
+            hash_under(&deployed, MNFT_A),
+            live_cell(
+                &hash_under(&deployed, MNFT_A),
+                0x11,
+                13_400_000_000,
+                13_889_070,
+            ),
+        );
+        // The dead item's cell is present in the index, to prove the walk
+        // never asks for it rather than merely not finding it.
+        live.insert(
+            hash_under(&deployed, MNFT_DEAD),
+            live_cell(
+                &hash_under(&deployed, MNFT_DEAD),
+                0x22,
+                13_400_000_000,
+                12_521_230,
+            ),
+        );
+        let (api, server, asked) = spawn_collection(
+            serde_json::json!({
+                "data": [
+                    { "nftId": MNFT_A, "standard": "m-nft", "isLive": true, "outputIndex": None::<u32> },
+                    { "nftId": MNFT_DEAD, "standard": "m-nft", "isLive": false },
+                ],
+                "hasMore": false,
+                "nextCursor": None::<String>,
+            }),
+            live,
+        )
+        .await;
+        let client = reqwest::Client::new();
+        let mut settled = None;
+
+        let walk = fetch_mnft_group(
+            &client,
+            &api,
+            "0x8f67efedd50c61c9dd332defd4051f08a02d797700000014",
+            &mut settled,
+            ITEM_PAGES_PER_GROUP,
+        )
+        .await;
+
+        assert_eq!(walk.candidates.len(), 1);
+        assert_eq!(walk.candidates[0].birth_block, 13_889_070);
+        assert_eq!(walk.melted, 0, "a dead row is not a melted item");
+        assert_eq!(
+            asked.lock().unwrap().clone(),
+            vec![hash_under(&deployed, MNFT_A)],
+            "the dead item never became a request"
+        );
+        server.abort();
+    }
+
+    /// Serves `/cells/by-script`, recording the query it was asked with.
+    async fn spawn_by_script(
+        rows: serde_json::Value,
+    ) -> (Url, tokio::task::JoinHandle<()>, Arc<Mutex<Vec<String>>>) {
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let logged = asked.clone();
+        let app = Router::new().route(
+            "/api/v1/cells/by-script",
+            get(move |request: axum::extract::Request| {
+                let rows = rows.clone();
+                let logged = logged.clone();
+                async move {
+                    logged
+                        .lock()
+                        .unwrap()
+                        .push(request.uri().query().unwrap_or_default().to_string());
+                    Json(serde_json::json!({
+                        "data": rows,
+                        "total": 2,
+                        "hasMore": false,
+                        "nextCursor": None::<String>,
+                    }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (
+            Url::parse(&format!("http://{address}/api/v1/")).unwrap(),
+            handle,
+            asked,
+        )
+    }
+
+    /// `/cells/by-script` matches lock OR type, and an unknown query
+    /// parameter is ignored in silence — so `script_kind=type` is asked for
+    /// AND re-checked, alongside the code hash. The hash type goes on the
+    /// wire in CKB's JSON-RPC spelling.
+    #[tokio::test]
+    async fn an_identity_family_takes_only_rows_its_own_type_script_matched() {
+        let family = ScriptId::parse(&format!("0x{:064x}", 0xbb), "data1").unwrap();
+        let code_hash = family.code_hash_hex();
+        let (api, server, asked) = spawn_by_script(serde_json::json!([
+            {
+                "txHash": format!("0x{:064x}", 0x01),
+                "outputIndex": 1,
+                "capacity": "23699989753",
+                "createdAtBlock": 13_337_986,
+                "lockScriptHash": format!("0x{:064x}", 0xcc),
+                "typeScriptHash": format!("0x{:064x}", 0x51),
+                "typeCodeHash": code_hash,
+                "matchedScriptKind": "type",
+            },
+            {
+                // The same code hash, matched as a LOCK.
+                "txHash": format!("0x{:064x}", 0x02),
+                "outputIndex": 0,
+                "capacity": "10000000000",
+                "createdAtBlock": 13_337_987,
+                "lockScriptHash": code_hash,
+                "typeScriptHash": None::<String>,
+                "typeCodeHash": None::<String>,
+                "matchedScriptKind": "lock",
+            },
+            {
+                // Matched as a type, but not this family's type.
+                "txHash": format!("0x{:064x}", 0x03),
+                "outputIndex": 0,
+                "capacity": "10000000000",
+                "createdAtBlock": 13_337_988,
+                "lockScriptHash": format!("0x{:064x}", 0xcc),
+                "typeScriptHash": format!("0x{:064x}", 0x53),
+                "typeCodeHash": format!("0x{:064x}", 0xfe),
+                "matchedScriptKind": "type",
+            },
+        ]))
+        .await;
+        let client = reqwest::Client::new();
+
+        let walk = fetch_identity_group(&client, &api, &family, 1).await;
+
+        assert!(walk.stopped_by.is_none());
+        assert_eq!(
+            walk.candidates
+                .iter()
+                .map(|c| c.birth_block)
+                .collect::<Vec<_>>(),
+            vec![13_337_986],
+            "only the row this family's own type script matched"
+        );
+
+        let query = asked.lock().unwrap()[0].clone();
+        assert!(
+            query.contains("hash_type=data1"),
+            "the wire spelling is CKB's own, got: {query}"
+        );
+        assert!(query.contains("script_kind=type"), "got: {query}");
+        assert!(
+            query.contains(&format!("code_hash={code_hash}")),
+            "got: {query}"
+        );
+        server.abort();
+    }
+
+    fn script(byte: u8, hash_type: &str) -> ScriptId {
+        ScriptId::parse(&format!("0x{byte:02x}{:062x}", 0), hash_type).unwrap()
+    }
+
+    /// The join that makes an identity collection pageable: the census says
+    /// which scripts are on stage, the registry names them, and the name is
+    /// what identifies the family.
+    #[test]
+    fn identity_families_resolve_by_the_name_the_registry_gives_them() {
+        let dotbit = script(0xa1, "type");
+        let bit_cell = script(0xa2, "type");
+        let did = script(0xa3, "type");
+        let observed = vec![
+            script(0x00, "type"), // an unparsed script carries the unset id
+            dotbit,
+            script(0xa9, "data1"), // named, but not an identity family
+            bit_cell,
+            did,
+        ];
+        let families = identity_families(&observed, |code_hash| {
+            match code_hash {
+                _ if code_hash == dotbit.code_hash_hex() => Some(".bit Account"),
+                _ if code_hash == bit_cell.code_hash_hex() => Some(".bit Cell"),
+                _ if code_hash == did.code_hash_hex() => Some("did:ckb"),
+                _ if code_hash == script(0xa9, "data1").code_hash_hex() => Some("Simple UDT"),
+                // The census has seen scripts the registry cannot name.
+                _ => None,
+            }
+        });
+
+        assert_eq!(families.len(), 3);
+        assert_eq!(families[&IdentityStandard::DotBit], dotbit);
+        assert_eq!(families[&IdentityStandard::BitCell], bit_cell);
+        assert_eq!(families[&IdentityStandard::DidCkb], did);
+    }
+
+    /// Cold start (R1): a family the census has not observed yet is simply
+    /// absent, and its collection contributes nothing this composition
+    /// rather than pretending to.
+    #[test]
+    fn an_unobserved_identity_family_stays_absent() {
+        let dotbit = script(0xa1, "type");
+        let families = identity_families(&[dotbit], |_| Some(".bit Account"));
+        assert_eq!(families.len(), 1);
+        assert!(!families.contains_key(&IdentityStandard::BitCell));
+        assert!(!families.contains_key(&IdentityStandard::DidCkb));
+
+        assert!(
+            identity_families(&[], |_| Some(".bit Account")).is_empty(),
+            "an empty census names nothing"
+        );
+    }
+
+    /// A family deployed more than once contributes the version the census
+    /// reported first; the rest keep reaching the stage through
+    /// block-following, as they do today.
+    #[test]
+    fn a_family_with_two_deployments_contributes_the_first_observed() {
+        let first = script(0xa1, "type");
+        let second = script(0xa2, "type");
+        let families = identity_families(&[first, second], |_| Some(".bit Account"));
+        assert_eq!(families[&IdentityStandard::DotBit], first);
     }
 
     // ── one class failing ─────────────────────────────────────────

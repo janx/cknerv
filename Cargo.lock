@@ -436,6 +436,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "blake2b-ref",
  "bs58",
  "cknerv-core",
  "cknerv-server",

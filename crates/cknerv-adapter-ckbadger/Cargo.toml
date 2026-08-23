@@ -12,6 +12,10 @@ anyhow.workspace = true
 async-trait.workspace = true
 # The crawler is keyed by PeerId bytes; CKB's RPC prints them base58.
 bs58.workspace = true
+# Item-keyed families (Spore, M-NFT) hand out a script's `args`, not its hash,
+# so the adapter computes the hash itself. Pure Rust, and already in the lock
+# under `ckb-hash` — this adapter deliberately keeps no `ckb-types` dependency.
+blake2b-ref = "0.3"
 futures = "0.3"
 reqwest.workspace = true
 serde.workspace = true
