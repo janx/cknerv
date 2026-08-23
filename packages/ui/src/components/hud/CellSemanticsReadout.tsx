@@ -101,6 +101,8 @@ function facetTitle(facet: SemanticFacet): string {
     case 'dao': return 'DAO POSITION';
     case 'dep_group': return 'DEP GROUP';
     case 'code_cell': return 'CODE CELL';
+    case 'collection': return 'COLLECTION';
+    case 'composition': return 'COMPOSITION';
     default: return facet.namespace === 'cell_data'
       ? `DATA · ${facet.kind.replaceAll('_', ' ')}`
       : facet.kind.replaceAll('_', ' ');
@@ -196,6 +198,105 @@ export function semanticFacetNumber(
   if (!attribute) return null;
   const value = Number(attribute.value);
   return Number.isFinite(value) ? value : null;
+}
+
+// ——— Storage composition ————————————————————————————————————————————————
+//
+// Where a digital object's content physically lives is the durability axis of
+// its value: fully on the chain, split across Bitcoin and CKB, leaning on a
+// decentralized network somebody else keeps up, or depending on one operator's
+// HTTPS server. That is a MEASUREMENT the index's decode worker makes, never a
+// claim the Cell carries, so the vocabulary below is ckbadger's own and this
+// file only translates it into HUD type — same five tiers, same five
+// sentences, so an object explained on either surface is explained in the same
+// words.
+//
+// `unknown` means NOT YET MEASURED. It is emphatically not "off-chain": an
+// object the worker has not reached yet is unread, and printing that as a
+// verdict about its storage would be inventing the one fact these rows exist
+// to state.
+
+type CompositionTierReadout = {
+  /** ckbadger's `formatCompositionTier` label, uppercased into HUD type. */
+  label: string;
+  color: string;
+  /** ckbadger's tooltip sentence, verbatim. */
+  description: string;
+};
+
+const COMPOSITION_TIERS: Readonly<Record<string, CompositionTierReadout>> = {
+  pure_ckb: {
+    label: 'PURE CKB',
+    color: HUD_COLORS.nominal,
+    description: 'All content is stored directly on the CKB blockchain (on-chain data or ckbfs://). Fully verifiable and permanent.',
+  },
+  btc_ckb: {
+    label: 'BTC+CKB',
+    // The consensus band: content that never leaves a chain, on two chains
+    // instead of one. Both halves are as permanent as the object itself, which
+    // is why this reads beside `nominal` rather than below it.
+    color: HUD_COLORS.cyanWire,
+    description: 'Content is stored across both CKB (on-chain data or ckbfs://) and Bitcoin (btcfs://). Fully verifiable and permanent.',
+  },
+  decentralized_mixture: {
+    label: 'DECENTRALIZED MIXTURE',
+    color: HUD_COLORS.caution,
+    description: 'Some content references external decentralized storage (e.g. IPFS, Arweave). Data persists as long as the external network hosts it.',
+  },
+  centralized_mixture: {
+    label: 'CENTRALIZED MIXTURE',
+    // `ember`, and the choice is between two documented meanings rather than
+    // two hues. `orangeDeep` is CHROME — the instrument's own frame, worn
+    // today by exactly one thing, a panel header's companion glyph — and the
+    // palette forbids painting a reading in the frame's colour. `ember` is the
+    // opposite layer by construction: never an accent, never a border, only
+    // ever a reading, sitting at hue 11° between `danger` and `orangeDeep`
+    // precisely so it can say "this is being consumed" without reading as a
+    // small alarm. Its literal gloss — cells being spent — stretches here into
+    // content that is spendable by somebody else: a server operator can stop
+    // paying for it, and then this object's content is gone. That is a
+    // stretch of the metaphor; using chrome for a value would be a break of
+    // the rule. Red stays reserved for pathology either way — an object stored
+    // on somebody's server is not a fault, it is a weaker promise.
+    color: HUD_COLORS.ember,
+    description: 'Some content depends on centralized servers (http/https). Data availability relies on the server operator.',
+  },
+  unknown: {
+    label: 'UNKNOWN',
+    color: HUD_COLORS.dim,
+    description: 'Composition could not be determined. The content storage method for objects in this cluster is unverified.',
+  },
+};
+
+/** The table entry for a tier, and only for a tier this side actually knows.
+ *  Own keys only: a wire string that happens to name something on
+ *  `Object.prototype` would otherwise come back as a truthy object with no
+ *  label, no colour and no sentence in it. */
+function compositionTier(tier: string): CompositionTierReadout | null {
+  return Object.hasOwn(COMPOSITION_TIERS, tier)
+    ? COMPOSITION_TIERS[tier]
+    : null;
+}
+
+/** The tier's name in HUD type. A spelling this side does not know is printed
+ *  as upstream spelled it — the index owns this vocabulary, and a sixth tier
+ *  arriving is a word we have not learned yet, never a decode failure. */
+export function compositionTierLabel(tier: string): string {
+  return compositionTier(tier)?.label
+    ?? tier.replaceAll('_', ' ').toUpperCase();
+}
+
+/** The tier's colour. An unrecognized tier reads `dim`, the same as `unknown`,
+ *  because both say the same thing: nothing here has been established. */
+export function compositionTierColor(tier: string): string {
+  return compositionTier(tier)?.color ?? HUD_COLORS.dim;
+}
+
+/** The sentence explaining what the tier means for the object's durability. An
+ *  unrecognized tier falls back to the `unknown` sentence, mirroring the
+ *  index's own default. */
+export function compositionTierDescription(tier: string): string {
+  return (compositionTier(tier) ?? COMPOSITION_TIERS.unknown).description;
 }
 
 /** One line naming WHAT an inventory Cell holds — `image/png · 6,878 B`, a

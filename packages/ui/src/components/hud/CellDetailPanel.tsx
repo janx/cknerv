@@ -94,6 +94,9 @@ import {
   type CellIdentityProofKind,
 } from '../../derives/cellIdentityProof.derive';
 import {
+  compositionTierColor,
+  compositionTierDescription,
+  compositionTierLabel,
   enrichmentSourceColor,
   enrichmentStatusMessage,
   EvidenceFact,
@@ -101,6 +104,7 @@ import {
   primarySemanticFacet,
   semanticAssetAmountReadout,
   semanticAssetIdentityReadout,
+  semanticFacetAttribute,
   semanticFacetNumber,
   semanticFacetValue,
   semanticObjectReadout,
@@ -346,6 +350,99 @@ function daoMomentReadout(
   return atMs !== null && atMs > 0
     ? `${formatBlockRef(block)} · ${formatWallClock(atMs)}`
     : formatBlockRef(block);
+}
+
+/** Facet kinds the register spells out one fact to a line. Everything else
+ *  keeps the generic one-line summary — and a kind listed here that stayed out
+ *  of this set would print twice, once as its own rows and once as the primary
+ *  facet's one-liner underneath them. */
+const SPELLED_OUT_FACET_KINDS = new Set(['dao', 'collection', 'composition']);
+
+/** A count an index stated about itself, grouped in the house's pinned
+ *  locale so a population cannot read differently on two machines. */
+function groupCount(value: number): string {
+  return value.toLocaleString('en-US');
+}
+
+/** What a collection is MADE OF, in as many of its three facts as the index
+ *  stated: how many objects are alive, how many wallets hold one, and how much
+ *  CKB the whole population has locked up. A fact that never arrived is absent
+ *  rather than zero — a collection with no stated population is not a
+ *  collection of none. */
+function collectionPopulationReadout(
+  facet: SemanticFacet | null,
+): string | null {
+  const parts: string[] = [];
+  const live = semanticFacetNumber(facet, 'live_items');
+  if (live !== null) parts.push(`${groupCount(live)} LIVE`);
+  const holders = semanticFacetNumber(facet, 'holders');
+  if (holders !== null) parts.push(`${groupCount(holders)} HOLDERS`);
+  // Shannons, and read off the attribute itself: `semanticFacetValue` appends
+  // the unit, which would print `109067222027837 shannons` in the one place
+  // the house CKB grammar belongs. A figure that will not parse is withheld —
+  // the row simply states the facts it does have.
+  const capacity = semanticFacetAttribute(facet, 'owned_capacity')?.value;
+  if (capacity) {
+    try {
+      parts.push(formatCkb(BigInt(capacity)));
+    } catch {
+      // Not a decimal integer: nothing truthful to print, so nothing is.
+    }
+  }
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
+
+/** The population's storage mix as a COUNT breakdown, for the composition
+ *  row's provenance. Never a ratio and never a bar: the question a reader has
+ *  about a collection is how many of its objects sit in each tier, and a
+ *  percentage of a population whose size is stated one row above says nothing
+ *  the two numbers do not already. Counts the index never stated are simply
+ *  not listed. */
+function compositionCountsReadout(
+  facet: SemanticFacet | null,
+): string | null {
+  const count = (key: string) => semanticFacetNumber(facet, key);
+  const parts: string[] = [];
+  const onchain = count('agg_onchain');
+  const pure = count('agg_pure_ckb');
+  // `agg_onchain` is the index's own field and already counts BTC+CKB objects
+  // among the pure ones; `agg_pure_ckb` is the subset that never leaves CKB,
+  // and the wire carries no separate BTC figure. So the pure count is stated
+  // INSIDE the on-chain one rather than beside it as if they were siblings
+  // that could be added up.
+  if (onchain !== null) {
+    parts.push(pure !== null
+      ? `on-chain ${groupCount(onchain)} (pure ${groupCount(pure)})`
+      : `on-chain ${groupCount(onchain)}`);
+  } else if (pure !== null) {
+    parts.push(`pure ${groupCount(pure)}`);
+  }
+  for (const [key, word] of [
+    ['agg_decentralized', 'decentralized'],
+    ['agg_centralized', 'centralized'],
+    ['agg_unknown', 'unknown'],
+  ] as const) {
+    const value = count(key);
+    if (value !== null) parts.push(`${word} ${groupCount(value)}`);
+  }
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
+
+/** The content issues the index's decode worker found in THIS object — a
+ *  source it could not read, media dangling off a dead reference — as a chip
+ *  beside the STORAGE label, in the same grammar the CODE row's lifecycle word
+ *  wears. Upstream emits the key only once there is something to count, so a
+ *  chip present at all means a number greater than zero. */
+function storageIssuesChip(issues: string | null): ReactNode {
+  if (!issues) return undefined;
+  return (
+    <span
+      data-cell-storage-issues={issues}
+      style={{ flex: '0 0 auto', ...plateStateChip(HUD_COLORS.caution) }}
+    >
+      {`${issues} ISSUES`}
+    </span>
+  );
 }
 
 type ClusterRowProps = {
@@ -1082,7 +1179,80 @@ export default function CellDetailPanel({
   const daoFacet = presentedSemanticRecord?.facets.find(
     (candidate) => candidate.kind === 'dao',
   ) ?? null;
-  const genericFacet = facet && facet.kind !== 'dao' ? facet : null;
+  const genericFacet = facet && !SPELLED_OUT_FACET_KINDS.has(facet.kind)
+    ? facet
+    : null;
+  // ——— Whose kin, and where the content lives ————————————————————————
+  // Two facets the index attaches to a digital object. Read BY KIND rather
+  // than by namespace, so the day an `mnft` namespace states the same two
+  // things these rows already speak for it.
+  const collectionFacet = presentedSemanticRecord?.facets.find(
+    (candidate) => candidate.kind === 'collection',
+  ) ?? null;
+  const compositionFacet = presentedSemanticRecord?.facets.find(
+    (candidate) => candidate.kind === 'composition',
+  ) ?? null;
+  // The role decides which of these rows are TRUE for this Cell, and only the
+  // facet ever states it: an object whose decode named no cluster carries no
+  // collection facet at all, and that is kinship UNKNOWN — never solitude.
+  // Inferring `sole_item` from an absence is the one mistake this block
+  // cannot make, because it would print a lie in the panel's own voice.
+  const collectionRole = semanticFacetValue(collectionFacet, 'role');
+  const collectionName = collectionFacet?.state?.trim() || null;
+  const collectionClusterId = semanticFacetValue(collectionFacet, 'cluster_id');
+  const collectionDescription = semanticFacetValue(
+    collectionFacet,
+    'description',
+  );
+  // A cluster Cell says nothing here: its name is already the OBJECT row and
+  // its id is already the ARGS row, and repeating either is the clutter this
+  // register's redesign killed.
+  const collectionStated = collectionRole === 'item'
+    || collectionRole === 'sole_item';
+  const collectionValue = collectionRole === 'sole_item'
+    ? 'SOLE SPORE'
+    : collectionName
+      ?? (collectionClusterId
+        ? midTruncate(collectionClusterId, 12, 9)
+        : 'UNRESOLVED');
+  // Gold is the house's value emphasis and belongs to a collection that
+  // exists. An object that belongs to nothing states that as a fact in
+  // instrument grey rather than wearing the ink of a name it does not have,
+  // and so does one whose kin the index could not resolve at all.
+  const collectionValueColor = collectionRole === 'sole_item'
+    || (!collectionName && !collectionClusterId)
+    ? HUD_COLORS.dim
+    : HUD_COLORS.goldInk;
+  // Provenance: the collection's description when the index stated one, and
+  // the full cluster id underneath it whenever the id is what the row had to
+  // print in place of a name.
+  const collectionTitle = [
+    collectionDescription,
+    collectionName ? null : collectionClusterId,
+  ].filter(Boolean).join(' · ') || undefined;
+  // The id gets a row of its own once a NAME has taken the row above it. With
+  // no name the COLLECTION row is already printing this hex, and a register
+  // that says the same string twice in two lines is the clutter this layout
+  // exists to prevent.
+  const collectionIdRow = collectionRole === 'item' && collectionName
+    ? collectionClusterId
+    : null;
+  // Population and mix are facts about a group, so they belong to the two
+  // roles that HAVE one.
+  const collectionKin = collectionRole === 'item'
+    || collectionRole === 'cluster';
+  const populationReadout = collectionKin
+    ? collectionPopulationReadout(collectionFacet)
+    : null;
+  const aggregateTier = collectionKin
+    ? semanticFacetValue(compositionFacet, 'agg_tier')
+    : null;
+  const compositionCounts = compositionCountsReadout(compositionFacet);
+  // This object's own storage, which a cluster Cell has none of — the headline
+  // state can be the aggregate's, so the row waits for the item's own key
+  // rather than inferring one from the other.
+  const itemTier = semanticFacetValue(compositionFacet, 'item_tier');
+  const itemIssues = semanticFacetValue(compositionFacet, 'item_issues');
   const assetAmount = presentedSemanticRecord
     ? semanticAssetAmountReadout(presentedSemanticRecord)
     : null;
@@ -1109,7 +1279,8 @@ export default function CellDetailPanel({
   );
   const assetEvidencePresent = Boolean(
     cell.type_script || assetAmount || assetIdentity || assetObject
-      || typeScript || daoFacet || genericFacet || enrichmentPending,
+      || typeScript || daoFacet || collectionFacet || compositionFacet
+      || genericFacet || enrichmentPending,
   );
   const knowledge = presentedSemanticRecord?.common_knowledge ?? null;
   const hasKnowledge = Boolean(knowledge && knowledge.total_bytes > 0);
@@ -1391,12 +1562,79 @@ export default function CellDetailPanel({
                       revealAt={semanticsRevealAt(1)}
                     />
                   ) : null}
+                  {/* Whose kin the object is, then what that kin is made of,
+                    * then the object itself — collection facts first, so the
+                    * OBJECT row reads as one specimen out of the population
+                    * stated above it. */}
+                  {collectionStated ? (
+                    <ClusterRow
+                      row="collection"
+                      accent={assetAccent}
+                      label="COLLECTION"
+                      value={collectionValue}
+                      valueColor={collectionValueColor}
+                      title={collectionTitle}
+                      revealAt={semanticsRevealAt(1)}
+                    />
+                  ) : null}
+                  {collectionIdRow ? (
+                    <ClusterRow
+                      row="cluster-id"
+                      accent={assetAccent}
+                      label="CLUSTER"
+                      value={midTruncate(collectionIdRow, 12, 9)}
+                      title={collectionIdRow}
+                      revealAt={semanticsRevealAt(2)}
+                    />
+                  ) : null}
+                  {populationReadout ? (
+                    <ClusterRow
+                      row="population"
+                      accent={assetAccent}
+                      label="POPULATION"
+                      value={populationReadout}
+                      revealAt={semanticsRevealAt(1)}
+                    />
+                  ) : null}
+                  {aggregateTier ? (
+                    <ClusterRow
+                      row="composition"
+                      accent={assetAccent}
+                      label="COMPOSITION"
+                      value={compositionTierLabel(aggregateTier)}
+                      valueColor={compositionTierColor(aggregateTier)}
+                      title={[
+                        compositionTierDescription(aggregateTier),
+                        compositionCounts,
+                      ].filter(Boolean).join(' ')}
+                      revealAt={semanticsRevealAt(1)}
+                    />
+                  ) : null}
                   {assetObject ? (
                     <ClusterRow
                       row="object"
                       accent={assetAccent}
                       label="OBJECT"
                       value={assetObject}
+                      revealAt={semanticsRevealAt(1)}
+                    />
+                  ) : null}
+                  {/* Where THIS object's content lives, directly under what it
+                    * is: the durability of the bytes named one row up. */}
+                  {itemTier ? (
+                    <ClusterRow
+                      row="storage"
+                      accent={assetAccent}
+                      label="STORAGE"
+                      value={compositionTierLabel(itemTier)}
+                      valueColor={compositionTierColor(itemTier)}
+                      badge={storageIssuesChip(itemIssues)}
+                      title={[
+                        compositionTierDescription(itemTier),
+                        itemIssues
+                          ? `${itemIssues} content issue${itemIssues === '1' ? '' : 's'} reported by the index.`
+                          : null,
+                      ].filter(Boolean).join(' ')}
                       revealAt={semanticsRevealAt(1)}
                     />
                   ) : null}
