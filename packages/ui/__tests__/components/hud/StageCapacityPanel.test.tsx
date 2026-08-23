@@ -10,6 +10,7 @@ import {
   populationCompositionMixes,
   populationMediumRows,
   populationRows,
+  stageTipWindowRow,
 } from '../../../src/components/hud/cellPopulation.presentation';
 import type { CellsStats } from '../../../src/derives/cellsStats.derive';
 import {
@@ -229,6 +230,54 @@ describe('composition disclosure', () => {
     expect(container.querySelector<HTMLElement>(
       '[data-population-mix="Stage mix"]',
     )?.style.opacity).toBe('1');
+  });
+});
+
+describe('the tip window', () => {
+  it('states the seats the newest live Cells standingly hold', () => {
+    // A curated stage divides its seats between two laws: the composition
+    // samples 10,800 and the recency window standingly holds 1,200 for the
+    // newest births on the chain.
+    expect(stageTipWindowRow(scenario('chain-scope-mainnet').model)).toEqual({
+      label: 'Tip window',
+      value: '1,200',
+      scope: 'NEWEST BIRTHS',
+    });
+  });
+
+  it('says the whole stage is the window when nothing curated it', () => {
+    // Without a composition there is no field to sit beside: the window is
+    // the entire resting set, and the stage IS the latest live Cells. The
+    // count excludes the transient activity seats rather than rounding them
+    // in — a widened claim is the one error these rows exist to prevent.
+    expect(stageTipWindowRow(scenario('uncurated-stage').model)).toEqual({
+      label: 'Tip window',
+      value: '11,488',
+      scope: 'WHOLE STAGE',
+    });
+  });
+
+  it('draws it above the mixes, scoped, and never on the funnel staircase', () => {
+    const { container } = renderScenario('chain-scope-mainnet');
+    const row = container.querySelector('[data-stage-reserve="Tip window"]')!;
+
+    expect(row).not.toBeNull();
+    expect(row.textContent).toContain('NEWEST BIRTHS');
+    expect(row.textContent).toContain('1,200');
+    // A reserve inside a funnel step is not a step: no depth bar, and no
+    // entry on the shared scale the staircase is read from.
+    expect(row.querySelector('[data-funnel-fill]')).toBeNull();
+    expect(
+      row.compareDocumentPosition(
+        container.querySelector('[data-population-mix="Stage mix"]')!,
+      ) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it('carries a scope in every scenario, like every other count here', () => {
+    for (const entry of scenarios) {
+      expect(stageTipWindowRow(entry.model).scope, entry.id).not.toBe('');
+    }
   });
 });
 

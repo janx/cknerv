@@ -27,6 +27,37 @@ export const CELL_DISPLAY_COARSE_STEP = 250;
  */
 export const AUTO_CELL_DISPLAY_BUDGET = 12_000;
 
+/**
+ * MUST MATCH `DISPLAY_TIP_WINDOW` in
+ * `crates/cknerv-core/src/projection/display_plane.rs`.
+ *
+ * Seats the server holds for the newest live Cells on the chain, standing
+ * rather than transient: a younger birth takes the window's oldest seat, and
+ * a death in it refills from the next-youngest live Cell. It is not carried
+ * on the wire — nothing about it changes what a snapshot or a delta says, and
+ * a field on the snapshot would be a number the client can only echo back.
+ * So it is mirrored here, the way the budget above already is, and the Rust
+ * test `the_window_and_the_curated_field_divide_the_budget_exactly` names
+ * this constant so a retune on either side fails on the other.
+ *
+ * Composed mode holds exactly this many beside the curated field; without a
+ * reservoir the window takes the whole resting field instead, which is
+ * `AUTO_CELL_DISPLAY_BUDGET - DISPLAY_ACTIVITY_QUOTA`.
+ */
+export const DISPLAY_TIP_WINDOW = 1_200;
+
+/**
+ * MUST MATCH `DISPLAY_ACTIVITY_QUOTA` in
+ * `crates/cknerv-core/src/projection/display_plane.rs`.
+ *
+ * Transient seats for the endpoints of landed transactions. Mirrored only so
+ * the tip window's size is statable in prefix mode, where the window is
+ * everything the activity FIFO is not — printing the whole budget there would
+ * widen the claim by these seats, which is exactly the error the population
+ * readouts exist to stop making.
+ */
+export const DISPLAY_ACTIVITY_QUOTA = 512;
+
 const listeners = new Set<() => void>();
 let runtimeSnapshot: CellDisplayRuntimeSnapshot = {
   mode: 'auto',

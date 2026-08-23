@@ -100,7 +100,7 @@ fn class_of(kind: AssetKind) -> CompositionClass {
 /// What a curated stage is short of, in the policy's own vocabulary.
 ///
 /// Measured against the IDEAL quota
-/// ([`GalaxyCompositionTarget::for_total`] over the full cell budget) —
+/// ([`GalaxyCompositionTarget::for_total`] over the CURATED FIELD) —
 /// *not* against the per-class counts a given refresh happened to land
 /// on. Those are what the composition could reach with the candidates it
 /// had; demand is the gap between that and what the product asks for, so
@@ -110,11 +110,23 @@ fn class_of(kind: AssetKind) -> CompositionClass {
 /// whole typed quota within minutes of boot. What demand reports there
 /// is a boot transient the ratchet closes, not a standing shortfall.
 ///
-/// Plain is deliberately absent (design D5): plain slots keep being
-/// filled by the canonical fallback stream, which is what keeps recent
-/// chain births and deaths visible in the resting field. Curated dao and
-/// typed converge by displacing plain's over-allocation, not by curating
-/// plain too.
+/// Plain is deliberately absent (design D5). Curated dao and typed
+/// converge by displacing plain's over-allocation, not by curating plain
+/// too: plain keeps its curated share and the canonical fallback stream
+/// keeps supplying it, which is cheap and which is all this asymmetry
+/// costs.
+///
+/// This comment used to claim more than that — that the plain lane was
+/// what kept recent chain births and deaths visible in the resting field.
+/// It was never true of the code. The refill queues are seeded in
+/// ADMISSION order, so a fresh birth queued behind the whole
+/// retained-but-unstaged backlog and a plain vacancy was filled from the
+/// oldest thing the server still held. That burden now belongs to the
+/// display plane's tip window
+/// ([`DISPLAY_TIP_WINDOW`](super::display_plane::DISPLAY_TIP_WINDOW)),
+/// which is ranked by birth height and actually delivers it — and which
+/// is why the field this quota is measured on is the budget less those
+/// seats.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CompositionDemand {
     /// False when no curated policy is staffing the stage. A prefix

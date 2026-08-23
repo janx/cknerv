@@ -8,6 +8,11 @@ import type { ChainCensus } from '@cknerv/types';
 import type {
   CellPopulationFieldModel,
 } from '../../derives/cellPopulationField.derive';
+import {
+  AUTO_CELL_DISPLAY_BUDGET,
+  DISPLAY_ACTIVITY_QUOTA,
+  DISPLAY_TIP_WINDOW,
+} from '../../tweaks/cellDisplay';
 
 const NUMBER = new Intl.NumberFormat('en-US');
 
@@ -196,6 +201,46 @@ export function populationCompositionMixes(
       dim: model.censusStale,
     },
   ];
+}
+
+export interface StageReserveRow {
+  label: string;
+  value: string;
+  /** The scope the reserve is true in — same rule as every other row here. */
+  scope: string;
+}
+
+/**
+ * The stage's other standing law, beside the class mix.
+ *
+ * The mix rows say what the composition SAMPLED; this says what the stage
+ * holds no matter what the composition wants — the newest live Cells on the
+ * chain, refilled from the next-youngest when one dies rather than from
+ * whatever the server has been holding longest. Without it a reader has no
+ * way to tell a stage that follows the tip from one that froze at boot, and
+ * the two look identical on screen.
+ *
+ * Deliberately NOT a funnel row: the funnel is a narrowing chain from the
+ * observed window down to the addressable bodies, and this is a reserve
+ * inside one of its steps. Putting it on that staircase would rescale the
+ * bars and make it look like a scope.
+ *
+ * The size is a server constant mirrored in `tweaks/cellDisplay`, not a wire
+ * field — see the MUST-MATCH note there.
+ */
+export function stageTipWindowRow(
+  model: CellPopulationFieldModel,
+): StageReserveRow {
+  // Without a composition the whole resting field is the window: everything
+  // the transient activity FIFO is not.
+  const seats = model.stagedCurated
+    ? DISPLAY_TIP_WINDOW
+    : AUTO_CELL_DISPLAY_BUDGET - DISPLAY_ACTIVITY_QUOTA;
+  return {
+    label: 'Tip window',
+    value: formatPopulationCount(seats),
+    scope: model.stagedCurated ? 'NEWEST BIRTHS' : 'WHOLE STAGE',
+  };
 }
 
 export interface MediumRow {

@@ -393,17 +393,24 @@ does not alter the canonical map, counters, outpoint index, or persisted state.
 
 Fixed product budgets are:
 
-- 12,000 staged Cells;
+- 12,000 staged Cells, divided between two standing laws:
+  - 1,200 in the **tip window** — the youngest live canonical Cells, ranked by
+    birth height, refilled from the next-youngest when one dies, and slid by
+    every younger birth;
+  - 10,800 in the **curated field**, which is what the composition staffs;
 - 8,000 passive nerve edges on screen;
 - 512 recent transaction endpoints in the activity quota.
 
 It supports two policies:
 
-1. **Canonical mode**: without a usable semantic reservoir, fill by canonical
-   insertion order while reserving room for recent activity swaps.
+1. **Canonical mode**: without a usable semantic reservoir, the tip window
+   takes the WHOLE resting field (12,000 − 512), so the stage is the newest
+   live Cells and slides with the chain tip.
 2. **Composed mode**: use a locally hydrated candidate reservoir with target
-   shares of 20% DAO, 70% typed, and 10% plain/native, then fill shortages
-   deterministically from canonical Cells.
+   shares of 20% DAO, 70% typed, and 10% plain/native **of the 10,800 curated
+   field** (2,160 / 7,560 / 1,080), then fill shortages deterministically from
+   canonical Cells. The tip window's 1,200 stand beside that field; the class
+   law and the freshness law never claim one slot twice.
 
 Composed mode may include a verified live `resident` that is outside the 50k
 canonical retention window. Residents exist only in the display plane and use
@@ -416,6 +423,11 @@ Additional mechanism rules:
 
 - Transaction endpoints may temporarily replace resting members. When the
   activity quota is full, activity groups from the oldest block leave first.
+- The tip window displaces only its own members: a younger birth takes the
+  window's oldest seat and never a curated one, so no class count moves and no
+  displaced (benched) member is disturbed. An endpoint young enough for the
+  window settles into it in place, which returns the curated slot it was
+  borrowing to the member it displaced.
 - A staged death remains visible through its death animation and exits only
   after canonical GC.
 - Each mutation emits at most one sorted, coalesced `display` delta.
@@ -735,9 +747,10 @@ ckbadger only discovers and ranks outpoints efficiently:
 
 - Candidate targets are divided 20/70/10 across DAO, typed, and plain, with
   125% discovery overfetch.
-- The initial curated reservoir is capped at the display cell budget (12,000)
-  and composed in one pass, so canonical fallback fills only what discovery
-  came up short of rather than half the stage.
+- The initial curated reservoir is capped at the curated field (10,800 — the
+  display cell budget less the tip window, since those seats are not the
+  composition's to fill) and composed in one pass, so canonical fallback fills
+  only what discovery came up short of rather than half the stage.
 - Paging, asset/address groups, and source concurrency are bounded.
 - A candidate's birth block may not be newer than its record anchor.
 - The CKB hydrator rechecks live state, capacity, script class, complete
@@ -1268,6 +1281,8 @@ tip advancement, Ctrl-C persistence, and port release.
 | Display Cell budget | 12,000 | Server-authored display plane |
 | Passive nerve default | 8,000 edges | Display/UI |
 | Display activity quota | 512 Cells | Display policy |
+| Display tip window | 1,200 Cells | Display plane (recency law) |
+| Curated field | 10,800 Cells (budget − tip window) | Display plane |
 | Death animation tail | 600 ms | Core/UI parity |
 | Exact reorg journal | 48 blocks | Core and CKB adapter |
 | Chain recent-block evidence | 50 blocks | Server entity |
@@ -1278,7 +1293,7 @@ tip advancement, Ctrl-C persistence, and port release.
 | Semantic transactions | 2,048 | Enrichment projection |
 | Script census entries | 24 per role, tail counted | Core projection |
 | Script registry entries | 256 | Core wire contract |
-| Curated composition candidates | 12,000 (the display cell budget) | ckbadger source |
+| Curated composition candidates | 10,800 (the curated field) | ckbadger source |
 | Composition top-up | 256 per class per tick | ckbadger source |
 | Top-up rounds run back-to-back | 64 per burst | Enrichment supervisor |
 | Entity/projection replay ring | 4,096 entries | Server |

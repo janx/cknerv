@@ -162,17 +162,32 @@ nerve screen budget) and ships it in the `display` section of the cells
 snapshot; the browser reads its budget from there rather than from a client
 constant.
 
+Those 12,000 seats answer to two standing laws. 1,200 of them are the **tip
+window** — the youngest live canonical Cells, ranked by birth height, slid by
+every younger birth and refilled from the next-youngest when one dies. It is
+maintained from the canonical stream alone and needs no ckbadger at all, which
+is why the no-enrichment product is not "the latest Cells as of boot" but "the
+latest Cells, continuously": without a reservoir the window takes the whole
+resting field. The remaining 10,800 are the **curated field**, and everything
+below about classes and quotas is measured on that field rather than on the
+budget.
+
 #### Mechanism and policy
 
 Two questions live behind the display plane, and they are answered in different
 places. *Who is on stage, and what do they look like* — the member set, staged
-payloads, the budget, the activity FIFO, the coalesced delta — belongs to the
-stage. *Who should be* — composition classes, the 20:70:10 quota, admission
-ranking, the displacement ratchet, refill queues — belongs to a
-`CompositionPolicy`. There are two policies: prefix staffing (canonical
-insertion order, class-blind) and curated staffing (everything above). The stage
-knows nothing about classes; its canonical mirror carries each Cell's
+payloads, the budget, the activity FIFO, the recency index behind the tip
+window, the coalesced delta — belongs to the stage. *Who should be* —
+composition classes, the 20:70:10 quota, admission ranking, the displacement
+ratchet, refill queues — belongs to a `CompositionPolicy`. There are two
+policies: prefix staffing (which holds no state at all, because the window is
+then the whole resting field) and curated staffing (everything above). The
+stage knows nothing about classes; its canonical mirror carries each Cell's
 `asset_kind`, which is chain fact, and the policy interprets it.
+
+Freshness is the stage's own law rather than the policy's, and the two never
+argue over a seat: tip churn displaces only tip members, moves no class count,
+and takes no ratchet victim.
 
 Policies answer synchronously, acting on the stage they are handed. That is a
 hard constraint rather than a style choice: the stage has to be self-consistent
@@ -182,14 +197,16 @@ emitted by it must agree.
 #### Composing, then holding
 
 With `galaxy_composition`, cknerv composes one non-persisted resting display
-reservoir. Its target is the whole of the browser's fixed 12,000-Cell field:
-curating fewer would leave the difference to canonical fallback, which is the
-plain-heavy boot the top-up then has to undo (the reservoir itself is far
-larger). At the default target the requested classes are exactly:
+reservoir. Its target is the whole curated field — the browser's fixed
+12,000-Cell stage less the 1,200 the tip window standingly holds. Curating
+fewer would leave the difference to canonical fallback, which is the
+plain-heavy boot the top-up then has to undo; curating more would spend index
+pages and node batches on Cells that have no seat to go to. At the default
+target the requested classes are exactly:
 
-- 2,400 active Nervos DAO deposit Cells (20%).
-- 8,400 non-DAO Cells with a non-empty type script (70%).
-- 1,200 plain Cells without a type script (10%).
+- 2,160 active Nervos DAO deposit Cells (20% of the field).
+- 7,560 non-DAO Cells with a non-empty type script (70%).
+- 1,080 plain Cells without a type script (10%).
 
 ckbadger's existing APIs provide the bounded discovery work:
 
@@ -268,8 +285,12 @@ Three deliberate limits, each visible in the product:
 - **Plain is not curated.** The shortfall covers DAO and typed only; plain
   vacancies keep being filled from the canonical fallback stream. Convergence
   works by DAO and typed displacing plain's over-allocation, so the ratio still
-  reaches 20:70:10 — but that final 10% is canonical membership, which is what
-  keeps recent on-chain births and deaths visible in the resting field.
+  reaches 20:70:10 — that final 10% is simply canonical membership, and
+  supplying it costs nothing. It is NOT what keeps recent on-chain births
+  visible: the refill queues are seeded in admission order, so a plain vacancy
+  is filled from the oldest Cell the server still holds, not the newest. That
+  job belongs to the tip window, which is ranked by birth height and does it
+  standingly.
 - **A retired Cell is not revived by a reorg.** Canonical rollback revives
   canonical Cells through the ordinary birth path, but a staged Cell retired by
   a spend stays retired. Showing one fewer of the Cells we could have shown is a

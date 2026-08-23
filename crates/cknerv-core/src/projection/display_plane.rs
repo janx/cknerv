@@ -83,11 +83,12 @@
 //! * **Refresh dedupe**: a record whose content matches the stored
 //!   reservoir (`GalaxyCompositionRecord::content_matches` — `as_of` and
 //!   `updated_at_ms` ignored) is a FULL no-op: no delta, provenance
-//!   frozen — mirroring the semantics projection's dedup invariants
-//!   (`projection_registry.rs` `duplicate_galaxy_composition_refresh…`).
-//!   Every degrade path (reorg cut, rebuild/reset) drops the stored
-//!   reservoir, which re-arms the dedup: a later content-identical record
-//!   applies again.
+//!   frozen. The guard lives HERE and nowhere else: the registry's own
+//!   duplicate-refresh case no longer exists, so
+//!   `refresh_dedupes_identical_content_and_rearms_after_degrade` below is
+//!   the whole of it. Every degrade path (reorg cut, rebuild/reset) drops
+//!   the stored reservoir, which re-arms the dedup: a later
+//!   content-identical record applies again.
 //! * **Degrade**: a rollback whose boundary is at or below the reservoir
 //!   anchor (`from_block <= as_of.block` — the same predicate the
 //!   semantics projection prunes with) drops the reservoir and rebuilds
@@ -1377,7 +1378,8 @@ impl DisplayPlane {
         debug_assert_eq!(
             self.stage.tip_pool.len() + self.stage.resting_count,
             self.stage.present.len() + self.stage.residents.len(),
-            "tip candidates + standing members must account for every              present cell and every staged resident"
+            "tip candidates + standing members must account for every present \
+             cell and every staged resident"
         );
         debug_assert!(
             self.stage.tip.len() <= self.stage.tip_quota,
@@ -1667,6 +1669,11 @@ mod tests {
             },
             "20:70:10 is measured on the curated field, not on the budget"
         );
+        // The window is disclosed by STAGE·07 and rides no wire field, so
+        // the browser keeps its own copy beside the budget's:
+        // `DISPLAY_TIP_WINDOW` and `DISPLAY_ACTIVITY_QUOTA` in
+        // `packages/ui/src/tweaks/cellDisplay.ts`, each naming this test.
+        assert_eq!(DISPLAY_ACTIVITY_QUOTA, 512);
     }
 
     /// A plane with the recency window switched OFF. Every composition
@@ -2279,9 +2286,10 @@ mod tests {
     /// on whatever the backfill happened to reach.
     #[test]
     fn prefix_mode_slides_the_whole_stage_with_the_chain_tip() {
-        let mut plane = small_plane(6, 2); // the resting field IS the window: 4
-                                           // Boot: the backfill walks the anchored tip BACKWARDS, so admission
-                                           // order already descends in height (audit finding F1).
+        // The resting field IS the window here: 4 seats.
+        let mut plane = small_plane(6, 2);
+        // Boot: the backfill walks the anchored tip BACKWARDS, so admission
+        // order already descends in height (audit finding F1).
         for (id, block) in [(0u64, 100u64), (1, 99), (2, 98), (3, 97), (4, 96), (5, 95)] {
             birth_at(&mut plane, id, block);
         }

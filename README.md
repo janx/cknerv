@@ -481,10 +481,11 @@ twin, the fixtures, and both sides of the tests together.
 - Which Cells are on stage is decided server-side in every mode and streamed as
   the cells projection's display membership, so the browser runs one code path
   whatever the source situation. Without enrichment the server stages the
-  canonical insertion-order prefix; with optional ckbadger enrichment it stages
-  DAO:typed:plain = 20:70:10 at the display budget, seeded in one pass from a
-  node-revalidated reservoir composed at that same budget (canonical retained
-  Cells fill any remainder). The
+  newest live Cells and keeps sliding with the chain tip; with optional
+  ckbadger enrichment it holds a 1,200-Cell tip window of the newest births
+  beside a 10,800-Cell curated field staged at DAO:typed:plain = 20:70:10,
+  seeded in one pass from a node-revalidated reservoir composed at that same
+  field size (canonical retained Cells fill any remainder). The
   composition is held by demand rather than by a timer: the plane publishes what
   it is short of per class, spends of staged Cells are detected exactly, and
   bounded top-ups walk deeper into each class and enter by a one-way ratchet, so

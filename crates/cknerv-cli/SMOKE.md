@@ -131,9 +131,10 @@ streamed record that names peers: at most 256 entries, each carrying a base58
 arrives as the same list round after round. `truncated` says the crawler knows
 more nodes than the roster names. A roster is published only when its
 `crawl_round` advances, and it clears with the crawler.
-The snapshot should also gain `galaxy_composition`. With the default 12,000
-visible budget and sufficient indexed candidates it contains 2,400 `dao`,
-8,400 `typed`, and 1,200 `plain` Cells. Every entry must carry a real outpoint,
+The snapshot should also gain `galaxy_composition`. It is composed for the
+CURATED FIELD — the 12,000-Cell stage less the 1,200 seats the tip window holds
+for the newest live Cells — so with sufficient indexed candidates it contains
+2,160 `dao`, 7,560 `typed`, and 1,080 `plain` Cells. Every entry must carry a real outpoint,
 node-derived content hash, and matching asset taxonomy. Replacing this record
 must not change the canonical cells projection revision or counters.
 
@@ -284,8 +285,13 @@ With a local ckbadger service configured:
 - [ ] With the crawler disabled, `network_atlas` and `network_roster` both
       remain absent while source health, Cell detail, ecosystem, DAO, and
       activity enrichment still work
-- [ ] The semantics snapshot gains an anchored `galaxy_composition`; at the
-      default visible budget its DAO:typed:plain lengths are 2400:8400:1200
+- [ ] The semantics snapshot gains an anchored `galaxy_composition`; over the
+      default curated field its DAO:typed:plain lengths are 2160:7560:1080
+- [ ] `STAGE SAMPLE` shows a `TIP WINDOW` row reading 1,200 · NEWEST BIRTHS
+      with a composition on stage, and 11,488 · WHOLE STAGE without one
+- [ ] Newly mined Cells appear on stage within a block or two and stay there,
+      with the stage's oldest members leaving to make room — the window
+      follows the tip rather than freezing on what boot happened to reach
 - [ ] The resting Cell points and passive fibres use that composition, while a
       new block still advances `last_pulse_at_ms`, emits its network pulse, and
       produces live nerve routes over canonical Cells; newest link endpoints

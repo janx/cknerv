@@ -16,7 +16,9 @@ import {
   populationCompositionMixes,
   populationMediumRows,
   populationRows,
+  stageTipWindowRow,
   type CompositionMix,
+  type StageReserveRow,
 } from './cellPopulation.presentation';
 
 /** Mainnet is 99% one lock family, so every other family rounds to zero and a
@@ -135,6 +137,29 @@ function FunnelRow({ label, value, scope, widthPct, alpha }: {
           }}
         />
       </div>
+    </div>
+  );
+}
+
+/** The standing reserve, stated as a policy rather than a measurement: one
+ *  label, its scope, and the number of seats. No depth bar — it is not a step
+ *  in the funnel above, and a bar would put it on that staircase. It leads
+ *  the mix block because it is the other law the stage obeys, and the two
+ *  belong to one another: what the composition samples, and what the stage
+ *  holds whatever the composition wants. */
+function ReserveRow({ row }: { row: StageReserveRow }) {
+  return (
+    <div
+      data-stage-reserve={row.label}
+      style={{ display: 'flex', alignItems: 'baseline', gap: 6, height: 14, whiteSpace: 'nowrap', marginBottom: 4 }}
+    >
+      <span style={{ fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: HUD_TYPE.nav, letterSpacing: 1.4, color: HUD_COLORS.dim, textTransform: 'uppercase' }}>
+        {row.label}
+      </span>
+      <span data-population-scope style={SCOPE_TAG}>{row.scope}</span>
+      <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.tech, color: HUD_COLORS.ink }}>
+        {row.value}
+      </span>
     </div>
   );
 }
@@ -296,8 +321,9 @@ export default function StageCapacityPanel({ stats, stageScripts, scriptRegistry
           )}
         </div>
 
-        {mixes.length > 0 ? (
+        {model ? (
           <div style={{ marginTop: 5 }}>
+            <ReserveRow row={stageTipWindowRow(model)} />
             {mixes.map((mix) => <MixBar key={mix.label} mix={mix} />)}
           </div>
         ) : null}
