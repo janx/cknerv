@@ -59,9 +59,9 @@ function BucketStrip({ label, buckets, total, provenance }: {
 //
 // Strictly additive: with no usable crawler record the panel's own measured
 // rows are the whole story, so absence renders nothing rather than a substitute
-// readout. Crawler run telemetry (dial counts, frontier state, new nodes) is
-// ckbadger's own operational view, not the pilot's — what survives here is the
-// shape of the network the crawl saw.
+// readout. Crawler run telemetry (attempt counts, new nodes) is ckbadger's own
+// operational view, not the pilot's — what survives here is the shape of the
+// network the crawl saw.
 export default function NetworkAtlasReadout({ source, record }: {
   source?: EnrichmentSourceStatus;
   record?: NetworkAtlasRecord | null;

@@ -354,10 +354,9 @@ export interface NetworkAtlasRecord {
   crawl_round: number;
   crawl_finished_at_s: number;
   total_known: number;
-  last_round_dialed: number;
+  last_round_attempted: number;
   last_round_reachable: number;
   new_nodes: number;
-  frontier_drained: boolean;
   sample_size: number;
   sample_reachable: number;
   sample_truncated: boolean;

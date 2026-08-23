@@ -2325,23 +2325,21 @@ fn map_network_atlas(
     }
     for (value, field) in [
         (round.round_id, "network roundId"),
-        (round.started, "network round started"),
-        (round.finished, "network round finished"),
-        (round.dialed, "network round dialed"),
-        (round.reachable, "network round reachable"),
-        (round.unreachable, "network round unreachable"),
-        (round.foreign_dropped, "network round foreignDropped"),
+        (round.started_at, "network round startedAt"),
+        (round.finished_at, "network round finishedAt"),
+        (round.attempted_peers, "network round attemptedPeers"),
+        (round.reachable_peers, "network round reachablePeers"),
         (round.new_nodes, "network round newNodes"),
         (round.total_known, "network round totalKnown"),
     ] {
         wire_safe_u64(value, field)?;
     }
-    if round.finished < round.started {
+    if round.finished_at < round.started_at {
         return Err(anyhow!("ckbadger network round finished before it started"));
     }
-    if round.reachable > round.dialed {
+    if round.reachable_peers > round.attempted_peers {
         return Err(anyhow!(
-            "ckbadger network round reachable count exceeds dialed count"
+            "ckbadger network round reachable count exceeds attempted count"
         ));
     }
     if round.new_nodes > round.total_known {
@@ -2402,12 +2400,11 @@ fn map_network_atlas(
         as_of: anchor,
         updated_at_ms: now_ms(),
         crawl_round: round.round_id,
-        crawl_finished_at_s: round.finished,
+        crawl_finished_at_s: round.finished_at,
         total_known: round.total_known,
-        last_round_dialed: round.dialed,
-        last_round_reachable: round.reachable,
+        last_round_attempted: round.attempted_peers,
+        last_round_reachable: round.reachable_peers,
         new_nodes: round.new_nodes,
-        frontier_drained: round.frontier_drained,
         sample_size,
         sample_reachable,
         sample_truncated: nodes.next_cursor.is_some(),
@@ -4169,16 +4166,20 @@ mod tests {
                         "hasData": true,
                         "lastRound": {
                             "roundId": 7,
-                            "started": 1699999990,
-                            "finished": 1700000000,
-                            "dialed": 12,
-                            "reachable": 9,
-                            "unreachable": 2,
-                            "foreignDropped": 1,
+                            "startedAt": 1699999990,
+                            "finishedAt": 1700000000,
+                            "candidatePeers": 14,
+                            "attemptedPeers": 12,
+                            "reachablePeers": 9,
+                            "unreachablePeers": 3,
+                            "addressAttempts": 20,
+                            "failedAddressAttempts": 8,
+                            "foreignPeers": 1,
+                            "malformedAddresses": 0,
                             "newNodes": 3,
-                            "totalKnown": 42,
-                            "frontierDrained": true
-                        }
+                            "totalKnown": 42
+                        },
+                        "activeRound": null
                     }))
                 }),
             )
@@ -6876,15 +6877,12 @@ mod tests {
             has_data: true,
             last_round: Some(crate::dto::NetworkCrawlerRoundResponse {
                 round_id,
-                started: 1_700_000_000,
-                finished: 1_700_000_010,
-                dialed: 4,
-                reachable: 3,
-                unreachable: 1,
-                foreign_dropped: 0,
+                started_at: 1_700_000_000,
+                finished_at: 1_700_000_010,
+                attempted_peers: 4,
+                reachable_peers: 3,
                 new_nodes: 1,
                 total_known: 9,
-                frontier_drained: true,
             }),
         }
     }

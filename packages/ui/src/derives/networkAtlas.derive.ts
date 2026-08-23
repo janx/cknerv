@@ -91,16 +91,15 @@ export function deriveNetworkAtlasVisual(
     record.crawl_round,
     record.crawl_finished_at_s,
     record.total_known,
-    record.last_round_dialed,
+    record.last_round_attempted,
     record.last_round_reachable,
     record.new_nodes,
     record.sample_size,
     record.sample_reachable,
   ];
   if (!summaryCounts.every(safeNonnegativeInteger)) return null;
-  if (typeof record.frontier_drained !== 'boolean'
-    || typeof record.sample_truncated !== 'boolean') return null;
-  if (record.last_round_reachable > record.last_round_dialed
+  if (typeof record.sample_truncated !== 'boolean') return null;
+  if (record.last_round_reachable > record.last_round_attempted
     || record.new_nodes > record.total_known
     || record.sample_size > NETWORK_ATLAS_MAX_SAMPLE
     || record.sample_size > record.total_known

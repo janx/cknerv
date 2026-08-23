@@ -36,19 +36,22 @@ pub(crate) struct NetworkCrawlerSummaryResponse {
     pub last_round: Option<NetworkCrawlerRoundResponse>,
 }
 
+/// The finished round inside `network/summary`, as ckbadger's round
+/// persistence rework spells it. The wire also carries address-level attempt
+/// counters (`candidatePeers`, `addressAttempts`, `failedAddressAttempts`,
+/// `foreignPeers`, `malformedAddresses`, `unreachablePeers`) that nothing in
+/// cknerv reads; they are deliberately not declared so a page can grow more
+/// of them without a decode failure here.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NetworkCrawlerRoundResponse {
     pub round_id: u64,
-    pub started: u64,
-    pub finished: u64,
-    pub dialed: u64,
-    pub reachable: u64,
-    pub unreachable: u64,
-    pub foreign_dropped: u64,
+    pub started_at: u64,
+    pub finished_at: u64,
+    pub attempted_peers: u64,
+    pub reachable_peers: u64,
     pub new_nodes: u64,
     pub total_known: u64,
-    pub frontier_drained: bool,
 }
 
 #[derive(Debug, Deserialize)]
