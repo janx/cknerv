@@ -4,6 +4,12 @@
 // the equivalence-test oracle. Moved here from @cknerv/ui's derive layer so
 // the reducer can own the upkeep — the ui module re-exports for
 // compatibility.
+//
+// Two script censuses meet in this module and must never be confused. The
+// RETAINED-window one rides `CellsStats.scripts` and is adopted from the
+// backend, which is the only side holding that population. The STAGE one is
+// the `StageScriptTally` at the bottom, counted here, because the staged set
+// is the population this cache holds in full. See `CellsStats.scripts`.
 
 import type {
   AssetKind,
@@ -12,6 +18,8 @@ import type {
   CellViewStats,
   LockKind,
   ScriptCensus,
+  ScriptCount,
+  ScriptId,
 } from '@cknerv/types';
 
 /** Re-exported from `@cknerv/types`, where it moved once the SERVER took
@@ -52,10 +60,18 @@ export interface CellsStats {
   /** The same alive set counted by script identity rather than by the four
    *  lock families and five asset families cknerv pins itself.
    *
-   *  Adopted wholesale from the backend and never maintained here: the cache
-   *  holds the staged subset, so counting it locally would report the stage
-   *  as if it were the galaxy. It refreshes on snapshots and on the backend's
-   *  own block-cadence `script_census` delta. */
+   *  RETAINED-WINDOW scope, and therefore adopted wholesale from the backend
+   *  and never counted here: this cache holds the staged subset, so a local
+   *  scan would report the stage under the retained window's name. It
+   *  refreshes on snapshots and on the backend's own block-cadence
+   *  `script_census` delta.
+   *
+   *  The other half of that rule is `StageScriptTally` at the bottom of this
+   *  module. A census that CLAIMS stage scope is exactly what local counting
+   *  is right for — the staged set is the one population this cache holds
+   *  whole — so that one is counted here and never adopted. The failure this
+   *  pair guards against was never the counting; it was the label. Neither
+   *  census may ever appear under the other's scope. */
   scripts: ScriptCensus;
 }
 
@@ -194,4 +210,259 @@ export function aggregateCellsStats(
     addCellContribution(stats, cell, 1);
   }
   return stats;
+}
+
+// ── stage-scoped script census ───────────────────────────────────────────
+//
+// The panel called STAGE SAMPLE has to describe the stage. `CellsStats.scripts`
+// above cannot: the backend aggregates it over its whole retained window
+// (~50k rows, 99% plain CKB), while the stage is a curated 12,000 whose whole
+// point is that its mix differs. So this census is counted where the staged
+// set actually lives — here — and carries a STAGE scope tag wherever it is
+// shown.
+//
+// Edge semantics mirror `crates/cknerv-core/src/projection/cells_stats.rs`
+// (`ScriptTally`) exactly, so the two censuses stay comparable line for line:
+// an unset (all-zero / omitted) script counts as `unidentified`, an absent
+// type script counts as `types_absent`, and both roles rank most-cells-first
+// with ties on the code hash, cut at `STAGE_CENSUS_CAP` with tail counters.
+//
+// ONE deliberate divergence: the backend skips dead cells, this does not. The
+// staged set decides who is on stage, and a corpse inside its death-animation
+// window is still on it. This census counts the stage, not the living.
+
+/** How deep the census ranks before it stops. Pinned to the backend's own
+ *  `CENSUS_CAP`: two censuses cut at different depths would make one bar mean
+ *  different things depending on which scope filled it. */
+export const STAGE_CENSUS_CAP = 24;
+
+/** One identity's running count. Mutable by design — a tally is rebuilt
+ *  copy-on-write per batch and only ever read through `stageScriptCensus`. */
+export interface StageScriptEntry {
+  script: ScriptId;
+  count: number;
+}
+
+/**
+ * Running tallies for the stage census: the two maps and two counters the
+ * backend's `ScriptTally` keeps, keyed by `code_hash:hash_type`.
+ *
+ * Deliberately NOT a `ScriptCensus`. A census is ranked and cut; re-ranking
+ * on every delta would be work nobody asked for, so `stageScriptCensus`
+ * ranks once per distinct tally, at read time.
+ */
+export interface StageScriptTally {
+  readonly locks: ReadonlyMap<string, StageScriptEntry>;
+  readonly types: ReadonlyMap<string, StageScriptEntry>;
+  /** Staged cells carrying no type script at all. */
+  readonly typesAbsent: number;
+  /** Staged cells whose script identity is unreadable. Kept out of the ranked
+   *  lists so a gap in cknerv's own records cannot show up as a family. */
+  readonly unidentified: number;
+}
+
+/** The writable form the reducer's copy-on-write path mutates. */
+export interface MutableStageScripts {
+  locks: Map<string, StageScriptEntry>;
+  types: Map<string, StageScriptEntry>;
+  typesAbsent: number;
+  unidentified: number;
+}
+
+/** Two identities are one bucket iff both fields match. Hex is lowercased so
+ *  a differently-cased code hash cannot open a second bucket for one script. */
+function scriptCensusKey(script: ScriptId): string {
+  return `${script.code_hash.toLowerCase()}:${script.hash_type}`;
+}
+
+/** True for the all-zero code hash — what a cell whose script cknerv could
+ *  not parse carries. Mirrors Rust `ScriptId::is_unset`; an omitted script is
+ *  the same condition, since the wire skips serializing an unset one. */
+function scriptUnset(script: ScriptId): boolean {
+  const hex = script.code_hash.startsWith('0x')
+    ? script.code_hash.slice(2)
+    : script.code_hash;
+  if (hex.length === 0) return true;
+  for (let i = 0; i < hex.length; i += 1) {
+    if (hex[i] !== '0') return false;
+  }
+  return true;
+}
+
+export function emptyStageScripts(): StageScriptTally {
+  return { locks: new Map(), types: new Map(), typesAbsent: 0, unidentified: 0 };
+}
+
+/** Small copy so a batch can mutate a draft. Bounded by the number of
+ *  DISTINCT scripts on stage (a few dozen — the identity is a code hash, not
+ *  an outpoint), never by the 12,000 bodies. */
+export function cloneStageScripts(tally: StageScriptTally): MutableStageScripts {
+  const copy = (source: ReadonlyMap<string, StageScriptEntry>) => {
+    const out = new Map<string, StageScriptEntry>();
+    for (const [key, entry] of source) {
+      out.set(key, { script: entry.script, count: entry.count });
+    }
+    return out;
+  };
+  return {
+    locks: copy(tally.locks),
+    types: copy(tally.types),
+    typesAbsent: tally.typesAbsent,
+    unidentified: tally.unidentified,
+  };
+}
+
+function bump(
+  bucket: Map<string, StageScriptEntry>,
+  script: ScriptId,
+  sign: 1 | -1,
+): void {
+  const key = scriptCensusKey(script);
+  const entry = bucket.get(key);
+  if (entry === undefined) {
+    if (sign > 0) bucket.set(key, { script, count: 1 });
+    return;
+  }
+  entry.count += sign;
+  // A family that left the stage entirely leaves no zero-count ghost behind:
+  // the ranked list would carry a name for nothing, and the tail counters
+  // would count a family holding no cells.
+  if (entry.count <= 0) bucket.delete(key);
+}
+
+/** Add (`sign` +1) or remove (−1) one staged cell's contribution in place. */
+function addStageContribution(
+  tally: MutableStageScripts,
+  cell: Cell,
+  sign: 1 | -1,
+): void {
+  const lock = cell.lock_script;
+  if (lock === undefined || scriptUnset(lock)) tally.unidentified += sign;
+  else bump(tally.locks, lock, sign);
+
+  const type = cell.type_script;
+  if (type === undefined) tally.typesAbsent += sign;
+  else if (scriptUnset(type)) tally.unidentified += sign;
+  else bump(tally.types, type, sign);
+}
+
+/**
+ * Replace one staged id's contribution: `before`/`after` are the payload the
+ * stage resolved for that id before and after the batch, either of which may
+ * be absent (not staged, or staged with no record this cache was ever sent).
+ * Unlike `adjustCellsStats` there is no death filter — see the module note.
+ */
+export function adjustStageScripts(
+  tally: MutableStageScripts,
+  before: Cell | undefined,
+  after: Cell | undefined,
+): void {
+  if (before !== undefined) addStageContribution(tally, before, -1);
+  if (after !== undefined) addStageContribution(tally, after, 1);
+}
+
+/** Whether two payloads for one id would tally identically. The lifecycle
+ *  patches that dominate a live stream — death, tag — rewrite the record but
+ *  not its scripts, and swapping a contribution for its equal would turn over
+ *  the tally identity (and with it the memoized census) every block. */
+export function sameStageContribution(
+  before: Cell | undefined,
+  after: Cell | undefined,
+): boolean {
+  if (before === after) return true;
+  if (before === undefined || after === undefined) return false;
+  return (
+    scriptRoleEquals(before.lock_script, after.lock_script)
+    && scriptRoleEquals(before.type_script, after.type_script)
+  );
+}
+
+/** Script identity comparison at census granularity: two unset scripts are
+ *  the same bucket (`unidentified`) however they were spelled. */
+function scriptRoleEquals(
+  a: ScriptId | undefined,
+  b: ScriptId | undefined,
+): boolean {
+  // Absent-vs-unset matters for the TYPE role — absent is `types_absent`,
+  // unset is `unidentified` — so presence is compared before content.
+  if ((a === undefined) !== (b === undefined)) return false;
+  if (a === undefined || b === undefined) return true;
+  if (scriptUnset(a) && scriptUnset(b)) return true;
+  return (
+    a.code_hash.toLowerCase() === b.code_hash.toLowerCase()
+    && a.hash_type === b.hash_type
+  );
+}
+
+/** Full-scan tally over a staged membership — the snapshot seed and the
+ *  equivalence oracle for the reducer's incremental upkeep. `resolve` is the
+ *  stage's own canonical-first lookup; a member it comes up empty for
+ *  contributes nothing, because a census counts records, not ids. */
+export function aggregateStageScripts(
+  members: Iterable<number>,
+  resolve: (id: number) => Cell | undefined,
+): StageScriptTally {
+  const tally = cloneStageScripts(emptyStageScripts());
+  for (const id of members) {
+    const cell = resolve(id);
+    if (cell !== undefined) addStageContribution(tally, cell, 1);
+  }
+  return tally;
+}
+
+/** Ranked censuses, one per distinct tally. The tally is immutable once the
+ *  batch that built it returns, so the answer cannot go stale; a tally that
+ *  survives a batch unchanged keeps its census, and the ranking cost is paid
+ *  only when the stage's script mix actually moved. */
+const censusMemo = new WeakMap<StageScriptTally, ScriptCensus>();
+
+/** Rank one role by cell count and cut it at [`STAGE_CENSUS_CAP`], returning
+ *  what the cut dropped. Ties break on the code hash so the same stage always
+ *  produces the same list — a census that reshuffled between frames would
+ *  make the panel's bars flicker for no chain reason. Same rule as the
+ *  backend's `rank_and_cut`, with `hash_type` added as a final discriminator
+ *  (the backend leaves the order of two deployments of one code hash under
+ *  different hash types unspecified; here it is pinned). */
+function rankAndCut(
+  bucket: ReadonlyMap<string, StageScriptEntry>,
+): { ranked: ScriptCount[]; tailCells: number; tailScripts: number } {
+  const ranked: ScriptCount[] = [];
+  for (const entry of bucket.values()) {
+    ranked.push({ script: entry.script, count: entry.count });
+  }
+  ranked.sort((a, b) => {
+    if (b.count !== a.count) return b.count - a.count;
+    if (a.script.code_hash !== b.script.code_hash) {
+      return a.script.code_hash < b.script.code_hash ? -1 : 1;
+    }
+    if (a.script.hash_type === b.script.hash_type) return 0;
+    return a.script.hash_type < b.script.hash_type ? -1 : 1;
+  });
+  const tail = ranked.slice(STAGE_CENSUS_CAP);
+  return {
+    ranked: ranked.slice(0, STAGE_CENSUS_CAP),
+    tailCells: tail.reduce((sum, entry) => sum + entry.count, 0),
+    tailScripts: tail.length,
+  };
+}
+
+/** The stage census in the shape every consumer of the backend's census
+ *  already reads. Built on first read of a given tally, then memoized. */
+export function stageScriptCensus(tally: StageScriptTally): ScriptCensus {
+  const memoized = censusMemo.get(tally);
+  if (memoized !== undefined) return memoized;
+  const locks = rankAndCut(tally.locks);
+  const types = rankAndCut(tally.types);
+  const census: ScriptCensus = {
+    locks: locks.ranked,
+    locks_tail_cells: locks.tailCells,
+    locks_tail_scripts: locks.tailScripts,
+    types: types.ranked,
+    types_tail_cells: types.tailCells,
+    types_tail_scripts: types.tailScripts,
+    types_absent: tally.typesAbsent,
+    unidentified: tally.unidentified,
+  };
+  censusMemo.set(tally, census);
+  return census;
 }

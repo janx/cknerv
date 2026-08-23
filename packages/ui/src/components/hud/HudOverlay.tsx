@@ -11,6 +11,7 @@ import type {
   EnrichmentSourceStatus,
   NetworkAtlasRecord,
   ProtocolEraRecord,
+  ScriptCensus,
   TransactionHorizonRecord,
 } from '@cknerv/types';
 import type { ActiveReplayProgress } from '@cknerv/cache';
@@ -134,8 +135,12 @@ function prefersFullMotion(): boolean {
   return !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
-function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, scriptRegistry, backfill, streamHealth, build, topBarActions, colonyCount }: {
+function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPopulation, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, scriptRegistry, backfill, streamHealth, build, topBarActions, colonyCount }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
+  /** The staged set counted by script identity, for the panel named after it.
+   *  A different scope from `cellsStats.scripts`, which the backend counts
+   *  over its whole retained window; the two never share a bar. */
+  stageScripts?: ScriptCensus;
   /** How much of the Cell set this dashboard has individualized, and at what
    *  scope. Omitted by a consumer that derives none; the panel is then absent
    *  rather than guessing. */
@@ -432,6 +437,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
                 >
                   <StageCapacityPanel
                     stats={cellsStats}
+                    stageScripts={stageScripts}
                     scriptRegistry={scriptRegistry}
                     model={cellPopulation}
                     colonyCount={colonyCount}

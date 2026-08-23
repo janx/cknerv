@@ -168,7 +168,11 @@ export function populationCompositionMixes(
   return [
     {
       label: 'Stage mix',
-      scope: model.stagedCurated ? 'CURATED' : 'INSERTION ORDER',
+      // A curated stage now samples its typed class in the inventory's own
+      // capacity ranking — most-occupied contract or collection first,
+      // proportionally. The tag says which law produced the mix, because
+      // "curated" alone no longer distinguishes it from any other choice.
+      scope: model.stagedCurated ? 'CURATED · CAP-RANKED' : 'INSERTION ORDER',
       dao: share(model.stagedClasses.dao, stageTotal),
       typed: share(model.stagedClasses.typedNonDao, stageTotal),
       plain: share(model.stagedClasses.plain, stageTotal),

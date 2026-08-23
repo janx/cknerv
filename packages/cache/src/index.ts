@@ -58,12 +58,17 @@ export {
 export {
   adoptCellViewStats,
   aggregateCellsStats,
+  aggregateStageScripts,
   cellKindKey,
   cloneCellsStats,
   emptyCellsStats,
   emptyScriptCensus,
+  emptyStageScripts,
+  stageScriptCensus,
+  STAGE_CENSUS_CAP,
   type CellKindKey,
   type CellsStats,
+  type StageScriptTally,
 } from './cellsStats';
 
 export {

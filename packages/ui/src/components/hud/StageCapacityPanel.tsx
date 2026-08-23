@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import type { ScriptRegistryRecord } from '@cknerv/types';
+import type { ScriptCensus, ScriptRegistryRecord } from '@cknerv/types';
 import type { CellsStats } from '../../derives/cellsStats.derive';
 import type { CellPopulationFieldModel } from '../../derives/cellPopulationField.derive';
 import {
@@ -48,12 +48,20 @@ const SUBHEAD: CSSProperties = {
   marginBottom: 4,
 };
 
-/** One bar over the retained set's families, legend naming only what a
- *  reader can see. Mainnet's retained window is 99% one family, so a legend
- *  listing every sub-percent name is a list of things the bar does not show;
- *  they collapse into one honest tail count, with the full breakdown on
- *  the bar's tooltip. */
-function TaxonomyBar({ title, buckets }: { title: string; buckets: ScriptFamilyBucket[] }) {
+/** One bar over a population's script families, legend naming only what a
+ *  reader can see. A 99%-one-family bar turns a legend of every sub-percent
+ *  name into a list of things the bar does not show; those collapse into one
+ *  honest tail count, with the full breakdown on the bar's tooltip.
+ *
+ *  `scope` is the population, and it is not optional: this bar has been fed
+ *  by two different ones, and the whole failure it was built to end is a
+ *  distribution over the retained window drawn under a panel that says
+ *  STAGE. */
+function TaxonomyBar({ title, scope, buckets }: {
+  title: string;
+  scope: string;
+  buckets: ScriptFamilyBucket[];
+}) {
   const total = buckets.reduce((sum, bucket) => sum + bucket.count, 0);
   if (total <= 0) return null;
   const nonZero = buckets.filter((bucket) => bucket.count > 0);
@@ -68,7 +76,12 @@ function TaxonomyBar({ title, buckets }: { title: string; buckets: ScriptFamilyB
     .join(' · ');
   return (
     <div style={{ marginTop: 7 }} title={full}>
-      <div style={SUBHEAD}>{title}</div>
+      {/* Qualifier right after the label, never a third column — same rule
+          the funnel rows follow, and for the same reason. */}
+      <div style={{ ...SUBHEAD, display: 'flex', alignItems: 'baseline', gap: 6 }}>
+        <span>{title}</span>
+        <span data-taxonomy-scope={title} style={SCOPE_TAG}>{scope}</span>
+      </div>
       <div style={{ display: 'flex', height: 6, border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.14)}`, background: HUD_COLORS.trackGround }}>
         {nonZero.map((bucket) => (
           <span
@@ -156,7 +169,10 @@ function MixBar({ mix }: { mix: CompositionMix }) {
       </div>
       {/* The tag slot is fixed-width so the two bars share both edges —
           comparing the mixes IS this block's job, and bars of different
-          lengths would turn a proportion contrast into a length artifact. */}
+          lengths would turn a proportion contrast into a length artifact.
+          Sized to the longest tag either row can carry (`CURATED ·
+          CAP-RANKED`, 109px at micro): a slot that ellipsizes the law the
+          stage samples under has stopped disclosing it. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '1px 0 5px' }}>
         <div style={{ flex: 1, display: 'flex', height: 4, background: HUD_COLORS.trackGround, border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.1)}` }}>
           {segments.map((segment) => segment.count > 0 ? (
@@ -171,7 +187,7 @@ function MixBar({ mix }: { mix: CompositionMix }) {
             />
           ) : null)}
         </div>
-        <span style={{ ...SCOPE_TAG, flex: '0 0 84px', textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis' }}>{mix.scope}</span>
+        <span style={{ ...SCOPE_TAG, flex: '0 0 110px', textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis' }}>{mix.scope}</span>
       </div>
     </div>
   );
@@ -193,8 +209,18 @@ function MixBar({ mix }: { mix: CompositionMix }) {
  * stands up is counted here too, because that count is a rendering fact.
  * MESH·02 is thereby left free to speak measured network truth alone.
  */
-export default function StageCapacityPanel({ stats, scriptRegistry, model, colonyCount, style }: {
+export default function StageCapacityPanel({ stats, stageScripts, scriptRegistry, model, colonyCount, style }: {
   stats: CellsStats;
+  /** The staged set counted by script identity — the cache's own census over
+   *  the bodies this panel is named after, ranked and capped exactly like the
+   *  backend's. Absent (or empty) before a stage exists, which is when the
+   *  bars fall back to the families cknerv classifies on its own.
+   *
+   *  Deliberately NOT `stats.scripts`: that census covers the backend's whole
+   *  retained window, which is ~4× this stage and a completely different mix.
+   *  It stays on `stats` for consumers that want that scope, under that
+   *  scope's own label. */
+  stageScripts?: ScriptCensus;
   scriptRegistry?: ScriptRegistryRecord | null;
   /** Population model, or null for a consumer that derives none. The funnel,
    *  mixes, and medium legend then stay absent — the panel never guesses a
@@ -207,11 +233,13 @@ export default function StageCapacityPanel({ stats, scriptRegistry, model, colon
   colonyCount?: number;
   style?: CSSProperties;
 }) {
-  // The backend counts the retained set by script identity; those bars are
-  // the real distribution. The four-family bars below them are what cknerv
-  // can classify on its own, and they are the fallback for a backend that
-  // has not counted yet — never a second opinion shown alongside.
-  const census = hasScriptCensus(stats.scripts) ? stats.scripts : null;
+  // The cache counts the STAGE by script identity; those bars are the real
+  // distribution of the bodies on screen. The pinned-family bars below them
+  // are what cknerv can classify on its own over the retained window — the
+  // fallback for a session with no stage yet, never a second opinion shown
+  // alongside. Which of the two is drawn decides the scope tag, because the
+  // two describe different populations.
+  const census = hasScriptCensus(stageScripts) ? stageScripts : null;
   const rows = model ? populationRows(model) : [];
   const funnelMax = Math.max(...rows.map((row) => row.count), 1);
   const mixes = model ? populationCompositionMixes(model) : [];
@@ -274,7 +302,11 @@ export default function StageCapacityPanel({ stats, scriptRegistry, model, colon
           </div>
         ) : null}
 
-        <TaxonomyBar title="ASSETS" buckets={census
+        {/* Each bar carries the population it counted, because the two
+            sources are not the same set: the census is the stage, the
+            fallback is the local retained window the funnel above labels
+            with the same words. */}
+        <TaxonomyBar title="ASSETS" scope={census ? 'STAGE' : 'LOCAL WINDOW'} buckets={census
           ? assetFamilyBuckets(census, scriptRegistry)
           : [
             { key: 'native', label: 'CKB', color: ASSET_COLORS.native, count: stats.byAsset.native, named: true, families: 1 },
@@ -284,7 +316,7 @@ export default function StageCapacityPanel({ stats, scriptRegistry, model, colon
             { key: 'spore', label: 'NFT', color: ASSET_COLORS.spore, count: stats.byAsset.spore, named: true, families: 1 },
             { key: 'other', label: '?', color: ASSET_COLORS.other, count: stats.byAsset.other, named: false, families: 1 },
           ]} />
-        <TaxonomyBar title="LOCKS" buckets={census
+        <TaxonomyBar title="LOCKS" scope={census ? 'STAGE' : 'LOCAL WINDOW'} buckets={census
           ? lockFamilyBuckets(census, scriptRegistry)
           : [
             { key: 'sighash', label: 'default', color: LOCK_COLORS.sighash, count: stats.byLock.sighash, named: true, families: 1 },

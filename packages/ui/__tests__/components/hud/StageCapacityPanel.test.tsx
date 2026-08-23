@@ -1,4 +1,5 @@
 import { emptyScriptCensus } from '@cknerv/cache';
+import type { ScriptCensus } from '@cknerv/types';
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -174,7 +175,8 @@ describe('composition disclosure', () => {
     // The curated stage is 20:65:15 by policy; mainnet is nothing like it.
     expect(mixes[0]).toMatchObject({ dao: '20%', typed: '65%', plain: '15%' });
     expect(mixes[1]).toMatchObject({ dao: '2%', typed: '32%', plain: '66%' });
-    expect(mixes[0].scope).toBe('CURATED');
+    // Not just "curated": the tag names the law the sample follows.
+    expect(mixes[0].scope).toBe('CURATED · CAP-RANKED');
     expect(mixes[1].scope).toContain('AS OF #');
   });
 
@@ -290,38 +292,44 @@ describe('the block', () => {
     expect(text).toContain('AS OF #');
   });
 
-  it('keeps the four-family bars while the backend has counted nothing', () => {
-    // A backend predating the census, or a galaxy restored from state written
-    // before script identities existed: an empty census is not a distribution.
+  it('keeps the classified bars while nothing has counted the stage', () => {
+    // A fresh boot before the stage is composed, a server shipping no display
+    // plane at all, or a galaxy restored from state written before script
+    // identities existed: an empty census is not a distribution.
     const { container } = render(<StageCapacityPanel stats={stats} model={null} />);
     const text = container.textContent ?? '';
     expect(text).toContain('ASSETS');
     expect(text).toContain('LOCKS');
     expect(text).toContain('default 64%');
     expect(text).toContain('multisig 22%');
+    // And they say so: these counts are the local retained window, which is
+    // the one thing this panel must not quietly present as its stage.
+    for (const bar of ['ASSETS', 'LOCKS']) {
+      expect(
+        container.querySelector(`[data-taxonomy-scope="${bar}"]`)?.textContent,
+      ).toBe('LOCAL WINDOW');
+    }
   });
 
-  it('bars the real script families once the backend counts by identity', () => {
+  it('bars the real script families once the stage is counted by identity', () => {
     const hash = (byte: string) => `0x${byte.repeat(32)}`;
-    const counted: CellsStats = {
-      ...stats,
-      scripts: {
-        locks: [
-          { script: { code_hash: hash('9b'), hash_type: 'type' }, count: 3_000 },
-          { script: { code_hash: hash('d0'), hash_type: 'type' }, count: 1_500 },
-        ],
-        locks_tail_cells: 0,
-        locks_tail_scripts: 0,
-        types: [{ script: { code_hash: hash('50'), hash_type: 'data1' }, count: 400 }],
-        types_tail_cells: 0,
-        types_tail_scripts: 0,
-        types_absent: 4_100,
-        unidentified: 0,
-      },
+    const counted: ScriptCensus = {
+      locks: [
+        { script: { code_hash: hash('9b'), hash_type: 'type' }, count: 3_000 },
+        { script: { code_hash: hash('d0'), hash_type: 'type' }, count: 1_500 },
+      ],
+      locks_tail_cells: 0,
+      locks_tail_scripts: 0,
+      types: [{ script: { code_hash: hash('50'), hash_type: 'data1' }, count: 400 }],
+      types_tail_cells: 0,
+      types_tail_scripts: 0,
+      types_absent: 4_100,
+      unidentified: 0,
     };
     const { container } = render(
       <StageCapacityPanel
-        stats={counted}
+        stats={stats}
+        stageScripts={counted}
         model={null}
         scriptRegistry={{
           source: 'ckbadger',
@@ -348,27 +356,89 @@ describe('the block', () => {
     expect(text).not.toContain('sUDT');
   });
 
-  it('collapses the legend names a 99% bar cannot show', () => {
+  it('draws the stage when the two censuses disagree, and says which', () => {
+    // The exact failure this panel had: the backend counts its whole retained
+    // window (~50k rows, 99% plain CKB) while the stage is a curated 12,000
+    // whose whole point is a different mix. Both are true; only one of them
+    // is the population this panel is named after.
     const hash = (byte: string) => `0x${byte.repeat(32)}`;
-    const dominated: CellsStats = {
+    const retained: CellsStats = {
       ...stats,
       scripts: {
-        locks: [
-          { script: { code_hash: hash('9b'), hash_type: 'type' }, count: 10_000 },
-          { script: { code_hash: hash('d0'), hash_type: 'type' }, count: 20 },
-        ],
-        locks_tail_cells: 30,
-        locks_tail_scripts: 16,
-        types: [],
+        locks: [{ script: { code_hash: hash('9b'), hash_type: 'type' }, count: 49_600 }],
+        locks_tail_cells: 0,
+        locks_tail_scripts: 0,
+        types: [{ script: { code_hash: hash('50'), hash_type: 'data1' }, count: 335 }],
         types_tail_cells: 0,
         types_tail_scripts: 0,
-        types_absent: 10_050,
+        types_absent: 49_622,
         unidentified: 0,
       },
     };
+    const staged: ScriptCensus = {
+      locks: [{ script: { code_hash: hash('9b'), hash_type: 'type' }, count: 12_000 }],
+      locks_tail_cells: 0,
+      locks_tail_scripts: 0,
+      types: [
+        { script: { code_hash: hash('4a'), hash_type: 'data1' }, count: 3_494 },
+        { script: { code_hash: hash('50'), hash_type: 'data1' }, count: 3_302 },
+      ],
+      types_tail_cells: 0,
+      types_tail_scripts: 0,
+      types_absent: 1_800,
+      unidentified: 0,
+    };
     const { container } = render(
       <StageCapacityPanel
-        stats={dominated}
+        stats={retained}
+        stageScripts={staged}
+        model={null}
+        scriptRegistry={{
+          source: 'ckbadger',
+          as_of: { block: 100, hash: '0xblock100' },
+          updated_at_ms: 1,
+          entries: [
+            { code_hash: hash('4a'), hash_type: 'data1', name: 'Spore', deprecated: false },
+            { code_hash: hash('50'), hash_type: 'data1', name: 'xUDT', deprecated: false },
+          ],
+          unresolved: 0,
+        }}
+      />,
+    );
+    const text = container.textContent ?? '';
+
+    // The stage's mix, where the retained window's would have read CKB 99%.
+    expect(text).toContain('Spore 41%');
+    expect(text).toContain('xUDT 38%');
+    expect(text).toContain('CKB 21%');
+    expect(text).not.toContain('CKB 99%');
+    // And every bar carries the population it counted.
+    for (const bar of ['ASSETS', 'LOCKS']) {
+      expect(
+        container.querySelector(`[data-taxonomy-scope="${bar}"]`)?.textContent,
+      ).toBe('STAGE');
+    }
+  });
+
+  it('collapses the legend names a 99% bar cannot show', () => {
+    const hash = (byte: string) => `0x${byte.repeat(32)}`;
+    const dominated: ScriptCensus = {
+      locks: [
+        { script: { code_hash: hash('9b'), hash_type: 'type' }, count: 10_000 },
+        { script: { code_hash: hash('d0'), hash_type: 'type' }, count: 20 },
+      ],
+      locks_tail_cells: 30,
+      locks_tail_scripts: 16,
+      types: [],
+      types_tail_cells: 0,
+      types_tail_scripts: 0,
+      types_absent: 10_050,
+      unidentified: 0,
+    };
+    const { container } = render(
+      <StageCapacityPanel
+        stats={stats}
+        stageScripts={dominated}
         model={null}
         scriptRegistry={{
           source: 'ckbadger',

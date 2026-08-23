@@ -31,8 +31,14 @@ export interface ScriptFamilyBucket {
 }
 
 /** How many families a bar names before the rest collapse into one segment.
- *  The census ranks 24; a legend of 24 names is not a bar, it is a list. */
-export const SCRIPT_BAR_FAMILIES = 4;
+ *  The census ranks 24; a legend of 24 names is not a bar, it is a list.
+ *
+ *  Six, not four, since the bars started counting the STAGE: the retained
+ *  window is 99% plain CKB, where a fifth and sixth rank are sub-percent
+ *  slivers, but the curated stage is a deliberate mix and those ranks are
+ *  real families a reader can see. Bounded by `RANK_COLORS` — a named
+ *  segment with no colour of its own is worse than a folded one. */
+export const SCRIPT_BAR_FAMILIES = 6;
 
 /** Coloured by rank rather than by a hash of the identity: the census ranking
  *  is stable (ties break on the code hash), so rank-colouring is stable too,
@@ -180,7 +186,6 @@ export function assetFamilyBuckets(
   limit = SCRIPT_BAR_FAMILIES,
 ): ScriptFamilyBucket[] {
   const names = scriptNameIndex(registry);
-  const { buckets, restCells, restScripts } = rank(census.types, names, limit);
   const plain: ScriptFamilyBucket[] = census.types_absent > 0
     ? [{
       key: 'native',
@@ -191,6 +196,15 @@ export function assetFamilyBuckets(
       families: 1,
     }]
     : [];
+  // The plain segment spends one of the bar's colours, so it also spends one
+  // of its named slots: at `limit === RANK_COLORS.length` the offset below
+  // would otherwise wrap the last type family back onto CKB's own hue, and
+  // two segments of one colour in one bar is a bar that reads as a bug.
+  const { buckets, restCells, restScripts } = rank(
+    census.types,
+    names,
+    Math.max(0, limit - plain.length),
+  );
   return [
     ...plain,
     ...withRest(
@@ -206,11 +220,13 @@ export function assetFamilyBuckets(
   ];
 }
 
-/** Whether the backend has counted anything by identity yet. Before it has —
- *  a pre-census backend, or a galaxy restored from state written before
- *  identities existed — the panel keeps its old four-family bars rather than
- *  showing an empty one. */
-export function hasScriptCensus(census: ScriptCensus | undefined): boolean {
+/** Whether anything has been counted by identity yet — a pre-census backend,
+ *  a galaxy restored from state written before identities existed, or a
+ *  session whose stage has not been composed. Until then the panel keeps the
+ *  families cknerv classifies on its own rather than showing an empty bar. */
+export function hasScriptCensus(
+  census: ScriptCensus | undefined,
+): census is ScriptCensus {
   return Boolean(
     census
       && (census.locks.length > 0

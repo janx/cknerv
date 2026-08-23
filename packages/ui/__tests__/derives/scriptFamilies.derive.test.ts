@@ -49,26 +49,54 @@ describe('scriptFamilies.derive', () => {
       // Unnamed families keep their identity rather than becoming "other".
       '0xcccc…ccc',
       '0xdddd…ddd',
-      // Ranks past the cut, plus the census's own tail, in one segment that
-      // says how many families it stands for.
-      '+3 more',
+      '0xeeee…eee',
+      // The census's own tail, in one segment that says how many families it
+      // stands for. Under the six-family cut nothing ranked joins it here.
+      '+2 more',
       'unidentified',
     ]);
-    expect(buckets.map((b) => b.named)).toEqual([true, true, false, false, false, false]);
+    expect(buckets.map((b) => b.named))
+      .toEqual([true, true, false, false, false, false, false]);
   });
 
   it('sums to every alive cell so the bar cannot silently drop one', () => {
     const alive = 500 + 300 + 120 + 60 + 20 + 7 + 13;
     expect(lockFamilyBuckets(census, registry).reduce((n, b) => n + b.count, 0))
       .toBe(alive);
-    // The remainder is the ranks past the cut (20) plus the census tail (7).
+    // Six ranks fit, so the remainder is the census's own tail alone.
     expect(lockFamilyBuckets(census, registry).find((b) => b.key === 'rest')?.count)
-      .toBe(27);
+      .toBe(7);
+    // Cut shallower and the ranks that no longer fit join it. The sum is the
+    // invariant; the cut only decides where the names stop.
+    const shallow = lockFamilyBuckets(census, registry, 3);
+    expect(shallow.reduce((n, b) => n + b.count, 0)).toBe(alive);
+    expect(shallow.find((b) => b.key === 'rest')?.count).toBe(60 + 20 + 7);
   });
 
   it('keeps neighbouring segments visually distinct', () => {
     const colors = lockFamilyBuckets(census, registry).map((b) => b.color);
     expect(new Set(colors).size).toBe(colors.length);
+  });
+
+  it('never spends CKB\u2019s colour twice in one bar', () => {
+    // The plain segment takes one of the six rank colours, so it also takes
+    // one of the six named slots: a full asset bar that wrapped its last
+    // family back onto CKB\u2019s hue would read as one family drawn twice.
+    const many: ScriptCensus = {
+      ...census,
+      types: ['11', '22', '33', '44', '55', '66', '77'].map((byte, index) => ({
+        script: { code_hash: hash(byte), hash_type: 'data1' as const },
+        count: 100 - index,
+      })),
+      types_absent: 800,
+    };
+    const buckets = assetFamilyBuckets(many, registry);
+    const colors = buckets.map((bucket) => bucket.color);
+
+    expect(buckets[0].label).toBe('CKB');
+    expect(new Set(colors).size).toBe(colors.length);
+    // The families past the reserved slot fold rather than repeat a colour.
+    expect(buckets.map((bucket) => bucket.key)).toContain('rest');
   });
 
   it('carries plain cells as CKB rather than as an unnamed family', () => {

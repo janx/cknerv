@@ -94,6 +94,7 @@ import {
   fetchTransactionSemantics,
   fromCellsSnapshot,
   outPointKey,
+  stageScriptCensus,
   type CellGalaxyCache,
   type ChainCache,
   type PeerSightingOutcome,
@@ -714,6 +715,11 @@ export default function App({
   // Maintained incrementally by the cells reducer (O(touched) per batch,
   // identity-stable when unchanged) — never re-aggregated here.
   const cellsStats = cellsCache.stats;
+  // The same discipline one scope down: the reducer keeps a running tally of
+  // the STAGE's script families, and this ranks it once per distinct tally.
+  // `cellsStats.scripts` is the backend's retained window and stays where it
+  // is — the two are different populations and never share a bar.
+  const stageScripts = stageScriptCensus(cellsCache.stageScripts);
   // How many cells the viewer could be shown. Under a display plane that is
   // the STAGED MEMBERSHIP, not the retained map: the snapshot carries only the
   // canonical rows the plane staged, and the rest of the stage arrives as
@@ -1584,6 +1590,7 @@ export default function App({
         peers={peers}
         localNode={localNode}
         cellsStats={cellsStats}
+        stageScripts={stageScripts}
         cellPopulation={cellPopulation}
         cellCount={showableCellCount}
         cellCapacity={galaxyConfig.cellCap}
