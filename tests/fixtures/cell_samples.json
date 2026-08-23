@@ -52,5 +52,43 @@
     "data_shape_seed": [3405691582, 2],
     "lock_kind": "multisig",
     "asset_kind": "other"
+  },
+  {
+    "id": 4,
+    "born_at_ms": 3000,
+    "death_at_ms": null,
+    "birth_block": 3,
+    "tag": null,
+    "pos_seed": [4.0, -1.5, 2.25],
+    "out_point": { "tx_hash": "0xb0f4", "index": 8 },
+    "capacity": 35499986956,
+    "data_hex": "0x75000000100000001900000051000000",
+    "data_bytes": 117,
+    "content_hash": "0x3333333333333333333333333333333333333333333333333333333333333333",
+    "lock_shape_seed": [572662306, 858993459],
+    "type_shape_seed": [1246613021, 4091543543],
+    "data_shape_seed": [3405691582, 3],
+    "lock_kind": "sighash",
+    "asset_kind": "spore",
+    "collection_seed": [3320521486, 3453362200]
+  },
+  {
+    "id": 5,
+    "born_at_ms": 3000,
+    "death_at_ms": null,
+    "birth_block": 3,
+    "tag": null,
+    "pos_seed": [4.25, -1.0, 2.5],
+    "out_point": { "tx_hash": "0xb0f4", "index": 0 },
+    "capacity": 900000000000,
+    "data_hex": "0x0a000000",
+    "data_bytes": 5135,
+    "content_hash": "0x4444444444444444444444444444444444444444444444444444444444444444",
+    "lock_shape_seed": [572662306, 858993459],
+    "type_shape_seed": [1935156735, 1723456812],
+    "data_shape_seed": [3405691582, 4],
+    "lock_kind": "sighash",
+    "asset_kind": "object",
+    "collection_seed": [3320521486, 3453362200]
   }
 ]

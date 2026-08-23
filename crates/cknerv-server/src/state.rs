@@ -1877,6 +1877,7 @@ mod tests {
             asset_kind: kind,
             lock_script: Default::default(),
             type_script: None,
+            collection_seed: None,
         }
     }
 

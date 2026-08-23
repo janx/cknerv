@@ -28,6 +28,40 @@ const TYPE: u8 = 1;
 const DATA1: u8 = 2;
 const DATA2: u8 = 4;
 
+// Families whose cells name the COLLECTION they belong to in bytes the node
+// hands us. Named here rather than left inline because `collection_seed`
+// matches on the same hashes: one crate, one pin per family.
+pub(crate) const SPORE_CLUSTER_MAINNET: &str =
+    "7366a61534fa7c7e6225ecc0d828ea3b5366adec2b58206f2ee84995fe030075";
+pub(crate) const SPORE_CLUSTER_TESTNET_V1: &str =
+    "598d793defef36e2eeba54a9b45130e4ca92822e1d193671f490950c3b856080";
+pub(crate) const SPORE_CLUSTER_TESTNET_V2: &str =
+    "0bbe768b519d8ea7b96d58f1182eb7e6ef96c541fbd9526975077ee09f049058";
+pub(crate) const M_NFT_ITEM: &str =
+    "2b24f0d644ccbdd77bbf86b27c8cca02efa0ad051e447c212636d9ee7acaaec9";
+pub(crate) const M_NFT_CLASS: &str =
+    "d51e6eaf48124c601f41abe173f1da550b4cbca9c6a166781906a287abbb3d9a";
+const M_NFT_ISSUER: &str = "24b04faf80ded836efc05247778eec4ec02548dab6e2012c0107374aa3f68b81";
+
+/// A Spore Cluster cell — the container that owns a family of spores. Its
+/// type args are the cluster id its members name from inside their own data.
+pub(crate) fn is_spore_cluster(code_hash: &str, hash_type: u8) -> bool {
+    hash_type == DATA1
+        && matches!(
+            code_hash,
+            SPORE_CLUSTER_MAINNET | SPORE_CLUSTER_TESTNET_V1 | SPORE_CLUSTER_TESTNET_V2
+        )
+}
+
+/// An M-NFT item or the class cell that defines it. Both carry the 24-byte
+/// class id as their args prefix — the item appends a 4-byte token index,
+/// the class stops there — so one rule reads the collection out of either.
+/// The issuer cell is deliberately not here: an issuer publishes classes, it
+/// is not itself a collection, and its args are 20 bytes anyway.
+pub(crate) fn is_m_nft_collection_member(code_hash: &str, hash_type: u8) -> bool {
+    hash_type == TYPE && matches!(code_hash, M_NFT_ITEM | M_NFT_CLASS)
+}
+
 /// The script's identity, carried through unclassified. Everything below this
 /// line recognizes a handful of families; this recognizes nothing and is
 /// therefore complete — which is what lets a script cknerv has never heard of
@@ -104,13 +138,13 @@ pub fn classify_asset(type_: Option<&packed::Script>) -> AssetKind {
         }
         // Digital objects: individually minted, individually owned artifacts.
         // Spore Cluster (mainnet + the two testnet deployments).
-        ("7366a61534fa7c7e6225ecc0d828ea3b5366adec2b58206f2ee84995fe030075", DATA1)
-        | ("598d793defef36e2eeba54a9b45130e4ca92822e1d193671f490950c3b856080", DATA1)
-        | ("0bbe768b519d8ea7b96d58f1182eb7e6ef96c541fbd9526975077ee09f049058", DATA1)
+        (SPORE_CLUSTER_MAINNET, DATA1)
+        | (SPORE_CLUSTER_TESTNET_V1, DATA1)
+        | (SPORE_CLUSTER_TESTNET_V2, DATA1)
         // M-NFT item, class and issuer.
-        | ("2b24f0d644ccbdd77bbf86b27c8cca02efa0ad051e447c212636d9ee7acaaec9", TYPE)
-        | ("d51e6eaf48124c601f41abe173f1da550b4cbca9c6a166781906a287abbb3d9a", TYPE)
-        | ("24b04faf80ded836efc05247778eec4ec02548dab6e2012c0107374aa3f68b81", TYPE)
+        | (M_NFT_ITEM, TYPE)
+        | (M_NFT_CLASS, TYPE)
+        | (M_NFT_ISSUER, TYPE)
         // COTA, and the single registry cell that anchors it.
         | ("1122a4fb54697cf2e6e3a96c9d80fd398a936559b90954c6e88eb7ba0cf652df", TYPE)
         | ("90ca618be6c15f5857d3cbd09f9f24ca6770af047ba9ee70989ec3b229419ac7", TYPE)

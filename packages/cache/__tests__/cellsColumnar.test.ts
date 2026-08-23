@@ -5,6 +5,7 @@ import type { Cell, CellGalaxySnapshot, ScriptId } from '@cknerv/types';
 import { DATA_HEX_TRUNCATION_MARKER } from '@cknerv/types';
 import {
   CELLS_COLUMNAR_HEADER_BYTES,
+  CELLS_COLUMNAR_NO_COLLECTION,
   CELLS_COLUMNAR_NO_SCRIPT,
   CELLS_COLUMNAR_NO_TAG,
   CELLS_COLUMNAR_REVISION_OFFSET,
@@ -21,7 +22,7 @@ import {
  *  so a layout change that lands on only one of them fails on both — which
  *  a hand-rolled TS encoder here could never catch, because it would drift
  *  along with whichever reading its author had. Regenerate with
- *  `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-core columnar_v5`. */
+ *  `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-core columnar_v6`. */
 function fixtureBytes(name: string): ArrayBuffer {
   const path = fileURLToPath(new URL(`../../../tests/fixtures/${name}`, import.meta.url));
   const bytes = readFileSync(path);
@@ -29,7 +30,7 @@ function fixtureBytes(name: string): ArrayBuffer {
 }
 
 function fixture(): ArrayBuffer {
-  return fixtureBytes('cells_columnar_v5.bin');
+  return fixtureBytes('cells_columnar_v6.bin');
 }
 
 const FIXTURE_LOCK: ScriptId = {
@@ -61,13 +62,18 @@ function expectedCell(id: number, tag: string | null) {
     data_shape_seed: [id * 23, id * 29],
     lock_kind: id % 2 === 0 ? 'sighash' : 'omnilock',
     asset_kind: id % 2 === 0 ? 'native' : 'dao',
+    // The Rust helper's three collection shapes: absent, an all-zero digest
+    // that is nonetheless a real collection, and a distinct one.
+    ...(id % 3 === 1 ? {} : {
+      collection_seed: id % 3 === 0 ? [0, 0] : [id * 31, id * 37],
+    }),
   };
 }
 
 describe('decodeCellsColumnar', () => {
   it('reads the header the Rust encoder wrote', () => {
     const view = decodeCellsColumnar(fixture());
-    expect(CELLS_COLUMNAR_VERSION).toBe(5);
+    expect(CELLS_COLUMNAR_VERSION).toBe(6);
     expect(CELLS_COLUMNAR_HEADER_BYTES).toBe(72);
     expect(view.lastPulseAtMs).toBe(777);
     expect(view.totalBirths).toBe(30);
@@ -113,6 +119,33 @@ describe('decodeCellsColumnar', () => {
     expect(Array.from(view.lockShapeSeed0)).toEqual([11, 22, 33, 99]);
     expect(Array.from(view.typeShapeSeed0)).toEqual([0, 34, 0, 0]);
     expect(Array.from(view.dataShapeSeed1)).toEqual([29, 58, 87, 261]);
+    // ids 1, 2, 3, 9 → none, [62, 74], [0, 0], [0, 0].
+    expect(Array.from(view.collectionSeed0)).toEqual([0, 62, 0, 0]);
+    expect(Array.from(view.collectionSeed1)).toEqual([0, 74, 0, 0]);
+  });
+
+  /** `collection_seed` is the one column whose absence NOTHING in the value
+   *  can spell: a digest prefix of `[0, 0]` is a collection like any other,
+   *  and the fixture carries exactly that row so a sentinel-on-the-value
+   *  scheme would fail here rather than in a galaxy nobody is inspecting. */
+  it('tells a kinless cell from one whose seed happens to be zero', () => {
+    const view = decodeCellsColumnar(fixture());
+    expect(Array.from(view.collectionPresent)).toEqual([
+      CELLS_COLUMNAR_NO_COLLECTION, 1, 1, 1,
+    ]);
+
+    const kinless = columnarCellAt(view, 0);
+    expect('collection_seed' in kinless).toBe(false);
+
+    // Rows 2 and 3 are ids 3 and 9 — both all-zero seeds, and both kin.
+    const zeroSeeded = columnarCellAt(view, 2);
+    expect(zeroSeeded.collection_seed).toEqual([0, 0]);
+    expect(columnarCellAt(view, 3).collection_seed).toEqual([0, 0]);
+    // Same numeric columns as the kinless row; only the byte tells them apart.
+    expect(view.collectionSeed0[0]).toBe(view.collectionSeed0[2]);
+    expect(view.collectionSeed1[0]).toBe(view.collectionSeed1[2]);
+
+    expect(columnarCellAt(view, 1).collection_seed).toEqual([62, 74]);
   });
 
   /** Script identity is dictionary-encoded: two rows under the same lock
@@ -168,7 +201,7 @@ describe('decodeCellsColumnar', () => {
    *  a plane is present would read the trailing sections length out of the
    *  middle of it — the rows would decode and the tail would be garbage. */
   it('reads a snapshot whose display plane is absent', () => {
-    const view = decodeCellsColumnar(fixtureBytes('cells_columnar_v5_absent.bin'));
+    const view = decodeCellsColumnar(fixtureBytes('cells_columnar_v6_absent.bin'));
     expect(view.display).toBeNull();
     expect(view.cellCount).toBe(3);
     expect(view.residentCount).toBe(0);
@@ -218,8 +251,8 @@ describe('decodeCellsColumnar', () => {
     // throw on the HTTP boot path and `projectionStream.ts` latches
     // `binaryRetired` on the socket path, so neither wedges.
     const oldVersion = good.slice(0);
-    new DataView(oldVersion).setUint16(4, 4, true);
-    expect(() => decodeCellsColumnar(oldVersion)).toThrow(/unsupported version 4/);
+    new DataView(oldVersion).setUint16(4, 5, true);
+    expect(() => decodeCellsColumnar(oldVersion)).toThrow(/unsupported version 5/);
 
     expect(() => decodeCellsColumnar(good.slice(0, 40))).toThrow(/too small/);
     expect(() => decodeCellsColumnar(new ArrayBuffer(8))).toThrow(/too small/);
@@ -292,9 +325,9 @@ describe('decodeCellsColumnar', () => {
 });
 
 // ── THE differential gate ────────────────────────────────────────────
-// One galaxy, serialized by the server twice: `cells_columnar_v5_pair.json`
-// through serde, `cells_columnar_v5_pair.bin` through the columnar encoder
-// (`cells.rs::columnar_v5_pair_describes_one_galaxy_in_both_wire_forms`).
+// One galaxy, serialized by the server twice: `cells_columnar_v6_pair.json`
+// through serde, `cells_columnar_v6_pair.bin` through the columnar encoder
+// (`cells.rs::columnar_v6_pair_describes_one_galaxy_in_both_wire_forms`).
 // Decoding the binary one HERE, through the very path production uses, and
 // diffing every field of every cell against the JSON one is the only check
 // that spans the language boundary AND the decoder. Rust's own
@@ -325,6 +358,7 @@ const diffedCellFields = {
   asset_kind: true,
   lock_script: true,
   type_script: true,
+  collection_seed: true,
 } as const satisfies Record<keyof Cell, true>;
 
 const CELL_FIELDS = Object.keys(diffedCellFields) as (keyof Cell)[];
@@ -346,12 +380,12 @@ function cellFieldEntries(label: string, cells: readonly Cell[]): Record<string,
 describe('decode(BIN) ≡ JSON', () => {
   function pair(): { fromBin: CellGalaxySnapshot; fromJson: CellGalaxySnapshot } {
     const fromBin = cellsSnapshotFromColumnar(
-      decodeCellsColumnar(fixtureBytes('cells_columnar_v5_pair.bin')),
+      decodeCellsColumnar(fixtureBytes('cells_columnar_v6_pair.bin')),
     );
     const fromJson = JSON.parse(
       readFileSync(
         fileURLToPath(
-          new URL('../../../tests/fixtures/cells_columnar_v5_pair.json', import.meta.url),
+          new URL('../../../tests/fixtures/cells_columnar_v6_pair.json', import.meta.url),
         ),
         'utf8',
       ),

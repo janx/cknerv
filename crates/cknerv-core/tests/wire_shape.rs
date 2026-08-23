@@ -250,6 +250,7 @@ fn sample_cell(id: u64) -> Cell {
         asset_kind: AssetKind::Xudt,
         lock_script: sample_lock_script(),
         type_script: Some(sample_type_script()),
+        collection_seed: None,
     }
 }
 
@@ -414,6 +415,7 @@ fn cell_delta_samples() -> BTreeMap<&'static str, CellDelta> {
                 asset_kind: AssetKind::Xudt,
                 lock_script: Default::default(),
                 type_script: None,
+                collection_seed: None,
             }],
             exit_ids: vec![2],
             provenance: Some(DisplayProvenance {
@@ -508,6 +510,55 @@ fn cell_samples_round_trip() {
             "cell[{i}] round-trip"
         );
     }
+}
+
+/// `collection_seed` is the one field on a `Cell` whose job is to be EQUAL
+/// across cells. The fixture carries the shape the chain actually produces —
+/// a Spore Cluster container and a spore inside it, two different asset
+/// kinds, one seed — and every cell whose family names no collection omits
+/// the key entirely, which is what a snapshot written before M2b looks like.
+#[test]
+fn collection_seed_is_shared_by_kin_and_absent_everywhere_else() {
+    let samples = fixture("cell_samples.json");
+    let cells: Vec<Cell> =
+        serde_json::from_value(samples.clone()).expect("cell_samples.json is a Cell array");
+
+    let kin: Vec<&Cell> = cells
+        .iter()
+        .filter(|cell| cell.collection_seed.is_some())
+        .collect();
+    assert_eq!(kin.len(), 2, "the fixture carries one family");
+    assert_eq!(
+        kin[0].collection_seed, kin[1].collection_seed,
+        "kinship is the field's whole purpose"
+    );
+    assert_ne!(
+        kin[0].asset_kind, kin[1].asset_kind,
+        "a container and its member are different kinds and still kin"
+    );
+    assert_ne!(
+        kin[0].type_shape_seed, kin[1].type_shape_seed,
+        "every OTHER seed still separates them"
+    );
+
+    // Absent means absent: no key on the wire, and a snapshot that predates
+    // the field deserializes to `None` rather than failing.
+    for (cell, sample) in cells.iter().zip(samples.as_array().expect("array")) {
+        assert_eq!(
+            cell.collection_seed.is_none(),
+            sample.get("collection_seed").is_none(),
+            "cell {} disagrees about whether it has kin",
+            cell.id
+        );
+    }
+    let mut legacy = samples[3].clone();
+    assert!(legacy
+        .as_object_mut()
+        .expect("object")
+        .remove("collection_seed")
+        .is_some());
+    let restored: Cell = serde_json::from_value(legacy).expect("pre-M2b cells still load");
+    assert_eq!(restored.collection_seed, None);
 }
 
 /// Total by construction, same contract as [`cell_delta_variant`].

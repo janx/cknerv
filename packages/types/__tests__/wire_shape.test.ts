@@ -243,7 +243,29 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
       expect(typeof cell.out_point.index).toBe('number');
       expect(Array.isArray(cell.pos_seed)).toBe(true);
       expect(cell.pos_seed.length).toBe(3);
+      // The one optional seed, and the one spelled by an ABSENT key rather
+      // than a null — mirroring Rust's `skip_serializing_if`, which is what
+      // `cellContentEquals` compares.
+      expect(
+        cell.collection_seed === undefined || cell.collection_seed.length === 2,
+      ).toBe(true);
+      expect(cell.collection_seed).not.toBeNull();
     }
+  });
+
+  /** `collection_seed` is the only field on a `Cell` whose job is to be the
+   *  SAME across cells. The fixture carries the shape mainnet produces — a
+   *  Spore Cluster container and a spore inside it, two asset kinds, one
+   *  seed — so both languages read kinship off the very same bytes. */
+  it('cell_samples.json carries one collection shared by two kinds of cell', () => {
+    const kin = fixture<Cell[]>('cell_samples.json')
+      .filter((cell) => cell.collection_seed !== undefined);
+    expect(kin).toHaveLength(2);
+    expect(kin[0].collection_seed).toEqual(kin[1].collection_seed);
+    expect(kin.map((cell) => cell.asset_kind).sort()).toEqual(['object', 'spore']);
+    // Every other seed still tells them apart — kinship adds a channel, it
+    // does not collapse the ones that carry individuality.
+    expect(kin[0].type_shape_seed).not.toEqual(kin[1].type_shape_seed);
   });
 
   it('snapshot_cells.json has CellGalaxySnapshot shape', () => {

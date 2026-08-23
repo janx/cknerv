@@ -411,6 +411,7 @@ mod tests {
                 asset_kind: AssetKind::Xudt,
                 lock_script: script,
                 type_script: Some(script),
+                collection_seed: None,
             }],
         });
         save(&source, &workdir).expect("save schema-v5 state");

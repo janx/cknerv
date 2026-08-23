@@ -8,6 +8,7 @@ import {
   type CellGalaxyCache,
 } from '../src/cellsReducer';
 import {
+  CELL_FIELD_HAS_COLLECTION,
   CELL_FIELD_HAS_DATA,
   cellFieldColumnBytes,
   cellFieldRemove,
@@ -22,6 +23,7 @@ import {
 } from '../src/cellField';
 import {
   CELLS_COLUMNAR_NO_SCRIPT,
+  CELLS_COLUMNAR_NO_COLLECTION,
   CELLS_COLUMNAR_NO_TAG,
   type CellsColumnarView,
 } from '../src/cellsColumnar';
@@ -314,10 +316,15 @@ describe('hydrateCellFieldFromColumnar', () => {
       typeShapeSeed1: new Uint32Array([0, 0]),
       dataShapeSeed0: new Uint32Array([31, 32]),
       dataShapeSeed1: new Uint32Array([41, 42]),
+      // Row 0 has kin whose seed is legitimately all-zero; row 1 has none.
+      // The two rows are byte-identical in these columns on purpose.
+      collectionSeed0: new Uint32Array([0, 0]),
+      collectionSeed1: new Uint32Array([0, 0]),
       lockKind: new Uint8Array([0, 3]),
       assetKind: new Uint8Array([0, 3]),
       tagIndex: new Uint8Array([0, CELLS_COLUMNAR_NO_TAG]),
       dataFlag: new Uint8Array([1, 0]),
+      collectionPresent: new Uint8Array([1, CELLS_COLUMNAR_NO_COLLECTION]),
       lockScriptRef: new Uint16Array([1, CELLS_COLUMNAR_NO_SCRIPT]),
       typeScriptRef: new Uint16Array([CELLS_COLUMNAR_NO_SCRIPT, CELLS_COLUMNAR_NO_SCRIPT]),
       tags: ['wallet'],
@@ -342,7 +349,9 @@ describe('hydrateCellFieldFromColumnar', () => {
     const slot = cellFieldSlotOf(field, 4_503_599_627_370_497);
     expect(slot).toBeGreaterThanOrEqual(0);
     expect(field.tag[slot]).toBe('wallet');
-    expect(field.flags[slot]).toBe(CELL_FIELD_HAS_DATA);
+    expect(field.flags[slot]).toBe(CELL_FIELD_HAS_DATA | CELL_FIELD_HAS_COLLECTION);
+    // Both rows carry `[0, 0]`; only the flag says which one means it.
+    expect(materializeCellAt(field, slot).collection_seed).toEqual([0, 0]);
     expect(field.dataBytes[slot]).toBe(4);
     expect([field.lockShapeSeed0[slot], field.lockShapeSeed1[slot]]).toEqual([11, 21]);
     expect(materializeCellAt(field, slot).type_shape_seed).toBeNull();
@@ -354,6 +363,7 @@ describe('hydrateCellFieldFromColumnar', () => {
     });
     expect(field.typeScript[slot]).toBeUndefined();
     const slot2 = cellFieldSlotOf(field, 8);
+    expect('collection_seed' in materializeCellAt(field, slot2)).toBe(false);
     expect(field.deathAtMs[slot2]).toBe(900);
     expect(field.tag[slot2]).toBeNull();
     expect(field.lockScript[slot2]).toBeUndefined();

@@ -106,6 +106,15 @@ export interface Cell {
   lock_script?: ScriptId;
   /** Which type script it carries; absent on a plain cell. */
   type_script?: ScriptId;
+  /** Fingerprint of the COLLECTION this cell belongs to — the one seed meant
+   *  to COLLIDE. The lock/type/data seeds separate cells; this one gathers
+   *  them, so two items of a spore cluster or an m-nft class read as family
+   *  rather than as strangers who happen to share an accent.
+   *
+   *  Absent — the key omitted, not null — wherever the chain does not say:
+   *  a plain cell, a family that keeps membership in a registry, a spore with
+   *  no cluster, or any cell restored from state written before M2b. */
+  collection_seed?: ShapeSeed;
 }
 
 /**

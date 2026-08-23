@@ -167,6 +167,20 @@ pub struct Cell {
     /// Which type script it carries, or `None` for a plain cell.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub type_script: Option<ScriptId>,
+    /// Fingerprint of the COLLECTION this cell belongs to — the one seed on
+    /// the wire that is meant to COLLIDE. The `lock`/`type`/`data` seeds
+    /// separate cells; this one gathers them, so a renderer can draw two
+    /// Nervapes as family rather than as two strangers who happen to be green.
+    ///
+    /// `None` wherever the chain does not say: a plain cell, a family that
+    /// keeps membership in a registry, or a spore that belongs to no cluster.
+    /// Same persisted-compat contract as `asset_kind` above — cells restored
+    /// from state written before this field existed load as `None` and learn
+    /// their kin the next time a producer reads them. Nothing has to be
+    /// migrated: the galaxy composition re-reads every curated cell through
+    /// the hydrator at boot, and block-following refreshes the rest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collection_seed: Option<ShapeSeed>,
 }
 
 /// Transient historical-replay progress. `None` during ordinary live polling.
@@ -1600,6 +1614,7 @@ impl CellGalaxy {
                 asset_kind: out.asset_kind,
                 lock_script: out.lock_script,
                 type_script: out.type_script,
+                collection_seed: out.collection_seed,
             };
             deltas.push(CellDelta::Birth { cell: cell.clone() });
             self.total_births += 1;
@@ -2014,6 +2029,7 @@ mod tests {
             asset_kind: AssetKind::Other,
             lock_script: Default::default(),
             type_script: None,
+            collection_seed: None,
         }
     }
 
@@ -4148,6 +4164,7 @@ mod tests {
             asset_kind: AssetKind::Other,
             lock_script: Default::default(),
             type_script: None,
+            collection_seed: None,
         };
         let alive_b = Cell {
             id: 1,
@@ -4844,6 +4861,7 @@ mod tests {
             asset_kind: kind,
             lock_script: Default::default(),
             type_script: None,
+            collection_seed: None,
         };
         GalaxyCompositionRecord {
             source: "ckbadger".into(),
@@ -5628,9 +5646,9 @@ mod tests {
     /// survived a green suite.
     ///
     /// Regenerate both with
-    /// `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-core columnar_v5`.
+    /// `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-core columnar_v6`.
     #[test]
-    fn columnar_v5_pair_describes_one_galaxy_in_both_wire_forms() {
+    fn columnar_v6_pair_describes_one_galaxy_in_both_wire_forms() {
         use crate::outpoint::DATA_HEX_TRUNCATION_MARKER;
         use crate::projection::cells_columnar::{
             assert_matches_fixture, assert_matches_text_fixture,
@@ -5691,6 +5709,11 @@ mod tests {
         acp_spore.lock_script = script(0x33, "data2");
         acp_spore.type_script = Some(script(0x44, "data2"));
         acp_spore.type_shape_seed = Some([0x4444_4444, 0x4444_4444]);
+        // Kinship has to cross the boundary too, and the shape that matters is
+        // two cells of DIFFERENT asset kinds sharing one seed: on mainnet that
+        // is a Spore Cluster container and a spore inside it, which is the one
+        // case a per-kind encoding would quietly get wrong.
+        acp_spore.collection_seed = Some([0xc0_11ec_71, 0x0_1dee_d5]);
         // Native means "no type script", so this one says its kind and
         // carries nothing to say it with — which is the pairing the wire has
         // to keep separable from a cell with no identity at all.
@@ -5706,6 +5729,7 @@ mod tests {
         sighash_object.lock_script = lock;
         sighash_object.type_script = Some(script(0x66, "data1"));
         sighash_object.type_shape_seed = Some([0x6666_6666, 0x6666_6666]);
+        sighash_object.collection_seed = Some([0xc0_11ec_71, 0x0_1dee_d5]);
         let mut sighash_identity = out(73_00000000, "0x04");
         sighash_identity.lock_kind = LockKind::Sighash;
         sighash_identity.asset_kind = AssetKind::Identity;
@@ -5825,9 +5849,9 @@ mod tests {
         );
 
         let json = serde_json::to_string_pretty(&snapshot).expect("serialize snapshot");
-        assert_matches_text_fixture("cells_columnar_v5_pair.json", &json);
+        assert_matches_text_fixture("cells_columnar_v6_pair.json", &json);
         assert_matches_fixture(
-            "cells_columnar_v5_pair.bin",
+            "cells_columnar_v6_pair.bin",
             &g.snapshot_bin().expect("columnar snapshot"),
         );
     }

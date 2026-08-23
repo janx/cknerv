@@ -15,6 +15,7 @@ import type {
   ReplayPhase,
   RevisionedCellDelta,
   ScriptId,
+  ShapeSeed,
 } from '@cknerv/types';
 import {
   adjustCellsStats,
@@ -364,7 +365,21 @@ export function cellContentEquals(a: Cell, b: Cell): boolean {
     && a.asset_kind === b.asset_kind
     && scriptIdEquals(a.lock_script, b.lock_script)
     && scriptIdEquals(a.type_script, b.type_script)
+    && shapeSeedEquals(a.collection_seed, b.collection_seed)
   );
+}
+
+/** A cell that just learned its kin is a CHANGED cell: the galaxy hue and the
+ *  cartouche both read this field, so reusing the retained object across a
+ *  resync that filled it in would freeze the old, kinless drawing. Absent and
+ *  present-but-equal are the only two ways to match — the same contract
+ *  `scriptIdEquals` keeps for the optional script records. */
+function shapeSeedEquals(
+  a: ShapeSeed | undefined,
+  b: ShapeSeed | undefined,
+): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  return a[0] === b[0] && a[1] === b[1];
 }
 
 /** Script identity is a two-field record on the wire; a cell whose lock or
@@ -399,6 +414,7 @@ const comparedCellFields = {
   asset_kind: true,
   lock_script: true,
   type_script: true,
+  collection_seed: true,
 } as const satisfies Record<keyof Cell, true>;
 void comparedCellFields;
 

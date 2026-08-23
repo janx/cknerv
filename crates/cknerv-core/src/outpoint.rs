@@ -75,6 +75,13 @@ pub struct TxOutputInfo {
     /// Which type script it carries, or `None` for a plain cell.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub type_script: Option<ScriptId>,
+    /// Fingerprint of the COLLECTION this cell belongs to, when its family
+    /// carries one. Alone among the seeds it is deliberately SHARED: two
+    /// cells answer alike exactly when the chain says they are kin. `None`
+    /// for most of the chain, and `#[serde(default)]` keeps snapshots
+    /// written before it existed loadable (→ `None`, i.e. no known kin).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collection_seed: Option<ShapeSeed>,
 }
 
 /// Cellbase tx's only "input" — never a real outpoint we can consume,

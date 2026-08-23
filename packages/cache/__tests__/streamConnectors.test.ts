@@ -534,7 +534,7 @@ describe('binary resync frames', () => {
    *  one. */
   function fixture(): ArrayBuffer {
     const bytes = readFileSync(
-      fileURLToPath(new URL('../../../tests/fixtures/cells_columnar_v5.bin', import.meta.url)),
+      fileURLToPath(new URL('../../../tests/fixtures/cells_columnar_v6.bin', import.meta.url)),
     );
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   }

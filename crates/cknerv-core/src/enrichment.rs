@@ -1919,6 +1919,7 @@ mod tests {
             asset_kind,
             lock_script: Default::default(),
             type_script: None,
+            collection_seed: None,
         }
     }
 

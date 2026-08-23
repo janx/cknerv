@@ -36,6 +36,7 @@ export {
   syncCellFieldFromCache,
   hydrateCellFieldFromColumnar,
   cellFieldColumnBytes,
+  CELL_FIELD_HAS_COLLECTION,
   CELL_FIELD_HAS_DATA,
   type CellField,
   type CellFieldSyncResult,

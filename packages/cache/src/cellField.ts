@@ -10,11 +10,12 @@
 // composition ids). Ids live exclusively in Float64Array columns and f64
 // hash keys — never 32-bit-pack a cell id.
 
-import type { AssetKind, Cell, LockKind, ScriptId } from '@cknerv/types';
+import type { AssetKind, Cell, LockKind, ScriptId, ShapeSeed } from '@cknerv/types';
 import type { CellGalaxyCache } from './cellsReducer';
 import {
   COLUMNAR_ASSET_KINDS,
   COLUMNAR_LOCK_KINDS,
+  CELLS_COLUMNAR_NO_COLLECTION,
   CELLS_COLUMNAR_NO_SCRIPT,
   CELLS_COLUMNAR_NO_TAG,
   type CellsColumnarView,
@@ -22,6 +23,11 @@ import {
 
 /** dataFlag bit: cell data beyond "0x". */
 export const CELL_FIELD_HAS_DATA = 1;
+/** flags bit: this cell belongs to a collection. A second BIT rather than a
+ *  second column — the seed words below are meaningless without it, and the
+ *  words themselves cannot carry the answer because `[0, 0]` is a legitimate
+ *  digest prefix. */
+export const CELL_FIELD_HAS_COLLECTION = 2;
 
 const EMPTY_SLOT = -1;
 
@@ -55,6 +61,9 @@ export interface CellField {
   typeShapeSeed1: Uint32Array;
   dataShapeSeed0: Uint32Array;
   dataShapeSeed1: Uint32Array;
+  /** Meaningless unless `flags[slot] & CELL_FIELD_HAS_COLLECTION`. */
+  collectionSeed0: Uint32Array;
+  collectionSeed1: Uint32Array;
   lockKind: Uint8Array;
   assetKind: Uint8Array;
   flags: Uint8Array;
@@ -127,6 +136,8 @@ export function createCellField(initialCapacity = 1024): CellField {
     typeShapeSeed1: new Uint32Array(capacity),
     dataShapeSeed0: new Uint32Array(capacity),
     dataShapeSeed1: new Uint32Array(capacity),
+    collectionSeed0: new Uint32Array(capacity),
+    collectionSeed1: new Uint32Array(capacity),
     lockKind: new Uint8Array(capacity),
     assetKind: new Uint8Array(capacity),
     flags: new Uint8Array(capacity),
@@ -274,6 +285,8 @@ function growColumns(field: CellField, minCapacity: number): void {
   field.typeShapeSeed1 = growTyped(field.typeShapeSeed1, (n) => new Uint32Array(n));
   field.dataShapeSeed0 = growTyped(field.dataShapeSeed0, (n) => new Uint32Array(n));
   field.dataShapeSeed1 = growTyped(field.dataShapeSeed1, (n) => new Uint32Array(n));
+  field.collectionSeed0 = growTyped(field.collectionSeed0, (n) => new Uint32Array(n));
+  field.collectionSeed1 = growTyped(field.collectionSeed1, (n) => new Uint32Array(n));
   field.lockKind = growTyped(field.lockKind, (n) => new Uint8Array(n));
   field.assetKind = growTyped(field.assetKind, (n) => new Uint8Array(n));
   field.flags = growTyped(field.flags, (n) => new Uint8Array(n));
@@ -339,9 +352,12 @@ function writeCellColumns(field: CellField, slot: number, cell: Cell): void {
   field.typeShapeSeed1[slot] = cell.type_shape_seed?.[1] ?? 0;
   field.dataShapeSeed0[slot] = cell.data_shape_seed[0];
   field.dataShapeSeed1[slot] = cell.data_shape_seed[1];
+  field.collectionSeed0[slot] = cell.collection_seed?.[0] ?? 0;
+  field.collectionSeed1[slot] = cell.collection_seed?.[1] ?? 0;
   field.lockKind[slot] = LOCK_KIND_CODES[cell.lock_kind ?? 'other'];
   field.assetKind[slot] = ASSET_KIND_CODES[cell.asset_kind ?? 'other'];
-  field.flags[slot] = cell.data_bytes > 0 ? CELL_FIELD_HAS_DATA : 0;
+  field.flags[slot] = (cell.data_bytes > 0 ? CELL_FIELD_HAS_DATA : 0)
+    | (cell.collection_seed === undefined ? 0 : CELL_FIELD_HAS_COLLECTION);
   field.tag[slot] = cell.tag;
   field.txHash[slot] = cell.out_point.tx_hash;
   field.contentHash[slot] = cell.content_hash;
@@ -439,6 +455,14 @@ export function materializeCellAt(field: CellField, slot: number): Cell {
     // Absent stays absent, as on the wire and in `columnarCellAt`.
     ...(lockScript === undefined ? {} : { lock_script: lockScript }),
     ...(typeScript === undefined ? {} : { type_script: typeScript }),
+    ...((field.flags[slot] & CELL_FIELD_HAS_COLLECTION) === 0
+      ? {}
+      : {
+        collection_seed: [
+          field.collectionSeed0[slot],
+          field.collectionSeed1[slot],
+        ] as ShapeSeed,
+      }),
   };
 }
 
@@ -523,9 +547,14 @@ export function hydrateCellFieldFromColumnar(
     field.typeShapeSeed1[slot] = view.typeShapeSeed1[i];
     field.dataShapeSeed0[slot] = view.dataShapeSeed0[i];
     field.dataShapeSeed1[slot] = view.dataShapeSeed1[i];
+    field.collectionSeed0[slot] = view.collectionSeed0[i];
+    field.collectionSeed1[slot] = view.collectionSeed1[i];
     field.lockKind[slot] = view.lockKind[i];
     field.assetKind[slot] = view.assetKind[i];
-    field.flags[slot] = view.dataFlag[i] === 1 ? CELL_FIELD_HAS_DATA : 0;
+    field.flags[slot] = (view.dataFlag[i] === 1 ? CELL_FIELD_HAS_DATA : 0)
+      | (view.collectionPresent[i] === CELLS_COLUMNAR_NO_COLLECTION
+        ? 0
+        : CELL_FIELD_HAS_COLLECTION);
     const tagCode = view.tagIndex[i];
     field.tag[slot] =
       tagCode === CELLS_COLUMNAR_NO_TAG ? null : view.tags[tagCode] ?? null;
@@ -564,6 +593,8 @@ export function cellFieldColumnBytes(field: CellField): number {
     + field.typeShapeSeed1.byteLength
     + field.dataShapeSeed0.byteLength
     + field.dataShapeSeed1.byteLength
+    + field.collectionSeed0.byteLength
+    + field.collectionSeed1.byteLength
     + field.lockKind.byteLength
     + field.assetKind.byteLength
     + field.flags.byteLength

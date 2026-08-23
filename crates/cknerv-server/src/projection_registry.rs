@@ -755,6 +755,7 @@ mod tests {
             asset_kind: Default::default(),
             lock_script: Default::default(),
             type_script: None,
+            collection_seed: None,
         }
     }
 
@@ -781,6 +782,7 @@ mod tests {
             asset_kind: Default::default(),
             lock_script: Default::default(),
             type_script: None,
+            collection_seed: None,
         }
     }
 

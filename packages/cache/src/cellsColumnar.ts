@@ -24,9 +24,10 @@ import type {
   HashType,
   LockKind,
   ScriptId,
+  ShapeSeed,
 } from '@cknerv/types';
 
-export const CELLS_COLUMNAR_VERSION = 5;
+export const CELLS_COLUMNAR_VERSION = 6;
 export const CELLS_COLUMNAR_HEADER_BYTES = 72;
 /** Byte offset of the u64 revision the SERVER patches into the header after
  *  the projection encoded it (`projection_registry.rs`). Mirrored here so a
@@ -39,6 +40,12 @@ export const CELLS_COLUMNAR_NO_TAG = 0xff;
 /** Script-ref value meaning "this cell carries no such script"; every other
  *  ref is `dictionary index + 1`. */
 export const CELLS_COLUMNAR_NO_SCRIPT = 0;
+/** `collectionPresent` byte: whether row `i`'s two collection-seed words mean
+ *  anything. It is the ONLY absence authority for that field — unlike
+ *  `type_shape_seed`, which borrows the type-script ref, a collection seed is
+ *  a raw digest prefix that may legitimately be `[0, 0]`, so nothing about the
+ *  value itself can say "no kin". */
+export const CELLS_COLUMNAR_NO_COLLECTION = 0;
 
 /** `display_mode` byte: absent / canonical / composed. */
 export const CELLS_COLUMNAR_DISPLAY_ABSENT = 0;
@@ -105,6 +112,9 @@ export interface CellsColumnarView {
   typeShapeSeed1: Uint32Array;
   dataShapeSeed0: Uint32Array;
   dataShapeSeed1: Uint32Array;
+  /** Words of `collection_seed`; meaningless unless `collectionPresent[i]`. */
+  collectionSeed0: Uint32Array;
+  collectionSeed1: Uint32Array;
   /** Codes into COLUMNAR_LOCK_KINDS. */
   lockKind: Uint8Array;
   /** Codes into COLUMNAR_ASSET_KINDS. */
@@ -113,6 +123,9 @@ export interface CellsColumnarView {
   tagIndex: Uint8Array;
   /** 1 = cell data beyond "0x". */
   dataFlag: Uint8Array;
+  /** 1 = this cell belongs to a collection; CELLS_COLUMNAR_NO_COLLECTION = it
+   *  does not, or its family does not name one. */
+  collectionPresent: Uint8Array;
   /** Refs into `scripts`, offset by one; CELLS_COLUMNAR_NO_SCRIPT = the cell
    *  carries no lock identity, which is what the JSON path spells as an
    *  absent `lock_script` key. */
@@ -222,10 +235,10 @@ export function decodeCellsColumnar(buffer: ArrayBuffer): CellsColumnarView {
   const membersBase = f64Base + 4 * 8 * n;
   const f32Base = membersBase + 8 * memberCount;
   const u32Base = f32Base + 3 * 4 * n;
-  const offsetsBase = u32Base + 9 * 4 * n;
+  const offsetsBase = u32Base + 11 * 4 * n;
   const u16Base = offsetsBase + 3 * (n + 1) * 4;
   const u8Base = u16Base + 2 * 2 * n;
-  const stringsBase = u8Base + 4 * n;
+  const stringsBase = u8Base + 5 * n;
   if (tailOffset < stringsBase || tailOffset > buffer.byteLength) {
     fail(`tail offset ${tailOffset} outside [${stringsBase}, ${buffer.byteLength}]`);
   }
@@ -327,10 +340,13 @@ export function decodeCellsColumnar(buffer: ArrayBuffer): CellsColumnarView {
     typeShapeSeed1: new Uint32Array(buffer, u32Base + 24 * n, n),
     dataShapeSeed0: new Uint32Array(buffer, u32Base + 28 * n, n),
     dataShapeSeed1: new Uint32Array(buffer, u32Base + 32 * n, n),
+    collectionSeed0: new Uint32Array(buffer, u32Base + 36 * n, n),
+    collectionSeed1: new Uint32Array(buffer, u32Base + 40 * n, n),
     lockKind: new Uint8Array(buffer, u8Base, n),
     assetKind: new Uint8Array(buffer, u8Base + n, n),
     tagIndex: new Uint8Array(buffer, u8Base + 2 * n, n),
     dataFlag: new Uint8Array(buffer, u8Base + 3 * n, n),
+    collectionPresent: new Uint8Array(buffer, u8Base + 4 * n, n),
     lockScriptRef: new Uint16Array(buffer, u16Base, n),
     typeScriptRef: new Uint16Array(buffer, u16Base + 2 * n, n),
     tags,
@@ -391,6 +407,11 @@ export function columnarCellAt(view: CellsColumnarView, i: number): Cell {
     // identity for every scripted cell on every lagged resync.
     ...(lockScript === undefined ? {} : { lock_script: lockScript }),
     ...(typeScript === undefined ? {} : { type_script: typeScript }),
+    // Same absent-stays-absent rule, and here the presence byte is the only
+    // thing that can say so: `[0, 0]` is a collection like any other.
+    ...(view.collectionPresent[i] === CELLS_COLUMNAR_NO_COLLECTION
+      ? {}
+      : { collection_seed: [view.collectionSeed0[i], view.collectionSeed1[i]] as ShapeSeed }),
   };
 }
 

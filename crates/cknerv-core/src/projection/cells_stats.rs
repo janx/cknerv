@@ -332,6 +332,7 @@ mod tests {
             asset_kind: AssetKind::Other,
             lock_script: Default::default(),
             type_script: None,
+            collection_seed: None,
         }
     }
 

@@ -99,6 +99,14 @@ impl CkbGalaxyCompositionHydrator {
                     // from the index that merely pointed at it.
                     lock_script: output.lock_script,
                     type_script: output.type_script,
+                    // `get_live_cell` hands back the whole cell data, so the
+                    // shared `parse_output_info` reads kinship here on exactly
+                    // the same bytes block-following reads it on. That is also
+                    // what makes a restored composition self-healing: P2
+                    // re-reads every curated cell through this hydrator at
+                    // boot, so a stage restored from pre-M2b state comes back
+                    // with its seeds already filled in.
+                    collection_seed: output.collection_seed,
                 });
             }
         }

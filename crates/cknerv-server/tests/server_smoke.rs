@@ -816,6 +816,7 @@ fn hydrated(candidate: &GalaxyCellCandidate, id: u64, asset_kind: AssetKind) -> 
         asset_kind,
         lock_script: Default::default(),
         type_script: None,
+        collection_seed: None,
     }
 }
 

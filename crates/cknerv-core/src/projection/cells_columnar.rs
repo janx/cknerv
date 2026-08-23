@@ -5,7 +5,7 @@
 //! zero-copy typed-array views on the client, then the dictionaries at the
 //! tail.
 //!
-//! v5 carries everything the JSON snapshot's `cells` + `display` sections
+//! v6 carries everything the JSON snapshot's `cells` + `display` sections
 //! do. Rows are the canonical cells followed by the staged resident
 //! payloads — one column set, split at `n_cells` — plus the staged member
 //! ids, the budgets and the provenance.
@@ -50,7 +50,8 @@ pub const CELLS_COLUMNAR_MAGIC: [u8; 4] = *b"CKNB";
 /// bump costs an old tab one slower boot, never a wrong galaxy.
 ///
 /// 5: `asset_kind` gained codes 6 (`object`) and 7 (`identity`).
-pub const CELLS_COLUMNAR_VERSION: u16 = 5;
+/// 6: `collection_seed` — two u32 word columns and their presence byte.
+pub const CELLS_COLUMNAR_VERSION: u16 = 6;
 pub const CELLS_COLUMNAR_HEADER_BYTES: usize = 72;
 pub const CELLS_COLUMNAR_REVISION_OFFSET: usize = 8;
 /// tag_index value meaning "no tag".
@@ -59,6 +60,16 @@ pub const CELLS_COLUMNAR_NO_TAG: u8 = 0xFF;
 /// ref is `dictionary index + 1`. Zero rather than a sentinel max so a
 /// zeroed column reads as absent, which is what pre-identity rows are.
 pub const CELLS_COLUMNAR_NO_SCRIPT: u16 = 0;
+/// `collection_present` byte for a cell whose family names no collection.
+///
+/// `collection_seed` is the one optional numeric field with no other column
+/// to borrow absence from. `type_shape_seed` can zero-fill its words because
+/// the type-script ref beside it already spells absence; a collection seed is
+/// a raw BLAKE2b prefix that is allowed to be any 64 bits, all-zero included,
+/// so a sentinel ON THE VALUE would make one legitimate collection invisible.
+/// One byte a row buys the field its own authority.
+pub const CELLS_COLUMNAR_NO_COLLECTION: u8 = 0;
+pub const CELLS_COLUMNAR_HAS_COLLECTION: u8 = 1;
 /// Refs are u16, so the dictionary tops out one short of the sentinel space.
 /// Unreachable in practice — the dictionary holds at most two entries per
 /// staged row and the stage is budgeted at 12k — but the encoder degrades
@@ -349,7 +360,7 @@ pub fn encode_cells_columnar(
     }
     let strings = strings.finish();
 
-    let fixed = n * (4 * 8 + 3 * 4 + 9 * 4 + 2 * 2 + 4) + members.len() * 8 + 3 * (n + 1) * 4;
+    let fixed = n * (4 * 8 + 3 * 4 + 11 * 4 + 2 * 2 + 5) + members.len() * 8 + 3 * (n + 1) * 4;
     let mut buf =
         Vec::with_capacity(CELLS_COLUMNAR_HEADER_BYTES + fixed + strings.region_len() + 128);
 
@@ -447,6 +458,18 @@ pub fn encode_cells_columnar(
             buf.extend_from_slice(&cell.data_shape_seed[word].to_le_bytes());
         }
     }
+    // Zero words for a cell with no collection, with the presence byte in the
+    // u8 group below as the ONLY authority — see [`CELLS_COLUMNAR_NO_COLLECTION`].
+    for word in 0..2 {
+        for cell in rows() {
+            buf.extend_from_slice(
+                &cell
+                    .collection_seed
+                    .map_or(0, |seed| seed[word])
+                    .to_le_bytes(),
+            );
+        }
+    }
     for offsets in [
         &strings.tx_hash_offsets,
         &strings.content_hash_offsets,
@@ -471,6 +494,12 @@ pub fn encode_cells_columnar(
     buf.extend_from_slice(&tag_indices);
     for cell in rows() {
         buf.push(u8::from(cell.data_bytes > 0));
+    }
+    for cell in rows() {
+        buf.push(match cell.collection_seed {
+            Some(_) => CELLS_COLUMNAR_HAS_COLLECTION,
+            None => CELLS_COLUMNAR_NO_COLLECTION,
+        });
     }
 
     // —— string region (field-major: tx hashes, content hashes, data) ——
@@ -662,6 +691,16 @@ mod tests {
                 fixture_lock_script()
             },
             type_script: (id % 3 == 2).then(fixture_type_script),
+            // Three collection shapes, and the middle one is the whole reason
+            // this field carries a presence byte: a real BLAKE2b prefix may be
+            // all-zero, so a row with kin whose seed reads `[0, 0]` must
+            // survive the round trip. Rows 3 and 9 share it — that is what
+            // kinship looks like on the wire.
+            collection_seed: match id % 3 {
+                0 => Some([0, 0]),
+                1 => None,
+                _ => Some([id as u32 * 31, id as u32 * 37]),
+            },
         }
     }
 
@@ -693,6 +732,7 @@ mod tests {
         lock_seed: usize,
         type_seed: usize,
         data_seed: usize,
+        collection_seed: usize,
         tx_offsets: usize,
         script_refs: usize,
         lock: usize,
@@ -708,7 +748,8 @@ mod tests {
         let lock_seed = data_bytes + 4 * n;
         let type_seed = lock_seed + 2 * 4 * n;
         let data_seed = type_seed + 2 * 4 * n;
-        let tx_offsets = u32s + 9 * 4 * n;
+        let collection_seed = data_seed + 2 * 4 * n;
+        let tx_offsets = u32s + 11 * 4 * n;
         let script_refs = tx_offsets + 3 * (n + 1) * 4;
         let lock = script_refs + 2 * 2 * n;
         Offsets {
@@ -720,10 +761,12 @@ mod tests {
             lock_seed,
             type_seed,
             data_seed,
+            collection_seed,
             tx_offsets,
             script_refs,
             lock,
-            strings: lock + 4 * n,
+            // lock_kind, asset_kind, tag, data flag, collection presence.
+            strings: lock + 5 * n,
         }
     }
 
@@ -808,6 +851,10 @@ mod tests {
         assert_eq!(u32_at(&buf, at.type_seed + n * 4 + 4), 38);
         assert_eq!(u32_at(&buf, at.data_seed), 23);
         assert_eq!(u32_at(&buf, at.data_seed + n * 4), 29);
+        // id 1 has no collection → zero words, id 2 does → 2*31, 2*37.
+        assert_eq!(u32_at(&buf, at.collection_seed), 0);
+        assert_eq!(u32_at(&buf, at.collection_seed + 4), 62);
+        assert_eq!(u32_at(&buf, at.collection_seed + n * 4 + 4), 74);
 
         // tag dictionary: first-seen order [wallet, dex]; indices 0,FF,1,0.
         let tail = u32_at(&buf, 64) as usize;
@@ -859,6 +906,41 @@ mod tests {
             FIXTURE_TYPE_CODE_HASH
         );
         assert_eq!(cursor + 2 + length, provenance_at(&buf));
+    }
+
+    /// The presence byte is the ONLY thing that says a cell has kin. A seed
+    /// is a raw digest prefix, so `[0, 0]` is a legitimate collection and any
+    /// sentinel read off the VALUE would erase it — which is exactly what the
+    /// zero-words convention next door does to `type_shape_seed`, safely,
+    /// because that one has a script ref to borrow absence from.
+    #[test]
+    fn a_collection_seed_of_all_zeroes_is_still_a_collection() {
+        let rows = [cell(1, None), cell(2, None), cell(3, None)];
+        let buf = encode_cells_columnar(&rows, header(), None, empty_tail());
+        let n = rows.len();
+        let at = offsets(n, 0);
+
+        assert_eq!(
+            rows[2].collection_seed,
+            Some([0, 0]),
+            "the row this is about"
+        );
+        let present = at.lock + 4 * n; // after lock_kind, asset_kind, tag, data
+        assert_eq!(
+            (0..n).map(|row| buf[present + row]).collect::<Vec<_>>(),
+            [
+                CELLS_COLUMNAR_NO_COLLECTION,
+                CELLS_COLUMNAR_HAS_COLLECTION,
+                CELLS_COLUMNAR_HAS_COLLECTION,
+            ]
+        );
+        // Rows 1 and 3 are indistinguishable in the numeric columns…
+        for word in 0..2 {
+            let column = at.collection_seed + word * n * 4;
+            assert_eq!(u32_at(&buf, column), u32_at(&buf, column + 2 * 4));
+        }
+        // …and told apart only by the byte above.
+        assert_ne!(buf[present], buf[present + 2]);
     }
 
     /// Strings are field-major with absolute offsets and an N+1 sentinel,
@@ -996,9 +1078,9 @@ mod tests {
 
     /// The cross-language gate. Rust writes this buffer, the TS decoder
     /// reads the very same bytes (`packages/cache/__tests__`). Regenerate with
-    /// `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-core columnar_v5`.
+    /// `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-core columnar_v6`.
     #[test]
-    fn columnar_v5_matches_the_shared_fixture() {
+    fn columnar_v6_matches_the_shared_fixture() {
         use crate::enrichment::ChainAnchor;
         use crate::projection::cells::{DisplayBudget, DisplayMode, DisplayProvenance};
 
@@ -1023,7 +1105,7 @@ mod tests {
             residents: vec![&resident],
         };
         let encoded = encode_cells_columnar(&rows, header(), Some(&view), empty_tail());
-        assert_matches_fixture("cells_columnar_v5.bin", &encoded);
+        assert_matches_fixture("cells_columnar_v6.bin", &encoded);
     }
 
     /// The display-absent shape, as its own fixture. The provenance
@@ -1031,10 +1113,10 @@ mod tests {
     /// when a plane is present reads the sections length out of the middle of
     /// it — which is exactly the desync this fixture exists to catch.
     #[test]
-    fn columnar_v5_display_absent_matches_the_shared_fixture() {
+    fn columnar_v6_display_absent_matches_the_shared_fixture() {
         let rows = [cell(1, Some("wallet")), cell(2, None), cell(3, Some("dex"))];
         let encoded = encode_cells_columnar(&rows, header(), None, empty_tail());
-        assert_matches_fixture("cells_columnar_v5_absent.bin", &encoded);
+        assert_matches_fixture("cells_columnar_v6_absent.bin", &encoded);
     }
 
     #[test]

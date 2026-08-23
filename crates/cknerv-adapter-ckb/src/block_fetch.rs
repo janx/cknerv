@@ -13,7 +13,7 @@ use cknerv_core::{Mutation, OutPoint, TxOutputInfo, DATA_HEX_TRUNCATION_MARKER};
 
 use crate::content_hash::compute_content_hash;
 use crate::rpc::RpcClient;
-use crate::shape_seed::{data_shape_seed, script_shape_seed};
+use crate::shape_seed::{collection_seed, data_shape_seed, script_shape_seed};
 
 /// One fully-translated canonical block plus the header linkage needed by
 /// the live poller to reject a mixed-fork fetch.
@@ -239,6 +239,10 @@ pub(crate) fn parse_output_info(
     let lock_shape_seed = script_shape_seed(&lock);
     let type_shape_seed = type_.as_ref().map(script_shape_seed);
     let data_shape_seed = data_shape_seed(&raw_data_bytes);
+    // Reads the FULL data, which only this side of the truncation has: a
+    // spore's cluster id sits after its content in the molecule table, so
+    // `data_hex` is capped short of it by construction.
+    let collection_seed = collection_seed(type_.as_ref(), &raw_data_bytes);
     let data_bytes =
         u32::try_from(raw_data_bytes.len()).context("Cell output data length exceeds u32")?;
     let cell_output = packed::CellOutput::new_builder()
@@ -259,6 +263,7 @@ pub(crate) fn parse_output_info(
         asset_kind,
         lock_script,
         type_script,
+        collection_seed,
     })
 }
 
@@ -469,6 +474,89 @@ mod tests {
         assert_eq!(no_type.type_shape_seed, None);
         assert_eq!(no_type.data_bytes, 0);
         assert_eq!(no_type.data_shape_seed, [0x44f4_c697, 0x44d5_f8c5]);
+    }
+
+    /// The claim the whole field rests on. `cluster_id` is the LAST molecule
+    /// field, after `content`, so any spore with real content hides it behind
+    /// the 1,024-byte cap — a client reading `data_hex` could never recover
+    /// it. This side reads the untruncated bytes, and the cap is applied
+    /// after. A 2 KiB spore proves it: `data_hex` comes back with the
+    /// truncation marker, and the collection is there anyway.
+    #[test]
+    fn a_spores_collection_is_read_before_the_data_hex_cap() {
+        /// `SporeData`: `content_type: Bytes, content: Bytes, cluster_id:
+        /// BytesOpt`, built the way the chain serializes it.
+        fn spore_data(content: &[u8], cluster: Option<&[u8]>) -> String {
+            let content_type = b"dob/0";
+            let header = 4 + 4 * 3;
+            let content_at = header + 4 + content_type.len();
+            let cluster_at = content_at + 4 + content.len();
+            let full = cluster_at + cluster.map_or(0, |id| 4 + id.len());
+            let mut out = Vec::with_capacity(full);
+            out.extend_from_slice(&(full as u32).to_le_bytes());
+            for offset in [header, content_at, cluster_at] {
+                out.extend_from_slice(&(offset as u32).to_le_bytes());
+            }
+            for field in [content_type.as_slice(), content] {
+                out.extend_from_slice(&(field.len() as u32).to_le_bytes());
+                out.extend_from_slice(field);
+            }
+            if let Some(id) = cluster {
+                out.extend_from_slice(&(id.len() as u32).to_le_bytes());
+                out.extend_from_slice(id);
+            }
+            format!("0x{}", hex::encode(out))
+        }
+
+        // The Nervape cluster, and the spore code hash that classifies as an
+        // item — both pinned from mainnet in `shape_seed.rs`.
+        let cluster =
+            hex::decode("d5852c19fa4fa394d64915cafe026cdeb702ce53cf2b839c6ace501e8dead41c")
+                .unwrap();
+        let spore_output = serde_json::json!({
+            "capacity": "0x84595161401484a",
+            "lock": {
+                "code_hash": format!("0x{}", hex::encode([0x11u8; 32])),
+                "hash_type": "type",
+                "args": "0x",
+            },
+            "type": {
+                "code_hash":
+                    "0x4a4dce1df3dffff7f8b2cd7dff7303df3b6150c9788cb75dcf6747247132b9f5",
+                "hash_type": "data1",
+                "args": format!("0x{}", hex::encode([0x04u8; 32])),
+            },
+        });
+
+        let big = spore_data(&[0xab; 2048], Some(&cluster));
+        let parsed = parse_output_info(&spore_output, &big, "big spore").unwrap();
+        assert!(
+            parsed.data_hex.ends_with(DATA_HEX_TRUNCATION_MARKER),
+            "the cap must actually bite for this test to mean anything"
+        );
+        assert_eq!(parsed.collection_seed, Some([0xc5eb_230e, 0xcdd6_2018]));
+
+        // A small spore reaches the same collection through data the cap
+        // never touched — one seed, whether or not the client can see why.
+        let small = spore_data(b"{}", Some(&cluster));
+        let small = parse_output_info(&spore_output, &small, "small spore").unwrap();
+        assert!(!small.data_hex.ends_with(DATA_HEX_TRUNCATION_MARKER));
+        assert_eq!(small.collection_seed, parsed.collection_seed);
+
+        // A sole spore, and a plain cell, carry none.
+        let sole = spore_data(b"{}", None);
+        assert_eq!(
+            parse_output_info(&spore_output, &sole, "sole spore")
+                .unwrap()
+                .collection_seed,
+            None
+        );
+        assert_eq!(
+            parse_output_info(&output_json(1_000, &[1, 2], None), "0x", "plain")
+                .unwrap()
+                .collection_seed,
+            None
+        );
     }
 
     #[test]
