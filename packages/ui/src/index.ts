@@ -30,6 +30,24 @@ export { default as SimClockTicker } from './tweaks/SimClockTicker';
 export { default as TweakSync } from './tweaks/TweakSync';
 export { default as RenderStatsSampler } from './tweaks/RenderStatsSampler';
 
+// ── Boot sequence (page-boot progress, written from the entry point) ─
+export {
+  beginBootPhase,
+  completeBootPhase,
+  failBootPhase,
+  reportBootSnapshotProgress,
+  reportBootSeeding,
+  completeBootSeeding,
+  getBootSequence,
+  subscribeBootSequence,
+  useBootSequence,
+  resetBootSequenceForTest,
+  type BootPhaseId,
+  type BootPhaseState,
+  type BootPhaseSnapshot,
+  type BootSequenceSnapshot,
+} from './boot/bootSequence';
+
 // ── Geometry helpers ───────────────────────────────────────────────
 export * from './geometry/cellPositions';
 export * from './geometry/neighborGraph';
