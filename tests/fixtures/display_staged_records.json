@@ -629,8 +629,8 @@
           }
         ],
         "exit_ids": [
-          6,
-          7
+          3,
+          6
         ]
       }
     },
@@ -646,6 +646,30 @@
       "delta": {
         "type": "death",
         "id": 0,
+        "at_ms": 3000
+      }
+    },
+    {
+      "revision": 6,
+      "delta": {
+        "type": "death",
+        "id": 1,
+        "at_ms": 3000
+      }
+    },
+    {
+      "revision": 6,
+      "delta": {
+        "type": "death",
+        "id": 2,
+        "at_ms": 3000
+      }
+    },
+    {
+      "revision": 6,
+      "delta": {
+        "type": "death",
+        "id": 3,
         "at_ms": 3000
       }
     },
@@ -693,7 +717,10 @@
         "tx_hash": "0xc",
         "block": 3,
         "from_ids": [
-          0
+          0,
+          1,
+          2,
+          3
         ],
         "to_ids": [
           11
@@ -707,6 +734,36 @@
               33.032718658447266
             ],
             "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000066",
+            "resolved": true
+          },
+          {
+            "id": 1,
+            "pos_seed": [
+              3.297882318496704,
+              8.10061264038086,
+              20.489866256713867
+            ],
+            "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000067",
+            "resolved": true
+          },
+          {
+            "id": 2,
+            "pos_seed": [
+              3.7966766357421875,
+              1.7670406103134155,
+              19.361539840698242
+            ],
+            "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000064",
+            "resolved": true
+          },
+          {
+            "id": 3,
+            "pos_seed": [
+              -1.7693411111831665,
+              0.7402845621109009,
+              -34.50374221801758
+            ],
+            "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000065",
             "resolved": true
           },
           {
@@ -732,7 +789,7 @@
       "delta": {
         "type": "stats",
         "total_births": 12,
-        "total_deaths": 2
+        "total_deaths": 5
       }
     },
     {
@@ -741,6 +798,37 @@
         "type": "display",
         "enter_ids": [],
         "enter_cells": [
+          {
+            "id": 3,
+            "born_at_ms": 1000,
+            "death_at_ms": 3000,
+            "birth_block": 1,
+            "tag": null,
+            "pos_seed": [
+              -1.7693411111831665,
+              0.7402845621109009,
+              -34.50374221801758
+            ],
+            "out_point": {
+              "tx_hash": "0xa",
+              "index": 3
+            },
+            "capacity": 103,
+            "data_hex": "0x",
+            "data_bytes": 0,
+            "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000065",
+            "lock_shape_seed": [
+              103,
+              1
+            ],
+            "type_shape_seed": null,
+            "data_shape_seed": [
+              2,
+              2
+            ],
+            "lock_kind": "other",
+            "asset_kind": "other"
+          },
           {
             "id": 11,
             "born_at_ms": 3000,
@@ -774,6 +862,7 @@
           }
         ],
         "exit_ids": [
+          7,
           8
         ]
       }
@@ -788,9 +877,28 @@
     {
       "revision": 7,
       "delta": {
+        "type": "script_census",
+        "census": {
+          "locks": [],
+          "locks_tail_cells": 0,
+          "locks_tail_scripts": 0,
+          "types": [],
+          "types_tail_cells": 0,
+          "types_tail_scripts": 0,
+          "types_absent": 7,
+          "unidentified": 7
+        }
+      }
+    },
+    {
+      "revision": 7,
+      "delta": {
         "type": "gc",
         "ids": [
           0,
+          1,
+          2,
+          3,
           4
         ]
       }
@@ -831,10 +939,44 @@
             ],
             "lock_kind": "other",
             "asset_kind": "other"
+          },
+          {
+            "id": 6,
+            "born_at_ms": 1000,
+            "death_at_ms": null,
+            "birth_block": 1,
+            "tag": null,
+            "pos_seed": [
+              -37.63455581665039,
+              -1.1969106197357178,
+              -9.31506633758545
+            ],
+            "out_point": {
+              "tx_hash": "0xa",
+              "index": 6
+            },
+            "capacity": 106,
+            "data_hex": "0x",
+            "data_bytes": 0,
+            "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000068",
+            "lock_shape_seed": [
+              106,
+              1
+            ],
+            "type_shape_seed": null,
+            "data_shape_seed": [
+              2,
+              2
+            ],
+            "lock_kind": "other",
+            "asset_kind": "other"
           }
         ],
         "exit_ids": [
           0,
+          1,
+          2,
+          3,
           4
         ]
       }
@@ -937,7 +1079,7 @@
       "delta": {
         "type": "stats",
         "total_births": 13,
-        "total_deaths": 3
+        "total_deaths": 6
       }
     },
     {
@@ -978,7 +1120,9 @@
             "asset_kind": "other"
           }
         ],
-        "exit_ids": []
+        "exit_ids": [
+          6
+        ]
       }
     },
     {
@@ -987,6 +1131,99 @@
         "type": "display",
         "enter_ids": [],
         "enter_cells": [
+          {
+            "id": 6,
+            "born_at_ms": 1000,
+            "death_at_ms": null,
+            "birth_block": 1,
+            "tag": null,
+            "pos_seed": [
+              -37.63455581665039,
+              -1.1969106197357178,
+              -9.31506633758545
+            ],
+            "out_point": {
+              "tx_hash": "0xa",
+              "index": 6
+            },
+            "capacity": 106,
+            "data_hex": "0x",
+            "data_bytes": 0,
+            "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000068",
+            "lock_shape_seed": [
+              106,
+              1
+            ],
+            "type_shape_seed": null,
+            "data_shape_seed": [
+              2,
+              2
+            ],
+            "lock_kind": "other",
+            "asset_kind": "other"
+          },
+          {
+            "id": 7,
+            "born_at_ms": 1000,
+            "death_at_ms": null,
+            "birth_block": 1,
+            "tag": null,
+            "pos_seed": [
+              -36.050472259521484,
+              -10.610566139221191,
+              41.841461181640625
+            ],
+            "out_point": {
+              "tx_hash": "0xa",
+              "index": 7
+            },
+            "capacity": 107,
+            "data_hex": "0x",
+            "data_bytes": 0,
+            "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000069",
+            "lock_shape_seed": [
+              107,
+              1
+            ],
+            "type_shape_seed": null,
+            "data_shape_seed": [
+              2,
+              2
+            ],
+            "lock_kind": "other",
+            "asset_kind": "other"
+          },
+          {
+            "id": 8,
+            "born_at_ms": 1000,
+            "death_at_ms": null,
+            "birth_block": 1,
+            "tag": null,
+            "pos_seed": [
+              -46.45037078857422,
+              -0.10410778224468231,
+              -1.8383359909057617
+            ],
+            "out_point": {
+              "tx_hash": "0xa",
+              "index": 8
+            },
+            "capacity": 108,
+            "data_hex": "0x",
+            "data_bytes": 0,
+            "content_hash": "0x000000000000000000000000000000000000000000000000000000000000006e",
+            "lock_shape_seed": [
+              108,
+              1
+            ],
+            "type_shape_seed": null,
+            "data_shape_seed": [
+              2,
+              2
+            ],
+            "lock_kind": "other",
+            "asset_kind": "other"
+          },
           {
             "id": 900,
             "born_at_ms": 0,
@@ -1082,9 +1319,9 @@
           }
         ],
         "exit_ids": [
-          2,
-          3,
-          5
+          10,
+          11,
+          12
         ],
         "provenance": {
           "mode": "composed",
@@ -1102,26 +1339,119 @@
   "final_snapshot": {
     "cells": [
       {
-        "id": 1,
+        "id": 5,
+        "born_at_ms": 1000,
+        "death_at_ms": 9000,
+        "birth_block": 1,
+        "tag": null,
+        "pos_seed": [
+          10.266837120056152,
+          4.467949867248535,
+          35.198211669921875
+        ],
+        "out_point": {
+          "tx_hash": "0xa",
+          "index": 5
+        },
+        "capacity": 105,
+        "data_hex": "0x",
+        "data_bytes": 0,
+        "content_hash": "0x000000000000000000000000000000000000000000000000000000000000006b",
+        "lock_shape_seed": [
+          105,
+          1
+        ],
+        "type_shape_seed": null,
+        "data_shape_seed": [
+          2,
+          2
+        ],
+        "lock_kind": "other",
+        "asset_kind": "other"
+      },
+      {
+        "id": 6,
         "born_at_ms": 1000,
         "death_at_ms": null,
         "birth_block": 1,
         "tag": null,
         "pos_seed": [
-          3.297882318496704,
-          8.10061264038086,
-          20.489866256713867
+          -37.63455581665039,
+          -1.1969106197357178,
+          -9.31506633758545
         ],
         "out_point": {
           "tx_hash": "0xa",
-          "index": 1
+          "index": 6
         },
-        "capacity": 101,
+        "capacity": 106,
         "data_hex": "0x",
         "data_bytes": 0,
-        "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000067",
+        "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000068",
         "lock_shape_seed": [
-          101,
+          106,
+          1
+        ],
+        "type_shape_seed": null,
+        "data_shape_seed": [
+          2,
+          2
+        ],
+        "lock_kind": "other",
+        "asset_kind": "other"
+      },
+      {
+        "id": 7,
+        "born_at_ms": 1000,
+        "death_at_ms": null,
+        "birth_block": 1,
+        "tag": null,
+        "pos_seed": [
+          -36.050472259521484,
+          -10.610566139221191,
+          41.841461181640625
+        ],
+        "out_point": {
+          "tx_hash": "0xa",
+          "index": 7
+        },
+        "capacity": 107,
+        "data_hex": "0x",
+        "data_bytes": 0,
+        "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000069",
+        "lock_shape_seed": [
+          107,
+          1
+        ],
+        "type_shape_seed": null,
+        "data_shape_seed": [
+          2,
+          2
+        ],
+        "lock_kind": "other",
+        "asset_kind": "other"
+      },
+      {
+        "id": 8,
+        "born_at_ms": 1000,
+        "death_at_ms": null,
+        "birth_block": 1,
+        "tag": null,
+        "pos_seed": [
+          -46.45037078857422,
+          -0.10410778224468231,
+          -1.8383359909057617
+        ],
+        "out_point": {
+          "tx_hash": "0xa",
+          "index": 8
+        },
+        "capacity": 108,
+        "data_hex": "0x",
+        "data_bytes": 0,
+        "content_hash": "0x000000000000000000000000000000000000000000000000000000000000006e",
+        "lock_shape_seed": [
+          108,
           1
         ],
         "type_shape_seed": null,
@@ -1153,99 +1483,6 @@
         "content_hash": "0x000000000000000000000000000000000000000000000000000000000000006f",
         "lock_shape_seed": [
           109,
-          1
-        ],
-        "type_shape_seed": null,
-        "data_shape_seed": [
-          2,
-          2
-        ],
-        "lock_kind": "other",
-        "asset_kind": "other"
-      },
-      {
-        "id": 10,
-        "born_at_ms": 2000,
-        "death_at_ms": null,
-        "birth_block": 2,
-        "tag": null,
-        "pos_seed": [
-          13.687667846679688,
-          7.197659969329834,
-          -36.480865478515625
-        ],
-        "out_point": {
-          "tx_hash": "0xb",
-          "index": 0
-        },
-        "capacity": 200,
-        "data_hex": "0x",
-        "data_bytes": 0,
-        "content_hash": "0x00000000000000000000000000000000000000000000000000000000000000ca",
-        "lock_shape_seed": [
-          200,
-          1
-        ],
-        "type_shape_seed": null,
-        "data_shape_seed": [
-          2,
-          2
-        ],
-        "lock_kind": "other",
-        "asset_kind": "other"
-      },
-      {
-        "id": 11,
-        "born_at_ms": 3000,
-        "death_at_ms": null,
-        "birth_block": 3,
-        "tag": null,
-        "pos_seed": [
-          7.735609531402588,
-          2.326733350753784,
-          14.942598342895508
-        ],
-        "out_point": {
-          "tx_hash": "0xc",
-          "index": 0
-        },
-        "capacity": 300,
-        "data_hex": "0x",
-        "data_bytes": 0,
-        "content_hash": "0x000000000000000000000000000000000000000000000000000000000000012e",
-        "lock_shape_seed": [
-          300,
-          1
-        ],
-        "type_shape_seed": null,
-        "data_shape_seed": [
-          2,
-          2
-        ],
-        "lock_kind": "other",
-        "asset_kind": "other"
-      },
-      {
-        "id": 12,
-        "born_at_ms": 9000,
-        "death_at_ms": null,
-        "birth_block": 5,
-        "tag": null,
-        "pos_seed": [
-          43.11887741088867,
-          -2.88618803024292,
-          20.79246711730957
-        ],
-        "out_point": {
-          "tx_hash": "0xd",
-          "index": 0
-        },
-        "capacity": 500,
-        "data_hex": "0x",
-        "data_bytes": 0,
-        "content_hash": "0x00000000000000000000000000000000000000000000000000000000000001f6",
-        "lock_shape_seed": [
-          500,
           1
         ],
         "type_shape_seed": null,
@@ -1422,7 +1659,10 @@
         "tx_hash": "0xc",
         "block": 3,
         "from_ids": [
-          0
+          0,
+          1,
+          2,
+          3
         ],
         "to_ids": [
           11
@@ -1436,6 +1676,36 @@
               33.032718658447266
             ],
             "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000066",
+            "resolved": true
+          },
+          {
+            "id": 1,
+            "pos_seed": [
+              3.297882318496704,
+              8.10061264038086,
+              20.489866256713867
+            ],
+            "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000067",
+            "resolved": true
+          },
+          {
+            "id": 2,
+            "pos_seed": [
+              3.7966766357421875,
+              1.7670406103134155,
+              19.361539840698242
+            ],
+            "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000064",
+            "resolved": true
+          },
+          {
+            "id": 3,
+            "pos_seed": [
+              -1.7693411111831665,
+              0.7402845621109009,
+              -34.50374221801758
+            ],
+            "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000065",
             "resolved": true
           },
           {
@@ -1494,24 +1764,24 @@
       }
     ],
     "total_births": 13,
-    "total_deaths": 3,
+    "total_deaths": 6,
     "stats": {
-      "in_view": 10,
+      "in_view": 7,
       "data_bearing": 0,
-      "capacity_shannons": 1736,
+      "capacity_shannons": 1430,
       "by_kind": {
         "wallet": 0,
         "dex": 0,
         "cf": 0,
         "ckbloom": 0,
-        "generic": 10
+        "generic": 7
       },
       "by_lock": {
         "sighash": 0,
         "multisig": 0,
         "acp": 0,
         "omnilock": 0,
-        "other": 10
+        "other": 7
       },
       "by_asset": {
         "native": 0,
@@ -1519,7 +1789,7 @@
         "xudt": 0,
         "dao": 0,
         "spore": 0,
-        "other": 10,
+        "other": 7,
         "object": 0,
         "identity": 0
       },
@@ -1530,8 +1800,8 @@
         "types": [],
         "types_tail_cells": 0,
         "types_tail_scripts": 0,
-        "types_absent": 10,
-        "unidentified": 10
+        "types_absent": 7,
+        "unidentified": 7
       }
     },
     "display": {
@@ -1540,11 +1810,11 @@
         "nerve_edges": 8
       },
       "members": [
-        1,
+        5,
+        6,
+        7,
+        8,
         9,
-        10,
-        11,
-        12,
         900,
         901,
         902

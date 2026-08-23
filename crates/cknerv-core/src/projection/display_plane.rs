@@ -33,6 +33,17 @@
 //!
 //! ## Membership rules the mechanism itself owns
 //!
+//! * **The tip window** is a standing reserve of the `tip_quota` YOUNGEST
+//!   live canonical cells — `birth_block` descending, admission sequence
+//!   ascending as the tiebreak — maintained from the canonical stream
+//!   alone and settled at every flush. A younger birth displaces the
+//!   window's oldest member (its own group only: the curated ratchet and
+//!   its bench are never touched by tip churn); a window death refills
+//!   from the next-youngest live cell, NOT from an admission-ordered
+//!   queue. A candidate already on stage as activity is promoted in place.
+//!   Composed mode gives it [`DISPLAY_TIP_WINDOW`] seats beside the
+//!   curated field; prefix mode gives it the whole resting field, which is
+//!   the "no reservoir ⇒ the stage IS the newest live cells" product rule.
 //! * **Activity** members are the resolved endpoint ids of each landed
 //!   tx (the same `from_ids`/`to_ids` that ride `CellDelta::Link`). An
 //!   endpoint not already on stage is offered to the policy, which
@@ -109,10 +120,16 @@
 //! ## Cost
 //!
 //! Steady-state operations are O(churn) per mutation (touched ids only),
-//! plus amortized queue compaction/skips. Full passes over the map happen
-//! only at refresh (15-minute cadence), degrade, bootstrap (restore),
-//! reset, and the backfill-terminal resettle — all sanctioned big events.
+//! plus amortized queue compaction/skips. The recency index costs one
+//! `BTreeMap` insert per birth and one removal per exit, and a settle
+//! moves at most `tip_quota` seats — so a mutation birthing B cells churns
+//! at most `min(tip_quota, B)` of them, and the enter/exit pair for each
+//! coalesces in the touched log exactly like any other membership move.
+//! Full passes over the map happen only at refresh (15-minute cadence),
+//! degrade, bootstrap (restore), reset, and the backfill-terminal
+//! resettle — all sanctioned big events.
 
+use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
@@ -143,14 +160,62 @@ pub const DISPLAY_NERVE_EDGE_BUDGET: u32 = 8_000;
 /// Activity quota: latest-block tx endpoints on stage. A reserved pool in
 /// prefix mode; an in-class substitution bound in composed mode.
 pub const DISPLAY_ACTIVITY_QUOTA: usize = 512;
+/// The tip window: stage slots held by the RECENCY law rather than by the
+/// composition — the youngest live canonical cells, standing membership,
+/// sliding with the chain tip forever.
+///
+/// This is the standing form of a guarantee the activity quota only ever
+/// gave transiently. An activity member is a tx endpoint passing through a
+/// 512-slot FIFO a few blocks deep; a tip member is on stage *because it is
+/// among the newest cells that exist*, and it leaves only when something
+/// younger arrives or it dies. Without it the resting field is admission-
+/// ordered — a fresh birth queues behind every retained-but-unstaged cell —
+/// so the stage shows the chain as of whenever it was last recomposed.
+///
+/// Composed mode holds exactly this many; prefix mode gives the window the
+/// WHOLE resting field (`budget - activity_quota`), which is the "no
+/// ckbadger ⇒ the stage IS the latest live cells" product rule.
+pub const DISPLAY_TIP_WINDOW: usize = 1_200;
+/// What the composition policy staffs in composed mode: the budget less
+/// the recency law's standing reserve. The 20:70:10 class quota is measured
+/// on THIS, not on the full budget, so the class law and the freshness law
+/// never claim one slot twice.
+///
+/// It is also the size a curated composition should be discovered at — the
+/// adapter's `MAX_GALAXY_COMPOSITION_TARGET` imports it rather than
+/// recomputing it, and so does the enrichment supervisor's burst threshold.
+pub const DISPLAY_CURATED_FIELD: usize = DISPLAY_CELL_BUDGET as usize - DISPLAY_TIP_WINDOW;
+
+/// Where a live canonical cell sits in the recency order, YOUNGEST FIRST:
+/// `birth_block` descending, with the stage's own admission sequence
+/// ascending as the deterministic tiebreak. The MINIMUM key is the newest
+/// cell the server knows about; the MAXIMUM is the oldest.
+///
+/// The tiebreak direction is not arbitrary. Backfill walks the anchored tip
+/// BACKWARDS (`backfill.rs`), so within the boot replay earlier admission
+/// already means younger — the tiebreak agrees with the primary key rather
+/// than fighting it, and a restored stage is the newest cells it holds
+/// without any special case. Within one live block it is simply tx order.
+pub(crate) type RecencyKey = (Reverse<u64>, u64);
+
+/// Prefix mode's recency window: the WHOLE resting field. With no reservoir
+/// there is no composition to staff and no class law to honour, so the only
+/// membership question left is "which cells are the newest" — requirement 3,
+/// stated as arithmetic.
+fn prefix_tip_quota(budget: &DisplayBudget, activity_quota: usize) -> usize {
+    (budget.cells as usize).saturating_sub(activity_quota)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MemberRole {
+    /// A standing member the [`CompositionPolicy`] staffs — the *field*.
     Resting,
+    /// A standing member the RECENCY law holds: one of the youngest
+    /// `tip_quota` live canonical cells. Never in the policy's accounting;
+    /// displaced only by a younger cell, or by its own death.
+    Tip,
     /// Entered via a tx-endpoint swap; `block` keys the eviction FIFO.
-    Activity {
-        block: u64,
-    },
+    Activity { block: u64 },
 }
 
 /// The stage: who is on stage, what they look like, and the bookkeeping
@@ -161,10 +226,17 @@ pub(crate) enum MemberRole {
 pub(crate) struct Stage {
     budget: DisplayBudget,
     activity_quota: usize,
+    /// Slots the recency law holds. Set by whoever installs the policy:
+    /// `budget - activity_quota` in prefix mode (the window IS the resting
+    /// field), [`DISPLAY_TIP_WINDOW`] in composed mode.
+    tip_quota: usize,
 
     /// Staged members. BTreeMap so snapshot/wire order is deterministic
     /// (ascending id) without per-mutation sorting of the full set.
     members: BTreeMap<u64, MemberRole>,
+    /// STANDING members: `Resting` + `Tip`. Everything that is not a
+    /// transient activity entry, which is what every "is the stage full of
+    /// real membership" question has always meant.
     resting_count: usize,
     activity_count: usize,
     /// Activity FIFO grouped by block: oldest block evicts first; ids
@@ -177,6 +249,27 @@ pub(crate) struct Stage {
     /// because the canonical container (`Vec<Cell>`) has no id index; the
     /// kind rides along as the raw canonical fact the policy classifies.
     present: HashMap<u64, AssetKind>,
+
+    /// Recency key of every id in `present`, assigned once at arrival.
+    /// Exactly co-extensive with `present` (asserted at flush): residents
+    /// are never in it, because the tip window is canonical-stream-only.
+    recency_of: HashMap<u64, RecencyKey>,
+    /// Monotonic admission sequence — the recency tiebreak, and the reason
+    /// the window is deterministic under equal birth heights.
+    next_recency_seq: u64,
+    /// The tip window itself: recency key → id, youngest first. The MAXIMUM
+    /// entry is the member a younger arrival displaces.
+    tip: BTreeMap<RecencyKey, u64>,
+    /// Ids the recency law MAY claim, youngest first: present, and not held
+    /// by a standing slot (`Resting` or `Tip`). An `Activity` member is in
+    /// here on purpose — a transient endpoint young enough for the window is
+    /// promoted in place rather than entering twice.
+    ///
+    /// Kept as an ordered complement rather than scanned out of a full
+    /// recency index: `fill` and `displace` are then `first_key_value` /
+    /// `last_key_value`, so a settle costs O(churn · log n) instead of
+    /// walking the whole staged prefix on every flush.
+    tip_pool: BTreeMap<RecencyKey, u64>,
 
     /// Staged residents' payloads (composition id → node-hydrated Cell) —
     /// members that are NOT in the canonical map.
@@ -198,15 +291,20 @@ pub(crate) struct Stage {
 }
 
 impl Stage {
-    fn new(budget: DisplayBudget, activity_quota: usize) -> Self {
+    fn new(budget: DisplayBudget, activity_quota: usize, tip_quota: usize) -> Self {
         Self {
             budget,
             activity_quota,
+            tip_quota,
             members: BTreeMap::new(),
             resting_count: 0,
             activity_count: 0,
             activity_groups: BTreeMap::new(),
             present: HashMap::new(),
+            recency_of: HashMap::new(),
+            next_recency_seq: 0,
+            tip: BTreeMap::new(),
+            tip_pool: BTreeMap::new(),
             residents: HashMap::new(),
             resident_pool: HashMap::new(),
             resident_outpoints: HashMap::new(),
@@ -225,20 +323,39 @@ impl Stage {
         self.activity_quota
     }
 
-    /// The largest member count the stage can currently hold:
-    /// `min(budget, everything stageable)`. Below it a new member fits
-    /// without anyone giving way.
-    pub(crate) fn dynamic_target(&self) -> usize {
-        self.budget_cells()
-            .min(self.present.len() + self.residents.len() + self.resident_pool.len())
+    pub(crate) fn tip_quota(&self) -> usize {
+        self.tip_quota
     }
 
-    pub(crate) fn member_count(&self) -> usize {
-        self.members.len()
+    /// Hand the recency law a different number of slots. Only ever called
+    /// while installing a policy; an over-full window is trimmed by the next
+    /// settle, so growing and shrinking are both safe here.
+    fn set_tip_quota(&mut self, tip_quota: usize) {
+        self.tip_quota = tip_quota.min(self.budget_cells());
     }
 
-    pub(crate) fn resting_count(&self) -> usize {
-        self.resting_count
+    /// Slots the composition policy staffs: the budget less the recency
+    /// law's standing reserve. EVERY quota, target and fullness question the
+    /// policy asks is scoped to this, never to the whole budget — the tip
+    /// window sits beside the curated field, not inside it.
+    pub(crate) fn field_cells(&self) -> usize {
+        self.budget_cells().saturating_sub(self.tip_quota)
+    }
+
+    /// Members the policy owns: everyone on stage except the tip window's
+    /// own reserve. Equal to the sum of its per-class counts.
+    pub(crate) fn field_member_count(&self) -> usize {
+        self.members.len().saturating_sub(self.tip.len())
+    }
+
+    /// The largest FIELD membership the stage can currently hold:
+    /// `min(field, everything stageable the tip window is not holding)`.
+    /// Below it a new member fits without anyone giving way.
+    pub(crate) fn field_dynamic_target(&self) -> usize {
+        self.field_cells().min(
+            (self.present.len() + self.residents.len() + self.resident_pool.len())
+                .saturating_sub(self.tip.len()),
+        )
     }
 
     pub(crate) fn role_of(&self, id: u64) -> Option<MemberRole> {
@@ -276,8 +393,8 @@ impl Stage {
 
     // ── membership moves the policy makes ────────────────────────────
 
-    /// Stage an off-stage id as resting. A pooled resident payload (an id
-    /// that is not canonical) comes on stage with it.
+    /// Stage an off-stage id as a resting FIELD member. A pooled resident
+    /// payload (an id that is not canonical) comes on stage with it.
     pub(crate) fn stage_resting(&mut self, id: u64) {
         debug_assert!(!self.members.contains_key(&id), "{id} is already staged");
         if !self.present.contains_key(&id) {
@@ -288,6 +405,7 @@ impl Stage {
         self.members.insert(id, MemberRole::Resting);
         self.touched.entry(id).or_insert(false);
         self.resting_count += 1;
+        self.refresh_tip_candidacy(id);
     }
 
     /// Stage an off-stage id as an activity member of `block`, consuming
@@ -298,10 +416,11 @@ impl Stage {
         self.touched.entry(id).or_insert(false);
         self.activity_count += 1;
         self.activity_groups.entry(block).or_default().push(id);
+        self.refresh_tip_candidacy(id);
     }
 
-    /// Convert an activity member into a resting one in place: membership
-    /// is unchanged (no wire noise) and its quota slot is freed.
+    /// Convert an activity member into a resting FIELD one in place:
+    /// membership is unchanged (no wire noise) and its quota slot is freed.
     pub(crate) fn promote_to_resting(&mut self, id: u64) {
         let Some(MemberRole::Activity { block }) = self.members.get(&id).copied() else {
             debug_assert!(false, "{id} is not an activity member");
@@ -311,6 +430,7 @@ impl Stage {
         self.activity_count -= 1;
         self.resting_count += 1;
         self.remove_from_activity_group(block, id);
+        self.refresh_tip_candidacy(id);
     }
 
     /// Take a member off stage. A staged resident's payload parks in the
@@ -325,26 +445,160 @@ impl Stage {
                     self.resident_pool.insert(id, payload);
                 }
             }
+            MemberRole::Tip => {
+                self.resting_count -= 1;
+                self.leave_tip(id);
+            }
             MemberRole::Activity { block } => {
                 self.activity_count -= 1;
                 self.remove_from_activity_group(block, id);
             }
         }
+        self.refresh_tip_candidacy(id);
         Some(role)
+    }
+
+    // ── the recency window's own moves ───────────────────────────────
+
+    /// The youngest id the recency law may claim, if any.
+    pub(crate) fn youngest_tip_candidate(&self) -> Option<(RecencyKey, u64)> {
+        self.tip_pool.first_key_value().map(|(k, v)| (*k, *v))
+    }
+
+    /// The oldest member of the window — the one a younger arrival
+    /// displaces.
+    pub(crate) fn oldest_tip(&self) -> Option<(RecencyKey, u64)> {
+        self.tip.last_key_value().map(|(k, v)| (*k, *v))
+    }
+
+    pub(crate) fn tip_count(&self) -> usize {
+        self.tip.len()
+    }
+
+    /// Stage an off-stage canonical id as a member of the recency window.
+    pub(crate) fn stage_tip(&mut self, id: u64) {
+        debug_assert!(!self.members.contains_key(&id), "{id} is already staged");
+        let Some(&key) = self.recency_of.get(&id) else {
+            debug_assert!(false, "{id} has no recency key — residents never tip");
+            return;
+        };
+        self.members.insert(id, MemberRole::Tip);
+        self.touched.entry(id).or_insert(false);
+        self.resting_count += 1;
+        self.tip.insert(key, id);
+        self.refresh_tip_candidacy(id);
+    }
+
+    /// Convert an activity member into a tip member in place: membership is
+    /// unchanged (no wire noise) and its FIFO slot is freed. Returns the
+    /// block that keyed the slot, so the caller can settle the policy's
+    /// accounting for a member that just left its field.
+    pub(crate) fn promote_to_tip(&mut self, id: u64) -> Option<u64> {
+        let Some(MemberRole::Activity { block }) = self.members.get(&id).copied() else {
+            debug_assert!(false, "{id} is not an activity member");
+            return None;
+        };
+        let Some(&key) = self.recency_of.get(&id) else {
+            debug_assert!(false, "{id} has no recency key — residents never tip");
+            return None;
+        };
+        self.members.insert(id, MemberRole::Tip);
+        self.activity_count -= 1;
+        self.resting_count += 1;
+        self.remove_from_activity_group(block, id);
+        self.tip.insert(key, id);
+        self.refresh_tip_candidacy(id);
+        Some(block)
+    }
+
+    /// Release the oldest member of the window: it leaves the stage
+    /// entirely (the field's refill queues may still hold a claim on it,
+    /// exactly as they do for any member that ever leaves).
+    pub(crate) fn release_oldest_tip(&mut self) -> Option<u64> {
+        let (_, id) = self.oldest_tip()?;
+        self.unstage(id);
+        Some(id)
+    }
+
+    fn leave_tip(&mut self, id: u64) {
+        if let Some(key) = self.recency_of.get(&id) {
+            self.tip.remove(key);
+        }
+    }
+
+    /// Restate whether `id` is claimable by the recency law: a present cell
+    /// that no STANDING slot is already holding. Called after every move
+    /// that can change a role, so `tip_pool` cannot drift out of agreement
+    /// with `members` the way a hand-maintained complement would.
+    fn refresh_tip_candidacy(&mut self, id: u64) {
+        let Some(&key) = self.recency_of.get(&id) else {
+            return; // a resident, or gone from the map
+        };
+        match self.members.get(&id) {
+            Some(MemberRole::Resting | MemberRole::Tip) => {
+                self.tip_pool.remove(&key);
+            }
+            Some(MemberRole::Activity { .. }) | None => {
+                self.tip_pool.insert(key, id);
+            }
+        }
+    }
+
+    /// Rebuild the candidate pool from scratch — for the moves that rewrite
+    /// membership wholesale instead of one id at a time (exit-all, composed
+    /// install). O(present · log present), and only ever at a sanctioned big
+    /// event.
+    fn rebuild_tip_pool(&mut self) {
+        let pool: BTreeMap<RecencyKey, u64> = self
+            .recency_of
+            .iter()
+            .filter(|(id, _)| {
+                !matches!(
+                    self.members.get(id),
+                    Some(MemberRole::Resting) | Some(MemberRole::Tip)
+                )
+            })
+            .map(|(id, key)| (*key, *id))
+            .collect();
+        self.tip_pool = pool;
     }
 
     // ── mechanism-owned bookkeeping ──────────────────────────────────
 
-    /// Mirror a canonical arrival. Returns the previous kind when the id
-    /// was already present (an in-place resurrection — a no-op).
+    /// Mirror a canonical arrival, giving it its place in the recency order.
+    /// Returns the previous kind when the id was already present (an
+    /// in-place resurrection — a no-op, and its recency key deliberately
+    /// stands: the identity never left the map, so its birth height did not
+    /// move either).
     fn note_present(&mut self, cell: &Cell) -> Option<AssetKind> {
-        self.present.insert(cell.id, cell.asset_kind)
+        let previous = self.present.insert(cell.id, cell.asset_kind);
+        if previous.is_none() {
+            let key = (Reverse(cell.birth_block), self.next_recency_seq);
+            self.next_recency_seq += 1;
+            self.recency_of.insert(cell.id, key);
+            self.refresh_tip_candidacy(cell.id);
+        }
+        previous
     }
 
-    /// Mirror a canonical removal. Returns `None` when the id was not in
-    /// the map (nothing to do).
+    /// Mirror a canonical removal, withdrawing the id from the recency
+    /// order ENTIRELY — its key, its candidacy, and its seat in the window
+    /// if it held one.
+    ///
+    /// All three in one step on purpose. The caller unstages the member
+    /// right after this, and every structure the window keeps is keyed by
+    /// the recency key: dropping the key first and the seat second leaves
+    /// the seat unreachable, and an unreachable seat counts against the
+    /// quota forever, so the window silently stops refilling.
     fn forget_present(&mut self, id: u64) -> Option<AssetKind> {
-        self.present.remove(&id)
+        let previous = self.present.remove(&id);
+        if previous.is_some() {
+            if let Some(key) = self.recency_of.remove(&id) {
+                self.tip_pool.remove(&key);
+                self.tip.remove(&key);
+            }
+        }
+        previous
     }
 
     /// D5 later-collision probe: the composition id representing
@@ -435,11 +689,16 @@ impl Stage {
         self.resting_count = 0;
         self.activity_count = 0;
         self.activity_groups.clear();
+        self.tip.clear();
+        self.rebuild_tip_pool();
     }
 
     /// Forget the whole canonical mirror (reset / restore).
     fn forget_all_presence(&mut self) {
         self.present.clear();
+        self.recency_of.clear();
+        self.tip_pool.clear();
+        self.tip.clear();
     }
 
     /// Drop every resident payload — a degrade back to canonical staffing
@@ -503,6 +762,11 @@ impl Stage {
                 .insert(payload.out_point.clone(), id);
             self.resident_pool.insert(id, payload);
         }
+
+        // The composition decided the FIELD. The recency window is rebuilt
+        // from whatever the field did not take, by the settle that follows.
+        self.tip.clear();
+        self.rebuild_tip_pool();
     }
 
     fn remove_from_activity_group(&mut self, block: u64, id: u64) {
@@ -562,6 +826,10 @@ pub(crate) struct DisplayPlane {
     /// Who *should* be on stage. `CanonicalPolicy` = prefix mode,
     /// `CuratedPolicy` = composed mode.
     policy: Box<dyn CompositionPolicy + Send + Sync>,
+    /// The recency window's size in COMPOSED mode. Prefix mode hands the
+    /// window the whole resting field instead, so this is only consulted
+    /// when a reservoir is staffing the stage.
+    tip_window: usize,
 
     /// Tx endpoints reported this mutation, in arrival order.
     pending_activity: Vec<(u64, u64)>, // (block, id)
@@ -601,21 +869,38 @@ impl DisplayPlane {
                 nerve_edges: DISPLAY_NERVE_EDGE_BUDGET,
             },
             DISPLAY_ACTIVITY_QUOTA,
+            DISPLAY_TIP_WINDOW,
         )
     }
 
     /// Test seam: shrink the budgets so quota/FIFO/composition behavior
-    /// is exercisable without minting thousands of cells.
-    pub(crate) fn with_limits(budget: DisplayBudget, activity_quota: usize) -> Self {
+    /// is exercisable without minting thousands of cells. `tip_window` is
+    /// the composed-mode recency reserve — pass 0 to isolate composition
+    /// behavior from the recency law, exactly as `activity_quota` shrinks
+    /// the FIFO rather than pretending 512 endpoints exist.
+    pub(crate) fn with_limits(
+        budget: DisplayBudget,
+        activity_quota: usize,
+        tip_window: usize,
+    ) -> Self {
         debug_assert!(
             budget.cells as usize >= activity_quota,
             "budget must cover the quota"
         );
-        let stage = Stage::new(budget, activity_quota);
-        let policy = Self::prefix_policy(&stage);
+        debug_assert!(
+            budget.cells as usize >= tip_window + activity_quota,
+            "budget must cover the tip window and the quota together"
+        );
+        let stage = Stage::new(
+            budget,
+            activity_quota,
+            prefix_tip_quota(&budget, activity_quota),
+        );
+        let policy = Self::prefix_policy();
         Self {
             stage,
             policy,
+            tip_window,
             pending_activity: Vec::new(),
             demand_sink: None,
             provenance: DisplayProvenance {
@@ -639,11 +924,75 @@ impl DisplayPlane {
         self.demand_sink = Some(sink);
     }
 
-    fn prefix_policy(stage: &Stage) -> Box<dyn CompositionPolicy + Send + Sync> {
-        Box::new(CanonicalPolicy::new(
-            stage.budget_cells(),
-            stage.activity_quota(),
-        ))
+    fn prefix_policy() -> Box<dyn CompositionPolicy + Send + Sync> {
+        Box::new(CanonicalPolicy::new())
+    }
+
+    /// Hand the stage back to prefix staffing: the recency window takes the
+    /// whole resting field, which is exactly the "no reservoir ⇒ the stage
+    /// IS the newest live cells" rule.
+    fn install_prefix_policy(&mut self) {
+        self.policy = Self::prefix_policy();
+        self.stage.set_tip_quota(prefix_tip_quota(
+            &self.stage.budget,
+            self.stage.activity_quota(),
+        ));
+    }
+
+    /// Settle the standing recency window: after this the window holds the
+    /// `tip_quota` youngest live canonical cells that no field slot is
+    /// already holding — which is what makes "the T youngest cells that
+    /// exist are on stage" true, since a cell the field holds is on stage
+    /// anyway.
+    ///
+    /// Three moves, all bounded by the window size: release members a
+    /// shrunk quota no longer has room for, fill free slots from the
+    /// candidate pool, and displace the oldest member whenever a younger
+    /// candidate is standing outside. A candidate already on stage as a
+    /// transient endpoint is PROMOTED in place — no wire noise, its FIFO
+    /// slot freed, and the field it was occupying settled through the same
+    /// `note_exit` an eviction would have used (so a composed-mode bench
+    /// comes back exactly as it does today).
+    fn settle_tip(&mut self) {
+        while self.stage.tip_count() > self.stage.tip_quota() {
+            if self.stage.release_oldest_tip().is_none() {
+                break;
+            }
+        }
+        loop {
+            let Some((candidate_key, candidate)) = self.stage.youngest_tip_candidate() else {
+                break;
+            };
+            if self.stage.tip_count() >= self.stage.tip_quota() {
+                // Full window: only a strictly younger cell may come in, and
+                // only by taking the oldest member's slot.
+                let Some((oldest_key, _)) = self.stage.oldest_tip() else {
+                    break; // quota 0 — the window is switched off
+                };
+                if candidate_key >= oldest_key {
+                    break; // the window already holds the youngest there are
+                }
+                if self.stage.release_oldest_tip().is_none() {
+                    break;
+                }
+            }
+            match self.stage.role_of(candidate) {
+                Some(MemberRole::Activity { .. }) => {
+                    if let Some(block) = self.stage.promote_to_tip(candidate) {
+                        self.policy.note_exit(
+                            &mut self.stage,
+                            candidate,
+                            MemberRole::Activity { block },
+                        );
+                    }
+                }
+                None => self.stage.stage_tip(candidate),
+                Some(MemberRole::Resting | MemberRole::Tip) => {
+                    debug_assert!(false, "{candidate} is standing — not a tip candidate");
+                    break;
+                }
+            }
+        }
     }
 
     // ── hooks (called by CellGalaxy handlers mid-mutation) ───────────
@@ -684,6 +1033,12 @@ impl DisplayPlane {
         let Some(role) = self.stage.unstage(id) else {
             return;
         };
+        if role == MemberRole::Tip {
+            // The recency law's own member: the policy never counted it, so
+            // there is nothing of its to settle. The window refills from the
+            // next-youngest live cell at the flush that follows.
+            return;
+        }
         self.policy.note_exit(&mut self.stage, id, role);
     }
 
@@ -738,7 +1093,7 @@ impl DisplayPlane {
         self.stage.forget_all_presence();
         self.stage.clear_residents();
         self.pending_activity.clear();
-        self.policy = Self::prefix_policy(&self.stage);
+        self.install_prefix_policy();
         if was_composed {
             self.provenance = DisplayProvenance {
                 mode: DisplayMode::Canonical,
@@ -784,7 +1139,7 @@ impl DisplayPlane {
         self.stage.forget_all_presence();
         self.stage.clear_residents();
         self.stage.touched.clear();
-        self.policy = Self::prefix_policy(&self.stage);
+        self.install_prefix_policy();
         self.pending_activity.clear();
         self.backfill_active = false;
         self.backfill_baseline = None;
@@ -803,6 +1158,7 @@ impl DisplayPlane {
                 self.policy.note_candidate(&self.stage, cell.id);
             }
         }
+        self.settle_tip();
         self.policy.fill_vacancies(&mut self.stage);
         self.stage.touched.clear();
         if !self.stage.members.is_empty() {
@@ -853,8 +1209,12 @@ impl DisplayPlane {
             return;
         }
 
+        // The recency window's reserve comes off the top: the composition
+        // is composed for the FIELD, and the 20:70:10 class law is measured
+        // on that field for as long as this policy is installed.
+        self.stage.set_tip_quota(self.tip_window);
         let (policy, fill) =
-            CuratedPolicy::compose(record, outpoint_index, cells, self.stage.budget_cells());
+            CuratedPolicy::compose(record, outpoint_index, cells, self.stage.field_cells());
         let standing_activity = self.stage.standing_activity();
         self.stage.install_composed(fill);
         self.policy = Box::new(policy);
@@ -934,7 +1294,7 @@ impl DisplayPlane {
     /// membership from the (already rolled back) canonical container,
     /// and ride mode-Canonical provenance on the coalesced delta. The
     /// content dedup re-arms (a later identical record applies again).
-    pub(crate) fn chain_reorganized(&mut self, from_block: u64, cells: &[Cell]) {
+    pub(crate) fn chain_reorganized(&mut self, from_block: u64) {
         let anchored_below = self
             .policy
             .reservoir()
@@ -943,10 +1303,8 @@ impl DisplayPlane {
             return;
         }
         self.stage.clear_residents();
-        let mut policy =
-            CanonicalPolicy::new(self.stage.budget_cells(), self.stage.activity_quota());
-        policy.rebuild(&mut self.stage, cells);
-        self.policy = Box::new(policy);
+        self.install_prefix_policy();
+        CanonicalPolicy::rebuild(&mut self.stage);
         self.provenance = DisplayProvenance {
             mode: DisplayMode::Canonical,
             source: None,
@@ -973,8 +1331,10 @@ impl DisplayPlane {
             self.last_at_ms = at;
         }
 
-        // 1. Vacancy fill. Runs even during backfill (membership evolves
-        //    silently).
+        // 1. The standing recency window first — its slots are not the
+        //    policy's to fill — then the policy's own vacancy fill. Both run
+        //    even during backfill (membership evolves silently).
+        self.settle_tip();
         self.policy.fill_vacancies(&mut self.stage);
 
         // 2. Activity entries — suppressed during historical replay
@@ -1000,11 +1360,40 @@ impl DisplayPlane {
                 self.policy
                     .note_exit(&mut self.stage, id, MemberRole::Activity { block });
             }
-            // Unrestorable benches leave resting vacancies inside this
-            // same mutation — repair before emitting. (A prefix-mode
-            // second pass is a no-op: activity never displaces resting.)
+            // An evicted endpoint young enough for the window SETTLES
+            // there instead of leaving the stage; an old cell that merely
+            // pulsed leaves exactly as it always has. Unrestorable benches
+            // leave field vacancies inside this same mutation — repair both
+            // before emitting.
+            self.settle_tip();
             self.policy.fill_vacancies(&mut self.stage);
         }
+
+        debug_assert_eq!(
+            self.stage.recency_of.len(),
+            self.stage.present.len(),
+            "the recency index and the presence mirror must name one set"
+        );
+        debug_assert_eq!(
+            self.stage.tip_pool.len() + self.stage.resting_count,
+            self.stage.present.len() + self.stage.residents.len(),
+            "tip candidates + standing members must account for every              present cell and every staged resident"
+        );
+        debug_assert!(
+            self.stage.tip.len() <= self.stage.tip_quota,
+            "the recency window never exceeds its quota"
+        );
+        debug_assert!(
+            self.stage
+                .tip
+                .values()
+                .all(|id| self.stage.members.get(id) == Some(&MemberRole::Tip)),
+            "every seat in the recency window names one of its own members"
+        );
+        debug_assert!(
+            self.stage.members.len() <= self.stage.budget_cells(),
+            "the stage never exceeds its budget"
+        );
 
         // 4. Publish what the policy is still short of. After the fills,
         //    so it reflects everything this mutation could close on its
@@ -1188,6 +1577,31 @@ impl DisplayPlane {
         matches!(self.stage.role_of(id), Some(MemberRole::Activity { .. }))
     }
 
+    /// Members the recency law holds, ascending id.
+    #[cfg(test)]
+    pub(crate) fn tip_ids_sorted(&self) -> Vec<u64> {
+        let mut ids: Vec<u64> = self.stage.tip.values().copied().collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_tip_member(&self, id: u64) -> bool {
+        matches!(self.stage.role_of(id), Some(MemberRole::Tip))
+    }
+
+    /// A standing member the POLICY holds — the curated field, as opposed
+    /// to the recency window beside it.
+    #[cfg(test)]
+    pub(crate) fn is_field_resting(&self, id: u64) -> bool {
+        matches!(self.stage.role_of(id), Some(MemberRole::Resting))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn tip_quota(&self) -> usize {
+        self.stage.tip_quota()
+    }
+
     #[cfg(test)]
     pub(crate) fn mode(&self) -> DisplayMode {
         self.provenance.mode
@@ -1216,6 +1630,7 @@ mod tests {
     use super::*;
     use crate::enrichment::ChainAnchor;
     use crate::projection::composition_policy::CompositionDemand;
+    use crate::rng::Mulberry32;
 
     /// Both budgets are the product's, not the server's, and the browser
     /// keeps its own copy for the boot path that runs before a snapshot has
@@ -1230,13 +1645,50 @@ mod tests {
         assert_eq!(DISPLAY_NERVE_EDGE_BUDGET, 8_000);
     }
 
+    /// The stage's two standing laws divide its seats exactly once, and the
+    /// class ratio is measured on the composition's share of them. Stated
+    /// by name so the product contract is a sentence rather than an
+    /// inference from a subtraction.
+    #[test]
+    fn the_window_and_the_curated_field_divide_the_budget_exactly() {
+        assert_eq!(DISPLAY_TIP_WINDOW, 1_200);
+        assert_eq!(DISPLAY_CURATED_FIELD, 10_800);
+        assert_eq!(
+            DISPLAY_TIP_WINDOW + DISPLAY_CURATED_FIELD,
+            DISPLAY_CELL_BUDGET as usize,
+            "every seat belongs to exactly one law"
+        );
+        assert_eq!(
+            GalaxyCompositionTarget::for_total(DISPLAY_CURATED_FIELD),
+            GalaxyCompositionTarget {
+                dao: 2_160,
+                typed: 7_560,
+                plain: 1_080,
+            },
+            "20:70:10 is measured on the curated field, not on the budget"
+        );
+    }
+
+    /// A plane with the recency window switched OFF. Every composition
+    /// case below is a port of the old client's membership algorithm, and
+    /// the tip window is a law that runs beside it rather than inside it —
+    /// mixing the two would stop these cases from pinning either.
     fn small_plane(cells: u32, quota: usize) -> DisplayPlane {
+        tip_plane(cells, quota, 0)
+    }
+
+    /// A plane whose composed mode reserves `tip` slots for the recency
+    /// window. Prefix mode always gives the window the whole resting field,
+    /// so `small_plane` exercises that too — this seam is about the CURATED
+    /// field, which is `cells - tip`.
+    fn tip_plane(cells: u32, quota: usize, tip: usize) -> DisplayPlane {
         DisplayPlane::with_limits(
             DisplayBudget {
                 cells,
                 nerve_edges: 8,
             },
             quota,
+            tip,
         )
     }
 
@@ -1381,11 +1833,14 @@ mod tests {
 
     // ═══ S1 prefix-mode pins (unchanged behavior) ════════════════════
 
-    /// Resting fill takes the first `cells − quota` births in insertion
-    /// order; overflow births wait as understudies. The first emitted
-    /// delta rides Canonical provenance stamped with the mutation clock.
+    /// Prefix mode's resting field IS the recency window, so it takes the
+    /// `cells − quota` YOUNGEST births — which, at one birth height, is the
+    /// first `cells − quota` in arrival order, because the sequence
+    /// tiebreak agrees with the backfill's tip-backwards walk. The first
+    /// emitted delta rides Canonical provenance stamped with the mutation
+    /// clock.
     #[test]
-    fn prefix_fill_stages_first_births_in_insertion_order() {
+    fn prefix_fill_stages_the_youngest_births() {
         let mut plane = small_plane(8, 2); // resting target 6
         for id in 0..9 {
             birth(&mut plane, id);
@@ -1399,7 +1854,8 @@ mod tests {
         assert_eq!(provenance.as_of, None);
         assert_eq!(provenance.updated_at_ms, 1_000);
 
-        // Later births beyond the full resting set do not enter…
+        // A birth of the SAME height does not displace anyone — the window
+        // already holds cells that are its equal and arrived first…
         birth(&mut plane, 9);
         let (enter, exit, provenance) = delta_parts(plane.flush(Some(1_100)));
         assert!(enter.is_empty() && exit.is_empty() && provenance.is_none());
@@ -1448,27 +1904,27 @@ mod tests {
         assert_eq!(plane.activity_len(), 2);
     }
 
-    /// Vacancy backfill walks the insertion-order cursor: stale (removed)
-    /// candidates are skipped; a candidate staged as activity is promoted
-    /// in place instead of double-entering, freeing its quota slot.
+    /// The window's refill skips candidates that left the map, and a
+    /// candidate already on stage as ACTIVITY is promoted in place instead
+    /// of double-entering — no wire noise, and its FIFO slot is freed.
     #[test]
-    fn cursor_skips_stale_candidates_and_promotes_staged_activity() {
+    fn tip_refill_skips_stale_candidates_and_promotes_staged_activity() {
         let mut plane = small_plane(8, 2);
         for id in 0..9 {
             birth(&mut plane, id);
         }
-        plane.flush(Some(1_000)); // resting 0..5, understudies [6, 7, 8]
+        plane.flush(Some(1_000)); // window 0..5, candidates [6, 7, 8]
         plane.note_activity(10, [7]);
         plane.flush(Some(1_100)); // 7 on stage as activity
 
-        // 6 dies and is GC'd while still waiting in the queue.
+        // 6 dies and is GC'd while still waiting off stage.
         plane.note_removed(6);
         let (enter, exit, _) = delta_parts(plane.flush(Some(1_200)));
         assert!(enter.is_empty() && exit.is_empty(), "6 was never staged");
 
-        // A resting member exits → cursor pops 6 (stale, skipped), then
-        // 7 (activity → promoted, no wire noise): the only visible
-        // change is the exit.
+        // A window member exits → 6 is gone, so the next-youngest candidate
+        // is 7, already on stage as activity → promoted in place: the only
+        // visible change is the exit.
         plane.note_removed(0);
         let (enter, exit, _) = delta_parts(plane.flush(Some(1_300)));
         assert!(enter.is_empty());
@@ -1478,7 +1934,7 @@ mod tests {
         assert_eq!(plane.activity_len(), 0, "promotion freed the quota slot");
         assert!(!plane.is_activity_member(7));
 
-        // Next vacancy stages the remaining understudy as resting.
+        // The next vacancy takes the last candidate there is.
         plane.note_removed(1);
         let (enter, exit, _) = delta_parts(plane.flush(Some(1_400)));
         assert_eq!(enter, vec![8]);
@@ -1532,6 +1988,539 @@ mod tests {
         assert!(section.residents.is_empty());
         assert_eq!(section.provenance.updated_at_ms, 900);
         assert_eq!(section.budget.cells, 8);
+    }
+
+    // ═══ T5 the tip window ═══════════════════════════════════════════
+
+    /// A canonical cell born at a chosen height — the recency window's
+    /// primary ranking key, and the only thing that distinguishes an old
+    /// cell from a new one here.
+    fn cell_at(id: u64, block: u64) -> Cell {
+        Cell {
+            birth_block: block,
+            ..cell_with(id, &format!("0x{id}"), AssetKind::Other, 0)
+        }
+    }
+
+    fn birth_at(plane: &mut DisplayPlane, id: u64, block: u64) {
+        plane.note_birth(&cell_at(id, block));
+    }
+
+    /// A full-scan mirror of the recency order, kept by the test from the
+    /// same events the plane sees. Deliberately dumb: it sorts everything
+    /// every time, so it can disagree with the incremental index the plane
+    /// maintains — which is the whole point of checking against it.
+    #[derive(Default)]
+    struct RecencyOracle {
+        /// id → (birth height, admission sequence), for ids in the map.
+        keys: BTreeMap<u64, (u64, u64)>,
+        next_seq: u64,
+    }
+
+    impl RecencyOracle {
+        fn born(&mut self, id: u64, block: u64) {
+            if self.keys.contains_key(&id) {
+                return; // in-place resurrection: the identity never left
+            }
+            self.keys.insert(id, (block, self.next_seq));
+            self.next_seq += 1;
+        }
+
+        fn removed(&mut self, id: u64) {
+            self.keys.remove(&id);
+        }
+
+        /// Youngest first: height descending, admission sequence ascending.
+        fn ranked(&self) -> Vec<u64> {
+            let mut rows: Vec<(u64, u64, u64)> = self
+                .keys
+                .iter()
+                .map(|(id, (block, seq))| (*block, *seq, *id))
+                .collect();
+            rows.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+            rows.into_iter().map(|(_, _, id)| id).collect()
+        }
+    }
+
+    /// THE law, both halves.
+    ///
+    /// Mechanically: the window holds the `tip_quota` youngest cells that no
+    /// FIELD slot is already standing on. Which gives the product claim the
+    /// requirement is actually written in — every one of the `tip_quota`
+    /// youngest live cells is on stage, whichever slot happens to hold it.
+    fn assert_tip_law(plane: &DisplayPlane, oracle: &RecencyOracle) {
+        let quota = plane.tip_quota();
+        let ranked = oracle.ranked();
+        let expected: Vec<u64> = {
+            let mut ids: Vec<u64> = ranked
+                .iter()
+                .copied()
+                .filter(|id| !plane.is_field_resting(*id))
+                .take(quota)
+                .collect();
+            ids.sort_unstable();
+            ids
+        };
+        assert_eq!(
+            plane.tip_ids_sorted(),
+            expected,
+            "the window is not the youngest claimable cells"
+        );
+        let members: BTreeSet<u64> = plane.member_ids_sorted().into_iter().collect();
+        for id in ranked.iter().take(quota) {
+            assert!(
+                members.contains(id),
+                "the {quota} youngest live cells must all be staged; {id} is not"
+            );
+        }
+    }
+
+    /// Soak: a randomized mutation sequence — births at wandering heights,
+    /// deaths, endpoint pulses — checked after EVERY flush against a mirror
+    /// that recomputes the answer from scratch. The incremental index has
+    /// several places it could silently drift (a removal that forgets a
+    /// seat, a promotion that forgets a candidate); a full-scan oracle is
+    /// the only check that does not share those assumptions.
+    #[test]
+    fn the_window_holds_the_youngest_live_cells_through_any_mutation_sequence() {
+        let mut rng = Mulberry32::new(0x5eed_1234);
+        let mut plane = small_plane(24, 6); // prefix window: 18
+        let mut oracle = RecencyOracle::default();
+        let mut live: Vec<u64> = Vec::new();
+        let mut next_id = 0u64;
+        let mut block = 1_000u64;
+
+        for step in 0..600u64 {
+            match (rng.next_f64() * 10.0) as u32 {
+                // Births, sometimes several, at a height that mostly climbs
+                // but occasionally lands behind the tip (a late relay, a
+                // backfill tail).
+                0..=4 => {
+                    block = if rng.next_f64() < 0.15 {
+                        block.saturating_sub((rng.next_f64() * 40.0) as u64)
+                    } else {
+                        block + 1
+                    };
+                    for _ in 0..=(rng.next_f64() * 3.0) as u32 {
+                        let id = next_id;
+                        next_id += 1;
+                        birth_at(&mut plane, id, block);
+                        oracle.born(id, block);
+                        live.push(id);
+                    }
+                }
+                // A canonical removal (GC, cap eviction, reorg park).
+                5..=7 => {
+                    if !live.is_empty() {
+                        let victim = live.remove((rng.next_f64() * live.len() as f64) as usize);
+                        plane.note_removed(victim);
+                        oracle.removed(victim);
+                    }
+                }
+                // A tx endpoint pulses.
+                _ => {
+                    if !live.is_empty() {
+                        let id = live[(rng.next_f64() * live.len() as f64) as usize];
+                        plane.note_activity(block, [id]);
+                    }
+                }
+            }
+            plane.flush(Some(10_000 + step));
+            assert_tip_law(&plane, &oracle);
+            assert!(
+                plane.member_ids_sorted().len() <= 24,
+                "step {step}: the stage outgrew its budget"
+            );
+        }
+        assert!(
+            plane.tip_ids_sorted().len() == 18,
+            "the soak has to actually fill the window"
+        );
+    }
+
+    /// The same soak with a curated policy staffing the field beside the
+    /// window: the law must hold when most of the map is spoken for by the
+    /// composition and only what it declines is claimable.
+    #[test]
+    fn the_window_holds_the_youngest_claimable_cells_beside_a_curated_field() {
+        let mut rng = Mulberry32::new(0xc0ff_ee01);
+        let mut plane = tip_plane(24, 4, 6); // curated field 18, window 6
+        let mut oracle = RecencyOracle::default();
+        let mut live: Vec<u64> = Vec::new();
+        let mut next_id = 0u64;
+        let mut block = 500u64;
+
+        // Seed a map, then compose the field from it (empty reservoir → a
+        // pure canonical fallback fill, so every field member is a cell the
+        // window could otherwise have claimed).
+        let seed: Vec<Cell> = (0..40)
+            .map(|i| {
+                let kind = if i % 7 == 0 {
+                    AssetKind::Dao
+                } else if i % 3 == 0 {
+                    AssetKind::Xudt
+                } else {
+                    AssetKind::Native
+                };
+                let mut cell = cell_with(i, &format!("0x{i}"), kind, 0);
+                cell.birth_block = 400 + i;
+                cell
+            })
+            .collect();
+        for cell in &seed {
+            plane.note_birth(cell);
+            oracle.born(cell.id, cell.birth_block);
+            live.push(cell.id);
+            next_id = cell.id + 1;
+        }
+        plane.flush(Some(900));
+        plane.reservoir_replaced(
+            &record(10, vec![], vec![], vec![]),
+            &outpoint_index(&seed),
+            &seed,
+        );
+        plane.flush(Some(1_000));
+        assert_eq!(plane.mode(), DisplayMode::Composed);
+        assert_tip_law(&plane, &oracle);
+
+        for step in 0..400u64 {
+            match (rng.next_f64() * 10.0) as u32 {
+                0..=4 => {
+                    block += 1;
+                    let id = next_id;
+                    next_id += 1;
+                    birth_at(&mut plane, id, block);
+                    oracle.born(id, block);
+                    live.push(id);
+                }
+                5..=7 => {
+                    if !live.is_empty() {
+                        let victim = live.remove((rng.next_f64() * live.len() as f64) as usize);
+                        plane.note_removed(victim);
+                        oracle.removed(victim);
+                    }
+                }
+                _ => {
+                    if !live.is_empty() {
+                        let id = live[(rng.next_f64() * live.len() as f64) as usize];
+                        plane.note_activity(block, [id]);
+                    }
+                }
+            }
+            plane.flush(Some(10_000 + step));
+            assert_tip_law(&plane, &oracle);
+            assert!(
+                plane.class_counts().iter().sum::<usize>() <= 18,
+                "step {step}: the curated field outgrew the budget less the window"
+            );
+            assert!(
+                plane.member_ids_sorted().len() <= 24,
+                "step {step}: the stage outgrew its budget"
+            );
+        }
+    }
+
+    /// One in, one out: a birth younger than the window's trailing edge
+    /// takes exactly that member's seat — not the oldest cell in the map,
+    /// which was never on stage to begin with.
+    #[test]
+    fn a_birth_displaces_exactly_the_oldest_window_member() {
+        let mut plane = small_plane(6, 2); // window 4
+        for (id, block) in [(0u64, 10u64), (1, 11), (2, 12), (3, 13), (4, 14)] {
+            birth_at(&mut plane, id, block);
+        }
+        let (enter, exit, _) = delta_parts(plane.flush(Some(1_000)));
+        assert_eq!(enter, vec![1, 2, 3, 4], "the four youngest, id 0 left out");
+        assert!(exit.is_empty());
+
+        birth_at(&mut plane, 5, 15);
+        let (enter, exit, _) = delta_parts(plane.flush(Some(1_100)));
+        assert_eq!(enter, vec![5]);
+        assert_eq!(exit, vec![1], "the trailing edge — never the older id 0");
+        assert_eq!(plane.member_ids_sorted(), vec![2, 3, 4, 5]);
+
+        // An arrival that is not younger than the trailing edge changes
+        // nothing at all: a late relay does not get to slide the window.
+        birth_at(&mut plane, 6, 9);
+        assert!(
+            plane.flush(Some(1_200)).is_none(),
+            "an old arrival leaves the window exactly as it was"
+        );
+    }
+
+    /// ⭐ The F2 fix. The seat a death opens goes to the next-YOUNGEST live
+    /// cell, not to the head of an admission queue.
+    ///
+    /// The distinction is the whole feature. A live-following server admits
+    /// cells oldest-first, so an admission-ordered refill hands every
+    /// vacancy to the oldest thing it is still holding, and the stage
+    /// drifts backwards in time for as long as it runs.
+    #[test]
+    fn a_window_death_refills_with_the_next_youngest_not_the_admission_backlog() {
+        let mut plane = small_plane(6, 2); // window 4
+        for (id, block) in [(0u64, 10u64), (1, 11), (2, 12), (3, 13), (4, 14), (5, 15)] {
+            birth_at(&mut plane, id, block);
+        }
+        plane.flush(Some(1_000));
+        assert_eq!(plane.member_ids_sorted(), vec![2, 3, 4, 5]);
+
+        plane.note_removed(3);
+        let (enter, exit, _) = delta_parts(plane.flush(Some(1_100)));
+        assert_eq!(
+            enter,
+            vec![1],
+            "the seat went to the next-youngest (block 11), not to id 0 at the queue head"
+        );
+        assert_eq!(exit, vec![3]);
+    }
+
+    /// Requirement 3, verbatim: with no reservoir the ENTIRE stage is the
+    /// recency window, and it keeps sliding after boot instead of freezing
+    /// on whatever the backfill happened to reach.
+    #[test]
+    fn prefix_mode_slides_the_whole_stage_with_the_chain_tip() {
+        let mut plane = small_plane(6, 2); // the resting field IS the window: 4
+                                           // Boot: the backfill walks the anchored tip BACKWARDS, so admission
+                                           // order already descends in height (audit finding F1).
+        for (id, block) in [(0u64, 100u64), (1, 99), (2, 98), (3, 97), (4, 96), (5, 95)] {
+            birth_at(&mut plane, id, block);
+        }
+        plane.flush(Some(1_000));
+        assert_eq!(
+            plane.member_ids_sorted(),
+            vec![0, 1, 2, 3],
+            "boot stages the newest four the backfill reached"
+        );
+        assert_eq!(
+            plane.resting_len(),
+            4,
+            "…every one of them standing, none of them transient"
+        );
+
+        // Post-boot: a birth at the live tip. Nothing died, no vacancy
+        // opened — it enters BECAUSE it is newer, and the trailing edge
+        // lets go. This is the freeze the old prefix could not thaw.
+        birth_at(&mut plane, 6, 101);
+        let (enter, exit, _) = delta_parts(plane.flush(Some(1_100)));
+        assert_eq!(enter, vec![6]);
+        assert_eq!(exit, vec![3], "the trailing edge, block 97");
+        assert_eq!(plane.resting_len(), 4);
+
+        // …and it keeps sliding, block after block.
+        for (id, block) in [(7u64, 102u64), (8, 103)] {
+            birth_at(&mut plane, id, block);
+            plane.flush(Some(1_100 + block));
+        }
+        assert_eq!(
+            plane.member_ids_sorted(),
+            vec![0, 6, 7, 8],
+            "the stage is the four newest cells on the chain, still"
+        );
+    }
+
+    /// A composed stage whose field is fully staffed and whose window is
+    /// full, with one endpoint on the FIFO holding a curated member on the
+    /// bench. Used by the two interplay cases below.
+    fn composed_stage_with_a_bench() -> DisplayPlane {
+        // Budget 8 = a curated field of 6 + a window of 2; quota 1.
+        let mut plane = tip_plane(8, 1, 2);
+        let kinds = [
+            AssetKind::Dao,    // 0
+            AssetKind::Xudt,   // 1
+            AssetKind::Xudt,   // 2
+            AssetKind::Xudt,   // 3
+            AssetKind::Xudt,   // 4
+            AssetKind::Xudt,   // 5  ← the typed the field's quota leaves out
+            AssetKind::Native, // 6
+            AssetKind::Native, // 7
+            AssetKind::Native, // 8
+        ];
+        let canonical: Vec<Cell> = kinds
+            .iter()
+            .enumerate()
+            .map(|(i, kind)| {
+                let mut cell = cell_with(i as u64, &format!("0x{i}"), *kind, 0);
+                cell.birth_block = 50 + i as u64;
+                cell
+            })
+            .collect();
+        seed_canonical(&mut plane, &canonical, 500);
+        // Empty reservoir → a pure canonical fallback fill over the FIELD:
+        // targets(6) = {1,4,1} ⇒ dao [0], typed [1,2,3,4], plain [6].
+        // Unchosen: typed 5 (block 55), plain 7 (57) and 8 (58) — and the
+        // window takes the two YOUNGEST of those three.
+        plane.reservoir_replaced(
+            &record(10, vec![], vec![], vec![]),
+            &outpoint_index(&canonical),
+            &canonical,
+        );
+        plane.flush(Some(1_000));
+        assert_eq!(plane.class_counts(), [1, 4, 1]);
+        assert_eq!(plane.tip_ids_sorted(), vec![7, 8]);
+        assert_eq!(plane.member_ids_sorted(), vec![0, 1, 2, 3, 4, 6, 7, 8]);
+
+        // Typed endpoint 5 (block 55) is older than the window's trailing
+        // edge (block 57), so the window does not want it: it enters the
+        // FIFO the way it always has, displacing the latest typed admit (4)
+        // onto the bench.
+        plane.note_activity(60, [5]);
+        let (enter, exit, _) = delta_parts(plane.flush(Some(2_000)));
+        assert_eq!(enter, vec![5]);
+        assert_eq!(exit, vec![4]);
+        assert!(plane.is_activity_member(5));
+        assert_eq!(plane.class_counts(), [1, 4, 1]);
+        plane
+    }
+
+    /// Window churn is the window's own business: a younger birth takes a
+    /// window seat and NOTHING about the curated field moves — no class
+    /// count, no ratchet victim, and the benched member stays benched.
+    #[test]
+    fn window_churn_never_touches_a_curated_member_or_its_bench() {
+        let mut plane = composed_stage_with_a_bench();
+        let field_before: Vec<u64> = plane
+            .member_ids_sorted()
+            .into_iter()
+            .filter(|id| plane.is_field_resting(*id))
+            .collect();
+
+        birth_at(&mut plane, 9, 100);
+        let (enter, exit, _) = delta_parts(plane.flush(Some(3_000)));
+        assert_eq!(enter, vec![9]);
+        assert_eq!(exit, vec![7], "the window's own trailing edge gave way");
+
+        assert_eq!(
+            plane.class_counts(),
+            [1, 4, 1],
+            "the class law did not feel the window move"
+        );
+        assert_eq!(
+            plane
+                .member_ids_sorted()
+                .into_iter()
+                .filter(|id| plane.is_field_resting(*id))
+                .collect::<Vec<_>>(),
+            field_before,
+            "every curated member kept its seat"
+        );
+        assert!(
+            plane.is_activity_member(5),
+            "the displacer is still standing"
+        );
+        assert!(
+            !plane.member_ids_sorted().contains(&4),
+            "and its bench is still benched"
+        );
+        assert_eq!(plane.tip_ids_sorted(), vec![8, 9]);
+    }
+
+    /// ⭐ The FIFO interplay. An endpoint the window did not want gets a
+    /// transient seat; when the window's trailing edge falls back past it —
+    /// here because the window's youngest member is GC'd — the endpoint
+    /// SETTLES into the window instead of waiting to be evicted.
+    ///
+    /// Settling is a role change in place, so nothing rides the wire for
+    /// it; what does ride is the consequence, which is that the field slot
+    /// the endpoint was borrowing goes back to the member it displaced. The
+    /// bench discipline is the eviction path's, reused exactly.
+    #[test]
+    fn an_endpoint_the_window_claims_settles_and_gives_its_bench_back() {
+        let mut plane = composed_stage_with_a_bench();
+
+        // The window's youngest member is GC'd. Its seat is now the oldest
+        // the window can offer, and endpoint 5 (block 55) qualifies.
+        plane.note_removed(8);
+        let (enter, exit, _) = delta_parts(plane.flush(Some(3_000)));
+        assert_eq!(exit, vec![8]);
+        assert_eq!(
+            enter,
+            vec![4],
+            "the benched curated member came back — that is the settle's whole wire trace"
+        );
+
+        assert!(plane.is_tip_member(5), "5 settled into the window");
+        assert!(
+            !plane.is_activity_member(5),
+            "…and gave the FIFO its slot back"
+        );
+        assert_eq!(plane.activity_len(), 0);
+        assert_eq!(
+            plane.class_counts(),
+            [1, 4, 1],
+            "the field is whole again, at the same ratio"
+        );
+        assert!(plane.is_field_resting(4), "restored as a curated member");
+        assert_eq!(plane.tip_ids_sorted(), vec![5, 7]);
+    }
+
+    /// An old cell that merely pulsed leaves exactly as it always has: the
+    /// window never wanted it, the FIFO evicts it on age, and the curated
+    /// member it displaced is restored by the same bench path.
+    #[test]
+    fn an_endpoint_the_window_does_not_want_leaves_with_its_bench_restored() {
+        let mut plane = composed_stage_with_a_bench();
+
+        // A second endpoint, also older than the window's edge, overflows
+        // the one-slot quota and evicts 5.
+        plane.note_activity(61, [4]);
+        let (enter, exit, _) = delta_parts(plane.flush(Some(3_000)));
+        assert_eq!(exit, vec![5], "evicted on age, not claimed by the window");
+        assert_eq!(
+            enter,
+            vec![4],
+            "and its bench came back — as the new displacer"
+        );
+
+        assert!(!plane.is_tip_member(5));
+        assert_eq!(
+            plane.tip_ids_sorted(),
+            vec![7, 8],
+            "the window did not move"
+        );
+        assert_eq!(plane.class_counts(), [1, 4, 1]);
+        assert_eq!(
+            plane.member_ids_sorted().len(),
+            8,
+            "the stage is still exactly full"
+        );
+    }
+
+    /// Reorg: a rolled-back birth is a SILENT canonical removal, and the
+    /// recency index has to lose it with the rollback — seat, candidacy and
+    /// rank. The cells it displaced are the youngest again and come back.
+    #[test]
+    fn a_rolled_back_birth_leaves_the_window_with_its_rollback() {
+        let mut plane = small_plane(6, 2); // window 4
+        for (id, block) in [(0u64, 10u64), (1, 11), (2, 12), (3, 13)] {
+            birth_at(&mut plane, id, block);
+        }
+        plane.flush(Some(1_000));
+        assert_eq!(plane.member_ids_sorted(), vec![0, 1, 2, 3]);
+
+        birth_at(&mut plane, 4, 14);
+        birth_at(&mut plane, 5, 15);
+        let (enter, exit, _) = delta_parts(plane.flush(Some(1_100)));
+        assert_eq!(enter, vec![4, 5]);
+        assert_eq!(exit, vec![0, 1]);
+
+        // The reorg parks both births.
+        plane.note_removed(4);
+        plane.note_removed(5);
+        let (enter, exit, _) = delta_parts(plane.flush(Some(1_200)));
+        assert_eq!(exit, vec![4, 5]);
+        assert_eq!(
+            enter,
+            vec![0, 1],
+            "the cells they displaced are the youngest live ones again"
+        );
+        assert_eq!(plane.member_ids_sorted(), vec![0, 1, 2, 3]);
+
+        // The replacement chain revives one at the height it now has: it
+        // re-enters through the ordinary birth path and ranks afresh.
+        birth_at(&mut plane, 4, 14);
+        let (enter, exit, _) = delta_parts(plane.flush(Some(1_300)));
+        assert_eq!(enter, vec![4]);
+        assert_eq!(exit, vec![0]);
     }
 
     // ═══ S2 composed mode ════════════════════════════════════════════
@@ -1853,7 +2842,7 @@ mod tests {
         assert_eq!(member_set(&plane), members_before);
 
         // Reorg at the stored anchor: degrade to canonical…
-        plane.chain_reorganized(10, &canonical);
+        plane.chain_reorganized(10);
         let (_, _, _, provenance) = full_delta_parts(plane.flush(Some(1_200)));
         let provenance = provenance.expect("degrade rides provenance");
         assert_eq!(provenance.mode, DisplayMode::Canonical);
@@ -1885,7 +2874,7 @@ mod tests {
         );
         plane.reservoir_replaced(&rec, &outpoint_index(&canonical), &canonical);
         plane.flush(Some(1_000));
-        plane.chain_reorganized(11, &canonical);
+        plane.chain_reorganized(11);
         assert!(plane.flush(Some(1_100)).is_none());
         assert_eq!(plane.mode(), DisplayMode::Composed);
     }
@@ -2062,9 +3051,11 @@ mod tests {
         sink
     }
 
-    /// The mainnet pathology this iteration exists to fix, reproduced at
-    /// full budget: a 6K reservoir plus a retained map that is ~99% plain
-    /// composes to roughly 1.8K/2.8K/7.3K instead of 2400/8400/1200,
+    /// The mainnet pathology this iteration exists to fix, reproduced in
+    /// the shipped configuration: 12,000 seats of which the recency window
+    /// standingly holds 1,200, so the composition is measured on the 10,800
+    /// curated field. A 6K reservoir plus a retained map that is ~99% plain
+    /// composes to roughly 1.8K/2.8K/6.1K instead of 2160/7560/1080,
     /// because dao and typed simply run out of candidates.
     ///
     /// Demand must be measured against the IDEAL quota. Against
@@ -2072,7 +3063,7 @@ mod tests {
     /// read zero forever and the lopsided stage would look healthy.
     #[test]
     fn demand_measures_the_ideal_quota_not_the_ratio_this_refresh_landed_on() {
-        let mut plane = small_plane(12_000, 512);
+        let mut plane = tip_plane(12_000, 512, DISPLAY_TIP_WINDOW);
         let sink = with_sink(&mut plane);
 
         // Retained canonical window, mainnet-shaped: a handful of dao,
@@ -2128,19 +3119,24 @@ mod tests {
         plane.flush(Some(1_000));
 
         // dao/typed take everything they have; plain absorbs the rest of
-        // the budget through the spill.
-        assert_eq!(plane.class_counts(), [1_848, 2_812, 7_340]);
+        // the FIELD through the spill.
+        assert_eq!(plane.class_counts(), [1_848, 2_812, 6_140]);
         assert_eq!(
             plane.class_counts().iter().sum::<usize>(),
+            DISPLAY_CURATED_FIELD,
+            "the field is full — the shortfall is in the RATIO, not the count"
+        );
+        assert_eq!(
+            plane.member_ids_sorted().len(),
             12_000,
-            "the stage is full — the shortfall is in the RATIO, not the count"
+            "and the window's 1,200 stand beside it: the stage is exactly full"
         );
 
         let demand = sink.read();
         assert!(demand.curated);
-        assert_eq!(demand.dao, 2_400 - 1_848);
-        assert_eq!(demand.typed, 8_400 - 2_812);
-        assert_eq!(demand.total(), 6_140);
+        assert_eq!(demand.dao, 2_160 - 1_848);
+        assert_eq!(demand.typed, 7_560 - 2_812);
+        assert_eq!(demand.total(), 5_060);
         assert!(!demand.is_empty());
     }
 
@@ -2208,7 +3204,7 @@ mod tests {
         plane.flush(Some(1_000));
         assert!(sink.read().curated && !sink.read().is_empty());
 
-        plane.chain_reorganized(10, &canonical);
+        plane.chain_reorganized(10);
         plane.flush(Some(1_100));
         assert_eq!(sink.read(), CompositionDemand::default(), "degrade");
 
@@ -2418,7 +3414,7 @@ mod tests {
         base_block: u64,
     ) -> u64 {
         const PER_CLASS_PER_TICK: usize = 256;
-        let quota = GalaxyCompositionTarget::for_total(12_000);
+        let quota = GalaxyCompositionTarget::for_total(DISPLAY_CURATED_FIELD);
         let mut previous = plane.class_counts();
         let mut rounds = 0u64;
         loop {
@@ -2457,8 +3453,13 @@ mod tests {
             );
             assert_eq!(
                 now.iter().sum::<usize>(),
+                DISPLAY_CURATED_FIELD,
+                "round {rounds}: the curated field is always exactly full"
+            );
+            assert_eq!(
+                plane.member_ids_sorted().len(),
                 12_000,
-                "round {rounds}: the stage is always exactly full"
+                "round {rounds}: field + recency window = the whole stage"
             );
             assert!(
                 now[0] <= quota.dao && now[1] <= quota.typed,
@@ -2473,26 +3474,34 @@ mod tests {
         }
     }
 
-    /// ⭐ The one-way ratchet, in two acts.
+    /// ⭐ The one-way ratchet, in two acts — on the CURATED FIELD, which
+    /// is the 12,000-seat stage less the recency window's standing 1,200.
     ///
     /// Act 1 — starting from the live mainnet shape, bounded rounds of
     /// supply climb monotonically until plain has nothing left it is
     /// ALLOWED to yield. Victims come only from the canonical-fallback
     /// group, and this reservoir's own 1,800 plain candidates are curated
-    /// members — 600 more than the whole 1,200 plain quota. So plain
-    /// floors at 1,800 rather than 1,200; the stage is exactly full
-    /// throughout, which makes those 600 slots plain will not give up
-    /// exactly the 600 typed the stage ends up short. The residue is
+    /// members — 720 more than the whole 1,080 plain quota. So plain
+    /// floors at 1,800 rather than 1,080; the field is exactly full
+    /// throughout, which makes those 720 slots plain will not give up
+    /// exactly the 720 typed the field ends up short. The residue is
     /// arithmetic, not a defect, and it stays published as demand.
     ///
     /// Act 2 — a refresh whose plain share does not EXCEED the quota
     /// removes that floor, and the same bounded rounds land exactly on
-    /// 2400/8400/1200. The adapter composes at the stage budget, so the
-    /// plain it really discovers sits exactly ON the quota; this half-size
+    /// 2160/7560/1080. The adapter composes at the FIELD's size, so the
+    /// plain it really discovers sits exactly ON the quota; this smaller
     /// record is the same case with room to spare.
+    ///
+    /// Throughout, the recency window holds its own 1,200 beside the field
+    /// and the ratchet never touches them: tip churn moves no class count,
+    /// and a plain member the ratchet releases is claimed by the window
+    /// only if it is one of the newest cells there are — which is the
+    /// freshness law doing exactly its job with a seat the class law just
+    /// gave up.
     #[test]
     fn bounded_rounds_climb_monotonically_and_the_ratchet_floors_on_curated_plain() {
-        let mut plane = small_plane(12_000, 512);
+        let mut plane = tip_plane(12_000, 512, DISPLAY_TIP_WINDOW);
         let sink = with_sink(&mut plane);
         let mut canonical: Vec<Cell> = Vec::new();
         for i in 0..48 {
@@ -2535,7 +3544,7 @@ mod tests {
         let index = outpoint_index(&canonical);
         plane.reservoir_replaced(&rec, &index, &canonical);
         plane.flush(Some(1_000));
-        assert_eq!(plane.class_counts(), [1_848, 2_812, 7_340]);
+        assert_eq!(plane.class_counts(), [1_848, 2_812, 6_140]);
 
         // Bounded rounds, exactly as the supervisor will drive them:
         // fetch at most 256 per class per tick, sized by the published
@@ -2545,7 +3554,7 @@ mod tests {
 
         assert_eq!(
             plane.class_counts(),
-            [2_400, 7_800, 1_800],
+            [2_160, 6_840, 1_800],
             "dao made its quota; plain would not go below its curated members"
         );
         assert_eq!(
@@ -2553,21 +3562,22 @@ mod tests {
             CompositionDemand {
                 curated: true,
                 dao: 0,
-                typed: 600,
+                typed: 720,
             },
             "the residue stays a STANDING demand, not a closed one"
         );
         assert_eq!(
-            plane.class_counts()[2] - GalaxyCompositionTarget::for_total(12_000).plain,
+            plane.class_counts()[2]
+                - GalaxyCompositionTarget::for_total(DISPLAY_CURATED_FIELD).plain,
             sink.read().typed,
             "plain's curated surplus IS the typed shortfall, slot for slot"
         );
         assert!(rounds >= 8, "the bound really did spread it over rounds");
 
-        // Act 2 — the same reservoir size, now shaped the way the quota
-        // asks for it. Plain brings 600 curated members instead of 1,800,
-        // so the floor is below the quota and the ratchet runs clean.
-        let quota = GalaxyCompositionTarget::for_total(6_000);
+        // Act 2 — a reservoir shaped the way the quota asks for it. Plain
+        // brings 540 curated members instead of 1,800, so the floor is
+        // below the quota and the ratchet runs clean.
+        let quota = GalaxyCompositionTarget::for_total(5_400);
         let shaped = record(
             500,
             (0..quota.dao)
@@ -2586,8 +3596,8 @@ mod tests {
 
         assert_eq!(
             plane.class_counts(),
-            [2_400, 8_400, 1_200],
-            "20:70:10, reached"
+            [2_160, 7_560, 1_080],
+            "20:70:10 of the curated field, reached"
         );
         assert!(sink.read().is_empty());
         assert!(rounds >= 8, "the bound really did spread it over rounds");

@@ -651,9 +651,13 @@ impl CellGalaxy {
     /// shape — 12k staged out of ~50k retained — and reaching it honestly
     /// would mean minting twelve thousand cells per test.
     #[cfg(test)]
-    pub(crate) fn with_display_limits(budget: DisplayBudget, activity_quota: usize) -> Self {
+    pub(crate) fn with_display_limits(
+        budget: DisplayBudget,
+        activity_quota: usize,
+        tip_window: usize,
+    ) -> Self {
         Self {
-            display: DisplayPlane::with_limits(budget, activity_quota),
+            display: DisplayPlane::with_limits(budget, activity_quota, tip_window),
             ..Self::new()
         }
     }
@@ -1191,7 +1195,7 @@ impl CellGalaxy {
             // Even a journal-less rollback invalidates a reservoir anchored
             // at or beyond the boundary (degrade → canonical mode; the
             // flush emits the coalesced transition delta).
-            self.display.chain_reorganized(number, &self.cells);
+            self.display.chain_reorganized(number);
             return vec![CellDelta::LinkPrune { from_block: number }];
         }
 
@@ -1331,9 +1335,9 @@ impl CellGalaxy {
         // or below the reservoir anchor drops the reservoir and rebuilds
         // canonical prefix membership from the rolled-back map. Ordered
         // AFTER the park/resurrect passes above so the plane rebuilds from
-        // the post-rollback container; the reorg exits and the mode
+        // the post-rollback presence mirror; the reorg exits and the mode
         // transition coalesce into the mutation's single Display delta.
-        self.display.chain_reorganized(number, &self.cells);
+        self.display.chain_reorganized(number);
 
         if counters_touched {
             deltas.push(CellDelta::Stats {
@@ -4427,11 +4431,17 @@ mod tests {
         assert!(section.members.len() <= DISPLAY_CELL_BUDGET as usize);
     }
 
-    /// Pin 1 — bootstrap fill: first (budget − quota) births in insertion
-    /// order; a birth beyond the full resting set enters as ACTIVITY
-    /// (D3), never as resting.
+    /// Pin 1 — bootstrap fill: the resting field IS the recency window, so
+    /// one tx's first (budget − quota) births fill it and the overflow
+    /// births of that same tx enter as ACTIVITY (D3) — they are the same
+    /// age, and the window is already full of them.
+    ///
+    /// A LATER birth is a different matter: it is younger than everything
+    /// standing, so it takes a window seat and the window's OLDEST member
+    /// gives it up. The resting prefix used to close behind the first
+    /// mutation and never open again; now it slides with the tip.
     #[test]
-    fn display_bootstrap_fills_resting_prefix_and_late_births_enter_as_activity() {
+    fn display_bootstrap_fills_the_window_and_a_later_birth_slides_it() {
         let mut g = make_galaxy();
         let outs: Vec<TxOutputInfo> = (0..RESTING_TARGET + 3)
             .map(|i| out(100 + i as u64, "0x"))
@@ -4451,30 +4461,40 @@ mod tests {
         assert_eq!(g.display.activity_len(), 3);
         assert!(g.display.is_activity_member(RESTING_TARGET as u64));
 
-        // A later birth beyond the full resting set: enters, but only as
-        // activity — the resting prefix is closed.
+        // A later birth: the newest cell on the chain, so it STANDS —
+        // and the oldest member of the window is the one that leaves.
         let late_id = RESTING_TARGET as u64 + 3;
+        let oldest = RESTING_TARGET as u64 - 1;
         let deltas = g.apply_mutation(&landed("0xlate", 2, 2_000, vec![], vec![out(7, "0x")]));
         let (enter, exit, provenance) = display_delta(&deltas).expect("late birth enters");
         assert_eq!(enter, vec![late_id]);
-        assert!(exit.is_empty());
+        assert_eq!(
+            exit,
+            &vec![oldest],
+            "the window's oldest member gave up the seat — one in, one out"
+        );
         assert!(
             provenance.is_none(),
             "provenance rides only when it changes"
         );
-        assert!(g.display.is_activity_member(late_id));
+        assert!(
+            !g.display.is_activity_member(late_id),
+            "the newest cell on the chain stands; it does not merely pulse"
+        );
         assert_eq!(g.display.resting_len(), RESTING_TARGET);
 
         let section = g.snapshot().display.expect("display always present");
-        assert_eq!(section.members.len(), RESTING_TARGET + 4);
+        assert_eq!(section.members.len(), RESTING_TARGET + 3);
         assert_eq!(section.budget.cells, DISPLAY_CELL_BUDGET);
         assert_eq!(section.budget.nerve_edges, DISPLAY_NERVE_EDGE_BUDGET);
         assert!(section.residents.is_empty());
         assert_display_invariants(&g);
     }
 
-    /// Pin 2 — a staged endpoint (even a fresh corpse) is a membership no-op;
-    /// only beyond-prefix endpoints enter.
+    /// Pin 2 — a staged endpoint (even a fresh corpse) is a membership
+    /// no-op. The tx's own output is the newest cell there is, so it takes
+    /// a window seat; the seat it takes belongs to the window's oldest
+    /// member, never to the consumed one, which keeps its corpse hold.
     #[test]
     fn display_endpoint_already_staged_is_membership_noop() {
         let mut g = make_galaxy();
@@ -4484,9 +4504,10 @@ mod tests {
         g.apply_mutation(&landed("0xbulk", 1, 1_000, vec![], outs));
 
         // Spend member 5 producing one output: endpoints are [5, new].
-        // 5 is staged (and now a corpse) → no-op; the new cell enters as
-        // activity.
+        // 5 is staged (and now a corpse) → no-op; the new cell stands in
+        // the recency window.
         let new_id = RESTING_TARGET as u64;
+        let oldest = RESTING_TARGET as u64 - 1;
         let deltas = g.apply_mutation(&landed(
             "0xswap",
             2,
@@ -4496,17 +4517,25 @@ mod tests {
         ));
         let (enter, exit, _) = display_delta(&deltas).expect("endpoint entry");
         assert_eq!(enter, vec![new_id]);
-        assert!(exit.is_empty(), "the consumed member keeps its seat");
-        assert!(g.display.is_activity_member(new_id));
-        assert!(g.display.member_ids_sorted().contains(&5));
+        assert_eq!(
+            exit,
+            &vec![oldest],
+            "the window's oldest gave way to the newest — not the corpse"
+        );
+        assert!(
+            g.display.member_ids_sorted().contains(&5),
+            "the consumed member keeps its seat"
+        );
+        assert!(!g.display.is_activity_member(new_id));
         assert_display_invariants(&g);
     }
 
-    /// Pin 3 — death: the member stays (corpse window); canonical GC → exit,
-    /// and the resting vacancy backfills from the insertion-order cursor
-    /// (promoting an already-staged activity member without wire churn).
+    /// Pin 3 — death: the member stays (corpse window); canonical GC →
+    /// exit, and the recency window refills the seat with the next-youngest
+    /// live cell (promoting an already-staged activity member without wire
+    /// churn when that is who it is).
     #[test]
-    fn display_corpse_stays_until_gc_then_cursor_backfills_with_promotion() {
+    fn display_corpse_stays_until_gc_then_the_window_refills_with_promotion() {
         let mut g = make_galaxy();
         let outs: Vec<TxOutputInfo> = (0..RESTING_TARGET + 1)
             .map(|i| out(1 + i as u64, "0x"))
@@ -4546,9 +4575,9 @@ mod tests {
         assert!(g.display.member_ids_sorted().contains(&0));
         assert!(g.cells.iter().any(|c| c.id == 0), "corpse still retained");
 
-        // GC past the corpse hold: 0 exits; the cursor's next candidate
-        // (over_id) is already staged as activity → promoted in place,
-        // so the only wire change is the exit.
+        // GC past the corpse hold: 0 exits; the window's next-youngest
+        // candidate (over_id) is already staged as activity → promoted in
+        // place, so the only wire change is the exit.
         let deltas = g.apply_mutation(&mined(4, "0xb4", death_a + CORPSE_HOLD_MS + 1));
         let (enter, exit, _) = display_delta(&deltas).expect("gc exit");
         assert!(enter.is_empty());
@@ -4557,7 +4586,7 @@ mod tests {
         assert_eq!(g.display.activity_len(), 0, "promotion freed the slot");
         assert!(!g.display.is_activity_member(over_id));
 
-        // Understudies exhausted: the next GC leaves the stage underfull…
+        // Candidates exhausted: the next GC leaves the stage underfull…
         // Eviction order is unchanged by the longer hold — a dead member
         // still leaves at ITS gc, in death order, just later.
         let death_b = death_a + CORPSE_HOLD_MS + 300;
@@ -4574,7 +4603,7 @@ mod tests {
         assert!(enter.is_empty(), "no backfill candidates left");
         assert_eq!(exit, &vec![1]);
 
-        // …and the next birth refills the vacancy as RESTING.
+        // …and the next birth takes the seat as a standing window member.
         let fresh_id = over_id + 1;
         let deltas = g.apply_mutation(&landed(
             "0xfresh",
@@ -5204,13 +5233,14 @@ mod tests {
             "prefix staffing asks for nothing"
         );
 
-        // Three residents against a 12,000-cell budget: the shortfall is
-        // almost the entire quota.
+        // Three residents against the curated field — the 12,000-cell
+        // budget less the recency window's 1,200 — so the shortfall is
+        // almost the entire quota of 2160/7560/1080.
         g.apply_mutation(&reservoir(1, (500_000, 500_001, 500_002)));
         let demand = sink.read();
         assert!(demand.curated);
-        assert_eq!(demand.dao, 2_400 - 1, "one dao staged of 2400");
-        assert_eq!(demand.typed, 8_400 - 3, "one resident + the two canonical");
+        assert_eq!(demand.dao, 2_160 - 1, "one dao staged of the field's 2160");
+        assert_eq!(demand.typed, 7_560 - 3, "one resident + the two canonical");
 
         g.apply_mutation(&Mutation::ChainReorganized { from_block: 1 });
         assert_eq!(
@@ -5468,6 +5498,7 @@ mod tests {
                 nerve_edges: 8,
             },
             1,
+            0,
         );
         g.apply_mutation(&landed(
             "0xa",
@@ -5906,6 +5937,7 @@ mod tests {
                 nerve_edges: 8,
             },
             4,
+            0,
         );
 
         // Block 1: ten cells, eight seats. Two of these never reach the
@@ -6009,7 +6041,11 @@ mod tests {
             "a corpse the client learned of on its enter still has to be dead"
         );
 
-        // Block 3: kill a resting member, so its GC opens a seat.
+        // Block 3: kill every cell the recency window ranks AHEAD of the
+        // strangers. The window refills youngest-first, so the second
+        // stranger — the oldest cell in the map — is reachable only once
+        // nothing younger is left off stage. Killing them opens the seats
+        // and empties the queue in front of it at the same time.
         step(
             &mut g,
             &mut shadow,
@@ -6017,16 +6053,17 @@ mod tests {
             &mut revision,
             mined(3, "0xblock3", 3_000),
         );
+        let ahead: Vec<OutPoint> = (0..corpse).map(|i| op("0xa", i as u32)).collect();
         step(
             &mut g,
             &mut shadow,
             &mut deltas,
             &mut revision,
-            landed("0xc", 3, 3_000, vec![op("0xa", 0)], vec![out(300, "0x")]),
+            landed("0xc", 3, 3_000, ahead, vec![out(300, "0x")]),
         );
 
         // Block 4: past the corpse hold, so the GC sweep runs and the
-        // vacancy refills — with the second stranger, alive.
+        // window refills — with the second stranger, alive.
         step(
             &mut g,
             &mut shadow,

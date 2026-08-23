@@ -69,7 +69,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
-use cknerv_core::projection::display_plane::DISPLAY_CELL_BUDGET;
+use cknerv_core::projection::display_plane::DISPLAY_CURATED_FIELD;
 use cknerv_core::{
     Cell, ChainAnchor, EnrichmentEvent, GalaxyCellCandidate, GalaxyCompositionCandidates,
     GalaxyCompositionRecord, GalaxyCompositionTarget,
@@ -263,15 +263,17 @@ fn read(path: &Path) -> Option<GalaxyCompositionRecord> {
 /// unverified. The hydrator re-reads each one and refuses any the node
 /// disagrees with.
 ///
-/// Targets are the display budget's class quotas, clamped to what the
-/// record actually holds — the restore is not an opportunity to seat more
-/// than was curated, only to seat again what survived.
+/// Targets are the CURATED FIELD's class quotas — the budget less the
+/// display plane's standing recency window, which is staffed from the
+/// canonical stream and is not the composition's to fill — clamped to what
+/// the record actually holds. The restore is not an opportunity to seat
+/// more than was curated, only to seat again what survived.
 fn candidates_for(
     record: &GalaxyCompositionRecord,
     as_of: ChainAnchor,
     updated_at_ms: u64,
 ) -> GalaxyCompositionCandidates {
-    let budget = GalaxyCompositionTarget::for_total(DISPLAY_CELL_BUDGET as usize);
+    let budget = GalaxyCompositionTarget::for_total(DISPLAY_CURATED_FIELD);
     GalaxyCompositionCandidates {
         source: restored_source(&record.source),
         as_of,

@@ -8,16 +8,27 @@
 //!
 //! Everything that answers "why" lives here: the composition classes, the
 //! 20:70:10 quota, admission ordering and dedupe, the displacement
-//! ratchet, and the refill queues. The dividing line, stated as a rule:
+//! ratchet, and the refill queues.
+//!
+//! One scoping rule runs through all of it: the policy staffs the CURATED
+//! FIELD, not the whole cell budget. The plane keeps a standing recency
+//! window (`DISPLAY_TIP_WINDOW`) of the newest live cells, staffed from the
+//! canonical stream alone, and those seats are not the composition's — so
+//! every quota, fullness and demand question below is asked through
+//! `Stage::field_*`. The class law and the freshness law each own their
+//! slots outright; neither is measured on the other's.
+//!
+//! The dividing line, stated as a rule:
 //!
 //! > **"who is on stage, and what they look like" belongs to the stage;
 //! > "who *should* be" belongs to the policy.**
 //!
 //! Two implementations:
 //!
-//! * [`CanonicalPolicy`] — prefix mode. Insertion order, class-blind: the
-//!   first `budget − quota` live-or-corpse cells rest, the remainder wait
-//!   in an insertion-order understudy queue.
+//! * [`CanonicalPolicy`] — prefix mode. Stateless: without a reservoir
+//!   there is nothing to staff, because the stage's whole resting field is
+//!   the display plane's recency window (the newest `budget − quota` live
+//!   cells, sliding with the chain tip).
 //! * [`CuratedPolicy`] — composed mode. A validated
 //!   [`GalaxyCompositionRecord`] staffs the stage by class at
 //!   [`GalaxyCompositionTarget`] ratios, with canonical fallback,
@@ -243,43 +254,34 @@ pub(crate) trait CompositionPolicy {
 
 // ══ canonical / prefix mode ═════════════════════════════════════════════
 
-/// Prefix staffing: canonical insertion order, no classes, no ratios.
-/// Births beyond a full resting set wait in an insertion-order understudy
-/// queue and are staged only when a vacancy opens (amortized cursor; the
-/// cursor never moves backward).
-pub(crate) struct CanonicalPolicy {
-    /// budget.cells − activity_quota — prefix mode's resting pool size.
-    resting_target: usize,
-    /// Insertion-order backfill candidates. May contain stale ids
-    /// (skipped at pop) and rebirth duplicates (skipped when they surface
-    /// already-resting).
-    understudies: VecDeque<u64>,
-}
+/// Prefix staffing: nothing to staff.
+///
+/// This used to hold an insertion-order understudy queue and stage the
+/// first `budget − quota` cells the map ever saw. That prefix froze: it was
+/// seeded in ADMISSION order, so a fresh birth queued behind every
+/// retained-but-unstaged cell and the stage kept showing the chain as of
+/// whenever it was built. The recency window replaced it wholesale — in
+/// prefix mode the plane gives the window the entire resting field, so
+/// "who should be resting" has exactly one answer (the newest live cells)
+/// and it is the stage's own recency index that answers it.
+///
+/// What is left for a policy to decide is nothing at all, which is why this
+/// type carries no state.
+pub(crate) struct CanonicalPolicy;
 
 impl CanonicalPolicy {
-    pub(crate) fn new(budget_cells: usize, activity_quota: usize) -> Self {
-        Self {
-            resting_target: budget_cells.saturating_sub(activity_quota),
-            understudies: VecDeque::new(),
-        }
+    pub(crate) fn new() -> Self {
+        Self
     }
 
-    /// Degrade rebuild: prefix membership recomputed from the canonical
-    /// container (first `resting_target` live-or-corpse cells in insertion
-    /// order, remainder understudies), standing activity members
-    /// re-admitted beyond the prefix. All changes flow through the stage's
-    /// touched log so the flush emits one coalesced diff.
-    pub(crate) fn rebuild(&mut self, stage: &mut Stage, cells: &[Cell]) {
+    /// Degrade rebuild: drop composed membership and let the recency window
+    /// restate it. Standing activity members are re-admitted so an endpoint
+    /// the window does not claim keeps its transient seat. All changes flow
+    /// through the stage's touched log so the flush emits one coalesced
+    /// diff — and the settle that flush begins with does the staffing.
+    pub(crate) fn rebuild(stage: &mut Stage) {
         let standing_activity = stage.standing_activity();
         stage.exit_all_members();
-        self.understudies.clear();
-
-        for cell in cells.iter().take(self.resting_target) {
-            stage.stage_resting(cell.id);
-        }
-        for cell in cells.iter().skip(self.resting_target) {
-            self.understudies.push_back(cell.id);
-        }
         for (block, id) in standing_activity {
             if stage.is_member(id) || !stage.is_present(id) {
                 continue;
@@ -287,26 +289,17 @@ impl CanonicalPolicy {
             stage.stage_activity(block, id);
         }
     }
-
-    /// Drop stale queue entries once they dominate. Amortized O(1) per
-    /// insertion: right after a compaction the queue is ⊆ present, so it
-    /// takes ≥ present + slack fresh pushes to trigger again.
-    fn maybe_compact(&mut self, stage: &Stage) {
-        if self.understudies.len() > stage.present_count() * 2 + UNDERSTUDY_COMPACT_SLACK {
-            self.understudies.retain(|id| stage.is_present(*id));
-        }
-    }
 }
 
 impl CompositionPolicy for CanonicalPolicy {
-    fn note_candidate(&mut self, stage: &Stage, id: u64) {
-        self.understudies.push_back(id);
-        self.maybe_compact(stage);
+    fn note_candidate(&mut self, _stage: &Stage, _id: u64) {
+        // The stage indexed the arrival by recency when it mirrored it;
+        // there is no second admission order worth keeping.
     }
 
     fn note_exit(&mut self, _stage: &mut Stage, _id: u64, _role: MemberRole) {
         // Prefix mode keeps no per-member bookkeeping: the vacancy is
-        // simply refilled from the cursor at the next flush.
+        // refilled by the recency window at the next flush.
     }
 
     fn note_resident_retired(
@@ -318,28 +311,9 @@ impl CompositionPolicy for CanonicalPolicy {
         // Unreachable: prefix mode never stages residents.
     }
 
-    /// Advance the insertion-order cursor to fill resting vacancies.
-    /// Candidates that left the map are skipped; a candidate already on
-    /// stage as activity is PROMOTED in place (membership unchanged, no
-    /// wire noise, activity slot freed) — it is, after all, the next cell
-    /// in canonical insertion order.
-    fn fill_vacancies(&mut self, stage: &mut Stage) {
-        while stage.resting_count() < self.resting_target {
-            let Some(id) = self.understudies.pop_front() else {
-                break;
-            };
-            if !stage.is_present(id) {
-                continue; // removed while waiting in the queue
-            }
-            match stage.role_of(id) {
-                Some(MemberRole::Activity { .. }) => stage.promote_to_resting(id),
-                Some(MemberRole::Resting) => {
-                    // Duplicate queue entry from a removal+rebirth cycle.
-                }
-                None => stage.stage_resting(id),
-            }
-        }
-    }
+    /// Nothing to fill: prefix mode's whole resting field belongs to the
+    /// recency window, which the plane settles before calling this.
+    fn fill_vacancies(&mut self, _stage: &mut Stage) {}
 
     fn admit_activity(&mut self, stage: &mut Stage, block: u64, id: u64) {
         stage.stage_activity(block, id);
@@ -356,11 +330,6 @@ impl CompositionPolicy for CanonicalPolicy {
         // top-up lands in the window between a degrade and the next
         // refresh.
         ids.to_vec()
-    }
-
-    #[cfg(test)]
-    fn queued_len(&self) -> usize {
-        self.understudies.len()
     }
 }
 
@@ -413,14 +382,16 @@ impl CuratedPolicy {
     /// * **Classes**: `asset_kind` dao → Dao, native → Plain, everything
     ///   else → Typed. Quotas come from the shared
     ///   [`GalaxyCompositionTarget::for_total`] (20:70:10 bps) over the
-    ///   FULL cell budget.
+    ///   CURATED FIELD (`budget` here) — the cell budget less the display
+    ///   plane's recency reserve. The class law and the freshness law each
+    ///   own their slots outright; neither is measured on the other's.
     /// * **Fill**: each class fills from its reservoir bucket first
     ///   (record rank order), with D5 outpoint dedupe at admission — an
     ///   outpoint retained canonically resolves to the canonical id/cell;
     ///   only genuinely off-map outpoints stage as *residents*. Then one
     ///   canonical fallback walk in insertion order admits cells into
     ///   their own classes until every quota is satisfied (whole-map walk
-    ///   when the budget is below the old client's ≥10 early-stop guard).
+    ///   when the field is below the old client's ≥10 early-stop guard).
     ///   Final per-class targets are computed on `min(budget, admitted)`;
     ///   classes that run dry spill round-robin dao → typed → plain (one
     ///   candidate per class per round — the old client's exact spill
@@ -648,7 +619,11 @@ impl CuratedPolicy {
                     }
                     continue;
                 }
-                Some(MemberRole::Resting) => continue, // stale duplicate
+                // Already standing — in the field from a rebirth cycle, or
+                // held by the recency window. Either way the entry is spent;
+                // a member that later LEAVES a tip slot is no more re-queued
+                // than any other member that leaves the stage.
+                Some(MemberRole::Resting | MemberRole::Tip) => continue,
                 None => {}
             }
             // Stage under the candidate's CURRENT class — rebirth cycles
@@ -692,6 +667,9 @@ impl CompositionPolicy for CuratedPolicy {
                 // The class vacancy refills at the next flush.
             }
             MemberRole::Activity { .. } => self.restore_bench(stage, id, class),
+            MemberRole::Tip => {
+                debug_assert!(false, "the plane never routes a tip exit to the policy")
+            }
         }
     }
 
@@ -729,20 +707,20 @@ impl CompositionPolicy for CuratedPolicy {
     /// round-robin) so the member COUNT holds even when the ratio can't
     /// (invariant I1's "when candidates suffice" proviso).
     fn fill_vacancies(&mut self, stage: &mut Stage) {
-        let dynamic_target = stage.dynamic_target();
+        let dynamic_target = stage.field_dynamic_target();
         for class in CLASS_ORDER {
             while self.class_counts[class as usize] < self.class_targets[class as usize]
-                && stage.member_count() < dynamic_target
+                && stage.field_member_count() < dynamic_target
             {
                 if !self.pop_stage_one(stage, class) {
                     break;
                 }
             }
         }
-        'top_up: while stage.member_count() < dynamic_target {
+        'top_up: while stage.field_member_count() < dynamic_target {
             let mut progressed = false;
             for class in CLASS_ORDER {
-                if stage.member_count() >= dynamic_target {
+                if stage.field_member_count() >= dynamic_target {
                     break 'top_up;
                 }
                 if self.pop_stage_one(stage, class) {
@@ -766,8 +744,8 @@ impl CompositionPolicy for CuratedPolicy {
             .kind_of(id)
             .map(class_of)
             .expect("caller verified canonical presence");
-        let dynamic_target = stage.dynamic_target();
-        let enter = if stage.member_count() < dynamic_target {
+        let dynamic_target = stage.field_dynamic_target();
+        let enter = if stage.field_member_count() < dynamic_target {
             true
         } else if let Some((&key, &victim)) =
             self.resting_priority[class as usize].iter().next_back()
@@ -797,7 +775,7 @@ impl CompositionPolicy for CuratedPolicy {
     }
 
     fn demand(&self, stage: &Stage) -> CompositionDemand {
-        let target = GalaxyCompositionTarget::for_total(stage.budget_cells());
+        let target = GalaxyCompositionTarget::for_total(stage.field_cells());
         let ideal = [target.dao, target.typed, target.plain];
         // Ask only for what could actually be placed. A full stage makes
         // room by taking it from a class that is over its own quota, so
@@ -807,7 +785,11 @@ impl CompositionPolicy for CuratedPolicy {
         let mut room = (0..3)
             .map(|c| self.class_counts[c].saturating_sub(ideal[c]))
             .sum::<usize>()
-            .saturating_add(stage.budget_cells().saturating_sub(stage.member_count()));
+            .saturating_add(
+                stage
+                    .field_cells()
+                    .saturating_sub(stage.field_member_count()),
+            );
         let dao = ideal[CompositionClass::Dao as usize]
             .saturating_sub(self.class_counts[CompositionClass::Dao as usize])
             .min(room);
@@ -839,7 +821,7 @@ impl CompositionPolicy for CuratedPolicy {
     /// it lost its slot to a better-qualified cell, not to a death, and
     /// the next vacancy in its class should take it first.
     fn supply(&mut self, stage: &mut Stage, ids: &[u64]) -> Vec<u64> {
-        let target = GalaxyCompositionTarget::for_total(stage.budget_cells());
+        let target = GalaxyCompositionTarget::for_total(stage.field_cells());
         let ideal = [target.dao, target.typed, target.plain];
         let mut declined = Vec::new();
         for &id in ids {
@@ -854,7 +836,7 @@ impl CompositionPolicy for CuratedPolicy {
                 declined.push(id); // this class is whole again
                 continue;
             }
-            if stage.member_count() >= stage.dynamic_target() {
+            if stage.field_member_count() >= stage.field_dynamic_target() {
                 let Some((victim, victim_class)) = self.take_yielder(&ideal) else {
                     // Nobody may give way without breaking the ratchet.
                     declined.push(id);
@@ -950,9 +932,11 @@ impl CuratedPolicy {
                     self.class_queues[class as usize].push_front(chained.id);
                 }
             }
-            Some(MemberRole::Resting) => {
-                // Already resting again through another path — the vacancy
-                // stands and the refill queues cover it.
+            Some(MemberRole::Resting | MemberRole::Tip) => {
+                // Already standing again through another path — refilled by
+                // the field, or claimed by the recency window because it is
+                // one of the newest cells there are. Either way the class
+                // vacancy stands and the refill queues cover it.
             }
             None => {
                 if !stage.is_stageable(b) {

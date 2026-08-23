@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, watch, Semaphore};
 use tokio::task::{JoinHandle, JoinSet};
 
-use cknerv_core::projection::display_plane::DISPLAY_CELL_BUDGET;
+use cknerv_core::projection::display_plane::DISPLAY_CURATED_FIELD;
 use cknerv_core::{
     CompositionDemand, EnrichmentEvent, EnrichmentSourceState, EnrichmentSourceStatus,
     GalaxyCompositionTarget,
@@ -94,7 +94,7 @@ const TOP_UP_BURST_MAX_ROUNDS: u32 = 64;
 /// exactly the position a booting one is, and a young process with a
 /// well-staffed stage has nothing to hurry about.
 fn top_up_burst_demand() -> usize {
-    GalaxyCompositionTarget::for_total(DISPLAY_CELL_BUDGET as usize).typed / 20
+    GalaxyCompositionTarget::for_total(DISPLAY_CURATED_FIELD).typed / 20
 }
 
 const MAX_CONCURRENT_REFRESHES: usize = 3;

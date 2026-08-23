@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use reqwest::StatusCode;
 use url::Url;
 
-use cknerv_core::projection::display_plane::DISPLAY_CELL_BUDGET;
+use cknerv_core::projection::display_plane::DISPLAY_CURATED_FIELD;
 use cknerv_core::{
     ActivityFeedItem, ActivityFeedRecord, AssetEcosystemCategory, AssetEcosystemLeader,
     AssetEcosystemRecord, CellSemanticRecord, ChainAnchor, ChainCensus, ChainCensusClasses,
@@ -161,14 +161,20 @@ const MAX_WIRE_SAFE_U64: u64 = 9_007_199_254_740_991;
 /// 6,000; the budget doubled and the cap did not follow, which is the only
 /// reason a cold boot ever showed half a curated galaxy.
 ///
-/// At the full budget the class quota is `{dao 2_400, typed 8_400,
-/// plain 1_200}`, so the composition curates exactly 1,200 plain — the
+/// It is the CURATED FIELD, not the whole cell budget: the display plane
+/// keeps a standing recency window (`DISPLAY_TIP_WINDOW`) staffed from the
+/// canonical stream alone, and those seats are not the composition's to
+/// fill. Curating more than the field can seat spends index pages and node
+/// batches on cells nobody will see.
+///
+/// Over the field the class quota is `{dao 2_160, typed 7_560,
+/// plain 1_080}`, so the composition curates exactly 1,080 plain — the
 /// plain quota, to the slot. That matters because the ratchet never
 /// displaces a curated member to reach a class target, so curated plain is
-/// a floor under the plain class: at the full size that floor sits ON the
-/// quota instead of above it, and 20/70/10 stays reachable rather than
+/// a floor under the plain class: at the field's size that floor sits ON
+/// the quota instead of above it, and 20/70/10 stays reachable rather than
 /// being held open by plain's own surplus.
-const MAX_GALAXY_COMPOSITION_TARGET: usize = DISPLAY_CELL_BUDGET as usize;
+const MAX_GALAXY_COMPOSITION_TARGET: usize = DISPLAY_CURATED_FIELD;
 /// Candidates a single top-up may offer per class. Bounds one tick's
 /// node work to ~4 `get_live_cell` batches per class; a larger shortfall
 /// simply takes more ticks, which is what keeps a several-thousand-cell
@@ -218,7 +224,7 @@ impl CkbadgerEnrichmentSource {
 
     /// Enable bounded indexed discovery backed by canonical CKB hydration.
     /// The requested target is clamped to
-    /// [`MAX_GALAXY_COMPOSITION_TARGET`] — the stage's own budget; larger
+    /// [`MAX_GALAXY_COMPOSITION_TARGET`] — the stage's curated field; larger
     /// canonical reservoirs remain available to live pulse routing.
     pub fn with_galaxy_composition_hydrator<H>(mut self, hydrator: H, target: usize) -> Self
     where
