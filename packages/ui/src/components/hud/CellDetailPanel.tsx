@@ -392,12 +392,27 @@ function collectionPopulationReadout(
   return parts.length > 0 ? parts.join(' · ') : null;
 }
 
-/** The population's storage mix as a COUNT breakdown, for the composition
- *  row's provenance. Never a ratio and never a bar: the question a reader has
- *  about a collection is how many of its objects sit in each tier, and a
- *  percentage of a population whose size is stated one row above says nothing
- *  the two numbers do not already. Counts the index never stated are simply
- *  not listed. */
+/** The three tiers a collection's census names outright, in the order it names
+ *  them. On-chain and pure are not in this list because they do not read as
+ *  siblings of it: `agg_onchain` is the index's own field and already counts
+ *  the BTC+CKB objects among the pure ones, `agg_pure_ckb` is the subset that
+ *  never leaves CKB, and the wire carries no separate BTC figure. So the pure
+ *  count is stated INSIDE the on-chain one wherever both arrived, rather than
+ *  beside it as if the two could be added up — and both readouts below fold it
+ *  the same way. */
+const COMPOSITION_MIX_TERMS = [
+  ['agg_decentralized', 'DECENTRALIZED'],
+  ['agg_centralized', 'CENTRALIZED'],
+  ['agg_unknown', 'UNKNOWN'],
+] as const;
+
+/** The population's storage mix as a COUNT breakdown, EVERY count the index
+ *  stated — the block's provenance, where a reader who wants the whole census
+ *  goes. Never a ratio and never a bar: the question a reader has about a
+ *  collection is how many of its objects sit in each tier, and a percentage of
+ *  a population whose size is stated a row above says nothing the two numbers
+ *  do not already. Counts the index never stated are simply not listed; a
+ *  count it stated as zero IS a fact and is listed. */
 function compositionCountsReadout(
   facet: SemanticFacet | null,
 ): string | null {
@@ -405,11 +420,6 @@ function compositionCountsReadout(
   const parts: string[] = [];
   const onchain = count('agg_onchain');
   const pure = count('agg_pure_ckb');
-  // `agg_onchain` is the index's own field and already counts BTC+CKB objects
-  // among the pure ones; `agg_pure_ckb` is the subset that never leaves CKB,
-  // and the wire carries no separate BTC figure. So the pure count is stated
-  // INSIDE the on-chain one rather than beside it as if they were siblings
-  // that could be added up.
   if (onchain !== null) {
     parts.push(pure !== null
       ? `on-chain ${groupCount(onchain)} (pure ${groupCount(pure)})`
@@ -417,28 +427,55 @@ function compositionCountsReadout(
   } else if (pure !== null) {
     parts.push(`pure ${groupCount(pure)}`);
   }
-  for (const [key, word] of [
-    ['agg_decentralized', 'decentralized'],
-    ['agg_centralized', 'centralized'],
-    ['agg_unknown', 'unknown'],
-  ] as const) {
+  for (const [key, word] of COMPOSITION_MIX_TERMS) {
     const value = count(key);
-    if (value !== null) parts.push(`${word} ${groupCount(value)}`);
+    if (value !== null) parts.push(`${word.toLowerCase()} ${groupCount(value)}`);
+  }
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
+
+/** The same mix, printed. A tier holding NONE of a collection's objects is a
+ *  term that costs a reader a glance and tells them nothing — `unknown 0` on
+ *  screen is four characters saying the census is complete, which the four
+ *  terms beside it already said. So the visible line omits the empty tiers and
+ *  the title keeps them, and the two functions differ in exactly that. */
+function compositionMixReadout(facet: SemanticFacet | null): string | null {
+  const count = (key: string) => {
+    const value = semanticFacetNumber(facet, key);
+    return value !== null && value > 0 ? value : null;
+  };
+  const parts: string[] = [];
+  const onchain = count('agg_onchain');
+  const pure = count('agg_pure_ckb');
+  if (onchain !== null) {
+    parts.push(pure !== null
+      ? `${groupCount(onchain)} ON-CHAIN (${groupCount(pure)} PURE)`
+      : `${groupCount(onchain)} ON-CHAIN`);
+  } else if (pure !== null) {
+    parts.push(`${groupCount(pure)} PURE`);
+  }
+  for (const [key, word] of COMPOSITION_MIX_TERMS) {
+    const value = count(key);
+    if (value !== null) parts.push(`${groupCount(value)} ${word}`);
   }
   return parts.length > 0 ? parts.join(' · ') : null;
 }
 
 /** The content issues the index's decode worker found in THIS object — a
  *  source it could not read, media dangling off a dead reference — as a chip
- *  beside the STORAGE label, in the same grammar the CODE row's lifecycle word
- *  wears. Upstream emits the key only once there is something to count, so a
- *  chip present at all means a number greater than zero. */
-function storageIssuesChip(issues: string | null): ReactNode {
-  if (!issues) return undefined;
+ *  on the COMPOSITION heading, in the same grammar the CODE row's lifecycle
+ *  word wears. Upstream emits the key only once there is something to count,
+ *  so a chip present at all means a number greater than zero, and only a spore
+ *  ever carries one: M-NFT publishes no per-item media profile to find issues
+ *  in. The attribute keeps its old `storage` spelling — the row it was named
+ *  for is gone, but the oracles that read it are not. */
+function compositionIssuesChip(issues: string | null): ReactNode {
+  if (!issues) return null;
   return (
     <span
       data-cell-storage-issues={issues}
-      style={{ flex: '0 0 auto', ...plateStateChip(HUD_COLORS.caution) }}
+      title={`${issues} content issue${issues === '1' ? '' : 's'} reported by the index.`}
+      style={{ flex: '0 0 auto', marginLeft: 'auto', ...plateStateChip(HUD_COLORS.caution) }}
     >
       {`${issues} ISSUES`}
     </span>
@@ -495,6 +532,73 @@ function ClusterRow({
     >
       {caption ? <PlateReadoutCaption>{caption}</PlateReadoutCaption> : null}
     </PlateReadoutRow>
+  );
+}
+
+/** WHERE a digital object's content physically lives — the durability half of
+ *  what it is worth — as one tinted card under the OBJECT row that names it.
+ *
+ *  It replaces two rows that said the same sentence twice: the collection's
+ *  aggregate tier and this object's own. They were never two facts a reader
+ *  was comparing — an object measured on its own account IS the answer, and the
+ *  population's mix is the answer only when nobody measured this one. The index
+ *  already resolves that, and the facet's `state` is the resolution, so this
+ *  block reads the headline rather than choosing between two attributes or
+ *  recomputing one from the other.
+ *
+ *  A card rather than a row because the fact outranks its neighbours: ckbadger
+ *  states it as a tinted card too, and this is that card in HUD type — the
+ *  tier's colour on the leading edge and washed faintly behind the words, so
+ *  the durability reads off the shape of the block before a word of it does. */
+function CompositionBlock({ tier, mix, issues, title, revealAt }: {
+  /** The wire spelling of the headline tier — the block's live oracle. */
+  tier: string;
+  /** Counts line, empty tiers already omitted, or null when none arrived. */
+  mix: string | null;
+  issues: string | null;
+  title?: string;
+  revealAt: number;
+}) {
+  const revealed = useCellScanStepLit(revealAt);
+  const color = compositionTierColor(tier);
+  return (
+    <div
+      data-cell-composition-block={tier}
+      title={title}
+      style={{
+        minWidth: 0,
+        padding: '3px 8px 4px',
+        // The rail every evidence row hangs on, twice as thick and in the
+        // tier's own colour: this is a card among rows, and the edge is what
+        // says so before the type does.
+        borderLeft: `2px solid ${rgba(color, 0.55)}`,
+        // A wash, never a fill. The plate under this block is near-opaque by
+        // construction and everything inside it tints DOWN onto that ground —
+        // a tint heavy enough to read as a surface of its own would lift the
+        // block off the plate it belongs to, which is the one thing the plate
+        // grammar does not allow.
+        background: rgba(color, 0.07),
+        ...revealInk(revealed),
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+        <span style={{ flex: '0 0 auto', fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, letterSpacing: 1.4, color: HUD_COLORS.dim }}>
+          COMPOSITION
+        </span>
+        {compositionIssuesChip(issues)}
+      </div>
+      <div
+        data-cell-composition-tier={tier}
+        style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: HUD_TYPE.value, lineHeight: 1.2, color }}
+      >
+        {compositionTierLabel(tier)}
+      </div>
+      {mix ? (
+        <PlateReadoutCaption style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <span data-cell-composition-counts="true">{mix}</span>
+        </PlateReadoutCaption>
+      ) : null}
+    </div>
   );
 }
 
@@ -1183,9 +1287,12 @@ export default function CellDetailPanel({
     ? facet
     : null;
   // ——— Whose kin, and where the content lives ————————————————————————
-  // Two facets the index attaches to a digital object. Read BY KIND rather
-  // than by namespace, so the day an `mnft` namespace states the same two
-  // things these rows already speak for it.
+  // Two facets the index attaches to a digital object. Read BY KIND and never
+  // by namespace: the family is `spore` for one object and `mnft` for the
+  // next, both state these same two things, and a read that filtered on the
+  // namespace would silently drop a whole family the day it arrived — which is
+  // exactly what it did until the index started answering for M-NFT. The
+  // namespace is a LABEL here and nothing else.
   const collectionFacet = presentedSemanticRecord?.facets.find(
     (candidate) => candidate.kind === 'collection',
   ) ?? null;
@@ -1199,7 +1306,10 @@ export default function CellDetailPanel({
   // cannot make, because it would print a lie in the panel's own voice.
   const collectionRole = semanticFacetValue(collectionFacet, 'role');
   const collectionName = collectionFacet?.state?.trim() || null;
-  const collectionClusterId = semanticFacetValue(collectionFacet, 'cluster_id');
+  const collectionClusterId = semanticFacetValue(
+    collectionFacet,
+    'collection_id',
+  );
   const collectionDescription = semanticFacetValue(
     collectionFacet,
     'description',
@@ -1237,21 +1347,34 @@ export default function CellDetailPanel({
   const collectionIdRow = collectionRole === 'item' && collectionName
     ? collectionClusterId
     : null;
-  // Population and mix are facts about a group, so they belong to the two
-  // roles that HAVE one.
+  // What that id's family CALLS a collection. Spore keys objects by a cluster
+  // and M-NFT by a class, and printing either family's word over the other's
+  // id would be the register naming a thing that does not exist upstream. A
+  // third family arriving is a group this side has no word for yet, and says
+  // so. The row keyword stays `cluster-id` — the label is what changed, and
+  // the oracles that read the attribute are not part of that change.
+  const collectionIdLabel = collectionFacet?.namespace === 'spore'
+    ? 'CLUSTER'
+    : collectionFacet?.namespace === 'mnft'
+      ? 'CLASS'
+      : 'COLLECTION ID';
+  // Population is a fact about a group, so it belongs to the two roles that
+  // HAVE one.
   const collectionKin = collectionRole === 'item'
     || collectionRole === 'cluster';
   const populationReadout = collectionKin
     ? collectionPopulationReadout(collectionFacet)
     : null;
-  const aggregateTier = collectionKin
-    ? semanticFacetValue(compositionFacet, 'agg_tier')
-    : null;
+  // The headline is the facet's `state` and is never recomputed here. The
+  // index states this object's OWN tier when it measured one and the
+  // population's otherwise — a spore item cell has both keys and a cluster
+  // Cell, an M-NFT token and an M-NFT class have only the aggregate — and that
+  // choice is upstream's to make once rather than this panel's to make twice.
+  const compositionHeadline = compositionFacet?.state?.trim() || null;
   const compositionCounts = compositionCountsReadout(compositionFacet);
-  // This object's own storage, which a cluster Cell has none of — the headline
-  // state can be the aggregate's, so the row waits for the item's own key
-  // rather than inferring one from the other.
-  const itemTier = semanticFacetValue(compositionFacet, 'item_tier');
+  const compositionMix = compositionMixReadout(compositionFacet);
+  // Only a spore ever carries this: M-NFT publishes no per-item media profile
+  // upstream, so there is nothing to have found issues in.
   const itemIssues = semanticFacetValue(compositionFacet, 'item_issues');
   const assetAmount = presentedSemanticRecord
     ? semanticAssetAmountReadout(presentedSemanticRecord)
@@ -1562,10 +1685,11 @@ export default function CellDetailPanel({
                       revealAt={semanticsRevealAt(1)}
                     />
                   ) : null}
-                  {/* Whose kin the object is, then what that kin is made of,
-                    * then the object itself — collection facts first, so the
+                  {/* Whose kin the object is, then the object itself, then
+                    * where its content lives — collection facts first, so the
                     * OBJECT row reads as one specimen out of the population
-                    * stated above it. */}
+                    * stated above it, and the durability of its bytes sits
+                    * under what those bytes are. */}
                   {collectionStated ? (
                     <ClusterRow
                       row="collection"
@@ -1581,7 +1705,7 @@ export default function CellDetailPanel({
                     <ClusterRow
                       row="cluster-id"
                       accent={assetAccent}
-                      label="CLUSTER"
+                      label={collectionIdLabel}
                       value={midTruncate(collectionIdRow, 12, 9)}
                       title={collectionIdRow}
                       revealAt={semanticsRevealAt(2)}
@@ -1596,20 +1720,6 @@ export default function CellDetailPanel({
                       revealAt={semanticsRevealAt(1)}
                     />
                   ) : null}
-                  {aggregateTier ? (
-                    <ClusterRow
-                      row="composition"
-                      accent={assetAccent}
-                      label="COMPOSITION"
-                      value={compositionTierLabel(aggregateTier)}
-                      valueColor={compositionTierColor(aggregateTier)}
-                      title={[
-                        compositionTierDescription(aggregateTier),
-                        compositionCounts,
-                      ].filter(Boolean).join(' ')}
-                      revealAt={semanticsRevealAt(1)}
-                    />
-                  ) : null}
                   {assetObject ? (
                     <ClusterRow
                       row="object"
@@ -1619,21 +1729,20 @@ export default function CellDetailPanel({
                       revealAt={semanticsRevealAt(1)}
                     />
                   ) : null}
-                  {/* Where THIS object's content lives, directly under what it
-                    * is: the durability of the bytes named one row up. */}
-                  {itemTier ? (
-                    <ClusterRow
-                      row="storage"
-                      accent={assetAccent}
-                      label="STORAGE"
-                      value={compositionTierLabel(itemTier)}
-                      valueColor={compositionTierColor(itemTier)}
-                      badge={storageIssuesChip(itemIssues)}
+                  {/* Where the content named one row up physically lives —
+                    * what it holds, then where that lives. One block, not the
+                    * two rows this used to be: the population's mix and this
+                    * object's own tier were the same sentence printed twice,
+                    * and the index already decides which of them is the
+                    * answer for THIS Cell. */}
+                  {compositionHeadline ? (
+                    <CompositionBlock
+                      tier={compositionHeadline}
+                      mix={compositionMix}
+                      issues={itemIssues}
                       title={[
-                        compositionTierDescription(itemTier),
-                        itemIssues
-                          ? `${itemIssues} content issue${itemIssues === '1' ? '' : 's'} reported by the index.`
-                          : null,
+                        compositionTierDescription(compositionHeadline),
+                        compositionCounts,
                       ].filter(Boolean).join(' ')}
                       revealAt={semanticsRevealAt(1)}
                     />
