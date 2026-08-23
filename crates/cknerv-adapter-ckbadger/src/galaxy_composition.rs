@@ -3058,11 +3058,16 @@ pub(crate) mod tests {
         assert_eq!(capacities, vec![100, 80, 70, 90]);
     }
 
+    /// The two class targets a full-size composition actually asks for —
+    /// dao and typed at the stage budget — and what each costs in
+    /// discovery once the 125% overfetch is on top.
     #[test]
     fn composition_overfetch_is_bounded() {
         assert_eq!(overfetch(0), 0);
-        assert_eq!(overfetch(1_200), 1_500);
-        assert_eq!(overfetch(4_200), 5_250);
+        assert_eq!(overfetch(2_400), 3_000);
+        assert_eq!(overfetch(8_400), 10_500);
+        // Rounds up: a target of one still costs a candidate to miss on.
+        assert_eq!(overfetch(1), 2);
     }
 
     // ── T2: the ranked roster ─────────────────────────────────────

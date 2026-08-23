@@ -735,8 +735,9 @@ ckbadger only discovers and ranks outpoints efficiently:
 
 - Candidate targets are divided 20/70/10 across DAO, typed, and plain, with
   125% discovery overfetch.
-- The initial curated reservoir is capped at 6,000 candidates; canonical
-  fallback fills the rest of the display stage.
+- The initial curated reservoir is capped at the display cell budget (12,000)
+  and composed in one pass, so canonical fallback fills only what discovery
+  came up short of rather than half the stage.
 - Paging, asset/address groups, and source concurrency are bounded.
 - A candidate's birth block may not be newer than its record anchor.
 - The CKB hydrator rechecks live state, capacity, script class, complete
@@ -1277,8 +1278,9 @@ tip advancement, Ctrl-C persistence, and port release.
 | Semantic transactions | 2,048 | Enrichment projection |
 | Script census entries | 24 per role, tail counted | Core projection |
 | Script registry entries | 256 | Core wire contract |
-| Curated composition candidates | 6,000 | ckbadger source |
+| Curated composition candidates | 12,000 (the display cell budget) | ckbadger source |
 | Composition top-up | 256 per class per tick | ckbadger source |
+| Top-up rounds run back-to-back | 64 per burst | Enrichment supervisor |
 | Entity/projection replay ring | 4,096 entries | Server |
 | One-frame reconnect replay budget | 2,048 entries | Server |
 | Canonical/enrichment channel | 4,096 / 256 | Server |

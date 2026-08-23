@@ -12,8 +12,10 @@ use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, watch, Semaphore};
 use tokio::task::{JoinHandle, JoinSet};
 
+use cknerv_core::projection::display_plane::DISPLAY_CELL_BUDGET;
 use cknerv_core::{
     CompositionDemand, EnrichmentEvent, EnrichmentSourceState, EnrichmentSourceStatus,
+    GalaxyCompositionTarget,
 };
 
 use crate::enrichment::{CanonicalContext, EnrichmentSource};
@@ -67,6 +69,33 @@ const ENRICHMENT_GALAXY_TOP_UP_REFRESH: Duration = Duration::from_secs(5);
 const TOP_UP_STALL_GRACE: u32 = 3;
 /// Ceiling on the doubling: 5s << 6 ≈ 5 minutes.
 const TOP_UP_MAX_BACKOFF_SHIFT: u32 = 6;
+/// Consecutive top-up rounds one burst may run back-to-back.
+///
+/// A stop, not a budget. Each round is bounded by the source to a few
+/// hundred candidates per class, so sixty-four of them offer several times
+/// the whole stage — far past any shortfall a boot or a degrade can open,
+/// which is the margin. What the number is really for is the case where the
+/// source keeps answering and the plane keeps declining: the burst has to
+/// end on its own even when nothing tells it to.
+const TOP_UP_BURST_MAX_ROUNDS: u32 = 64;
+
+/// The shortfall above which the top-up stops waiting out its cadence.
+///
+/// Five percent of the typed quota. Below it lies ordinary drift — a
+/// handful of deaths in a class — which the 5s cadence closes without
+/// anyone noticing. Above it lies convergence, and there are exactly two
+/// ways to get there: the residue a fresh composition leaves at boot, and
+/// the climb back after a degrade dropped the stage to prefix staffing.
+///
+/// Both want the same treatment, which is why the trigger is the shortfall
+/// and not how long the process has been up. Nothing about being young is
+/// what makes hurrying right; a stage that degrades an hour in is in
+/// exactly the position a booting one is, and a young process with a
+/// well-staffed stage has nothing to hurry about.
+fn top_up_burst_demand() -> usize {
+    GalaxyCompositionTarget::for_total(DISPLAY_CELL_BUDGET as usize).typed / 20
+}
+
 const MAX_CONCURRENT_REFRESHES: usize = 3;
 
 #[derive(Clone, Copy)]
@@ -86,6 +115,10 @@ struct RefreshCadence {
     galaxy_composition: Option<Duration>,
     galaxy_composition_retry: Duration,
     galaxy_top_up: Duration,
+    /// See [`top_up_burst_demand`].
+    top_up_burst_demand: usize,
+    /// See [`TOP_UP_BURST_MAX_ROUNDS`].
+    top_up_burst_max_rounds: u32,
     max_concurrent: usize,
 }
 
@@ -107,6 +140,8 @@ impl Default for RefreshCadence {
             galaxy_composition: ENRICHMENT_GALAXY_COMPOSITION_REFRESH,
             galaxy_composition_retry: ENRICHMENT_GALAXY_COMPOSITION_RETRY,
             galaxy_top_up: ENRICHMENT_GALAXY_TOP_UP_REFRESH,
+            top_up_burst_demand: top_up_burst_demand(),
+            top_up_burst_max_rounds: TOP_UP_BURST_MAX_ROUNDS,
             max_concurrent: MAX_CONCURRENT_REFRESHES,
         }
     }
@@ -282,6 +317,12 @@ struct RefreshTracker {
     top_up_stalled: u32,
     top_up_awaiting_outcome: bool,
     top_up_demand_before: usize,
+    /// Rounds the current burst has run back-to-back. Zero means the
+    /// top-up is on its ordinary cadence, and it is the whole of "am I
+    /// bursting" — there is no second flag to disagree with it.
+    top_up_burst_rounds: u32,
+    /// Cells the current burst has landed, for the one line it logs.
+    top_up_burst_landed: usize,
 }
 
 impl RefreshTracker {
@@ -308,10 +349,17 @@ impl RefreshTracker {
                 .is_none_or(|last| last.elapsed() >= at_least)
         };
         match kind.interval(cadence) {
+            // A burst is due by definition — running without waiting out
+            // the cadence is the whole of what bursting means.
+            Some(_) if self.bursting(kind) => true,
             Some(interval) => waited(self.stretched(kind, interval)),
             // No cadence: keep trying until it lands, then hold.
             None => !self.published.contains(&kind) && waited(cadence.galaxy_composition_retry),
         }
+    }
+
+    fn bursting(&self, kind: RefreshKind) -> bool {
+        kind == RefreshKind::GalaxyTopUp && self.top_up_burst_rounds > 0
     }
 
     /// A composition with no cadence runs once — so something has to
@@ -359,6 +407,17 @@ impl RefreshTracker {
             self.top_up_awaiting_outcome = false;
             return;
         }
+        if self.top_up_burst_rounds > 0 {
+            // A burst is ONE judging window, not one per round. The
+            // shortfall a round closes is republished by the reducer
+            // several rounds after the round that closed it, so judging
+            // each burst round by the demand delta would read a burst
+            // doing exactly its job as a stall and stretch the cadence
+            // for it. The judgment runs once, when the burst ends, against
+            // the shortfall the burst opened on — see
+            // [`RefreshTracker::end_top_up_burst`].
+            return;
+        }
         if !self.top_up_awaiting_outcome || self.in_flight.contains(&RefreshKind::GalaxyTopUp) {
             return; // no completed round to judge
         }
@@ -376,6 +435,85 @@ impl RefreshTracker {
                  stretching the top-up cadence"
             );
         }
+    }
+
+    /// Record the shortfall a dispatched top-up round is opening
+    /// against. A burst keeps the shortfall its FIRST round opened on:
+    /// the whole run is judged as one window, so the window's baseline is
+    /// the one that matters.
+    fn note_top_up_dispatch(&mut self, demand: CompositionDemand) {
+        if self.top_up_burst_rounds == 0 {
+            self.top_up_demand_before = demand.total();
+        }
+    }
+
+    /// Judge a completed top-up round, and say whether the next one should
+    /// follow immediately instead of waiting out the cadence.
+    ///
+    /// A burst is armed by a round that LANDED cells under a shortfall
+    /// worth hurrying for, and it lasts exactly as long as both stay true.
+    /// Fruitfulness is read from the round's own result rather than from
+    /// the demand delta because inside a burst the delta is not yet
+    /// knowable — the reducer republishes the shortfall several rounds
+    /// behind the round that closed it.
+    ///
+    /// The delta still has the final word. The whole burst goes to
+    /// [`RefreshTracker::note_top_up_outcome`] as one window when it ends,
+    /// and a tracker carrying a stall may not arm a new one: that is what
+    /// keeps a dry source, or a live source whose cells the plane will not
+    /// place, from being asked sixty-four times about it.
+    fn note_top_up_landing(
+        &mut self,
+        landed: usize,
+        demand: CompositionDemand,
+        cadence: RefreshCadence,
+    ) -> bool {
+        let hungry = demand.curated && demand.total() > cadence.top_up_burst_demand;
+        if self.top_up_burst_rounds == 0 {
+            // Nothing to arm from: an ordinary cadence round stays on the
+            // ordinary path, judged by the demand delta at the next probe
+            // exactly as it was before bursts existed.
+            if landed == 0 || !hungry || self.top_up_stalled > 0 {
+                return false;
+            }
+        } else if landed == 0 || !hungry {
+            // The supply ran dry, or the shortfall closed. Either way the
+            // reason to hurry is gone.
+            self.end_top_up_burst(demand);
+            return false;
+        }
+        self.top_up_burst_rounds = self.top_up_burst_rounds.saturating_add(1);
+        self.top_up_burst_landed = self.top_up_burst_landed.saturating_add(landed);
+        if self.top_up_burst_rounds >= cadence.top_up_burst_max_rounds {
+            self.end_top_up_burst(demand);
+            return false;
+        }
+        true
+    }
+
+    /// Close a burst and hand the run it made to the ordinary judgment.
+    ///
+    /// Every exit goes through here, so the summary line is a property of
+    /// the burst ending rather than of which way it ended.
+    fn end_top_up_burst(&mut self, demand: CompositionDemand) {
+        if self.top_up_burst_rounds == 0 {
+            return;
+        }
+        tracing::info!(
+            target: "cknerv-server",
+            rounds = self.top_up_burst_rounds,
+            cells = self.top_up_burst_landed,
+            shortfall = demand.total(),
+            "the top-up ran its rounds back-to-back and is back on cadence"
+        );
+        self.top_up_burst_rounds = 0;
+        self.top_up_burst_landed = 0;
+        // `top_up_demand_before` still holds the shortfall the burst
+        // opened on, so this counts the whole run as exactly one round for
+        // the backoff: a burst that closed nothing earns one fruitless
+        // round — and with it the refusal to arm another — while a burst
+        // that closed something clears the count outright.
+        self.note_top_up_outcome(demand);
     }
 
     /// The top-up's cadence after any earned backoff. Every other
@@ -486,7 +624,10 @@ async fn run(
                 for kind in REFRESH_KINDS {
                     if kind == RefreshKind::GalaxyTopUp && (!demand.curated || demand.is_empty()) {
                         // Nothing to close. Stay due so the next tick sees
-                        // a fresh number the moment the stage drifts.
+                        // a fresh number the moment the stage drifts — and
+                        // let go of any burst here rather than leaving one
+                        // armed against a shortfall that no longer exists.
+                        tracker.end_top_up_burst(demand);
                         continue;
                     }
                     if !tracker.due(kind, &status, cadence) {
@@ -510,7 +651,7 @@ async fn run(
                         break;
                     };
                     if kind == RefreshKind::GalaxyTopUp {
-                        tracker.top_up_demand_before = demand.total();
+                        tracker.note_top_up_dispatch(demand);
                     }
                     tracker.started(kind);
                     let source = source.clone();
@@ -550,6 +691,16 @@ async fn run(
                 match completion {
                     Ok(RefreshCompletion { kind, result }) => {
                         tracker.finished(kind, matches!(&result, Ok(Some(_))));
+                        // What this round actually delivered, read before
+                        // the event is handed on. A burst continues on
+                        // supply, never on a shortfall number the reducer
+                        // has not republished yet.
+                        let landed = match &result {
+                            Ok(Some(EnrichmentEvent::GalaxyCompositionTopUp(top_up))) => {
+                                top_up.len()
+                            }
+                            _ => 0,
+                        };
                         match result {
                             Ok(Some(event)) => {
                                 if out.send(event).await.is_err() {
@@ -584,12 +735,31 @@ async fn run(
                                 "optional enrichment refresh failed: {error}"
                             ),
                         }
+                        if kind == RefreshKind::GalaxyTopUp
+                            && tracker.note_top_up_landing(
+                                landed,
+                                state.composition_demand(),
+                                cadence,
+                            )
+                        {
+                            // Run the next round now. The probe tick is
+                            // what dispatches, so waking it is how a round
+                            // is asked for — and it re-probes on the way,
+                            // which means the round that follows carries
+                            // its own fresh canonical proof rather than
+                            // inheriting this one's.
+                            interval.reset_immediately();
+                        }
                     }
                     Err(error) => {
                         // A source panic used to terminate the entire serial
                         // supervisor. Keep health probing alive and allow every
                         // capability to become due again instead.
                         tracker.in_flight.clear();
+                        // A round that died proved nothing about supply, so
+                        // it cannot carry a burst: end it here rather than
+                        // leave one armed on a source that is falling over.
+                        tracker.end_top_up_burst(state.composition_demand());
                         tracing::warn!(
                             target: "cknerv-server",
                             "optional enrichment refresh task failed: {error}"
@@ -922,6 +1092,8 @@ mod tests {
             galaxy_composition: None,
             galaxy_composition_retry: Duration::from_secs(60),
             galaxy_top_up: Duration::from_millis(10),
+            top_up_burst_demand: top_up_burst_demand(),
+            top_up_burst_max_rounds: TOP_UP_BURST_MAX_ROUNDS,
             max_concurrent: 1,
         }
     }
@@ -1003,6 +1175,8 @@ mod tests {
             galaxy_composition: periodic,
             galaxy_composition_retry: Duration::from_millis(30),
             galaxy_top_up: Duration::from_secs(60),
+            top_up_burst_demand: top_up_burst_demand(),
+            top_up_burst_max_rounds: TOP_UP_BURST_MAX_ROUNDS,
             max_concurrent: 2,
         }
     }
@@ -1334,6 +1508,353 @@ mod tests {
         let _ = handle.await;
     }
 
+    // ── the boot burst ────────────────────────────────────────────
+
+    /// A source whose top-up lands cells for its first `fruitful` rounds
+    /// and nothing after, so a test can say exactly when the supply runs
+    /// out. It counts every round it is asked for.
+    struct BurstTopUpSource {
+        rounds: Arc<AtomicUsize>,
+        fruitful: usize,
+    }
+
+    #[async_trait]
+    impl EnrichmentSource for BurstTopUpSource {
+        fn name(&self) -> &'static str {
+            "burst-fixture"
+        }
+
+        fn capabilities(&self) -> Vec<String> {
+            vec!["galaxy_composition".to_string()]
+        }
+
+        async fn probe(&self, context: &CanonicalContext) -> EnrichmentSourceStatus {
+            let anchor = context.recent_blocks.last().map(|block| ChainAnchor {
+                block: block.number,
+                hash: block.hash.clone(),
+            });
+            EnrichmentSourceStatus {
+                source: self.name().to_string(),
+                status: EnrichmentSourceState::Ready,
+                capabilities: self.capabilities(),
+                indexed_tip: Some(context.tip),
+                lag_blocks: Some(0),
+                validated_anchor: anchor,
+                last_success_at_ms: Some(1),
+                message: None,
+            }
+        }
+
+        async fn enrich_cell(
+            &self,
+            _out_point: &cknerv_core::OutPoint,
+            _context: &CanonicalContext,
+        ) -> anyhow::Result<Option<cknerv_core::CellSemanticRecord>> {
+            Ok(None)
+        }
+
+        async fn enrich_galaxy_top_up(
+            &self,
+            context: &CanonicalContext,
+            _demand: CompositionDemand,
+        ) -> anyhow::Result<Option<cknerv_core::GalaxyCompositionTopUp>> {
+            let round = self.rounds.fetch_add(1, Ordering::Relaxed);
+            if round >= self.fruitful {
+                return Ok(None);
+            }
+            let block = context.recent_blocks.last().expect("canonical block");
+            Ok(Some(cknerv_core::GalaxyCompositionTopUp {
+                source: self.name().to_string(),
+                as_of: ChainAnchor {
+                    block: block.number,
+                    hash: block.hash.clone(),
+                },
+                updated_at_ms: 1,
+                dao: (0..4).map(|i| top_up_cell(round as u64 * 16 + i)).collect(),
+                typed: Vec::new(),
+            }))
+        }
+    }
+
+    fn top_up_cell(id: u64) -> cknerv_core::Cell {
+        cknerv_core::Cell {
+            id,
+            born_at_ms: 0,
+            death_at_ms: None,
+            birth_block: 1,
+            tag: None,
+            pos_seed: [0.0, 0.0, 0.0],
+            out_point: cknerv_core::OutPoint {
+                tx_hash: format!("0x{id:064x}"),
+                index: 0,
+            },
+            capacity: id,
+            data_hex: "0x".into(),
+            data_bytes: 0,
+            content_hash: format!("0x{:064x}", id + 1),
+            lock_shape_seed: [id as u32, 1],
+            type_shape_seed: None,
+            data_shape_seed: [id as u32, 2],
+            lock_kind: Default::default(),
+            asset_kind: Default::default(),
+            lock_script: Default::default(),
+            type_script: None,
+        }
+    }
+
+    /// A cadence on which the ORDINARY path could not produce a second
+    /// top-up round inside a test: a minute between rounds, against probes
+    /// that tick every ten milliseconds. Every round past the first is
+    /// therefore a burst round and can be nothing else.
+    fn burst_cadence(max_rounds: u32) -> RefreshCadence {
+        RefreshCadence {
+            galaxy_top_up: Duration::from_secs(60),
+            top_up_burst_demand: 100,
+            top_up_burst_max_rounds: max_rounds,
+            ..top_up_cadence()
+        }
+    }
+
+    /// Run the supervisor against a published shortfall until the top-up
+    /// goes quiet — `quiet` elapsed with no new round — and report how
+    /// many rounds it got through.
+    ///
+    /// Quiet rather than a fixed sleep because the claim under test is
+    /// about ORDERING, not speed: on these cadences the next cadence round
+    /// is a minute away, so any silence at all means the burst is over and
+    /// waiting longer cannot change the count. A fixed window would have
+    /// measured how loaded the machine was instead.
+    async fn top_up_rounds_until_quiet(
+        fruitful: usize,
+        demand: CompositionDemand,
+        cadence: RefreshCadence,
+        quiet: Duration,
+    ) -> usize {
+        let sink = Arc::new(cknerv_core::CompositionDemandSink::new());
+        let mut state = ServerState::new();
+        state.set_composition_demand_sink(sink.clone());
+        let state = Arc::new(state);
+        state.apply_mutation(Mutation::BlockMined {
+            number: 7,
+            hash: "0xblock7".to_string(),
+            tx_count: 1,
+            size: 1,
+            at: 1,
+        });
+        // The shortfall stands: no reducer is applying what the rounds
+        // land, which is the harshest case for a burst — every round is
+        // answered by a demand number that has not moved.
+        sink.publish(demand);
+
+        let rounds = Arc::new(AtomicUsize::new(0));
+        let source: Arc<dyn EnrichmentSource> = Arc::new(BurstTopUpSource {
+            rounds: rounds.clone(),
+            fruitful,
+        });
+        let (out, mut events) = mpsc::channel(4);
+        // Drain the channel. A burst sends an event per round, and a full
+        // channel would block the supervisor mid-burst — which is the very
+        // thing under test.
+        let drain = tokio::spawn(async move { while events.recv().await.is_some() {} });
+        let (shutdown, shutdown_rx) = watch::channel(false);
+        let handle = tokio::spawn(run(source, state, out, shutdown_rx, cadence));
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut last = usize::MAX;
+        let mut unchanged_since = Instant::now();
+        let ran = loop {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            let now = rounds.load(Ordering::Relaxed);
+            if now != last {
+                last = now;
+                unchanged_since = Instant::now();
+            } else if unchanged_since.elapsed() >= quiet {
+                break now;
+            }
+            assert!(Instant::now() < deadline, "the top-up never stopped asking");
+        };
+        let _ = shutdown.send(true);
+        let _ = handle.await;
+        drain.abort();
+        ran
+    }
+
+    /// ⭐ The boot answer: a stage far short of its quota does not wait out
+    /// a cadence per few hundred Cells. Sixteen rounds land inside a
+    /// window where the configured cadence allows exactly one.
+    #[tokio::test]
+    async fn a_large_shortfall_takes_the_top_up_off_its_cadence() {
+        let ran = top_up_rounds_until_quiet(
+            usize::MAX,
+            curated_shortfall(4_000),
+            burst_cadence(16),
+            Duration::from_millis(60),
+        )
+        .await;
+        assert_eq!(
+            ran, 16,
+            "a shortfall worth hurrying for runs its rounds back-to-back"
+        );
+    }
+
+    /// The bound, and that it is the ONLY thing stopping a source that
+    /// never runs out: the round count follows the cap and nothing else.
+    #[tokio::test]
+    async fn the_burst_stops_at_its_round_cap() {
+        for cap in [4u32, 12] {
+            let ran = top_up_rounds_until_quiet(
+                usize::MAX,
+                curated_shortfall(4_000),
+                burst_cadence(cap),
+                Duration::from_millis(60),
+            )
+            .await;
+            assert_eq!(
+                ran, cap as usize,
+                "an endless supply under a standing shortfall stops at the cap"
+            );
+        }
+    }
+
+    /// Burst only while fruitful. The moment a round returns nothing the
+    /// drumbeat stops — and stays stopped, rather than pausing.
+    #[tokio::test]
+    async fn the_burst_ends_on_the_first_round_that_lands_nothing() {
+        // A long silence, deliberately: the claim is that the burst ENDED,
+        // not that it paused for breath.
+        let ran = top_up_rounds_until_quiet(
+            5,
+            curated_shortfall(4_000),
+            burst_cadence(64),
+            Duration::from_millis(250),
+        )
+        .await;
+        assert_eq!(
+            ran, 6,
+            "five rounds that landed Cells, and the one that did not, which ended it"
+        );
+    }
+
+    /// Ordinary drift is not a boot. A stage a few dozen Cells short keeps
+    /// the cadence it always had — one round, then the wait.
+    #[tokio::test]
+    async fn a_small_shortfall_never_leaves_the_cadence() {
+        let cadence = burst_cadence(64);
+        let ran = top_up_rounds_until_quiet(
+            usize::MAX,
+            curated_shortfall(cadence.top_up_burst_demand),
+            cadence,
+            Duration::from_millis(150),
+        )
+        .await;
+        assert_eq!(ran, 1, "a shortfall at the threshold waits out the cadence");
+
+        // Same source, same cadence, same window: only the size of the ask
+        // is different.
+        let ran = top_up_rounds_until_quiet(
+            usize::MAX,
+            curated_shortfall(cadence.top_up_burst_demand + 1),
+            cadence,
+            Duration::from_millis(150),
+        )
+        .await;
+        assert!(
+            ran > 1,
+            "one Cell past the threshold is what changes the behaviour, and nothing else"
+        );
+    }
+
+    /// ⭐ How the burst composes with the fruitless-stretch backoff: the
+    /// whole run is ONE round as far as the backoff is concerned.
+    ///
+    /// It has to be. Inside a burst the demand delta is unreadable — the
+    /// reducer republishes the shortfall several rounds behind the round
+    /// that closed it — so a per-round judgment would score a burst doing
+    /// exactly its job as eight consecutive stalls and stretch the cadence
+    /// to minutes for it. Judged once, against the shortfall it opened on,
+    /// a burst that moved nothing earns exactly one fruitless round; and a
+    /// tracker carrying one may not open another burst, which is what
+    /// stops a source the plane will not place from being asked in bulk.
+    #[test]
+    fn a_whole_burst_is_one_round_to_the_backoff_and_a_stalled_one_may_not_re_arm() {
+        let cadence = RefreshCadence {
+            top_up_burst_demand: 100,
+            top_up_burst_max_rounds: 8,
+            ..RefreshCadence::default()
+        };
+        let mut tracker = RefreshTracker::default();
+        let hungry = curated_shortfall(1_000);
+        let round = |tracker: &mut RefreshTracker, landed: usize| {
+            tracker.note_top_up_dispatch(hungry);
+            tracker.started(RefreshKind::GalaxyTopUp);
+            tracker.finished(RefreshKind::GalaxyTopUp, landed > 0);
+            tracker.note_top_up_landing(landed, hungry, cadence)
+        };
+
+        assert!(
+            round(&mut tracker, 64),
+            "a landing round under a large ask arms the burst"
+        );
+        for _ in 0..6 {
+            assert!(round(&mut tracker, 64));
+            assert_eq!(
+                tracker.top_up_stalled, 0,
+                "a burst in flight is not judged round by round"
+            );
+        }
+        assert!(!round(&mut tracker, 64), "the eighth round hits the cap");
+        assert_eq!(
+            tracker.top_up_stalled, 1,
+            "eight rounds against an unmoved shortfall are ONE fruitless round"
+        );
+
+        assert!(
+            !round(&mut tracker, 64),
+            "a stalled tracker may not open another burst, however well the source answers"
+        );
+        assert_eq!(
+            tracker.stretched(RefreshKind::GalaxyTopUp, Duration::from_secs(5)),
+            Duration::from_secs(5),
+            "one fruitless round is still inside the grace: the cadence has not moved"
+        );
+    }
+
+    /// The other half of the same law: a burst that DID close the
+    /// shortfall it opened on leaves the backoff clean, so the next one
+    /// may arm at once.
+    #[test]
+    fn a_burst_that_closes_its_shortfall_leaves_the_backoff_clean() {
+        let cadence = RefreshCadence {
+            top_up_burst_demand: 100,
+            top_up_burst_max_rounds: 64,
+            ..RefreshCadence::default()
+        };
+        let mut tracker = RefreshTracker::default();
+        let opened = curated_shortfall(1_000);
+        for _ in 0..3 {
+            tracker.note_top_up_dispatch(opened);
+            tracker.started(RefreshKind::GalaxyTopUp);
+            tracker.finished(RefreshKind::GalaxyTopUp, true);
+            assert!(tracker.note_top_up_landing(64, opened, cadence));
+        }
+
+        // The source runs dry, and by now the reducer has published what
+        // the burst placed.
+        let closed = curated_shortfall(600);
+        tracker.note_top_up_dispatch(closed);
+        tracker.started(RefreshKind::GalaxyTopUp);
+        tracker.finished(RefreshKind::GalaxyTopUp, false);
+        assert!(!tracker.note_top_up_landing(0, closed, cadence));
+        assert_eq!(
+            tracker.top_up_stalled, 0,
+            "a burst that moved the shortfall is not a stall"
+        );
+        assert!(
+            tracker.note_top_up_landing(64, closed, cadence),
+            "and the next landing round may arm a burst straight away"
+        );
+    }
+
     fn cold_start_cadence() -> RefreshCadence {
         RefreshCadence {
             probe: Duration::from_secs(10),
@@ -1351,6 +1872,8 @@ mod tests {
             galaxy_composition: Some(Duration::from_secs(60)),
             galaxy_composition_retry: Duration::from_secs(60),
             galaxy_top_up: Duration::from_secs(60),
+            top_up_burst_demand: top_up_burst_demand(),
+            top_up_burst_max_rounds: TOP_UP_BURST_MAX_ROUNDS,
             max_concurrent: 1,
         }
     }
@@ -1390,6 +1913,8 @@ mod tests {
             galaxy_composition: Some(Duration::from_secs(1)),
             galaxy_composition_retry: Duration::from_secs(1),
             galaxy_top_up: Duration::from_secs(1),
+            top_up_burst_demand: top_up_burst_demand(),
+            top_up_burst_max_rounds: TOP_UP_BURST_MAX_ROUNDS,
             max_concurrent: 2,
         };
         let handle = tokio::spawn(run(source, state, out, shutdown_rx, cadence));

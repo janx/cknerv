@@ -182,13 +182,14 @@ emitted by it must agree.
 #### Composing, then holding
 
 With `galaxy_composition`, cknerv composes one non-persisted resting display
-reservoir. Its target is 6,000 Cells — the curated core of the browser's fixed
-12,000-Cell field, with canonical retained Cells filling the remainder (the
-reservoir itself is far larger). At the default target the requested classes are exactly:
+reservoir. Its target is the whole of the browser's fixed 12,000-Cell field:
+curating fewer would leave the difference to canonical fallback, which is the
+plain-heavy boot the top-up then has to undo (the reservoir itself is far
+larger). At the default target the requested classes are exactly:
 
-- 1,200 active Nervos DAO deposit Cells (20%).
-- 4,200 non-DAO Cells with a non-empty type script (70%).
-- 600 plain Cells without a type script (10%).
+- 2,400 active Nervos DAO deposit Cells (20%).
+- 8,400 non-DAO Cells with a non-empty type script (70%).
+- 1,200 plain Cells without a type script (10%).
 
 ckbadger's existing APIs provide the bounded discovery work:
 

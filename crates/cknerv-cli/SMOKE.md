@@ -131,9 +131,9 @@ streamed record that names peers: at most 256 entries, each carrying a base58
 arrives as the same list round after round. `truncated` says the crawler knows
 more nodes than the roster names. A roster is published only when its
 `crawl_round` advances, and it clears with the crawler.
-The snapshot should also gain `galaxy_composition`. With the default 6,000
-visible budget and sufficient indexed candidates it contains 1,200 `dao`,
-4,200 `typed`, and 600 `plain` Cells. Every entry must carry a real outpoint,
+The snapshot should also gain `galaxy_composition`. With the default 12,000
+visible budget and sufficient indexed candidates it contains 2,400 `dao`,
+8,400 `typed`, and 1,200 `plain` Cells. Every entry must carry a real outpoint,
 node-derived content hash, and matching asset taxonomy. Replacing this record
 must not change the canonical cells projection revision or counters.
 
@@ -285,7 +285,7 @@ With a local ckbadger service configured:
       remain absent while source health, Cell detail, ecosystem, DAO, and
       activity enrichment still work
 - [ ] The semantics snapshot gains an anchored `galaxy_composition`; at the
-      default visible budget its DAO:typed:plain lengths are 1200:4200:600
+      default visible budget its DAO:typed:plain lengths are 2400:8400:1200
 - [ ] The resting Cell points and passive fibres use that composition, while a
       new block still advances `last_pulse_at_ms`, emits its network pulse, and
       produces live nerve routes over canonical Cells; newest link endpoints

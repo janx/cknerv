@@ -2485,9 +2485,11 @@ mod tests {
     /// exactly the 600 typed the stage ends up short. The residue is
     /// arithmetic, not a defect, and it stays published as demand.
     ///
-    /// Act 2 — a refresh carrying the plain share the quota actually asks
-    /// for (which is what the adapter discovers) removes that floor, and
-    /// the same bounded rounds land exactly on 2400/8400/1200.
+    /// Act 2 — a refresh whose plain share does not EXCEED the quota
+    /// removes that floor, and the same bounded rounds land exactly on
+    /// 2400/8400/1200. The adapter composes at the stage budget, so the
+    /// plain it really discovers sits exactly ON the quota; this half-size
+    /// record is the same case with room to spare.
     #[test]
     fn bounded_rounds_climb_monotonically_and_the_ratchet_floors_on_curated_plain() {
         let mut plane = small_plane(12_000, 512);
