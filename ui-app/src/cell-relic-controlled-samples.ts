@@ -9,6 +9,7 @@ export type ControlledRelicAxis =
   | 'data-content'
   | 'data-size'
   | 'capacity'
+  | 'collection'
   | 'fallback';
 
 export interface ControlledRelicVariant {
@@ -60,6 +61,15 @@ const LOCK_SEEDS: Record<LockKind, ShapeSeed> = {
   omnilock: [0x6a09_e667, 0xbb67_ae85],
   other: [0x3c6e_f372, 0xa54f_f53a],
 };
+/** Digests of live mainnet Spore Cluster ids — the first is Nervape's
+ *  `0xd5852c19…`, the two after it are other clusters the node returns. Real
+ *  ones because the claim on screen is that real collections separate. */
+const COLLECTION_SEEDS: readonly (readonly [string, ShapeSeed])[] = [
+  ['NERVAPE', [0xc5eb_230e, 0xcdd6_2018]],
+  ['CLUSTER B', [0x9482_0ee0, 0x12ad_cca5]],
+  ['CLUSTER C', [0x37bd_9b1f, 0xa7f9_1e37]],
+];
+
 const DATA_SEEDS: readonly ShapeSeed[] = [
   [0x1111_2222, 0x3333_4444],
   [0xaaaa_bbbb, 0xcccc_dddd],
@@ -137,6 +147,24 @@ export function controlledRelicRows(source: Cell): ControlledRelicRow[] {
     { capacity },
   ));
 
+  // The crafted family is held CONSTANT here — a cartouche only exists for
+  // one, and pinning it is what leaves `collection_seed` as the single thing
+  // that moves. Same item, shown as if it belonged to three families and to
+  // none: the hue and the glyph move, the outline does not.
+  const collectionVariants = [
+    variant(source, 'collection', 'SOLE / NO CLUSTER', {
+      asset_kind: 'spore',
+      type_shape_seed: TYPE_SEEDS.spore,
+      collection_seed: undefined,
+    }),
+    ...COLLECTION_SEEDS.map(([name, seed]) => variant(
+      source,
+      'collection',
+      `CLUSTER / ${name}`,
+      { asset_kind: 'spore', type_shape_seed: TYPE_SEEDS.spore, collection_seed: seed },
+    )),
+  ];
+
   const fallbackVariants = [
     variant(source, 'fallback', 'ZERO / LOCK+DATA', {
       lock_shape_seed: [0, 0],
@@ -156,6 +184,7 @@ export function controlledRelicRows(source: Cell): ControlledRelicRow[] {
     { axis: 'data-content', title: 'DATA-CONTENT · SAME LENGTH', variants: dataContentVariants },
     { axis: 'data-size', title: 'DATA-SIZE · SAME SEED FAMILY', variants: dataSizeVariants },
     { axis: 'capacity', title: 'CAPACITY · PRESENCE ONLY', variants: capacityVariants },
+    { axis: 'collection', title: 'COLLECTION · KINSHIP ONLY', variants: collectionVariants },
     { axis: 'fallback', title: 'FALLBACK · ZERO-SEED DIAGNOSTIC', variants: fallbackVariants },
   ];
 }

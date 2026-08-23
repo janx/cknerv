@@ -12,7 +12,7 @@ import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import type { Cell, CellSemanticRecord } from '@cknerv/types';
-import { deriveCellVisual } from '../../derives/cellVisual.derive';
+import { deriveCellVisual, rotateAccentHue } from '../../derives/cellVisual.derive';
 import {
   deriveMorphologyFrames,
   type MorphologyPoint3,
@@ -347,7 +347,13 @@ export default function ConsensusMemory({
     // closed outline in a buffer that already exists, no extra draw.
     if (topology.mintMark !== null) {
       const { points, hueShift } = topology.mintMark;
-      color.copy(gold).offsetHSL(hueShift, 0.06, 0.04);
+      // The HUE comes from the shared law, so this mark and the same cell's
+      // mark out in the galaxy land on the same angle rather than on two
+      // implementations that merely agree today. The saturation and lightness
+      // lift stays local: it is what makes the mark read on a lit inset, and
+      // it is presentation, not identity.
+      color.setRGB(...rotateAccentHue(CONSENSUS_BRAID_PALETTE.gold, hueShift))
+        .offsetHSL(0, 0.06, 0.04);
       for (let step = 0; step < points.length - 1; step += 1) {
         stitchPositions.push(...points[step], ...points[step + 1]);
         stitchColors.push(

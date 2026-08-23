@@ -7,7 +7,9 @@ import {
   MINT_MARK_GLYPHS,
   MINT_MARK_MAX_HUE_SHIFT,
   MINT_MARK_POINTS,
+  cellCollectionAccent,
   mintMarkCollectionAccent,
+  mintMarkSeedAccent,
   deriveCellMorphologyGenome,
   deriveCellMorphologyTopology,
   morphologyFallbackSeed,
@@ -841,6 +843,132 @@ describe('Object mint mark cartouche', () => {
         expect(`${lock_kind}/${family}:${topology.segmentCount <= CELL_MORPHOLOGY_MAX_SEGMENTS}`)
           .toBe(`${lock_kind}/${family}:true`);
       }
+    }
+  });
+});
+
+/** M2b — the wire's own answer to "who is this cell's family".
+ *
+ *  Every cluster id below was read off mainnet: they are the type args of
+ *  live Spore Cluster cells, and the seeds are the BLAKE2b prefixes the
+ *  adapter derives from those exact 32 bytes. Using real ones matters — the
+ *  claim being tested is that distinct collections separate ON SCREEN, and a
+ *  handful of hand-picked round numbers could pass that while real digests
+ *  clumped. */
+describe('collection kinship', () => {
+  const MAINNET_CLUSTER_SEEDS: readonly ShapeSeed[] = [
+    [0x9482_0ee0, 0x12ad_cca5],
+    [0x37bd_9b1f, 0xa7f9_1e37],
+    [0xac90_994b, 0x05b5_ac99],
+    [0xf599_caa0, 0xbccf_d8e0],
+    [0x7c97_8b24, 0xa6ed_2bd2],
+    [0x28b3_abb1, 0x55e0_1019],
+    [0x0d24_50d2, 0x63cf_3833],
+    [0x163d_d232, 0x5258_bd53],
+  ];
+  /** The Nervape cluster `0xd5852c19…`, whose container and members the
+   *  adapter's own goldens pin to this seed. */
+  const NERVAPE: ShapeSeed = [0xc5eb_230e, 0xcdd6_2018];
+
+  function crafted(overrides: Partial<Cell> = {}): Cell {
+    return cell({ asset_kind: 'spore', ...overrides });
+  }
+
+  it('is deterministic and pure in the seed', () => {
+    for (const seed of MAINNET_CLUSTER_SEEDS) {
+      const once = mintMarkSeedAccent(seed);
+      const again = mintMarkSeedAccent([seed[0], seed[1]]);
+      expect(once).toEqual(again);
+      expect(once!.hueShift).toBeCloseTo(once!.hueLean * MINT_MARK_MAX_HUE_SHIFT, 12);
+      expect(Math.abs(once!.hueLean)).toBeLessThanOrEqual(1);
+      expect(Math.abs(once!.hueShift)).toBeLessThanOrEqual(MINT_MARK_MAX_HUE_SHIFT);
+      expect(Number.isInteger(once!.glyph)).toBe(true);
+      expect(once!.glyph).toBeGreaterThanOrEqual(0);
+      expect(once!.glyph).toBeLessThan(MINT_MARK_GLYPHS);
+    }
+    expect(mintMarkSeedAccent(null)).toBeNull();
+    expect(mintMarkSeedAccent(undefined)).toBeNull();
+    // A digest may be all-zero, and that is a collection like any other.
+    expect(mintMarkSeedAccent([0, 0])).not.toBeNull();
+  });
+
+  it('separates real mainnet clusters instead of clumping them', () => {
+    const leans = MAINNET_CLUSTER_SEEDS.map((seed) => mintMarkSeedAccent(seed)!.hueLean);
+    expect(new Set(leans).size).toBe(leans.length);
+    // Spread across the range rather than piled at one end.
+    expect(Math.max(...leans) - Math.min(...leans)).toBeGreaterThan(1);
+    expect(leans.some((lean) => lean < 0)).toBe(true);
+    expect(leans.some((lean) => lean > 0)).toBe(true);
+    // Glyphs vary too, so the mark still separates with colour off.
+    expect(
+      new Set(MAINNET_CLUSTER_SEEDS.map((s) => mintMarkSeedAccent(s)!.glyph)).size,
+    ).toBeGreaterThan(1);
+  });
+
+  /** THE unification property, and the reason this exists. M2a derived the
+   *  portrait's tint from the enrichment collection STRING while the seed
+   *  hashes a cluster id — two inputs, two hues for one collection. The
+   *  string and seed paths may still disagree with each other; what must
+   *  never happen is two cells the CHAIN calls kin disagreeing. */
+  it('never lets two cells of one collection differ', () => {
+    const a = crafted({
+      collection_seed: NERVAPE,
+      type_shape_seed: [0x1111_1111, 0x2222_2222],
+      content_hash: `0x${'11'.repeat(32)}`,
+      capacity: 90_00000000,
+    });
+    const b = crafted({
+      collection_seed: [NERVAPE[0], NERVAPE[1]],
+      type_shape_seed: [0x3333_3333, 0x4444_4444],
+      content_hash: `0x${'99'.repeat(32)}`,
+      capacity: 61_00000000,
+      asset_kind: 'object',
+    });
+    const markA = deriveCellMorphologyTopology(a).mintMark!;
+    const markB = deriveCellMorphologyTopology(b).mintMark!;
+    expect(markA.hueShift).toBe(markB.hueShift);
+    expect(markA.glyph).toBe(markB.glyph);
+    // Individuality survives: same family, different item.
+    expect(markA.points).not.toEqual(markB.points);
+
+    // …and the enrichment string cannot pull one of them off the family hue.
+    const named = deriveCellMorphologyTopology(a, { collection: 'cluster:Nervape' });
+    expect(named.mintMark!.hueShift).toBe(markA.hueShift);
+    expect(named.mintMark!.glyph).toBe(markA.glyph);
+
+    // Two different collections do NOT collide.
+    const other = crafted({ collection_seed: MAINNET_CLUSTER_SEEDS[0] });
+    expect(deriveCellMorphologyTopology(other).mintMark!.hueShift)
+      .not.toBe(markA.hueShift);
+  });
+
+  /** The seed rides the wire to every LOD; the name only ever reaches a panel
+   *  that loaded a record. So the seed leads and the name is the fallback for
+   *  a cell restored from state written before M2b. */
+  it('falls back to the enrichment name only when the wire carries no seed', () => {
+    const kinless = crafted();
+    expect(cellCollectionAccent(kinless)).toBeNull();
+    expect(deriveCellMorphologyTopology(kinless).mintMark!.hueShift).toBe(0);
+    expect(deriveCellMorphologyTopology(kinless).mintMark!.glyph).toBeNull();
+
+    const named = cellCollectionAccent(kinless, 'cluster:Nervape');
+    expect(named).toEqual(mintMarkCollectionAccent('cluster:Nervape'));
+    expect(named!.hueShift).not.toBe(0);
+
+    const seeded = crafted({ collection_seed: NERVAPE });
+    expect(cellCollectionAccent(seeded, 'cluster:Something Else'))
+      .toEqual(mintMarkSeedAccent(NERVAPE));
+  });
+
+  /** Kinship is a channel the crafted families own. A token's collection is
+   *  already its type script and an identity cell's meaning is its name, so
+   *  neither stamps a cartouche — seed or no seed. */
+  it('stamps nothing on the classes that carry no maker mark', () => {
+    for (const kind of ['native', 'sudt', 'xudt', 'dao', 'other', 'identity'] as const) {
+      const topology = deriveCellMorphologyTopology(
+        cell({ asset_kind: kind, collection_seed: NERVAPE }),
+      );
+      expect(topology.mintMark).toBeNull();
     }
   });
 });

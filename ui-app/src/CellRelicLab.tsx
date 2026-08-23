@@ -43,6 +43,7 @@ const AXIS_COLOR: Record<ControlledRelicAxis, string> = {
   'data-content': '#67e8b5',
   'data-size': '#34d399',
   capacity: '#f8d477',
+  collection: '#fb923c',
   fallback: '#fb7185',
 };
 

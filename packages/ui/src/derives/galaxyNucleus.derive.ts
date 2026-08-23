@@ -1,5 +1,5 @@
 import type { Cell } from '@cknerv/types';
-import { deriveCellVisual } from './cellVisual.derive';
+import { deriveCellVisual, rotateAccentHue } from './cellVisual.derive';
 import {
   CONSENSUS_BRAID_PALETTE,
   consensusBraidContributorColor,
@@ -182,11 +182,17 @@ export function deriveGalaxyConsensusBraid(cell: Cell): GalaxyConsensusBraid {
     });
   }
 
-  // The maker's mark rides the same near-LOD fade as the rest of the code.
+  // The maker's mark rides the same near-LOD fade as the rest of the code —
+  // and since M2b it rides its collection's tint out here too. The galaxy
+  // used to stamp every cartouche flat gold because a collection was only
+  // ever a name a detail panel had loaded; `collection_seed` is on the Cell,
+  // so the constellation reads at the distance the swarm is actually seen
+  // from. It costs no vertex attribute: these colours are CPU-written.
   if (topology.mintMark !== null) {
-    const { points } = topology.mintMark;
+    const { points, hueShift } = topology.mintMark;
+    const mark = rotateAccentHue(CONSENSUS_BRAID_PALETTE.gold, hueShift);
     for (let step = 0; step < points.length - 1; step += 1) {
-      addSegment(points[step], points[step + 1], CONSENSUS_BRAID_PALETTE.gold, 0.88);
+      addSegment(points[step], points[step + 1], mark, 0.88);
     }
   }
 

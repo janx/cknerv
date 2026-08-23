@@ -1,5 +1,5 @@
 import { DATA_HEX_TRUNCATION_MARKER } from '@cknerv/types';
-import type { AssetKind, Cell, CellTag, LockKind } from '@cknerv/types';
+import type { AssetKind, Cell, CellTag, LockKind, ShapeSeed } from '@cknerv/types';
 
 export type CellVisualAccent = readonly [number, number, number];
 export type CellVisualSeeds = readonly [number, number, number, number];
@@ -108,8 +108,102 @@ export function payloadDensity(dataHex: string): number {
   return clamp01(Math.log2(1 + observedDataBytes(dataHex)) / 10);
 }
 
-export function accentFor(asset: AssetKind, tag: CellTag | null): CellVisualAccent {
-  return (tag && TAG_ACCENT[tag]) || ASSET_ACCENT[asset];
+/** How far a collection may rotate its class accent, in turns.
+ *
+ *  Small on purpose. The accent's first job is to say which CLASS a cell
+ *  belongs to, and a free per-collection colour would dissolve the palette
+ *  the discipline matrix keeps apart — spore green wandering into the object
+ *  violet it is supposed to be distinguishable from. A seventh of a turn is
+ *  enough for a Nervape swarm to read as one family against another green
+ *  swarm beside it, and far too little to read as a different class.
+ *  The cartouche can afford three times this ([`MINT_MARK_MAX_HUE_SHIFT`]);
+ *  it is a mark ON a body whose own colour still says the class. */
+export const COLLECTION_ACCENT_HUE_SPAN = 0.07;
+
+function mixWord(value: number): number {
+  let mixed = value >>> 0;
+  mixed ^= mixed >>> 16;
+  mixed = Math.imul(mixed, 0x7feb_352d);
+  mixed ^= mixed >>> 15;
+  mixed = Math.imul(mixed, 0x846c_a68b);
+  mixed ^= mixed >>> 16;
+  return mixed >>> 0;
+}
+
+/** The collection channel's signed lean, in [-1, 1]; 0 for a cell with no kin.
+ *
+ *  THE hue law, and deliberately the only one: every surface a collection
+ *  touches — the galaxy body, the braid-LOD cartouche, the detail portrait —
+ *  scales THIS number rather than hashing the collection again its own way.
+ *  Two cells the chain calls kin therefore cannot disagree anywhere, which is
+ *  a property the wire seed alone does not buy: M2a derived the portrait's
+ *  tint from the enrichment collection STRING, so the same collection reached
+ *  two surfaces through two different hashes.
+ *
+ *  A `[0, 0]` seed is a real collection like any other — absence is the key
+ *  being absent, never a value. */
+export function collectionHueLean(seed: ShapeSeed | null | undefined): number {
+  if (seed === null || seed === undefined) return 0;
+  const word = mixWord((seed[0] >>> 0) ^ mixWord((seed[1] >>> 0) ^ 0x9e37_79b1));
+  return (mixWord(word) / 0x1_0000_0000) * 2 - 1;
+}
+
+/** Rotate an accent's hue by `turns`, keeping saturation and lightness.
+ *
+ *  Every surface that tints by collection turns its hue HERE — the galaxy's
+ *  CPU-written colours and the portrait's alike — so two views of one
+ *  collection cannot drift onto two implementations that merely agree today.
+ *  Plain numbers rather than a `THREE.Color`, because the derives are pure
+ *  and the galaxy's colours never become one. */
+export function rotateAccentHue(
+  accent: CellVisualAccent,
+  turns: number,
+): CellVisualAccent {
+  if (turns === 0) return accent;
+  const [r, g, b] = accent;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const lightness = (max + min) / 2;
+  const span = max - min;
+  // Grey has no hue to rotate, so there is nothing a collection could say.
+  if (span <= 1e-9) return accent;
+  const saturation = lightness > 0.5
+    ? span / (2 - max - min)
+    : span / (max + min);
+  let hue: number;
+  if (max === r) hue = ((g - b) / span + (g < b ? 6 : 0)) / 6;
+  else if (max === g) hue = ((b - r) / span + 2) / 6;
+  else hue = ((r - g) / span + 4) / 6;
+  hue = (((hue + turns) % 1) + 1) % 1;
+
+  const q = lightness < 0.5
+    ? lightness * (1 + saturation)
+    : lightness + saturation - lightness * saturation;
+  const p = 2 * lightness - q;
+  const channel = (t: number): number => {
+    const shifted = ((t % 1) + 1) % 1;
+    if (shifted < 1 / 6) return p + (q - p) * 6 * shifted;
+    if (shifted < 1 / 2) return q;
+    if (shifted < 2 / 3) return p + (q - p) * (2 / 3 - shifted) * 6;
+    return p;
+  };
+  return [channel(hue + 1 / 3), channel(hue), channel(hue - 1 / 3)];
+}
+
+export function accentFor(
+  asset: AssetKind,
+  tag: CellTag | null,
+  collectionSeed?: ShapeSeed | null,
+): CellVisualAccent {
+  // A renderer-owned tag displaces the class accent entirely, and it is a
+  // different channel with its own palette — a collection has no standing to
+  // rotate it. Kinship shifts the CLASS colour or nothing.
+  const tagged = tag && TAG_ACCENT[tag];
+  if (tagged) return tagged;
+  return rotateAccentHue(
+    ASSET_ACCENT[asset],
+    collectionHueLean(collectionSeed) * COLLECTION_ACCENT_HUE_SPAN,
+  );
 }
 
 export function deriveCellVisual(cell: Cell): CellVisualDescriptor {
@@ -121,6 +215,6 @@ export function deriveCellVisual(cell: Cell): CellVisualDescriptor {
     mass: capacityMass(cell.capacity),
     payload: payloadDensity(cell.data_hex),
     seeds: contentHashSeeds(cell.content_hash),
-    accent: accentFor(asset, cell.tag),
+    accent: accentFor(asset, cell.tag, cell.collection_seed),
   };
 }

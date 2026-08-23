@@ -1,5 +1,5 @@
 import type { AssetKind, Cell, LockKind, ShapeSeed } from '@cknerv/types';
-import { capacityMass } from './cellVisual.derive';
+import { capacityMass, collectionHueLean } from './cellVisual.derive';
 import { cellUdtQuantitySignature } from './udtAmount.derive';
 import type { UdtQuantitySignature } from './udtAmount.derive';
 
@@ -159,6 +159,11 @@ export const MINT_MARK_POINTS = 14;
  *  the collection is unknown — the galaxy, and a panel whose record has not
  *  landed yet — and a neutral cartouche is the honest answer there. */
 export interface MintMarkAccent {
+  /** Signed lean in [-1, 1] — the shared quantity every LOD scales for
+   *  itself, so the cartouche and the body lean the same way for one
+   *  collection. See `collectionHueLean`. */
+  hueLean: number;
+  /** The lean scaled to the cartouche's own budget. */
   hueShift: number;
   glyph: number;
 }
@@ -1138,10 +1143,45 @@ export function mintMarkCollectionAccent(
   if (typeof collection !== 'string' || collection.trim().length === 0) return null;
   const word = collectionWord(collection);
   const spread = mix32(word) / UINT32_SCALE;
-  return {
-    hueShift: (spread - 0.5) * 2 * MINT_MARK_MAX_HUE_SHIFT,
-    glyph: mix32(word ^ 0x9e37_79b1) % MINT_MARK_GLYPHS,
-  };
+  return accentFromLean(spread * 2 - 1, mix32(word ^ 0x9e37_79b1) % MINT_MARK_GLYPHS);
+}
+
+function accentFromLean(lean: number, glyph: number): MintMarkAccent {
+  return { hueLean: lean, hueShift: lean * MINT_MARK_MAX_HUE_SHIFT, glyph };
+}
+
+/** The same accent, taken from the wire's own answer instead of a name.
+ *
+ *  `collection_seed` is what the CHAIN says two cells share — a spore's
+ *  cluster id, an m-nft class id — so it reaches every LOD, while the
+ *  enrichment string only ever reaches a panel that has loaded a record. */
+export function mintMarkSeedAccent(
+  seed: ShapeSeed | null | undefined,
+): MintMarkAccent | null {
+  if (seed === null || seed === undefined) return null;
+  // The glyph is a second, independent draw off the same seed: two
+  // collections that happen to lean the same way still stamp different
+  // outlines, so the mark survives a monochrome read.
+  return accentFromLean(
+    collectionHueLean(seed),
+    mix32(mix32(seed[0] >>> 0) ^ (seed[1] >>> 0)) % MINT_MARK_GLYPHS,
+  );
+}
+
+/** THE collection accent for a cell, at every LOD.
+ *
+ *  The wire seed WINS wherever it exists, because it is the only answer the
+ *  galaxy can also see; the enrichment collection string stays as the
+ *  fallback for a cell restored from pre-M2b state, where a loaded panel
+ *  still knows the name even though no seed came with it. Two cells carrying
+ *  the same seed therefore cannot disagree anywhere — a promise the string
+ *  path alone could not make, since it reached the portrait through a hash of
+ *  its own that no other surface computed. */
+export function cellCollectionAccent(
+  cell: Cell,
+  collection?: string | null,
+): MintMarkAccent | null {
+  return mintMarkSeedAccent(cell.collection_seed) ?? mintMarkCollectionAccent(collection);
 }
 
 /** Stamp the mark at the carrier's crown — its highest point, which is a
@@ -1202,8 +1242,10 @@ function deriveMintMark(
 }
 
 export interface CellMorphologyTopologyOptions {
-  /** Detail-view only. The galaxy never knows a collection and stamps a
-   *  neutral cartouche; so does a panel whose enrichment has not landed. */
+  /** Enrichment's NAME for the collection — labels, glyph fallback. Only a
+   *  loaded detail panel has one, and since M2b it is the fallback rather
+   *  than the source: `cell.collection_seed` rides the wire to every LOD and
+   *  wins wherever it is present. */
   collection?: string | null;
 }
 
@@ -1223,7 +1265,7 @@ export function deriveCellMorphologyTopology(
       genome.type,
       carrier,
       frames,
-      mintMarkCollectionAccent(options.collection),
+      cellCollectionAccent(cell, options.collection),
     )
     : null;
   const segmentCount = strands.reduce(

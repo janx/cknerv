@@ -33,6 +33,7 @@ describe('controlled Cell relic matrix', () => {
       'data-content',
       'data-size',
       'capacity',
+      'collection',
       'fallback',
     ]);
     expect(CONTROLLED_RELIC_CAMERAS).toEqual(['front', 'side', 'three-quarter']);
@@ -81,5 +82,21 @@ describe('controlled Cell relic matrix', () => {
       expect(sample.cell.data_shape_seed).toEqual(SOURCE.data_shape_seed);
       expect(sample.cell.data_bytes).toBe(SOURCE.data_bytes);
     }
+    // The crafted family is the row's CONSTANT, not a second variable: every
+    // variant wears the same one, so the only thing that moves is the
+    // collection. Everything a cartouche's outline reads from is held too.
+    const collection = byAxis.get('collection')!.variants;
+    for (const sample of collection) {
+      expect(sample.cell.asset_kind).toBe('spore');
+      expect(sample.cell.type_shape_seed).toEqual(collection[0].cell.type_shape_seed);
+      expect(sample.cell.lock_shape_seed).toEqual(SOURCE.lock_shape_seed);
+      expect(sample.cell.data_shape_seed).toEqual(SOURCE.data_shape_seed);
+      expect(sample.cell.data_bytes).toBe(SOURCE.data_bytes);
+      expect(sample.cell.capacity).toBe(SOURCE.capacity);
+    }
+    expect(collection[0].cell.collection_seed).toBeUndefined();
+    expect(
+      new Set(collection.slice(1).map((s) => String(s.cell.collection_seed))).size,
+    ).toBe(collection.length - 1);
   });
 });
