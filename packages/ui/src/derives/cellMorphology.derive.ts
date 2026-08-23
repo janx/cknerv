@@ -56,7 +56,26 @@ export interface DataMark {
 /** Which reading shaped `DataMorphology.slots`. `generic` is the seed-driven
  *  texture every cell outside a signed class still carries; the others are a
  *  class saying what its data MEANS through the same channel. */
-export type DataMarkScheme = 'generic' | 'bead_train';
+export type DataMarkScheme = 'generic' | 'bead_train' | 'registration_seal';
+
+/** One tick of a seal inlay: a radial notch of `length` standing at `angle`,
+ *  starting `radius` out from the seal axis. Polar on purpose — the symmetry
+ *  is a statement about angles, and stating it in angles keeps it exact. */
+export interface SealNotch {
+  angle: number;
+  radius: number;
+  length: number;
+}
+
+/** The inlay an identity cell's NAME stamps inside its family emblem. The
+ *  frame says ".bit"; this says which account. */
+export interface SealMorphology {
+  /** Folds of exact rotational symmetry, 3..6. */
+  symmetryOrder: number;
+  /** Notches generated per fold, then rotated into every other fold. */
+  foldNotches: number;
+  notches: readonly SealNotch[];
+}
 
 export interface DataMorphology {
   seed: ShapeSeed;
@@ -69,6 +88,8 @@ export interface DataMorphology {
   scheme: DataMarkScheme;
   /** Present exactly when `scheme` is `bead_train`. */
   quantity: UdtQuantitySignature | null;
+  /** Present exactly when `scheme` is `registration_seal`. */
+  seal: SealMorphology | null;
 }
 
 export interface CellMorphologyGenome {
@@ -478,17 +499,79 @@ function beadTrainSlots(quantity: UdtQuantitySignature): DataMark[] {
   } satisfies DataMark));
 }
 
+/** The name written as a rosette. One fold is generated and then rotated into
+ *  the other N−1, and inside a fold the notches sit in mirror pairs about the
+ *  fold's own axis — so the result carries the full dihedral symmetry, which
+ *  is the one thing no other class is allowed to do. */
+function deriveSealMorphology(seed: ShapeSeed): SealMorphology {
+  const random = seedStream(seed, 'data/seal');
+  const symmetryOrder = 3 + Math.floor(random() * 4);
+  // The inlay never outgrows the agreement budget, so the count a seal can
+  // reach stays inside what `consensusBraidAgreementTarget` predicts.
+  const foldNotches = Math.min(
+    1 + Math.floor(random() * 3),
+    Math.max(1, Math.floor(CELL_MORPHOLOGY_MAX_NODES / symmetryOrder)),
+  );
+  const halfFold = CELL_MORPHOLOGY_TAU / (2 * symmetryOrder);
+  // Stays well inside the fold, so a pair never crosses into its neighbour.
+  const spread = (0.22 + random() * 0.2) * halfFold;
+  const pairRadius = 0.17 + random() * 0.15;
+  const centreRadius = 0.17 + random() * 0.15;
+  const pairLength = 0.05 + random() * 0.06;
+  const centreLength = 0.05 + random() * 0.06;
+  // A vertex at the crown. With the fold axis on +y the angle set is also
+  // invariant under the emblem's own x → −x mirror, for ODD orders too.
+  const crown = CELL_MORPHOLOGY_TAU / 4;
+  const offsets = foldNotches === 1
+    ? [0]
+    : foldNotches === 2 ? [-spread, spread] : [-spread, 0, spread];
+  const notches: SealNotch[] = [];
+  for (let fold = 0; fold < symmetryOrder; fold += 1) {
+    const axis = crown + (fold * CELL_MORPHOLOGY_TAU) / symmetryOrder;
+    for (const offset of offsets) {
+      const centred = offset === 0;
+      notches.push({
+        angle: axis + offset,
+        radius: centred ? centreRadius : pairRadius,
+        length: centred ? centreLength : pairLength,
+      });
+    }
+  }
+  return { symmetryOrder, foldNotches, notches };
+}
+
+/** Registration notches: the inlay's ticks, one slot each. */
+function sealNotchSlots(seal: SealMorphology): DataMark[] {
+  return seal.notches.map((notch, index) => ({
+    slot: index,
+    lane: 0,
+    pairLane: 0,
+    kind: 'crossbar',
+    magnitude: notch.length,
+    score: (seal.notches.length - index) / seal.notches.length,
+    // Reported as the seal angle, so a mark still answers "where am I" in the
+    // same [0, 1) currency every other scheme uses.
+    phase: ((notch.angle % CELL_MORPHOLOGY_TAU) + CELL_MORPHOLOGY_TAU)
+      % CELL_MORPHOLOGY_TAU / CELL_MORPHOLOGY_TAU,
+  } satisfies DataMark));
+}
+
 function deriveDataMorphology(
   seed: ShapeSeed,
   rawBytes: number,
   quantity: UdtQuantitySignature | null,
+  seal: SealMorphology | null,
 ): DataMorphology {
   const bytes = Number.isFinite(rawBytes)
     ? clamp(Math.trunc(rawBytes), 0, 0xffff_ffff)
     : 0;
-  const slots = quantity === null
-    ? genericDataSlots(seed, bytes)
-    : beadTrainSlots(quantity);
+  // Disjoint by construction: no asset kind is both a token and an identity.
+  const scheme: DataMarkScheme = quantity !== null
+    ? 'bead_train'
+    : seal !== null ? 'registration_seal' : 'generic';
+  const slots = quantity !== null
+    ? beadTrainSlots(quantity)
+    : seal !== null ? sealNotchSlots(seal) : genericDataSlots(seed, bytes);
   const slotMask = slots.reduce((mask, mark) => mask | (1 << mark.slot), 0) >>> 0;
   const density = clamp(Math.log2(bytes + 1) / 24, 0, 1);
   return {
@@ -499,8 +582,9 @@ function deriveDataMorphology(
     packetCount: bytes === 0 ? 0 : clamp(1 + Math.floor(Math.log2(bytes + 1) / 4), 1, 8),
     slotMask,
     slots,
-    scheme: quantity === null ? 'generic' : 'bead_train',
+    scheme,
     quantity,
+    seal,
   };
 }
 
@@ -514,10 +598,19 @@ export function deriveCellMorphologyGenome(cell: Cell): CellMorphologyGenome {
   // instead of texturing the bytes. Every other family — and any token cell
   // whose prefix we cannot read — keeps the generic channel untouched.
   const quantity = cellUdtQuantitySignature(cell);
+  // An identity cell's meaning is its NAME, and the name is the one thing the
+  // family emblem cannot say: `script_shape_seed` hashes the whole script
+  // including args, so a single-script family like .bit stamps one identical
+  // carrier for every account. The data seed hashes the name record, so it is
+  // the channel that already varies per cell — the frame is the family, the
+  // inlay is the name. A cell with no record has no name to write.
+  const seal = family === 'identity' && cell.data_bytes > 0
+    ? deriveSealMorphology(data.seed)
+    : null;
   return {
     type: deriveTypeMorphology(family, type.seed),
     lock: deriveLockMorphology(lockFamily, lock.seed),
-    data: deriveDataMorphology(data.seed, cell.data_bytes, quantity),
+    data: deriveDataMorphology(data.seed, cell.data_bytes, quantity, seal),
     presenceScale: 1.02 + (capacityMass(cell.capacity) - 0.84) * 0.32,
     fallback: type.fallback || lock.fallback || data.fallback,
   };
@@ -850,17 +943,66 @@ function deriveCrossings(
   });
 }
 
+/** The seal axis: the emblem's own z, carried through the same canonical-pose
+ *  tilt the carrier gets. Rotating the inlay about THIS is what the symmetry
+ *  claim means once the cell is posed. */
+export function sealAxis(type: TypeMorphology): MorphologyVector3 {
+  return rotateEuler([0, 0, 1], type.tilt);
+}
+
+/** Normal of the emblem's mirror plane. `carrierPoint` builds the identity
+ *  family with x odd in t and y, z even, so the canonical mirror is x → −x. */
+export function sealMirrorNormal(type: TypeMorphology): MorphologyVector3 {
+  return rotateEuler([1, 0, 0], type.tilt);
+}
+
+/** A point on the inlay. The scale is UNIFORM even though the carrier's aspect
+ *  is not: an anisotropic scale shears a rosette, and a sheared rosette is no
+ *  longer invariant under its own rotation — the whole claim would be lost to
+ *  a jitter of ±6%. The frame stays slightly irregular; the inlay is struck. */
+function sealPoint(
+  type: TypeMorphology,
+  angle: number,
+  radius: number,
+): MorphologyPoint3 {
+  const uniform = (type.aspect[0] + type.aspect[1]) * 0.5;
+  return rotateEuler([
+    Math.cos(angle) * radius * uniform,
+    Math.sin(angle) * radius * uniform,
+    0,
+  ], type.tilt);
+}
+
 function deriveTopologyDataMarks(
   strands: readonly MorphologyBraidStrand[],
-  data: DataMorphology,
+  genome: CellMorphologyGenome,
 ): MorphologyBraidDataMark[] {
+  const { data } = genome;
   const strandCount = strands.length;
-  return data.slots.map((mark) => {
+  const seal = data.scheme === 'registration_seal' ? data.seal : null;
+  return data.slots.map((mark, index) => {
     // A generic mark sits in its slot on the 16-slot grid; a class signature
     // that needs exact spacing carries its own phase.
     const parameter = mark.phase ?? (mark.slot + 0.5) / CELL_MORPHOLOGY_DATA_SLOTS;
     const strand = mark.lane % strandCount;
     const pair = mark.pairLane % Math.max(1, strandCount - 1);
+    if (seal !== null) {
+      // A notch is struck into the seal face, not threaded onto a strand:
+      // strand positions follow the carrier, which is only mirror-symmetric,
+      // and the inlay has to be exactly N-fold.
+      const notch = seal.notches[index];
+      const point = sealPoint(genome.type, notch.angle, notch.radius);
+      const peerPoint = sealPoint(genome.type, notch.angle, notch.radius + notch.length);
+      return {
+        ...mark,
+        parameter,
+        strand,
+        pair,
+        point,
+        peerPoint,
+        midpoint: midpoint(point, peerPoint),
+      };
+    }
     const point = sampleStrand(strands[strand], parameter);
     const peerPoint = sampleStrand(strands[(strand + 1) % strandCount], parameter);
     const center = midpoint(point, peerPoint);
@@ -889,8 +1031,14 @@ function agreementScore(seed: ShapeSeed, crossing: MorphologyBraidCrossing): num
 function deriveAgreements(
   crossings: readonly MorphologyBraidCrossing[],
   data: DataMorphology,
+  dataMarks: readonly MorphologyBraidDataMark[],
 ): MorphologyAgreement[] {
   if (data.slots.length === 0) return [];
+  // A seal's knots land ON its registration notches. Which crossings agreed
+  // still selects them — the count, and so the evidence ledger, is untouched
+  // — but a knot floating off the inlay would break the one class allowed to
+  // be exactly symmetric.
+  const snap = data.scheme === 'registration_seal';
   const selected = crossings
     .map((crossing, crossingIndex) => ({
       crossing,
@@ -901,7 +1049,9 @@ function deriveAgreements(
     .slice(0, Math.min(data.slots.length, CELL_MORPHOLOGY_MAX_NODES));
   return selected
     .map(({ crossing, crossingIndex }, index) => {
-      const mark = data.slots[index % data.slots.length];
+      const slotIndex = index % data.slots.length;
+      const mark = data.slots[slotIndex];
+      const anchor = snap ? dataMarks[slotIndex] : null;
       return {
         parameter: crossing.parameter,
         pair: crossing.pair,
@@ -909,9 +1059,9 @@ function deriveAgreements(
         crossingIndex,
         dataSlot: mark.slot,
         kind: mark.kind,
-        pointA: crossing.pointA,
-        pointB: crossing.pointB,
-        midpoint: crossing.midpoint,
+        pointA: anchor?.point ?? crossing.pointA,
+        pointB: anchor?.peerPoint ?? crossing.pointB,
+        midpoint: anchor?.midpoint ?? crossing.midpoint,
       } satisfies MorphologyAgreement;
     })
     .sort((left, right) => (
@@ -927,8 +1077,8 @@ export function deriveCellMorphologyTopology(cell: Cell): CellMorphologyTopology
   const frames = deriveMorphologyFrames(carrier);
   const strands = deriveStrands(carrier, frames, genome.lock);
   const crossings = deriveCrossings(strands, genome.lock);
-  const dataMarks = deriveTopologyDataMarks(strands, genome.data);
-  const agreements = deriveAgreements(crossings, genome.data);
+  const dataMarks = deriveTopologyDataMarks(strands, genome);
+  const agreements = deriveAgreements(crossings, genome.data, dataMarks);
   const segmentCount = strands.reduce(
     (total, strand) => total + Math.max(0, strand.points.length - 1),
     0,

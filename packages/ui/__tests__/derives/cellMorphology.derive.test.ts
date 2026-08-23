@@ -8,6 +8,8 @@ import {
   deriveCellMorphologyTopology,
   morphologyFallbackSeed,
   morphologySignature,
+  sealAxis,
+  sealMirrorNormal,
 } from '../../src/derives/cellMorphology.derive';
 
 const TYPE_SEED: ShapeSeed = [0x1234_5678, 0x9abc_def0];
@@ -450,7 +452,8 @@ describe('Token quantity bead train', () => {
 
     const unsigned: Partial<Cell>[] = [
       // Right bytes, wrong family: a spore that opens with 16 bytes is not
-      // holding a balance.
+      // holding a balance. (An identity cell reads those bytes too, as its
+      // own seal — never as a quantity.)
       { asset_kind: 'spore', data_hex: readable, data_bytes: 16 },
       { asset_kind: 'object', data_hex: readable, data_bytes: 16 },
       { asset_kind: 'identity', data_hex: readable, data_bytes: 16 },
@@ -465,7 +468,7 @@ describe('Token quantity bead train', () => {
     for (const overrides of unsigned) {
       const data = deriveCellMorphologyGenome(cell(overrides)).data;
       expect(`${overrides.asset_kind}/${overrides.data_bytes}:${data.scheme}`)
-        .toBe(`${overrides.asset_kind}/${overrides.data_bytes}:generic`);
+        .not.toBe(`${overrides.asset_kind}/${overrides.data_bytes}:bead_train`);
       expect(data.quantity).toBeNull();
     }
   });
@@ -493,5 +496,181 @@ describe('Token quantity bead train', () => {
     // The scheme is a NEW field, never spliced into the recorded strings.
     expect(generic.data).toMatch(/^256b\/\d+(\.\d+)*$/);
     expect(token.data).toMatch(/^16b\/\d+(\.\d+)*$/);
+  });
+});
+
+/** Rotate `point` about `axis` (a unit vector) by `angle` — Rodrigues. */
+function rotateAbout(
+  point: readonly number[],
+  axis: readonly number[],
+  angle: number,
+): [number, number, number] {
+  const cosine = Math.cos(angle);
+  const sine = Math.sin(angle);
+  const dot = point[0] * axis[0] + point[1] * axis[1] + point[2] * axis[2];
+  const cross = [
+    axis[1] * point[2] - axis[2] * point[1],
+    axis[2] * point[0] - axis[0] * point[2],
+    axis[0] * point[1] - axis[1] * point[0],
+  ];
+  return [0, 1, 2].map((axisIndex) => (
+    point[axisIndex] * cosine
+    + cross[axisIndex] * sine
+    + axis[axisIndex] * dot * (1 - cosine)
+  )) as [number, number, number];
+}
+
+/** Reflect `point` through the plane whose unit normal is `normal`. */
+function reflectThrough(
+  point: readonly number[],
+  normal: readonly number[],
+): [number, number, number] {
+  const dot = point[0] * normal[0] + point[1] * normal[1] + point[2] * normal[2];
+  return [0, 1, 2].map((axis) => point[axis] - 2 * dot * normal[axis]) as
+    [number, number, number];
+}
+
+function containsPoint(
+  haystack: readonly (readonly number[])[],
+  needle: readonly number[],
+  epsilon = 1e-9,
+): boolean {
+  return haystack.some((candidate) => candidate.every(
+    (component, axis) => Math.abs(component - needle[axis]) <= epsilon,
+  ));
+}
+
+function identityCell(seed: ShapeSeed, overrides: Partial<Cell> = {}): Cell {
+  return cell({ asset_kind: 'identity', data_shape_seed: seed, ...overrides });
+}
+
+describe('Identity registration seal', () => {
+  it('writes a different inlay for every name', () => {
+    const seeds: ShapeSeed[] = [
+      [0x1de4_71fa, 0x5ea1_ed03],
+      [0x0bad_c0de, 0xfeed_face],
+      [0x1111_2222, 0x3333_4444],
+      [0xaaaa_bbbb, 0xcccc_dddd],
+      [0x0102_0304, 0x0506_0708],
+    ];
+    const inlays = seeds.map((seed) => {
+      const topology = deriveCellMorphologyTopology(identityCell(seed));
+      expect(topology.genome.data.scheme).toBe('registration_seal');
+      return pointList(topology.dataMarks.map((mark) => mark.point));
+    });
+    expect(new Set(inlays).size).toBe(seeds.length);
+
+    // The FRAME is the family: one shared type seed still stamps one carrier.
+    const carriers = seeds.map((seed) => (
+      pointList(deriveCellMorphologyTopology(identityCell(seed)).carrier)
+    ));
+    expect(new Set(carriers).size).toBe(1);
+  });
+
+  it('takes its individuality from the name record, never from the family', () => {
+    const base = deriveCellMorphologyTopology(identityCell([0x1111_2222, 0x3333_4444]));
+    // Every .bit account shares one type script, so this is what actually
+    // varies across the family in production — and it must not move the seal.
+    const sameName = deriveCellMorphologyTopology(identityCell(
+      [0x1111_2222, 0x3333_4444],
+      { type_shape_seed: [0x9999_8888, 0x7777_6666] },
+    ));
+    expect(sameName.genome.data.seal).toEqual(base.genome.data.seal);
+
+    const otherName = deriveCellMorphologyTopology(identityCell([0x5555_6666, 0x7777_8888]));
+    expect(otherName.genome.data.seal).not.toEqual(base.genome.data.seal);
+  });
+
+  it('is deterministic for one cell', () => {
+    const seed: ShapeSeed = [0x2384_6264, 0x3383_2795];
+    expect(deriveCellMorphologyTopology(identityCell(seed)))
+      .toEqual(deriveCellMorphologyTopology(identityCell(seed)));
+  });
+
+  it('holds an exact N-fold rotation and the emblem mirror', () => {
+    const seeds: ShapeSeed[] = [
+      [0x1de4_71fa, 0x5ea1_ed03],
+      [0x0bad_c0de, 0xfeed_face],
+      [0x1111_2222, 0x3333_4444],
+      [0xaaaa_bbbb, 0xcccc_dddd],
+      [0x0102_0304, 0x0506_0708],
+      [0x4242_4242, 0x2424_2424],
+      [0x7fff_ffff, 0x0000_0001],
+      [0xdead_beef, 0xcafe_babe],
+    ];
+    const orders = new Set<number>();
+    for (const seed of seeds) {
+      const topology = deriveCellMorphologyTopology(identityCell(seed));
+      const seal = topology.genome.data.seal;
+      expect(seal).not.toBeNull();
+      if (seal === null) continue;
+      orders.add(seal.symmetryOrder);
+      expect(seal.symmetryOrder).toBeGreaterThanOrEqual(3);
+      expect(seal.symmetryOrder).toBeLessThanOrEqual(6);
+      expect(seal.notches.length).toBe(seal.symmetryOrder * seal.foldNotches);
+      expect(seal.notches.length).toBeLessThanOrEqual(CELL_MORPHOLOGY_MAX_NODES);
+
+      const axis = sealAxis(topology.genome.type);
+      const normal = sealMirrorNormal(topology.genome.type);
+      const inner = topology.dataMarks.map((mark) => mark.point);
+      const outer = topology.dataMarks.map((mark) => mark.peerPoint);
+      const step = (Math.PI * 2) / seal.symmetryOrder;
+      for (const [label, ring] of [['inner', inner], ['outer', outer]] as const) {
+        // Non-vacuous: a ring collapsed onto one point would satisfy any
+        // rotation. Distinct notches are what make the claim mean something.
+        expect(new Set(ring.map((point) => point.map(round).join(','))).size)
+          .toBe(seal.notches.length);
+        for (const point of ring) {
+          expect(`${label}:rot:${containsPoint(ring, rotateAbout(point, axis, step))}`)
+            .toBe(`${label}:rot:true`);
+          expect(`${label}:mirror:${containsPoint(ring, reflectThrough(point, normal))}`)
+            .toBe(`${label}:mirror:true`);
+        }
+      }
+    }
+    // The order is a real channel, not a constant dressed up as one.
+    expect(orders.size).toBeGreaterThan(1);
+  });
+
+  it('lands every agreement knot on a notch of the inlay', () => {
+    const topology = deriveCellMorphologyTopology(identityCell([0x0bad_c0de, 0xfeed_face]));
+    expect(topology.agreements.length).toBeGreaterThan(0);
+    const notchMidpoints = topology.dataMarks.map((mark) => mark.midpoint);
+    for (const agreement of topology.agreements) {
+      expect(containsPoint(notchMidpoints, agreement.midpoint)).toBe(true);
+      // The crossing it was selected from is still recorded, so the DOM
+      // evidence ledger and the 3D knots keep counting the same knots.
+      expect(topology.crossings[agreement.crossingIndex]).toBeDefined();
+    }
+    expect(topology.agreements.length).toBe(Math.min(
+      topology.genome.data.slots.length,
+      topology.genome.lock.braidWord.length,
+    ));
+  });
+
+  it('leaves other families their marks on the braid, not on a seal face', () => {
+    for (const family of ['native', 'sudt', 'xudt', 'dao', 'spore', 'other', 'object'] as const) {
+      const topology = deriveCellMorphologyTopology(cell({
+        asset_kind: family,
+        type_shape_seed: family === 'native' ? null : TYPE_SEED,
+      }));
+      expect(`${family}:${topology.genome.data.seal === null}`).toBe(`${family}:true`);
+      expect(`${family}:${topology.genome.data.scheme === 'registration_seal'}`)
+        .toBe(`${family}:false`);
+      for (const agreement of topology.agreements) {
+        expect(agreement.midpoint).toEqual(topology.crossings[agreement.crossingIndex].midpoint);
+      }
+    }
+  });
+
+  it('has no name to write when there is no record', () => {
+    const empty = deriveCellMorphologyTopology(identityCell(DATA_SEED, {
+      data_hex: '0x',
+      data_bytes: 0,
+    }));
+    expect(empty.genome.data.seal).toBeNull();
+    expect(empty.genome.data.scheme).toBe('generic');
+    expect(empty.dataMarks).toEqual([]);
+    expect(empty.agreements).toEqual([]);
   });
 });
