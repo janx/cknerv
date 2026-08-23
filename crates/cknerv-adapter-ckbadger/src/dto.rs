@@ -475,6 +475,73 @@ pub(crate) struct TokenResponse {
     pub decimals: Option<i16>,
 }
 
+/// One digital object as ckbadger's spore index knows it.
+///
+/// The response also names the object's cluster, but this side has already
+/// read that id out of the Cell's own decode segment — which is exactly what
+/// lets the object and cluster fetches run side by side — so it is
+/// deliberately not deserialized here.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SporeItemResponse {
+    /// Absent until ckbadger's decode worker has measured the object. An
+    /// unmeasured object is unknown, which is not the same claim as off-chain.
+    #[serde(default)]
+    pub media_profile: Option<SporeMediaProfileDto>,
+}
+
+/// Where one object's content physically lives. `tier` is ckbadger's own
+/// vocabulary — `pure_ckb`, `btc_ckb`, `decentralized_mixture`,
+/// `centralized_mixture`, `unknown` — and is carried through verbatim: the
+/// tier list is ckbadger's to grow, and a sixth spelling must arrive as a
+/// string this side does not recognise rather than as a decode failure.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SporeMediaProfileDto {
+    pub tier: String,
+    /// Deterministic decode failures and dangling media, one sentence each.
+    /// Only how many there are travels onward.
+    #[serde(default)]
+    pub issues: Vec<String>,
+}
+
+/// One spore cluster: the collection's own facts and the storage composition
+/// of its whole live population, riding a single response.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ClusterDetailResponse {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Live spores, not everything ever minted: a collection's population is
+    /// what it holds now.
+    pub spores_count: i64,
+    pub holders_count: i64,
+    /// Shannons locked in the collection's live cells.
+    #[serde(default)]
+    pub owned_capacity: Option<String>,
+    #[serde(default)]
+    pub composition: Option<ClusterCompositionDto>,
+}
+
+/// The population's storage composition. The tier is worst-dominant upstream:
+/// one centralized object colours the whole collection. `onchain_count`
+/// already sums the pure-CKB and BTC+CKB objects — the wire carries no
+/// separate BTC+CKB count, so their difference is the only way to see the BTC
+/// half. `onchainRatio` rides the same object and is deliberately not read:
+/// the panel states tiers and counts, never a percentage.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ClusterCompositionDto {
+    pub tier: String,
+    pub onchain_count: i64,
+    pub pure_ckb_count: i64,
+    pub decentralized_mixture_count: i64,
+    pub centralized_mixture_count: i64,
+    pub unknown_count: i64,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TransactionDetailResponse {

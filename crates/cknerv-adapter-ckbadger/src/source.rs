@@ -24,13 +24,14 @@ use cknerv_server::{CanonicalContext, EnrichmentSource, GalaxyCompositionHydrato
 
 use crate::dto::{
     AssetEcosystemResponse, BlockResponse, CellDataAnalysis, CellDetailResponse,
-    CommonKnowledgeSizeBreakdown, DaoInfo, DaoStatisticsResponse, HardforkEventResponse,
-    HardforkTimelineResponse, LatestActivityResponse, LiveCellSummaryResponse,
-    LookupScriptsRequest, NetworkCrawlerSummaryResponse, NetworkNodeDetailResponse,
-    NetworkNodeSummaryResponse, NetworkNodesPageResponse, NetworkStats, RecentReorgResponse,
-    ReorgEventResponse, ScriptCatalogueResponse, ScriptFamilyResponse, ScriptLookupInfo,
-    ScriptLookupResponse, ScriptResponse, TokenResponse, TransactionDetailResponse,
-    TransactionLifecycleResponse, TransactionStatsPoint, TransactionStatsResponse,
+    ClusterDetailResponse, CommonKnowledgeSizeBreakdown, DaoInfo, DaoStatisticsResponse,
+    HardforkEventResponse, HardforkTimelineResponse, LatestActivityResponse,
+    LiveCellSummaryResponse, LookupScriptsRequest, NetworkCrawlerSummaryResponse,
+    NetworkNodeDetailResponse, NetworkNodeSummaryResponse, NetworkNodesPageResponse, NetworkStats,
+    RecentReorgResponse, ReorgEventResponse, ScriptCatalogueResponse, ScriptFamilyResponse,
+    ScriptLookupInfo, ScriptLookupResponse, ScriptResponse, SporeItemResponse, TokenResponse,
+    TransactionDetailResponse, TransactionLifecycleResponse, TransactionStatsPoint,
+    TransactionStatsResponse,
 };
 use crate::galaxy_composition::{
     discover as discover_galaxy_composition, identity_families as galaxy_identity_families,
@@ -133,6 +134,15 @@ const MAX_PEER_PROTOCOLS: usize = 32;
 const MAX_CELL_CONTENT_PREVIEW_BYTES: usize = 4 * 1024;
 const MAX_CELL_CONTENT_SEGMENTS: usize = 64;
 const MAX_CELL_CONTENT_GUESSES: usize = 16;
+/// How much of a collection's description one Cell record carries. Long enough
+/// for the sentence that says what the collection is, short enough that a
+/// marketing essay cannot dominate a per-Cell record. Counted in characters,
+/// not bytes, so the cut never lands inside one.
+const MAX_SPORE_DESCRIPTION_CHARS: usize = 160;
+/// The literal ckbadger's spore decode writes into the `cluster_id` segment
+/// for an object minted outside any cluster. It is a stated fact — unlike an
+/// absent segment, which states nothing at all.
+const SPORE_NO_CLUSTER: &str = "none";
 const SHANNONS_PER_CKB: u128 = 100_000_000;
 const MAX_WIRE_SAFE_U64: u64 = 9_007_199_254_740_991;
 const MAX_GALAXY_COMPOSITION_TARGET: usize = 6_000;
@@ -560,12 +570,156 @@ impl CkbadgerEnrichmentSource {
         }))
     }
 
+    /// The two things a spore Cell cannot say about itself: which collection
+    /// it belongs to, and where its content physically lives.
+    ///
+    /// Neither is legible from the Cell alone. SporeData puts the cluster id
+    /// after the content bytes, so the bounded `data` prefix never reaches it
+    /// and every object's type script looks alike on the wire; the storage
+    /// tier is a measurement ckbadger's decode worker makes, not a claim the
+    /// Cell carries. What the Cell does carry is the decode segment naming its
+    /// cluster, and that is precisely what lets the object lookup and the
+    /// cluster lookup run side by side instead of one behind the other.
+    ///
+    /// A Cell that is not a spore costs zero requests. Every request that is
+    /// made degrades alone: whichever half answers still becomes a facet.
+    async fn spore_enrichment(&self, cell: &CellDetailResponse) -> Vec<SemanticFacet> {
+        let Some(decoded) = cell
+            .data_analysis
+            .as_ref()
+            .and_then(|analysis| analysis.deterministic.as_ref())
+        else {
+            return Vec::new();
+        };
+        let args = cell
+            .type_script
+            .as_ref()
+            .map(|script| script.args.as_str())
+            .filter(|args| is_hash32(args));
+        match decoded.kind.as_str() {
+            "spore_cell" => {
+                let segment = decoded
+                    .segments
+                    .iter()
+                    .find(|segment| segment.label == "cluster_id")
+                    .map(|segment| segment.human_value.as_str());
+                // An object's role is derived from the segment, so a segment
+                // that is absent or unreadable leaves the role unknown — and
+                // unknown is never dressed up as sole. It earns no collection
+                // facet, while the storage question is still asked.
+                let (role, cluster_id) = match segment {
+                    Some(id) if is_hash32(id) => (Some("item"), Some(id)),
+                    Some(SPORE_NO_CLUSTER) => (Some("sole_item"), None),
+                    _ => (None, None),
+                };
+                let (item, cluster) =
+                    tokio::join!(self.spore_object(args), self.spore_cluster(cluster_id));
+                map_spore_facets(role, cluster_id, item, cluster)
+            }
+            // A cluster Cell states its role by being one, so the role holds
+            // even when its args are not an id anything can be looked up by.
+            "spore_cluster_cell" => {
+                let cluster = self.spore_cluster(args).await;
+                map_spore_facets(Some("cluster"), args, None, cluster)
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// One object's storage measurement. A `None` id is a spore Cell whose
+    /// type args are not a 32-byte object id: nothing to ask about, so nothing
+    /// is asked.
+    async fn spore_object(&self, spore_id: Option<&str>) -> Option<SporeItemResponse> {
+        let spore_id = spore_id?;
+        match self.fetch_spore_object(spore_id).await {
+            Ok(item) => item,
+            Err(error) => {
+                tracing::debug!(
+                    target: "cknerv-adapter-ckbadger",
+                    "ckbadger spore object unavailable: {error}"
+                );
+                None
+            }
+        }
+    }
+
+    async fn fetch_spore_object(
+        &self,
+        spore_id: &str,
+    ) -> anyhow::Result<Option<SporeItemResponse>> {
+        let url = self.endpoint(&format!("spore/objects/{spore_id}"))?;
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .context("fetch ckbadger spore object")?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "ckbadger spore object returned HTTP {}",
+                response.status()
+            ));
+        }
+        let item: SporeItemResponse = response
+            .json()
+            .await
+            .context("decode ckbadger spore object")?;
+        Ok(Some(item))
+    }
+
+    /// One collection's facts. A `None` id is a Cell that named no cluster it
+    /// could be looked up by — a sole object, or one whose decode said nothing.
+    async fn spore_cluster(&self, cluster_id: Option<&str>) -> Option<ClusterDetailResponse> {
+        let cluster_id = cluster_id?;
+        match self.fetch_spore_cluster(cluster_id).await {
+            Ok(cluster) => cluster,
+            Err(error) => {
+                tracing::debug!(
+                    target: "cknerv-adapter-ckbadger",
+                    "ckbadger spore cluster unavailable: {error}"
+                );
+                None
+            }
+        }
+    }
+
+    async fn fetch_spore_cluster(
+        &self,
+        cluster_id: &str,
+    ) -> anyhow::Result<Option<ClusterDetailResponse>> {
+        let url = self.endpoint(&format!("spore/clusters/{cluster_id}"))?;
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .context("fetch ckbadger spore cluster")?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "ckbadger spore cluster returned HTTP {}",
+                response.status()
+            ));
+        }
+        let cluster: ClusterDetailResponse = response
+            .json()
+            .await
+            .context("decode ckbadger spore cluster")?;
+        Ok(Some(cluster))
+    }
+
     fn to_record(
         &self,
         cell: CellDetailResponse,
         anchor: ChainAnchor,
         lookups: &ScriptLookupResponse,
         asset: Option<SemanticAsset>,
+        spore_facets: Vec<SemanticFacet>,
     ) -> anyhow::Result<CellSemanticRecord> {
         let created_at_block = u64::try_from(cell.created_at_block)
             .map_err(|_| anyhow!("ckbadger returned a negative Cell creation block"))?;
@@ -645,6 +799,7 @@ impl CkbadgerEnrichmentSource {
         if let Some(dao) = cell.dao_info {
             facets.push(dao_facet(dao)?);
         }
+        facets.extend(spore_facets);
         Ok(CellSemanticRecord {
             out_point: OutPoint {
                 tx_hash: cell.tx_hash,
@@ -961,8 +1116,12 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         if cell.tx_hash != out_point.tx_hash || cell.output_index != requested_index {
             return Err(anyhow!("ckbadger returned a different outpoint"));
         }
-        let (lookups, asset) = tokio::join!(self.script_lookups(&cell), self.token_asset(&cell));
-        let record = self.to_record(cell, anchor.clone(), &lookups, asset)?;
+        let (lookups, asset, spore_facets) = tokio::join!(
+            self.script_lookups(&cell),
+            self.token_asset(&cell),
+            self.spore_enrichment(&cell)
+        );
+        let record = self.to_record(cell, anchor.clone(), &lookups, asset, spore_facets)?;
         self.revalidate_anchor(&anchor, "Cell detail").await?;
         Ok(Some(record))
     }
@@ -3424,6 +3583,126 @@ fn dao_facet(dao: DaoInfo) -> anyhow::Result<SemanticFacet> {
     })
 }
 
+/// Assembles the spore facets out of whatever the two lookups established.
+///
+/// The two are independent by construction, because their sources are: a
+/// collection facet carrying nothing but a role and an id still answers whose
+/// kin the object is, and a composition facet carrying only the object's own
+/// tier still answers where that one object lives. So each attribute appears
+/// on its own evidence, and a half that never arrived is simply absent rather
+/// than zero — a collection with no stated population is not a collection of
+/// none.
+///
+/// `role` is `None` for an object whose decode named no cluster either way:
+/// there is nothing truthful to say about its kin, so no collection facet is
+/// built at all.
+fn map_spore_facets(
+    role: Option<&str>,
+    cluster_id: Option<&str>,
+    item: Option<SporeItemResponse>,
+    cluster: Option<ClusterDetailResponse>,
+) -> Vec<SemanticFacet> {
+    let media = item.as_ref().and_then(|item| item.media_profile.as_ref());
+    let item_tier = media.and_then(|profile| nonempty(profile.tier.as_str()));
+    let aggregate = cluster
+        .as_ref()
+        .and_then(|cluster| cluster.composition.as_ref());
+    let aggregate_tier = aggregate.and_then(|aggregate| nonempty(aggregate.tier.as_str()));
+
+    let mut composition = Vec::new();
+    if let Some(tier) = item_tier.clone() {
+        composition.push(attribute("item_tier", tier, None));
+    }
+    // Zero issues is the ordinary case and says nothing; a count only appears
+    // once there is something wrong to count.
+    if let Some(issues) = media
+        .map(|profile| profile.issues.len())
+        .filter(|issues| *issues > 0)
+    {
+        composition.push(attribute("item_issues", issues.to_string(), None));
+    }
+    if let Some(aggregate) = aggregate {
+        if let Some(tier) = aggregate_tier.clone() {
+            composition.push(attribute("agg_tier", tier, None));
+        }
+        composition.extend(
+            [
+                spore_count("agg_onchain", aggregate.onchain_count),
+                spore_count("agg_pure_ckb", aggregate.pure_ckb_count),
+                spore_count("agg_decentralized", aggregate.decentralized_mixture_count),
+                spore_count("agg_centralized", aggregate.centralized_mixture_count),
+                spore_count("agg_unknown", aggregate.unknown_count),
+            ]
+            .into_iter()
+            .flatten(),
+        );
+    }
+    // The headline is the object's own tier when it has one — that is the
+    // question a reader of one object is asking. A cluster Cell holds no media
+    // of its own, so its headline is the population's.
+    let headline = item_tier.or(aggregate_tier);
+
+    let mut facets = Vec::new();
+    if let Some(role) = role {
+        let mut attributes = vec![attribute("role", role, None)];
+        if let Some(cluster_id) = cluster_id {
+            attributes.push(attribute("cluster_id", cluster_id, None));
+        }
+        let mut state = None;
+        if let Some(cluster) = cluster {
+            state = cluster.name.and_then(nonempty);
+            attributes.extend(
+                [
+                    spore_count("live_items", cluster.spores_count),
+                    spore_count("holders", cluster.holders_count),
+                ]
+                .into_iter()
+                .flatten(),
+            );
+            if let Some(capacity) = cluster
+                .owned_capacity
+                .and_then(nonempty)
+                .filter(|capacity| unsigned_decimal(capacity, "spore ownedCapacity").is_ok())
+            {
+                attributes.push(attribute("owned_capacity", capacity, Some("shannons")));
+            }
+            if let Some(description) = cluster.description.and_then(nonempty) {
+                attributes.push(attribute(
+                    "description",
+                    description
+                        .chars()
+                        .take(MAX_SPORE_DESCRIPTION_CHARS)
+                        .collect::<String>(),
+                    None,
+                ));
+            }
+        }
+        facets.push(SemanticFacet {
+            namespace: "spore".to_string(),
+            kind: "collection".to_string(),
+            state,
+            attributes,
+        });
+    }
+    if !composition.is_empty() {
+        facets.push(SemanticFacet {
+            namespace: "spore".to_string(),
+            kind: "composition".to_string(),
+            state: headline,
+            attributes: composition,
+        });
+    }
+    facets
+}
+
+/// A count a spore index stated about itself. Negative is not a smaller
+/// number, it is a broken one, so it is withheld rather than printed.
+fn spore_count(key: &str, value: i64) -> Option<SemanticAttribute> {
+    nonnegative(value, key)
+        .ok()
+        .map(|count| attribute(key, count.to_string(), None))
+}
+
 /// Milliseconds since the Unix epoch for an RFC 3339 instant, or `None` when
 /// the text is not one this parser can read exactly.
 ///
@@ -4012,53 +4291,7 @@ mod tests {
                             "isDepGroup": false
                         }));
                     }
-                    Json(serde_json::json!({
-                        "txHash": TX_HASH,
-                        "outputIndex": output_index,
-                        "dataSize": 7,
-                        "data": format!("0x{}", "00".repeat(7)),
-                        "lockScriptHash": "0xlockscript",
-                        "typeScriptHash": "0xtypescript",
-                        "address": "ckt1qyqexample",
-                        "cellType": "dao",
-                        "createdAtBlock": 92,
-                        "lock": {
-                            "codeHash": "0xlockcode",
-                            "hashType": "type",
-                            "args": "0x01"
-                        },
-                        "type": {
-                            "codeHash": "0xdaocode",
-                            "hashType": "type",
-                            "args": "0x"
-                        },
-                        "commonKnowledgeSizeBreakdown": {
-                            "capacityFieldBytes": 8,
-                            "lockScriptBytes": 54,
-                            "typeScriptBytes": 33,
-                            "dataBytes": 7,
-                            "totalBytes": 102
-                        },
-                        "dataAnalysis": {
-                            "deterministic": {
-                                "kind": "dao_cell",
-                                "summary": "DAO deposit",
-                                "segments": [{
-                                    "label": "deposit_block",
-                                    "start": 0,
-                                    "end": 7,
-                                    "meaning": "DAO deposit block marker",
-                                    "humanValue": "92"
-                                }]
-                            },
-                            "heuristicGuesses": []
-                        },
-                        "isDepGroup": false,
-                        "daoInfo": {
-                            "daoStatus": "deposit",
-                            "depositBlockNumber": 92
-                        }
-                    }))
+                    Json(dao_cell_detail(output_index))
                 }),
             )
             .route(
@@ -4902,6 +5135,758 @@ mod tests {
         );
 
         server.abort();
+    }
+
+    /// The DAO deposit Cell every mock serves for `TX_HASH`. Shared so the
+    /// spore stub can prove a non-spore Cell asks the spore index nothing
+    /// while still being the same Cell the older tests read.
+    fn dao_cell_detail(output_index: i32) -> serde_json::Value {
+        serde_json::json!({
+            "txHash": TX_HASH,
+            "outputIndex": output_index,
+            "dataSize": 7,
+            "data": format!("0x{}", "00".repeat(7)),
+            "lockScriptHash": "0xlockscript",
+            "typeScriptHash": "0xtypescript",
+            "address": "ckt1qyqexample",
+            "cellType": "dao",
+            "createdAtBlock": 92,
+            "lock": {
+                "codeHash": "0xlockcode",
+                "hashType": "type",
+                "args": "0x01"
+            },
+            "type": {
+                "codeHash": "0xdaocode",
+                "hashType": "type",
+                "args": "0x"
+            },
+            "commonKnowledgeSizeBreakdown": {
+                "capacityFieldBytes": 8,
+                "lockScriptBytes": 54,
+                "typeScriptBytes": 33,
+                "dataBytes": 7,
+                "totalBytes": 102
+            },
+            "dataAnalysis": {
+                "deterministic": {
+                    "kind": "dao_cell",
+                    "summary": "DAO deposit",
+                    "segments": [{
+                        "label": "deposit_block",
+                        "start": 0,
+                        "end": 7,
+                        "meaning": "DAO deposit block marker",
+                        "humanValue": "92"
+                    }]
+                },
+                "heuristicGuesses": []
+            },
+            "isDepGroup": false,
+            "daoInfo": {
+                "daoStatus": "deposit",
+                "depositBlockNumber": 92
+            }
+        })
+    }
+
+    const SPORE_TX_HASH: &str =
+        "0x5555555555555555555555555555555555555555555555555555555555555555";
+    const SOLE_SPORE_TX_HASH: &str =
+        "0x6666666666666666666666666666666666666666666666666666666666666666";
+    /// A spore whose decode carries no `cluster_id` segment at all — the shape
+    /// that must read as unknown rather than as sole.
+    const MUTE_SPORE_TX_HASH: &str =
+        "0x7777777777777777777777777777777777777777777777777777777777777777";
+    const CLUSTER_TX_HASH: &str =
+        "0x8888888888888888888888888888888888888888888888888888888888888888";
+    /// An object's spore id is its type-script args, which is why the object
+    /// lookup needs nothing the Cell detail did not already carry.
+    const SPORE_ID: &str = "0x9999999999999999999999999999999999999999999999999999999999999999";
+    const SOLE_SPORE_ID: &str =
+        "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const MUTE_SPORE_ID: &str =
+        "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    const CLUSTER_ID: &str = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    const SPORE_CODE_HASH: &str =
+        "0x1010101010101010101010101010101010101010101010101010101010101010";
+    const SPORE_CLUSTER_CODE_HASH: &str =
+        "0x2020202020202020202020202020202020202020202020202020202020202020";
+    const SPORE_TYPE_HASH: &str =
+        "0x3030303030303030303030303030303030303030303030303030303030303030";
+    const SPORE_CLUSTER_TYPE_HASH: &str =
+        "0x4040404040404040404040404040404040404040404040404040404040404040";
+
+    /// A collection description longer than one Cell record carries, arranged
+    /// so an em dash occupies the bytes on either side of the bound: a
+    /// byte-wise cut at 160 would land inside that character, which is the
+    /// whole reason the bound counts characters.
+    fn long_cluster_description() -> String {
+        let prose = "Nervape Gen2, a generation of on-chain characters. Minted 2024. ".repeat(4);
+        let head: String = prose.chars().take(158).collect();
+        format!("{head}—and a tail no per-Cell record needs to carry")
+    }
+
+    /// A spore object Cell as ckbadger's Cell detail describes one. The
+    /// cluster id reaches this side through the decode, never through the
+    /// bounded data prefix: SporeData puts it after the content bytes.
+    fn spore_cell_detail(
+        tx_hash: &str,
+        spore_id: &str,
+        segments: serde_json::Value,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "txHash": tx_hash,
+            "outputIndex": 0,
+            "dataSize": 96,
+            "data": format!("0x{}", "00".repeat(96)),
+            "lockScriptHash": "0xlockscript",
+            "typeScriptHash": SPORE_TYPE_HASH,
+            "address": "ckt1qyqspore",
+            "createdAtBlock": 94,
+            "lock": {
+                "codeHash": "0xlockcode",
+                "hashType": "type",
+                "args": "0x01"
+            },
+            "type": {
+                "codeHash": SPORE_CODE_HASH,
+                "hashType": "data1",
+                "args": spore_id
+            },
+            "commonKnowledgeSizeBreakdown": {
+                "capacityFieldBytes": 8,
+                "lockScriptBytes": 54,
+                "typeScriptBytes": 65,
+                "dataBytes": 96,
+                "totalBytes": 223
+            },
+            "dataAnalysis": {
+                "deterministic": {
+                    "kind": "spore_cell",
+                    "summary": "Spore digital object",
+                    "segments": segments
+                },
+                "heuristicGuesses": []
+            },
+            "isDepGroup": false
+        })
+    }
+
+    fn cluster_id_segment(human_value: &str) -> serde_json::Value {
+        serde_json::json!({
+            "label": "cluster_id",
+            "start": 64,
+            "end": 96,
+            "meaning": "SporeData cluster id",
+            "humanValue": human_value
+        })
+    }
+
+    fn content_type_segment() -> serde_json::Value {
+        serde_json::json!({
+            "label": "content_type",
+            "start": 0,
+            "end": 9,
+            "meaning": "SporeData content type",
+            "humanValue": "image/png"
+        })
+    }
+
+    fn clustered_spore_cell() -> serde_json::Value {
+        spore_cell_detail(
+            SPORE_TX_HASH,
+            SPORE_ID,
+            serde_json::json!([content_type_segment(), cluster_id_segment(CLUSTER_ID)]),
+        )
+    }
+
+    fn sole_spore_cell() -> serde_json::Value {
+        spore_cell_detail(
+            SOLE_SPORE_TX_HASH,
+            SOLE_SPORE_ID,
+            serde_json::json!([content_type_segment(), cluster_id_segment(SPORE_NO_CLUSTER)]),
+        )
+    }
+
+    fn mute_spore_cell() -> serde_json::Value {
+        spore_cell_detail(
+            MUTE_SPORE_TX_HASH,
+            MUTE_SPORE_ID,
+            serde_json::json!([content_type_segment()]),
+        )
+    }
+
+    /// A cluster Cell names itself by its own type-script args, so it needs no
+    /// segment read at all. Its data is a small on-chain document.
+    fn spore_cluster_cell() -> serde_json::Value {
+        serde_json::json!({
+            "txHash": CLUSTER_TX_HASH,
+            "outputIndex": 0,
+            "dataSize": 40,
+            "data": format!("0x{}", "00".repeat(40)),
+            "lockScriptHash": "0xlockscript",
+            "typeScriptHash": SPORE_CLUSTER_TYPE_HASH,
+            "address": "ckt1qyqcluster",
+            "createdAtBlock": 90,
+            "lock": {
+                "codeHash": "0xlockcode",
+                "hashType": "type",
+                "args": "0x01"
+            },
+            "type": {
+                "codeHash": SPORE_CLUSTER_CODE_HASH,
+                "hashType": "data1",
+                "args": CLUSTER_ID
+            },
+            "commonKnowledgeSizeBreakdown": {
+                "capacityFieldBytes": 8,
+                "lockScriptBytes": 54,
+                "typeScriptBytes": 65,
+                "dataBytes": 40,
+                "totalBytes": 167
+            },
+            "dataAnalysis": {
+                "deterministic": {
+                    "kind": "spore_cluster_cell",
+                    "summary": "Spore cluster",
+                    "segments": [{
+                        "label": "name",
+                        "start": 0,
+                        "end": 12,
+                        "meaning": "ClusterData name",
+                        "humanValue": "Nervape Gen2"
+                    }]
+                },
+                "heuristicGuesses": []
+            },
+            "isDepGroup": false
+        })
+    }
+
+    /// The collection's own facts and its population's composition, riding one
+    /// response, spelled as ckbadger spells them. `sources` and `onchainRatio`
+    /// are here precisely because nothing reads them: an unread field must
+    /// pass through the deserializer, not break it.
+    fn cluster_detail() -> serde_json::Value {
+        serde_json::json!({
+            "clusterId": CLUSTER_ID,
+            "name": "Nervape Gen2",
+            "description": long_cluster_description(),
+            "sporesCount": 1024,
+            "holdersCount": 210,
+            "ownedCapacity": "109067222027837",
+            "composition": {
+                "tier": "centralized_mixture",
+                "onchainCount": 1010,
+                "pureCkbCount": 980,
+                "decentralizedMixtureCount": 12,
+                "centralizedMixtureCount": 2,
+                "unknownCount": 0,
+                "onchainRatio": 0.986
+            }
+        })
+    }
+
+    /// Which halves of ckbadger's spore index answer during one test. A
+    /// degraded half answers 500 rather than vanishing, because the discipline
+    /// under test is that a failing call costs only its own attributes.
+    #[derive(Clone, Copy)]
+    struct SporeIndexHealth {
+        objects: StatusCode,
+        clusters: StatusCode,
+    }
+
+    impl SporeIndexHealth {
+        const HEALTHY: Self = Self {
+            objects: StatusCode::OK,
+            clusters: StatusCode::OK,
+        };
+        const OBJECTS_DOWN: Self = Self {
+            objects: StatusCode::INTERNAL_SERVER_ERROR,
+            clusters: StatusCode::OK,
+        };
+        const CLUSTERS_DOWN: Self = Self {
+            objects: StatusCode::OK,
+            clusters: StatusCode::INTERNAL_SERVER_ERROR,
+        };
+    }
+
+    /// What the adapter asked the spore index, per route. Round trips are the
+    /// point of the parallel design, so the tests count them rather than
+    /// trusting them.
+    #[derive(Clone)]
+    struct SporeCalls {
+        objects: Arc<AtomicUsize>,
+        clusters: Arc<AtomicUsize>,
+    }
+
+    impl SporeCalls {
+        fn counts(&self) -> (usize, usize) {
+            (
+                self.objects.load(Ordering::Relaxed),
+                self.clusters.load(Ordering::Relaxed),
+            )
+        }
+    }
+
+    async fn spawn_spore_api(
+        health: SporeIndexHealth,
+    ) -> (Url, tokio::task::JoinHandle<()>, SporeCalls) {
+        let calls = SporeCalls {
+            objects: Arc::new(AtomicUsize::new(0)),
+            clusters: Arc::new(AtomicUsize::new(0)),
+        };
+        let counted_objects = calls.objects.clone();
+        let counted_clusters = calls.clusters.clone();
+        let app = Router::new()
+            .route(
+                "/api/v1/statistics/network",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "syncStatus": { "isSyncing": false, "syncedBlock": 100 }
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/blocks/:number",
+                get(|| async { Json(serde_json::json!({ "number": 100, "hash": "0xblock100" })) }),
+            )
+            .route(
+                "/api/v1/scripts/lookup",
+                post(|| async {
+                    Json(serde_json::json!({
+                        "0xlockcode": {
+                            "name": "Default Lock",
+                            "deprecated": false,
+                            "scriptKind": "lock",
+                            "decoderType": null,
+                            "resolutionState": "resolved"
+                        },
+                        (SPORE_CODE_HASH): {
+                            "name": "Spore",
+                            "deprecated": false,
+                            "scriptKind": "type",
+                            "decoderType": "spore",
+                            "resolutionState": "resolved"
+                        },
+                        (SPORE_CLUSTER_CODE_HASH): {
+                            "name": "Spore Cluster",
+                            "deprecated": false,
+                            "scriptKind": "type",
+                            "decoderType": "spore_cluster",
+                            "resolutionState": "resolved"
+                        }
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/cells/:tx_hash/:output_index",
+                get(
+                    |axum::extract::Path((tx_hash, output_index)): axum::extract::Path<(
+                        String,
+                        i32,
+                    )>| async move {
+                        Json(match tx_hash.as_str() {
+                            SPORE_TX_HASH => clustered_spore_cell(),
+                            SOLE_SPORE_TX_HASH => sole_spore_cell(),
+                            MUTE_SPORE_TX_HASH => mute_spore_cell(),
+                            CLUSTER_TX_HASH => spore_cluster_cell(),
+                            _ => dao_cell_detail(output_index),
+                        })
+                    },
+                ),
+            )
+            .route(
+                "/api/v1/spore/objects/:spore_id",
+                get(
+                    move |axum::extract::Path(spore_id): axum::extract::Path<String>| {
+                        let calls = counted_objects.clone();
+                        async move {
+                            calls.fetch_add(1, Ordering::Relaxed);
+                            if health.objects != StatusCode::OK {
+                                return (
+                                    health.objects,
+                                    Json(serde_json::json!({ "error": "object index down" })),
+                                );
+                            }
+                            let media = match spore_id.as_str() {
+                                SPORE_ID => serde_json::json!({
+                                    "tier": "pure_ckb",
+                                    "sources": [{ "scheme": "ckbfs" }],
+                                    "issues": ["dangling media", "decode failed"]
+                                }),
+                                SOLE_SPORE_ID => serde_json::json!({
+                                    "tier": "btc_ckb",
+                                    "sources": [{ "scheme": "btcfs" }],
+                                    "issues": []
+                                }),
+                                _ => serde_json::json!({
+                                    "tier": "decentralized_mixture",
+                                    "sources": [{ "scheme": "ipfs" }],
+                                    "issues": []
+                                }),
+                            };
+                            (
+                                StatusCode::OK,
+                                Json(serde_json::json!({
+                                    "clusterId": CLUSTER_ID,
+                                    "mediaProfile": media
+                                })),
+                            )
+                        }
+                    },
+                ),
+            )
+            .route(
+                "/api/v1/spore/clusters/:cluster_id",
+                get(
+                    move |axum::extract::Path(cluster_id): axum::extract::Path<String>| {
+                        let calls = counted_clusters.clone();
+                        async move {
+                            calls.fetch_add(1, Ordering::Relaxed);
+                            if health.clusters != StatusCode::OK {
+                                return (
+                                    health.clusters,
+                                    Json(serde_json::json!({ "error": "cluster index down" })),
+                                );
+                            }
+                            if cluster_id != CLUSTER_ID {
+                                return (
+                                    StatusCode::NOT_FOUND,
+                                    Json(serde_json::json!({ "error": "cluster not found" })),
+                                );
+                            }
+                            (StatusCode::OK, Json(cluster_detail()))
+                        }
+                    },
+                ),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (
+            Url::parse(&format!("http://{address}/api/v1")).unwrap(),
+            handle,
+            calls,
+        )
+    }
+
+    async fn enrich_spore_cell(
+        source: &CkbadgerEnrichmentSource,
+        tx_hash: &str,
+    ) -> CellSemanticRecord {
+        source.probe(&context()).await;
+        source
+            .enrich_cell(
+                &OutPoint {
+                    tx_hash: tx_hash.to_string(),
+                    index: 0,
+                },
+                &context(),
+            )
+            .await
+            .expect("enrichment must never fail on a degraded spore index")
+            .expect("the Cell exists")
+    }
+
+    fn spore_facet<'a>(record: &'a CellSemanticRecord, kind: &str) -> &'a SemanticFacet {
+        record
+            .facets
+            .iter()
+            .find(|candidate| candidate.namespace == "spore" && candidate.kind == kind)
+            .unwrap_or_else(|| panic!("record carries no spore {kind} facet"))
+    }
+
+    fn facet_value<'a>(facet: &'a SemanticFacet, key: &str) -> Option<&'a str> {
+        facet
+            .attributes
+            .iter()
+            .find(|candidate| candidate.key == key)
+            .map(|candidate| candidate.value.as_str())
+    }
+
+    fn facet_keys(facet: &SemanticFacet) -> Vec<&str> {
+        facet
+            .attributes
+            .iter()
+            .map(|candidate| candidate.key.as_str())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_clustered_spore_learns_its_kin_and_where_its_content_lives() {
+        let (api_base, server, calls) = spawn_spore_api(SporeIndexHealth::HEALTHY).await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+
+        let record = enrich_spore_cell(&source, SPORE_TX_HASH).await;
+
+        let collection = spore_facet(&record, "collection");
+        assert_eq!(collection.state.as_deref(), Some("Nervape Gen2"));
+        assert_eq!(facet_value(collection, "role"), Some("item"));
+        assert_eq!(facet_value(collection, "cluster_id"), Some(CLUSTER_ID));
+        assert_eq!(facet_value(collection, "live_items"), Some("1024"));
+        assert_eq!(facet_value(collection, "holders"), Some("210"));
+        assert_eq!(
+            facet_value(collection, "owned_capacity"),
+            Some("109067222027837")
+        );
+
+        let description = facet_value(collection, "description").expect("description");
+        assert_eq!(description.chars().count(), MAX_SPORE_DESCRIPTION_CHARS);
+        assert_eq!(
+            description,
+            long_cluster_description()
+                .chars()
+                .take(MAX_SPORE_DESCRIPTION_CHARS)
+                .collect::<String>()
+        );
+        // The bound counts characters because it must: a byte-wise cut at the
+        // same number would land inside this description's em dash.
+        assert!(!long_cluster_description().is_char_boundary(MAX_SPORE_DESCRIPTION_CHARS));
+
+        let composition = spore_facet(&record, "composition");
+        // The headline a reader of one object wants is that object's own tier,
+        // not the collection's worst-dominant verdict.
+        assert_eq!(composition.state.as_deref(), Some("pure_ckb"));
+        assert_eq!(facet_value(composition, "item_tier"), Some("pure_ckb"));
+        assert_eq!(facet_value(composition, "item_issues"), Some("2"));
+        assert_eq!(
+            facet_value(composition, "agg_tier"),
+            Some("centralized_mixture")
+        );
+        assert_eq!(facet_value(composition, "agg_onchain"), Some("1010"));
+        assert_eq!(facet_value(composition, "agg_pure_ckb"), Some("980"));
+        assert_eq!(facet_value(composition, "agg_decentralized"), Some("12"));
+        assert_eq!(facet_value(composition, "agg_centralized"), Some("2"));
+        assert_eq!(facet_value(composition, "agg_unknown"), Some("0"));
+
+        // Two lookups, side by side, because the decode already named the
+        // cluster.
+        assert_eq!(calls.counts(), (1, 1));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_sole_spore_states_its_solitude_and_asks_no_collection() {
+        let (api_base, server, calls) = spawn_spore_api(SporeIndexHealth::HEALTHY).await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+
+        let record = enrich_spore_cell(&source, SOLE_SPORE_TX_HASH).await;
+
+        let collection = spore_facet(&record, "collection");
+        assert_eq!(collection.state, None);
+        assert_eq!(facet_keys(collection), vec!["role"]);
+        assert_eq!(facet_value(collection, "role"), Some("sole_item"));
+
+        let composition = spore_facet(&record, "composition");
+        assert_eq!(composition.state.as_deref(), Some("btc_ckb"));
+        // No issues is the ordinary case, and states nothing worth a row.
+        assert_eq!(facet_keys(composition), vec!["item_tier"]);
+        assert_eq!(facet_value(composition, "item_tier"), Some("btc_ckb"));
+
+        assert_eq!(calls.counts(), (1, 0));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_collection_lookup_that_fails_costs_only_its_own_attributes() {
+        let (api_base, server, calls) = spawn_spore_api(SporeIndexHealth::CLUSTERS_DOWN).await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+
+        let record = enrich_spore_cell(&source, SPORE_TX_HASH).await;
+
+        // Whose kin it is survives the outage: that answer came from the Cell.
+        let collection = spore_facet(&record, "collection");
+        assert_eq!(collection.state, None);
+        assert_eq!(facet_keys(collection), vec!["role", "cluster_id"]);
+        assert_eq!(facet_value(collection, "cluster_id"), Some(CLUSTER_ID));
+
+        let composition = spore_facet(&record, "composition");
+        assert_eq!(composition.state.as_deref(), Some("pure_ckb"));
+        assert_eq!(facet_keys(composition), vec!["item_tier", "item_issues"]);
+
+        assert_eq!(calls.counts(), (1, 1));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn an_object_lookup_that_fails_leaves_the_collection_whole() {
+        let (api_base, server, calls) = spawn_spore_api(SporeIndexHealth::OBJECTS_DOWN).await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+
+        let record = enrich_spore_cell(&source, SPORE_TX_HASH).await;
+
+        let collection = spore_facet(&record, "collection");
+        assert_eq!(collection.state.as_deref(), Some("Nervape Gen2"));
+        assert_eq!(
+            facet_keys(collection),
+            vec![
+                "role",
+                "cluster_id",
+                "live_items",
+                "holders",
+                "owned_capacity",
+                "description"
+            ]
+        );
+
+        // With no measurement of its own, the object borrows the population's
+        // headline rather than showing none.
+        let composition = spore_facet(&record, "composition");
+        assert_eq!(composition.state.as_deref(), Some("centralized_mixture"));
+        assert_eq!(
+            facet_keys(composition),
+            vec![
+                "agg_tier",
+                "agg_onchain",
+                "agg_pure_ckb",
+                "agg_decentralized",
+                "agg_centralized",
+                "agg_unknown"
+            ]
+        );
+
+        assert_eq!(calls.counts(), (1, 1));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_spore_whose_decode_names_no_cluster_is_unknown_rather_than_sole() {
+        let (api_base, server, calls) = spawn_spore_api(SporeIndexHealth::HEALTHY).await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+
+        let record = enrich_spore_cell(&source, MUTE_SPORE_TX_HASH).await;
+
+        // Silence is not solitude: with nothing said about kinship, nothing is
+        // claimed about it.
+        assert!(record.facets.iter().all(|facet| facet.kind != "collection"));
+
+        // The storage question is independent, so it is still asked.
+        let composition = spore_facet(&record, "composition");
+        assert_eq!(composition.state.as_deref(), Some("decentralized_mixture"));
+        assert_eq!(
+            facet_value(composition, "item_tier"),
+            Some("decentralized_mixture")
+        );
+
+        assert_eq!(calls.counts(), (1, 0));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_cluster_cell_reads_the_population_it_names() {
+        let (api_base, server, calls) = spawn_spore_api(SporeIndexHealth::HEALTHY).await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+
+        let record = enrich_spore_cell(&source, CLUSTER_TX_HASH).await;
+
+        let collection = spore_facet(&record, "collection");
+        assert_eq!(collection.state.as_deref(), Some("Nervape Gen2"));
+        assert_eq!(facet_value(collection, "role"), Some("cluster"));
+        // A cluster is keyed by its own type-script args, not by a segment.
+        assert_eq!(facet_value(collection, "cluster_id"), Some(CLUSTER_ID));
+        assert_eq!(facet_value(collection, "live_items"), Some("1024"));
+        assert_eq!(facet_value(collection, "holders"), Some("210"));
+
+        // A cluster Cell holds no media of its own, so the aggregate is the
+        // only composition it has.
+        let composition = spore_facet(&record, "composition");
+        assert_eq!(composition.state.as_deref(), Some("centralized_mixture"));
+        assert!(composition
+            .attributes
+            .iter()
+            .all(|attribute| attribute.key.starts_with("agg_")));
+
+        assert_eq!(calls.counts(), (0, 1));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_cell_that_is_not_a_spore_asks_the_spore_index_nothing() {
+        let (api_base, server, calls) = spawn_spore_api(SporeIndexHealth::HEALTHY).await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+
+        let record = enrich_spore_cell(&source, TX_HASH).await;
+
+        assert!(record.facets.iter().any(|facet| facet.kind == "dao"));
+        assert!(record.facets.iter().all(|facet| facet.namespace != "spore"));
+        assert_eq!(calls.counts(), (0, 0));
+        server.abort();
+    }
+
+    /// The vocabulary pin. Every name below is ckbadger's rather than ours —
+    /// the camelCase wire fields, the five tier spellings, the two decode
+    /// kinds, the `cluster_id` segment label and its `"none"` sentinel — and
+    /// this test exists for one purpose: to fail loudly when one of them
+    /// drifts upstream, because a drifted name otherwise reaches the panel as
+    /// a row that quietly stopped appearing.
+    #[test]
+    fn the_spore_vocabulary_is_pinned_to_ckbadgers_own_spelling() {
+        let cluster: ClusterDetailResponse =
+            serde_json::from_value(cluster_detail()).expect("cluster detail decodes");
+        assert_eq!(cluster.name.as_deref(), Some("Nervape Gen2"));
+        assert_eq!(cluster.spores_count, 1024);
+        assert_eq!(cluster.holders_count, 210);
+        assert_eq!(cluster.owned_capacity.as_deref(), Some("109067222027837"));
+        let composition = cluster
+            .composition
+            .expect("composition rides the cluster response");
+        assert_eq!(composition.tier, "centralized_mixture");
+        assert_eq!(composition.onchain_count, 1010);
+        assert_eq!(composition.pure_ckb_count, 980);
+        assert_eq!(composition.decentralized_mixture_count, 12);
+        assert_eq!(composition.centralized_mixture_count, 2);
+        assert_eq!(composition.unknown_count, 0);
+
+        // The five tiers ckbadger measures, plus a sixth it has not invented
+        // yet: an unfamiliar tier must arrive as a string this side does not
+        // recognise, never as a decode failure.
+        for tier in [
+            "pure_ckb",
+            "btc_ckb",
+            "decentralized_mixture",
+            "centralized_mixture",
+            "unknown",
+            "a_tier_from_a_later_ckbadger",
+        ] {
+            let item: SporeItemResponse = serde_json::from_value(serde_json::json!({
+                "clusterId": CLUSTER_ID,
+                "mediaProfile": { "tier": tier, "sources": [], "issues": [] }
+            }))
+            .expect("spore object decodes");
+            assert_eq!(item.media_profile.expect("media profile").tier, tier);
+        }
+
+        // What the gate matches on, read back through the real Cell decoder.
+        let decode = |cell: serde_json::Value| {
+            serde_json::from_value::<CellDetailResponse>(cell)
+                .expect("cell detail decodes")
+                .data_analysis
+                .and_then(|analysis| analysis.deterministic)
+                .expect("deterministic decode")
+        };
+        let clustered = decode(clustered_spore_cell());
+        assert_eq!(clustered.kind, "spore_cell");
+        assert_eq!(
+            clustered
+                .segments
+                .iter()
+                .find(|segment| segment.label == "cluster_id")
+                .map(|segment| segment.human_value.as_str()),
+            Some(CLUSTER_ID)
+        );
+        assert_eq!(
+            decode(sole_spore_cell())
+                .segments
+                .iter()
+                .find(|segment| segment.label == "cluster_id")
+                .map(|segment| segment.human_value.as_str()),
+            Some(SPORE_NO_CLUSTER)
+        );
+        assert_eq!(decode(spore_cluster_cell()).kind, "spore_cluster_cell");
     }
 
     /// Anchor-valid stub carrying a script catalogue and a lookup endpoint.
