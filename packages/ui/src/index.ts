@@ -47,6 +47,7 @@ export {
   type BootPhaseSnapshot,
   type BootSequenceSnapshot,
 } from './boot/bootSequence';
+export { default as BootFrameSentinel } from './boot/BootFrameSentinel';
 
 // ── Geometry helpers ───────────────────────────────────────────────
 export * from './geometry/cellPositions';
@@ -63,6 +64,13 @@ export * from './derives/cellPopulationField.derive';
 export * from './derives/networkTopology.derive';
 export * from './derives/networkFlood.derive';
 export * from './derives/sceneView.derive';
+// Only the collapse itself: the formatters beside it are banner copy, and the
+// one caller outside this package asks a single question — is every stream
+// this page subscribed to live?
+export {
+  deriveStreamHealthSummary,
+  type StreamHealthChannels,
+} from './derives/streamHealth.derive';
 
 // ── Hooks ──────────────────────────────────────────────────────────
 export { CellGalaxyProvider } from './hooks/cellGalaxyContext';

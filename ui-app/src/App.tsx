@@ -21,6 +21,11 @@ import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, Stars } from '@react-three/drei';
 import {
   AdaptiveQualityController,
+  beginBootPhase,
+  BootFrameSentinel,
+  completeBootPhase,
+  completeBootSeeding,
+  reportBootSeeding,
   CELLS_Y,
   CELL_SELECTION_PREFIX,
   cellDetailViewFocus,
@@ -33,6 +38,7 @@ import {
   deriveConsensusMemoryRouteHopFocus,
   colonyFlood,
   deriveConsensusMemoryTraceEndpoints,
+  deriveStreamHealthSummary,
   inferredTopology,
   livePulseDepartureDelayS,
   CellGalaxy,
@@ -1330,6 +1336,44 @@ export default function App({
       enrichmentConfig.enabled,
     ],
   );
+
+  // ── The renderer's half of the boot record ────────────────────────────
+  // Three effects here; the GL completion rides the Canvas `onCreated` below
+  // and first light rides an in-Canvas sentinel, because those are the only
+  // two places that can witness them. Every write is idempotent in the
+  // record, so a StrictMode double-mount needs no guard of its own — and the
+  // record refuses every write once boot completes, which is what keeps a
+  // mid-session reconnect or replay from reopening a line watched here.
+
+  // Building the GL context is the freeze the visitor sits through (two dozen
+  // shader programs compile and link behind it), so the START is worth
+  // showing — and the Canvas cannot report itself until it exists. The
+  // matching completion rides `onCreated` below.
+  useEffect(() => { beginBootPhase('gl'); }, []);
+
+  // The data plane stands up when every stream this page actually subscribed
+  // to is live — the same collapse the HUD banner reads, so the readout and
+  // the banner can never disagree about it. The timestamp only dates an
+  // interrupted channel's silence; the phase does not depend on it.
+  const bootDataPlaneRef = useRef(false);
+  useEffect(() => {
+    if (bootDataPlaneRef.current) return;
+    const summary = deriveStreamHealthSummary(hudStreamHealth, Date.now());
+    if (summary.phase !== 'live') return;
+    bootDataPlaneRef.current = true;
+    completeBootPhase('data_plane');
+  }, [hudStreamHealth]);
+
+  // The server's chain replay folds INTO the sequence as one line carrying its
+  // real done/total, rather than a second banner overlapping the first. With
+  // no replay in this boot the line is never inserted and finishing it is a
+  // no-op, which is exactly the boot that should not mention seeding at all.
+  const bootSeeding = cellsCache.backfill;
+  useEffect(() => {
+    if (bootSeeding) reportBootSeeding(bootSeeding.done, bootSeeding.total);
+    else completeBootSeeding();
+  }, [bootSeeding]);
+
   const clearNetSelection = useCallback(() => setSelectedNetId(null), []);
   // A dropped link is the peer's own ending: the probe holds its last snapshot
   // and anchor long enough to say so, then retires the selection itself.
@@ -1633,6 +1677,9 @@ export default function App({
           gl={{ antialias: true, alpha: true }}
           dpr={canvasDpr}
           style={{ background: '#02030a' }}
+          // The context exists — the boot record's GL line closes here, the
+          // one place that knows. Nothing else hangs off this callback.
+          onCreated={() => completeBootPhase('gl')}
           onPointerMissed={() => {
             // The inspection card is a Canvas sibling, so its clicks can no
             // longer surface here as scene misses.
@@ -1649,6 +1696,11 @@ export default function App({
               NeuralNetwork, NetworkColony) actually plays. Must live
               under the r3f context; mount exactly once. */}
           <SimClockTicker />
+          {/* Watches frame deltas for first light — the loop running steadily
+              with cells on the stage — and closes that line of the boot
+              record. Draws nothing; same discipline as the ticker above
+              (r3f context, mounted exactly once). */}
+          <BootFrameSentinel populated={showableCellCount > 0} />
           <CellDetailViewTracker
             controlsRef={orbitControlsRef}
             focusRef={cellDetailViewFocusRef}
