@@ -1687,8 +1687,7 @@ mod tests {
         plane.reservoir_replaced(&rec, &outpoint_index(&canonical), &canonical);
         plane.flush(Some(1_000));
 
-        let expected: BTreeSet<u64> =
-            [1_001, 0, 2_001, 3, 6, 9, 12, 15, 18, 3_001, 1, 2].into();
+        let expected: BTreeSet<u64> = [1_001, 0, 2_001, 3, 6, 9, 12, 15, 18, 3_001, 1, 2].into();
         assert_eq!(member_set(&plane), expected);
         assert_eq!(plane.class_counts(), [2, 7, 3]);
         assert_eq!(plane.resident_ids_sorted(), vec![1_001, 2_001, 3_001]);
