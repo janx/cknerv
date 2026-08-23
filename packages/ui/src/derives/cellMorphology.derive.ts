@@ -1,5 +1,7 @@
 import type { AssetKind, Cell, LockKind, ShapeSeed } from '@cknerv/types';
 import { capacityMass } from './cellVisual.derive';
+import { cellUdtQuantitySignature } from './udtAmount.derive';
+import type { UdtQuantitySignature } from './udtAmount.derive';
 
 export const CELL_MORPHOLOGY_TAU = Math.PI * 2;
 export const CELL_MORPHOLOGY_DATA_SLOTS = 16;
@@ -45,7 +47,16 @@ export interface DataMark {
   kind: DataMarkKind;
   magnitude: number;
   score: number;
+  /** Exact carrier phase in [0, 1), set only by a class signature that needs
+   *  spacing the 16-slot grid cannot express. Absent means "read my slot",
+   *  which is what every generic mark has always done. */
+  phase?: number;
 }
+
+/** Which reading shaped `DataMorphology.slots`. `generic` is the seed-driven
+ *  texture every cell outside a signed class still carries; the others are a
+ *  class saying what its data MEANS through the same channel. */
+export type DataMarkScheme = 'generic' | 'bead_train';
 
 export interface DataMorphology {
   seed: ShapeSeed;
@@ -55,6 +66,9 @@ export interface DataMorphology {
   packetCount: number;
   slotMask: number;
   slots: readonly DataMark[];
+  scheme: DataMarkScheme;
+  /** Present exactly when `scheme` is `bead_train`. */
+  quantity: UdtQuantitySignature | null;
 }
 
 export interface CellMorphologyGenome {
@@ -128,6 +142,9 @@ export interface CellMorphologySignature {
   data: string;
   slotMaskHex: string;
   markKinds: string;
+  /** Which class reading shaped the marks. Additive: the strings above keep
+   *  the spelling every earlier relic sheet was read against. */
+  markScheme: DataMarkScheme;
   segments: number;
   nodes: number;
   fallback: boolean;
@@ -416,10 +433,10 @@ function dataMarkCount(bytes: number): number {
   return clamp(Math.ceil(Math.log2(bytes + 1) / 2), 1, CELL_MORPHOLOGY_MAX_NODES);
 }
 
-function deriveDataMorphology(seed: ShapeSeed, rawBytes: number): DataMorphology {
-  const bytes = Number.isFinite(rawBytes)
-    ? clamp(Math.trunc(rawBytes), 0, 0xffff_ffff)
-    : 0;
+/** The seed-driven texture: how many bytes there are and which of them the
+ *  fingerprint happened to favour. It says nothing about what the bytes mean,
+ *  which is exactly why the signed classes take the channel over. */
+function genericDataSlots(seed: ShapeSeed, bytes: number): DataMark[] {
   const count = dataMarkCount(bytes);
   const candidates = Array.from({ length: CELL_MORPHOLOGY_DATA_SLOTS }, (_, slot) => {
     const random = seedStream(seed, `data/slot/${slot}`);
@@ -437,10 +454,41 @@ function deriveDataMorphology(seed: ShapeSeed, rawBytes: number): DataMorphology
       score,
     } satisfies DataMark;
   });
-  const slots = candidates
+  return candidates
     .sort((left, right) => right.score - left.score || left.slot - right.slot)
     .slice(0, count)
     .sort((left, right) => left.slot - right.slot);
+}
+
+/** A quantity counted out along the primary strand. Every bead is the same
+ *  knot at the same size and the spacing is exactly even, so what the eye
+ *  picks up is the REPETITION — a tell that survives with the colour off and
+ *  that neither a seal nor a mint mark can imitate. */
+function beadTrainSlots(quantity: UdtQuantitySignature): DataMark[] {
+  return Array.from({ length: quantity.beadCount }, (_, index) => ({
+    slot: index,
+    // The whole train rides strand 0: a bead that wandered between strands
+    // would read as lock weave rather than as counting.
+    lane: 0,
+    pairLane: 0,
+    kind: 'single_knot',
+    magnitude: 0.085 * quantity.beadScale,
+    score: (quantity.beadCount - index) / quantity.beadCount,
+    phase: (index + 0.5) / quantity.beadCount,
+  } satisfies DataMark));
+}
+
+function deriveDataMorphology(
+  seed: ShapeSeed,
+  rawBytes: number,
+  quantity: UdtQuantitySignature | null,
+): DataMorphology {
+  const bytes = Number.isFinite(rawBytes)
+    ? clamp(Math.trunc(rawBytes), 0, 0xffff_ffff)
+    : 0;
+  const slots = quantity === null
+    ? genericDataSlots(seed, bytes)
+    : beadTrainSlots(quantity);
   const slotMask = slots.reduce((mask, mark) => mask | (1 << mark.slot), 0) >>> 0;
   const density = clamp(Math.log2(bytes + 1) / 24, 0, 1);
   return {
@@ -451,6 +499,8 @@ function deriveDataMorphology(seed: ShapeSeed, rawBytes: number): DataMorphology
     packetCount: bytes === 0 ? 0 : clamp(1 + Math.floor(Math.log2(bytes + 1) / 4), 1, 8),
     slotMask,
     slots,
+    scheme: quantity === null ? 'generic' : 'bead_train',
+    quantity,
   };
 }
 
@@ -460,10 +510,14 @@ export function deriveCellMorphologyGenome(cell: Cell): CellMorphologyGenome {
   const type = resolveTypeSeed(cell, family);
   const lock = resolveRequiredSeed(cell.lock_shape_seed, cell.content_hash, 'lock');
   const data = resolveRequiredSeed(cell.data_shape_seed, cell.content_hash, 'data');
+  // A token cell's data IS its balance, so the mark channel counts it out
+  // instead of texturing the bytes. Every other family — and any token cell
+  // whose prefix we cannot read — keeps the generic channel untouched.
+  const quantity = cellUdtQuantitySignature(cell);
   return {
     type: deriveTypeMorphology(family, type.seed),
     lock: deriveLockMorphology(lockFamily, lock.seed),
-    data: deriveDataMorphology(data.seed, cell.data_bytes),
+    data: deriveDataMorphology(data.seed, cell.data_bytes, quantity),
     presenceScale: 1.02 + (capacityMass(cell.capacity) - 0.84) * 0.32,
     fallback: type.fallback || lock.fallback || data.fallback,
   };
@@ -802,7 +856,9 @@ function deriveTopologyDataMarks(
 ): MorphologyBraidDataMark[] {
   const strandCount = strands.length;
   return data.slots.map((mark) => {
-    const parameter = (mark.slot + 0.5) / CELL_MORPHOLOGY_DATA_SLOTS;
+    // A generic mark sits in its slot on the 16-slot grid; a class signature
+    // that needs exact spacing carries its own phase.
+    const parameter = mark.phase ?? (mark.slot + 0.5) / CELL_MORPHOLOGY_DATA_SLOTS;
     const strand = mark.lane % strandCount;
     const pair = mark.pairLane % Math.max(1, strandCount - 1);
     const point = sampleStrand(strands[strand], parameter);
@@ -907,6 +963,7 @@ export function morphologySignature(
     data: `${genome.data.bytes}b/${genome.data.slots.map((mark) => mark.slot).join('.')}`,
     slotMaskHex: genome.data.slotMask.toString(16).padStart(4, '0'),
     markKinds: genome.data.slots.map((mark) => mark.kind).join(','),
+    markScheme: genome.data.scheme,
     segments: topology.segmentCount,
     nodes: topology.nodeCount,
     fallback: genome.fallback,

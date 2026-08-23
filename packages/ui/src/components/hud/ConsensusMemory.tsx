@@ -219,6 +219,9 @@ export default function ConsensusMemory({
     cell.capacity,
     cell.content_hash,
     cell.data_bytes,
+    // A token cell's braid counts out the balance decoded from these bytes,
+    // so the portrait goes stale without them on the list.
+    cell.data_hex,
     cell.data_shape_seed[0],
     cell.data_shape_seed[1],
     cell.lock_kind,

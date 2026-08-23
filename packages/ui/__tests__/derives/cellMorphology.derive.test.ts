@@ -50,6 +50,72 @@ function allPoints(topology: ReturnType<typeof deriveCellMorphologyTopology>) {
   ];
 }
 
+const round = (value: number): string => value.toFixed(6);
+const pointList = (list: readonly (readonly number[])[]): string =>
+  list.map((point) => point.map(round).join(',')).join(';');
+
+/** Every geometric field the braid carried BEFORE class signatures existed,
+ *  flattened. Deliberately excludes anything a signature commit adds — so one
+ *  set of recorded literals stays valid across all three of them. */
+function topologyDigestBody(
+  topology: ReturnType<typeof deriveCellMorphologyTopology>,
+): string {
+  return [
+    pointList(topology.carrier),
+    topology.strands.map((s) => `${s.index}|${pointList(s.points)}`).join('/'),
+    topology.crossings.map((c) => (
+      `${round(c.parameter)}|${c.pair}|${c.ordinal}|${c.generator}`
+      + `|${pointList([c.pointA, c.pointB, c.midpoint])}`
+    )).join('/'),
+    topology.dataMarks.map((m) => (
+      `${m.slot}|${m.lane}|${m.pairLane}|${m.kind}|${round(m.magnitude)}`
+      + `|${round(m.score)}|${round(m.parameter)}|${m.strand}|${m.pair}`
+      + `|${pointList([m.point, m.peerPoint, m.midpoint])}`
+    )).join('/'),
+    topology.agreements.map((a) => (
+      `${round(a.parameter)}|${a.pair}|${a.ordinal}|${a.crossingIndex}`
+      + `|${a.dataSlot}|${a.kind}|${pointList([a.pointA, a.pointB, a.midpoint])}`
+    )).join('/'),
+    `${round(topology.presenceScale)}|${round(topology.birthPhase)}`
+    + `|${topology.segmentCount}|${topology.nodeCount}`,
+  ].join('\n');
+}
+
+function topologyDigest(
+  topology: ReturnType<typeof deriveCellMorphologyTopology>,
+): string {
+  const body = topologyDigestBody(topology);
+  let left = 0x811c_9dc5;
+  let right = 0x1000_0193;
+  for (let index = 0; index < body.length; index += 1) {
+    const code = body.charCodeAt(index);
+    left = Math.imul(left ^ code, 0x0100_0193) >>> 0;
+    right = Math.imul(right + code + index, 0x9e37_79b1) >>> 0;
+    right = ((right << 13) | (right >>> 19)) >>> 0;
+  }
+  return `${left.toString(16).padStart(8, '0')}${right.toString(16).padStart(8, '0')}`;
+}
+
+/** u128 little-endian, the way a udt cell writes its balance. */
+function udtDataHex(amount: bigint, trailingBytes = 0): string {
+  let remaining = amount;
+  let body = '';
+  for (let index = 0; index < 16; index += 1) {
+    body += Number(remaining & 0xffn).toString(16).padStart(2, '0');
+    remaining >>= 8n;
+  }
+  return `0x${body}${'5a'.repeat(trailingBytes)}`;
+}
+
+function tokenCell(amount: bigint, overrides: Partial<Cell> = {}): Cell {
+  return cell({
+    asset_kind: 'xudt',
+    data_hex: udtDataHex(amount),
+    data_bytes: 16,
+    ...overrides,
+  });
+}
+
 function bitCount(value: number): number {
   let count = 0;
   let remaining = value >>> 0;
@@ -101,8 +167,16 @@ describe('Cell Morphology V2 grammar', () => {
   });
 
   it('isolates type, lock, data, and capacity responsibilities', () => {
-    const base = deriveCellMorphologyTopology(cell());
-    const typeChanged = deriveCellMorphologyTopology(cell({
+    // Stated on a family that still reads its bytes generically. A SIGNED
+    // class — a token counting out its balance — deliberately lets the asset
+    // kind reshape the mark channel, which is the one coupling this matrix
+    // does not hold and which the class-signature tests below pin instead.
+    const generic = (overrides: Partial<Cell> = {}): Cell => cell({
+      asset_kind: 'other',
+      ...overrides,
+    });
+    const base = deriveCellMorphologyTopology(generic());
+    const typeChanged = deriveCellMorphologyTopology(generic({
       asset_kind: 'spore',
       type_shape_seed: [0x7777_1111, 0x9999_3333],
     }));
@@ -110,7 +184,7 @@ describe('Cell Morphology V2 grammar', () => {
     expect(typeChanged.genome.data).toEqual(base.genome.data);
     expect(typeChanged.carrier).not.toEqual(base.carrier);
 
-    const lockChanged = deriveCellMorphologyTopology(cell({
+    const lockChanged = deriveCellMorphologyTopology(generic({
       lock_kind: 'acp',
       lock_shape_seed: [0xaaaa_1111, 0xbbbb_2222],
     }));
@@ -119,7 +193,7 @@ describe('Cell Morphology V2 grammar', () => {
     expect(lockChanged.carrier).toEqual(base.carrier);
     expect(lockChanged.genome.lock.braidWord).not.toEqual(base.genome.lock.braidWord);
 
-    const dataChanged = deriveCellMorphologyTopology(cell({
+    const dataChanged = deriveCellMorphologyTopology(generic({
       data_shape_seed: [0x0102_0304, 0x0506_0708],
     }));
     expect(dataChanged.genome.type).toEqual(base.genome.type);
@@ -128,7 +202,7 @@ describe('Cell Morphology V2 grammar', () => {
     expect(dataChanged.genome.lock.braidWord).toEqual(base.genome.lock.braidWord);
     expect(dataChanged.genome.data.slotMask).not.toBe(base.genome.data.slotMask);
 
-    const capacityChanged = deriveCellMorphologyTopology(cell({ capacity: 1_000_000e8 }));
+    const capacityChanged = deriveCellMorphologyTopology(generic({ capacity: 1_000_000e8 }));
     expect(capacityChanged.presenceScale).toBeGreaterThan(base.presenceScale);
     expect({ ...capacityChanged, genome: { ...capacityChanged.genome, presenceScale: 0 }, presenceScale: 0 })
       .toEqual({ ...base, genome: { ...base.genome, presenceScale: 0 }, presenceScale: 0 });
@@ -200,15 +274,22 @@ describe('Cell Morphology V2 grammar', () => {
   });
 
   it('separates curated same-length data and leaves empty data clean', () => {
+    // The generic channel's job: same byte count, different fingerprint,
+    // visibly different marks. A token cell answers to its amount instead, so
+    // this claim is stated on a family that still reads its bytes generically.
     const left = deriveCellMorphologyGenome(cell({
+      asset_kind: 'other',
       data_shape_seed: [0x1111_2222, 0x3333_4444],
     })).data;
     const right = deriveCellMorphologyGenome(cell({
+      asset_kind: 'other',
       data_shape_seed: [0xaaaa_bbbb, 0xcccc_dddd],
     })).data;
     expect(left.bytes).toBe(right.bytes);
     expect(bitCount(left.slotMask ^ right.slotMask)).toBeGreaterThanOrEqual(4);
 
+    // Still an xudt: an empty token cell has no 16-byte balance to read, so it
+    // falls back to the generic channel and empties out cleanly.
     const empty = deriveCellMorphologyTopology(cell({
       data_hex: '0x',
       data_bytes: 0,
@@ -261,5 +342,156 @@ describe('Cell Morphology V2 grammar', () => {
     }));
     expect(plain.type.seed).toEqual([0, 0]);
     expect(plain.fallback).toBe(false);
+  });
+});
+
+/** Recorded from master@e894418 — the commit before any class signature — by
+ *  hashing `topologyDigestBody` over the unmodified derive. A cell OUTSIDE a
+ *  signature's gate must keep hashing to its recorded value; that is what
+ *  makes "signed classes only" a checkable claim rather than an intention. */
+const MASTER_TOPOLOGY_DIGESTS: readonly (readonly [string, Partial<Cell>, string])[] = [
+  ['native/plain', { asset_kind: 'native', type_shape_seed: null }, '01952fa41105bf50'],
+  ['dao/256b', { asset_kind: 'dao' }, '1d35fab6a9ab3dc2'],
+  ['spore/256b', { asset_kind: 'spore' }, 'daa8e37b3d15d955'],
+  ['other/256b', { asset_kind: 'other' }, 'c49907791b850018'],
+  ['object/256b', { asset_kind: 'object' }, '662c4fade8c1422c'],
+  ['xudt/short-8b', { asset_kind: 'xudt', data_bytes: 8, data_hex: `0x${'ff'.repeat(8)}` }, '7b8af9e5a1c32d14'],
+  ['xudt/empty', { asset_kind: 'xudt', data_bytes: 0, data_hex: '0x' }, '283fe8277d898d36'],
+  ['object/empty', { asset_kind: 'object', data_bytes: 0, data_hex: '0x' }, '36f6e9aec2f07d03'],
+  ['native/multisig', { asset_kind: 'native', type_shape_seed: null, lock_kind: 'multisig' }, '4467e6f2d8391e3c'],
+];
+
+describe('Braid class signatures', () => {
+  it('leaves every cell outside a gate byte-identical to master', () => {
+    for (const [label, overrides, expected] of MASTER_TOPOLOGY_DIGESTS) {
+      const digest = topologyDigest(deriveCellMorphologyTopology(cell(overrides)));
+      expect(`${label}:${digest}`).toBe(`${label}:${expected}`);
+    }
+  });
+
+  it('keeps every scheme inside the agreement-count invariant', () => {
+    // `consensusBraidAgreementTarget` predicts the knot count as
+    // min(slots.length, braidWord.length) — it omits deriveAgreements' own
+    // MAX_NODES clamp, so it is only correct while no scheme can emit more
+    // than MAX_NODES slots. The DOM evidence ledger indexes by that
+    // prediction while the 3D knots come from agreements.length.
+    const cases: Partial<Cell>[] = [
+      { asset_kind: 'other', data_bytes: 0xffff_ffff },
+      { asset_kind: 'xudt', data_hex: udtDataHex(2n ** 128n - 1n), data_bytes: 16 },
+      { asset_kind: 'sudt', data_hex: udtDataHex(2n ** 128n - 1n), data_bytes: 0xffff_ffff },
+    ];
+    for (const overrides of cases) {
+      const topology = deriveCellMorphologyTopology(cell(overrides));
+      const { slots } = topology.genome.data;
+      expect(slots.length).toBeLessThanOrEqual(CELL_MORPHOLOGY_MAX_NODES);
+      expect(topology.agreements.length).toBe(
+        Math.min(slots.length, topology.genome.lock.braidWord.length),
+      );
+      expect(topology.segmentCount).toBeLessThanOrEqual(CELL_MORPHOLOGY_MAX_SEGMENTS);
+    }
+  });
+});
+
+describe('Token quantity bead train', () => {
+  it('counts beads up with the magnitude of the amount', () => {
+    const magnitudes = [1n, 10n ** 3n, 10n ** 8n, 10n ** 12n, 2n ** 128n - 1n];
+    const counts = magnitudes.map((amount) => (
+      deriveCellMorphologyGenome(tokenCell(amount)).data.slots.length
+    ));
+    expect(counts).toEqual([1, 2, 3, 5, 12]);
+    for (let index = 1; index < counts.length; index += 1) {
+      expect(counts[index]).toBeGreaterThan(counts[index - 1]);
+    }
+    expect(counts.at(-1)).toBeLessThanOrEqual(CELL_MORPHOLOGY_MAX_NODES);
+  });
+
+  it('tells dust from a whale in the mark channel alone', () => {
+    const dust = deriveCellMorphologyTopology(tokenCell(1n));
+    const whale = deriveCellMorphologyTopology(tokenCell(10n ** 24n));
+    expect(dust.genome.data.bytes).toBe(whale.genome.data.bytes);
+    expect(dust.carrier).toEqual(whale.carrier);
+    expect(dust.genome.lock).toEqual(whale.genome.lock);
+    expect(dust.dataMarks.length).not.toBe(whale.dataMarks.length);
+    expect(dust.genome.data.slotMask).not.toBe(whale.genome.data.slotMask);
+  });
+
+  it('spaces the train evenly on one strand at one size', () => {
+    const topology = deriveCellMorphologyTopology(tokenCell(123_456_789n));
+    const { slots, scheme, quantity } = topology.genome.data;
+    expect(scheme).toBe('bead_train');
+    expect(quantity).not.toBeNull();
+    expect(slots.length).toBe(3);
+    expect(new Set(slots.map((mark) => mark.kind)).size).toBe(1);
+    expect(new Set(slots.map((mark) => mark.magnitude)).size).toBe(1);
+    expect(new Set(topology.dataMarks.map((mark) => mark.strand)).size).toBe(1);
+    const phases = topology.dataMarks.map((mark) => mark.parameter);
+    const gaps = phases.slice(1).map((phase, index) => phase - phases[index]);
+    for (const gap of gaps) expect(gap).toBeCloseTo(1 / slots.length, 12);
+    expect(phases[0]).toBeCloseTo(0.5 / slots.length, 12);
+  });
+
+  it('scales the beads with the leading significand', () => {
+    const low = deriveCellMorphologyGenome(tokenCell(10n ** 20n)).data;
+    const high = deriveCellMorphologyGenome(tokenCell(99n * 10n ** 19n)).data;
+    expect(low.slots.length).toBe(high.slots.length);
+    expect(high.slots[0].magnitude).toBeGreaterThan(low.slots[0].magnitude);
+    for (const genome of [low, high]) {
+      expect(genome.quantity?.beadScale).toBeGreaterThanOrEqual(0.8);
+      expect(genome.quantity?.beadScale).toBeLessThanOrEqual(1.2);
+    }
+  });
+
+  it('gates on the token families and on a readable 16-byte prefix', () => {
+    const readable = udtDataHex(4_200n);
+    const signed = (['sudt', 'xudt'] as const).map((asset_kind) => (
+      deriveCellMorphologyGenome(cell({ asset_kind, data_hex: readable, data_bytes: 16 })).data
+    ));
+    for (const data of signed) expect(data.scheme).toBe('bead_train');
+
+    const unsigned: Partial<Cell>[] = [
+      // Right bytes, wrong family: a spore that opens with 16 bytes is not
+      // holding a balance.
+      { asset_kind: 'spore', data_hex: readable, data_bytes: 16 },
+      { asset_kind: 'object', data_hex: readable, data_bytes: 16 },
+      { asset_kind: 'identity', data_hex: readable, data_bytes: 16 },
+      { asset_kind: 'other', data_hex: readable, data_bytes: 16 },
+      // Right family, unreadable prefix.
+      { asset_kind: 'xudt', data_hex: '0x', data_bytes: 0 },
+      { asset_kind: 'xudt', data_hex: `0x${'ab'.repeat(8)}`, data_bytes: 8 },
+      { asset_kind: 'xudt', data_hex: `0x${'ab'.repeat(4)}~`, data_bytes: 4_096 },
+      { asset_kind: 'xudt', data_hex: `0xzz${'ab'.repeat(15)}`, data_bytes: 64 },
+      { asset_kind: 'xudt', data_hex: 'deadbeef'.repeat(8), data_bytes: 32 },
+    ];
+    for (const overrides of unsigned) {
+      const data = deriveCellMorphologyGenome(cell(overrides)).data;
+      expect(`${overrides.asset_kind}/${overrides.data_bytes}:${data.scheme}`)
+        .toBe(`${overrides.asset_kind}/${overrides.data_bytes}:generic`);
+      expect(data.quantity).toBeNull();
+    }
+  });
+
+  it('still reads the balance out of a truncated data_hex', () => {
+    const amount = 987_654_321n;
+    const whole = deriveCellMorphologyGenome(
+      cell({ asset_kind: 'xudt', data_hex: udtDataHex(amount, 32), data_bytes: 48 }),
+    ).data;
+    // The producer's cap eats the TAIL; the balance lives in the prefix.
+    const capped = deriveCellMorphologyGenome(
+      cell({ asset_kind: 'xudt', data_hex: `${udtDataHex(amount, 32)}~`, data_bytes: 4_096 }),
+    ).data;
+    expect(capped.scheme).toBe('bead_train');
+    expect(capped.slots).toEqual(whole.slots);
+  });
+
+  it('reports the scheme in the relic signature without respelling the rest', () => {
+    const token = morphologySignature(deriveCellMorphologyTopology(tokenCell(10n ** 9n)));
+    const generic = morphologySignature(deriveCellMorphologyTopology(cell({
+      asset_kind: 'other',
+    })));
+    expect(token.markScheme).toBe('bead_train');
+    expect(generic.markScheme).toBe('generic');
+    // The scheme is a NEW field, never spliced into the recorded strings.
+    expect(generic.data).toMatch(/^256b\/\d+(\.\d+)*$/);
+    expect(token.data).toMatch(/^16b\/\d+(\.\d+)*$/);
   });
 });
