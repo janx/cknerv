@@ -31,6 +31,24 @@ pub enum LockKind {
 }
 
 /// Asset class (by type-script; `Native` = no type script).
+///
+/// `Object` is a digital object — a crafted, individually-minted artifact
+/// (Spore Cluster, M-NFT, COTA, CKBFS). `Identity` is a cell that names
+/// somebody (`.bit`, did:ckb). Both were `Other` until the stage started
+/// sampling them, at which point a third of the galaxy rendered as
+/// "unrecognized".
+///
+/// APPEND ONLY, AND ONLY AFTER `Other`. Declaration order *is* the columnar
+/// wire code (`projection::cells_columnar::asset_kind_code`, mirrored by the
+/// TS `COLUMNAR_ASSET_KINDS` table at the matching index), so inserting a
+/// variant renumbers every later one and silently re-colors every cell in
+/// every buffer already in flight. Appending costs a
+/// `CELLS_COLUMNAR_VERSION` bump and nothing else.
+///
+/// Persisted snapshots need no migration in either direction: a file written
+/// before these variants existed can only contain the old serde names, and
+/// `#[serde(default)]` on the carrying field already covers a file with no
+/// asset kind at all.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum AssetKind {
@@ -41,6 +59,8 @@ pub enum AssetKind {
     Spore,
     #[default]
     Other,
+    Object,
+    Identity,
 }
 
 /// How a script's `code_hash` is to be matched, in CKB's own vocabulary.
@@ -72,8 +92,8 @@ impl HashType {
 /// One script's identity: the `(code_hash, hash_type)` pair, which is what
 /// makes two cells guarded by the same code the same *kind* of cell.
 ///
-/// Held unclassified on purpose. cknerv pins four lock families and five asset
-/// families; mainnet runs dozens more, and collapsing every one it cannot pin
+/// Held unclassified on purpose. cknerv pins four lock families and seven
+/// asset families; mainnet runs dozens more, and collapsing every one it cannot pin
 /// into "other" is what made the Cell panel report two thirds of the galaxy as
 /// unrecognized. Carrying the pair costs 33 inline bytes per script and lets a
 /// name arrive later, from an index, without the Cell projection having to
@@ -183,6 +203,14 @@ mod tests {
             serde_json::to_string(&AssetKind::Spore).unwrap(),
             "\"spore\""
         );
+        assert_eq!(
+            serde_json::to_string(&AssetKind::Object).unwrap(),
+            "\"object\""
+        );
+        assert_eq!(
+            serde_json::to_string(&AssetKind::Identity).unwrap(),
+            "\"identity\""
+        );
     }
 
     #[test]
@@ -241,6 +269,8 @@ mod tests {
             AssetKind::Dao,
             AssetKind::Spore,
             AssetKind::Other,
+            AssetKind::Object,
+            AssetKind::Identity,
         ] {
             let s = serde_json::to_string(&v).unwrap();
             assert_eq!(serde_json::from_str::<AssetKind>(&s).unwrap(), v);

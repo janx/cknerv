@@ -5,7 +5,7 @@
 //! zero-copy typed-array views on the client, then the dictionaries at the
 //! tail.
 //!
-//! v4 carries everything the JSON snapshot's `cells` + `display` sections
+//! v5 carries everything the JSON snapshot's `cells` + `display` sections
 //! do. Rows are the canonical cells followed by the staged resident
 //! payloads — one column set, split at `n_cells` — plus the staged member
 //! ids, the budgets and the provenance.
@@ -44,7 +44,13 @@ use crate::projection::display_plane::ColumnarDisplayView;
 use crate::taxonomy::{AssetKind, HashType, LockKind, ScriptId};
 
 pub const CELLS_COLUMNAR_MAGIC: [u8; 4] = *b"CKNB";
-pub const CELLS_COLUMNAR_VERSION: u16 = 4;
+/// Bumped whenever a column's meaning changes, including a widened enum code
+/// table: a decoder that does not know code 6 must not guess. The client
+/// treats a version it cannot read as "fall back to the JSON snapshot", so a
+/// bump costs an old tab one slower boot, never a wrong galaxy.
+///
+/// 5: `asset_kind` gained codes 6 (`object`) and 7 (`identity`).
+pub const CELLS_COLUMNAR_VERSION: u16 = 5;
 pub const CELLS_COLUMNAR_HEADER_BYTES: usize = 72;
 pub const CELLS_COLUMNAR_REVISION_OFFSET: usize = 8;
 /// tag_index value meaning "no tag".
@@ -69,6 +75,9 @@ fn lock_kind_code(kind: LockKind) -> u8 {
     }
 }
 
+/// Codes are the enum's declaration order, and the TS `COLUMNAR_ASSET_KINDS`
+/// table holds the same names at the same indices. Exhaustive on purpose: a
+/// new variant must fail to compile here rather than silently share a code.
 fn asset_kind_code(kind: AssetKind) -> u8 {
     match kind {
         AssetKind::Native => 0,
@@ -77,6 +86,8 @@ fn asset_kind_code(kind: AssetKind) -> u8 {
         AssetKind::Dao => 3,
         AssetKind::Spore => 4,
         AssetKind::Other => 5,
+        AssetKind::Object => 6,
+        AssetKind::Identity => 7,
     }
 }
 
@@ -985,9 +996,9 @@ mod tests {
 
     /// The cross-language gate. Rust writes this buffer, the TS decoder
     /// reads the very same bytes (`packages/cache/__tests__`). Regenerate with
-    /// `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-core columnar_v4`.
+    /// `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-core columnar_v5`.
     #[test]
-    fn columnar_v4_matches_the_shared_fixture() {
+    fn columnar_v5_matches_the_shared_fixture() {
         use crate::enrichment::ChainAnchor;
         use crate::projection::cells::{DisplayBudget, DisplayMode, DisplayProvenance};
 
@@ -1012,7 +1023,7 @@ mod tests {
             residents: vec![&resident],
         };
         let encoded = encode_cells_columnar(&rows, header(), Some(&view), empty_tail());
-        assert_matches_fixture("cells_columnar_v4.bin", &encoded);
+        assert_matches_fixture("cells_columnar_v5.bin", &encoded);
     }
 
     /// The display-absent shape, as its own fixture. The provenance
@@ -1020,10 +1031,10 @@ mod tests {
     /// when a plane is present reads the sections length out of the middle of
     /// it — which is exactly the desync this fixture exists to catch.
     #[test]
-    fn columnar_v4_display_absent_matches_the_shared_fixture() {
+    fn columnar_v5_display_absent_matches_the_shared_fixture() {
         let rows = [cell(1, Some("wallet")), cell(2, None), cell(3, Some("dex"))];
         let encoded = encode_cells_columnar(&rows, header(), None, empty_tail());
-        assert_matches_fixture("cells_columnar_v4_absent.bin", &encoded);
+        assert_matches_fixture("cells_columnar_v5_absent.bin", &encoded);
     }
 
     #[test]

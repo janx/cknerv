@@ -50,6 +50,10 @@ pub struct LockKindCounts {
 }
 
 /// Asset-class breakdown, same contract as [`LockKindCounts`].
+///
+/// `#[serde(default)]` on the two youngest fields so a stats object written
+/// by a server that predates them still deserializes — the same courtesy the
+/// cell's own `asset_kind` field extends to old snapshots.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AssetKindCounts {
     pub native: u64,
@@ -58,6 +62,10 @@ pub struct AssetKindCounts {
     pub dao: u64,
     pub spore: u64,
     pub other: u64,
+    #[serde(default)]
+    pub object: u64,
+    #[serde(default)]
+    pub identity: u64,
 }
 
 /// One script's share of the retained set, keyed by identity and by nothing
@@ -117,7 +125,7 @@ pub struct CellViewStats {
     pub by_lock: LockKindCounts,
     pub by_asset: AssetKindCounts,
     /// The same alive set counted by script identity instead of by the four
-    /// lock families and five asset families cknerv pins itself. Empty on a
+    /// lock families and seven asset families cknerv pins itself. Empty on a
     /// retained set restored from state written before identities existed.
     #[serde(default)]
     pub scripts: ScriptCensus,
@@ -145,6 +153,8 @@ impl CellViewStats {
             AssetKind::Dao => self.by_asset.dao += 1,
             AssetKind::Spore => self.by_asset.spore += 1,
             AssetKind::Other => self.by_asset.other += 1,
+            AssetKind::Object => self.by_asset.object += 1,
+            AssetKind::Identity => self.by_asset.identity += 1,
         }
         match cell.tag.as_deref() {
             Some("wallet") => self.by_kind.wallet += 1,
@@ -390,6 +400,21 @@ mod tests {
         assert_eq!(stats.by_asset.native, 1);
     }
 
+    #[test]
+    fn object_and_identity_get_their_own_buckets() {
+        let mut a = cell(1, None);
+        a.asset_kind = AssetKind::Object;
+        let mut b = cell(2, None);
+        b.asset_kind = AssetKind::Identity;
+        let mut c = cell(3, None);
+        c.asset_kind = AssetKind::Other;
+        let stats = aggregate_cell_view_stats(&[a, b, c]);
+        assert_eq!(stats.by_asset.object, 1);
+        assert_eq!(stats.by_asset.identity, 1);
+        // The whole point: they stopped being "unrecognized".
+        assert_eq!(stats.by_asset.other, 1);
+    }
+
     fn script(byte: u8, hash_type: HashType) -> ScriptId {
         ScriptId {
             code_hash: [byte; 32],
@@ -495,5 +520,7 @@ mod tests {
         assert_eq!(json["by_kind"]["generic"], 0);
         assert_eq!(json["by_lock"]["other"], 1);
         assert_eq!(json["by_asset"]["other"], 1);
+        assert_eq!(json["by_asset"]["object"], 0);
+        assert_eq!(json["by_asset"]["identity"], 0);
     }
 }

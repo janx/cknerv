@@ -314,6 +314,8 @@ export default function StageCapacityPanel({ stats, stageScripts, scriptRegistry
             { key: 'xudt', label: 'xUDT', color: ASSET_COLORS.xudt, count: stats.byAsset.xudt, named: true, families: 1 },
             { key: 'dao', label: 'DAO', color: ASSET_COLORS.dao, count: stats.byAsset.dao, named: true, families: 1 },
             { key: 'spore', label: 'NFT', color: ASSET_COLORS.spore, count: stats.byAsset.spore, named: true, families: 1 },
+            { key: 'object', label: 'OBJ', color: ASSET_COLORS.object, count: stats.byAsset.object, named: true, families: 1 },
+            { key: 'identity', label: 'ID', color: ASSET_COLORS.identity, count: stats.byAsset.identity, named: true, families: 1 },
             { key: 'other', label: '?', color: ASSET_COLORS.other, count: stats.byAsset.other, named: false, families: 1 },
           ]} />
         <TaxonomyBar title="LOCKS" scope={census ? 'STAGE' : 'LOCAL WINDOW'} buckets={census

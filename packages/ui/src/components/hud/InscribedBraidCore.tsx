@@ -78,6 +78,8 @@ function weaveFrequency(assetClass: number): number {
   if (asset === 3) return 2;
   if (asset === 4) return 4;
   if (asset === 5) return 6;
+  if (asset === 6) return 7;
+  if (asset === 7) return 1;
   return 3;
 }
 

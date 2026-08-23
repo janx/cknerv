@@ -26,7 +26,7 @@ export function consensusMemoryCoreIdentity(
 ): ConsensusMemoryCoreIdentity {
   return {
     semantic: [
-      clampUnit(visual.assetClass / 5),
+      clampUnit(visual.assetClass / 7),
       clampUnit(visual.lockClass / 4),
       clampUnit(visual.payload),
       clampUnit((visual.mass - 0.84) / 0.36),

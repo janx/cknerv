@@ -33,6 +33,8 @@ const TYPE_FAMILIES: readonly AssetKind[] = [
   'dao',
   'spore',
   'other',
+  'object',
+  'identity',
 ];
 const LOCK_FAMILIES: readonly LockKind[] = [
   'sighash',
@@ -48,6 +50,8 @@ const TYPE_SEEDS: Record<Exclude<AssetKind, 'native'>, ShapeSeed> = {
   dao: [0x1234_abcd, 0x5678_ef01],
   spore: [0x1357_9bdf, 0x2468_ace0],
   other: [0x0bad_c0de, 0xfeed_face],
+  object: [0x0b1e_c701, 0x4ac7_ed02],
+  identity: [0x1de4_71fa, 0x5ea1_ed03],
 };
 const LOCK_SEEDS: Record<LockKind, ShapeSeed> = {
   sighash: [0x3141_5926, 0x5358_9793],

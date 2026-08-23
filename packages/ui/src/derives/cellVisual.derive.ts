@@ -27,6 +27,8 @@ const ASSET_CLASS: Record<AssetKind, number> = {
   dao: 3,
   spore: 4,
   other: 5,
+  object: 6,
+  identity: 7,
 };
 
 const LOCK_CLASS: Record<LockKind, number> = {
@@ -44,6 +46,12 @@ const ASSET_ACCENT: Record<AssetKind, CellVisualAccent> = {
   dao: [0.62, 0.78, 1.0],
   spore: [0.66, 0.92, 0.45],
   other: [1.0, 0.48, 0.42],
+  // Violet for a made thing, cyan-teal for a name. Both sit in the two
+  // regions this palette had not spent; the closest neighbour either has is
+  // 0.35 away, which is wider than the native/sudt pair the galaxy already
+  // ships.
+  object: [0.72, 0.38, 0.95],
+  identity: [0.32, 0.88, 0.86],
 };
 
 const TAG_ACCENT: Record<string, CellVisualAccent> = {

@@ -26,7 +26,7 @@ import type {
   ScriptId,
 } from '@cknerv/types';
 
-export const CELLS_COLUMNAR_VERSION = 4;
+export const CELLS_COLUMNAR_VERSION = 5;
 export const CELLS_COLUMNAR_HEADER_BYTES = 72;
 /** Byte offset of the u64 revision the SERVER patches into the header after
  *  the projection encoded it (`projection_registry.rs`). Mirrored here so a
@@ -62,6 +62,8 @@ export const COLUMNAR_ASSET_KINDS: readonly AssetKind[] = [
   'dao',
   'spore',
   'other',
+  'object',
+  'identity',
 ];
 /** Same contract for the script dictionary's `hash_type` byte — MUST match
  *  the Rust `hash_type_code` mapping. */

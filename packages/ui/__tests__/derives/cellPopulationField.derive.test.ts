@@ -79,7 +79,7 @@ function cache(options: CacheOptions = {}): CellPopulationCache {
       inView: options.inView ?? retained.length,
       dataBearing: 0,
       byLock: { sighash: 0, multisig: 0, acp: 0, omnilock: 0, other: 0 },
-      byAsset: { native: 0, sudt: 0, xudt: 0, dao: 0, spore: 0, other: 0 },
+      byAsset: { native: 0, sudt: 0, xudt: 0, dao: 0, spore: 0, other: 0, object: 0, identity: 0 },
       scripts: {
         locks: [],
         locks_tail_cells: 0,

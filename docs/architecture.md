@@ -198,7 +198,9 @@ classified by nobody, so it is complete by construction: it is what the script
 census counts and what an index can turn into a name. Measured against
 ckbadger's catalogue the four pinned lock families cover 59.8% of mainnet's
 live cells and the five asset families 33.4%, which is why the identity had to
-stop being derivable from the family. `ScriptId` is unset on Cells restored
+stop being derivable from the family. (`Object` and `Identity` have since made
+it seven; the argument is unchanged — the chain deploys script families faster
+than anyone pins them.) `ScriptId` is unset on Cells restored
 from state written before it existed and is omitted from the wire while unset.
 
 ### 4.4 Three Kinds of Fact

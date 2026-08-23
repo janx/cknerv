@@ -26,7 +26,9 @@ import Tweaks from './Tweaks';
 import { selectInitialLabCell } from './cell-form-lab-selection';
 import { resolveCanvasDpr } from './render-quality';
 
-const SAMPLE_ASSETS = ['native', 'sudt', 'xudt', 'dao', 'spore', 'other'] as const;
+const SAMPLE_ASSETS = [
+  'native', 'sudt', 'xudt', 'dao', 'spore', 'object', 'identity', 'other',
+] as const;
 const FIELD_COUNT = 260;
 const SCHEMA_LABEL: Record<(typeof SAMPLE_ASSETS)[number], string> = {
   native: 'PHOTONIC MONAD',
@@ -34,6 +36,8 @@ const SCHEMA_LABEL: Record<(typeof SAMPLE_ASSETS)[number], string> = {
   xudt: 'EXTENDED CHOIR',
   dao: 'TEMPORAL LATTICE',
   spore: 'RECURSIVE FIELD',
+  object: 'MINTED ARTIFACT',
+  identity: 'STAMPED SEAL',
   other: 'UNRESOLVED RELIC',
 };
 

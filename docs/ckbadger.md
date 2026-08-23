@@ -634,7 +634,7 @@ record only has to say that asking produced nothing.
 
 `STAGE SAMPLE` joins the two planes in the browser on `(code_hash, hash_type)`
 and renders the real families in its **ASSETS** and **LOCKS** bars in place
-of the four lock and five asset families cknerv pins itself — never beside them.
+of the four lock and seven asset families cknerv pins itself — never beside them.
 Without a census at all, from a backend predating it or a galaxy restored from
 older state, the pinned families remain rather than an empty panel. A family
 nothing named keeps its code hash as its label. Losing the index therefore costs

@@ -3,6 +3,22 @@
 //! testnet) classifies without knowing the chain — which also means backfilled
 //! cells (parsed before chain_name is known) classify correctly.
 //! Match on the (code_hash, hash_type) pair — xUDT mainnet is data1, testnet type.
+//!
+//! Every hash below was read back from a registry rather than recalled: each
+//! one was posted to a running ckbadger's `POST /scripts/lookup`, which
+//! answers with the family name, the canonical hash_type and a live-cell
+//! count. That is the only reason to trust the table, and it is how the two
+//! mis-pins it used to carry were found — Spore Cluster and `.bit Cell` both
+//! sat in the Spore arm and rendered 1,059 mainnet cells as dob items.
+//!
+//! Mainnet-only where the family is new here. The lookup service indexes one
+//! chain, so a testnet hash comes back unknown and cannot be verified the
+//! same way; the testnet alternates that remain are the spore-ecosystem ones
+//! this table already carried.
+//!
+//! Known but deliberately unpinned, because no verified hash was in hand for
+//! them at the time: Unique Cell, Bitcoin SPV, and the `xudt_compatible`
+//! token contracts (wCKB, ccBTC, Stable++, iCKB), which fall to `Other`.
 
 use ckb_types::packed;
 use cknerv_core::{AssetKind, HashType, LockKind, ScriptId};
@@ -54,6 +70,11 @@ pub fn classify_lock(lock: &packed::Script) -> LockKind {
 }
 
 /// Classify a type script. `None` → `Native`; unknown → `Other`.
+///
+/// `Object` and `Identity` are structural, not decorative: a third of the
+/// curated stage is digital objects and identity cells, and before they had
+/// their own classes they all arrived as `Other` — one salmon accent whose
+/// meaning is "cknerv does not recognize this".
 pub fn classify_asset(type_: Option<&packed::Script>) -> AssetKind {
     let Some(t) = type_ else {
         return AssetKind::Native;
@@ -72,15 +93,45 @@ pub fn classify_asset(type_: Option<&packed::Script>) -> AssetKind {
         | ("25c29dc317811a6f6f3985a7a9ebc4838bd388d19d0feeecf0bcd60f6c0975bb", TYPE) => {
             AssetKind::Xudt
         }
+        // Spore ITEMS only. The cluster that owns them, and the `.bit Cell`
+        // family that borrows the cluster's decoder, used to sit in this arm
+        // and rendered as dob green; they are a container and an identity,
+        // not a dob.
         ("4a4dce1df3dffff7f8b2cd7dff7303df3b6150c9788cb75dcf6747247132b9f5", DATA1)
-        | ("7366a61534fa7c7e6225ecc0d828ea3b5366adec2b58206f2ee84995fe030075", DATA1)
         | ("bbad126377d45f90a8ee120da988a2d7332c78ba8fd679aab478a19d6c133494", DATA1)
-        | ("598d793defef36e2eeba54a9b45130e4ca92822e1d193671f490950c3b856080", DATA1)
-        | ("685a60219309029d01310311dba953d67029170ca4848a4ff638e57002130a0d", DATA1)
-        | ("0bbe768b519d8ea7b96d58f1182eb7e6ef96c541fbd9526975077ee09f049058", DATA1)
-        | ("0b1f412fbae26853ff7d082d422c2bdd9e2ff94ee8aaec11240a5b34cc6e890f", TYPE)
-        | ("cfba73b58b6f30e70caed8a999748781b164ef9a1e218424a6fb55ebf641cb33", TYPE) => {
+        | ("685a60219309029d01310311dba953d67029170ca4848a4ff638e57002130a0d", DATA1) => {
             AssetKind::Spore
+        }
+        // Digital objects: individually minted, individually owned artifacts.
+        // Spore Cluster (mainnet + the two testnet deployments).
+        ("7366a61534fa7c7e6225ecc0d828ea3b5366adec2b58206f2ee84995fe030075", DATA1)
+        | ("598d793defef36e2eeba54a9b45130e4ca92822e1d193671f490950c3b856080", DATA1)
+        | ("0bbe768b519d8ea7b96d58f1182eb7e6ef96c541fbd9526975077ee09f049058", DATA1)
+        // M-NFT item, class and issuer.
+        | ("2b24f0d644ccbdd77bbf86b27c8cca02efa0ad051e447c212636d9ee7acaaec9", TYPE)
+        | ("d51e6eaf48124c601f41abe173f1da550b4cbca9c6a166781906a287abbb3d9a", TYPE)
+        | ("24b04faf80ded836efc05247778eec4ec02548dab6e2012c0107374aa3f68b81", TYPE)
+        // COTA, and the single registry cell that anchors it.
+        | ("1122a4fb54697cf2e6e3a96c9d80fd398a936559b90954c6e88eb7ba0cf652df", TYPE)
+        | ("90ca618be6c15f5857d3cbd09f9f24ca6770af047ba9ee70989ec3b229419ac7", TYPE)
+        // CKBFS — both deployed versions carry live cells.
+        | ("31e6376287d223b8c0410d562fb422f04d1d617b2947596a14c3d2efb7218d3a", DATA1)
+        | ("b5d13ffe0547c78021c01fe24dce2e959a1ed8edbca3cb93dd2e9f57fb56d695", DATA1) => {
+            AssetKind::Object
+        }
+        // Identity: cells whose job is to name somebody.
+        // .bit — account, the cell family, income aggregation, reverse
+        // records, and the two time-oracle cells the protocol needs to read.
+        ("4f170a048198408f4f4d36bdbcddcebe7a0ae85244d3ab08fd40a80cbfc70918", TYPE)
+        | ("cfba73b58b6f30e70caed8a999748781b164ef9a1e218424a6fb55ebf641cb33", TYPE)
+        | ("0b1f412fbae26853ff7d082d422c2bdd9e2ff94ee8aaec11240a5b34cc6e890f", TYPE)
+        | ("ebafc1ebe95b88cac426f984ed5fce998089ecad0cd2f8b17755c9de4cb02162", TYPE)
+        | ("ebc9e13658f6df13593cf59b7e9cd159602b6c3c7d54b14dea43bae600ebae11", TYPE)
+        | ("9e537bf5b8ec044ca3f53355e879f3fd8832217e4a9b41d9994cf0c547241a79", TYPE)
+        | ("3a468d53352eb855521dabed0dc7036929bfe72766ad58f801edfbae564f7b43", TYPE)
+        // did:ckb.
+        | ("4a06164dc34dccade5afe3e847a97b6db743e79f5477fa3295acf02849c5984a", TYPE) => {
+            AssetKind::Identity
         }
         _ => AssetKind::Other,
     }
@@ -176,6 +227,148 @@ mod tests {
                 DATA1
             ))),
             AssetKind::Spore
+        );
+    }
+
+    /// One per pinned arm, and the two regressions this table used to carry.
+    /// Every hash here was confirmed against a live ckbadger
+    /// `POST /scripts/lookup` before it was written down.
+    #[test]
+    fn classifies_objects_and_identities() {
+        // Spore Cluster is a container of dobs, not a dob. It answered
+        // "Spore" for as long as it lived in the Spore arm.
+        let cluster = script(
+            "7366a61534fa7c7e6225ecc0d828ea3b5366adec2b58206f2ee84995fe030075",
+            DATA1,
+        );
+        assert_eq!(classify_asset(Some(&cluster)), AssetKind::Object);
+        assert_ne!(classify_asset(Some(&cluster)), AssetKind::Spore);
+        // `.bit Cell` borrows the spore-cluster decoder, which is how it
+        // ended up in the Spore arm. It is an identity.
+        let bit_cell = script(
+            "cfba73b58b6f30e70caed8a999748781b164ef9a1e218424a6fb55ebf641cb33",
+            TYPE,
+        );
+        assert_eq!(classify_asset(Some(&bit_cell)), AssetKind::Identity);
+        assert_ne!(classify_asset(Some(&bit_cell)), AssetKind::Spore);
+        // A spore ITEM stays a spore — the shipped dob accent is the point.
+        assert_eq!(
+            classify_asset(Some(&script(
+                "4a4dce1df3dffff7f8b2cd7dff7303df3b6150c9788cb75dcf6747247132b9f5",
+                DATA1
+            ))),
+            AssetKind::Spore
+        );
+        assert_eq!(
+            classify_asset(Some(&script(
+                "2b24f0d644ccbdd77bbf86b27c8cca02efa0ad051e447c212636d9ee7acaaec9",
+                TYPE
+            ))),
+            AssetKind::Object
+        ); // M-NFT
+        assert_eq!(
+            classify_asset(Some(&script(
+                "d51e6eaf48124c601f41abe173f1da550b4cbca9c6a166781906a287abbb3d9a",
+                TYPE
+            ))),
+            AssetKind::Object
+        ); // M-NFT Class
+        assert_eq!(
+            classify_asset(Some(&script(
+                "24b04faf80ded836efc05247778eec4ec02548dab6e2012c0107374aa3f68b81",
+                TYPE
+            ))),
+            AssetKind::Object
+        ); // M-NFT Issuer
+        assert_eq!(
+            classify_asset(Some(&script(
+                "1122a4fb54697cf2e6e3a96c9d80fd398a936559b90954c6e88eb7ba0cf652df",
+                TYPE
+            ))),
+            AssetKind::Object
+        ); // COTA
+        assert_eq!(
+            classify_asset(Some(&script(
+                "90ca618be6c15f5857d3cbd09f9f24ca6770af047ba9ee70989ec3b229419ac7",
+                TYPE
+            ))),
+            AssetKind::Object
+        ); // COTA Registry
+        assert_eq!(
+            classify_asset(Some(&script(
+                "b5d13ffe0547c78021c01fe24dce2e959a1ed8edbca3cb93dd2e9f57fb56d695",
+                DATA1
+            ))),
+            AssetKind::Object
+        ); // CKBFS v2
+        assert_eq!(
+            classify_asset(Some(&script(
+                "31e6376287d223b8c0410d562fb422f04d1d617b2947596a14c3d2efb7218d3a",
+                DATA1
+            ))),
+            AssetKind::Object
+        ); // CKBFS v1
+        assert_eq!(
+            classify_asset(Some(&script(
+                "4f170a048198408f4f4d36bdbcddcebe7a0ae85244d3ab08fd40a80cbfc70918",
+                TYPE
+            ))),
+            AssetKind::Identity
+        ); // .bit Account
+        assert_eq!(
+            classify_asset(Some(&script(
+                "ebafc1ebe95b88cac426f984ed5fce998089ecad0cd2f8b17755c9de4cb02162",
+                TYPE
+            ))),
+            AssetKind::Identity
+        ); // .bit Income Cell
+        assert_eq!(
+            classify_asset(Some(&script(
+                "ebc9e13658f6df13593cf59b7e9cd159602b6c3c7d54b14dea43bae600ebae11",
+                TYPE
+            ))),
+            AssetKind::Identity
+        ); // .bit Reverse Record
+        assert_eq!(
+            classify_asset(Some(&script(
+                "9e537bf5b8ec044ca3f53355e879f3fd8832217e4a9b41d9994cf0c547241a79",
+                TYPE
+            ))),
+            AssetKind::Identity
+        ); // .bit Time Info
+        assert_eq!(
+            classify_asset(Some(&script(
+                "3a468d53352eb855521dabed0dc7036929bfe72766ad58f801edfbae564f7b43",
+                TYPE
+            ))),
+            AssetKind::Identity
+        ); // .bit Time Index State
+        assert_eq!(
+            classify_asset(Some(&script(
+                "4a06164dc34dccade5afe3e847a97b6db743e79f5477fa3295acf02849c5984a",
+                TYPE
+            ))),
+            AssetKind::Identity
+        ); // did:ckb
+    }
+
+    /// The hash_type half of the pair guards the new arms too — a Spore
+    /// Cluster hash under `type` is not a Spore Cluster.
+    #[test]
+    fn new_arms_still_require_the_right_hashtype() {
+        assert_eq!(
+            classify_asset(Some(&script(
+                "7366a61534fa7c7e6225ecc0d828ea3b5366adec2b58206f2ee84995fe030075",
+                TYPE
+            ))),
+            AssetKind::Other
+        );
+        assert_eq!(
+            classify_asset(Some(&script(
+                "4f170a048198408f4f4d36bdbcddcebe7a0ae85244d3ab08fd40a80cbfc70918",
+                DATA1
+            ))),
+            AssetKind::Other
         );
     }
 

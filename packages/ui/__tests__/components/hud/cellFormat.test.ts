@@ -139,6 +139,8 @@ describe('cellFormat — new helpers', () => {
   });
   it('color maps cover every family key', () => {
     for (const k of ['sighash','multisig','acp','omnilock','other']) expect(LOCK_COLORS[k]).toMatch(/^#/);
-    for (const k of ['native','sudt','xudt','dao','spore','other']) expect(ASSET_COLORS[k]).toMatch(/^#/);
+    for (const k of ['native','sudt','xudt','dao','spore','other','object','identity']) {
+      expect(ASSET_COLORS[k]).toMatch(/^#/);
+    }
   });
 });

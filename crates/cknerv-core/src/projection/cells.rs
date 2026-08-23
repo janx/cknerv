@@ -5597,9 +5597,9 @@ mod tests {
     /// survived a green suite.
     ///
     /// Regenerate both with
-    /// `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-core columnar_v4`.
+    /// `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-core columnar_v5`.
     #[test]
-    fn columnar_v4_pair_describes_one_galaxy_in_both_wire_forms() {
+    fn columnar_v5_pair_describes_one_galaxy_in_both_wire_forms() {
         use crate::outpoint::DATA_HEX_TRUNCATION_MARKER;
         use crate::projection::cells_columnar::{
             assert_matches_fixture, assert_matches_text_fixture,
@@ -5667,6 +5667,20 @@ mod tests {
         omnilock_native.lock_kind = LockKind::Omnilock;
         omnilock_native.asset_kind = AssetKind::Native;
         omnilock_native.lock_script = script(0x55, "type");
+        // The two youngest asset codes. Appended after the cells above so the
+        // outpoint indices tx2 spends stay where they were.
+        let mut sighash_object = out(72_00000000, "0x03");
+        sighash_object.lock_kind = LockKind::Sighash;
+        sighash_object.asset_kind = AssetKind::Object;
+        sighash_object.lock_script = lock;
+        sighash_object.type_script = Some(script(0x66, "data1"));
+        sighash_object.type_shape_seed = Some([0x6666_6666, 0x6666_6666]);
+        let mut sighash_identity = out(73_00000000, "0x04");
+        sighash_identity.lock_kind = LockKind::Sighash;
+        sighash_identity.asset_kind = AssetKind::Identity;
+        sighash_identity.lock_script = lock;
+        sighash_identity.type_script = Some(script(0x77, "type"));
+        sighash_identity.type_shape_seed = Some([0x7777_7777, 0x7777_7777]);
         g.apply_mutation(&landed(
             "0xtx1",
             7,
@@ -5679,6 +5693,8 @@ mod tests {
                 multisig_sudt,
                 acp_spore,
                 omnilock_native,
+                sighash_object,
+                sighash_identity,
             ],
         ));
         g.apply_mutation(&Mutation::CellTagged {
@@ -5729,6 +5745,8 @@ mod tests {
                 AssetKind::Dao => "dao",
                 AssetKind::Spore => "spore",
                 AssetKind::Other => "other",
+                AssetKind::Object => "object",
+                AssetKind::Identity => "identity",
             }
         }
         fn hash_type_name(hash_type: crate::HashType) -> &'static str {
@@ -5758,7 +5776,9 @@ mod tests {
         );
         assert_eq!(
             named(rows.iter().map(|c| asset_kind_name(c.asset_kind)).collect()),
-            named(vec!["native", "sudt", "xudt", "dao", "spore", "other"]),
+            named(vec![
+                "native", "sudt", "xudt", "dao", "spore", "other", "object", "identity"
+            ]),
             "every AssetKind code must ride this fixture across the boundary"
         );
         assert_eq!(
@@ -5774,9 +5794,9 @@ mod tests {
         );
 
         let json = serde_json::to_string_pretty(&snapshot).expect("serialize snapshot");
-        assert_matches_text_fixture("cells_columnar_v4_pair.json", &json);
+        assert_matches_text_fixture("cells_columnar_v5_pair.json", &json);
         assert_matches_fixture(
-            "cells_columnar_v4_pair.bin",
+            "cells_columnar_v5_pair.bin",
             &g.snapshot_bin().expect("columnar snapshot"),
         );
     }

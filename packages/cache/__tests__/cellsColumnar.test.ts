@@ -21,7 +21,7 @@ import {
  *  so a layout change that lands on only one of them fails on both — which
  *  a hand-rolled TS encoder here could never catch, because it would drift
  *  along with whichever reading its author had. Regenerate with
- *  `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-core columnar_v4`. */
+ *  `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-core columnar_v5`. */
 function fixtureBytes(name: string): ArrayBuffer {
   const path = fileURLToPath(new URL(`../../../tests/fixtures/${name}`, import.meta.url));
   const bytes = readFileSync(path);
@@ -29,7 +29,7 @@ function fixtureBytes(name: string): ArrayBuffer {
 }
 
 function fixture(): ArrayBuffer {
-  return fixtureBytes('cells_columnar_v4.bin');
+  return fixtureBytes('cells_columnar_v5.bin');
 }
 
 const FIXTURE_LOCK: ScriptId = {
@@ -67,7 +67,7 @@ function expectedCell(id: number, tag: string | null) {
 describe('decodeCellsColumnar', () => {
   it('reads the header the Rust encoder wrote', () => {
     const view = decodeCellsColumnar(fixture());
-    expect(CELLS_COLUMNAR_VERSION).toBe(4);
+    expect(CELLS_COLUMNAR_VERSION).toBe(5);
     expect(CELLS_COLUMNAR_HEADER_BYTES).toBe(72);
     expect(view.lastPulseAtMs).toBe(777);
     expect(view.totalBirths).toBe(30);
@@ -168,7 +168,7 @@ describe('decodeCellsColumnar', () => {
    *  a plane is present would read the trailing sections length out of the
    *  middle of it — the rows would decode and the tail would be garbage. */
   it('reads a snapshot whose display plane is absent', () => {
-    const view = decodeCellsColumnar(fixtureBytes('cells_columnar_v4_absent.bin'));
+    const view = decodeCellsColumnar(fixtureBytes('cells_columnar_v5_absent.bin'));
     expect(view.display).toBeNull();
     expect(view.cellCount).toBe(3);
     expect(view.residentCount).toBe(0);
@@ -210,12 +210,16 @@ describe('decodeCellsColumnar', () => {
     new DataView(badVersion).setUint16(4, 99, true);
     expect(() => decodeCellsColumnar(badVersion)).toThrow(/version/);
 
-    // v3 is not read either: rust-embed ships the client with the server, so
-    // the only way to see one is a proxy serving a different build, and a
-    // JSON fallback beats a buffer read against the wrong layout.
+    // The version one step back is not read either — and that is the case
+    // that actually happens: a tab holding the previous SPA across a deploy.
+    // rust-embed ships the client with the server, so the only way to see an
+    // older frame is a proxy serving a different build, and a JSON fallback
+    // beats a buffer read against the wrong layout. `connect.ts` catches this
+    // throw on the HTTP boot path and `projectionStream.ts` latches
+    // `binaryRetired` on the socket path, so neither wedges.
     const oldVersion = good.slice(0);
-    new DataView(oldVersion).setUint16(4, 3, true);
-    expect(() => decodeCellsColumnar(oldVersion)).toThrow(/unsupported version 3/);
+    new DataView(oldVersion).setUint16(4, 4, true);
+    expect(() => decodeCellsColumnar(oldVersion)).toThrow(/unsupported version 4/);
 
     expect(() => decodeCellsColumnar(good.slice(0, 40))).toThrow(/too small/);
     expect(() => decodeCellsColumnar(new ArrayBuffer(8))).toThrow(/too small/);
@@ -248,7 +252,7 @@ describe('decodeCellsColumnar', () => {
     it('fails on an out-of-range asset_kind rather than calling it other', () => {
       const code = COLUMNAR_ASSET_KINDS.length;
       expect(() => columnarCellAt(poked('assetKind', code), 0))
-        .toThrow(new RegExp(`asset_kind code ${code} outside 0\\.\\.5 at row 0`));
+        .toThrow(new RegExp(`asset_kind code ${code} outside 0\\.\\.7 at row 0`));
     });
 
     it('fails on a tag code past the dictionary', () => {
@@ -288,9 +292,9 @@ describe('decodeCellsColumnar', () => {
 });
 
 // ── THE differential gate ────────────────────────────────────────────
-// One galaxy, serialized by the server twice: `cells_columnar_v4_pair.json`
-// through serde, `cells_columnar_v4_pair.bin` through the columnar encoder
-// (`cells.rs::columnar_v4_pair_describes_one_galaxy_in_both_wire_forms`).
+// One galaxy, serialized by the server twice: `cells_columnar_v5_pair.json`
+// through serde, `cells_columnar_v5_pair.bin` through the columnar encoder
+// (`cells.rs::columnar_v5_pair_describes_one_galaxy_in_both_wire_forms`).
 // Decoding the binary one HERE, through the very path production uses, and
 // diffing every field of every cell against the JSON one is the only check
 // that spans the language boundary AND the decoder. Rust's own
@@ -342,12 +346,12 @@ function cellFieldEntries(label: string, cells: readonly Cell[]): Record<string,
 describe('decode(BIN) ≡ JSON', () => {
   function pair(): { fromBin: CellGalaxySnapshot; fromJson: CellGalaxySnapshot } {
     const fromBin = cellsSnapshotFromColumnar(
-      decodeCellsColumnar(fixtureBytes('cells_columnar_v4_pair.bin')),
+      decodeCellsColumnar(fixtureBytes('cells_columnar_v5_pair.bin')),
     );
     const fromJson = JSON.parse(
       readFileSync(
         fileURLToPath(
-          new URL('../../../tests/fixtures/cells_columnar_v4_pair.json', import.meta.url),
+          new URL('../../../tests/fixtures/cells_columnar_v5_pair.json', import.meta.url),
         ),
         'utf8',
       ),

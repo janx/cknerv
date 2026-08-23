@@ -283,6 +283,30 @@ const TYPE_PROFILES: Record<AssetKind, TypeProfile> = {
     aspect: [0.92, 1.02, 0.82],
     secondary: [0.14, 0.24],
   },
+  // Profiles resume at 8, not 6: `other` spends 5, 6 and 7 through the
+  // three-way jitter in `deriveTypeMorphology` below.
+  //
+  // A crafted artifact, read against spore's organic body: fewer and
+  // chunkier lobes, ONE winding triple instead of two (so two objects of a
+  // family differ in placement, not in construction), near-isotropic aspect,
+  // and a low ripple — a thing that was made to a shape, not grown into one.
+  object: {
+    profile: 8,
+    lobes: [2, 3],
+    winding: [[2, 2, 1]],
+    aspect: [1.06, 0.94, 1.0],
+    secondary: [0.05, 0.09],
+  },
+  // An emblem. A single winding triple with equal terms and a fixed lobe
+  // count, so every cell of the family stamps the same seal; the lowest
+  // secondary amplitude in the table keeps the outline from wandering.
+  identity: {
+    profile: 9,
+    lobes: [4, 4],
+    winding: [[2, 2, 2]],
+    aspect: [1.0, 1.0, 1.0],
+    secondary: [0.025, 0.05],
+  },
 };
 
 function deriveTypeMorphology(family: AssetKind, seed: ShapeSeed): TypeMorphology {
@@ -553,6 +577,32 @@ function carrierPoint(type: TypeMorphology, parameter: number): MorphologyPoint3
         petals * Math.cos(t) + 0.12 * Math.cos(2 * t),
         petals * Math.sin(t) * 0.76 + 0.08 * Math.sin(3 * t),
         Math.sin(type.winding[2] * t + 0.35) * 0.4,
+      ];
+      break;
+    }
+    case 'object': {
+      // Beveled: pushing the extremes out and flattening the arcs between
+      // them turns the ring squarish, which is what reads as machined
+      // rather than grown.
+      const bevel = 0.5 + secondary * Math.cos(type.lobes * t);
+      const cx = Math.cos(t);
+      const cy = Math.sin(t);
+      point = [
+        bevel * cx * (0.7 + 0.3 * cx * cx),
+        bevel * cy * (0.7 + 0.3 * cy * cy),
+        Math.cos(type.winding[0] * t) * 0.26,
+      ];
+      break;
+    }
+    case 'identity': {
+      // Mirror-symmetric about the vertical axis BY CONSTRUCTION: x is odd
+      // in t while y and z are even. Two cells of one identity family should
+      // read as two impressions of the same seal, not as two individuals.
+      const seal = 0.56 + secondary * Math.cos(type.lobes * t);
+      point = [
+        Math.sin(t) * seal,
+        Math.cos(t) * seal * 0.9 + Math.cos(2 * t) * 0.1,
+        Math.cos(type.winding[0] * t) * 0.22,
       ];
       break;
     }

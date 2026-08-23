@@ -58,7 +58,7 @@ export interface CellsStats {
    *  sample like `byLock`; cells lacking `asset_kind` bucket into `other`. */
   byAsset: Record<AssetKind, number>;
   /** The same alive set counted by script identity rather than by the four
-   *  lock families and five asset families cknerv pins itself.
+   *  lock families and seven asset families cknerv pins itself.
    *
    *  RETAINED-WINDOW scope, and therefore adopted wholesale from the backend
    *  and never counted here: this cache holds the staged subset, so a local
@@ -108,7 +108,9 @@ export function emptyCellsStats(totalBirths = 0, totalDeaths = 0): CellsStats {
     inView: 0,
     dataBearing: 0,
     byLock: { sighash: 0, multisig: 0, acp: 0, omnilock: 0, other: 0 },
-    byAsset: { native: 0, sudt: 0, xudt: 0, dao: 0, spore: 0, other: 0 },
+    byAsset: {
+      native: 0, sudt: 0, xudt: 0, dao: 0, spore: 0, other: 0, object: 0, identity: 0,
+    },
     scripts: emptyScriptCensus(),
   };
 }

@@ -675,7 +675,7 @@ describe('writeCellBuffers', () => {
     expect([...t.memoryIdentityArr.slice(0, 3)]).toEqual([0, 0, 0]);
     expect(t.memoryIdentityArr[3]).toBeGreaterThan(0);
     expect(t.memoryIdentityArr[3]).toBeLessThan(1);
-    expect(t.memoryIdentityArr[4]).toBeCloseTo(0.6);
+    expect(t.memoryIdentityArr[4]).toBeCloseTo(3 / 7);
     expect(t.memoryIdentityArr[5]).toBeCloseTo(0.75);
     expect(t.memoryIdentityArr[6]).toBe(1);
     expect(t.memoryIdentityArr[7]).toBe(1);

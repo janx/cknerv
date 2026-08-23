@@ -78,6 +78,9 @@ function ellipseProfile(assetClass: number): readonly [number, number] {
   if (asset === 3) return [0.94, 1.07];
   if (asset === 4) return [1.02, 0.76];
   if (asset === 5) return [0.87, 1.1];
+  if (asset === 6) return [1.2, 0.86];
+  // An emblem has no long axis; equal radii is the point, not an oversight.
+  if (asset === 7) return [0.96, 0.96];
   return [1, 0.94];
 }
 

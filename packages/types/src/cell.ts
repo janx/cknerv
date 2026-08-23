@@ -32,8 +32,16 @@ export type ShapeSeed = [number, number];
 export type LockKind = 'sighash' | 'multisig' | 'acp' | 'omnilock' | 'other';
 
 /** Asset/type-script family classification. Mirrors the Rust
- *  `#[serde(rename_all = "snake_case")]` `AssetKind` enum. */
-export type AssetKind = 'native' | 'sudt' | 'xudt' | 'dao' | 'spore' | 'other';
+ *  `#[serde(rename_all = "snake_case")]` `AssetKind` enum.
+ *
+ *  `object` is a crafted, individually-minted artifact (Spore Cluster,
+ *  M-NFT, COTA, CKBFS); `identity` is a cell whose job is to name somebody
+ *  (`.bit`, did:ckb). Both used to arrive as `other`.
+ *
+ *  Order is the wire order — `COLUMNAR_ASSET_KINDS` indexes by it — so the
+ *  two youngest members sit after `other`, not in alphabetical place. */
+export type AssetKind =
+  | 'native' | 'sudt' | 'xudt' | 'dao' | 'spore' | 'other' | 'object' | 'identity';
 
 /** How a script's `code_hash` is matched. Part of the identity: the same 32
  *  bytes under a different hash type is a different script. */
@@ -200,7 +208,7 @@ export interface ScriptCount {
 }
 
 /** The retained set counted by script identity instead of by the four lock
- *  families and five asset families cknerv pins itself. Mirrors the Rust
+ *  families and seven asset families cknerv pins itself. Mirrors the Rust
  *  `ScriptCensus`; ranked most-cells-first and cut at 24 entries per role,
  *  with the tail counters carrying whatever the cut dropped so a panel can
  *  say "and N more" instead of showing a head as if it were the whole. */

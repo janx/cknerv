@@ -108,6 +108,8 @@ describe('aggregateCellsStats', () => {
     );
     const stats = aggregateCellsStats(cells, 10, 3);
     expect(stats.byLock).toEqual({ sighash: 2, multisig: 1, acp: 0, omnilock: 0, other: 1 });
-    expect(stats.byAsset).toEqual({ native: 2, sudt: 1, xudt: 0, dao: 0, spore: 0, other: 1 });
+    expect(stats.byAsset).toEqual({
+      native: 2, sudt: 1, xudt: 0, dao: 0, spore: 0, other: 1, object: 0, identity: 0,
+    });
   });
 });

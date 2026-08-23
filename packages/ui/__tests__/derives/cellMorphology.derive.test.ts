@@ -134,8 +134,10 @@ describe('Cell Morphology V2 grammar', () => {
       .toEqual({ ...base, genome: { ...base.genome, presenceScale: 0 }, presenceScale: 0 });
   });
 
-  it('keeps all six type families macro-distinct', () => {
-    const families: AssetKind[] = ['native', 'sudt', 'xudt', 'dao', 'spore', 'other'];
+  it('keeps all eight type families macro-distinct', () => {
+    const families: AssetKind[] = [
+      'native', 'sudt', 'xudt', 'dao', 'spore', 'other', 'object', 'identity',
+    ];
     const signatures = families.map((family) => {
       const topology = deriveCellMorphologyTopology(cell({
         asset_kind: family,

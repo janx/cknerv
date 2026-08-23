@@ -1,7 +1,9 @@
 import type { AssetKind, Cell, CellGalaxySnapshot, LockKind } from '@cknerv/types';
 import { observedLabDataBytes } from './cell-form-lab-selection';
 
-const ASSET_ORDER: AssetKind[] = ['native', 'sudt', 'xudt', 'dao', 'spore', 'other'];
+const ASSET_ORDER: AssetKind[] = [
+  'native', 'sudt', 'xudt', 'dao', 'spore', 'object', 'identity', 'other',
+];
 const LOCK_ORDER: LockKind[] = ['sighash', 'multisig', 'acp', 'omnilock', 'other'];
 
 export type RelicSampleBasis = 'asset' | 'lock' | 'capacity' | 'data' | 'hash';

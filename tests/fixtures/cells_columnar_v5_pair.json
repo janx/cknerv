@@ -229,14 +229,98 @@
     },
     {
       "id": 6,
-      "born_at_ms": 2000,
+      "born_at_ms": 1000,
       "death_at_ms": null,
-      "birth_block": 8,
+      "birth_block": 7,
       "tag": null,
       "pos_seed": [
         -37.63455581665039,
         -1.1969106197357178,
         -9.31506633758545
+      ],
+      "out_point": {
+        "tx_hash": "0xtx1",
+        "index": 6
+      },
+      "capacity": 7200000000,
+      "data_hex": "0x03",
+      "data_bytes": 1,
+      "content_hash": "0x00000000000000000000000000000000000000000000000000000001ad274804",
+      "lock_shape_seed": [
+        2905032704,
+        1
+      ],
+      "type_shape_seed": [
+        1717986918,
+        1717986918
+      ],
+      "data_shape_seed": [
+        4,
+        2
+      ],
+      "lock_kind": "sighash",
+      "asset_kind": "object",
+      "lock_script": {
+        "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+        "hash_type": "type"
+      },
+      "type_script": {
+        "code_hash": "0x0000000000000000000000000000000000000000000000000000000066666666",
+        "hash_type": "data1"
+      }
+    },
+    {
+      "id": 7,
+      "born_at_ms": 1000,
+      "death_at_ms": null,
+      "birth_block": 7,
+      "tag": null,
+      "pos_seed": [
+        -36.050472259521484,
+        -10.610566139221191,
+        41.841461181640625
+      ],
+      "out_point": {
+        "tx_hash": "0xtx1",
+        "index": 7
+      },
+      "capacity": 7300000000,
+      "data_hex": "0x04",
+      "data_bytes": 1,
+      "content_hash": "0x00000000000000000000000000000000000000000000000000000001b31d2904",
+      "lock_shape_seed": [
+        3005032704,
+        1
+      ],
+      "type_shape_seed": [
+        2004318071,
+        2004318071
+      ],
+      "data_shape_seed": [
+        4,
+        2
+      ],
+      "lock_kind": "sighash",
+      "asset_kind": "identity",
+      "lock_script": {
+        "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+        "hash_type": "type"
+      },
+      "type_script": {
+        "code_hash": "0x0000000000000000000000000000000000000000000000000000000077777777",
+        "hash_type": "type"
+      }
+    },
+    {
+      "id": 8,
+      "born_at_ms": 2000,
+      "death_at_ms": null,
+      "birth_block": 8,
+      "tag": null,
+      "pos_seed": [
+        -46.45037078857422,
+        -0.10410778224468231,
+        -1.8383359909057617
       ],
       "out_point": {
         "tx_hash": "0xtx2",
@@ -271,7 +355,9 @@
         2,
         3,
         4,
-        5
+        5,
+        6,
+        7
       ],
       "endpoint_anchors": [
         {
@@ -333,6 +419,26 @@
           ],
           "content_hash": "0x0000000000000000000000000000000000000000000000000000000189640202",
           "resolved": true
+        },
+        {
+          "id": 6,
+          "pos_seed": [
+            -37.63455581665039,
+            -1.1969106197357178,
+            -9.31506633758545
+          ],
+          "content_hash": "0x00000000000000000000000000000000000000000000000000000001ad274804",
+          "resolved": true
+        },
+        {
+          "id": 7,
+          "pos_seed": [
+            -36.050472259521484,
+            -10.610566139221191,
+            41.841461181640625
+          ],
+          "content_hash": "0x00000000000000000000000000000000000000000000000000000001b31d2904",
+          "resolved": true
         }
       ],
       "parents": [],
@@ -346,7 +452,7 @@
         2
       ],
       "to_ids": [
-        6
+        8
       ],
       "endpoint_anchors": [
         {
@@ -370,11 +476,11 @@
           "resolved": false
         },
         {
-          "id": 6,
+          "id": 8,
           "pos_seed": [
-            -37.63455581665039,
-            -1.1969106197357178,
-            -9.31506633758545
+            -46.45037078857422,
+            -0.10410778224468231,
+            -1.8383359909057617
           ],
           "content_hash": "0x00000000000000000000000000000000000000000000000000000001dcd65002",
           "resolved": true
@@ -388,21 +494,21 @@
       "at_ms": 2000
     }
   ],
-  "total_births": 7,
+  "total_births": 9,
   "total_deaths": 1,
   "stats": {
-    "in_view": 6,
-    "data_bearing": 3,
-    "capacity_shannons": 47200000000,
+    "in_view": 8,
+    "data_bearing": 5,
+    "capacity_shannons": 61700000000,
     "by_kind": {
       "wallet": 1,
       "dex": 0,
       "cf": 0,
       "ckbloom": 0,
-      "generic": 5
+      "generic": 7
     },
     "by_lock": {
-      "sighash": 2,
+      "sighash": 4,
       "multisig": 1,
       "acp": 1,
       "omnilock": 1,
@@ -414,7 +520,9 @@
       "xudt": 1,
       "dao": 0,
       "spore": 1,
-      "other": 2
+      "other": 2,
+      "object": 1,
+      "identity": 1
     },
     "scripts": {
       "locks": [
@@ -423,7 +531,7 @@
             "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
             "hash_type": "type"
           },
-          "count": 2
+          "count": 4
         },
         {
           "script": {
@@ -466,6 +574,20 @@
         },
         {
           "script": {
+            "code_hash": "0x0000000000000000000000000000000000000000000000000000000066666666",
+            "hash_type": "data1"
+          },
+          "count": 1
+        },
+        {
+          "script": {
+            "code_hash": "0x0000000000000000000000000000000000000000000000000000000077777777",
+            "hash_type": "type"
+          },
+          "count": 1
+        },
+        {
+          "script": {
             "code_hash": "0x50bd8d6680b8b9cf98b73f3c08faf8b2a21914311954118ad6609be6e78a1b95",
             "hash_type": "data1"
           },
@@ -491,6 +613,8 @@
       4,
       5,
       6,
+      7,
+      8,
       900,
       901,
       902

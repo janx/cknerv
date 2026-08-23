@@ -15,7 +15,7 @@ describe('consensusMemoryCoreIdentity', () => {
   it('normalizes the existing A field mapping for the far core', () => {
     expect(consensusMemoryCoreIdentity({
       ...VISUAL,
-      assetClass: 5,
+      assetClass: 7,
       lockClass: 4,
       payload: 0.72,
       mass: 1.2,

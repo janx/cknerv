@@ -171,6 +171,8 @@ const ASSET_LABEL: Record<string, string> = {
   xudt: 'xUDT',
   dao: 'Nervos DAO',
   spore: 'Spore',
+  object: 'Digital Object',
+  identity: 'Identity',
   other: UNLISTED,
 };
 
@@ -225,6 +227,8 @@ export function isScriptNamed(
 //   script     #9D7BD8    script-defined identity (omnilock, spore objects)
 //   token      #3FC9A6    an issued fungible token
 //   value      lockedGold value held under lock — DAO, capacity, amounts
+//   artifact   #E06BC8    a crafted object, minted one at a time
+//   identity   #3E6BE8    a cell whose job is to name somebody
 //   unlisted   #33424F    a family nothing could name
 //
 // A band carries at most two steps, and kinds that share a nature share a band
@@ -250,6 +254,16 @@ export const CONTENT_BANDS = {
    *  told apart with no label between them. */
   tokenExtended: '#95EAD3',
   value: HUD_COLORS.lockedGold,
+  /** A digital object: a Spore cluster, an M-NFT, a COTA item, a CKBFS file.
+   *  Magenta is the one strong hue the house had not spent, and these are
+   *  the one nature that rhymes with nothing else on the other axis — a
+   *  thing somebody made, rather than a rule about who may spend it. */
+  artifact: '#E06BC8',
+  /** A cell that names somebody: `.bit`, did:ckb. Deliberately a blue near
+   *  `authority`, because it rhymes across axes the way the palette's other
+   *  pairs do — authority answers "who may", identity answers "who is" —
+   *  while staying 56 apart, which is past the separation floor. */
+  identity: '#3E6BE8',
   /** The unremarkable majority in a mix bar — quiet by design, near the HUD's
    *  own dim, because "bare CKB" is the background against which the rest reads. */
   plain: '#607789',
@@ -268,6 +282,7 @@ export const ASSET_COLORS: Record<string, string> = {
   native: CONTENT_BANDS.consensus, sudt: CONTENT_BANDS.token,
   xudt: CONTENT_BANDS.tokenExtended, dao: CONTENT_BANDS.value,
   spore: CONTENT_BANDS.script, other: CONTENT_BANDS.unlisted,
+  object: CONTENT_BANDS.artifact, identity: CONTENT_BANDS.identity,
 };
 
 /** The census's three-class partition, in the chain-capacity bar's category

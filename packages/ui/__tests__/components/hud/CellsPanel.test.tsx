@@ -12,7 +12,7 @@ const stats: CellsStats = {
   capacityShannons: 121_000_000_000_000_000, // 1.21e17 shannons = 1.21e9 bytes = 1.21 GB
   inView: 4983, dataBearing: 1545,
   byLock: { sighash: 3200, multisig: 1100, acp: 450, omnilock: 0, other: 233 },
-  byAsset: { native: 3500, sudt: 900, xudt: 350, dao: 200, spore: 33, other: 0 },
+  byAsset: { native: 3500, sudt: 900, xudt: 350, dao: 200, spore: 33, other: 0, object: 0, identity: 0 },
   scripts: emptyScriptCensus(),
 };
 const churn = { bornPerBlock: 3.2, spentPerBlock: 2.7, netPerBlock: 0.5 };

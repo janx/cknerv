@@ -318,6 +318,8 @@ const ASSET_KIND_CODES: Record<AssetKind, number> = {
   dao: 3,
   spore: 4,
   other: 5,
+  object: 6,
+  identity: 7,
 };
 
 function writeCellColumns(field: CellField, slot: number, cell: Cell): void {

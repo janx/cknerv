@@ -138,7 +138,9 @@
       "xudt": 0,
       "dao": 0,
       "spore": 0,
-      "other": 0
+      "other": 0,
+      "object": 0,
+      "identity": 0
     },
     "scripts": {
       "locks": [
