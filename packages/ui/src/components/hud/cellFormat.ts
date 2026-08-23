@@ -43,18 +43,6 @@ export function formatOutpoint(txHash: string, index: number): string {
   return `${midTruncate(txHash, 6, 8)}#${index}`;
 }
 
-/** Keeps `0x` + first N hex chars; appends `…` for any tail. */
-export function formatDataHex(hex: string, charLimit: number): string {
-  if (hex.length <= charLimit + 1) return hex;
-  return `${hex.slice(0, charLimit)}…`;
-}
-
-export function formatCellKind(k: Cell['tag']): string {
-  if (k === null) return 'GENERIC';
-  return k.toUpperCase();
-}
-
-/** Humanized elapsed span, largest-two-units. Clamps negatives to 0s. */
 /** Chain block reference in the HUD's grouped house style (`#20,100,194`).
  *  Locale pinned so grouping cannot drift with the viewer's runtime. */
 export function formatBlockRef(block: number): string {

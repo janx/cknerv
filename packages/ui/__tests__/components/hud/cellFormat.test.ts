@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  formatCkb, midTruncate, formatOutpoint, formatDataHex, formatCellKind,
+  formatCkb, midTruncate, formatOutpoint,
   formatAge, formatBlockRef, formatDataSize, formatExactCkb, formatFeeShannons,
   formatLockKind, formatAssetKind,
   formatScriptIdentity, formatWallClock, scriptIdentityColor,
@@ -25,14 +25,6 @@ describe('cellFormat — moved formatters', () => {
     // literal ("…ababab", 6 chars) was an arithmetic typo; the verbatim
     // midTruncate(txHash, 6, 8) is the proven source of truth.
     expect(formatOutpoint('0x' + 'ab'.repeat(32), 2)).toBe('0xabab…abababab#2');
-  });
-  it('formatDataHex truncates past the char limit', () => {
-    expect(formatDataHex('0xdeadbeefcafe1234567890', 14)).toBe('0xdeadbeefcafe…');
-    expect(formatDataHex('0xdead', 14)).toBe('0xdead');
-  });
-  it('formatCellKind uppercases the tag, GENERIC for null', () => {
-    expect(formatCellKind('wallet')).toBe('WALLET');
-    expect(formatCellKind(null)).toBe('GENERIC');
   });
 });
 

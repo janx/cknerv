@@ -2,8 +2,8 @@
 //
 // The wire types (Cell, Mutation, ChainEntry, ...) live in
 // `@cknerv/types`; this module holds shape helpers internal to the
-// component layer (geometry vectors, graph-node shapes, animation
-// hints) that are not part of the cknerv-core wire contract.
+// component layer (geometry vectors, cell lookups, the colony's node and
+// edge shapes) that are not part of the cknerv-core wire contract.
 
 import type { Cell, Peer, RosterNode } from '@cknerv/types';
 
@@ -18,37 +18,6 @@ export type Vec3 = [number, number, number];
 export interface CellById {
   get(id: number): Cell | undefined;
 }
-
-/**
- * Minimal graph-node shape consumed by `GlowNode` and other generic
- * topology primitives. Consumers (simulator, cknerv-cli) carry their
- * own richer per-node metadata and project it down to this shape at
- * the prop boundary.
- *
- * `kind` is an opaque string the renderer doesn't interpret — the
- * caller is responsible for mapping kind → palette/shape via the
- * `palette` / `shape` props. `cluster` is an optional grouping key for
- * future clustering visualizations.
- */
-export interface GraphNode {
-  id: string;
-  kind: string;
-  label: string;
-  size: number;
-  pinned?: boolean;
-  cluster?: string;
-}
-
-/**
- * Animation hint a renderer may apply to a single node this frame.
- * Mirrors the shape simulator uses — chain-generic in that the visual
- * vocabulary (pulse, flash) is decoupled from any specific event-type
- * meaning.
- */
-export type AnimationHint =
-  | { type: 'pulse_blue' }
-  | { type: 'flash_green' }
-  | { type: 'flash_red' };
 
 /** The colony's honesty ladder, in descending order of what we actually know:
  *  `local`/`measured` are nodes we hold a live link to, `sighted` are nodes a

@@ -51,10 +51,14 @@ export const PEER_NETWORK_PALETTE = {
  * Cyan family for the structural chain anchor (the CKB icosahedron). The
  * anchor reads as "structural backbone / chain truth" and stays visually
  * distinct from the Cell consensus field. Its resting structure remains cyan
- * while a block event temporarily carries that block's A-lane hue. Kept in
- * sync with the `ckb` entry of `_rcg/glowNodePalette.ts` — tune both together.
- * It lives here rather than beside the anchor because the floating NODE card
- * tints itself from the same constant: card and icosahedron cannot drift.
+ * while a block event temporarily carries that block's A-lane hue.
+ *
+ * It lives here rather than beside the anchor because it has two readers that
+ * must never drift apart: `CellGalaxy` paints the icosahedron with it, and the
+ * floating `NodeSelfCard` tints its frame from the same constant, so the card
+ * and the thing the card is about are the same colour. (It used to name a
+ * third reader — a palette file in a sibling repo that no longer exists — and
+ * that is the only reason this line ever mentioned keeping anything in sync.)
  */
 export const CHAIN_ANCHOR_HEX = {
   edge: '#7df9ff',

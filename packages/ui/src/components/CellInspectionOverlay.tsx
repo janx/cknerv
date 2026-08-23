@@ -30,7 +30,6 @@ import {
   useSceneInspectionLayoutSide,
   type SceneInspectionHandles,
   type SceneInspectorPlacement,
-  type SceneInspectorPlacementSide,
 } from './sceneInspection';
 
 const DEFAULT_PANEL_WIDTH_PX = 728;
@@ -39,7 +38,6 @@ const DEFAULT_PANEL_WIDTH_PX = 728;
 // first measured frame.
 const DEFAULT_PANEL_HEIGHT_PX = 620;
 
-export type CellInspectorPlacementSide = SceneInspectorPlacementSide;
 export type CellInspectorPlacement = SceneInspectorPlacement;
 export type CellInspectionHandles = SceneInspectionHandles;
 
