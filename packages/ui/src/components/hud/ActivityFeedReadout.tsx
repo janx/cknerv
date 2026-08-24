@@ -75,7 +75,7 @@ export default function ActivityFeedReadout({ source, record, compact = false }:
               />
             ))}
           </div>
-          <div style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, color: '#9fb0bd', marginTop: compact ? 2 : 3, lineHeight: 1.45 }}>
+          <div style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, color: HUD_COLORS.legendInk, marginTop: compact ? 2 : 3, lineHeight: 1.45 }}>
             {visual.buckets
               .map((bucket) => `${CATEGORY_LABELS[bucket.category] ?? bucket.category.toUpperCase()} ${bucket.count}`)
               .join(' · ')}

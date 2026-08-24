@@ -53,6 +53,7 @@ import {
   CellSemanticOrbit,
   ConsensusRouteCamera,
   ConsensusWriteSeal,
+  HUD_COLORS,
   HudOverlay,
   deriveCellPopulationField,
   resolveCellDisplayLimit,
@@ -1696,7 +1697,7 @@ export default function App({
           // attributes back off it.
           gl={{ antialias: true, alpha: false }}
           dpr={canvasDpr}
-          style={{ background: '#02030a' }}
+          style={{ background: HUD_COLORS.stageGround }}
           // The context exists — the boot record's GL line closes here, the
           // one place that knows. Nothing else hangs off this callback.
           onCreated={() => completeBootPhase('gl')}
@@ -1711,13 +1712,14 @@ export default function App({
             setSelectedNetId(null);
           }}
         >
-          {/* The ground the scene clears to every frame, spelled the same as
-              the CSS above it: the wrapper carries the colour until the first
+          {/* The ground the scene clears to every frame, and the same token the
+              CSS above it wears: the wrapper carries the colour until the first
               frame exists, this carries it afterwards, and the black window
               before first light stays the one black. This is what makes the
               ground the scene's own fact rather than a colour showing through
-              a transparent buffer. */}
-          <color attach="background" args={['#02030a']} />
+              a transparent buffer. `index.html` spells the value out because a
+              stylesheet cannot import; nothing else needs to. */}
+          <color attach="background" args={[HUD_COLORS.stageGround]} />
           {/* Advances the module-level simClock once per frame so every
               useSimFrame animation (CellGalaxy, BlockDeliveryLayer, GlowNode,
               NeuralNetwork, NetworkColony) actually plays. Must live

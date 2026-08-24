@@ -270,7 +270,7 @@ export default function NodeSelfCard({
                 height: 5,
                 marginTop: 4,
                 border: `1px solid ${rgba(accent, 0.22)}`,
-                background: '#050a10',
+                background: HUD_COLORS.trackGround,
               }}
             >
               <span
@@ -346,7 +346,7 @@ export default function NodeSelfCard({
                 height: 5,
                 marginTop: 4,
                 border: `1px solid ${rgba(HUD_COLORS.peerWire, 0.22)}`,
-                background: '#050a10',
+                background: HUD_COLORS.trackGround,
               }}
             >
               <span style={{ width: segment(consensus.atTip), background: HUD_COLORS.nominal }} />

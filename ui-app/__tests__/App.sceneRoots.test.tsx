@@ -13,8 +13,10 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { HUD_COLORS } from '@cknerv/ui';
 
 const APP_SOURCE = readFileSync(resolve(process.cwd(), 'src/App.tsx'), 'utf8');
+const INDEX_HTML = readFileSync(resolve(process.cwd(), 'index.html'), 'utf8');
 
 interface HoistedOverlay {
   body: string;
@@ -138,10 +140,23 @@ describe('canvas ground', () => {
     // one the clear falls back to if the background below ever goes away.
     expect(APP_SOURCE).toContain('gl={{ antialias: true, alpha: false }}');
     // The clear IS the ground: the CSS below the canvas carries it until the
-    // first frame exists, the scene carries it afterwards, and both are
-    // spelled the same so the pre-first-light black never shifts.
-    expect(APP_SOURCE).toContain("<color attach=\"background\" args={['#02030a']} />");
-    expect(APP_SOURCE).toContain("style={{ background: '#02030a' }}");
+    // first frame exists, the scene carries it afterwards, and both now say the
+    // one token, so the pre-first-light black cannot shift by half an edit.
+    expect(APP_SOURCE).toContain('<color attach="background" args={[HUD_COLORS.stageGround]} />');
+    expect(APP_SOURCE).toContain('style={{ background: HUD_COLORS.stageGround }}');
+    // Both, or neither: this pair spent its whole life as two literals that
+    // happened to agree, which is a guarantee nobody was keeping.
+    expect(APP_SOURCE.toLowerCase()).not.toContain(HUD_COLORS.stageGround.toLowerCase());
+  });
+
+  it('holds the shell stylesheet to the token it cannot import', () => {
+    // `index.html` paints before a module has evaluated, so its copy of the
+    // ground is a literal by necessity — the same bargain the boot shell one
+    // element down makes with cyanWire / dim / danger. A literal by necessity
+    // still needs a keeper: this is the surface a visitor stares at for the
+    // whole snapshot download, and nothing else compares it to anything.
+    const background = /body\s*\{[^}]*background:\s*(#[0-9a-fA-F]{3,8})/.exec(INDEX_HTML);
+    expect(background?.[1]?.toLowerCase()).toBe(HUD_COLORS.stageGround.toLowerCase());
   });
 });
 

@@ -47,6 +47,14 @@ const HUD_DIR = resolve(process.cwd(), 'src/components/hud');
  *  half the question. */
 const SRC_DIR = resolve(process.cwd(), 'src');
 
+/** And the app shell, for the one promoted token with no reader in this
+ *  package at all: the stage's ground is painted where the Canvas is mounted,
+ *  which is `ui-app`. The palette owns the value either way — a colour the HUD
+ *  sits on top of is the HUD's business — but an oracle that only read the
+ *  overlay would call the token an orphan and be confidently wrong, which is
+ *  the same mistake in the other direction. */
+const APP_DIR = resolve(process.cwd(), '../../ui-app/src');
+
 /** The one file allowed to write a hex down: that is what a palette IS.
  *  Everything else in the directory reads it. */
 const PALETTE_SOURCE = 'hudTheme.ts';
@@ -76,14 +84,38 @@ const BANNED: ReadonlyArray<{
   },
   { pattern: /#5a6470/gi, token: 'HUD_COLORS.moduleSlate' },
   { pattern: /#0a0a0a/gi, token: 'HUD_COLORS.trackGround' },
+  // The same track, declined twice. An epoch gauge, a colony bar and a
+  // transaction histogram wrote their own near-black channel instead of the
+  // token that already describes the empty half of every meter in the HUD —
+  // and the two spellings sit 4.2 apart, which is not two decisions, it is one
+  // colour typed by two hands.
+  { pattern: /#050a10/gi, token: 'HUD_COLORS.trackGround' },
+  { pattern: /#080d10/gi, token: 'HUD_COLORS.trackGround' },
   // Drift not toward a token but BETWEEN two: `#FFD79A` splits the difference
   // between `lockedGold #FFD7A1` and `goldInk #FFD29A` and matched neither.
   { pattern: /#ffd79a/gi, token: 'HUD_COLORS.goldInk' },
+  // A tier four panels used and nobody named. The legend under a bucket bar is
+  // neither the label above it nor the readings around it, so four files typed
+  // the in-between out longhand. (`derives/activityFeed.derive.ts` spells the
+  // same six digits for a different job — the colour of a category the feed
+  // cannot name — and is outside this sweep's directory. Two jobs at one value
+  // is its own defect; it is not this one.)
+  { pattern: /#9fb0bd/gi, token: 'HUD_COLORS.legendInk' },
+  // Banned in a directory it never appeared in, which is the point: the stage's
+  // ground is painted by the app shell that mounts the Canvas, and the overlay
+  // reaching for it by hand is how the value would come back.
+  { pattern: /#02030a/gi, token: 'HUD_COLORS.stageGround' },
 ];
 
 /** Tokens promoted out of inline literals — each has to be read by somebody,
  *  or the ban above is guarding a value nothing uses. */
-const PROMOTED = ['heroInk', 'moduleSlate', 'trackGround'] as const;
+const PROMOTED = [
+  'heroInk',
+  'moduleSlate',
+  'trackGround',
+  'legendInk',
+  'stageGround',
+] as const;
 
 /** Straight euclidean distance across the RGB cube. A crude stand-in for "a
  *  person can tell these apart" — crude on purpose, because the job here is to
@@ -138,6 +170,7 @@ function readSources(root: string): HudSource[] {
 }
 
 const SOURCES = readSources(HUD_DIR);
+const APP_SOURCES = readSources(APP_DIR);
 
 describe('hud discipline', () => {
   it('actually reads the HUD directory', () => {
@@ -145,6 +178,8 @@ describe('hud discipline', () => {
     // that makes the assertions below mean what they claim.
     expect(SOURCES.length).toBeGreaterThan(40);
     expect(SOURCES.map((source) => source.name)).toContain(PALETTE_SOURCE);
+    // …and the shell beside it, where the ground is painted.
+    expect(APP_SOURCES.map((source) => source.name)).toContain('App.tsx');
   });
 
   it.each(BANNED)('$token owns its value — no file spells $pattern', ({ pattern, token, exempt = [] }) => {
@@ -160,7 +195,7 @@ describe('hud discipline', () => {
   });
 
   it.each(PROMOTED)('%s is read outside the palette', (token) => {
-    const readers = SOURCES.filter(
+    const readers = [...SOURCES, ...APP_SOURCES].filter(
       (source) => source.name !== PALETTE_SOURCE
         && source.text.includes(`HUD_COLORS.${token}`),
     );
@@ -169,6 +204,22 @@ describe('hud discipline', () => {
     // ban that protects it is guarding an empty room.
     expect(readers.length).toBeGreaterThan(0);
     expect(HUD_COLORS[token]).toMatch(/^#[0-9A-F]{6}$/);
+  });
+
+  it('the knockout and the ground the stage sits on are two jobs', () => {
+    // These land ten apart and that is not the drift this file hunts — the
+    // distance rule is about colours a reader has to tell APART, and no surface
+    // shows these two together. `ground` is a knockout: the black read back out
+    // through a filled severity's letters and through the hole in a scrubber
+    // marker, so it has to be absolute, because a knockout with a hue is a
+    // fill. `stageGround` is a painted surface — the one value the CSS under
+    // the canvas, the scene's clear and the body behind both have to agree on.
+    //
+    // Pinned because the mismatch ran the whole life of the palette: the token
+    // called `ground` was never the ground, so the stage's black had no home
+    // and lived as a literal in three files.
+    expect(HUD_COLORS.ground).toBe('#000000');
+    expect(HUD_COLORS.stageGround).not.toBe(HUD_COLORS.ground);
   });
 
   it('warning is its own color, not chrome orange wearing a semantic name', () => {

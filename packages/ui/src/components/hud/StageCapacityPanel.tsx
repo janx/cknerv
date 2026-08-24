@@ -92,7 +92,7 @@ function TaxonomyBar({ title, scope, buckets }: {
           />
         ))}
       </div>
-      <div style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.tech, color: '#9fb0bd', marginTop: 3, lineHeight: 1.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+      <div style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.tech, color: HUD_COLORS.legendInk, marginTop: 3, lineHeight: 1.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
         {named.map((bucket) => `${bucket.label} ${share(bucket.count, total)}`).join(' · ')}
         {tailFamilies > 0 ? (
           <span style={{ color: HUD_COLORS.dim }}>{` · +${tailFamilies} <1%`}</span>

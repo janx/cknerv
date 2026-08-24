@@ -43,7 +43,7 @@ function BucketStrip({ label, buckets, total, provenance }: {
           />
         ))}
       </div>
-      <div style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, color: '#9fb0bd', marginTop: 3, lineHeight: 1.45 }}>
+      <div style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, color: HUD_COLORS.legendInk, marginTop: 3, lineHeight: 1.45 }}>
         {legend(buckets)}
       </div>
     </div>

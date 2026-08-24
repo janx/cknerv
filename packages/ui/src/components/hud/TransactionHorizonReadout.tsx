@@ -79,7 +79,7 @@ export default function TransactionHorizonReadout({ source, record, compact = fa
           alignItems: 'flex-end',
           gap: 2,
           padding: '2px 3px',
-          background: '#080d10',
+          background: HUD_COLORS.trackGround,
           border: `1px solid ${rgba(accent, 0.14)}`,
         }}
       >

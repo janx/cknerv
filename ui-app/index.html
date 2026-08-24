@@ -4,6 +4,15 @@
     <meta charset="UTF-8" />
     <title>cknerv</title>
     <style>
+      /* The background is HUD_COLORS.stageGround from
+         packages/ui/src/components/hud/hudTheme.ts — the same value the Canvas
+         wrapper and the scene's own clear read by name — spelled out here for
+         the same reason the boot shell below spells its three: a stylesheet in
+         the document head cannot import. It paints before any module has
+         evaluated and holds the ground until a first frame exists, so a copy
+         that drifts shows up as the page shifting at first light.
+         `ui-app/__tests__/App.sceneRoots.test.tsx` holds this literal against
+         the token. */
       body { margin: 0; background: #02030a; overflow: hidden; font-family: ui-monospace, monospace; color: #cbd5e1; }
       #root { width: 100vw; height: 100vh; }
     </style>

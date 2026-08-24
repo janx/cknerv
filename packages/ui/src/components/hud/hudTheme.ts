@@ -15,7 +15,33 @@ import { PEER_NETWORK_HEX } from '../../visualPalette';
 // identity only ever outline. So a filled block anywhere in the HUD means
 // something is wrong — never "this panel matters more than its neighbours".
 export const HUD_COLORS = {
+  // Absolute black, and never a surface: `ground` is what gets KNOCKED OUT of
+  // something coloured. `severityChip` reads it back through the letters of a
+  // filled severity block, and the status strip's three scrubber markers read
+  // it through the middle of a 4–6px bordered dot so the marker sits on its
+  // track as a hole rather than a bead. Those four are the whole readership,
+  // and a knockout with a hue is just a fill — which is why this one may not
+  // drift the way the two near-blacks around it are free to.
+  //
+  // It does not name the ground the stage is painted on. That is `stageGround`,
+  // and the token being called `ground` is exactly why nobody found it there.
   ground: '#000000',
+  // The colour the stage itself is painted, and the only near-black here a
+  // person actually looks at: the scene's clear colour, the CSS under the
+  // canvas that holds it until a first frame exists, and the body behind both.
+  // All three have to spell one value or the page shifts at first light.
+  //
+  // Ten units off `ground` and ten off `trackGround`, and that is not the drift
+  // this palette hunts — those two are a knockout and a channel, jobs no reader
+  // ever sees beside this one. What it ends is a mismatch that had run the life
+  // of the file: the token named `ground` was not naming the ground, so every
+  // surface that wanted the stage's black typed it out, and the value lived in
+  // three files and belonged to none.
+  //
+  // `index.html` still spells it, because the shell paints before a module has
+  // evaluated and a stylesheet cannot import. Its copy is held against this one
+  // by `ui-app/__tests__/App.sceneRoots.test.tsx`.
+  stageGround: '#02030A',
   panel: 'rgba(0,0,0,0.45)',
   // The empty half of every gauge, meter and segmented bar. Deliberately one
   // step off `ground`: a track has to read as a channel carved into the panel's
@@ -78,6 +104,23 @@ export const HUD_COLORS = {
   // numeral a panel exists to show. `ink` stays the body text — if everything
   // were white, the hero would be nothing.
   heroInk: '#FFFFFF',
+  // The line of segment names under a bucket bar — `CKB 41 · TOKEN 12 · DAO 3`
+  // — ranked here on purpose, between the label tier and the reading tier. Four
+  // panels had been typing it out because it had nowhere to come from, and it
+  // is a real rung rather than a drift between two: 68 off `dim` and 102 off
+  // `ink`, both clear of the separation floor.
+  //
+  // Why a legend earns a tier of its own. It is not a label — a label names the
+  // instrument and then gets out of the way, which is what `dim` is for, and
+  // every one of those bars titles itself in `dim` on the line above. And it is
+  // not a reading — the eye is meant to land on the BAR, so a legend set in
+  // `ink` competes with the picture it annotates. It is a caption on a graphic:
+  // read second, read in full, never mistaken for the thing it captions.
+  //
+  // `StageCapacityPanel` argues the rank inside one sentence: the named
+  // families print in this, and the `+N <1%` tail that follows them in the same
+  // line drops to `dim`.
+  legendInk: '#9FB0BD',
   dim: '#7C8794',
   // The module registry's own grey, for the CKB·01 / MESH·02 count-off tags.
   // Below `dim` on purpose: a tag is an address, not a reading. A panel that

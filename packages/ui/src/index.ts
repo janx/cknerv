@@ -109,6 +109,10 @@ export {
   createCellInspectionHandles,
   type CellInspectionHandles,
 } from './components/CellInspectionOverlay';
+// The palette, for the one surface the HUD does not own: the app mounts the
+// Canvas and paints the ground the whole instrument sits on, so `stageGround`
+// has to be readable from out there or it goes back to being a literal.
+export { HUD_COLORS } from './components/hud/hudTheme';
 export { default as HudOverlay } from './components/hud/HudOverlay';
 export { default as CellDetailPanel } from './components/hud/CellDetailPanel';
 export { default as CellNucleusPortrait } from './components/hud/CellNucleusPortrait';
