@@ -17,6 +17,7 @@
 // digit, which meant the middle severity had a name, a doc comment, and no
 // color — every warning the HUD ever raised looked like part of the frame.
 
+import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -118,6 +119,15 @@ const BANNED: ReadonlyArray<{
   // ground is painted by the app shell that mounts the Canvas, and the overlay
   // reaching for it by hand is how the value would come back.
   { pattern: /#02030a/gi, token: 'HUD_COLORS.stageGround' },
+  // Two text tiers retyped a hair off themselves, on a pair of scene markers
+  // the sweep had never been able to reach. The consensus-memory endpoints
+  // print their metadata 18.7 from `dim` and their content line 30.3 from
+  // `moduleSlate` — both inside the floor, which is this file's own definition
+  // of one colour wearing two names, and both invisible until `nerve/` came
+  // inside the fence. The two-step hierarchy they were reaching for is the one
+  // the tokens already describe: a reading, then an address under it.
+  { pattern: /#7b8ca6/gi, token: 'HUD_COLORS.dim' },
+  { pattern: /#56738a/gi, token: 'HUD_COLORS.moduleSlate' },
   // Not a hex, which is how it hid from every sweep this file has ever run:
   // `crit` was retyped as the decimal triple its hex expands to, because the
   // one surface that uses it needs an alpha and reached for the rgba form
@@ -208,19 +218,31 @@ const PACKAGE_SOURCES = readSources(SRC_DIR);
  *  `tweaks/` is the render plumbing behind GL·08, and it held a private
  *  three-rung severity ramp in Tailwind defaults.
  *
+ *  `nerve/` is the third, and it is the one occupant that DRAWS: the fabric,
+ *  the bridges and the consensus-memory endpoint markers, the last of which
+ *  are DOM labels pinned over the stage through drei's `Html`. It is here
+ *  because a colour typed there is the same defect as a colour typed anywhere
+ *  else — the markers had a grey 18.7 off `dim` and a second 30.3 off
+ *  `moduleSlate`, which is one text tier wearing two names — and because the
+ *  Chinese on those markers is the same load-bearing inventory entry as the
+ *  Chinese on a panel.
+ *
  *  What travels with the widening and what does not. The ban list above is
  *  about a value having one home, and a value has one home wherever it is
  *  typed, so it travels. The type ladder further down is about a medium — a
- *  rung is a reading size on a screen — and neither of these directories has
- *  one, so it stays where it is. Half of `tweaks/` imports `@react-three/fiber`
- *  and would be sorted into the scene dialect anyway, which is the same answer
- *  arrived at twice.
+ *  rung is a reading size on a screen — and none of these directories renders
+ *  in that medium, so it stays where it is. Half of `tweaks/` imports
+ *  `@react-three/fiber` and would be sorted into the scene dialect anyway,
+ *  which is the same answer arrived at twice; `nerve/` is that dialect
+ *  outright, where 7px is a marker under a camera rather than a caption, so
+ *  neither the ladder nor the shape grammar follows the colours in. Those two
+ *  read `SOURCES`, which is the HUD directory and stops there.
  *
  *  Scoped by directory rather than by exemption, deliberately. `materials/` is
  *  a sibling of these and builds THREE colours for the bloom pass; a sweep that
  *  reached it would need a file exempted from a rule it was never the subject
  *  of, and an exemption list is the debt this file is paying off. */
-const INK_JURISDICTION = /^(derives|tweaks)\//;
+const INK_JURISDICTION = /^(derives|nerve|tweaks)\//;
 
 const INK_SOURCES = [
   ...SOURCES,
@@ -243,6 +265,7 @@ describe('hud discipline', () => {
     const names = INK_SOURCES.map((source) => source.name);
     expect(names).toContain('derives/activityFeed.derive.ts');
     expect(names).toContain('tweaks/renderStatsStore.ts');
+    expect(names).toContain('nerve/ConsensusMemoryMarkers.tsx');
     expect(names.filter((name) => INK_JURISDICTION.test(name)).length)
       .toBeGreaterThan(20);
 
@@ -250,6 +273,13 @@ describe('hud discipline', () => {
     // ink rule would need exempting from it, which is the thing this scoping
     // exists to make unnecessary.
     expect(names.some((name) => name.startsWith('materials/'))).toBe(false);
+
+    // …and the other half of the `nerve/` ruling, pinned where a reader will
+    // look for it: the colour rules follow the value into the scene, the type
+    // ladder and the shape grammar do not follow it anywhere. Both of those
+    // read `SOURCES`, so this is what keeps them off a dialect that draws at
+    // 7px under a camera on purpose.
+    expect(SOURCES.some((source) => source.name.startsWith('nerve/'))).toBe(false);
   });
 
   it.each(BANNED)('$token owns its value — no file spells $pattern', ({ pattern, token, exempt = [] }) => {
@@ -782,9 +812,9 @@ describe('one type scale', () => {
   });
 });
 
-// ——— Twenty-two glyphs ——————————————————————————————————————————————————
+// ——— Thirty-two glyphs ——————————————————————————————————————————————————
 //
-// The HUD's Chinese face is not a font, it is a HAND-CUT SUBSET: 22 glyphs and
+// The HUD's Chinese face is not a font, it is a HAND-CUT SUBSET: 32 glyphs and
 // no more, so the page ships a few kilobytes instead of a few megabytes. That
 // makes every Chinese string in the overlay a load-bearing inventory entry, and
 // makes the failure mode invisible — a glyph outside the set does not error, it
@@ -799,38 +829,110 @@ describe('one type scale', () => {
 // `src/fonts/README.md` beside the `pyftsubset` command that produced it. If
 // this list and that list ever disagree, one of them is lying and the test
 // should be the loud one.
+//
+// It shipped reading the `cjk=`/`watermark=` PROPS, in the HUD directory. Both
+// halves of that were too narrow, and one defect walked through the gap in
+// both directions at once: `nerve/ConsensusMemoryMarkers` writes its three
+// endpoint labels as `cjk: '…'` FIELDS on a returned object, two directories
+// away — so the oracle could not see them, ten of their twelve glyphs were
+// outside the subset, and the element around them asked for
+// `JetBrains Mono Local`, an ASCII face with no Chinese in it at all. Neither
+// half raises anything on its own; together they put 7px of system serif on
+// the stage beside Latin set in mono.
+//
+// So the sweep reads Han runs wherever they are written, over the whole
+// package, with comments stripped — this file's own prose says these glyphs
+// out loud, and so does `hudTheme.ts`, and a doc comment is not a label. And
+// there is a second rule under it now, because re-subsetting alone would not
+// have fixed the markers: a string may only be written where the face that
+// carries it is asked for.
+//
+// It stops at the package boundary, and that is a decision rather than an
+// oversight. `packages/ui` owns the woff2 and every reader of `HUD_FONTS.cjk`;
+// the app shell's only Han is a Japanese song title inside an iframe's `title`
+// attribute — an accessibility label that asks for no HUD face and could not
+// be swept without an exemption, which is the debt this file is paying off.
 
 /** Exactly the glyphs in `src/fonts/HuiwenMincho-subset.woff2`. Adding Chinese
  *  to the HUD means re-subsetting the face IN THE SAME COMMIT and updating both
  *  this string and the README's. */
-const CJK_SUBSET = '共识基神经元脉搏节点场对端状态警告道样本细胞';
+const CJK_SUBSET = '共识基神经元脉搏节点场对端状态警告道样本细胞记录交易输入谱系见证';
 
-/** Every Chinese literal the HUD hands to the subset face: a panel's CJK
- *  companion, a plate's, and now the watermark under a panel's telemetry.
- *  Interpolated values yield nothing to check, which is why every one of these
- *  is written as a literal at its call site. */
+/** The other two copies of that inventory. Three lists have to move together —
+ *  the string above, the README's, and the bytes the README's `pyftsubset`
+ *  line produced — and for the life of this section the file said so in prose
+ *  while checking exactly one of them. A woff2 cannot be read here without a
+ *  decoder, but it can be WEIGHED: the README records the subset's SHA-256, so
+ *  the binary answers for itself. */
+const FONT_DIR = resolve(process.cwd(), 'src/fonts');
+const FONT_README = readFileSync(join(FONT_DIR, 'README.md'), 'utf8');
+const CJK_FACE = 'HuiwenMincho-subset.woff2';
+
+/** A run of Han characters, however it was written down: a JSX prop, a field
+ *  on a returned object, text between tags. Interpolated values yield nothing
+ *  to check, which is why every one of these is a literal at its call site. */
+const CJK_RUN = /[\u4E00-\u9FFF]+/g;
+
+/** The two props whose primitives put the face on for the writer — `HudPanel`'s
+ *  `watermark`, and the `cjk` of `PanelHeader` / `SpatialPlateHeader`. A file
+ *  that spells its Chinese as one of these has named the face by naming the
+ *  primitive; anything else has to say `HUD_FONTS.cjk` itself. */
 const CJK_PROP = /(?:watermark|cjk)="([^"]*)"/g;
 
-function cjkLiterals(): Array<{ source: string; text: string }> {
-  const found: Array<{ source: string; text: string }> = [];
-  for (const source of SOURCES) {
-    const text = code(source.text);
-    CJK_PROP.lastIndex = 0;
-    let match = CJK_PROP.exec(text);
-    while (match !== null) {
-      if (match[1].length > 0) found.push({ source: source.name, text: match[1] });
-      match = CJK_PROP.exec(text);
-    }
+function cjkRuns(text: string): string[] {
+  const found: string[] = [];
+  CJK_RUN.lastIndex = 0;
+  let match = CJK_RUN.exec(text);
+  while (match !== null) {
+    found.push(match[0]);
+    match = CJK_RUN.exec(text);
   }
   return found;
 }
 
+function cjkPropValues(text: string): Set<string> {
+  const found = new Set<string>();
+  CJK_PROP.lastIndex = 0;
+  let match = CJK_PROP.exec(text);
+  while (match !== null) {
+    if (match[1].length > 0) found.add(match[1]);
+    match = CJK_PROP.exec(text);
+  }
+  return found;
+}
+
+function cjkLiterals(): Array<{ source: string; text: string }> {
+  return PACKAGE_SOURCES.flatMap((source) => cjkRuns(code(source.text))
+    .map((text) => ({ source: source.name, text })));
+}
+
 describe('the hand-cut face', () => {
-  it('is 22 glyphs, each of them once', () => {
+  it('is 32 glyphs, each of them once', () => {
     // The subset is a set. A duplicate here would mean the README's
     // `--text=` argument is describing a smaller font than the name claims.
-    expect(CJK_SUBSET.length).toBe(22);
-    expect(new Set(CJK_SUBSET).size).toBe(22);
+    expect(CJK_SUBSET.length).toBe(32);
+    expect(new Set(CJK_SUBSET).size).toBe(32);
+  });
+
+  it('the string here, the README and the bytes on disk are one inventory', () => {
+    // "If this list and that list ever disagree, one of them is lying and the
+    // test should be the loud one" — said in prose above since this section was
+    // written, and unenforced until now. Three copies, closed into a ring: the
+    // string is the README's list, the README's list is the `--text=` argument
+    // that cut the face, and the face is the file whose hash the README
+    // records. Re-subset without updating any one of them and this goes red
+    // naming which.
+    const listed = /```text\n([\u4E00-\u9FFF]+)\n```/.exec(FONT_README);
+    expect(listed, 'no Han glyph block in src/fonts/README.md').not.toBeNull();
+    expect(listed?.[1]).toBe(CJK_SUBSET);
+    expect(FONT_README).toContain(`--text='${CJK_SUBSET}'`);
+
+    const recorded = /checked-in subset is\n`([0-9a-f]{64})`/.exec(FONT_README);
+    expect(recorded, 'no subset SHA-256 in src/fonts/README.md').not.toBeNull();
+    const actual = createHash('sha256')
+      .update(readFileSync(join(FONT_DIR, CJK_FACE)))
+      .digest('hex');
+    expect(actual).toBe(recorded?.[1]);
   });
 
   it('finds the strings it is supposed to be checking', () => {
@@ -840,6 +942,15 @@ describe('the hand-cut face', () => {
     expect(literals.length).toBeGreaterThanOrEqual(11);
     expect(literals.filter((literal) => literal.text === '神经元').length)
       .toBeGreaterThanOrEqual(2);
+
+    // And the form that hid the defect this section was widened for: three
+    // fields on an object returned by a helper, in a scene file the old sweep
+    // never opened. Asked exactly — if these stop being found, the widening
+    // has been undone and the file would go quiet again rather than red.
+    expect(literals
+      .filter((literal) => literal.source === 'nerve/ConsensusMemoryMarkers.tsx')
+      .map((literal) => literal.text))
+      .toEqual(['共识记录', '交易输入', '谱系见证']);
   });
 
   it('every glyph the HUD renders is one the face carries', () => {
@@ -849,6 +960,29 @@ describe('the hand-cut face', () => {
       .map((glyph) => `${source}: "${text}" uses ${glyph} — re-subset the face (src/fonts/README.md)`));
 
     expect(strays).toEqual([]);
+  });
+
+  it('every Chinese literal is set in the face that has Chinese in it', () => {
+    // The half an inventory cannot see. A glyph can be in the subset and still
+    // never reach it: the markers' container named `JetBrains Mono Local`, so
+    // re-cutting the face would have changed nothing on the stage. The claim
+    // is per FILE rather than per element, deliberately — a text oracle cannot
+    // tie a literal to the node that wraps it, and the honest scope of what
+    // this catches is "a file that writes Chinese without ever asking for the
+    // face", which is exactly what happened here.
+    const offenders: string[] = [];
+    for (const source of PACKAGE_SOURCES) {
+      const text = code(source.text);
+      const runs = cjkRuns(text);
+      if (runs.length === 0) continue;
+      if (text.includes('HUD_FONTS.cjk')) continue;
+      const viaPrimitive = cjkPropValues(text);
+      offenders.push(...runs
+        .filter((run) => !viaPrimitive.has(run))
+        .map((run) => `${source.name}: "${run}" is set in whatever face its container asked for — say HUD_FONTS.cjk`));
+    }
+
+    expect(offenders).toEqual([]);
   });
 
   it('the watermark is off the type ladder on purpose, not by drift', () => {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, type RefObject } from 'react';
 import { Html } from '@react-three/drei';
 import type { Cell } from '@cknerv/types';
+import { HUD_COLORS, HUD_FONTS } from '../components/hud/hudTheme';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { useSimFrame } from '../tweaks/useSimFrame';
@@ -50,6 +51,12 @@ const MEMORY_TARGET_COPY_OFFSET_PX = 42;
 
 interface ConsensusMemoryEndpointCopy {
   headline: string;
+  /** Rendered in `HUD_FONTS.cjk`, and every glyph of it has to be in the
+   *  hand-cut subset behind that family (`src/fonts/README.md`). These three
+   *  strings shipped needing ten glyphs the subset did not carry, inside a
+   *  marker whose own `fontFamily` asked for `JetBrains Mono Local` — an ASCII
+   *  face. Both halves silently fall back to a system serif, so the labels
+   *  came out in whatever the machine had, at 7px, beside Latin set in mono. */
   cjk: string;
 }
 
@@ -752,9 +759,9 @@ export default function ConsensusMemoryMarkers({
                 <div
                   ref={(node) => { metadataRefs.current[index] = node; }}
                   data-memory-label-metadata="true"
-                  style={{ marginTop: 2, fontSize: 7, letterSpacing: '0.09em', color: '#7B8CA6' }}
+                  style={{ marginTop: 2, fontSize: 7, letterSpacing: '0.09em', color: HUD_COLORS.dim }}
                 >
-                  {copy.cjk}
+                  <span style={{ fontFamily: HUD_FONTS.cjk }}>{copy.cjk}</span>
                   {!source ? ` · ${String(focus.routedSourceCount).padStart(2, '0')} ${evidenceNoun}` : ''}
                   {source ? (
                     <span
@@ -769,7 +776,7 @@ export default function ConsensusMemoryMarkers({
                   <div
                     ref={(node) => { targetContentRefs.current[index] = node; }}
                     data-memory-label-target-content="true"
-                    style={{ marginTop: 2, fontSize: 7, letterSpacing: '0.11em', color: '#56738A' }}
+                    style={{ marginTop: 2, fontSize: 7, letterSpacing: '0.11em', color: HUD_COLORS.moduleSlate }}
                   >
                     CONTENT {shortContentHash(cell)}
                   </div>

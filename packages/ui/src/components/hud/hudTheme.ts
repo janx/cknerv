@@ -292,10 +292,13 @@ export function rgba(hex: string, alpha: number): string {
 }
 
 // Self-hosted, subset webfonts — no third-party CDN at runtime. Latin faces are
-// Google's latin-range woff2. Huiwen-mincho (public domain) carries the 22 HUD
-// glyphs 共识基神经元脉搏节点场对端状态警告道样本细胞 — exactly what the panels and
-// inspector-card companions render, so any new Chinese needs a re-subset (see
-// fonts/README.md) or it silently falls back to a system serif.
+// Google's latin-range woff2. Huiwen-mincho (public domain) carries the 32 HUD
+// glyphs 共识基神经元脉搏节点场对端状态警告道样本细胞记录交易输入谱系见证 — exactly what
+// the panels, the inspector-card companions and the consensus-memory endpoint
+// markers render, so any new Chinese needs a re-subset (see fonts/README.md) or
+// it silently falls back to a system serif. The last ten arrived with the
+// markers, which had been asking a Latin face for Chinese: the string and the
+// face are one fix, and `hudDiscipline.test.ts` now checks both.
 //
 // The two `* Local` families back the in-scene labels (cell-galaxy label,
 // consensus-memory markers, route-hop callouts) that name them directly in
