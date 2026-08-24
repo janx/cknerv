@@ -395,8 +395,12 @@ describe('commitInspectionFrame', () => {
     expect(handles.leaderDot?.style.borderColor).toBe('rgb(113, 236, 255)');
     expect(handles.leaderDot?.style.boxShadow).toBe('0 0 9px #71ECFF99');
     // The free coordinate: 15px clear of the card corner, else -placement.y.
-    expect(handles.leader?.style.top).toBe('150px');
-    expect(handles.leaderDot?.style.top).toBe('146px');
+    // It is a DISPLACEMENT from a corner pinned at zero, never an edge offset
+    // — the frame loop may not write a layout property.
+    expect(handles.leader?.style.top).toBe('0px');
+    expect(handles.leaderDot?.style.top).toBe('0px');
+    expect(handles.leader?.style.translate).toBe('0px 150px');
+    expect(handles.leaderDot?.style.translate).toBe('0px 146px');
   });
 
   it('re-places a drifting card without repainting its connector', () => {
@@ -421,8 +425,11 @@ describe('commitInspectionFrame', () => {
     // ...while the two things that actually moved did move.
     expect(handles.card?.style.transform)
       .toBe('translate3d(349px, 242px, 0)');
-    expect(leader.style.top).toBe('158px');
-    expect(dot.style.top).toBe('154px');
+    expect(leader.style.translate).toBe('0px 158px');
+    expect(dot.style.translate).toBe('0px 154px');
+    // …and moved by nothing that costs a layout: the pin did not budge.
+    expect(leader.style.top).toBe('0px');
+    expect(dot.style.top).toBe('0px');
   });
 
   it('skips the frame entirely when the drift is sub-quantum', () => {
@@ -485,12 +492,41 @@ describe('commitInspectionFrame', () => {
 
     commitInspectionFrame(handles, { side: 'below', x: -150, y: 42 }, 45, 442);
     expect(handles.leader?.style.top).toBe('-42px');
-    expect(handles.leader?.style.left).toBe('150px');
-    expect(handles.leaderDot?.style.left).toBe('146px');
+    expect(handles.leader?.style.left).toBe('0px');
+    expect(handles.leader?.style.translate).toBe('150px 0px');
+    expect(handles.leaderDot?.style.translate).toBe('146px 0px');
 
     (handles.leader as HTMLSpanElement).style.background = 'none';
     commitInspectionFrame(handles, { side: 'below', x: -130, y: 42 }, 65, 442);
-    expect(handles.leader?.style.left).toBe('130px');
+    expect(handles.leader?.style.translate).toBe('130px 0px');
+    expect(handles.leader?.style.left).toBe('0px');
     expect(handles.leader?.style.background).toBe('none');
+  });
+
+  it('writes no layout property on the frame path', () => {
+    // The card moves by transform and the connector by translate; a `top` or
+    // a `left` here would put a positioned layout on every frame of an orbit
+    // for as long as a card is open. The pins are the appearance pass's.
+    const handles = makeWiredHandles();
+    commitInspectionFrame(handles, RIGHT, 342, 250);
+    const leader = handles.leader as HTMLSpanElement;
+    const dot = handles.leaderDot as HTMLSpanElement;
+    const pinned = [
+      leader.style.left, leader.style.right, leader.style.top, leader.style.bottom,
+      dot.style.left, dot.style.right, dot.style.top, dot.style.bottom,
+    ];
+
+    for (let step = 1; step <= 6; step += 1) {
+      commitInspectionFrame(
+        handles, { side: 'right', x: 42, y: -150 - step * 9 }, 342 + step * 9, 250,
+      );
+    }
+
+    expect([
+      leader.style.left, leader.style.right, leader.style.top, leader.style.bottom,
+      dot.style.left, dot.style.right, dot.style.top, dot.style.bottom,
+    ]).toEqual(pinned);
+    expect(leader.style.translate).toBe('0px 204px');
+    expect(dot.style.translate).toBe('0px 200px');
   });
 });

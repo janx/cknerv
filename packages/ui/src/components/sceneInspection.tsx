@@ -568,28 +568,55 @@ function restyleLeader(
   // too — every other card drew a tether that changed hue halfway across for
   // no reason anyone could state. A tether belongs to one thing, so it is one
   // colour fading out, and it follows whichever dialect is doing the pointing.
+  // Each span is pinned to ONE corner of the card here, on the axis the side
+  // fixes, and the free axis is pinned at zero — {@link positionLeader} moves
+  // it from there. Both offsets on this pass are layout properties, which is
+  // exactly why the free one may not be: this runs when the connector changes
+  // character, and that one runs on every frame the card drifts.
   if (side === 'right') {
     line.style.background = `linear-gradient(90deg,${accent}dd,${accent}38)`;
     line.style.left = `${-gap}px`;
+    line.style.top = '0px';
     anchor.style.left = `${-gap - 4}px`;
+    anchor.style.top = '0px';
   } else if (side === 'left') {
     line.style.background = `linear-gradient(90deg,${accent}38,${accent}dd)`;
     line.style.right = `${-gap}px`;
+    line.style.top = '0px';
     anchor.style.right = `${-gap - 4}px`;
+    anchor.style.top = '0px';
   } else if (side === 'below') {
     line.style.background = `linear-gradient(180deg,${accent}dd,${accent}38)`;
     line.style.top = `${-gap}px`;
+    line.style.left = '0px';
     anchor.style.top = `${-gap - 4}px`;
+    anchor.style.left = '0px';
   } else {
     line.style.background = `linear-gradient(180deg,${accent}38,${accent}dd)`;
     line.style.bottom = `${-gap}px`;
+    line.style.left = '0px';
     anchor.style.bottom = `${-gap - 4}px`;
+    anchor.style.left = '0px';
   }
 }
 
-/** The connector's one free coordinate: where along the card's near edge the
+/**
+ * The connector's one free coordinate: where along the card's near edge the
  * line meets it. The beside family slides it vertically, the stacked family
- * horizontally, and both keep it 15px clear of the card's corners. */
+ * horizontally, and both keep it 15px clear of the card's corners.
+ *
+ * ⚠️ This is the only thing the frame loop writes to the connector, so it may
+ * not write a layout property: the card beside it moves by `translate3d` for
+ * that reason, and an `top` / `left` here put a positioned layout back on the
+ * per-frame path for the whole time a card is open under an orbiting camera.
+ * The pin is {@link restyleLeader}'s job; this is a displacement from it.
+ *
+ * ⚠️ `translate` rather than `transform`, and the two are not interchangeable
+ * here: the dot enters on a keyframe that animates `transform` with a forwards
+ * fill, so an inline `transform` on it would be overridden for the element's
+ * whole life. The independent property applies BEFORE `transform`, so the
+ * entry still scales the dot about its own centre, in place.
+ */
 function positionLeader(
   line: HTMLSpanElement,
   anchor: HTMLSpanElement,
@@ -599,13 +626,13 @@ function positionLeader(
 ): void {
   if (placement.side === 'left' || placement.side === 'right') {
     const top = Math.max(15, Math.min(panelHeight - 15, -placement.y));
-    line.style.top = `${top}px`;
-    anchor.style.top = `${top - 4}px`;
+    line.style.translate = `0px ${top}px`;
+    anchor.style.translate = `0px ${top - 4}px`;
     return;
   }
   const left = Math.max(15, Math.min(panelWidth - 15, -placement.x));
-  line.style.left = `${left}px`;
-  anchor.style.left = `${left - 4}px`;
+  line.style.translate = `${left}px 0px`;
+  anchor.style.translate = `${left - 4}px 0px`;
 }
 
 /**
