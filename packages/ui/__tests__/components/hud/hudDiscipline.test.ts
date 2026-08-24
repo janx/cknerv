@@ -1160,11 +1160,14 @@ describe('the colour reserve', () => {
     // Cell organism itself, and another 39.2 from `warning`.
     expect(text).toContain('QUALITATIVE_BUCKET_COLORS[');
 
-    // One literal left, and it is on the record: a facet glyph is not one of
-    // the four byte axes and the palette holds no band for it. Asked as the
-    // whole list rather than as a count, so a table growing back here says
-    // which values came with it.
-    expect(text.match(HEX_LITERAL) ?? []).toEqual(['#fef3c7']);
+    // …and the one literal that used to be left. A facet glyph is not one of
+    // the four byte axes and no band names it, so it stayed a hex here while
+    // the same value was typed again in the morphology lab. It is
+    // `FACET_GLYPH_COLOR` now, in the file the other three tables come from —
+    // asked as the whole list rather than as a count, so a table growing back
+    // here says which values came with it.
+    expect(text).toContain('FACET_GLYPH_COLOR');
+    expect(text.match(HEX_LITERAL) ?? []).toEqual([]);
   });
 
   it('categories that share a bar stay apart from each other', () => {
@@ -1801,17 +1804,15 @@ describe('one directory, two dialects', () => {
     expect(masked.match(/#FFD48C/g)?.length).toBe(2);
   });
 
-  it('sorts the mixed directory, and finds both dialects in it', () => {
+  it('sorts the mixed directory, and finds the material it was drawn for', () => {
     const sites = MIXED_SOURCES.flatMap((source) => hexSites(source.text)
       .map((site) => ({ ...site, file: source.name })));
     const material = sites.filter((site) => site.dialect === 'material');
-    const ink = sites.filter((site) => site.dialect === 'ink');
 
     expect(material.length).toBeGreaterThan(0);
-    expect(ink.length).toBeGreaterThan(0);
 
-    // Named members, both ways, in the files that made the case for this rule.
-    // `CellIdentityBindingGlyph` is the whole argument in one file: the same
+    // Named members, in the files that made the case for this rule.
+    // `CellIdentityBindingGlyph` was the whole argument in one file: the same
     // value four times as a scene parameter, and two others written the DOM's
     // way one table above them.
     const named = (dialect: Dialect): string[] => sites
@@ -1821,10 +1822,14 @@ describe('one directory, two dialects', () => {
     expect(named('material')).toContain('components/CellSemanticOrbit.tsx: #020712');
     expect(named('material')).toContain('components/CellGalaxy.tsx: #e0f2fe');
     expect(named('material')).toContain('components/CellBirthAnchorMarker.tsx: #050914');
-    expect(named('material')
-      .filter((entry) => entry === 'components/CellIdentityBindingGlyph.tsx: #D9F8FF'))
-      .toHaveLength(4);
-    expect(named('ink')).toContain('components/CellIdentityBindingGlyph.tsx: #9DF7FF');
+
+    // The ink half of the sorting is NOT asked of these files, and that is the
+    // point rather than a gap: the two DOM literals this directory had are
+    // `IDENTITY_PROOF_COLORS` now, so a "finds ink here too" clause would be
+    // asking a real component to keep a defect so the oracle can find it. The
+    // classifier's ink side is pinned on the probe below, where nobody can
+    // edit it away.
+    expect(named('ink')).toEqual([]);
   });
 
   it('a colour the scene keeps to itself still clears the reserve', () => {

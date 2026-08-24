@@ -10,7 +10,7 @@ import {
   cellSemanticVisualState,
   deriveCellSemanticComposition,
 } from '../../src/derives/cellSemantics.derive';
-import { SEGMENT_COLORS } from '../../src/components/hud/cellFormat';
+import { ASSET_STANDARD_ACCENTS, SEGMENT_COLORS } from '../../src/components/hud/cellFormat';
 
 const record: CellSemanticRecord = {
   out_point: { tx_hash: `0x${'11'.repeat(32)}`, index: 0 },
@@ -93,8 +93,8 @@ describe('selected Cell semantic visual derivation', () => {
       standard,
     });
 
-    expect(cellSemanticAssetAccent(asset('xUDT'))).toBe('#c8ff72');
-    expect(cellSemanticAssetAccent(asset('sUDT'))).toBe('#72ffd4');
-    expect(cellSemanticAssetAccent(asset('custom'))).toBe('#d8b4ff');
+    expect(cellSemanticAssetAccent(asset('xUDT'))).toBe(ASSET_STANDARD_ACCENTS.xudt);
+    expect(cellSemanticAssetAccent(asset('sUDT'))).toBe(ASSET_STANDARD_ACCENTS.sudt);
+    expect(cellSemanticAssetAccent(asset('custom'))).toBe(ASSET_STANDARD_ACCENTS.other);
   });
 });

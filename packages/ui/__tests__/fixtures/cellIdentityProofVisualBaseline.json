@@ -28,7 +28,7 @@
       "detail": "0123456·CDEF#16909060",
       "title": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef#16909060",
       "color": "#9DF7FF",
-      "dimColor": "rgba(157, 247, 255, 0.52)"
+      "dimColor": "rgba(157,247,255,0.52)"
     },
     "labelFrame": {
       "opacity": 0.94,
@@ -94,7 +94,7 @@
       "detail": "FEDCBA9·3210",
       "title": "0xfedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
       "color": "#C7A7FF",
-      "dimColor": "rgba(199, 167, 255, 0.54)"
+      "dimColor": "rgba(199,167,255,0.54)"
     },
     "labelFrame": {
       "opacity": 0.94,

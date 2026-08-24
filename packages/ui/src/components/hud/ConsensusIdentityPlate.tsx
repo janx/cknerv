@@ -511,7 +511,7 @@ function EvidenceRouteLedger({
                 width: 5,
                 height: 5,
                 border: `1px solid ${LOCKED_GOLD}`,
-                background: '#07101B',
+                background: HUD_COLORS.ground,
                 boxShadow: `0 0 8px ${LOCKED_GOLD}aa`,
                 transform: 'translate(-50%, -50%) rotate(45deg)',
                 transition: reducedMotion ? undefined : 'left 180ms ease-out',

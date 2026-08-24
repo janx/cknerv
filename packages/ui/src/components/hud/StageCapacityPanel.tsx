@@ -45,7 +45,7 @@ const SUBHEAD: CSSProperties = {
   fontFamily: HUD_FONTS.tech,
   fontSize: HUD_TYPE.micro,
   letterSpacing: 1.4,
-  color: '#6b7f8e',
+  color: HUD_COLORS.dim,
   textTransform: 'uppercase',
   marginBottom: 4,
 };

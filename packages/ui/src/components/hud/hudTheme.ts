@@ -119,6 +119,15 @@ export const HUD_COLORS = {
   // distinct from `rebuild`, which is the scene's replay/rebuild semantic.
   memory: '#AA88FF',
   memoryInk: '#C9BAFF',
+  // A consensus-memory endpoint marker with NO evidence source bound to it —
+  // the target's own end of the trace, beside the ends that carry one and take
+  // a slot of `CONSENSUS_MEMORY_EVIDENCE_COLORS`. It was typed three times in
+  // `nerve/ConsensusMemoryMarkers.tsx` and is not any other cyan the house
+  // holds: 90 from `cyanInk`, 111 from `cyanWire`. The nearest thing to it is
+  // `PEER_NETWORK_HEX.outbound` at 18, and that is the peer plane's word for a
+  // link direction — the wrong sentence entirely, which is why this is a name
+  // of its own rather than a borrow.
+  memoryUnbound: '#8FF7FF',
   // Bright text tiers of the wire families; chrome stays cyanWire / orange.
   cyanInk: '#C9F8FF',
   lockedGold: '#FFD7A1',

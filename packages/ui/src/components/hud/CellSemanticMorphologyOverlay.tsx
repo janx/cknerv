@@ -12,6 +12,7 @@ import type { CellSemanticMorphologyOverlay } from '../../derives/cellSemanticMo
 import { CELL_PORTRAIT_LABEL_PORTAL } from './cellPortraitInsetChannel';
 import { SEGMENT_COLORS } from './cellFormat';
 import { HUD_COLORS, QUALITATIVE_BUCKET_COLORS, rgba } from './hudTheme';
+import { FACET_GLYPH_COLOR } from './cellFormat';
 import {
   cellSemanticKnowledgeArcWindow,
   cellSemanticKnowledgeRingVisible,
@@ -58,7 +59,6 @@ function dataSegmentColor(colorIndex: number): string {
  *  once here because it is drawn twice — as the point in the scene and as the
  *  label beside it — and one colour typed twice is how the table above drifted.
  */
-const ROLE_GLYPH_COLOR = '#fef3c7';
 
 function radialOffset(point: MorphologyPoint3, amount: number): MorphologyPoint3 {
   const magnitude = Math.hypot(point[0], point[1], point[2]);
@@ -154,7 +154,7 @@ function buildOverlayGeometry(
   }
 
   for (const glyph of overlay.roleGlyphs) {
-    const color = new THREE.Color(ROLE_GLYPH_COLOR);
+    const color = new THREE.Color(FACET_GLYPH_COLOR);
     const point = radialOffset(
       consensusBraidPathPoint(topology.carrier, glyph.parameter),
       0.17,
@@ -234,7 +234,7 @@ export default function CellSemanticMorphologyOverlay({
       role: glyph.role.replaceAll('_', ' ').toUpperCase(),
       text: glyph.label,
       parameter: glyph.parameter,
-      color: ROLE_GLYPH_COLOR,
+      color: FACET_GLYPH_COLOR,
     })),
   ];
 

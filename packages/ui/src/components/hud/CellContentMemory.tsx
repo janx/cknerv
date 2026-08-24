@@ -10,7 +10,7 @@ import {
   contentSegmentAtByte,
   deriveCellContentMemory,
 } from '../../derives/cellContentMemory.derive';
-import { HUD_COLORS, HUD_FONTS, rgba, HUD_TYPE } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, QUALITATIVE_BUCKET_COLORS, rgba, HUD_TYPE } from './hudTheme';
 import { revealStageAttributes, revealStageStyle } from './primitives';
 import { formatSemanticAssetAmount } from './cellFormat';
 import type { CellSemanticsPhase } from './CellSemanticsReadout';
@@ -46,14 +46,6 @@ const HEX_WINDOW_BYTES = HEX_ROW_BYTES * 2;
  * bargain every other pending slot on this card makes.
  */
 export const CELL_CONTENT_ANALYSIS_RESERVED_PX = 102;
-
-const SEGMENT_COLORS = [
-  '#71ECFF',
-  '#C5A8FF',
-  '#FFD27D',
-  '#75F2AE',
-  '#FF8FBD',
-] as const;
 
 function readableKind(value: string): string {
   return value.replaceAll('_', ' ').toUpperCase();
@@ -146,7 +138,7 @@ function SegmentReadout({
   interactive: boolean;
   onStep: (direction: -1 | 1) => void;
 }) {
-  const color = SEGMENT_COLORS[index % SEGMENT_COLORS.length];
+  const color = QUALITATIVE_BUCKET_COLORS[index % QUALITATIVE_BUCKET_COLORS.length];
   const stepEnabled = interactive && count > 1;
   return (
     <div
@@ -526,7 +518,7 @@ export default function CellContentMemory({
                     && byteSegmentIndex === selectedSegmentIndex;
                   const color = byteSegmentIndex === null
                     ? HUD_COLORS.ink
-                    : SEGMENT_COLORS[byteSegmentIndex % SEGMENT_COLORS.length];
+                    : QUALITATIVE_BUCKET_COLORS[byteSegmentIndex % QUALITATIVE_BUCKET_COLORS.length];
                   return (
                     <span
                       key={index}

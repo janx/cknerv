@@ -570,7 +570,7 @@ export default function ConsensusMemoryMarkers({
       if (frameLedgerMarkNumber(ledger, 'emphasis', emphasized ? 1 : 0)) {
         const emphasisColor = marker.source
           ? consensusMemoryEvidenceCssColor(marker.sourceIndex)
-          : '#8FF7FF';
+          : HUD_COLORS.memoryUnbound;
         node.style.filter = emphasized
           ? `drop-shadow(0 0 11px ${emphasisColor}aa)`
           : `drop-shadow(0 0 7px ${emphasisColor}66)`;
@@ -580,7 +580,7 @@ export default function ConsensusMemoryMarkers({
       if (!measured && !rebound) return;
       const color = marker.source
         ? consensusMemoryEvidenceCssColor(marker.sourceIndex)
-        : '#8FF7FF';
+        : HUD_COLORS.memoryUnbound;
       node.dataset.memoryLabelSide = side;
       node.dataset.memoryLabelShift = shift.toFixed(1);
       node.style.flexDirection = side === 'left' ? 'row-reverse' : 'row';
@@ -645,7 +645,7 @@ export default function ConsensusMemoryMarkers({
         const copy = consensusMemoryEndpointCopy(role, focus.sourceKind);
         const color = source
           ? consensusMemoryEvidenceCssColor(sourceIndex)
-          : '#8FF7FF';
+          : HUD_COLORS.memoryUnbound;
         const evidenceFocusState = source
           ? evidenceFocusSourceId === null
             ? 'idle'

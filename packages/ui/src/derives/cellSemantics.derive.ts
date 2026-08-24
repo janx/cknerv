@@ -3,7 +3,7 @@ import type {
   EnrichmentSourceStatus,
   SemanticAsset,
 } from '@cknerv/types';
-import { SEGMENT_COLORS } from '../components/hud/cellFormat';
+import { ASSET_STANDARD_ACCENTS, SEGMENT_COLORS } from '../components/hud/cellFormat';
 import type { ByteBudgetSegmentKey } from './cellByteBudget.derive';
 
 export const CELL_SEMANTIC_TAU = Math.PI * 2;
@@ -98,7 +98,7 @@ export function cellSemanticVisualState(
 /** A small protocol-family accent; identity remains the exact type hash. */
 export function cellSemanticAssetAccent(asset: SemanticAsset): string {
   const standard = asset.standard?.trim().toLowerCase() ?? '';
-  if (standard.includes('xudt')) return '#c8ff72';
-  if (standard.includes('sudt')) return '#72ffd4';
-  return '#d8b4ff';
+  if (standard.includes('xudt')) return ASSET_STANDARD_ACCENTS.xudt;
+  if (standard.includes('sudt')) return ASSET_STANDARD_ACCENTS.sudt;
+  return ASSET_STANDARD_ACCENTS.other;
 }

@@ -1,7 +1,7 @@
 import { useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { HUD_COLORS } from './hud/hudTheme';
+import { IDENTITY_PROOF_COLORS } from './hud/cellFormat';
 import {
   CELL_IDENTITY_PROOF_KINDS,
   cellIdentityProofBindingComplete,
@@ -28,9 +28,9 @@ const GLYPH_META: Record<CellIdentityProofKind, {
   angle: number;
   color: string;
 }> = {
-  address: { angle: Math.PI / 6, color: '#9DF7FF' },
-  content: { angle: Math.PI * 5 / 6, color: '#C7A7FF' },
-  anchor: { angle: Math.PI * 3 / 2, color: HUD_COLORS.goldInk },
+  address: { angle: Math.PI / 6, color: IDENTITY_PROOF_COLORS.address },
+  content: { angle: Math.PI * 5 / 6, color: IDENTITY_PROOF_COLORS.content },
+  anchor: { angle: Math.PI * 3 / 2, color: IDENTITY_PROOF_COLORS.anchor },
 };
 
 /** The knot's centre reads its phase back as colour. Parsed once, at module
@@ -38,8 +38,8 @@ const GLYPH_META: Record<CellIdentityProofKind, {
 const CENTRE_COLORS: Record<CellIdentityBindingPhase, THREE.Color> = {
   collecting: new THREE.Color('#D9F8FF'),
   verified: new THREE.Color('#D9F8FF'),
-  recalling: new THREE.Color('#C7A7FF'),
-  retained: new THREE.Color(HUD_COLORS.goldInk),
+  recalling: new THREE.Color(IDENTITY_PROOF_COLORS.content),
+  retained: new THREE.Color(IDENTITY_PROOF_COLORS.anchor),
 };
 
 function smoothstep(value: number): number {

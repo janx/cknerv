@@ -1,5 +1,6 @@
 import type { Cell } from '@cknerv/types';
 import type { ByteBudgetSegmentKey } from '../../derives/cellByteBudget.derive';
+import type { CellIdentityProofKind } from '../../derives/cellIdentityProof.derive';
 import { HUD_COLORS } from './hudTheme';
 
 const SHANNONS_PER_CKB = 100_000_000n;
@@ -392,6 +393,49 @@ export const STORAGE_TIER_COLORS: Readonly<Record<string, string>> = {
    *  what it is: unread, and quiet about it. */
   unknown: CONTENT_BANDS.unlisted,
 };
+
+// ——— The three proofs a Cell offers about itself ————————————————————————
+//
+// WHERE it sits, WHAT it holds, WHEN it was born — one triad, drawn on two
+// surfaces that never see each other's source: the scene glyph whose three
+// arms point at the proofs, and the derive that writes the label beside each
+// one. WHEN was promoted to `goldInk` on both; the other two stayed literals
+// in both files, so a triad was two-thirds named and one-third typed twice.
+//
+// The values do not move here. What moves is where they live: a colour drawn
+// by two files is a table, and the table is the thing the palette holds.
+export const IDENTITY_PROOF_COLORS: Readonly<Record<CellIdentityProofKind, string>> = {
+  /** WHERE — the outpoint locator. */
+  address: '#9DF7FF',
+  /** WHAT — the content address. */
+  content: '#C7A7FF',
+  /** WHEN — the birth anchor. The bright gold text tier, which is what a
+   *  label is, and which the whole birth-anchor family already reads. */
+  anchor: HUD_COLORS.goldInk,
+};
+
+/** The smallest marks on the specimen artwork: the role glyphs pinned to the
+ *  braid in `CellSemanticMorphologyOverlay`, drawn as scene points AND as the
+ *  DOM label beside each one.
+ *
+ *  A facet glyph is not one of the four byte axes and no content band names
+ *  it, so this is its own value rather than a borrow — but it is drawn from
+ *  two dialects in one file, which is why it is a name and not a literal. */
+export const FACET_GLYPH_COLOR = '#FEF3C7';
+
+/** A small protocol-family accent for a typed asset. Identity remains the
+ *  exact type hash; this only says which standard's rules the cell is playing
+ *  by, so it is a category palette like any other and walks the same reserve.
+ *
+ *  It lived in `cellSemantics.derive.ts` as three literals returned from a
+ *  branch, which is a palette with no table — nothing could walk it, and
+ *  nothing did. */
+export const ASSET_STANDARD_ACCENTS = {
+  xudt: '#C8FF72',
+  sudt: '#72FFD4',
+  /** A typed asset whose standard we do not recognise. */
+  other: '#D8B4FF',
+} as const;
 
 /** Palette colour for a script identity. A script the index named is a known
  *  script even when cknerv's own table could not place it, so it drops the

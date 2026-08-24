@@ -1790,7 +1790,7 @@ export default function ConsensusRouteHopMarker({
                           borderBottom: `1px solid ${signatureBorder}`,
                           background: calloutBackground,
                           boxShadow: `0 0 10px ${signatureShadow}`,
-                          color: 'rgba(232, 247, 255, .92)',
+                          color: rgba(HUD_COLORS.cyanInk, 0.92),
                           fontFamily: '"JetBrains Mono Local", ui-monospace, monospace',
                           fontSize: 6,
                           lineHeight: 1.12,
@@ -1808,7 +1808,7 @@ export default function ConsensusRouteHopMarker({
                         <div
                           style={{
                             marginTop: 2,
-                            color: 'rgba(167, 204, 220, .72)',
+                            color: rgba(HUD_COLORS.legendInk, 0.72),
                             fontSize: 5.4,
                             letterSpacing: '0.11em',
                           }}

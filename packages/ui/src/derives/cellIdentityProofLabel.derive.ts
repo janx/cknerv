@@ -1,5 +1,6 @@
 import type { Cell } from '@cknerv/types';
-import { HUD_COLORS, rgba } from '../components/hud/hudTheme';
+import { IDENTITY_PROOF_COLORS } from '../components/hud/cellFormat';
+import { rgba } from '../components/hud/hudTheme';
 import { deriveCellContentAddressEncoding } from './cellContentAddress.derive';
 import {
   deriveCellBirthAnchorEncoding,
@@ -53,8 +54,8 @@ export function deriveCellIdentityProofLabel(
       code: 'WHERE',
       detail: encoding.fingerprint,
       title: `${cell.out_point.tx_hash}#${cell.out_point.index}`,
-      color: '#9DF7FF',
-      dimColor: 'rgba(157, 247, 255, 0.52)',
+      color: IDENTITY_PROOF_COLORS.address,
+      dimColor: rgba(IDENTITY_PROOF_COLORS.address, 0.52),
     };
   }
   if (kind === 'anchor') {
@@ -70,11 +71,11 @@ export function deriveCellIdentityProofLabel(
       // `goldInk` — the bright text tier, which is what a label is — and the
       // whole birth-anchor family says so now: the glyph, the marker ring and
       // the lab's WHEN column read the same token.
-      color: HUD_COLORS.goldInk,
+      color: IDENTITY_PROOF_COLORS.anchor,
       // And through the helper, because a colour retyped as the decimal triple
       // its hex expands to is the same defect wearing an alpha — that is how
       // `crit` hid from every sweep this palette has ever run.
-      dimColor: rgba(HUD_COLORS.goldInk, 0.52),
+      dimColor: rgba(IDENTITY_PROOF_COLORS.anchor, 0.52),
     };
   }
   const encoding = deriveCellContentAddressEncoding(cell.content_hash);
@@ -83,8 +84,8 @@ export function deriveCellIdentityProofLabel(
     code: 'WHAT',
     detail: encoding.fingerprint,
     title: cell.content_hash,
-    color: '#C7A7FF',
-    dimColor: 'rgba(199, 167, 255, 0.54)',
+    color: IDENTITY_PROOF_COLORS.content,
+    dimColor: rgba(IDENTITY_PROOF_COLORS.content, 0.54),
   };
 }
 
