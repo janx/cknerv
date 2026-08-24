@@ -1684,10 +1684,16 @@ export default function App({
         <Canvas
           ref={cellGalaxyCanvasRef}
           camera={{ position: [110, 108, 110], fov: 50, near: 1, far: 3000 }}
-          // Opaque: nothing in the page paints behind this canvas — every DOM
-          // overlay is positioned above it and the only thing under it is the
-          // same `#02030a` the wrapper below carries — so a per-frame
-          // page-composite blend of the whole surface bought nothing.
+          // ⚠️ This does NOT make the drawing buffer opaque. three hardcodes
+          // `alpha: true` in the context attributes it creates
+          // (WebGLRenderer.js), so the surface the compositor blends always
+          // carries an alpha channel; the flag only picks the default clear
+          // alpha, and the scene background below overrides even that. It is
+          // the honest value for a scene that paints its own ground, and the
+          // one the clear falls back to if that background ever goes away.
+          // A genuinely opaque canvas would mean handing three a context
+          // created here with `alpha: false` — three then reads the real
+          // attributes back off it.
           gl={{ antialias: true, alpha: false }}
           dpr={canvasDpr}
           style={{ background: '#02030a' }}
@@ -1705,10 +1711,12 @@ export default function App({
             setSelectedNetId(null);
           }}
         >
-          {/* The ground the opaque canvas clears to every frame, spelled the
-              same as the CSS above it: the wrapper carries the colour until
-              the first frame exists, this carries it afterwards, and the black
-              window before first light stays the one black. */}
+          {/* The ground the scene clears to every frame, spelled the same as
+              the CSS above it: the wrapper carries the colour until the first
+              frame exists, this carries it afterwards, and the black window
+              before first light stays the one black. This is what makes the
+              ground the scene's own fact rather than a colour showing through
+              a transparent buffer. */}
           <color attach="background" args={['#02030a']} />
           {/* Advances the module-level simClock once per frame so every
               useSimFrame animation (CellGalaxy, BlockDeliveryLayer, GlowNode,

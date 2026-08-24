@@ -129,16 +129,17 @@ describe('scene-root memo inputs', () => {
   });
 });
 
-describe('canvas compositing', () => {
-  it('hands the compositor an opaque surface, and clears it to the page ground', () => {
-    // Nothing in the page paints behind the canvas — every DOM overlay is
-    // positioned above it and under it is the same colour — so a transparent
-    // drawing buffer only asked the compositor to blend an opaque scene over
-    // its own ground, full-viewport, every frame.
+describe('canvas ground', () => {
+  it('paints its own ground rather than showing one through', () => {
+    // ⚠️ This flag does not reach the compositor: three hardcodes `alpha: true`
+    // in the context attributes it creates, so the surface always carries an
+    // alpha channel and the flag only picks the default clear alpha. It is
+    // pinned as the honest value for a scene that paints its own ground — the
+    // one the clear falls back to if the background below ever goes away.
     expect(APP_SOURCE).toContain('gl={{ antialias: true, alpha: false }}');
-    // Opaque means the clear IS the ground: the CSS below the canvas carries
-    // it until the first frame exists, the scene carries it afterwards, and
-    // both are spelled the same so the pre-first-light black never shifts.
+    // The clear IS the ground: the CSS below the canvas carries it until the
+    // first frame exists, the scene carries it afterwards, and both are
+    // spelled the same so the pre-first-light black never shifts.
     expect(APP_SOURCE).toContain("<color attach=\"background\" args={['#02030a']} />");
     expect(APP_SOURCE).toContain("style={{ background: '#02030a' }}");
   });
