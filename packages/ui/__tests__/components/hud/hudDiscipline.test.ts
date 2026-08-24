@@ -1188,6 +1188,303 @@ describe('the colour reserve', () => {
   });
 });
 
+// ——— Chrome is not a reading ————————————————————————————————————————————
+//
+// The reserve above asks whether a CATEGORY has borrowed a reserved hue. This
+// asks the other half of the same sentence, the one `hudTheme.ts` states
+// outright and nothing enforced: a READING may never be painted in the
+// instrument's own frame colour. The frame is what you look through; a value
+// is what you look at, and a HUD where those are one colour has stopped
+// distinguishing the two.
+//
+// Three surfaces had. The DAO panel's second hero — an annualized yield —
+// rendered at `heroSub` in chrome orange with an orange text-shadow, beside a
+// first hero that does it correctly: white ink, orange GLOW. A glow is
+// atmosphere and belongs to the frame; the letters are the reading and do not.
+// Worse, orange is already spoken for as a sentence: the top bar's controls
+// use cyan/orange to mean "sitting at the default" versus "you have diverged
+// from it", so a yield in chrome read as a config divergence. The cell
+// dossier's utilisation strip — the reading its own comment promotes to the
+// head of the line — had an orange-tinted track, an orange fill and an orange
+// glow, three lines under a bar that had been re-cut off chrome for exactly
+// that reason. And the protocol era badge printed the chain's era name in the
+// frame's orange beside an epoch number in plain ink.
+//
+// All three did something else as well, and it is the same something: the
+// colour was `stale ? <severity> : <chrome>`, so the value changed which
+// LAYER of the palette it was speaking as its record aged. A reading may not
+// be chrome and may not be a severity; a number that alternates between them
+// is both defects taking turns. Freshness has carriers of its own on every one
+// of these panels — a `· STALE` token, an opacity drop, a title.
+
+/** The instrument's own frame, by name. `peerWire` and `cellRose` are in the
+ *  reserve above but not here: they are IDENTITY, and a reading about a peer
+ *  or about a Cell may legitimately be tinted by the thing it is about. Chrome
+ *  is about nothing — it is the panel. */
+const CHROME: Readonly<Record<string, string>> = {
+  orange: HUD_COLORS.orange,
+  orangeDeep: HUD_COLORS.orangeDeep,
+  cyanWire: HUD_COLORS.cyanWire,
+};
+
+/** The rungs at which a size means "this is a value", not "this is what the
+ *  value is called". `label` and below are deliberately out: the HUD sets its
+ *  captions, its tags and — declared in `hudTheme.ts` — the cell dossier's
+ *  provenance affordances at those sizes, and the affordances are correctly
+ *  chrome, being controls rather than readings. */
+const READING_RUNGS = ['hero', 'heroSub', 'emphasis', 'value'] as const;
+
+const READING_SIZE = new RegExp(
+  `fontSize:\\s*HUD_TYPE\\.(${READING_RUNGS.join('|')})\\b`,
+  'g',
+);
+
+/** Every name a file can reach chrome through: the tokens themselves, plus any
+ *  local binding whose initializer mentions one. The binding form is not an
+ *  edge case, it is how all three of these were written — `const accent =
+ *  stale ? HUD_COLORS.caution : HUD_COLORS.orange` — and an oracle that only
+ *  knew the token's own spelling would have read every one of them as clean. */
+function chromeNames(text: string): string[] {
+  const names = Object.keys(CHROME).map((token) => `HUD_COLORS.${token}`);
+  const chrome = Object.keys(CHROME).join('|');
+  const bound = new RegExp(
+    `(?:const|let)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*([^;]*HUD_COLORS\\.(?:${chrome})\\b[^;]*);`,
+    'g',
+  );
+  let match = bound.exec(text);
+  while (match !== null) {
+    names.push(match[1]);
+    match = bound.exec(text);
+  }
+  return names;
+}
+
+/** The object literal an offset sits directly inside, found by balancing
+ *  braces outward. A style object is the unit the question is asked of: a
+ *  `fontSize` and the `color` it goes with are siblings in one, and asking the
+ *  whole file instead would hit every panel that legitimately paints its frame
+ *  in chrome somewhere else. */
+function enclosingObject(text: string, at: number): string | null {
+  let depth = 0;
+  let open = -1;
+  for (let index = at; index >= 0; index -= 1) {
+    if (text[index] === '}') depth += 1;
+    else if (text[index] === '{') {
+      if (depth === 0) { open = index; break; }
+      depth -= 1;
+    }
+  }
+  if (open < 0) return null;
+  depth = 0;
+  for (let index = open; index < text.length; index += 1) {
+    if (text[index] === '{') depth += 1;
+    else if (text[index] === '}') {
+      depth -= 1;
+      if (depth === 0) return text.slice(open, index + 1);
+    }
+  }
+  return null;
+}
+
+/** `color:` and nothing else. `textShadow`, `boxShadow`, `background` and the
+ *  borders are the frame's own properties and chrome is CORRECT in them — the
+ *  DAO hero this rule was written for keeps its orange glow. Only the letters
+ *  are the reading. */
+function paintsInk(region: string, name: string): boolean {
+  const escaped = name.replace(/\./g, '\\.');
+  return new RegExp(
+    `(?<![\\w$.])color:\\s*(?:[^,;{}]*\\?\\s*)?${escaped}(?![\\w$])`,
+  ).test(region);
+}
+
+/** The other way a reading gets its colour, and the one a style object cannot
+ *  show: `StatRow` and the plate rows take a `valueColor` and render it at
+ *  `HUD_TYPE.value` inside `primitives.tsx`, so the size is a property of the
+ *  primitive rather than of the call. Passing chrome to one is passing chrome
+ *  to a reading, spelled somewhere the size does not appear. */
+function passesToValueSlot(text: string, name: string): boolean {
+  const escaped = name.replace(/\./g, '\\.');
+  return new RegExp(
+    `valueColor(?:=\\{|:\\s*)(?:[^,;{}]*\\?\\s*)?${escaped}(?![\\w$])`,
+  ).test(text);
+}
+
+describe('chrome is the frame, not the reading', () => {
+  it('no value in the HUD is painted in the instrument\'s own colour', () => {
+    const offenders: string[] = [];
+    for (const source of SOURCES) {
+      const text = code(source.text);
+      const names = chromeNames(text);
+      READING_SIZE.lastIndex = 0;
+      let reading = READING_SIZE.exec(text);
+      while (reading !== null) {
+        const region = enclosingObject(text, reading.index);
+        if (region !== null) {
+          offenders.push(...names
+            .filter((name) => paintsInk(region, name))
+            .map((name) => `${source.name}: a ${reading?.[1]} reading is painted ${name}`));
+        }
+        reading = READING_SIZE.exec(text);
+      }
+      offenders.push(...names
+        .filter((name) => passesToValueSlot(text, name))
+        .map((name) => `${source.name}: valueColor={${name}} is a reading in chrome`));
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('finds a reading, a chrome name and a binding when there is one to find', () => {
+    // The pin, and it needs three: a recogniser that stopped seeing reading
+    // rungs, one that stopped resolving local bindings, and one that had
+    // quietly narrowed `color:` to nothing would each pass the rule above by
+    // checking less than it claims. Written out rather than found in a real
+    // file, so editing a panel cannot silently disarm this.
+    const probe = [
+      'const accent = stale ? HUD_COLORS.caution : HUD_COLORS.orange;',
+      'const fine = <div style={{ fontSize: HUD_TYPE.heroSub, color: HUD_COLORS.goldInk }} />;',
+      'const glow = <div style={{ fontSize: HUD_TYPE.hero, color: HUD_COLORS.heroInk,',
+      '  textShadow: `0 0 11px ${rgba(HUD_COLORS.orange, 0.32)}` }} />;',
+      'const bad = <div style={{ fontSize: HUD_TYPE.heroSub, color: accent }} />;',
+    ].join('\n');
+
+    expect(chromeNames(probe)).toContain('accent');
+
+    const hits: string[] = [];
+    READING_SIZE.lastIndex = 0;
+    let reading = READING_SIZE.exec(probe);
+    while (reading !== null) {
+      const region = enclosingObject(probe, reading.index);
+      hits.push(...chromeNames(probe)
+        .filter((name) => region !== null && paintsInk(region, name))
+        .map((name) => `${reading?.[1]} ← ${name}`));
+      reading = READING_SIZE.exec(probe);
+    }
+
+    // Exactly one, and it is the bound one: the gold reading is clean, and the
+    // white hero with the orange GLOW is clean, which is the distinction the
+    // whole rule turns on.
+    expect(hits).toEqual(['heroSub ← accent']);
+  });
+
+  it('the DAO panel ranks its two heroes white over gold', () => {
+    // The surface the rule was written for, pinned as well as swept — the
+    // general form can only say the APC is not chrome, and the ruling was
+    // which colour it IS. `ink` is not available at this size: beside a
+    // `heroInk` hero it measures 39.8, inside the floor, so the pair would
+    // read as one colour rather than as two ranks.
+    expect(rgbDistance(HUD_COLORS.ink, HUD_COLORS.heroInk))
+      .toBeLessThan(SEPARATION_FLOOR);
+    expect(rgbDistance(HUD_COLORS.goldInk, HUD_COLORS.heroInk))
+      .toBeGreaterThan(SEPARATION_FLOOR);
+
+    const dao = SOURCES.find((source) => source.name === 'DaoStateReadout.tsx');
+    const text = code(dao?.text ?? '');
+    expect(text).toContain('color: HUD_COLORS.heroInk');
+    expect(text).toContain('color: HUD_COLORS.goldInk');
+    // Both glow in the frame's orange, which is where chrome belongs.
+    expect(text).toContain('textShadow: `0 0 11px ${rgba(HUD_COLORS.orange, 0.32)}`');
+    expect(text).toContain('textShadow: `0 0 9px ${rgba(HUD_COLORS.orange, 0.36)}`');
+  });
+
+  it('the three stacked sections of CKB·01 wear one accent', () => {
+    // Not a reading and so not caught above: this is a section's own chrome, a
+    // 5px lamp and a hairline rule. The defect is one layer over — the accent
+    // was `nominal`, a health tone, so of three identical headers in one panel
+    // the top one appeared to be reporting that it was well and the two under
+    // it did not. None of the three is reporting anything of the kind.
+    const sections = ['ChainCapacityReadout.tsx', 'TransactionHorizonReadout.tsx', 'ActivityFeedReadout.tsx'];
+    const accents = sections.map((name) => {
+      const source = SOURCES.find((entry) => entry.name === name);
+      expect(source, `${name} moved — this oracle reads files off disk`).toBeDefined();
+      const found = /const accent = stale \? HUD_COLORS\.(\w+) : HUD_COLORS\.(\w+);/
+        .exec(code(source?.text ?? ''));
+      return found ? `${found[1]}/${found[2]}` : `${name}: no accent to read`;
+    });
+
+    expect(new Set(accents).size).toBe(1);
+    expect(accents[0]).toBe('caution/cyanWire');
+  });
+
+  it('the meter that leads the byte line is a meter like every other', () => {
+    // Two claims the general rule cannot make, because neither is type. A
+    // track is `trackGround` — that is what the token is for, and this one was
+    // a 13% orange tint instead. And a bar FILL is a reading in a shape rather
+    // than in letters, so it takes a band: `CONTENT_BANDS.value` is the one
+    // this house gives capacity everywhere else it appears, and the strip's
+    // denominator is the purchased capacity.
+    //
+    // Pinned rather than generalised: recognising "this span is a meter fill"
+    // from source text means recognising a percentage width inside a fixed
+    // height, which is a shape, and a rule that guessed at it would either
+    // miss the next one or fire on every progress-shaped div in the HUD.
+    const bar = SOURCES.find((source) => source.name === 'CellByteBudget.tsx');
+    expect(bar, 'the byte budget moved — this oracle reads files off disk')
+      .toBeDefined();
+    const text = code(bar?.text ?? '');
+    expect(text).toContain('height: 4, background: HUD_COLORS.trackGround');
+    expect(text).toContain('background: CONTENT_BANDS.value');
+    expect(text).toContain('boxShadow: `0 0 6px ${rgba(CONTENT_BANDS.value, 0.55)}`');
+    // The whole file, not just the strip: nothing on this surface speaks
+    // chrome any more, which is the state the bar above it was re-cut into.
+    expect(Object.keys(CHROME).filter((token) => text.includes(`HUD_COLORS.${token}`)))
+      .toEqual([]);
+  });
+
+  it('a placeholder wears the accent of the fact it is standing in for', () => {
+    // The knock-on, and the reason it is a defect rather than a detail: the
+    // byte budget's ghosts were railed in chrome orange under a CAPACITY fact
+    // accented cyan, so the stack did not match its heading and then changed
+    // colour when the real bar arrived. Every other cluster's ghosts take
+    // their fact's accent, and this one now asks the same table.
+    const panel = SOURCES.find((source) => source.name === 'CellDetailPanel.tsx');
+    const text = code(panel?.text ?? '');
+    const ghosts = [...text.matchAll(/<GhostRows[\s\S]{0,220}?\/>/g)]
+      .map((match) => match[0])
+      .filter((ghost) => !/accent=\{(?:lockAccent|assetAccent|factAccent\('[a-z]+'\))\}/.test(ghost))
+      .map((ghost) => `a ghost stack is railed in something other than its fact's accent: ${ghost.slice(0, 60)}…`);
+
+    expect(ghosts).toEqual([]);
+    expect(text).toContain("accent={factAccent('capacity')}");
+  });
+
+  it('the module registry\'s grey is worn by tags, never by a reading', () => {
+    // `moduleSlate` is documented as sitting below `dim` on purpose — "a tag
+    // is an address, not a reading" — and the peer mesh painted the best known
+    // block height in it, which made the one figure on that row quieter than
+    // the words around it.
+    //
+    // Asked as a reader list, the way `crit` and `termGreen` are, because the
+    // token's whole meaning is WHO may wear it. Two readers, both addresses:
+    // the panel and plate module stamps, and the scene marker's content line
+    // under its reading.
+    const holders = [...SOURCES, ...PACKAGE_SOURCES.filter((source) => INK_JURISDICTION.test(source.name))]
+      .filter((source) => code(source.text).includes('HUD_COLORS.moduleSlate'))
+      .map((source) => source.name)
+      .sort();
+
+    expect(holders).toEqual(['nerve/ConsensusMemoryMarkers.tsx', 'primitives.tsx']);
+  });
+
+  it('the era of the chain is a fact, in the ink a fact is written in', () => {
+    // The last of the three, and too small for the reading rungs: the badge
+    // sets at `label`, which is where the HUD writes captions and where the
+    // dossier's provenance affordances are correctly chrome. So the sweep
+    // above cannot see it and this pins it instead. It sits on CKB·01's Epoch
+    // row directly after `epoch.number`, which `StatRow` renders in `ink`.
+    const badge = SOURCES.find((source) => source.name === 'ProtocolEraBadge.tsx');
+    expect(badge, 'the era badge moved — this oracle reads files off disk')
+      .toBeDefined();
+    const text = code(badge?.text ?? '');
+    expect(text).toContain('color: HUD_COLORS.ink');
+    // Neither chrome while fresh nor a severity while stale. Freshness is
+    // carried by the opacity below it and by the title and aria-label.
+    expect(text).not.toContain('HUD_COLORS.orange');
+    expect(text).not.toContain('HUD_COLORS.caution');
+    expect(text).toContain('opacity: stale ? 0.68 : 1');
+  });
+});
+
 // ——— One directory, two dialects ————————————————————————————————————————
 //
 // The classifier above is the whole jurisdiction model, so it is the thing most

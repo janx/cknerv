@@ -1937,7 +1937,13 @@ export default function CellDetailPanel({
                   revealAt={semanticsRevealAt(1)}
                 />
               ) : enrichmentPending ? (
-                <GhostRows rows={BYTE_BUDGET_GHOST_ROWS} accent={ORANGE} />
+                /* The ghosts take the CAPACITY fact's own accent, the way
+                 * every other cluster's do. They were railed in chrome
+                 * orange, so a stack of orange rails hung under a cyan fact
+                 * for as long as the index took to answer — and then the
+                 * arriving bar replaced them with something a different
+                 * colour, which is the one thing a placeholder must not do. */
+                <GhostRows rows={BYTE_BUDGET_GHOST_ROWS} accent={factAccent('capacity')} />
               ) : null}
             </div>
           </div>

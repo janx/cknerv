@@ -44,7 +44,13 @@ export default function NetworkPanel({ summary, consensus, syncRatio, enrichment
         <span style={{ color: HUD_COLORS.nominal }}>▲{consensus.atTip} at-tip</span>
         <span style={{ color: HUD_COLORS.dim }}>{consensus.behind} behind</span>
         <span style={{ color: HUD_COLORS.caution }}>{consensus.ahead} ahead</span>
-        <span style={{ marginLeft: 'auto', color: HUD_COLORS.moduleSlate }}>#{fmt(summary.bestKnown)}</span>
+        {/* The height the three tallies are counted against — a reading, and
+          * the only unqualified figure in the row. It was painted
+          * `moduleSlate`, the module registry's grey, which the palette puts
+          * below `dim` on purpose because a tag is an address and not a
+          * reading. `dim` is spoken for one span to the left by the `behind`
+          * tally, so plain ink is what is left and what this is. */}
+        <span style={{ marginLeft: 'auto', color: HUD_COLORS.ink }}>#{fmt(summary.bestKnown)}</span>
       </div>
       {syncRatio < AT_TIP_SYNC_RATIO ? (
         <div data-network-sync="catching-up">

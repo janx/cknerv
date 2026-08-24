@@ -257,15 +257,37 @@ export default function DaoStateReadout({ source, record, variant = 'section', n
             borderLeft: `1px solid ${rgba(accent, 0.18)}`,
           }}>
             <MetricLabel>Est. APC</MetricLabel>
+            {/* The panel's second hero, ranked under the first and reading in
+              * the same grammar: white ink, then gold, both glowing in the
+              * frame's orange. It used to be painted IN that orange — a
+              * reading in the instrument's own frame colour, which the palette
+              * forbids outright, and which borrowed a sentence the HUD already
+              * says elsewhere: the top bar's controls use cyan/orange to mean
+              * "sitting at the default" versus "you have diverged from it", so
+              * a yield printed in chrome read as a config divergence.
+              *
+              * Gold rather than `ink`, and not by preference: at `heroSub`
+              * beside a `heroInk` hero, `ink` measures 39.8 from it — inside
+              * the separation floor, which is one colour wearing two names.
+              * `goldInk` is the value family's own reading tier, which is what
+              * an annualized yield is.
+              *
+              * And it no longer changes colour LAYER with freshness. The
+              * expression here was `stale ? caution : orange`, so the number
+              * left chrome for a severity tone when the record aged — a
+              * reading saying two different kinds of thing out of one slot.
+              * Freshness is carried on this panel already, twice: the
+              * `· STALE` token in the heading and the whole content block
+              * dropping to 0.72 opacity. */}
             <div style={{
               marginTop: 4,
-              color: accent,
+              color: HUD_COLORS.goldInk,
               fontFamily: HUD_FONTS.display,
               fontSize: HUD_TYPE.heroSub,
               fontWeight: 700,
               fontVariantNumeric: 'tabular-nums',
               lineHeight: 1,
-              textShadow: `0 0 9px ${rgba(accent, 0.36)}`,
+              textShadow: `0 0 9px ${rgba(HUD_COLORS.orange, 0.36)}`,
               whiteSpace: 'nowrap',
             }}>
               {formatApc(record.estimated_apc_bps)}

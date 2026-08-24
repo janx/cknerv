@@ -64,7 +64,13 @@ export default function ChainCapacityReadout({ source, record, census = null, ce
   if (!usableRecord && !census) return null;
 
   const stale = visualState === 'stale';
-  const accent = stale ? HUD_COLORS.caution : HUD_COLORS.nominal;
+  // The same accent its two siblings wear, and for the same reason they wear
+  // it: CHAIN CAPACITY, TX HORIZON and ACTIVITY are three stacked sections of
+  // one panel about the chain, and not one of them is reporting health. This
+  // one opened in `nominal` — so of three identical headers, the top one had a
+  // green lamp beside it and the two under it did not, which reads as a
+  // verdict about the section rather than as the section's own colour.
+  const accent = stale ? HUD_COLORS.caution : HUD_COLORS.cyanWire;
   const headerAnchor = usableRecord?.as_of ?? census!.as_of;
   const liveCells = chainLiveRow(census, censusStale, headerAnchor.block);
 

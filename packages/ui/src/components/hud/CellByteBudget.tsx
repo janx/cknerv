@@ -5,7 +5,13 @@ import {
   formatUtilizationPercent,
   type ByteBudgetSegmentKey,
 } from '../../derives/cellByteBudget.derive';
-import { SEGMENT_COLORS, formatCkb, formatDataSize, formatExactCkb } from './cellFormat';
+import {
+  CONTENT_BANDS,
+  SEGMENT_COLORS,
+  formatCkb,
+  formatDataSize,
+  formatExactCkb,
+} from './cellFormat';
 import { HUD_COLORS, HUD_TYPE, rgba } from './hudTheme';
 
 export interface CellByteBudgetProps {
@@ -156,13 +162,30 @@ export default function CellByteBudget({
         * line instead of trailing under it as a 2px afterthought — and the
         * capacity it is a percentage OF is the CAPACITY fact three lines up,
         * which is why this no longer prints the same figure again. It stays
-        * on the hover title, exact, where a restatement costs nothing. */}
+        * on the hover title, exact, where a restatement costs nothing.
+        *
+        * It was drawn in chrome. The bar above this one was re-cut off chrome
+        * orange for exactly this reason — `SEGMENT_COLORS` says so where it
+        * lives, that a byte decomposition wearing the frame's colours "look[ed]
+        * like a status readout with an opinion about the Cell's health" — and
+        * the strip promoted above it kept the orange, plus an orange-tinted
+        * track that was not `trackGround`, plus an orange glow. So the reading
+        * the whole line leads with was the one thing on it still speaking the
+        * instrument's own frame colour.
+        *
+        * The track is `trackGround` now, like every other meter in the HUD.
+        * The fill is `CONTENT_BANDS.value`, which is the band this house gives
+        * capacity everywhere it appears — the CAP segment in the bar directly
+        * above, the DAO class of the census, a cell's own amount. That is not
+        * a collision with the CAP segment: this strip's denominator IS the
+        * purchased capacity, and the FREE reading at the other end of the same
+        * line is the same fact read backwards. One subject, one band. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 6, whiteSpace: 'nowrap' }}>
         <span
           data-byte-budget-ratio="true"
           data-byte-budget-capacity-shannons={model.capacityShannons.toString()}
           title={`${formatUtilizationPercent(model.utilization)} of ${formatExactCkb(model.capacityShannons)}`}
-          style={{ position: 'relative', display: 'block', flex: '0 1 108px', height: 4, background: rgba(HUD_COLORS.orange, 0.13) }}
+          style={{ position: 'relative', display: 'block', flex: '0 1 108px', height: 4, background: HUD_COLORS.trackGround }}
         >
           <span
             data-byte-budget-ratio-fill="true"
@@ -173,8 +196,8 @@ export default function CellByteBudget({
               bottom: 0,
               width: `${model.utilization * 100}%`,
               minWidth: model.utilization > 0 ? 1 : 0,
-              background: HUD_COLORS.orange,
-              boxShadow: `0 0 6px ${rgba(HUD_COLORS.orange, 0.55)}`,
+              background: CONTENT_BANDS.value,
+              boxShadow: `0 0 6px ${rgba(CONTENT_BANDS.value, 0.55)}`,
             }}
           />
         </span>

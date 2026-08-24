@@ -34,7 +34,14 @@ export default function ProtocolEraBadge({ chain, source, record }: {
         overflow: 'hidden',
         textOverflow: 'ellipsis',
         verticalAlign: 'bottom',
-        color: stale ? HUD_COLORS.caution : HUD_COLORS.orange,
+        // A fact about the chain — which consensus rules are in force —
+        // printed beside the epoch number it qualifies nothing about, so it
+        // reads in the same plain ink that number does. It used to be chrome
+        // orange while fresh and caution yellow while stale: the instrument's
+        // own frame colour on a reading, flipping to a severity tone for a
+        // record that had merely aged. Staleness is already said three ways
+        // here — the title, the aria-label and the opacity below.
+        color: HUD_COLORS.ink,
         fontSize: HUD_TYPE.label,
         letterSpacing: 0.35,
         opacity: stale ? 0.68 : 1,
