@@ -202,6 +202,22 @@ export interface PeerLinkAccentInput {
  * `selectedCellScanAccent`. A selected facet re-tints the leader line with the
  * colour that facet's own instrument is already speaking, so the line names
  * what is being read and not merely that something is.
+ *
+ * Which means there are exactly two answers a branch may give: the colour that
+ * facet's own row carries, or — when the row carries none — the card's accent,
+ * which is what the row falls back to on screen. A third colour is a line
+ * pointing at a fact painted in something the fact is not wearing.
+ *
+ * Two branches used to give one. VERSION answered `nominal` whenever the two
+ * versions AGREED — a green that appears nowhere else on the card and means
+ * "state OK" everywhere else in the HUD, over a row whose own colour is
+ * `undefined` and which therefore prints in the peer plane's wire. PING
+ * answered chrome `cyanWire` always, which is the instrument's frame rather
+ * than any reading on it. Both were the same shape of oversight: a facet with
+ * nothing of its own to say, answered with an invention instead of a
+ * fallthrough. ADDR and UPTIME are the other two colourless facets and both
+ * fell through correctly, which is what made these two read as omissions
+ * rather than as a rule.
  */
 export function selectedPeerLinkAccent(
   input: PeerLinkAccentInput,
@@ -209,11 +225,8 @@ export function selectedPeerLinkAccent(
 ): string {
   const { peer, tip, localVersion } = input;
   if (facet === 'sync') return peerSyncReadout(peer.best_known, tip).color;
-  if (facet === 'version') {
-    return peerVersionMismatch(peer, localVersion)
-      ? PEER_NETWORK_HEX.version
-      : HUD_COLORS.nominal;
+  if (facet === 'version' && peerVersionMismatch(peer, localVersion)) {
+    return PEER_NETWORK_HEX.version;
   }
-  if (facet === 'ping') return HUD_COLORS.cyanWire;
   return PEER_LINK_ACCENT_HEX[peerColorKind(peer, localVersion)];
 }

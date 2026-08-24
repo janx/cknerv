@@ -5,6 +5,7 @@ import PeerLinkCard from '../../../src/components/hud/PeerLinkCard';
 import { NODE_SELF_ACCENT } from '../../../src/components/hud/NodeSelfCard';
 import type { PeerSightingState } from '../../../src/components/hud/PeerSightingPlate';
 import { PEER_LATENCY_CAP_MS } from '../../../src/derives/peers.derive';
+import { HUD_COLORS } from '../../../src/components/hud/hudTheme';
 import { PEER_NETWORK_HEX } from '../../../src/visualPalette';
 
 const LOCAL_VERSION = '0.201.0';
@@ -118,8 +119,13 @@ describe('PeerLinkCard signal compass', () => {
     // LOCAL rung of the sync ladder — and it is the same entity the NODE card
     // is a whole dossier of. All three used to disagree. One entity, one
     // colour, and it survives whatever the cell/peer cyan question settles on.
-    // SVG keeps the hex on its `fill` attribute; jsdom rewrites an inline
-    // background to `rgb(…)`. Compare on the channels, not the spelling.
+    // SVG keeps the hex on an attribute; jsdom rewrites an inline background
+    // to `rgb(…)`. Compare on the channels, not the spelling.
+    //
+    // Read from `stroke` before `fill`, because the compass mark is a HOLE:
+    // the anchor colour is its rim and the knockout is its middle. The claim
+    // is unchanged — whatever paints the mark is the anchor's own edge — and
+    // the test below is what says the mark is a hole in the first place.
     const channels = (paint: string): number[] => {
       const rgb = /rgb\((\d+),\s*(\d+),\s*(\d+)\)/.exec(paint);
       if (rgb) return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])];
@@ -131,10 +137,58 @@ describe('PeerLinkCard signal compass', () => {
     const marks = Array.from(container.querySelectorAll('[data-peer-probe-self]'));
     expect(marks).toHaveLength(2);
     for (const mark of marks) {
-      const painted = mark.getAttribute('fill')
+      const painted = mark.getAttribute('stroke')
+        ?? mark.getAttribute('fill')
         ?? (mark as HTMLElement).style.background;
       expect(channels(painted)).toEqual(channels(NODE_SELF_ACCENT));
     }
+  });
+
+  it('tells the two ends of a link apart while they share one hex', () => {
+    // The compass is the one instrument on this card whose entire job is to
+    // show two ends of a link, and on any OUTBOUND peer both ends resolve to
+    // `#7DF9FF`: `NODE_SELF_ACCENT` is `CHAIN_ANCHOR_HEX.edge` and the blip is
+    // `PEER_NETWORK_HEX.outbound`, byte for byte. The self dot was documented
+    // as deliberately not a generic instrument cyan precisely so it would be
+    // distinguishable, and against this peer it was not.
+    //
+    // Separating them in the palette is a ruling of its own and is deferred;
+    // the cyan/teal corridor has no bright value left that does not read as
+    // status green. So they are separated by FORM, the way `crit` escalates
+    // when there is no louder red — and the form is the house's own: a hole
+    // rather than a bead, which is what the status strip does to a marker that
+    // has to be told apart from what it sits among.
+    expect(NODE_SELF_ACCENT.toLowerCase())
+      .toBe(PEER_NETWORK_HEX.outbound.toLowerCase());
+
+    const { container } = renderCard();
+    const self = container.querySelector('[data-peer-probe-self]')!;
+    const blip = container.querySelector('[data-peer-probe-blip]')!;
+
+    // A mark is a BEAD when its body is painted and a HOLE when its body is
+    // the ground and only its rim is. Stated as the general question — do
+    // these two differ in anything a reader can see — so the day the palette
+    // ruling lands and the hexes separate, this keeps holding without being
+    // rewritten, and the day somebody flattens the form back it goes red.
+    const body = (mark: Element): string => mark.getAttribute('fill') ?? '';
+    const rim = (mark: Element): string => mark.getAttribute('stroke') ?? '';
+    const solid = (mark: Element): boolean => {
+      const painted = body(mark);
+      return painted !== '' && painted !== 'none'
+        && painted.toLowerCase() !== HUD_COLORS.ground.toLowerCase();
+    };
+
+    expect(body(self).toLowerCase() === body(blip).toLowerCase()
+      && solid(self) === solid(blip))
+      .toBe(false);
+
+    // …and what the difference IS today, so a reader of this file can picture
+    // the instrument: we are a ring around the ground, they are a filled disc.
+    expect(solid(self)).toBe(false);
+    expect(solid(blip)).toBe(true);
+    expect(body(self).toLowerCase()).toBe(HUD_COLORS.ground.toLowerCase());
+    expect(rim(self)).toBe(NODE_SELF_ACCENT);
+    expect(body(blip)).toBe(PEER_NETWORK_HEX.outbound);
   });
 });
 

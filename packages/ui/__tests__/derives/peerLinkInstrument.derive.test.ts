@@ -30,6 +30,11 @@ function peer(overrides: Partial<Peer> = {}): Peer {
   };
 }
 
+function factColor(p: Peer, facet: PeerLinkFacet, tip = TIP): string | undefined {
+  return derivePeerLinkInstrument(p, tip, LOCAL_VERSION).facts
+    .find((fact) => fact.facet === facet)?.color;
+}
+
 function factValue(p: Peer, facet: PeerLinkFacet, tip = TIP): string {
   const row = derivePeerLinkInstrument(p, tip, LOCAL_VERSION).facts
     .find((fact) => fact.facet === facet);
@@ -181,15 +186,71 @@ describe('selectedPeerLinkAccent', () => {
   });
 
   it('tints the VERSION facet violet only on a real mismatch', () => {
-    expect(selectedPeerLinkAccent(base, 'version')).toBe(HUD_COLORS.nominal);
     expect(selectedPeerLinkAccent(
       { ...base, peer: peer({ version: '0.114.0' }) },
       'version',
     )).toBe(PEER_NETWORK_HEX.version);
+
+    // Agreement is not a colour. This branch used to answer `nominal` — a
+    // green that appears nowhere else on this card and means "state OK"
+    // everywhere else in the HUD — over a fact row whose own colour is
+    // `undefined`, so the line and the row it pointed at were two different
+    // things. Two versions that match is the ordinary condition of a link, and
+    // the ordinary condition has no tint of its own.
+    expect(selectedPeerLinkAccent(base, 'version')).toBe(PEER_NETWORK_HEX.outbound);
+    expect(factColor(peer(), 'version')).toBeUndefined();
   });
 
-  it('tints the PING facet with the instrument cyan', () => {
-    expect(selectedPeerLinkAccent(base, 'ping')).toBe(HUD_COLORS.cyanWire);
+  it('leaves the PING facet to the card, having nothing of its own to say', () => {
+    // The identical oversight in the identical shape: chrome `cyanWire` for a
+    // facet with no colour, which is the instrument's own frame standing in
+    // for a reading. ADDR and UPTIME are the other two colourless facets and
+    // both always fell through; these two are why that read as an accident
+    // rather than as a rule.
+    expect(selectedPeerLinkAccent(base, 'ping')).toBe(PEER_NETWORK_HEX.outbound);
+    expect(factColor(peer(), 'ping')).toBeUndefined();
+  });
+
+  it('never tints a tether a colour the card is not already showing', () => {
+    // The general form, and the one that would have caught both of the above
+    // the day they were written. The connector's whole contract is that it
+    // wears "the colour that facet's own instrument is already speaking", so
+    // there are exactly two legal answers per facet: the fact row's own
+    // colour, or the card accent the row falls back to when it carries none. A
+    // third colour is a line pointing at a fact painted in something the fact
+    // is not wearing.
+    //
+    // Walked over the whole branch space rather than pinned facet by facet —
+    // a mismatched version and a peer that dialed us both move the card
+    // accent, and a rule stated on one peer would say nothing about the other.
+    const subjects = [
+      peer(),
+      peer({ direction: 'inbound' }),
+      peer({ version: '0.114.0' }),
+      peer({ version: '0.114.0', direction: 'inbound' }),
+      peer({ best_known: TIP - 5 }),
+      peer({ best_known: TIP + 5 }),
+      peer({ best_known: null, latency_ms: null, version: '', addr: '' }),
+    ];
+    const offenders: string[] = [];
+    for (const subject of subjects) {
+      const instrument = derivePeerLinkInstrument(subject, TIP, LOCAL_VERSION);
+      for (const facet of PEER_LINK_FACETS) {
+        const row = instrument.facts.find((fact) => fact.facet === facet);
+        const allowed = new Set([instrument.accent, ...(row?.color ? [row.color] : [])]);
+        const tether = selectedPeerLinkAccent(
+          { peer: subject, tip: TIP, localVersion: LOCAL_VERSION },
+          facet,
+        );
+        if (allowed.has(tether)) continue;
+        offenders.push(
+          `${subject.direction}/${subject.version || 'no version'}/${facet}`
+          + ` → ${tether}, which the card is wearing nowhere`,
+        );
+      }
+    }
+
+    expect(offenders).toEqual([]);
   });
 
   it('keeps the mismatch violet as the base accent under a neutral facet', () => {

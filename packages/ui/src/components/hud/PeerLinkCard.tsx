@@ -242,8 +242,34 @@ function ColonyCompass({
           entity the NODE card is a dossier of and the same icosahedron the
           scene draws — so it wears `NODE_SELF_ACCENT`, the chain anchor's own
           edge, rather than a generic instrument cyan. One entity, one colour,
-          across every card that draws it. */}
-      <circle data-peer-probe-self cx={COMPASS_CENTER} cy={COMPASS_CENTER} r={3} fill={NODE_SELF_ACCENT} />
+          across every card that draws it.
+
+          And that colour is `#7DF9FF` to the byte, which is also
+          `PEER_NETWORK_HEX.outbound`: on the compass of any outbound peer the
+          two ends of the link resolve to one hex, on the one instrument whose
+          whole job is to show two ends of a link. Separating them in the
+          PALETTE is a ruling of its own and is not this one — the cyan/teal
+          corridor is full (cyanWire, peerWire, outbound, inbound, coldWhite,
+          cyanInk), every bright candidate there reads as status green, and the
+          one clear cyan left is too dark for a frame carrying a text glow.
+
+          So they are told apart by FORM, which is the escalation this HUD
+          already uses when it has run out of colour — `crit` gives up on being
+          a louder red and grows hazard banding instead. Us is a HOLE: the
+          ground read back through a ringed mark, which is exactly what the
+          status strip's scrubber markers do to sit on their track as a hole
+          rather than a bead. The peer is a bead. Two marks, one hex, and a
+          reader can say which is which without being told. */}
+      <circle
+        data-peer-probe-self
+        data-peer-probe-self-form="hole"
+        cx={COMPASS_CENTER}
+        cy={COMPASS_CENTER}
+        r={3.2}
+        fill={HUD_COLORS.ground}
+        stroke={NODE_SELF_ACCENT}
+        strokeWidth={1.4}
+      />
       <circle
         cx={COMPASS_CENTER}
         cy={COMPASS_CENTER}

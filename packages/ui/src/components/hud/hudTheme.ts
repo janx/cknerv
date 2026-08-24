@@ -19,9 +19,12 @@ export const HUD_COLORS = {
   // something coloured. `severityChip` reads it back through the letters of a
   // filled severity block, and the status strip's three scrubber markers read
   // it through the middle of a 4–6px bordered dot so the marker sits on its
-  // track as a hole rather than a bead. Those four are the whole readership,
-  // and a knockout with a hue is just a fill — which is why this one may not
-  // drift the way the two near-blacks around it are free to.
+  // track as a hole rather than a bead. The fifth reader borrows that second
+  // form for the same reason one step further out: the link probe's compass
+  // draws US as a hole and the peer as a bead, because the two marks resolve
+  // to the same hex and had to be told apart by shape rather than by hue. Five
+  // readers, and a knockout with a hue is just a fill — which is why this one
+  // may not drift the way the two near-blacks around it are free to.
   //
   // It does not name the ground the stage is painted on. That is `stageGround`,
   // and the token being called `ground` is exactly why nobody found it there.
