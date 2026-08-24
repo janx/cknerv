@@ -193,10 +193,33 @@ describe('the dense line', () => {
     ]))?.id).toBe('gl');
   });
 
-  it('is nothing once every line is done', () => {
+  it('names the line the run ended on once every line is done', () => {
+    // The linger, at narrow widths. `HudOverlay` holds the CLOSED sequence in
+    // the slot for 700ms because the whole trail lit is the only frame in which
+    // a visitor can read what happened while they waited — and this selector
+    // used to answer "nothing" for exactly that frame, so every viewport at or
+    // under 1280px was handed a band with no lines in it. The last line is what
+    // the wide trail is saying too, in the only words a dense band has room for.
     expect(denseBootPhase(sequence([
       { id: 'instrument', state: 'done' },
       { id: 'snapshot', state: 'done' },
-    ]))).toBeNull();
+      { id: 'data_plane', state: 'done' },
+    ]))?.id).toBe('data_plane');
+  });
+
+  it('still lets a fault outrank the line the run ended on', () => {
+    // A record carrying a fault never completes, so this is not the linger —
+    // it is a dead boot holding the slot for the session, and the fault is the
+    // whole reason the band is still there. Ordering matters: the fault is not
+    // last, and must win anyway.
+    expect(denseBootPhase(sequence([
+      { id: 'instrument', state: 'done' },
+      { id: 'gl', state: 'failed', detail: 'context lost' },
+      { id: 'data_plane', state: 'done' },
+    ]))?.id).toBe('gl');
+  });
+
+  it('has nothing to name when the record carries no lines at all', () => {
+    expect(denseBootPhase(sequence([]))).toBeNull();
   });
 });

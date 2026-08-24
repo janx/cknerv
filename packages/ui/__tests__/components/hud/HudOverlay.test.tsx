@@ -956,6 +956,39 @@ describe('HudOverlay — the boot readout owns the top slot', () => {
     expect(banner.textContent).not.toContain('FIRST LIGHT');
   });
 
+  it('keeps a line in the narrow band for the whole held frame', () => {
+    // Dense × linger, the crossing neither suite made — which is exactly why
+    // this shipped. The linger exists because the whole trail lit is the only
+    // frame in which a visitor can read what happened while they waited; the
+    // dense selector asked for the leftmost UNFINISHED line, and during the
+    // linger there is no such thing. So on every viewport at or under 1280px
+    // the held frame was `◇ STAGE POWER-ON` and an empty trail, for all 700ms
+    // of it, and then the band left. The linger bought a blank.
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('max-width: 1280px'),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    vi.useFakeTimers();
+    const { container } = booting();
+
+    act(() => { finishBootRecord(); });
+    const banner = container.querySelector('[data-boot-banner]') as HTMLElement;
+    expect(banner).not.toBeNull();
+    expect(banner.dataset.bootDense).toBe('true');
+
+    // The band still says something, and what it says is the line the run
+    // ended on — lit, because it finished.
+    const trail = banner.querySelectorAll('[data-boot-phase]');
+    expect(trail).toHaveLength(1);
+    expect(trail[0].textContent).toBe('DATA PLANE');
+    expect((trail[0] as HTMLElement).dataset.state).toBe('done');
+
+    // …and it is still a linger, not a band that forgot to leave.
+    act(() => { vi.advanceTimersByTime(BOOT_LINGER_SETTLED_MS); });
+    expect(container.querySelector('[data-boot-banner]')).toBeNull();
+  });
+
   it('leaves the settled HUD exactly as it was', () => {
     // The other side of the handover, asserted here rather than trusted: a HUD
     // mounting after the record closed shows no band and holds nothing back.

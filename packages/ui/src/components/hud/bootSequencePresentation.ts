@@ -134,14 +134,27 @@ export function bootSequenceAccent(sequence: BootSequenceSnapshot): string {
 
 /**
  * The one line a narrow top bar has room for: the fault if there is one,
- * otherwise the leftmost line that has not finished. The trail does not fit on
- * a phone and half a trail is worse than none — it reads as the whole sequence
- * and quietly omits the part that is still working.
+ * otherwise the leftmost line that has not finished — and once nothing is
+ * unfinished, the line the run ended on. The trail does not fit on a phone and
+ * half a trail is worse than none — it reads as the whole sequence and quietly
+ * omits the part that is still working.
+ *
+ * That last clause is the linger. `HudOverlay` holds the CLOSED sequence in the
+ * slot for 700ms so the wait is legible for at least one frame, and asking only
+ * for an unfinished line at that moment answers with nothing: every viewport at
+ * or under 1280px — laptops, tablets, phones — spent the whole held frame
+ * showing a band with no lines in it, which is the opposite of what the linger
+ * was added to buy. A dense band that has run out of work names the line it
+ * finished on, which is the same thing the wide trail says with all of it lit.
  */
 export function denseBootPhase(
   sequence: BootSequenceSnapshot,
 ): BootPhaseSnapshot | null {
   const failed = sequence.phases.find((phase) => phase.state === 'failed');
   if (failed) return failed;
-  return sequence.phases.find((phase) => phase.state !== 'done') ?? null;
+  const unfinished = sequence.phases.find((phase) => phase.state !== 'done');
+  if (unfinished) return unfinished;
+  return sequence.phases.length > 0
+    ? sequence.phases[sequence.phases.length - 1]
+    : null;
 }
