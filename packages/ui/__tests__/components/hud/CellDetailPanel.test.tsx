@@ -47,7 +47,7 @@ import CellDetailPanel, {
   cellScanFactAccent,
   type CellInspectionFacet,
 } from '../../../src/components/hud/CellDetailPanel';
-import { HUD_COLORS } from '../../../src/components/hud/hudTheme';
+import { HUD_COLORS, HUD_TYPE } from '../../../src/components/hud/hudTheme';
 
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
@@ -899,8 +899,15 @@ describe('CellDetailPanel', () => {
     const typeEvidence = typeCluster.querySelector('[data-cell-cluster-evidence="type"]') as HTMLElement;
     expect(typeEvidence.querySelector('[data-cell-evidence-row="amount"]')?.textContent)
       .toContain('123.45 NTT');
+    // The register's one type size. AMOUNT used to be lifted to `value`
+    // (11.5) while IDENTITY directly under it — the same asset, the same gold
+    // — stayed at `label`, two rungs down and unargued. Emphasis is the ink
+    // here; the size is what says which register a row is in.
     expect((typeEvidence.querySelector('[data-cell-evidence-value="amount"]') as HTMLElement)
-      .style.fontSize).toBe('11.5px');
+      .style.fontSize).toBe(`${HUD_TYPE.label}px`);
+    expect((typeEvidence.querySelector('[data-cell-evidence-value="identity"]') as HTMLElement)
+      .style.fontSize)
+      .toBe((typeEvidence.querySelector('[data-cell-evidence-value="amount"]') as HTMLElement).style.fontSize);
     expect(typeEvidence.querySelector('[data-cell-evidence-row="identity"]')?.textContent)
       .toContain('NTT · Nervos Test Token · xUDT');
     expect(typeEvidence.querySelector('[data-cell-evidence-row="type-script"]')

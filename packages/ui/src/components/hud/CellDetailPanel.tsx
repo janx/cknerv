@@ -1769,7 +1769,18 @@ export default function CellDetailPanel({
                   {/* The value rows — how much, of what, where in the DAO,
                     * earning what — read in `goldInk`, the house's
                     * value-emphasis tier. They used to read in caution yellow,
-                    * which said "watch out" about somebody's token balance. */}
+                    * which said "watch out" about somebody's token balance.
+                    *
+                    * Four rows, one family, and the ink is the whole of the
+                    * emphasis. AMOUNT alone used to be lifted to `value` as
+                    * well — two rungs over IDENTITY directly beneath it, both
+                    * gold, both about the same asset, with nothing anywhere
+                    * saying why. The register has ONE type size: the rows step
+                    * down to `label`, which is what `PlateReadoutRow`'s own
+                    * doc calls the evidence tier, and the single thing in this
+                    * stack set at `value` is `CompositionBlock` — which is set
+                    * there because it stopped being a row. Ink carries the
+                    * emphasis, size carries the register. */}
                   {assetAmount ? (
                     <ClusterRow
                       row="amount"
@@ -1777,7 +1788,6 @@ export default function CellDetailPanel({
                       label="AMOUNT"
                       value={assetAmount}
                       valueColor={HUD_COLORS.goldInk}
-                      valueSize={HUD_TYPE.value}
                       revealAt={semanticsRevealAt(1)}
                     />
                   ) : null}

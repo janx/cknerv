@@ -146,7 +146,19 @@ function FunnelRow({ label, value, scope, widthPct, alpha }: {
  *  in the funnel above, and a bar would put it on that staircase. It leads
  *  the mix block because it is the other law the stage obeys, and the two
  *  belong to one another: what the composition samples, and what the stage
- *  holds whatever the composition wants. */
+ *  holds whatever the composition wants.
+ *
+ *  Which is also why it is set in the MIX register — `nav` / 1.4 over a `tech`
+ *  value — rather than the funnel's stat-row register of `tech` / 1.6 over a
+ *  `value` one, even though the two rows are the same three parts in the same
+ *  order. This panel runs two registers and each says which block a row is in:
+ *  the funnel is the measured staircase and reads at the panel's stat-row
+ *  voice, the mix block is the denser disclosure of what the stage is made of
+ *  and how it was chosen. This row leads the second one, so it is set in the
+ *  second one — property for property with `MixBar` below it, which is the
+ *  test of the claim rather than a resemblance to it. That was true before it
+ *  was written down here, and being true by accident is how it stops being
+ *  true. */
 function ReserveRow({ row }: { row: StageReserveRow }) {
   return (
     <div

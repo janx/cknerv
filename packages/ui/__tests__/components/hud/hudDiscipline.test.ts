@@ -1200,6 +1200,160 @@ describe('one shape grammar', () => {
   });
 });
 
+// ——— One hero, one register ————————————————————————————————————————————
+//
+// Three rules about which reading outranks which, each of them a place where
+// two ladders were pointing at two different numbers.
+//
+// `HUD_TYPE.hero` is documented as "the single numeral a panel exists to show"
+// and `HUD_COLORS.heroInk` as "the ONE hero numeral a panel exists to show".
+// Two tokens, one claim, and CELL MESH was the only panel that spent both — the
+// 22px net-per-block rate in its metabolic pair, and the white on a stat row
+// three readings under it. DAO·05 spends both on ONE number, which is what the
+// two tokens agreeing looks like; PULSE spends the size alone and CKB·01 the
+// ink alone, which is what either of them alone looks like.
+//
+// `plateStateChip` is the second. A chip is a state word beside an identity, so
+// it may be tinted by the surface it sits on or by a severity — and by nothing
+// else, because anything else makes the chip a member of a family it is not in.
+// `NodeSelfCard` tinted MINER in `lockedGold`, which is the token for value and
+// for things HELD: the locked evidence row, the locked route hop, the identity
+// proof that has been read, `CONTENT_BANDS.value`. A node that mines is none of
+// those, and the same slot then read chain-anchor cyan for OBSERVER — one chip
+// changing what KIND of thing it was according to what the node does.
+//
+// And the third is the dossier's evidence register, which is one type size. The
+// rows step down to `label` and the one thing at `value` is `CompositionBlock`,
+// which is at `value` because it stopped being a row.
+
+describe('one hero, one register', () => {
+  it('a panel that spends both hero tiers spends them on one number', () => {
+    const offenders: string[] = [];
+    for (const source of domDialect()) {
+      const text = code(source.text);
+      if (!/fontSize: HUD_TYPE\.hero\b/.test(text)) continue;
+
+      const heroes: string[] = [];
+      const size = /fontSize: HUD_TYPE\.hero\b/g;
+      let match = size.exec(text);
+      while (match !== null) {
+        const object = enclosingObject(text, match.index);
+        if (object) heroes.push(object);
+        match = size.exec(text);
+      }
+
+      const ink = /color: HUD_COLORS\.heroInk/g;
+      match = ink.exec(text);
+      while (match !== null) {
+        const object = enclosingObject(text, match.index);
+        if (object && !heroes.includes(object)) {
+          offenders.push(`${source.name}: heroInk is on a reading the hero rung is not`);
+        }
+        match = ink.exec(text);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('finds a panel spending both tiers on one number', () => {
+    // The pin. The rule above passes trivially on a HUD where nothing wears
+    // the hero rung at all, so it has to be shown the surface it is modelled
+    // on: DAO·05's deposit total is `hero` and `heroInk` in one style object.
+    const dao = SOURCES.find((source) => source.name === 'DaoStateReadout.tsx');
+    const text = code(dao?.text ?? '');
+    const at = text.indexOf('color: HUD_COLORS.heroInk');
+    expect(at, 'the DAO hero moved — this oracle reads files off disk').toBeGreaterThan(-1);
+    expect(enclosingObject(text, at)).toContain('fontSize: HUD_TYPE.hero');
+  });
+
+  it('a state chip is tinted by its surface or by a severity, never by a family', () => {
+    // Every argument `plateStateChip` is called with, across the whole
+    // directory. A bare identifier is the surface's own accent — `accent`,
+    // `color`, `visual.color` — and a `HUD_COLORS.` name has to be one the
+    // chip grammar admits: instrument grey for a condition that is merely the
+    // normal one, or a rung of the ramp at or above `caution` for one worth
+    // noticing. `nominal` is not on the list for the reason `scriptStateChip`
+    // states: a chip that sounds the ordinary case turns it into a verdict.
+    const ALLOWED_TOKENS = ['dim', 'caution', 'warning', 'danger'];
+    const offenders: string[] = [];
+    for (const source of SOURCES) {
+      if (source.name === SHAPE_SOURCE) continue;
+      const call = /plateStateChip\(\s*([^)]*?)\s*\)/g;
+      let match = call.exec(code(source.text));
+      while (match !== null) {
+        const tint = match[1].trim();
+        const tokens = [...tint.matchAll(/HUD_COLORS\.(\w+)/g)].map((hit) => hit[1]);
+        for (const token of tokens) {
+          if (!ALLOWED_TOKENS.includes(token)) {
+            offenders.push(`${source.name}: a state chip tinted HUD_COLORS.${token}`);
+          }
+        }
+        match = call.exec(code(source.text));
+      }
+    }
+
+    expect(offenders).toEqual([]);
+
+    // …and that the sweep is reading real call sites rather than none.
+    const wearers = SOURCES.filter(
+      (source) => source.name !== SHAPE_SOURCE
+        && code(source.text).includes('plateStateChip('),
+    );
+    expect(wearers.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it('the dossier evidence register is one type size', () => {
+    // AMOUNT was lifted to `value` while IDENTITY directly beneath it stayed at
+    // `label` — two rungs apart, both `goldInk`, both about the same asset, no
+    // rule anywhere. `ClusterRow` already defaults to the evidence tier, so a
+    // register with one size is a register where nobody overrides it.
+    const panel = SOURCES.find((source) => source.name === 'CellDetailPanel.tsx');
+    expect(panel, 'the cell dossier moved — this oracle reads files off disk')
+      .toBeDefined();
+    const text = code(panel?.text ?? '');
+    expect(text).toContain('valueSize = HUD_TYPE.label,');
+
+    const rows = [...text.matchAll(/<ClusterRow\b[\s\S]*?\/>/g)].map((hit) => hit[0]);
+    expect(rows.length).toBeGreaterThan(10);
+    expect(rows.filter((row) => /valueSize=/.test(row))).toEqual([]);
+  });
+
+  it('STAGE·07 runs two registers and every row is wholly in one', () => {
+    // The funnel's staircase is the panel's stat-row voice; the mix block is a
+    // denser one. `ReserveRow` is the same three parts as `FunnelRow` in the
+    // same order and takes the MIX register, because it leads the mix block —
+    // which is argued in the file rather than left to be inferred from a
+    // resemblance. What is checked is that it is property-for-property with
+    // the block it leads, so "it is in that register" cannot quietly become
+    // "it is in neither".
+    const panel = SOURCES.find((source) => source.name === 'StageCapacityPanel.tsx');
+    expect(panel, 'STAGE·07 moved — this oracle reads files off disk').toBeDefined();
+    const text = code(panel?.text ?? '');
+
+    const labelStyle = (fn: string, renders: string): string => {
+      const start = text.indexOf(`function ${fn}(`);
+      expect(start, `${fn} moved — this oracle reads files off disk`).toBeGreaterThan(-1);
+      const after = text.slice(start + 1).search(/\n(?:export )?(?:function|const|type|interface) /);
+      const body = text.slice(start, after === -1 ? text.length : start + 1 + after);
+      return styleRendering(body, renders);
+    };
+
+    const register = (style: string) => ({
+      size: /fontSize: HUD_TYPE\.(\w+)/.exec(style)?.[1],
+      tracking: /letterSpacing: ([\d.]+)/.exec(style)?.[1],
+    });
+
+    const funnel = register(labelStyle('FunnelRow', '{label}'));
+    const reserve = register(labelStyle('ReserveRow', '{row.label}'));
+    const mix = register(labelStyle('MixBar', '{mix.label}'));
+
+    expect(funnel).toEqual({ size: 'tech', tracking: '1.6' });
+    expect(reserve).toEqual(mix);
+    expect(reserve).not.toEqual(funnel);
+  });
+});
+
 // ——— A limit on what we saw is not a fault ——————————————————————————————
 //
 // Two more places the severity ramp was being spent on something that is not a

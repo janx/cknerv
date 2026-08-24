@@ -203,11 +203,23 @@ export default function NodeSelfCard({
         <span style={{ color: accent, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: 0.72 }}>
           节点
         </span>
+        {/* One chip, one ink, and the WORD says which role. It used to switch
+          * families between its two states: `lockedGold` for MINER against the
+          * chain anchor's own cyan for OBSERVER, so the chip changed what KIND
+          * of thing it was according to what the node does.
+          *
+          * `lockedGold` is not a role colour. Its readers are the locked
+          * evidence row, the locked route hop, the identity proof that has
+          * been read, and `CONTENT_BANDS.value` — value HELD UNDER LOCK. A
+          * node that mines is neither held nor value, and the house has no
+          * palette for a node's role because it does not need one: this is
+          * the same ruling `scriptStateChip` took one file over, where ACTIVE
+          * stopped being `nominal` because a chip that sounds the ordinary
+          * case makes the ordinary case look like a verdict. Both roles are
+          * ordinary. The card's own accent, and the word carries it. */}
         <span
           data-node-probe-role={node.is_miner ? 'miner' : 'observer'}
-          style={plateStateChip(
-            node.is_miner ? HUD_COLORS.lockedGold : accent,
-          )}
+          style={plateStateChip(accent)}
         >
           {node.is_miner ? 'MINER' : 'OBSERVER'}
         </span>

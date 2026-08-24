@@ -68,8 +68,20 @@ export default function CellsPanel({ stats, churn, reducedMotion = false, style 
           standing for millions of unresolved Cells beside it, an unqualified
           "Live cells" becomes actively contradictory. The whole-chain count
           lives in CELL POPULATION, under its own validated anchor. */}
+      {/* Lifted in SIZE and not in ink, which is the one rank this panel had
+          pointing two ways. `HUD_TYPE.emphasis` is documented as "a value
+          lifted out of a stat row without leaving the row" and that is exactly
+          what this is; `heroInk` is documented as "the ONE hero numeral a
+          panel exists to show", and it was worn down here, three readings
+          under a 22px numeral that breathes and glows. CELL MESH exists to
+          show METABOLISM — its own subhead says so — so the ink tier and the
+          size tier were naming two different numbers.
+          The panel keeps no white at all now, which is the same arrangement
+          PULSE has: a hero at the `hero` rung, coloured by what it is saying,
+          and no second claim on the tier above `ink`. `heroInk` is worn where
+          it is worn alone — CKB·01's tip, DAO·05's deposit total. */}
       <div style={{ marginTop: 11 }}>
-        <StatRow label="Observed live"><span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: HUD_TYPE.emphasis, fontVariantNumeric: 'tabular-nums', color: HUD_COLORS.heroInk }}>{fmt(stats.live)}</span></StatRow>
+        <StatRow label="Observed live"><span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: HUD_TYPE.emphasis, fontVariantNumeric: 'tabular-nums' }}>{fmt(stats.live)}</span></StatRow>
         <StatRow label="Total observed">{fmt(stats.born)}</StatRow>
         <StatRow label="Dead" valueColor={HUD_COLORS.ember}>{fmt(stats.dead)}</StatRow>
       </div>
