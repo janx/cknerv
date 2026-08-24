@@ -10,18 +10,55 @@ import { consensusBraidPathPoint } from '../../derives/consensusBraid.derive';
 import type { CellMorphologyTopology, MorphologyPoint3 } from '../../derives/cellMorphology.derive';
 import type { CellSemanticMorphologyOverlay } from '../../derives/cellSemanticMorphology.derive';
 import { CELL_PORTRAIT_LABEL_PORTAL } from './cellPortraitInsetChannel';
+import { SEGMENT_COLORS } from './cellFormat';
+import { QUALITATIVE_BUCKET_COLORS } from './hudTheme';
 import {
   cellSemanticKnowledgeArcWindow,
   cellSemanticKnowledgeRingVisible,
 } from './cellSemanticMorphologyOverlay.presentation';
 
-const DATA_COLORS = ['#67e8f9', '#fbbf24', '#c084fc', '#fb7185'] as const;
-const KNOWLEDGE_COLORS = {
-  capacity: '#fb923c',
-  lock: '#67e8f9',
-  type: '#86efac',
-  data: '#fbbf24',
+/** The occupied-byte ring says the same four words the dossier's byte bar and
+ *  the stage's composition orbit say — capacity, lock, type, data — so it reads
+ *  from the table both of those already read. It kept a private copy for the
+ *  life of this overlay, which made this the THIRD spelling of one
+ *  decomposition, and the copy had drifted the way copies do: its capacity arc
+ *  sat 14.0 from chrome orange and its data arc 39.2 from `warning`, so a
+ *  Cell's ordinary byte split was painted in the instrument's own frame colour
+ *  and in an alarm tone.
+ *
+ *  The names differ by one word — the ring calls the first axis `capacity` and
+ *  the bar calls it `cap` — so the mapping is written down rather than assumed.
+ *
+ *  Taken as the token's own value, not a brightened derivation of it: there is
+ *  no bloom pass in this app (no `EffectComposer`, no `postprocessing`
+ *  dependency), and `SEGMENT_COLORS` is ALREADY drawn as an additive,
+ *  `toneMapped={false}` scene material by `CellSemanticOrbit` — the composition
+ *  ring around the selected Cell on stage. Two of the three surfaces that
+ *  decompose a Cell were already agreeing in this medium at these values; a
+ *  private scene-side treatment here would put the third back out of step for
+ *  a legibility problem the other two do not have. */
+const KNOWLEDGE_SEGMENT_KEY = {
+  capacity: 'cap',
+  lock: 'lock',
+  type: 'type',
+  data: 'data',
 } as const;
+
+/** A byte segment's colour is handed out by a hash of its label — a slot index
+ *  that means nothing, which is exactly what the house's qualitative ramp is
+ *  for. The private four it kept instead had two members inside the reserve:
+ *  one 9.8 from `cellRose`, so a stretch of a Cell's bytes was painted in the
+ *  colour that names the Cell organism itself, and one 39.2 from `warning`. */
+function dataSegmentColor(colorIndex: number): string {
+  return QUALITATIVE_BUCKET_COLORS[colorIndex % QUALITATIVE_BUCKET_COLORS.length];
+}
+
+/** A facet glyph is not one of the four byte axes and has no band of its own:
+ *  DAO, dep group and code cell are marked as a set, in one warm point. Written
+ *  once here because it is drawn twice — as the point in the scene and as the
+ *  label beside it — and one colour typed twice is how the table above drifted.
+ */
+const ROLE_GLYPH_COLOR = '#fef3c7';
 
 function radialOffset(point: MorphologyPoint3, amount: number): MorphologyPoint3 {
   const magnitude = Math.hypot(point[0], point[1], point[2]);
@@ -63,7 +100,7 @@ function buildOverlayGeometry(
   const boundaryKeys = new Set<string>();
 
   for (const segment of overlay.dataSegments) {
-    const color = new THREE.Color(DATA_COLORS[segment.colorIndex]);
+    const color = new THREE.Color(dataSegmentColor(segment.colorIndex));
     const span = Math.max(0, segment.end - segment.start);
     const steps = Math.max(1, Math.min(16, Math.ceil(span * 32)));
     for (let index = 0; index < steps; index += 1) {
@@ -98,7 +135,9 @@ function buildOverlayGeometry(
   for (const segment of overlay.knowledgeSegments) {
     const window = cellSemanticKnowledgeArcWindow(segment);
     if (!window) continue;
-    const color = new THREE.Color(KNOWLEDGE_COLORS[segment.role]);
+    const color = new THREE.Color(
+      SEGMENT_COLORS[KNOWLEDGE_SEGMENT_KEY[segment.role]],
+    );
     const span = window.end - window.start;
     const steps = Math.max(1, Math.ceil(span * 32));
     for (let index = 0; index < steps; index += 1) {
@@ -115,7 +154,7 @@ function buildOverlayGeometry(
   }
 
   for (const glyph of overlay.roleGlyphs) {
-    const color = new THREE.Color('#fef3c7');
+    const color = new THREE.Color(ROLE_GLYPH_COLOR);
     const point = radialOffset(
       consensusBraidPathPoint(topology.carrier, glyph.parameter),
       0.17,
@@ -188,14 +227,14 @@ export default function CellSemanticMorphologyOverlay({
       role: label.role.toUpperCase(),
       text: label.text,
       parameter: label.parameter,
-      color: label.role === 'lock' ? '#67e8f9' : '#86efac',
+      color: label.role === 'lock' ? SEGMENT_COLORS.lock : SEGMENT_COLORS.type,
     })),
     ...overlay.roleGlyphs.map((glyph) => ({
       key: `role/${glyph.role}/${glyph.parameter}`,
       role: glyph.role.replaceAll('_', ' ').toUpperCase(),
       text: glyph.label,
       parameter: glyph.parameter,
-      color: '#fef3c7',
+      color: ROLE_GLYPH_COLOR,
     })),
   ];
 

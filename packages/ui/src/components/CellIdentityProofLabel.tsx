@@ -6,6 +6,7 @@ import type {
 import {
   CELL_IDENTITY_PROOF_LABEL_VISUAL_TOKENS as TOKENS,
 } from './cellIdentityProofLabel.presentation';
+import { HUD_COLORS } from './hud/hudTheme';
 
 /** One transient screen-space evidence tag attached to a scene proof marker. */
 const CellIdentityProofLabel = forwardRef<
@@ -80,7 +81,10 @@ const CellIdentityProofLabel = forwardRef<
             fontSize: TOKENS.detailFontSizePx,
             lineHeight: 1,
             letterSpacing: TOKENS.detailLetterSpacingPx,
-            color: '#D9F8FF',
+            // The evidence line under the proof code, and the one part of this
+            // tag that does not take the proof's own colour: it is the bright
+            // cyan text tier, which has a name. It was typed 16.0 off it.
+            color: HUD_COLORS.cyanInk,
           }}
         >
           {label.detail}

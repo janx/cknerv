@@ -121,6 +121,7 @@ import { markPopulatedBufferUpdate } from '../geometry/populatedBufferAttribute'
 import CellPopulationField from './CellPopulationField';
 
 import { CHAIN_ANCHOR_HEX } from '../visualPalette';
+import { HUD_COLORS } from './hud/hudTheme';
 // Pre-parsed rest halo: the anchor frame loop re-asserts uColor every frame,
 // and THREE's CSS-string parse is measurable at that rate.
 const CHAIN_ANCHOR_HALO_COLOR = new THREE.Color(CHAIN_ANCHOR_HEX.halo);
@@ -451,12 +452,18 @@ export interface CkbNodeAnchorPresentation {
   labelShadow: string;
 }
 
+/** The label under the chain anchor is DOM — a drei `Html` pinned to the
+ *  scene, not a material — so its two tiers come from the HUD's text ladder
+ *  rather than from a pair of hexes typed beside the opacities. Both were
+ *  inside the separation floor of the rung they were reaching for: the resting
+ *  grey 28.0 from `legendInk` and the selected cyan 15.5 from `cyanInk`, which
+ *  is this file's own definition of one colour wearing two names. */
 const ANCHOR_REST_PRESENTATION: CkbNodeAnchorPresentation = {
   haloIntensity: 0.52,
   edgeOpacity: 0.46,
   fillOpacity: 0.07,
   labelOpacity: 0.46,
-  labelColor: '#86aab2',
+  labelColor: HUD_COLORS.legendInk,
   labelShadow: '0 0 6px rgba(34, 211, 238, 0.24)',
 };
 
@@ -465,7 +472,7 @@ const ANCHOR_SELECTED_PRESENTATION: CkbNodeAnchorPresentation = {
   edgeOpacity: 0.9,
   fillOpacity: 0.14,
   labelOpacity: 0.92,
-  labelColor: '#d8f8fb',
+  labelColor: HUD_COLORS.cyanInk,
   labelShadow:
     '0 0 5px rgba(125, 249, 255, 0.62), 0 0 11px rgba(34, 211, 238, 0.32)',
 };

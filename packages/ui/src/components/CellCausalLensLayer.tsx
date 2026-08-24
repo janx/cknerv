@@ -25,6 +25,8 @@ import {
   type CellCausalArcRole,
 } from '../geometry/cellCausalLens';
 import { useCanvasClientRect } from '../hooks/useCanvasClientRect';
+import { CONTENT_BANDS } from './hud/cellFormat';
+import { HUD_COLORS } from './hud/hudTheme';
 import { useReducedMotion } from './hud/useReducedMotion';
 
 const ARC_SEGMENTS = 18;
@@ -121,13 +123,42 @@ function buildLinework(
   };
 }
 
+/** The DOM half of the four arc colours above. The arcs are float triples
+ *  because the linework wants vertex colours; the labels that name them are
+ *  CSS, and CSS is where the HUD's palette has jurisdiction — so what a role
+ *  MEANS is said here by name.
+ *
+ *  All four were typed out, and three of them were a token to the digit or
+ *  inside the floor of one. A sibling output was painted the exact hex the
+ *  whole instrument frame is drawn in; an input sat 13.3 from `memory`, the
+ *  violet the consensus-memory surfaces already use for exactly this — a cell
+ *  this one consumed; the identity-only fallback was a character-for-character
+ *  copy of `CONTENT_BANDS.script`.
+ *
+ *  The selected output carried the same drifted gold this branch has already
+ *  banned in five other files, and it means the same thing here as it does
+ *  there. The question was whether a selected output is a different job from
+ *  the birth-anchor family; it is a different job, and it is the same COLOUR —
+ *  the ban is about a value having one home, not about two surfaces sharing a
+ *  subject. The arc this label names settles it from the other side too:
+ *  `SELECTED_COLOR` expands nearer `goldInk` (34.0) than `lockedGold` (41.4),
+ *  so the label and the line it labels agree on which gold they are.
+ *
+ *  Chrome stays chrome on the sibling arc, and that is a decision rather than
+ *  an oversight. The value is the frame's own hex, so anything else is a
+ *  RETUNE and not a promotion; `SIBLING_COLOR` is in chrome's own family, so
+ *  re-hueing the label alone would break the one correspondence this
+ *  function exists to keep; and the label is a navigation affordance —
+ *  `SIBLING OUTPUT #id · FOLLOW` — which is the one job the cell dossier
+ *  already prints in chrome on purpose. Saying the name is what makes the
+ *  other verdict a one-line change if it is ever wanted. */
 function endpointCssColor(
   role: CellCausalArcRole,
   identityOnly: boolean,
 ): string {
-  if (identityOnly) return '#9D7BD8';
-  if (role === 'input') return '#9D8BFF';
-  return role === 'selected-output' ? '#FFD48C' : '#FF9830';
+  if (identityOnly) return CONTENT_BANDS.script;
+  if (role === 'input') return HUD_COLORS.memory;
+  return role === 'selected-output' ? HUD_COLORS.goldInk : HUD_COLORS.orange;
 }
 
 function navigationRoleLabel(role: CellCausalArcRole): string {
@@ -311,7 +342,7 @@ function CellCausalNavigationLabel({
           }}
         >
           {navigationRoleLabel(role)} #{navigationTargetId}
-          <span style={{ color: '#E8E8E8', opacity: 0.62 }}>
+          <span style={{ color: HUD_COLORS.ink, opacity: 0.62 }}>
             {' · FOLLOW'}
           </span>
         </div>
