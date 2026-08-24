@@ -5,10 +5,12 @@ import {
   createFirstLightDetector,
   type FirstLightDetector,
 } from './firstLightDetector';
+import { kickBootShaderPrecompile } from './shaderPrecompile';
 
 /**
  * Reports first light to the boot record: the one phase only the render loop
- * can witness.
+ * can witness. That same moment is the earliest honest proof the renderer can
+ * draw, so the scene's shader precompile is kicked from it.
  *
  * Must live under the r3f context and mount exactly once (SimClockTicker's
  * discipline). Default priority — a positive one would take the render loop
@@ -27,11 +29,18 @@ export default function BootFrameSentinel({ populated }: {
     detectorRef.current = createFirstLightDetector();
   }
   const detector = detectorRef.current;
-  useFrame((_, delta) => {
+  useFrame((state, delta) => {
     // Inert for the rest of the session after the latch; the phase is
     // terminal in the record too, so nothing downstream re-reads this.
     if (detector.lit) return;
-    if (detector.frame(delta, populated)) completeBootPhase('first_light');
+    if (!detector.frame(delta, populated)) return;
+    completeBootPhase('first_light');
+    // The loop is proven, so the renderer is genuinely alive: the programs
+    // nothing has drawn yet can link against the rest of the readout instead
+    // of against the visitor's first gesture. Deferred out of this callback
+    // and one-shot on its own module, so neither the phase above nor the
+    // frame carrying it pays for it.
+    kickBootShaderPrecompile(state.gl, state.scene, state.camera);
   });
   return null;
 }
