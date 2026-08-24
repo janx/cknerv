@@ -5,10 +5,17 @@ import { HUD_COLORS } from '../../../src/components/hud/hudTheme';
 
 afterEach(cleanup);
 
-function asRgb(hex: string): string {
+function channels(hex: string): string {
   const h = hex.replace('#', '');
-  const [r, g, b] = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
-  return `rgb(${r}, ${g}, ${b})`;
+  return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)).join(', ');
+}
+
+function asRgb(hex: string): string {
+  return `rgb(${channels(hex)})`;
+}
+
+function asRgba(hex: string, alpha: number): string {
+  return `rgba(${channels(hex)}, ${alpha})`;
 }
 
 describe('WarningBar', () => {
@@ -58,6 +65,19 @@ describe('WarningBar', () => {
     expect((bands[0] as HTMLElement).style.height).toBe('4px');
     rerender(<WarningBar level="danger" trigger="stalled" />);
     expect(container.querySelectorAll('[data-hazard-band]').length).toBe(0);
+  });
+  // The other half of the crit step, and the only thing `crit` is: the ground
+  // the banding is laid on. Pinned at the surface rather than in the source
+  // oracle beside it, because the finding was a token that reached the DOM
+  // only as a hand-typed copy of itself.
+  it('darkens its own ground at crit, in the token that names the level', () => {
+    const { container, rerender } = render(<WarningBar level="crit" trigger="reorg-7" />);
+    const bar = () => container.firstElementChild as HTMLElement;
+    expect(bar().style.background).toBe(asRgba(HUD_COLORS.crit, 0.35));
+    // Only at crit: one step down the bar is still the ordinary black scrim,
+    // which is what makes the darkening read as an escalation at all.
+    rerender(<WarningBar level="danger" trigger="stalled" />);
+    expect(bar().style.background).not.toContain(channels(HUD_COLORS.crit));
   });
   it('keeps the hazard bands under reduced motion, where the flash stops', () => {
     const { container } = render(

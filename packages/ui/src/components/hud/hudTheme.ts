@@ -137,6 +137,18 @@ export const HUD_COLORS = {
   // which is why severity also changes treatment (see the fill rule above).
   warning: '#FFB000',
   danger: '#FF3030',
+  // The deepest red, and not a fourth alarm hue: by the time `crit` arrives the
+  // bar is already painted `danger` and there is no louder colour left, so the
+  // last step of the ramp escalates in SHAPE instead — hazard banding along the
+  // band's own edges — and this darkens the ground underneath it at .35 so the
+  // banding has something to be laid on.
+  //
+  // `WarningBar` is that one reader, and for the life of the file it was not
+  // even that: the bar typed `rgba(139,0,0,.35)` — this value, expanded — in a
+  // file whose third line imports this palette. An orphan token and a token
+  // retyped at its only call site read identically from here; both mean the
+  // name is not where the value lives. `hudDiscipline.test.ts` holds it to the
+  // single reader, the same bargain `termGreen` makes below.
   crit: '#8B0000',
   // CRT phosphor. Not a fourth semantic green — the light a cathode tube
   // glows, which is why it is harder and more saturated than any state token.

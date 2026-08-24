@@ -25,6 +25,7 @@ import {
   CELL_PANEL_ACCENT,
   HUD_COLORS,
   HUD_TYPE,
+  rgba,
 } from '../../../src/components/hud/hudTheme';
 import {
   PANEL_WATERMARK_PX,
@@ -105,6 +106,11 @@ const BANNED: ReadonlyArray<{
   // ground is painted by the app shell that mounts the Canvas, and the overlay
   // reaching for it by hand is how the value would come back.
   { pattern: /#02030a/gi, token: 'HUD_COLORS.stageGround' },
+  // Not a hex, which is how it hid from every sweep this file has ever run:
+  // `crit` was retyped as the decimal triple its hex expands to, because the
+  // one surface that uses it needs an alpha and reached for the rgba form
+  // rather than the helper that builds one from a token.
+  { pattern: /rgba\(\s*139\s*,\s*0\s*,\s*0/gi, token: 'rgba(HUD_COLORS.crit, …)' },
 ];
 
 /** Tokens promoted out of inline literals — each has to be read by somebody,
@@ -301,6 +307,32 @@ describe('hud discipline', () => {
       (source) => source.name !== PALETTE_SOURCE && code(source.text).includes('HUD_COLORS.termGreen'),
     );
     expect(readers.map((source) => source.name)).toEqual(['BlockCadenceEcg.tsx']);
+  });
+
+  it('crit escalates in shape, and the one surface that draws it says the name', () => {
+    // The two greens, inverted twice over. `termGreen` was an orphan — a hex in
+    // the palette with no reader anywhere. `crit` looked like the same finding
+    // and was not: it had a reader all along, and that reader was spelling the
+    // value out as `rgba(139,0,0,.35)` in a file whose third line imports the
+    // palette. From here the two are indistinguishable, because they are the
+    // same defect — the name is not where the value lives.
+    //
+    // What the token means is settled and is not a colour question: once the
+    // bar is `danger` there is nothing louder, so crit escalates in SHAPE. So
+    // one reader is the whole of it, and a second appearing means somebody has
+    // started using the deepest red as a fifth alarm hue.
+    //
+    // Asked of the CODE for the reason termGreen is: the prose in `hudTheme.ts`
+    // and in the bar itself says the token's name out loud, and a doc comment
+    // is not a reader.
+    const readers = SOURCES.filter(
+      (source) => source.name !== PALETTE_SOURCE && code(source.text).includes('HUD_COLORS.crit'),
+    );
+    expect(readers.map((source) => source.name)).toEqual(['WarningBar.tsx']);
+
+    // And that reading it by name costs nothing: the helper rebuilds exactly
+    // the string the bar used to type, so this is a promotion and not a retune.
+    expect(rgba(HUD_COLORS.crit, 0.35)).toBe('rgba(139,0,0,0.35)');
   });
 
   it('the metabolism panel raises no alarms', () => {
