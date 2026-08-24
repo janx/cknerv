@@ -43,7 +43,7 @@
 //     needs thousands of overlapping ramps to bite. ⚠️ The luma match is not
 //     decoration — see {@link bridgeSymbolicDim}.
 
-import type { BridgeEdge } from '../geometry/bridgeEdges';
+import { bridgeKey, type BridgeEdge } from '../geometry/bridgeEdges';
 import { bezierAtInto, bezierControlInto, fnv1a } from '../geometry/edgeBezier';
 import { consensusRouteColors } from '../derives/consensusFlow.derive';
 import {
@@ -313,6 +313,53 @@ export function makeBridgeStrokeState(
     dyingAt: null,
     slot: BRIDGE_NO_SLOT,
   };
+}
+
+/**
+ * Fold one completed selection into the persistent stroke map, and report how
+ * many strokes it moved.
+ *
+ * Three kinds of movement and no others: a host that gained a bridge (a new
+ * stroke), a host re-admitted before its retract finished (a revival), and a
+ * host that left the selection (a death). Everything else the selector
+ * produced is the same stroke against the same anchor, already drawn where it
+ * belongs.
+ *
+ * ⭐ The COUNT is what the layer is here for. A composed stage re-selects on
+ * every completed topology build and the overwhelmingly common answer is that
+ * nothing moved, while the walk that answer used to arm re-writes every span
+ * and re-uploads the layer's whole populated prefix. Zero means that walk has
+ * nothing to say.
+ */
+export function reconcileBridgeStrokes(
+  strokes: Map<string, BridgeStrokeState>,
+  bridges: readonly BridgeEdge[],
+  nowSec: number,
+): number {
+  let changed = 0;
+  const live = new Set<string>();
+  for (const bridge of bridges) {
+    const key = bridgeKey(bridge.cellId, bridge.anchorIndex);
+    live.add(key);
+    const existing = strokes.get(key);
+    if (existing === undefined) {
+      strokes.set(key, makeBridgeStrokeState(bridge, nowSec));
+      changed += 1;
+      continue;
+    }
+    // A host re-admitted before its retract finished keeps growing from where
+    // it is rather than restarting: the clock is left alone.
+    if (existing.dyingAt !== null) {
+      existing.dyingAt = null;
+      changed += 1;
+    }
+  }
+  for (const [key, stroke] of strokes) {
+    if (live.has(key) || stroke.dyingAt !== null) continue;
+    stroke.dyingAt = nowSec;
+    changed += 1;
+  }
+  return changed;
 }
 
 /** Reused so the per-frame walk allocates nothing. Two of its five fields are

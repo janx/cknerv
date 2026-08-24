@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Cell } from '@cknerv/types';
 import {
   consensusBraidAgreementTarget,
@@ -231,6 +231,56 @@ describe('galaxy consensus braid LOD', () => {
     expect(Math.max(...reading.nodeResolve)).toBe(0);
     expect(Math.max(...resolved.nodeResolve)).toBe(1);
     expect(resolved.linePos).toEqual(baseline.linePos);
+  });
+
+  it('pays no read-head arithmetic on a Cell with no recall', () => {
+    // The resting LOD rewrite runs at 12 Hz over every expanded Cell, and
+    // every consumer of the read head multiplies it by zero when there is no
+    // recall. `Math.pow` appears once in the writer — inside that head — so
+    // its call count is the honest witness.
+    const braid = deriveGalaxyConsensusBraid(CELL);
+    const segments = braid.segments.length / 6;
+    const buffers = buffersFor(braid.segments.length / 3, braid.knots.length);
+    const pow = vi.spyOn(Math, 'pow');
+    try {
+      writeGalaxyConsensusBraidBuffers(CELL, braid, 1, 0.3, buffers, emptyCursor());
+      expect(pow).not.toHaveBeenCalled();
+      pow.mockClear();
+      writeGalaxyConsensusBraidBuffers(
+        CELL,
+        braid,
+        1,
+        0.3,
+        buffers,
+        emptyCursor(),
+        { role: 'target', strength: 1, phase: 0.5, convergence: 0 },
+      );
+      // And a real recall still pays it once a segment — the gate skips the
+      // work, it does not remove it.
+      expect(pow.mock.calls.length).toBeGreaterThanOrEqual(segments);
+    } finally {
+      pow.mockRestore();
+    }
+  });
+
+  it('leaves the resting picture exactly where it was', () => {
+    const braid = deriveGalaxyConsensusBraid(CELL);
+    const gated = buffersFor(braid.segments.length / 3, braid.knots.length);
+    const inert = buffersFor(braid.segments.length / 3, braid.knots.length);
+    writeGalaxyConsensusBraidBuffers(CELL, braid, 1, 0.3, gated, emptyCursor());
+    // A recall that carries no strength anywhere is what a null one used to be
+    // written as: the two must still draw the same Cell.
+    writeGalaxyConsensusBraidBuffers(
+      CELL,
+      braid,
+      1,
+      0.3,
+      inert,
+      emptyCursor(),
+      { role: 'source', strength: 0, phase: 0, convergence: 0 },
+    );
+    expect([...gated.lineCol]).toEqual([...inert.lineCol]);
+    expect([...gated.linePos]).toEqual([...inert.linePos]);
   });
 
   it('resolves each evidence-bound knot from that source instead of the aggregate', () => {

@@ -15,7 +15,9 @@ import {
   bridgeSymbolicDim,
   bridgeWidthScale,
   makeBridgeStrokeState,
+  reconcileBridgeStrokes,
   writeBridgeStroke,
+  type BridgeStrokeState,
 } from '../../src/nerve/bridgeStroke';
 import { bridgeTaper, TWIG_MIN } from '../../src/nerve/fabricLuminance';
 import {
@@ -318,6 +320,68 @@ describe('bridge stroke state', () => {
       .toEqual(makeBridgeStrokeState(bridge(), 3));
     expect(makeBridgeStrokeState(bridge({ cellId: 4243 }), 3).ctrlX)
       .not.toBe(makeBridgeStrokeState(bridge(), 3).ctrlX);
+  });
+});
+
+describe('reconcileBridgeStrokes', () => {
+  const strokeMap = (
+    ...bridges: BridgeEdge[]
+  ): Map<string, BridgeStrokeState> => {
+    const strokes = new Map<string, BridgeStrokeState>();
+    reconcileBridgeStrokes(strokes, bridges, 0);
+    return strokes;
+  };
+
+  it('counts a host that gained a bridge', () => {
+    const strokes = new Map<string, BridgeStrokeState>();
+    expect(reconcileBridgeStrokes(strokes, [bridge(), bridge({ cellId: 7 })], 5))
+      .toBe(2);
+    expect(strokes.size).toBe(2);
+    expect(strokes.get('4242#991')?.bornAt).toBe(5);
+  });
+
+  it('counts a host that left the selection, once', () => {
+    const strokes = strokeMap(bridge(), bridge({ cellId: 7 }));
+    expect(reconcileBridgeStrokes(strokes, [bridge()], 5)).toBe(1);
+    expect(strokes.get('7#991')?.dyingAt).toBe(5);
+    // The second build finds it already retracting: a death is not re-counted
+    // for as long as the afterimage lives.
+    expect(reconcileBridgeStrokes(strokes, [bridge()], 6)).toBe(0);
+    expect(strokes.get('7#991')?.dyingAt).toBe(5);
+  });
+
+  it('counts a re-admitted host and leaves its clock alone', () => {
+    const strokes = strokeMap(bridge());
+    reconcileBridgeStrokes(strokes, [], 5);
+    expect(reconcileBridgeStrokes(strokes, [bridge()], 9)).toBe(1);
+    const revived = strokes.get('4242#991')!;
+    expect(revived.dyingAt).toBeNull();
+    // Keeps growing from where it is rather than restarting.
+    expect(revived.bornAt).toBe(0);
+  });
+
+  it('reports zero for a selection that did not move — and touches nothing', () => {
+    // ⭐ The steady state of a composed stage. Zero is what lets the layer skip
+    // a full re-walk and a full-prefix upload, so it has to be exact: same
+    // hosts, same anchors, same records, in a different array order.
+    const strokes = strokeMap(bridge(), bridge({ cellId: 7 }));
+    const before = [...strokes.entries()].map(([key, s]) => [key, { ...s }]);
+    expect(
+      reconcileBridgeStrokes(strokes, [bridge({ cellId: 7 }), bridge()], 40),
+    ).toBe(0);
+    expect([...strokes.entries()].map(([key, s]) => [key, { ...s }]))
+      .toEqual(before);
+  });
+
+  it('sums the three kinds in one build', () => {
+    const strokes = strokeMap(bridge(), bridge({ cellId: 7 }));
+    reconcileBridgeStrokes(strokes, [bridge()], 5);
+    // One revival (7), one death (4242), one birth (8).
+    expect(
+      reconcileBridgeStrokes(
+        strokes, [bridge({ cellId: 7 }), bridge({ cellId: 8 })], 9,
+      ),
+    ).toBe(3);
   });
 });
 

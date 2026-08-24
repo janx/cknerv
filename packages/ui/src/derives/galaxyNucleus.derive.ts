@@ -278,8 +278,15 @@ export function writeGalaxyConsensusBraidBuffers(
     const weight = braid.detailWeights[segment] ?? 0;
     const baseVisibility = lerp(midVisibility, nearVisibility, weight) * life;
     const segmentPhase = (segment + 0.5) / segmentCount;
-    const phaseDistance = circularUnitDistance(segmentPhase, recallPhase);
-    const readHead = Math.exp(-Math.pow(phaseDistance / 0.055, 2));
+    // Same gate as the interaction term below, for the same reason: with no
+    // recall on this Cell every consumer of the read head multiplies it by
+    // zero, so the resting LOD rewrite must not pay a distance and a Gaussian
+    // per segment to arrive there.
+    const readHead = recall === null
+      ? 0
+      : Math.exp(
+        -Math.pow(circularUnitDistance(segmentPhase, recallPhase) / 0.055, 2),
+      );
     const targetRead = recall?.role === 'target'
       ? coreEnergy.reading
         * readHead

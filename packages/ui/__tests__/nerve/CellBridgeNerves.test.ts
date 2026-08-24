@@ -92,6 +92,20 @@ describe('the bridge layer stays inside its own budget', () => {
     expect(LAYER.match(/makeFatLineLayer\(/g)).toHaveLength(1);
   });
 
+  it('arms the full walk only for a selection that moved', () => {
+    // The walk re-writes every span and re-uploads the layer's whole populated
+    // prefix; a build that re-selected the same hosts has nothing for it to
+    // say. `reconcileBridgeStrokes` counts the strokes that actually moved.
+    expect(LAYER_CODE).toContain('if (changed > 0) dirtyRef.current = true;');
+    // Two arms and no third: the moved selection, and the knob drag that moves
+    // every stroke's energy at once.
+    expect(LAYER_CODE.match(/dirtyRef\.current = true/g)).toHaveLength(2);
+    // The boot deadline is NOT behind the gate — the first real build reports
+    // it whether or not that build moved anything.
+    expect(LAYER_CODE.indexOf('reportBootBridgeSelected('))
+      .toBeLessThan(LAYER_CODE.indexOf('if (changed > 0)'));
+  });
+
   it('draws living strokes before retracting ones', () => {
     // So an allocation overflow can only clip an afterimage.
     const living = LAYER.indexOf('if (stroke.dyingAt !== null) continue;');

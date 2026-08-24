@@ -72,7 +72,7 @@ import {
   BRIDGE_NO_SLOT,
   BRIDGE_WIDTH_RATIO,
   bridgeRenderState,
-  makeBridgeStrokeState,
+  reconcileBridgeStrokes,
   writeBridgeStroke,
   type BridgeStrokeState,
 } from './bridgeStroke';
@@ -355,24 +355,9 @@ export default function CellBridgeNerves({
     });
 
     const now = simClock.elapsedSec;
-    const strokes = strokesRef.current;
-    const live = new Set<string>();
-    for (const bridge of selection.bridges) {
-      const key = bridgeKey(bridge.cellId, bridge.anchorIndex);
-      live.add(key);
-      const existing = strokes.get(key);
-      if (existing === undefined) {
-        strokes.set(key, makeBridgeStrokeState(bridge, now));
-        continue;
-      }
-      // A host re-admitted before its retract finished keeps growing from
-      // where it is rather than restarting: the clock is left alone.
-      existing.dyingAt = null;
-    }
-    for (const [key, stroke] of strokes) {
-      if (live.has(key) || stroke.dyingAt !== null) continue;
-      stroke.dyingAt = now;
-    }
+    const changed = reconcileBridgeStrokes(
+      strokesRef.current, selection.bridges, now,
+    );
     // The boot record's outer-nerve deadline. The first selection against a
     // real topology build (version 0 is the pre-build mount pass over an
     // empty host map) is the boot cohort of bridges: born just above, fully
@@ -385,7 +370,13 @@ export default function CellBridgeNerves({
         selection.bridges.length > 0 ? now + GROWTH_MS / 1000 : now,
       );
     }
-    dirtyRef.current = true;
+    // ⚠️ Only a selection that MOVED arms the walk. A build that re-selected
+    // the same hosts against the same anchors — the steady state of a composed
+    // stage, and every refill build on a cold server — leaves the layer
+    // exactly as it already is, so re-walking it would re-upload the whole
+    // populated prefix to restate it. The tweak gate below is the other arm
+    // and stays unconditional: a knob moves every stroke's energy at once.
+    if (changed > 0) dirtyRef.current = true;
   }, [anchorIndex, version, cellsRef, passiveGraphRef, simClock]);
 
   useSimFrame(() => {

@@ -312,10 +312,20 @@ describe('the bridge layer rewrites the strokes that moved, not the layer', () =
     frame(SETTLED_SEC + REAPED_SEC + 0.1);
     expect(buffers.positions.updateRanges).toEqual([]);
 
-    // A build is where the debt is paid: spans are handed out from zero and
-    // the prefix shrinks back to what is actually drawn. Hole debt is
-    // therefore bounded by one block's reaps and can never outlive a build.
+    // ⚠️ A build that re-selected the same hosts is NOT where the debt is
+    // paid. Nothing moved, so there is nothing for the walk to say and it does
+    // not run: the layer already draws exactly what that selection asks for,
+    // holes and all, and re-walking it would re-upload the whole prefix to
+    // restate it.
     build([1], SETTLED_SEC + REAPED_SEC + 0.2);
+    expect(buffers.geometry.instanceCount).toBe(both);
+    expect(buffers.positions.updateRanges).toEqual([]);
+
+    // A build that MOVED something is. Spans are handed out from zero and the
+    // prefix shrinks back to what is actually drawn — here the last host's own
+    // strokes, retracting. Hole debt is therefore bounded by one block's reaps
+    // and can never outlive the next selection that changed.
+    build([], SETTLED_SEC + REAPED_SEC + 0.3);
     expect(buffers.geometry.instanceCount).toBe(both - dying.count);
   });
 
