@@ -47,26 +47,117 @@ export function pickOrigin(topology: NetworkTopology, nonce: number): string {
   return cands[cands.length - 1].id;
 }
 
-/** Dijkstra shortest-path arrival times from origin over the weighted graph. */
+/**
+ * Dijkstra shortest-path arrival times from origin over the weighted graph.
+ *
+ * Runs on integer node indices in typed arrays behind a binary heap. This is on
+ * the render path — re-run for every block pulse and every topology rebuild, at
+ * V≈250-460 and E≈700 — so the frontier may not be found by re-scanning every
+ * node's distance on every settle.
+ *
+ * ⭐ Ties settle in NODE ORDER, lowest `topology.nodes` index first, which is
+ * why the heap carries the index as a second key instead of leaving equal
+ * distances to heap shape. Equal-cost routes are routine on a scaffold whose
+ * edges are mirrored geometry, and the winner is the `predecessor` an edge
+ * pulse draws its direction from — leave it to chance and the colony's relay
+ * arrows reshuffle between two identical floods.
+ */
 export function floodArrivalTimes(
   topology: NetworkTopology, originId: string,
 ): { arrival: Map<string, number>; predecessor: Map<string, string | null> } {
+  // One slot per DISTINCT id, in first-appearance order: the returned maps are
+  // keyed and ordered exactly as the node list presents them, and a repeated id
+  // is one node rather than two.
+  const ids: string[] = [];
+  const indexById = new Map<string, number>();
+  for (const n of topology.nodes) {
+    if (indexById.has(n.id)) continue;
+    indexById.set(n.id, ids.length);
+    ids.push(n.id);
+  }
+  // An origin the node list never mentioned still floods, and still reports no
+  // predecessor row of its own — it is not one of the topology's nodes.
+  const nodeCount = ids.length;
+  let origin = indexById.get(originId);
+  if (origin === undefined) {
+    origin = ids.length;
+    indexById.set(originId, origin);
+    ids.push(originId);
+  }
+  const count = ids.length;
+  const dist = new Float64Array(count).fill(Infinity);
+  const pred = new Int32Array(count).fill(-1);
+  const settled = new Uint8Array(count);
+  dist[origin] = 0;
+
+  // Lazy-deletion heap: a relaxed node is pushed again rather than sifted in
+  // place, and the stale copy is dropped when it surfaces already settled.
+  let cap = Math.max(16, count);
+  let heapDist = new Float64Array(cap);
+  let heapNode = new Int32Array(cap);
+  let heapSize = 0;
+  const before = (ad: number, ai: number, bd: number, bi: number): boolean => (
+    ad !== bd ? ad < bd : ai < bi
+  );
+  const push = (d: number, node: number): void => {
+    if (heapSize === cap) {
+      cap *= 2;
+      const grownDist = new Float64Array(cap); grownDist.set(heapDist); heapDist = grownDist;
+      const grownNode = new Int32Array(cap); grownNode.set(heapNode); heapNode = grownNode;
+    }
+    let i = heapSize;
+    heapSize += 1;
+    while (i > 0) {
+      const parent = (i - 1) >> 1;
+      if (!before(d, node, heapDist[parent], heapNode[parent])) break;
+      heapDist[i] = heapDist[parent]; heapNode[i] = heapNode[parent];
+      i = parent;
+    }
+    heapDist[i] = d; heapNode[i] = node;
+  };
+  const pop = (): number => {
+    const top = heapNode[0];
+    heapSize -= 1;
+    if (heapSize > 0) {
+      const d = heapDist[heapSize], node = heapNode[heapSize];
+      let i = 0;
+      for (;;) {
+        const left = i * 2 + 1;
+        if (left >= heapSize) break;
+        const right = left + 1;
+        const child = right < heapSize
+          && before(heapDist[right], heapNode[right], heapDist[left], heapNode[left])
+          ? right : left;
+        if (!before(heapDist[child], heapNode[child], d, node)) break;
+        heapDist[i] = heapDist[child]; heapNode[i] = heapNode[child];
+        i = child;
+      }
+      heapDist[i] = d; heapNode[i] = node;
+    }
+    return top;
+  };
+
+  push(0, origin);
+  while (heapSize > 0) {
+    const u = pop();
+    if (settled[u]) continue;
+    settled[u] = 1;
+    const base = dist[u];
+    for (const { to, weight } of topology.adjacency.get(ids[u]) ?? []) {
+      const v = indexById.get(to);
+      // `adjacency` is built from the node list, so a neighbour nobody declared
+      // is a malformed topology, not a node the flood may invent.
+      if (v === undefined || settled[v] === 1) continue;
+      const nd = base + weight;
+      if (nd < dist[v]) { dist[v] = nd; pred[v] = u; push(nd, v); }
+    }
+  }
+
   const arrival = new Map<string, number>();
   const predecessor = new Map<string, string | null>();
-  const visited = new Set<string>();
-  for (const n of topology.nodes) { arrival.set(n.id, Infinity); predecessor.set(n.id, null); }
-  arrival.set(originId, 0);
-  // O(V^2) is fine for a few hundred nodes and avoids a heap dependency.
-  for (let iter = 0; iter < topology.nodes.length; iter++) {
-    let u: string | null = null, best = Infinity;
-    for (const [id, d] of arrival) if (!visited.has(id) && d < best) { best = d; u = id; }
-    if (u === null || best === Infinity) break;
-    visited.add(u);
-    for (const { to, weight } of topology.adjacency.get(u) ?? []) {
-      if (visited.has(to)) continue;
-      const nd = best + weight;
-      if (nd < (arrival.get(to) ?? Infinity)) { arrival.set(to, nd); predecessor.set(to, u); }
-    }
+  for (let i = 0; i < count; i += 1) {
+    arrival.set(ids[i], dist[i]);
+    if (i < nodeCount) predecessor.set(ids[i], pred[i] >= 0 ? ids[pred[i]] : null);
   }
   return { arrival, predecessor };
 }
