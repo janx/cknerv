@@ -14,8 +14,8 @@ import type {
   ScriptId,
   ScriptRegistryRecord,
 } from '@cknerv/types';
-import { HUD_COLORS } from '../components/hud/hudTheme';
-import { midTruncate } from '../components/hud/cellFormat';
+import { QUALITATIVE_BUCKET_COLORS } from '../components/hud/hudTheme';
+import { CONTENT_BANDS, midTruncate } from '../components/hud/cellFormat';
 
 export interface ScriptFamilyBucket {
   key: string;
@@ -36,26 +36,67 @@ export interface ScriptFamilyBucket {
  *  Six, not four, since the bars started counting the STAGE: the retained
  *  window is 99% plain CKB, where a fifth and sixth rank are sub-percent
  *  slivers, but the curated stage is a deliberate mix and those ranks are
- *  real families a reader can see. Bounded by `RANK_COLORS` — a named
+ *  real families a reader can see. Bounded by the ramp below — a named
  *  segment with no colour of its own is worse than a folded one. */
 export const SCRIPT_BAR_FAMILIES = 6;
 
 /** Coloured by rank rather than by a hash of the identity: the census ranking
  *  is stable (ties break on the code hash), so rank-colouring is stable too,
- *  and it guarantees neighbouring segments differ — which hashing does not. */
-const RANK_COLORS = [
-  HUD_COLORS.cyanWire,
-  HUD_COLORS.orange,
-  HUD_COLORS.caution,
-  '#9d7bd8',
-  '#ffb84d',
-  '#72ffd4',
-];
-/** Everything past the named ranks. */
-const REST_COLOR = '#33424f';
-/** Cells whose identity cknerv could not read at all — a gap in its own
- *  records, kept visually distinct from a script it simply cannot name. */
-const UNIDENTIFIED_COLOR = '#22303a';
+ *  and it guarantees neighbouring segments differ — which hashing does not.
+ *
+ *  Which is exactly why the slots come from the house's qualitative ramp and
+ *  not from `CONTENT_BANDS`: a slot here is POSITIONAL. Rank 0 is not
+ *  "consensus content", it is just first, and painting it in the consensus
+ *  band would tell a reader something about the family that the bar does not
+ *  know. The peer atlas's country and version bars hand out the same slots for
+ *  the same reason, and they hand out the same six.
+ *
+ *  What was here instead: `cyanWire` and `orange` — the two halves of the
+ *  instrument's own chrome — then `caution`, a SEMANTIC health tone naming a
+ *  script family, then three literals, the first of them a copy of
+ *  `CONTENT_BANDS.script` down to the digit. Four rows of a six-row table
+ *  borrowing from three layers that all mean something else. */
+const RANK_COLORS = QUALITATIVE_BUCKET_COLORS;
+
+/** Everything these bars paint, in one table: the six rank slots off the house
+ *  ramp, then the three segments that are NOT slots and so are the three that
+ *  do carry a meaning. Written out as the bar a READER sees rather than as the
+ *  two tables it is assembled from, because that is the thing
+ *  `hudDiscipline.test.ts` has to be able to walk — a stacked strip is legible
+ *  or not as a whole, and a matrix that only saw half of it would have missed
+ *  every finding below.
+ *
+ *  `native` — a cell with no type script is not an unnamed family, it is bare
+ *  CKB, and plain consensus content wears the consensus's own colour. That is
+ *  the house's one sanctioned borrow from the identity layer, spelled through
+ *  the band the way `ASSET_COLORS.native` and `LOCK_COLORS.sighash` already
+ *  spell it rather than through the wire token.
+ *
+ *  `rest` — everything past the named ranks: a family nothing could place,
+ *  which is the band the whole house paints that in. It was already exactly
+ *  this value, typed out.
+ *
+ *  `unidentified` — cells whose identity cknerv could not read at all: a gap in
+ *  its own records, and the last segment of the bar, sitting directly against
+ *  `rest`. It claimed to be "kept visually distinct" from that neighbour while
+ *  sitting 32.5 from it, inside the separation floor — two adjacent segments of
+ *  a 6px bar with no boundary a reader could find. The claim was the right one
+ *  and the value was not, so the value moved: the same quiet blue-slate family,
+ *  one clear step deeper (relative luminance 0.018 against `rest`'s 0.052),
+ *  which is also what it MEANS — a hole in the records is less than a family
+ *  too small to name. It stays 52.4 from the `trackGround` channel it is drawn
+ *  on, so it still reads as a segment rather than as a gap in the bar; going
+ *  deeper still would have bought separation from `rest` by spending it against
+ *  the track. */
+export const SCRIPT_FAMILY_COLORS: Record<string, string> = {
+  ...Object.fromEntries(RANK_COLORS.map((hex, slot) => [`slot${slot}`, hex])),
+  native: CONTENT_BANDS.consensus,
+  rest: CONTENT_BANDS.unlisted,
+  unidentified: '#182634',
+};
+
+const REST_COLOR = SCRIPT_FAMILY_COLORS.rest;
+const UNIDENTIFIED_COLOR = SCRIPT_FAMILY_COLORS.unidentified;
 
 function registryKey(codeHash: string, hashType: string): string {
   return `${codeHash.toLowerCase()}:${hashType}`;
@@ -191,7 +232,7 @@ export function assetFamilyBuckets(
       key: 'native',
       label: 'CKB',
       count: census.types_absent,
-      color: HUD_COLORS.cyanWire,
+      color: SCRIPT_FAMILY_COLORS.native,
       named: true,
       families: 1,
     }]

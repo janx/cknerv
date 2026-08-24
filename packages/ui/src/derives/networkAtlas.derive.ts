@@ -3,6 +3,7 @@ import type {
   NetworkAtlasBucket,
   NetworkAtlasRecord,
 } from '@cknerv/types';
+import { QUALITATIVE_BUCKET_COLORS } from '../components/hud/hudTheme';
 
 export type NetworkAtlasVisualState = 'ready' | 'stale';
 
@@ -18,43 +19,18 @@ export interface NetworkAtlasVisual {
   versions: NetworkAtlasBucketVisual[];
 }
 
-// The atlas's two bars are the one place in the HUD where a colour means
-// NOTHING. A country and a client version are qualitative buckets handed a
-// slot by a hash of their own label — `DE` is not a lock family, `v0.201.0`
-// is not an asset class — so mapping them onto the content bands would be a
-// lie in the other direction from the one this ramp replaces: it would tell a
-// reader that a country belongs to a family of things it has nothing to do
-// with. What the buckets owe is only that they can be told apart, and that
-// none of them impersonates a layer that does mean something.
-//
-// So: five hues of its own, checked against every reserved tone, every content
-// band and every text tier rather than borrowed from any of them. Closest pair
-// inside the ramp is 118.9, and the nearest any member comes to anything
-// outside it is 47.2 — both clear of the separation floor.
-//
-// The green sector is excluded on purpose and that is the load-bearing part of
-// this comment. Green is spoken for by `nominal`, and a country must never
-// read as health: a bar where Germany is green and Singapore is amber is a bar
-// that appears to be grading nations.
-//
-// One ramp for both bars, not two. They used to be two arrays that shared
-// three of their five values anyway, and the first slot of the version ramp
-// was `#ff9d52` — 34.4 from chrome orange, the same near-frame colour the byte
-// orbit and the activity feed had each arrived at separately.
-export const ATLAS_BUCKET_COLORS: readonly string[] = [
-  '#465EB8',
-  '#D0B846',
-  '#CA94D0',
-  '#B24670',
-  '#5ED0D0',
-];
-
+// A country and a client version are qualitative buckets: `DE` is not a lock
+// family, `v0.201.0` is not an asset class, and each is handed its colour by a
+// hash of its own label. That is the house's `QUALITATIVE_BUCKET_COLORS` ramp
+// exactly — the argument for why these bars may not read `CONTENT_BANDS`, and
+// why the green sector stays shut, is written where the ramp lives. The STAGE
+// script-family bar hands out the same slots for the same reason.
 function labelColor(label: string): string {
   let hash = 0;
   for (const character of label) {
     hash = (hash * 31 + (character.codePointAt(0) ?? 0)) >>> 0;
   }
-  return ATLAS_BUCKET_COLORS[hash % ATLAS_BUCKET_COLORS.length];
+  return QUALITATIVE_BUCKET_COLORS[hash % QUALITATIVE_BUCKET_COLORS.length];
 }
 
 function safeNonnegativeInteger(value: number): boolean {

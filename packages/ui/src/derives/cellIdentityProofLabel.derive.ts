@@ -1,4 +1,5 @@
 import type { Cell } from '@cknerv/types';
+import { HUD_COLORS, rgba } from '../components/hud/hudTheme';
 import { deriveCellContentAddressEncoding } from './cellContentAddress.derive';
 import {
   deriveCellBirthAnchorEncoding,
@@ -63,8 +64,17 @@ export function deriveCellIdentityProofLabel(
       code: 'WHEN',
       detail: `#${encoding.block}`,
       title: `Birth block #${encoding.block} · 0x${encoding.hexadecimal}`,
-      color: '#FFD48C',
-      dimColor: 'rgba(255, 212, 140, 0.52)',
+      // Drift not toward a token but BETWEEN two, which is the shape of the
+      // gold already on `hudDiscipline.test.ts`'s ban list: this one sat 14.1
+      // from `goldInk` and 21.2 from `lockedGold` and was neither. It means
+      // `goldInk` — the bright text tier, which is what a label is — and the
+      // whole birth-anchor family says so now: the glyph, the marker ring and
+      // the lab's WHEN column read the same token.
+      color: HUD_COLORS.goldInk,
+      // And through the helper, because a colour retyped as the decimal triple
+      // its hex expands to is the same defect wearing an alpha — that is how
+      // `crit` hid from every sweep this palette has ever run.
+      dimColor: rgba(HUD_COLORS.goldInk, 0.52),
     };
   }
   const encoding = deriveCellContentAddressEncoding(cell.content_hash);

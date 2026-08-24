@@ -26,6 +26,7 @@ import {
   CELL_PANEL_ACCENT,
   HUD_COLORS,
   HUD_TYPE,
+  QUALITATIVE_BUCKET_COLORS,
   rgba,
 } from '../../../src/components/hud/hudTheme';
 import {
@@ -47,7 +48,7 @@ import {
   ECOSYSTEM_CATEGORY_COLORS,
   ECOSYSTEM_UNLISTED_COLOR,
 } from '../../../src/derives/assetEcosystem.derive';
-import { ATLAS_BUCKET_COLORS } from '../../../src/derives/networkAtlas.derive';
+import { SCRIPT_FAMILY_COLORS } from '../../../src/derives/scriptFamilies.derive';
 import { fpsColor } from '../../../src/tweaks/renderStatsStore';
 import { CELL_GALAXY_PALETTE, CHAIN_ANCHOR_HEX } from '../../../src/visualPalette';
 
@@ -106,6 +107,16 @@ const BANNED: ReadonlyArray<{
   // Drift not toward a token but BETWEEN two: `#FFD79A` splits the difference
   // between `lockedGold #FFD7A1` and `goldInk #FFD29A` and matched neither.
   { pattern: /#ffd79a/gi, token: 'HUD_COLORS.goldInk' },
+  // The same gold, drifted the same way, in five files at once: `#FFD48C` sat
+  // 14.1 from `goldInk` and 21.2 from `lockedGold` and was neither. It is the
+  // WHEN proof's colour — the birth-anchor label, the glyph arm that points at
+  // it, the marker's terminal ring, the lab column that reviews all three — so
+  // it is one value meaning one thing, and it now says `goldInk` in all of
+  // them. The alpha form went with it: `rgba(255, 212, 140, …)` was the same
+  // colour retyped as the decimal triple its hex expands to, which is exactly
+  // how `crit` hid from every sweep this file has ever run.
+  { pattern: /#ffd48c/gi, token: 'HUD_COLORS.goldInk' },
+  { pattern: /rgba\(\s*255\s*,\s*212\s*,\s*140/gi, token: 'rgba(HUD_COLORS.goldInk, …)' },
   // A tier four panels used and nobody named. The legend under a bucket bar is
   // neither the label above it nor the readings around it, so four files typed
   // the in-between out longhand. A fifth typed it for a DIFFERENT job —
@@ -160,6 +171,28 @@ function rgbDistance(a: string, b: string): number {
 
 /** Below this, two colors are the same color wearing two names. */
 const SEPARATION_FLOOR = 40;
+
+/** Hue in degrees, or `null` for a colour that has none. Everything else in
+ *  this file measures RGB distance, and on purpose: distance answers "can a
+ *  reader tell these two apart". Exactly one claim in the palette is about a
+ *  SECTOR instead of a pair — the qualitative ramp's green exclusion — and a
+ *  sector is a statement about hue, so it needs the other measurement. */
+function hueDegrees(hex: string): number | null {
+  const [r, g, b] = [0, 2, 4]
+    .map((i) => parseInt(hex.replace('#', '').slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b);
+  const span = max - Math.min(r, g, b);
+  if (span === 0) return null;
+  const sextant = max === r
+    ? ((g - b) / span) % 6
+    : (max === g ? (b - r) / span + 2 : (r - g) / span + 4);
+  return (sextant * 60 + 360) % 360;
+}
+
+/** Yellow-green through spring-green, about 45° either side of the two greens
+ *  the palette already owns: `nominal` sits at 134° and `termGreen` at 120°.
+ *  Gold at 50° and the ramp's cyan at 180° are outside it with room to spare. */
+const GREEN_SECTOR: readonly [number, number] = [75, 165];
 
 /** A colour written out by hand, in any of the forms one gets typed. */
 const HEX_LITERAL = /#[0-9a-fA-F]{3,8}\b/g;
@@ -534,13 +567,15 @@ const METABOLIC_COLORS: Readonly<Record<string, string>> = {
   ember: HUD_COLORS.ember,
 };
 
-/** The atlas ramp, indexed. It is an ARRAY in its own file because its slots
- *  are handed out by a hash of a country code or a client version string and
- *  mean nothing individually — which is exactly why it is a ramp of its own and
- *  not a set of content bands. A slot still has to clear the reserve, so it
- *  walks the same matrix as every palette whose keys do mean something. */
-const ATLAS_SLOTS: Readonly<Record<string, string>> = Object.fromEntries(
-  ATLAS_BUCKET_COLORS.map((hex, slot) => [`slot${slot}`, hex]),
+/** The house's qualitative ramp, indexed. It is an ARRAY in the palette because
+ *  its slots are handed out by something that means nothing — a hash of a
+ *  country code or a client version string on the atlas bars, a POSITION in a
+ *  sorted census on the STAGE script bar — which is exactly why it is a ramp of
+ *  its own and not a set of content bands. A slot still has to clear the
+ *  reserve, so it walks the same matrix as every palette whose keys do mean
+ *  something. */
+const QUALITATIVE_SLOTS: Readonly<Record<string, string>> = Object.fromEntries(
+  QUALITATIVE_BUCKET_COLORS.map((hex, slot) => [`slot${slot}`, hex]),
 );
 
 /** Every palette that colours DATA rather than state, by the surface it
@@ -567,7 +602,18 @@ const CATEGORY_PALETTES: Readonly<Record<string, Readonly<Record<string, string>
   // the single worst offender on both of these surfaces.
   activity: { ...ACTIVITY_CATEGORY_COLORS, unlisted: ACTIVITY_UNLISTED_COLOR },
   ecosystem: { ...ECOSYSTEM_CATEGORY_COLORS, unlisted: ECOSYSTEM_UNLISTED_COLOR },
-  atlasBucket: ATLAS_SLOTS,
+  atlasBucket: QUALITATIVE_SLOTS,
+  // The other bar that reads the ramp, and read as the bar a READER sees rather
+  // than as the two tables it is assembled from: six rank slots, then the
+  // plain-CKB segment, the folded remainder and the unidentified tail, all of
+  // them touching in one 6px strip. Taken from the derive itself, not rebuilt
+  // here, so a private rank palette growing back in that file is a hit rather
+  // than an invisible divergence between what is checked and what is painted.
+  // Registering it is what caught the last three: `caution` — a health tone —
+  // named a script family, the remainder spelled `CONTENT_BANDS.unlisted` out
+  // longhand, and the tail sat 32.5 from the remainder it shares an edge with
+  // while its own comment claimed the two were kept apart.
+  scriptFamily: SCRIPT_FAMILY_COLORS,
 };
 
 /** The sanctioned borrows, each `<palette>.<key> → <reserved>`, and each one
@@ -598,6 +644,12 @@ const SANCTIONED_BORROWS: ReadonlySet<string> = new Set([
   'byteSegment.data → peerWire',
   'activity.transfer → cyanWire',
   'activity.transfer → peerWire',
+  // A fourth time, on the STAGE script bar, where it is the SAME sentence as
+  // `asset.native`: a cell carrying no type script is bare CKB. It is the one
+  // segment of that bar which is not a rank slot, precisely because it is the
+  // one that names something.
+  'scriptFamily.native → cyanWire',
+  'scriptFamily.native → peerWire',
 ]);
 
 describe('the colour reserve', () => {
@@ -680,6 +732,47 @@ describe('the colour reserve', () => {
         .map((hex) => `${source.name}: ${hex} → say a HUD_COLORS token`));
 
     expect(offenders).toEqual([]);
+  });
+
+  it('no qualitative slot strays into the green the semantics own', () => {
+    // The one rule in this palette that distance cannot state, and the one the
+    // ramp's own comment calls its load-bearing part: green is spoken for by
+    // `nominal`, so a country must never read as health. A bar where Germany is
+    // green and Singapore is amber is a bar that appears to be grading nations,
+    // and the ramp already carries the amber at slot 1.
+    //
+    // Pinned because it was unenforced and nearly lost. The sixth slot was
+    // first cut as a moss green — 155.6 from `nominal`, so every distance rule
+    // in this file passed it — for the honest reason that green was the widest
+    // unspent hue left. Distance was the wrong question: the defect is not that
+    // a reader confuses the two greens, it is that a green ANYWHERE in a
+    // qualitative bar reads as a verdict.
+    const strays = QUALITATIVE_BUCKET_COLORS
+      .map((hex, slot) => ({ hex, slot, hue: hueDegrees(hex) }))
+      .filter(({ hue }) => hue !== null && hue >= GREEN_SECTOR[0] && hue <= GREEN_SECTOR[1])
+      .map(({ hex, slot, hue }) => `slot${slot} ${hex} at ${hue?.toFixed(0)}° — green means nominal`);
+
+    expect(strays).toEqual([]);
+
+    // And the pin under the pin: a sector rule over a ramp of greys would pass
+    // by saying nothing, because a grey has no hue to be in the wrong place.
+    expect(QUALITATIVE_BUCKET_COLORS.filter((hex) => hueDegrees(hex) === null))
+      .toEqual([]);
+  });
+
+  it('the quietest segment of a bar still clears the track it is drawn on', () => {
+    // The half the intra-bar matrix cannot see. `scriptFamily.unidentified` is
+    // the deliberately quiet tail of the STAGE bars, and it was moved DOWN to
+    // put a visible edge between it and the folded remainder it touches — the
+    // only direction available, because the register above it is spoken for by
+    // `plain`. Down has a floor of its own: the bar is drawn on `trackGround`,
+    // and a segment that reaches it has stopped being a segment and become a
+    // hole in the bar. So the next hand to widen that edge spends the margin
+    // it does not have here rather than at the running panel.
+    expect(rgbDistance(CATEGORY_PALETTES.scriptFamily.unidentified, HUD_COLORS.trackGround))
+      .toBeGreaterThan(SEPARATION_FLOOR);
+    expect(rgbDistance(CATEGORY_PALETTES.scriptFamily.unidentified, HUD_COLORS.stageGround))
+      .toBeGreaterThan(SEPARATION_FLOOR);
   });
 
   it('categories that share a bar stay apart from each other', () => {

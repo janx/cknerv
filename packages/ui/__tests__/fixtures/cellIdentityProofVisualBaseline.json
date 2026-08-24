@@ -150,8 +150,8 @@
       "code": "WHEN",
       "detail": "#16204800",
       "title": "Birth block #16204800 · 0xF74400",
-      "color": "#FFD48C",
-      "dimColor": "rgba(255, 212, 140, 0.52)"
+      "color": "#FFD29A",
+      "dimColor": "rgba(255,210,154,0.52)"
     },
     "labelFrame": {
       "opacity": 0.94,

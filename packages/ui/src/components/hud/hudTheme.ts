@@ -167,6 +167,51 @@ export const HUD_COLORS = {
   termGreen: '#00F700',
 } as const;
 
+// ——— Slots that mean nothing ————————————————————————————————————————————
+//
+// The one ramp in the HUD where a colour is only a POSITION. Two bars read it,
+// and both hand a slot out by something that carries no meaning of its own: the
+// peer atlas hashes a country code or a client version string, and the STAGE
+// script-family bar goes by RANK — its own comment says the ranking is used
+// precisely because it "guarantees neighbouring segments differ", which is a
+// statement about legibility and not about what a family IS. Slot 0 is not
+// consensus content; it is just first.
+//
+// So mapping either bar onto `CONTENT_BANDS` would be a lie in a direction no
+// reader can check: it would say a country, or a position in a sorted list,
+// belongs to a family of things it has nothing to do with. What a slot owes is
+// only that it can be told apart, and that it never impersonates a layer that
+// does mean something. Six hues of their own, checked against every reserved
+// tone, every content band and every text tier rather than borrowed from any of
+// them. Closest pair inside the ramp is 90.2, and the nearest any member comes
+// to anything outside it is 47.2 — both clear of the separation floor.
+//
+// The green sector is excluded on purpose and that is the load-bearing part of
+// this comment. Green is spoken for by `nominal`, and a country must never read
+// as health: a bar where Germany is green and Singapore is amber is a bar that
+// appears to be grading nations. The sixth slot was nearly a moss green, for
+// want of an unspent hue — and it would have built exactly that bar beside slot
+// 1's gold, while sitting 44.9 from `moduleSlate`, tighter than any member of
+// the five it was joining. The violet between slot 0's indigo and slot 2's
+// orchid was the untenanted gap, and taking it cost nothing: the ramp's margin
+// against everything outside it is the same 47.2 at six slots as at five.
+//
+// One ramp for all of it, not three. The atlas used to keep two arrays that
+// agreed on three of their five values anyway, and the first slot of its
+// version ramp was `#ff9d52` — 34.4 from chrome orange, the same near-frame
+// colour the byte orbit and the activity feed had each arrived at separately.
+// The script bar kept a third list: two chrome tokens, one SEMANTIC token
+// (`caution` — a health tone naming a script family) and three literals, one of
+// them a character-for-character copy of `CONTENT_BANDS.script`.
+export const QUALITATIVE_BUCKET_COLORS: readonly string[] = [
+  '#465EB8',
+  '#D0B846',
+  '#CA94D0',
+  '#B24670',
+  '#5ED0D0',
+  '#983BC6',
+];
+
 // ——— Cell identity ———————————————————————————————————————————————————————
 //
 // VERDICT, adjudicated at the running stage on 2026-08-23: the cell mesh wears

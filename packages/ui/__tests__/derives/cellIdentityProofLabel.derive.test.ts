@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Cell } from '@cknerv/types';
+import { HUD_COLORS } from '../../src/components/hud/hudTheme';
 import {
   cellIdentityProofLabelFrame,
   deriveCellIdentityProofLabel,
@@ -55,7 +56,7 @@ describe('Cell identity proof label', () => {
       code: 'WHEN',
       detail: '#16204800',
       title: 'Birth block #16204800 · 0xF74400',
-      color: '#FFD48C',
+      color: HUD_COLORS.goldInk,
     });
   });
 

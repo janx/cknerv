@@ -4,12 +4,12 @@ import type {
   NetworkAtlasRecord,
 } from '@cknerv/types';
 import {
-  ATLAS_BUCKET_COLORS,
   deriveNetworkAtlasVisual,
   NETWORK_ATLAS_STALE_AFTER_MS,
   networkAtlasVisualState,
 } from '../../src/derives/networkAtlas.derive';
 import { CONTENT_BANDS } from '../../src/components/hud/cellFormat';
+import { QUALITATIVE_BUCKET_COLORS } from '../../src/components/hud/hudTheme';
 
 const record: NetworkAtlasRecord = {
   source: 'ckbadger',
@@ -68,16 +68,18 @@ describe('network atlas visual derivation', () => {
   it('colours both bars out of one ramp that means nothing', () => {
     // Two claims at once. Every bucket takes a slot of the shared ramp — the
     // countries and the versions used to hold two arrays that agreed on three
-    // of their five values anyway — and none of them lands on a content band,
-    // because a country is not an asset class and a bar that said it was would
-    // be lying in a way a reader cannot see.
+    // of their five values anyway, and the ramp is the house's now, handed out
+    // by rank on the STAGE script bar for the same reason it is handed out by
+    // hash here — and none of them lands on a content band, because a country
+    // is not an asset class and a bar that said it was would be lying in a way
+    // a reader cannot see.
     const visual = deriveNetworkAtlasVisual(record);
     const painted = [...visual?.countries ?? [], ...visual?.versions ?? []]
       .map((bucket) => bucket.color);
     expect(painted).toHaveLength(4);
-    expect(painted.every((color) => ATLAS_BUCKET_COLORS.includes(color))).toBe(true);
+    expect(painted.every((color) => QUALITATIVE_BUCKET_COLORS.includes(color))).toBe(true);
     const bands = new Set<string>(Object.values(CONTENT_BANDS));
-    expect(ATLAS_BUCKET_COLORS.filter((color) => bands.has(color))).toEqual([]);
+    expect(QUALITATIVE_BUCKET_COLORS.filter((color) => bands.has(color))).toEqual([]);
   });
 
   it('requires the capability, usable source, and compatible anchor', () => {

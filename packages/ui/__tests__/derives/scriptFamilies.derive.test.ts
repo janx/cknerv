@@ -5,7 +5,11 @@ import {
   hasScriptCensus,
   lockFamilyBuckets,
   scriptLabel,
+  SCRIPT_BAR_FAMILIES,
+  SCRIPT_FAMILY_COLORS,
 } from '../../src/derives/scriptFamilies.derive';
+import { CONTENT_BANDS } from '../../src/components/hud/cellFormat';
+import { QUALITATIVE_BUCKET_COLORS } from '../../src/components/hud/hudTheme';
 
 const hash = (byte: string) => `0x${byte.repeat(32)}`;
 
@@ -76,6 +80,44 @@ describe('scriptFamilies.derive', () => {
   it('keeps neighbouring segments visually distinct', () => {
     const colors = lockFamilyBuckets(census, registry).map((b) => b.color);
     expect(new Set(colors).size).toBe(colors.length);
+  });
+
+  it('ranks are positional slots, never content bands', () => {
+    // The ruling this table used to break. A rank is a POSITION — the census
+    // ranking is stable, which is the entire reason the bar colours by rank
+    // rather than by a hash of the identity — so rank 0 is not "consensus
+    // content", it is just first. Painting it in a band would tell a reader
+    // something about the family that the bar does not know.
+    //
+    // Four of the six slots used to be borrowed anyway: chrome cyan, chrome
+    // orange, `caution` — a HEALTH tone naming a script family — and a
+    // character-for-character copy of `CONTENT_BANDS.script`. They come out of
+    // the house's qualitative ramp now, the one the peer atlas's country and
+    // version bars read for exactly the same reason.
+    const ranked = lockFamilyBuckets(census, registry)
+      .filter((bucket) => bucket.key !== 'rest' && bucket.key !== 'unidentified')
+      .map((bucket) => bucket.color);
+    expect(ranked.length).toBeGreaterThan(0);
+    expect(ranked.filter((color) => !QUALITATIVE_BUCKET_COLORS.includes(color)))
+      .toEqual([]);
+    const bands = new Set<string>(Object.values(CONTENT_BANDS));
+    expect(QUALITATIVE_BUCKET_COLORS.filter((color) => bands.has(color))).toEqual([]);
+
+    // The bar names six families before the rest fold, and the slots are taken
+    // modulo the ramp's length: a ramp shorter than the cut would wrap the last
+    // family back onto the first's hue, and two segments of one colour in one
+    // bar is a bar that reads as a bug.
+    expect(QUALITATIVE_BUCKET_COLORS.length).toBeGreaterThanOrEqual(SCRIPT_BAR_FAMILIES);
+
+    // And the segments that are NOT slots take the band they mean, because
+    // those three do mean something: bare CKB is plain consensus content, and
+    // a family nothing could place is what `unlisted` is for. Both were typed
+    // out longhand rather than read — one of them digit for digit.
+    expect(SCRIPT_FAMILY_COLORS.native).toBe(CONTENT_BANDS.consensus);
+    expect(SCRIPT_FAMILY_COLORS.rest).toBe(CONTENT_BANDS.unlisted);
+    expect(lockFamilyBuckets(census, registry)
+      .find((bucket) => bucket.key === 'rest')?.color)
+      .toBe(CONTENT_BANDS.unlisted);
   });
 
   it('never spends CKB\u2019s colour twice in one bar', () => {
