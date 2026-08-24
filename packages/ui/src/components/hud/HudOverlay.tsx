@@ -57,7 +57,13 @@ const SYNC_LAG_THRESHOLD = 2; // blocks behind best-known before we count as syn
 const SYNC_AHEAD_RATIO = 0.5; // fraction of peers ahead of our tip = we're behind
 
 const ROOT_STYLE: CSSProperties = { position: 'fixed', inset: 0, zIndex: 15, pointerEvents: 'none', userSelect: 'none', overflow: 'hidden' };
-const SCAN_STYLE: CSSProperties = { position: 'absolute', inset: 0, pointerEvents: 'none', background: 'repeating-linear-gradient(0deg,rgba(255,255,255,.035) 0 1px,transparent 1px 3px)', mixBlendMode: 'overlay', opacity: 0.5 };
+// The scan lines are the first thing the root paints and the only thing under
+// them is the root's own transparent ground: every band, rail and panel below
+// carries a z-index or arrives later in the tree, so all of them paint above.
+// No blend mode, therefore — an `overlay` against a zero-alpha backdrop
+// resolves to the plain source-over already written here, and asking for one
+// costs the compositor an isolated full-viewport blending group per frame.
+const SCAN_STYLE: CSSProperties = { position: 'absolute', inset: 0, pointerEvents: 'none', background: 'repeating-linear-gradient(0deg,rgba(255,255,255,.035) 0 1px,transparent 1px 3px)', opacity: 0.5 };
 // Right-edge MESH RAIL: the CELL zone stacked over the PEER zone, right-anchored.
 // Each zone is a flex row [detail | mesh] (network detail fans LEFT of its mesh); the
 // rail is a flex column so the zones stack and details top-align to their mesh

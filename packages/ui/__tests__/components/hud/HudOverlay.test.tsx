@@ -179,6 +179,25 @@ describe('HudOverlay', () => {
     expect(meshRail.style.bottom).toBe('');
   });
 
+  it('rules the whole overlay with scan lines that blend against nothing', () => {
+    const { container } = render(
+      <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
+    );
+    const root = container.firstElementChild as HTMLElement;
+    const scan = root.firstElementChild as HTMLElement;
+    expect(scan.style.background).toContain('repeating-linear-gradient');
+    expect(scan.style.background).toContain('rgba(255,255,255,.035)');
+    expect(scan.style.opacity).toBe('0.5');
+    expect(scan.style.pointerEvents).toBe('none');
+    // First child of the root, and every band, rail and panel after it either
+    // carries a z-index or arrives later in the tree — so the ruling has the
+    // root's own transparent ground under it and nothing else. A blend mode
+    // against a zero-alpha backdrop resolves to exactly the source-over above,
+    // and costs the compositor an isolated full-viewport group to say so.
+    expect(scan.style.mixBlendMode).toBe('');
+    expect(root.style.zIndex).toBe('15');
+  });
+
   it('keeps every rail at full energy — scene inspection never dims the HUD', () => {
     const { container } = render(
       <HudOverlay

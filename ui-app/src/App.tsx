@@ -1684,7 +1684,11 @@ export default function App({
         <Canvas
           ref={cellGalaxyCanvasRef}
           camera={{ position: [110, 108, 110], fov: 50, near: 1, far: 3000 }}
-          gl={{ antialias: true, alpha: true }}
+          // Opaque: nothing in the page paints behind this canvas — every DOM
+          // overlay is positioned above it and the only thing under it is the
+          // same `#02030a` the wrapper below carries — so a per-frame
+          // page-composite blend of the whole surface bought nothing.
+          gl={{ antialias: true, alpha: false }}
           dpr={canvasDpr}
           style={{ background: '#02030a' }}
           // The context exists — the boot record's GL line closes here, the
@@ -1701,6 +1705,11 @@ export default function App({
             setSelectedNetId(null);
           }}
         >
+          {/* The ground the opaque canvas clears to every frame, spelled the
+              same as the CSS above it: the wrapper carries the colour until
+              the first frame exists, this carries it afterwards, and the black
+              window before first light stays the one black. */}
+          <color attach="background" args={['#02030a']} />
           {/* Advances the module-level simClock once per frame so every
               useSimFrame animation (CellGalaxy, BlockDeliveryLayer, GlowNode,
               NeuralNetwork, NetworkColony) actually plays. Must live

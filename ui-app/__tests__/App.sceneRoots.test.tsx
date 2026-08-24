@@ -129,6 +129,21 @@ describe('scene-root memo inputs', () => {
   });
 });
 
+describe('canvas compositing', () => {
+  it('hands the compositor an opaque surface, and clears it to the page ground', () => {
+    // Nothing in the page paints behind the canvas — every DOM overlay is
+    // positioned above it and under it is the same colour — so a transparent
+    // drawing buffer only asked the compositor to blend an opaque scene over
+    // its own ground, full-viewport, every frame.
+    expect(APP_SOURCE).toContain('gl={{ antialias: true, alpha: false }}');
+    // Opaque means the clear IS the ground: the CSS below the canvas carries
+    // it until the first frame exists, the scene carries it afterwards, and
+    // both are spelled the same so the pre-first-light black never shifts.
+    expect(APP_SOURCE).toContain("<color attach=\"background\" args={['#02030a']} />");
+    expect(APP_SOURCE).toContain("style={{ background: '#02030a' }}");
+  });
+});
+
 describe('colony topology signature', () => {
   it('admits identity, direction and version raw — and a ping only by its step', () => {
     // The signature is what stands between a ~4s peer poll and a full colony

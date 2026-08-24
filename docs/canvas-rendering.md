@@ -259,8 +259,9 @@ The production Canvas uses:
 - camera position `[110, 108, 110]`;
 - target `[0, CELLS_Y, 0]`;
 - FOV `50`, near `1`, and far `3000`;
-- WebGL antialiasing and an alpha-capable renderer;
-- CSS background `#02030a`;
+- WebGL antialiasing and an opaque drawing buffer (`alpha: false`);
+- scene background `#02030a`, with the same colour as CSS below the canvas for
+  the window before the first frame;
 - quality-limited DPR, never below CSS-pixel density; and
 - damped orbit control with damping factor `0.08` and distance range `4..400`.
 
