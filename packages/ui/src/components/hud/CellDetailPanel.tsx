@@ -2147,9 +2147,14 @@ export default function CellDetailPanel({
           {/* The axis mark is drawn, not typed: `↔` is in none of the faces
               this repo ships and in none of the upstream faces either, so the
               one affordance telling a reader the square is draggable was set
-              in whatever their machine had. The words stay the carrier — the
-              compact form says ORBIT and the mark says which way. */}
-          <span data-cell-scan-drag-affordance style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 5, color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.9, whiteSpace: 'nowrap' }}>
+              in whatever their machine had.
+            *
+            * The mark is decoration and hidden, which leaves the compact copy
+            * saying only ORBIT where it used to say ORBIT and an axis. The
+            * title carries the gesture instead, in both layouts and to a
+            * reader who cannot see either — the same way the byte budget's
+            * hints are worded. */}
+          <span data-cell-scan-drag-affordance title="Drag the specimen square to orbit it" style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 5, color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.9, whiteSpace: 'nowrap' }}>
             {verticalLayout ? 'ORBIT' : 'DRAG TO ORBIT'}
             <DragAxisMark />
           </span>

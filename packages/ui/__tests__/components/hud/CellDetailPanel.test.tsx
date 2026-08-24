@@ -688,6 +688,9 @@ describe('CellDetailPanel', () => {
     const affordance = container.querySelector('[data-cell-scan-drag-affordance]');
     expect(affordance?.textContent).toBe('ORBIT');
     expect(affordance?.querySelector('[data-drag-axis-mark]')).not.toBeNull();
+    // The mark is hidden, so the gesture it used to spell has to be said in
+    // words somewhere a reader who cannot see it will meet them.
+    expect(affordance?.getAttribute('title')).toBe('Drag the specimen square to orbit it');
   });
 
   it('clusters indexed semantics by subject under their fact leads', () => {
