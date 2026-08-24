@@ -376,8 +376,8 @@ const CATEGORY_PALETTES: Readonly<Record<string, Readonly<Record<string, string>
  *  so they take the colour consensus already wears, and the byte bar's DATA
  *  segment joins them because a Cell's own bytes are the same kind of fact.
  *  `state` is the one place a semantic tone is still correct on these
- *  surfaces, and it is a branch in `selectedCellScanAccent` rather than a
- *  token, so it needs no row here.
+ *  surfaces, and it is a branch in `cellScanFactAccent` rather than a token,
+ *  so it needs no row here.
  *
  *  Each borrow costs two rows because `cyanWire` and `peerWire` are ~15 apart
  *  — the twin-mesh collapse the palette review filed as A2. Borrow one and you
@@ -657,11 +657,16 @@ describe('the hand-cut face', () => {
 // the promoted colour tokens make above, asked of every field of the token: a
 // field nobody reads by name is a guarantee nobody is keeping.
 
+/** The whole package, walked once. Two oracles down here need it: the chain
+ *  anchor's readers and the cell card's surfaces both straddle the canvas
+ *  boundary, so neither can be asked of the HUD directory alone. */
+const PACKAGE_SOURCES = readSources(SRC_DIR);
+
 /** The package minus the file that owns the value. "Outside the palette" is the
  *  whole claim, so the palette itself is not allowed to answer it — and the
  *  readers live on both sides of the canvas boundary, which is why this is the
  *  package rather than the HUD directory. */
-const ANCHOR_SOURCES = readSources(SRC_DIR)
+const ANCHOR_SOURCES = PACKAGE_SOURCES
   .filter((source) => source.name !== 'visualPalette.ts');
 
 /** Every name a file reads the anchor palette through: the token itself, plus
@@ -726,5 +731,124 @@ describe('the chain anchor palette', () => {
       .map((source) => `${source.name} → say CHAIN_ANCHOR_HEX.${field}`);
 
     expect(offenders).toEqual([]);
+  });
+});
+
+
+// ——— The cell card wears one colour —————————————————————————————————————
+//
+// The rose rebind was adjudicated at the running stage and is written down in
+// `hudTheme.ts`: the cell mesh wears the galaxy's rose on BOTH its surfaces and
+// cyan goes back to belonging to the peer plane. It shipped as a sweep over the
+// literal `cyanWire`, so it landed on everything that had been cyan — the plate
+// border, the card glow, the scan beam, the specimen sweep — and touched
+// nothing that had not. Three surfaces had not: the masthead was written chrome
+// orange before the rebind existed, the scene tether resolved its colour
+// through the asset table, and the portrait's backing plate lives in a file the
+// sweep never opened.
+//
+// So the card said "this is a Cell" in rose everywhere except the one line that
+// names the creature, the one line that ties the card to it, and the trailing
+// edge of its other half.
+//
+// `the two mesh identities are a pair` above was supposed to catch that. It
+// pins the VALUE, and the value never moved — which is exactly why three
+// surfaces could drift out from under it while it stayed green. These pin the
+// SURFACES, so a fourth one cannot be added in chrome or in the peer plane's
+// cyan.
+
+/** One identity surface of the cell dossier: the fragments it must speak, and
+ *  the ones it may not. `within` scopes the read to the surface's own JSX where
+ *  the file legitimately speaks other colours elsewhere — `CellDetailPanel`
+ *  prints its provenance affordances in chrome orange, and that is correct. */
+const CELL_CARD_SURFACES: ReadonlyArray<{
+  surface: string;
+  file: string;
+  within?: readonly [string, string];
+  /** Read RAW: the masthead's own text contains `//`, and stripping comments
+   *  would take the title with them. */
+  wears: readonly string[];
+  /** Read as CODE: a comment is allowed to say which colour this used to be. */
+  never: readonly string[];
+}> = [
+  {
+    surface: 'the masthead that names the specimen',
+    file: 'components/hud/CellDetailPanel.tsx',
+    within: ['data-cell-scan-identity', '<CloseButton'],
+    wears: [
+      'CELL // #{cell.id}',
+      '细胞',
+      'color: CELL_CARD_ACCENT, fontFamily: HUD_FONTS.display',
+      'color: CELL_CARD_ACCENT, fontFamily: HUD_FONTS.cjk',
+      'rgba(CELL_CARD_ACCENT, 0.45)',
+    ],
+    never: ['HUD_COLORS.orange', 'ORANGE', 'HUD_COLORS.cyanWire', 'CYAN', 'peerWire'],
+  },
+  {
+    surface: 'the tether back to the Cell on stage',
+    file: 'components/CellInspectionOverlay.tsx',
+    wears: [
+      'if (field === null) return CELL_CARD_ACCENT;',
+      'cellScanFactAccent(props.cell, field, props.semanticRecord)',
+      ': CELL_CARD_ACCENT;',
+    ],
+    never: ['HUD_COLORS.cyanWire', 'ASSET_COLORS', 'LOCK_COLORS', 'peerWire'],
+  },
+  {
+    surface: "the specimen column's backing plate",
+    file: 'components/hud/CellPortraitInset.tsx',
+    wears: ['drawPortraitPlateGradient(ctx, 256, 256, CELL_CARD_ACCENT)'],
+    never: ['HUD_COLORS.cyanWire', 'peerWire'],
+  },
+];
+
+/** The surface's own text, or the whole file when the surface IS the file. */
+function surfaceText(text: string, within?: readonly [string, string]): string {
+  if (!within) return text;
+  const start = text.indexOf(within[0]);
+  const end = text.indexOf(within[1], start);
+  expect(start, `no ${within[0]} to scope by`).toBeGreaterThan(-1);
+  expect(end, `no ${within[1]} after ${within[0]}`).toBeGreaterThan(start);
+  return text.slice(start, end);
+}
+
+describe('the cell card wears one colour', () => {
+  it.each(CELL_CARD_SURFACES)('$surface says CELL_CARD_ACCENT', ({ file, within, wears }) => {
+    const source = PACKAGE_SOURCES.find((entry) => entry.name === file);
+    expect(source, `${file} moved — this oracle reads files off disk`).toBeDefined();
+    const text = surfaceText(source?.text ?? '', within);
+
+    // Every fragment, not just one: the masthead is two spans and a glow, and
+    // the drift that started all this was one of three surfaces at a time.
+    expect(wears.filter((fragment) => !text.includes(fragment))).toEqual([]);
+  });
+
+  it.each(CELL_CARD_SURFACES)('$surface says nothing else', ({ file, within, never }) => {
+    const source = PACKAGE_SOURCES.find((entry) => entry.name === file);
+    const text = code(surfaceText(source?.text ?? '', within));
+
+    expect(never.filter((token) => text.includes(token)))
+      .toEqual([]);
+  });
+
+  it('the register and the tether read one table, in one file', () => {
+    // The other half of the same finding. `selectedCellScanAccent` used to keep
+    // its own copy of "what colour is this fact", and copies drift: COMMIT went
+    // orange on the tether and stayed cyan on its own button, for the one facet
+    // whose colour is a declared house exception. `cellScanFactAccent` is the
+    // table now, and the scene half asks it rather than answering itself.
+    const panel = PACKAGE_SOURCES.find(
+      (entry) => entry.name === 'components/hud/CellDetailPanel.tsx',
+    );
+    expect(code(panel?.text ?? '')).toContain('export function cellScanFactAccent(');
+
+    const holders = PACKAGE_SOURCES
+      .filter((entry) => code(entry.text).includes('cellScanFactAccent'))
+      .map((entry) => entry.name)
+      .sort();
+    expect(holders).toEqual([
+      'components/CellInspectionOverlay.tsx',
+      'components/hud/CellDetailPanel.tsx',
+    ]);
   });
 });

@@ -1,6 +1,6 @@
 import { cleanup, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Cell } from '@cknerv/types';
+import type { AssetKind, Cell, CellSemanticRecord, LockKind } from '@cknerv/types';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
@@ -9,6 +9,12 @@ import {
   selectedCellScanAccent,
   useCellInspectionDismiss,
 } from '../../src/components/CellInspectionOverlay';
+import {
+  cellScanFactAccent,
+  type CellInspectionFacet,
+} from '../../src/components/hud/CellDetailPanel';
+import { CONTENT_BANDS } from '../../src/components/hud/cellFormat';
+import { CELL_CARD_ACCENT, HUD_COLORS } from '../../src/components/hud/hudTheme';
 
 const INSPECTION_OVERLAY_SOURCE = readFileSync(resolve(
   process.cwd(),
@@ -183,6 +189,127 @@ describe('cellInspectorPlacement', () => {
     expect(INSPECTION_OVERLAY_SOURCE).not.toContain(
       'onClick={(event) => event.stopPropagation()}',
     );
+  });
+});
+
+// ——— The one line that says "this card is about that Cell" ————————————————
+//
+// The tether kept its own copy of the fact-colour table and a resting branch
+// that read the asset family. `asset_kind` is non-optional on the wire, so the
+// `CELL_CARD_ACCENT` fallback beside it never ran: a plain CKB Cell — the
+// commonest thing on the stage — tethered in `CONTENT_BANDS.consensus`, which
+// is the peer plane's cyan, and a cell whose type script the local table cannot
+// place tethered in `unlisted`, a near-black swatch that is invisible on the
+// stage and completely invisible over the galaxy.
+
+const FACETS: readonly CellInspectionFacet[] = [
+  'lock', 'asset', 'state', 'born', 'capacity', 'data',
+];
+const ASSET_KINDS: readonly AssetKind[] = [
+  'native', 'sudt', 'xudt', 'dao', 'spore', 'other', 'object', 'identity',
+];
+const LOCK_KINDS: readonly LockKind[] = [
+  'sighash', 'multisig', 'acp', 'omnilock', 'other',
+];
+
+/** WCAG contrast against the stage's black. The tether is two pixels of line
+ *  drawn straight onto it, so this is the only reading that says whether it
+ *  survives — `#33424F` is a fifth of the way up in raw channel values and a
+ *  twentieth of the way up in light. Written out here rather than imported:
+ *  an oracle that borrows the implementation's own arithmetic cannot catch the
+ *  implementation getting it wrong. */
+function stageContrast(hex: string): number {
+  const h = hex.replace('#', '');
+  const channel = (offset: number): number => {
+    const value = parseInt(h.slice(offset, offset + 2), 16) / 255;
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance = 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4);
+  return (luminance + 0.05) / 0.05;
+}
+
+/** A script the INDEX named, of a family the local table cannot place. */
+const namedUnlisted: CellSemanticRecord = {
+  out_point: selected.out_point,
+  source: 'test',
+  as_of: { block: 100, hash: `0x${'33'.repeat(32)}` },
+  observed_at_block: 100,
+  updated_at_ms: 0,
+  type_script: {
+    script_hash: `0x${'44'.repeat(32)}`,
+    code_hash: `0x${'55'.repeat(32)}`,
+    hash_type: 'type',
+    args: '0x',
+    name: 'Some Registry Script',
+  },
+  facets: [],
+};
+
+describe('the tether back to the Cell', () => {
+  it('says what the Cell IS while no fact is open, for every asset family', () => {
+    // Including `native`. A plain CKB cell used to resolve through the asset
+    // table into the consensus cyan, so opening the commonest cell on stage drew
+    // the tether in the colour that belongs to the peer plane.
+    for (const asset_kind of ASSET_KINDS) {
+      expect(selectedCellScanAccent({ cell: { ...selected, asset_kind } }, null))
+        .toBe(CELL_CARD_ACCENT);
+    }
+    expect(CELL_CARD_ACCENT).not.toBe(CONTENT_BANDS.consensus);
+  });
+
+  it('says the same thing about a fact as the fact says about itself', () => {
+    // One table, asked twice. The register's button and the tether are two
+    // surfaces of one selection: the copy that used to live out here is how
+    // COMMIT ended up orange on the line and cyan on the button.
+    for (const field of FACETS) {
+      const register = cellScanFactAccent(selected, field);
+      const tether = selectedCellScanAccent({ cell: selected }, field);
+      expect(tether).toBe(register);
+    }
+    // The declared house exception, kept: an anchor is a house fact, so both
+    // surfaces wear chrome.
+    expect(cellScanFactAccent(selected, 'born')).toBe(HUD_COLORS.orange);
+    expect(selectedCellScanAccent({ cell: selected }, 'born'))
+      .toBe(HUD_COLORS.orange);
+  });
+
+  it('reads a named script the way the register reads it', () => {
+    const cell: Cell = { ...selected, asset_kind: 'other' };
+
+    // Both through `scriptIdentityColor`: present, claiming no family colour it
+    // has not earned. The tether used to answer `unlisted` for this.
+    expect(cellScanFactAccent(cell, 'asset', namedUnlisted))
+      .toBe(HUD_COLORS.ink);
+    expect(selectedCellScanAccent(
+      { cell, semanticRecord: namedUnlisted },
+      'asset',
+    )).toBe(HUD_COLORS.ink);
+  });
+
+  it('can never draw itself invisible', () => {
+    // The whole branch space: every lock family, every asset family, both
+    // states, every facet plus the resting frame. `unlisted` sits at 2.0 against
+    // black and everything else clears 4.4, so a floor at 3 catches exactly the
+    // one that cannot be seen.
+    const dim: string[] = [];
+    for (const lock_kind of LOCK_KINDS) {
+      for (const asset_kind of ASSET_KINDS) {
+        for (const death_at_ms of [null, 1]) {
+          const cell: Cell = { ...selected, lock_kind, asset_kind, death_at_ms };
+          for (const field of [...FACETS, null]) {
+            const accent = selectedCellScanAccent({ cell }, field);
+            if (stageContrast(accent) < 3) {
+              dim.push(`${lock_kind}/${asset_kind}/${field} → ${accent}`);
+            }
+          }
+        }
+      }
+    }
+
+    expect(dim).toEqual([]);
+    // And the pin that makes the sweep mean something: the value it used to
+    // answer with really is below the floor.
+    expect(stageContrast(CONTENT_BANDS.unlisted)).toBeLessThan(3);
   });
 });
 

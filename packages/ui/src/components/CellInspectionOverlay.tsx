@@ -7,11 +7,11 @@ import {
 } from 'react';
 import type { Cell } from '@cknerv/types';
 import CellDetailPanel, {
+  cellScanFactAccent,
   type CellInspectionFacet,
   type CellDetailPanelProps,
 } from './hud/CellDetailPanel';
-import { ASSET_COLORS, LOCK_COLORS } from './hud/cellFormat';
-import { CELL_CARD_ACCENT, HUD_COLORS } from './hud/hudTheme';
+import { CELL_CARD_ACCENT } from './hud/hudTheme';
 import { useReducedMotion } from './hud/useReducedMotion';
 import {
   clearCellPortraitCardOrigin,
@@ -60,33 +60,55 @@ export function createCellInspectionHandles(): CellInspectionHandles {
   });
 }
 
+/** The stage is black and the tether is two pixels of line drawn on it, which
+ *  is a floor the register's text does not have: an unplaced script's band is
+ *  a near-black swatch — readable as a filled chip on a plate, invisible as a
+ *  hairline over the galaxy. 3:1 against the stage is the line; every colour a
+ *  facet can answer with clears 4.4:1 except that one, which sits at 2.0. */
+const TETHER_STAGE_CONTRAST_FLOOR = 3;
+
+/** WCAG relative luminance, which is the only reading that says whether a thin
+ *  line survives on black — `#33424F` is a fifth of the way up in raw channel
+ *  values and a twentieth of the way up in light. */
+function stageContrast(hex: string): number {
+  const h = hex.replace('#', '');
+  const channel = (offset: number): number => {
+    const value = parseInt(h.slice(offset, offset + 2), 16) / 255;
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance = 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4);
+  return (luminance + 0.05) / 0.05;
+}
+
 /** The colour the card frame and its connector take while one fact is open.
  *
- *  The rule, because it was being broken in three places at once: a semantic
- *  accent only when the fact IS a state. `state` is the whole of that — live
- *  or spent is a genuine state axis, so it keeps green and yellow and is the
- *  sanctioned exception. Everything else is content and draws from the content
- *  bands: `data` is knowledge, not health, so it wears the consensus cyan the
- *  DATA fact button and the DATA byte segment wear; lock and asset inherit
- *  their family colour from the re-cut tables. `born` stays chrome orange —
- *  an anchor is a house fact, and orange accent on orange chrome is the
- *  instrument's own colour rather than a borrow from anywhere. */
+ *  The rule is the one `CELL_CARD_ACCENT` is documented with, and both halves
+ *  of it had rotted. Nothing selected → the frame says what the thing IS, in
+ *  the organism's own rose; this used to answer with the asset family instead,
+ *  and since `asset_kind` is non-optional on the wire the rose branch never ran
+ *  — so a plain CKB Cell, the commonest thing on the stage, tethered in the
+ *  peer plane's cyan on the one line whose whole job is to say "this card is
+ *  about that Cell". A fact IS selected → that fact's colour wins, and it is
+ *  the SAME colour the fact's own button wears, because this asks
+ *  `cellScanFactAccent` rather than keeping a second copy of that table. The
+ *  copy is how COMMIT ended up orange out here and cyan in the register.
+ *
+ *  `born → orange` is the declared exception and it stays: an anchor is a house
+ *  fact, and chrome on chrome is the instrument's own colour rather than a
+ *  borrow from anywhere. The button moved to it, not the tether away from it.
+ *
+ *  It reads the record the register reads, so a script the index NAMED but the
+ *  local table cannot place says `ink` in both places instead of `ink` in one
+ *  and a near-black swatch in the other. */
 export function selectedCellScanAccent(
-  props: Pick<CellDetailPanelProps, 'cell'>,
+  props: Pick<CellDetailPanelProps, 'cell' | 'semanticRecord'>,
   field: CellInspectionFacet | null,
 ): string {
-  const { cell } = props;
-  if (field === 'lock' && cell.lock_kind) return LOCK_COLORS[cell.lock_kind];
-  if (field === 'asset' && cell.asset_kind) return ASSET_COLORS[cell.asset_kind];
-  if (field === 'data') return HUD_COLORS.cyanWire;
-  if (field === 'state') {
-    return cell.death_at_ms === null ? HUD_COLORS.nominal : HUD_COLORS.caution;
-  }
-  if (field === 'born') return HUD_COLORS.orange;
-  // Nothing selected and no asset family to speak for the Cell: the card falls
-  // back to saying what it IS rather than what it holds, so the frame and the
-  // tether take the organism's own colour (`CELL_CARD_ACCENT`).
-  return cell.asset_kind ? ASSET_COLORS[cell.asset_kind] : CELL_CARD_ACCENT;
+  if (field === null) return CELL_CARD_ACCENT;
+  const accent = cellScanFactAccent(props.cell, field, props.semanticRecord);
+  return stageContrast(accent) >= TETHER_STAGE_CONTRAST_FLOOR
+    ? accent
+    : CELL_CARD_ACCENT;
 }
 
 /** The braid inset draws inside the card, so the portrait channel needs the
@@ -156,7 +178,7 @@ export default function CellInspectionOverlay(props: CellInspectionOverlayProps)
   // Render-time write into the mutable channel: the anchor folds the accent
   // into its frame signature, so a focus change re-tints the connector on the
   // next frame without any React coupling between the two trees.
-  handles.accent = selectedCellScanAccent({ cell }, focusField);
+  handles.accent = selectedCellScanAccent(panelProps, focusField);
   const layoutSide = useSceneInspectionLayoutSide(handles);
   const handleInspectionFieldChange = useCallback((field: CellInspectionFacet | null) => {
     setFocusField(field);

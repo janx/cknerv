@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { HUD_COLORS } from './hudTheme';
+import { CELL_CARD_ACCENT } from './hudTheme';
 import { spatialPlateTail } from './primitives';
 import { useReducedMotion } from './useReducedMotion';
 import {
@@ -58,7 +58,13 @@ function makePlateMaterial(): THREE.MeshBasicMaterial {
   surface.width = 256;
   surface.height = 256;
   const ctx = surface.getContext('2d');
-  if (ctx) drawPortraitPlateGradient(ctx, 256, 256, HUD_COLORS.cyanWire);
+  // The specimen column and the analysis column are two halves of ONE card,
+  // eight pixels apart, and both tails are cut by `spatialPlateTail`. Painted
+  // in the card's own accent for that reason alone: this plate wore cyan back
+  // when the whole cell dialect did, and kept it through the rose rebind — so
+  // the braid's tail dimmed toward teal-black beside a plum-black analysis
+  // plate, which reads as two windows that happen to touch.
+  if (ctx) drawPortraitPlateGradient(ctx, 256, 256, CELL_CARD_ACCENT);
   const texture = new THREE.CanvasTexture(surface);
   texture.colorSpace = THREE.SRGBColorSpace;
   return new THREE.MeshBasicMaterial({

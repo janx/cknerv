@@ -202,9 +202,46 @@ const TRACE_CAPTION_RECALL = `${TRACE_CAPTION} · SELECT TO REPLAY ITS INPUTS`;
  *  above was true at. */
 const PROOF_CAPTION = 'ENRICHMENT ANCHOR · EVERY INDEXED FACT ABOVE IS AS OF THIS BLOCK';
 
+/** A register row's READING: the words, and the ink they are printed in. The
+ *  ink is optional because two facts are printed in body ink on purpose — see
+ *  `cellScanFactAccent`, which is where the row's FRAME colour comes from. */
 type RowDecode = { label: string; value: string; color?: string };
 export type CellInspectionFacet = ConsensusBraidField;
 export type CellDetailLayoutSide = 'left' | 'right' | 'above' | 'below';
+
+/** The colour ONE fact answers in — its rail, its selected wash, and the
+ *  scene tether the overlay draws while that fact is open. Exported because
+ *  the two surfaces live in two files, and they had drifted apart: the tether
+ *  kept its own copy of this table, so COMMIT lit an orange line beside a cyan
+ *  button and an unrecognized script drew a near-black tether beside an `ink`
+ *  row. One function, asked by both.
+ *
+ *  Separate from `RowDecode.color` because a frame and a reading are not the
+ *  same job. COMMIT is the case that proves it: the anchor is a house fact, so
+ *  its frame is the instrument's own orange — but a READING may never be
+ *  painted in chrome, so the block reference stays body ink until the fact is
+ *  selected. CAPACITY reads the same way, in the consensus cyan its bytes zone
+ *  is ruled with. */
+export function cellScanFactAccent(
+  cell: Cell,
+  field: CellInspectionFacet,
+  record?: CellSemanticRecord | null,
+): string {
+  switch (field) {
+    case 'lock':
+      return scriptIdentityColor(cell.lock_kind, LOCK_COLORS, record?.lock_script);
+    case 'asset':
+      return scriptIdentityColor(cell.asset_kind, ASSET_COLORS, record?.type_script);
+    case 'state':
+      return cell.death_at_ms === null ? HUD_COLORS.nominal : HUD_COLORS.caution;
+    case 'born':
+      return ORANGE;
+    // CAPACITY and DATA are both plain consensus content — what the chain says
+    // this output occupies and what it carries.
+    default:
+      return CYAN;
+  }
+}
 
 function clampUnit(value: number): number {
   if (!Number.isFinite(value)) return 1;
@@ -638,6 +675,11 @@ function GhostRows({ rows, captions = 0, accent }: {
 
 type CellScanFactProps = RowDecode & {
   field: CellInspectionFacet;
+  /** The fact's frame colour, from `cellScanFactAccent` — never defaulted
+   *  here. A local fallback is what let COMMIT sit in cyan while the tether it
+   *  is supposed to agree with went orange, for as long as nobody opened both
+   *  at once. */
+  accent: string;
   /** The walk step that lights this fact, 1-based in panel display order. */
   revealAt: number;
   selected: boolean;
@@ -651,6 +693,7 @@ const CellScanFact = memo(function CellScanFact({
   label,
   value,
   color,
+  accent,
   revealAt,
   selected,
   proof,
@@ -661,7 +704,6 @@ const CellScanFact = memo(function CellScanFact({
   // one of their two booleans.
   const revealed = useCellScanStepLit(revealAt);
   const interactive = useCellScanClassified();
-  const accent = color ?? HUD_COLORS.cyanWire;
   return (
     <button
       type="button"
@@ -1168,6 +1210,13 @@ export default function CellDetailPanel({
     scanClock.setSteps(revealSteps);
   }, [revealSteps, scanClock]);
 
+  // Four of the six print their reading in their own frame colour, so they say
+  // it once, through `cellScanFactAccent`. CAPACITY and COMMIT are the two that
+  // do not: bytes and a block height are house facts, and body ink is what a
+  // house fact reads in — see the note on that function.
+  const factAccent = (field: CellInspectionFacet): string => (
+    cellScanFactAccent(cell, field, presentedSemanticRecord)
+  );
   const DECODE: Record<CellInspectionFacet, RowDecode> = {
     capacity: { label: 'CAPACITY', value: formatCkb(cell.capacity) },
     asset: {
@@ -1176,11 +1225,7 @@ export default function CellDetailPanel({
         formatAssetKind(cell.asset_kind),
         presentedSemanticRecord?.type_script,
       ),
-      color: scriptIdentityColor(
-        cell.asset_kind,
-        ASSET_COLORS,
-        presentedSemanticRecord?.type_script,
-      ),
+      color: factAccent('asset'),
     },
     lock: {
       label: 'LOCK',
@@ -1188,11 +1233,7 @@ export default function CellDetailPanel({
         formatLockKind(cell.lock_kind),
         presentedSemanticRecord?.lock_script,
       ),
-      color: scriptIdentityColor(
-        cell.lock_kind,
-        LOCK_COLORS,
-        presentedSemanticRecord?.lock_script,
-      ),
+      color: factAccent('lock'),
     },
     // Content, not condition: what a Cell carries is knowledge, and knowledge
     // is cyan here — the same cyan the DATA byte segment and the open-DATA
@@ -1201,7 +1242,7 @@ export default function CellDetailPanel({
     data: {
       label: 'DATA',
       value: formatCellData(cell.data_bytes),
-      color: CYAN,
+      color: factAccent('data'),
     },
     // The masthead carries the indicator glyph; twinning it here printed the
     // same green `● LIVE` twice in one column. The register states the word,
@@ -1209,7 +1250,7 @@ export default function CellDetailPanel({
     state: {
       label: 'STATE',
       value: live ? 'LIVE' : 'SPENT',
-      color: live ? HUD_COLORS.nominal : HUD_COLORS.caution,
+      color: factAccent('state'),
     },
     born: { label: 'COMMIT', value: formatBlockRef(cell.birth_block) },
   };
@@ -1385,8 +1426,8 @@ export default function CellDetailPanel({
   const assetObject = semanticObjectReadout(presentedSemanticRecord);
   const lockScript = presentedSemanticRecord?.lock_script ?? null;
   const typeScript = presentedSemanticRecord?.type_script ?? null;
-  const lockAccent = DECODE.lock.color ?? CYAN;
-  const assetAccent = DECODE.asset.color ?? CYAN;
+  const lockAccent = factAccent('lock');
+  const assetAccent = factAccent('asset');
   // A record is on its way: hold the rows it will fill at their final height
   // so the arrival replaces ghosts instead of pushing the card down. When it
   // resolves — record, absence or failure — the reservation drops ONCE.
@@ -1435,6 +1476,7 @@ export default function CellDetailPanel({
       <CellScanFact
         field={field}
         {...DECODE[field]}
+        accent={factAccent(field)}
         revealAt={factRevealAt(field)}
         selected={field === selectedField}
         proof={proofKind
@@ -1539,16 +1581,21 @@ export default function CellDetailPanel({
           * above this one only repeated the subject in a taller frame. Two
           * lines: WHO the specimen is, then WHERE it lives and how far the
           * scan has read. The `CLOSE` affordance belongs to the titled plate,
-          * as it does in every other dialect. */}
+          * as it does in every other dialect — and, as in every other dialect,
+          * the title is spoken in the CARD's accent. It said `CELL // #id` in
+          * chrome orange for as long as the card was cyan and nobody could see
+          * the difference between a frame and a bracket; the rose rebind swept
+          * the cyan and left the orange behind, so the one line that names the
+          * creature was the only thing on the plate not painted in its blood. */}
         <div data-cell-scan-identity style={{ minWidth: 0, display: 'grid', gap: 1 }}>
           <div style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: '2px 8px', minWidth: 0, paddingRight: 20 }}>
-            <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.display, fontSize: HUD_TYPE.title, fontWeight: 600, letterSpacing: 1.6, textShadow: `0 0 9px ${rgba(HUD_COLORS.orange, 0.45)}` }}>
+            <span style={{ color: CELL_CARD_ACCENT, fontFamily: HUD_FONTS.display, fontSize: HUD_TYPE.title, fontWeight: 600, letterSpacing: 1.6, textShadow: `0 0 9px ${rgba(CELL_CARD_ACCENT, 0.45)}` }}>
               CELL // #{cell.id}
             </span>
             {/* The house CJK companion, as PEER wears 对端 and NODE wears 节点.
               * 细胞 is in the hand-subset woff2 (fonts/README.md) — deliberate
               * presence, where SightedNodeCard documents a deliberate absence. */}
-            <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: 0.72 }}>
+            <span style={{ color: CELL_CARD_ACCENT, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: 0.72 }}>
               细胞
             </span>
             <span style={{ marginLeft: 'auto', whiteSpace: 'nowrap', color: live ? HUD_COLORS.nominal : HUD_COLORS.caution, fontSize: HUD_TYPE.section, letterSpacing: 0.9 }}>

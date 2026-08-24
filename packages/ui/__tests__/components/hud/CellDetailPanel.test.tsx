@@ -43,7 +43,11 @@ vi.mock('../../../src/components/hud/CellNucleusPortrait', async () => {
   };
 });
 
-import CellDetailPanel from '../../../src/components/hud/CellDetailPanel';
+import CellDetailPanel, {
+  cellScanFactAccent,
+  type CellInspectionFacet,
+} from '../../../src/components/hud/CellDetailPanel';
+import { HUD_COLORS } from '../../../src/components/hud/hudTheme';
 
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
@@ -360,6 +364,38 @@ describe('CellDetailPanel', () => {
     expect(consensusRow.style.gridTemplateColumns).toBe('repeat(2, minmax(0, 1fr))');
     expect(consensusRow.querySelector('[data-cell-detail-field="state"]')).not.toBeNull();
     expect(consensusRow.querySelector('[data-cell-detail-field="born"]')).not.toBeNull();
+  });
+
+  it('lets every fact answer in the colour its tether takes', () => {
+    // COMMIT was the one that did not. Its rail and its label fell through
+    // `CellScanFact`'s own cyan default while the scene tether went chrome
+    // orange for the same selection, so "the selected fact's colour wins"
+    // pointed two ways for the one facet whose colour is a declared house
+    // exception. One table answers both now, and this asks the rendered button
+    // whether it is reading from it — a local default here is invisible from
+    // the tether's side, which is how the split survived.
+    const { container } = render(<CellDetailPanel cell={base} onClose={() => {}} />);
+    const rgb = (hex: string): string => {
+      const h = hex.replace('#', '');
+      return `rgb(${[0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)).join(', ')})`;
+    };
+    const facets: readonly CellInspectionFacet[] = [
+      'lock', 'asset', 'state', 'born', 'capacity', 'data',
+    ];
+
+    const painted = facets.map((field) => {
+      const button = container.querySelector(
+        `[data-cell-detail-field="${field}"]`,
+      ) as HTMLElement;
+      return `${field} ${button.style.color}`;
+    });
+
+    expect(painted).toEqual(facets.map(
+      (field) => `${field} ${rgb(cellScanFactAccent(base, field))}`,
+    ));
+    // The exception, spelled out where a reader will meet it: an anchor is a
+    // house fact, so COMMIT answers in the instrument's own orange.
+    expect(cellScanFactAccent(base, 'born')).toBe(HUD_COLORS.orange);
   });
 
   it('lights the facts top-down through the merged layout, capacity no longer first', () => {
