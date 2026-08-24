@@ -1656,7 +1656,7 @@ describe('a rate the organism is spending is only ever a reading', () => {
   it('nothing in the HUD frames itself in a metabolic tone', () => {
     const offenders = INK_SOURCES
       .filter((source) => !isPaletteSource(source.name))
-      .flatMap((source) => framesIn(code(inkText(source)))
+      .flatMap((source) => framesIn(inkText(source))
         .map((hit) => `${source.name}: ${hit} — ember reads, it never frames`));
 
     expect(offenders).toEqual([]);
