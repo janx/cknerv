@@ -1,14 +1,19 @@
 // One emitFabric can reach the lifecycle colour buffer twice: the recall
-// aperture bakes its dim into the colour records' .w lanes and marks the whole
-// populated prefix, and the event flush marks the handful of slots an
-// admit/kill/revival rewrote. Both paths clear before they mark, so whoever
-// runs last decides what the renderer actually uploads — and a block's churn
-// burst arriving mid-recall is the ordinary case, not a corner.
+// aperture bakes its dim into the colour records' .w lanes, and the event flush
+// marks the handful of slots an admit/kill/revival rewrote. Both paths clear
+// before they mark, so whoever runs last decides what the renderer actually
+// uploads — and a block's churn burst arriving mid-recall is the ordinary case,
+// not a corner.
 //
-// The constraint these tests pin: the aperture's prefix is a SUPERSET of every
-// slot's colour range, so on a collision frame the surviving colour ranges must
-// be the prefix, while curve and scalar keep their slot ranges. Single-path
-// frames must look exactly as they always did.
+// The constraint these tests pin: the bake's mark set COVERS every slot the
+// flush would have marked — the whole populated prefix when the bake writes the
+// flat baseline back over everything, otherwise the ranges it rewrote with the
+// flush's own slots folded in — while curve and scalar keep their slot ranges.
+// Single-path frames must look exactly as they always did.
+//
+// And what it must NOT be is the whole prefix on every frame of a hold: a recall
+// dims a bounded disc for 2-5 s, and the slots outside it hold the same 1.0 the
+// GPU already has.
 //
 // The component is Canvas-bound only through `useFrame`/`useThree` (the
 // fabricChurnLifecycle precedent), and the passive fabric is the only layer
@@ -491,6 +496,73 @@ describe('recall aperture bake — what a still frame owes', () => {
     handles.emitFabric(47.1);
     expect(buffers.color.updateRanges).toEqual([]);
     expect(fabricStats.uploadedBytes).toBe(uploaded);
+  });
+
+  it('a dimming frame uploads the box neighbourhood, not the colour prefix', () => {
+    const handles = mountFabric();
+    handles.setFabric(SPAN_GRAPH, SPAN_CELLS, 40);
+    handles.emitFabric(40);
+    const buffers = lifecycleBuffers();
+    consumeUploads(buffers);
+
+    // A window the frame clock is INSIDE: the dim is moving, so the bake has
+    // to run — and this is the whole 2-5 s of a recall, not a corner.
+    const far = straightAperture(890, 910, 39, 60);
+    handles.setRecallAperture(far.field, 1, null, 0);
+    handles.emitFabric(41);
+
+    expect(slotRanges(buffers.color, FABRIC_LIFE_COLOR_STRIDE))
+      .toEqual([{ start: FAR_SLOT, count: 1 }]);
+    expect(Math.max(...apertureLanes(buffers, FAR_SLOT))).toBeLessThan(1);
+    expect(apertureLanes(buffers, NEAR_SLOT)).toEqual(BASELINE_LANES);
+  });
+
+  it('a slot the aperture moves off is uploaded back, once', () => {
+    const handles = mountFabric();
+    handles.setFabric(SPAN_GRAPH, SPAN_CELLS, 40);
+    handles.emitFabric(40);
+    const buffers = lifecycleBuffers();
+    consumeUploads(buffers);
+
+    handles.setRecallAperture(straightAperture(890, 910, 39, 60).field, 1, null, 0);
+    handles.emitFabric(41);
+    consumeUploads(buffers);
+
+    // The recall jumps to the other end of the galaxy. The far slot is out of
+    // the new box entirely, so nothing about THIS frame's geometry would send
+    // it — only the memory that the last bake dimmed it.
+    handles.setRecallAperture(straightAperture(0, 20, 39, 60).field, 1, null, 0);
+    handles.emitFabric(41.1);
+    expect(slotRanges(buffers.color, FABRIC_LIFE_COLOR_STRIDE))
+      .toEqual([{ start: NEAR_SLOT, count: 2 }]);
+    expect(apertureLanes(buffers, FAR_SLOT)).toEqual(BASELINE_LANES);
+    consumeUploads(buffers);
+
+    // Once given back, it stays given back: the range narrows to the box.
+    handles.emitFabric(41.2);
+    expect(slotRanges(buffers.color, FABRIC_LIFE_COLOR_STRIDE))
+      .toEqual([{ start: NEAR_SLOT, count: 1 }]);
+  });
+
+  it('a dimming bake carries the flush colour slots inside its own ranges', () => {
+    const handles = mountFabric();
+    handles.setFabric(SPAN_GRAPH, SPAN_CELLS, 40);
+    handles.emitFabric(40);
+    const buffers = lifecycleBuffers();
+    consumeUploads(buffers);
+
+    // The recall reaches only the far slot; the churn is on the near one. Two
+    // disjoint claims on one buffer — the bake owns it, so it must carry both.
+    handles.setRecallAperture(straightAperture(890, 910, 39, 60).field, 1, null, 0);
+    handles.killEdges([fabricEdgeKey(1, 2)], 41, 'gc');
+    handles.emitFabric(41);
+
+    expect(slotRanges(buffers.color, FABRIC_LIFE_COLOR_STRIDE))
+      .toEqual([{ start: NEAR_SLOT, count: 2 }]);
+    expect(slotRanges(buffers.curve, FABRIC_LIFE_CURVE_STRIDE))
+      .toEqual([{ start: NEAR_SLOT, count: 1 }]);
+    expect(slotRanges(buffers.scalar, FABRIC_LIFE_SCALAR_STRIDE))
+      .toEqual([{ start: NEAR_SLOT, count: 1 }]);
   });
 
   it('only slots the aperture can reach are sampled; the rest go to baseline', () => {

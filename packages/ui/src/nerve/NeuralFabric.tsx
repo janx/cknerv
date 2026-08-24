@@ -913,33 +913,6 @@ export function commitLayer(
   layer.geometry.instanceCount = layer.count;
 }
 
-/** Upload only the given SEGMENT ranges (positions + colours). The
- * incremental animating-edge path rewrites fixed slots in place, so the
- * populated prefix and instanceCount are unchanged. */
-function commitFabricSlotRanges(
-  layer: FatLineLayer,
-  ranges: readonly FabricSlotRange[],
-): void {
-  if (ranges.length === 0) return;
-  layer.posBuf.clearUpdateRanges();
-  layer.colBuf.clearUpdateRanges();
-  let rangeSegments = 0;
-  for (const range of ranges) {
-    rangeSegments += range.count;
-    layer.posBuf.addUpdateRange(range.start * 6, range.count * 6);
-    layer.colBuf.addUpdateRange(range.start * 6, range.count * 6);
-  }
-  layer.posBuf.needsUpdate = true;
-  layer.colBuf.needsUpdate = true;
-  layer.geometry.instanceCount = layer.count;
-  // This path serves only the passive fabric layer; its upload volume is
-  // the number the range-governance and cohort staggering exist to bound.
-  fabricStats.observeUpload(fabricUploadBytes(rangeSegments, {
-    positions: true,
-    colors: true,
-  }));
-}
-
 /** Static-record bytes per segment across the four lifecycle buffers. */
 const FABRIC_LIFECYCLE_BYTES_PER_SEGMENT = 4 * (
   FABRIC_LIFE_CURVE_STRIDE
@@ -958,20 +931,21 @@ const FABRIC_LIFECYCLE_CURVE_SCALAR_BYTES_PER_SEGMENT = 4 * (
  * colors, scalars — aperture has its own recall-window writer). Event-driven:
  * runs when an admit/kill/revival wrote slots, never per animated frame.
  *
- * `colorPrefixMarked` says the aperture bake already claimed the colour
- * buffer this frame. Its range is the WHOLE populated prefix — a superset of
- * every slot range here — so this pass leaves that buffer alone rather than
- * clearing a wider upload than it can re-mark. Each buffer is still
- * cleared-and-marked exactly once per frame; on those frames the colour half
- * simply belongs to the aperture. */
+ * `colorClaimedByAperture` says the aperture bake already claimed the colour
+ * buffer this frame. Its mark set covers every slot range here — either the
+ * whole populated prefix, or ranges the bake merged THESE slots into before
+ * marking — so this pass leaves that buffer alone rather than clearing a
+ * wider upload than it can re-mark. Each buffer is still cleared-and-marked
+ * exactly once per frame; on those frames the colour half simply belongs to
+ * the aperture. */
 function commitFabricLifecycleSlotRanges(
   layer: FatLineLayer,
   ranges: readonly FabricSlotRange[],
-  colorPrefixMarked = false,
+  colorClaimedByAperture = false,
 ): void {
   const lifecycle = layer.lifecycle;
   if (!lifecycle || ranges.length === 0) return;
-  const colorBuf = colorPrefixMarked ? null : lifecycle.colorBuf;
+  const colorBuf = colorClaimedByAperture ? null : lifecycle.colorBuf;
   lifecycle.curveBuf.clearUpdateRanges();
   colorBuf?.clearUpdateRanges();
   lifecycle.scalarBuf.clearUpdateRanges();
@@ -997,7 +971,7 @@ function commitFabricLifecycleSlotRanges(
   lifecycle.scalarBuf.needsUpdate = true;
   layer.geometry.instanceCount = layer.count;
   fabricStats.observeUpload(
-    rangeSegments * (colorPrefixMarked
+    rangeSegments * (colorClaimedByAperture
       ? FABRIC_LIFECYCLE_CURVE_SCALAR_BYTES_PER_SEGMENT
       : FABRIC_LIFECYCLE_BYTES_PER_SEGMENT),
   );
@@ -1026,15 +1000,41 @@ function commitFabricLifecycleFull(layer: FatLineLayer): void {
   );
 }
 
-/** Aperture-window upload: recall dims live in the color records' .w lanes,
- * so a recall frame re-uploads the populated color prefix (8 floats per
- * segment — bounded to the interaction window).
+/** Aperture-window upload: recall dims live in the color records' .w lanes
+ * (8 floats per segment), so an aperture frame is a colour-only upload.
  *
- * Returns whether the colour prefix is now marked, i.e. whether this frame's
- * later commits must keep their hands off that buffer. */
-function commitFabricApertureLanes(layer: FatLineLayer): boolean {
+ * `ranges` are the SEGMENT ranges the bake actually rewrote — the slots the
+ * union box reaches, plus the slots the previous bake dimmed, plus any slot
+ * this frame's event flush wrote, which together are the only ones whose
+ * lanes can differ from what the GPU already holds. Omitting them uploads the
+ * whole populated prefix, which is what the flat-baseline restore that ends a
+ * recall needs: it writes every slot, so it must reach every slot.
+ *
+ * Returns whether the colour buffer is now marked, i.e. whether this frame's
+ * later commits must keep their hands off it. */
+function commitFabricApertureLanes(
+  layer: FatLineLayer,
+  ranges?: readonly FabricSlotRange[],
+): boolean {
   const lifecycle = layer.lifecycle;
   if (!lifecycle) return false;
+  if (ranges) {
+    // Nothing rewritten: claim nothing, so the event flush owns the colour
+    // buffer exactly as on a frame with no recall at all.
+    if (ranges.length === 0) return false;
+    lifecycle.colorBuf.clearUpdateRanges();
+    let rangeSegments = 0;
+    for (const range of ranges) {
+      rangeSegments += range.count;
+      lifecycle.colorBuf.addUpdateRange(
+        range.start * FABRIC_LIFE_COLOR_STRIDE,
+        range.count * FABRIC_LIFE_COLOR_STRIDE,
+      );
+    }
+    lifecycle.colorBuf.needsUpdate = true;
+    fabricStats.observeUpload(rangeSegments * 4 * FABRIC_LIFE_COLOR_STRIDE);
+    return true;
+  }
   lifecycle.colorBuf.clearUpdateRanges();
   let marked = false;
   if (layer.count > 0) {
@@ -1218,6 +1218,12 @@ export default function NeuralFabric({
     departingStrength: 0,
     dimmed: false,
   });
+  /** Slots the previous bake actually dimmed. A slot outside the union box
+   *  holds the flat baseline, so only these can need writing BACK — which is
+   *  what lets a dimming frame upload the box's neighbourhood instead of the
+   *  whole colour prefix. Persistent like `apertureBakedRef`: the effect
+   *  below is rebuilt on a quality change while the buffers are not. */
+  const apertureDimmedSlotsRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     fabric.material.resolution.set(size.width, size.height);
@@ -1267,6 +1273,10 @@ export default function NeuralFabric({
     const lifecycleArrays = fabric.lifecycle!.arrays;
     /** Slots whose static record changed since the last emit → ranged upload. */
     const lifeDirtySlots: number[] = [];
+    /** One bake's outputs: the slots whose aperture lanes it rewrote, and the
+     * subset it left dimmed. Reused across frames like the scratch buffers. */
+    const apertureDirtySlots: number[] = [];
+    const apertureDimmedNow: number[] = [];
     /** One warm walk's surviving members and their render state, so the
      * presentation pass never re-derives what the bookkeeping pass read. */
     const warmDrawKeys: string[] = [];
@@ -2016,12 +2026,14 @@ export default function NeuralFabric({
           && baked.departingStrength === recallAperture.departingStrength;
         /** The colour buffer is the one lane two commits can reach in a single
          *  frame: the bake below and the event flush further down. The bake
-         *  goes first and marks the whole populated prefix, so it takes
-         *  ownership for the rest of the frame — a recall holding through a
-         *  block's admit/kill burst is the ordinary case, not a corner. A
-         *  frame that skips the bake claims nothing, and the flush owns the
-         *  colour buffer again exactly as on any non-recall frame. */
-        let apertureMarkedColorPrefix = false;
+         *  goes first, and whatever it marks it owns for the rest of the frame
+         *  — a recall holding through a block's admit/kill burst is the
+         *  ordinary case, not a corner, so a dimming bake folds the flush's own
+         *  slots into its ranges rather than leaving two mark sets on one
+         *  buffer. A frame that skips the bake, or that rewrites nothing,
+         *  claims nothing, and the flush owns the colour buffer again exactly
+         *  as on any non-recall frame. */
+        let apertureClaimedColorBuffer = false;
         if (
           (apertureActive || apertureAnimationRef.current)
           && !apertureBakeSettled
@@ -2029,12 +2041,19 @@ export default function NeuralFabric({
           const colorArray = lifecycleArrays.color;
           const slots = slotByKeyRef.current;
           const apertureStates = edgeStatesRef.current;
+          const dimmedSlots = apertureDimmedSlotsRef.current;
+          // A bake that CANNOT dim is the flat-baseline restore: it writes
+          // every slot and uploads the whole prefix, once, and settles.
+          // A bake that can dim writes and uploads only the slots whose lanes
+          // can differ from the GPU's — the union box's neighbourhood, plus
+          // whatever the last bake dimmed and must now give back.
+          const rangedBake = apertureDimming;
+          apertureDirtySlots.length = 0;
+          apertureDimmedNow.length = 0;
           // The dim is a bounded disc around one route inside a field ~4×
           // wider, so most edges cannot be touched at any distance. Union the
           // live fields' reach once, then reject a whole curve on four
-          // compares. Rejected curves still WRITE the 1.0 baseline: that —
-          // not skipping them — is what restores a slot the aperture has
-          // shrunk or moved away from, with no per-slot history to keep.
+          // compares.
           let boxMinX = Infinity;
           let boxMaxX = -Infinity;
           let boxMinZ = Infinity;
@@ -2078,9 +2097,15 @@ export default function NeuralFabric({
             const curveMaxZ = Math.max(st.fromZ, st.ctrlZ, st.toZ);
             const reaches = curveMaxX >= boxMinX && curveMinX <= boxMaxX
               && curveMaxZ >= boxMinZ && curveMinZ <= boxMaxZ;
+            const wasDimmed = dimmedSlots.has(slot);
+            // Out of reach and undimmed last frame: this slot already holds
+            // the baseline in both the array and the buffer. Writing it would
+            // change nothing and uploading it would say nothing.
+            if (rangedBake && !reaches && !wasDimmed) continue;
             let prevScale = reaches
               ? recallApertureScaleAt(recallAperture, st.fromX, st.fromZ, 0, now)
               : 1;
+            let dimmed = prevScale < 1;
             for (let seg = 0; seg < FABRIC_SLOT_SEGMENTS; seg += 1) {
               let endScale = 1;
               if (reaches) {
@@ -2094,15 +2119,34 @@ export default function NeuralFabric({
                 endScale = recallApertureScaleAt(
                   recallAperture, sample[0], sample[2], 0, now,
                 );
+                if (endScale < 1) dimmed = true;
               }
               const offset = (baseSegment + seg) * FABRIC_LIFE_COLOR_STRIDE;
               colorArray[offset + FABRIC_LIFE_APERTURE_START_OFFSET] = prevScale;
               colorArray[offset + FABRIC_LIFE_APERTURE_END_OFFSET] = endScale;
               prevScale = endScale;
             }
+            if (dimmed) apertureDimmedNow.push(slot);
+            // A reached slot that came out flat, and was flat before, wrote
+            // the baseline over the baseline — no upload owed.
+            if (rangedBake && (dimmed || wasDimmed)) apertureDirtySlots.push(slot);
           }
+          dimmedSlots.clear();
+          for (const slot of apertureDimmedNow) dimmedSlots.add(slot);
           fabric.count = usedSlotCountRef.current * FABRIC_SLOT_SEGMENTS;
-          apertureMarkedColorPrefix = commitFabricApertureLanes(fabric);
+          apertureClaimedColorBuffer = rangedBake
+            ? commitFabricApertureLanes(
+              fabric,
+              // The event flush marks curve and scalar at slot resolution and
+              // would mark colour there too; folding its slots in here is what
+              // keeps the colour buffer to ONE mark set for the frame.
+              mergeFabricSlotRanges(
+                lifeDirtySlots.length > 0
+                  ? apertureDirtySlots.concat(lifeDirtySlots)
+                  : apertureDirtySlots,
+              ),
+            )
+            : commitFabricApertureLanes(fabric);
           baked.active = recallAperture.active;
           baked.activeStrength = recallAperture.activeStrength;
           baked.departing = recallAperture.departing;
@@ -2238,7 +2282,7 @@ export default function NeuralFabric({
             commitFabricLifecycleSlotRanges(
               fabric,
               mergeFabricSlotRanges(lifeDirtySlots),
-              apertureMarkedColorPrefix,
+              apertureClaimedColorBuffer,
             );
             fabricStats.observeIncrementalFrame(lifeDirtySlots.length, 0);
             lifeDirtySlots.length = 0;
@@ -2321,6 +2365,11 @@ export default function NeuralFabric({
           );
         }
         renderOrderTombstonesRef.current = 0;
+        // Every surviving slot was just rewritten from its record, whose
+        // aperture lanes are the 1.0 baseline, and the whole prefix goes up
+        // below — so nothing this walk leaves behind is dimmed, whatever the
+        // same frame's bake wrote into the layout it replaced.
+        apertureDimmedSlotsRef.current.clear();
 
         commitFabricLifecycleFull(fabric);
         globalRepaintRef.current = false;

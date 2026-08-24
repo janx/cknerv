@@ -370,10 +370,10 @@ describe('NeuralFabric oversized-diff cohort staggering', () => {
   it('meters passive-fabric uploads through fabricUploadBytes', () => {
     expect(SRC).toContain('fabricUploadBytes');
     const observeCalls = SRC.match(/fabricStats\.observeUpload\(/g) ?? [];
-    // Legacy slot ranges (test surface), the three lifecycle commits (event
-    // ranges, full population, aperture prefix), and the warm-route overlay —
-    // the fabric family's largest steady-state uploader, and for a long time
-    // the only one RENDER STATS·08 could not see.
+    // The two lifecycle record commits (event ranges, full population), the
+    // aperture bake's two shapes (ranged, whole prefix), and the warm-route
+    // overlay — the fabric family's largest steady-state uploader, and for a
+    // long time the only one RENDER STATS·08 could not see.
     expect(observeCalls.length).toBe(5);
   });
 });
