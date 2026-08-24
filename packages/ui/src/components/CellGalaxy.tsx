@@ -24,6 +24,8 @@ import {
 } from '../geometry/cellPositions';
 import {
   cellRenderOverlay,
+  cellRenderOverlayChanged,
+  cellRenderSetChanged,
   createCellRenderSetState,
   diffCellRenderSlots,
   resolveStagedCell,
@@ -1381,6 +1383,10 @@ function CellGalaxy({
   /** Stable GPU slot assignment over the staged + overlay + exit-hold
    * membership. */
   const cellSlotStateRef = useRef(createCellSlotState());
+  /** Bumped only when the slot sync reports the drawn cells MOVED. Published
+   * beside `cellsListRef` in the same synchronous block, so a reader that
+   * takes both takes one consistent generation of them. */
+  const cellFieldVersionRef = useRef(0);
   /** Unchanged immutable Cell objects retain their expensive hash/taxonomy
    * presentation even when GC moves them to a different visible slot. */
   const cellBufferPresentationCacheRef = useRef(
@@ -1687,8 +1693,15 @@ function CellGalaxy({
     // AFTER the staged list, resolved canonical-first. Recomputed only when
     // the staged list or the selection inputs move.
     const overlayState = overlayStateRef.current;
+    // The staged list is copy-on-write, so a delta whose display journal
+    // touched nothing on stage — an off-stage record, an enrichment refresh —
+    // republishes the same array. Resolving the overlay against it stays
+    // O(1) and runs on every delta; walking the drawn list does not, and
+    // takes this as its precondition.
+    const stagedChanged = cellRenderSetChanged(renderUpdate);
     const overlayNeedsSync = renderUpdate !== null
       || overlayState.selectedCellId !== selectedCellIdRef.current;
+    let overlayChanged = false;
     if (overlayNeedsSync) {
       const overlay = cellRenderOverlay(
         cellsCache,
@@ -1701,25 +1714,31 @@ function CellGalaxy({
       // Clamp defensively so a manual full-capacity clamp can never push
       // the combined list past the allocation.
       const capacityLeft = INSTANCE_CAPACITY - renderSet.cells.length;
-      overlayState.entries = overlay.length > capacityLeft
+      const entries = overlay.length > capacityLeft
         ? overlay.slice(0, Math.max(0, capacityLeft))
         : overlay;
-      overlayState.ids = overlayState.entries.length === 0
-        ? null
-        : new Set(overlayState.entries.map((cell) => cell.id));
+      overlayChanged = cellRenderOverlayChanged(overlayState.entries, entries);
+      overlayState.entries = entries;
+      if (overlayChanged) {
+        overlayState.ids = entries.length === 0
+          ? null
+          : new Set(entries.map((cell) => cell.id));
+      }
     }
     // Stage lifecycle: a departure keeps its slot until its fade ends, so the
     // drawn list is staged + overlay + exit holds. Reaping is one comparison
     // against the time-ordered head, cheap enough to run every frame.
     const lifecycle = cellLifecycleRef.current;
     const holdsReaped = reapCellExitHolds(lifecycle, now);
+    let holdsChanged = holdsReaped > 0;
     const overlayIds = overlayState.ids;
     let exitStampIds: readonly number[] = EMPTY_CELL_ID_LIST;
     // A selection can land on a cell that is still fading out, with no
     // journal patch behind it — so this runs on any overlay movement, not
     // only on membership churn: the hold has to end before the overlay draws
-    // the same cell a second time.
-    if (overlayNeedsSync) {
+    // the same cell a second time. Nothing else can start or cancel a fade:
+    // holds are born from `exited` and die from an overlay pickup.
+    if (overlayChanged || (renderUpdate?.membershipChanged ?? false)) {
       const slotState = cellSlotStateRef.current;
       const stampSync = syncCellLifecycleStamps(lifecycle, {
         entered: renderUpdate?.entered ?? EMPTY_CELL_ID_LIST,
@@ -1747,17 +1766,23 @@ function CellGalaxy({
           : (id) => overlayIds.has(id),
       });
       exitStampIds = stampSync.exitStampIds;
+      if (stampSync.held > 0 || stampSync.cancelled > 0) holdsChanged = true;
       pruneCellEnterStamps(lifecycle, now, ENTER_FADE_MS / 1000);
     }
     if (cellsMapChanged) {
       // A death landing mid-fade has to reach the buffers: the withering
       // clock is written from the record, so the held record must keep up.
-      refreshCellExitHolds(
+      const refreshed = refreshCellExitHolds(
         lifecycle,
         (id) => resolveStagedCell(cellsCache, id) ?? null,
       );
+      if (refreshed > 0) holdsChanged = true;
     }
-    const membershipNeedsSync = overlayNeedsSync || holdsReaped > 0;
+    // The three segments of the drawn list, each with its own precondition:
+    // a slot sync that runs for a list none of them moved spends 12K lookups
+    // to conclude exactly that. Reaping is frame-driven and is the one thing
+    // that re-syncs the slots with no journal patch behind it.
+    const membershipNeedsSync = stagedChanged || overlayChanged || holdsChanged;
     if (membershipNeedsSync) {
       const staged = renderSet.cells;
       const overlayEntries = overlayState.entries;
@@ -1781,6 +1806,7 @@ function CellGalaxy({
     const drawCountChanged = count !== drawCountRef.current;
     cellsListRef.current = cellsList;
     drawCountRef.current = count;
+    if (slotSync?.positionsChanged) cellFieldVersionRef.current += 1;
     const flashMap = cellFlashRef.current;
     // Exit stamps land on slots whose occupant did not change, so this is the
     // one upload the membership ranges above cannot express. Merge both
@@ -2131,6 +2157,8 @@ function CellGalaxy({
           <CellNucleus
             cellsListRef={cellsListRef}
             drawCountRef={drawCountRef}
+            visibleIndexByCell={cellSlotStateRef.current.slotOf}
+            fieldVersionRef={cellFieldVersionRef}
             groupRef={groupRef}
             detailAttr={cellDetailAttr}
             detailPickEpoch={cellDetailPickEpoch}

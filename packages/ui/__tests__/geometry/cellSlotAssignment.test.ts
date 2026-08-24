@@ -202,4 +202,35 @@ describe('syncCellSlots', () => {
       }
     }
   });
+
+  it('separates a payload replacement from a relocation', () => {
+    const state = createCellSlotState();
+    const list = [cell(1), cell(2), cell(3)];
+    expect(syncCellSlots(state, list).positionsChanged).toBe(true);
+
+    // A tag, a death, an enrichment refresh: a new record in the same place.
+    // The slots dirty and upload; nothing that depends on WHERE the drawn
+    // cells are has to be recomputed.
+    const tagged = [list[0], cell(2, 'dex'), list[2]];
+    const payload = syncCellSlots(state, tagged);
+    expect(payload.ranges).toEqual([{ start: 1, count: 1 }]);
+    expect(payload.membershipChanged).toBe(false);
+    expect(payload.positionsChanged).toBe(false);
+
+    // A replacement that carries a different pos_seed IS a relocation, even
+    // though the id kept its slot.
+    const moved = { ...tagged[1], pos_seed: [9, 9, 9] as [number, number, number] };
+    expect(syncCellSlots(state, [tagged[0], moved, tagged[2]]).positionsChanged)
+      .toBe(true);
+
+    // And so is a departure, which hands the slot to somebody else.
+    const departed = syncCellSlots(state, [tagged[0], tagged[2]]);
+    expect(departed.membershipChanged).toBe(true);
+    expect(departed.positionsChanged).toBe(true);
+
+    // A sync that changes nothing reports nothing.
+    const resting = syncCellSlots(state, [tagged[0], tagged[2]]);
+    expect(resting.ranges).toEqual([]);
+    expect(resting.positionsChanged).toBe(false);
+  });
 });

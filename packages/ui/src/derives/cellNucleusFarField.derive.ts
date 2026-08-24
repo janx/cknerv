@@ -14,12 +14,15 @@ export interface CellFieldBoundsSource {
   readonly pos_seed: readonly [number, number, number];
 }
 
-/** Bounding sphere over the drawn Cell prefix, cached by cells-list identity
- * plus draw count — exactly the pair the nucleus frame loop already treats as
- * its render-set change signal (`renderCellsChanged`), so this cache can
- * never be staler than the loop's own bookkeeping. */
+/** Bounding sphere over the drawn Cell prefix, cached by the slot layer's
+ * position version plus draw count. The list republishes for any payload
+ * change — a tag, a death, an enrichment refresh — while the sphere depends
+ * on WHERE the drawn cells are and nothing else, so list identity would pay
+ * a full rescan per delta for an answer that cannot have moved. */
 export interface CellFieldBoundsCache {
-  cells: readonly CellFieldBoundsSource[] | null;
+  /** Position version this sphere was measured at; -1 before the first
+   * scan, which no version can equal. */
+  version: number;
   count: number;
   centerX: number;
   centerY: number;
@@ -31,7 +34,7 @@ export interface CellFieldBoundsCache {
 
 export function makeCellFieldBoundsCache(): CellFieldBoundsCache {
   return {
-    cells: null,
+    version: -1,
     count: -1,
     centerX: 0,
     centerY: 0,
@@ -40,23 +43,25 @@ export function makeCellFieldBoundsCache(): CellFieldBoundsCache {
   };
 }
 
-/** Refresh the cached bounding sphere when the (list identity, draw count)
- * key moves; otherwise return the cache untouched. The rescan is O(count)
- * but runs only when the render set itself changes (block arrival, resync),
- * never on steady LOD ticks. Two passes keep the sphere tight: axis-aligned
- * box first, then the exact max distance from the box centre, so a compact
- * field does not forfeit skips to a loose radius. */
+/** Refresh the cached bounding sphere when the (position version, draw
+ * count) key moves; otherwise return the cache untouched. The rescan is
+ * O(count) but runs only when the drawn cells actually move (membership
+ * churn, resync), never on steady LOD ticks and never for a payload delta.
+ * Two passes keep the sphere tight: axis-aligned box first, then the exact
+ * max distance from the box centre, so a compact field does not forfeit
+ * skips to a loose radius. */
 export function ensureCellFieldBounds(
   cache: CellFieldBoundsCache,
   cells: readonly CellFieldBoundsSource[],
   count: number,
+  version: number,
 ): CellFieldBoundsCache {
   const scanCount = Math.min(
     Math.max(0, Math.floor(Number.isFinite(count) ? count : 0)),
     cells.length,
   );
-  if (cache.cells === cells && cache.count === scanCount) return cache;
-  cache.cells = cells;
+  if (cache.version === version && cache.count === scanCount) return cache;
+  cache.version = version;
   cache.count = scanCount;
   cache.centerX = 0;
   cache.centerY = 0;

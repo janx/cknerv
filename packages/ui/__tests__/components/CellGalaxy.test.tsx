@@ -34,12 +34,33 @@ import { consensusBraidPresenceScale } from '../../src/derives/consensusBraid.de
 import { capacityMass } from '../../src/derives/cellVisual.derive';
 import { ScreenSpaceHitIndex } from '../../src/geometry/screenSpaceHitIndex';
 import {
+  cellLifecycleSceneTimes,
+  createCellLifecycleStampState,
   ENTER_STAMP_SENTINEL,
   EXIT_STAMP_SENTINEL,
+  reapCellExitHolds,
+  syncCellLifecycleStamps,
+  takeCellExitHoldCells,
 } from '../../src/geometry/cellLifecycleStamps';
+import {
+  cellRenderSetChanged,
+  createCellRenderSetState,
+  resolveStagedCell,
+  syncCellRenderSet,
+} from '../../src/geometry/cellRenderSet';
+import {
+  createCellSlotState,
+  syncCellSlots,
+} from '../../src/geometry/cellSlotAssignment';
 import { CellGalaxyProvider } from '../../src/hooks/cellGalaxyContext';
-import { emptyCellsCache } from '@cknerv/cache';
-import type { Cell } from '@cknerv/types';
+import {
+  applyCellDelta,
+  applyRevisionedCellDeltas,
+  emptyCellsCache,
+  fromCellsSnapshot,
+  type CellGalaxyCache,
+} from '@cknerv/cache';
+import type { Cell, CellGalaxySnapshot } from '@cknerv/types';
 
 const CELL_GALAXY_SOURCE = resolve(
   process.cwd(),
@@ -813,10 +834,24 @@ describe('CellGalaxy useSimFrame buffer behavior', () => {
       'staged.concat(overlayEntries, holdCells)',
     );
     // Reaping is frame-driven, membership work is not: a hold expiring is
-    // the one thing that re-syncs the slots without a journal patch.
+    // the one thing that re-syncs the slots without a journal patch. Each
+    // segment of the drawn list carries its own precondition; a delta that
+    // moved none of them never reaches the slot layer.
     expect(source).toContain(
-      'const membershipNeedsSync = overlayNeedsSync || holdsReaped > 0;',
+      'const membershipNeedsSync = stagedChanged || overlayChanged'
+      + ' || holdsChanged;',
     );
+    expect(source).toContain(
+      'const stagedChanged = cellRenderSetChanged(renderUpdate);',
+    );
+    expect(source).toContain(
+      'cellRenderOverlayChanged(overlayState.entries, entries)',
+    );
+    expect(source).toContain('let holdsChanged = holdsReaped > 0;');
+    expect(source).toContain(
+      'if (stampSync.held > 0 || stampSync.cancelled > 0) holdsChanged = true;',
+    );
+    expect(source).toContain('if (refreshed > 0) holdsChanged = true;');
     // The hold segment can never outgrow the allocation it is written into.
     expect(source).toContain(
       'INSTANCE_CAPACITY - staged.length - overlayEntries.length',
@@ -825,7 +860,10 @@ describe('CellGalaxy useSimFrame buffer behavior', () => {
     // runs on overlay movement too — a selection can land on a fading cell.
     expect(source).toContain('entered: renderUpdate?.entered');
     expect(source).toContain('exited: renderUpdate?.exited');
-    expect(source).toContain('if (overlayNeedsSync) {\n      const slotState');
+    expect(source).toContain(
+      'if (overlayChanged || (renderUpdate?.membershipChanged ?? false)) {'
+      + '\n      const slotState',
+    );
     // The packed stage clock is marked exactly once, from both range
     // sources — enter and exit share one attribute, so a second mark would
     // clear the first.
@@ -834,6 +872,273 @@ describe('CellGalaxy useSimFrame buffer behavior', () => {
     expect(source).toContain(
       'mergeCellFlashRanges(cellBufferRanges, exitStampRanges, count)',
     );
+  });
+});
+
+// ── the drawn list's preconditions, replayed against real deltas ────────
+// A miniature of the frame body's membership section: the same production
+// modules in the same order, minus the overlay pool (its own predicate is
+// tested beside `cellRenderOverlay`). The gated and ungated drivers differ
+// in exactly one expression — the precondition under test — so the ungated
+// one is the oracle for the gated one.
+
+/** Every `slotOf` read and write the slot sync performs. The sync's whole
+ * O(list) cost lands here, so zero reads is the honest proof that a delta
+ * never reached it. */
+class CountingSlotMap extends Map<number, number> {
+  reads = 0;
+  writes = 0;
+
+  override get(key: number): number | undefined {
+    this.reads += 1;
+    return super.get(key);
+  }
+
+  override set(key: number, value: number): this {
+    this.writes += 1;
+    return super.set(key, value);
+  }
+}
+
+interface StageDriver {
+  render: ReturnType<typeof createCellRenderSetState>;
+  slots: ReturnType<typeof createCellSlotState>;
+  lifecycle: ReturnType<typeof createCellLifecycleStampState>;
+  probe: CountingSlotMap;
+  combined: Cell[];
+  syncs: number;
+  fieldVersion: number;
+}
+
+function makeStageDriver(): StageDriver {
+  const slots = createCellSlotState();
+  const probe = new CountingSlotMap();
+  slots.slotOf = probe;
+  return {
+    render: createCellRenderSetState(),
+    slots,
+    lifecycle: createCellLifecycleStampState(),
+    probe,
+    combined: [],
+    syncs: 0,
+    fieldVersion: 0,
+  };
+}
+
+/** One frame. `cache` is null for a frame with no cache movement behind it
+ * — the reap case, which has no journal patch at all. */
+function stageFrame(
+  driver: StageDriver,
+  cache: CellGalaxyCache | null,
+  nowS: number,
+  gated: boolean,
+): { ids: number[]; ranges: unknown[]; drawn: Cell[] } {
+  const update = cache === null
+    ? null
+    : syncCellRenderSet(driver.render, cache, 12_000);
+  const stagedChanged = cellRenderSetChanged(update);
+  const holdsReaped = reapCellExitHolds(driver.lifecycle, nowS);
+  let holdsChanged = holdsReaped > 0;
+  if (update?.membershipChanged) {
+    const stamp = syncCellLifecycleStamps(driver.lifecycle, {
+      entered: update.entered,
+      exited: update.exited,
+      nowS,
+      resolve: (id) => {
+        const cell = cache === null ? undefined : resolveStagedCell(cache, id);
+        if (!cell) return null;
+        return { cell, times: cellLifecycleSceneTimes(cell, (ms) => ms / 1000) };
+      },
+    });
+    if (stamp.held > 0 || stamp.cancelled > 0) holdsChanged = true;
+  }
+  // Ungated: what the frame body did before — any journal patch at all, plus
+  // the reap. Stamping is unreachable without a membership diff either way,
+  // so the two drivers stamp identically.
+  const needsSync = gated
+    ? stagedChanged || holdsChanged
+    : update !== null || holdsReaped > 0;
+  if (needsSync) {
+    const staged = driver.render.cells;
+    const holdCells = takeCellExitHoldCells(driver.lifecycle, 12_000);
+    driver.combined = holdCells.length === 0
+      ? staged
+      : staged.concat(holdCells);
+  }
+  let sync = null as ReturnType<typeof syncCellSlots> | null;
+  if (needsSync) {
+    driver.syncs += 1;
+    sync = syncCellSlots(driver.slots, driver.combined);
+    if (sync.positionsChanged) driver.fieldVersion += 1;
+  }
+  const drawn = sync?.cells ?? driver.slots.published;
+  return { ids: drawn.map((entry) => entry.id), ranges: sync?.ranges ?? [], drawn };
+}
+
+function stagedSnapshot(ids: readonly number[]): CellGalaxySnapshot {
+  return {
+    cells: ids.map((id) => mkCellAt(id)),
+    last_pulse_at_ms: 0,
+    display: {
+      budget: { cells: 12_000, nerve_edges: 8_000 },
+      members: [...ids],
+      residents: [],
+      provenance: {
+        mode: 'canonical',
+        source: null,
+        as_of: null,
+        updated_at_ms: 0,
+      },
+    },
+  };
+}
+
+/** Distinct positions per id, so a bounding sphere can tell the drawn set
+ * apart from any other. */
+function mkCellAt(id: number, overrides: Partial<Cell> = {}): Cell {
+  return { ...mkCell(id), pos_seed: [id, id * 0.5, -id], ...overrides };
+}
+
+describe('CellGalaxy drawn-list preconditions', () => {
+  it('spends nothing on a delta whose display journal touched no one', () => {
+    const base = fromCellsSnapshot(1, stagedSnapshot([1, 2, 3]));
+    const driver = makeStageDriver();
+    expect(stageFrame(driver, base, 0, true).ids).toEqual([1, 2, 3]);
+    const published = driver.slots.published;
+    const version = driver.fieldVersion;
+    driver.probe.reads = 0;
+    driver.probe.writes = 0;
+
+    // An off-stage birth and an off-stage tag: the cache advances, the
+    // cursor runs, and the stage it describes does not move.
+    const offStage = applyRevisionedCellDeltas(base, [
+      { revision: 2, delta: { type: 'birth', cell: mkCellAt(99) } },
+      { revision: 3, delta: { type: 'tag', id: 99, tag: 'dex' } },
+    ]);
+    const after = stageFrame(driver, offStage, 0.1, true);
+
+    expect(driver.syncs).toBe(1);
+    expect(driver.probe.reads).toBe(0);
+    expect(driver.probe.writes).toBe(0);
+    expect(driver.fieldVersion).toBe(version);
+    // The published identity is what the nucleus index and the pick index
+    // both memoize on — it must survive a delta that changed nothing.
+    expect(after.drawn).toBe(published);
+
+    // Mutation check: ungated, the same delta pays a full pass to conclude
+    // exactly this.
+    const ungated = makeStageDriver();
+    stageFrame(ungated, base, 0, false);
+    ungated.probe.reads = 0;
+    stageFrame(ungated, offStage, 0.1, false);
+    expect(ungated.syncs).toBe(2);
+    expect(ungated.probe.reads).toBe(3);
+  });
+
+  it('answers what the ungated path answers, delta for delta', () => {
+    const base = fromCellsSnapshot(1, stagedSnapshot([1, 2, 3]));
+    const arrival = applyRevisionedCellDeltas(base, [
+      { revision: 2, delta: { type: 'birth', cell: mkCellAt(4) } },
+      {
+        revision: 2,
+        delta: {
+          type: 'display',
+          enter_ids: [4],
+          enter_cells: [],
+          exit_ids: [],
+        },
+      },
+    ]);
+    const payload = applyCellDelta(arrival, { type: 'tag', id: 2, tag: 'dex' });
+    const departure = applyCellDelta(payload, {
+      type: 'display',
+      enter_ids: [],
+      enter_cells: [],
+      exit_ids: [1],
+    });
+    const offStage = applyCellDelta(departure, {
+      type: 'birth',
+      cell: mkCellAt(77),
+    });
+    // Wall clock: the last frame is past the exit fade, so the hold reaps
+    // with no journal patch behind it.
+    const script: [CellGalaxyCache | null, number][] = [
+      [base, 0],
+      [arrival, 0.2],
+      [payload, 0.4],
+      [departure, 0.6],
+      [offStage, 0.8],
+      [null, 60],
+    ];
+
+    const gated = makeStageDriver();
+    const ungated = makeStageDriver();
+    for (const [cache, nowS] of script) {
+      const left = stageFrame(gated, cache, nowS, true);
+      const right = stageFrame(ungated, cache, nowS, false);
+      expect(left.ids).toEqual(right.ids);
+      expect(left.ranges).toEqual(right.ranges);
+    }
+    // The churn really did happen: an arrival, a departure that held its
+    // slot for the fade, and a reap that finally freed it.
+    expect(gated.syncs).toBeGreaterThan(1);
+    expect(gated.slots.published.map((entry) => entry.id).sort())
+      .toEqual([2, 3, 4]);
+    expect(gated.fieldVersion).toBe(ungated.fieldVersion);
+    // The nucleus reads this map instead of rebuilding its own — it has to
+    // be the drawn list, exactly.
+    expect([...gated.slots.slotOf.keys()].sort()).toEqual([2, 3, 4]);
+    for (const [id, slot] of gated.slots.slotOf) {
+      expect(gated.slots.published[slot].id).toBe(id);
+    }
+  });
+
+  it('stamps the stage lifecycle on the delta that carried it', () => {
+    const base = fromCellsSnapshot(1, stagedSnapshot([1, 2, 3]));
+    const driver = makeStageDriver();
+    stageFrame(driver, base, 0, true);
+
+    const departure = applyCellDelta(base, {
+      type: 'display',
+      enter_ids: [],
+      enter_cells: [],
+      exit_ids: [2],
+    });
+    const after = stageFrame(driver, departure, 0.2, true);
+
+    // The departure is stamped and still drawn: the slot belongs to the fade
+    // until the fade ends.
+    expect(driver.lifecycle.exitAt.get(2)).toBe(0.2);
+    expect(after.ids).toContain(2);
+    expect(driver.slots.slotOf.has(2)).toBe(true);
+  });
+
+  it('syncs a reap frame that carries no journal patch at all', () => {
+    const base = fromCellsSnapshot(1, stagedSnapshot([1, 2, 3]));
+    const driver = makeStageDriver();
+    stageFrame(driver, base, 0, true);
+    stageFrame(driver, applyCellDelta(base, {
+      type: 'display',
+      enter_ids: [],
+      enter_cells: [],
+      exit_ids: [2],
+    }), 0.2, true);
+    const syncs = driver.syncs;
+
+    // No cache movement, only the clock: the fade ends and the cell has to
+    // leave the stage.
+    const reaped = stageFrame(driver, null, 60, true);
+
+    expect(driver.syncs).toBe(syncs + 1);
+    expect(reaped.ids).not.toContain(2);
+    expect(driver.slots.slotOf.has(2)).toBe(false);
+
+    // And a frame after that, with the queue empty, costs nothing again.
+    const resting = driver.slots.published;
+    driver.probe.reads = 0;
+    expect(stageFrame(driver, null, 61, true).drawn).toBe(resting);
+    expect(driver.probe.reads).toBe(0);
+    expect(driver.syncs).toBe(syncs + 1);
   });
 });
 

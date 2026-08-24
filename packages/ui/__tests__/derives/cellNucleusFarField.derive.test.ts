@@ -28,7 +28,7 @@ function freshBounds(
   cells: readonly CellFieldBoundsSource[],
   count = cells.length,
 ): CellFieldBoundsCache {
-  return ensureCellFieldBounds(makeCellFieldBoundsCache(), cells, count);
+  return ensureCellFieldBounds(makeCellFieldBoundsCache(), cells, count, 1);
 }
 
 function distanceToCenter(
@@ -55,34 +55,35 @@ describe('ensureCellFieldBounds', () => {
     expect(freshBounds(cells, cells.length).radius).toBeGreaterThan(200);
   });
 
-  it('reuses the cached sphere while the (list, count) identity holds', () => {
+  it('reuses the cached sphere while the position version holds', () => {
     const cache = makeCellFieldBoundsCache();
-    const cells = field.map((cell) => ({
-      pos_seed: [...cell.pos_seed] as [number, number, number],
-    }));
-    const before = ensureCellFieldBounds(cache, cells, cells.length).radius;
-    // In-place mutation is invisible until list identity or count moves —
-    // the same contract the frame loop's renderCellsChanged signal relies on.
-    cells[0].pos_seed[0] = 999;
-    expect(ensureCellFieldBounds(cache, cells, cells.length).radius)
+    const before = ensureCellFieldBounds(cache, field, field.length, 7).radius;
+    // List identity is NOT the key — a payload delta republishes the array
+    // without moving anything in it. The version is the caller's promise
+    // that nothing moved, so a relocation here is unreachable by contract
+    // and is used only to prove which of the two the cache reads.
+    const republished = [...field.slice(1), cellAt(400, 0, 0)];
+    expect(ensureCellFieldBounds(cache, republished, field.length, 7).radius)
       .toBe(before);
+    expect(ensureCellFieldBounds(cache, republished, field.length, 8).radius)
+      .toBeGreaterThan(before);
   });
 
-  it('rescans when the list identity changes', () => {
+  it('rescans when the position version moves', () => {
     const cache = makeCellFieldBoundsCache();
-    expect(ensureCellFieldBounds(cache, field, field.length).radius)
+    expect(ensureCellFieldBounds(cache, field, field.length, 7).radius)
       .toBeLessThan(10);
     const replaced = [...field, cellAt(120, 0, 0)];
-    expect(ensureCellFieldBounds(cache, replaced, replaced.length).radius)
+    expect(ensureCellFieldBounds(cache, replaced, replaced.length, 8).radius)
       .toBeGreaterThan(50);
   });
 
-  it('rescans when the drawn count changes on the same list', () => {
+  it('rescans when the drawn count changes at the same version', () => {
     const cells = [...field, cellAt(120, 0, 0)];
     const cache = makeCellFieldBoundsCache();
-    expect(ensureCellFieldBounds(cache, cells, field.length).radius)
+    expect(ensureCellFieldBounds(cache, cells, field.length, 7).radius)
       .toBeLessThan(10);
-    expect(ensureCellFieldBounds(cache, cells, cells.length).radius)
+    expect(ensureCellFieldBounds(cache, cells, cells.length, 7).radius)
       .toBeGreaterThan(50);
   });
 
@@ -271,7 +272,7 @@ describe('cellNucleusFarFieldBeyond', () => {
     expect(NUCLEUS_SOURCE).toContain('cellNucleusFarFieldBeyond(');
     expect(NUCLEUS_SOURCE).toContain('envelopeOnlyLod ? 0 : count');
     expect(NUCLEUS_SOURCE).toContain(
-      'const index = visibleIndexByCell.current.get(cellId)',
+      'const index = visibleIndexByCell.get(cellId)',
     );
     expect(NUCLEUS_SOURCE).toContain('const detail = userFocus * 0.68');
   });

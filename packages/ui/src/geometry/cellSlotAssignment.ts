@@ -57,6 +57,11 @@ export interface CellSlotSync {
   ranges: CellSlotRange[];
   /** True when any cell entered or left the visible set. */
   membershipChanged: boolean;
+  /** True when the drawn set's POSITIONS moved: a slot changed occupant, or
+   * an in-place replacement carried a different `pos_seed`. A record refresh
+   * that leaves every cell where it was republishes the list without this —
+   * which is what lets a spatial cache outlive a payload delta. */
+  positionsChanged: boolean;
 }
 
 export function createCellSlotState(): CellSlotState {
@@ -107,6 +112,7 @@ export function syncCellSlots(
   const dirty: number[] = [];
   const adds: Cell[] = [];
   let membershipChanged = false;
+  let relocated = false;
 
   for (const cell of list) {
     const slot = slotOf.get(cell.id);
@@ -119,7 +125,15 @@ export function syncCellSlots(
       continue;
     }
     stamps[slot] = generation;
-    if (cells[slot] !== cell) {
+    const before = cells[slot];
+    if (before !== cell) {
+      if (
+        before.pos_seed[0] !== cell.pos_seed[0]
+        || before.pos_seed[1] !== cell.pos_seed[1]
+        || before.pos_seed[2] !== cell.pos_seed[2]
+      ) {
+        relocated = true;
+      }
       cells[slot] = cell;
       dirty.push(slot);
     }
@@ -179,5 +193,8 @@ export function syncCellSlots(
     count: state.count,
     ranges: coalesceSlots(dirty),
     membershipChanged,
+    // Every occupant change goes through `placeAt`, and every `placeAt` is a
+    // membership move — so the two sources cover the whole set between them.
+    positionsChanged: relocated || membershipChanged,
   };
 }

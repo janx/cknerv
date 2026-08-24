@@ -201,6 +201,21 @@ export function resolveStagedCell(
   return cache.cells.get(id) ?? cache.displayResidents.get(id);
 }
 
+/** True when this update actually moved the published list.
+ *
+ * The cursor is copy-on-write and skips equal replacements, so `cells` keeps
+ * its identity through every delta whose display journal touched nothing on
+ * stage — an off-stage record, an enrichment refresh, a canonical birth
+ * outside the membership. That is the majority of deltas, and this is the
+ * precondition every consumer that WALKS the list has to satisfy before it
+ * spends a pass proving nothing changed. Membership and dirty ranges are
+ * both strictly narrower signals; neither can stand in for the other. */
+export function cellRenderSetChanged(
+  update: CellRenderSetUpdate | null,
+): boolean {
+  return update !== null && update.cells !== update.previousCells;
+}
+
 export function cellRenderMap(cells: readonly Cell[]): Map<number, Cell> {
   return new Map(cells.map((cell) => [cell.id, cell]));
 }
@@ -668,4 +683,19 @@ export function cellRenderOverlay(
   const cell = resolveStagedCell(cache, selectedCellId);
   if (!cell) return EMPTY_OVERLAY;
   return [cell];
+}
+
+/** True when two resolved overlay lists differ. Entries are immutable Cell
+ * objects, so identity IS the content — a re-resolve that returns the same
+ * record for the same selection is not a change, and the drawn list it feeds
+ * stays exactly where it was. */
+export function cellRenderOverlayChanged(
+  previous: readonly Cell[],
+  next: readonly Cell[],
+): boolean {
+  if (previous.length !== next.length) return true;
+  for (let index = 0; index < next.length; index += 1) {
+    if (previous[index] !== next[index]) return true;
+  }
+  return false;
 }

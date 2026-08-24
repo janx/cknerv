@@ -11,6 +11,8 @@ import {
   cellRenderClampActive,
   cellRenderMap,
   cellRenderOverlay,
+  cellRenderOverlayChanged,
+  cellRenderSetChanged,
   createCellRenderMapState,
   createCellRenderSetState,
   OVERLAY_SLOT_POOL,
@@ -228,6 +230,16 @@ describe('syncCellRenderSet — display plane', () => {
     expect(update.membershipChanged).toBe(false);
     expect(update.topologyVersion).toBe(initial.topologyVersion);
     expect(visited).toBe(0);
+    // The precondition every consumer that WALKS the list stands on: this
+    // delta gives them nothing to walk.
+    expect(cellRenderSetChanged(update)).toBe(false);
+    expect(cellRenderSetChanged(null)).toBe(false);
+
+    // A payload replacement on stage does move it, membership or not.
+    const tagged = applyCellDelta(after, { type: 'tag', id: 1, tag: 'dex' });
+    const tagUpdate = syncCellRenderSet(state, tagged, 12_000);
+    expect(tagUpdate.membershipChanged).toBe(false);
+    expect(cellRenderSetChanged(tagUpdate)).toBe(true);
   });
 
   it('a byte-identical display replay leaves the sync unchanged', () => {
@@ -672,6 +684,27 @@ describe('cellRenderOverlay (D4 selected-cell pool)', () => {
     expect(cellRenderOverlay(cache, new Map(), 1, 0)).toEqual([]);
     expect(cellRenderOverlay(cache, new Map(), 1, OVERLAY_SLOT_POOL))
       .toHaveLength(1);
+  });
+
+  it('re-resolving the same selection is not a change', () => {
+    const cache = fallbackCacheWithCells([1, 2, 3]);
+    const before = cellRenderOverlay(cache, stagedIndex, 3);
+    // The pool is re-resolved on every delta; the drawn list only has to
+    // move when the resolved record does.
+    expect(cellRenderOverlayChanged(
+      before,
+      cellRenderOverlay(cache, stagedIndex, 3),
+    )).toBe(false);
+    expect(cellRenderOverlayChanged(before, [])).toBe(true);
+    expect(cellRenderOverlayChanged([], [])).toBe(false);
+
+    // An off-stage record replaced under a held selection has to reach the
+    // buffers — same id, different object.
+    const refreshed = applyCellDelta(cache, { type: 'tag', id: 3, tag: 'dex' });
+    expect(cellRenderOverlayChanged(
+      before,
+      cellRenderOverlay(refreshed, stagedIndex, 3),
+    )).toBe(true);
   });
 });
 

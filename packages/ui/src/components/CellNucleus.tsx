@@ -70,6 +70,17 @@ const EMPTY_RECALL_BY_CELL: ReadonlyMap<
 interface Props {
   cellsListRef: { readonly current: Cell[] };
   drawCountRef: { readonly current: number };
+  /** id → drawn slot for exactly the contents of `cellsListRef`. CellGalaxy's
+   *  slot assignment already carries this map and patches it at O(churn), and
+   *  publishes both halves inside one synchronous block — so it is read live
+   *  and memoized on by nobody: its identity is a handle, not a signal.
+   *  Mirroring it here cost one 12K-entry rebuild per block for an answer the
+   *  owner had already computed. */
+  visibleIndexByCell: ReadonlyMap<number, number>;
+  /** Moves only when the drawn set's positions move. A payload delta — a tag,
+   *  a death, an enrichment refresh — republishes the list and leaves this
+   *  where it was, which is what the spatial cache keys on. */
+  fieldVersionRef: { readonly current: number };
   groupRef: { readonly current: THREE.Group | null };
   detailAttr: THREE.BufferAttribute;
   /** Owned by CellGalaxy, shared with its picker. The detail lane is written
@@ -129,6 +140,8 @@ function makeBraidMaterial(linewidth: number, opacity: number): LineMaterial {
 export default function CellNucleus({
   cellsListRef,
   drawCountRef,
+  visibleIndexByCell,
+  fieldVersionRef,
   groupRef,
   detailAttr,
   detailPickEpoch,
@@ -231,7 +244,6 @@ export default function CellNucleus({
     new Map(),
   );
   const focusByCell = useRef<Map<number, number>>(new Map());
-  const visibleIndexByCell = useRef<Map<number, number>>(new Map());
   const detailSlots = useRef<number[]>([]);
   const focusSlots = useRef<number[]>([]);
   const recallSlots = useRef<number[]>([]);
@@ -366,13 +378,6 @@ export default function CellNucleus({
     const cellsChanged = renderCellsChanged || qualityBudgetChanged;
     const focusNeedsWrite = focusEnvelopeChanged
       || (renderCellsChanged && focusByCell.current.size > 0);
-    if (renderCellsChanged) {
-      const indices = visibleIndexByCell.current;
-      indices.clear();
-      for (let index = 0; index < count; index += 1) {
-        indices.set(cells[index].id, index);
-      }
-    }
     const refreshLod = cellNucleusLodRefreshDue(
       lodElapsedS.current,
       cellsChanged,
@@ -406,7 +411,12 @@ export default function CellNucleus({
       // the whole time it stays open. Recall keeps the full walk: its
       // response set spans endpoint Cells beyond the envelope. When the
       // distance predicate declines, the walk runs exactly as before.
-      const bounds = ensureCellFieldBounds(fieldBounds, cells, count);
+      const bounds = ensureCellFieldBounds(
+        fieldBounds,
+        cells,
+        count,
+        fieldVersionRef.current,
+      );
       const envelopeOnlyLod = recallFocus === null
         && cellNucleusFarFieldBeyond(
           cameraLocalPosition.x,
@@ -419,7 +429,7 @@ export default function CellNucleus({
       if (envelopeOnlyLod && focusByCell.current.size > 0) {
         for (const [cellId, userFocus] of focusByCell.current) {
           if (userFocus <= 0) continue;
-          const index = visibleIndexByCell.current.get(cellId);
+          const index = visibleIndexByCell.get(cellId);
           if (index === undefined || index >= count) continue;
           const cell = cells[index];
           const dx = cell.pos_seed[0] - cameraLocalPosition.x;
@@ -598,7 +608,7 @@ export default function CellNucleus({
       const recallWrites: ScalarAttributeSlotWrite[] = [];
       const stateWrites: ScalarAttributeSlotWrite[] = [];
       for (const [cellId, response] of recallByCell) {
-        const index = visibleIndexByCell.current.get(cellId);
+        const index = visibleIndexByCell.get(cellId);
         if (index === undefined) continue;
         recallWrites.push({
           index,
