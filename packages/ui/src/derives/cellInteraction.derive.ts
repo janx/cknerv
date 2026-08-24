@@ -29,6 +29,20 @@ export function cellGalaxyRotationScaleTarget(
   return selectedCellId === null ? 1 : CELL_INSPECTION_GALAXY_ROTATION_SCALE;
 }
 
+/** The colony's twin of `cellGalaxyRotationScaleTarget`, at the same
+ *  inspection tempo: a peer or sighted card tethers to a node INSIDE the
+ *  counter-rotating colony group, so its selection slows that group the way
+ *  a Cell selection slows the canopy. A chain-node selection (bare id) stays
+ *  at full speed — its anchor is world-mounted and never rides the colony. */
+export function networkColonyRotationScaleTarget(
+  selectedNetId: string | null,
+): number {
+  return selectedNetId !== null
+    && (selectedNetId.startsWith('peer:') || selectedNetId.startsWith('sighted:'))
+    ? CELL_INSPECTION_GALAXY_ROTATION_SCALE
+    : 1;
+}
+
 /** Smoothly enter and leave inspection tempo without a visible speed step. */
 export function dampCellGalaxyRotationScale(
   current: number,

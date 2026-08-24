@@ -851,6 +851,11 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
                 </>
               )}
             />
+            {/* rotationEnabled=false: the review registry stands TWO chain
+                anchors, which scatters `ckb:local` OFF the colony's rotation
+                axis — a turning colony would carry the reviewed delivery (and
+                the local stitch) away from the world-mounted icosahedron and
+                out of the fixed review framing. */}
             <NetworkColony
               topology={topology}
               cf={reviewFlood}
@@ -861,6 +866,7 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
               flashDirtyRef={flashDirtyRef}
               flashDirtyIdsRef={flashDirtyIdsRef}
               localVersion=""
+              rotationEnabled={false}
             />
             <OrbitControls
               enabled={clockMode === 'paused'}

@@ -624,6 +624,23 @@ describe('peers.derive', () => {
       expect(d[0].from).toEqual([75, 22, 0]);
       expect(d[0].to[0]).toBeCloseTo(60, 6);
     });
+
+    it('lands in world while the launch stays colony-frame (counter-rotating colony)', () => {
+      // Peer standing at colony-frame (0,·,58): with the colony turned +90°
+      // its WORLD xz is (58,0) — on the long axis, inside the rim, so the
+      // landing is that world point untouched. `from` keeps the topology's
+      // colony-frame coordinates: the renderer rotates it live each frame.
+      const pos = new Map<string, [number, number, number]>([['A', [0, 22, 58]]]);
+      const d = planDeliveries([], 0, pos, { A: 0 }, 38, FIELD, Math.PI / 2);
+      expect(d[0].from).toEqual([0, 22, 58]);
+      expect(d[0].to[0]).toBeCloseTo(58, 6);
+      expect(d[0].to[1]).toBe(38);
+      expect(d[0].to[2]).toBeCloseTo(0, 6);
+      // Omitting the colony rotation is the resting colony, byte-identical
+      // to the pre-rotation plan (that same worker overruns half-z 54).
+      const resting = planDeliveries([], 0, pos, { A: 0 }, 38, FIELD);
+      expect(resting[0].to[2]).toBeCloseTo(54, 6);
+    });
   });
 
   describe('cellIdsWithinRadiusFromIndex', () => {

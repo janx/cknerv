@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { galaxyFrame } from '../tweaks/galaxyFrame';
+import { colonyFrame } from '../tweaks/colonyFrame';
 import { LIVE } from '../tweaks/liveTweaks';
 import { useCellGalaxyOptional } from '../hooks/cellGalaxyContext';
 import type { Vec3 } from '../types';
@@ -351,15 +352,27 @@ export default function BlockDeliveryLayer({
   const simClock = useSimClock();
   const cellsCache = useCellGalaxyOptional();
   const deliveries = useMemo(
-    () => planDeliveries(localOrigins, localReceiveDelayS, posById, arrivals, CELLS_Y, {
-      halfX: FIELD_HALF_X,
-      halfZ: FIELD_HALF_Z,
-      // Plan-time rotation, same trick as the ignition pass below: the galaxy
-      // turns ≤ ~0.02 rad across a whole pulse at the default rate, so pinning
-      // the ellipse where it stood when the plan was made is exact enough for
-      // a landing clamp and keeps this memo off the frame clock.
-      rotationY: galaxyFrame.rotationY,
-    }),
+    () => planDeliveries(
+      localOrigins,
+      localReceiveDelayS,
+      posById,
+      arrivals,
+      CELLS_Y,
+      {
+        halfX: FIELD_HALF_X,
+        halfZ: FIELD_HALF_Z,
+        // Plan-time rotation, same trick as the ignition pass below: the galaxy
+        // turns ≤ ~0.02 rad across a whole pulse at the default rate, so pinning
+        // the ellipse where it stood when the plan was made is exact enough for
+        // a landing clamp and keeps this memo off the frame clock.
+        rotationY: galaxyFrame.rotationY,
+      },
+      // The colony's rotation gets the same plan-time pin for the LANDING
+      // (Delivery.to is world); the launch stays colony-frame and is carried
+      // through the live rotation every frame below, so the gather glyph
+      // never detaches from its turning node however long a pulse runs.
+      colonyFrame.rotationY,
+    ),
     [localOrigins, localReceiveDelayS, posById, arrivals],
   );
   const capacity = Math.max(1, deliveries.length);
@@ -517,6 +530,13 @@ export default function BlockDeliveryLayer({
     // Three-arg setRGB: the spread form allocates an arguments array per frame.
     CARRIER_COLOR.setRGB(pulse.color[0], pulse.color[1], pulse.color[2]);
     state.camera.getWorldPosition(_cameraPosition);
+    // Launches live in the colony's rotating frame (Delivery.from); landings
+    // are world (Delivery.to). One cos/sin pair per frame carries every
+    // launch through the LIVE colony rotation (rotYLocalToWorldXZ inlined —
+    // no allocation in the frame loop), so the gather beat holds still ON
+    // its node while the node turns.
+    const colonyRotC = Math.cos(colonyFrame.rotationY);
+    const colonyRotS = Math.sin(colonyFrame.rotationY);
     waveMaterial.uniforms.uWake.value = LIVE.delivery.waveWake;
     waveMaterial.uniforms.uSegmentDepth.value = LIVE.delivery.waveSegments;
     // The rim-extinction ellipse turns with the galaxy; track it exactly.
@@ -567,14 +587,19 @@ export default function BlockDeliveryLayer({
       const phase = deliveryPhase(age - delivery.startAge, CFG);
       if (phase.phase === 'idle' || phase.phase === 'done') continue;
 
+      // This delivery's launch in world, at the colony's rotation THIS frame.
+      const fromX = delivery.from[0] * colonyRotC + delivery.from[2] * colonyRotS;
+      const fromY = delivery.from[1];
+      const fromZ = -delivery.from[0] * colonyRotS + delivery.from[2] * colonyRotC;
+
       // The actual node→landing path. The rim itself stays flat in the Cell
       // plane (CARRIER_FLAT_FACING) — this axis only steers the travel streak,
       // so a rim worker's inward-slanted throw reads in the streak while the
       // seed ring arrives lying on the membrane it is about to ripple.
       _flightDirection.set(
-        delivery.to[0] - delivery.from[0],
-        delivery.to[1] - delivery.from[1],
-        delivery.to[2] - delivery.from[2],
+        delivery.to[0] - fromX,
+        delivery.to[1] - fromY,
+        delivery.to[2] - fromZ,
       );
       if (_flightDirection.lengthSq() < 1e-8) {
         _flightDirection.copy(CARRIER_FALLBACK_DIRECTION);
@@ -602,9 +627,10 @@ export default function BlockDeliveryLayer({
       let glyphOpacity = 0;
 
       if (phase.phase === 'gather') {
-        // Held breath: the glyph tightens and brightens where it stands. No
-        // travel, no roll, no swim — the beat is the absence of motion.
-        _position.set(delivery.from[0], delivery.from[1], delivery.from[2]);
+        // Held breath: the glyph tightens and brightens where it stands —
+        // and "where it stands" is the turning node, so it rides the colony
+        // rotation with it. No travel of its own, no roll, no swim.
+        _position.set(fromX, fromY, fromZ);
         glyphScale = size * (1 + GATHER_SWELL * (1 - phase.t));
         glyphOpacity = Math.pow(phase.t, 0.6);
         writeSpriteInstance(
@@ -621,9 +647,9 @@ export default function BlockDeliveryLayer({
       } else if (phase.phase === 'lob') {
         const progress = easeInLob(phase.t);
         _position.set(
-          delivery.from[0] + (delivery.to[0] - delivery.from[0]) * progress,
-          delivery.from[1] + (delivery.to[1] - delivery.from[1]) * progress,
-          delivery.from[2] + (delivery.to[2] - delivery.from[2]) * progress,
+          fromX + (delivery.to[0] - fromX) * progress,
+          fromY + (delivery.to[1] - fromY) * progress,
+          fromZ + (delivery.to[2] - fromZ) * progress,
         );
         glyphScale = size * (1 - LIVE.delivery.glyphCompress * progress);
         glyphOpacity = 1;

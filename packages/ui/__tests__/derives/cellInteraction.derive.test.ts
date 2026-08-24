@@ -15,6 +15,7 @@ import {
   cellNucleusLodRefreshDue,
   consensusBraidRenderScale,
   NETWORK_PEER_PICK_FLAG,
+  networkColonyRotationScaleTarget,
   pointerRayOwnedByNetworkPeer,
   dampCellGalaxyRotationScale,
   dampCellFocus,
@@ -143,6 +144,18 @@ describe('cell interaction derivation', () => {
     expect(entering).toBeGreaterThan(CELL_INSPECTION_GALAXY_ROTATION_SCALE);
     expect(leaving).toBeGreaterThan(CELL_INSPECTION_GALAXY_ROTATION_SCALE);
     expect(dampCellGalaxyRotationScale(Number.NaN, 3, -1)).toBe(1);
+  });
+
+  it('slows the colony only for selections anchored inside its rotating group', () => {
+    // peer:/sighted: cards tether to colony-frame nodes — inspection tempo.
+    expect(networkColonyRotationScaleTarget('peer:QmAbc'))
+      .toBe(CELL_INSPECTION_GALAXY_ROTATION_SCALE);
+    expect(networkColonyRotationScaleTarget('sighted:QmDef'))
+      .toBe(CELL_INSPECTION_GALAXY_ROTATION_SCALE);
+    // The chain anchor's card tethers to a world-mounted icosahedron the
+    // rotation never moves; no selection at all is full speed too.
+    expect(networkColonyRotationScaleTarget('ckb:local')).toBe(1);
+    expect(networkColonyRotationScaleTarget(null)).toBe(1);
   });
 
   it('eases focus in faster than it releases', () => {

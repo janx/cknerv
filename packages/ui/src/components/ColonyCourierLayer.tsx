@@ -26,6 +26,7 @@ import type { RootState } from '@react-three/fiber';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { LIVE } from '../tweaks/liveTweaks';
+import { colonyFrame } from '../tweaks/colonyFrame';
 import type { Vec3 } from '../types';
 import type { ColonyFlood } from '../derives/networkFlood.derive';
 import {
@@ -219,6 +220,15 @@ export default function ColonyCourierLayer({
     state.camera.getWorldPosition(_camPos);
     state.camera.getWorldQuaternion(_camQuat);
 
+    // The hops ride edges of the counter-rotating colony, but this layer
+    // stays OUTSIDE the rotating group (its billboard bases are world-frame):
+    // carry each sampled point and its flight axis through the live rotation
+    // instead. Rotation is linear, so rotating the interpolated point keeps
+    // the glint exactly ON its turning edge.
+    const rotY = colonyFrame.rotationY;
+    const rotC = Math.cos(rotY);
+    const rotS = Math.sin(rotY);
+
     // Bind each in-flight hop to the next free pool slot; hide the rest below.
     let slot = 0;
     for (const hop of schedule) {
@@ -246,8 +256,12 @@ export default function ColonyCourierLayer({
       const hx = hop.from[0] + dx * s;
       const hy = hop.from[1] + dy * s;
       const hz = hop.from[2] + dz * s;
+      // Colony frame → world (rotYLocalToWorldXZ, inlined: no allocation in
+      // the hot loop). Y and every length are rotation-invariant.
+      const wx = hx * rotC + hz * rotS;
+      const wz = -hx * rotS + hz * rotC;
 
-      _position.set(hx, hy, hz);
+      _position.set(wx, hy, wz);
 
       // Ease presence in/out at the hop ends so nothing pops (shrinks to nothing).
       const edge = Math.max(
@@ -268,9 +282,10 @@ export default function ColonyCourierLayer({
       const length = Math.min(LIVE.peer.flameMaxLen, LIVE.peer.flameMinLen + speed * FLAME_SPEED_STRETCH);
       // Orient +Y along the flight direction, billboarded around that axis so
       // the quad faces the camera. The batch transform is identity, so this
-      // instance quaternion is also its world orientation.
-      _dir.set(dx, dy, dz).normalize();
-      _view.set(_camPos.x - hx, _camPos.y - hy, _camPos.z - hz).normalize();
+      // instance quaternion is also its world orientation. The axis is the
+      // hop direction carried through the same rotation as the point.
+      _dir.set(dx * rotC + dz * rotS, dy, -dx * rotS + dz * rotC).normalize();
+      _view.set(_camPos.x - wx, _camPos.y - hy, _camPos.z - wz).normalize();
       _x.crossVectors(_dir, _view);
       if (_x.lengthSq() < 1e-6) {
         // Camera dead-on the flight axis → dir×view collapses. Fall back to a

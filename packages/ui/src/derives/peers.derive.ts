@@ -67,7 +67,15 @@ export function easeInLob(t: number): number {
 export interface Delivery {
   /** Stable per-node key for the pooled protocol-carrier child. */
   key: string;
+  /** Launch position in the COLONY's rotating frame (the coordinates the
+   *  topology stores). The renderer carries it through the live colony
+   *  rotation each frame (`rotYLocalToWorldXZ` at `colonyFrame.rotationY`),
+   *  which is what keeps the gather glyph glued to its turning node. The
+   *  production hero origin sits ON the rotation axis, so its colony and
+   *  world positions coincide. */
   from: Vec3;
+  /** Landing in WORLD space, pinned at plan time (plan-time colony rotation
+   *  applied to the launch, then clamped to the plan-time tissue ellipse). */
   to: Vec3;
   /** Age (s since pulse) at which this node starts its delivery. */
   startAge: number;
@@ -143,7 +151,11 @@ function clampLandingToField(
  *  `localOrigins` at `localStartAge`) plus every rendered peer that has an
  *  arrival. Each rises from its node to `cellsY`, landing at its own xz when
  *  that is on the tissue and at the nearest radially-inward rim point when it
- *  is not (see `clampLandingToField`). Pure. */
+ *  is not (see `clampLandingToField`). `colonyRotationY` is the colony
+ *  group's rotation as of plan time: launches are stored colony-frame (see
+ *  `Delivery.from`), but the LANDING is a world point, so the launch is
+ *  carried into world before the ellipse judges it — the same plan-time pin
+ *  the field's own `rotationY` already applies on the galaxy side. Pure. */
 export function planDeliveries(
   localOrigins: Vec3[],
   localStartAge: number,
@@ -151,10 +163,15 @@ export function planDeliveries(
   arrivals: Record<string, number>,
   cellsY: number,
   field: DeliveryLandingField,
+  colonyRotationY = 0,
 ): Delivery[] {
   const out: Delivery[] = [];
+  const land = (from: Vec3): [number, number] => {
+    const [wx, wz] = rotYLocalToWorldXZ(from[0], from[2], colonyRotationY);
+    return clampLandingToField(wx, wz, field);
+  };
   localOrigins.forEach((from, i) => {
-    const [x, z] = clampLandingToField(from[0], from[2], field);
+    const [x, z] = land(from);
     out.push({
       key: `local:${i}`,
       from,
@@ -166,7 +183,7 @@ export function planDeliveries(
   for (const [id, from] of posById) {
     const a = arrivals[id];
     if (a === undefined) continue;
-    const [x, z] = clampLandingToField(from[0], from[2], field);
+    const [x, z] = land(from);
     out.push({
       key: `peer:${id}`,
       from,

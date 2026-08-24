@@ -194,8 +194,9 @@ describe('A protocol event relay', () => {
     const transformedNormal = new THREE.Vector3(0, 0, 1).applyQuaternion(facing);
 
     expect(transformedNormal.distanceTo(direction)).toBeLessThan(1e-9);
-    // The streak still reads the true node→landing velocity…
-    expect(delivery).toContain('delivery.to[1] - delivery.from[1]');
+    // The streak still reads the true node→landing velocity (fromX/Y/Z is the
+    // launch carried through the live colony rotation)…
+    expect(delivery).toContain('delivery.to[1] - fromY');
     // …but the rim itself rides the one flat basis, so a slanted (rim-clamped)
     // arrival can never release a front tilted out of the disc.
     expect(delivery).toContain('_bodyQuaternion.copy(CARRIER_FLAT_FACING)');

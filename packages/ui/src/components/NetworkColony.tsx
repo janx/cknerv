@@ -41,8 +41,11 @@
 // effects and to stamp its own `pulseRef` for delivery into the Cell field.
 import { memo, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useFrame } from '@react-three/fiber';
+import type { Group } from 'three';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { useCellGalaxyOptional } from '../hooks/cellGalaxyContext';
+import { LIVE } from '../tweaks/liveTweaks';
+import { colonyFrame } from '../tweaks/colonyFrame';
 import type { NetworkTopology, Vec3 } from '../types';
 import type { ColonyFlood } from '../derives/networkFlood.derive';
 import ColonyNodes from './ColonyNodes';
@@ -51,6 +54,10 @@ import ColonyCourierLayer from './ColonyCourierLayer';
 import BlockDeliveryLayer, { type BlockDeliveryPulse } from './BlockDeliveryLayer';
 import { consensusBlockColor } from '../derives/consensusFlow.derive';
 import { dampContextEnergy } from '../nerve/contextDamp';
+import {
+  dampCellGalaxyRotationScale,
+  networkColonyRotationScaleTarget,
+} from '../derives/cellInteraction.derive';
 import {
   cellDetailPeerContextEnergy,
   cellDetailPeerLinkContextEnergy,
@@ -74,10 +81,16 @@ interface NetworkColonyProps {
   localVersion: string;
   /** Shared camera-distance focus. Optional keeps standalone scenes unchanged. */
   cellDetailViewFocusRef?: { readonly current: number };
-  /** Optional overlay rendered inside the colony's group, so consumer layers
-   *  (e.g. the peer inspection anchor) sit in colony space without coupling
-   *  NetworkColony to them. Passive: the colony reads nothing from it. */
+  /** Optional overlay rendered inside the colony's ROTATING group, so
+   *  consumer layers (e.g. the peer inspection anchor) sit in colony space —
+   *  and turn with it — without coupling NetworkColony to them. Passive: the
+   *  colony reads nothing from it. */
   overlay?: ReactNode;
+  /** The colony counter-rotates against the cell canopy by default (same
+   *  rate knob, opposite sign). Review labs opt out: their two-anchor chain
+   *  registry stands the local node OFF the rotation axis, and a fixed review
+   *  framing must not have its subject carried out of shot. */
+  rotationEnabled?: boolean;
 }
 
 function NetworkColony({
@@ -92,6 +105,7 @@ function NetworkColony({
   localVersion,
   cellDetailViewFocusRef,
   overlay,
+  rotationEnabled = true,
 }: NetworkColonyProps) {
   const simClock = useSimClock();
   // Calm catch-up signal (same flag beams/nerves already respect). Read via the
@@ -102,6 +116,12 @@ function NetworkColony({
   const backfillActive = !!cellsCache?.backfill;
   const nodeContextEnergyRef = useRef(1);
   const linkContextEnergyRef = useRef(1);
+  // The colony's structural body (edges + nodes + inspection anchors) turns
+  // as one piece inside this group; the courier glints and the delivery
+  // carriers stay OUTSIDE in world space (their per-frame billboard math is
+  // world-frame) and follow the turn by reading `colonyFrame.rotationY`.
+  const rotationGroupRef = useRef<Group>(null);
+  const rotationScaleRef = useRef(1);
   useFrame((_, deltaSeconds) => {
     // Camera navigation is input, not simulation. When the camera closes on a
     // Cell, passive P2P structure recedes while block surges/couriers retain
@@ -120,6 +140,31 @@ function NetworkColony({
       cellDetailPeerLinkContextEnergy(detailFocus),
       deltaSeconds,
     );
+    // Counter-rotation: the canopy's own rate knob with the sign flipped, so
+    // the two planes slowly shear against each other instead of reading as
+    // one rigid body. A peer/sighted selection eases the colony to the same
+    // inspection tempo a Cell selection gives the canopy. The axis is the
+    // world Y axis the canopy turns about; App pins the colony's local node
+    // onto the chain anchor at that axis, so the world-mounted icosahedron
+    // never detaches from the measured belts converging on it.
+    const rotationGroup = rotationGroupRef.current;
+    if (rotationGroup) {
+      if (rotationEnabled) {
+        rotationScaleRef.current = dampCellGalaxyRotationScale(
+          rotationScaleRef.current,
+          networkColonyRotationScaleTarget(selectedId),
+          deltaSeconds,
+        );
+        rotationGroup.rotation.y -= LIVE.galaxy.rotationRate
+          * rotationScaleRef.current
+          * deltaSeconds;
+      }
+      // Mirror to the shared frame so the world-space sibling layers can
+      // carry colony-frame positions through the live rotation. Written even
+      // when disabled: the group holds 0, and the singleton must not keep a
+      // stale angle from a previously mounted colony.
+      colonyFrame.rotationY = rotationGroup.rotation.y;
+    }
   });
 
   // Per-block pulse: the delivery layer reads `at` (when it fired) and `entryId`
@@ -166,23 +211,37 @@ function NetworkColony({
 
   return (
     <group>
-      <ColonyEdges
-        topology={topology}
-        cf={cf}
-        blockPulseAtMs={blockPulseAtMs}
-        backfillActive={backfillActive}
-        contextEnergyRef={linkContextEnergyRef}
-      />
-      <ColonyNodes
-        topology={topology}
-        cf={cf}
-        blockPulseAtMs={blockPulseAtMs}
-        backfillActive={backfillActive}
-        selectedId={selectedId}
-        onSelect={onSelect}
-        localVersion={localVersion}
-        contextEnergyRef={nodeContextEnergyRef}
-      />
+      {/* The colony's structural body — every drawn node and edge, plus the
+          inspection anchors tethering DOM cards to nodes — counter-rotates
+          as one piece. Static geometry rides the group transform for free;
+          picking raycasts and the anchors' matrixWorld projections follow it
+          without any per-layer math. */}
+      <group ref={rotationGroupRef}>
+        <ColonyEdges
+          topology={topology}
+          cf={cf}
+          blockPulseAtMs={blockPulseAtMs}
+          backfillActive={backfillActive}
+          contextEnergyRef={linkContextEnergyRef}
+        />
+        <ColonyNodes
+          topology={topology}
+          cf={cf}
+          blockPulseAtMs={blockPulseAtMs}
+          backfillActive={backfillActive}
+          selectedId={selectedId}
+          onSelect={onSelect}
+          localVersion={localVersion}
+          contextEnergyRef={nodeContextEnergyRef}
+        />
+        {overlay}
+      </group>
+      {/* World space, deliberately outside the rotating group: both layers
+          rebuild world-frame billboard bases from the camera every frame and
+          bridge into galaxy-frame math (`galaxyFrame`), so they carry the
+          colony-frame positions through the rotation themselves by reading
+          `colonyFrame.rotationY` instead of inheriting a parent transform
+          their math would then have to undo. */}
       <ColonyCourierLayer
         cf={cf}
         posById={posById}
@@ -199,7 +258,6 @@ function NetworkColony({
         flashDirtyRef={flashDirtyRef}
         flashDirtyIdsRef={flashDirtyIdsRef}
       />
-      {overlay}
     </group>
   );
 }

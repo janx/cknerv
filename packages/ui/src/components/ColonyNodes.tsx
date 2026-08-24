@@ -39,7 +39,12 @@ import { useSimClock } from '../tweaks/SimClockScope';
 import { LIVE } from '../tweaks/liveTweaks';
 import { phaseFor, rateFor } from './GlowNode';
 import { CkbSelectionReticle } from './CellGalaxy';
-import { PEER_COLORS, peerColorKind } from '../derives/peers.derive';
+import { colonyFrame } from '../tweaks/colonyFrame';
+import {
+  PEER_COLORS,
+  peerColorKind,
+  rotYLocalToWorldXZ,
+} from '../derives/peers.derive';
 import type { NetworkNode, NetworkTopology } from '../types';
 import type { ColonyFlood } from '../derives/networkFlood.derive';
 import { consensusBlockColor } from '../derives/consensusFlow.derive';
@@ -604,13 +609,18 @@ export default function ColonyNodes({
 
     const slot = shockwaveSlotRef.current;
     shockwaveSlotRef.current = (slot + 1) % SHOCKWAVE_SLOTS;
+    // The shockwave shader measures distance in WORLD xz (modelMatrix ×
+    // position), while `origin.pos` is a colony-frame topology coordinate —
+    // carry it through the counter-rotation as it stands at stamp time. The
+    // pin drifts ≤ ~0.02 rad over the wave's life at the default rate, the
+    // same tolerance the delivery plan already accepts for the tissue rim.
     writeShockwaveSlot(
       shockwaveUniforms.uShockwaveAt.value,
       shockwaveUniforms.uShockwaveOriginXZ.value,
       shockwaveUniforms.uShockwaveColor.value,
       slot,
       simClock.elapsedSec,
-      [origin.pos[0], origin.pos[2]],
+      rotYLocalToWorldXZ(origin.pos[0], origin.pos[2], colonyFrame.rotationY),
       consensusBlockColor(blockPulseAtMs),
     );
     // cf/topology/backfillActive are recomputed in the same render that advances
