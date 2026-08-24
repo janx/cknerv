@@ -42,7 +42,7 @@ import CellsPanel from './CellsPanel';
 import StageCapacityPanel from './StageCapacityPanel';
 import RenderStatsPanel from './RenderStatsPanel';
 import { useCellChurn } from './useCellChurn';
-import WarningBar from './WarningBar';
+import WarningBar, { WARNING_BAR_HEIGHT, warningBarStanding } from './WarningBar';
 import { useReducedMotion } from './useReducedMotion';
 import { useMediaQuery } from './useMediaQuery';
 import {
@@ -384,17 +384,6 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
     : compactTopBar
       ? STATUS_STRIP_HEIGHTS.compact
       : STATUS_STRIP_HEIGHTS.wide;
-  // Same one-band-one-shift rule as the WarningBar below: whichever banner is
-  // standing in the slot pushes the rails clear of it. Without the boot term
-  // the rails jump up the moment `data_plane` goes live — measured seconds
-  // before `fabric` closes the sequence — and tuck their titles 18px under a
-  // band that is still very much standing.
-  const contentTop = topBarHeight
-    + (bootReadoutVisible || streamInterrupted ? 42 : 12);
-  const railStyle: CSSProperties = narrowRail
-    ? { ...MESH_RAIL_STYLE, top: contentTop, maxHeight: `calc(100vh - ${contentTop + 14}px)`, overflowX: 'hidden', overflowY: 'auto', pointerEvents: railScrolls ? 'auto' : 'none', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,152,48,.35) transparent' }
-    : { ...MESH_RAIL_STYLE, top: contentTop };
-
   // Re-measure rail overflow on mode / selection change and each 1s tick (the
   // latter catches viewport resize within a second). setRailScrolls no-ops when
   // unchanged, so this doesn't churn renders.
@@ -428,6 +417,29 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
   const avgMs = windowMeanMs(chain.recent_block_intervals_ms, ECG_WINDOW);
   const alert = alertLevel({ ecg: condition, reorgDepth, syncing });
   const syncRatio = chain.best_known_block > 0 ? Math.min(1, chain.tip / chain.best_known_block) : 1;
+
+  // Two bands, one stack — and the geometry lives here, below the alert, because
+  // it is the alert that everything under the top slot has to clear.
+  //
+  // Same one-band-one-shift rule the WarningBar takes: whichever banner is
+  // standing in the slot pushes what follows clear of it. Without the boot term
+  // the rails jump up the moment `data_plane` goes live — measured seconds
+  // before `fabric` closes the sequence — and tuck their titles 18px under a
+  // band that is still very much standing.
+  //
+  // The alarm is the second band and was the half nobody carried: the bar knew
+  // to sit under a banner, and nothing knew to sit under the bar. So its height
+  // comes from the bar itself, and whether it is standing comes from the same
+  // predicate the bar uses to decide it renders at all — the layout and the
+  // band can then never disagree about whether the slot is occupied.
+  const alarmStanding = warningBarStanding(alert.level);
+  const alarmBandHeight = alarmStanding ? WARNING_BAR_HEIGHT : 0;
+  const contentTop = topBarHeight
+    + (bootReadoutVisible || streamInterrupted ? 42 : 12)
+    + alarmBandHeight;
+  const railStyle: CSSProperties = narrowRail
+    ? { ...MESH_RAIL_STYLE, top: contentTop, maxHeight: `calc(100vh - ${contentTop + 14}px)`, overflowX: 'hidden', overflowY: 'auto', pointerEvents: railScrolls ? 'auto' : 'none', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,152,48,.35) transparent' }
+    : { ...MESH_RAIL_STYLE, top: contentTop };
 
   // persist the across-render baselines after each commit
   useEffect(() => { prevReorgs.current = chain.reorgs; }, [chain.reorgs]);
@@ -486,7 +498,10 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
         />
       ) : null}
       {/* One band, one shift: whichever of the two is standing in the slot
-          moves the alert down by its 30px, and they are never both there. */}
+          moves the alert down by its 30px, and they are never both there.
+          The other half of that rule — this band's own 34px moving everything
+          below it — is `alarmBandHeight` above, taken from the bar rather than
+          typed again here. */}
       <WarningBar level={alert.level} trigger={alert.trigger} reducedMotion={reduced} top={topBarHeight + (bootReadoutVisible || streamInterrupted ? 30 : 0)} />
       {chainPanelVisible
       || panelVisibility.stage
@@ -623,17 +638,19 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
       {bootReadoutVisible ? null : (
         <BackfillBar
           backfill={backfill ?? null}
-          style={{ top: topBarHeight + (streamInterrupted ? 40 : 10) }}
+          style={{ top: topBarHeight + (streamInterrupted ? 40 : 10) + alarmBandHeight }}
         />
       )}
       {/* One voice in the slot: the chip yields to the boot banner it trails,
-          and to both fault surfaces — a stream fault or a replay outranks a
-          composition disclosure. */}
-      {stageFill.visible && !bootReadoutVisible && !streamInterrupted && !backfill ? (
+          and to every fault surface — a stream fault, a replay, or a raised
+          alarm all outrank a composition disclosure. It takes the alarm's
+          offset regardless, so its geometry stays honest if that yield is ever
+          relaxed the way the replay plate's already is. */}
+      {stageFill.visible && !bootReadoutVisible && !streamInterrupted && !backfill && !alarmStanding ? (
         <StageFillChip
           staged={stagedLive}
           budget={stageBudget}
-          style={{ top: topBarHeight + 10 }}
+          style={{ top: topBarHeight + 10 + alarmBandHeight }}
         />
       ) : null}
     </div>

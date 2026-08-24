@@ -1084,3 +1084,154 @@ describe('HudOverlay — the stage-fill chip trails the boot readout', () => {
     expect(container.querySelector('[data-stage-fill-chip]')).toBeNull();
   });
 });
+
+
+// ——— The alarm is a band too ——————————————————————————————————————
+//
+// The top slot stacks. A banner (boot or stream) takes 30px, the alarm takes
+// its own 34 under it, and the rails start below the stack. The alarm knew to
+// sit under a banner from the day it was written; nothing knew to sit under
+// the ALARM. So on every reorg and every at-tip stall — banner up or banner
+// down, it made no difference — the rails started 22px INSIDE the band, and
+// the CKB·01 and PULSE panels printed their top brackets and the first third
+// of their headers over it. The rails are DOM-later so they win the paint, and
+// their translucent ground let the flash strobe through them.
+//
+// What regressed is arithmetic, so arithmetic is what this pins. The bands are
+// measured off the DOM they actually rendered rather than recomputed from
+// numbers copied over here — recomputing the number somewhere else is the
+// whole of the bug — and the clearance under the stack has to come out the
+// same in every state the slot can be in.
+
+import { STATUS_STRIP_HEIGHTS } from '../../../src/components/hud/StatusStrip';
+import { WARNING_BAR_HEIGHT } from '../../../src/components/hud/WarningBar';
+
+/** A pixel length written by a style prop, as a number. */
+const px = (value: string): number => Number.parseFloat(value);
+
+/** The gap the rails hold under whatever is standing in the slot, and the
+ *  narrower one the floating plates hold. Two numbers because they are two
+ *  kinds of surface; one number each because a clearance that changes with
+ *  the tenant is the same drift wearing a different hat. */
+const RAIL_CLEARANCE_PX = 12;
+const PLATE_CLEARANCE_PX = 10;
+
+/** A chain stalled at tip: caught up, and no block for ten minutes. The alarm
+ *  this raises is `danger / stalled` — a real one, from the real derive, so
+ *  the suite cannot pass by describing an alarm nobody would ever see. */
+const stalled = (): ChainEntry => ({
+  ...chain,
+  recent_block_intervals_ms: Array.from({ length: 60 }, () => 8000),
+  last_block_ts_ms: Date.now() - 600_000,
+});
+
+const alarmBand = (root: HTMLElement): HTMLElement | null =>
+  (root.querySelector('[data-warning-trigger]')?.parentElement as HTMLElement) ?? null;
+
+/** The bottom edge of the lowest band standing in the top slot, taken from
+ *  what rendered: each band's own `top` plus its own `height`. Falls back to
+ *  the status strip when the slot is empty, because the strip is then the
+ *  ceiling everything hangs from. */
+const slotBottom = (root: HTMLElement): number => [
+  root.querySelector('[data-boot-banner]'),
+  root.querySelector('[data-stream-health-banner]'),
+  alarmBand(root),
+].reduce(
+  (bottom, band) => (band === null
+    ? bottom
+    : Math.max(bottom, px((band as HTMLElement).style.top) + px((band as HTMLElement).style.height))),
+  STATUS_STRIP_HEIGHTS.wide as number,
+);
+
+const SLOT_LAYOUTS = [
+  { name: 'a quiet slot', boot: false, streams: false, alarm: false },
+  { name: 'an alarm standing alone', boot: false, streams: false, alarm: true },
+  { name: 'the boot readout alone', boot: true, streams: false, alarm: false },
+  { name: 'the boot readout over an alarm', boot: true, streams: false, alarm: true },
+  { name: 'a stream fault over an alarm', boot: false, streams: true, alarm: true },
+] as const;
+
+describe('HudOverlay — everything below the top slot clears the whole stack', () => {
+  const mount = (layout: { boot: boolean; streams: boolean; alarm: boolean }) => {
+    vi.useFakeTimers();
+    if (layout.boot) resetBootSequenceForTest();
+    return render(
+      <HudOverlay
+        chain={layout.alarm ? stalled() : chain}
+        peers={peers}
+        localNode={localNode}
+        cellsStats={cellsStats}
+        streamHealth={layout.streams ? connectingStreams : undefined}
+      />,
+    );
+  };
+
+  it.each(SLOT_LAYOUTS)('holds one clearance under $name', (layout) => {
+    const { container } = mount(layout);
+
+    // The states are real, not asserted into being: check the slot actually
+    // contains what the row claims before measuring anything about it.
+    expect(Boolean(container.querySelector('[data-boot-banner]'))).toBe(layout.boot);
+    expect(Boolean(container.querySelector('[data-stream-health-banner]')))
+      .toBe(layout.streams && !layout.boot);
+    expect(Boolean(alarmBand(container))).toBe(layout.alarm);
+
+    const left = container.querySelector('[data-hud-left-rail]') as HTMLElement;
+    const mesh = container.querySelector('.cknerv-mesh-rail') as HTMLElement;
+    expect(px(left.style.top)).toBe(slotBottom(container) + RAIL_CLEARANCE_PX);
+    expect(px(mesh.style.top)).toBe(px(left.style.top));
+  });
+
+  it('budgets exactly the band it paints', () => {
+    // The fix in one assertion. The height the bar renders and the offset the
+    // surfaces below it add were two literals in two files, 22px apart, and
+    // nothing ever made them meet. Now there is one exported number: retune it
+    // and both sides move, or this fails.
+    const { container } = mount({ boot: false, streams: false, alarm: true });
+    const band = alarmBand(container) as HTMLElement;
+
+    expect(px(band.style.height)).toBe(WARNING_BAR_HEIGHT);
+    expect(px((container.querySelector('[data-hud-left-rail]') as HTMLElement).style.top))
+      .toBe(px(band.style.top) + WARNING_BAR_HEIGHT + RAIL_CLEARANCE_PX);
+  });
+
+  it('drops the replay plate below a standing alarm too', () => {
+    // The plate floats in the same column as the bands and is not held back by
+    // an alarm — a catch-up and a stall are different facts and both are worth
+    // saying — so it has to be moved rather than suppressed.
+    vi.useFakeTimers();
+    const { container } = render(
+      <HudOverlay
+        chain={stalled()}
+        peers={peers}
+        localNode={localNode}
+        cellsStats={cellsStats}
+        backfill={{ done: 1234, total: 65_829, phase: 'boot' }}
+      />,
+    );
+
+    const plate = container.querySelector('[data-replay-phase="boot"]') as HTMLElement;
+    expect(alarmBand(container)).not.toBeNull();
+    expect(px(plate.style.top)).toBe(slotBottom(container) + PLATE_CLEARANCE_PX);
+  });
+
+  it('yields the composition chip to an alarm, the way it yields to the rest', () => {
+    // The chip is the quietest thing in the slot — a disclosure, not a fault —
+    // and it already stands down for the boot readout, a stream fault and a
+    // replay. An alarm is the loudest of the four; it cannot be the one the
+    // chip talks over.
+    vi.useFakeTimers();
+    const { container } = render(
+      <HudOverlay
+        chain={stalled()}
+        peers={peers}
+        localNode={localNode}
+        cellsStats={cellsStats}
+        cellPopulation={populationModel(9_298, 12_000)}
+      />,
+    );
+
+    expect(alarmBand(container)).not.toBeNull();
+    expect(container.querySelector('[data-stage-fill-chip]')).toBeNull();
+  });
+});
