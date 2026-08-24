@@ -43,6 +43,7 @@ import { memo, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useFrame } from '@react-three/fiber';
 import type { Group } from 'three';
 import { useSimClock } from '../tweaks/SimClockScope';
+import { useSimFrame } from '../tweaks/useSimFrame';
 import { useCellGalaxyOptional } from '../hooks/cellGalaxyContext';
 import { LIVE } from '../tweaks/liveTweaks';
 import { colonyFrame } from '../tweaks/colonyFrame';
@@ -122,6 +123,37 @@ function NetworkColony({
   // world-frame) and follow the turn by reading `colonyFrame.rotationY`.
   const rotationGroupRef = useRef<Group>(null);
   const rotationScaleRef = useRef(1);
+  // Counter-rotation: the canopy's own rate knob with the sign flipped, so
+  // the two planes slowly shear against each other instead of reading as
+  // one rigid body. A peer/sighted selection eases the colony to the same
+  // inspection tempo a Cell selection gives the canopy. The axis is the
+  // world Y axis the canopy turns about; App pins the colony's local node
+  // onto the chain anchor at that axis, so the world-mounted icosahedron
+  // never detaches from the measured belts converging on it.
+  //
+  // ⚠️ The SIM clock, on the canopy's own dt, because "the same knob with the
+  // sign flipped" is a contract about two planes and not about one of them: on
+  // the raw clock the colony went on turning against a frozen canopy under a
+  // pause or any timeScale, and every world-space reader of
+  // `colonyFrame.rotationY` — delivery launches, courier hops — is itself on
+  // the sim clock and snapped back on resume. The colony now freezes with the
+  // canopy under the Time controls, which is what the shear means.
+  //
+  // Ahead of the raw frame below, which publishes the angle: this component's
+  // callbacks run before its children's, so the couriers and the delivery
+  // layer read the turn this frame took rather than the last one.
+  useSimFrame((_, dt) => {
+    const rotationGroup = rotationGroupRef.current;
+    if (!rotationGroup || !rotationEnabled) return;
+    rotationScaleRef.current = dampCellGalaxyRotationScale(
+      rotationScaleRef.current,
+      networkColonyRotationScaleTarget(selectedId),
+      dt,
+    );
+    rotationGroup.rotation.y -= LIVE.galaxy.rotationRate
+      * rotationScaleRef.current
+      * dt;
+  });
   useFrame((_, deltaSeconds) => {
     // Camera navigation is input, not simulation. When the camera closes on a
     // Cell, passive P2P structure recedes while block surges/couriers retain
@@ -140,31 +172,14 @@ function NetworkColony({
       cellDetailPeerLinkContextEnergy(detailFocus),
       deltaSeconds,
     );
-    // Counter-rotation: the canopy's own rate knob with the sign flipped, so
-    // the two planes slowly shear against each other instead of reading as
-    // one rigid body. A peer/sighted selection eases the colony to the same
-    // inspection tempo a Cell selection gives the canopy. The axis is the
-    // world Y axis the canopy turns about; App pins the colony's local node
-    // onto the chain anchor at that axis, so the world-mounted icosahedron
-    // never detaches from the measured belts converging on it.
+    // Mirror to the shared frame so the world-space sibling layers can carry
+    // colony-frame positions through the live rotation. Raw and
+    // unconditional, where the turn itself is neither: the group holds 0 when
+    // rotation is disabled, and the singleton must not keep a stale angle from
+    // a previously mounted colony — including while time is paused, when the
+    // turn above does not run at all.
     const rotationGroup = rotationGroupRef.current;
-    if (rotationGroup) {
-      if (rotationEnabled) {
-        rotationScaleRef.current = dampCellGalaxyRotationScale(
-          rotationScaleRef.current,
-          networkColonyRotationScaleTarget(selectedId),
-          deltaSeconds,
-        );
-        rotationGroup.rotation.y -= LIVE.galaxy.rotationRate
-          * rotationScaleRef.current
-          * deltaSeconds;
-      }
-      // Mirror to the shared frame so the world-space sibling layers can
-      // carry colony-frame positions through the live rotation. Written even
-      // when disabled: the group holds 0, and the singleton must not keep a
-      // stale angle from a previously mounted colony.
-      colonyFrame.rotationY = rotationGroup.rotation.y;
-    }
+    if (rotationGroup) colonyFrame.rotationY = rotationGroup.rotation.y;
   });
 
   // Per-block pulse: the delivery layer reads `at` (when it fired) and `entryId`

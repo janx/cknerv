@@ -32,6 +32,34 @@ describe('NetworkColony counter-rotation frame contract', () => {
     expect(network).toContain('rotationEnabled = true');
   });
 
+  it('turns on the canopy\'s own clock, not the render clock', () => {
+    // "Same knob, opposite sign" is a contract about two planes, so the two
+    // have to share a time base as well as a rate. On the raw clock the colony
+    // kept turning against a frozen canopy under a pause or a timeScale, and
+    // every sim-clock reader of `colonyFrame.rotationY` snapped on resume.
+    const network = source('NetworkColony.tsx');
+    const galaxy = source('CellGalaxy.tsx');
+
+    expect(galaxy).toContain("import { useSimFrame } from '../tweaks/useSimFrame'");
+    expect(network).toContain("import { useSimFrame } from '../tweaks/useSimFrame'");
+    const turn = network.indexOf('rotationGroup.rotation.y -= LIVE.galaxy.rotationRate');
+    const simFrame = network.indexOf('useSimFrame((_, dt) => {');
+    const rawFrame = network.indexOf('useFrame((_, deltaSeconds) => {');
+    expect(simFrame).toBeGreaterThan(-1);
+    expect(turn).toBeGreaterThan(simFrame);
+    expect(turn).toBeLessThan(rawFrame);
+    // The damping the turn rides shares the same dt as the turn itself…
+    expect(network).toContain('networkColonyRotationScaleTarget(selectedId),\n      dt,');
+    // …and the canopy's own spin is written exactly the same way.
+    expect(galaxy).toContain('group.rotation.y += LIVE.galaxy.rotationRate');
+
+    // The published angle stays on the RAW frame and stays unconditional: a
+    // lab holds the group at 0, and a paused session must not leave the
+    // singleton carrying a previously mounted colony's angle.
+    const publish = network.indexOf('colonyFrame.rotationY = rotationGroup.rotation.y');
+    expect(publish).toBeGreaterThan(rawFrame);
+  });
+
   it('rotates edges, nodes and the inspection overlay; leaves courier + delivery in world space', () => {
     const network = source('NetworkColony.tsx');
 
