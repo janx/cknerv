@@ -14,6 +14,13 @@ export const CONSENSUS_BRAID_LOCAL_RADIUS = 0.55;
 export const CELL_EXPANDED_PICK_MIN_RADIUS_PX = 14;
 export const CELL_EXPANDED_PICK_PADDING_PX = 5;
 export const CELL_EXPANDED_DETAIL_THRESHOLD = 0.02;
+/** Ceiling on how many px focus can add to a Cell's pick disc. Focus reaches
+ * the disc through `focusedBraidScale` alone, which drives a fully selected
+ * braid at a 24 px screen radius; capacity presence scales that by at most
+ * ~1.14 and the expanded-detail branch adds its own pad on top. The screen
+ * index admits entries within this distance of the viewport so the two
+ * focused discs can be padded at query time rather than re-projected. */
+export const CELL_PICK_FOCUS_PAD_CEILING_PX = 34;
 /** Camera-distance LOD is perceptual state, not motion. Sampling it at 12 Hz
  *  keeps rotation/animation on the render clock while avoiding a full Cell
  *  field transform + GPU attribute upload on every frame. */

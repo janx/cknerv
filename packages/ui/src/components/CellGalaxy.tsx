@@ -46,7 +46,10 @@ import {
   createCellSlotState,
   syncCellSlots,
 } from '../geometry/cellSlotAssignment';
-import { ScreenSpaceHitIndex } from '../geometry/screenSpaceHitIndex';
+import {
+  ScreenSpaceHitIndex,
+  type ScreenSpaceRadiusPad,
+} from '../geometry/screenSpaceHitIndex';
 import type { ScalarThresholdEpoch } from '../geometry/sparseScalarAttribute';
 import type { Cell } from '@cknerv/types';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
@@ -67,12 +70,14 @@ import {
 import {
   CELL_CLICK_MAX_POINTER_DELTA_PX,
   CELL_EXPANDED_DETAIL_THRESHOLD,
+  CELL_HOVER_FOCUS,
+  CELL_PICK_FOCUS_PAD_CEILING_PX,
+  CELL_SELECTED_FOCUS,
   CONSENSUS_BRAID_LOCAL_RADIUS,
   NETWORK_PEER_PICK_FLAG,
   cellCanvasCursor,
   pointerRayOwnedByNetworkPeer,
   cellGalaxyRotationScaleTarget,
-  cellFocusTarget,
   cellPickRadiusPx,
   consensusBraidRenderScale,
   dampCellGalaxyRotationScale,
@@ -748,15 +753,20 @@ export function CkbSelectionReticle({ size }: { size: number }) {
 // The pad applies only while the real braid geometry is actually visible;
 // compact lights keep their exact footprint in the dense far field.
 //
-// Performance: one O(N) projection refresh per structural/camera revision feeds
-// an allocation-stable screen-space grid; all pointer queries reuse it until an
-// input to the projection changes. Camera drags suspend the picker entirely.
+// Performance: one O(N) projection refresh per index revision feeds an
+// allocation-stable screen-space grid, and every pointer query reuses it until
+// something a pick answer reads has moved further than a pixel budget. Two
+// inputs are deliberately NOT revisions: focus, which changes at most two
+// discs and is padded at query time, and sub-budget camera motion, which the
+// damping tail and every route flight produce on every frame. Camera drags
+// suspend the picker entirely; pointerdown forces a precise snapshot.
 
 interface CellPickerProps {
   cellsListRef: React.MutableRefObject<Cell[]>;
   drawCountRef: React.MutableRefObject<number>;
   detailAttr: THREE.BufferAttribute;
   detailPickEpoch: ScalarThresholdEpoch;
+  sizeAttr: THREE.BufferAttribute;
   selectedCellIdRef: React.MutableRefObject<number | null>;
   hoveredCellIdRef: React.MutableRefObject<number | null>;
   pickingSuspendedRef?: React.RefObject<boolean>;
@@ -791,6 +801,351 @@ export function cellPickDriftPxPerRadian(
   return viewZ > 0 ? (axisRadius * projectionScaleY * halfH) / viewZ : 0;
 }
 
+/** Screen-px an indexed cell can have moved since the index was built, given
+ *  how far the CAMERA has rotated and travelled — the same budget the galaxy's
+ *  own spin gets, for the motion exact matrix equality used to rebuild on: the
+ *  OrbitControls damping tail after every release and every route flight's
+ *  exponential lerp, both of which run while the pointer is still moving.
+ *
+ *  Rotation needs nothing from the scene: the gnomonic projection stretches
+ *  radially by sec²α, so one radian moves the worst point in the frame — the
+ *  far corner — by f + corner²/f, with f = projectionScaleY·halfH the focal
+ *  length in px. Translation is the term that does: its across-view component
+ *  moves a point by f·d/z and its along-view component rescales screen radius
+ *  by d/z, both worst at the NEAREST indexed cell. The denominator shrinks by
+ *  the distance travelled so the bound stays a bound whichever way the move
+ *  points, and a move that reaches that cell is unbounded — which is the
+ *  honest answer, and forces the rebuild. */
+export function cellPickCameraDriftPx(
+  radians: number,
+  distance: number,
+  projectionScaleY: number,
+  halfW: number,
+  halfH: number,
+  minViewZ: number,
+): number {
+  const focalPx = projectionScaleY * halfH;
+  if (!(focalPx > 0)) return Infinity;
+  const cornerSq = halfW * halfW + halfH * halfH;
+  const rotationPx = Math.max(0, radians) * (focalPx + cornerSq / focalPx);
+  if (!(distance > 0)) return rotationPx;
+  const nearZ = minViewZ - distance;
+  if (!(nearZ > 0)) return Infinity;
+  return rotationPx + (distance * (focalPx + Math.sqrt(cornerSq))) / nearZ;
+}
+
+/** The one arithmetic behind a Cell's screen-space acquisition disc. The
+ *  rebuild loop runs it at focus 0 for every indexed cell and the query-time
+ *  pad re-runs it at the live focus for the ≤2 focused ones, so a padded disc
+ *  is what a rebuild would have baked and not an approximation of it. */
+export function cellPickDiscRadiusPx(
+  pointSize: number,
+  capacity: number,
+  detail: number,
+  focus: number,
+  viewZ: number,
+  height: number,
+  halfH: number,
+  projectionScaleY: number,
+): number {
+  const depthToPx = halfH / viewZ;
+  const braidScale = consensusBraidRenderScale(
+    viewZ,
+    height,
+    projectionScaleY,
+    focus,
+    consensusBraidPresenceScale(capacityMass(capacity)),
+  );
+  return cellPickRadiusPx(
+    pointSize * depthToPx,
+    CONSENSUS_BRAID_LOCAL_RADIUS * braidScale * projectionScaleY * depthToPx,
+    detail,
+  );
+}
+
+export interface CellPickRaycastSources {
+  cellsListRef: React.MutableRefObject<Cell[]>;
+  drawCountRef: React.MutableRefObject<number>;
+  detailAttr: THREE.BufferAttribute;
+  detailPickEpoch: ScalarThresholdEpoch;
+  /** Authoritative per-slot point size. `writeCellBuffers` fills it in the
+   *  same synchronous block that publishes `cellsListRef`, and every slot
+   *  rewrite makes a fresh list — so a slot's size can never disagree with
+   *  the cell the picker reads at that index. */
+  sizeAttr: THREE.BufferAttribute;
+  selectedCellIdRef: React.MutableRefObject<number | null>;
+  hoveredCellIdRef: React.MutableRefObject<number | null>;
+  pickingSuspendedRef?: React.RefObject<boolean>;
+  forcePreciseRef: React.MutableRefObject<boolean>;
+  viewportRef: React.MutableRefObject<{ width: number; height: number }>;
+}
+
+/** Build the picker's `Object3D.raycast`. Lives outside the component so the
+ *  index's revision state and the gate that governs it can be exercised
+ *  without an r3f Canvas, which jsdom cannot raycast through. */
+export function createCellPickRaycast({
+  cellsListRef,
+  drawCountRef,
+  detailAttr,
+  detailPickEpoch,
+  sizeAttr,
+  selectedCellIdRef,
+  hoveredCellIdRef,
+  pickingSuspendedRef,
+  forcePreciseRef,
+  viewportRef,
+}: CellPickRaycastSources) {
+  // Scratch allocations hoisted out of the per-cell loop.
+  const cellView = new THREE.Vector3();
+  const cellNdc = new THREE.Vector3();
+  const rayNdc = new THREE.Vector3();
+  const bestPoint = new THREE.Vector3();
+  const modelView = new THREE.Matrix4();
+  const cameraPosition = new THREE.Vector3();
+  const cameraQuaternion = new THREE.Quaternion();
+  const cameraScale = new THREE.Vector3();
+  const screenIndex = new ScreenSpaceHitIndex(INSTANCE_CAPACITY);
+  const indexedMatrixWorld = new THREE.Matrix4();
+  const indexedModelView = new THREE.Matrix4();
+  const indexedProjection = new THREE.Matrix4();
+  const indexedCameraPosition = new THREE.Vector3();
+  const indexedCameraQuaternion = new THREE.Quaternion();
+  // Two pad slots because `cellFocusTarget` has two inputs, selected first: a
+  // cell that is both takes the selected disc once and leaves slot 1 unused.
+  const focusPads: ScreenSpaceRadiusPad[] = [
+    { index: -1, radius: 0 },
+    { index: -1, radius: 0 },
+  ];
+  let indexedCells: Cell[] | null = null;
+  let indexedCount = -1;
+  let indexedDetailEpoch = -1;
+  let indexedWidth = -1;
+  let indexedHeight = -1;
+  let indexedRotationY = 0;
+  let indexedDriftPxPerRadian = 0;
+  let indexedProjectionScaleY = 0;
+  // Zero until a rebuild reports one, so an index holding nothing rebuilds on
+  // any camera travel instead of trusting a depth it never measured.
+  let indexedMinViewZ = 0;
+  let indexedRevision = 0;
+  let padRevision = -1;
+  let padSelectedCellId: number | null = null;
+  let padHoveredCellId: number | null = null;
+
+  return function raycastCells(
+    this: THREE.Object3D,
+    raycaster: THREE.Raycaster,
+    intersects: THREE.Intersection[],
+  ): void {
+    if (pickingSuspendedRef?.current) return;
+    const cells = cellsListRef.current;
+    const count = Math.min(drawCountRef.current, cells.length);
+    if (count === 0) return;
+    const detailArray = detailAttr.array as Float32Array;
+    const sizeArray = sizeAttr.array as Float32Array;
+    const camera = raycaster.camera;
+    if (!camera) return;
+    const ray = raycaster.ray;
+
+    // Recover the click point in NDC: any point on the ray in front of
+    // the camera projects back to the same screen pixel. t=1 is fine.
+    rayNdc.copy(ray.origin).addScaledVector(ray.direction, 1).project(camera);
+    const clickNdcX = rayNdc.x;
+    const clickNdcY = rayNdc.y;
+
+    const { width, height } = viewportRef.current;
+    const halfW = width * 0.5;
+    const halfH = height * 0.5;
+    const forcePrecise = forcePreciseRef.current;
+    forcePreciseRef.current = false;
+    const matrix = this.matrixWorld;
+    // The galaxy group only ever SPINS about Y (it never translates or
+    // scales), so a matrixWorld change is attributed to the recorded spin
+    // and tolerated inside the pixel budget; a change with zero recorded
+    // spin means some other ancestor transform moved — rebuild exactly.
+    const rotationDrift = Math.abs(galaxyFrame.rotationY - indexedRotationY);
+    const matrixStale = !indexedMatrixWorld.equals(matrix)
+      && (rotationDrift === 0
+        || rotationDrift * indexedDriftPxPerRadian
+          > CELL_PICK_ROTATION_DRIFT_BUDGET_PX);
+    // Viewport and projection are pinned exactly below, so reading them live
+    // for the bound is reading what the index was built with. The projection
+    // stays an exact compare: it moves on resize and fov alone.
+    camera.matrixWorld.decompose(cameraPosition, cameraQuaternion, cameraScale);
+    const cameraStale = cellPickCameraDriftPx(
+      indexedCameraQuaternion.angleTo(cameraQuaternion),
+      indexedCameraPosition.distanceTo(cameraPosition),
+      camera.projectionMatrix.elements[5],
+      halfW,
+      halfH,
+      indexedMinViewZ,
+    ) > CELL_PICK_ROTATION_DRIFT_BUDGET_PX;
+    const structuralIndexChange = indexedCells !== cells
+      || indexedCount !== count
+      // Detail reaches the index ONLY through cellPickRadiusPx's expanded
+      // branch, which is a threshold test — so the attribute's version is
+      // the wrong signal. A hover envelope eases for 0.3–0.7s and rewrites
+      // its slots on every frame of it, and gating on the version made every
+      // pointermove of a sweep re-project the whole field for magnitudes no
+      // pick answer reads. The epoch counts crossings, so it moves exactly
+      // when a cell's pick disc changes width.
+      || indexedDetailEpoch !== detailPickEpoch.epoch
+      || indexedWidth !== width
+      || indexedHeight !== height
+      || matrixStale
+      || cameraStale
+      || !indexedProjection.equals(camera.projectionMatrix);
+    if (forcePrecise || structuralIndexChange) {
+      // Focus is NOT baked in: every disc goes in unfocused and the ≤2
+      // focused ones are padded at query time. The admit pad keeps entries
+      // a pad could still reach inside the grid, so membership stays what a
+      // focused rebuild's would have been.
+      screenIndex.begin(width, height, CELL_PICK_FOCUS_PAD_CEILING_PX);
+      modelView.multiplyMatrices(camera.matrixWorldInverse, matrix);
+      const projectionScaleY = camera.projectionMatrix.elements[5];
+      let maxDriftPxPerRadian = 0;
+      let minViewZ = Infinity;
+      for (let i = 0; i < count; i += 1) {
+        const c = cells[i];
+        cellView
+          .set(c.pos_seed[0], c.pos_seed[1], c.pos_seed[2])
+          .applyMatrix4(modelView);
+
+        // View-space depth feeds both visual footprint and frustum rejection.
+        const viewZ = -cellView.z;
+        if (viewZ <= 0) continue;
+        const pickPxR = cellPickDiscRadiusPx(
+          sizeArray[i],
+          c.capacity,
+          detailArray[i] ?? 0,
+          0,
+          viewZ,
+          height,
+          halfH,
+          projectionScaleY,
+        );
+
+        // Reuse the view-space result instead of applying the camera inverse
+        // a second time through Vector3.project().
+        cellNdc.copy(cellView).applyMatrix4(camera.projectionMatrix);
+        if (cellNdc.z < -1 || cellNdc.z > 1) continue;
+        const driftPxPerRadian = cellPickDriftPxPerRadian(
+          Math.hypot(c.pos_seed[0], c.pos_seed[2]),
+          projectionScaleY,
+          halfH,
+          viewZ,
+        );
+        if (driftPxPerRadian > maxDriftPxPerRadian) {
+          maxDriftPxPerRadian = driftPxPerRadian;
+        }
+        if (viewZ < minViewZ) minViewZ = viewZ;
+        screenIndex.insert(
+          i,
+          (cellNdc.x + 1) * halfW,
+          (1 - cellNdc.y) * halfH,
+          pickPxR,
+          cellNdc.z,
+        );
+      }
+      indexedCells = cells;
+      indexedCount = count;
+      indexedDetailEpoch = detailPickEpoch.epoch;
+      indexedWidth = width;
+      indexedHeight = height;
+      indexedRotationY = galaxyFrame.rotationY;
+      indexedDriftPxPerRadian = maxDriftPxPerRadian;
+      indexedProjectionScaleY = projectionScaleY;
+      indexedMinViewZ = Number.isFinite(minViewZ) ? minViewZ : 0;
+      indexedModelView.copy(modelView);
+      indexedMatrixWorld.copy(matrix);
+      indexedCameraPosition.copy(cameraPosition);
+      indexedCameraQuaternion.copy(cameraQuaternion);
+      indexedProjection.copy(camera.projectionMatrix);
+      indexedRevision += 1;
+    }
+
+    const selectedCellId = selectedCellIdRef.current;
+    const hoveredCellId = hoveredCellIdRef.current;
+    if (
+      padRevision !== indexedRevision
+      || padSelectedCellId !== selectedCellId
+      || padHoveredCellId !== hoveredCellId
+    ) {
+      padRevision = indexedRevision;
+      padSelectedCellId = selectedCellId;
+      padHoveredCellId = hoveredCellId;
+      focusPads[0].index = -1;
+      focusPads[1].index = -1;
+      // The only O(count) step a focus change still costs: two id lookups
+      // over the very list the index is keyed on, ~1% of the projection it
+      // replaces. Selected wins the cell it shares with hover, exactly as
+      // `cellFocusTarget` resolves it.
+      let wanted = (selectedCellId === null ? 0 : 1)
+        + (hoveredCellId === null || hoveredCellId === selectedCellId ? 0 : 1);
+      for (let i = 0; i < count && wanted > 0; i += 1) {
+        const id = cells[i].id;
+        if (id === selectedCellId) {
+          focusPads[0].index = i;
+          wanted -= 1;
+        } else if (id === hoveredCellId) {
+          focusPads[1].index = i;
+          wanted -= 1;
+        }
+      }
+      // Padded discs are evaluated in the index's own snapshot — its model
+      // view, its viewport — so a pad and the radii around it describe one
+      // camera even while the live one drifts inside the budget.
+      for (let slot = 0; slot < focusPads.length; slot += 1) {
+        const pad = focusPads[slot];
+        if (pad.index < 0) continue;
+        const c = cells[pad.index];
+        cellView
+          .set(c.pos_seed[0], c.pos_seed[1], c.pos_seed[2])
+          .applyMatrix4(indexedModelView);
+        const viewZ = -cellView.z;
+        if (viewZ <= 0) {
+          pad.index = -1;
+          continue;
+        }
+        pad.radius = cellPickDiscRadiusPx(
+          sizeArray[pad.index],
+          c.capacity,
+          detailArray[pad.index] ?? 0,
+          slot === 0 ? CELL_SELECTED_FOCUS : CELL_HOVER_FOCUS,
+          viewZ,
+          indexedHeight,
+          indexedHeight * 0.5,
+          indexedProjectionScaleY,
+        );
+      }
+    }
+
+    const hit = screenIndex.find(
+      (clickNdcX + 1) * halfW,
+      (1 - clickNdcY) * halfH,
+      focusPads,
+    );
+    if (!hit) return;
+    const hitCell = cells[hit.index];
+    if (!hitCell) return;
+    bestPoint
+      .set(hitCell.pos_seed[0], hitCell.pos_seed[1], hitCell.pos_seed[2])
+      .applyMatrix4(matrix);
+
+    intersects.push({
+      // World distance from the ray origin (camera) to the picked
+      // cell's pos_seed. r3f sorts intersects by this when multiple
+      // objects (e.g. chain icosahedra) compete for the same click.
+      distance: ray.origin.distanceTo(bestPoint),
+      point: bestPoint.clone(),
+      object: this,
+      // r3f surfaces this on the synthetic event as `e.instanceId`;
+      // the onClick handler below indexes back into cellsListRef.
+      instanceId: hit.index,
+    });
+  };
+}
+
 /** Custom Object3D that participates in r3f's raycast pipeline. Its
  *  `raycast()` refreshes a current-frame screen index, then pushes an
  *  intersect for the cell whose own visual radius covers the pointer.
@@ -801,6 +1156,7 @@ function CellPicker({
   drawCountRef,
   detailAttr,
   detailPickEpoch,
+  sizeAttr,
   selectedCellIdRef,
   hoveredCellIdRef,
   pickingSuspendedRef,
@@ -817,173 +1173,18 @@ function CellPicker({
     const node = ref.current;
     if (!node) return;
 
-    // Scratch allocations hoisted out of the per-cell loop.
-    const cellWorld = new THREE.Vector3();
-    const cellView = new THREE.Vector3();
-    const cellNdc = new THREE.Vector3();
-    const rayNdc = new THREE.Vector3();
-    const bestPoint = new THREE.Vector3();
-    const modelView = new THREE.Matrix4();
-    const screenIndex = new ScreenSpaceHitIndex(INSTANCE_CAPACITY);
-    const indexedMatrixWorld = new THREE.Matrix4();
-    const indexedCameraView = new THREE.Matrix4();
-    const indexedProjection = new THREE.Matrix4();
-    let indexedCells: Cell[] | null = null;
-    let indexedCount = -1;
-    let indexedSelectedCellId: number | null = null;
-    let indexedHoveredCellId: number | null = null;
-    let indexedDetailEpoch = -1;
-    let indexedWidth = -1;
-    let indexedHeight = -1;
-    let indexedRotationY = 0;
-    let indexedDriftPxPerRadian = 0;
-
-    node.raycast = function raycastCells(raycaster, intersects) {
-      if (pickingSuspendedRef?.current) return;
-      const cells = cellsListRef.current;
-      const count = Math.min(drawCountRef.current, cells.length);
-      if (count === 0) return;
-      const detailArray = detailAttr.array as Float32Array;
-      const camera = raycaster.camera;
-      if (!camera) return;
-      const ray = raycaster.ray;
-
-      // Recover the click point in NDC: any point on the ray in front of
-      // the camera projects back to the same screen pixel. t=1 is fine.
-      rayNdc.copy(ray.origin).addScaledVector(ray.direction, 1).project(camera);
-      const clickNdcX = rayNdc.x;
-      const clickNdcY = rayNdc.y;
-
-      const { width, height } = sizeRef.current;
-      const halfW = width * 0.5;
-      const halfH = height * 0.5;
-      const forcePrecise = forcePreciseRaycastRef.current;
-      forcePreciseRaycastRef.current = false;
-      const matrix = this.matrixWorld;
-      // The galaxy group only ever SPINS about Y (it never translates or
-      // scales), so a matrixWorld change is attributed to the recorded spin
-      // and tolerated inside the pixel budget; a change with zero recorded
-      // spin means some other ancestor transform moved — rebuild exactly.
-      const rotationDrift = Math.abs(galaxyFrame.rotationY - indexedRotationY);
-      const matrixStale = !indexedMatrixWorld.equals(matrix)
-        && (rotationDrift === 0
-          || rotationDrift * indexedDriftPxPerRadian
-            > CELL_PICK_ROTATION_DRIFT_BUDGET_PX);
-      const structuralIndexChange = indexedCells !== cells
-        || indexedCount !== count
-        || indexedSelectedCellId !== selectedCellIdRef.current
-        || indexedHoveredCellId !== hoveredCellIdRef.current
-        // Detail reaches the index ONLY through cellPickRadiusPx's expanded
-        // branch, which is a threshold test — so the attribute's version is
-        // the wrong signal. A hover envelope eases for 0.3–0.7s and rewrites
-        // its slots on every frame of it, and gating on the version made every
-        // pointermove of a sweep re-project the whole field for magnitudes no
-        // pick answer reads. The epoch counts crossings, so it moves exactly
-        // when a cell's pick disc changes width.
-        || indexedDetailEpoch !== detailPickEpoch.epoch
-        || indexedWidth !== width
-        || indexedHeight !== height
-        || matrixStale
-        || !indexedCameraView.equals(camera.matrixWorldInverse)
-        || !indexedProjection.equals(camera.projectionMatrix);
-      if (forcePrecise || structuralIndexChange) {
-        screenIndex.begin(width, height);
-        modelView.multiplyMatrices(camera.matrixWorldInverse, matrix);
-        const projectionScaleY = camera.projectionMatrix.elements[5];
-        const selectedCellId = selectedCellIdRef.current;
-        const hoveredCellId = hoveredCellIdRef.current;
-        let maxDriftPxPerRadian = 0;
-        for (let i = 0; i < count; i += 1) {
-          const c = cells[i];
-          cellView
-            .set(c.pos_seed[0], c.pos_seed[1], c.pos_seed[2])
-            .applyMatrix4(modelView);
-
-          // View-space depth feeds both visual footprint and frustum rejection.
-          const viewZ = -cellView.z;
-          if (viewZ <= 0) continue;
-          const depthToPx = halfH / viewZ;
-          const cellPointPxR = cellPointSize(c) * depthToPx;
-          const focus = cellFocusTarget(
-            c.id,
-            selectedCellId,
-            hoveredCellId,
-          );
-          const braidScale = consensusBraidRenderScale(
-            viewZ,
-            height,
-            projectionScaleY,
-            focus,
-            consensusBraidPresenceScale(capacityMass(c.capacity)),
-          );
-          const braidPxR = CONSENSUS_BRAID_LOCAL_RADIUS
-            * braidScale
-            * projectionScaleY
-            * depthToPx;
-          const pickPxR = cellPickRadiusPx(
-            cellPointPxR,
-            braidPxR,
-            detailArray[i] ?? 0,
-          );
-
-          // Reuse the view-space result instead of applying the camera inverse
-          // a second time through Vector3.project().
-          cellNdc.copy(cellView).applyMatrix4(camera.projectionMatrix);
-          if (cellNdc.z < -1 || cellNdc.z > 1) continue;
-          const driftPxPerRadian = cellPickDriftPxPerRadian(
-            Math.hypot(c.pos_seed[0], c.pos_seed[2]),
-            projectionScaleY,
-            halfH,
-            viewZ,
-          );
-          if (driftPxPerRadian > maxDriftPxPerRadian) {
-            maxDriftPxPerRadian = driftPxPerRadian;
-          }
-          screenIndex.insert(
-            i,
-            (cellNdc.x + 1) * halfW,
-            (1 - cellNdc.y) * halfH,
-            pickPxR,
-            cellNdc.z,
-          );
-        }
-        indexedCells = cells;
-        indexedCount = count;
-        indexedSelectedCellId = selectedCellIdRef.current;
-        indexedHoveredCellId = hoveredCellIdRef.current;
-        indexedDetailEpoch = detailPickEpoch.epoch;
-        indexedWidth = width;
-        indexedHeight = height;
-        indexedRotationY = galaxyFrame.rotationY;
-        indexedDriftPxPerRadian = maxDriftPxPerRadian;
-        indexedMatrixWorld.copy(matrix);
-        indexedCameraView.copy(camera.matrixWorldInverse);
-        indexedProjection.copy(camera.projectionMatrix);
-      }
-
-      const hit = screenIndex.find(
-        (clickNdcX + 1) * halfW,
-        (1 - clickNdcY) * halfH,
-      );
-      if (!hit) return;
-      const hitCell = cells[hit.index];
-      if (!hitCell) return;
-      bestPoint
-        .set(hitCell.pos_seed[0], hitCell.pos_seed[1], hitCell.pos_seed[2])
-        .applyMatrix4(matrix);
-
-      intersects.push({
-        // World distance from the ray origin (camera) to the picked
-        // cell's pos_seed. r3f sorts intersects by this when multiple
-        // objects (e.g. chain icosahedra) compete for the same click.
-        distance: ray.origin.distanceTo(bestPoint),
-        point: bestPoint.clone(),
-        object: this,
-        // r3f surfaces this on the synthetic event as `e.instanceId`;
-        // the onClick handler below indexes back into cellsListRef.
-        instanceId: hit.index,
-      });
-    };
+    node.raycast = createCellPickRaycast({
+      cellsListRef,
+      drawCountRef,
+      detailAttr,
+      detailPickEpoch,
+      sizeAttr,
+      selectedCellIdRef,
+      hoveredCellIdRef,
+      pickingSuspendedRef,
+      forcePreciseRef: forcePreciseRaycastRef,
+      viewportRef: sizeRef,
+    });
 
     return () => {
       // Plain Object3D.raycast is a no-op; restore on unmount so a
@@ -998,6 +1199,7 @@ function CellPicker({
     hoveredCellIdRef,
     pickingSuspendedRef,
     selectedCellIdRef,
+    sizeAttr,
   ]);
 
   useEffect(() => {
@@ -1961,6 +2163,7 @@ function CellGalaxy({
           drawCountRef={drawCountRef}
           detailAttr={cellDetailAttr}
           detailPickEpoch={cellDetailPickEpoch}
+          sizeAttr={cellSizeAttr}
           selectedCellIdRef={selectedCellIdRef}
           hoveredCellIdRef={hoveredCellIdRef}
           pickingSuspendedRef={pickingSuspendedRef}

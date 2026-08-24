@@ -3,20 +3,36 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { render } from '@testing-library/react';
 import { Canvas } from '@react-three/fiber';
+import * as THREE from 'three';
 import CellGalaxy from '../../src/components/CellGalaxy';
 import {
   ckbNodeAnchorHaloTarget,
   ckbNodeAnchorPresentation,
   cellPointerGestureIsClick,
+  cellPickCameraDriftPx,
+  cellPickDiscRadiusPx,
   cellPickDriftPxPerRadian,
   CELL_PICK_ROTATION_DRIFT_BUDGET_PX,
   cellPointSize,
+  createCellPickRaycast,
   diffCellBufferSlots,
   type CellBufferPresentation,
   writeFlashSlots,
   writeCellBuffers,
   writeCellExitStampSlots,
 } from '../../src/components/CellGalaxy';
+import {
+  CELL_HOVER_FOCUS,
+  CELL_PICK_FOCUS_PAD_CEILING_PX,
+  CELL_SELECTED_FOCUS,
+  CONSENSUS_BRAID_LOCAL_RADIUS,
+  cellFocusTarget,
+  cellPickRadiusPx,
+  consensusBraidRenderScale,
+} from '../../src/derives/cellInteraction.derive';
+import { consensusBraidPresenceScale } from '../../src/derives/consensusBraid.derive';
+import { capacityMass } from '../../src/derives/cellVisual.derive';
+import { ScreenSpaceHitIndex } from '../../src/geometry/screenSpaceHitIndex';
 import {
   ENTER_STAMP_SENTINEL,
   EXIT_STAMP_SENTINEL,
@@ -199,19 +215,19 @@ describe('CellGalaxy', () => {
 
   it('reuses one exact screen index until a projection input changes', () => {
     const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
-    // The galaxy root is `memo(CellGalaxy)` now, so the slice ends at the
-    // declaration rather than at an `export default function` that no longer
-    // exists — an indexOf miss here would silently widen the window to the end
-    // of the file and let the negative assertions below pass for free.
+    // The window opens at the raycast factory and runs through the component
+    // that binds it. The galaxy root is `memo(CellGalaxy)` now, so the slice
+    // ends at the declaration rather than at an `export default function` that
+    // no longer exists — an indexOf miss on either boundary would silently
+    // widen the window and let the negative assertions below pass for free.
     const picker = source.slice(
-      source.indexOf('function CellPicker('),
+      source.indexOf('export function createCellPickRaycast('),
       source.indexOf('function CellGalaxy('),
     );
     expect(source.indexOf('function CellGalaxy(')).toBeGreaterThan(-1);
 
     expect(picker).toContain('ScreenSpaceHitIndex');
     expect(picker).toContain('indexedMatrixWorld.equals(matrix)');
-    expect(picker).toContain('indexedCameraView.equals(camera.matrixWorldInverse)');
     expect(picker).toContain('indexedProjection.equals(camera.projectionMatrix)');
     expect(picker).toContain('indexedDetailEpoch !== detailPickEpoch.epoch');
     expect(picker).toContain('screenIndex.find(');
@@ -221,6 +237,17 @@ describe('CellGalaxy', () => {
     expect(picker).not.toContain('window.requestAnimationFrame');
     expect(picker).not.toContain('indexFreshThisFrame');
     expect(picker).toContain('forcePreciseRaycastRef.current');
+
+    // Focus identity is not a projection input: the two focused discs are
+    // padded at query time, so a pointer sweep no longer re-projects the
+    // field twice per cell it crosses.
+    expect(picker).not.toContain('indexedSelectedCellId');
+    expect(picker).not.toContain('indexedHoveredCellId');
+    expect(picker).toContain('CELL_PICK_FOCUS_PAD_CEILING_PX');
+    // Camera motion is a pixel budget like the spin above it, not an exact
+    // matrix compare that every frame of a damping tail walks through.
+    expect(picker).not.toContain('indexedCameraView');
+    expect(picker).toContain('cellPickCameraDriftPx(');
   });
 
   it('goes stale on the detail line being crossed, not on detail moving', () => {
@@ -895,5 +922,411 @@ describe('cell pick index rotation tolerance', () => {
     expect(toleratedRadians / 0.00125).toBeGreaterThan(0.5);
     // …while staying sub-visual: the budget itself is under 2px.
     expect(CELL_PICK_ROTATION_DRIFT_BUDGET_PX).toBeLessThan(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pointer picking — the gate that decides WHEN the screen index is rebuilt,
+// against an oracle for WHAT it must answer. jsdom cannot raycast an r3f
+// Canvas, so the raycast is built straight from its factory and driven with a
+// real THREE.Raycaster.
+// ---------------------------------------------------------------------------
+
+const PICK_WIDTH = 960;
+const PICK_HEIGHT = 640;
+
+function pickField(): Cell[] {
+  // A spiral shell, deliberately crowded: overlapping discs are what make the
+  // find()'s distance/depth tie-break — and therefore the oracle — load
+  // bearing. Tagged cells and a capacity spread vary point size and presence.
+  return Array.from({ length: 260 }, (_, i) => {
+    const angle = i * 2.399963;
+    const radius = 4 + 2.4 * Math.sqrt(i);
+    const cell = mkCell(i + 1);
+    cell.pos_seed = [
+      Math.cos(angle) * radius,
+      Math.sin(i * 0.7) * 14,
+      Math.sin(angle) * radius,
+    ];
+    cell.capacity = 61 + (i % 23) * 1400;
+    cell.tag = i % 7 === 0 ? 'tagged' : null;
+    return cell;
+  });
+}
+
+interface PickHarness {
+  cells: Cell[];
+  sizes: Float32Array;
+  details: Float32Array;
+  object: THREE.Object3D;
+  camera: THREE.PerspectiveCamera;
+  selectedCellIdRef: { current: number | null };
+  hoveredCellIdRef: { current: number | null };
+  forcePreciseRef: { current: boolean };
+  raycast: (
+    this: THREE.Object3D,
+    raycaster: THREE.Raycaster,
+    intersects: THREE.Intersection[],
+  ) => void;
+}
+
+function pickHarness(): PickHarness {
+  const cells = pickField();
+  const sizes = new Float32Array(cells.length);
+  const details = new Float32Array(cells.length);
+  for (let i = 0; i < cells.length; i += 1) sizes[i] = cellPointSize(cells[i]);
+  // A handful of near cells sit past the expanded-detail line, so the padded
+  // branch of `cellPickRadiusPx` is exercised and not merely declared.
+  for (const i of [3, 17, 88, 201]) details[i] = 0.5;
+
+  const object = new THREE.Object3D();
+  object.updateMatrixWorld(true);
+  const camera = new THREE.PerspectiveCamera(
+    50, PICK_WIDTH / PICK_HEIGHT, 0.1, 2000,
+  );
+  camera.position.set(0, 18, 132);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld(true);
+
+  const selectedCellIdRef = { current: null as number | null };
+  const hoveredCellIdRef = { current: null as number | null };
+  const forcePreciseRef = { current: false };
+  const raycast = createCellPickRaycast({
+    cellsListRef: { current: cells },
+    drawCountRef: { current: cells.length },
+    detailAttr: new THREE.BufferAttribute(details, 1),
+    detailPickEpoch: { threshold: 0.02, epoch: 0 },
+    sizeAttr: new THREE.BufferAttribute(sizes, 1),
+    selectedCellIdRef,
+    hoveredCellIdRef,
+    forcePreciseRef,
+    viewportRef: { current: { width: PICK_WIDTH, height: PICK_HEIGHT } },
+  });
+  return {
+    cells, sizes, details, object, camera,
+    selectedCellIdRef, hoveredCellIdRef, forcePreciseRef, raycast,
+  };
+}
+
+/** The picker's rebuild exactly as it stood before the focus pad and the
+ *  camera budget: the whole field re-projected on the spot, every disc baked
+ *  at its live focus. Kept here as the ORACLE — a pick answer is contract,
+ *  and this is what that contract has always been. */
+function referencePick(
+  h: PickHarness,
+  camera: THREE.PerspectiveCamera,
+  px: number,
+  py: number,
+): number | null {
+  const index = new ScreenSpaceHitIndex(h.cells.length);
+  index.begin(PICK_WIDTH, PICK_HEIGHT);
+  const halfW = PICK_WIDTH * 0.5;
+  const halfH = PICK_HEIGHT * 0.5;
+  const modelView = new THREE.Matrix4()
+    .multiplyMatrices(camera.matrixWorldInverse, h.object.matrixWorld);
+  const projectionScaleY = camera.projectionMatrix.elements[5];
+  const view = new THREE.Vector3();
+  const ndc = new THREE.Vector3();
+  for (let i = 0; i < h.cells.length; i += 1) {
+    const c = h.cells[i];
+    view.set(c.pos_seed[0], c.pos_seed[1], c.pos_seed[2])
+      .applyMatrix4(modelView);
+    const viewZ = -view.z;
+    if (viewZ <= 0) continue;
+    const depthToPx = halfH / viewZ;
+    const braidScale = consensusBraidRenderScale(
+      viewZ,
+      PICK_HEIGHT,
+      projectionScaleY,
+      cellFocusTarget(
+        c.id,
+        h.selectedCellIdRef.current,
+        h.hoveredCellIdRef.current,
+      ),
+      consensusBraidPresenceScale(capacityMass(c.capacity)),
+    );
+    const pickPxR = cellPickRadiusPx(
+      cellPointSize(c) * depthToPx,
+      CONSENSUS_BRAID_LOCAL_RADIUS * braidScale * projectionScaleY * depthToPx,
+      h.details[i] ?? 0,
+    );
+    ndc.copy(view).applyMatrix4(camera.projectionMatrix);
+    if (ndc.z < -1 || ndc.z > 1) continue;
+    index.insert(
+      i, (ndc.x + 1) * halfW, (1 - ndc.y) * halfH, pickPxR, ndc.z,
+    );
+  }
+  return index.find(px, py)?.index ?? null;
+}
+
+/** One pointer position through the real raycast, as `e.instanceId`. */
+function livePick(h: PickHarness, px: number, py: number): number | null {
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(
+    new THREE.Vector2(
+      (px / PICK_WIDTH) * 2 - 1,
+      -((py / PICK_HEIGHT) * 2 - 1),
+    ),
+    h.camera,
+  );
+  const intersects: THREE.Intersection[] = [];
+  h.raycast.call(h.object, raycaster, intersects);
+  return intersects.length === 0
+    ? null
+    : (intersects[0].instanceId ?? null);
+}
+
+/** Every pointer position on a coarse raster. Live and oracle sweeps stay
+ *  apart so a rebuild count can be taken around the live one alone. */
+function sweep(
+  answer: (px: number, py: number) => number | null,
+): Array<number | null> {
+  const answers: Array<number | null> = [];
+  for (let py = 6; py < PICK_HEIGHT; py += 11) {
+    for (let px = 6; px < PICK_WIDTH; px += 11) answers.push(answer(px, py));
+  }
+  return answers;
+}
+
+const liveSweep = (h: PickHarness) => sweep((px, py) => livePick(h, px, py));
+
+/** `camera` is the pose the oracle projects through — the INDEXED one when
+ *  the live camera has since drifted inside its budget. */
+const oracleSweep = (h: PickHarness, camera = h.camera) =>
+  sweep((px, py) => referencePick(h, camera, px, py));
+
+function countRebuilds(run: () => void): number {
+  const spy = vi.spyOn(ScreenSpaceHitIndex.prototype, 'begin');
+  try {
+    run();
+    return spy.mock.calls.length;
+  } finally {
+    spy.mockRestore();
+  }
+}
+
+describe('cell pick focus pad', () => {
+  it('never grows a disc past the ceiling the index admits entries for', () => {
+    // The admit pad is what keeps a padded disc reachable, so it has to be an
+    // upper bound on the pad itself. Sweep the inputs focus actually travels
+    // through: depth, viewport, projection, capacity presence, both sides of
+    // the expanded-detail line.
+    let worst = 0;
+    for (const viewZ of [1.5, 6, 22, 74, 190, 640]) {
+      for (const projectionScaleY of [0.9, 2.144, 4.1]) {
+        for (const height of [360, 640, 1440]) {
+          for (const capacity of [61, 900, 12_000, 900_000]) {
+            for (const detail of [0, 0.5]) {
+              for (const size of [0.78, 1.4, 3.6]) {
+                const base = cellPickDiscRadiusPx(
+                  size, capacity, detail, 0,
+                  viewZ, height, height * 0.5, projectionScaleY,
+                );
+                for (const focus of [CELL_HOVER_FOCUS, CELL_SELECTED_FOCUS]) {
+                  const padded = cellPickDiscRadiusPx(
+                    size, capacity, detail, focus,
+                    viewZ, height, height * 0.5, projectionScaleY,
+                  );
+                  // A pad may only ever grow a disc: the index keeps the
+                  // bucket the centre put it in, and `find` widens its probe
+                  // by the pad, so a shrinking one would answer wrong.
+                  expect(padded).toBeGreaterThanOrEqual(base);
+                  worst = Math.max(worst, padded - base);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(worst).toBeLessThanOrEqual(CELL_PICK_FOCUS_PAD_CEILING_PX);
+    // …and the ceiling is not idly generous: it is worth padding for.
+    expect(worst).toBeGreaterThan(CELL_PICK_FOCUS_PAD_CEILING_PX * 0.5);
+  });
+
+  it('answers a hover flip without re-projecting the field', () => {
+    const h = pickHarness();
+    // First pointer event builds the index. Everything after is the finding:
+    // a sweep across the dense core flips the hovered id twice per cell it
+    // crosses, and each flip used to re-project all of them.
+    expect(countRebuilds(() => livePick(h, 480, 320))).toBe(1);
+    const flips = countRebuilds(() => {
+      for (const id of [12, 13, null, 41, 42, 41, null, 7]) {
+        h.hoveredCellIdRef.current = id;
+        livePick(h, 480, 320);
+      }
+    });
+    expect(flips).toBe(0);
+
+    // Selection arrives from outside the picker (a HUD link, a route flight),
+    // and is just as free.
+    expect(countRebuilds(() => {
+      h.selectedCellIdRef.current = 41;
+      livePick(h, 480, 320);
+      h.selectedCellIdRef.current = 200;
+      livePick(h, 480, 320);
+    })).toBe(0);
+  });
+
+  it('pads the focused discs to exactly what a focused rebuild bakes', () => {
+    const h = pickHarness();
+    livePick(h, 480, 320);
+
+    for (const [selected, hovered] of [
+      [null, null], [41, null], [null, 41], [41, 42], [41, 41], [4, 202],
+    ] as Array<[number | null, number | null]>) {
+      h.selectedCellIdRef.current = selected;
+      h.hoveredCellIdRef.current = hovered;
+      let live: Array<number | null> = [];
+      expect(countRebuilds(() => { live = liveSweep(h); })).toBe(0);
+      expect(live).toEqual(oracleSweep(h));
+      // The sweep has to actually reach the focused cells, or the
+      // equivalence above is a statement about empty space.
+      if (selected !== null) expect(live).toContain(selected - 1);
+    }
+  });
+});
+
+describe('cell pick camera budget', () => {
+  it('bounds the screen motion the camera can hide, and says so in px', () => {
+    // The derivation, checked against the thing it claims to bound: move a
+    // real camera, project a real field through both poses, and measure.
+    const h = pickHarness();
+    const projectionScaleY = h.camera.projectionMatrix.elements[5];
+    const halfW = PICK_WIDTH * 0.5;
+    const halfH = PICK_HEIGHT * 0.5;
+
+    const project = (camera: THREE.PerspectiveCamera) => {
+      const modelView = new THREE.Matrix4()
+        .multiplyMatrices(camera.matrixWorldInverse, h.object.matrixWorld);
+      const out: Array<[number, number] | null> = [];
+      let minViewZ = Infinity;
+      const v = new THREE.Vector3();
+      for (const c of h.cells) {
+        v.set(c.pos_seed[0], c.pos_seed[1], c.pos_seed[2])
+          .applyMatrix4(modelView);
+        const viewZ = -v.z;
+        if (viewZ <= 0) { out.push(null); continue; }
+        minViewZ = Math.min(minViewZ, viewZ);
+        v.applyMatrix4(camera.projectionMatrix);
+        out.push([(v.x + 1) * halfW, (1 - v.y) * halfH]);
+      }
+      return { out, minViewZ };
+    };
+
+    const from = project(h.camera);
+    for (const [pitch, yaw, roll, dx, dy, dz] of [
+      [0.002, 0, 0, 0, 0, 0],
+      [0, 0.004, 0, 0, 0, 0],
+      [0, 0, 0.01, 0, 0, 0],
+      [0, 0, 0, 0.05, 0, 0],
+      [0, 0, 0, 0, 0, -0.4],
+      [0.0015, 0.0009, 0.003, 0.02, 0.03, 0.05],
+      [0.02, 0.03, 0.01, 0.9, 0.4, 1.7],
+    ]) {
+      const moved = h.camera.clone();
+      moved.rotateX(pitch);
+      moved.rotateY(yaw);
+      moved.rotateZ(roll);
+      moved.position.add(new THREE.Vector3(dx, dy, dz));
+      moved.updateMatrixWorld(true);
+
+      const to = project(moved);
+      let measured = 0;
+      for (let i = 0; i < h.cells.length; i += 1) {
+        const a = from.out[i];
+        const b = to.out[i];
+        if (!a || !b) continue;
+        measured = Math.max(measured, Math.hypot(a[0] - b[0], a[1] - b[1]));
+      }
+
+      const fromQ = new THREE.Quaternion();
+      const toQ = new THREE.Quaternion();
+      const scratch = new THREE.Vector3();
+      h.camera.matrixWorld.decompose(new THREE.Vector3(), fromQ, scratch);
+      moved.matrixWorld.decompose(new THREE.Vector3(), toQ, scratch);
+      const bound = cellPickCameraDriftPx(
+        fromQ.angleTo(toQ),
+        h.camera.position.distanceTo(moved.position),
+        projectionScaleY,
+        halfW,
+        halfH,
+        from.minViewZ,
+      );
+      expect(measured).toBeGreaterThan(0);
+      expect(bound).toBeGreaterThanOrEqual(measured);
+    }
+  });
+
+  it('is unbounded where it cannot be honest', () => {
+    // Travel that reaches the nearest indexed cell rescales the screen without
+    // limit, and an index that measured no depth at all has no near cell to
+    // reason from. Both must rebuild rather than guess.
+    expect(cellPickCameraDriftPx(0, 4, 2.144, 480, 320, 4)).toBe(Infinity);
+    expect(cellPickCameraDriftPx(0, 0.001, 2.144, 480, 320, 0)).toBe(Infinity);
+    expect(cellPickCameraDriftPx(0, 0, 2.144, 480, 320, 0)).toBe(0);
+    expect(cellPickCameraDriftPx(0, 1, 0, 480, 320, 90)).toBe(Infinity);
+    // Rotation alone needs nothing from the scene: no indexed depth, still a
+    // finite bound, because the projection's own stretch is the whole term.
+    expect(cellPickCameraDriftPx(0.01, 0, 2.144, 480, 320, 0))
+      .toBeCloseTo(0.01 * (686.08 + (480 * 480 + 320 * 320) / 686.08), 6);
+  });
+
+  it('rides a sub-budget camera move on the index it already has', () => {
+    const h = pickHarness();
+    expect(countRebuilds(() => livePick(h, 480, 320))).toBe(1);
+    const indexed = h.camera.clone();
+
+    // A damping tail's late frames and a route flight's last approach: motion
+    // far under one pixel of screen displacement, arriving on every
+    // pointermove. Exact matrix equality rebuilt the whole field for each.
+    const tail = countRebuilds(() => {
+      for (let step = 0; step < 24; step += 1) {
+        h.camera.rotateY(2e-6);
+        h.camera.position.z -= 4e-4;
+        h.camera.updateMatrixWorld(true);
+        livePick(h, 480 + step, 320);
+      }
+    });
+    expect(tail).toBe(0);
+
+    // And what it answers is the snapshot it was built from, exactly.
+    const live = liveSweep(h);
+    expect(live).toEqual(oracleSweep(h, indexed));
+    expect(live.some((hit) => hit !== null)).toBe(true);
+  });
+
+  it('rebuilds once the move could have cost more than the budget', () => {
+    const h = pickHarness();
+    livePick(h, 480, 320);
+
+    // One orbit step of any real size clears 1.5px many times over.
+    expect(countRebuilds(() => {
+      h.camera.rotateY(0.02);
+      h.camera.updateMatrixWorld(true);
+      livePick(h, 480, 320);
+    })).toBe(1);
+
+    // A pure dolly with no rotation at all is caught by the translation term.
+    expect(countRebuilds(() => {
+      h.camera.position.z -= 3;
+      h.camera.updateMatrixWorld(true);
+      livePick(h, 480, 320);
+    })).toBe(1);
+
+    // …and the fresh index answers the new camera, not the old one.
+    expect(liveSweep(h)).toEqual(oracleSweep(h));
+  });
+
+  it('gives the click its precise snapshot however cheap the reuse got', () => {
+    const h = pickHarness();
+    livePick(h, 480, 320);
+    // Nothing changed — the pointermove path reuses.
+    expect(countRebuilds(() => livePick(h, 481, 320))).toBe(0);
+    // The pointerdown listener sets this flag; it must survive every budget
+    // above it and be spent exactly once.
+    h.forcePreciseRef.current = true;
+    expect(countRebuilds(() => livePick(h, 481, 320))).toBe(1);
+    expect(countRebuilds(() => livePick(h, 481, 320))).toBe(0);
   });
 });
