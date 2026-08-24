@@ -16,6 +16,10 @@ import {
   type PopulationPlacementSnapshot,
 } from '../geometry/populationPlacementStore';
 import { beginPopulationFieldPlacement } from '../geometry/populationFieldSession';
+import {
+  reportBootPopulationExpected,
+  reportBootPopulationReady,
+} from '../boot/nerveRestGate';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
 import {
   makeScreenSpaceCapsuleGeometry,
@@ -262,7 +266,6 @@ export default function CellPopulationField({
   const backboneMaterial = useMemo(() => makePopulationBackboneMaterial(), []);
   const [placed, setPlaced] = useState<PlacedGeometry | null>(null);
   const placementRef = useRef<PlacementCounts | null>(null);
-  const startedRef = useRef(false);
   const { effective: quality } = useQualityRuntime();
   const pointsGeometryRef = useRef<THREE.BufferGeometry | null>(null);
   const fibresGeometryRef = useRef<THREE.BufferGeometry | null>(null);
@@ -282,10 +285,17 @@ export default function CellPopulationField({
   //
   // Started on the first frame that has something unresolved to state. A stage
   // that covers its scope places nothing and spins nothing up.
+  // NO once-latch on this effect, deliberately. The cleanup below CANCELS a
+  // session in flight, so a run whose delivery was cancelled must be
+  // re-runnable — a ref latch here left the store null for the life of the
+  // tab whenever the effect re-ran mid-placement (StrictMode's dev probe
+  // being the guaranteed case: mount, cleanup-cancel, remount, latched skip
+  // — and both layers silently gone). Steady state still places exactly
+  // once: re-runs only happen on a dep change, and the published-adoption
+  // branch answers those without a second pass.
   const wanted = gain > 0;
   useEffect(() => {
-    if (!wanted || startedRef.current) return undefined;
-    startedRef.current = true;
+    if (!wanted) return undefined;
 
     // ONE position attribute, shared by the point and line draws. The fibres
     // are an index
@@ -347,10 +357,17 @@ export default function CellPopulationField({
     // is the one the state exists for.
     const published = getPopulationPlacement();
     if (published) {
+      // Latched AFTER the guards above: the boot gate waits for every
+      // placement it is told to expect, so `expected` may only be reported
+      // on a path whose `ready` is guaranteed — adoption here, or a session
+      // whose every failure path falls back to the main thread below.
+      reportBootPopulationExpected();
       adopt(published);
+      reportBootPopulationReady(published.count);
       return undefined;
     }
     if (typeof Worker === 'undefined') return undefined;
+    reportBootPopulationExpected();
 
     const worker = new Worker(
       new URL('../geometry/populationField.worker.ts', import.meta.url),
@@ -373,6 +390,7 @@ export default function CellPopulationField({
         // for one frame.
         setPopulationPlacement(placement);
         adopt(placement);
+        reportBootPopulationReady(placement.count);
       },
     });
 

@@ -337,9 +337,15 @@ describe('degradation', () => {
 
   it('places nothing when the stage covers its scope', () => {
     // Gain zero is the correct degenerate case, and it must not spend a
-    // worker, a second of CPU, and three megabytes to state nothing.
+    // worker, a second of CPU, and three megabytes to state nothing. This
+    // guard is the WHOLE gate now: the once-latch that used to sit beside it
+    // left deliberately — the cleanup cancels a session in flight, so a
+    // cancelled run must be re-runnable (StrictMode's dev probe cancels the
+    // first one every time), and steady state re-runs land on the
+    // published-adoption branch instead of a second pass.
     expect(FIELD_SOURCE).toContain('const wanted = gain > 0;');
-    expect(FIELD_SOURCE).toContain('if (!wanted || startedRef.current) return undefined;');
+    expect(FIELD_SOURCE).toContain('if (!wanted) return undefined;');
+    expect(FIELD_SOURCE).not.toContain('startedRef');
   });
 
   it('survives an environment with no worker', () => {

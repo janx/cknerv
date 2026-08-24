@@ -121,6 +121,7 @@ import {
   cellDetailFabricWidthScale,
 } from '../derives/sceneView.derive';
 import { neverRaycast } from '../components/CellPopulationField';
+import { reportBootNerveGrowth } from '../boot/nerveRestGate';
 
 // Dense-mesh baseline energy (the `cell.fabricAlpha` tweak, default 0.15).
 // Passive fibres use bounded screen accumulation plus spatial compression;
@@ -1643,6 +1644,15 @@ export default function NeuralFabric({
             (deferredKills ??= []).push(key);
             statsDying += 1;
           }
+        }
+        // The boot record's nerve-growth deadline: a first population from an
+        // empty set is THE boot cohort — admitted in one pass just above, all
+        // bornAt=now, fully grown one GROWTH_MS later. Later builds are the
+        // organism living (block churn, a cold server's minutes of curated
+        // refill) and must not stretch the boot readout; the gate is inert
+        // once the line closes, and this report is scoped to keep it so.
+        if (!wasPopulated && statsAdded > 0) {
+          reportBootNerveGrowth(now + GROWTH_MS / 1000);
         }
         if (plan && (deferredAdds || deferredKills)) {
           pendingCohortsRef.current = {

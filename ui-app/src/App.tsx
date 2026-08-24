@@ -23,6 +23,7 @@ import {
   AdaptiveQualityController,
   beginBootPhase,
   BootFrameSentinel,
+  BootNerveRestSentinel,
   completeBootPhase,
   completeBootSeeding,
   reportBootSeeding,
@@ -1701,6 +1702,12 @@ export default function App({
               record. Draws nothing; same discipline as the ticker above
               (r3f context, mounted exactly once). */}
           <BootFrameSentinel populated={showableCellCount > 0} />
+          {/* Holds the boot record's fabric line open until the nerve tiers
+              are at rest — fabric growth, halo placement, first bridge
+              growth — ticking the gate on the same sim clock the growth is
+              drawn against. Same discipline again: r3f context, mounted
+              exactly once, draws nothing. */}
+          <BootNerveRestSentinel />
           <CellDetailViewTracker
             controlsRef={orbitControlsRef}
             focusRef={cellDetailViewFocusRef}

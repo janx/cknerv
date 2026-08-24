@@ -32,7 +32,7 @@ import {
   markCellFlashDirty,
   type CellFlashDirtyIdsRef,
 } from '../components/cellFlash';
-import { completeBootPhase } from '../boot/bootSequence';
+import { reportBootGraphApplied } from '../boot/nerveRestGate';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { galaxyFrame } from '../tweaks/galaxyFrame';
@@ -669,12 +669,14 @@ function NeuralNetwork({
       displayRequestedTopologyVersionRef.current = -1;
       displayGraphRef.current = result.graph;
       setDisplayGraphVersion((version) => version + 1);
-      // The boot record's fabric line closes here, on the graph landing —
-      // not on worker health and not on edges existing. A field too small to
-      // wire is still a fabric that finished being built, and a worker that
-      // died resolves the same promise from the synchronous fallback.
-      // Terminal in the record, so later builds cost nothing.
-      completeBootPhase('fabric');
+      // The boot record's fabric line OPENS here, on the graph landing — and
+      // closes in the nerve-rest gate, once the admitted edges have grown and
+      // the outer tiers (halo placement, first bridges) are at rest on
+      // screen. Not on worker health and not on edges existing: a field too
+      // small to wire is still a fabric that finished being built, and a
+      // worker that died resolves the same promise from the synchronous
+      // fallback. First apply wins, so later builds cost one boolean.
+      reportBootGraphApplied();
       passiveGraphRef.current = passiveGraph;
       fabricStats.passiveSelectionEdges = passiveGraph.edges.length;
       // The fabric's WIDTH tier is a property of the whole drawn selection,

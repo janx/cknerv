@@ -76,8 +76,9 @@ import {
   writeBridgeStroke,
   type BridgeStrokeState,
 } from './bridgeStroke';
+import { reportBootBridgeSelected } from '../boot/nerveRestGate';
 import { FABRIC_SAMPLES_PER_EDGE } from './fabricCapacity';
-import type { EdgeRender } from './fabricEdgeRender';
+import { GROWTH_MS, type EdgeRender } from './fabricEdgeRender';
 import {
   FABRIC_SLOT_SEGMENTS,
   mergeFabricSlotRanges,
@@ -371,6 +372,18 @@ export default function CellBridgeNerves({
     for (const [key, stroke] of strokes) {
       if (live.has(key) || stroke.dyingAt !== null) continue;
       stroke.dyingAt = now;
+    }
+    // The boot record's outer-nerve deadline. The first selection against a
+    // real topology build (version 0 is the pre-build mount pass over an
+    // empty host map) is the boot cohort of bridges: born just above, fully
+    // grown one GROWTH_MS later — or nothing to grow, in which case the
+    // deadline is already met. First report wins in the gate, so the refill
+    // churn that keeps re-selecting on a cold server never stretches the
+    // boot readout.
+    if (version >= 1) {
+      reportBootBridgeSelected(
+        selection.bridges.length > 0 ? now + GROWTH_MS / 1000 : now,
+      );
     }
     dirtyRef.current = true;
   }, [anchorIndex, version, cellsRef, passiveGraphRef, simClock]);
