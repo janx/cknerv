@@ -36,8 +36,17 @@ import {
   ASSET_COLORS,
   CLASS_MIX_COLORS,
   LOCK_COLORS,
+  SEGMENT_COLORS,
 } from '../../../src/components/hud/cellFormat';
-import { SEGMENT_COLORS } from '../../../src/components/hud/CellByteBudget';
+import {
+  ACTIVITY_CATEGORY_COLORS,
+  ACTIVITY_UNLISTED_COLOR,
+} from '../../../src/derives/activityFeed.derive';
+import {
+  ECOSYSTEM_CATEGORY_COLORS,
+  ECOSYSTEM_UNLISTED_COLOR,
+} from '../../../src/derives/assetEcosystem.derive';
+import { ATLAS_BUCKET_COLORS } from '../../../src/derives/networkAtlas.derive';
 import { CELL_GALAXY_PALETTE, CHAIN_ANCHOR_HEX } from '../../../src/visualPalette';
 
 const HUD_DIR = resolve(process.cwd(), 'src/components/hud');
@@ -97,10 +106,12 @@ const BANNED: ReadonlyArray<{
   { pattern: /#ffd79a/gi, token: 'HUD_COLORS.goldInk' },
   // A tier four panels used and nobody named. The legend under a bucket bar is
   // neither the label above it nor the readings around it, so four files typed
-  // the in-between out longhand. (`derives/activityFeed.derive.ts` spells the
-  // same six digits for a different job — the colour of a category the feed
-  // cannot name — and is outside this sweep's directory. Two jobs at one value
-  // is its own defect; it is not this one.)
+  // the in-between out longhand. A fifth typed it for a DIFFERENT job —
+  // `derives/activityFeed.derive.ts` painted a category it could not name in
+  // it, so a text tier was doing duty as a category colour — and that one was
+  // out of reach, because this sweep only ever read the HUD directory. It
+  // reads `derives/` too now, and the feed's unnameable category takes
+  // `CONTENT_BANDS.unlisted` like every other family nothing could place.
   { pattern: /#9fb0bd/gi, token: 'HUD_COLORS.legendInk' },
   // Banned in a directory it never appeared in, which is the point: the stage's
   // ground is painted by the app shell that mounts the Canvas, and the overlay
@@ -178,6 +189,36 @@ function readSources(root: string): HudSource[] {
 const SOURCES = readSources(HUD_DIR);
 const APP_SOURCES = readSources(APP_DIR);
 
+/** The whole package, walked once. The oracles down the file need it — the
+ *  chain anchor's readers and the cell card's surfaces both straddle the canvas
+ *  boundary, so neither can be asked of the HUD directory alone — and the
+ *  jurisdiction below is carved out of it. */
+const PACKAGE_SOURCES = readSources(SRC_DIR);
+
+/** Everywhere a colour has a MEANING, which is a different question from where
+ *  it is drawn. `derives/` renders nothing: it hands components the colour a
+ *  bucket, a byte segment or a feed category will be painted in — and being
+ *  outside the HUD directory made all of that invisible to every rule in this
+ *  file, which is how four palettes drifted there at once. One was a
+ *  straight DUPLICATE of a table already checked in the matrix below.
+ *
+ *  What travels with the widening and what does not. The ban list above is
+ *  about a value having one home, and a value has one home wherever it is
+ *  typed, so it travels. The type ladder further down is about a medium — a
+ *  rung is a reading size on a screen — and a directory that renders nothing
+ *  has no medium, so it stays where it is.
+ *
+ *  Scoped by directory rather than by exemption, deliberately. `materials/` is
+ *  a sibling of these and builds THREE colours for the bloom pass; a sweep that
+ *  reached it would need a file exempted from a rule it was never the subject
+ *  of, and an exemption list is the debt this file is paying off. */
+const INK_JURISDICTION = /^derives\//;
+
+const INK_SOURCES = [
+  ...SOURCES,
+  ...PACKAGE_SOURCES.filter((source) => INK_JURISDICTION.test(source.name)),
+];
+
 describe('hud discipline', () => {
   it('actually reads the HUD directory', () => {
     // A source oracle pointed at nothing passes everything. This is the pin
@@ -188,8 +229,22 @@ describe('hud discipline', () => {
     expect(APP_SOURCES.map((source) => source.name)).toContain('App.tsx');
   });
 
+  it('reaches the directory that hands the HUD its category colours', () => {
+    // Same pin one directory over. A jurisdiction that quietly matched nothing
+    // would leave the ban list green over a file spelling every value it bans.
+    const names = INK_SOURCES.map((source) => source.name);
+    expect(names).toContain('derives/activityFeed.derive.ts');
+    expect(names.filter((name) => INK_JURISDICTION.test(name)).length)
+      .toBeGreaterThan(20);
+
+    // And stops where it was scoped to stop. A scene-material file swept by an
+    // ink rule would need exempting from it, which is the thing this scoping
+    // exists to make unnecessary.
+    expect(names.some((name) => name.startsWith('materials/'))).toBe(false);
+  });
+
   it.each(BANNED)('$token owns its value — no file spells $pattern', ({ pattern, token, exempt = [] }) => {
-    const offenders = SOURCES
+    const offenders = INK_SOURCES
       .filter((source) => source.name !== PALETTE_SOURCE && !exempt.includes(source.name))
       .filter((source) => {
         pattern.lastIndex = 0;
@@ -440,15 +495,40 @@ const METABOLIC_COLORS: Readonly<Record<string, string>> = {
   ember: HUD_COLORS.ember,
 };
 
+/** The atlas ramp, indexed. It is an ARRAY in its own file because its slots
+ *  are handed out by a hash of a country code or a client version string and
+ *  mean nothing individually — which is exactly why it is a ramp of its own and
+ *  not a set of content bands. A slot still has to clear the reserve, so it
+ *  walks the same matrix as every palette whose keys do mean something. */
+const ATLAS_SLOTS: Readonly<Record<string, string>> = Object.fromEntries(
+  ATLAS_BUCKET_COLORS.map((hex, slot) => [`slot${slot}`, hex]),
+);
+
 /** Every palette that colours DATA rather than state, by the surface it
  *  paints: a lock family, an asset family, a class of the census, a byte
- *  segment, a rate of cells being spent. */
+ *  segment, a rate of cells being spent, an activity the chain performed, a
+ *  slice of the whole chain's capacity, a bucket of the peer atlas.
+ *
+ *  The last three live in `derives/`, and for the life of that directory none
+ *  of them was checked by anything. Each drifted the way an unchecked palette
+ *  does: the feed disagreed with the bands about five words it shares with
+ *  them, the ecosystem bar painted its unnameable bucket in the brightest hue
+ *  on the panel, and the atlas ramp opened on a near-chrome orange. A category
+ *  is a category wherever it is computed — the matrix does not care which
+ *  directory a colour was decided in, and neither does a reader looking at the
+ *  bar. */
 const CATEGORY_PALETTES: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   lock: LOCK_COLORS,
   asset: ASSET_COLORS,
   classMix: CLASS_MIX_COLORS,
   byteSegment: SEGMENT_COLORS,
   metabolic: METABOLIC_COLORS,
+  // The fallback is folded in as a member rather than left out of the matrix:
+  // a category nobody could name is still a category the bar paints, and it was
+  // the single worst offender on both of these surfaces.
+  activity: { ...ACTIVITY_CATEGORY_COLORS, unlisted: ACTIVITY_UNLISTED_COLOR },
+  ecosystem: { ...ECOSYSTEM_CATEGORY_COLORS, unlisted: ECOSYSTEM_UNLISTED_COLOR },
+  atlasBucket: ATLAS_SLOTS,
 };
 
 /** The sanctioned borrows, each `<palette>.<key> → <reserved>`, and each one
@@ -462,6 +542,10 @@ const CATEGORY_PALETTES: Readonly<Record<string, Readonly<Record<string, string>
  *  surfaces, and it is a branch in `cellScanFactAccent` rather than a token,
  *  so it needs no row here.
  *
+ *  The activity feed's `transfer` is the same borrow a third time and for the
+ *  same reason: a plain CKB transfer is the chain doing the one thing it does
+ *  without anybody's extra rules, which is what consensus cyan already names.
+ *
  *  Each borrow costs two rows because `cyanWire` and `peerWire` are ~15 apart
  *  — the twin-mesh collapse the palette review filed as A2. Borrow one and you
  *  have borrowed both. When that pair separates, the peerWire rows here start
@@ -473,6 +557,8 @@ const SANCTIONED_BORROWS: ReadonlySet<string> = new Set([
   'asset.native → peerWire',
   'byteSegment.data → cyanWire',
   'byteSegment.data → peerWire',
+  'activity.transfer → cyanWire',
+  'activity.transfer → peerWire',
 ]);
 
 describe('the colour reserve', () => {
@@ -480,7 +566,8 @@ describe('the colour reserve', () => {
     // Same pin as the source oracle above: an empty matrix asserts nothing.
     const tokens = Object.values(CATEGORY_PALETTES)
       .flatMap((palette) => Object.keys(palette));
-    expect(tokens.length).toBeGreaterThanOrEqual(18);
+    expect(tokens.length).toBeGreaterThanOrEqual(36);
+    expect(Object.keys(CATEGORY_PALETTES).length).toBeGreaterThanOrEqual(8);
     expect(Object.keys(RESERVED).length).toBeGreaterThanOrEqual(9);
   });
 
@@ -739,11 +826,6 @@ describe('the hand-cut face', () => {
 // the card's frame and left the icosahedron exactly where it was. Same bargain
 // the promoted colour tokens make above, asked of every field of the token: a
 // field nobody reads by name is a guarantee nobody is keeping.
-
-/** The whole package, walked once. Two oracles down here need it: the chain
- *  anchor's readers and the cell card's surfaces both straddle the canvas
- *  boundary, so neither can be asked of the HUD directory alone. */
-const PACKAGE_SOURCES = readSources(SRC_DIR);
 
 /** The package minus the file that owns the value. "Outside the palette" is the
  *  whole claim, so the palette itself is not allowed to answer it — and the

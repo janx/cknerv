@@ -3,6 +3,7 @@ import type {
   ActivityFeedRecord,
   EnrichmentSourceStatus,
 } from '@cknerv/types';
+import { CONTENT_BANDS } from '../components/hud/cellFormat';
 
 export type ActivityFeedVisualState = 'ready' | 'stale';
 
@@ -20,15 +21,45 @@ export interface ActivityFeedVisual {
   buckets: ActivityFeedBucket[];
 }
 
-const CATEGORY_COLORS: Record<string, string> = {
-  transfer: '#69e7ff',
-  dao: '#ff9d52',
-  token: '#78f2b3',
-  object: '#d8b4ff',
-  identity: '#ff78c6',
-  script: '#7da7ff',
-  protocol: '#ffd36b',
+// Seven words the feed shares with the house's content bands, and for the life
+// of the file it disagreed with the bands about five of them. `identity` was
+// the loudest: blue in the CELLS asset bar and PINK here, 196 apart, so the
+// same word named two colours on one screen — and the feed's pink sat 33.7
+// from the band system's `artifact` magenta, inside the separation floor, so
+// the feed's "identity" and the asset bar's "digital object" were very nearly
+// one colour meaning two things. `dao` was worse in the other direction: its
+// `#ff9d52` was 34.4 from chrome orange, which put an ordinary DAO deposit in
+// the instrument's own frame colour.
+//
+// A feed category IS a content category — it names what a transaction did, not
+// whether anything is wrong — so it takes the bands rather than a palette of
+// its own. The one that needed thinking about is `protocol`, which has no band
+// named for it: a protocol action is a rule about who may act, which is what
+// `authority` means, and it is the reading the band's own comment already
+// gives. All 21 pairs clear the separation floor, which is the binding
+// constraint here because these seven share ONE stacked bar.
+export const ACTIVITY_CATEGORY_COLORS: Record<string, string> = {
+  transfer: CONTENT_BANDS.consensus,
+  dao: CONTENT_BANDS.value,
+  token: CONTENT_BANDS.token,
+  object: CONTENT_BANDS.artifact,
+  identity: CONTENT_BANDS.identity,
+  script: CONTENT_BANDS.script,
+  protocol: CONTENT_BANDS.authority,
 };
+
+/** A category the feed's vocabulary does not carry. It used to take the six
+ *  digits that are now `HUD_COLORS.legendInk` — a TEXT tier, the caption under
+ *  a bucket bar — so the one bucket the feed could say least about was painted
+ *  in the colour that belongs to the words underneath it. `unlisted` is the
+ *  band that exists for exactly this: present, but claiming no family colour it
+ *  has not earned.
+ *
+ *  Spelled by token rather than by value on purpose: `hudDiscipline.test.ts`
+ *  reads this file RAW, and a comment that types the banned hex out is a hit,
+ *  which is the right answer — a value that has a name has a name in prose
+ *  too. */
+export const ACTIVITY_UNLISTED_COLOR = CONTENT_BANDS.unlisted;
 
 /** Suppress samples whose source or canonical proof is no longer usable. */
 export function activityFeedVisualState(
@@ -85,11 +116,12 @@ export function deriveActivityFeedVisual(
   const buckets = [...counts].map(([category, count]) => ({
     category,
     count,
-    color: CATEGORY_COLORS[category] ?? '#9fb0bd',
+    color: ACTIVITY_CATEGORY_COLORS[category] ?? ACTIVITY_UNLISTED_COLOR,
   }));
   return { items: record.activities, buckets };
 }
 
 export function activityCategoryColor(category: string): string {
-  return CATEGORY_COLORS[category.trim().toLowerCase()] ?? '#9fb0bd';
+  return ACTIVITY_CATEGORY_COLORS[category.trim().toLowerCase()]
+    ?? ACTIVITY_UNLISTED_COLOR;
 }

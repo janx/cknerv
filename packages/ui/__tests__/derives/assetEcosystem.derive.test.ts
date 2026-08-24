@@ -8,7 +8,7 @@ import {
   assetEcosystemVisualState,
   deriveAssetEcosystemBuckets,
 } from '../../src/derives/assetEcosystem.derive';
-import { CLASS_MIX_COLORS } from '../../src/components/hud/cellFormat';
+import { CLASS_MIX_COLORS, CONTENT_BANDS } from '../../src/components/hud/cellFormat';
 
 const record: AssetEcosystemRecord = {
   source: 'ckbadger',
@@ -42,6 +42,24 @@ describe('asset ecosystem visual derivation', () => {
       CLASS_MIX_COLORS.dao,
       CLASS_MIX_COLORS.typed,
       CLASS_MIX_COLORS.plain,
+    ]);
+  });
+
+  it('does not shout about the bucket it knows least about', () => {
+    // The branch that fires when the source names a class this table does not.
+    // It used to be a bright cyan 247 from where it belongs, so a category
+    // arriving from upstream announced itself as the loudest segment in the
+    // bar — the exact inverse of what a bucket nobody can name should do.
+    const buckets = deriveAssetEcosystemBuckets({
+      ...record,
+      capacity_breakdown: [
+        { category: 'dao', capacity_shannons: '25000000000000', share_bps: 2500 },
+        { category: 'restaking', capacity_shannons: '75000000000000', share_bps: 7500 },
+      ],
+    });
+    expect(buckets?.map((bucket) => bucket.color)).toEqual([
+      CLASS_MIX_COLORS.dao,
+      CONTENT_BANDS.unlisted,
     ]);
   });
 

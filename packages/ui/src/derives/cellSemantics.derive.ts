@@ -3,14 +3,16 @@ import type {
   EnrichmentSourceStatus,
   SemanticAsset,
 } from '@cknerv/types';
+import { SEGMENT_COLORS } from '../components/hud/cellFormat';
+import type { ByteBudgetSegmentKey } from './cellByteBudget.derive';
 
 export const CELL_SEMANTIC_TAU = Math.PI * 2;
 
-export type CellSemanticCompositionKind =
-  | 'capacity'
-  | 'lock'
-  | 'type'
-  | 'data';
+/** The orbit decomposes a cell into exactly the four parts the dossier's byte
+ *  budget bar does, so it counts them in the same words. It used to spell its
+ *  own — `capacity` where the bar says `cap` — and one concept with two
+ *  spellings is how the two surfaces ended up with two palettes. */
+export type CellSemanticCompositionKind = ByteBudgetSegmentKey;
 
 export interface CellSemanticCompositionSegment {
   kind: CellSemanticCompositionKind;
@@ -28,17 +30,19 @@ export interface CellSemanticComposition {
 
 export type CellSemanticVisualState = 'ready' | 'stale';
 
-const COMPOSITION_COLORS: Record<CellSemanticCompositionKind, string> = {
-  capacity: '#ff9d52',
-  lock: '#69e7ff',
-  type: '#78f2b3',
-  data: '#ffd166',
-};
-
 /**
  * Turn the source's exact occupied-byte accounting into one closed orbit.
  * An inconsistent breakdown is not visualized: gaps must not be disguised as
  * a presentation fallback.
+ *
+ * Segment colours come from `SEGMENT_COLORS`, the same table the dossier's
+ * byte-budget bar paints with. This file kept a second one for the life of
+ * both surfaces — capacity `#ff9d52`, lock `#69e7ff`, type `#78f2b3`, data
+ * `#ffd166` — so one cell's bytes were decomposed twice and coloured by two
+ * unrelated palettes, and the orbit's capacity arc sat 34.4 from chrome
+ * orange, close enough that a Cell's own capacity read as the instrument's
+ * frame. Two tables describing one decomposition is not a palette question,
+ * it is a duplicate.
  */
 export function deriveCellSemanticComposition(
   record: CellSemanticRecord,
@@ -46,7 +50,7 @@ export function deriveCellSemanticComposition(
   const knowledge = record.common_knowledge;
   if (!knowledge || knowledge.total_bytes <= 0) return null;
   const components: Array<readonly [CellSemanticCompositionKind, number]> = [
-    ['capacity', knowledge.capacity_field_bytes],
+    ['cap', knowledge.capacity_field_bytes],
     ['lock', knowledge.lock_script_bytes],
     ['type', knowledge.type_script_bytes],
     ['data', knowledge.data_bytes],
@@ -68,7 +72,7 @@ export function deriveCellSemanticComposition(
       fraction,
       start: cursor,
       sweep,
-      color: COMPOSITION_COLORS[kind],
+      color: SEGMENT_COLORS[kind],
     };
     cursor += sweep;
     return [segment];

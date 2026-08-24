@@ -1,4 +1,5 @@
 import type { Cell } from '@cknerv/types';
+import type { ByteBudgetSegmentKey } from '../../derives/cellByteBudget.derive';
 import { HUD_COLORS } from './hudTheme';
 
 const SHANNONS_PER_CKB = 100_000_000n;
@@ -289,10 +290,45 @@ export const ASSET_COLORS: Record<string, string> = {
  *  hues (DAO, token-like, bare CKB) so the stage-versus-chain mix bars and
  *  the whole-chain capacity bar read as one color system —
  *  `assetEcosystem.derive.ts` reads these very values rather than keeping a
- *  second copy that could drift. */
+ *  second copy that could drift.
+ *
+ *  It said that while it was three-quarters true: the three named classes read
+ *  from here and the FALLBACK — the branch that fires for a category nothing
+ *  in this table names — spelled a bright cyan of its own, so the ONE bucket
+ *  the bar knows least about was the loudest thing in it. It takes
+ *  `CONTENT_BANDS.unlisted` now, with the rest of the house's unnamed
+ *  families. */
 export const CLASS_MIX_COLORS = {
   dao: CONTENT_BANDS.value, typed: CONTENT_BANDS.token, plain: CONTENT_BANDS.plain,
 } as const;
+
+// One cell's bytes, decomposed. Each segment wears the content band of the
+// axis it measures, so the bar says the same four words the register above it
+// does: CAP is value, LOCK is authorization, TYPE is the token family, DATA is
+// knowledge. It used to wear chrome orange, nominal green and caution yellow
+// at once — a four-segment bar carrying three reserved layers, which made
+// every cell's byte composition look like a status readout with an opinion
+// about the Cell's health.
+//
+// The LOCK segment takes the authority BAND rather than the cyan the default
+// lock borrows: cyan belongs to the DATA segment here, and one bar cannot
+// spend the same color twice.
+//
+// Why it lives in this file rather than beside the bar that draws it: TWO
+// surfaces decompose a cell into these same four numbers — `CellByteBudget`'s
+// stacked bar in the dossier, and the composition orbit `CellSemanticOrbit`
+// draws around the selected Cell on stage — and for the life of both they
+// painted one decomposition in two unrelated palettes, the orbit's capacity
+// arc landing 34.4 from chrome orange. A table two layers have to share
+// belongs where both may read it, which is here: the scene's derive already
+// reaches into this file for the asset bands, and a derive that imported the
+// DOM component would have the dependency graph upside down.
+export const SEGMENT_COLORS: Record<ByteBudgetSegmentKey, string> = {
+  cap: CONTENT_BANDS.value,
+  lock: CONTENT_BANDS.authority,
+  type: CONTENT_BANDS.token,
+  data: CONTENT_BANDS.consensus,
+};
 
 /** Palette colour for a script identity. A script the index named is a known
  *  script even when cknerv's own table could not place it, so it drops the

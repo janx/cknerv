@@ -18,15 +18,43 @@ export interface NetworkAtlasVisual {
   versions: NetworkAtlasBucketVisual[];
 }
 
-const COUNTRY_COLORS = ['#69e7ff', '#78f2b3', '#d8b4ff', '#7da7ff', '#ff78c6'];
-const VERSION_COLORS = ['#ff9d52', '#ffd36b', '#69e7ff', '#78f2b3', '#d8b4ff'];
+// The atlas's two bars are the one place in the HUD where a colour means
+// NOTHING. A country and a client version are qualitative buckets handed a
+// slot by a hash of their own label — `DE` is not a lock family, `v0.201.0`
+// is not an asset class — so mapping them onto the content bands would be a
+// lie in the other direction from the one this ramp replaces: it would tell a
+// reader that a country belongs to a family of things it has nothing to do
+// with. What the buckets owe is only that they can be told apart, and that
+// none of them impersonates a layer that does mean something.
+//
+// So: five hues of its own, checked against every reserved tone, every content
+// band and every text tier rather than borrowed from any of them. Closest pair
+// inside the ramp is 118.9, and the nearest any member comes to anything
+// outside it is 47.2 — both clear of the separation floor.
+//
+// The green sector is excluded on purpose and that is the load-bearing part of
+// this comment. Green is spoken for by `nominal`, and a country must never
+// read as health: a bar where Germany is green and Singapore is amber is a bar
+// that appears to be grading nations.
+//
+// One ramp for both bars, not two. They used to be two arrays that shared
+// three of their five values anyway, and the first slot of the version ramp
+// was `#ff9d52` — 34.4 from chrome orange, the same near-frame colour the byte
+// orbit and the activity feed had each arrived at separately.
+export const ATLAS_BUCKET_COLORS: readonly string[] = [
+  '#465EB8',
+  '#D0B846',
+  '#CA94D0',
+  '#B24670',
+  '#5ED0D0',
+];
 
-function labelColor(label: string, palette: readonly string[]): string {
+function labelColor(label: string): string {
   let hash = 0;
   for (const character of label) {
     hash = (hash * 31 + (character.codePointAt(0) ?? 0)) >>> 0;
   }
-  return palette[hash % palette.length];
+  return ATLAS_BUCKET_COLORS[hash % ATLAS_BUCKET_COLORS.length];
 }
 
 function safeNonnegativeInteger(value: number): boolean {
@@ -36,7 +64,6 @@ function safeNonnegativeInteger(value: number): boolean {
 function deriveBuckets(
   buckets: NetworkAtlasBucket[],
   sampleSize: number,
-  palette: readonly string[],
 ): NetworkAtlasBucketVisual[] | null {
   if (buckets.length > NETWORK_ATLAS_MAX_SAMPLE) return null;
   const seen = new Set<string>();
@@ -55,7 +82,7 @@ function deriveBuckets(
     total += bucket.count;
     if (total > sampleSize) return null;
     seen.add(label);
-    visual.push({ ...bucket, label, color: labelColor(label, palette) });
+    visual.push({ ...bucket, label, color: labelColor(label) });
   }
   if (total !== sampleSize) return null;
   visual.sort((left, right) => right.count - left.count || left.label.localeCompare(right.label));
@@ -108,7 +135,7 @@ export function deriveNetworkAtlasVisual(
     && (!safeNonnegativeInteger(record.median_rtt_ms)
       || record.median_rtt_ms > 0xffff_ffff)) return null;
 
-  const countries = deriveBuckets(record.countries, record.sample_size, COUNTRY_COLORS);
-  const versions = deriveBuckets(record.versions, record.sample_size, VERSION_COLORS);
+  const countries = deriveBuckets(record.countries, record.sample_size);
+  const versions = deriveBuckets(record.versions, record.sample_size);
   return countries && versions ? { countries, versions } : null;
 }

@@ -10,6 +10,7 @@ import {
   cellSemanticVisualState,
   deriveCellSemanticComposition,
 } from '../../src/derives/cellSemantics.derive';
+import { SEGMENT_COLORS } from '../../src/components/hud/cellFormat';
 
 const record: CellSemanticRecord = {
   out_point: { tx_hash: `0x${'11'.repeat(32)}`, index: 0 },
@@ -39,10 +40,21 @@ describe('selected Cell semantic visual derivation', () => {
     const composition = deriveCellSemanticComposition(record);
 
     expect(composition?.segments.map((segment) => segment.kind)).toEqual([
-      'capacity',
+      'cap',
       'lock',
       'type',
       'data',
+    ]);
+    // One decomposition, one palette. The orbit and the dossier's byte-budget
+    // bar break a cell into the same four numbers, and for the life of both
+    // they painted them out of two unrelated tables — this one opening on a
+    // capacity arc 34.4 from chrome orange. Asked of the shared table by name,
+    // so a hex retyped into either surface fails here.
+    expect(composition?.segments.map((segment) => segment.color)).toEqual([
+      SEGMENT_COLORS.cap,
+      SEGMENT_COLORS.lock,
+      SEGMENT_COLORS.type,
+      SEGMENT_COLORS.data,
     ]);
     expect(composition?.segments[1].fraction).toBeCloseTo(0.52);
     expect(composition?.segments.reduce(
