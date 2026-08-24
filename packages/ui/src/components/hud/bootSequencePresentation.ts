@@ -16,14 +16,32 @@ import { HUD_COLORS } from './hudTheme';
  * semantics, exactly the way `replayPresentation` sits beside the replay HUDs.
  */
 
-/** Adjudicated copy. `FIRST LIGHT` names the moment the galaxy is actually on
- *  screen, which is the thing a visitor is waiting for and had no word for. */
+/** What the band is called, for the whole run: the instrument coming up, not
+ *  any one step of it. The steps are the trail beside it, and they are
+ *  `BOOT_PHASE_LABELS` below.
+ *
+ *  This string is SHIPPED TWICE — here and written out literally in
+ *  `ui-app/index.html`, which is markup and cannot import — and that is the
+ *  constraint on changing it: React replacing the static shell has to swap the
+ *  mechanism without the band appearing to restart, so the two copies agree or
+ *  the handover flickers a different word. `bootSequencePresentation.test.ts`
+ *  holds them together.
+ *
+ *  This comment used to be an adjudication of `FIRST LIGHT`, which is a phase
+ *  label eleven lines down and has been moved onto the table that holds it.
+ *  Nothing was ever recorded about the words attached here, and nothing is
+ *  invented now: what is written above is what the constant DOES. */
 export const BOOT_SEQUENCE_TITLE = 'STAGE POWER-ON';
 
 /** The house mark for a banner reporting on something still in progress: the
  *  static shell opens with it and so does `BackfillBar`. */
 export const BOOT_SEQUENCE_GLYPH = '◇';
 
+/** Adjudicated copy. `FIRST LIGHT` names the moment the galaxy is actually on
+ *  screen, which is the thing a visitor is waiting for and had no word for.
+ *  It sat on `BOOT_SEQUENCE_TITLE` for the life of this file — a doc comment
+ *  adjudicating a string eleven lines below the one it was attached to, which
+ *  reads as settled and is documentation of the wrong thing. */
 export const BOOT_PHASE_LABELS: Record<BootPhaseId, string> = {
   instrument: 'INSTRUMENT',
   snapshot: 'SNAPSHOT',

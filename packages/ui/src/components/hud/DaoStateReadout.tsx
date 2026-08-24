@@ -9,7 +9,6 @@ import {
 } from '../../derives/daoState.derive';
 import { formatAge, formatCkb } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
-import { ReadoutHeader } from './primitives';
 
 const SHANNONS_PER_CKB = 100_000_000n;
 
@@ -109,10 +108,18 @@ export function canRenderDaoStateReadout(
     && deriveDaoStateVisual(record) !== null;
 }
 
-export default function DaoStateReadout({ source, record, variant = 'section', nowMs = Date.now() }: {
+/** The DAO's own readout, always as the body of `DaoStatePanel`.
+ *
+ *  It used to take a `variant`, and one of the two branches was dead: every
+ *  call site in the application passed `"panel"`, so the `"section"` shape — a
+ *  `ReadoutHeader` of its own, a top rule, and 10px of margin above it — was a
+ *  second layout nobody had looked at since the panel was built around this.
+ *  A palette-bearing file is the worst place to keep an unrendered branch: it
+ *  carried two more readers of `accent` that nothing could see, so a retune
+ *  here would have been judged against a shape that does not ship. */
+export default function DaoStateReadout({ source, record, nowMs = Date.now() }: {
   source?: EnrichmentSourceStatus;
   record?: DaoStateRecord | null;
-  variant?: 'section' | 'panel';
   /** Shared HUD clock for deterministic freshness text and stale state. */
   nowMs?: number;
 }) {
@@ -122,7 +129,6 @@ export default function DaoStateReadout({ source, record, variant = 'section', n
   if (!visualState || !visual) return null;
   const stale = visualState === 'stale';
   const accent = stale ? HUD_COLORS.caution : HUD_COLORS.orange;
-  const panelVariant = variant === 'panel';
   const updatedAge = formatAge(record.updated_at_ms, nowMs);
   const depositChangePercent = visual.depositChange24hShannons === null
     ? null
@@ -138,20 +144,7 @@ export default function DaoStateReadout({ source, record, variant = 'section', n
     <section
       aria-label="Nervos DAO state"
       data-dao-state={visualState}
-      style={{
-        marginTop: panelVariant ? 0 : 10,
-        paddingTop: panelVariant ? 0 : 8,
-        borderTop: panelVariant ? undefined : `1px solid ${rgba(accent, 0.16)}`,
-      }}
     >
-      {panelVariant ? null : (
-        <ReadoutHeader
-          title="NERVOS DAO"
-          meta={`SNAPSHOT #${record.statistics_block.toLocaleString('en-US')}`}
-          accent={accent}
-          stale={stale}
-        />
-      )}
       <div
         data-dao-freshness={visualState}
         style={{

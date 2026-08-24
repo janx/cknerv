@@ -3076,6 +3076,63 @@ describe('one tracking ladder', () => {
     expect(offenders).toEqual([]);
   });
 
+  it('the two rungs the table describes in words are the rungs shipped', () => {
+    // Membership cannot catch a wrong DESCRIPTION. The table said "1.6
+    // stat-row labels, plate titles" and the plate-title primitive has always
+    // been at 1.4, so every rung in the HUD passed while the record said
+    // something that was not true of any of them — and a design system's own
+    // record being wrong is worse than a value being wrong, because the record
+    // is what the next edit is measured against.
+    //
+    // Two roles are named in that table AND owned by a primitive, so both can
+    // be read out of the prose and checked against the code rather than
+    // against a number copied over here. A floating card has two kinds of
+    // title and they are two rungs apart on purpose: the masthead is the
+    // card's own name, a `SpatialPlateHeader` is a section header inside it.
+    const table = between(trackingComment(), 'cannot make a line wrap:', 'An explicit `0`');
+
+    /** Every rung with the whole of its description — a rung's entry runs to
+     *  the next rung, because several of them wrap onto continuation lines and
+     *  a reader that stopped at the newline would be reading a third of the
+     *  table. */
+    const entries: Array<{ rung: number; at: number; text: string }> = [];
+    RUNG_LINE.lastIndex = 0;
+    let rung = RUNG_LINE.exec(table);
+    while (rung !== null) {
+      entries.push({ rung: signed(rung[1]), at: rung.index, text: '' });
+      rung = RUNG_LINE.exec(table);
+    }
+    for (let index = 0; index < entries.length; index += 1) {
+      const end = index + 1 < entries.length ? entries[index + 1].at : table.length;
+      entries[index].text = table.slice(entries[index].at, end);
+    }
+
+    /** The rung whose description names `phrase`, and only one may. */
+    const rungFor = (phrase: string): number => {
+      const naming = entries.filter((entry) => entry.text.includes(phrase));
+      expect(naming.map((entry) => entry.rung), `the tracking table no longer describes ${phrase} on exactly one rung`)
+        .toHaveLength(1);
+      return naming[0].rung;
+    };
+
+    const primitives = SOURCES.find((source) => source.name === SHAPE_SOURCE);
+    expect(primitives, 'primitives.tsx moved — this oracle reads files off disk')
+      .toBeDefined();
+    const text = code(primitives?.text ?? '');
+
+    const statRow = /export function StatRow\([\s\S]*?letterSpacing: ([\d.]+)/.exec(text);
+    expect(statRow, 'StatRow no longer sets a tracking').not.toBeNull();
+    expect(Number(statRow?.[1])).toBe(rungFor('stat-row labels'));
+
+    const plateHeader = /export function SpatialPlateHeader\([\s\S]*?letterSpacing: ([\d.]+)/.exec(text);
+    expect(plateHeader, 'SpatialPlateHeader no longer sets a tracking').not.toBeNull();
+    expect(Number(plateHeader?.[1])).toBe(rungFor('SECTION header'));
+
+    // …and that the two are actually different rungs, which is the whole of
+    // what the old wording lost.
+    expect(rungFor('stat-row labels')).not.toBe(rungFor('SECTION header'));
+  });
+
   it('a declared exception is not a rung anybody else may borrow', () => {
     // Stated separately because it is a different promise. The membership rule
     // above would pass if `WarningBar`'s 4 turned up on a third panel; this says

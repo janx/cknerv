@@ -369,13 +369,25 @@ export const HUD_TYPE = {
 //   0.9   captions and small state words
 //   1.2   the standard uppercase label
 //   1.4   chips — both the outline kind and the inverted severity block —
-//         and the floating-card dialect's readout label (see below)
-//   1.6   stat-row labels, plate titles
+//         a plate's own SECTION header, and the floating-card dialect's
+//         readout label (see below)
+//   1.6   stat-row labels, and the NAME a card or plate carries at its head
 //   2     banner titles, condition words
 //   3     panel titles
 //
 // An explicit `0` is not a rung — it is the absence of tracking, which a run of
 // mono digits sometimes genuinely wants.
+//
+// Those two lines said "1.6 stat-row labels, plate titles", and the plate-title
+// primitive — `SpatialPlateHeader` — has always been set at 1.4. The record was
+// wrong rather than the code: a floating card has TWO kinds of title, and they
+// are on two rungs on purpose. The masthead is the card's own name, in the
+// display face at `title`, and it is the thing the card is called: `NODE //
+// node-1`, `CELL // #4,102,993`, the replay plate's `RESTORING CKB
+// CONTINUITY`. A `SpatialPlateHeader` is a section header INSIDE that card, in
+// the tech face at `section`, naming one plate of several. Calling both of them
+// "plate titles" collapsed a real distinction into an ambiguity, and an
+// ambiguity in a design system's own record is read as a licence.
 //
 // MEMBERSHIP IS HALF THE RULE, and for this table's whole life it was the only
 // half anybody checked. Every rung above is legal, so a sweep that asks nothing
