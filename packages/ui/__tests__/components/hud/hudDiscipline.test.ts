@@ -37,9 +37,15 @@ import {
   LOCK_COLORS,
 } from '../../../src/components/hud/cellFormat';
 import { SEGMENT_COLORS } from '../../../src/components/hud/CellByteBudget';
-import { CELL_GALAXY_PALETTE } from '../../../src/visualPalette';
+import { CELL_GALAXY_PALETTE, CHAIN_ANCHOR_HEX } from '../../../src/visualPalette';
 
 const HUD_DIR = resolve(process.cwd(), 'src/components/hud');
+
+/** The whole package, for the one palette entry that does NOT live in the HUD
+ *  directory: `CHAIN_ANCHOR_HEX` has readers on both sides of the canvas
+ *  boundary, so an oracle about it that only read the overlay would be asking
+ *  half the question. */
+const SRC_DIR = resolve(process.cwd(), 'src');
 
 /** The one file allowed to write a hex down: that is what a palette IS.
  *  Everything else in the directory reads it. */
@@ -113,7 +119,7 @@ function code(text: string): string {
 
 type HudSource = { name: string; text: string };
 
-function readHudSources(): HudSource[] {
+function readSources(root: string): HudSource[] {
   const sources: HudSource[] = [];
   const walk = (directory: string, prefix: string): void => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -127,11 +133,11 @@ function readHudSources(): HudSource[] {
       sources.push({ name, text: readFileSync(path, 'utf8') });
     }
   };
-  walk(HUD_DIR, '');
+  walk(root, '');
   return sources;
 }
 
-const SOURCES = readHudSources();
+const SOURCES = readSources(HUD_DIR);
 
 describe('hud discipline', () => {
   it('actually reads the HUD directory', () => {
@@ -631,5 +637,94 @@ describe('the hand-cut face', () => {
     // the record rather than a constant that happened to dodge the regex.
     expect(DECLARED_SIZES.has(PANEL_WATERMARK_PX)).toBe(false);
     expect(PANEL_WATERMARK_PX).toBeGreaterThan(HUD_TYPE.hero * 2);
+  });
+});
+
+
+// ——— One anchor, one colour —————————————————————————————————————————————
+//
+// `CHAIN_ANCHOR_HEX` is the palette entry that does not live in `hudTheme.ts`,
+// and `visualPalette.ts` argues at length why it is where it is: it has two
+// readers that must never drift apart — `CellGalaxy` paints the chain
+// icosahedron with it, and the floating `NodeSelfCard` tints its frame from the
+// same constant, so the card and the thing the card is ABOUT are one colour by
+// construction rather than by two people remembering.
+//
+// It shipped with that guarantee half-wired. `.halo` had a reader; `.edge` and
+// `.fill` were typed back as literals inside the JSX of the very component that
+// had already bound the token seventy lines above, so retuning the anchor moved
+// the card's frame and left the icosahedron exactly where it was. Same bargain
+// the promoted colour tokens make above, asked of every field of the token: a
+// field nobody reads by name is a guarantee nobody is keeping.
+
+/** The package minus the file that owns the value. "Outside the palette" is the
+ *  whole claim, so the palette itself is not allowed to answer it — and the
+ *  readers live on both sides of the canvas boundary, which is why this is the
+ *  package rather than the HUD directory. */
+const ANCHOR_SOURCES = readSources(SRC_DIR)
+  .filter((source) => source.name !== 'visualPalette.ts');
+
+/** Every name a file reads the anchor palette through: the token itself, plus
+ *  any local binding taken straight off it. `CellGalaxy` binds it once as
+ *  `palette` and spends it three times — an oracle that knew only the token's
+ *  own name would call two of its fields orphans and be confidently wrong. */
+function anchorNames(text: string): string[] {
+  const names = ['CHAIN_ANCHOR_HEX'];
+  const bound = /(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*CHAIN_ANCHOR_HEX\s*[;,]/g;
+  let match = bound.exec(text);
+  while (match !== null) {
+    names.push(match[1]);
+    match = bound.exec(text);
+  }
+  return names;
+}
+
+/** `name.field` as a field ACCESS, not as a suffix of a longer one:
+ *  `CELL_GALAXY_PALETTE.edge` must not be mistaken for `palette.edge`. */
+function readsField(text: string, name: string, field: string): boolean {
+  const escaped = name.replace(/\$/g, '\\$');
+  return new RegExp(`(?<![\\w$.])${escaped}\\.${field}\\b`).test(text);
+}
+
+describe('the chain anchor palette', () => {
+  it('has the two readers its own doc comment claims, and no third', () => {
+    // The pin. An oracle pointed at an empty list passes everything asked of
+    // it — and a third reader appearing is not a failure so much as a notice
+    // that the sentence in `visualPalette.ts` needs rewriting with it.
+    expect(ANCHOR_SOURCES.length).toBeGreaterThan(100);
+
+    const holders = ANCHOR_SOURCES
+      .filter((source) => code(source.text).includes('CHAIN_ANCHOR_HEX'))
+      .map((source) => source.name)
+      .sort();
+    expect(holders).toEqual(['components/CellGalaxy.tsx', 'components/hud/NodeSelfCard.tsx']);
+  });
+
+  it.each(Object.keys(CHAIN_ANCHOR_HEX))('%s is read by name outside the palette', (field) => {
+    // Asked of the CODE: the prose in `visualPalette.ts` and around the binding
+    // in `CellGalaxy` names these fields out loud, and a doc comment is not a
+    // reader — that is exactly how two of the three went unnoticed.
+    const readers = ANCHOR_SOURCES.filter((source) => {
+      const text = code(source.text);
+      return anchorNames(text).some((name) => readsField(text, name, field));
+    });
+
+    expect(readers.length).toBeGreaterThan(0);
+    expect(CHAIN_ANCHOR_HEX[field as keyof typeof CHAIN_ANCHOR_HEX])
+      .toMatch(/^#[0-9a-f]{6}$/);
+  });
+
+  it.each(Object.entries(CHAIN_ANCHOR_HEX))('nothing spells %s out again as %s', (field, hex) => {
+    // The half a reader count cannot see. `.edge` has a reader in
+    // `NodeSelfCard` whatever `CellGalaxy` does, so the assertion above stayed
+    // green through the whole drift: the icosahedron was painted with a literal
+    // that happened to still match the token it had stopped reading. Same ban
+    // the HUD's own palette makes at the top of this file, one directory out.
+    const spelled = new RegExp(hex, 'i');
+    const offenders = ANCHOR_SOURCES
+      .filter((source) => spelled.test(code(source.text)))
+      .map((source) => `${source.name} → say CHAIN_ANCHOR_HEX.${field}`);
+
+    expect(offenders).toEqual([]);
   });
 });

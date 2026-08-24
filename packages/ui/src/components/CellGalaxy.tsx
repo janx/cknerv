@@ -536,6 +536,14 @@ function CkbNodeAnchor({
       false,
     );
   }, [gl, id]);
+  // All three of the anchor's surfaces — halo, wireframe, translucent fill —
+  // come off the one token, which is the whole reason it lives in
+  // `visualPalette.ts` rather than beside this component: `NodeSelfCard` tints
+  // its frame from the same constant, so the floating card and the thing the
+  // card is ABOUT are the same colour by construction. Two of the three used
+  // to be typed as literals seventy lines below this binding, and retuning the
+  // token moved the card while leaving the icosahedron exactly where it was.
+  //
   // The event carrier lives in the halo. An intensity ref eases between the
   // subdued rest/selection levels and a short block-arrival peak, while the
   // shader supplies the single shared breathing envelope.
@@ -608,7 +616,7 @@ function CkbNodeAnchor({
         <lineSegments>
           <primitive object={wireGeometry} attach="geometry" />
           <lineBasicMaterial
-            color="#7df9ff"
+            color={palette.edge}
             toneMapped={false}
             blending={THREE.AdditiveBlending}
             transparent
@@ -619,7 +627,7 @@ function CkbNodeAnchor({
         <mesh>
           <icosahedronGeometry args={[ANCHOR_BODY_RADIUS, 0]} />
           <meshBasicMaterial
-            color="#0e7490"
+            color={palette.fill}
             transparent
             opacity={presentation.fillOpacity}
             side={THREE.DoubleSide}
