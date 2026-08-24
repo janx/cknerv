@@ -22,8 +22,25 @@ export const USAGE_CAP = 1.0;
 export const USAGE_GAIN = 1.6;
 /** Seconds for an idle edge's usage to halve — its activity "memory". */
 export const USAGE_DECAY_HALF_LIFE_S = 3.0;
-/** Below this, usage snaps to 0 so the fabric can stop animating and settle. */
-export const USAGE_EPSILON = 0.002;
+/** Below this, usage snaps to 0 so the fabric can stop animating and settle.
+ *  The floor is a VISIBILITY threshold, not a numerical one: at 0.02 one
+ *  crossing's incremental energy is ~1.2% of the resting stroke it rides on —
+ *  under the display's own quantization — while every frame below it still
+ *  cost the warm overlay a full re-sample and re-upload. Raising it from the
+ *  historical 0.002 shortens one crossing's warm tail from ~22 s to ~12 s and
+ *  changes nothing anyone can see. */
+export const USAGE_EPSILON = 0.02;
+
+/** Usage under which the per-frame colour delta of the warm overlay is a
+ *  fraction of a percent of an already faint stroke. The overlay quantizes
+ *  its upload in this band (see WARM_TAIL_COMMIT_INTERVAL_S); the decay
+ *  itself stays frame-accurate, because decay is bookkeeping and upload is
+ *  presentation. */
+export const WARM_TAIL_USAGE = 0.1;
+/** Sim seconds between warm-overlay uploads inside the deep tail — ~10 Hz.
+ *  One crossing decays from WARM_TAIL_USAGE to USAGE_EPSILON over ~7 s, so
+ *  this is where most of the tail's bytes were. */
+export const WARM_TAIL_COMMIT_INTERVAL_S = 0.1;
 
 /** One pulse crossing: bump usage by `amount`, clamped to the cap. `amount`
  *  defaults to the shipped constant; callers pass the live-tuned value. */

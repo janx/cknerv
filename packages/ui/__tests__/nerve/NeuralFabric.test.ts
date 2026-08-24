@@ -247,7 +247,9 @@ describe('NeuralFabric living-mesh handles', () => {
     expect(SRC).toContain('warmSegmentAllocation(allocationEdges)');
     expect(SRC).toContain('warmRouteKeysRef');
     expect(SRC).toContain('warmRouteBrightnessGain(');
-    expect(SRC).toContain('commitLayer(warmRoutes)');
+    // Colours ride usage and move every decaying frame; endpoints only move
+    // when the packed membership does or a member is still animating.
+    expect(SRC).toContain('commitLayer(warmRoutes, warmPositionsMoved, true)');
     expect(SRC).toContain('<primitive object={warmRoutes.mesh} />');
 
     const reinforceImplementation = SRC.slice(
@@ -368,8 +370,10 @@ describe('NeuralFabric oversized-diff cohort staggering', () => {
   it('meters passive-fabric uploads through fabricUploadBytes', () => {
     expect(SRC).toContain('fabricUploadBytes');
     const observeCalls = SRC.match(/fabricStats\.observeUpload\(/g) ?? [];
-    // Legacy slot ranges (test surface) + the three lifecycle commits
-    // (event ranges, full population, aperture prefix).
-    expect(observeCalls.length).toBe(4);
+    // Legacy slot ranges (test surface), the three lifecycle commits (event
+    // ranges, full population, aperture prefix), and the warm-route overlay —
+    // the fabric family's largest steady-state uploader, and for a long time
+    // the only one RENDER STATS·08 could not see.
+    expect(observeCalls.length).toBe(5);
   });
 });

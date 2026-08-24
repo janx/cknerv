@@ -76,6 +76,8 @@ import {
   reinforceUsage,
   decayUsage,
   warmRouteBrightnessGain,
+  WARM_TAIL_COMMIT_INTERVAL_S,
+  WARM_TAIL_USAGE,
 } from './fabricReinforce';
 import {
   arborBrightness,
@@ -1145,6 +1147,15 @@ export default function NeuralFabric({
   /** Only edges with positive usage live here. Reinforcement updates this
    * sparse set without dirtying the complete passive-fabric prefix. */
   const warmRouteKeysRef = useRef<Set<string>>(new Set());
+  /** Warm-set moves since the last warm commit: a reinforce that admitted a
+   * NEW key, or a walk that dropped a settled one. The overlay is packed in
+   * iteration order, so any move relocates segments and the position lane has
+   * to go up with the colours; a pure decay leaves every endpoint where it
+   * was. Starts armed so the first populated commit uploads both. */
+  const warmMembershipMovedRef = useRef(true);
+  /** Sim second of the last warm upload. Inside the deep decay tail the
+   * overlay commits at WARM_TAIL_COMMIT_INTERVAL_S rather than per frame. */
+  const warmCommittedSecRef = useRef(Number.NEGATIVE_INFINITY);
   /** True when there's pending work to emit: either the edge map
    *  was just mutated by `setFabric`, or at least one edge is in
    *  growth/decay and its appearance changes per frame. Flipped
@@ -1256,6 +1267,10 @@ export default function NeuralFabric({
     const lifecycleArrays = fabric.lifecycle!.arrays;
     /** Slots whose static record changed since the last emit → ranged upload. */
     const lifeDirtySlots: number[] = [];
+    /** One warm walk's surviving members and their render state, so the
+     * presentation pass never re-derives what the bookkeeping pass read. */
+    const warmDrawKeys: string[] = [];
+    const warmDrawRenders: EdgeRender[] = [];
     /** Rewrite one edge's static record into its slot and mark it dirty.
      * Fabric-layer usage is deliberately 0 — reinforcement lives on the warm
      * overlay; the shader's gold/reclaim terms match the old CPU walk which
@@ -1815,7 +1830,12 @@ export default function NeuralFabric({
         const st = edgeStatesRef.current.get(key);
         if (!st) return;
         st.usage = reinforceUsage(st.usage, LIVE.cell.reinforceAmount);
-        if (st.usage > 0) warmRouteKeysRef.current.add(key);
+        if (st.usage > 0 && !warmRouteKeysRef.current.has(key)) {
+          // A new member appends segments to the packed overlay; re-warming
+          // one already in it moves no endpoint anywhere.
+          warmRouteKeysRef.current.add(key);
+          warmMembershipMovedRef.current = true;
+        }
       },
       collectLiveEdgeKeys() {
         const keys: string[] = [];
@@ -2107,11 +2127,18 @@ export default function NeuralFabric({
         // when the last usage value settles, one empty commit hides the layer
         // and subsequent frames return to zero buffer work.
         if (warmRouteKeys.size > 0 || warmLayerWasVisible) {
-          warmRoutes.count = 0;
+          // Bookkeeping pass. Decay is a property of elapsed time and runs
+          // ahead of every gate below — what a frame chooses to upload is
+          // presentation, and presentation may never move the simulation.
+          warmDrawKeys.length = 0;
+          warmDrawRenders.length = 0;
+          let warmEndpointsMoved = false;
+          let warmPeakUsage = 0;
           for (const key of warmRouteKeys) {
             const st = states.get(key);
             if (!st) {
               warmRouteKeys.delete(key);
+              warmMembershipMovedRef.current = true;
               continue;
             }
             st.usage = decayUsage(
@@ -2121,29 +2148,72 @@ export default function NeuralFabric({
             );
             if (st.usage <= 0) {
               warmRouteKeys.delete(key);
+              warmMembershipMovedRef.current = true;
               continue;
             }
             const render = fabricEdgeRenderState(st, now);
             if (render.reap) {
               st.usage = 0;
               warmRouteKeys.delete(key);
+              warmMembershipMovedRef.current = true;
               continue;
             }
-            writeFabricEdgeSegments(
-              warmRoutes,
-              st,
-              render,
-              sample,
-              now,
-              st.usage,
-              warmRouteBrightnessGain(
-                st.usage,
-                LIVE.cell.reinforceGain,
-              ),
-              recallAperture,
-            );
+            // Endpoints are sampled across [tStart, tEnd], and that interval
+            // moves only while a tendril extends or a dead end retracts. A gc
+            // fade and a stable edge both draw the full span, frame after
+            // frame, from the same nine snapshotted numbers.
+            if (render.animating && (render.tStart > 0 || render.tEnd < 1)) {
+              warmEndpointsMoved = true;
+            }
+            if (st.usage > warmPeakUsage) warmPeakUsage = st.usage;
+            warmDrawKeys.push(key);
+            warmDrawRenders.push(render);
           }
-          commitLayer(warmRoutes);
+          const warmSinceCommit = now - warmCommittedSecRef.current;
+          // Deep tail: every member is faint enough that a frame's colour
+          // delta is under the display's own quantization, nothing has moved,
+          // and the buffer already holds a coherent frame. Leave count and
+          // every mark exactly where they are.
+          const warmQuiet = warmPeakUsage > 0
+            && warmPeakUsage < WARM_TAIL_USAGE
+            && !warmMembershipMovedRef.current
+            && !warmEndpointsMoved
+            && warmSinceCommit >= 0
+            && warmSinceCommit < WARM_TAIL_COMMIT_INTERVAL_S;
+          if (!warmQuiet) {
+            warmRoutes.count = 0;
+            for (let i = 0; i < warmDrawKeys.length; i += 1) {
+              const st = states.get(warmDrawKeys[i]);
+              if (!st) continue;
+              writeFabricEdgeSegments(
+                warmRoutes,
+                st,
+                warmDrawRenders[i],
+                sample,
+                now,
+                st.usage,
+                warmRouteBrightnessGain(
+                  st.usage,
+                  LIVE.cell.reinforceGain,
+                ),
+                recallAperture,
+              );
+            }
+            // Colours ride usage and change every frame while anything decays;
+            // positions do not. The third reading catches a layout change
+            // neither of the first two explains — a live gain knob taken to
+            // zero drops every stroke out of the packed prefix.
+            const warmPositionsMoved = warmMembershipMovedRef.current
+              || warmEndpointsMoved
+              || warmRoutes.count !== warmRoutes.geometry.instanceCount;
+            commitLayer(warmRoutes, warmPositionsMoved, true);
+            fabricStats.observeUpload(fabricUploadBytes(warmRoutes.count, {
+              positions: warmPositionsMoved,
+              colors: true,
+            }));
+            warmMembershipMovedRef.current = false;
+            warmCommittedSecRef.current = now;
+          }
         }
 
         if (!emitDirtyRef.current) {
