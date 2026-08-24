@@ -40,6 +40,7 @@ import {
   CONTENT_BANDS,
   LOCK_COLORS,
   SEGMENT_COLORS,
+  STORAGE_TIER_COLORS,
 } from '../../../src/components/hud/cellFormat';
 import {
   ACTIVITY_CATEGORY_COLORS,
@@ -50,6 +51,7 @@ import {
   ECOSYSTEM_UNLISTED_COLOR,
 } from '../../../src/derives/assetEcosystem.derive';
 import { SCRIPT_FAMILY_COLORS } from '../../../src/derives/scriptFamilies.derive';
+import { compositionTierColor } from '../../../src/components/hud/CellSemanticsReadout';
 import { fpsColor } from '../../../src/tweaks/renderStatsStore';
 import { CELL_GALAXY_PALETTE, CHAIN_ANCHOR_HEX } from '../../../src/visualPalette';
 
@@ -837,6 +839,14 @@ const CATEGORY_PALETTES: Readonly<Record<string, Readonly<Record<string, string>
   // longhand, and the tail sat 32.5 from the remainder it shares an edge with
   // while its own comment claimed the two were kept apart.
   scriptFamily: SCRIPT_FAMILY_COLORS,
+  // A RAMP rather than a set of bands, and registered here for the half of it
+  // that is the same question: an ordinal still names a fact about a Cell, so
+  // no rung of it may sit on a reserved hue. It shipped with four of them on
+  // one — `nominal`, `cyanWire`, `caution`, `ember` — which is not a colour
+  // that slid onto a reserved layer but a ramp built OUT of them, and the
+  // block that draws it rails and washes a whole card in the rung's colour.
+  // Nothing walked it, because nothing knew it was a palette.
+  storageTier: STORAGE_TIER_COLORS,
 };
 
 /** The sanctioned borrows, each `<palette>.<key> → <reserved>`, and each one
@@ -1054,6 +1064,127 @@ describe('the colour reserve', () => {
     }
 
     expect(collisions).toEqual([]);
+  });
+
+  it('the durability ramp ranks, and ranks in one direction', () => {
+    // The half the reserve cannot state. Every other palette in the matrix is
+    // NOMINAL — omnilock is other than sighash, not more than it — so distance
+    // from the reserve and distance from its neighbours is the whole of what
+    // legibility means there. This one is ORDERED, and a reader has to be able
+    // to put two rungs in order with no legend in front of them, which is a
+    // claim about brightness rather than about distance.
+    //
+    // Pinned because the ramp it replaced ranked in the WRONG vocabulary: it
+    // stepped nominal green → consensus cyan → caution yellow → ember, which
+    // is the HUD's own gradient for something going wrong, spent on a fact
+    // that is not a fault. Cold-and-bright to ash is the axis the reserve does
+    // not own, and it only works if it is monotone.
+    const RUNGS = [
+      'pure_ckb', 'btc_ckb', 'decentralized_mixture',
+      'centralized_mixture', 'unknown',
+    ] as const;
+    expect(Object.keys(STORAGE_TIER_COLORS)).toEqual([...RUNGS]);
+
+    const luma = (hex: string): number => {
+      const [r, g, b] = [0, 2, 4]
+        .map((i) => parseInt(hex.replace('#', '').slice(i, i + 2), 16));
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const ladder = RUNGS.map((rung) => luma(STORAGE_TIER_COLORS[rung]));
+    const inversions = ladder
+      .slice(1)
+      .map((step, index) => ({ step, index }))
+      .filter(({ step, index }) => step >= ladder[index])
+      .map(({ index }) => `${RUNGS[index]} → ${RUNGS[index + 1]} does not step down`);
+    expect(inversions).toEqual([]);
+  });
+
+  it('no rung of the durability ramp is a rate the organism is spending', () => {
+    // The one gap the matrix above cannot close on its own. `RESERVED` is
+    // states, chrome and the two identity wires; `ember` is in neither list,
+    // because it is a READING — cells being spent — and readings are the thing
+    // category palettes are made of. So the matrix walks it as data and
+    // correctly lets other data sit near it.
+    //
+    // But it carries a rule of its own, written in `hudTheme.ts` and quoted in
+    // this ramp's old comment three lines above where it was broken: never an
+    // accent, never a border, only ever a reading. A durability rung is drawn
+    // as a 2px rail and a wash across a whole card, so a rung that is `ember`
+    // is `ember` as a border — which is how a Spore on somebody's web server
+    // came to be framed like a state the HUD had raised.
+    //
+    // Walked as a table rather than pinned as a hex, so the day a second
+    // metabolic tone is cut beside it, this covers it without anyone
+    // remembering the rule exists.
+    const collisions: string[] = [];
+    for (const [rung, value] of Object.entries(STORAGE_TIER_COLORS)) {
+      for (const [name, tone] of Object.entries(METABOLIC_COLORS)) {
+        if (rgbDistance(value, tone) > SEPARATION_FLOOR) continue;
+        collisions.push(
+          `storageTier.${rung} is ${name} (${value}) — a rail and a wash, in a reading's colour`,
+        );
+      }
+    }
+
+    expect(collisions).toEqual([]);
+  });
+
+  it('the two ends of the ramp are tokens, not values that match tokens', () => {
+    // Both ends already had names before the ramp existed, and a ramp that
+    // retyped them would be the drift at the top of this file with extra
+    // steps. The middle three are the ramp's own, which is why they are not
+    // asserted here — they have no other home to agree with.
+    expect(STORAGE_TIER_COLORS.pure_ckb).toBe(HUD_COLORS.cyanInk);
+    expect(STORAGE_TIER_COLORS.unknown).toBe(CONTENT_BANDS.unlisted);
+  });
+
+  it('the one value two palettes share is a coincidence, on the record', () => {
+    // `btc_ckb` is `CONTENT_BANDS.tokenExtended` to the digit, and it is
+    // written out as a literal rather than read from the band ON PURPOSE. Two
+    // independent decisions landed on one pale teal: widening the sUDT/xUDT
+    // edge on the CELLS asset bar is a legitimate thing to want, and if the
+    // ramp READ that band it would move a durability rung with it — silently,
+    // and possibly through the floor. A shared value is an accident; a shared
+    // NAME would be a claim that a BTC+CKB object is an extended token.
+    //
+    // So the accident is held here instead. If either side is retuned this
+    // goes red, and the answer is to update this line rather than to wire the
+    // two together.
+    expect(STORAGE_TIER_COLORS.btc_ckb).toBe(CONTENT_BANDS.tokenExtended);
+    expect(rgbDistance(STORAGE_TIER_COLORS.btc_ckb, CONTENT_BANDS.tokenExtended))
+      .toBe(0);
+  });
+
+  it('the composition card is railed and washed in the ramp, and nothing else', () => {
+    // The consumer, pinned. The rung is not a swatch beside a label: the block
+    // draws a 2px rail in it and washes the whole card behind the words, so a
+    // rung on a reserved layer does not tint a chip, it tints a CARD — which
+    // is how an ordinary IPFS-hosted Spore came to wear the caution-yellow
+    // rail and wash that a degraded state gets everywhere else, and how
+    // `ember` came to be a border in a HUD whose palette says it is never one.
+    //
+    // Read as source text because the defect was never a literal: the block
+    // asks a function for a colour, and the function answered out of the
+    // severity ladder. What this can check is that the rail and the wash both
+    // come from the one call, so no future hand can splice a second colour in.
+    const panel = SOURCES.find((source) => source.name === 'CellDetailPanel.tsx');
+    expect(panel, 'the composition block moved — this oracle reads files off disk')
+      .toBeDefined();
+    const text = code(panel?.text ?? '');
+    expect(text).toContain('const color = compositionTierColor(tier);');
+    expect(text).toContain('borderLeft: `2px solid ${rgba(color, 0.55)}`');
+    expect(text).toContain('background: rgba(color, 0.07)');
+
+    // …and that the function it asks is answering out of the ramp. Asked of
+    // the values rather than the source, because the wire vocabulary is
+    // upstream's and a sixth tier is a word we have not learned yet, never a
+    // reason to fall off the ramp.
+    const rungs = new Set(Object.values(STORAGE_TIER_COLORS));
+    const answers = [
+      ...Object.keys(STORAGE_TIER_COLORS),
+      'quantum_mixture',
+    ].map((tier) => compositionTierColor(tier));
+    expect(answers.filter((answer) => !rungs.has(answer))).toEqual([]);
   });
 });
 

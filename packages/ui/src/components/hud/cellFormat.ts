@@ -330,6 +330,69 @@ export const SEGMENT_COLORS: Record<ByteBudgetSegmentKey, string> = {
   data: CONTENT_BANDS.consensus,
 };
 
+// ——— The durability ramp ————————————————————————————————————————————————
+//
+// WHERE a digital object's content physically lives, as five steps of one
+// ORDINAL: fully on the chain, split across two chains, leaning on a
+// decentralized network somebody else keeps up, or depending on one operator's
+// HTTPS server — and `unknown`, which means NOT YET MEASURED.
+//
+// It is a ramp rather than a set of bands, and that is the whole reason it is
+// its own table. A lock family and an asset family are NOMINAL: omnilock is
+// not more than sighash, it is other than it, so they draw from
+// `CONTENT_BANDS` where a band names a nature. A durability tier is ordered —
+// on-chain outranks BTC+CKB outranks IPFS outranks somebody's server — so the
+// colour has to rank, and a reader has to be able to put two of these in order
+// with no legend in front of them.
+//
+// What it must NOT be is the severity ladder. The tiers shipped as
+// `nominal → cyanWire → caution → ember → dim`, which is four reserved layers
+// spliced into one ordinal: the middle of it read left to right as the HUD's
+// own gradient for something going wrong, and the block that draws it rails
+// and washes a whole card in the tier's colour. So an ordinary Spore hosted on
+// IPFS wore caution yellow and a Spore on a web server wore `ember` as a
+// border — the treatment a degraded state gets everywhere else, for a fact
+// that is not a fault. Storage on somebody's server is a WEAKER PROMISE, not
+// an alarm, and the palette has no business raising one on its behalf. It cost
+// `ember` its own rule as well, which is that it is never an accent, never a
+// border, only ever a reading.
+//
+// So the ramp is cold-and-bright to ash, on an axis the reserve does not own:
+// permanence is lit, dependence on somebody else fades toward the plate. Every
+// step clears every reserved hue, and the tightest adjacent pair is 51.4 —
+// past the separation floor — so it ranks without a legend and no rung reads
+// as a verdict.
+//
+// The second rung is `#95EAD3` to the digit, which is also
+// `CONTENT_BANDS.tokenExtended`. It is written out here rather than read from
+// the band, on purpose and against this file's usual instinct: two independent
+// decisions happen to have landed on one pale teal, and wiring them together
+// would mean that widening the sUDT/xUDT edge on the CELLS asset bar silently
+// moved a durability rung and could collapse this ramp's ordering. A shared
+// VALUE is a coincidence; a shared NAME would be a claim that a BTC+CKB object
+// is an extended token, which it is not. `hudDiscipline.test.ts` holds the
+// coincidence on the record so it cannot drift into either a defect or a
+// dependency unnoticed.
+export const STORAGE_TIER_COLORS: Readonly<Record<string, string>> = {
+  /** Never leaves the chain: on-chain data or `ckbfs://`. The brightest cold
+   *  ink the palette has, because this is the only tier that promises nothing
+   *  outside consensus. */
+  pure_ckb: HUD_COLORS.cyanInk,
+  /** Two chains instead of one, both of them permanent — a step down the ramp
+   *  in brightness only, because nothing here depends on anybody. */
+  btc_ckb: '#95EAD3',
+  /** IPFS, Arweave: persists as long as a network somebody else runs keeps
+   *  hosting it. The first rung where the promise is somebody else's. */
+  decentralized_mixture: '#6FA9B8',
+  /** One operator's `https://`. They can stop paying, and then the content is
+   *  gone — so this is the ash end of the ramp, not the loud end. */
+  centralized_mixture: '#4A6270',
+  /** NOT YET MEASURED, emphatically not "off-chain". It takes the band the
+   *  whole house gives a thing nothing could place, because that is exactly
+   *  what it is: unread, and quiet about it. */
+  unknown: CONTENT_BANDS.unlisted,
+};
+
 /** Palette colour for a script identity. A script the index named is a known
  *  script even when cknerv's own table could not place it, so it drops the
  *  near-black unrecognized-family swatch for plain ink — present, but

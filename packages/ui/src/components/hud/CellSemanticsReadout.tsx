@@ -6,7 +6,11 @@ import type {
   SemanticContentDecode,
   SemanticFacet,
 } from '@cknerv/types';
-import { formatSemanticAssetAmount, midTruncate } from './cellFormat';
+import {
+  STORAGE_TIER_COLORS,
+  formatSemanticAssetAmount,
+  midTruncate,
+} from './cellFormat';
 import {
   OBJECT_SEGMENT_LABELS,
   decodeSegmentValue,
@@ -215,6 +219,14 @@ export function semanticFacetNumber(
 // object the worker has not reached yet is unread, and printing that as a
 // verdict about its storage would be inventing the one fact these rows exist
 // to state.
+//
+// The COLOURS are `STORAGE_TIER_COLORS` and are argued where they live, beside
+// the rest of the cell palette. What matters here is why this file no longer
+// picks them one at a time: the five tiers are an ORDINAL, so they are one
+// ramp chosen together, and choosing them one at a time is how four of them
+// ended up on reserved layers — a health tone in the middle and `ember` at the
+// bottom, which railed and washed an IPFS-hosted Spore's card in the treatment
+// a degraded state gets everywhere else. A weaker promise is not a fault.
 
 type CompositionTierReadout = {
   /** ckbadger's `formatCompositionTier` label, uppercased into HUD type. */
@@ -227,43 +239,27 @@ type CompositionTierReadout = {
 const COMPOSITION_TIERS: Readonly<Record<string, CompositionTierReadout>> = {
   pure_ckb: {
     label: 'PURE CKB',
-    color: HUD_COLORS.nominal,
+    color: STORAGE_TIER_COLORS.pure_ckb,
     description: 'All content is stored directly on the CKB blockchain (on-chain data or ckbfs://). Fully verifiable and permanent.',
   },
   btc_ckb: {
     label: 'BTC+CKB',
-    // The consensus band: content that never leaves a chain, on two chains
-    // instead of one. Both halves are as permanent as the object itself, which
-    // is why this reads beside `nominal` rather than below it.
-    color: HUD_COLORS.cyanWire,
+    color: STORAGE_TIER_COLORS.btc_ckb,
     description: 'Content is stored across both CKB (on-chain data or ckbfs://) and Bitcoin (btcfs://). Fully verifiable and permanent.',
   },
   decentralized_mixture: {
     label: 'DECENTRALIZED MIXTURE',
-    color: HUD_COLORS.caution,
+    color: STORAGE_TIER_COLORS.decentralized_mixture,
     description: 'Some content references external decentralized storage (e.g. IPFS, Arweave). Data persists as long as the external network hosts it.',
   },
   centralized_mixture: {
     label: 'CENTRALIZED MIXTURE',
-    // `ember`, and the choice is between two documented meanings rather than
-    // two hues. `orangeDeep` is CHROME — the instrument's own frame, worn
-    // today by exactly one thing, a panel header's companion glyph — and the
-    // palette forbids painting a reading in the frame's colour. `ember` is the
-    // opposite layer by construction: never an accent, never a border, only
-    // ever a reading, sitting at hue 11° between `danger` and `orangeDeep`
-    // precisely so it can say "this is being consumed" without reading as a
-    // small alarm. Its literal gloss — cells being spent — stretches here into
-    // content that is spendable by somebody else: a server operator can stop
-    // paying for it, and then this object's content is gone. That is a
-    // stretch of the metaphor; using chrome for a value would be a break of
-    // the rule. Red stays reserved for pathology either way — an object stored
-    // on somebody's server is not a fault, it is a weaker promise.
-    color: HUD_COLORS.ember,
+    color: STORAGE_TIER_COLORS.centralized_mixture,
     description: 'Some content depends on centralized servers (http/https). Data availability relies on the server operator.',
   },
   unknown: {
     label: 'UNKNOWN',
-    color: HUD_COLORS.dim,
+    color: STORAGE_TIER_COLORS.unknown,
     description: 'Composition could not be determined. The content storage method for objects in this cluster is unverified.',
   },
 };
@@ -286,10 +282,12 @@ export function compositionTierLabel(tier: string): string {
     ?? tier.replaceAll('_', ' ').toUpperCase();
 }
 
-/** The tier's colour. An unrecognized tier reads `dim`, the same as `unknown`,
- *  because both say the same thing: nothing here has been established. */
+/** The tier's colour. An unrecognized tier reads the `unknown` rung, because
+ *  both say the same thing: nothing here has been established. A sixth tier
+ *  arriving from upstream lands at the quiet end of the ramp rather than
+ *  somewhere off it. */
 export function compositionTierColor(tier: string): string {
-  return compositionTier(tier)?.color ?? HUD_COLORS.dim;
+  return compositionTier(tier)?.color ?? STORAGE_TIER_COLORS.unknown;
 }
 
 /** The sentence explaining what the tier means for the object's durability. An

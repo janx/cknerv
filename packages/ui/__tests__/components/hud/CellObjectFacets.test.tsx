@@ -37,6 +37,7 @@ import {
   compositionTierLabel,
   FacetEvidenceRow,
 } from '../../../src/components/hud/CellSemanticsReadout';
+import { STORAGE_TIER_COLORS } from '../../../src/components/hud/cellFormat';
 import { HUD_COLORS } from '../../../src/components/hud/hudTheme';
 
 afterEach(() => cleanup());
@@ -244,13 +245,13 @@ function blockCounts(container: HTMLElement): HTMLElement | null {
 describe('composition tier vocabulary', () => {
   it('speaks ckbadger\'s five tiers in HUD type, colour and sentence', () => {
     expect(compositionTierLabel('pure_ckb')).toBe('PURE CKB');
-    expect(compositionTierColor('pure_ckb')).toBe(HUD_COLORS.nominal);
+    expect(compositionTierColor('pure_ckb')).toBe(STORAGE_TIER_COLORS.pure_ckb);
     expect(compositionTierDescription('pure_ckb')).toBe(
       'All content is stored directly on the CKB blockchain (on-chain data or ckbfs://). Fully verifiable and permanent.',
     );
 
     expect(compositionTierLabel('btc_ckb')).toBe('BTC+CKB');
-    expect(compositionTierColor('btc_ckb')).toBe(HUD_COLORS.cyanWire);
+    expect(compositionTierColor('btc_ckb')).toBe(STORAGE_TIER_COLORS.btc_ckb);
     expect(compositionTierDescription('btc_ckb')).toBe(
       'Content is stored across both CKB (on-chain data or ckbfs://) and Bitcoin (btcfs://). Fully verifiable and permanent.',
     );
@@ -258,24 +259,29 @@ describe('composition tier vocabulary', () => {
     expect(compositionTierLabel('decentralized_mixture'))
       .toBe('DECENTRALIZED MIXTURE');
     expect(compositionTierColor('decentralized_mixture'))
-      .toBe(HUD_COLORS.caution);
+      .toBe(STORAGE_TIER_COLORS.decentralized_mixture);
     expect(compositionTierDescription('decentralized_mixture')).toBe(
       'Some content references external decentralized storage (e.g. IPFS, Arweave). Data persists as long as the external network hosts it.',
     );
 
     expect(compositionTierLabel('centralized_mixture'))
       .toBe('CENTRALIZED MIXTURE');
-    // The ember family, never red: an object leaning on somebody's server is a
-    // weaker promise, not a fault. Red stays reserved for pathology.
-    expect(compositionTierColor('centralized_mixture')).toBe(HUD_COLORS.ember);
+    // Ash, and nothing louder: an object leaning on somebody's server is a
+    // weaker promise, not a fault. The whole ramp sits off the severity ladder
+    // now — this used to be `ember`, one rung above `caution`, which put the
+    // HUD's own gradient for something going wrong behind a durability fact.
+    expect(compositionTierColor('centralized_mixture'))
+      .toBe(STORAGE_TIER_COLORS.centralized_mixture);
     expect(compositionTierColor('centralized_mixture'))
       .not.toBe(HUD_COLORS.danger);
+    expect(compositionTierColor('centralized_mixture'))
+      .not.toBe(HUD_COLORS.ember);
     expect(compositionTierDescription('centralized_mixture')).toBe(
       'Some content depends on centralized servers (http/https). Data availability relies on the server operator.',
     );
 
     expect(compositionTierLabel('unknown')).toBe('UNKNOWN');
-    expect(compositionTierColor('unknown')).toBe(HUD_COLORS.dim);
+    expect(compositionTierColor('unknown')).toBe(STORAGE_TIER_COLORS.unknown);
     expect(compositionTierDescription('unknown')).toBe(
       'Composition could not be determined. The content storage method for objects in this cluster is unverified.',
     );
@@ -307,14 +313,15 @@ describe('composition tier vocabulary', () => {
     // The index owns this vocabulary. A sixth spelling is a word this side has
     // not learned, which reads raw and unestablished — never a decode failure.
     expect(compositionTierLabel('quantum_mixture')).toBe('QUANTUM MIXTURE');
-    expect(compositionTierColor('quantum_mixture')).toBe(HUD_COLORS.dim);
+    expect(compositionTierColor('quantum_mixture'))
+      .toBe(STORAGE_TIER_COLORS.unknown);
     expect(compositionTierDescription('quantum_mixture'))
       .toBe(compositionTierDescription('unknown'));
 
     // A wire string naming something on `Object.prototype` is an unknown tier
     // like any other, not a truthy table hit with nothing inside it.
     expect(compositionTierLabel('constructor')).toBe('CONSTRUCTOR');
-    expect(compositionTierColor('constructor')).toBe(HUD_COLORS.dim);
+    expect(compositionTierColor('constructor')).toBe(STORAGE_TIER_COLORS.unknown);
     expect(compositionTierDescription('constructor'))
       .toBe(compositionTierDescription('unknown'));
   });
@@ -368,7 +375,8 @@ describe('CellDetailPanel — object kin and composition', () => {
     expect(statedBlock(container).getAttribute('data-cell-composition-block'))
       .toBe('pure_ckb');
     expect(blockTier(container).textContent).toBe('PURE CKB');
-    expect(blockTier(container).style.color).toBe(rgbOf(HUD_COLORS.nominal));
+    expect(blockTier(container).style.color)
+      .toBe(rgbOf(STORAGE_TIER_COLORS.pure_ckb));
 
     // Its neighbours' census sits under it — counts, never a ratio and never a
     // bar — with the empty tiers left off the line and kept in the hover.
@@ -391,9 +399,9 @@ describe('CellDetailPanel — object kin and composition', () => {
     ]));
 
     expect(statedBlock(container).style.borderLeft)
-      .toBe(`2px solid ${rgbaOf(HUD_COLORS.ember, 0.55)}`);
+      .toBe(`2px solid ${rgbaOf(STORAGE_TIER_COLORS.centralized_mixture, 0.55)}`);
     expect(statedBlock(container).style.background)
-      .toBe(rgbaOf(HUD_COLORS.ember, 0.07));
+      .toBe(rgbaOf(STORAGE_TIER_COLORS.centralized_mixture, 0.07));
   });
 
   it('reads an m-NFT token with the same two kinds, and calls its group a CLASS', () => {
@@ -426,7 +434,8 @@ describe('CellDetailPanel — object kin and composition', () => {
     // No per-item media profile exists upstream for m-NFT, so the headline is
     // the population's tier and there is nothing to have found issues in.
     expect(blockTier(container).textContent).toBe('CENTRALIZED MIXTURE');
-    expect(blockTier(container).style.color).toBe(rgbOf(HUD_COLORS.ember));
+    expect(blockTier(container).style.color)
+      .toBe(rgbOf(STORAGE_TIER_COLORS.centralized_mixture));
     expect(blockCounts(container)?.textContent).toBe(AGGREGATE_VISIBLE_COUNTS);
     expect(statedBlock(container).querySelector('[data-cell-storage-issues]'))
       .toBeNull();
@@ -522,7 +531,13 @@ describe('CellDetailPanel — object kin and composition', () => {
     ]));
 
     expect(blockTier(container).textContent).toBe('DECENTRALIZED MIXTURE');
-    expect(blockTier(container).style.color).toBe(rgbOf(HUD_COLORS.caution));
+    expect(blockTier(container).style.color)
+      .toBe(rgbOf(STORAGE_TIER_COLORS.decentralized_mixture));
+    // The chip beside it is the one thing here that IS a fault, and it is the
+    // only caution on the block now: an object hosted on IPFS used to wear the
+    // same yellow as the issues its index found in it.
+    expect(blockTier(container).style.color)
+      .not.toBe(rgbOf(HUD_COLORS.caution));
     // The chip rides the block's own heading, right of the word it qualifies.
     const chip = statedBlock(container).querySelector<HTMLElement>(
       '[data-cell-storage-issues="2"]',
@@ -574,7 +589,8 @@ describe('CellDetailPanel — object kin and composition', () => {
     // A cluster Cell holds no media of its own, so the headline it wears is
     // the population's — which is exactly what the facet's state says.
     expect(blockTier(container).textContent).toBe('CENTRALIZED MIXTURE');
-    expect(blockTier(container).style.color).toBe(rgbOf(HUD_COLORS.ember));
+    expect(blockTier(container).style.color)
+      .toBe(rgbOf(STORAGE_TIER_COLORS.centralized_mixture));
   });
 
   it('names the kin by id when the collection index is down', () => {
@@ -618,7 +634,8 @@ describe('CellDetailPanel — object kin and composition', () => {
 
     expect(evidenceStack(container)).toEqual(['composition-block']);
     expect(blockTier(container).textContent).toBe('BTC+CKB');
-    expect(blockTier(container).style.color).toBe(rgbOf(HUD_COLORS.cyanWire));
+    expect(blockTier(container).style.color)
+      .toBe(rgbOf(STORAGE_TIER_COLORS.btc_ckb));
     expect(container.textContent).not.toContain('SOLE SPORE');
     expect(row(container, 'collection')).toBeNull();
   });
