@@ -26,6 +26,24 @@ const INSPECTOR_EDGE_PX = 14;
 const INSPECTOR_SAFE_TOP_PX = 104;
 
 /**
+ * Fraction of the card's own measure the opposite side must win by before an
+ * already-placed card is worth teleporting across its anchor.
+ *
+ * A bare `roomRight >= roomLeft` has no answer at all for an entity sitting on
+ * the screen's midline, and one entity sits there permanently: the local
+ * node's chain anchor stands at (0, CHAIN_Y, 0) while the controls target sits
+ * at (0, CELLS_Y, 0), so it is ON the camera's orbit axis and projects to the
+ * exact centre for EVERY azimuth and elevation. There the two rooms are equal
+ * to the last bit, the winner is whatever sign the projection's float noise
+ * carries (~1e-13 px, rebuilt with the camera matrix on every frame damping is
+ * alive), and the card strobes between two homes `panelWidth + 2 * gap` apart.
+ * A quarter of the card is far past any such noise while still well inside the
+ * jump it gates — the entity has to travel an eighth of a card past the
+ * midline before the reader pays for the move.
+ */
+const INSPECTOR_SIDE_HYSTERESIS = 0.25;
+
+/**
  * Sub-pixel the frame writer refuses to chase. The galaxy autorotates, so a
  * tethered card drifts a fraction of a pixel every frame forever; a gate finer
  * than the eye can read turns that drift into a DOM write per frame for as
@@ -60,6 +78,12 @@ export type SceneInspectorPlacementFamily = 'beside' | 'stacked';
  * as the pre-clamp preference until the selection changes. Offsets are
  * anchor-relative, so a locked card still tracks its entity across the
  * screen; the lock freezes the preference, never the absolute position.
+ *
+ * The side is held for a different reason than the offsets. An offset is a
+ * continuous preference the solver re-clamps; a side is a discrete choice
+ * between two rooms, and it is the choice that has no honest answer when the
+ * entity sits between them. Remembering it is what gives that comparison the
+ * hysteresis it needs — see INSPECTOR_SIDE_HYSTERESIS.
  */
 export interface SceneInspectorPlacementLock {
   /** Family the offsets were captured in. The two families measure
@@ -71,6 +95,11 @@ export interface SceneInspectorPlacementLock {
   y: number | null;
   /** Sticky horizontal offset (stacked family's free axis). */
   x: number | null;
+  /** Side the card is currently placed on, kept so the next solve can hold it
+   * against a rival that is barely — or not at all — roomier. Null between
+   * selections, and never carried across a family change: the two families
+   * name different sides. */
+  side: SceneInspectorPlacementSide | null;
 }
 
 export interface InspectionCardSize {
@@ -140,7 +169,7 @@ export function createSceneInspectionHandles({
     defaultSize,
     frameKey: '',
     restyleKey: '',
-    placementLock: { family: null, y: null, x: null },
+    placementLock: { family: null, y: null, x: null, side: null },
     visible: false,
     layoutSide: 'left',
     layoutListeners: new Set(),
@@ -164,9 +193,10 @@ export function commitInspectionCardSize(
   handles.restyleKey = '';
 }
 
-/** Forget the sticky offsets. Called when the inspected entity changes and
- * when the card detaches, so the next selection centres itself afresh
- * instead of inheriting where the previous card happened to sit. */
+/** Forget the sticky offsets and the held side. Called when the inspected
+ * entity changes and when the card detaches, so the next selection centres
+ * itself afresh instead of inheriting where the previous card happened to
+ * sit. */
 export function resetInspectionPlacementLock(
   handles: SceneInspectionHandles,
 ): void {
@@ -174,6 +204,7 @@ export function resetInspectionPlacementLock(
   lock.family = null;
   lock.y = null;
   lock.x = null;
+  lock.side = null;
 }
 
 /** Release a card the dialect is unmounting, so no frame can write into it. */
@@ -307,6 +338,25 @@ export function useSceneInspectionDismiss(
   }, [boundaryRef, onDismiss]);
 }
 
+/**
+ * One side decision under the hysteresis a held side buys. `preferred` is the
+ * side the geometry alone picks; a card already living on `alternate` stays
+ * there while that side is still an option and `preferred` has not pulled
+ * ahead by more than `margin`. Scalars only: the frame loop calls this on
+ * every frame a card is open, and nothing on that path may allocate.
+ */
+function settleInspectorSide(
+  preferred: SceneInspectorPlacementSide,
+  alternate: SceneInspectorPlacementSide,
+  lead: number,
+  alternateAvailable: boolean,
+  held: SceneInspectorPlacementSide | null | undefined,
+  margin: number,
+): SceneInspectorPlacementSide {
+  if (held !== alternate || !alternateAvailable) return preferred;
+  return lead > margin ? preferred : alternate;
+}
+
 export function sceneInspectorPlacement({
   anchorX,
   anchorY,
@@ -319,6 +369,7 @@ export function sceneInspectorPlacement({
   safeTop = INSPECTOR_SAFE_TOP_PX,
   preferredY,
   preferredX,
+  heldSide,
 }: {
   anchorX: number;
   anchorY: number;
@@ -338,6 +389,10 @@ export function sceneInspectorPlacement({
    * preference, still clamped. The beside family ignores it — its x is
    * width-derived. */
   preferredX?: number;
+  /** Side the card is already placed on. It keeps the card while it remains
+   * an option and the roomier side has not pulled ahead by the hysteresis
+   * margin; a held side from the other family never applies. */
+  heldSide?: SceneInspectorPlacementSide | null;
 }): SceneInspectorPlacement {
   const roomRight = viewportWidth - edge - anchorX;
   const roomLeft = anchorX - edge;
@@ -353,9 +408,18 @@ export function sceneInspectorPlacement({
     : minY;
 
   if (canRight || canLeft) {
-    const side = canRight && (!canLeft || roomRight >= roomLeft)
+    const roomier = canRight && (!canLeft || roomRight >= roomLeft)
       ? 'right'
       : 'left';
+    const side = settleInspectorSide(
+      roomier,
+      roomier === 'right' ? 'left' : 'right',
+      Math.abs(roomRight - roomLeft),
+      // A side the card no longer fits on is not a side it may be held on.
+      roomier === 'right' ? canLeft : canRight,
+      heldSide,
+      panelWidth * INSPECTOR_SIDE_HYSTERESIS,
+    );
     return {
       side,
       x: side === 'right' ? gap : -panelWidth - gap,
@@ -367,7 +431,17 @@ export function sceneInspectorPlacement({
   // the inspector open above or below it, still tethered to its screen point.
   const roomBelow = viewportHeight - edge - anchorY;
   const roomAbove = anchorY - safeTop;
-  const side = roomBelow >= roomAbove ? 'below' : 'above';
+  const stackedRoomier = roomBelow >= roomAbove ? 'below' : 'above';
+  // Both stacked sides stay available whatever the room: the card is clamped
+  // into the band either way, so only the margin retires a held one.
+  const side = settleInspectorSide(
+    stackedRoomier,
+    stackedRoomier === 'below' ? 'above' : 'below',
+    Math.abs(roomBelow - roomAbove),
+    true,
+    heldSide,
+    panelHeight * INSPECTOR_SIDE_HYSTERESIS,
+  );
   const minX = edge - anchorX;
   const maxX = viewportWidth - edge - panelWidth - anchorX;
   const stackedX = typeof preferredX === 'number'
@@ -390,9 +464,11 @@ export function sceneInspectorPlacement({
  * a fresh selection, or a flip between families whose offsets measure
  * different axes — commit the solved offsets as that selection's own. A
  * left↔right flip stays inside the beside family, so the y offset survives
- * it. DOM-free and mutation-only over the handles (no per-frame allocation
- * beyond the solve itself), so the frame loop calls it directly and jsdom
- * can exercise the contract without R3F.
+ * it. The side solved on is committed every frame, which is what the next
+ * frame holds the card to: the offsets are sticky per selection, the side is
+ * sticky per frame. DOM-free and mutation-only over the handles (no per-frame
+ * allocation beyond the solve itself), so the frame loop calls it directly and
+ * jsdom can exercise the contract without R3F.
  */
 export function resolveStickyInspectorPlacement(
   handles: SceneInspectionHandles,
@@ -411,6 +487,7 @@ export function resolveStickyInspectorPlacement(
     viewportHeight,
     preferredY: lock.y ?? undefined,
     preferredX: lock.x ?? undefined,
+    heldSide: lock.side,
   });
   const family: SceneInspectorPlacementFamily =
     placement.side === 'left' || placement.side === 'right'
@@ -421,6 +498,7 @@ export function resolveStickyInspectorPlacement(
     lock.y = family === 'beside' ? placement.y : null;
     lock.x = family === 'stacked' ? placement.x : null;
   }
+  lock.side = placement.side;
   return placement;
 }
 

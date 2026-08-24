@@ -114,6 +114,7 @@ describe('PeerInspectionOverlay', () => {
     // A frame has already locked where this card opened...
     handles.placementLock.family = 'beside';
     handles.placementLock.y = -150;
+    handles.placementLock.side = 'right';
 
     view.rerender(
       <PeerInspectionOverlay
@@ -128,7 +129,8 @@ describe('PeerInspectionOverlay', () => {
 
     // ...and probing a different peer clears it, so the next card centres
     // itself beside its own node instead of inheriting this one's offset.
-    expect(handles.placementLock).toEqual({ family: null, y: null, x: null });
+    expect(handles.placementLock)
+      .toEqual({ family: null, y: null, x: null, side: null });
   });
 
   it('tints the connector with the peer the card is reading', () => {

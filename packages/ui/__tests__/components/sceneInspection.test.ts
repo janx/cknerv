@@ -98,10 +98,100 @@ describe('sceneInspectorPlacement preferred offsets', () => {
   });
 });
 
+/** What the local node's anchor does to the beside rule. Its icosahedron
+ *  stands at (0, CHAIN_Y, 0) and the controls target at (0, CELLS_Y, 0), so it
+ *  is ON the camera's orbit axis: it projects to the exact horizontal centre
+ *  for every azimuth and elevation, where `roomRight` and `roomLeft` are equal
+ *  to the last bit. The ulp of an 800-ish pixel coordinate is what the sides
+ *  were being chosen by. */
+const MIDLINE_X = 600;
+const COORDINATE_ULP = 2.2737367544323206e-13;
+
+describe('sceneInspectorPlacement side hysteresis', () => {
+  it('picks the roomier side when the card has no side yet', () => {
+    // The tie itself still resolves the way it always did — deterministically,
+    // and only once per selection.
+    expect(sceneInspectorPlacement({ ...BESIDE, anchorX: MIDLINE_X }).side)
+      .toBe('right');
+  });
+
+  it('keeps a held side through an exact tie', () => {
+    expect(sceneInspectorPlacement({
+      ...BESIDE,
+      anchorX: MIDLINE_X,
+      heldSide: 'left',
+    })).toEqual({ side: 'left', x: -542, y: -150 });
+  });
+
+  it('keeps a held side through last-bit projection noise', () => {
+    // Either sign: this is the noise itself, not a direction of travel.
+    for (const noise of [COORDINATE_ULP, -COORDINATE_ULP, 3 * COORDINATE_ULP]) {
+      expect(sceneInspectorPlacement({
+        ...BESIDE,
+        anchorX: MIDLINE_X + noise,
+        heldSide: 'right',
+      }).side).toBe('right');
+      expect(sceneInspectorPlacement({
+        ...BESIDE,
+        anchorX: MIDLINE_X + noise,
+        heldSide: 'left',
+      }).side).toBe('left');
+    }
+  });
+
+  it('keeps a held side while the rival leads by less than a quarter card', () => {
+    // 2000 wide so both sides genuinely fit: roomRight 936, roomLeft 1036 —
+    // a 100px lead under the 125px margin a 500-wide card buys.
+    expect(sceneInspectorPlacement({
+      ...BESIDE,
+      viewportWidth: 2000,
+      anchorX: 1050,
+      heldSide: 'right',
+    }).side).toBe('right');
+  });
+
+  it('gives way once the rival leads by more than a quarter card', () => {
+    // Same geometry, anchor 50px further right: a 200px lead clears 125.
+    expect(sceneInspectorPlacement({
+      ...BESIDE,
+      viewportWidth: 2000,
+      anchorX: 1100,
+      heldSide: 'right',
+    }).side).toBe('left');
+  });
+
+  it('abandons a held side the card no longer fits on', () => {
+    // No margin can keep a card somewhere it does not fit: roomRight is 186
+    // against the 542 a 500-wide card needs.
+    expect(sceneInspectorPlacement({
+      ...BESIDE,
+      anchorX: 1000,
+      heldSide: 'right',
+    }).side).toBe('left');
+  });
+
+  it('ignores a held side that belongs to the other family', () => {
+    // A card driven onto a narrow canvas cannot be held 'right': the stacked
+    // family names neither of the sides the beside one was solved in.
+    expect(sceneInspectorPlacement({ ...STACKED, heldSide: 'right' }).side)
+      .toBe('below');
+  });
+
+  it('holds the stacked family by its height instead', () => {
+    // roomBelow 366, roomAbove 316: a 50px lead under the 75px margin a
+    // 300-tall card buys, so a held 'above' keeps the card.
+    expect(sceneInspectorPlacement({ ...STACKED, anchorY: 420, heldSide: 'above' }).side)
+      .toBe('above');
+    // ...and at the original anchor the lead is 90px, which clears it.
+    expect(sceneInspectorPlacement({ ...STACKED, heldSide: 'above' }).side)
+      .toBe('below');
+  });
+});
+
 describe('sticky placement lock', () => {
   it('starts unlocked when the handles are created', () => {
     expect(makeHandles().placementLock)
-      .toEqual({ family: null, y: null, x: null });
+      .toEqual({ family: null, y: null, x: null, side: null });
   });
 
   it('captures the first beside solve and holds its y while the card grows', () => {
@@ -110,7 +200,7 @@ describe('sticky placement lock', () => {
     const opened = resolveStickyInspectorPlacement(handles, 300, 400, 1200, 800);
     expect(opened).toEqual({ side: 'right', x: 42, y: -150 });
     expect(handles.placementLock)
-      .toEqual({ family: 'beside', y: -150, x: null });
+      .toEqual({ family: 'beside', y: -150, x: null, side: 'right' });
 
     // Enrichment arrives, the card grows 120px taller. Committing the new
     // measurement clears the frame signature but must not touch the lock...
@@ -131,7 +221,7 @@ describe('sticky placement lock', () => {
 
     expect(flipped).toEqual({ side: 'left', x: -542, y: -150 });
     expect(handles.placementLock)
-      .toEqual({ family: 'beside', y: -150, x: null });
+      .toEqual({ family: 'beside', y: -150, x: null, side: 'left' });
   });
 
   it('recaptures when the solver changes family', () => {
@@ -143,13 +233,13 @@ describe('sticky placement lock', () => {
     const stacked = resolveStickyInspectorPlacement(handles, 195, 400, 390, 800);
     expect(stacked.side).toBe('below');
     expect(handles.placementLock)
-      .toEqual({ family: 'stacked', y: null, x: stacked.x });
+      .toEqual({ family: 'stacked', y: null, x: stacked.x, side: 'below' });
 
     // And widening again recaptures a freshly centred beside offset.
     const beside = resolveStickyInspectorPlacement(handles, 300, 400, 1200, 800);
     expect(beside).toEqual({ side: 'right', x: 42, y: -150 });
     expect(handles.placementLock)
-      .toEqual({ family: 'beside', y: -150, x: null });
+      .toEqual({ family: 'beside', y: -150, x: null, side: 'right' });
   });
 
   it('holds the stacked x while the card grows on a narrow canvas', () => {
@@ -163,7 +253,7 @@ describe('sticky placement lock', () => {
     const opened = resolveStickyInspectorPlacement(handles, 195, 400, 390, 800);
     expect(opened).toEqual({ side: 'below', x: -150, y: 42 });
     expect(handles.placementLock)
-      .toEqual({ family: 'stacked', y: null, x: -150 });
+      .toEqual({ family: 'stacked', y: null, x: -150, side: 'below' });
 
     commitInspectionCardSize(handles, 300, 500);
     const grown = resolveStickyInspectorPlacement(handles, 195, 400, 390, 800);
@@ -173,6 +263,41 @@ describe('sticky placement lock', () => {
     expect(grown).toEqual({ side: 'below', x: -150, y: -114 });
   });
 
+  it('holds a midline card still while the projection jitters in the last bit', () => {
+    const handles = makeHandles();
+
+    // The card opens on the deterministic side of the tie...
+    expect(resolveStickyInspectorPlacement(handles, MIDLINE_X, 400, 1200, 800).side)
+      .toBe('right');
+
+    // ...and every frame after it is float noise around the same midline. The
+    // local node's card used to teleport `panelWidth + 2 * gap` across its
+    // anchor on ~a third of the frames after any camera movement.
+    for (const noise of [COORDINATE_ULP, -COORDINATE_ULP, 0, -3 * COORDINATE_ULP, 2 * COORDINATE_ULP]) {
+      const frame = resolveStickyInspectorPlacement(
+        handles, MIDLINE_X + noise, 400, 1200, 800,
+      );
+      expect(frame).toEqual({ side: 'right', x: 42, y: -150 });
+    }
+    expect(handles.placementLock.side).toBe('right');
+  });
+
+  it('still follows an entity that really crosses the midline', () => {
+    const handles = makeHandles();
+    expect(resolveStickyInspectorPlacement(handles, 900, 400, 2000, 800).side)
+      .toBe('right');
+
+    // Past the midline but inside the margin: the card stays put rather than
+    // jumping the moment the anchor grazes centre.
+    expect(resolveStickyInspectorPlacement(handles, 1050, 400, 2000, 800).side)
+      .toBe('right');
+
+    // Far enough past it that the other side is plainly the better home.
+    expect(resolveStickyInspectorPlacement(handles, 1100, 400, 2000, 800).side)
+      .toBe('left');
+    expect(handles.placementLock.side).toBe('left');
+  });
+
   it('clears on reset so the next selection centres itself afresh', () => {
     const handles = makeHandles();
     resolveStickyInspectorPlacement(handles, 300, 400, 1200, 800);
@@ -180,7 +305,7 @@ describe('sticky placement lock', () => {
 
     resetInspectionPlacementLock(handles);
     expect(handles.placementLock)
-      .toEqual({ family: null, y: null, x: null });
+      .toEqual({ family: null, y: null, x: null, side: null });
 
     // With no lock, the taller card centres to −210 and captures that.
     const fresh = resolveStickyInspectorPlacement(handles, 300, 400, 1200, 800);
@@ -198,7 +323,7 @@ describe('sticky placement lock', () => {
 
     expect(handles.card).toBeNull();
     expect(handles.placementLock)
-      .toEqual({ family: null, y: null, x: null });
+      .toEqual({ family: null, y: null, x: null, side: null });
   });
 });
 
