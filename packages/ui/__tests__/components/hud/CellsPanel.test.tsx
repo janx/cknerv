@@ -44,6 +44,25 @@ describe('CellsPanel', () => {
     expect(t).not.toContain('STAGE LOCKS');
     expect(t).not.toContain('sighash');
   });
+  it('states BORN and DIED with a mark that is drawn, not typed', () => {
+    // `▲`/`▼` are in no face `src/fonts` ships, and in no upstream face
+    // either — Google's `latin` range stops before Geometric Shapes. The two
+    // rows carried them as the first character of a LABEL, which meant the
+    // one part of this panel encoding a direction was set in whatever the
+    // reader's machine had. The direction is a mark now, and the words keep
+    // saying it, which is why the marks stay out of the a11y tree.
+    const { container } = render(<CellsPanel stats={stats} churn={churn} reducedMotion />);
+    const t = container.textContent ?? '';
+    expect(t).toContain('BORN');
+    expect(t).toContain('DIED');
+    expect(t).not.toMatch(/[\u25B2\u25BC]/);
+    expect(Array.from(container.querySelectorAll('[data-direction-mark]'))
+      .map((mark) => mark.getAttribute('data-direction-mark')))
+      .toEqual(['up', 'down']);
+    expect(container.querySelectorAll('[data-direction-mark][aria-hidden="true"]').length)
+      .toBe(2);
+  });
+
   it('has no Umbrella octagon (no svg path)', () => {
     const { container } = render(<CellsPanel stats={stats} churn={churn} reducedMotion />);
     expect(container.querySelectorAll('path').length).toBe(0);

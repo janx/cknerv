@@ -442,4 +442,33 @@ describe('StatusStrip', () => {
     });
     expect(low.getAttribute('aria-pressed')).toBe('true');
   });
+
+  it('draws the panels control\'s two marks instead of typing them', () => {
+    // `▦` and `▲`/`▼` — a menu icon and a disclosure caret, neither of them a
+    // word, all three of them characters no face in `src/fonts` carries. The
+    // button already states everything they mean: it carries its own
+    // `aria-label` and an `aria-expanded`, so both marks are decoration and
+    // both stay hidden.
+    render(
+      <StatusStrip
+        level="nominal"
+        uptimeMs={0}
+        panelControls={panelControls}
+        onPanelVisibilityChange={() => {}}
+      />,
+    );
+    const toggle = screen.getByRole('button', { name: /Configure HUD panels/ });
+
+    expect(toggle.textContent).not.toMatch(/[\u25A6\u25B2\u25BC]/);
+    expect(toggle.querySelector('[data-panel-grid-mark][aria-hidden="true"]')).not.toBeNull();
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(toggle.querySelector('[data-direction-mark]')?.getAttribute('data-direction-mark'))
+      .toBe('down');
+
+    fireEvent.click(toggle);
+
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(toggle.querySelector('[data-direction-mark]')?.getAttribute('data-direction-mark'))
+      .toBe('up');
+  });
 });

@@ -422,7 +422,7 @@ export default function CellContentMemory({
   const analysisPending = enhanced && pending && !record;
 
   // A validly-empty output earns NO line. It used to earn one — down from the
-  // stack of negatives (∅ box, byte count, decode fallbacks) that all restate
+  // stack of negatives (the empty box, byte count, decode fallbacks) that all restate
   // the same absence — but the DATA fact directly above this window already
   // reads `Empty`, so even the one line was the third statement of nothing in
   // four lines. Absence is stated once, by the fact whose subject it is.
@@ -497,7 +497,13 @@ export default function CellContentMemory({
             </div>
           ) : previewBytes.length === 0 ? (
             <div data-cell-content-empty="true" data-cell-content-reveal-item="bytes" data-cell-content-reveal-item-state={bytesRevealed ? 'resolved' : 'scanning'} {...revealStageAttributes(bytesRevealed)} style={{ display: 'block', marginTop: 4, padding: '3px 5px', border: `1px solid ${rgba(HUD_COLORS.dim, 0.14)}`, color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.6, ...revealStageStyle(bytesRevealed) }}>
-              ∅ NO OUTPUT DATA
+              {/* The ornament that used to open this line was `∅`, and no face
+                  the HUD ships or could ship carries it — not the Latin
+                  subsets, not the upstream faces, not JetBrains Mono. It said
+                  nothing the three words after it do not, and the sibling
+                  empty state two branches up (INVALID CONTENT HEX) never had
+                  one, so the two now read as the pair they are. */}
+              NO OUTPUT DATA
             </div>
           ) : (
             <>

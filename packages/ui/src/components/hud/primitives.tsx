@@ -36,6 +36,147 @@ export const PLATE_CUT_PX = 12;
 
 export const PLATE_CUT_CLIP = `polygon(0 0,calc(100% - ${PLATE_CUT_PX}px) 0,100% ${PLATE_CUT_PX}px,100% 100%,0 100%)`;
 
+// ——— The marks ————————————————————————————————————————————————————————
+//
+// The other half of the shape grammar, and the half that spent its life being
+// typed instead of drawn. A lamp, a caret, a direction, a menu icon, a drag
+// affordance: none of these is a word, and every one of them shipped as a
+// character — `●`, `▲`, `▼`, `▦`, `↔` — inside a text run.
+//
+// That is not a style opinion, it is a bug. The HUD's Latin faces are Google's
+// pre-built `latin`-range woff2, and that range stops before the Geometric
+// Shapes block entirely: not one of `● ▲ ▼ ▦ ↔` is in any face this repo
+// ships, and none of them is in the upstream faces either. Every one of them
+// was resolving out of whatever the reader's machine happened to have — the
+// same silent fallback the Chinese subset is inventoried against in
+// `src/fonts/README.md`, arriving from the side nobody had checked. A mark
+// drawn here also gets what a borrowed glyph never had: an exact size, an
+// exact colour, and a baseline it sits on rather than near.
+//
+// Three forms, and the vocabulary is deliberately small so a reader can learn
+// it once:
+//
+//   LAMP — a condition. Lit is a filled disc, unlit is a ring, and the colour
+//     is the reading. Wherever something can be well or unwell: the cadence
+//     monitor's `FINE`/`FLATLINE`, a Cell's `LIVE`/`SPENT`.
+//
+//   DIRECTION — which way a quantity moved, or which way a disclosure opens.
+//     A triangle, never an arrow: arrows are characters and belong in
+//     sentences (see `HUD_FONTS`), triangles are marks and belong here.
+//
+//   PANEL GRID — the one icon in the overlay, on the control that shows and
+//     hides panels. It draws what it opens.
+//
+// All four are `aria-hidden` by construction, and that is a claim each call
+// site has to keep: a mark may only carry a meaning some WORD beside it also
+// carries. `BORN`/`DIED` say the direction, `FINE` says the condition,
+// `aria-expanded` says the disclosure. Nothing here is the sole carrier of
+// anything, which is why nothing here needs a label.
+
+/** A condition light. `lit` fills it; unlit leaves the ring, which is the
+ *  off-state of a lamp rather than a second symbol standing in for one. */
+export function StatusLamp({ color, lit = true, size = 5 }: {
+  color: string;
+  lit?: boolean;
+  size?: number;
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      data-status-lamp={lit ? 'lit' : 'unlit'}
+      style={{
+        flex: '0 0 auto',
+        display: 'inline-block',
+        width: size,
+        height: size,
+        borderRadius: '50%',
+        border: lit ? undefined : `1px solid ${color}`,
+        background: lit ? color : 'transparent',
+        boxShadow: lit ? `0 0 ${size}px ${color}` : undefined,
+        boxSizing: 'border-box',
+      }}
+    />
+  );
+}
+
+/** Which way. A CSS triangle, so it is the size it is asked to be at 7.5px —
+ *  the rung where a borrowed glyph's own optical sizing stopped agreeing with
+ *  the type beside it. */
+export function DirectionMark({ direction, color, size = 5 }: {
+  direction: 'up' | 'down';
+  color: string;
+  size?: number;
+}) {
+  const edge = `${size / 2}px solid transparent`;
+  const point = `${size * 0.82}px solid ${color}`;
+  return (
+    <span
+      aria-hidden="true"
+      data-direction-mark={direction}
+      style={{
+        flex: '0 0 auto',
+        display: 'inline-block',
+        width: 0,
+        height: 0,
+        borderLeft: edge,
+        borderRight: edge,
+        borderTop: direction === 'down' ? point : undefined,
+        borderBottom: direction === 'up' ? point : undefined,
+      }}
+    />
+  );
+}
+
+/** The panels control's icon: four cells of a grid, the first one lit, drawn
+ *  in the button's own ink so it can never disagree with the word beside it. */
+export function PanelGridMark({ size = 7 }: { size?: number }) {
+  return (
+    <span
+      aria-hidden="true"
+      data-panel-grid-mark
+      style={{
+        flex: '0 0 auto',
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr',
+        gridTemplateRows: '1fr 1fr',
+        gap: 1,
+        width: size,
+        height: size,
+      }}
+    >
+      {[0, 1, 2, 3].map((cell) => (
+        <span key={cell} style={{ background: 'currentColor', opacity: cell === 0 ? 1 : 0.5 }} />
+      ))}
+    </span>
+  );
+}
+
+/** "This drags sideways." The one mark that is a drawing rather than a form —
+ *  a double-headed arrow has no CSS shorthand, and `↔` is carried by no face
+ *  the HUD ships or could ship: the upstream Latin faces do not have it
+ *  either. */
+export function DragAxisMark({ width = 11 }: { width?: number }) {
+  return (
+    <svg
+      aria-hidden="true"
+      data-drag-axis-mark
+      width={width}
+      height={5}
+      viewBox="0 0 11 5"
+      fill="none"
+      style={{ flex: '0 0 auto', display: 'inline-block', verticalAlign: 'middle' }}
+    >
+      <path
+        d="M0.5 2.5h10M2.6 0.6 0.5 2.5l2.1 1.9M8.4 0.6 10.5 2.5 8.4 4.4"
+        stroke="currentColor"
+        strokeWidth={0.9}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 // ——— The panel's own name, printed as a mark —————————————————————————————
 //
 // A docked panel already says what it is twice, at reading size: the English

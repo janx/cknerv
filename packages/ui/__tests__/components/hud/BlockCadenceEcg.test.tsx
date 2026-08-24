@@ -76,12 +76,18 @@ function traceStroke(strokes: ReturnType<typeof stubCanvas>['strokes']) {
   return strokes.find((s) => s.shadowBlur > 0);
 }
 
-/** The `● FINE` word — the status light, and the only other place on the panel
- *  a condition names its own colour. */
+/** The condition lamp — the status light, and the only other place on the panel
+ *  a condition names its own colour.
+ *
+ *  It used to be found by its TEXT: the span whose content started with `●`.
+ *  That glyph is in no face `src/fonts` ships, so the lamp was drawn by
+ *  whatever the reader's machine had; it is a `StatusLamp` now, and the colour
+ *  this reads is the mark's own paint rather than the ink of the word beside
+ *  it. Strictly the better oracle — a lamp that stopped being painted would
+ *  have kept passing the old one as long as the word stayed the right colour. */
 function lampColor(container: HTMLElement): string | undefined {
-  const lamp = Array.from(container.querySelectorAll('span'))
-    .find((span) => (span.textContent ?? '').trim().startsWith('●'));
-  return lamp?.style.color;
+  const lamp = container.querySelector<HTMLElement>('[data-status-lamp="lit"]');
+  return lamp?.style.background;
 }
 
 /** jsdom rewrites `#27FF5A` into `rgb(39, 255, 90)` on the way into a style

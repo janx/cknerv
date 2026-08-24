@@ -484,16 +484,27 @@ export default function CellCausalLensReadout({
             <span style={{ ...flowCell, color: HUD_COLORS.memoryInk }}>
               {endpointCount(anchoredInputs, lens.inputCount, 'INPUTS')}
             </span>
+            {/* The two connectors are rules, so they are rules: `─` is a
+                box-drawing character no face in `src/fonts` carries, and the
+                pair of them were the only thing in this ornament holding the
+                INPUTS and OUTPUTS counts together. A 1px line joins where a
+                borrowed glyph's side bearings left a gap. The diamonds stay
+                characters — they are read in sequence with TX. */}
             <span
               aria-hidden="true"
               style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 3,
                 color: meta.color,
                 fontFamily: HUD_FONTS.mono,
                 fontSize: HUD_TYPE.label,
                 textShadow: `0 0 6px ${meta.color}55`,
               }}
             >
-              ─◇ TX ◆─
+              <span style={{ width: 6, height: 1, background: meta.color }} />
+              ◇ TX ◆
+              <span style={{ width: 6, height: 1, background: meta.color }} />
             </span>
             <span style={{ ...flowCell, color: HUD_COLORS.goldInk, textAlign: 'right' }}>
               {endpointCount(anchoredOutputs, lens.outputCount, 'OUTPUTS')}

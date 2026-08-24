@@ -3,10 +3,11 @@ import type { CSSProperties } from 'react';
 import type { EcgCondition } from '../../derives/ecgCondition';
 import { reconstructArrivals, drawStripChart } from './ecgTrace';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
-import { HudPanel, PanelHeader } from './primitives';
+import { HudPanel, PanelHeader, StatusLamp } from './primitives';
 
 /** The status light: what the panel SAYS about the chain's cadence. Read by the
- *  `● FINE` word and the "since last" hero — both of them sentences, not signal. */
+ *  lamp beside the condition word and the "since last" hero — both of them
+ *  sentences, not signal. */
 const COND_COLOR: Record<EcgCondition, string> = {
   FINE: HUD_COLORS.nominal, CAUTION: HUD_COLORS.caution, DANGER: HUD_COLORS.danger,
   FLATLINE: HUD_COLORS.danger, SYNCING: HUD_COLORS.cyanWire,
@@ -14,7 +15,7 @@ const COND_COLOR: Record<EcgCondition, string> = {
 
 /** The instrument's ink: what the CANVAS is drawn in.
  *
- *  Two colors for one condition, and only in the healthy state. The `● FINE`
+ *  Two colors for one condition, and only in the healthy state. The condition
  *  lamp is a status light — the cadence is inside tolerance, so it wears the
  *  same `nominal` green every other healthy reading in the HUD wears. The
  *  canvas is not a reading, it is a tube: a cardiac monitor's trace glows in
@@ -142,7 +143,16 @@ export default function BlockCadenceEcg({
         <canvas ref={cvs} width={300} height={46} style={{ display: 'block', flex: 1, minWidth: 0, width: '100%', height: 46, background: HUD_COLORS.trackGround, border: `1px solid ${rgba(HUD_COLORS.orange, 0.2)}` }} />
       </div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, marginTop: 6, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.tech, color: HUD_COLORS.dim, letterSpacing: 0.9 }}>
-        <span style={{ color, letterSpacing: 2, textShadow: `0 0 7px ${color}` }}>● {condition}</span>
+        {/* The lamp is a lamp: `nominal` green for a cadence inside tolerance,
+            the same disc the enrichment chips wear in the top bar. It used to
+            be a `●`, which no face the HUD ships carries — so the one mark on
+            this panel whose COLOUR is the reading was drawn by whatever the
+            reader's machine had lying around, beside a canvas trace drawn in
+            phosphor by us. The two greens are still two greens on purpose. */}
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color, letterSpacing: 2, textShadow: `0 0 7px ${color}` }}>
+          <StatusLamp color={color} />
+          {condition}
+        </span>
         <span>TGT {fmtS(targetMs)}</span><span>AVG {fmtS(avgMs)}</span><span>RATE {rate != null ? `${rate}/min` : '—'}</span>
       </div>
     </HudPanel>

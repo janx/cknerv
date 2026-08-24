@@ -2,15 +2,18 @@ import type { CSSProperties } from 'react';
 import type { CellsStats } from '../../derives/cellsStats.derive';
 import type { ChurnRates } from '../../derives/cellChurn';
 import { CELL_PANEL_ACCENT, HUD_COLORS, HUD_FONTS, HUD_TYPE } from './hudTheme';
-import { HudPanel, PanelHeader, StatRow } from './primitives';
+import { DirectionMark, HudPanel, PanelHeader, StatRow } from './primitives';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
 const fmtSigned = (n: number) => `${n >= 0 ? '+' : ''}${n.toFixed(1)}`;
 
-function FlowRow({ label, color, width, value }: { label: string; color: string; width: string; value: number }) {
+function FlowRow({ label, direction, color, width, value }: { label: string; direction: 'up' | 'down'; color: string; width: string; value: number }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 7, height: 16 }}>
-      <span style={{ fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: HUD_TYPE.nav, letterSpacing: 0.9, width: 54, color }}>{label}</span>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: HUD_TYPE.nav, letterSpacing: 0.9, width: 54, color }}>
+        <DirectionMark direction={direction} color={color} size={4.5} />
+        {label}
+      </span>
       <span style={{ flex: 1, height: 6, background: HUD_COLORS.trackGround, border: '1px solid rgba(255,152,48,.12)', position: 'relative' }}>
         <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width, background: color, boxShadow: `0 0 7px ${color}66` }} />
       </span>
@@ -56,9 +59,9 @@ export default function CellsPanel({ stats, churn, reducedMotion = false, style 
           block of spent outputs read as a small emergency. Cells being
           consumed is what a living chain looks like; the alarming number
           would be this row at zero. */}
-      <FlowRow label="▲ BORN" color={HUD_COLORS.nominal} width={bornW} value={churn.bornPerBlock} />
+      <FlowRow label="BORN" direction="up" color={HUD_COLORS.nominal} width={bornW} value={churn.bornPerBlock} />
       <div style={{ height: 5 }} />
-      <FlowRow label="▼ DIED" color={HUD_COLORS.ember} width={spentW} value={churn.spentPerBlock} />
+      <FlowRow label="DIED" direction="down" color={HUD_COLORS.ember} width={spentW} value={churn.spentPerBlock} />
       {/* `stats.live` is births minus deaths in the BACKEND'S OBSERVATION
           WINDOW — never a live-chain total. That was merely imprecise while
           nothing else on screen implied a chain-wide number; with a medium

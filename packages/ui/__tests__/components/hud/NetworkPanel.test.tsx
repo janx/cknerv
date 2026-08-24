@@ -211,4 +211,17 @@ describe('NetworkPanel', () => {
       .style.opacity).toBe('0.68');
     expect((caution[0] as HTMLElement).style.opacity).toBe('');
   });
+
+  it('points the at-tip tally with a mark rather than a borrowed glyph', () => {
+    // The tally opened with `▲`, which Google's `latin` range does not reach
+    // and no face in `src/fonts` carries. The word `at-tip` was always the
+    // carrier; the triangle is a mark now and stays out of the a11y tree.
+    const { container } = render(<NetworkPanel {...props} />);
+
+    expect(container.textContent).toContain('44 at-tip');
+    expect(container.textContent).not.toMatch(/[\u25B2\u25BC]/);
+    const mark = container.querySelector('[data-direction-mark]');
+    expect(mark?.getAttribute('data-direction-mark')).toBe('up');
+    expect(mark?.getAttribute('aria-hidden')).toBe('true');
+  });
 });

@@ -192,7 +192,12 @@ describe('CellDetailPanel', () => {
     // it used to fall back to is the COMMIT fact below, and one plate must
     // not print the same anchor twice.
     expect(t).not.toContain('SINCE #');
-    expect(t).toContain('● LIVE');
+    // The masthead's liveness reading, which used to be asked as the string
+    // `● LIVE`. The bullet was in no face `src/fonts` ships; it is a lit
+    // `StatusLamp` now, and `LIVE` alone is not an oracle here — the STATE
+    // register three rows down prints the same word. So the mark answers.
+    expect(container.querySelector('[data-cell-scan-identity] [data-status-lamp]')
+      ?.getAttribute('data-status-lamp')).toBe('lit');
     expect(t).toContain('#16,204,800');    // COMMIT / block anchor (grouped)
     expect(t).toContain('11 B');           // DATA — 22 hex chars = 11 bytes
     expect(t).not.toContain('ƒ');          // portrait frequencies stay visual-only
@@ -678,8 +683,11 @@ describe('CellDetailPanel', () => {
     expect(container.textContent).toContain('RESOLVING SELECTED CELL…');
     expect(container.querySelector('[data-cell-detail-module="context"]'))
       .toBeNull();
-    expect(container.querySelector('[data-cell-scan-drag-affordance]')
-      ?.textContent).toBe('ORBIT ↔');
+    // `↔` is carried by no face this repo ships and none it could — the mark
+    // is drawn now, so the words and the axis are two assertions.
+    const affordance = container.querySelector('[data-cell-scan-drag-affordance]');
+    expect(affordance?.textContent).toBe('ORBIT');
+    expect(affordance?.querySelector('[data-drag-axis-mark]')).not.toBeNull();
   });
 
   it('clusters indexed semantics by subject under their fact leads', () => {

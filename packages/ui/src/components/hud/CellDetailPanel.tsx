@@ -38,6 +38,7 @@ import type { CellById } from '../../types';
 import { CELL_CARD_ACCENT, HUD_COLORS, HUD_FONTS, rgba, HUD_TYPE } from './hudTheme';
 import {
   CloseButton,
+  DragAxisMark,
   moduleTag,
   PlateReadoutCaption,
   PlateReadoutRow,
@@ -49,6 +50,7 @@ import {
   satelliteBase,
   SpatialPlateHeader,
   spatialPlate,
+  StatusLamp,
 } from './primitives';
 import { useReducedMotion } from './useReducedMotion';
 import CellNucleusPortrait from './CellNucleusPortrait';
@@ -1282,8 +1284,8 @@ export default function CellDetailPanel({
       value: formatCellData(cell.data_bytes),
       color: factAccent('data'),
     },
-    // The masthead carries the indicator glyph; twinning it here printed the
-    // same green `● LIVE` twice in one column. The register states the word,
+    // The masthead carries the lamp; twinning it here printed the same green
+    // LIVE twice in one column. The register states the word,
     // in the colour that already says which word it is.
     //
     // The one reading on this card that does NOT take its fact's frame colour
@@ -1648,8 +1650,9 @@ export default function CellDetailPanel({
               * `caution`, so the masthead of every consumed Cell opened in the
               * HUD's degradation yellow — a small alarm raised over the most
               * ordinary thing a chain does. */}
-            <span style={{ marginLeft: 'auto', whiteSpace: 'nowrap', color: live ? HUD_COLORS.nominal : HUD_COLORS.ember, fontSize: HUD_TYPE.section, letterSpacing: 0.9 }}>
-              {live ? '● LIVE' : '◇ SPENT'}{lifetime}
+            <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap', color: live ? HUD_COLORS.nominal : HUD_COLORS.ember, fontSize: HUD_TYPE.section, letterSpacing: 0.9 }}>
+              <StatusLamp color={live ? HUD_COLORS.nominal : HUD_COLORS.ember} lit={live} size={5.5} />
+              {live ? 'LIVE' : 'SPENT'}{lifetime}
             </span>
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: '2px 8px', minWidth: 0 }}>
@@ -2141,7 +2144,15 @@ export default function CellDetailPanel({
       >
         <div style={{ position: 'absolute', zIndex: 3, left: 12, top: 10, right: 12, display: 'flex', alignItems: 'baseline', gap: 8, pointerEvents: 'none' }}>
           <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.section, fontWeight: 700, letterSpacing: 1.4, whiteSpace: 'nowrap' }}>CELL SCAN</span>
-          <span data-cell-scan-drag-affordance style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.9, whiteSpace: 'nowrap' }}>{verticalLayout ? 'ORBIT ↔' : 'DRAG TO ORBIT ↔'}</span>
+          {/* The axis mark is drawn, not typed: `↔` is in none of the faces
+              this repo ships and in none of the upstream faces either, so the
+              one affordance telling a reader the square is draggable was set
+              in whatever their machine had. The words stay the carrier — the
+              compact form says ORBIT and the mark says which way. */}
+          <span data-cell-scan-drag-affordance style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 5, color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.9, whiteSpace: 'nowrap' }}>
+            {verticalLayout ? 'ORBIT' : 'DRAG TO ORBIT'}
+            <DragAxisMark />
+          </span>
         </div>
         <CellNucleusPortrait
           cell={cell}

@@ -21,7 +21,7 @@ import {
   useCellDisplayRuntime,
 } from '../../tweaks/cellDisplay';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
-import { severityChip } from './primitives';
+import { DirectionMark, PanelGridMark, severityChip } from './primitives';
 
 export type BuildInfo = { version: string; href: string };
 export type HudPanelControl = {
@@ -192,10 +192,16 @@ function PanelVisibilityControl({ panels, onChange, compact = false, menuOffset 
           cursor: 'pointer',
         }}
       >
-        <span aria-hidden style={{ fontSize: HUD_TYPE.label }}>▦</span>
+        {/* Both marks are drawn rather than typed, and both are decoration
+            twice over: the button carries its own `aria-label` and an
+            `aria-expanded`, so the icon and the caret say nothing the
+            accessibility tree does not already have. They used to be `▦` and
+            `▲`/`▼` — three characters no face in `src/fonts` carries, on the
+            one control in the top bar that is pure chrome. */}
+        <PanelGridMark size={HUD_TYPE.label} />
         <span className="cknerv-panel-toggle-label">PANELS</span>
         <span>{visibleCount}/{panels.length}</span>
-        <span aria-hidden style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro }}>{open ? '▲' : '▼'}</span>
+        <DirectionMark direction={open ? 'up' : 'down'} color={HUD_COLORS.dim} size={4.5} />
       </button>
       {open ? (
         <div
