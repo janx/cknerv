@@ -1580,7 +1580,7 @@ export default function CellDetailPanel({
         // the cell card has no per-fact accent at card level, so it derives it
         // from the dialect's identity instead — the same colour the frame,
         // the beam and the tether are drawn in.
-        filter: `drop-shadow(0 8px 16px rgba(0,0,0,.56)) drop-shadow(0 0 14px ${rgba(CELL_CARD_ACCENT, 0.06)})`,
+        filter: `drop-shadow(0 8px 16px ${rgba(HUD_COLORS.ground, 0.56)}) drop-shadow(0 0 14px ${rgba(CELL_CARD_ACCENT, 0.06)})`,
         animation: reduced
           ? undefined
           : 'cknerv-cell-consensus-enter 280ms cubic-bezier(.2,.82,.2,1) both',

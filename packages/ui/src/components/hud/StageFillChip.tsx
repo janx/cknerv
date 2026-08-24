@@ -37,7 +37,7 @@ export default function StageFillChip({ staged, budget, style }: {
         width: 'min(264px, calc(100vw - 24px))',
         boxSizing: 'border-box',
         padding: '7px 12px 8px',
-        background: `linear-gradient(90deg,${rgba(color, 0.07)},${HUD_COLORS.panel} 34%,rgba(0,0,0,.6))`,
+        background: `linear-gradient(90deg,${rgba(color, 0.07)},${HUD_COLORS.panel} 34%,${rgba(HUD_COLORS.ground, 0.6)})`,
         border: `1px solid ${rgba(color, 0.22)}`,
         borderLeft: `3px solid ${rgba(color, 0.6)}`,
         clipPath: PLATE_CUT_CLIP,

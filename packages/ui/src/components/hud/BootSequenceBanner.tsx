@@ -65,7 +65,7 @@ export default function BootSequenceBanner({
         gap: 10,
         boxSizing: 'border-box',
         overflow: 'hidden',
-        background: `linear-gradient(90deg,transparent,${rgba(accent, 0.13)} 28%,rgba(0,0,0,.78) 50%,${rgba(accent, 0.13)} 72%,transparent)`,
+        background: `linear-gradient(90deg,transparent,${rgba(accent, 0.13)} 28%,${rgba(HUD_COLORS.ground, 0.78)} 50%,${rgba(accent, 0.13)} 72%,transparent)`,
         borderBottom: `1px solid ${rgba(accent, 0.45)}`,
         color: accent,
       }}

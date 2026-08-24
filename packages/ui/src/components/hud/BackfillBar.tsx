@@ -38,7 +38,7 @@ export default function BackfillBar({ backfill, style }: {
         // cannot print through them; this one floats over the stage at the top
         // centre, and a banner that heavy would read as a panel that had grown
         // there. So it keeps its own flat, translucent ground.
-        background: `linear-gradient(90deg,${rgba(visual.color, 0.11)},${HUD_COLORS.panel} 34%,rgba(0,0,0,.68))`,
+        background: `linear-gradient(90deg,${rgba(visual.color, 0.11)},${HUD_COLORS.panel} 34%,${rgba(HUD_COLORS.ground, 0.68)})`,
         border: `1px solid ${rgba(visual.color, 0.32)}`,
         borderLeft: `3px solid ${visual.color}`,
         boxShadow: `inset 0 0 18px ${rgba(visual.color, 0.05)}`,

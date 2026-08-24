@@ -35,8 +35,8 @@ export default function NetworkPanel({ summary, consensus, syncRatio, enrichment
       <PanelHeader en="PEER MESH" cjk="节点场" idx="MESH·02" accent={HUD_COLORS.peerWire} />
       <StatRow label="Peers"><span style={{ color: HUD_COLORS.peerWire }}>{summary.peerCount}</span> &nbsp; <span style={{ color: HUD_COLORS.dim }}>out</span> {summary.outbound} / <span style={{ color: HUD_COLORS.dim }}>in</span> {summary.inbound}</StatRow>
       <StatRow label="Head consensus">{consensus.atTip} / {consensus.total}</StatRow>
-      <div style={{ display: 'flex', height: 7, border: '1px solid rgba(255,152,48,.2)', background: HUD_COLORS.trackGround, margin: '4px 0' }}>
-        <span style={{ width: seg(consensus.atTip), background: HUD_COLORS.nominal, boxShadow: '0 0 7px rgba(39,255,90,.55)' }} />
+      <div style={{ display: 'flex', height: 7, border: `1px solid ${rgba(HUD_COLORS.orange, 0.2)}`, background: HUD_COLORS.trackGround, margin: '4px 0' }}>
+        <span style={{ width: seg(consensus.atTip), background: HUD_COLORS.nominal, boxShadow: `0 0 7px ${rgba(HUD_COLORS.nominal, 0.55)}` }} />
         <span style={{ width: seg(consensus.behind), background: HUD_COLORS.dim }} />
         <span style={{ width: seg(consensus.ahead), background: HUD_COLORS.caution }} />
       </div>

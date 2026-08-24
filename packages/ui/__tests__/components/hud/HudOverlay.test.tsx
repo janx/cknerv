@@ -8,6 +8,7 @@ import {
   resetBootSequenceForTest,
   type BootPhaseId,
 } from '../../../src/boot/bootSequence';
+import { HUD_COLORS, rgba } from '../../../src/components/hud/hudTheme';
 import { REVEAL_GHOST_OPACITY } from '../../../src/components/hud/primitives';
 import type { StreamHealthChannels } from '../../../src/derives/streamHealth.derive';
 import type {
@@ -186,7 +187,7 @@ describe('HudOverlay', () => {
     const root = container.firstElementChild as HTMLElement;
     const scan = root.firstElementChild as HTMLElement;
     expect(scan.style.background).toContain('repeating-linear-gradient');
-    expect(scan.style.background).toContain('rgba(255,255,255,.035)');
+    expect(scan.style.background).toContain(rgba(HUD_COLORS.heroInk, 0.035));
     expect(scan.style.opacity).toBe('0.5');
     expect(scan.style.pointerEvents).toBe('none');
     // First child of the root, and every band, rail and panel after it either

@@ -121,7 +121,7 @@ import { markPopulatedBufferUpdate } from '../geometry/populatedBufferAttribute'
 import CellPopulationField from './CellPopulationField';
 
 import { CHAIN_ANCHOR_HEX } from '../visualPalette';
-import { HUD_COLORS } from './hud/hudTheme';
+import { HUD_COLORS, rgba } from './hud/hudTheme';
 // Pre-parsed rest halo: the anchor frame loop re-asserts uColor every frame,
 // and THREE's CSS-string parse is measurable at that rate.
 const CHAIN_ANCHOR_HALO_COLOR = new THREE.Color(CHAIN_ANCHOR_HEX.halo);
@@ -464,7 +464,7 @@ const ANCHOR_REST_PRESENTATION: CkbNodeAnchorPresentation = {
   fillOpacity: 0.07,
   labelOpacity: 0.46,
   labelColor: HUD_COLORS.legendInk,
-  labelShadow: '0 0 6px rgba(34, 211, 238, 0.24)',
+  labelShadow: `0 0 6px ${rgba(CHAIN_ANCHOR_HEX.halo, 0.24)}`,
 };
 
 const ANCHOR_SELECTED_PRESENTATION: CkbNodeAnchorPresentation = {
@@ -474,7 +474,7 @@ const ANCHOR_SELECTED_PRESENTATION: CkbNodeAnchorPresentation = {
   labelOpacity: 0.92,
   labelColor: HUD_COLORS.cyanInk,
   labelShadow:
-    '0 0 5px rgba(125, 249, 255, 0.62), 0 0 11px rgba(34, 211, 238, 0.32)',
+    `0 0 5px ${rgba(CHAIN_ANCHOR_HEX.edge, 0.62)}, 0 0 11px ${rgba(CHAIN_ANCHOR_HEX.halo, 0.32)}`,
 };
 
 /** Three explicit levels keep the anchor quiet at rest, legible on selection,

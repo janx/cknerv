@@ -220,7 +220,7 @@ function PanelVisibilityControl({ panels, onChange, compact = false, menuOffset 
             padding: '7px 8px 8px',
             border: `1px solid ${rgba(HUD_COLORS.orange, 0.34)}`,
             background: 'rgba(2,5,8,.96)',
-            boxShadow: `0 8px 28px rgba(0,0,0,.72), 0 0 18px ${rgba(HUD_COLORS.orange, 0.08)}`,
+            boxShadow: `0 8px 28px ${rgba(HUD_COLORS.ground, 0.72)}, 0 0 18px ${rgba(HUD_COLORS.orange, 0.08)}`,
             fontFamily: HUD_FONTS.mono,
           }}
         >
@@ -953,7 +953,7 @@ export default function StatusStrip({
           padding: '0 8px',
           overflow: 'visible',
           background: 'linear-gradient(180deg,rgba(4,7,12,.985),rgba(0,3,8,.965))',
-          boxShadow: '0 7px 22px rgba(0,0,0,.36)',
+          boxShadow: `0 7px 22px ${rgba(HUD_COLORS.ground, 0.36)}`,
         }}
       >
         {primary}
@@ -1022,7 +1022,7 @@ export default function StatusStrip({
           padding: '0 8px',
           overflow: 'visible',
           background: 'linear-gradient(180deg,rgba(4,7,12,.985),rgba(0,3,8,.96))',
-          boxShadow: '0 7px 22px rgba(0,0,0,.32)',
+          boxShadow: `0 7px 22px ${rgba(HUD_COLORS.ground, 0.32)}`,
         }}
       >
         {primary}
@@ -1060,7 +1060,7 @@ export default function StatusStrip({
       role="navigation"
       aria-label="Dashboard controls"
       data-status-layout="wide"
-      style={{ position: 'absolute', left: 0, right: 0, top: 0, height: barHeight, boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 4, padding: '0 12px', overflow: 'visible', background: 'linear-gradient(180deg,rgba(4,7,12,.985),rgba(0,3,8,.955))', boxShadow: '0 7px 22px rgba(0,0,0,.28)' }}
+      style={{ position: 'absolute', left: 0, right: 0, top: 0, height: barHeight, boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 4, padding: '0 12px', overflow: 'visible', background: 'linear-gradient(180deg,rgba(4,7,12,.985),rgba(0,3,8,.955))', boxShadow: `0 7px 22px ${rgba(HUD_COLORS.ground, 0.28)}` }}
     >
       {primary}
       <span style={{ flex: 1 }} />

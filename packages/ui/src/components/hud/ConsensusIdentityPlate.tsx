@@ -27,7 +27,7 @@ import {
   consensusMemoryRouteHopPulseKey,
 } from '../../nerve/consensusRouteHopPulse';
 import { formatBlockRef, formatOutpoint } from './cellFormat';
-import { HUD_COLORS, HUD_FONTS, HUD_TYPE } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 
 const CYAN = HUD_COLORS.cyanWire;
 const VIOLET = HUD_COLORS.memory;
@@ -397,7 +397,7 @@ function EvidenceRouteLedger({
         borderBottom: `1px solid ${CYAN}30`,
         borderLeft: `1px solid ${sourceColor}4f`,
         background: 'linear-gradient(110deg, rgba(1,4,12,.97), rgba(3,8,20,.94))',
-        boxShadow: `-8px 0 24px rgba(0,0,0,.3), inset 8px 0 18px ${sourceColor}0b`,
+        boxShadow: `-8px 0 24px ${rgba(HUD_COLORS.ground, 0.3)}, inset 8px 0 18px ${sourceColor}0b`,
         color: HUD_COLORS.dim,
         whiteSpace: 'normal',
         textAlign: 'left',

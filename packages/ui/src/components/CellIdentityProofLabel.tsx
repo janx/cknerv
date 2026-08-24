@@ -6,7 +6,7 @@ import type {
 import {
   CELL_IDENTITY_PROOF_LABEL_VISUAL_TOKENS as TOKENS,
 } from './cellIdentityProofLabel.presentation';
-import { HUD_COLORS } from './hud/hudTheme';
+import { HUD_COLORS, rgba } from './hud/hudTheme';
 
 /** One transient screen-space evidence tag attached to a scene proof marker. */
 const CellIdentityProofLabel = forwardRef<
@@ -43,7 +43,7 @@ const CellIdentityProofLabel = forwardRef<
           borderRight: '1px solid transparent',
           background: `linear-gradient(105deg, ${label.color}17, rgba(1, 4, 12, .92) 32%, rgba(1, 4, 12, .74))`,
           boxShadow: [
-            `0 0 ${TOKENS.glowRadiusPx}px rgba(0, 0, 0, .58)`,
+            `0 0 ${TOKENS.glowRadiusPx}px ${rgba(HUD_COLORS.ground, 0.58)}`,
             `inset 0 0 8px ${label.color}0b`,
           ].join(', '),
           color: label.color,

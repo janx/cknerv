@@ -156,7 +156,7 @@ export default function SightedNodeCard({
         fontFamily: HUD_FONTS.mono,
         // One composited shadow for the whole constellation, as on the link
         // and self cards — never a filter surface per plate.
-        filter: `drop-shadow(0 8px 16px rgba(0,0,0,.56)) drop-shadow(0 0 14px ${rgba(accent, 0.06)})`,
+        filter: `drop-shadow(0 8px 16px ${rgba(HUD_COLORS.ground, 0.56)}) drop-shadow(0 0 14px ${rgba(accent, 0.06)})`,
         ...style,
       }}
     >

@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react';
 import type { CellsStats } from '../../derives/cellsStats.derive';
 import type { ChurnRates } from '../../derives/cellChurn';
-import { CELL_PANEL_ACCENT, HUD_COLORS, HUD_FONTS, HUD_TYPE } from './hudTheme';
+import { CELL_PANEL_ACCENT, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import { DirectionMark, HudPanel, PanelHeader, StatRow } from './primitives';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
@@ -14,7 +14,7 @@ function FlowRow({ label, direction, color, width, value }: { label: string; dir
         <DirectionMark direction={direction} color={color} size={4.5} />
         {label}
       </span>
-      <span style={{ flex: 1, height: 6, background: HUD_COLORS.trackGround, border: '1px solid rgba(255,152,48,.12)', position: 'relative' }}>
+      <span style={{ flex: 1, height: 6, background: HUD_COLORS.trackGround, border: `1px solid ${rgba(HUD_COLORS.orange, 0.12)}`, position: 'relative' }}>
         <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width, background: color, boxShadow: `0 0 7px ${color}66` }} />
       </span>
       <span style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, width: 30, textAlign: 'right', color }}>{value.toFixed(1)}</span>

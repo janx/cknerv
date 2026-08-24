@@ -14,6 +14,11 @@ import { PEER_NETWORK_HEX } from '../../visualPalette';
 // block of its own color with `ground` punched through the letters. Chrome and
 // identity only ever outline. So a filled block anywhere in the HUD means
 // something is wrong — never "this panel matters more than its neighbours".
+/** Absolute black, named once so the palette's own translucent panel can be
+ *  built from it rather than spelled beside it — the token and the surface
+ *  that is 45% of it were two copies of one value in one file. */
+const GROUND = '#000000';
+
 export const HUD_COLORS = {
   // Absolute black, and never a surface: `ground` is what gets KNOCKED OUT of
   // something coloured. `severityChip` reads it back through the letters of a
@@ -28,7 +33,7 @@ export const HUD_COLORS = {
   //
   // It does not name the ground the stage is painted on. That is `stageGround`,
   // and the token being called `ground` is exactly why nobody found it there.
-  ground: '#000000',
+  ground: GROUND,
   // The colour the stage itself is painted, and the only near-black here a
   // person actually looks at: the scene's clear colour, the CSS under the
   // canvas that holds it until a first frame exists, and the body behind both.
@@ -45,7 +50,7 @@ export const HUD_COLORS = {
   // evaluated and a stylesheet cannot import. Its copy is held against this one
   // by `ui-app/__tests__/App.sceneRoots.test.tsx`.
   stageGround: '#02030A',
-  panel: 'rgba(0,0,0,0.45)',
+  panel: rgba(GROUND, 0.45),
   // The empty half of every gauge, meter and segmented bar. Deliberately one
   // step off `ground`: a track has to read as a channel carved into the panel's
   // translucent black, and pure black just dissolves into the stage behind it.
@@ -424,19 +429,19 @@ export function injectHudTheme(doc: Document = document): void {
     + `\n@keyframes cknerv-cell-consensus-enter{0%{opacity:0;transform:translate3d(12px,-2px,0) scale(.985)}55%{opacity:1}100%{opacity:1;transform:translate3d(0,0,0) scale(1)}}`
     + `\n@keyframes cknerv-cell-detail-anchor-enter{0%{opacity:0;transform:scale(.35)}65%{opacity:1;transform:scale(1.18)}100%{opacity:1;transform:scale(1)}}`
     + `\n@keyframes cknerv-cell-specimen-sweep{0%{transform:translate3d(0,0,0);opacity:0}12%{opacity:.82}88%{opacity:.72}100%{transform:translate3d(0,100%,0);opacity:0}}`
-    + `\n@keyframes cknerv-route-hop-lock-pulse{0%{filter:brightness(1) drop-shadow(0 0 0 transparent)}18%{filter:brightness(1.58) drop-shadow(0 0 7px var(--route-hop-pulse-color,rgba(255,215,161,.76)))}52%{filter:brightness(1.16) drop-shadow(0 0 3px var(--route-hop-pulse-color,rgba(255,215,161,.42)))}100%{filter:brightness(1) drop-shadow(0 0 0 transparent)}}`
+    + `\n@keyframes cknerv-route-hop-lock-pulse{0%{filter:brightness(1) drop-shadow(0 0 0 transparent)}18%{filter:brightness(1.58) drop-shadow(0 0 7px var(--route-hop-pulse-color,${rgba(HUD_COLORS.lockedGold, 0.76)}))}52%{filter:brightness(1.16) drop-shadow(0 0 3px var(--route-hop-pulse-color,${rgba(HUD_COLORS.lockedGold, 0.42)}))}100%{filter:brightness(1) drop-shadow(0 0 0 transparent)}}`
     + `\n.cknerv-hud-control-button:hover{filter:brightness(1.35)}`
-    + `\n.cknerv-hud-control-button:focus-visible{outline:1px solid rgba(32,240,255,.55);outline-offset:1px}`
+    + `\n.cknerv-hud-control-button:focus-visible{outline:1px solid ${rgba(HUD_COLORS.cyanWire, 0.55)};outline-offset:1px}`
     + `\n.cknerv-cell-display-track:focus-within{filter:brightness(1.35)}`
-    + `\n.cknerv-cell-display-track:focus-within::after{content:'';position:absolute;left:0;right:0;bottom:0;height:1px;background:rgba(32,240,255,.42);box-shadow:0 0 5px rgba(32,240,255,.3)}`
+    + `\n.cknerv-cell-display-track:focus-within::after{content:'';position:absolute;left:0;right:0;bottom:0;height:1px;background:${rgba(HUD_COLORS.cyanWire, 0.42)};box-shadow:0 0 5px ${rgba(HUD_COLORS.cyanWire, 0.3)}}`
     + `\n.cknerv-mesh-rail::-webkit-scrollbar{width:5px}`
-    + `\n.cknerv-mesh-rail::-webkit-scrollbar-thumb{background:rgba(255,152,48,.35);border-radius:3px}`
+    + `\n.cknerv-mesh-rail::-webkit-scrollbar-thumb{background:${rgba(HUD_COLORS.orange, 0.35)};border-radius:3px}`
     + `\n.cknerv-mesh-rail::-webkit-scrollbar-track{background:transparent}`
     + `\n.cknerv-chain-cluster::-webkit-scrollbar{height:5px}`
-    + `\n.cknerv-chain-cluster::-webkit-scrollbar-thumb{background:rgba(255,152,48,.35);border-radius:3px}`
+    + `\n.cknerv-chain-cluster::-webkit-scrollbar-thumb{background:${rgba(HUD_COLORS.orange, 0.35)};border-radius:3px}`
     + `\n.cknerv-chain-cluster::-webkit-scrollbar-track{background:transparent}`
     + `\n.cknerv-chain-panel-scroll::-webkit-scrollbar{width:5px}`
-    + `\n.cknerv-chain-panel-scroll::-webkit-scrollbar-thumb{background:rgba(255,152,48,.35);border-radius:3px}`
+    + `\n.cknerv-chain-panel-scroll::-webkit-scrollbar-thumb{background:${rgba(HUD_COLORS.orange, 0.35)};border-radius:3px}`
     + `\n.cknerv-chain-panel-scroll::-webkit-scrollbar-track{background:transparent}`
     + `\n.cknerv-status-controls::-webkit-scrollbar{display:none}`
     + `\n.cknerv-status-context::-webkit-scrollbar{display:none}`
@@ -445,22 +450,22 @@ export function injectHudTheme(doc: Document = document): void {
     + `\n.cknerv-memory-route-ledger-viewport{position:relative;display:flex;flex:1 1 auto;min-height:0}`
     + `\n.cknerv-memory-route-ledger-scroll{position:relative;flex:1 1 auto;min-width:0;min-height:0;box-sizing:border-box}`
     + `\n.cknerv-memory-route-scroll-edge{position:absolute;left:0;right:9px;z-index:2;height:14px;pointer-events:none;opacity:0}`
-    + `\n.cknerv-memory-route-scroll-edge-before{top:0;background:linear-gradient(180deg,rgba(1,5,14,.98),rgba(1,5,14,0));box-shadow:inset 0 1px 0 rgba(32,240,255,.14)}`
-    + `\n.cknerv-memory-route-scroll-edge-after{bottom:0;background:linear-gradient(0deg,rgba(1,5,14,.98),rgba(1,5,14,0));box-shadow:inset 0 -1px 0 rgba(32,240,255,.14)}`
-    + `\n.cknerv-memory-route-scroll-position{position:absolute;top:3px;right:4px;bottom:3px;z-index:3;width:4px;border-right:1px solid rgba(32,240,255,.18);pointer-events:none;opacity:0}`
-    + `\n.cknerv-memory-route-scroll-position-marker{position:absolute;left:100%;top:var(--route-ledger-scroll-progress,0%);width:4px;height:4px;border:1px solid rgba(201,248,255,.88);background:#06111B;box-shadow:0 0 6px rgba(32,240,255,.72);transform:translate(-50%,-50%) rotate(45deg)}`
-    + `\n.cknerv-memory-route-ledger-lens .cknerv-memory-route-scroll-position-marker{border-color:rgba(255,215,161,.9);box-shadow:0 0 7px rgba(255,215,161,.66)}`
+    + `\n.cknerv-memory-route-scroll-edge-before{top:0;background:linear-gradient(180deg,${rgba(HUD_COLORS.stageGround, 0.98)},${rgba(HUD_COLORS.stageGround, 0)});box-shadow:inset 0 1px 0 ${rgba(HUD_COLORS.cyanWire, 0.14)}}`
+    + `\n.cknerv-memory-route-scroll-edge-after{bottom:0;background:linear-gradient(0deg,${rgba(HUD_COLORS.stageGround, 0.98)},${rgba(HUD_COLORS.stageGround, 0)});box-shadow:inset 0 -1px 0 ${rgba(HUD_COLORS.cyanWire, 0.14)}}`
+    + `\n.cknerv-memory-route-scroll-position{position:absolute;top:3px;right:4px;bottom:3px;z-index:3;width:4px;border-right:1px solid ${rgba(HUD_COLORS.cyanWire, 0.18)};pointer-events:none;opacity:0}`
+    + `\n.cknerv-memory-route-scroll-position-marker{position:absolute;left:100%;top:var(--route-ledger-scroll-progress,0%);width:4px;height:4px;border:1px solid ${rgba(HUD_COLORS.cyanInk, 0.88)};background:${HUD_COLORS.ground};box-shadow:0 0 6px ${rgba(HUD_COLORS.cyanWire, 0.72)};transform:translate(-50%,-50%) rotate(45deg)}`
+    + `\n.cknerv-memory-route-ledger-lens .cknerv-memory-route-scroll-position-marker{border-color:${rgba(HUD_COLORS.lockedGold, 0.9)};box-shadow:0 0 7px ${rgba(HUD_COLORS.lockedGold, 0.66)}}`
     + `\n.cknerv-memory-route-ledger-scroll::-webkit-scrollbar{width:3px}`
-    + `\n.cknerv-memory-route-ledger-scroll::-webkit-scrollbar-thumb{background:rgba(32,240,255,.28)}`
+    + `\n.cknerv-memory-route-ledger-scroll::-webkit-scrollbar-thumb{background:${rgba(HUD_COLORS.cyanWire, 0.28)}}`
     + `\n.cknerv-memory-route-ledger-scroll::-webkit-scrollbar-track{background:transparent}`
     + `\n.cknerv-memory-route-cells::-webkit-scrollbar{width:3px}`
-    + `\n.cknerv-memory-route-cells::-webkit-scrollbar-thumb{background:rgba(32,240,255,.28)}`
+    + `\n.cknerv-memory-route-cells::-webkit-scrollbar-thumb{background:${rgba(HUD_COLORS.cyanWire, 0.28)}}`
     + `\n.cknerv-memory-route-cells::-webkit-scrollbar-track{background:transparent}`
     + `\n.cknerv-memory-route-connector-tail{display:none}`
     + `\n@media (min-width:1101px) and (max-width:1373px),(min-width:1374px) and (max-height:860px){.cknerv-memory-route-ledger{top:-106px}.cknerv-memory-route-connector-tail{display:block;height:106px}}`
     + `\n@media (max-width:1100px){.cknerv-top-bar-action-label{display:none}}`
     + `\n@media (max-width:560px){.cknerv-build-label{display:none}}`
     + `\n@media (max-width:380px){.cknerv-cell-display-label,.cknerv-quality-label,.cknerv-panel-toggle-label{display:none}}`
-    + `\n@media (max-width:1100px){.cknerv-memory-route-ledger{position:static;width:auto;max-height:100px;margin:4px 4px 2px 0;overflow:hidden}.cknerv-memory-route-ledger-scroll{overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:rgba(32,240,255,.28) transparent;padding-right:8px}.cknerv-memory-route-ledger-viewport[data-memory-evidence-route-scrollable="true"] .cknerv-memory-route-scroll-position{opacity:1}.cknerv-memory-route-ledger-viewport[data-memory-evidence-route-scroll-before="true"] .cknerv-memory-route-scroll-edge-before{opacity:1}.cknerv-memory-route-ledger-viewport[data-memory-evidence-route-scroll-after="true"] .cknerv-memory-route-scroll-edge-after{opacity:1}.cknerv-memory-route-connector,.cknerv-memory-route-connector-tail{display:none}}`;
+    + `\n@media (max-width:1100px){.cknerv-memory-route-ledger{position:static;width:auto;max-height:100px;margin:4px 4px 2px 0;overflow:hidden}.cknerv-memory-route-ledger-scroll{overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:${rgba(HUD_COLORS.cyanWire, 0.28)} transparent;padding-right:8px}.cknerv-memory-route-ledger-viewport[data-memory-evidence-route-scrollable="true"] .cknerv-memory-route-scroll-position{opacity:1}.cknerv-memory-route-ledger-viewport[data-memory-evidence-route-scroll-before="true"] .cknerv-memory-route-scroll-edge-before{opacity:1}.cknerv-memory-route-ledger-viewport[data-memory-evidence-route-scroll-after="true"] .cknerv-memory-route-scroll-edge-after{opacity:1}.cknerv-memory-route-connector,.cknerv-memory-route-connector-tail{display:none}}`;
   doc.head.appendChild(style);
 }

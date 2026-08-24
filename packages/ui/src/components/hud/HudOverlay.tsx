@@ -22,7 +22,7 @@ import { alertLevel } from '../../derives/alertLevel';
 import type { CellsStats } from '../../derives/cellsStats.derive';
 import type { CellPopulationFieldModel } from '../../derives/cellPopulationField.derive';
 import { useBootSequence } from '../../boot/bootSequence';
-import { injectHudTheme } from './hudTheme';
+import { HUD_COLORS, injectHudTheme, rgba } from './hudTheme';
 import { revealStageStyle } from './primitives';
 import StatusStrip, {
   STATUS_STRIP_HEIGHTS,
@@ -63,7 +63,7 @@ const ROOT_STYLE: CSSProperties = { position: 'fixed', inset: 0, zIndex: 15, poi
 // No blend mode, therefore — an `overlay` against a zero-alpha backdrop
 // resolves to the plain source-over already written here, and asking for one
 // costs the compositor an isolated full-viewport blending group per frame.
-const SCAN_STYLE: CSSProperties = { position: 'absolute', inset: 0, pointerEvents: 'none', background: 'repeating-linear-gradient(0deg,rgba(255,255,255,.035) 0 1px,transparent 1px 3px)', opacity: 0.5 };
+const SCAN_STYLE: CSSProperties = { position: 'absolute', inset: 0, pointerEvents: 'none', background: `repeating-linear-gradient(0deg,${rgba(HUD_COLORS.heroInk, 0.035)} 0 1px,transparent 1px 3px)`, opacity: 0.5 };
 // Right-edge MESH RAIL: the CELL zone stacked over the PEER zone, right-anchored.
 // Each zone is a flex row [detail | mesh] (network detail fans LEFT of its mesh); the
 // rail is a flex column so the zones stack and details top-align to their mesh
@@ -91,11 +91,11 @@ const PANEL_SCROLL_STYLE: CSSProperties = {
   overflowY: 'auto',
   overscrollBehavior: 'contain',
   scrollbarWidth: 'thin',
-  scrollbarColor: 'rgba(255,152,48,.35) transparent',
+  scrollbarColor: `${rgba(HUD_COLORS.orange, 0.35)} transparent`,
   pointerEvents: 'auto',
 };
 
-const CHAIN_CLUSTER_STYLE: CSSProperties = { display: 'flex', flex: '1 1 auto', flexDirection: 'row', gap: LEFT_PANEL_GAP_PX, alignItems: 'flex-start', minHeight: 0, maxWidth: '100%', overflowX: 'auto', overflowY: 'hidden', overscrollBehavior: 'contain', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,152,48,.35) transparent', pointerEvents: 'none' };
+const CHAIN_CLUSTER_STYLE: CSSProperties = { display: 'flex', flex: '1 1 auto', flexDirection: 'row', gap: LEFT_PANEL_GAP_PX, alignItems: 'flex-start', minHeight: 0, maxWidth: '100%', overflowX: 'auto', overflowY: 'hidden', overscrollBehavior: 'contain', scrollbarWidth: 'thin', scrollbarColor: `${rgba(HUD_COLORS.orange, 0.35)} transparent`, pointerEvents: 'none' };
 const PANEL_FLOW: CSSProperties = { position: 'relative' };
 const PULSE_ANCHOR_STYLE: CSSProperties = { position: 'relative', flex: '0 0 auto', maxWidth: '100%' };
 
@@ -438,7 +438,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
     + (bootReadoutVisible || streamInterrupted ? 42 : 12)
     + alarmBandHeight;
   const railStyle: CSSProperties = narrowRail
-    ? { ...MESH_RAIL_STYLE, top: contentTop, maxHeight: `calc(100vh - ${contentTop + 14}px)`, overflowX: 'hidden', overflowY: 'auto', pointerEvents: railScrolls ? 'auto' : 'none', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,152,48,.35) transparent' }
+    ? { ...MESH_RAIL_STYLE, top: contentTop, maxHeight: `calc(100vh - ${contentTop + 14}px)`, overflowX: 'hidden', overflowY: 'auto', pointerEvents: railScrolls ? 'auto' : 'none', scrollbarWidth: 'thin', scrollbarColor: `${rgba(HUD_COLORS.orange, 0.35)} transparent` }
     : { ...MESH_RAIL_STYLE, top: contentTop };
 
   // persist the across-render baselines after each commit
