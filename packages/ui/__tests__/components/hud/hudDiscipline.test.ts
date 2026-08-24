@@ -25,6 +25,7 @@ import {
   CELL_CARD_ACCENT,
   CELL_PANEL_ACCENT,
   HUD_COLORS,
+  HUD_FONTS,
   HUD_TYPE,
   QUALITATIVE_BUCKET_COLORS,
   rgba,
@@ -2177,6 +2178,316 @@ describe('the hand-cut face', () => {
     // the record rather than a constant that happened to dodge the regex.
     expect(DECLARED_SIZES.has(PANEL_WATERMARK_PX)).toBe(false);
     expect(PANEL_WATERMARK_PX).toBeGreaterThan(HUD_TYPE.hero * 2);
+  });
+});
+
+
+// ——— The other side of the same subset ——————————————————————————————————
+//
+// The section above has been guarding the Chinese face since the day 样本
+// shipped a release ahead of the inventory. It is the same class of bug on the
+// Latin side, and for the whole life of that section nobody asked the question
+// there — because a face called `Saira` obviously has letters in it, and the
+// asking stops.
+//
+// The Latin faces are subsets too. They are Google Fonts' pre-built
+// `latin`-range woff2, dropped in as downloaded, and `latin` is a published
+// fixed range that stops before the Arrows and Geometric Shapes blocks almost
+// entirely. `→` is not in it. `← ↔ ◆ ◇ ● ▲ ▼ ▦` are not in it. Every one of
+// those was being rendered by the shipped HUD out of whatever face the
+// reader's machine happened to offer — nondeterministic across machines, ours
+// on none of them, and silent, exactly as the section above says a missing
+// glyph is silent.
+//
+// So this is the Latin equivalent, and it is asked one notch harder than
+// "carried by some face". A glyph carried by the wrong face is the same defect
+// wearing a different costume: `◇` lives only in `JetBrains Mono Local`, which
+// made it correct on the consensus-memory markers that name that face and
+// broken on the nine DOM sites that did not. The question is per SITE, and a
+// site is a STACK — CSS resolves a family list per character, so the honest
+// unit of coverage is the union of the shipped faces in the list, not one face.
+//
+// WHAT THIS CANNOT DO, stated rather than implied. A text oracle cannot tie a
+// literal to the element that wraps it — the section above says so about
+// Chinese and it is no less true here. So the claim is per FILE, in two tiers:
+//
+//   IN-SCENE — a file naming a `* Local` family has said which face draws it,
+//     and is judged against exactly the stacks it names. Those labels render
+//     under a camera in a face with no `…` and no `‹ ›` in it, and requiring
+//     the DOM vocabulary of them would be a rule about the wrong medium.
+//
+//   DOM — everything else is judged against ALL THREE of the HUD's voices, not
+//     merely the ones it happens to mention. That is deliberately stronger
+//     than per-site truth: a formatter's `…` lands wherever its caller renders
+//     it, a shared row can be restyled from `mono` to `tech` in one line, and
+//     a symbol vocabulary only one of three voices can pronounce is a trap set
+//     for the next person. `−`, `‹ ›` and `…` clear it on the Latin faces' own
+//     coverage; `→ ← ↓ ◆ ◇ ↗ ✓` clear it because `HUD_FONTS` puts the hand-cut
+//     symbol face behind all three.
+//
+// Two more gaps, named so the rule does not imply a promise it is not keeping.
+// It stops at the package boundary for the same reason the Chinese sweep does:
+// `packages/ui` ships the woff2 and registers every `@font-face`, and a
+// guarantee about coverage is that package's to make. `ui-app/src/Jukebox.tsx`
+// renders `∞` and `♥`, which no face here carries, in a family string it
+// re-typed rather than imported — the same defect, out of this file's
+// jurisdiction, and unfixed. And `ui-app/index.html`'s pre-boot shell draws a
+// `◇` in `ui-monospace` deliberately: it paints before any `@font-face`
+// exists, so there is no face for it to be wrong about.
+//
+// Han is not swept here. It has its own section, its own face, and its own
+// three-way ring above.
+
+/** Every face in `src/fonts`, and what each one carries above ASCII, as
+ *  codepoint ranges.
+ *
+ *  Recorded rather than read, because a woff2 cannot be decoded here — the
+ *  section above discovered that and answered it by WEIGHING the file instead.
+ *  Same answer, same ring: these ranges are a claim about seven binaries, and
+ *  each binary's SHA-256 is recorded in `src/fonts/README.md` and checked
+ *  against the bytes below. Re-cut or re-download a face without re-reading
+ *  its cmap and the hash goes red naming the file, which is the only moment
+ *  this table could be wrong with nobody noticing. */
+const FACE_COVERAGE: ReadonlyArray<{ family: string; file: string; nonAscii: string }> = [
+  {
+    family: 'Saira',
+    file: 'Saira-latin.woff2',
+    nonAscii:
+      '00A0-00FF 0102 0131 0152-0153 02BC 02C6 02DA 02DC 0300-0301'
+      + ' 0303-0304 0308-0309 0323 2002 2013-2014 2018-201A 201C-201E'
+      + ' 2022 2026 2032-2033 2039-203A 2044 20AC 2122 2191 2193 2212'
+      + ' 2215',
+  },
+  {
+    family: 'Chakra Petch',
+    file: 'ChakraPetch-500-latin.woff2',
+    nonAscii:
+      '00A0-00B4 00B6-00FF 0131 0152-0153 02BB-02BC 02C6 02DA 02DC'
+      + ' 0300-0301 0303-0304 0308-0309 0323 2013-2014 2018-201A'
+      + ' 201C-201E 2022 2026 2032-2033 2039-203A 2044 20AC 2122 2191'
+      + ' 2193 2212 2215',
+  },
+  {
+    family: 'Chakra Petch',
+    file: 'ChakraPetch-700-latin.woff2',
+    nonAscii:
+      '00A0-00B4 00B6-00FF 0131 0152-0153 02BB-02BC 02C6 02DA 02DC'
+      + ' 0300-0301 0303-0304 0308-0309 0323 2013-2014 2018-201A'
+      + ' 201C-201E 2022 2026 2032-2033 2039-203A 2044 20AC 2122 2191'
+      + ' 2193 2212 2215',
+  },
+  {
+    family: 'Share Tech Mono',
+    file: 'ShareTechMono-latin.woff2',
+    nonAscii:
+      '00A0-00FF 0131 0152-0153 02C6 02DA 02DC 2013-2014 2018-201A'
+      + ' 201C-201E 2022 2026 2039-203A 2044 20AC 2122 2212 2215',
+  },
+  {
+    family: 'JetBrains Mono Local',
+    file: 'JetBrainsMono-400-subset.woff2',
+    nonAscii:
+      '00B7 00D7 2013-2014 2022 2190 2192-2193 2197 2248 2264-2265'
+      + ' 25C6-25C7 2713',
+  },
+  {
+    family: 'Orbitron Local',
+    file: 'Orbitron-500-subset.woff2',
+    nonAscii: '00D7 2013-2014 2022',
+  },
+  {
+    family: 'Huiwen-mincho',
+    file: CJK_FACE,
+    nonAscii:
+      '4EA4 5143 5165 5171 544A 573A 57FA 5BF9 5F55 6001 640F 6613'
+      + ' 672C 6837 70B9 72B6 795E 7AEF 7CFB 7EC6 7ECF 80DE 8109 8282'
+      + ' 89C1 8B66 8BB0 8BC1 8BC6 8C31 8F93 9053',
+  },
+];
+
+function codepoints(spec: string): ReadonlySet<number> {
+  const set = new Set<number>();
+  for (const token of spec.split(' ')) {
+    const [from, to] = token.split('-');
+    const start = Number.parseInt(from, 16);
+    const end = to === undefined ? start : Number.parseInt(to, 16);
+    for (let cp = start; cp <= end; cp += 1) set.add(cp);
+  }
+  return set;
+}
+
+/** What a FAMILY promises, which is the INTERSECTION of the faces registered
+ *  under its name. `Chakra Petch` ships as two weights and a heading may wear
+ *  either; a glyph in one file and not the other is not something the family
+ *  can be asked for. */
+function familyCoverage(family: string): ReadonlySet<number> {
+  const sets = FACE_COVERAGE
+    .filter((face) => face.family === family)
+    .map((face) => codepoints(face.nonAscii));
+  if (sets.length === 0) return new Set();
+  return new Set([...sets[0]].filter((cp) => sets.every((set) => set.has(cp))));
+}
+
+type FontStack = { name: string; families: readonly string[]; carries: ReadonlySet<number> };
+
+/** A family list, resolved the way a browser resolves one: per character, down
+ *  the list, first family that has it. Names we do not ship (`system-ui`,
+ *  `ui-monospace`, the CJK system serifs) contribute nothing, which is the
+ *  whole point — they are where the silent fallback used to happen. */
+function fontStack(name: string, value: string): FontStack {
+  const families = value.split(',').map((entry) => entry.trim().replace(/^['"]|['"]$/g, ''));
+  const carries = new Set<number>();
+  for (const family of families) {
+    for (const cp of familyCoverage(family)) carries.add(cp);
+  }
+  return { name, families, carries };
+}
+
+const HUD_STACKS = Object.fromEntries(
+  Object.entries(HUD_FONTS).map(([key, value]) => [key, fontStack(`HUD_FONTS.${key}`, value)]),
+) as Record<keyof typeof HUD_FONTS, FontStack>;
+
+/** The three voices the DOM overlay is written in. `cjk` is not one of them:
+ *  it carries no Latin at all, it is the section above's business, and asking
+ *  it to spell an interpunct would be the wrong question to the wrong face. */
+const DOM_VOICES: readonly FontStack[] = [
+  HUD_STACKS.display, HUD_STACKS.tech, HUD_STACKS.mono,
+];
+
+/** A stack written straight into a `fontFamily`, which is how the in-scene
+ *  labels name their faces (and how three components re-type a HUD voice by
+ *  hand). Multi-line, because `CellGalaxy` wraps its list onto its own line. */
+const INLINE_FONT_STACK = /fontFamily:\s*(['"])((?:(?!\1)[\s\S])*)\1/g;
+
+function stacksIn(text: string): FontStack[] {
+  const stacks: FontStack[] = [];
+  for (const [key, stack] of Object.entries(HUD_STACKS)) {
+    if (key !== 'cjk' && text.includes(`HUD_FONTS.${key}`)) stacks.push(stack);
+  }
+  INLINE_FONT_STACK.lastIndex = 0;
+  let match = INLINE_FONT_STACK.exec(text);
+  while (match !== null) {
+    stacks.push(fontStack(`fontFamily: ${match[2]}`, match[2]));
+    match = INLINE_FONT_STACK.exec(text);
+  }
+  return stacks;
+}
+
+/** Which stacks a file's marks have to clear. A `* Local` family is the tell
+ *  that a file draws in the scene and has said which face does it; everything
+ *  else is DOM and answers to all three voices whether it named them or not. */
+function applicableStacks(text: string): FontStack[] {
+  const named = stacksIn(text);
+  const inScene = named.some((stack) => stack.families.some((family) => family.endsWith(' Local')));
+  if (inScene) return named;
+  const unnamed = DOM_VOICES.filter((voice) => !named.some((stack) => stack.name === voice.name));
+  return [...named, ...unnamed];
+}
+
+/** Every character a file renders that is neither ASCII nor Han. */
+function marksIn(text: string): string[] {
+  return [...new Set(text)]
+    .filter((mark) => {
+      const cp = mark.codePointAt(0) ?? 0;
+      return cp > 0x7e && !(cp >= 0x4e00 && cp <= 0x9fff);
+    })
+    .sort();
+}
+
+function renderedMarks(): Array<{ source: string; mark: string }> {
+  return PACKAGE_SOURCES.flatMap((source) => marksIn(code(source.text))
+    .map((mark) => ({ source: source.name, mark })));
+}
+
+describe('every mark the HUD writes', () => {
+  it('the coverage table and the bytes on disk are one inventory', () => {
+    // Same ring the Chinese face closes, one axis wider: the ranges above are
+    // a claim about seven files, the README records each file's SHA-256, and
+    // the files answer for themselves. A face swapped for a different build of
+    // the same name is the one way this table could go quietly wrong, and it
+    // is the way that would ship a re-download with no arrows left in it.
+    const recorded = new Map<string, string>();
+    // The two tables are shaped differently on purpose — the hand-cut faces
+    // record the SOURCE hash beside the subset's, the downloaded ones have no
+    // source to record — so the row is read for its LAST hash either way.
+    for (const [, file, rest] of FONT_README.matchAll(/\| `([A-Za-z0-9-]+\.woff2)` \|([^\n]*)/g)) {
+      const hashes = rest.match(/[0-9a-f]{64}/g) ?? [];
+      if (hashes.length > 0) recorded.set(file, hashes[hashes.length - 1]);
+    }
+    // …plus the Chinese face, which the README states in prose rather than in
+    // a table, and which the section above already checks. Read here too so
+    // the claim covers `src/fonts` WHOLE — a face with no recorded hash is a
+    // face this table could describe wrongly for free.
+    const cjkSha = /checked-in subset is\n`([0-9a-f]{64})`/.exec(FONT_README);
+    expect(cjkSha, 'no subset SHA-256 in src/fonts/README.md').not.toBeNull();
+    recorded.set(CJK_FACE, cjkSha?.[1] ?? '');
+
+    const onDisk = readdirSync(FONT_DIR).filter((name) => name.endsWith('.woff2')).sort();
+    expect(FACE_COVERAGE.map((face) => face.file).sort()).toEqual(onDisk);
+
+    const drifted = FACE_COVERAGE
+      .map((face) => {
+        const actual = createHash('sha256')
+          .update(readFileSync(join(FONT_DIR, face.file)))
+          .digest('hex');
+        return recorded.get(face.file) === actual
+          ? null
+          : `${face.file}: the bytes and src/fonts/README.md disagree`
+            + ' — re-read the cmap, and this table with it';
+      })
+      .filter((entry) => entry !== null);
+
+    expect(drifted).toEqual([]);
+  });
+
+  it('finds the marks it is supposed to be checking', () => {
+    // The pin. Every rule below is a text sweep, and a text sweep that stops
+    // matching passes everything in silence — which is the failure it exists
+    // to catch, one level up.
+    const marks = renderedMarks();
+    expect(new Set(marks.map((entry) => entry.mark)).size).toBeGreaterThanOrEqual(10);
+
+    // The three forms the defect took, each asked at a file that still writes
+    // one. Arrows in DOM prose (carried by no Latin face, only by the symbol
+    // fallback behind them), a diamond in a scene label (carried by that one
+    // face), and the interpunct the whole HUD is punctuated with.
+    const at = (name: string) => marks
+      .filter((entry) => entry.source === name)
+      .map((entry) => entry.mark);
+    expect(at('components/hud/ConsensusIdentityPlate.tsx')).toContain('→');
+    expect(at('components/hud/ConsensusIdentityPlate.tsx')).toContain('←');
+    expect(at('components/hud/ConsensusMemory.tsx')).toContain('◇');
+    expect(at('components/hud/BlockchainReadout.tsx')).toContain('·');
+
+    // And the resolution every ruling below turns on: `→` is in exactly one
+    // shipped face, and the three DOM voices reach it only because
+    // `HUD_FONTS` lists that face behind each of them. Drop the fallback and
+    // this says so in one line, before the sweep has to say it in thirty.
+    expect(familyCoverage('Saira').has(0x2192)).toBe(false);
+    expect(familyCoverage('Chakra Petch').has(0x2192)).toBe(false);
+    expect(familyCoverage('Share Tech Mono').has(0x2192)).toBe(false);
+    expect(familyCoverage('JetBrains Mono Local').has(0x2192)).toBe(true);
+    for (const voice of DOM_VOICES) expect(voice.carries.has(0x2192)).toBe(true);
+  });
+
+  it('every mark is carried by every face its site could be set in', () => {
+    const strays = PACKAGE_SOURCES.flatMap((source) => {
+      const text = code(source.text);
+      const marks = marksIn(text);
+      if (marks.length === 0) return [];
+      const stacks = applicableStacks(text);
+      return marks.flatMap((mark) => {
+        const cp = mark.codePointAt(0) ?? 0;
+        const hex = cp.toString(16).toUpperCase().padStart(4, '0');
+        return stacks
+          .filter((stack) => !stack.carries.has(cp))
+          .map((stack) => `${source.name}: ${mark} (U+${hex}) is in no face of ${stack.name}`
+            + ' — draw it as a mark in primitives.tsx, or put a face that has'
+            + ' it in the stack (src/fonts/README.md)');
+      });
+    });
+
+    expect(strays).toEqual([]);
   });
 });
 
