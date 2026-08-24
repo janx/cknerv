@@ -144,7 +144,7 @@ function SegmentReadout({
     <div
       data-cell-content-segment={index}
       data-cell-content-segment-range={`${segment.start_byte}:${segment.end_byte}`}
-      style={{ marginTop: 3, paddingTop: 3, borderTop: `1px solid ${rgba(color, 0.18)}` }}
+      style={{ marginTop: 3, paddingTop: 3, borderTop: `1px solid ${rgba(color, 0.16)}` }}
     >
       <div style={{ display: 'grid', gridTemplateColumns: '18px auto minmax(0,1fr) auto 18px', alignItems: 'center', gap: 4, minWidth: 0 }}>
         <button
@@ -204,7 +204,7 @@ function GuessReadout({
   return (
     <div
       data-cell-content-heuristic={index}
-      style={{ display: 'grid', gridTemplateColumns: '18px auto minmax(0,1fr) 18px', alignItems: 'baseline', gap: 4, minWidth: 0, marginTop: 3, paddingTop: 3, borderTop: `1px solid ${rgba(HUD_COLORS.caution, 0.15)}` }}
+      style={{ display: 'grid', gridTemplateColumns: '18px auto minmax(0,1fr) 18px', alignItems: 'baseline', gap: 4, minWidth: 0, marginTop: 3, paddingTop: 3, borderTop: `1px solid ${rgba(HUD_COLORS.caution, 0.16)}` }}
     >
       <button
         type="button"
@@ -545,7 +545,7 @@ export default function CellContentMemory({
         {/* The rule under the raw bytes is structure, not evidence: it is
           * drawn from the first frame, and only the rows below it stage. */}
         {enhanced ? (
-          <div data-cell-content-analysis="true" data-cell-content-analysis-state={analysisRevealed ? 'resolved' : 'scanning'} data-cell-content-analysis-reserved={analysisPending ? 'true' : undefined} style={{ display: 'block', minWidth: 0, paddingTop: 2, borderTop: `1px solid ${rgba(tone, 0.13)}`, minHeight: analysisPending ? CELL_CONTENT_ANALYSIS_RESERVED_PX : undefined }}>
+          <div data-cell-content-analysis="true" data-cell-content-analysis-state={analysisRevealed ? 'resolved' : 'scanning'} data-cell-content-analysis-reserved={analysisPending ? 'true' : undefined} style={{ display: 'block', minWidth: 0, paddingTop: 2, borderTop: `1px solid ${rgba(tone, 0.16)}`, minHeight: analysisPending ? CELL_CONTENT_ANALYSIS_RESERVED_PX : undefined }}>
             {/* The asset line is a VALUE reading, so it wears the house's
               * value-emphasis gold rather than the caution yellow it used to —
               * the same gold the register's AMOUNT row two columns over uses.

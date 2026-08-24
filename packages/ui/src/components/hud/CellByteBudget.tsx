@@ -13,6 +13,7 @@ import {
   formatExactCkb,
 } from './cellFormat';
 import { HUD_COLORS, HUD_TYPE, rgba } from './hudTheme';
+import { REVEAL_GHOST_OPACITY } from './primitives';
 
 export interface CellByteBudgetProps {
   /** Shannons, exactly as `cell.capacity` carries them. */
@@ -53,7 +54,7 @@ export default function CellByteBudget({
       data-byte-budget-reveal-state={revealed ? 'resolved' : 'scanning'}
       style={{
         minWidth: 0,
-        opacity: revealed ? 1 : 0.18,
+        opacity: revealed ? 1 : REVEAL_GHOST_OPACITY,
         transition: 'opacity 260ms ease',
         ...style,
       }}

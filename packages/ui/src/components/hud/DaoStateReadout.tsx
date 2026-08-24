@@ -317,8 +317,8 @@ export default function DaoStateReadout({ source, record, variant = 'section', n
             gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)',
             gap: 12,
             padding: '8px 0',
-            borderTop: `1px solid ${rgba(accent, 0.14)}`,
-            borderBottom: `1px solid ${rgba(accent, 0.14)}`,
+            borderTop: `1px solid ${rgba(accent, 0.16)}`,
+            borderBottom: `1px solid ${rgba(accent, 0.16)}`,
           }}
         >
           <CompactMetric

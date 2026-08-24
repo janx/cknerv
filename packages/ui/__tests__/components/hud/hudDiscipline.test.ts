@@ -72,6 +72,7 @@ import {
   PANEL_WATERMARK_PX,
   PLATE_CUT_CLIP,
   PLATE_CUT_PX,
+  REVEAL_GHOST_OPACITY,
 } from '../../../src/components/hud/primitives';
 import {
   ASSET_COLORS,
@@ -2740,6 +2741,208 @@ describe('the card dialect names a reading one way', () => {
     // a ninth is a deliberate edit rather than something that happens to a rule
     // nobody reread.
     expect(READOUT_LABEL_SITES).toHaveLength(8);
+  });
+});
+
+// ——— One alpha for a rule ———————————————————————————————————————————————
+//
+// Alpha was the dimension of this system nobody ever declared, and the sweep
+// that found that out is in `hudTheme.ts` beside the tracking table: one idea —
+// the line between two blocks of the cell dossier — drawn at 0.09, 0.13, 0.15,
+// 0.18, 0.24 and 0.32. The 0.09 was not merely inconsistent; it sat BELOW the
+// number the same file had already written down as invisible, in a comment
+// arguing that two other rules had to be raised because "under this background
+// that is no rule at all".
+//
+// What this governs is a RULE and nothing else, and the jurisdiction is a
+// CONSTRUCT rather than a filename: a `1px solid` horizontal border in a style
+// object that sets no vertical border and no `background` of its own. Both
+// halves of that do real work. A style object with a ground is a SURFACE — a
+// banner, a condition box, a control — and its border is that surface's own
+// outline, not a line between two things; that is what keeps the banners' 0.45
+// bottom edges and the LINK LOST box's 0.5 out of a rule's business. And an
+// object that sets a left or right border is drawing an EDGE: `spatialPlate`
+// wears 0.46 / 0.15 / 0.09 on its three sides because it is a LIT edge, and
+// collapsing those onto a rule's rung would flatten the one thing they are for.
+//
+// The three rungs and the reasoning behind each are in `hudTheme.ts` — this
+// tolls itself against that table rather than keeping a second copy of it. Two
+// of them are about what a line separates, a section or a rank. The third
+// belongs to the status strip alone, and is declared rather than derived
+// because a rule is read as its alpha TIMES the brightness of its ink: the
+// strip draws in `cyanWire`, a panel in its accent, and cyan at 0.07 and orange
+// at 0.16 land within 1.4× of each other on the ground both sit on. So the
+// strip's rung is keyed to its file the way the tracking table's exceptions
+// are, and nobody else may borrow it.
+//
+// WHAT IS NOT HERE is argued at length in `hudTheme.ts` and worth naming again
+// in one line: material alpha under a camera, canvas `globalAlpha`, a wash, a
+// glow, a surface's edge, a rail and a track are each a different question, and
+// a rule that reached for them would be wrong about most of them.
+
+/** The rungs, held here for the sweep and tolled against `hudTheme.ts`. */
+const ALPHA_RUNGS = { rule: 0.16, zoneBreak: 0.32, strip: 0.07 } as const;
+
+/** The one surface the strip rung belongs to — same arrangement as a declared
+ *  tracking exception, and for the same reason: the argument is about ONE
+ *  surface, so it stops being an argument the moment a second one helps itself. */
+const STRIP_RULE_SOURCE = 'StatusStrip.tsx';
+
+/** The alpha table's own text in `hudTheme.ts`. Read RAW: it is a comment. */
+function alphaComment(): string {
+  const theme = SOURCES.find((source) => source.name === 'hudTheme.ts');
+  expect(theme, 'hudTheme.ts moved — this oracle reads files off disk').toBeDefined();
+  const text = theme?.text ?? '';
+  const start = text.indexOf('// ——— Alpha');
+  const end = text.indexOf('/** A `#RRGGBB` palette color', start);
+  expect(start, 'no Alpha section to read').toBeGreaterThan(-1);
+  expect(end, 'no end to the Alpha section').toBeGreaterThan(start);
+  return text.slice(start, end);
+}
+
+/** A horizontal 1px line, however its property was spelled — the DAO band
+ *  writes its top rule behind a ternary, and a sweep anchored on the backtick
+ *  would have read past it. */
+const RULE_BORDER = /border(?:Top|Bottom):[^\n]*?`1px solid \$\{rgba\(([^,()]+),\s*([\d.]+)\)\}`/g;
+
+/** Every rule a source draws, with the ink it is drawn in. */
+function rulesIn(text: string): Array<{ ink: string; alpha: number }> {
+  const rules: Array<{ ink: string; alpha: number }> = [];
+  RULE_BORDER.lastIndex = 0;
+  let match = RULE_BORDER.exec(text);
+  while (match !== null) {
+    const object = enclosingObject(text, match.index) ?? '';
+    const surface = /(?:^|[\s{,])background:/.test(object);
+    const edge = /border(?:Left|Right):/.test(object);
+    if (!surface && !edge) rules.push({ ink: match[1].trim(), alpha: Number(match[2]) });
+    match = RULE_BORDER.exec(text);
+  }
+  return rules;
+}
+
+/** Every opacity written as a number, in the notation React takes it. */
+function opacitiesIn(text: string): number[] {
+  const found: number[] = [];
+  const opacity = /(?<![\w$-])opacity:\s*([^,;}\n]+)/g;
+  let match = opacity.exec(text);
+  while (match !== null) {
+    for (const number of match[1].match(/\d+\.?\d*|\.\d+/g) ?? []) found.push(Number(number));
+    match = opacity.exec(text);
+  }
+  return found;
+}
+
+describe('one alpha for a rule', () => {
+  it('the table in hudTheme and the rungs here are one ladder', () => {
+    // The toll, as the tracking table has one. A rung table written in two
+    // places is the failure this whole file is about.
+    const comment = alphaComment();
+    const declared: number[] = [];
+    const line = /^\/\/   (0\.\d+)   [A-Z]/gm;
+    let rung = line.exec(comment);
+    while (rung !== null) {
+      declared.push(Number(rung[1]));
+      rung = line.exec(comment);
+    }
+    expect(declared.sort((a, b) => a - b))
+      .toEqual([...Object.values(ALPHA_RUNGS)].sort((a, b) => a - b));
+
+    // …and the strip's rung is attributed to the strip in the record, not just
+    // in this file.
+    expect(comment).toContain('STATUS STRIP');
+    expect(comment).toContain('`REVEAL_GHOST_OPACITY` in `primitives.tsx`');
+  });
+
+  it('a zone break is louder than a rule, which is the whole distinction', () => {
+    expect(ALPHA_RUNGS.zoneBreak).toBeGreaterThan(ALPHA_RUNGS.rule);
+    expect(ALPHA_RUNGS.rule).toBeGreaterThan(ALPHA_RUNGS.strip);
+  });
+
+  it('finds rules, and does not mistake a surface or an edge for one', () => {
+    // The pin, and it has two halves because this classifier can fail in two
+    // directions. Too narrow and the membership rule below checks nothing; too
+    // broad and it starts demanding a rule's alpha from a banner's own edge.
+    const overlay = domDialect();
+    const rules = overlay.flatMap((source) => rulesIn(code(source.text)));
+    expect(rules.length).toBeGreaterThan(10);
+
+    // `primitives.tsx` draws exactly one pair of horizontal borders and they
+    // are `spatialPlate`'s lit edge — three sides, three alphas, on purpose.
+    const primitives = SOURCES.find((source) => source.name === 'primitives.tsx');
+    expect(code(primitives?.text ?? '')).toContain('borderTop: `1px solid ${rgba(accent, 0.15)}`');
+    expect(rulesIn(code(primitives?.text ?? ''))).toEqual([]);
+
+    // …and a banner's bottom edge is the banner, not a rule between blocks.
+    const banner = SOURCES.find((source) => source.name === 'StreamHealthBanner.tsx');
+    expect(code(banner?.text ?? '')).toContain('borderBottom: `1px solid ${rgba(visual.color, 0.45)}`');
+    expect(rulesIn(code(banner?.text ?? ''))).toEqual([]);
+  });
+
+  it('every rule in the overlay is a declared rung', () => {
+    const offenders: string[] = [];
+    for (const source of domDialect()) {
+      for (const rule of rulesIn(code(source.text))) {
+        if (Object.values(ALPHA_RUNGS).includes(rule.alpha as never)) continue;
+        offenders.push(`${source.name}: a rule at ${rule.alpha} is not a rung of the alpha table`);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('the strip rung belongs to the strip', () => {
+    // Stated separately because it is a different promise. Membership would
+    // pass if a panel drew its section rule at the strip's 0.07; the argument
+    // for that number is about cyan on the instrument's own chrome, and it does
+    // not travel.
+    const strays: string[] = [];
+    for (const source of domDialect()) {
+      if (source.name === STRIP_RULE_SOURCE) continue;
+      for (const rule of rulesIn(code(source.text))) {
+        if (rule.alpha !== ALPHA_RUNGS.strip) continue;
+        strays.push(`${source.name}: ${rule.alpha} is ${STRIP_RULE_SOURCE}'s rung`);
+      }
+    }
+    expect(strays).toEqual([]);
+
+    // And the strip really is where it is worn — otherwise the rung is a rule
+    // about nothing.
+    const strip = SOURCES.find((source) => source.name === STRIP_RULE_SOURCE);
+    const worn = rulesIn(code(strip?.text ?? '')).map((rule) => rule.alpha);
+    expect(worn.length).toBeGreaterThan(1);
+    expect(new Set(worn)).toEqual(new Set([ALPHA_RUNGS.strip]));
+  });
+
+  it('the ghost is one number, and no file writes it down', () => {
+    // `REVEAL_GHOST_OPACITY`'s own doc comment says "One number so no two
+    // stages can disagree about what dark means" — and two files were typing
+    // the literal instead, one of them without importing the module at all,
+    // which is exactly the shape the palette's inverted rule was written for.
+    const offenders: string[] = [];
+    for (const source of domDialect()) {
+      for (const value of opacitiesIn(code(source.text))) {
+        if (value !== REVEAL_GHOST_OPACITY) continue;
+        offenders.push(`${source.name}: ${value} is REVEAL_GHOST_OPACITY, spelled instead of read`);
+      }
+    }
+    expect(offenders).toEqual([]);
+
+    // …and it has readers, so the ban above is not guarding an orphan.
+    const readers = SOURCES
+      .filter((source) => code(source.text).includes('REVEAL_GHOST_OPACITY'))
+      .map((source) => source.name)
+      .sort();
+    expect(readers).toContain('primitives.tsx');
+    expect(readers.length).toBeGreaterThan(2);
+  });
+
+  it('reads an opacity however it was written', () => {
+    // The pin under the ban. A leading-zero-less decimal is how CSS strings
+    // spell one, and a sweep that only knew `0.18` would read `.18` as nothing.
+    expect(opacitiesIn('opacity: 0.18,')).toEqual([0.18]);
+    expect(opacitiesIn('opacity: revealed ? 1 : 0.18,')).toEqual([1, 0.18]);
+    expect(opacitiesIn('opacity:.18}')).toEqual([0.18]);
+    expect(opacitiesIn('backgroundOpacity: 0.18,')).toEqual([]);
   });
 });
 

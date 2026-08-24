@@ -990,7 +990,7 @@ export default function StatusStrip({
               overscrollBehaviorX: 'contain',
               scrollbarWidth: 'none',
               pointerEvents: 'auto',
-              borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.055)}`,
+              borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.07)}`,
             }}
           >
             {contextControls}
@@ -1043,7 +1043,7 @@ export default function StatusStrip({
             overscrollBehaviorX: 'contain',
             scrollbarWidth: 'none',
             pointerEvents: 'auto',
-            borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.06)}`,
+            borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.07)}`,
           }}
         >
           {performanceControls}

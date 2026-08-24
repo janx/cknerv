@@ -444,6 +444,84 @@ export const HUD_TYPE = {
 //               name each other in a comment so neither gets "fixed" into the
 //               other.
 
+// ——— Alpha ————————————————————————————————————————————————————————————————
+//
+// The one dimension of this system nobody had declared, and the evidence that
+// it needed declaring is a single idea drawn six ways: the RULE between two
+// blocks of the cell dossier was 0.09, 0.13, 0.15, 0.18, 0.24 and 0.32.
+//
+// 0.09 is not merely inconsistent with the others. It is below the value this
+// HUD has already written down as INVISIBLE: `CellDetailPanel.tsx` says of the
+// two rules between its three ranks that they "were drawn at 0.12 and 0.18
+// alpha — under this background that is no rule at all", and raises them. The
+// MEMORY TRACE separator a thousand lines up in the same file was still 0.09 —
+// and drawn in the consensus cyan, inside a provenance footer that is violet.
+//
+// Three rungs, and they are about WHAT A LINE SEPARATES:
+//
+//   0.16   A RULE. The line between two sections of one readout, or between two
+//          clusters inside one section: the DAO capacity band's brackets, the
+//          activity feed's and the chain and horizon readouts' section tops,
+//          every separator in the content window, the dossier's MEMORY TRACE.
+//   0.32   A ZONE BREAK. The line between two RANKS of a card — the dossier's
+//          register/analysis break and the break into its provenance footer.
+//          Twice a rule, because a rank is not a section.
+//   0.07   A rule on the STATUS STRIP, between the bands of the instrument's
+//          own chrome. It has a rung of its own and the reason is measured,
+//          below; it is not a grandfathering.
+//
+// And one more that is not a rule at all but is the same class of promise, so
+// it is recorded here and lives where its machinery lives:
+//
+//   ghost  `REVEAL_GHOST_OPACITY` in `primitives.tsx` — 0.18, the dark an
+//          unreached stage of a card's reveal wears. Its own doc comment says
+//          "One number so no two stages can disagree about what dark means",
+//          and two files were writing the literal instead of importing it, one
+//          of them without importing the module at all.
+//
+// WHY THE STRIP GETS ITS OWN RUNG. A rule is read as its alpha TIMES the
+// brightness of the ink it is drawn in, and this palette's inks are nothing
+// like one brightness: `cyanWire` is twice the relative luminance of `memory`,
+// and about 1.6× `orange`. The strip's hairlines are cyan; a panel's rule is
+// its accent. Measured against the near-black both surfaces are painted on,
+// cyan at 0.07 and orange at 0.16 land within 1.4× of each other — so snapping
+// the strip to the panel rung would not tidy anything, it would make three
+// hairlines two and a half times louder than the rules they currently match.
+// The strip had three values for one job (0.055, 0.06, 0.07) and now has one.
+//
+// AND WHY THE ZONE BREAK IS THE HIGHER OF ITS TWO. The dossier's two rank
+// rules were 0.24 in cyan and 0.32 in violet. Nothing argued the pair: they
+// were raised together, in one edit, out of one comment, and landed on two
+// numbers. They are one rung now, and it is 0.32 — because the recorded
+// failure mode of this line is that it went INVISIBLE, and the rung has to be
+// set by the dimmest ink that has to wear it, which is the violet at half the
+// cyan's luminance. The same arithmetic is why the MEMORY TRACE rule keeps its
+// weight while moving two rungs and changing colour: violet at 0.16 is within
+// a hair of what cyan at 0.09 was.
+//
+// WHAT THIS LADDER DOES NOT GOVERN, and why, because a ladder that reached for
+// all of them would be wrong about most:
+//
+//   material alpha   The scene is additive light on the stage ground with tone
+//               mapping off, not ink composited onto a lit panel — the same
+//               argument that exempts it from the type scale. A shader uniform
+//               and a `<meshBasicMaterial opacity>` are that medium; an alpha
+//               rule written for a DOM hairline would be nonsense there.
+//   canvas       The ECG's trace is phosphor drawn with `globalAlpha` on its
+//               own canvas, which is neither.
+//   a wash       `background: rgba(c, a)` under a block. How much ground shows
+//               through is a property of THE PAIR — the colour and the surface
+//               it tints — not of a role, and the dossier's composition block
+//               argues its own 0.07 on exactly those terms.
+//   a glow       `boxShadow` / `textShadow`. Atmosphere, sized to its source.
+//   an EDGE      A surface's own border is not a rule between two things, it is
+//               the outline of one. `spatialPlate` wears three deliberately
+//               different alphas — 0.46 on the left rail, 0.15 on top, 0.09
+//               underneath — because it is a LIT edge, and it is single-sourced
+//               in `primitives.tsx` so it cannot drift anyway.
+//   a rail       `PLATE_ROW_RAIL_ALPHA`, already one number in one place.
+//   a track      The empty half of a meter is `trackGround`, a colour.
+
 /** A `#RRGGBB` palette color as an `rgba(r,g,b,a)` string — single source for
  *  canvas/border tints that need an alpha the hex form can't carry. */
 export function rgba(hex: string, alpha: number): string {

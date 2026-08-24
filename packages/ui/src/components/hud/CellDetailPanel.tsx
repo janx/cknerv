@@ -772,7 +772,7 @@ const CellScanFact = memo(function CellScanFact({
         font: 'inherit',
         textAlign: 'left',
         cursor: interactive ? 'crosshair' : 'default',
-        opacity: revealed ? 1 : 0.18,
+        opacity: revealed ? 1 : REVEAL_GHOST_OPACITY,
         transition: 'opacity 260ms ease, background 160ms ease, box-shadow 160ms ease',
         pointerEvents: interactive ? 'auto' : 'none',
       }}
@@ -1019,10 +1019,15 @@ function CellScanTraceBlock({
   const recallEnabled = classified && identityProofComplete;
   return (
     <div
+      // The rule over this affordance was cyan at 0.09 — below the alpha this
+      // file's own zone-break comment calls no rule at all, and in the
+      // consensus plane's colour inside a footer that is violet. It is the
+      // footer's ink at the house rule rung now, and it reads at very nearly
+      // the weight it did: violet carries about half the light cyan does.
       data-consensus-memory-reveal="trace"
       data-consensus-memory-reveal-state={revealed ? 'resolved' : 'scanning'}
       {...revealStageAttributes(revealed)}
-      style={{ display: 'block', marginTop: 4, paddingTop: 2, borderTop: `1px solid ${rgba(CYAN, 0.09)}`, ...revealStageStyle(revealed) }}
+      style={{ display: 'block', marginTop: 4, paddingTop: 2, borderTop: `1px solid ${rgba(VIOLET, 0.16)}`, ...revealStageStyle(revealed) }}
     >
       {onTraceWrite ? (
         <button
@@ -1962,13 +1967,20 @@ export default function CellDetailPanel({
           * while the gap INSIDE the register (6) all but matched the gap
           * BETWEEN ranks (7). Fourteen bands of equal weight read as one
           * undifferentiated column, which is the clutter. Ranks separate
-          * wide and visibly; clusters inside a rank sit close. */}
+          * wide and visibly; clusters inside a rank sit close.
+          *
+          * That raise landed on TWO numbers, 0.24 here and 0.32 on the
+          * footer below, and nothing ever argued the difference. One rung
+          * now — the alpha table in `hudTheme.ts` — and it is the higher of
+          * the two, because the failure this comment records is a rule going
+          * invisible and the footer's violet is half the luminance of this
+          * cyan. */}
         <div
           data-cell-analysis-bytes="true"
           style={{
             minWidth: 0,
             paddingTop: 11,
-            borderTop: `1px solid ${rgba(CYAN, 0.24)}`,
+            borderTop: `1px solid ${rgba(CYAN, 0.32)}`,
             display: 'grid',
             gap: 6,
           }}
