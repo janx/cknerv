@@ -83,6 +83,26 @@ function sightedHitRadius(node: NetworkNode): number {
     : SIGHTED_HIT_RADIUS;
 }
 
+/** Keep handing back the list a point buffer was already built from, for as long
+ *  as `matches` holds pairwise. Every topology rebuild re-splits the node list
+ *  into fresh arrays; a cloud that keys its geometry on one of them pays a GPU
+ *  delete/alloc/upload for points that did not move. What "did not move" MEANS
+ *  differs per tier, so each caller supplies its own test. Exported for
+ *  out-of-band testing — nothing outside this file renders a colony cloud. */
+export function useStableList<T>(next: T[], matches: (a: T, b: T) => boolean): T[] {
+  const held = useRef(next);
+  const prev = held.current;
+  if (prev !== next) {
+    let unchanged = prev.length === next.length;
+    for (let i = 0; unchanged && i < next.length; i += 1) unchanged = matches(prev[i], next[i]);
+    if (!unchanged) held.current = next;
+  }
+  return held.current;
+}
+
+const sameNodeObject = (a: NetworkNode, b: NetworkNode): boolean => a === b;
+const sameNodeId = (a: NetworkNode, b: NetworkNode): boolean => a.id === b.id;
+
 // Measured node tint = the real peer palette: version-mismatch (violet) wins,
 // else connection direction — single-sourced via peerColorKind (see the
 // value-keyed memo in MeasuredNode).
@@ -104,10 +124,16 @@ function InferredCloud({
 }) {
   const simClock = useSimClock();
   const gl = useThree((state) => state.gl);
-  const inferred = useMemo(
+  // The ghosts are the derive's CACHED scaffold objects, pushed into the node
+  // list by reference and handed back untouched until the seed or the sighted
+  // roster changes — so object identity is exactly the test for "these points
+  // stand where they stood", and it is the only test that survives a reseed
+  // (which keeps every `inf:n` id while moving every point).
+  const staged = useMemo(
     () => topology.nodes.filter((n) => n.kind === 'inferred'),
     [topology],
   );
+  const inferred = useStableList(staged, sameNodeObject);
 
   const geom = useMemo(() => {
     const g = new THREE.BufferGeometry();
@@ -172,17 +198,26 @@ function SightedCloud({
   const simClock = useSimClock();
   const gl = useThree((state) => state.gl);
 
+  // Unlike the ghosts, these node objects are re-staged from the crawler's row
+  // on every build, so identity says nothing. Their POSITIONS are `sightedPos`
+  // of the id and nothing else — the same fact the derive's scaffold cache is
+  // keyed on — so the id sequence is what this buffer follows. A round that
+  // adds, drops or reorders a node changes it, and so does one that flips a
+  // node's reachability (it moves between the two tones); a round that only
+  // refreshed last_seen does not.
+  const points = useStableList(nodes, sameNodeId);
+
   const geom = useMemo(() => {
     const g = new THREE.BufferGeometry();
-    const pos = new Float32Array(nodes.length * 3);
-    nodes.forEach((n, i) => {
+    const pos = new Float32Array(points.length * 3);
+    points.forEach((n, i) => {
       pos[i * 3] = n.pos[0];
       pos[i * 3 + 1] = n.pos[1];
       pos[i * 3 + 2] = n.pos[2];
     });
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     return g;
-  }, [nodes]);
+  }, [points]);
 
   const mat = useMemo(
     () => makePeerCloudMaterial(shockwaveUniforms, tone),

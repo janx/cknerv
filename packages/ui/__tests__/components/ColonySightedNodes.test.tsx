@@ -1,11 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { render } from '@testing-library/react';
+import { render, renderHook } from '@testing-library/react';
 import { Canvas } from '@react-three/fiber';
-import ColonyNodes from '../../src/components/ColonyNodes';
+import ColonyNodes, { useStableList } from '../../src/components/ColonyNodes';
 import { inferredTopology } from '../../src/derives/networkTopology.derive';
 import { colonyFlood } from '../../src/derives/networkFlood.derive';
+import type { NetworkNode } from '../../src/types';
 import type { NetworkRosterRecord, Peer, RosterNode } from '@cknerv/types';
 
 function source(file: string): string {
@@ -132,5 +133,76 @@ describe('ColonyNodes sighted tier', () => {
     // churn + unmount guards: a retired or unmounted node never strands a hand.
     expect(nodes).toContain('ownedRef.current.has(hovered)');
     expect(nodes).toContain('!previous.has(hovered)');
+  });
+});
+
+describe('cloud point buffers outlive the rebuilds that do not move them', () => {
+  const sameObject = (a: NetworkNode, b: NetworkNode) => a === b;
+  const sameId = (a: NetworkNode, b: NetworkNode) => a.id === b.id;
+  const ghostsOf = (t: ReturnType<typeof inferredTopology>) => t.nodes.filter((n) => n.kind === 'inferred');
+  const sightedOf = (t: ReturnType<typeof inferredTopology>) => t.nodes.filter((n) => n.kind === 'sighted');
+  const measured = (node_id: string, latency_ms: number) => ({ ...peer(node_id), latency_ms });
+
+  it('a peer ping that moves the measured belt leaves the 240-point ghost cloud alone', () => {
+    const before = ghostsOf(inferredTopology([measured('A', 40)], 0xc0ffee, 'ckb:local', undefined, ROSTER));
+    const after = ghostsOf(inferredTopology([measured('A', 220)], 0xc0ffee, 'ckb:local', undefined, ROSTER));
+    expect(after).not.toBe(before);           // the topology really did rebuild
+    const held = renderHook(({ list }) => useStableList(list, sameObject), {
+      initialProps: { list: before },
+    });
+    held.rerender({ list: after });
+    expect(held.result.current).toBe(before); // …and the geometry key did not
+  });
+
+  it('the two tiers test different things: ghosts by object, sighted by id', () => {
+    // A ghost is the derive's cached scaffold object; a reseed keeps every
+    // `inf:n` id while moving every point, so only identity is safe there. A
+    // sighted node is re-staged from the crawler's row every build, so identity
+    // is never held — but `sightedPos` is a pure function of the id, so the id
+    // is exactly what its points follow.
+    const original: NetworkNode[] = [
+      { id: 'inf:0', kind: 'inferred', pos: [0, 0, 0] },
+      { id: 'inf:1', kind: 'inferred', pos: [1, 0, 0] },
+    ];
+    const reseeded: NetworkNode[] = original.map((n) => ({ ...n, pos: [9, 9, 9] }));
+    const byObject = renderHook(({ list }) => useStableList(list, sameObject), {
+      initialProps: { list: original },
+    });
+    byObject.rerender({ list: reseeded });
+    expect(byObject.result.current).toBe(reseeded);
+    const byId = renderHook(({ list }) => useStableList(list, sameId), {
+      initialProps: { list: original },
+    });
+    byId.rerender({ list: original.map((n) => ({ ...n })) });
+    expect(byId.result.current).toBe(original);
+  });
+
+  it('a fresh crawl round holds the sighted buffer; a roster that changed who is on it does not', () => {
+    const staged = (roster: NetworkRosterRecord) => sightedOf(
+      inferredTopology([measured('A', 40)], 0xc0ffee, 'ckb:local', undefined, roster),
+    );
+    const rounds = {
+      ...ROSTER,
+      crawl_round: ROSTER.crawl_round + 1,
+      entries: ROSTER.entries.map((e) => ({ ...e, last_seen_ms: e.last_seen_ms + 60_000 })),
+    };
+    const shorter = { ...ROSTER, entries: ROSTER.entries.slice(0, 8) };
+    const first = staged(ROSTER);
+    const held = renderHook(({ list }) => useStableList(list, sameId), {
+      initialProps: { list: first },
+    });
+    held.rerender({ list: staged(rounds) });
+    expect(held.result.current).toBe(first);
+    held.rerender({ list: staged(shorter) });
+    expect(held.result.current).not.toBe(first);
+  });
+
+  it('each cloud keys its buffer on the held list, under its own tier’s test', () => {
+    const nodes = source('ColonyNodes.tsx');
+    expect(nodes).toContain('const inferred = useStableList(staged, sameNodeObject)');
+    expect(nodes).toContain('const points = useStableList(nodes, sameNodeId)');
+    // …and the geometry follows the held list, never the freshly split one.
+    expect(nodes).toContain('}, [inferred]);');
+    expect(nodes).toContain('}, [points]);');
   });
 });
