@@ -24,6 +24,19 @@ export function latencyToRadius01(latencyMs: number | null | undefined): number 
   return c / PEER_LATENCY_CAP_MS;
 }
 
+/** How many radial steps the annulus resolves a ping into. The band is
+ *  PEER_OUTER_RADIUS − PEER_INNER_RADIUS = 22 world units wide for the WHOLE
+ *  0-PEER_LATENCY_CAP_MS range, so a step is 1.4 of them: the finest reading a
+ *  viewer can take off a ring of glow blobs that is itself counter-rotating. */
+export const PEER_LATENCY_STEPS = 16;
+
+/** Which of those steps a ping places a peer on. Memo signatures over the peer
+ *  list quantize HERE rather than on raw `latency_ms`, so the step travels with
+ *  the placement formula above instead of drifting away from it. */
+export function latencyPlacementStep(latencyMs: number | null | undefined): number {
+  return Math.round(latencyToRadius01(latencyMs) * PEER_LATENCY_STEPS);
+}
+
 /** Deterministic angle [0, 2π) from a node id — stable per peer. */
 export function peerAngle(nodeId: string): number {
   let h = 0;

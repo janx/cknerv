@@ -41,6 +41,7 @@ import {
   deriveConsensusMemoryTraceEndpoints,
   deriveStreamHealthSummary,
   inferredTopology,
+  latencyPlacementStep,
   livePulseDepartureDelayS,
   CellGalaxy,
   CellGalaxyProvider,
@@ -684,16 +685,24 @@ export default function App({
   // flash/pulse buffers) would rebuild/reset every poll. No-op re-clones now keep
   // the same `topology` object; genuine peer changes still rebuild (accepted).
   // The signature includes ONLY the fields the colony actually renders from the
-  // topology snapshot: node_id (identity), latency_ms (measured position),
+  // topology snapshot: node_id (identity), latency (measured position),
   // direction + version (measured colour via peerColorKind). `best_known` is
   // deliberately EXCLUDED — nothing rendered reads it (sync-brightness was
   // dropped), and it advances ~every block, so including it would rebuild the
   // topology mid-flood and truncate the in-flight wavefront every block. If
   // sync-based brightness is ever restored, drive it via a ref, not this sig.
+  // Latency enters QUANTIZED for the same reason, one door further in: it is
+  // read only through `latencyToRadius01`, which resolves the whole 0-400 ms
+  // range onto 16 steps of the peer annulus, and the adapter deliberately
+  // admits a telemetry-only refresh every ~32s whose OWN structural key
+  // excludes latency. At raw resolution a peer's ping jitter re-keys the
+  // topology on that refresh and the whole colony — flood, edges, clouds,
+  // courier schedule — rebuilds for a move the ring cannot show. A ping that
+  // crosses a step is a real move and still rebuilds.
   const peersSig = useMemo(
     () =>
       peers
-        .map((p) => `${p.node_id}|${p.latency_ms ?? ''}|${p.direction}|${p.version ?? ''}`)
+        .map((p) => `${p.node_id}|${latencyPlacementStep(p.latency_ms)}|${p.direction}|${p.version ?? ''}`)
         .join(';'),
     [peers],
   );

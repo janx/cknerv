@@ -68,6 +68,10 @@ export * from './derives/consensusFlow.derive';
 export * from './derives/cellPopulationField.derive';
 export * from './derives/networkTopology.derive';
 export * from './derives/networkFlood.derive';
+// Only the placement quantizer: a memo signature over the peer list has to
+// resolve a ping exactly as the annulus does, and this keeps the two on one
+// formula rather than copying the band constants out of the package.
+export { latencyPlacementStep } from './derives/peers.derive';
 export * from './derives/sceneView.derive';
 // Only the collapse itself: the formatters beside it are banner copy, and the
 // one caller outside this package asks a single question — is every stream

@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   latencyToRadius01,
+  latencyPlacementStep,
+  PEER_LATENCY_CAP_MS,
+  PEER_INNER_RADIUS,
+  PEER_OUTER_RADIUS,
+  PEER_LATENCY_STEPS,
   peerAngle,
   syncProximity,
   peerColorKind,
@@ -48,6 +53,26 @@ describe('peers.derive', () => {
     expect(latencyToRadius01(undefined)).toBe(0.5);
     expect(latencyToRadius01(0)).toBe(0);
     expect(latencyToRadius01(100000)).toBe(1);
+  });
+
+  it('latencyPlacementStep resolves a ping onto the annulus, no finer', () => {
+    // The step exists so a memo signature over the peer list stops flipping on
+    // ping jitter. Its size is the band's own reading resolution: one step is
+    // (PEER_OUTER_RADIUS − PEER_INNER_RADIUS) / PEER_LATENCY_STEPS world units.
+    const perStep = (PEER_OUTER_RADIUS - PEER_INNER_RADIUS) / PEER_LATENCY_STEPS;
+    expect(perStep).toBeCloseTo(1.375, 6);
+    expect(PEER_LATENCY_CAP_MS / PEER_LATENCY_STEPS).toBe(25);
+    // jitter inside one step is one step…
+    expect(latencyPlacementStep(140)).toBe(latencyPlacementStep(147));
+    // …and a ping that genuinely moved is a different one.
+    expect(latencyPlacementStep(140)).not.toBe(latencyPlacementStep(190));
+    // the ends, and the unknown ping the annulus stands mid-ring.
+    expect(latencyPlacementStep(0)).toBe(0);
+    expect(latencyPlacementStep(PEER_LATENCY_CAP_MS)).toBe(PEER_LATENCY_STEPS);
+    expect(latencyPlacementStep(100_000)).toBe(PEER_LATENCY_STEPS);
+    expect(latencyPlacementStep(null)).toBe(PEER_LATENCY_STEPS / 2);
+    expect(latencyPlacementStep(undefined)).toBe(latencyPlacementStep(null));
+    expect(latencyPlacementStep(Number.NaN)).toBe(latencyPlacementStep(null));
   });
 
   it('peerAngle is deterministic and in range', () => {

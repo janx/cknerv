@@ -128,3 +128,21 @@ describe('scene-root memo inputs', () => {
     expect(body).toContain('<CellInspectionAnchor');
   });
 });
+
+describe('colony topology signature', () => {
+  it('admits identity, direction and version raw — and a ping only by its step', () => {
+    // The signature is what stands between a ~4s peer poll and a full colony
+    // rebuild, so every field it reads is a field the colony draws. Raw
+    // `latency_ms` reads as one of those and is not: the annulus resolves a
+    // ping onto 16 steps, while the adapter deliberately admits a
+    // telemetry-only refresh whose own structural key excludes latency — so at
+    // raw resolution the whole colony rebuilds on jitter, mid-flood.
+    const sig = APP_SOURCE.slice(
+      APP_SOURCE.indexOf('const peersSig = useMemo('),
+      APP_SOURCE.indexOf('const networkRoster ='),
+    );
+    expect(sig).toContain('${p.node_id}|${latencyPlacementStep(p.latency_ms)}|${p.direction}|${p.version ?? \'\'}');
+    expect(sig).not.toContain('p.latency_ms ??');
+    expect(sig).not.toContain('best_known');
+  });
+});
