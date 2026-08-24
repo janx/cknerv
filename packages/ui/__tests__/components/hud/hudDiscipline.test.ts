@@ -75,6 +75,10 @@ import {
   REVEAL_GHOST_OPACITY,
 } from '../../../src/components/hud/primitives';
 import {
+  HAZARD_BAND_PX,
+  WARNING_BAR_HEIGHT,
+} from '../../../src/components/hud/WarningBar';
+import {
   ASSET_COLORS,
   ASSET_STANDARD_ACCENTS,
   CLASS_MIX_COLORS,
@@ -1082,6 +1086,35 @@ describe('hud discipline', () => {
  *  treatment, so the property — not the function — is what is matched. */
 const CLIP_PATH_PROP = /clipPath:\s*([A-Za-z_$][\w$]*|['"`])/g;
 
+/** Every box in the overlay outlined on all four sides with no ground of its
+ *  own, and whether it is a BLOCK rather than a chip. The three properties are
+ *  the whole classifier: an all-round `1px solid` rule, some padding, and no
+ *  `background`. A meter track and a plate both have a ground; a rail-hung tag
+ *  draws one edge; what is left is the outlined box that holds a word. */
+function boxedOutlines(): Array<{ name: string; block: boolean }> {
+  const found: Array<{ name: string; block: boolean }> = [];
+  for (const source of domDialect()) {
+    const text = code(source.text);
+    const border = /border: `1px solid /g;
+    let match = border.exec(text);
+    while (match !== null) {
+      const object = enclosingObject(text, match.index);
+      if (
+        object
+        && !/(?:^|[\s{,])background:/.test(object)
+        && /(?:^|[\s{,])padding:/.test(object)
+      ) {
+        found.push({
+          name: source.name,
+          block: /display: '(?:block|flex|grid)'/.test(object),
+        });
+      }
+      match = border.exec(text);
+    }
+  }
+  return found;
+}
+
 describe('one shape grammar', () => {
   it('one cut, one number, and the number is in the shape', () => {
     expect(PLATE_CUT_PX).toBe(12);
@@ -1115,6 +1148,226 @@ describe('one shape grammar', () => {
     );
 
     expect(wearers.map((source) => source.name)).toContain('BackfillBar.tsx');
+  });
+
+  it('nothing in the HUD cuts its own outline chip', () => {
+    // The cut's rule one shape over, and found the same way: by CONSTRUCT, not
+    // by filename. A box outlined on all four sides in a tinted colour, holding
+    // a word, with no ground of its own IS the outline chip — `plateStateChip`
+    // — and five surfaces wear it. The sixth hand-rolled it: the replay
+    // banner's phase tag differed from the house grammar in every one of its
+    // six properties (1px 4px against 1px 5px, a 0.36 border against 0.55,
+    // `nav` against `micro`, weight 400 against 700, tracking 0.9 against 1.4,
+    // mono against tech) and nothing anywhere argued a single one of them.
+    //
+    // Blocks are not chips and the classifier says so in the property that
+    // actually distinguishes them: a chip is inline and sits beside the thing
+    // it qualifies, so the one outlined BLOCK in the overlay — the content
+    // window's `NO OUTPUT DATA` placeholder, which spans its column — declares
+    // `display: 'block'` and is sorted out rather than listed out.
+    const chips = boxedOutlines();
+
+    // The pin, before the assertion: the sweep has to be shown reaching both
+    // the primitive it is protecting and the block it is supposed to exclude,
+    // or "no offenders" would be indistinguishable from "no population".
+    expect(chips.filter((chip) => chip.name === SHAPE_SOURCE)).toHaveLength(1);
+    expect(chips.some((chip) => chip.name === 'CellContentMemory.tsx' && chip.block))
+      .toBe(true);
+
+    const offenders = chips
+      .filter((chip) => chip.name !== SHAPE_SOURCE && !chip.block)
+      .map((chip) => `${chip.name}: hand-cut outline chip → say plateStateChip`);
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('the outline chip is worn outside the file that describes it', () => {
+    const wearers = SOURCES.filter(
+      (source) => source.name !== SHAPE_SOURCE
+        && code(source.text).includes('plateStateChip('),
+    );
+
+    // Five surfaces, and the replay banner is the fifth: it is the one that
+    // hand-rolled its own for the life of the file, so naming it here is what
+    // stops the convergence being quietly undone.
+    expect(wearers.map((source) => source.name).sort()).toEqual([
+      'BackfillBar.tsx',
+      'CellDetailPanel.tsx',
+      'NodeSelfCard.tsx',
+      'PeerLinkCard.tsx',
+      'SightedNodeCard.tsx',
+    ]);
+  });
+});
+
+// ——— One register below ————————————————————————————————————————————————
+//
+// The top-centre floating slot holds two readouts and one of them says in its
+// own doc comment that it is "deliberately one register below" the other:
+// `StageFillChip` under `BackfillBar`, because a stage still composing is the
+// organism living and a replay is the chain being repaired, and "nothing here
+// may shout over one".
+//
+// It was not. The bar puts its TITLE in the accent and its counted form in
+// `dim`; the chip had them the other way round — the label `dim`, the count at
+// full `cyanWire` — so the chip's brightest element was louder than the same
+// element on the bar it defers to. A claim in a doc comment that the code
+// contradicts is worse than no claim, because the next reader takes it as
+// settled.
+//
+// So the claim is checked. Not "the chip is quieter" — that is a rendering
+// question no source oracle can answer — but the one thing that made it false:
+// the two readouts assign their accent and their `dim` to the same ROLES.
+
+describe('one register below', () => {
+  it('the plate and the chip that defers to it rank their two words alike', () => {
+    // The title span and the counted-form span of each, found by the text node
+    // each one renders rather than by position, so a reordered row is read
+    // correctly and a renamed one fails loudly.
+    //
+    // Both files have exactly two inks — the plate's accent, held in a local
+    // called `color` on one and `visual.color` on the other, and `HUD_COLORS.
+    // dim` — so a span's ink is fully described by which of the two it names.
+    const ink = (file: string, renders: string) => {
+      const source = SOURCES.find((entry) => entry.name === file);
+      expect(source, `${file} moved — this oracle reads files off disk`).toBeDefined();
+      const style = styleRendering(code(source?.text ?? ''), renders);
+      return {
+        accent: /(?<![\w])(?:visual\.)?color(?=[,}\s])/.test(style),
+        dim: /HUD_COLORS\.dim/.test(style),
+      };
+    };
+
+    // The titles: the accent, on both.
+    expect(ink('BackfillBar.tsx', '{visual.title}')).toEqual({ accent: true, dim: false });
+    expect(ink('StageFillChip.tsx', 'Stage composing')).toEqual({ accent: true, dim: false });
+
+    // The counted forms: `dim`, on both. The bar's span carries the accent too
+    // — the same span prints its WAITING sentence when there is nothing to
+    // count yet, and a sentence is words rather than a measurement — which is
+    // why this is read as "does it dim its count" rather than as an equality
+    // between two spans that are not doing the same number of jobs.
+    expect(ink('BackfillBar.tsx', '{waiting ? visual.waiting : `${fmt(done)} / ${fmt(total)} blocks`}').dim)
+      .toBe(true);
+    expect(ink('StageFillChip.tsx', '{`${fmt(staged)} / ${fmt(budget)}`}'))
+      .toEqual({ accent: false, dim: true });
+  });
+
+  it('the chip still says it is one register below, and still is one', () => {
+    const chip = SOURCES.find((source) => source.name === 'StageFillChip.tsx');
+    expect(chip, 'the stage-fill chip moved — this oracle reads files off disk')
+      .toBeDefined();
+    const text = chip?.text ?? '';
+    expect(text).toContain('one register below');
+
+    // The size half of the claim, which is the half a reader sees first: every
+    // rung the chip sets is at or below the matching rung on the bar. Read off
+    // the two files rather than typed here, because the bar's rungs are the
+    // thing this is relative to.
+    const rungs = (name: string): number[] => {
+      const source = SOURCES.find((entry) => entry.name === name);
+      return [...code(source?.text ?? '').matchAll(/fontSize: HUD_TYPE\.(\w+)/g)]
+        .map((match) => HUD_TYPE[match[1] as keyof typeof HUD_TYPE]);
+    };
+    expect(Math.max(...rungs('StageFillChip.tsx')))
+      .toBeLessThanOrEqual(Math.max(...rungs('BackfillBar.tsx')));
+  });
+});
+
+// ——— The edge-bound stack ———————————————————————————————————————————————
+//
+// Three surfaces span the viewport under the status strip and none of them is
+// a card you could have opened, so `primitives.tsx` gives all three the same
+// form: no brackets, no cut corner, the viewport ends them. What the shape
+// grammar does NOT say is which of them are the same OBJECT, and that is the
+// question a reader answers in a tenth of a second and this file had nothing
+// to say about.
+//
+// Two of them are: `StreamHealthBanner` and `BootSequenceBanner` are two
+// TENANTS OF ONE SLOT — `HudOverlay` renders whichever applies and never both
+// — and they are one formula to the digit because two objects that swap in and
+// out of one place must not read as two kinds of thing. That agreement is what
+// the first assertion holds, and it is worth holding: it was reached by the
+// boot band copying the health band, which is the kind of agreement that
+// survives exactly as long as nobody edits one of them.
+//
+// The alarm is NOT the third tenant. It stands at `topBarHeight + 30` whenever
+// a banner is up, so it is the second band in a STACK — co-present with a
+// banner in the two states that matter most, which the banners can never be
+// with each other. Two stacked bands cut to one formula are one 64px band with
+// a seam in it. So it closes both edges instead of one, lays a flat ground
+// instead of a gradient that fades out under `crit`'s hazard banding, and runs
+// 4px taller. `WarningBar.tsx` argues each of those three; what is CHECKED
+// here is the one part of it that is arithmetic rather than judgement — that
+// the banding may never cross the type it is banding.
+
+describe('the edge-bound stack', () => {
+  it('the two tenants of the top slot are one band', () => {
+    const health = SOURCES.find((source) => source.name === 'StreamHealthBanner.tsx');
+    const boot = SOURCES.find((source) => source.name === 'BootSequenceBanner.tsx');
+    expect(health, 'the health banner moved — this oracle reads files off disk')
+      .toBeDefined();
+    expect(boot, 'the boot banner moved — this oracle reads files off disk')
+      .toBeDefined();
+
+    // Read as the three properties that make the band the object it is, with
+    // the accent's own name left out: the health band calls it `visual.color`
+    // and the boot band `accent`, and that difference is a variable name
+    // rather than a difference in the band.
+    const formula = (text: string): string[] => {
+      const ground = /background: `linear-gradient\(90deg,transparent,\$\{rgba\([\w.]+, ([\d.]+)\)\} 28%,\$\{rgba\(HUD_COLORS\.ground, ([\d.]+)\)\} 50%,\$\{rgba\([\w.]+, ([\d.]+)\)\} 72%,transparent\)`/.exec(text);
+      const edge = /borderBottom: `1px solid \$\{rgba\([\w.]+, ([\d.]+)\)\}`/.exec(text);
+      const height = /\n\s+height: (\d+),/.exec(text);
+      return [
+        `ground ${ground?.slice(1).join('/') ?? 'none'}`,
+        `edge ${edge?.[1] ?? 'none'}`,
+        `height ${height?.[1] ?? 'none'}`,
+      ];
+    };
+
+    const one = formula(code(health?.text ?? ''));
+    expect(one).toEqual(formula(code(boot?.text ?? '')));
+    // …and that the reader found a band rather than three `none`s.
+    expect(one).toEqual(['ground 0.13/0.78/0.13', 'edge 0.45', 'height 30']);
+  });
+
+  it('the alarm is a second band, and its banding never crosses its type', () => {
+    // `crit` escalates in shape: 4px of hazard banding along both edges, which
+    // is the one part of the alarm that still speaks when the flash is off for
+    // reduced motion. It eats `2 × HAZARD_BAND_PX` of the band, and what is
+    // left has to hold the tallest type in the HUD's second-largest rung.
+    //
+    // This does not pin 34 — the extra 4px over a banner is a judgement and
+    // `WarningBar.tsx` says so. It pins the floor under that judgement: drop
+    // the band far enough and the stripes run through the 警告.
+    expect(WARNING_BAR_HEIGHT - 2 * HAZARD_BAND_PX).toBeGreaterThan(HUD_TYPE.heroSub);
+
+    // And that it really is the second band rather than a third tenant: the
+    // alarm's own offset adds the banner's height, so the two stack.
+    const overlay = SOURCES.find((source) => source.name === 'HudOverlay.tsx');
+    expect(overlay, 'the overlay moved — this oracle reads files off disk')
+      .toBeDefined();
+    const text = code(overlay?.text ?? '');
+    expect(text).toContain('top={topBarHeight + (bootReadoutVisible || streamInterrupted ? 30 : 0)}');
+    // …while the two banners are alternatives, which is the whole reason they
+    // are allowed to be one formula.
+    expect(text).toContain('streamSummary && !bootReadoutVisible');
+  });
+
+  it('the alarm closes both edges and the banners close one', () => {
+    // The visible half of "second band, not third tenant". A banner's top edge
+    // is the status strip's bottom edge, so it draws none; the alarm has a
+    // band above it as often as not and needs its own.
+    const alarm = SOURCES.find((source) => source.name === 'WarningBar.tsx');
+    expect(alarm, 'the alarm moved — this oracle reads files off disk').toBeDefined();
+    const text = code(alarm?.text ?? '');
+    expect(text).toContain('borderTop: `1px solid ${color}`');
+    expect(text).toContain('borderBottom: `1px solid ${color}`');
+
+    for (const name of ['StreamHealthBanner.tsx', 'BootSequenceBanner.tsx']) {
+      const banner = SOURCES.find((source) => source.name === name);
+      expect(code(banner?.text ?? ''), `${name} grew a top edge`).not.toMatch(/borderTop:/);
+    }
   });
 });
 

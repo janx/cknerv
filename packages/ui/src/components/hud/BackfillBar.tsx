@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react';
 import type { ActiveReplayProgress } from '@cknerv/cache';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
-import { Gauge, PLATE_CUT_CLIP } from './primitives';
+import { Gauge, PLATE_CUT_CLIP, plateStateChip } from './primitives';
 import { replayPresentation } from './replayPresentation';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
@@ -49,7 +49,15 @@ export default function BackfillBar({ backfill, style }: {
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
         <span aria-hidden style={{ color: visual.color, fontSize: HUD_TYPE.section }}>◇</span>
         <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 600, fontSize: HUD_TYPE.section, letterSpacing: 1.6, color: visual.color, textTransform: 'uppercase' }}>{visual.title}</span>
-        <span style={{ marginLeft: 'auto', padding: '1px 4px', border: `1px solid ${rgba(visual.color, 0.36)}`, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, letterSpacing: 0.9, color: visual.color }}>{visual.tag}</span>
+        {/* BOOT · CATCHUP · REORG · REBUILD — a state word beside the thing
+            it is a state of, which is exactly what `plateStateChip` is and
+            what four cards already wear. This was the family's only hand-cut
+            outline: 1px 4px of padding against the house's 1px 5px, a 0.36
+            border against 0.55, `nav` against `micro`, weight 400 against
+            700, tracking 0.9 against 1.4. Six properties, six differences,
+            none of them argued anywhere — which is how a grammar becomes two
+            grammars. */}
+        <span style={{ marginLeft: 'auto', ...plateStateChip(visual.color) }}>{visual.tag}</span>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 5 }}>
         {visual.subtitle && (

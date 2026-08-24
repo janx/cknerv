@@ -15,6 +15,15 @@ const fmt = (n: number) => n.toLocaleString('en-US');
  * (single top-right cut, accent left rail), but a single row, narrower, and
  * spoken in the wire cyan of ordinary readouts — composition is the organism
  * living, not a fault, and nothing here may shout over one.
+ *
+ * That claim used to be false in the one place it is easiest to check. The bar
+ * puts its TITLE in the accent and its counted form in `dim`; this chip had
+ * them the other way round — the label `dim`, the count at full `cyanWire` —
+ * so the chip's brightest element was louder than the same element on the bar
+ * it defers to, and a deferral that inverts the hierarchy of the thing it
+ * defers to is not a deferral. Same assignment as the bar now, one rung down
+ * in size: the label carries the accent, the count is `dim`, and the only
+ * thing left at full strength is the gauge, which is a picture and not a word.
  */
 export default function StageFillChip({ staged, budget, style }: {
   staged: number | null;
@@ -46,11 +55,11 @@ export default function StageFillChip({ staged, budget, style }: {
     >
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, marginBottom: 5 }}>
         <span aria-hidden style={{ color: rgba(color, 0.7), fontSize: HUD_TYPE.label }}>◇</span>
-        <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 600, fontSize: HUD_TYPE.label, letterSpacing: 1.4, color: HUD_COLORS.dim, textTransform: 'uppercase' }}>
+        <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 600, fontSize: HUD_TYPE.label, letterSpacing: 1.4, color, textTransform: 'uppercase' }}>
           Stage composing
         </span>
         {/* No tracking on the counted form — one measurement, not two words. */}
-        <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0, color }}>
+        <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0, color: HUD_COLORS.dim }}>
           {`${fmt(staged)} / ${fmt(budget)}`}
         </span>
       </div>

@@ -19,7 +19,40 @@ export function warningBarStanding(level: AlertLevel): boolean {
  *  edge. It shipped as a literal that lived only here, so nothing below ever
  *  moved: on any reorg or at-tip stall the CKB and PULSE panels printed their
  *  top brackets and the first third of their headers straight through 34px of
- *  flashing amber, in every configuration, since the band was written. */
+ *  flashing amber, in every configuration, since the band was written.
+ *
+ *  WHY IT IS NOT 30, WHICH IS WHAT THE BANNERS ARE. `StreamHealthBanner` and
+ *  `BootSequenceBanner` are one formula to the digit — 30px, a horizontal
+ *  gradient ground, a single `rgba(accent,.45)` bottom edge — and they may be,
+ *  because they are two TENANTS OF ONE SLOT: `HudOverlay` renders whichever of
+ *  them applies and never both, so the one thing they must not do is read as
+ *  two different kinds of object.
+ *
+ *  This band is not a third tenant of that slot. It is the SECOND BAND IN THE
+ *  STACK: it stands at `topBarHeight + 30` whenever a banner is up, so the
+ *  alarm and a banner are on screen together in the two states that matter
+ *  most, which the two banners can never be with each other. Two stacked bands
+ *  cut to one formula are one 64px band with a seam in it. Every way this one
+ *  differs falls out of that, and each is load-bearing rather than incidental:
+ *
+ *    · It closes BOTH edges at full-strength colour. A banner draws only a
+ *      bottom edge because its top edge is the status strip's bottom edge —
+ *      it hangs off the chrome. This one has a band above it as often as not,
+ *      so without its own top rule the two grounds run together.
+ *
+ *    · It lays a FLAT ground rather than the banners' gradient. The gradient
+ *      fades to transparent at both ends; `crit` lays hazard banding along the
+ *      full width of both edges, and banding whose outer thirds sit on nothing
+ *      is a hazard stripe that stops at the edges of the hazard.
+ *
+ *    · And it is 4px taller, which is the one number here that is a judgement
+ *      rather than a deduction. The alarm carries `heroSub` — 19px of mincho,
+ *      nearly twice the banners' `section` title — behind 4px of banding top
+ *      and bottom that the banners do not have. At 30 the 警告 line box clears
+ *      the banding by about a pixel and a half; at 34 by about three and a
+ *      half, and it is still the tighter of the two bands. What is checked
+ *      rather than argued is the invariant underneath it, in
+ *      `hudDiscipline.test.ts`: the banding may never cross the type. */
 export const WARNING_BAR_HEIGHT = 34;
 
 /** Once the bar is already red there is no louder color left, so `crit` escalates
@@ -27,7 +60,7 @@ export const WARNING_BAR_HEIGHT = 34;
  *  physical world's sign for do-not-cross. Static by construction — it is the one
  *  part of the alarm that still speaks when the flash is switched off for
  *  reduced motion. */
-const HAZARD_BAND_PX = 4;
+export const HAZARD_BAND_PX = 4;
 
 function hazardBand(color: string, edge: 'top' | 'bottom'): CSSProperties {
   return {
