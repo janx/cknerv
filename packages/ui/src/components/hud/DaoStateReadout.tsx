@@ -27,12 +27,6 @@ function formatApc(bps: number): string {
   return `${(bps / 100).toFixed(2)}%`;
 }
 
-function deltaColor(value: bigint | number): string {
-  if (value > 0) return HUD_COLORS.nominal;
-  if (value < 0) return HUD_COLORS.danger;
-  return HUD_COLORS.dim;
-}
-
 function formatSignedInteger(value: number): string {
   if (value > 0) return `+${value.toLocaleString('en-US')}`;
   if (value < 0) return `−${Math.abs(value).toLocaleString('en-US')}`;
@@ -228,9 +222,20 @@ export default function DaoStateReadout({ source, record, variant = 'section', n
               style={{
                 minHeight: 12,
                 marginTop: 3,
+                // Body ink, whichever way it went. This line used to ask
+                // `deltaColor`, which painted any rise `nominal` and any fall
+                // `danger` — the same red the HUD raises for a reorg — so a
+                // quarter's worth of DAO deposits maturing out read as a
+                // pathology of the chain. It is a market moving, and a market
+                // moving in the direction nobody wanted is still not a fault.
+                // The direction is on the number already: `formatCkb(_, true)`
+                // signs it, and the em dash below says when there is nothing
+                // to sign. `dim` survives for exactly that absence — a figure
+                // the source has not published yet is a quieter thing than a
+                // figure that is zero.
                 color: visual.depositChange24hShannons === null
                   ? HUD_COLORS.dim
-                  : deltaColor(visual.depositChange24hShannons),
+                  : HUD_COLORS.ink,
                 fontFamily: HUD_FONTS.mono,
                 fontSize: HUD_TYPE.tech,
                 fontVariantNumeric: 'tabular-nums',
@@ -360,7 +365,13 @@ export default function DaoStateReadout({ source, record, variant = 'section', n
                 <span
                   data-dao-depositor-change
                   style={{
-                    color: deltaColor(record.depositors_change_24h),
+                    // The same ruling as the deposit line above: depositors
+                    // leaving is a directional fact about a market, not a
+                    // fault report. `formatSignedInteger` carries the
+                    // direction, and the count beside it outranks this by two
+                    // rungs of the type scale, which is what makes it a delta
+                    // rather than a second reading.
+                    color: HUD_COLORS.ink,
                     fontFamily: HUD_FONTS.mono,
                     fontSize: HUD_TYPE.nav,
                     fontVariantNumeric: 'tabular-nums',

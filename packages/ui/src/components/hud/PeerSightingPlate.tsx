@@ -209,13 +209,25 @@ export default function PeerSightingPlate({
     tone: HUD_COLORS.dim,
   };
 
+  // Severity belongs to the dialect that can act on it. On the mirror, EXPOSURE
+  // is the one question a node cannot ask itself and the answer is the operator's
+  // to fix: an undialable local node is a real condition of this instrument, so
+  // the ramp is correct there. On the other two the row describes a STRANGER —
+  // most of the colony is behind NAT, none of it is ours to reach, and nothing
+  // about it is a fault of anything. That is the ruling `SightedNodeCard` already
+  // writes down three plates away: steel, not caution, because the alarm colours
+  // belong to links that broke. The mirrored `nominal` goes with it — a stranger
+  // being dialable from outside is not this instrument's health either.
+  const exposureIsOurs = variant === 'self';
   const exposure = sighting ? (
     <SightingRow
       key="exposure"
       row="exposure"
       label="EXPOSURE"
       value={sighting.reachable ? 'PUBLIC · DIALED FROM OUTSIDE' : 'UNREACHABLE FROM OUTSIDE'}
-      valueColor={sighting.reachable ? HUD_COLORS.nominal : HUD_COLORS.caution}
+      valueColor={exposureIsOurs
+        ? (sighting.reachable ? HUD_COLORS.nominal : HUD_COLORS.caution)
+        : HUD_COLORS.dim}
     >
       {sighting.reachable ? null : (
         <SightingCaption>

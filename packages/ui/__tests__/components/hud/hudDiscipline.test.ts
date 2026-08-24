@@ -700,6 +700,126 @@ describe('hud discipline', () => {
     expect(panel?.text).toContain('HUD_COLORS.ember');
     expect(panel?.text).not.toContain('HUD_COLORS.danger');
   });
+
+  it('the other two surfaces that name a spent Cell name it the same way', () => {
+    // The panel above was the first of THREE surfaces that report the same
+    // event, and for a while it was the only one that had been ruled on. The
+    // dossier names a consumed Cell twice more — the masthead flag over the
+    // specimen, and the transaction that did the spending in the causal
+    // footer — and both said it in `caution`, so opening any spent output
+    // framed it in the HUD's degradation yellow. Three surfaces, one event,
+    // one tone.
+    //
+    // Both of these are ink and only ink, which is the whole reason they could
+    // take the token directly: a `color:` on a span and a `valueColor` on a
+    // readout row. The dossier's third naming of it — the STATE fact — could
+    // not, because its colour is also a rail and a scene tether, and that
+    // split is argued and checked in `CellInspectionOverlay.test.ts`.
+    const masthead = SOURCES.find((source) => source.name === 'CellDetailPanel.tsx');
+    expect(masthead, 'the cell dossier moved — this oracle reads files off disk')
+      .toBeDefined();
+    // Read with the size beside it, because the register's STATE reading is
+    // spelled the same way one screen up and the two are on different layers:
+    // this is the flag over the specimen, at the `section` rung.
+    expect(code(masthead?.text ?? '')).toContain(
+      'color: live ? HUD_COLORS.nominal : HUD_COLORS.ember,'
+      + ' fontSize: HUD_TYPE.section',
+    );
+
+    const lens = SOURCES.find((source) => source.name === 'CellCausalLensReadout.tsx');
+    expect(lens, 'the causal lens moved — this oracle reads files off disk')
+      .toBeDefined();
+    expect(code(lens?.text ?? '')).toContain('valueColor: HUD_COLORS.ember,');
+    expect(code(lens?.text ?? '')).not.toContain('HUD_COLORS.caution');
+  });
+
+  it('a market moving is not a fault the DAO reports', () => {
+    // `deltaColor` painted any rise `nominal` and any fall `danger`, at two
+    // call sites: the 24h deposit change and the depositor count's delta. A
+    // DAO total shrinking is a direction, not a pathology — and the direction
+    // is already on the figure, because both formatters sign it.
+    //
+    // Asked as "no `danger` anywhere in the file", which is the general form
+    // this surface can carry: nothing on this panel is a fault report. The
+    // freshness lamp keeps `nominal`/`caution`, and that is a status lamp
+    // rather than a reading — it is reporting on the RECORD, which is the one
+    // thing here that can be unwell.
+    const dao = SOURCES.find((source) => source.name === 'DaoStateReadout.tsx');
+    expect(dao, 'the DAO readout moved — this oracle reads files off disk')
+      .toBeDefined();
+    const text = code(dao?.text ?? '');
+    expect(text).not.toContain('HUD_COLORS.danger');
+    expect(text).not.toContain('deltaColor');
+    // …and the carrier that replaced the colour, on both readings. A sign is
+    // a direction marker a reader already knows how to read; a ▲/▼ would be a
+    // glyph none of the three Latin faces in `src/fonts` carries, which is the
+    // silent-fallback failure the hand-cut face section further down exists to
+    // catch.
+    expect(text).toContain('formatCkb(visual.depositChange24hShannons, true)');
+    expect(text).toContain('formatSignedInteger(record.depositors_change_24h)');
+  });
+
+  it('a script lifecycle word is not a verdict on the Cell wearing it', () => {
+    // `scriptStateChip` ran the whole ramp across a word an upstream registry
+    // attaches to a CODE HASH: `nominal` for ACTIVE, `danger` for DEPRECATED.
+    // Neither end is a condition of the Cell, and a Cell locked by a
+    // superseded script is not a reorg.
+    //
+    // Scoped to the function rather than to the file, because the dossier
+    // legitimately raises a real alarm elsewhere: a decode the index could not
+    // finish is a fault, and `hudTheme.ts` names decode error in the list red
+    // is reserved for.
+    const panel = SOURCES.find((source) => source.name === 'CellDetailPanel.tsx');
+    const text = code(panel?.text ?? '');
+    const start = text.indexOf('function scriptStateChip(');
+    expect(start, 'scriptStateChip moved — this oracle reads files off disk')
+      .toBeGreaterThan(-1);
+    const chip = text.slice(start, text.indexOf('\n}', start));
+    expect(chip).not.toContain('HUD_COLORS.danger');
+    expect(chip).not.toContain('HUD_COLORS.nominal');
+    expect(chip).toContain('HUD_COLORS.caution');
+    expect(chip).toContain('HUD_COLORS.dim');
+  });
+
+  it('a stranger behind NAT is not an instrument reporting on itself', () => {
+    // One line served all three card variants: EXPOSURE was `nominal` when the
+    // crawler could dial the node and `caution` when it could not. On the
+    // mirror that is right — an undialable local node is the operator's to
+    // fix. On the peer and sighted dialects the row describes somebody else's
+    // node, most of the colony is behind NAT, and none of it is actionable
+    // from here. `SightedNodeCard` had already written the ruling down: steel,
+    // not caution, because the alarm colours belong to links that broke.
+    const plate = SOURCES.find((source) => source.name === 'PeerSightingPlate.tsx');
+    expect(plate, 'the dossier plate moved — this oracle reads files off disk')
+      .toBeDefined();
+    const text = code(plate?.text ?? '');
+    expect(text).toContain("const exposureIsOurs = variant === 'self';");
+    expect(text).toContain('valueColor={exposureIsOurs');
+    // The severity that stayed, and the steel that replaced it everywhere else.
+    expect(text).toContain('? (sighting.reachable ? HUD_COLORS.nominal : HUD_COLORS.caution)');
+    expect(text).toContain(': HUD_COLORS.dim}');
+  });
+
+  it('a ping that has not come back is not a link that broke', () => {
+    // The compass parks an unmeasured peer on the mid ring and dashes the rim
+    // to say the ring is a fallback rather than a measurement. The DASH is the
+    // argument and it stays; the HUE was the unexamined half, and it was
+    // `caution` on both the rim and the UNMEASURED label — a degraded link,
+    // said about a live peer whose first round trip is merely still in flight.
+    //
+    // The flatline is deliberately NOT swept with it: `flatlined` is
+    // `linkLost`, a link that really has gone, and severity there is the one
+    // correct use of it on this card.
+    const card = SOURCES.find((source) => source.name === 'PeerLinkCard.tsx');
+    expect(card, 'the link probe moved — this oracle reads files off disk')
+      .toBeDefined();
+    const text = code(card?.text ?? '');
+    expect(text).toContain('stroke={rgba(HUD_COLORS.dim, 0.7)}');
+    expect(text).toContain('fill={HUD_COLORS.dim}');
+    expect(text).toContain('stroke={rgba(HUD_COLORS.caution, 0.72)}');
+    expect(text).not.toContain('stroke={rgba(HUD_COLORS.caution, 0.5)}');
+    expect(text).not.toContain('fill={HUD_COLORS.caution}');
+  });
 });
 
 // ——— One cut ————————————————————————————————————————————————————————————
@@ -1187,6 +1307,146 @@ describe('the colour reserve', () => {
       'quantum_mixture',
     ].map((tier) => compositionTierColor(tier));
     expect(answers.filter((answer) => !rungs.has(answer))).toEqual([]);
+  });
+});
+
+// ——— A rate may be read; a rate may not frame ————————————————————————————
+//
+// The mirror of the section below, and the other half of the ruling that gave
+// BORN/DIED a colour of their own. `hudTheme.ts` says of `ember`: "It is never
+// a panel accent, never a border, only ever a reading." That sentence has been
+// enforced exactly once, obliquely — the durability ramp may not contain a
+// metabolic tone, because a rung is drawn as a 2px rail and a wash. This is the
+// general form of the same claim, asked of every file that writes ink.
+//
+// It is worth stating generally because the rule keeps nearly being broken by
+// people obeying the OTHER half of it. Naming a spent Cell in `ember` is
+// correct and is why the token exists; three surfaces do it. The trap is that
+// two of them are ink and the third is a colour that also paints a rail, a
+// wash, a lamp and a leader line — so "move it to ember like the others" is
+// right on two surfaces and wrong on the third, and nothing said so.
+//
+// What this reaches and what it does not, stated rather than implied. It reads
+// the border and outline properties, which is the palette's own wording and
+// the only form that is a frame beyond argument — `boxShadow` and `textShadow`
+// are atmosphere and are correct in any layer, and `background` is where a bar
+// FILL lives, which this file has already ruled is a reading in a shape rather
+// than in letters. It follows local bindings, the way the chrome sweep does,
+// because that is how a colour is usually written down. It cannot follow a
+// value through a PROP — a rail spelled `${accent}` is a rail whose colour was
+// decided in another file — and that is the path the cell dossier's STATE fact
+// took, so the value-side oracle over `cellScanFactAccent` in
+// `CellInspectionOverlay.test.ts` is the half that covers it.
+
+/** Every name a file can reach a metabolic tone through: the tokens
+ *  themselves, plus any local binding whose initializer mentions one. Same
+ *  shape as `chromeNames`, and for the same reason — `const netColor =
+ *  churn.netPerBlock >= 0 ? HUD_COLORS.nominal : HUD_COLORS.ember` is how the
+ *  panel that owns this tone actually writes it, and an oracle that knew only
+ *  the token's own spelling would read that as clean. */
+function metabolicNames(text: string): string[] {
+  const names = Object.keys(METABOLIC_COLORS).map((token) => `HUD_COLORS.${token}`);
+  const tones = Object.keys(METABOLIC_COLORS).join('|');
+  const bound = new RegExp(
+    `(?:const|let)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*([^;]*HUD_COLORS\\.(?:${tones})\\b[^;]*);`,
+    'g',
+  );
+  let match = bound.exec(text);
+  while (match !== null) {
+    names.push(match[1]);
+    match = bound.exec(text);
+  }
+  return names;
+}
+
+/** A property that draws a FRAME. Anchored so the match is a declaration
+ *  rather than a mention: `borderLeft`, `outlineColor`, `border` itself. */
+const FRAME_PROPERTY = /(?:^|[\s{;,(])(border[A-Za-z]*|outline[A-Za-z]*)\s*:/g;
+
+/** The expression a property was given, read to the end of the VALUE rather
+ *  than to the next comma: `border: \`1px solid ${rgba(tone, 0.55)}\`` carries a
+ *  comma of its own inside the alpha, and a scan that stopped at the first one
+ *  would report half an answer for the form this rule most needs to see. */
+function propertyValue(text: string, from: number): string {
+  let depth = 0;
+  for (let index = from; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === '(' || char === '[' || char === '{') depth += 1;
+    else if (char === ')' || char === ']') depth -= 1;
+    else if (char === '}') {
+      if (depth === 0) return text.slice(from, index);
+      depth -= 1;
+    } else if ((char === ',' || char === ';' || char === '\n') && depth === 0) {
+      return text.slice(from, index);
+    }
+  }
+  return text.slice(from);
+}
+
+/** `name` as an identifier, not as a fragment of a longer one. */
+function mentions(region: string, name: string): boolean {
+  const escaped = name.replace(/\./g, '\\.');
+  return new RegExp(`(?<![\\w$.])${escaped}(?![\\w$])`).test(region);
+}
+
+function framesIn(text: string): string[] {
+  const names = metabolicNames(text);
+  const found: string[] = [];
+  FRAME_PROPERTY.lastIndex = 0;
+  let property = FRAME_PROPERTY.exec(text);
+  while (property !== null) {
+    const value = propertyValue(text, property.index + property[0].length);
+    found.push(...names
+      .filter((name) => mentions(value, name))
+      .map((name) => `${property?.[1]}: … ${name} …`));
+    property = FRAME_PROPERTY.exec(text);
+  }
+  return found;
+}
+
+describe('a rate the organism is spending is only ever a reading', () => {
+  it('nothing in the HUD frames itself in a metabolic tone', () => {
+    const offenders = INK_SOURCES
+      .filter((source) => !isPaletteSource(source.name))
+      .flatMap((source) => framesIn(code(inkText(source)))
+        .map((hit) => `${source.name}: ${hit} — ember reads, it never frames`));
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('finds a frame, a metabolic name and a binding when there is one to find', () => {
+    // The pin, and it needs the same three the chrome probe needs: a
+    // recogniser that stopped seeing frame properties, one that stopped
+    // resolving local bindings, and one whose value scan had quietly narrowed
+    // to nothing would each pass the rule above by checking less than it
+    // claims. Written out rather than found in a real file, so editing a panel
+    // cannot silently disarm this.
+    const probe = [
+      'const netColor = up ? HUD_COLORS.nominal : HUD_COLORS.ember;',
+      'const fine = <div style={{ color: netColor, boxShadow: `0 0 7px ${netColor}` }} />;',
+      'const fill = <span style={{ background: HUD_COLORS.ember, width }} />;',
+      'const bad = <div style={{ borderLeft: `1px solid ${rgba(netColor, 0.34)}`, gap: 3 }} />;',
+      'const alsoBad = <div style={{ outlineColor: HUD_COLORS.ember }} />;',
+    ].join('\n');
+
+    expect(metabolicNames(probe)).toContain('netColor');
+    // Exactly two, and neither of them is the glow, the ink or the bar fill —
+    // which is the distinction the whole rule turns on.
+    expect(framesIn(probe)).toEqual([
+      'borderLeft: … netColor …',
+      'outlineColor: … HUD_COLORS.ember …',
+    ]);
+  });
+
+  it('the panel that owns the tone still wears it, in the places it may', () => {
+    // The other side of the bargain, the way `PROMOTED` makes it: a ban with
+    // no subjects is a rule guarding an empty room. CELL MESH writes this tone
+    // as a label, a bar fill, a glow on that fill and a stat value, and every
+    // one of those is a reading.
+    const panel = SOURCES.find((source) => source.name === 'CellsPanel.tsx');
+    const text = code(panel?.text ?? '');
+    expect(text).toContain('HUD_COLORS.ember');
+    expect(framesIn(text)).toEqual([]);
   });
 });
 

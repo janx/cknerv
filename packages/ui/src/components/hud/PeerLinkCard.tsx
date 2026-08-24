@@ -218,14 +218,22 @@ function ColonyCompass({
       ))}
       {measured ? null : (
         // The scene parks unmeasured peers on the mid ring; the dashed rim
-        // says that ring is a fallback, not a measurement.
+        // says that ring is a fallback, not a measurement. The DASH is the
+        // whole argument and it stays; the HUE was the unexamined half. It was
+        // `caution`, which said a peer whose first ping has not come back is a
+        // degraded link — and a live peer we have not timed yet is neither
+        // broken nor anybody's to fix. Steel, for the reason `SightedNodeCard`
+        // states outright: the alarm colours belong to links that broke, and
+        // this one has not. Carried at a higher alpha than the yellow it
+        // replaces because steel is the darker token — the rim keeps the
+        // weight it had, on a layer that is not making a claim.
         <circle
           data-peer-probe-unmeasured-ring
           cx={COMPASS_CENTER}
           cy={COMPASS_CENTER}
           r={COMPASS_RIM * 0.5}
           fill="none"
-          stroke={rgba(HUD_COLORS.caution, 0.5)}
+          stroke={rgba(HUD_COLORS.dim, 0.7)}
           strokeWidth={1}
           strokeDasharray="3 4"
         />
@@ -276,7 +284,7 @@ function ColonyCompass({
           x={COMPASS_CENTER}
           y={COMPASS_CENTER + COMPASS_RIM * 0.5 + 12}
           textAnchor="middle"
-          fill={HUD_COLORS.caution}
+          fill={HUD_COLORS.dim}
           fontFamily={HUD_FONTS.mono}
           fontSize={HUD_TYPE.micro}
           letterSpacing={1.1}

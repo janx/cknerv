@@ -201,7 +201,13 @@ export default function CellCausalLensReadout({
             : midTruncate(spender.tx_hash, 12, 9),
           {
             title: spender.tx_hash,
-            valueColor: HUD_COLORS.caution,
+            // The third surface in the HUD that names this event, and the last
+            // one still calling it a degradation. CELL MESH counts the deaths
+            // in `ember` and the dossier's masthead flags the specimen in it;
+            // the transaction that did the spending reads in the same tone. A
+            // `valueColor` is ink and only ink, which is the one layer this
+            // token is allowed on.
+            valueColor: HUD_COLORS.ember,
             caption: CONSUMED_CAPTION,
           },
         )

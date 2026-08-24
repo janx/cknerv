@@ -21,6 +21,11 @@ const INSPECTION_OVERLAY_SOURCE = readFileSync(resolve(
   'src/components/CellInspectionOverlay.tsx',
 ), 'utf8');
 
+const DETAIL_PANEL_SOURCE = readFileSync(resolve(
+  process.cwd(),
+  'src/components/hud/CellDetailPanel.tsx',
+), 'utf8');
+
 afterEach(() => {
   cleanup();
   document.body.innerHTML = '';
@@ -142,9 +147,69 @@ describe('cellInspectorPlacement', () => {
 
     expect(lock).not.toBe(resting);
     expect(data).not.toBe(lock);
-    expect(selectedCellScanAccent({
-      cell: { ...selected, death_at_ms: 1 },
-    }, 'state')).not.toBe(selectedCellScanAccent({ cell: selected }, 'state'));
+
+    // STATE used to be a third pin here, on the CELL's value rather than on
+    // the facet: a live cell tethered `nominal` and a spent one `caution`, and
+    // the assertion was that the line moved between them. It does not any
+    // more, and that is the ruling rather than a regression — see the two
+    // tests below. The line says WHICH FACT is open; the card says which state
+    // the Cell is in, twice, in the one vocabulary the house cut for it.
+    expect(selectedCellScanAccent({ cell: { ...selected, death_at_ms: 1 } }, 'state'))
+      .toBe(selectedCellScanAccent({ cell: selected }, 'state'));
+    expect(selectedCellScanAccent({ cell: selected }, 'state'))
+      .toBe(selectedCellScanAccent({ cell: selected }, 'capacity'));
+  });
+
+  it('nothing this table answers may be a rate the organism is spending', () => {
+    // The general form of the finding, asked of the VALUES because the defect
+    // cannot be seen in the source: what comes out of `cellScanFactAccent` is
+    // a 1px rail, a selected wash, a 3px lamp and a leader line drawn across
+    // the stage — four frames — and `hudTheme.ts` says of `ember` that it is
+    // "never a panel accent, never a border, only ever a reading". So the
+    // dossier could not simply take the tone CELL MESH counts deaths in, the
+    // way the masthead and the CONSUMED BY row could; the frame and the
+    // reading had to come apart, exactly as they already do for COMMIT one
+    // layer over.
+    //
+    // Walked as a table rather than pinned as a hex, so the day a second
+    // metabolic tone is cut beside `ember` this covers it without anybody
+    // remembering the rule exists — the same bargain the durability ramp's
+    // rung check makes in `hudDiscipline.test.ts`.
+    const METABOLIC: Readonly<Record<string, string>> = { ember: HUD_COLORS.ember };
+    const offenders: string[] = [];
+    for (const lock_kind of LOCK_KINDS) {
+      for (const asset_kind of ASSET_KINDS) {
+        for (const death_at_ms of [null, 1]) {
+          const cell: Cell = { ...selected, lock_kind, asset_kind, death_at_ms };
+          for (const field of FACETS) {
+            const accent = cellScanFactAccent(cell, field);
+            for (const [name, tone] of Object.entries(METABOLIC)) {
+              if (accent !== tone) continue;
+              offenders.push(
+                `${lock_kind}/${asset_kind}/${death_at_ms === null ? 'live' : 'spent'}/${field}`
+                + ` frames in ${name} — a rail and a tether, in a reading's colour`,
+              );
+            }
+          }
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('a spent Cell is named in the metabolic tone where a reading is allowed', () => {
+    // The other half, and the reason the test above is not simply a ban: the
+    // event still has to be NAMED, and the register's STATE word is one of the
+    // three surfaces that names it. It is `DECODE.state.color` rather than
+    // `factAccent('state')` for the layer reason above, so it is read here as
+    // source text — the one thing an oracle can ask of a value that is spelled
+    // beside its frame.
+    expect(DETAIL_PANEL_SOURCE).toContain([
+      "      label: 'STATE',",
+      "      value: live ? 'LIVE' : 'SPENT',",
+      '      color: live ? HUD_COLORS.nominal : HUD_COLORS.ember,',
+    ].join('\n'));
   });
 
   it('tethers details without rebuilding a scanning apparatus around the Cell', () => {

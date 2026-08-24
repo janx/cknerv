@@ -221,7 +221,13 @@ export type CellDetailLayoutSide = 'left' | 'right' | 'above' | 'below';
  *  its frame is the instrument's own orange — but a READING may never be
  *  painted in chrome, so the block reference stays body ink until the fact is
  *  selected. CAPACITY reads the same way, in the consensus cyan its bytes zone
- *  is ruled with. */
+ *  is ruled with.
+ *
+ *  STATE is the same split running the other way, and it is why this function
+ *  may not simply return whatever the word is printed in: chrome may FRAME a
+ *  fact it may not be read as, and `ember` may be READ as a fact it may not
+ *  frame. Nothing this function answers is allowed to be a metabolic tone —
+ *  `CellInspectionOverlay.test.ts` walks every branch of it against that. */
 export function cellScanFactAccent(
   cell: Cell,
   field: CellInspectionFacet,
@@ -232,12 +238,24 @@ export function cellScanFactAccent(
       return scriptIdentityColor(cell.lock_kind, LOCK_COLORS, record?.lock_script);
     case 'asset':
       return scriptIdentityColor(cell.asset_kind, ASSET_COLORS, record?.type_script);
-    case 'state':
-      return cell.death_at_ms === null ? HUD_COLORS.nominal : HUD_COLORS.caution;
     case 'born':
       return ORANGE;
-    // CAPACITY and DATA are both plain consensus content — what the chain says
-    // this output occupies and what it carries.
+    // CAPACITY, DATA and STATE are all plain consensus content — what the
+    // chain says this output occupies, what it carries, and whether it is
+    // still there to carry it.
+    //
+    // STATE arrived at that default the same way COMMIT arrived at chrome, and
+    // for the mirror-image reason. It used to answer `nominal` for a live Cell
+    // and `caution` for a spent one, which is a severity ramp spent on the one
+    // event this HUD is most certain is not a fault: a Cell being consumed is
+    // metabolism, and a chain that stopped spending its outputs would be the
+    // emergency. The house already cut a colour for it — `ember` — and this
+    // slot cannot take it, because what comes out of this function is a 1px
+    // rail, a selected wash, a 3px lamp and a leader line drawn across the
+    // stage, and `ember` is documented as never a border. So the FRAME says
+    // which kind of fact this is, in the cyan its two siblings wear, and the
+    // WORD says which state it is in — see `DECODE.state`, where the metabolic
+    // pair lives.
     default:
       return CYAN;
   }
@@ -363,7 +381,27 @@ function scriptArgsReadout(args: string): string {
 function scriptStateChip(script: SemanticScript | null | undefined): ReactNode {
   if (!script || script.deprecated == null) return undefined;
   const deprecated = script.deprecated === true;
-  const color = deprecated ? HUD_COLORS.danger : HUD_COLORS.nominal;
+  // Steel, then caution. The pair used to be `nominal` over `danger`, which is
+  // the whole severity ramp spent on a word an upstream registry attaches to a
+  // CODE HASH: green said this Cell was well and red said it was broken, when
+  // what the index said was that the ecosystem has, or has not, moved on from
+  // the script it happens to be locked by. Neither is a condition of this
+  // Cell, this node or this instrument, and a Cell locked by a superseded
+  // script is not a reorg.
+  //
+  // ACTIVE loses `nominal` for the reason CKB·01's three section headers did:
+  // a current script is not the HUD reporting that it is well, and a chip that
+  // says so beside one that does not makes the ordinary case look like a pass
+  // mark. It says the word in steel, the way `SightedNodeCard` says NOT LINKED
+  // — the normal condition, stated and not sounded.
+  //
+  // DEPRECATED keeps the middle rung rather than going steel with it, and that
+  // is the one judgement here rather than a deduction: it is the same shape as
+  // the DOSSIER's IDENTIFY row two files over, where an upstream identity that
+  // agrees is `dim` and one that disagrees is `caution`. A superseded script is
+  // worth noticing and is not worth an alarm, which is exactly what the middle
+  // of the ramp is for.
+  const color = deprecated ? HUD_COLORS.caution : HUD_COLORS.dim;
   return (
     <span
       data-cell-script-state={deprecated ? 'deprecated' : 'active'}
@@ -1247,10 +1285,17 @@ export default function CellDetailPanel({
     // The masthead carries the indicator glyph; twinning it here printed the
     // same green `● LIVE` twice in one column. The register states the word,
     // in the colour that already says which word it is.
+    //
+    // The one reading on this card that does NOT take its fact's frame colour
+    // by way of `factAccent`, because the two answers are on two layers. SPENT
+    // is `ember` — the tone the CELL MESH panel counts deaths in and the tone
+    // the galaxy withers a consumed body toward, so the three surfaces that
+    // name this event finally name it once. It used to be `caution`, which
+    // said an ordinary block of spent outputs was a degraded state.
     state: {
       label: 'STATE',
       value: live ? 'LIVE' : 'SPENT',
-      color: factAccent('state'),
+      color: live ? HUD_COLORS.nominal : HUD_COLORS.ember,
     },
     born: { label: 'COMMIT', value: formatBlockRef(cell.birth_block) },
   };
@@ -1598,7 +1643,12 @@ export default function CellDetailPanel({
             <span style={{ color: CELL_CARD_ACCENT, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: 0.72 }}>
               细胞
             </span>
-            <span style={{ marginLeft: 'auto', whiteSpace: 'nowrap', color: live ? HUD_COLORS.nominal : HUD_COLORS.caution, fontSize: HUD_TYPE.section, letterSpacing: 0.9 }}>
+            {/* A reading, not a chip: `color` and nothing else, which is the
+              * only layer `ember` is allowed on. `◇ SPENT` used to be
+              * `caution`, so the masthead of every consumed Cell opened in the
+              * HUD's degradation yellow — a small alarm raised over the most
+              * ordinary thing a chain does. */}
+            <span style={{ marginLeft: 'auto', whiteSpace: 'nowrap', color: live ? HUD_COLORS.nominal : HUD_COLORS.ember, fontSize: HUD_TYPE.section, letterSpacing: 0.9 }}>
               {live ? '● LIVE' : '◇ SPENT'}{lifetime}
             </span>
           </div>
