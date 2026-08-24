@@ -120,6 +120,36 @@ describe('ColonyNodes sighted tier', () => {
     expect(nodes).not.toContain('const SIGHTED_SIZE');
   });
 
+  it('keeps the measured tier off the same two allocations', () => {
+    const nodes = source('ColonyNodes.tsx');
+    // ⚠️ Wrapping data in a NEW InstancedBufferAttribute orphans its GL
+    // buffer, and both measured walks run on every roster round and every
+    // selection. The wrappers are built once for a capacity; the walks write
+    // through `.array` and mark them.
+    expect(nodes).toContain('const lanes = useMemo(() => ({');
+    expect(nodes).toContain('lanes.color.array as Float32Array');
+    expect(nodes).toContain('lanes.selected.array as Float32Array');
+    expect(nodes).toContain('lanes.selected.needsUpdate = true');
+    expect(nodes).toContain(
+      "if (mesh.geometry.getAttribute('aPeerColor') !== lanes.color) {",
+    );
+    expect(nodes).not.toMatch(
+      /'aPeer[A-Za-z]+',\s*\n?\s*new THREE\.InstancedBufferAttribute/,
+    );
+    // And one unit sphere for every measured hit target rather than 128
+    // triangles and a GL buffer per peer, for geometry with no per-node
+    // parameter at all. ⚠️ r3f v8's unmount disposes an object's own
+    // properties, so without the opt-out one peer leaving the roster would
+    // free the geometry every other peer is still drawing.
+    expect(nodes).toContain(
+      'const MEASURED_HIT_GEOMETRY = new THREE.SphereGeometry(1, 8, 8)',
+    );
+    expect(nodes).toContain('geometry={MEASURED_HIT_GEOMETRY}');
+    expect(nodes).toContain('scale={MEASURED_SIZE}');
+    expect(nodes).toContain('dispose={null}');
+    expect(nodes).not.toContain('<sphereGeometry');
+  });
+
   it('keeps the shared hover word instance-aware in both directions', () => {
     const nodes = source('ColonyNodes.tsx');
     // Every hover write and retraction is resolved from e.instanceId, and a

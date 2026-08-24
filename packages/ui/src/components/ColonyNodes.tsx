@@ -439,13 +439,29 @@ function MeasuredPeerHalos({
   }, []);
   const capacity = Math.max(1, measured.length);
 
-  // Static per-peer identity: rebuilt only when the measured set (or a
+  // The four per-peer lanes, allocated once for a capacity and rewritten in
+  // place. ⚠️ Wrapping data in a NEW InstancedBufferAttribute is what orphans
+  // its GL buffer, and both walks below run on every roster round and every
+  // selection — so the WRAPPER is what has to persist, not just the array.
+  const lanes = useMemo(() => ({
+    color: new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3),
+    phase: new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1),
+    rate: new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1),
+    selected: new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1),
+  }), [capacity]);
+
+  // Static per-peer identity: rewritten only when the measured set (or a
   // version tint input) changes — the topology memo is churn-stable.
-  const identity = useMemo(() => {
-    const color = new Float32Array(capacity * 3);
-    const phase = new Float32Array(capacity);
-    const rate = new Float32Array(capacity);
+  useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    mesh.count = measured.length;
+    const color = lanes.color.array as Float32Array;
+    const phase = lanes.phase.array as Float32Array;
+    const rate = lanes.rate.array as Float32Array;
     measured.forEach((node, index) => {
+      SCRATCH_MATRIX.makeTranslation(node.pos[0], node.pos[1], node.pos[2]);
+      mesh.setMatrixAt(index, SCRATCH_MATRIX);
       const [r, g, b] = PEER_COLORS[peerColorKind(node.peer!, localVersion)];
       color[index * 3] = r;
       color[index * 3 + 1] = g;
@@ -453,47 +469,30 @@ function MeasuredPeerHalos({
       phase[index] = phaseFor(node.id);
       rate[index] = 0.7 + 0.6 * rateFor(node.id);
     });
-    return { color, phase, rate };
-  }, [capacity, measured, localVersion]);
-  const selectedArray = useMemo(
-    () => new Float32Array(capacity),
-    [capacity],
-  );
-
-  useEffect(() => {
-    const mesh = meshRef.current;
-    if (!mesh) return;
-    mesh.count = measured.length;
-    measured.forEach((node, index) => {
-      SCRATCH_MATRIX.makeTranslation(node.pos[0], node.pos[1], node.pos[2]);
-      mesh.setMatrixAt(index, SCRATCH_MATRIX);
-    });
     mesh.instanceMatrix.needsUpdate = true;
-    mesh.geometry.setAttribute(
-      'aPeerColor',
-      new THREE.InstancedBufferAttribute(identity.color, 3),
-    );
-    mesh.geometry.setAttribute(
-      'aPeerPhase',
-      new THREE.InstancedBufferAttribute(identity.phase, 1),
-    );
-    mesh.geometry.setAttribute(
-      'aPeerRate',
-      new THREE.InstancedBufferAttribute(identity.rate, 1),
-    );
-  }, [identity, measured]);
+    lanes.color.needsUpdate = true;
+    lanes.phase.needsUpdate = true;
+    lanes.rate.needsUpdate = true;
+    // Bound on the first pass and again only when a capacity change built new
+    // lanes. The geometry outlives the InstancedMesh (a capacity change
+    // rebuilds the mesh through `args`), so it can still be holding the
+    // previous set.
+    if (mesh.geometry.getAttribute('aPeerColor') !== lanes.color) {
+      mesh.geometry.setAttribute('aPeerColor', lanes.color);
+      mesh.geometry.setAttribute('aPeerPhase', lanes.phase);
+      mesh.geometry.setAttribute('aPeerRate', lanes.rate);
+      mesh.geometry.setAttribute('aPeerSelected', lanes.selected);
+    }
+  }, [lanes, localVersion, measured]);
 
   useEffect(() => {
-    const mesh = meshRef.current;
-    if (!mesh) return;
+    if (!meshRef.current) return;
+    const selected = lanes.selected.array as Float32Array;
     measured.forEach((node, index) => {
-      selectedArray[index] =
-        selectedId === `peer:${node.peer!.node_id}` ? 1 : 0;
+      selected[index] = selectedId === `peer:${node.peer!.node_id}` ? 1 : 0;
     });
-    const attribute = new THREE.InstancedBufferAttribute(selectedArray, 1);
-    mesh.geometry.setAttribute('aPeerSelected', attribute);
-    attribute.needsUpdate = true;
-  }, [measured, selectedArray, selectedId]);
+    lanes.selected.needsUpdate = true;
+  }, [lanes, measured, selectedId]);
 
   useEffect(() => () => {
     geometry.dispose();
@@ -516,6 +515,24 @@ function MeasuredPeerHalos({
 }
 
 const SCRATCH_MATRIX = new THREE.Matrix4();
+
+/**
+ * The measured tier's hit target, once for the whole colony: a UNIT sphere and
+ * an invisible material, scaled to the mark at each node — the sighted tier's
+ * own construction, which has to be module scope here because that tier is one
+ * instanced mesh and this one is a component per peer.
+ *
+ * A hit target has no per-node parameter, so a fresh 128-triangle sphere and a
+ * fresh material per measured peer was a GL buffer and a material record per
+ * peer, allocated and orphaned on every roster churn.
+ *
+ * ⚠️ `dispose={null}` on the mesh below is what keeps this shared: r3f v8's
+ * unmount walks an object's own properties and disposes each one, so a single
+ * peer leaving the roster would otherwise free the geometry every other peer
+ * is still drawing.
+ */
+const MEASURED_HIT_GEOMETRY = new THREE.SphereGeometry(1, 8, 8);
+const MEASURED_HIT_MATERIAL = new THREE.MeshBasicMaterial({ visible: false });
 
 /**
  * One measured peer's INTERACTION surface: the invisible solid hit-target
@@ -568,6 +585,10 @@ function MeasuredNode({
           consults material.visible) while the renderer skips the draw. */}
       <mesh
         userData={hitUserData}
+        geometry={MEASURED_HIT_GEOMETRY}
+        material={MEASURED_HIT_MATERIAL}
+        scale={MEASURED_SIZE}
+        dispose={null}
         onClick={(e) => {
           e.stopPropagation();
           onSelect(`peer:${peerId}`);
@@ -582,10 +603,7 @@ function MeasuredNode({
           }
           syncCursor();
         }}
-      >
-        <sphereGeometry args={[MEASURED_SIZE, 8, 8]} />
-        <meshBasicMaterial visible={false} />
-      </mesh>
+      />
       {selected ? <CkbSelectionReticle size={MEASURED_SIZE * 2.4} /> : null}
     </group>
   );
