@@ -5,12 +5,49 @@
 // that was neither `lockedGold` nor `goldInk` but sat between them.
 //
 // So this file is a source oracle rather than a render test: it reads the HUD
-// directory off disk and fails on the literal, naming the token that owns the
-// value now. Nothing here renders, because the point is not what one component
-// paints — it is that no component anywhere writes the number down again.
+// directory off disk and fails on the literal. Nothing here renders, because
+// the point is not what one component paints — it is that no component
+// anywhere writes a colour down.
 //
-// The list is meant to grow. Every time a value earns a name in `hudTheme.ts`,
-// ban the hex it used to be spelled as.
+// THAT SENTENCE USED TO END DIFFERENTLY. For most of this file's life the rule
+// was a DENYLIST: a table of specific hexes, each naming the token that owns it
+// now, with a header that said "the list is meant to grow". It grew — a lot.
+// And a denylist has a hole its own header never admitted:
+//
+//     it only catches values somebody already noticed.
+//
+// A new literal passed. And a second hole nobody found until the list was 24
+// rows long: the ban matched HEX SPELLINGS, so a colour retyped as the decimal
+// triple its hex expands to walked straight through. `crit` did exactly that
+// for the life of the file — `rgba(139,0,0,.35)`, in a file whose third line
+// imports the palette — and when it was finally caught the answer was to add
+// one more row, for that one value. Then a sweep found sixty more of them.
+//
+// So the rule is INVERTED. Inside the ink jurisdiction a colour literal is
+// illegal by default rather than illegal once noticed: no hex, and no numeric
+// `rgb()`/`rgba()`, outside the files that hold the palettes. The denylist is
+// gone — ZERO of its twenty-five rows survived, because every one of them is a
+// strict subset of "no colour literal at all": twenty-three hexes, and the two
+// decimal triples it had learned to name. The offender message survives, and
+// it is better than it was: it names the token by LOOKING THE VALUE UP rather
+// than by having been told about it in advance, so it can name a token nobody
+// has written a rule for yet.
+//
+// The one exemption went with it, and by the same argument rather than by
+// grandfathering. It read `#ffffff`, for `CellMorphologyLabArtwork.tsx`, and
+// it was correct: the value reaches a `<pointsMaterial>` one binding below the
+// ternary that spells it, so a positional classifier reads ink where a reader
+// sees a material parameter. The classifier follows a binding now — a name
+// whose every consumer is a material construct is material — and the file is
+// clean with nothing written down about it anywhere.
+//
+// What that costs, stated rather than implied. A denylist can be scoped to one
+// value; a blanket rule cannot, so everything the old list did not cover had
+// to be resolved instead of listed — twelve near-black spellings of the stage
+// ground, five ramp slots handed out by index, a triad of proof colours typed
+// in two files, three protocol accents returned from a branch. That work is in
+// the three commits under this one. What it buys is that the next one is
+// caught the day it is typed, by nobody's vigilance.
 //
 // The palette degrades a second way too, and this file guards that as well: two
 // tokens quietly holding the SAME value. `warning` was chrome orange to the
@@ -20,6 +57,7 @@
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   CELL_CARD_ACCENT,
@@ -37,8 +75,11 @@ import {
 } from '../../../src/components/hud/primitives';
 import {
   ASSET_COLORS,
+  ASSET_STANDARD_ACCENTS,
   CLASS_MIX_COLORS,
   CONTENT_BANDS,
+  FACET_GLYPH_COLOR,
+  IDENTITY_PROOF_COLORS,
   LOCK_COLORS,
   SEGMENT_COLORS,
   STORAGE_TIER_COLORS,
@@ -54,7 +95,11 @@ import {
 import { SCRIPT_FAMILY_COLORS } from '../../../src/derives/scriptFamilies.derive';
 import { compositionTierColor } from '../../../src/components/hud/CellSemanticsReadout';
 import { fpsColor } from '../../../src/tweaks/renderStatsStore';
-import { CELL_GALAXY_PALETTE, CHAIN_ANCHOR_HEX } from '../../../src/visualPalette';
+import {
+  CELL_GALAXY_PALETTE,
+  CHAIN_ANCHOR_HEX,
+  PEER_NETWORK_HEX,
+} from '../../../src/visualPalette';
 
 const HUD_DIR = resolve(process.cwd(), 'src/components/hud');
 
@@ -79,15 +124,26 @@ const APP_DIR = resolve(process.cwd(), '../../ui-app/src');
  *  is "outside the HUD's own palette", not "outside any palette". */
 const PALETTE_SOURCE = 'hudTheme.ts';
 
-/** …and every file that IS a palette, for the rule that is about a value
- *  having one home rather than about one table's readers.
+/** …and every file that IS a palette — which under the inverted rule is the
+ *  whole of the exception. A colour literal is legal HERE and illegal
+ *  everywhere else, so this set is the one thing standing between a general
+ *  rule and a growing exemption list, and it has to be read that way: not
+ *  "files allowed to type a hex" but "files whose colours are UNDER AUDIT".
  *
  *  It was a single filename for as long as the ban list only guarded
  *  `HUD_COLORS`, and that was the reason the ban list only ever guarded
  *  `HUD_COLORS`: `CONTENT_BANDS` lives in `cellFormat.ts` and the stage's own
  *  hexes live in `visualPalette.ts`, so banning a band's value would have gone
  *  red on the table that defines it. A palette is a palette wherever it is
- *  kept, and the bands are now protected the same way the HUD's tokens are.
+ *  kept — and three of them are kept in `derives/`, which is exactly why the
+ *  reserve matrix found four drifted palettes there at once.
+ *
+ *  Membership is not free and the pin below is what charges for it: a file may
+ *  only be here if this oracle IMPORTS a colour table out of it. That is the
+ *  difference between a jurisdiction and an exemption. Adding a file means
+ *  putting its table in front of the reserve matrix, the intra-bar separation
+ *  matrix and the monotone-luma rule; it cannot be done to quiet one literal,
+ *  because the import is what the pin reads.
  *
  *  Matched on the BASENAME, because the same file arrives under two names: the
  *  HUD sweep walks `src/components/hud` and calls it `cellFormat.ts`, the
@@ -96,131 +152,92 @@ const PALETTE_SOURCES: ReadonlySet<string> = new Set([
   'hudTheme.ts',
   'cellFormat.ts',
   'visualPalette.ts',
+  'activityFeed.derive.ts',
+  'assetEcosystem.derive.ts',
+  'scriptFamilies.derive.ts',
 ]);
 
 function isPaletteSource(name: string): boolean {
   return PALETTE_SOURCES.has(name.slice(name.lastIndexOf('/') + 1));
 }
 
+/** This file, read as text. The toll above is a claim about this oracle's own
+ *  import list, and the only honest way to check a claim about a file is to
+ *  read the file. */
+const ORACLE_SOURCE = readFileSync(fileURLToPath(import.meta.url), 'utf8');
+
 /** The same arrangement one axis over: the one file allowed to describe a
  *  shape. Everything else in the directory wears one. */
 const SHAPE_SOURCE = 'primitives.tsx';
 
-const BANNED: ReadonlyArray<{
-  /** How the value used to be spelled. Case-insensitive — `#0A0A0A` is the
-   *  same drift as `#0a0a0a`, just typed by a different hand. */
-  pattern: RegExp;
-  /** The token that owns it now. */
-  token: string;
-  /** Files that may still carry it, each earning the exemption above. */
-  exempt?: readonly string[];
-}> = [
-  { pattern: /#fff(?![0-9a-fA-F])/g, token: 'HUD_COLORS.heroInk' },
-  {
-    pattern: /#ffffff/gi,
-    token: 'HUD_COLORS.heroInk',
-    // The morphology lab's artwork hands this to `new THREE.Color(...)` — a
-    // material parameter in the scene medium, not HUD ink, and outside the DOM
-    // palette's jurisdiction for the same reason the type scale exempts the
-    // in-scene marker dialect.
-    exempt: ['CellMorphologyLabArtwork.tsx'],
-  },
-  { pattern: /#5a6470/gi, token: 'HUD_COLORS.moduleSlate' },
-  { pattern: /#0a0a0a/gi, token: 'HUD_COLORS.trackGround' },
-  // The same track, declined twice. An epoch gauge, a colony bar and a
-  // transaction histogram wrote their own near-black channel instead of the
-  // token that already describes the empty half of every meter in the HUD —
-  // and the two spellings sit 4.2 apart, which is not two decisions, it is one
-  // colour typed by two hands.
-  { pattern: /#050a10/gi, token: 'HUD_COLORS.trackGround' },
-  { pattern: /#080d10/gi, token: 'HUD_COLORS.trackGround' },
-  // Drift not toward a token but BETWEEN two: `#FFD79A` splits the difference
-  // between `lockedGold #FFD7A1` and `goldInk #FFD29A` and matched neither.
-  { pattern: /#ffd79a/gi, token: 'HUD_COLORS.goldInk' },
-  // The same gold, drifted the same way, in five files at once: `#FFD48C` sat
-  // 14.1 from `goldInk` and 21.2 from `lockedGold` and was neither. It is the
-  // WHEN proof's colour — the birth-anchor label, the glyph arm that points at
-  // it, the marker's terminal ring, the lab column that reviews all three — so
-  // it is one value meaning one thing, and it now says `goldInk` in all of
-  // them. The alpha form went with it: `rgba(255, 212, 140, …)` was the same
-  // colour retyped as the decimal triple its hex expands to, which is exactly
-  // how `crit` hid from every sweep this file has ever run.
-  { pattern: /#ffd48c/gi, token: 'HUD_COLORS.goldInk' },
-  { pattern: /rgba\(\s*255\s*,\s*212\s*,\s*140/gi, token: 'rgba(HUD_COLORS.goldInk, …)' },
-  // A tier four panels used and nobody named. The legend under a bucket bar is
-  // neither the label above it nor the readings around it, so four files typed
-  // the in-between out longhand. A fifth typed it for a DIFFERENT job —
-  // `derives/activityFeed.derive.ts` painted a category it could not name in
-  // it, so a text tier was doing duty as a category colour — and that one was
-  // out of reach, because this sweep only ever read the HUD directory. It
-  // reads `derives/` too now, and the feed's unnameable category takes
-  // `CONTENT_BANDS.unlisted` like every other family nothing could place.
-  { pattern: /#9fb0bd/gi, token: 'HUD_COLORS.legendInk' },
-  // Banned in a directory it never appeared in, which is the point: the stage's
-  // ground is painted by the app shell that mounts the Canvas, and the overlay
-  // reaching for it by hand is how the value would come back.
-  { pattern: /#02030a/gi, token: 'HUD_COLORS.stageGround' },
-  // Two text tiers retyped a hair off themselves, on a pair of scene markers
-  // the sweep had never been able to reach. The consensus-memory endpoints
-  // print their metadata 18.7 from `dim` and their content line 30.3 from
-  // `moduleSlate` — both inside the floor, which is this file's own definition
-  // of one colour wearing two names, and both invisible until `nerve/` came
-  // inside the fence. The two-step hierarchy they were reaching for is the one
-  // the tokens already describe: a reading, then an address under it.
-  { pattern: /#7b8ca6/gi, token: 'HUD_COLORS.dim' },
-  { pattern: /#56738a/gi, token: 'HUD_COLORS.moduleSlate' },
-  // The causal lens' four endpoint labels, which are the DOM half of four scene
-  // arcs. A sibling output was painted the frame's own hex — a content role in
-  // the instrument's colour, which is the reserve's whole subject — an input sat
-  // 13.3 from the violet the consensus-memory surfaces already use for exactly
-  // that, the identity-only fallback was a character-for-character copy of a
-  // content band, and the `· FOLLOW` suffix spelled `ink` out longhand.
-  { pattern: /#ff9830/gi, token: 'HUD_COLORS.orange' },
-  { pattern: /#9d8bff/gi, token: 'HUD_COLORS.memory' },
-  { pattern: /#e8e8e8/gi, token: 'HUD_COLORS.ink' },
-  // The first two bans this file has ever made on behalf of `CONTENT_BANDS`,
-  // and the reason `PALETTE_SOURCES` had to stop being one filename. The band
-  // system has been the house's content palette for as long as the reserve
-  // matrix has walked it, and its values were protected only where somebody
-  // remembered to import the table.
-  { pattern: /#9d7bd8/gi, token: 'CONTENT_BANDS.script' },
-  { pattern: /#33424f/gi, token: 'CONTENT_BANDS.unlisted' },
-  // Two text tiers under the chain anchor's label, 28.0 and 15.5 off the rungs
-  // they were reaching for, and a third on the identity proof's evidence line
-  // at 16.0. The last of those is the one that could not have been banned
-  // before this commit: `CellIdentityBindingGlyph` spells the same value four
-  // times as a `THREE.Color` and as two material props, and a material may keep
-  // a private value. The ban lands on the DOM spelling only because the sweep
-  // now reads the construct rather than the file.
-  { pattern: /#86aab2/gi, token: 'HUD_COLORS.legendInk' },
-  { pattern: /#d8f8fb/gi, token: 'HUD_COLORS.cyanInk' },
-  { pattern: /#d9f8ff/gi, token: 'HUD_COLORS.cyanInk' },
-  // A cell's bytes, decomposed, spelled a THIRD time. `SEGMENT_COLORS` was
-  // moved into `cellFormat.ts` so the dossier's bar and the stage's composition
-  // orbit could share one table; the portrait's occupied-byte ring kept its own
-  // anyway, with a capacity arc 14.0 from chrome orange and a data arc 39.2
-  // from `warning`. Three of the four are banned; the data segment's amber is
-  // not, because `CellMorphologyLabArtwork`'s lab-only strand ramp still spells
-  // it, and a ban that needs a file exempted from it is the trade this file
-  // exists to refuse.
-  { pattern: /#fb923c/gi, token: 'SEGMENT_COLORS.cap' },
-  { pattern: /#67e8f9/gi, token: 'SEGMENT_COLORS.lock' },
-  { pattern: /#86efac/gi, token: 'SEGMENT_COLORS.type' },
-  // Not a hex, which is how it hid from every sweep this file has ever run:
-  // `crit` was retyped as the decimal triple its hex expands to, because the
-  // one surface that uses it needs an alpha and reached for the rgba form
-  // rather than the helper that builds one from a token.
-  { pattern: /rgba\(\s*139\s*,\s*0\s*,\s*0/gi, token: 'rgba(HUD_COLORS.crit, …)' },
+/** Every value the palette layer holds, by the name it is held under.
+ *
+ *  This is NOT the rule. The rule below catches a colour literal whether or
+ *  not it matches anything here — that is the whole of the inversion, and a
+ *  table of known values is precisely the thing that failed. This exists so
+ *  the failure message can say WHICH token a caught value already is, which is
+ *  the one useful thing the old denylist did and the only thing it did that
+ *  survives. It names a token nobody wrote a rule for, on the first offence.
+ *
+ *  Every table this oracle imports, flattened. The float triples of the scene
+ *  palette are converted, because a scene value retyped in the DOM is the same
+ *  defect as a DOM value retyped in the DOM. */
+const PALETTE_TOKENS: ReadonlyArray<{ token: string; hex: string }> = [
+  ...Object.entries(HUD_COLORS).map(([key, hex]) => ({ token: `HUD_COLORS.${key}`, hex })),
+  ...QUALITATIVE_BUCKET_COLORS
+    .map((hex, slot) => ({ token: `QUALITATIVE_BUCKET_COLORS[${slot}]`, hex })),
+  ...Object.entries(CONTENT_BANDS).map(([key, hex]) => ({ token: `CONTENT_BANDS.${key}`, hex })),
+  ...Object.entries(LOCK_COLORS).map(([key, hex]) => ({ token: `LOCK_COLORS.${key}`, hex })),
+  ...Object.entries(ASSET_COLORS).map(([key, hex]) => ({ token: `ASSET_COLORS.${key}`, hex })),
+  ...Object.entries(CLASS_MIX_COLORS).map(([key, hex]) => ({ token: `CLASS_MIX_COLORS.${key}`, hex })),
+  ...Object.entries(SEGMENT_COLORS).map(([key, hex]) => ({ token: `SEGMENT_COLORS.${key}`, hex })),
+  ...Object.entries(STORAGE_TIER_COLORS).map(([key, hex]) => ({ token: `STORAGE_TIER_COLORS.${key}`, hex })),
+  ...Object.entries(IDENTITY_PROOF_COLORS).map(([key, hex]) => ({ token: `IDENTITY_PROOF_COLORS.${key}`, hex })),
+  ...Object.entries(ASSET_STANDARD_ACCENTS).map(([key, hex]) => ({ token: `ASSET_STANDARD_ACCENTS.${key}`, hex })),
+  { token: 'FACET_GLYPH_COLOR', hex: FACET_GLYPH_COLOR },
+  ...Object.entries(ACTIVITY_CATEGORY_COLORS).map(([key, hex]) => ({ token: `ACTIVITY_CATEGORY_COLORS.${key}`, hex })),
+  { token: 'ACTIVITY_UNLISTED_COLOR', hex: ACTIVITY_UNLISTED_COLOR },
+  ...Object.entries(ECOSYSTEM_CATEGORY_COLORS).map(([key, hex]) => ({ token: `ECOSYSTEM_CATEGORY_COLORS.${key}`, hex })),
+  { token: 'ECOSYSTEM_UNLISTED_COLOR', hex: ECOSYSTEM_UNLISTED_COLOR },
+  ...Object.entries(SCRIPT_FAMILY_COLORS).map(([key, hex]) => ({ token: `SCRIPT_FAMILY_COLORS.${key}`, hex })),
+  ...Object.entries(CHAIN_ANCHOR_HEX).map(([key, hex]) => ({ token: `CHAIN_ANCHOR_HEX.${key}`, hex })),
+  ...Object.entries(PEER_NETWORK_HEX).map(([key, hex]) => ({ token: `PEER_NETWORK_HEX.${key}`, hex })),
+  ...Object.entries(CELL_GALAXY_PALETTE)
+    .map(([key, color]) => ({ token: `CELL_GALAXY_PALETTE.${key}`, hex: sceneHex(color) })),
 ];
 
+/** `#RRGGBB` for a value written any of the ways a colour gets typed: three
+ *  digits or six, upper case or lower, with or without an alpha pair. */
+function canonicalHex(literal: string): string | null {
+  const body = literal.replace('#', '').toLowerCase();
+  if (body.length === 3) return `#${[...body].map((d) => d + d).join('')}`;
+  if (body.length === 6 || body.length === 8) return `#${body.slice(0, 6)}`;
+  return null;
+}
+
+const TOKEN_BY_HEX: ReadonlyMap<string, string> = new Map(
+  PALETTE_TOKENS
+    .map(({ token, hex }) => [canonicalHex(hex) ?? hex, token] as const)
+    .reverse(),
+);
+
+/** What to say about a value the rule has caught: the token that already holds
+ *  it, or — the common case for a brand new literal — that it does not have a
+ *  name yet and needs one. */
+function saysWhat(hex: string): string {
+  const token = TOKEN_BY_HEX.get(canonicalHex(hex) ?? '');
+  return token ? `say ${token}` : 'this value has no name — give it one in a palette';
+}
+
 /** Tokens promoted out of inline literals — each has to be read by somebody,
- *  or the ban above is guarding a value nothing uses. */
+ *  or the rule above is guarding a value nothing uses. */
 const PROMOTED = [
   'heroInk',
   'moduleSlate',
   'trackGround',
   'legendInk',
   'stageGround',
+  'memoryUnbound',
 ] as const;
 
 /** Straight euclidean distance across the RGB cube. A crude stand-in for "a
@@ -263,6 +280,14 @@ const GREEN_SECTOR: readonly [number, number] = [75, 165];
 
 /** A colour written out by hand, in any of the forms one gets typed. */
 const HEX_LITERAL = /#[0-9a-fA-F]{3,8}\b/g;
+
+/** …and the other notation, which is how `crit` hid from every sweep this file
+ *  ran for a year. A LITERAL triple only: `rgba(${r},${g},${b},…)` is a value
+ *  being computed, which is a different thing entirely and is what
+ *  `spatialPlateTail` legitimately does. Both separators, because CSS Color 4
+ *  spells the same triple with spaces and a rule that knew only commas would
+ *  be the hex-only ban all over again, one notation along. */
+const NUMERIC_RGB = /rgba?\(\s*(\d{1,3})\s*[,\s]\s*(\d{1,3})\s*[,\s]\s*(\d{1,3})\s*[,)/\s]/g;
 
 /** A scene colour written the way the HUD writes colours. The stage palette
  *  keeps float triples for three.js; a HUD token derived from one has to be
@@ -327,7 +352,7 @@ const PACKAGE_SOURCES = readSources(SRC_DIR);
  *  Chinese on those markers is the same load-bearing inventory entry as the
  *  Chinese on a panel.
  *
- *  What travels with the widening and what does not. The ban list above is
+ *  What travels with the widening and what does not. The colour rule above is
  *  about a value having one home, and a value has one home wherever it is
  *  typed, so it travels. The type ladder further down is about a medium — a
  *  rung is a reading size on a screen — and none of these directories renders
@@ -375,9 +400,9 @@ const INK_SOURCES = [
 // Two rules, and a hex belongs to exactly one of them:
 //
 //   DOM ink        a CSS property, a template string, a drei `Html` subtree.
-//                  The token single-source rule applies in full — the ban list
-//                  above is the HUD's palette speaking, and this is where it
-//                  has jurisdiction.
+//                  The no-literal rule applies in full — the palette layer is
+//                  the only place a colour is written down, and this is where
+//                  that has jurisdiction.
 //
 //   scene material a `THREE.Color`, a material or light element's colour prop,
 //                  a canvas texture's gradient stop. Only the reserve applies:
@@ -433,24 +458,109 @@ function openElementTag(before: string): string | null {
   return name ? name[1] : null;
 }
 
+/** Which grammar the expression at an offset was written in. Split out of the
+ *  hex sweep because the binding pass below has to ask the same question of a
+ *  NAME — `color={nodeColor}` is a material parameter for exactly the reasons
+ *  `color="#fef3c7"` is, and one recogniser answering both is the only way the
+ *  two answers cannot drift apart. */
+function dialectAt(text: string, at: number): { dialect: Dialect; via: string } {
+  const before = text.slice(0, at);
+  if (SCENE_COLOR_CALL.test(before.slice(-200))) {
+    return { dialect: 'material', via: 'material: THREE colour call' };
+  }
+  const tag = openElementTag(before);
+  if (tag !== null && SCENE_ELEMENT.test(tag)) {
+    return { dialect: 'material', via: `material: <${tag}> prop` };
+  }
+  if (CSS_COLOR_PROPERTY.test(before.slice(-120))) {
+    return { dialect: 'ink', via: 'ink: CSS property' };
+  }
+  return { dialect: 'ink', via: 'ink: unclassified' };
+}
+
+/** A binding whose initializer holds a colour, with the span of that
+ *  initializer. `const nodeColor = greyscale ? '#ffffff' : '#fef3c7';` and
+ *  `const WARM_STRANDS = ['#fb7185', …];` are the two forms in the tree, and
+ *  they are the same shape: a name, then everything up to the terminating
+ *  semicolon. */
+const COLOUR_BINDING = /(?:^|[\s;{])(?:const|let)\s+([A-Za-z_$][\w$]*)(?::[^=;]*)?\s*=\s*/g;
+
+/** Every mention of `name` in the source that is not its own declaration. */
+function mentionOffsets(text: string, name: string): number[] {
+  const found: number[] = [];
+  const mention = new RegExp(`(?<![\\w$.])${name}(?![\\w$])`, 'g');
+  let match = mention.exec(text);
+  while (match !== null) {
+    found.push(match.index);
+    match = mention.exec(text);
+  }
+  return found;
+}
+
+/** The names in a source whose colour is only ever handed to the scene.
+ *
+ *  This is the half a positional classifier cannot see, and it is the half
+ *  that used to be paid for with the file's one exemption. `nodeColor` is
+ *  declared twenty lines above the `<pointsMaterial>` that wears it and
+ *  `WARM_STRANDS` is an array indexed inside a `new THREE.Color(...)`, so both
+ *  read as ink at the literal and as material at the use — and the old answer
+ *  was to write `CellMorphologyLabArtwork.tsx` down on an exemption list.
+ *
+ *  A binding is material when it has at least one consumer and EVERY consumer
+ *  is a material construct. Both halves matter: "every" keeps a name that also
+ *  paints DOM ink on the strict side, which is the case that made
+ *  `FACET_GLYPH_COLOR` a name rather than an exemption; "at least one" stops a
+ *  dead constant from being quietly promoted by having no consumers to fail. */
+function sceneBoundNames(text: string): Set<string> {
+  const bound = new Set<string>();
+  COLOUR_BINDING.lastIndex = 0;
+  let declaration = COLOUR_BINDING.exec(text);
+  while (declaration !== null) {
+    const name = declaration[1];
+    const from = declaration.index + declaration[0].length;
+    const semicolon = text.indexOf(';', from);
+    const initializer = text.slice(from, semicolon < 0 ? text.length : semicolon);
+    if (/#[0-9a-fA-F]{3,8}\b/.test(initializer)) {
+      const uses = mentionOffsets(text, name)
+        .filter((at) => at < declaration!.index || at > (semicolon < 0 ? text.length : semicolon));
+      if (uses.length > 0 && uses.every((at) => dialectAt(text, at).dialect === 'material')) {
+        bound.add(name);
+      }
+    }
+    declaration = COLOUR_BINDING.exec(text);
+  }
+  return bound;
+}
+
 /** Every hex in a source, with the grammar it was written in. */
 function hexSites(text: string): HexSite[] {
   const sites: HexSite[] = [];
+  const sceneBound = sceneBoundNames(text);
   HEX_LITERAL.lastIndex = 0;
   let match = HEX_LITERAL.exec(text);
   while (match !== null) {
-    const before = text.slice(0, match.index);
-    const tag = openElementTag(before);
-    let dialect: Dialect = 'ink';
-    let via = 'ink: unclassified';
-    if (SCENE_COLOR_CALL.test(before.slice(-200))) {
-      dialect = 'material';
-      via = 'material: THREE colour call';
-    } else if (tag !== null && SCENE_ELEMENT.test(tag)) {
-      dialect = 'material';
-      via = `material: <${tag}> prop`;
-    } else if (CSS_COLOR_PROPERTY.test(before.slice(-120))) {
-      via = 'ink: CSS property';
+    const answer = dialectAt(text, match.index);
+    let { dialect, via } = answer;
+    if (dialect === 'ink' && sceneBound.size > 0) {
+      // …unless the literal is being given a NAME the scene is the only
+      // consumer of, which is the same answer one binding away.
+      const line = text.slice(text.lastIndexOf('\n', match.index) + 1, match.index);
+      const declared = /(?:const|let)\s+([A-Za-z_$][\w$]*)/.exec(
+        text.slice(Math.max(0, text.lastIndexOf(';', match.index)), match.index),
+      );
+      if (declared !== null && sceneBound.has(declared[1])) {
+        dialect = 'material';
+        via = `material: bound to ${declared[1]}, worn only by the scene`;
+      } else if (line.length === 0) {
+        // A continuation line inside a multi-line initializer: the declaration
+        // is above, so look for the nearest one the scene owns.
+        const head = text.slice(0, match.index);
+        const nearest = /(?:const|let)\s+([A-Za-z_$][\w$]*)(?::[^=;]*)?\s*=\s*[^;]*$/.exec(head);
+        if (nearest !== null && sceneBound.has(nearest[1])) {
+          dialect = 'material';
+          via = `material: bound to ${nearest[1]}, worn only by the scene`;
+        }
+      }
     }
     sites.push({
       hex: match[0],
@@ -477,13 +587,39 @@ function maskSceneMaterials(text: string): string {
   return masked;
 }
 
-/** What the ban list reads. The single-dialect directories hand over their raw
- *  text, comments and all — a comment that types a colour out is how the next
- *  one gets pasted back in. The mixed directory hands over its ink. */
+/** What the colour rules read: every source, with its scene materials painted
+ *  out and its comments stripped.
+ *
+ *  BOTH halves of that changed with the inversion, and both are worth stating
+ *  because both look like a relaxation and neither is.
+ *
+ *  MASKED EVERYWHERE. It used to mask only the mixed directory, on the ground
+ *  that sweeping the HUD directory whole was "the stricter arrangement". That
+ *  was true of a denylist — a material spelling one of two dozen known values
+ *  was itself a finding — and it is not true of a blanket rule: sweeping a
+ *  material construct whole means either exempting the file or banning a value
+ *  a surface under a camera is entitled to keep. So the construct decides
+ *  everywhere now.
+ *
+ *  What that gives up, stated rather than buried: a HUD-directory MATERIAL
+ *  spelling one of the values the old list held would have gone red and will
+ *  not now. Nothing does today. The obvious compensation — widening the
+ *  reserve check over material literals from the mixed directory to the whole
+ *  jurisdiction — was tried and does not hold, for a reason written where that
+ *  rule lives: the reserve is a DOM-ink rule, and run over the scene it fails
+ *  the scene's own palette.
+ *
+ *  COMMENTS STRIPPED. The ban list read raw text on the argument that a
+ *  comment typing a colour out is how the next one gets pasted back in. Under
+ *  the inversion that argument no longer buys anything — a paste into code is
+ *  caught the instant it happens, by the rule itself — and it costs something
+ *  real: this repository's comments ARGUE about values, including values that
+ *  were deliberately deleted. `activityFeed.derive.ts` records that `#ff9d52`
+ *  sat 34.4 from chrome orange, which is why it is gone; `ConsensusMemory`
+ *  explains why `#E9FCFF` is deliberately not a token. A rule that read those
+ *  would force the file to forget why it is the way it is. */
 function inkText(source: HudSource): string {
-  return MIXED_INK_JURISDICTION.test(source.name)
-    ? maskSceneMaterials(source.text)
-    : source.text;
+  return code(maskSceneMaterials(source.text));
 }
 
 describe('hud discipline', () => {
@@ -498,7 +634,8 @@ describe('hud discipline', () => {
 
   it('reaches the directories that hand the HUD its colours', () => {
     // Same pin one directory over. A jurisdiction that quietly matched nothing
-    // would leave the ban list green over a file spelling every value it bans.
+    // would leave the colour rules green over a file writing colours down on
+    // every line.
     const names = INK_SOURCES.map((source) => source.name);
     expect(names).toContain('derives/activityFeed.derive.ts');
     expect(names).toContain('tweaks/renderStatsStore.ts');
@@ -520,7 +657,7 @@ describe('hud discipline', () => {
 
     // The mixed directory, same pin. It is fenced by construct rather than by
     // name, but it still has to BE here — a jurisdiction that matched nothing
-    // would leave the ban list green over the files it was widened for.
+    // would leave the colour rules green over the files it was widened for.
     const mixed = MIXED_SOURCES.map((source) => source.name);
     expect(mixed.length).toBeGreaterThan(20);
     expect(mixed).toContain('components/CellCausalLensLayer.tsx');
@@ -530,39 +667,142 @@ describe('hud discipline', () => {
     expect(mixed.some((name) => name.startsWith('components/hud/'))).toBe(false);
   });
 
-  it('the two bans made on behalf of the bands still name the bands', () => {
-    // A ban is a claim that a value has a home. These two are the first this
-    // file has made about `CONTENT_BANDS` rather than `HUD_COLORS`, and a
-    // retune of either band would leave the ban guarding a value nothing holds
-    // any more while the new one went unprotected — which is the same defect
-    // the ban exists to catch, one level up.
-    expect(CONTENT_BANDS.script).toBe('#9D7BD8');
-    expect(CONTENT_BANDS.unlisted).toBe('#33424F');
-    const banned = BANNED.map((rule) => rule.pattern.source);
-    expect(banned).toContain('#9d7bd8');
-    expect(banned).toContain('#33424f');
+  it('a palette source is a file whose colours this oracle has in hand', () => {
+    // The toll on the one exception the inverted rule has. `PALETTE_SOURCES`
+    // is what stands between "a colour literal is illegal" and a growing
+    // exemption list, so it needs a cost, and the cost is that a file may only
+    // be in it if this oracle IMPORTS a colour table out of it — at which
+    // point that table walks the reserve matrix, the intra-bar separation
+    // matrix and everything else below.
+    //
+    // Asked of this file's own text, because that is the only place the claim
+    // can be checked. A future hand can still add a row, but not quietly and
+    // not without putting a palette in front of the rules.
+    const imported = new Set(
+      [...code(ORACLE_SOURCE).matchAll(/from '([^']+)'/g)]
+        .map((match) => match[1].slice(match[1].lastIndexOf('/') + 1)),
+    );
+    const unpaid = [...PALETTE_SOURCES]
+      .filter((file) => !imported.has(file.replace(/\.tsx?$/, '')))
+      .map((file) => `${file} is a palette source this oracle imports nothing from`);
+
+    expect(unpaid).toEqual([]);
+    // …and the pin under the pin: a reader that had stopped finding import
+    // clauses would pass the line above by having nothing to complain about.
+    expect(PALETTE_SOURCES.size).toBeGreaterThanOrEqual(6);
+    expect(imported.size).toBeGreaterThanOrEqual(8);
+    expect(imported).toContain('hudTheme');
   });
 
-  it.each(BANNED)('$token owns its value — no file spells $pattern', ({ pattern, token, exempt = [] }) => {
+  it('no colour is written down outside the files that hold the palettes', () => {
+    // THE RULE, inverted. Not "these two dozen values may not be typed" but
+    // "no value may be typed" — so a colour nobody has noticed yet is caught
+    // on the first commit that writes it, which is the whole of the argument
+    // for turning the list inside out.
+    //
+    // Ink only: a material parameter is a surface under a camera and may keep
+    // a private value, which the reserve rule below is what audits. Code only:
+    // a comment that argues about a colour is this repository's record of why
+    // that colour is gone.
     const offenders = INK_SOURCES
-      .filter((source) => !isPaletteSource(source.name) && !exempt.includes(source.name))
-      .filter((source) => {
-        pattern.lastIndex = 0;
-        return pattern.test(inkText(source));
-      })
-      .map((source) => `${source.name} → say ${token}`);
+      .filter((source) => !isPaletteSource(source.name))
+      .flatMap((source) => (inkText(source).match(HEX_LITERAL) ?? [])
+        .map((hex) => `${source.name}: ${hex} → ${saysWhat(hex)}`));
 
     expect(offenders).toEqual([]);
   });
 
+  it('no colour is written down as the decimal triple its hex expands to', () => {
+    // The second hole, and the one that made the first one worth closing. The
+    // old list matched hex SPELLINGS, so `rgba(139,0,0,.35)` — `crit`, in a
+    // file whose third line imports the palette — sat in plain sight for the
+    // life of the file, and the answer when it was found was one more row for
+    // that one value. A sweep afterwards turned up sixty more triples spelling
+    // a token: seventeen blacks, nine chrome oranges, ten consensus cyans.
+    //
+    // So the notation is not what the rule is about. `hudTheme.ts` exports
+    // `rgba(hex, alpha)` for exactly this, and it was already the majority
+    // form — the raw triples were drift, never house style.
+    const offenders = INK_SOURCES
+      .filter((source) => !isPaletteSource(source.name))
+      .flatMap((source) => [...inkText(source).matchAll(NUMERIC_RGB)]
+        .map((match) => {
+          const hex = `#${[match[1], match[2], match[3]]
+            .map((channel) => Number(channel).toString(16).padStart(2, '0')).join('')}`;
+          return `${source.name}: rgb(${match[1]},${match[2]},${match[3]}) is ${hex}`
+            + ` → ${saysWhat(hex)}, through rgba(token, alpha)`;
+        }));
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('the rule is looking at a real population, in both notations', () => {
+    // A rule that accidentally matches nothing passes everything, and both
+    // rules above report by staying green — so this is what says they are
+    // reading a HUD rather than an empty list. Asked of the palette sources,
+    // which is where the colours legitimately are: a sweep that had stopped
+    // seeing hexes would show up here first.
+    const palette = INK_SOURCES.filter((source) => isPaletteSource(source.name));
+    const hexes = palette.flatMap((source) => inkText(source).match(HEX_LITERAL) ?? []);
+    expect(palette.length).toBeGreaterThanOrEqual(4);
+    expect(hexes.length).toBeGreaterThan(40);
+
+    // …and that the naming table is a table rather than an empty map, so a
+    // caught value gets told which token it already is.
+    expect(PALETTE_TOKENS.length).toBeGreaterThan(60);
+    expect(saysWhat('#FF9830')).toBe('say HUD_COLORS.orange');
+    expect(saysWhat('#fff')).toBe('say HUD_COLORS.heroInk');
+    expect(saysWhat('#123456')).toContain('has no name');
+
+    // The swept side is a real population too — a jurisdiction with three
+    // files in it would pass both rules by having nothing to read.
+    expect(INK_SOURCES.filter((source) => !isPaletteSource(source.name)).length)
+      .toBeGreaterThan(100);
+  });
+
+  it('catches a fresh literal in a DOM construct and lets a material tint be', () => {
+    // The falsification, planted rather than found. Both rules above are
+    // sweeps, and the failure mode of a sweep is silence: it is not enough to
+    // watch them stay green over a clean tree, because a classifier that had
+    // started sorting everything into "material" would do exactly that.
+    //
+    // So: a value NOTHING in this repository has ever seen, in the two
+    // grammars, plus a token spelled as its triple. The hex on the ink side
+    // has to be caught with no list naming it — that is the inversion in one
+    // assertion — and the identical hex on the material side has to pass.
+    const probe = [
+      "const card = <div style={{ background: '#3B0F2A' }} />;",
+      'const tint = <meshBasicMaterial color="#3B0F2A" />;',
+      "const glow = <div style={{ boxShadow: '0 0 6px rgba(255,152,48,.4)' }} />;",
+      'const strand = new THREE.Color(\'#3B0F2A\');',
+    ].join('\n');
+    const seen = code(maskSceneMaterials(probe));
+
+    // Ink: caught, and told it has no name.
+    expect(seen.match(HEX_LITERAL)).toEqual(['#3B0F2A']);
+    expect(saysWhat('#3B0F2A')).toContain('has no name');
+    // Material: both forms survive the classifier and are painted out.
+    expect(seen).not.toContain('color="#3B0F2A"');
+    expect(seen).not.toContain("new THREE.Color('#3B0F2A')");
+    // The triple: caught, and named.
+    const triples = [...seen.matchAll(NUMERIC_RGB)]
+      .map((match) => `${match[1]},${match[2]},${match[3]}`);
+    expect(triples).toEqual(['255,152,48']);
+    expect(saysWhat('#FF9830')).toBe('say HUD_COLORS.orange');
+  });
+
   it.each(PROMOTED)('%s is read outside the palette', (token) => {
-    const readers = [...SOURCES, ...APP_SOURCES].filter(
-      (source) => source.name !== PALETTE_SOURCE
+    // Asked of the whole colour jurisdiction rather than of the HUD directory,
+    // because that is where the jurisdiction is. `memoryUnbound` has exactly
+    // one reader and it is in `nerve/` — a sweep of the overlay alone would
+    // call the newest promotion an orphan on the day it was made.
+    const readers = [...INK_SOURCES, ...APP_SOURCES].filter(
+      (source) => !isPaletteSource(source.name)
         && source.text.includes(`HUD_COLORS.${token}`),
     );
 
     // Not just "the token exists": a token nobody reads is an orphan, and the
-    // ban that protects it is guarding an empty room.
+    // rule that protects it is guarding an empty room.
     expect(readers.length).toBeGreaterThan(0);
     expect(HUD_COLORS[token]).toMatch(/^#[0-9A-F]{6}$/);
   });
@@ -1072,10 +1312,14 @@ describe('the colour reserve', () => {
 
   it('nothing in the render plumbing writes a colour down', () => {
     // The fence around the finding above, and the reason it is a rule about a
-    // DIRECTORY rather than three more rows on the ban list: the three hexes
-    // that were here are Tailwind defaults, and two HUD scene files legitimately
-    // spell two of them as `THREE.Color` arguments. Banning the values would
-    // have meant exempting those, which is the trade this file exists to refuse.
+    // DIRECTORY rather than three more rows on a list of values: the three
+    // hexes that were here are Tailwind defaults, and two HUD scene files
+    // legitimately spell two of them as `THREE.Color` arguments. Naming the
+    // values would have meant exempting those, which is the trade this file
+    // exists to refuse. The inversion reaches the same answer from the other
+    // side — a literal is illegal here whatever it is — and this stays because
+    // it says something the general rule cannot: not just that the plumbing
+    // writes no colour down, but that it has no business having one.
     //
     // So the claim is scoped instead: `tweaks/` is quality presets, a sim
     // clock and a stats store — plumbing that counts things. It has no business
@@ -1755,7 +1999,7 @@ describe('chrome is the frame, not the reading', () => {
 //
 // The classifier above is the whole jurisdiction model, so it is the thing most
 // worth being suspicious of. A rule that quietly sorted every hex into
-// "material" would pass the ban list, pass the reserve, and check nothing —
+// "material" would pass the colour rules, pass the reserve, and check nothing —
 // and it would do it silently, because both of those rules report by staying
 // green. So this section asserts the sorting itself: that both sets exist, that
 // named members land on the side they belong to, and that the two constructs
@@ -1767,9 +2011,9 @@ describe('chrome is the frame, not the reading', () => {
 // longer has a hex in it". The probe cannot be edited away.
 
 /** Both grammars, side by side, with the SAME value in each — so nothing here
- *  can be passing because two hexes differ. It is a banned value on purpose:
- *  the two assertions this file most needs to be true are that the ink form
- *  reaches the ban and the material form does not. */
+ *  can be passing because two hexes differ. It is a value the palette holds,
+ *  on purpose: the two assertions this file most needs to be true are that the
+ *  ink form reaches the rule and the material form does not. */
 const CLASSIFIER_PROBE = [
   "const ink = <div style={{ color: '#FFD48C' }} />;",
   'const material = <meshBasicMaterial color="#FFD48C" />;',
@@ -1789,9 +2033,10 @@ describe('one directory, two dialects', () => {
     ]);
   });
 
-  it('the ban reaches a style object and stops at a material', () => {
-    // The two claims the whole fence rests on, asked of the mechanism the ban
-    // list actually runs — the masked text, not the classifier's verdict.
+  it('the rule reaches a style object and stops at a material', () => {
+    // The two claims the whole fence rests on, asked of the mechanism the
+    // colour rules actually run — the masked text, not the classifier's
+    // verdict.
     const masked = maskSceneMaterials(CLASSIFIER_PROBE);
 
     expect(masked).toContain("style={{ color: '#FFD48C' }}");
@@ -1802,6 +2047,53 @@ describe('one directory, two dialects', () => {
     // masked everything and a fence that masked nothing would each pass one of
     // the pairs above and fail the other.
     expect(masked.match(/#FFD48C/g)?.length).toBe(2);
+  });
+
+  it('follows a colour one binding into the scene, and stops if the DOM uses it too', () => {
+    // The half a positional classifier cannot see, and the reason this file no
+    // longer carries an exemption list. It carried exactly one row —
+    // `#ffffff`, for `CellMorphologyLabArtwork.tsx` — and the row was correct:
+    // the value is handed to a `<pointsMaterial>` twenty lines below the
+    // ternary that spells it, so the literal reads as ink at the point it is
+    // written and as material at the point it is worn. A text oracle that only
+    // looks at the character before the hex cannot know that, and the answer
+    // for a year was to write the filename down.
+    //
+    // Written out rather than found, so editing that component cannot silently
+    // disarm it — and asked both ways round, because a binding pass that said
+    // "material" to everything would retire the exemption by giving every
+    // future literal a free pass, which is the same defect in a nicer costume.
+    const scene = [
+      "const nodeColor = greyscale ? '#ffffff' : '#fef3c7';",
+      'const dot = <pointsMaterial color={nodeColor} size={0.05} />;',
+    ].join('\n');
+    expect([...sceneBoundNames(scene)]).toEqual(['nodeColor']);
+    expect(hexSites(scene).map((site) => site.dialect)).toEqual(['material', 'material']);
+
+    // The array form, which is the other spelling in that same file: a ramp
+    // indexed inside a `new THREE.Color(...)`.
+    const ramp = [
+      "const STRANDS = ['#fb7185', '#fbbf24'];",
+      'const tint = new THREE.Color(STRANDS[index % STRANDS.length]);',
+    ].join('\n');
+    expect([...sceneBoundNames(ramp)]).toEqual(['STRANDS']);
+    expect(hexSites(ramp).every((site) => site.dialect === 'material')).toBe(true);
+
+    // And the case that keeps it honest: the same shape with ONE DOM consumer
+    // stays ink, all of it. This is the case that made `FACET_GLYPH_COLOR` a
+    // name in `cellFormat.ts` rather than a second exemption — the specimen's
+    // role glyphs are drawn as scene points AND as the label beside each one.
+    const both = [
+      "const GLYPH = '#fef3c7';",
+      'const mark = new THREE.Color(GLYPH);',
+      'const label = <div style={{ color: GLYPH }} />;',
+    ].join('\n');
+    expect([...sceneBoundNames(both)]).toEqual([]);
+    expect(hexSites(both).map((site) => site.dialect)).toEqual(['ink']);
+
+    // …and a name with no consumer at all is not promoted by having nothing to
+    // fail: a dead constant is a literal like any other.
+    expect([...sceneBoundNames("const DEAD = '#123456';")]).toEqual([]);
   });
 
   it('sorts the mixed directory, and finds the material it was drawn for', () => {
@@ -1840,6 +2132,18 @@ describe('one directory, two dialects', () => {
     // mesh identity, says something about the whole HUD wherever it is drawn.
     // A material that genuinely wants one of these says the token's name, and
     // then it is not a literal and this rule never sees it.
+    //
+    // Scoped to the mixed directory, and it STAYS there — which is a finding
+    // rather than an oversight, because widening it was tried when the ink
+    // rule started masking materials everywhere and it does not survive
+    // contact with the palette. The reserve is a rule about DOM ink. Run over
+    // the scene it condemns the stage: `CELL_GALAXY_PALETTE.tissueRose` lands
+    // 29.0 from `cellRose`, which is not drift but a REQUIREMENT this file
+    // pins two sections up — the panel that counts Cells and the Cells
+    // themselves are the same colour on purpose — and `synapseAmber` lands
+    // 15.6 from chrome orange because additive light on a near-black stage is
+    // not ink on a lit panel. A rule that fails the scene's own palette is not
+    // a rule the scene can be held to.
     const collisions: string[] = [];
     for (const source of MIXED_SOURCES) {
       for (const site of hexSites(source.text)) {
