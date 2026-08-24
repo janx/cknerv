@@ -98,6 +98,7 @@ import CanonicalRewriteEcho from './CanonicalRewriteEcho';
 import { deriveCanonicalRewriteArrivals } from '../derives/canonicalRewrite.derive';
 import {
   cellIdsWithinRadiusFromIndex,
+  rotYWorldToLocalXZ,
   sharedCellNearestIndex,
 } from '../derives/peers.derive';
 import {
@@ -1806,11 +1807,11 @@ function CellGalaxy({
         // block at the end of the shared carrier/commit phase. There is no
         // distance sweep here; a broad radial wave would falsely make unrelated
         // Cell state read as network propagation.
-        const groupRotY = group.rotation.y;
-        const cosTinv = Math.cos(-groupRotY);
-        const sinTinv = Math.sin(-groupRotY);
-        const originLocalX = worldOrigin[0] * cosTinv - worldOrigin[2] * sinTinv;
-        const originLocalZ = worldOrigin[0] * sinTinv + worldOrigin[2] * cosTinv;
+        const [originLocalX, originLocalZ] = rotYWorldToLocalXZ(
+          worldOrigin[0],
+          worldOrigin[2],
+          group.rotation.y,
+        );
         const freshLinks = cellsCache.pulseLinks.filter(
           (lk) => lk.at_ms >= prevPulseAtMs,
         );

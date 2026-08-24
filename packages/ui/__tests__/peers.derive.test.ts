@@ -26,8 +26,11 @@ import {
   sharedCellNearestIndex,
   nearestCellIds,
   nearestCellIdsFromIndex,
+  rotYLocalToWorldXZ,
+  rotYWorldToLocalXZ,
   PEER_COLORS,
 } from '../src/derives/peers.derive';
+import { consensusRouteHopWorldPosition } from '../src/derives/consensusRouteCamera.derive';
 import { deliverySchema } from '../src/tweaks/tweakSchema';
 import { emptyChainCache } from '@cknerv/cache';
 import type { Peer, ChainNode } from '@cknerv/types';
@@ -388,6 +391,28 @@ describe('peers.derive', () => {
     });
   });
 
+  describe('rotYLocalToWorldXZ / rotYWorldToLocalXZ', () => {
+    it('matches the three.js rotation.y map (local +x → world −z at +90°)', () => {
+      // Pinned empirically against THREE.Group.matrixWorld, and against
+      // consensusRouteHopWorldPosition, the live-verified twin of this map.
+      const [wx, wz] = rotYLocalToWorldXZ(10, 0, Math.PI / 2);
+      expect(wx).toBeCloseTo(0, 9);
+      expect(wz).toBeCloseTo(-10, 9);
+      const hop = consensusRouteHopWorldPosition([10, 0, 0], Math.PI / 2);
+      expect(wx).toBeCloseTo(hop[0], 12);
+      expect(wz).toBeCloseTo(hop[2], 12);
+    });
+
+    it('inverts exactly (round-trip is identity at any angle)', () => {
+      for (const rotation of [0, 0.3, 1.7, -2.4, 9.1]) {
+        const [wx, wz] = rotYLocalToWorldXZ(12.5, -7.25, rotation);
+        const [lx, lz] = rotYWorldToLocalXZ(wx, wz, rotation);
+        expect(lx).toBeCloseTo(12.5, 9);
+        expect(lz).toBeCloseTo(-7.25, 9);
+      }
+    });
+  });
+
   describe('nearestCellIds', () => {
     const grid = [
       { id: 1, pos_seed: [0, 0, 0] as [number, number, number] },
@@ -411,9 +436,24 @@ describe('peers.derive', () => {
     });
 
     it('accounts for galaxy rotation (landing is world-xz; cells live in the rotating local frame)', () => {
-      // cell 2 at local (10,0,0); with the group rotated +pi/2 its WORLD xz is (0,10).
+      // cell 2 at local (10,0,0); three's rotation.y=+pi/2 carries local +x to
+      // world −z, so its WORLD xz is (0,−10). (The old pin asserted (0,10) —
+      // the inverse applied with the sign flipped, drifting 2θ from the frame.)
       const only = [grid[1]];
-      expect(nearestCellIds([0, 10], Math.PI / 2, only, 1)).toEqual([2]);
+      expect(nearestCellIds([0, -10], Math.PI / 2, only, 1)).toEqual([2]);
+    });
+
+    it('agrees with the live-verified local→world map (round-trips through consensusRouteHopWorldPosition)', () => {
+      // consensusRouteHopWorldPosition is pinned to a real THREE.Group's
+      // matrixWorld by the route camera's live verification; the nearest-cell
+      // inverse must find exactly the cell whose world footprint it names.
+      for (const rotation of [0.3, 1.2, 2.5, -0.7]) {
+        for (const cell of grid) {
+          const world = consensusRouteHopWorldPosition(cell.pos_seed, rotation);
+          expect(nearestCellIds([world[0], world[2]], rotation, grid, 1))
+            .toEqual([cell.id]);
+        }
+      }
     });
 
     it('returns min(k, count) and never throws on empty', () => {
@@ -482,10 +522,7 @@ describe('peers.derive', () => {
           ((query * 43) % 193) - 96,
         ];
         const rotation = (query - 12) * 0.11;
-        const cos = Math.cos(-rotation);
-        const sin = Math.sin(-rotation);
-        const lx = landing[0] * cos - landing[1] * sin;
-        const lz = landing[0] * sin + landing[1] * cos;
+        const [lx, lz] = rotYWorldToLocalXZ(landing[0], landing[1], rotation);
         const expected = many
           .map((cell, order) => {
             const dx = cell.pos_seed[0] - lx;
@@ -565,6 +602,20 @@ describe('peers.derive', () => {
       const turned = planDeliveries([], 0, pos, { A: 0 }, 38, { ...FIELD, rotationY: Math.PI / 2 });
       expect(turned[0].to[0]).toBeCloseTo(0, 6);
       expect(turned[0].to[2]).toBeCloseTo(58, 6);
+    });
+
+    it('judges the rim in the frame the tissue actually turned to (sign-sensitive)', () => {
+      // A ±90° turn of an ellipse is the same footprint either way, so the
+      // test above cannot catch an inverse applied with the wrong sign. At
+      // rotationY=0.4 it can: this worker stands exactly on the turned LONG
+      // axis at norm 0.99 — on tissue, so the landing passes through
+      // untouched. The flipped inverse reads it at norm 1.05 and clamps.
+      const field = { ...FIELD, rotationY: 0.4 };
+      const [wx, wz] = rotYLocalToWorldXZ(59.5, 0, 0.4);
+      const pos = new Map<string, [number, number, number]>([['axis', [wx, 22, wz]]]);
+      const d = planDeliveries([], 0, pos, { axis: 0 }, 38, field);
+      expect(d[0].to[0]).toBeCloseTo(wx, 9);
+      expect(d[0].to[2]).toBeCloseTo(wz, 9);
     });
 
     it('clamps the hero exactly like a peer (multi-node anchors can sit past the rim)', () => {

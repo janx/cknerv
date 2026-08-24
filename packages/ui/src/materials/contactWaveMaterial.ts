@@ -217,12 +217,14 @@ export function makeContactWaveMaterial(): THREE.ShaderMaterial {
 
         // The wave only propagates through tissue. The footprint is an
         // ellipse in the galaxy's rotating local frame, so project the world
-        // fragment back through the live rotation before normalizing.
+        // fragment back through the live rotation before normalizing. This is
+        // rotYWorldToLocalXZ (peers.derive) verbatim — the exact inverse of
+        // three's rotation.y map — and must stay in lockstep with it.
         float rotC = cos(uGalaxyRotY);
         float rotS = sin(uGalaxyRotY);
         vec2 tissueXZ = vec2(
-          vWorldXZ.x * rotC + vWorldXZ.y * rotS,
-          -vWorldXZ.x * rotS + vWorldXZ.y * rotC
+          vWorldXZ.x * rotC - vWorldXZ.y * rotS,
+          vWorldXZ.x * rotS + vWorldXZ.y * rotC
         );
         float fieldNorm = length(tissueXZ / vec2(
           ${FIELD_HALF_X.toFixed(1)},

@@ -93,6 +93,35 @@ export interface DeliveryLandingField {
  *  degenerate case. */
 export const DELIVERY_LANDING_MAX_NORM = 1.0;
 
+/** three.js `group.rotation.y = θ` carries a LOCAL xz into WORLD as
+ *  (x·cosθ + z·sinθ, −x·sinθ + z·cosθ) — the map
+ *  consensusRouteHopWorldPosition already uses for the live-verified route
+ *  camera. This pair is that map and its exact inverse, single-sourced so a
+ *  rotating-frame projection can never again re-derive the convention with
+ *  the sign flipped (the world→local family did exactly that, and every
+ *  consumer drifted from the true frame by 2θ as the group turned). */
+export function rotYLocalToWorldXZ(
+  x: number,
+  z: number,
+  rotationY: number,
+): [number, number] {
+  const c = Math.cos(rotationY);
+  const s = Math.sin(rotationY);
+  return [x * c + z * s, -x * s + z * c];
+}
+
+/** Exact inverse of `rotYLocalToWorldXZ` — projects a WORLD xz into the
+ *  local frame of a group whose `rotation.y` stands at `rotationY`. */
+export function rotYWorldToLocalXZ(
+  x: number,
+  z: number,
+  rotationY: number,
+): [number, number] {
+  const c = Math.cos(rotationY);
+  const s = Math.sin(rotationY);
+  return [x * c - z * s, x * s + z * c];
+}
+
 /** Pull a world-xz landing radially (in the tissue's local frame) back onto
  *  the footprint. Radial, not nearest-point: an over-rim worker throws its
  *  block INWARD toward the galaxy, which is also what keeps the lob's travel
@@ -103,16 +132,11 @@ function clampLandingToField(
   z: number,
   field: DeliveryLandingField,
 ): [number, number] {
-  const c = Math.cos(field.rotationY);
-  const s = Math.sin(field.rotationY);
-  const lx = x * c + z * s;
-  const lz = -x * s + z * c;
+  const [lx, lz] = rotYWorldToLocalXZ(x, z, field.rotationY);
   const norm = Math.hypot(lx / field.halfX, lz / field.halfZ);
   if (norm <= DELIVERY_LANDING_MAX_NORM) return [x, z];
   const k = DELIVERY_LANDING_MAX_NORM / norm;
-  const cx = lx * k;
-  const cz = lz * k;
-  return [cx * c - cz * s, cx * s + cz * c];
+  return rotYLocalToWorldXZ(lx * k, lz * k, field.rotationY);
 }
 
 /** Build one delivery per delivering node: the local/hero node(s) (offered from
@@ -553,10 +577,7 @@ export function nearestCellIdsFromIndex(
       : 0;
   if (limit === 0 || index.count === 0) return [];
 
-  const c = Math.cos(-rotationY);
-  const s = Math.sin(-rotationY);
-  const lx = landing[0] * c - landing[1] * s;
-  const lz = landing[0] * s + landing[1] * c;
+  const [lx, lz] = rotYWorldToLocalXZ(landing[0], landing[1], rotationY);
   const originBx = Math.floor(lx / index.bucketSize);
   const originBz = Math.floor(lz / index.bucketSize);
   const maxRadius = Math.max(
