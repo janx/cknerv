@@ -44,7 +44,7 @@ describe('NetworkPanel', () => {
     expect(t).toContain('节点场');
     expect(t).toContain('47');
     expect(t).toContain('44 / 47');       // head consensus
-    expect(t).toContain('44 at-tip');
+    expect(t).toContain('44 AT-TIP');
     expect(t).toContain('#16,204,887');   // the height the legend is judged from
     expect(container.querySelectorAll('[data-network-detail-mode]')).toHaveLength(0);
   });
@@ -214,11 +214,11 @@ describe('NetworkPanel', () => {
 
   it('points the at-tip tally with a mark rather than a borrowed glyph', () => {
     // The tally opened with `▲`, which Google's `latin` range does not reach
-    // and no face in `src/fonts` carries. The word `at-tip` was always the
+    // and no face in `src/fonts` carries. The word `AT-TIP` was always the
     // carrier; the triangle is a mark now and stays out of the a11y tree.
     const { container } = render(<NetworkPanel {...props} />);
 
-    expect(container.textContent).toContain('44 at-tip');
+    expect(container.textContent).toContain('44 AT-TIP');
     expect(container.textContent).not.toMatch(/[\u25B2\u25BC]/);
     const mark = container.querySelector('[data-direction-mark]');
     expect(mark?.getAttribute('data-direction-mark')).toBe('up');

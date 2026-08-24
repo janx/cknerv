@@ -479,7 +479,21 @@ export default function CellContentMemory({
                 </button>
               </span>
             ) : null}
-            <span style={{ marginLeft: 'auto', color: model.complete ? HUD_COLORS.nominal : HUD_COLORS.caution, fontSize: HUD_TYPE.micro, whiteSpace: 'nowrap' }}>
+            {/* How much of the content we are holding, in the ink a reading
+                is written in. It ran the two ends of the severity ramp —
+                `nominal` for a complete read, `caution` for a partial one —
+                across a fact that is neither a pass mark nor a fault: a
+                complete decode is the ordinary case, and a partial one is a
+                statement about the SCOPE OF OUR KNOWLEDGE rather than a
+                condition of the Cell. The card's other surface for this fact
+                already had it right: `CellByteBudget` says a truncated data
+                window with an opacity drop, a dashed rule and a `dim`
+                OBSERVED, and raises nothing.
+
+                Losing the colour loses nothing, because the colour was never
+                the disclosure — `byteCount` spells all three states out in
+                words, and `n / m B` is a partial read said as a number. */}
+            <span style={{ marginLeft: 'auto', color: HUD_COLORS.ink, fontSize: HUD_TYPE.micro, whiteSpace: 'nowrap' }}>
               {byteCount(model.observedBytes, model.totalBytes, model.complete)}
             </span>
           </div>

@@ -33,7 +33,14 @@ export default function NetworkPanel({ summary, consensus, syncRatio, enrichment
   return (
     <HudPanel watermark="节点场" style={{ width: 302, paddingTop: 14, ...style }}>
       <PanelHeader en="PEER MESH" cjk="节点场" idx="MESH·02" accent={HUD_COLORS.peerWire} />
-      <StatRow label="Peers"><span style={{ color: HUD_COLORS.peerWire }}>{summary.peerCount}</span> &nbsp; <span style={{ color: HUD_COLORS.dim }}>out</span> {summary.outbound} / <span style={{ color: HUD_COLORS.dim }}>in</span> {summary.inbound}</StatRow>
+      {/* The link-direction pair reads as `OUT n / IN n`, which is how
+        * `NodeSelfCard` states the identical reading and how every other
+        * legend in the HUD states any reading. This panel was the only surface
+        * in the overlay that spoke lowercase, and it did it directly under its
+        * own uppercase `StatRow` labels — five authored words (`out`, `in`,
+        * and the three consensus tallies below) that read as a different
+        * instrument's captions in the middle of this one's. */}
+      <StatRow label="Peers"><span style={{ color: HUD_COLORS.peerWire }}>{summary.peerCount}</span> &nbsp; <span style={{ color: HUD_COLORS.dim }}>OUT</span> {summary.outbound} / <span style={{ color: HUD_COLORS.dim }}>IN</span> {summary.inbound}</StatRow>
       <StatRow label="Head consensus">{consensus.atTip} / {consensus.total}</StatRow>
       <div style={{ display: 'flex', height: 7, border: `1px solid ${rgba(HUD_COLORS.orange, 0.2)}`, background: HUD_COLORS.trackGround, margin: '4px 0' }}>
         <span style={{ width: seg(consensus.atTip), background: HUD_COLORS.nominal, boxShadow: `0 0 7px ${rgba(HUD_COLORS.nominal, 0.55)}` }} />
@@ -43,10 +50,10 @@ export default function NetworkPanel({ summary, consensus, syncRatio, enrichment
       <div style={{ display: 'flex', gap: 11, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, letterSpacing: 0.35, marginBottom: 8 }}>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: HUD_COLORS.nominal }}>
           <DirectionMark direction="up" color={HUD_COLORS.nominal} size={4.5} />
-          {consensus.atTip} at-tip
+          {consensus.atTip} AT-TIP
         </span>
-        <span style={{ color: HUD_COLORS.dim }}>{consensus.behind} behind</span>
-        <span style={{ color: HUD_COLORS.caution }}>{consensus.ahead} ahead</span>
+        <span style={{ color: HUD_COLORS.dim }}>{consensus.behind} BEHIND</span>
+        <span style={{ color: HUD_COLORS.caution }}>{consensus.ahead} AHEAD</span>
         {/* The height the three tallies are counted against — a reading, and
           * the only unqualified figure in the row. It was painted
           * `moduleSlate`, the module registry's grey, which the palette puts

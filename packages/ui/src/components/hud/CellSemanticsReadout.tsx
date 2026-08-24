@@ -15,7 +15,8 @@ import {
   OBJECT_SEGMENT_LABELS,
   decodeSegmentValue,
 } from '../../derives/cellSemanticMorphology.derive';
-import { HUD_COLORS, HUD_TYPE, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_TYPE } from './hudTheme';
+import { PlateReadoutRow } from './primitives';
 
 export { formatSemanticAssetAmount } from './cellFormat';
 
@@ -133,27 +134,43 @@ export function primarySemanticFacet(
   return record.facets[0] ?? null;
 }
 
-/** One-line facet summary (title · state · first attributes). */
-export function FacetEvidenceRow({ facet, style }: {
+/** One facet the register has no spelled-out block for, as one evidence row:
+ *  the facet's title, its state, and the first two attributes under them.
+ *
+ *  It is `PlateReadoutRow` and not a row of its own. It used to be the latter,
+ *  and every place the two differed was a place this row said the register's
+ *  sentence with a different accent: a rail at 0.22 against the house's
+ *  `PLATE_ROW_RAIL_ALPHA`, that rail hardcoded to `cyanWire` while every
+ *  sibling row in the cluster took the cluster's own accent, 6px of indent
+ *  against 9. Nothing consumed this but the dossier, so there was never a
+ *  second reader whose needs the divergence was serving.
+ *
+ *  The state word is the register's ordinary value ink. It was `caution` — the
+ *  middle of the severity ramp, spent on whatever word the index happened to
+ *  attach to a facet this side has no block for. `SemanticFacet.state` is a
+ *  wire SLOT rather than a fact: for a DAO facet it is a lifecycle position,
+ *  for a collection the cluster's name, for a composition a durability tier,
+ *  and here it is a word we have not learned. Three of those are read in the
+ *  colour of what they ARE, argued where they are drawn; this one is read in
+ *  the ink a fact is written in, because that is all that is known about it. */
+export function FacetEvidenceRow({ facet, accent, style }: {
   facet: SemanticFacet;
+  /** The cluster's accent — the rail's colour, exactly as the spelled-out
+   *  rows beside this one take it. */
+  accent: string;
   style?: CSSProperties;
 }) {
   const attributes = facet.attributes.slice(0, 2);
   return (
-    <div
-      data-cell-context-facet={`${facet.namespace}:${facet.kind}`}
-      style={{ minWidth: 0, padding: '2px 6px 3px', borderLeft: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.22)}`, ...style }}
+    <PlateReadoutRow
+      accent={accent}
+      label={facetTitle(facet).toUpperCase()}
+      value={facet.state ? facet.state.toUpperCase() : null}
+      valueSize={HUD_TYPE.label}
+      title={facet.state ?? undefined}
+      rowAttributes={{ 'data-cell-context-facet': `${facet.namespace}:${facet.kind}` }}
+      style={style}
     >
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
-        <span style={{ color: HUD_COLORS.cyanWire, fontSize: HUD_TYPE.micro, letterSpacing: 0.6, whiteSpace: 'nowrap' }}>
-          {facetTitle(facet).toUpperCase()}
-        </span>
-        {facet.state ? (
-          <span title={facet.state} style={{ color: HUD_COLORS.caution, fontSize: HUD_TYPE.micro, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            · {facet.state.toUpperCase()}
-          </span>
-        ) : null}
-      </div>
       {attributes.length > 0 ? (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(0,1fr))', gap: 7, marginTop: 1, minWidth: 0 }}>
           {attributes.map((attribute) => (
@@ -164,7 +181,7 @@ export function FacetEvidenceRow({ facet, style }: {
           ))}
         </div>
       ) : null}
-    </div>
+    </PlateReadoutRow>
   );
 }
 

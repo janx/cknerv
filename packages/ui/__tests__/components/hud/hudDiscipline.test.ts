@@ -1200,6 +1200,171 @@ describe('one shape grammar', () => {
   });
 });
 
+// ——— A limit on what we saw is not a fault ——————————————————————————————
+//
+// Two more places the severity ramp was being spent on something that is not a
+// condition of anything, found the same way the spent Cell and the deprecated
+// script were.
+//
+// `SemanticFacet.state` is a wire SLOT rather than a fact. The dossier draws it
+// four times and the four are four different subjects: a DAO lifecycle
+// position, a collection's NAME, a durability tier, and — for a facet this side
+// has no block for — whatever word the index attached. Three of those are read
+// in the colour of what they ARE, argued where each is drawn. The fourth was
+// `caution`, which said the middle of the severity ramp about a word nobody
+// here has read.
+//
+// And the content window said a partial decode in `caution` over `nominal`,
+// which is the same pair `scriptStateChip` was carrying: a complete read
+// printed as a pass mark, a partial one as a degradation. Neither is either.
+// The Cell's OTHER surface for that fact had already ruled correctly and
+// silently — `CellByteBudget` marks a truncated data window with an opacity
+// drop, a dashed rule and a `dim` OBSERVED, and raises nothing — so this is
+// two surfaces agreeing rather than a new judgement.
+
+describe('a limit on what we saw is not a fault', () => {
+  it('the four subjects behind one wire field are read as four subjects', () => {
+    const readout = SOURCES.find((source) => source.name === 'CellSemanticsReadout.tsx');
+    const panel = SOURCES.find((source) => source.name === 'CellDetailPanel.tsx');
+    expect(readout, 'the semantics readout moved — this oracle reads files off disk')
+      .toBeDefined();
+    expect(panel, 'the cell dossier moved — this oracle reads files off disk')
+      .toBeDefined();
+
+    // The generic facet: no ink of its own at all now, which is the point —
+    // the row takes `PlateReadoutRow`'s default, and the default is the ink a
+    // fact is written in. Scoped to the function, because the file raises a
+    // real alarm elsewhere: an enrichment source that has gone stale is a
+    // condition of the RECORD, and that is what the middle rung is for.
+    const text = code(readout?.text ?? '');
+    const start = text.indexOf('export function FacetEvidenceRow(');
+    expect(start, 'FacetEvidenceRow moved — this oracle reads files off disk')
+      .toBeGreaterThan(-1);
+    // Cut at the next top-level declaration rather than at the first `}` in
+    // column one: this function's props are a multi-line type annotation, so
+    // the closing `})` of the SIGNATURE is in column one and a naive cut reads
+    // none of the body. That is the failure mode of a scoped assertion — it
+    // passes, and it passes because it is looking at nothing.
+    const after = text.slice(start + 1).search(/\n(?:export )?(?:function|const|type|interface) /);
+    const row = text.slice(start, after === -1 ? text.length : start + 1 + after);
+    expect(row, 'the slice missed the body').toContain('PlateReadoutRow');
+    for (const severity of ['caution', 'warning', 'danger', 'nominal', 'crit']) {
+      expect(row, `the generic facet row reads a state as ${severity}`)
+        .not.toContain(`HUD_COLORS.${severity}`);
+    }
+    // …and that the file still has a use for the ramp, so the scoping above is
+    // a real distinction rather than a file that happens to be clean.
+    expect(text).toContain('HUD_COLORS.caution');
+
+    // The three that are argued, each in the colour of its own subject.
+    const dossier = code(panel?.text ?? '');
+    expect(dossier).toContain('value={daoFacet.state.toUpperCase()}');
+    expect(dossier).toContain('valueColor={collectionValueColor}');
+    expect(dossier).toContain('tier={compositionHeadline}');
+    expect(dossier).toContain('const color = compositionTierColor(tier);');
+  });
+
+  it('the generic facet row is the dialect\'s row, railed in its cluster\'s accent', () => {
+    // It hand-drew one: a rail at 0.22 against `PLATE_ROW_RAIL_ALPHA`, in
+    // `cyanWire` while every sibling row in the cluster took the cluster's
+    // accent, indented 6px against 9. Nothing but the dossier ever rendered
+    // it, so there was no second consumer the divergence was for.
+    const readout = SOURCES.find((source) => source.name === 'CellSemanticsReadout.tsx');
+    const text = code(readout?.text ?? '');
+    expect(text).toContain('<PlateReadoutRow');
+    expect(text, 'the facet row draws its own rail again').not.toContain('borderLeft:');
+
+    // The accent arrives from the caller. A row that names its own rail colour
+    // is a row that cannot sit in a second cluster.
+    expect(text).toContain('accent={accent}');
+    const panel = SOURCES.find((source) => source.name === 'CellDetailPanel.tsx');
+    expect(code(panel?.text ?? '')).toContain('accent={assetAccent}\n                      revealAt');
+  });
+
+  it('both surfaces that report a partial read report it without severity', () => {
+    // The general form on the budget side — nothing in a byte decomposition is
+    // a fault report — and the specific reading on the window side.
+    const budget = SOURCES.find((source) => source.name === 'CellByteBudget.tsx');
+    expect(budget, 'the byte budget moved — this oracle reads files off disk')
+      .toBeDefined();
+    const budgetText = code(budget?.text ?? '');
+    for (const severity of ['caution', 'warning', 'danger', 'nominal', 'crit']) {
+      expect(budgetText, `the byte budget raises ${severity}`)
+        .not.toContain(`HUD_COLORS.${severity}`);
+    }
+    // …and the carriers that do the work instead, which is what makes the
+    // absence a ruling rather than an omission.
+    expect(budgetText).toContain('opacity: partial ? 0.6 : 1');
+    expect(budgetText).toContain('borderTop: partial ? `1px dashed');
+    expect(budgetText).toContain('OBSERVED');
+
+    const memory = SOURCES.find((source) => source.name === 'CellContentMemory.tsx');
+    expect(memory, 'the content window moved — this oracle reads files off disk')
+      .toBeDefined();
+    const memoryText = code(memory?.text ?? '');
+    expect(memoryText).toContain(
+      'color: HUD_COLORS.ink, fontSize: HUD_TYPE.micro, whiteSpace: \'nowrap\' }}>\n              {byteCount(',
+    );
+    expect(memoryText).not.toContain('model.complete ? HUD_COLORS.nominal');
+  });
+});
+
+// ——— One case ———————————————————————————————————————————————————————————
+//
+// The overlay is set in capitals: the type is small, the faces are technical,
+// and a word in sentence case in the middle of a panel reads as a caption from
+// a different instrument. Every surface obeys that, and most of them obey it in
+// CSS — `StatRow`, `MetricLabel`, `SUBHEAD` and the scope tags all declare
+// `textTransform: 'uppercase'` and let the caller author whatever it likes.
+//
+// MESH·02 did not. Five authored words — `out`, `in`, and the three consensus
+// tallies `at-tip` / `behind` / `ahead` — shipped lowercase in a panel whose
+// own `StatRow` labels are uppercased one line above them, and `NodeSelfCard`
+// states the identical link-direction reading as `OUT n / IN n`.
+//
+// THIS IS NOT DERIVED AND THE REASON IS WORTH SAYING, because the obvious
+// general rule looks derivable and is not: half the overlay's uppercase is
+// declared on a COMPONENT — `<MetricLabel>Total deposited</MetricLabel>` is
+// correct and a text sweep sees a lowercase word with no transform in sight —
+// so a rule of the form "no lowercase text node" would have to resolve every
+// JSX tag in the directory to its own style object before it could tell a
+// defect from a component doing its job. And under that there is a second
+// question it would be wrong about: `net /blk` and `· per block` are UNITS,
+// and lowercase units are typography rather than drift.
+//
+// So this pins the two surfaces that state one reading, the way the three
+// surfaces naming a spent Cell are pinned above. A third panel speaking
+// lowercase is not caught, and saying so is better than a rule that would fail
+// four correct surfaces to catch it.
+
+describe('one case', () => {
+  it('the two surfaces that count links state it the same way', () => {
+    const panel = SOURCES.find((source) => source.name === 'NetworkPanel.tsx');
+    const card = SOURCES.find((source) => source.name === 'NodeSelfCard.tsx');
+    expect(panel, 'MESH·02 moved — this oracle reads files off disk').toBeDefined();
+    expect(card, 'the self probe moved — this oracle reads files off disk').toBeDefined();
+
+    // The card's phrasing is the reference because it was already right.
+    const reading = /<span>OUT \{summary\.outbound\}<\/span>/;
+    expect(code(card?.text ?? '')).toMatch(reading);
+
+    const text = code(panel?.text ?? '');
+    expect(text).toContain('>OUT</span>');
+    expect(text).toContain('>IN</span>');
+    for (const lowercase of ['>out<', '>in<', ' at-tip', ' behind<', ' ahead<']) {
+      expect(text, `MESH·02 says ${lowercase} in lower case`).not.toContain(lowercase);
+    }
+  });
+
+  it('the consensus legend is three tallies in one case', () => {
+    const panel = SOURCES.find((source) => source.name === 'NetworkPanel.tsx');
+    const text = code(panel?.text ?? '');
+    for (const tally of ['AT-TIP', 'BEHIND', 'AHEAD']) {
+      expect(text, `the ${tally} tally lost its case`).toContain(tally);
+    }
+  });
+});
+
 // ——— One register below ————————————————————————————————————————————————
 //
 // The top-centre floating slot holds two readouts and one of them says in its

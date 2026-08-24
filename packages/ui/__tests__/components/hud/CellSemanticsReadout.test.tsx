@@ -12,7 +12,7 @@ import {
   semanticFacetValue,
   semanticObjectReadout,
 } from '../../../src/components/hud/CellSemanticsReadout';
-import { HUD_TYPE } from '../../../src/components/hud/hudTheme';
+import { HUD_COLORS, HUD_TYPE } from '../../../src/components/hud/hudTheme';
 
 afterEach(() => cleanup());
 
@@ -176,7 +176,7 @@ describe('CellSemanticsReadout — inventory object', () => {
 
 describe('CellSemanticsReadout — facet evidence row', () => {
   it('prints facet values in the body tier with micro labels', () => {
-    const { container } = render(<FacetEvidenceRow facet={{
+    const { container } = render(<FacetEvidenceRow accent={HUD_COLORS.cyanWire} facet={{
       namespace: 'ckb',
       kind: 'dep_group',
       attributes: [

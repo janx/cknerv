@@ -847,12 +847,13 @@ function CellScanStagedBlock({ revealAt, attributes, style, children }: {
 }
 
 /** The generic facet row, on the deep-enrichment step. */
-function CellScanFacetRow({ facet, revealAt }: {
+function CellScanFacetRow({ facet, accent, revealAt }: {
   facet: SemanticFacet;
+  accent: string;
   revealAt: number;
 }) {
   const revealed = useCellScanStepLit(revealAt);
-  return <FacetEvidenceRow facet={facet} style={revealInk(revealed)} />;
+  return <FacetEvidenceRow facet={facet} accent={accent} style={revealInk(revealed)} />;
 }
 
 /** The walk's own progress, and only while there is a walk. One span of text
@@ -1924,6 +1925,7 @@ export default function CellDetailPanel({
                   {genericFacet ? (
                     <CellScanFacetRow
                       facet={genericFacet}
+                      accent={assetAccent}
                       revealAt={semanticsRevealAt(2)}
                     />
                   ) : null}

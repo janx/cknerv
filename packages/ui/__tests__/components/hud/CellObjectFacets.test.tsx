@@ -292,7 +292,7 @@ describe('composition tier vocabulary', () => {
     // the naming any OTHER surface would read — untitled, `collection` would
     // have arrived there as the raw wire word.
     const { container } = render(
-      <FacetEvidenceRow facet={collectionFacet(
+      <FacetEvidenceRow accent={HUD_COLORS.cyanWire} facet={collectionFacet(
         [{ key: 'role', value: 'item' }],
         'Nervape Gen2',
       )} />,
@@ -301,7 +301,7 @@ describe('composition tier vocabulary', () => {
     cleanup();
 
     const composition = render(
-      <FacetEvidenceRow facet={compositionFacet(
+      <FacetEvidenceRow accent={HUD_COLORS.cyanWire} facet={compositionFacet(
         [{ key: 'item_tier', value: 'pure_ckb' }],
         'pure_ckb',
       )} />,
