@@ -85,6 +85,15 @@ export interface PeerCloudTone {
   /** How loudly this stop answers a block wave. Defaults to `dim`: only the
    *  ghost haze, which sits far below its own event, ever separates them. */
   event?: number;
+  /**
+   * Falloff exponent of the sprite's CORE term. Defaults to 2.0 — the ghost
+   * haze's soft profile, which is all a stop resting under the additive clip
+   * ever needs. A stop that rests ABOVE the clip wants a higher exponent: the
+   * bright plateau is bounded by where the profile crosses 1/`dim`, so a
+   * tighter core is the only thing that turns a saturated disc back into a
+   * nucleus with a skirt. Brightness alone cannot do it — it clips.
+   */
+  coreExp?: number;
   /** Tint — same cyan family. Defaults to the ghost scaffold hue. */
   color?: readonly [number, number, number];
 }
@@ -99,16 +108,30 @@ export interface PeerCloudTone {
  * white-cyan pixel and the gradient existed only in the source. A ghost now
  * rests well under the clip — it is haze, and only a wave lights it — while the
  * two sighted stops keep both the light AND the footprint the eye actually
- * sorts on. Ghost → reached is 3x the diameter and ~10x the resting light
+ * sorts on. Ghost → reached is 3.08x the diameter and ~4.4x the resting light
  * (which goes as dim SQUARED — additive blending applies alpha to colour).
+ *
+ * Passing the clip is the point of a sighted stop; sitting on a PLATEAU of it
+ * is not, and that was the second cut's mistake. The bright zone ends where the
+ * radial profile crosses 1/dim, so the first sighted tone (dim 1.95, soft 2.0
+ * core) held its centre 7.7x past the clip and stayed saturated out to 42% of
+ * the sprite radius — a flat ~1-world-unit disc that shouted over the twelve
+ * real measured peers it is supposed to sit BELOW. Dropping the light a stop
+ * and tightening the core to 3.5 confines that plateau to 19%, so the mark
+ * reads as a nucleus with a skirt instead of a disc, and the tier keeps its
+ * footprint advantage over the haze.
  */
 export const PEER_CLOUD_GHOST_TONE = {
-  dim: 0.62, size: 0.8, event: 0.9,
+  dim: 0.62, size: 0.65, event: 0.9,
 } satisfies PeerCloudTone;
 /** Named by the crawler, but it could not reach the node this round. */
-export const PEER_CLOUD_SIGHTED_DARK_TONE = { dim: 1.3, size: 1.85 } satisfies PeerCloudTone;
+export const PEER_CLOUD_SIGHTED_DARK_TONE = {
+  dim: 1.0, size: 1.5, coreExp: 3.5,
+} satisfies PeerCloudTone;
 /** Named by the crawler and answering it. */
-export const PEER_CLOUD_SIGHTED_TONE = { dim: 1.95, size: 2.45 } satisfies PeerCloudTone;
+export const PEER_CLOUD_SIGHTED_TONE = {
+  dim: 1.3, size: 2.0, coreExp: 3.5,
+} satisfies PeerCloudTone;
 
 /**
  * The pick target for one cloud stop: its own mark, and no more.
@@ -148,6 +171,10 @@ export function makePeerCloudMaterial(
       uDim: { value: stop.dim ?? PEER_CLOUD_GHOST_TONE.dim },
       uEvent: { value: stop.event ?? stop.dim ?? PEER_CLOUD_GHOST_TONE.dim },
       uSize: { value: stop.size ?? PEER_CLOUD_GHOST_TONE.size },
+      // Not read off the ghost stop like its neighbours: the ghost has no
+      // `coreExp` of its own, and 2.0 IS the soft profile it wants. A stop that
+      // omits the field is asking for that same profile, whatever it is.
+      uCoreExp: { value: stop.coreExp ?? 2.0 },
       // Drawing-buffer height in device pixels; the owner refreshes it, because
       // a resize or a quality-tier DPR change moves it under a live material.
       uViewportHeight: { value: 1080 },
@@ -193,6 +220,7 @@ export function makePeerCloudMaterial(
       uniform vec3 uColor;
       uniform float uDim;
       uniform float uEvent;
+      uniform float uCoreExp;
       uniform float uContextEnergy;
       ${SHOCKWAVE_UNIFORMS_GLSL}
 
@@ -204,7 +232,12 @@ export function makePeerCloudMaterial(
       void main() {
         float r = length(gl_PointCoord - 0.5) * 2.0;
         if (r > 1.0) discard;
-        float core = pow(1.0 - r, 2.0);
+        // The core carries the tone's own exponent while the skirt stays fixed:
+        // a stop resting above the additive clip has to pull its bright plateau
+        // in, and it is the CORE crossing 1/uDim that sets where that plateau
+        // ends. One shader source still serves every stop — the exponent rides
+        // a uniform, so no tone can cost a vertex attribute.
+        float core = pow(1.0 - r, uCoreExp);
         float halo = pow(1.0 - r, 1.6) * 0.42;
         vec4 signal = peerShockwaveResponse(
           uColor,

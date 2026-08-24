@@ -108,6 +108,46 @@ describe('peer cloud tones (the confidence axis)', () => {
     expect(restPeak(PEER_CLOUD_SIGHTED_TONE)).toBeGreaterThan(1);
   });
 
+  it('pulls the bright plateau in on every stop that passes the clip', () => {
+    // Passing the additive clip is what a sighted stop is FOR; resting on a
+    // plateau of it is what made the first sighted cut read as a flat disc.
+    // The bright zone ends where the radial profile crosses 1/dim, so once a
+    // stop rests above 1.0 the only lever left is the core exponent —
+    // brightness cannot shrink a plateau, it clips. Both sighted stops
+    // therefore run a TIGHTER core than the haze's soft default.
+    const restPeak = (tone: PeerCloudTone): number => (
+      1.42 * 1.42 * (tone.dim ?? 0) ** 2
+    );
+    const ghostCoreExp = makePeerCloudMaterial().uniforms.uCoreExp.value;
+    for (const tone of [PEER_CLOUD_SIGHTED_DARK_TONE, PEER_CLOUD_SIGHTED_TONE]) {
+      expect(restPeak(tone)).toBeGreaterThan(1);
+      expect(tone.coreExp).toBeGreaterThanOrEqual(3);
+      expect(tone.coreExp).toBeGreaterThan(ghostCoreExp);
+    }
+    // The haze rests under the clip, so it has no plateau to pull in and keeps
+    // the soft profile — which is also the fallback every tone inherits.
+    expect(ghostCoreExp).toBe(2);
+  });
+
+  it('falls back to the soft core for any tone that does not ask', () => {
+    // `coreExp` is the one tone field with no ghost-stop counterpart to read:
+    // omitting it must mean "the soft profile", not "undefined" reaching GLSL.
+    const untuned = makePeerCloudMaterial(undefined, { dim: 1.1, size: 1.2 });
+    expect(untuned.uniforms.uCoreExp.value).toBe(2);
+    expect(PEER_CLOUD_GHOST_TONE).not.toHaveProperty('coreExp');
+  });
+
+  it('carries the core exponent on a uniform the shader actually reads', () => {
+    // A tone that ever became per-point would spend a vertex-attribute slot the
+    // scene cannot pay, so the exponent has to reach the fragment stage as a
+    // uniform — and the shader has to consume it, not a baked literal.
+    const sighted = makePeerCloudMaterial(undefined, PEER_CLOUD_SIGHTED_TONE);
+    expect(sighted.uniforms.uCoreExp.value).toBe(PEER_CLOUD_SIGHTED_TONE.coreExp);
+    expect(sighted.fragmentShader).toContain('uniform float uCoreExp;');
+    expect(sighted.fragmentShader).toContain('pow(1.0 - r, uCoreExp)');
+    expect(sighted.fragmentShader).not.toContain('pow(1.0 - r, 2.0)');
+  });
+
   it('lets the ghost recede at rest without going quiet on a block wave', () => {
     // The haze is faint BECAUSE it is haze, but a block still crosses it at
     // full strength: uDim carries the resting level, uEvent the wave answer.
