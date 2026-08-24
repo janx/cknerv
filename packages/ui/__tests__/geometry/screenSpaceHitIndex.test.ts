@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { ScreenSpaceHitIndex } from '../../src/geometry/screenSpaceHitIndex';
+import {
+  ScreenSpaceHitIndex,
+  type ScreenSpaceRadiusPad,
+} from '../../src/geometry/screenSpaceHitIndex';
 
 describe('ScreenSpaceHitIndex', () => {
   it('finds a sprite across bucket boundaries using its visual radius', () => {
@@ -32,5 +35,99 @@ describe('ScreenSpaceHitIndex', () => {
     index.insert(1, 40, 40, 5, 0);
     expect(index.find(20, 20)).toBeNull();
     expect(index.find(40, 40)?.index).toBe(1);
+  });
+});
+
+/** The entries under test, dense enough that a padded disc has to beat real
+ * competitors rather than sit alone on an empty screen. */
+const CROWD: ReadonlyArray<[number, number, number, number, number]> = [
+  // index, x, y, radius, depth
+  [0, 60, 60, 4, 0.5],
+  [1, 96, 60, 5, 0.2],
+  [2, 132, 62, 3, 0.9],
+  [3, 60, 96, 6, 0.4],
+  [4, 100, 100, 3, 0.1],
+  [5, 150, 120, 7, 0.7],
+  [6, 30, 130, 4, 0.3],
+];
+
+function crowd(padded?: { index: number; radius: number }): ScreenSpaceHitIndex {
+  const index = new ScreenSpaceHitIndex(8, 32);
+  index.begin(200, 160);
+  for (const [i, x, y, radius, depth] of CROWD) {
+    index.insert(i, x, y, i === padded?.index ? padded.radius : radius, depth);
+  }
+  return index;
+}
+
+function raster(
+  index: ScreenSpaceHitIndex,
+  pads?: readonly ScreenSpaceRadiusPad[],
+): Array<number | null> {
+  const answers: Array<number | null> = [];
+  for (let y = 1; y < 160; y += 3) {
+    for (let x = 1; x < 200; x += 3) {
+      answers.push(index.find(x, y, pads)?.index ?? null);
+    }
+  }
+  return answers;
+}
+
+describe('ScreenSpaceHitIndex query-time radius pads', () => {
+  it('answers exactly as an index built with the padded radius does', () => {
+    // The equivalence bar: for every pointer position on the screen, a pad
+    // must return what re-inserting that entry at the same radius returns —
+    // ties, depth ordering, bucket walk order and all.
+    for (const radius of [9, 17, 26, 40]) {
+      const padded = crowd({ index: 1, radius });
+      const base = crowd();
+      expect(
+        raster(base, [{ index: 1, radius }, { index: -1, radius: 0 }]),
+      ).toEqual(raster(padded));
+    }
+  });
+
+  it('leaves every unpadded query on the indexed radii', () => {
+    // A pad is not a mutation: the same index answers both ways at once, so
+    // a stale focus can never leak into an unfocused answer.
+    const index = crowd();
+    const answers = raster(index);
+    expect(raster(index, [{ index: 1, radius: 40 }])).not.toEqual(answers);
+    expect(raster(index)).toEqual(answers);
+    expect(index.find(96, 96, [{ index: 1, radius: 40 }])?.index).toBe(1);
+    expect(index.find(96, 96)).toBeNull();
+  });
+
+  it('widens the probe window by the pad, not just by the indexed max', () => {
+    // The bug this pins: bucketRadius derived from maxRadius alone stops the
+    // walk short of the padded entry's own bucket. 7px indexed, 40px padded,
+    // 32px buckets — the pointer is three buckets away from every centre.
+    const index = crowd();
+    expect(index.find(60, 155, [{ index: 3, radius: 60 }])?.index).toBe(3);
+    expect(index.find(60, 155)).toBeNull();
+  });
+
+  it('reports the radius the answer was decided by', () => {
+    const index = crowd();
+    expect(index.find(96, 62, [{ index: 1, radius: 20 }])?.radiusSq).toBe(400);
+    expect(index.find(96, 62)?.radiusSq).toBe(25);
+  });
+
+  it('keeps entries a pad could still reach inside the grid', () => {
+    // An entry whose centre is off-viewport but whose padded disc reaches
+    // back in. Without the admit pad the insert drops it and no query-time
+    // radius can bring it back, so the pad would answer differently from a
+    // rebuild — which is the one thing it must never do.
+    const admitted = new ScreenSpaceHitIndex(4, 32);
+    admitted.begin(200, 160, 34);
+    admitted.insert(0, -12, 80, 3, 0.5);
+    expect(admitted.find(4, 80, [{ index: 0, radius: 30 }])?.index).toBe(0);
+    // ...and it stays invisible to everyone who does not pad it.
+    expect(admitted.find(4, 80)).toBeNull();
+
+    const dropped = new ScreenSpaceHitIndex(4, 32);
+    dropped.begin(200, 160);
+    dropped.insert(0, -12, 80, 3, 0.5);
+    expect(dropped.find(4, 80, [{ index: 0, radius: 30 }])).toBeNull();
   });
 });
