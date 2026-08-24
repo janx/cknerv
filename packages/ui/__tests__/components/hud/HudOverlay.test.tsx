@@ -951,3 +951,117 @@ describe('HudOverlay — the boot readout owns the top slot', () => {
     expect(container.querySelector('[data-boot-banner]')).toBeNull();
   });
 });
+
+// ——— The boot readout's tail: the stage-fill chip ————————————————
+//
+// A freshly started server announces its dashboard before it finishes
+// restoring the stage composition, so the first page to boot lands on a
+// partial world and would otherwise watch Cells sprout with no readout on
+// screen. The record must not be held for that; the slot hands over to a
+// quiet chip instead (`boot/stageFill.ts`).
+
+import type { CellPopulationFieldModel } from '../../../src/derives/cellPopulationField.derive';
+
+const populationModel = (
+  stagedLive: number,
+  stageBudget: number | null,
+): CellPopulationFieldModel => ({
+  renderedLive: stagedLive,
+  renderedRetainedLive: stagedLive,
+  renderedResidentLive: 0,
+  stagedLive,
+  stagedRetainedLive: stagedLive,
+  stagedResidentLive: 0,
+  stagedClasses: { dao: 0, typedNonDao: 0, plain: stagedLive },
+  stagedCurated: true,
+  clamped: false,
+  stageBudget,
+  retainedLive: stagedLive,
+  retainedScope: 'full_retained',
+  observedLive: stagedLive,
+  chainCensus: null,
+  censusAgeBlocks: null,
+  censusStale: false,
+  scope: 'retained',
+  ratio: 1,
+  gain: 0.4,
+});
+
+describe('HudOverlay — the stage-fill chip trails the boot readout', () => {
+  const settled = (extra: Record<string, unknown> = {}) => render(
+    <HudOverlay
+      chain={chain}
+      peers={peers}
+      localNode={localNode}
+      cellsStats={cellsStats}
+      {...extra}
+    />,
+  );
+
+  it('discloses a still-composing stage once the record has stood down', () => {
+    const { container } = settled({
+      cellPopulation: populationModel(9_298, 12_000),
+    });
+    const chip = container.querySelector('[data-stage-fill-chip]') as HTMLElement;
+    expect(chip).not.toBeNull();
+    expect(chip.textContent).toContain('Stage composing');
+    expect(chip.textContent).toContain('9,298 / 12,000');
+  });
+
+  it('never renders for a stage that booted composed — the refresh case', () => {
+    const { container } = settled({
+      cellPopulation: populationModel(12_000, 12_000),
+    });
+    expect(container.querySelector('[data-stage-fill-chip]')).toBeNull();
+  });
+
+  it('never renders without a display plane', () => {
+    const { container } = settled({
+      cellPopulation: populationModel(9_298, null),
+    });
+    expect(container.querySelector('[data-stage-fill-chip]')).toBeNull();
+  });
+
+  it('holds while the boot readout still owns the slot', () => {
+    resetBootSequenceForTest();
+    const { container } = settled({
+      cellPopulation: populationModel(9_298, 12_000),
+    });
+    expect(container.querySelector('[data-boot-banner]')).not.toBeNull();
+    expect(container.querySelector('[data-stage-fill-chip]')).toBeNull();
+  });
+
+  it('yields the slot to a stream fault', () => {
+    const { container } = settled({
+      cellPopulation: populationModel(9_298, 12_000),
+      streamHealth: connectingStreams,
+    });
+    expect(container.querySelector('[data-stream-health-banner]')).not.toBeNull();
+    expect(container.querySelector('[data-stage-fill-chip]')).toBeNull();
+  });
+
+  it('yields the slot to the replay plate', () => {
+    const { container } = settled({
+      cellPopulation: populationModel(9_298, 12_000),
+      backfill: { done: 1234, total: 65_829, phase: 'boot' },
+    });
+    expect(container.querySelector('[data-replay-phase="boot"]')).not.toBeNull();
+    expect(container.querySelector('[data-stage-fill-chip]')).toBeNull();
+  });
+
+  it('leaves for good when the composition lands, and churn cannot recall it', () => {
+    const props = {
+      chain, peers, localNode, cellsStats,
+      cellPopulation: populationModel(9_298, 12_000),
+    };
+    const { container, rerender } = render(<HudOverlay {...props} />);
+    expect(container.querySelector('[data-stage-fill-chip]')).not.toBeNull();
+
+    rerender(<HudOverlay {...props} cellPopulation={populationModel(12_000, 12_000)} />);
+    expect(container.querySelector('[data-stage-fill-chip]')).toBeNull();
+
+    // A later per-block dip is churn, not composing: the watch is terminal.
+    rerender(<HudOverlay {...props} cellPopulation={populationModel(9_000, 12_000)} />);
+    expect(container.querySelector('[data-stage-fill-chip]')).toBeNull();
+  });
+});

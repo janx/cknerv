@@ -36,6 +36,8 @@ import { canRenderDaoStateReadout } from './DaoStateReadout';
 import NetworkPanel from './NetworkPanel';
 import BackfillBar from './BackfillBar';
 import BootSequenceBanner from './BootSequenceBanner';
+import StageFillChip from './StageFillChip';
+import { createStageFillWatch, sampleStageFill } from '../../boot/stageFill';
 import CellsPanel from './CellsPanel';
 import StageCapacityPanel from './StageCapacityPanel';
 import RenderStatsPanel from './RenderStatsPanel';
@@ -204,6 +206,32 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
     return () => clearTimeout(id);
   }, [boot.active, reduced]);
   const bootReadoutVisible = boot.active || bootLingering;
+
+  // The boot readout's tail. A freshly started server announces its dashboard
+  // before it finishes restoring the stage composition, so the first page to
+  // boot lands on a partial world and watches Cells sprout AFTER the banner
+  // left. The banner must not be held for that — stage convergence is the
+  // organism living, and on a cold server it runs for minutes — so the slot
+  // hands over to a quiet chip until the stage is effectively full or stops
+  // growing. `boot/stageFill.ts` owns the decision; a resolved watch stops
+  // the sampling interval and is terminal for the session.
+  const [stageFill, setStageFill] = useState(createStageFillWatch);
+  const stagedLive = cellPopulation?.stagedLive ?? null;
+  const stageBudget = cellPopulation?.stageBudget ?? null;
+  const bootComplete = boot.complete;
+  useEffect(() => {
+    if (stageFill.phase === 'resolved') return undefined;
+    const sample = () => setStageFill((watch) => sampleStageFill(watch, {
+      nowMs: Date.now(),
+      bootComplete,
+      stagedLive,
+      budget: stageBudget,
+    }));
+    sample();
+    // The quiet-window resolve needs time to pass, not props to change.
+    const id = setInterval(sample, 1_000);
+    return () => clearInterval(id);
+  }, [bootComplete, stagedLive, stageBudget, stageFill.phase]);
 
   // Below ~1100px the rail's summaries would crowd the left-hand panels, so it
   // narrows and scrolls instead of fanning. Tunable breakpoint.
@@ -592,6 +620,16 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
           style={{ top: topBarHeight + (streamInterrupted ? 40 : 10) }}
         />
       )}
+      {/* One voice in the slot: the chip yields to the boot banner it trails,
+          and to both fault surfaces — a stream fault or a replay outranks a
+          composition disclosure. */}
+      {stageFill.visible && !bootReadoutVisible && !streamInterrupted && !backfill ? (
+        <StageFillChip
+          staged={stagedLive}
+          budget={stageBudget}
+          style={{ top: topBarHeight + 10 }}
+        />
+      ) : null}
     </div>
   );
 }

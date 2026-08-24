@@ -68,6 +68,10 @@ export interface CellPopulationFieldModel {
    *  server stage. Both numbers are then disclosed, because continuing to
    *  call the whole stage addressable would be false. */
   clamped: boolean;
+  /** The display plane's Cell budget, or null without a plane. Disclosed so
+   *  the boot tail can say how full the stage is against what the server
+   *  intends to fill (`stageFill.ts`). */
+  stageBudget: number | null;
 
   /** Alive count in the canonical retained window. */
   retainedLive: number;
@@ -311,6 +315,7 @@ export function deriveCellPopulationField(
     },
     stagedCurated: cache.displayProvenance?.mode === 'composed',
     clamped: displayPlaneActive && limit < cache.displayMembers.size,
+    stageBudget: cache.displayBudget?.cells ?? null,
     retainedLive,
     retainedScope: cache.statsScope,
     observedLive: cache.stats.live,
