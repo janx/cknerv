@@ -139,7 +139,12 @@ describe('A protocol event relay', () => {
     // never a second hand-typed radius.
     expect(wave).toContain("from '../helix'");
     expect(wave).toContain('FIELD_HALF_X');
-    expect(wave).toContain('uGalaxyRotY');
+    // As a (cos, sin) pair the renderer resolves once a frame — the fragment
+    // stage may not re-derive a value that is constant across the whole draw.
+    expect(wave).toContain('uniform vec2 uGalaxyRot;');
+    expect(wave).not.toMatch(/\b(cos|sin)\(uGalaxy/);
+    expect(source('BlockDeliveryLayer.tsx'))
+      .toContain('waveMaterial.uniforms.uGalaxyRot.value.set(');
     expect(wave).not.toMatch(/uDiskFade|smoothstep\(\s*44/);
     // An annulus, not a quad: ~81 full-screen-ish fills per block is not free.
     expect(wave).toContain('THREE.RingGeometry');

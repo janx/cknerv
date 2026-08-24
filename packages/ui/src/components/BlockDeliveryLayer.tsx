@@ -539,8 +539,15 @@ export default function BlockDeliveryLayer({
     const colonyRotS = Math.sin(colonyFrame.rotationY);
     waveMaterial.uniforms.uWake.value = LIVE.delivery.waveWake;
     waveMaterial.uniforms.uSegmentDepth.value = LIVE.delivery.waveSegments;
-    // The rim-extinction ellipse turns with the galaxy; track it exactly.
-    waveMaterial.uniforms.uGalaxyRotY.value = galaxyFrame.rotationY;
+    // The rim-extinction ellipse turns with the galaxy; track it exactly. The
+    // front resolves the turn per FRAGMENT, so the pair is resolved here —
+    // the galaxy's own angle, not the colony's: the two planes share a rate
+    // knob and a sign, never a value (the colony damps its own under a
+    // selection).
+    waveMaterial.uniforms.uGalaxyRot.value.set(
+      Math.cos(galaxyFrame.rotationY),
+      Math.sin(galaxyFrame.rotationY),
+    );
 
     // Galaxy RECEIVES the wave: once per real block, schedule a flare on the
     // Cells nearest each real delivery landing. Batching never changes this data

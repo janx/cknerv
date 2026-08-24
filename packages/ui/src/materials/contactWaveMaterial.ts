@@ -115,7 +115,13 @@ export function makeContactWaveMaterial(): THREE.ShaderMaterial {
       uSegmentDepth: { value: 0.55 },
       // The tissue ellipse turns with the galaxy while fronts hold world
       // positions; the renderer mirrors the group's live rotation in here.
-      uGalaxyRotY: { value: 0 },
+      //
+      // ⚠️ The angle's COSINE and SINE, not the angle: the rotation is one
+      // value for the whole frame and the fragment stage is the one place it
+      // must not be resolved. A front is an annulus of blended fragments, so
+      // a scalar here bought two transcendentals per covered pixel to restate
+      // a number the renderer already had. (cos 0, sin 0) is identity.
+      uGalaxyRot: { value: new THREE.Vector2(1, 0) },
     },
     transparent: true,
     depthTest: false,
@@ -161,7 +167,7 @@ export function makeContactWaveMaterial(): THREE.ShaderMaterial {
 
       uniform float uWake;
       uniform float uSegmentDepth;
-      uniform float uGalaxyRotY;
+      uniform vec2 uGalaxyRot;
 
       varying vec2 vPlane;
       varying vec2 vWorldXZ;
@@ -220,11 +226,9 @@ export function makeContactWaveMaterial(): THREE.ShaderMaterial {
         // fragment back through the live rotation before normalizing. This is
         // rotYWorldToLocalXZ (peers.derive) verbatim — the exact inverse of
         // three's rotation.y map — and must stay in lockstep with it.
-        float rotC = cos(uGalaxyRotY);
-        float rotS = sin(uGalaxyRotY);
         vec2 tissueXZ = vec2(
-          vWorldXZ.x * rotC - vWorldXZ.y * rotS,
-          vWorldXZ.x * rotS + vWorldXZ.y * rotC
+          vWorldXZ.x * uGalaxyRot.x - vWorldXZ.y * uGalaxyRot.y,
+          vWorldXZ.x * uGalaxyRot.y + vWorldXZ.y * uGalaxyRot.x
         );
         float fieldNorm = length(tissueXZ / vec2(
           ${FIELD_HALF_X.toFixed(1)},

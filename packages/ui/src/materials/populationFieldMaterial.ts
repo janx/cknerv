@@ -169,6 +169,32 @@ export const POPULATION_FIELD_EMISSION = 0.95;
 export const POPULATION_FIELD_MIN_POINT_PX = 1.4;
 
 /**
+ * Largest sprite the layer will draw, in CSS pixels before DPR — the other end
+ * of the same clamp, in the same unit, so the pair reads as one bound.
+ *
+ * The footprint law is `size * 2 * (viewportHeight / 2) / viewDistance` and
+ * nothing in it is bounded from above: a point the camera passes CLOSE to
+ * rasterizes without limit. That is not a hypothetical pose — the layer is
+ * `frustumCulled = false` by construction (105K points, one static draw), and
+ * `CONSENSUS_ROUTE_CAMERA_DISTANCE` stands the camera 36 world units off a
+ * route centroid and flies it through the slab the halo occupies. At 1080p a
+ * max-weight point is 22.8 CSS px at that standoff, 46 at 18 units, and 456 at
+ * 1.8 — one point, one blended Gaussian quad, a fifth of the frame's height.
+ *
+ * 48 CSS px is twice the standoff footprint: points legitimately nearer than
+ * the camera's own distance keep growing, and the ones it is passing THROUGH
+ * stop. The energy term is unaffected either way — it corrects a sprite the
+ * MINIMUM had to widen, and `min(1, shrink * shrink)` already saturates when
+ * the drawn footprint is the smaller of the two.
+ *
+ * ⚠️ A ceiling on the halo cannot cross the class boundary it is separated by:
+ * the bodies are drawn by `cellHybridMaterial` under no such clamp, so the
+ * "always smaller than the smallest addressable Cell" invariant is tightened
+ * here, never loosened.
+ */
+export const POPULATION_FIELD_MAX_POINT_PX = 48;
+
+/**
  * The BEADS' body hue, at full saturation — one emitted colour per class, and
  * the palette's own.
  *
@@ -414,6 +440,19 @@ export function populationPointFootprint(
   return size
     * HYBRID_BASE_PX_PER_WU
     * (deviceViewportHeight * 0.5 / Math.max(viewDistance, 0.001));
+}
+
+/** The footprint as drawn: the wanted one held between the two clamps, both
+ *  stated in CSS pixels and both taken to device pixels by the same DPR. */
+export function populationPointDrawn(
+  wantedPx: number,
+  pixelRatio: number,
+): number {
+  const dpr = Math.max(pixelRatio, 0.001);
+  return Math.min(
+    Math.max(wantedPx, POPULATION_FIELD_MIN_POINT_PX * dpr),
+    POPULATION_FIELD_MAX_POINT_PX * dpr,
+  );
 }
 
 /** Energy correction for a sprite the minimum footprint had to widen.
@@ -901,6 +940,7 @@ export function makePopulationPointMaterial(): THREE.ShaderMaterial {
       uSizeMin: { value: POPULATION_FIELD_POINT_SIZE_MIN },
       uSizeMax: { value: POPULATION_FIELD_POINT_SIZE_MAX },
       uMinPointPx: { value: POPULATION_FIELD_MIN_POINT_PX },
+      uMaxPointPx: { value: POPULATION_FIELD_MAX_POINT_PX },
       uEmission: { value: 0 },
       uColor: { value: new THREE.Color(...POPULATION_FIELD_COLOR) },
     },
@@ -935,6 +975,7 @@ export function makePopulationPointMaterial(): THREE.ShaderMaterial {
       uniform float uSizeMin;
       uniform float uSizeMax;
       uniform float uMinPointPx;
+      uniform float uMaxPointPx;
 
       varying float vEnergy;
 
@@ -946,10 +987,15 @@ export function makePopulationPointMaterial(): THREE.ShaderMaterial {
         float wanted = mix(uSizeMin, uSizeMax, weight)
           * ${HYBRID_BASE_PX_PER_WU.toFixed(1)}
           * (uViewportHeight * 0.5 / max(-viewPos.z, 0.001));
-        float minimum = uMinPointPx * max(uPixelRatio, 0.001);
-        float drawn = max(wanted, minimum);
-        // Conserve the light the clamp added, so pulling the camera back
+        float dpr = max(uPixelRatio, 0.001);
+        // Both ends of the same bound. The floor is what a fragment can
+        // resolve; the ceiling is what one member of a population may cover,
+        // and the layer is never frustum culled, so a camera flying through
+        // the slab is a pose the law has to hold at.
+        float drawn = clamp(wanted, uMinPointPx * dpr, uMaxPointPx * dpr);
+        // Conserve the light the FLOOR added, so pulling the camera back
         // dims the field instead of making it twinkle across the pixel grid.
+        // A sprite the ceiling narrowed leaves this at one.
         float shrink = wanted / drawn;
         vEnergy = min(1.0, shrink * shrink);
         gl_PointSize = drawn;

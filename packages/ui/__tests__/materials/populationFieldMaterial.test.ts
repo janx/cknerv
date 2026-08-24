@@ -8,6 +8,7 @@ import {
   makePopulationBackboneMaterial,
   makePopulationFibreMaterial,
   makePopulationPointMaterial,
+  populationPointDrawn,
   populationPointEnergy,
   populationEmissionForGain,
   populationPointFootprint,
@@ -15,6 +16,7 @@ import {
   POPULATION_FIELD_COLOR,
   POPULATION_STROKE_COLOR,
   POPULATION_FIELD_EMISSION,
+  POPULATION_FIELD_MAX_POINT_PX,
   POPULATION_FIELD_MIN_POINT_PX,
   POPULATION_FIELD_POINT_SIZE_MAX,
   POPULATION_FIELD_POINT_SIZE_MIN,
@@ -655,6 +657,49 @@ describe('the sprite footprint', () => {
     const px = populationPointFootprint(POPULATION_FIELD_POINT_SIZE_MIN, 2160, 189);
     expect(px).toBeGreaterThan(POPULATION_FIELD_MIN_POINT_PX);
     expect(px).toBeLessThan(16);
+  });
+
+  it('is bounded at both ends, in one unit, by the same DPR', () => {
+    // The floor is what a fragment can resolve; the ceiling is what one member
+    // of a population may cover. Both are CSS px, so a sprite looks the same
+    // size on a DPR 1 and a DPR 2 canvas.
+    expect(populationPointDrawn(0.2, 2)).toBe(POPULATION_FIELD_MIN_POINT_PX * 2);
+    expect(populationPointDrawn(9_000, 2)).toBe(POPULATION_FIELD_MAX_POINT_PX * 2);
+    expect(populationPointDrawn(9_000, 1)).toBe(POPULATION_FIELD_MAX_POINT_PX);
+    // Untouched in between — the great majority of the field at every camera.
+    expect(populationPointDrawn(7, 2)).toBe(7);
+    expect(POPULATION_FIELD_MIN_POINT_PX).toBeLessThan(POPULATION_FIELD_MAX_POINT_PX);
+  });
+
+  it('binds only where the camera flies through the slab', () => {
+    // The layer is never frustum culled, so a route framing rasterizes points
+    // the camera is passing THROUGH. 1080p at DPR 2 is 2160 drawing-buffer px.
+    const at = (distance: number) => populationPointFootprint(
+      POPULATION_FIELD_POINT_SIZE_MAX, 2160, distance,
+    );
+    // The production camera and the route camera's own standoff are both well
+    // under the ceiling: nothing about the ordinary picture moves.
+    expect(populationPointDrawn(at(189), 2)).toBe(at(189));
+    expect(populationPointDrawn(at(36), 2)).toBe(at(36));
+    // A point two world units off the lens wanted a fifth of the frame height.
+    expect(at(1.8)).toBeGreaterThan(400);
+    expect(populationPointDrawn(at(1.8), 2)).toBe(POPULATION_FIELD_MAX_POINT_PX * 2);
+  });
+
+  it('states the pair in the shader the mirror stands for', () => {
+    const point = makePopulationPointMaterial();
+    expect(point.uniforms.uMinPointPx.value).toBe(POPULATION_FIELD_MIN_POINT_PX);
+    expect(point.uniforms.uMaxPointPx.value).toBe(POPULATION_FIELD_MAX_POINT_PX);
+    expect(point.vertexShader)
+      .toContain('clamp(wanted, uMinPointPx * dpr, uMaxPointPx * dpr)');
+    point.dispose();
+  });
+
+  it('leaves the light alone when the CEILING is the clamp that bound', () => {
+    // The energy term corrects a sprite the MINIMUM widened. A narrowed one
+    // has shrink above one, which the saturation already caps.
+    const wanted = populationPointFootprint(POPULATION_FIELD_POINT_SIZE_MAX, 2160, 1.8);
+    expect(populationPointEnergy(wanted, populationPointDrawn(wanted, 2))).toBe(1);
   });
 
   it('conserves light when the minimum footprint has to widen a sprite', () => {
