@@ -6,11 +6,38 @@ import { fnv1a } from '../geometry/edgeBezier';
 import { dist2 } from './networkTopology.derive';
 import type { NetworkTopology } from '../types';
 
-/** Pick a non-local flood origin, biased FAR from local so the front travels to us. */
+/**
+ * Pick a flood origin among the ANONYMOUS scatter, biased FAR from local so the
+ * front travels to us.
+ *
+ * ⭐ NEVER a node that has a name. The origin is the one part of this flood
+ * that singles a node out — "the block entered the network HERE" — and nothing
+ * observable backs it: the tree is geometric fiction end to end
+ * (`provenance: 'inferred'`, every scaffold edge `kind: 'inferred'`), and no
+ * source we read reports who relayed a block. Landing that claim on an
+ * `inferred` ghost leaves it unattributable, which is what a declared fiction
+ * should be. Landing it on a `sighted` node would pin an invented "first" onto
+ * a REAL base58 identity whose card carries real crawler facts (country, ASN,
+ * client version, last_seen); landing it on a `measured` peer would in
+ * addition leave `arrivals[id] = 0` below, launching a delivery carrier into
+ * the Cell canopy at t=0 — the scene physically asserting that named peer
+ * handed us this block.
+ *
+ * Named nodes still relay, and still light as the front crosses them:
+ * RECEIVING a block is the true part (every peer really does), being its
+ * source is not.
+ *
+ * The fallback keeps a scatter-less topology (labs, fixtures, the degenerate
+ * few-node case) choosing exactly as it did before, rather than collapsing the
+ * origin onto local.
+ */
 export function pickOrigin(topology: NetworkTopology, nonce: number): string {
   const rng = mulberry32((fnv1a(topology.localId) ^ (Math.floor(nonce) >>> 0)) >>> 0);
   const local = topology.nodes.find((n) => n.id === topology.localId)!;
-  const cands = topology.nodes.filter((n) => n.id !== topology.localId);
+  const anonymous = topology.nodes.filter((n) => n.kind === 'inferred');
+  const cands = anonymous.length > 0
+    ? anonymous
+    : topology.nodes.filter((n) => n.id !== topology.localId);
   if (cands.length === 0) return topology.localId;
   // weight ∝ geometric distance from local (farther = more likely origin)
   const weights = cands.map((n) => Math.sqrt(dist2(n.pos, local.pos)) + 1);
@@ -61,7 +88,7 @@ export function clampHeroDelayS(rawSec: number): number {
 }
 
 export interface ColonyFlood {
-  entryId: string | null;                            // flood origin (may be inferred)
+  entryId: string | null;                            // flood origin (anonymous — see pickOrigin)
   localReceiveDelayS: number;                        // hero timing (measured-worker feed)
   arrivals: Record<string, number>;                  // MEASURED peers → carrier arrival age
   senders: Record<string, string | null>;            // MEASURED peers → flood predecessor

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { pickOrigin, floodArrivalTimes, colonyFlood, clampHeroDelayS, FLOOD_DURATION_S, HERO_MIN_FRAC, HERO_MAX_FRAC } from '../src/derives/networkFlood.derive';
 import { inferredTopology } from '../src/derives/networkTopology.derive';
-import type { Peer } from '@cknerv/types';
+import type { NetworkRosterRecord, Peer, RosterNode } from '@cknerv/types';
 
 function peer(p: Partial<Peer>): Peer {
   return { node_id: 'Qm', addr: '1.2.3.4:8115', direction: 'outbound', version: '0.1', connected_ms: 0, ...p };
@@ -9,12 +9,57 @@ function peer(p: Partial<Peer>): Peer {
 const peers = [peer({ node_id: 'A', latency_ms: 40 }), peer({ node_id: 'B', latency_ms: 220 })];
 const topo = inferredTopology(peers, 0xc0ffee, 'ckb:local');
 
+/** A crawler roster of `n` rows, the shape `stageSighted` reads. */
+function roster(n: number): NetworkRosterRecord {
+  const entries: RosterNode[] = Array.from({ length: n }, (_, i) => ({
+    node_id: `Qm${String(i).padStart(4, '0')}`,
+    addr: '/ip4/10.0.0.1/tcp/8115',
+    version: '0.116.1',
+    country: 'Unknown',
+    asn: 'Unknown',
+    reachable: true,
+    last_seen_ms: 1_700_000_000_000,
+  }));
+  return {
+    source: 'ckbadger',
+    as_of: { block: 12_000_000, hash: '0xabc' },
+    updated_at_ms: 1_700_000_000_000,
+    crawl_round: 1,
+    truncated: false,
+    entries,
+  };
+}
+
 describe('graph flood', () => {
   it('pickOrigin is deterministic per nonce, never local, and reshuffles across nonces', () => {
     expect(pickOrigin(topo, 7)).toBe(pickOrigin(topo, 7));
     expect(pickOrigin(topo, 7)).not.toBe('ckb:local');
     const winners = new Set([1, 2, 3, 4, 5, 6, 7, 8].map((n) => pickOrigin(topo, n)));
     expect(winners.size).toBeGreaterThan(1);
+  });
+
+  it('pickOrigin never singles out a NAMED node — the origin is always anonymous', () => {
+    // Both named tiers on stage at once: two measured peers we hold a link to,
+    // and 24 sighted rows a crawler handed us. An origin is the claim "the
+    // block entered the network HERE", and nothing observable backs it — so it
+    // may only ever land on the anonymous scatter, never on an identity whose
+    // card carries real facts.
+    const named = inferredTopology(peers, 0xc0ffee, 'ckb:local', undefined, roster(24));
+    const kindById = new Map(named.nodes.map((n) => [n.id, n.kind]));
+    expect(new Set(kindById.values())).toEqual(new Set(['local', 'measured', 'inferred', 'sighted']));
+    for (let nonce = 0; nonce < 512; nonce += 1) {
+      expect(kindById.get(pickOrigin(named, nonce))).toBe('inferred');
+    }
+  });
+
+  it('a scatter-less topology still picks a non-local origin (fallback intact)', () => {
+    // Labs and fixtures stand a colony with no ghosts at all; the anonymity
+    // rule must narrow the choice, never collapse it back onto us.
+    const bare = { ...topo, nodes: topo.nodes.filter((n) => n.kind === 'local' || n.kind === 'measured') };
+    expect(bare.nodes.map((n) => n.kind).sort()).toEqual(['local', 'measured', 'measured']);
+    for (let nonce = 0; nonce < 32; nonce += 1) {
+      expect(pickOrigin(bare, nonce)).not.toBe('ckb:local');
+    }
   });
 
   it('arrival times: origin = 0, all nodes reachable, monotonic along predecessors', () => {
