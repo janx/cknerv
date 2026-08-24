@@ -14,6 +14,7 @@ import {
 import { Html } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import { HUD_COLORS, rgba } from '../components/hud/hudTheme';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { useReducedMotion } from '../components/hud/useReducedMotion';
 import {
@@ -1652,8 +1653,8 @@ export default function ConsensusRouteHopMarker({
                 Math.hypot(labelX, callout.offsetYPx) - 5,
               );
               const calloutBackground = callout.side === 'right'
-                ? `linear-gradient(90deg, rgba(1,5,14,.96), ${signatureFill}, rgba(1,5,14,.82))`
-                : `linear-gradient(270deg, rgba(1,5,14,.96), ${signatureFill}, rgba(1,5,14,.82))`;
+                ? `linear-gradient(90deg, ${rgba(HUD_COLORS.stageGround, 0.96)}, ${signatureFill}, ${rgba(HUD_COLORS.stageGround, 0.82)})`
+                : `linear-gradient(270deg, ${rgba(HUD_COLORS.stageGround, 0.96)}, ${signatureFill}, ${rgba(HUD_COLORS.stageGround, 0.82)})`;
               return (
                 <div
                   key={tick.sourceId}
@@ -1874,7 +1875,7 @@ export default function ConsensusRouteHopMarker({
             padding: '2px 5px 2px 6px',
             borderLeft: `1px solid ${color}`,
             borderBottom: `1px solid ${cssColor(presentation.primary, 0.4)}`,
-            background: `linear-gradient(90deg, rgba(1,5,14,.92), ${cssColor(presentation.primary, 0.07)}, rgba(1,5,14,.78))`,
+            background: `linear-gradient(90deg, ${rgba(HUD_COLORS.stageGround, 0.92)}, ${cssColor(presentation.primary, 0.07)}, ${rgba(HUD_COLORS.stageGround, 0.78)})`,
             boxShadow: `0 0 10px ${cssColor(presentation.primary, 0.17)}`,
             opacity: renderStrength,
             whiteSpace: 'nowrap',

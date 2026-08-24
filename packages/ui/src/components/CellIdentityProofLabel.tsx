@@ -41,7 +41,7 @@ const CellIdentityProofLabel = forwardRef<
           borderTop: `1px solid ${label.dimColor}`,
           borderLeft: '1px solid transparent',
           borderRight: '1px solid transparent',
-          background: `linear-gradient(105deg, ${label.color}17, rgba(1, 4, 12, .92) 32%, rgba(1, 4, 12, .74))`,
+          background: `linear-gradient(105deg, ${label.color}17, ${rgba(HUD_COLORS.stageGround, 0.92)} 32%, ${rgba(HUD_COLORS.stageGround, 0.74)})`,
           boxShadow: [
             `0 0 ${TOKENS.glowRadiusPx}px ${rgba(HUD_COLORS.ground, 0.58)}`,
             `inset 0 0 8px ${label.color}0b`,

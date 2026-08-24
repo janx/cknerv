@@ -211,7 +211,7 @@ function RouteHopInspector({
         padding: '5px 6px 4px',
         borderTop: `1px solid ${roleCopy.color}52`,
         borderLeft: `1px solid ${roleCopy.color}78`,
-        background: `linear-gradient(105deg, ${roleCopy.color}12, rgba(3,8,20,.72) 58%, ${sourceColor}08)`,
+        background: `linear-gradient(105deg, ${roleCopy.color}12, ${rgba(HUD_COLORS.stageGround, 0.72)} 58%, ${sourceColor}08)`,
         boxShadow: `inset 5px 0 12px ${roleCopy.color}08`,
         fontFamily: HUD_FONTS.mono,
       }}
@@ -396,7 +396,7 @@ function EvidenceRouteLedger({
         borderTop: `1px solid ${sourceColor}7a`,
         borderBottom: `1px solid ${CYAN}30`,
         borderLeft: `1px solid ${sourceColor}4f`,
-        background: 'linear-gradient(110deg, rgba(1,4,12,.97), rgba(3,8,20,.94))',
+        background: `linear-gradient(110deg, ${rgba(HUD_COLORS.stageGround, 0.97)}, ${rgba(HUD_COLORS.stageGround, 0.94)})`,
         boxShadow: `-8px 0 24px ${rgba(HUD_COLORS.ground, 0.3)}, inset 8px 0 18px ${sourceColor}0b`,
         color: HUD_COLORS.dim,
         whiteSpace: 'normal',

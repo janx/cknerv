@@ -49,6 +49,22 @@ export const HUD_COLORS = {
   // `index.html` still spells it, because the shell paints before a module has
   // evaluated and a stylesheet cannot import. Its copy is held against this one
   // by `ui-app/__tests__/App.sceneRoots.test.tsx`.
+  //
+  // It is also the DARK EVERY FLOATING SURFACE IS DRAWN ON, and that was the
+  // second half of the same mismatch. The plate gradients, the dropdown menus,
+  // the scene callouts and the inline label washes wrote their own near-black
+  // channel at an alpha — twelve spellings of it: 0,3,8 · 0,3,10 · 0,3,12 ·
+  // 1,4,12 · 1,5,13 · 1,5,14 · 1,5,15 · 2,5,8 · 2,5,12 · 3,8,17 · 3,8,20 ·
+  // 4,7,12. They are not twelve decisions. The widest pair among them is 13.3
+  // apart, a third of the separation floor this palette calls "one colour
+  // wearing two names", and every one of them lands within 11.2 of this token
+  // with the centroid at 3.5. Two of them are not even near-copies: the plate
+  // head and tail are spelled character-for-character in `primitives.tsx` and
+  // in the portrait's canvas gradient, at the same two alphas.
+  //
+  // So the surfaces say `rgba(HUD_COLORS.stageGround, α)` now, and the reading
+  // they were each reaching for — a plate is darker or lighter than its
+  // neighbour — is carried where it was always actually carried, by the ALPHA.
   stageGround: '#02030A',
   panel: rgba(GROUND, 0.45),
   // The empty half of every gauge, meter and segmented bar. Deliberately one

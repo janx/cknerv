@@ -484,7 +484,7 @@ export function spatialPlateTail(accent: string): string {
 }
 
 export function spatialPlateBackground(accent: string): string {
-  return `linear-gradient(100deg,rgba(2,5,12,.985),rgba(3,8,17,.965) 72%,${spatialPlateTail(accent)})`;
+  return `linear-gradient(100deg,${rgba(HUD_COLORS.stageGround, 0.985)},${rgba(HUD_COLORS.stageGround, 0.965)} 72%,${spatialPlateTail(accent)})`;
 }
 
 export function spatialPlate(accent: string): CSSProperties {

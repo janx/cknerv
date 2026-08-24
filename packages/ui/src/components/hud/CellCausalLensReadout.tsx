@@ -5,7 +5,7 @@ import type {
 } from '@cknerv/types';
 import type { CellCausalLens } from '../../derives/cellCausalLens.derive';
 import { formatBlockRef, formatFeeShannons, midTruncate } from './cellFormat';
-import { HUD_COLORS, HUD_FONTS, HUD_TYPE } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import { PlateReadoutCaption, PlateReadoutRow } from './primitives';
 
 const EXACT = HUD_COLORS.cyanInk;
@@ -393,7 +393,7 @@ export default function CellCausalLensReadout({
         padding: compact ? '4px 5px 4px' : '6px 7px 5px',
         border: `1px solid ${meta.color}26`,
         borderLeftColor: `${meta.color}8f`,
-        background: `linear-gradient(90deg, ${meta.color}0f, rgba(1,4,12,.22) 58%, transparent)`,
+        background: `linear-gradient(90deg, ${meta.color}0f, ${rgba(HUD_COLORS.stageGround, 0.22)} 58%, transparent)`,
         boxShadow: `inset 0 0 14px ${meta.color}08`,
         opacity,
       }}

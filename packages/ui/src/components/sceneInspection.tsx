@@ -9,7 +9,7 @@ import {
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { CELL_CLICK_MAX_POINTER_DELTA_PX } from '../derives/cellInteraction.derive';
-import { HUD_COLORS } from './hud/hudTheme';
+import { HUD_COLORS, rgba } from './hud/hudTheme';
 
 /**
  * Chassis shared by every scene-tethered inspector. A floating card is two
@@ -816,7 +816,7 @@ function inspectionLeaderDotStyle(enterAnimation?: string): CSSProperties {
     boxSizing: 'border-box',
     borderRadius: '50%',
     border: `1px solid ${HUD_COLORS.orange}`,
-    background: 'rgba(1,5,13,.78)',
+    background: rgba(HUD_COLORS.stageGround, 0.78),
     boxShadow: `0 0 9px ${HUD_COLORS.orange}`,
     pointerEvents: 'none',
     animation: enterAnimation,

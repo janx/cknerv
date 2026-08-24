@@ -11,7 +11,7 @@ import type { CellMorphologyTopology, MorphologyPoint3 } from '../../derives/cel
 import type { CellSemanticMorphologyOverlay } from '../../derives/cellSemanticMorphology.derive';
 import { CELL_PORTRAIT_LABEL_PORTAL } from './cellPortraitInsetChannel';
 import { SEGMENT_COLORS } from './cellFormat';
-import { QUALITATIVE_BUCKET_COLORS } from './hudTheme';
+import { HUD_COLORS, QUALITATIVE_BUCKET_COLORS, rgba } from './hudTheme';
 import {
   cellSemanticKnowledgeArcWindow,
   cellSemanticKnowledgeRingVisible,
@@ -304,7 +304,7 @@ export default function CellSemanticMorphologyOverlay({
               style={{
                 padding: '1px 3px',
                 borderLeft: `1px solid ${label.color}`,
-                background: 'rgba(0,3,12,.78)',
+                background: rgba(HUD_COLORS.stageGround, 0.78),
                 boxShadow: `0 0 7px ${label.color}44`,
                 color: label.color,
                 fontFamily: '"JetBrains Mono Local", ui-monospace, monospace',

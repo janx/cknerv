@@ -513,7 +513,7 @@ export default function CellContentMemory({
                 data-cell-content-reveal-item-state={bytesRevealed ? 'resolved' : 'scanning'}
                 title={content?.data_hex ?? dataHex}
                 {...revealStageAttributes(bytesRevealed)}
-                style={{ display: 'grid', ...revealStageStyle(bytesRevealed), gridTemplateColumns: `repeat(${HEX_ROW_BYTES}, minmax(0, 1fr))`, justifyItems: 'center', gap: '2px 3px', minWidth: 0, marginTop: 3, padding: '3px 4px', border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.12)}`, background: 'rgba(0,3,10,.38)' }}
+                style={{ display: 'grid', ...revealStageStyle(bytesRevealed), gridTemplateColumns: `repeat(${HEX_ROW_BYTES}, minmax(0, 1fr))`, justifyItems: 'center', gap: '2px 3px', minWidth: 0, marginTop: 3, padding: '3px 4px', border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.12)}`, background: rgba(HUD_COLORS.stageGround, 0.38) }}
               >
                 {previewBytes.map((byte, localIndex) => {
                   const index = previewStart + localIndex;

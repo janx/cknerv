@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { CELL_CARD_ACCENT } from './hudTheme';
+import { CELL_CARD_ACCENT, HUD_COLORS, rgba } from './hudTheme';
 import { spatialPlateTail } from './primitives';
 import { useReducedMotion } from './useReducedMotion';
 import {
@@ -39,8 +39,8 @@ export function drawPortraitPlateGradient(
     cx + (dirX * lineLength) / 2,
     cy + (dirY * lineLength) / 2,
   );
-  gradient.addColorStop(0, 'rgba(2,5,12,.985)');
-  gradient.addColorStop(0.72, 'rgba(3,8,17,.965)');
+  gradient.addColorStop(0, rgba(HUD_COLORS.stageGround, 0.985));
+  gradient.addColorStop(0.72, rgba(HUD_COLORS.stageGround, 0.965));
   gradient.addColorStop(1, spatialPlateTail(accent));
   ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = gradient;

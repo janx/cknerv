@@ -54,7 +54,7 @@ import {
   makeConsensusMemoryKnotMaterial,
 } from '../../materials/consensusMemoryKnotMaterial';
 import { CELL_PORTRAIT_LABEL_PORTAL } from './cellPortraitInsetChannel';
-import { HUD_COLORS } from './hudTheme';
+import { HUD_COLORS, rgba } from './hudTheme';
 import CellSemanticMorphologyOverlay from './CellSemanticMorphologyOverlay';
 
 const TAU = CONSENSUS_BRAID_TAU;
@@ -1034,8 +1034,8 @@ export default function ConsensusMemory({
                 padding: '1px 3px 1px 2px',
                 borderLeft: `1px solid ${sourceColor}`,
                 background: focusState === 'active'
-                  ? `linear-gradient(90deg, ${sourceColor}30, rgba(0, 3, 12, .84))`
-                  : 'rgba(0, 3, 12, .74)',
+                  ? `linear-gradient(90deg, ${sourceColor}30, ${rgba(HUD_COLORS.stageGround, 0.84)})`
+                  : rgba(HUD_COLORS.stageGround, 0.74),
                 boxShadow: focusState === 'active'
                   ? `0 0 11px ${sourceColor}66`
                   : `0 0 7px ${sourceColor}33`,
