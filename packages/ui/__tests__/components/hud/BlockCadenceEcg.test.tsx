@@ -1,5 +1,5 @@
 import { cleanup, render } from '@testing-library/react';
-import { afterEach, describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import type { EcgCondition } from '../../../src/derives/ecgCondition';
 import BlockCadenceEcg from '../../../src/components/hud/BlockCadenceEcg';
 import { HUD_COLORS } from '../../../src/components/hud/hudTheme';
@@ -92,6 +92,50 @@ function asStyleColor(hex: string): string {
   probe.style.color = hex;
   return probe.style.color;
 }
+
+// ——— Redraw cadence —————————————————————————————————————————————————
+//
+// The paper's speed is the whole budget here: one window (8 beats ≈ 64s)
+// crosses ~300px, so the ink travels ~4.7px/s while every redraw sums a
+// gaussian beat profile per column and strokes the result through a glow.
+// `ECG_DRAW_FPS` is what keeps the two in proportion — a draw per animation
+// frame bought sub-pixel motion at three times the cost.
+
+/** Drives the component's loop by hand: it asks for one frame at a time, so
+ *  the timestamps come from the test and nothing rides a real clock. */
+function stubFrames(): (at: number) => void {
+  let pending: FrameRequestCallback | null = null;
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+    pending = cb;
+    return 1;
+  });
+  vi.stubGlobal('cancelAnimationFrame', () => { pending = null; });
+  return (at: number) => {
+    const cb = pending;
+    pending = null;
+    cb?.(at);
+  };
+}
+
+describe('BlockCadenceEcg — redraw cadence', () => {
+  let canvas: ReturnType<typeof stubCanvas>;
+  afterEach(() => { canvas?.restore(); vi.unstubAllGlobals(); });
+
+  it('redraws the scrolling trace at 10 Hz, not once per animation frame', () => {
+    canvas = stubCanvas();
+    const frame = stubFrames();
+    render(<BlockCadenceEcg {...base} reducedMotion={false} condition="FINE" />);
+    const draws = () => canvas.strokes.filter((s) => s.shadowBlur > 0).length;
+
+    expect(draws()).toBe(1); // the mount draw, before any frame arrives
+    frame(0); // the first frame has no predecessor and always draws
+    frame(50);
+    frame(99);
+    expect(draws()).toBe(2); // 50 and 99 fall inside the same 100ms step
+    frame(99.5);
+    expect(draws()).toBe(3);
+  });
+});
 
 describe('BlockCadenceEcg — instrument ink vs status lamp', () => {
   let canvas: ReturnType<typeof stubCanvas>;

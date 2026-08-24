@@ -38,7 +38,12 @@ const COND_COLOR_TRACE: Record<EcgCondition, string> = {
   ...COND_COLOR,
   FINE: HUD_COLORS.termGreen,
 };
-const ECG_DRAW_FPS = 30;
+/** One window is `ECG_SPAN_BEATS` × target ≈ 64s across ~300px, so the paper
+ *  travels ~4.7px/s: at 10 Hz a redraw advances the trace under half a pixel.
+ *  The ceiling is set by that velocity and nothing else — every draw sums a
+ *  gaussian beat profile per column and strokes the result with a glow, and
+ *  paying for it faster than the paper moves buys no motion. */
+const ECG_DRAW_FPS = 10;
 
 function fmtS(ms: number | null | undefined): string {
   if (ms == null || !Number.isFinite(ms)) return '—';
@@ -70,7 +75,7 @@ export default function BlockCadenceEcg({
   );
 
   // Latest draw inputs, read by one persistent animation loop. Arrival history
-  // is reconstructed only when chain input changes; the 30 Hz scroll redraw no
+  // is reconstructed only when chain input changes; the scroll redraw no
   // longer allocates and filters a new history array on every frame.
   const live = useRef({ arrivals, sizes, txCounts, lastBlockTsMs, targetMs, gapMs, traceColor });
   live.current = { arrivals, sizes, txCounts, lastBlockTsMs, targetMs, gapMs, traceColor };
