@@ -145,7 +145,7 @@ export const cellSchema = {
   // Restore the living rose body used by the earlier brain-like galaxy.
   // `warmth` adds only a restrained ember bias; real packet traffic remains the
   // brighter synaptic signal.
-  warmth: { value: 0.12, min: 0, max: 1, step: 0.01, label: 'body rose→ember' },
+  warmth: { value: 0.12, min: 0, max: 1, step: 0.01, label: 'body rose-ember' },
   // Shared galaxy-centre brightness floor. Cell bodies use it directly; the
   // much denser passive fabric squares it, while trunks/activity/events reclaim
   // headroom. 1.0 disables compression; Cells past the core are unaffected.

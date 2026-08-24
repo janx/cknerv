@@ -243,10 +243,39 @@ export const CELL_PANEL_ACCENT = HUD_COLORS.cellRose;
  *  selected → that fact's own colour wins, as it always did. */
 export const CELL_CARD_ACCENT = HUD_COLORS.cellRose;
 
+/** The four voices of the overlay, each one a STACK rather than a face.
+ *
+ *  `JetBrains Mono Local` sits behind all three Latin voices and is not a
+ *  fallback in the usual sense — nothing here is expected to fail to load. It
+ *  is a SYMBOL fallback, and CSS resolves a family list per CHARACTER: a span
+ *  set in `display` takes its letters from Saira and, for a character Saira
+ *  does not have, the next family that does.
+ *
+ *  It is here because the three Latin faces are Google Fonts' pre-built
+ *  `latin`-range woff2, and that range is a published, fixed list that stops
+ *  before the Geometric Shapes and Arrows blocks almost entirely. `→` is not
+ *  in it. Neither is `←`, `↔`, `◇`, `◆`, `●`, `▲`, `▼`, `▦`. So every symbol
+ *  the HUD writes into a sentence — the route arrows on the identity plate,
+ *  the read-marks on a proof, the lag arrow on an enrichment chip — was
+ *  resolving out of whatever the reader's machine happened to have installed,
+ *  which is not the same font twice across two machines and is not our font on
+ *  either. Nothing errored; the HUD just looked slightly wrong to somebody who
+ *  was not looking for it, which is the exact failure `src/fonts/README.md`
+ *  documents for the hand-cut Chinese face and nobody had asked of this side.
+ *
+ *  The arrangement is not new either — `CellGalaxy` has always listed this
+ *  face behind `Orbitron Local` for the same reason, and the README says so.
+ *  This is that ruling applied to the surface that never got it. It costs no
+ *  bytes: the face is already registered and already shipped.
+ *
+ *  What the symbol face does NOT carry, the HUD may not write: `▦`, `↔`, `∅`
+ *  and the rest are in no face this repo ships and none it could — they are
+ *  drawn as marks in `primitives.tsx` instead. `hudDiscipline.test.ts` holds
+ *  every face's inventory and fails on a character no stack at a site covers. */
 export const HUD_FONTS = {
-  display: "'Saira', system-ui, sans-serif",
-  tech: "'Chakra Petch', system-ui, sans-serif",
-  mono: "'Share Tech Mono', ui-monospace, monospace",
+  display: "'Saira', 'JetBrains Mono Local', system-ui, sans-serif",
+  tech: "'Chakra Petch', 'JetBrains Mono Local', system-ui, sans-serif",
+  mono: "'Share Tech Mono', 'JetBrains Mono Local', ui-monospace, monospace",
   cjk: "'Huiwen-mincho', 'Noto Serif CJK SC', 'Noto Serif SC', 'Songti SC', SimSun, serif",
 } as const;
 
@@ -360,13 +389,15 @@ export function rgba(hex: string, alpha: number): string {
 //
 // The two `* Local` families back the in-scene labels (cell-galaxy label,
 // consensus-memory markers, route-hop callouts) that name them directly in
-// inline `fontFamily` stacks. Both are hand-subset to ASCII printable plus the
-// symbols those labels render (· × – — • → ↗ ≈ ≤ ✓ ◇) with all optional layout
-// features dropped — JetBrains Mono's programming ligatures must never fire on
-// a hex id. Regenerate with:
+// inline `fontFamily` stacks — and JetBrains Mono now backs the three DOM
+// voices too, as the symbol fallback `HUD_FONTS` argues for above. Both are
+// hand-subset to ASCII printable plus the symbols the HUD renders
+// (· × – — • ← → ↓ ↗ ≈ ≤ ≥ ◆ ◇ ✓) with all optional layout features dropped —
+// JetBrains Mono's programming ligatures must never fire on a hex id.
+// Regenerate with:
 //   pyftsubset <face>.ttf --layout-features="" --no-hinting --desubroutinize \
 //     --flavor=woff2 --unicodes=U+0020-007E,U+00B7,U+00D7,U+2013,U+2014,\
-//     U+2022,U+2192,U+2197,U+2248,U+2264,U+2713,U+25C7
+//     U+2022,U+2190,U+2192,U+2193,U+2197,U+2248,U+2264,U+2713,U+25C6,U+25C7
 // Orbitron ships Medium only and the galaxy label asks for 400/500, so the one
 // face declares the whole span rather than letting the browser synthesize.
 const FONT_FACES = [

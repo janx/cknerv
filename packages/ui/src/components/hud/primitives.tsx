@@ -192,7 +192,7 @@ export function DragAxisMark({ width = 11 }: { width?: number }) {
 // glyph run off a 109px-tall PULSE and sit quietly inside a 475px CKB·01 is what
 // makes it read as a stamp the panel was cut out of.
 //
-// ⚠️ The CJK face is a HAND-SUBSET woff2 carrying exactly 22 glyphs, inventoried
+// ⚠️ The CJK face is a HAND-SUBSET woff2 carrying exactly 32 glyphs, inventoried
 // in `src/fonts/README.md`. A watermark using anything outside that set silently
 // falls back to a system serif — no error, just the wrong face — so every
 // literal passed here is checked against the inventory in
