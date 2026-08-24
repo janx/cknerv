@@ -68,8 +68,8 @@ export function createCellInspectionHandles(): CellInspectionHandles {
 const TETHER_STAGE_CONTRAST_FLOOR = 3;
 
 /** WCAG relative luminance, which is the only reading that says whether a thin
- *  line survives on black — `#33424F` is a fifth of the way up in raw channel
- *  values and a twentieth of the way up in light. */
+ *  line survives on black — `CONTENT_BANDS.unlisted` is a fifth of the way up
+ *  in raw channel values and a twentieth of the way up in light. */
 function stageContrast(hex: string): number {
   const h = hex.replace('#', '');
   const channel = (offset: number): number => {

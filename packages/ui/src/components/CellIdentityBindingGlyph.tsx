@@ -11,6 +11,19 @@ import {
 } from '../derives/cellIdentityProof.derive';
 
 const TAU = Math.PI * 2;
+
+/** The three arms of the knot, and the one table in this file the colour fence
+ *  cannot read for what it is. Every other colour here says its construct out
+ *  loud — a `THREE.Color`, or a material's own prop — and is sorted into the
+ *  scene dialect on sight. These two reach a `meshBasicMaterial` two bindings
+ *  later, through `GLYPH_META[kind].color`, so a text oracle sees only the
+ *  DOM's own spelling of a colour and holds them to the DOM's rule, which is
+ *  the strict side and the right side to guess on.
+ *
+ *  Nothing is lost by that: the ink rule says a value that already has a name
+ *  must say it, and neither of these is anything the palette holds. If one ever
+ *  becomes one, the ban will land here, and the answer will be to say the name
+ *  rather than to exempt the file. */
 const GLYPH_META: Record<CellIdentityProofKind, {
   angle: number;
   color: string;
