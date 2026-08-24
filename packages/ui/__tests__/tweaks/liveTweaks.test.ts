@@ -4,7 +4,7 @@ import { galaxySchema, peerSchema } from '../../src/tweaks/tweakSchema';
 
 describe('defaultsFrom', () => {
   it('extracts the numeric value from each knob def', () => {
-    expect(defaultsFrom(galaxySchema)).toMatchObject({ rotationRate: 0.0025 });
+    expect(defaultsFrom(galaxySchema)).toMatchObject({ rotationRate: 0.00125 });
     expect(defaultsFrom(peerSchema)).toMatchObject({
       colorCeil: 1.4,
       alphaCeil: 1.1,
@@ -14,7 +14,7 @@ describe('defaultsFrom', () => {
 
 describe('LIVE', () => {
   it('is initialized to the schema defaults', () => {
-    expect(LIVE.galaxy.rotationRate).toBe(0.0025);
+    expect(LIVE.galaxy.rotationRate).toBe(0.00125);
     expect(LIVE.delivery.heroSize).toBe(1.16);
     expect(LIVE.peer.surgeAmp).toBe(1.1);
     expect(LIVE.peer.colorBoost).toBe(3.75);

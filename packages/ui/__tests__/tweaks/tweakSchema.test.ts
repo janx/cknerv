@@ -4,7 +4,10 @@ import { galaxySchema, deliverySchema, peerSchema, cellSchema, nerveSchema, FOLD
 // Zero-drift guard: these are the EXACT literals the code shipped before the panel.
 // If a default changes, the untouched-panel baseline shifts — this test must fail.
 const EXPECTED_DEFAULTS = {
-  galaxy: { rotationRate: 0.0025 },
+  // Halved from the original 0.0025 when the peer colony began
+  // counter-rotating (2026-08-24): the two planes shear at twice the knob,
+  // so the shipped tempo came down with it.
+  galaxy: { rotationRate: 0.00125 },
   // waveWidth is 0.55/CONTACT_WAVE_SCALE — the one delivery default that is
   // derived rather than a hand literal, deliberately: the crest must rescale
   // with the ring (baseline shifted 0.14 → 0.1375 when the hand-rounding was

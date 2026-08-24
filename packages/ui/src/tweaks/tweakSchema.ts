@@ -61,7 +61,11 @@ export interface KnobDef {
 export type FolderSchema = Record<string, KnobDef>;
 
 export const galaxySchema = {
-  rotationRate: { value: 0.0025, min: 0, max: 0.02, step: 0.0005, label: 'rotation rate' },
+  // One knob turns BOTH planes: the cell canopy rides it directly and the
+  // peer colony counter-rotates at the same magnitude. Halved 0.0025 →
+  // 0.00125 (2026-08-24) so the counter-rotation shear stays calm; the step
+  // halves with it to keep the default reachable by dragging.
+  rotationRate: { value: 0.00125, min: 0, max: 0.02, step: 0.00025, label: 'rotation rate' },
 } satisfies FolderSchema;
 
 // Carrier glyph → contact front. The wave block is where this event lives now:

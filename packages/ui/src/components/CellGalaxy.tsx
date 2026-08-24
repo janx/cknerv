@@ -774,8 +774,8 @@ export function cellPointerGestureIsClick(delta: number): boolean {
  *  EVERY pointermove rebuild the whole O(visible) projection; letting the
  *  worst-placed cell drift ≤ this many px keeps hover accuracy sub-visual
  *  (pick radii are 5–15px) while collapsing rebuilds during mouse motion to
- *  ~1/s at the default spin rate. Clicks are exempt: pointerdown forces a
- *  precise snapshot. */
+ *  ~1 per 2s at the default spin rate. Clicks are exempt: pointerdown forces
+ *  a precise snapshot. */
 export const CELL_PICK_ROTATION_DRIFT_BUDGET_PX = 1.5;
 
 /** Max screen-px displacement per radian of galaxy spin for one indexed

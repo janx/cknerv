@@ -887,12 +887,12 @@ describe('cell pick index rotation tolerance', () => {
     expect(cellPickDriftPxPerRadian(60, 2.4, 540, 0)).toBe(0);
   });
 
-  it('tolerates ~1s of default spin before the worst rim cell rebuilds', () => {
+  it('tolerates ~2s of default spin before the worst rim cell rebuilds', () => {
     const rim = cellPickDriftPxPerRadian(60, 2.4, 540, 150);
     const toleratedRadians = CELL_PICK_ROTATION_DRIFT_BUDGET_PX / rim;
-    // Default LIVE.galaxy.rotationRate is 0.0025 rad/s — the budget must
+    // Default LIVE.galaxy.rotationRate is 0.00125 rad/s — the budget must
     // buy enough angle that hover motion stops rebuilding per event.
-    expect(toleratedRadians / 0.0025).toBeGreaterThan(0.5);
+    expect(toleratedRadians / 0.00125).toBeGreaterThan(0.5);
     // …while staying sub-visual: the budget itself is under 2px.
     expect(CELL_PICK_ROTATION_DRIFT_BUDGET_PX).toBeLessThan(2);
   });
