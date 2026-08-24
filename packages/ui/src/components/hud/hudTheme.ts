@@ -267,9 +267,19 @@ export const HUD_FONTS = {
  *  EXEMPT: the in-scene label dialect — the files that draw INSIDE the three.js
  *  canvas rather than in DOM overlay (`ConsensusMemory`,
  *  `CellSemanticMorphologyOverlay`, the portrait/artwork components). Those
- *  render at 6–6.4px under a camera and a bloom pass; they are a different
- *  medium with a different legibility floor, and `hudDiscipline.test.ts`
- *  recognises them by their imports rather than by a hand-kept list. */
+ *  render at 6–6.4px under a camera, as ADDITIVE material with `toneMapped`
+ *  off, laid on the near-black stage ground: light that accumulates, not ink
+ *  composited onto a lit panel. A 6px mark there is a mark that is present
+ *  rather than a word that is read, which is a different medium with a
+ *  different legibility floor, and `hudDiscipline.test.ts` recognises them by
+ *  their imports rather than by a hand-kept list.
+ *
+ *  This paragraph said "under a camera and a BLOOM PASS" for most of its life
+ *  and there has never been a bloom pass in this application — no
+ *  `EffectComposer`, no `postprocessing` dependency, no tone-mapped path. The
+ *  exemption was right and the reason was invented, which is the worse of the
+ *  two mistakes: this file is the design system's own record, and people have
+ *  reasoned downstream from that sentence. The oracle checks the reason now. */
 export const HUD_TYPE = {
   hero: 22,
   heroSub: 19,

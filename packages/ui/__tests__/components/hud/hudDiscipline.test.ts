@@ -338,9 +338,11 @@ const PACKAGE_SOURCES = readSources(SRC_DIR);
  *  read `SOURCES`, which is the HUD directory and stops there.
  *
  *  Scoped by directory rather than by exemption, deliberately. `materials/` is
- *  a sibling of these and builds THREE colours for the bloom pass; a sweep that
- *  reached it would need a file exempted from a rule it was never the subject
- *  of, and an exemption list is the debt this file is paying off. */
+ *  a sibling of these and builds THREE colours for the shaders the stage is
+ *  drawn with; a sweep that reached it would need a file exempted from a rule
+ *  it was never the subject of, and an exemption list is the debt this file is
+ *  paying off. (It said "for the BLOOM PASS", which does not exist — see the
+ *  scene-dialect exemption below.) */
 const INK_JURISDICTION = /^(derives|nerve|tweaks)\//;
 
 /** And the one directory a NAME cannot fence, because it is the one that
@@ -1597,12 +1599,25 @@ describe('one directory, two dialects', () => {
 // size a DOM-dialect file renders has to be one of the declared rungs.
 //
 // The exemption is PROGRAMMATIC on purpose. A file that imports from `three` or
-// `@react-three/*` is drawing inside the canvas, under a camera and a bloom
-// pass — a different medium with a different legibility floor, where 6.4px is a
-// marker rather than a caption. Deciding that by imports rather than by a
-// hand-kept filename list means the rule maintains itself: a new in-scene
-// overlay is exempt the day it is written, and a scene file that stops
-// importing three has stopped being scene dialect and starts being checked.
+// `@react-three/*` is drawing inside the canvas, under a camera, as additive
+// material with `toneMapped` off on the near-black stage ground — light that
+// accumulates rather than ink composited onto a lit panel, which is a different
+// medium with a different legibility floor, and where 6.4px is a marker rather
+// than a caption. Deciding that by imports rather than by a hand-kept filename
+// list means the rule maintains itself: a new in-scene overlay is exempt the
+// day it is written, and a scene file that stops importing three has stopped
+// being scene dialect and starts being checked.
+//
+// It said "under a camera and a BLOOM PASS", in three places across two files,
+// and there is no bloom pass in this application: no `EffectComposer`, no
+// `postprocessing` dependency, no tone-mapped path. The exemption is correct
+// and the stated reason was fiction — which is the more expensive kind of
+// error, because an exemption's reason is what the next person reasons from
+// when they decide whether their file qualifies. Somebody reading "bloom pass"
+// would conclude the scene is post-processed and that a colour handed to it
+// will be brightened on the way out; it will not be. So the reason is now the
+// medium the scene actually is, and the assertion under it checks the claim
+// rather than repeating it.
 
 const SCENE_DIALECT = /from '(three|@react-three\/[a-z-]+)'/;
 
@@ -1662,6 +1677,33 @@ describe('one type scale', () => {
     expect(dom.length).toBeGreaterThan(30);
     expect(scene.length).toBeGreaterThan(0);
     expect(scene.map((source) => source.name)).toContain('ConsensusMemory.tsx');
+  });
+
+  it('the reason the scene dialect is exempt is a fact, not a story', () => {
+    // A comment cannot be tested and a PREMISE can. The exemption above rests
+    // on the claim that the scene is a different medium; the version of that
+    // claim which shipped named a bloom pass, and this repository has never had
+    // one. Read as CODE, because two comments now say the word `bloom` in the
+    // course of saying it is not there.
+    const composed = [...PACKAGE_SOURCES, ...APP_SOURCES]
+      .filter((source) => /EffectComposer|from '(?:@react-three\/)?postprocessing'/
+        .test(code(source.text)))
+      .map((source) => `${source.name} composes a post pass — the exemption's reason needs rewriting`);
+    expect(composed).toEqual([]);
+
+    // …and what IS true of it, asked of the two files the exemption names. A
+    // scene label is additive light on the stage ground with tone mapping off,
+    // which is the whole of why 6.4px is legible there and would not be on a
+    // panel. If that stops being true the exemption has to be re-argued, and
+    // this is what says so.
+    for (const name of ['ConsensusMemory.tsx', 'CellSemanticMorphologyOverlay.tsx']) {
+      const scene = SOURCES.find((source) => source.name === name);
+      expect(scene, `${name} moved — this oracle reads files off disk`).toBeDefined();
+      const text = code(scene?.text ?? '');
+      expect(text, `${name} is no longer additive`).toContain('AdditiveBlending');
+      expect(text, `${name} is no longer untonemapped`).toMatch(/toneMapped[:=]\s*\{?false/);
+      expect(SCENE_DIALECT.test(scene?.text ?? '')).toBe(true);
+    }
   });
 
   it('the scale is a ladder — every rung distinct, micro at the floor', () => {
