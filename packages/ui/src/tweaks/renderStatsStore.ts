@@ -1,7 +1,9 @@
 // Render-stats core: the pure metric math + a tiny external store bridging the
 // in-Canvas sampler (writes) to the DOM panel (reads via useSyncExternalStore).
-// fpsColor/fmtCompact/the sampling math are migrated verbatim from the deleted
-// stats HUD component.
+// fmtCompact and the sampling math are migrated verbatim from the deleted stats
+// HUD component; `fpsColor` was too, which is how it kept its own severity ramp
+// for so long — see the argument on it below.
+import { HUD_COLORS } from '../components/hud/hudTheme';
 
 export interface RuntimeStats {
   fps: number;
@@ -69,11 +71,32 @@ export function computeRuntimeStats(frames: number, elapsedMs: number, info: Ren
   };
 }
 
-/** Perf-overlay FPS color: green 55+, amber 30-54, red below 30. */
+/** The FPS reading on the HUD's own severity ramp: fine at 55+, worth
+ *  noticing from 30, a fault below it.
+ *
+ *  Three states against a five-rung ramp, so two rungs go unspent and which
+ *  two is the decision. `crit` cannot be spelled here at all — it escalates in
+ *  SHAPE rather than colour, and `hudDiscipline.test.ts` holds it to its one
+ *  reader. `warning` is skipped because of what it is in practice: its only
+ *  readers in the whole HUD are the warning bar, the stream banner and the
+ *  status strip's severity map — the channel where the instrument INTERRUPTS
+ *  you. GL·08 is a panel you have to summon from the menu, and a reading you
+ *  went looking for does not get to borrow the colour of an interruption.
+ *  `danger` is the rung the HUD already spends on one reading being bad — a
+ *  lagging node, a frozen stream, a deprecated script — which is exactly what
+ *  a renderer under 30fps is.
+ *
+ *  What it replaced: three Tailwind defaults (green-300, amber-400, red-400)
+ *  carried in from the deleted stats overlay, forming a second severity ramp
+ *  beside the declared one. The FPS figure is this panel's only coloured
+ *  reading, so its "healthy" was visibly a different green from every other
+ *  healthy reading on screen — and the bottom rung sat 23.0 from `cellRose`,
+ *  inside the separation floor, so a dropped frame rate announced itself in
+ *  very nearly the colour that means "this is a Cell" everywhere else. */
 export function fpsColor(fps: number): string {
-  if (fps >= 55) return '#86efac';
-  if (fps >= 30) return '#fbbf24';
-  return '#f87171';
+  if (fps >= 55) return HUD_COLORS.nominal;
+  if (fps >= 30) return HUD_COLORS.caution;
+  return HUD_COLORS.danger;
 }
 
 /** Integer count with an SI-ish suffix so TRIS (100k+) doesn't overflow the

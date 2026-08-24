@@ -4,6 +4,7 @@ import {
   setStats, getStatsSnapshot, subscribeStats, ZERO_STATS,
   type RenderInfoLike,
 } from '../../src/tweaks/renderStatsStore';
+import { HUD_COLORS } from '../../src/components/hud/hudTheme';
 
 const info: RenderInfoLike = {
   render: { calls: 300, triangles: 90000 },
@@ -35,10 +36,29 @@ describe('computeRuntimeStats', () => {
 });
 
 describe('fpsColor', () => {
-  it('green 55+, amber 30-54, red below 30', () => {
-    expect(fpsColor(60)).toBe('#86efac');
-    expect(fpsColor(45)).toBe('#fbbf24');
-    expect(fpsColor(20)).toBe('#f87171');
+  it('reads the house severity ramp, one rung per state', () => {
+    // Named, not spelled — the whole finding. These three used to be Tailwind
+    // defaults, a private ramp beside the declared one, and the panel's only
+    // coloured reading was therefore the one green on screen that did not
+    // match any other healthy reading.
+    expect(fpsColor(60)).toBe(HUD_COLORS.nominal);
+    expect(fpsColor(45)).toBe(HUD_COLORS.caution);
+    expect(fpsColor(20)).toBe(HUD_COLORS.danger);
+  });
+
+  it('changes rung exactly at the thresholds it documents', () => {
+    // The boundaries are the behaviour; the tokens above are only what the
+    // behaviour is painted in. Kept separate so a retune of the palette and a
+    // retune of the thresholds fail as two different tests.
+    expect(fpsColor(55)).toBe(HUD_COLORS.nominal);
+    expect(fpsColor(54.9)).toBe(HUD_COLORS.caution);
+    expect(fpsColor(30)).toBe(HUD_COLORS.caution);
+    expect(fpsColor(29.9)).toBe(HUD_COLORS.danger);
+  });
+
+  it('spends three distinct rungs, so the three states are three colours', () => {
+    const rungs = new Set([fpsColor(60), fpsColor(45), fpsColor(20)]);
+    expect(rungs.size).toBe(3);
   });
 });
 

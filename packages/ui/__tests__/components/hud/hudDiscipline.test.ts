@@ -47,6 +47,7 @@ import {
   ECOSYSTEM_UNLISTED_COLOR,
 } from '../../../src/derives/assetEcosystem.derive';
 import { ATLAS_BUCKET_COLORS } from '../../../src/derives/networkAtlas.derive';
+import { fpsColor } from '../../../src/tweaks/renderStatsStore';
 import { CELL_GALAXY_PALETTE, CHAIN_ANCHOR_HEX } from '../../../src/visualPalette';
 
 const HUD_DIR = resolve(process.cwd(), 'src/components/hud');
@@ -150,6 +151,9 @@ function rgbDistance(a: string, b: string): number {
 /** Below this, two colors are the same color wearing two names. */
 const SEPARATION_FLOOR = 40;
 
+/** A colour written out by hand, in any of the forms one gets typed. */
+const HEX_LITERAL = /#[0-9a-fA-F]{3,8}\b/g;
+
 /** A scene colour written the way the HUD writes colours. The stage palette
  *  keeps float triples for three.js; a HUD token derived from one has to be
  *  comparable to the hexes it will sit beside. */
@@ -201,18 +205,22 @@ const PACKAGE_SOURCES = readSources(SRC_DIR);
  *  outside the HUD directory made all of that invisible to every rule in this
  *  file, which is how four palettes drifted there at once. One was a
  *  straight DUPLICATE of a table already checked in the matrix below.
+ *  `tweaks/` is the render plumbing behind GL·08, and it held a private
+ *  three-rung severity ramp in Tailwind defaults.
  *
  *  What travels with the widening and what does not. The ban list above is
  *  about a value having one home, and a value has one home wherever it is
  *  typed, so it travels. The type ladder further down is about a medium — a
- *  rung is a reading size on a screen — and a directory that renders nothing
- *  has no medium, so it stays where it is.
+ *  rung is a reading size on a screen — and neither of these directories has
+ *  one, so it stays where it is. Half of `tweaks/` imports `@react-three/fiber`
+ *  and would be sorted into the scene dialect anyway, which is the same answer
+ *  arrived at twice.
  *
  *  Scoped by directory rather than by exemption, deliberately. `materials/` is
  *  a sibling of these and builds THREE colours for the bloom pass; a sweep that
  *  reached it would need a file exempted from a rule it was never the subject
  *  of, and an exemption list is the debt this file is paying off. */
-const INK_JURISDICTION = /^derives\//;
+const INK_JURISDICTION = /^(derives|tweaks)\//;
 
 const INK_SOURCES = [
   ...SOURCES,
@@ -229,11 +237,12 @@ describe('hud discipline', () => {
     expect(APP_SOURCES.map((source) => source.name)).toContain('App.tsx');
   });
 
-  it('reaches the directory that hands the HUD its category colours', () => {
+  it('reaches the directories that hand the HUD its colours', () => {
     // Same pin one directory over. A jurisdiction that quietly matched nothing
     // would leave the ban list green over a file spelling every value it bans.
     const names = INK_SOURCES.map((source) => source.name);
     expect(names).toContain('derives/activityFeed.derive.ts');
+    expect(names).toContain('tweaks/renderStatsStore.ts');
     expect(names.filter((name) => INK_JURISDICTION.test(name)).length)
       .toBeGreaterThan(20);
 
@@ -599,6 +608,48 @@ describe('the colour reserve', () => {
     expect(value).toBeTypeOf('string');
     expect(rgbDistance(value, RESERVED[reservedName]))
       .toBeLessThanOrEqual(SEPARATION_FLOOR);
+  });
+
+  it('the one reading that is supposed to be semantic reads the semantics', () => {
+    // The reserve inverted. Everything above says content may not wear a
+    // severity tone; this says the surface that IS reporting health has to,
+    // and by name. `fpsColor` had been answering in three Tailwind defaults —
+    // a second severity ramp with its own opinion about what green means, and
+    // a bottom rung 23.0 from `cellRose`, which put a dropped frame rate in
+    // very nearly the colour that names the Cell organism.
+    //
+    // Asked of the returned values rather than the source text, because the
+    // defect was never a literal in the wrong place: it was the right shape of
+    // function answering out of the wrong vocabulary.
+    const ramp = [fpsColor(60), fpsColor(45), fpsColor(20)];
+    const semantics = new Set<string>([
+      HUD_COLORS.nominal, HUD_COLORS.caution, HUD_COLORS.warning,
+      HUD_COLORS.danger, HUD_COLORS.crit,
+    ]);
+    expect(ramp.filter((rung) => !semantics.has(rung))).toEqual([]);
+    expect(new Set(ramp).size).toBe(3);
+    expect(rgbDistance(ramp[2], HUD_COLORS.cellRose))
+      .toBeGreaterThan(SEPARATION_FLOOR);
+  });
+
+  it('nothing in the render plumbing writes a colour down', () => {
+    // The fence around the finding above, and the reason it is a rule about a
+    // DIRECTORY rather than three more rows on the ban list: the three hexes
+    // that were here are Tailwind defaults, and two HUD scene files legitimately
+    // spell two of them as `THREE.Color` arguments. Banning the values would
+    // have meant exempting those, which is the trade this file exists to refuse.
+    //
+    // So the claim is scoped instead: `tweaks/` is quality presets, a sim
+    // clock and a stats store — plumbing that counts things. It has no business
+    // deciding what any of them look like, and the one colour it ever produced
+    // is a severity, which has tokens. Read RAW, because a comment that types a
+    // colour out is how the next one gets pasted back in.
+    const offenders = INK_SOURCES
+      .filter((source) => source.name.startsWith('tweaks/'))
+      .flatMap((source) => (source.text.match(HEX_LITERAL) ?? [])
+        .map((hex) => `${source.name}: ${hex} → say a HUD_COLORS token`));
+
+    expect(offenders).toEqual([]);
   });
 
   it('categories that share a bar stay apart from each other', () => {
