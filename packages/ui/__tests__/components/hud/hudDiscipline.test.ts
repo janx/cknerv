@@ -2307,6 +2307,442 @@ describe('one type scale', () => {
   });
 });
 
+// ——— One tracking ladder ————————————————————————————————————————————————
+//
+// `hudTheme.ts` declares an eight-rung letter-spacing table with three argued
+// exceptions, and until this section existed it was the only declared ladder in
+// the system with NO TEST. Its own comment says what that costs: tracking had
+// drifted to 45 distinct values, "0.28 and 0.3 and 0.32 and 0.34 and 0.35 all
+// living in the same card, none of them telling a reader anything the others
+// did not". A table that nothing checks goes back there one edit at a time.
+//
+// The membership half is the type scale's rule one axis over, and it has the
+// type scale's lesson built in from the start. That oracle missed four sizes
+// because the top bar wrote them in the CSS `font:` shorthand rather than as a
+// `fontSize` prop; tracking has no shorthand — CSS `font:` does not carry
+// letter-spacing — but it has two other spellings, and one of them was hiding a
+// value. The link probe's compass is an SVG, so it writes `letterSpacing={1.1}`
+// as an ATTRIBUTE, and a sweep for `letterSpacing:` reads straight past it.
+// That is exactly how 1.1 sat twelve lines above a sibling caption correctly
+// set at 0.9. So this reads all three notations: the style prop, the JSX/SVG
+// attribute, and `letter-spacing` in a CSS string (of which there are none
+// today — the point is that the next one is caught the day it is written).
+//
+// The rungs are held here AND in the comment over there, which is two copies of
+// one table, so the first assertion is a toll: the oracle parses `hudTheme.ts`'s
+// own prose and fails if the two ever disagree. The comment is the design
+// system's record and this is its enforcement; neither may drift from the
+// other, and the exceptions are read out of the comment too — including which
+// FILE each one belongs to, which the comment states in backticks and nothing
+// checked.
+//
+// And then the half membership cannot reach. Every rung is legal, so a sweep
+// for membership passes a HUD where one ROLE is set four different ways, and
+// that was the state of the cell card: the dim word that names a reading ran
+// 1.4 → 0.9 → nothing at all → 0.6 down one column, with `COMPOSITION` and
+// `BYTE BUDGET` — the same object one zone apart — at 1.4 and 0.9. Two roles
+// are checked below. One is recognised by CONSTRUCT and needs no list; the
+// other cannot be, and says so rather than implying a promise it does not keep.
+
+/** The eight rungs, held here so the sweep has something to check against and
+ *  tolled against `hudTheme.ts` immediately below. */
+const TRACK_RUNGS: readonly number[] = [0.35, 0.6, 0.9, 1.2, 1.4, 1.6, 2, 3];
+
+/** The declared exceptions, each keyed by the ONE file allowed to write it.
+ *  Keying by file is the point: 4 is the 警告 siren's air between two mincho
+ *  glyphs, and it stops being a declared exception the moment a second surface
+ *  helps itself to it. */
+const TRACK_EXCEPTIONS: Readonly<Record<string, readonly number[]>> = {
+  'StatusStrip.tsx': [4.2, 2.6],
+  'WarningBar.tsx': [4],
+  'DaoStateReadout.tsx': [-0.25],
+};
+
+/** The tracking table's own text in `hudTheme.ts`, from its rule to the line
+ *  that ends it. Read RAW: the whole table is a comment. */
+function trackingComment(): string {
+  const theme = SOURCES.find((source) => source.name === 'hudTheme.ts');
+  expect(theme, 'hudTheme.ts moved — this oracle reads files off disk').toBeDefined();
+  const text = theme?.text ?? '';
+  const start = text.indexOf('// ——— Tracking');
+  const end = text.indexOf('/** A `#RRGGBB` palette color', start);
+  expect(start, 'no Tracking section to read').toBeGreaterThan(-1);
+  expect(end, 'no end to the Tracking section').toBeGreaterThan(start);
+  return text.slice(start, end);
+}
+
+/** A comment slice between two of its own sentences. */
+function between(text: string, from: string, to: string): string {
+  const start = text.indexOf(from);
+  const end = text.indexOf(to, start);
+  expect(start, `no "${from}" in the tracking comment`).toBeGreaterThan(-1);
+  expect(end, `no "${to}" after it`).toBeGreaterThan(start);
+  return text.slice(start, end);
+}
+
+/** The HUD writes a negative tracking with a real MINUS SIGN in prose and a
+ *  hyphen in code, and they are different characters. */
+function signed(literal: string): number {
+  return Number(literal.replace('−', '-'));
+}
+
+/** A rung line: three spaces, the number, then the gutter before its
+ *  description. The exception lines below the table are shaped the same way and
+ *  are read separately, which is why this is given the table's own slice. */
+const RUNG_LINE = /^\/\/ {3}(-?[\d.]+) {2,}\S/gm;
+
+/** An exception line: the values it declares, and the file in backticks that is
+ *  the first thing said about it. `4.2 / 2.6` is one exception with two forms. */
+const EXCEPTION_LINE = /^\/\/ {3}([−\-\d.]+(?:\s*\/\s*[\d.]+)*) {2,}`([A-Za-z]+)`/gm;
+
+/** Every place a tracking is written down, in all three notations, with the
+ *  numbers pulled out of whatever expression it was given. A ternary is two
+ *  values and both of them render, so both are checked. */
+function trackingsIn(text: string): number[] {
+  const found: number[] = [];
+  const take = (expression: string): void => {
+    for (const number of expression.match(/-?\d+(?:\.\d+)?/g) ?? []) {
+      found.push(Number(number));
+    }
+  };
+
+  // The style prop, which is how most of the HUD writes one.
+  const prop = /(?<![\w$])letterSpacing:\s*([^,}\n]+)/g;
+  let match = prop.exec(text);
+  while (match !== null) {
+    take(match[1]);
+    match = prop.exec(text);
+  }
+
+  // The JSX/SVG attribute — the notation the compass's 1.1 hid in.
+  const attribute = /(?<![\w$])letterSpacing=\{([^}]*)\}/g;
+  match = attribute.exec(text);
+  while (match !== null) {
+    take(match[1]);
+    match = attribute.exec(text);
+  }
+
+  // And the CSS spelling, for the stylesheet strings this package ships.
+  const css = /letter-spacing:\s*([^;`'"}\n]+)/g;
+  match = css.exec(text);
+  while (match !== null) {
+    take(match[1]);
+    match = css.exec(text);
+  }
+
+  return found;
+}
+
+describe('one tracking ladder', () => {
+  it('the table in hudTheme and the rungs here are one ladder', () => {
+    // The toll. Two copies of one table is the failure this whole file exists
+    // to catch, and this section would otherwise be the newest instance of it.
+    const comment = trackingComment();
+    const table = between(comment, 'cannot make a line wrap:', 'An explicit `0`');
+
+    const declared: number[] = [];
+    RUNG_LINE.lastIndex = 0;
+    let rung = RUNG_LINE.exec(table);
+    while (rung !== null) {
+      declared.push(signed(rung[1]));
+      rung = RUNG_LINE.exec(table);
+    }
+    expect(declared).toEqual([...TRACK_RUNGS]);
+
+    const exceptions = between(comment, 'Declared exceptions', 'about SIZE rather than tracking');
+    const claimed: Record<string, number[]> = {};
+    EXCEPTION_LINE.lastIndex = 0;
+    let line = EXCEPTION_LINE.exec(exceptions);
+    while (line !== null) {
+      claimed[`${line[2]}.tsx`] = line[1].split('/').map((part) => signed(part.trim()));
+      line = EXCEPTION_LINE.exec(exceptions);
+    }
+    expect(claimed).toEqual(TRACK_EXCEPTIONS);
+  });
+
+  it('the ladder is a ladder — every rung distinct, and it only ever loosens', () => {
+    expect(new Set(TRACK_RUNGS).size).toBe(TRACK_RUNGS.length);
+    expect([...TRACK_RUNGS].sort((a, b) => a - b)).toEqual([...TRACK_RUNGS]);
+    // Nothing on the ladder is negative or zero: `0` is the ABSENCE of tracking
+    // and the one negative in the HUD is a declared exception, so a rung that
+    // went to or below zero would mean one of those two had been mistaken for a
+    // step of the scale.
+    expect(Math.min(...TRACK_RUNGS)).toBeGreaterThan(0);
+  });
+
+  it('reads tracking in every notation it is written in', () => {
+    // The pin. A sweep that only knew the style prop would have read the whole
+    // HUD as clean while an SVG attribute sat off the ladder, so the assertion
+    // under this one has to be shown a population in each spelling it claims to
+    // cover before it is worth anything.
+    const overlay = domDialect();
+    const props = overlay.filter((source) => /letterSpacing:/.test(code(source.text)));
+    const attributes = overlay.filter((source) => /letterSpacing=\{/.test(code(source.text)));
+    expect(props.length).toBeGreaterThan(20);
+    expect(attributes.map((source) => source.name)).toContain('PeerLinkCard.tsx');
+
+    // …and that the reader itself pulls both values out of a ternary, which is
+    // how the status strip writes its wordmark and the backfill bar its label.
+    expect(trackingsIn('letterSpacing: dense ? 2.6 : 4.2,')).toEqual([2.6, 4.2]);
+    expect(trackingsIn('letterSpacing={1.1}')).toEqual([1.1]);
+    expect(trackingsIn('letter-spacing:0.6px')).toEqual([0.6]);
+  });
+
+  it('every tracking is a rung, an explicit zero, or that file\'s declared exception', () => {
+    const offenders: string[] = [];
+    for (const source of domDialect()) {
+      const allowed = TRACK_EXCEPTIONS[source.name] ?? [];
+      for (const value of trackingsIn(code(source.text))) {
+        if (value === 0) continue;
+        if (TRACK_RUNGS.includes(value)) continue;
+        if (allowed.includes(value)) continue;
+        offenders.push(`${source.name}: ${value} is not a rung of the tracking table`);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('a declared exception is not a rung anybody else may borrow', () => {
+    // Stated separately because it is a different promise. The membership rule
+    // above would pass if `WarningBar`'s 4 turned up on a third panel; this says
+    // that would itself be the mistake, since the argument for every one of them
+    // is about ONE surface.
+    const strays: string[] = [];
+    for (const source of domDialect()) {
+      const mine = TRACK_EXCEPTIONS[source.name] ?? [];
+      for (const value of trackingsIn(code(source.text))) {
+        for (const [owner, values] of Object.entries(TRACK_EXCEPTIONS)) {
+          if (owner === source.name) continue;
+          if (values.includes(value) && !mine.includes(value)) {
+            strays.push(`${source.name}: ${value} is ${owner}'s declared exception`);
+          }
+        }
+      }
+    }
+
+    expect(strays).toEqual([]);
+  });
+});
+
+// ——— One role, one rung ————————————————————————————————————————————————
+//
+// The condition box, recognised by what it IS rather than by where it is. A box
+// that spans its card, declares its own type — the `tech` voice at `label`,
+// bold — and sits on a wash of its own colour is saying what condition
+// something is in, and `hudTheme.ts` gives condition words a rung. Three of
+// them shipped on three different rungs: `LINK LOST` at 2, the sync ladder's
+// state word at 1.6, `WE LAG · n BLOCKS BEHIND THE FURTHEST PEER` at 1.4 — so
+// the most severe of the three was the one set tightest, which is the opposite
+// of what the ladder means.
+//
+// The four properties together are the whole classifier and they sort the HUD
+// cleanly: the outline chips and the severity block are NOT caught, because a
+// chip leaves its type to the caller and a condition box declares its own —
+// that difference is real and is what `severityChip`'s doc comment already
+// says. Nothing is listed, so a fourth box is governed the day it is written.
+
+const CONDITION_RUNG = 2;
+
+/** A style object that declares the condition box's type over a wash. */
+function conditionBoxes(text: string): string[] {
+  const boxes: string[] = [];
+  const bold = /fontWeight:\s*700/g;
+  let match = bold.exec(text);
+  while (match !== null) {
+    const object = enclosingObject(text, match.index);
+    if (
+      object
+      && /fontFamily:\s*HUD_FONTS\.tech/.test(object)
+      && /fontSize:\s*HUD_TYPE\.label/.test(object)
+      && /(?:^|[\s{,])background:/.test(object)
+    ) {
+      boxes.push(object);
+    }
+    match = bold.exec(text);
+  }
+  return boxes;
+}
+
+describe('a condition is a condition wherever it is raised', () => {
+  it('finds the boxes it is supposed to be checking', () => {
+    // The pin. This classifier is four properties and no list, which is what
+    // makes it worth having and also what makes it silently checkable against
+    // nothing — a renamed prop would empty it and the rule below would pass.
+    // A floor and two names, not a roster: the whole claim above is that a
+    // fourth box is governed the day it is written, and a pin that spelled the
+    // population out would make writing one a test edit.
+    const found = domDialect()
+      .flatMap((source) => conditionBoxes(code(source.text)).map(() => source.name))
+      .sort();
+    expect(found.length).toBeGreaterThanOrEqual(3);
+    expect(found).toContain('NodeSelfCard.tsx');
+    expect(found).toContain('PeerLinkCard.tsx');
+  });
+
+  it('every condition box is set at the condition rung', () => {
+    // The rung is read out of `hudTheme.ts`, not held here: the record and the
+    // rule have to be one thing, the way the ladder above is.
+    const rung = /\/\/   condition box   ([\d.]+),/.exec(trackingComment());
+    expect(rung, 'the record no longer states the condition rung').not.toBeNull();
+    expect(Number(rung?.[1])).toBe(CONDITION_RUNG);
+
+    const offenders: string[] = [];
+    for (const source of domDialect()) {
+      for (const box of conditionBoxes(code(source.text))) {
+        const tracking = /letterSpacing:\s*(-?[\d.]+)/.exec(box);
+        const value = tracking ? Number(tracking[1]) : null;
+        if (value === CONDITION_RUNG) continue;
+        offenders.push(
+          `${source.name}: a condition box is tracked at ${value ?? 'nothing'}, not ${CONDITION_RUNG}`,
+        );
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('a chip is not a condition box', () => {
+    // The other side of the classifier, said out loud. `severityChip` fills
+    // solid and `plateStateChip` outlines, and both sit at the chip rung; if
+    // either started declaring the condition box's type this rule would begin
+    // demanding a rung neither of them wants.
+    const primitives = SOURCES.find((source) => source.name === 'primitives.tsx');
+    const text = code(primitives?.text ?? '');
+    expect(conditionBoxes(text)).toEqual([]);
+    expect(text).toMatch(/export function severityChip[\s\S]*?letterSpacing: 1\.4/);
+    expect(text).toMatch(/export function plateStateChip[\s\S]*?letterSpacing: 1\.4/);
+  });
+});
+
+// ——— …and one role that has to be named ————————————————————————————————
+//
+// The dim `micro` word that names a reading in the floating-card dialect:
+// `PlateReadoutRow`'s label, the dossier's `COMPOSITION`, the sync ladder's
+// `LOCAL` and `PEER`, `BYTE BUDGET`, `FREE`, the evidence register's `OWNER`
+// and `AMOUNT`, the content window's `VALUE`. One role, and it shipped on four
+// settings — 1.4, 0.9, 0.6 and no tracking at all — inside one card.
+//
+// THIS RULE IS PARTIAL AND THAT IS THE HONEST FORM OF IT. The classifier above
+// works because a condition box declares four properties nothing else declares
+// together. This role declares nothing of the kind: a label, a caption and a
+// right-aligned meta stamp are the same two properties in source — `color:
+// HUD_COLORS.dim` and `fontSize: HUD_TYPE.micro` — and differ only by where
+// they sit in the row, which is not written in the style object at all. Thirty-
+// nine style objects in the DOM overlay are dim and `micro`; they wear eight
+// different trackings and most of them are right. A rule derived from the pair
+// would have to fail nearly all of them to catch these.
+//
+// So the surfaces are NAMED, the way the cell card's identity surfaces are
+// named further down this file, and a new one has to be added by hand. What
+// that buys is that the eight that exist cannot drift apart again; what it
+// costs is stated rather than implied, which is the ruling this file has taken
+// everywhere else it could not derive something.
+
+const READOUT_LABEL_RUNG = 1.4;
+
+/** Where the floating-card dialect names a reading. `within` scopes the read to
+ *  one component where the file writes other labels elsewhere, and `renders` is
+ *  the text node itself — the span is found by walking back from what a reader
+ *  actually sees to the style object that sets it. */
+const READOUT_LABEL_SITES: ReadonlyArray<{
+  surface: string;
+  file: string;
+  within?: readonly [string, string];
+  renders: string;
+}> = [
+  {
+    surface: "the dialect's own row primitive",
+    file: 'primitives.tsx',
+    within: ['export function PlateReadoutRow(', '{badge}'],
+    renders: '{label}',
+  },
+  {
+    surface: 'the dossier composition block',
+    file: 'CellDetailPanel.tsx',
+    within: ['function CompositionBlock(', 'compositionIssuesChip(issues)'],
+    renders: 'COMPOSITION',
+  },
+  { surface: 'the byte budget header', file: 'CellByteBudget.tsx', renders: 'BYTE BUDGET' },
+  { surface: 'the unspent reading', file: 'CellByteBudget.tsx', renders: 'FREE' },
+  {
+    surface: 'the evidence register',
+    file: 'CellSemanticsReadout.tsx',
+    within: ['export function EvidenceFact(', 'function facetTitle('],
+    renders: '{label}',
+  },
+  { surface: 'the content window asset line', file: 'CellContentMemory.tsx', renders: 'VALUE' },
+  {
+    surface: "the sync ladder's own rung",
+    file: 'PeerLinkCard.tsx',
+    within: ['en="SYNC LADDER"', 'data-peer-probe-sync-state'],
+    renders: 'LOCAL',
+  },
+  {
+    surface: "the sync ladder's peer rung",
+    file: 'PeerLinkCard.tsx',
+    within: ['en="SYNC LADDER"', 'data-peer-probe-sync-state'],
+    renders: 'PEER',
+  },
+];
+
+/** The style object of the span that renders `word` — found by walking back
+ *  from the text node to the `style={{` before it, which is the one direction
+ *  that does not need to know what the object contains. */
+function styleRendering(region: string, word: string): string {
+  const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const node = new RegExp(`>\\s*${escaped}\\s*</`).exec(region);
+  expect(node, `nothing renders ${word} here`).not.toBeNull();
+  const at = region.lastIndexOf('style={{', node?.index ?? 0);
+  expect(at, `${word} is not inside a style object`).toBeGreaterThan(-1);
+  const open = at + 'style={'.length;
+  let depth = 0;
+  for (let index = open; index < region.length; index += 1) {
+    if (region[index] === '{') depth += 1;
+    else if (region[index] === '}') {
+      depth -= 1;
+      if (depth === 0) return region.slice(open, index + 1);
+    }
+  }
+  return '';
+}
+
+describe('the card dialect names a reading one way', () => {
+  it.each(READOUT_LABEL_SITES)('$surface is tracked at the label rung', ({ file, within, renders }) => {
+    const source = SOURCES.find((entry) => entry.name === file);
+    expect(source, `${file} moved — this oracle reads files off disk`).toBeDefined();
+    const region = surfaceText(code(source?.text ?? ''), within);
+    const style = styleRendering(region, renders);
+    expect(style, `${renders} has no style object`).not.toBe('');
+    expect(style).toMatch(/fontSize:\s*HUD_TYPE\.micro/);
+    const tracking = /letterSpacing:\s*(-?[\d.]+)/.exec(style);
+    expect(
+      tracking ? Number(tracking[1]) : null,
+      `${file} sets ${renders} off the readout-label rung`,
+    ).toBe(READOUT_LABEL_RUNG);
+  });
+
+  it('the record says the rung, and says the rule is partial', () => {
+    // A partial rule that reads like a general one is worse than no rule, so
+    // the admission is checked rather than merely written. It is checked in
+    // `hudTheme.ts` and not here: this file asserting that this file contains a
+    // sentence is not an assertion, because the expected string would be in the
+    // file as part of the expectation. The design system's own record is the
+    // only place the claim can be falsified from.
+    const comment = trackingComment();
+    expect(comment).toContain('readout label');
+    expect(comment).toContain('This rule is PARTIAL');
+    const rung = /\/\/   readout label\s+([\d.]+)\./.exec(comment);
+    expect(rung, 'the record no longer states the readout label rung').not.toBeNull();
+    expect(Number(rung?.[1])).toBe(READOUT_LABEL_RUNG);
+
+    // …and the surfaces it governs are a list, held at a length, so that adding
+    // a ninth is a deliberate edit rather than something that happens to a rule
+    // nobody reread.
+    expect(READOUT_LABEL_SITES).toHaveLength(8);
+  });
+});
+
 // ——— Thirty-two glyphs ——————————————————————————————————————————————————
 //
 // The HUD's Chinese face is not a font, it is a HAND-CUT SUBSET: 32 glyphs and

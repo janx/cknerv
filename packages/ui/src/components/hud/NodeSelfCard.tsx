@@ -382,7 +382,7 @@ export default function NodeSelfCard({
                   fontFamily: HUD_FONTS.tech,
                   fontSize: HUD_TYPE.label,
                   fontWeight: 700,
-                  letterSpacing: 1.4,
+                  letterSpacing: 2,
                   textAlign: 'center',
                 }}
               >

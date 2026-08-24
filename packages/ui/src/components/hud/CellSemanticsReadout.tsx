@@ -90,7 +90,7 @@ export function EvidenceFact({
         ...style,
       }}
     >
-      <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.6, whiteSpace: 'nowrap' }}>
+      <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 1.4, whiteSpace: 'nowrap' }}>
         {label}
       </span>
       <span title={value} style={{ minWidth: 0, color: color ?? HUD_COLORS.ink, fontSize: valueSize, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

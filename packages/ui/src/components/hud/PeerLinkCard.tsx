@@ -313,7 +313,7 @@ function ColonyCompass({
           fill={HUD_COLORS.dim}
           fontFamily={HUD_FONTS.mono}
           fontSize={HUD_TYPE.micro}
-          letterSpacing={1.1}
+          letterSpacing={0.9}
         >
           UNMEASURED
         </text>
@@ -684,7 +684,7 @@ export default function PeerLinkCard({
             fontFamily: HUD_FONTS.tech,
             fontSize: HUD_TYPE.label,
             fontWeight: 700,
-            letterSpacing: 1.6,
+            letterSpacing: 2,
             textAlign: 'center',
             // AHEAD is the loudest rung: the peer is past us, so WE are the
             // node that lags. Re-locking to the tip is a colour/box change,

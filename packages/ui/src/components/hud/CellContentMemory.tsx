@@ -553,7 +553,7 @@ export default function CellContentMemory({
               * really is a state. */}
             {record?.asset ? (
               <div data-cell-content-asset="true" data-cell-content-reveal-item="asset" data-cell-content-reveal-item-state={assetRevealed ? 'resolved' : 'scanning'} title={record.asset.type_script_hash} {...revealStageAttributes(assetRevealed)} style={{ display: 'flex', alignItems: 'baseline', gap: 5, minWidth: 0, color: HUD_COLORS.goldInk, fontSize: HUD_TYPE.label, ...revealStageStyle(assetRevealed) }}>
-                <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro }}>VALUE</span>
+                <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 1.4 }}>VALUE</span>
                 <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {[record.asset.symbol, record.asset.name, record.asset.standard].filter(Boolean).join(' · ') || record.asset.type_script_hash}
                   {assetAmount ? ` · ${assetAmount}` : ''}

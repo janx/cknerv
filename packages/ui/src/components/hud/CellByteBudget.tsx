@@ -59,7 +59,7 @@ export default function CellByteBudget({
       }}
     >
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-        <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.9, whiteSpace: 'nowrap' }}>
+        <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 1.4, whiteSpace: 'nowrap' }}>
           BYTE BUDGET
         </span>
         <span style={{ marginLeft: 'auto', whiteSpace: 'nowrap' }}>
@@ -212,7 +212,7 @@ export default function CellByteBudget({
           * measures the spent side; this is the same reading from the other
           * end, and the only one that answers how much more could fit. */}
         <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'baseline', gap: 5 }}>
-          <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.9 }}>FREE</span>
+          <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 1.4 }}>FREE</span>
           <span
             data-byte-budget-free="true"
             data-byte-budget-free-shannons={model.freeShannons.toString()}

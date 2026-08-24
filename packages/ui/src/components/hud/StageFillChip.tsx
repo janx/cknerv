@@ -46,7 +46,7 @@ export default function StageFillChip({ staged, budget, style }: {
     >
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, marginBottom: 5 }}>
         <span aria-hidden style={{ color: rgba(color, 0.7), fontSize: HUD_TYPE.label }}>◇</span>
-        <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 600, fontSize: HUD_TYPE.label, letterSpacing: 1.5, color: HUD_COLORS.dim, textTransform: 'uppercase' }}>
+        <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 600, fontSize: HUD_TYPE.label, letterSpacing: 1.4, color: HUD_COLORS.dim, textTransform: 'uppercase' }}>
           Stage composing
         </span>
         {/* No tracking on the counted form — one measurement, not two words. */}

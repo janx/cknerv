@@ -368,13 +368,57 @@ export const HUD_TYPE = {
 //   0.6   dense chrome readouts, menu rows
 //   0.9   captions and small state words
 //   1.2   the standard uppercase label
-//   1.4   chips — both the outline kind and the inverted severity block
+//   1.4   chips — both the outline kind and the inverted severity block —
+//         and the floating-card dialect's readout label (see below)
 //   1.6   stat-row labels, plate titles
 //   2     banner titles, condition words
 //   3     panel titles
 //
 // An explicit `0` is not a rung — it is the absence of tracking, which a run of
 // mono digits sometimes genuinely wants.
+//
+// MEMBERSHIP IS HALF THE RULE, and for this table's whole life it was the only
+// half anybody checked. Every rung above is legal, so a sweep that asks nothing
+// but "is this a rung?" passes a HUD where one ROLE is set four different ways
+// — and that was the state of the cell card. Read it top to bottom and the dim
+// word that names a reading ran 1.4 → 0.9 → nothing at all → 0.6; `COMPOSITION`
+// and `BYTE BUDGET` are the same object one zone apart and were set at 1.4 and
+// 0.9. Three full-width condition boxes in the peer family sat on three rungs
+// — `LINK LOST` at 2, the sync ladder's state word at 1.6, `WE LAG` at 1.4 —
+// so the most severe of the three was the one set tightest.
+//
+// So the other half: ONE ROLE, ONE RUNG.
+//
+//   condition box   2, the rung the table already names for condition words. A
+//               box that spans its card, declares its own type — the `tech`
+//               voice at `label`, bold — and sits on a wash of its own colour
+//               to say what CONDITION something is in: `LINK LOST`, `WE LAG · n
+//               BLOCKS BEHIND THE FURTHEST PEER`, the sync ladder's state word.
+//               That description is a CONSTRUCT, so the oracle recognises the
+//               role instead of listing its sites and a fourth box is governed
+//               the day it is written.
+//
+//   readout label   1.4. The dim `micro` word that names a reading in the
+//               floating-card dialect: `PlateReadoutRow`'s label, the cell
+//               dossier's `COMPOSITION`, the sync ladder's `LOCAL` and `PEER`,
+//               `BYTE BUDGET`, `FREE`, the evidence register's `OWNER` and
+//               `AMOUNT`, the content window's `VALUE`. It is the panel
+//               dialect's stat-row label (`tech`, 1.6) stepped down one rung in
+//               size and one in tracking together — the same dense-register
+//               argument the last exception in this comment makes for the peer
+//               card, applied to the dialect rather than to one panel.
+//
+//               This rule is PARTIAL, and `hudDiscipline.test.ts` says so where
+//               it states it. A label, a caption and a right-aligned meta stamp
+//               are the SAME THREE PROPERTIES in source — `color: dim`,
+//               `fontSize: micro`, a string — and differ only by where they sit
+//               in the row, which is not written in the style object. Thirty-
+//               nine dim `micro` style objects in the DOM overlay carry eight
+//               different trackings and most of them are right. So the oracle
+//               NAMES the surfaces this role is on rather than pretending to
+//               derive them, and a new one has to be added by hand. A narrow
+//               rule that admits it is narrow beats a broad one that is wrong,
+//               which is the same ruling the type scale's scene exemption got.
 //
 // Declared exceptions, each one a place where the rung would be wrong rather
 // than merely different:
