@@ -28,11 +28,12 @@ use crate::dto::{
     ClusterDetailResponse, CollectionCompositionDto, CommonKnowledgeSizeBreakdown, DaoInfo,
     DaoStatisticsResponse, HardforkEventResponse, HardforkTimelineResponse, LatestActivityResponse,
     LiveCellSummaryResponse, LookupScriptsRequest, NetworkCrawlerSummaryResponse,
-    NetworkNodeDetailResponse, NetworkNodeSummaryResponse, NetworkNodesPageResponse, NetworkStats,
-    NftCollectionDetailResponse, RecentReorgResponse, ReorgEventResponse, ScriptCatalogueResponse,
-    ScriptFamilyResponse, ScriptLookupInfo, ScriptLookupResponse, ScriptResponse,
-    SporeItemResponse, TokenResponse, TransactionDetailResponse, TransactionLifecycleResponse,
-    TransactionStatsPoint, TransactionStatsResponse,
+    NetworkNodeDetailResponse, NetworkPeersPageResponse, NetworkStats,
+    NftCollectionDetailResponse, PeerDisplayState, PeerSummaryResponse, RecentReorgResponse,
+    ReorgEventResponse, ScriptCatalogueResponse, ScriptFamilyResponse, ScriptLookupInfo,
+    ScriptLookupResponse, ScriptResponse, SporeItemResponse, TokenResponse,
+    TransactionDetailResponse, TransactionLifecycleResponse, TransactionStatsPoint,
+    TransactionStatsResponse,
 };
 use crate::galaxy_composition::{
     discover as discover_galaxy_composition, identity_families as galaxy_identity_families,
@@ -317,10 +318,10 @@ impl CkbadgerEnrichmentSource {
     }
 
     /// One crawler read: the latest round's summary, and one explicitly
-    /// bounded page of the nodes it knows. `None` is a source with no crawler
-    /// data to report — switched off, never run, or still in its first round
-    /// — and each caller turns that into whatever absence its own record
-    /// means.
+    /// bounded page of the peers it reached. `None` is a source with no
+    /// crawler data to report — switched off, never run, or still in its
+    /// first round — and each caller turns that into whatever absence its own
+    /// record means.
     ///
     /// The atlas and the roster make this call separately, each with its own
     /// bound, rather than sharing one page. The atlas's numbers are
@@ -328,10 +329,18 @@ impl CkbadgerEnrichmentSource {
     /// to fit the roster would quietly redefine every one of them; and two
     /// records built from one fetch would fail together over a fault that
     /// only belongs to one of them.
+    ///
+    /// Both callers pin the page to `state=reachable`. `network/peers` now
+    /// unifies candidates with verified peers, so an unpinned page answers
+    /// with every peer anybody has ever *named* — and staging those as
+    /// sighted would say the crawler reached a node it never got a packet
+    /// from. The pin is what keeps `sighted` meaning "dialed, and it
+    /// answered", and it is also why every metadata field on the page comes
+    /// back populated.
     async fn read_crawler(
         &self,
         limit: usize,
-    ) -> anyhow::Result<Option<(NetworkCrawlerSummaryResponse, NetworkNodesPageResponse)>> {
+    ) -> anyhow::Result<Option<(NetworkCrawlerSummaryResponse, NetworkPeersPageResponse)>> {
         let summary_url = self.endpoint("network/summary")?;
         let response = self
             .client
@@ -340,6 +349,9 @@ impl CkbadgerEnrichmentSource {
             .await
             .context("fetch ckbadger network summary")?;
         if response.status() == StatusCode::NOT_FOUND {
+            // A source with no crawler API at all. This is the one absence
+            // in this method: it is asked first, and a source that answers
+            // it has committed to answering the page below too.
             return Ok(None);
         }
         if !response.status().is_success() {
@@ -356,30 +368,46 @@ impl CkbadgerEnrichmentSource {
             return Ok(None);
         }
 
-        let mut nodes_url = self.endpoint("network/nodes")?;
-        nodes_url
+        let peers = self.read_reachable_peers(limit).await?;
+        Ok(Some((summary, peers)))
+    }
+
+    /// The bounded page of reached peers, and the single place this crate
+    /// observes whether the peer list route is answering at all.
+    ///
+    /// A 404 here is deliberately an error rather than an absence, which is
+    /// the opposite of what this code did under the old route name. The
+    /// summary has already said the crawler is enabled, holds data, and
+    /// finished a round; a source that then denies the list route is not a
+    /// source without a crawler, it is a source whose route this build no
+    /// longer knows the name of. The distinction is not academic — the
+    /// supervisor turns `Ok(None)` into `NetworkRosterClear`, which takes
+    /// every sighted node off stage and states, in the only voice the scene
+    /// has, that nobody is crawling. That is how a rename cost the whole
+    /// colony twice: silently, and while looking like a healthy report of
+    /// nothing.
+    async fn read_reachable_peers(&self, limit: usize) -> anyhow::Result<NetworkPeersPageResponse> {
+        let mut peers_url = self.endpoint("network/peers")?;
+        peers_url
             .query_pairs_mut()
+            .append_pair("state", "reachable")
             .append_pair("limit", &limit.to_string());
         let response = self
             .client
-            .get(nodes_url)
+            .get(peers_url)
             .send()
             .await
-            .context("fetch ckbadger bounded network nodes")?;
-        if response.status() == StatusCode::NOT_FOUND {
-            return Ok(None);
-        }
+            .context("fetch ckbadger bounded network peers")?;
         if !response.status().is_success() {
             return Err(anyhow!(
-                "ckbadger bounded network nodes returned HTTP {}",
+                "ckbadger bounded network peers returned HTTP {}",
                 response.status()
             ));
         }
-        let nodes: NetworkNodesPageResponse = response
+        response
             .json()
             .await
-            .context("decode ckbadger bounded network nodes")?;
-        Ok(Some((summary, nodes)))
+            .context("decode ckbadger bounded network peers")
     }
 
     async fn transaction_lifecycle(&self, tx_hash: &str) -> Option<TransactionLifecycleResponse> {
@@ -2314,7 +2342,7 @@ fn map_dao_state(
 
 fn map_network_atlas(
     summary: NetworkCrawlerSummaryResponse,
-    nodes: NetworkNodesPageResponse,
+    peers: NetworkPeersPageResponse,
     anchor: ChainAnchor,
 ) -> anyhow::Result<NetworkAtlasRecord> {
     let round = summary
@@ -2327,29 +2355,36 @@ fn map_network_atlas(
         (round.round_id, "network roundId"),
         (round.started_at, "network round startedAt"),
         (round.finished_at, "network round finishedAt"),
-        (round.attempted_peers, "network round attemptedPeers"),
+        (round.candidate_peers, "network round candidatePeers"),
+        (
+            round.verified_retained_peers,
+            "network round verifiedRetainedPeers",
+        ),
         (round.reachable_peers, "network round reachablePeers"),
-        (round.new_nodes, "network round newNodes"),
-        (round.total_known, "network round totalKnown"),
+        (round.new_verified_peers, "network round newVerifiedPeers"),
     ] {
         wire_safe_u64(value, field)?;
     }
     if round.finished_at < round.started_at {
         return Err(anyhow!("ckbadger network round finished before it started"));
     }
-    if round.reachable_peers > round.attempted_peers {
+    // The round's own nesting, in the two places cknerv publishes it: a peer
+    // that answered was a peer the round considered, and a peer verified for
+    // the first time is one of the peers the crawler now holds a
+    // verification for.
+    if round.reachable_peers > round.candidate_peers {
         return Err(anyhow!(
-            "ckbadger network round reachable count exceeds attempted count"
+            "ckbadger network round reachable count exceeds its candidate count"
         ));
     }
-    if round.new_nodes > round.total_known {
+    if round.new_verified_peers > round.verified_retained_peers {
         return Err(anyhow!(
-            "ckbadger network round new-node count exceeds total known"
+            "ckbadger network round newly-verified count exceeds its retained verified count"
         ));
     }
-    if nodes.items.len() > NETWORK_ATLAS_LIMIT {
+    if peers.items.len() > NETWORK_ATLAS_LIMIT {
         return Err(anyhow!(
-            "ckbadger network nodes exceeded the requested limit"
+            "ckbadger network peers exceeded the requested limit"
         ));
     }
 
@@ -2358,27 +2393,41 @@ fn map_network_atlas(
     let mut versions = BTreeMap::<String, u32>::new();
     let mut rtts = Vec::new();
     let mut sample_reachable = 0_u32;
-    let mut previous_last_seen = None;
-    for node in nodes.items {
-        validate_network_peer_id(&node.peer_id)?;
-        if !peer_ids.insert(node.peer_id) {
-            return Err(anyhow!("ckbadger network nodes returned a duplicate peer"));
+    let mut previous_last_advertised_at = None;
+    for peer in peers.items {
+        validate_network_peer_id(&peer.peer_id)?;
+        if !peer_ids.insert(peer.peer_id) {
+            return Err(anyhow!("ckbadger network peers returned a duplicate peer"));
         }
-        wire_safe_u64(node.last_seen, "network node lastSeen")?;
-        if previous_last_seen.is_some_and(|previous| node.last_seen > previous) {
+        // The atlas asked for one state and every count below is a statement
+        // about that population, so a row in any other state — including one
+        // this build has no name for — is not a row to fold in but a page
+        // that is not the page this record claims to describe.
+        if peer.display_state != PeerDisplayState::Reachable {
             return Err(anyhow!(
-                "ckbadger network nodes were not ordered newest first"
+                "ckbadger network peers answered a reachable-only page with another state"
             ));
         }
-        previous_last_seen = Some(node.last_seen);
-        let country = bounded_network_label(&node.country, "network node country")?;
-        let version = bounded_network_label(&node.version, "network node version")?;
+        // Upstream sorts this page by `lastAdvertisedAt` descending, ties
+        // broken by peer id, and that is the only ordering cknerv can check:
+        // `lastObservedAt` moves per peer within a round and arrives
+        // genuinely out of order, so an invariant written against it would
+        // refuse every healthy page. Ties are the normal case rather than an
+        // edge — a round advertises its whole page in one moment — so only a
+        // strictly newer row after an older one is out of order.
+        wire_safe_u64(peer.last_advertised_at, "network peer lastAdvertisedAt")?;
+        if previous_last_advertised_at.is_some_and(|previous| peer.last_advertised_at > previous) {
+            return Err(anyhow!(
+                "ckbadger network peers were not ordered newest advertised first"
+            ));
+        }
+        previous_last_advertised_at = Some(peer.last_advertised_at);
+        let country = optional_network_label(peer.country.as_deref(), "network peer country")?;
+        let version = optional_network_label(peer.version.as_deref(), "network peer version")?;
         *countries.entry(country).or_default() += 1;
         *versions.entry(version).or_default() += 1;
-        if node.reachable {
-            sample_reachable = sample_reachable.saturating_add(1);
-        }
-        if let Some(rtt) = node.rtt_ms {
+        sample_reachable = sample_reachable.saturating_add(1);
+        if let Some(rtt) = peer.rtt_ms {
             rtts.push(rtt);
         }
     }
@@ -2401,13 +2450,17 @@ fn map_network_atlas(
         updated_at_ms: now_ms(),
         crawl_round: round.round_id,
         crawl_finished_at_s: round.finished_at,
-        total_known: round.total_known,
-        last_round_attempted: round.attempted_peers,
+        verified_retained_peers: round.verified_retained_peers,
+        candidate_peers: round.candidate_peers,
         last_round_reachable: round.reachable_peers,
-        new_nodes: round.new_nodes,
+        new_verified_peers: round.new_verified_peers,
         sample_size,
+        // Every row on a reachable-only page is a reached peer, so this
+        // equals `sample_size` today. It is counted rather than assumed
+        // because the loop above is where the state of each row is read, and
+        // a count derived from the rows cannot drift from them.
         sample_reachable,
-        sample_truncated: nodes.next_cursor.is_some(),
+        sample_truncated: peers.next_cursor.is_some(),
         median_rtt_ms,
         countries: network_buckets(countries),
         versions: network_buckets(versions),
@@ -2423,7 +2476,7 @@ fn map_network_atlas(
 /// guessed at, and no count here is derived from the rows that survived.
 fn map_network_roster(
     summary: NetworkCrawlerSummaryResponse,
-    nodes: NetworkNodesPageResponse,
+    peers: NetworkPeersPageResponse,
     anchor: ChainAnchor,
 ) -> anyhow::Result<NetworkRosterRecord> {
     let round = summary
@@ -2433,23 +2486,23 @@ fn map_network_roster(
         return Err(anyhow!("ckbadger network crawler has no usable data"));
     }
     wire_safe_u64(round.round_id, "network roundId")?;
-    if nodes.items.len() > ROSTER_CAP {
+    if peers.items.len() > ROSTER_CAP {
         return Err(anyhow!(
-            "ckbadger network nodes exceeded the requested roster limit"
+            "ckbadger network peers exceeded the requested roster limit"
         ));
     }
-    // Upstream orders this page by last-seen, which is the one key that moves
-    // under a crawl: publishing it in that order would reshuffle the whole
-    // roster every round. Membership within the cap is upstream's recency
-    // call, but the order cknerv publishes is its own, and it is the id — a
-    // node's only fact that a crawl cannot change.
-    let received = nodes.items.len();
+    // Upstream orders this page by when each peer was last advertised, which
+    // is a key every crawl round moves: publishing it in that order would
+    // reshuffle the whole roster every round. Membership within the cap is
+    // upstream's call, but the order cknerv publishes is its own, and it is
+    // the id — a node's only fact that a crawl cannot change.
+    let received = peers.items.len();
     let mut entries: Vec<RosterNode> = Vec::with_capacity(received);
     let mut staged = HashSet::new();
     let mut unreadable = 0usize;
     let mut duplicate = 0usize;
-    for node in nodes.items {
-        let Some(entry) = roster_node(node) else {
+    for peer in peers.items {
+        let Some(entry) = roster_node(peer) else {
             unreadable += 1;
             continue;
         };
@@ -2487,7 +2540,7 @@ fn map_network_roster(
         as_of: anchor,
         updated_at_ms: now_ms(),
         crawl_round: round.round_id,
-        truncated: nodes.next_cursor.is_some(),
+        truncated: peers.next_cursor.is_some(),
         entries,
     })
 }
@@ -2496,17 +2549,50 @@ fn map_network_roster(
 /// as one. Every field is bounded here rather than at the record, because the
 /// answer to an unusable field is to leave this node out — never to invent a
 /// value for it, and never to lose the page over it.
-fn roster_node(node: NetworkNodeSummaryResponse) -> Option<RosterNode> {
-    validate_network_peer_id(&node.peer_id).ok()?;
+///
+/// Two of upstream's five states stage, and they are the two it holds a
+/// verification for: `reachable` is a peer that answered this round and
+/// `verifiedUnavailable` is one that answered a previous round and did not
+/// answer this one — which is exactly what `RosterNode::reachable` has always
+/// meant. The other three are hearsay: `advertisedUnverified` and
+/// `noCompletedObservation` are peers other peers merely named, and
+/// `foreignNetwork` is a peer on another chain. Staging any of them would put
+/// a node on stage under a tier whose name says the crawler dialed it and it
+/// answered. Under the `state=reachable` pin only the first can arrive at
+/// all; the rest are refused here so the pin is a bound and not the only
+/// thing standing between hearsay and the stage.
+fn roster_node(peer: PeerSummaryResponse) -> Option<RosterNode> {
+    validate_network_peer_id(&peer.peer_id).ok()?;
+    let reachable = match peer.display_state {
+        PeerDisplayState::Reachable => true,
+        PeerDisplayState::VerifiedUnavailable => false,
+        PeerDisplayState::AdvertisedUnverified
+        | PeerDisplayState::ForeignNetwork
+        | PeerDisplayState::NoCompletedObservation
+        | PeerDisplayState::Unknown => return None,
+    };
     Some(RosterNode {
-        node_id: peer_hex_to_id(&node.peer_id)?,
-        addr: bounded_network_text(&node.addr, MAX_NETWORK_ADDR_CHARS, "network node addr").ok()?,
-        version: bounded_network_label(&node.version, "network node version").ok()?,
-        country: bounded_network_label(&node.country, "network node country").ok()?,
-        asn: bounded_network_label(&node.asn, "network node asn").ok()?,
-        reachable: node.reachable,
-        last_seen_ms: sighting_clock_ms(node.last_seen, "network node lastSeen").ok()?,
-        rtt_ms: node.rtt_ms,
+        node_id: peer_hex_to_id(&peer.peer_id)?,
+        addr: bounded_network_text(
+            &peer.primary_addr,
+            MAX_NETWORK_ADDR_CHARS,
+            "network peer primaryAddr",
+        )
+        .ok()?,
+        version: optional_network_label(peer.version.as_deref(), "network peer version").ok()?,
+        country: optional_network_label(peer.country.as_deref(), "network peer country").ok()?,
+        asn: optional_network_label(peer.asn.as_deref(), "network peer asn").ok()?,
+        reachable,
+        // `last_seen_ms` is documented as the moment the crawler SAW this
+        // node, and `lastReachableAt` is the only field on the page that is
+        // that moment. `lastObservedAt` is when the crawler last tried, which
+        // for a peer that did not answer is a different fact wearing the same
+        // shape; the two clocks stay apart. A verified row without the clock
+        // is a row cknerv cannot date, and an undated sighting is not one to
+        // stage.
+        last_seen_ms: sighting_clock_ms(peer.last_reachable_at?, "network peer lastReachableAt")
+            .ok()?,
+        rtt_ms: peer.rtt_ms,
     })
 }
 
@@ -2526,6 +2612,17 @@ fn network_buckets(counts: BTreeMap<String, u32>) -> Vec<NetworkAtlasBucket> {
 
 fn bounded_network_label(value: &str, field: &str) -> anyhow::Result<String> {
     bounded_network_text(value, MAX_NETWORK_LABEL_CHARS, field)
+}
+
+/// The same label, from a page that answers `null` for what it never learned.
+///
+/// Upstream holds a peer's version, country and ASN only for a peer it
+/// actually reached, and refuses to fabricate them for one it merely heard
+/// about. Absent and empty are the same statement to a reader — nobody knows
+/// — and both become the word for it below, so a null never has to be
+/// invented into a plausible label and never thins the record into a hole.
+fn optional_network_label(value: Option<&str>, field: &str) -> anyhow::Result<String> {
+    bounded_network_label(value.unwrap_or_default(), field)
 }
 
 /// Trimmed, length-bounded and control-free — and an empty answer becomes
@@ -4168,63 +4265,75 @@ mod tests {
                             "roundId": 7,
                             "startedAt": 1699999990,
                             "finishedAt": 1700000000,
-                            "candidatePeers": 14,
-                            "attemptedPeers": 12,
+                            "candidatePeers": 61,
+                            "verifiedRetainedPeers": 42,
                             "reachablePeers": 9,
-                            "unreachablePeers": 3,
-                            "addressAttempts": 20,
-                            "failedAddressAttempts": 8,
+                            "verifiedUnavailablePeers": 33,
+                            "exhaustedCandidates": 51,
                             "foreignPeers": 1,
+                            "addressAttempts": 20,
+                            "nonSuccessfulAddressAttempts": 8,
                             "malformedAddresses": 0,
-                            "newNodes": 3,
-                            "totalKnown": 42
+                            "newVerifiedPeers": 3
                         },
                         "activeRound": null
                     }))
                 }),
             )
             .route(
-                "/api/v1/network/nodes",
+                "/api/v1/network/peers",
                 get(|axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>| async move {
                     // Both bounded readers land here, each with its own cap.
                     // An unbounded page is the failure this asserts against.
                     let limit = query.get("limit").map(String::as_str);
                     assert!(
                         limit == Some("64") || limit == Some("256"),
-                        "network nodes fetched with an unexpected bound: {limit:?}"
+                        "network peers fetched with an unexpected bound: {limit:?}"
+                    );
+                    // And an unscoped page is the other one. `network/peers`
+                    // answers candidates and verified peers from one route,
+                    // so a reader that forgets the scope is handed hearsay
+                    // and stages it as a sighting.
+                    assert_eq!(
+                        query.get("state").map(String::as_str),
+                        Some("reachable"),
+                        "network peers fetched without the reachable scope"
                     );
                     Json(serde_json::json!({
                         "items": [
                             {
                                 "peerId": "7065657241",
-                                "addr": "/ip4/127.0.0.1/tcp/8115",
+                                "displayState": "reachable",
+                                "primaryAddr": "/ip4/127.0.0.1/tcp/8115",
                                 "version": "0.119.0",
                                 "country": "SG",
                                 "asn": "AS1 Example",
-                                "reachable": true,
-                                "lastSeen": 30,
+                                "lastAdvertisedAt": 30,
+                                "lastObservedAt": 30,
                                 "lastReachableAt": 30,
                                 "rttMs": 12
                             },
                             {
                                 "peerId": "7065657242",
-                                "addr": "/ip4/127.0.0.2/tcp/8115",
+                                "displayState": "reachable",
+                                "primaryAddr": "/ip4/127.0.0.2/tcp/8115",
                                 "version": "0.119.0",
                                 "country": "SG",
                                 "asn": "AS1 Example",
-                                "reachable": false,
-                                "lastSeen": 20,
+                                "lastAdvertisedAt": 20,
+                                "lastObservedAt": 12,
                                 "lastReachableAt": 10,
                                 "rttMs": null
                             },
                             {
                                 "peerId": "7065657243",
-                                "addr": "/ip4/127.0.0.3/tcp/8115",
+                                "displayState": "reachable",
+                                "primaryAddr": "/ip4/127.0.0.3/tcp/8115",
                                 "version": "0.118.0",
                                 "country": "US",
                                 "asn": "AS2 Example",
-                                "reachable": true,
-                                "lastSeen": 10,
+                                "lastAdvertisedAt": 10,
+                                "lastObservedAt": 18,
                                 "lastReachableAt": 10,
                                 "rttMs": 24
                             }
@@ -4640,7 +4749,7 @@ mod tests {
                 }),
             )
             .route(
-                "/api/v1/network/nodes",
+                "/api/v1/network/peers",
                 get(move || {
                     let node_requests = counted_requests.clone();
                     async move {
@@ -5215,9 +5324,13 @@ mod tests {
             .unwrap();
         assert_eq!(network_atlas.as_of.block, 100);
         assert_eq!(network_atlas.crawl_round, 7);
-        assert_eq!(network_atlas.total_known, 42);
+        assert_eq!(network_atlas.verified_retained_peers, 42);
+        assert_eq!(network_atlas.candidate_peers, 61);
+        assert_eq!(network_atlas.new_verified_peers, 3);
         assert_eq!(network_atlas.sample_size, 3);
-        assert_eq!(network_atlas.sample_reachable, 2);
+        // The page was asked for one state, so every row on it is a peer that
+        // answered — the sample is reachable end to end by construction.
+        assert_eq!(network_atlas.sample_reachable, 3);
         assert!(network_atlas.sample_truncated);
         assert_eq!(network_atlas.median_rtt_ms, Some(18));
         assert_eq!(network_atlas.countries[0].label, "SG");
@@ -5247,8 +5360,10 @@ mod tests {
         // Unix seconds upstream, milliseconds on the wire.
         assert_eq!(network_roster.entries[0].last_seen_ms, 30_000);
         assert_eq!(network_roster.entries[0].rtt_ms, Some(12));
-        // The dark half of the sample is carried, not filtered out.
-        assert!(!network_roster.entries[1].reachable);
+        // Every row of a reachable-scoped page stages as reached. The other
+        // verified state the roster accepts cannot arrive through this scope
+        // and is pinned on the mapper instead.
+        assert!(network_roster.entries.iter().all(|entry| entry.reachable));
         assert_eq!(network_roster.entries[1].rtt_ms, None);
 
         let record = source
@@ -6879,23 +6994,26 @@ mod tests {
                 round_id,
                 started_at: 1_700_000_000,
                 finished_at: 1_700_000_010,
-                attempted_peers: 4,
+                candidate_peers: 12,
+                verified_retained_peers: 9,
                 reachable_peers: 3,
-                new_nodes: 1,
-                total_known: 9,
+                new_verified_peers: 1,
             }),
         }
     }
 
-    fn crawler_row(peer_id: &str, last_seen: u64) -> NetworkNodeSummaryResponse {
-        NetworkNodeSummaryResponse {
+    /// One row of a reachable-scoped page. `last_seen` fills both clocks the
+    /// row carries, so a test that means to separate them has to say so.
+    fn crawler_row(peer_id: &str, last_seen: u64) -> PeerSummaryResponse {
+        PeerSummaryResponse {
             peer_id: peer_id.to_string(),
-            addr: "/ip4/127.0.0.1/tcp/8115".to_string(),
-            version: "0.209.0".to_string(),
-            country: "SG".to_string(),
-            asn: "AS1 Example".to_string(),
-            reachable: true,
-            last_seen,
+            display_state: PeerDisplayState::Reachable,
+            primary_addr: "/ip4/127.0.0.1/tcp/8115".to_string(),
+            version: Some("0.209.0".to_string()),
+            country: Some("SG".to_string()),
+            asn: Some("AS1 Example".to_string()),
+            last_advertised_at: last_seen,
+            last_reachable_at: Some(last_seen),
             rtt_ms: Some(12),
         }
     }
@@ -6912,7 +7030,7 @@ mod tests {
         // Upstream pages by last-seen, the one key a crawl round moves. A
         // roster published in that order would reshuffle every round and
         // teleport every node the scene had placed.
-        let nodes = NetworkNodesPageResponse {
+        let peers = NetworkPeersPageResponse {
             items: vec![
                 crawler_row("7065657243", 30),
                 crawler_row("7065657241", 20),
@@ -6921,7 +7039,7 @@ mod tests {
             next_cursor: None,
         };
 
-        let roster = map_network_roster(crawler_summary(7), nodes, roster_anchor()).unwrap();
+        let roster = map_network_roster(crawler_summary(7), peers, roster_anchor()).unwrap();
 
         assert_eq!(
             roster
@@ -6936,11 +7054,26 @@ mod tests {
 
     #[test]
     fn a_roster_drops_the_rows_it_cannot_stage_and_keeps_the_rest() {
-        let mut unnamed = crawler_row("7065657242", 20);
-        unnamed.country = String::new();
-        unnamed.asn = String::new();
-        unnamed.reachable = false;
-        let nodes = NetworkNodesPageResponse {
+        // The crawler reached this one before and could not this round: it is
+        // still a peer it holds a verification for, so it stages dark rather
+        // than leaving.
+        let mut remembered = crawler_row("7065657242", 20);
+        remembered.display_state = PeerDisplayState::VerifiedUnavailable;
+        remembered.country = None;
+        remembered.asn = None;
+        // The crawler never reached this one at all — only heard it named.
+        let mut hearsay = crawler_row("7065657244", 15);
+        hearsay.display_state = PeerDisplayState::AdvertisedUnverified;
+        hearsay.version = None;
+        hearsay.country = None;
+        hearsay.asn = None;
+        hearsay.last_reachable_at = None;
+        hearsay.rtt_ms = None;
+        // A reached peer the crawler holds no reach moment for: nothing to
+        // date the sighting by.
+        let mut undated = crawler_row("7065657245", 12);
+        undated.last_reachable_at = None;
+        let peers = NetworkPeersPageResponse {
             items: vec![
                 crawler_row("7065657241", 40),
                 // Not a peer id at all: skipped, never repaired into one.
@@ -6949,12 +7082,14 @@ mod tests {
                 crawler_row("7065657243", 0),
                 // The same node twice: it may only stand on stage once.
                 crawler_row("7065657241", 30),
-                unnamed,
+                remembered,
+                hearsay,
+                undated,
             ],
             next_cursor: Some("7065657242".to_string()),
         };
 
-        let roster = map_network_roster(crawler_summary(7), nodes, roster_anchor()).unwrap();
+        let roster = map_network_roster(crawler_summary(7), peers, roster_anchor()).unwrap();
 
         assert_eq!(
             roster
@@ -6964,8 +7099,9 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["DgUrnn4", "DgUrnn5"]
         );
-        // A crawler with no geolocation for a node says so; the row carries
-        // the word rather than an absent field.
+        // A crawler with no geolocation for a node says so — and it now says
+        // it with `null` rather than an empty string. The row carries the
+        // word either way rather than an absent field.
         assert_eq!(roster.entries[1].country, "Unknown");
         assert_eq!(roster.entries[1].asn, "Unknown");
         assert!(!roster.entries[1].reachable);
@@ -6973,13 +7109,42 @@ mod tests {
     }
 
     #[test]
+    fn hearsay_never_stages_as_a_sighting() {
+        // The three states upstream will not vouch for. `sighted` says the
+        // crawler dialed the node and it answered; a peer that other peers
+        // merely named has no business wearing that. This is the invariant
+        // the `state=reachable` scope protects at the request, pinned again
+        // where the row becomes a node.
+        for state in [
+            PeerDisplayState::AdvertisedUnverified,
+            PeerDisplayState::ForeignNetwork,
+            PeerDisplayState::NoCompletedObservation,
+            PeerDisplayState::Unknown,
+        ] {
+            let mut row = crawler_row("7065657241", 40);
+            row.display_state = state;
+            let peers = NetworkPeersPageResponse {
+                items: vec![row],
+                next_cursor: None,
+            };
+
+            let roster = map_network_roster(crawler_summary(7), peers, roster_anchor()).unwrap();
+
+            assert!(
+                roster.entries.is_empty(),
+                "{state:?} was staged as a sighting"
+            );
+        }
+    }
+
+    #[test]
     fn a_round_that_found_nobody_is_an_empty_roster_and_still_a_report() {
-        let nodes = NetworkNodesPageResponse {
+        let peers = NetworkPeersPageResponse {
             items: Vec::new(),
             next_cursor: None,
         };
 
-        let roster = map_network_roster(crawler_summary(11), nodes, roster_anchor()).unwrap();
+        let roster = map_network_roster(crawler_summary(11), peers, roster_anchor()).unwrap();
 
         assert_eq!(roster.crawl_round, 11);
         assert!(roster.entries.is_empty());
@@ -6993,14 +7158,218 @@ mod tests {
         let items = (0..=ROSTER_CAP)
             .map(|index| crawler_row(&format!("1220{index:060x}"), 20))
             .collect();
-        let nodes = NetworkNodesPageResponse {
+        let peers = NetworkPeersPageResponse {
             items,
             next_cursor: None,
         };
 
-        let error = map_network_roster(crawler_summary(7), nodes, roster_anchor()).unwrap_err();
+        let error = map_network_roster(crawler_summary(7), peers, roster_anchor()).unwrap_err();
 
         assert!(error.to_string().contains("roster limit"), "{error}");
+    }
+
+    #[test]
+    fn an_unknown_display_state_costs_one_row_not_the_page() {
+        // Upstream has broken this wire twice inside one week, and each break
+        // cost the whole roster rather than a field of it, because serde
+        // fails an entire page over one value it has no name for. A sixth
+        // state has to arrive as a row cknerv declines to stage — never as a
+        // page it cannot open. Delete `#[serde(other)]` and this decode is
+        // the error that empties the colony again.
+        let page: NetworkPeersPageResponse = serde_json::from_str(
+            r#"{
+                "items": [
+                    {
+                        "peerId": "7065657241",
+                        "displayState": "reachable",
+                        "primaryAddr": "/ip4/127.0.0.1/tcp/8115",
+                        "version": "0.209.0",
+                        "country": "SG",
+                        "asn": "AS1 Example",
+                        "lastAdvertisedAt": 40,
+                        "lastObservedAt": 40,
+                        "lastReachableAt": 40,
+                        "rttMs": 12
+                    },
+                    {
+                        "peerId": "7065657242",
+                        "displayState": "quantumEntangled",
+                        "primaryAddr": "/ip4/127.0.0.2/tcp/8115",
+                        "version": null,
+                        "country": null,
+                        "asn": null,
+                        "lastAdvertisedAt": 40,
+                        "lastObservedAt": 40,
+                        "lastReachableAt": null,
+                        "rttMs": null
+                    }
+                ],
+                "nextCursor": null
+            }"#,
+        )
+        .expect("a state this build has no name for must not fail the page");
+
+        assert_eq!(page.items.len(), 2);
+        assert_eq!(page.items[0].display_state, PeerDisplayState::Reachable);
+        assert_eq!(page.items[1].display_state, PeerDisplayState::Unknown);
+
+        // And the row that has no name is the only thing lost: its neighbour
+        // still stages.
+        let roster = map_network_roster(crawler_summary(7), page, roster_anchor()).unwrap();
+        assert_eq!(
+            roster
+                .entries
+                .iter()
+                .map(|entry| entry.node_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["DgUrnn4"]
+        );
+    }
+
+    #[test]
+    fn an_atlas_refuses_a_page_that_did_not_arrive_newest_advertised_first() {
+        // The invariant this replaces was written against `lastSeen`, a field
+        // that no longer exists. This is the half that has to keep biting: a
+        // page whose order cknerv cannot vouch for is a sample whose
+        // membership nobody chose.
+        let out_of_order = NetworkPeersPageResponse {
+            items: vec![
+                crawler_row("7065657241", 20),
+                crawler_row("7065657242", 40),
+            ],
+            next_cursor: None,
+        };
+
+        let error = map_network_atlas(crawler_summary(7), out_of_order, roster_anchor()).unwrap_err();
+
+        assert!(
+            error.to_string().contains("newest advertised first"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn one_advertise_moment_shared_by_every_row_is_an_order_and_not_a_fault() {
+        // A round advertises its whole page in a single moment, so the live
+        // page is nothing but ties and upstream falls through to the peer id
+        // to break them. An invariant demanding a strict decrease would
+        // refuse every healthy page — a total loss dressed as a validation.
+        let tied = NetworkPeersPageResponse {
+            items: vec![
+                crawler_row("7065657241", 40),
+                crawler_row("7065657242", 40),
+                crawler_row("7065657243", 40),
+            ],
+            next_cursor: None,
+        };
+
+        let atlas = map_network_atlas(crawler_summary(7), tied, roster_anchor()).unwrap();
+
+        assert_eq!(atlas.sample_size, 3);
+        assert_eq!(atlas.sample_reachable, 3);
+        assert_eq!(atlas.verified_retained_peers, 9);
+        assert_eq!(atlas.candidate_peers, 12);
+        assert_eq!(atlas.last_round_reachable, 3);
+        assert_eq!(atlas.new_verified_peers, 1);
+    }
+
+    #[test]
+    fn an_atlas_refuses_a_round_whose_peer_counts_do_not_nest() {
+        // Two counts upstream deleted for being ambiguous used to hold these
+        // invariants up. Their replacements nest the same way: a peer that
+        // answered was a peer the round considered, and a peer verified for
+        // the first time is one of the peers now held verified.
+        let mut louder_than_it_tried = crawler_summary(7);
+        louder_than_it_tried
+            .last_round
+            .as_mut()
+            .unwrap()
+            .reachable_peers = 13;
+        let error = map_network_atlas(
+            louder_than_it_tried,
+            NetworkPeersPageResponse {
+                items: Vec::new(),
+                next_cursor: None,
+            },
+            roster_anchor(),
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("exceeds its candidate count"),
+            "{error}"
+        );
+
+        let mut newer_than_it_holds = crawler_summary(7);
+        newer_than_it_holds
+            .last_round
+            .as_mut()
+            .unwrap()
+            .new_verified_peers = 10;
+        let error = map_network_atlas(
+            newer_than_it_holds,
+            NetworkPeersPageResponse {
+                items: Vec::new(),
+                next_cursor: None,
+            },
+            roster_anchor(),
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("exceeds its retained verified count"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn an_atlas_refuses_a_page_answered_in_a_state_it_did_not_ask_for() {
+        // The atlas is a tally, and every count in it is a statement about a
+        // reachable-only page. A row in any other state is not a row to fold
+        // in: it is evidence that the page is not the one the record claims
+        // to describe.
+        for state in [
+            PeerDisplayState::VerifiedUnavailable,
+            PeerDisplayState::AdvertisedUnverified,
+            PeerDisplayState::Unknown,
+        ] {
+            let mut row = crawler_row("7065657241", 40);
+            row.display_state = state;
+            let error = map_network_atlas(
+                crawler_summary(7),
+                NetworkPeersPageResponse {
+                    items: vec![row],
+                    next_cursor: None,
+                },
+                roster_anchor(),
+            )
+            .unwrap_err();
+            assert!(
+                error.to_string().contains("reachable-only page"),
+                "{state:?}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_label_the_crawler_never_learned_is_counted_as_the_word_for_it() {
+        // Upstream answers `null` rather than fabricating metadata for a peer
+        // it holds none for. That is the same statement an empty label always
+        // made — nobody knows — and the tally spells both with one word
+        // instead of dropping a row or inventing a plausible one.
+        let mut unlabelled = crawler_row("7065657241", 40);
+        unlabelled.country = None;
+        unlabelled.version = None;
+        let page = NetworkPeersPageResponse {
+            items: vec![unlabelled],
+            next_cursor: None,
+        };
+
+        let atlas = map_network_atlas(crawler_summary(7), page, roster_anchor()).unwrap();
+
+        assert_eq!(atlas.sample_size, 1);
+        assert_eq!(atlas.countries[0].label, "Unknown");
+        assert_eq!(atlas.versions[0].label, "Unknown");
     }
 
     #[test]

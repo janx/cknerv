@@ -36,49 +36,112 @@ pub(crate) struct NetworkCrawlerSummaryResponse {
     pub last_round: Option<NetworkCrawlerRoundResponse>,
 }
 
-/// The finished round inside `network/summary`, as ckbadger's round
-/// persistence rework spells it. The wire also carries address-level attempt
-/// counters (`candidatePeers`, `addressAttempts`, `failedAddressAttempts`,
-/// `foreignPeers`, `malformedAddresses`, `unreachablePeers`) that nothing in
-/// cknerv reads; they are deliberately not declared so a page can grow more
-/// of them without a decode failure here.
+/// The finished round inside `network/summary`, as ckbadger's peer-evidence
+/// rework spells it.
+///
+/// Every name here is upstream's own. The round used to report `totalKnown`,
+/// `attemptedPeers` and `unreachablePeers`; upstream deleted all three for
+/// blurring separate quantities under one word, and cknerv does not
+/// resurrect them from the survivors — a deleted field has no honest
+/// substitute, only an invented one.
+///
+/// The wire carries more of this round than is declared here:
+/// `verifiedUnavailablePeers`, `exhaustedCandidates`, `foreignPeers`,
+/// `addressAttempts`, `nonSuccessfulAddressAttempts`, `malformedAddresses`,
+/// `peerOutcomes`, `addressObservations` and `discovery`. Nothing in cknerv
+/// reads them yet, so they are deliberately not declared: a field declared
+/// here is a field whose disappearance costs the whole record, and this
+/// crate has now paid that price twice in one week.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NetworkCrawlerRoundResponse {
     pub round_id: u64,
     pub started_at: u64,
     pub finished_at: u64,
-    pub attempted_peers: u64,
+    /// Peers the round considered — the widest count it reports, and the
+    /// denominator every other peer count here sits under.
+    pub candidate_peers: u64,
+    /// Peers the crawler still holds a verification for at the end of the
+    /// round: reached, or reached before and remembered. This is the set the
+    /// deleted `totalKnown` was counting.
+    pub verified_retained_peers: u64,
+    /// Peers that answered this round.
     pub reachable_peers: u64,
-    pub new_nodes: u64,
-    pub total_known: u64,
+    /// Peers verified for the first time in this round.
+    pub new_verified_peers: u64,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct NetworkNodesPageResponse {
+pub(crate) struct NetworkPeersPageResponse {
     #[serde(default)]
-    pub items: Vec<NetworkNodeSummaryResponse>,
+    pub items: Vec<PeerSummaryResponse>,
     pub next_cursor: Option<String>,
 }
 
+/// How far the crawler got with one peer, in upstream's own vocabulary.
+///
+/// This is a gradient of evidence, not a confidence rating: `reachable` means
+/// the crawler dialed the peer and it identified itself, and
+/// `advertisedUnverified` means other peers named it and it never answered.
+/// cknerv reads the two verified rungs and stages neither the hearsay ones
+/// nor the transient one.
+///
+/// ⭐ `Unknown` is load-bearing. Upstream broke this contract twice inside
+/// 48 hours and each break cost the entire roster, because one unreadable
+/// field fails the whole page decode. A sixth state added upstream must cost
+/// one row and nothing else, so an unrecognised state decodes rather than
+/// throwing, and the mappers decide what a row they cannot classify is
+/// worth. Guarded by `an_unknown_display_state_costs_one_row_not_the_page`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum PeerDisplayState {
+    Reachable,
+    VerifiedUnavailable,
+    AdvertisedUnverified,
+    ForeignNetwork,
+    NoCompletedObservation,
+    #[serde(other)]
+    Unknown,
+}
+
+/// One row of `network/peers`: candidates and verified peers unified, each
+/// tagged with the evidence behind it.
+///
+/// The optional fields are optional for a reason worth keeping: upstream
+/// holds `version`, `country`, `asn`, `lastReachableAt` and `rttMs` only for
+/// a peer it actually reached, and answers `null` rather than fabricating
+/// metadata for a peer it merely heard about. `null` and "the crawler holds
+/// an empty label" are the same statement to a reader — nobody knows — and
+/// the mapper spells both with the same word.
+///
+/// The wire also carries `lastObservedAt` (when the crawler last *tried*).
+/// It is deliberately not declared: it is a different clock from
+/// `lastReachableAt` (when the crawler last *succeeded*), no reader wants
+/// the former yet, and the one field the roster dates its rows with must not
+/// be able to silently become the other.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct NetworkNodeSummaryResponse {
+pub(crate) struct PeerSummaryResponse {
     pub peer_id: String,
-    /// The primary address the crawler holds for this node. Read only by the
+    pub display_state: PeerDisplayState,
+    /// The first alias the crawler retains for this peer. Read only by the
     /// roster: the atlas counts this page and deliberately names nothing on
-    /// it. Defaulted because a node whose address book is empty is answered
-    /// with an empty string upstream, and a source that omits the field
-    /// entirely should still be countable.
+    /// it. Defaulted because a row that reaches us without one is a row to
+    /// leave off stage, not a page to lose — upstream refuses to answer at
+    /// all for a candidate with no retained alias.
     #[serde(default)]
-    pub addr: String,
-    pub version: String,
-    pub country: String,
-    #[serde(default)]
-    pub asn: String,
-    pub reachable: bool,
-    pub last_seen: u64,
+    pub primary_addr: String,
+    pub version: Option<String>,
+    pub country: Option<String>,
+    pub asn: Option<String>,
+    /// Unix seconds, and upstream's sort key for this page: rows arrive
+    /// newest-advertised first, ties broken by `peerId`.
+    pub last_advertised_at: u64,
+    /// Unix seconds the crawler last reached this peer. Present exactly when
+    /// upstream holds a verification for it, which is exactly when the state
+    /// is `reachable` or `verifiedUnavailable`.
+    pub last_reachable_at: Option<u64>,
     pub rtt_ms: Option<u32>,
 }
 

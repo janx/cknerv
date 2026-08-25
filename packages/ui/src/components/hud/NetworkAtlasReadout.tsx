@@ -59,9 +59,9 @@ function BucketStrip({ label, buckets, total, provenance }: {
 //
 // Strictly additive: with no usable crawler record the panel's own measured
 // rows are the whole story, so absence renders nothing rather than a substitute
-// readout. Crawler run telemetry (attempt counts, new nodes) is ckbadger's own
-// operational view, not the pilot's — what survives here is the shape of the
-// network the crawl saw.
+// readout. Crawler run telemetry (candidates considered, peers verified for the
+// first time) is ckbadger's own operational view, not the pilot's — what
+// survives here is the shape of the network the crawl saw.
 export default function NetworkAtlasReadout({ source, record }: {
   source?: EnrichmentSourceStatus;
   record?: NetworkAtlasRecord | null;
@@ -80,7 +80,12 @@ export default function NetworkAtlasReadout({ source, record }: {
       style={{ marginTop: 6 }}
     >
       <div data-network-atlas-rows style={{ opacity: stale ? 0.68 : 1 }}>
-        <StatRow label="Known nodes" title={provenance}>{fmt(record.total_known)}</StatRow>
+        {/* The peers the crawler still holds a verification for — the set it
+            has actually reached, which is what this row has always counted.
+            The number upstream used to answer with was that same set under a
+            name that also read as "every peer anyone has named", and it was
+            deleted for it. */}
+        <StatRow label="Known nodes" title={provenance}>{fmt(record.verified_retained_peers)}</StatRow>
         <StatRow label="Median RTT" title={provenance}>
           {record.median_rtt_ms == null ? '—' : `${fmt(record.median_rtt_ms)}ms`}
         </StatRow>

@@ -528,16 +528,19 @@ disappears in CKB-only mode and dims after three missed refreshes.
 ### Network Atlas
 
 With `network_atlas`, cknerv checks the crawler summary at most once every 60
-seconds. A usable crawl triggers exactly one `network/nodes?limit=64` request.
-The adapter validates the counters and newest-first sample, then reduces it to
-country and version buckets, reachable count, and median RTT. Peer IDs and
-addresses never enter the shared wire contract.
+seconds. A usable crawl triggers exactly one
+`network/peers?state=reachable&limit=64` request. `network/peers` answers
+candidates and verified peers from one route, so the scope is what keeps this
+sample to peers the crawler actually reached rather than peers it merely heard
+named. The adapter validates the counters and the newest-advertised-first
+order, then reduces the page to country and version buckets, reachable count,
+and median RTT. Peer IDs and addresses never enter the shared wire contract.
 
 `PEER MESH` always keeps the local CKB node's directly measured peer count and
 head consensus as primary truth, plus a catch-up row that appears only while our
 own tip trails the best known head. Per-peer client version and RTT belong to
 the floating PEER and NODE cards, never to this rail. A valid atlas record adds
-its known-node count, median RTT, and country and client-version strips as more
+its verified-peer count, median RTT, and country and client-version strips as more
 rows of that same panel rather than a titled sub-section — one network read at
 two distances, near rows measured over our own links and far rows indexed by the
 crawl. The strip labels state the sample size and `BOUNDED` when the crawl

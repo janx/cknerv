@@ -93,19 +93,23 @@ export function deriveNetworkAtlasVisual(
   const summaryCounts = [
     record.crawl_round,
     record.crawl_finished_at_s,
-    record.total_known,
-    record.last_round_attempted,
+    record.verified_retained_peers,
+    record.candidate_peers,
     record.last_round_reachable,
-    record.new_nodes,
+    record.new_verified_peers,
     record.sample_size,
     record.sample_reachable,
   ];
   if (!summaryCounts.every(safeNonnegativeInteger)) return null;
   if (typeof record.sample_truncated !== 'boolean') return null;
-  if (record.last_round_reachable > record.last_round_attempted
-    || record.new_nodes > record.total_known
+  // The round's own nesting, in the vocabulary that replaced the three counts
+  // upstream deleted for ambiguity: a peer that answered was a peer the round
+  // considered, a peer verified for the first time is one of the peers now
+  // held verified, and the sample is drawn from the peers held verified.
+  if (record.last_round_reachable > record.candidate_peers
+    || record.new_verified_peers > record.verified_retained_peers
     || record.sample_size > NETWORK_ATLAS_MAX_SAMPLE
-    || record.sample_size > record.total_known
+    || record.sample_size > record.verified_retained_peers
     || record.sample_reachable > record.sample_size) return null;
   if (record.median_rtt_ms !== undefined
     && (!safeNonnegativeInteger(record.median_rtt_ms)

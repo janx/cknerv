@@ -697,6 +697,18 @@ pub struct NetworkAtlasBucket {
 /// Bounded context from an optional network crawler. The crawl summary can
 /// describe the source's whole known set, while countries, versions, and RTT
 /// are derived only from the explicitly limited latest-node sample.
+///
+/// Three of these counts carry the crawler's own field names. They used to be
+/// `total_known`, `last_round_attempted` and `new_nodes`, and every one of
+/// those quantities has been deleted at the source for blurring several
+/// separate populations into one word. The replacements are not renames of a
+/// number that stayed put: `verified_retained_peers` counts the peers the
+/// crawler still holds a verification for, `candidate_peers` counts the peers
+/// the round considered, and `new_verified_peers` counts the peers verified
+/// for the first time in it. They keep upstream's spelling precisely so this
+/// record cannot drift away from what its source means by them.
+/// `last_round_reachable` keeps its own name because the fact under it never
+/// moved.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NetworkAtlasRecord {
     pub source: String,
@@ -704,10 +716,10 @@ pub struct NetworkAtlasRecord {
     pub updated_at_ms: u64,
     pub crawl_round: u64,
     pub crawl_finished_at_s: u64,
-    pub total_known: u64,
-    pub last_round_attempted: u64,
+    pub verified_retained_peers: u64,
+    pub candidate_peers: u64,
     pub last_round_reachable: u64,
-    pub new_nodes: u64,
+    pub new_verified_peers: u64,
     pub sample_size: u32,
     pub sample_reachable: u32,
     pub sample_truncated: bool,
@@ -1794,10 +1806,10 @@ mod tests {
             updated_at_ms: block,
             crawl_round: 7,
             crawl_finished_at_s: block,
-            total_known: 42,
-            last_round_attempted: 12,
+            verified_retained_peers: 42,
+            candidate_peers: 12,
             last_round_reachable: 9,
-            new_nodes: 3,
+            new_verified_peers: 3,
             sample_size: 2,
             sample_reachable: 1,
             sample_truncated: true,

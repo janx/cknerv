@@ -17,10 +17,10 @@ const record: NetworkAtlasRecord = {
   updated_at_ms: 1,
   crawl_round: 7,
   crawl_finished_at_s: 1_700_000_000,
-  total_known: 42,
-  last_round_attempted: 12,
+  verified_retained_peers: 42,
+  candidate_peers: 61,
   last_round_reachable: 9,
-  new_nodes: 3,
+  new_verified_peers: 3,
   sample_size: 3,
   sample_reachable: 2,
   sample_truncated: true,
@@ -62,6 +62,22 @@ describe('network atlas visual derivation', () => {
     expect(deriveNetworkAtlasVisual({
       ...record,
       sample_reachable: 4,
+    })).toBeNull();
+  });
+
+  it('rejects a round whose peer counts do not nest', () => {
+    // The three counts this record used to carry were deleted upstream for
+    // blurring separate populations under one word. Their replacements nest,
+    // and nothing else here would notice if they stopped: a peer that answered
+    // was a peer the round considered, a peer verified for the first time is
+    // one of the peers now held verified, and the sample is drawn from the
+    // peers held verified.
+    expect(deriveNetworkAtlasVisual({ ...record, last_round_reachable: 62 })).toBeNull();
+    expect(deriveNetworkAtlasVisual({ ...record, new_verified_peers: 43 })).toBeNull();
+    expect(deriveNetworkAtlasVisual({
+      ...record,
+      verified_retained_peers: 2,
+      new_verified_peers: 0,
     })).toBeNull();
   });
 

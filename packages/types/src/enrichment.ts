@@ -347,16 +347,27 @@ export interface ScriptRegistryRecord {
   unresolved: number;
 }
 
+/** Bounded context from an optional network crawler.
+ *
+ * Three of these counts carry the crawler's own field names. They used to be
+ * `total_known`, `last_round_attempted` and `new_nodes`, and every one of
+ * those quantities has been deleted at the source for blurring several
+ * separate populations into one word. The replacements are not renames of a
+ * number that stayed put: `verified_retained_peers` counts the peers the
+ * crawler still holds a verification for, `candidate_peers` counts the peers
+ * the round considered, and `new_verified_peers` counts the peers verified
+ * for the first time in it. `last_round_reachable` keeps its own name because
+ * the fact under it never moved. */
 export interface NetworkAtlasRecord {
   source: string;
   as_of: ChainAnchor;
   updated_at_ms: number;
   crawl_round: number;
   crawl_finished_at_s: number;
-  total_known: number;
-  last_round_attempted: number;
+  verified_retained_peers: number;
+  candidate_peers: number;
   last_round_reachable: number;
-  new_nodes: number;
+  new_verified_peers: number;
   sample_size: number;
   sample_reachable: number;
   sample_truncated: boolean;
