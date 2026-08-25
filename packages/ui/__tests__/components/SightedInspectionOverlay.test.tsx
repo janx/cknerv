@@ -18,6 +18,7 @@ function rosterNode(overrides: Partial<RosterNode> = {}): RosterNode {
     last_reachable_ms: 1_700_000_000_000,
     last_advertised_ms: 1_700_000_000_000,
     last_observed_ms: 1_700_000_000_000,
+    latest_positive_observed_ms: 1_700_000_005_000,
     ...overrides,
   };
 }

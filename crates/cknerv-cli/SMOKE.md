@@ -139,13 +139,15 @@ and it clears with the crawler.
 
 Every entry carries a `state` of `reachable`, `verified_unavailable` or
 `advertised_unverified` — never `foreign_network` or `no_completed_observation`,
-which are counted on the reach bar and named by nobody. `last_advertised_ms` is on
-every entry; `version`, `country`, `asn`, `last_reachable_ms` and `rtt_ms` are
-present exactly on the entries the crawler holds a verification for, and ABSENT
-rather than `"Unknown"` on the ones it does not — `"Unknown"` is the crawler's
-own word for a peer it reached and could not place, and the two must not read
-alike. The colony stages the two verified states and leaves
-`advertised_unverified` off stage.
+which are counted on the reach bar and named by nobody.
+`latest_positive_observed_ms` is on every entry, and it is the only clock that
+is: `last_advertised_ms` joins `version`, `country`, `asn`, `last_reachable_ms`
+and `rtt_ms` in being present only when the crawler has something to put there,
+and ABSENT rather than `"Unknown"` when it does not — `"Unknown"` is the
+crawler's own word for a peer it reached and could not place, and the two must
+not read alike. `addr` is on every entry by construction: a peer upstream holds
+no address for is one the adapter leaves off rather than naming `Unknown`. The
+colony stages all three states.
 The snapshot should also gain `galaxy_composition`. It is composed for the
 CURATED FIELD — the 12,000-Cell stage less the 1,200 seats the tip window holds
 for the newest live Cells — so with sufficient indexed candidates it contains

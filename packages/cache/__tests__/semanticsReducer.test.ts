@@ -218,7 +218,10 @@ function networkRoster(block: number, round: number): NetworkRosterRecord {
     // Both ends of the gradient, because the reducer carries this record
     // whole: a peer the crawler dialed, and a peer nobody has ever got an
     // answer out of, whose absent fields have to survive a snapshot and a
-    // delta without a reducer filling them in.
+    // delta without a reducer filling them in. The second row leaves out the
+    // advertise clock too, now that the wire allows it — the reducer's job is
+    // to carry an absence, and an absence it has never been handed is one
+    // nobody has checked it can carry.
     entries: [{
       node_id: 'QmQHmapDhRnzHqcAJQ5geABWdMVRaa6qah9gEdBEF7ejyL',
       addr: '/ip4/203.0.113.7/tcp/8115',
@@ -229,13 +232,14 @@ function networkRoster(block: number, round: number): NetworkRosterRecord {
       last_reachable_ms: 1_699_999_940_000,
       last_advertised_ms: 1_699_999_990_000,
       last_observed_ms: 1_699_999_940_000,
+      latest_positive_observed_ms: 1_699_999_995_000,
       rtt_ms: 41,
     }, {
       node_id: 'QmTdv6Dpi1e5fzKUVZzw5SJJYVvDt1jAq5ShiRRCQ7eBLB',
       addr: '/ip4/203.0.113.254/tcp/8115',
       state: 'advertised_unverified',
-      last_advertised_ms: 1_699_999_990_000,
       last_observed_ms: 1_699_999_920_000,
+      latest_positive_observed_ms: 1_699_999_991_000,
     }],
   };
 }

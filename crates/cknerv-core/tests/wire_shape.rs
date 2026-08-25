@@ -667,10 +667,18 @@ fn enrichment_network_roster(entries: Vec<RosterNode>, truncated: bool) -> Netwo
 ///   cannot tell them apart will print the crawler's verdict over a peer it
 ///   has never spoken to.
 ///
-/// The clocks are this file's own scheme rather than the crawl's, and they are
-/// deliberately all different from each other: three clocks ride every row and
-/// a fixture that gave two of them one value would let a twin collapse the pair
-/// and still pass.
+/// The clocks are this file's own scheme rather than the crawl's, and every
+/// row gives all four of them a different value: four clocks ride every row
+/// now, and a fixture that gave two of them one value would let a twin
+/// collapse the pair and still pass. The required one is always the newest,
+/// which is what it means — it is the maximum over every positive channel,
+/// and the advertise clock it replaced is only one of those channels.
+///
+/// Every row carries an advertise clock even though the wire no longer demands
+/// one, and that is honest rather than lazy: the source answers `null` there
+/// exactly when it answers `null` for the address too, and a row with no
+/// address is one the adapter never stages. The optional is for the wire's
+/// sake, not for a shape this fixture could truthfully draw.
 fn enrichment_roster_nodes() -> Vec<RosterNode> {
     vec![
         RosterNode {
@@ -683,8 +691,9 @@ fn enrichment_roster_nodes() -> Vec<RosterNode> {
             country: Some("CA".to_string()),
             asn: Some("AS16509 Amazon.com, Inc.".to_string()),
             last_reachable_ms: Some(1_699_999_940_000),
-            last_advertised_ms: 1_699_999_990_000,
-            last_observed_ms: Some(1_699_999_940_000),
+            last_advertised_ms: Some(1_699_999_990_000),
+            last_observed_ms: Some(1_699_999_945_000),
+            latest_positive_observed_ms: 1_699_999_995_000,
             rtt_ms: Some(1_331),
         },
         RosterNode {
@@ -695,8 +704,9 @@ fn enrichment_roster_nodes() -> Vec<RosterNode> {
             country: Some("Unknown".to_string()),
             asn: Some("Unknown".to_string()),
             last_reachable_ms: Some(1_699_999_930_000),
-            last_advertised_ms: 1_699_999_990_000,
-            last_observed_ms: Some(1_699_999_930_000),
+            last_advertised_ms: Some(1_699_999_990_000),
+            last_observed_ms: Some(1_699_999_935_000),
+            latest_positive_observed_ms: 1_699_999_992_000,
             rtt_ms: Some(467),
         },
         RosterNode {
@@ -707,8 +717,9 @@ fn enrichment_roster_nodes() -> Vec<RosterNode> {
             country: None,
             asn: None,
             last_reachable_ms: None,
-            last_advertised_ms: 1_699_999_990_000,
+            last_advertised_ms: Some(1_699_999_990_000),
             last_observed_ms: Some(1_699_999_920_000),
+            latest_positive_observed_ms: 1_699_999_991_000,
             rtt_ms: None,
         },
         RosterNode {
@@ -719,8 +730,9 @@ fn enrichment_roster_nodes() -> Vec<RosterNode> {
             country: Some("SG".to_string()),
             asn: Some("AS45102 Alibaba (US) Technology Co., Ltd.".to_string()),
             last_reachable_ms: Some(1_699_999_100_000),
-            last_advertised_ms: 1_699_999_980_000,
+            last_advertised_ms: Some(1_699_999_980_000),
             last_observed_ms: Some(1_699_999_910_000),
+            latest_positive_observed_ms: 1_699_999_985_000,
             rtt_ms: None,
         },
     ]

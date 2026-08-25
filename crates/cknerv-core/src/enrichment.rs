@@ -884,6 +884,13 @@ pub struct RosterNode {
     /// The primary address the crawler holds for this node. Present for every
     /// state: an address is what a candidate IS, and a peer nobody can name an
     /// address for is not on any roster.
+    ///
+    /// That is now a cut the source makes rather than a shape it happens to
+    /// have. A crawler that met a node only through a session it did not dial
+    /// answers with no address at all, and the adapter leaves that node off
+    /// rather than minting a word to fill the field — a staged node whose
+    /// address reads `Unknown` is a node the scene invites a reader to click
+    /// on and then cannot say anything true about.
     pub addr: String,
     /// What the crawler knows about this node, and how it came to know it.
     pub state: RosterNodeState,
@@ -910,13 +917,19 @@ pub struct RosterNode {
     /// whole record was reshaped to prevent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_reachable_ms: Option<u64>,
-    /// When the network last named this node to the crawler.
+    /// When the network last named this node to the crawler. It says the
+    /// network still gossips this address, which is a statement about the
+    /// network rather than about the node.
     ///
-    /// The one clock every row has, and the reason no roster row is ever
-    /// undated: a peer nobody has ever advertised is a peer no crawler ever
-    /// heard of. It says the network still gossips this address, which is a
-    /// statement about the network rather than about the node.
-    pub last_advertised_ms: u64,
+    /// ⭐ THIS USED TO BE THE ONE CLOCK EVERY ROW HAD, AND IT IS NOT ANY MORE.
+    /// The sentence that made it mandatory — a peer nobody has ever advertised
+    /// is a peer no crawler ever heard of — stopped being true when the
+    /// crawler learned to hear of a peer through a session it opened rather
+    /// than through gossip. A node with no gossiped alias has no advertise
+    /// moment, and inventing one out of the session that reached it would be
+    /// the same fabrication the source refuses to commit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_advertised_ms: Option<u64>,
     /// When the crawler last TRIED this node — the last round that finished
     /// with it in it, whether or not the dial got anywhere.
     ///
@@ -926,6 +939,27 @@ pub struct RosterNode {
     /// advertise clock instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_observed_ms: Option<u64>,
+    /// When anything at all last observed this node — the newest of every
+    /// positive channel the crawler holds: a gossiped alias, evidence naming
+    /// it as a target, a direct session, or the crawler's own identification.
+    ///
+    /// ⭐ THE ONE REQUIRED CLOCK, AND THE ONLY ONE THAT CAN BE. It replaces the
+    /// advertise clock in that job because the source guarantees it and no
+    /// longer guarantees that one: a candidate with no positive evidence to
+    /// take a maximum over is a request the source refuses outright rather
+    /// than a row it dates with `null`. So no roster row is undated, which is
+    /// the property the record has always had and the reason a scene can age
+    /// a node it has placed.
+    ///
+    /// It is also THE AXIS THE ROSTER'S CUT WAS MADE ALONG. This record names
+    /// a bounded few out of a set that outgrows the budget, `truncated` says
+    /// only that there were more, and this is the key that decided which few —
+    /// so a reader asking "why is that node here and this one not" has the
+    /// answer on the row rather than nowhere. Nothing draws it yet; it is
+    /// carried for the same reason `last_observed_ms` is, so that the reader
+    /// which eventually wants it is not tempted into a clock that means
+    /// something narrower.
+    pub latest_positive_observed_ms: u64,
     /// The crawler's own dial, from the crawler's vantage. Display-only: it
     /// measures a link cknerv does not have, and is never a distance.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2263,8 +2297,9 @@ mod tests {
                 country: Some("DE".into()),
                 asn: Some("AS24940 Hetzner Online GmbH".into()),
                 last_reachable_ms: Some(1_699_999_940_000),
-                last_advertised_ms: 1_699_999_980_000,
+                last_advertised_ms: Some(1_699_999_980_000),
                 last_observed_ms: Some(1_699_999_940_000),
+                latest_positive_observed_ms: 1_699_999_985_000,
                 rtt_ms: Some(41),
             }],
         }

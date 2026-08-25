@@ -472,7 +472,12 @@ export interface RosterNode {
    * `/api/enrichment/peers/:node_id` — not the hex the crawler is keyed by. */
   node_id: string;
   /** The primary address the crawler holds for this node. Present for every
-   * state: an address is what a candidate IS. */
+   * state: an address is what a candidate IS.
+   *
+   * The crawler can answer with none — for a node it met through a session it
+   * did not dial, where the only "address" available would be an inbound
+   * socket nobody can dial back. Such a node never reaches this list; the
+   * adapter leaves it off rather than minting a word to fill the field. */
   addr: string;
   /** What the crawler knows about this node, and how it came to know it. */
   state: RosterNodeState;
@@ -487,17 +492,29 @@ export interface RosterNode {
   asn?: string;
   /** When the crawler last REACHED this node.
    *
-   * ⭐ One of three clocks, and not interchangeable with either. This is the
+   * ⭐ One of four clocks, and not interchangeable with any. This is the
    * only one that means "the crawler saw this node", so it is absent for a node
    * it never did — a row that filled it from a neighbouring clock would print a
    * sighting that never happened. */
   last_reachable_ms?: number;
-  /** When the network last NAMED this node to the crawler. The one clock every
-   * row has, and the reason no roster row is ever undated. */
-  last_advertised_ms: number;
+  /** When the network last NAMED this node to the crawler.
+   *
+   * ⭐ It used to be the one clock every row had, and it is not any more: the
+   * crawler now also hears of a node through a session nobody gossiped, and
+   * such a node has no advertise moment to be dated by. */
+  last_advertised_ms?: number;
   /** When the crawler last TRIED this node — the last completed round it was
    * in, whether or not the dial got anywhere. What dates a failure. */
   last_observed_ms?: number;
+  /** When anything at all last observed this node — the newest of every
+   * positive channel: gossip naming it, evidence naming it as a target, a
+   * direct session, or the crawler's own identification.
+   *
+   * ⭐ The one required clock, and the reason no roster row is ever undated.
+   * It is also the axis this roster's cut was made along: the record names a
+   * bounded few out of a set that outgrows the budget, and this is the key
+   * that decided which few. Nothing draws it yet. */
+  latest_positive_observed_ms: number;
   /** The crawler's own dial, from the crawler's vantage. Display-only: it
    * measures a link this dashboard does not have, and is never a distance. */
   rtt_ms?: number;

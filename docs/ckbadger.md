@@ -637,21 +637,30 @@ the budget never reached is a roster that does not name everything the crawler
 holds, which is what `truncated` reports — the only way that flag can be raised
 with no cursor behind it.
 
-Within the hearsay rung the order is upstream's own, newest-advertised first,
-and it is knowingly not the right weight. The honest measure of hearsay is how
-many independent peers named the node, and that lives on the per-peer detail
-route rather than on the list row, so ranking by it would cost one request per
-candidate. What the list row can say is worth something: advertise time
-separates peers the network is still naming from peers it has stopped naming,
-and inside a single round it degenerates into a peer-id prefix — arbitrary, but
-the same arbitrary set every round, so the colony does not reshuffle its
-identities every minute.
+Within the hearsay rung the order is upstream's own, newest positively-observed
+first, and it is knowingly not the right weight. The honest measure of hearsay
+is how many independent peers named the node, and that lives on the per-peer
+detail route rather than on the list row, so ranking by it would cost one
+request per candidate. What the list row can say is worth something: the
+observation clock separates peers something still touches from peers nothing
+has touched in a while, and inside a single round it degenerates into a peer-id
+prefix — arbitrary, but the same arbitrary set every round, so the colony does
+not reshuffle its identities every minute.
 
-Every row carries its own `state`, and the two the crawler holds a verification
-for are the two the colony has marks for. `advertised_unverified` rides the
-record and stays off stage: `sighted` is a tier whose name says the crawler
-dialed the node and it answered, and a peer nobody has ever got an answer out of
-is real without being that.
+Every row carries its own `state`, and all three are rungs the colony has a
+mark for: `advertised_unverified` stages as the faintest of them, because a
+peer nobody has ever got an answer out of is still a real peer and drawing it
+is what replaced a rung the scene used to invent.
+
+The `state=` word matches upstream's dial result and nothing else. Upstream is
+explicit that it neither filters nor reinterprets the separate participation
+evidence beside it, so these three rungs are three answers about dialing — and
+one consequence is worth stating plainly: a peer the crawler has never managed
+to dial, but which the local node is in a live session with, reports
+`no_completed_observation` permanently and is named by no roster. On a publicly
+reachable host that hides exactly the peers upstream grew this evidence to
+reveal. The ruling that the roster does not name that state stands; the
+question of whether dialability should remain the axis is open.
 
 The optional fields are where that gradient is spelled out, and absent is not
 `"Unknown"`. Upstream builds a peer's version, country, ASN, reach clock and
@@ -662,11 +671,23 @@ nobody has ever spoken to this node, versus somebody did and could not place it.
 The roster carries each through as it arrived rather than folding both into the
 word, because the fold prints the crawler's verdict over a peer it never dialed.
 
-Three clocks ride every row and none may stand in for another.
+Four clocks ride every row and none may stand in for another.
 `last_reachable_ms` is when the crawler SAW the node and is absent for one it
-never did; `last_advertised_ms` is when the network last NAMED it, which every
-candidate has and is therefore the stamp that dates the row; `last_observed_ms`
-is when the crawler last TRIED it, which is what dates a failure.
+never did; `last_advertised_ms` is when the network last NAMED it;
+`last_observed_ms` is when the crawler last TRIED it, which is what dates a
+failure; `latest_positive_observed_ms` is the newest of every positive channel
+at once — gossip, target-centric evidence, a direct session, or the crawler's
+own identification.
+
+The last of the four is the one that is required, and it took that job from the
+advertise clock. A peer met through a session nobody gossiped has no advertise
+moment, so upstream answers `null` there rather than inventing one; it never
+answers `null` for the maximum, because a candidate with no positive evidence
+to take a maximum over is a request it refuses outright. The advertise clock
+therefore becomes optional and is read if it is there — dropping a verified,
+dialable, named peer out of the colony over a clock no reader draws would be a
+worse answer than the missing clock. It is also the key upstream sorts this
+page by, which makes it the axis the roster's own cut was made along.
 
 ### Peer Sighting
 

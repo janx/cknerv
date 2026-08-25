@@ -554,7 +554,8 @@
           "asn": "AS16509 Amazon.com, Inc.",
           "last_reachable_ms": 1699999940000,
           "last_advertised_ms": 1699999990000,
-          "last_observed_ms": 1699999940000,
+          "last_observed_ms": 1699999945000,
+          "latest_positive_observed_ms": 1699999995000,
           "rtt_ms": 1331
         },
         {
@@ -566,7 +567,8 @@
           "asn": "Unknown",
           "last_reachable_ms": 1699999930000,
           "last_advertised_ms": 1699999990000,
-          "last_observed_ms": 1699999930000,
+          "last_observed_ms": 1699999935000,
+          "latest_positive_observed_ms": 1699999992000,
           "rtt_ms": 467
         },
         {
@@ -574,7 +576,8 @@
           "addr": "/ip4/203.0.113.254/tcp/8115",
           "state": "advertised_unverified",
           "last_advertised_ms": 1699999990000,
-          "last_observed_ms": 1699999920000
+          "last_observed_ms": 1699999920000,
+          "latest_positive_observed_ms": 1699999991000
         },
         {
           "node_id": "QmcPjVi8ZvUCAsyrV3ocTkwQzMzPXpSUWnWnvYAxRmHKgh",
@@ -585,7 +588,8 @@
           "asn": "AS45102 Alibaba (US) Technology Co., Ltd.",
           "last_reachable_ms": 1699999100000,
           "last_advertised_ms": 1699999980000,
-          "last_observed_ms": 1699999910000
+          "last_observed_ms": 1699999910000,
+          "latest_positive_observed_ms": 1699999985000
         }
       ]
     },
@@ -1039,7 +1043,8 @@
             "asn": "AS16509 Amazon.com, Inc.",
             "last_reachable_ms": 1699999940000,
             "last_advertised_ms": 1699999990000,
-            "last_observed_ms": 1699999940000,
+            "last_observed_ms": 1699999945000,
+            "latest_positive_observed_ms": 1699999995000,
             "rtt_ms": 1331
           },
           {
@@ -1051,7 +1056,8 @@
             "asn": "Unknown",
             "last_reachable_ms": 1699999930000,
             "last_advertised_ms": 1699999990000,
-            "last_observed_ms": 1699999930000,
+            "last_observed_ms": 1699999935000,
+            "latest_positive_observed_ms": 1699999992000,
             "rtt_ms": 467
           },
           {
@@ -1059,7 +1065,8 @@
             "addr": "/ip4/203.0.113.254/tcp/8115",
             "state": "advertised_unverified",
             "last_advertised_ms": 1699999990000,
-            "last_observed_ms": 1699999920000
+            "last_observed_ms": 1699999920000,
+            "latest_positive_observed_ms": 1699999991000
           },
           {
             "node_id": "QmcPjVi8ZvUCAsyrV3ocTkwQzMzPXpSUWnWnvYAxRmHKgh",
@@ -1070,7 +1077,8 @@
             "asn": "AS45102 Alibaba (US) Technology Co., Ltd.",
             "last_reachable_ms": 1699999100000,
             "last_advertised_ms": 1699999980000,
-            "last_observed_ms": 1699999910000
+            "last_observed_ms": 1699999910000,
+            "latest_positive_observed_ms": 1699999985000
           }
         ]
       }

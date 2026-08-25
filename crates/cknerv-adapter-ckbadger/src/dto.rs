@@ -165,24 +165,38 @@ pub(crate) struct NetworkPeersPageResponse {
     pub next_cursor: Option<String>,
 }
 
-/// How far the crawler got with one peer, in upstream's own vocabulary.
+/// How far THIS CRAWLER'S DIAL got with one peer, in upstream's own
+/// vocabulary.
 ///
-/// This is a gradient of evidence, not a confidence rating: `reachable` means
-/// the crawler dialed the peer and it identified itself, and
-/// `advertisedUnverified` means other peers named it and it never answered.
-/// The roster carries those three onto the wire as its own state discriminant
-/// and asks for them one scope at a time. It carries neither of the other two:
-/// a `foreignNetwork` peer answered from another chain and is not a member of
-/// this network's colony, and `noCompletedObservation` is the transient state
-/// of a peer no finished round has reached yet, which is strictly less
-/// evidence than `advertisedUnverified` already is.
+/// This is a gradient of dial evidence, not a confidence rating and no longer
+/// a statement about the peer's standing: `reachable` means the crawler dialed
+/// the peer and it identified itself, and `advertisedUnverified` means all the
+/// aliases anyone gossiped for it were exhausted without one answering. The
+/// roster carries those three onto the wire as its own state discriminant and
+/// asks for them one scope at a time. It carries neither of the other two: a
+/// `foreignNetwork` peer answered from another chain and is not a member of
+/// this network's colony, and `noCompletedObservation` is a peer no finished
+/// round has reached, which is strictly less dial evidence than
+/// `advertisedUnverified` already is.
 ///
-/// ⭐ `Unknown` is load-bearing. Upstream broke this contract twice inside
-/// 48 hours and each break cost the entire roster, because one unreadable
-/// field fails the whole page decode. A sixth state added upstream must cost
-/// one row and nothing else, so an unrecognised state decodes rather than
-/// throwing, and the mappers decide what a row they cannot classify is
-/// worth. Guarded by `an_unknown_display_state_costs_one_row_not_the_page`.
+/// ⚠️ `noCompletedObservation` USED TO BE A TRANSIENT STATE AND IS NOT ONE ANY
+/// MORE. Upstream reaches it on exactly one condition — the candidate has no
+/// completed round — and a peer the observer only ever met through an inbound
+/// direct session never acquires a dial probe to complete, because it never
+/// yielded a dialable alias to probe. Such a peer sits in this state
+/// permanently while being a live, participating member of the network. The
+/// roster does not stage it, which is a settled ruling and stays one; the
+/// consequence is that on a publicly reachable host the roster is silent about
+/// precisely the peers upstream grew this evidence to reveal. That is a
+/// question about what a roster is for, and it is not answered here.
+///
+/// ⭐ `Unknown` is load-bearing. Upstream broke this contract three times
+/// inside 36 hours and each break cost the entire roster, because one
+/// unreadable field fails the whole page decode. A sixth state added upstream
+/// must cost one row and nothing else, so an unrecognised state decodes rather
+/// than throwing, and the mappers decide what a row they cannot classify is
+/// worth. Guarded by
+/// `an_unknown_crawler_dial_state_costs_one_row_not_the_page`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum PeerDisplayState {
@@ -210,35 +224,57 @@ pub(crate) enum PeerDisplayState {
 /// `unwrap_or_default()` in the mapper is enough to do — would print the
 /// crawler's verdict over a peer it never dialed.
 ///
-/// Three clocks arrive here and they are three different facts. Nothing may
+/// Four clocks arrive here and they are four different facts. Nothing may
 /// fill one from another; see the mapper, where each keeps its own name all
 /// the way onto the wire.
+///
+/// The wire carries two more evidence fields than are declared here.
+/// `participation` (`discoveryAdvertised` / `directSessionObserved` /
+/// `crawlerIdentified`) and `sessionInitiators` (`observerInitiated` /
+/// `peerInitiated`) are the orthogonal facts upstream split out of the old
+/// single state word, and nothing in cknerv reads either yet. A field
+/// declared here is a field whose reshape costs the whole page, so an unread
+/// one is pure risk against no benefit — they are named here instead, so the
+/// reader that eventually wants them knows they are already on the wire.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PeerSummaryResponse {
     pub peer_id: String,
-    pub display_state: PeerDisplayState,
+    /// What THIS CRAWLER'S DIAL did, and nothing else. Upstream renamed it out
+    /// of `displayState` precisely to stop it being read as the peer's
+    /// standing: a peer can be a live participant that the crawler has never
+    /// managed to dial, and that peer now says so through `participation`
+    /// rather than through this word. The roster still asks one rung at a
+    /// time on it, because upstream's `state=` filter matches this field only
+    /// and does not reinterpret the participation booleans.
+    pub crawler_dial_state: PeerDisplayState,
     /// The first alias the crawler retains for this peer. Read only by the
     /// roster: the atlas counts this page and deliberately names nothing on
-    /// it. Defaulted because a row that reaches us without one is a row to
-    /// leave off stage, not a page to lose — upstream refuses to answer at
-    /// all for a candidate with no retained alias.
+    /// it.
+    ///
+    /// ⭐ NULLABLE, AND THE NULL IS THE WHOLE POINT OF THE RENAME ABOVE. A
+    /// peer the observer only ever met through a direct session has no
+    /// retained dial alias, and upstream refuses to mint one out of that
+    /// session's connection — an inbound socket's source port is not an
+    /// address anybody can dial back. The mapper drops such a row rather than
+    /// staging it, because a node with no address is not a node the scene can
+    /// name; `#[serde(default)]` is kept so an absent key and an explicit
+    /// `null` are the same answer, which is the one this build must survive.
     #[serde(default)]
-    pub primary_addr: String,
+    pub primary_addr: Option<String>,
     pub version: Option<String>,
     pub country: Option<String>,
     pub asn: Option<String>,
-    /// Unix seconds the network last named this peer to the crawler, and
-    /// upstream's sort key for this page: rows arrive newest-advertised first,
-    /// ties broken by `peerId`.
+    /// Unix seconds the network last named this peer to the crawler.
     ///
-    /// It does two jobs and they are worth keeping apart. It is what the
-    /// roster checks the page's order against — which peers land inside a
-    /// bounded slice is decided by that order, and nothing else on the page
-    /// can say whether it held. It is also the ONE clock every candidate has,
-    /// verified or not, so it is the stamp an unverified row is dated by; a
-    /// peer nobody ever advertised is a peer no crawler ever heard of.
-    pub last_advertised_at: u64,
+    /// ⭐ IT USED TO BE THIS PAGE'S SORT KEY AND THE ONE CLOCK EVERY ROW HAD.
+    /// It is neither any more, and the sentence that made it mandatory — a
+    /// peer nobody ever advertised is a peer no crawler ever heard of — is now
+    /// simply false: the crawler hears of a peer through a direct session
+    /// nobody gossiped. It is null under exactly the condition `primaryAddr`
+    /// is, both being drawn from the retained alias set, but the roster does
+    /// not lean on that coincidence; each is read for itself.
+    pub last_advertised_at: Option<u64>,
     /// Unix seconds the crawler last FINISHED A ROUND with this peer in it,
     /// whether or not the dial got anywhere — the newest stamp across the
     /// addresses that round tried. Absent for a candidate no completed round
@@ -248,7 +284,21 @@ pub(crate) struct PeerSummaryResponse {
     /// roster can say when a failure was last confirmed to still be a failure,
     /// which is the one thing an unverified peer's row could otherwise only
     /// answer by borrowing a clock that means something else.
-    pub last_observed_at: Option<u64>,
+    pub last_dial_observed_at: Option<u64>,
+    /// Unix seconds of the newest POSITIVE observation of this peer from any
+    /// channel at all, and upstream's sort key for this page: rows arrive
+    /// newest-observed first, ties broken by `peerId`.
+    ///
+    /// It is the checked maximum of four independent things — when an alias
+    /// was last advertised, when target-centric advertisement evidence last
+    /// named it, when a direct session last carried it, and the `lastSeen` of
+    /// a crawler-identified node record. That makes it the only clock upstream
+    /// can always answer, and it does not treat a row without one as a null to
+    /// send: it refuses the whole request instead. So this is a `u64` and not
+    /// an `Option`, and it is the field the roster now checks the page's order
+    /// against — which peers land inside a bounded slice is decided by that
+    /// order, and nothing else on the page can say whether it held.
+    pub latest_positive_observed_at: u64,
     /// Unix seconds the crawler last REACHED this peer. Present exactly when
     /// upstream holds a verified node record for it — the same condition that
     /// decides every other optional field on this row, which is why the five

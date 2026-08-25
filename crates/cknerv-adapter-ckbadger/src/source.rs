@@ -125,28 +125,34 @@ const ROSTER_CAP: usize = 256;
 /// that decides who is left out once the network outgrows it.
 ///
 /// ⭐ THE ORDER IS WHY THIS IS THREE REQUESTS AND NOT ONE. `network/peers`
-/// unscoped is one page sorted by advertise time, which mixes the rungs: ask
-/// it for 256 rows of a 400-peer network and the slice that comes back is
-/// whoever the gossip mentioned most recently, with no guarantee a single peer
-/// the crawler has actually spoken to is inside it. Asking rung by rung is
-/// what makes "every verified peer, then hearsay with what is left" a property
-/// of the request rather than a policy written in a comment — and it also
-/// stops the two states the roster does not stage from spending budget on
+/// unscoped is one page sorted by last positive observation, which mixes the
+/// rungs: ask it for 256 rows of a 400-peer network and the slice that comes
+/// back is whoever anything touched most recently, with no guarantee a single
+/// peer the crawler has actually spoken to is inside it. Asking rung by rung
+/// is what makes "every verified peer, then hearsay with what is left" a
+/// property of the request rather than a policy written in a comment — and it
+/// also stops the two states the roster does not stage from spending budget on
 /// their way to being dropped. It costs two extra requests a minute.
 ///
+/// The `state=` word matches upstream's dial result and nothing else; upstream
+/// is explicit that it neither filters nor reinterprets the participation
+/// evidence that now sits beside it. So these three rungs are three answers
+/// about dialing, which is what this roster has always sorted on, and the
+/// filter values did not move when the field they match was renamed.
+///
 /// Within the last rung the order upstream returns is the order the budget is
-/// spent, which is newest-advertised first, ties broken by peer id.
+/// spent, which is newest positively-observed first, ties broken by peer id.
 /// ⚠️ THAT IS NOT THE RIGHT WEIGHT AND IT IS KNOWN NOT TO BE. The honest
 /// measure of hearsay is how many independent peers named the node, and that
 /// lives on the per-peer detail route rather than on this page, so ranking by
 /// it would cost one request per candidate. What the page can say is worth
-/// something and worth stating plainly: advertise time separates peers the
-/// network is still naming from peers it has stopped naming, which is exactly
-/// the axis to drop from, and it degenerates within a round into a peer-id
-/// prefix — arbitrary, but the same arbitrary set every round, so the colony
-/// does not reshuffle its identities every minute. When upstream grows an
-/// `advertiserCount` on the list row, the swap is to over-ask this last rung
-/// and sort the surplus off in `map_network_roster`, where the budget is
+/// something and worth stating plainly: the observation clock separates peers
+/// something still touches from peers nothing has touched in a while, which is
+/// exactly the axis to drop from, and it degenerates within a round into a
+/// peer-id prefix — arbitrary, but the same arbitrary set every round, so the
+/// colony does not reshuffle its identities every minute. When upstream grows
+/// an `advertiserCount` on the list row, the swap is to over-ask this last
+/// rung and sort the surplus off in `map_network_roster`, where the budget is
 /// already the thing being spent.
 const ROSTER_SCOPES: [RosterScope; 3] = [
     RosterScope {
@@ -2758,9 +2764,9 @@ fn map_network_roster(
             "ckbadger network peers exceeded the requested roster limit"
         ));
     }
-    // Upstream orders each page by when its peers were last advertised, which
-    // is a key every crawl round moves: publishing it in that order would
-    // reshuffle the whole roster every round. Membership within the cap is
+    // Upstream orders each page by when its peers were last positively
+    // observed, which is a key every crawl round moves: publishing it in that
+    // order would reshuffle the whole roster every round. Membership in the cap is
     // this crate's call and the scope order is what makes it, but the order
     // cknerv publishes is the id — a node's only fact that a crawl cannot
     // change.
@@ -2777,20 +2783,20 @@ fn map_network_roster(
     let mut off_scope = 0usize;
     for (scope, page) in ROSTER_SCOPES.iter().zip(pages) {
         truncated |= page.next_cursor.is_some();
-        let mut previous_last_advertised_at = None;
+        let mut previous_latest_positive_observed_at = None;
         for peer in page.items {
             // A page may only contribute the rung it was asked for. Upstream
             // filters on exactly this field, so in health the test never
             // fires — and that is the point of it. If the `state=` parameter
             // ever stops being honoured, every page becomes the same unscoped
-            // population sorted by advertise time, the strongest rung's
+            // population sorted by observation time, the strongest rung's
             // request swallows the entire budget on rows belonging to the
             // weakest, and the roster is back to a slice nobody chose while
             // still looking like a healthy report. Dropped rather than
             // refused, and dropped rather than kept: a row on the wrong page
             // is asked for again on its own, and a sixth state upstream adds
             // must cost this build a row and never the record.
-            if peer.display_state != scope.state {
+            if peer.crawler_dial_state != scope.state {
                 off_scope += 1;
                 continue;
             }
@@ -2805,21 +2811,34 @@ fn map_network_roster(
             // they arrive in. A page cknerv cannot vouch for the order of is a
             // slice whose membership nobody chose.
             //
-            // `lastAdvertisedAt` is upstream's actual sort key, ties broken by
-            // peer id, and it is the only ordering that can be checked:
-            // `lastObservedAt` moves per peer within a round and arrives
+            // `latestPositiveObservedAt` is upstream's actual sort key, ties
+            // broken by peer id. It took that job over from `lastAdvertisedAt`
+            // when the advertise clock became nullable, and checking the old
+            // key against the new order would have refused every healthy page
+            // — the sort is a checked maximum over four channels, so a peer a
+            // direct session touched a second ago legitimately outranks one
+            // gossiped an hour ago, and the advertise clock says the reverse.
+            // A page-order invariant that fires on health is a total loss
+            // wearing a validation's clothes, which is the one failure this
+            // guard exists to avoid rather than cause.
+            //
+            // It is also the only ordering that CAN be checked:
+            // `lastDialObservedAt` moves per peer within a round and arrives
             // genuinely out of order. Ties are the normal case rather than an
             // edge — a round advertises its whole page in one moment — so only
             // a strictly newer row after an older one is out of order.
-            wire_safe_u64(peer.last_advertised_at, "network peer lastAdvertisedAt")?;
-            if previous_last_advertised_at
-                .is_some_and(|previous| peer.last_advertised_at > previous)
+            wire_safe_u64(
+                peer.latest_positive_observed_at,
+                "network peer latestPositiveObservedAt",
+            )?;
+            if previous_latest_positive_observed_at
+                .is_some_and(|previous| peer.latest_positive_observed_at > previous)
             {
                 return Err(anyhow!(
-                    "ckbadger network peers were not ordered newest advertised first"
+                    "ckbadger network peers were not ordered newest positively observed first"
                 ));
             }
-            previous_last_advertised_at = Some(peer.last_advertised_at);
+            previous_latest_positive_observed_at = Some(peer.latest_positive_observed_at);
             let Some(entry) = roster_node(peer) else {
                 unreadable += 1;
                 continue;
@@ -2871,9 +2890,16 @@ fn map_network_roster(
 /// The three that map are the three the record can say a true sentence about.
 /// `foreignNetwork` is a peer that answered from another chain — a real
 /// observation, and not a member of this network's colony, so the atlas's
-/// reach bar counts it and the roster does not name it. `noCompletedObservation` is a
-/// candidate no finished round has reached yet, which is strictly less than
-/// `advertisedUnverified` already carries and gone again by the next round.
+/// reach bar counts it and the roster does not name it. `noCompletedObservation`
+/// is a candidate no finished round has reached, which is strictly less dial
+/// evidence than `advertisedUnverified` already carries.
+///
+/// ⚠️ That last one is no longer only the state of a peer the next round will
+/// move on. A peer met through an inbound session it never advertised for
+/// never yields an alias to dial, so it never completes a round and never
+/// leaves this state — see [`PeerDisplayState`], where the consequence is
+/// written out. The ruling that the roster does not stage it stands; what has
+/// changed is that the set it excludes is now permanent rather than passing.
 /// `Unknown` is a state upstream added and this build has no name for, which
 /// is the one case where naming a node would mean inventing what is known
 /// about it.
@@ -2907,11 +2933,21 @@ fn roster_state(state: PeerDisplayState) -> Option<RosterNodeState> {
 /// behind this row — and it is the only thing it answers.
 fn roster_node(peer: PeerSummaryResponse) -> Option<RosterNode> {
     validate_network_peer_id(&peer.peer_id).ok()?;
-    let state = roster_state(peer.display_state)?;
+    let state = roster_state(peer.crawler_dial_state)?;
+    // ⭐ NO ADDRESS, NO ROW — and this is the `?` that finally makes that
+    // sentence true. The field was a defaulted `String` while upstream still
+    // refused to answer at all for an aliasless candidate, and an empty one
+    // fell through `bounded_network_text` to the literal word `Unknown`: the
+    // comment claimed such a row was left off stage and the code staged it,
+    // with an address a reader could click on and learn nothing from. Upstream
+    // now answers `null` here on purpose, for the peers it met through a
+    // session rather than a dial, so the gap stopped being hypothetical on the
+    // same day it was found.
+    let primary_addr = peer.primary_addr.as_deref()?;
     Some(RosterNode {
         node_id: peer_hex_to_id(&peer.peer_id)?,
         addr: bounded_network_text(
-            &peer.primary_addr,
+            primary_addr,
             MAX_NETWORK_ADDR_CHARS,
             "network peer primaryAddr",
         )
@@ -2920,33 +2956,42 @@ fn roster_node(peer: PeerSummaryResponse) -> Option<RosterNode> {
         version: optional_network_label(peer.version.as_deref(), "network peer version").ok()?,
         country: optional_network_label(peer.country.as_deref(), "network peer country").ok()?,
         asn: optional_network_label(peer.asn.as_deref(), "network peer asn").ok()?,
-        // Three clocks, three facts, and each one keeps its own name from the
+        // Four clocks, four facts, and each one keeps its own name from the
         // wire it arrived on to the wire it leaves on. `lastReachableAt` is
         // the moment the crawler SAW this node and the only one that may ever
         // date a sighting; `lastAdvertisedAt` is the moment the network last
-        // NAMED it, which every candidate has and no candidate can be missing;
-        // `lastObservedAt` is the moment the crawler last TRIED it, which is
-        // what dates a failure. A row that let one of them stand in for
-        // another would put a sighting's date on a node nobody has ever
-        // dialed.
+        // NAMED it; `lastDialObservedAt` is the moment the crawler last TRIED
+        // it, which is what dates a failure; `latestPositiveObservedAt` is the
+        // newest of every positive channel at once. A row that let one of them
+        // stand in for another would put a sighting's date on a node nobody
+        // has ever dialed.
         //
-        // The advertise clock is the one that is required, which is also why
-        // no roster row is ever undated: an unverified peer has no reach
-        // moment by definition, and refusing it for the lack of one would
-        // reintroduce the pin this task removed.
+        // The last of the four is the one that is required, and it is why no
+        // roster row is ever undated. The advertise clock used to hold that
+        // job and cannot any more — a node reached only through a session was
+        // never gossiped, so it has no advertise moment to be dated by, and
+        // the source says so with a `null` rather than by inventing one. It is
+        // read if it is there and never a second reason to drop a row: losing
+        // a verified, dialable, named peer over a clock no reader draws would
+        // be a worse answer than the missing clock.
         last_reachable_ms: optional_sighting_clock_ms(
             peer.last_reachable_at,
             "network peer lastReachableAt",
         )
         .ok()?,
-        last_advertised_ms: sighting_clock_ms(
+        last_advertised_ms: optional_sighting_clock_ms(
             peer.last_advertised_at,
             "network peer lastAdvertisedAt",
         )
         .ok()?,
         last_observed_ms: optional_sighting_clock_ms(
-            peer.last_observed_at,
-            "network peer lastObservedAt",
+            peer.last_dial_observed_at,
+            "network peer lastDialObservedAt",
+        )
+        .ok()?,
+        latest_positive_observed_ms: sighting_clock_ms(
+            peer.latest_positive_observed_at,
+            "network peer latestPositiveObservedAt",
         )
         .ok()?,
         rtt_ms: peer.rtt_ms,
@@ -4846,37 +4891,40 @@ mod tests {
                         "reachable" => serde_json::json!([
                             {
                                 "peerId": "7065657241",
-                                "displayState": "reachable",
+                                "crawlerDialState": "reachable",
                                 "primaryAddr": "/ip4/127.0.0.1/tcp/8115",
                                 "version": "0.119.0",
                                 "country": "SG",
                                 "asn": "AS1 Example",
                                 "lastAdvertisedAt": 30,
-                                "lastObservedAt": 30,
+                                "latestPositiveObservedAt": 30,
+                                "lastDialObservedAt": 30,
                                 "lastReachableAt": 30,
                                 "rttMs": 12
                             },
                             {
                                 "peerId": "7065657242",
-                                "displayState": "reachable",
+                                "crawlerDialState": "reachable",
                                 "primaryAddr": "/ip4/127.0.0.2/tcp/8115",
                                 "version": "0.119.0",
                                 "country": "SG",
                                 "asn": "AS1 Example",
                                 "lastAdvertisedAt": 20,
-                                "lastObservedAt": 12,
+                                "latestPositiveObservedAt": 20,
+                                "lastDialObservedAt": 12,
                                 "lastReachableAt": 10,
                                 "rttMs": null
                             },
                             {
                                 "peerId": "7065657243",
-                                "displayState": "reachable",
+                                "crawlerDialState": "reachable",
                                 "primaryAddr": "/ip4/127.0.0.3/tcp/8115",
                                 "version": "0.118.0",
                                 "country": "US",
                                 "asn": "AS2 Example",
                                 "lastAdvertisedAt": 10,
-                                "lastObservedAt": 18,
+                                "latestPositiveObservedAt": 10,
+                                "lastDialObservedAt": 18,
                                 "lastReachableAt": 10,
                                 "rttMs": 24
                             }
@@ -4887,13 +4935,14 @@ mod tests {
                         "verifiedUnavailable" => serde_json::json!([
                             {
                                 "peerId": "7065657244",
-                                "displayState": "verifiedUnavailable",
+                                "crawlerDialState": "verifiedUnavailable",
                                 "primaryAddr": "/ip4/127.0.0.4/tcp/8115",
                                 "version": "0.117.0",
                                 "country": "Unknown",
                                 "asn": "Unknown",
                                 "lastAdvertisedAt": 28,
-                                "lastObservedAt": 28,
+                                "latestPositiveObservedAt": 28,
+                                "lastDialObservedAt": 28,
                                 "lastReachableAt": 6,
                                 "rttMs": null
                             }
@@ -4905,13 +4954,14 @@ mod tests {
                         "advertisedUnverified" => serde_json::json!([
                             {
                                 "peerId": "7065657245",
-                                "displayState": "advertisedUnverified",
+                                "crawlerDialState": "advertisedUnverified",
                                 "primaryAddr": "/ip4/127.0.0.5/tcp/8115",
                                 "version": null,
                                 "country": null,
                                 "asn": null,
                                 "lastAdvertisedAt": 30,
-                                "lastObservedAt": 26,
+                                "latestPositiveObservedAt": 30,
+                                "lastDialObservedAt": 26,
                                 "lastReachableAt": null,
                                 "rttMs": null
                             }
@@ -6005,13 +6055,17 @@ mod tests {
             network_roster.entries[0].asn.as_deref(),
             Some("AS1 Example")
         );
-        // Unix seconds upstream, milliseconds on the wire — and three clocks
-        // that do not share one, on a row that carries all three.
+        // Unix seconds upstream, milliseconds on the wire — and four clocks
+        // that do not share one, on a row that carries all four.
         assert_eq!(network_roster.entries[0].last_reachable_ms, Some(30_000));
-        assert_eq!(network_roster.entries[0].last_advertised_ms, 30_000);
+        assert_eq!(network_roster.entries[0].last_advertised_ms, Some(30_000));
         assert_eq!(network_roster.entries[0].last_observed_ms, Some(30_000));
+        assert_eq!(
+            network_roster.entries[0].latest_positive_observed_ms,
+            30_000
+        );
         assert_eq!(network_roster.entries[1].last_reachable_ms, Some(10_000));
-        assert_eq!(network_roster.entries[1].last_advertised_ms, 20_000);
+        assert_eq!(network_roster.entries[1].last_advertised_ms, Some(20_000));
         assert_eq!(network_roster.entries[1].last_observed_ms, Some(12_000));
         assert_eq!(network_roster.entries[0].rtt_ms, Some(12));
         assert_eq!(network_roster.entries[1].rtt_ms, None);
@@ -6050,7 +6104,7 @@ mod tests {
         assert_eq!(hearsay.last_reachable_ms, None);
         // What it does have is the two clocks that belong to a candidate: when
         // the network last named it, and when the crawler last tried it.
-        assert_eq!(hearsay.last_advertised_ms, 30_000);
+        assert_eq!(hearsay.last_advertised_ms, Some(30_000));
         assert_eq!(hearsay.last_observed_ms, Some(26_000));
 
         let record = source
@@ -7716,18 +7770,21 @@ mod tests {
         }
     }
 
-    /// One row of a reachable-scoped page. `last_seen` fills all three clocks
-    /// the row carries, so a test that means to separate them has to say so.
+    /// One row of a reachable-scoped page. `last_seen` fills all four clocks
+    /// the row carries, so a test that means to separate them has to say so —
+    /// and because the page's order is checked on the newest positive
+    /// observation, that is also the number an ordering test is choosing.
     fn crawler_row(peer_id: &str, last_seen: u64) -> PeerSummaryResponse {
         PeerSummaryResponse {
             peer_id: peer_id.to_string(),
-            display_state: PeerDisplayState::Reachable,
-            primary_addr: "/ip4/127.0.0.1/tcp/8115".to_string(),
+            crawler_dial_state: PeerDisplayState::Reachable,
+            primary_addr: Some("/ip4/127.0.0.1/tcp/8115".to_string()),
             version: Some("0.209.0".to_string()),
             country: Some("SG".to_string()),
             asn: Some("AS1 Example".to_string()),
-            last_advertised_at: last_seen,
-            last_observed_at: Some(last_seen),
+            last_advertised_at: Some(last_seen),
+            last_dial_observed_at: Some(last_seen),
+            latest_positive_observed_at: last_seen,
             last_reachable_at: Some(last_seen),
             rtt_ms: Some(12),
         }
@@ -7735,16 +7792,22 @@ mod tests {
 
     /// One row of the weakest rung: a real id on a real address, and null for
     /// every one of the five things only a dial could have answered.
+    ///
+    /// Its newest positive observation is the advertisement, which is the
+    /// whole of what is positively known about a peer nobody ever reached —
+    /// the dial clock beside it records an attempt that failed, and a failure
+    /// is not one of the channels upstream takes its maximum over.
     fn hearsay_row(peer_id: &str, advertised_at: u64, observed_at: u64) -> PeerSummaryResponse {
         PeerSummaryResponse {
             peer_id: peer_id.to_string(),
-            display_state: PeerDisplayState::AdvertisedUnverified,
-            primary_addr: "/ip4/127.0.0.9/tcp/8115".to_string(),
+            crawler_dial_state: PeerDisplayState::AdvertisedUnverified,
+            primary_addr: Some("/ip4/127.0.0.9/tcp/8115".to_string()),
             version: None,
             country: None,
             asn: None,
-            last_advertised_at: advertised_at,
-            last_observed_at: Some(observed_at),
+            last_advertised_at: Some(advertised_at),
+            last_dial_observed_at: Some(observed_at),
+            latest_positive_observed_at: advertised_at,
             last_reachable_at: None,
             rtt_ms: None,
         }
@@ -7805,20 +7868,20 @@ mod tests {
         // than leaving. Its country and ASN arrive as upstream's own word for
         // a lookup that came back empty.
         let mut remembered = crawler_row("7065657242", 20);
-        remembered.display_state = PeerDisplayState::VerifiedUnavailable;
+        remembered.crawler_dial_state = PeerDisplayState::VerifiedUnavailable;
         remembered.country = Some(String::new());
         remembered.asn = Some(String::new());
         // A peer on another chain: it answered, and it is not a member of this
         // network's colony. The reach bar counts it; the roster does not
         // name it.
         let mut foreign = crawler_row("7065657246", 18);
-        foreign.display_state = PeerDisplayState::ForeignNetwork;
+        foreign.crawler_dial_state = PeerDisplayState::ForeignNetwork;
         // A reached peer the crawler holds no reach moment for. It still
         // stages: the state is what says the dial was answered, and the row is
-        // dated by the advertise clock every candidate has.
+        // dated by the positive-observation clock every candidate has.
         let mut undated = crawler_row("7065657245", 12);
         undated.last_reachable_at = None;
-        // Newest-advertised first within each page, because that is the order
+        // Newest positively-observed first within each page, because that is the order
         // upstream sorts a scope in and the order this mapper checks for. The
         // dark row rides the rung that asked for it — a page only contributes
         // its own state.
@@ -7863,10 +7926,10 @@ mod tests {
         );
         // Reached, and with no moment to date the reach by. The old record
         // could not express that and dropped the row; this one can, and the
-        // advertise clock still stamps it.
+        // positive-observation clock still stamps it.
         assert_eq!(roster.entries[2].state, RosterNodeState::Reachable);
         assert_eq!(roster.entries[2].last_reachable_ms, None);
-        assert_eq!(roster.entries[2].last_advertised_ms, 12_000);
+        assert_eq!(roster.entries[2].latest_positive_observed_ms, 12_000);
         assert!(roster.truncated);
     }
 
@@ -7888,7 +7951,7 @@ mod tests {
         ] {
             assert_eq!(roster_state(state), None, "{state:?} became a roster rung");
             let mut row = crawler_row("7065657241", 40);
-            row.display_state = state;
+            row.crawler_dial_state = state;
             let peers = peers_page(vec![row], None);
 
             let roster =
@@ -7978,7 +8041,7 @@ mod tests {
             peers_page(
                 vec![{
                     let mut row = crawler_row("7065657242", 9);
-                    row.display_state = PeerDisplayState::VerifiedUnavailable;
+                    row.crawler_dial_state = PeerDisplayState::VerifiedUnavailable;
                     row
                 }],
                 None,
@@ -8047,17 +8110,21 @@ mod tests {
     }
 
     #[test]
-    fn the_three_clocks_a_row_carries_are_three_different_facts() {
+    fn the_four_clocks_a_row_carries_are_four_different_facts() {
         // Every value here is distinct on purpose: collapse any pair — read
-        // the advertise moment into the reach field, or let `lastObservedAt`
-        // stand in for a reach the crawler never made — and one of these
-        // numbers lands under the wrong name. The reach clock is the only one
-        // that means "the crawler saw this node", and it is exactly the one an
-        // unverified row does not have.
+        // the advertise moment into the reach field, let `lastDialObservedAt`
+        // stand in for a reach the crawler never made, or fill the required
+        // clock from a channel instead of reading the maximum upstream sent —
+        // and one of these numbers lands under the wrong name. The reach clock
+        // is the only one that means "the crawler saw this node", and it is
+        // exactly the one an unverified row does not have; the required clock
+        // is the only one that is never missing, and it is strictly the
+        // newest, because that is what a maximum over channels is.
         let mut reached = crawler_row("7065657241", 0);
-        reached.last_advertised_at = 900;
-        reached.last_observed_at = Some(800);
+        reached.last_advertised_at = Some(900);
+        reached.last_dial_observed_at = Some(800);
         reached.last_reachable_at = Some(700);
+        reached.latest_positive_observed_at = 950;
         let pages = vec![
             peers_page(vec![reached], None),
             peers_page(Vec::new(), None),
@@ -8066,13 +8133,15 @@ mod tests {
 
         let roster = map_network_roster(crawler_summary(7), pages, roster_anchor()).unwrap();
 
-        assert_eq!(roster.entries[0].last_advertised_ms, 900_000);
+        assert_eq!(roster.entries[0].last_advertised_ms, Some(900_000));
         assert_eq!(roster.entries[0].last_observed_ms, Some(800_000));
         assert_eq!(roster.entries[0].last_reachable_ms, Some(700_000));
-        // The row nobody ever reached: two clocks, and the third one is not
-        // borrowed from either of them.
-        assert_eq!(roster.entries[1].last_advertised_ms, 600_000);
+        assert_eq!(roster.entries[0].latest_positive_observed_ms, 950_000);
+        // The row nobody ever reached: three clocks, and the fourth one is not
+        // borrowed from any of them.
+        assert_eq!(roster.entries[1].last_advertised_ms, Some(600_000));
         assert_eq!(roster.entries[1].last_observed_ms, Some(500_000));
+        assert_eq!(roster.entries[1].latest_positive_observed_ms, 600_000);
         assert_eq!(roster.entries[1].last_reachable_ms, None);
     }
 
@@ -8128,37 +8197,56 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_display_state_costs_one_row_not_the_page() {
-        // Upstream has broken this wire twice inside one week, and each break
-        // cost the whole roster rather than a field of it, because serde
+    fn an_unknown_crawler_dial_state_costs_one_row_not_the_page() {
+        // Upstream has broken this wire three times inside 36 hours, and each
+        // break cost the whole roster rather than a field of it, because serde
         // fails an entire page over one value it has no name for. A sixth
         // state has to arrive as a row cknerv declines to stage — never as a
         // page it cannot open. Delete `#[serde(other)]` and this decode is
         // the error that empties the colony again.
+        //
+        // The rows carry the two evidence fields this build deliberately does
+        // not declare, so the page proves what it claims: an undeclared field
+        // is ignored rather than fatal, which is the whole reason they are
+        // named in a doc comment instead of read into a struct.
         let page: NetworkPeersPageResponse = serde_json::from_str(
             r#"{
                 "items": [
                     {
                         "peerId": "7065657241",
-                        "displayState": "reachable",
+                        "crawlerDialState": "reachable",
+                        "participation": {
+                            "discoveryAdvertised": true,
+                            "directSessionObserved": false,
+                            "crawlerIdentified": true
+                        },
+                        "sessionInitiators": [],
                         "primaryAddr": "/ip4/127.0.0.1/tcp/8115",
                         "version": "0.209.0",
                         "country": "SG",
                         "asn": "AS1 Example",
                         "lastAdvertisedAt": 40,
-                        "lastObservedAt": 40,
+                        "lastDialObservedAt": 40,
+                        "latestPositiveObservedAt": 40,
                         "lastReachableAt": 40,
                         "rttMs": 12
                     },
                     {
                         "peerId": "7065657242",
-                        "displayState": "quantumEntangled",
+                        "crawlerDialState": "quantumEntangled",
+                        "participation": {
+                            "discoveryAdvertised": true,
+                            "directSessionObserved": false,
+                            "crawlerIdentified": false
+                        },
+                        "sessionInitiators": ["peerInitiated"],
                         "primaryAddr": "/ip4/127.0.0.2/tcp/8115",
                         "version": null,
                         "country": null,
                         "asn": null,
                         "lastAdvertisedAt": 40,
-                        "lastObservedAt": 40,
+                        "lastDialObservedAt": 40,
+                        "latestPositiveObservedAt": 40,
                         "lastReachableAt": null,
                         "rttMs": null
                     }
@@ -8169,8 +8257,11 @@ mod tests {
         .expect("a state this build has no name for must not fail the page");
 
         assert_eq!(page.items.len(), 2);
-        assert_eq!(page.items[0].display_state, PeerDisplayState::Reachable);
-        assert_eq!(page.items[1].display_state, PeerDisplayState::Unknown);
+        assert_eq!(
+            page.items[0].crawler_dial_state,
+            PeerDisplayState::Reachable
+        );
+        assert_eq!(page.items[1].crawler_dial_state, PeerDisplayState::Unknown);
 
         // And the row that has no name is the only thing lost: its neighbour
         // still stages.
@@ -8186,25 +8277,175 @@ mod tests {
     }
 
     #[test]
-    fn a_roster_refuses_a_page_that_did_not_arrive_newest_advertised_first() {
-        // The invariant this replaces was written against `lastSeen`, a field
-        // that no longer exists, and it lived on the atlas until the atlas
-        // stopped drawing a sample off this page. The argument did not change
-        // when it moved: a page whose order cknerv cannot vouch for is a slice
-        // whose membership nobody chose, and the roster is the only reader
-        // taking a slice.
-        let out_of_order = peers_page(
-            vec![crawler_row("7065657241", 20), crawler_row("7065657242", 40)],
-            None,
+    fn a_peer_the_crawler_only_ever_met_through_a_session_decodes_and_stages_nobody() {
+        // The row this whole repair exists for, and the one shape the live
+        // crawler could not be made to produce: nothing has ever dialed IN to
+        // that host, so every candidate it holds came from gossip and carries
+        // an address. These bytes are upstream's own pinned example of the
+        // other case — a peer seen only through an inbound session it did not
+        // dial — copied from the test that fixes that contract upstream.
+        //
+        // Three separate things have to hold at once, and each was a break in
+        // its own right: `null` in `primaryAddr` and `lastAdvertisedAt` must
+        // decode rather than fail the page, `latestPositiveObservedAt` must be
+        // there to date the row when both of those are gone, and the two
+        // evidence fields this build does not declare must be ignored rather
+        // than fatal.
+        let page: NetworkPeersPageResponse = serde_json::from_str(
+            r#"{
+                "items": [
+                    {
+                        "peerId": "7065657244",
+                        "crawlerDialState": "noCompletedObservation",
+                        "participation": {
+                            "discoveryAdvertised": false,
+                            "directSessionObserved": true,
+                            "crawlerIdentified": false
+                        },
+                        "sessionInitiators": ["peerInitiated"],
+                        "primaryAddr": null,
+                        "version": null,
+                        "country": null,
+                        "asn": null,
+                        "lastAdvertisedAt": null,
+                        "lastDialObservedAt": null,
+                        "latestPositiveObservedAt": 250,
+                        "lastReachableAt": null,
+                        "rttMs": null
+                    }
+                ],
+                "nextCursor": null
+            }"#,
+        )
+        .expect("a peer with no dialable address must not fail the page");
+
+        assert_eq!(page.items[0].primary_addr, None);
+        assert_eq!(page.items[0].last_advertised_at, None);
+        assert_eq!(page.items[0].latest_positive_observed_at, 250);
+        assert_eq!(
+            page.items[0].crawler_dial_state,
+            PeerDisplayState::NoCompletedObservation
         );
+
+        // ⚠️ AND IT STAGES NOBODY, WHICH IS THE SETTLED RULING AND ALSO THE
+        // COST OF IT. The roster names the three dial rungs, and a peer met
+        // only through a session never completes a dial, so it can never be
+        // one of them — on a publicly reachable host that is precisely the
+        // population upstream grew this evidence to reveal, and the colony
+        // stays silent about it. Pinned here so the silence is a decision on
+        // the record rather than an accident nobody wrote down.
+        let roster = map_network_roster(crawler_summary(7), vec![page], roster_anchor()).unwrap();
+
+        assert!(roster.entries.is_empty());
+    }
+
+    #[test]
+    fn a_roster_refuses_a_page_that_did_not_arrive_newest_positively_observed_first() {
+        // The invariant this replaces was written against `lastSeen`, then
+        // against `lastAdvertisedAt`, and it is on its third key because
+        // upstream is on its third sort. The argument has never changed: a
+        // page whose order cknerv cannot vouch for is a slice whose membership
+        // nobody chose, and the roster is the only reader taking a slice.
+        //
+        // These two rows are DESCENDING by the retired key and ASCENDING by
+        // the live one, so an invariant still reading the advertise clock
+        // waves them through. That is the point of building them this way —
+        // a guard that merely still compiles against a renamed field is a
+        // guard that stopped guarding, and nothing else here would say so.
+        let mut newest_advertised = crawler_row("7065657241", 20);
+        newest_advertised.last_advertised_at = Some(40);
+        newest_advertised.latest_positive_observed_at = 20;
+        let mut newest_observed = crawler_row("7065657242", 40);
+        newest_observed.last_advertised_at = Some(20);
+        newest_observed.latest_positive_observed_at = 40;
+        let out_of_order = peers_page(vec![newest_advertised, newest_observed], None);
 
         let error = map_network_roster(crawler_summary(7), vec![out_of_order], roster_anchor())
             .unwrap_err();
 
         assert!(
-            error.to_string().contains("newest advertised first"),
+            error
+                .to_string()
+                .contains("newest positively observed first"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn a_page_upstream_sorted_is_never_refused_for_the_key_it_stopped_sorting_by() {
+        // The other half, and the expensive one. `latestPositiveObservedAt` is
+        // a checked maximum over four channels, and the advertise clock is
+        // only one of them — so a peer a direct session touched a moment ago
+        // outranks one the gossip named an hour ago, and the two keys disagree
+        // constantly on a live crawl. An invariant left pointing at the old
+        // key would refuse a page upstream sorted perfectly, take every node
+        // off stage, and do it while looking like a validation catching a
+        // fault. That is the exact silent-total-loss shape this file has now
+        // been bitten by twice; here it is, pinned, so the third time is a red
+        // test instead of an empty colony.
+        let mut freshly_sessioned = crawler_row("7065657241", 90);
+        freshly_sessioned.last_advertised_at = Some(10);
+        let mut long_gossiped = crawler_row("7065657242", 20);
+        long_gossiped.last_advertised_at = Some(80);
+        let healthy = peers_page(vec![freshly_sessioned, long_gossiped], None);
+
+        let roster = map_network_roster(crawler_summary(7), vec![healthy], roster_anchor())
+            .expect("a page upstream sorted is a page this roster stages");
+
+        assert_eq!(roster.entries.len(), 2);
+    }
+
+    #[test]
+    fn a_peer_with_no_address_is_left_off_rather_than_named_unknown() {
+        // Upstream answers `null` here for a peer it only ever met through a
+        // session it did not dial, and refuses on principle to mint an address
+        // out of that session's socket. cknerv must refuse just as flatly. The
+        // failure being pinned is not a decode error — it is the quiet one:
+        // `bounded_network_text` turns an empty string into the word
+        // `"Unknown"`, so a mapper that reached for `unwrap_or_default()` here
+        // would stage a node whose address reads `Unknown`, invite a reader to
+        // click it, and have nothing true to say. One row leaves; the page and
+        // its neighbour stay.
+        let mut addressless = crawler_row("7065657242", 30);
+        addressless.primary_addr = None;
+        addressless.last_advertised_at = None;
+        let page = peers_page(vec![crawler_row("7065657241", 40), addressless], None);
+
+        let roster = map_network_roster(crawler_summary(7), vec![page], roster_anchor()).unwrap();
+
+        assert_eq!(
+            roster
+                .entries
+                .iter()
+                .map(|entry| entry.node_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["DgUrnn4"]
+        );
+        assert!(
+            roster.entries.iter().all(|entry| entry.addr != "Unknown"),
+            "an address nobody sent was invented"
+        );
+    }
+
+    #[test]
+    fn a_missing_advertise_clock_costs_a_reading_and_never_the_node() {
+        // The advertise clock is optional on both wires now, and the reason it
+        // is optional rather than a second reason to drop a row matters: no
+        // reader draws it. Dropping a verified, dialable, named peer out of
+        // the colony because a clock nobody renders came back `null` would be
+        // a strictly worse answer than the missing clock itself. So the node
+        // stages, undated on that one axis and dated on the axis that is
+        // required — and nothing borrows a neighbouring clock to fill the gap.
+        let mut ungossiped = crawler_row("7065657241", 40);
+        ungossiped.last_advertised_at = None;
+        let page = peers_page(vec![ungossiped], None);
+
+        let roster = map_network_roster(crawler_summary(7), vec![page], roster_anchor()).unwrap();
+
+        assert_eq!(roster.entries.len(), 1);
+        assert_eq!(roster.entries[0].last_advertised_ms, None);
+        assert_eq!(roster.entries[0].latest_positive_observed_ms, 40_000);
+        assert_eq!(roster.entries[0].last_reachable_ms, Some(40_000));
     }
 
     #[test]
@@ -8470,7 +8711,7 @@ mod tests {
         // And the one clock every candidate has still dates it, which is why
         // no roster row is ever undated even when four of its five optional
         // fields are gone.
-        assert_eq!(roster.entries[0].last_advertised_ms, 40_000);
+        assert_eq!(roster.entries[0].latest_positive_observed_ms, 40_000);
     }
 
     #[test]

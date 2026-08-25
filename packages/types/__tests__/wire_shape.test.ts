@@ -18,6 +18,7 @@ import {
   type ChainEntry,
   type CellGalaxySnapshot,
   type PeerSightingLookup,
+  type RosterNode,
   type SemanticsDelta,
   type SemanticsSnapshot,
 } from '../src';
@@ -464,11 +465,14 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     );
     expect(roster?.entries[0].state).toBe('reachable');
     expect(roster?.entries[0].rtt_ms).toBe(1331);
-    // Three clocks, and the fixture gives each of them its own value, because
+    // Four clocks, and the fixture gives each of them its own value, because
     // two that agreed would let a reader collapse the pair and still pass.
+    // The required one is the newest, which is what it means: the maximum
+    // over every positive channel, of which the advertise clock is only one.
     expect(roster?.entries[0].last_reachable_ms).toBe(1_699_999_940_000);
     expect(roster?.entries[0].last_advertised_ms).toBe(1_699_999_990_000);
-    expect(roster?.entries[0].last_observed_ms).toBe(1_699_999_940_000);
+    expect(roster?.entries[0].last_observed_ms).toBe(1_699_999_945_000);
+    expect(roster?.entries[0].latest_positive_observed_ms).toBe(1_699_999_995_000);
     // ⭐ The distinction the whole record turns on. A node the crawler REACHED
     // and could not place carries the crawler's own word for that; a node
     // nobody has ever got an answer out of carries nothing at all. Two
@@ -489,12 +493,34 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(hearsay?.last_reachable_ms).toBeUndefined();
     expect(hearsay?.last_advertised_ms).toBe(1_699_999_990_000);
     expect(hearsay?.last_observed_ms).toBe(1_699_999_920_000);
+    // ⭐ And the one clock that is never absent, on the row with the fewest
+    // fields of any. The advertise clock used to hold that job and no longer
+    // can: the crawler hears of peers through sessions nobody gossiped, so it
+    // answers `null` there rather than inventing a moment. Every row on this
+    // wire still carries a date, which is what lets a scene age a node it has
+    // placed — this is the assertion that says so.
+    expect(hearsay?.latest_positive_observed_ms).toBe(1_699_999_991_000);
+    // ⭐ And a pin no runtime assertion can stand in for. Every check above
+    // reads a fixture that HAS the field, so all of them keep passing the day
+    // someone marks it optional on this side — and the moment it is optional,
+    // readers start writing `?? 0` and the property that no roster row is
+    // undated dies quietly on the twin while the Rust side still guarantees
+    // it. This is a type-level equality: it stops compiling if the required
+    // clock stops being required, and `pnpm typecheck` is what reads it.
+    type RequiredClockStaysRequired =
+      RosterNode extends { latest_positive_observed_ms: number } ? true : false;
+    const requiredClockStaysRequired: RequiredClockStaysRequired = true;
+    expect(requiredClockStaysRequired).toBe(true);
+    expect(
+      roster?.entries.every((node) => typeof node.latest_positive_observed_ms === 'number'),
+    ).toBe(true);
     // Dark matter is carried, not filtered: a node the crawler could not
     // reach this round is still a node it holds a verification for, so it
     // answers every field the reached rows do and has no dial to report.
     expect(roster?.entries[3].state).toBe('verified_unavailable');
     expect(roster?.entries[3].version).toBe('0.208.1');
     expect(roster?.entries[3].last_reachable_ms).toBe(1_699_999_100_000);
+    expect(roster?.entries[3].latest_positive_observed_ms).toBe(1_699_999_985_000);
     expect(roster?.entries[3].rtt_ms).toBeUndefined();
     expect(sample.deltas.network_roster_replace.type).toBe('network_roster_replace');
     expect(sample.deltas.network_roster_clear.type).toBe('network_roster_clear');

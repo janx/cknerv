@@ -124,6 +124,7 @@ function rosterNode(node_id: string, reachable: boolean): RosterNode {
     last_reachable_ms: 1_700_000_000_000,
     last_advertised_ms: 1_700_000_060_000,
     last_observed_ms: 1_700_000_000_000,
+    latest_positive_observed_ms: 1_700_000_065_000,
   };
 }
 
@@ -138,6 +139,7 @@ function hearsayNode(node_id: string): RosterNode {
     state: 'advertised_unverified',
     last_advertised_ms: 1_700_000_060_000,
     last_observed_ms: 1_700_000_000_000,
+    latest_positive_observed_ms: 1_700_000_065_000,
   };
 }
 
