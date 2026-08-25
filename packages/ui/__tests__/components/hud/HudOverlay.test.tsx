@@ -1005,42 +1005,52 @@ describe('HudOverlay — the boot readout owns the top slot', () => {
   });
 });
 
-// ——— The boot readout's tail: the stage-fill chip ————————————————
+// ——— The boot readout's second chapter: the stage composing —————
 //
-// A freshly started server announces its dashboard before it finishes
-// restoring the stage composition, so the first page to boot lands on a
-// partial world and would otherwise watch Cells sprout with no readout on
-// screen. The record must not be held for that; the slot hands over to a
-// quiet chip instead (`boot/stageFill.ts`).
+// A freshly started server announces its dashboard before its composition is
+// back, so the page it auto-opens boots against a placeholder world and the
+// Cells, edges and bridges that arrive afterwards would sprout with nothing on
+// screen naming them. The record itself must not be held for that; the band
+// changes chapter instead (`boot/stageCompose.ts` decides, and the chapter is
+// a tenant of the same slot rather than a plate under it).
 
 import type { CellPopulationFieldModel } from '../../../src/derives/cellPopulationField.derive';
+import { STAGE_COMPOSE_SETTLE_MS } from '../../../src/boot/stageCompose';
 
 const populationModel = (
   stagedLive: number,
   stageBudget: number | null,
-): CellPopulationFieldModel => ({
-  renderedLive: stagedLive,
-  renderedRetainedLive: stagedLive,
-  renderedResidentLive: 0,
-  stagedLive,
-  stagedRetainedLive: stagedLive,
-  stagedResidentLive: 0,
-  stagedClasses: { dao: 0, typedNonDao: 0, plain: stagedLive },
-  stagedCurated: true,
-  clamped: false,
-  stageBudget,
-  retainedLive: stagedLive,
-  retainedScope: 'full_retained',
-  observedLive: stagedLive,
-  chainCensus: null,
-  censusAgeBlocks: null,
-  censusStale: false,
-  scope: 'retained',
-  ratio: 1,
-  gain: 0.4,
-});
+  composition: { curated?: number; composed?: boolean; stampMs?: number } = {},
+): CellPopulationFieldModel => {
+  const curated = composition.curated ?? 0;
+  return {
+    renderedLive: stagedLive,
+    renderedRetainedLive: stagedLive - curated,
+    renderedResidentLive: curated,
+    stagedLive,
+    stagedRetainedLive: stagedLive - curated,
+    stagedResidentLive: curated,
+    stagedClasses: { dao: 0, typedNonDao: 0, plain: stagedLive },
+    stagedCurated: composition.composed ?? true,
+    stageComposedAtMs: composition.stampMs ?? 1,
+    clamped: false,
+    stageBudget,
+    retainedLive: stagedLive,
+    retainedScope: 'full_retained',
+    observedLive: stagedLive,
+    chainCensus: null,
+    censusAgeBlocks: null,
+    censusStale: false,
+    scope: 'retained',
+    ratio: 1,
+    gain: 0.4,
+  };
+};
 
-describe('HudOverlay — the stage-fill chip trails the boot readout', () => {
+const composingBand = (root: HTMLElement) =>
+  root.querySelector('[data-stage-composing-banner]') as HTMLElement | null;
+
+describe('HudOverlay — the stage composing chapter', () => {
   const settled = (extra: Record<string, unknown> = {}) => render(
     <HudOverlay
       chain={chain}
@@ -1051,28 +1061,43 @@ describe('HudOverlay — the stage-fill chip trails the boot readout', () => {
     />,
   );
 
-  it('discloses a still-composing stage once the record has stood down', () => {
+  it('discloses a still-filling stage once the record has stood down', () => {
     const { container } = settled({
       cellPopulation: populationModel(9_298, 12_000),
     });
-    const chip = container.querySelector('[data-stage-fill-chip]') as HTMLElement;
-    expect(chip).not.toBeNull();
-    expect(chip.textContent).toContain('Stage composing');
-    expect(chip.textContent).toContain('9,298 / 12,000');
+    const band = composingBand(container);
+    expect(band).not.toBeNull();
+    expect(band?.textContent).toContain('STAGE COMPOSING');
+    expect(band?.textContent).toContain('STAGED 9,298 / 12,000');
+    // Filling is the one movement with an honest denominator, so it is the one
+    // that draws the edge.
+    expect(band?.querySelector('[data-top-band-fill]')).not.toBeNull();
   });
 
-  it('never renders for a stage that booted composed — the refresh case', () => {
+  it('speaks for a stage that is full but still uncomposed', () => {
     const { container } = settled({
-      cellPopulation: populationModel(12_000, 12_000),
+      cellPopulation: populationModel(12_000, 12_000, { composed: false }),
     });
-    expect(container.querySelector('[data-stage-fill-chip]')).toBeNull();
+    const band = composingBand(container);
+    expect(band).not.toBeNull();
+    expect(band?.textContent).toContain('AWAITING COMPOSITION');
+    // …and draws no bar for it: every seat is taken and none of them is the
+    // one the composition means to put there.
+    expect(band?.querySelector('[data-top-band-fill]')).toBeNull();
+  });
+
+  it('never renders for a stage that booted full and composed — the refresh case', () => {
+    const { container } = settled({
+      cellPopulation: populationModel(12_000, 12_000, { curated: 9_000 }),
+    });
+    expect(composingBand(container)).toBeNull();
   });
 
   it('never renders without a display plane', () => {
     const { container } = settled({
       cellPopulation: populationModel(9_298, null),
     });
-    expect(container.querySelector('[data-stage-fill-chip]')).toBeNull();
+    expect(composingBand(container)).toBeNull();
   });
 
   it('holds while the boot readout still owns the slot', () => {
@@ -1081,7 +1106,7 @@ describe('HudOverlay — the stage-fill chip trails the boot readout', () => {
       cellPopulation: populationModel(9_298, 12_000),
     });
     expect(container.querySelector('[data-boot-banner]')).not.toBeNull();
-    expect(container.querySelector('[data-stage-fill-chip]')).toBeNull();
+    expect(composingBand(container)).toBeNull();
   });
 
   it('yields the slot to a stream fault', () => {
@@ -1090,7 +1115,7 @@ describe('HudOverlay — the stage-fill chip trails the boot readout', () => {
       streamHealth: connectingStreams,
     });
     expect(container.querySelector('[data-stream-health-banner]')).not.toBeNull();
-    expect(container.querySelector('[data-stage-fill-chip]')).toBeNull();
+    expect(composingBand(container)).toBeNull();
   });
 
   it('yields the slot to the replay plate', () => {
@@ -1099,23 +1124,46 @@ describe('HudOverlay — the stage-fill chip trails the boot readout', () => {
       backfill: { done: 1234, total: 65_829, phase: 'boot' },
     });
     expect(container.querySelector('[data-replay-phase="boot"]')).not.toBeNull();
-    expect(container.querySelector('[data-stage-fill-chip]')).toBeNull();
+    expect(composingBand(container)).toBeNull();
   });
 
-  it('leaves for good when the composition lands, and churn cannot recall it', () => {
+  it('stays through the composition it exists to narrate, then leaves for good', () => {
+    vi.useFakeTimers();
     const props = {
       chain, peers, localNode, cellsStats,
-      cellPopulation: populationModel(9_298, 12_000),
+      cellPopulation: populationModel(11_488, 12_000, { composed: false }),
     };
     const { container, rerender } = render(<HudOverlay {...props} />);
-    expect(container.querySelector('[data-stage-fill-chip]')).not.toBeNull();
+    expect(composingBand(container)).not.toBeNull();
 
-    rerender(<HudOverlay {...props} cellPopulation={populationModel(12_000, 12_000)} />);
-    expect(container.querySelector('[data-stage-fill-chip]')).toBeNull();
+    // The seat count reaching the budget is where the old readout resolved —
+    // measured, its last frame was a full bar drawn at the instant the
+    // composition began. It is a movement, not an ending.
+    rerender(<HudOverlay {...props} cellPopulation={
+      populationModel(12_000, 12_000, { curated: 9_008, stampMs: 2 })
+    } />);
+    expect(composingBand(container)?.textContent).toContain('CURATED 9,008');
 
-    // A later per-block dip is churn, not composing: the watch is terminal.
-    rerender(<HudOverlay {...props} cellPopulation={populationModel(9_000, 12_000)} />);
-    expect(container.querySelector('[data-stage-fill-chip]')).toBeNull();
+    // Top-up rounds keep swapping fill for curated members. Each one re-arms
+    // the settle clock, so a gap shorter than it cannot end the chapter.
+    act(() => { vi.advanceTimersByTime(STAGE_COMPOSE_SETTLE_MS - 1_000); });
+    rerender(<HudOverlay {...props} cellPopulation={
+      populationModel(12_000, 12_000, { curated: 10_169, stampMs: 2 })
+    } />);
+    act(() => { vi.advanceTimersByTime(STAGE_COMPOSE_SETTLE_MS - 1_000); });
+    expect(composingBand(container)?.textContent).toContain('CURATED 10,169');
+
+    // Nothing moves for a settle window: the world on screen IS the world.
+    act(() => { vi.advanceTimersByTime(STAGE_COMPOSE_SETTLE_MS); });
+    expect(composingBand(container)).toBeNull();
+
+    // …and a later per-block dip is churn, not composing: the watch is
+    // terminal for the session.
+    rerender(<HudOverlay {...props} cellPopulation={
+      populationModel(9_000, 12_000, { curated: 8_000, stampMs: 3 })
+    } />);
+    expect(composingBand(container)).toBeNull();
+    vi.useRealTimers();
   });
 });
 
@@ -1249,11 +1297,11 @@ describe('HudOverlay — everything below the top slot clears the whole stack', 
     expect(px(plate.style.top)).toBe(slotBottom(container) + PLATE_CLEARANCE_PX);
   });
 
-  it('yields the composition chip to an alarm, the way it yields to the rest', () => {
-    // The chip is the quietest thing in the slot — a disclosure, not a fault —
-    // and it already stands down for the boot readout, a stream fault and a
-    // replay. An alarm is the loudest of the four; it cannot be the one the
-    // chip talks over.
+  it('yields the composing chapter to an alarm, the way it yields to the rest', () => {
+    // The chapter is the quietest thing in the slot — a disclosure, not a
+    // fault — and it already stands down for the boot readout, a stream fault
+    // and a replay. An alarm is the loudest of the four; it cannot be the one
+    // the chapter talks over.
     vi.useFakeTimers();
     const { container } = render(
       <HudOverlay
@@ -1266,6 +1314,6 @@ describe('HudOverlay — everything below the top slot clears the whole stack', 
     );
 
     expect(alarmBand(container)).not.toBeNull();
-    expect(container.querySelector('[data-stage-fill-chip]')).toBeNull();
+    expect(composingBand(container)).toBeNull();
   });
 });

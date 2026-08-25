@@ -75,6 +75,7 @@ import {
   PLATE_CUT_PX,
   REVEAL_GHOST_OPACITY,
 } from '../../../src/components/hud/primitives';
+import { TOP_BAND_HEIGHT } from '../../../src/components/hud/TopBand';
 import {
   HAZARD_BAND_PX,
   WARNING_BAR_HEIGHT,
@@ -1534,45 +1535,50 @@ describe('one case', () => {
 
 // ——— One register below ————————————————————————————————————————————————
 //
-// The top-centre floating slot holds two readouts and one of them says in its
-// own doc comment that it is "deliberately one register below" the other:
-// `StageFillChip` under `BackfillBar`, because a stage still composing is the
-// organism living and a replay is the chain being repaired, and "nothing here
-// may shout over one".
+// Two readouts can be on screen at once while the world is still arriving: the
+// replay plate (the chain being repaired) and the boot band's composing chapter
+// (the stage still being composed). One of them is a fault surface and the
+// other is a disclosure, and the disclosure says in its own doc comment that
+// "quiet is still the register".
 //
-// It was not. The bar puts its TITLE in the accent and its counted form in
-// `dim`; the chip had them the other way round — the label `dim`, the count at
-// full `cyanWire` — so the chip's brightest element was louder than the same
-// element on the bar it defers to. A claim in a doc comment that the code
+// That claim used to be false in the one place it is easiest to check. The bar
+// puts its TITLE in the accent and its counted form in `dim`; the readout that
+// defers to it had them the other way round — the label `dim`, the count at
+// full `cyanWire` — so its brightest element was louder than the same element
+// on the surface it defers to, and a deferral that inverts the hierarchy of the
+// thing it defers to is not a deferral. A claim in a doc comment that the code
 // contradicts is worse than no claim, because the next reader takes it as
 // settled.
 //
-// So the claim is checked. Not "the chip is quieter" — that is a rendering
-// question no source oracle can answer — but the one thing that made it false:
-// the two readouts assign their accent and their `dim` to the same ROLES.
+// So the claim is checked. Not "the chapter is quieter" — that is a rendering
+// question no source oracle can answer — but the two things that made it
+// false: the roles its two inks are assigned to, and whether it can reach for
+// a colour that means something is wrong.
 
 describe('one register below', () => {
-  it('the plate and the chip that defers to it rank their two words alike', () => {
+  it('the plate and the chapter that defers to it rank their two words alike', () => {
     // The title span and the counted-form span of each, found by the text node
     // each one renders rather than by position, so a reordered row is read
     // correctly and a renamed one fails loudly.
-    //
-    // Both files have exactly two inks — the plate's accent, held in a local
-    // called `color` on one and `visual.color` on the other, and `HUD_COLORS.
-    // dim` — so a span's ink is fully described by which of the two it names.
     const ink = (file: string, renders: string) => {
       const source = SOURCES.find((entry) => entry.name === file);
       expect(source, `${file} moved — this oracle reads files off disk`).toBeDefined();
       const style = styleRendering(code(source?.text ?? ''), renders);
       return {
-        accent: /(?<![\w])(?:visual\.)?color(?=[,}\s])/.test(style),
+        accent: /(?<![\w])(?:visual\.)?color(?=[,}\s])/.test(style)
+          || /HUD_COLORS\.cyanWire/.test(style),
         dim: /HUD_COLORS\.dim/.test(style),
       };
     };
 
-    // The titles: the accent, on both.
+    // The bar's title is the accent; the chapter's title is the band's, handed
+    // to `TopBand` as a prop rather than styled here — which is the same
+    // assignment made structural.
     expect(ink('BackfillBar.tsx', '{visual.title}')).toEqual({ accent: true, dim: false });
-    expect(ink('StageFillChip.tsx', 'Stage composing')).toEqual({ accent: true, dim: false });
+    const chapter = SOURCES.find((entry) => entry.name === 'StageComposingBanner.tsx');
+    expect(chapter, 'the composing chapter moved — this oracle reads files off disk')
+      .toBeDefined();
+    expect(code(chapter?.text ?? '')).toContain('accent={HUD_COLORS.cyanWire}');
 
     // The counted forms: `dim`, on both. The bar's span carries the accent too
     // — the same span prints its WAITING sentence when there is nothing to
@@ -1581,28 +1587,25 @@ describe('one register below', () => {
     // between two spans that are not doing the same number of jobs.
     expect(ink('BackfillBar.tsx', '{waiting ? visual.waiting : `${fmt(done)} / ${fmt(total)} blocks`}').dim)
       .toBe(true);
-    expect(ink('StageFillChip.tsx', '{`${fmt(staged)} / ${fmt(budget)}`}'))
+    expect(ink('StageComposingBanner.tsx', '{line.text}'))
       .toEqual({ accent: false, dim: true });
   });
 
-  it('the chip still says it is one register below, and still is one', () => {
-    const chip = SOURCES.find((source) => source.name === 'StageFillChip.tsx');
-    expect(chip, 'the stage-fill chip moved — this oracle reads files off disk')
+  it('the chapter cannot reach for a colour that means something is wrong', () => {
+    // The other half of "quiet": a composing stage is the organism living, so
+    // the chapter has exactly one ink and it is the instrument's own wire.
+    // Every state colour in the HUD means health, and none of them is this.
+    const chapter = SOURCES.find((source) => source.name === 'StageComposingBanner.tsx');
+    expect(chapter, 'the composing chapter moved — this oracle reads files off disk')
       .toBeDefined();
-    const text = chip?.text ?? '';
-    expect(text).toContain('one register below');
-
-    // The size half of the claim, which is the half a reader sees first: every
-    // rung the chip sets is at or below the matching rung on the bar. Read off
-    // the two files rather than typed here, because the bar's rungs are the
-    // thing this is relative to.
-    const rungs = (name: string): number[] => {
-      const source = SOURCES.find((entry) => entry.name === name);
-      return [...code(source?.text ?? '').matchAll(/fontSize: HUD_TYPE\.(\w+)/g)]
-        .map((match) => HUD_TYPE[match[1] as keyof typeof HUD_TYPE]);
-    };
-    expect(Math.max(...rungs('StageFillChip.tsx')))
-      .toBeLessThanOrEqual(Math.max(...rungs('BackfillBar.tsx')));
+    const text = code(chapter?.text ?? '');
+    for (const token of ['nominal', 'caution', 'warning', 'danger', 'crit', 'rebuild']) {
+      expect(text, `the composing chapter reached for ${token}`)
+        .not.toContain(`HUD_COLORS.${token}`);
+    }
+    // …and it does not animate. The boot chapter's stillness is a contract the
+    // static shell set, and the chapter that succeeds it keeps it.
+    expect(text).not.toMatch(/animation/);
   });
 });
 
@@ -1633,34 +1636,60 @@ describe('one register below', () => {
 // here is the one part of it that is arithmetic rather than judgement — that
 // the banding may never cross the type it is banding.
 
-describe('the edge-bound stack', () => {
-  it('the two tenants of the top slot are one band', () => {
-    const health = SOURCES.find((source) => source.name === 'StreamHealthBanner.tsx');
-    const boot = SOURCES.find((source) => source.name === 'BootSequenceBanner.tsx');
-    expect(health, 'the health banner moved — this oracle reads files off disk')
-      .toBeDefined();
-    expect(boot, 'the boot banner moved — this oracle reads files off disk')
-      .toBeDefined();
+/** Everything that rents the top slot. Listed rather than discovered: a
+ *  fourth tenant added without a line here is a readout nobody decided
+ *  belonged in a slot that holds one voice. */
+const TOP_BAND_TENANTS = [
+  'BootSequenceBanner.tsx',
+  'StageComposingBanner.tsx',
+  'StreamHealthBanner.tsx',
+] as const;
 
-    // Read as the three properties that make the band the object it is, with
-    // the accent's own name left out: the health band calls it `visual.color`
-    // and the boot band `accent`, and that difference is a variable name
-    // rather than a difference in the band.
+describe('the edge-bound stack', () => {
+  it('every tenant of the top slot is the same band', () => {
+    // Three readouts take this slot and never two at a time: the boot record,
+    // the stage composing after it, and the data plane being unwell. They are
+    // one OBJECT changing what it says — which used to be an AGREEMENT between
+    // copies of one formula, re-read out of two files by this oracle, and an
+    // agreement survives exactly as long as nobody edits one copy.
+    //
+    // It is now structural: the formula lives in `TopBand` and the tenants
+    // render through it. So the question changed shape too — not "do the files
+    // still spell the same numbers" but "does any tenant draw its own band".
+    const band = SOURCES.find((source) => source.name === 'TopBand.tsx');
+    expect(band, 'the band moved — this oracle reads files off disk').toBeDefined();
+
     const formula = (text: string): string[] => {
       const ground = /background: `linear-gradient\(90deg,transparent,\$\{rgba\([\w.]+, ([\d.]+)\)\} 28%,\$\{rgba\(HUD_COLORS\.ground, ([\d.]+)\)\} 50%,\$\{rgba\([\w.]+, ([\d.]+)\)\} 72%,transparent\)`/.exec(text);
       const edge = /borderBottom: `1px solid \$\{rgba\([\w.]+, ([\d.]+)\)\}`/.exec(text);
-      const height = /\n\s+height: (\d+),/.exec(text);
+      const height = /\n\s+height: TOP_BAND_HEIGHT,/.exec(text);
       return [
         `ground ${ground?.slice(1).join('/') ?? 'none'}`,
         `edge ${edge?.[1] ?? 'none'}`,
-        `height ${height?.[1] ?? 'none'}`,
+        `height ${height ? String(TOP_BAND_HEIGHT) : 'none'}`,
       ];
     };
+    expect(formula(code(band?.text ?? '')))
+      .toEqual(['ground 0.13/0.78/0.13', 'edge 0.45', 'height 30']);
 
-    const one = formula(code(health?.text ?? ''));
-    expect(one).toEqual(formula(code(boot?.text ?? '')));
-    // …and that the reader found a band rather than three `none`s.
-    expect(one).toEqual(['ground 0.13/0.78/0.13', 'edge 0.45', 'height 30']);
+    // And that no tenant kept a copy: a band drawn anywhere else in the HUD is
+    // a second kind of object in a one-object slot, which is the whole defect.
+    for (const source of SOURCES) {
+      if (source.name === 'TopBand.tsx') continue;
+      expect(
+        code(source.text),
+        `${source.name} draws its own edge-bound band — the slot holds one object`,
+      ).not.toMatch(/borderBottom: `1px solid \$\{rgba\([\w.]+, 0\.45\)\}`/);
+    }
+
+    // The tenants, named: each one hands `TopBand` an accent and a title and
+    // owns nothing else about the shape.
+    for (const name of TOP_BAND_TENANTS) {
+      const tenant = SOURCES.find((source) => source.name === name);
+      expect(tenant, `${name} moved — this oracle reads files off disk`).toBeDefined();
+      const text = code(tenant?.text ?? '');
+      expect(text, `${name} stopped renting the band`).toMatch(/<TopBand\b/);
+    }
   });
 
   it('the alarm is a second band, and its banding never crosses its type', () => {
@@ -1680,10 +1709,13 @@ describe('the edge-bound stack', () => {
     expect(overlay, 'the overlay moved — this oracle reads files off disk')
       .toBeDefined();
     const text = code(overlay?.text ?? '');
-    expect(text).toContain('top={topBarHeight + (bootReadoutVisible || streamInterrupted ? 30 : 0)}');
-    // …while the two banners are alternatives, which is the whole reason they
-    // are allowed to be one formula.
-    expect(text).toContain('streamSummary && !bootReadoutVisible');
+    expect(text).toContain('top={topBarHeight + (topBandVisible || streamInterrupted ? 30 : 0)}');
+    // …while the tenants are alternatives, which is the whole reason they are
+    // allowed to be one shape: the health band waits for an empty slot, and
+    // the composing chapter waits for the boot chapter to finish speaking.
+    expect(text).toContain('streamSummary && !topBandVisible');
+    expect(text).toContain('const stageComposingVisible = stageCompose.visible');
+    expect(text).toContain('&& !bootReadoutVisible');
   });
 
   it('the alarm closes both edges and the banners close one', () => {
@@ -1696,10 +1728,8 @@ describe('the edge-bound stack', () => {
     expect(text).toContain('borderTop: `1px solid ${color}`');
     expect(text).toContain('borderBottom: `1px solid ${color}`');
 
-    for (const name of ['StreamHealthBanner.tsx', 'BootSequenceBanner.tsx']) {
-      const banner = SOURCES.find((source) => source.name === name);
-      expect(code(banner?.text ?? ''), `${name} grew a top edge`).not.toMatch(/borderTop:/);
-    }
+    const band = SOURCES.find((source) => source.name === 'TopBand.tsx');
+    expect(code(band?.text ?? ''), 'the band grew a top edge').not.toMatch(/borderTop:/);
   });
 });
 
@@ -3607,10 +3637,11 @@ describe('one alpha for a rule', () => {
     expect(code(primitives?.text ?? '')).toContain('borderTop: `1px solid ${rgba(accent, 0.15)}`');
     expect(rulesIn(code(primitives?.text ?? ''))).toEqual([]);
 
-    // …and a banner's bottom edge is the banner, not a rule between blocks.
-    const banner = SOURCES.find((source) => source.name === 'StreamHealthBanner.tsx');
-    expect(code(banner?.text ?? '')).toContain('borderBottom: `1px solid ${rgba(visual.color, 0.45)}`');
-    expect(rulesIn(code(banner?.text ?? ''))).toEqual([]);
+    // …and a band's bottom edge is the band, not a rule between blocks. It is
+    // drawn once now, in the shape all three tenants of the top slot wear.
+    const band = SOURCES.find((source) => source.name === 'TopBand.tsx');
+    expect(code(band?.text ?? '')).toContain('borderBottom: `1px solid ${rgba(accent, 0.45)}`');
+    expect(rulesIn(code(band?.text ?? ''))).toEqual([]);
   });
 
   it('every rule in the overlay is a declared rung', () => {

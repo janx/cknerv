@@ -64,13 +64,18 @@ export interface CellPopulationFieldModel {
    *  canonical insertion order — i.e. when `stagedClasses` is a curation
    *  choice rather than an accident of ordering. */
   stagedCurated: boolean;
+  /** When the current membership's provenance was stamped, or null without a
+   *  display plane. A NEW stamp is the server publishing another composition —
+   *  the one movement that can leave both the seat count and the curated share
+   *  reading exactly what they read a moment ago (`boot/stageCompose.ts`). */
+  stageComposedAtMs: number | null;
   /** True while the presentation clamp makes the render set smaller than the
    *  server stage. Both numbers are then disclosed, because continuing to
    *  call the whole stage addressable would be false. */
   clamped: boolean;
   /** The display plane's Cell budget, or null without a plane. Disclosed so
    *  the boot tail can say how full the stage is against what the server
-   *  intends to fill (`stageFill.ts`). */
+   *  intends to fill (`boot/stageCompose.ts`). */
   stageBudget: number | null;
 
   /** Alive count in the canonical retained window. */
@@ -314,6 +319,7 @@ export function deriveCellPopulationField(
       plain: stagedClasses.plain,
     },
     stagedCurated: cache.displayProvenance?.mode === 'composed',
+    stageComposedAtMs: cache.displayProvenance?.updated_at_ms ?? null,
     clamped: displayPlaneActive && limit < cache.displayMembers.size,
     stageBudget: cache.displayBudget?.cells ?? null,
     retainedLive,

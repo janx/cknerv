@@ -36,8 +36,8 @@ import { canRenderDaoStateReadout } from './DaoStateReadout';
 import NetworkPanel from './NetworkPanel';
 import BackfillBar from './BackfillBar';
 import BootSequenceBanner from './BootSequenceBanner';
-import StageFillChip from './StageFillChip';
-import { createStageFillWatch, sampleStageFill } from '../../boot/stageFill';
+import StageComposingBanner from './StageComposingBanner';
+import { createStageComposeWatch, sampleStageCompose } from '../../boot/stageCompose';
 import CellsPanel from './CellsPanel';
 import StageCapacityPanel from './StageCapacityPanel';
 import RenderStatsPanel from './RenderStatsPanel';
@@ -213,31 +213,43 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
   }, [boot.active, reduced]);
   const bootReadoutVisible = boot.active || bootLingering;
 
-  // The boot readout's tail. A freshly started server announces its dashboard
-  // before it finishes restoring the stage composition, so the first page to
-  // boot lands on a partial world and watches Cells sprout AFTER the banner
-  // left. The banner must not be held for that — stage convergence is the
-  // organism living, and on a cold server it runs for minutes — so the slot
-  // hands over to a quiet chip until the stage is effectively full or stops
-  // growing. `boot/stageFill.ts` owns the decision; a resolved watch stops
-  // the sampling interval and is terminal for the session.
-  const [stageFill, setStageFill] = useState(createStageFillWatch);
+  // The boot readout's second chapter. A freshly started server announces its
+  // dashboard before its composition is back — so the page it auto-opens boots
+  // against a placeholder world, and the Cells, edges and bridges that arrive
+  // afterwards used to sprout with nothing on screen naming them. The boot
+  // record itself must not be held open for that (it reports what the PAGE
+  // did, and on a cold server the composition converges for minutes), so the
+  // band changes chapter instead: same slot, same object, one word different.
+  // `boot/stageCompose.ts` owns the decision; a resolved watch stops the
+  // sampling interval and is terminal for the session.
+  const [stageCompose, setStageCompose] = useState(createStageComposeWatch);
   const stagedLive = cellPopulation?.stagedLive ?? null;
   const stageBudget = cellPopulation?.stageBudget ?? null;
-  const bootComplete = boot.complete;
+  const stageCurated = cellPopulation?.stagedResidentLive ?? null;
+  const stageComposed = cellPopulation?.stagedCurated ?? false;
+  const stageComposedAtMs = cellPopulation?.stageComposedAtMs ?? null;
   useEffect(() => {
-    if (stageFill.phase === 'resolved') return undefined;
-    const sample = () => setStageFill((watch) => sampleStageFill(watch, {
+    if (stageCompose.phase === 'resolved') return undefined;
+    const sample = () => setStageCompose((watch) => sampleStageCompose(watch, {
       nowMs: Date.now(),
-      bootComplete,
       stagedLive,
       budget: stageBudget,
+      curatedLive: stageCurated,
+      composed: stageComposed,
+      composedAtMs: stageComposedAtMs,
     }));
     sample();
-    // The quiet-window resolve needs time to pass, not props to change.
+    // The settle resolve needs time to pass, not props to change.
     const id = setInterval(sample, 1_000);
     return () => clearInterval(id);
-  }, [bootComplete, stagedLive, stageBudget, stageFill.phase]);
+  }, [
+    stagedLive,
+    stageBudget,
+    stageCurated,
+    stageComposed,
+    stageComposedAtMs,
+    stageCompose.phase,
+  ]);
 
   // Below ~1100px the rail's summaries would crowd the left-hand panels, so it
   // narrows and scrolls instead of fanning. Tunable breakpoint.
@@ -434,8 +446,24 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
   // band can then never disagree about whether the slot is occupied.
   const alarmStanding = warningBarStanding(alert.level);
   const alarmBandHeight = alarmStanding ? WARNING_BAR_HEIGHT : 0;
+
+  // One voice in the slot, and the boot record has the first claim on it: a
+  // page that is still coming up says so before it says anything about the
+  // world it is coming up into. Every fault surface outranks the chapter too —
+  // a stream fault, a replay or a raised alarm is a different kind of news, and
+  // two of them are drawn in this same band.
+  const stageComposingVisible = stageCompose.visible
+    && !bootReadoutVisible
+    && !streamInterrupted
+    && !backfill
+    && !alarmStanding;
+  /** Something is standing in the top slot, whichever tenant is speaking.
+   *  Everything below it clears the same 30px either way — the composing
+   *  chapter is the band, not a plate floating under it, so a layout that
+   *  cleared only the boot chapter would tuck the rails under a live band. */
+  const topBandVisible = bootReadoutVisible || stageComposingVisible;
   const contentTop = topBarHeight
-    + (bootReadoutVisible || streamInterrupted ? 42 : 12)
+    + (topBandVisible || streamInterrupted ? 42 : 12)
     + alarmBandHeight;
   const railStyle: CSSProperties = narrowRail
     ? { ...MESH_RAIL_STYLE, top: contentTop, maxHeight: `calc(100vh - ${contentTop + 14}px)`, overflowX: 'hidden', overflowY: 'auto', pointerEvents: railScrolls ? 'auto' : 'none', scrollbarWidth: 'thin', scrollbarColor: `${rgba(HUD_COLORS.orange, 0.35)} transparent` }
@@ -490,19 +518,33 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
           reducedMotion={reduced}
         />
       ) : null}
-      {streamSummary && !bootReadoutVisible ? (
+      {/* The record's second chapter, and the reason it is a chapter rather
+          than a plate underneath: the composition landing is the same story
+          the boot lines were telling, told one step further on. It waits for
+          the boot chapter to finish — including its held last frame — so the
+          band never changes its mind about which of the two it is. */}
+      {stageComposingVisible ? (
+        <StageComposingBanner
+          staged={stagedLive}
+          budget={stageBudget}
+          curated={stageCurated}
+          composed={stageComposed}
+          top={topBarHeight}
+        />
+      ) : null}
+      {streamSummary && !topBandVisible ? (
         <StreamHealthBanner
           summary={streamSummary}
           reducedMotion={reduced}
           top={topBarHeight}
         />
       ) : null}
-      {/* One band, one shift: whichever of the two is standing in the slot
-          moves the alert down by its 30px, and they are never both there.
+      {/* One band, one shift: whichever tenant is standing in the slot moves
+          the alert down by its 30px, and they are never two at a time.
           The other half of that rule — this band's own 34px moving everything
           below it — is `alarmBandHeight` above, taken from the bar rather than
           typed again here. */}
-      <WarningBar level={alert.level} trigger={alert.trigger} reducedMotion={reduced} top={topBarHeight + (bootReadoutVisible || streamInterrupted ? 30 : 0)} />
+      <WarningBar level={alert.level} trigger={alert.trigger} reducedMotion={reduced} top={topBarHeight + (topBandVisible || streamInterrupted ? 30 : 0)} />
       {chainPanelVisible
       || panelVisibility.stage
       || panelVisibility.render
@@ -641,18 +683,6 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
           style={{ top: topBarHeight + (streamInterrupted ? 40 : 10) + alarmBandHeight }}
         />
       )}
-      {/* One voice in the slot: the chip yields to the boot banner it trails,
-          and to every fault surface — a stream fault, a replay, or a raised
-          alarm all outrank a composition disclosure. It takes the alarm's
-          offset regardless, so its geometry stays honest if that yield is ever
-          relaxed the way the replay plate's already is. */}
-      {stageFill.visible && !bootReadoutVisible && !streamInterrupted && !backfill && !alarmStanding ? (
-        <StageFillChip
-          staged={stagedLive}
-          budget={stageBudget}
-          style={{ top: topBarHeight + 10 + alarmBandHeight }}
-        />
-      ) : null}
     </div>
   );
 }

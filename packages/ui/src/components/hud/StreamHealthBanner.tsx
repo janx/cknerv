@@ -5,6 +5,7 @@ import {
   formatStreamChannels,
 } from '../../derives/streamHealth.derive';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import TopBand from './TopBand';
 
 const PRESENTATION: Record<
   Exclude<StreamHealthPhase, 'live'>,
@@ -37,44 +38,28 @@ export default function StreamHealthBanner({
   return (
     <>
       {/* The third form in the house shape grammar (`primitives.tsx`): an
-          edge-bound bar. It is neither docked nor floating, so it takes neither
-          the panels' corner brackets nor the plates' cut corner — it runs the
-          full width and the viewport ends it. Nothing about the data plane
-          being unwell is a card you could have opened; this is the frame
+          edge-bound bar, and this file is one tenant of the single one the HUD
+          draws (`TopBand`). It is neither docked nor floating, so it takes
+          neither the panels' corner brackets nor the plates' cut corner — it
+          runs the full width and the viewport ends it. Nothing about the data
+          plane being unwell is a card you could have opened; this is the frame
           itself raising its voice. */}
-      <div
-        role="status"
-        aria-live="polite"
-        data-stream-health-banner
-        data-stream-phase={summary.phase}
-        style={{
-          position: 'absolute',
-          zIndex: 3,
-          top,
-          left: 0,
-          right: 0,
-          height: 30,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 10,
-          boxSizing: 'border-box',
-          background: `linear-gradient(90deg,transparent,${rgba(visual.color, 0.13)} 28%,${rgba(HUD_COLORS.ground, 0.78)} 50%,${rgba(visual.color, 0.13)} 72%,transparent)`,
-          borderBottom: `1px solid ${rgba(visual.color, 0.45)}`,
-          color: visual.color,
-          animation: reducedMotion || summary.phase !== 'stale'
-            ? undefined
-            : 'cknerv-hud-breathe 1.4s ease-in-out infinite',
+      <TopBand
+        accent={visual.color}
+        title={visual.title}
+        top={top}
+        animation={reducedMotion || summary.phase !== 'stale'
+          ? undefined
+          : 'cknerv-hud-breathe 1.4s ease-in-out infinite'}
+        attrs={{
+          'data-stream-health-banner': 'true',
+          'data-stream-phase': summary.phase,
         }}
       >
-        <span aria-hidden style={{ fontSize: HUD_TYPE.label }}>◇</span>
-        <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: HUD_TYPE.section, letterSpacing: 2 }}>
-          {visual.title}
-        </span>
         <span style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 1.2, color: rgba(visual.color, 0.82) }}>
           {channel}{retry}{age}
         </span>
-      </div>
+      </TopBand>
       {summary.phase === 'stale' ? (
         <div
           aria-hidden

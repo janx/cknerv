@@ -33,10 +33,6 @@ import { HUD_COLORS } from './hudTheme';
  *  invented now: what is written above is what the constant DOES. */
 export const BOOT_SEQUENCE_TITLE = 'STAGE POWER-ON';
 
-/** The house mark for a banner reporting on something still in progress: the
- *  static shell opens with it and so does `BackfillBar`. */
-export const BOOT_SEQUENCE_GLYPH = '◇';
-
 /** Adjudicated copy. `FIRST LIGHT` names the moment the galaxy is actually on
  *  screen, which is the thing a visitor is waiting for and had no word for.
  *  It sat on `BOOT_SEQUENCE_TITLE` for the life of this file — a doc comment

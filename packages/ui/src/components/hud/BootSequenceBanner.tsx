@@ -1,8 +1,8 @@
 import { Fragment } from 'react';
 import type { BootSequenceSnapshot } from '../../boot/bootSequence';
-import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE } from './hudTheme';
+import TopBand from './TopBand';
 import {
-  BOOT_SEQUENCE_GLYPH,
   BOOT_SEQUENCE_TITLE,
   bootPhaseLine,
   bootSequenceAccent,
@@ -17,6 +17,10 @@ import {
  * the readout appearing to move or restart. Everything that differs is
  * something React can do and inline markup cannot: the whole phase trail
  * instead of one line, and per-phase colour.
+ *
+ * The band itself is `TopBand`, which is also what the composing readout that
+ * SUCCEEDS this one wears, and what the health banner that alternates with it
+ * wears. This file is one chapter of that instrument, not a banner of its own.
  *
  * The snapshot arrives as a prop rather than being read here, because
  * `HudOverlay` already subscribes to decide whether this band exists at all,
@@ -42,38 +46,15 @@ export default function BootSequenceBanner({
   const densePhase = dense ? denseBootPhase(boot) : null;
   const phases = dense ? (densePhase ? [densePhase] : []) : boot.phases;
   return (
-    /* The edge-bound bar, same as `StreamHealthBanner` and for the same reason
-       (`primitives.tsx` argues the grammar): the instrument coming up is not a
-       card you could have opened, it is the frame itself speaking. Which is
-       also why it takes the band's formula to the digit — the two are tenants
-       of one slot and must not read as two different kinds of object. */
-    <div
-      role="status"
-      aria-live="polite"
-      data-boot-banner
-      data-boot-dense={dense ? 'true' : undefined}
-      style={{
-        position: 'absolute',
-        zIndex: 3,
-        top,
-        left: 0,
-        right: 0,
-        height: 30,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 10,
-        boxSizing: 'border-box',
-        overflow: 'hidden',
-        background: `linear-gradient(90deg,transparent,${rgba(accent, 0.13)} 28%,${rgba(HUD_COLORS.ground, 0.78)} 50%,${rgba(accent, 0.13)} 72%,transparent)`,
-        borderBottom: `1px solid ${rgba(accent, 0.45)}`,
-        color: accent,
+    <TopBand
+      accent={accent}
+      title={BOOT_SEQUENCE_TITLE}
+      top={top}
+      attrs={{
+        'data-boot-banner': 'true',
+        'data-boot-dense': dense ? 'true' : undefined,
       }}
     >
-      <span aria-hidden style={{ fontSize: HUD_TYPE.label }}>{BOOT_SEQUENCE_GLYPH}</span>
-      <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: HUD_TYPE.section, letterSpacing: 2 }}>
-        {BOOT_SEQUENCE_TITLE}
-      </span>
       <span
         data-boot-trail
         style={{
@@ -107,6 +88,6 @@ export default function BootSequenceBanner({
           );
         })}
       </span>
-    </div>
+    </TopBand>
   );
 }

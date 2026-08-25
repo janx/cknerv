@@ -6,9 +6,9 @@ import type {
   BootSequenceSnapshot,
 } from '../../../src/boot/bootSequence';
 import { HUD_COLORS } from '../../../src/components/hud/hudTheme';
+import { TOP_BAND_GLYPH } from '../../../src/components/hud/TopBand';
 import {
   BOOT_PHASE_LABELS,
-  BOOT_SEQUENCE_GLYPH,
   BOOT_SEQUENCE_TITLE,
   bootPhaseColor,
   bootPhaseDetail,
@@ -57,7 +57,9 @@ describe('boot phase labels', () => {
     // `ui-app/index.html` writes these two literally, because markup cannot
     // import. The handover is only seamless while they agree.
     expect(BOOT_SEQUENCE_TITLE).toBe('STAGE POWER-ON');
-    expect(BOOT_SEQUENCE_GLYPH).toBe('◇');
+    // The mark belongs to the band all three tenants wear, not to this
+    // chapter of it — the shell's literal has to match THAT.
+    expect(TOP_BAND_GLYPH).toBe('◇');
   });
 });
 
