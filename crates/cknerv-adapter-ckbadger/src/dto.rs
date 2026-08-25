@@ -46,12 +46,34 @@ pub(crate) struct NetworkCrawlerSummaryResponse {
 /// substitute, only an invented one.
 ///
 /// The wire carries more of this round than is declared here:
-/// `verifiedUnavailablePeers`, `exhaustedCandidates`, `foreignPeers`,
 /// `addressAttempts`, `nonSuccessfulAddressAttempts`, `malformedAddresses`,
 /// `peerOutcomes`, `addressObservations` and `discovery`. Nothing in cknerv
 /// reads them yet, so they are deliberately not declared: a field declared
 /// here is a field whose disappearance costs the whole record, and this
 /// crate has now paid that price twice in one week.
+///
+/// The five peer counts below are not five independent measurements. Upstream
+/// derives all of them from one disjoint five-cell outcome matrix — every
+/// candidate the round completed lands in exactly one of `sameNetworkIdentified`,
+/// `exhausted{With,Without}RetainedVerification` and
+/// `foreign{With,Without}RetainedVerification` — so they carry exact
+/// arithmetic between them, and `map_network_atlas` refuses a round that breaks
+/// it. Written out in those five cells:
+///
+/// ```text
+/// candidatePeers            = S + Ewith + Ewithout + Fwith + Fwithout
+/// reachablePeers            = S
+/// exhaustedCandidates       =     Ewith + Ewithout
+/// foreignPeers              =                        Fwith + Fwithout
+/// verifiedUnavailablePeers  =     Ewith             + Fwith
+/// verifiedRetainedPeers     = S + Ewith             + Fwith
+/// ```
+///
+/// Two consequences worth stating because they are easy to assume away.
+/// `reachable + exhausted + foreign` is exactly `candidatePeers` — a true
+/// partition. `verifiedUnavailablePeers` is NOT a sixth part of it: it cuts
+/// across `exhausted` and `foreign`, sharing `Ewith` with one and `Fwith` with
+/// the other, so it may never be added to them.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NetworkCrawlerRoundResponse {
@@ -65,10 +87,73 @@ pub(crate) struct NetworkCrawlerRoundResponse {
     /// round: reached, or reached before and remembered. This is the set the
     /// deleted `totalKnown` was counting.
     pub verified_retained_peers: u64,
-    /// Peers that answered this round.
+    /// Peers that answered this round and named this network.
     pub reachable_peers: u64,
+    /// Peers the round finished without a verification: it tried every
+    /// address it holds for them and none returned an identify.
+    pub exhausted_candidates: u64,
+    /// Peers that answered and named a different network. They dialed
+    /// perfectly well; they are simply not on this chain.
+    pub foreign_peers: u64,
+    /// Peers the crawler still holds a verification for that this round did
+    /// not reach on this network — the cohort the colony already draws dark.
+    pub verified_unavailable_peers: u64,
     /// Peers verified for the first time in this round.
     pub new_verified_peers: u64,
+}
+
+/// `network/distributions`: the crawler's whole verified set, counted by
+/// label rather than sampled.
+///
+/// This is a census and the peers page is not. cknerv used to fold its own
+/// country and version buckets out of one bounded 64-row page and had to
+/// caption them as a sample for it; upstream now folds them over every peer it
+/// holds a verification for, and adds the two axes cknerv could never compute
+/// — the autonomous systems the fleet is hosted in, and the protocols it
+/// opened. A census answers a question the sample only gestured at: whether
+/// half the network shares one operator is not visible in sixty-four rows of
+/// it.
+///
+/// `verifiedRetained` is the denominator the three histograms below are
+/// counted against, and it is a DIFFERENT CLOCK from the round's identically-meant
+/// `verifiedRetainedPeers`: upstream scans its node store when this request
+/// arrives, while the round reports what its own outcome matrix added up to
+/// when it finished. The two agree whenever nothing has changed in between and
+/// nothing guarantees that they must, so cknerv carries this one under its own
+/// name and never asserts the two against each other.
+///
+/// The wire also carries `sameNetworkReachable` and `verifiedUnavailable`,
+/// which are that same scan split by the node record's `reachable` flag. They
+/// are not declared: the ladder states both facts already, from the round,
+/// where they are the crawler's own arithmetic rather than a re-derivation at
+/// request time, and a second pair of numbers meaning the same words is the
+/// ambiguity this whole rework exists to remove.
+///
+/// `protocols` is not declared either, and for a different reason worth
+/// writing down because it looks like a free fourth strip. It is the one
+/// histogram here that is NOT a partition: upstream counts one row per
+/// protocol per peer, so a fleet where every peer opens Discovery and Identify
+/// answers with two buckets that each equal the population and add up to twice
+/// it. A proportional strip drawn from that would state a denominator it does
+/// not have, and the shape it would draw is two segments at 100% each, which
+/// is no shape at all. The day a peer speaks something else is news, but it is
+/// news for a list of exceptions rather than for a bar.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NetworkDistributionsResponse {
+    pub verified_retained: u64,
+    #[serde(default)]
+    pub versions: Vec<LabelCountResponse>,
+    #[serde(default)]
+    pub countries: Vec<LabelCountResponse>,
+    #[serde(default)]
+    pub asns: Vec<LabelCountResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct LabelCountResponse {
+    pub label: String,
+    pub count: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -136,7 +221,10 @@ pub(crate) struct PeerSummaryResponse {
     pub country: Option<String>,
     pub asn: Option<String>,
     /// Unix seconds, and upstream's sort key for this page: rows arrive
-    /// newest-advertised first, ties broken by `peerId`.
+    /// newest-advertised first, ties broken by `peerId`. Read by the roster
+    /// alone, and read only to check that order — which peers land inside a
+    /// bounded slice is decided by it, and nothing else on the page can say
+    /// whether it held.
     pub last_advertised_at: u64,
     /// Unix seconds the crawler last reached this peer. Present exactly when
     /// upstream holds a verification for it, which is exactly when the state

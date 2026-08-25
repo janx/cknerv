@@ -24,16 +24,19 @@ const networkAtlas: NetworkAtlasRecord = {
   updated_at_ms: Date.now(),
   crawl_round: 7,
   crawl_finished_at_s: 1_700_000_000,
-  verified_retained_peers: 42,
+  // One round's outcome matrix: 9 answered here, 51 ran their addresses out
+  // (33 still holding an earlier verification), 1 answered from another chain.
   candidate_peers: 61,
   last_round_reachable: 9,
+  foreign_peers: 1,
+  exhausted_candidates: 51,
+  verified_unavailable_peers: 33,
+  verified_retained_peers: 42,
   new_verified_peers: 3,
-  sample_size: 3,
-  sample_reachable: 2,
-  sample_truncated: true,
-  median_rtt_ms: 18,
-  countries: [{ label: 'SG', count: 2 }, { label: 'US', count: 1 }],
-  versions: [{ label: '0.119.0', count: 2 }, { label: '0.118.0', count: 1 }],
+  indexed_peers: 42,
+  countries: [{ label: 'SG', count: 28 }, { label: 'US', count: 14 }],
+  versions: [{ label: '0.119.0', count: 30 }, { label: '0.118.0', count: 12 }],
+  asns: [{ label: 'AS1 Example', count: 40 }, { label: 'AS2 Example', count: 2 }],
 };
 
 describe('NetworkPanel', () => {
@@ -83,22 +86,85 @@ describe('NetworkPanel', () => {
     expect(container.querySelector('[data-network-detail-mode="indexed"]')
       ?.getAttribute('data-network-atlas-state')).toBe('ready');
     const text = container.textContent ?? '';
-    expect(text).toContain('Known nodes');
-    expect(text).toContain('Median RTT');
-    expect(text).toContain('18ms');
-    // The sample denominator rides the strip it qualifies.
-    expect(text).toContain('SAMPLE COUNTRIES · 3 NODES · BOUNDED');
-    expect(text).toContain('SG 2 · US 1');
-    expect(text).toContain('SAMPLE CLIENT VERSIONS');
+    // The ladder. `Known nodes` was one number for the set the crawler holds
+    // verified, under a name that read as the much larger set it had heard of
+    // — and that larger set is a number now, so all of them are named.
+    expect(text).toContain('Named by the network61');
+    expect(text).toContain('Answered, this chain9');
+    expect(text).toContain('Answered, another chain1');
+    expect(text).toContain('No answer this round51');
+    expect(text).toContain('Verified, not reached33');
+    expect(text).not.toContain('Known nodes');
+
+    // The census that replaced a 64-row sample: the denominator rides the
+    // first strip it belongs to, and the caveat it used to carry is gone
+    // because there is no longer anything to caveat.
+    expect(text).toContain('COUNTRIES · ALL 42 VERIFIED PEERS');
+    expect(text).toContain('SG 28 · US 14');
+    expect(text).toContain('CLIENT VERSIONS');
+    expect(text).toContain('AUTONOMOUS SYSTEMS');
+    expect(text).toContain('AS1 Example 40');
+    expect(text).not.toContain('SAMPLE');
+    expect(text).not.toContain('BOUNDED');
+
+    // The median dial left with the page it was drawn from. It measured the
+    // crawler's own distance from the fleet rather than anything about the
+    // fleet, and it was the last number here a bounded sample could answer —
+    // keeping it would have meant keeping the sample beside a census with no
+    // way for a reader to tell which was which.
+    expect(text).not.toContain('Median RTT');
+    expect(text).not.toContain('18ms');
 
     expect(text).not.toContain('Last crawl');
     expect(text).not.toContain('Latest sample');
     expect(text).not.toContain('9 reachable / 12 dialed');
     expect(text).not.toContain('LATEST 3 NODE SAMPLE');
     expect(text).not.toContain('FRONTIER');
-    expect(text).not.toContain('NEW');
     expect(text).not.toContain('INDEXED');
     expect(text).not.toContain('CKBADGER');
+  });
+
+  it('keeps a rung that resolved to zero, because zero is the reading', () => {
+    // The live mainnet answer for two of these rungs is `0`, and it is a
+    // RESULT: nobody answered from another chain, nobody is being held from an
+    // earlier round. A row that disappeared on zero would make that crawl and
+    // a crawl that has stopped reporting those cohorts look identical — which
+    // is the exact class of silence this whole readout was rebuilt out of.
+    //
+    // Guard, stated plainly so it is not softened by accident: put a truthy
+    // test in front of any ladder row and this goes red.
+    const quiet: NetworkAtlasRecord = {
+      ...networkAtlas,
+      candidate_peers: 136,
+      last_round_reachable: 57,
+      foreign_peers: 0,
+      exhausted_candidates: 79,
+      verified_unavailable_peers: 0,
+      verified_retained_peers: 57,
+      new_verified_peers: 0,
+    };
+    const { container } = render(
+      <NetworkPanel
+        {...props}
+        enrichmentSource={enrichmentSource}
+        networkAtlas={quiet}
+      />,
+    );
+
+    const text = container.textContent ?? '';
+    expect(text).toContain('Answered, another chain0');
+    expect(text).toContain('Verified, not reached0');
+    // And structurally, so a row cannot be hidden by rendering an empty one.
+    const rows = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-network-atlas-rows] > *'),
+    );
+    expect(rows.slice(0, 5).map((row) => row.textContent)).toEqual([
+      'Named by the network136',
+      'Answered, this chain57',
+      'Answered, another chain0',
+      'No answer this round79',
+      'Verified, not reached0',
+    ]);
   });
 
   it('folds the atlas into the panel flow instead of framing a sub-section', () => {
@@ -128,13 +194,21 @@ describe('NetworkPanel', () => {
     const rows = Array.from(
       container.querySelectorAll<HTMLElement>('[data-network-atlas-rows] > *'),
     );
-    expect(rows).toHaveLength(4);
+    expect(rows).toHaveLength(8);
     for (const row of rows) {
       expect(row.title).toContain('Crawler atlas · round 7 · as of #100');
     }
-    // The strips keep their bucket detail behind the same provenance.
-    expect(rows[2]?.title).toContain('SG 2 · US 1');
-    expect(rows[3]?.title).toContain('0.119.0 2 · 0.118.0 1');
+    // Each ladder rung says what it counts on the same hover, because five
+    // rungs of one number are only a ladder if a reader can tell which
+    // population each one is a slice of — and the fifth is a slice of the two
+    // above it rather than of the first.
+    expect(rows[0]?.title).toContain('every peer the round considered');
+    expect(rows[2]?.title).toContain('identified itself on a different network');
+    expect(rows[4]?.title).toContain('not a further part of the peers considered');
+    // The strips keep their whole bucket list behind the same provenance.
+    expect(rows[5]?.title).toContain('SG 28 · US 14');
+    expect(rows[6]?.title).toContain('0.119.0 30 · 0.118.0 12');
+    expect(rows[7]?.title).toContain('AS1 Example 40 · AS2 Example 2');
   });
 
   it('speaks measured network truth only — the scene colony is STAGE·07\'s', () => {

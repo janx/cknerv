@@ -29,13 +29,14 @@ use crate::dto::{
     AssetEcosystemResponse, BlockResponse, CandidateEvidenceResponse, CellDataAnalysis,
     CellDetailResponse, ClusterDetailResponse, CollectionCompositionDto,
     CommonKnowledgeSizeBreakdown, DaoInfo, DaoStatisticsResponse, HardforkEventResponse,
-    HardforkTimelineResponse, LatestActivityResponse, LiveCellSummaryResponse,
-    LookupScriptsRequest, NetworkCrawlerSummaryResponse, NetworkPeersPageResponse, NetworkStats,
-    NftCollectionDetailResponse, PeerDetailResponse, PeerDisplayState, PeerProbeResultResponse,
-    PeerSummaryResponse, RecentReorgResponse, ReorgEventResponse, ScriptCatalogueResponse,
-    ScriptFamilyResponse, ScriptLookupInfo, ScriptLookupResponse, ScriptResponse,
-    SporeItemResponse, TokenResponse, TransactionDetailResponse, TransactionLifecycleResponse,
-    TransactionStatsPoint, TransactionStatsResponse, VerifiedPeerResponse,
+    HardforkTimelineResponse, LabelCountResponse, LatestActivityResponse, LiveCellSummaryResponse,
+    LookupScriptsRequest, NetworkCrawlerSummaryResponse, NetworkDistributionsResponse,
+    NetworkPeersPageResponse, NetworkStats, NftCollectionDetailResponse, PeerDetailResponse,
+    PeerDisplayState, PeerProbeResultResponse, PeerSummaryResponse, RecentReorgResponse,
+    ReorgEventResponse, ScriptCatalogueResponse, ScriptFamilyResponse, ScriptLookupInfo,
+    ScriptLookupResponse, ScriptResponse, SporeItemResponse, TokenResponse,
+    TransactionDetailResponse, TransactionLifecycleResponse, TransactionStatsPoint,
+    TransactionStatsResponse, VerifiedPeerResponse,
 };
 use crate::galaxy_composition::{
     discover as discover_galaxy_composition, identity_families as galaxy_identity_families,
@@ -85,7 +86,16 @@ const MAX_TRANSACTION_DAILY_BUCKETS: usize = 14;
 const MAX_FORK_WATCH_WINDOW_SECONDS: u32 = 31 * 24 * 60 * 60;
 const MAX_PROTOCOL_ERAS: usize = 16;
 const MAX_PROTOCOL_LABEL_CHARS: usize = 64;
-const NETWORK_ATLAS_LIMIT: usize = 64;
+/// How many label buckets one `network/distributions` histogram may carry.
+///
+/// A hostility guard rather than a policy: the real bound is the population
+/// itself, because every bucket is at least one peer and the buckets have to
+/// add up to the peers they describe, so a verified set of N peers can never
+/// answer with more than N of them. This is here so an answer that is not a
+/// histogram at all is refused before it is folded, and it sits far enough
+/// above any network CKB has ever had that it cannot be what refuses a real
+/// one.
+const MAX_NETWORK_DISTRIBUTION_BUCKETS: usize = 512;
 /// What this source last learned about whether `network/peers` answers.
 ///
 /// Written by the one reader that can tell — the bounded page, which upstream
@@ -344,30 +354,16 @@ impl CkbadgerEnrichmentSource {
         Ok(anchor)
     }
 
-    /// One crawler read: the latest round's summary, and one explicitly
-    /// bounded page of the peers it reached. `None` is a source with no
-    /// crawler data to report — switched off, never run, or still in its
-    /// first round — and each caller turns that into whatever absence its own
-    /// record means.
+    /// The latest completed round, and the gate every other crawler read sits
+    /// behind. `None` is a source with no crawler data to report — switched
+    /// off, never run, or still in its first round — and each caller turns
+    /// that into whatever absence its own record means.
     ///
-    /// The atlas and the roster make this call separately, each with its own
-    /// bound, rather than sharing one page. The atlas's numbers are
-    /// statements about a 64-row identity-free sample, so widening that page
-    /// to fit the roster would quietly redefine every one of them; and two
-    /// records built from one fetch would fail together over a fault that
-    /// only belongs to one of them.
-    ///
-    /// Both callers pin the page to `state=reachable`. `network/peers` now
-    /// unifies candidates with verified peers, so an unpinned page answers
-    /// with every peer anybody has ever *named* — and staging those as
-    /// sighted would say the crawler reached a node it never got a packet
-    /// from. The pin is what keeps `sighted` meaning "dialed, and it
-    /// answered", and it is also why every metadata field on the page comes
-    /// back populated.
-    async fn read_crawler(
-        &self,
-        limit: usize,
-    ) -> anyhow::Result<Option<(NetworkCrawlerSummaryResponse, NetworkPeersPageResponse)>> {
+    /// It is asked first and it is the one place a missing crawler is an
+    /// absence rather than a fault: a source that answers this has committed
+    /// to answering the crawler's other routes too, so a denial from any of
+    /// them is a route this build no longer knows the name of.
+    async fn read_crawler_round(&self) -> anyhow::Result<Option<NetworkCrawlerSummaryResponse>> {
         let summary_url = self.endpoint("network/summary")?;
         let response = self
             .client
@@ -376,9 +372,6 @@ impl CkbadgerEnrichmentSource {
             .await
             .context("fetch ckbadger network summary")?;
         if response.status() == StatusCode::NOT_FOUND {
-            // A source with no crawler API at all. This is the one absence
-            // in this method: it is asked first, and a source that answers
-            // it has committed to answering the page below too.
             return Ok(None);
         }
         if !response.status().is_success() {
@@ -394,9 +387,70 @@ impl CkbadgerEnrichmentSource {
         if !summary.enabled || !summary.has_data || summary.last_round.is_none() {
             return Ok(None);
         }
+        Ok(Some(summary))
+    }
 
+    /// One roster read: the latest round, and one explicitly bounded page of
+    /// the peers it reached.
+    ///
+    /// The atlas used to come through here too, for a 64-row page it folded
+    /// into country and version buckets and a median dial. It no longer asks
+    /// for peers at all — upstream counts those buckets over its whole
+    /// verified set now — so this page has one reader and one purpose: naming
+    /// the few nodes the scene may stage.
+    ///
+    /// The page is pinned to `state=reachable`. `network/peers` unifies
+    /// candidates with verified peers, so an unpinned page answers with every
+    /// peer anybody has ever *named* — and staging those as sighted would say
+    /// the crawler reached a node it never got a packet from. The pin is what
+    /// keeps `sighted` meaning "dialed, and it answered", and it is also why
+    /// every metadata field on the page comes back populated.
+    async fn read_crawler(
+        &self,
+        limit: usize,
+    ) -> anyhow::Result<Option<(NetworkCrawlerSummaryResponse, NetworkPeersPageResponse)>> {
+        let Some(summary) = self.read_crawler_round().await? else {
+            return Ok(None);
+        };
         let peers = self.read_reachable_peers(limit).await?;
         Ok(Some((summary, peers)))
+    }
+
+    /// The crawler's whole verified set, counted by label.
+    ///
+    /// A 404 here is an error rather than an absence, for the same reason it
+    /// is on the peer page: the round summary has already said the crawler is
+    /// enabled, holds data and finished a round, so a source that then denies
+    /// this route is not a source without distributions — it is a source whose
+    /// route name this build has fallen behind. Turning that into `Ok(None)`
+    /// would publish a `NetworkAtlasClear` and take the readout off the panel
+    /// while stating, in the only voice the panel has, that the crawl found
+    /// nothing.
+    ///
+    /// It deliberately does NOT write [`CkbadgerEnrichmentSource::peers_route`].
+    /// That flag is what lets the per-peer dossier tell a verdict about a node
+    /// from a fault about this build, and it may only be written by a reader of
+    /// the route whose 404 the dossier is trying to read — `network/peers`, not
+    /// this one. The roster refresh runs on the same minute cadence and keeps
+    /// writing it.
+    async fn read_network_distributions(&self) -> anyhow::Result<NetworkDistributionsResponse> {
+        let url = self.endpoint("network/distributions")?;
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .context("fetch ckbadger network distributions")?;
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "ckbadger network distributions returned HTTP {}",
+                response.status()
+            ));
+        }
+        response
+            .json()
+            .await
+            .context("decode ckbadger network distributions")
     }
 
     /// The bounded page of reached peers, and the single place this crate
@@ -1645,10 +1699,11 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         context: &CanonicalContext,
     ) -> anyhow::Result<Option<NetworkAtlasRecord>> {
         let anchor = self.current_anchor(context)?;
-        let Some((summary, nodes)) = self.read_crawler(NETWORK_ATLAS_LIMIT).await? else {
+        let Some(summary) = self.read_crawler_round().await? else {
             return Ok(None);
         };
-        let record = map_network_atlas(summary, nodes, anchor.clone())?;
+        let distributions = self.read_network_distributions().await?;
+        let record = map_network_atlas(summary, distributions, anchor.clone())?;
         self.revalidate_anchor(&anchor, "network atlas").await?;
         Ok(Some(record))
     }
@@ -2413,9 +2468,21 @@ fn map_dao_state(
     }))
 }
 
+/// The reach ladder and the census under it.
+///
+/// Two upstream reads, and they are two different statements. The round is
+/// what one crawl of the network found; the distributions are what the crawler
+/// holds right now. Neither is checked against the other — see
+/// `NetworkAtlasRecord::indexed_peers` for why a cross-clock equality here
+/// would be an invariant that fails on a healthy source.
+///
+/// This is a TALLY, so anything it cannot read refuses the whole record rather
+/// than thinning it: every count published here is a statement about a
+/// population, and a population with a hole in it is not the population the
+/// row claims to describe.
 fn map_network_atlas(
     summary: NetworkCrawlerSummaryResponse,
-    peers: NetworkPeersPageResponse,
+    distributions: NetworkDistributionsResponse,
     anchor: ChainAnchor,
 ) -> anyhow::Result<NetworkAtlasRecord> {
     let round = summary
@@ -2429,25 +2496,67 @@ fn map_network_atlas(
         (round.started_at, "network round startedAt"),
         (round.finished_at, "network round finishedAt"),
         (round.candidate_peers, "network round candidatePeers"),
+        (round.reachable_peers, "network round reachablePeers"),
+        (round.foreign_peers, "network round foreignPeers"),
+        (
+            round.exhausted_candidates,
+            "network round exhaustedCandidates",
+        ),
+        (
+            round.verified_unavailable_peers,
+            "network round verifiedUnavailablePeers",
+        ),
         (
             round.verified_retained_peers,
             "network round verifiedRetainedPeers",
         ),
-        (round.reachable_peers, "network round reachablePeers"),
         (round.new_verified_peers, "network round newVerifiedPeers"),
+        (
+            distributions.verified_retained,
+            "network distributions verifiedRetained",
+        ),
     ] {
         wire_safe_u64(value, field)?;
     }
     if round.finished_at < round.started_at {
         return Err(anyhow!("ckbadger network round finished before it started"));
     }
-    // The round's own nesting, in the two places cknerv publishes it: a peer
-    // that answered was a peer the round considered, and a peer verified for
-    // the first time is one of the peers the crawler now holds a
-    // verification for.
-    if round.reachable_peers > round.candidate_peers {
+
+    // The round's arithmetic, which is exact rather than merely bounded.
+    // Upstream derives all five of these counts from ONE disjoint outcome
+    // matrix — see `NetworkCrawlerRoundResponse` for the five cells written
+    // out — so they are not five measurements that happen to agree, and a
+    // source whose ladder does not close is a source publishing something
+    // other than that matrix.
+    //
+    // A completed candidate ends in exactly one of three ways: it answered on
+    // this network, it answered on another one, or the round ran out of
+    // addresses to try. So those three ARE the candidates, and every rung of
+    // the ladder the panel draws is checked by that one equality.
+    let outcomes = round
+        .reachable_peers
+        .checked_add(round.exhausted_candidates)
+        .and_then(|sum| sum.checked_add(round.foreign_peers))
+        .ok_or_else(|| anyhow!("ckbadger network round peer outcomes overflowed"))?;
+    if outcomes != round.candidate_peers {
         return Err(anyhow!(
-            "ckbadger network round reachable count exceeds its candidate count"
+            "ckbadger network round outcomes do not add up to its candidate count"
+        ));
+    }
+    // And the cross-cut. A peer the crawler still holds a verification for is
+    // either one this round reached or one it did not, with no third case, so
+    // this is an equality too — and it is the reason the panel may print the
+    // unavailable count beside the reachable one without implying they are
+    // parts of the candidates. `verifiedUnavailable` is drawn from the
+    // exhausted and foreign cohorts and would double-count against them.
+    let verified = round
+        .reachable_peers
+        .checked_add(round.verified_unavailable_peers)
+        .ok_or_else(|| anyhow!("ckbadger network round verified peers overflowed"))?;
+    if verified != round.verified_retained_peers {
+        return Err(anyhow!(
+            "ckbadger network round reachable and unavailable peers do not add up to its \
+             retained verified count"
         ));
     }
     if round.new_verified_peers > round.verified_retained_peers {
@@ -2455,67 +2564,24 @@ fn map_network_atlas(
             "ckbadger network round newly-verified count exceeds its retained verified count"
         ));
     }
-    if peers.items.len() > NETWORK_ATLAS_LIMIT {
-        return Err(anyhow!(
-            "ckbadger network peers exceeded the requested limit"
-        ));
-    }
 
-    let mut peer_ids = HashSet::new();
-    let mut countries = BTreeMap::<String, u32>::new();
-    let mut versions = BTreeMap::<String, u32>::new();
-    let mut rtts = Vec::new();
-    let mut sample_reachable = 0_u32;
-    let mut previous_last_advertised_at = None;
-    for peer in peers.items {
-        validate_network_peer_id(&peer.peer_id)?;
-        if !peer_ids.insert(peer.peer_id) {
-            return Err(anyhow!("ckbadger network peers returned a duplicate peer"));
-        }
-        // The atlas asked for one state and every count below is a statement
-        // about that population, so a row in any other state — including one
-        // this build has no name for — is not a row to fold in but a page
-        // that is not the page this record claims to describe.
-        if peer.display_state != PeerDisplayState::Reachable {
-            return Err(anyhow!(
-                "ckbadger network peers answered a reachable-only page with another state"
-            ));
-        }
-        // Upstream sorts this page by `lastAdvertisedAt` descending, ties
-        // broken by peer id, and that is the only ordering cknerv can check:
-        // `lastObservedAt` moves per peer within a round and arrives
-        // genuinely out of order, so an invariant written against it would
-        // refuse every healthy page. Ties are the normal case rather than an
-        // edge — a round advertises its whole page in one moment — so only a
-        // strictly newer row after an older one is out of order.
-        wire_safe_u64(peer.last_advertised_at, "network peer lastAdvertisedAt")?;
-        if previous_last_advertised_at.is_some_and(|previous| peer.last_advertised_at > previous) {
-            return Err(anyhow!(
-                "ckbadger network peers were not ordered newest advertised first"
-            ));
-        }
-        previous_last_advertised_at = Some(peer.last_advertised_at);
-        let country = optional_network_label(peer.country.as_deref(), "network peer country")?;
-        let version = optional_network_label(peer.version.as_deref(), "network peer version")?;
-        *countries.entry(country).or_default() += 1;
-        *versions.entry(version).or_default() += 1;
-        sample_reachable = sample_reachable.saturating_add(1);
-        if let Some(rtt) = peer.rtt_ms {
-            rtts.push(rtt);
-        }
-    }
-    rtts.sort_unstable();
-    let median_rtt_ms = match rtts.len() {
-        0 => None,
-        len if len % 2 == 1 => Some(rtts[len / 2]),
-        len => {
-            let left = u64::from(rtts[len / 2 - 1]);
-            let right = u64::from(rtts[len / 2]);
-            Some(((left + right) / 2) as u32)
-        }
-    };
-    let sample_size =
-        u32::try_from(peer_ids.len()).context("ckbadger network sample size is outside u32")?;
+    let indexed_peers = u32::try_from(distributions.verified_retained)
+        .context("ckbadger network indexed peer count is outside u32")?;
+    let countries = network_distribution(
+        distributions.countries,
+        indexed_peers,
+        "network distribution country",
+    )?;
+    let versions = network_distribution(
+        distributions.versions,
+        indexed_peers,
+        "network distribution version",
+    )?;
+    let asns = network_distribution(
+        distributions.asns,
+        indexed_peers,
+        "network distribution asn",
+    )?;
 
     Ok(NetworkAtlasRecord {
         source: "ckbadger".to_string(),
@@ -2523,21 +2589,66 @@ fn map_network_atlas(
         updated_at_ms: now_ms(),
         crawl_round: round.round_id,
         crawl_finished_at_s: round.finished_at,
-        verified_retained_peers: round.verified_retained_peers,
         candidate_peers: round.candidate_peers,
         last_round_reachable: round.reachable_peers,
+        foreign_peers: round.foreign_peers,
+        exhausted_candidates: round.exhausted_candidates,
+        verified_unavailable_peers: round.verified_unavailable_peers,
+        verified_retained_peers: round.verified_retained_peers,
         new_verified_peers: round.new_verified_peers,
-        sample_size,
-        // Every row on a reachable-only page is a reached peer, so this
-        // equals `sample_size` today. It is counted rather than assumed
-        // because the loop above is where the state of each row is read, and
-        // a count derived from the rows cannot drift from them.
-        sample_reachable,
-        sample_truncated: peers.next_cursor.is_some(),
-        median_rtt_ms,
-        countries: network_buckets(countries),
-        versions: network_buckets(versions),
+        indexed_peers,
+        countries,
+        versions,
+        asns,
     })
+}
+
+/// One histogram from `network/distributions`, checked against the population
+/// it claims to partition.
+///
+/// The partition check is the load-bearing one. A histogram whose counts do
+/// not add up to the peers it describes is not a slower or a staler answer, it
+/// is a different question — and the panel draws each bucket as its share of
+/// that population, so a wrong denominator draws a wrong bar rather than a
+/// missing one. It is also what keeps a multi-label histogram out: upstream's
+/// `protocols` counts one row per protocol per peer and would fail here on the
+/// first healthy network it met, which is why nothing reads it.
+///
+/// Labels that arrive empty become the word for not knowing, and two rows that
+/// both say it are added together rather than refused. `bounded_network_text`
+/// has always held that an absent label and an empty one are the same
+/// statement to a reader; two spellings of that one statement are still one
+/// bucket.
+fn network_distribution(
+    rows: Vec<LabelCountResponse>,
+    population: u32,
+    field: &str,
+) -> anyhow::Result<Vec<NetworkAtlasBucket>> {
+    if rows.len() > MAX_NETWORK_DISTRIBUTION_BUCKETS {
+        return Err(anyhow!("ckbadger returned too many {field} buckets"));
+    }
+    let mut counts = BTreeMap::<String, u32>::new();
+    let mut total = 0_u32;
+    for row in rows {
+        let count = u32::try_from(row.count)
+            .ok()
+            .filter(|count| *count > 0)
+            .ok_or_else(|| anyhow!("ckbadger returned an invalid {field} count"))?;
+        let label = bounded_network_label(&row.label, field)?;
+        let bucket = counts.entry(label).or_default();
+        *bucket = bucket
+            .checked_add(count)
+            .ok_or_else(|| anyhow!("ckbadger {field} buckets overflowed"))?;
+        total = total
+            .checked_add(count)
+            .ok_or_else(|| anyhow!("ckbadger {field} buckets overflowed"))?;
+    }
+    if total != population {
+        return Err(anyhow!(
+            "ckbadger {field} buckets do not add up to the peers they describe"
+        ));
+    }
+    Ok(network_buckets(counts))
 }
 
 /// The atlas's twin, and the place their two disciplines part.
@@ -2574,7 +2685,32 @@ fn map_network_roster(
     let mut staged = HashSet::new();
     let mut unreadable = 0usize;
     let mut duplicate = 0usize;
+    let mut previous_last_advertised_at = None;
     for peer in peers.items {
+        // The one page-level fault a sample can still have. The atlas used to
+        // check this, back when it drew its own 64-row sample off this page;
+        // it counts a census now and never asks for peers, so the guard moved
+        // to the reader that kept the page — and the argument moved with it
+        // unchanged, because it was always an argument about a sample. This
+        // page is a bounded slice of a set that outgrows it, `truncated` is
+        // the only thing said about the rest, and which peers land inside the
+        // cap is decided entirely by the order they arrive in. A page cknerv
+        // cannot vouch for the order of is a slice whose membership nobody
+        // chose.
+        //
+        // `lastAdvertisedAt` is upstream's actual sort key, ties broken by
+        // peer id, and it is the only ordering that can be checked:
+        // `lastObservedAt` moves per peer within a round and arrives genuinely
+        // out of order. Ties are the normal case rather than an edge — a round
+        // advertises its whole page in one moment — so only a strictly newer
+        // row after an older one is out of order.
+        wire_safe_u64(peer.last_advertised_at, "network peer lastAdvertisedAt")?;
+        if previous_last_advertised_at.is_some_and(|previous| peer.last_advertised_at > previous) {
+            return Err(anyhow!(
+                "ckbadger network peers were not ordered newest advertised first"
+            ));
+        }
+        previous_last_advertised_at = Some(peer.last_advertised_at);
         let Some(entry) = roster_node(peer) else {
             unreadable += 1;
             continue;
@@ -4450,12 +4586,15 @@ mod tests {
             .route(
                 "/api/v1/network/peers",
                 get(|axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>| async move {
-                    // Both bounded readers land here, each with its own cap.
-                    // An unbounded page is the failure this asserts against.
+                    // The roster is the only reader of this page now — the
+                    // atlas counts a census instead — and it asks with its own
+                    // cap. An unbounded page is the failure this asserts
+                    // against.
                     let limit = query.get("limit").map(String::as_str);
-                    assert!(
-                        limit == Some("64") || limit == Some("256"),
-                        "network peers fetched with an unexpected bound: {limit:?}"
+                    assert_eq!(
+                        limit,
+                        Some("256"),
+                        "network peers fetched with an unexpected bound"
                     );
                     // And an unscoped page is the other one. `network/peers`
                     // answers candidates and verified peers from one route,
@@ -4506,6 +4645,38 @@ mod tests {
                             }
                         ],
                         "nextCursor": "7065657243"
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/network/distributions",
+                get(|| async {
+                    // A census over the same forty-two peers the round says it
+                    // holds verified — three histograms that partition them,
+                    // and `protocols`, which does not: two labels that each
+                    // cover the whole set. It is on the wire here precisely
+                    // because nothing declares it, so a decode that quietly
+                    // started reading it would land in the partition check.
+                    Json(serde_json::json!({
+                        "verifiedRetained": 42,
+                        "sameNetworkReachable": 9,
+                        "verifiedUnavailable": 33,
+                        "versions": [
+                            { "label": "0.119.0", "count": 30 },
+                            { "label": "0.118.0", "count": 12 }
+                        ],
+                        "countries": [
+                            { "label": "SG", "count": 25 },
+                            { "label": "US", "count": 17 }
+                        ],
+                        "asns": [
+                            { "label": "AS1 Example", "count": 40 },
+                            { "label": "AS2 Example", "count": 2 }
+                        ],
+                        "protocols": [
+                            { "label": "/ckb/discovery", "count": 42 },
+                            { "label": "/ckb/identify", "count": 42 }
+                        ]
                     }))
                 }),
             )
@@ -4882,8 +5053,8 @@ mod tests {
     }
 
     async fn spawn_disabled_crawler_api() -> (Url, tokio::task::JoinHandle<()>, Arc<AtomicUsize>) {
-        let node_requests = Arc::new(AtomicUsize::new(0));
-        let counted_requests = node_requests.clone();
+        let crawler_requests = Arc::new(AtomicUsize::new(0));
+        let counted_requests = crawler_requests.clone();
         let app = Router::new()
             .route(
                 "/api/v1/statistics/network",
@@ -4915,15 +5086,41 @@ mod tests {
                     }))
                 }),
             )
+            // Both crawler data routes, counted together. A disabled crawler
+            // must cost neither: the summary gate is what stops the atlas
+            // reaching for a census and the roster reaching for a page, and a
+            // counter on only one of them would stop noticing if that gate
+            // moved.
             .route(
                 "/api/v1/network/peers",
+                get({
+                    let counted = counted_requests.clone();
+                    move || {
+                        let counted = counted.clone();
+                        async move {
+                            counted.fetch_add(1, Ordering::Relaxed);
+                            Json(serde_json::json!({
+                                "items": [],
+                                "nextCursor": null
+                            }))
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/api/v1/network/distributions",
                 get(move || {
-                    let node_requests = counted_requests.clone();
+                    let counted = counted_requests.clone();
                     async move {
-                        node_requests.fetch_add(1, Ordering::Relaxed);
+                        counted.fetch_add(1, Ordering::Relaxed);
                         Json(serde_json::json!({
-                            "items": [],
-                            "nextCursor": null
+                            "verifiedRetained": 0,
+                            "sameNetworkReachable": 0,
+                            "verifiedUnavailable": 0,
+                            "versions": [],
+                            "countries": [],
+                            "asns": [],
+                            "protocols": []
                         }))
                     }
                 }),
@@ -4936,7 +5133,7 @@ mod tests {
         (
             Url::parse(&format!("http://{address}/api/v1")).unwrap(),
             handle,
-            node_requests,
+            crawler_requests,
         )
     }
 
@@ -5491,18 +5688,22 @@ mod tests {
             .unwrap();
         assert_eq!(network_atlas.as_of.block, 100);
         assert_eq!(network_atlas.crawl_round, 7);
-        assert_eq!(network_atlas.verified_retained_peers, 42);
         assert_eq!(network_atlas.candidate_peers, 61);
+        assert_eq!(network_atlas.last_round_reachable, 9);
+        assert_eq!(network_atlas.foreign_peers, 1);
+        assert_eq!(network_atlas.exhausted_candidates, 51);
+        assert_eq!(network_atlas.verified_unavailable_peers, 33);
+        assert_eq!(network_atlas.verified_retained_peers, 42);
         assert_eq!(network_atlas.new_verified_peers, 3);
-        assert_eq!(network_atlas.sample_size, 3);
-        // The page was asked for one state, so every row on it is a peer that
-        // answered — the sample is reachable end to end by construction.
-        assert_eq!(network_atlas.sample_reachable, 3);
-        assert!(network_atlas.sample_truncated);
-        assert_eq!(network_atlas.median_rtt_ms, Some(18));
+        // The buckets come from the census route, not from the three-row page
+        // above: they cover every peer the crawler holds, which is why the
+        // strips no longer have to caption themselves as a sample.
+        assert_eq!(network_atlas.indexed_peers, 42);
         assert_eq!(network_atlas.countries[0].label, "SG");
-        assert_eq!(network_atlas.countries[0].count, 2);
+        assert_eq!(network_atlas.countries[0].count, 25);
         assert_eq!(network_atlas.versions[0].label, "0.119.0");
+        assert_eq!(network_atlas.asns[0].label, "AS1 Example");
+        assert_eq!(network_atlas.asns[0].count, 40);
 
         let network_roster = source
             .enrich_network_roster(&context())
@@ -7019,7 +7220,7 @@ mod tests {
 
     #[tokio::test]
     async fn disabled_crawler_returns_no_atlas_without_fetching_nodes() {
-        let (api_base, server, node_requests) = spawn_disabled_crawler_api().await;
+        let (api_base, server, crawler_requests) = spawn_disabled_crawler_api().await;
         let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
         assert_eq!(
             source.probe(&context()).await.status,
@@ -7029,13 +7230,13 @@ mod tests {
         let atlas = source.enrich_network_atlas(&context()).await.unwrap();
 
         assert!(atlas.is_none());
-        assert_eq!(node_requests.load(Ordering::Relaxed), 0);
+        assert_eq!(crawler_requests.load(Ordering::Relaxed), 0);
         server.abort();
     }
 
     #[tokio::test]
     async fn disabled_crawler_returns_no_roster_without_fetching_nodes() {
-        let (api_base, server, node_requests) = spawn_disabled_crawler_api().await;
+        let (api_base, server, crawler_requests) = spawn_disabled_crawler_api().await;
         let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
         assert_eq!(
             source.probe(&context()).await.status,
@@ -7047,7 +7248,7 @@ mod tests {
         // No crawler is an ABSENT roster, which is what retires the sighted
         // nodes already on stage. An empty one would say the opposite.
         assert!(roster.is_none());
-        assert_eq!(node_requests.load(Ordering::Relaxed), 0);
+        assert_eq!(crawler_requests.load(Ordering::Relaxed), 0);
         server.abort();
     }
 
@@ -7161,11 +7362,42 @@ mod tests {
                 round_id,
                 started_at: 1_700_000_000,
                 finished_at: 1_700_000_010,
+                // One disjoint outcome matrix, spelled out so the ladder
+                // closes both ways: 3 identified on this network, 8 exhausted
+                // (6 of them still holding an older verification), 1 foreign.
+                // 3 + 8 + 1 = 12 candidates, and 3 + 6 = 9 held verified.
                 candidate_peers: 12,
-                verified_retained_peers: 9,
                 reachable_peers: 3,
+                exhausted_candidates: 8,
+                foreign_peers: 1,
+                verified_unavailable_peers: 6,
+                verified_retained_peers: 9,
                 new_verified_peers: 1,
             }),
+        }
+    }
+
+    /// The census beside that round: nine peers held verified, folded three
+    /// ways over the same nine.
+    fn crawler_distributions() -> NetworkDistributionsResponse {
+        NetworkDistributionsResponse {
+            verified_retained: 9,
+            versions: vec![
+                label_count("0.209.0 (d166e28 2026-07-29)", 6),
+                label_count("0.207.0 (8f6cacf 2026-06-10)", 3),
+            ],
+            countries: vec![label_count("SG", 5), label_count("US", 4)],
+            asns: vec![
+                label_count("AS16509 Amazon.com, Inc.", 7),
+                label_count("AS16276 OVH SAS", 2),
+            ],
+        }
+    }
+
+    fn label_count(label: &str, count: u64) -> LabelCountResponse {
+        LabelCountResponse {
+            label: label.to_string(),
+            count,
         }
     }
 
@@ -7240,18 +7472,21 @@ mod tests {
         // date the sighting by.
         let mut undated = crawler_row("7065657245", 12);
         undated.last_reachable_at = None;
+        // Newest-advertised first, because that is the order upstream pages
+        // in and the order this mapper now checks for.
         let peers = NetworkPeersPageResponse {
             items: vec![
                 crawler_row("7065657241", 40),
                 // Not a peer id at all: skipped, never repaired into one.
                 crawler_row("not-hex", 35),
-                // The crawler's "never seen": no moment to stamp the row with.
-                crawler_row("7065657243", 0),
                 // The same node twice: it may only stand on stage once.
                 crawler_row("7065657241", 30),
                 remembered,
                 hearsay,
                 undated,
+                // The crawler's "never seen": no moment to stamp the row with,
+                // which is also why it sorts to the back of the page.
+                crawler_row("7065657243", 0),
             ],
             next_cursor: Some("7065657242".to_string()),
         };
@@ -7394,18 +7629,20 @@ mod tests {
     }
 
     #[test]
-    fn an_atlas_refuses_a_page_that_did_not_arrive_newest_advertised_first() {
+    fn a_roster_refuses_a_page_that_did_not_arrive_newest_advertised_first() {
         // The invariant this replaces was written against `lastSeen`, a field
-        // that no longer exists. This is the half that has to keep biting: a
-        // page whose order cknerv cannot vouch for is a sample whose
-        // membership nobody chose.
+        // that no longer exists, and it lived on the atlas until the atlas
+        // stopped drawing a sample off this page. The argument did not change
+        // when it moved: a page whose order cknerv cannot vouch for is a slice
+        // whose membership nobody chose, and the roster is now the only reader
+        // taking a slice.
         let out_of_order = NetworkPeersPageResponse {
             items: vec![crawler_row("7065657241", 20), crawler_row("7065657242", 40)],
             next_cursor: None,
         };
 
         let error =
-            map_network_atlas(crawler_summary(7), out_of_order, roster_anchor()).unwrap_err();
+            map_network_roster(crawler_summary(7), out_of_order, roster_anchor()).unwrap_err();
 
         assert!(
             error.to_string().contains("newest advertised first"),
@@ -7428,41 +7665,102 @@ mod tests {
             next_cursor: None,
         };
 
-        let atlas = map_network_atlas(crawler_summary(7), tied, roster_anchor()).unwrap();
+        let roster = map_network_roster(crawler_summary(7), tied, roster_anchor()).unwrap();
 
-        assert_eq!(atlas.sample_size, 3);
-        assert_eq!(atlas.sample_reachable, 3);
-        assert_eq!(atlas.verified_retained_peers, 9);
-        assert_eq!(atlas.candidate_peers, 12);
-        assert_eq!(atlas.last_round_reachable, 3);
-        assert_eq!(atlas.new_verified_peers, 1);
+        assert_eq!(roster.entries.len(), 3);
     }
 
     #[test]
-    fn an_atlas_refuses_a_round_whose_peer_counts_do_not_nest() {
-        // Two counts upstream deleted for being ambiguous used to hold these
-        // invariants up. Their replacements nest the same way: a peer that
-        // answered was a peer the round considered, and a peer verified for
-        // the first time is one of the peers now held verified.
-        let mut louder_than_it_tried = crawler_summary(7);
-        louder_than_it_tried
-            .last_round
-            .as_mut()
-            .unwrap()
-            .reachable_peers = 13;
-        let error = map_network_atlas(
-            louder_than_it_tried,
-            NetworkPeersPageResponse {
-                items: Vec::new(),
-                next_cursor: None,
-            },
-            roster_anchor(),
-        )
-        .unwrap_err();
-        assert!(
-            error.to_string().contains("exceeds its candidate count"),
-            "{error}"
-        );
+    fn an_atlas_publishes_the_round_ladder_and_the_census_beside_it() {
+        let atlas = map_network_atlas(crawler_summary(7), crawler_distributions(), roster_anchor())
+            .unwrap();
+
+        // The ladder, in the order the panel reads it. The first three are a
+        // partition of the fourth; the fifth cuts across two of them.
+        assert_eq!(atlas.candidate_peers, 12);
+        assert_eq!(atlas.last_round_reachable, 3);
+        assert_eq!(atlas.foreign_peers, 1);
+        assert_eq!(atlas.exhausted_candidates, 8);
+        assert_eq!(atlas.verified_unavailable_peers, 6);
+        assert_eq!(atlas.verified_retained_peers, 9);
+        assert_eq!(atlas.new_verified_peers, 1);
+
+        // And the census, on its own clock and its own denominator.
+        assert_eq!(atlas.indexed_peers, 9);
+        for family in [&atlas.countries, &atlas.versions, &atlas.asns] {
+            assert_eq!(
+                family.iter().map(|bucket| bucket.count).sum::<u32>(),
+                atlas.indexed_peers
+            );
+        }
+        // Ranked, not in the order upstream happened to answer in.
+        assert_eq!(atlas.asns[0].label, "AS16509 Amazon.com, Inc.");
+        assert_eq!(atlas.asns[0].count, 7);
+    }
+
+    #[test]
+    fn an_atlas_refuses_a_round_whose_outcomes_do_not_add_up_to_its_candidates() {
+        // The three ways a completed candidate can end ARE the candidates:
+        // upstream reads all four counts off one disjoint outcome matrix, so
+        // this is an equality and not a bound. Loosen it to `<=` and a round
+        // that lost a whole cohort on the way out publishes a ladder whose
+        // rungs quietly stop describing the number above them.
+        for (name, mutate) in [
+            (
+                "a cohort short",
+                Box::new(|round: &mut crate::dto::NetworkCrawlerRoundResponse| {
+                    round.exhausted_candidates -= 1;
+                }) as Box<dyn Fn(&mut crate::dto::NetworkCrawlerRoundResponse)>,
+            ),
+            (
+                "a cohort over",
+                Box::new(|round: &mut crate::dto::NetworkCrawlerRoundResponse| {
+                    round.foreign_peers += 1;
+                }),
+            ),
+            (
+                "more reached than considered",
+                Box::new(|round: &mut crate::dto::NetworkCrawlerRoundResponse| {
+                    round.reachable_peers = round.candidate_peers + 1;
+                }),
+            ),
+        ] {
+            let mut summary = crawler_summary(7);
+            mutate(summary.last_round.as_mut().unwrap());
+            let error =
+                map_network_atlas(summary, crawler_distributions(), roster_anchor()).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("do not add up to its candidate count"),
+                "{name}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_atlas_refuses_a_round_whose_verified_peers_do_not_split_in_two() {
+        // A peer the crawler holds a verification for was either reached this
+        // round or it was not, and there is no third case — so this is the
+        // other equality, and it is what lets the panel print the unavailable
+        // count beside the reachable one without implying they are parts of
+        // the candidates.
+        for delta in [-1_i64, 1] {
+            let mut summary = crawler_summary(7);
+            {
+                let round = summary.last_round.as_mut().unwrap();
+                round.verified_unavailable_peers =
+                    round.verified_unavailable_peers.wrapping_add_signed(delta);
+            }
+            let error =
+                map_network_atlas(summary, crawler_distributions(), roster_anchor()).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("do not add up to its retained verified count"),
+                "{delta}: {error}"
+            );
+        }
 
         let mut newer_than_it_holds = crawler_summary(7);
         newer_than_it_holds
@@ -7472,10 +7770,7 @@ mod tests {
             .new_verified_peers = 10;
         let error = map_network_atlas(
             newer_than_it_holds,
-            NetworkPeersPageResponse {
-                items: Vec::new(),
-                next_cursor: None,
-            },
+            crawler_distributions(),
             roster_anchor(),
         )
         .unwrap_err();
@@ -7488,53 +7783,107 @@ mod tests {
     }
 
     #[test]
-    fn an_atlas_refuses_a_page_answered_in_a_state_it_did_not_ask_for() {
-        // The atlas is a tally, and every count in it is a statement about a
-        // reachable-only page. A row in any other state is not a row to fold
-        // in: it is evidence that the page is not the one the record claims
-        // to describe.
-        for state in [
-            PeerDisplayState::VerifiedUnavailable,
-            PeerDisplayState::AdvertisedUnverified,
-            PeerDisplayState::Unknown,
-        ] {
-            let mut row = crawler_row("7065657241", 40);
-            row.display_state = state;
-            let error = map_network_atlas(
-                crawler_summary(7),
-                NetworkPeersPageResponse {
-                    items: vec![row],
-                    next_cursor: None,
-                },
-                roster_anchor(),
-            )
-            .unwrap_err();
-            assert!(
-                error.to_string().contains("reachable-only page"),
-                "{state:?}: {error}"
-            );
-        }
+    fn an_atlas_refuses_a_histogram_that_does_not_cover_the_peers_it_describes() {
+        // Every strip is drawn as each bucket's share of one population, so a
+        // histogram that does not add up to that population draws a wrong bar
+        // rather than a short one. This is also the check that keeps a
+        // multi-label histogram out: upstream's `protocols` counts one row per
+        // protocol per peer, so a fleet where every peer opens both would land
+        // here at twice the population — which is why nothing reads it.
+        let mut short = crawler_distributions();
+        short.countries.pop();
+        let error = map_network_atlas(crawler_summary(7), short, roster_anchor()).unwrap_err();
+        assert!(
+            error.to_string().contains("country buckets do not add up"),
+            "{error}"
+        );
+
+        let mut doubled = crawler_distributions();
+        doubled.asns = doubled
+            .asns
+            .iter()
+            .map(|bucket| label_count(&bucket.label, bucket.count * 2))
+            .collect();
+        let error = map_network_atlas(crawler_summary(7), doubled, roster_anchor()).unwrap_err();
+        assert!(
+            error.to_string().contains("asn buckets do not add up"),
+            "{error}"
+        );
+
+        let mut empty_bucket = crawler_distributions();
+        empty_bucket.versions.push(label_count("0.0.0", 0));
+        let error =
+            map_network_atlas(crawler_summary(7), empty_bucket, roster_anchor()).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("invalid network distribution version count"),
+            "{error}"
+        );
     }
 
     #[test]
-    fn a_label_the_crawler_never_learned_is_counted_as_the_word_for_it() {
+    fn an_atlas_refuses_a_histogram_too_long_to_be_one() {
+        // This record rides in every snapshot, so the bucket cap is a wire
+        // budget before it is anything else — and `serde` has already
+        // materialised the array by the time this runs, which is precisely why
+        // the cap has to stop it going any further. It is a hostility guard
+        // and never a policy: the partition check bounds a real histogram at
+        // one bucket per peer, far below this.
+        let mut flooded = crawler_distributions();
+        flooded.countries = (0..=MAX_NETWORK_DISTRIBUTION_BUCKETS)
+            .map(|index| label_count(&format!("C{index}"), 1))
+            .collect();
+
+        let error = map_network_atlas(crawler_summary(7), flooded, roster_anchor()).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("too many network distribution country buckets"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_census_label_the_crawler_never_learned_is_counted_as_the_word_for_it() {
+        // Upstream writes its own word for not knowing into the country and
+        // ASN histograms, and writes nothing at all into the version one for
+        // a peer that identified without a version. Both are the same
+        // statement to a reader — nobody knows — so they are one bucket, and
+        // the record never carries a blank label for a strip to draw as a
+        // nameless sliver.
+        let mut unlabelled = crawler_distributions();
+        unlabelled.versions = vec![label_count("", 4), label_count("Unknown", 5)];
+
+        let atlas = map_network_atlas(crawler_summary(7), unlabelled, roster_anchor()).unwrap();
+
+        assert_eq!(atlas.versions.len(), 1);
+        assert_eq!(atlas.versions[0].label, "Unknown");
+        assert_eq!(atlas.versions[0].count, 9);
+    }
+
+    #[test]
+    fn a_label_the_crawler_never_learned_is_staged_as_the_word_for_it() {
         // Upstream answers `null` rather than fabricating metadata for a peer
         // it holds none for. That is the same statement an empty label always
-        // made — nobody knows — and the tally spells both with one word
-        // instead of dropping a row or inventing a plausible one.
+        // made — nobody knows — and the roster spells both with one word
+        // instead of dropping the node or inventing a plausible label for it.
         let mut unlabelled = crawler_row("7065657241", 40);
         unlabelled.country = None;
         unlabelled.version = None;
+        unlabelled.asn = None;
         let page = NetworkPeersPageResponse {
             items: vec![unlabelled],
             next_cursor: None,
         };
 
-        let atlas = map_network_atlas(crawler_summary(7), page, roster_anchor()).unwrap();
+        let roster = map_network_roster(crawler_summary(7), page, roster_anchor()).unwrap();
 
-        assert_eq!(atlas.sample_size, 1);
-        assert_eq!(atlas.countries[0].label, "Unknown");
-        assert_eq!(atlas.versions[0].label, "Unknown");
+        assert_eq!(roster.entries.len(), 1);
+        assert_eq!(roster.entries[0].country, "Unknown");
+        assert_eq!(roster.entries[0].version, "Unknown");
+        assert_eq!(roster.entries[0].asn, "Unknown");
     }
 
     #[test]
@@ -8738,8 +9087,11 @@ mod tests {
                             "startedAt": 1_699_999_990,
                             "finishedAt": 1_700_000_000,
                             "candidatePeers": 61,
-                            "verifiedRetainedPeers": 42,
                             "reachablePeers": 9,
+                            "exhaustedCandidates": 51,
+                            "foreignPeers": 1,
+                            "verifiedUnavailablePeers": 33,
+                            "verifiedRetainedPeers": 42,
                             "newVerifiedPeers": 3
                         },
                         "activeRound": null
@@ -8767,7 +9119,10 @@ mod tests {
         // different true statements are never blurred.
         //
         // The list route is what separates the two readings of a 404, and it
-        // costs no request: the crawler refresh already asks it every 60s.
+        // costs no request: the roster refresh already asks it every 60s. The
+        // atlas used to be the one asking — it reads a census now and never
+        // touches the peer page, so the roster is the whole of that health
+        // signal and this test asks it the way the supervisor does.
         let (api_base, server) = spawn_renamed_peer_api().await;
         let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
         assert_eq!(
@@ -8786,13 +9141,30 @@ mod tests {
             PeerSightingLookup::unsighted(PeerSightingAbsence::NeverSighted)
         );
 
-        // One crawler refresh is all it takes to learn the route is gone.
+        // The atlas fails against this source too — its census route is gone
+        // by the same rename — and that failure must teach the dossier
+        // NOTHING. Only a reader of `network/peers` can separate the two
+        // readings of a point-lookup 404, so the flag has exactly one writer,
+        // and a peer asked after an atlas fault still gets the crawler's own
+        // verdict rather than a fault borrowed from a different route.
         let atlas_error = source
             .enrich_network_atlas(&context())
             .await
             .unwrap_err()
             .to_string();
         assert!(atlas_error.contains("HTTP 404"), "{atlas_error}");
+        assert_eq!(
+            source.enrich_peer(&unseen, &context()).await.unwrap(),
+            PeerSightingLookup::unsighted(PeerSightingAbsence::NeverSighted)
+        );
+
+        // One roster refresh is all it takes to learn the peer route is gone.
+        let roster_error = source
+            .enrich_network_roster(&context())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(roster_error.contains("HTTP 404"), "{roster_error}");
 
         // And now the same 404 is a fault about this build, not a verdict on
         // the node. Delete the health check in `enrich_peer` and this comes

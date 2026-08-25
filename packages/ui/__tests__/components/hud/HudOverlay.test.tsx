@@ -114,16 +114,17 @@ const networkAtlas: NetworkAtlasRecord = {
   updated_at_ms: Date.now(),
   crawl_round: 7,
   crawl_finished_at_s: 1_700_000_000,
-  verified_retained_peers: 1204,
   candidate_peers: 1290,
   last_round_reachable: 9,
+  foreign_peers: 1,
+  exhausted_candidates: 1280,
+  verified_unavailable_peers: 1195,
+  verified_retained_peers: 1204,
   new_verified_peers: 3,
-  sample_size: 3,
-  sample_reachable: 2,
-  sample_truncated: true,
-  median_rtt_ms: 18,
-  countries: [{ label: 'SG', count: 2 }, { label: 'US', count: 1 }],
-  versions: [{ label: '0.119.0', count: 2 }, { label: '0.118.0', count: 1 }],
+  indexed_peers: 1204,
+  countries: [{ label: 'SG', count: 800 }, { label: 'US', count: 404 }],
+  versions: [{ label: '0.119.0', count: 900 }, { label: '0.118.0', count: 304 }],
+  asns: [{ label: 'AS1 Example', count: 1200 }, { label: 'AS2 Example', count: 4 }],
 };
 const daoState: DaoStateRecord = {
   source: 'ckbadger',
@@ -505,8 +506,8 @@ describe('HudOverlay', () => {
 
     // The indexed rows sit in the same flow as the measured ones…
     expect(mesh.textContent).toContain('Head consensus');
-    expect(mesh.textContent).toContain('Known nodes');
-    expect(mesh.textContent).toContain('SAMPLE COUNTRIES · 3 NODES · BOUNDED');
+    expect(mesh.textContent).toContain('Named by the network');
+    expect(mesh.textContent).toContain('COUNTRIES · ALL 1,204 VERIFIED PEERS');
     // …under one panel title, with no second heading and no scope framing.
     expect(mesh.textContent).toContain('PEER MESH');
     expect(mesh.textContent).not.toContain('NETWORK ATLAS');

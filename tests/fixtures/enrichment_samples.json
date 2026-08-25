@@ -410,31 +410,173 @@
       "updated_at_ms": 1700000000006,
       "crawl_round": 7,
       "crawl_finished_at_s": 1700000000,
-      "verified_retained_peers": 57,
-      "candidate_peers": 133,
+      "candidate_peers": 136,
       "last_round_reachable": 57,
+      "foreign_peers": 0,
+      "exhausted_candidates": 79,
+      "verified_unavailable_peers": 0,
+      "verified_retained_peers": 57,
       "new_verified_peers": 0,
-      "sample_size": 3,
-      "sample_reachable": 3,
-      "sample_truncated": true,
-      "median_rtt_ms": 24,
+      "indexed_peers": 57,
       "countries": [
         {
+          "label": "US",
+          "count": 11
+        },
+        {
+          "label": "DE",
+          "count": 9
+        },
+        {
           "label": "SG",
+          "count": 8
+        },
+        {
+          "label": "HK",
+          "count": 6
+        },
+        {
+          "label": "CA",
+          "count": 4
+        },
+        {
+          "label": "AE",
           "count": 2
         },
         {
-          "label": "Unknown",
+          "label": "AU",
+          "count": 2
+        },
+        {
+          "label": "FR",
+          "count": 2
+        },
+        {
+          "label": "KR",
+          "count": 2
+        },
+        {
+          "label": "BR",
+          "count": 1
+        },
+        {
+          "label": "CL",
+          "count": 1
+        },
+        {
+          "label": "CN",
+          "count": 1
+        },
+        {
+          "label": "GB",
+          "count": 1
+        },
+        {
+          "label": "ID",
+          "count": 1
+        },
+        {
+          "label": "IN",
+          "count": 1
+        },
+        {
+          "label": "JP",
+          "count": 1
+        },
+        {
+          "label": "MO",
+          "count": 1
+        },
+        {
+          "label": "PL",
+          "count": 1
+        },
+        {
+          "label": "TW",
+          "count": 1
+        },
+        {
+          "label": "ZA",
           "count": 1
         }
       ],
       "versions": [
         {
-          "label": "0.119.0",
+          "label": "0.209.0 (d166e28 2026-07-29)",
+          "count": 36
+        },
+        {
+          "label": "0.207.0 (8f6cacf 2026-06-10)",
+          "count": 6
+        },
+        {
+          "label": "0.209.0 (7e31f75 2026-07-30)",
+          "count": 6
+        },
+        {
+          "label": "0.202.0 (d0a6c95 2025-06-11)",
+          "count": 4
+        },
+        {
+          "label": "0.205.0 (b75a785 2026-03-17)",
           "count": 2
         },
         {
-          "label": "0.118.0",
+          "label": "0.203.0 (88d1126 2025-10-22)",
+          "count": 1
+        },
+        {
+          "label": "0.204.0 (555140e 2025-12-15)",
+          "count": 1
+        },
+        {
+          "label": "0.5.3",
+          "count": 1
+        }
+      ],
+      "asns": [
+        {
+          "label": "AS16509 Amazon.com, Inc.",
+          "count": 29
+        },
+        {
+          "label": "AS14618 Amazon.com, Inc.",
+          "count": 5
+        },
+        {
+          "label": "AS16276 OVH SAS",
+          "count": 5
+        },
+        {
+          "label": "AS396982 Google LLC",
+          "count": 5
+        },
+        {
+          "label": "AS8075 Microsoft Corporation",
+          "count": 5
+        },
+        {
+          "label": "AS45102 Alibaba (US) Technology Co., Ltd.",
+          "count": 3
+        },
+        {
+          "label": "AS14061 DigitalOcean, LLC",
+          "count": 1
+        },
+        {
+          "label": "AS152918 Liberally Network LLC",
+          "count": 1
+        },
+        {
+          "label": "AS24940 Hetzner Online GmbH",
+          "count": 1
+        },
+        {
+          "label": "AS32475 Internap Holding LLC",
+          "count": 1
+        },
+        {
+          "label": "AS4808 China Unicom Beijing Province Network",
           "count": 1
         }
       ]
@@ -780,31 +922,173 @@
         "updated_at_ms": 1700000000006,
         "crawl_round": 7,
         "crawl_finished_at_s": 1700000000,
-        "verified_retained_peers": 57,
-        "candidate_peers": 133,
+        "candidate_peers": 136,
         "last_round_reachable": 57,
+        "foreign_peers": 0,
+        "exhausted_candidates": 79,
+        "verified_unavailable_peers": 0,
+        "verified_retained_peers": 57,
         "new_verified_peers": 0,
-        "sample_size": 3,
-        "sample_reachable": 3,
-        "sample_truncated": true,
-        "median_rtt_ms": 24,
+        "indexed_peers": 57,
         "countries": [
           {
+            "label": "US",
+            "count": 11
+          },
+          {
+            "label": "DE",
+            "count": 9
+          },
+          {
             "label": "SG",
+            "count": 8
+          },
+          {
+            "label": "HK",
+            "count": 6
+          },
+          {
+            "label": "CA",
+            "count": 4
+          },
+          {
+            "label": "AE",
             "count": 2
           },
           {
-            "label": "Unknown",
+            "label": "AU",
+            "count": 2
+          },
+          {
+            "label": "FR",
+            "count": 2
+          },
+          {
+            "label": "KR",
+            "count": 2
+          },
+          {
+            "label": "BR",
+            "count": 1
+          },
+          {
+            "label": "CL",
+            "count": 1
+          },
+          {
+            "label": "CN",
+            "count": 1
+          },
+          {
+            "label": "GB",
+            "count": 1
+          },
+          {
+            "label": "ID",
+            "count": 1
+          },
+          {
+            "label": "IN",
+            "count": 1
+          },
+          {
+            "label": "JP",
+            "count": 1
+          },
+          {
+            "label": "MO",
+            "count": 1
+          },
+          {
+            "label": "PL",
+            "count": 1
+          },
+          {
+            "label": "TW",
+            "count": 1
+          },
+          {
+            "label": "ZA",
             "count": 1
           }
         ],
         "versions": [
           {
-            "label": "0.119.0",
+            "label": "0.209.0 (d166e28 2026-07-29)",
+            "count": 36
+          },
+          {
+            "label": "0.207.0 (8f6cacf 2026-06-10)",
+            "count": 6
+          },
+          {
+            "label": "0.209.0 (7e31f75 2026-07-30)",
+            "count": 6
+          },
+          {
+            "label": "0.202.0 (d0a6c95 2025-06-11)",
+            "count": 4
+          },
+          {
+            "label": "0.205.0 (b75a785 2026-03-17)",
             "count": 2
           },
           {
-            "label": "0.118.0",
+            "label": "0.203.0 (88d1126 2025-10-22)",
+            "count": 1
+          },
+          {
+            "label": "0.204.0 (555140e 2025-12-15)",
+            "count": 1
+          },
+          {
+            "label": "0.5.3",
+            "count": 1
+          }
+        ],
+        "asns": [
+          {
+            "label": "AS16509 Amazon.com, Inc.",
+            "count": 29
+          },
+          {
+            "label": "AS14618 Amazon.com, Inc.",
+            "count": 5
+          },
+          {
+            "label": "AS16276 OVH SAS",
+            "count": 5
+          },
+          {
+            "label": "AS396982 Google LLC",
+            "count": 5
+          },
+          {
+            "label": "AS8075 Microsoft Corporation",
+            "count": 5
+          },
+          {
+            "label": "AS45102 Alibaba (US) Technology Co., Ltd.",
+            "count": 3
+          },
+          {
+            "label": "AS14061 DigitalOcean, LLC",
+            "count": 1
+          },
+          {
+            "label": "AS152918 Liberally Network LLC",
+            "count": 1
+          },
+          {
+            "label": "AS24940 Hetzner Online GmbH",
+            "count": 1
+          },
+          {
+            "label": "AS32475 Internap Holding LLC",
+            "count": 1
+          },
+          {
+            "label": "AS4808 China Unicom Beijing Province Network",
             "count": 1
           }
         ]

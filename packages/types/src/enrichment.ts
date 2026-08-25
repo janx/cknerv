@@ -347,33 +347,65 @@ export interface ScriptRegistryRecord {
   unresolved: number;
 }
 
-/** Bounded context from an optional network crawler.
+/** Whole-network context from an optional network crawler: what the last
+ * completed round reached, and what the set it holds is made of.
  *
- * Three of these counts carry the crawler's own field names. They used to be
- * `total_known`, `last_round_attempted` and `new_nodes`, and every one of
- * those quantities has been deleted at the source for blurring several
- * separate populations into one word. The replacements are not renames of a
- * number that stayed put: `verified_retained_peers` counts the peers the
- * crawler still holds a verification for, `candidate_peers` counts the peers
- * the round considered, and `new_verified_peers` counts the peers verified
- * for the first time in it. `last_round_reachable` keeps its own name because
- * the fact under it never moved. */
+ * Every count here carries the crawler's own field name. Three of them used to
+ * be `total_known`, `last_round_attempted` and `new_nodes`, and every one of
+ * those quantities was deleted at the source for blurring several separate
+ * populations into one word. The replacements are not renames of a number that
+ * stayed put: `verified_retained_peers` counts the peers the crawler still
+ * holds a verification for, `candidate_peers` counts the peers the round
+ * considered, and `new_verified_peers` counts the peers verified for the first
+ * time in it. `last_round_reachable` keeps its own name because the fact under
+ * it never moved.
+ *
+ * The four counts under `candidate_peers` are one round's outcome matrix read
+ * four ways, so they are bound by arithmetic rather than merely bounded:
+ * `last_round_reachable + exhausted_candidates + foreign_peers` is exactly
+ * `candidate_peers`, and `last_round_reachable + verified_unavailable_peers`
+ * is exactly `verified_retained_peers`. `verified_unavailable_peers` cuts
+ * ACROSS the first three rather than joining them — it is what is left
+ * verified out of the exhausted and foreign cohorts — so it is the one number
+ * here that must never be added to its neighbours.
+ *
+ * The buckets are a census, not a sample. They used to be folded out of one
+ * bounded 64-row page of peers and captioned for it; upstream computes them
+ * over every verified peer now, which is why `sample_size`,
+ * `sample_reachable` and `sample_truncated` are gone, why `median_rtt_ms` went
+ * with them — the only number left that a bounded page could have answered,
+ * and a reading of the crawler's own distance from the fleet rather than of
+ * the fleet — and why `asns` is here at all. */
 export interface NetworkAtlasRecord {
   source: string;
   as_of: ChainAnchor;
   updated_at_ms: number;
   crawl_round: number;
   crawl_finished_at_s: number;
-  verified_retained_peers: number;
   candidate_peers: number;
   last_round_reachable: number;
+  foreign_peers: number;
+  exhausted_candidates: number;
+  verified_unavailable_peers: number;
+  verified_retained_peers: number;
   new_verified_peers: number;
-  sample_size: number;
-  sample_reachable: number;
-  sample_truncated: boolean;
-  median_rtt_ms?: number;
+  /** The peers the crawler holds an index entry for right now, and the
+   * denominator every bucket below is counted against.
+   *
+   * It is upstream's `distributions.verifiedRetained` and it means the same
+   * words as `verified_retained_peers` on a DIFFERENT CLOCK: the crawler scans
+   * its node store when the request arrives, while the round reports what its
+   * outcome matrix added up to when it finished. They agree whenever nothing
+   * changed in between, and nothing promises that they must, so both are
+   * carried and neither is ever asserted against the other. The buckets belong
+   * to this one, and it is the number their caption states. */
+  indexed_peers: number;
   countries: NetworkAtlasBucket[];
   versions: NetworkAtlasBucket[];
+  /** The autonomous systems the verified set is hosted in — the axis that says
+   * whether half a network shares one operator, which is a fact no count of
+   * peers or countries can state. */
+  asns: NetworkAtlasBucket[];
 }
 
 /** One crawler-known node, as the scene may stage it.

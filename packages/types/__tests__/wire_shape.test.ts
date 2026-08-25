@@ -416,8 +416,25 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(sample.snapshot.activity_feed?.activities[1].participant_count).toBe(2);
     expect(sample.snapshot.transaction_horizon?.current_day).toBe(345);
     expect(sample.snapshot.transaction_horizon?.hourly_counts).toEqual([7, 9, 12]);
-    expect(sample.snapshot.network_atlas?.sample_size).toBe(3);
-    expect(sample.snapshot.network_atlas?.countries[0].label).toBe('SG');
+    // The atlas is asserted by its arithmetic rather than by its figures. The
+    // fixture is regenerated from a live crawl, so a literal here would pin a
+    // number the network is free to change overnight — while the relationships
+    // below are the contract itself, and are what a reader of the panel is
+    // being shown.
+    const atlas = sample.snapshot.network_atlas!;
+    // Three ways a completed candidate ends, and no fourth.
+    expect(atlas.last_round_reachable + atlas.exhausted_candidates + atlas.foreign_peers)
+      .toBe(atlas.candidate_peers);
+    // The cross-cut: reached this round, or held from an earlier one.
+    expect(atlas.last_round_reachable + atlas.verified_unavailable_peers)
+      .toBe(atlas.verified_retained_peers);
+    // Three histograms, one population — the census that replaced a 64-row
+    // sample, which is why every strip may be drawn as shares of one number.
+    for (const family of [atlas.countries, atlas.versions, atlas.asns]) {
+      expect(family.length).toBeGreaterThan(0);
+      expect(family.reduce((sum, bucket) => sum + bucket.count, 0)).toBe(atlas.indexed_peers);
+    }
+    expect(atlas.asns[0].label).toMatch(/^AS\d+ /);
     expect(sample.deltas.cell_upsert.type).toBe('cell_upsert');
     expect(sample.deltas.asset_ecosystem_replace.type).toBe('asset_ecosystem_replace');
     expect(sample.deltas.dao_state_replace.type).toBe('dao_state_replace');

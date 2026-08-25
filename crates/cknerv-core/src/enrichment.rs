@@ -686,7 +686,7 @@ pub struct TransactionHorizonRecord {
     pub daily_counts: Vec<u64>,
 }
 
-/// One display-safe label count derived from a bounded network-node sample.
+/// One display-safe label count over the crawler's whole verified set.
 /// Individual peer identities and addresses never cross this contract.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NetworkAtlasBucket {
@@ -694,21 +694,35 @@ pub struct NetworkAtlasBucket {
     pub count: u32,
 }
 
-/// Bounded context from an optional network crawler. The crawl summary can
-/// describe the source's whole known set, while countries, versions, and RTT
-/// are derived only from the explicitly limited latest-node sample.
+/// Whole-network context from an optional network crawler: what the last
+/// completed round reached, and what the set it holds is made of.
 ///
-/// Three of these counts carry the crawler's own field names. They used to be
-/// `total_known`, `last_round_attempted` and `new_nodes`, and every one of
-/// those quantities has been deleted at the source for blurring several
-/// separate populations into one word. The replacements are not renames of a
-/// number that stayed put: `verified_retained_peers` counts the peers the
-/// crawler still holds a verification for, `candidate_peers` counts the peers
-/// the round considered, and `new_verified_peers` counts the peers verified
-/// for the first time in it. They keep upstream's spelling precisely so this
-/// record cannot drift away from what its source means by them.
-/// `last_round_reachable` keeps its own name because the fact under it never
-/// moved.
+/// Every count here carries the crawler's own field name. Three of them used
+/// to be `total_known`, `last_round_attempted` and `new_nodes`, and every one
+/// of those quantities was deleted at the source for blurring several separate
+/// populations into one word. The replacements are not renames of a number
+/// that stayed put: `verified_retained_peers` counts the peers the crawler
+/// still holds a verification for, `candidate_peers` counts the peers the
+/// round considered, and `new_verified_peers` counts the peers verified for
+/// the first time in it. `last_round_reachable` keeps its own name because the
+/// fact under it never moved.
+///
+/// The four counts under `candidate_peers` are one round's outcome matrix read
+/// four ways, so they are bound by arithmetic rather than merely bounded:
+/// `last_round_reachable + exhausted_candidates + foreign_peers` is exactly
+/// `candidate_peers`, and `last_round_reachable + verified_unavailable_peers`
+/// is exactly `verified_retained_peers`. `verified_unavailable_peers` cuts
+/// ACROSS the first three rather than joining them — it is what is left
+/// verified out of the exhausted and foreign cohorts — so it is the one number
+/// here that must never be added to its neighbours.
+///
+/// The buckets are a census, not a sample. They used to be folded here out of
+/// one bounded 64-row page of peers and captioned for it; upstream computes
+/// them over every verified peer now, which is why `sample_size`,
+/// `sample_reachable` and `sample_truncated` are gone, why `median_rtt_ms`
+/// went with them — the only number left that a bounded page could have
+/// answered, and a reading of the crawler's own distance from the fleet rather
+/// than of the fleet — and why `asns` is here at all.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NetworkAtlasRecord {
     pub source: String,
@@ -716,19 +730,34 @@ pub struct NetworkAtlasRecord {
     pub updated_at_ms: u64,
     pub crawl_round: u64,
     pub crawl_finished_at_s: u64,
-    pub verified_retained_peers: u64,
     pub candidate_peers: u64,
     pub last_round_reachable: u64,
+    pub foreign_peers: u64,
+    pub exhausted_candidates: u64,
+    pub verified_unavailable_peers: u64,
+    pub verified_retained_peers: u64,
     pub new_verified_peers: u64,
-    pub sample_size: u32,
-    pub sample_reachable: u32,
-    pub sample_truncated: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub median_rtt_ms: Option<u32>,
+    /// The peers the crawler holds an index entry for right now, and the
+    /// denominator every bucket below is counted against.
+    ///
+    /// It is upstream's `distributions.verifiedRetained` and it means the same
+    /// words as `verified_retained_peers` on a DIFFERENT CLOCK: the crawler
+    /// scans its node store when the request arrives, while the round reports
+    /// what its outcome matrix added up to when it finished. They agree
+    /// whenever nothing changed in between, and nothing promises that they
+    /// must, so both are carried and neither is ever asserted against the
+    /// other. The buckets belong to this one, and it is the number their
+    /// caption states.
+    pub indexed_peers: u32,
     #[serde(default)]
     pub countries: Vec<NetworkAtlasBucket>,
     #[serde(default)]
     pub versions: Vec<NetworkAtlasBucket>,
+    /// The autonomous systems the verified set is hosted in — the axis that
+    /// says whether half a network shares one operator, which is a fact no
+    /// count of peers or countries can state.
+    #[serde(default)]
+    pub asns: Vec<NetworkAtlasBucket>,
 }
 
 /// One crawler-known node, as the scene may stage it.
@@ -1915,21 +1944,31 @@ mod tests {
             updated_at_ms: block,
             crawl_round: 7,
             crawl_finished_at_s: block,
-            verified_retained_peers: 42,
             candidate_peers: 12,
-            last_round_reachable: 9,
+            last_round_reachable: 8,
+            foreign_peers: 1,
+            exhausted_candidates: 3,
+            verified_unavailable_peers: 1,
+            verified_retained_peers: 9,
             new_verified_peers: 3,
-            sample_size: 2,
-            sample_reachable: 1,
-            sample_truncated: true,
-            median_rtt_ms: Some(24),
-            countries: vec![NetworkAtlasBucket {
-                label: "SG".into(),
-                count: 2,
-            }],
+            indexed_peers: 9,
+            countries: vec![
+                NetworkAtlasBucket {
+                    label: "SG".into(),
+                    count: 6,
+                },
+                NetworkAtlasBucket {
+                    label: "US".into(),
+                    count: 3,
+                },
+            ],
             versions: vec![NetworkAtlasBucket {
-                label: "0.119.0".into(),
-                count: 2,
+                label: "0.209.0".into(),
+                count: 9,
+            }],
+            asns: vec![NetworkAtlasBucket {
+                label: "AS16509 Amazon.com, Inc.".into(),
+                count: 9,
             }],
         }
     }

@@ -121,9 +121,11 @@ most 24/14 non-negative counts and which contains no source bucket labels. Its
 cached summary was generated at that exact block. This summary refreshes
 independently and must not change canonical chain state.
 If ckbadger's network crawler is enabled and has completed a round, the snapshot
-should additionally gain `network_atlas`. Its `sample_size` must be at most 64;
-country/version bucket totals must each equal that sample size; and no peer ID
-or address should appear. With the crawler disabled, `network_atlas` stays
+should additionally gain `network_atlas`. Its country, version and ASN bucket
+totals must each equal `indexed_peers`; its round counts must close both ways
+(`last_round_reachable + exhausted_candidates + foreign_peers` equals
+`candidate_peers`, and `last_round_reachable + verified_unavailable_peers`
+equals `verified_retained_peers`); and no peer ID or address should appear. With the crawler disabled, `network_atlas` stays
 absent while all other configured enrichment capabilities continue normally.
 The same crawler also supplies `network_roster`, the atlas's twin and the only
 streamed record that names peers: at most 256 entries, each carrying a base58
@@ -274,7 +276,10 @@ With a local ckbadger service configured:
 - [ ] The semantics snapshot gains anchored `transaction_horizon` with at most
       24 hourly / 14 daily count buckets and no localized source labels
 - [ ] With ckbadger's crawler enabled, the semantics snapshot gains a
-      `network_atlas` whose sample is at most 64 and contains no peer identities
+      `network_atlas` whose three histograms each total `indexed_peers`, whose
+      round counts close both ways, and which contains no peer identities
+- [ ] `PEER MESH` shows all five reach-ladder rungs including the ones reading
+      `0`, and no strip captions itself as a sample
 - [ ] It also gains a `network_roster` of at most 256 entries at the atlas's
       round, every `node_id` base58 and the list ordered by it; a refresh at the
       same `crawl_round` publishes no second roster delta
@@ -312,9 +317,10 @@ With a local ckbadger service configured:
 - [ ] `CELL MESH` replaces its retained-capacity detail with a labeled
       `INDEXED CHAIN CAPACITY` bar and bounded top-asset list, without showing
       duplicate capacity views
-- [ ] `PEER MESH` appends known nodes, median RTT, and sample-size-labeled
-      country/version strips as plain rows of the panel — no `NETWORK ATLAS`
-      heading, provenance on hover — while retaining direct peer count and head
+- [ ] `PEER MESH` appends the five-rung reach ladder and the country, client
+      version and autonomous-system strips as plain rows of the panel — no
+      `NETWORK ATLAS` heading, no strip captioned as a sample, provenance and
+      each rung's meaning on hover — while retaining direct peer count and head
       consensus and adding no crawler scene objects
 - [ ] A same-height block hash mismatch shows `INCOMPATIBLE`; chain/cells keep moving
 - [ ] A same-height replacement that occurs after an enrichment payload is

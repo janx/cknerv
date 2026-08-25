@@ -528,29 +528,61 @@ disappears in CKB-only mode and dims after three missed refreshes.
 ### Network Atlas
 
 With `network_atlas`, cknerv checks the crawler summary at most once every 60
-seconds. A usable crawl triggers exactly one
-`network/peers?state=reachable&limit=64` request. `network/peers` answers
-candidates and verified peers from one route, so the scope is what keeps this
-sample to peers the crawler actually reached rather than peers it merely heard
-named. The adapter validates the counters and the newest-advertised-first
-order, then reduces the page to country and version buckets, reachable count,
-and median RTT. Peer IDs and addresses never enter the shared wire contract.
+seconds. A usable crawl triggers exactly one `network/distributions` request.
+The atlas asks for no peers at all: upstream folds versions, countries and ASNs
+over its whole verified set now, so cknerv no longer draws a 64-row sample and
+no longer has to caption one. The adapter validates the round's counters and
+each histogram against the population it claims to partition. Peer IDs and
+addresses never enter the shared wire contract.
+
+The round's five peer counts are one disjoint outcome matrix read five ways,
+not five independent measurements, and the adapter checks them as equalities:
+`reachablePeers + exhaustedCandidates + foreignPeers` is exactly
+`candidatePeers`, and `reachablePeers + verifiedUnavailablePeers` is exactly
+`verifiedRetainedPeers`. `verifiedUnavailablePeers` cuts across the exhausted
+and foreign cohorts rather than joining them, so it is never added to them.
+`distributions.verifiedRetained` is carried separately as `indexed_peers`: it
+means the same words as the round's count on a different clock — a node-store
+scan as the request arrived, against what the round's matrix added up to when
+it finished — so the two are never asserted against each other.
 
 `PEER MESH` always keeps the local CKB node's directly measured peer count and
 head consensus as primary truth, plus a catch-up row that appears only while our
 own tip trails the best known head. Per-peer client version and RTT belong to
 the floating PEER and NODE cards, never to this rail. A valid atlas record adds
-its verified-peer count, median RTT, and country and client-version strips as more
-rows of that same panel rather than a titled sub-section — one network read at
-two distances, near rows measured over our own links and far rows indexed by the
-crawl. The strip labels state the sample size and `BOUNDED` when the crawl
-sample was capped, the shared `Crawler atlas · round N · as of #block`
-provenance waits on hover instead of spending a line, and crawler run counters
-stay in ckbadger's own operational view. Enrichment is strictly additive: when
-the crawler is unconfigured, empty, disabled, or canonically unusable those rows
-are simply absent and the panel is its measured rows alone. It creates no scene
-nodes or edges, and staleness dims the indexed rows and adds a single
-`ATLAS STALE` line after three missed minute refreshes.
+a five-rung reach ladder — named by the network, answered on this chain,
+answered on another chain, no answer this round, verified but not reached — and
+country, client-version and autonomous-system strips as more rows of that same
+panel rather than a titled sub-section: one network read at two distances, near
+rows measured over our own links and far rows indexed by the crawl. **A rung
+that resolves to zero stays on screen**: zero is a result, and a row that
+vanished on it would make a healthy crawl and a broken one look identical. Each
+rung says what it counts on hover, beside the shared
+`Crawler atlas · round N · as of #block` provenance, which is also where a
+strip's whole bucket list waits; crawler run counters stay in ckbadger's own
+operational view. Enrichment is strictly additive: when the crawler is
+unconfigured, empty, disabled, or canonically unusable those rows are simply
+absent and the panel is its measured rows alone. It creates no scene nodes or
+edges, and staleness dims the indexed rows and adds a single `ATLAS STALE` line
+after three missed minute refreshes.
+
+The median crawler RTT left with the sample it was drawn from. It measured the
+crawler's own distance from the fleet rather than anything about the fleet, and
+it was the last number here that a bounded page could answer — keeping it would
+have put a 64-row median inside a block of census figures with no way for a
+reader to tell which was which. The crawler's per-peer dial still appears on the
+SIGHTED node card, where it is a statement about one peer it dialed.
+
+`network/protocols` counts are answered by the same route and deliberately
+unread: upstream counts one row per protocol per peer, so the buckets add up to
+a multiple of the population rather than to it, and a proportional strip drawn
+from them would state a denominator they do not have.
+
+The bounded `network/peers?state=reachable&limit=256` page now has one reader,
+the roster, and it is also the only writer of the peer-route health the DOSSIER
+consults. The newest-advertised-first ordering invariant moved there with it:
+which peers land inside a bounded slice is decided entirely by the order they
+arrive in, and the roster is the only reader still taking a slice.
 
 ### Peer Sighting
 
