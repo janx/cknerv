@@ -9,9 +9,9 @@ use cknerv_core::{
     ActivityFeedItem, ActivityFeedRecord, AssetEcosystemCategory, AssetEcosystemRecord, AssetKind,
     Cell, CellDelta, CellGalaxy, CellSemanticRecord, ChainAnchor, EnrichmentSourceState,
     EnrichmentSourceStatus, GalaxyCellCandidate, GalaxyCompositionCandidates,
-    GalaxyCompositionRecord, GalaxyCompositionTopUp, Mutation, OutPoint, PeerSightingAbsence,
-    PeerSightingLookup, PeerSightingRecord, Projection, ReplayPhase, SemanticsProjection,
-    TransactionSemanticRecord,
+    GalaxyCompositionRecord, GalaxyCompositionTopUp, Mutation, OutPoint, PeerAdvertisedEvidence,
+    PeerProbeResult, PeerSightingAbsence, PeerSightingLookup, PeerSightingRecord, Projection,
+    ReplayPhase, SemanticsProjection, TransactionSemanticRecord,
 };
 use cknerv_server::{
     Adapter, CanonicalContext, EnrichmentSource, GalaxyCompositionHydrator, ServerBuilder,
@@ -22,6 +22,9 @@ use tokio::sync::{mpsc, watch};
 /// A live `get_peers` id, base58 as CKB prints it. The fixture source knows
 /// this one node and nothing else.
 const SIGHTED_NODE_ID: &str = "QmagxSv7GNwKXQE7mi1iDjFHghjUpbqjBgqSot7PmMJqHA";
+/// A node the network names and nobody outside could get an identify out of.
+/// The third answer this route has to keep apart from the other two.
+const ADVERTISED_NODE_ID: &str = "QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco";
 
 struct CompletedBootReplayAdapter;
 
@@ -120,9 +123,10 @@ impl EnrichmentSource for TransactionFixtureSource {
         }))
     }
 
-    /// One node is sighted and every other one honestly is not. Both are
-    /// answers, and the route has to keep them apart without calling either
-    /// a failure.
+    /// One node is sighted, one is named by the network and never answered,
+    /// and every other one honestly is neither. All three are answers, and
+    /// the route has to keep them apart without calling any of them a
+    /// failure.
     async fn enrich_peer(
         &self,
         node_id: &str,
@@ -133,6 +137,15 @@ impl EnrichmentSource for TransactionFixtureSource {
                 PeerSightingAbsence::NeverSighted,
             ));
         };
+        if node_id == ADVERTISED_NODE_ID {
+            return Ok(PeerSightingLookup::advertised_unverified(
+                PeerAdvertisedEvidence {
+                    last_advertised_at_ms: 1_700_000_000_000,
+                    furthest_result: Some(PeerProbeResult::DialRequestFailed),
+                    consecutive_exhausted_rounds: 3,
+                },
+            ));
+        }
         if node_id != SIGHTED_NODE_ID {
             return Ok(PeerSightingLookup::unsighted(
                 PeerSightingAbsence::NeverSighted,
@@ -155,7 +168,7 @@ impl EnrichmentSource for TransactionFixtureSource {
             last_reachable_at_ms: Some(1_699_999_000_000),
             reachable: true,
             rtt_ms: Some(41),
-            known_peers_count: 45,
+            known_peers_count: None,
         }))
     }
 
@@ -760,7 +773,12 @@ async fn peer_sighting_route_separates_a_sighting_from_a_silence() {
     assert_eq!(body["state"], "sighted");
     assert_eq!(body["sighting"]["node_id"], SIGHTED_NODE_ID);
     assert_eq!(body["sighting"]["last_seen_ms"], 1_700_000_000_000_u64);
-    assert_eq!(body["sighting"]["known_peers_count"], 45);
+    // The outbound peer count upstream deleted leaves no hole and no zero:
+    // the slot is simply not on the wire, and the CROWD row stands down.
+    assert!(
+        body["sighting"].get("known_peers_count").is_none(),
+        "body: {body}"
+    );
 
     // A node the crawler never saw is a 200 that says so: the plate has
     // something true to print, and a 404 would have thrown it away.
@@ -771,6 +789,28 @@ async fn peer_sighting_route_separates_a_sighting_from_a_silence() {
     let body: serde_json::Value = unsighted.json().await.unwrap();
     assert_eq!(body["state"], "unsighted");
     assert_eq!(body["reason"], "never_sighted");
+    assert!(body.get("sighting").is_none(), "body: {body}");
+    assert!(body.get("advertised").is_none(), "body: {body}");
+
+    // And a node the network names that never answered is a third answer
+    // again — an absence, but one with the crawler's own evidence under it.
+    // Collapsing it into the line above would tell a pilot nobody has ever
+    // heard of a peer whose addresses the crawler is dialing every round.
+    let advertised = reqwest::get(format!(
+        "http://{addr}/api/enrichment/peers/{ADVERTISED_NODE_ID}"
+    ))
+    .await
+    .expect("peer enrichment succeeds");
+    assert_eq!(advertised.status(), 200);
+    let body: serde_json::Value = advertised.json().await.unwrap();
+    assert_eq!(body["state"], "unsighted");
+    assert_eq!(body["reason"], "advertised_unverified");
+    assert_eq!(body["advertised"]["furthest_result"], "dial_request_failed");
+    assert_eq!(body["advertised"]["consecutive_exhausted_rounds"], 3);
+    assert_eq!(
+        body["advertised"]["last_advertised_at_ms"],
+        1_700_000_000_000_u64
+    );
     assert!(body.get("sighting").is_none(), "body: {body}");
 
     // The lookup describes a network node, not a chain object: nothing of it

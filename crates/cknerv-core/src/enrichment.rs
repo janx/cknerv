@@ -817,7 +817,81 @@ pub struct PeerSightingRecord {
     pub reachable: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rtt_ms: Option<u32>,
-    pub known_peers_count: u32,
+    /// How many peers this node holds in its own address book — the OUTBOUND
+    /// direction, and the one count no source can currently answer.
+    ///
+    /// ckbadger deleted `knownPeers` from its peer route. What replaced it is
+    /// `advertisers[]`, the peers that named THIS node: the same relationship
+    /// read from the other end. Filling this slot from that list would print
+    /// the sentence backwards, so it is left empty until both directions can
+    /// be labelled for what they are, and the CROWD row stands down while it
+    /// is. Absent means "nobody can say", never "zero".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub known_peers_count: Option<u32>,
+}
+
+/// How far one of the crawler's dials got, in upstream's own vocabulary.
+///
+/// An ORDINAL axis rather than a set of labels: each name is strictly further
+/// through the handshake than the one before it, from a dial that never
+/// opened to a peer that identified itself on this chain. That is what makes
+/// "the furthest any of its addresses got" a meaningful answer to "why is
+/// this peer not verified" — and it is why the two middle rungs must not be
+/// collapsed. `noAuthenticatedSessionBeforeDeadline` says nothing answered on
+/// the wire; `authenticatedSessionWithoutIdentifyBeforeDeadline` says
+/// something answered, completed a secure handshake, and then never said who
+/// it was. To an operator those are different problems with different fixes.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum PeerProbeResult {
+    /// The crawler named a result this build has no word for. Ranked lowest
+    /// deliberately: any result this build CAN name is a better answer than
+    /// one it cannot, and this only surfaces when every observation on the
+    /// peer was unreadable.
+    Unknown,
+    /// The dial never opened — no route, refused, or malformed address.
+    DialRequestFailed,
+    /// Nothing completed a secure handshake before the round gave up.
+    NoAuthenticatedSessionBeforeDeadline,
+    /// A secure session opened and the peer never identified itself.
+    AuthenticatedSessionWithoutIdentifyBeforeDeadline,
+    /// The peer identified itself in a shape the crawler could not read.
+    MalformedIdentify,
+    /// The peer identified itself, on another chain.
+    ForeignNetwork,
+    /// The peer identified itself, on this chain. A peer whose furthest probe
+    /// is this one normally has a verified record, so seeing it beside an
+    /// absence means upstream held an identify it did not keep.
+    SameNetworkIdentified,
+}
+
+/// What the crawler holds about a peer it has never verified.
+///
+/// The crawler's peer set is a gradient of evidence, and this is the rung
+/// below a sighting: other peers advertised addresses for this node, the
+/// crawler dialed them, and no dial ended in an identify it could keep. It is
+/// an ordinary state rather than an edge — a node behind NAT dials out and
+/// cannot be dialed back, so cknerv can hold a live link to a peer the
+/// crawler will never verify.
+///
+/// Every field here is evidence the crawler actually has. There is no
+/// `country`, no `client_version` and no `rtt_ms`, because upstream refuses
+/// to fabricate metadata for a peer it never reached, and neither does this.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PeerAdvertisedEvidence {
+    /// When the network last named this peer to the crawler. The report's own
+    /// clock: an unverified peer has no sighting to be stamped by, and an
+    /// undated statement about the network is the one thing the DOSSIER never
+    /// prints.
+    pub last_advertised_at_ms: u64,
+    /// The furthest any of this peer's addresses got in the last completed
+    /// round. Absent when no round has completed with this peer in it — which
+    /// is a different statement again: nobody has tried yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub furthest_result: Option<PeerProbeResult>,
+    /// Completed rounds in a row that ended with no verification. Zero for a
+    /// peer that has only just started failing.
+    pub consecutive_exhausted_rounds: u32,
 }
 
 /// Why a peer lookup came back without a sighting.
@@ -833,10 +907,17 @@ pub enum PeerSightingAbsence {
     /// The id the local node reports for this peer cannot be turned into the
     /// key the source is indexed by, so nothing was asked.
     UnreadableNodeId,
-    /// The source answered, and it has never seen this node from outside.
-    /// A source running with its crawler switched off looks the same from
-    /// here, and means the same thing to a reader: no outside observation.
+    /// The source answered, and it holds nothing at all under this id — not
+    /// a sighting, and not even an address somebody advertised. Under the
+    /// route this used to be read from, it meant only "no verified record";
+    /// it is now the stronger statement, because the same route answers for
+    /// every peer anyone has merely named.
     NeverSighted,
+    /// The source holds addresses for this node that other peers advertised,
+    /// and no verification of it. The network names this peer; nobody outside
+    /// could get an identify out of it. [`PeerAdvertisedEvidence`] carries the
+    /// crawler's own word for how far the dials got.
+    AdvertisedUnverified,
 }
 
 /// The result of one lazy per-peer crawler lookup.
@@ -848,13 +929,41 @@ pub enum PeerSightingAbsence {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum PeerSightingLookup {
-    Sighted { sighting: Box<PeerSightingRecord> },
-    Unsighted { reason: PeerSightingAbsence },
+    Sighted {
+        sighting: Box<PeerSightingRecord>,
+    },
+    Unsighted {
+        reason: PeerSightingAbsence,
+        /// What the crawler holds about a peer it never verified. Present
+        /// only with [`PeerSightingAbsence::AdvertisedUnverified`], which is
+        /// the one absence that has evidence behind it.
+        ///
+        /// This rides beside the reason rather than becoming a third lookup
+        /// state because it is not a sighting and must never be read as one:
+        /// none of a sighting's fields — where the node is, what it runs, how
+        /// long the network has carried it — exists for a peer nobody
+        /// authenticated, and a shape that could be mistaken for a record is
+        /// a shape somebody will eventually draw a record's rows from.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        advertised: Option<PeerAdvertisedEvidence>,
+    },
 }
 
 impl PeerSightingLookup {
     pub fn unsighted(reason: PeerSightingAbsence) -> Self {
-        Self::Unsighted { reason }
+        Self::Unsighted {
+            reason,
+            advertised: None,
+        }
+    }
+
+    /// The absence that carries evidence: the network names this peer, and
+    /// the crawler never got an identify out of it.
+    pub fn advertised_unverified(evidence: PeerAdvertisedEvidence) -> Self {
+        Self::Unsighted {
+            reason: PeerSightingAbsence::AdvertisedUnverified,
+            advertised: Some(evidence),
+        }
     }
 
     pub fn sighted(record: PeerSightingRecord) -> Self {

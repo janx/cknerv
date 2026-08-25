@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -14,26 +15,27 @@ use cknerv_core::{
     CommonKnowledgeBreakdown, CompositionDemand, DaoStateRecord, EnrichmentSourceState,
     EnrichmentSourceStatus, ForkWatchDeepFork, ForkWatchEventKind, ForkWatchRecord, ForkWatchReorg,
     GalaxyCompositionRecord, GalaxyCompositionTopUp, HashType, NetworkAtlasBucket,
-    NetworkAtlasRecord, NetworkRosterRecord, OutPoint, PeerSightingAbsence, PeerSightingLookup,
-    PeerSightingRecord, ProtocolEra, ProtocolEraRecord, RosterNode, ScriptId, ScriptNameRecord,
-    ScriptRegistryRecord, SemanticAsset, SemanticAttribute, SemanticCellConsumption,
-    SemanticCellContent, SemanticContentDecode, SemanticContentGuess, SemanticContentSegment,
-    SemanticFacet, SemanticScript, TransactionHorizonRecord, TransactionParticipantSemantic,
-    TransactionSemanticRecord, DATA_HEX_TRUNCATION_MARKER, MAX_SCRIPT_REGISTRY_ENTRIES,
+    NetworkAtlasRecord, NetworkRosterRecord, OutPoint, PeerAdvertisedEvidence, PeerProbeResult,
+    PeerSightingAbsence, PeerSightingLookup, PeerSightingRecord, ProtocolEra, ProtocolEraRecord,
+    RosterNode, ScriptId, ScriptNameRecord, ScriptRegistryRecord, SemanticAsset, SemanticAttribute,
+    SemanticCellConsumption, SemanticCellContent, SemanticContentDecode, SemanticContentGuess,
+    SemanticContentSegment, SemanticFacet, SemanticScript, TransactionHorizonRecord,
+    TransactionParticipantSemantic, TransactionSemanticRecord, DATA_HEX_TRUNCATION_MARKER,
+    MAX_SCRIPT_REGISTRY_ENTRIES,
 };
 use cknerv_server::{CanonicalContext, EnrichmentSource, GalaxyCompositionHydrator};
 
 use crate::dto::{
-    AssetEcosystemResponse, BlockResponse, CellDataAnalysis, CellDetailResponse,
-    ClusterDetailResponse, CollectionCompositionDto, CommonKnowledgeSizeBreakdown, DaoInfo,
-    DaoStatisticsResponse, HardforkEventResponse, HardforkTimelineResponse, LatestActivityResponse,
-    LiveCellSummaryResponse, LookupScriptsRequest, NetworkCrawlerSummaryResponse,
-    NetworkNodeDetailResponse, NetworkPeersPageResponse, NetworkStats,
-    NftCollectionDetailResponse, PeerDisplayState, PeerSummaryResponse, RecentReorgResponse,
-    ReorgEventResponse, ScriptCatalogueResponse, ScriptFamilyResponse, ScriptLookupInfo,
-    ScriptLookupResponse, ScriptResponse, SporeItemResponse, TokenResponse,
-    TransactionDetailResponse, TransactionLifecycleResponse, TransactionStatsPoint,
-    TransactionStatsResponse,
+    AssetEcosystemResponse, BlockResponse, CandidateEvidenceResponse, CellDataAnalysis,
+    CellDetailResponse, ClusterDetailResponse, CollectionCompositionDto,
+    CommonKnowledgeSizeBreakdown, DaoInfo, DaoStatisticsResponse, HardforkEventResponse,
+    HardforkTimelineResponse, LatestActivityResponse, LiveCellSummaryResponse,
+    LookupScriptsRequest, NetworkCrawlerSummaryResponse, NetworkPeersPageResponse, NetworkStats,
+    NftCollectionDetailResponse, PeerDetailResponse, PeerDisplayState, PeerProbeResultResponse,
+    PeerSummaryResponse, RecentReorgResponse, ReorgEventResponse, ScriptCatalogueResponse,
+    ScriptFamilyResponse, ScriptLookupInfo, ScriptLookupResponse, ScriptResponse,
+    SporeItemResponse, TokenResponse, TransactionDetailResponse, TransactionLifecycleResponse,
+    TransactionStatsPoint, TransactionStatsResponse, VerifiedPeerResponse,
 };
 use crate::galaxy_composition::{
     discover as discover_galaxy_composition, identity_families as galaxy_identity_families,
@@ -84,6 +86,25 @@ const MAX_FORK_WATCH_WINDOW_SECONDS: u32 = 31 * 24 * 60 * 60;
 const MAX_PROTOCOL_ERAS: usize = 16;
 const MAX_PROTOCOL_LABEL_CHARS: usize = 64;
 const NETWORK_ATLAS_LIMIT: usize = 64;
+/// What this source last learned about whether `network/peers` answers.
+///
+/// Written by the one reader that can tell — the bounded page, which upstream
+/// answers with `200` and an empty `items` even for a crawler that knows
+/// nobody, so a non-success there is never "no peers" and always "not this
+/// route". The per-peer dossier lookup only READS it, because its own `404`
+/// is ambiguous by construction: it is the same answer for "the crawler holds
+/// nothing under this id" and "this build is asking a route that no longer
+/// exists", and only the list can separate them.
+///
+/// `UNOBSERVED` is the window before the first crawler refresh of a process.
+/// It is deliberately read as "no reason to doubt": refusing to answer until
+/// the 60s cadence has run once would trade a false statement about a peer
+/// for a false alarm on every card opened in the first minute, and the
+/// capability that gates this dossier is announced beside the two that drive
+/// that refresh, so the window closes on its own.
+const PEERS_ROUTE_UNOBSERVED: u8 = 0;
+const PEERS_ROUTE_ANSWERING: u8 = 1;
+const PEERS_ROUTE_FAULTING: u8 = 2;
 /// How many crawler-known nodes one roster may name. The scene stages every
 /// entry it is given, so this is a stage budget before it is a wire budget:
 /// it sits just above the inferred cloud's own population, which is what
@@ -195,6 +216,11 @@ pub struct CkbadgerEnrichmentSource {
     /// is the one piece of source state that must survive between calls.
     /// Contention is nil: one supervisor task drives it.
     candidate_tail: tokio::sync::Mutex<CandidateTail>,
+    /// One of the `PEERS_ROUTE_*` values: whether the crawler's peer list
+    /// answered the last time it was asked. Shared so the per-peer dossier
+    /// can tell a peer the crawler has never heard of from a route this build
+    /// no longer knows the name of, without spending a request to find out.
+    peers_route: AtomicU8,
 }
 
 impl CkbadgerEnrichmentSource {
@@ -215,6 +241,7 @@ impl CkbadgerEnrichmentSource {
             galaxy_hydrator: None,
             galaxy_composition_target: 0,
             candidate_tail: tokio::sync::Mutex::new(CandidateTail::default()),
+            peers_route: AtomicU8::new(PEERS_ROUTE_UNOBSERVED),
         })
     }
 
@@ -386,18 +413,27 @@ impl CkbadgerEnrichmentSource {
     /// has, that nobody is crawling. That is how a rename cost the whole
     /// colony twice: silently, and while looking like a healthy report of
     /// nothing.
+    ///
+    /// It is also the only writer of [`CkbadgerEnrichmentSource::peers_route`],
+    /// which is what lets the per-peer dossier refuse to turn its own 404 into
+    /// a fact about a peer. The flag records whether the route ANSWERED, not
+    /// whether the answer could be read: a page that arrives in a shape this
+    /// build cannot decode still proves the route is there, so the mark goes
+    /// down before the decode.
     async fn read_reachable_peers(&self, limit: usize) -> anyhow::Result<NetworkPeersPageResponse> {
         let mut peers_url = self.endpoint("network/peers")?;
         peers_url
             .query_pairs_mut()
             .append_pair("state", "reachable")
             .append_pair("limit", &limit.to_string());
-        let response = self
-            .client
-            .get(peers_url)
-            .send()
-            .await
-            .context("fetch ckbadger bounded network peers")?;
+        let response = match self.client.get(peers_url).send().await {
+            Ok(response) => response,
+            Err(error) => {
+                self.note_peers_route(false);
+                return Err(error).context("fetch ckbadger bounded network peers");
+            }
+        };
+        self.note_peers_route(response.status().is_success());
         if !response.status().is_success() {
             return Err(anyhow!(
                 "ckbadger bounded network peers returned HTTP {}",
@@ -408,6 +444,26 @@ impl CkbadgerEnrichmentSource {
             .json()
             .await
             .context("decode ckbadger bounded network peers")
+    }
+
+    /// Record what the peer list route just did. See the `PEERS_ROUTE_*`
+    /// constants for why only the list route may write this.
+    fn note_peers_route(&self, answering: bool) {
+        self.peers_route.store(
+            if answering {
+                PEERS_ROUTE_ANSWERING
+            } else {
+                PEERS_ROUTE_FAULTING
+            },
+            Ordering::Relaxed,
+        );
+    }
+
+    /// Whether the last look at the peer list route found it broken. Only a
+    /// positive answer means anything: an unobserved route is read as one
+    /// there is no reason to doubt.
+    fn peers_route_is_faulting(&self) -> bool {
+        self.peers_route.load(Ordering::Relaxed) == PEERS_ROUTE_FAULTING
     }
 
     async fn transaction_lifecycle(&self, tx_hash: &str) -> Option<TransactionLifecycleResponse> {
@@ -1623,34 +1679,51 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
             ));
         };
         let anchor = self.current_anchor(context)?;
-        let url = self.endpoint(&format!("network/nodes/{peer_hex}"))?;
+        let url = self.endpoint(&format!("network/peers/{peer_hex}"))?;
         let response = self
             .client
             .get(url)
             .send()
             .await
-            .context("fetch ckbadger network node detail")?;
+            .context("fetch ckbadger peer detail")?;
         if response.status() == StatusCode::NOT_FOUND {
-            // Either the crawler has never sighted this node, or this source
-            // runs with its crawler switched off. A reader learns the same
-            // thing from both: nobody has seen this node from outside.
+            // A 404 is two different answers wearing one status, and which
+            // one it is depends on something this request cannot see. If the
+            // peer list route is not answering either, the whole peer API is
+            // gone — renamed, most likely, which is how this exact line came
+            // to print `NEVER SEEN FROM OUTSIDE` under every peer on the
+            // dashboard while the crawler sat there healthy. That is a fault
+            // about cknerv, not a fact about the node, and the plate has a
+            // voice for faults.
+            if self.peers_route_is_faulting() {
+                return Err(anyhow!(
+                    "ckbadger peer detail answered HTTP 404 while its peer list route is not \
+                     answering: this is a fault in the peer API, not a report about the node"
+                ));
+            }
+            // The route is there and holds nothing under this id — not a
+            // verification, and not even an address somebody advertised.
+            // Under the old route this was the weaker "no verified record";
+            // the route it now asks answers for every peer anyone has named,
+            // so a miss here means the network has never named this node
+            // where this crawler could hear it.
             return Ok(PeerSightingLookup::unsighted(
                 PeerSightingAbsence::NeverSighted,
             ));
         }
         if !response.status().is_success() {
             return Err(anyhow!(
-                "ckbadger network node detail returned HTTP {}",
+                "ckbadger peer detail returned HTTP {}",
                 response.status()
             ));
         }
-        let detail: NetworkNodeDetailResponse = response
+        let detail: PeerDetailResponse = response
             .json()
             .await
-            .context("decode ckbadger network node detail")?;
-        let record = map_peer_sighting(node_id, &peer_hex, detail, anchor.clone())?;
+            .context("decode ckbadger peer detail")?;
+        let lookup = map_peer_lookup(node_id, &peer_hex, detail, anchor.clone())?;
         self.revalidate_anchor(&anchor, "peer sighting").await?;
-        Ok(PeerSightingLookup::sighted(record))
+        Ok(lookup)
     }
 
     async fn enrich_script_registry(
@@ -2708,38 +2781,71 @@ fn peer_hex_to_id(peer_hex: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-fn map_peer_sighting(
+/// One peer dossier, turned into whichever of the two true statements it is.
+///
+/// The route answers a candidate — everything anyone advertised about a peer
+/// — with the crawler's verified observation nested inside it, and that inner
+/// record is `null` for every peer the crawler could not authenticate. The
+/// split here is exactly that field: a peer with a verification is a
+/// sighting, and a peer without one is not a decode failure, not an empty
+/// sighting, and not "never seen from outside" — it is a peer the network
+/// names that nobody outside could get an identify out of, which is its own
+/// statement with its own evidence.
+fn map_peer_lookup(
     node_id: &str,
     peer_hex: &str,
-    detail: NetworkNodeDetailResponse,
+    detail: PeerDetailResponse,
     anchor: ChainAnchor,
-) -> anyhow::Result<PeerSightingRecord> {
+) -> anyhow::Result<PeerSightingLookup> {
     validate_network_peer_id(&detail.peer_id)?;
     if !detail.peer_id.eq_ignore_ascii_case(peer_hex) {
         return Err(anyhow!("ckbadger returned a different network node"));
     }
-    let first_seen_ms = sighting_clock_ms(detail.first_seen, "network node firstSeen")?;
-    let last_seen_ms = sighting_clock_ms(detail.last_seen, "network node lastSeen")?;
+    let Some(verified) = detail.verified else {
+        return Ok(PeerSightingLookup::advertised_unverified(
+            map_advertised_evidence(detail.last_advertised_at, detail.last_completed.as_ref())?,
+        ));
+    };
+    // `reachable` on this record has always meant "the crawler got an
+    // identify out of it in the round that just finished", which is precisely
+    // what upstream now calls the `reachable` display state. A peer it holds
+    // a verification for but did not reach this round keeps reading as the
+    // dark half of the sighted tier, exactly as it did.
+    let reachable = detail.display_state == PeerDisplayState::Reachable;
+    map_peer_sighting(node_id, verified, reachable, anchor).map(PeerSightingLookup::sighted)
+}
+
+fn map_peer_sighting(
+    node_id: &str,
+    verified: VerifiedPeerResponse,
+    reachable: bool,
+    anchor: ChainAnchor,
+) -> anyhow::Result<PeerSightingRecord> {
+    let first_seen_ms = sighting_clock_ms(verified.first_seen, "peer verified firstSeen")?;
+    let last_seen_ms = sighting_clock_ms(verified.last_seen, "peer verified lastSeen")?;
     if last_seen_ms < first_seen_ms {
         return Err(anyhow!(
-            "ckbadger network node was last seen before it was first seen"
+            "ckbadger peer was last seen before it was first seen"
         ));
     }
     // Zero is the crawler's "never": a node it has never completed a dial to
     // has no reachable-at moment, and 1970 is not one.
-    let last_reachable_at_ms = match detail.last_reachable_at {
+    let last_reachable_at_ms = match verified.last_reachable_at {
         0 => None,
-        seconds => Some(seconds_to_wire_ms(seconds, "network node lastReachableAt")?),
+        seconds => Some(seconds_to_wire_ms(
+            seconds,
+            "peer verified lastReachableAt",
+        )?),
     };
-    if detail.protocols.len() > MAX_PEER_PROTOCOLS {
+    if verified.protocols.len() > MAX_PEER_PROTOCOLS {
         return Err(anyhow!(
-            "ckbadger network node returned more protocols than a peer can open"
+            "ckbadger peer returned more protocols than a peer can open"
         ));
     }
-    let protocols = detail
+    let protocols = verified
         .protocols
         .iter()
-        .map(|protocol| bounded_network_label(protocol, "network node protocol"))
+        .map(|protocol| bounded_network_label(protocol, "peer verified protocol"))
         .collect::<anyhow::Result<Vec<String>>>()?;
 
     Ok(PeerSightingRecord {
@@ -2747,21 +2853,82 @@ fn map_peer_sighting(
         as_of: anchor,
         updated_at_ms: now_ms(),
         node_id: node_id.to_string(),
-        country: bounded_network_label(&detail.country, "network node country")?,
-        asn: bounded_network_label(&detail.asn, "network node asn")?,
+        country: bounded_network_label(&verified.country, "peer verified country")?,
+        asn: bounded_network_label(&verified.asn, "peer verified asn")?,
         client_version: bounded_network_label(
-            &detail.client_version,
-            "network node clientVersion",
+            &verified.client_version,
+            "peer verified clientVersion",
         )?,
         protocols,
         first_seen_ms,
         last_seen_ms,
         last_reachable_at_ms,
-        reachable: detail.reachable,
-        rtt_ms: detail.rtt_ms,
-        known_peers_count: u32::try_from(detail.known_peers)
-            .context("ckbadger network node knownPeers is outside u32")?,
+        reachable,
+        rtt_ms: verified.rtt_ms,
+        // Upstream deleted the outbound count this used to carry, and the
+        // list that replaced it (`advertisers`) reads the relationship from
+        // the other end — the peers that named THIS node. Filling this slot
+        // from that list would print the sentence backwards, so nothing fills
+        // it and the CROWD row stands down until both directions can be
+        // labelled for what they are.
+        known_peers_count: None,
     })
+}
+
+/// The crawler's account of a peer it never verified.
+///
+/// A candidate is dialed once per address it has been advertised under, so
+/// there is no single "the" result — there is a handful, one per alias. The
+/// honest summary of them is the FURTHEST any of them got, because that is
+/// the best this peer managed and the only one an operator can act on: a peer
+/// whose seven addresses all refused the dial and a peer that opened a secure
+/// session on one of them and then went quiet have different problems, and
+/// taking the last observation in the list would pick between them by
+/// accident.
+fn map_advertised_evidence(
+    last_advertised_at: u64,
+    last_completed: Option<&CandidateEvidenceResponse>,
+) -> anyhow::Result<PeerAdvertisedEvidence> {
+    Ok(PeerAdvertisedEvidence {
+        last_advertised_at_ms: sighting_clock_ms(last_advertised_at, "peer lastAdvertisedAt")?,
+        // No completed round is a third statement again — the network has
+        // named this peer and nobody has tried it yet — so the absent result
+        // is carried as absent rather than flattened into a failure.
+        furthest_result: last_completed.and_then(|completed| {
+            completed
+                .observations
+                .iter()
+                .map(|observation| map_probe_result(observation.result))
+                .max()
+        }),
+        consecutive_exhausted_rounds: last_completed
+            .map(|completed| {
+                u32::try_from(completed.consecutive_exhausted_rounds)
+                    .context("ckbadger peer consecutiveExhaustedRounds is outside u32")
+            })
+            .transpose()?
+            .unwrap_or(0),
+    })
+}
+
+/// The wire's word for how far a dial got, in the shared contract's own
+/// vocabulary. A result this build has no name for becomes the rung that
+/// claims least, so any nameable result on any of the peer's addresses wins
+/// the `max` above and this only ever surfaces alone.
+fn map_probe_result(result: PeerProbeResultResponse) -> PeerProbeResult {
+    match result {
+        PeerProbeResultResponse::DialRequestFailed => PeerProbeResult::DialRequestFailed,
+        PeerProbeResultResponse::NoAuthenticatedSessionBeforeDeadline => {
+            PeerProbeResult::NoAuthenticatedSessionBeforeDeadline
+        }
+        PeerProbeResultResponse::AuthenticatedSessionWithoutIdentifyBeforeDeadline => {
+            PeerProbeResult::AuthenticatedSessionWithoutIdentifyBeforeDeadline
+        }
+        PeerProbeResultResponse::MalformedIdentify => PeerProbeResult::MalformedIdentify,
+        PeerProbeResultResponse::ForeignNetwork => PeerProbeResult::ForeignNetwork,
+        PeerProbeResultResponse::SameNetworkIdentified => PeerProbeResult::SameNetworkIdentified,
+        PeerProbeResultResponse::Unknown => PeerProbeResult::Unknown,
+    }
 }
 
 /// A sighting's own clock, in the milliseconds the shared wire counts. Zero is
@@ -7233,14 +7400,12 @@ mod tests {
         // page whose order cknerv cannot vouch for is a sample whose
         // membership nobody chose.
         let out_of_order = NetworkPeersPageResponse {
-            items: vec![
-                crawler_row("7065657241", 20),
-                crawler_row("7065657242", 40),
-            ],
+            items: vec![crawler_row("7065657241", 20), crawler_row("7065657242", 40)],
             next_cursor: None,
         };
 
-        let error = map_network_atlas(crawler_summary(7), out_of_order, roster_anchor()).unwrap_err();
+        let error =
+            map_network_atlas(crawler_summary(7), out_of_order, roster_anchor()).unwrap_err();
 
         assert!(
             error.to_string().contains("newest advertised first"),
@@ -8243,11 +8408,21 @@ mod tests {
         bytes
     }
 
+    /// A peer the network names and the crawler could never dial — the state
+    /// most of the live candidate set is in, and the one a NAT'd node cknerv
+    /// holds an inbound link to is in.
+    fn advertised_peer_bytes() -> Vec<u8> {
+        let mut bytes = vec![0x12, 0x20];
+        bytes.extend((0..32).map(|index| 0x30_u8 ^ index));
+        bytes
+    }
+
     async fn spawn_peer_dossier_api() -> (Url, tokio::task::JoinHandle<()>, Arc<AtomicUsize>) {
         let node_requests = Arc::new(AtomicUsize::new(0));
         let counted_requests = node_requests.clone();
         let sighted = peer_id_to_hex(&base58_peer_id(&sighted_peer_bytes())).unwrap();
         let broken = peer_id_to_hex(&base58_peer_id(&broken_store_peer_bytes())).unwrap();
+        let advertised = peer_id_to_hex(&base58_peer_id(&advertised_peer_bytes())).unwrap();
         let app = Router::new()
             .route(
                 "/api/v1/statistics/network",
@@ -8270,18 +8445,68 @@ mod tests {
                 }),
             )
             .route(
-                "/api/v1/network/nodes/:peer_id",
+                "/api/v1/network/peers/:peer_id",
                 get(
                     move |axum::extract::Path(peer_id): axum::extract::Path<String>| {
                         let node_requests = counted_requests.clone();
                         let sighted = sighted.clone();
                         let broken = broken.clone();
+                        let advertised = advertised.clone();
                         async move {
                             node_requests.fetch_add(1, Ordering::Relaxed);
                             if peer_id == broken {
                                 return (
                                     axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                                     Json(serde_json::json!({ "error": "store" })),
+                                );
+                            }
+                            // The live shape of a peer nobody could dial:
+                            // real aliases, real advertisers, a typed reason
+                            // per address tried — and `verified: null`.
+                            if peer_id == advertised {
+                                return (
+                                    axum::http::StatusCode::OK,
+                                    Json(serde_json::json!({
+                                        "peerId": peer_id,
+                                        "observationVantage": "thisCkbadgerInstance",
+                                        "displayState": "advertisedUnverified",
+                                        "firstDiscoveredAt": 1_699_990_000,
+                                        "lastAdvertisedAt": 1_700_000_000,
+                                        "aliases": [{
+                                            "address": "/ip4/198.51.100.4/tcp/8115",
+                                            "firstAdvertisedAt": 1_699_990_000,
+                                            "lastAdvertisedAt": 1_700_000_000
+                                        }],
+                                        "lastCompleted": {
+                                            "roundId": 2,
+                                            "outcome": "exhausted",
+                                            "observations": [
+                                                {
+                                                    "address": "/ip4/198.51.100.4/tcp/8115",
+                                                    "roundId": 2,
+                                                    "observedAt": 1_699_999_900,
+                                                    "elapsedMs": 231,
+                                                    "result": "dialRequestFailed"
+                                                },
+                                                {
+                                                    "address": "/ip4/198.51.100.5/tcp/8115",
+                                                    "roundId": 2,
+                                                    "observedAt": 1_699_999_910,
+                                                    "elapsedMs": 4000,
+                                                    "result": "noAuthenticatedSessionBeforeDeadline"
+                                                }
+                                            ],
+                                            "consecutiveExhaustedRounds": 2
+                                        },
+                                        "active": null,
+                                        "verified": null,
+                                        "advertisers": [
+                                            {
+                                                "advertiserPeerId": "1220aa",
+                                                "observedAt": 1_700_000_000
+                                            }
+                                        ]
+                                    })),
                                 );
                             }
                             if peer_id != sighted {
@@ -8294,18 +8519,53 @@ mod tests {
                                 axum::http::StatusCode::OK,
                                 Json(serde_json::json!({
                                     "peerId": peer_id,
-                                    "ownAddrs": ["/ip4/203.0.113.7/tcp/8115"],
-                                    "clientVersion": "0.209.0 (d166e28 2026-07-29)",
-                                    "flags": 3,
-                                    "protocols": ["/ckb/syn", "/ckb/relay"],
-                                    "firstSeen": 1_650_000_000,
-                                    "lastSeen": 1_700_000_000,
-                                    "lastReachableAt": 1_699_999_000,
-                                    "reachable": true,
-                                    "country": "DE",
-                                    "asn": "AS24940 Hetzner",
-                                    "rttMs": 41,
-                                    "knownPeers": 45
+                                    "observationVantage": "thisCkbadgerInstance",
+                                    "displayState": "reachable",
+                                    "firstDiscoveredAt": 1_650_000_000,
+                                    "lastAdvertisedAt": 1_700_000_000,
+                                    "aliases": [{
+                                        "address": "/ip4/203.0.113.7/tcp/8115",
+                                        "firstAdvertisedAt": 1_650_000_000,
+                                        "lastAdvertisedAt": 1_700_000_000
+                                    }],
+                                    "lastCompleted": {
+                                        "roundId": 2,
+                                        "outcome": "sameNetworkIdentified",
+                                        "observations": [{
+                                            "address": "/ip4/203.0.113.7/tcp/8115",
+                                            "roundId": 2,
+                                            "observedAt": 1_700_000_000,
+                                            "elapsedMs": 41,
+                                            "result": "sameNetworkIdentified"
+                                        }],
+                                        "consecutiveExhaustedRounds": 0
+                                    },
+                                    "active": null,
+                                    "verified": {
+                                        "ownAddrs": ["/ip4/203.0.113.7/tcp/8115"],
+                                        "clientVersion": "0.209.0 (d166e28 2026-07-29)",
+                                        "flags": 3,
+                                        "protocols": ["/ckb/syn", "/ckb/relay"],
+                                        "firstSeen": 1_650_000_000,
+                                        "lastSeen": 1_700_000_000,
+                                        "lastReachableAt": 1_699_999_000,
+                                        "country": "DE",
+                                        "asn": "AS24940 Hetzner",
+                                        "rttMs": 41,
+                                        "discovery": {
+                                            "validNodesMessages": 1,
+                                            "malformedMessages": 0,
+                                            "unexpectedMessages": 0,
+                                            "normalizedAdvertisedAddresses": 87,
+                                            "rejectedAdvertisedAddresses": 0
+                                        }
+                                    },
+                                    "advertisers": [
+                                        {
+                                            "advertiserPeerId": "1220bb",
+                                            "observedAt": 1_700_000_000
+                                        }
+                                    ]
                                 })),
                             )
                         }
@@ -8378,7 +8638,52 @@ mod tests {
         assert_eq!(sighting.last_reachable_at_ms, Some(1_699_999_000_000));
         assert!(sighting.reachable);
         assert_eq!(sighting.rtt_ms, Some(41));
-        assert_eq!(sighting.known_peers_count, 45);
+        // Upstream deleted the outbound count and put the INBOUND one
+        // (`advertisers`) in its place. The mock answers with advertisers,
+        // and nothing here reads them into the slot they would read
+        // backwards in.
+        assert_eq!(sighting.known_peers_count, None);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_peer_the_network_names_and_nobody_could_dial_is_its_own_report() {
+        // The case that used to be a decode failure and then a lie: upstream
+        // nests its verified observation inside the candidate, and answers
+        // `verified: null` for every peer it could not authenticate. Most of
+        // the live candidate set is in that state, and a peer cknerv holds an
+        // inbound link to can be one of them, because a node behind NAT dials
+        // out and cannot be dialed back.
+        let (api_base, server, node_requests) = spawn_peer_dossier_api().await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        assert_eq!(
+            source.probe(&context()).await.status,
+            EnrichmentSourceState::Ready
+        );
+        let node_id = base58_peer_id(&advertised_peer_bytes());
+
+        let lookup = source.enrich_peer(&node_id, &context()).await.unwrap();
+
+        let PeerSightingLookup::Unsighted { reason, advertised } = lookup else {
+            panic!("a peer with no verification is not a sighting");
+        };
+        // Not `NeverSighted`: the crawler holds this peer's addresses and
+        // dialed them. Different fact, different word.
+        assert_eq!(reason, PeerSightingAbsence::AdvertisedUnverified);
+        let evidence = advertised.expect("the absence with evidence carries it");
+        // Two addresses were tried and the furthest of them got a session
+        // attempt rather than a refused dial. Taking the list's last entry
+        // would have been the same answer by luck; taking its first would
+        // have been the wrong one.
+        assert_eq!(
+            evidence.furthest_result,
+            Some(PeerProbeResult::NoAuthenticatedSessionBeforeDeadline)
+        );
+        assert_eq!(evidence.consecutive_exhausted_rounds, 2);
+        // Unix SECONDS upstream, milliseconds on cknerv's wire — the one
+        // clock an unverified peer's report can be dated by.
+        assert_eq!(evidence.last_advertised_at_ms, 1_700_000_000_000);
+        assert_eq!(node_requests.load(Ordering::Relaxed), 1);
         server.abort();
     }
 
@@ -8401,6 +8706,106 @@ mod tests {
             PeerSightingLookup::unsighted(PeerSightingAbsence::NeverSighted)
         );
         assert_eq!(node_requests.load(Ordering::Relaxed), 1);
+        server.abort();
+    }
+
+    /// A source whose crawler is alive and whose peer routes this build no
+    /// longer knows the name of — the exact break that has now happened
+    /// twice, from cknerv's side of it.
+    async fn spawn_renamed_peer_api() -> (Url, tokio::task::JoinHandle<()>) {
+        let app = Router::new()
+            .route(
+                "/api/v1/statistics/network",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "syncStatus": { "isSyncing": false, "syncedBlock": 100 }
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/blocks/:number",
+                get(|| async { Json(serde_json::json!({ "number": 100, "hash": "0xblock100" })) }),
+            )
+            // The crawler itself is fine and says so.
+            .route(
+                "/api/v1/network/summary",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "enabled": true,
+                        "hasData": true,
+                        "lastRound": {
+                            "roundId": 7,
+                            "startedAt": 1_699_999_990,
+                            "finishedAt": 1_700_000_000,
+                            "candidatePeers": 61,
+                            "verifiedRetainedPeers": 42,
+                            "reachablePeers": 9,
+                            "newVerifiedPeers": 3
+                        },
+                        "activeRound": null
+                    }))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (
+            Url::parse(&format!("http://{address}/api/v1")).unwrap(),
+            handle,
+        )
+    }
+
+    #[tokio::test]
+    async fn a_peer_route_this_build_cannot_find_is_a_fault_and_never_a_verdict_on_a_node() {
+        // The worst thing this adapter has ever printed: upstream renamed the
+        // peer routes, every point lookup answered 404, and the DOSSIER told
+        // the pilot that every peer on the dashboard had never been seen from
+        // outside. A blank would have been honest. That line asserted
+        // something false, on the one plate whose whole discipline is that
+        // different true statements are never blurred.
+        //
+        // The list route is what separates the two readings of a 404, and it
+        // costs no request: the crawler refresh already asks it every 60s.
+        let (api_base, server) = spawn_renamed_peer_api().await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        assert_eq!(
+            source.probe(&context()).await.status,
+            EnrichmentSourceState::Ready
+        );
+
+        // Before the list route has been looked at, there is nothing to doubt
+        // and the crawler's own 404 is taken at its word. This is the window
+        // the refresh cadence closes, and it is deliberate: refusing to
+        // answer for the first minute of a process would trade a false
+        // statement for a false alarm.
+        let unseen = base58_peer_id(&[0x12, 0x20, 0x77, 0x77]);
+        assert_eq!(
+            source.enrich_peer(&unseen, &context()).await.unwrap(),
+            PeerSightingLookup::unsighted(PeerSightingAbsence::NeverSighted)
+        );
+
+        // One crawler refresh is all it takes to learn the route is gone.
+        let atlas_error = source
+            .enrich_network_atlas(&context())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(atlas_error.contains("HTTP 404"), "{atlas_error}");
+
+        // And now the same 404 is a fault about this build, not a verdict on
+        // the node. Delete the health check in `enrich_peer` and this comes
+        // back `NeverSighted` — the lie, restored.
+        let error = source
+            .enrich_peer(&unseen, &context())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("peer list route is not answering"),
+            "error was {error}"
+        );
         server.abort();
     }
 
@@ -8446,30 +8851,49 @@ mod tests {
         server.abort();
     }
 
-    #[test]
-    fn a_sighting_of_a_different_node_is_refused() {
-        let detail = NetworkNodeDetailResponse {
-            peer_id: "1220ff".to_string(),
+    fn peer_anchor() -> ChainAnchor {
+        ChainAnchor {
+            block: 100,
+            hash: "0xblock100".to_string(),
+        }
+    }
+
+    /// The crawler's verified half, as it arrives nested inside the
+    /// candidate. Every clock is a unix SECOND here, as upstream counts them.
+    fn verified_peer() -> VerifiedPeerResponse {
+        VerifiedPeerResponse {
             client_version: "0.209.0".to_string(),
             protocols: Vec::new(),
             first_seen: 1_650_000_000,
             last_seen: 1_700_000_000,
             last_reachable_at: 0,
-            reachable: false,
             country: String::new(),
             asn: String::new(),
             rtt_ms: None,
-            known_peers: 0,
-        };
+        }
+    }
 
-        let error = map_peer_sighting(
+    fn peer_detail(peer_id: &str, verified: Option<VerifiedPeerResponse>) -> PeerDetailResponse {
+        PeerDetailResponse {
+            peer_id: peer_id.to_string(),
+            display_state: if verified.is_some() {
+                PeerDisplayState::Reachable
+            } else {
+                PeerDisplayState::AdvertisedUnverified
+            },
+            last_advertised_at: 1_700_000_000,
+            last_completed: None,
+            verified,
+        }
+    }
+
+    #[test]
+    fn a_sighting_of_a_different_node_is_refused() {
+        let error = map_peer_lookup(
             "QmWhoever",
             "1220ee",
-            detail,
-            ChainAnchor {
-                block: 100,
-                hash: "0xblock100".to_string(),
-            },
+            peer_detail("1220ff", Some(verified_peer())),
+            peer_anchor(),
         )
         .unwrap_err()
         .to_string();
@@ -8482,66 +8906,140 @@ mod tests {
 
     #[test]
     fn a_node_never_dialed_has_no_reachable_moment_and_empty_labels_stay_unknown() {
-        let detail = NetworkNodeDetailResponse {
-            peer_id: "1220ee".to_string(),
-            client_version: String::new(),
-            protocols: Vec::new(),
-            first_seen: 1_650_000_000,
-            last_seen: 1_700_000_000,
-            last_reachable_at: 0,
-            reachable: false,
-            country: "  ".to_string(),
-            asn: String::new(),
-            rtt_ms: None,
-            known_peers: 0,
-        };
+        let mut verified = verified_peer();
+        verified.client_version = String::new();
+        verified.country = "  ".to_string();
 
-        let record = map_peer_sighting(
+        let lookup = map_peer_lookup(
             "QmWhoever",
             "1220EE",
-            detail,
-            ChainAnchor {
-                block: 100,
-                hash: "0xblock100".to_string(),
-            },
+            peer_detail("1220ee", Some(verified)),
+            peer_anchor(),
         )
         .unwrap();
 
+        let PeerSightingLookup::Sighted { sighting } = lookup else {
+            panic!("a peer with a verification is a sighting");
+        };
         // Zero is the crawler's "never", and 1970 is not a reachable moment.
-        assert_eq!(record.last_reachable_at_ms, None);
-        assert_eq!(record.country, "Unknown");
-        assert_eq!(record.asn, "Unknown");
-        assert_eq!(record.client_version, "Unknown");
+        assert_eq!(sighting.last_reachable_at_ms, None);
+        assert_eq!(sighting.country, "Unknown");
+        assert_eq!(sighting.asn, "Unknown");
+        assert_eq!(sighting.client_version, "Unknown");
     }
 
     #[test]
     fn a_sighting_without_a_clock_is_not_a_sighting() {
-        let detail = NetworkNodeDetailResponse {
-            peer_id: "1220ee".to_string(),
-            client_version: "0.209.0".to_string(),
-            protocols: Vec::new(),
-            first_seen: 0,
-            last_seen: 0,
-            last_reachable_at: 0,
-            reachable: true,
-            country: "DE".to_string(),
-            asn: "AS24940 Hetzner".to_string(),
-            rtt_ms: None,
-            known_peers: 1,
-        };
+        let mut verified = verified_peer();
+        verified.first_seen = 0;
+        verified.last_seen = 0;
 
-        let error = map_peer_sighting(
+        let error = map_peer_lookup(
             "QmWhoever",
             "1220ee",
-            detail,
-            ChainAnchor {
-                block: 100,
-                hash: "0xblock100".to_string(),
-            },
+            peer_detail("1220ee", Some(verified)),
+            peer_anchor(),
         )
         .unwrap_err()
         .to_string();
 
         assert!(error.contains("firstSeen"), "error was {error}");
+    }
+
+    #[test]
+    fn a_peer_the_crawler_holds_but_did_not_reach_this_round_stages_dark() {
+        // `verifiedUnavailable` is the crawler's own word for a peer it
+        // reached before and could not reach this round, and it is exactly
+        // what `reachable: false` has always meant on this record. It is not
+        // an absence: the sighting is real, it is just not fresh.
+        let mut detail = peer_detail("1220ee", Some(verified_peer()));
+        detail.display_state = PeerDisplayState::VerifiedUnavailable;
+
+        let lookup = map_peer_lookup("QmWhoever", "1220ee", detail, peer_anchor()).unwrap();
+
+        let PeerSightingLookup::Sighted { sighting } = lookup else {
+            panic!("a peer with a verification is a sighting");
+        };
+        assert!(!sighting.reachable);
+    }
+
+    #[test]
+    fn a_peer_no_completed_round_has_touched_says_so_rather_than_naming_a_reason() {
+        // A third statement again, and the reason it is `Option` rather than
+        // a seventh rung: the network has named this peer and no finished
+        // round has tried it. Inventing "the dial failed" here would be the
+        // same class of lie this whole task exists to remove.
+        let mut detail = peer_detail("1220ee", None);
+        detail.display_state = PeerDisplayState::NoCompletedObservation;
+
+        let lookup = map_peer_lookup("QmWhoever", "1220ee", detail, peer_anchor()).unwrap();
+
+        assert_eq!(
+            lookup,
+            PeerSightingLookup::advertised_unverified(PeerAdvertisedEvidence {
+                last_advertised_at_ms: 1_700_000_000_000,
+                furthest_result: None,
+                consecutive_exhausted_rounds: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn the_furthest_dial_is_the_answer_and_a_word_this_build_lacks_never_wins() {
+        // A candidate is dialed once per advertised address, so there is no
+        // single result — there is a handful, in whatever order upstream
+        // wrote them. The furthest is the only summary an operator can act
+        // on, and a result this build cannot name must never displace one it
+        // can.
+        let observations = [
+            "authenticatedSessionWithoutIdentifyBeforeDeadline",
+            "quantumTunnelled",
+            "dialRequestFailed",
+        ];
+        let completed: CandidateEvidenceResponse = serde_json::from_value(serde_json::json!({
+            "roundId": 4,
+            "outcome": "exhausted",
+            "observations": observations.iter().map(|result| serde_json::json!({
+                "address": "/ip4/198.51.100.4/tcp/8115",
+                "roundId": 4,
+                "observedAt": 1_699_999_900,
+                "elapsedMs": 12,
+                "result": result,
+            })).collect::<Vec<_>>(),
+            "consecutiveExhaustedRounds": 9,
+        }))
+        .expect("a result this build has no name for must not fail the dossier");
+
+        let evidence = map_advertised_evidence(1_700_000_000, Some(&completed)).unwrap();
+
+        assert_eq!(
+            evidence.furthest_result,
+            Some(PeerProbeResult::AuthenticatedSessionWithoutIdentifyBeforeDeadline)
+        );
+        assert_eq!(evidence.consecutive_exhausted_rounds, 9);
+
+        // And when every observation is a word this build lacks, the report
+        // says that rather than picking a reason out of the air.
+        let all_unknown: CandidateEvidenceResponse = serde_json::from_value(serde_json::json!({
+            "observations": [{ "result": "quantumTunnelled" }],
+            "consecutiveExhaustedRounds": 1,
+        }))
+        .expect("decode");
+        assert_eq!(
+            map_advertised_evidence(1_700_000_000, Some(&all_unknown))
+                .unwrap()
+                .furthest_result,
+            Some(PeerProbeResult::Unknown)
+        );
+    }
+
+    #[test]
+    fn an_undated_advertisement_is_not_a_report() {
+        // Every CRAWLER-class line the DOSSIER prints has to be stamped, and
+        // this is the only clock an unverified peer has. Zero is upstream's
+        // "never", and 1970 is not a moment the network named anything.
+        let error = map_advertised_evidence(0, None).unwrap_err().to_string();
+
+        assert!(error.contains("lastAdvertisedAt"), "error was {error}");
     }
 }

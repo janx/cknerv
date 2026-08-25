@@ -12,7 +12,12 @@
 // the node card as a mirror, which promotes EXPOSURE to the headline. DOM only
 // — nothing here may touch three.js.
 import type { ReactNode } from 'react';
-import type { PeerSightingAbsence, PeerSightingRecord } from '@cknerv/types';
+import type {
+  PeerAdvertisedEvidence,
+  PeerProbeResult,
+  PeerSightingAbsence,
+  PeerSightingRecord,
+} from '@cknerv/types';
 import { formatAge } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE } from './hudTheme';
 import {
@@ -44,6 +49,10 @@ export interface PeerSightingState {
   record?: PeerSightingRecord | null;
   /** Why the source had no sighting. Only meaningful while `unsighted`. */
   reason?: PeerSightingAbsence | null;
+  /** What the crawler holds about a peer it never verified. Arrives only with
+   *  `advertised_unverified`, which is the one absence that has evidence
+   *  behind it rather than only a word. */
+  advertised?: PeerAdvertisedEvidence | null;
   /** The fault text, when the lookup could not be answered at all. */
   message?: string | null;
 }
@@ -140,43 +149,111 @@ function SightingCaption({ tone, children }: { tone?: string; children: ReactNod
   return <PlateReadoutCaption tone={tone}>{children}</PlateReadoutCaption>;
 }
 
-/** Every phase that has no record to print resolves to one quiet line, the
- *  way the Cell context readout states its own empty phases. */
+/** How far the crawler's furthest dial got, said the way a pilot reads it.
+ *
+ *  The axis is ordinal and each rung is a genuinely different diagnosis, so
+ *  every one gets its own sentence: a peer whose addresses all refused the
+ *  dial and a peer that completed a secure handshake and then went quiet have
+ *  nothing in common except the outcome. Collapsing them into "unreachable"
+ *  would throw away the only part of this report an operator can act on. */
+function probeSentence(result: PeerProbeResult | undefined): string {
+  switch (result) {
+    case 'dial_request_failed':
+      return 'NO DIAL TO IT COULD BE OPENED';
+    case 'no_authenticated_session_before_deadline':
+      return 'NO HANDSHAKE BEFORE THE DEADLINE';
+    case 'authenticated_session_without_identify_before_deadline':
+      return 'IT OPENED A SESSION AND NEVER SAID WHO IT WAS';
+    case 'malformed_identify':
+      return 'IT IDENTIFIED IN A SHAPE THE CRAWLER COULD NOT READ';
+    case 'foreign_network':
+      return 'IT ANSWERED, FROM ANOTHER CHAIN';
+    case 'same_network_identified':
+      return 'IT IDENTIFIED, AND NO RECORD OF IT WAS KEPT';
+    case 'unknown':
+      return 'THE CRAWLER NAMED A REASON THIS BUILD CANNOT READ';
+    default:
+      // No completed round has touched it. A third statement again, and the
+      // reason the field is optional rather than carrying a seventh rung:
+      // "nobody has tried yet" is not a failed dial.
+      return 'NO COMPLETED ROUND HAS TRIED IT YET';
+  }
+}
+
+/** When the network last named this peer, and how long it has been failing.
+ *  Every CRAWLER-class line on this plate carries its own stamp, and an
+ *  unverified peer has no sighting to be stamped by — this clock is the only
+ *  one it has. */
+function advertisedStamp(advertised: PeerAdvertisedEvidence, nowMs: number): string {
+  const named = `LAST NAMED ${formatAge(advertised.last_advertised_at_ms, nowMs)} AGO`;
+  const rounds = advertised.consecutive_exhausted_rounds;
+  if (rounds <= 0) return named;
+  return `${named} · ${rounds === 1 ? '1 ROUND' : `${count(rounds)} ROUNDS`} EXHAUSTED`;
+}
+
+/** Every phase that has no record to print resolves to one quiet line and the
+ *  captions that qualify it, the way the Cell context readout states its own
+ *  empty phases. */
 function absenceLine(
   phase: PeerSightingPhase,
   reason: PeerSightingAbsence | null | undefined,
+  advertised: PeerAdvertisedEvidence | null | undefined,
   message: string | null | undefined,
-): { text: string; caption?: string; tone: string } | null {
+  nowMs: number,
+): { text: string; captions: string[]; tone: string } | null {
   switch (phase) {
     case 'waiting':
-      return { text: 'WAITING FOR THE SOURCE ANCHOR', tone: HUD_COLORS.dim };
+      return { text: 'WAITING FOR THE SOURCE ANCHOR', captions: [], tone: HUD_COLORS.dim };
     case 'loading':
-      return { text: 'ASKING THE CRAWLER…', tone: HUD_COLORS.dim };
+      return { text: 'ASKING THE CRAWLER…', captions: [], tone: HUD_COLORS.dim };
     case 'error':
       return {
         text: message ?? 'CRAWLER SIGHTING UNAVAILABLE',
+        captions: [],
         tone: HUD_COLORS.danger,
       };
     case 'unsighted':
-      // A source with no crawler and a crawler that never saw this node are
-      // different true statements, and the plate refuses to blur them.
+      // Four different true statements share this phase — a source with no
+      // crawler, an id the crawler cannot be keyed by, a crawler that holds
+      // nothing at all under this one, and a peer the network names that
+      // nobody could get an identify out of — and the plate refuses to blur
+      // them. Every one of them is a report; none of them is a fault.
       if (reason === 'no_crawler') {
         return {
           text: 'NO CRAWLER ON SOURCE',
-          caption: 'THIS SOURCE RUNS WITHOUT A NETWORK CRAWLER',
+          captions: ['THIS SOURCE RUNS WITHOUT A NETWORK CRAWLER'],
           tone: HUD_COLORS.dim,
         };
       }
       if (reason === 'unreadable_node_id') {
         return {
           text: 'NO CRAWLER SIGHTING',
-          caption: 'THIS ID CANNOT BE KEYED TO THE CRAWLER',
+          captions: ['THIS ID CANNOT BE KEYED TO THE CRAWLER'],
+          tone: HUD_COLORS.dim,
+        };
+      }
+      // The rung below a sighting, and the one absence with evidence under
+      // it. Saying "never seen from outside" here would be false in the way
+      // this plate exists to prevent: the crawler holds this peer's addresses
+      // and dials them every round. Most of the colony lives here — a node
+      // behind NAT dials out and cannot be dialed back — so this is an
+      // ordinary report and not a fault, and it stays in the quiet tone.
+      //
+      // The headline stands on the reason alone. A source that names this
+      // state without sending the evidence still said something true, and
+      // falling back to the line below would replace it with something false.
+      if (reason === 'advertised_unverified') {
+        return {
+          text: 'NAMED BY THE NETWORK, NEVER VERIFIED',
+          captions: advertised
+            ? [probeSentence(advertised.furthest_result), advertisedStamp(advertised, nowMs)]
+            : [],
           tone: HUD_COLORS.dim,
         };
       }
       return {
         text: 'NO CRAWLER SIGHTING',
-        caption: 'NEVER SEEN FROM OUTSIDE',
+        captions: ['NEVER SEEN FROM OUTSIDE'],
         tone: HUD_COLORS.dim,
       };
     default:
@@ -188,6 +265,7 @@ export default function PeerSightingPlate({
   phase,
   record,
   reason,
+  advertised,
   message,
   module,
   nowMs,
@@ -204,8 +282,9 @@ export default function PeerSightingPlate({
   // Every phase that is not a sighting resolves to exactly one line, including
   // the one that should not happen: a plate frame with an empty body would be
   // the only thing on either card that says nothing at all.
-  const absence = sighting ? null : absenceLine(phase, reason, message) ?? {
+  const absence = sighting ? null : absenceLine(phase, reason, advertised, message, nowMs) ?? {
     text: 'CRAWLER SIGHTING UNAVAILABLE',
+    captions: [],
     tone: HUD_COLORS.dim,
   };
 
@@ -301,7 +380,13 @@ export default function PeerSightingPlate({
     </SightingRow>
   ) : null;
 
-  const crowd = sighting ? (
+  // Stands down entirely when the source cannot say it. ckbadger deleted the
+  // outbound count this row printed, and what replaced it — the peers that
+  // named THIS node — is the same relationship read from the other end: put
+  // through this row it would print the sentence backwards. The row keeps its
+  // wording for a source that can still answer the outbound question, and
+  // says nothing at all for one that cannot.
+  const crowd = sighting && sighting.known_peers_count != null ? (
     <SightingRow
       key="crowd"
       row="crowd"
@@ -368,7 +453,13 @@ export default function PeerSightingPlate({
         </div>
       ) : null}
       {absence ? (
-        <div data-sighting-absence style={{ minWidth: 0 }}>
+        <div
+          data-sighting-absence
+          {...(reason === 'advertised_unverified' && advertised?.furthest_result
+            ? { 'data-sighting-probe': advertised.furthest_result }
+            : {})}
+          style={{ minWidth: 0 }}
+        >
           <div
             title={absence.text}
             style={{
@@ -380,7 +471,9 @@ export default function PeerSightingPlate({
           >
             {absence.text}
           </div>
-          {absence.caption ? <SightingCaption>{absence.caption}</SightingCaption> : null}
+          {absence.captions.map((caption) => (
+            <SightingCaption key={caption}>{caption}</SightingCaption>
+          ))}
         </div>
       ) : (
         <div style={{ display: 'grid', rowGap: 3 }}>{rows}</div>

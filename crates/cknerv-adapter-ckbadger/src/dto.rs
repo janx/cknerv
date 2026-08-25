@@ -145,26 +145,122 @@ pub(crate) struct PeerSummaryResponse {
     pub rtt_ms: Option<u32>,
 }
 
-/// One node's crawler dossier, keyed by hex-encoded PeerId bytes. The clocks
-/// are unix SECONDS here; the shared wire contract counts milliseconds, and
-/// the mapper is where that conversion happens. `ownAddrs` and `flags` are
-/// deliberately not read: the dashboard already holds the addresses the local
-/// node negotiated, and capability bits have no reader yet.
+/// One peer's crawler dossier, keyed by hex-encoded PeerId bytes.
+///
+/// Upstream used to answer this route with one flat record and no way to say
+/// "I hold addresses for this peer and have never got a packet out of it".
+/// It now answers a candidate — everything anyone has advertised about the
+/// peer — with the verified observation nested inside it, and **`verified` is
+/// null for every peer the crawler could not authenticate**. That is not an
+/// edge: most of the candidate set is in that state (79 of 136 as measured),
+/// and a peer cknerv holds an inbound link to is a perfectly ordinary member
+/// of it, because a node behind NAT dials out and cannot be dialed back.
+///
+/// The wire carries more of this peer than is declared here:
+/// `observationVantage`, `firstDiscoveredAt`, `aliases`, `active` and
+/// `advertisers`. Nothing in cknerv reads them yet, so they are deliberately
+/// not declared — a field declared here is a field whose disappearance costs
+/// the whole record, and this crate has now paid that price twice in one
+/// week. `advertisers` in particular is NOT the deleted `knownPeers`: it
+/// counts the peers that named *this* one, where `knownPeers` counted the
+/// peers *this* one named. Reading it into the old slot would print the
+/// sentence backwards.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct NetworkNodeDetailResponse {
+pub(crate) struct PeerDetailResponse {
     pub peer_id: String,
+    pub display_state: PeerDisplayState,
+    /// Unix seconds the network last named this peer to the crawler. It
+    /// exists for every candidate, verified or not, which is what makes it
+    /// the one clock an unverified peer's report can be dated by.
+    pub last_advertised_at: u64,
+    /// The last round that finished with this peer in it. Absent for a peer
+    /// the crawler has heard named and not yet probed in any completed round.
+    pub last_completed: Option<CandidateEvidenceResponse>,
+    /// The crawler's verified observation, or `null` for a peer it holds no
+    /// verification for. This is the field that decides whether cknerv has a
+    /// sighting to report at all.
+    pub verified: Option<VerifiedPeerResponse>,
+}
+
+/// How the last completed round went for one candidate.
+///
+/// `roundId` and `outcome` are on the wire and not declared: the outcome word
+/// is derivable from the observations below — an `exhausted` candidate is one
+/// where no address identified — and the round number has no reader. What
+/// matters is the per-address evidence: a dial that never opened and a secure
+/// session that opened and then went quiet are genuinely different diagnoses,
+/// and collapsing them would throw away the only part of this record an
+/// operator can act on.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CandidateEvidenceResponse {
+    #[serde(default)]
+    pub observations: Vec<AddressProbeEvidenceResponse>,
+    /// How many completed rounds in a row have ended without a verification.
+    /// Zero for a peer that has just started failing, and the difference
+    /// between "the network is settling" and "this has never worked".
+    pub consecutive_exhausted_rounds: u64,
+}
+
+/// One address the round dialed, and how far it got.
+///
+/// The wire also carries `address`, `roundId`, `observedAt` and `elapsedMs`.
+/// They are the raw material of the operator diagnostic the DOSSIER's
+/// EXPOSURE row will grow, and that row is not this task's; declaring them
+/// now would only widen the surface a rename can break.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AddressProbeEvidenceResponse {
+    pub result: PeerProbeResultResponse,
+}
+
+/// How far one dial got, in upstream's own vocabulary.
+///
+/// This is an ORDINAL axis, not a set of labels: each name is strictly
+/// further through the handshake than the one above it, from a dial that
+/// never opened to a peer that identified itself on this chain. A candidate
+/// is probed once per alias, so the honest answer to "why is this peer not
+/// verified" is the FURTHEST any of its addresses got — the last one tried
+/// would be an arbitrary pick.
+///
+/// ⭐ `Unknown` is load-bearing for the same reason it is on
+/// [`PeerDisplayState`]: upstream sends these as strings, and a seventh
+/// result added there must cost this build a sentence it cannot phrase, never
+/// the whole dossier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum PeerProbeResultResponse {
+    DialRequestFailed,
+    NoAuthenticatedSessionBeforeDeadline,
+    AuthenticatedSessionWithoutIdentifyBeforeDeadline,
+    MalformedIdentify,
+    ForeignNetwork,
+    SameNetworkIdentified,
+    #[serde(other)]
+    Unknown,
+}
+
+/// The crawler's verified observation of a peer: present exactly when it
+/// authenticated the peer and read an identify off it, absent otherwise.
+///
+/// The clocks are unix SECONDS here; the shared wire contract counts
+/// milliseconds, and the mapper is where that conversion happens. `ownAddrs`,
+/// `flags` and `discovery` are deliberately not read: the dashboard already
+/// holds the addresses the local node negotiated, and capability bits and
+/// per-peer discovery counters have no reader yet.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct VerifiedPeerResponse {
     pub client_version: String,
     #[serde(default)]
     pub protocols: Vec<String>,
     pub first_seen: u64,
     pub last_seen: u64,
     pub last_reachable_at: u64,
-    pub reachable: bool,
     pub country: String,
     pub asn: String,
     pub rtt_ms: Option<u32>,
-    pub known_peers: u64,
 }
 
 #[derive(Debug, Deserialize)]

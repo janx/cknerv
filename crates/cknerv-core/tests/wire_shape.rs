@@ -15,9 +15,9 @@ use std::path::PathBuf;
 use cknerv_core::{
     AssetKind, Cell, CellDelta, CellGalaxySnapshot, CellLinkEndpointAnchor, Chain, ChainAnchor,
     DisplayMode, DisplayProvenance, LockKind, Mutation, NetworkRosterRecord, OutPoint,
-    PeerSightingAbsence, PeerSightingLookup, PeerSightingRecord, ReplayPhase, RosterNode,
-    ScriptCensus, ScriptCount, ScriptId, ScriptNameRecord, ScriptRegistryRecord, SemanticsDelta,
-    SemanticsSnapshot,
+    PeerAdvertisedEvidence, PeerProbeResult, PeerSightingAbsence, PeerSightingLookup,
+    PeerSightingRecord, ReplayPhase, RosterNode, ScriptCensus, ScriptCount, ScriptId,
+    ScriptNameRecord, ScriptRegistryRecord, SemanticsDelta, SemanticsSnapshot,
 };
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -710,7 +710,23 @@ fn enrichment_peer_sighting() -> PeerSightingRecord {
         last_reachable_at_ms: Some(1_699_999_940_000),
         reachable: true,
         rtt_ms: Some(41),
-        known_peers_count: 45,
+        // Upstream deleted the outbound count this slot held, and the sample
+        // has to be a record an adapter can actually produce: nothing can
+        // fill it, so nothing does, and the CROWD row stands down.
+        known_peers_count: None,
+    }
+}
+
+/// The rung below a sighting: the network named this peer and the crawler
+/// could not get an identify out of it. It rides the fixture beside the
+/// sighting because it is the answer the browser gets for most of the live
+/// candidate set, and the plate prints a different sentence for every result
+/// the crawler can name.
+fn enrichment_peer_advertised() -> PeerAdvertisedEvidence {
+    PeerAdvertisedEvidence {
+        last_advertised_at_ms: 1_699_999_940_000,
+        furthest_result: Some(PeerProbeResult::NoAuthenticatedSessionBeforeDeadline),
+        consecutive_exhausted_rounds: 2,
     }
 }
 
@@ -721,6 +737,7 @@ fn peer_sighting_absence_variant(reason: &PeerSightingAbsence) -> &'static str {
         PeerSightingAbsence::NoCrawler => "no_crawler",
         PeerSightingAbsence::UnreadableNodeId => "unreadable_node_id",
         PeerSightingAbsence::NeverSighted => "never_sighted",
+        PeerSightingAbsence::AdvertisedUnverified => "advertised_unverified",
     }
 }
 
@@ -886,6 +903,12 @@ fn enrichment_samples() -> EnrichmentSamples {
             PeerSightingLookup::unsighted(reason),
         );
     }
+    // The one absence that carries evidence, so the browser has a sample of
+    // the shape rather than only of the word.
+    peer_sightings.insert(
+        peer_sighting_absence_variant(&PeerSightingAbsence::AdvertisedUnverified),
+        PeerSightingLookup::advertised_unverified(enrichment_peer_advertised()),
+    );
 
     EnrichmentSamples {
         snapshot,
@@ -906,14 +929,21 @@ fn enrichment_samples_cover_every_peer_absence_reason() {
         .values()
         .filter_map(|lookup| match lookup {
             PeerSightingLookup::Sighted { .. } => None,
-            PeerSightingLookup::Unsighted { reason } => Some(peer_sighting_absence_variant(reason)),
+            PeerSightingLookup::Unsighted { reason, .. } => {
+                Some(peer_sighting_absence_variant(reason))
+            }
         })
         .collect();
     assert_eq!(
         covered,
-        ["never_sighted", "no_crawler", "unreadable_node_id"]
-            .into_iter()
-            .collect::<std::collections::BTreeSet<&str>>(),
+        [
+            "advertised_unverified",
+            "never_sighted",
+            "no_crawler",
+            "unreadable_node_id"
+        ]
+        .into_iter()
+        .collect::<std::collections::BTreeSet<&str>>(),
         "every PeerSightingAbsence reason needs a sample in enrichment_samples.json — \
          the DOSSIER plate prints a different sentence for each one"
     );

@@ -198,7 +198,9 @@ describe('SightedNodeCard dossier', () => {
     expect(container.querySelector('[data-sighting-row="whereabouts"]')).not.toBeNull();
     expect(container.querySelector('[data-sighting-row="exposure"]')).not.toBeNull();
     expect(container.querySelector('[data-sighting-row="network-age"]')).not.toBeNull();
-    expect(container.querySelector('[data-sighting-row="crowd"]')).not.toBeNull();
+    // CROWD stands down: upstream deleted the outbound count this row read,
+    // and the list that replaced it counts the other direction.
+    expect(container.querySelector('[data-sighting-row="crowd"]')).toBeNull();
     // Nothing live stands on the other side of this card, so there is no
     // second version to cross-check the crawler's against.
     expect(container.querySelector('[data-sighting-row="identify"]')).toBeNull();

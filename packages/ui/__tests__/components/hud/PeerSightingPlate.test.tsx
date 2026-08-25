@@ -10,7 +10,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { PeerSightingLookup, PeerSightingRecord } from '@cknerv/types';
+import type {
+  PeerAdvertisedEvidence,
+  PeerProbeResult,
+  PeerSightingLookup,
+  PeerSightingRecord,
+} from '@cknerv/types';
 import PeerSightingPlate, {
   formatNetworkSpan,
   type PeerSightingPlateProps,
@@ -29,6 +34,13 @@ if (sighted?.state !== 'sighted') {
   throw new Error('enrichment_samples.json is missing a sighted peer sample');
 }
 const RECORD: PeerSightingRecord = sighted.sighting;
+
+const advertisedSample = samples.peer_sightings.advertised_unverified;
+if (advertisedSample?.state !== 'unsighted' || !advertisedSample.advertised) {
+  throw new Error('enrichment_samples.json is missing an advertised-unverified peer sample');
+}
+/** The rung below a sighting, as the server actually writes it. */
+const ADVERTISED: PeerAdvertisedEvidence = advertisedSample.advertised;
 
 /** One minute after the crawler last saw the node, so every age in the plate
  *  is a round number a reader can check by eye. */
@@ -103,6 +115,103 @@ describe('PeerSightingPlate absence', () => {
     });
     expect(container.textContent).toContain('NO CRAWLER SIGHTING');
     expect(container.textContent).toContain('THIS ID CANNOT BE KEYED TO THE CRAWLER');
+  });
+
+  it('separates a peer nobody has named from one nobody could dial', () => {
+    // The whole point of the rung. Both are absences of a sighting and they
+    // are not the same statement: `never_sighted` is a crawler that holds
+    // nothing at all under this id, and this is a crawler that holds the
+    // peer's addresses and dials them every round without ever getting an
+    // identify back. Printing "NEVER SEEN FROM OUTSIDE" over a peer the
+    // network is actively naming is the falsehood this task removed.
+    const { container } = renderPlate({
+      phase: 'unsighted',
+      record: null,
+      reason: 'advertised_unverified',
+      advertised: ADVERTISED,
+      nowMs: ADVERTISED.last_advertised_at_ms + 120_000,
+    });
+    expect(container.querySelector('[data-sighting-phase="unsighted"]')
+      ?.getAttribute('data-sighting-reason')).toBe('advertised_unverified');
+    expect(container.textContent).toContain('NAMED BY THE NETWORK, NEVER VERIFIED');
+    expect(container.textContent).not.toContain('NEVER SEEN FROM OUTSIDE');
+    expect(container.textContent).not.toContain('NO CRAWLER SIGHTING');
+    // The typed reason, and the clock the report is dated by — an unverified
+    // peer has no sighting to be stamped by, so this is the only one it has.
+    expect(container.textContent).toContain('NO HANDSHAKE BEFORE THE DEADLINE');
+    expect(container.textContent).toContain('LAST NAMED 2m 0s AGO');
+    expect(container.textContent).toContain('2 ROUNDS EXHAUSTED');
+    expect(container.querySelector('[data-sighting-absence]')
+      ?.getAttribute('data-sighting-probe'))
+      .toBe('no_authenticated_session_before_deadline');
+  });
+
+  it('gives every rung of the handshake its own sentence', () => {
+    // The axis is ordinal and each rung is a different diagnosis with a
+    // different fix. Collapsing any two of them into one phrase — most
+    // temptingly the two middle ones — would throw away the only part of
+    // this report an operator can act on, and nothing else here would notice.
+    const sentences = new Map<PeerProbeResult | undefined, string>();
+    const rungs: (PeerProbeResult | undefined)[] = [
+      undefined,
+      'dial_request_failed',
+      'no_authenticated_session_before_deadline',
+      'authenticated_session_without_identify_before_deadline',
+      'malformed_identify',
+      'foreign_network',
+      'same_network_identified',
+      'unknown',
+    ];
+    for (const rung of rungs) {
+      const { container } = renderPlate({
+        phase: 'unsighted',
+        record: null,
+        reason: 'advertised_unverified',
+        advertised: { ...ADVERTISED, furthest_result: rung },
+      });
+      // The absence block is one headline div followed by its caption divs.
+      const lines = Array.from(container.querySelectorAll('[data-sighting-absence] > div'))
+        .map((node) => node.textContent ?? '');
+      expect(lines.length).toBe(3);
+      sentences.set(rung, lines[1]);
+      cleanup();
+    }
+    expect(new Set(sentences.values()).size).toBe(rungs.length);
+    // Two that must never merge: nothing answered on the wire, versus
+    // something answered, completed a secure handshake and then went quiet.
+    expect(sentences.get('no_authenticated_session_before_deadline'))
+      .toBe('NO HANDSHAKE BEFORE THE DEADLINE');
+    expect(sentences.get('authenticated_session_without_identify_before_deadline'))
+      .toBe('IT OPENED A SESSION AND NEVER SAID WHO IT WAS');
+    // A peer on another chain DID answer, so no sentence here may claim
+    // nobody reached it.
+    expect(sentences.get('foreign_network')).toBe('IT ANSWERED, FROM ANOTHER CHAIN');
+    // And "nobody has tried yet" is not a failed dial.
+    expect(sentences.get(undefined)).toBe('NO COMPLETED ROUND HAS TRIED IT YET');
+  });
+
+  it('drops the exhausted-round clause rather than printing a zero', () => {
+    const { container } = renderPlate({
+      phase: 'unsighted',
+      record: null,
+      reason: 'advertised_unverified',
+      advertised: { ...ADVERTISED, consecutive_exhausted_rounds: 0 },
+    });
+    expect(container.textContent).toContain('LAST NAMED');
+    expect(container.textContent).not.toContain('EXHAUSTED');
+  });
+
+  it('keeps the true headline when the reason arrives without its evidence', () => {
+    // A source that names this state and sends no payload has still said
+    // something true. Falling back to the never-sighted line would swap it
+    // for something false.
+    const { container } = renderPlate({
+      phase: 'unsighted',
+      record: null,
+      reason: 'advertised_unverified',
+    });
+    expect(container.textContent).toContain('NAMED BY THE NETWORK, NEVER VERIFIED');
+    expect(container.textContent).not.toContain('NEVER SEEN FROM OUTSIDE');
   });
 
   it('reports a fault in the source\'s own words, quietly', () => {
@@ -202,10 +311,26 @@ describe('PeerSightingPlate sighting', () => {
   });
 
   it('labels the address-book figure as the sample it is', () => {
-    const { container } = renderPlate();
+    // The count is optional on the record now, so this is a record with one
+    // — a source that can still answer the OUTBOUND question. ckbadger no
+    // longer can: it deleted `knownPeers` and answers with the peers that
+    // named THIS node instead, which is the same relationship read from the
+    // other end and would print this sentence backwards.
+    const { container } = renderPlate({ record: { ...RECORD, known_peers_count: 45 } });
     const crowd = row(container, 'crowd');
     expect(crowd).toContain('~45 PEERS IN ADDRESS BOOK');
     expect(crowd).toContain('SAMPLED');
+  });
+
+  it('stands the crowd row down entirely when nobody can say', () => {
+    // The committed sample is what the adapter actually produces, and it
+    // carries no count. Absent has to read as "nobody can say" and never as
+    // a zero, an empty row, or a number inferred from the other direction.
+    expect(RECORD.known_peers_count).toBeUndefined();
+    const { container } = renderPlate();
+    expect(container.querySelector('[data-sighting-row="crowd"]')).toBeNull();
+    expect(container.textContent).not.toContain('ADDRESS BOOK');
+    expect(container.textContent).not.toContain('CROWD');
   });
 });
 
@@ -214,7 +339,8 @@ describe('PeerSightingPlate dialects', () => {
     const { container } = renderPlate();
     const rows = Array.from(container.querySelectorAll('[data-sighting-row]'))
       .map((node) => node.getAttribute('data-sighting-row'));
-    expect(rows).toEqual(['whereabouts', 'exposure', 'network-age', 'identify', 'crowd']);
+    // CROWD stands down: no source can answer the outbound question today.
+    expect(rows).toEqual(['whereabouts', 'exposure', 'network-age', 'identify']);
     expect(container.textContent).not.toContain('HOW THE NETWORK SEES YOU');
   });
 
@@ -245,7 +371,7 @@ describe('PeerSightingPlate dialects', () => {
       .map((node) => node.getAttribute('data-sighting-row'));
     // No live RPC stands on the other side, so IDENTIFY could only set the
     // crawler's version against the crawler's version.
-    expect(rows).toEqual(['whereabouts', 'exposure', 'network-age', 'crowd']);
+    expect(rows).toEqual(['whereabouts', 'exposure', 'network-age']);
     expect(container.textContent).not.toContain('NO LIVE VERSION TO CHECK AGAINST');
     // The dial belongs to the host card's own RECORD row in this dialect,
     // which had it off the roster before this lookup was even sent.

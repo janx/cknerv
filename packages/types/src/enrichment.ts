@@ -450,7 +450,63 @@ export interface PeerSightingRecord {
   last_reachable_at_ms?: number;
   reachable: boolean;
   rtt_ms?: number;
-  known_peers_count: number;
+  /** How many peers this node holds in its own address book — the OUTBOUND
+   * direction, and the one count no source can currently answer.
+   *
+   * ckbadger deleted `knownPeers` from its peer route. What replaced it is
+   * `advertisers[]`, the peers that named THIS node: the same relationship
+   * read from the other end. Filling this slot from that list would print the
+   * sentence backwards, so it is left empty until both directions can be
+   * labelled for what they are, and the CROWD row stands down while it is.
+   * Absent means "nobody can say", never "zero". */
+  known_peers_count?: number;
+}
+
+/** How far one of the crawler's dials got, in upstream's own vocabulary.
+ *
+ * An ORDINAL axis rather than a set of labels: each name is strictly further
+ * through the handshake than the one before it, from a dial that never opened
+ * to a peer that identified itself on this chain. The two middle rungs must
+ * not be collapsed — `no_authenticated_session_before_deadline` says nothing
+ * answered on the wire, and
+ * `authenticated_session_without_identify_before_deadline` says something
+ * answered, completed a secure handshake, and then never said who it was. To
+ * an operator those are different problems with different fixes.
+ *
+ * `unknown` is the crawler naming a result this build has no word for; it
+ * ranks lowest, so it only ever arrives alone. */
+export type PeerProbeResult =
+  | 'unknown'
+  | 'dial_request_failed'
+  | 'no_authenticated_session_before_deadline'
+  | 'authenticated_session_without_identify_before_deadline'
+  | 'malformed_identify'
+  | 'foreign_network'
+  | 'same_network_identified';
+
+/** What the crawler holds about a peer it has never verified.
+ *
+ * The rung below a sighting: other peers advertised addresses for this node,
+ * the crawler dialed them, and no dial ended in an identify it could keep. An
+ * ordinary state rather than an edge — a node behind NAT dials out and cannot
+ * be dialed back, so cknerv can hold a live link to a peer the crawler will
+ * never verify.
+ *
+ * There is no country, no client version and no RTT here, because upstream
+ * refuses to fabricate metadata for a peer it never reached and neither does
+ * this. */
+export interface PeerAdvertisedEvidence {
+  /** When the network last named this peer to the crawler. The report's own
+   * clock: an unverified peer has no sighting to be stamped by, and an
+   * undated statement about the network is the one thing the DOSSIER never
+   * prints. */
+  last_advertised_at_ms: number;
+  /** The furthest any of this peer's addresses got in the last completed
+   * round. Absent when no round has completed with this peer in it — which is
+   * a different statement again: nobody has tried yet. */
+  furthest_result?: PeerProbeResult;
+  /** Completed rounds in a row that ended with no verification. */
+  consecutive_exhausted_rounds: number;
 }
 
 /** Why a peer lookup came back without a sighting. Each one is a different
@@ -461,15 +517,29 @@ export type PeerSightingAbsence =
   /** The local node's id for this peer is not one the source can be keyed
    * by, so nothing was asked. */
   | 'unreadable_node_id'
-  /** The source answered, and has never seen this node from outside. */
-  | 'never_sighted';
+  /** The source answered, and holds nothing at all under this id — not a
+   * sighting, and not even an address somebody advertised. */
+  | 'never_sighted'
+  /** The source holds addresses for this node that other peers advertised,
+   * and no verification of it: the network names this peer, and nobody
+   * outside could get an identify out of it. `advertised` carries the
+   * crawler's own word for how far the dials got. */
+  | 'advertised_unverified';
 
 /** The result of `GET /api/enrichment/peers/:node_id` when a source is
  * configured. Deliberately not `PeerSightingRecord | null`: "never seen from
- * outside" is an observation about the network, not a missing record. */
+ * outside" is an observation about the network, not a missing record.
+ *
+ * The evidence rides beside the reason rather than becoming a third state
+ * because it is not a sighting and must never be read as one: none of a
+ * sighting's fields exists for a peer nobody authenticated. */
 export type PeerSightingLookup =
   | { state: 'sighted'; sighting: PeerSightingRecord }
-  | { state: 'unsighted'; reason: PeerSightingAbsence };
+  | {
+      state: 'unsighted';
+      reason: PeerSightingAbsence;
+      advertised?: PeerAdvertisedEvidence;
+    };
 
 export interface SemanticsSnapshot {
   source: EnrichmentSourceStatus;

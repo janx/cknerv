@@ -535,16 +535,39 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(sighted.sighting.node_id).toMatch(/^Qm/);
     expect(sighted.sighting.asn).toBe('AS24940 Hetzner Online GmbH');
     expect(sighted.sighting.protocols).toEqual(['/ckb/syn', '/ckb/relay']);
-    expect(sighted.sighting.known_peers_count).toBe(45);
     expect(sighted.sighting.rtt_ms).toBe(41);
     expect(sighted.sighting.reachable).toBe(true);
+    // The outbound address-book count upstream deleted is absent rather than
+    // zero, and the CROWD row stands down on it. `advertisers[]` is what
+    // replaced it upstream, and it counts the peers that named THIS node —
+    // the same relationship read from the other end, so it must never be
+    // read into this slot.
+    expect(sighted.sighting.known_peers_count).toBeUndefined();
     // Same total-match pin as the deltas: the Rust writer enumerates every
     // absence reason, and the plate prints a different sentence for each.
     const absences = Object.values(sample.peer_sightings).flatMap((lookup) =>
       lookup.state === 'unsighted' ? [lookup.reason] : [],
     );
     expect(new Set(absences)).toEqual(
-      new Set(['no_crawler', 'unreadable_node_id', 'never_sighted']),
+      new Set([
+        'no_crawler',
+        'unreadable_node_id',
+        'never_sighted',
+        'advertised_unverified',
+      ]),
     );
+    // The one absence with evidence under it, and the shape the plate reads
+    // its two captions from. A sample of the word alone would let the payload
+    // be dropped without anything noticing.
+    const advertised = sample.peer_sightings.advertised_unverified;
+    if (advertised.state !== 'unsighted') throw new Error('advertised sample is a sighting');
+    expect(advertised.advertised?.furthest_result)
+      .toBe('no_authenticated_session_before_deadline');
+    expect(advertised.advertised?.consecutive_exhausted_rounds).toBe(2);
+    expect(advertised.advertised?.last_advertised_at_ms).toBe(1_699_999_940_000);
+    // And the absences that are only a word carry no payload at all.
+    const neverSighted = sample.peer_sightings.never_sighted;
+    if (neverSighted.state !== 'unsighted') throw new Error('never_sighted sample is a sighting');
+    expect(neverSighted.advertised).toBeUndefined();
   });
 });

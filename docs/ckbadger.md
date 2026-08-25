@@ -557,10 +557,16 @@ nodes or edges, and staleness dims the indexed rows and adds a single
 With `peer_sighting`, selecting one peer resolves that single node's crawler
 dossier on demand through `GET /api/enrichment/peers/:node_id`: country, ASN,
 client version, opened protocols, first and last sighting, public
-reachability, dial RTT, and address-book size. This is the one thing local RPC
-cannot answer — how the network sees a node from outside, including our own.
-The lookup is a point read; the atlas remains the only bounded whole-network
-sample, and neither one puts a peer identity into the streamed contract.
+reachability, and dial RTT. This is the one thing local RPC cannot answer —
+how the network sees a node from outside, including our own. The lookup is a
+point read; the atlas remains the only bounded whole-network sample, and
+neither one puts a peer identity into the streamed contract.
+
+The record no longer carries an address-book size. Upstream deleted the
+outbound count and answers with `advertisers[]` instead, which counts the
+peers that named THIS node — the same relationship read from the other end.
+Filling the old slot from the new list would print the sentence backwards, so
+`known_peers_count` is absent and the `CROWD` row stands down.
 
 cknerv holds the base58 node id CKB's `get_peers` reports and the crawler is
 keyed by the multihash bytes behind it, so the adapter decodes the id before
@@ -570,24 +576,38 @@ every other cknerv wire type, and carries `last_seen_ms` so every row drawn
 from it can be stamped with its own observation age instead of passing for
 live link telemetry.
 
-The route distinguishes three true statements, and only the first is an
+The route distinguishes four true statements, and only the first is an
 absence of configuration:
 
 - no source configured — `404 enrichment_disabled`, exactly as the Cell and
   transaction routes answer it;
 - `200 {"state":"unsighted","reason":…}` — the lookup succeeded and there is
-  no sighting. `never_sighted` means the source was asked and has never seen
-  this node from outside (a source running with its crawler switched off looks
-  the same from here and means the same thing); `unreadable_node_id` means the
-  local node's id for this peer could not be turned into the source's key, so
+  no sighting. `never_sighted` means the source was asked and holds nothing at
+  all under this id — not a verification, and not even an address somebody
+  advertised (a source running with its crawler switched off looks the same
+  from here and means the same thing); `unreadable_node_id` means the local
+  node's id for this peer could not be turned into the source's key, so
   nothing was asked; `no_crawler` means the configured source has no crawler
   at all. Never having been seen from outside is real information about a
   node, so it is reported rather than discarded as a 404;
+- `200 {"state":"unsighted","reason":"advertised_unverified","advertised":…}`
+  — the network names this peer and nobody outside could get an identify out
+  of it. Still an absence of a sighting, and the only one with evidence under
+  it: when the network last named the peer, how far the furthest of its dials
+  got, and how many completed rounds in a row have ended without a
+  verification. This is the ordinary state of a node behind NAT — it dials out
+  and cannot be dialed back — so cknerv can hold a live link to a peer that is
+  permanently in it;
 - `200 {"state":"sighted","sighting":…}` — the record.
 
 An unreachable source, a malformed answer, an upstream store error, or a
 canonical anchor that moved during the fetch is `503 enrichment_unavailable`:
-absence never papers over a fault. The record rides the same validated anchor
+absence never papers over a fault. So is a point lookup that 404s while the
+crawler's own peer list route is not answering — that pair means the peer API
+this build asks for is gone, which is a fault about cknerv rather than a
+verdict on a node. The ckbadger adapter reads that from the list route the
+atlas and roster already refresh every 60 seconds, so it costs no extra
+request. The record rides the same validated anchor
 and re-read fence as the network atlas, but it never enters the semantics
 projection — it describes a network node rather than a chain object, and the
 set of peers belongs to the network.

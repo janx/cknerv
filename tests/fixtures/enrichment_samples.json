@@ -1011,6 +1011,15 @@
     }
   },
   "peer_sightings": {
+    "advertised_unverified": {
+      "state": "unsighted",
+      "reason": "advertised_unverified",
+      "advertised": {
+        "last_advertised_at_ms": 1699999940000,
+        "furthest_result": "no_authenticated_session_before_deadline",
+        "consecutive_exhausted_rounds": 2
+      }
+    },
     "never_sighted": {
       "state": "unsighted",
       "reason": "never_sighted"
@@ -1040,8 +1049,7 @@
         "last_seen_ms": 1699999940000,
         "last_reachable_at_ms": 1699999940000,
         "reachable": true,
-        "rtt_ms": 41,
-        "known_peers_count": 45
+        "rtt_ms": 41
       }
     },
     "unreadable_node_id": {

@@ -91,6 +91,24 @@ describe('fetchPeerSighting', () => {
     });
   });
 
+  it('carries the evidence under an absence through untouched', async () => {
+    // `advertised_unverified` is the one absence with a payload, and the
+    // plate's two captions are the only thing that reads it. A client that
+    // narrowed the answer to its `reason` would leave the plate with a
+    // headline and nothing to qualify it — and nothing else here would fail.
+    const advertised = body('advertised_unverified');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(advertised)));
+
+    const outcome = await fetchPeerSighting('QmAdvertised');
+
+    expect(outcome).toEqual(advertised);
+    if (outcome.state !== 'unsighted') throw new Error('expected an absence');
+    expect(outcome.reason).toBe('advertised_unverified');
+    expect(outcome.advertised?.furthest_result)
+      .toBe('no_authenticated_session_before_deadline');
+    expect(outcome.advertised?.consecutive_exhausted_rounds).toBe(2);
+  });
+
   it('reads a disabled source off the 404 rather than calling it an absence', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(
       { error: 'enrichment_disabled', message: 'no enrichment source is configured' },

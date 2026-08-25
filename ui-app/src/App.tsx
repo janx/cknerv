@@ -117,6 +117,7 @@ import type {
   ChainNode,
   Peer,
   CellSemanticRecord,
+  PeerAdvertisedEvidence,
   PeerSightingAbsence,
   PeerSightingRecord,
   TransactionSemanticRecord,
@@ -1426,8 +1427,16 @@ export default function App({
     phase: PeerSightingPhase;
     record: PeerSightingRecord | null;
     reason: PeerSightingAbsence | null;
+    advertised: PeerAdvertisedEvidence | null;
     message: string | null;
-  }>({ key: null, phase: 'waiting', record: null, reason: null, message: null });
+  }>({
+    key: null,
+    phase: 'waiting',
+    record: null,
+    reason: null,
+    advertised: null,
+    message: null,
+  });
   useEffect(() => {
     if (!peerSightingEnabled || !inspectedNetNodeId) {
       setPeerSightingLookup({
@@ -1435,6 +1444,7 @@ export default function App({
         phase: 'waiting',
         record: null,
         reason: null,
+        advertised: null,
         message: null,
       });
       return;
@@ -1446,6 +1456,10 @@ export default function App({
         : outcome.state === 'unsighted' ? 'unsighted' : 'disabled',
       record: outcome.state === 'sighted' ? outcome.sighting : null,
       reason: outcome.state === 'unsighted' ? outcome.reason : null,
+      // The one absence that carries evidence. It rides beside the reason all
+      // the way to the plate rather than being flattened into a record: it is
+      // not a sighting, and nothing downstream may read it as one.
+      advertised: outcome.state === 'unsighted' ? outcome.advertised ?? null : null,
       message: null,
     });
     const remembered = cachedPeerSighting(inspectedNetNodeId, sightingSourceIdentity);
@@ -1462,6 +1476,7 @@ export default function App({
         phase: hardFailure ? 'error' : 'waiting',
         record: null,
         reason: null,
+        advertised: null,
         message: source.message ?? null,
       });
       return;
@@ -1473,6 +1488,7 @@ export default function App({
       phase: 'loading',
       record: null,
       reason: null,
+      advertised: null,
       message: null,
     });
     void fetchPeerSighting(inspectedNetNodeId, {
@@ -1488,6 +1504,7 @@ export default function App({
         phase: 'error',
         record: null,
         reason: null,
+        advertised: null,
         message: error instanceof Error ? error.message : String(error),
       });
     });
@@ -1505,12 +1522,13 @@ export default function App({
   const inspectedNetSighting = useMemo<PeerSightingState | undefined>(() => {
     if (!peerSightingEnabled || !inspectedNetNodeId) return undefined;
     if (peerSightingLookup.key !== inspectedNetNodeId) {
-      return { phase: 'waiting', record: null, reason: null, message: null };
+      return { phase: 'waiting', record: null, reason: null, advertised: null, message: null };
     }
     return {
       phase: peerSightingLookup.phase,
       record: peerSightingLookup.record,
       reason: peerSightingLookup.reason,
+      advertised: peerSightingLookup.advertised,
       message: peerSightingLookup.message,
     };
   }, [inspectedNetNodeId, peerSightingEnabled, peerSightingLookup]);
