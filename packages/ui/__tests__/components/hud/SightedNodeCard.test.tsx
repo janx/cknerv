@@ -49,11 +49,13 @@ function rosterNode(overrides: Partial<RosterNode> = {}): RosterNode {
   return {
     node_id: 'QmSightedAlpha0123456789',
     addr: LONG_ADDR,
+    state: 'reachable',
     version: '0.116.1',
     country: 'Germany',
     asn: 'AS24940',
-    reachable: true,
-    last_seen_ms: LAST_SEEN_MS,
+    last_reachable_ms: LAST_SEEN_MS,
+    last_advertised_ms: LAST_SEEN_MS,
+    last_observed_ms: LAST_SEEN_MS,
     ...overrides,
   };
 }

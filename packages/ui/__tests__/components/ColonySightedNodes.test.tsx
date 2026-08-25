@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { render, renderHook } from '@testing-library/react';
 import { Canvas } from '@react-three/fiber';
-import ColonyNodes, { useStableList } from '../../src/components/ColonyNodes';
+import ColonyNodes, { isReachedStop, useStableList } from '../../src/components/ColonyNodes';
 import { inferredTopology } from '../../src/derives/networkTopology.derive';
 import { colonyFlood } from '../../src/derives/networkFlood.derive';
 import type { NetworkNode } from '../../src/types';
@@ -23,11 +23,13 @@ function rosterNode(node_id: string, reachable: boolean): RosterNode {
   return {
     node_id,
     addr: '/ip4/10.0.0.1/tcp/8115',
+    state: reachable ? 'reachable' : 'verified_unavailable',
     version: '0.116.1',
     country: 'Unknown',
     asn: 'Unknown',
-    reachable,
-    last_seen_ms: 1_700_000_000_000,
+    last_reachable_ms: 1_700_000_000_000,
+    last_advertised_ms: 1_700_000_060_000,
+    last_observed_ms: 1_700_000_000_000,
   };
 }
 
@@ -76,6 +78,41 @@ describe('ColonyNodes sighted tier', () => {
         />
       </Canvas>,
     )).not.toThrow();
+  });
+
+  // ⭐⭐ The predecessor asked `n.sighted?.reachable !== false`, so ANY node
+  // whose answer was not literally `false` — a state this build has no name
+  // for, a row from an older record, a node with no crawler row at all — drew
+  // at the brightness reserved for a peer the crawler dialed this round. That
+  // is a default that hands out the strongest claim on the ladder to whatever
+  // it cannot read. The direction has to be the other one, and the only way to
+  // tell the two apart is to ask about a rung this file has never heard of.
+  it('never lets a stop it cannot name reach for the bright mark', () => {
+    const node = (sighted?: RosterNode): NetworkNode => ({
+      id: 'Qm0000', kind: 'sighted', pos: [0, 0, 0], sighted,
+    });
+    expect(isReachedStop(node(rosterNode('Qm0000', true)))).toBe(true);
+    expect(isReachedStop(node(rosterNode('Qm0000', false)))).toBe(false);
+    // A rung upstream grew and nothing here has been taught to draw.
+    const unnamed = {
+      ...rosterNode('Qm0000', true), state: 'quantum_entangled',
+    } as unknown as RosterNode;
+    expect(isReachedStop(node(unnamed))).toBe(false);
+    // And a node carrying no crawler row at all, which is every other tier in
+    // the colony: it must not fall through to the sighted tier's brightest
+    // stop either.
+    expect(isReachedStop(node(undefined))).toBe(false);
+  });
+
+  it('routes both the draw split and the hit radius through that one guard', () => {
+    const nodes = source('ColonyNodes.tsx');
+    // Two consumers, one predicate, and the dim stop is the fallthrough in
+    // both: a second copy of the test written the other way round would give
+    // an unnameable rung a bright mark on one of them and a small target on
+    // the other.
+    expect(nodes).toContain('isReachedStop(node) ? SIGHTED_HIT_RADIUS : SIGHTED_DARK_HIT_RADIUS');
+    expect(nodes).toContain('sighted.filter(isReachedStop)');
+    expect(nodes).toContain('sighted.filter((n) => !isReachedStop(n))');
   });
 
   it('draws the tier as point clouds only — ZERO new vertex attributes', () => {
@@ -214,7 +251,9 @@ describe('cloud point buffers outlive the rebuilds that do not move them', () =>
     const rounds = {
       ...ROSTER,
       crawl_round: ROSTER.crawl_round + 1,
-      entries: ROSTER.entries.map((e) => ({ ...e, last_seen_ms: e.last_seen_ms + 60_000 })),
+      entries: ROSTER.entries.map((e) => ({
+        ...e, last_reachable_ms: (e.last_reachable_ms ?? 0) + 60_000,
+      })),
     };
     const shorter = { ...ROSTER, entries: ROSTER.entries.slice(0, 8) };
     const first = staged(ROSTER);

@@ -225,15 +225,27 @@ function networkRoster(block: number, round: number): NetworkRosterRecord {
     updated_at_ms: block,
     crawl_round: round,
     truncated: true,
+    // Both ends of the gradient, because the reducer carries this record
+    // whole: a peer the crawler dialed, and a peer nobody has ever got an
+    // answer out of, whose absent fields have to survive a snapshot and a
+    // delta without a reducer filling them in.
     entries: [{
       node_id: 'QmQHmapDhRnzHqcAJQ5geABWdMVRaa6qah9gEdBEF7ejyL',
       addr: '/ip4/203.0.113.7/tcp/8115',
+      state: 'reachable',
       version: '0.209.0',
       country: 'DE',
       asn: 'AS24940 Hetzner Online GmbH',
-      reachable: true,
-      last_seen_ms: 1_699_999_940_000,
+      last_reachable_ms: 1_699_999_940_000,
+      last_advertised_ms: 1_699_999_990_000,
+      last_observed_ms: 1_699_999_940_000,
       rtt_ms: 41,
+    }, {
+      node_id: 'QmTdv6Dpi1e5fzKUVZzw5SJJYVvDt1jAq5ShiRRCQ7eBLB',
+      addr: '/ip4/203.0.113.254/tcp/8115',
+      state: 'advertised_unverified',
+      last_advertised_ms: 1_699_999_990_000,
+      last_observed_ms: 1_699_999_920_000,
     }],
   };
 }
@@ -490,7 +502,7 @@ describe('semantics reducer', () => {
       type: 'network_roster_replace',
       network_roster: named,
     });
-    expect(seeded.networkRoster?.entries).toHaveLength(1);
+    expect(seeded.networkRoster?.entries).toHaveLength(2);
 
     // A round that finished knowing nobody replaces the named set with an
     // empty one, and the record stays: "the crawler saw no one" is an answer

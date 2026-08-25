@@ -510,26 +510,71 @@ export interface NetworkAtlasRecord {
   asns: NetworkAtlasBucket[];
 }
 
+/** How the crawler came to know one roster node — the evidence behind the row,
+ * in upstream's own gradient rather than a confidence rating.
+ *
+ * `reachable` is a node the crawler dialed in the last completed round and got
+ * an identify out of; `verified_unavailable` is one it holds a verification for
+ * from an earlier round and could not reach in the last one; and
+ * `advertised_unverified` is one other peers advertise that no completed round
+ * has ever got an answer out of. The first two are peers the crawler has
+ * SPOKEN to. The third is hearsay with a real identity attached, and the reason
+ * this replaced a boolean: three states do not fit in one, and folding the
+ * third in beside a peer the crawler has actually dialed is exactly the blur
+ * this record refuses.
+ *
+ * ⚠️ A consumer that has a mark for one rung and not another must SELECT the
+ * rungs it can draw. Defaulting an unrecognised state to the brightest one —
+ * which the old `reachable !== false` did, and which is what a boolean invites
+ * — renders hearsay at the brightness reserved for a peer somebody answered. */
+export type RosterNodeState = 'reachable' | 'verified_unavailable' | 'advertised_unverified';
+
 /** One crawler-known node, as the scene may stage it.
  *
  * Its identity is real and nothing else here is: the id, the address, the
  * version and the labels are the crawler's own observations, while where this
  * node ends up standing — and every edge drawn to it — is scene placement
- * with no claim on the network's shape. */
+ * with no claim on the network's shape.
+ *
+ * ⭐ THE ABSENT FIELDS ARE THE POINT. Everything below `state` is optional
+ * because the crawler holds it only for a node it actually reached, and a row
+ * for a node it never reached must not borrow a plausible value from one it
+ * did. `'Unknown'` still appears and still means what it always meant — the
+ * crawler reached this node and its geolocation lookup came back empty — which
+ * is a different statement from a field that is not here at all, and the reason
+ * those two are not spelled the same way. */
 export interface RosterNode {
   /** Base58: the id vocabulary the whole app already shares with the local
    * node's peer list, with `Peer.node_id`, and with
    * `/api/enrichment/peers/:node_id` — not the hex the crawler is keyed by. */
   node_id: string;
-  /** The primary address the crawler holds for this node. */
+  /** The primary address the crawler holds for this node. Present for every
+   * state: an address is what a candidate IS. */
   addr: string;
-  version: string;
-  /** A crawler with no geolocation or ASN for a node says `'Unknown'`, and
-   * that answer crosses unchanged: "nobody knows" is a label, not a gap. */
-  country: string;
-  asn: string;
-  reachable: boolean;
-  last_seen_ms: number;
+  /** What the crawler knows about this node, and how it came to know it. */
+  state: RosterNodeState;
+  /** The client version the crawler read off this node's identify. Absent
+   * unless the crawler holds a verification for it. */
+  version?: string;
+  /** A crawler that REACHED a node and has no geolocation or ASN for it says
+   * `'Unknown'`, and that answer crosses unchanged: "nobody knows" is a label,
+   * not a gap. The field is absent only for a node the crawler never reached,
+   * where there was no lookup to come back empty. */
+  country?: string;
+  asn?: string;
+  /** When the crawler last REACHED this node.
+   *
+   * ⭐ One of three clocks, and not interchangeable with either. This is the
+   * only one that means "the crawler saw this node", so it is absent for a node
+   * it never did — a row that filled it from a neighbouring clock would print a
+   * sighting that never happened. */
+  last_reachable_ms?: number;
+  /** When the network last NAMED this node to the crawler. The one clock every
+   * row has, and the reason no roster row is ever undated. */
+  last_advertised_ms: number;
+  /** When the crawler last TRIED this node — the last completed round it was
+   * in, whether or not the dial got anywhere. What dates a failure. */
+  last_observed_ms?: number;
   /** The crawler's own dial, from the crawler's vantage. Display-only: it
    * measures a link this dashboard does not have, and is never a distance. */
   rtt_ms?: number;
@@ -548,13 +593,19 @@ export interface RosterNode {
  * same set in the same order round after round. Empty `entries` is a crawler
  * that finished a round knowing nobody, which is a report and not the same
  * thing as having no crawler at all (that one arrives as
- * `network_roster_clear`). */
+ * `network_roster_clear`).
+ *
+ * The bounded few are no longer one kind of node: every entry carries its own
+ * `state`, and a scene with a mark for one rung and not another selects the
+ * rungs it can draw rather than assuming the record only names those. */
 export interface NetworkRosterRecord {
   source: string;
   as_of: ChainAnchor;
   updated_at_ms: number;
   crawl_round: number;
-  /** The crawler knows more nodes than this roster names. */
+  /** The crawler knows more nodes than this roster names — either because a
+   * page said there was more behind it, or because the roster spent its whole
+   * budget before it had asked after every rung of the gradient. */
   truncated: boolean;
   entries: RosterNode[];
 }

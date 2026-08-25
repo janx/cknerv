@@ -883,30 +883,103 @@ pub struct NetworkAtlasRecord {
     pub asns: Vec<NetworkAtlasBucket>,
 }
 
+/// How the crawler came to know one roster node — the evidence behind the row,
+/// in upstream's own gradient rather than a confidence rating.
+///
+/// This replaced a `reachable` boolean, which could name two states and had to
+/// carry three. The third is not a shade of the first two: `reachable` and
+/// `verified_unavailable` are peers the crawler dialed and got an identify out
+/// of, once or this round, and `advertised_unverified` is a peer other peers
+/// named that has never answered anybody. A boolean would have had to fold that
+/// last one in beside a peer the crawler has actually spoken to, and the whole
+/// point of this record is that it does not.
+///
+/// The three upstream states that do NOT appear are the three no roster row is
+/// made from: a peer on another chain, a peer no completed round has reached
+/// yet, and a state this build has no name for. They are counted on the atlas
+/// ladder where a count is what they are worth, and the roster names nobody it
+/// cannot say a true sentence about.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RosterNodeState {
+    /// The crawler dialed this node in the last completed round and it
+    /// identified itself on this chain.
+    Reachable,
+    /// The crawler holds a verification for this node from an earlier round
+    /// and could not reach it in the last one. Dark, and real.
+    VerifiedUnavailable,
+    /// Other peers advertise this node and no completed round has ever got an
+    /// identify out of it. Its identity, its address and its advertise window
+    /// are real; everything a dial would have told us is absent, and absent is
+    /// how this record says it.
+    AdvertisedUnverified,
+}
+
 /// One crawler-known node, as the scene may stage it.
 ///
 /// Its identity is real and nothing else here is: the id, the address, the
 /// version and the labels are the crawler's own observations, while where
 /// this node ends up standing — and every edge drawn to it — is scene
 /// placement with no claim on the network's shape.
+///
+/// ⭐ THE ABSENT FIELDS ARE THE POINT. Everything below `state` is optional
+/// because the crawler holds it only for a node it actually reached, and a
+/// row for a node it never reached must not borrow a plausible value from one
+/// it did. `"Unknown"` still appears and still means what it always meant —
+/// the crawler reached this node and its geolocation lookup came back empty —
+/// which is a different statement from a field that is not here at all, and
+/// the reason those two are not spelled the same way.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RosterNode {
     /// Base58: the id vocabulary the whole app already shares with the local
     /// node's peer list and with `/api/enrichment/peers/:node_id`, not the
     /// hex the crawler is keyed by.
     pub node_id: String,
-    /// The primary address the crawler holds for this node.
+    /// The primary address the crawler holds for this node. Present for every
+    /// state: an address is what a candidate IS, and a peer nobody can name an
+    /// address for is not on any roster.
     pub addr: String,
-    pub version: String,
-    /// A crawler with no geolocation or ASN for a node says `"Unknown"`, and
-    /// that answer crosses unchanged rather than thinning into an absent
-    /// field: "nobody knows" is a label, not a gap.
-    pub country: String,
-    pub asn: String,
-    pub reachable: bool,
-    /// Milliseconds, like every other cknerv wire clock, although the crawler
-    /// counts seconds.
-    pub last_seen_ms: u64,
+    /// What the crawler knows about this node, and how it came to know it.
+    pub state: RosterNodeState,
+    /// The client version the crawler read off this node's identify. Absent
+    /// unless the crawler holds a verification for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// A crawler that reached a node and has no geolocation or ASN for it says
+    /// `"Unknown"`, and that answer crosses unchanged rather than thinning
+    /// into an absent field: "nobody knows" is a label. The field is absent
+    /// only for a node the crawler never reached, where there was no lookup to
+    /// come back empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub country: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asn: Option<String>,
+    /// When the crawler last reached this node. Milliseconds, like every other
+    /// cknerv wire clock, although the crawler counts seconds.
+    ///
+    /// ⭐ ONE OF THREE CLOCKS, AND NOT INTERCHANGEABLE WITH EITHER. This is
+    /// the only one that means "the crawler saw this node", so it is absent
+    /// for a node it never did — filling it from a neighbouring clock would
+    /// state a sighting that never happened, which is the exact failure this
+    /// whole record was reshaped to prevent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_reachable_ms: Option<u64>,
+    /// When the network last named this node to the crawler.
+    ///
+    /// The one clock every row has, and the reason no roster row is ever
+    /// undated: a peer nobody has ever advertised is a peer no crawler ever
+    /// heard of. It says the network still gossips this address, which is a
+    /// statement about the network rather than about the node.
+    pub last_advertised_ms: u64,
+    /// When the crawler last TRIED this node — the last round that finished
+    /// with it in it, whether or not the dial got anywhere.
+    ///
+    /// Absent for a candidate no completed round has reached yet, which is a
+    /// state this roster does not stage; carried anyway, because a reader that
+    /// wants "how stale is this failure" must not be tempted to reach for the
+    /// advertise clock instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_observed_ms: Option<u64>,
     /// The crawler's own dial, from the crawler's vantage. Display-only: it
     /// measures a link cknerv does not have, and is never a distance.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -925,13 +998,21 @@ pub struct RosterNode {
 /// set in the same order round after round. Empty `entries` is a crawler that
 /// finished a round knowing nobody — which is a report, and not the same
 /// thing as having no crawler at all.
+///
+/// The bounded few are no longer one kind of node. Every entry carries its own
+/// [`RosterNodeState`], so a consumer that has a mark for one rung of the
+/// gradient and not another must SELECT the rungs it can draw rather than
+/// assume the record only ever names those — the record reports what the
+/// crawler knows, and what a scene has a mark for is the scene's business.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NetworkRosterRecord {
     pub source: String,
     pub as_of: ChainAnchor,
     pub updated_at_ms: u64,
     pub crawl_round: u64,
-    /// The crawler knows more nodes than this roster names.
+    /// The crawler knows more nodes than this roster names — either because a
+    /// page said there was more behind it, or because the roster spent its
+    /// whole budget before it had asked after every rung of the gradient.
     pub truncated: bool,
     #[serde(default)]
     pub entries: Vec<RosterNode>,
@@ -2195,11 +2276,13 @@ mod tests {
             entries: vec![RosterNode {
                 node_id: "QmagxSv7GNwKXQE7mi1iDjFHghjUpbqjBgqSot7PmMJqHA".into(),
                 addr: "/ip4/203.0.113.7/tcp/8115".into(),
-                version: "0.209.0".into(),
-                country: "DE".into(),
-                asn: "AS24940 Hetzner Online GmbH".into(),
-                reachable: true,
-                last_seen_ms: 1_699_999_940_000,
+                state: RosterNodeState::Reachable,
+                version: Some("0.209.0".into()),
+                country: Some("DE".into()),
+                asn: Some("AS24940 Hetzner Online GmbH".into()),
+                last_reachable_ms: Some(1_699_999_940_000),
+                last_advertised_ms: 1_699_999_980_000,
+                last_observed_ms: Some(1_699_999_940_000),
                 rtt_ms: Some(41),
             }],
         }

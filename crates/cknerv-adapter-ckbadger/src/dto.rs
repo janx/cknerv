@@ -208,8 +208,12 @@ pub(crate) struct NetworkPeersPageResponse {
 /// This is a gradient of evidence, not a confidence rating: `reachable` means
 /// the crawler dialed the peer and it identified itself, and
 /// `advertisedUnverified` means other peers named it and it never answered.
-/// cknerv reads the two verified rungs and stages neither the hearsay ones
-/// nor the transient one.
+/// The roster carries those three onto the wire as its own state discriminant
+/// and asks for them one scope at a time. It carries neither of the other two:
+/// a `foreignNetwork` peer answered from another chain and is not a member of
+/// this network's colony, and `noCompletedObservation` is the transient state
+/// of a peer no finished round has reached yet, which is strictly less
+/// evidence than `advertisedUnverified` already is.
 ///
 /// ⭐ `Unknown` is load-bearing. Upstream broke this contract twice inside
 /// 48 hours and each break cost the entire roster, because one unreadable
@@ -232,18 +236,21 @@ pub(crate) enum PeerDisplayState {
 /// One row of `network/peers`: candidates and verified peers unified, each
 /// tagged with the evidence behind it.
 ///
-/// The optional fields are optional for a reason worth keeping: upstream
-/// holds `version`, `country`, `asn`, `lastReachableAt` and `rttMs` only for
-/// a peer it actually reached, and answers `null` rather than fabricating
-/// metadata for a peer it merely heard about. `null` and "the crawler holds
-/// an empty label" are the same statement to a reader — nobody knows — and
-/// the mapper spells both with the same word.
+/// ⭐ THE NULLS ARE THE CONTRACT. Upstream builds `version`, `country`, `asn`,
+/// `lastReachableAt` and `rttMs` out of the verified node record and answers
+/// `null` for all five when it holds none — so a `null` here is upstream
+/// saying *there was never a dial to learn this from*, and it draws the line
+/// in exactly the place cknerv needs it drawn. It is emphatically NOT the same
+/// answer as an empty label: upstream mints the word `"Unknown"` itself for a
+/// peer it DID reach whose geolocation or ASN lookup came back empty, so
+/// "nobody knows where this reached node is" arrives as a string and "nobody
+/// ever spoke to this node" arrives as `null`. Collapsing the two — which one
+/// `unwrap_or_default()` in the mapper is enough to do — would print the
+/// crawler's verdict over a peer it never dialed.
 ///
-/// The wire also carries `lastObservedAt` (when the crawler last *tried*).
-/// It is deliberately not declared: it is a different clock from
-/// `lastReachableAt` (when the crawler last *succeeded*), no reader wants
-/// the former yet, and the one field the roster dates its rows with must not
-/// be able to silently become the other.
+/// Three clocks arrive here and they are three different facts. Nothing may
+/// fill one from another; see the mapper, where each keeps its own name all
+/// the way onto the wire.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PeerSummaryResponse {
@@ -259,15 +266,39 @@ pub(crate) struct PeerSummaryResponse {
     pub version: Option<String>,
     pub country: Option<String>,
     pub asn: Option<String>,
-    /// Unix seconds, and upstream's sort key for this page: rows arrive
-    /// newest-advertised first, ties broken by `peerId`. Read by the roster
-    /// alone, and read only to check that order — which peers land inside a
-    /// bounded slice is decided by it, and nothing else on the page can say
-    /// whether it held.
+    /// Unix seconds the network last named this peer to the crawler, and
+    /// upstream's sort key for this page: rows arrive newest-advertised first,
+    /// ties broken by `peerId`.
+    ///
+    /// It does two jobs and they are worth keeping apart. It is what the
+    /// roster checks the page's order against — which peers land inside a
+    /// bounded slice is decided by that order, and nothing else on the page
+    /// can say whether it held. It is also the ONE clock every candidate has,
+    /// verified or not, so it is the stamp an unverified row is dated by; a
+    /// peer nobody ever advertised is a peer no crawler ever heard of.
     pub last_advertised_at: u64,
-    /// Unix seconds the crawler last reached this peer. Present exactly when
-    /// upstream holds a verification for it, which is exactly when the state
-    /// is `reachable` or `verifiedUnavailable`.
+    /// Unix seconds the crawler last FINISHED A ROUND with this peer in it,
+    /// whether or not the dial got anywhere — the newest stamp across the
+    /// addresses that round tried. Absent for a candidate no completed round
+    /// has reached yet, which is precisely the `noCompletedObservation` state.
+    ///
+    /// It is not a sighting and it is not the sort key. It arrives here so the
+    /// roster can say when a failure was last confirmed to still be a failure,
+    /// which is the one thing an unverified peer's row could otherwise only
+    /// answer by borrowing a clock that means something else.
+    pub last_observed_at: Option<u64>,
+    /// Unix seconds the crawler last REACHED this peer. Present exactly when
+    /// upstream holds a verified node record for it — the same condition that
+    /// decides every other optional field on this row, which is why the five
+    /// arrive and depart together.
+    ///
+    /// Note that condition is the node record and not the state word: a
+    /// `foreignNetwork` or `noCompletedObservation` row can carry a stale node
+    /// record from an earlier round and answer with all five populated. The
+    /// roster stages neither of those, so the two never disagree in practice —
+    /// but a reader that derived "was this peer ever reached" from the state
+    /// word instead of from this field would be deriving it from the wrong
+    /// one.
     pub last_reachable_at: Option<u64>,
     pub rtt_ms: Option<u32>,
 }

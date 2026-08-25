@@ -15,11 +15,13 @@ function roster(n: number): NetworkRosterRecord {
   const entries: RosterNode[] = Array.from({ length: n }, (_, i) => ({
     node_id: `Qm${String(i).padStart(4, '0')}`,
     addr: '/ip4/10.0.0.1/tcp/8115',
+    state: 'reachable',
     version: '0.116.1',
     country: 'Unknown',
     asn: 'Unknown',
-    reachable: true,
-    last_seen_ms: 1_700_000_000_000,
+    last_reachable_ms: 1_700_000_000_000,
+    last_advertised_ms: 1_700_000_060_000,
+    last_observed_ms: 1_700_000_000_000,
   }));
   return {
     source: 'ckbadger',

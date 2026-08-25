@@ -77,10 +77,21 @@ const SIGHTED_SELECTION_PREFIX = 'sighted:';
 const SIGHTED_HIT_RADIUS = peerCloudHitRadius(PEER_CLOUD_SIGHTED_TONE);
 const SIGHTED_DARK_HIT_RADIUS = peerCloudHitRadius(PEER_CLOUD_SIGHTED_DARK_TONE);
 
+/** ⭐ THE BRIGHT STOP IS OPT-IN, EVERYWHERE. Both this and the draw split below
+ *  test for `reachable` and let everything else fall to the dim stop, and that
+ *  direction is load-bearing rather than stylistic: the predecessor asked
+ *  `reachable !== false`, so a node whose state was missing — an older record,
+ *  a rung nobody has taught this file about yet — rendered at the brightness
+ *  reserved for a peer the crawler dialed this round. An unknown must always
+ *  cost brightness, never gain it. Exported so that direction can be tested
+ *  against a state this file has never heard of, which is the only way to tell
+ *  the guard apart from its inverse. */
+export function isReachedStop(node: NetworkNode): boolean {
+  return node.sighted?.state === 'reachable';
+}
+
 function sightedHitRadius(node: NetworkNode): number {
-  return node.sighted?.reachable === false
-    ? SIGHTED_DARK_HIT_RADIUS
-    : SIGHTED_HIT_RADIUS;
+  return isReachedStop(node) ? SIGHTED_HIT_RADIUS : SIGHTED_DARK_HIT_RADIUS;
 }
 
 /** Keep handing back the list a point buffer was already built from, for as long
@@ -265,12 +276,13 @@ function SightedNodes({
   const hitUserData = useMemo(() => ({ [NETWORK_PEER_PICK_FLAG]: true }), []);
   // A crawler that could not reach a node this round still knows it exists;
   // that is real, dimmer information, and it costs one extra draw, not a slot.
-  const reached = useMemo(
-    () => sighted.filter((n) => n.sighted?.reachable !== false),
-    [sighted],
-  );
+  // The two lists are a partition by construction — `isReachedStop` and its
+  // negation — because the hit mesh below walks `sighted` whole and hands every
+  // instance one of these two radii, so a node in neither list would stand an
+  // invisible target nothing draws a mark for.
+  const reached = useMemo(() => sighted.filter(isReachedStop), [sighted]);
   const remembered = useMemo(
-    () => sighted.filter((n) => n.sighted?.reachable === false),
+    () => sighted.filter((n) => !isReachedStop(n)),
     [sighted],
   );
   const selected = useMemo(() => {

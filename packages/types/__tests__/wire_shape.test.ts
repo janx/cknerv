@@ -473,17 +473,42 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
       [...(roster?.entries.map((node) => node.node_id) ?? [])].sort(),
     );
     expect(roster?.entries[0].node_id).toBe(
-      'QmQHmapDhRnzHqcAJQ5geABWdMVRaa6qah9gEdBEF7ejyL',
+      'QmNRAvtC6L85hwp6vWnqaKonJw3dz1q39B4nXVQErzC4Hx',
     );
-    expect(roster?.entries[0].addr).toBe('/ip4/203.0.113.7/tcp/8115');
-    expect(roster?.entries[0].rtt_ms).toBe(41);
+    expect(roster?.entries[0].state).toBe('reachable');
+    expect(roster?.entries[0].rtt_ms).toBe(1331);
+    // Three clocks, and the fixture gives each of them its own value, because
+    // two that agreed would let a reader collapse the pair and still pass.
+    expect(roster?.entries[0].last_reachable_ms).toBe(1_699_999_940_000);
+    expect(roster?.entries[0].last_advertised_ms).toBe(1_699_999_990_000);
+    expect(roster?.entries[0].last_observed_ms).toBe(1_699_999_940_000);
+    // ⭐ The distinction the whole record turns on. A node the crawler REACHED
+    // and could not place carries the crawler's own word for that; a node
+    // nobody has ever got an answer out of carries nothing at all. Two
+    // different true sentences, and a reader that spelled them the same way
+    // would print a verdict over a peer nobody has spoken to.
+    expect(roster?.entries[1].state).toBe('reachable');
+    expect(roster?.entries[1].country).toBe('Unknown');
+    expect(roster?.entries[1].asn).toBe('Unknown');
+    const hearsay = roster?.entries[2];
+    expect(hearsay?.state).toBe('advertised_unverified');
+    expect(hearsay?.version).toBeUndefined();
+    expect(hearsay?.country).toBeUndefined();
+    expect(hearsay?.asn).toBeUndefined();
+    expect(hearsay?.rtt_ms).toBeUndefined();
+    // The reach clock in particular: an unverified peer was never reached, so
+    // the field that means "the crawler saw this node" has to be gone rather
+    // than filled from either of the two clocks beside it.
+    expect(hearsay?.last_reachable_ms).toBeUndefined();
+    expect(hearsay?.last_advertised_ms).toBe(1_699_999_990_000);
+    expect(hearsay?.last_observed_ms).toBe(1_699_999_920_000);
     // Dark matter is carried, not filtered: a node the crawler could not
-    // reach is still a node it saw, and it has no dial to report.
-    expect(roster?.entries[1].reachable).toBe(false);
-    expect(roster?.entries[1].rtt_ms).toBeUndefined();
-    // An honest label, not an absent field.
-    expect(roster?.entries[2].country).toBe('Unknown');
-    expect(roster?.entries[2].asn).toBe('Unknown');
+    // reach this round is still a node it holds a verification for, so it
+    // answers every field the reached rows do and has no dial to report.
+    expect(roster?.entries[3].state).toBe('verified_unavailable');
+    expect(roster?.entries[3].version).toBe('0.208.1');
+    expect(roster?.entries[3].last_reachable_ms).toBe(1_699_999_100_000);
+    expect(roster?.entries[3].rtt_ms).toBeUndefined();
     expect(sample.deltas.network_roster_replace.type).toBe('network_roster_replace');
     expect(sample.deltas.network_roster_clear.type).toBe('network_roster_clear');
     // A round that found nobody and no crawler at all are different answers

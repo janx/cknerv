@@ -16,8 +16,8 @@ use cknerv_core::{
     AssetKind, Cell, CellDelta, CellGalaxySnapshot, CellLinkEndpointAnchor, Chain, ChainAnchor,
     DisplayMode, DisplayProvenance, LockKind, Mutation, NetworkRosterRecord, OutPoint,
     PeerAdvertisedEvidence, PeerProbeResult, PeerSightingAbsence, PeerSightingLookup,
-    PeerSightingRecord, ReplayPhase, RosterNode, ScriptCensus, ScriptCount, ScriptId,
-    ScriptNameRecord, ScriptRegistryRecord, SemanticsDelta, SemanticsSnapshot,
+    PeerSightingRecord, ReplayPhase, RosterNode, RosterNodeState, ScriptCensus, ScriptCount,
+    ScriptId, ScriptNameRecord, ScriptRegistryRecord, SemanticsDelta, SemanticsSnapshot,
 };
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -630,11 +630,8 @@ fn enrichment_script_registry() -> ScriptRegistryRecord {
 /// browser can carry one row straight into a lookup. Nothing relational is
 /// real: the roster says who exists, never who links to whom.
 ///
-/// Three rows, because three things have to survive the wire — a node the
-/// crawler reached, a node it could not (carried, not filtered: dark matter
-/// is information), and a node it has no geolocation for, whose `"Unknown"`
-/// is a label rather than an absent field. Ordered by `node_id`, which is
-/// what keeps a staged set the same set round after round.
+/// Ordered by `node_id`, which is what keeps a staged set the same set round
+/// after round.
 fn enrichment_network_roster(entries: Vec<RosterNode>, truncated: bool) -> NetworkRosterRecord {
     NetworkRosterRecord {
         source: "ckbadger".to_string(),
@@ -649,37 +646,82 @@ fn enrichment_network_roster(entries: Vec<RosterNode>, truncated: bool) -> Netwo
     }
 }
 
+/// Four rows, because four things have to survive the wire, and three of them
+/// are about what a row DOES NOT say.
+///
+/// The ids, addresses, versions and labels are lifted off a live mainnet crawl
+/// rather than invented, so the shapes a browser has to parse are the shapes it
+/// will meet: a `/dns4` alias with the peer id repeated inside it, a raw
+/// `/ip4`, a client version carrying a build hash and a date, an ASN label that
+/// is a number and an organisation name in one string.
+///
+/// - a node the crawler reached, carrying everything a dial can tell you;
+/// - a node it reached and could not place, whose `"Unknown"` country and ASN
+///   are the crawler's own word for a lookup that came back empty — a LABEL,
+///   and the reason the field beside it is a string rather than a gap;
+/// - a node it reached before and could not this round, which still holds a
+///   verification and so still answers every one of those fields;
+/// - a node nobody has ever got an answer out of, where the five things only a
+///   dial could have told us are ABSENT. That row is the point of the shape:
+///   absent and `"Unknown"` are two different sentences, and a reader that
+///   cannot tell them apart will print the crawler's verdict over a peer it
+///   has never spoken to.
+///
+/// The clocks are this file's own scheme rather than the crawl's, and they are
+/// deliberately all different from each other: three clocks ride every row and
+/// a fixture that gave two of them one value would let a twin collapse the pair
+/// and still pass.
 fn enrichment_roster_nodes() -> Vec<RosterNode> {
     vec![
         RosterNode {
-            node_id: "QmQHmapDhRnzHqcAJQ5geABWdMVRaa6qah9gEdBEF7ejyL".to_string(),
-            addr: "/ip4/203.0.113.7/tcp/8115".to_string(),
-            version: "0.209.0 (d166e28 2026-07-29)".to_string(),
-            country: "DE".to_string(),
-            asn: "AS24940 Hetzner Online GmbH".to_string(),
-            reachable: true,
-            last_seen_ms: 1_699_999_940_000,
-            rtt_ms: Some(41),
+            node_id: "QmNRAvtC6L85hwp6vWnqaKonJw3dz1q39B4nXVQErzC4Hx".to_string(),
+            addr:
+                "/dns4/sange.ckb.guide/tcp/443/p2p/QmNRAvtC6L85hwp6vWnqaKonJw3dz1q39B4nXVQErzC4Hx"
+                    .to_string(),
+            state: RosterNodeState::Reachable,
+            version: Some("0.209.0 (d166e28 2026-07-29)".to_string()),
+            country: Some("CA".to_string()),
+            asn: Some("AS16509 Amazon.com, Inc.".to_string()),
+            last_reachable_ms: Some(1_699_999_940_000),
+            last_advertised_ms: 1_699_999_990_000,
+            last_observed_ms: Some(1_699_999_940_000),
+            rtt_ms: Some(1_331),
         },
         RosterNode {
-            node_id: "QmZwKtibfGWsRxgwkWSMNU5Z4Vq833nH1Lb7yUgggm5w18".to_string(),
-            addr: "/ip6/2001:db8::4/tcp/8114".to_string(),
-            version: "0.208.1".to_string(),
-            country: "SG".to_string(),
-            asn: "AS1 Example".to_string(),
-            reachable: false,
-            last_seen_ms: 1_699_999_100_000,
+            node_id: "QmPQM3t3fyWPzD5UvZEaiLw1siAesXbdCUQozDEUgYJ22Y".to_string(),
+            addr: "/ip4/104.199.224.122/tcp/32872".to_string(),
+            state: RosterNodeState::Reachable,
+            version: Some("0.202.0 (d0a6c95 2025-06-11)".to_string()),
+            country: Some("Unknown".to_string()),
+            asn: Some("Unknown".to_string()),
+            last_reachable_ms: Some(1_699_999_930_000),
+            last_advertised_ms: 1_699_999_990_000,
+            last_observed_ms: Some(1_699_999_930_000),
+            rtt_ms: Some(467),
+        },
+        RosterNode {
+            node_id: "QmTdv6Dpi1e5fzKUVZzw5SJJYVvDt1jAq5ShiRRCQ7eBLB".to_string(),
+            addr: "/ip4/203.0.113.254/tcp/8115".to_string(),
+            state: RosterNodeState::AdvertisedUnverified,
+            version: None,
+            country: None,
+            asn: None,
+            last_reachable_ms: None,
+            last_advertised_ms: 1_699_999_990_000,
+            last_observed_ms: Some(1_699_999_920_000),
             rtt_ms: None,
         },
         RosterNode {
-            node_id: "QmcgXBRjq5zHvGqSgT3MyY4gtGkBWfAP9JgoJxUu936fTs".to_string(),
-            addr: "Unknown".to_string(),
-            version: "Unknown".to_string(),
-            country: "Unknown".to_string(),
-            asn: "Unknown".to_string(),
-            reachable: true,
-            last_seen_ms: 1_699_999_800_000,
-            rtt_ms: Some(214),
+            node_id: "QmcPjVi8ZvUCAsyrV3ocTkwQzMzPXpSUWnWnvYAxRmHKgh".to_string(),
+            addr: "/ip4/8.218.177.113/tcp/8115".to_string(),
+            state: RosterNodeState::VerifiedUnavailable,
+            version: Some("0.208.1".to_string()),
+            country: Some("SG".to_string()),
+            asn: Some("AS45102 Alibaba (US) Technology Co., Ltd.".to_string()),
+            last_reachable_ms: Some(1_699_999_100_000),
+            last_advertised_ms: 1_699_999_980_000,
+            last_observed_ms: Some(1_699_999_910_000),
+            rtt_ms: None,
         },
     ]
 }

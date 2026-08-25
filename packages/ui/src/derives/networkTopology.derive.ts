@@ -7,7 +7,7 @@ import {
   latencyToRadius01, peerAngle, PEER_INNER_RADIUS, PEER_OUTER_RADIUS,
 } from './peers.derive';
 import type { Vec3, NetworkNode, NetworkEdge, NetworkTopology, EdgeKind } from '../types';
-import type { NetworkRosterRecord, Peer } from '@cknerv/types';
+import type { NetworkRosterRecord, RosterNodeState, Peer } from '@cknerv/types';
 
 /** Peer-independent inferred-node count (seeded ±). Tune live. */
 export const COLONY_INFERRED_COUNT = 240;
@@ -121,6 +121,25 @@ export function sightedPos(nodeId: string): Vec3 {
   ];
 }
 
+/** The rungs of the roster's gradient this colony has a mark for.
+ *
+ *  ⭐ THE RECORD REPORTS THREE STATES AND THE SCENE DRAWS TWO. `sighted` is a
+ *  tier whose name says the crawler dialed the node and it answered, and the
+ *  two stops the colony owns — the bright `reached` and the dim `remembered` —
+ *  both mean exactly that, one this round and one an earlier one. An
+ *  `advertised_unverified` peer is real and is not that: nobody has ever got an
+ *  answer out of it. Staging it here would put hearsay under a mark reserved
+ *  for a peer somebody has spoken to, which is the one thing the whole tier
+ *  exists to prevent — so it waits for a mark of its own rather than borrowing
+ *  one, and until then it rides the record unstaged.
+ *
+ *  This is a SET rather than a list of exclusions on purpose: a rung added
+ *  upstream is one the scene has no mark for by definition, so it must have to
+ *  be named here before it can be drawn. */
+const STAGEABLE_ROSTER_STATES: ReadonlySet<RosterNodeState> = new Set<RosterNodeState>([
+  'reachable', 'verified_unavailable',
+]);
+
 /**
  * The crawler's roster as stageable nodes, in the order it sent them.
  *
@@ -130,6 +149,9 @@ export function sightedPos(nodeId: string): Vec3 {
  * same reason. A repeated id inside one roster is dropped too — the cap and
  * the ordering are the server's contract, but a duplicate would double-book an
  * instance in the hit mesh, so tolerate it here.
+ *
+ * A row whose state this colony has no mark for is dropped as well; see
+ * `STAGEABLE_ROSTER_STATES` for why that is a gate and not an oversight.
  *
  * `localId` is cknerv's own key for the endpoint (`ckb:local`), which is not a
  * vocabulary the crawler speaks: roster rows carry base58 p2p ids, the same
@@ -151,6 +173,7 @@ export function stageSighted(
   const out: NetworkNode[] = [];
   const staged = new Set<string>();
   for (const entry of roster.entries) {
+    if (!STAGEABLE_ROSTER_STATES.has(entry.state)) continue;
     if (linked.has(entry.node_id) || staged.has(entry.node_id)) continue;
     staged.add(entry.node_id);
     out.push({

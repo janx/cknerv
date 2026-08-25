@@ -622,11 +622,56 @@ unread: upstream counts one row per protocol per peer, so the buckets add up to
 a multiple of the population rather than to it, and a proportional strip drawn
 from them would state a denominator they do not have.
 
-The bounded `network/peers?state=reachable&limit=256` page now has one reader,
-the roster, and it is also the only writer of the peer-route health the DOSSIER
-consults. The newest-advertised-first ordering invariant moved there with it:
-which peers land inside a bounded slice is decided entirely by the order they
-arrive in, and the roster is the only reader still taking a slice.
+The bounded `network/peers` page now has one reader, the roster, and it is also
+the only writer of the peer-route health the DOSSIER consults. The
+newest-advertised-first ordering invariant moved there with it: which peers land
+inside a bounded slice is decided entirely by the order they arrive in, and the
+roster is the only reader still taking a slice.
+
+The roster asks that route once per rung of the crawler's evidence gradient —
+`state=reachable`, then `state=verifiedUnavailable`, then
+`state=advertisedUnverified` — and gives each request only what the 256-node
+stage budget has left. Unscoped, the page is one list sorted by advertise time,
+which mixes the rungs: asking it for 256 rows of a network larger than that
+returns whoever the gossip mentioned most recently, with no guarantee that a
+single peer the crawler has actually spoken to is inside it. Asking rung by rung
+makes "every verified peer, then hearsay with what is left" a property of the
+request rather than a policy in a comment, and it also stops the two states the
+roster never names from spending budget on their way to being dropped. A rung
+the budget never reached is a roster that does not name everything the crawler
+holds, which is what `truncated` reports — the only way that flag can be raised
+with no cursor behind it.
+
+Within the hearsay rung the order is upstream's own, newest-advertised first,
+and it is knowingly not the right weight. The honest measure of hearsay is how
+many independent peers named the node, and that lives on the per-peer detail
+route rather than on the list row, so ranking by it would cost one request per
+candidate. What the list row can say is worth something: advertise time
+separates peers the network is still naming from peers it has stopped naming,
+and inside a single round it degenerates into a peer-id prefix — arbitrary, but
+the same arbitrary set every round, so the colony does not reshuffle its
+identities every minute.
+
+Every row carries its own `state`, and the two the crawler holds a verification
+for are the two the colony has marks for. `advertised_unverified` rides the
+record and stays off stage: `sighted` is a tier whose name says the crawler
+dialed the node and it answered, and a peer nobody has ever got an answer out of
+is real without being that.
+
+The optional fields are where that gradient is spelled out, and absent is not
+`"Unknown"`. Upstream builds a peer's version, country, ASN, reach clock and
+dial out of its verified node record and answers `null` for all five when it
+holds none — while for a peer it DID reach whose geolocation lookup came back
+empty it writes the word `"Unknown"` itself. Two different true sentences:
+nobody has ever spoken to this node, versus somebody did and could not place it.
+The roster carries each through as it arrived rather than folding both into the
+word, because the fold prints the crawler's verdict over a peer it never dialed.
+
+Three clocks ride every row and none may stand in for another.
+`last_reachable_ms` is when the crawler SAW the node and is absent for one it
+never did; `last_advertised_ms` is when the network last NAMED it, which every
+candidate has and is therefore the stamp that dates the row; `last_observed_ms`
+is when the crawler last TRIED it, which is what dates a failure.
 
 ### Peer Sighting
 

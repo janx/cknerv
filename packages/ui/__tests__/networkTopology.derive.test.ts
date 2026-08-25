@@ -18,11 +18,13 @@ function peer(p: Partial<Peer>): Peer {
 function rosterNode(p: Partial<RosterNode> & { node_id: string }): RosterNode {
   return {
     addr: '/ip4/10.0.0.1/tcp/8115',
+    state: 'reachable',
     version: '0.116.1',
     country: 'Unknown',
     asn: 'Unknown',
-    reachable: true,
-    last_seen_ms: 1_700_000_000_000,
+    last_reachable_ms: 1_700_000_000_000,
+    last_advertised_ms: 1_700_000_060_000,
+    last_observed_ms: 1_700_000_000_000,
     ...p,
   };
 }
@@ -330,6 +332,33 @@ describe('sighted nodes (the crawler names a bounded few)', () => {
     for (const g of ghostsOf(t)) expect(g.sighted).toBeUndefined(); // ghosts stay anonymous
   });
 
+  // ⭐ The record reports three rungs of the crawler's gradient and this colony
+  // owns marks for two. `sighted` is a tier whose name says the crawler dialed
+  // the node and it answered — the bright stop this round, the dim one an
+  // earlier round — and a peer nobody has ever got an answer out of is real
+  // without being that. Staging it would put hearsay under a mark reserved for
+  // a peer somebody has spoken to, on the honesty ladder whose whole reason for
+  // existing is that it does not.
+  it('stages the rungs it has a mark for and leaves the hearsay off stage', () => {
+    const rows = [
+      rosterNode({ node_id: 'Qm0000', state: 'reachable' }),
+      rosterNode({ node_id: 'Qm0001', state: 'verified_unavailable' }),
+      rosterNode({
+        node_id: 'Qm0002',
+        state: 'advertised_unverified',
+        version: undefined,
+        country: undefined,
+        asn: undefined,
+        last_reachable_ms: undefined,
+      }),
+    ];
+    const t = inferredTopology(peers, seed, 'ckb:local', undefined, roster(rows));
+    expect(sightedOf(t).map((n) => n.id)).toEqual(['Qm0000', 'Qm0001']);
+    // And it is off stage rather than anonymous: nothing invents a ghost in
+    // its place, so the row simply rides the record unstaged.
+    expect(t.nodes.filter((n) => n.id === 'Qm0002')).toHaveLength(0);
+  });
+
   it('dedupe: measured wins, local is excluded, and a repeat is staged once', () => {
     const rows = [
       rosterNode({ node_id: 'A' }),          // already on stage as a measured peer
@@ -495,14 +524,18 @@ describe('sighted nodes (the crawler names a bounded few)', () => {
   it('a fresh crawl round updates the staged rows without moving anybody', () => {
     const first = sightedRoster(8);
     const before = inferredTopology(peers, seed, 'ckb:local', undefined, roster(first));
-    const second = sightedRoster(8, { reachable: false, last_seen_ms: 9 });
+    const second = sightedRoster(8, {
+      state: 'verified_unavailable', last_reachable_ms: 9,
+    });
     const after = inferredTopology(
       peers, seed, 'ckb:local', undefined, roster(second, { crawl_round: 2 }),
     );
     // The scaffold cache holds geometry, not the crawler's report: a node going
     // dark has to cross even though the id set (and the cache key) is unchanged.
-    expect(sightedOf(after).every((n) => n.sighted!.reachable === false)).toBe(true);
-    expect(sightedOf(before).every((n) => n.sighted!.reachable === true)).toBe(true);
+    expect(
+      sightedOf(after).every((n) => n.sighted!.state === 'verified_unavailable'),
+    ).toBe(true);
+    expect(sightedOf(before).every((n) => n.sighted!.state === 'reachable')).toBe(true);
     expect(sightedOf(after).map((n) => n.pos)).toEqual(sightedOf(before).map((n) => n.pos));
   });
 });

@@ -619,33 +619,46 @@
       "truncated": true,
       "entries": [
         {
-          "node_id": "QmQHmapDhRnzHqcAJQ5geABWdMVRaa6qah9gEdBEF7ejyL",
-          "addr": "/ip4/203.0.113.7/tcp/8115",
+          "node_id": "QmNRAvtC6L85hwp6vWnqaKonJw3dz1q39B4nXVQErzC4Hx",
+          "addr": "/dns4/sange.ckb.guide/tcp/443/p2p/QmNRAvtC6L85hwp6vWnqaKonJw3dz1q39B4nXVQErzC4Hx",
+          "state": "reachable",
           "version": "0.209.0 (d166e28 2026-07-29)",
-          "country": "DE",
-          "asn": "AS24940 Hetzner Online GmbH",
-          "reachable": true,
-          "last_seen_ms": 1699999940000,
-          "rtt_ms": 41
+          "country": "CA",
+          "asn": "AS16509 Amazon.com, Inc.",
+          "last_reachable_ms": 1699999940000,
+          "last_advertised_ms": 1699999990000,
+          "last_observed_ms": 1699999940000,
+          "rtt_ms": 1331
         },
         {
-          "node_id": "QmZwKtibfGWsRxgwkWSMNU5Z4Vq833nH1Lb7yUgggm5w18",
-          "addr": "/ip6/2001:db8::4/tcp/8114",
-          "version": "0.208.1",
-          "country": "SG",
-          "asn": "AS1 Example",
-          "reachable": false,
-          "last_seen_ms": 1699999100000
-        },
-        {
-          "node_id": "QmcgXBRjq5zHvGqSgT3MyY4gtGkBWfAP9JgoJxUu936fTs",
-          "addr": "Unknown",
-          "version": "Unknown",
+          "node_id": "QmPQM3t3fyWPzD5UvZEaiLw1siAesXbdCUQozDEUgYJ22Y",
+          "addr": "/ip4/104.199.224.122/tcp/32872",
+          "state": "reachable",
+          "version": "0.202.0 (d0a6c95 2025-06-11)",
           "country": "Unknown",
           "asn": "Unknown",
-          "reachable": true,
-          "last_seen_ms": 1699999800000,
-          "rtt_ms": 214
+          "last_reachable_ms": 1699999930000,
+          "last_advertised_ms": 1699999990000,
+          "last_observed_ms": 1699999930000,
+          "rtt_ms": 467
+        },
+        {
+          "node_id": "QmTdv6Dpi1e5fzKUVZzw5SJJYVvDt1jAq5ShiRRCQ7eBLB",
+          "addr": "/ip4/203.0.113.254/tcp/8115",
+          "state": "advertised_unverified",
+          "last_advertised_ms": 1699999990000,
+          "last_observed_ms": 1699999920000
+        },
+        {
+          "node_id": "QmcPjVi8ZvUCAsyrV3ocTkwQzMzPXpSUWnWnvYAxRmHKgh",
+          "addr": "/ip4/8.218.177.113/tcp/8115",
+          "state": "verified_unavailable",
+          "version": "0.208.1",
+          "country": "SG",
+          "asn": "AS45102 Alibaba (US) Technology Co., Ltd.",
+          "last_reachable_ms": 1699999100000,
+          "last_advertised_ms": 1699999980000,
+          "last_observed_ms": 1699999910000
         }
       ]
     },
@@ -1164,33 +1177,46 @@
         "truncated": true,
         "entries": [
           {
-            "node_id": "QmQHmapDhRnzHqcAJQ5geABWdMVRaa6qah9gEdBEF7ejyL",
-            "addr": "/ip4/203.0.113.7/tcp/8115",
+            "node_id": "QmNRAvtC6L85hwp6vWnqaKonJw3dz1q39B4nXVQErzC4Hx",
+            "addr": "/dns4/sange.ckb.guide/tcp/443/p2p/QmNRAvtC6L85hwp6vWnqaKonJw3dz1q39B4nXVQErzC4Hx",
+            "state": "reachable",
             "version": "0.209.0 (d166e28 2026-07-29)",
-            "country": "DE",
-            "asn": "AS24940 Hetzner Online GmbH",
-            "reachable": true,
-            "last_seen_ms": 1699999940000,
-            "rtt_ms": 41
+            "country": "CA",
+            "asn": "AS16509 Amazon.com, Inc.",
+            "last_reachable_ms": 1699999940000,
+            "last_advertised_ms": 1699999990000,
+            "last_observed_ms": 1699999940000,
+            "rtt_ms": 1331
           },
           {
-            "node_id": "QmZwKtibfGWsRxgwkWSMNU5Z4Vq833nH1Lb7yUgggm5w18",
-            "addr": "/ip6/2001:db8::4/tcp/8114",
-            "version": "0.208.1",
-            "country": "SG",
-            "asn": "AS1 Example",
-            "reachable": false,
-            "last_seen_ms": 1699999100000
-          },
-          {
-            "node_id": "QmcgXBRjq5zHvGqSgT3MyY4gtGkBWfAP9JgoJxUu936fTs",
-            "addr": "Unknown",
-            "version": "Unknown",
+            "node_id": "QmPQM3t3fyWPzD5UvZEaiLw1siAesXbdCUQozDEUgYJ22Y",
+            "addr": "/ip4/104.199.224.122/tcp/32872",
+            "state": "reachable",
+            "version": "0.202.0 (d0a6c95 2025-06-11)",
             "country": "Unknown",
             "asn": "Unknown",
-            "reachable": true,
-            "last_seen_ms": 1699999800000,
-            "rtt_ms": 214
+            "last_reachable_ms": 1699999930000,
+            "last_advertised_ms": 1699999990000,
+            "last_observed_ms": 1699999930000,
+            "rtt_ms": 467
+          },
+          {
+            "node_id": "QmTdv6Dpi1e5fzKUVZzw5SJJYVvDt1jAq5ShiRRCQ7eBLB",
+            "addr": "/ip4/203.0.113.254/tcp/8115",
+            "state": "advertised_unverified",
+            "last_advertised_ms": 1699999990000,
+            "last_observed_ms": 1699999920000
+          },
+          {
+            "node_id": "QmcPjVi8ZvUCAsyrV3ocTkwQzMzPXpSUWnWnvYAxRmHKgh",
+            "addr": "/ip4/8.218.177.113/tcp/8115",
+            "state": "verified_unavailable",
+            "version": "0.208.1",
+            "country": "SG",
+            "asn": "AS45102 Alibaba (US) Technology Co., Ltd.",
+            "last_reachable_ms": 1699999100000,
+            "last_advertised_ms": 1699999980000,
+            "last_observed_ms": 1699999910000
           }
         ]
       }

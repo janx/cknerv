@@ -17,11 +17,12 @@ use cknerv_core::{
     GalaxyCompositionRecord, GalaxyCompositionTopUp, HashType, NetworkAtlasBucket,
     NetworkAtlasRecord, NetworkRosterRecord, OutPoint, PeerAdvertisedEvidence,
     PeerHandshakeDepthBucket, PeerProbeResult, PeerSightingAbsence, PeerSightingLookup,
-    PeerSightingRecord, ProtocolEra, ProtocolEraRecord, RosterNode, ScriptId, ScriptNameRecord,
-    ScriptRegistryRecord, SemanticAsset, SemanticAttribute, SemanticCellConsumption,
-    SemanticCellContent, SemanticContentDecode, SemanticContentGuess, SemanticContentSegment,
-    SemanticFacet, SemanticScript, TransactionHorizonRecord, TransactionParticipantSemantic,
-    TransactionSemanticRecord, DATA_HEX_TRUNCATION_MARKER, MAX_SCRIPT_REGISTRY_ENTRIES,
+    PeerSightingRecord, ProtocolEra, ProtocolEraRecord, RosterNode, RosterNodeState, ScriptId,
+    ScriptNameRecord, ScriptRegistryRecord, SemanticAsset, SemanticAttribute,
+    SemanticCellConsumption, SemanticCellContent, SemanticContentDecode, SemanticContentGuess,
+    SemanticContentSegment, SemanticFacet, SemanticScript, TransactionHorizonRecord,
+    TransactionParticipantSemantic, TransactionSemanticRecord, DATA_HEX_TRUNCATION_MARKER,
+    MAX_SCRIPT_REGISTRY_ENTRIES,
 };
 use cknerv_server::{CanonicalContext, EnrichmentSource, GalaxyCompositionHydrator};
 
@@ -115,11 +116,63 @@ const MAX_NETWORK_DISTRIBUTION_BUCKETS: usize = 512;
 const PEERS_ROUTE_UNOBSERVED: u8 = 0;
 const PEERS_ROUTE_ANSWERING: u8 = 1;
 const PEERS_ROUTE_FAULTING: u8 = 2;
-/// How many crawler-known nodes one roster may name. The scene stages every
-/// entry it is given, so this is a stage budget before it is a wire budget:
-/// it sits just above the inferred cloud's own population, which is what
-/// keeps replacing scatter with real identities GPU-neutral.
+/// How many crawler-known nodes one roster may name. The scene stages the
+/// entries it has a mark for, so this is a stage budget before it is a wire
+/// budget: it sits just above the inferred cloud's own population, which is
+/// what keeps replacing scatter with real identities GPU-neutral.
 const ROSTER_CAP: usize = 256;
+/// The rungs of upstream's evidence gradient the roster names, strongest
+/// first — and, because the budget above is spent in this order, the priority
+/// that decides who is left out once the network outgrows it.
+///
+/// ⭐ THE ORDER IS WHY THIS IS THREE REQUESTS AND NOT ONE. `network/peers`
+/// unscoped is one page sorted by advertise time, which mixes the rungs: ask
+/// it for 256 rows of a 400-peer network and the slice that comes back is
+/// whoever the gossip mentioned most recently, with no guarantee a single peer
+/// the crawler has actually spoken to is inside it. Asking rung by rung is
+/// what makes "every verified peer, then hearsay with what is left" a property
+/// of the request rather than a policy written in a comment — and it also
+/// stops the two states the roster does not stage from spending budget on
+/// their way to being dropped. It costs two extra requests a minute.
+///
+/// Within the last rung the order upstream returns is the order the budget is
+/// spent, which is newest-advertised first, ties broken by peer id.
+/// ⚠️ THAT IS NOT THE RIGHT WEIGHT AND IT IS KNOWN NOT TO BE. The honest
+/// measure of hearsay is how many independent peers named the node, and that
+/// lives on the per-peer detail route rather than on this page, so ranking by
+/// it would cost one request per candidate. What the page can say is worth
+/// something and worth stating plainly: advertise time separates peers the
+/// network is still naming from peers it has stopped naming, which is exactly
+/// the axis to drop from, and it degenerates within a round into a peer-id
+/// prefix — arbitrary, but the same arbitrary set every round, so the colony
+/// does not reshuffle its identities every minute. When upstream grows an
+/// `advertiserCount` on the list row, the swap is to over-ask this last rung
+/// and sort the surplus off in `map_network_roster`, where the budget is
+/// already the thing being spent.
+const ROSTER_SCOPES: [RosterScope; 3] = [
+    RosterScope {
+        filter: "reachable",
+        state: PeerDisplayState::Reachable,
+    },
+    RosterScope {
+        filter: "verifiedUnavailable",
+        state: PeerDisplayState::VerifiedUnavailable,
+    },
+    RosterScope {
+        filter: "advertisedUnverified",
+        state: PeerDisplayState::AdvertisedUnverified,
+    },
+];
+
+/// One rung of [`ROSTER_SCOPES`]: the word upstream's `state=` filter parses,
+/// and the state every row of that page must then decode to. Both are here so
+/// the pair can be checked against each other rather than trusted to stay in
+/// step — `roster_scope_filters_name_the_states_they_ask_for` is that check.
+#[derive(Clone, Copy)]
+struct RosterScope {
+    filter: &'static str,
+    state: PeerDisplayState,
+}
 /// One page holds ckbadger's whole script catalogue (66 families as measured);
 /// the limit is here so a grown catalogue arrives truncated rather than paged.
 const SCRIPT_CATALOGUE_LIMIT: usize = 200;
@@ -390,30 +443,44 @@ impl CkbadgerEnrichmentSource {
         Ok(Some(summary))
     }
 
-    /// One roster read: the latest round, and one explicitly bounded page of
-    /// the peers it reached.
+    /// One roster read: the latest round, and one bounded page per rung of the
+    /// evidence gradient the roster names.
     ///
     /// The atlas used to come through here too, for a 64-row page it folded
     /// into country and version buckets and a median dial. It no longer asks
     /// for peers at all — upstream counts those buckets over its whole
-    /// verified set now — so this page has one reader and one purpose: naming
-    /// the few nodes the scene may stage.
+    /// verified set now — so these pages have one reader and one purpose:
+    /// naming the nodes the scene may stage.
     ///
-    /// The page is pinned to `state=reachable`. `network/peers` unifies
-    /// candidates with verified peers, so an unpinned page answers with every
-    /// peer anybody has ever *named* — and staging those as sighted would say
-    /// the crawler reached a node it never got a packet from. The pin is what
-    /// keeps `sighted` meaning "dialed, and it answered", and it is also why
-    /// every metadata field on the page comes back populated.
+    /// The pages are asked for in [`ROSTER_SCOPES`] order and each one is
+    /// asked only for what the budget has left, so a rung can never take a
+    /// seat from a stronger one; see that constant for why the order is the
+    /// whole design and why this is not a single unscoped page. A rung that
+    /// finds the budget already spent is not asked at all — there is nothing
+    /// left to do with its answer, and the roster says it stopped short by
+    /// coming back `truncated`.
     async fn read_crawler(
         &self,
-        limit: usize,
-    ) -> anyhow::Result<Option<(NetworkCrawlerSummaryResponse, NetworkPeersPageResponse)>> {
+        budget: usize,
+    ) -> anyhow::Result<Option<(NetworkCrawlerSummaryResponse, Vec<NetworkPeersPageResponse>)>>
+    {
         let Some(summary) = self.read_crawler_round().await? else {
             return Ok(None);
         };
-        let peers = self.read_reachable_peers(limit).await?;
-        Ok(Some((summary, peers)))
+        let mut pages = Vec::with_capacity(ROSTER_SCOPES.len());
+        let mut remaining = budget;
+        for scope in ROSTER_SCOPES {
+            if remaining == 0 {
+                // Every rung after this one goes unasked, and `truncated`
+                // carries that: `map_network_roster` reads a page count short
+                // of the scope count as "there was more gradient than budget".
+                break;
+            }
+            let page = self.read_roster_page(scope.filter, remaining).await?;
+            remaining = remaining.saturating_sub(page.items.len());
+            pages.push(page);
+        }
+        Ok(Some((summary, pages)))
     }
 
     /// The crawler's whole verified set, counted by label.
@@ -453,8 +520,9 @@ impl CkbadgerEnrichmentSource {
             .context("decode ckbadger network distributions")
     }
 
-    /// The bounded page of reached peers, and the single place this crate
-    /// observes whether the peer list route is answering at all.
+    /// One bounded, scoped page of the crawler's candidates, and the single
+    /// place this crate observes whether the peer list route is answering at
+    /// all.
     ///
     /// A 404 here is deliberately an error rather than an absence, which is
     /// the opposite of what this code did under the old route name. The
@@ -473,12 +541,24 @@ impl CkbadgerEnrichmentSource {
     /// a fact about a peer. The flag records whether the route ANSWERED, not
     /// whether the answer could be read: a page that arrives in a shape this
     /// build cannot decode still proves the route is there, so the mark goes
-    /// down before the decode.
-    async fn read_reachable_peers(&self, limit: usize) -> anyhow::Result<NetworkPeersPageResponse> {
+    /// down before the decode. Each rung of a roster refresh writes it in
+    /// turn, which is what it means — the last thing the route did.
+    ///
+    /// `state` is always sent. It used to be sent to keep hearsay off the
+    /// stage, and the record can name hearsay honestly now, so what it does
+    /// today is spend the budget in evidence order; [`ROSTER_SCOPES`] carries
+    /// that argument. `limit` is never zero: upstream rejects a page of none,
+    /// and a caller with nothing left to spend has no reason to ask.
+    async fn read_roster_page(
+        &self,
+        scope: &str,
+        limit: usize,
+    ) -> anyhow::Result<NetworkPeersPageResponse> {
+        debug_assert!(limit > 0, "a roster page with no budget is never asked for");
         let mut peers_url = self.endpoint("network/peers")?;
         peers_url
             .query_pairs_mut()
-            .append_pair("state", "reachable")
+            .append_pair("state", scope)
             .append_pair("limit", &limit.to_string());
         let response = match self.client.get(peers_url).send().await {
             Ok(response) => response,
@@ -1713,10 +1793,10 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         context: &CanonicalContext,
     ) -> anyhow::Result<Option<NetworkRosterRecord>> {
         let anchor = self.current_anchor(context)?;
-        let Some((summary, nodes)) = self.read_crawler(ROSTER_CAP).await? else {
+        let Some((summary, pages)) = self.read_crawler(ROSTER_CAP).await? else {
             return Ok(None);
         };
-        let record = map_network_roster(summary, nodes, anchor.clone())?;
+        let record = map_network_roster(summary, pages, anchor.clone())?;
         self.revalidate_anchor(&anchor, "network roster").await?;
         Ok(Some(record))
     }
@@ -2760,9 +2840,17 @@ fn network_distribution(
 /// scene may stage — so a row it cannot read honestly is simply not staged,
 /// and the nodes beside it still are. Nothing about a dropped row is ever
 /// guessed at, and no count here is derived from the rows that survived.
+///
+/// `pages` arrives one entry per rung of [`ROSTER_SCOPES`], in that order,
+/// strongest evidence first — and short of that when the budget ran out before
+/// the weaker rungs were asked after, which is why it is zipped against the
+/// scope table rather than indexed into it. They are three slices and not one
+/// page: each was sorted by upstream on its own, so the ordering invariant
+/// below is checked WITHIN a page and never across the seam between two, where
+/// a fresher hearsay row legitimately follows a staler verified one.
 fn map_network_roster(
     summary: NetworkCrawlerSummaryResponse,
-    peers: NetworkPeersPageResponse,
+    pages: Vec<NetworkPeersPageResponse>,
     anchor: ChainAnchor,
 ) -> anyhow::Result<NetworkRosterRecord> {
     let round = summary
@@ -2772,69 +2860,97 @@ fn map_network_roster(
         return Err(anyhow!("ckbadger network crawler has no usable data"));
     }
     wire_safe_u64(round.round_id, "network roundId")?;
-    if peers.items.len() > ROSTER_CAP {
+    let received: usize = pages.iter().map(|page| page.items.len()).sum();
+    if received > ROSTER_CAP {
         return Err(anyhow!(
             "ckbadger network peers exceeded the requested roster limit"
         ));
     }
-    // Upstream orders this page by when each peer was last advertised, which
+    // Upstream orders each page by when its peers were last advertised, which
     // is a key every crawl round moves: publishing it in that order would
     // reshuffle the whole roster every round. Membership within the cap is
-    // upstream's call, but the order cknerv publishes is its own, and it is
-    // the id — a node's only fact that a crawl cannot change.
-    let received = peers.items.len();
+    // this crate's call and the scope order is what makes it, but the order
+    // cknerv publishes is the id — a node's only fact that a crawl cannot
+    // change.
     let mut entries: Vec<RosterNode> = Vec::with_capacity(received);
     let mut staged = HashSet::new();
     let mut unreadable = 0usize;
     let mut duplicate = 0usize;
-    let mut previous_last_advertised_at = None;
-    for peer in peers.items {
-        // The one page-level fault a sample can still have. The atlas used to
-        // check this, back when it drew its own 64-row sample off this page;
-        // it counts a census now and never asks for peers, so the guard moved
-        // to the reader that kept the page — and the argument moved with it
-        // unchanged, because it was always an argument about a sample. This
-        // page is a bounded slice of a set that outgrows it, `truncated` is
-        // the only thing said about the rest, and which peers land inside the
-        // cap is decided entirely by the order they arrive in. A page cknerv
-        // cannot vouch for the order of is a slice whose membership nobody
-        // chose.
-        //
-        // `lastAdvertisedAt` is upstream's actual sort key, ties broken by
-        // peer id, and it is the only ordering that can be checked:
-        // `lastObservedAt` moves per peer within a round and arrives genuinely
-        // out of order. Ties are the normal case rather than an edge — a round
-        // advertises its whole page in one moment — so only a strictly newer
-        // row after an older one is out of order.
-        wire_safe_u64(peer.last_advertised_at, "network peer lastAdvertisedAt")?;
-        if previous_last_advertised_at.is_some_and(|previous| peer.last_advertised_at > previous) {
-            return Err(anyhow!(
-                "ckbadger network peers were not ordered newest advertised first"
-            ));
+    // A rung nobody asked after is a rung whose peers this roster does not
+    // name, which is precisely what `truncated` reports. It is the only way
+    // the flag can be raised without a cursor to raise it: a scope answered
+    // in full has no `nextCursor`, so a budget that ran out between scopes
+    // would otherwise publish a full roster claiming to be the whole set.
+    let mut truncated = pages.len() < ROSTER_SCOPES.len();
+    let mut off_scope = 0usize;
+    for (scope, page) in ROSTER_SCOPES.iter().zip(pages) {
+        truncated |= page.next_cursor.is_some();
+        let mut previous_last_advertised_at = None;
+        for peer in page.items {
+            // A page may only contribute the rung it was asked for. Upstream
+            // filters on exactly this field, so in health the test never
+            // fires — and that is the point of it. If the `state=` parameter
+            // ever stops being honoured, every page becomes the same unscoped
+            // population sorted by advertise time, the strongest rung's
+            // request swallows the entire budget on rows belonging to the
+            // weakest, and the roster is back to a slice nobody chose while
+            // still looking like a healthy report. Dropped rather than
+            // refused, and dropped rather than kept: a row on the wrong page
+            // is asked for again on its own, and a sixth state upstream adds
+            // must cost this build a row and never the record.
+            if peer.display_state != scope.state {
+                off_scope += 1;
+                continue;
+            }
+            // The one page-level fault a sample can still have. The atlas used
+            // to check this, back when it drew its own 64-row sample off this
+            // page; it counts a census now and never asks for peers, so the
+            // guard moved to the reader that kept the page — and the argument
+            // moved with it unchanged, because it was always an argument about
+            // a sample. Each page is a bounded slice of a set that outgrows
+            // it, `truncated` is the only thing said about the rest, and which
+            // peers land inside the budget is decided entirely by the order
+            // they arrive in. A page cknerv cannot vouch for the order of is a
+            // slice whose membership nobody chose.
+            //
+            // `lastAdvertisedAt` is upstream's actual sort key, ties broken by
+            // peer id, and it is the only ordering that can be checked:
+            // `lastObservedAt` moves per peer within a round and arrives
+            // genuinely out of order. Ties are the normal case rather than an
+            // edge — a round advertises its whole page in one moment — so only
+            // a strictly newer row after an older one is out of order.
+            wire_safe_u64(peer.last_advertised_at, "network peer lastAdvertisedAt")?;
+            if previous_last_advertised_at
+                .is_some_and(|previous| peer.last_advertised_at > previous)
+            {
+                return Err(anyhow!(
+                    "ckbadger network peers were not ordered newest advertised first"
+                ));
+            }
+            previous_last_advertised_at = Some(peer.last_advertised_at);
+            let Some(entry) = roster_node(peer) else {
+                unreadable += 1;
+                continue;
+            };
+            if !staged.insert(entry.node_id.clone()) {
+                duplicate += 1;
+                continue;
+            }
+            entries.push(entry);
         }
-        previous_last_advertised_at = Some(peer.last_advertised_at);
-        let Some(entry) = roster_node(peer) else {
-            unreadable += 1;
-            continue;
-        };
-        if !staged.insert(entry.node_id.clone()) {
-            duplicate += 1;
-            continue;
-        }
-        entries.push(entry);
     }
     entries.sort_by(|left, right| left.node_id.cmp(&right.node_id));
     // Dropping a row is correct — a roster is a sample, and an unreadable node
     // is one cknerv will not stage — but doing it in silence made "the crawler
     // knows 56 nodes" indistinguishable from "the crawler answered with 200
-    // and validation ate 144". One line per page, only when something was
+    // and validation ate 144". One line per refresh, only when something was
     // dropped, so the shortfall has a place to be read from.
     //
     // Deliberately NOT on the wire: `NetworkRosterRecord` carries `truncated`
-    // (upstream had more than the cap) and nothing else about size, so an
+    // (upstream had more than the budget) and nothing else about size, so an
     // honest dropped-row count would be a new field on a shared record — a
     // wire change, and this is an observability fix.
-    if unreadable > 0 || duplicate > 0 {
+    if unreadable > 0 || duplicate > 0 || off_scope > 0 {
         tracing::debug!(
             target: "cknerv-adapter-ckbadger",
             crawl_round = round.round_id,
@@ -2842,6 +2958,7 @@ fn map_network_roster(
             staged = entries.len(),
             unreadable,
             duplicate,
+            off_scope,
             "the roster dropped rows it could not stage"
         );
     }
@@ -2851,9 +2968,36 @@ fn map_network_roster(
         as_of: anchor,
         updated_at_ms: now_ms(),
         crawl_round: round.round_id,
-        truncated: peers.next_cursor.is_some(),
+        truncated,
         entries,
     })
+}
+
+/// Which rung of the record's own gradient one upstream state is, or `None`
+/// for a state no roster row is made from.
+///
+/// The three that map are the three the record can say a true sentence about.
+/// `foreignNetwork` is a peer that answered from another chain — a real
+/// observation, and not a member of this network's colony, so the atlas ladder
+/// counts it and the roster does not name it. `noCompletedObservation` is a
+/// candidate no finished round has reached yet, which is strictly less than
+/// `advertisedUnverified` already carries and gone again by the next round.
+/// `Unknown` is a state upstream added and this build has no name for, which
+/// is the one case where naming a node would mean inventing what is known
+/// about it.
+///
+/// Exhaustive on purpose: a state added upstream lands here as a compile
+/// error, in a crate whose last two outages were both a wire that changed
+/// without anything stopping to ask.
+fn roster_state(state: PeerDisplayState) -> Option<RosterNodeState> {
+    match state {
+        PeerDisplayState::Reachable => Some(RosterNodeState::Reachable),
+        PeerDisplayState::VerifiedUnavailable => Some(RosterNodeState::VerifiedUnavailable),
+        PeerDisplayState::AdvertisedUnverified => Some(RosterNodeState::AdvertisedUnverified),
+        PeerDisplayState::ForeignNetwork
+        | PeerDisplayState::NoCompletedObservation
+        | PeerDisplayState::Unknown => None,
+    }
 }
 
 /// One row turned into one stageable node, or `None` when it cannot be read
@@ -2861,27 +3005,17 @@ fn map_network_roster(
 /// answer to an unusable field is to leave this node out — never to invent a
 /// value for it, and never to lose the page over it.
 ///
-/// Two of upstream's five states stage, and they are the two it holds a
-/// verification for: `reachable` is a peer that answered this round and
-/// `verifiedUnavailable` is one that answered a previous round and did not
-/// answer this one — which is exactly what `RosterNode::reachable` has always
-/// meant. The other three are hearsay: `advertisedUnverified` and
-/// `noCompletedObservation` are peers other peers merely named, and
-/// `foreignNetwork` is a peer on another chain. Staging any of them would put
-/// a node on stage under a tier whose name says the crawler dialed it and it
-/// answered. Under the `state=reachable` pin only the first can arrive at
-/// all; the rest are refused here so the pin is a bound and not the only
-/// thing standing between hearsay and the stage.
+/// ⭐ NOTHING HERE READS THE STATE TO DECIDE WHAT A FIELD MEANS, and that is
+/// deliberate. It would be easy to write "if this row is unverified then drop
+/// the labels", and it would be a second opinion about a line upstream has
+/// already drawn: it builds all five optional fields out of the verified node
+/// record, so their absence IS the statement that there was no dial to learn
+/// them from. Reading them straight through keeps one authority over that
+/// line. The state answers a different question — what kind of evidence stands
+/// behind this row — and it is the only thing it answers.
 fn roster_node(peer: PeerSummaryResponse) -> Option<RosterNode> {
     validate_network_peer_id(&peer.peer_id).ok()?;
-    let reachable = match peer.display_state {
-        PeerDisplayState::Reachable => true,
-        PeerDisplayState::VerifiedUnavailable => false,
-        PeerDisplayState::AdvertisedUnverified
-        | PeerDisplayState::ForeignNetwork
-        | PeerDisplayState::NoCompletedObservation
-        | PeerDisplayState::Unknown => return None,
-    };
+    let state = roster_state(peer.display_state)?;
     Some(RosterNode {
         node_id: peer_hex_to_id(&peer.peer_id)?,
         addr: bounded_network_text(
@@ -2890,19 +3024,39 @@ fn roster_node(peer: PeerSummaryResponse) -> Option<RosterNode> {
             "network peer primaryAddr",
         )
         .ok()?,
+        state,
         version: optional_network_label(peer.version.as_deref(), "network peer version").ok()?,
         country: optional_network_label(peer.country.as_deref(), "network peer country").ok()?,
         asn: optional_network_label(peer.asn.as_deref(), "network peer asn").ok()?,
-        reachable,
-        // `last_seen_ms` is documented as the moment the crawler SAW this
-        // node, and `lastReachableAt` is the only field on the page that is
-        // that moment. `lastObservedAt` is when the crawler last tried, which
-        // for a peer that did not answer is a different fact wearing the same
-        // shape; the two clocks stay apart. A verified row without the clock
-        // is a row cknerv cannot date, and an undated sighting is not one to
-        // stage.
-        last_seen_ms: sighting_clock_ms(peer.last_reachable_at?, "network peer lastReachableAt")
-            .ok()?,
+        // Three clocks, three facts, and each one keeps its own name from the
+        // wire it arrived on to the wire it leaves on. `lastReachableAt` is
+        // the moment the crawler SAW this node and the only one that may ever
+        // date a sighting; `lastAdvertisedAt` is the moment the network last
+        // NAMED it, which every candidate has and no candidate can be missing;
+        // `lastObservedAt` is the moment the crawler last TRIED it, which is
+        // what dates a failure. A row that let one of them stand in for
+        // another would put a sighting's date on a node nobody has ever
+        // dialed.
+        //
+        // The advertise clock is the one that is required, which is also why
+        // no roster row is ever undated: an unverified peer has no reach
+        // moment by definition, and refusing it for the lack of one would
+        // reintroduce the pin this task removed.
+        last_reachable_ms: optional_sighting_clock_ms(
+            peer.last_reachable_at,
+            "network peer lastReachableAt",
+        )
+        .ok()?,
+        last_advertised_ms: sighting_clock_ms(
+            peer.last_advertised_at,
+            "network peer lastAdvertisedAt",
+        )
+        .ok()?,
+        last_observed_ms: optional_sighting_clock_ms(
+            peer.last_observed_at,
+            "network peer lastObservedAt",
+        )
+        .ok()?,
         rtt_ms: peer.rtt_ms,
     })
 }
@@ -2927,13 +3081,24 @@ fn bounded_network_label(value: &str, field: &str) -> anyhow::Result<String> {
 
 /// The same label, from a page that answers `null` for what it never learned.
 ///
-/// Upstream holds a peer's version, country and ASN only for a peer it
-/// actually reached, and refuses to fabricate them for one it merely heard
-/// about. Absent and empty are the same statement to a reader — nobody knows
-/// — and both become the word for it below, so a null never has to be
-/// invented into a plausible label and never thins the record into a hole.
-fn optional_network_label(value: Option<&str>, field: &str) -> anyhow::Result<String> {
-    bounded_network_label(value.unwrap_or_default(), field)
+/// ⭐ ABSENT AND EMPTY ARE TWO DIFFERENT ANSWERS HERE, and this function
+/// exists to keep them apart. Upstream builds a peer's version, country and
+/// ASN out of the verified node record, so `null` means there was never a dial
+/// to learn them from — while a peer it DID reach whose geolocation lookup
+/// came back empty arrives carrying upstream's own word `"Unknown"`. Both
+/// sentences are true and they are not the same sentence: one says nobody has
+/// ever spoken to this node, the other says somebody did and could not place
+/// it. This used to be `value.unwrap_or_default()`, which was right while the
+/// page was pinned to peers the crawler had reached and would now print the
+/// crawler's verdict over a node it never dialed.
+///
+/// An empty string still becomes `"Unknown"` below, because a crawler that
+/// holds a node record with no label in it is stating something rather than
+/// leaving a hole.
+fn optional_network_label(value: Option<&str>, field: &str) -> anyhow::Result<Option<String>> {
+    value
+        .map(|label| bounded_network_label(label, field))
+        .transpose()
 }
 
 /// Trimmed, length-bounded and control-free — and an empty answer becomes
@@ -3177,6 +3342,15 @@ fn sighting_clock_ms(seconds: u64, field: &str) -> anyhow::Result<u64> {
         return Err(anyhow!("ckbadger returned a sighting with no {field}"));
     }
     seconds_to_wire_ms(seconds, field)
+}
+
+/// The same clock from a wire that answers `null` for a moment that never
+/// happened. A clock the source did not send stays unsent; only a clock it
+/// sent and cknerv cannot read is a reason to drop the row.
+fn optional_sighting_clock_ms(seconds: Option<u64>, field: &str) -> anyhow::Result<Option<u64>> {
+    seconds
+        .map(|seconds| sighting_clock_ms(seconds, field))
+        .transpose()
 }
 
 fn seconds_to_wire_ms(seconds: u64, field: &str) -> anyhow::Result<u64> {
@@ -4698,25 +4872,29 @@ mod tests {
                 get(|axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>| async move {
                     // The roster is the only reader of this page now — the
                     // atlas counts a census instead — and it asks with its own
-                    // cap. An unbounded page is the failure this asserts
+                    // budget. An unbounded page is the failure this asserts
                     // against.
-                    let limit = query.get("limit").map(String::as_str);
-                    assert_eq!(
-                        limit,
-                        Some("256"),
-                        "network peers fetched with an unexpected bound"
+                    let limit: usize = query
+                        .get("limit")
+                        .expect("network peers fetched with no bound")
+                        .parse()
+                        .expect("network peers fetched with an unreadable bound");
+                    assert!(
+                        limit > 0 && limit <= 256,
+                        "network peers fetched with an unexpected bound: {limit}"
                     );
                     // And an unscoped page is the other one. `network/peers`
-                    // answers candidates and verified peers from one route,
-                    // so a reader that forgets the scope is handed hearsay
-                    // and stages it as a sighting.
-                    assert_eq!(
-                        query.get("state").map(String::as_str),
-                        Some("reachable"),
-                        "network peers fetched without the reachable scope"
-                    );
-                    Json(serde_json::json!({
-                        "items": [
+                    // answers every rung of the crawler's evidence gradient
+                    // from one route, sorted by advertise time, so a reader
+                    // that forgets the scope hands a bounded budget to
+                    // whoever the gossip mentioned last. The roster asks rung
+                    // by rung so its budget is spent strongest first.
+                    let scope = query
+                        .get("state")
+                        .map(String::as_str)
+                        .expect("network peers fetched without a scope");
+                    let items = match scope {
+                        "reachable" => serde_json::json!([
                             {
                                 "peerId": "7065657241",
                                 "displayState": "reachable",
@@ -4753,8 +4931,50 @@ mod tests {
                                 "lastReachableAt": 10,
                                 "rttMs": 24
                             }
-                        ],
-                        "nextCursor": "7065657243"
+                        ]),
+                        // Verified once, silent now — and with no geolocation
+                        // behind it, which upstream answers with its own word
+                        // rather than with a null.
+                        "verifiedUnavailable" => serde_json::json!([
+                            {
+                                "peerId": "7065657244",
+                                "displayState": "verifiedUnavailable",
+                                "primaryAddr": "/ip4/127.0.0.4/tcp/8115",
+                                "version": "0.117.0",
+                                "country": "Unknown",
+                                "asn": "Unknown",
+                                "lastAdvertisedAt": 28,
+                                "lastObservedAt": 28,
+                                "lastReachableAt": 6,
+                                "rttMs": null
+                            }
+                        ]),
+                        // Hearsay: a real id on a real address that no dial
+                        // has ever got an answer out of. Every field a dial
+                        // would have filled is null, and null is how it
+                        // leaves.
+                        "advertisedUnverified" => serde_json::json!([
+                            {
+                                "peerId": "7065657245",
+                                "displayState": "advertisedUnverified",
+                                "primaryAddr": "/ip4/127.0.0.5/tcp/8115",
+                                "version": null,
+                                "country": null,
+                                "asn": null,
+                                "lastAdvertisedAt": 30,
+                                "lastObservedAt": 26,
+                                "lastReachableAt": null,
+                                "rttMs": null
+                            }
+                        ]),
+                        other => panic!("network peers fetched with an unexpected scope: {other}"),
+                    };
+                    Json(serde_json::json!({
+                        "items": items,
+                        // Only the strongest rung says there is more behind
+                        // it, so the record's `truncated` has exactly one
+                        // source in this fixture.
+                        "nextCursor": if scope == "reachable" { Some("7065657243") } else { None }
                     }))
                 }),
             )
@@ -5831,18 +6051,60 @@ mod tests {
                 .iter()
                 .map(|entry| entry.node_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["DgUrnn4", "DgUrnn5", "DgUrnn6"]
+            vec!["DgUrnn4", "DgUrnn5", "DgUrnn6", "DgUrnn7", "DgUrnn8"]
         );
         assert_eq!(network_roster.entries[0].addr, "/ip4/127.0.0.1/tcp/8115");
-        assert_eq!(network_roster.entries[0].asn, "AS1 Example");
-        // Unix seconds upstream, milliseconds on the wire.
-        assert_eq!(network_roster.entries[0].last_seen_ms, 30_000);
+        assert_eq!(
+            network_roster.entries[0].asn.as_deref(),
+            Some("AS1 Example")
+        );
+        // Unix seconds upstream, milliseconds on the wire — and three clocks
+        // that do not share one, on a row that carries all three.
+        assert_eq!(network_roster.entries[0].last_reachable_ms, Some(30_000));
+        assert_eq!(network_roster.entries[0].last_advertised_ms, 30_000);
+        assert_eq!(network_roster.entries[0].last_observed_ms, Some(30_000));
+        assert_eq!(network_roster.entries[1].last_reachable_ms, Some(10_000));
+        assert_eq!(network_roster.entries[1].last_advertised_ms, 20_000);
+        assert_eq!(network_roster.entries[1].last_observed_ms, Some(12_000));
         assert_eq!(network_roster.entries[0].rtt_ms, Some(12));
-        // Every row of a reachable-scoped page stages as reached. The other
-        // verified state the roster accepts cannot arrive through this scope
-        // and is pinned on the mapper instead.
-        assert!(network_roster.entries.iter().all(|entry| entry.reachable));
         assert_eq!(network_roster.entries[1].rtt_ms, None);
+        // Three requests, three rungs, one record — and the budget was spent
+        // strongest first, so the three reached peers are all inside it.
+        assert_eq!(
+            network_roster
+                .entries
+                .iter()
+                .map(|entry| entry.state)
+                .collect::<Vec<_>>(),
+            vec![
+                RosterNodeState::Reachable,
+                RosterNodeState::Reachable,
+                RosterNodeState::Reachable,
+                RosterNodeState::VerifiedUnavailable,
+                RosterNodeState::AdvertisedUnverified,
+            ]
+        );
+        // The crawler reached this one before and could not place it: that is
+        // its word, and it crosses as a label rather than thinning to a gap.
+        assert_eq!(
+            network_roster.entries[3].country.as_deref(),
+            Some("Unknown")
+        );
+        assert_eq!(network_roster.entries[3].last_reachable_ms, Some(6_000));
+        // And the row nobody has ever dialed carries no answer at all for the
+        // four things a dial would have told us — never the crawler's word for
+        // a lookup that came back empty, which is a different sentence.
+        let hearsay = &network_roster.entries[4];
+        assert_eq!(hearsay.state, RosterNodeState::AdvertisedUnverified);
+        assert_eq!(hearsay.version, None);
+        assert_eq!(hearsay.country, None);
+        assert_eq!(hearsay.asn, None);
+        assert_eq!(hearsay.rtt_ms, None);
+        assert_eq!(hearsay.last_reachable_ms, None);
+        // What it does have is the two clocks that belong to a candidate: when
+        // the network last named it, and when the crawler last tried it.
+        assert_eq!(hearsay.last_advertised_ms, 30_000);
+        assert_eq!(hearsay.last_observed_ms, Some(26_000));
 
         let record = source
             .enrich_cell(
@@ -7527,8 +7789,8 @@ mod tests {
         }
     }
 
-    /// One row of a reachable-scoped page. `last_seen` fills both clocks the
-    /// row carries, so a test that means to separate them has to say so.
+    /// One row of a reachable-scoped page. `last_seen` fills all three clocks
+    /// the row carries, so a test that means to separate them has to say so.
     fn crawler_row(peer_id: &str, last_seen: u64) -> PeerSummaryResponse {
         PeerSummaryResponse {
             peer_id: peer_id.to_string(),
@@ -7538,8 +7800,38 @@ mod tests {
             country: Some("SG".to_string()),
             asn: Some("AS1 Example".to_string()),
             last_advertised_at: last_seen,
+            last_observed_at: Some(last_seen),
             last_reachable_at: Some(last_seen),
             rtt_ms: Some(12),
+        }
+    }
+
+    /// One row of the weakest rung: a real id on a real address, and null for
+    /// every one of the five things only a dial could have answered.
+    fn hearsay_row(peer_id: &str, advertised_at: u64, observed_at: u64) -> PeerSummaryResponse {
+        PeerSummaryResponse {
+            peer_id: peer_id.to_string(),
+            display_state: PeerDisplayState::AdvertisedUnverified,
+            primary_addr: "/ip4/127.0.0.9/tcp/8115".to_string(),
+            version: None,
+            country: None,
+            asn: None,
+            last_advertised_at: advertised_at,
+            last_observed_at: Some(observed_at),
+            last_reachable_at: None,
+            rtt_ms: None,
+        }
+    }
+
+    /// One page as the mapper takes them: a refresh hands it one per rung of
+    /// [`ROSTER_SCOPES`], and most tests here exercise a single rung.
+    fn peers_page(
+        items: Vec<PeerSummaryResponse>,
+        next_cursor: Option<&str>,
+    ) -> NetworkPeersPageResponse {
+        NetworkPeersPageResponse {
+            items,
+            next_cursor: next_cursor.map(str::to_string),
         }
     }
 
@@ -7552,19 +7844,19 @@ mod tests {
 
     #[test]
     fn a_roster_is_ordered_by_id_no_matter_how_the_page_arrived() {
-        // Upstream pages by last-seen, the one key a crawl round moves. A
-        // roster published in that order would reshuffle every round and
+        // Upstream pages by last-advertised, the one key a crawl round moves.
+        // A roster published in that order would reshuffle every round and
         // teleport every node the scene had placed.
-        let peers = NetworkPeersPageResponse {
-            items: vec![
+        let peers = peers_page(
+            vec![
                 crawler_row("7065657243", 30),
                 crawler_row("7065657241", 20),
                 crawler_row("7065657242", 10),
             ],
-            next_cursor: None,
-        };
+            None,
+        );
 
-        let roster = map_network_roster(crawler_summary(7), peers, roster_anchor()).unwrap();
+        let roster = map_network_roster(crawler_summary(7), vec![peers], roster_anchor()).unwrap();
 
         assert_eq!(
             roster
@@ -7574,50 +7866,56 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["DgUrnn4", "DgUrnn5", "DgUrnn6"]
         );
-        assert!(!roster.truncated);
+        // Two rungs went unasked, and a roster that did not get to the end of
+        // the gradient says so.
+        assert!(roster.truncated);
     }
 
     #[test]
     fn a_roster_drops_the_rows_it_cannot_stage_and_keeps_the_rest() {
         // The crawler reached this one before and could not this round: it is
         // still a peer it holds a verification for, so it stages dark rather
-        // than leaving.
+        // than leaving. Its country and ASN arrive as upstream's own word for
+        // a lookup that came back empty.
         let mut remembered = crawler_row("7065657242", 20);
         remembered.display_state = PeerDisplayState::VerifiedUnavailable;
-        remembered.country = None;
-        remembered.asn = None;
-        // The crawler never reached this one at all — only heard it named.
-        let mut hearsay = crawler_row("7065657244", 15);
-        hearsay.display_state = PeerDisplayState::AdvertisedUnverified;
-        hearsay.version = None;
-        hearsay.country = None;
-        hearsay.asn = None;
-        hearsay.last_reachable_at = None;
-        hearsay.rtt_ms = None;
-        // A reached peer the crawler holds no reach moment for: nothing to
-        // date the sighting by.
+        remembered.country = Some(String::new());
+        remembered.asn = Some(String::new());
+        // A peer on another chain: it answered, and it is not a member of this
+        // network's colony. The ladder counts it; the roster does not name it.
+        let mut foreign = crawler_row("7065657246", 18);
+        foreign.display_state = PeerDisplayState::ForeignNetwork;
+        // A reached peer the crawler holds no reach moment for. It still
+        // stages: the state is what says the dial was answered, and the row is
+        // dated by the advertise clock every candidate has.
         let mut undated = crawler_row("7065657245", 12);
         undated.last_reachable_at = None;
-        // Newest-advertised first, because that is the order upstream pages
-        // in and the order this mapper now checks for.
-        let peers = NetworkPeersPageResponse {
-            items: vec![
-                crawler_row("7065657241", 40),
-                // Not a peer id at all: skipped, never repaired into one.
-                crawler_row("not-hex", 35),
-                // The same node twice: it may only stand on stage once.
-                crawler_row("7065657241", 30),
-                remembered,
-                hearsay,
-                undated,
-                // The crawler's "never seen": no moment to stamp the row with,
-                // which is also why it sorts to the back of the page.
-                crawler_row("7065657243", 0),
-            ],
-            next_cursor: Some("7065657242".to_string()),
-        };
+        // Newest-advertised first within each page, because that is the order
+        // upstream sorts a scope in and the order this mapper checks for. The
+        // dark row rides the rung that asked for it — a page only contributes
+        // its own state.
+        let pages = vec![
+            peers_page(
+                vec![
+                    crawler_row("7065657241", 40),
+                    // Not a peer id at all: skipped, never repaired into one.
+                    crawler_row("not-hex", 35),
+                    // The same node twice: it may only stand on stage once.
+                    crawler_row("7065657241", 30),
+                    foreign,
+                    undated,
+                    // No advertise moment at all. Every other clock on this
+                    // record may be absent; this one is what dates the row, so
+                    // a row without it is one nothing can stamp.
+                    crawler_row("7065657243", 0),
+                ],
+                Some("7065657242"),
+            ),
+            peers_page(vec![remembered], None),
+            peers_page(Vec::new(), None),
+        ];
 
-        let roster = map_network_roster(crawler_summary(7), peers, roster_anchor()).unwrap();
+        let roster = map_network_roster(crawler_summary(7), pages, roster_anchor()).unwrap();
 
         assert_eq!(
             roster
@@ -7625,54 +7923,240 @@ mod tests {
                 .iter()
                 .map(|entry| entry.node_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["DgUrnn4", "DgUrnn5"]
+            vec!["DgUrnn4", "DgUrnn5", "DgUrnn8"]
         );
-        // A crawler with no geolocation for a node says so — and it now says
-        // it with `null` rather than an empty string. The row carries the
-        // word either way rather than an absent field.
-        assert_eq!(roster.entries[1].country, "Unknown");
-        assert_eq!(roster.entries[1].asn, "Unknown");
-        assert!(!roster.entries[1].reachable);
+        // A crawler that reached a node and cannot place it says so, and the
+        // row carries the word rather than an absent field.
+        assert_eq!(roster.entries[1].country.as_deref(), Some("Unknown"));
+        assert_eq!(roster.entries[1].asn.as_deref(), Some("Unknown"));
+        assert_eq!(
+            roster.entries[1].state,
+            RosterNodeState::VerifiedUnavailable
+        );
+        // Reached, and with no moment to date the reach by. The old record
+        // could not express that and dropped the row; this one can, and the
+        // advertise clock still stamps it.
+        assert_eq!(roster.entries[2].state, RosterNodeState::Reachable);
+        assert_eq!(roster.entries[2].last_reachable_ms, None);
+        assert_eq!(roster.entries[2].last_advertised_ms, 12_000);
         assert!(roster.truncated);
     }
 
     #[test]
-    fn hearsay_never_stages_as_a_sighting() {
-        // The three states upstream will not vouch for. `sighted` says the
-        // crawler dialed the node and it answered; a peer that other peers
-        // merely named has no business wearing that. This is the invariant
-        // the `state=reachable` scope protects at the request, pinned again
-        // where the row becomes a node.
+    fn the_states_the_scene_has_no_mark_for_never_reach_the_record() {
+        // Two of upstream's five states are not rungs of this record's
+        // gradient and never become a row. A foreign-chain peer answered a
+        // dial and belongs to another network — the ladder counts it, and a
+        // colony that staged it would be drawing somebody else's network into
+        // this one. A candidate no completed round has reached yet carries
+        // strictly less than the hearsay rung already does, and is gone again
+        // by the next round. `Unknown` is a sixth state upstream added that
+        // this build has no sentence for, and the only honest thing to do with
+        // a node you cannot describe is to not name it.
         for state in [
-            PeerDisplayState::AdvertisedUnverified,
             PeerDisplayState::ForeignNetwork,
             PeerDisplayState::NoCompletedObservation,
             PeerDisplayState::Unknown,
         ] {
+            assert_eq!(roster_state(state), None, "{state:?} became a roster rung");
             let mut row = crawler_row("7065657241", 40);
             row.display_state = state;
-            let peers = NetworkPeersPageResponse {
-                items: vec![row],
-                next_cursor: None,
-            };
+            let peers = peers_page(vec![row], None);
 
-            let roster = map_network_roster(crawler_summary(7), peers, roster_anchor()).unwrap();
+            let roster =
+                map_network_roster(crawler_summary(7), vec![peers], roster_anchor()).unwrap();
 
+            assert!(roster.entries.is_empty(), "{state:?} was staged");
+        }
+    }
+
+    #[test]
+    fn roster_scope_filters_name_the_states_they_ask_for() {
+        // The scope table sends a word and then trusts every row of the answer
+        // to decode to the state that word names. Both halves are written by
+        // hand from upstream's filter vocabulary, so this is where they are
+        // checked against each other: `state=` is parsed upstream by string
+        // match, and a scope word that drifted from its state would ask for
+        // one rung and then throw the whole page away as off-scope.
+        for scope in ROSTER_SCOPES {
+            let decoded: PeerDisplayState = serde_json::from_value(serde_json::json!(scope.filter))
+                .expect("a scope filter must be a state this build can name");
+            assert_eq!(
+                decoded, scope.state,
+                "scope filter {} does not name its own state",
+                scope.filter
+            );
             assert!(
-                roster.entries.is_empty(),
-                "{state:?} was staged as a sighting"
+                roster_state(scope.state).is_some(),
+                "scope filter {} asks for a state the record cannot carry",
+                scope.filter
             );
         }
     }
 
     #[test]
-    fn a_round_that_found_nobody_is_an_empty_roster_and_still_a_report() {
-        let peers = NetworkPeersPageResponse {
-            items: Vec::new(),
-            next_cursor: None,
+    fn a_row_on_the_wrong_page_is_dropped_rather_than_taking_a_seat() {
+        // In health this never fires: upstream filters on exactly the field
+        // being compared. It is here for the day it stops — a `state=` that
+        // is ignored turns every page into the same unscoped population, the
+        // strongest rung's request swallows the whole budget on rows belonging
+        // to the weakest, and nothing about the record would look wrong.
+        let unfiltered = || {
+            vec![
+                crawler_row("7065657241", 40),
+                hearsay_row("7065657242", 39, 38),
+            ]
         };
+        let pages = vec![
+            peers_page(unfiltered(), None),
+            peers_page(
+                vec![
+                    crawler_row("7065657243", 37),
+                    hearsay_row("7065657244", 36, 35),
+                ],
+                None,
+            ),
+            peers_page(unfiltered(), None),
+        ];
 
-        let roster = map_network_roster(crawler_summary(11), peers, roster_anchor()).unwrap();
+        let roster = map_network_roster(crawler_summary(7), pages, roster_anchor()).unwrap();
+
+        // One row from each page: the one that rung was asked for. The
+        // verified-unavailable page contributed nothing, because nothing on
+        // it was verified-unavailable.
+        assert_eq!(
+            roster
+                .entries
+                .iter()
+                .map(|entry| (entry.node_id.as_str(), entry.state))
+                .collect::<Vec<_>>(),
+            vec![
+                ("DgUrnn4", RosterNodeState::Reachable),
+                ("DgUrnn5", RosterNodeState::AdvertisedUnverified),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_budget_is_spent_on_the_strongest_evidence_first() {
+        // The whole reason the roster asks three times instead of once. An
+        // unscoped page is sorted by advertise time, which mixes the rungs, so
+        // a budget spent on it goes to whoever the gossip mentioned most
+        // recently — here, hearsay advertised after every verified peer. Rung
+        // by rung, the verified peers are inside the budget and the hearsay
+        // competes only with itself for what is left.
+        let pages = vec![
+            peers_page(vec![crawler_row("7065657241", 10)], None),
+            peers_page(
+                vec![{
+                    let mut row = crawler_row("7065657242", 9);
+                    row.display_state = PeerDisplayState::VerifiedUnavailable;
+                    row
+                }],
+                None,
+            ),
+            peers_page(
+                vec![
+                    hearsay_row("7065657243", 90, 89),
+                    hearsay_row("7065657244", 80, 79),
+                ],
+                None,
+            ),
+        ];
+
+        let roster = map_network_roster(crawler_summary(7), pages, roster_anchor()).unwrap();
+
+        assert_eq!(
+            roster
+                .entries
+                .iter()
+                .map(|entry| entry.state)
+                .collect::<Vec<_>>(),
+            vec![
+                RosterNodeState::Reachable,
+                RosterNodeState::VerifiedUnavailable,
+                RosterNodeState::AdvertisedUnverified,
+                RosterNodeState::AdvertisedUnverified,
+            ]
+        );
+        // Every rung was asked after and every page was answered in full, so
+        // this roster names everything the crawler would have handed it.
+        assert!(!roster.truncated);
+    }
+
+    #[test]
+    fn a_row_the_crawler_never_dialed_carries_no_answer_rather_than_the_word_for_one() {
+        // ⭐ The distinction this whole task turns on. Upstream mints
+        // `"Unknown"` itself, for a peer it DID reach whose geolocation lookup
+        // came back empty, and answers `null` for a peer it never reached at
+        // all. Two different true sentences: somebody dialed this node and
+        // could not place it, versus nobody has ever dialed it. Spelling them
+        // the same way — one `unwrap_or_default()` is enough — prints the
+        // crawler's verdict over a node it has never spoken to.
+        let mut placeless = crawler_row("7065657241", 40);
+        placeless.country = Some("Unknown".to_string());
+        placeless.asn = Some("Unknown".to_string());
+        let pages = vec![
+            peers_page(vec![placeless], None),
+            peers_page(Vec::new(), None),
+            peers_page(vec![hearsay_row("7065657242", 39, 38)], None),
+        ];
+
+        let roster = map_network_roster(crawler_summary(7), pages, roster_anchor()).unwrap();
+
+        let reached = &roster.entries[0];
+        assert_eq!(reached.state, RosterNodeState::Reachable);
+        assert_eq!(reached.country.as_deref(), Some("Unknown"));
+        assert_eq!(reached.asn.as_deref(), Some("Unknown"));
+        assert_eq!(reached.version.as_deref(), Some("0.209.0"));
+
+        let hearsay = &roster.entries[1];
+        assert_eq!(hearsay.state, RosterNodeState::AdvertisedUnverified);
+        assert_eq!(hearsay.version, None);
+        assert_eq!(hearsay.country, None);
+        assert_eq!(hearsay.asn, None);
+        assert_eq!(hearsay.rtt_ms, None);
+    }
+
+    #[test]
+    fn the_three_clocks_a_row_carries_are_three_different_facts() {
+        // Every value here is distinct on purpose: collapse any pair — read
+        // the advertise moment into the reach field, or let `lastObservedAt`
+        // stand in for a reach the crawler never made — and one of these
+        // numbers lands under the wrong name. The reach clock is the only one
+        // that means "the crawler saw this node", and it is exactly the one an
+        // unverified row does not have.
+        let mut reached = crawler_row("7065657241", 0);
+        reached.last_advertised_at = 900;
+        reached.last_observed_at = Some(800);
+        reached.last_reachable_at = Some(700);
+        let pages = vec![
+            peers_page(vec![reached], None),
+            peers_page(Vec::new(), None),
+            peers_page(vec![hearsay_row("7065657242", 600, 500)], None),
+        ];
+
+        let roster = map_network_roster(crawler_summary(7), pages, roster_anchor()).unwrap();
+
+        assert_eq!(roster.entries[0].last_advertised_ms, 900_000);
+        assert_eq!(roster.entries[0].last_observed_ms, Some(800_000));
+        assert_eq!(roster.entries[0].last_reachable_ms, Some(700_000));
+        // The row nobody ever reached: two clocks, and the third one is not
+        // borrowed from either of them.
+        assert_eq!(roster.entries[1].last_advertised_ms, 600_000);
+        assert_eq!(roster.entries[1].last_observed_ms, Some(500_000));
+        assert_eq!(roster.entries[1].last_reachable_ms, None);
+    }
+
+    #[test]
+    fn a_round_that_found_nobody_is_an_empty_roster_and_still_a_report() {
+        let pages = vec![
+            peers_page(Vec::new(), None),
+            peers_page(Vec::new(), None),
+            peers_page(Vec::new(), None),
+        ];
+
+        let roster = map_network_roster(crawler_summary(11), pages, roster_anchor()).unwrap();
 
         assert_eq!(roster.crawl_round, 11);
         assert!(roster.entries.is_empty());
@@ -7680,18 +8164,37 @@ mod tests {
     }
 
     #[test]
-    fn a_page_larger_than_the_cap_is_refused_rather_than_trimmed() {
-        // Trimming would publish a roster whose membership is decided by an
-        // order this crate did not ask for.
-        let items = (0..=ROSTER_CAP)
-            .map(|index| crawler_row(&format!("1220{index:060x}"), 20))
-            .collect();
-        let peers = NetworkPeersPageResponse {
-            items,
-            next_cursor: None,
-        };
+    fn a_refresh_that_ran_out_of_budget_before_the_gradient_says_so() {
+        // The one way `truncated` can be true with no cursor anywhere. A scope
+        // answered in full carries no `nextCursor`, so a budget that ran out
+        // between rungs would otherwise publish a roster that names a fraction
+        // of the crawler's peers while claiming to name all of them.
+        let pages = vec![peers_page(vec![crawler_row("7065657241", 40)], None)];
 
-        let error = map_network_roster(crawler_summary(7), peers, roster_anchor()).unwrap_err();
+        let roster = map_network_roster(crawler_summary(7), pages, roster_anchor()).unwrap();
+
+        assert_eq!(roster.entries.len(), 1);
+        assert!(roster.truncated);
+    }
+
+    #[test]
+    fn a_refresh_larger_than_the_cap_is_refused_rather_than_trimmed() {
+        // Trimming would publish a roster whose membership is decided by an
+        // order this crate did not ask for. Counted across the rungs, because
+        // that is what the stage budget bounds: three pages each inside the
+        // cap can still add up to more colony than there is room for.
+        let pages = vec![
+            peers_page(
+                (0..ROSTER_CAP)
+                    .map(|index| crawler_row(&format!("1220{index:060x}"), 20))
+                    .collect(),
+                None,
+            ),
+            peers_page(Vec::new(), None),
+            peers_page(vec![hearsay_row("7065657242", 20, 19)], None),
+        ];
+
+        let error = map_network_roster(crawler_summary(7), pages, roster_anchor()).unwrap_err();
 
         assert!(error.to_string().contains("roster limit"), "{error}");
     }
@@ -7743,7 +8246,7 @@ mod tests {
 
         // And the row that has no name is the only thing lost: its neighbour
         // still stages.
-        let roster = map_network_roster(crawler_summary(7), page, roster_anchor()).unwrap();
+        let roster = map_network_roster(crawler_summary(7), vec![page], roster_anchor()).unwrap();
         assert_eq!(
             roster
                 .entries
@@ -7760,15 +8263,15 @@ mod tests {
         // that no longer exists, and it lived on the atlas until the atlas
         // stopped drawing a sample off this page. The argument did not change
         // when it moved: a page whose order cknerv cannot vouch for is a slice
-        // whose membership nobody chose, and the roster is now the only reader
+        // whose membership nobody chose, and the roster is the only reader
         // taking a slice.
-        let out_of_order = NetworkPeersPageResponse {
-            items: vec![crawler_row("7065657241", 20), crawler_row("7065657242", 40)],
-            next_cursor: None,
-        };
+        let out_of_order = peers_page(
+            vec![crawler_row("7065657241", 20), crawler_row("7065657242", 40)],
+            None,
+        );
 
-        let error =
-            map_network_roster(crawler_summary(7), out_of_order, roster_anchor()).unwrap_err();
+        let error = map_network_roster(crawler_summary(7), vec![out_of_order], roster_anchor())
+            .unwrap_err();
 
         assert!(
             error.to_string().contains("newest advertised first"),
@@ -7777,21 +8280,40 @@ mod tests {
     }
 
     #[test]
+    fn the_order_is_checked_inside_a_page_and_never_across_two() {
+        // Each rung is sorted by upstream on its own, so the seam between two
+        // pages is not an ordering at all — the hearsay a round advertised a
+        // minute ago legitimately follows a verified peer nobody has mentioned
+        // in a day. An invariant swept across the concatenation would refuse
+        // every healthy refresh where the weakest rung is the freshest, which
+        // is the ordinary shape of a live crawl.
+        let pages = vec![
+            peers_page(vec![crawler_row("7065657241", 10)], None),
+            peers_page(Vec::new(), None),
+            peers_page(vec![hearsay_row("7065657242", 90, 89)], None),
+        ];
+
+        let roster = map_network_roster(crawler_summary(7), pages, roster_anchor()).unwrap();
+
+        assert_eq!(roster.entries.len(), 2);
+    }
+
+    #[test]
     fn one_advertise_moment_shared_by_every_row_is_an_order_and_not_a_fault() {
         // A round advertises its whole page in a single moment, so the live
         // page is nothing but ties and upstream falls through to the peer id
         // to break them. An invariant demanding a strict decrease would
         // refuse every healthy page — a total loss dressed as a validation.
-        let tied = NetworkPeersPageResponse {
-            items: vec![
+        let tied = peers_page(
+            vec![
                 crawler_row("7065657241", 40),
                 crawler_row("7065657242", 40),
                 crawler_row("7065657243", 40),
             ],
-            next_cursor: None,
-        };
+            None,
+        );
 
-        let roster = map_network_roster(crawler_summary(7), tied, roster_anchor()).unwrap();
+        let roster = map_network_roster(crawler_summary(7), vec![tied], roster_anchor()).unwrap();
 
         assert_eq!(roster.entries.len(), 3);
     }
@@ -8169,26 +8691,36 @@ mod tests {
     }
 
     #[test]
-    fn a_label_the_crawler_never_learned_is_staged_as_the_word_for_it() {
-        // Upstream answers `null` rather than fabricating metadata for a peer
-        // it holds none for. That is the same statement an empty label always
-        // made — nobody knows — and the roster spells both with one word
-        // instead of dropping the node or inventing a plausible label for it.
+    fn a_reached_row_with_nothing_behind_it_stages_reached_and_says_nothing_else() {
+        // Upstream reads `reachable` off the round's outcome and the five
+        // optional fields off the node record, and the two are not the same
+        // condition — a peer that identified in the last round while upstream
+        // holds no record for it answers `reachable` with every one of them
+        // null. It is rare and it is not a decode failure: the dial WAS
+        // answered, which is the whole of what the state claims, so the row
+        // stages under it and stays silent about everything a record would
+        // have told us. The old contract had no way to be silent and dropped
+        // the node instead.
         let mut unlabelled = crawler_row("7065657241", 40);
         unlabelled.country = None;
         unlabelled.version = None;
         unlabelled.asn = None;
-        let page = NetworkPeersPageResponse {
-            items: vec![unlabelled],
-            next_cursor: None,
-        };
+        unlabelled.last_reachable_at = None;
+        unlabelled.rtt_ms = None;
+        let page = peers_page(vec![unlabelled], None);
 
-        let roster = map_network_roster(crawler_summary(7), page, roster_anchor()).unwrap();
+        let roster = map_network_roster(crawler_summary(7), vec![page], roster_anchor()).unwrap();
 
         assert_eq!(roster.entries.len(), 1);
-        assert_eq!(roster.entries[0].country, "Unknown");
-        assert_eq!(roster.entries[0].version, "Unknown");
-        assert_eq!(roster.entries[0].asn, "Unknown");
+        assert_eq!(roster.entries[0].state, RosterNodeState::Reachable);
+        assert_eq!(roster.entries[0].country, None);
+        assert_eq!(roster.entries[0].version, None);
+        assert_eq!(roster.entries[0].asn, None);
+        assert_eq!(roster.entries[0].last_reachable_ms, None);
+        // And the one clock every candidate has still dates it, which is why
+        // no roster row is ever undated even when four of its five optional
+        // fields are gone.
+        assert_eq!(roster.entries[0].last_advertised_ms, 40_000);
     }
 
     #[test]

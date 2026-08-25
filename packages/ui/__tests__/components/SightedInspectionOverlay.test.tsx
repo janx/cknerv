@@ -11,11 +11,13 @@ function rosterNode(overrides: Partial<RosterNode> = {}): RosterNode {
   return {
     node_id: 'QmSightedAlpha0123456789',
     addr: '/ip4/203.0.113.44/tcp/8115',
+    state: 'reachable',
     version: '0.116.1',
     country: 'Germany',
     asn: 'AS24940',
-    reachable: true,
-    last_seen_ms: 1_700_000_000_000,
+    last_reachable_ms: 1_700_000_000_000,
+    last_advertised_ms: 1_700_000_000_000,
+    last_observed_ms: 1_700_000_000_000,
     ...overrides,
   };
 }

@@ -204,16 +204,25 @@ export default function SightedNodeCard({
           * pushed right by `marginLeft` used to run under an absolutely-placed
           * stamp instead of pushing it. */}
         <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'baseline', gap: 6, whiteSpace: 'nowrap' }}>
-          <span
-            data-sighted-probe-last-seen
-            style={{
-              color: HUD_COLORS.dim,
-              fontSize: HUD_TYPE.label,
-              letterSpacing: 0.9,
-            }}
-          >
-            LAST SEEN {formatAge(node.last_seen_ms, atMs)}
-          </span>
+          {/* The crawler's reach clock, and only ever that one. Two other
+              clocks ride this row now — when the network last named the node
+              and when the crawler last tried it — and neither of them is a
+              sighting, so neither may stand in for one here. A node this
+              colony stages has been dialed, so the clock is normally there;
+              when it is not, the line goes rather than dating a sighting from
+              something else. */}
+          {node.last_reachable_ms != null ? (
+            <span
+              data-sighted-probe-last-seen
+              style={{
+                color: HUD_COLORS.dim,
+                fontSize: HUD_TYPE.label,
+                letterSpacing: 0.9,
+              }}
+            >
+              LAST SEEN {formatAge(node.last_reachable_ms, atMs)}
+            </span>
+          ) : null}
           {moduleTag('SGHT·01')}
         </span>
         <CloseButton onClose={onClose} title="Close · ESC or click outside" />

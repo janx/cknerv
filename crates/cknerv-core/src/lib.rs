@@ -34,11 +34,12 @@ pub use enrichment::{
     GalaxyCompositionRecord, GalaxyCompositionTarget, GalaxyCompositionTopUp, NetworkAtlasBucket,
     NetworkAtlasRecord, NetworkRosterRecord, PeerAdvertisedEvidence, PeerHandshakeDepthBucket,
     PeerProbeResult, PeerSightingAbsence, PeerSightingLookup, PeerSightingRecord, ProtocolEra,
-    ProtocolEraRecord, RosterNode, ScriptNameRecord, ScriptRegistryRecord, SemanticAsset,
-    SemanticAttribute, SemanticCellConsumption, SemanticCellContent, SemanticContentDecode,
-    SemanticContentGuess, SemanticContentSegment, SemanticFacet, SemanticScript, SemanticsDelta,
-    SemanticsProjection, SemanticsSnapshot, TransactionHorizonRecord,
-    TransactionParticipantSemantic, TransactionSemanticRecord, MAX_SCRIPT_REGISTRY_ENTRIES,
+    ProtocolEraRecord, RosterNode, RosterNodeState, ScriptNameRecord, ScriptRegistryRecord,
+    SemanticAsset, SemanticAttribute, SemanticCellConsumption, SemanticCellContent,
+    SemanticContentDecode, SemanticContentGuess, SemanticContentSegment, SemanticFacet,
+    SemanticScript, SemanticsDelta, SemanticsProjection, SemanticsSnapshot,
+    TransactionHorizonRecord, TransactionParticipantSemantic, TransactionSemanticRecord,
+    MAX_SCRIPT_REGISTRY_ENTRIES,
 };
 pub use entity::{
     Chain, ChainNode, EpochInfo, MempoolStats, Peer, PeerDirection, RecentBlock, RecentTx,
