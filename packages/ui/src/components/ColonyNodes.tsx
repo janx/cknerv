@@ -1,16 +1,19 @@
 // ColonyNodes — the P2P "colony" rendered as ONE glow-node primitive across
-// three honesty classes, separated only by a confidence gradient (never three
+// three honesty classes and five stops of one confidence gradient (never five
 // visual languages):
 //   • inferred ghosts   — ONE faint additive <points> cloud (~240 minus the
-//     sighted count): a "possible network" haze. Each point is the SAME soft
+//     staged count): a "possible network" haze. Each point is the SAME soft
 //     core+halo radial as the measured halo, drawn small and — this is the
 //     part that has to hold — under the additive clip, so it stays haze
 //     instead of a white speck the eye reads as a node. Non-selectable.
-//   • sighted nodes     — TWO more <points> draws off the same factory (the
-//     crawler reached it / only remembers it), a stop brighter than the ghosts
-//     and a stop below the measured core, and ~3x their diameter: the tiers
+//   • roster nodes      — THREE more <points> draws off the same factory, one
+//     per rung of the crawler's evidence gradient (it reached the node / it
+//     only remembers reaching it / the network names it and nobody has ever
+//     had an answer out of it). Every rung is a stop brighter than the ghosts
+//     and below the measured core, at 1.3x to 3.1x their diameter: the tiers
 //     have to separate in FOOTPRINT, because brightness clips and the inferred
-//     edges pile light onto every junction they cross. Real identity, invented
+//     edges pile light onto every junction they cross — and in the footprint
+//     a viewer SEES, which the sprite diameter alone does not predict. Real identity, invented
 //     position, no link of ours — so they are clickable through ONE instanced
 //     invisible hit mesh sized from those same marks, and every edge they
 //     carry stays inferred fiction.
@@ -45,6 +48,7 @@ import {
   peerColorKind,
   rotYLocalToWorldXZ,
 } from '../derives/peers.derive';
+import type { RosterNodeState } from '@cknerv/types';
 import type { NetworkNode, NetworkTopology } from '../types';
 import type { ColonyFlood } from '../derives/networkFlood.derive';
 import { consensusBlockColor } from '../derives/consensusFlow.derive';
@@ -58,6 +62,7 @@ import {
   makeMeasuredPeerHalosMaterial,
   makePeerCloudMaterial,
   peerCloudHitRadius,
+  PEER_CLOUD_ADVERTISED_TONE,
   PEER_CLOUD_SIGHTED_DARK_TONE,
   PEER_CLOUD_SIGHTED_TONE,
   type PeerCloudTone,
@@ -69,29 +74,90 @@ const MEASURED_SIZE = 1.4;
 /** Selection id prefix for a sighted node — the colony's third dialect beside
  *  `peer:` (measured) and the bare chain-node id. */
 const SIGHTED_SELECTION_PREFIX = 'sighted:';
-/** A sighted node's invisible hit sphere IS its mark: both stops hand their own
- *  world diameter to `peerCloudHitRadius`, so the reachable stop's larger glow
- *  carries the larger target and a retune of one moves the other with it. The
- *  target is the footprint, never a generous pick disc — the Cell canopy yields
- *  this pixel through NETWORK_PEER_PICK_FLAG, so it is taken from that layer. */
-const SIGHTED_HIT_RADIUS = peerCloudHitRadius(PEER_CLOUD_SIGHTED_TONE);
-const SIGHTED_DARK_HIT_RADIUS = peerCloudHitRadius(PEER_CLOUD_SIGHTED_DARK_TONE);
+/** The stops this tier draws, FAINTEST FIRST — which is also the order the
+ *  clouds mount in, so the DOM reads in the same direction the eye does. One
+ *  table: the draw split, the mount order and every pick radius below are all
+ *  read off it, so a stop cannot be retuned in one of those places and not the
+ *  others. */
+export const SIGHTED_STOPS = {
+  advertised: PEER_CLOUD_ADVERTISED_TONE,
+  remembered: PEER_CLOUD_SIGHTED_DARK_TONE,
+  reached: PEER_CLOUD_SIGHTED_TONE,
+} as const;
 
-/** ⭐ THE BRIGHT STOP IS OPT-IN, EVERYWHERE. Both this and the draw split below
- *  test for `reachable` and let everything else fall to the dim stop, and that
- *  direction is load-bearing rather than stylistic: the predecessor asked
+export type SightedStop = keyof typeof SIGHTED_STOPS;
+
+const SIGHTED_STOP_ORDER = Object.keys(SIGHTED_STOPS) as SightedStop[];
+
+/** Which stop each rung of the crawler's gradient draws at.
+ *
+ *  Exhaustive by TYPE rather than by habit: a rung grown upstream widens
+ *  `RosterNodeState` and stops this file compiling until somebody says what it
+ *  looks like, which is the same gate `STAGEABLE_ROSTER_STATES` holds on the
+ *  staging side. Neither half is any use alone — a rung that stages with no
+ *  mark stands an invisible target, a mark no rung reaches is dead paint — so
+ *  the two are checked against each other rather than trusted to stay in step. */
+const STOP_BY_ROSTER_STATE: Readonly<Record<RosterNodeState, SightedStop>> = {
+  reachable: 'reached',
+  verified_unavailable: 'remembered',
+  advertised_unverified: 'advertised',
+};
+
+/** ⭐ THE LADDER FALLS THROUGH TO ITS FAINTEST RUNG, EVERYWHERE. That direction
+ *  is load-bearing rather than stylistic: the predecessor asked
  *  `reachable !== false`, so a node whose state was missing — an older record,
  *  a rung nobody has taught this file about yet — rendered at the brightness
- *  reserved for a peer the crawler dialed this round. An unknown must always
- *  cost brightness, never gain it. Exported so that direction can be tested
- *  against a state this file has never heard of, which is the only way to tell
- *  the guard apart from its inverse. */
-export function isReachedStop(node: NetworkNode): boolean {
-  return node.sighted?.state === 'reachable';
+ *  reserved for a peer the crawler dialed this round. Brightness on this axis
+ *  is a claim about how the fact was obtained, and an unknown must always cost
+ *  it, never gain it. In production nothing reaches here at all: a state with
+ *  no mark never leaves `stageSighted`. This is what that gate leaks INTO if it
+ *  ever fails, which is the only reason it names the faintest stop rather than
+ *  throwing. */
+export const SIGHTED_FALLTHROUGH_STOP: SightedStop = 'advertised';
+
+/** Which stop one staged node draws at. Exported so the fallthrough can be
+ *  tested against a state this file has never heard of, which is the only way
+ *  to tell the guard apart from its inverse. */
+export function sightedStop(node: NetworkNode): SightedStop {
+  const state = node.sighted?.state;
+  // `RosterNodeState` is a claim about the wire, not a check on it — a decoded
+  // record can carry a rung this build has never heard of — so the lookup is
+  // allowed to miss, and the miss has to land somewhere named.
+  const named = state === undefined
+    ? undefined
+    : (STOP_BY_ROSTER_STATE as Partial<Record<string, SightedStop>>)[state];
+  return named ?? SIGHTED_FALLTHROUGH_STOP;
 }
 
+/** A staged node's invisible hit sphere IS its mark: every stop hands its own
+ *  world diameter to `peerCloudHitRadius`, so the brighter stops carry the
+ *  larger targets and a retune of one moves the other with it. The target is
+ *  the footprint, never a generous pick disc — the Cell canopy yields this
+ *  pixel through NETWORK_PEER_PICK_FLAG, so it is taken from that layer. */
+export const SIGHTED_HIT_RADII = Object.fromEntries(
+  SIGHTED_STOP_ORDER.map((stop) => [stop, peerCloudHitRadius(SIGHTED_STOPS[stop])]),
+) as Readonly<Record<SightedStop, number>>;
+
 function sightedHitRadius(node: NetworkNode): number {
-  return isReachedStop(node) ? SIGHTED_HIT_RADIUS : SIGHTED_DARK_HIT_RADIUS;
+  return SIGHTED_HIT_RADII[sightedStop(node)];
+}
+
+/** The staged nodes split into one bucket per stop, faintest first.
+ *
+ *  ⭐ ONE PASS, ONE BUCKET EACH — a partition BY CONSTRUCTION rather than N
+ *  filters that have to add up to each other's complement. The hit mesh walks
+ *  the staged list WHOLE and hands every instance the radius of its own stop,
+ *  so a node in no bucket would stand an invisible target with no mark over it
+ *  and a node in two would be double-booked. Exported because that property is
+ *  the one thing about this split worth a test, and a loop inside a component
+ *  cannot be asked about it. */
+export function partitionByStop(
+  sighted: readonly NetworkNode[],
+): Readonly<Record<SightedStop, NetworkNode[]>> {
+  const groups = {} as Record<SightedStop, NetworkNode[]>;
+  for (const stop of SIGHTED_STOP_ORDER) groups[stop] = [];
+  for (const node of sighted) groups[sightedStop(node)].push(node);
+  return groups;
 }
 
 /** Keep handing back the list a point buffer was already built from, for as long
@@ -185,12 +251,13 @@ function InferredCloud({
 }
 
 /**
- * One tone's worth of sighted nodes as a single additive point cloud — the
+ * One stop's worth of staged nodes as a single additive point cloud — the
  * ghost cloud's pattern, cloned: `position` only, one shared material, the same
  * wave uniforms and the same context-energy damping. The tone (brightness,
- * size) is a creation-time uniform rather than a per-point attribute, because
- * the vertex-attribute budget sits at a cliff and a second Points draw is
- * cheaper than a slot.
+ * size, core falloff) is a creation-time uniform rather than a per-point
+ * attribute, because the vertex-attribute budget sits at a cliff and one more
+ * Points draw is cheaper than a slot — which is why a THIRD stop cost this
+ * tier one draw call and not one byte of vertex layout.
  *
  * Its raycast is a no-op too: the pixel belongs to the instanced hit mesh below,
  * so the visible sprite never competes with it.
@@ -213,8 +280,8 @@ function SightedCloud({
   // on every build, so identity says nothing. Their POSITIONS are `sightedPos`
   // of the id and nothing else — the same fact the derive's scaffold cache is
   // keyed on — so the id sequence is what this buffer follows. A round that
-  // adds, drops or reorders a node changes it, and so does one that flips a
-  // node's reachability (it moves between the two tones); a round that only
+  // adds, drops or reorders a node changes it, and so does one that moves a
+  // node up or down the gradient (it changes clouds); a round that only
   // refreshed last_seen does not.
   const points = useStableList(nodes, sameNodeId);
 
@@ -247,9 +314,9 @@ function SightedCloud({
 }
 
 /**
- * The sighted tier: two point clouds (reached / only remembered) plus ONE
- * instanced invisible hit mesh covering every sighted node, and the reticle for
- * the selected one.
+ * The staged tier: one point cloud per stop of the gradient, plus ONE instanced
+ * invisible hit mesh covering every staged node, and the reticle for the
+ * selected one.
  *
  * Hundreds of one-mesh-per-node targets would be the wrong shape for the
  * raycaster, so a single InstancedMesh answers once and hands back
@@ -257,6 +324,17 @@ function SightedCloud({
  * renderer skips the draw (the MeasuredNode/anchor trick), and the mesh carries
  * NETWORK_PEER_PICK_FLAG so the Cell picker yields the pixel — the existing
  * arbitration path, not a new one.
+ *
+ * ⭐ THE HEARSAY RUNG IS CLICKABLE AND THE HAZE IS NOT, because the difference
+ * is what each one has to say. A ghost is invented and answers "nothing"; a
+ * node the network names carries aliases the crawler tried, how far each dial
+ * got, how many rounds running it has failed and how many independent peers
+ * name it. Paying for that is one instance, and the instance costs an
+ * `instanceMatrix` row plus a bounding-sphere reject on each raycast — the
+ * material is invisible, so nothing is drawn for it at all. What it does spend
+ * is SCREEN: the target is the mark, so it takes exactly its own glow from the
+ * Cell canopy below and not one pixel more, and the faintest stop draws the
+ * smallest mark on the tier precisely because it has the weakest claim.
  */
 function SightedNodes({
   sighted,
@@ -274,17 +352,10 @@ function SightedNodes({
   const gl = useThree((state) => state.gl);
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const hitUserData = useMemo(() => ({ [NETWORK_PEER_PICK_FLAG]: true }), []);
-  // A crawler that could not reach a node this round still knows it exists;
-  // that is real, dimmer information, and it costs one extra draw, not a slot.
-  // The two lists are a partition by construction — `isReachedStop` and its
-  // negation — because the hit mesh below walks `sighted` whole and hands every
-  // instance one of these two radii, so a node in neither list would stand an
-  // invisible target nothing draws a mark for.
-  const reached = useMemo(() => sighted.filter(isReachedStop), [sighted]);
-  const remembered = useMemo(
-    () => sighted.filter((n) => !isReachedStop(n)),
-    [sighted],
-  );
+  // A crawler that could not reach a node this round still knows it exists, and
+  // a node it has never reached is still one the network keeps naming. Both are
+  // real, dimmer information, and each costs one extra draw rather than a slot.
+  const byStop = useMemo(() => partitionByStop(sighted), [sighted]);
   const selected = useMemo(() => {
     if (selectedId === null || !selectedId.startsWith(SIGHTED_SELECTION_PREFIX)) return null;
     const id = selectedId.slice(SIGHTED_SELECTION_PREFIX.length);
@@ -362,24 +433,18 @@ function SightedNodes({
 
   return (
     <group>
-      {/* A tone with nobody in it is not drawn at all: an all-reachable roster
-          costs one cloud, not two empty ones. */}
-      {reached.length > 0 ? (
+      {/* Faintest first, and a stop with nobody standing at it is not drawn at
+          all: an all-reachable roster costs one cloud, not three, two of them
+          empty. */}
+      {SIGHTED_STOP_ORDER.map((stop) => (byStop[stop].length > 0 ? (
         <SightedCloud
-          nodes={reached}
-          tone={PEER_CLOUD_SIGHTED_TONE}
+          key={stop}
+          nodes={byStop[stop]}
+          tone={SIGHTED_STOPS[stop]}
           contextEnergyRef={contextEnergyRef}
           shockwaveUniforms={shockwaveUniforms}
         />
-      ) : null}
-      {remembered.length > 0 ? (
-        <SightedCloud
-          nodes={remembered}
-          tone={PEER_CLOUD_SIGHTED_DARK_TONE}
-          contextEnergyRef={contextEnergyRef}
-          shockwaveUniforms={shockwaveUniforms}
-        />
-      ) : null}
+      ) : null))}
       <instancedMesh
         ref={meshRef}
         args={[geometry, material, capacity]}

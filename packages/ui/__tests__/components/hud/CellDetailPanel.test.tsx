@@ -173,6 +173,16 @@ describe('CellDetailPanel', () => {
   });
 
   it('renders one CKBYTES ANALYSIS column beside the specimen square', () => {
+    // ⚠️ PIN THE WALK'S CLOCK, as every other test in this file that reads the
+    // lattice does. `beforeEach` fakes the timers, but the reveal reads
+    // `performance.now` — which vitest's fake timers do NOT cover — so this one
+    // asserted the count at step zero while the walk kept moving underneath it.
+    // Two 0.3s steps is all it takes, and the thirty assertions between the
+    // render and the check spend that whenever the machine is loaded: the
+    // check read `2/6` under `pnpm -r test` (four suites at once) and `0/6`
+    // when this package ran alone. The number being asserted is a fact about
+    // the first frame, not about how fast the file happens to run.
+    const performanceNow = vi.spyOn(performance, 'now').mockReturnValue(0);
     const { container } = render(<CellDetailPanel cell={base} onClose={() => {}} />);
     const t = container.textContent ?? '';
     expect(t).toContain('CELL');
@@ -350,6 +360,8 @@ describe('CellDetailPanel', () => {
     expect(container.querySelectorAll('[data-cell-content-byte]')).toHaveLength(11);
     expect(root.style.height).toBe('');
     expect(analysis.style.height).toBe('');
+    // Hand the real clock back: the tests below this one drive their own.
+    performanceNow.mockRestore();
   });
 
   it('re-homes the six facts as cluster leads in the register and bytes zones', () => {

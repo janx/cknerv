@@ -144,7 +144,7 @@ export default function SightedInspectionOverlay({
         data-sighted-probe-dismiss-boundary="true"
         data-sighted-probe-node={node.node_id}
         role="region"
-        aria-label={`Sighted node ${node.node_id} inspection`}
+        aria-label={`${node.state === 'advertised_unverified' ? 'Advertised' : 'Sighted'} node ${node.node_id} inspection`}
         style={INSPECTION_CARD_STYLE}
       >
         <SceneInspectionConnector

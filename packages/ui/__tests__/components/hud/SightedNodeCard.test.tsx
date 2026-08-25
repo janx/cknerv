@@ -115,6 +115,35 @@ describe('SightedNodeCard header', () => {
     expect(badge?.style.color).not.toBe(rgbOf(HUD_COLORS.caution));
   });
 
+  // ⚠️ THE MASTHEAD IS THE CARD'S ONE CLAIM THAT CAN GO FALSE. The colony now
+  // stages a rung the crawler has never had an answer out of, and this card is
+  // what its mark opens; every other line already says nothing rather than
+  // guessing, so the word is the only thing that would have printed a sighting
+  // over a node nobody has spoken to. The rest of the dialect that rung wants
+  // is a task of its own — this is the floor, not the finish.
+  it('never calls a peer sighted when nobody has ever had an answer out of it', () => {
+    const hearsay = rosterNode({
+      state: 'advertised_unverified',
+      version: undefined,
+      country: undefined,
+      asn: undefined,
+      last_reachable_ms: undefined,
+      rtt_ms: undefined,
+    });
+    const { container } = renderCard({ node: hearsay });
+    const text = container.textContent ?? '';
+    expect(text).toContain('ADVERTISED // QmSighte');
+    expect(text).not.toContain('SIGHTED // QmSighte');
+    expect(container.querySelector('[data-sighted-probe-card]')?.getAttribute('aria-label'))
+      .toBe('Advertised node QmSighte probe');
+    // …and the rung that WAS answered keeps the word it earned.
+    cleanup();
+    const answered = renderCard();
+    expect(answered.container.textContent ?? '').toContain('SIGHTED // QmSighte');
+    expect(answered.container.querySelector('[data-sighted-probe-card]')
+      ?.getAttribute('aria-label')).toBe('Sighted node QmSighte probe');
+  });
+
   it('wears the sighted tier tint its own point cloud is drawn with', () => {
     expect(SIGHTED_NODE_ACCENT).toBe(PEER_NETWORK_HEX.scaffold);
     const { container } = renderCard();

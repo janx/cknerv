@@ -120,6 +120,19 @@ export default function SightedNodeCard({
 }: SightedNodeCardProps) {
   const accent = SIGHTED_NODE_ACCENT;
   const id8 = node.node_id.slice(0, 8);
+  // ⚠️ THE MINIMUM, NOT THE DIALECT. The colony now stages a rung the crawler
+  // has never had an answer out of, and this card is what its mark opens. The
+  // rows an unverified peer would actually fill — the aliases that were tried,
+  // how far the last dial got, how many rounds running it has failed, how many
+  // independent peers name it — are a task of their own. The WORD could not
+  // wait for that task: a card headed SIGHTED over a node nobody has ever
+  // spoken to is precisely the sentence this whole tier exists to refuse, and
+  // it is the only claim on the card that goes from true to false when the
+  // subject changes rung. Everything else here already says nothing rather
+  // than guessing — an absent version prints a dash, an absent dial prints no
+  // row at all.
+  const unverified = node.state === 'advertised_unverified';
+  const evidenceWord = unverified ? 'ADVERTISED' : 'SIGHTED';
 
   // The card prints one age and lends it to the dossier's ages, so it needs a
   // wall clock that keeps moving. A host that already runs one hands it down
@@ -141,7 +154,7 @@ export default function SightedNodeCard({
       data-sighted-probe-card
       data-sighted-probe-layout={verticalLayout ? 'vertical' : layoutSide}
       role="region"
-      aria-label={`Sighted node ${id8} probe`}
+      aria-label={`${unverified ? 'Advertised' : 'Sighted'} node ${id8} probe`}
       style={{
         position: 'relative',
         display: 'grid',
@@ -187,7 +200,7 @@ export default function SightedNodeCard({
             textShadow: `0 0 9px ${rgba(accent, 0.45)}`,
           }}
         >
-          SIGHTED // {id8}
+          {evidenceWord} // {id8}
         </span>
         {/* Steel, not caution. Having no link to a node the crawler named is
             this card's normal condition, not a fault of anything — the alarm

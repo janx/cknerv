@@ -66,9 +66,10 @@ function sharedShockwave(
 /**
  * Where one cloud draw sits on the confidence axis.
  *
- * A node we can name is worth more light than an anonymous one, and a node the
+ * A node we can name is worth more light than an anonymous one, a node somebody
+ * has answered is worth more than one only the gossip names, and a node the
  * crawler could still reach is worth more than one it only remembers — but that
- * is THREE stops of one gradient, not three visual languages, so the tone rides
+ * is FOUR stops of one gradient, not four visual languages, so the tone rides
  * creation-time UNIFORMS on the shared factory. Splitting it per point would
  * cost a vertex attribute, and the attribute budget has no room to sell.
  */
@@ -99,15 +100,16 @@ export interface PeerCloudTone {
 }
 
 /**
- * The three stops, faintest first. One hue, one axis: a sighted node reads as
- * "the same kind of thing, better known", never as a different species. The
- * measured core sits above all three with its own (brighter, tinted) halo.
+ * The four stops, faintest first. One hue, one axis: a node the crawler named
+ * reads as "the same kind of thing, better known", never as a different
+ * species. The measured core sits above all four with its own (brighter,
+ * tinted) halo.
  *
  * The axis has to survive ADDITIVE blending, which is where the first cut of it
- * failed: every stop drove its core past 1.0, so all three clipped to the same
- * white-cyan pixel and the gradient existed only in the source. A ghost now
- * rests well under the clip — it is haze, and only a wave lights it — while the
- * two sighted stops keep both the light AND the footprint the eye actually
+ * failed: every stop drove its core past 1.0, so all of them clipped to the
+ * same white-cyan pixel and the gradient existed only in the source. A ghost
+ * now rests well under the clip — it is haze, and only a wave lights it — while
+ * the stops above it keep both the light AND the footprint the eye actually
  * sorts on. Ghost → reached is 3.08x the diameter and ~4.4x the resting light
  * (which goes as dim SQUARED — additive blending applies alpha to colour).
  *
@@ -123,6 +125,43 @@ export interface PeerCloudTone {
  */
 export const PEER_CLOUD_GHOST_TONE = {
   dim: 0.62, size: 0.65, event: 0.9,
+} satisfies PeerCloudTone;
+/**
+ * Named by the network, answered by nobody — hearsay carrying a real identity.
+ *
+ * It is the first stop that is REAL and the last that has never been spoken to,
+ * so it sits directly above the invented haze and clearly below the pair that
+ * mean somebody got a packet back.
+ *
+ * ⚠️ `size` IS NOT THE MARK, AND THAT IS WHY THIS NUMBER IS NOT THE OBVIOUS ONE.
+ * Keeping the ladder of world diameters even (0.65 · 1.05 · 1.5 · 2.0) was the
+ * first cut of this stop, and rendered at the default camera it drew a mark a
+ * single pixel off the one above it — the two overlapped completely once the
+ * colony's depth spread was taken in. What a viewer sees is not the sprite: it
+ * is the disc inside it where the radial profile is still above visibility, and
+ * the stop above pulls its own core in hard (3.5), throwing away far more of
+ * its sprite than the soft default does. So an even ladder of SPRITES is a
+ * lopsided ladder of MARKS. 0.85 is what an even ladder of marks costs, and it
+ * measured a clean step from the haze and a clean step to the stop above at
+ * every viewport it was checked at.
+ *
+ * ⭐ NO `coreExp`, ON PURPOSE — 2.0 is the default and 2.0 is what this stop
+ * wants. The tight 3.5 core exists only to pull IN the saturated plateau of a
+ * stop resting well above the additive clip; at dim 0.80 the profile crosses
+ * 1/dim at 6.5% of the radius, which at the default camera is narrower than one
+ * pixel — the only saturated pixels this stop produced in a rendered count came
+ * from two of its marks overlapping, never from one of them alone. Tightening
+ * the core here would only shrink the visible mark away from the pick target
+ * its sprite defines.
+ *
+ * `event` is the one field it names rather than inherits. Every other stop is
+ * content to answer a block wave as loudly as it rests, but the haze is not —
+ * it recedes at rest and keeps 0.9 for the wave — so a stop inheriting 0.80
+ * from its own rest would be OUT-SHOUTED by the haze underneath it for the
+ * length of every block, on the one axis whose whole job is ordering.
+ */
+export const PEER_CLOUD_ADVERTISED_TONE = {
+  dim: 0.8, size: 0.85, event: 0.95,
 } satisfies PeerCloudTone;
 /** Named by the crawler, but it could not reach the node this round. */
 export const PEER_CLOUD_SIGHTED_DARK_TONE = {

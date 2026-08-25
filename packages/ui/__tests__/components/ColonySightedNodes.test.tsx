@@ -3,14 +3,108 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { render, renderHook } from '@testing-library/react';
 import { Canvas } from '@react-three/fiber';
-import ColonyNodes, { isReachedStop, useStableList } from '../../src/components/ColonyNodes';
-import { inferredTopology } from '../../src/derives/networkTopology.derive';
+import ColonyNodes, {
+  partitionByStop,
+  SIGHTED_FALLTHROUGH_STOP,
+  SIGHTED_HIT_RADII,
+  SIGHTED_STOPS,
+  sightedStop,
+  useStableList,
+  type SightedStop,
+} from '../../src/components/ColonyNodes';
+import {
+  inferredTopology,
+  STAGEABLE_ROSTER_STATES,
+} from '../../src/derives/networkTopology.derive';
 import { colonyFlood } from '../../src/derives/networkFlood.derive';
+import {
+  peerCloudHitRadius,
+  PEER_CLOUD_GHOST_TONE,
+  type PeerCloudTone,
+} from '../../src/materials/peerNodeMaterial';
 import type { NetworkNode } from '../../src/types';
-import type { NetworkRosterRecord, Peer, RosterNode } from '@cknerv/types';
+import type {
+  NetworkRosterRecord, Peer, RosterNode, RosterNodeState,
+} from '@cknerv/types';
 
 function source(file: string): string {
   return readFileSync(resolve(process.cwd(), `src/components/${file}`), 'utf8');
+}
+
+function materialSource(): string {
+  return readFileSync(resolve(process.cwd(), 'src/materials/peerNodeMaterial.ts'), 'utf8');
+}
+
+/** The whole ladder, faintest first — the haze the tier sits on top of, then
+ *  every stop the tier itself draws. The haze is not one of `SIGHTED_STOPS`
+ *  (it is not staged and cannot be picked), but it IS the rung below them, so
+ *  the separation tests have to include it or the tier could quietly sink into
+ *  the fiction underneath it. */
+const LADDER: readonly (readonly [string, PeerCloudTone])[] = [
+  ['ghost', PEER_CLOUD_GHOST_TONE],
+  ...(Object.entries(SIGHTED_STOPS) as [SightedStop, PeerCloudTone][]),
+];
+
+/** The three uniforms the factory actually resolves, with the same fallbacks —
+ *  a tone that omits a field is asking for the ghost's, and comparing declared
+ *  fields alone would let a stop go dark by leaving one out. */
+const restingDim = (t: PeerCloudTone) => t.dim ?? PEER_CLOUD_GHOST_TONE.dim;
+const eventDim = (t: PeerCloudTone) => t.event ?? restingDim(t);
+const coreExp = (t: PeerCloudTone) => t.coreExp ?? 2.0;
+const diameter = (t: PeerCloudTone) => t.size ?? PEER_CLOUD_GHOST_TONE.size;
+
+/** The sprite's radial profile, transcribed from the fragment shader (pinned
+ *  against it below). `r` runs 0 at the centre to 1 at the sprite's edge. */
+const shapeAt = (r: number, exp: number) => (
+  (1 - r) ** exp + 0.42 * (1 - r) ** 1.6
+);
+
+/**
+ * How much of the sprite's RADIUS is a saturated plateau — the measurement the
+ * axis has failed on before, and the one brightness alone cannot fix.
+ *
+ * Additive blending multiplies colour by alpha, so a stop's resting light goes
+ * as `shape² · dim²`, and the scaffold hue's blue channel is exactly 1.0. The
+ * plateau is therefore everywhere `shape · dim >= 1`, and it ends where the
+ * profile crosses `1/dim`. A stop resting under the clip has none at all.
+ */
+function plateauFraction(tone: PeerCloudTone): number {
+  const dim = restingDim(tone);
+  const exp = coreExp(tone);
+  let last = 0;
+  for (let step = 0; step <= 1000; step += 1) {
+    const r = step / 1000;
+    if (shapeAt(r, exp) * dim >= 1) last = r;
+  }
+  return last;
+}
+
+/** A visibility floor in the same units the profile is measured in: the light
+ *  a stop puts down at radius `r` is `(shape · dim)²`, so a mark stops being a
+ *  mark where `shape · dim` falls under this. Its exact value only scales every
+ *  answer below together; nothing here depends on which floor is chosen. */
+const VISIBILITY_FLOOR = 0.05;
+
+/**
+ * ⭐ THE MARK, IN WORLD UNITS — WHICH IS NOT `size`.
+ *
+ * `size` is the sprite the shader rasterises; what a viewer sees is the disc
+ * inside it where the profile is still above the floor, and that fraction moves
+ * with BOTH `dim` and `coreExp`. A stop with a tight 3.5 core throws away far
+ * more of its sprite than one on the soft 2.0 default, so two stops can be a
+ * clean 1.4x apart in declared diameter and land a single pixel apart on the
+ * screen. That is not a hypothetical: it is what the first cut of the hearsay
+ * stop did, and only a rendered measurement caught it.
+ */
+function visibleExtent(tone: PeerCloudTone): number {
+  const dim = restingDim(tone);
+  const exp = coreExp(tone);
+  let edge = 0;
+  for (let step = 0; step <= 2000; step += 1) {
+    const r = step / 2000;
+    if (shapeAt(r, exp) * dim >= VISIBILITY_FLOOR) edge = r;
+  }
+  return edge * diameter(tone);
 }
 
 function peer(node_id: string): Peer {
@@ -28,6 +122,20 @@ function rosterNode(node_id: string, reachable: boolean): RosterNode {
     country: 'Unknown',
     asn: 'Unknown',
     last_reachable_ms: 1_700_000_000_000,
+    last_advertised_ms: 1_700_000_060_000,
+    last_observed_ms: 1_700_000_000_000,
+  };
+}
+
+/** The rung the crawler has never had an answer out of. Its absences are the
+ *  point: no version, no reach clock, no dial — the roster row for a peer
+ *  nobody has spoken to carries an identity, an address and an advertise
+ *  window, and nothing that would require a dial to learn. */
+function hearsayNode(node_id: string): RosterNode {
+  return {
+    node_id,
+    addr: '/ip4/10.0.0.2/tcp/8115',
+    state: 'advertised_unverified',
     last_advertised_ms: 1_700_000_060_000,
     last_observed_ms: 1_700_000_000_000,
   };
@@ -87,45 +195,110 @@ describe('ColonyNodes sighted tier', () => {
   // is a default that hands out the strongest claim on the ladder to whatever
   // it cannot read. The direction has to be the other one, and the only way to
   // tell the two apart is to ask about a rung this file has never heard of.
-  it('never lets a stop it cannot name reach for the bright mark', () => {
+  it('never lets a stop it cannot name reach for a brighter mark', () => {
     const node = (sighted?: RosterNode): NetworkNode => ({
       id: 'Qm0000', kind: 'sighted', pos: [0, 0, 0], sighted,
     });
-    expect(isReachedStop(node(rosterNode('Qm0000', true)))).toBe(true);
-    expect(isReachedStop(node(rosterNode('Qm0000', false)))).toBe(false);
-    // A rung upstream grew and nothing here has been taught to draw.
+    expect(sightedStop(node(rosterNode('Qm0000', true)))).toBe('reached');
+    expect(sightedStop(node(rosterNode('Qm0000', false)))).toBe('remembered');
+    expect(sightedStop(node(hearsayNode('Qm0000')))).toBe('advertised');
+    // A rung upstream grew and nothing here has been taught to draw, and a
+    // node carrying no crawler row at all (every other tier in the colony).
     const unnamed = {
       ...rosterNode('Qm0000', true), state: 'quantum_entangled',
     } as unknown as RosterNode;
-    expect(isReachedStop(node(unnamed))).toBe(false);
-    // And a node carrying no crawler row at all, which is every other tier in
-    // the colony: it must not fall through to the sighted tier's brightest
-    // stop either.
-    expect(isReachedStop(node(undefined))).toBe(false);
+    for (const unreadable of [node(unnamed), node(undefined)]) {
+      expect(sightedStop(unreadable)).toBe(SIGHTED_FALLTHROUGH_STOP);
+    }
   });
 
-  it('routes both the draw split and the hit radius through that one guard', () => {
-    const nodes = source('ColonyNodes.tsx');
-    // Two consumers, one predicate, and the dim stop is the fallthrough in
-    // both: a second copy of the test written the other way round would give
-    // an unnameable rung a bright mark on one of them and a small target on
-    // the other.
-    expect(nodes).toContain('isReachedStop(node) ? SIGHTED_HIT_RADIUS : SIGHTED_DARK_HIT_RADIUS');
-    expect(nodes).toContain('sighted.filter(isReachedStop)');
-    expect(nodes).toContain('sighted.filter((n) => !isReachedStop(n))');
+  // …and the fallthrough is only worth anything if the stop it names really is
+  // the faintest one. Naming a stop is what the guard above checks; being the
+  // bottom of the ladder is a property of the NUMBERS, and a retune that
+  // reordered them would leave the guard reading correctly while it handed an
+  // unreadable rung the brightest mark on the tier.
+  it('and the stop it falls through to is provably the bottom of the ladder', () => {
+    const floor = SIGHTED_STOPS[SIGHTED_FALLTHROUGH_STOP];
+    for (const [name, tone] of Object.entries(SIGHTED_STOPS)) {
+      if (name === SIGHTED_FALLTHROUGH_STOP) continue;
+      expect(restingDim(tone)).toBeGreaterThan(restingDim(floor));
+      expect(diameter(tone)).toBeGreaterThan(diameter(floor));
+    }
+  });
+
+  // ⭐ TWO HALVES OF ONE GATE, CHECKED AGAINST EACH OTHER. The derive decides
+  // which rungs may be staged; this file decides what each one looks like.
+  // A rung that stages with no mark of its own falls through and stands an
+  // invisible hit target under somebody else's glow; a mark no rung can reach
+  // is paint nothing will ever wear. Both halves pass their own tests while
+  // disagreeing, so the disagreement is what has to be asserted.
+  it('every rung that can be staged has its own mark, and no mark is unreachable', () => {
+    const staged = [...STAGEABLE_ROSTER_STATES];
+    const stops = staged.map((state) => sightedStop({
+      id: 'Qm0000',
+      kind: 'sighted',
+      pos: [0, 0, 0],
+      sighted: { ...rosterNode('Qm0000', true), state },
+    }));
+    // No two rungs share a mark — which is also how a rung added to the
+    // staging set and forgotten here shows up, since it would fall through
+    // onto the faintest stop and collide with the rung that owns it.
+    expect(new Set(stops).size).toBe(staged.length);
+    // …and every mark this file draws belongs to a rung that can reach it.
+    expect([...stops].sort()).toEqual(Object.keys(SIGHTED_STOPS).sort());
+  });
+
+  // The hit mesh walks the staged list WHOLE and gives every instance the
+  // radius of its own stop, so the split has to be a partition: a node in no
+  // bucket stands an invisible target with no mark over it, and a node in two
+  // is double-booked.
+  it('assigns every staged node exactly one stop, whatever its row says', () => {
+    const rows: RosterNode[] = [
+      rosterNode('Qm0000', true),
+      rosterNode('Qm0001', false),
+      hearsayNode('Qm0002'),
+      { ...rosterNode('Qm0003', true), state: 'quantum_entangled' } as unknown as RosterNode,
+    ];
+    const staged: NetworkNode[] = rows.map((sighted, i) => ({
+      id: `Qm000${i}`, kind: 'sighted', pos: [0, 0, 0], sighted,
+    }));
+    const buckets = partitionByStop(staged);
+    // Every stop the tier draws gets a bucket, even an empty one — the mount
+    // decides emptiness, the split never silently omits a rung.
+    expect(Object.keys(buckets).sort()).toEqual(Object.keys(SIGHTED_STOPS).sort());
+    const drawn = Object.values(buckets).flat();
+    expect(drawn).toHaveLength(staged.length);              // nobody dropped
+    expect(new Set(drawn).size).toBe(staged.length);        // nobody twice
+    for (const node of staged) {
+      expect(buckets[sightedStop(node)]).toContain(node);   // …and in its own
+    }
+    // The hit mesh sizes from the same guard, so every staged node has a
+    // radius and it is the one its own cloud draws.
+    for (const [stop, nodes] of Object.entries(buckets)) {
+      for (const node of nodes) {
+        expect(SIGHTED_HIT_RADII[sightedStop(node)])
+          .toBe(peerCloudHitRadius(SIGHTED_STOPS[stop as SightedStop]));
+      }
+    }
   });
 
   it('draws the tier as point clouds only — ZERO new vertex attributes', () => {
     const nodes = source('ColonyNodes.tsx');
     // Cloned from the ghost cloud: one `position` buffer per draw, and the
-    // reachable/unreachable split is two draws off one factory rather than a
+    // whole gradient is one draw per stop off one factory rather than a
     // per-point attribute. The attribute budget is at a cliff (13 custom slots)
-    // and this tier must never spend one.
+    // and this tier must never spend one — which is why a third stop cost a
+    // draw call and nothing else.
     expect(nodes).toContain("g.setAttribute('position', new THREE.BufferAttribute(pos, 3))");
     expect(nodes).toContain('makePeerCloudMaterial(shockwaveUniforms, tone)');
-    expect(nodes).toContain('tone={PEER_CLOUD_SIGHTED_TONE}');
-    expect(nodes).toContain('tone={PEER_CLOUD_SIGHTED_DARK_TONE}');
+    expect(nodes).toContain('tone={SIGHTED_STOPS[stop]}');
+    // …and the clouds are mounted off the same partition the hit mesh is
+    // sized from. A component cannot be asked in jsdom what it drew, so this
+    // is the only place the two can be held to one split.
+    expect(nodes).toContain('const byStop = useMemo(() => partitionByStop(sighted), [sighted])');
+    expect(nodes).toContain('SIGHTED_STOP_ORDER.map((stop) => (byStop[stop].length > 0 ? (');
     expect(nodes).not.toContain('InstancedBufferAttribute(sighted');
+    expect(nodes).not.toMatch(/setAttribute\('a(Sighted|Stop|Tone)/);
     // …and it rides the same wave + context damping the ghost cloud gets.
     expect(nodes).toContain('mat.uniforms.uContextEnergy.value = contextEnergyRef?.current ?? 1');
   });
@@ -147,10 +320,13 @@ describe('ColonyNodes sighted tier', () => {
     // A pick target that does not track the sprite is a target the user cannot
     // see: they aim at the glow and press on nothing. One unit sphere, scaled
     // per instance out of the same tone the cloud draws, so retuning a stop
-    // moves its target with it — and the reachable stop's larger glow carries
-    // the larger sphere rather than one flat radius for the whole tier.
-    expect(nodes).toContain('peerCloudHitRadius(PEER_CLOUD_SIGHTED_TONE)');
-    expect(nodes).toContain('peerCloudHitRadius(PEER_CLOUD_SIGHTED_DARK_TONE)');
+    // moves its target with it — and the brighter stops carry the larger
+    // spheres rather than one flat radius for the whole tier.
+    for (const [stop, tone] of Object.entries(SIGHTED_STOPS)) {
+      expect(SIGHTED_HIT_RADII[stop as SightedStop]).toBe(peerCloudHitRadius(tone));
+      expect(SIGHTED_HIT_RADII[stop as SightedStop]).toBe(diameter(tone) / 2);
+    }
+    expect(nodes).toContain('peerCloudHitRadius(SIGHTED_STOPS[stop])');
     expect(nodes).toContain('new THREE.SphereGeometry(1, 8, 8)');
     expect(nodes).toContain('SCRATCH_MATRIX.makeScale(radius, radius, radius)');
     expect(nodes).toContain('SCRATCH_MATRIX.setPosition(');
@@ -200,6 +376,113 @@ describe('ColonyNodes sighted tier', () => {
     // churn + unmount guards: a retired or unmounted node never strands a hand.
     expect(nodes).toContain('ownedRef.current.has(hovered)');
     expect(nodes).toContain('!previous.has(hovered)');
+  });
+});
+
+/**
+ * The confidence axis itself. Everything here is arithmetic on the tone table,
+ * because the axis has failed TWICE in the source rather than on the screen:
+ * once with every stop driven past the additive clip (so all of them rendered
+ * as the same white-cyan pixel and the gradient existed only in the constants),
+ * and once with a stop that passed the clip on a soft core and spread a
+ * saturated plateau across 42% of its sprite radius. Neither cut had a test
+ * that could tell.
+ */
+describe('the confidence axis separates where the eye reads it', () => {
+  it('every rung of the ladder is strictly above the one below it', () => {
+    // ⭐ FOOTPRINT IS THE AXIS THE EYE SORTS ON, because brightness clips and
+    // the inferred edges pile light onto every junction they cross. Light is
+    // asserted alongside it and goes as dim SQUARED — additive blending applies
+    // alpha to colour a second time — so intuition about "a bit brighter" is
+    // wrong here by construction.
+    for (let i = 1; i < LADDER.length; i += 1) {
+      const [belowName, below] = LADDER[i - 1];
+      const [aboveName, above] = LADDER[i];
+      const step = `${belowName} → ${aboveName}`;
+      expect([step, diameter(above) > diameter(below)]).toEqual([step, true]);
+      expect([step, restingDim(above) > restingDim(below)]).toEqual([step, true]);
+      // …and on a block wave too. Only the haze ever names an `event` apart
+      // from its rest — it recedes at rest and must not go quiet on a wave —
+      // so a stop that simply inherited its own rest could be out-shouted from
+      // underneath for the length of every block.
+      expect([step, eventDim(above) > eventDim(below)]).toEqual([step, true]);
+    }
+  });
+
+  it('no two stops are within a hair of each other on either axis', () => {
+    // Convergence, not inversion: two stops that pass the ordering test above
+    // by 0.01 are one stop as far as a viewer is concerned. Each step is at
+    // least a quarter again as much footprint and a fifth again as much light.
+    for (let i = 1; i < LADDER.length; i += 1) {
+      const [belowName, below] = LADDER[i - 1];
+      const [aboveName, above] = LADDER[i];
+      const step = `${belowName} → ${aboveName}`;
+      const footprint = diameter(above) / diameter(below);
+      const light = (restingDim(above) / restingDim(below)) ** 2;
+      expect([step, footprint >= 1.25]).toEqual([step, true]);
+      expect([step, light >= 1.2]).toEqual([step, true]);
+    }
+  });
+
+  it('no stop spreads a saturated plateau across its sprite', () => {
+    // ⚠️ THIS IS THE SECOND CUT'S FAILURE, WRITTEN DOWN. A stop resting above
+    // the additive clip is saturated everywhere its profile stays over 1/dim,
+    // and brightness cannot fix that — it clips. Only a tighter core can. The
+    // tone that failed (dim 1.95 on the default 2.0 core) held 42% of its
+    // radius flat; every stop shipped since keeps it under a fifth.
+    for (const [name, tone] of LADDER) {
+      expect([name, plateauFraction(tone) <= 0.2]).toEqual([name, true]);
+    }
+    // The haze rests so far under the clip that it has no plateau at all —
+    // that is what makes it haze rather than a white speck the eye reads as a
+    // node — and the stop directly above it is nearly as restrained.
+    expect(plateauFraction(PEER_CLOUD_GHOST_TONE)).toBe(0);
+    expect(plateauFraction(SIGHTED_STOPS.advertised)).toBeLessThan(0.1);
+    // …and the failing tone is still caught, which is the only proof this
+    // measurement is measuring anything.
+    expect(plateauFraction({ dim: 1.95, size: 2.0 })).toBeGreaterThan(0.4);
+  });
+
+  it('separates on the mark a viewer sees, not on the sprite it is cut from', () => {
+    // The same ladder as above, re-asked against the disc that is actually
+    // visible. It has to hold here too, because this is the one the eye reads.
+    const marks = LADDER.map(([name, tone]) => [name, visibleExtent(tone)] as const);
+    for (let i = 1; i < marks.length; i += 1) {
+      const step = `${marks[i - 1][0]} → ${marks[i][0]}`;
+      expect([step, marks[i][1] / marks[i - 1][1] >= 1.25]).toEqual([step, true]);
+    }
+  });
+
+  // ⭐⭐ THE WEAKEST RUNG LEANS TOWARD THE HAZE, AND THAT IS A MEASURED CALL.
+  // Its declared diameter was first set to keep the ladder of SPRITES even
+  // (0.65 · 1.05 · 1.5 · 2.0), and at the default camera that drew a mark one
+  // device pixel off the stop above it, indistinguishable once the colony's
+  // depth spread was taken in. What fixed it was pulling the stop DOWN the
+  // ladder, which is also where it belongs on the argument: it is the rung
+  // nobody has ever had an answer out of, so it should read nearer the invented
+  // haze than the peers that answered. Both halves of that are this assertion —
+  // and the rejected 1.05 sits at 0.64 of the span, which is the wrong side.
+  it('places the hearsay stop below the midpoint between haze and answered', () => {
+    const span = (a: PeerCloudTone, b: PeerCloudTone) => (
+      Math.log(visibleExtent(b) / visibleExtent(a))
+    );
+    const position = span(PEER_CLOUD_GHOST_TONE, SIGHTED_STOPS.advertised)
+      / span(PEER_CLOUD_GHOST_TONE, SIGHTED_STOPS.remembered);
+    expect(position).toBeGreaterThan(0.2);
+    expect(position).toBeLessThan(0.5);
+  });
+
+  it('reads its profile off the shader it is claiming to model', () => {
+    // The arithmetic above is worthless if the fragment shader stops matching
+    // it. One core term carrying the tone's own exponent, one fixed skirt.
+    const material = materialSource();
+    expect(material).toContain('float core = pow(1.0 - r, uCoreExp);');
+    expect(material).toContain('float halo = pow(1.0 - r, 1.6) * 0.42;');
+    expect(material).toContain('uCoreExp: { value: stop.coreExp ?? 2.0 }');
+    // …and the tone reaches the shader as UNIFORMS, so no stop can ever cost
+    // the vertex-attribute budget a slot.
+    expect(material).toContain('uDim: { value: stop.dim ?? PEER_CLOUD_GHOST_TONE.dim }');
+    expect(material).toContain('uSize: { value: stop.size ?? PEER_CLOUD_GHOST_TONE.size }');
   });
 });
 

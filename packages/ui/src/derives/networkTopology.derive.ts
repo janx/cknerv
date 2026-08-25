@@ -123,21 +123,23 @@ export function sightedPos(nodeId: string): Vec3 {
 
 /** The rungs of the roster's gradient this colony has a mark for.
  *
- *  ⭐ THE RECORD REPORTS THREE STATES AND THE SCENE DRAWS TWO. `sighted` is a
- *  tier whose name says the crawler dialed the node and it answered, and the
- *  two stops the colony owns — the bright `reached` and the dim `remembered` —
- *  both mean exactly that, one this round and one an earlier one. An
- *  `advertised_unverified` peer is real and is not that: nobody has ever got an
- *  answer out of it. Staging it here would put hearsay under a mark reserved
- *  for a peer somebody has spoken to, which is the one thing the whole tier
- *  exists to prevent — so it waits for a mark of its own rather than borrowing
- *  one, and until then it rides the record unstaged.
+ *  ⭐ EVERY RUNG THE RECORD REPORTS NOW HAS ONE. Two of them mean the crawler
+ *  dialed the node and it answered — one this round, one an earlier one — and
+ *  the third means nobody ever has. That third rung waited outside for a
+ *  commit because borrowing a mark that says "somebody answered this" is the
+ *  one thing the tier exists to prevent; it did not wait because it is less
+ *  real. It has a real id, a real address, a real advertise window and a typed
+ *  reason the dial failed, and the space it now fills was being filled by
+ *  invented `inf:` ghosts on a seeded scatter. So this is a fiction being
+ *  displaced by evidence, one node for one node, rather than a colony growing.
  *
  *  This is a SET rather than a list of exclusions on purpose: a rung added
  *  upstream is one the scene has no mark for by definition, so it must have to
- *  be named here before it can be drawn. */
-const STAGEABLE_ROSTER_STATES: ReadonlySet<RosterNodeState> = new Set<RosterNodeState>([
-  'reachable', 'verified_unavailable',
+ *  be named here before it can be drawn. Exported because that is only half
+ *  the gate — the scene's own stop table is the other half, and the two are
+ *  checked against each other rather than trusted to stay in step. */
+export const STAGEABLE_ROSTER_STATES: ReadonlySet<RosterNodeState> = new Set<RosterNodeState>([
+  'reachable', 'verified_unavailable', 'advertised_unverified',
 ]);
 
 /**

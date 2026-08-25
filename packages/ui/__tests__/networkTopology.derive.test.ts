@@ -3,12 +3,15 @@ import {
   localAnchor, measuredPeerPos, COLONY_Y, LOCAL_ANCHOR_OFFSET, COLONY_ELLIPSE_X, COLONY_ELLIPSE_Z,
   scatterInferred, COLONY_INFERRED_COUNT, COLONY_INFERRED_JITTER, COLONY_MIN_SPACING,
   COLONY_RADIUS, COLONY_Y_THICKNESS, inferredTopology, ensureConnectedFrom, sightedPos,
+  STAGEABLE_ROSTER_STATES,
 } from '../src/derives/networkTopology.derive';
 import { colonyFlood } from '../src/derives/networkFlood.derive';
 import {
   latencyToRadius01, peerAngle, PEER_INNER_RADIUS, PEER_OUTER_RADIUS,
 } from '../src/derives/peers.derive';
-import type { NetworkRosterRecord, Peer, RosterNode } from '@cknerv/types';
+import type {
+  NetworkRosterRecord, Peer, RosterNode, RosterNodeState,
+} from '@cknerv/types';
 import type { NetworkNode, Vec3 } from '../src/types';
 
 function peer(p: Partial<Peer>): Peer {
@@ -332,14 +335,13 @@ describe('sighted nodes (the crawler names a bounded few)', () => {
     for (const g of ghostsOf(t)) expect(g.sighted).toBeUndefined(); // ghosts stay anonymous
   });
 
-  // ⭐ The record reports three rungs of the crawler's gradient and this colony
-  // owns marks for two. `sighted` is a tier whose name says the crawler dialed
-  // the node and it answered — the bright stop this round, the dim one an
-  // earlier round — and a peer nobody has ever got an answer out of is real
-  // without being that. Staging it would put hearsay under a mark reserved for
-  // a peer somebody has spoken to, on the honesty ladder whose whole reason for
-  // existing is that it does not.
-  it('stages the rungs it has a mark for and leaves the hearsay off stage', () => {
+  // ⭐ Every rung the record reports now has a mark, INCLUDING the one that
+  // means nobody has ever had an answer out of this peer — which the scene
+  // used to leave off stage and fill the same space with invented ghosts. What
+  // stays true is the shape of the gate: staging is a set of rungs the colony
+  // can draw, so a rung nobody has drawn a mark for still has to be named here
+  // before it can appear.
+  it('stages every rung it has a mark for, hearsay included', () => {
     const rows = [
       rosterNode({ node_id: 'Qm0000', state: 'reachable' }),
       rosterNode({ node_id: 'Qm0001', state: 'verified_unavailable' }),
@@ -353,10 +355,66 @@ describe('sighted nodes (the crawler names a bounded few)', () => {
       }),
     ];
     const t = inferredTopology(peers, seed, 'ckb:local', undefined, roster(rows));
-    expect(sightedOf(t).map((n) => n.id)).toEqual(['Qm0000', 'Qm0001']);
-    // And it is off stage rather than anonymous: nothing invents a ghost in
-    // its place, so the row simply rides the record unstaged.
-    expect(t.nodes.filter((n) => n.id === 'Qm0002')).toHaveLength(0);
+    expect(sightedOf(t).map((n) => n.id)).toEqual(['Qm0000', 'Qm0001', 'Qm0002']);
+    // The hearsay row rides through by reference with its absences intact:
+    // nothing here fills a version or a reach clock the crawler never had.
+    const hearsay = sightedOf(t).find((n) => n.id === 'Qm0002')!;
+    expect(hearsay.sighted).toBe(rows[2]);
+    expect(hearsay.sighted!.version).toBeUndefined();
+    expect(hearsay.sighted!.last_reachable_ms).toBeUndefined();
+  });
+
+  // ⚠️ The gate is a SET of what can be drawn, never a list of exclusions:
+  // a rung grown upstream is one nothing here has a mark for by definition, so
+  // it must stay off stage until somebody draws one. Asking with a state this
+  // build has never heard of is the only way to tell that gate from its
+  // inverse — a `!== 'foreignNetwork'` filter passes every other test in this
+  // file and stages the next rung upstream invents.
+  it('leaves a rung it has no mark for off stage entirely', () => {
+    const alien = {
+      ...rosterNode({ node_id: 'Qm0001' }), state: 'quantum_entangled',
+    } as unknown as RosterNode;
+    const rows = [rosterNode({ node_id: 'Qm0000' }), alien];
+    const t = inferredTopology(peers, seed, 'ckb:local', undefined, roster(rows));
+    expect(sightedOf(t).map((n) => n.id)).toEqual(['Qm0000']);
+    // Off stage rather than anonymous: nothing invents a ghost in its place,
+    // so the row simply rides the record unstaged.
+    expect(t.nodes.filter((n) => n.id === 'Qm0001')).toHaveLength(0);
+    expect(STAGEABLE_ROSTER_STATES.has('quantum_entangled' as RosterNodeState)).toBe(false);
+  });
+
+  // ⭐ THE THIRD RUNG THINS THE FICTION, IT DOES NOT GROW THE COLONY. Staging
+  // is prefix displacement — one real identity for one invented ghost — so
+  // the population a viewer sees is the same before and after, with a larger
+  // share of it true. A change that made hearsay ADD to the cloud instead would
+  // pass every other assertion in this file.
+  it('trading ghosts for hearsay keeps the colony exactly the same size', () => {
+    const scatter = scatterInferred(seed);
+    const verifiedOnly = roster(sightedRoster(20));
+    const withHearsay = roster([
+      ...sightedRoster(20),
+      ...Array.from({ length: 60 }, (_, i) => rosterNode({
+        node_id: `Qm9${String(i).padStart(3, '0')}`,
+        state: 'advertised_unverified',
+        version: undefined,
+        country: undefined,
+        asn: undefined,
+        last_reachable_ms: undefined,
+      })),
+    ]);
+    const before = inferredTopology(peers, seed, 'ckb:local', undefined, verifiedOnly);
+    const after = inferredTopology(peers, seed, 'ckb:local', undefined, withHearsay);
+    const population = (t: Topology) => ghostsOf(t).length + sightedOf(t).length;
+    expect(population(before)).toBe(scatter.length);
+    expect(population(after)).toBe(scatter.length);
+    expect(sightedOf(after)).toHaveLength(80);
+    expect(ghostsOf(after)).toHaveLength(ghostsOf(before).length - 60);
+    // …and the ghosts that stayed are the same ghosts, standing where they
+    // stood: displacement comes off the TAIL of the untouched scatter.
+    ghostsOf(after).forEach((g, i) => {
+      expect(g.id).toBe(`inf:${i}`);
+      expect(g.pos).toEqual(scatter[i]);
+    });
   });
 
   it('dedupe: measured wins, local is excluded, and a repeat is staged once', () => {
