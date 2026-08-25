@@ -202,19 +202,9 @@ function networkAtlas(block: number): NetworkAtlasRecord {
     verified_unavailable_peers: 33,
     verified_retained_peers: 42,
     new_verified_peers: 3,
-    address_attempts: 95,
-    handshake_depth: [
-      { result: 'dial_request_failed', attempts: 18 },
-      { result: 'no_authenticated_session_before_deadline', attempts: 60 },
-      { result: 'authenticated_session_without_identify_before_deadline', attempts: 5 },
-      { result: 'malformed_identify', attempts: 2 },
-      { result: 'foreign_network', attempts: 1 },
-      { result: 'same_network_identified', attempts: 9 },
-    ],
     indexed_peers: 42,
     countries: [{ label: 'SG', count: 42 }],
     versions: [{ label: '0.119.0', count: 42 }],
-    asns: [{ label: 'AS1 Example', count: 42 }],
   };
 }
 

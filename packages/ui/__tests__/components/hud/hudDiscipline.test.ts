@@ -65,7 +65,7 @@ import {
   HUD_COLORS,
   HUD_FONTS,
   HUD_TYPE,
-  ORDINAL_DEPTH_RAMP,
+  ORDINAL_REACH_RAMP,
   QUALITATIVE_BUCKET_COLORS,
   rgba,
 } from '../../../src/components/hud/hudTheme';
@@ -99,7 +99,7 @@ import {
   ECOSYSTEM_UNLISTED_COLOR,
 } from '../../../src/derives/assetEcosystem.derive';
 import { SCRIPT_FAMILY_COLORS } from '../../../src/derives/scriptFamilies.derive';
-import { PEER_PROBE_HANDSHAKE_AXIS } from '@cknerv/types';
+import { NETWORK_ATLAS_REACH_ORDER } from '../../../src/derives/networkAtlas.derive';
 import { compositionTierColor } from '../../../src/components/hud/CellSemanticsReadout';
 import { fpsColor } from '../../../src/tweaks/renderStatsStore';
 import {
@@ -2056,21 +2056,22 @@ describe('the colour reserve', () => {
   });
 
   it('the other ordinal ramp ranks too, and spends no new colour doing it', () => {
-    // MESH·02's handshake strip lays a crawl round's address dials along
-    // `dial refused → no session → session without identify → unreadable
-    // identify → another chain → identified`. That is ordered, so it may not
-    // read `QUALITATIVE_BUCKET_COLORS`, whose whole job is that a slot means
-    // NOTHING: a hash would scramble the progression into a colour wheel and a
-    // reader could no longer put two segments in order.
+    // MESH·02's reach bar splits the peers a crawl round considered along
+    // `no answer → answered from another chain → answered from this one`. That
+    // is ordered, so it may not read `QUALITATIVE_BUCKET_COLORS`, whose whole
+    // job is that a slot means NOTHING: a hash would scramble the progression
+    // into a colour wheel and a reader could no longer put two segments in
+    // order.
     //
     // And it is the second ordinal in the HUD, which is where the question got
     // interesting. The durability ramp answers with five hand-cut hues, each
     // clearing the reserve, each other, and a luma ladder — three constraints
-    // at once, and at six steps the third fights the first. A single hue
-    // stepping in ALPHA answers all three for free, and the palette's own note
-    // on `stageGround` already says brightness is where "darker or lighter than
-    // its neighbour" belongs. So: no new hex, and one that ranks by
-    // construction rather than by a comment asking the next hand to be careful.
+    // at once, and the third fights the first as soon as the steps are close
+    // together. A single hue stepping in ALPHA answers all three for free, and
+    // the palette's own note on `stageGround` already says brightness is where
+    // "darker or lighter than its neighbour" belongs. So: no new hex, and one
+    // that ranks by construction rather than by a comment asking the next hand
+    // to be careful.
     const composite = (paint: string): string => {
       const match = /^rgba\((\d+),(\d+),(\d+),([\d.]+)\)$/.exec(paint);
       expect(match, `${paint} is not rgba(token, alpha)`).not.toBeNull();
@@ -2088,14 +2089,16 @@ describe('the colour reserve', () => {
 
     // One hue, and it is a token: the peer plane's own wire, on the peer panel,
     // about peers being dialed.
-    for (const step of ORDINAL_DEPTH_RAMP) {
+    for (const step of ORDINAL_REACH_RAMP) {
       expect(step).toContain(rgba(HUD_COLORS.peerWire, 1).slice(0, -3));
     }
-    // As many steps as there are rungs to paint. A seventh result upstream
-    // would need a seventh step, and this is where that is noticed.
-    expect(ORDINAL_DEPTH_RAMP).toHaveLength(PEER_PROBE_HANDSHAKE_AXIS.length);
+    // As many steps as there are segments to paint, counted off the same list
+    // the derive walks rather than off a number written here — a fourth
+    // outcome without a fourth step would otherwise paint two segments the
+    // same, which is the one failure a ramp cannot show on its own.
+    expect(ORDINAL_REACH_RAMP).toHaveLength(NETWORK_ATLAS_REACH_ORDER.length);
 
-    const seen = ORDINAL_DEPTH_RAMP.map(composite);
+    const seen = ORDINAL_REACH_RAMP.map(composite);
     const luma = (hex: string): number => {
       const [r, g, b] = [0, 2, 4]
         .map((i) => parseInt(hex.replace('#', '').slice(i, i + 2), 16));
@@ -2128,18 +2131,19 @@ describe('the colour reserve', () => {
   it('the two ordinals and the qualitative slots share no member', () => {
     // Three ramps in one HUD and two of them rank, so what keeps a reader from
     // reading the wrong one is that no value appears in two. It matters most on
-    // MESH·02, where the ordinal strip and three qualitative strips are stacked
-    // in one column and count DIFFERENT POPULATIONS — the ordinal counts the
-    // addresses peers were dialed on, the three below it count peers. A shared
-    // swatch would invite a reader to carry one denominator into the other.
-    const ordinal = new Set<string>(ORDINAL_DEPTH_RAMP);
+    // MESH·02, where the ordinal bar and two qualitative strips are stacked in
+    // one column and count DIFFERENT POPULATIONS — the ordinal counts every
+    // peer the network named, the two below it count only the peers the
+    // crawler verified. A shared swatch would invite a reader to carry one
+    // denominator into the other.
+    const ordinal = new Set<string>(ORDINAL_REACH_RAMP);
     expect(QUALITATIVE_BUCKET_COLORS.filter((hex) => ordinal.has(hex))).toEqual([]);
     expect(Object.values(STORAGE_TIER_COLORS).filter((hex) => ordinal.has(hex))).toEqual([]);
     // …and the ramp is not a palette table's worth of values with one reader
     // and no rule, which is what the file at the top of this oracle warns about.
     // It is read where it is meant to be read.
     const readers = [...INK_SOURCES, ...APP_SOURCES].filter(
-      (source) => !isPaletteSource(source.name) && source.text.includes('ORDINAL_DEPTH_RAMP'),
+      (source) => !isPaletteSource(source.name) && source.text.includes('ORDINAL_REACH_RAMP'),
     );
     expect(readers.map((source) => source.name)).toContain('derives/networkAtlas.derive.ts');
   });

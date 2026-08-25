@@ -34,22 +34,12 @@ const networkAtlas: NetworkAtlasRecord = {
   verified_unavailable_peers: 33,
   verified_retained_peers: 42,
   new_verified_peers: 3,
-  // …and the address histogram beside that matrix, on its OWN population: those
-  // 61 peers were dialed on 95 addresses between them. 18 + 60 + 5 + 2 + 1 + 9
-  // is 95, and the top rung is the 9 peers that identified.
-  address_attempts: 95,
-  handshake_depth: [
-    { result: 'dial_request_failed', attempts: 18 },
-    { result: 'no_authenticated_session_before_deadline', attempts: 60 },
-    { result: 'authenticated_session_without_identify_before_deadline', attempts: 5 },
-    { result: 'malformed_identify', attempts: 2 },
-    { result: 'foreign_network', attempts: 1 },
-    { result: 'same_network_identified', attempts: 9 },
-  ],
+  // …and the census beside it, on a DIFFERENT population: 42 of those 61 are
+  // peers the crawler holds a verification for, and that is the number the two
+  // strips under the bar are folded against.
   indexed_peers: 42,
   countries: [{ label: 'SG', count: 28 }, { label: 'US', count: 14 }],
   versions: [{ label: '0.119.0', count: 30 }, { label: '0.118.0', count: 12 }],
-  asns: [{ label: 'AS1 Example', count: 40 }, { label: 'AS2 Example', count: 2 }],
 };
 
 describe('NetworkPanel', () => {
@@ -99,15 +89,15 @@ describe('NetworkPanel', () => {
     expect(container.querySelector('[data-network-detail-mode="indexed"]')
       ?.getAttribute('data-network-atlas-state')).toBe('ready');
     const text = container.textContent ?? '';
-    // The ladder. `Known nodes` was one number for the set the crawler holds
-    // verified, under a name that read as the much larger set it had heard of
-    // — and that larger set is a number now, so all of them are named.
-    expect(text).toContain('Named by the network61');
-    expect(text).toContain('Answered, this chain9');
-    expect(text).toContain('Answered, another chain1');
-    expect(text).toContain('No answer this round51');
-    expect(text).toContain('Verified, not reached33');
+    // The reach bar. It was five rows of one number each — `Named by the
+    // network` and the four cohorts under it — and the numbers are all still
+    // here, in a fifth of the height: three of them as segments of the bar,
+    // the total in its caption, and the fifth on the hover, where it belongs
+    // because it cuts across two of the segments rather than joining them.
+    expect(text).toContain('NAMED BY THE NETWORK · 61 PEERS');
+    expect(text).toContain('NO ANSWER 51 · ANOTHER CHAIN 1 · THIS CHAIN 9');
     expect(text).not.toContain('Known nodes');
+    expect(text).not.toContain('Named by the network61');
 
     // The census that replaced a 64-row sample: the denominator rides the
     // first strip it belongs to, and the caveat it used to carry is gone
@@ -115,10 +105,17 @@ describe('NetworkPanel', () => {
     expect(text).toContain('COUNTRIES · ALL 42 VERIFIED PEERS');
     expect(text).toContain('SG 28 · US 14');
     expect(text).toContain('CLIENT VERSIONS');
-    expect(text).toContain('AUTONOMOUS SYSTEMS');
-    expect(text).toContain('AS1 Example 40');
     expect(text).not.toContain('SAMPLE');
     expect(text).not.toContain('BOUNDED');
+
+    // Two axes left with the bars nobody was reading them off. How far each
+    // dial got was a decomposition of a rung this panel no longer draws as a
+    // rung, and which cloud a peer sits in was never a question this panel was
+    // being asked.
+    expect(text).not.toContain('HANDSHAKE');
+    expect(text).not.toContain('ADDRESSES DIALED');
+    expect(text).not.toContain('AUTONOMOUS SYSTEMS');
+    expect(container.querySelectorAll('[data-handshake-rung]')).toHaveLength(0);
 
     // The median dial left with the page it was drawn from. It measured the
     // crawler's own distance from the fleet rather than anything about the
@@ -137,15 +134,23 @@ describe('NetworkPanel', () => {
     expect(text).not.toContain('CKBADGER');
   });
 
-  it('keeps a rung that resolved to zero, because zero is the reading', () => {
-    // The live mainnet answer for two of these rungs is `0`, and it is a
+  it('keeps a cohort that resolved to zero, because zero is the reading', () => {
+    // The live mainnet answer for two of these cohorts is `0`, and it is a
     // RESULT: nobody answered from another chain, nobody is being held from an
-    // earlier round. A row that disappeared on zero would make that crawl and
-    // a crawl that has stopped reporting those cohorts look identical — which
-    // is the exact class of silence this whole readout was rebuilt out of.
+    // earlier round. A cohort that disappeared on zero would make that crawl
+    // and a crawl that has stopped reporting those cohorts look identical —
+    // which is the exact class of silence this whole readout was rebuilt out
+    // of.
     //
-    // Guard, stated plainly so it is not softened by accident: put a truthy
-    // test in front of any ladder row and this goes red.
+    // The rule survived the change of mechanism and the mechanism is the whole
+    // reason it needs stating again: five rows kept a zero visible by being
+    // rows, and a zero SEGMENT is zero pixels wide. So the legend prints every
+    // cohort rather than only the ones that fired, which also means what it
+    // prints always adds up to the number in its own caption — a reader can
+    // check that nothing was folded away, because nothing ever is.
+    //
+    // Guard, stated plainly so it is not softened by accident: filter the
+    // legend on a truthy count and this goes red.
     const quiet: NetworkAtlasRecord = {
       ...networkAtlas,
       candidate_peers: 136,
@@ -165,22 +170,25 @@ describe('NetworkPanel', () => {
     );
 
     const text = container.textContent ?? '';
-    expect(text).toContain('Answered, another chain0');
-    expect(text).toContain('Verified, not reached0');
-    // And structurally, so a row cannot be hidden by rendering an empty one.
-    const rows = Array.from(
-      container.querySelectorAll<HTMLElement>('[data-network-atlas-rows] > *'),
+    expect(text).toContain('NAMED BY THE NETWORK · 136 PEERS');
+    expect(text).toContain('NO ANSWER 79 · ANOTHER CHAIN 0 · THIS CHAIN 57');
+    // What the legend prints IS the caption's total, so the reader's own check
+    // is the one asserted here rather than a restatement of the string above.
+    expect([79, 0, 57].reduce((sum, count) => sum + count, 0)).toBe(136);
+    // And the cross-cut, on the hover, at zero — the row that used to say
+    // `Verified, not reached 0` costs no line now and still says it.
+    const bar = container.querySelector<HTMLElement>('[data-network-atlas-rows] > *');
+    expect(bar?.title).toContain('0 of them are still held verified from an earlier round');
+    // Structurally, so a segment cannot be hidden by rendering an empty bar.
+    const segments = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-reach-segment]'),
     );
-    expect(rows.slice(0, 5).map((row) => row.textContent)).toEqual([
-      'Named by the network136',
-      'Answered, this chain57',
-      'Answered, another chain0',
-      'No answer this round79',
-      'Verified, not reached0',
-    ]);
+    expect(segments.map((segment) => segment.dataset.reachSegment))
+      .toEqual(['exhausted', 'foreign', 'reachable']);
+    expect(segments[1].style.width).toBe('0%');
   });
 
-  it('decomposes the round into where each dial stopped, in one ordinal', () => {
+  it('draws the round as three widths of the peers it considered', () => {
     const { container } = render(
       <NetworkPanel
         {...props}
@@ -190,50 +198,42 @@ describe('NetworkPanel', () => {
     );
     const text = container.textContent ?? '';
 
-    // The denominator is the thing a reader must not get wrong. Every other
-    // number on this panel counts peers; this one counts the ADDRESSES those
-    // peers were dialed on, which is several times as many, so the caption
-    // states the unit rather than inheriting the census's.
-    expect(text).toContain('HANDSHAKE DEPTH · 95 ADDRESSES DIALED');
+    // The denominator is the thing a reader must not get wrong. This bar
+    // totals every peer the network named; the strips under it total only the
+    // peers the crawler holds verified, which is a smaller set on the same
+    // panel. Both captions state their own number, in their own words for what
+    // it counts, because the two are stacked and neither may be read as the
+    // other's.
+    expect(text).toContain('NAMED BY THE NETWORK · 61 PEERS');
     expect(text).toContain('COUNTRIES · ALL 42 VERIFIED PEERS');
 
-    // The legend names every rung a dial actually ended on, in axis order, and
-    // folds no tail into a group count — and what it prints adds up to the
-    // number in its own caption, which is how a reader checks that the two
-    // rungs it leaves out are the zero ones.
-    expect(text).toContain(
-      'NO DIAL 18 · NO HANDSHAKE 60 · NO IDENTIFY 5 · UNREADABLE 2'
-      + ' · ANOTHER CHAIN 1 · IDENTIFIED 9',
-    );
-    expect(text).not.toContain('groups');
-
-    // And the bar itself is the whole axis, weakest rung first. This is the
-    // assertion that fails if anybody re-sorts it by size the way the three
-    // qualitative strips below are sorted — which would leave the same six
+    // The bar is the whole partition, least evidence first. This is the
+    // assertion that fails if anybody re-sorts it by size the way the two
+    // qualitative strips below are sorted — which would leave the same three
     // numbers saying something else entirely.
-    const rungs = Array.from(
-      container.querySelectorAll<HTMLElement>('[data-handshake-rung]'),
+    const segments = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-reach-segment]'),
     );
-    expect(rungs.map((rung) => rung.dataset.handshakeRung)).toEqual([
-      'dial_request_failed',
-      'no_authenticated_session_before_deadline',
-      'authenticated_session_without_identify_before_deadline',
-      'malformed_identify',
-      'foreign_network',
-      'same_network_identified',
+    expect(segments.map((segment) => segment.dataset.reachSegment)).toEqual([
+      'exhausted',
+      'foreign',
+      'reachable',
     ]);
-    // Widths are shares of the dials, never of any peer count on the panel.
-    expect(rungs[1].style.width).toBe(`${(60 / 95) * 100}%`);
-    expect(rungs[5].style.width).toBe(`${(9 / 95) * 100}%`);
+    // Widths are shares of the peers the round considered, never of any other
+    // count on the panel — and they are all of it, which is what the adapter's
+    // and the derive's partition guards exist to promise.
+    expect(segments[0].style.width).toBe(`${(51 / 61) * 100}%`);
+    expect(segments[2].style.width).toBe(`${(9 / 61) * 100}%`);
+    expect(segments.reduce((sum, segment) => sum + parseFloat(segment.style.width), 0))
+      .toBeCloseTo(100, 9);
   });
 
-  it('ranks the handshake bar in brightness, where the strips below it do not', () => {
-    // The axis is ordinal and the three strips under it are not, so they may
-    // not wear one colour language. A hash-assigned hue scrambles a
-    // progression; one hue stepping in brightness IS the progression. It is
-    // also the second thing telling a reader that this bar's denominator is not
-    // theirs — six unrelated hues means qualitative, one hue ramping means
-    // ordinal.
+  it('ranks the reach bar in brightness, where the strips below it do not', () => {
+    // The bar is ordinal and the two strips under it are not, so they may not
+    // wear one colour language. A hash-assigned hue scrambles a progression;
+    // one hue stepping in brightness IS the progression. It is also the second
+    // thing telling a reader that this bar's denominator is not theirs —
+    // unrelated hues means qualitative, one hue ramping means ordinal.
     const { container } = render(
       <NetworkPanel
         {...props}
@@ -242,10 +242,10 @@ describe('NetworkPanel', () => {
       />,
     );
 
-    // jsdom drops the alpha channel when it is exactly 1, so the top rung comes
-    // back as `rgb(…)` while the five below it are `rgba(…)`. Both forms are
-    // read rather than one, because a parser that only knew `rgba` would report
-    // the brightest rung as missing.
+    // jsdom drops the alpha channel when it is exactly 1, so the top segment
+    // comes back as `rgb(…)` while the two below it are `rgba(…)`. Both forms
+    // are read rather than one, because a parser that only knew `rgba` would
+    // report the brightest segment as missing.
     const paint = (background: string) => {
       const match = /rgba?\((\d+), ?(\d+), ?(\d+)(?:, ?([\d.]+))?\)/.exec(background);
       expect(match, background).not.toBeNull();
@@ -256,8 +256,8 @@ describe('NetworkPanel', () => {
     };
 
     const steps = Array.from(
-      container.querySelectorAll<HTMLElement>('[data-handshake-rung]'),
-    ).map((rung) => paint(rung.style.background));
+      container.querySelectorAll<HTMLElement>('[data-reach-segment]'),
+    ).map((segment) => paint(segment.style.background));
 
     // One hue, and it is the peer plane's own wire: this bar is about peers
     // being dialed, on the peer panel.
@@ -266,9 +266,9 @@ describe('NetworkPanel', () => {
       HUD_COLORS.peerWire.replace('#', '').match(/../g)!
         .map((pair) => parseInt(pair, 16)).join(','),
     );
-    // Climbing, so the further a dial got the brighter its segment. Asked as a
-    // STRICT increase: an equal pair is two rungs a reader cannot rank, which
-    // is the whole failure a hashed ramp would have shipped.
+    // Climbing, so the further the crawler got the brighter its segment. Asked
+    // as a STRICT increase: an equal pair is two cohorts a reader cannot rank,
+    // which is the whole failure a hashed ramp would have shipped.
     for (let i = 1; i < steps.length; i += 1) {
       expect(steps[i].alpha).toBeGreaterThan(steps[i - 1].alpha);
     }
@@ -279,8 +279,8 @@ describe('NetworkPanel', () => {
     // of them is this hue.
     const qualitative = Array.from(
       container.querySelectorAll<HTMLElement>('[data-network-atlas-rows] > div'),
-    ).slice(-3).flatMap((strip) => Array.from(strip.querySelectorAll<HTMLElement>('span')));
-    expect(qualitative.length).toBe(6);
+    ).slice(-2).flatMap((strip) => Array.from(strip.querySelectorAll<HTMLElement>('span')));
+    expect(qualitative.length).toBe(4);
     for (const segment of qualitative) {
       const slot = paint(segment.style.background);
       expect(slot.alpha).toBe(1);
@@ -315,27 +315,22 @@ describe('NetworkPanel', () => {
     const rows = Array.from(
       container.querySelectorAll<HTMLElement>('[data-network-atlas-rows] > *'),
     );
-    expect(rows).toHaveLength(9);
+    expect(rows).toHaveLength(3);
     for (const row of rows) {
       expect(row.title).toContain('Crawler atlas · round 7 · as of #100');
     }
-    // Each ladder rung says what it counts on the same hover, because five
-    // rungs of one number are only a ladder if a reader can tell which
-    // population each one is a slice of — and the fifth is a slice of the two
-    // above it rather than of the first.
+    // The bar says what each of its segments counts on the same hover, because
+    // three widths of one number are only readable if a reader can tell which
+    // cohort each one is — and it carries the count that is NOT a segment
+    // there too, worded on its own verb so nothing invites adding it in.
     expect(rows[0]?.title).toContain('every peer the round considered');
-    expect(rows[2]?.title).toContain('identified itself on a different network');
-    expect(rows[4]?.title).toContain('not a further part of the peers considered');
-    // The strips keep their whole bucket list behind the same provenance —
-    // including the two handshake rungs no dial ended on, which the legend
-    // under the bar leaves out precisely because they are zero.
-    expect(rows[5]?.title).toContain(
-      'NO DIAL 18 · NO HANDSHAKE 60 · NO IDENTIFY 5 · UNREADABLE 2'
-      + ' · ANOTHER CHAIN 1 · IDENTIFIED 9',
+    expect(rows[0]?.title).toContain('identified itself on a different network');
+    expect(rows[0]?.title).toContain(
+      '33 of them are still held verified from an earlier round',
     );
-    expect(rows[6]?.title).toContain('SG 28 · US 14');
-    expect(rows[7]?.title).toContain('0.119.0 30 · 0.118.0 12');
-    expect(rows[8]?.title).toContain('AS1 Example 40 · AS2 Example 2');
+    // The strips keep their whole bucket list behind the same provenance.
+    expect(rows[1]?.title).toContain('SG 28 · US 14');
+    expect(rows[2]?.title).toContain('0.119.0 30 · 0.118.0 12');
   });
 
   it('speaks measured network truth only — the scene colony is STAGE·07\'s', () => {

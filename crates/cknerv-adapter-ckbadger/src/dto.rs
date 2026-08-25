@@ -46,15 +46,15 @@ pub(crate) struct NetworkCrawlerSummaryResponse {
 /// substitute, only an invented one.
 ///
 /// The wire carries more of this round than is declared here:
-/// `nonSuccessfulAddressAttempts`, `malformedAddresses`, `peerOutcomes` and
-/// `discovery`. Nothing in cknerv reads them, so they are deliberately not
-/// declared: a field declared here is a field whose disappearance costs the
-/// whole record, and this crate has now paid that price twice in one week.
-/// Two of them could not be read anyway. `nonSuccessfulAddressAttempts` is
-/// `addressAttempts` less the histogram's top rung and carries nothing the
-/// strip does not draw; `malformedAddresses` counts advertised addresses that
-/// never became a dial, so it sits OUTSIDE the partition below and would have
-/// to be a statement of its own rather than a seventh bucket.
+/// `addressAttempts`, `addressObservations`, `nonSuccessfulAddressAttempts`,
+/// `malformedAddresses`, `peerOutcomes` and `discovery`. Nothing in cknerv
+/// reads them, so they are deliberately not declared: a field declared here is
+/// a field whose disappearance costs the whole record, and this crate has now
+/// paid that price twice in one week. The first two were read, briefly, for a
+/// bar decomposing how far each of the round's dials got; they count
+/// ADDRESSES rather than peers, which made them the one population on that
+/// panel nothing else shared, and the answer they gave was one the panel had
+/// no use for.
 ///
 /// The five peer counts below are not five independent measurements. Upstream
 /// derives all of them from one disjoint five-cell outcome matrix — every
@@ -104,41 +104,6 @@ pub(crate) struct NetworkCrawlerRoundResponse {
     pub verified_unavailable_peers: u64,
     /// Peers verified for the first time in this round.
     pub new_verified_peers: u64,
-    /// Address dials the round made. Upstream derives it by summing
-    /// `addressObservations`, which is what makes reading both worth the
-    /// second field: the sum is then a check rather than a restatement, and it
-    /// is the only thing that would notice a SEVENTH result added upstream.
-    /// Serde would ignore an undeclared seventh counter silently, cknerv's six
-    /// would come up short of this total, and the round would be refused —
-    /// which is the correct answer for a strip whose one claim is that its
-    /// parts are all the parts.
-    pub address_attempts: u64,
-    pub address_observations: AddressObservationHistogramResponse,
-}
-
-/// Where each of the round's address dials stopped, along upstream's own
-/// handshake axis.
-///
-/// Six counters, and cknerv reads every one of them — which is why they are
-/// declared required rather than defaulted. A missing counter and a wrong
-/// counter both end in the same refusal here, and the undefaulted form says
-/// the truer thing about which happened: the wire changed shape, rather than
-/// this round's arithmetic failing to close.
-///
-/// The order of these fields is the ORDER OF THE AXIS, weakest rung first, and
-/// it is the same order `PeerProbeResult` declares. Nothing in this struct
-/// enforces that — the mapper builds the axis from
-/// `PeerProbeResult::HANDSHAKE_AXIS` and never from field order — but writing
-/// them out of order here would be a lie to the next reader.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct AddressObservationHistogramResponse {
-    pub dial_request_failed: u64,
-    pub no_authenticated_session_before_deadline: u64,
-    pub authenticated_session_without_identify_before_deadline: u64,
-    pub malformed_identify: u64,
-    pub foreign_network: u64,
-    pub same_network_identified: u64,
 }
 
 /// `network/distributions`: the crawler's whole verified set, counted by
@@ -147,14 +112,12 @@ pub(crate) struct AddressObservationHistogramResponse {
 /// This is a census and the peers page is not. cknerv used to fold its own
 /// country and version buckets out of one bounded 64-row page and had to
 /// caption them as a sample for it; upstream now folds them over every peer it
-/// holds a verification for, and adds the two axes cknerv could never compute
-/// — the autonomous systems the fleet is hosted in, and the protocols it
-/// opened. A census answers a question the sample only gestured at: whether
-/// half the network shares one operator is not visible in sixty-four rows of
+/// holds a verification for, and a census answers a question the sample only
+/// gestured at — what a fleet is made of is not visible in sixty-four rows of
 /// it.
 ///
-/// `verifiedRetained` is the denominator the three histograms below are
-/// counted against, and it is a DIFFERENT CLOCK from the round's identically-meant
+/// `verifiedRetained` is the denominator the two histograms below are counted
+/// against, and it is a DIFFERENT CLOCK from the round's identically-meant
 /// `verifiedRetainedPeers`: upstream scans its node store when this request
 /// arrives, while the round reports what its own outcome matrix added up to
 /// when it finished. The two agree whenever nothing has changed in between and
@@ -163,20 +126,21 @@ pub(crate) struct AddressObservationHistogramResponse {
 ///
 /// The wire also carries `sameNetworkReachable` and `verifiedUnavailable`,
 /// which are that same scan split by the node record's `reachable` flag. They
-/// are not declared: the ladder states both facts already, from the round,
-/// where they are the crawler's own arithmetic rather than a re-derivation at
-/// request time, and a second pair of numbers meaning the same words is the
-/// ambiguity this whole rework exists to remove.
+/// are not declared: the round states both facts already, off its own outcome
+/// matrix rather than as a re-derivation at request time, and a second pair of
+/// numbers meaning the same words is the ambiguity this whole rework exists to
+/// remove.
 ///
-/// `protocols` is not declared either, and for a different reason worth
-/// writing down because it looks like a free fourth strip. It is the one
-/// histogram here that is NOT a partition: upstream counts one row per
-/// protocol per peer, so a fleet where every peer opens Discovery and Identify
-/// answers with two buckets that each equal the population and add up to twice
-/// it. A proportional strip drawn from that would state a denominator it does
-/// not have, and the shape it would draw is two segments at 100% each, which
-/// is no shape at all. The day a peer speaks something else is news, but it is
-/// news for a list of exceptions rather than for a bar.
+/// `asns` and `protocols` are not declared, for two different reasons.
+/// `asns` counts the autonomous systems the fleet is hosted in, and it is a
+/// clean partition that cknerv drew as a third strip for a day — the panel now
+/// says it is not a question worth a bar. `protocols` never could be one: it
+/// is the one histogram here that is NOT a partition, because upstream counts
+/// a row per protocol per peer, so a fleet where every peer opens Discovery
+/// and Identify answers with two buckets that each equal the population and
+/// add up to twice it. A proportional strip drawn from that would state a
+/// denominator it does not have, and the shape it would draw is two segments
+/// at 100% each, which is no shape at all.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NetworkDistributionsResponse {
@@ -185,8 +149,6 @@ pub(crate) struct NetworkDistributionsResponse {
     pub versions: Vec<LabelCountResponse>,
     #[serde(default)]
     pub countries: Vec<LabelCountResponse>,
-    #[serde(default)]
-    pub asns: Vec<LabelCountResponse>,
 }
 
 #[derive(Debug, Deserialize)]

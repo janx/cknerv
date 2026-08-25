@@ -12,7 +12,6 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  PEER_PROBE_HANDSHAKE_AXIS,
   type Mutation,
   type Cell,
   type CellDelta,
@@ -429,29 +428,17 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     // The cross-cut: reached this round, or held from an earlier one.
     expect(atlas.last_round_reachable + atlas.verified_unavailable_peers)
       .toBe(atlas.verified_retained_peers);
-    // Three histograms, one population — the census that replaced a 64-row
+    // Two histograms, one population — the census that replaced a 64-row
     // sample, which is why every strip may be drawn as shares of one number.
-    for (const family of [atlas.countries, atlas.versions, atlas.asns]) {
+    // And it is NOT the number the bar above them is drawn as shares of: the
+    // round names every peer it heard of, these count only the peers it holds
+    // a verification for, so a fixture where those two happened to agree would
+    // stop being evidence that the panel keeps them apart.
+    for (const family of [atlas.countries, atlas.versions]) {
       expect(family.length).toBeGreaterThan(0);
       expect(family.reduce((sum, bucket) => sum + bucket.count, 0)).toBe(atlas.indexed_peers);
     }
-    expect(atlas.asns[0].label).toMatch(/^AS\d+ /);
-    // And the round's address histogram, which is the one thing in this record
-    // that partitions something OTHER than peers: a peer is dialed once per
-    // address anybody advertised for it, so this population runs several times
-    // the peer counts above it.
-    expect(atlas.handshake_depth.map((rung) => rung.result))
-      .toEqual([...PEER_PROBE_HANDSHAKE_AXIS]);
-    expect(atlas.handshake_depth.reduce((sum, rung) => sum + rung.attempts, 0))
-      .toBe(atlas.address_attempts);
-    expect(atlas.address_attempts).toBeGreaterThan(atlas.candidate_peers);
-    // The bridge to the ladder, as a bound rather than an equality — upstream
-    // holds an identified peer to exactly one identifying dial today, and that
-    // is a property of dialing a peer's addresses in turn rather than a
-    // guarantee cknerv may refuse a record over.
-    const identified = atlas.handshake_depth
-      .find((rung) => rung.result === 'same_network_identified');
-    expect(identified?.attempts).toBeGreaterThanOrEqual(atlas.last_round_reachable);
+    expect(atlas.candidate_peers).toBeGreaterThan(atlas.indexed_peers);
     expect(sample.deltas.cell_upsert.type).toBe('cell_upsert');
     expect(sample.deltas.asset_ecosystem_replace.type).toBe('asset_ecosystem_replace');
     expect(sample.deltas.dao_state_replace.type).toBe('dao_state_replace');

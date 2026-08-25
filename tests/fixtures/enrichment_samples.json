@@ -417,33 +417,6 @@
       "verified_unavailable_peers": 0,
       "verified_retained_peers": 57,
       "new_verified_peers": 0,
-      "address_attempts": 282,
-      "handshake_depth": [
-        {
-          "result": "dial_request_failed",
-          "attempts": 32
-        },
-        {
-          "result": "no_authenticated_session_before_deadline",
-          "attempts": 191
-        },
-        {
-          "result": "authenticated_session_without_identify_before_deadline",
-          "attempts": 2
-        },
-        {
-          "result": "malformed_identify",
-          "attempts": 0
-        },
-        {
-          "result": "foreign_network",
-          "attempts": 0
-        },
-        {
-          "result": "same_network_identified",
-          "attempts": 57
-        }
-      ],
       "indexed_peers": 57,
       "countries": [
         {
@@ -558,52 +531,6 @@
         },
         {
           "label": "0.5.3",
-          "count": 1
-        }
-      ],
-      "asns": [
-        {
-          "label": "AS16509 Amazon.com, Inc.",
-          "count": 29
-        },
-        {
-          "label": "AS14618 Amazon.com, Inc.",
-          "count": 5
-        },
-        {
-          "label": "AS16276 OVH SAS",
-          "count": 5
-        },
-        {
-          "label": "AS396982 Google LLC",
-          "count": 5
-        },
-        {
-          "label": "AS8075 Microsoft Corporation",
-          "count": 5
-        },
-        {
-          "label": "AS45102 Alibaba (US) Technology Co., Ltd.",
-          "count": 3
-        },
-        {
-          "label": "AS14061 DigitalOcean, LLC",
-          "count": 1
-        },
-        {
-          "label": "AS152918 Liberally Network LLC",
-          "count": 1
-        },
-        {
-          "label": "AS24940 Hetzner Online GmbH",
-          "count": 1
-        },
-        {
-          "label": "AS32475 Internap Holding LLC",
-          "count": 1
-        },
-        {
-          "label": "AS4808 China Unicom Beijing Province Network",
           "count": 1
         }
       ]
@@ -969,33 +896,6 @@
         "verified_unavailable_peers": 0,
         "verified_retained_peers": 57,
         "new_verified_peers": 0,
-        "address_attempts": 282,
-        "handshake_depth": [
-          {
-            "result": "dial_request_failed",
-            "attempts": 32
-          },
-          {
-            "result": "no_authenticated_session_before_deadline",
-            "attempts": 191
-          },
-          {
-            "result": "authenticated_session_without_identify_before_deadline",
-            "attempts": 2
-          },
-          {
-            "result": "malformed_identify",
-            "attempts": 0
-          },
-          {
-            "result": "foreign_network",
-            "attempts": 0
-          },
-          {
-            "result": "same_network_identified",
-            "attempts": 57
-          }
-        ],
         "indexed_peers": 57,
         "countries": [
           {
@@ -1110,52 +1010,6 @@
           },
           {
             "label": "0.5.3",
-            "count": 1
-          }
-        ],
-        "asns": [
-          {
-            "label": "AS16509 Amazon.com, Inc.",
-            "count": 29
-          },
-          {
-            "label": "AS14618 Amazon.com, Inc.",
-            "count": 5
-          },
-          {
-            "label": "AS16276 OVH SAS",
-            "count": 5
-          },
-          {
-            "label": "AS396982 Google LLC",
-            "count": 5
-          },
-          {
-            "label": "AS8075 Microsoft Corporation",
-            "count": 5
-          },
-          {
-            "label": "AS45102 Alibaba (US) Technology Co., Ltd.",
-            "count": 3
-          },
-          {
-            "label": "AS14061 DigitalOcean, LLC",
-            "count": 1
-          },
-          {
-            "label": "AS152918 Liberally Network LLC",
-            "count": 1
-          },
-          {
-            "label": "AS24940 Hetzner Online GmbH",
-            "count": 1
-          },
-          {
-            "label": "AS32475 Internap Holding LLC",
-            "count": 1
-          },
-          {
-            "label": "AS4808 China Unicom Beijing Province Network",
             "count": 1
           }
         ]

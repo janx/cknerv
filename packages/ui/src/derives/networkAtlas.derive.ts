@@ -1,11 +1,9 @@
 import {
-  PEER_PROBE_HANDSHAKE_AXIS,
   type EnrichmentSourceStatus,
   type NetworkAtlasBucket,
   type NetworkAtlasRecord,
-  type PeerHandshakeAxisRung,
 } from '@cknerv/types';
-import { ORDINAL_DEPTH_RAMP, QUALITATIVE_BUCKET_COLORS } from '../components/hud/hudTheme';
+import { ORDINAL_REACH_RAMP, QUALITATIVE_BUCKET_COLORS } from '../components/hud/hudTheme';
 
 export type NetworkAtlasVisualState = 'ready' | 'stale';
 
@@ -27,50 +25,54 @@ export interface NetworkAtlasBucketVisual extends NetworkAtlasBucket {
   color: string;
 }
 
-export interface NetworkAtlasHandshakeRung {
-  /** Narrowed to the axis's own six. The wire's `result` is the whole
-   *  `PeerProbeResult` union because a wire may carry anything; by the time a
-   *  rung is here it has been checked against the axis, so a surface that names
-   *  the rungs is exhaustive over six rather than carrying a seventh row
-   *  nothing can reach. */
-  result: PeerHandshakeAxisRung;
-  attempts: number;
+/** The three ways a round can finish with a peer, in upstream's own words for
+ *  them: it ran that peer's addresses out, it got an identify from another
+ *  chain, or it got one from this chain. The colony spells the first and last
+ *  the same way, so a reader meets one vocabulary rather than two. */
+export type NetworkAtlasReachOutcome = 'exhausted' | 'foreign' | 'reachable';
+
+/** The bar's segments, in the order they are drawn: least evidence first.
+ *
+ * The order IS the reading — how far the crawler got with a peer, coarsened
+ * from a dial's handshake to the whole peer — so this is where it lives, and
+ * both the segment list and the ramp that paints it are counted off it rather
+ * than off two literals that could drift apart. There is no fourth entry
+ * because a completed candidate ends in exactly one of these three ways, and
+ * `deriveNetworkAtlasVisual` refuses a record whose three do not add up to the
+ * peers it says it considered. */
+export const NETWORK_ATLAS_REACH_ORDER = [
+  'exhausted',
+  'foreign',
+  'reachable',
+] as const satisfies readonly NetworkAtlasReachOutcome[];
+
+export interface NetworkAtlasReachSegment {
+  outcome: NetworkAtlasReachOutcome;
+  peers: number;
   color: string;
 }
 
 export interface NetworkAtlasVisual {
-  /** The round's address dials, along the handshake axis. Ordered by the axis
-   *  and NEVER by size — unlike the three histograms beside it, whose order is
-   *  a rendering choice. */
-  handshake: NetworkAtlasHandshakeRung[];
+  /** The round's candidates, split by outcome. Ordered by how far the crawler
+   *  got and NEVER by size — unlike the two histograms beside it, whose order
+   *  is a rendering choice. */
+  reach: NetworkAtlasReachSegment[];
   countries: NetworkAtlasBucketVisual[];
   versions: NetworkAtlasBucketVisual[];
-  asns: NetworkAtlasBucketVisual[];
 }
 
-// A country, a client version and an autonomous system are qualitative
-// buckets: `DE` is not a lock family, `v0.201.0` is not an asset class, and
-// each is handed its colour by a hash of its own label. That is the house's
-// `QUALITATIVE_BUCKET_COLORS` ramp exactly — the argument for why these bars
-// may not read `CONTENT_BANDS`, and why the green sector stays shut, is
-// written where the ramp lives. The STAGE script-family bar hands out the same
-// slots for the same reason.
+// A country and a client version are qualitative buckets: `DE` is not a lock
+// family and `v0.201.0` is not an asset class, and each is handed its colour by
+// a hash of its own label. That is the house's `QUALITATIVE_BUCKET_COLORS` ramp
+// exactly — the argument for why these bars may not read `CONTENT_BANDS`, and
+// why the green sector stays shut, is written where the ramp lives. The STAGE
+// script-family bar hands out the same slots for the same reason.
 function labelColor(label: string): string {
   let hash = 0;
   for (const character of label) {
     hash = (hash * 31 + (character.codePointAt(0) ?? 0)) >>> 0;
   }
   return QUALITATIVE_BUCKET_COLORS[hash % QUALITATIVE_BUCKET_COLORS.length];
-}
-
-// A rung's colour is its POSITION on the axis, and nothing else — which is why
-// it is an index into the ramp rather than a lookup keyed by the result. The
-// three bars above hash a label into `QUALITATIVE_BUCKET_COLORS` because a
-// country has no order; this one has nothing but order, so it takes the ramp
-// that steps in brightness. See `ORDINAL_DEPTH_RAMP` for why one hue at six
-// alphas rather than six hues.
-function rungColor(rung: number): string {
-  return ORDINAL_DEPTH_RAMP[rung];
 }
 
 function safeNonnegativeInteger(value: number): boolean {
@@ -109,49 +111,6 @@ function deriveBuckets(
   return visual;
 }
 
-/** The round's address dials, checked against the dials the round says it made.
- *
- *  `deriveBuckets`'s sibling, and every difference between them is a difference
- *  in what the two histograms are. The adapter refuses a record that fails any
- *  of this; it is asked again here for the same reason the three census strips
- *  are, which is that this side draws the bar and a bar of the wrong widths is
- *  worse than no bar.
- *
- *  Four rules, and the last three are the opposite of that function's:
- *
- *  - The population is `address_attempts`, not a peer count. A peer is dialed
- *    once per address anybody advertised for it, so this partitions a
- *    several-times-larger set and would refuse instantly against
- *    `candidate_peers` or `indexed_peers`.
- *  - A zero rung is KEPT. `deriveBuckets` refuses a zero-count bucket because
- *    upstream's label histograms never emit one — a country with no peers in it
- *    is a country nobody named. This histogram always emits all six counters,
- *    and "no dial ended with an unreadable identify" is a result.
- *  - Nothing is sorted. The order IS the reading.
- *  - The rungs must be the whole axis, in the axis's order. That single check
- *    does four jobs: it rejects a missing rung, a duplicated one, a reordered
- *    one, and `unknown` — which is cknerv's word for an observation it could
- *    not read on one peer and can never be a bucket of a round's histogram. */
-function deriveHandshake(record: NetworkAtlasRecord): NetworkAtlasHandshakeRung[] | null {
-  const rungs = record.handshake_depth;
-  if (rungs.length !== PEER_PROBE_HANDSHAKE_AXIS.length) return null;
-  let total = 0;
-  const visual: NetworkAtlasHandshakeRung[] = [];
-  // Walked over the AXIS rather than over the record, so the rung that comes
-  // out is the axis's own literal and the narrowing above is earned rather than
-  // asserted.
-  for (const [index, expected] of PEER_PROBE_HANDSHAKE_AXIS.entries()) {
-    const rung = rungs[index];
-    if (rung.result !== expected) return null;
-    if (!safeNonnegativeInteger(rung.attempts)) return null;
-    total += rung.attempts;
-    if (total > record.address_attempts) return null;
-    visual.push({ result: expected, attempts: rung.attempts, color: rungColor(index) });
-  }
-  if (total !== record.address_attempts) return null;
-  return visual;
-}
-
 /** Suppress crawler context whose source or canonical proof is unusable. */
 export function networkAtlasVisualState(
   source: EnrichmentSourceStatus,
@@ -173,11 +132,11 @@ export function networkAtlasVisualState(
     : 'ready';
 }
 
-/** Validate the round's ladder and the census under it, then derive the three
- *  visual fingerprints.
+/** Validate the round's arithmetic and the census under it, then derive the
+ *  reach bar and the two label fingerprints.
  *
  *  Both halves have to hold for either to render. The panel prints them as one
- *  block of numbers about one network, so a ladder whose rungs contradict each
+ *  block of numbers about one network, so a round whose counts contradict each
  *  other is not a reason to draw the strips anyway — it is a reason to believe
  *  nothing the record says. */
 export function deriveNetworkAtlasVisual(
@@ -193,7 +152,6 @@ export function deriveNetworkAtlasVisual(
     record.verified_unavailable_peers,
     record.verified_retained_peers,
     record.new_verified_peers,
-    record.address_attempts,
     record.indexed_peers,
   ];
   if (!summaryCounts.every(safeNonnegativeInteger)) return null;
@@ -203,19 +161,43 @@ export function deriveNetworkAtlasVisual(
   //
   // A completed candidate ends in exactly one of three ways: it answered on
   // this network, it answered on another one, or the round ran out of
-  // addresses to try. Those three ARE the candidates, which is what lets the
-  // ladder print them under the number they belong to.
+  // addresses to try. Those three ARE the candidates, and this equality is
+  // what earns the panel the right to draw them as three widths of one bar —
+  // three parts that did not close would be drawn as shares of a whole they
+  // are not parts of, and every segment would be wrong rather than one.
   if (record.last_round_reachable + record.exhausted_candidates + record.foreign_peers
     !== record.candidate_peers) return null;
   // And the cross-cut. A peer the crawler still holds a verification for was
   // either reached this round or it was not, with no third case — so this is
-  // an equality too, and it is why the panel may print the unavailable count
-  // beside the reachable one without implying they are parts of the
-  // candidates. `verified_unavailable_peers` is drawn from the exhausted and
-  // foreign cohorts and would double-count against them.
+  // an equality too, and it is why the panel may state the unavailable count
+  // beside the bar without implying it is a fourth segment of it.
+  // `verified_unavailable_peers` is drawn from the exhausted and foreign
+  // cohorts and would double-count against them.
   if (record.last_round_reachable + record.verified_unavailable_peers
     !== record.verified_retained_peers) return null;
   if (record.new_verified_peers > record.verified_retained_peers) return null;
+
+  // The bar, walked over the ORDER rather than over the record, so the
+  // sequence a reader sees comes out of the one place that states it. A zero
+  // outcome keeps its place: "nobody answered from another chain" is a result,
+  // and the panel's legend prints all three counts so a segment of no width is
+  // still a number on screen.
+  const peersOf: Record<NetworkAtlasReachOutcome, number> = {
+    exhausted: record.exhausted_candidates,
+    foreign: record.foreign_peers,
+    reachable: record.last_round_reachable,
+  };
+  const reach: NetworkAtlasReachSegment[] = NETWORK_ATLAS_REACH_ORDER
+    .map((outcome, index) => ({
+      outcome,
+      peers: peersOf[outcome],
+      // Position on the axis, and nothing else — which is why it is an index
+      // into the ramp rather than a lookup keyed by the outcome. The two bars
+      // below hash a label into `QUALITATIVE_BUCKET_COLORS` because a country
+      // has no order; this one has nothing but order. See `ORDINAL_REACH_RAMP`
+      // for why one hue at three alphas rather than three hues.
+      color: ORDINAL_REACH_RAMP[index],
+    }));
 
   // Deliberately NOT checked against `verified_retained_peers`. They mean the
   // same words on two clocks — a scan of the crawler's node store as this
@@ -226,14 +208,5 @@ export function deriveNetworkAtlasVisual(
 
   const countries = deriveBuckets(record.countries, population);
   const versions = deriveBuckets(record.versions, population);
-  const asns = deriveBuckets(record.asns, population);
-  // The round's own histogram, on the round's own population. It is validated
-  // here beside the census rather than after it because the panel prints all of
-  // it as one block of numbers about one network: a record whose parts
-  // contradict each other is not a reason to draw the parts that happen to
-  // close.
-  const handshake = deriveHandshake(record);
-  return countries && versions && asns && handshake
-    ? { handshake, countries, versions, asns }
-    : null;
+  return countries && versions ? { reach, countries, versions } : null;
 }

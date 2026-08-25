@@ -1,16 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import {
-  PEER_PROBE_HANDSHAKE_AXIS,
-  type EnrichmentSourceStatus,
-  type NetworkAtlasRecord,
-} from '@cknerv/types';
+import type { EnrichmentSourceStatus, NetworkAtlasRecord } from '@cknerv/types';
 import {
   deriveNetworkAtlasVisual,
+  NETWORK_ATLAS_REACH_ORDER,
   NETWORK_ATLAS_STALE_AFTER_MS,
   networkAtlasVisualState,
 } from '../../src/derives/networkAtlas.derive';
 import { CONTENT_BANDS } from '../../src/components/hud/cellFormat';
-import { ORDINAL_DEPTH_RAMP, QUALITATIVE_BUCKET_COLORS } from '../../src/components/hud/hudTheme';
+import { ORDINAL_REACH_RAMP, QUALITATIVE_BUCKET_COLORS } from '../../src/components/hud/hudTheme';
 
 // One round's outcome matrix written out, so every equality below has a
 // coherent record to be broken against: 9 answered on this network, 51 ran
@@ -30,18 +27,6 @@ const record: NetworkAtlasRecord = {
   verified_unavailable_peers: 33,
   verified_retained_peers: 42,
   new_verified_peers: 3,
-  // …and the address histogram beside that matrix, on its OWN population: those
-  // 61 peers were dialed on 95 addresses between them. 18 + 60 + 5 + 2 + 1 + 9
-  // is 95, and the top rung is the 9 peers that identified.
-  address_attempts: 95,
-  handshake_depth: [
-    { result: 'dial_request_failed', attempts: 18 },
-    { result: 'no_authenticated_session_before_deadline', attempts: 60 },
-    { result: 'authenticated_session_without_identify_before_deadline', attempts: 5 },
-    { result: 'malformed_identify', attempts: 2 },
-    { result: 'foreign_network', attempts: 1 },
-    { result: 'same_network_identified', attempts: 9 },
-  ],
   indexed_peers: 42,
   countries: [
     { label: 'US', count: 14 },
@@ -50,10 +35,6 @@ const record: NetworkAtlasRecord = {
   versions: [
     { label: '0.118.0', count: 12 },
     { label: '0.119.0', count: 30 },
-  ],
-  asns: [
-    { label: 'AS2 Example', count: 2 },
-    { label: 'AS1 Example', count: 40 },
   ],
 };
 
@@ -65,18 +46,13 @@ const source: EnrichmentSourceStatus = {
 };
 
 describe('network atlas visual derivation', () => {
-  it('ranks all three census fingerprints without exposing individual peers', () => {
+  it('ranks both census fingerprints without exposing individual peers', () => {
     const visual = deriveNetworkAtlasVisual(record);
     expect(visual?.countries.map(({ label, count }) => ({ label, count }))).toEqual([
       { label: 'SG', count: 28 },
       { label: 'US', count: 14 },
     ]);
     expect(visual?.versions[0].label).toBe('0.119.0');
-    // The axis a 64-row sample could not have answered: one operator holding
-    // most of the fleet is a fact about the network, and it only exists once
-    // the buckets are counted over the whole verified set.
-    expect(visual?.asns[0].label).toBe('AS1 Example');
-    expect(visual?.asns[0].count).toBe(40);
     expect(record).not.toHaveProperty('peers');
   });
 
@@ -96,30 +72,53 @@ describe('network atlas visual derivation', () => {
     })).toBeNull();
     expect(deriveNetworkAtlasVisual({
       ...record,
-      asns: record.asns.map((bucket) => ({ ...bucket, count: bucket.count * 2 })),
+      versions: record.versions.map((bucket) => ({ ...bucket, count: bucket.count * 2 })),
     })).toBeNull();
     // And an axis that arrives empty is not a strip to skip: it is a record
-    // whose three histograms no longer describe one population.
-    expect(deriveNetworkAtlasVisual({ ...record, asns: [] })).toBeNull();
+    // whose two histograms no longer describe one population.
+    expect(deriveNetworkAtlasVisual({ ...record, versions: [] })).toBeNull();
+  });
+
+  it('splits the round into three shares of the peers it considered', () => {
+    const visual = deriveNetworkAtlasVisual(record);
+
+    // The order is the reading — least evidence first — and it comes out of
+    // the derive's own list rather than out of the order the record spells its
+    // fields, which is why a segment cannot quietly change places.
+    expect(visual?.reach.map((segment) => segment.outcome))
+      .toEqual([...NETWORK_ATLAS_REACH_ORDER]);
+    expect(visual?.reach.map((segment) => segment.peers)).toEqual([51, 1, 9]);
+    // The partition, which is what earns the panel the right to draw these as
+    // widths: they are all of the ways a completed candidate ends, so they add
+    // up to the peers the round considered and to nothing else.
+    expect(visual?.reach.reduce((sum, segment) => sum + segment.peers, 0))
+      .toBe(record.candidate_peers);
+    // And NOT to the number the two strips below the bar are drawn against.
+    // Two proportional bars stacked with different denominators is the
+    // confusion this panel has to keep out, so the fixture keeps them apart.
+    expect(record.candidate_peers).toBeGreaterThan(record.indexed_peers);
   });
 
   it('rejects a round whose outcomes do not add up to its candidates', () => {
     // The three ways a completed candidate can end ARE the candidates —
     // upstream reads all four counts off one disjoint outcome matrix, so this
     // is an equality and not a bound. A cohort short and a cohort over both
-    // have to bite: loosen it to `<=` and a round that lost a whole cohort on
-    // the way out still publishes a ladder, with rungs that quietly stop
-    // describing the number above them.
+    // have to bite: loosen it to `<=` and three segments that do not close
+    // still get drawn, as shares of a whole they are not the parts of, so
+    // EVERY width on the bar is wrong rather than one of them.
     expect(deriveNetworkAtlasVisual({ ...record, exhausted_candidates: 50 })).toBeNull();
     expect(deriveNetworkAtlasVisual({ ...record, foreign_peers: 2 })).toBeNull();
     expect(deriveNetworkAtlasVisual({ ...record, candidate_peers: 60 })).toBeNull();
+    // …and the record those three are mutations OF has to pass, or none of
+    // them is evidence about the rule.
+    expect(deriveNetworkAtlasVisual(record)?.reach).toHaveLength(3);
   });
 
   it('rejects a round whose verified peers do not split in two', () => {
     // A peer the crawler still holds a verification for was either reached
     // this round or it was not, and there is no third case. This is what lets
-    // the ladder print the unavailable count beside the reachable one without
-    // implying it is a further part of the candidates.
+    // the panel state the unavailable count beside the bar without implying it
+    // is a fourth share of the peers considered.
     expect(deriveNetworkAtlasVisual({ ...record, verified_unavailable_peers: 32 })).toBeNull();
     expect(deriveNetworkAtlasVisual({ ...record, verified_unavailable_peers: 34 })).toBeNull();
     expect(deriveNetworkAtlasVisual({
@@ -128,110 +127,23 @@ describe('network atlas visual derivation', () => {
     })).toBeNull();
   });
 
-  it('lays the round dials along the whole handshake axis, in the axis order', () => {
-    const visual = deriveNetworkAtlasVisual(record);
-
-    expect(visual?.handshake.map((rung) => rung.result))
-      .toEqual([...PEER_PROBE_HANDSHAKE_AXIS]);
-    expect(visual?.handshake.map((rung) => rung.attempts))
-      .toEqual([18, 60, 5, 2, 1, 9]);
-    // On its own population, which is NOT any peer count in the same record.
-    expect(visual?.handshake.reduce((sum, rung) => sum + rung.attempts, 0))
-      .toBe(record.address_attempts);
-    expect(record.address_attempts).toBeGreaterThan(record.candidate_peers);
-  });
-
-  it('rejects dials that do not add up to the dials the round says it made', () => {
-    // The partition, and the whole claim the strip makes: its segments are ALL
-    // of the segments. Upstream derives `addressAttempts` by summing these six,
-    // so the equality can only break two ways — the wire ceasing to mean what
-    // it says, and a SEVENTH result arriving that this build has no bucket for.
-    // Both directions bite, because each segment is drawn as a share of the
-    // total this record states and a wrong total draws every OTHER bar wrong.
-    const rungs = record.handshake_depth;
-    expect(deriveNetworkAtlasVisual({
-      ...record,
-      handshake_depth: rungs.map((rung, index) => (
-        index === 1 ? { ...rung, attempts: rung.attempts - 1 } : rung
-      )),
-    })).toBeNull();
-    expect(deriveNetworkAtlasVisual({
-      ...record,
-      handshake_depth: rungs.map((rung, index) => (
-        index === 3 ? { ...rung, attempts: rung.attempts + 1 } : rung
-      )),
-    })).toBeNull();
-    // A seventh rung upstream, seen from in here: the total grows and the six
-    // do not.
-    expect(deriveNetworkAtlasVisual({
-      ...record,
-      address_attempts: record.address_attempts + 4,
-    })).toBeNull();
-    // …and the record these three are mutations OF has to pass, or none of them
-    // is evidence about the rule.
-    expect(deriveNetworkAtlasVisual(record)?.handshake).toHaveLength(6);
-  });
-
-  it('rejects an axis that is not this axis, in this order', () => {
-    // The ordinal, enforced rather than assumed. `dial refused → no session →
-    // session without identify → unreadable identify → another chain →
-    // identified` is a progression, the bar draws it left to right, and a
-    // reader puts two segments in order by where they sit. Reorder the rungs
-    // and the same six numbers say something else.
-    const rungs = record.handshake_depth;
-    const swapped = [...rungs];
-    [swapped[1], swapped[3]] = [swapped[3], swapped[1]];
-    expect(deriveNetworkAtlasVisual({ ...record, handshake_depth: swapped })).toBeNull();
-
-    // Reversed outright — the same six rungs and the same total, so what is
-    // refused here is the ORDER and nothing else.
-    expect(deriveNetworkAtlasVisual({
-      ...record,
-      handshake_depth: [...rungs].reverse(),
-    })).toBeNull();
-
-    // A rung missing, a rung twice, and `unknown` — cknerv's own word for an
-    // observation it could not read on one peer, which is never a bucket of a
-    // round's histogram. One check catches all three.
-    expect(deriveNetworkAtlasVisual({
-      ...record,
-      address_attempts: record.address_attempts - rungs[3].attempts,
-      handshake_depth: rungs.filter((_, index) => index !== 3),
-    })).toBeNull();
-    expect(deriveNetworkAtlasVisual({
-      ...record,
-      handshake_depth: rungs.map((rung, index) => (
-        index === 4 ? { ...rungs[3], attempts: rung.attempts } : rung
-      )),
-    })).toBeNull();
-    expect(deriveNetworkAtlasVisual({
-      ...record,
-      handshake_depth: rungs.map((rung, index) => (
-        index === 0 ? { result: 'unknown' as const, attempts: rung.attempts } : rung
-      )),
-    })).toBeNull();
-  });
-
-  it('keeps a rung no dial ended on, where the label strips refuse one', () => {
-    // The two histograms disagree about zero on purpose. A country with no
-    // peers in it is a country nobody named, so `deriveBuckets` refuses one and
-    // upstream never emits one. This histogram always answers with all six
-    // counters, and "no dial ended with an unreadable identify" is a RESULT —
-    // an axis that dropped its quiet rungs would render a clean round and a
-    // build that stopped counting them identically.
+  it('keeps a segment nobody landed in, where the label strips refuse one', () => {
+    // The two disagree about zero on purpose. A country with no peers in it is
+    // a country nobody named, so `deriveBuckets` refuses one and upstream never
+    // emits one. The round always answers with all three outcomes, and "nobody
+    // answered from another chain" is a RESULT — this is the rule the five
+    // rows this bar replaced were built on, and it survives the change of
+    // mechanism: a zero segment is zero pixels wide, so the segment stays in
+    // the list and the panel's legend is where the number is legible.
     const quiet = {
       ...record,
-      address_attempts: record.address_attempts - 3,
-      handshake_depth: record.handshake_depth.map((rung) => (
-        rung.result === 'malformed_identify' || rung.result === 'foreign_network'
-          ? { ...rung, attempts: 0 }
-          : rung
-      )),
+      foreign_peers: 0,
+      exhausted_candidates: 52,
     };
     const visual = deriveNetworkAtlasVisual(quiet);
-    expect(visual?.handshake).toHaveLength(6);
-    expect(visual?.handshake.filter((rung) => rung.attempts === 0).map((rung) => rung.result))
-      .toEqual(['malformed_identify', 'foreign_network']);
+    expect(visual?.reach).toHaveLength(3);
+    expect(visual?.reach.filter((segment) => segment.peers === 0).map((s) => s.outcome))
+      .toEqual(['foreign']);
 
     // The proof that this is the opposite rule and not the same one: a zero in
     // a label histogram still refuses the record.
@@ -241,23 +153,24 @@ describe('network atlas visual derivation', () => {
     })).toBeNull();
   });
 
-  it('colours the handshake axis by position, out of a ramp that ranks', () => {
+  it('colours the reach bar by position, out of a ramp that ranks', () => {
     // The strips beside it hash a label into a slot, because a country has no
     // order. This one has nothing BUT order, so it takes the ordinal ramp — and
     // the two vocabularies share no member, which is half of what tells a
     // reader the bar is counting a different population.
     const visual = deriveNetworkAtlasVisual(record);
-    const painted = visual?.handshake.map((rung) => rung.color) ?? [];
+    const painted = visual?.reach.map((segment) => segment.color) ?? [];
 
-    expect(painted).toEqual([...ORDINAL_DEPTH_RAMP]);
+    expect(painted).toEqual([...ORDINAL_REACH_RAMP]);
     expect(painted.filter((color) => QUALITATIVE_BUCKET_COLORS.includes(color))).toEqual([]);
-    // Position, not identity: the colour is the index, so a rung that moved
-    // would take its neighbour's step rather than carrying its own along.
-    const reversed = deriveNetworkAtlasVisual({
-      ...record,
-      handshake_depth: [...record.handshake_depth].reverse(),
-    });
-    expect(reversed).toBeNull();
+    // Position, not identity: the colour is the index into the ramp, so an
+    // outcome that moved would take its neighbour's step rather than carrying
+    // its own along — which is what makes the order above load-bearing.
+    const slots = new Map(
+      visual?.reach.map((segment) => [segment.outcome, segment.color]) ?? [],
+    );
+    expect(slots.get(NETWORK_ATLAS_REACH_ORDER[0])).toBe(ORDINAL_REACH_RAMP[0]);
+    expect(slots.get(NETWORK_ATLAS_REACH_ORDER[2])).toBe(ORDINAL_REACH_RAMP[2]);
   });
 
   it('never asserts the round clock against the index clock', () => {
@@ -273,12 +186,11 @@ describe('network atlas visual derivation', () => {
       indexed_peers: 43,
       countries: [{ label: 'SG', count: 43 }],
       versions: [{ label: '0.119.0', count: 43 }],
-      asns: [{ label: 'AS1 Example', count: 43 }],
     };
     expect(deriveNetworkAtlasVisual(midRound)?.countries[0].count).toBe(43);
   });
 
-  it('colours all three bars out of one ramp that means nothing', () => {
+  it('colours both bars out of one ramp that means nothing', () => {
     // Two claims at once. Every bucket takes a slot of the shared ramp — the
     // countries and the versions used to hold two arrays that agreed on three
     // of their five values anyway, and the ramp is the house's now, handed out
@@ -290,9 +202,8 @@ describe('network atlas visual derivation', () => {
     const painted = [
       ...visual?.countries ?? [],
       ...visual?.versions ?? [],
-      ...visual?.asns ?? [],
     ].map((bucket) => bucket.color);
-    expect(painted).toHaveLength(6);
+    expect(painted).toHaveLength(4);
     expect(painted.every((color) => QUALITATIVE_BUCKET_COLORS.includes(color))).toBe(true);
     const bands = new Set<string>(Object.values(CONTENT_BANDS));
     expect(QUALITATIVE_BUCKET_COLORS.filter((color) => bands.has(color))).toEqual([]);

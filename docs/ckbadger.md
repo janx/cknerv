@@ -529,73 +529,68 @@ disappears in CKB-only mode and dims after three missed refreshes.
 
 With `network_atlas`, cknerv checks the crawler summary at most once every 60
 seconds. A usable crawl triggers exactly one `network/distributions` request.
-The atlas asks for no peers at all: upstream folds versions, countries and ASNs
-over its whole verified set now, so cknerv no longer draws a 64-row sample and
-no longer has to caption one. The adapter validates the round's counters and
-each histogram against the population it claims to partition. Peer IDs and
-addresses never enter the shared wire contract.
+The atlas asks for no peers at all: upstream folds versions and countries over
+its whole verified set now, so cknerv no longer draws a 64-row sample and no
+longer has to caption one. The adapter validates the round's counters and each
+histogram against the population it claims to partition. Peer IDs and addresses
+never enter the shared wire contract.
 
 The round's five peer counts are one disjoint outcome matrix read five ways,
 not five independent measurements, and the adapter checks them as equalities:
 `reachablePeers + exhaustedCandidates + foreignPeers` is exactly
 `candidatePeers`, and `reachablePeers + verifiedUnavailablePeers` is exactly
-`verifiedRetainedPeers`. `verifiedUnavailablePeers` cuts across the exhausted
-and foreign cohorts rather than joining them, so it is never added to them.
-`distributions.verifiedRetained` is carried separately as `indexed_peers`: it
-means the same words as the round's count on a different clock — a node-store
-scan as the request arrived, against what the round's matrix added up to when
-it finished — so the two are never asserted against each other.
+`verifiedRetainedPeers`. The first is what lets the panel draw those three
+outcomes as three widths of one bar — three parts that did not close would be
+drawn as shares of a whole they are not the parts of. The second is why
+`verifiedUnavailablePeers` may not be a fourth width: it cuts across the
+exhausted and foreign cohorts rather than joining them, so it is never added to
+them. `distributions.verifiedRetained` is carried separately as
+`indexed_peers`: it means the same words as the round's count on a different
+clock — a node-store scan as the request arrived, against what the round's
+matrix added up to when it finished — so the two are never asserted against
+each other.
 
-Beside the ladder and never part of it, the round's `addressObservations` cross
-as `handshake_depth`: six buckets naming how far each of the round's dials got,
-weakest rung first, along the same `PeerProbeResult` ordinal the DOSSIER already
-picks a peer's furthest rung by. They partition ADDRESSES rather than peers — a
-peer is dialed once per address anybody advertised for it, so the population runs
-several times the ladder's — and their denominator, `addressAttempts`, is read
-from the wire rather than summed here. That is what makes the equality a check:
-upstream derives it from the same six counters, so a seventh result added
-upstream would leave cknerv's six short of it and the round would be refused,
-instead of a strip silently drawing five sixths of an axis as a whole. A rung
-that resolves to zero is kept, on the same argument as a ladder rung that does.
-
-Two bounds bridge the two populations, and both are inequalities on purpose.
-Upstream holds an identified peer to exactly one identifying dial and refuses to
-publish a completed candidate with no observations at all, so the histogram's top
-rung is at least `reachablePeers` and `addressAttempts` is at least
-`candidatePeers`. Those catch a histogram belonging to another round, or one
-arriving zeroed beside a ladder that is not. The equality upstream's own
-validator holds today is NOT asserted: it is a property of dialing a peer's
-addresses in turn and stopping at the first identify, and refusing a whole atlas
-the day that dialer went parallel would be an outage cknerv inflicted on itself.
-`nonSuccessfulAddressAttempts` is not read — it is `addressAttempts` less that
-top rung — and neither is `malformedAddresses`, which counts advertised
-addresses that never became a dial and so sits outside the partition entirely.
+The round's other counters are deliberately unread. `addressAttempts` and
+`addressObservations` count ADDRESSES rather than peers — a peer is dialed once
+per address anybody advertised for it — and cknerv drew them for a day as a bar
+naming how far each dial got. It is gone at the user's word that the panel was
+not being asked that question, and the wire fields went with it rather than
+lingering as slots nothing reads. `nonSuccessfulAddressAttempts`,
+`malformedAddresses`, `peerOutcomes` and `discovery` were never read.
+`distributions.asns` is unread for the same reason as the bar it fed;
+`distributions.protocols` never could be read, because upstream counts one row
+per protocol per peer, so it adds up to a multiple of the fleet rather than to
+it and no proportional strip can be drawn from it.
 
 `PEER MESH` always keeps the local CKB node's directly measured peer count and
 head consensus as primary truth, plus a catch-up row that appears only while our
 own tip trails the best known head. Per-peer client version and RTT belong to
 the floating PEER and NODE cards, never to this rail. A valid atlas record adds
-a five-rung reach ladder — named by the network, answered on this chain,
-answered on another chain, no answer this round, verified but not reached — and
-country, client-version and autonomous-system strips as more rows of that same
+a reach bar and country and client-version strips as more rows of that same
 panel rather than a titled sub-section: one network read at two distances, near
-rows measured over our own links and far rows indexed by the crawl. **A rung
-that resolves to zero stays on screen**: zero is a result, and a row that
-vanished on it would make a healthy crawl and a broken one look identical. Each
-rung says what it counts on hover, beside the shared
-`Crawler atlas · round N · as of #block` provenance, which is also where a
-strip's whole bucket list waits.
+rows measured over our own links and far rows indexed by the crawl. The shared
+`Crawler atlas · round N · as of #block` provenance waits on hover, which is
+also where a bar's whole segment list and a strip's whole bucket list wait.
 
-Between the ladder and those three strips sits the handshake bar, decomposing the
-ladder's own failure rung: `HANDSHAKE DEPTH · N ADDRESSES DIALED`, six segments
-in axis order, never sorted by size. It states its own denominator because that
-denominator is not the panel's — everything else there counts peers — and it is
-painted in one hue stepping in brightness where the three census strips are
-painted in six unrelated hues, so the two kinds of bar cannot be read into each
-other. Its legend names every rung a dial actually ended on and folds no tail
-into a group count; what it prints always adds up to the number in its own
-caption, because the rungs it omits are exactly the zero ones, and all six wait
-on the hover.
+The reach bar is `NAMED BY THE NETWORK · N PEERS`, three segments running from
+the peers no dial ever got an answer out of, through the peers that answered
+from another chain, to the peers that answered from this one. It is never
+sorted by size: the progression is the reading. It states its own total because
+that total is not the panel's — the two strips under it are folded against
+`indexed_peers`, the smaller set the crawler holds verified — and it is painted
+in one hue stepping in brightness where those strips are painted in unrelated
+hues, so two stacked proportional bars cannot be read into each other. **A
+cohort that resolves to zero stays on screen**: zero is a result, and a cohort
+that vanished on it would make a healthy crawl and a broken one look identical.
+A zero segment is zero pixels wide, so the legend under the bar prints all
+three counts rather than only the ones that fired — which also means what it
+prints always adds up to the number in its own caption, and a reader can check
+that nothing was folded away.
+
+`verifiedUnavailablePeers` is on that bar's hover rather than in it. It is the
+one count here that cuts across two of the three segments instead of joining
+them, so it can never be a fourth width, and the hover is where it costs no
+line — the same place every other number on these rows says what it counts.
 
 What may appear here at all is a fact about the NETWORK; what may not is a fact
 about the crawl that read it. The median crawler dial went because it measured
