@@ -182,14 +182,26 @@ function probeSentence(result: PeerProbeResult | undefined): string {
 
 /** When the network last named this peer, and how long it has been failing.
  *  Every CRAWLER-class line on this plate carries its own stamp, and an
- *  unverified peer has no sighting to be stamped by — this clock is the only
- *  one it has, on every dialect, which is why no variant suppresses it the way
- *  the sighted dialect suppresses figures its host card prints twice. */
+ *  unverified peer has no sighting to be stamped by — this is the only clock
+ *  it has, on every dialect, which is why no variant suppresses it the way the
+ *  sighted dialect suppresses figures its host card prints twice.
+ *
+ *  Which clock that is, is a sentence and not a fallback. `LAST NAMED` is what
+ *  the rung is about and it is preferred wherever it exists; a peer the
+ *  crawler holds no gossiped alias for has never been named by anybody, and
+ *  printing that phrase over the observation clock would date the report with
+ *  an event that did not happen. So the word changes with the fact. */
 function advertisedStamp(advertised: PeerAdvertisedEvidence, nowMs: number): string {
-  const named = `LAST NAMED ${formatAge(advertised.last_advertised_at_ms, nowMs)} AGO`;
+  // `!= null` rather than a check against `undefined`: the server omits the
+  // key it has no answer for, and a wire that ever sends an explicit `null`
+  // instead means exactly the same thing here.
+  const advertisedAt = advertised.last_advertised_at_ms;
+  const stamp = advertisedAt != null
+    ? `LAST NAMED ${formatAge(advertisedAt, nowMs)} AGO`
+    : `LAST OBSERVED ${formatAge(advertised.latest_positive_observed_ms, nowMs)} AGO`;
   const rounds = advertised.consecutive_exhausted_rounds;
-  if (rounds <= 0) return named;
-  return `${named} · ${rounds === 1 ? '1 ROUND' : `${count(rounds)} ROUNDS`} EXHAUSTED`;
+  if (rounds <= 0) return stamp;
+  return `${stamp} · ${rounds === 1 ? '1 ROUND' : `${count(rounds)} ROUNDS`} EXHAUSTED`;
 }
 
 /** Where the furthest dial was made, and out of how many.

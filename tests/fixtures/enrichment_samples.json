@@ -1242,6 +1242,7 @@
       "reason": "advertised_unverified",
       "advertised": {
         "last_advertised_at_ms": 1699999940000,
+        "latest_positive_observed_ms": 1699999985000,
         "furthest_result": "no_authenticated_session_before_deadline",
         "furthest_address": "/ip4/198.51.100.4/tcp/8115",
         "dialed_address_count": 3,

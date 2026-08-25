@@ -780,7 +780,13 @@ fn enrichment_peer_sighting() -> PeerSightingRecord {
 /// the crawler can name.
 fn enrichment_peer_advertised() -> PeerAdvertisedEvidence {
     PeerAdvertisedEvidence {
-        last_advertised_at_ms: 1_699_999_940_000,
+        // Two clocks and deliberately not the same moment: the browser's
+        // tests read the units and the sentences off this file, and a sample
+        // where both stamps agreed would let the plate print either one under
+        // either phrase and still look right. Upstream's own maximum is the
+        // later of the two by construction.
+        last_advertised_at_ms: Some(1_699_999_940_000),
+        latest_positive_observed_ms: 1_699_999_985_000,
         furthest_result: Some(PeerProbeResult::NoAuthenticatedSessionBeforeDeadline),
         furthest_address: Some("/ip4/198.51.100.4/tcp/8115".to_string()),
         // Three aliases dialed and none of them answered — the population the

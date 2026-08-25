@@ -644,7 +644,14 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(advertised.advertised?.furthest_result)
       .toBe('no_authenticated_session_before_deadline');
     expect(advertised.advertised?.consecutive_exhausted_rounds).toBe(2);
+    // Two clocks, and the sample keeps them apart on purpose. The advertise
+    // clock is what the rung is about and is now OPTIONAL — a peer met only
+    // through a session nobody gossiped has no advertise moment — so the
+    // report is dated by the observation maximum, which upstream answers for
+    // every peer it answers about at all. Equal figures would let the plate
+    // print either one under either phrase and still look right.
     expect(advertised.advertised?.last_advertised_at_ms).toBe(1_699_999_940_000);
+    expect(advertised.advertised?.latest_positive_observed_ms).toBe(1_699_999_985_000);
     // The rung has somewhere it happened, and a denominator: one refused
     // address out of one is a dead entry in the gossip, one out of three is a
     // node that is not answering anywhere.

@@ -701,7 +701,7 @@ neither one puts a peer identity into the streamed contract.
 
 The address book is now read from both ends, under two names and two units.
 Upstream deleted the outbound peer count the record used to carry and answers
-with `advertisers[]`, which counts the peers that named THIS node — the same
+with `advertisers[]`, which names the peers that named THIS node — the same
 relationship read from the other end, so the old slot is gone rather than
 filled by it. In its place the record carries `advertiser_peer_count` (how many
 distinct peers advertised this node) and `advertised_address_count` (how many
@@ -709,6 +709,16 @@ addresses this node advertised to the crawler, off the verification's own
 `discovery` counters). They are never interchangeable: one counts peers and the
 other counts addresses, and a peer is advertised under every alias anybody has
 seen it at, so the second runs several times the number of peers behind it.
+
+⚠️ `advertiser_peer_count` is a count of DISTINCT ADVERTISERS and not the
+length of `advertisers[]`. Upstream used to rebuild that list by scanning node
+records for the ones naming this peer, which yielded one row per advertiser; it
+now keeps durable target-centric evidence keyed by advertiser AND alias, so one
+peer gossiping this node under three aliases writes three rows. Live, 5772 rows
+stand for 3145 advertisers. The adapter reads the id and counts the set, and a
+row whose id it cannot read stands the whole count down rather than being
+skipped — a rename of that key would take every row with it, and a skipping
+count would answer zero over a peer the whole gossip layer repeats.
 
 ⚠️ Neither is a topology edge. Upstream is explicit that this is address-book
 gossip: a peer that advertises another's address may never have spoken to it.
@@ -745,13 +755,20 @@ absence of configuration:
 - `200 {"state":"unsighted","reason":"advertised_unverified","advertised":…}`
   — the network names this peer and nobody outside could get an identify out
   of it. Still an absence of a sighting, and the only one with evidence under
-  it: when the network last named the peer, how far the furthest of its dials
-  got and at which address, how many of the peer's addresses that round dialed,
-  how many completed rounds in a row have ended without a verification, and how
-  many distinct peers still name it. This is the ordinary state of a node
-  behind NAT — it dials out
-  and cannot be dialed back — so cknerv can hold a live link to a peer that is
-  permanently in it;
+  it: when anything last observed the peer, when the network last named it if
+  it ever did, how far the furthest of its dials got and at which address, how
+  many of the peer's addresses that round dialed, how many completed rounds in
+  a row have ended without a verification, and how many distinct peers still
+  name it. This is the ordinary state of a node behind NAT — it dials out and
+  cannot be dialed back — so cknerv can hold a live link to a peer that is
+  permanently in it.
+
+  The two clocks are two sentences and the plate says which one it used.
+  `last_advertised_at_ms` is when the network named the peer and is absent for
+  one the crawler holds no gossiped alias for; `latest_positive_observed_ms` is
+  the newest of every positive channel at once and is the one upstream
+  guarantees, so no report here is undated. Filling the first from the second
+  would date the report with an event that did not happen;
 - `200 {"state":"sighted","sighting":…}` — the record.
 
 An unreachable source, a malformed answer, an upstream store error, or a

@@ -140,7 +140,8 @@ impl EnrichmentSource for TransactionFixtureSource {
         if node_id == ADVERTISED_NODE_ID {
             return Ok(PeerSightingLookup::advertised_unverified(
                 PeerAdvertisedEvidence {
-                    last_advertised_at_ms: 1_700_000_000_000,
+                    last_advertised_at_ms: Some(1_700_000_000_000),
+                    latest_positive_observed_ms: 1_700_000_040_000,
                     furthest_result: Some(PeerProbeResult::DialRequestFailed),
                     furthest_address: Some("/ip4/198.51.100.4/tcp/8115".to_string()),
                     dialed_address_count: 2,

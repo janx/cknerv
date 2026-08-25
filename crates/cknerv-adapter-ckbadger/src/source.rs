@@ -26,8 +26,8 @@ use cknerv_core::{
 use cknerv_server::{CanonicalContext, EnrichmentSource, GalaxyCompositionHydrator};
 
 use crate::dto::{
-    AssetEcosystemResponse, BlockResponse, CandidateEvidenceResponse, CellDataAnalysis,
-    CellDetailResponse, ClusterDetailResponse, CollectionCompositionDto,
+    AdvertiserEvidenceResponse, AssetEcosystemResponse, BlockResponse, CandidateEvidenceResponse,
+    CellDataAnalysis, CellDetailResponse, ClusterDetailResponse, CollectionCompositionDto,
     CommonKnowledgeSizeBreakdown, DaoInfo, DaoStatisticsResponse, HardforkEventResponse,
     HardforkTimelineResponse, LabelCountResponse, LatestActivityResponse, LiveCellSummaryResponse,
     LookupScriptsRequest, NetworkCrawlerSummaryResponse, NetworkDistributionsResponse,
@@ -222,6 +222,12 @@ const MAX_PEER_ID_BASE58_CHARS: usize = 128;
 /// CKB opens a handful of protocols per peer; the cap is here so a
 /// mis-shaped answer is refused rather than rendered.
 const MAX_PEER_PROTOCOLS: usize = 32;
+/// A memory bound, not a semantic one. Counting distinct advertisers means
+/// holding their ids, where the old length count held nothing, and this is the
+/// ceiling on what one dossier may make cknerv allocate. It sits far above
+/// anything the network can produce — a peer can be advertised by every other
+/// peer under every alias it has, and the live worst case is 162 rows.
+const MAX_PEER_ADVERTISER_ROWS: usize = 8_192;
 const MAX_CELL_CONTENT_PREVIEW_BYTES: usize = 4 * 1024;
 const MAX_CELL_CONTENT_SEGMENTS: usize = 64;
 const MAX_CELL_CONTENT_GUESSES: usize = 16;
@@ -3146,17 +3152,12 @@ fn map_peer_lookup(
     // dial is still a peer the network keeps repeating the address of — so it
     // is read once here and handed to whichever of the two statements this
     // turns out to be.
-    let advertiser_peer_count = detail
-        .advertisers
-        .as_ref()
-        .map(|advertisers| {
-            u32::try_from(advertisers.len()).context("ckbadger peer advertisers is outside u32")
-        })
-        .transpose()?;
+    let advertiser_peer_count = distinct_advertiser_count(detail.advertisers.as_deref())?;
     let Some(verified) = detail.verified else {
         return Ok(PeerSightingLookup::advertised_unverified(
             map_advertised_evidence(
                 detail.last_advertised_at,
+                detail.latest_positive_observed_at,
                 detail.last_completed.as_ref(),
                 advertiser_peer_count,
             )?,
@@ -3164,10 +3165,15 @@ fn map_peer_lookup(
     };
     // `reachable` on this record has always meant "the crawler got an
     // identify out of it in the round that just finished", which is precisely
-    // what upstream now calls the `reachable` display state. A peer it holds
-    // a verification for but did not reach this round keeps reading as the
-    // dark half of the sighted tier, exactly as it did.
-    let reachable = detail.display_state == PeerDisplayState::Reachable;
+    // what upstream now calls the `reachable` dial state. A peer it holds a
+    // verification for but did not reach this round keeps reading as the dark
+    // half of the sighted tier, exactly as it did.
+    //
+    // ⭐ IT IS READ AS A DIAL AND NOTHING ELSE, which is what upstream renamed
+    // the field to say. The peer's standing is decided one line up, by whether
+    // a verification exists at all; this only decides whether that
+    // verification is fresh.
+    let reachable = detail.crawler_dial_state == PeerDisplayState::Reachable;
     map_peer_sighting(node_id, verified, reachable, advertiser_peer_count, anchor)
         .map(PeerSightingLookup::sighted)
 }
@@ -3241,6 +3247,46 @@ fn map_peer_sighting(
     })
 }
 
+/// How many DISTINCT peers the crawler retains an advertisement from for one
+/// node.
+///
+/// ⚠️ NOT THE LENGTH OF THE LIST, AND THE DIFFERENCE IS LARGE. Upstream keys
+/// its retained advertisement evidence by (advertiser, alias), so one peer
+/// gossiping this node under three aliases writes three rows — live, 5772 rows
+/// stand for 3145 advertisers, and one sampled peer carries 162 rows from 38
+/// peers. The label on the row cknerv prints from this says PEERS, so the
+/// length would be a 4× overstatement in the exact place the unit is spelled
+/// out.
+///
+/// A row whose advertiser this build cannot read stands the whole count down
+/// rather than being skipped. Skipping is the tempting half-measure and it is
+/// the dangerous one: an upstream rename of the id takes EVERY row with it, so
+/// a skipping count answers zero — "no peer names this node" — over a peer the
+/// whole gossip layer repeats. Absent says "nobody can say", which is the true
+/// one.
+fn distinct_advertiser_count(
+    advertisers: Option<&[AdvertiserEvidenceResponse]>,
+) -> anyhow::Result<Option<u32>> {
+    let Some(advertisers) = advertisers else {
+        return Ok(None);
+    };
+    if advertisers.len() > MAX_PEER_ADVERTISER_ROWS {
+        return Err(anyhow!(
+            "ckbadger peer returned more advertisements than the network could have made"
+        ));
+    }
+    let mut distinct: HashSet<&str> = HashSet::with_capacity(advertisers.len());
+    for advertiser in advertisers {
+        let AdvertiserEvidenceResponse::Named { advertiser_peer_id } = advertiser else {
+            return Ok(None);
+        };
+        distinct.insert(advertiser_peer_id.as_str());
+    }
+    u32::try_from(distinct.len())
+        .context("ckbadger peer advertisers is outside u32")
+        .map(Some)
+}
+
 /// The crawler's account of a peer it never verified.
 ///
 /// A candidate is dialed once per address it has been advertised under, so
@@ -3252,7 +3298,8 @@ fn map_peer_sighting(
 /// taking the last observation in the list would pick between them by
 /// accident.
 fn map_advertised_evidence(
-    last_advertised_at: u64,
+    last_advertised_at: Option<u64>,
+    latest_positive_observed_at: u64,
     last_completed: Option<&CandidateEvidenceResponse>,
     advertiser_peer_count: Option<u32>,
 ) -> anyhow::Result<PeerAdvertisedEvidence> {
@@ -3273,7 +3320,20 @@ fn map_advertised_evidence(
             .max_by_key(|observation| map_probe_result(observation.result))
     });
     Ok(PeerAdvertisedEvidence {
-        last_advertised_at_ms: sighting_clock_ms(last_advertised_at, "peer lastAdvertisedAt")?,
+        // Two clocks, each read for itself. The advertise clock is the one
+        // this report would rather be dated by, because "the network last
+        // named it" is what the rung is about — and it is now absent for a
+        // peer the crawler holds no gossiped alias for, so the report falls
+        // back to the moment upstream guarantees rather than minting one out
+        // of the other's meaning.
+        last_advertised_at_ms: optional_sighting_clock_ms(
+            last_advertised_at,
+            "peer lastAdvertisedAt",
+        )?,
+        latest_positive_observed_ms: sighting_clock_ms(
+            latest_positive_observed_at,
+            "peer latestPositiveObservedAt",
+        )?,
         furthest_result: furthest.map(|observation| map_probe_result(observation.result)),
         // A multiaddr, so it is bounded as one — a truncated address is an
         // address that is not the node's. An observation that carried none
@@ -9645,14 +9705,23 @@ mod tests {
                                     axum::http::StatusCode::OK,
                                     Json(serde_json::json!({
                                         "peerId": peer_id,
-                                        "observationVantage": "thisCkbadgerInstance",
-                                        "displayState": "advertisedUnverified",
+                                        "observationVantage":
+                                            "configuredLocalCkbRpcObserverAndThisCrawler",
+                                        "crawlerDialState": "advertisedUnverified",
+                                        "participation": {
+                                            "discoveryAdvertised": true,
+                                            "directSessionObserved": false,
+                                            "crawlerIdentified": false
+                                        },
+                                        "sessionInitiators": [],
                                         "firstDiscoveredAt": 1_699_990_000,
                                         "lastAdvertisedAt": 1_700_000_000,
+                                        "latestPositiveObservedAt": 1_700_000_000,
                                         "aliases": [{
                                             "address": "/ip4/198.51.100.4/tcp/8115",
                                             "firstAdvertisedAt": 1_699_990_000,
-                                            "lastAdvertisedAt": 1_700_000_000
+                                            "lastAdvertisedAt": 1_700_000_000,
+                                            "lastVerifiedAt": null
                                         }],
                                         "lastCompleted": {
                                             "roundId": 2,
@@ -9677,16 +9746,49 @@ mod tests {
                                         },
                                         "active": null,
                                         "verified": null,
+                                        // Upstream's live shape: one row per
+                                        // (advertiser, alias), so two peers
+                                        // gossiping two aliases each write
+                                        // four rows. The count below is two.
                                         "advertisers": [
                                             {
                                                 "advertiserPeerId": "1220aa",
-                                                "observedAt": 1_700_000_000
+                                                "alias": "/ip4/198.51.100.4/tcp/8115",
+                                                "firstObservedAt": 1_699_990_000,
+                                                "lastObservedAt": 1_700_000_000,
+                                                "firstObservedRound": 1,
+                                                "lastObservedRound": 2,
+                                                "observationCount": 2
+                                            },
+                                            {
+                                                "advertiserPeerId": "1220aa",
+                                                "alias": "/ip4/198.51.100.5/tcp/8115",
+                                                "firstObservedAt": 1_699_990_000,
+                                                "lastObservedAt": 1_700_000_000,
+                                                "firstObservedRound": 1,
+                                                "lastObservedRound": 2,
+                                                "observationCount": 2
                                             },
                                             {
                                                 "advertiserPeerId": "1220ab",
-                                                "observedAt": 1_700_000_001
+                                                "alias": "/ip4/198.51.100.4/tcp/8115",
+                                                "firstObservedAt": 1_699_990_001,
+                                                "lastObservedAt": 1_700_000_001,
+                                                "firstObservedRound": 1,
+                                                "lastObservedRound": 2,
+                                                "observationCount": 2
+                                            },
+                                            {
+                                                "advertiserPeerId": "1220ab",
+                                                "alias": "/ip4/198.51.100.5/tcp/8115",
+                                                "firstObservedAt": 1_699_990_001,
+                                                "lastObservedAt": 1_700_000_001,
+                                                "firstObservedRound": 1,
+                                                "lastObservedRound": 2,
+                                                "observationCount": 2
                                             }
-                                        ]
+                                        ],
+                                        "directSessions": []
                                     })),
                                 );
                             }
@@ -9700,14 +9802,23 @@ mod tests {
                                 axum::http::StatusCode::OK,
                                 Json(serde_json::json!({
                                     "peerId": peer_id,
-                                    "observationVantage": "thisCkbadgerInstance",
-                                    "displayState": "reachable",
+                                    "observationVantage":
+                                        "configuredLocalCkbRpcObserverAndThisCrawler",
+                                    "crawlerDialState": "reachable",
+                                    "participation": {
+                                        "discoveryAdvertised": true,
+                                        "directSessionObserved": true,
+                                        "crawlerIdentified": true
+                                    },
+                                    "sessionInitiators": ["observerInitiated"],
                                     "firstDiscoveredAt": 1_650_000_000,
                                     "lastAdvertisedAt": 1_700_000_000,
+                                    "latestPositiveObservedAt": 1_700_000_000,
                                     "aliases": [{
                                         "address": "/ip4/203.0.113.7/tcp/8115",
                                         "firstAdvertisedAt": 1_650_000_000,
-                                        "lastAdvertisedAt": 1_700_000_000
+                                        "lastAdvertisedAt": 1_700_000_000,
+                                        "lastVerifiedAt": 1_699_999_000
                                     }],
                                     "lastCompleted": {
                                         "roundId": 2,
@@ -9741,20 +9852,48 @@ mod tests {
                                             "rejectedAdvertisedAddresses": 0
                                         }
                                     },
+                                    // Three peers, one of them naming this
+                                    // node under two aliases: four rows, and
+                                    // the sighting's count is three.
                                     "advertisers": [
                                         {
                                             "advertiserPeerId": "1220bb",
-                                            "observedAt": 1_700_000_000
+                                            "alias": "/ip4/203.0.113.7/tcp/8115",
+                                            "firstObservedAt": 1_650_000_000,
+                                            "lastObservedAt": 1_700_000_000,
+                                            "firstObservedRound": 1,
+                                            "lastObservedRound": 2,
+                                            "observationCount": 2
+                                        },
+                                        {
+                                            "advertiserPeerId": "1220bb",
+                                            "alias": "/dns4/peer.example/tcp/443",
+                                            "firstObservedAt": 1_650_000_000,
+                                            "lastObservedAt": 1_700_000_000,
+                                            "firstObservedRound": 1,
+                                            "lastObservedRound": 2,
+                                            "observationCount": 2
                                         },
                                         {
                                             "advertiserPeerId": "1220bc",
-                                            "observedAt": 1_700_000_001
+                                            "alias": "/ip4/203.0.113.7/tcp/8115",
+                                            "firstObservedAt": 1_650_000_001,
+                                            "lastObservedAt": 1_700_000_001,
+                                            "firstObservedRound": 1,
+                                            "lastObservedRound": 2,
+                                            "observationCount": 2
                                         },
                                         {
                                             "advertiserPeerId": "1220bd",
-                                            "observedAt": 1_700_000_002
+                                            "alias": "/ip4/203.0.113.7/tcp/8115",
+                                            "firstObservedAt": 1_650_000_002,
+                                            "lastObservedAt": 1_700_000_002,
+                                            "firstObservedRound": 1,
+                                            "lastObservedRound": 2,
+                                            "observationCount": 2
                                         }
-                                    ]
+                                    ],
+                                    "directSessions": []
                                 })),
                             )
                         }
@@ -9834,6 +9973,10 @@ mod tests {
         // ADDRESSES. The mock's two figures are far apart on purpose — if the
         // mapper read `discovery` into the inbound count nothing about the
         // shape of the record would look wrong.
+        //
+        // Three, out of FOUR rows: upstream keys its retained advertisements
+        // by (advertiser, alias), so a peer that names this node under two
+        // aliases writes two of them. Counting the list would say four.
         assert_eq!(sighting.advertiser_peer_count, Some(3));
         assert_eq!(sighting.advertised_address_count, Some(87));
         server.abort();
@@ -9886,11 +10029,13 @@ mod tests {
         assert_eq!(evidence.dialed_address_count, 2);
         // The only weight this rung has: how much of the network still
         // repeats the address. Fewer than name the sighted peer, as it is
-        // live.
+        // live — and two out of four rows, because the mock gossips two
+        // aliases from each of two peers exactly as upstream now does.
         assert_eq!(evidence.advertiser_peer_count, Some(2));
-        // Unix SECONDS upstream, milliseconds on cknerv's wire — the one
-        // clock an unverified peer's report can be dated by.
-        assert_eq!(evidence.last_advertised_at_ms, 1_700_000_000_000);
+        // Unix SECONDS upstream, milliseconds on cknerv's wire. Both clocks
+        // this rung can be dated by, each read from its own field.
+        assert_eq!(evidence.last_advertised_at_ms, Some(1_700_000_000_000));
+        assert_eq!(evidence.latest_positive_observed_ms, 1_700_000_000_000);
         assert_eq!(node_requests.load(Ordering::Relaxed), 1);
         server.abort();
     }
@@ -10117,12 +10262,13 @@ mod tests {
     fn peer_detail(peer_id: &str, verified: Option<VerifiedPeerResponse>) -> PeerDetailResponse {
         PeerDetailResponse {
             peer_id: peer_id.to_string(),
-            display_state: if verified.is_some() {
+            crawler_dial_state: if verified.is_some() {
                 PeerDisplayState::Reachable
             } else {
                 PeerDisplayState::AdvertisedUnverified
             },
-            last_advertised_at: 1_700_000_000,
+            last_advertised_at: Some(1_700_000_000),
+            latest_positive_observed_at: 1_700_000_000,
             last_completed: None,
             verified,
             advertisers: None,
@@ -10195,7 +10341,7 @@ mod tests {
         // what `reachable: false` has always meant on this record. It is not
         // an absence: the sighting is real, it is just not fresh.
         let mut detail = peer_detail("1220ee", Some(verified_peer()));
-        detail.display_state = PeerDisplayState::VerifiedUnavailable;
+        detail.crawler_dial_state = PeerDisplayState::VerifiedUnavailable;
 
         let lookup = map_peer_lookup("QmWhoever", "1220ee", detail, peer_anchor()).unwrap();
 
@@ -10212,14 +10358,15 @@ mod tests {
         // round has tried it. Inventing "the dial failed" here would be the
         // same class of lie this whole task exists to remove.
         let mut detail = peer_detail("1220ee", None);
-        detail.display_state = PeerDisplayState::NoCompletedObservation;
+        detail.crawler_dial_state = PeerDisplayState::NoCompletedObservation;
 
         let lookup = map_peer_lookup("QmWhoever", "1220ee", detail, peer_anchor()).unwrap();
 
         assert_eq!(
             lookup,
             PeerSightingLookup::advertised_unverified(PeerAdvertisedEvidence {
-                last_advertised_at_ms: 1_700_000_000_000,
+                last_advertised_at_ms: Some(1_700_000_000_000),
+                latest_positive_observed_ms: 1_700_000_000_000,
                 furthest_result: None,
                 furthest_address: None,
                 dialed_address_count: 0,
@@ -10255,7 +10402,9 @@ mod tests {
         }))
         .expect("a result this build has no name for must not fail the dossier");
 
-        let evidence = map_advertised_evidence(1_700_000_000, Some(&completed), None).unwrap();
+        let evidence =
+            map_advertised_evidence(Some(1_700_000_000), 1_700_000_000, Some(&completed), None)
+                .unwrap();
 
         assert_eq!(
             evidence.furthest_result,
@@ -10271,7 +10420,7 @@ mod tests {
         }))
         .expect("decode");
         assert_eq!(
-            map_advertised_evidence(1_700_000_000, Some(&all_unknown), None)
+            map_advertised_evidence(Some(1_700_000_000), 1_700_000_000, Some(&all_unknown), None)
                 .unwrap()
                 .furthest_result,
             Some(PeerProbeResult::Unknown)
@@ -10290,7 +10439,8 @@ mod tests {
         // pass for a plausible record.
         let detail: PeerDetailResponse = serde_json::from_value(serde_json::json!({
             "peerId": "1220ee",
-            "displayState": "reachable",
+            "crawlerDialState": "reachable",
+            "latestPositiveObservedAt": 1_700_000_000,
             "lastAdvertisedAt": 1_700_000_000,
             "verified": {
                 "clientVersion": "0.209.0",
@@ -10336,7 +10486,8 @@ mod tests {
         // `Option<Vec<_>>` where every other list on the route defaults.
         let without: PeerDetailResponse = serde_json::from_value(serde_json::json!({
             "peerId": "1220ee",
-            "displayState": "advertisedUnverified",
+            "crawlerDialState": "advertisedUnverified",
+            "latestPositiveObservedAt": 1_700_000_000,
             "lastAdvertisedAt": 1_700_000_000,
             "verified": null
         }))
@@ -10354,7 +10505,8 @@ mod tests {
 
         let empty: PeerDetailResponse = serde_json::from_value(serde_json::json!({
             "peerId": "1220ee",
-            "displayState": "advertisedUnverified",
+            "crawlerDialState": "advertisedUnverified",
+            "latestPositiveObservedAt": 1_700_000_000,
             "lastAdvertisedAt": 1_700_000_000,
             "verified": null,
             "advertisers": []
@@ -10385,20 +10537,136 @@ mod tests {
     }
 
     #[test]
-    fn an_advertiser_row_this_build_cannot_read_still_counts() {
-        // Only the LENGTH of this list is read, and the ids behind it are the
-        // first real edge evidence the colony has ever held — which is a spec
-        // of its own and not this one. Parsing the rows as nothing keeps a
-        // reshape of the entry from costing the whole dossier, and the test is
-        // here because the cheap alternative (a declared `advertiserPeerId`)
-        // would have looked identical until the day upstream renamed it.
+    fn a_dossier_for_a_peer_met_only_through_a_session_survives_and_invents_nothing() {
+        // The dossier half of the shape the roster page test pins, copied
+        // from the same upstream test: a peer the local observer met through
+        // an inbound session it did not dial. It has no gossiped alias, so
+        // upstream answers `null` for BOTH clocks that come off the alias set
+        // — and answers `latestPositiveObservedAt` anyway, because the
+        // session itself is a positive observation.
+        //
+        // What must hold: the record decodes rather than costing the peer its
+        // whole plate, the advertise clock stays absent rather than being
+        // minted out of the observation clock, and the direct-session
+        // evidence this build does not declare is ignored rather than fatal.
+        let detail: PeerDetailResponse = serde_json::from_str(
+            r#"{
+                "peerId": "7065657244",
+                "observationVantage": "configuredLocalCkbRpcObserverAndThisCrawler",
+                "crawlerDialState": "noCompletedObservation",
+                "participation": {
+                    "discoveryAdvertised": false,
+                    "directSessionObserved": true,
+                    "crawlerIdentified": false
+                },
+                "sessionInitiators": ["peerInitiated"],
+                "firstDiscoveredAt": null,
+                "lastAdvertisedAt": null,
+                "latestPositiveObservedAt": 250,
+                "aliases": [],
+                "lastCompleted": null,
+                "active": null,
+                "verified": null,
+                "advertisers": [],
+                "directSessions": [
+                    {
+                        "observerPeerId": "6c6f63616c2d6f62736572766572",
+                        "initiator": "peerInitiated",
+                        "firstObservedAt": 250,
+                        "lastObservedAt": 250,
+                        "firstObservedRound": 1,
+                        "lastObservedRound": 1,
+                        "observationCount": 1,
+                        "clientVersion": "0.209.0",
+                        "sessionAddresses": [],
+                        "connectedDurationMs": 1000,
+                        "lastPingDurationMs": 12,
+                        "protocols": [{ "id": 0, "version": "3" }]
+                    }
+                ]
+            }"#,
+        )
+        .expect("a peer with no dialable address must not fail the dossier");
+
+        assert_eq!(detail.last_advertised_at, None);
+        assert_eq!(detail.latest_positive_observed_at, 250);
+
+        let PeerSightingLookup::Unsighted { advertised, .. } =
+            map_peer_lookup("QmWhoever", "7065657244", detail, peer_anchor()).unwrap()
+        else {
+            panic!("a peer with no verification is not a sighting");
+        };
+        let advertised = advertised.expect("evidence");
+        // The clock upstream cannot answer stays unanswered, and the one it
+        // guarantees dates the report.
+        assert_eq!(advertised.last_advertised_at_ms, None);
+        assert_eq!(advertised.latest_positive_observed_ms, 250_000);
+        // Nobody has dialed it, so no rung is named — "nobody has tried yet"
+        // is not a failed dial.
+        assert_eq!(advertised.furthest_result, None);
+        assert_eq!(advertised.dialed_address_count, 0);
+        // And an empty advertiser list is a report of zero, which here is the
+        // true one: this peer really is named by nobody.
+        assert_eq!(advertised.advertiser_peer_count, Some(0));
+
+        // ⚠️ OPEN, AND DELIBERATELY NOT ASSERTED HERE. The absence tag this
+        // resolves to is `advertised_unverified`, whose headline reads NAMED
+        // BY THE NETWORK, NEVER VERIFIED — and for this peer the first half of
+        // that sentence is false. Every FIGURE above is true; the word over
+        // them is not. Fixing it means deciding what the DOSSIER should say
+        // about a peer whose only evidence is a session, which is the same
+        // open question as whether direct-session evidence belongs on the
+        // plate at all. Pinning today's headline in a test would freeze the
+        // falsehood as if it were the contract, so this states the gap
+        // instead.
+    }
+
+    #[test]
+    fn a_dossier_may_not_make_this_build_hold_an_unbounded_address_book() {
+        // Counting distinct advertisers means HOLDING their ids, where the
+        // old length count held nothing — so this route gained the one place
+        // a single answer can decide how much cknerv allocates. The ceiling
+        // sits far above anything the network can produce (live worst case:
+        // 162 rows), which is what makes refusing past it a memory bound and
+        // not a semantic one.
+        let sane: Vec<AdvertiserEvidenceResponse> = (0..MAX_PEER_ADVERTISER_ROWS)
+            .map(|index| AdvertiserEvidenceResponse::Named {
+                advertiser_peer_id: format!("1220{index:04x}"),
+            })
+            .collect();
+        assert_eq!(
+            distinct_advertiser_count(Some(&sane)).unwrap(),
+            Some(MAX_PEER_ADVERTISER_ROWS as u32)
+        );
+
+        let mut absurd = sane;
+        absurd.push(AdvertiserEvidenceResponse::Named {
+            advertiser_peer_id: "1220ffff".to_string(),
+        });
+        let error = distinct_advertiser_count(Some(&absurd))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("advertisements"), "error was {error}");
+    }
+
+    #[test]
+    fn an_advertiser_row_this_build_cannot_key_stands_the_count_down() {
+        // The count is a count of DISTINCT peers, so the id has to be read —
+        // and the moment it is read, a rename of it becomes able to say
+        // something false. Skipping unreadable rows is the tempting
+        // half-measure and the dangerous one: a rename takes EVERY row with
+        // it, so a skipping count answers "0 PEERS NAME IT" over a peer the
+        // whole gossip layer repeats. Standing down says "nobody can say",
+        // which is the true report — and the dossier survives either way,
+        // which is what the scalar row in here is for.
         let detail: PeerDetailResponse = serde_json::from_value(serde_json::json!({
             "peerId": "1220ee",
-            "displayState": "advertisedUnverified",
+            "crawlerDialState": "advertisedUnverified",
+            "latestPositiveObservedAt": 1_700_000_000,
             "lastAdvertisedAt": 1_700_000_000,
             "verified": null,
             "advertisers": [
-                { "advertiserPeerId": "1220aa", "observedAt": 1_700_000_000 },
+                { "advertiserPeerId": "1220aa", "alias": "/ip4/198.51.100.4/tcp/8115" },
                 { "seenBy": "1220ab", "firstHeardAt": 1_700_000_000, "hops": 2 },
                 17
             ]
@@ -10410,7 +10678,7 @@ mod tests {
         else {
             panic!("a peer with no verification is not a sighting");
         };
-        assert_eq!(advertised.expect("evidence").advertiser_peer_count, Some(3));
+        assert_eq!(advertised.expect("evidence").advertiser_peer_count, None);
     }
 
     #[test]
@@ -10426,7 +10694,9 @@ mod tests {
         }))
         .expect("decode");
 
-        let evidence = map_advertised_evidence(1_700_000_000, Some(&completed), None).unwrap();
+        let evidence =
+            map_advertised_evidence(Some(1_700_000_000), 1_700_000_000, Some(&completed), None)
+                .unwrap();
 
         assert_eq!(
             evidence.furthest_result,
@@ -10439,12 +10709,61 @@ mod tests {
     #[test]
     fn an_undated_advertisement_is_not_a_report() {
         // Every CRAWLER-class line the DOSSIER prints has to be stamped, and
-        // this is the only clock an unverified peer has. Zero is upstream's
-        // "never", and 1970 is not a moment the network named anything.
-        let error = map_advertised_evidence(0, None, None)
+        // an unverified peer has no sighting to be stamped by. Zero is
+        // upstream's "never", and 1970 is not a moment anything observed
+        // anything — on either clock.
+        let error = map_advertised_evidence(Some(0), 1_700_000_000, None, None)
             .unwrap_err()
             .to_string();
-
         assert!(error.contains("lastAdvertisedAt"), "error was {error}");
+
+        let error = map_advertised_evidence(Some(1_700_000_000), 0, None, None)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("latestPositiveObservedAt"),
+            "error was {error}"
+        );
+    }
+
+    #[test]
+    fn an_advertise_clock_upstream_did_not_send_is_not_minted_from_the_other_one() {
+        // The clock this rung would rather be dated by is now absent for a
+        // peer the crawler holds no gossiped alias for, and the two clocks
+        // mean different things: "the network last named it" against
+        // "something last observed it". Upstream sends the second for every
+        // peer it answers about at all, so there is always a stamp — and
+        // filling the first from it would date the report with an event that
+        // did not happen.
+        let evidence = map_advertised_evidence(None, 1_700_000_123, None, None).expect("a report");
+
+        assert_eq!(evidence.last_advertised_at_ms, None);
+        assert_eq!(evidence.latest_positive_observed_ms, 1_700_000_123_000);
+    }
+
+    #[test]
+    fn the_advertiser_count_is_peers_and_not_the_length_of_the_list() {
+        // ⚠️ THE BREAK THIS TEST EXISTS FOR. Upstream used to rebuild this
+        // list one row per advertiser; it now keeps durable evidence keyed by
+        // (advertiser, alias), so one peer naming this node under three
+        // aliases writes three rows. Measured live: 5772 rows over 3145
+        // advertisers, and 162 rows over 38 peers on a single node. The row
+        // cknerv prints from this spells its unit out — PEERS — so the length
+        // would have been a 4× overstatement in exactly the place a reader
+        // trusts the number most.
+        let advertisers: Vec<AdvertiserEvidenceResponse> =
+            serde_json::from_value(serde_json::json!([
+                { "advertiserPeerId": "1220aa", "alias": "/ip4/198.51.100.4/tcp/8115" },
+                { "advertiserPeerId": "1220aa", "alias": "/ip4/198.51.100.5/tcp/8115" },
+                { "advertiserPeerId": "1220aa", "alias": "/dns4/peer.example/tcp/443" },
+                { "advertiserPeerId": "1220ab", "alias": "/ip4/198.51.100.4/tcp/8115" },
+            ]))
+            .expect("decode");
+
+        assert_eq!(advertisers.len(), 4);
+        assert_eq!(
+            distinct_advertiser_count(Some(&advertisers)).unwrap(),
+            Some(2)
+        );
     }
 }

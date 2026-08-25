@@ -613,11 +613,24 @@ export interface PeerSightingRecord {
  * refuses to fabricate metadata for a peer it never reached and neither does
  * this. */
 export interface PeerAdvertisedEvidence {
-  /** When the network last named this peer to the crawler. The report's own
-   * clock: an unverified peer has no sighting to be stamped by, and an
-   * undated statement about the network is the one thing the DOSSIER never
-   * prints. */
-  last_advertised_at_ms: number;
+  /** When the network last named this peer to the crawler.
+   *
+   * Absent for a peer the crawler holds no gossiped alias for — the local
+   * observer's own session names a peer nobody advertised, and an inbound
+   * socket yields no address to keep. Absent rather than filled from the clock
+   * below, because "the network last named it" and "something last observed
+   * it" are different sentences and only one of them is this field. */
+  last_advertised_at_ms?: number;
+  /** When anything at all last observed this peer — the newest of every
+   * positive channel the crawler holds: a gossiped alias, evidence naming it
+   * as a target, a direct session, or the crawler's own identification.
+   *
+   * ⭐ THE CLOCK THAT MAKES THE REPORT DATABLE, and it took that job from the
+   * advertise clock above. An unverified peer has no sighting to be stamped
+   * by, and an undated statement about the network is the one thing the
+   * DOSSIER never prints — so the required clock has to be one the source can
+   * always answer, and the source guarantees this one. */
+  latest_positive_observed_ms: number;
   /** The furthest any of this peer's addresses got in the last completed
    * round. Absent when no round has completed with this peer in it — which is
    * a different statement again: nobody has tried yet. */

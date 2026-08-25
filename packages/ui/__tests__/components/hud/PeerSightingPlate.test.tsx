@@ -41,6 +41,10 @@ if (advertisedSample?.state !== 'unsighted' || !advertisedSample.advertised) {
 }
 /** The rung below a sighting, as the server actually writes it. */
 const ADVERTISED: PeerAdvertisedEvidence = advertisedSample.advertised;
+const ADVERTISED_AT_MS = ADVERTISED.last_advertised_at_ms;
+if (ADVERTISED_AT_MS === undefined) {
+  throw new Error('the advertised-unverified sample is the one that HAS an advertise clock');
+}
 
 /** One minute after the crawler last saw the node, so every age in the plate
  *  is a round number a reader can check by eye. */
@@ -136,7 +140,7 @@ describe('PeerSightingPlate absence', () => {
       record: null,
       reason: 'advertised_unverified',
       advertised: ADVERTISED,
-      nowMs: ADVERTISED.last_advertised_at_ms + 120_000,
+      nowMs: ADVERTISED_AT_MS + 120_000,
     });
     const plate = container.querySelector('[data-sighting-phase="unsighted"]');
     expect(plate?.getAttribute('data-sighting-reason')).toBe('advertised_unverified');
@@ -155,6 +159,40 @@ describe('PeerSightingPlate absence', () => {
     // `null` while passing.
     expect(plate?.getAttribute('data-sighting-probe'))
       .toBe('no_authenticated_session_before_deadline');
+  });
+
+  it('names the clock it dated the report by, and never the wrong one', () => {
+    // Two clocks now reach this line and they are two sentences. The
+    // advertise clock is what the rung is about and wins wherever it exists;
+    // a peer the crawler holds no gossiped alias for has never been named by
+    // anybody, so printing LAST NAMED over the observation clock would date
+    // the report with an event that did not happen. Upstream answers the
+    // second for every peer it answers about at all, which is why dropping
+    // the stamp is not the alternative.
+    const unnamed: PeerAdvertisedEvidence = { ...ADVERTISED };
+    delete unnamed.last_advertised_at_ms;
+    const { container } = renderPlate({
+      phase: 'unsighted',
+      record: null,
+      reason: 'advertised_unverified',
+      advertised: unnamed,
+      nowMs: unnamed.latest_positive_observed_ms + 120_000,
+    });
+    const exposure = row(container, 'exposure');
+    expect(exposure).toContain('LAST OBSERVED 2m 0s AGO');
+    expect(exposure).not.toContain('LAST NAMED');
+    // And the sample that HAS been named still says so, off its own clock —
+    // which is a different moment in the fixture on purpose, so a mapper that
+    // read either field into the other would move the age it prints.
+    expect(ADVERTISED.latest_positive_observed_ms).not.toBe(ADVERTISED_AT_MS);
+    const named = renderPlate({
+      phase: 'unsighted',
+      record: null,
+      reason: 'advertised_unverified',
+      advertised: ADVERTISED,
+      nowMs: ADVERTISED_AT_MS + 120_000,
+    });
+    expect(row(named.container, 'exposure')).toContain('LAST NAMED 2m 0s AGO');
   });
 
   it('says where the furthest dial went, and out of how many', () => {

@@ -326,11 +326,24 @@ pub(crate) struct PeerSummaryResponse {
 /// and a peer cknerv holds an inbound link to is a perfectly ordinary member
 /// of it, because a node behind NAT dials out and cannot be dialed back.
 ///
-/// The wire carries more of this peer than is declared here:
-/// `observationVantage`, `firstDiscoveredAt`, `aliases` and `active`. Nothing
-/// in cknerv reads them, so they are deliberately not declared — a field
-/// declared here is a field whose disappearance costs the whole record, and
-/// this crate has now paid that price twice in one week.
+/// The wire carries more of this peer than is declared here. `aliases` and
+/// `active` have never had a reader. `observationVantage` still has none, and
+/// it no longer says what it used to: it now reads
+/// `configuredLocalCkbRpcObserverAndThisCrawler`, because a second vantage —
+/// the configured local CKB node's own sessions — feeds this record beside
+/// the crawl. `firstDiscoveredAt` has none either, and has become nullable
+/// under the same condition `lastAdvertisedAt` has.
+///
+/// Three more evidence fields arrived with that second vantage and are named
+/// rather than declared: `directSessions[]` (each session the local observer
+/// holds, with its initiator, its clocks and its own protocol list),
+/// `participation` (`discoveryAdvertised` / `directSessionObserved` /
+/// `crawlerIdentified`) and `sessionInitiators` (`observerInitiated` /
+/// `peerInitiated`). Whether direct-session evidence belongs on the DOSSIER
+/// is an open design question, and a field declared here is a field whose
+/// disappearance costs the whole record — a price this crate has now paid
+/// three times in one week. They are named so the reader that eventually
+/// wants them knows they are already on the wire.
 ///
 /// `advertisers` is declared, and it is NOT the deleted `knownPeers`: it
 /// counts the peers that named *this* one, where `knownPeers` counted the
@@ -341,11 +354,36 @@ pub(crate) struct PeerSummaryResponse {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PeerDetailResponse {
     pub peer_id: String,
-    pub display_state: PeerDisplayState,
-    /// Unix seconds the network last named this peer to the crawler. It
-    /// exists for every candidate, verified or not, which is what makes it
-    /// the one clock an unverified peer's report can be dated by.
-    pub last_advertised_at: u64,
+    /// What THIS CRAWLER'S DIAL did with this peer, under the name upstream
+    /// renamed it to. Same five words and the same meanings as on the roster
+    /// row — see [`PeerDisplayState`], which both routes share — and the
+    /// rename is the whole point: the dossier reads it to decide whether a
+    /// verification it already holds is FRESH, never to decide whether the
+    /// peer is real.
+    pub crawler_dial_state: PeerDisplayState,
+    /// Unix seconds the network last named this peer to the crawler.
+    ///
+    /// ⭐ NULLABLE, AND IT USED TO BE THE ONE CLOCK EVERY CANDIDATE HAD. It
+    /// is null exactly when the crawler retains no advertised alias for this
+    /// peer, which is now a state a peer can be in and stay in: the local
+    /// observer's own session names a peer nobody gossiped, and an inbound
+    /// socket yields no address to keep. The report is dated by
+    /// `latestPositiveObservedAt` in that case, and by this when it is here —
+    /// what must never happen is a stamp minted out of the other one's
+    /// meaning, because "the network last named it" and "something last
+    /// observed it" are two sentences and only one of them is on this field.
+    pub last_advertised_at: Option<u64>,
+    /// Unix seconds of the newest POSITIVE observation of this peer through
+    /// any channel: a gossiped alias, target-centric advertisement evidence, a
+    /// direct session, or the crawler's own identification.
+    ///
+    /// ⭐ THE ONE CLOCK UPSTREAM CAN ALWAYS ANSWER, which is why it is a
+    /// `u64` and not an `Option`. A candidate with no positive evidence to
+    /// take a maximum over is a request upstream refuses outright rather than
+    /// a record it dates with `null` — so no dossier this route answers is
+    /// undated, which is the property the plate has always relied on and the
+    /// advertise clock can no longer supply.
+    pub latest_positive_observed_at: u64,
     /// The last round that finished with this peer in it. Absent for a peer
     /// the crawler has heard named and not yet probed in any completed round.
     pub last_completed: Option<CandidateEvidenceResponse>,
@@ -353,25 +391,56 @@ pub(crate) struct PeerDetailResponse {
     /// verification for. This is the field that decides whether cknerv has a
     /// sighting to report at all.
     pub verified: Option<VerifiedPeerResponse>,
-    /// The peers that named this one to the crawler — the INBOUND half of the
-    /// address-book relationship, and the only half that exists for a peer
-    /// nobody ever authenticated.
+    /// Every advertisement the crawler retains for this peer — the INBOUND
+    /// half of the address-book relationship, and the only half that exists
+    /// for a peer nobody ever authenticated.
     ///
-    /// ⭐ Only the LENGTH is read, and the entries are deliberately parsed as
-    /// nothing at all. cknerv publishes a count of distinct advertisers; the
-    /// ids behind it would be the first genuinely real edge evidence the
-    /// colony has ever held, and drawing them needs a spec of its own —
-    /// upstream is explicit that `knownPeers` is address-book gossip rather
-    /// than a live topology edge. Reading the rows as [`IgnoredAny`] keeps a
-    /// reshape of the entry shape from costing the whole dossier, which is a
-    /// real risk on a field whose only job here is to be counted.
+    /// ⚠️ ONE ROW PER (ADVERTISER, ALIAS) PAIR, NOT PER ADVERTISER, AND THE
+    /// LENGTH IS THEREFORE NOT THE COUNT cknerv PUBLISHES. Upstream used to
+    /// rebuild this list by scanning node records for the ones naming this
+    /// peer, which yielded one row per advertiser; it now keeps durable
+    /// target-centric evidence keyed by advertiser AND alias, so one peer
+    /// gossiping the same node under three aliases writes three rows.
+    /// Measured live across 136 peers: 5772 rows over 3145 distinct
+    /// advertisers, and up to 162 rows over 38 advertisers on a single peer.
+    /// `.len()` would have printed "162 PEERS NAME IT" under a peer 38 peers
+    /// name — confidently, in the one row whose unit is spelled out.
+    ///
+    /// So the id is read and the distinct set is counted. That is the only
+    /// field taken: the aliases and clocks beside it would be the first
+    /// genuinely real edge evidence the colony has ever held, and drawing them
+    /// needs a spec of its own — upstream is explicit that this is
+    /// address-book gossip rather than a live topology edge.
     ///
     /// `Option` rather than `#[serde(default)]`, unlike every other list on
     /// this route: absent has to stay distinguishable from empty, because the
     /// COUNT is the fact. A wire that stops sending the list must stand the
     /// row down, never print "0 PEERS NAME IT" over a peer the crawler is
     /// dialing every round.
-    pub advertisers: Option<Vec<IgnoredAny>>,
+    pub advertisers: Option<Vec<AdvertiserEvidenceResponse>>,
+}
+
+/// One retained advertisement, read for the advertiser it names and nothing
+/// else.
+///
+/// The wire also carries `alias`, `firstObservedAt`, `lastObservedAt`,
+/// `firstObservedRound`, `lastObservedRound` and `observationCount`. None has
+/// a reader, and each is a row of the edge spec this task is not.
+///
+/// ⭐ THE FALLBACK ARM IS WHY THE COUNT CAN STILL BE TRUSTED. A row whose id
+/// upstream renames or retypes decodes as `Unreadable` instead of failing the
+/// whole dossier, and the mapper stands the count down rather than reporting
+/// the smaller number that ignoring such rows would produce. Dropping them
+/// silently is the trap: a rename would take every row with it and print
+/// "0 PEERS NAME IT" over a peer the whole gossip layer repeats.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum AdvertiserEvidenceResponse {
+    #[serde(rename_all = "camelCase")]
+    Named {
+        advertiser_peer_id: String,
+    },
+    Unreadable(IgnoredAny),
 }
 
 /// How the last completed round went for one candidate.
@@ -477,11 +546,13 @@ pub(crate) struct VerifiedPeerResponse {
 
 /// What one authenticated peer's discovery messages amounted to.
 ///
-/// ⚠️ THE UNIT IS ADDRESSES. `validNodesMessages`, `malformedMessages`,
-/// `unexpectedMessages` and `rejectedAdvertisedAddresses` ride the same object
-/// and are not declared: they measure the conversation rather than the address
-/// book, and the row cknerv draws from this asks how much of the network one
-/// peer knows. The count that answers that is the normalized one, and a peer
+/// ⚠️ THE UNIT IS ADDRESSES. `validNodesMessages`, `validResponseMessages`,
+/// `validAnnounceMessages`, `malformedMessages`, `unexpectedMessages` and
+/// `rejectedAdvertisedAddresses` ride the same object and are not declared:
+/// they measure the conversation rather than the address book — the last two
+/// of them arrived splitting the first into the two Discovery message kinds it
+/// had been counting together — and the row cknerv draws from this asks how
+/// much of the network one peer knows. The count that answers that is the normalized one, and a peer
 /// carries several addresses, so it is never the peer count the deleted
 /// `knownPeers` was — which is the whole reason this arrives under its own
 /// name instead of into that slot.
