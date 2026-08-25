@@ -15,28 +15,28 @@ use cknerv_core::{
     CommonKnowledgeBreakdown, CompositionDemand, DaoStateRecord, EnrichmentSourceState,
     EnrichmentSourceStatus, ForkWatchDeepFork, ForkWatchEventKind, ForkWatchRecord, ForkWatchReorg,
     GalaxyCompositionRecord, GalaxyCompositionTopUp, HashType, NetworkAtlasBucket,
-    NetworkAtlasRecord, NetworkRosterRecord, OutPoint, PeerAdvertisedEvidence, PeerProbeResult,
-    PeerSightingAbsence, PeerSightingLookup, PeerSightingRecord, ProtocolEra, ProtocolEraRecord,
-    RosterNode, ScriptId, ScriptNameRecord, ScriptRegistryRecord, SemanticAsset, SemanticAttribute,
-    SemanticCellConsumption, SemanticCellContent, SemanticContentDecode, SemanticContentGuess,
-    SemanticContentSegment, SemanticFacet, SemanticScript, TransactionHorizonRecord,
-    TransactionParticipantSemantic, TransactionSemanticRecord, DATA_HEX_TRUNCATION_MARKER,
-    MAX_SCRIPT_REGISTRY_ENTRIES,
+    NetworkAtlasRecord, NetworkRosterRecord, OutPoint, PeerAdvertisedEvidence,
+    PeerHandshakeDepthBucket, PeerProbeResult, PeerSightingAbsence, PeerSightingLookup,
+    PeerSightingRecord, ProtocolEra, ProtocolEraRecord, RosterNode, ScriptId, ScriptNameRecord,
+    ScriptRegistryRecord, SemanticAsset, SemanticAttribute, SemanticCellConsumption,
+    SemanticCellContent, SemanticContentDecode, SemanticContentGuess, SemanticContentSegment,
+    SemanticFacet, SemanticScript, TransactionHorizonRecord, TransactionParticipantSemantic,
+    TransactionSemanticRecord, DATA_HEX_TRUNCATION_MARKER, MAX_SCRIPT_REGISTRY_ENTRIES,
 };
 use cknerv_server::{CanonicalContext, EnrichmentSource, GalaxyCompositionHydrator};
 
 use crate::dto::{
-    AssetEcosystemResponse, BlockResponse, CandidateEvidenceResponse, CellDataAnalysis,
-    CellDetailResponse, ClusterDetailResponse, CollectionCompositionDto,
-    CommonKnowledgeSizeBreakdown, DaoInfo, DaoStatisticsResponse, HardforkEventResponse,
-    HardforkTimelineResponse, LabelCountResponse, LatestActivityResponse, LiveCellSummaryResponse,
-    LookupScriptsRequest, NetworkCrawlerSummaryResponse, NetworkDistributionsResponse,
-    NetworkPeersPageResponse, NetworkStats, NftCollectionDetailResponse, PeerDetailResponse,
-    PeerDisplayState, PeerProbeResultResponse, PeerSummaryResponse, RecentReorgResponse,
-    ReorgEventResponse, ScriptCatalogueResponse, ScriptFamilyResponse, ScriptLookupInfo,
-    ScriptLookupResponse, ScriptResponse, SporeItemResponse, TokenResponse,
-    TransactionDetailResponse, TransactionLifecycleResponse, TransactionStatsPoint,
-    TransactionStatsResponse, VerifiedPeerResponse,
+    AddressObservationHistogramResponse, AssetEcosystemResponse, BlockResponse,
+    CandidateEvidenceResponse, CellDataAnalysis, CellDetailResponse, ClusterDetailResponse,
+    CollectionCompositionDto, CommonKnowledgeSizeBreakdown, DaoInfo, DaoStatisticsResponse,
+    HardforkEventResponse, HardforkTimelineResponse, LabelCountResponse, LatestActivityResponse,
+    LiveCellSummaryResponse, LookupScriptsRequest, NetworkCrawlerSummaryResponse,
+    NetworkDistributionsResponse, NetworkPeersPageResponse, NetworkStats,
+    NftCollectionDetailResponse, PeerDetailResponse, PeerDisplayState, PeerProbeResultResponse,
+    PeerSummaryResponse, RecentReorgResponse, ReorgEventResponse, ScriptCatalogueResponse,
+    ScriptFamilyResponse, ScriptLookupInfo, ScriptLookupResponse, ScriptResponse,
+    SporeItemResponse, TokenResponse, TransactionDetailResponse, TransactionLifecycleResponse,
+    TransactionStatsPoint, TransactionStatsResponse, VerifiedPeerResponse,
 };
 use crate::galaxy_composition::{
     discover as discover_galaxy_composition, identity_families as galaxy_identity_families,
@@ -2511,6 +2511,7 @@ fn map_network_atlas(
             "network round verifiedRetainedPeers",
         ),
         (round.new_verified_peers, "network round newVerifiedPeers"),
+        (round.address_attempts, "network round addressAttempts"),
         (
             distributions.verified_retained,
             "network distributions verifiedRetained",
@@ -2565,6 +2566,34 @@ fn map_network_atlas(
         ));
     }
 
+    let address_attempts = u32::try_from(round.address_attempts)
+        .context("ckbadger network round address dial count is outside u32")?;
+    let handshake_depth = handshake_depth_axis(&round.address_observations, address_attempts)?;
+    // The one bridge between the two populations, and a BOUND rather than an
+    // equality on purpose. Upstream dials a peer's addresses in turn and stops
+    // at the first identify, so its own validator holds an identified candidate
+    // to exactly one identifying dial and the two counts are equal today — but
+    // that equality is a property of the dialer's strategy, and refusing the
+    // whole atlas the day it went parallel would be an outage cknerv inflicted
+    // on itself over a healthy source. What IS necessary in either strategy is
+    // that a peer counted as reached had at least one dial that reached it, and
+    // that is what catches a histogram belonging to some other round, or one
+    // arriving zeroed beside a ladder that is not.
+    if round.address_observations.same_network_identified < round.reachable_peers {
+        return Err(anyhow!(
+            "ckbadger network round identified fewer addresses than the peers it reached"
+        ));
+    }
+    // And the other direction of the same argument: a completed candidate is
+    // dialed on at least one of its addresses — upstream refuses to publish one
+    // with no observations at all — so a round can never have made fewer dials
+    // than it considered peers.
+    if round.address_attempts < round.candidate_peers {
+        return Err(anyhow!(
+            "ckbadger network round made fewer address dials than it considered peers"
+        ));
+    }
+
     let indexed_peers = u32::try_from(distributions.verified_retained)
         .context("ckbadger network indexed peer count is outside u32")?;
     let countries = network_distribution(
@@ -2596,11 +2625,84 @@ fn map_network_atlas(
         verified_unavailable_peers: round.verified_unavailable_peers,
         verified_retained_peers: round.verified_retained_peers,
         new_verified_peers: round.new_verified_peers,
+        address_attempts,
+        handshake_depth,
         indexed_peers,
         countries,
         versions,
         asns,
     })
+}
+
+/// The round's address dials, laid along the handshake axis.
+///
+/// `network_distribution`'s sibling, and every difference between them is a
+/// difference in what the two histograms ARE.
+///
+/// It takes its own total rather than the peer counts beside it, because this
+/// one partitions ADDRESSES: a peer is dialed once per address anybody
+/// advertised for it, so the population here runs several times the peer counts
+/// in the same round and would refuse instantly against any of them. Its
+/// buckets are typed rungs rather than crawler-chosen labels, so nothing folds
+/// two spellings together and nothing ranks them by size — the axis IS the
+/// order, and it is read straight out of `PeerProbeResult::HANDSHAKE_AXIS` so
+/// that one enum stays the only place the six results are put in order. And a
+/// zero rung is kept: upstream always answers with all six counters, "no dial
+/// ended with an unreadable identify" is a result, and a strip that dropped its
+/// quiet rungs would render a clean round and a build that stopped counting
+/// them identically.
+///
+/// The partition check is the same load-bearing one, for the same reason and
+/// with one addition. Upstream derives `addressAttempts` by summing these six,
+/// so the equality can only break two ways: the wire stopped meaning what it
+/// says, or upstream grew a SEVENTH result that serde dropped on the floor
+/// here. Both refuse the round, which is correct — a strip whose one claim is
+/// that its segments are all of the segments may not be drawn from five sixths
+/// of them.
+fn handshake_depth_axis(
+    histogram: &AddressObservationHistogramResponse,
+    address_attempts: u32,
+) -> anyhow::Result<Vec<PeerHandshakeDepthBucket>> {
+    let mut total = 0_u32;
+    let mut buckets = Vec::with_capacity(PeerProbeResult::HANDSHAKE_AXIS.len());
+    for result in PeerProbeResult::HANDSHAKE_AXIS {
+        let counter = match result {
+            PeerProbeResult::DialRequestFailed => histogram.dial_request_failed,
+            PeerProbeResult::NoAuthenticatedSessionBeforeDeadline => {
+                histogram.no_authenticated_session_before_deadline
+            }
+            PeerProbeResult::AuthenticatedSessionWithoutIdentifyBeforeDeadline => {
+                histogram.authenticated_session_without_identify_before_deadline
+            }
+            PeerProbeResult::MalformedIdentify => histogram.malformed_identify,
+            PeerProbeResult::ForeignNetwork => histogram.foreign_network,
+            PeerProbeResult::SameNetworkIdentified => histogram.same_network_identified,
+            // Unreachable by construction — `HANDSHAKE_AXIS` is the six rungs
+            // upstream counts and deliberately excludes cknerv's own word for
+            // an observation it could not read. Written as a refusal rather
+            // than as an `unreachable!` because nothing outside this file's
+            // tests panics, and the cost of being wrong about "unreachable" in
+            // a refresh loop is that loop ending rather than one round being
+            // dropped.
+            PeerProbeResult::Unknown => {
+                return Err(anyhow!(
+                    "ckbadger network handshake axis asked for a rung the crawler does not count"
+                ));
+            }
+        };
+        let attempts = u32::try_from(counter)
+            .context("ckbadger network address observation count is outside u32")?;
+        total = total
+            .checked_add(attempts)
+            .ok_or_else(|| anyhow!("ckbadger network address observations overflowed"))?;
+        buckets.push(PeerHandshakeDepthBucket { result, attempts });
+    }
+    if total != address_attempts {
+        return Err(anyhow!(
+            "ckbadger network address observations do not add up to the dials the round made"
+        ));
+    }
+    Ok(buckets)
 }
 
 /// One histogram from `network/distributions`, checked against the population
@@ -4574,10 +4676,18 @@ mod tests {
                             "verifiedUnavailablePeers": 33,
                             "exhaustedCandidates": 51,
                             "foreignPeers": 1,
-                            "addressAttempts": 20,
-                            "nonSuccessfulAddressAttempts": 8,
+                            "addressAttempts": 90,
+                            "nonSuccessfulAddressAttempts": 81,
                             "malformedAddresses": 0,
-                            "newVerifiedPeers": 3
+                            "newVerifiedPeers": 3,
+                            "addressObservations": {
+                                "dialRequestFailed": 20,
+                                "noAuthenticatedSessionBeforeDeadline": 45,
+                                "authenticatedSessionWithoutIdentifyBeforeDeadline": 8,
+                                "malformedIdentify": 4,
+                                "foreignNetwork": 4,
+                                "sameNetworkIdentified": 9
+                            }
                         },
                         "activeRound": null
                     }))
@@ -7373,6 +7483,22 @@ mod tests {
                 verified_unavailable_peers: 6,
                 verified_retained_peers: 9,
                 new_verified_peers: 1,
+                // The address histogram beside that matrix, on its own
+                // population: those 12 peers were dialed on 20 addresses
+                // between them. 5 + 8 + 2 + 1 + 1 + 3 = 20, and the top rung
+                // is the 3 peers that identified — upstream stops dialing a
+                // peer at its first identify, so the axis's last bucket and
+                // the ladder's reachable count are the same cohort read two
+                // ways.
+                address_attempts: 20,
+                address_observations: crate::dto::AddressObservationHistogramResponse {
+                    dial_request_failed: 5,
+                    no_authenticated_session_before_deadline: 8,
+                    authenticated_session_without_identify_before_deadline: 2,
+                    malformed_identify: 1,
+                    foreign_network: 1,
+                    same_network_identified: 3,
+                },
             }),
         }
     }
@@ -7696,6 +7822,185 @@ mod tests {
         // Ranked, not in the order upstream happened to answer in.
         assert_eq!(atlas.asns[0].label, "AS16509 Amazon.com, Inc.");
         assert_eq!(atlas.asns[0].count, 7);
+    }
+
+    #[test]
+    fn an_atlas_lays_the_round_dials_along_the_handshake_axis() {
+        let atlas = map_network_atlas(crawler_summary(7), crawler_distributions(), roster_anchor())
+            .unwrap();
+
+        // A different population from every peer count in the same record, and
+        // the reason the strip has to state its own denominator: 12 peers,
+        // 20 dials.
+        assert_eq!(atlas.address_attempts, 20);
+        assert_eq!(atlas.candidate_peers, 12);
+
+        // The axis, in the enum's order and never in the order the wire spells
+        // its fields, with the quiet rungs kept.
+        assert_eq!(
+            atlas
+                .handshake_depth
+                .iter()
+                .map(|bucket| bucket.result)
+                .collect::<Vec<_>>(),
+            PeerProbeResult::HANDSHAKE_AXIS.to_vec()
+        );
+        assert_eq!(
+            atlas
+                .handshake_depth
+                .iter()
+                .map(|bucket| bucket.attempts)
+                .collect::<Vec<_>>(),
+            vec![5, 8, 2, 1, 1, 3]
+        );
+        assert_eq!(
+            atlas
+                .handshake_depth
+                .iter()
+                .map(|bucket| bucket.attempts)
+                .sum::<u32>(),
+            atlas.address_attempts
+        );
+    }
+
+    #[test]
+    fn an_atlas_refuses_dials_that_do_not_add_up_to_the_dials_the_round_made() {
+        // The partition, and the whole claim the strip makes: its segments are
+        // ALL of the segments. Upstream derives `addressAttempts` by summing
+        // these six, so the only two ways this can break are the wire ceasing
+        // to mean what it says and a SEVENTH result arriving that serde drops
+        // on the floor here — the second being why the total is read at all
+        // rather than summed from the six and called a denominator.
+        //
+        // Both directions bite. A rung short and a rung over would each draw
+        // every OTHER segment at the wrong width, because a share is a share
+        // of the total this record states.
+        for (name, mutate) in [
+            (
+                "a rung short",
+                Box::new(|round: &mut crate::dto::NetworkCrawlerRoundResponse| {
+                    round
+                        .address_observations
+                        .no_authenticated_session_before_deadline -= 1;
+                }) as Box<dyn Fn(&mut crate::dto::NetworkCrawlerRoundResponse)>,
+            ),
+            (
+                "a rung over",
+                Box::new(|round: &mut crate::dto::NetworkCrawlerRoundResponse| {
+                    round.address_observations.malformed_identify += 1;
+                }),
+            ),
+            (
+                "a seventh rung upstream, dropped on the floor here",
+                Box::new(|round: &mut crate::dto::NetworkCrawlerRoundResponse| {
+                    // Exactly what an undeclared new counter looks like from
+                    // inside this crate: the total grows and the six do not.
+                    round.address_attempts += 4;
+                }),
+            ),
+        ] {
+            let mut summary = crawler_summary(7);
+            mutate(summary.last_round.as_mut().unwrap());
+            let error =
+                map_network_atlas(summary, crawler_distributions(), roster_anchor()).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("do not add up to the dials the round made"),
+                "{name}: {error}"
+            );
+        }
+
+        // …and the falsification the three mutations above are worth nothing
+        // without: the unmutated round has to pass the same check, or every
+        // assertion here is being made of a record that was never going to
+        // close.
+        assert!(
+            map_network_atlas(crawler_summary(7), crawler_distributions(), roster_anchor()).is_ok()
+        );
+    }
+
+    #[test]
+    fn an_atlas_refuses_a_histogram_that_belongs_to_some_other_round() {
+        // The two bridges between the address population and the peer one, and
+        // both are BOUNDS rather than equalities — see `map_network_atlas` for
+        // why the equality upstream's validator holds today is not one cknerv
+        // may depend on.
+        //
+        // A peer counted as reached had at least one dial that reached it, so
+        // a histogram arriving zeroed beside a ladder that is not — the shape a
+        // stale or foreign round takes — cannot pass.
+        let mut fewer_identifies = crawler_summary(7);
+        {
+            let round = fewer_identifies.last_round.as_mut().unwrap();
+            round.address_observations.same_network_identified -= 1;
+            round.address_attempts -= 1;
+        }
+        let error = map_network_atlas(fewer_identifies, crawler_distributions(), roster_anchor())
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("identified fewer addresses than the peers it reached"),
+            "{error}"
+        );
+
+        // And a completed candidate was dialed at least once — upstream
+        // refuses to publish one with no observations at all — so a round can
+        // never have made fewer dials than it considered peers.
+        let mut fewer_dials = crawler_summary(7);
+        {
+            let round = fewer_dials.last_round.as_mut().unwrap();
+            round.candidate_peers = 21;
+            round.exhausted_candidates = 17;
+        }
+        let error =
+            map_network_atlas(fewer_dials, crawler_distributions(), roster_anchor()).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("fewer address dials than it considered peers"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn an_atlas_keeps_a_rung_no_dial_ended_on() {
+        // Zero is a result here exactly as it is on the ladder above: "no dial
+        // ended with an unreadable identify" is a reading, and an axis that
+        // dropped its quiet rungs would render a clean round and a build that
+        // stopped counting them identically. Upstream always answers with all
+        // six counters, so this is a rule about what cknerv does with a zero
+        // rather than about what it might not receive.
+        let mut quiet = crawler_summary(7);
+        {
+            let round = quiet.last_round.as_mut().unwrap();
+            round.address_observations.malformed_identify = 0;
+            round.address_observations.foreign_network = 0;
+            round.address_attempts -= 2;
+            // The ladder has to close too: those two foreign dials were the
+            // one foreign peer.
+            round.foreign_peers = 0;
+            round.exhausted_candidates += 1;
+        }
+        let atlas = map_network_atlas(quiet, crawler_distributions(), roster_anchor()).unwrap();
+
+        assert_eq!(
+            atlas.handshake_depth.len(),
+            PeerProbeResult::HANDSHAKE_AXIS.len()
+        );
+        assert_eq!(
+            atlas
+                .handshake_depth
+                .iter()
+                .filter(|bucket| bucket.attempts == 0)
+                .map(|bucket| bucket.result)
+                .collect::<Vec<_>>(),
+            vec![
+                PeerProbeResult::MalformedIdentify,
+                PeerProbeResult::ForeignNetwork,
+            ]
+        );
     }
 
     #[test]
@@ -9092,7 +9397,16 @@ mod tests {
                             "foreignPeers": 1,
                             "verifiedUnavailablePeers": 33,
                             "verifiedRetainedPeers": 42,
-                            "newVerifiedPeers": 3
+                            "newVerifiedPeers": 3,
+                            "addressAttempts": 90,
+                            "addressObservations": {
+                                "dialRequestFailed": 20,
+                                "noAuthenticatedSessionBeforeDeadline": 45,
+                                "authenticatedSessionWithoutIdentifyBeforeDeadline": 8,
+                                "malformedIdentify": 4,
+                                "foreignNetwork": 4,
+                                "sameNetworkIdentified": 9
+                            }
                         },
                         "activeRound": null
                     }))

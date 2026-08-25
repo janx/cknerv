@@ -125,7 +125,11 @@ should additionally gain `network_atlas`. Its country, version and ASN bucket
 totals must each equal `indexed_peers`; its round counts must close both ways
 (`last_round_reachable + exhausted_candidates + foreign_peers` equals
 `candidate_peers`, and `last_round_reachable + verified_unavailable_peers`
-equals `verified_retained_peers`); and no peer ID or address should appear. With the crawler disabled, `network_atlas` stays
+equals `verified_retained_peers`); its `handshake_depth` must carry all six
+rungs of the handshake axis in axis order, zeros included, adding up to
+`address_attempts` — a population of ADDRESSES, so it is normally several times
+`candidate_peers` and never equal to any peer count; and no peer ID or address
+should appear. With the crawler disabled, `network_atlas` stays
 absent while all other configured enrichment capabilities continue normally.
 The same crawler also supplies `network_roster`, the atlas's twin and the only
 streamed record that names peers: at most 256 entries, each carrying a base58

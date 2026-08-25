@@ -2,7 +2,9 @@ import type {
   EnrichmentSourceStatus,
   NetworkAtlasBucket,
   NetworkAtlasRecord,
+  PeerHandshakeAxisRung,
 } from '@cknerv/types';
+import type { NetworkAtlasHandshakeRung } from '../../derives/networkAtlas.derive';
 import {
   deriveNetworkAtlasVisual,
   networkAtlasVisualState,
@@ -42,6 +44,96 @@ function legend(buckets: NetworkAtlasBucket[]): string {
   const rest = buckets.length - visible.length;
   if (rest > 0) visible.push(`+${rest} groups`);
   return visible.join(' · ');
+}
+
+/** What each rung of the handshake axis is called under a six-pixel bar.
+ *
+ *  The DOSSIER already says these six results in sentences —
+ *  `PeerSightingPlate`'s `probeSentence`, where there is a whole line to spend
+ *  on one peer and the answer to "why is this peer not verified" is the point.
+ *  These are the same six statements at legend length, in the same order, and
+ *  they are deliberately the SHORT form rather than a truncation of the long
+ *  one: `NO HANDSHAKE` and `NO IDENTIFY` are the distinction that whole axis
+ *  exists to draw, and a legend that ran out of room would have collapsed them
+ *  into one word.
+ *
+ *  `ANOTHER CHAIN` is the ladder's own wording two rows above, on purpose. It
+ *  is the same cohort read at address scale, and a reader who has just met the
+ *  phrase should not have to learn a second one for it. */
+const HANDSHAKE_RUNG_LABEL: Record<PeerHandshakeAxisRung, string> = {
+  dial_request_failed: 'NO DIAL',
+  no_authenticated_session_before_deadline: 'NO HANDSHAKE',
+  authenticated_session_without_identify_before_deadline: 'NO IDENTIFY',
+  malformed_identify: 'UNREADABLE',
+  foreign_network: 'ANOTHER CHAIN',
+  same_network_identified: 'IDENTIFIED',
+};
+
+/** The round's address dials, laid along the handshake axis.
+ *
+ *  `BucketStrip`'s sibling and NOT a fourth call of it, because almost every
+ *  rule that one follows is inverted here.
+ *
+ *  It counts ADDRESSES. Every other number on this panel counts peers, and a
+ *  peer is dialed once per address anybody advertised for it, so this bar's
+ *  denominator runs several times the ladder's. That is the one thing a reader
+ *  must not get wrong, and three things say it: the caption states the unit,
+ *  the bar is one hue stepping in brightness where the three below it are six
+ *  unrelated hues, and it sits up here with the round it belongs to rather than
+ *  down there with the index scan the census is folded from.
+ *
+ *  It is never sorted. The segments run weakest rung to strongest, left to
+ *  right, and that progression IS the reading — a bar re-ordered by size would
+ *  be a different statement about the same six numbers.
+ *
+ *  The legend names every rung a dial actually ended on, in axis order, and
+ *  never folds a tail into `+N groups` the way a qualitative legend may. It can
+ *  afford to: the rungs it leaves out are exactly the ones that resolved to
+ *  zero, so what it prints always adds up to the number in its own caption, and
+ *  a reader can check that nothing was hidden. The zeros are not lost — the bar
+ *  carries all six segments and the hover names all six counts.
+ *
+ *  Why this belongs on MESH·02 at all, when the median crawler dial was moved
+ *  off it one commit ago for measuring the crawler rather than the network: the
+ *  ladder above states how many peers gave no answer this round, and this is
+ *  the only thing on the panel that answers WHY. A dial that never opened is a
+ *  dead address in the network's gossip; a secure session that opened and then
+ *  went quiet is a live node that will not say who it is. Those are different
+ *  facts about the network, and the crawler is only the instrument that read
+ *  them. */
+function HandshakeStrip({ rungs, total, provenance }: {
+  rungs: NetworkAtlasHandshakeRung[];
+  total: number;
+  provenance: string;
+}) {
+  // A round that made no dials. The ladder above already says it considered
+  // nobody, and a bar of one population with no members has no shape to draw.
+  if (total === 0) return null;
+  const named = (rung: NetworkAtlasHandshakeRung) =>
+    `${HANDSHAKE_RUNG_LABEL[rung.result]} ${rung.attempts}`;
+  return (
+    <div style={{ marginTop: 6 }} title={`${provenance} · ${rungs.map(named).join(' · ')}`}>
+      <div style={{ fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, letterSpacing: 1.2, color: HUD_COLORS.dim, marginBottom: 2 }}>
+        HANDSHAKE DEPTH · {fmt(total)} ADDRESSES DIALED
+      </div>
+      <div style={{ display: 'flex', height: 6, background: HUD_COLORS.trackGround, border: `1px solid ${rgba(HUD_COLORS.peerWire, 0.14)}` }}>
+        {rungs.map((rung) => (
+          <span
+            key={rung.result}
+            data-handshake-rung={rung.result}
+            // No glow, unlike the qualitative strips below. Theirs separates
+            // six unrelated hues; here the neighbours are one hue two steps
+            // apart, and a 5px bleed would smear exactly the edge the ranking
+            // is read from.
+            style={{ width: `${(rung.attempts / total) * 100}%`, background: rung.color }}
+          />
+        ))}
+      </div>
+      <div style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, color: HUD_COLORS.legendInk, marginTop: 3, lineHeight: 1.45 }}>
+        {rungs.filter((rung) => rung.attempts > 0).map(named).join(' · ')}
+      </div>
+    </div>
+  );
 }
 
 function BucketStrip({ label, buckets, total, provenance }: {
@@ -85,9 +177,21 @@ function BucketStrip({ label, buckets, total, provenance }: {
 //
 // Strictly additive: with no usable crawler record the panel's own measured
 // rows are the whole story, so absence renders nothing rather than a substitute
-// readout. Crawler run telemetry (address attempts, dial histograms) is
-// ckbadger's own operational view, not the pilot's — what survives here is the
-// shape of the network the crawl saw.
+// readout.
+//
+// What may be here is a fact about the NETWORK; what may not is a fact about
+// the crawl that read it. The line used to be drawn by listing whatever was
+// currently left out — three different lists in three commits, each naming the
+// thing its own author had not built, and two of the three named something a
+// later commit then put on screen. A list of exclusions is a changelog, not a
+// rule, so the rule is written instead: the median crawler dial went because it
+// measured the crawler's distance from the fleet; `frontier drained` went
+// because it is the run loop's own state; the peers verified for the first time
+// in a round is the crawler's knowledge changing rather than the network's
+// shape. The address histogram stays because a dial that never opened is a dead
+// address in the network's gossip and a session that opened and went quiet is a
+// live node that will not say who it is — the crawler is the instrument there,
+// not the subject.
 export default function NetworkAtlasReadout({ source, record }: {
   source?: EnrichmentSourceStatus;
   record?: NetworkAtlasRecord | null;
@@ -160,10 +264,22 @@ export default function NetworkAtlasReadout({ source, record }: {
             {fmt(value)}
           </StatRow>
         ))}
-        {/* One denominator, stated once, on the first strip that spends it —
-            the same place the sample size used to ride. The three strips fold
-            the same peers three ways, so repeating it under each would read as
-            three different populations. */}
+        {/* The ladder's failure rung, decomposed — and the reason it sits HERE
+            rather than under the census below. It belongs to the round, on the
+            round's clock and the round's evidence; the three strips below are
+            folded out of a node-store scan taken when the request arrived. Two
+            clocks, in order, with the boundary where a reader can see it. */}
+        <HandshakeStrip
+          rungs={visual.handshake}
+          total={record.address_attempts}
+          provenance={provenance}
+        />
+        {/* One denominator, stated once, on the first strip that spends THIS
+            one — the same place the sample size used to ride. The three strips
+            fold the same peers three ways, so repeating it under each would
+            read as three different populations. The strip above states a
+            different one, in a different unit, which is why it says so in its
+            own caption rather than inheriting this. */}
         <BucketStrip
           label={`COUNTRIES · ALL ${fmt(record.indexed_peers)} VERIFIED PEERS`}
           buckets={visual.countries}

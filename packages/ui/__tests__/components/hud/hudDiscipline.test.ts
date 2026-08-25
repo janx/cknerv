@@ -65,6 +65,7 @@ import {
   HUD_COLORS,
   HUD_FONTS,
   HUD_TYPE,
+  ORDINAL_DEPTH_RAMP,
   QUALITATIVE_BUCKET_COLORS,
   rgba,
 } from '../../../src/components/hud/hudTheme';
@@ -98,6 +99,7 @@ import {
   ECOSYSTEM_UNLISTED_COLOR,
 } from '../../../src/derives/assetEcosystem.derive';
 import { SCRIPT_FAMILY_COLORS } from '../../../src/derives/scriptFamilies.derive';
+import { PEER_PROBE_HANDSHAKE_AXIS } from '@cknerv/types';
 import { compositionTierColor } from '../../../src/components/hud/CellSemanticsReadout';
 import { fpsColor } from '../../../src/tweaks/renderStatsStore';
 import {
@@ -2040,6 +2042,95 @@ describe('the colour reserve', () => {
       .filter(({ step, index }) => step >= ladder[index])
       .map(({ index }) => `${RUNGS[index]} → ${RUNGS[index + 1]} does not step down`);
     expect(inversions).toEqual([]);
+  });
+
+  it('the other ordinal ramp ranks too, and spends no new colour doing it', () => {
+    // MESH·02's handshake strip lays a crawl round's address dials along
+    // `dial refused → no session → session without identify → unreadable
+    // identify → another chain → identified`. That is ordered, so it may not
+    // read `QUALITATIVE_BUCKET_COLORS`, whose whole job is that a slot means
+    // NOTHING: a hash would scramble the progression into a colour wheel and a
+    // reader could no longer put two segments in order.
+    //
+    // And it is the second ordinal in the HUD, which is where the question got
+    // interesting. The durability ramp answers with five hand-cut hues, each
+    // clearing the reserve, each other, and a luma ladder — three constraints
+    // at once, and at six steps the third fights the first. A single hue
+    // stepping in ALPHA answers all three for free, and the palette's own note
+    // on `stageGround` already says brightness is where "darker or lighter than
+    // its neighbour" belongs. So: no new hex, and one that ranks by
+    // construction rather than by a comment asking the next hand to be careful.
+    const composite = (paint: string): string => {
+      const match = /^rgba\((\d+),(\d+),(\d+),([\d.]+)\)$/.exec(paint);
+      expect(match, `${paint} is not rgba(token, alpha)`).not.toBeNull();
+      const alpha = Number(match![4]);
+      // Over the track it is drawn on, because that is the colour a reader
+      // actually sees — an alpha judged against nothing is not a brightness.
+      const over = [0, 2, 4].map((i) =>
+        parseInt(HUD_COLORS.trackGround.replace('#', '').slice(i, i + 2), 16));
+      return `#${[1, 2, 3]
+        .map((channel, index) =>
+          Math.round(Number(match![channel]) * alpha + over[index] * (1 - alpha))
+            .toString(16).padStart(2, '0'))
+        .join('')}`;
+    };
+
+    // One hue, and it is a token: the peer plane's own wire, on the peer panel,
+    // about peers being dialed.
+    for (const step of ORDINAL_DEPTH_RAMP) {
+      expect(step).toContain(rgba(HUD_COLORS.peerWire, 1).slice(0, -3));
+    }
+    // As many steps as there are rungs to paint. A seventh result upstream
+    // would need a seventh step, and this is where that is noticed.
+    expect(ORDINAL_DEPTH_RAMP).toHaveLength(PEER_PROBE_HANDSHAKE_AXIS.length);
+
+    const seen = ORDINAL_DEPTH_RAMP.map(composite);
+    const luma = (hex: string): number => {
+      const [r, g, b] = [0, 2, 4]
+        .map((i) => parseInt(hex.replace('#', '').slice(i, i + 2), 16));
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+
+    // It ranks, in one direction — the same claim the durability ramp makes,
+    // and the reason both are ordinals rather than sets of bands.
+    const inversions = seen
+      .slice(1)
+      .map((step, index) => ({ step, index }))
+      .filter(({ step, index }) => luma(step) <= luma(seen[index]))
+      .map(({ index }) => `step ${index} → ${index + 1} does not step up`);
+    expect(inversions).toEqual([]);
+
+    // Every neighbouring pair is legible as two segments, and the quietest step
+    // still clears the channel it is laid in — a segment that reaches the track
+    // has stopped being a segment and become a hole in the bar. Both are what
+    // the `0.2` floor and the even spacing are FOR, so both are held here
+    // rather than argued for in a comment nobody can run.
+    const tight = seen
+      .slice(1)
+      .map((step, index) => ({ step, index, gap: rgbDistance(step, seen[index]) }))
+      .filter(({ gap }) => gap <= SEPARATION_FLOOR)
+      .map(({ index, gap }) => `step ${index} ~ ${index + 1} (${gap.toFixed(1)})`);
+    expect(tight).toEqual([]);
+    expect(rgbDistance(seen[0], HUD_COLORS.trackGround)).toBeGreaterThan(SEPARATION_FLOOR);
+  });
+
+  it('the two ordinals and the qualitative slots share no member', () => {
+    // Three ramps in one HUD and two of them rank, so what keeps a reader from
+    // reading the wrong one is that no value appears in two. It matters most on
+    // MESH·02, where the ordinal strip and three qualitative strips are stacked
+    // in one column and count DIFFERENT POPULATIONS — the ordinal counts the
+    // addresses peers were dialed on, the three below it count peers. A shared
+    // swatch would invite a reader to carry one denominator into the other.
+    const ordinal = new Set<string>(ORDINAL_DEPTH_RAMP);
+    expect(QUALITATIVE_BUCKET_COLORS.filter((hex) => ordinal.has(hex))).toEqual([]);
+    expect(Object.values(STORAGE_TIER_COLORS).filter((hex) => ordinal.has(hex))).toEqual([]);
+    // …and the ramp is not a palette table's worth of values with one reader
+    // and no rule, which is what the file at the top of this oracle warns about.
+    // It is read where it is meant to be read.
+    const readers = [...INK_SOURCES, ...APP_SOURCES].filter(
+      (source) => !isPaletteSource(source.name) && source.text.includes('ORDINAL_DEPTH_RAMP'),
+    );
+    expect(readers.map((source) => source.name)).toContain('derives/networkAtlas.derive.ts');
   });
 
   it('no rung of the durability ramp is a rate the organism is spending', () => {

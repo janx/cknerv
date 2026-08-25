@@ -46,11 +46,15 @@ pub(crate) struct NetworkCrawlerSummaryResponse {
 /// substitute, only an invented one.
 ///
 /// The wire carries more of this round than is declared here:
-/// `addressAttempts`, `nonSuccessfulAddressAttempts`, `malformedAddresses`,
-/// `peerOutcomes`, `addressObservations` and `discovery`. Nothing in cknerv
-/// reads them yet, so they are deliberately not declared: a field declared
-/// here is a field whose disappearance costs the whole record, and this
-/// crate has now paid that price twice in one week.
+/// `nonSuccessfulAddressAttempts`, `malformedAddresses`, `peerOutcomes` and
+/// `discovery`. Nothing in cknerv reads them, so they are deliberately not
+/// declared: a field declared here is a field whose disappearance costs the
+/// whole record, and this crate has now paid that price twice in one week.
+/// Two of them could not be read anyway. `nonSuccessfulAddressAttempts` is
+/// `addressAttempts` less the histogram's top rung and carries nothing the
+/// strip does not draw; `malformedAddresses` counts advertised addresses that
+/// never became a dial, so it sits OUTSIDE the partition below and would have
+/// to be a statement of its own rather than a seventh bucket.
 ///
 /// The five peer counts below are not five independent measurements. Upstream
 /// derives all of them from one disjoint five-cell outcome matrix — every
@@ -100,6 +104,41 @@ pub(crate) struct NetworkCrawlerRoundResponse {
     pub verified_unavailable_peers: u64,
     /// Peers verified for the first time in this round.
     pub new_verified_peers: u64,
+    /// Address dials the round made. Upstream derives it by summing
+    /// `addressObservations`, which is what makes reading both worth the
+    /// second field: the sum is then a check rather than a restatement, and it
+    /// is the only thing that would notice a SEVENTH result added upstream.
+    /// Serde would ignore an undeclared seventh counter silently, cknerv's six
+    /// would come up short of this total, and the round would be refused —
+    /// which is the correct answer for a strip whose one claim is that its
+    /// parts are all the parts.
+    pub address_attempts: u64,
+    pub address_observations: AddressObservationHistogramResponse,
+}
+
+/// Where each of the round's address dials stopped, along upstream's own
+/// handshake axis.
+///
+/// Six counters, and cknerv reads every one of them — which is why they are
+/// declared required rather than defaulted. A missing counter and a wrong
+/// counter both end in the same refusal here, and the undefaulted form says
+/// the truer thing about which happened: the wire changed shape, rather than
+/// this round's arithmetic failing to close.
+///
+/// The order of these fields is the ORDER OF THE AXIS, weakest rung first, and
+/// it is the same order `PeerProbeResult` declares. Nothing in this struct
+/// enforces that — the mapper builds the axis from
+/// `PeerProbeResult::HANDSHAKE_AXIS` and never from field order — but writing
+/// them out of order here would be a lie to the next reader.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AddressObservationHistogramResponse {
+    pub dial_request_failed: u64,
+    pub no_authenticated_session_before_deadline: u64,
+    pub authenticated_session_without_identify_before_deadline: u64,
+    pub malformed_identify: u64,
+    pub foreign_network: u64,
+    pub same_network_identified: u64,
 }
 
 /// `network/distributions`: the crawler's whole verified set, counted by

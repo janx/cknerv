@@ -312,6 +312,79 @@ export interface TransactionHorizonRecord {
   daily_counts: number[];
 }
 
+/** How far one of the crawler's dials got, in upstream's own vocabulary.
+ *
+ * An ORDINAL axis rather than a set of labels: each name is strictly further
+ * through the handshake than the one before it, from a dial that never opened
+ * to a peer that identified itself on this chain. The two middle rungs must
+ * not be collapsed — `no_authenticated_session_before_deadline` says nothing
+ * answered on the wire, and
+ * `authenticated_session_without_identify_before_deadline` says something
+ * answered, completed a secure handshake, and then never said who it was. To
+ * an operator those are different problems with different fixes.
+ *
+ * `unknown` is the crawler naming a result this build has no word for; it
+ * ranks lowest, so it only ever arrives alone.
+ *
+ * It sits here, above both records that speak it, because it is now ONE
+ * vocabulary read at two scales: `PeerHandshakeDepthBucket` counts a whole
+ * round's dials by where each stopped, and `PeerAdvertisedEvidence` names the
+ * furthest rung one peer's dials reached. A second ordering of the same six
+ * results is exactly the drift that would let the panel and the dossier
+ * disagree about which way this axis points. */
+export type PeerProbeResult =
+  | 'unknown'
+  | 'dial_request_failed'
+  | 'no_authenticated_session_before_deadline'
+  | 'authenticated_session_without_identify_before_deadline'
+  | 'malformed_identify'
+  | 'foreign_network'
+  | 'same_network_identified';
+
+/** The axis a round's address histogram is counted along, weakest rung first.
+ *
+ * The Rust twin is `PeerProbeResult::HANDSHAKE_AXIS`, and there the order is
+ * the enum's own `Ord`; a TS string union has no order at all, so this is the
+ * only place the order exists on this side and every reader takes it from
+ * here rather than writing the six results out again.
+ *
+ * `unknown` is deliberately absent. It is cknerv's word for an observation it
+ * could not read on ONE peer, and a round's histogram has six upstream-named
+ * counters and no seventh — so a bucket for it would be a bucket nothing could
+ * ever fill, in a strip whose whole claim is that its parts add up to the
+ * dials that were made. */
+export const PEER_PROBE_HANDSHAKE_AXIS = [
+  'dial_request_failed',
+  'no_authenticated_session_before_deadline',
+  'authenticated_session_without_identify_before_deadline',
+  'malformed_identify',
+  'foreign_network',
+  'same_network_identified',
+] as const satisfies readonly PeerProbeResult[];
+
+/** A result that can actually be a bucket of a round's histogram: the axis's
+ * six, and never `unknown`. The wire shape below stays permissive because a
+ * wire may carry anything; this is what a reader is allowed to have narrowed it
+ * to, so a surface that names the rungs is exhaustive over six rather than
+ * carrying a seventh row nothing can reach. */
+export type PeerHandshakeAxisRung = (typeof PEER_PROBE_HANDSHAKE_AXIS)[number];
+
+/** One rung of the handshake axis, and how many of the round's address dials
+ * stopped on it.
+ *
+ * Deliberately NOT a `NetworkAtlasBucket`. That one carries a label the
+ * crawler chose — a country code, a client version string — which cknerv can
+ * only pass through and rank by size. This one carries a typed rung of a fixed
+ * axis, so its order is a fact about the wire rather than a rendering choice,
+ * and nothing downstream may sort it. */
+export interface PeerHandshakeDepthBucket {
+  result: PeerProbeResult;
+  /** Address dials, not peers. A peer is dialed once per address anybody
+   * advertised for it, so this population is several times the peer counts
+   * beside it and never partitions them. */
+  attempts: number;
+}
+
 export interface NetworkAtlasBucket {
   label: string;
   count: number;
@@ -360,6 +433,15 @@ export interface ScriptRegistryRecord {
  * time in it. `last_round_reachable` keeps its own name because the fact under
  * it never moved.
  *
+ * Beside them, and NOT one of them, is the round's address histogram.
+ * `address_attempts` and `handshake_depth` count the individual ADDRESSES
+ * those peers were dialed on, which is a several-times-larger population that
+ * partitions nothing above it. It rides here because it is the same round's
+ * evidence one scale down — the decomposition of the ladder's own failure rung
+ * — and because upstream holds each identified peer to exactly one identifying
+ * dial, so the axis's top rung and `last_round_reachable` are one cohort
+ * counted two ways.
+ *
  * The four counts under `candidate_peers` are one round's outcome matrix read
  * four ways, so they are bound by arithmetic rather than merely bounded:
  * `last_round_reachable + exhausted_candidates + foreign_peers` is exactly
@@ -389,6 +471,26 @@ export interface NetworkAtlasRecord {
   verified_unavailable_peers: number;
   verified_retained_peers: number;
   new_verified_peers: number;
+  /** Address dials the round made, and the denominator `handshake_depth`
+   * partitions.
+   *
+   * A DIFFERENT POPULATION from every peer count above it: a peer is dialed
+   * once per address anybody advertised for it, so a round makes several times
+   * as many dials as it considers peers, and nothing bounds the ratio. Upstream
+   * derives this by summing the same six counters `handshake_depth` carries,
+   * which is what makes the equality worth checking rather than restating — a
+   * seventh rung added upstream would leave the six short of it, and a strip
+   * drawn from six of seven parts would claim to be a whole. */
+  address_attempts: number;
+  /** Where each of those dials stopped, one bucket per rung of
+   * `PEER_PROBE_HANDSHAKE_AXIS`, weakest first.
+   *
+   * The order is the reading, so it is never sorted by size the way the three
+   * label histograms below are. A zero bucket is kept rather than dropped:
+   * "no dial ended with an unreadable identify" is a result, and an axis that
+   * lost its quiet rungs would make a round where nothing went wrong
+   * indistinguishable from a build that stopped counting them. */
+  handshake_depth: PeerHandshakeDepthBucket[];
   /** The peers the crawler holds an index entry for right now, and the
    * denominator every bucket below is counted against.
    *
@@ -493,28 +595,6 @@ export interface PeerSightingRecord {
    * Absent means "nobody can say", never "zero". */
   known_peers_count?: number;
 }
-
-/** How far one of the crawler's dials got, in upstream's own vocabulary.
- *
- * An ORDINAL axis rather than a set of labels: each name is strictly further
- * through the handshake than the one before it, from a dial that never opened
- * to a peer that identified itself on this chain. The two middle rungs must
- * not be collapsed — `no_authenticated_session_before_deadline` says nothing
- * answered on the wire, and
- * `authenticated_session_without_identify_before_deadline` says something
- * answered, completed a secure handshake, and then never said who it was. To
- * an operator those are different problems with different fixes.
- *
- * `unknown` is the crawler naming a result this build has no word for; it
- * ranks lowest, so it only ever arrives alone. */
-export type PeerProbeResult =
-  | 'unknown'
-  | 'dial_request_failed'
-  | 'no_authenticated_session_before_deadline'
-  | 'authenticated_session_without_identify_before_deadline'
-  | 'malformed_identify'
-  | 'foreign_network'
-  | 'same_network_identified';
 
 /** What the crawler holds about a peer it has never verified.
  *

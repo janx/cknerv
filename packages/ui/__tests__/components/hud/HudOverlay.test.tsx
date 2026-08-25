@@ -121,6 +121,16 @@ const networkAtlas: NetworkAtlasRecord = {
   verified_unavailable_peers: 1195,
   verified_retained_peers: 1204,
   new_verified_peers: 3,
+  // 1,290 peers, dialed on 2,000 addresses between them.
+  address_attempts: 2000,
+  handshake_depth: [
+    { result: 'dial_request_failed', attempts: 400 },
+    { result: 'no_authenticated_session_before_deadline', attempts: 1500 },
+    { result: 'authenticated_session_without_identify_before_deadline', attempts: 60 },
+    { result: 'malformed_identify', attempts: 20 },
+    { result: 'foreign_network', attempts: 11 },
+    { result: 'same_network_identified', attempts: 9 },
+  ],
   indexed_peers: 1204,
   countries: [{ label: 'SG', count: 800 }, { label: 'US', count: 404 }],
   versions: [{ label: '0.119.0', count: 900 }, { label: '0.118.0', count: 304 }],

@@ -417,6 +417,33 @@
       "verified_unavailable_peers": 0,
       "verified_retained_peers": 57,
       "new_verified_peers": 0,
+      "address_attempts": 282,
+      "handshake_depth": [
+        {
+          "result": "dial_request_failed",
+          "attempts": 32
+        },
+        {
+          "result": "no_authenticated_session_before_deadline",
+          "attempts": 191
+        },
+        {
+          "result": "authenticated_session_without_identify_before_deadline",
+          "attempts": 2
+        },
+        {
+          "result": "malformed_identify",
+          "attempts": 0
+        },
+        {
+          "result": "foreign_network",
+          "attempts": 0
+        },
+        {
+          "result": "same_network_identified",
+          "attempts": 57
+        }
+      ],
       "indexed_peers": 57,
       "countries": [
         {
@@ -929,6 +956,33 @@
         "verified_unavailable_peers": 0,
         "verified_retained_peers": 57,
         "new_verified_peers": 0,
+        "address_attempts": 282,
+        "handshake_depth": [
+          {
+            "result": "dial_request_failed",
+            "attempts": 32
+          },
+          {
+            "result": "no_authenticated_session_before_deadline",
+            "attempts": 191
+          },
+          {
+            "result": "authenticated_session_without_identify_before_deadline",
+            "attempts": 2
+          },
+          {
+            "result": "malformed_identify",
+            "attempts": 0
+          },
+          {
+            "result": "foreign_network",
+            "attempts": 0
+          },
+          {
+            "result": "same_network_identified",
+            "attempts": 57
+          }
+        ],
         "indexed_peers": 57,
         "countries": [
           {

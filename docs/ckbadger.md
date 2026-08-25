@@ -546,6 +546,31 @@ means the same words as the round's count on a different clock — a node-store
 scan as the request arrived, against what the round's matrix added up to when
 it finished — so the two are never asserted against each other.
 
+Beside the ladder and never part of it, the round's `addressObservations` cross
+as `handshake_depth`: six buckets naming how far each of the round's dials got,
+weakest rung first, along the same `PeerProbeResult` ordinal the DOSSIER already
+picks a peer's furthest rung by. They partition ADDRESSES rather than peers — a
+peer is dialed once per address anybody advertised for it, so the population runs
+several times the ladder's — and their denominator, `addressAttempts`, is read
+from the wire rather than summed here. That is what makes the equality a check:
+upstream derives it from the same six counters, so a seventh result added
+upstream would leave cknerv's six short of it and the round would be refused,
+instead of a strip silently drawing five sixths of an axis as a whole. A rung
+that resolves to zero is kept, on the same argument as a ladder rung that does.
+
+Two bounds bridge the two populations, and both are inequalities on purpose.
+Upstream holds an identified peer to exactly one identifying dial and refuses to
+publish a completed candidate with no observations at all, so the histogram's top
+rung is at least `reachablePeers` and `addressAttempts` is at least
+`candidatePeers`. Those catch a histogram belonging to another round, or one
+arriving zeroed beside a ladder that is not. The equality upstream's own
+validator holds today is NOT asserted: it is a property of dialing a peer's
+addresses in turn and stopping at the first identify, and refusing a whole atlas
+the day that dialer went parallel would be an outage cknerv inflicted on itself.
+`nonSuccessfulAddressAttempts` is not read — it is `addressAttempts` less that
+top rung — and neither is `malformedAddresses`, which counts advertised
+addresses that never became a dial and so sits outside the partition entirely.
+
 `PEER MESH` always keeps the local CKB node's directly measured peer count and
 head consensus as primary truth, plus a catch-up row that appears only while our
 own tip trails the best known head. Per-peer client version and RTT belong to
@@ -559,8 +584,27 @@ that resolves to zero stays on screen**: zero is a result, and a row that
 vanished on it would make a healthy crawl and a broken one look identical. Each
 rung says what it counts on hover, beside the shared
 `Crawler atlas · round N · as of #block` provenance, which is also where a
-strip's whole bucket list waits; crawler run counters stay in ckbadger's own
-operational view. Enrichment is strictly additive: when the crawler is
+strip's whole bucket list waits.
+
+Between the ladder and those three strips sits the handshake bar, decomposing the
+ladder's own failure rung: `HANDSHAKE DEPTH · N ADDRESSES DIALED`, six segments
+in axis order, never sorted by size. It states its own denominator because that
+denominator is not the panel's — everything else there counts peers — and it is
+painted in one hue stepping in brightness where the three census strips are
+painted in six unrelated hues, so the two kinds of bar cannot be read into each
+other. Its legend names every rung a dial actually ended on and folds no tail
+into a group count; what it prints always adds up to the number in its own
+caption, because the rungs it omits are exactly the zero ones, and all six wait
+on the hover.
+
+What may appear here at all is a fact about the NETWORK; what may not is a fact
+about the crawl that read it. The median crawler dial went because it measured
+the crawler's distance from the fleet, the frontier state because it is the run
+loop's own, the newly-verified count because it is the crawler's knowledge
+changing rather than the network's shape. The address histogram stays because a
+dial that never opened is a dead address in the network's gossip and a session
+that opened and went quiet is a live node that will not say who it is — the
+crawler is the instrument there, not the subject. Enrichment is strictly additive: when the crawler is
 unconfigured, empty, disabled, or canonically unusable those rows are simply
 absent and the panel is its measured rows alone. It creates no scene nodes or
 edges, and staleness dims the indexed rows and adds a single `ATLAS STALE` line

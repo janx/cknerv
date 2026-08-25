@@ -686,6 +686,92 @@ pub struct TransactionHorizonRecord {
     pub daily_counts: Vec<u64>,
 }
 
+/// How far one of the crawler's dials got, in upstream's own vocabulary.
+///
+/// An ORDINAL axis rather than a set of labels: each name is strictly further
+/// through the handshake than the one before it, from a dial that never
+/// opened to a peer that identified itself on this chain. That is what makes
+/// "the furthest any of its addresses got" a meaningful answer to "why is
+/// this peer not verified" — and it is why the two middle rungs must not be
+/// collapsed. `noAuthenticatedSessionBeforeDeadline` says nothing answered on
+/// the wire; `authenticatedSessionWithoutIdentifyBeforeDeadline` says
+/// something answered, completed a secure handshake, and then never said who
+/// it was. To an operator those are different problems with different fixes.
+///
+/// It sits here, above both records that speak it, because it is now ONE
+/// vocabulary read at two scales: [`PeerHandshakeDepthBucket`] counts a whole
+/// round's dials by where each stopped, and [`PeerAdvertisedEvidence`] names
+/// the furthest rung one peer's dials reached. It was written for the second
+/// and lived beside it; a second ordering of the same six results is exactly
+/// the drift that would let the panel and the dossier disagree about which
+/// way this axis points.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum PeerProbeResult {
+    /// The crawler named a result this build has no word for. Ranked lowest
+    /// deliberately: any result this build CAN name is a better answer than
+    /// one it cannot, and this only surfaces when every observation on the
+    /// peer was unreadable.
+    Unknown,
+    /// The dial never opened — no route, refused, or malformed address.
+    DialRequestFailed,
+    /// Nothing completed a secure handshake before the round gave up.
+    NoAuthenticatedSessionBeforeDeadline,
+    /// A secure session opened and the peer never identified itself.
+    AuthenticatedSessionWithoutIdentifyBeforeDeadline,
+    /// The peer identified itself in a shape the crawler could not read.
+    MalformedIdentify,
+    /// The peer identified itself, on another chain.
+    ForeignNetwork,
+    /// The peer identified itself, on this chain. A peer whose furthest probe
+    /// is this one normally has a verified record, so seeing it beside an
+    /// absence means upstream held an identify it did not keep.
+    SameNetworkIdentified,
+}
+
+impl PeerProbeResult {
+    /// The axis a round's address histogram is counted along, weakest rung
+    /// first.
+    ///
+    /// The order is this enum's own `Ord`, written out rather than derived so
+    /// a reader can see the sentence it spells — a dial that never opened, a
+    /// wire that never answered, a session that never said who it was, an
+    /// identify nobody could read, an identify from somewhere else, an
+    /// identify from here. `handshake_axis_is_this_enum_in_order` holds the
+    /// two together, so reordering either one goes red.
+    ///
+    /// [`Self::Unknown`] is deliberately absent. It is cknerv's own word for
+    /// an observation it could not read on ONE peer, and a round's histogram
+    /// has six upstream-named counters and no seventh: a bucket for it here
+    /// would be a bucket nothing could ever fill, in a strip whose whole claim
+    /// is that its parts add up to the dials that were made.
+    pub const HANDSHAKE_AXIS: [Self; 6] = [
+        Self::DialRequestFailed,
+        Self::NoAuthenticatedSessionBeforeDeadline,
+        Self::AuthenticatedSessionWithoutIdentifyBeforeDeadline,
+        Self::MalformedIdentify,
+        Self::ForeignNetwork,
+        Self::SameNetworkIdentified,
+    ];
+}
+
+/// One rung of the handshake axis, and how many of the round's address dials
+/// stopped on it.
+///
+/// Deliberately NOT a [`NetworkAtlasBucket`]. That one carries a label the
+/// crawler chose — a country code, a client version string — which cknerv can
+/// only pass through and rank by size. This one carries a typed rung of a
+/// fixed axis, so its order is a fact about the wire rather than a rendering
+/// choice, and nothing downstream may sort it.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PeerHandshakeDepthBucket {
+    pub result: PeerProbeResult,
+    /// Address dials, not peers. A peer is dialed once per address anybody
+    /// advertised for it, so this population is several times the peer counts
+    /// beside it and never partitions them.
+    pub attempts: u32,
+}
+
 /// One display-safe label count over the crawler's whole verified set.
 /// Individual peer identities and addresses never cross this contract.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -716,6 +802,19 @@ pub struct NetworkAtlasBucket {
 /// verified out of the exhausted and foreign cohorts — so it is the one number
 /// here that must never be added to its neighbours.
 ///
+/// Beside them, and NOT one of them, is the round's address histogram. Every
+/// count above is a count of peers; `address_attempts` and `handshake_depth`
+/// count the individual addresses those peers were dialed on, which is a
+/// several-times-larger population that partitions nothing above it. It rides
+/// in this record because it is the same round's evidence one scale down — the
+/// decomposition of the ladder's own failure rung — and because upstream's
+/// validator holds each identified peer to exactly one identifying dial, so
+/// the axis's top rung and the ladder's `last_round_reachable` are the same
+/// cohort counted two ways. cknerv checks only that the first is at least the
+/// second: the equality is a property of upstream dialing a peer's addresses
+/// in turn and stopping at the first identify, and refusing a whole atlas the
+/// day that dialer went parallel would be a self-inflicted outage.
+///
 /// The buckets are a census, not a sample. They used to be folded here out of
 /// one bounded 64-row page of peers and captioned for it; upstream computes
 /// them over every verified peer now, which is why `sample_size`,
@@ -737,6 +836,30 @@ pub struct NetworkAtlasRecord {
     pub verified_unavailable_peers: u64,
     pub verified_retained_peers: u64,
     pub new_verified_peers: u64,
+    /// Address dials the round made, and the denominator `handshake_depth`
+    /// partitions.
+    ///
+    /// A DIFFERENT POPULATION from every peer count above it, and the reason
+    /// this pair is carried rather than folded into the ladder: a peer is
+    /// dialed once per address anybody advertised for it, so a round makes
+    /// several times as many dials as it considers peers — mainnet has been
+    /// running near two of them per candidate, and nothing bounds the ratio.
+    /// Upstream derives this by summing the same six counters
+    /// `handshake_depth` carries, which is exactly what makes the equality
+    /// worth checking — a seventh rung added upstream would leave cknerv's six
+    /// short of it, and a strip drawn from six of seven parts would claim to
+    /// be a whole while quietly dropping one.
+    pub address_attempts: u32,
+    /// Where each of those dials stopped, one bucket per rung of
+    /// [`PeerProbeResult::HANDSHAKE_AXIS`], weakest first.
+    ///
+    /// The order is the reading, so it is never sorted by size the way the
+    /// three label histograms below are. A zero bucket is kept rather than
+    /// dropped: "no dial ended with an unreadable identify" is a result, and
+    /// an axis that lost its quiet rungs would make a round where nothing went
+    /// wrong indistinguishable from a build that stopped counting them.
+    #[serde(default)]
+    pub handshake_depth: Vec<PeerHandshakeDepthBucket>,
     /// The peers the crawler holds an index entry for right now, and the
     /// denominator every bucket below is counted against.
     ///
@@ -857,41 +980,6 @@ pub struct PeerSightingRecord {
     /// is. Absent means "nobody can say", never "zero".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub known_peers_count: Option<u32>,
-}
-
-/// How far one of the crawler's dials got, in upstream's own vocabulary.
-///
-/// An ORDINAL axis rather than a set of labels: each name is strictly further
-/// through the handshake than the one before it, from a dial that never
-/// opened to a peer that identified itself on this chain. That is what makes
-/// "the furthest any of its addresses got" a meaningful answer to "why is
-/// this peer not verified" — and it is why the two middle rungs must not be
-/// collapsed. `noAuthenticatedSessionBeforeDeadline` says nothing answered on
-/// the wire; `authenticatedSessionWithoutIdentifyBeforeDeadline` says
-/// something answered, completed a secure handshake, and then never said who
-/// it was. To an operator those are different problems with different fixes.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "snake_case")]
-pub enum PeerProbeResult {
-    /// The crawler named a result this build has no word for. Ranked lowest
-    /// deliberately: any result this build CAN name is a better answer than
-    /// one it cannot, and this only surfaces when every observation on the
-    /// peer was unreadable.
-    Unknown,
-    /// The dial never opened — no route, refused, or malformed address.
-    DialRequestFailed,
-    /// Nothing completed a secure handshake before the round gave up.
-    NoAuthenticatedSessionBeforeDeadline,
-    /// A secure session opened and the peer never identified itself.
-    AuthenticatedSessionWithoutIdentifyBeforeDeadline,
-    /// The peer identified itself in a shape the crawler could not read.
-    MalformedIdentify,
-    /// The peer identified itself, on another chain.
-    ForeignNetwork,
-    /// The peer identified itself, on this chain. A peer whose furthest probe
-    /// is this one normally has a verified record, so seeing it beside an
-    /// absence means upstream held an identify it did not keep.
-    SameNetworkIdentified,
 }
 
 /// What the crawler holds about a peer it has never verified.
@@ -1766,6 +1854,61 @@ mod tests {
         assert_eq!(projection.transaction_cap, 2_048);
     }
 
+    /// The ordinal is one vocabulary and it points ONE WAY.
+    ///
+    /// `HANDSHAKE_AXIS` is written out by hand so a reader can see the
+    /// sentence it spells, and a hand-written list is exactly the thing that
+    /// drifts: the round's strip draws its segments in this order and the
+    /// DOSSIER picks a peer's furthest rung by this enum's `Ord`, so an axis
+    /// that disagreed with the enum would have the panel and the plate reading
+    /// the same six results in two different directions with nothing to say so.
+    ///
+    /// Asked as a strict increase rather than against a second copy of the
+    /// list, because a second copy is one more thing to reorder in the same
+    /// commit. Reorder either the enum or the axis and this goes red.
+    #[test]
+    fn handshake_axis_is_this_enum_in_order() {
+        let axis = PeerProbeResult::HANDSHAKE_AXIS;
+        for pair in axis.windows(2) {
+            assert!(
+                pair[0] < pair[1],
+                "the handshake axis stopped ranking at {:?} → {:?}",
+                pair[0],
+                pair[1]
+            );
+        }
+
+        // …and that it is the WHOLE axis minus the one rung upstream cannot
+        // answer with. A strip whose parts must add up to the dials that were
+        // made may not be drawn from five of six results, and it may not carry
+        // a bucket nothing can ever fill.
+        assert!(!axis.contains(&PeerProbeResult::Unknown));
+        assert_eq!(axis[0], PeerProbeResult::DialRequestFailed);
+        assert_eq!(axis[axis.len() - 1], PeerProbeResult::SameNetworkIdentified);
+        assert!(PeerProbeResult::Unknown < axis[0]);
+    }
+
+    /// The falsification for the rule above: it has to fail on a list that is
+    /// this enum's members in the wrong order, or "strictly increasing" is
+    /// being asserted of something that cannot decrease.
+    #[test]
+    fn a_reordered_axis_is_caught_rather_than_ranked() {
+        let scrambled = [
+            PeerProbeResult::DialRequestFailed,
+            PeerProbeResult::MalformedIdentify,
+            PeerProbeResult::NoAuthenticatedSessionBeforeDeadline,
+            PeerProbeResult::AuthenticatedSessionWithoutIdentifyBeforeDeadline,
+            PeerProbeResult::ForeignNetwork,
+            PeerProbeResult::SameNetworkIdentified,
+        ];
+        assert!(scrambled.windows(2).any(|pair| pair[0] >= pair[1]));
+        // The same six results, so the failure above is about the ORDER and
+        // not about the membership.
+        let mut sorted = scrambled;
+        sorted.sort();
+        assert_eq!(sorted, PeerProbeResult::HANDSHAKE_AXIS);
+    }
+
     fn cell(block: u64, suffix: &str) -> CellSemanticRecord {
         CellSemanticRecord {
             out_point: OutPoint {
@@ -1951,6 +2094,14 @@ mod tests {
             verified_unavailable_peers: 1,
             verified_retained_peers: 9,
             new_verified_peers: 3,
+            // 12 peers, dialed on 19 addresses between them, and the top rung
+            // is the 8 that identified.
+            address_attempts: 19,
+            handshake_depth: PeerProbeResult::HANDSHAKE_AXIS
+                .into_iter()
+                .zip([4_u32, 5, 1, 0, 1, 8])
+                .map(|(result, attempts)| PeerHandshakeDepthBucket { result, attempts })
+                .collect(),
             indexed_peers: 9,
             countries: vec![
                 NetworkAtlasBucket {

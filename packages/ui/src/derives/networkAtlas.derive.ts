@@ -1,9 +1,11 @@
-import type {
-  EnrichmentSourceStatus,
-  NetworkAtlasBucket,
-  NetworkAtlasRecord,
+import {
+  PEER_PROBE_HANDSHAKE_AXIS,
+  type EnrichmentSourceStatus,
+  type NetworkAtlasBucket,
+  type NetworkAtlasRecord,
+  type PeerHandshakeAxisRung,
 } from '@cknerv/types';
-import { QUALITATIVE_BUCKET_COLORS } from '../components/hud/hudTheme';
+import { ORDINAL_DEPTH_RAMP, QUALITATIVE_BUCKET_COLORS } from '../components/hud/hudTheme';
 
 export type NetworkAtlasVisualState = 'ready' | 'stale';
 
@@ -25,7 +27,22 @@ export interface NetworkAtlasBucketVisual extends NetworkAtlasBucket {
   color: string;
 }
 
+export interface NetworkAtlasHandshakeRung {
+  /** Narrowed to the axis's own six. The wire's `result` is the whole
+   *  `PeerProbeResult` union because a wire may carry anything; by the time a
+   *  rung is here it has been checked against the axis, so a surface that names
+   *  the rungs is exhaustive over six rather than carrying a seventh row
+   *  nothing can reach. */
+  result: PeerHandshakeAxisRung;
+  attempts: number;
+  color: string;
+}
+
 export interface NetworkAtlasVisual {
+  /** The round's address dials, along the handshake axis. Ordered by the axis
+   *  and NEVER by size — unlike the three histograms beside it, whose order is
+   *  a rendering choice. */
+  handshake: NetworkAtlasHandshakeRung[];
   countries: NetworkAtlasBucketVisual[];
   versions: NetworkAtlasBucketVisual[];
   asns: NetworkAtlasBucketVisual[];
@@ -44,6 +61,16 @@ function labelColor(label: string): string {
     hash = (hash * 31 + (character.codePointAt(0) ?? 0)) >>> 0;
   }
   return QUALITATIVE_BUCKET_COLORS[hash % QUALITATIVE_BUCKET_COLORS.length];
+}
+
+// A rung's colour is its POSITION on the axis, and nothing else — which is why
+// it is an index into the ramp rather than a lookup keyed by the result. The
+// three bars above hash a label into `QUALITATIVE_BUCKET_COLORS` because a
+// country has no order; this one has nothing but order, so it takes the ramp
+// that steps in brightness. See `ORDINAL_DEPTH_RAMP` for why one hue at six
+// alphas rather than six hues.
+function rungColor(rung: number): string {
+  return ORDINAL_DEPTH_RAMP[rung];
 }
 
 function safeNonnegativeInteger(value: number): boolean {
@@ -79,6 +106,49 @@ function deriveBuckets(
   // every bar drawn from it would be the wrong width rather than a short one.
   if (total !== population) return null;
   visual.sort((left, right) => right.count - left.count || left.label.localeCompare(right.label));
+  return visual;
+}
+
+/** The round's address dials, checked against the dials the round says it made.
+ *
+ *  `deriveBuckets`'s sibling, and every difference between them is a difference
+ *  in what the two histograms are. The adapter refuses a record that fails any
+ *  of this; it is asked again here for the same reason the three census strips
+ *  are, which is that this side draws the bar and a bar of the wrong widths is
+ *  worse than no bar.
+ *
+ *  Four rules, and the last three are the opposite of that function's:
+ *
+ *  - The population is `address_attempts`, not a peer count. A peer is dialed
+ *    once per address anybody advertised for it, so this partitions a
+ *    several-times-larger set and would refuse instantly against
+ *    `candidate_peers` or `indexed_peers`.
+ *  - A zero rung is KEPT. `deriveBuckets` refuses a zero-count bucket because
+ *    upstream's label histograms never emit one — a country with no peers in it
+ *    is a country nobody named. This histogram always emits all six counters,
+ *    and "no dial ended with an unreadable identify" is a result.
+ *  - Nothing is sorted. The order IS the reading.
+ *  - The rungs must be the whole axis, in the axis's order. That single check
+ *    does four jobs: it rejects a missing rung, a duplicated one, a reordered
+ *    one, and `unknown` — which is cknerv's word for an observation it could
+ *    not read on one peer and can never be a bucket of a round's histogram. */
+function deriveHandshake(record: NetworkAtlasRecord): NetworkAtlasHandshakeRung[] | null {
+  const rungs = record.handshake_depth;
+  if (rungs.length !== PEER_PROBE_HANDSHAKE_AXIS.length) return null;
+  let total = 0;
+  const visual: NetworkAtlasHandshakeRung[] = [];
+  // Walked over the AXIS rather than over the record, so the rung that comes
+  // out is the axis's own literal and the narrowing above is earned rather than
+  // asserted.
+  for (const [index, expected] of PEER_PROBE_HANDSHAKE_AXIS.entries()) {
+    const rung = rungs[index];
+    if (rung.result !== expected) return null;
+    if (!safeNonnegativeInteger(rung.attempts)) return null;
+    total += rung.attempts;
+    if (total > record.address_attempts) return null;
+    visual.push({ result: expected, attempts: rung.attempts, color: rungColor(index) });
+  }
+  if (total !== record.address_attempts) return null;
   return visual;
 }
 
@@ -123,6 +193,7 @@ export function deriveNetworkAtlasVisual(
     record.verified_unavailable_peers,
     record.verified_retained_peers,
     record.new_verified_peers,
+    record.address_attempts,
     record.indexed_peers,
   ];
   if (!summaryCounts.every(safeNonnegativeInteger)) return null;
@@ -156,5 +227,13 @@ export function deriveNetworkAtlasVisual(
   const countries = deriveBuckets(record.countries, population);
   const versions = deriveBuckets(record.versions, population);
   const asns = deriveBuckets(record.asns, population);
-  return countries && versions && asns ? { countries, versions, asns } : null;
+  // The round's own histogram, on the round's own population. It is validated
+  // here beside the census rather than after it because the panel prints all of
+  // it as one block of numbers about one network: a record whose parts
+  // contradict each other is not a reason to draw the parts that happen to
+  // close.
+  const handshake = deriveHandshake(record);
+  return countries && versions && asns && handshake
+    ? { handshake, countries, versions, asns }
+    : null;
 }

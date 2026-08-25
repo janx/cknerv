@@ -245,6 +245,40 @@ export const QUALITATIVE_BUCKET_COLORS: readonly string[] = [
   '#983BC6',
 ];
 
+/** The other kind of bucket ramp, and the one the six slots above cannot be.
+ *
+ *  `QUALITATIVE_BUCKET_COLORS` hands out a slot by a hash of a label, because a
+ *  country and a client version have no order to draw. One bar in the HUD does:
+ *  MESH·02's handshake strip lays a crawl round's address dials along the axis
+ *  `dial refused → no session → session without identify → unreadable identify
+ *  → another chain → identified`, where each rung is strictly further through
+ *  the handshake than the one before it. Handed six unrelated hues, that
+ *  progression is scrambled into a colour wheel and a reader can no longer put
+ *  two segments in order.
+ *
+ *  So it steps in BRIGHTNESS, in one hue, which is what a sequential ramp is.
+ *  The hue is `peerWire` — the peer plane's own wire, on the peer panel, about
+ *  peers being dialed — and the ladder is the alpha, which is the reading the
+ *  palette already carries brightness in everywhere else it means "further
+ *  along" rather than "other than". Six values and not one new colour: an
+ *  ordinal built out of six fresh hexes would have to clear the reserve, clear
+ *  each other, AND rank monotonically, and the answer to all three at once is
+ *  the ramp a single hue gives for free.
+ *
+ *  It is also what tells this bar apart from the three above it at a glance,
+ *  which the strip needs more than most: it counts ADDRESSES while every other
+ *  number on that panel counts PEERS, so a reader who took it for a fourth
+ *  census strip would read it against the wrong denominator. Six hues means
+ *  qualitative, one hue ramping means ordinal.
+ *
+ *  The floor is not decorative. `0.2` is where the quietest step still clears
+ *  the `trackGround` channel it is drawn on by the palette's own separation
+ *  floor, and the even spacing is what keeps every neighbouring pair clear of
+ *  each other. `hudDiscipline.test.ts` composites the whole ladder over the
+ *  track and holds both. */
+export const ORDINAL_DEPTH_RAMP: readonly string[] = [0.2, 0.36, 0.52, 0.68, 0.84, 1]
+  .map((alpha) => rgba(HUD_COLORS.peerWire, alpha));
+
 // ——— Cell identity ———————————————————————————————————————————————————————
 //
 // VERDICT, adjudicated at the running stage on 2026-08-23: the cell mesh wears
