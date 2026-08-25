@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { STAGE_FILL_FULL_RATIO } from '../../../src/boot/stageCompose';
 import { BOOT_SEQUENCE_TITLE } from '../../../src/components/hud/bootSequencePresentation';
 import {
   STAGE_COMPOSING_TITLE,
@@ -43,6 +44,19 @@ describe('stage composing — the line', () => {
       staged: BUDGET, budget: BUDGET, curated: 0, composed: false,
     });
     expect(line?.text).toBe('AWAITING COMPOSITION · STAGED 12,000');
+    expect(line?.fill).toBeNull();
+  });
+
+  it('calls effectively-full full, on the decision\'s own predicate', () => {
+    // Caught live: the stage restored at 11,991 of 12,000, the decision called
+    // that full and the line drew a bar at 99.9% — a composition that had not
+    // begun, rendered as nearly finished. Per-block churn keeps a full stage a
+    // few seats short at any instant; the last stretch is noise, not filling.
+    const nearlyFull = Math.ceil(BUDGET * STAGE_FILL_FULL_RATIO);
+    const line = stageComposingLine({
+      staged: nearlyFull, budget: BUDGET, curated: 0, composed: false,
+    });
+    expect(line?.text).toBe(`AWAITING COMPOSITION · STAGED ${nearlyFull.toLocaleString('en-US')}`);
     expect(line?.fill).toBeNull();
   });
 

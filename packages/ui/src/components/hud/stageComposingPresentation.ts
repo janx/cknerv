@@ -1,3 +1,5 @@
+import { stageEffectivelyFull } from '../../boot/stageCompose';
+
 /**
  * What the composing chapter of the boot band says, and how much of it is a
  * measurement. Beside the banner for the same reason `bootSequencePresentation`
@@ -48,7 +50,12 @@ export function stageComposingLine(input: {
   if (staged === null || budget === null || budget <= 0) return null;
 
   const seats = `STAGED ${fmt(staged)}`;
-  if (staged < budget) {
+  // The SAME predicate the decision uses, and not `staged < budget`, which is
+  // how a bar at 99.9% got drawn live: per-block churn keeps a full stage a few
+  // seats short at any instant, so the last stretch of "filling" is noise, and
+  // a readout that renders noise as a nearly-complete bar has told the reader
+  // the composition is nearly done at the moment it has not begun.
+  if (!stageEffectivelyFull(staged, budget)) {
     return {
       text: `${seats} / ${fmt(budget)}`,
       fill: Math.max(0, Math.min(1, staged / budget)),

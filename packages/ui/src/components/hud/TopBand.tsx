@@ -65,7 +65,10 @@ export default function TopBand({
     height: 2,
     width: `${Math.max(0, Math.min(1, fill)) * 100}%`,
     background: accent,
-    boxShadow: `0 0 8px ${accent}`,
+    // A softer halo than the plate gauge's: that one sits inside a boxed plate
+    // and can afford to glow, while this runs the full width of the viewport
+    // and the chapter it belongs to is the quiet one.
+    boxShadow: `0 0 6px ${rgba(accent, 0.55)}`,
   };
   return (
     <div
