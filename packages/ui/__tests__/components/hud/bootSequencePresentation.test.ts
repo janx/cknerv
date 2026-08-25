@@ -114,6 +114,25 @@ describe('boot phase detail', () => {
     expect(bootPhaseDetail({ id: 'gl', state: 'done' })).toBe('');
   });
 
+  it('never prints a replay as a fraction of nothing', () => {
+    // A replay announces itself before it knows how far it has to go. Measured
+    // on a cold datastore the band printed `SEEDING 23,552 / 0` for seconds —
+    // the same synthesized denominator the snapshot phase refuses, arriving
+    // from the other side.
+    expect(bootPhaseDetail({
+      id: 'seeding',
+      state: 'active',
+      seedingDone: 23_552,
+      seedingTotal: 0,
+    })).toBe('23,552');
+    expect(bootPhaseDetail({
+      id: 'seeding',
+      state: 'active',
+      seedingDone: 0,
+      seedingTotal: 0,
+    })).toBe('');
+  });
+
   it('drops the numbers once a phase finishes — the tick is the reading', () => {
     expect(bootPhaseDetail({
       id: 'snapshot',

@@ -94,6 +94,25 @@ export function formatBootSnapshotDetail(
 }
 
 /**
+ * The server's replay, and the same rule the streamed snapshot follows: report
+ * what was measured and never a denominator that was not.
+ *
+ * A replay announces itself before it knows how far it has to go — measured on
+ * a cold datastore, the band spent its first seconds printing `SEEDING 23,552 /
+ * 0`, which is a fraction of nothing and reads as a fault in a readout whose
+ * whole job is to be trusted about progress. The replay plate has said
+ * `WAITING FOR …` in that state for as long as it has existed; the band has no
+ * room for a sentence beside seven other phases, so it says the half it knows.
+ */
+export function formatBootSeedingDetail(phase: BootPhaseSnapshot): string {
+  const done = phase.seedingDone ?? 0;
+  const total = phase.seedingTotal ?? 0;
+  if (total > 0) return `${fmt(done)} / ${fmt(total)}`;
+  if (done <= 0) return '';
+  return fmt(done);
+}
+
+/**
  * The number a line carries, when it carries one. Only two phases are measured
  * — the streamed snapshot and the server's replay — everything else is a tick,
  * because a tick is all that was observed. A failed line drops its measurement
@@ -105,9 +124,7 @@ export function bootPhaseDetail(phase: BootPhaseSnapshot): string {
   if (phase.id === 'snapshot') {
     return formatBootSnapshotDetail(phase.receivedBytes, phase.totalBytes);
   }
-  if (phase.id === 'seeding') {
-    return `${fmt(phase.seedingDone ?? 0)} / ${fmt(phase.seedingTotal ?? 0)}`;
-  }
+  if (phase.id === 'seeding') return formatBootSeedingDetail(phase);
   return '';
 }
 
