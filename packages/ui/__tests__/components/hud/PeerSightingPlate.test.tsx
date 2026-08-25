@@ -64,6 +64,13 @@ function row(container: HTMLElement, name: string): string {
   return container.querySelector(`[data-sighting-row="${name}"]`)?.textContent ?? '';
 }
 
+/** The row's VALUE alone. A row's text includes captions that deliberately
+ *  name the unit they are not ("…, NOT PEERS"), so a unit assertion has to
+ *  read the number's own words rather than the whole row's. */
+function value(container: HTMLElement, name: string): string {
+  return container.querySelector(`[data-sighting-value="${name}"]`)?.textContent ?? '';
+}
+
 describe('PeerSightingPlate absence', () => {
   it('renders nothing at all when no source was asked', () => {
     const { container } = renderPlate({ phase: 'disabled', record: null });
@@ -131,19 +138,136 @@ describe('PeerSightingPlate absence', () => {
       advertised: ADVERTISED,
       nowMs: ADVERTISED.last_advertised_at_ms + 120_000,
     });
-    expect(container.querySelector('[data-sighting-phase="unsighted"]')
-      ?.getAttribute('data-sighting-reason')).toBe('advertised_unverified');
+    const plate = container.querySelector('[data-sighting-phase="unsighted"]');
+    expect(plate?.getAttribute('data-sighting-reason')).toBe('advertised_unverified');
     expect(container.textContent).toContain('NAMED BY THE NETWORK, NEVER VERIFIED');
     expect(container.textContent).not.toContain('NEVER SEEN FROM OUTSIDE');
     expect(container.textContent).not.toContain('NO CRAWLER SIGHTING');
     // The typed reason, and the clock the report is dated by — an unverified
     // peer has no sighting to be stamped by, so this is the only one it has.
-    expect(container.textContent).toContain('NO HANDSHAKE BEFORE THE DEADLINE');
-    expect(container.textContent).toContain('LAST NAMED 2m 0s AGO');
-    expect(container.textContent).toContain('2 ROUNDS EXHAUSTED');
-    expect(container.querySelector('[data-sighting-absence]')
-      ?.getAttribute('data-sighting-probe'))
+    const exposure = row(container, 'exposure');
+    expect(exposure).toContain('NO HANDSHAKE BEFORE THE DEADLINE');
+    expect(exposure).toContain('LAST NAMED 2m 0s AGO');
+    expect(exposure).toContain('2 ROUNDS EXHAUSTED');
+    // The rung and the reason answer one question between them, so they are
+    // on ONE element. They were two apart for a commit, which cost nothing
+    // visible and made every oracle that asked the plate for the rung read
+    // `null` while passing.
+    expect(plate?.getAttribute('data-sighting-probe'))
       .toBe('no_authenticated_session_before_deadline');
+  });
+
+  it('says where the furthest dial went, and out of how many', () => {
+    // The one fact on the mirror a node cannot read off its own config: that
+    // states what it BOUND, and this is the address the network is telling
+    // everybody to dial. The denominator rides with it because a rung alone
+    // does not say how hard anybody tried — one refusal out of one is a dead
+    // entry in the gossip, one out of nine is a node answering nowhere.
+    const { container } = renderPlate({
+      phase: 'unsighted',
+      record: null,
+      reason: 'advertised_unverified',
+      advertised: ADVERTISED,
+    });
+    const exposure = row(container, 'exposure');
+    expect(ADVERTISED.furthest_address).toBeTruthy();
+    expect(exposure).toContain('DIALED AT');
+    expect(exposure).toContain('198.51.100.4');
+    expect(exposure).toContain(`FURTHEST OF ${ADVERTISED.dialed_address_count}`);
+  });
+
+  it('keeps the port when a real multiaddr is too long to print whole', () => {
+    // The only part of the address an operator can act on is the transport
+    // and the PORT. A multiaddr ends in `/p2p/<id>` — the node this plate is
+    // already about — so an evenly-split truncation spends its whole budget
+    // spelling the subject twice and hides the one number that matters.
+    const long: PeerAdvertisedEvidence = {
+      ...ADVERTISED,
+      furthest_address:
+        '/ip6/::ffff:203.0.113.168/tcp/8114/p2p/QmNRAvtC6L85hwp6vWnqaKonJw3dz1q39B4nXVQErzC4Hx',
+    };
+    const { container } = renderPlate({
+      phase: 'unsighted',
+      record: null,
+      reason: 'advertised_unverified',
+      advertised: long,
+    });
+    const exposure = row(container, 'exposure');
+    expect(exposure).toContain('/ip6/::ffff:203.0.113.168/tcp/8114');
+    expect(exposure).toContain('…');
+  });
+
+  it('states the count alone rather than inventing a place for the rung', () => {
+    const withoutAddress: PeerAdvertisedEvidence = { ...ADVERTISED };
+    delete withoutAddress.furthest_address;
+    const { container } = renderPlate({
+      phase: 'unsighted',
+      record: null,
+      reason: 'advertised_unverified',
+      advertised: withoutAddress,
+    });
+    const exposure = row(container, 'exposure');
+    expect(exposure).toContain('3 ADDRESSES DIALED');
+    expect(exposure).not.toContain('DIALED AT');
+  });
+
+  it('drops the denominator when one address is the whole population', () => {
+    const single: PeerAdvertisedEvidence = { ...ADVERTISED, dialed_address_count: 1 };
+    const { container } = renderPlate({
+      phase: 'unsighted',
+      record: null,
+      reason: 'advertised_unverified',
+      advertised: single,
+    });
+    const exposure = row(container, 'exposure');
+    expect(exposure).toContain('DIALED AT');
+    expect(exposure).not.toContain('FURTHEST OF');
+  });
+
+  it('renders no verified-only row over a peer nobody verified', () => {
+    // The whole point of the dialect. None of these exists for a peer the
+    // crawler never authenticated — upstream refuses to fabricate them and so
+    // does this — so the body is the subset it can actually fill, and a row
+    // that leaked through would be a fact with no observation under it.
+    const { container } = renderPlate({
+      phase: 'unsighted',
+      record: null,
+      reason: 'advertised_unverified',
+      advertised: ADVERTISED,
+    });
+    const rows = Array.from(container.querySelectorAll('[data-sighting-row]'))
+      .map((node) => node.getAttribute('data-sighting-row'));
+    expect(rows).toEqual(['exposure', 'crowd-inbound']);
+    for (const absent of ['whereabouts', 'network-age', 'identify', 'crowd-outbound']) {
+      expect(container.querySelector(`[data-sighting-row="${absent}"]`)).toBeNull();
+    }
+    // And no observation stamp: nothing here was sighted.
+    expect(container.querySelector('[data-sighting-stamp]')).toBeNull();
+  });
+
+  it('counts the peers that name an unverified peer, in the same words', () => {
+    const { container } = renderPlate({
+      phase: 'unsighted',
+      record: null,
+      reason: 'advertised_unverified',
+      advertised: ADVERTISED,
+    });
+    expect(value(container, 'crowd-inbound'))
+      .toBe(`${ADVERTISED.advertiser_peer_count} PEERS`);
+    expect(row(container, 'crowd-inbound')).toContain('GOSSIP, NOT LINKS');
+  });
+
+  it('stands the crowd row down for an unverified peer nobody can count', () => {
+    const uncounted: PeerAdvertisedEvidence = { ...ADVERTISED };
+    delete uncounted.advertiser_peer_count;
+    const { container } = renderPlate({
+      phase: 'unsighted',
+      record: null,
+      reason: 'advertised_unverified',
+      advertised: uncounted,
+    });
+    expect(container.querySelector('[data-sighting-row="crowd-inbound"]')).toBeNull();
+    expect(container.textContent).not.toContain('ADVERTISED BY');
   });
 
   it('gives every rung of the handshake its own sentence', () => {
@@ -169,11 +293,11 @@ describe('PeerSightingPlate absence', () => {
         reason: 'advertised_unverified',
         advertised: { ...ADVERTISED, furthest_result: rung },
       });
-      // The absence block is one headline div followed by its caption divs.
-      const lines = Array.from(container.querySelectorAll('[data-sighting-absence] > div'))
-        .map((node) => node.textContent ?? '');
-      expect(lines.length).toBe(3);
-      sentences.set(rung, lines[1]);
+      // The sentence is the EXPOSURE row's VALUE — the row that asks whether
+      // the outside can reach this node, answering with how far it got.
+      const value = container.querySelector('[data-sighting-value="exposure"]');
+      expect(value, `no exposure row for ${rung}`).not.toBeNull();
+      sentences.set(rung, value?.textContent ?? '');
       cleanup();
     }
     expect(new Set(sentences.values()).size).toBe(rungs.length);
@@ -197,7 +321,7 @@ describe('PeerSightingPlate absence', () => {
       reason: 'advertised_unverified',
       advertised: { ...ADVERTISED, consecutive_exhausted_rounds: 0 },
     });
-    expect(container.textContent).toContain('LAST NAMED');
+    expect(row(container, 'exposure')).toContain('LAST NAMED');
     expect(container.textContent).not.toContain('EXHAUSTED');
   });
 
@@ -212,6 +336,11 @@ describe('PeerSightingPlate absence', () => {
     });
     expect(container.textContent).toContain('NAMED BY THE NETWORK, NEVER VERIFIED');
     expect(container.textContent).not.toContain('NEVER SEEN FROM OUTSIDE');
+    // …and nothing under it. The rows are the evidence, so no evidence is no
+    // rows rather than rows full of blanks.
+    expect(container.querySelectorAll('[data-sighting-row]')).toHaveLength(0);
+    expect(container.querySelector('[data-sighting-plate]')
+      ?.getAttribute('data-sighting-probe')).toBeNull();
   });
 
   it('reports a fault in the source\'s own words, quietly', () => {
@@ -310,27 +439,76 @@ describe('PeerSightingPlate sighting', () => {
       .toBe('rgb(246, 226, 1)');
   });
 
-  it('labels the address-book figure as the sample it is', () => {
-    // The count is optional on the record now, so this is a record with one
-    // — a source that can still answer the OUTBOUND question. ckbadger no
-    // longer can: it deleted `knownPeers` and answers with the peers that
-    // named THIS node instead, which is the same relationship read from the
-    // other end and would print this sentence backwards.
-    const { container } = renderPlate({ record: { ...RECORD, known_peers_count: 45 } });
-    const crowd = row(container, 'crowd');
-    expect(crowd).toContain('~45 PEERS IN ADDRESS BOOK');
-    expect(crowd).toContain('SAMPLED');
+  it('reads the address book from both ends, in two units that cannot swap', () => {
+    // The row this replaces printed ONE number for a relationship with two
+    // ends, and upstream deleted the number under it. Both directions are
+    // answerable now and they are neither the same measurement nor the same
+    // unit: peers that gossip this node, and addresses this node gossiped. A
+    // peer is advertised under every alias anybody ever saw it at, so the
+    // second runs several times the first — printing either under the other's
+    // label would misstate the network by an unbounded factor and read just
+    // as confidently.
+    const { container } = renderPlate();
+    expect(row(container, 'crowd-inbound')).toContain('ADVERTISED BY');
+    expect(row(container, 'crowd-outbound')).toContain('ADVERTISES');
+    // The VALUES, where the unit is the number's own word and a swap would be
+    // silent. Read separately from the rows above, because both captions name
+    // the unit they are NOT.
+    expect(value(container, 'crowd-inbound')).toBe(`${RECORD.advertiser_peer_count} PEERS`);
+    expect(value(container, 'crowd-outbound')).toBe('5,727 ADDRESSES');
+    // The unit is never left to be inferred from a bare number.
+    expect(RECORD.advertised_address_count).not.toBe(RECORD.advertiser_peer_count);
   });
 
-  it('stands the crowd row down entirely when nobody can say', () => {
-    // The committed sample is what the adapter actually produces, and it
-    // carries no count. Absent has to read as "nobody can say" and never as
-    // a zero, an empty row, or a number inferred from the other direction.
-    expect(RECORD.known_peers_count).toBeUndefined();
+  it('calls the crowd gossip rather than a drawing of who is connected', () => {
+    // Upstream is explicit that `knownPeers` is address-book gossip and not a
+    // live topology edge. This plate hangs beside a scene that draws points
+    // joined by lines, which is exactly where a reader supplies the wrong
+    // sentence unless the row says otherwise.
     const { container } = renderPlate();
-    expect(container.querySelector('[data-sighting-row="crowd"]')).toBeNull();
-    expect(container.textContent).not.toContain('ADDRESS BOOK');
-    expect(container.textContent).not.toContain('CROWD');
+    expect(row(container, 'crowd-inbound')).toContain('GOSSIP, NOT LINKS');
+    expect(row(container, 'crowd-outbound')).toContain('NOT PEERS');
+  });
+
+  it('states one and many in the units they are counted in', () => {
+    const { container } = renderPlate({
+      record: { ...RECORD, advertiser_peer_count: 1, advertised_address_count: 1 },
+    });
+    expect(value(container, 'crowd-inbound')).toBe('1 PEER');
+    expect(value(container, 'crowd-outbound')).toBe('1 ADDRESS');
+  });
+
+  it('stands each direction down on its own when nobody can say', () => {
+    // Absent has to read as "nobody can say" and never as a zero, an empty
+    // row, or a number inferred from the other direction. The two are
+    // separately absent because they are separately answerable: the outbound
+    // counter is nested inside a verification, so a peer can have one and not
+    // the other.
+    const record = { ...RECORD };
+    delete record.advertised_address_count;
+    const { container } = renderPlate({ record });
+    expect(container.querySelector('[data-sighting-row="crowd-inbound"]')).not.toBeNull();
+    expect(container.querySelector('[data-sighting-row="crowd-outbound"]')).toBeNull();
+    expect(container.textContent).not.toContain('ADVERTISES');
+
+    cleanup();
+    const silent = { ...RECORD };
+    delete silent.advertiser_peer_count;
+    delete silent.advertised_address_count;
+    const quiet = renderPlate({ record: silent });
+    expect(quiet.container.querySelector('[data-sighting-row="crowd-inbound"]')).toBeNull();
+    expect(quiet.container.querySelector('[data-sighting-row="crowd-outbound"]')).toBeNull();
+    expect(quiet.container.textContent).not.toContain('ADVERTISED BY');
+  });
+
+  it('never prints a zero where nobody counted, and prints one where they did', () => {
+    const { container } = renderPlate({
+      record: { ...RECORD, advertiser_peer_count: 0, advertised_address_count: 0 },
+    });
+    // A crawler that answered with an empty list has said zero, and zero is a
+    // report — the row that stands down is the one with no answer at all.
+    expect(value(container, 'crowd-inbound')).toBe('0 PEERS');
+    expect(value(container, 'crowd-outbound')).toBe('0 ADDRESSES');
   });
 });
 
@@ -339,8 +517,14 @@ describe('PeerSightingPlate dialects', () => {
     const { container } = renderPlate();
     const rows = Array.from(container.querySelectorAll('[data-sighting-row]'))
       .map((node) => node.getAttribute('data-sighting-row'));
-    // CROWD stands down: no source can answer the outbound question today.
-    expect(rows).toEqual(['whereabouts', 'exposure', 'network-age', 'identify']);
+    expect(rows).toEqual([
+      'whereabouts',
+      'exposure',
+      'network-age',
+      'identify',
+      'crowd-inbound',
+      'crowd-outbound',
+    ]);
     expect(container.textContent).not.toContain('HOW THE NETWORK SEES YOU');
   });
 
@@ -371,7 +555,13 @@ describe('PeerSightingPlate dialects', () => {
       .map((node) => node.getAttribute('data-sighting-row'));
     // No live RPC stands on the other side, so IDENTIFY could only set the
     // crawler's version against the crawler's version.
-    expect(rows).toEqual(['whereabouts', 'exposure', 'network-age']);
+    expect(rows).toEqual([
+      'whereabouts',
+      'exposure',
+      'network-age',
+      'crowd-inbound',
+      'crowd-outbound',
+    ]);
     expect(container.textContent).not.toContain('NO LIVE VERSION TO CHECK AGAINST');
     // The dial belongs to the host card's own RECORD row in this dialect,
     // which had it off the roster before this lookup was even sent.

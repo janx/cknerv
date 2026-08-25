@@ -18,7 +18,7 @@ import type {
   PeerSightingAbsence,
   PeerSightingRecord,
 } from '@cknerv/types';
-import { formatAge } from './cellFormat';
+import { formatAge, midTruncate } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE } from './hudTheme';
 import {
   moduleTag,
@@ -183,12 +183,42 @@ function probeSentence(result: PeerProbeResult | undefined): string {
 /** When the network last named this peer, and how long it has been failing.
  *  Every CRAWLER-class line on this plate carries its own stamp, and an
  *  unverified peer has no sighting to be stamped by — this clock is the only
- *  one it has. */
+ *  one it has, on every dialect, which is why no variant suppresses it the way
+ *  the sighted dialect suppresses figures its host card prints twice. */
 function advertisedStamp(advertised: PeerAdvertisedEvidence, nowMs: number): string {
   const named = `LAST NAMED ${formatAge(advertised.last_advertised_at_ms, nowMs)} AGO`;
   const rounds = advertised.consecutive_exhausted_rounds;
   if (rounds <= 0) return named;
   return `${named} · ${rounds === 1 ? '1 ROUND' : `${count(rounds)} ROUNDS`} EXHAUSTED`;
+}
+
+/** Where the furthest dial was made, and out of how many.
+ *
+ *  The one thing on the mirror a node cannot read off its own configuration:
+ *  that states what it BOUND, and this is what the network is telling
+ *  everybody to dial — which is a different string the moment a NAT, a
+ *  forwarded port or a moved host is involved, and the whole reason an
+ *  operator opens this plate.
+ *
+ *  The denominator rides with it because the rung alone does not say how hard
+ *  anybody tried: one refused address out of one is a dead entry in the
+ *  gossip, and one out of nine is a node that is not answering anywhere. */
+function dialedAtCaption(advertised: PeerAdvertisedEvidence): string | null {
+  const dialed = advertised.dialed_address_count;
+  const address = advertised.furthest_address;
+  if (!address) {
+    // Upstream named a rung and no address for it. The count is still a fact,
+    // and stating it alone is better than inventing a place for the rung.
+    return dialed > 0 ? `${count(dialed)} ${dialed === 1 ? 'ADDRESS' : 'ADDRESSES'} DIALED` : null;
+  }
+  // Head-weighted on purpose, and by a lot. A multiaddr ends in `/p2p/<id>`
+  // — the node this card is already headed by — and what an operator needs
+  // out of it is the transport and the PORT, which an even split hides
+  // behind an ellipsis while spelling out the id twice. The head clears the
+  // longest form that carries one (`/ip6/::ffff:…/tcp/8114`), and the tail
+  // stays only long enough to show that something was cut.
+  const at = `DIALED AT ${midTruncate(address, 34, 6)}`;
+  return dialed > 1 ? `${at} · FURTHEST OF ${count(dialed)}` : at;
 }
 
 /** Every phase that has no record to print resolves to one quiet line and the
@@ -197,9 +227,7 @@ function advertisedStamp(advertised: PeerAdvertisedEvidence, nowMs: number): str
 function absenceLine(
   phase: PeerSightingPhase,
   reason: PeerSightingAbsence | null | undefined,
-  advertised: PeerAdvertisedEvidence | null | undefined,
   message: string | null | undefined,
-  nowMs: number,
 ): { text: string; captions: string[]; tone: string } | null {
   switch (phase) {
     case 'waiting':
@@ -243,11 +271,15 @@ function absenceLine(
       // state without sending the evidence still said something true, and
       // falling back to the line below would replace it with something false.
       if (reason === 'advertised_unverified') {
+        // The evidence under it is not captions on this line: it is rows, in
+        // the same grammar a sighting's rows use, because it answers the same
+        // questions the sighted body answers. EXPOSURE is still "can the
+        // outside reach it", and what it prints here is how far the outside
+        // got — which is that row gaining a reason rather than a second body
+        // for the same subject.
         return {
           text: 'NAMED BY THE NETWORK, NEVER VERIFIED',
-          captions: advertised
-            ? [probeSentence(advertised.furthest_result), advertisedStamp(advertised, nowMs)]
-            : [],
+          captions: [],
           tone: HUD_COLORS.dim,
         };
       }
@@ -282,11 +314,24 @@ export default function PeerSightingPlate({
   // Every phase that is not a sighting resolves to exactly one line, including
   // the one that should not happen: a plate frame with an empty body would be
   // the only thing on either card that says nothing at all.
-  const absence = sighting ? null : absenceLine(phase, reason, advertised, message, nowMs) ?? {
+  const absence = sighting ? null : absenceLine(phase, reason, message) ?? {
     text: 'CRAWLER SIGHTING UNAVAILABLE',
     captions: [],
     tone: HUD_COLORS.dim,
   };
+  // The one absence with a body. Everything else this plate cannot report is
+  // a line and nothing under it; this one is a peer the crawler holds the
+  // addresses of and dials every round, so it has rows to fill and they are
+  // the same rows a sighting would have filled where the fact exists.
+  const evidence = !sighting && reason === 'advertised_unverified' ? advertised ?? null : null;
+
+  // The INBOUND half of the address book, and the one figure that stands on
+  // BOTH sides of the sighted/unsighted split — the peers that name a node
+  // are counted whether or not anybody ever got an answer out of it. One name
+  // for one fact, so the row below does not have to know which of the two it
+  // was handed.
+  const advertiserPeerCount = sighting?.advertiser_peer_count
+    ?? evidence?.advertiser_peer_count;
 
   // Severity belongs to the dialect that can act on it. On the mirror, EXPOSURE
   // is the one question a node cannot ask itself and the answer is the operator's
@@ -298,6 +343,34 @@ export default function PeerSightingPlate({
   // belong to links that broke. The mirrored `nominal` goes with it — a stranger
   // being dialable from outside is not this instrument's health either.
   const exposureIsOurs = variant === 'self';
+  // The same question of a peer nobody ever answered. EXPOSURE asks whether
+  // the outside can reach this node; a sighting answers yes-or-no, and this
+  // answers HOW FAR the outside got, which is the same row with more of the
+  // answer in it rather than a different row wearing its name. It takes the
+  // mirror's severity by the identical rule: an undialable local node is a
+  // real condition of this instrument and somebody's to fix, and a stranger
+  // behind NAT is neither.
+  const dialedAt = evidence ? dialedAtCaption(evidence) : null;
+  const unverifiedExposure = evidence ? (
+    <SightingRow
+      key="exposure"
+      row="exposure"
+      label="EXPOSURE"
+      value={probeSentence(evidence.furthest_result)}
+      valueColor={exposureIsOurs ? HUD_COLORS.caution : HUD_COLORS.dim}
+    >
+      {/* The address takes the severity with the value: on the mirror it is
+          the actionable half of the whole report, and the stamp under it is
+          context rather than a thing to go and fix. */}
+      {dialedAt ? (
+        <SightingCaption tone={exposureIsOurs ? HUD_COLORS.caution : undefined}>
+          {dialedAt}
+        </SightingCaption>
+      ) : null}
+      <SightingCaption>{advertisedStamp(evidence, nowMs)}</SightingCaption>
+    </SightingRow>
+  ) : null;
+
   const exposure = sighting ? (
     <SightingRow
       key="exposure"
@@ -380,20 +453,45 @@ export default function PeerSightingPlate({
     </SightingRow>
   ) : null;
 
-  // Stands down entirely when the source cannot say it. ckbadger deleted the
-  // outbound count this row printed, and what replaced it — the peers that
-  // named THIS node — is the same relationship read from the other end: put
-  // through this row it would print the sentence backwards. The row keeps its
-  // wording for a source that can still answer the outbound question, and
-  // says nothing at all for one that cannot.
-  const crowd = sighting && sighting.known_peers_count != null ? (
+  // CROWD, back as the TWO rows the one it replaces could never have been.
+  //
+  // The row that stood here printed a single "peers in address book", and
+  // upstream deleted the number under it. What arrived instead was the peers
+  // that named THIS node — the same relationship read from the other end — so
+  // there was no honest way to put it through the old row, and the slot went
+  // rather than being inverted into it. Both directions can be said now, and
+  // they are said separately because they are not the same measurement and
+  // not even the same unit: one counts PEERS that gossip this node, the other
+  // counts ADDRESSES this node gossiped. A peer is advertised under every
+  // alias anybody ever saw it at, so the second runs several times the number
+  // of peers behind it — which is why neither row states a bare number and
+  // both spell their unit out.
+  //
+  // ⚠️ Neither is a link. Upstream is explicit that this is address-book
+  // gossip rather than live topology: a peer repeating an address may never
+  // have spoken to the node at it, and nothing here watched anybody try. The
+  // captions carry that, because a crowd count beside a network drawing of
+  // connected points is exactly where a reader would otherwise supply it.
+  const crowdInbound = advertiserPeerCount != null ? (
     <SightingRow
-      key="crowd"
-      row="crowd"
-      label="CROWD"
-      value={`~${count(sighting.known_peers_count)} PEERS IN ADDRESS BOOK`}
+      key="crowd-inbound"
+      row="crowd-inbound"
+      label="ADVERTISED BY"
+      value={`${count(advertiserPeerCount)} ${advertiserPeerCount === 1 ? 'PEER' : 'PEERS'}`}
     >
-      <SightingCaption>SAMPLED FROM THEIR ADDRESS BOOK, NOT COUNTED</SightingCaption>
+      <SightingCaption>PEERS THAT NAMED IT TO THE CRAWLER · GOSSIP, NOT LINKS</SightingCaption>
+    </SightingRow>
+  ) : null;
+
+  const advertisedAddresses = sighting?.advertised_address_count;
+  const crowdOutbound = advertisedAddresses != null ? (
+    <SightingRow
+      key="crowd-outbound"
+      row="crowd-outbound"
+      label="ADVERTISES"
+      value={`${count(advertisedAddresses)} ${advertisedAddresses === 1 ? 'ADDRESS' : 'ADDRESSES'}`}
+    >
+      <SightingCaption>ADDRESSES IT NAMED TO THE CRAWLER, NOT PEERS</SightingCaption>
     </SightingRow>
   ) : null;
 
@@ -402,10 +500,31 @@ export default function PeerSightingPlate({
   // other side, the row could only set the crawler's version against the same
   // crawler's version — a cross-check with one party, printed twice.
   const rows = variant === 'self'
-    ? [exposure, whereabouts, networkAge, identify, crowd]
+    ? [exposure, whereabouts, networkAge, identify, crowdInbound, crowdOutbound]
     : variant === 'sighted'
-      ? [whereabouts, exposure, networkAge, crowd]
-      : [whereabouts, exposure, networkAge, identify, crowd];
+      ? [whereabouts, exposure, networkAge, crowdInbound, crowdOutbound]
+      : [whereabouts, exposure, networkAge, identify, crowdInbound, crowdOutbound];
+
+  // An unverified peer's body is the subset of those the crawler can actually
+  // fill. There is no whereabouts to place it, no membership to age and no
+  // version to cross-check — upstream refuses to fabricate any of them for a
+  // peer it never reached, and so does this — which leaves the two rows it
+  // does hold, in the order they hold each other: what the outside got, and
+  // how much of the network is still repeating the address it got there at.
+  const unverifiedRows = evidence ? [unverifiedExposure, crowdInbound] : [];
+  const body = evidence ? unverifiedRows : rows;
+
+  // What the plate says about itself, for a reader that is not a person. The
+  // reason and the rung ride the SAME element on purpose: they answer one
+  // question between them, and for one commit they sat two elements apart —
+  // which cost nothing visible and made every oracle that asked the plate for
+  // the rung read `null` without failing.
+  const absenceAttributes = {
+    ...(phase === 'unsighted' && reason ? { 'data-sighting-reason': reason } : {}),
+    ...(evidence?.furthest_result
+      ? { 'data-sighting-probe': evidence.furthest_result }
+      : {}),
+  };
 
   return (
     <section
@@ -413,7 +532,7 @@ export default function PeerSightingPlate({
       data-sighting-plate
       data-sighting-phase={phase}
       data-sighting-variant={variant}
-      {...(phase === 'unsighted' && reason ? { 'data-sighting-reason': reason } : {})}
+      {...absenceAttributes}
       style={{
         ...stackedSatelliteBase,
         padding: '9px 12px 10px 14px',
@@ -453,13 +572,7 @@ export default function PeerSightingPlate({
         </div>
       ) : null}
       {absence ? (
-        <div
-          data-sighting-absence
-          {...(reason === 'advertised_unverified' && advertised?.furthest_result
-            ? { 'data-sighting-probe': advertised.furthest_result }
-            : {})}
-          style={{ minWidth: 0 }}
-        >
+        <div data-sighting-absence style={{ minWidth: 0 }}>
           <div
             title={absence.text}
             style={{
@@ -475,9 +588,14 @@ export default function PeerSightingPlate({
             <SightingCaption key={caption}>{caption}</SightingCaption>
           ))}
         </div>
-      ) : (
-        <div style={{ display: 'grid', rowGap: 3 }}>{rows}</div>
-      )}
+      ) : null}
+      {/* Rows under an absence, not instead of it: the headline states which
+          of the plate's true statements this is, and the body states what the
+          crawler holds under it. Every other absence has nothing to hold and
+          renders the headline alone. */}
+      {body.some(Boolean) ? (
+        <div style={{ display: 'grid', rowGap: 3, marginTop: absence ? 5 : 0 }}>{body}</div>
+      ) : null}
     </section>
   );
 }

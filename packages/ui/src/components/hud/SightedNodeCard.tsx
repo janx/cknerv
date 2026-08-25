@@ -9,6 +9,18 @@
 // is left is a short RECORD of the crawler's row, the shared DOSSIER plate
 // underneath it, and one line saying what the scene is not claiming.
 //
+// ⭐ ONE CARD, TWO DIALECTS, AND THE SUBJECT PICKS. The colony stages a rung
+// the crawler has never had an answer out of, and this card is what its mark
+// opens too. For that subject VERSION and THEIR DIAL do not exist — not as
+// "Unknown", which is the crawler's word for a lookup that came back empty on
+// a node it DID reach, but structurally, because there was never a dial to
+// read them off. So the record swaps them for the clock that does exist: when
+// the crawler last TRIED. The evidence of that attempt — how far it got, at
+// which address, out of how many, and how much of the network still repeats
+// the address — is the DOSSIER's, one plate down, where the same rows serve
+// the peer and the mirror dialects that have no RECORD of their own. Printing
+// it in both places would give one crawler two voices on one card.
+//
 // Everything on it is known the moment it opens — the roster row arrived with
 // the round that staged the node — so nothing reveals, nothing animates in and
 // nothing is selectable. DOM only: nothing here may touch three.js.
@@ -18,7 +30,7 @@ import {
   useEffect,
   useState,
 } from 'react';
-import type { RosterNode } from '@cknerv/types';
+import type { RosterNode, RosterNodeState } from '@cknerv/types';
 import { formatAge, midTruncate } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import {
@@ -47,9 +59,50 @@ const CARD_WIDTH_PX = 340;
  *  this card is the readout for the middle one. */
 export const SIGHTED_NODE_ACCENT = PEER_NETWORK_HEX.scaffold;
 
-/** The crawler's row, printed as-is. Three facts and no derivation: anything
- *  computed from them would be a claim the crawler did not make. */
-export type SightedNodeRow = 'addr' | 'version' | 'dial';
+/** The crawler's row, printed as-is. No derivation anywhere: anything computed
+ *  from these would be a claim the crawler did not make.
+ *
+ *  Four names for two dialects. `version` and `dial` exist only where the
+ *  crawler holds a verification; `tried` exists only where it does not, and
+ *  says when the last completed round dialed the node — which is the one thing
+ *  a peer nobody answered has that a peer somebody answered states another
+ *  way (in the masthead, as a sighting). No row is ever in both sets. */
+export type SightedNodeRow = 'addr' | 'version' | 'dial' | 'tried';
+
+/** Which of the two the subject is.
+ *
+ *  Read off `state` and never off the optional fields: `reachable` and
+ *  `verified_unavailable` are both peers the crawler SPOKE to, and one of them
+ *  routinely arrives with no dial time, so "has an rtt" would have sorted the
+ *  same peer into different dialects on different rounds. The record's own
+ *  discriminant is the discriminant. */
+export type SightedNodeDialect = 'verified' | 'advertised';
+
+export function sightedNodeDialect(state: RosterNodeState): SightedNodeDialect {
+  return state === 'advertised_unverified' ? 'advertised' : 'verified';
+}
+
+/** The word each dialect wears in the masthead and in the accessible name.
+ *
+ *  ⚠️ THIS IS THE CARD'S ONE CLAIM THAT CAN GO FALSE. Every other line already
+ *  says nothing rather than guessing — an absent version prints a dash, an
+ *  absent dial prints no row at all — but a heading is not optional, and
+ *  SIGHTED over a node nobody has ever spoken to is precisely the sentence the
+ *  whole tier exists to refuse. It is one table so the masthead and the two
+ *  accessible names cannot drift apart, which they had begun to: the same
+ *  ternary was written out three times — the masthead, this card's own
+ *  accessible name, and the overlay's. */
+const DIALECT_WORD: Record<SightedNodeDialect, { masthead: string; spoken: string }> = {
+  verified: { masthead: 'SIGHTED', spoken: 'Sighted' },
+  advertised: { masthead: 'ADVERTISED', spoken: 'Advertised' },
+};
+
+/** The accessible name for a card or overlay about this node, in the dialect
+ *  its evidence earns. Exported because the scene half names the same subject
+ *  and must name it the same way. */
+export function sightedNodeSpokenWord(state: RosterNodeState): string {
+  return DIALECT_WORD[sightedNodeDialect(state)].spoken;
+}
 
 export type SightedNodeLayoutSide = SceneInspectorPlacementSide;
 
@@ -120,19 +173,8 @@ export default function SightedNodeCard({
 }: SightedNodeCardProps) {
   const accent = SIGHTED_NODE_ACCENT;
   const id8 = node.node_id.slice(0, 8);
-  // ⚠️ THE MINIMUM, NOT THE DIALECT. The colony now stages a rung the crawler
-  // has never had an answer out of, and this card is what its mark opens. The
-  // rows an unverified peer would actually fill — the aliases that were tried,
-  // how far the last dial got, how many rounds running it has failed, how many
-  // independent peers name it — are a task of their own. The WORD could not
-  // wait for that task: a card headed SIGHTED over a node nobody has ever
-  // spoken to is precisely the sentence this whole tier exists to refuse, and
-  // it is the only claim on the card that goes from true to false when the
-  // subject changes rung. Everything else here already says nothing rather
-  // than guessing — an absent version prints a dash, an absent dial prints no
-  // row at all.
-  const unverified = node.state === 'advertised_unverified';
-  const evidenceWord = unverified ? 'ADVERTISED' : 'SIGHTED';
+  const dialect = sightedNodeDialect(node.state);
+  const word = DIALECT_WORD[dialect];
 
   // The card prints one age and lends it to the dossier's ages, so it needs a
   // wall clock that keeps moving. A host that already runs one hands it down
@@ -153,8 +195,9 @@ export default function SightedNodeCard({
     <div
       data-sighted-probe-card
       data-sighted-probe-layout={verticalLayout ? 'vertical' : layoutSide}
+      data-sighted-probe-dialect={dialect}
       role="region"
-      aria-label={`${unverified ? 'Advertised' : 'Sighted'} node ${id8} probe`}
+      aria-label={`${word.spoken} node ${id8} probe`}
       style={{
         position: 'relative',
         display: 'grid',
@@ -200,7 +243,7 @@ export default function SightedNodeCard({
             textShadow: `0 0 9px ${rgba(accent, 0.45)}`,
           }}
         >
-          {evidenceWord} // {id8}
+          {word.masthead} // {id8}
         </span>
         {/* Steel, not caution. Having no link to a node the crawler named is
             this card's normal condition, not a fault of anything — the alarm
@@ -266,16 +309,23 @@ export default function SightedNodeCard({
             value={midTruncate(node.addr, 14, 13)}
             title={node.addr}
           />
-          <SightedReadout
-            row="version"
-            label="VERSION"
-            value={node.version || '—'}
-          />
+          {/* The two rows that exist only where a verification does. Not
+              "Unknown" for the other dialect and not an em dash either: the
+              crawler never dialed that node, so there was no lookup to come
+              back empty and no round trip to be missing. A row that is not
+              there is the honest form of a fact that is not there. */}
+          {dialect === 'verified' ? (
+            <SightedReadout
+              row="version"
+              label="VERSION"
+              value={node.version || '—'}
+            />
+          ) : null}
           {/* THEIR dial, never OUR ping: the number is a round trip from the
               crawler's vantage to this node, and it measures a link this
               dashboard does not have. The dossier's own copy of it stands
               down in this dialect so the figure prints once. */}
-          {node.rtt_ms != null ? (
+          {dialect === 'verified' && node.rtt_ms != null ? (
             <SightedReadout
               row="dial"
               label="THEIR DIAL"
@@ -283,6 +333,24 @@ export default function SightedNodeCard({
             >
               <ReadoutCaption>
                 THE CRAWLER'S ROUND TRIP FROM ITS OWN VANTAGE
+              </ReadoutCaption>
+            </SightedReadout>
+          ) : null}
+          {/* And the row that exists only where one does not. It is a clock
+              the dossier never prints — that plate dates the report by when
+              the NETWORK last named the peer, which is a statement about the
+              network; this is when the CRAWLER last dialed it, which is what
+              says whether the failure below is current or a fortnight old.
+              Three clocks ride the roster row and none may stand in for
+              another, so this one is labelled for the only thing it means. */}
+          {dialect === 'advertised' && node.last_observed_ms != null ? (
+            <SightedReadout
+              row="tried"
+              label="LAST TRIED"
+              value={formatAge(node.last_observed_ms, atMs)}
+            >
+              <ReadoutCaption>
+                THE LAST COMPLETED ROUND THAT DIALED IT
               </ReadoutCaption>
             </SightedReadout>
           ) : null}

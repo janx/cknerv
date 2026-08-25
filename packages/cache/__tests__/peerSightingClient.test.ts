@@ -107,6 +107,13 @@ describe('fetchPeerSighting', () => {
     expect(outcome.advertised?.furthest_result)
       .toBe('no_authenticated_session_before_deadline');
     expect(outcome.advertised?.consecutive_exhausted_rounds).toBe(2);
+    // The rest of the payload has to survive the trip too: the address the
+    // furthest dial went to, how many were dialed, and how many peers still
+    // name it. A client that carried only the two fields it was written for
+    // would silently drop the rows added after it.
+    expect(outcome.advertised?.furthest_address).toBe('/ip4/198.51.100.4/tcp/8115');
+    expect(outcome.advertised?.dialed_address_count).toBe(3);
+    expect(outcome.advertised?.advertiser_peer_count).toBe(6);
   });
 
   it('reads a disabled source off the 404 rather than calling it an absence', async () => {

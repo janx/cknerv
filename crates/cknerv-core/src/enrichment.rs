@@ -1050,17 +1050,32 @@ pub struct PeerSightingRecord {
     pub reachable: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rtt_ms: Option<u32>,
-    /// How many peers this node holds in its own address book — the OUTBOUND
-    /// direction, and the one count no source can currently answer.
+    /// How many distinct peers named this node to the crawler — the INBOUND
+    /// half of the address-book relationship.
     ///
-    /// ckbadger deleted `knownPeers` from its peer route. What replaced it is
-    /// `advertisers[]`, the peers that named THIS node: the same relationship
-    /// read from the other end. Filling this slot from that list would print
-    /// the sentence backwards, so it is left empty until both directions can
-    /// be labelled for what they are, and the CROWD row stands down while it
-    /// is. Absent means "nobody can say", never "zero".
+    /// ⚠️ NOT A COUNT OF LINKS. Upstream is explicit that this is address-book
+    /// gossip: a peer that advertises this node's address may never have
+    /// spoken to it, and the crawler certainly did not watch them do it. Every
+    /// surface that prints this one says so, because "47 peers name it" and
+    /// "47 peers are connected to it" are a sentence apart and a fact apart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub known_peers_count: Option<u32>,
+    pub advertiser_peer_count: Option<u32>,
+    /// How many ADDRESSES this node advertised to the crawler — the OUTBOUND
+    /// half, and the other end of the same relationship.
+    ///
+    /// ⚠️ ADDRESSES, NEVER PEERS, and the two are not interchangeable at any
+    /// ratio: a peer is advertised under every alias anybody has ever seen it
+    /// at, so this count runs several times the number of peers behind it
+    /// (live: ~5.7k addresses across ~137 peers). The field it replaces —
+    /// ckbadger's deleted `knownPeers` — counted peers, so a reader that
+    /// carried the old label onto this number would overstate the network by
+    /// an unbounded factor while sounding exactly as confident.
+    ///
+    /// Absent for every peer with no verification: the counter is nested
+    /// inside the crawler's authenticated observation, because it counts what
+    /// the peer said after it identified itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub advertised_address_count: Option<u32>,
 }
 
 /// What the crawler holds about a peer it has never verified.
@@ -1075,7 +1090,7 @@ pub struct PeerSightingRecord {
 /// Every field here is evidence the crawler actually has. There is no
 /// `country`, no `client_version` and no `rtt_ms`, because upstream refuses
 /// to fabricate metadata for a peer it never reached, and neither does this.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PeerAdvertisedEvidence {
     /// When the network last named this peer to the crawler. The report's own
     /// clock: an unverified peer has no sighting to be stamped by, and an
@@ -1087,9 +1102,41 @@ pub struct PeerAdvertisedEvidence {
     /// is a different statement again: nobody has tried yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub furthest_result: Option<PeerProbeResult>,
+    /// The address `furthest_result` was read on, so the rung has somewhere to
+    /// have happened.
+    ///
+    /// The one fact here a node cannot learn about itself: a local node's own
+    /// config states what it BOUND, and this is what the network is telling
+    /// everybody to dial — a NAT's outside address, a port nobody forwarded, a
+    /// host that moved. It travels with the result rather than beside it
+    /// because a peer is dialed once per alias and the two would otherwise be
+    /// a rung from one address and a name from another.
+    ///
+    /// Absent whenever the result is: no completed round, no address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub furthest_address: Option<String>,
+    /// How many of this peer's addresses the last completed round actually
+    /// dialed — the population `furthest_result` is the best of.
+    ///
+    /// It is what makes that rung readable as a summary rather than as the
+    /// only thing that happened: one alias refused out of one is a dead
+    /// address, and one refused out of nine is a node that is genuinely not
+    /// answering anywhere. Zero when no round has completed.
+    pub dialed_address_count: u32,
     /// Completed rounds in a row that ended with no verification. Zero for a
     /// peer that has only just started failing.
     pub consecutive_exhausted_rounds: u32,
+    /// How many distinct peers named this one to the crawler — the same
+    /// INBOUND count [`PeerSightingRecord::advertiser_peer_count`] carries,
+    /// under the same name because it is the same fact.
+    ///
+    /// The only weight this rung has. Everything else about an unverified peer
+    /// says how it failed; this says how much of the network is still
+    /// repeating its address, which is the difference between one stale entry
+    /// and a node the whole gossip layer believes in. ⚠️ Still not a count of
+    /// links — see the sighting's own note.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub advertiser_peer_count: Option<u32>,
 }
 
 /// Why a peer lookup came back without a sighting.

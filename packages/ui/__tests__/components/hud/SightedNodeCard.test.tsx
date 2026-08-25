@@ -18,6 +18,8 @@ import type {
 } from '@cknerv/types';
 import SightedNodeCard, {
   SIGHTED_NODE_ACCENT,
+  sightedNodeDialect,
+  sightedNodeSpokenWord,
 } from '../../../src/components/hud/SightedNodeCard';
 import { HUD_COLORS } from '../../../src/components/hud/hudTheme';
 import { PEER_NETWORK_HEX } from '../../../src/visualPalette';
@@ -58,6 +60,23 @@ function rosterNode(overrides: Partial<RosterNode> = {}): RosterNode {
     last_observed_ms: LAST_SEEN_MS,
     ...overrides,
   };
+}
+
+/** A peer the network names and nobody has ever had an answer out of. Every
+ *  field the crawler only holds for a node it reached is absent — not
+ *  `'Unknown'`, which is its word for a lookup that came back empty on a node
+ *  it DID reach — because there was never a dial to read them off. */
+function hearsayNode(overrides: Partial<RosterNode> = {}): RosterNode {
+  return rosterNode({
+    state: 'advertised_unverified',
+    version: undefined,
+    country: undefined,
+    asn: undefined,
+    last_reachable_ms: undefined,
+    rtt_ms: undefined,
+    last_observed_ms: LAST_SEEN_MS - 120_000,
+    ...overrides,
+  });
 }
 
 /** jsdom hands inline colours back in `rgb()` form, so read the constant the
@@ -115,33 +134,45 @@ describe('SightedNodeCard header', () => {
     expect(badge?.style.color).not.toBe(rgbOf(HUD_COLORS.caution));
   });
 
-  // ⚠️ THE MASTHEAD IS THE CARD'S ONE CLAIM THAT CAN GO FALSE. The colony now
-  // stages a rung the crawler has never had an answer out of, and this card is
-  // what its mark opens; every other line already says nothing rather than
-  // guessing, so the word is the only thing that would have printed a sighting
-  // over a node nobody has spoken to. The rest of the dialect that rung wants
-  // is a task of its own — this is the floor, not the finish.
+  // ⚠️ THE MASTHEAD IS THE CARD'S ONE CLAIM THAT CAN GO FALSE. Every other
+  // line says nothing rather than guessing, but a heading is not optional, and
+  // SIGHTED over a node nobody has spoken to is the sentence the whole tier
+  // exists to refuse.
   it('never calls a peer sighted when nobody has ever had an answer out of it', () => {
-    const hearsay = rosterNode({
-      state: 'advertised_unverified',
-      version: undefined,
-      country: undefined,
-      asn: undefined,
-      last_reachable_ms: undefined,
-      rtt_ms: undefined,
-    });
-    const { container } = renderCard({ node: hearsay });
+    const { container } = renderCard({ node: hearsayNode() });
     const text = container.textContent ?? '';
     expect(text).toContain('ADVERTISED // QmSighte');
     expect(text).not.toContain('SIGHTED // QmSighte');
     expect(container.querySelector('[data-sighted-probe-card]')?.getAttribute('aria-label'))
       .toBe('Advertised node QmSighte probe');
+    expect(container.querySelector('[data-sighted-probe-card]')
+      ?.getAttribute('data-sighted-probe-dialect')).toBe('advertised');
     // …and the rung that WAS answered keeps the word it earned.
     cleanup();
     const answered = renderCard();
     expect(answered.container.textContent ?? '').toContain('SIGHTED // QmSighte');
     expect(answered.container.querySelector('[data-sighted-probe-card]')
       ?.getAttribute('aria-label')).toBe('Sighted node QmSighte probe');
+    expect(answered.container.querySelector('[data-sighted-probe-card]')
+      ?.getAttribute('data-sighted-probe-dialect')).toBe('verified');
+  });
+
+  it('reads the dialect off the record\'s own discriminant, not off a gap', () => {
+    // `verified_unavailable` is a peer the crawler SPOKE to and could not
+    // reach this round, so it routinely arrives with no dial time and often
+    // no fresh anything. Sorting the dialects by "has an rtt" would have put
+    // the same peer on different sides on different rounds, and called a peer
+    // that answered last week hearsay.
+    expect(sightedNodeDialect('reachable')).toBe('verified');
+    expect(sightedNodeDialect('verified_unavailable')).toBe('verified');
+    expect(sightedNodeDialect('advertised_unverified')).toBe('advertised');
+    expect(sightedNodeSpokenWord('verified_unavailable')).toBe('Sighted');
+    expect(sightedNodeSpokenWord('advertised_unverified')).toBe('Advertised');
+
+    const remembered = rosterNode({ state: 'verified_unavailable', rtt_ms: undefined });
+    const { container } = renderCard({ node: remembered });
+    expect(container.textContent).toContain('SIGHTED // QmSighte');
+    expect(row(container, 'version')).not.toBeNull();
   });
 
   it('wears the sighted tier tint its own point cloud is drawn with', () => {
@@ -185,6 +216,64 @@ describe('SightedNodeCard record', () => {
       node: rosterNode({ addr: '/ip4/10.0.0.1/tcp/8115' }),
     });
     expect(value(container, 'addr')).toBe('/ip4/10.0.0.1/tcp/8115');
+  });
+
+  it('renders no verified-only row over a peer nobody verified', () => {
+    // The dialect, and the thing it exists to prevent. VERSION and THEIR DIAL
+    // are read off a verification that does not exist here, so they are not
+    // absent-as-a-dash and not absent-as-"Unknown" — they are not rows. A
+    // dash would say the crawler looked and found nothing; the crawler never
+    // looked, because it never got a packet out of this node.
+    const { container } = renderCard({ node: hearsayNode() });
+    expect(row(container, 'version')).toBeNull();
+    expect(row(container, 'dial')).toBeNull();
+    const text = container.textContent ?? '';
+    expect(text).not.toContain('VERSION');
+    expect(text).not.toContain('THEIR DIAL');
+    expect(text).not.toContain('Unknown');
+  });
+
+  it('swaps them for the one clock a peer nobody answered actually has', () => {
+    // Three clocks ride the roster row and none may stand in for another.
+    // This is the crawler TRYING, which is what dates a failure — not the
+    // network NAMING (the dossier's stamp, a statement about the network) and
+    // certainly not the crawler SEEING, which never happened.
+    const { container } = renderCard({ node: hearsayNode() });
+    expect(row(container, 'tried')).not.toBeNull();
+    expect(value(container, 'tried')).toBe('7m 0s');
+    expect(container.textContent).toContain('LAST TRIED');
+    expect(container.textContent).toContain('THE LAST COMPLETED ROUND THAT DIALED IT');
+    // …and it is not the masthead's sighting clock wearing another label.
+    expect(container.querySelector('[data-sighted-probe-last-seen]')).toBeNull();
+  });
+
+  it('prints no attempt row when no completed round has named one', () => {
+    const { container } = renderCard({
+      node: hearsayNode({ last_observed_ms: undefined }),
+    });
+    expect(row(container, 'tried')).toBeNull();
+    expect(container.textContent).not.toContain('LAST TRIED');
+    // The address is what a candidate IS, so that row is always there.
+    expect(row(container, 'addr')).not.toBeNull();
+  });
+
+  it('keeps the two dialects\' rows disjoint', () => {
+    // No row may be in both sets. If one ever is, the two dialects have
+    // stopped being dialects and become one row list with holes in it.
+    const answered = renderCard();
+    const verifiedRows = Array.from(
+      answered.container.querySelectorAll('[data-sighted-probe-fact]'),
+    ).map((node) => node.getAttribute('data-sighted-probe-fact'));
+    cleanup();
+    const hearsay = renderCard({ node: hearsayNode() });
+    const advertisedRows = Array.from(
+      hearsay.container.querySelectorAll('[data-sighted-probe-fact]'),
+    ).map((node) => node.getAttribute('data-sighted-probe-fact'));
+
+    expect(verifiedRows).toEqual(['addr', 'version']);
+    expect(advertisedRows).toEqual(['addr', 'tried']);
+    const shared = verifiedRows.filter((name) => advertisedRows.includes(name));
+    expect(shared).toEqual(['addr']);
   });
 });
 
@@ -266,5 +355,35 @@ describe('SightedNodeCard discipline', () => {
     for (const name of ['addr', 'version', 'dial']) {
       expect(row(container, name)).not.toBeNull();
     }
+  });
+
+  it('carries the crawler\'s evidence on the plate that speaks for all three cards', () => {
+    // The rows an unverified peer fills — how far the dial got, at which
+    // address, out of how many, and how much of the network still repeats it
+    // — belong to the DOSSIER and not to the RECORD above it. That plate
+    // serves the peer and mirror dialects too, and neither of them has a
+    // record of its own; printing the same evidence in both places would give
+    // one crawler two voices on one card.
+    const advertisedSample = samples.peer_sightings.advertised_unverified;
+    if (advertisedSample?.state !== 'unsighted' || !advertisedSample.advertised) {
+      throw new Error('enrichment_samples.json is missing an advertised-unverified sample');
+    }
+    const { container } = renderCard({
+      node: hearsayNode(),
+      sighting: {
+        phase: 'unsighted',
+        record: null,
+        reason: 'advertised_unverified',
+        advertised: advertisedSample.advertised,
+      },
+    });
+    expect(container.querySelector('[data-sighting-row="exposure"]')).not.toBeNull();
+    expect(container.querySelector('[data-sighting-row="crowd-inbound"]')).not.toBeNull();
+    expect(container.textContent).toContain('NAMED BY THE NETWORK, NEVER VERIFIED');
+    // …and the RECORD above it repeats none of it.
+    const record = container.querySelector('[data-sighted-probe-module="record"]');
+    expect(record?.textContent).not.toContain('DIALED AT');
+    expect(record?.textContent).not.toContain('LAST NAMED');
+    expect(record?.textContent).not.toContain('ADVERTISED BY');
   });
 });

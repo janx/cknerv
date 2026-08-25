@@ -752,10 +752,12 @@ fn enrichment_peer_sighting() -> PeerSightingRecord {
         last_reachable_at_ms: Some(1_699_999_940_000),
         reachable: true,
         rtt_ms: Some(41),
-        // Upstream deleted the outbound count this slot held, and the sample
-        // has to be a record an adapter can actually produce: nothing can
-        // fill it, so nothing does, and the CROWD row stands down.
-        known_peers_count: None,
+        // Both directions of the address book, and deliberately not the same
+        // ORDER of magnitude: the browser's samples are what its tests read
+        // the units off, and two counts that looked alike would let a surface
+        // print either one under either label and still look right.
+        advertiser_peer_count: Some(47),
+        advertised_address_count: Some(5_727),
     }
 }
 
@@ -768,7 +770,15 @@ fn enrichment_peer_advertised() -> PeerAdvertisedEvidence {
     PeerAdvertisedEvidence {
         last_advertised_at_ms: 1_699_999_940_000,
         furthest_result: Some(PeerProbeResult::NoAuthenticatedSessionBeforeDeadline),
+        furthest_address: Some("/ip4/198.51.100.4/tcp/8115".to_string()),
+        // Three aliases dialed and none of them answered — the population the
+        // rung above is the best of, and the difference between one dead
+        // address and a node that is not answering anywhere.
+        dialed_address_count: 3,
         consecutive_exhausted_rounds: 2,
+        // Fewer peers name a peer nobody could dial than name one that
+        // answers, which is the whole weight this rung has.
+        advertiser_peer_count: Some(6),
     }
 }
 

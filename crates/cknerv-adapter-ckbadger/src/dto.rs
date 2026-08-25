@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
+use serde::{de::IgnoredAny, Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -315,14 +315,16 @@ pub(crate) struct PeerSummaryResponse {
 /// of it, because a node behind NAT dials out and cannot be dialed back.
 ///
 /// The wire carries more of this peer than is declared here:
-/// `observationVantage`, `firstDiscoveredAt`, `aliases`, `active` and
-/// `advertisers`. Nothing in cknerv reads them yet, so they are deliberately
-/// not declared — a field declared here is a field whose disappearance costs
-/// the whole record, and this crate has now paid that price twice in one
-/// week. `advertisers` in particular is NOT the deleted `knownPeers`: it
+/// `observationVantage`, `firstDiscoveredAt`, `aliases` and `active`. Nothing
+/// in cknerv reads them, so they are deliberately not declared — a field
+/// declared here is a field whose disappearance costs the whole record, and
+/// this crate has now paid that price twice in one week.
+///
+/// `advertisers` is declared, and it is NOT the deleted `knownPeers`: it
 /// counts the peers that named *this* one, where `knownPeers` counted the
-/// peers *this* one named. Reading it into the old slot would print the
-/// sentence backwards.
+/// peers *this* one named. Reading it into the old slot would have printed the
+/// sentence backwards, which is why that slot is gone rather than filled and
+/// why this arrives under a label of its own.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PeerDetailResponse {
@@ -339,6 +341,25 @@ pub(crate) struct PeerDetailResponse {
     /// verification for. This is the field that decides whether cknerv has a
     /// sighting to report at all.
     pub verified: Option<VerifiedPeerResponse>,
+    /// The peers that named this one to the crawler — the INBOUND half of the
+    /// address-book relationship, and the only half that exists for a peer
+    /// nobody ever authenticated.
+    ///
+    /// ⭐ Only the LENGTH is read, and the entries are deliberately parsed as
+    /// nothing at all. cknerv publishes a count of distinct advertisers; the
+    /// ids behind it would be the first genuinely real edge evidence the
+    /// colony has ever held, and drawing them needs a spec of its own —
+    /// upstream is explicit that `knownPeers` is address-book gossip rather
+    /// than a live topology edge. Reading the rows as [`IgnoredAny`] keeps a
+    /// reshape of the entry shape from costing the whole dossier, which is a
+    /// real risk on a field whose only job here is to be counted.
+    ///
+    /// `Option` rather than `#[serde(default)]`, unlike every other list on
+    /// this route: absent has to stay distinguishable from empty, because the
+    /// COUNT is the fact. A wire that stops sending the list must stand the
+    /// row down, never print "0 PEERS NAME IT" over a peer the crawler is
+    /// dialing every round.
+    pub advertisers: Option<Vec<IgnoredAny>>,
 }
 
 /// How the last completed round went for one candidate.
@@ -363,14 +384,27 @@ pub(crate) struct CandidateEvidenceResponse {
 
 /// One address the round dialed, and how far it got.
 ///
-/// The wire also carries `address`, `roundId`, `observedAt` and `elapsedMs`.
-/// They are the raw material of the operator diagnostic the DOSSIER's
-/// EXPOSURE row will grow, and that row is not this task's; declaring them
-/// now would only widen the surface a rename can break.
+/// The wire also carries `roundId`, `observedAt` and `elapsedMs`. The round
+/// number has no reader, and the two clocks would only date a failure the
+/// candidate's own `lastObservedAt` already dates. `elapsedMs` is the one
+/// worth naming as a refusal rather than an oversight: it is how long the
+/// crawler waited, so on the rung that dominates the live set it is the
+/// crawler's own deadline printed back — the same figure under every peer,
+/// and a number that says nothing about any of them.
+///
+/// `address` IS read. It is the operator diagnostic the DOSSIER's EXPOSURE
+/// row was always going to grow: the alias the network is gossiping is the
+/// one thing on the mirror that a node cannot learn from its own config,
+/// which prints what it bound rather than what the world was told.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AddressProbeEvidenceResponse {
     pub result: PeerProbeResultResponse,
+    /// The multiaddr this dial was made to. Defaulted rather than required:
+    /// it qualifies the result, and an observation that arrives without one
+    /// is a sentence with no address in it, never a dossier to lose.
+    #[serde(default)]
+    pub address: String,
 }
 
 /// How far one dial got, in upstream's own vocabulary.
@@ -403,10 +437,9 @@ pub(crate) enum PeerProbeResultResponse {
 /// authenticated the peer and read an identify off it, absent otherwise.
 ///
 /// The clocks are unix SECONDS here; the shared wire contract counts
-/// milliseconds, and the mapper is where that conversion happens. `ownAddrs`,
-/// `flags` and `discovery` are deliberately not read: the dashboard already
-/// holds the addresses the local node negotiated, and capability bits and
-/// per-peer discovery counters have no reader yet.
+/// milliseconds, and the mapper is where that conversion happens. `ownAddrs`
+/// and `flags` are deliberately not read: the dashboard already holds the
+/// addresses the local node negotiated, and capability bits have no reader.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct VerifiedPeerResponse {
@@ -419,6 +452,31 @@ pub(crate) struct VerifiedPeerResponse {
     pub country: String,
     pub asn: String,
     pub rtt_ms: Option<u32>,
+    /// What this peer gossiped to the crawler while it was authenticated —
+    /// the OUTBOUND half of the address-book relationship, and the half that
+    /// exists only for a peer somebody actually got an identify out of.
+    ///
+    /// It is nested under the verification for exactly that reason, and it is
+    /// why the two directions can never be one row: the count of peers that
+    /// named this node stands for every candidate, and this one stands only
+    /// here.
+    pub discovery: Option<PeerDiscoveryCountersResponse>,
+}
+
+/// What one authenticated peer's discovery messages amounted to.
+///
+/// ⚠️ THE UNIT IS ADDRESSES. `validNodesMessages`, `malformedMessages`,
+/// `unexpectedMessages` and `rejectedAdvertisedAddresses` ride the same object
+/// and are not declared: they measure the conversation rather than the address
+/// book, and the row cknerv draws from this asks how much of the network one
+/// peer knows. The count that answers that is the normalized one, and a peer
+/// carries several addresses, so it is never the peer count the deleted
+/// `knownPeers` was — which is the whole reason this arrives under its own
+/// name instead of into that slot.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PeerDiscoveryCountersResponse {
+    pub normalized_advertised_addresses: u64,
 }
 
 #[derive(Debug, Deserialize)]

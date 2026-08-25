@@ -4,7 +4,10 @@ import {
   useRef,
 } from 'react';
 import type { RosterNode } from '@cknerv/types';
-import SightedNodeCard, { SIGHTED_NODE_ACCENT } from './hud/SightedNodeCard';
+import SightedNodeCard, {
+  SIGHTED_NODE_ACCENT,
+  sightedNodeSpokenWord,
+} from './hud/SightedNodeCard';
 import type { PeerSightingState } from './hud/PeerSightingPlate';
 import { useReducedMotion } from './hud/useReducedMotion';
 import type { Vec3 } from '../types';
@@ -144,7 +147,7 @@ export default function SightedInspectionOverlay({
         data-sighted-probe-dismiss-boundary="true"
         data-sighted-probe-node={node.node_id}
         role="region"
-        aria-label={`${node.state === 'advertised_unverified' ? 'Advertised' : 'Sighted'} node ${node.node_id} inspection`}
+        aria-label={`${sightedNodeSpokenWord(node.state)} node ${node.node_id} inspection`}
         style={INSPECTION_CARD_STYLE}
       >
         <SceneInspectionConnector

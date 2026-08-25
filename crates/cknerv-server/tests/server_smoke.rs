@@ -142,7 +142,10 @@ impl EnrichmentSource for TransactionFixtureSource {
                 PeerAdvertisedEvidence {
                     last_advertised_at_ms: 1_700_000_000_000,
                     furthest_result: Some(PeerProbeResult::DialRequestFailed),
+                    furthest_address: Some("/ip4/198.51.100.4/tcp/8115".to_string()),
+                    dialed_address_count: 2,
                     consecutive_exhausted_rounds: 3,
+                    advertiser_peer_count: Some(6),
                 },
             ));
         }
@@ -168,7 +171,8 @@ impl EnrichmentSource for TransactionFixtureSource {
             last_reachable_at_ms: Some(1_699_999_000_000),
             reachable: true,
             rtt_ms: Some(41),
-            known_peers_count: None,
+            advertiser_peer_count: Some(47),
+            advertised_address_count: Some(5_727),
         }))
     }
 
@@ -773,12 +777,21 @@ async fn peer_sighting_route_separates_a_sighting_from_a_silence() {
     assert_eq!(body["state"], "sighted");
     assert_eq!(body["sighting"]["node_id"], SIGHTED_NODE_ID);
     assert_eq!(body["sighting"]["last_seen_ms"], 1_700_000_000_000_u64);
-    // The outbound peer count upstream deleted leaves no hole and no zero:
-    // the slot is simply not on the wire, and the CROWD row stands down.
+    // The slot that held one number for a relationship with two ends is not
+    // on the wire at all — not as a null, not as a zero. It counted PEERS
+    // this node knew; what upstream answers with counts peers that know THIS
+    // node, so there was never a way to fill it that did not print the
+    // sentence backwards.
     assert!(
         body["sighting"].get("known_peers_count").is_none(),
         "body: {body}"
     );
+    // What replaced it, in two units that cannot be swapped: peers that named
+    // this node, and ADDRESSES this node named. A peer is advertised under
+    // every alias anybody saw it at, so the second runs several times the
+    // first and neither may be printed under the other's label.
+    assert_eq!(body["sighting"]["advertiser_peer_count"], 47);
+    assert_eq!(body["sighting"]["advertised_address_count"], 5_727);
 
     // A node the crawler never saw is a 200 that says so: the plate has
     // something true to print, and a 404 would have thrown it away.
@@ -807,6 +820,14 @@ async fn peer_sighting_route_separates_a_sighting_from_a_silence() {
     assert_eq!(body["reason"], "advertised_unverified");
     assert_eq!(body["advertised"]["furthest_result"], "dial_request_failed");
     assert_eq!(body["advertised"]["consecutive_exhausted_rounds"], 3);
+    // The rung has somewhere it happened, a denominator, and the one weight
+    // this cohort carries — how much of the network still repeats the address.
+    assert_eq!(
+        body["advertised"]["furthest_address"],
+        "/ip4/198.51.100.4/tcp/8115"
+    );
+    assert_eq!(body["advertised"]["dialed_address_count"], 2);
+    assert_eq!(body["advertised"]["advertiser_peer_count"], 6);
     assert_eq!(
         body["advertised"]["last_advertised_at_ms"],
         1_700_000_000_000_u64

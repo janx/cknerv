@@ -1381,7 +1381,10 @@
       "advertised": {
         "last_advertised_at_ms": 1699999940000,
         "furthest_result": "no_authenticated_session_before_deadline",
-        "consecutive_exhausted_rounds": 2
+        "furthest_address": "/ip4/198.51.100.4/tcp/8115",
+        "dialed_address_count": 3,
+        "consecutive_exhausted_rounds": 2,
+        "advertiser_peer_count": 6
       }
     },
     "never_sighted": {
@@ -1413,7 +1416,9 @@
         "last_seen_ms": 1699999940000,
         "last_reachable_at_ms": 1699999940000,
         "reachable": true,
-        "rtt_ms": 41
+        "rtt_ms": 41,
+        "advertiser_peer_count": 47,
+        "advertised_address_count": 5727
       }
     },
     "unreadable_node_id": {

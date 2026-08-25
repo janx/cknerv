@@ -683,11 +683,26 @@ how the network sees a node from outside, including our own. The lookup is a
 point read; the atlas remains the only bounded whole-network sample, and
 neither one puts a peer identity into the streamed contract.
 
-The record no longer carries an address-book size. Upstream deleted the
-outbound count and answers with `advertisers[]` instead, which counts the
-peers that named THIS node — the same relationship read from the other end.
-Filling the old slot from the new list would print the sentence backwards, so
-`known_peers_count` is absent and the `CROWD` row stands down.
+The address book is now read from both ends, under two names and two units.
+Upstream deleted the outbound peer count the record used to carry and answers
+with `advertisers[]`, which counts the peers that named THIS node — the same
+relationship read from the other end, so the old slot is gone rather than
+filled by it. In its place the record carries `advertiser_peer_count` (how many
+distinct peers advertised this node) and `advertised_address_count` (how many
+addresses this node advertised to the crawler, off the verification's own
+`discovery` counters). They are never interchangeable: one counts peers and the
+other counts addresses, and a peer is advertised under every alias anybody has
+seen it at, so the second runs several times the number of peers behind it.
+
+⚠️ Neither is a topology edge. Upstream is explicit that this is address-book
+gossip: a peer that advertises another's address may never have spoken to it.
+The `CROWD` rows say so.
+
+`advertiser_peer_count` is absent, never zero, when the source did not send the
+list at all — the count is the fact, so "nobody can say" and "nobody names it"
+have to stay apart. `advertised_address_count` is absent for every peer with no
+verification, because the counter is nested inside the crawler's authenticated
+observation.
 
 cknerv holds the base58 node id CKB's `get_peers` reports and the crawler is
 keyed by the multihash bytes behind it, so the adapter decodes the id before
@@ -715,8 +730,10 @@ absence of configuration:
   — the network names this peer and nobody outside could get an identify out
   of it. Still an absence of a sighting, and the only one with evidence under
   it: when the network last named the peer, how far the furthest of its dials
-  got, and how many completed rounds in a row have ended without a
-  verification. This is the ordinary state of a node behind NAT — it dials out
+  got and at which address, how many of the peer's addresses that round dialed,
+  how many completed rounds in a row have ended without a verification, and how
+  many distinct peers still name it. This is the ordinary state of a node
+  behind NAT — it dials out
   and cannot be dialed back — so cknerv can hold a live link to a peer that is
   permanently in it;
 - `200 {"state":"sighted","sighting":…}` — the record.

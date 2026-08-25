@@ -1042,10 +1042,21 @@ describe('hud discipline', () => {
       .toBeDefined();
     const text = code(plate?.text ?? '');
     expect(text).toContain("const exposureIsOurs = variant === 'self';");
-    expect(text).toContain('valueColor={exposureIsOurs');
     // The severity that stayed, and the steel that replaced it everywhere else.
     expect(text).toContain('? (sighting.reachable ? HUD_COLORS.nominal : HUD_COLORS.caution)');
     expect(text).toContain(': HUD_COLORS.dim}');
+    // EXPOSURE is TWO rows now — one for a peer with a sighting and one for a
+    // peer the network only names — and the second is the same question with
+    // more of the answer in it, so it takes the same ruling from the same
+    // predicate rather than a second opinion of its own. Every tinted EXPOSURE
+    // value on this plate gates on `exposureIsOurs`; a row that reached for
+    // `caution` directly would put an alarm colour on somebody else's NAT.
+    const exposureRows = text.split('row="exposure"').slice(1);
+    expect(exposureRows.length).toBe(2);
+    for (const row of exposureRows) {
+      const tint = row.slice(0, row.indexOf('>'));
+      expect(tint).toContain('valueColor={exposureIsOurs');
+    }
   });
 
   it('a ping that has not come back is not a link that broke', () => {

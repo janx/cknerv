@@ -355,7 +355,8 @@ function sighting(overrides: Partial<PeerSightingRecord> = {}): PeerSightingStat
       last_reachable_at_ms: Date.now() - 60_000,
       reachable: true,
       rtt_ms: 41,
-      known_peers_count: 45,
+      advertiser_peer_count: 45,
+      advertised_address_count: 5_727,
       ...overrides,
     },
   };

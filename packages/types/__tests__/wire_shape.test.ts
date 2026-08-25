@@ -596,12 +596,20 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(sighted.sighting.protocols).toEqual(['/ckb/syn', '/ckb/relay']);
     expect(sighted.sighting.rtt_ms).toBe(41);
     expect(sighted.sighting.reachable).toBe(true);
-    // The outbound address-book count upstream deleted is absent rather than
-    // zero, and the CROWD row stands down on it. `advertisers[]` is what
-    // replaced it upstream, and it counts the peers that named THIS node —
-    // the same relationship read from the other end, so it must never be
-    // read into this slot.
-    expect(sighted.sighting.known_peers_count).toBeUndefined();
+    // The address book, read from both ends, in two units that are not the
+    // same unit. The slot that held one number for both is gone: it counted
+    // PEERS this node knew, upstream deleted it, and what replaced it counts
+    // peers that know THIS node — there was never a way to fill it that did
+    // not say the sentence backwards.
+    expect(sighted.sighting).not.toHaveProperty('known_peers_count');
+    expect(sighted.sighting.advertiser_peer_count).toBe(47);
+    expect(sighted.sighting.advertised_address_count).toBe(5_727);
+    // ⚠️ A peer is advertised under every alias anybody ever saw it at, so
+    // the ADDRESS count runs several times the PEER count. The sample keeps
+    // them orders apart on purpose: two figures of the same size would let a
+    // surface print either one under either label and still look right.
+    expect(sighted.sighting.advertised_address_count)
+      .toBeGreaterThan((sighted.sighting.advertiser_peer_count ?? 0) * 10);
     // Same total-match pin as the deltas: the Rust writer enumerates every
     // absence reason, and the plate prints a different sentence for each.
     const absences = Object.values(sample.peer_sightings).flatMap((lookup) =>
@@ -624,6 +632,15 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
       .toBe('no_authenticated_session_before_deadline');
     expect(advertised.advertised?.consecutive_exhausted_rounds).toBe(2);
     expect(advertised.advertised?.last_advertised_at_ms).toBe(1_699_999_940_000);
+    // The rung has somewhere it happened, and a denominator: one refused
+    // address out of one is a dead entry in the gossip, one out of three is a
+    // node that is not answering anywhere.
+    expect(advertised.advertised?.furthest_address).toBe('/ip4/198.51.100.4/tcp/8115');
+    expect(advertised.advertised?.dialed_address_count).toBe(3);
+    // The INBOUND count stands on both sides of the sighted/unsighted split —
+    // the peers that name a node are counted whether or not anybody ever got
+    // an answer out of it — so it is the same field name in both records.
+    expect(advertised.advertised?.advertiser_peer_count).toBe(6);
     // And the absences that are only a word carry no payload at all.
     const neverSighted = sample.peer_sightings.never_sighted;
     if (neverSighted.state !== 'unsighted') throw new Error('never_sighted sample is a sighting');
