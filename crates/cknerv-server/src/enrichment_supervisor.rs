@@ -1224,6 +1224,8 @@ mod tests {
             tx_count: 1,
             size: 1,
             at: 1,
+            producer_key: None,
+            producer_message: None,
         });
         let compositions = Arc::new(AtomicUsize::new(0));
         let source: Arc<dyn EnrichmentSource> = Arc::new(CompositionCountingSource {
@@ -1286,6 +1288,8 @@ mod tests {
             tx_count: 1,
             size: 1,
             at: 1,
+            producer_key: None,
+            producer_message: None,
         });
         let compositions = Arc::new(AtomicUsize::new(0));
         let source: Arc<dyn EnrichmentSource> = Arc::new(CompositionCountingSource {
@@ -1346,6 +1350,8 @@ mod tests {
             tx_count: 1,
             size: 1,
             at: 1,
+            producer_key: None,
+            producer_message: None,
         });
         let compositions = Arc::new(AtomicUsize::new(0));
         let source: Arc<dyn EnrichmentSource> = Arc::new(CompositionCountingSource {
@@ -1481,6 +1487,8 @@ mod tests {
             tx_count: 1,
             size: 1,
             at: 1,
+            producer_key: None,
+            producer_message: None,
         });
 
         let asks = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -1673,6 +1681,8 @@ mod tests {
             tx_count: 1,
             size: 1,
             at: 1,
+            producer_key: None,
+            producer_message: None,
         });
         // The shortfall stands: no reducer is applying what the rounds
         // land, which is the harshest case for a burst — every round is
@@ -1920,6 +1930,8 @@ mod tests {
             tx_count: 1,
             size: 1,
             at: 1,
+            producer_key: None,
+            producer_message: None,
         });
 
         let probes = Arc::new(AtomicUsize::new(0));
@@ -1992,6 +2004,8 @@ mod tests {
             tx_count: 1,
             size: 1,
             at: 1,
+            producer_key: None,
+            producer_message: None,
         });
 
         let census_calls = Arc::new(AtomicUsize::new(0));
@@ -2079,6 +2093,8 @@ mod tests {
             tx_count: 1,
             size: 1,
             at: 1,
+            producer_key: None,
+            producer_message: None,
         });
         tokio::time::sleep(Duration::from_millis(30)).await;
         assert_eq!(
@@ -2121,6 +2137,8 @@ mod tests {
             tx_count: 1,
             size: 1,
             at: 1,
+            producer_key: None,
+            producer_message: None,
         });
 
         let dao_calls = Arc::new(AtomicUsize::new(0));
@@ -2153,6 +2171,8 @@ mod tests {
             tx_count: 1,
             size: 1,
             at: 2,
+            producer_key: None,
+            producer_message: None,
         });
 
         let dao = tokio::time::timeout(Duration::from_millis(250), async {
@@ -2173,6 +2193,8 @@ mod tests {
             tx_count: 1,
             size: 1,
             at: 3,
+            producer_key: None,
+            producer_message: None,
         });
         tokio::time::sleep(Duration::from_millis(60)).await;
         assert_eq!(

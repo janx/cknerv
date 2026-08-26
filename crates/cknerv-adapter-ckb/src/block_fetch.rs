@@ -28,7 +28,7 @@ pub struct FetchedBlock {
 const DATA_HEX_CAP_BYTES: usize = 1024;
 
 /// Fetch + translate block `number`. Returns mutations in emit order:
-/// 1. `BlockMined { number, hash, tx_count, size, at }`
+/// 1. `BlockMined { number, hash, tx_count, size, at, producer_* }`
 /// 2. for each tx (including cellbase): `TxLanded { tx_hash, block, inputs, outputs, at }`
 ///
 /// Returns `Ok(None)` if the block isn't visible yet (RPC race), letting the
@@ -139,6 +139,8 @@ pub fn translate_block(block: &Value, number: u64, at: u64, size: u64) -> Result
     let tx_count =
         u32::try_from(txs.len()).map_err(|_| anyhow!("block {number}: tx_count exceeds u32"))?;
 
+    let (producer_key, producer_message) = cellbase_producer(txs).unzip();
+
     let mut out = Vec::with_capacity(1 + txs.len());
     out.push(Mutation::BlockMined {
         number,
@@ -146,6 +148,8 @@ pub fn translate_block(block: &Value, number: u64, at: u64, size: u64) -> Result
         tx_count,
         size,
         at,
+        producer_key,
+        producer_message,
     });
 
     for t in txs {
@@ -167,6 +171,61 @@ pub fn translate_block(block: &Value, number: u64, at: u64, size: u64) -> Result
     }
 
     Ok(out)
+}
+
+/// The block's own producer, read out of the cellbase witness: its lock
+/// script hash as the identity key, and its declared message.
+///
+/// ⭐⭐⭐ The miner is `CellbaseWitness.lock`, **never the cellbase OUTPUT
+/// lock**. CKB pays the block reward eleven confirmations back, so block N's
+/// cellbase output pays whoever mined block N−11; only the witness names the
+/// producer of the block carrying it. Reading the output instead would shift
+/// every attribution by eleven blocks while leaving the aggregate
+/// distribution identical — the same multiset of producers, so a share
+/// readout, a distribution table, even a flood-origin oracle would all still
+/// agree. On a chain where one producer takes most blocks the two locks also
+/// coincide by luck most of the time, which is why the test that pins this
+/// has to assert the two are DIFFERENT and that the witness one won.
+///
+/// ⚠️ The molecule is [`packed::CellbaseWitness`] (RFC-0022: `lock: Script,
+/// message: Bytes`), **not `WitnessArgs`** — different tables with different
+/// field counts. Reading this one as `WitnessArgs` is the historical bug that
+/// makes miner messages come back empty.
+///
+/// `None` is a first-class answer that travels all the way up: a block whose
+/// producer we cannot read is still a block cknerv must show, so a missing,
+/// malformed or nameless witness returns `None` rather than failing the whole
+/// translation. Both halves are read from one witness, so they are `Some`
+/// together or `None` together.
+fn cellbase_producer(txs: &[Value]) -> Option<(String, String)> {
+    let witness_hex = txs.first()?.get("witnesses")?.get(0)?.as_str()?;
+    let witness_body = witness_hex.strip_prefix("0x").unwrap_or(witness_hex);
+    let witness = packed::CellbaseWitness::from_slice(&hex::decode(witness_body).ok()?).ok()?;
+
+    let lock = witness.lock();
+    // ⭐ Genesis DOES carry a structurally valid `CellbaseWitness` — mainnet's
+    // is 69 bytes and parses — but its lock is the null script: zero code
+    // hash, `data` hash type, no args. Nobody mined genesis. Hashing that
+    // script anyway would mint a well-formed 64-hex key out of a declaration
+    // that names no one, and everything above here reads a key as an
+    // identity. No code cell hashes to zero, so a zero code hash is exactly
+    // the shape of "nobody".
+    if lock.code_hash().is_zero() {
+        return None;
+    }
+    let key = format!("0x{}", hex::encode(lock.calc_script_hash().raw_data()));
+
+    // Miners that write a message at all pad it with NUL bytes (mainnet's
+    // carry a four-byte zero head and often a zero tail). Strip the padding
+    // off both ends — NULs have no business on a wire this repo reads back as
+    // text — and leave everything between exactly as declared. It is the
+    // miner talking, not us measuring.
+    let declared = witness.message().raw_data();
+    let message = String::from_utf8_lossy(&declared)
+        .trim_matches(|c: char| c.is_control() || c.is_whitespace())
+        .to_string();
+
+    Some((key, message))
 }
 
 fn parse_inputs(tx: &Value, tx_hash: &str) -> Result<Vec<OutPoint>> {
@@ -377,15 +436,326 @@ mod tests {
                 tx_count,
                 size,
                 at,
+                producer_key,
+                producer_message,
             } => {
                 assert_eq!(*number, 7);
                 assert_eq!(hash, "0xblock7");
                 assert_eq!(*tx_count, 1);
                 assert_eq!(*size, 0);
                 assert_eq!(*at, 42);
+                // This fixture's cellbase carries no witness at all, and a
+                // block whose producer we cannot read is still a block.
+                assert_eq!(*producer_key, None);
+                assert_eq!(*producer_message, None);
             }
             other => panic!("expected BlockMined first, got {other:?}"),
         }
+    }
+
+    /// The secp256k1_blake160_sighash_all code hash every mainnet cellbase
+    /// lock uses, on both sides of the pair below.
+    const SIGHASH_CODE_HASH: &str =
+        "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8";
+
+    /// `transactions[0].witnesses[0]` of mainnet block 20,259,445, verbatim
+    /// as the node serves it. Its lock args are `0xeb0c0007…d7d6` and its
+    /// message is NUL-padded on both ends.
+    const BLOCK_20259445_WITNESS: &str = "0x7f0000000c000000550000004900000010000000300000\
+         00310000009bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce80114000000eb\
+         0c00079f76e90b970d236bbf845d9a501de7d6260000000000000020302e3230392e30202837653331663\
+         73520323032362d30372d3330292000000000";
+
+    /// Same block's cellbase OUTPUT lock args. Different identity: the
+    /// reward it pays belongs to whoever mined block 20,259,434.
+    const BLOCK_20259445_OUTPUT_LOCK_ARGS: &str = "0x8805eaf629140c223ece7e2ad8e2a01acb8695f9";
+
+    /// `transactions[0].witnesses[0]` of CKB mainnet genesis, verbatim. It
+    /// is a structurally valid `CellbaseWitness` — 69 bytes, two fields —
+    /// carrying the null script and an empty message.
+    const GENESIS_WITNESS: &str = "0x450000000c000000410000003500000010000000300000003100000000\
+         00000000000000000000000000000000000000000000000000000000000000000000000000000000";
+
+    fn sighash_lock_json(args: &str) -> Value {
+        serde_json::json!({
+            "code_hash": SIGHASH_CODE_HASH,
+            "hash_type": "type",
+            "args": args,
+        })
+    }
+
+    /// A one-cellbase block whose witness list and output lock are both
+    /// supplied, so a test can make the two miner locks disagree.
+    fn cellbase_block_with(witnesses: Option<Value>, output_lock: Value) -> Value {
+        let mut tx = serde_json::json!({
+            "hash": format!("0x{:064x}", 1),
+            "inputs": [{
+                "previous_output": {
+                    "tx_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    "index": "0xffffffff"
+                },
+                "since": "0x0"
+            }],
+            "outputs": [{
+                "capacity": "0xae0bc7e000",
+                "lock": output_lock,
+                "type": null
+            }],
+            "outputs_data": ["0x"]
+        });
+        if let Some(witnesses) = witnesses {
+            tx["witnesses"] = witnesses;
+        }
+        serde_json::json!({
+            "header": { "hash": "0xblock", "number": "0x1" },
+            "transactions": [tx]
+        })
+    }
+
+    fn producer_of(block: &Value) -> (Option<String>, Option<String>) {
+        let muts = translate_block(block, 1, 42, 0).expect("a block still translates");
+        match &muts[0] {
+            Mutation::BlockMined {
+                producer_key,
+                producer_message,
+                ..
+            } => (producer_key.clone(), producer_message.clone()),
+            other => panic!("expected BlockMined first, got {other:?}"),
+        }
+    }
+
+    /// ⭐⭐⭐ The pin the whole producer feature rests on.
+    ///
+    /// CKB pays the block reward eleven confirmations back, so every
+    /// cellbase carries TWO miner locks: the OUTPUT lock pays whoever mined
+    /// eleven blocks earlier, and only the WITNESS lock names the producer of
+    /// the block carrying it. Reading the output instead shifts every
+    /// attribution by eleven while leaving the aggregate distribution
+    /// identical — so a test that only asserted "a key came back" would pass
+    /// under the bug, and so would every share readout downstream.
+    ///
+    /// The vector is mainnet block 20,259,445, chosen because its two locks
+    /// DISAGREE: on a chain where one producer takes most of the blocks they
+    /// coincide by luck most of the time. This test asserts the disagreement
+    /// first — if a future edit ever made the two locks equal, the pin would
+    /// be worthless and must fail loudly rather than pass vacuously.
+    #[test]
+    fn the_producer_is_the_cellbase_witness_lock_never_the_output_lock() {
+        let output_lock_json = sighash_lock_json(BLOCK_20259445_OUTPUT_LOCK_ARGS);
+        let block = cellbase_block_with(
+            Some(serde_json::json!([BLOCK_20259445_WITNESS])),
+            output_lock_json.clone(),
+        );
+
+        // Both locks, as packed scripts, straight from the block.
+        let witness_bytes = hex::decode(BLOCK_20259445_WITNESS.trim_start_matches("0x")).unwrap();
+        let witness_lock = packed::CellbaseWitness::from_slice(&witness_bytes)
+            .expect("a real cellbase witness parses as CellbaseWitness")
+            .lock();
+        let output_lock: packed::Script =
+            serde_json::from_value::<ckb_jsonrpc_types::Script>(output_lock_json)
+                .unwrap()
+                .into();
+
+        // The premise. Without it the rest of this test proves nothing.
+        assert_ne!(
+            witness_lock.args().raw_data(),
+            output_lock.args().raw_data(),
+            "this vector was chosen because its two miner locks differ"
+        );
+
+        let hash_of = |script: &packed::Script| {
+            format!("0x{}", hex::encode(script.calc_script_hash().raw_data()))
+        };
+        let (key, message) = producer_of(&block);
+        let key = key.expect("a mined block names its producer");
+
+        assert_eq!(
+            key,
+            hash_of(&witness_lock),
+            "the producer key must be the WITNESS lock's script hash"
+        );
+        assert_ne!(
+            key,
+            hash_of(&output_lock),
+            "the cellbase OUTPUT lock pays the miner of eleven blocks ago; \
+             attributing by it shifts every block while leaving the \
+             distribution identical"
+        );
+
+        // Pinned literals, so a change in how the hash is computed fails here
+        // rather than agreeing with itself, and an independent blake2b of the
+        // packed script proves the key is the ckb-default-hash script hash.
+        assert_eq!(
+            key,
+            "0xfc20a8c81a461efaf91585c631db784749d066f709d30243095efda7a7fdcfd9"
+        );
+        assert_eq!(
+            hash_of(&output_lock),
+            "0xbccf17b39f4295b62ce19f8475f873914021df57d15725dae390aa3317e2afb9"
+        );
+        assert_eq!(
+            key,
+            format!(
+                "0x{}",
+                hex::encode(ckb_hash::blake2b_256(witness_lock.as_slice()))
+            )
+        );
+
+        // The declared message reaches the wire without the NUL padding the
+        // miner wrapped it in, and with everything between left alone.
+        assert_eq!(message.as_deref(), Some("0.209.0 (7e31f75 2026-07-30)"));
+    }
+
+    /// ⭐ Genesis is not the "no witness" case the shape of this code would
+    /// suggest. Its cellbase carries a perfectly valid `CellbaseWitness` —
+    /// whose lock is the null script, because nobody mined genesis. Hashing
+    /// that anyway does not yield an obvious zero: it yields a well-formed
+    /// 64-hex key that every consumer above would read as a producer
+    /// identity, and a devnet starts at genesis every time.
+    #[test]
+    fn genesis_names_no_producer_even_though_its_witness_parses() {
+        let genesis_bytes = hex::decode(GENESIS_WITNESS.trim_start_matches("0x")).unwrap();
+        let witness = packed::CellbaseWitness::from_slice(&genesis_bytes)
+            .expect("genesis really does carry a valid CellbaseWitness");
+        assert_eq!(
+            witness.lock().as_slice(),
+            packed::Script::default().as_slice(),
+            "genesis declares the null script as its miner lock"
+        );
+
+        // What a naive read would emit: not a zero, and not obviously wrong.
+        let phantom = format!(
+            "0x{}",
+            hex::encode(witness.lock().calc_script_hash().raw_data())
+        );
+        assert_eq!(
+            phantom,
+            "0x77c93b0632b5b6c3ef922c5b7cea208fb0a7c427a13d50e13d3fefad17e0c590"
+        );
+
+        let genesis_lock = serde_json::json!({
+            "code_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "hash_type": "data",
+            "args": "0x",
+        });
+        let block = cellbase_block_with(
+            Some(serde_json::json!([GENESIS_WITNESS])),
+            genesis_lock.clone(),
+        );
+        assert_eq!(
+            producer_of(&block),
+            (None, None),
+            "no synthesized key, no empty-string key — genesis names nobody"
+        );
+
+        // And the block itself still translates whole.
+        let muts = translate_block(&block, 0, 42, 0).expect("genesis still translates");
+        assert!(matches!(muts[0], Mutation::BlockMined { number: 0, .. }));
+        assert!(matches!(muts[1], Mutation::TxLanded { block: 0, .. }));
+    }
+
+    /// A witness cknerv cannot read is not an error — a block whose producer
+    /// is illegible is still a block cknerv must show. Both halves come back
+    /// `None` together, since one reading yields both.
+    ///
+    /// ⚠️ The `WitnessArgs` row is the interesting one. It is a DIFFERENT
+    /// molecule from `CellbaseWitness` (three fields against two), and
+    /// confusing the two is the historical bug that makes miner messages come
+    /// back empty. Here it must simply fail to parse rather than yield
+    /// anything at all.
+    #[test]
+    fn an_unreadable_witness_leaves_the_block_without_a_producer() {
+        let witness_args = packed::WitnessArgs::new_builder()
+            .lock(Some(ckb_types::bytes::Bytes::from(vec![1u8, 2, 3])).pack())
+            .build();
+        let witness_args_hex = format!("0x{}", hex::encode(witness_args.as_slice()));
+
+        let cases: Vec<(&str, Option<Value>)> = vec![
+            ("no witnesses field at all", None),
+            ("an empty witness list", Some(serde_json::json!([]))),
+            ("an empty witness", Some(serde_json::json!(["0x"]))),
+            (
+                "a witness that is not hex",
+                Some(serde_json::json!(["0xnothex"])),
+            ),
+            (
+                "a truncated witness",
+                Some(serde_json::json!(["0x7f0000000c00000055"])),
+            ),
+            (
+                "a WitnessArgs, which is a different molecule",
+                Some(serde_json::json!([witness_args_hex])),
+            ),
+            (
+                "a witness that is not a string",
+                Some(serde_json::json!([42])),
+            ),
+        ];
+
+        for (label, witnesses) in cases {
+            let block = cellbase_block_with(
+                witnesses,
+                sighash_lock_json(BLOCK_20259445_OUTPUT_LOCK_ARGS),
+            );
+            assert_eq!(
+                producer_of(&block),
+                (None, None),
+                "{label}: an illegible producer is None, never invented"
+            );
+            let muts = translate_block(&block, 1, 42, 0)
+                .unwrap_or_else(|e| panic!("{label}: the block must still translate: {e}"));
+            assert_eq!(muts.len(), 2, "{label}: BlockMined + the cellbase TxLanded");
+        }
+    }
+
+    /// The message is the miner talking, and it arrives as declared apart
+    /// from the padding stripped off its ends. A producer that declared
+    /// nothing readable says `""` — which is still an answer, and still comes
+    /// with a key.
+    #[test]
+    fn the_declared_message_arrives_trimmed_but_otherwise_verbatim() {
+        let cellbase_witness = |message: &[u8]| {
+            let witness = packed::CellbaseWitness::new_builder()
+                .lock(
+                    packed::Script::new_builder()
+                        .code_hash(
+                            packed::Byte32::from_slice(
+                                &hex::decode(SIGHASH_CODE_HASH.trim_start_matches("0x")).unwrap(),
+                            )
+                            .unwrap(),
+                        )
+                        .hash_type(packed::Byte::new(1))
+                        .args(ckb_types::bytes::Bytes::from(vec![0xab; 20]).pack())
+                        .build(),
+                )
+                .message(ckb_types::bytes::Bytes::from(message.to_vec()).pack())
+                .build();
+            let block = cellbase_block_with(
+                Some(serde_json::json!([format!(
+                    "0x{}",
+                    hex::encode(witness.as_slice())
+                )])),
+                sighash_lock_json(BLOCK_20259445_OUTPUT_LOCK_ARGS),
+            );
+            producer_of(&block)
+        };
+
+        let (key, message) = cellbase_witness(b"\0\0\0\0 0.209.0 (d166e28 2026-07-29) bpool\0");
+        assert!(key.is_some());
+        assert_eq!(
+            message.as_deref(),
+            Some("0.209.0 (d166e28 2026-07-29) bpool")
+        );
+
+        // Nothing declared is not the same as nothing known: the key is still
+        // there, and the message is an empty claim rather than a missing one.
+        let (key, message) = cellbase_witness(b"");
+        assert!(key.is_some());
+        assert_eq!(message.as_deref(), Some(""));
+
+        let (_, padding_only) = cellbase_witness(b"\0\0\0\0");
+        assert_eq!(padding_only.as_deref(), Some(""));
     }
 
     #[test]

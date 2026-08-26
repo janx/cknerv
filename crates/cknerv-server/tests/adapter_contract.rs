@@ -41,6 +41,8 @@ impl Adapter for CountdownAdapter {
                             tx_count: 0,
                             size: 0,
                             at: 0,
+                            producer_key: None,
+                            producer_message: None,
                         })
                         .await;
                 }

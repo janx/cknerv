@@ -225,6 +225,8 @@ mod tests {
             tx_count: 1,
             size: 0,
             at: 1_000,
+            producer_key: None,
+            producer_message: None,
         });
         save(&s1, &workdir).expect("save");
 
@@ -251,6 +253,8 @@ mod tests {
             tx_count: 0,
             size: 0,
             at: 1_000,
+            producer_key: None,
+            producer_message: None,
         });
         save(&s, &workdir).expect("save");
         assert_eq!(peek_restored_tip(&workdir), Some(12345));
@@ -316,6 +320,8 @@ mod tests {
             tx_count: 0,
             size: 0,
             at: 1_000,
+            producer_key: None,
+            producer_message: None,
         });
         state.apply_mutation(Mutation::CellHydrationCompleted {
             target: 20_000,

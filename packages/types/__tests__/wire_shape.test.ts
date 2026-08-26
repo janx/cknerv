@@ -103,6 +103,22 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(named.p2p_node_id).toMatch(/^Qm/);
     expect(unnamed.id).toBe(named.id);
     expect(unnamed.p2p_node_id).toBeUndefined();
+
+    // A block's producer is optional on the wire for the same reason: the
+    // adapter cannot always read one (genesis names nobody, a witness may not
+    // parse, and the simulator emits none at all). Both halves ride one
+    // reading, so they are present together or absent together — never a
+    // synthesized key, never an empty-string one.
+    const mined = samples.BlockMined as Extract<Mutation, { type: 'block_mined' }>;
+    const minedAnonymously = samples.BlockMinedWithoutProducer as Extract<
+      Mutation,
+      { type: 'block_mined' }
+    >;
+    expect(mined.producer_key).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(typeof mined.producer_message).toBe('string');
+    expect(minedAnonymously.number).toBe(mined.number);
+    expect(minedAnonymously.producer_key).toBeUndefined();
+    expect(minedAnonymously.producer_message).toBeUndefined();
   });
 
   it('snapshot_chain.json has ChainEntry shape', () => {

@@ -834,6 +834,8 @@ fn apply_chain_mutation(chain: &mut Chain, m: &Mutation) {
             tx_count,
             size,
             at,
+            producer_key: _,
+            producer_message: _,
         } => {
             let exact_dup = chain
                 .recent_blocks
@@ -1031,6 +1033,8 @@ mod tests {
             tx_count: 0,
             size: 0,
             at: number * 1_000,
+            producer_key: None,
+            producer_message: None,
         }
     }
 
@@ -1147,6 +1151,8 @@ mod tests {
             tx_count: 0,
             size: 0,
             at: 1_000,
+            producer_key: None,
+            producer_message: None,
         });
 
         let first = state.mutation_ring_snapshot();
@@ -1195,6 +1201,8 @@ mod tests {
             tx_count: 2,
             size: 0,
             at: 1_000,
+            producer_key: None,
+            producer_message: None,
         });
         assert_eq!(rev, 1);
         let snap = s.snapshot();
@@ -1213,6 +1221,8 @@ mod tests {
             tx_count: 2,
             size: 500,
             at: 100,
+            producer_key: None,
+            producer_message: None,
         });
         s.apply_mutation(Mutation::BlockMined {
             number: 2,
@@ -1220,6 +1230,8 @@ mod tests {
             tx_count: 7,
             size: 1200,
             at: 110,
+            producer_key: None,
+            producer_message: None,
         });
         let snap = s.snapshot();
         assert_eq!(
@@ -1241,6 +1253,8 @@ mod tests {
             tx_count: 0,
             size: 0,
             at: 100,
+            producer_key: None,
+            producer_message: None,
         });
         s.apply_mutation(Mutation::BlockMined {
             number: 3,
@@ -1248,6 +1262,8 @@ mod tests {
             tx_count: 0,
             size: 0,
             at: 200,
+            producer_key: None,
+            producer_message: None,
         });
         let snap = s.snapshot();
         assert_eq!(snap["chain"]["total_blocks"], 1);
@@ -1262,6 +1278,8 @@ mod tests {
             tx_count: 0,
             size: 0,
             at: 100,
+            producer_key: None,
+            producer_message: None,
         });
         s.apply_mutation(Mutation::BlockMined {
             number: 3,
@@ -1269,6 +1287,8 @@ mod tests {
             tx_count: 0,
             size: 0,
             at: 200,
+            producer_key: None,
+            producer_message: None,
         });
         let snap = s.snapshot();
         assert_eq!(snap["chain"]["reorgs"], 1);
@@ -1285,6 +1305,8 @@ mod tests {
                 tx_count: 1,
                 size: 100,
                 at: number * 1_000,
+                producer_key: None,
+                producer_message: None,
             });
             s.apply_mutation(Mutation::TxLanded {
                 tx_hash: format!("0xtx{number}"),
@@ -1328,6 +1350,8 @@ mod tests {
                 tx_count: 1,
                 size: 100,
                 at: number * 1_000,
+                producer_key: None,
+                producer_message: None,
             });
             s.apply_mutation(Mutation::TxLanded {
                 tx_hash: format!("0xtx{number}"),
@@ -1357,6 +1381,8 @@ mod tests {
             tx_count: 0,
             size: 80,
             at: 20_000,
+            producer_key: None,
+            producer_message: None,
         });
         let replayed = s.snapshot();
         assert_eq!(replayed["chain"]["tip"], 20);
@@ -1392,6 +1418,8 @@ mod tests {
                 tx_count: 0,
                 size: 0,
                 at: i * 10,
+                producer_key: None,
+                producer_message: None,
             });
             assert_eq!(rev, i + 1);
         }
@@ -1407,6 +1435,8 @@ mod tests {
                 tx_count: 0,
                 size: 0,
                 at: number,
+                producer_key: None,
+                producer_message: None,
             });
         }
         assert_eq!(state.mutation_ring_snapshot().len(), 10);
@@ -1427,6 +1457,8 @@ mod tests {
             tx_count: 0,
             size: 0,
             at: 11,
+            producer_key: None,
+            producer_message: None,
         });
         assert_eq!(state.mutation_ring_snapshot().len(), 2);
         state.apply_mutation(Mutation::BackfillProgress {
@@ -1605,6 +1637,8 @@ mod tests {
             tx_count: 4,
             size: 0,
             at: 1_000,
+            producer_key: None,
+            producer_message: None,
         });
         let saved = s.save_entities();
 
@@ -1685,6 +1719,8 @@ mod tests {
             tx_count: 0,
             size: 0,
             at: 1_000,
+            producer_key: None,
+            producer_message: None,
         });
         let record = cknerv_core::CellSemanticRecord {
             out_point: cknerv_core::OutPoint {
@@ -1946,6 +1982,8 @@ mod tests {
             tx_count: 0,
             size: 0,
             at: 1_000,
+            producer_key: None,
+            producer_message: None,
         });
         assert!(
             state.apply_enrichment(EnrichmentEvent::GalaxyCompositionReplace(reservoir_record(
@@ -2032,6 +2070,8 @@ mod tests {
             tx_count: 0,
             size: 0,
             at: 1_000,
+            producer_key: None,
+            producer_message: None,
         });
         let mut rx = state.subscribe_mutations();
 
@@ -2063,6 +2103,8 @@ mod tests {
             tx_count: 0,
             size: 0,
             at: 2_000,
+            producer_key: None,
+            producer_message: None,
         });
         assert_eq!(next, 3);
         let got = rx.try_recv().expect("visible mutation broadcasts");
@@ -2096,6 +2138,8 @@ mod tests {
             tx_count: 0,
             size: 0,
             at: 1_000,
+            producer_key: None,
+            producer_message: None,
         });
         let mut rx = state.subscribe_mutations();
 

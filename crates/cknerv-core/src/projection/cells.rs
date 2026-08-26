@@ -1869,6 +1869,8 @@ impl Projection for CellGalaxy {
                 tx_count,
                 size: _,
                 at,
+                producer_key: _,
+                producer_message: _,
             } => self.handle_block_mined(*number, hash, *tx_count, *at),
             Mutation::ChainReorganized { from_block } => self.rollback_from(*from_block),
             Mutation::ChainRebuild { .. } => self.reset_for_rebuild(),
@@ -2105,6 +2107,8 @@ mod tests {
             tx_count: 1,
             size: 0,
             at: 2_000,
+            producer_key: None,
+            producer_message: None,
         });
 
         assert_eq!(
@@ -2139,6 +2143,8 @@ mod tests {
                 tx_count: 1,
                 size: 0,
                 at,
+                producer_key: None,
+                producer_message: None,
             })
         }
 
@@ -2196,6 +2202,8 @@ mod tests {
             tx_count: 1,
             size: 0,
             at: 2_000,
+            producer_key: None,
+            producer_message: None,
         });
         // Boot replays thousands of blocks; a full pass per replayed block is
         // exactly the cost the live-block gate exists to avoid.
@@ -2227,6 +2235,8 @@ mod tests {
             tx_count: 1,
             size: 0,
             at: 1_000,
+            producer_key: None,
+            producer_message: None,
         });
         g.apply_mutation(&Mutation::TxLanded {
             tx_hash: "0xmint".into(),
@@ -2241,6 +2251,8 @@ mod tests {
             tx_count: 1,
             size: 0,
             at: 1_100,
+            producer_key: None,
+            producer_message: None,
         });
         g.apply_mutation(&Mutation::TxLanded {
             tx_hash: "0xsurvivor".into(),
@@ -2259,6 +2271,8 @@ mod tests {
             tx_count: 1,
             size: 0,
             at: 1_200,
+            producer_key: None,
+            producer_message: None,
         });
         assert!(!block
             .iter()
@@ -2302,6 +2316,8 @@ mod tests {
             tx_count: 1,
             size: 0,
             at: 1_000,
+            producer_key: None,
+            producer_message: None,
         });
         g.apply_mutation(&Mutation::TxLanded {
             tx_hash: "0xobsolete".into(),
@@ -2325,6 +2341,8 @@ mod tests {
             tx_count: 0,
             size: 0,
             at: 2_000 + CORPSE_HOLD_MS + 1,
+            producer_key: None,
+            producer_message: None,
         });
 
         assert!(g.cells.is_empty(), "Cell-tail GC still runs during replay");
@@ -4345,6 +4363,8 @@ mod tests {
             tx_count: 1,
             size: 0,
             at,
+            producer_key: None,
+            producer_message: None,
         }
     }
 
@@ -5713,7 +5733,7 @@ mod tests {
         // two cells of DIFFERENT asset kinds sharing one seed: on mainnet that
         // is a Spore Cluster container and a spore inside it, which is the one
         // case a per-kind encoding would quietly get wrong.
-        acp_spore.collection_seed = Some([0xc0_11ec_71, 0x0_1dee_d5]);
+        acp_spore.collection_seed = Some([0xc011_ec71, 0x001d_eed5]);
         // Native means "no type script", so this one says its kind and
         // carries nothing to say it with — which is the pairing the wire has
         // to keep separable from a cell with no identity at all.
@@ -5729,7 +5749,7 @@ mod tests {
         sighash_object.lock_script = lock;
         sighash_object.type_script = Some(script(0x66, "data1"));
         sighash_object.type_shape_seed = Some([0x6666_6666, 0x6666_6666]);
-        sighash_object.collection_seed = Some([0xc0_11ec_71, 0x0_1dee_d5]);
+        sighash_object.collection_seed = Some([0xc011_ec71, 0x001d_eed5]);
         let mut sighash_identity = out(73_00000000, "0x04");
         sighash_identity.lock_kind = LockKind::Sighash;
         sighash_identity.asset_kind = AssetKind::Identity;

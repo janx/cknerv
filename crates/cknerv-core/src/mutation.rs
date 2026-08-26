@@ -48,6 +48,26 @@ pub enum Mutation {
         #[serde(default)]
         size: u64,
         at: u64,
+        /// Who produced this block — an opaque identity key chosen by the
+        /// source adapter. Chain-generic: consumers group and count by it and
+        /// never parse it. The CKB adapter sends the `ckb-default-hash` of the
+        /// packed `CellbaseWitness.lock` script (`0x` + 64 lowercase hex),
+        /// which names the miner of THIS block — never the cellbase output
+        /// lock, which pays whoever mined eleven blocks earlier.
+        ///
+        /// `None` is a first-class answer, never a synthesized key: a block
+        /// whose producer the adapter cannot read is still a block. Combined
+        /// with `#[serde(default)]` that also lets simulator frames and every
+        /// older persisted frame decode.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        producer_key: Option<String>,
+        /// What that producer says about itself, as the adapter read it.
+        /// Self-declared and trivially spoofable — consumers must present it
+        /// as a claim, not as a measurement. `Some("")` when the producer
+        /// declared nothing; `None` exactly when `producer_key` is `None`,
+        /// since one reading yields both.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        producer_message: Option<String>,
     },
     /// Invalidates the previously-observed canonical suffix beginning at
     /// `from_block`. Adapters emit this before replaying replacement blocks
@@ -266,6 +286,58 @@ mod tests {
                 phase: ReplayPhase::Boot,
             }
         );
+    }
+
+    #[test]
+    fn block_mined_carries_its_producer_and_survives_frames_without_one() {
+        let mined = Mutation::BlockMined {
+            number: 12,
+            hash: "0xb12".into(),
+            tx_count: 3,
+            size: 900,
+            at: 1_700,
+            producer_key: Some(
+                "0xfc20a8c81a461efaf91585c631db784749d066f709d30243095efda7a7fdcfd9".into(),
+            ),
+            producer_message: Some("0.209.0 (7e31f75 2026-07-30)".into()),
+        };
+        let v = serde_json::to_value(&mined).expect("serialize");
+        assert_eq!(v["type"], "block_mined");
+        assert_eq!(
+            v["producer_key"],
+            "0xfc20a8c81a461efaf91585c631db784749d066f709d30243095efda7a7fdcfd9"
+        );
+        assert_eq!(v["producer_message"], "0.209.0 (7e31f75 2026-07-30)");
+        assert_eq!(serde_json::from_value::<Mutation>(v).unwrap(), mined);
+
+        // A block whose producer nobody could read: the keys never reach the
+        // wire, and a frame without them is still a whole mutation. This is
+        // also every simulator frame and every frame persisted before the
+        // field existed.
+        let anonymous = Mutation::BlockMined {
+            number: 12,
+            hash: "0xb12".into(),
+            tx_count: 3,
+            size: 900,
+            at: 1_700,
+            producer_key: None,
+            producer_message: None,
+        };
+        let av = serde_json::to_value(&anonymous).expect("serialize");
+        assert!(av.get("producer_key").is_none());
+        assert!(av.get("producer_message").is_none());
+        assert_eq!(serde_json::from_value::<Mutation>(av).unwrap(), anonymous);
+
+        let legacy: Mutation = serde_json::from_value(serde_json::json!({
+            "type": "block_mined",
+            "number": 12,
+            "hash": "0xb12",
+            "tx_count": 3,
+            "size": 900,
+            "at": 1_700
+        }))
+        .expect("deserialize a frame that predates the producer");
+        assert_eq!(legacy, anonymous);
     }
 
     #[test]

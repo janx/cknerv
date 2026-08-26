@@ -514,6 +514,8 @@ mod tests {
             tx_count: 2,
             size: 1_024,
             at: 1_700_000_000_000,
+            producer_key: None,
+            producer_message: None,
         });
         let mutation = state
             .mutation_ring_snapshot()
@@ -900,6 +902,8 @@ mod tests {
             tx_count: 1,
             size: 42,
             at: 1_000,
+            producer_key: None,
+            producer_message: None,
         });
 
         let live = first.try_recv().expect("first client gets the mutation");

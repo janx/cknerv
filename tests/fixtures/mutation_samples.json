@@ -13,6 +13,16 @@
     "hash": "0xabc",
     "tx_count": 2,
     "size": 1024,
+    "at": 1000,
+    "producer_key": "0xfc20a8c81a461efaf91585c631db784749d066f709d30243095efda7a7fdcfd9",
+    "producer_message": "0.209.0 (7e31f75 2026-07-30)"
+  },
+  "BlockMinedWithoutProducer": {
+    "type": "block_mined",
+    "number": 1,
+    "hash": "0xabc",
+    "tx_count": 2,
+    "size": 1024,
     "at": 1000
   },
   "TxLanded": {

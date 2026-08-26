@@ -102,7 +102,7 @@ fn spore_cluster_id(data: &[u8]) -> Option<&[u8]> {
     // The first field's offset is also the header length, so it counts the
     // fields: `full_size` plus one offset each.
     let header = le_u32(data, 4)? as usize;
-    if header % 4 != 0 || header / 4 != SPORE_DATA_FIELDS + 1 {
+    if !header.is_multiple_of(4) || header / 4 != SPORE_DATA_FIELDS + 1 {
         return None;
     }
     let start = le_u32(data, 4 * SPORE_DATA_FIELDS)? as usize;

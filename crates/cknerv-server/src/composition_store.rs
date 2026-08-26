@@ -644,6 +644,8 @@ mod tests {
                 tx_count: 0,
                 size: 0,
                 at: 2,
+                producer_key: None,
+                producer_message: None,
             });
             SpendingNode.hydrate_galaxy_composition(candidates).await
         }
@@ -684,6 +686,8 @@ mod tests {
             tx_count: 0,
             size: 0,
             at: 1,
+            producer_key: None,
+            producer_message: None,
         });
         state
     }

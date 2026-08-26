@@ -221,6 +221,8 @@ impl Adapter for CompletedBootReplayAdapter {
                 tx_count: 0,
                 size: 0,
                 at: 7,
+                producer_key: None,
+                producer_message: None,
             })
             .await;
         let _ = out
@@ -261,6 +263,8 @@ impl Adapter for TwoBlockAdapter {
                     tx_count: 0,
                     size: 0,
                     at: number,
+                    producer_key: None,
+                    producer_message: None,
                 })
                 .await;
         }

@@ -17,6 +17,19 @@ export type Mutation =
       tx_count: number;
       size?: number;
       at: number;
+      /** Who produced this block — an opaque identity key chosen by the
+       *  source adapter. Group and count by it; never parse it. The CKB
+       *  adapter sends the script hash of the cellbase WITNESS lock, which
+       *  names the miner of THIS block — not the cellbase output lock, which
+       *  pays whoever mined eleven blocks earlier. Omitted when the adapter
+       *  could not read one: a block whose producer is illegible is still a
+       *  block, and the key is never synthesized. */
+      producer_key?: string | null;
+      /** What that producer says about itself, as the adapter read it.
+       *  Self-declared and trivially spoofable — present it as a claim, not
+       *  as a measurement. `''` when the producer declared nothing; present
+       *  exactly when `producer_key` is, since one reading yields both. */
+      producer_message?: string | null;
     }
   /** Invalidates the formerly-canonical suffix before replacement blocks
    *  are replayed. */

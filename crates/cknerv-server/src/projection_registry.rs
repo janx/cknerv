@@ -1013,6 +1013,8 @@ mod tests {
                 tx_count: 1,
                 size: 0,
                 at: 1_000,
+                producer_key: None,
+                producer_message: None,
             },
             Mutation::TxLanded {
                 tx_hash: "0xtx".to_string(),
@@ -1139,6 +1141,8 @@ mod tests {
                 tx_count: 1,
                 size: 0,
                 at: 1_000,
+                producer_key: None,
+                producer_message: None,
             },
         );
         apply(
@@ -1159,6 +1163,8 @@ mod tests {
                 tx_count: 1,
                 size: 0,
                 at: 1_100,
+                producer_key: None,
+                producer_message: None,
             },
         );
         apply(
@@ -1182,6 +1188,8 @@ mod tests {
                 tx_count: 0,
                 size: 0,
                 at: 1_200,
+                producer_key: None,
+                producer_message: None,
             },
         );
 
@@ -1231,6 +1239,8 @@ mod tests {
                 tx_count: 0,
                 size: 0,
                 at: 9,
+                producer_key: None,
+                producer_message: None,
             },
         });
         assert_eq!(runtime.snapshot_json().0, 0);
