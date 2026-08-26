@@ -469,7 +469,7 @@ describe('NetworkPanel producers', () => {
       <NetworkPanel {...props} producers={view([96, 48, 32, 24])} />,
     );
     const row = container.querySelector('[data-network-producers]');
-    expect(row?.textContent).toContain('Mining cohorts');
+    expect(row?.textContent).toContain('POW COHORTS');
     expect(row?.textContent).toContain('4 · TOP 48% · 200 BLK');
     cleanup();
 
@@ -495,7 +495,7 @@ describe('NetworkPanel producers', () => {
       <NetworkPanel {...props} producers={view([96, 104])} />,
     );
     const row = container.querySelector('[data-network-producers]')?.textContent ?? '';
-    expect(row).toMatch(/MINING COHORTS/i);
+    expect(row).toMatch(/POW COHORTS/i);
     // No surface here may claim a machine, and `PRODUCER` is the derive's own
     // name for the fact — an internal vocabulary is not a reason for a panel to
     // speak a dialect nothing else on screen speaks.

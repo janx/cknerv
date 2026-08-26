@@ -153,13 +153,14 @@ export const peerSchema = {
   flameBloom: { value: 0.7, min: 0.1, max: 2, step: 0.05, label: 'flame bloom' },
   glintBloomOpacity: { value: 0.55, min: 0, max: 1, step: 0.05, label: 'glint bloom op' },
   glintPlumeOpacity: { value: 0.3, min: 0, max: 1, step: 0.05, label: 'glint plume op' },
-  // The mining channel — one black hole per cohort. `holeInfall` is how many
+  // The POW channel — one accreting void per cohort. `holeInfall` is how many
   // times a second a mote completes its fall for a cohort holding the WHOLE
   // window (the share scales it, and it is the only thing the share moves);
   // `holeSwirl` is how many turns that fall adds; `holeSpin` is how fast the
   // accretion rim itself turns, and it may go NEGATIVE because which way a disc
   // spins is arbitrary. `holeRim` and `holeMotes` are the two brightnesses:
-  // reach for `holeRim` first, since the rim is what makes the shadow a shadow.
+  // reach for `holeRim` first, since the disc and photon ring make the aperture
+  // legible at colony scale.
   holeRim: { value: COHORT_RIM_AMP, min: 0, max: 3, step: 0.05, label: 'hole rim amp' },
   holeMotes: { value: COHORT_MOTE_AMP, min: 0, max: 3, step: 0.05, label: 'hole mote amp' },
   holeInfall: { value: COHORT_INFALL_HZ, min: 0.02, max: 3, step: 0.01, label: 'hole infall hz' },

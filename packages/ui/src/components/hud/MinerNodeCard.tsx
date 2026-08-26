@@ -27,14 +27,10 @@
 // one rig and may be a fleet, and the card says which of those we can tell
 // (neither) rather than picking.
 //
-// ⚠️ AND IT IS `COHORT //` RATHER THAN `MINING COHORT //` ON MEASURED WIDTH.
-// This card is 340px and its header plate leaves a 306px measure; at
-// `HUD_TYPE.title` in the display face `MINING COHORT // fc20a8c8` runs 215px
-// and the `CHAIN ATTESTED` chip beside it 91px, which is 314px with the gap —
-// the chip wraps and the masthead grows a line. `COHORT // fc20a8c8` measures
-// 154px, lands at 253px with the chip, and keeps the two-line header the other
-// three dialects have. MESH·02 carries the long form (`MINING COHORTS`), where
-// there is room for it; a masthead is a name and the row is a sentence.
+// ⚠️ `POW COHORT //` IS THE FULL PRODUCT NAME AND IT FITS THE MEASURE. This
+// card is 340px and its header plate leaves a 306px measure. The compact POW
+// token keeps the payout-key head and `CHAIN ATTESTED` chip on the same line,
+// while matching MESH·02's `POW COHORTS` vocabulary exactly.
 //
 // ⭐ THE CHIP CARRIES THE EVIDENCE CLASS, WHICH IS THE MASTHEAD'S OTHER HALF.
 // `COHORT` says what the node does; `CHAIN ATTESTED` says how we know it is
@@ -99,26 +95,24 @@ const CARD_WIDTH_PX = 340;
 
 /** The tint the cohort's own mark is drawn in, in hex.
  *
- *  `makeColonyAccretionMaterial` names `PEER_NETWORK_PALETTE.scaffold`
- *  outright — the black hole's accretion rim, its motes and its veil are all
- *  one value, and it is the value the colony's links and every cloud stop are
- *  already drawn in.
+ *  `makeColonyAccretionMaterial` uses `PEER_NETWORK_PALETTE.scaffold` for the
+ *  disc, motes, filaments and veil, with the palette's existing `coldWhite`
+ *  reserved for the photon ring and lensed caps. The aperture itself removes
+ *  light instead of introducing a competing identity hue.
  *
  *  It is the SIGHTED card's accent too, and deliberately: a cohort is a member
  *  of the peer mesh rather than a species beside it, so the whole colony is one
  *  cyan and this card is the readout for the thing the chain proves. What tells
  *  them apart on stage is the SHAPE — a hole with a disc around it against a
  *  point of light — which is the same argument §3.1 makes about brightness, one
- *  channel over. Zero new colour values reach the palette for any of it. */
+ *  channel over. */
 export const MINER_NODE_ACCENT = PEER_NETWORK_HEX.scaffold;
 
 /** The word this dialect wears, in the register a screen reader speaks. One
  *  export because the scene half names the same subject.
  *
- *  ⭐ THE SPOKEN FORM IS THE LONG ONE. The masthead is clipped to `COHORT` by a
- *  306px measure; a screen reader has no measure, so it gets the whole noun and
- *  the reason the noun exists comes across without a second sentence. */
-export const MINER_NODE_SPOKEN_WORD = 'Mining cohort';
+ *  The spoken form matches the visible `POW COHORT` masthead. */
+export const MINER_NODE_SPOKEN_WORD = 'POW cohort';
 
 /** One line of the chain's record. A readout, never a button: nothing here
  *  re-tints the scene, because the scene has nothing to re-tint — the node
@@ -331,7 +325,7 @@ export default function MinerNodeCard({
             textShadow: `0 0 9px ${rgba(accent, 0.45)}`,
           }}
         >
-          COHORT // {keyHead}
+          POW COHORT // {keyHead}
         </span>
         {/* The one thing this card can say that no other card can. It is not a
             caution: a node the chain proves and nobody has met is this

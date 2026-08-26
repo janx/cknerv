@@ -82,7 +82,7 @@ export default function NetworkPanel({ summary, consensus, syncRatio, enrichment
         * stands above the atlas, on the near side of this panel's one line
         * between what the network is and what this crawl saw.
         *
-        * ⭐⭐ THE WORD IS `MINING COHORTS`, AND THAT IS A CORRECTION RATHER
+        * ⭐⭐ THE WORD IS `POW COHORTS`, AND THAT IS A CORRECTION RATHER
         * THAN A RENAME. This row counts DISTINCT PAYOUT LOCK HASHES, and a
         * payout lock hash is a destination: one address pays every machine a
         * pool runs. `MINERS` therefore counted machines it had no evidence
@@ -92,15 +92,15 @@ export default function NetworkPanel({ summary, consensus, syncRatio, enrichment
         * whatever each of them turns out to contain.
         *
         * ⭐ THE HUD STILL ONLY GETS ONE WORD FOR IT. The card this row leads to
-        * is masted `COHORT //` (the long form does not fit a 306px masthead),
+        * is masted `POW COHORT //`,
         * the stamp a peer may carry asks `IN A MINING COHORT?`, and the derive
         * keeps its own vocabulary (`BlockProducer`, `producer_key`, `attested`)
         * because those are names for code and never reach a reader. The local
         * node's own probe still says `MINER`, and correctly: that subject IS
         * one machine, and it is the only one in this app we can say that about.
         *
-        * ⚠️ THE LABEL FITS, MEASURED RATHER THAN HOPED. `MINING COHORTS` is
-        * 91px at `HUD_TYPE.tech` in the Chakra face with this row's 1.6
+        * ⚠️ THE LABEL FITS, MEASURED RATHER THAN HOPED. `POW COHORTS` is
+        * shorter than the previous label at `HUD_TYPE.tech` with this row's 1.6
         * tracking; the widest value this row can print is ~143px; the panel's
         * measure is 272px. `StatRow` is `nowrap` at a fixed 17px height, so
         * neither a wrap nor a taller row is reachable from here — the 53% cut
@@ -117,7 +117,7 @@ export default function NetworkPanel({ summary, consensus, syncRatio, enrichment
       {producers ? (
         <div data-network-producers>
           <StatRow
-            label="Mining cohorts"
+            label="POW COHORTS"
             title="Distinct payout identities in the recent block window, read from each block's cellbase witness. One payout address may pay many machines, so this counts cohorts and never miners."
           >
             {producerFleetText(producers)}

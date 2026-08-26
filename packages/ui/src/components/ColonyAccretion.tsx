@@ -1,16 +1,13 @@
-// ColonyAccretion — what a mining cohort looks like: a black hole.
+// ColonyAccretion — what a POW cohort looks like: an accreting void.
 //
-// A dark event horizon, a bright swirling accretion rim, and motes seeded out
-// in the empty space around the node that spiral in, accelerate and are
-// swallowed at the throat. Continuously, for as long as that payout identity
-// is in the chain's recent window, because this is the IDLE state — what a
-// cohort does BETWEEN blocks. On the block it wins, the colony's own outward
-// surge already erupts from that node, so nothing here fires and nothing here
-// reads the pulse.
+// A true light-removing event horizon sits under a white-hot photon ring,
+// lensed accretion disc, and matter streaks drawn out of the surrounding void.
+// It runs continuously for as long as the payout identity is in the recent
+// window. On the block it wins, the colony's own outward surge already erupts
+// from that node, so nothing here fires and nothing here reads the pulse.
 //
-// The whole design argument — why a hole rather than a ring, how a dark core
-// is possible at all under additive blending, and the four ways this is not the
-// Cell canopy's contact wave — lives on `makeColonyAccretionMaterial` in
+// The whole design argument — why the aperture and light need separate passes,
+// and how this differs from the Cell canopy's contact wave — lives in
 // `materials/colonyAccretion`. Read it before touching either.
 //
 // This file owns the two things that cannot live in a material:
@@ -37,7 +34,9 @@ import type { ProducerStanding } from '../derives/blockProducers.derive';
 import { ATTESTED_ID_PREFIX } from '../derives/networkTopology.derive';
 import {
   COHORT_MARK_HALF_EXTENT,
+  COHORT_SHADOW_HALF_EXTENT,
   makeColonyAccretionMaterial,
+  makeColonyHorizonMaterial,
 } from '../materials/colonyAccretion';
 import { useStableList } from './ColonyNodes';
 
@@ -119,12 +118,12 @@ export function sameCohortMark(a: CohortMark, b: CohortMark): boolean {
 const SCRATCH_MATRIX = new THREE.Matrix4();
 
 /**
- * Every cohort's black hole, in ONE instanced additive draw.
+ * Every cohort's accreting void, in two instanced draws.
  *
- * The quad is camera-facing and rebuilt in the vertex shader from the view
- * matrix's own row axes, so there is no per-frame CPU here at all beyond a
- * handful of uniform writes — the horizon, the rim's swirl and every mote in
- * flight are functions of `uTime` and two instanced lanes.
+ * The compact normal-blended pass makes the event horizon able to eclipse the
+ * mesh behind it; the larger additive pass supplies the photon ring, disc,
+ * lensing arcs, filaments and infall. Both are camera-facing and rebuilt in the
+ * vertex shader, so per-frame CPU work remains a handful of uniform writes.
  */
 export default function ColonyAccretion({
   topology,
@@ -144,7 +143,8 @@ export default function ColonyAccretion({
   const simClock = useSimClock();
   const plan = useMemo(() => cohortAccretionMarks(topology), [topology]);
   const marks = useStableList(plan, sameCohortMark);
-  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const horizonMeshRef = useRef<THREE.InstancedMesh>(null);
+  const accretionMeshRef = useRef<THREE.InstancedMesh>(null);
   const cappedLogged = useRef(false);
   useEffect(() => {
     if (marks.length < COHORT_MARK_CAP || cappedLogged.current) return;
@@ -154,7 +154,14 @@ export default function ColonyAccretion({
     );
   }, [marks]);
 
-  const geometry = useMemo(
+  const horizonGeometry = useMemo(
+    () => new THREE.PlaneGeometry(
+      COHORT_SHADOW_HALF_EXTENT * 2,
+      COHORT_SHADOW_HALF_EXTENT * 2,
+    ),
+    [],
+  );
+  const accretionGeometry = useMemo(
     () => new THREE.PlaneGeometry(
       COHORT_MARK_HALF_EXTENT * 2,
       COHORT_MARK_HALF_EXTENT * 2,
@@ -163,7 +170,8 @@ export default function ColonyAccretion({
   );
   // Memoized on [] (stable for the component's life) so a plan rebuild never
   // forces a shader recompile; disposed on unmount only, for the same reason.
-  const material = useMemo(() => makeColonyAccretionMaterial(), []);
+  const horizonMaterial = useMemo(() => makeColonyHorizonMaterial(), []);
+  const accretionMaterial = useMemo(() => makeColonyAccretionMaterial(), []);
   const capacity = Math.max(1, marks.length);
 
   // The two per-cohort lanes, allocated once for a capacity and rewritten in
@@ -177,34 +185,38 @@ export default function ColonyAccretion({
 
   // Placement and identity: written only when the staged cohort set moves.
   useEffect(() => {
-    const mesh = meshRef.current;
-    if (!mesh) return;
-    mesh.count = marks.length;
+    const horizonMesh = horizonMeshRef.current;
+    const accretionMesh = accretionMeshRef.current;
+    if (!horizonMesh || !accretionMesh) return;
+    horizonMesh.count = marks.length;
+    accretionMesh.count = marks.length;
     const seed = lanes.seed.array as Float32Array;
     marks.forEach((mark, index) => {
       // TRANSLATION ONLY — the quad's own orientation is rebuilt from the view
       // matrix in the shader, so a rotation here would be undone and a scale
       // here would fight the geometry's world extent.
       SCRATCH_MATRIX.makeTranslation(mark.pos[0], mark.pos[1], mark.pos[2]);
-      mesh.setMatrixAt(index, SCRATCH_MATRIX);
+      horizonMesh.setMatrixAt(index, SCRATCH_MATRIX);
+      accretionMesh.setMatrixAt(index, SCRATCH_MATRIX);
       seed[index] = mark.seed;
     });
-    mesh.instanceMatrix.needsUpdate = true;
+    horizonMesh.instanceMatrix.needsUpdate = true;
+    accretionMesh.instanceMatrix.needsUpdate = true;
     lanes.seed.needsUpdate = true;
     // Bound on the first pass and again only when a capacity change built new
     // lanes. The geometry outlives the InstancedMesh (a capacity change
     // rebuilds the mesh through `args`), so it can still be holding the
     // previous set.
-    if (mesh.geometry.getAttribute('aSeed') !== lanes.seed) {
-      mesh.geometry.setAttribute('aSeed', lanes.seed);
-      mesh.geometry.setAttribute('aShare', lanes.share);
+    if (accretionMesh.geometry.getAttribute('aSeed') !== lanes.seed) {
+      accretionMesh.geometry.setAttribute('aSeed', lanes.seed);
+      accretionMesh.geometry.setAttribute('aShare', lanes.share);
     }
   }, [lanes, marks]);
 
   // The live share, written in place whenever the window moves — which is once
   // per attributed block, and never touches the geometry.
   useEffect(() => {
-    if (!meshRef.current) return;
+    if (!accretionMeshRef.current) return;
     const shareByKey = new Map<string, number>();
     for (const producer of producers ?? []) shareByKey.set(producer.key, producer.share);
     const share = lanes.share.array as Float32Array;
@@ -220,18 +232,22 @@ export default function ColonyAccretion({
   }, [lanes, marks, producers]);
 
   useEffect(() => () => {
-    geometry.dispose();
-    material.dispose();
-  }, [geometry, material]);
+    horizonGeometry.dispose();
+    accretionGeometry.dispose();
+    horizonMaterial.dispose();
+    accretionMaterial.dispose();
+  }, [accretionGeometry, accretionMaterial, horizonGeometry, horizonMaterial]);
 
   useSimFrame(() => {
-    material.uniforms.uTime.value = simClock.elapsedSec;
-    material.uniforms.uContextEnergy.value = contextEnergyRef?.current ?? 1;
-    material.uniforms.uRimAmp.value = LIVE.peer.holeRim;
-    material.uniforms.uMoteAmp.value = LIVE.peer.holeMotes;
-    material.uniforms.uInfall.value = LIVE.peer.holeInfall;
-    material.uniforms.uSwirl.value = LIVE.peer.holeSwirl;
-    material.uniforms.uSpin.value = LIVE.peer.holeSpin;
+    const contextEnergy = contextEnergyRef?.current ?? 1;
+    horizonMaterial.uniforms.uContextEnergy.value = contextEnergy;
+    accretionMaterial.uniforms.uTime.value = simClock.elapsedSec;
+    accretionMaterial.uniforms.uContextEnergy.value = contextEnergy;
+    accretionMaterial.uniforms.uRimAmp.value = LIVE.peer.holeRim;
+    accretionMaterial.uniforms.uMoteAmp.value = LIVE.peer.holeMotes;
+    accretionMaterial.uniforms.uInfall.value = LIVE.peer.holeInfall;
+    accretionMaterial.uniforms.uSwirl.value = LIVE.peer.holeSwirl;
+    accretionMaterial.uniforms.uSpin.value = LIVE.peer.holeSpin;
   });
 
   // ⭐ NO COHORTS ⇒ NO DRAW, NOT AN EMPTY ONE. Every hook above still runs, so
@@ -247,11 +263,21 @@ export default function ColonyAccretion({
   // billboard several world units across would put a wall of invisible quads
   // in front of the colony.
   return (
-    <instancedMesh
-      ref={meshRef}
-      args={[geometry, material, capacity]}
-      frustumCulled={false}
-      raycast={() => null}
-    />
+    <group>
+      <instancedMesh
+        ref={horizonMeshRef}
+        args={[horizonGeometry, horizonMaterial, capacity]}
+        frustumCulled={false}
+        renderOrder={1}
+        raycast={() => null}
+      />
+      <instancedMesh
+        ref={accretionMeshRef}
+        args={[accretionGeometry, accretionMaterial, capacity]}
+        frustumCulled={false}
+        renderOrder={2}
+        raycast={() => null}
+      />
+    </group>
   );
 }

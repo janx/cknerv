@@ -487,16 +487,13 @@ describe('MinerNodeCard', () => {
   it('wears the one masthead its evidence earns, and neither of the other two', () => {
     const { container } = renderMiner();
     const text = container.textContent ?? '';
-    // ⭐⭐ THE WORD IS COHORT, AND IT IS A CORRECTION RATHER THAN A RENAME. The
+    // ⭐⭐ THE WORD IS POW COHORT, AND IT IS A CORRECTION RATHER THAN A RENAME. The
     // subject is a payout LOCK HASH — a destination — and one address pays
     // every machine a pool runs, so `MINER //` was asserting a machine off
     // evidence that names a place the reward goes.
-    expect(text).toContain('COHORT // eb0c0007');
-    // ⚠️ …and the SHORT form, on measured width. `MINING COHORT // eb0c0007`
-    // runs 215px at `HUD_TYPE.title` in the display face; with the 91px
-    // `CHAIN ATTESTED` chip and the header's 8px gap that is 314px against a
-    // 306px measure, so the chip would wrap and the header would grow a line.
-    // MESH·02 carries the long form, where there is room for it.
+    expect(text).toContain('POW COHORT // eb0c0007');
+    expect(container.querySelector('[data-miner-probe-card]')?.getAttribute('aria-label'))
+      .toBe('POW cohort eb0c0007 probe');
     expect(text).not.toContain('MINING COHORT //');
     // No surface on this card may say MINER: it is one machine, and this
     // subject may be any number of them.

@@ -20,7 +20,10 @@ import {
 } from '../../src/materials/populationFieldMaterial';
 import { makeHaloMaterial } from '../../src/components/GlowNode';
 import { makeColonyEdgeMaterial } from '../../src/components/ColonyEdges';
-import { makeColonyAccretionMaterial } from '../../src/materials/colonyAccretion';
+import {
+  makeColonyAccretionMaterial,
+  makeColonyHorizonMaterial,
+} from '../../src/materials/colonyAccretion';
 import {
   makeCanonicalRewriteEchoMaterial,
 } from '../../src/components/CanonicalRewriteEcho';
@@ -298,8 +301,14 @@ const ROWS: readonly BudgetRow[] = [
     name: 'colonyAccretionMaterial',
     sources: ['src/materials/colonyAccretion.ts'],
     material: makeColonyAccretionMaterial,
-    // ColonyAccretion draws every cohort's black hole as ONE InstancedMesh of
-    // camera-facing quads, so it pays the mat4 as well as its own two lanes.
+    // The luminous pass pays the mat4 plus its seed and live-share lanes.
+    usage: { instanced: true },
+  },
+  {
+    name: 'colonyHorizonMaterial',
+    sources: ['src/materials/colonyAccretion.ts'],
+    material: makeColonyHorizonMaterial,
+    // The aperture shares the instance positions but needs no custom lane.
     usage: { instanced: true },
   },
   {
@@ -462,9 +471,12 @@ describe('vertex attribute budget', () => {
     // report — and the two lanes are split by WRITE CADENCE rather than packed
     // into a vec2, because `aSeed` moves when the staged set does and `aShare`
     // on every attributed block.
-    const hole = measured.find(({ name }) => name === 'colonyAccretionMaterial');
-    expect(hole).toBeDefined();
-    expect([hole?.custom, hole?.injected, hole?.total]).toEqual([2, 7, 9]);
+    const light = measured.find(({ name }) => name === 'colonyAccretionMaterial');
+    const aperture = measured.find(({ name }) => name === 'colonyHorizonMaterial');
+    expect(light).toBeDefined();
+    expect(aperture).toBeDefined();
+    expect([light?.custom, light?.injected, light?.total]).toEqual([2, 7, 9]);
+    expect([aperture?.custom, aperture?.injected, aperture?.total]).toEqual([0, 7, 7]);
   });
 
   it('keeps the colony edge program exactly where it was', () => {

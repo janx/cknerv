@@ -294,11 +294,11 @@ export function partitionByKind(
  *  This radius once made the producer the smallest target in the colony — 0.375
  *  world units, under the faintest roster rung's 0.425 — and a full-canvas
  *  13-pixel hover sweep of the running app found forty peers and zero miners.
- *  The mark is a black hole now, so the target is its accretion rim: 1.05 world
- *  units, ~6.0 CSS px of radius at the default camera, against the 0.9 the
- *  subsumed point sprite stood. It covers the whole shadow, so aiming at the
- *  hole hits it too, and there is exactly ONE number — no annulus, no second
- *  radius, nothing to keep in step. */
+ *  The mark is an accreting void now, so the target is its disc: 1.42 world
+ *  units, ~8.1 CSS px of radius at the default camera. It covers the whole
+ *  0.96-world-unit event horizon, so aiming at the aperture hits it too, and
+ *  there is exactly ONE number — no annulus, no second radius, nothing to keep
+ *  in step. */
 export const ATTESTED_HIT_RADIUS = COHORT_HIT_RADIUS;
 
 /** One clickable staged node: where it stands, how big its mark is, and what

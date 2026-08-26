@@ -31,13 +31,17 @@ import ColonyAccretion, {
   sameCohortMark,
 } from '../../src/components/ColonyAccretion';
 import {
+  COHORT_DISC_FLATTEN,
   COHORT_HIT_RADIUS,
   COHORT_HORIZON_R,
   COHORT_MARK_HALF_EXTENT,
   COHORT_MOTE_BIRTH_R,
   COHORT_MOTE_SIGMA,
   COHORT_RIM_R,
+  COHORT_SHADOW_HALF_EXTENT,
   COHORT_THROAT_R,
+  makeColonyAccretionMaterial,
+  makeColonyHorizonMaterial,
 } from '../../src/materials/colonyAccretion';
 import {
   peerCloudHitRadius,
@@ -811,18 +815,8 @@ describe('the block wave reports where it started', () => {
 });
 
 
-/**
- * THE MINING CHANNEL, THIRD CUT: a cohort is a black hole.
- *
- * The first cut modulated the brightness of a hard geometric ring — HUD chrome
- * that escaped into the scene, and not motion at all, since nothing travelled.
- * The second sent motes inward along the node's own LINKS, which is motion and
- * which says the energy comes FROM THE NETWORK — a different claim, and a
- * wrong one. Energy is drawn out of the surrounding void here: a dark event
- * horizon, a swirling accretion rim, and motes seeded in empty space that
- * spiral in, accelerate, and are swallowed.
- */
-describe('what a mining cohort looks like', () => {
+/** A POW cohort is an aperture plus the accretion phenomenon around it. */
+describe('what a POW cohort looks like', () => {
   const peers = [peer('A'), peer('B')];
   const producers = [
     standing(producerKey('a'), 0.56),
@@ -835,18 +829,9 @@ describe('what a mining cohort looks like', () => {
     resolve(process.cwd(), 'src/materials/colonyAccretion.ts'),
     'utf8',
   );
-  /** The GLSL a driver actually compiles, with this file's own commentary
-   *  stripped. ⚠️ A source oracle that reads the prose EXPLAINING a rule
-   *  instead of the code obeying it is an oracle that can never fail — the
-   *  `toContain('…PARTIAL…')` trap, one file over — and two of the assertions
-   *  below matched their own warning comments the first time they ran. */
-  const accretionFragment = () => {
-    const source = accretionSource();
-    return source
-      .slice(source.indexOf('fragmentShader:'))
-      .replace(/\/\*[\s\S]*?\*\//g, ' ')
-      .replace(/\/\/.*$/gm, ' ');
-  };
+  /** The exact shader strings a driver receives, not comments describing them. */
+  const accretionFragment = () => makeColonyAccretionMaterial().fragmentShader;
+  const horizonFragment = () => makeColonyHorizonMaterial().fragmentShader;
 
   it('mounts a colony of cohorts inside an r3f Canvas without throwing', () => {
     expect(() => render(
@@ -887,54 +872,48 @@ describe('what a mining cohort looks like', () => {
     // …and the billboard is sized from the outermost feature rather than
     // picked, so a mote is never clipped at the moment it appears.
     expect(COHORT_MARK_HALF_EXTENT)
-      .toBeGreaterThanOrEqual(COHORT_MOTE_BIRTH_R + COHORT_MOTE_SIGMA * 3);
+      .toBeGreaterThanOrEqual(COHORT_MOTE_BIRTH_R * 1.05 + COHORT_MOTE_SIGMA * 5.2);
   });
 
-  it('makes the dark core an ABSENCE of glow, because additive blending cannot paint one', () => {
-    // ⚠️⚠️ Adding zero changes nothing, so there is no colour and no alpha
-    // that paints black over a lit stage. The horizon can only exist as the
-    // region this shader declines to light, and it is defined entirely by the
-    // rim around it. Every term is multiplied by ONE mask, in one expression,
-    // so a term added later cannot quietly light the middle.
-    const material = accretionSource();
-    expect(material).toContain('float horizon = smoothstep(hIn, hOut, rw);');
-    expect(material)
-      .toContain('float amp = (rim + motes * uMoteAmp + veil) * horizon * edge;');
-    // Nothing subtracts, nothing blends anything but additively, and there is
-    // no second pass painting a disc over what is behind it.
-    expect(material).toContain('blending: THREE.AdditiveBlending');
-    expect(material).not.toMatch(/NormalBlending|SubtractiveBlending|renderOrder/);
-    // ⚠️ And the mask's edges are FLOORED apart: smoothstep is undefined when
-    // its two edges are equal, and a NaN here would paint the whole cohort NaN.
-    expect(material).toContain('float hIn = min(hOut * 0.72, hOut - 0.001);');
-    expect(material).toContain('float eOut = max(uHalf, eIn + 0.001);');
-    // ⚠️ …and the rim's falloff squares by MULTIPLICATION. `pow` is undefined
-    // for a negative base, and this one is negative everywhere inside the ring.
-    expect(material).toContain('float band = exp(-rd * rd);');
-    expect(material).not.toMatch(/pow\((rd|md)/);
+  it('removes light with a real aperture before adding the phenomenon around it', () => {
+    const horizon = makeColonyHorizonMaterial();
+    const accretion = makeColonyAccretionMaterial();
+    expect(horizon.blending).toBe(THREE.NormalBlending);
+    expect(horizon.depthWrite).toBe(false);
+    expect(horizonFragment()).toContain('core * 0.985');
+    expect(horizonFragment()).toContain('well * 0.42');
+    expect(horizonFragment()).toContain('gl_FragColor = vec4(uVoidColor, alpha);');
+    expect(COHORT_SHADOW_HALF_EXTENT).toBeGreaterThan(COHORT_HORIZON_R);
+
+    expect(accretion.blending).toBe(THREE.AdditiveBlending);
+    expect(accretionFragment()).toContain('float horizon = smoothstep(');
+    expect(accretionFragment()).toContain('float amp = (cold + hot) * horizon * edge;');
+    const layer = source('ColonyAccretion.tsx');
+    expect(layer).toContain('makeColonyHorizonMaterial()');
+    expect(layer).toContain('renderOrder={1}');
+    expect(layer).toContain('renderOrder={2}');
   });
 
-  it('is a swirling disc rather than a stroked circle, which is how the first cut died', () => {
-    const material = accretionSource();
-    // The ring's RADIUS wanders with angle, and so does its brightness — two
-    // harmonics each, enough to break the outline and few enough that the
-    // shape still reads as one ring.
-    expect(material).toContain(
-      'float rimR = uRim\n          * (1.0 + 0.16 * sin(ang * 2.0 + 0.9) + 0.09 * sin(ang * 3.0 + 2.1));',
-    );
-    expect(material).toContain('float lobes = 0.40 + 0.34 * sin(ang)');
-    // …and never to nothing: a rim that went dark on its far side would read
-    // as two arcs rather than as one thing turning.
-    expect(material).toContain('max(lobes, 0.36)');
-    // It turns, and every cohort turns on its own phase.
-    expect(material).toContain('- uTime * uSpin * TAU');
-    expect(material).toContain('vSeed * TAU');
-    // ⭐ AND THE THINGS FALLING THROUGH IT DO NOT ARRIVE TOGETHER. Fourteen
-    // motes on one rate translate RIGIDLY — the whole pattern sweeps in, resets
-    // and does it again, so the hole reads as breathing once a cycle instead of
-    // eating continuously. A per-mote pace decorrelates the flow, and it is the
-    // same distribution for every cohort, so it says nothing about the share.
-    expect(material).toContain('float pace = 0.7 + 0.6 * hash11(fk * 5.3 + vSeed * 19.0);');
+  it('has a tilted asymmetric disc, photon ring and gravitational lensing arcs', () => {
+    const fragment = accretionFragment();
+    expect(COHORT_DISC_FLATTEN).toBeLessThan(0.5);
+    expect(fragment).toContain('vec2 discQ = vec2(discP.x, discP.y / max(uDiscFlatten, 0.08));');
+    expect(fragment).toContain('float approaching = pow(');
+    expect(fragment).toContain('float photon = gaussian(');
+    expect(fragment).toContain('float lens = gaussian(');
+    expect(fragment).toContain('uHotColor * hot');
+    expect(fragment).toContain('- uTime * uSpin * TAU');
+    expect(fragment).toContain('vSeed * TAU');
+  });
+
+  it('pulls directional streaks and filaments out of the surrounding void', () => {
+    const fragment = accretionFragment();
+    expect(fragment).toContain('const int STREAMS = 4;');
+    expect(fragment).toContain('float distanceToStream = angleDistance(');
+    expect(fragment).toContain('float pace = 0.68 + 0.64 * hash11(');
+    expect(fragment).toContain('vec2 flow = normalize(-radial + tangent * turning);');
+    expect(fragment).toContain('vec2 trail = -flow;');
+    expect(fragment).toContain('float tailGate = smoothstep(');
   });
 
   it('cannot be mistaken for the canopy contact wave, and structurally cannot become one', () => {
@@ -942,16 +921,11 @@ describe('what a mining cohort looks like', () => {
     // canopy's block contact wave, which draws expanding pale ellipses across
     // the tissue. The load-bearing difference is the RADIUS: that one grows
     // from its own age and this one never grows at all.
-    const material = accretionSource();
-    // Every radius here is a world constant on a uniform, and `uTime` reaches
-    // the swirl and the motes' phase — never an extent. Checked on the
-    // compiled GLSL, statement by statement.
-    for (const statement of accretionFragment().split(';')) {
-      if (!statement.includes('uTime')) continue;
-      expect([statement.trim().slice(0, 60), /\b(uRim|uHorizon|uHalf|uBirth)\b/.test(statement)])
-        .toEqual([statement.trim().slice(0, 60), false]);
-    }
-    expect(material).toContain('float rd = (rw - rimR) / max(uRimSigma, 0.02);');
+    const fragment = accretionFragment();
+    // Every extent remains a uniform constant; time reaches orbit and infall
+    // phases but never writes or rescales one of those extents.
+    expect(fragment).not.toMatch(/u(?:Rim|Horizon|Half|Birth)\s*[+*/-]?=/);
+    expect(fragment).toContain('float discBand = gaussian(discRadius - rimRadius, uRimSigma);');
     // ⭐ The contact wave grows because its OWNER rescales every instance from
     // the front's age, once a frame. This layer writes a translation and never
     // a scale, so there is no arrangement of it that expands.
@@ -960,7 +934,7 @@ describe('what a mining cohort looks like', () => {
     const layer = source('ColonyAccretion.tsx');
     expect(layer).toContain('SCRATCH_MATRIX.makeTranslation(');
     expect(layer).not.toMatch(/makeScale|\.scale\.set|setScalar/);
-    // …and it is small. Two world units of rim against a front that crosses
+    // …and it is compact against a front that crosses
     // the canopy.
     expect(COHORT_RIM_R * 2).toBeLessThan(3);
   });
@@ -1019,12 +993,13 @@ describe('what a mining cohort looks like', () => {
     // — and would make a cohort with four blocks look like a rounding error
     // rather than one that made four blocks, which is why the rate has a floor
     // rather than reaching zero.
-    const material = accretionSource();
-    const rate = material.slice(material.indexOf('float rate = uInfall'));
-    expect(rate).toContain('mix(uInfallFloor, 1.0, clamp(vShare, 0.0, 1.0))');
+    const fragment = accretionFragment();
+    const rate = fragment.slice(fragment.indexOf('float rate = uInfall'));
+    expect(rate.replace(/\s+/g, ' '))
+      .toContain('mix( uInfallFloor, 1.0, clamp(vShare, 0.0, 1.0) )');
     // vShare reaches the rate and nothing else: not an amplitude, not a radius.
-    expect(material.match(/vShare/g)).toHaveLength(4); // 2 declarations, 1 assign, 1 read
-    for (const statement of accretionFragment().split(';')) {
+    expect(fragment.match(/vShare/g)).toHaveLength(2); // 1 declaration, 1 read
+    for (const statement of fragment.split(';')) {
       if (!statement.includes('vShare') || statement.includes('varying')) continue;
       expect([statement.trim().slice(0, 60), statement.includes('uInfall')])
         .toEqual([statement.trim().slice(0, 60), true]);
