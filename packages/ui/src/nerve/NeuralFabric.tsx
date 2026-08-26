@@ -27,7 +27,11 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import type { Cell } from '@cknerv/types';
 import type { NeighborGraph, NeighborEdge } from '../geometry/neighborGraph';
 import { bezierAtInto, bezierControlInto, fabricEdgeSeed } from '../geometry/edgeBezier';
-import { fabricEdgeKey, orderFabricStateKeys } from './fabricOrder';
+import {
+  canonicalizeFabricRenderOrder,
+  fabricEdgeKey,
+  orderFabricStateKeys,
+} from './fabricOrder';
 import {
   FABRIC_SAMPLES_PER_EDGE,
   FABRIC_ALLOCATION_EDGE_CLASSES,
@@ -106,6 +110,12 @@ import { useSimClock } from '../tweaks/SimClockScope';
 import { LIVE } from '../tweaks/liveTweaks';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
 import {
+  PERFORMANCE_PROBE_LABELS,
+  beginCpuProbe,
+  endCpuProbe,
+} from '../tweaks/performanceProbeStore';
+import { createGpuProbeCallbacks } from '../tweaks/gpuTimerQuery';
+import {
   consensusChromaIntensity,
   consensusRouteColors,
   consensusRouteGoldMix,
@@ -118,6 +128,16 @@ import {
   consensusMemoryApertureScale,
   type ConsensusMemoryAperture,
 } from './consensusMemoryAperture';
+import {
+  RecallApertureIndex,
+  type RecallApertureIndexEntry,
+  type RecallApertureQueryBounds,
+} from './recallApertureIndex';
+import {
+  resolveActiveHopCurveInto,
+  type ResolvedActiveHopCurve,
+} from './activeHopCurve';
+import { createNonEmptyInstanceGpuProbeCallbacks } from '../tweaks/nonEmptyGpuProbeCallbacks';
 import {
   cellDetailFabricEnergyGain,
   cellDetailFabricWidthScale,
@@ -932,12 +952,11 @@ const FABRIC_LIFECYCLE_CURVE_SCALAR_BYTES_PER_SEGMENT = 4 * (
  * runs when an admit/kill/revival wrote slots, never per animated frame.
  *
  * `colorClaimedByAperture` says the aperture bake already claimed the colour
- * buffer this frame. Its mark set covers every slot range here — either the
- * whole populated prefix, or ranges the bake merged THESE slots into before
- * marking — so this pass leaves that buffer alone rather than clearing a
- * wider upload than it can re-mark. Each buffer is still cleared-and-marked
- * exactly once per frame; on those frames the colour half simply belongs to
- * the aperture. */
+ * buffer this frame. Its indexed ranges already merge THESE lifecycle slots
+ * before marking, so this pass leaves that buffer alone rather than clearing
+ * a wider upload than it can re-mark. Each buffer is still
+ * cleared-and-marked exactly once per frame; on those frames the colour half
+ * simply belongs to the aperture. */
 function commitFabricLifecycleSlotRanges(
   layer: FatLineLayer,
   ranges: readonly FabricSlotRange[],
@@ -1003,47 +1022,35 @@ function commitFabricLifecycleFull(layer: FatLineLayer): void {
 /** Aperture-window upload: recall dims live in the color records' .w lanes
  * (8 floats per segment), so an aperture frame is a colour-only upload.
  *
- * `ranges` are the SEGMENT ranges the bake actually rewrote — the slots the
- * union box reaches, plus the slots the previous bake dimmed, plus any slot
- * this frame's event flush wrote, which together are the only ones whose
- * lanes can differ from what the GPU already holds. Omitting them uploads the
- * whole populated prefix, which is what the flat-baseline restore that ends a
- * recall needs: it writes every slot, so it must reach every slot.
+ * `ranges` are the SEGMENT ranges the bake actually rewrote — indexed curves
+ * the union box reaches, slots the previous bake dimmed, plus any slot this
+ * frame's event flush wrote. Together those are the only lanes that can differ
+ * from what the GPU already holds; release therefore restores the previous
+ * dim set rather than the whole populated prefix.
  *
  * Returns whether the colour buffer is now marked, i.e. whether this frame's
  * later commits must keep their hands off it. */
 function commitFabricApertureLanes(
   layer: FatLineLayer,
-  ranges?: readonly FabricSlotRange[],
+  ranges: readonly FabricSlotRange[],
 ): boolean {
   const lifecycle = layer.lifecycle;
   if (!lifecycle) return false;
-  if (ranges) {
-    // Nothing rewritten: claim nothing, so the event flush owns the colour
-    // buffer exactly as on a frame with no recall at all.
-    if (ranges.length === 0) return false;
-    lifecycle.colorBuf.clearUpdateRanges();
-    let rangeSegments = 0;
-    for (const range of ranges) {
-      rangeSegments += range.count;
-      lifecycle.colorBuf.addUpdateRange(
-        range.start * FABRIC_LIFE_COLOR_STRIDE,
-        range.count * FABRIC_LIFE_COLOR_STRIDE,
-      );
-    }
-    lifecycle.colorBuf.needsUpdate = true;
-    fabricStats.observeUpload(rangeSegments * 4 * FABRIC_LIFE_COLOR_STRIDE);
-    return true;
-  }
+  // Nothing rewritten: claim nothing, so the event flush owns the colour
+  // buffer exactly as on a frame with no recall at all.
+  if (ranges.length === 0) return false;
   lifecycle.colorBuf.clearUpdateRanges();
-  let marked = false;
-  if (layer.count > 0) {
-    lifecycle.colorBuf.addUpdateRange(0, layer.count * FABRIC_LIFE_COLOR_STRIDE);
-    lifecycle.colorBuf.needsUpdate = true;
-    marked = true;
+  let rangeSegments = 0;
+  for (const range of ranges) {
+    rangeSegments += range.count;
+    lifecycle.colorBuf.addUpdateRange(
+      range.start * FABRIC_LIFE_COLOR_STRIDE,
+      range.count * FABRIC_LIFE_COLOR_STRIDE,
+    );
   }
-  fabricStats.observeUpload(layer.count * 4 * FABRIC_LIFE_COLOR_STRIDE);
-  return marked;
+  lifecycle.colorBuf.needsUpdate = true;
+  fabricStats.observeUpload(rangeSegments * 4 * FABRIC_LIFE_COLOR_STRIDE);
+  return true;
 }
 
 export default function NeuralFabric({
@@ -1107,6 +1114,27 @@ export default function NeuralFabric({
     ),
     [],
   );
+  // True per-draw GPU timings. Empty instanced passes do not enter the timer
+  // stream, and the wrapper preserves LineSegments2's own uniform-sync hook.
+  // Unsupported contexts stay empty; there is no CPU wall-time substitute.
+  const nerveGpuProbes = useMemo(() => ({
+    passiveBase: createNonEmptyInstanceGpuProbeCallbacks(
+      fabric.mesh,
+      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.passiveFabricBase),
+    ),
+    passiveTrunk: createNonEmptyInstanceGpuProbeCallbacks(
+      trunk.mesh,
+      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.passiveFabricTrunk),
+    ),
+    active: createNonEmptyInstanceGpuProbeCallbacks(
+      active.mesh,
+      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.activeRoute),
+    ),
+    memory: createNonEmptyInstanceGpuProbeCallbacks(
+      memory.mesh,
+      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.memoryRoute),
+    ),
+  }), [fabric, trunk, active, memory]);
 
   // (focus, width) value gate: the raw-frame reassertion below runs every
   // frame, but its outputs are pure functions of these two numbers, which
@@ -1264,10 +1292,28 @@ export default function NeuralFabric({
     // samples, plus ~400 per frame from active hop sampling).
     const ctrl = new Float32Array(3);
     const sample = new Float32Array(3);
+    const activeCurve: ResolvedActiveHopCurve = {
+      fromX: 0, fromY: 0, fromZ: 0,
+      ctrlX: 0, ctrlY: 0, ctrlZ: 0,
+      toX: 0, toY: 0, toZ: 0,
+    };
 
     const fabricSlotCapacity = Math.floor(
       fabric.positions.length / 6 / FABRIC_SLOT_SEGMENTS,
     );
+    /** Stable-slot spatial index for recall aperture frames. It is rebuilt
+     * from the persistent maps when this effect is recreated (for example on
+     * a quality change), then maintained incrementally with slot ownership. */
+    const apertureIndex = new RecallApertureIndex();
+    const indexApertureSlot = (key: string, st: EdgeState): void => {
+      const slot = slotByKeyRef.current.get(key);
+      if (slot === undefined) return;
+      apertureIndex.upsert(slot, key, st);
+    };
+    for (const [key, slot] of slotByKeyRef.current) {
+      const st = edgeStatesRef.current.get(key);
+      if (st) apertureIndex.upsert(slot, key, st);
+    }
 
     // ——— GPU-parametric lifecycle plumbing (P1.7) ———
     const lifecycleArrays = fabric.lifecycle!.arrays;
@@ -1277,6 +1323,146 @@ export default function NeuralFabric({
      * subset it left dimmed. Reused across frames like the scratch buffers. */
     const apertureDirtySlots: number[] = [];
     const apertureDimmedNow: number[] = [];
+    const apertureCandidates: RecallApertureIndexEntry[] = [];
+    const apertureCandidateSlots = new Set<number>();
+    const apertureUnionBounds: RecallApertureQueryBounds = {
+      minX: 0,
+      maxX: 0,
+      minZ: 0,
+      maxZ: 0,
+    };
+    /** Sample and write one indexed slot. Defined once per handle lifetime so
+     * the animation path does not allocate a closure per frame. */
+    const bakeApertureSlot = (
+      entry: RecallApertureIndexEntry,
+      reaches: boolean,
+      recallAperture: RecallApertureState,
+      now: number,
+      dimmedSlots: ReadonlySet<number>,
+    ): void => {
+      const { key, slot } = entry;
+      // Slot ownership changes only on event paths, which maintain the index
+      // synchronously. Keep this guard nevertheless: a stale candidate must
+      // never write a recycled edge's record.
+      if (slotByKeyRef.current.get(key) !== slot) return;
+      const st = edgeStatesRef.current.get(key);
+      if (!st) return;
+      const baseSegment = slot * FABRIC_SLOT_SEGMENTS;
+      const wasDimmed = dimmedSlots.has(slot);
+      let prevScale = reaches
+        ? recallApertureScaleAt(recallAperture, st.fromX, st.fromZ, 0, now)
+        : 1;
+      let dimmed = prevScale < 1;
+      for (let seg = 0; seg < FABRIC_SLOT_SEGMENTS; seg += 1) {
+        let endScale = 1;
+        if (reaches) {
+          bezierAtInto(
+            sample,
+            st.fromX, st.fromY, st.fromZ,
+            st.ctrlX, st.ctrlY, st.ctrlZ,
+            st.toX, st.toY, st.toZ,
+            (seg + 1) / FABRIC_SLOT_SEGMENTS,
+          );
+          endScale = recallApertureScaleAt(
+            recallAperture, sample[0], sample[2], 0, now,
+          );
+          if (endScale < 1) dimmed = true;
+        }
+        const offset = (baseSegment + seg) * FABRIC_LIFE_COLOR_STRIDE;
+        lifecycleArrays.color[
+          offset + FABRIC_LIFE_APERTURE_START_OFFSET
+        ] = prevScale;
+        lifecycleArrays.color[
+          offset + FABRIC_LIFE_APERTURE_END_OFFSET
+        ] = endScale;
+        prevScale = endScale;
+      }
+      if (dimmed) apertureDimmedNow.push(slot);
+      // A reached slot that came out flat, and was flat before, wrote the
+      // baseline over the baseline — no upload owed.
+      if (dimmed || wasDimmed) apertureDirtySlots.push(slot);
+    };
+    /** Re-bake the current aperture through the spatial index. A normal
+     * incremental frame restores slots dimmed by the previous bake; a full
+     * walk passes `restorePrevious=false` because its static-record rewrite
+     * has already reset every surviving lane to the 1.0 baseline and numeric
+     * slots may now belong to different edges. */
+    const bakeIndexedAperture = (
+      recallAperture: RecallApertureState,
+      now: number,
+      activeDimming: boolean,
+      departingDimming: boolean,
+      restorePrevious: boolean,
+    ): void => {
+      const dimmedSlots = apertureDimmedSlotsRef.current;
+      if (!restorePrevious) dimmedSlots.clear();
+      apertureDirtySlots.length = 0;
+      apertureDimmedNow.length = 0;
+      apertureCandidateSlots.clear();
+
+      // The dim is a bounded disc around one route inside a field ~4× wider,
+      // so query the live fields' union rather than scanning passive edges.
+      let boxMinX = Infinity;
+      let boxMaxX = -Infinity;
+      let boxMinZ = Infinity;
+      let boxMaxZ = -Infinity;
+      const activeBounds = activeDimming
+        ? consensusMemoryApertureBounds(recallAperture.active)
+        : null;
+      if (activeBounds) {
+        boxMinX = activeBounds.minX;
+        boxMaxX = activeBounds.maxX;
+        boxMinZ = activeBounds.minZ;
+        boxMaxZ = activeBounds.maxZ;
+      }
+      const departingBounds = departingDimming
+        ? consensusMemoryApertureBounds(recallAperture.departing)
+        : null;
+      if (departingBounds) {
+        if (departingBounds.minX < boxMinX) boxMinX = departingBounds.minX;
+        if (departingBounds.maxX > boxMaxX) boxMaxX = departingBounds.maxX;
+        if (departingBounds.minZ < boxMinZ) boxMinZ = departingBounds.minZ;
+        if (departingBounds.maxZ > boxMaxZ) boxMaxZ = departingBounds.maxZ;
+      }
+      if (boxMinX <= boxMaxX && boxMinZ <= boxMaxZ) {
+        apertureUnionBounds.minX = boxMinX;
+        apertureUnionBounds.maxX = boxMaxX;
+        apertureUnionBounds.minZ = boxMinZ;
+        apertureUnionBounds.maxZ = boxMaxZ;
+        apertureIndex.query(apertureUnionBounds, apertureCandidates);
+      } else {
+        apertureCandidates.length = 0;
+      }
+
+      for (const entry of apertureCandidates) {
+        apertureCandidateSlots.add(entry.slot);
+        bakeApertureSlot(entry, true, recallAperture, now, dimmedSlots);
+      }
+      if (restorePrevious) {
+        // A release or moving union owes work only to slots the previous bake
+        // actually left below 1.0. A full walk needs no restore: every record
+        // was just rewritten to baseline before this indexed pass.
+        for (const slot of dimmedSlots) {
+          if (apertureCandidateSlots.has(slot)) continue;
+          const entry = apertureIndex.get(slot);
+          if (entry) {
+            bakeApertureSlot(entry, false, recallAperture, now, dimmedSlots);
+          }
+        }
+      }
+      dimmedSlots.clear();
+      for (const slot of apertureDimmedNow) dimmedSlots.add(slot);
+    };
+    const completeApertureBake = (
+      recallAperture: RecallApertureState,
+    ): void => {
+      const baked = apertureBakedRef.current;
+      baked.active = recallAperture.active;
+      baked.activeStrength = recallAperture.activeStrength;
+      baked.departing = recallAperture.departing;
+      baked.departingStrength = recallAperture.departingStrength;
+      baked.dimmed = apertureDimmedSlotsRef.current.size > 0;
+    };
     /** One warm walk's surviving members and their render state, so the
      * presentation pass never re-derives what the bookkeeping pass read. */
     const warmDrawKeys: string[] = [];
@@ -1326,10 +1512,23 @@ export default function NeuralFabric({
       slots: slotByKeyRef.current,
       freeSlots: freeSlotsRef.current,
       warmKeys: warmRouteKeysRef.current,
-      onReap: () => {
+      onReap: (key) => {
+        const removed = apertureIndex.removeKey(key);
+        if (removed) apertureDimmedSlotsRef.current.delete(removed.slot);
         renderOrderTombstonesRef.current += 1;
         fabricStats.observeReapInPlace();
       },
+    };
+    /** Materialise the lazy order only at its existing cleanup/full-walk
+     * boundaries. This removes tombstones and same-key re-entry duplicates,
+     * fills any state omitted by an unslotted admission, and makes the clip
+     * contract explicit: current form always precedes fading afterimages. */
+    const canonicalizeRenderOrder = (): void => {
+      renderOrderRef.current = canonicalizeFabricRenderOrder(
+        renderOrderRef.current,
+        edgeStatesRef.current,
+      );
+      renderOrderTombstonesRef.current = 0;
     };
 
     // ——— Reaping without a frame behind it ———
@@ -1355,11 +1554,7 @@ export default function NeuralFabric({
       drainFabricReapQueue(reapQueues.gc, reapTargets, now);
       evictDeadFabricEdges(reapTargets, now, edgeStateCeiling);
       if (renderOrderTombstonesRef.current > 0) {
-        const reapStates = edgeStatesRef.current;
-        renderOrderRef.current = renderOrderRef.current.filter(
-          (key) => reapStates.has(key),
-        );
-        renderOrderTombstonesRef.current = 0;
+        canonicalizeRenderOrder();
       }
       if (frameless && lifeDirtySlots.length > 0) {
         lifeDirtySlots.length = 0;
@@ -1402,6 +1597,22 @@ export default function NeuralFabric({
       }
       if (slot !== undefined) slotByKeyRef.current.set(key, slot);
       return slot;
+    };
+    /** Recover an existing state that survived a capacity clip without a slot.
+     * A recycled hole is enough for an incremental repair; if none exists the
+     * caller arms a current-first compacting walk. */
+    const recoverExistingFabricSlot = (
+      key: string,
+      st: EdgeState,
+    ): boolean => {
+      if (slotByKeyRef.current.has(key)) {
+        writeLifecycleSlot(key, st);
+        return true;
+      }
+      if (allocateFabricSlot(key) === undefined) return false;
+      indexApertureSlot(key, st);
+      writeLifecycleSlot(key, st);
+      return true;
     };
 
     /** Resolve and publish the width tier for a completed passive selection.
@@ -1464,7 +1675,10 @@ export default function NeuralFabric({
       };
       edgeStatesRef.current.set(key, state);
       // One static-record write; the shader grows it from bornAt onward.
-      if (slotted) writeLifecycleSlot(key, state);
+      if (slotted) {
+        indexApertureSlot(key, state);
+        writeLifecycleSlot(key, state);
+      }
       return slotted ? 'slotted' : 'unslotted';
     };
 
@@ -1520,6 +1734,7 @@ export default function NeuralFabric({
         // empty set applies in one pass instead of staggered cohorts.
         const wasPopulated = states.size > 0;
         let overflowed = false;
+        let existingSlotOwnershipChanged = false;
         // A NEW authoritative graph supersedes any still-queued cohorts of
         // the previous one, and the diff below must run against COMPLETE
         // states. Flush first: deferred adds are admitted as fully-grown
@@ -1583,16 +1798,22 @@ export default function NeuralFabric({
             // disappear/reappear it replaces. Revival is rare (only
             // happens when a cell membership oscillates within
             // DECAY_MS), so we don't bother smoothing it further.
-            if (existing.dyingAt !== null) {
+            const revived = existing.dyingAt !== null;
+            if (revived) {
               existing.dyingAt = null;
               existing.deathKind = null;
               existing.deadEnd = null;
               existing.bornAt = now - GROWTH_MS / 1000;
               statsRevived += 1;
-              // One static-record rewrite snaps the slot back to stable.
-              writeLifecycleSlot(key, existing);
             } else {
               statsStable += 1;
+            }
+            if (!slotByKeyRef.current.has(key)) {
+              existingSlotOwnershipChanged = true;
+              if (!recoverExistingFabricSlot(key, existing)) overflowed = true;
+            } else if (revived) {
+              // One static-record rewrite snaps the slot back to stable.
+              writeLifecycleSlot(key, existing);
             }
             continue;
           }
@@ -1703,6 +1924,7 @@ export default function NeuralFabric({
         if (
           statsAdded === 0 && statsRevived === 0 && statsDying === 0
           && flushAdmitted === 0
+          && !existingSlotOwnershipChanged
         ) return;
         emitDirtyRef.current = true;
         if (overflowed) {
@@ -1745,8 +1967,11 @@ export default function NeuralFabric({
             existing.deadEnd = null;
             existing.bornAt = now - GROWTH_MS / 1000;
             statsRevived += 1;
-            // One static-record rewrite snaps the slot back to stable.
-            writeLifecycleSlot(key, existing);
+            // One static-record rewrite snaps a slotted edge back to stable;
+            // a previously clipped state first claims a recycled hole. If the
+            // allocation is still full, the canonical full walk below promotes
+            // every live state ahead of afterimages.
+            if (!recoverExistingFabricSlot(key, existing)) growOverflowed = true;
             continue;
           }
           const a = cells.get(e.from);
@@ -1780,6 +2005,7 @@ export default function NeuralFabric({
             usage: 0,
           };
           states.set(key, grown);
+          indexApertureSlot(key, grown);
           writeLifecycleSlot(key, grown);
           renderOrderRef.current.push(key); // append; reaps clean up lazily
         }
@@ -1855,6 +2081,9 @@ export default function NeuralFabric({
         return keys;
       },
       emitFabric(now) {
+        const emitProbe = beginCpuProbe(
+          PERFORMANCE_PROBE_LABELS.neuralFabricEmit,
+        );
         // The fabric animates entirely on the GPU: these three scalars are
         // its complete per-frame cost, and they must advance even on frames
         // the CPU otherwise skips.
@@ -1896,11 +2125,7 @@ export default function NeuralFabric({
         drainFabricReapQueue(reapQueues.death, reapTargets, now);
         drainFabricReapQueue(reapQueues.gc, reapTargets, now);
         if (renderOrderTombstonesRef.current > RENDER_ORDER_TOMBSTONE_MAX) {
-          const reapStates = edgeStatesRef.current;
-          renderOrderRef.current = renderOrderRef.current.filter(
-            (key) => reapStates.has(key),
-          );
-          renderOrderTombstonesRef.current = 0;
+          canonicalizeRenderOrder();
         }
         // Deferred-cohort pump: admit any due slices of a staggered
         // oversized diff through the SAME insertion body the immediate
@@ -1986,10 +2211,10 @@ export default function NeuralFabric({
         const recallAperture = recallApertureRef.current;
         // Recall apertures are the one lifecycle input the CPU still owns
         // (spatial-hash segment queries can't move to the vertex stage).
-        // While a recall holds or releases, bake the aperture scale at each
-        // slot's STATIC curve samples (flash = 0 — the shader lifts) and
-        // upload just the 2-float-per-segment aperture prefix; one final
-        // pass after release restores the exact 1.0 baseline everywhere.
+        // While a recall holds or releases, bake the aperture scale at the
+        // indexed STATIC curves its union bounds can reach (flash = 0 — the
+        // shader lifts). The previous bake's genuinely dimmed slots join that
+        // candidate set so moving/releasing the aperture restores them once.
         const apertureActive = recallAperture.activeStrength > 0.001
           || recallAperture.departingStrength > 0.001;
         // Most of a hold is a plateau: the recall is up, the trace clock has
@@ -2008,12 +2233,14 @@ export default function NeuralFabric({
         // Asked per field, the way recallApertureScaleAt dispatches: zero
         // strength returns 1 whatever the geometry, a closed window returns 1
         // whatever the strength. A resting fabric never reaches the question.
-        const apertureDimming = apertureActive && (
-          (recallAperture.activeStrength > 0
-            && consensusMemoryApertureAnimating(recallAperture.active, now))
-          || (recallAperture.departingStrength > 0
-            && consensusMemoryApertureAnimating(recallAperture.departing, now))
-        );
+        const activeApertureDimming = apertureActive
+          && recallAperture.activeStrength > 0
+          && consensusMemoryApertureAnimating(recallAperture.active, now);
+        const departingApertureDimming = apertureActive
+          && recallAperture.departingStrength > 0
+          && consensusMemoryApertureAnimating(recallAperture.departing, now);
+        const apertureDimming = activeApertureDimming
+          || departingApertureDimming;
         const baked = apertureBakedRef.current;
         // The identity/strength half is not needed for the proof above; it is
         // a freshness rule, so the frame a recall's state actually moves
@@ -2034,124 +2261,34 @@ export default function NeuralFabric({
          *  claims nothing, and the flush owns the colour buffer again exactly
          *  as on any non-recall frame. */
         let apertureClaimedColorBuffer = false;
+        const apertureBakeDeferredToFullWalk =
+          passivePositionsDirtyRef.current || globalRepaintRef.current;
         if (
           (apertureActive || apertureAnimationRef.current)
           && !apertureBakeSettled
+          && !apertureBakeDeferredToFullWalk
         ) {
-          const colorArray = lifecycleArrays.color;
-          const slots = slotByKeyRef.current;
-          const apertureStates = edgeStatesRef.current;
-          const dimmedSlots = apertureDimmedSlotsRef.current;
-          // A bake that CANNOT dim is the flat-baseline restore: it writes
-          // every slot and uploads the whole prefix, once, and settles.
-          // A bake that can dim writes and uploads only the slots whose lanes
-          // can differ from the GPU's — the union box's neighbourhood, plus
-          // whatever the last bake dimmed and must now give back.
-          const rangedBake = apertureDimming;
-          apertureDirtySlots.length = 0;
-          apertureDimmedNow.length = 0;
-          // The dim is a bounded disc around one route inside a field ~4×
-          // wider, so most edges cannot be touched at any distance. Union the
-          // live fields' reach once, then reject a whole curve on four
-          // compares.
-          let boxMinX = Infinity;
-          let boxMaxX = -Infinity;
-          let boxMinZ = Infinity;
-          let boxMaxZ = -Infinity;
-          const widenApertureBox = (
-            field: ConsensusMemoryAperture | null,
-            strength: number,
-          ): void => {
-            // Mirrors recallApertureScaleAt: a field at zero strength returns
-            // 1 everywhere, so it contributes no reach.
-            if (!(strength > 0)) return;
-            const bounds = consensusMemoryApertureBounds(field);
-            if (!bounds) return;
-            if (bounds.minX < boxMinX) boxMinX = bounds.minX;
-            if (bounds.maxX > boxMaxX) boxMaxX = bounds.maxX;
-            if (bounds.minZ < boxMinZ) boxMinZ = bounds.minZ;
-            if (bounds.maxZ > boxMaxZ) boxMaxZ = bounds.maxZ;
-          };
-          if (apertureActive) {
-            widenApertureBox(
-              recallAperture.active,
-              recallAperture.activeStrength,
-            );
-            widenApertureBox(
-              recallAperture.departing,
-              recallAperture.departingStrength,
-            );
-          }
-          for (const [key, slot] of slots) {
-            const st = apertureStates.get(key);
-            if (!st) continue;
-            const baseSegment = slot * FABRIC_SLOT_SEGMENTS;
-            // A quadratic Bezier is a convex combination of its three control
-            // points, so no sample can leave their box — testing the box can
-            // over-approximate the curve, never miss it. On a release frame
-            // the union box is empty and every slot takes this branch, which
-            // is exactly the whole-population restore that path always was.
-            const curveMinX = Math.min(st.fromX, st.ctrlX, st.toX);
-            const curveMaxX = Math.max(st.fromX, st.ctrlX, st.toX);
-            const curveMinZ = Math.min(st.fromZ, st.ctrlZ, st.toZ);
-            const curveMaxZ = Math.max(st.fromZ, st.ctrlZ, st.toZ);
-            const reaches = curveMaxX >= boxMinX && curveMinX <= boxMaxX
-              && curveMaxZ >= boxMinZ && curveMinZ <= boxMaxZ;
-            const wasDimmed = dimmedSlots.has(slot);
-            // Out of reach and undimmed last frame: this slot already holds
-            // the baseline in both the array and the buffer. Writing it would
-            // change nothing and uploading it would say nothing.
-            if (rangedBake && !reaches && !wasDimmed) continue;
-            let prevScale = reaches
-              ? recallApertureScaleAt(recallAperture, st.fromX, st.fromZ, 0, now)
-              : 1;
-            let dimmed = prevScale < 1;
-            for (let seg = 0; seg < FABRIC_SLOT_SEGMENTS; seg += 1) {
-              let endScale = 1;
-              if (reaches) {
-                bezierAtInto(
-                  sample,
-                  st.fromX, st.fromY, st.fromZ,
-                  st.ctrlX, st.ctrlY, st.ctrlZ,
-                  st.toX, st.toY, st.toZ,
-                  (seg + 1) / FABRIC_SLOT_SEGMENTS,
-                );
-                endScale = recallApertureScaleAt(
-                  recallAperture, sample[0], sample[2], 0, now,
-                );
-                if (endScale < 1) dimmed = true;
-              }
-              const offset = (baseSegment + seg) * FABRIC_LIFE_COLOR_STRIDE;
-              colorArray[offset + FABRIC_LIFE_APERTURE_START_OFFSET] = prevScale;
-              colorArray[offset + FABRIC_LIFE_APERTURE_END_OFFSET] = endScale;
-              prevScale = endScale;
-            }
-            if (dimmed) apertureDimmedNow.push(slot);
-            // A reached slot that came out flat, and was flat before, wrote
-            // the baseline over the baseline — no upload owed.
-            if (rangedBake && (dimmed || wasDimmed)) apertureDirtySlots.push(slot);
-          }
-          dimmedSlots.clear();
-          for (const slot of apertureDimmedNow) dimmedSlots.add(slot);
+          const recallApertureProbe = beginCpuProbe(
+            PERFORMANCE_PROBE_LABELS.recallAperture,
+          );
+          bakeIndexedAperture(
+            recallAperture,
+            now,
+            activeApertureDimming,
+            departingApertureDimming,
+            true,
+          );
           fabric.count = usedSlotCountRef.current * FABRIC_SLOT_SEGMENTS;
-          apertureClaimedColorBuffer = rangedBake
-            ? commitFabricApertureLanes(
-              fabric,
-              // The event flush marks curve and scalar at slot resolution and
-              // would mark colour there too; folding its slots in here is what
-              // keeps the colour buffer to ONE mark set for the frame.
-              mergeFabricSlotRanges(
-                lifeDirtySlots.length > 0
-                  ? apertureDirtySlots.concat(lifeDirtySlots)
-                  : apertureDirtySlots,
-              ),
-            )
-            : commitFabricApertureLanes(fabric);
-          baked.active = recallAperture.active;
-          baked.activeStrength = recallAperture.activeStrength;
-          baked.departing = recallAperture.departing;
-          baked.departingStrength = recallAperture.departingStrength;
-          baked.dimmed = apertureDimming;
+          // The event flush marks curve and scalar at slot resolution and
+          // would mark colour there too; folding its slots in here is what
+          // keeps the colour buffer to ONE mark set for the frame.
+          for (const slot of lifeDirtySlots) apertureDirtySlots.push(slot);
+          apertureClaimedColorBuffer = commitFabricApertureLanes(
+            fabric,
+            mergeFabricSlotRanges(apertureDirtySlots),
+          );
+          completeApertureBake(recallAperture);
+          endCpuProbe(recallApertureProbe);
         }
         apertureAnimationRef.current = apertureActive;
 
@@ -2262,6 +2399,7 @@ export default function NeuralFabric({
 
         if (!emitDirtyRef.current) {
           fabricStats.observeSkipFrame();
+          endCpuProbe(emitProbe);
           return;
         }
         // Live line widths. LineMaterial.linewidth is runtime-settable, so
@@ -2288,6 +2426,7 @@ export default function NeuralFabric({
             lifeDirtySlots.length = 0;
           }
           emitDirtyRef.current = false;
+          endCpuProbe(emitProbe);
           return;
         }
 
@@ -2297,8 +2436,10 @@ export default function NeuralFabric({
         const fullWalkReason: FabricFullWalkReason = passivePositionsDirtyRef.current
           ? 'structural'
           : 'global-repaint';
+        canonicalizeRenderOrder();
         const slots = slotByKeyRef.current;
         slots.clear();
+        apertureIndex.clear();
         const slotCapacity = Math.floor(
           fabric.positions.length / 6 / FABRIC_SLOT_SEGMENTS,
         );
@@ -2337,12 +2478,11 @@ export default function NeuralFabric({
               trunkness: st.trunkness,
             },
           );
-          // The slot writer resets the aperture lanes to the 1.0 baseline;
-          // the aperture pass re-bakes them next frame while a recall holds.
-          // This walk may follow the same frame's bake — and unlike the event
-          // flush it may take the colour buffer back, because it re-marks the
-          // very prefix the bake marked and overwrites the same lanes.
+          // The slot writer resets the aperture lanes to the 1.0 baseline.
+          // After every new slot is indexed, the post-walk pass below applies
+          // the current recall to this final layout before the full upload.
           slots.set(key, slotIndex);
+          apertureIndex.upsert(slotIndex, key, st);
           slotIndex += 1;
         }
         usedSlotCountRef.current = slotIndex;
@@ -2365,17 +2505,33 @@ export default function NeuralFabric({
           );
         }
         renderOrderTombstonesRef.current = 0;
-        // Every surviving slot was just rewritten from its record, whose
-        // aperture lanes are the 1.0 baseline, and the whole prefix goes up
-        // below — so nothing this walk leaves behind is dimmed, whatever the
-        // same frame's bake wrote into the layout it replaced.
+        // The rewrite established a baseline in the NEW compacted layout.
+        // Re-bake a live aperture through the NEW index before the full colour
+        // upload claims the prefix. Release/no-recall keeps that baseline
+        // directly. There is deliberately no partial aperture commit here:
+        // it would clear or replace the full upload's ownership.
         apertureDimmedSlotsRef.current.clear();
+        if (apertureDimming) {
+          const recallApertureProbe = beginCpuProbe(
+            PERFORMANCE_PROBE_LABELS.recallAperture,
+          );
+          bakeIndexedAperture(
+            recallAperture,
+            now,
+            activeApertureDimming,
+            departingApertureDimming,
+            false,
+          );
+          endCpuProbe(recallApertureProbe);
+        }
+        completeApertureBake(recallAperture);
 
         commitFabricLifecycleFull(fabric);
         globalRepaintRef.current = false;
         passivePositionsDirtyRef.current = false;
         emitDirtyRef.current = false;
         fabricStats.observeFullWalk(fullWalkReason, slotIndex, 0);
+        endCpuProbe(emitProbe);
       },
       pushActiveHop(hop, cells) {
         const layer = hop.mode === 'memory'
@@ -2388,20 +2544,18 @@ export default function NeuralFabric({
         // not continue doing Cell lookups and Bezier sampling for data that
         // pushSegment would discard.
         if (layer.count >= layerCapacity) return;
-        // An end supplied by value wins over the display map: a metabolic
-        // packet's ghost leg leaves a cell that has already died, an address
-        // no id can resolve. The ids still seed the curve, so a ghost keeps
-        // one bow for its whole flight.
-        const a = hop.fromPos ?? cells.get(hop.fromCellId)?.pos_seed;
-        const c = hop.toPos ?? cells.get(hop.toCellId)?.pos_seed;
-        if (!a || !c) return;
-        const seed = fabricEdgeSeed(hop.fromCellId, hop.toCellId);
-        bezierControlInto(
+        // Ordinary route hops reuse the passive edge's snapshotted quadratic
+        // exactly, avoiding two Cell lookups and one control-point derive per
+        // active pulse per frame. A by-value ghost override must remain its own
+        // geometry, and an edge outside the passive selection follows the
+        // historical Cell lookup + seeded-control fallback.
+        if (!resolveActiveHopCurveInto(
+          activeCurve,
           ctrl,
-          a[0], a[1], a[2],
-          c[0], c[1], c[2],
-          seed,
-        );
+          hop,
+          cells,
+          edgeStatesRef.current,
+        )) return;
         // Walk the hop's Bezier in N+1 sample points; for each pair
         // of consecutive samples emit one sub-segment. Per-segment
         // brightness peaks at the wavefront (frontT) and decays
@@ -2411,18 +2565,18 @@ export default function NeuralFabric({
         const samplesPerHop = hop.mode === 'lock'
           ? ROUTE_HOP_PULSE_SAMPLES_PER_HOP
           : activeSamplesPerHop;
-        let prevX = direction === 1 ? a[0] : c[0];
-        let prevY = direction === 1 ? a[1] : c[1];
-        let prevZ = direction === 1 ? a[2] : c[2];
+        let prevX = direction === 1 ? activeCurve.fromX : activeCurve.toX;
+        let prevY = direction === 1 ? activeCurve.fromY : activeCurve.toY;
+        let prevZ = direction === 1 ? activeCurve.fromZ : activeCurve.toZ;
         for (let i = 1; i <= samplesPerHop; i++) {
           if (layer.count >= layerCapacity) break;
           const travelT = i / samplesPerHop;
           const curveT = direction === 1 ? travelT : 1 - travelT;
           bezierAtInto(
             sample,
-            a[0], a[1], a[2],
-            ctrl[0], ctrl[1], ctrl[2],
-            c[0], c[1], c[2],
+            activeCurve.fromX, activeCurve.fromY, activeCurve.fromZ,
+            activeCurve.ctrlX, activeCurve.ctrlY, activeCurve.ctrlZ,
+            activeCurve.toX, activeCurve.toY, activeCurve.toZ,
             curveT,
           );
           // Midpoint in travel space, independent of Bezier sampling direction.
@@ -2478,14 +2632,14 @@ export default function NeuralFabric({
 
   return (
     <>
-      <primitive object={fabric.mesh} />
+      <primitive object={fabric.mesh} {...nerveGpuProbes.passiveBase} />
       {/* 中央神经: the same records, drawn wide, over the top decile of the
           arbor. Immediately after the mesh pass because the two are one
           picture split by width — never a second copy of the same edge. */}
-      <primitive object={trunk.mesh} />
+      <primitive object={trunk.mesh} {...nerveGpuProbes.passiveTrunk} />
       <primitive object={warmRoutes.mesh} />
-      <primitive object={active.mesh} />
-      <primitive object={memory.mesh} />
+      <primitive object={active.mesh} {...nerveGpuProbes.active} />
+      <primitive object={memory.mesh} {...nerveGpuProbes.memory} />
       <primitive object={routeHopPulse.mesh} />
     </>
   );

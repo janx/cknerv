@@ -21,6 +21,9 @@ import {
   reportBootPopulationReady,
 } from '../boot/nerveRestGate';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
+import { PERFORMANCE_PROBE_LABELS } from '../tweaks/performanceProbeStore';
+import { createGpuProbeCallbacks } from '../tweaks/gpuTimerQuery';
+import { createNonEmptyInstanceGpuProbeCallbacks } from '../tweaks/nonEmptyGpuProbeCallbacks';
 import {
   makeScreenSpaceCapsuleGeometry,
   syncScreenSpaceCapsuleViewport,
@@ -264,7 +267,31 @@ export default function CellPopulationField({
   const material = useMemo(() => makePopulationPointMaterial(), []);
   const fibreMaterial = useMemo(() => makePopulationFibreMaterial(), []);
   const backboneMaterial = useMemo(() => makePopulationBackboneMaterial(), []);
+  // True per-draw GPU timings when the opt-in render probe owns a timer-query
+  // context. No CPU wall-time stand-in: unsupported contexts simply export no
+  // GPU samples. Three calls these object hooks around the exact draw that the
+  // label names; disabled callbacks stop at the probe's boolean gate.
+  const populationGpuProbes = useMemo(() => ({
+    points: createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.populationPoints),
+    residualFibres: createGpuProbeCallbacks(
+      PERFORMANCE_PROBE_LABELS.populationResidualFibres,
+    ),
+  }), []);
   const [placed, setPlaced] = useState<PlacedGeometry | null>(null);
+  // The capsule mesh already owns LineSegments2's resolution callback plus
+  // the device-viewport wrapper installed by makeBackboneLayer. Compose with
+  // that hook instead of replacing it, and exclude zero-instance trims from
+  // the GPU percentile.
+  const backboneGpuProbe = useMemo(() => (
+    placed
+      ? createNonEmptyInstanceGpuProbeCallbacks(
+        placed.backbone.mesh,
+        createGpuProbeCallbacks(
+          PERFORMANCE_PROBE_LABELS.populationBackboneCapsules,
+        ),
+      )
+      : undefined
+  ), [placed]);
   const placementRef = useRef<PlacementCounts | null>(null);
   const { effective: quality } = useQualityRuntime();
   const pointsGeometryRef = useRef<THREE.BufferGeometry | null>(null);
@@ -539,6 +566,7 @@ export default function CellPopulationField({
       <lineSegments
         geometry={placed.fibres}
         material={fibreMaterial}
+        {...populationGpuProbes.residualFibres}
         frustumCulled={false}
         raycast={neverRaycast}
         renderOrder={-2}
@@ -555,10 +583,14 @@ export default function CellPopulationField({
           promotion is that same bead failure in a new costume — and they LEAVE
           the index above rather than sitting over it. Same emission, same
           tissue taper, same hue, same blend: wider, never brighter. */}
-      <primitive object={placed.backbone.mesh} />
+      <primitive
+        object={placed.backbone.mesh}
+        {...backboneGpuProbe}
+      />
       <points
         geometry={placed.points}
         material={material}
+        {...populationGpuProbes.points}
         // The cloud spans the halo envelope and the camera can sit inside it.
         // Skipping the frustum test also means the bounding sphere is never
         // computed, which would otherwise be a pass over every point.

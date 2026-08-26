@@ -27,16 +27,22 @@ import {
   dampCellFocus,
 } from '../derives/cellInteraction.derive';
 import {
-  cellNucleusFarFieldBeyond,
-  ensureCellFieldBounds,
-  makeCellFieldBoundsCache,
-} from '../derives/cellNucleusFarField.derive';
+  ensureCellNucleusSpatialIndex,
+  makeCellNucleusCandidateScratch,
+  makeCellNucleusSpatialIndex,
+  queryCellNucleusCandidateIndices,
+} from '../derives/cellNucleusSpatialLod.derive';
 import { makeNucleusPointMaterial } from '../materials/cellNucleusMaterial';
 import {
   pointSpriteDeviceViewportHeight,
   resolvePointSpritePixelRatio,
 } from '../materials/pointSpritePresentation';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
+import {
+  PERFORMANCE_PROBE_LABELS,
+  beginCpuProbe,
+  endCpuProbe,
+} from '../tweaks/performanceProbeStore';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { useConsensusMemoryFocusRef } from '../hooks/consensusMemoryFocusContext';
 import {
@@ -257,7 +263,8 @@ export default function CellNucleus({
   const lastHoveredCellId = useRef<number | null>(null);
   const lastRecallKey = useRef<string | null>(null);
   const lastNearCap = useRef(-1);
-  const routeHopIndexCache = useRef({
+  const directLodCellIds = useRef<Set<number>>(new Set());
+  const routeHopResidentIndexCache = useRef({
     cells: null as Cell[] | null,
     count: -1,
     cellId: -1,
@@ -266,7 +273,8 @@ export default function CellNucleus({
   const cameraPosition = useMemo(() => new THREE.Vector3(), []);
   const cameraLocalPosition = useMemo(() => new THREE.Vector3(), []);
   const groupWorldInverse = useMemo(() => new THREE.Matrix4(), []);
-  const fieldBounds = useMemo(makeCellFieldBoundsCache, []);
+  const lodSpatialIndex = useMemo(makeCellNucleusSpatialIndex, []);
+  const lodCandidateScratch = useMemo(makeCellNucleusCandidateScratch, []);
 
   useFrame((state, deltaSeconds) => {
     const group = groupRef.current;
@@ -400,60 +408,47 @@ export default function CellNucleus({
         .applyMatrix4(groupWorldInverse);
 
       near.current.length = 0;
-      // Whole-field early-out. Identity is a zoom-in detail: under the
-      // resting overview camera every Cell is beyond FAR_DIST, so the
-      // O(count) walk below can admit nothing distance-wise. Proving that
-      // from one cached bounding-sphere distance (same group-local camera
-      // math, same 12 Hz tick) drops `lodWalkCount` to 0. Focus entries
-      // (selection / hover / route-hop cells) are the only far-camera
-      // admissions, and they are walked directly from the envelope below —
-      // an open detail panel must not resurrect the full per-Cell walk for
-      // the whole time it stays open. Recall keeps the full walk: its
-      // response set spans endpoint Cells beyond the envelope. When the
-      // distance predicate declines, the walk runs exactly as before.
-      const bounds = ensureCellFieldBounds(
-        fieldBounds,
+      // Camera-distance admission is local to the exact stable-slot list.
+      // The shared/canonical index carries different membership, while this
+      // cache includes staged cells, selection overlays and exit holds.  It
+      // rebuilds only when CellGalaxy's position version moves; every 12 Hz
+      // tick then visits the FAR_DIST buckets plus the tiny semantic-id set.
+      // The opt-in scope spans both that spatial query and the exact candidate
+      // bake/sort below. Disabled beginCpuProbe returns before reading the
+      // clock or allocating a token, so ordinary frames pay two short gates
+      // only on a refresh tick.
+      const lodProbe = beginCpuProbe(
+        PERFORMANCE_PROBE_LABELS.cellNucleusLod,
+      );
+      ensureCellNucleusSpatialIndex(
+        lodSpatialIndex,
         cells,
         count,
         fieldVersionRef.current,
+        FAR_DIST,
       );
-      const envelopeOnlyLod = recallFocus === null
-        && cellNucleusFarFieldBeyond(
-          cameraLocalPosition.x,
-          cameraLocalPosition.y,
-          cameraLocalPosition.z,
-          bounds,
-          FAR_DIST,
-        );
-      const lodWalkCount = envelopeOnlyLod ? 0 : count;
-      if (envelopeOnlyLod && focusByCell.current.size > 0) {
-        for (const [cellId, userFocus] of focusByCell.current) {
-          if (userFocus <= 0) continue;
-          const index = visibleIndexByCell.get(cellId);
-          if (index === undefined || index >= count) continue;
-          const cell = cells[index];
-          const dx = cell.pos_seed[0] - cameraLocalPosition.x;
-          const dy = cell.pos_seed[1] - cameraLocalPosition.y;
-          const dz = cell.pos_seed[2] - cameraLocalPosition.z;
-          const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-          // Beyond-field cameraDetail is provably 0; the envelope term is
-          // the byte-identical interaction formula from the full walk.
-          const detail = userFocus * 0.68;
-          if (detail > CELL_EXPANDED_DETAIL_THRESHOLD) {
-            near.current.push({
-              cell,
-              index,
-              detail,
-              cameraDetail: 0,
-              focus: userFocus,
-              userFocus,
-              recall: null,
-              dist,
-            });
-          }
-        }
-      }
-      for (let index = 0; index < lodWalkCount; index += 1) {
+      const directIds = directLodCellIds.current;
+      directIds.clear();
+      // Keep every easing envelope address, including the release tail after
+      // hover/selection ends.  Current ids are named explicitly as a guard
+      // against a future envelope implementation changing its first frame.
+      for (const cellId of focusByCell.current.keys()) directIds.add(cellId);
+      if (selectedCellId !== null) directIds.add(selectedCellId);
+      if (hoveredCellId !== null) directIds.add(hoveredCellId);
+      for (const cellId of recallByCell.keys()) directIds.add(cellId);
+      if (routeHopFocus !== null) directIds.add(routeHopFocus.cellId);
+      const candidateIndices = queryCellNucleusCandidateIndices(
+        lodSpatialIndex,
+        cells,
+        cameraLocalPosition.x,
+        cameraLocalPosition.y,
+        cameraLocalPosition.z,
+        FAR_DIST,
+        visibleIndexByCell,
+        directIds,
+        lodCandidateScratch,
+      );
+      for (const index of candidateIndices) {
         const cell = cells[index];
         const userFocus = focusByCell.current.get(cell.id) ?? 0;
         const recall = recallByCell.get(cell.id) ?? null;
@@ -498,11 +493,21 @@ export default function CellNucleus({
       // A verified ledger hop still gets its canonical A braid even when its
       // base sprite falls outside that prefix; this does not increase the
       // shared Points draw range or invent a surrogate Cell.
-      // The beyond-prefix scan is O(all retained cells); cache it per
-      // (cells list, prefix, hop cell) so steady LOD ticks skip the walk.
-      let routeHopIndex = -1;
-      if (routeHopFocus !== null) {
-        const cached = routeHopIndexCache.current;
+      // Reuse CellGalaxy's stable-slot lookup rather than mirroring a complete
+      // resident id table in the private position index.
+      let routeHopIndex = routeHopFocus === null
+        ? -1
+        : (visibleIndexByCell.get(routeHopFocus.cellId) ?? -1);
+      // A consumer may retain extra records after `count` without including
+      // them in the drawn-slot map, or republish only that tail while a lookup
+      // hit remains stale. Validate the hit and preserve the old list-identity
+      // fallback for this one exceptional lane. It runs only while a verified
+      // route hop is inspected.
+      if (
+        routeHopFocus !== null
+        && cells[routeHopIndex]?.id !== routeHopFocus.cellId
+      ) {
+        const cached = routeHopResidentIndexCache.current;
         if (
           cached.cells !== cells
           || cached.count !== count
@@ -511,9 +516,12 @@ export default function CellNucleus({
           cached.cells = cells;
           cached.count = count;
           cached.cellId = routeHopFocus.cellId;
-          cached.index = cells.findIndex((cell, index) => (
-            index >= count && cell.id === routeHopFocus.cellId
-          ));
+          cached.index = -1;
+          for (let index = count; index < cells.length; index += 1) {
+            if (cells[index].id !== routeHopFocus.cellId) continue;
+            cached.index = index;
+            break;
+          }
         }
         routeHopIndex = cached.index;
       }
@@ -553,6 +561,7 @@ export default function CellNucleus({
         || left.dist - right.dist
       ));
       if (near.current.length > nucleusNearCap) near.current.length = nucleusNearCap;
+      endCpuProbe(lodProbe);
       rewriteDetailAttribute = true;
     } else if (focusNeedsWrite || recallNeedsWrite) {
       // Camera selection is cached between LOD ticks, but the semantic focus

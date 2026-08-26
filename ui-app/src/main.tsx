@@ -6,7 +6,12 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import type { CellGalaxySnapshot } from '@cknerv/types';
-import { completeBootPhase, setQualityMode } from '@cknerv/ui';
+import {
+  QUALITY_PRESETS,
+  completeBootPhase,
+  setAdaptiveQuality,
+  setQualityMode,
+} from '@cknerv/ui';
 import App from './App';
 import { installBootShellReadout } from './boot-shell';
 import { fetchCellsSnapshot, fetchChainSnapshot } from './connect';
@@ -16,7 +21,11 @@ import {
   resolveVisualReviewRoute,
   type VisualReviewRoute,
 } from './visual-review-route';
-import { resolveQualityOverride } from './render-quality';
+import {
+  resolveAutoStartupQuality,
+  resolveQualityOverride,
+  shouldApplyAutoStartupQuality,
+} from './render-quality';
 
 type VisualReviewLab = React.ComponentType<{ snapshot: CellGalaxySnapshot }>;
 
@@ -41,7 +50,26 @@ async function bootstrap() {
   completeBootPhase('instrument');
   const reviewRoute = resolveVisualReviewRoute(window.location.search);
   const qualityOverride = resolveQualityOverride(window.location.search);
-  if (qualityOverride) setQualityMode(qualityOverride);
+  if (qualityOverride) {
+    setQualityMode(qualityOverride);
+  } else if (shouldApplyAutoStartupQuality(
+    reviewRoute !== null,
+    window.location.search,
+  )) {
+    // AUTO starts from a ceiling proportionate to the buffer High would ask
+    // the GPU to carry. This runs before the first Canvas mount, so a 4K page
+    // never spends warmup/calibration rendering a tier already measured past
+    // its vsync budget. Deterministic review Labs stay at their documented High
+    // default unless they explicitly opt into adaptive quality. The in-Canvas
+    // controller retains lifetime ownership and may lower the ceiling further
+    // after sustained pressure.
+    setAdaptiveQuality(resolveAutoStartupQuality(
+      window.innerWidth,
+      window.innerHeight,
+      window.devicePixelRatio,
+      QUALITY_PRESETS.high.maxDpr,
+    ));
+  }
   const [chainResp, cellsResp, ReviewLab] = await Promise.all([
     fetchChainSnapshot(),
     fetchCellsSnapshot(),

@@ -21,6 +21,9 @@
 //                                    one thing a live pass cannot see by
 //                                    looking at the scene.
 //   window.__producerOriginStatsReset() → zero the origin counters
+//   window.__renderPerformanceStats()   → bounded p50/p95/p99 CPU/GPU/frame data
+//   window.__renderPerformanceStatsJson() → versioned JSON export
+//   window.__renderPerformanceStatsReset() → clean measurement window
 // Read-only; safe to leave attached. The library itself stays window-free.
 import {
   getQualityRuntimeSnapshot,
@@ -30,6 +33,9 @@ import {
   resetFabricStats,
   snapshotProducerOriginStats,
   resetProducerOriginStats,
+  snapshotPerformanceProbe,
+  exportPerformanceProbeJson,
+  resetPerformanceProbe,
 } from '@cknerv/ui';
 
 declare global {
@@ -41,6 +47,9 @@ declare global {
     __qualityStats?: typeof getQualityRuntimeSnapshot;
     __producerOriginStats?: typeof snapshotProducerOriginStats;
     __producerOriginStatsReset?: typeof resetProducerOriginStats;
+    __renderPerformanceStats?: typeof snapshotPerformanceProbe;
+    __renderPerformanceStatsJson?: typeof exportPerformanceProbeJson;
+    __renderPerformanceStatsReset?: typeof resetPerformanceProbe;
   }
 }
 
@@ -53,4 +62,7 @@ export function installPulseStatsHook(): void {
   window.__qualityStats = getQualityRuntimeSnapshot;
   window.__producerOriginStats = snapshotProducerOriginStats;
   window.__producerOriginStatsReset = resetProducerOriginStats;
+  window.__renderPerformanceStats = snapshotPerformanceProbe;
+  window.__renderPerformanceStatsJson = exportPerformanceProbeJson;
+  window.__renderPerformanceStatsReset = resetPerformanceProbe;
 }

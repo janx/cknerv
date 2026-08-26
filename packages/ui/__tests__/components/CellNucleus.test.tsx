@@ -186,6 +186,48 @@ describe('CellNucleus dynamic attributes', () => {
     expect(SOURCE).not.toContain('recallArray.fill');
   });
 
+  it('profiles the bounded spatial LOD query and candidate bake as one CPU scope', () => {
+    const refresh = SOURCE.slice(
+      SOURCE.indexOf('    if (refreshLod) {'),
+      SOURCE.indexOf('    } else if (focusNeedsWrite || recallNeedsWrite)'),
+    );
+    const begin = refresh.indexOf('const lodProbe = beginCpuProbe(');
+    const ensure = refresh.indexOf('ensureCellNucleusSpatialIndex(');
+    const query = refresh.indexOf('queryCellNucleusCandidateIndices(');
+    const bake = refresh.indexOf('for (const index of candidateIndices)');
+    const sort = refresh.indexOf('near.current.sort(');
+    const end = refresh.indexOf('endCpuProbe(lodProbe);');
+
+    expect(begin).toBeGreaterThanOrEqual(0);
+    expect(begin).toBeLessThan(ensure);
+    expect(ensure).toBeLessThan(query);
+    expect(query).toBeLessThan(bake);
+    expect(bake).toBeLessThan(sort);
+    expect(sort).toBeLessThan(end);
+    expect(refresh).toContain('PERFORMANCE_PROBE_LABELS.cellNucleusLod');
+    // The scope API owns the clock gate; the production renderer must not read
+    // wall time on an ordinary disabled LOD refresh.
+    expect(refresh).not.toContain('performance.now');
+  });
+
+  it('reuses the stable-slot lookup for semantic ids and verified route hops', () => {
+    expect(SOURCE).toContain(
+      '        visibleIndexByCell,\n        directIds,',
+    );
+    expect(SOURCE).toContain(
+      '(visibleIndexByCell.get(routeHopFocus.cellId) ?? -1)',
+    );
+    // A missing or stale lookup can still describe the exceptional retained
+    // tail, but that scan remains route-hop-only and starts after drawCount.
+    expect(SOURCE).toContain(
+      'for (let index = count; index < cells.length; index += 1)',
+    );
+    expect(SOURCE).toContain(
+      'cells[index].id !== routeHopFocus.cellId',
+    );
+    expect(SOURCE).not.toContain('cellNucleusSpatialIndexOf');
+  });
+
   it('streams only populated line and node geometry ranges', () => {
     expect(SOURCE).toContain('setUsage(THREE.DynamicDrawUsage)');
     expect(SOURCE).toContain(

@@ -38,5 +38,20 @@ describe('installPulseStatsHook', () => {
     // instrument that is not there when it is wanted.
     window.__producerOriginStatsReset!();
     expect(window.__producerOriginStats!().waves).toBe(0);
+
+    // The opt-in render probe rides the same devtools surface. The hooks are
+    // always discoverable, but the snapshot proves measurement itself remains
+    // disabled until RenderStatsSampler is demanded / ?render-stats=1.
+    expect(typeof window.__renderPerformanceStats).toBe('function');
+    expect(typeof window.__renderPerformanceStatsJson).toBe('function');
+    expect(typeof window.__renderPerformanceStatsReset).toBe('function');
+    const performance = window.__renderPerformanceStats!();
+    expect(performance.schemaVersion).toBe(1);
+    expect(performance.enabled).toBe(false);
+    expect(performance.gpu.metrics).toEqual({});
+    expect(JSON.parse(window.__renderPerformanceStatsJson!())).toMatchObject({
+      schemaVersion: 1,
+      enabled: false,
+    });
   });
 });

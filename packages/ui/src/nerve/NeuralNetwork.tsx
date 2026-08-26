@@ -36,6 +36,11 @@ import { reportBootGraphApplied } from '../boot/nerveRestGate';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { galaxyFrame } from '../tweaks/galaxyFrame';
+import {
+  PERFORMANCE_PROBE_LABELS,
+  beginCpuProbe,
+  endCpuProbe,
+} from '../tweaks/performanceProbeStore';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
 import { fabricAllocationEdges } from './fabricCapacity';
 import {
@@ -1452,322 +1457,350 @@ function NeuralNetwork({
   // hop's edge, push the spike head sprite, flash the receiving
   // cells, then stamp a consensus write seal at the terminal.
   useSimFrame((state) => {
-    const now = simClock.elapsedSec;
-    spikePool.beginFrame();
-    const handles = fabricHandlesRef.current;
-    // Endpoint geometry for every hop below. Paired with the display graph on
-    // purpose: a hop is drawn only where both the fibre and its two cells are
-    // on screen, and residents (most of the stage) live only in this map.
-    const cells = displayCellsRef.current;
-    const departingFocus = departingTraceFocusRef.current;
-    if (departingFocus && now >= departingFocus.endsAtSec) {
-      departingTraceFocusRef.current = null;
-      setDepartingTraceFocus(null);
-    }
-    let activeFocus = traceFocusRef.current;
-    if (
-      activeFocus
-      && activeTraceRequestRef.current
-      && traceHoldForRecordSwitch
-      && activeFocus.visualContinuity?.mode !== 'park'
-      && now >= activeFocus.endsAtSec - CONSENSUS_MEMORY_TRACE_RELEASE_SECONDS
-    ) {
-      const parkedFocus = deriveConsensusMemoryRecordParkFocus(
-        activeFocus,
-        now,
-        { reducedMotion },
-      );
-      if (parkedFocus) {
-        activeFocus = parkedFocus;
-        traceFocusRef.current = parkedFocus;
-        if (sharedTraceFocusRef) sharedTraceFocusRef.current = parkedFocus;
-        setTraceFocus(parkedFocus);
+    const activePulseFrameProbe = beginCpuProbe(
+      PERFORMANCE_PROBE_LABELS.activePulseFrame,
+    );
+    try {
+      const now = simClock.elapsedSec;
+      spikePool.beginFrame();
+      const handles = fabricHandlesRef.current;
+      // Endpoint geometry for every hop below. Paired with the display graph on
+      // purpose: a hop is drawn only where both the fibre and its two cells are
+      // on screen, and residents (most of the stage) live only in this map.
+      const cells = displayCellsRef.current;
+      const departingFocus = departingTraceFocusRef.current;
+      if (departingFocus && now >= departingFocus.endsAtSec) {
+        departingTraceFocusRef.current = null;
+        setDepartingTraceFocus(null);
       }
-    }
-    if (activeFocus && now >= activeFocus.endsAtSec) {
-      const completedRequest = activeTraceRequestRef.current;
-      pulsesRef.current = pulsesRef.current.filter((pulse) => pulse.mode !== 'memory');
-      activeTraceRequestRef.current = null;
-      traceFocusRef.current = null;
-      if (sharedTraceFocusRef) sharedTraceFocusRef.current = null;
-      publishTraceTargetResponse(null, null);
-      setTraceFocus(null);
-      setTraceDisplayEvidenceSourceId(null);
-      setTraceDisplayRouteHopLock(null);
-      publishTraceReadout(null);
-      if (completedRequest) onTraceComplete?.(completedRequest, 'complete');
-    }
-    const currentFocus = traceFocusRef.current;
-    const currentRequest = activeTraceRequestRef.current;
-    const readoutTargetId = currentRequest?.targetCellId
-      ?? currentFocus?.targetIds[0];
-    let currentTargetResponse: ConsensusMemoryCellResponse | null = null;
-    if (currentFocus && readoutTargetId !== undefined) {
-      const response = consensusMemoryCellResponseForFrame(
-        currentFocus,
-        readoutTargetId,
-        now,
-      );
-      currentTargetResponse = response?.role === 'target' ? response : null;
-      if (currentRequest) {
-        publishTraceTargetResponse(readoutTargetId, currentTargetResponse);
-        publishTraceReadout(
-          consensusMemoryTraceReadoutInto(
-            traceReadoutScratchRef.current,
-            currentFocus,
-            readoutTargetId,
-            now,
-          ),
-          true,
+      let activeFocus = traceFocusRef.current;
+      if (
+        activeFocus
+        && activeTraceRequestRef.current
+        && traceHoldForRecordSwitch
+        && activeFocus.visualContinuity?.mode !== 'park'
+        && now >= activeFocus.endsAtSec - CONSENSUS_MEMORY_TRACE_RELEASE_SECONDS
+      ) {
+        const parkedFocus = deriveConsensusMemoryRecordParkFocus(
+          activeFocus,
+          now,
+          { reducedMotion },
         );
+        if (parkedFocus) {
+          activeFocus = parkedFocus;
+          traceFocusRef.current = parkedFocus;
+          if (sharedTraceFocusRef) sharedTraceFocusRef.current = parkedFocus;
+          setTraceFocus(parkedFocus);
+        }
       }
-    }
-    const focusStrength = consensusMemoryTraceFocusStrength(
-      traceFocusRef.current,
-      now,
-    );
-    const departingFocusStrength = consensusMemoryTraceFocusStrength(
-      departingTraceFocusRef.current,
-      now,
-    );
-    const presentationFocusStrength = Math.max(
-      focusStrength,
-      departingFocusStrength,
-    );
-    let memoryCameraDistance = CONSENSUS_MEMORY_NEAR_PRESENTATION.cameraDistance;
-    let hasMemoryTarget = false;
-    for (const candidateFocus of [traceFocusRef.current, departingFocus]) {
-      if (!candidateFocus) continue;
-      for (const targetId of candidateFocus.targetIds) {
-        const target = cells.get(targetId);
-        if (!target) continue;
-        const world = consensusRouteHopWorldPosition(
-          target.pos_seed,
-          galaxyFrame.rotationY,
+      if (activeFocus && now >= activeFocus.endsAtSec) {
+        const completedRequest = activeTraceRequestRef.current;
+        pulsesRef.current = pulsesRef.current.filter((pulse) => pulse.mode !== 'memory');
+        activeTraceRequestRef.current = null;
+        traceFocusRef.current = null;
+        if (sharedTraceFocusRef) sharedTraceFocusRef.current = null;
+        publishTraceTargetResponse(null, null);
+        setTraceFocus(null);
+        setTraceDisplayEvidenceSourceId(null);
+        setTraceDisplayRouteHopLock(null);
+        publishTraceReadout(null);
+        if (completedRequest) onTraceComplete?.(completedRequest, 'complete');
+      }
+      const currentFocus = traceFocusRef.current;
+      const currentRequest = activeTraceRequestRef.current;
+      const readoutTargetId = currentRequest?.targetCellId
+        ?? currentFocus?.targetIds[0];
+      let currentTargetResponse: ConsensusMemoryCellResponse | null = null;
+      if (currentFocus && readoutTargetId !== undefined) {
+        const response = consensusMemoryCellResponseForFrame(
+          currentFocus,
+          readoutTargetId,
+          now,
         );
-        const distance = Math.hypot(
-          state.camera.position.x - world[0],
-          state.camera.position.y - world[1],
-          state.camera.position.z - world[2],
-        );
-        if (!Number.isFinite(distance)) continue;
-        hasMemoryTarget = true;
-        memoryCameraDistance = Math.max(memoryCameraDistance, distance);
-      }
-    }
-    const distancePresentation = hasMemoryTarget
-      ? deriveConsensusMemoryDistancePresentation(memoryCameraDistance)
-      : CONSENSUS_MEMORY_NEAR_PRESENTATION;
-    traceDistancePresentationRef.current = distancePresentation;
-
-    // Drive growth/decay plus the trace-clock aperture on the persistent
-    // fabric layer. Internally gated: no-op when neither can change and
-    // nothing has changed since the last commit, so steady state stays free.
-    handles?.setRecallAperture(
-      traceAperture,
-      focusStrength,
-      departingTraceAperture,
-      departingFocusStrength,
-    );
-    handles?.setMemoryRouteWidthScale(distancePresentation.routeWidthScale);
-    handles?.emitFabric(now);
-
-    // Live adjacency snapshot for this frame. Pulses ride only edges
-    // that exist in this graph; when a hop's edge has been dropped
-    // (cell GC, rebuild after membership delta, exit from the stage) the
-    // pulse — or that individual trail hop — extinguishes. Single
-    // calculation path: this is the graph the fabric layer is built from
-    // AND the graph the routes were planned on, so the active layer can
-    // never light up a fibre that isn't there.
-    const adjacency = displayGraphRef.current.adjacency;
-    const framePulses = pulsesRef.current;
-    const stillActive = sparePulsesRef.current;
-    stillActive.length = 0;
-    for (const pulse of framePulses) {
-      const policy = CONSENSUS_PULSE_POLICY[pulse.mode];
-      const releaseScale = pulse.mode === 'memory'
-        ? consensusMemoryTraceReleaseStrength(pulse.release, now)
-        : 1;
-      if (releaseScale <= 0.001) continue;
-      const activityScale = consensusMemoryPulseActivityScale(
-        pulse.mode,
-        presentationFocusStrength,
-      );
-      const pulseMatchesFocus = pulse.mode === 'memory'
-        && pulse.traceKey === currentFocus?.key;
-      const recordEntryScale = pulseMatchesFocus
-        ? consensusMemoryTraceEntryScale(currentFocus, now)
-        : 1;
-      const evidenceActivityScale = pulse.mode === 'memory'
-        ? pulse.release?.evidenceScale
-          ?? (pulseMatchesFocus
-            ? consensusMemorySourceHandoffEvidenceScale(
-              pulse.path[0] ?? null,
-              currentFocus?.evidenceFocusSourceId ?? null,
-              sourceHandoffRef.current,
-              sourceHandoffTimeRef.current,
-            )
-            : 1)
-        : 1;
-      const routeActivityScale = activityScale
-        * evidenceActivityScale
-        * releaseScale
-        * recordEntryScale
-        * (pulse.mode === 'memory'
-          ? distancePresentation.routeEnergyScale
-          : 1);
-      // Each pulse has its own start delay (jitter) and hop duration
-      // (speed scale). Subtract the delay before checking elapsed.
-      const rawElapsedMs = (now - pulse.startSec) * 1000;
-      const elapsedMs = rawElapsedMs - pulse.startDelayMs;
-      const totalHops = pulse.path.length - 1; // edges, not nodes
-      // An empty path is not renderable at all; a one-node path is, because a
-      // ghost carries it (the entry node IS the destination). Never index
-      // path[-1] either way.
-      if (totalHops < 0) continue;
-      // Pulse hasn't started yet (still in its jitter delay).
-      if (elapsedMs < 0) {
-        // A packet that was never visible should not depart after its recall
-        // has already been released.
-        if (pulse.release) continue;
-        stillActive.push(pulse);
-        continue;
-      }
-      const hopMs = pulse.hopMs;
-      // The ghost is part of the journey, not an overlay: every hop boundary
-      // and the terminal arrival shift by its duration.
-      const ghost = pulse.ghost;
-      const ghostMs = ghost?.ms ?? 0;
-      const head = pulseLegHeadInto(
-        legHead,
-        totalHops,
-        hopMs,
-        ghostMs,
-        elapsedMs,
-      );
-      const headHop = head.leg;
-      const subT = head.subT;
-
-      // Has the pulse arrived at the terminal cell?
-      if (head.arrived) {
-        const term = pulse.path[totalHops];
-        const arriveAt =
-          pulse.startSec
-          + (
-            pulse.startDelayMs
-            + pulseTerminalArrivalMs(totalHops, hopMs, ghostMs)
-          ) / 1000;
-        if (pulse.mode === 'memory') {
-          const resonance = consensusMemoryTraceResonance(
-            (now - arriveAt) * 1000,
+        currentTargetResponse = response?.role === 'target' ? response : null;
+        if (currentRequest) {
+          publishTraceTargetResponse(readoutTargetId, currentTargetResponse);
+          publishTraceReadout(
+            consensusMemoryTraceReadoutInto(
+              traceReadoutScratchRef.current,
+              currentFocus,
+              readoutTargetId,
+              now,
+            ),
+            true,
           );
-          if (resonance > 0) {
-            stillActive.push(pulse);
-            const targetResponse = pulseMatchesFocus && term === readoutTargetId
-              ? currentTargetResponse
-              : pulseMatchesFocus
-                ? consensusMemoryCellResponseForFrame(currentFocus, term, now)
-                : null;
-            const handoffScale = pulse.release?.routeHandoffScale
-              ?? consensusMemoryRouteHandoffScale(
-                targetResponse?.role === 'target'
-                  ? targetResponse.convergence
-                  : 0,
-              );
-            if (handles) {
-              for (let h = 0; h < totalHops; h++) {
-                const fromId = pulse.path[h];
-                const toId = pulse.path[h + 1];
-                if (!cells.has(fromId) || !cells.has(toId)) continue;
-                const hopAdjacency = adjacency.get(fromId);
-                if (!hopAdjacency?.has(toId)) continue;
-                handles.pushActiveHop(
-                  {
-                    fromCellId: fromId,
-                    toCellId: toId,
-                    mode: 'memory',
-                    frontT: 1,
-                    brightness: MEMORY_RESONANCE_BRIGHT
-                      * resonance
-                      * handoffScale
-                      * routeActivityScale,
-                    tailDecay: MEMORY_RESONANCE_TAIL_DECAY,
-                    color: pulse.color,
-                  },
-                  cells,
-                );
-              }
-            }
-          }
+        }
+      }
+      const focusStrength = consensusMemoryTraceFocusStrength(
+        traceFocusRef.current,
+        now,
+      );
+      const departingFocusStrength = consensusMemoryTraceFocusStrength(
+        departingTraceFocusRef.current,
+        now,
+      );
+      const presentationFocusStrength = Math.max(
+        focusStrength,
+        departingFocusStrength,
+      );
+      let memoryCameraDistance = CONSENSUS_MEMORY_NEAR_PRESENTATION.cameraDistance;
+      let hasMemoryTarget = false;
+      for (const candidateFocus of [traceFocusRef.current, departingFocus]) {
+        if (!candidateFocus) continue;
+        for (const targetId of candidateFocus.targetIds) {
+          const target = cells.get(targetId);
+          if (!target) continue;
+          const world = consensusRouteHopWorldPosition(
+            target.pos_seed,
+            galaxyFrame.rotationY,
+          );
+          const distance = Math.hypot(
+            state.camera.position.x - world[0],
+            state.camera.position.y - world[1],
+            state.camera.position.z - world[2],
+          );
+          if (!Number.isFinite(distance)) continue;
+          hasMemoryTarget = true;
+          memoryCameraDistance = Math.max(memoryCameraDistance, distance);
+        }
+      }
+      const distancePresentation = hasMemoryTarget
+        ? deriveConsensusMemoryDistancePresentation(memoryCameraDistance)
+        : CONSENSUS_MEMORY_NEAR_PRESENTATION;
+      traceDistancePresentationRef.current = distancePresentation;
+
+      // Drive growth/decay plus the trace-clock aperture on the persistent
+      // fabric layer. Internally gated: no-op when neither can change and
+      // nothing has changed since the last commit, so steady state stays free.
+      handles?.setRecallAperture(
+        traceAperture,
+        focusStrength,
+        departingTraceAperture,
+        departingFocusStrength,
+      );
+      handles?.setMemoryRouteWidthScale(distancePresentation.routeWidthScale);
+      handles?.emitFabric(now);
+
+      // Live adjacency snapshot for this frame. Pulses ride only edges
+      // that exist in this graph; when a hop's edge has been dropped
+      // (cell GC, rebuild after membership delta, exit from the stage) the
+      // pulse — or that individual trail hop — extinguishes. Single
+      // calculation path: this is the graph the fabric layer is built from
+      // AND the graph the routes were planned on, so the active layer can
+      // never light up a fibre that isn't there.
+      const adjacency = displayGraphRef.current.adjacency;
+      const framePulses = pulsesRef.current;
+      const stillActive = sparePulsesRef.current;
+      stillActive.length = 0;
+      for (const pulse of framePulses) {
+        const policy = CONSENSUS_PULSE_POLICY[pulse.mode];
+        const releaseScale = pulse.mode === 'memory'
+          ? consensusMemoryTraceReleaseStrength(pulse.release, now)
+          : 1;
+        if (releaseScale <= 0.001) continue;
+        const activityScale = consensusMemoryPulseActivityScale(
+          pulse.mode,
+          presentationFocusStrength,
+        );
+        const pulseMatchesFocus = pulse.mode === 'memory'
+          && pulse.traceKey === currentFocus?.key;
+        const recordEntryScale = pulseMatchesFocus
+          ? consensusMemoryTraceEntryScale(currentFocus, now)
+          : 1;
+        const evidenceActivityScale = pulse.mode === 'memory'
+          ? pulse.release?.evidenceScale
+            ?? (pulseMatchesFocus
+              ? consensusMemorySourceHandoffEvidenceScale(
+                pulse.path[0] ?? null,
+                currentFocus?.evidenceFocusSourceId ?? null,
+                sourceHandoffRef.current,
+                sourceHandoffTimeRef.current,
+              )
+              : 1)
+          : 1;
+        const routeActivityScale = activityScale
+          * evidenceActivityScale
+          * releaseScale
+          * recordEntryScale
+          * (pulse.mode === 'memory'
+            ? distancePresentation.routeEnergyScale
+            : 1);
+        // Each pulse has its own start delay (jitter) and hop duration
+        // (speed scale). Subtract the delay before checking elapsed.
+        const rawElapsedMs = (now - pulse.startSec) * 1000;
+        const elapsedMs = rawElapsedMs - pulse.startDelayMs;
+        const totalHops = pulse.path.length - 1; // edges, not nodes
+        // An empty path is not renderable at all; a one-node path is, because a
+        // ghost carries it (the entry node IS the destination). Never index
+        // path[-1] either way.
+        if (totalHops < 0) continue;
+        // Pulse hasn't started yet (still in its jitter delay).
+        if (elapsedMs < 0) {
+          // A packet that was never visible should not depart after its recall
+          // has already been released.
+          if (pulse.release) continue;
+          stillActive.push(pulse);
           continue;
         }
-        if (policy.stampWrite && burstArrivalRef?.current) {
-          const prev = burstArrivalRef.current.get(term);
-          if (!prev || arriveAt > prev.firedAt) {
-            burstArrivalRef.current.set(term, {
-              firedAt: arriveAt,
-              color: pulse.color,
-            });
+        const hopMs = pulse.hopMs;
+        // The ghost is part of the journey, not an overlay: every hop boundary
+        // and the terminal arrival shift by its duration.
+        const ghost = pulse.ghost;
+        const ghostMs = ghost?.ms ?? 0;
+        const head = pulseLegHeadInto(
+          legHead,
+          totalHops,
+          hopMs,
+          ghostMs,
+          elapsedMs,
+        );
+        const headHop = head.leg;
+        const subT = head.subT;
+
+        // Has the pulse arrived at the terminal cell?
+        if (head.arrived) {
+          const term = pulse.path[totalHops];
+          const arriveAt =
+            pulse.startSec
+            + (
+              pulse.startDelayMs
+              + pulseTerminalArrivalMs(totalHops, hopMs, ghostMs)
+            ) / 1000;
+          if (pulse.mode === 'memory') {
+            const resonance = consensusMemoryTraceResonance(
+              (now - arriveAt) * 1000,
+            );
+            if (resonance > 0) {
+              stillActive.push(pulse);
+              const targetResponse = pulseMatchesFocus && term === readoutTargetId
+                ? currentTargetResponse
+                : pulseMatchesFocus
+                  ? consensusMemoryCellResponseForFrame(currentFocus, term, now)
+                  : null;
+              const handoffScale = pulse.release?.routeHandoffScale
+                ?? consensusMemoryRouteHandoffScale(
+                  targetResponse?.role === 'target'
+                    ? targetResponse.convergence
+                    : 0,
+                );
+              if (handles) {
+                for (let h = 0; h < totalHops; h++) {
+                  const fromId = pulse.path[h];
+                  const toId = pulse.path[h + 1];
+                  if (!cells.has(fromId) || !cells.has(toId)) continue;
+                  const hopAdjacency = adjacency.get(fromId);
+                  if (!hopAdjacency?.has(toId)) continue;
+                  handles.pushActiveHop(
+                    {
+                      fromCellId: fromId,
+                      toCellId: toId,
+                      mode: 'memory',
+                      frontT: 1,
+                      brightness: MEMORY_RESONANCE_BRIGHT
+                        * resonance
+                        * handoffScale
+                        * routeActivityScale,
+                      tailDecay: MEMORY_RESONANCE_TAIL_DECAY,
+                      color: pulse.color,
+                    },
+                    cells,
+                  );
+                }
+              }
+            }
+            continue;
           }
-        }
-        // Final cell flash on the terminal too.
-        if (policy.flashCells && cellFlashRef?.current) {
-          const prev = cellFlashRef.current.get(term) ?? -1e9;
-          if (arriveAt > prev) {
-            cellFlashRef.current.set(term, arriveAt);
-            markCellFlashDirty(term, flashDirtyRef, flashDirtyIdsRef);
+          if (policy.stampWrite && burstArrivalRef?.current) {
+            const prev = burstArrivalRef.current.get(term);
+            if (!prev || arriveAt > prev.firedAt) {
+              burstArrivalRef.current.set(term, {
+                firedAt: arriveAt,
+                color: pulse.color,
+              });
+            }
           }
+          // Final cell flash on the terminal too.
+          if (policy.flashCells && cellFlashRef?.current) {
+            const prev = cellFlashRef.current.get(term) ?? -1e9;
+            if (arriveAt > prev) {
+              cellFlashRef.current.set(term, arriveAt);
+              markCellFlashDirty(term, flashDirtyRef, flashDirtyIdsRef);
+            }
+          }
+          continue; // pulse done
         }
-        continue; // pulse done
-      }
 
-      // Validate the head hop's edge against the live graph. If the
-      // pulse is currently flying along a fibre that no longer
-      // exists (edge dropped on rebuild, endpoint cell GC'd), the
-      // pulse extinguishes — we do NOT push it back into stillActive
-      // and we render nothing for this frame. The ghost leg is exempt: it
-      // rides no fibre, so no fibre can be taken from it.
-      const headFromId = pulse.path[headHop];
-      const headToId = pulse.path[headHop + 1];
-      if (pulseLegExtinguishes(headHop)) {
-        if (!cells.has(headFromId) || !cells.has(headToId)) continue;
-        const headAdj = adjacency.get(headFromId);
-        if (!headAdj || !headAdj.has(headToId)) continue;
-      }
+        // Validate the head hop's edge against the live graph. If the
+        // pulse is currently flying along a fibre that no longer
+        // exists (edge dropped on rebuild, endpoint cell GC'd), the
+        // pulse extinguishes — we do NOT push it back into stillActive
+        // and we render nothing for this frame. The ghost leg is exempt: it
+        // rides no fibre, so no fibre can be taken from it.
+        const headFromId = pulse.path[headHop];
+        const headToId = pulse.path[headHop + 1];
+        if (pulseLegExtinguishes(headHop)) {
+          if (!cells.has(headFromId) || !cells.has(headToId)) continue;
+          const headAdj = adjacency.get(headFromId);
+          if (!headAdj || !headAdj.has(headToId)) continue;
+        }
 
-      stillActive.push(pulse);
+        stillActive.push(pulse);
 
-      // Reinforce the route this packet is traversing — once per edge crossed
-      // (headHop only advances). Repeatedly-travelled routes accumulate glow
-      // and persist; the fabric self-organizes toward live block/tx flow.
-      if (policy.reinforce && headHop > (pulse.lastReinforcedHop ?? -1)) {
-        handles?.reinforce(headFromId, headToId);
-        pulse.lastReinforcedHop = headHop;
-      }
+        // Reinforce the route this packet is traversing — once per edge crossed
+        // (headHop only advances). Repeatedly-travelled routes accumulate glow
+        // and persist; the fabric self-organizes toward live block/tx flow.
+        if (policy.reinforce && headHop > (pulse.lastReinforcedHop ?? -1)) {
+          handles?.reinforce(headFromId, headToId);
+          pulse.lastReinforcedHop = headHop;
+        }
 
-      // For each hop in the visible window, draw the lit Bezier
-      // sub-segments. The head hop's wavefront position is `subT`;
-      // older hops are fully traversed (frontT = 1) but dimmer with
-      // distance from the lead.
-      if (handles) {
-        // The wake starts one leg earlier when a ghost carried the departure,
-        // so the tail still reaches back to the dying cell's own address.
-        const firstLeg = ghost ? PULSE_LEG_GHOST : 0;
-        for (let h = firstLeg; h <= headHop && h < totalHops; h++) {
-          const ageHops = headHop - h;
-          if (ageHops > TRAIL_HOPS) continue;
-          const isHead = ageHops === 0;
-          const frontT = isHead ? subT : 1.0;
-          const brightness = isHead
-            ? HOP_HEAD_BRIGHT
-            : HOP_TAIL_BRIGHT * Math.exp(-ageHops * HOP_TAIL_DECAY);
-          if (ghost && h === PULSE_LEG_GHOST) {
+        // For each hop in the visible window, draw the lit Bezier
+        // sub-segments. The head hop's wavefront position is `subT`;
+        // older hops are fully traversed (frontT = 1) but dimmer with
+        // distance from the lead.
+        if (handles) {
+          // The wake starts one leg earlier when a ghost carried the departure,
+          // so the tail still reaches back to the dying cell's own address.
+          const firstLeg = ghost ? PULSE_LEG_GHOST : 0;
+          for (let h = firstLeg; h <= headHop && h < totalHops; h++) {
+            const ageHops = headHop - h;
+            if (ageHops > TRAIL_HOPS) continue;
+            const isHead = ageHops === 0;
+            const frontT = isHead ? subT : 1.0;
+            const brightness = isHead
+              ? HOP_HEAD_BRIGHT
+              : HOP_TAIL_BRIGHT * Math.exp(-ageHops * HOP_TAIL_DECAY);
+            if (ghost && h === PULSE_LEG_GHOST) {
+              handles.pushActiveHop(
+                {
+                  fromCellId: ghost.origin.anchorId,
+                  toCellId: pulse.path[0],
+                  fromPos: ghost.origin.pos,
+                  toPos: ghost.to,
+                  mode: pulse.mode,
+                  frontT,
+                  brightness: brightness * routeActivityScale,
+                  color: pulse.color,
+                },
+                cells,
+              );
+              continue;
+            }
+            const hFromId = pulse.path[h];
+            const hToId = pulse.path[h + 1];
+            // Trail hops are individually gated — a wake segment over
+            // a now-removed edge is dropped rather than rendered over
+            // empty space. Head hop already passed the same check
+            // above; this is the equivalent check for ageHops > 0.
+            if (ageHops > 0) {
+              if (!cells.has(hFromId) || !cells.has(hToId)) continue;
+              const hAdj = adjacency.get(hFromId);
+              if (!hAdj || !hAdj.has(hToId)) continue;
+            }
             handles.pushActiveHop(
               {
-                fromCellId: ghost.origin.anchorId,
-                toCellId: pulse.path[0],
-                fromPos: ghost.origin.pos,
-                toPos: ghost.to,
+                fromCellId: hFromId,
+                toCellId: hToId,
                 mode: pulse.mode,
                 frontT,
                 brightness: brightness * routeActivityScale,
@@ -1775,216 +1808,195 @@ function NeuralNetwork({
               },
               cells,
             );
-            continue;
           }
-          const hFromId = pulse.path[h];
-          const hToId = pulse.path[h + 1];
-          // Trail hops are individually gated — a wake segment over
-          // a now-removed edge is dropped rather than rendered over
-          // empty space. Head hop already passed the same check
-          // above; this is the equivalent check for ageHops > 0.
-          if (ageHops > 0) {
-            if (!cells.has(hFromId) || !cells.has(hToId)) continue;
-            const hAdj = adjacency.get(hFromId);
-            if (!hAdj || !hAdj.has(hToId)) continue;
-          }
-          handles.pushActiveHop(
-            {
-              fromCellId: hFromId,
-              toCellId: hToId,
-              mode: pulse.mode,
-              frontT,
-              brightness: brightness * routeActivityScale,
-              color: pulse.color,
-            },
-            cells,
+        }
+
+        // Small accent sprite at the wavefront position on the head
+        // hop's Bezier (NOT the chord). Sub-segment lighting does most
+        // of the work; this just adds a sharp focal point at the lead.
+        const onGhost = ghost !== undefined && headHop === PULSE_LEG_GHOST;
+        const fromPos = onGhost
+          ? ghost.origin.pos
+          : cells.get(headFromId)?.pos_seed;
+        const toPos = onGhost ? ghost.to : cells.get(headToId)?.pos_seed;
+        if (fromPos && toPos) {
+          // path[headHop + 1] is path[0] on the ghost leg, and the origin's
+          // anchor id stands in for the absent path[-1]: one stable seed per
+          // packet, so its bow does not change shape as it flies.
+          const seed = fabricEdgeSeed(
+            onGhost ? ghost.origin.anchorId : headFromId,
+            pulse.path[headHop + 1],
+          );
+          bezierControlInto(
+            spikeControl,
+            fromPos[0], fromPos[1], fromPos[2],
+            toPos[0], toPos[1], toPos[2],
+            seed,
+          );
+          bezierAtInto(
+            spikePosition,
+            fromPos[0], fromPos[1], fromPos[2],
+            spikeControl[0], spikeControl[1], spikeControl[2],
+            toPos[0], toPos[1], toPos[2],
+            subT,
+          );
+          spikePool.pushValues(
+            spikePosition[0],
+            spikePosition[1],
+            spikePosition[2],
+            pulse.color,
+            pulse.mode === 'memory'
+              ? SPIKE_SIZE * 0.74 * distancePresentation.spikeScale
+              : SPIKE_SIZE,
+            (pulse.mode === 'memory' ? SPIKE_ALPHA * 0.72 : SPIKE_ALPHA)
+              * routeActivityScale,
+            pulse.mode === 'memory' ? 0.5 : 0.95,
+            pulse.mode === 'memory' ? 'memory' : 'packet',
           );
         }
-      }
 
-      // Small accent sprite at the wavefront position on the head
-      // hop's Bezier (NOT the chord). Sub-segment lighting does most
-      // of the work; this just adds a sharp focal point at the lead.
-      const onGhost = ghost !== undefined && headHop === PULSE_LEG_GHOST;
-      const fromPos = onGhost
-        ? ghost.origin.pos
-        : cells.get(headFromId)?.pos_seed;
-      const toPos = onGhost ? ghost.to : cells.get(headToId)?.pos_seed;
-      if (fromPos && toPos) {
-        // path[headHop + 1] is path[0] on the ghost leg, and the origin's
-        // anchor id stands in for the absent path[-1]: one stable seed per
-        // packet, so its bow does not change shape as it flies.
-        const seed = fabricEdgeSeed(
-          onGhost ? ghost.origin.anchorId : headFromId,
-          pulse.path[headHop + 1],
-        );
-        bezierControlInto(
-          spikeControl,
-          fromPos[0], fromPos[1], fromPos[2],
-          toPos[0], toPos[1], toPos[2],
-          seed,
-        );
-        bezierAtInto(
-          spikePosition,
-          fromPos[0], fromPos[1], fromPos[2],
-          spikeControl[0], spikeControl[1], spikeControl[2],
-          toPos[0], toPos[1], toPos[2],
-          subT,
-        );
-        spikePool.pushValues(
-          spikePosition[0],
-          spikePosition[1],
-          spikePosition[2],
-          pulse.color,
-          pulse.mode === 'memory'
-            ? SPIKE_SIZE * 0.74 * distancePresentation.spikeScale
-            : SPIKE_SIZE,
-          (pulse.mode === 'memory' ? SPIKE_ALPHA * 0.72 : SPIKE_ALPHA)
-            * routeActivityScale,
-          pulse.mode === 'memory' ? 0.5 : 0.95,
-          pulse.mode === 'memory' ? 'memory' : 'packet',
-        );
-      }
-
-      // Cell flash on the cell we *arrive at* during this hop. Schedule
-      // exactly when subT crosses 1 (= when we land on the next cell).
-      if (policy.flashCells && cellFlashRef?.current) {
-        // path[0] is an arrival like any other once a ghost precedes it.
-        const arrivingCellId = pulse.path[headHop + 1];
-        const arriveAt =
-          pulse.startSec
-          + (
-            pulse.startDelayMs
-            + pulseLegArrivalMs(hopMs, ghostMs, headHop)
-          ) / 1000;
-        const prev = cellFlashRef.current.get(arrivingCellId) ?? -1e9;
-        if (arriveAt > prev) {
-          cellFlashRef.current.set(arrivingCellId, arriveAt);
-          markCellFlashDirty(
-            arrivingCellId,
-            flashDirtyRef,
-            flashDirtyIdsRef,
-          );
+        // Cell flash on the cell we *arrive at* during this hop. Schedule
+        // exactly when subT crosses 1 (= when we land on the next cell).
+        if (policy.flashCells && cellFlashRef?.current) {
+          // path[0] is an arrival like any other once a ghost precedes it.
+          const arrivingCellId = pulse.path[headHop + 1];
+          const arriveAt =
+            pulse.startSec
+            + (
+              pulse.startDelayMs
+              + pulseLegArrivalMs(hopMs, ghostMs, headHop)
+            ) / 1000;
+          const prev = cellFlashRef.current.get(arrivingCellId) ?? -1e9;
+          if (arriveAt > prev) {
+            cellFlashRef.current.set(arrivingCellId, arriveAt);
+            markCellFlashDirty(
+              arrivingCellId,
+              flashDirtyRef,
+              flashDirtyIdsRef,
+            );
+          }
         }
       }
-    }
-    pulsesRef.current = stillActive;
-    framePulses.length = 0;
-    sparePulsesRef.current = framePulses;
+      pulsesRef.current = stillActive;
+      framePulses.length = 0;
+      sparePulsesRef.current = framePulses;
 
-    // A route-ledger hover reads the exact retained route independently of
-    // packet progress. Only the one or two live graph edges adjacent to that
-    // verified Cell are lifted, so an untraversed or stale edge is never drawn.
-    const routeHopFocus = currentFocus?.routeHopFocus ?? null;
-    if (handles && currentFocus && focusStrength > 0) {
-      const routeForFocus = (candidate: ConsensusMemoryRouteHopFocus) => {
-        const verified = validateConsensusMemoryRouteHopFocus(
-          currentFocus,
-          candidate,
-        );
-        const source = verified
-          ? currentFocus.sources.find(({ id }) => id === verified.sourceId)
-          : null;
-        const route = source && verified
-          ? consensusMemoryTraceRouteForTarget(source, verified.targetCellId)
-          : null;
-        return verified && route ? { focus: verified, route } : null;
-      };
-      const pushAdjacentRoute = (
-        candidate: ConsensusMemoryRouteHopFocus,
-        brightnessScale: number,
-      ) => {
-        if (brightnessScale <= 0.001) return;
-        const resolved = routeForFocus(candidate);
-        if (!resolved) return;
-        for (const segmentIndex of consensusMemoryRouteHopAdjacentSegments(
-          resolved.focus,
-          resolved.route.path,
+      // A route-ledger hover reads the exact retained route independently of
+      // packet progress. Only the one or two live graph edges adjacent to that
+      // verified Cell are lifted, so an untraversed or stale edge is never drawn.
+      const routeHopFocus = currentFocus?.routeHopFocus ?? null;
+      if (handles && currentFocus && focusStrength > 0) {
+        const routeForFocus = (candidate: ConsensusMemoryRouteHopFocus) => {
+          const verified = validateConsensusMemoryRouteHopFocus(
+            currentFocus,
+            candidate,
+          );
+          const source = verified
+            ? currentFocus.sources.find(({ id }) => id === verified.sourceId)
+            : null;
+          const route = source && verified
+            ? consensusMemoryTraceRouteForTarget(source, verified.targetCellId)
+            : null;
+          return verified && route ? { focus: verified, route } : null;
+        };
+        const pushAdjacentRoute = (
+          candidate: ConsensusMemoryRouteHopFocus,
+          brightnessScale: number,
+        ) => {
+          if (brightnessScale <= 0.001) return;
+          const resolved = routeForFocus(candidate);
+          if (!resolved) return;
+          for (const segmentIndex of consensusMemoryRouteHopAdjacentSegments(
+            resolved.focus,
+            resolved.route.path,
+          )) {
+            const fromCellId = resolved.route.path[segmentIndex];
+            const toCellId = resolved.route.path[segmentIndex + 1];
+            if (!cells.has(fromCellId) || !cells.has(toCellId)) continue;
+            if (!adjacency.get(fromCellId)?.has(toCellId)) continue;
+            handles.pushActiveHop({
+              fromCellId,
+              toCellId,
+              mode: 'memory',
+              frontT: 1,
+              brightness: MEMORY_ROUTE_HOP_INSPECT_BRIGHT
+                * focusStrength
+                * brightnessScale
+                * distancePresentation.routeEnergyScale,
+              tailDecay: MEMORY_ROUTE_HOP_INSPECT_TAIL_DECAY,
+              color: resolved.route.color,
+            }, cells);
+          }
+        };
+        const pushRouteFlare = (
+          candidate: ConsensusMemoryRouteHopFocus,
+          side: ConsensusMemorySourceHandoffSide,
+          handoff: ConsensusMemorySourceHandoff,
+        ) => {
+          const resolved = routeForFocus(candidate);
+          if (!resolved) return;
+          const segmentCount = resolved.route.path.length - 1;
+          for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
+            const flareScale = consensusMemorySourceHandoffRouteFlareScale(
+              side,
+              segmentIndex,
+              segmentCount,
+              handoff,
+              sourceHandoffTimeRef.current,
+            );
+            if (flareScale <= 0.001) continue;
+            const fromCellId = resolved.route.path[segmentIndex];
+            const toCellId = resolved.route.path[segmentIndex + 1];
+            if (!cells.has(fromCellId) || !cells.has(toCellId)) continue;
+            if (!adjacency.get(fromCellId)?.has(toCellId)) continue;
+            handles.pushActiveHop({
+              fromCellId,
+              toCellId,
+              mode: 'memory',
+              frontT: 1,
+              brightness: MEMORY_SOURCE_HANDOFF_FLARE_BRIGHT
+                * focusStrength
+                * flareScale
+                * distancePresentation.routeEnergyScale,
+              tailDecay: MEMORY_SOURCE_HANDOFF_FLARE_TAIL_DECAY,
+              color: resolved.route.color,
+            }, cells);
+          }
+        };
+        const handoff = sourceHandoffRef.current;
+        if (consensusMemorySourceHandoffActive(
+          handoff,
+          currentFocus.evidenceFocusSourceId,
+          sourceHandoffTimeRef.current,
         )) {
-          const fromCellId = resolved.route.path[segmentIndex];
-          const toCellId = resolved.route.path[segmentIndex + 1];
-          if (!cells.has(fromCellId) || !cells.has(toCellId)) continue;
-          if (!adjacency.get(fromCellId)?.has(toCellId)) continue;
-          handles.pushActiveHop({
-            fromCellId,
-            toCellId,
-            mode: 'memory',
-            frontT: 1,
-            brightness: MEMORY_ROUTE_HOP_INSPECT_BRIGHT
-              * focusStrength
-              * brightnessScale
-              * distancePresentation.routeEnergyScale,
-            tailDecay: MEMORY_ROUTE_HOP_INSPECT_TAIL_DECAY,
-            color: resolved.route.color,
-          }, cells);
-        }
-      };
-      const pushRouteFlare = (
-        candidate: ConsensusMemoryRouteHopFocus,
-        side: ConsensusMemorySourceHandoffSide,
-        handoff: ConsensusMemorySourceHandoff,
-      ) => {
-        const resolved = routeForFocus(candidate);
-        if (!resolved) return;
-        const segmentCount = resolved.route.path.length - 1;
-        for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
-          const flareScale = consensusMemorySourceHandoffRouteFlareScale(
-            side,
-            segmentIndex,
-            segmentCount,
-            handoff,
-            sourceHandoffTimeRef.current,
+          pushAdjacentRoute(
+            handoff.from,
+            consensusMemorySourceHandoffLockScale(
+              'from',
+              handoff,
+              sourceHandoffTimeRef.current,
+            ),
           );
-          if (flareScale <= 0.001) continue;
-          const fromCellId = resolved.route.path[segmentIndex];
-          const toCellId = resolved.route.path[segmentIndex + 1];
-          if (!cells.has(fromCellId) || !cells.has(toCellId)) continue;
-          if (!adjacency.get(fromCellId)?.has(toCellId)) continue;
-          handles.pushActiveHop({
-            fromCellId,
-            toCellId,
-            mode: 'memory',
-            frontT: 1,
-            brightness: MEMORY_SOURCE_HANDOFF_FLARE_BRIGHT
-              * focusStrength
-              * flareScale
-              * distancePresentation.routeEnergyScale,
-            tailDecay: MEMORY_SOURCE_HANDOFF_FLARE_TAIL_DECAY,
-            color: resolved.route.color,
-          }, cells);
+          pushAdjacentRoute(
+            handoff.to,
+            consensusMemorySourceHandoffLockScale(
+              'to',
+              handoff,
+              sourceHandoffTimeRef.current,
+            ),
+          );
+          pushRouteFlare(handoff.from, 'from', handoff);
+          pushRouteFlare(handoff.to, 'to', handoff);
+        } else if (routeHopFocus) {
+          pushAdjacentRoute(routeHopFocus, 1);
         }
-      };
-      const handoff = sourceHandoffRef.current;
-      if (consensusMemorySourceHandoffActive(
-        handoff,
-        currentFocus.evidenceFocusSourceId,
-        sourceHandoffTimeRef.current,
-      )) {
-        pushAdjacentRoute(
-          handoff.from,
-          consensusMemorySourceHandoffLockScale(
-            'from',
-            handoff,
-            sourceHandoffTimeRef.current,
-          ),
-        );
-        pushAdjacentRoute(
-          handoff.to,
-          consensusMemorySourceHandoffLockScale(
-            'to',
-            handoff,
-            sourceHandoffTimeRef.current,
-          ),
-        );
-        pushRouteFlare(handoff.from, 'from', handoff);
-        pushRouteFlare(handoff.to, 'to', handoff);
-      } else if (routeHopFocus) {
-        pushAdjacentRoute(routeHopFocus, 1);
       }
-    }
 
-    handles?.flushActive();
-    spikePool.endFrame(state.size.height, state.viewport.dpr ?? 1);
+      handles?.flushActive();
+      spikePool.endFrame(state.size.height, state.viewport.dpr ?? 1);
+    } finally {
+      endCpuProbe(activePulseFrameProbe);
+    }
   });
 
   return (

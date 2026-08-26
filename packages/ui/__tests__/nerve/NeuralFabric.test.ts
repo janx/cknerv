@@ -1,7 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { fabricEdgeKey, orderFabricStateKeys } from '../../src/nerve/fabricOrder';
+import {
+  canonicalizeFabricRenderOrder,
+  fabricEdgeKey,
+  orderFabricStateKeys,
+} from '../../src/nerve/fabricOrder';
 
 const SRC = readFileSync(resolve(process.cwd(), 'src/nerve/NeuralFabric.tsx'), 'utf8');
 
@@ -34,6 +38,42 @@ describe('NeuralFabric edge ordering', () => {
       fabricEdgeKey(1, 2),
       fabricEdgeKey(2, 3),
     ]));
+  });
+
+  it('canonicalizes lazy order stably with live form before afterimages', () => {
+    const states = new Map<string, { dyingAt: number | null }>([
+      ['live-a', { dyingAt: null }],
+      ['after-a', { dyingAt: 4 }],
+      ['live-missing', { dyingAt: null }],
+      ['after-missing', { dyingAt: 5 }],
+      ['live-b', { dyingAt: null }],
+    ]);
+
+    expect(canonicalizeFabricRenderOrder([
+      'tombstone',
+      'after-a',
+      'live-a',
+      'live-a', // same-key re-entry before the lazy tombstone sweep
+      'live-b',
+      'after-a',
+    ], states)).toEqual([
+      'live-a',
+      'live-b',
+      'live-missing',
+      'after-a',
+      'after-missing',
+    ]);
+  });
+
+  it('canonicalizes every full walk so capacity clipping cannot prefer history', () => {
+    const fullWalk = SRC.slice(
+      SRC.indexOf('const fullWalkReason:'),
+      SRC.indexOf('commitFabricLifecycleFull(fabric)'),
+    );
+    expect(fullWalk.indexOf('canonicalizeRenderOrder()')).toBeGreaterThan(-1);
+    expect(fullWalk.indexOf('canonicalizeRenderOrder()')).toBeLessThan(
+      fullWalk.indexOf('for (const key of renderOrderRef.current)'),
+    );
   });
 });
 
@@ -78,6 +118,33 @@ describe('NeuralFabric living-mesh handles', () => {
     );
     expect(SRC).toContain('if (travelMid <= hop.frontT)');
     expect(SRC).toContain('const distBehind = hop.frontT - travelMid');
+  });
+
+  it('reuses passive quadratic records before falling back to Cell geometry', () => {
+    const activeImplementation = SRC.slice(
+      SRC.lastIndexOf('pushActiveHop(hop, cells)'),
+      SRC.lastIndexOf('flushActive()'),
+    );
+    expect(activeImplementation).toContain('resolveActiveHopCurveInto(');
+    expect(activeImplementation).toContain('edgeStatesRef.current');
+    expect(activeImplementation).toContain('activeCurve.ctrlX');
+  });
+
+  it('installs honest GPU draw probes and nested CPU hot-path spans', () => {
+    expect(SRC).toContain('createGpuProbeCallbacks');
+    expect(SRC).toContain('createNonEmptyInstanceGpuProbeCallbacks');
+    expect(SRC).toContain('PERFORMANCE_PROBE_LABELS.passiveFabricBase');
+    expect(SRC).toContain('PERFORMANCE_PROBE_LABELS.passiveFabricTrunk');
+    expect(SRC).toContain('PERFORMANCE_PROBE_LABELS.activeRoute');
+    expect(SRC).toContain('PERFORMANCE_PROBE_LABELS.memoryRoute');
+    expect(SRC).toContain('{...nerveGpuProbes.passiveBase}');
+    expect(SRC).toContain('{...nerveGpuProbes.passiveTrunk}');
+    expect(SRC).toContain('{...nerveGpuProbes.active}');
+    expect(SRC).toContain('{...nerveGpuProbes.memory}');
+    expect(SRC).toContain('PERFORMANCE_PROBE_LABELS.neuralFabricEmit');
+    expect(SRC).toContain('PERFORMANCE_PROBE_LABELS.recallAperture');
+    expect(SRC).toContain('endCpuProbe(emitProbe)');
+    expect(SRC).toContain('endCpuProbe(recallApertureProbe)');
   });
 
   it('isolates distance-compensated memory weight from live writes', () => {
@@ -125,6 +192,33 @@ describe('NeuralFabric living-mesh handles', () => {
     // reset the lanes AFTER the same frame's bake — the dim snapped
     // instead of fading while uploading ~MBs per frame for nothing.
     expect(SRC).not.toMatch(/globalRepaintRef\.current = true/);
+  });
+
+  it('queries indexed aperture candidates instead of scanning every slot', () => {
+    const apertureBody = SRC.slice(
+      SRC.indexOf('const bakeIndexedAperture ='),
+      SRC.indexOf('const completeApertureBake ='),
+    );
+    expect(apertureBody).toContain('apertureIndex.query');
+    expect(apertureBody).toContain('for (const slot of dimmedSlots)');
+    expect(apertureBody).not.toMatch(
+      /for\s*\(const\s*\[key,\s*slot\]\s*of\s*slots\)/,
+    );
+  });
+
+  it('re-bakes a live aperture after compaction and before full upload ownership', () => {
+    const fullWalk = SRC.slice(
+      SRC.indexOf('const fullWalkReason:'),
+      SRC.indexOf('globalRepaintRef.current = false'),
+    );
+    expect(fullWalk).toContain('apertureIndex.clear()');
+    expect(fullWalk.indexOf('bakeIndexedAperture(')).toBeGreaterThan(
+      fullWalk.indexOf('apertureIndex.upsert('),
+    );
+    expect(fullWalk.indexOf('bakeIndexedAperture(')).toBeLessThan(
+      fullWalk.indexOf('commitFabricLifecycleFull(fabric)'),
+    );
+    expect(fullWalk).not.toContain('commitFabricApertureLanes(');
   });
 
   it('carries no selection-topology dimming — passive fibres keep full energy', () => {
@@ -371,9 +465,9 @@ describe('NeuralFabric oversized-diff cohort staggering', () => {
     expect(SRC).toContain('fabricUploadBytes');
     const observeCalls = SRC.match(/fabricStats\.observeUpload\(/g) ?? [];
     // The two lifecycle record commits (event ranges, full population), the
-    // aperture bake's two shapes (ranged, whole prefix), and the warm-route
-    // overlay — the fabric family's largest steady-state uploader, and for a
-    // long time the only one RENDER STATS·08 could not see.
-    expect(observeCalls.length).toBe(5);
+    // aperture bake's indexed ranges, and the warm-route overlay — the fabric
+    // family's largest steady-state uploader, and for a long time the only
+    // one RENDER STATS·08 could not see.
+    expect(observeCalls.length).toBe(4);
   });
 });

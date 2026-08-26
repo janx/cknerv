@@ -6,10 +6,10 @@
 // not a corner.
 //
 // The constraint these tests pin: the bake's mark set COVERS every slot the
-// flush would have marked — the whole populated prefix when the bake writes the
-// flat baseline back over everything, otherwise the ranges it rewrote with the
-// flush's own slots folded in — while curve and scalar keep their slot ranges.
-// Single-path frames must look exactly as they always did.
+// flush would have marked — indexed aperture candidates, previously dimmed
+// slots being restored, and the flush's own slots folded into one range set —
+// while curve and scalar keep their slot ranges. Single-path frames must look
+// exactly as they always did.
 //
 // And what it must NOT be is the whole prefix on every frame of a hold: a recall
 // dims a bounded disc for 2-5 s, and the slots outside it hold the same 1.0 the
@@ -158,9 +158,14 @@ function consumeUploads(buffers: LifecycleBuffers): void {
   buffers.scalar.clearUpdateRanges();
 }
 
-function mountFabric(): NeuralFabricHandles {
+function mountFabric(allocationEdges?: number): NeuralFabricHandles {
   let handles: NeuralFabricHandles | null = null;
-  render(<NeuralFabric onReady={(ready) => { handles = ready; }} />);
+  render(
+    <NeuralFabric
+      allocationEdges={allocationEdges}
+      onReady={(ready) => { handles = ready; }}
+    />,
+  );
   if (handles === null) throw new Error('NeuralFabric never handed over handles');
   return handles;
 }
@@ -175,6 +180,11 @@ const FULL_PREFIX: SlotRange = { start: 0, count: SLOTS };
 
 /** Both aperture lanes of every segment of one slot, undimmed. */
 const BASELINE_LANES = new Array(FABRIC_SLOT_SEGMENTS * 2).fill(1);
+const FULL_LIFECYCLE_BYTES_PER_SLOT = FABRIC_SLOT_SEGMENTS * 4 * (
+  FABRIC_LIFE_CURVE_STRIDE
+  + FABRIC_LIFE_COLOR_STRIDE
+  + FABRIC_LIFE_SCALAR_STRIDE
+);
 
 /** The recall dim as the shader will read it: each segment's start and end
  *  aperture lane, in slot order. 1 is untouched passive fabric. */
@@ -302,7 +312,9 @@ describe('fabric lifecycle update ranges — one frame, two commits', () => {
   it('a recall-only frame marks the whole populated colour prefix', () => {
     const { handles, buffers } = bootedFabric();
 
-    handles.setRecallAperture(null, 0.5, null, 0);
+    handles.setRecallAperture(
+      straightAperture(0, 20, 39, 60).field, 1, null, 0,
+    );
     handles.emitFabric(40.1);
 
     expect(slotRanges(buffers.color, FABRIC_LIFE_COLOR_STRIDE))
@@ -315,7 +327,9 @@ describe('fabric lifecycle update ranges — one frame, two commits', () => {
   it('a recall holding through churn keeps the prefix the flush would have erased', () => {
     const { handles, buffers } = bootedFabric();
 
-    handles.setRecallAperture(null, 0.5, null, 0);
+    handles.setRecallAperture(
+      straightAperture(0, 20, 39, 60).field, 1, null, 0,
+    );
     handles.killEdges([CHURNED_EDGE], 40.1, 'gc');
     const colorVersion = buffers.color.version;
     handles.emitFabric(40.1);
@@ -337,13 +351,14 @@ describe('fabric lifecycle update ranges — one frame, two commits', () => {
     const { handles, buffers } = bootedFabric();
 
     // Frame 1: the recall holds.
-    handles.setRecallAperture(null, 0.5, null, 0);
+    handles.setRecallAperture(
+      straightAperture(0, 20, 39, 60).field, 1, null, 0,
+    );
     handles.emitFabric(40.1);
     consumeUploads(buffers);
 
-    // Frame 2: the recall is gone. This is the ONE pass that writes the
-    // baseline back over every slot — losing its range sticks the dim on
-    // every edge the churn did not touch.
+    // Frame 2: the recall is gone. Every slot was genuinely dimmed, so the
+    // previous-dim set happens to cover the whole prefix in this fixture.
     handles.setRecallAperture(null, 0, null, 0);
     handles.killEdges([CHURNED_EDGE], 40.2, 'gc');
     handles.emitFabric(40.2);
@@ -352,6 +367,81 @@ describe('fabric lifecycle update ranges — one frame, two commits', () => {
       .toEqual([FULL_PREFIX]);
     expect(slotRanges(buffers.curve, FABRIC_LIFE_CURVE_STRIDE))
       .toEqual([CHURNED_SLOT]);
+  });
+});
+
+describe('recall aperture ownership across a structural full walk', () => {
+  it('re-bakes an active recall into the final compacted records before the full upload', () => {
+    const handles = mountFabric();
+    handles.setFabric(GRAPH, CELLS, 40);
+    handles.setRecallAperture(
+      straightAperture(0, 20, 44, 48).field, 1, null, 0,
+    );
+    const uploadedBefore = fabricStats.uploadedBytes;
+
+    // Boot is a structural full walk, and all admissions also left static
+    // lifeDirty records pending. Neither may replace the aperture lanes after
+    // the NEW slot index has been baked.
+    handles.emitFabric(45);
+    const buffers = lifecycleBuffers();
+
+    expect(Math.max(...apertureLanes(buffers, 0))).toBeLessThan(1);
+    expect(slotRanges(buffers.curve, FABRIC_LIFE_CURVE_STRIDE))
+      .toEqual([FULL_PREFIX]);
+    expect(slotRanges(buffers.color, FABRIC_LIFE_COLOR_STRIDE))
+      .toEqual([FULL_PREFIX]);
+    expect(slotRanges(buffers.scalar, FABRIC_LIFE_SCALAR_STRIDE))
+      .toEqual([FULL_PREFIX]);
+    // One full static upload owns all three buffers. An earlier partial
+    // aperture commit would inflate this by at least one colour slot.
+    expect(fabricStats.uploadedBytes - uploadedBefore)
+      .toBe(SLOTS * FULL_LIFECYCLE_BYTES_PER_SLOT);
+  });
+
+  it('keeps the rewritten baseline on release without a partial colour claim', () => {
+    const handles = mountFabric(1); // three lifecycle slots
+    const cells = cellsFor([1, 2, 3, 4, 5]);
+    handles.setFabric(graphOf([[1, 2]]), cells, 40);
+    handles.emitFabric(40);
+    const buffers = lifecycleBuffers();
+    consumeUploads(buffers);
+
+    handles.setRecallAperture(
+      straightAperture(0, 20, 44, 48).field, 1, null, 0,
+    );
+    handles.emitFabric(45);
+    expect(Math.max(...apertureLanes(buffers, 0))).toBeLessThan(1);
+    consumeUploads(buffers);
+
+    handles.setRecallAperture(null, 0, null, 0);
+    // Two admissions fit; the third leaves a lifeDirty/static backlog and
+    // forces compaction. The full walk's baseline is already the release
+    // answer, so no old-slot restore pass should claim colour first.
+    handles.growEdges(
+      [
+        { from: 2, to: 3, d: 1, w: 0.5 },
+        { from: 3, to: 4, d: 1, w: 0.5 },
+        { from: 4, to: 5, d: 1, w: 0.5 },
+      ],
+      cells,
+      new Map(),
+      new Map(),
+    );
+    const uploadedBefore = fabricStats.uploadedBytes;
+    handles.emitFabric(45.1);
+
+    const compactedPrefix = [{ start: 0, count: 3 }];
+    expect(slotRanges(buffers.curve, FABRIC_LIFE_CURVE_STRIDE))
+      .toEqual(compactedPrefix);
+    expect(slotRanges(buffers.color, FABRIC_LIFE_COLOR_STRIDE))
+      .toEqual(compactedPrefix);
+    expect(slotRanges(buffers.scalar, FABRIC_LIFE_SCALAR_STRIDE))
+      .toEqual(compactedPrefix);
+    for (let slot = 0; slot < 3; slot += 1) {
+      expect(apertureLanes(buffers, slot)).toEqual(BASELINE_LANES);
+    }
+    expect(fabricStats.uploadedBytes - uploadedBefore)
+      .toBe(3 * FULL_LIFECYCLE_BYTES_PER_SLOT);
   });
 });
 
@@ -369,8 +459,7 @@ describe('recall aperture bake — what a still frame owes', () => {
     // Frame 1: the recall state moved, so it is evaluated once.
     handles.setRecallAperture(recall.field, 0.6, null, 0);
     handles.emitFabric(45);
-    expect(slotRanges(buffers.color, FABRIC_LIFE_COLOR_STRIDE))
-      .toEqual([FULL_PREFIX]);
+    expect(buffers.color.updateRanges).toEqual([]);
     consumeUploads(buffers);
 
     // Frame 2: nothing moved and nothing can. Not one mark, not one byte.
@@ -409,7 +498,7 @@ describe('recall aperture bake — what a still frame owes', () => {
       .toEqual([FULL_PREFIX]);
   });
 
-  it('a strength that moves wakes the bake back up', () => {
+  it('a strength change outside the trace window owes no upload', () => {
     const { handles, buffers } = bootedFabric();
     const recall = straightAperture(0, 20, 41, 42);
 
@@ -421,8 +510,7 @@ describe('recall aperture bake — what a still frame owes', () => {
 
     handles.setRecallAperture(recall.field, 0.9, null, 0);
     handles.emitFabric(45.2);
-    expect(slotRanges(buffers.color, FABRIC_LIFE_COLOR_STRIDE))
-      .toEqual([FULL_PREFIX]);
+    expect(buffers.color.updateRanges).toEqual([]);
   });
 
   it('a slot admitted mid-hold carries the lanes a bake would have given it', () => {
@@ -542,6 +630,29 @@ describe('recall aperture bake — what a still frame owes', () => {
     handles.emitFabric(41.2);
     expect(slotRanges(buffers.color, FABRIC_LIFE_COLOR_STRIDE))
       .toEqual([{ start: NEAR_SLOT, count: 1 }]);
+  });
+
+  it('release restores only slots the previous bake actually dimmed', () => {
+    const handles = mountFabric();
+    handles.setFabric(SPAN_GRAPH, SPAN_CELLS, 40);
+    handles.emitFabric(40);
+    const buffers = lifecycleBuffers();
+    consumeUploads(buffers);
+
+    handles.setRecallAperture(
+      straightAperture(890, 910, 39, 60).field, 1, null, 0,
+    );
+    handles.emitFabric(41);
+    expect(Math.max(...apertureLanes(buffers, FAR_SLOT))).toBeLessThan(1);
+    expect(apertureLanes(buffers, NEAR_SLOT)).toEqual(BASELINE_LANES);
+    consumeUploads(buffers);
+
+    handles.setRecallAperture(null, 0, null, 0);
+    handles.emitFabric(41.1);
+    expect(slotRanges(buffers.color, FABRIC_LIFE_COLOR_STRIDE))
+      .toEqual([{ start: FAR_SLOT, count: 1 }]);
+    expect(apertureLanes(buffers, FAR_SLOT)).toEqual(BASELINE_LANES);
+    expect(apertureLanes(buffers, NEAR_SLOT)).toEqual(BASELINE_LANES);
   });
 
   it('a dimming bake carries the flush colour slots inside its own ranges', () => {

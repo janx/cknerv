@@ -786,6 +786,7 @@ not own staged Cell membership or the resting nervous system.
 |---|---:|---:|---:|---|
 | Maximum DPR | 2.0 | 1.5 | 1.0 | Raster cost |
 | Stars | 2,000 | 600 | 200 | Ambient density |
+| Unresolved-population sample | 1.0 | 0.5 | 0.25 | Static halo primitive density |
 | Particle capacity multiplier | 1.0 | 0.5 | 0.25 | Transient concurrency |
 | Discharge arms | 3 | 2 | 1 | Transient write decoration |
 | Active samples per hop | 12 | 10 | 8 | Moving wavefront tessellation |
@@ -808,12 +809,20 @@ The particle multiplier can lower simultaneous active-pulse admission under
 saturation. It may omit bounded transient work, but it cannot reroute an
 admitted pulse or change canonical state.
 
-AUTO samples 750 ms windows, uses a 1,500 ms exponential average, begins with a
-4,000 ms warmup, and waits 6,000 ms after a switch. It requires sustained slow
-or fast evidence with a deadband before moving one adjacent preset. Hidden
-tabs, delayed callbacks, debugger pauses, and backfill/replay windows are
-rejected as performance evidence. Manual High/Med/Low takes ownership
-immediately.
+Before the first Canvas mount, AUTO estimates the drawing-buffer load High
+would request. It begins at High below 8 million pixels, Med from 8 million,
+and Low from 20 million. Thus 4K at DPR 1 and 1080p at DPR 2 begin at Med
+instead of spending the calibration window in a tier already measured at the
+vsync boundary. Deterministic review Labs retain High unless their URL opts
+into `adaptive-quality=1`. An explicit High/Med/Low query or control remains
+authoritative.
+
+AUTO then samples 750 ms windows, uses a 1,500 ms exponential average, begins
+with a 4,000 ms warmup, and waits 6,000 ms after a switch. Sustained slow
+evidence may move it down one adjacent preset; it never moves up during the
+page lifetime. Hidden tabs, delayed callbacks, debugger pauses, and
+backfill/replay windows are rejected as performance evidence. Manual
+High/Med/Low takes ownership immediately.
 
 ## 14. Capacity and Resource Budgets
 
@@ -1046,6 +1055,43 @@ captures, name the changed invariant, and verify every affected quality preset.
 - Report deliberate visual-budget increases separately from implementation
   overhead.
 
+### 19.5 Performance sampling runbook
+
+1. Open the production page or a review Lab with `render-stats=1`; add an
+   explicit `quality=high`, `quality=med`, or `quality=low` when comparing
+   runs. Opening the GL·08 panel also enables sampling for that panel's mounted
+   lifetime, but the query switch is the reproducible automation path.
+2. Keep the tab visible, wait for boot/readiness and shader warmup, then run
+   `window.__renderPerformanceStatsReset()` in DevTools immediately before the
+   measured interval.
+3. Read the bounded snapshot with `window.__renderPerformanceStats()`. Export
+   its versioned JSON with `window.__renderPerformanceStatsJson()`; Chromium
+   DevTools can place it on the clipboard with
+   `copy(window.__renderPerformanceStatsJson())`.
+4. Let at least two visible frames elapse after a transient before exporting,
+   because GPU timer queries resolve asynchronously. `pendingQueries` names
+   still-in-flight samples and those samples are not included in percentiles.
+
+Use the same snapshot and capture settings for these minimum scenarios:
+
+- **Idle:** `/?render-stats=1&quality=high`; after warmup, measure at least ten
+  seconds with no selection, pointer motion, or camera input.
+- **Active route:**
+  `/?protocol-event-lab=1&render-stats=1&quality=high`; reset, restart, and let
+  one complete eight-second protocol cycle play.
+- **Recall:**
+  `/?protocol-event-lab=1&memory-trace=1&render-stats=1&quality=high`; wait for
+  `[data-review-ready="true"]`, reset, and capture a complete cycle including
+  the memory trace after the settled write.
+
+`gpu.state.availability: "unsupported"` means WebGL2 timer queries or
+`EXT_disjoint_timer_query_webgl2` are unavailable; missing GPU metrics are
+then unknown, not zero, and CPU/frame results remain usable. A non-zero
+`disjointEvents` or `droppedByReason.disjoint` means the GPU clock became
+discontinuous and affected queries were deliberately discarded; repeat the
+window on a stable visible context. Likewise, an absent metric key means its
+scope was not exercised or is not installed, never that the pass cost zero.
+
 ## 20. Change Checklist
 
 Before merging a Canvas change, answer:
@@ -1085,7 +1131,7 @@ Before merging a Canvas change, answer:
 | Staged render cursor and inspection overlay | `packages/ui/src/geometry/cellRenderSet.ts` |
 | Stable Cell GPU slot assignment | `packages/ui/src/geometry/cellSlotAssignment.ts` |
 | Cell visual descriptors and shaders | `packages/ui/src/derives/cellVisual.derive.ts`, `packages/ui/src/materials/cellHybridMaterial.ts`, `packages/ui/src/materials/cellFlareMaterial.ts` |
-| Batched near identity | `packages/ui/src/components/CellNucleus.tsx` |
+| Batched near identity and local LOD index | `packages/ui/src/components/CellNucleus.tsx`, `packages/ui/src/derives/cellNucleusSpatialLod.derive.ts` |
 | One staged neighbor topology | `packages/ui/src/geometry/neighborGraph.ts` |
 | Worker and topology journal | `packages/ui/src/geometry/neighborGraphBuilder.ts`, `packages/ui/src/geometry/topologyJournal.ts` |
 | Passive edge selection | `packages/ui/src/geometry/passiveNeighborGraph.ts` |
@@ -1093,7 +1139,7 @@ Before merging a Canvas change, answer:
 | Neural orchestration and pulse state | `packages/ui/src/nerve/NeuralNetwork.tsx` |
 | Pulse planning and batch bounds | `packages/ui/src/nerve/pulseRunner.ts`, `packages/ui/src/nerve/pulseBatch.ts` |
 | Inspection fields and memory routes | `packages/ui/src/nerve/cellInspectionField.ts`, `packages/ui/src/nerve/consensusMemoryTrace.ts` |
-| Persistent and active nerve rendering | `packages/ui/src/nerve/NeuralFabric.tsx` |
+| Persistent and active nerve rendering | `packages/ui/src/nerve/NeuralFabric.tsx`, `packages/ui/src/nerve/recallApertureIndex.ts`, `packages/ui/src/nerve/activeHopCurve.ts` |
 | Nerve allocation classes | `packages/ui/src/nerve/fabricCapacity.ts` |
 | Screen-space capsule geometry | `packages/ui/src/geometry/screenSpaceCapsuleLine.ts` |
 | Peer topology and block flood | `packages/ui/src/derives/networkTopology.derive.ts`, `packages/ui/src/derives/networkFlood.derive.ts` |
@@ -1102,7 +1148,7 @@ Before merging a Canvas change, answer:
 | Canonical rewrite echo | `packages/ui/src/components/CanonicalRewriteEcho.tsx` |
 | Simulation clock | `packages/ui/src/tweaks/simClock.ts`, `packages/ui/src/tweaks/SimClockTicker.tsx`, `packages/ui/src/tweaks/useSimFrame.ts` |
 | Portrait scissor pass | `packages/ui/src/components/hud/CellPortraitInset.tsx` |
-| Render diagnostics | `packages/ui/src/tweaks/RenderStatsSampler.tsx` |
+| Render diagnostics | `packages/ui/src/tweaks/RenderStatsSampler.tsx`, `packages/ui/src/tweaks/performanceProbeStore.ts`, `packages/ui/src/tweaks/gpuTimerQuery.ts` |
 | Deterministic browser review | `ui-app/VISUAL_REVIEW.md`, `ui-app/src/ProtocolEventLab.tsx` |
 
 ## 22. Glossary

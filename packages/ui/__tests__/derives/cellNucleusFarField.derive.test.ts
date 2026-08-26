@@ -258,22 +258,19 @@ describe('cellNucleusFarFieldBeyond', () => {
     expect(cellNucleusFarFieldBeyond(1e6, 0, 0, unknown, FAR_DIST)).toBe(false);
   });
 
-  it('keeps the far-camera selection walk on the envelope, not the field', () => {
-    // An open detail panel holds a focus envelope for its whole lifetime;
-    // that must not resurrect the O(count) per-Cell walk the far-field
-    // early-out exists to remove. Recall keeps the full walk (its response
-    // set spans endpoints beyond the envelope), and route-hop focus only
-    // exists while recall is active.
+  it('has been superseded in production by the private stable-slot index', () => {
+    // The sphere predicate remains independently tested because it is useful
+    // algebra, but production no longer needs a full-walk fallback when the
+    // camera enters the field or recall is active.  Every case now queries the
+    // exact staged + overlay + exit-hold slot index.
     const NUCLEUS_SOURCE = readFileSync(
       resolve(process.cwd(), 'src/components/CellNucleus.tsx'),
       'utf8',
     );
-    expect(NUCLEUS_SOURCE).toContain('const envelopeOnlyLod = recallFocus === null');
-    expect(NUCLEUS_SOURCE).toContain('cellNucleusFarFieldBeyond(');
-    expect(NUCLEUS_SOURCE).toContain('envelopeOnlyLod ? 0 : count');
-    expect(NUCLEUS_SOURCE).toContain(
-      'const index = visibleIndexByCell.get(cellId)',
-    );
-    expect(NUCLEUS_SOURCE).toContain('const detail = userFocus * 0.68');
+    expect(NUCLEUS_SOURCE).toContain('ensureCellNucleusSpatialIndex(');
+    expect(NUCLEUS_SOURCE).toContain('queryCellNucleusCandidateIndices(');
+    expect(NUCLEUS_SOURCE).toContain('for (const cellId of recallByCell.keys())');
+    expect(NUCLEUS_SOURCE).toContain('for (const index of candidateIndices)');
+    expect(NUCLEUS_SOURCE).not.toContain('const lodWalkCount');
   });
 });

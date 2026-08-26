@@ -82,6 +82,34 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
     expect(NETWORK_SOURCE.match(/markCellFlashDirty\(/g)).toHaveLength(2);
   });
 
+  it('measures the complete active and memory pulse frame without a callback wrapper', () => {
+    const frameStart = NETWORK_SOURCE.indexOf(
+      '// Per-frame: roll every active pulse forward',
+    );
+    const frameEnd = NETWORK_SOURCE.indexOf('\n\n  return (', frameStart);
+    const frame = NETWORK_SOURCE.slice(frameStart, frameEnd);
+    const begin = frame.indexOf('const activePulseFrameProbe = beginCpuProbe(');
+    const guardedWork = frame.indexOf('try {', begin);
+    const firstPush = frame.indexOf('handles.pushActiveHop');
+    const lastPush = frame.lastIndexOf('handles.pushActiveHop');
+    const flush = frame.indexOf('handles?.flushActive()');
+    const cleanup = frame.indexOf('} finally {', flush);
+    const end = frame.indexOf('endCpuProbe(activePulseFrameProbe)', cleanup);
+
+    expect(frame).toContain('PERFORMANCE_PROBE_LABELS.activePulseFrame');
+    expect(begin).toBeGreaterThan(-1);
+    expect(guardedWork).toBeGreaterThan(begin);
+    expect(firstPush).toBeGreaterThan(guardedWork);
+    expect(lastPush).toBeGreaterThanOrEqual(firstPush);
+    expect(flush).toBeGreaterThan(lastPush);
+    expect(cleanup).toBeGreaterThan(flush);
+    expect(end).toBeGreaterThan(cleanup);
+    // measureCpuProbe would allocate its callback argument on every frame.
+    // The explicit begin/end API returns before both allocation and clock
+    // access while the opt-in probe has no retainers.
+    expect(frame).not.toContain('measureCpuProbe');
+  });
+
   it('feeds the display graph from the server display journal — invalidating only for a truncated prefix', () => {
     // The display-plane build request chains worker deltas; the explicit
     // journal invalidation survives for the two truncated-prefix regimes —

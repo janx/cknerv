@@ -54,7 +54,10 @@ import {
 } from '../geometry/screenSpaceHitIndex';
 import type { ScalarThresholdEpoch } from '../geometry/sparseScalarAttribute';
 import type { Cell } from '@cknerv/types';
-import { useCellGalaxy } from '../hooks/cellGalaxyContext';
+import {
+  useCellGalaxy,
+  useCellGalaxyRef,
+} from '../hooks/cellGalaxyContext';
 import { ConsensusMemoryFocusScope } from '../hooks/consensusMemoryFocusContext';
 import {
   capacityMass,
@@ -1304,6 +1307,51 @@ function CellPicker({
 // CellGalaxy — main component.
 // ---------------------------------------------------------------------------
 
+interface CellIdentityCacheMarkersProps {
+  identityProof: CellIdentityProofEvent | null;
+  identityProofBinding: CellIdentityProofBinding | null;
+  identityProofSampleElapsedSeconds?: number;
+}
+
+/** Render-owned cache decisions stay subscribed without making the thousand-
+ * line frame driver a Context consumer. A proof can outlive the cache object
+ * that first resolved it, so this small leaf deliberately rerenders and
+ * resolves canonical-first on every committed cache value. */
+const CellIdentityCacheMarkers = memo(function CellIdentityCacheMarkers({
+  identityProof,
+  identityProofBinding,
+  identityProofSampleElapsedSeconds,
+}: CellIdentityCacheMarkersProps) {
+  const cellsCache = useCellGalaxy();
+  const identityProofCell = identityProof
+    ? cellsCache.cells.get(identityProof.cellId)
+      ?? cellsCache.displayResidents.get(identityProof.cellId)
+      ?? null
+    : null;
+  const identityProofBindingCell = identityProofBinding
+    ? cellsCache.cells.get(identityProofBinding.cellId)
+      ?? cellsCache.displayResidents.get(identityProofBinding.cellId)
+      ?? null
+    : null;
+  return (
+    <>
+      {identityProof && identityProofCell ? (
+        <CellIdentityProofMarker
+          cell={identityProofCell}
+          event={identityProof}
+          sampleElapsedSeconds={identityProofSampleElapsedSeconds}
+        />
+      ) : null}
+      {identityProofBinding && identityProofBindingCell ? (
+        <CellIdentityBindingMarker
+          cell={identityProofBindingCell}
+          binding={identityProofBinding}
+        />
+      ) : null}
+    </>
+  );
+});
+
 /**
  * Backdrop "galaxy" of cells (UTXOs) at the chain anchor y=CHAIN_Y.
  *
@@ -1338,29 +1386,12 @@ function CellGalaxy({
   const simClock = useSimClock();
   const groupRef = useRef<THREE.Group>(null);
   // Server-driven cell list. The component is now a pure visual layer:
-  // it reads cells from the cache and patches changed xyz / born / death
-  // slots in the Points BufferGeometry. Birth / death / tag are reduced
-  // server-side before they reach this renderer.
-  const cellsCache = useCellGalaxy();
-  // Selection targets resolve canonical-first, then through the display
-  // plane's resident payloads (staged members outside the retained set).
-  const identityProofCell = identityProof
-    ? cellsCache.cells.get(identityProof.cellId)
-      ?? cellsCache.displayResidents.get(identityProof.cellId)
-      ?? null
-    : null;
-  const identityProofBindingCell = identityProofBinding
-    ? cellsCache.cells.get(identityProofBinding.cellId)
-      ?? cellsCache.displayResidents.get(identityProofBinding.cellId)
-      ?? null
-    : null;
+  // the frame callback reads the latest committed cache through one stable
+  // handle and patches changed xyz / born / death slots in the Points buffers.
+  // Render-owned proof markers retain an ordinary subscribed consumer above.
+  const cellsCacheRef = useCellGalaxyRef();
   const { effective: quality } = useQualityRuntime();
   const cellDisplay = useCellDisplayRuntime();
-  const cellDisplayLimit = resolveCellDisplayLimit(
-    cellDisplay,
-    cellCapacity,
-    cellsCache.displayBudget?.cells,
-  );
   const dischargeArms = QUALITY_PRESETS[quality].dischargeArms;
   const memorySignal = QUALITY_PRESETS[quality].memorySignal;
   /** Per-frame mirror of the cellsList iteration order, written by
@@ -1419,7 +1450,7 @@ function CellGalaxy({
    * small client-side clock the replacement records would appear fully formed
    * instead of visibly re-entering the maintained structure. */
   const rewriteBirthAtRef = useRef<Map<number, number>>(new Map());
-  const handledRewriteRef = useRef(cellsCache.linkPrune);
+  const handledRewriteRef = useRef(cellsCacheRef.current.linkPrune);
   const rewriteArrivalUntilRef = useRef(-1e9);
   /** Per-frame mirror of the cell draw count. Written by the journal cursor;
    * read by the flash-only fast path so neither path recomputes the clamp. */
@@ -1644,6 +1675,15 @@ function CellGalaxy({
     const group = groupRef.current;
     if (!group) return;
 
+    // One coherent cache generation for this frame. The Provider advances the
+    // stable handle at commit, so every read below observes the same immutable
+    // reducer result without subscribing this scene root to Context identity.
+    const cellsCache = cellsCacheRef.current;
+    const cellDisplayLimit = resolveCellDisplayLimit(
+      cellDisplay,
+      cellCapacity,
+      cellsCache.displayBudget?.cells,
+    );
     const now = simClock.elapsedSec;
     // Derive the wall→scene-seconds basis live each frame instead of
     // anchoring on mount. Canvas remounts preserve simClock.elapsedSec,
@@ -2183,17 +2223,11 @@ function CellGalaxy({
             selectedCellIdRef={selectedCellIdRef}
             hoveredCellIdRef={hoveredCellIdRef}
           />
-          {identityProof && identityProofCell ? (
-            <CellIdentityProofMarker
-              cell={identityProofCell}
-              event={identityProof}
-              sampleElapsedSeconds={identityProofSampleElapsedSeconds}
-            />
-          ) : null}
-          {identityProofBinding && identityProofBindingCell ? (
-            <CellIdentityBindingMarker
-              cell={identityProofBindingCell}
-              binding={identityProofBinding}
+          {identityProof !== null || identityProofBinding !== null ? (
+            <CellIdentityCacheMarkers
+              identityProof={identityProof}
+              identityProofBinding={identityProofBinding}
+              identityProofSampleElapsedSeconds={identityProofSampleElapsedSeconds}
             />
           ) : null}
         </ConsensusMemoryFocusScope>
@@ -2238,8 +2272,9 @@ function CellGalaxy({
 // Memoized: the consumer holds the whole dashboard's state in one component, so
 // a chain poll, a stream-health flip or a note about an orbit gesture used to
 // re-run this entire body — forty-odd hook slots and their dep compares — for a
-// frame in which not one cell had moved. Cells arrive by CONTEXT
-// (`useCellGalaxy`), and React propagates a context change to its consumers
-// straight through a memo bail-out, so the live data path is untouched: this
-// only drops the renders that were never about the galaxy.
+// frame in which not one cell had moved. Cells now reach the imperative driver
+// through `useCellGalaxyRef`, so cache-object replacement no longer pierces the
+// memo bail-out; the frame reads the latest committed value. The small identity
+// marker leaf remains a subscribed `useCellGalaxy` consumer because its cache
+// resolution controls JSX and must receive a React commit.
 export default memo(CellGalaxy);

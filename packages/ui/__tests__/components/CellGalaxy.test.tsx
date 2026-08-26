@@ -179,6 +179,44 @@ describe('CellGalaxy', () => {
     expect(source).toContain('const count = cellsList.length');
   });
 
+  it('keeps frame-owned cache churn off the scene-root render lane', () => {
+    const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
+    const identityLeaf = source.slice(
+      source.indexOf('const CellIdentityCacheMarkers = memo('),
+      source.indexOf('function CellGalaxy('),
+    );
+    const root = source.slice(
+      source.indexOf('function CellGalaxy('),
+      source.indexOf('// Memoized:'),
+    );
+    const frame = root.slice(
+      root.indexOf('useSimFrame('),
+      root.indexOf('\n  return ('),
+    );
+
+    // The thousand-line root subscribes only to the stable handle, then takes
+    // one immutable cache generation for each frame.
+    expect(root).toContain('const cellsCacheRef = useCellGalaxyRef()');
+    expect(root).not.toContain('const cellsCache = useCellGalaxy()');
+    expect(frame).toContain('const cellsCache = cellsCacheRef.current');
+    // A server-budget update still reaches stage sync even though it no longer
+    // needs a React commit on the root.
+    expect(frame).toMatch(
+      /resolveCellDisplayLimit\(\s*cellDisplay,\s*cellCapacity,\s*cellsCache\.displayBudget\?\.cells,\s*\)/,
+    );
+    expect(frame).toContain(
+      'syncCellRenderSet(renderSet, cellsCache, cellDisplayLimit)',
+    );
+
+    // Cache lookup that controls JSX remains on the ordinary subscribed lane,
+    // including display-resident fallback for off-canonical staged records.
+    expect(identityLeaf).toContain('const cellsCache = useCellGalaxy()');
+    expect(identityLeaf).toContain('cellsCache.cells.get(identityProof.cellId)');
+    expect(identityLeaf).toContain(
+      'cellsCache.displayResidents.get(identityProof.cellId)',
+    );
+  });
+
   it('uploads exact dirty flash slots while retaining the legacy fallback', () => {
     const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
 

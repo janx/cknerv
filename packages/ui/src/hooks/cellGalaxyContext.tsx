@@ -7,10 +7,26 @@
 // behind a blank canvas). Local tests can stub by wrapping their tree
 // in `<CellGalaxyProvider value={emptyCellsCache()}>`.
 
-import { createContext, useContext, type ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useLayoutEffect,
+  useRef,
+  type ReactNode,
+} from 'react';
 import type { CellGalaxyCache } from '@cknerv/cache';
 
 const CellGalaxyContext = createContext<CellGalaxyCache | null>(null);
+
+/** Stable imperative handle for frame-loop consumers. Its value advances at
+ * commit, so it must not drive React output; an r3f frame can read the newest
+ * committed cache without subscribing the whole scene root to every immutable
+ * cache object. */
+export interface CellGalaxyCacheRef {
+  readonly current: CellGalaxyCache;
+}
+
+const CellGalaxyRefContext = createContext<CellGalaxyCacheRef | null>(null);
 
 export interface CellGalaxyProviderProps {
   value: CellGalaxyCache;
@@ -21,10 +37,18 @@ export function CellGalaxyProvider({
   value,
   children,
 }: CellGalaxyProviderProps) {
+  const valueRef = useRef(value);
+  // Keep the imperative lane commit-consistent. A concurrent render must not
+  // expose its uncommitted cache to the independently scheduled r3f loop.
+  useLayoutEffect(() => {
+    valueRef.current = value;
+  }, [value]);
   return (
-    <CellGalaxyContext.Provider value={value}>
-      {children}
-    </CellGalaxyContext.Provider>
+    <CellGalaxyRefContext.Provider value={valueRef}>
+      <CellGalaxyContext.Provider value={value}>
+        {children}
+      </CellGalaxyContext.Provider>
+    </CellGalaxyRefContext.Provider>
   );
 }
 
@@ -43,6 +67,24 @@ export function useCellGalaxy(): CellGalaxyCache {
     );
   }
   return v;
+}
+
+/**
+ * Stable, non-subscribing cache handle for imperative frame callbacks. The
+ * handle identity never changes while its Provider remains mounted; `current`
+ * advances after each Provider commit. Render-time/JSX decisions must continue
+ * to use `useCellGalaxy()` so React schedules them normally.
+ */
+export function useCellGalaxyRef(): CellGalaxyCacheRef {
+  const valueRef = useContext(CellGalaxyRefContext);
+  if (valueRef === null) {
+    throw new Error(
+      '@cknerv/ui: useCellGalaxyRef() called outside a <CellGalaxyProvider>. ' +
+        'Wrap the component tree in <CellGalaxyProvider value={cellsCache}> ' +
+        'before mounting a frame-loop Cell consumer.',
+    );
+  }
+  return valueRef;
 }
 
 /**

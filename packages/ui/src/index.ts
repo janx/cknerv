@@ -29,6 +29,26 @@ export { default as AdaptiveQualityController } from './tweaks/AdaptiveQualityCo
 export { default as SimClockTicker } from './tweaks/SimClockTicker';
 export { default as TweakSync } from './tweaks/TweakSync';
 export { default as RenderStatsSampler } from './tweaks/RenderStatsSampler';
+export {
+  PERFORMANCE_PROBE_LABELS,
+  PERFORMANCE_PROBE_SAMPLE_CAPACITY,
+  PERFORMANCE_PROBE_SCHEMA_VERSION,
+  beginCpuProbe,
+  endCpuProbe,
+  measureCpuProbe,
+  snapshotPerformanceProbe,
+  exportPerformanceProbeJson,
+  resetPerformanceProbe,
+  type CpuProbeSpan,
+  type PerformanceProbeMetricSummary,
+  type PerformanceProbeSnapshot,
+} from './tweaks/performanceProbeStore';
+export {
+  beginGpuProbe,
+  endGpuProbe,
+  createGpuProbeCallbacks,
+  type GpuProbeSpan,
+} from './tweaks/gpuTimerQuery';
 
 // ── Boot sequence (page-boot progress, written from the entry point) ─
 export {

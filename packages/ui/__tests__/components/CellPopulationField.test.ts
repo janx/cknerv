@@ -298,6 +298,24 @@ describe('two static buffers and three draws', () => {
     expect(LAYER_CODE).not.toContain('autoReset');
   });
 
+  it('gives each real draw its own opt-in GPU timer scope', () => {
+    // The three-pass baseline must come from TIME_ELAPSED queries around the
+    // exact objects, never from CPU wall time or one aggregate estimate.
+    expect(FIELD_CODE).toContain('createGpuProbeCallbacks');
+    expect(FIELD_CODE).toContain('PERFORMANCE_PROBE_LABELS.populationPoints');
+    expect(FIELD_CODE).toContain('PERFORMANCE_PROBE_LABELS.populationResidualFibres');
+    expect(FIELD_CODE).toContain('PERFORMANCE_PROBE_LABELS.populationBackboneCapsules');
+    // The backbone is an instanced LineSegments2 with a pre-existing viewport
+    // callback. Its timer must compose with that callback and skip empty
+    // quality trims instead of replacing it with a bare probe callback.
+    expect(FIELD_CODE).toContain('createNonEmptyInstanceGpuProbeCallbacks');
+    expect(FIELD_CODE).toContain('placed.backbone.mesh');
+    expect(FIELD_CODE).toContain('{...backboneGpuProbe}');
+    expect(FIELD_CODE).not.toContain('populationGpuProbes.backboneCapsules');
+    expect(FIELD_CODE).not.toContain('performance.now');
+    expect(FIELD_CODE.match(/\.\.\.populationGpuProbes\./g)).toHaveLength(2);
+  });
+
   it('does no per-frame work proportional to anything', () => {
     // Four uniform writes. No loop of any kind inside the frame callback:
     // the geometry is static and the layer's only frame cost is its two

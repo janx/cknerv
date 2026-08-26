@@ -7,6 +7,16 @@ export function hasQuerySwitch(search: string, name: string): boolean {
   return new URLSearchParams(search).get(name) === '1';
 }
 
+/** The production dashboard owns AUTO by default. Deterministic review Labs
+ * retain their High baseline unless the review URL explicitly asks to exercise
+ * the adaptive controller. */
+export function shouldApplyAutoStartupQuality(
+  reviewRouteActive: boolean,
+  search: string,
+): boolean {
+  return !reviewRouteActive || hasQuerySwitch(search, 'adaptive-quality');
+}
+
 /** Resolve a runtime Canvas DPR without ever supersampling below CSS-pixel
  * density. Invalid browser readings fall back to one. */
 export function resolveCanvasDpr(devicePixelRatio: number, maxDpr: number): number {
@@ -14,6 +24,36 @@ export function resolveCanvasDpr(devicePixelRatio: number, maxDpr: number): numb
     ? Math.max(1, devicePixelRatio)
     : 1;
   return Math.min(deviceDpr, maxDpr);
+}
+
+/** AUTO's cold-start load classes, expressed as pixels in the drawing buffer
+ * High would create. The 8 MP boundary puts both 4K@1x and 1080p@2x directly
+ * on Med: the repository's paired 4K measurements found High missing vsync in
+ * two windows of four while Med made it in all four. Above 20 MP, beginning at
+ * Low avoids spending the entire warmup/calibration window on a plainly
+ * oversized High buffer. This chooses only the opening ceiling; the lifetime
+ * controller may still step down after sustained pressure and never steps up. */
+export const AUTO_STARTUP_MED_BUFFER_PIXELS = 8_000_000;
+export const AUTO_STARTUP_LOW_BUFFER_PIXELS = 20_000_000;
+
+export function resolveAutoStartupQuality(
+  cssWidth: number,
+  cssHeight: number,
+  devicePixelRatio: number,
+  highMaxDpr: number,
+): QualityPreset {
+  if (
+    !Number.isFinite(cssWidth)
+    || !Number.isFinite(cssHeight)
+    || cssWidth <= 0
+    || cssHeight <= 0
+  ) return 'high';
+
+  const highDpr = resolveCanvasDpr(devicePixelRatio, highMaxDpr);
+  const highBufferPixels = cssWidth * cssHeight * highDpr * highDpr;
+  if (highBufferPixels >= AUTO_STARTUP_LOW_BUFFER_PIXELS) return 'low';
+  if (highBufferPixels >= AUTO_STARTUP_MED_BUFFER_PIXELS) return 'med';
+  return 'high';
 }
 
 /** Explicit deterministic quality override for screenshots and performance

@@ -34,6 +34,7 @@ import {
   snapshotFabricStats,
   type FabricDiffSample,
 } from '../../src/nerve/fabricStats';
+import { LIVE } from '../../src/tweaks/liveTweaks';
 import { resetSimClock, simClock } from '../../src/tweaks/simClock';
 import NeuralFabric, {
   type NeuralFabricHandles,
@@ -127,6 +128,12 @@ function recordFor(from: number, to: number): FabricLifecycleRecord | undefined 
   return undefined;
 }
 
+function recordEdgeKeys(): string[] {
+  return slotWrites.records.map((record) => (
+    fabricEdgeKey(record.fromX, record.toX)
+  ));
+}
+
 /** The lifecycle the shader evaluates, taken from a written record. */
 function lifecycleOf(record: FabricLifecycleRecord): EdgeLifecycle {
   return {
@@ -143,9 +150,14 @@ function lastDiff(): FabricDiffSample {
   return recentDiffs[recentDiffs.length - 1];
 }
 
-function mountFabric(): NeuralFabricHandles {
+function mountFabric(allocationEdges?: number): NeuralFabricHandles {
   let handles: NeuralFabricHandles | null = null;
-  render(<NeuralFabric onReady={(ready) => { handles = ready; }} />);
+  render(
+    <NeuralFabric
+      allocationEdges={allocationEdges}
+      onReady={(ready) => { handles = ready; }}
+    />,
+  );
   if (handles === null) throw new Error('NeuralFabric never handed over handles');
   return handles;
 }
@@ -364,6 +376,124 @@ describe('fabric path 3 — a whole-graph rebuild diffs, it never swaps', () => 
     expect(now.alphaMul).toBe(1);
     expect(now.tEnd).toBe(1);
     expect(lastDiff().revived).toBe(1);
+  });
+});
+
+describe('fabric slot ownership survives lazy order and capacity clipping', () => {
+  it('deduplicates a reaped same-key re-entry before the next full walk', () => {
+    const handles = mountFabric(1); // three lifecycle slots
+    const cells = cellsFor([1, 2, 3, 4, 5, 6, 7, 8]);
+    const returningKey = fabricEdgeKey(1, 2);
+    handles.setFabric(graphOf([[1, 2]]), cells, 40);
+    handles.emitFabric(40);
+
+    handles.killEdges([returningKey], 41, 'gc');
+    handles.emitFabric(41);
+    const reapedAt = 41 + DECAY_MS / 1000 + 0.01;
+    handles.emitFabric(reapedAt);
+
+    // The lazy order still contains the old key. Re-admission appends the same
+    // key, then the fourth live edge forces a compacting walk at capacity 3.
+    simClock.elapsedSec = reapedAt;
+    handles.growEdges(
+      [edge(1, 2), edge(3, 4), edge(5, 6), edge(7, 8)],
+      cells,
+      new Map(),
+      new Map(),
+    );
+    slotWrites.records.length = 0;
+    handles.emitFabric(reapedAt);
+
+    const compactedKeys = recordEdgeKeys();
+    expect(compactedKeys).toEqual([
+      returningKey,
+      fabricEdgeKey(3, 4),
+      fabricEdgeKey(5, 6),
+    ]);
+    expect(new Set(compactedKeys).size).toBe(compactedKeys.length);
+  });
+
+  it('promotes a grow overflow ahead of fading afterimages', () => {
+    const handles = mountFabric(1); // three lifecycle slots
+    const cells = cellsFor([1, 2, 3, 4, 5, 6, 7, 8]);
+    const afterimages = [
+      fabricEdgeKey(1, 2),
+      fabricEdgeKey(3, 4),
+      fabricEdgeKey(5, 6),
+    ];
+    handles.setFabric(graphOf([[1, 2], [3, 4], [5, 6]]), cells, 40);
+    handles.emitFabric(40);
+    handles.killEdges(afterimages, 41, 'gc');
+    simClock.elapsedSec = 41;
+    handles.growEdges([edge(7, 8)], cells, new Map(), new Map());
+
+    slotWrites.records.length = 0;
+    handles.emitFabric(41);
+
+    expect(recordEdgeKeys()).toEqual([
+      fabricEdgeKey(7, 8),
+      afterimages[0],
+      afterimages[1],
+    ]);
+  });
+
+  it('re-slots a trailing clipped afterimage when it becomes live again', () => {
+    const handles = mountFabric(1); // three lifecycle slots
+    const cells = cellsFor([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    const initial = graphOf([[1, 2], [3, 4], [5, 6]]);
+    const replacement = graphOf([[7, 8], [9, 10]]);
+    handles.setFabric(initial, cells, 40);
+    handles.emitFabric(40);
+
+    // The replacement is live-first after compaction. It consumes two slots;
+    // 1|2 keeps the third and trailing 3|4 + 5|6 survive only as state.
+    handles.setFabric(replacement, cells, 41);
+    handles.emitFabric(41);
+
+    slotWrites.records.length = 0;
+    handles.setFabric(graphOf([[7, 8], [9, 10], [3, 4]]), cells, 41.1);
+    handles.emitFabric(41.1);
+
+    expect(recordEdgeKeys()).toEqual([
+      fabricEdgeKey(7, 8),
+      fabricEdgeKey(9, 10),
+      fabricEdgeKey(3, 4),
+    ]);
+  });
+
+  it('promotes a deferred-cohort overflow ahead of pending afterimages', () => {
+    const previous = {
+      threshold: LIVE.cell.fabricStaggerThreshold,
+      size: LIVE.cell.fabricCohortSize,
+      interval: LIVE.cell.fabricCohortInterval,
+    };
+    try {
+      LIVE.cell.fabricStaggerThreshold = 1;
+      LIVE.cell.fabricCohortSize = 1;
+      LIVE.cell.fabricCohortInterval = 0.25;
+
+      const handles = mountFabric(1); // three lifecycle slots
+      const cells = cellsFor([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+      handles.setFabric(graphOf([[1, 2], [3, 4], [5, 6]]), cells, 40);
+      handles.emitFabric(40);
+
+      // With threshold 1 this applies one kill immediately. At 41.25 the
+      // first deferred add (7|8) and kill land together while every slot is
+      // still occupied, forcing the cohort-overflow full walk.
+      handles.setFabric(graphOf([[7, 8], [9, 10]]), cells, 41);
+      slotWrites.records.length = 0;
+      handles.emitFabric(41.25);
+
+      // The pump first writes the cohort kill in place; the final three writes
+      // are the compacted prefix emitted by the structural walk it then arms.
+      const compactedKeys = recordEdgeKeys().slice(-3);
+      expect(compactedKeys).toContain(fabricEdgeKey(7, 8));
+      expect(compactedKeys).toHaveLength(3);
+    } finally {
+      LIVE.cell.fabricStaggerThreshold = previous.threshold;
+      LIVE.cell.fabricCohortSize = previous.size;
+      LIVE.cell.fabricCohortInterval = previous.interval;
+    }
   });
 });
 
