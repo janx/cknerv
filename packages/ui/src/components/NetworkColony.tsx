@@ -49,8 +49,10 @@ import { LIVE } from '../tweaks/liveTweaks';
 import { colonyFrame } from '../tweaks/colonyFrame';
 import type { NetworkTopology, Vec3 } from '../types';
 import type { ColonyFlood } from '../derives/networkFlood.derive';
+import type { ProducerStanding } from '../derives/blockProducers.derive';
 import ColonyNodes from './ColonyNodes';
 import ColonyEdges from './ColonyEdges';
+import ColonyAccretion from './ColonyAccretion';
 import ColonyCourierLayer from './ColonyCourierLayer';
 import BlockDeliveryLayer, { type BlockDeliveryPulse } from './BlockDeliveryLayer';
 import { consensusBlockColor } from '../derives/consensusFlow.derive';
@@ -80,6 +82,19 @@ interface NetworkColonyProps {
   flashDirtyIdsRef?: CellFlashDirtyIdsRef;
   /** Local node version — drives measured version-mismatch coloring (violet). */
   localVersion: string;
+  /** The chain's recent mining cohorts, LIVE. Passed straight through to the
+   *  accretion layer, where a cohort's share of the window sets the rate its
+   *  black hole pulls matter in at: the topology is keyed on the producer key
+   *  set alone (a per-block key would rebuild the colony's geometry once a
+   *  block and truncate every in-flight wave), so the standings hanging off the
+   *  staged nodes are stale between key-set changes and this is the live
+   *  reading.
+   *
+   *  ⚠️ It is `BlockProducerView`'s `staging` array — key-ascending, the same
+   *  sequence the topology was built from — and never `ranked`, which is
+   *  ordered by a tally. Nothing below reads it positionally; the accretion
+   *  layer walks the staged nodes and looks each share up by key. */
+  producers?: readonly ProducerStanding[] | null;
   /** Shared camera-distance focus. Optional keeps standalone scenes unchanged. */
   cellDetailViewFocusRef?: { readonly current: number };
   /** Optional overlay rendered inside the colony's ROTATING group, so
@@ -104,6 +119,7 @@ function NetworkColony({
   flashDirtyRef,
   flashDirtyIdsRef,
   localVersion,
+  producers,
   cellDetailViewFocusRef,
   overlay,
   rotationEnabled = true,
@@ -238,6 +254,15 @@ function NetworkColony({
           blockPulseAtMs={blockPulseAtMs}
           backfillActive={backfillActive}
           contextEnergyRef={linkContextEnergyRef}
+        />
+        {/* Drawn between the links and the marks. It is the widest structure
+            in the colony and the only one with a hole in the middle, so the
+            links pass BEHIND it and the staged marks sit on top — which is the
+            order a viewer already reads the colony in. */}
+        <ColonyAccretion
+          topology={topology}
+          producers={producers}
+          contextEnergyRef={nodeContextEnergyRef}
         />
         <ColonyNodes
           topology={topology}

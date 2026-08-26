@@ -18,6 +18,21 @@ import {
   SHOCKWAVE_COLOR_CEIL,
   SHOCKWAVE_ALPHA_CEIL,
 } from '../materials/shockwaveMaterial';
+// …and the five `hole*` knobs take theirs from the accretion material, on the
+// same rule: the material seeds its own uniforms from these constants and
+// ColonyAccretion overwrites them from LIVE.peer.* each frame, so there is ONE
+// authority. (`COHORT_INFALL_FLOOR`, `COHORT_INFALL_EASE` and `COHORT_VEIL_AMP`
+// are deliberately NOT knobs: one says a cohort holding almost nothing is still
+// mining, one that a mote FALLS rather than coasts, and one that the mark has
+// to be findable before it is legible. All three are statements this layer
+// makes rather than tastes to settle against pixels.)
+import {
+  COHORT_INFALL_HZ,
+  COHORT_MOTE_AMP,
+  COHORT_RIM_AMP,
+  COHORT_RIM_SPIN_HZ,
+  COHORT_SWIRL_TURNS,
+} from '../materials/colonyAccretion';
 // The Cell-field contact front is a scaled-down version of the peer-plane
 // brightness wave: same shape, same timing, its reach divided by
 // CONTACT_WAVE_SCALE — so both planes still read as sections of one event
@@ -138,6 +153,18 @@ export const peerSchema = {
   flameBloom: { value: 0.7, min: 0.1, max: 2, step: 0.05, label: 'flame bloom' },
   glintBloomOpacity: { value: 0.55, min: 0, max: 1, step: 0.05, label: 'glint bloom op' },
   glintPlumeOpacity: { value: 0.3, min: 0, max: 1, step: 0.05, label: 'glint plume op' },
+  // The mining channel — one black hole per cohort. `holeInfall` is how many
+  // times a second a mote completes its fall for a cohort holding the WHOLE
+  // window (the share scales it, and it is the only thing the share moves);
+  // `holeSwirl` is how many turns that fall adds; `holeSpin` is how fast the
+  // accretion rim itself turns, and it may go NEGATIVE because which way a disc
+  // spins is arbitrary. `holeRim` and `holeMotes` are the two brightnesses:
+  // reach for `holeRim` first, since the rim is what makes the shadow a shadow.
+  holeRim: { value: COHORT_RIM_AMP, min: 0, max: 3, step: 0.05, label: 'hole rim amp' },
+  holeMotes: { value: COHORT_MOTE_AMP, min: 0, max: 3, step: 0.05, label: 'hole mote amp' },
+  holeInfall: { value: COHORT_INFALL_HZ, min: 0.02, max: 3, step: 0.01, label: 'hole infall hz' },
+  holeSwirl: { value: COHORT_SWIRL_TURNS, min: 0, max: 4, step: 0.05, label: 'hole swirl turns' },
+  holeSpin: { value: COHORT_RIM_SPIN_HZ, min: -0.5, max: 0.5, step: 0.005, label: 'hole rim spin hz' },
 } satisfies FolderSchema;
 
 export const cellSchema = {

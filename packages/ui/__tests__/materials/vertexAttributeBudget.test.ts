@@ -20,6 +20,7 @@ import {
 } from '../../src/materials/populationFieldMaterial';
 import { makeHaloMaterial } from '../../src/components/GlowNode';
 import { makeColonyEdgeMaterial } from '../../src/components/ColonyEdges';
+import { makeColonyAccretionMaterial } from '../../src/materials/colonyAccretion';
 import {
   makeCanonicalRewriteEchoMaterial,
 } from '../../src/components/CanonicalRewriteEcho';
@@ -294,6 +295,14 @@ const ROWS: readonly BudgetRow[] = [
     material: makeColonyEdgeMaterial,
   },
   {
+    name: 'colonyAccretionMaterial',
+    sources: ['src/materials/colonyAccretion.ts'],
+    material: makeColonyAccretionMaterial,
+    // ColonyAccretion draws every cohort's black hole as ONE InstancedMesh of
+    // camera-facing quads, so it pays the mat4 as well as its own two lanes.
+    usage: { instanced: true },
+  },
+  {
     name: 'canonicalRewriteEchoMaterial',
     sources: ['src/components/CanonicalRewriteEcho.tsx'],
     material: makeCanonicalRewriteEchoMaterial,
@@ -442,6 +451,20 @@ describe('vertex attribute budget', () => {
     expect(flareAttributes.get('aStageAt')).toBe('vec2');
     expect(hybridAttributes.get('aRecordAt')).toBe('vec2');
     expect(hybridAttributes.get('aStageAt')).toBe('vec2');
+  });
+
+  it('charges the mining channel its own row, and leaves the edge program alone', () => {
+    // ⚠️ THE MINING CHANNEL IS ITS OWN PROGRAM. The row it replaced was a
+    // `lineSegments` over the cohorts' own links at 5 custom + 3 injected = 8;
+    // this one is an InstancedMesh, so it pays two lanes plus the mat4 three
+    // injects for instancing. Stated as exact numbers so a third lane is a
+    // deliberate edit rather than a drift only the browser console would
+    // report — and the two lanes are split by WRITE CADENCE rather than packed
+    // into a vec2, because `aSeed` moves when the staged set does and `aShare`
+    // on every attributed block.
+    const hole = measured.find(({ name }) => name === 'colonyAccretionMaterial');
+    expect(hole).toBeDefined();
+    expect([hole?.custom, hole?.injected, hole?.total]).toEqual([2, 7, 9]);
   });
 
   it('keeps the colony edge program exactly where it was', () => {

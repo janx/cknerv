@@ -100,9 +100,9 @@ export interface PeerCloudTone {
 }
 
 /**
- * The five stops, faintest first. One hue, one axis: a node the crawler named
+ * The four stops, faintest first. One hue, one axis: a node the crawler named
  * reads as "the same kind of thing, better known", never as a different
- * species. The measured core sits above all five with its own (brighter,
+ * species. The measured core sits above all four with its own (brighter,
  * tinted) halo.
  *
  * The axis has to survive ADDITIVE blending, which is where the first cut of it
@@ -126,48 +126,20 @@ export interface PeerCloudTone {
 export const PEER_CLOUD_GHOST_TONE = {
   dim: 0.62, size: 0.65, event: 0.9,
 } satisfies PeerCloudTone;
-/**
- * Proved by the chain, named by nobody — a node whose EXISTENCE is certain and
- * whose identity is zero. The exact inverse of the stop below this comment.
+/*
+ * ⭐⭐ THERE IS NO ATTESTED STOP ON THIS AXIS, AND ITS ABSENCE IS A DECISION.
+ * A node the chain proves and nobody can name once drew here, wedged between
+ * the invented haze and the faintest named stop. It wears a black hole now
+ * (`materials/colonyAccretion`), and the two could not co-exist: an additive
+ * point sprite is brightest at its own centre, which is exactly the pixel an
+ * event horizon needs empty, so keeping the stop would have been arithmetically
+ * identical to filling the hole with light.
  *
- * ⭐⭐ IT IS THE ONE TONE ON THIS AXIS THAT MOVES ITS TWO FIELDS APART, and the
- * split is the whole statement. Every stop the crawler's ladder draws buys
- * brightness AND footprint together — the tier's own tests hold each step to a
- * quarter again as much of both — because both are answering the same question,
- * "how well do we know this node". This rung answers it with `dim`, and the
- * answer is *barely at all*: it stays wedged between the invented haze and the
- * faintest named stop, because the chain proves the node is there and we cannot
- * say one word about which machine it is. Brightness is the identification
- * claim, and this rung makes none.
- *
- * ⭐ ITS SIZE IS NOT ON THAT AXIS AT ALL. `size` is a world DIAMETER and it is
- * also, through `peerCloudHitRadius`, the node's whole pick target — so it is
- * answering a different question: is there something here to press, and does
- * pressing it say anything. For a producer the answer is a card with blocks, a
- * share, a window, a declared build and a candidate fan. At 0.75 that card was
- * unreachable: 0.375 world units of target, the smallest in the colony, and a
- * full-canvas 13-pixel hover sweep of the running app came back with forty
- * peers and not one miner. 1.8 is 5.8x that target's area (~10 CSS px of sprite
- * at the default camera, against ~4), which is the ordinary size of a small
- * thing an interface expects to be clicked.
- *
- * ⚠️ AND A LARGE DIM MARK IS ON NO LADDER, which is what keeps the step from
- * reading as a confidence claim. On the crawler's gradient a bigger mark is
- * always a brighter one; this rung is wider than two of those stops while
- * resting dimmer than every one of them, so it matches no rung and cannot be
- * mistaken for one. Its own tests hold exactly that — the brightness bracket,
- * and the rule that it never buys the two together.
- *
- * It rests UNDER the additive clip (no saturated plateau at all, like the haze)
- * on purpose: what a viewer gets is a wide, soft, dim pool of light, which is
- * the honest look of a presence nobody can name. `event` clears the haze's 0.9 for
- * the reason the stop below spells out: a stop that answers a block more
- * quietly than the fiction underneath it gets swallowed for the length of every
- * wave.
+ * The rung it left behind is on a DIFFERENT AXIS, which is why the ladder below
+ * is unchanged rather than re-spaced. These five stops answer "how well do we
+ * know this node"; a black hole answers "what does it do", and a mark on the
+ * second axis was never a step on the first.
  */
-export const PEER_CLOUD_ATTESTED_TONE = {
-  dim: 0.7, size: 1.8, event: 0.92,
-} satisfies PeerCloudTone;
 /**
  * Named by the network, answered by nobody — hearsay carrying a real identity.
  *

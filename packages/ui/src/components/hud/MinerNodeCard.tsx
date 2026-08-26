@@ -97,17 +97,19 @@ import type { SceneInspectorPlacementSide } from '../sceneInspection';
  *  share, so a card swap never resizes the constellation. */
 const CARD_WIDTH_PX = 340;
 
-/** The attested tier's own tint, read from the constant its point cloud and its
- *  ring are drawn with: `PEER_CLOUD_ATTESTED_TONE` sets brightness and size but
- *  no colour, so `makePeerCloudMaterial` falls back to
- *  `PEER_NETWORK_PALETTE.scaffold`, and `makeProducerRingMaterial` names that
- *  same value outright. This is that colour in hex.
+/** The tint the cohort's own mark is drawn in, in hex.
  *
- *  It is the SIGHTED card's accent too, and deliberately: the rung is a rung of
- *  the peer mesh rather than a species beside it, so the whole colony is one
- *  cyan and this card is the readout for the stop the chain proves. What tells
- *  the tiers apart on stage is the ring, not the hue — which is the same
- *  argument §3.1 makes about brightness, one channel over. */
+ *  `makeColonyAccretionMaterial` names `PEER_NETWORK_PALETTE.scaffold`
+ *  outright — the black hole's accretion rim, its motes and its veil are all
+ *  one value, and it is the value the colony's links and every cloud stop are
+ *  already drawn in.
+ *
+ *  It is the SIGHTED card's accent too, and deliberately: a cohort is a member
+ *  of the peer mesh rather than a species beside it, so the whole colony is one
+ *  cyan and this card is the readout for the thing the chain proves. What tells
+ *  them apart on stage is the SHAPE — a hole with a disc around it against a
+ *  point of light — which is the same argument §3.1 makes about brightness, one
+ *  channel over. Zero new colour values reach the palette for any of it. */
 export const MINER_NODE_ACCENT = PEER_NETWORK_HEX.scaffold;
 
 /** The word this dialect wears, in the register a screen reader speaks. One

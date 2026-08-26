@@ -25,10 +25,23 @@ import {
   STAGEABLE_ROSTER_STATES,
 } from '../../src/derives/networkTopology.derive';
 import { colonyFlood } from '../../src/derives/networkFlood.derive';
+import ColonyAccretion, {
+  COHORT_MARK_CAP,
+  cohortAccretionMarks,
+  sameCohortMark,
+} from '../../src/components/ColonyAccretion';
+import {
+  COHORT_HIT_RADIUS,
+  COHORT_HORIZON_R,
+  COHORT_MARK_HALF_EXTENT,
+  COHORT_MOTE_BIRTH_R,
+  COHORT_MOTE_SIGMA,
+  COHORT_RIM_R,
+  COHORT_THROAT_R,
+} from '../../src/materials/colonyAccretion';
 import {
   peerCloudHitRadius,
   PEER_CLOUD_ADVERTISED_TONE,
-  PEER_CLOUD_ATTESTED_TONE,
   PEER_CLOUD_GHOST_TONE,
   PEER_CLOUD_SIGHTED_DARK_TONE,
   PEER_CLOUD_SIGHTED_TONE,
@@ -681,7 +694,10 @@ describe('ColonyNodes attested tier', () => {
     expect([...used].sort()).toEqual([...COLONY_DRAWS].sort());
     // The rungs land where this file says they land, one at a time.
     expect(buckets.haze).toEqual([KIND_SAMPLE.inferred]);
-    expect(buckets.attested).toEqual([KIND_SAMPLE.attested]);
+    // ⭐ `accretion`, NOT `attested`: the table names the LAYER that claims a
+    // kind, and a cohort's mark is the black hole `ColonyAccretion` draws.
+    // This file stands its hit sphere and nothing else.
+    expect(buckets.accretion).toEqual([KIND_SAMPLE.attested]);
     expect(buckets.sighted).toEqual([KIND_SAMPLE.sighted]);
     expect(buckets.measured).toEqual([KIND_SAMPLE.measured]);
     // `local` is not a hole: the galaxy's labeled anchor draws it, which is a
@@ -703,58 +719,24 @@ describe('ColonyNodes attested tier', () => {
     expect(Object.values(buckets).flat()).toEqual([KIND_SAMPLE.inferred]);
   });
 
-  // ⭐⭐ THE ONE RUNG WHOSE TWO FIELDS ARE ANSWERING DIFFERENT QUESTIONS.
-  // Everywhere else on this axis, brightness and footprint move together and
-  // the convergence test above holds each step to a quarter again of both.
-  // This rung is not a step: `dim` is the identification claim and it has
-  // none, so it stays wedged between the invented haze and the faintest named
-  // stop; `size` is the pick target, and the chain has a card's worth to say
-  // about this node, so it is large enough to press. Held as two assertions
-  // because it is two claims.
-  it('keeps the attested rung anonymous on the axis that means identification', () => {
-    for (const field of [restingDim, eventDim] as const) {
-      expect(field(PEER_CLOUD_ATTESTED_TONE)).toBeGreaterThan(field(PEER_CLOUD_GHOST_TONE));
-      expect(field(PEER_CLOUD_ATTESTED_TONE)).toBeLessThan(field(PEER_CLOUD_ADVERTISED_TONE));
-    }
-    // It rests UNDER the additive clip, like the haze and unlike every named
-    // stop: what a viewer gets is a wide soft pool, never a bright nucleus.
-    expect(plateauFraction(PEER_CLOUD_ATTESTED_TONE)).toBe(0);
-    // …and it is NOT one of the crawler's stops, so the ladder those are held
-    // to is unchanged by its existence.
-    expect(Object.values(SIGHTED_STOPS)).not.toContain(PEER_CLOUD_ATTESTED_TONE);
-  });
-
-  it('buys footprint without buying light, which is what no rung ever does', () => {
-    // ⭐⭐ THIS IS WHY A SIZE STEP HERE CANNOT READ AS A CONFIDENCE CLAIM, and
-    // it is a property rather than a promise. On the crawler's ladder a bigger
-    // mark is ALWAYS a brighter one — 'every rung of the ladder is strictly
-    // above the one below it' asserts exactly that, on both fields at once. So
-    // a mark that is WIDER than a stop while resting DIMMER than it matches no
-    // rung and can be mistaken for none. The attested tone is that mark
-    // against every stop it out-sizes.
-    const outsized = LADDER.filter(
-      ([, tone]) => diameter(PEER_CLOUD_ATTESTED_TONE) > diameter(tone),
-    );
-    // Not vacuous, and this is the half the old tone failed: at 0.75 it
-    // out-sized only the invented haze, which is a perfectly legal rung — and
-    // an unclickable mark.
-    const named = outsized.filter(([, tone]) => tone !== PEER_CLOUD_GHOST_TONE);
-    expect(named.length).toBeGreaterThan(0);
-    for (const [name, tone] of named) {
-      expect([name, restingDim(PEER_CLOUD_ATTESTED_TONE) < restingDim(tone)])
-        .toEqual([name, true]);
-    }
-    // The haze is the one stop it out-sizes AND out-shines, and that pair is
-    // honest rather than an exception: a node the chain proves outranks an
-    // invented one on every reading there is.
-    expect(diameter(PEER_CLOUD_ATTESTED_TONE)).toBeGreaterThan(diameter(PEER_CLOUD_GHOST_TONE));
-    expect(restingDim(PEER_CLOUD_ATTESTED_TONE)).toBeGreaterThan(restingDim(PEER_CLOUD_GHOST_TONE));
-    // And the mark a viewer sees lands between the two stops that mean somebody
-    // got a packet back — big enough to aim at, and never the largest thing on
-    // the stage. That still belongs to the peer the crawler reached this round.
-    const mark = visibleExtent(PEER_CLOUD_ATTESTED_TONE);
-    expect(mark).toBeGreaterThan(visibleExtent(PEER_CLOUD_SIGHTED_DARK_TONE));
-    expect(mark).toBeLessThan(visibleExtent(PEER_CLOUD_SIGHTED_TONE));
+  // ⭐⭐ THE RUNG HAS NO STOP ON THE CLOUD'S AXIS AT ALL, AND THAT IS THE
+  // DECISION. It had one — wedged between the invented haze and the faintest
+  // named stop, wide and dim — and it could not survive beside a black hole:
+  // an additive point sprite is brightest at its own CENTRE, which is exactly
+  // the pixel an event horizon needs empty. Keeping it would have been
+  // arithmetically identical to filling the hole with light.
+  it('leaves the confidence ladder alone, because a black hole was never a rung of it', () => {
+    const material = materialSource();
+    expect(material).not.toContain('PEER_CLOUD_ATTESTED_TONE');
+    // The ladder those five stops make is unchanged rather than re-spaced: it
+    // answers "how well do we know this node", a black hole answers "what does
+    // it do", and a mark on the second axis was never a step on the first.
+    expect(Object.keys(SIGHTED_STOPS)).toEqual(['advertised', 'remembered', 'reached']);
+    expect(LADDER).toHaveLength(4);
+    // …and this file no longer draws the rung at all.
+    const nodes = source('ColonyNodes.tsx');
+    expect(nodes).not.toContain('nodes={attested}');
+    expect(nodes).not.toMatch(/setAttribute\('a(Attested|Producer|Miner|Cohort)/);
   });
 
   it('stands one hit target per staged node across BOTH tiers, sized from its own mark', () => {
@@ -778,31 +760,26 @@ describe('ColonyNodes attested tier', () => {
       expect(target.selectionId).toBe(`${MINER_SELECTION_PREFIX}${producers[index].key}`);
       expect(target.bodyRadius).toBe(ATTESTED_HIT_RADIUS);
     }
-    // ⚠️ THE TARGET IS THE SPRITE, AND IT HAS TO BE BIG ENOUGH TO PRESS. At
+    // ⚠️ THE TARGET IS THE MARK, AND IT HAS TO BE BIG ENOUGH TO PRESS. At
     // 0.375 world units this was the SMALLEST target in the colony, under the
     // faintest roster rung's 0.425, and a full-canvas 13-pixel hover sweep of
-    // the running app found forty peers and not one miner. No unit test can
-    // see a pixel, so what is pinned here is the ordering the measurement
-    // implied: the node the chain proves and can say a card's worth about is
-    // never a harder target than the node nobody has ever answered.
-    expect(ATTESTED_HIT_RADIUS).toBe(peerCloudHitRadius(PEER_CLOUD_ATTESTED_TONE));
-    expect(ATTESTED_HIT_RADIUS).toBeGreaterThan(SIGHTED_HIT_RADII.advertised);
-    expect(ATTESTED_HIT_RADIUS).toBeGreaterThan(SIGHTED_HIT_RADII.remembered);
-    // …and still never the largest: a peer the crawler reached this round is
-    // the best-known thing on the stage and keeps the biggest target on it.
-    expect(ATTESTED_HIT_RADIUS).toBeLessThan(SIGHTED_HIT_RADII.reached);
-  });
-
-  it('draws the rung as a point cloud at its own stop — ZERO new vertex attributes', () => {
-    const nodes = source('ColonyNodes.tsx');
-    // The fourth cloud off the one factory, exactly as the third was: a tone is
-    // a creation-time uniform, so a stop can never cost a slot.
-    expect(nodes).toContain('tone={PEER_CLOUD_ATTESTED_TONE}');
-    expect(nodes).toContain('nodes={attested}');
-    expect(nodes).not.toMatch(/setAttribute\('a(Attested|Producer|Miner)/);
-    // …and it is wave-receptive like every other node here: same shockwave
-    // uniforms, same context damping, no exemption.
-    expect(nodes).toContain('shockwaveUniforms={shockwaveUniforms}');
+    // the running app found forty peers and not one miner. It is the accretion
+    // rim now — one number, taken straight off the thing a viewer aims at.
+    expect(ATTESTED_HIT_RADIUS).toBe(COHORT_HIT_RADIUS);
+    expect(ATTESTED_HIT_RADIUS).toBe(COHORT_RIM_R);
+    // Bigger than the 0.9 the subsumed point sprite stood, which is the floor
+    // this revision was given.
+    expect(ATTESTED_HIT_RADIUS).toBeGreaterThan(0.9);
+    // ⭐⭐ AND IT MAY NOW EXCEED EVERY RUNG OF THE LADDER, which the old mark
+    // was forbidden to do. A larger target used to read as a confidence claim
+    // because every stop bought light and footprint together; a black hole is
+    // not a stop, so there is no rung for it to tie and nothing about its size
+    // that says how well the node is known.
+    for (const stop of Object.values(SIGHTED_HIT_RADII)) {
+      expect(ATTESTED_HIT_RADIUS).toBeGreaterThan(stop);
+    }
+    // …and it covers the whole shadow, so aiming at the hole hits it too.
+    expect(ATTESTED_HIT_RADIUS).toBeGreaterThan(COHORT_HORIZON_R);
   });
 });
 
@@ -830,5 +807,306 @@ describe('the block wave reports where it started', () => {
     // render path one increment on an edge it was already handling.
     expect(nodes).not.toMatch(/producerOriginStats\.(waves|attested|anonymous|byProducer)/);
     expect(nodes).not.toContain('snapshotProducerOriginStats');
+  });
+});
+
+
+/**
+ * THE MINING CHANNEL, THIRD CUT: a cohort is a black hole.
+ *
+ * The first cut modulated the brightness of a hard geometric ring — HUD chrome
+ * that escaped into the scene, and not motion at all, since nothing travelled.
+ * The second sent motes inward along the node's own LINKS, which is motion and
+ * which says the energy comes FROM THE NETWORK — a different claim, and a
+ * wrong one. Energy is drawn out of the surrounding void here: a dark event
+ * horizon, a swirling accretion rim, and motes seeded in empty space that
+ * spiral in, accelerate, and are swallowed.
+ */
+describe('what a mining cohort looks like', () => {
+  const peers = [peer('A'), peer('B')];
+  const producers = [
+    standing(producerKey('a'), 0.56),
+    standing(producerKey('b'), 0.02),
+  ];
+  const topology = inferredTopology(
+    peers, 0xc0ffee, 'ckb:local', undefined, ROSTER, undefined, producers,
+  );
+  const accretionSource = () => readFileSync(
+    resolve(process.cwd(), 'src/materials/colonyAccretion.ts'),
+    'utf8',
+  );
+  /** The GLSL a driver actually compiles, with this file's own commentary
+   *  stripped. ⚠️ A source oracle that reads the prose EXPLAINING a rule
+   *  instead of the code obeying it is an oracle that can never fail — the
+   *  `toContain('…PARTIAL…')` trap, one file over — and two of the assertions
+   *  below matched their own warning comments the first time they ran. */
+  const accretionFragment = () => {
+    const source = accretionSource();
+    return source
+      .slice(source.indexOf('fragmentShader:'))
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/\/\/.*$/gm, ' ');
+  };
+
+  it('mounts a colony of cohorts inside an r3f Canvas without throwing', () => {
+    expect(() => render(
+      <Canvas>
+        <ColonyAccretion topology={topology} producers={producers} />
+      </Canvas>,
+    )).not.toThrow();
+  });
+
+  it('stands one hole on every cohort the colony stages, and on nothing else', () => {
+    const marks = cohortAccretionMarks(topology);
+    const cohorts = topology.nodes.filter((n) => n.kind === 'attested');
+    expect(cohorts).toHaveLength(producers.length);
+    expect(marks.map((m) => m.nodeId)).toEqual(cohorts.map((n) => n.id));
+    for (const mark of marks) {
+      expect(mark.pos).toEqual(cohorts.find((n) => n.id === mark.nodeId)?.pos);
+      expect(mark.nodeId).toBe(`attested:${mark.producerKey}`);
+      // A per-cohort de-sync, so six holes do not swirl on one beat.
+      expect(mark.seed).toBeGreaterThanOrEqual(0);
+      expect(mark.seed).toBeLessThan(1);
+    }
+    expect(new Set(marks.map((m) => m.seed)).size).toBe(marks.length);
+  });
+
+  it('is drawn on NO EDGE of this colony, which is the whole of this revision', () => {
+    // ⭐⭐ The second cut planned its geometry by walking `topology.edges` and
+    // drawing a mote along each of a cohort's own links. That says the energy
+    // arrives over the network. The planner cannot reach an edge now — it
+    // walks nodes and nothing else — and the motes are seeded at a world
+    // radius, in empty space, on nothing.
+    const layer = source('ColonyAccretion.tsx');
+    expect(layer).not.toContain('topology.edges');
+    expect(layer).not.toContain('lineSegments');
+    expect(layer).toContain("if (node.kind !== 'attested') continue;");
+    // Born well outside the rim, and swallowed well inside the horizon.
+    expect(COHORT_MOTE_BIRTH_R).toBeGreaterThan(COHORT_RIM_R * 2);
+    expect(COHORT_THROAT_R).toBeLessThan(COHORT_HORIZON_R);
+    // …and the billboard is sized from the outermost feature rather than
+    // picked, so a mote is never clipped at the moment it appears.
+    expect(COHORT_MARK_HALF_EXTENT)
+      .toBeGreaterThanOrEqual(COHORT_MOTE_BIRTH_R + COHORT_MOTE_SIGMA * 3);
+  });
+
+  it('makes the dark core an ABSENCE of glow, because additive blending cannot paint one', () => {
+    // ⚠️⚠️ Adding zero changes nothing, so there is no colour and no alpha
+    // that paints black over a lit stage. The horizon can only exist as the
+    // region this shader declines to light, and it is defined entirely by the
+    // rim around it. Every term is multiplied by ONE mask, in one expression,
+    // so a term added later cannot quietly light the middle.
+    const material = accretionSource();
+    expect(material).toContain('float horizon = smoothstep(hIn, hOut, rw);');
+    expect(material)
+      .toContain('float amp = (rim + motes * uMoteAmp + veil) * horizon * edge;');
+    // Nothing subtracts, nothing blends anything but additively, and there is
+    // no second pass painting a disc over what is behind it.
+    expect(material).toContain('blending: THREE.AdditiveBlending');
+    expect(material).not.toMatch(/NormalBlending|SubtractiveBlending|renderOrder/);
+    // ⚠️ And the mask's edges are FLOORED apart: smoothstep is undefined when
+    // its two edges are equal, and a NaN here would paint the whole cohort NaN.
+    expect(material).toContain('float hIn = min(hOut * 0.72, hOut - 0.001);');
+    expect(material).toContain('float eOut = max(uHalf, eIn + 0.001);');
+    // ⚠️ …and the rim's falloff squares by MULTIPLICATION. `pow` is undefined
+    // for a negative base, and this one is negative everywhere inside the ring.
+    expect(material).toContain('float band = exp(-rd * rd);');
+    expect(material).not.toMatch(/pow\((rd|md)/);
+  });
+
+  it('is a swirling disc rather than a stroked circle, which is how the first cut died', () => {
+    const material = accretionSource();
+    // The ring's RADIUS wanders with angle, and so does its brightness — two
+    // harmonics each, enough to break the outline and few enough that the
+    // shape still reads as one ring.
+    expect(material).toContain(
+      'float rimR = uRim\n          * (1.0 + 0.16 * sin(ang * 2.0 + 0.9) + 0.09 * sin(ang * 3.0 + 2.1));',
+    );
+    expect(material).toContain('float lobes = 0.40 + 0.34 * sin(ang)');
+    // …and never to nothing: a rim that went dark on its far side would read
+    // as two arcs rather than as one thing turning.
+    expect(material).toContain('max(lobes, 0.36)');
+    // It turns, and every cohort turns on its own phase.
+    expect(material).toContain('- uTime * uSpin * TAU');
+    expect(material).toContain('vSeed * TAU');
+    // ⭐ AND THE THINGS FALLING THROUGH IT DO NOT ARRIVE TOGETHER. Fourteen
+    // motes on one rate translate RIGIDLY — the whole pattern sweeps in, resets
+    // and does it again, so the hole reads as breathing once a cycle instead of
+    // eating continuously. A per-mote pace decorrelates the flow, and it is the
+    // same distribution for every cohort, so it says nothing about the share.
+    expect(material).toContain('float pace = 0.7 + 0.6 * hash11(fk * 5.3 + vSeed * 19.0);');
+  });
+
+  it('cannot be mistaken for the canopy contact wave, and structurally cannot become one', () => {
+    // ⚠️⚠️ The nearest thing on stage to "a ring around a point" is the Cell
+    // canopy's block contact wave, which draws expanding pale ellipses across
+    // the tissue. The load-bearing difference is the RADIUS: that one grows
+    // from its own age and this one never grows at all.
+    const material = accretionSource();
+    // Every radius here is a world constant on a uniform, and `uTime` reaches
+    // the swirl and the motes' phase — never an extent. Checked on the
+    // compiled GLSL, statement by statement.
+    for (const statement of accretionFragment().split(';')) {
+      if (!statement.includes('uTime')) continue;
+      expect([statement.trim().slice(0, 60), /\b(uRim|uHorizon|uHalf|uBirth)\b/.test(statement)])
+        .toEqual([statement.trim().slice(0, 60), false]);
+    }
+    expect(material).toContain('float rd = (rw - rimR) / max(uRimSigma, 0.02);');
+    // ⭐ The contact wave grows because its OWNER rescales every instance from
+    // the front's age, once a frame. This layer writes a translation and never
+    // a scale, so there is no arrangement of it that expands.
+    expect(source('BlockDeliveryLayer.tsx'))
+      .toContain('const extent = crestRadius / CONTACT_WAVE_CREST_UV;');
+    const layer = source('ColonyAccretion.tsx');
+    expect(layer).toContain('SCRATCH_MATRIX.makeTranslation(');
+    expect(layer).not.toMatch(/makeScale|\.scale\.set|setScalar/);
+    // …and it is small. Two world units of rim against a front that crosses
+    // the canopy.
+    expect(COHORT_RIM_R * 2).toBeLessThan(3);
+  });
+
+  it('cannot be mistaken for a courier glint either', () => {
+    const material = accretionSource();
+    const layer = source('ColonyAccretion.tsx');
+    const courier = source('ColonyCourierLayer.tsx');
+    // A courier is a billboarded bloom plus a comet plume, fired ONCE per
+    // block, travelling OUTWARD down the propagation tree and tinted that
+    // block's carrier hue. This has no head to stretch, no plume texture, no
+    // pulse to fire from and no carrier hue.
+    expect(layer).not.toMatch(/makeCourier|Sprite|easeOutCubic/);
+    expect(courier).toContain('makeCourierPlumeTexture');
+    expect(material).toContain('PEER_NETWORK_PALETTE.scaffold');
+    expect(material).not.toContain('consensusBlockColor');
+    expect(layer).not.toContain('consensusBlockColor');
+    expect(courier).toContain('consensusBlockColor(blockPulseAtMs)');
+  });
+
+  it('never samples the block shockwave, which would flare every cohort at once', () => {
+    // ⚠️ The front crosses the WHOLE colony on every block. A wave-receptive
+    // mining mark would flare for every cohort as it passed — the scene showing
+    // six of them discharging on a block exactly one of them won.
+    const layer = source('ColonyAccretion.tsx');
+    // The compiled GLSL, not the comment above it that says so.
+    expect(accretionFragment()).not.toMatch(/[Ss]hockwave/i);
+    // …and nothing in either file can import one.
+    expect(accretionSource()).not.toMatch(/^import .*shockwave/im);
+    expect(layer).not.toMatch(/shockwaveMaterial|shockwaveUniforms/);
+  });
+
+  it('takes no pulse and no flood at all, so it cannot fire for the wrong cohort', () => {
+    // ⭐ The win is ALREADY DRAWN: on the block a cohort makes, the colony's
+    // own outward surge erupts from that very node, off `cf.entryId`. A layer
+    // with no per-block input is structurally incapable of discharging for
+    // anybody, right or wrong — which is a stronger guarantee than a lookup
+    // that happens to agree with the flood's.
+    const layer = source('ColonyAccretion.tsx');
+    expect(layer).not.toContain('blockPulseAtMs');
+    expect(layer).not.toContain('backfillActive');
+    expect(layer).not.toContain('cf.entryId');
+    expect(layer).not.toContain('ColonyFlood');
+    // The mount passes none of the three either.
+    const network = source('NetworkColony.tsx');
+    const open = network.indexOf('<ColonyAccretion');
+    const close = network.indexOf('/>', open);
+    expect(open).toBeGreaterThan(-1);
+    expect(network.slice(open, close)).not.toMatch(/cf=|blockPulseAtMs=|backfillActive=/);
+  });
+
+  it('says the share as a RATE and never a second time as size or light', () => {
+    // ⭐ A cohort holding more of the window pulls its motes in FASTER; every
+    // rim is the same radius and the same light and every mote the same size,
+    // whoever they belong to. Saying the share twice would say one fact twice
+    // — and would make a cohort with four blocks look like a rounding error
+    // rather than one that made four blocks, which is why the rate has a floor
+    // rather than reaching zero.
+    const material = accretionSource();
+    const rate = material.slice(material.indexOf('float rate = uInfall'));
+    expect(rate).toContain('mix(uInfallFloor, 1.0, clamp(vShare, 0.0, 1.0))');
+    // vShare reaches the rate and nothing else: not an amplitude, not a radius.
+    expect(material.match(/vShare/g)).toHaveLength(4); // 2 declarations, 1 assign, 1 read
+    for (const statement of accretionFragment().split(';')) {
+      if (!statement.includes('vShare') || statement.includes('varying')) continue;
+      expect([statement.trim().slice(0, 60), statement.includes('uInfall')])
+        .toEqual([statement.trim().slice(0, 60), true]);
+    }
+  });
+
+  it('reads no standing at all in its plan, so a window that moved cannot move a hole', () => {
+    // ⭐⭐ THE SPLIT THAT KEEPS THE GEOMETRY STILL. A cohort's blocks and share
+    // change on EVERY block while its key, its placement and its seed do not,
+    // so a plan that read the window would rewrite this layer's instance
+    // matrices once a block for a numerator that moved.
+    expect(cohortAccretionMarks.length).toBeLessThanOrEqual(2); // (topology, cap)
+    const layer = source('ColonyAccretion.tsx');
+    expect(layer).toContain('const plan = useMemo(() => cohortAccretionMarks(topology), [topology]);');
+    // The share reaches the GPU through a lane written in place instead, and
+    // the lane is marked ONCE for the whole walk.
+    expect(layer).toContain('}, [lanes, marks, producers]);');
+    expect(layer).toContain('lanes.share.needsUpdate = true;');
+    expect(layer).not.toMatch(/useMemo\([^)]*producers[^)]*\)/);
+  });
+
+  it('holds its buffers across a rebuild that moved nothing it draws', () => {
+    const later = inferredTopology(
+      [{ ...peer('A'), latency_ms: 220 }, peer('B')],
+      0xc0ffee, 'ckb:local', undefined, ROSTER, undefined, producers,
+    );
+    const before = cohortAccretionMarks(topology);
+    const after = cohortAccretionMarks(later);
+    expect(after).not.toBe(before);
+    expect(before.every((mark, i) => sameCohortMark(mark, after[i]))).toBe(true);
+    const held = renderHook(({ list }) => useStableList(list, sameCohortMark), {
+      initialProps: { list: before },
+    });
+    held.rerender({ list: after });
+    expect(held.result.current).toBe(before);
+
+    // ⚠️ …and a hole whose NODE MOVED must break it. A reseed keeps every id
+    // while moving every point, so a test on ids alone would call an entirely
+    // rearranged colony unchanged and leave these holes hanging in the space
+    // the old one used to occupy.
+    const [mark] = before;
+    expect(sameCohortMark(mark, { ...mark, pos: [...mark.pos] as Vec3 })).toBe(true);
+    expect(sameCohortMark(mark, {
+      ...mark, pos: [mark.pos[0] + 1, mark.pos[1], mark.pos[2]],
+    })).toBe(false);
+  });
+
+  it('stands nothing at all for a colony with no cohorts in its window', () => {
+    const bare = inferredTopology(peers, 0xc0ffee, 'ckb:local', undefined, ROSTER);
+    expect(cohortAccretionMarks(bare)).toEqual([]);
+    // …and it is a NO DRAW rather than an empty one. A material that never
+    // enters the scene graph is never compiled, and a devnet nobody mines or a
+    // review lab that passes no window would otherwise carry an empty vertex
+    // program for the whole life of the scene.
+    expect(source('ColonyAccretion.tsx'))
+      .toContain('if (marks.length === 0) return null;');
+    expect(() => render(
+      <Canvas><ColonyAccretion topology={bare} /></Canvas>,
+    )).not.toThrow();
+  });
+
+  it('stops at a cap and says so, rather than sizing a buffer off the wire', () => {
+    const marks = cohortAccretionMarks(topology, 1);
+    expect(marks).toHaveLength(1);
+    expect(COHORT_MARK_CAP).toBeGreaterThan(marks.length);
+    const layer = source('ColonyAccretion.tsx');
+    expect(layer).toContain('cappedLogged.current = true;');
+    expect(layer).toContain('console.warn(');
+  });
+
+  it('needs no rotation maths, because only its origin turns with the colony', () => {
+    // The courier and the delivery stand OUTSIDE the counter-rotating group
+    // and carry every point and axis through `colonyFrame.rotationY`
+    // themselves, because their billboard bases are world-frame. This one
+    // rides the group: the instance matrix carries a translation, the group
+    // turns it, and the quad is rebuilt from the view matrix — so there is no
+    // basis for a rotation to have to undo.
+    expect(source('ColonyAccretion.tsx')).not.toContain('colonyFrame');
+    expect(source('ColonyCourierLayer.tsx')).toContain('colonyFrame.rotationY');
+    const material = accretionSource();
+    expect(material).toContain('viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]');
+    expect(source('ColonyAccretion.tsx')).toContain('SCRATCH_MATRIX.makeTranslation(');
+    expect(source('ColonyAccretion.tsx')).not.toContain('SCRATCH_MATRIX.makeScale(');
   });
 });

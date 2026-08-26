@@ -6,14 +6,15 @@
 //     core+halo radial as the measured halo, drawn small and — this is the
 //     part that has to hold — under the additive clip, so it stays haze
 //     instead of a white speck the eye reads as a node. Non-selectable.
-//   • attested nodes    — ONE more <points> draw for a node the CHAIN proves
-//     exists and cannot name. It is the exact inverse of the faintest roster
-//     rung — certain existence, zero identity — so its BRIGHTNESS rests near
-//     the haze on purpose, while its DIAMETER is the largest of any anonymous
-//     mark here. Those two fields are answering different questions: light is
-//     the identification claim (none), size is the pick target, and the chain
-//     has a card's worth to say about this node. Clickable, and its hit sphere
-//     IS that mark, like every other staged node's.
+//   • attested nodes    — NOT DRAWN HERE. A node the CHAIN proves exists and
+//     cannot name wears a black hole, and `ColonyAccretion` draws it: a dark
+//     event horizon, a swirling accretion rim, and motes falling in out of the
+//     surrounding void. It had a <points> stop of its own until that mark
+//     arrived, and an additive sprite is brightest at its own centre — exactly
+//     the pixel a shadow needs empty — so the stop was subsumed rather than
+//     left underneath. This file still stands its hit sphere, sized from the
+//     accretion rim, because the pick target belongs with every other staged
+//     node's.
 //   • roster nodes      — THREE more <points> draws off the same factory, one
 //     per rung of the crawler's evidence gradient (it reached the node / it
 //     only remembers reaching it / the network names it and nobody has ever
@@ -71,11 +72,11 @@ import {
   makePeerCloudMaterial,
   peerCloudHitRadius,
   PEER_CLOUD_ADVERTISED_TONE,
-  PEER_CLOUD_ATTESTED_TONE,
   PEER_CLOUD_SIGHTED_DARK_TONE,
   PEER_CLOUD_SIGHTED_TONE,
   type PeerCloudTone,
 } from '../materials/peerNodeMaterial';
+import { COHORT_HIT_RADIUS } from '../materials/colonyAccretion';
 import { ATTESTED_ID_PREFIX } from '../derives/networkTopology.derive';
 import { producerOriginStats } from '../derives/producerOriginStats';
 
@@ -214,14 +215,21 @@ export function useStableList<T>(next: T[], matches: (a: T, b: T) => boolean): T
 const sameNodeObject = (a: NetworkNode, b: NetworkNode): boolean => a === b;
 const sameNodeId = (a: NetworkNode, b: NetworkNode): boolean => a.id === b.id;
 
-/** Every draw this file splits the colony into, in mount order.
+/** Every draw the colony splits into, in mount order — which is not the same
+ *  list as "the draws this FILE makes", and never was.
  *
  *  `anchor` is a real answer and not a hole: the local "you" is drawn by the
  *  galaxy's labeled CkbNodeAnchor, which App pins the colony's local node onto,
  *  so this file's answer to "what does `local` look like" is "somebody else's
  *  mark, deliberately". A bucket that names it is what keeps that sentence
- *  checkable instead of a comment. */
-export const COLONY_DRAWS = ['haze', 'attested', 'sighted', 'measured', 'anchor'] as const;
+ *  checkable instead of a comment.
+ *
+ *  ⭐ `accretion` IS THE SECOND SUCH ANSWER, and naming it for the layer rather
+ *  than for the kind is what keeps the table honest. An attested node's mark is
+ *  the black hole `ColonyAccretion` draws; this file stands its hit sphere and
+ *  nothing else. Calling the bucket `attested` would have named a draw this
+ *  file does not make, which is exactly the drift the table exists to stop. */
+export const COLONY_DRAWS = ['haze', 'accretion', 'sighted', 'measured', 'anchor'] as const;
 
 export type ColonyDraw = typeof COLONY_DRAWS[number];
 
@@ -251,7 +259,7 @@ export type ColonyDraw = typeof COLONY_DRAWS[number];
  *  borrowed mark that would say something false. */
 const DRAW_BY_NODE_KIND: Readonly<Record<NodeKind, ColonyDraw>> = {
   inferred: 'haze',
-  attested: 'attested',
+  attested: 'accretion',
   sighted: 'sighted',
   measured: 'measured',
   local: 'anchor',
@@ -279,20 +287,19 @@ export function partitionByKind(
   return groups;
 }
 
-/** An attested node's hit sphere — its point sprite, exactly as a sighted
- *  stop's is its own. One rule, one exception nowhere.
+/** An attested node's hit sphere — its own mark, exactly as a sighted stop's
+ *  is its own. One rule, one exception nowhere.
  *
- *  ⭐ THE FILE'S RULE WAS ALWAYS RIGHT; IT WAS THE MARK THAT WAS WRONG. This
- *  radius once made the producer the smallest target in the colony — 0.375
+ *  ⭐ THE FILE'S RULE WAS ALWAYS RIGHT; IT WAS THE MARK THAT KEPT BEING WRONG.
+ *  This radius once made the producer the smallest target in the colony — 0.375
  *  world units, under the faintest roster rung's 0.425 — and a full-canvas
  *  13-pixel hover sweep of the running app found forty peers and zero miners.
- *  The answer taken then was a second target cut from the ring drawn around it;
- *  the ring is gone and the answer now is the one this file already had. The
- *  mark itself is 1.8 world units, so the target is 0.9 and there is exactly
- *  one of it — no annulus, no hole, nothing to keep in step with a second
- *  number. See `PEER_CLOUD_ATTESTED_TONE` for why a size step here is not a
- *  brightness step, and cannot be read as one. */
-export const ATTESTED_HIT_RADIUS = peerCloudHitRadius(PEER_CLOUD_ATTESTED_TONE);
+ *  The mark is a black hole now, so the target is its accretion rim: 1.05 world
+ *  units, ~6.0 CSS px of radius at the default camera, against the 0.9 the
+ *  subsumed point sprite stood. It covers the whole shadow, so aiming at the
+ *  hole hits it too, and there is exactly ONE number — no annulus, no second
+ *  radius, nothing to keep in step. */
+export const ATTESTED_HIT_RADIUS = COHORT_HIT_RADIUS;
 
 /** One clickable staged node: where it stands, how big its mark is, and what
  *  selecting it says. Two tiers, one shape — see `stagedPickTargets`. */
@@ -434,13 +441,12 @@ function InferredCloud({
  * size, core falloff) is a creation-time uniform rather than a per-point
  * attribute, because the vertex-attribute budget sits at a cliff and one more
  * Points draw is cheaper than a slot — which is why a THIRD stop cost this
- * tier one draw call and not one byte of vertex layout, and a FOURTH (the
- * attested rung, on a tier of its own) cost the same.
+ * tier one draw call and not one byte of vertex layout.
  *
  * Named for what it draws rather than for one of its callers: the crawler's
- * three rungs and the chain's one are the same construction at a different
- * stop, and the day they stopped being one component is the day a stop could
- * quietly acquire a second visual language.
+ * three rungs are the same construction at a different stop, and the day they
+ * stopped being one component is the day a stop could quietly acquire a second
+ * visual language.
  *
  * Its raycast is a no-op too: the pixel belongs to the instanced hit mesh below,
  * so the visible sprite never competes with it.
@@ -863,12 +869,13 @@ function MeasuredNode({
 }
 
 /**
- * Composes the colony: the inferred ghost cloud + the attested rung + the
- * sighted tier + one measured glow-node per real peer, unified as a single glow
- * primitive on a confidence gradient. The local "you" is drawn by the galaxy
- * (its labeled CkbNodeAnchor), NOT here. This owner stamps one shared
- * ring-buffer slot per block so inferred and measured nodes cannot drift or
- * cancel an older in-flight wave.
+ * Composes the colony: the inferred ghost cloud + the sighted tier + one
+ * measured glow-node per real peer, unified as a single glow primitive on a
+ * confidence gradient, plus ONE hit mesh over both staged tiers. The local
+ * "you" is drawn by the galaxy (its labeled CkbNodeAnchor) and a cohort's black
+ * hole by `ColonyAccretion`, NOT here. This owner stamps one shared ring-buffer
+ * slot per block so inferred and measured nodes cannot drift or cancel an older
+ * in-flight wave.
  */
 export default function ColonyNodes({
   topology,
@@ -895,7 +902,7 @@ export default function ColonyNodes({
   const byKind = useMemo(() => partitionByKind(topology.nodes), [topology]);
   const measured = byKind.measured;
   const sighted = byKind.sighted;
-  const attested = byKind.attested;
+  const attested = byKind.accretion;
   // A crawler that could not reach a node this round still knows it exists, and
   // a node it has never reached is still one the network keeps naming. Both are
   // real, dimmer information, and each costs one extra draw rather than a slot.
@@ -994,18 +1001,6 @@ export default function ColonyNodes({
           shockwaveUniforms={shockwaveUniforms}
         />
       ) : null))}
-      {/* The chain's rung, on the same construction at its own stop. It is
-          WAVE-RECEPTIVE like every other node here — a producer receives a
-          block exactly as anything else at that distance does, which is the
-          half of the 2026-08-24 ruling that was always true. */}
-      {attested.length > 0 ? (
-        <StagedCloud
-          nodes={attested}
-          tone={PEER_CLOUD_ATTESTED_TONE}
-          contextEnergyRef={contextEnergyRef}
-          shockwaveUniforms={shockwaveUniforms}
-        />
-      ) : null}
       {/* No crawler and no miners: the whole staged tier costs the scene
           nothing at all — not an empty draw, not an idle hit mesh. */}
       {pickTargets.length > 0 ? (
