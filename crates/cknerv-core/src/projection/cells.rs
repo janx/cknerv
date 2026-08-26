@@ -382,8 +382,36 @@ pub enum CellDelta {
     Gc {
         ids: Vec<u64>,
     },
+    /// A block landed and the scene fires its wave.
+    ///
+    /// `producer_key` is the producer of the block that TRIGGERED this pulse,
+    /// carried by value rather than looked up when the wave is drawn. The
+    /// rolling producer tally lives on the `Chain` entity, which reaches a
+    /// client on a DIFFERENT stream with its own revision and its own flush;
+    /// reading the producer from there at pulse time is a race that would
+    /// attribute a wave to some other block's producer — mostly right,
+    /// occasionally not, and silent when it is wrong. Carrying the value on
+    /// the event that causes the effect is the fix, the same one the
+    /// metabolic pulse already makes for its ghost origin.
+    ///
+    /// Pulses are throttled ([`PULSE_THROTTLE_MS`]) and suppressed outright
+    /// during backfill, so this is deliberately NOT "the producer of every
+    /// block": it is the producer of the one block whose arrival opened the
+    /// throttle window. One pulse, one block's wave, one producer. Blocks
+    /// that land inside a closed window draw no wave and so name nobody
+    /// here — they still reach the `Chain` entity's window, which is where
+    /// a tally over every block belongs. A consumer wanting "who has been
+    /// mining lately" reads that; this answers only "who made the block you
+    /// are watching arrive".
+    ///
+    /// `None` is a first-class answer, never a synthesized key and never an
+    /// empty string standing in for absence: a simulator frame, a devnet
+    /// genesis, a witness that would not parse. Consumers fall back to their
+    /// own anonymous origin.
     Pulse {
         at_ms: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        producer_key: Option<String>,
     },
     /// Authoritative push of the cumulative on-chain counters. Emitted by
     /// any handler that changes `total_births` / `total_deaths` (real
@@ -1383,6 +1411,7 @@ impl CellGalaxy {
         hash: &str,
         _tx_count: u32,
         at_ms: u64,
+        producer_key: Option<&str>,
     ) -> Vec<CellDelta> {
         let mut deltas: Vec<CellDelta> = Vec::new();
         if self
@@ -1425,12 +1454,18 @@ impl CellGalaxy {
         }
 
         // Pulse throttle. Suppressed during backfill so the boot replay
-        // doesn't fire a shockwave per replayed block.
+        // doesn't fire a shockwave per replayed block. The producer rides
+        // along by value: this delta is the only place the wave's cause and
+        // the wave's origin are known together, and the block that opens the
+        // window is the block the wave is about (see `CellDelta::Pulse`).
         if self.backfill.is_none()
             && at_ms.saturating_sub(self.last_pulse_at_ms) >= PULSE_THROTTLE_MS
         {
             self.last_pulse_at_ms = at_ms;
-            deltas.push(CellDelta::Pulse { at_ms });
+            deltas.push(CellDelta::Pulse {
+                at_ms,
+                producer_key: producer_key.map(str::to_owned),
+            });
         }
 
         // Script census, on the same "live block, not replay" gate as the
@@ -1869,9 +1904,9 @@ impl Projection for CellGalaxy {
                 tx_count,
                 size: _,
                 at,
-                producer_key: _,
+                producer_key,
                 producer_message: _,
-            } => self.handle_block_mined(*number, hash, *tx_count, *at),
+            } => self.handle_block_mined(*number, hash, *tx_count, *at, producer_key.as_deref()),
             Mutation::ChainReorganized { from_block } => self.rollback_from(*from_block),
             Mutation::ChainRebuild { .. } => self.reset_for_rebuild(),
             Mutation::TxLanded {
@@ -2473,7 +2508,7 @@ mod tests {
         );
 
         // A block during backfill: no Pulse delta.
-        let blk = g.handle_block_mined(1, "0xh1", 1, 1_000);
+        let blk = g.handle_block_mined(1, "0xh1", 1, 1_000, None);
         assert!(
             !blk.iter().any(|d| matches!(d, CellDelta::Pulse { .. })),
             "Pulse deltas must be suppressed during backfill"
@@ -2491,11 +2526,75 @@ mod tests {
             tx2.iter().any(|d| matches!(d, CellDelta::Link { .. })),
             "Link continues post-backfill"
         );
-        let blk2 = g.handle_block_mined(2, "0xh2", 1, 5_000);
+        let blk2 = g.handle_block_mined(2, "0xh2", 1, 5_000, None);
         assert!(
             blk2.iter().any(|d| matches!(d, CellDelta::Pulse { .. })),
             "Pulse resumes post-backfill"
         );
+    }
+
+    /// The wave and the name of who caused it travel together. `Chain`'s
+    /// rolling window answers "who has been mining lately"; this answers
+    /// "who made the block you are watching arrive", and it has to ride the
+    /// event rather than be looked up beside it — the two reach a client on
+    /// different streams, so a lookup at draw time is a race whose wrong
+    /// answers are rare, plausible and silent.
+    #[test]
+    fn the_pulse_names_the_producer_of_the_block_that_fired_it() {
+        const KEY: &str = "0xfc20a8c81a461efaf91585c631db784749d066f709d30243095efda7a7fdcfd9";
+        let mut g = make_galaxy();
+        // Through `apply_mutation`, so the wire's own destructure is what is
+        // being pinned and not just the private handler under it.
+        let deltas = g.apply_mutation(&Mutation::BlockMined {
+            number: 1,
+            hash: "0xh1".into(),
+            tx_count: 1,
+            size: 0,
+            at: 1_000,
+            producer_key: Some(KEY.into()),
+            producer_message: Some("0.209.0 (7e31f75 2026-07-30)".into()),
+        });
+        assert_eq!(
+            pulse_producers(&deltas),
+            vec![Some(KEY.to_string())],
+            "the pulse carries the key of the block that fired it"
+        );
+    }
+
+    /// A block that names nobody is a first-class answer, not an error and
+    /// not a blank identity: consumers fall back to an anonymous origin on
+    /// absence, and `Some("")` would stage as a producer nobody has.
+    #[test]
+    fn a_block_that_names_nobody_pulses_with_nobody() {
+        let mut g = make_galaxy();
+        let deltas = g.apply_mutation(&mined(1, "0xh1", 1_000));
+        assert_eq!(pulse_producers(&deltas), vec![None]);
+    }
+
+    /// One pulse, one block's wave. The throttle drops the blocks that land
+    /// inside a closed window, and the key that survives belongs to the
+    /// block that opened the next one — never the newest block seen, never
+    /// the previous pulse's producer held over.
+    #[test]
+    fn a_throttled_block_takes_its_producer_with_it() {
+        let mut g = make_galaxy();
+        let opened = g.apply_mutation(&produced(1, "0xh1", 1_000, "0xaaa"));
+        assert_eq!(pulse_producers(&opened), vec![Some("0xaaa".to_string())]);
+
+        // Inside the window: no wave, so nothing claims this producer.
+        let swallowed =
+            g.apply_mutation(&produced(2, "0xh2", 1_000 + PULSE_THROTTLE_MS - 1, "0xbbb"));
+        assert!(
+            pulse_producers(&swallowed).is_empty(),
+            "a block inside the throttle window draws no wave"
+        );
+
+        // Past it: the block that opens the window is the one named, and an
+        // anonymous block clears the previous name rather than inheriting it.
+        let reopened = g.apply_mutation(&produced(3, "0xh3", 2_000, "0xccc"));
+        assert_eq!(pulse_producers(&reopened), vec![Some("0xccc".to_string())]);
+        let anonymous = g.apply_mutation(&mined(4, "0xh4", 3_000));
+        assert_eq!(pulse_producers(&anonymous), vec![None]);
     }
 
     #[test]
@@ -3250,13 +3349,13 @@ mod tests {
     #[test]
     fn reorg_rolls_back_orphaned_births_and_restores_spent_inputs() {
         let mut g = make_galaxy();
-        g.handle_block_mined(1, "0xaaa", 1, 1_000);
+        g.handle_block_mined(1, "0xaaa", 1, 1_000, None);
         g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
         let base = op("0xbase", 0);
         assert_eq!(g.cells.len(), 1);
         assert!(g.cells[0].death_at_ms.is_none());
 
-        g.handle_block_mined(2, "0xbbb", 1, 1_100);
+        g.handle_block_mined(2, "0xbbb", 1, 1_100, None);
         g.handle_tx_landed(
             "0xorphan",
             2,
@@ -3274,7 +3373,7 @@ mod tests {
             .iter()
             .any(|c| c.out_point.tx_hash == "0xorphan" && c.death_at_ms.is_none()));
 
-        let deltas = g.handle_block_mined(2, "0xccc", 1, 1_200);
+        let deltas = g.handle_block_mined(2, "0xccc", 1, 1_200, None);
         assert_eq!(g.cells.len(), 1);
         assert_eq!(g.cells[0].out_point, base);
         assert!(g.cells[0].death_at_ms.is_none());
@@ -3307,10 +3406,10 @@ mod tests {
     /// at height 1.
     fn galaxy_with_a_same_block_mint_and_burn() -> (CellGalaxy, OutPoint, u64) {
         let mut g = make_galaxy();
-        g.handle_block_mined(1, "0xaaa", 1, 1_000);
+        g.handle_block_mined(1, "0xaaa", 1, 1_000, None);
         g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
 
-        g.handle_block_mined(2, "0xbbb", 2, 2_000);
+        g.handle_block_mined(2, "0xbbb", 2, 2_000, None);
         g.handle_tx_landed("0xmint", 2, 2_000, &[], &[out(200, "0xdd")]);
         let minted = op("0xmint", 0);
         let minted_id = g.outpoint_index[&minted];
@@ -3335,7 +3434,7 @@ mod tests {
         let (mut g, minted, minted_id) = galaxy_with_a_same_block_mint_and_burn();
 
         // Same-height replacement block: the whole of height 2 unwinds.
-        let rollback = g.handle_block_mined(2, "0xccc", 0, 3_000);
+        let rollback = g.handle_block_mined(2, "0xccc", 0, 3_000, None);
 
         // The identity leaves the canonical container entirely — it belongs
         // to a block that never happened.
@@ -3400,7 +3499,7 @@ mod tests {
     #[test]
     fn a_replacement_re_including_a_same_block_mint_revives_it_once() {
         let (mut g, minted, minted_id) = galaxy_with_a_same_block_mint_and_burn();
-        g.handle_block_mined(2, "0xccc", 2, 3_000);
+        g.handle_block_mined(2, "0xccc", 2, 3_000, None);
         let next_id_before = g.next_id;
 
         // The replacement re-includes the mint: the parked identity revives in
@@ -3447,9 +3546,9 @@ mod tests {
     #[test]
     fn explicit_chain_reorganized_rolls_back_before_replacement_arrives() {
         let mut g = make_galaxy();
-        g.handle_block_mined(1, "0xaaa", 1, 1_000);
+        g.handle_block_mined(1, "0xaaa", 1, 1_000, None);
         g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
-        g.handle_block_mined(2, "0xbbb", 1, 1_100);
+        g.handle_block_mined(2, "0xbbb", 1, 1_100, None);
         g.handle_tx_landed("0xorphan", 2, 1_100, &[op("0xbase", 0)], &[out(200, "0x")]);
 
         let deltas = g.apply_mutation(&Mutation::ChainReorganized { from_block: 2 });
@@ -3471,9 +3570,9 @@ mod tests {
     #[test]
     fn reorg_replay_revives_identity_for_a_re_included_outpoint() {
         let mut g = make_galaxy();
-        g.handle_block_mined(1, "0xaaa", 1, 1_000);
+        g.handle_block_mined(1, "0xaaa", 1, 1_000, None);
         g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
-        g.handle_block_mined(2, "0xbbb", 1, 2_000);
+        g.handle_block_mined(2, "0xbbb", 1, 2_000, None);
         g.handle_tx_landed("0xtx", 2, 2_000, &[], &[out(200, "0xdd")]);
         let original = g
             .cells
@@ -3485,7 +3584,7 @@ mod tests {
         assert_eq!(g.total_births, 2);
 
         // Same-height replacement block: the rollback parks the birth…
-        let rollback = g.handle_block_mined(2, "0xccc", 1, 3_000);
+        let rollback = g.handle_block_mined(2, "0xccc", 1, 3_000, None);
         assert!(
             !rollback.iter().any(|d| matches!(d, CellDelta::Gc { .. })),
             "rollback must defer the orphan-birth GC; got {rollback:?}"
@@ -3518,9 +3617,9 @@ mod tests {
     #[test]
     fn enveloped_reorg_replay_revives_identity_when_the_tx_moves_heights() {
         let mut g = make_galaxy();
-        g.handle_block_mined(1, "0xaaa", 1, 1_000);
+        g.handle_block_mined(1, "0xaaa", 1, 1_000, None);
         g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
-        g.handle_block_mined(2, "0xbbb", 1, 2_000);
+        g.handle_block_mined(2, "0xbbb", 1, 2_000, None);
         g.handle_tx_landed("0xtx", 2, 2_000, &[], &[out(200, "0xdd")]);
         let original_id = g
             .cells
@@ -3539,8 +3638,8 @@ mod tests {
         // Replacement chain: empty block at 2, the tx re-included at 3. The
         // enveloped replay must NOT trip the live-block backstop while
         // heights beyond the old tip stream in.
-        g.handle_block_mined(2, "0xccc", 0, 3_000);
-        let mined = g.handle_block_mined(3, "0xddd", 1, 3_100);
+        g.handle_block_mined(2, "0xccc", 0, 3_000, None);
+        let mined = g.handle_block_mined(3, "0xddd", 1, 3_100, None);
         assert!(
             !mined.iter().any(|d| matches!(d, CellDelta::Gc { .. })),
             "enveloped replay must not settle at a live-looking block"
@@ -3573,9 +3672,9 @@ mod tests {
     #[test]
     fn unreplayed_orphan_birth_gc_defers_to_the_replay_terminal() {
         let mut g = make_galaxy();
-        g.handle_block_mined(1, "0xaaa", 1, 1_000);
+        g.handle_block_mined(1, "0xaaa", 1, 1_000, None);
         g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
-        g.handle_block_mined(2, "0xbbb", 1, 2_000);
+        g.handle_block_mined(2, "0xbbb", 1, 2_000, None);
         g.handle_tx_landed("0xorphan", 2, 2_000, &[], &[out(200, "0xdd")]);
         let orphan_id = g
             .cells
@@ -3592,7 +3691,7 @@ mod tests {
             phase: ReplayPhase::Reorg,
         });
         // Replacement block does not re-include the orphan tx.
-        g.handle_block_mined(2, "0xccc", 0, 3_000);
+        g.handle_block_mined(2, "0xccc", 0, 3_000, None);
         let terminal = g.apply_mutation(&Mutation::BackfillProgress {
             done: 1,
             total: 1,
@@ -3613,9 +3712,9 @@ mod tests {
     #[test]
     fn incomplete_replay_terminal_keeps_parked_identities_for_the_retry() {
         let mut g = make_galaxy();
-        g.handle_block_mined(1, "0xaaa", 1, 1_000);
+        g.handle_block_mined(1, "0xaaa", 1, 1_000, None);
         g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
-        g.handle_block_mined(2, "0xbbb", 1, 2_000);
+        g.handle_block_mined(2, "0xbbb", 1, 2_000, None);
         g.handle_tx_landed("0xtx", 2, 2_000, &[], &[out(200, "0xdd")]);
 
         g.apply_mutation(&Mutation::ChainReorganized { from_block: 2 });
@@ -3641,23 +3740,23 @@ mod tests {
     #[test]
     fn implicit_replacement_settles_leftover_limbo_at_the_next_live_block() {
         let mut g = make_galaxy();
-        g.handle_block_mined(1, "0xaaa", 1, 1_000);
+        g.handle_block_mined(1, "0xaaa", 1, 1_000, None);
         g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
-        g.handle_block_mined(2, "0xbbb", 2, 2_000);
+        g.handle_block_mined(2, "0xbbb", 2, 2_000, None);
         g.handle_tx_landed("0xta", 2, 2_000, &[], &[out(200, "0xdd")]);
         g.handle_tx_landed("0xtb", 2, 2_100, &[], &[out(300, "0xee")]);
         let id_a = g.outpoint_index[&op("0xta", 0)];
         let id_b = g.outpoint_index[&op("0xtb", 0)];
 
         // Same-height replacement (no envelope): parks both, replays only A.
-        g.handle_block_mined(2, "0xccc", 1, 3_000);
+        g.handle_block_mined(2, "0xccc", 1, 3_000, None);
         let replay = g.handle_tx_landed("0xta", 2, 3_000, &[], &[out(200, "0xdd")]);
         assert!(replay
             .iter()
             .any(|d| matches!(d, CellDelta::Birth { cell } if cell.id == id_a)));
 
         // The first live block beyond the old tip retires the leftover.
-        let mined = g.handle_block_mined(3, "0xddd", 0, 4_000);
+        let mined = g.handle_block_mined(3, "0xddd", 0, 4_000, None);
         assert!(
             mined
                 .iter()
@@ -3673,18 +3772,18 @@ mod tests {
     #[test]
     fn a_second_rollback_reparks_revived_identities_without_duplication() {
         let mut g = make_galaxy();
-        g.handle_block_mined(1, "0xaaa", 1, 1_000);
+        g.handle_block_mined(1, "0xaaa", 1, 1_000, None);
         g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
-        g.handle_block_mined(2, "0xbbb", 1, 2_000);
+        g.handle_block_mined(2, "0xbbb", 1, 2_000, None);
         g.handle_tx_landed("0xtx", 2, 2_000, &[], &[out(200, "0xdd")]);
         let id = g.outpoint_index[&op("0xtx", 0)];
 
-        g.handle_block_mined(2, "0xccc", 1, 3_000);
+        g.handle_block_mined(2, "0xccc", 1, 3_000, None);
         g.handle_tx_landed("0xtx", 2, 3_000, &[], &[out(200, "0xdd")]);
 
         // The revived birth was re-journaled, so a second replacement at the
         // same height parks the same identity again — exactly once.
-        g.handle_block_mined(2, "0xddd", 1, 4_000);
+        g.handle_block_mined(2, "0xddd", 1, 4_000, None);
         assert_eq!(g.reorg_limbo.len(), 1);
         assert_eq!(g.reorg_limbo[&op("0xtx", 0)].id, id);
         assert!(g.cells.iter().all(|c| c.id != id));
@@ -3693,7 +3792,7 @@ mod tests {
         assert!(replay
             .iter()
             .any(|d| matches!(d, CellDelta::Birth { cell } if cell.id == id)));
-        let settled = g.handle_block_mined(3, "0xeee", 0, 5_000);
+        let settled = g.handle_block_mined(3, "0xeee", 0, 5_000, None);
         assert!(
             !settled.iter().any(|d| matches!(d, CellDelta::Gc { .. })),
             "everything revived — nothing left to retire"
@@ -3704,12 +3803,12 @@ mod tests {
     #[test]
     fn limbo_content_mismatch_fails_open_to_a_fresh_identity() {
         let mut g = make_galaxy();
-        g.handle_block_mined(1, "0xaaa", 1, 1_000);
+        g.handle_block_mined(1, "0xaaa", 1, 1_000, None);
         g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
-        g.handle_block_mined(2, "0xbbb", 1, 2_000);
+        g.handle_block_mined(2, "0xbbb", 1, 2_000, None);
         g.handle_tx_landed("0xtx", 2, 2_000, &[], &[out(200, "0xdd")]);
         let old_id = g.outpoint_index[&op("0xtx", 0)];
-        g.handle_block_mined(2, "0xccc", 1, 3_000);
+        g.handle_block_mined(2, "0xccc", 1, 3_000, None);
         let fresh_id = g.next_id;
 
         // Impossible on a real chain (tx_hash covers output content); a
@@ -3727,9 +3826,9 @@ mod tests {
     #[test]
     fn reset_for_rebuild_retires_parked_identities() {
         let mut g = make_galaxy();
-        g.handle_block_mined(1, "0xaaa", 1, 1_000);
+        g.handle_block_mined(1, "0xaaa", 1, 1_000, None);
         g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
-        g.handle_block_mined(2, "0xbbb", 1, 2_000);
+        g.handle_block_mined(2, "0xbbb", 1, 2_000, None);
         g.handle_tx_landed("0xorphan", 2, 2_000, &[], &[out(200, "0xdd")]);
         let orphan_id = g.outpoint_index[&op("0xorphan", 0)];
         g.apply_mutation(&Mutation::ChainReorganized { from_block: 2 });
@@ -3754,9 +3853,9 @@ mod tests {
     #[test]
     fn parked_identities_do_not_persist() {
         let mut g = make_galaxy();
-        g.handle_block_mined(1, "0xaaa", 1, 1_000);
+        g.handle_block_mined(1, "0xaaa", 1, 1_000, None);
         g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
-        g.handle_block_mined(2, "0xbbb", 1, 2_000);
+        g.handle_block_mined(2, "0xbbb", 1, 2_000, None);
         g.handle_tx_landed("0xtx", 2, 2_000, &[], &[out(200, "0xdd")]);
         g.apply_mutation(&Mutation::ChainReorganized { from_block: 2 });
         assert!(!g.reorg_limbo.is_empty());
@@ -3785,7 +3884,7 @@ mod tests {
         // adds is that the O(1) death and tag lookups still land on the
         // cell the old linear scans landed on once slots have shifted.
         let mut g = make_galaxy();
-        g.handle_block_mined(1, "0xb1", 1, 1_000);
+        g.handle_block_mined(1, "0xb1", 1, 1_000, None);
         g.handle_tx_landed(
             "0xgen",
             1,
@@ -3801,7 +3900,7 @@ mod tests {
         let gen_ids: Vec<u64> = (0..4).map(|i| g.outpoint_index[&op("0xgen", i)]).collect();
 
         // Deaths mark in place: no compaction, every slot stays put.
-        g.handle_block_mined(2, "0xb2", 1, 2_000);
+        g.handle_block_mined(2, "0xb2", 1, 2_000, None);
         g.handle_tx_landed(
             "0xspend",
             2,
@@ -3816,7 +3915,7 @@ mod tests {
 
         // Retain compaction: both corpses fall past the hold, so every
         // surviving slot shifts down by two.
-        g.handle_block_mined(3, "0xb3", 0, 2_000 + CORPSE_HOLD_MS + 1);
+        g.handle_block_mined(3, "0xb3", 0, 2_000 + CORPSE_HOLD_MS + 1, None);
         assert_eq!(
             g.cells.iter().map(|c| c.id).collect::<Vec<_>>(),
             vec![gen_ids[2], gen_ids[3], spend_ids[0], spend_ids[1]]
@@ -3839,7 +3938,7 @@ mod tests {
         // Replacement at height 2: parks both spend births (mid-vec
         // removes, tail repair) and resurrects the two gc'd corpses —
         // appends, since their old slots are long gone.
-        g.handle_block_mined(2, "0xb2prime", 1, 2_000 + CORPSE_HOLD_MS + 1_001);
+        g.handle_block_mined(2, "0xb2prime", 1, 2_000 + CORPSE_HOLD_MS + 1_001, None);
         assert_eq!(g.reorg_limbo.len(), 2);
         assert_eq!(
             g.cells.iter().map(|c| c.id).collect::<Vec<_>>(),
@@ -3910,7 +4009,7 @@ mod tests {
             reorg_window_blocks: 10,
         });
         for block in 1..=4 {
-            source.handle_block_mined(block, &format!("0xblock{block}"), 1, block * 1_000);
+            source.handle_block_mined(block, &format!("0xblock{block}"), 1, block * 1_000, None);
             let inputs = if block == 1 {
                 Vec::new()
             } else {
@@ -3958,9 +4057,9 @@ mod tests {
             recent_links_cap: DEFAULT_RECENT_LINKS_CAP,
             reorg_window_blocks: 2,
         });
-        g.handle_block_mined(1, "0xblock1", 1, 1_000);
+        g.handle_block_mined(1, "0xblock1", 1, 1_000, None);
         g.handle_tx_landed("0xtx1", 1, 1_000, &[], &[out(100, "0x")]);
-        g.handle_block_mined(2, "0xblock2", 1, 2_000);
+        g.handle_block_mined(2, "0xblock2", 1, 2_000, None);
         g.handle_tx_landed("0xtx2", 2, 2_000, &[], &[out(100, "0x")]);
         let next_id = g.next_id;
 
@@ -4004,7 +4103,7 @@ mod tests {
             reorg_window_blocks: 2,
         });
         for block in 1..=4 {
-            g.handle_block_mined(block, &format!("0xblock{block}"), 1, block * 1_000);
+            g.handle_block_mined(block, &format!("0xblock{block}"), 1, block * 1_000, None);
             g.handle_tx_landed(
                 &format!("0xtx{block}"),
                 block,
@@ -4032,13 +4131,13 @@ mod tests {
             recent_links_cap: 0,
             reorg_window_blocks: DEFAULT_REORG_WINDOW_BLOCKS,
         });
-        g.handle_block_mined(1, "0xaaa", 1, 1_000);
+        g.handle_block_mined(1, "0xaaa", 1, 1_000, None);
         g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
-        g.handle_block_mined(2, "0xbbb", 1, 1_100);
+        g.handle_block_mined(2, "0xbbb", 1, 1_100, None);
         g.handle_tx_landed("0xorphan", 2, 1_100, &[op("0xbase", 0)], &[out(100, "0x")]);
         assert!(g.recent_links.is_empty());
 
-        let deltas = g.handle_block_mined(2, "0xccc", 1, 1_200);
+        let deltas = g.handle_block_mined(2, "0xccc", 1, 1_200, None);
         assert!(matches!(
             deltas.first(),
             Some(CellDelta::LinkPrune { from_block: 2 })
@@ -4113,7 +4212,7 @@ mod tests {
         // Fire a block to trigger enforce_cap. It will mark 5 generic cells
         // dead and emit Death deltas, but those must NOT be counted as real
         // chain deaths.
-        let deltas = g.handle_block_mined(2, "0xbbb", 1, 1_100);
+        let deltas = g.handle_block_mined(2, "0xbbb", 1, 1_100, None);
         let evicted = deltas
             .iter()
             .filter(|d| matches!(d, CellDelta::Death { .. }))
@@ -4127,11 +4226,11 @@ mod tests {
     #[test]
     fn reorg_undoes_counter_increments() {
         let mut g = make_galaxy();
-        g.handle_block_mined(1, "0xaaa", 1, 1_000);
+        g.handle_block_mined(1, "0xaaa", 1, 1_000, None);
         g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
         let base = op("0xbase", 0);
 
-        g.handle_block_mined(2, "0xbbb", 1, 1_100);
+        g.handle_block_mined(2, "0xbbb", 1, 1_100, None);
         g.handle_tx_landed(
             "0xorphan",
             2,
@@ -4145,7 +4244,7 @@ mod tests {
 
         // Reorg replaces block 2: orphan's birth is undone, base's death is
         // undone. Counters return to (1, 0).
-        let deltas = g.handle_block_mined(2, "0xccc", 1, 1_200);
+        let deltas = g.handle_block_mined(2, "0xccc", 1, 1_200, None);
         assert_eq!(g.total_births, 1);
         assert_eq!(g.total_deaths, 0);
         assert!(deltas.iter().any(|d| matches!(
@@ -4366,6 +4465,32 @@ mod tests {
             producer_key: None,
             producer_message: None,
         }
+    }
+
+    /// `mined`, but the block names its producer.
+    fn produced(number: u64, hash: &str, at: u64, producer_key: &str) -> Mutation {
+        Mutation::BlockMined {
+            number,
+            hash: hash.into(),
+            tx_count: 1,
+            size: 0,
+            at,
+            producer_key: Some(producer_key.to_string()),
+            producer_message: Some(String::new()),
+        }
+    }
+
+    /// The producer of every pulse in a batch, in order. An empty vec means
+    /// the batch drew no wave at all, which is a different statement from a
+    /// wave that named nobody.
+    fn pulse_producers(deltas: &[CellDelta]) -> Vec<Option<String>> {
+        deltas
+            .iter()
+            .filter_map(|d| match d {
+                CellDelta::Pulse { producer_key, .. } => Some(producer_key.clone()),
+                _ => None,
+            })
+            .collect()
     }
 
     fn landed(

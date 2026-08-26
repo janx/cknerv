@@ -178,7 +178,12 @@
   },
   "pulse": {
     "type": "pulse",
-    "at_ms": 1700000006000
+    "at_ms": 1700000006000,
+    "producer_key": "0xfc20a8c81a461efaf91585c631db784749d066f709d30243095efda7a7fdcfd9"
+  },
+  "pulse_anonymous": {
+    "type": "pulse",
+    "at_ms": 1700000007000
   },
   "script_census": {
     "type": "script_census",

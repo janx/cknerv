@@ -122,9 +122,22 @@ describe('cell delta fixtures drive the real cells reducer', () => {
     expect([...next.cellChanges.removed].sort()).toEqual([...gc.ids].sort());
   });
 
-  it('pulse lands the block stamp', () => {
+  it('pulse lands the block stamp and the producer that caused it', () => {
     const pulse = sample('pulse', 'pulse');
-    expect(applyCellDelta(emptyCellsCache(), pulse).lastPulseAtMs).toBe(pulse.at_ms);
+    const next = applyCellDelta(emptyCellsCache(), pulse);
+    expect(next.lastPulseAtMs).toBe(pulse.at_ms);
+    expect(next.lastPulseProducerKey).toBe(pulse.producer_key);
+  });
+
+  it('an anonymous pulse lands the stamp and no producer', () => {
+    const pulse = sample('pulse_anonymous', 'pulse');
+    // The server omits the key entirely rather than blanking it, and the
+    // reducer has to read that absence as absence.
+    expect('producer_key' in pulse).toBe(false);
+    const seeded = applyCellDelta(emptyCellsCache(), sample('pulse', 'pulse'));
+    const next = applyCellDelta(seeded, pulse);
+    expect(next.lastPulseAtMs).toBe(pulse.at_ms);
+    expect(next.lastPulseProducerKey).toBeNull();
   });
 
   it('stats overwrite the cumulative counters', () => {

@@ -201,6 +201,22 @@ export interface CellGalaxyCache {
    * metadata; this is not part of the Rust/TypeScript wire contract. */
   cellChanges: CellChangeSet;
   lastPulseAtMs: number;
+  /** Producer of the block that fired the pulse at `lastPulseAtMs`, or null
+   *  when that block named nobody.
+   *
+   *  It rides the pulse delta rather than being read off the chain cache at
+   *  draw time: the chain entity arrives on a different stream with its own
+   *  revision and its own flush, so a lookup would attribute a wave to
+   *  whichever producer happened to be current — mostly the right one, and
+   *  silent when it is not.
+   *
+   *  Moves in lockstep with `lastPulseAtMs` and only there. A pulse whose
+   *  block named nobody CLEARS it; the previous producer is never held over,
+   *  because a wave with no name is a wave with no name and not the last one
+   *  repeated. A snapshot clears it too — the snapshot carries when the
+   *  server last pulsed, never who caused it, and inventing a name from the
+   *  wave before the reload is the exact lie this field exists to avoid. */
+  lastPulseProducerKey: string | null;
   /** Authoritative recent causal evidence used by inspection, identity, and
    *  memory recall. Snapshot history hydrates this FIFO in full up to the
    *  configured evidence capacity. */
@@ -308,6 +324,7 @@ export function emptyCellsCache(): CellGalaxyCache {
     cellsToken: {},
     cellChanges: RESET_CELL_CHANGES,
     lastPulseAtMs: 0,
+    lastPulseProducerKey: null,
     recentLinks: [],
     pulseLinks: [],
     linksSeq: 0,
@@ -476,6 +493,10 @@ export function fromCellsSnapshot(
     cellsToken: {},
     cellChanges: RESET_CELL_CHANGES,
     lastPulseAtMs: snap.last_pulse_at_ms,
+    // The snapshot says WHEN the server last pulsed and never who caused it,
+    // and a resync must not carry the previous stream's producer across a
+    // pulse stamp that belongs to a different block.
+    lastPulseProducerKey: null,
     recentLinks,
     pulseLinks: [],
     linksSeq: recentLinks.length,
@@ -913,6 +934,9 @@ function mutateCellDelta(
     }
     case 'pulse': {
       c.lastPulseAtMs = d.at_ms;
+      // Absent means the block named nobody — a first-class answer that
+      // clears the previous name rather than inheriting it.
+      c.lastPulseProducerKey = d.producer_key ?? null;
       return true;
     }
     case 'stats': {

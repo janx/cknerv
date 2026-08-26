@@ -179,6 +179,16 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(census.census.locks[0].script).toEqual(birth.cell.lock_script);
     expect(census.census.locks_tail_scripts).toBe(1);
     expect(census.census.unidentified).toBe(1);
+    // The block wave's cause, carried on the event that makes the wave. The
+    // anonymous twin must be missing the key OUTRIGHT: a blank string would
+    // reach the client as a producer nobody has, where absence reaches it as
+    // the anonymous origin it is.
+    const pulse = samples.pulse as Extract<CellDelta, { type: 'pulse' }>;
+    expect(pulse.producer_key).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(samples.pulse_anonymous).toEqual({
+      type: 'pulse',
+      at_ms: 1_700_000_007_000,
+    });
     // Durable causal geometry: the anchors, not the live cells, are what a
     // client routes on once the inputs have left its retained window.
     const link = samples.link as Extract<CellDelta, { type: 'link' }>;

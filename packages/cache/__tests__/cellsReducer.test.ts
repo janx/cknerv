@@ -161,6 +161,36 @@ describe('applyCellDelta', () => {
     expect(c.lastPulseAtMs).toBe(12345);
   });
 
+  it('pulse retains the producer of the block that fired it', () => {
+    const key = '0xfc20a8c81a461efaf91585c631db784749d066f709d30243095efda7a7fdcfd9';
+    const c = applyCellDelta(emptyCellsCache(), {
+      type: 'pulse',
+      at_ms: 12345,
+      producer_key: key,
+    });
+    expect(c.lastPulseAtMs).toBe(12345);
+    expect(c.lastPulseProducerKey).toBe(key);
+  });
+
+  it('a pulse whose block named nobody clears the previous producer', () => {
+    const named = applyCellDelta(emptyCellsCache(), {
+      type: 'pulse',
+      at_ms: 1000,
+      producer_key: '0xaaa',
+    });
+    // Absent, not empty: an anonymous block is a first-class answer and the
+    // name of the block before it is not an answer at all.
+    const anonymous = applyCellDelta(named, { type: 'pulse', at_ms: 2000 });
+    expect(anonymous.lastPulseProducerKey).toBeNull();
+    // A wire that spelled absence as null gets the same reading.
+    const explicitNull = applyCellDelta(named, {
+      type: 'pulse',
+      at_ms: 3000,
+      producer_key: null,
+    });
+    expect(explicitNull.lastPulseProducerKey).toBeNull();
+  });
+
   it('stats overwrites total_births / total_deaths', () => {
     const c = applyCellDelta(emptyCellsCache(), {
       type: 'stats',
@@ -799,6 +829,7 @@ describe('fromCellsSnapshot', () => {
     expect(c.pulseLinks).toEqual([]);
     expect(c.linksSeq).toBe(1);
     expect(c.lastPulseAtMs).toBe(1234);
+    expect(c.lastPulseProducerKey).toBeNull();
     expect(c.cellChanges).toMatchObject({
       reset: true,
       born: [],
@@ -806,6 +837,26 @@ describe('fromCellsSnapshot', () => {
       evicted: [],
       updated: [],
     });
+  });
+
+  it('a resync snapshot drops the producer of the wave before it', () => {
+    const pulsed = applyCellDelta(emptyCellsCache(), {
+      type: 'pulse',
+      at_ms: 1000,
+      producer_key: '0xaaa',
+    });
+    expect(pulsed.lastPulseProducerKey).toBe('0xaaa');
+    // The snapshot stamps a LATER pulse than the one 0xaaa fired, and says
+    // nothing about who fired it. Carrying the old name across that stamp
+    // would hand a different block's wave to a producer that never made it.
+    const resynced = fromCellsSnapshot(
+      9,
+      { cells: [], last_pulse_at_ms: 5000 },
+      {},
+      pulsed,
+    );
+    expect(resynced.lastPulseAtMs).toBe(5000);
+    expect(resynced.lastPulseProducerKey).toBeNull();
   });
 
   it('hydrates the evidence window without replaying snapshot links as pulses', () => {

@@ -273,7 +273,10 @@ fn sample_type_script() -> ScriptId {
 /// One realistic sample per `CellDelta` variant, keyed by fixture name.
 /// `display` appears twice because its two shapes — a composed patch with
 /// resident payloads and the everyday id-only swap whose `provenance: None`
-/// must vanish from the wire — are separately load-bearing.
+/// must vanish from the wire — are separately load-bearing. `pulse` appears
+/// twice for the same reason: a wave that names its producer and a wave that
+/// names nobody drive different code on the client, and the anonymous one is
+/// the case a synthesized key would quietly replace.
 fn cell_delta_samples() -> BTreeMap<&'static str, CellDelta> {
     let mut samples: BTreeMap<&'static str, CellDelta> = BTreeMap::new();
     samples.insert(
@@ -297,10 +300,25 @@ fn cell_delta_samples() -> BTreeMap<&'static str, CellDelta> {
         },
     );
     samples.insert("gc", CellDelta::Gc { ids: vec![7, 8] });
+    // A real mainnet producer key: the `ckb-default-hash` of the packed
+    // `CellbaseWitness.lock` of block 20,259,445.
     samples.insert(
         "pulse",
         CellDelta::Pulse {
             at_ms: 1_700_000_006_000,
+            producer_key: Some(
+                "0xfc20a8c81a461efaf91585c631db784749d066f709d30243095efda7a7fdcfd9".to_string(),
+            ),
+        },
+    );
+    // The block that names nobody. The key has to be ABSENT from the wire,
+    // not an empty string: downstream falls back to an anonymous origin on
+    // absence, and a blank key would stage as an identity nobody has.
+    samples.insert(
+        "pulse_anonymous",
+        CellDelta::Pulse {
+            at_ms: 1_700_000_007_000,
+            producer_key: None,
         },
     );
     samples.insert(

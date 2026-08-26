@@ -284,7 +284,25 @@ export type CellDelta =
   | { type: 'death'; id: number; at_ms: number }
   | { type: 'tag'; id: number; tag: CellTag }
   | { type: 'gc'; ids: number[] }
-  | { type: 'pulse'; at_ms: number }
+  /** A block landed and the scene fires its wave.
+   *
+   *  `producer_key` is the producer of the block that TRIGGERED this pulse,
+   *  carried on the event rather than looked up beside it. The rolling
+   *  producer window lives on the `Chain` entity, which arrives on a
+   *  DIFFERENT stream with its own revision and its own flush; reading the
+   *  producer from there when the wave is drawn is a race whose wrong
+   *  answers are rare, plausible and silent.
+   *
+   *  Pulses are throttled server-side and suppressed during backfill, so
+   *  this is not "the producer of every block" — it is the producer of the
+   *  one block whose arrival opened the throttle window. One pulse, one
+   *  block's wave, one producer. The tally over every block belongs to the
+   *  `Chain` entity's window, not here.
+   *
+   *  Absent when the block names nobody, which is a first-class answer:
+   *  never a synthesized key, never an empty string standing in for
+   *  absence. Consumers fall back to their own anonymous origin. */
+  | { type: 'pulse'; at_ms: number; producer_key?: string | null }
   | { type: 'stats'; total_births: number; total_deaths: number }
   /** Refreshed script census over the whole retained set. Its own delta
    *  because it runs at block cadence, not per transaction, and because the

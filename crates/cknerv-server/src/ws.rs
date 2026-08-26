@@ -495,6 +495,7 @@ mod tests {
         fn apply_mutation(&mut self, _m: &Mutation) -> Vec<CellDelta> {
             vec![CellDelta::Pulse {
                 at_ms: 1_700_000_006_000,
+                producer_key: None,
             }]
         }
     }
