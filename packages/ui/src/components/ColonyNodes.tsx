@@ -8,7 +8,7 @@
 //     instead of a white speck the eye reads as a node. Non-selectable.
 //   • attested nodes    — NOT DRAWN HERE. A node the CHAIN proves exists and
 //     cannot name wears a black hole, and `ColonyAccretion` draws it: a dark
-//     event horizon, a swirling accretion rim, and motes falling in out of the
+//     gravity depression, a swirling accretion rim, and gas flowing in from the
 //     surrounding void. It had a <points> stop of its own until that mark
 //     arrived, and an additive sprite is brightest at its own centre — exactly
 //     the pixel a shadow needs empty — so the stop was subsumed rather than
@@ -294,11 +294,11 @@ export function partitionByKind(
  *  This radius once made the producer the smallest target in the colony — 0.375
  *  world units, under the faintest roster rung's 0.425 — and a full-canvas
  *  13-pixel hover sweep of the running app found forty peers and zero miners.
- *  The mark is an accreting void now, so the target is its disc: 1.28 world
- *  units, ~7.3 CSS px of radius at the default camera. It covers the whole
- *  0.72-world-unit event horizon, so aiming at the aperture hits it too, and
- *  there is exactly ONE number — no annulus, no second radius, nothing to keep
- *  in step. */
+ *  The mark is an accreting void now, so the target is its disc: 1.15 world
+ *  units, ~6.6 CSS px of radius at the default camera. It covers the whole
+ *  0.56-world-unit gravity depression, so aiming at the aperture hits it too,
+ *  and there is exactly ONE number — no annulus, no second radius, nothing to
+ *  keep in step. */
 export const ATTESTED_HIT_RADIUS = COHORT_HIT_RADIUS;
 
 /** One clickable staged node: where it stands, how big its mark is, and what

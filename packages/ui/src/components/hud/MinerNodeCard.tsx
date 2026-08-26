@@ -96,9 +96,10 @@ const CARD_WIDTH_PX = 340;
 /** The tint the cohort's own mark is drawn in, in hex.
  *
  *  `makeColonyAccretionMaterial` uses `PEER_NETWORK_PALETTE.scaffold` for the
- *  disc, motes, filaments and peer-profile halo, with the palette's existing
- *  `coldWhite` mixed into the photon crest and lensed caps. The aperture itself
- *  removes light instead of introducing a competing identity hue.
+ *  disc, continuous gas and peer-profile halo, with the palette's existing
+ *  `coldWhite` mixed into the photon crest and lensed caps. The gravity
+ *  depression itself removes light instead of introducing a competing identity
+ *  hue.
  *
  *  It is the SIGHTED card's accent too, and deliberately: a cohort is a member
  *  of the peer mesh rather than a species beside it, so the whole colony is one

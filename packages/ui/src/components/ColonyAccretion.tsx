@@ -1,8 +1,8 @@
 // ColonyAccretion — what a POW cohort looks like: an accreting void.
 //
-// A true light-removing event horizon sits under a cyan-white photon ring,
-// peer-profile halo, lensed accretion disc, and matter streaks drawn out of the
-// surrounding void.
+// A soft light-removing gravity depression sits under a cyan-white photon ring,
+// peer-profile halo, lensed accretion disc, and continuous gas drawn inward
+// from the surrounding void.
 // It runs continuously for as long as the payout identity is in the recent
 // window. On the block it wins, the colony's own outward surge already erupts
 // from that node, so nothing here fires and nothing here reads the pulse.
@@ -121,9 +121,9 @@ const SCRATCH_MATRIX = new THREE.Matrix4();
 /**
  * Every cohort's accreting void, in two instanced draws.
  *
- * The compact normal-blended pass makes the event horizon able to eclipse the
- * mesh behind it; the larger additive pass supplies the photon ring, disc,
- * lensing arcs, filaments and infall. Both are camera-facing and rebuilt in the
+ * The compact normal-blended pass makes the gravity depression able to soften
+ * the mesh behind it; the larger additive pass supplies the photon ring, disc,
+ * lensing arcs and gaseous infall. Both are camera-facing and rebuilt in the
  * vertex shader, so per-frame CPU work remains a handful of uniform writes.
  */
 export default function ColonyAccretion({
@@ -245,7 +245,7 @@ export default function ColonyAccretion({
     accretionMaterial.uniforms.uTime.value = simClock.elapsedSec;
     accretionMaterial.uniforms.uContextEnergy.value = contextEnergy;
     accretionMaterial.uniforms.uRimAmp.value = LIVE.peer.holeRim;
-    accretionMaterial.uniforms.uMoteAmp.value = LIVE.peer.holeMotes;
+    accretionMaterial.uniforms.uGasAmp.value = LIVE.peer.holeGas;
     accretionMaterial.uniforms.uInfall.value = LIVE.peer.holeInfall;
     accretionMaterial.uniforms.uSwirl.value = LIVE.peer.holeSwirl;
     accretionMaterial.uniforms.uSpin.value = LIVE.peer.holeSpin;

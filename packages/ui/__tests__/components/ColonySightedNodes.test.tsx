@@ -34,12 +34,12 @@ import {
   COHORT_BREATHE_DEPTH,
   COHORT_BREATHE_HZ,
   COHORT_DISC_FLATTEN,
+  COHORT_GAS_AMP,
+  COHORT_GAS_BIRTH_R,
   COHORT_HIT_RADIUS,
   COHORT_HORIZON_R,
   COHORT_MARK_HALF_EXTENT,
   COHORT_MESH_HALO_AMP,
-  COHORT_MOTE_BIRTH_R,
-  COHORT_MOTE_SIGMA,
   COHORT_PHOTON_SIGMA,
   COHORT_PHOTON_WHITE_MIX,
   COHORT_RIM_R,
@@ -865,30 +865,33 @@ describe('what a POW cohort looks like', () => {
 
   it('is drawn on NO EDGE of this colony, which is the whole of this revision', () => {
     // ⭐⭐ The second cut planned its geometry by walking `topology.edges` and
-    // drawing a mote along each of a cohort's own links. That says the energy
+    // drawing matter along each of a cohort's own links. That says the energy
     // arrives over the network. The planner cannot reach an edge now — it
-    // walks nodes and nothing else — and the motes are seeded at a world
-    // radius, in empty space, on nothing.
+    // walks nodes and nothing else — and the gas condenses at a world radius,
+    // in empty space, on nothing.
     const layer = source('ColonyAccretion.tsx');
     expect(layer).not.toContain('topology.edges');
     expect(layer).not.toContain('lineSegments');
     expect(layer).toContain("if (node.kind !== 'attested') continue;");
     // Born well outside the rim, and swallowed well inside the horizon.
-    expect(COHORT_MOTE_BIRTH_R).toBeGreaterThan(COHORT_RIM_R * 2);
+    expect(COHORT_GAS_BIRTH_R).toBeGreaterThan(COHORT_RIM_R * 2);
     expect(COHORT_THROAT_R).toBeLessThan(COHORT_HORIZON_R);
     // …and the billboard is sized from the outermost feature rather than
-    // picked, so a mote is never clipped at the moment it appears.
+    // picked, so the gas never meets a rectangular clip at its outer fade.
     expect(COHORT_MARK_HALF_EXTENT)
-      .toBeGreaterThanOrEqual(COHORT_MOTE_BIRTH_R * 1.05 + COHORT_MOTE_SIGMA * 5.2);
+      .toBeGreaterThanOrEqual(COHORT_GAS_BIRTH_R * 1.05);
   });
 
-  it('removes light with a real aperture before adding the phenomenon around it', () => {
+  it('softens light into a gravity depression before adding the phenomenon', () => {
     const horizon = makeColonyHorizonMaterial();
     const accretion = makeColonyAccretionMaterial();
     expect(horizon.blending).toBe(THREE.NormalBlending);
     expect(horizon.depthWrite).toBe(false);
-    expect(horizonFragment()).toContain('core * 0.965');
-    expect(horizonFragment()).toContain('well * 0.28');
+    expect(horizonFragment()).toContain('smoothstep(0.0, uHorizon * 1.08, rw)');
+    expect(horizonFragment()).toContain('core * 0.68');
+    expect(horizonFragment()).toContain('pupil * 0.16');
+    expect(horizonFragment()).toContain('well * 0.16');
+    expect(horizonFragment()).not.toContain('core * 0.965');
     expect(horizonFragment()).toContain('gl_FragColor = vec4(uVoidColor, alpha);');
     expect(COHORT_SHADOW_HALF_EXTENT).toBeGreaterThan(COHORT_HORIZON_R);
 
@@ -945,14 +948,28 @@ describe('what a POW cohort looks like', () => {
     expect(COHORT_PHOTON_WHITE_MIX).toBeLessThan(0.75);
   });
 
-  it('pulls directional streaks and filaments out of the surrounding void', () => {
-    const fragment = accretionFragment();
-    expect(fragment).toContain('const int STREAMS = 4;');
-    expect(fragment).toContain('float distanceToStream = angleDistance(');
-    expect(fragment).toContain('float pace = 0.68 + 0.64 * hash11(');
-    expect(fragment).toContain('vec2 flow = normalize(-radial + tangent * turning);');
-    expect(fragment).toContain('vec2 trail = -flow;');
-    expect(fragment).toContain('float tailGate = smoothstep(');
+  it('advects one continuous gas volume inward instead of orbiting particles', () => {
+    const material = makeColonyAccretionMaterial();
+    const fragment = material.fragmentShader;
+
+    expect(material.uniforms.uGasAmp.value).toBe(COHORT_GAS_AMP);
+    expect(fragment).toContain('float valueNoise3(vec3 p)');
+    expect(fragment).toContain('float fbm3(vec3 p)');
+    expect(fragment).toContain('float flowTravel = pow(gasRadial, uEase);');
+    expect(fragment).toContain(
+      'float flowPhase = flowTravel * 3.4 + uTime * rate * 1.1;',
+    );
+    expect(fragment).toContain('float gasBody = smoothstep(');
+    expect(fragment).toContain('float gasFilaments = pow(');
+    expect(fragment).toContain('float gasWindow = smoothstep(');
+    expect(fragment).toContain('float gasHeat = gas * pow(');
+
+    // No independently positioned body, head or tail remains. Motion lives in
+    // the density coordinate, so there is nothing that can orbit as a bead.
+    expect(fragment).not.toContain('const int MOTES');
+    expect(fragment).not.toContain('vec2 centre =');
+    expect(fragment).not.toContain('tailGate');
+    expect(fragment).not.toMatch(/for\s*\(int\s+k/);
   });
 
   it('cannot be mistaken for the canopy contact wave, and structurally cannot become one', () => {
@@ -961,7 +978,7 @@ describe('what a POW cohort looks like', () => {
     // the tissue. The load-bearing difference is the RADIUS: that one grows
     // from its own age and this one never grows at all.
     const fragment = accretionFragment();
-    // Every extent remains a uniform constant; time reaches orbit and infall
+    // Every extent remains a uniform constant; time reaches disc and gas-flow
     // phases but never writes or rescales one of those extents.
     expect(fragment).not.toMatch(/u(?:Rim|Horizon|Half|Birth)\s*[+*/-]?=/);
     expect(fragment).toContain('float discBand = gaussian(discRadius - rimRadius, uRimSigma);');
@@ -975,8 +992,8 @@ describe('what a POW cohort looks like', () => {
     expect(layer).not.toMatch(/makeScale|\.scale\.set|setScalar/);
     // …and it is compact against a front that crosses
     // the canopy.
-    expect(COHORT_RIM_R * 2).toBeLessThan(2.7);
-    expect(COHORT_MOTE_BIRTH_R).toBeLessThan(4);
+    expect(COHORT_RIM_R * 2).toBeLessThan(2.4);
+    expect(COHORT_GAS_BIRTH_R).toBeLessThan(3.5);
   });
 
   it('cannot be mistaken for a courier glint either', () => {
@@ -1027,9 +1044,9 @@ describe('what a POW cohort looks like', () => {
   });
 
   it('says the share as a RATE and never a second time as size or light', () => {
-    // ⭐ A cohort holding more of the window pulls its motes in FASTER; every
-    // rim is the same radius and the same light and every mote the same size,
-    // whoever they belong to. Saying the share twice would say one fact twice
+    // ⭐ A cohort holding more of the window pulls its gas in FASTER; every
+    // rim is the same radius and light and every gas field the same density,
+    // whoever it belongs to. Saying the share twice would say one fact twice
     // — and would make a cohort with four blocks look like a rounding error
     // rather than one that made four blocks, which is why the rate has a floor
     // rather than reaching zero.

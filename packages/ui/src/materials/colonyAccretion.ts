@@ -9,10 +9,11 @@ import { PEER_NETWORK_PALETTE } from '../visualPalette';
  * still shone straight through it, turning the silhouette back into a cyan
  * ring. The new mark therefore has two deliberately different passes:
  *
- *  1. a normal-blended aperture that actually removes light from the scene;
+ *  1. a normal-blended optical depression that softly removes light from the
+ *     scene without stamping a flat black disc over the mesh;
  *  2. an additive phenomenon around it: a cyan-white photon ring, a flattened
- *     asymmetric accretion disc, lensed polar arcs, and matter dragged out of
- *     otherwise empty space along accelerating spiral trajectories.
+ *     asymmetric accretion disc, lensed polar arcs, and a continuous gaseous
+ *     density field dragged inward from otherwise empty space.
  *
  * The aperture stays semantically distinct, but its resting visual grammar is
  * the peer mesh's own: the same soft halo exponent and amplitude, the same
@@ -25,20 +26,20 @@ import { PEER_NETWORK_PALETTE } from '../visualPalette';
  * infall, never the size or brightness of its mark.
  */
 
-/** Radius of the opaque event horizon in world units. */
-export const COHORT_HORIZON_R = 0.72;
+/** Radius of the central optical depression in world units. */
+export const COHORT_HORIZON_R = 0.56;
 
-/** Final point of an infall, safely inside the event horizon. */
+/** Inner endpoint of the gas coordinate, safely inside the gravity depression. */
 export const COHORT_THROAT_R = COHORT_HORIZON_R * 0.48;
 
 /** Major radius of the projected accretion disc. */
-export const COHORT_RIM_R = 1.28;
+export const COHORT_RIM_R = 1.15;
 
 /** Gaussian half-width of the accretion disc. */
-export const COHORT_RIM_SIGMA = 0.23;
+export const COHORT_RIM_SIGMA = 0.21;
 
 /** Gaussian half-width of the white photon ring around the aperture. */
-export const COHORT_PHOTON_SIGMA = 0.13;
+export const COHORT_PHOTON_SIGMA = 0.12;
 
 /** Vertical compression that makes the disc read as a tilted plane. */
 export const COHORT_DISC_FLATTEN = 0.38;
@@ -46,28 +47,25 @@ export const COHORT_DISC_FLATTEN = 0.38;
 /** Peak additive brightness of the disc. */
 export const COHORT_RIM_AMP = 1.45;
 
-/** Mean radius at which matter first becomes visible in the surrounding void. */
-export const COHORT_MOTE_BIRTH_R = 3.8;
+/** Outer radius at which the gaseous inflow condenses out of the void. */
+export const COHORT_GAS_BIRTH_R = 3.35;
 
-/** Gaussian half-width of a mote head. */
-export const COHORT_MOTE_SIGMA = 0.18;
+/** Peak additive density of the gaseous inflow. */
+export const COHORT_GAS_AMP = 0.72;
 
-/** Peak additive brightness of infalling matter. */
-export const COHORT_MOTE_AMP = 1.08;
+/** Outer billboard extent, including the whole gaseous inflow. */
+export const COHORT_MARK_HALF_EXTENT = 3.7;
 
-/** Outer billboard extent, including the longest mote tail at birth. */
-export const COHORT_MARK_HALF_EXTENT = 5.0;
-
-/** The aperture pass only covers the shadow and its immediate gravity well. */
+/** The normal-blended pass only covers the depression and its immediate well. */
 export const COHORT_SHADOW_HALF_EXTENT = COHORT_HORIZON_R * 1.7;
 
-/** Infall cycles per second for a cohort holding the whole producer window. */
+/** Gas-advection rate for a cohort holding the whole producer window. */
 export const COHORT_INFALL_HZ = 0.4;
 
 /** A cohort with a small share still accretes; share changes rate, not state. */
 export const COHORT_INFALL_FLOOR = 0.32;
 
-/** Above one means matter accelerates as it approaches the throat. */
+/** Above one stretches the gas inward, expressing gravitational acceleration. */
 export const COHORT_INFALL_EASE = 2.45;
 
 /** Turns added between the outer void and the throat. */
@@ -86,16 +84,10 @@ export const COHORT_PHOTON_WHITE_MIX = 0.62;
 export const COHORT_BREATHE_HZ = 1.2;
 export const COHORT_BREATHE_DEPTH = 0.1;
 
-/** Keeps the light-removing centre a near-black member of the cyan palette. */
-export const COHORT_VOID_TINT = 0.012;
+/** Keeps the light-removing centre a deep cyan member of the peer palette. */
+export const COHORT_VOID_TINT = 0.024;
 
-/** Number of independently paced pieces of matter around each cohort. */
-export const COHORT_MOTES = 18;
-
-/** Number of faint spiral filaments connecting the void to the disc. */
-export const COHORT_STREAMS = 4;
-
-/** The event horizon and disc are one selectable mark. */
+/** The gravity depression and disc are one selectable mark. */
 export const COHORT_HIT_RADIUS = COHORT_RIM_R;
 
 const BILLBOARD_VERTEX_SHADER = /* glsl */ `
@@ -155,18 +147,22 @@ export function makeColonyHorizonMaterial(): THREE.ShaderMaterial {
       void main() {
         vec2 p = (vUv - 0.5) * 2.0;
         float rw = length(p) * uHalf;
-        float outer = uHorizon * 1.48;
+        float outer = uHorizon * 1.38;
         if (rw > outer) discard;
 
-        float core = 1.0 - smoothstep(
-          uHorizon * 0.88,
-          uHorizon * 1.035,
-          rw
-        );
-        float well = 1.0 - smoothstep(uHorizon * 0.92, outer, rw);
+        // No opaque plateau and no hard circular cut-out: the centre is a
+        // graded optical depth whose last few percent feather into the mesh.
+        float sink = 1.0 - smoothstep(0.0, uHorizon * 1.08, rw);
+        float core = pow(max(sink, 0.0), 0.72);
+        float pupil = exp(-pow(
+          rw / max(uHorizon * 0.46, 0.001),
+          2.0
+        ));
+        float well = 1.0 - smoothstep(uHorizon * 0.74, outer, rw);
         float alpha = (
-          core * 0.965
-          + (1.0 - core) * well * 0.28
+          core * 0.68
+          + pupil * 0.16
+          + (1.0 - core) * well * 0.16
         ) * uContextEnergy;
         if (alpha < 0.002) discard;
         gl_FragColor = vec4(uVoidColor, alpha);
@@ -204,8 +200,7 @@ export function makeColonyAccretionMaterial(): THREE.ShaderMaterial {
       uRimSigma: { value: COHORT_RIM_SIGMA },
       uPhotonSigma: { value: COHORT_PHOTON_SIGMA },
       uDiscFlatten: { value: COHORT_DISC_FLATTEN },
-      uBirth: { value: COHORT_MOTE_BIRTH_R },
-      uMoteSigma: { value: COHORT_MOTE_SIGMA },
+      uBirth: { value: COHORT_GAS_BIRTH_R },
       uEase: { value: COHORT_INFALL_EASE },
       uInfallFloor: { value: COHORT_INFALL_FLOOR },
       uMeshHaloAmp: { value: COHORT_MESH_HALO_AMP },
@@ -213,7 +208,7 @@ export function makeColonyAccretionMaterial(): THREE.ShaderMaterial {
       uBreatheHz: { value: COHORT_BREATHE_HZ },
       uBreatheDepth: { value: COHORT_BREATHE_DEPTH },
       uRimAmp: { value: COHORT_RIM_AMP },
-      uMoteAmp: { value: COHORT_MOTE_AMP },
+      uGasAmp: { value: COHORT_GAS_AMP },
       uInfall: { value: COHORT_INFALL_HZ },
       uSwirl: { value: COHORT_SWIRL_TURNS },
       uSpin: { value: COHORT_RIM_SPIN_HZ },
@@ -256,8 +251,7 @@ export function makeColonyAccretionMaterial(): THREE.ShaderMaterial {
       uniform float uDiscFlatten;
       uniform float uRimAmp;
       uniform float uBirth;
-      uniform float uMoteSigma;
-      uniform float uMoteAmp;
+      uniform float uGasAmp;
       uniform float uEase;
       uniform float uInfall;
       uniform float uInfallFloor;
@@ -272,20 +266,50 @@ export function makeColonyAccretionMaterial(): THREE.ShaderMaterial {
       varying float vSeed;
 
       const float TAU = 6.28318530718;
-      const int MOTES = ${COHORT_MOTES};
-      const int STREAMS = ${COHORT_STREAMS};
-
-      float hash11(float n) {
-        return fract(sin(n * 127.1 + 311.7) * 43758.5453123);
-      }
 
       float gaussian(float distanceToCentre, float sigma) {
         float d = distanceToCentre / max(sigma, 0.002);
         return exp(-d * d);
       }
 
-      float angleDistance(float a, float b) {
-        return abs(atan(sin(a - b), cos(a - b)));
+      float hash31(vec3 p) {
+        p = fract(p * 0.1031);
+        p += dot(p, p.yzx + 33.33);
+        return fract((p.x + p.y) * p.z);
+      }
+
+      float valueNoise3(vec3 p) {
+        vec3 cell = floor(p);
+        vec3 f = fract(p);
+        f = f * f * (3.0 - 2.0 * f);
+
+        float n000 = hash31(cell + vec3(0.0, 0.0, 0.0));
+        float n100 = hash31(cell + vec3(1.0, 0.0, 0.0));
+        float n010 = hash31(cell + vec3(0.0, 1.0, 0.0));
+        float n110 = hash31(cell + vec3(1.0, 1.0, 0.0));
+        float n001 = hash31(cell + vec3(0.0, 0.0, 1.0));
+        float n101 = hash31(cell + vec3(1.0, 0.0, 1.0));
+        float n011 = hash31(cell + vec3(0.0, 1.0, 1.0));
+        float n111 = hash31(cell + vec3(1.0, 1.0, 1.0));
+
+        float x00 = mix(n000, n100, f.x);
+        float x10 = mix(n010, n110, f.x);
+        float x01 = mix(n001, n101, f.x);
+        float x11 = mix(n011, n111, f.x);
+        return mix(
+          mix(x00, x10, f.y),
+          mix(x01, x11, f.y),
+          f.z
+        );
+      }
+
+      float fbm3(vec3 p) {
+        float density = valueNoise3(p) * 0.57;
+        p = p * 2.03 + vec3(17.1, 9.2, 13.7);
+        density += valueNoise3(p) * 0.30;
+        p = p * 2.01 + vec3(8.3, 19.1, 4.7);
+        density += valueNoise3(p) * 0.13;
+        return density;
       }
 
       mat2 rotate2(float angle) {
@@ -308,7 +332,6 @@ export function makeColonyAccretionMaterial(): THREE.ShaderMaterial {
           clamp(vShare, 0.0, 1.0)
         );
         float throat = max(uThroat, 0.02);
-        float span = max(uBirth / throat - 1.0, 0.001);
 
         // Each disc has a stable shallow screen-space tilt. Its silhouette is
         // fixed; only the hot structure within it turns.
@@ -332,7 +355,7 @@ export function makeColonyAccretionMaterial(): THREE.ShaderMaterial {
         float rim = discBand * (0.34 + 1.02 * approaching) * uRimAmp;
 
         // A tight photon ring and two lensed caps make the aperture read as a
-        // gravity well rather than a flat icon, even before a mote moves.
+        // gravity well rather than a flat icon, even before the gas moves.
         float photon = gaussian(
           rw - uHorizon * 1.075,
           uPhotonSigma
@@ -346,90 +369,58 @@ export function makeColonyAccretionMaterial(): THREE.ShaderMaterial {
           uRimSigma * 0.42
         ) * polar * uRimAmp * 0.9;
 
-        // Faint filaments are born in unconnected space, not on topology
-        // edges. Their spiral tightens toward the disc and advances at the same
-        // rate as the motes, so there is one coherent accretion motion.
+        // A continuous density volume, not a set of orbiting objects. The
+        // texture coordinate itself travels from the outer void toward the
+        // throat; its non-linear radial map stretches near the centre, so the
+        // gas visibly accelerates and thins as gravity takes it.
         float polarAngle = atan(pw.y, pw.x);
-        float spiralProgress = (
-          uBirth / max(rw, throat) - 1.0
-        ) / span;
-        float streamWindow = smoothstep(
-          uHorizon * 1.05,
-          uRim * 1.45,
+        float gasRadial = clamp(
+          (rw - throat) / max(uBirth - throat, 0.01),
+          0.0,
+          1.0
+        );
+        float flowTravel = pow(gasRadial, uEase);
+        float spiralAngle = polarAngle
+          + uSwirl * TAU * (1.0 - flowTravel);
+        // A constant-density feature moves toward LOWER flowTravel as time
+        // rises. Time never rotates its angle in place, so this cannot read as
+        // particles orbiting the centre.
+        float flowPhase = flowTravel * 3.4 + uTime * rate * 1.1;
+        float warp = valueNoise3(vec3(
+          cos(spiralAngle) * 1.35 + vSeed * 5.1,
+          sin(spiralAngle) * 1.35 - vSeed * 3.7,
+          flowPhase * 0.72 + vSeed * 8.3
+        ));
+        float gasAngle = spiralAngle + (warp - 0.5) * 0.72;
+        vec3 gasCoord = vec3(
+          cos(gasAngle) * 2.15,
+          sin(gasAngle) * 2.15,
+          flowPhase + vSeed * 11.0
+        );
+        float billow = fbm3(gasCoord);
+        float fineGas = valueNoise3(
+          gasCoord * 2.31 + vec3(7.1, 17.3, 3.7)
+        );
+        float densityShape = billow * 0.82 + fineGas * 0.18;
+        float gasBody = smoothstep(0.38, 0.72, densityShape);
+        float gasFilaments = pow(
+          smoothstep(0.50, 0.78, densityShape),
+          1.35
+        );
+        float gasWindow = smoothstep(
+          uHorizon * 1.04,
+          uRim * 0.82,
           rw
-        ) * (1.0 - smoothstep(uBirth * 0.86, uBirth * 1.03, rw));
-        float streams = 0.0;
-        for (int k = 0; k < STREAMS; k++) {
-          float fk = float(k);
-          float streamSeed = hash11(fk * 13.7 + vSeed * 41.0);
-          float targetAngle = streamSeed * TAU
-            + uSwirl * TAU * spiralProgress
-            - uTime * rate * TAU * (0.07 + 0.035 * streamSeed);
-          float width = mix(
-            0.07,
-            0.14,
-            clamp((rw - uRim) / max(uBirth - uRim, 0.01), 0.0, 1.0)
-          );
-          float distanceToStream = angleDistance(polarAngle, targetAngle) * rw;
-          streams += gaussian(distanceToStream, width)
-            * (0.48 + 0.52 * streamSeed);
-        }
-        streams *= streamWindow * 0.16;
-
-        // Independent matter streaks accelerate down the same spiral. The
-        // anisotropic tail points back into the void, making direction visible
-        // from a still frame instead of relying on brightness modulation.
-        float motes = 0.0;
-        if (rw < uBirth * 1.05 + uMoteSigma * 5.2) {
-          for (int k = 0; k < MOTES; k++) {
-            float fk = float(k);
-            float birth = uBirth * mix(
-              0.82,
-              1.05,
-              hash11(fk * 2.9 + vSeed * 23.0)
-            );
-            float pace = 0.68 + 0.64 * hash11(fk * 5.3 + vSeed * 19.0);
-            float t = fract(
-              uTime * rate * pace
-              + hash11(fk + vSeed * 37.0)
-            );
-            float fall = pow(t, uEase);
-            float moteRadius = mix(birth, throat, fall);
-            float moteSpan = max(birth / throat - 1.0, 0.001);
-            float moteAngle = hash11(
-              fk * 1.7 + vSeed * 11.0 + 3.1
-            ) * TAU + uSwirl * TAU * (
-              birth / max(moteRadius, throat) - 1.0
-            ) / moteSpan;
-            vec2 centre = vec2(cos(moteAngle), sin(moteAngle)) * moteRadius;
-            vec2 radial = centre / max(moteRadius, 0.001);
-            vec2 tangent = vec2(-radial.y, radial.x);
-            float turning = 0.28 + 0.84 * clamp(
-              throat / max(moteRadius, throat),
-              0.0,
-              1.0
-            );
-            vec2 flow = normalize(-radial + tangent * turning);
-            vec2 trail = -flow;
-            vec2 crossAxis = vec2(-trail.y, trail.x);
-            vec2 delta = pw - centre;
-            float along = dot(delta, trail);
-            float across = dot(delta, crossAxis);
-            float head = gaussian(length(delta), uMoteSigma * 0.78);
-            float tailGate = smoothstep(0.0, uMoteSigma * 0.34, along)
-              * (1.0 - smoothstep(
-                uMoteSigma * 3.6,
-                uMoteSigma * 5.2,
-                along
-              ));
-            float tail = gaussian(across, uMoteSigma * 0.5)
-              * exp(-max(along, 0.0) / max(uMoteSigma * 2.8, 0.001))
-              * tailGate;
-            float born = smoothstep(0.0, 0.12, t);
-            float gravity = mix(0.46, 1.0, fall);
-            motes += (head + tail * 0.76) * born * gravity;
-          }
-        }
+        ) * (1.0 - smoothstep(uBirth * 0.84, uBirth, rw));
+        float gasGravity = mix(
+          0.34,
+          1.0,
+          pow(1.0 - gasRadial, 0.72)
+        );
+        float gas = (
+          gasBody * 0.22 + gasFilaments * 0.78
+        ) * gasWindow * gasGravity * uGasAmp;
+        float gasHeat = gas * pow(1.0 - gasRadial, 2.0) * 0.24;
 
         // Seat the exceptional aperture in the ordinary peer mesh. This is
         // the exact skirt profile used by peerNodeMaterial; unlike the old
@@ -450,11 +441,10 @@ export function makeColonyAccretionMaterial(): THREE.ShaderMaterial {
         float cold = (rim * 0.68
           + lens * 0.58
           + meshHalo) * restBreathe
-          + streams
-          + motes * uMoteAmp;
+          + gas;
         float hot = (
           photon * 1.18 + rim * 0.38 + lens * 0.82
-        ) * restBreathe;
+        ) * restBreathe + gasHeat;
         float amp = (cold + hot) * horizon * edge;
         if (amp < 0.002) discard;
 

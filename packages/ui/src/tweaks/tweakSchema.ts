@@ -23,13 +23,13 @@ import {
 // ColonyAccretion overwrites them from LIVE.peer.* each frame, so there is ONE
 // authority. (`COHORT_INFALL_FLOOR`, `COHORT_INFALL_EASE` and the mesh-halo /
 // breathe constants are deliberately NOT knobs: one says a cohort holding
-// almost nothing is still mining, one that a mote FALLS rather than coasts, and
-// the rest that this exceptional mark still belongs to the peer plane's visual
-// grammar. Those are layer statements rather than tastes to settle against
-// pixels.)
+// almost nothing is still mining, one that gas ACCELERATES rather than coasts,
+// and the rest that this exceptional mark still belongs to the peer plane's
+// visual grammar. Those are layer statements rather than tastes to settle
+// against pixels.)
 import {
   COHORT_INFALL_HZ,
-  COHORT_MOTE_AMP,
+  COHORT_GAS_AMP,
   COHORT_RIM_AMP,
   COHORT_RIM_SPIN_HZ,
   COHORT_SWIRL_TURNS,
@@ -154,16 +154,16 @@ export const peerSchema = {
   flameBloom: { value: 0.7, min: 0.1, max: 2, step: 0.05, label: 'flame bloom' },
   glintBloomOpacity: { value: 0.55, min: 0, max: 1, step: 0.05, label: 'glint bloom op' },
   glintPlumeOpacity: { value: 0.3, min: 0, max: 1, step: 0.05, label: 'glint plume op' },
-  // The POW channel — one accreting void per cohort. `holeInfall` is how many
-  // times a second a mote completes its fall for a cohort holding the WHOLE
-  // window (the share scales it, and it is the only thing the share moves);
-  // `holeSwirl` is how many turns that fall adds; `holeSpin` is how fast the
-  // accretion rim itself turns, and it may go NEGATIVE because which way a disc
-  // spins is arbitrary. `holeRim` and `holeMotes` are the two brightnesses:
+  // The POW channel — one accreting void per cohort. `holeInfall` is the gas
+  // advection rate for a cohort holding the WHOLE window (the share scales it,
+  // and it is the only thing the share moves); `holeSwirl` is how many turns
+  // the inflow adds; `holeSpin` is how fast the accretion rim itself turns,
+  // and it may go NEGATIVE because which way a disc spins is arbitrary.
+  // `holeRim` and `holeGas` are the two brightnesses:
   // reach for `holeRim` first, since the disc and photon ring make the aperture
   // legible at colony scale.
   holeRim: { value: COHORT_RIM_AMP, min: 0, max: 3, step: 0.05, label: 'hole rim amp' },
-  holeMotes: { value: COHORT_MOTE_AMP, min: 0, max: 3, step: 0.05, label: 'hole mote amp' },
+  holeGas: { value: COHORT_GAS_AMP, min: 0, max: 3, step: 0.05, label: 'hole gas density' },
   holeInfall: { value: COHORT_INFALL_HZ, min: 0.02, max: 3, step: 0.01, label: 'hole infall hz' },
   holeSwirl: { value: COHORT_SWIRL_TURNS, min: 0, max: 4, step: 0.05, label: 'hole swirl turns' },
   holeSpin: { value: COHORT_RIM_SPIN_HZ, min: -0.5, max: 0.5, step: 0.005, label: 'hole rim spin hz' },
