@@ -1,8 +1,8 @@
 // ColonyAccretion — what a POW cohort looks like: an accreting void.
 //
-// A soft light-removing gravity depression sits under a cyan-white photon ring,
-// peer-profile halo, lensed accretion disc, and continuous gas drawn inward
-// from the surrounding void.
+// A tiny light-removing gravity throat sits under a thick cyan-white photon
+// collar, peer-profile halo, lensed accretion disc, turbulent field caustics,
+// and continuous gas collapsing inward from the surrounding void.
 // It runs continuously for as long as the payout identity is in the recent
 // window. On the block it wins, the colony's own outward surge already erupts
 // from that node, so nothing here fires and nothing here reads the pulse.
@@ -14,7 +14,7 @@
 // This file owns the two things that cannot live in a material:
 //   • WHICH nodes wear one — `cohortAccretionMarks`, pure and exported, one
 //     mark per attested node, carrying its placement and a stable per-cohort
-//     seed so no two holes swirl on the same beat;
+//     seed so no two fields boil or breathe on the same beat;
 //   • the live SHARE, which moves on every attributed block and must never be
 //     allowed to move the geometry with it.
 //
@@ -61,8 +61,8 @@ export interface CohortMark {
   /** Where it stands, in colony-frame coordinates. */
   readonly pos: Vec3;
   /** Per-cohort de-sync in [0,1), a stable hash of the payout key. Without it
-   *  every hole in the colony would swirl on the same beat and six of them
-   *  would read as one animation stamped six times. */
+   *  every hole in the colony would boil on the same beat and six of them would
+   *  read as one animation stamped six times. */
   readonly seed: number;
 }
 
@@ -123,8 +123,9 @@ const SCRATCH_MATRIX = new THREE.Matrix4();
  *
  * The compact normal-blended pass makes the gravity depression able to soften
  * the mesh behind it; the larger additive pass supplies the photon ring, disc,
- * lensing arcs and gaseous infall. Both are camera-facing and rebuilt in the
- * vertex shader, so per-frame CPU work remains a handful of uniform writes.
+ * lensing arcs, disturbed energy field and gaseous infall. Both are
+ * camera-facing and rebuilt in the vertex shader, so per-frame CPU work remains
+ * a handful of uniform writes.
  */
 export default function ColonyAccretion({
   topology,
@@ -246,8 +247,8 @@ export default function ColonyAccretion({
     accretionMaterial.uniforms.uContextEnergy.value = contextEnergy;
     accretionMaterial.uniforms.uRimAmp.value = LIVE.peer.holeRim;
     accretionMaterial.uniforms.uGasAmp.value = LIVE.peer.holeGas;
+    accretionMaterial.uniforms.uFieldAmp.value = LIVE.peer.holeField;
     accretionMaterial.uniforms.uInfall.value = LIVE.peer.holeInfall;
-    accretionMaterial.uniforms.uSwirl.value = LIVE.peer.holeSwirl;
     accretionMaterial.uniforms.uSpin.value = LIVE.peer.holeSpin;
   });
 

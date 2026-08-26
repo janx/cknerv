@@ -29,10 +29,10 @@ import {
 // against pixels.)
 import {
   COHORT_INFALL_HZ,
+  COHORT_FIELD_AMP,
   COHORT_GAS_AMP,
   COHORT_RIM_AMP,
   COHORT_RIM_SPIN_HZ,
-  COHORT_SWIRL_TURNS,
 } from '../materials/colonyAccretion';
 // The Cell-field contact front is a scaled-down version of the peer-plane
 // brightness wave: same shape, same timing, its reach divided by
@@ -156,16 +156,16 @@ export const peerSchema = {
   glintPlumeOpacity: { value: 0.3, min: 0, max: 1, step: 0.05, label: 'glint plume op' },
   // The POW channel — one accreting void per cohort. `holeInfall` is the gas
   // advection rate for a cohort holding the WHOLE window (the share scales it,
-  // and it is the only thing the share moves); `holeSwirl` is how many turns
-  // the inflow adds; `holeSpin` is how fast the accretion rim itself turns,
-  // and it may go NEGATIVE because which way a disc spins is arbitrary.
-  // `holeRim` and `holeGas` are the two brightnesses:
+  // and it is the only thing the share moves); `holeField` controls the broken
+  // caustics in the ambient energy field; `holeSpin` is how fast the accretion
+  // rim itself turns, and it may go NEGATIVE because which way a disc spins is
+  // arbitrary. `holeRim` and `holeGas` are the two principal brightnesses:
   // reach for `holeRim` first, since the disc and photon ring make the aperture
   // legible at colony scale.
   holeRim: { value: COHORT_RIM_AMP, min: 0, max: 3, step: 0.05, label: 'hole rim amp' },
   holeGas: { value: COHORT_GAS_AMP, min: 0, max: 3, step: 0.05, label: 'hole gas density' },
+  holeField: { value: COHORT_FIELD_AMP, min: 0, max: 2, step: 0.05, label: 'hole field disturbance' },
   holeInfall: { value: COHORT_INFALL_HZ, min: 0.02, max: 3, step: 0.01, label: 'hole infall hz' },
-  holeSwirl: { value: COHORT_SWIRL_TURNS, min: 0, max: 4, step: 0.05, label: 'hole swirl turns' },
   holeSpin: { value: COHORT_RIM_SPIN_HZ, min: -0.5, max: 0.5, step: 0.005, label: 'hole rim spin hz' },
 } satisfies FolderSchema;
 

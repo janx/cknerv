@@ -34,6 +34,7 @@ import {
   COHORT_BREATHE_DEPTH,
   COHORT_BREATHE_HZ,
   COHORT_DISC_FLATTEN,
+  COHORT_FIELD_AMP,
   COHORT_GAS_AMP,
   COHORT_GAS_BIRTH_R,
   COHORT_HIT_RADIUS,
@@ -856,7 +857,7 @@ describe('what a POW cohort looks like', () => {
     for (const mark of marks) {
       expect(mark.pos).toEqual(cohorts.find((n) => n.id === mark.nodeId)?.pos);
       expect(mark.nodeId).toBe(`attested:${mark.producerKey}`);
-      // A per-cohort de-sync, so six holes do not swirl on one beat.
+      // A per-cohort de-sync, so six turbulent fields do not boil on one beat.
       expect(mark.seed).toBeGreaterThanOrEqual(0);
       expect(mark.seed).toBeLessThan(1);
     }
@@ -887,10 +888,10 @@ describe('what a POW cohort looks like', () => {
     const accretion = makeColonyAccretionMaterial();
     expect(horizon.blending).toBe(THREE.NormalBlending);
     expect(horizon.depthWrite).toBe(false);
-    expect(horizonFragment()).toContain('smoothstep(0.0, uHorizon * 1.08, rw)');
-    expect(horizonFragment()).toContain('core * 0.68');
-    expect(horizonFragment()).toContain('pupil * 0.16');
-    expect(horizonFragment()).toContain('well * 0.16');
+    expect(horizonFragment()).toContain('smoothstep(0.0, uHorizon * 0.98, rw)');
+    expect(horizonFragment()).toContain('core * 0.70');
+    expect(horizonFragment()).toContain('pupil * 0.12');
+    expect(horizonFragment()).toContain('well * 0.08');
     expect(horizonFragment()).not.toContain('core * 0.965');
     expect(horizonFragment()).toContain('gl_FragColor = vec4(uVoidColor, alpha);');
     expect(COHORT_SHADOW_HALF_EXTENT).toBeGreaterThan(COHORT_HORIZON_R);
@@ -910,8 +911,10 @@ describe('what a POW cohort looks like', () => {
     // The aperture was deliberately tightened while the photon ring received
     // its own wider band: the centre reads smaller without making the whole
     // cohort or its white boundary disappear at colony scale.
-    expect(COHORT_HORIZON_R / COHORT_RIM_R).toBeLessThan(0.6);
-    expect(COHORT_PHOTON_SIGMA).toBeGreaterThan(COHORT_RIM_SIGMA * 0.5);
+    expect(COHORT_HORIZON_R).toBeLessThanOrEqual(0.26);
+    expect(COHORT_HORIZON_R / COHORT_RIM_R).toBeLessThan(0.25);
+    expect(COHORT_PHOTON_SIGMA / COHORT_HORIZON_R).toBeGreaterThan(0.75);
+    expect(COHORT_RIM_SIGMA / COHORT_RIM_R).toBeGreaterThan(0.25);
     expect(fragment).toContain('vec2 discQ = vec2(discP.x, discP.y / max(uDiscFlatten, 0.08));');
     expect(fragment).toContain('float approaching = pow(');
     expect(fragment).toContain('float photon = gaussian(');
@@ -948,27 +951,39 @@ describe('what a POW cohort looks like', () => {
     expect(COHORT_PHOTON_WHITE_MIX).toBeLessThan(0.75);
   });
 
-  it('advects one continuous gas volume inward instead of orbiting particles', () => {
+  it('disturbs an energy field and advects continuous gas inward without spiral lanes', () => {
     const material = makeColonyAccretionMaterial();
     const fragment = material.fragmentShader;
 
     expect(material.uniforms.uGasAmp.value).toBe(COHORT_GAS_AMP);
+    expect(material.uniforms.uFieldAmp.value).toBe(COHORT_FIELD_AMP);
     expect(fragment).toContain('float valueNoise3(vec3 p)');
     expect(fragment).toContain('float fbm3(vec3 p)');
+    expect(fragment).toContain('float fieldRidges = 1.0 - smoothstep(');
+    expect(fragment).toContain('float fieldBreakup = smoothstep(');
+    expect(fragment).toContain('float disturbance = fieldRidges');
     expect(fragment).toContain('float flowTravel = pow(gasRadial, uEase);');
     expect(fragment).toContain(
-      'float flowPhase = flowTravel * 3.4 + uTime * rate * 1.1;',
+      'float flowPhase = flowTravel * 5.2 + uTime * rate * 1.16;',
     );
+    expect(fragment).toContain('vec2 gasPlane = fieldP * 3.7');
+    expect(fragment).not.toContain('gravityBacktrace');
     expect(fragment).toContain('float gasBody = smoothstep(');
-    expect(fragment).toContain('float gasFilaments = pow(');
+    expect(fragment).toContain('float gasWisps = pow(');
     expect(fragment).toContain('float gasWindow = smoothstep(');
-    expect(fragment).toContain('float gasHeat = gas * pow(');
+    expect(fragment).toContain('float absorptionHeat = gaussian(');
+    expect(fragment).toContain('float gasHeat = gas * (');
 
-    // No independently positioned body, head or tail remains. Motion lives in
-    // the density coordinate, so there is nothing that can orbit as a bead.
+    // No independently positioned body, angular lane or radius-to-angle map
+    // remains. Gas back-traces through Cartesian noise, so it can billow and
+    // collapse but cannot settle into a family of neat orbit curves.
     expect(fragment).not.toContain('const int MOTES');
     expect(fragment).not.toContain('vec2 centre =');
     expect(fragment).not.toContain('tailGate');
+    expect(fragment).not.toContain('spiralAngle');
+    expect(fragment).not.toContain('polarAngle');
+    expect(fragment).not.toContain('gasAngle');
+    expect(fragment).not.toContain('uSwirl');
     expect(fragment).not.toMatch(/for\s*\(int\s+k/);
   });
 

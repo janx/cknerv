@@ -8,8 +8,8 @@
 //     instead of a white speck the eye reads as a node. Non-selectable.
 //   • attested nodes    — NOT DRAWN HERE. A node the CHAIN proves exists and
 //     cannot name wears a black hole, and `ColonyAccretion` draws it: a dark
-//     gravity depression, a swirling accretion rim, and gas flowing in from the
-//     surrounding void. It had a <points> stop of its own until that mark
+//     gravity throat, a thick accretion halo, and disturbed gas collapsing from
+//     the surrounding void. It had a <points> stop of its own until that mark
 //     arrived, and an additive sprite is brightest at its own centre — exactly
 //     the pixel a shadow needs empty — so the stop was subsumed rather than
 //     left underneath. This file still stands its hit sphere, sized from the
@@ -296,7 +296,7 @@ export function partitionByKind(
  *  13-pixel hover sweep of the running app found forty peers and zero miners.
  *  The mark is an accreting void now, so the target is its disc: 1.15 world
  *  units, ~6.6 CSS px of radius at the default camera. It covers the whole
- *  0.56-world-unit gravity depression, so aiming at the aperture hits it too,
+ *  0.25-world-unit gravity throat, so aiming at the aperture hits it too,
  *  and there is exactly ONE number — no annulus, no second radius, nothing to
  *  keep in step. */
 export const ATTESTED_HIT_RADIUS = COHORT_HIT_RADIUS;
