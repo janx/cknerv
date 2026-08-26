@@ -96,6 +96,7 @@ import {
   PRODUCER_RING_UNFIRED,
 } from '../materials/producerRingMaterial';
 import { attestedNodeId, ATTESTED_ID_PREFIX } from '../derives/networkTopology.derive';
+import { producerOriginStats } from '../derives/producerOriginStats';
 
 // Measured core: bright, saturated, larger than the ghost haze.
 const MEASURED_SIZE = 1.4;
@@ -1426,11 +1427,25 @@ export default function ColonyNodes({
     lastPulseRef.current = blockPulseAtMs;
     // Consume while backfilling so a historical backlog cannot replay as one
     // network-wide strobe when live mode resumes.
-    if (backfillActive) return;
+    if (backfillActive) {
+      producerOriginStats.observeSuppressed();
+      return;
+    }
 
     const origin = topology.nodes.find((node) => node.id === cf.entryId)
       ?? topology.nodes.find((node) => node.id === topology.localId);
     if (!origin) return;
+
+    // ⭐ THE ORIGIN'S ONLY OBSERVABLE, counted where the wave is actually
+    // armed. It is one integer on an edge this owner already handles, and it
+    // is the only way anything outside the render can answer the question the
+    // origin change was made to answer: over a few dozen blocks, do the waves
+    // erupting from a producer's node come out at that producer's share of the
+    // window? Counted here rather than inside `colonyFlood`, which is a memo
+    // that re-runs on every topology rebuild and would count one block many
+    // times; and counted as ARMED rather than as finished, because a key-set
+    // change landing mid-wave truncates it and a truncated wave still fired.
+    producerOriginStats.observeWave(cf.entryId);
 
     const slot = shockwaveSlotRef.current;
     shockwaveSlotRef.current = (slot + 1) % SHOCKWAVE_SLOTS;

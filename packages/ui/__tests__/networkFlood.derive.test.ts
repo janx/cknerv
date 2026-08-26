@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { attestedOrigin, pickOrigin, floodArrivalTimes, colonyFlood, clampHeroDelayS, FLOOD_DURATION_S, HERO_MIN_FRAC, HERO_MAX_FRAC } from '../src/derives/networkFlood.derive';
 import { attestedNodeId, buildAdjacency, inferredTopology } from '../src/derives/networkTopology.derive';
+import {
+  producerOriginStats,
+  resetProducerOriginStats,
+  snapshotProducerOriginStats,
+} from '../src/derives/producerOriginStats';
 import { deriveBlockProducers, type ProducerStanding } from '../src/derives/blockProducers.derive';
 import {
   applyCellDelta, emptyCellsCache, emptyChainCache, fromCellsSnapshot,
@@ -509,5 +514,136 @@ describe('the producer signature the topology memo is keyed on', () => {
     // and the geometry did not move under them
     expect(later.nodes.map((n) => n.id)).toEqual(first.nodes.map((n) => n.id));
     expect(later.nodes.map((n) => n.pos)).toEqual(first.nodes.map((n) => n.pos));
+  });
+});
+
+/**
+ * ⭐ THE ORIGIN CHANGE'S ONLY OBSERVABLE.
+ *
+ * "The wave starts where the block was made" is a claim about a DISTRIBUTION,
+ * and the honest test of it is live: over a few dozen blocks the fraction of
+ * waves erupting from the dominant producer's node should approach its share of
+ * the window. Nothing on the page could answer that — a wave is a stamp in a
+ * uniform and two seconds of light — so the change shipped verifiable only by
+ * watching, which is not verification. The counter below is what a probe reads
+ * instead, and everything here is the arithmetic it has to get right.
+ */
+describe('__producerOriginStats — where the wave started', () => {
+  const KEY_A = `0x${'a'.repeat(64)}`;
+  const KEY_B = `0x${'b'.repeat(64)}`;
+
+  function fresh() {
+    resetProducerOriginStats();
+    return producerOriginStats;
+  }
+
+  it('splits every wave into the chain\'s name or the anonymous scatter', () => {
+    const stats = fresh();
+    stats.observeWave(attestedNodeId(KEY_A));
+    stats.observeWave(attestedNodeId(KEY_A));
+    stats.observeWave(attestedNodeId(KEY_B));
+    stats.observeWave('inf:37');
+    stats.observeWave(null);
+    const snap = snapshotProducerOriginStats();
+    expect(snap.waves).toBe(5);
+    expect(snap.attested).toBe(3);
+    expect(snap.anonymous).toBe(2);
+    // The split is exhaustive by construction: an origin is the chain's name or
+    // it is not, and the "not" bucket is where a block that named nobody, a
+    // producer that left the window, and a resync's producer-less stamp all
+    // land — which is exactly what the screen shows for each of them.
+    expect(snap.attested + snap.anonymous).toBe(snap.waves);
+    expect(snap.attestedRatePct).toBeCloseTo(60, 12);
+  });
+
+  it('tallies origins per producer key, which is the oracle', () => {
+    const stats = fresh();
+    // A stand-in for a window one producer dominates: the tally over waves is
+    // the number the live pass compares against that producer's share.
+    for (let i = 0; i < 13; i += 1) stats.observeWave(attestedNodeId(KEY_A));
+    for (let i = 0; i < 7; i += 1) stats.observeWave(attestedNodeId(KEY_B));
+    const snap = snapshotProducerOriginStats();
+    expect(snap.byProducer).toEqual({ [KEY_A]: 13, [KEY_B]: 7 });
+    expect(snap.byProducer[KEY_A] / snap.waves).toBeCloseTo(0.65, 12);
+    // The key is the PAYOUT key the standing is filed under, never the graph
+    // id — a probe joins it against the producer view and must not have to
+    // know this colony's namespace.
+    expect(Object.keys(snap.byProducer).every((k) => !k.startsWith('attested:'))).toBe(true);
+    // An anonymous wave belongs to nobody and names nobody.
+    stats.observeWave('inf:1');
+    expect(snapshotProducerOriginStats().byProducer).toEqual({ [KEY_A]: 13, [KEY_B]: 7 });
+  });
+
+  // ⚠️ A TRUNCATED WAVE STILL FIRED. A genuine key-set change — a tail producer
+  // entering or leaving the 240-block window — rebuilds the topology, and a
+  // rebuild landing mid-wave truncates the wave in flight. That is expected
+  // occasionally and it may not disturb the tally, so there is nothing in this
+  // counter that could notice: it counts at the instant a wave is armed and
+  // never looks back to ask whether it finished crossing.
+  it('counts what fired, and has no notion of what completed', () => {
+    const stats = fresh();
+    stats.observeWave(attestedNodeId(KEY_A));
+    const mid = snapshotProducerOriginStats();
+    // Whatever a rebuild does to the scene, the counter has already answered
+    // and there is no second call that could take it back.
+    expect(Object.keys(stats)).not.toContain('observeWaveCompleted');
+    expect(snapshotProducerOriginStats()).toEqual(mid);
+  });
+
+  it('counts a suppressed pulse apart from a wave', () => {
+    const stats = fresh();
+    stats.observeSuppressed();
+    stats.observeSuppressed();
+    stats.observeWave(attestedNodeId(KEY_A));
+    const snap = snapshotProducerOriginStats();
+    // A backfill catch-up consumes the pulse and stamps no wave on purpose, so
+    // it is neither an origin nor a missing one. Kept apart so a probe can tell
+    // "nothing is arriving" from "everything is being replayed".
+    expect(snap.suppressed).toBe(2);
+    expect(snap.waves).toBe(1);
+  });
+
+  it('hands back a detached snapshot and zeroes cleanly', () => {
+    const stats = fresh();
+    stats.observeWave(attestedNodeId(KEY_A));
+    const before = snapshotProducerOriginStats();
+    stats.observeWave(attestedNodeId(KEY_A));
+    // The snapshot is a copy, not a window onto the live counters — a probe
+    // that reads twice around a wait is comparing two moments.
+    expect(before.waves).toBe(1);
+    expect(before.byProducer).toEqual({ [KEY_A]: 1 });
+    expect(snapshotProducerOriginStats().byProducer).toEqual({ [KEY_A]: 2 });
+    resetProducerOriginStats();
+    expect(snapshotProducerOriginStats()).toEqual({
+      waves: 0,
+      attested: 0,
+      anonymous: 0,
+      suppressed: 0,
+      byProducer: {},
+      attestedRatePct: 0,
+    });
+  });
+
+  it('agrees with the flood about what an attested origin looks like', () => {
+    // Not a transcription of the prefix: the counter classifies the id the
+    // FLOOD chose, so the two have to read the same namespace or the tally
+    // would quietly call every wave anonymous.
+    const producers: ProducerStanding[] = [standing({ key: KEY_A })];
+    const topology = inferredTopology(
+      peers, 0xc0ffee, 'ckb:local', undefined, roster(6), undefined, producers,
+    );
+    const cf = colonyFlood(topology, 1, KEY_A);
+    expect(cf.entryId).toBe(attestedNodeId(KEY_A));
+    const stats = fresh();
+    stats.observeWave(cf.entryId);
+    expect(snapshotProducerOriginStats().byProducer).toEqual({ [KEY_A]: 1 });
+    // …and the fallback the same way: a key this colony stands no node for
+    // enters through the scatter, and the counter calls it what it is.
+    const anonymous = colonyFlood(topology, 1, `0x${'c'.repeat(64)}`);
+    expect(anonymous.entryId).not.toBe(null);
+    stats.observeWave(anonymous.entryId);
+    const snap = snapshotProducerOriginStats();
+    expect(snap.waves).toBe(2);
+    expect(snap.anonymous).toBe(1);
   });
 });

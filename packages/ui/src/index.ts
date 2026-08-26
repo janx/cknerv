@@ -197,3 +197,7 @@ export {
 } from './nerve/consensusMemoryTrace';
 export * from './nerve/pulseStats';
 export * from './nerve/fabricStats';
+// The colony's own counter, on the same window surface those two ride: where
+// each block wave started, which is the only way to observe from outside that
+// the flood's origin follows the chain rather than the scatter.
+export * from './derives/producerOriginStats';

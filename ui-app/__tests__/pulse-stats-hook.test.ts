@@ -21,5 +21,22 @@ describe('installPulseStatsHook', () => {
     expect(quality).toHaveProperty('effective');
     expect(quality).toHaveProperty('locked');
     expect(typeof quality.switches).toBe('number');
+    // ⭐ And where each block wave started, on the same surface for the same
+    // reason: "the flood begins at the node that made the block" is a claim
+    // about a distribution, and a distribution cannot be verified by looking at
+    // a scene. A probe resets, waits out a few dozen blocks, and divides.
+    expect(typeof window.__producerOriginStats).toBe('function');
+    expect(typeof window.__producerOriginStatsReset).toBe('function');
+    const origins = window.__producerOriginStats!();
+    expect(origins).toHaveProperty('waves');
+    expect(origins).toHaveProperty('attested');
+    expect(origins).toHaveProperty('anonymous');
+    expect(origins).toHaveProperty('byProducer');
+    expect(typeof origins.attestedRatePct).toBe('number');
+    // Always attached, exactly as its neighbours are: the live pass runs
+    // against a release build, and an instrument a release build drops is an
+    // instrument that is not there when it is wanted.
+    window.__producerOriginStatsReset!();
+    expect(window.__producerOriginStats!().waves).toBe(0);
   });
 });

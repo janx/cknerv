@@ -11,6 +11,16 @@
 //                                    non-increasing: read `switches` twice
 //                                    around a load spike and any growth is a
 //                                    step down, never a climb back.
+//   window.__producerOriginStats()      → { waves, attested, anonymous,
+//                                    suppressed, byProducer, attestedRatePct }
+//                                  — where each colony block wave STARTED.
+//                                    Reset, wait out a few dozen blocks, and
+//                                    `byProducer[key] / waves` should approach
+//                                    that producer's share of the window: the
+//                                    origin change's only observable, and the
+//                                    one thing a live pass cannot see by
+//                                    looking at the scene.
+//   window.__producerOriginStatsReset() → zero the origin counters
 // Read-only; safe to leave attached. The library itself stays window-free.
 import {
   getQualityRuntimeSnapshot,
@@ -18,6 +28,8 @@ import {
   resetPulseStats,
   snapshotFabricStats,
   resetFabricStats,
+  snapshotProducerOriginStats,
+  resetProducerOriginStats,
 } from '@cknerv/ui';
 
 declare global {
@@ -27,6 +39,8 @@ declare global {
     __fabricStats?: typeof snapshotFabricStats;
     __fabricStatsReset?: typeof resetFabricStats;
     __qualityStats?: typeof getQualityRuntimeSnapshot;
+    __producerOriginStats?: typeof snapshotProducerOriginStats;
+    __producerOriginStatsReset?: typeof resetProducerOriginStats;
   }
 }
 
@@ -37,4 +51,6 @@ export function installPulseStatsHook(): void {
   window.__fabricStats = snapshotFabricStats;
   window.__fabricStatsReset = resetFabricStats;
   window.__qualityStats = getQualityRuntimeSnapshot;
+  window.__producerOriginStats = snapshotProducerOriginStats;
+  window.__producerOriginStatsReset = resetProducerOriginStats;
 }

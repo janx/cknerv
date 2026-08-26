@@ -1238,3 +1238,36 @@ describe("the ring stroke is the producer's target", () => {
     expect(nodes).toContain('ray.at(hit.distance, hit.point);');
   });
 });
+
+/**
+ * The origin counter's one wiring point. The counter itself is exercised in
+ * `networkFlood.derive.test.ts`, beside the origin rule it measures; what
+ * belongs here is that the colony bumps it EXACTLY where it stamps a wave, and
+ * an r3f effect cannot be asked that in jsdom.
+ */
+describe('the block wave reports where it started', () => {
+  it('observes on the pulse edge that stamps the wave, and only there', () => {
+    const nodes = source('ColonyNodes.tsx');
+    // ⭐ NOT inside `colonyFlood`, which is a memo App re-runs on every topology
+    // rebuild — counted there, one block would be counted many times. The edge
+    // this owner already guards with `blockPulseAtMs` fires once per block.
+    expect(nodes).toContain('producerOriginStats.observeWave(cf.entryId);');
+    expect(nodes.match(/producerOriginStats\.observeWave\(/g)).toHaveLength(1);
+    expect(nodes).toContain('if (blockPulseAtMs <= lastPulseRef.current) return;');
+    // The id the FLOOD chose, so what is counted is where the scene actually
+    // started the wave — the only thing a viewer can see, and the only thing
+    // the oracle is about.
+    const armed = nodes.indexOf('producerOriginStats.observeWave(cf.entryId);');
+    const edge = nodes.lastIndexOf('lastPulseRef.current = blockPulseAtMs;', armed);
+    expect(edge).toBeGreaterThan(0);
+    expect(armed).toBeGreaterThan(edge);
+    // A backfill catch-up consumes the pulse and stamps nothing, so it is
+    // counted as itself rather than as a wave that never started.
+    expect(nodes).toContain('producerOriginStats.observeSuppressed();');
+    expect(nodes.match(/producerOriginStats\.observeSuppressed\(\)/g)).toHaveLength(1);
+    // An instrument, not a feature: nothing here renders it, and it costs the
+    // render path one increment on an edge it was already handling.
+    expect(nodes).not.toMatch(/producerOriginStats\.(waves|attested|anonymous|byProducer)/);
+    expect(nodes).not.toContain('snapshotProducerOriginStats');
+  });
+});
