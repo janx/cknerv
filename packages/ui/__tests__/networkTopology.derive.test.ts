@@ -990,14 +990,14 @@ describe('attested nodes in the colony (⭐ ghost displacement, one for one)', (
     expect(producers.some((p) => predecessors.has(attestedNodeId(p.key)))).toBe(true);
   });
 
-  // ⚠️ NOTHING PAINTS THIS RUNG YET, AND THAT IS THE HONEST STATE. Widening
-  // `NodeKind` broke no switch — every consumer in the scene opts IN by literal
-  // (`kind === 'inferred' | 'measured' | 'sighted'`) rather than switching
-  // exhaustively — so the compiler never asked what an attested node looks like.
-  // This is the question the compiler did not ask: a producer is in none of the
-  // three drawn buckets, so it neither crashes the scene nor borrows a mark
-  // that would say something false about it. A mark is a deliberate act.
-  it('is drawn by nobody yet, and is in no other tier’s bucket', () => {
+  // ⭐ THE PAYLOAD BELONGS TO EXACTLY ONE RUNG, and this is the derive's half
+  // of that. Widening `NodeKind` broke no switch — every consumer in the scene
+  // opted IN by literal rather than switching exhaustively — so the compiler
+  // never asked what an attested node looks like, and for one commit nothing
+  // painted the rung at all. `DRAW_BY_NODE_KIND` in `ColonyNodes` is the gate
+  // that now asks; what stays here is the question that gate cannot answer,
+  // which is whether the standing ever lands on a node of another kind.
+  it('carries its standing on its own rung and on no other tier’s', () => {
     const t = inferredTopology(
       peers, seed, 'ckb:local', undefined, roster(sightedRoster(20)), undefined, standings(6),
     );

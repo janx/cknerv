@@ -147,10 +147,15 @@ describe('cell interaction derivation', () => {
   });
 
   it('slows the colony only for selections anchored inside its rotating group', () => {
-    // peer:/sighted: cards tether to colony-frame nodes — inspection tempo.
+    // peer:/sighted:/miner: cards tether to colony-frame nodes — inspection
+    // tempo. A producer stands in the same rotating group the other two do, so
+    // the counter-rotation carries it out from under the pointer at the same
+    // rate; the reticle alone is reason enough, card or no card.
     expect(networkColonyRotationScaleTarget('peer:QmAbc'))
       .toBe(CELL_INSPECTION_GALAXY_ROTATION_SCALE);
     expect(networkColonyRotationScaleTarget('sighted:QmDef'))
+      .toBe(CELL_INSPECTION_GALAXY_ROTATION_SCALE);
+    expect(networkColonyRotationScaleTarget(`miner:0x${'ab'.repeat(32)}`))
       .toBe(CELL_INSPECTION_GALAXY_ROTATION_SCALE);
     // The chain anchor's card tethers to a world-mounted icosahedron the
     // rotation never moves; no selection at all is full speed too.

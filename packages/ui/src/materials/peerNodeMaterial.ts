@@ -69,7 +69,7 @@ function sharedShockwave(
  * A node we can name is worth more light than an anonymous one, a node somebody
  * has answered is worth more than one only the gossip names, and a node the
  * crawler could still reach is worth more than one it only remembers — but that
- * is FOUR stops of one gradient, not four visual languages, so the tone rides
+ * is FIVE stops of one gradient, not five visual languages, so the tone rides
  * creation-time UNIFORMS on the shared factory. Splitting it per point would
  * cost a vertex attribute, and the attribute budget has no room to sell.
  */
@@ -100,9 +100,9 @@ export interface PeerCloudTone {
 }
 
 /**
- * The four stops, faintest first. One hue, one axis: a node the crawler named
+ * The five stops, faintest first. One hue, one axis: a node the crawler named
  * reads as "the same kind of thing, better known", never as a different
- * species. The measured core sits above all four with its own (brighter,
+ * species. The measured core sits above all five with its own (brighter,
  * tinted) halo.
  *
  * The axis has to survive ADDITIVE blending, which is where the first cut of it
@@ -125,6 +125,40 @@ export interface PeerCloudTone {
  */
 export const PEER_CLOUD_GHOST_TONE = {
   dim: 0.62, size: 0.65, event: 0.9,
+} satisfies PeerCloudTone;
+/**
+ * Proved by the chain, named by nobody — a node whose EXISTENCE is certain and
+ * whose identity is zero. The exact inverse of the stop below this comment.
+ *
+ * ⭐⭐ IT SITS BETWEEN THE HAZE AND THE HEARSAY STOP AND DELIBERATELY DOES NOT
+ * SEPARATE FROM EITHER, which is the one thing about this tone worth reading
+ * twice. Every other stop on this axis buys legibility with footprint, under a
+ * rule the tier's own tests enforce: each step is at least a quarter again as
+ * much visible mark, because two stops closer than that are one stop as far as
+ * a viewer is concerned. This stop CANNOT hold that rule and must not pretend
+ * to. Ghost → hearsay is only 1.35x of visible extent end to end, so a rung
+ * inserted between them splits that into two ~1.16x steps — under the bar on
+ * both sides, whatever numbers are chosen. Squeezing it in is arithmetically
+ * impossible, and reaching past the hearsay stop to make room would assert
+ * identification this rung has NONE of, which is the only thing brightness
+ * means here.
+ *
+ * ⇒ So brightness and footprint are a CEILING AND A FLOOR for this rung rather
+ * than a claim: strictly above the invented haze because the chain proves the
+ * node is there, strictly below the faintest named stop because we cannot say
+ * one word about which machine it is. What asserts its presence is the producer
+ * ring on the other channel, and that is the whole point of there BEING another
+ * channel — mining is a rate, this axis is a state, and a rate drawn as
+ * brightness would be competing for the one signal the ladder already owns.
+ *
+ * It therefore rests UNDER the additive clip (no saturated plateau at all, like
+ * the haze) on purpose: the point is a body and a pick target, and the ring is
+ * the mark. `event` clears the haze's 0.9 for the reason the stop below spells
+ * out — a stop that answers a block more quietly than the fiction underneath it
+ * gets swallowed for the length of every wave.
+ */
+export const PEER_CLOUD_ATTESTED_TONE = {
+  dim: 0.7, size: 0.75, event: 0.92,
 } satisfies PeerCloudTone;
 /**
  * Named by the network, answered by nobody — hearsay carrying a real identity.

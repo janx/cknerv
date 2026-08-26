@@ -37,15 +37,21 @@ export function cellGalaxyRotationScaleTarget(
 }
 
 /** The colony's twin of `cellGalaxyRotationScaleTarget`, at the same
- *  inspection tempo: a peer or sighted card tethers to a node INSIDE the
- *  counter-rotating colony group, so its selection slows that group the way
+ *  inspection tempo: a peer, sighted or miner card tethers to a node INSIDE
+ *  the counter-rotating colony group, so its selection slows that group the way
  *  a Cell selection slows the canopy. A chain-node selection (bare id) stays
- *  at full speed — its anchor is world-mounted and never rides the colony. */
+ *  at full speed — its anchor is world-mounted and never rides the colony.
+ *
+ *  ⭐ The test is "does the subject ride the colony", never "does a card exist
+ *  for it": the reticle alone is enough to want the turn eased, and a producer
+ *  stands in the same rotating group everything else on this list does. */
+const COLONY_MOUNTED_SELECTIONS = ['peer:', 'sighted:', 'miner:'];
+
 export function networkColonyRotationScaleTarget(
   selectedNetId: string | null,
 ): number {
   return selectedNetId !== null
-    && (selectedNetId.startsWith('peer:') || selectedNetId.startsWith('sighted:'))
+    && COLONY_MOUNTED_SELECTIONS.some((prefix) => selectedNetId.startsWith(prefix))
     ? CELL_INSPECTION_GALAXY_ROTATION_SCALE
     : 1;
 }
