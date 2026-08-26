@@ -18,6 +18,7 @@ const chain: ChainEntry = {
   epoch: { number: 11042, index: 842, length: 1800 }, median_time_ms: 0, difficulty: '0x0',
   chain_name: 'ckb', reorgs: 0, recent_block_intervals_ms: [8000, 7000], recent_block_tx_counts: [2, 3], recent_block_sizes: [500, 800],
   ibd: false, best_known_block: 16204887,
+  producers: [], producer_window: [], producer_window_blocks: 0,
 };
 
 const source: EnrichmentSourceStatus = {

@@ -34,6 +34,9 @@ const chain: ChainEntry = {
   recent_block_sizes: [],
   ibd: false,
   best_known_block: 100,
+  producers: [],
+  producer_window: [],
+  producer_window_blocks: 0,
 };
 
 const record: ProtocolEraRecord = {

@@ -48,6 +48,9 @@
             "total_tx_cycles": 0,
             "total_tx_size": 0
           },
+          "producer_window": [],
+          "producer_window_blocks": 0,
+          "producers": [],
           "recent_block_intervals_ms": [],
           "recent_block_sizes": [
             1024

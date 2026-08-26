@@ -113,6 +113,67 @@ pub struct Peer {
 /// mesh jitter without chasing every tick.
 pub const RECENT_INTERVAL_CAP: usize = 60;
 
+/// Cap on [`Chain::producer_window`] — how many attributed blocks the
+/// producer tally counts.
+///
+/// Deliberately far wider than [`RECENT_INTERVAL_CAP`], because the two
+/// windows answer different kinds of question. Cadence is a per-block fact
+/// and 60 blocks is plenty of it; a share is a *distribution*, and a
+/// distribution over 60 blocks is mostly binomial noise — a producer holding
+/// a tenth of the work would swing between 2 and 10 blocks from one window to
+/// the next. 240 blocks (~32 minutes at mainnet cadence) resolves the small
+/// producers well enough to be worth printing while still turning over fast
+/// enough to notice a pool arriving or leaving. A first guess, tunable.
+pub const PRODUCER_WINDOW_CAP: usize = 240;
+
+/// Cap on a retained [`BlockProducer::message`], counted in Unicode scalar
+/// values. Longer declarations keep their leading `PRODUCER_MESSAGE_CAP_CHARS`
+/// characters and gain a trailing [`crate::DATA_HEX_TRUNCATION_MARKER`], the
+/// same convention (and the same single-byte marker) `data_hex` uses.
+///
+/// The declaration is attacker-controlled free-form bytes: any miner on the
+/// network writes it into its own cellbase, and from there it lands in a
+/// persisted state file and is re-served in every chain snapshot. The longest
+/// message observed on mainnet is 34 characters, so 256 leaves an order of
+/// magnitude of headroom and still bounds the whole retained window at a few
+/// tens of KB in the worst case a chain could construct.
+///
+/// ⚠️ Counted in CHARACTERS, not bytes, because two reducers in two languages
+/// have to enforce this identically: Rust's `chars()` and JS code-point
+/// iteration agree exactly, while a UTF-8 *byte* cap needs boundary arithmetic
+/// on the JS side that could drift from Rust's without either side failing.
+/// Bytes stay bounded regardless — at most four times this.
+pub const PRODUCER_MESSAGE_CAP_CHARS: usize = 256;
+
+/// One distinct block producer inside [`Chain`]'s rolling window, carrying
+/// the count that makes its share meaningful.
+///
+/// Chain-generic: `key` is whatever opaque identity the source adapter put on
+/// `Mutation::BlockMined`, and nothing here parses it. (The CKB adapter sends
+/// the script hash of the cellbase witness lock.)
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BlockProducer {
+    /// The adapter's opaque producer identity. Group and count by it.
+    pub key: String,
+    /// What this producer declared on its most recent block **in the
+    /// window**. Self-declared and trivially spoofable, so consumers must
+    /// render it as a claim and not as a measurement; a producer may also
+    /// declare something different on every block, and the last declaration
+    /// inside the window is the one kept. A bounded prefix — see
+    /// [`PRODUCER_MESSAGE_CAP_CHARS`]. Empty when the producer declared
+    /// nothing readable.
+    pub message: String,
+    /// How many blocks of the window this producer holds — the numerator of
+    /// its share. The denominator is [`Chain::producer_window_blocks`]: never
+    /// `producers.len()`, and never [`PRODUCER_WINDOW_CAP`], which the window
+    /// has not reached while it is still warming.
+    pub blocks: u32,
+    /// Envelope timestamp of this producer's most recent block in the window.
+    /// Exact for as long as the row exists, because eviction only ever takes
+    /// the oldest end and a row is dropped the moment its last block leaves.
+    pub last_seen_ms: u64,
+}
+
 /// Chain-state singleton. Adapters produce this via the `ChainUpdated`
 /// mutation path (Phase C); the cknerv-server reducer assembles the
 /// snapshot frame consumers see.
@@ -171,6 +232,43 @@ pub struct Chain {
     /// Network best-known block height (`sync_state.best_known_block_number`).
     #[serde(default)]
     pub best_known_block: u64,
+    /// Distinct producers of the blocks in `producer_window`, in the order
+    /// they first appear in it. A materialized tally: the window below is the
+    /// fact, this is the sum over it. Small — six on mainnet today — and a
+    /// producer leaves the moment its last block does.
+    #[serde(default)]
+    pub producers: Vec<BlockProducer>,
+    /// The window itself: one entry per block in it, oldest first, each an
+    /// index into `producers`. Capped at [`PRODUCER_WINDOW_CAP`].
+    ///
+    /// Membership is *attributed blocks only* — a block whose producer the
+    /// adapter could not read (genesis, an unreadable witness) takes no slot
+    /// here and is counted in no share. That keeps
+    /// `sum(producers[].blocks) == producer_window_blocks` exactly true, so a
+    /// share can never be computed against a window it was not measured over.
+    ///
+    /// ⚠️ This ring rides the wire rather than staying server-side, and it has
+    /// to. Two reducers maintain this window from the same mutation stream —
+    /// cknerv-server's and its twin in `packages/cache/src/chainReducer.ts` —
+    /// and a client is handed the chain entity exactly once per connection and
+    /// then only `BlockMined` deltas for the rest of the session. Evicting the
+    /// oldest block from a tally means knowing *which* producer made it, which
+    /// a tally cannot answer; without the ring the client's window would
+    /// silently freeze at connect time while the readout claimed to be live.
+    /// Persistence needs it for the same reason: a boot that restores state
+    /// SKIPS the backfill (`cknerv-cli/src/server.rs`), so a window that did
+    /// not survive the save would start cold exactly there.
+    ///
+    /// Indices rather than keys: a 66-character hash repeated 240 times costs
+    /// 16KB of wire and save file to say what ~700 bytes says.
+    #[serde(default)]
+    pub producer_window: Vec<u32>,
+    /// How many blocks `producers` actually counts — the denominator of every
+    /// share, carried explicitly so no consumer has to reconstruct it. Below
+    /// [`PRODUCER_WINDOW_CAP`] the whole time the window is warming, and back
+    /// to zero after a reorg drops it.
+    #[serde(default)]
+    pub producer_window_blocks: u32,
 }
 
 #[cfg(test)]
@@ -185,6 +283,60 @@ mod tests {
     #[test]
     fn recent_interval_cap_matches_its_client_mirror() {
         assert_eq!(RECENT_INTERVAL_CAP, 60);
+    }
+
+    /// Same treatment for the producer window's two caps, and for the same
+    /// reason: the snapshot arrives already cut to them and every block after
+    /// it is cut by the client's own copy of this reducer
+    /// (`packages/cache/src/chainReducer.ts`). A one-sided retune would show
+    /// one window on the snapshot and a different one a minute later, with
+    /// nothing failing anywhere.
+    #[test]
+    fn producer_window_caps_match_their_client_mirror() {
+        assert_eq!(PRODUCER_WINDOW_CAP, 240);
+        assert_eq!(PRODUCER_MESSAGE_CAP_CHARS, 256);
+    }
+
+    /// A producer window written before these fields existed — every save on
+    /// disk today — still loads, as an empty window rather than a failed
+    /// restore. That is what lets this change stay on the current persistence
+    /// schema instead of discarding everyone's state.
+    #[test]
+    fn chain_without_a_producer_window_loads_empty() {
+        let c: Chain = serde_json::from_value(serde_json::json!({
+            "tip": 42,
+            "recent_blocks": [{ "number": 42, "hash": "0x2a" }]
+        }))
+        .expect("a pre-field save still loads");
+        assert_eq!(c.tip, 42);
+        assert!(c.producers.is_empty());
+        assert!(c.producer_window.is_empty());
+        assert_eq!(c.producer_window_blocks, 0);
+
+        // And the window is always emitted, so a client never has to guess
+        // whether an absent denominator means zero or means unknown.
+        let v = serde_json::to_value(&c).expect("serialize");
+        assert!(v.get("producers").is_some());
+        assert!(v.get("producer_window").is_some());
+        assert_eq!(v["producer_window_blocks"], 0);
+    }
+
+    #[test]
+    fn block_producer_round_trips_snake_case() {
+        let p = BlockProducer {
+            key: "0xfc20a8c81a461efaf91585c631db784749d066f709d30243095efda7a7fdcfd9".into(),
+            message: "0.209.0 (7e31f75 2026-07-30)".into(),
+            blocks: 113,
+            last_seen_ms: 1_756_000_000_000,
+        };
+        let v = serde_json::to_value(&p).expect("serialize");
+        assert_eq!(v["blocks"], 113);
+        assert_eq!(v["last_seen_ms"], 1_756_000_000_000u64);
+        assert_eq!(v["message"], "0.209.0 (7e31f75 2026-07-30)");
+        assert_eq!(
+            serde_json::from_value::<BlockProducer>(v).expect("deserialize"),
+            p
+        );
     }
 
     #[test]

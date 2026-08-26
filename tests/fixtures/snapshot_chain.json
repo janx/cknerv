@@ -27,5 +27,21 @@
   "recent_block_sizes": [1024, 2048],
   "last_block_ts_ms": 1234567890000,
   "ibd": false,
-  "best_known_block": 100
+  "best_known_block": 100,
+  "producers": [
+    {
+      "key": "0xfc20a8c81a461efaf91585c631db784749d066f709d30243095efda7a7fdcfd9",
+      "message": "0.209.0 (7e31f75 2026-07-30)",
+      "blocks": 1,
+      "last_seen_ms": 1234567879000
+    },
+    {
+      "key": "0x3c1a2b4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809",
+      "message": "0.209.0 (d166e28 2026-07-29) bpool",
+      "blocks": 1,
+      "last_seen_ms": 1234567890000
+    }
+  ],
+  "producer_window": [0, 1],
+  "producer_window_blocks": 2
 }

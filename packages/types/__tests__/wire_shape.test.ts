@@ -131,6 +131,17 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(typeof sample.chain_name).toBe('string');
     expect(typeof sample.mempool).toBe('object');
     expect(typeof sample.epoch).toBe('object');
+    // The producer window ships its own denominator, so a share can never be
+    // rendered against a window it was not measured over.
+    expect(Array.isArray(sample.producers)).toBe(true);
+    expect(Array.isArray(sample.producer_window)).toBe(true);
+    expect(typeof sample.producer_window_blocks).toBe('number');
+    for (const producer of sample.producers) {
+      expect(typeof producer.key).toBe('string');
+      expect(typeof producer.message).toBe('string');
+      expect(typeof producer.blocks).toBe('number');
+      expect(typeof producer.last_seen_ms).toBe('number');
+    }
   });
 
   it('cell_delta_samples.json carries every CellDelta variant', () => {

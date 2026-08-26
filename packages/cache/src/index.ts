@@ -77,6 +77,8 @@ export {
   applyChainMutation,
   applyRevisionedChainMutations,
   RECENT_INTERVAL_CAP,
+  PRODUCER_WINDOW_CAP,
+  PRODUCER_MESSAGE_CAP_CHARS,
 } from './chainReducer';
 
 export {

@@ -25,9 +25,10 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{broadcast, mpsc, watch};
 
 use cknerv_core::{
-    Chain, ChainNode, CompositionDemand, CompositionDemandSink, EnrichmentEvent,
+    BlockProducer, Chain, ChainNode, CompositionDemand, CompositionDemandSink, EnrichmentEvent,
     EnrichmentSourceState, MempoolStats, Mutation, ObservedScriptsSink, Peer, RecentBlock,
-    RecentTx, ReplayPhase, RevisionedMutation, Ring,
+    RecentTx, ReplayPhase, RevisionedMutation, Ring, DATA_HEX_TRUNCATION_MARKER,
+    PRODUCER_MESSAGE_CAP_CHARS, PRODUCER_WINDOW_CAP,
 };
 
 use crate::enrichment::CanonicalContext;
@@ -810,6 +811,7 @@ fn apply_chain_mutation(chain: &mut Chain, m: &Mutation) {
             chain.recent_block_tx_counts.clear();
             chain.recent_block_sizes.clear();
             chain.last_block_ts_ms = None;
+            clear_producer_window(chain);
         }
         Mutation::ChainRebuild { from_block } => {
             // No common ancestor was provable inside the retained rollback
@@ -827,6 +829,7 @@ fn apply_chain_mutation(chain: &mut Chain, m: &Mutation) {
             chain.recent_block_tx_counts.clear();
             chain.recent_block_sizes.clear();
             chain.last_block_ts_ms = None;
+            clear_producer_window(chain);
         }
         Mutation::BlockMined {
             number,
@@ -834,8 +837,8 @@ fn apply_chain_mutation(chain: &mut Chain, m: &Mutation) {
             tx_count,
             size,
             at,
-            producer_key: _,
-            producer_message: _,
+            producer_key,
+            producer_message,
         } => {
             let exact_dup = chain
                 .recent_blocks
@@ -857,6 +860,7 @@ fn apply_chain_mutation(chain: &mut Chain, m: &Mutation) {
                 chain.recent_block_tx_counts.clear();
                 chain.recent_block_sizes.clear();
                 chain.last_block_ts_ms = None;
+                clear_producer_window(chain);
             } else if *number > chain.tip {
                 chain.tip = *number;
             }
@@ -894,6 +898,19 @@ fn apply_chain_mutation(chain: &mut Chain, m: &Mutation) {
             });
             while chain.recent_blocks.len() > RECENT_BLOCKS_CAP {
                 chain.recent_blocks.remove(0);
+            }
+            // The key is the identity; the declared message is decoration the
+            // producer wrote about itself. The adapter reads both from one
+            // witness and so sends them together, but a frame carrying only a
+            // key still names a producer — losing the attribution over a
+            // missing decoration would be the wrong half to keep.
+            if let Some(key) = producer_key {
+                record_block_producer(
+                    chain,
+                    key,
+                    producer_message.as_deref().unwrap_or_default(),
+                    *at,
+                );
             }
         }
         Mutation::TxLanded { tx_hash, block, .. } => {
@@ -971,6 +988,117 @@ fn apply_chain_mutation(chain: &mut Chain, m: &Mutation) {
             // canonical truth.
         }
     }
+}
+
+/// Drop the producer window. Called from every place the three rolling
+/// metric rings are cleared, and for the same reason they are: a reorg
+/// abandons a canonical suffix, and the samples measured over it are not
+/// samples of the chain any more.
+///
+/// A precise rollback was the alternative and was rejected. It is *possible*
+/// here — unlike `recent_block_intervals_ms`, the producer ring is ours to
+/// shape and could have carried block numbers — but it would leave `Chain`
+/// holding two "recent windows" that describe different stretches of chain,
+/// and a producer share printed beside a cadence average measured over the
+/// three blocks since the reorg is the confusing half of that trade. Clearing
+/// is not a silent loss either: `producer_window_blocks` rides the wire, so a
+/// window that restarts at 1 says 1 out loud rather than quietly keeping
+/// blocks the chain has abandoned.
+fn clear_producer_window(chain: &mut Chain) {
+    chain.producers.clear();
+    chain.producer_window.clear();
+    chain.producer_window_blocks = 0;
+}
+
+/// Fold one attributed block into the rolling producer window.
+///
+/// The window is the last [`PRODUCER_WINDOW_CAP`] blocks **that named a
+/// producer**. A block the adapter could not attribute takes no slot and is
+/// counted in no share — the caller simply does not call this — which keeps
+/// `sum(producers[].blocks) == producer_window.len() == producer_window_blocks`
+/// exactly true. Both readings were defensible; this one was chosen because
+/// the denominator's only job is to divide a share, and a block nobody can be
+/// credited with belongs in neither half of that fraction. An unattributed
+/// block is rare by construction anyway (genesis, an unreadable witness), so
+/// the invariant is worth more than the difference.
+///
+/// ⚠️ This runs during boot backfill too. `BackfillProgress` gates the cells
+/// projection's pulse, not the entity reducer, and `apply_entity_mutation`
+/// sees every replayed `BlockMined` in ascending block order — which is what
+/// makes the window warm at boot rather than blank for its first half hour.
+fn record_block_producer(chain: &mut Chain, key: &str, message: &str, at: u64) {
+    let index = match chain.producers.iter().position(|p| p.key == key) {
+        Some(index) => index,
+        None => {
+            chain.producers.push(BlockProducer {
+                key: key.to_string(),
+                message: String::new(),
+                blocks: 0,
+                last_seen_ms: 0,
+            });
+            chain.producers.len() - 1
+        }
+    };
+
+    let row = &mut chain.producers[index];
+    row.blocks = row.blocks.saturating_add(1);
+    // A producer may declare something different on every block. The last
+    // declaration inside the window wins, so the card shows what it is saying
+    // now rather than what it said half an hour ago.
+    row.message = cap_declared_message(message);
+    row.last_seen_ms = at;
+    // `producers` never outgrows the ring, which is capped well under u32.
+    chain.producer_window.push(index as u32);
+
+    while chain.producer_window.len() > PRODUCER_WINDOW_CAP {
+        let evicted = chain.producer_window.remove(0) as usize;
+        let row = &mut chain.producers[evicted];
+        row.blocks = row.blocks.saturating_sub(1);
+    }
+
+    // A producer with nothing left in the window is not in the window.
+    // Dropping its row renumbers every row after it, so the ring is remapped
+    // in the same pass — the two are one edit and must never become two.
+    if chain.producers.iter().any(|p| p.blocks == 0) {
+        let mut remap = vec![0u32; chain.producers.len()];
+        let mut kept: Vec<BlockProducer> = Vec::with_capacity(chain.producers.len());
+        for (old, producer) in std::mem::take(&mut chain.producers).into_iter().enumerate() {
+            if producer.blocks == 0 {
+                continue;
+            }
+            remap[old] = kept.len() as u32;
+            kept.push(producer);
+        }
+        chain.producers = kept;
+        for slot in &mut chain.producer_window {
+            *slot = remap[*slot as usize];
+        }
+    }
+
+    chain.producer_window_blocks = chain.producer_window.len() as u32;
+}
+
+/// Bound a self-declared producer message before it becomes retained state.
+///
+/// This is the single enforcement point, and it is here rather than in the
+/// CKB adapter deliberately. The adapter reports what the miner declared,
+/// verbatim; the cap belongs where the value stops being an observation and
+/// starts being a document that cknerv persists and re-serves — which is also
+/// the only place that covers every source of a `BlockMined`, not just the one
+/// adapter that reads cellbases today.
+///
+/// The convention is `data_hex`'s: a bounded prefix plus a single trailing
+/// [`DATA_HEX_TRUNCATION_MARKER`] so a consumer can tell a short message from
+/// a clipped one. ⚠️ That marker stays one ASCII character — it is shared with
+/// the columnar string blob, whose byte offsets the client reads as char
+/// offsets.
+fn cap_declared_message(message: &str) -> String {
+    let mut chars = message.chars();
+    let mut head: String = chars.by_ref().take(PRODUCER_MESSAGE_CAP_CHARS).collect();
+    if chars.next().is_some() {
+        head.push(DATA_HEX_TRUNCATION_MARKER);
+    }
+    head
 }
 
 #[cfg(test)]
@@ -1390,6 +1518,240 @@ mod tests {
             replayed["chain"]["recent_blocks"],
             serde_json::json!([{ "number": 20, "hash": "0xcanonical20" }])
         );
+    }
+
+    /// A block that names a producer, for the producer-window tests below.
+    fn mined_by(number: u64, key: &str, message: &str) -> Mutation {
+        Mutation::BlockMined {
+            number,
+            hash: format!("0xblock{number}"),
+            tx_count: 0,
+            size: 0,
+            at: number * 1_000,
+            producer_key: Some(key.into()),
+            producer_message: Some(message.into()),
+        }
+    }
+
+    /// The window's structural promise, checked after every push in these
+    /// tests: the denominator a share is divided by is the number of blocks
+    /// the tally actually covers, and every one of those blocks is credited
+    /// to exactly one producer. If any of the three ever disagree, some
+    /// consumer is dividing by the wrong number.
+    fn assert_window_is_self_consistent(chain: &serde_json::Value) {
+        let producers = chain["producers"].as_array().expect("producers array");
+        let window = chain["producer_window"]
+            .as_array()
+            .expect("producer_window array");
+        let counted: u64 = producers
+            .iter()
+            .map(|p| p["blocks"].as_u64().expect("blocks"))
+            .sum();
+        let denominator = chain["producer_window_blocks"]
+            .as_u64()
+            .expect("producer_window_blocks");
+        assert_eq!(denominator, window.len() as u64);
+        assert_eq!(counted, denominator);
+        for slot in window {
+            let index = slot.as_u64().expect("window slot") as usize;
+            assert!(index < producers.len(), "window slot points at no producer");
+        }
+        for p in producers {
+            assert!(
+                p["blocks"].as_u64().expect("blocks") > 0,
+                "a producer with no block left in the window must not be in it"
+            );
+        }
+    }
+
+    #[test]
+    fn producer_window_tallies_shares_against_the_blocks_it_counted() {
+        let s = ServerState::new();
+        for number in 1..=10 {
+            let key = if number % 2 == 0 { "0xeven" } else { "0xodd" };
+            s.apply_mutation(mined_by(number, key, "0.209.0 (7e31f75 2026-07-30)"));
+        }
+        let chain = s.snapshot()["chain"].clone();
+        assert_window_is_self_consistent(&chain);
+        assert_eq!(chain["producer_window_blocks"], 10);
+
+        let producers = chain["producers"].as_array().unwrap();
+        assert_eq!(producers.len(), 2);
+        // First-appearance order: the odd producer opened the window.
+        assert_eq!(producers[0]["key"], "0xodd");
+        assert_eq!(producers[0]["blocks"], 5);
+        assert_eq!(producers[1]["key"], "0xeven");
+        assert_eq!(producers[1]["blocks"], 5);
+        assert_eq!(producers[1]["last_seen_ms"], 10_000);
+    }
+
+    /// The window states its own denominator the whole time it is warming,
+    /// then holds at the cap while the ring turns over. A producer whose last
+    /// block falls out leaves with it rather than lingering at zero.
+    #[test]
+    fn producer_window_stops_at_the_cap_and_forgets_who_fell_out_of_it() {
+        let s = ServerState::new();
+        s.apply_mutation(mined_by(1, "0xtransient", "first and only"));
+        let warming = s.snapshot()["chain"].clone();
+        assert_eq!(warming["producer_window_blocks"], 1);
+        assert!(
+            (warming["producer_window_blocks"].as_u64().unwrap() as usize) < PRODUCER_WINDOW_CAP,
+            "the test would prove nothing if one block already filled the window"
+        );
+
+        for number in 2..=(PRODUCER_WINDOW_CAP as u64 + 20) {
+            s.apply_mutation(mined_by(number, "0xsteady", "0.209.0 (d166e28 2026-07-29)"));
+        }
+        let chain = s.snapshot()["chain"].clone();
+        assert_window_is_self_consistent(&chain);
+        assert_eq!(
+            chain["producer_window_blocks"].as_u64().unwrap() as usize,
+            PRODUCER_WINDOW_CAP
+        );
+        let producers = chain["producers"].as_array().unwrap();
+        assert_eq!(producers.len(), 1, "the one-block producer aged out");
+        assert_eq!(producers[0]["key"], "0xsteady");
+        assert_eq!(
+            producers[0]["blocks"].as_u64().unwrap() as usize,
+            PRODUCER_WINDOW_CAP
+        );
+    }
+
+    /// A block nobody can be credited with is still a block, but it is not a
+    /// share of anything: it takes no slot in the window and moves no
+    /// denominator. Genesis and an unreadable witness both arrive this way.
+    #[test]
+    fn a_block_that_names_nobody_enters_neither_half_of_the_fraction() {
+        let s = ServerState::new();
+        s.apply_mutation(mined_by(1, "0xminer", "0.209.0"));
+        s.apply_mutation(block(2));
+        s.apply_mutation(block(3));
+        let chain = s.snapshot()["chain"].clone();
+        assert_window_is_self_consistent(&chain);
+        assert_eq!(chain["total_blocks"], 3, "all three blocks were observed");
+        assert_eq!(
+            chain["producer_window_blocks"], 1,
+            "only the attributed one is in the window"
+        );
+        assert_eq!(chain["producers"].as_array().unwrap()[0]["blocks"], 1);
+    }
+
+    /// The producer, not the message, is the identity. A miner that rewrites
+    /// its own declaration is the same producer with a newer claim.
+    #[test]
+    fn the_last_declaration_in_the_window_is_the_one_kept() {
+        let s = ServerState::new();
+        s.apply_mutation(mined_by(1, "0xminer", "0.209.0 (d166e28 2026-07-29)"));
+        s.apply_mutation(mined_by(2, "0xminer", "0.209.0 (d166e28 2026-07-29) bpool"));
+        let chain = s.snapshot()["chain"].clone();
+        let producers = chain["producers"].as_array().unwrap();
+        assert_eq!(producers.len(), 1);
+        assert_eq!(producers[0]["blocks"], 2);
+        assert_eq!(
+            producers[0]["message"],
+            "0.209.0 (d166e28 2026-07-29) bpool"
+        );
+        assert_eq!(producers[0]["last_seen_ms"], 2_000);
+    }
+
+    /// The declaration is free-form bytes any miner on the network can write,
+    /// and from here it is persisted and re-served. It arrives bounded, with
+    /// the same single-character marker `data_hex` uses so a clipped message
+    /// is never mistaken for a short one.
+    #[test]
+    fn an_oversized_declaration_is_bounded_before_it_becomes_state() {
+        let s = ServerState::new();
+        let shouted = "A".repeat(PRODUCER_MESSAGE_CAP_CHARS * 40);
+        s.apply_mutation(mined_by(1, "0xloud", &shouted));
+        // Multi-byte characters must be cut on a character, never mid-scalar.
+        s.apply_mutation(mined_by(
+            2,
+            "0xwide",
+            &"字".repeat(PRODUCER_MESSAGE_CAP_CHARS + 5),
+        ));
+        s.apply_mutation(mined_by(3, "0xquiet", "0.209.0 (7e31f75 2026-07-30)"));
+
+        let chain = s.snapshot()["chain"].clone();
+        let producers = chain["producers"].as_array().unwrap();
+        for (row, key) in producers.iter().zip(["0xloud", "0xwide", "0xquiet"]) {
+            assert_eq!(row["key"], key);
+        }
+        for row in producers.iter().take(2) {
+            let message = row["message"].as_str().unwrap();
+            assert_eq!(message.chars().count(), PRODUCER_MESSAGE_CAP_CHARS + 1);
+            assert!(message.ends_with(DATA_HEX_TRUNCATION_MARKER));
+        }
+        let short = producers[2]["message"].as_str().unwrap();
+        assert_eq!(short, "0.209.0 (7e31f75 2026-07-30)");
+        assert!(
+            !short.ends_with(DATA_HEX_TRUNCATION_MARKER),
+            "a message that fits must not be marked as clipped"
+        );
+    }
+
+    /// A reorg abandons a canonical suffix, and the producer window goes with
+    /// the other rolling rings rather than keeping blocks the chain no longer
+    /// has. All three paths that clear those rings clear this one too: the
+    /// explicit reorg, the deep rebuild, and the same-number-different-hash
+    /// replacement detected inside `BlockMined` itself.
+    #[test]
+    fn every_reorg_path_drops_the_producer_window_with_the_other_rings() {
+        for (label, invalidate) in [
+            (
+                "explicit reorg",
+                Mutation::ChainReorganized { from_block: 2 },
+            ),
+            ("deep rebuild", Mutation::ChainRebuild { from_block: 2 }),
+            (
+                "replacement block",
+                Mutation::BlockMined {
+                    number: 2,
+                    hash: "0xreplacement2".into(),
+                    tx_count: 0,
+                    size: 0,
+                    at: 2_500,
+                    producer_key: None,
+                    producer_message: None,
+                },
+            ),
+        ] {
+            let s = ServerState::new();
+            s.apply_mutation(mined_by(1, "0xminer", "0.209.0"));
+            s.apply_mutation(mined_by(2, "0xminer", "0.209.0"));
+            assert_eq!(
+                s.snapshot()["chain"]["producer_window_blocks"],
+                2,
+                "{label}"
+            );
+
+            s.apply_mutation(invalidate);
+            let chain = s.snapshot()["chain"].clone();
+            assert_window_is_self_consistent(&chain);
+            assert_eq!(
+                chain["producer_window_blocks"], 0,
+                "{label} must not leave a share standing on abandoned blocks"
+            );
+            assert_eq!(chain["producers"], serde_json::json!([]), "{label}");
+
+            // And the replacement suffix refills it from scratch.
+            s.apply_mutation(mined_by(3, "0xreplacer", "0.209.0"));
+            let refilled = s.snapshot()["chain"].clone();
+            assert_window_is_self_consistent(&refilled);
+            assert_eq!(refilled["producer_window_blocks"], 1, "{label}");
+        }
+    }
+
+    /// The dedupe guard covers the producer window too: a block replayed at
+    /// the identical hash returns before any ring is touched, so a producer
+    /// cannot be credited twice for one block.
+    #[test]
+    fn a_replayed_block_is_not_a_second_block_for_its_producer() {
+        let s = ServerState::new();
+        s.apply_mutation(mined_by(1, "0xminer", "0.209.0"));
+        s.apply_mutation(mined_by(1, "0xminer", "0.209.0"));
+        let chain = s.snapshot()["chain"].clone();
+        assert_window_is_self_consistent(&chain);
+        assert_eq!(chain["producer_window_blocks"], 1);
     }
 
     #[test]

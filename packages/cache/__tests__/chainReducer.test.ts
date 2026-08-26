@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { DATA_HEX_TRUNCATION_MARKER } from '@cknerv/types';
 import type {
   ChainEntry,
   Mutation,
@@ -18,6 +19,8 @@ import {
   applyChainMutation,
   applyRevisionedChainMutations,
   emptyChainCache,
+  PRODUCER_MESSAGE_CAP_CHARS,
+  PRODUCER_WINDOW_CAP,
   RECENT_INTERVAL_CAP,
 } from '../src/chainReducer';
 
@@ -397,6 +400,19 @@ describe('cross-language wire-shape parity', () => {
     expect(snap.total_blocks).toBeGreaterThanOrEqual(snap.recent_blocks.length);
   });
 
+  it('snapshot_chain.json carries a producer window with its denominator', () => {
+    const snap = fixture<ChainEntry>('snapshot_chain.json');
+    // The tally, the ring it is a tally OF, and the denominator every share is
+    // divided by all describe the same blocks — the whole point of shipping
+    // the denominator rather than letting each consumer reconstruct one.
+    const counted = snap.producers.reduce((sum, p) => sum + p.blocks, 0);
+    expect(snap.producer_window_blocks).toBe(snap.producer_window.length);
+    expect(counted).toBe(snap.producer_window_blocks);
+    for (const slot of snap.producer_window) {
+      expect(snap.producers[slot]).toBeDefined();
+    }
+  });
+
   it('the cadence rings are cut at the same window the server cuts them', () => {
     // Twin of `RECENT_INTERVAL_CAP` in `crates/cknerv-core/src/entity.rs`
     // (asserted there by `recent_interval_cap_matches_its_client_mirror`).
@@ -418,6 +434,152 @@ describe('cross-language wire-shape parity', () => {
     expect(chain.recent_block_intervals_ms).toHaveLength(RECENT_INTERVAL_CAP);
     expect(chain.recent_block_tx_counts).toHaveLength(RECENT_INTERVAL_CAP);
     expect(chain.recent_block_sizes).toHaveLength(RECENT_INTERVAL_CAP);
+  });
+
+  /** A block that names a producer. */
+  const minedBy = (
+    number: number,
+    key: string,
+    message: string,
+  ): Mutation => ({
+    type: 'block_mined',
+    number,
+    hash: `0xb${number}`,
+    tx_count: 0,
+    at: number * 1000,
+    producer_key: key,
+    producer_message: message,
+  });
+
+  /** The window's structural promise, the same one the Rust reducer's tests
+   *  assert after every push: the denominator a share is divided by is the
+   *  number of blocks the tally actually covers, and each of those blocks is
+   *  credited to exactly one producer still in the list. */
+  const expectSelfConsistentWindow = (chain: ChainEntry): void => {
+    const counted = chain.producers.reduce((sum, p) => sum + p.blocks, 0);
+    expect(chain.producer_window_blocks).toBe(chain.producer_window.length);
+    expect(counted).toBe(chain.producer_window_blocks);
+    for (const slot of chain.producer_window) {
+      expect(chain.producers[slot]).toBeDefined();
+    }
+    for (const p of chain.producers) expect(p.blocks).toBeGreaterThan(0);
+  };
+
+  it('the producer window is cut at the same cap the server cuts it', () => {
+    // Twin of `PRODUCER_WINDOW_CAP` in `crates/cknerv-core/src/entity.rs`
+    // (asserted there by `producer_window_caps_match_their_client_mirror`).
+    // A client is handed the chain entity once per connection and then only
+    // block_mined deltas, so this reducer owns the window for the rest of the
+    // session; a one-sided retune would print one window on the snapshot and a
+    // different one a minute later.
+    expect(PRODUCER_WINDOW_CAP).toBe(240);
+    expect(PRODUCER_MESSAGE_CAP_CHARS).toBe(256);
+
+    let chain = applyChainMutation(
+      emptyChainCache(),
+      minedBy(1, '0xtransient', 'first and only'),
+    );
+    expect(chain.producer_window_blocks).toBe(1);
+    for (let n = 2; n <= PRODUCER_WINDOW_CAP + 20; n += 1) {
+      chain = applyChainMutation(chain, minedBy(n, '0xsteady', '0.209.0'));
+    }
+    expectSelfConsistentWindow(chain);
+    expect(chain.producer_window_blocks).toBe(PRODUCER_WINDOW_CAP);
+    // The one-block producer aged out and left with its last block.
+    expect(chain.producers).toHaveLength(1);
+    expect(chain.producers[0].key).toBe('0xsteady');
+    expect(chain.producers[0].blocks).toBe(PRODUCER_WINDOW_CAP);
+  });
+
+  it('a block that names nobody enters neither half of the fraction', () => {
+    let chain = applyChainMutation(
+      emptyChainCache(),
+      minedBy(1, '0xminer', '0.209.0'),
+    );
+    chain = applyChainMutation(chain, {
+      type: 'block_mined',
+      number: 2,
+      hash: '0xb2',
+      tx_count: 0,
+      at: 2000,
+    });
+    expectSelfConsistentWindow(chain);
+    expect(chain.total_blocks).toBe(2);
+    expect(chain.producer_window_blocks).toBe(1);
+  });
+
+  it('the last declaration in the window is the one kept, bounded', () => {
+    let chain = applyChainMutation(
+      emptyChainCache(),
+      minedBy(1, '0xminer', '0.209.0 (d166e28 2026-07-29)'),
+    );
+    chain = applyChainMutation(
+      chain,
+      minedBy(2, '0xminer', '0.209.0 (d166e28 2026-07-29) bpool'),
+    );
+    expect(chain.producers).toHaveLength(1);
+    expect(chain.producers[0].blocks).toBe(2);
+    expect(chain.producers[0].message).toBe('0.209.0 (d166e28 2026-07-29) bpool');
+    expect(chain.producers[0].last_seen_ms).toBe(2000);
+
+    // Free-form bytes any miner on the network writes: bounded here exactly as
+    // the Rust reducer bounds them, cut on a character and marked as clipped.
+    chain = applyChainMutation(
+      chain,
+      minedBy(3, '0xloud', '\u5b57'.repeat(PRODUCER_MESSAGE_CAP_CHARS + 5)),
+    );
+    const loud = chain.producers.find((p) => p.key === '0xloud');
+    expect(loud).toBeDefined();
+    expect(Array.from(loud?.message ?? '')).toHaveLength(
+      PRODUCER_MESSAGE_CAP_CHARS + 1,
+    );
+    expect(loud?.message.endsWith(DATA_HEX_TRUNCATION_MARKER)).toBe(true);
+  });
+
+  it('every reorg path drops the producer window with the other rings', () => {
+    const invalidations: Mutation[] = [
+      { type: 'chain_reorganized', from_block: 2 },
+      { type: 'chain_rebuild', from_block: 2 },
+      // A replacement block at a number already seen with another hash.
+      {
+        type: 'block_mined',
+        number: 2,
+        hash: '0xreplacement2',
+        tx_count: 0,
+        at: 2500,
+      },
+    ];
+    for (const invalidate of invalidations) {
+      let chain = applyChainMutation(
+        emptyChainCache(),
+        minedBy(1, '0xminer', '0.209.0'),
+      );
+      chain = applyChainMutation(chain, minedBy(2, '0xminer', '0.209.0'));
+      expect(chain.producer_window_blocks).toBe(2);
+
+      chain = applyChainMutation(chain, invalidate);
+      expectSelfConsistentWindow(chain);
+      expect(chain.producer_window_blocks).toBe(0);
+      expect(chain.producers).toEqual([]);
+
+      chain = applyChainMutation(chain, minedBy(3, '0xreplacer', '0.209.0'));
+      expectSelfConsistentWindow(chain);
+      expect(chain.producer_window_blocks).toBe(1);
+    }
+  });
+
+  it('folding a producer into the window never mutates the previous cache', () => {
+    const seeded = applyChainMutation(
+      emptyChainCache(),
+      minedBy(1, '0xminer', '0.209.0'),
+    );
+    const before = JSON.parse(JSON.stringify(seeded)) as ChainEntry;
+    const after = applyChainMutation(seeded, minedBy(2, '0xminer', '0.209.0'));
+    expect(seeded).toEqual(before);
+    expect(seeded.producers[0].blocks).toBe(1);
+    expect(after.producers[0].blocks).toBe(2);
+    expect(after.producers).not.toBe(seeded.producers);
+    expect(after.producers[0]).not.toBe(seeded.producers[0]);
   });
 
   it('all mutation_samples.json variants pipe through applyChainMutation without throwing', () => {

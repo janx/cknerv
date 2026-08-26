@@ -6,7 +6,13 @@
 // ckbloom peer-id) stays in simulator. This module only knows about
 // chain mutations and the singleton `ChainEntry`.
 
-import type { ChainEntry, Mutation, RevisionedMutation } from '@cknerv/types';
+import { DATA_HEX_TRUNCATION_MARKER } from '@cknerv/types';
+import type {
+  BlockProducer,
+  ChainEntry,
+  Mutation,
+  RevisionedMutation,
+} from '@cknerv/types';
 
 /** How many recent blocks the three cadence rings keep. Twin of
  *  `RECENT_INTERVAL_CAP` in `crates/cknerv-core/src/entity.rs`, which trims
@@ -14,6 +20,20 @@ import type { ChainEntry, Mutation, RevisionedMutation } from '@cknerv/types';
  *  window and every block after it is cut here, so a drift between the two
  *  would silently change the cadence strip's window mid-session. */
 export const RECENT_INTERVAL_CAP = 60;
+
+/** How many attributed blocks the producer tally counts. Twin of
+ *  `PRODUCER_WINDOW_CAP` in `crates/cknerv-core/src/entity.rs`, and it has to
+ *  stay one number for the same reason the cadence cap does: the snapshot
+ *  arrives cut to this window and every block after it is cut here. Far wider
+ *  than the cadence rings on purpose — cadence is a per-block fact, a share is
+ *  a distribution, and a distribution over 60 blocks is mostly noise. */
+export const PRODUCER_WINDOW_CAP = 240;
+
+/** Cap on a retained `BlockProducer.message`, in Unicode scalar values. Twin
+ *  of `PRODUCER_MESSAGE_CAP_CHARS` in `crates/cknerv-core/src/entity.rs`.
+ *  Characters rather than bytes so this reducer and the Rust one can agree
+ *  exactly without either doing UTF-8 boundary arithmetic. */
+export const PRODUCER_MESSAGE_CAP_CHARS = 256;
 
 /** Construct a fresh, empty chain-entity cache. */
 export function emptyChainCache(): ChainEntry {
@@ -42,6 +62,9 @@ export function emptyChainCache(): ChainEntry {
     last_block_ts_ms: null,
     ibd: false,
     best_known_block: 0,
+    producers: [],
+    producer_window: [],
+    producer_window_blocks: 0,
   };
 }
 
@@ -55,13 +78,21 @@ function cloneChain(c: ChainEntry): ChainEntry {
   return { ...c };
 }
 
-/** The five bounded history rings on `ChainEntry`. */
+/** The bounded history rings on `ChainEntry` — arrays of values, for which a
+ *  `slice()` is a complete copy. */
 type ChainRingKey =
   | 'recent_blocks'
   | 'recent_tx_hashes'
   | 'recent_block_intervals_ms'
   | 'recent_block_tx_counts'
-  | 'recent_block_sizes';
+  | 'recent_block_sizes'
+  | 'producer_window';
+
+/** Everything the batch's copy-on-write ledger tracks. `producers` is in here
+ *  but deliberately NOT a `ChainRingKey`: a `slice()` of it would still hand
+ *  the previous cache's row objects to the writer, so it has its own guard and
+ *  the type stops it from being copied the shallow way by mistake. */
+type ChainOwnedKey = ChainRingKey | 'producers';
 
 /** Copy-on-write guard for in-place ring mutation (push/shift). Replacing a
  *  ring with a fresh array (filter / `[]`) must instead mark it via
@@ -69,15 +100,108 @@ type ChainRingKey =
 function ownRing(
   chain: ChainEntry,
   key: ChainRingKey,
-  owned: Set<ChainRingKey>,
+  owned: Set<ChainOwnedKey>,
 ): void {
   if (owned.has(key)) return;
   owned.add(key);
   (chain[key] as unknown[]) = (chain[key] as unknown[]).slice();
 }
 
-function ringReplaced(owned: Set<ChainRingKey>, ...keys: ChainRingKey[]): void {
+function ringReplaced(owned: Set<ChainOwnedKey>, ...keys: ChainOwnedKey[]): void {
   for (const key of keys) owned.add(key);
+}
+
+/** Copy-on-write guard for `producers`. Its ROWS are mutated in place (a
+ *  block bumps one producer's count), so unlike the number rings a `slice()`
+ *  would still hand the previous cache's objects to the writer. Each row is
+ *  copied once per batch; the list is six rows on mainnet. */
+function ownProducers(chain: ChainEntry, owned: Set<ChainOwnedKey>): void {
+  if (owned.has('producers')) return;
+  owned.add('producers');
+  chain.producers = chain.producers.map((p) => ({ ...p }));
+}
+
+/** Twin of `cap_declared_message` in `crates/cknerv-server/src/state.rs`.
+ *  The declaration is free-form bytes any miner writes into its own block, so
+ *  it arrives bounded with the same single-character marker `data_hex` uses —
+ *  a clipped message must never read as a short one. */
+function capDeclaredMessage(message: string): string {
+  const chars = Array.from(message);
+  if (chars.length <= PRODUCER_MESSAGE_CAP_CHARS) return message;
+  return (
+    chars.slice(0, PRODUCER_MESSAGE_CAP_CHARS).join('') +
+    DATA_HEX_TRUNCATION_MARKER
+  );
+}
+
+/** Drop the producer window. Called wherever the three cadence rings are
+ *  cleared, and for the same reason: a reorg abandons a canonical suffix, and
+ *  a share measured over it is not a share of this chain. `producer_window_blocks`
+ *  rides the wire, so a window that restarts at 1 says so rather than quietly
+ *  counting blocks the chain no longer has. */
+function clearProducerWindow(chain: ChainEntry, owned: Set<ChainOwnedKey>): void {
+  chain.producers = [];
+  chain.producer_window = [];
+  chain.producer_window_blocks = 0;
+  ringReplaced(owned, 'producers', 'producer_window');
+}
+
+/** Fold one attributed block into the rolling producer window — twin of
+ *  `record_block_producer` in `crates/cknerv-server/src/state.rs`, and it has
+ *  to stay a twin: the server cuts the snapshot with its copy and this one
+ *  cuts every block after it.
+ *
+ *  The window is the last `PRODUCER_WINDOW_CAP` blocks THAT NAMED A PRODUCER.
+ *  A block the adapter could not attribute takes no slot and moves no
+ *  denominator — the caller simply does not call this — which keeps
+ *  `sum(producers[].blocks) === producer_window.length === producer_window_blocks`
+ *  exactly true, so a share can never be divided by a window it was not
+ *  measured over. */
+function recordBlockProducer(
+  chain: ChainEntry,
+  key: string,
+  message: string,
+  at: number,
+  owned: Set<ChainOwnedKey>,
+): void {
+  ownProducers(chain, owned);
+  ownRing(chain, 'producer_window', owned);
+
+  let index = chain.producers.findIndex((p) => p.key === key);
+  if (index === -1) {
+    chain.producers.push({ key, message: '', blocks: 0, last_seen_ms: 0 });
+    index = chain.producers.length - 1;
+  }
+
+  const row = chain.producers[index];
+  row.blocks += 1;
+  // A producer may declare something different on every block; the last
+  // declaration inside the window is the one kept.
+  row.message = capDeclaredMessage(message);
+  row.last_seen_ms = at;
+  chain.producer_window.push(index);
+
+  while (chain.producer_window.length > PRODUCER_WINDOW_CAP) {
+    const evicted = chain.producer_window.shift() as number;
+    chain.producers[evicted].blocks -= 1;
+  }
+
+  // A producer with nothing left in the window is not in the window. Dropping
+  // its row renumbers every row after it, so the ring is remapped in the same
+  // pass — the two are one edit and must never become two.
+  if (chain.producers.some((p) => p.blocks === 0)) {
+    const remap = new Array<number>(chain.producers.length).fill(0);
+    const kept: BlockProducer[] = [];
+    chain.producers.forEach((producer, old) => {
+      if (producer.blocks === 0) return;
+      remap[old] = kept.length;
+      kept.push(producer);
+    });
+    chain.producers = kept;
+    chain.producer_window = chain.producer_window.map((slot) => remap[slot]);
+  }
+
+  chain.producer_window_blocks = chain.producer_window.length;
 }
 
 /** True iff this mutation needs a chain-table change. `cell_tagged` and
@@ -120,7 +244,7 @@ function touchesChain(m: Mutation): boolean {
 function applyToChain(
   chain: ChainEntry,
   m: Mutation,
-  owned: Set<ChainRingKey>,
+  owned: Set<ChainOwnedKey>,
 ): void {
   switch (m.type) {
     case 'chain_reorganized': {
@@ -147,6 +271,7 @@ function applyToChain(
         'recent_block_tx_counts',
         'recent_block_sizes',
       );
+      clearProducerWindow(chain, owned);
       return;
     }
     case 'chain_rebuild': {
@@ -166,6 +291,7 @@ function applyToChain(
         'recent_block_tx_counts',
         'recent_block_sizes',
       );
+      clearProducerWindow(chain, owned);
       return;
     }
     case 'block_mined': {
@@ -198,6 +324,7 @@ function applyToChain(
           'recent_block_tx_counts',
           'recent_block_sizes',
         );
+        clearProducerWindow(chain, owned);
       } else if (m.number > chain.tip) {
         chain.tip = m.number;
       }
@@ -225,6 +352,20 @@ function applyToChain(
       ownRing(chain, 'recent_blocks', owned);
       chain.recent_blocks.push({ number: m.number, hash: m.hash });
       while (chain.recent_blocks.length > 50) chain.recent_blocks.shift();
+      // The key is the identity; the declared message is decoration the
+      // producer wrote about itself. The adapter reads both from one witness
+      // and sends them together, but a frame carrying only a key still names a
+      // producer — losing the attribution over a missing decoration would be
+      // the wrong half to keep.
+      if (m.producer_key) {
+        recordBlockProducer(
+          chain,
+          m.producer_key,
+          m.producer_message ?? '',
+          m.at,
+          owned,
+        );
+      }
       return;
     }
     case 'tx_landed': {
@@ -307,7 +448,7 @@ export function applyRevisionedChainMutations(
 ): ChainEntry {
   if (rms.length === 0) return prev;
   let chain: ChainEntry | null = null;
-  const owned = new Set<ChainRingKey>();
+  const owned = new Set<ChainOwnedKey>();
   for (const rm of rms) {
     if (!touchesChain(rm.mutation)) continue;
     if (chain === null) chain = cloneChain(prev);

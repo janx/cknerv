@@ -29,6 +29,28 @@ export interface EpochInfo {
   length: number;
 }
 
+/** One distinct block producer inside `ChainEntry`'s rolling window — TS twin
+ *  of `cknerv-core::BlockProducer`.
+ *
+ *  Chain-generic: `key` is whatever opaque identity the source adapter put on
+ *  `BlockMined`. Group and count by it; never parse it. */
+export interface BlockProducer {
+  key: string;
+  /** What this producer declared on its most recent block IN THE WINDOW.
+   *  Self-declared and trivially spoofable — render it as a claim, not as a
+   *  measurement. A producer may declare something different on every block
+   *  and the last one in the window wins. A bounded prefix: longer than
+   *  `PRODUCER_MESSAGE_CAP_CHARS` and it ends in `DATA_HEX_TRUNCATION_MARKER`.
+   *  `''` when the producer declared nothing readable. */
+  message: string;
+  /** Blocks of the window this producer holds — the numerator of its share.
+   *  The denominator is `ChainEntry.producer_window_blocks`, never
+   *  `producers.length` and never the cap. */
+  blocks: number;
+  /** Envelope timestamp of this producer's most recent block in the window. */
+  last_seen_ms: number;
+}
+
 export interface ChainEntry {
   tip: number;
   recent_blocks: RecentBlock[];
@@ -61,6 +83,25 @@ export interface ChainEntry {
   ibd: boolean;
   /** Network best-known block height (`sync_state.best_known_block_number`). */
   best_known_block: number;
+  /** Distinct producers of the blocks in `producer_window`, in the order they
+   *  first appear in it. A materialized tally over the window below. */
+  producers: BlockProducer[];
+  /** The window itself: one entry per block in it, oldest first, each an index
+   *  into `producers`. Capped at `PRODUCER_WINDOW_CAP`.
+   *
+   *  Membership is ATTRIBUTED BLOCKS ONLY — a block whose producer the adapter
+   *  could not read takes no slot and is counted in no share, which keeps
+   *  `sum(producers[].blocks) === producer_window_blocks` exactly true.
+   *
+   *  The ring is on the wire because this cache maintains the same window the
+   *  server does, from the same `block_mined` deltas, and a client sees the
+   *  chain entity once per connection. Evicting the oldest block from a tally
+   *  means knowing which producer made it, which a tally cannot say. */
+  producer_window: number[];
+  /** How many blocks `producers` actually counts — the denominator of every
+   *  share, carried so no consumer has to reconstruct it. Below the cap the
+   *  whole time the window is warming, and zero after a reorg drops it. */
+  producer_window_blocks: number;
 }
 
 /** One chain endpoint cknerv is observing. 0..N: mainnet single RPC = 1,

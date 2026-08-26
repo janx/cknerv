@@ -41,7 +41,8 @@ pub use enrichment::{
     TransactionParticipantSemantic, TransactionSemanticRecord, MAX_SCRIPT_REGISTRY_ENTRIES,
 };
 pub use entity::{
-    Chain, ChainNode, EpochInfo, MempoolStats, Peer, PeerDirection, RecentBlock, RecentTx,
+    BlockProducer, Chain, ChainNode, EpochInfo, MempoolStats, Peer, PeerDirection, RecentBlock,
+    RecentTx, PRODUCER_MESSAGE_CAP_CHARS, PRODUCER_WINDOW_CAP,
 };
 pub use helix::{helix_seed_f64, helix_seed_for};
 pub use identity::{composition_id_for_outpoint, COMPOSITION_ID_MASK, COMPOSITION_ID_PREFIX};

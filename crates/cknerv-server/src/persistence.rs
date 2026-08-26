@@ -368,6 +368,83 @@ mod tests {
         let _ = std::fs::remove_dir_all(&workdir);
     }
 
+    /// The producer window is why a restore is worth having on this path at
+    /// all: a boot that restores state SKIPS the backfill, so the window has
+    /// no replay to warm it and starts from whatever the save file held.
+    #[test]
+    fn a_warm_producer_window_survives_save_and_load() {
+        let workdir = tmpdir();
+        let s1 = Arc::new(ServerState::new());
+        for number in 1..=5u64 {
+            s1.apply_mutation(Mutation::BlockMined {
+                number,
+                hash: format!("0xblk{number}"),
+                tx_count: 0,
+                size: 0,
+                at: number * 1_000,
+                producer_key: Some(if number % 5 == 0 { "0xrare" } else { "0xbusy" }.into()),
+                producer_message: Some("0.209.0 (7e31f75 2026-07-30)".into()),
+            });
+        }
+        save(&s1, &workdir).expect("save");
+
+        let s2 = Arc::new(ServerState::new());
+        assert!(load(s2.clone(), &workdir).restored);
+        let chain = s2.snapshot()["chain"].clone();
+        assert_eq!(chain["producer_window_blocks"], 5);
+        assert_eq!(chain["producer_window"], serde_json::json!([0, 0, 0, 0, 1]));
+        let producers = chain["producers"].as_array().unwrap();
+        assert_eq!(producers[0]["key"], "0xbusy");
+        assert_eq!(producers[0]["blocks"], 4);
+        assert_eq!(producers[1]["key"], "0xrare");
+        assert_eq!(producers[1]["blocks"], 1);
+
+        let _ = std::fs::remove_dir_all(&workdir);
+    }
+
+    /// Every state file on disk today was written without a producer window,
+    /// and the fields are additive with serde defaults — so the file still
+    /// loads at the CURRENT schema version, as an empty window rather than a
+    /// discarded save. That is the whole reason `SCHEMA_VERSION` did not move
+    /// for this change.
+    #[test]
+    fn a_save_written_before_the_producer_window_still_restores() {
+        let workdir = tmpdir();
+        let path = persisted_path(&workdir);
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": SCHEMA_VERSION,
+                "entities": {
+                    "revision": 9,
+                    "chain": {
+                        "tip": 4242,
+                        "recent_blocks": [{ "number": 4242, "hash": "0xblk" }],
+                        "total_blocks": 4242
+                    },
+                    "chain_nodes": []
+                },
+                "projections": {}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let s = Arc::new(ServerState::new());
+        let outcome = load(s.clone(), &workdir);
+        assert!(
+            outcome.restored,
+            "an additive field must not discard a save"
+        );
+        assert_eq!(outcome.restored_chain_tip, Some(4242));
+        assert!(path.exists(), "a loadable save must not be deleted");
+        let chain = s.snapshot()["chain"].clone();
+        assert_eq!(chain["producers"], serde_json::json!([]));
+        assert_eq!(chain["producer_window_blocks"], 0);
+
+        let _ = std::fs::remove_dir_all(&workdir);
+    }
+
     #[test]
     fn load_with_newer_schema_discards_file() {
         let workdir = tmpdir();
