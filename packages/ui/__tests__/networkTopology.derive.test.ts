@@ -3,14 +3,16 @@ import {
   localAnchor, measuredPeerPos, COLONY_Y, LOCAL_ANCHOR_OFFSET, COLONY_ELLIPSE_X, COLONY_ELLIPSE_Z,
   scatterInferred, COLONY_INFERRED_COUNT, COLONY_INFERRED_JITTER, COLONY_MIN_SPACING,
   COLONY_RADIUS, COLONY_Y_THICKNESS, inferredTopology, ensureConnectedFrom, sightedPos,
-  STAGEABLE_ROSTER_STATES,
+  STAGEABLE_ROSTER_STATES, ATTESTED_ID_PREFIX, attestedNodeId, attestedPos, stageAttested,
 } from '../src/derives/networkTopology.derive';
 import { colonyFlood } from '../src/derives/networkFlood.derive';
+import { deriveBlockProducers, type ProducerStanding } from '../src/derives/blockProducers.derive';
 import {
   latencyToRadius01, peerAngle, PEER_INNER_RADIUS, PEER_OUTER_RADIUS,
 } from '../src/derives/peers.derive';
+import { emptyChainCache } from '@cknerv/cache';
 import type {
-  NetworkRosterRecord, Peer, RosterNode, RosterNodeState,
+  BlockProducer, ChainEntry, NetworkRosterRecord, Peer, RosterNode, RosterNodeState,
 } from '@cknerv/types';
 import type { NetworkNode, Vec3 } from '../src/types';
 
@@ -596,5 +598,452 @@ describe('sighted nodes (the crawler names a bounded few)', () => {
     ).toBe(true);
     expect(sightedOf(before).every((n) => n.sighted!.state === 'reachable')).toBe(true);
     expect(sightedOf(after).map((n) => n.pos)).toEqual(sightedOf(before).map((n) => n.pos));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ATTESTED NODES — the rung whose existence is certain and whose identity is
+// zero. Every key below is CONSTRUCTED. ⚠️ The live producer set drifts with
+// the pools and the crawl drifts with the round, so nothing here pins a real
+// hash or a real count.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A lock-script-hash-shaped key: `0x` + 64 hex, the shape §5.2 emits.
+ *
+ *  `tag` is hex-encoded per character and zero-padded, which keeps distinct
+ *  tags on distinct keys — a helper that quietly folded two tags together would
+ *  make the placement tests below assert their own bug. */
+function producerKey(tag: string): string {
+  const encoded = [...tag].map((c) => c.charCodeAt(0).toString(16).padStart(2, '0')).join('');
+  return `0x${encoded.padEnd(64, '0').slice(0, 64)}`;
+}
+
+/** One producer's standing. `fan` is always withheld here: T5 never reads it,
+ *  and a drawn fan would smuggle roster rows into a staging test that is
+ *  supposed to prove staging cannot see them. */
+function standing(over: Partial<ProducerStanding> & { key: string }): ProducerStanding {
+  const blocks = over.blocks ?? 10;
+  const windowBlocks = over.windowBlocks ?? 100;
+  return {
+    role: 'producer',
+    message: '0.209.0 (aaaaaaa 2026-07-30)',
+    blocks,
+    windowBlocks,
+    share: blocks / windowBlocks,
+    lastSeenMs: 1_700_000_000_000,
+    fan: { drawn: false, reason: 'roster_absent', matchedVersion: null, matched: 0, shareOfVersioned: 0 },
+    ...over,
+  };
+}
+
+/** `n` producers on distinct constructed keys. */
+function standings(n: number, over: Partial<ProducerStanding> = {}): ProducerStanding[] {
+  return Array.from({ length: n }, (_, i) => standing({
+    key: producerKey('0123456789abcdef'[i % 16] + String(i)),
+    ...over,
+  }));
+}
+
+describe('attestedPos (⭐ pure hash of the producer key, and never a centroid)', () => {
+  const keys = Array.from({ length: 400 }, (_, i) => producerKey(
+    `${'0123456789abcdef'[i % 16]}${'0123456789abcdef'[(i * 7) % 16]}${i}`,
+  ));
+
+  it('stands inside the same elliptical disc and slab as everybody else', () => {
+    for (const key of keys.slice(0, 60)) {
+      const pos = attestedPos(key);
+      const x = pos[0] / COLONY_ELLIPSE_X;
+      const z = pos[2] / COLONY_ELLIPSE_Z;
+      expect(Math.hypot(x, z)).toBeLessThanOrEqual(COLONY_RADIUS);
+      expect(Math.abs(pos[1] - COLONY_Y)).toBeLessThanOrEqual(COLONY_Y_THICKNESS / 2);
+    }
+  });
+
+  it('is a pure function of the key — stable, and blind to everything else', () => {
+    const key = producerKey('ab');
+    expect(attestedPos(key)).toEqual(attestedPos(key));
+    expect(attestedPos(key)).not.toEqual(attestedPos(producerKey('ac')));
+  });
+
+  // ⭐ THE PLACEMENT IS MUTE. §2.4 rejected standing a narrowed producer at the
+  // centroid of its candidates: a centroid moves when the crawl round changes,
+  // which is the one invariant every id-hashed node in this file holds, and
+  // standing a producer among its suspects is a soft spatial accusation. So the
+  // only input is the key — not the fan, not the share, not the window.
+  it('the window rolling and the fan changing move a producer nowhere', () => {
+    const key = producerKey('be');
+    const fresh = standing({ key, blocks: 1, windowBlocks: 1 });
+    const rolled = standing({
+      key,
+      blocks: 137,
+      windowBlocks: 240,
+      lastSeenMs: 1_900_000_000_000,
+      message: 'something else entirely',
+      fan: {
+        drawn: true,
+        matchedVersion: '0.209.0 (aaaaaaa 2026-07-30)',
+        candidates: [rosterNode({ node_id: 'Qm0000' }), rosterNode({ node_id: 'Qm0001' })],
+        shareOfVersioned: 0.1,
+      },
+    });
+    expect(stageAttested([rolled])[0].pos).toEqual(stageAttested([fresh])[0].pos);
+    expect(stageAttested([rolled])[0].pos).toEqual(attestedPos(key));
+  });
+
+  // The sighted tier's own spiral test, run against the hex-shaped keys this
+  // tier actually receives: a fixed `0x` behind 64 symbols out of an alphabet
+  // of 16 is a much narrower input than a base58 peer id, so the decorrelation
+  // has to be shown here rather than inherited.
+  it('angle, radius and height are three uncorrelated draws (no key spiral)', () => {
+    const angleOf = (key: string) => {
+      const pos = attestedPos(key);
+      return Math.atan2(pos[2] / COLONY_ELLIPSE_Z, pos[0] / COLONY_ELLIPSE_X);
+    };
+    const radiusOf = (key: string) => {
+      const pos = attestedPos(key);
+      const r = Math.hypot(pos[0] / COLONY_ELLIPSE_X, pos[2] / COLONY_ELLIPSE_Z) / COLONY_RADIUS;
+      return r * r;              // undo the sqrt: this is the raw hash
+    };
+    const heightOf = (key: string) => (attestedPos(key)[1] - COLONY_Y) / COLONY_Y_THICKNESS;
+    const corr = (xs: number[], ys: number[]) => {
+      const mean = (a: number[]) => a.reduce((s, v) => s + v, 0) / a.length;
+      const mx = mean(xs), my = mean(ys);
+      let c = 0, vx = 0, vy = 0;
+      for (let i = 0; i < xs.length; i += 1) {
+        const dx = xs[i] - mx, dy = ys[i] - my;
+        c += dx * dy; vx += dx * dx; vy += dy * dy;
+      }
+      return Math.abs(c / Math.sqrt(vx * vy));
+    };
+    const angles = keys.map(angleOf);
+    const radii = keys.map(radiusOf);
+    const heights = keys.map(heightOf);
+    expect(corr(angles, radii)).toBeLessThan(0.15);
+    expect(corr(angles, heights)).toBeLessThan(0.15);
+    expect(corr(radii, heights)).toBeLessThan(0.15);
+    // …and distinct keys land on distinct places rather than piling up.
+    expect(new Set(keys.map((k) => attestedPos(k).join(','))).size).toBe(keys.length);
+  });
+
+  // Its own mixes, not the sighted tier's. Sharing them would look identical in
+  // every test above and would tie a producer's place to how the crawler's tier
+  // happens to be tuned — so ask the one question that can tell them apart.
+  it('does not borrow the sighted tier’s placement function', () => {
+    const shared = producerKey('cd');
+    expect(attestedPos(shared)).not.toEqual(sightedPos(shared));
+  });
+});
+
+describe('stageAttested (⭐ one node per producer, always anonymous)', () => {
+  it('stands one node per producer, in the order the producer derive sent them', () => {
+    const producers = standings(4);
+    const staged = stageAttested(producers);
+    expect(staged).toHaveLength(4);
+    expect(staged.map((n) => n.id)).toEqual(producers.map((p) => attestedNodeId(p.key)));
+    staged.forEach((node, i) => {
+      expect(node.kind).toBe('attested');
+      expect(node.pos).toEqual(attestedPos(producers[i].key));
+      // the standing by reference — a copy would print a stale share beside a
+      // live window on the very next block.
+      expect(node.attested).toBe(producers[i]);
+    });
+  });
+
+  it('no producers at all is not an empty tier but no tier', () => {
+    expect(stageAttested()).toEqual([]);
+    expect(stageAttested(null)).toEqual([]);
+    expect(stageAttested([])).toEqual([]);
+  });
+
+  // §9.1, STRUCTURALLY. The guarantee is not that this file remembers to leave
+  // an identity out — it is that `ProducerStanding` has no field one could land
+  // in, and that the node carries nothing beside it. Pin the whole key set, so
+  // a later edit that adds `node_id`/`addr`/`country`/`asn`/`version` to either
+  // shape has to come through this test to do it.
+  it('⭐ an attested node carries no id, address, country, ASN or version', () => {
+    const [node] = stageAttested(standings(1));
+    expect(Object.keys(node).sort()).toEqual(['attested', 'id', 'kind', 'pos']);
+    expect(node.peer).toBeUndefined();
+    expect(node.sighted).toBeUndefined();
+    expect(Object.keys(node.attested!).sort()).toEqual([
+      'blocks', 'fan', 'key', 'lastSeenMs', 'message', 'role', 'share', 'windowBlocks',
+    ]);
+    const identityish = /node_id|addr|country|asn|version|host|ip|peer/i;
+    for (const field of Object.keys(node.attested!)) expect(field).not.toMatch(identityish);
+    // and the graph id is the payout key under a namespace, never a peer name
+    expect(node.id).toBe(`${ATTESTED_ID_PREFIX}${node.attested!.key}`);
+  });
+
+  // §9.8's shape: a producer with no key does not stage. `deriveBlockProducers`
+  // already refuses a whole window carrying one — blocks with nobody behind
+  // them are an unanswered question, not a producer we may not draw — so this
+  // is the second lock rather than the first.
+  it('a keyless producer does not stage, and a repeated key stages once', () => {
+    const staged = stageAttested([
+      standing({ key: '' }),
+      standing({ key: producerKey('aa') }),
+      standing({ key: producerKey('aa'), blocks: 3 }),
+    ]);
+    expect(staged.map((n) => n.id)).toEqual([attestedNodeId(producerKey('aa'))]);
+    expect(staged[0].attested!.blocks).toBe(10);      // the first row wins
+  });
+
+  // ⭐ NO MEASURED-WINS, DELIBERATELY. `stageSighted` drops a roster row we
+  // already hold a link to because both markers would be the SAME node. A
+  // producer and a peer are never known to be the same node — that is the whole
+  // §2.6 double-count — so folding them would make the accusation this tier
+  // exists to avoid, and would make it by deleting a producer the chain proved
+  // exists. A key and a base58 id cannot collide in the field; ask anyway, so
+  // the rule is pinned rather than merely unexercised.
+  it('never folds a producer onto a peer, even one wearing the same string', () => {
+    const shared = producerKey('ff');
+    const t = inferredTopology(
+      [peer({ node_id: shared, latency_ms: 40 })], 0xc0ffee, 'ckb:local', undefined,
+      roster([rosterNode({ node_id: shared })]), undefined,
+      [standing({ key: shared })],
+    );
+    const wearing = t.nodes.filter((n) => n.id === shared || n.id === attestedNodeId(shared));
+    expect(wearing.map((n) => n.kind).sort()).toEqual(['attested', 'measured']);
+    // the namespace is what keeps the graph's keying safe under that collision
+    expect(new Set(t.nodes.map((n) => n.id)).size).toBe(t.nodes.length);
+  });
+});
+
+describe('attested nodes in the colony (⭐ ghost displacement, one for one)', () => {
+  const seed = 0xc0ffee;
+  const peers = [
+    peer({ node_id: 'A', latency_ms: 40, direction: 'outbound' }),
+    peer({ node_id: 'B', latency_ms: 180, direction: 'inbound' }),
+  ];
+  type Topology = ReturnType<typeof inferredTopology>;
+  const ghostsOf = (t: Topology) => t.nodes.filter((n) => n.kind === 'inferred');
+  const sightedOf = (t: Topology) => t.nodes.filter((n) => n.kind === 'sighted');
+  const attestedOf = (t: Topology) => t.nodes.filter((n) => n.kind === 'attested');
+
+  /** Every edge endpoint is a node that is actually standing. The one oracle
+   *  that catches a scaffold cache hitting when it must not: the tails are
+   *  re-staged live while the cached EDGES are not, so a wrong hit surfaces
+   *  here as an edge pointing at an id nobody wears. */
+  const expectEdgesClosed = (t: Topology) => {
+    const ids = new Set(t.nodes.map((n) => n.id));
+    for (const e of t.edges) {
+      expect(ids.has(e.a)).toBe(true);
+      expect(ids.has(e.b)).toBe(true);
+    }
+  };
+
+  // §9.4. A fiction is replaced by a certainty; the colony does not inflate.
+  it('⭐ staging producers displaces ghosts one for one and grows nothing', () => {
+    const scatter = scatterInferred(seed);
+    const before = inferredTopology(peers, seed, 'ckb:local', undefined, roster(sightedRoster(20)));
+    const after = inferredTopology(
+      peers, seed, 'ckb:local', undefined, roster(sightedRoster(20)), undefined, standings(6),
+    );
+    const population = (t: Topology) => ghostsOf(t).length + sightedOf(t).length + attestedOf(t).length;
+    expect(population(before)).toBe(scatter.length);
+    expect(population(after)).toBe(scatter.length);
+    expect(attestedOf(after)).toHaveLength(6);
+    expect(ghostsOf(after)).toHaveLength(ghostsOf(before).length - 6);
+    expect(after.nodes).toHaveLength(before.nodes.length);   // total colony count unchanged
+  });
+
+  // §9.5, the half that is easy to lose: the ghosts that stay are the SAME
+  // ghosts, standing where they stood. Displacement comes off the tail of an
+  // untouched seed-pure scatter — nothing is re-rolled or re-parameterized.
+  it('⭐ no ghost moves when a producer appears, leaves, or is re-tallied', () => {
+    const scatter = scatterInferred(seed);
+    const rows = roster(sightedRoster(12));
+    const none = inferredTopology(peers, seed, 'ckb:local', undefined, rows);
+    const three = inferredTopology(peers, seed, 'ckb:local', undefined, rows, undefined, standings(3));
+    const two = inferredTopology(peers, seed, 'ckb:local', undefined, rows, undefined, standings(2));
+    for (const t of [none, three, two]) {
+      ghostsOf(t).forEach((g, i) => {
+        expect(g.id).toBe(`inf:${i}`);
+        expect(g.pos).toEqual(scatter[i]);
+      });
+      expectEdgesClosed(t);
+    }
+    expect(ghostsOf(three)).toHaveLength(ghostsOf(none).length - 3);
+    expect(ghostsOf(two)).toHaveLength(ghostsOf(none).length - 2);
+  });
+
+  // Sighted and attested subtract from the same tail, additively — neither tier
+  // is a special case of the other and neither double-spends a ghost.
+  it('both tails come off one scatter, and past the end the ghosts simply run out', () => {
+    const scatter = scatterInferred(seed);
+    const t = inferredTopology(
+      peers, seed, 'ckb:local', undefined, roster(sightedRoster(40)), undefined, standings(10),
+    );
+    expect(ghostsOf(t)).toHaveLength(scatter.length - 50);
+
+    const overflowing = inferredTopology(
+      peers, seed, 'ckb:local', undefined, roster(sightedRoster(scatter.length)), undefined, standings(5),
+    );
+    expect(ghostsOf(overflowing)).toHaveLength(0);
+    expect(attestedOf(overflowing)).toHaveLength(5);
+    expectEdgesClosed(overflowing);
+  });
+
+  // The producer tail is appended LAST, so with no producers every index in the
+  // node array is exactly where it has always been. Absent, null and empty are
+  // one path rather than three.
+  it('no producers yields exactly today’s topology, node for node and edge for edge', () => {
+    const rows = roster(sightedRoster(15));
+    const base = inferredTopology(peers, seed, 'ckb:local', undefined, rows);
+    // bust the single-slot memo so the comparisons below are genuine rebuilds
+    inferredTopology(peers, seed, 'ckb:local', undefined, rows, undefined, standings(4));
+    for (const producers of [undefined, null, []]) {
+      const t = inferredTopology(peers, seed, 'ckb:local', undefined, rows, undefined, producers);
+      expect(t.nodes).toEqual(base.nodes);
+      expect(t.edges).toEqual(base.edges);
+      expect(attestedOf(t)).toHaveLength(0);
+    }
+  });
+
+  // ⭐ THE MEMO IS KEYED ON KEYS, NOT ON STANDINGS. A producer's blocks, share
+  // and fan move on every block while its key does not, so a key that read the
+  // standings would miss once a block and re-derive the O(V² log V) geometry
+  // because a numerator moved. Object identity of the cached ghost objects is
+  // the oracle: same objects means the scaffold was reused.
+  it('re-tallying a producer crosses without rebuilding the scaffold', () => {
+    const rows = roster(sightedRoster(9));
+    const keys = standings(3).map((p) => p.key);
+    const first = inferredTopology(
+      peers, seed, 'ckb:local', undefined, rows, undefined,
+      keys.map((key) => standing({ key, blocks: 4, windowBlocks: 12 })),
+    );
+    const retallied = inferredTopology(
+      peers, seed, 'ckb:local', undefined, rows, undefined,
+      keys.map((key, i) => standing({ key, blocks: 1 + i, windowBlocks: 6 })),
+    );
+    const a = ghostsOf(first), b = ghostsOf(retallied);
+    expect(b).toHaveLength(a.length);
+    for (let i = 0; i < a.length; i += 1) expect(b[i]).toBe(a[i]);   // same objects
+    // …while the live tally genuinely crossed, exactly as a fresh crawl round does
+    expect(attestedOf(retallied).map((n) => n.attested!.blocks)).toEqual([1, 2, 3]);
+    expect(attestedOf(first).map((n) => n.attested!.blocks)).toEqual([4, 4, 4]);
+    expect(attestedOf(retallied).map((n) => n.pos)).toEqual(attestedOf(first).map((n) => n.pos));
+  });
+
+  // The other half of the memo: a changed producer SET has to miss. Keyed on
+  // the sighted ids alone it would hit, hand back a scaffold with the wrong
+  // ghost count, and wire edges to ids nobody wears.
+  it('a changed producer set rebuilds even when the roster is identical', () => {
+    const rows = roster(sightedRoster(9));
+    const three = inferredTopology(peers, seed, 'ckb:local', undefined, rows, undefined, standings(3));
+    const ghostsThree = ghostsOf(three).length;
+    const four = inferredTopology(peers, seed, 'ckb:local', undefined, rows, undefined, standings(4));
+    expect(ghostsOf(four)).toHaveLength(ghostsThree - 1);
+    expect(attestedOf(four)).toHaveLength(4);
+    expectEdgesClosed(four);
+    // and back the other way, through the same single slot
+    const backToThree = inferredTopology(peers, seed, 'ckb:local', undefined, rows, undefined, standings(3));
+    expect(ghostsOf(backToThree)).toHaveLength(ghostsThree);
+    expectEdgesClosed(backToThree);
+  });
+
+  // A matrix walked through the SINGLE-SLOT memo, asserting the one property a
+  // wrong hit always breaks. Cheaper than enumerating the ways a key can be
+  // wrong, and it does not care which way it was wrong.
+  it('every combination of the two tails leaves the graph closed', () => {
+    for (const sightedCount of [0, 5, 20]) {
+      for (const producerCount of [0, 1, 6]) {
+        const t = inferredTopology(
+          peers, seed, 'ckb:local', undefined,
+          sightedCount === 0 ? null : roster(sightedRoster(sightedCount)),
+          undefined,
+          producerCount === 0 ? undefined : standings(producerCount),
+        );
+        expect(sightedOf(t)).toHaveLength(sightedCount);
+        expect(attestedOf(t)).toHaveLength(producerCount);
+        expectEdgesClosed(t);
+      }
+    }
+  });
+
+  // The chain says something made a block. It never says who that something
+  // talks to — so an attested node's edges are the identical declared fiction a
+  // ghost's are, and inventing an edge kind for the chain's certainty would put
+  // that certainty on links nothing observed.
+  it('every edge an attested node carries stays inferred fiction', () => {
+    const producers = standings(8);
+    const t = inferredTopology(
+      peers, seed, 'ckb:local', undefined, roster(sightedRoster(20)), undefined, producers,
+    );
+    const ids = new Set(producers.map((p) => attestedNodeId(p.key)));
+    const touching = t.edges.filter((e) => ids.has(e.a) || ids.has(e.b));
+    expect(touching.length).toBeGreaterThan(0);
+    for (const e of touching) expect(e.kind).toBe('inferred');
+    for (const id of ids) expect((t.adjacency.get(id) ?? []).length).toBeGreaterThan(0);
+  });
+
+  it('the flood reaches the attested tier and relays through it', () => {
+    const producers = standings(10);
+    const t = inferredTopology(
+      peers, seed, 'ckb:local', undefined, roster(sightedRoster(20)), undefined, producers,
+    );
+    const cf = colonyFlood(t, 7);
+    for (const p of producers) {
+      expect(Number.isFinite(cf.colonyArrivalS[attestedNodeId(p.key)])).toBe(true);
+    }
+    const predecessors = new Set(Object.values(cf.colonyPredecessor));
+    expect(producers.some((p) => predecessors.has(attestedNodeId(p.key)))).toBe(true);
+  });
+
+  // ⚠️ NOTHING PAINTS THIS RUNG YET, AND THAT IS THE HONEST STATE. Widening
+  // `NodeKind` broke no switch — every consumer in the scene opts IN by literal
+  // (`kind === 'inferred' | 'measured' | 'sighted'`) rather than switching
+  // exhaustively — so the compiler never asked what an attested node looks like.
+  // This is the question the compiler did not ask: a producer is in none of the
+  // three drawn buckets, so it neither crashes the scene nor borrows a mark
+  // that would say something false about it. A mark is a deliberate act.
+  it('is drawn by nobody yet, and is in no other tier’s bucket', () => {
+    const t = inferredTopology(
+      peers, seed, 'ckb:local', undefined, roster(sightedRoster(20)), undefined, standings(6),
+    );
+    const staged = attestedOf(t);
+    expect(staged).toHaveLength(6);
+    for (const bucket of ['local', 'measured', 'inferred', 'sighted'] as const) {
+      for (const node of t.nodes.filter((n) => n.kind === bucket)) {
+        expect(node.attested).toBeUndefined();
+      }
+    }
+    for (const node of staged) {
+      expect(node.id.startsWith('inf:')).toBe(false);
+      expect(node.sighted).toBeUndefined();
+    }
+  });
+
+  // The seam with the producer derive: what T4 hands over stages verbatim,
+  // including its order, and a window that does not add up stages nothing
+  // because there is no view to stage from.
+  it('stages the producer derive’s own view, in its own order', () => {
+    const wire = (key: string, blocks: number): BlockProducer => (
+      { key, message: '0.209.0 (aaaaaaa 2026-07-30)', blocks, last_seen_ms: 1_700_000_000_000 }
+    );
+    const producers = [wire(producerKey('bb'), 3), wire(producerKey('aa'), 9)];
+    const chain: ChainEntry = {
+      ...emptyChainCache(),
+      producers,
+      producer_window: producers.flatMap((p, i) => Array<number>(p.blocks).fill(i)),
+      producer_window_blocks: 12,
+    };
+    const view = deriveBlockProducers(chain, null)!;
+    expect(view).not.toBeNull();
+    const t = inferredTopology(
+      peers, seed, 'ckb:local', undefined, null, undefined, view.producers,
+    );
+    // blocks descending, so the 9-block producer stands first whatever the wire
+    // happened to send.
+    expect(attestedOf(t).map((n) => n.attested!.key)).toEqual([producerKey('aa'), producerKey('bb')]);
+    expect(attestedOf(t).map((n) => n.attested!.blocks)).toEqual([9, 3]);
+
+    // A window that contradicts itself yields no view at all — and a scene
+    // handed `null` stands no producers rather than shares of a wrong whole.
+    const broken = deriveBlockProducers({ ...chain, producer_window_blocks: 11 }, null);
+    expect(broken).toBeNull();
+    expect(attestedOf(inferredTopology(
+      peers, seed, 'ckb:local', undefined, null, undefined, broken?.producers,
+    ))).toHaveLength(0);
   });
 });
