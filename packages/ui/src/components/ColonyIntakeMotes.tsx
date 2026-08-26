@@ -137,12 +137,29 @@ export function colonyIntakeSegments(
   return out;
 }
 
+/** Same point, by value. The scaffold hands back cached node objects and would
+ *  compare by reference, but `stageAttested` builds a fresh node — and a fresh
+ *  `pos` array — on every call, so a reference test would report every miner as
+ *  having moved on every poll. */
+function samePoint(a: Vec3, b: Vec3): boolean {
+  return a === b || (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]);
+}
+
 /** Whether two plans describe the same streams. The colony rebuilds its
  *  topology on every peer poll, and a measured ping moves nothing an intake
- *  stream is drawn from — so the buffers are held across those rebuilds on
- *  identity of the two ends, exactly as the point clouds are held on theirs. */
+ *  stream is drawn from — so the buffers are held across those rebuilds rather
+ *  than deleted and re-uploaded, exactly as the point clouds are held.
+ *
+ *  ⚠️ IT COMPARES THE ENDS' POSITIONS AND NOT ONLY THEIR IDS, which is the same
+ *  trap the ghost cloud names on its own held list: a RESEED keeps every
+ *  `inf:n` id while moving every point, so an id-only test would report a
+ *  colony that had entirely rearranged itself as unchanged and leave these
+ *  lines hanging in the space the old one used to occupy. Every position here
+ *  is a pure hash of the id under a seed, so a value test costs six comparisons
+ *  and is exact in both directions. */
 export function sameIntakeSegment(a: IntakeSegment, b: IntakeSegment): boolean {
-  return a.nodeId === b.nodeId && a.fromId === b.fromId;
+  return a.nodeId === b.nodeId && a.fromId === b.fromId
+    && samePoint(a.from, b.from) && samePoint(a.to, b.to);
 }
 
 /**

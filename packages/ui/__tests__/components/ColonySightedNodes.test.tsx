@@ -969,6 +969,20 @@ describe('what a mining node draws in', () => {
     });
     held.rerender({ list: after });
     expect(held.result.current).toBe(before);
+
+    // ⚠️ …and a stream whose ENDS MOVED must break it. A reseed keeps every
+    // `inf:n` id while moving every point, so a test on ids alone would call an
+    // entirely rearranged colony unchanged and leave these lines hanging in the
+    // space the old one used to occupy — the same trap the ghost cloud names on
+    // its own held list, which is why it holds by object identity.
+    const [seg] = before;
+    expect(sameIntakeSegment(seg, { ...seg, from: [...seg.from] as Vec3 })).toBe(true);
+    expect(sameIntakeSegment(seg, {
+      ...seg, from: [seg.from[0] + 1, seg.from[1], seg.from[2]],
+    })).toBe(false);
+    expect(sameIntakeSegment(seg, {
+      ...seg, to: [seg.to[0], seg.to[1], seg.to[2] - 1],
+    })).toBe(false);
   });
 
   it('stands no geometry at all for a colony with no miners in its window', () => {

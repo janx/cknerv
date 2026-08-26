@@ -236,9 +236,15 @@ export function makeColonyIntakeMaterial(): THREE.ShaderMaterial {
         // ends it is arriving at the node.
         float born = smoothstep(0.0, uBirth, u);
         // …and the stream is SPENT for as long as the block it fed is leaving.
+        // WARN: the rebuild window is FLOORED rather than a plain multiple of
+        // the knob. smoothstep is undefined when its two edges are equal, and
+        // the panel can drag uSpentS to exactly zero — which on a driver that
+        // answers NaN would paint the winner's links NaN until its next block.
+        // Floored, zero means "spend it for no time", which is what it says.
         float since = uTime - vFireAt;
+        float spentEdge = uSpentS + max(uSpentS * 1.4, 0.05);
         float spent = vFireAt > ARMED && since >= 0.0
-          ? 1.0 - smoothstep(uSpentS, uSpentS * 2.4, since)
+          ? 1.0 - smoothstep(uSpentS, spentEdge, since)
           : 0.0;
         float amp = uAmp * mote * born * (1.0 - spent);
         if (amp < 0.002) discard;
