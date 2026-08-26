@@ -91,11 +91,17 @@ const SIGHTED_SELECTION_PREFIX = 'sighted:';
  *  ⚠️ IT IS NOT THE GRAPH ID'S PREFIX, and the difference is deliberate rather
  *  than sloppy. The graph files a producer under `attested:<key>`, named for the
  *  RUNG — how the fact was obtained — which is settled and belongs to the
- *  topology. A selection id names what the user is looking at, and the word for
- *  that is `MINER`, which the app already stamps as a role elsewhere. Keeping
- *  them apart means the card's vocabulary can be re-decided without touching one
- *  line of the graph, and the graph's namespace can never be read as a claim
- *  about what a node does.
+ *  topology. A selection id names WHICH CARD OPENS, which is a routing fact, and
+ *  keeping the two namespaces apart means the card's vocabulary can be
+ *  re-decided without touching one line of the graph.
+ *
+ *  ⭐ AND IT HAS ALREADY EARNED THAT ONCE. The card this prefix opens said
+ *  `MINER //` when this constant was written and says `COHORT //` now — a payout
+ *  lock hash is a destination and may pay a whole fleet, so the old word was
+ *  claiming a machine. Not one byte of the graph, the flood or this routing
+ *  moved for it, which is exactly the property the split was for. The prefix
+ *  keeps its spelling for the same reason `producer_key` and `attested` keep
+ *  theirs: it is a name for code and no reader can see it.
  *
  *  The key after the prefix is the payout key, NOT the node id — a card asks the
  *  live producer view for its standing, and the view is keyed on that. */

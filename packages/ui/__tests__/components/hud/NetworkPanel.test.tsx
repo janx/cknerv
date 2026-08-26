@@ -469,7 +469,7 @@ describe('NetworkPanel producers', () => {
       <NetworkPanel {...props} producers={view([96, 48, 32, 24])} />,
     );
     const row = container.querySelector('[data-network-producers]');
-    expect(row?.textContent).toContain('Miners');
+    expect(row?.textContent).toContain('Mining cohorts');
     expect(row?.textContent).toContain('4 · TOP 48% · 200 BLK');
     cleanup();
 
@@ -484,20 +484,30 @@ describe('NetworkPanel producers', () => {
     expect(unsorted?.textContent).toContain('3 · TOP 60% · 200 BLK');
   });
 
-  it('calls them what the rest of the HUD calls them, and never a second word', () => {
-    // ⭐ ONE WORD PER THING. The card this row leads to is masted `MINER //`,
-    // the stamp a named peer may carry is `MINER?`, and the local node's own
-    // probe has said `MINER` since long before any of this existed. `PRODUCER`
-    // was the derive's name for the same fact, and a panel that borrowed it
-    // made the HUD speak two dialects about one thing. The internal vocabulary
-    // is untouched and deliberately so — it is a name for code, and nothing
-    // here can see it.
+  it('counts cohorts rather than miners, because a payout address is not a machine', () => {
+    // ⭐⭐ A CORRECTION, NOT A RENAME. Every number in this row is keyed on a
+    // PAYOUT LOCK HASH, and a payout lock hash names where the reward goes —
+    // one address pays every rig a pool runs. `MINERS` therefore counted
+    // machines nothing here has evidence about. Counted as cohorts the number
+    // is exact again: six payout identities is six cohorts, whatever each of
+    // them contains.
     const { container } = render(
       <NetworkPanel {...props} producers={view([96, 104])} />,
     );
+    const row = container.querySelector('[data-network-producers]')?.textContent ?? '';
+    expect(row).toMatch(/MINING COHORTS/i);
+    // No surface here may claim a machine, and `PRODUCER` is the derive's own
+    // name for the fact — an internal vocabulary is not a reason for a panel to
+    // speak a dialect nothing else on screen speaks.
+    expect(row).not.toMatch(/\bMINERS?\b/i);
     expect(container.textContent).not.toMatch(/producer/i);
-    expect(container.querySelector('[data-network-producers]')?.textContent)
-      .toMatch(/MINERS/i);
+    // ⚠️ AND IT FITS, MEASURED RATHER THAN HOPED. `StatRow` is `nowrap` at a
+    // fixed 17px height, so the panel's 53% cut cannot be spent from here: the
+    // label runs 91px at `HUD_TYPE.tech` with this row's 1.6 tracking, the
+    // widest value this row can print is ~143px, and the measure is 272px.
+    const stat = container.querySelector('[data-network-producers] > div') as HTMLElement;
+    expect(stat.style.whiteSpace).toBe('nowrap');
+    expect(stat.style.height).toBe('17px');
   });
 
   it('never prints the top share without that window', () => {

@@ -1,4 +1,4 @@
-// MINER — the chain's own dialect of the floating inspection constellation,
+// COHORT — the chain's own dialect of the floating inspection constellation,
 // and the shortest of the four.
 //
 // The link probe reads a connection, the self probe reads our own vitals, the
@@ -9,26 +9,44 @@
 // height), no uptime (nothing is up), no country, no ASN, no address and no
 // version — not as "Unknown", which is a word for a lookup that came back
 // empty, but structurally, because `ProducerStanding` has nowhere to put them.
-// What is left is the chain's RECORD of the window, what the miner said about
-// itself, who else says they run that, and one line saying what the scene is
-// not claiming. There is less here than on any other card and that is the
-// honest amount.
+// What is left is the chain's RECORD of the window, what the cohort wrote into
+// its own blocks, who else says they run that, and one line saying what the
+// scene is not claiming. There is less here than on any other card and that is
+// the honest amount.
 //
 // ⭐ THE MASTHEAD IS THE ONE CLAIM A CARD CANNOT MAKE QUIETLY. Per the P2-b
 // ruling a wrong masthead is itself a shipped lie, and this subject can wear
 // neither of the words already on stage: PEER means we hold a link and we do
-// not, SIGHTED means a crawler answered for it and none ever has. The word is
-// MINER, and it is not a coinage — `NodeSelfCard` already stamps
-// `data-node-probe-role="miner"` when the local node mines, with a test pinning
-// the string. One word, two surfaces, no new vocabulary.
+// not, SIGHTED means a crawler answered for it and none ever has.
+//
+// ⭐⭐ AND IT CANNOT SAY MINER EITHER, WHICH IS A CORRECTION AND NOT A RENAME.
+// The subject of this card is a PAYOUT LOCK HASH — a destination, not a
+// machine. One address pays every rig a pool runs, so `MINER // fc20a8c8` was
+// asserting a machine off evidence that names a place the reward goes. The word
+// is COHORT: the set of machines one payout identity stands for, which may be
+// one rig and may be a fleet, and the card says which of those we can tell
+// (neither) rather than picking.
+//
+// ⚠️ AND IT IS `COHORT //` RATHER THAN `MINING COHORT //` ON MEASURED WIDTH.
+// This card is 340px and its header plate leaves a 306px measure; at
+// `HUD_TYPE.title` in the display face `MINING COHORT // fc20a8c8` runs 215px
+// and the `CHAIN ATTESTED` chip beside it 91px, which is 314px with the gap —
+// the chip wraps and the masthead grows a line. `COHORT // fc20a8c8` measures
+// 154px, lands at 253px with the chip, and keeps the two-line header the other
+// three dialects have. MESH·02 carries the long form (`MINING COHORTS`), where
+// there is room for it; a masthead is a name and the row is a sentence.
 //
 // ⭐ THE CHIP CARRIES THE EVIDENCE CLASS, WHICH IS THE MASTHEAD'S OTHER HALF.
-// `MINER` says what the node does; `CHAIN ATTESTED` says how we know it is
+// `COHORT` says what the node does; `CHAIN ATTESTED` says how we know it is
 // there at all, and it is the strongest sentence on the card — stronger than
 // anything the crawler can say about anybody, because a crawl is hearsay and a
 // block is proof. The graph's own name for the rung stays in the graph
 // (`attested:<key>`); this is the one place the word surfaces, and it surfaces
 // as evidence rather than as a tier.
+//
+// ⚠️ ENGLISH ONLY. A new CJK glyph costs a `pyftsubset` re-subset of the
+// hand-cut woff2 (~21 glyphs today), and this dialect asks the face for none —
+// see the comment on the header plate for why it wears no CJK companion.
 //
 // ⚠️ EVERY LIVE NUMBER COMES FROM THE PRODUCER VIEW, NEVER FROM THE STAGED
 // NODE. The App's topology memo is keyed on the producer KEY SET alone and has
@@ -63,6 +81,7 @@ import {
   stackedSatelliteBase,
 } from './primitives';
 import {
+  COHORT_PAYOUT_CAPTION,
   PRODUCER_BUILD_DENOMINATOR_CAPTION,
   PRODUCER_FAN_DRAWN_CAPTION,
   PRODUCER_FAN_WITHHELD_TEXT,
@@ -92,8 +111,12 @@ const CARD_WIDTH_PX = 340;
 export const MINER_NODE_ACCENT = PEER_NETWORK_HEX.scaffold;
 
 /** The word this dialect wears, in the register a screen reader speaks. One
- *  export because the scene half names the same subject. */
-export const MINER_NODE_SPOKEN_WORD = 'Miner';
+ *  export because the scene half names the same subject.
+ *
+ *  ⭐ THE SPOKEN FORM IS THE LONG ONE. The masthead is clipped to `COHORT` by a
+ *  306px measure; a screen reader has no measure, so it gets the whole noun and
+ *  the reason the noun exists comes across without a second sentence. */
+export const MINER_NODE_SPOKEN_WORD = 'Mining cohort';
 
 /** One line of the chain's record. A readout, never a button: nothing here
  *  re-tints the scene, because the scene has nothing to re-tint — the node
@@ -174,7 +197,7 @@ function ReadoutCaption({ children }: { children: ReactNode }) {
 
 /**
  * The ONE mining sentence a card about a NAMED node is allowed to carry:
- * `MINER? · 1 OF 6 ON THIS BUILD`.
+ * `IN A MINING COHORT? · 1 OF 6 ON THIS BUILD`.
  *
  * ⭐⭐ IT LIVES IN THE MINER CARD'S FILE ON PURPOSE, and it is the whole reason
  * this component exists rather than two lines of JSX in two cards. There are
@@ -191,6 +214,11 @@ function ReadoutCaption({ children }: { children: ReactNode }) {
  * returns nothing for it, so there is no rendering of this stamp that reads as
  * an identification.
  *
+ * ⭐ AND IT ASKS `IN A`, NOT `IS A`. The peer would be a MEMBER of the cohort,
+ * never the cohort itself — a cohort is a set of machines behind one payout
+ * identity, and a peer is one machine. The old stamp asked whether this peer
+ * WAS the miner, which is the one relation the fan can never establish.
+ *
  * No plate, no chip, no accent. It is set in the instrument's quietest ink
  * because it is the least certain thing on either card, and a claim we are not
  * making must not be the brightest line in the masthead.
@@ -201,7 +229,7 @@ export function MiningCandidacyStamp({ candidacy }: { candidacy: PeerMiningCandi
   return (
     <span
       data-mining-candidacy={String(candidacy.oneOf)}
-      title={`One of ${candidacy.oneOf} crawled peers reporting the build a recent block producer declared. Both sides of that are self-declared, so it narrows a set and never names a machine.`}
+      title={`One of ${candidacy.oneOf} crawled peers reporting the build a recent block producer declared. Both sides of that are self-declared, so it narrows a set and never names a machine — and the cohort may contain several of them, or none.`}
       style={{
         flex: '0 0 100%',
         minWidth: 0,
@@ -230,9 +258,9 @@ export default function MinerNodeCard({
   const { producer, versionedRosterSize } = subject;
   const keyHead = minerKeyHead(producer.key);
   // Trimmed only to ASK the question. What gets RENDERED is the string the
-  // miner wrote, byte for byte — the adapter already stripped the control
+  // cohort wrote, byte for byte — the adapter already stripped the control
   // padding mainnet miners wrap their messages in, and anything left inside is
-  // the miner's own and not this card's to tidy.
+  // theirs and not this card's to tidy.
   const declared = producer.message.trim().length > 0;
   const buildShare = producerBuildShareText(producer.fan, versionedRosterSize);
 
@@ -301,7 +329,7 @@ export default function MinerNodeCard({
             textShadow: `0 0 9px ${rgba(accent, 0.45)}`,
           }}
         >
-          MINER // {keyHead}
+          COHORT // {keyHead}
         </span>
         {/* The one thing this card can say that no other card can. It is not a
             caution: a node the chain proves and nobody has met is this
@@ -360,13 +388,21 @@ export default function MinerNodeCard({
             value={producerShareText(producer)}
           >
             <ReadoutCaption>
-              OF THE RECENT BLOCKS THAT NAMED THE MINER WHO MADE THEM
+              OF THE RECENT BLOCKS THAT NAMED WHO THEY PAID
             </ReadoutCaption>
           </MinerReadout>
           {/* The whole of the identity. No encoded address and no operator
               name: both are crawler enrichment, neither is wired, and an
               address computed here would be this card inventing the one thing
-              it is for refusing to invent. */}
+              it is for refusing to invent.
+
+              ⭐⭐ AND THE SECOND CAPTION IS WHY THIS DIALECT IS CALLED A
+              COHORT AT ALL. The row above prints the only identity the chain
+              attests, and this one says what that identity is worth: a
+              destination, which may pay any number of machines. It sits HERE
+              rather than in the footer because it is a fact about the KEY —
+              the footer's business is what the SCENE is not claiming, and this
+              is a limit on the evidence itself. */}
           <MinerReadout
             row="key"
             label="KEY"
@@ -376,11 +412,14 @@ export default function MinerNodeCard({
             <ReadoutCaption>
               PAYOUT LOCK HASH · THE ONLY IDENTITY THE CHAIN ATTESTS
             </ReadoutCaption>
+            <ReadoutCaption>
+              <span data-miner-probe-cohort-reason>{COHORT_PAYOUT_CAPTION}</span>
+            </ReadoutCaption>
           </MinerReadout>
         </div>
       </section>
 
-      {/* The miner talking about itself, and everyone who says the same thing.
+      {/* The cohort talking about itself, and everyone who says the same thing.
           Both halves of this plate are SELF-DECLARED — that is the whole reason
           the join below can narrow a set and never name a member. */}
       <section
@@ -398,7 +437,7 @@ export default function MinerNodeCard({
           status={moduleTag('MINE·03')}
         />
         <div style={{ display: 'grid', rowGap: 3 }}>
-          {/* Absent rather than dashed when the miner said nothing: there was
+          {/* Absent rather than dashed when the cohort said nothing: there was
               no declaration to print, which the withheld reason below states
               in words. A row that is not there is the honest form of a fact
               that is not there. */}
@@ -437,7 +476,7 @@ export default function MinerNodeCard({
                 {producer.message}
               </div>
               <ReadoutCaption>
-                WRITTEN BY THE MINER INTO ITS OWN BLOCK · NOT MEASURED, AND
+                WRITTEN BY THE COHORT INTO ITS OWN BLOCKS · NOT MEASURED, AND
                 TRIVIALLY SPOOFED
               </ReadoutCaption>
             </MinerReadout>
@@ -480,10 +519,18 @@ export default function MinerNodeCard({
 
       {/* The three things the scene cannot say for itself. The entity is really
           out there and really made these blocks; where it stands is the
-          renderer's arrangement; and if its machine is one of the peers already
-          on stage, the colony is drawing it twice — which is inherent to giving
-          every producer an anonymous node of its own, and is disclosed here
-          rather than hidden. */}
+          renderer's arrangement; and if any machine of this cohort is one of
+          the peers already on stage, the colony is drawing it twice — which is
+          inherent to giving every payout identity one anonymous node, and is
+          disclosed here rather than hidden.
+
+          ⭐ BOTH OF THE LAST TWO CLAUSES ARE PLURAL NOW, AND THEY HAVE TO BE.
+          `NODE NOT OBSERVED` said "node", singular, about a subject that may
+          stand for a whole fleet — and `MAY ALSO STAND AS A PEER ABOVE` said
+          the cohort itself might be a peer, which is a category error: a peer
+          is a machine and a cohort is a set of them. What may stand above is
+          one of its MACHINES, and the honest count of the ones we have seen is
+          none of them. */}
       <div
         data-miner-probe-footer
         style={{
@@ -497,8 +544,8 @@ export default function MinerNodeCard({
           ...spatialPlate(HUD_COLORS.dim),
         }}
       >
-        POSITION IS SCENE PLACEMENT · NODE NOT OBSERVED · MAY ALSO STAND AS A
-        PEER ABOVE
+        POSITION IS SCENE PLACEMENT · NONE OF ITS NODES OBSERVED · ITS MACHINES
+        MAY ALSO STAND AS PEERS ABOVE
       </div>
     </div>
   );

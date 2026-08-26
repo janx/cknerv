@@ -19,6 +19,21 @@
 // that a set of size one never render a tie, and the cheapest way to hold that
 // is for the formatter to have no output for it.
 //
+// ⭐⭐ AND THE WORD IS COHORT, NOT MINER, WHICH IS A CORRECTION AND NOT A
+// RENAME. Everything here counts payout lock hashes, and a payout lock hash is
+// a DESTINATION: one address pays every machine a pool runs, and §1.4 said so
+// before a line of this was written — "one lock hash can pay for many
+// machines". The surfaces then went ahead and said MINER anyway, which is a
+// claim about a MACHINE, and it is a claim no evidence in this feature
+// supports. A cohort is the set of machines one payout identity stands for; it
+// may be one rig in somebody's garage and it may be a pool's whole fleet, and
+// the honest reading is that we cannot tell which. Every sentence below is
+// written to survive both.
+//
+// ⚠️ ENGLISH ONLY, here and on every surface these strings reach. The hand-cut
+// CJK face carries about twenty-one glyphs and a new one costs a `pyftsubset`
+// re-subset of the woff2.
+//
 // Words only. Nothing here renders, and nothing here touches three.js.
 
 import {
@@ -98,13 +113,19 @@ export function producerFleetText(view: BlockProducerView): string {
 
 /**
  * The stamp a PEER or SIGHTED card may carry, and the only mining sentence
- * either of them is allowed: `MINER? · 1 OF 6 ON THIS BUILD`.
+ * either of them is allowed: `IN A MINING COHORT? · 1 OF 6 ON THIS BUILD`.
  *
  * ⭐ THE QUESTION MARK AND THE DENOMINATOR ARE THE WHOLE POINT. The join behind
  * this is two self-declared strings meeting; it narrows a set and never names a
  * member, so the card asks rather than states, and it says how large the set is
- * in the same breath. `1 OF 6` is not "this peer is one sixth of a miner" — it
- * is "this peer is one of six machines any of which could be, or none".
+ * in the same breath. `1 OF 6` is not "this peer is one sixth of a cohort" — it
+ * is "this peer is one of six machines, any number of which may belong to it".
+ *
+ * ⭐⭐ AND THE PREPOSITION IS THE CORRECTION. `MINER?` asked whether this peer
+ * IS the thing that made the blocks; a cohort is a SET of machines behind one
+ * payout identity, and a peer is never a set. What can honestly be asked is
+ * whether this peer stands INSIDE one — which is also the only relation the fan
+ * could ever support, since the join narrows membership and never identity.
  *
  * `null` for a set of one. `candidacyByPeer` is built only from fans that
  * passed `PRODUCER_FAN_MIN_CANDIDATES`, so this cannot happen from the derive;
@@ -114,7 +135,7 @@ export function producerFleetText(view: BlockProducerView): string {
 export function peerCandidacyText(candidacy: PeerMiningCandidacy): string | null {
   if (!Number.isFinite(candidacy.oneOf)) return null;
   if (candidacy.oneOf < PRODUCER_FAN_MIN_CANDIDATES) return null;
-  return `MINER? · 1 OF ${candidacy.oneOf} ON THIS BUILD`;
+  return `IN A MINING COHORT? · 1 OF ${candidacy.oneOf} ON THIS BUILD`;
 }
 
 /**
@@ -134,7 +155,7 @@ export function peerCandidacyText(candidacy: PeerMiningCandidacy): string | null
  * and the only place one is named.
  */
 export const PRODUCER_FAN_WITHHELD_TEXT: Readonly<Record<ProducerFanWithheld, string>> = {
-  no_declaration: 'THIS MINER WROTE NO BUILD INTO ITS BLOCKS',
+  no_declaration: 'THIS COHORT WROTE NO BUILD INTO ITS BLOCKS',
   roster_absent: 'NO CRAWLER ROSTER HERE TO COMPARE AGAINST',
   roster_unversioned: 'THE ROSTER NAMES PEERS AND HOLDS A BUILD FOR NONE',
   no_match: 'NO PEER WE HOLD A BUILD FOR IS RUNNING THIS ONE',
@@ -195,7 +216,34 @@ export function producerBuildShareText(
  *  of a readout row is a measure, and this is what the measure is OF. */
 export const PRODUCER_BUILD_DENOMINATOR_CAPTION = 'PEERS THE CRAWLER HOLDS A BUILD FOR';
 
-/** What a drawn fan is claiming, said out loud. A set, and possibly a set the
- *  machine is not even in: a pool assembler behind private relays advertises
- *  nothing, so "any of them" and "none of them" are both live. */
-export const PRODUCER_FAN_DRAWN_CAPTION = 'THE MACHINE MAY BE ANY OF THEM, OR NONE';
+/** What a drawn fan is claiming, said out loud.
+ *
+ *  ⭐ `INCLUDE` RATHER THAN `BE`, AND THAT IS THE WHOLE CORRECTION. The old
+ *  sentence — "the machine may be any of them" — asked a reader to pick one
+ *  line out of the fan and it offered a set of one as the answer. A cohort is a
+ *  SET, so it may contain several of them at once, and on the live shape that
+ *  is what the evidence actually looks like: the dominant cohort's rare build
+ *  narrows to six peers spread two apiece across three ASNs in three countries,
+ *  which is a relay fleet and not a machine. `INCLUDE` says the true thing and
+ *  the more informative one in the same breath.
+ *
+ *  `OR NONE` stays, and it is not hedging: a pool assembler behind private
+ *  relays advertises nothing, so a cohort whose every candidate is wrong is an
+ *  ordinary outcome rather than a failure. */
+export const PRODUCER_FAN_DRAWN_CAPTION = 'THE COHORT MAY INCLUDE ANY OF THEM, OR NONE';
+
+/** Why the word on every one of these surfaces is COHORT.
+ *
+ *  ⭐⭐ IT IS THE ONE FACT THAT MAKES THE VOCABULARY NECESSARY, so it is
+ *  printed rather than assumed. Everything this feature measures is keyed on a
+ *  payout lock hash, and a payout lock hash names where the reward GOES — one
+ *  address can pay a whole fleet, and two addresses can belong to one operator.
+ *  A card that said MINER would be claiming a machine off evidence that only
+ *  ever named a destination.
+ *
+ *  It is also the honest form of the double-count the footer discloses: if one
+ *  of a cohort's machines is a peer already on stage, the colony draws that
+ *  machine twice, and it does so precisely BECAUSE a cohort is a set we cannot
+ *  enumerate. */
+export const COHORT_PAYOUT_CAPTION =
+  'ONE HASH MAY PAY MANY MACHINES · WHICH IS WHY THIS IS A COHORT';

@@ -407,7 +407,7 @@ describe('SightedNodeCard discipline', () => {
   });
 });
 
-// ——— The MINER card, and the one mining sentence its neighbours may carry ———
+// ——— The COHORT card, and the one mining sentence its neighbours may carry ———
 //
 // It lives in this file rather than one of its own for the reason T6 and T7
 // both landed on: `CellDetailPanel.test.tsx` races the real `performance.now`
@@ -487,10 +487,20 @@ describe('MinerNodeCard', () => {
   it('wears the one masthead its evidence earns, and neither of the other two', () => {
     const { container } = renderMiner();
     const text = container.textContent ?? '';
-    // The word is MINER — already in the lexicon, since `NodeSelfCard` stamps
-    // the same role on the local node — and the key head stands where the
-    // other dialects put an id head.
-    expect(text).toContain('MINER // eb0c0007');
+    // ⭐⭐ THE WORD IS COHORT, AND IT IS A CORRECTION RATHER THAN A RENAME. The
+    // subject is a payout LOCK HASH — a destination — and one address pays
+    // every machine a pool runs, so `MINER //` was asserting a machine off
+    // evidence that names a place the reward goes.
+    expect(text).toContain('COHORT // eb0c0007');
+    // ⚠️ …and the SHORT form, on measured width. `MINING COHORT // eb0c0007`
+    // runs 215px at `HUD_TYPE.title` in the display face; with the 91px
+    // `CHAIN ATTESTED` chip and the header's 8px gap that is 314px against a
+    // 306px measure, so the chip would wrap and the header would grow a line.
+    // MESH·02 carries the long form, where there is room for it.
+    expect(text).not.toContain('MINING COHORT //');
+    // No surface on this card may say MINER: it is one machine, and this
+    // subject may be any number of them.
+    expect(text).not.toContain('MINER');
     // A wrong masthead is itself a shipped lie: we hold no link, so it cannot
     // say PEER, and no crawler has ever answered for this node, so it cannot
     // say SIGHTED.
@@ -550,7 +560,7 @@ describe('MinerNodeCard', () => {
     expect(minerValue(container, 'blocks')).toBe('1 / 200 BLK · <1%');
   });
 
-  it('prints what the miner said about itself, verbatim and marked as a claim', () => {
+  it('prints what the cohort said about itself, verbatim and marked as a claim', () => {
     const { container } = renderMiner();
     expect(container.querySelector('[data-miner-probe-declared]')?.textContent)
       .toBe('SELF-DECLARED');
@@ -564,7 +574,7 @@ describe('MinerNodeCard', () => {
     expect(message?.style.whiteSpace).toBe('pre-wrap');
   });
 
-  it('drops the message row when the miner said nothing, rather than dashing it', () => {
+  it('drops the message row when the cohort said nothing, rather than dashing it', () => {
     const { container } = renderMiner({
       message: '',
       fan: withheldFan('no_declaration', 0),
@@ -578,6 +588,13 @@ describe('MinerNodeCard', () => {
     const key = container.querySelector('[data-miner-probe-value="key"]');
     expect(key?.getAttribute('title')).toBe(PRODUCER_KEY);
     expect(container.textContent).toContain('PAYOUT LOCK HASH');
+    // ⭐⭐ …and the one fact that makes the whole vocabulary necessary, printed
+    // on the row it is a fact ABOUT rather than assumed by a reader. A payout
+    // lock hash is a destination: one of them may pay a rig in a garage or a
+    // pool's entire fleet, and nothing in this feature can tell those apart —
+    // which is why the card is masted COHORT and not MINER.
+    expect(container.querySelector('[data-miner-probe-cohort-reason]')?.textContent)
+      .toBe('ONE HASH MAY PAY MANY MACHINES · WHICH IS WHY THIS IS A COHORT');
     // The encoded CKB address and the operator name are crawler enrichment and
     // nothing in this feature fetches them. A card that computed one would be
     // inventing the single thing it exists to refuse to invent.
@@ -612,7 +629,7 @@ describe('MinerNodeCard', () => {
   });
 
   it.each([
-    ['no_declaration', 0, 'THIS MINER WROTE NO BUILD INTO ITS BLOCKS', false],
+    ['no_declaration', 0, 'THIS COHORT WROTE NO BUILD INTO ITS BLOCKS', false],
     ['roster_absent', 0, 'NO CRAWLER ROSTER HERE TO COMPARE AGAINST', false],
     ['roster_unversioned', 0, 'THE ROSTER NAMES PEERS AND HOLDS A BUILD FOR NONE', false],
     ['no_match', 0, 'NO PEER WE HOLD A BUILD FOR IS RUNNING THIS ONE', true],
@@ -640,7 +657,7 @@ describe('MinerNodeCard', () => {
       expect(container.querySelector('[data-miner-probe-narrowed]')?.textContent)
         .toBe('NOT NARROWED');
       // …and the three that have no honest denominator print no fraction. A
-      // silent miner has a versioned roster and a matched count of zero, and
+      // silent cohort has a versioned roster and a matched count of zero, and
       // `0 OF 32` would say we asked thirty-two peers — but the join never ran.
       expect(minerValue(container, 'build')).toBe(
         hasFraction ? `${matched} OF ${versioned}` : '—',
@@ -660,11 +677,17 @@ describe('MinerNodeCard', () => {
   it('states the three things the scene cannot say for itself', () => {
     const { container } = renderMiner();
     // The third clause is the double-count, disclosed rather than hidden: one
-    // node per producer means that if the real machine is also a peer on
-    // stage, the colony is drawing it twice, and that is inherent to keeping
-    // every producer anonymous.
+    // node per payout identity means that if a machine of this cohort is also a
+    // peer on stage, the colony is drawing it twice, and that is inherent to
+    // keeping every cohort anonymous.
+    //
+    // ⭐ THE LAST TWO CLAUSES ARE PLURAL, AND THAT IS THE CORRECTION. `NODE NOT
+    // OBSERVED` said "node", singular, about a subject that may stand for a
+    // fleet; `MAY ALSO STAND AS A PEER ABOVE` said the cohort itself might BE a
+    // peer, which is a category error — a peer is a machine and a cohort is a
+    // set of them.
     expect(container.querySelector('[data-miner-probe-footer]')?.textContent)
-      .toBe('POSITION IS SCENE PLACEMENT · NODE NOT OBSERVED · MAY ALSO STAND AS A PEER ABOVE');
+      .toBe('POSITION IS SCENE PLACEMENT · NONE OF ITS NODES OBSERVED · ITS MACHINES MAY ALSO STAND AS PEERS ABOVE');
   });
 
   it('carries none of the instruments that need a link, a dial or a height', () => {
@@ -694,12 +717,18 @@ describe('the mining stamp a named node may carry', () => {
   it('asks rather than states, and says how large the set is', () => {
     const { container } = renderCard({ candidacy: candidacy(6) });
     const stamp = container.querySelector('[data-mining-candidacy]');
-    expect(stamp?.textContent).toBe('MINER? · 1 OF 6 ON THIS BUILD');
+    expect(stamp?.textContent).toBe('IN A MINING COHORT? · 1 OF 6 ON THIS BUILD');
     // ⭐ §9.2: no surface may say a peer IS a producer. The `?` and the
     // denominator are the whole point, so the sentence is checked for both
     // rather than for the word.
-    expect(stamp?.textContent).toContain('MINER?');
-    expect(stamp?.textContent).not.toMatch(/MINER(?!\?)/);
+    expect(stamp?.textContent).toContain('?');
+    expect(stamp?.textContent).toContain('1 OF 6');
+    // ⭐⭐ AND THE PREPOSITION IS THE OTHER HALF OF THE CORRECTION. A cohort is
+    // a SET of machines behind one payout identity and a peer is one machine,
+    // so `IS` was a category error on top of a claim the fan cannot support.
+    // What can honestly be asked is whether this peer stands INSIDE one.
+    expect(stamp?.textContent).toMatch(/^IN A MINING COHORT\?/);
+    expect(stamp?.textContent).not.toContain('MINER');
   });
 
   it('refuses a set of one outright', () => {
@@ -715,13 +744,14 @@ describe('the mining stamp a named node may carry', () => {
   it('is absent from a card whose node is in no drawn fan', () => {
     const { container } = renderCard();
     expect(container.querySelector('[data-mining-candidacy]')).toBeNull();
+    expect(container.textContent).not.toContain('COHORT');
     expect(container.textContent).not.toContain('MINER');
   });
 
   it('stays out of the record, which prints the crawler and nothing derived', () => {
     const { container } = renderCard({ candidacy: candidacy(3) });
     const record = container.querySelector('[data-sighted-probe-module="record"]');
-    expect(record?.textContent).not.toContain('MINER?');
+    expect(record?.textContent).not.toContain('COHORT');
     expect(
       container.querySelector('[data-sighted-probe-module="header"] [data-mining-candidacy]'),
     ).not.toBeNull();

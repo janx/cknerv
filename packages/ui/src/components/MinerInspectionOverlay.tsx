@@ -54,7 +54,7 @@ export function createMinerInspectionHandles(): MinerInspectionHandles {
 }
 
 /**
- * Scene half of the miner probe: the shared anchor at the producer's staged
+ * Scene half of the cohort probe: the shared anchor at the cohort's staged
  * point in the colony, mounted through NetworkColony's overlay slot so it reads
  * colony space — the same slot the other two colony dialects use, and only ever
  * one of them at a time, because the selection is single. Like its siblings it
@@ -73,7 +73,7 @@ export function MinerInspectionAnchor({
 
 export interface MinerInspectionOverlayProps {
   handles: MinerInspectionHandles;
-  /** The producer standing behind the clicked node, resolved from the LIVE
+  /** The cohort's standing behind the clicked node, resolved from the LIVE
    *  producer view together with the denominator its build share is measured
    *  against — never from the standing hanging off the staged node, which is
    *  the one captured at the last producer key-set change. */
@@ -82,16 +82,21 @@ export interface MinerInspectionOverlayProps {
 }
 
 /**
- * Miner probe — the DOM half. A Canvas sibling, so pointer events inside the
+ * Cohort probe — the DOM half. A Canvas sibling, so pointer events inside the
  * card never reach the R3F root and the colony's own selection raycasts stay
  * untouched.
  *
  * No retention epilogue and no promotion path, unlike the two dialects beside
- * it. Nothing here is linked, so nothing can be lost; and a producer cannot be
- * discovered into a richer dialect either, because knowing WHICH machine it is
- * is exactly the thing this evidence class does not carry. A producer leaves
- * this card one way — its last block rolls out of the window — and the
- * selection ends with it.
+ * it. Nothing here is linked, so nothing can be lost; and a cohort cannot be
+ * discovered into a richer dialect either, because knowing WHICH machines it
+ * runs is exactly the thing this evidence class does not carry — a payout lock
+ * hash names a destination and never a rig. A cohort leaves this card one way
+ * — its last block rolls out of the window — and the selection ends with it.
+ *
+ * The internal vocabulary here (`miner`, `MinerNodeCard`, `minerProbe…`) is
+ * deliberately untouched: it is a name for code, no reader can see it, and
+ * churning it would cost every test hook and every selection prefix in the app
+ * for nothing a person on screen would notice.
  */
 export default function MinerInspectionOverlay({
   handles,

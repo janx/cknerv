@@ -82,14 +82,29 @@ export default function NetworkPanel({ summary, consensus, syncRatio, enrichment
         * stands above the atlas, on the near side of this panel's one line
         * between what the network is and what this crawl saw.
         *
-        * ⭐ THE WORD IS `MINERS`, AND THE HUD ONLY GETS ONE. The card this row
-        * leads to is masted `MINER //`, the stamp a peer may carry is `MINER?`,
-        * and the local node's own probe has said `MINER` since long before any
-        * of this. `PRODUCER` was a second word for the same thing, borrowed
-        * from the derive that computes it — and an internal name is not a
-        * reason for a panel to speak a dialect nothing else on screen speaks.
-        * The derive keeps its own vocabulary (`BlockProducer`, `producer_key`,
-        * `attested`); those are names for code and never appear to a reader.
+        * ⭐⭐ THE WORD IS `MINING COHORTS`, AND THAT IS A CORRECTION RATHER
+        * THAN A RENAME. This row counts DISTINCT PAYOUT LOCK HASHES, and a
+        * payout lock hash is a destination: one address pays every machine a
+        * pool runs. `MINERS` therefore counted machines it had no evidence
+        * about — six of them on the live shape, where at least one is plainly a
+        * pool. A cohort is the set of machines behind one payout identity, so
+        * the count is exact again: six payout identities is six cohorts,
+        * whatever each of them turns out to contain.
+        *
+        * ⭐ THE HUD STILL ONLY GETS ONE WORD FOR IT. The card this row leads to
+        * is masted `COHORT //` (the long form does not fit a 306px masthead),
+        * the stamp a peer may carry asks `IN A MINING COHORT?`, and the derive
+        * keeps its own vocabulary (`BlockProducer`, `producer_key`, `attested`)
+        * because those are names for code and never reach a reader. The local
+        * node's own probe still says `MINER`, and correctly: that subject IS
+        * one machine, and it is the only one in this app we can say that about.
+        *
+        * ⚠️ THE LABEL FITS, MEASURED RATHER THAN HOPED. `MINING COHORTS` is
+        * 91px at `HUD_TYPE.tech` in the Chakra face with this row's 1.6
+        * tracking; the widest value this row can print is ~143px; the panel's
+        * measure is 272px. `StatRow` is `nowrap` at a fixed 17px height, so
+        * neither a wrap nor a taller row is reachable from here — the 53% cut
+        * this panel took stands untouched.
         *
         * ⚠️ ONE ROW, AND THE HEIGHT IS THE ARGUMENT. This panel was cut by 53%
         * when five StatRows became a bar, and that saving is not this feature's
@@ -102,8 +117,8 @@ export default function NetworkPanel({ summary, consensus, syncRatio, enrichment
       {producers ? (
         <div data-network-producers>
           <StatRow
-            label="Miners"
-            title="Distinct payout identities in the recent block window, read from each block's cellbase witness. Counted by payout identity, which may be one pool running many machines."
+            label="Mining cohorts"
+            title="Distinct payout identities in the recent block window, read from each block's cellbase witness. One payout address may pay many machines, so this counts cohorts and never miners."
           >
             {producerFleetText(producers)}
           </StatRow>

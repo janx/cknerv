@@ -419,21 +419,25 @@ describe('PeerLinkCard mining stamp', () => {
     };
   }
 
-  it('asks whether this peer mines, and never answers', () => {
+  it('asks whether this peer stands inside a mining cohort, and never answers', () => {
     const { container } = renderCard({ candidacy: candidacy(6) });
     const stamp = container.querySelector('[data-mining-candidacy]');
     // ⭐ §9.2. This card holds a live link to a real, named machine — which is
     // exactly why it is the most dangerous surface in the HUD to let state
     // anything about mining. The join behind the stamp is two self-declared
     // strings meeting; it narrows a set and never names a member.
-    expect(stamp?.textContent).toBe('MINER? · 1 OF 6 ON THIS BUILD');
-    expect(stamp?.textContent).not.toMatch(/MINER(?!\?)/);
+    expect(stamp?.textContent).toBe('IN A MINING COHORT? · 1 OF 6 ON THIS BUILD');
+    // ⭐⭐ `IN`, NEVER `IS`. A cohort is the set of machines one payout identity
+    // stands for; this peer is one machine. Asking whether it IS the cohort is
+    // a category error on top of a claim the fan could never support.
+    expect(stamp?.textContent).not.toContain('MINER');
     expect(stamp?.getAttribute('data-mining-candidacy')).toBe('6');
   });
 
   it('says nothing at all about mining for a peer in no drawn fan', () => {
     const { container } = renderCard();
     expect(container.querySelector('[data-mining-candidacy]')).toBeNull();
+    expect(container.textContent).not.toContain('COHORT');
     expect(container.textContent).not.toContain('MINER');
   });
 
@@ -452,6 +456,6 @@ describe('PeerLinkCard mining stamp', () => {
   it('survives the link\'s ending, because it was never about the link', () => {
     const { container } = renderCard({ linkLost: true, candidacy: candidacy(3) });
     expect(container.querySelector('[data-mining-candidacy]')?.textContent)
-      .toBe('MINER? · 1 OF 3 ON THIS BUILD');
+      .toBe('IN A MINING COHORT? · 1 OF 3 ON THIS BUILD');
   });
 });
