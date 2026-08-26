@@ -37,7 +37,9 @@ import {
   COHORT_MARK_HALF_EXTENT,
   COHORT_MOTE_BIRTH_R,
   COHORT_MOTE_SIGMA,
+  COHORT_PHOTON_SIGMA,
   COHORT_RIM_R,
+  COHORT_RIM_SIGMA,
   COHORT_SHADOW_HALF_EXTENT,
   COHORT_THROAT_R,
   makeColonyAccretionMaterial,
@@ -897,9 +899,15 @@ describe('what a POW cohort looks like', () => {
   it('has a tilted asymmetric disc, photon ring and gravitational lensing arcs', () => {
     const fragment = accretionFragment();
     expect(COHORT_DISC_FLATTEN).toBeLessThan(0.5);
+    // The aperture was deliberately tightened while the photon ring received
+    // its own wider band: the centre reads smaller without making the whole
+    // cohort or its white boundary disappear at colony scale.
+    expect(COHORT_HORIZON_R / COHORT_RIM_R).toBeLessThan(0.6);
+    expect(COHORT_PHOTON_SIGMA).toBeGreaterThan(COHORT_RIM_SIGMA * 0.5);
     expect(fragment).toContain('vec2 discQ = vec2(discP.x, discP.y / max(uDiscFlatten, 0.08));');
     expect(fragment).toContain('float approaching = pow(');
     expect(fragment).toContain('float photon = gaussian(');
+    expect(fragment).toContain('uPhotonSigma');
     expect(fragment).toContain('float lens = gaussian(');
     expect(fragment).toContain('uHotColor * hot');
     expect(fragment).toContain('- uTime * uSpin * TAU');
@@ -936,7 +944,8 @@ describe('what a POW cohort looks like', () => {
     expect(layer).not.toMatch(/makeScale|\.scale\.set|setScalar/);
     // …and it is compact against a front that crosses
     // the canopy.
-    expect(COHORT_RIM_R * 2).toBeLessThan(3);
+    expect(COHORT_RIM_R * 2).toBeLessThan(2.7);
+    expect(COHORT_MOTE_BIRTH_R).toBeLessThan(4);
   });
 
   it('cannot be mistaken for a courier glint either', () => {

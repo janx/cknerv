@@ -21,16 +21,19 @@ import { PEER_NETWORK_PALETTE } from '../visualPalette';
  */
 
 /** Radius of the opaque event horizon in world units. */
-export const COHORT_HORIZON_R = 0.96;
+export const COHORT_HORIZON_R = 0.72;
 
 /** Final point of an infall, safely inside the event horizon. */
 export const COHORT_THROAT_R = COHORT_HORIZON_R * 0.48;
 
 /** Major radius of the projected accretion disc. */
-export const COHORT_RIM_R = 1.42;
+export const COHORT_RIM_R = 1.28;
 
 /** Gaussian half-width of the accretion disc. */
-export const COHORT_RIM_SIGMA = 0.25;
+export const COHORT_RIM_SIGMA = 0.23;
+
+/** Gaussian half-width of the white photon ring around the aperture. */
+export const COHORT_PHOTON_SIGMA = 0.13;
 
 /** Vertical compression that makes the disc read as a tilted plane. */
 export const COHORT_DISC_FLATTEN = 0.38;
@@ -39,16 +42,16 @@ export const COHORT_DISC_FLATTEN = 0.38;
 export const COHORT_RIM_AMP = 1.45;
 
 /** Mean radius at which matter first becomes visible in the surrounding void. */
-export const COHORT_MOTE_BIRTH_R = 4.2;
+export const COHORT_MOTE_BIRTH_R = 3.8;
 
 /** Gaussian half-width of a mote head. */
-export const COHORT_MOTE_SIGMA = 0.2;
+export const COHORT_MOTE_SIGMA = 0.18;
 
 /** Peak additive brightness of infalling matter. */
 export const COHORT_MOTE_AMP = 1.08;
 
 /** Outer billboard extent, including the longest mote tail at birth. */
-export const COHORT_MARK_HALF_EXTENT = 5.5;
+export const COHORT_MARK_HALF_EXTENT = 5.0;
 
 /** The aperture pass only covers the shadow and its immediate gravity well. */
 export const COHORT_SHADOW_HALF_EXTENT = COHORT_HORIZON_R * 1.7;
@@ -178,6 +181,7 @@ export function makeColonyAccretionMaterial(): THREE.ShaderMaterial {
       uThroat: { value: COHORT_THROAT_R },
       uRim: { value: COHORT_RIM_R },
       uRimSigma: { value: COHORT_RIM_SIGMA },
+      uPhotonSigma: { value: COHORT_PHOTON_SIGMA },
       uDiscFlatten: { value: COHORT_DISC_FLATTEN },
       uBirth: { value: COHORT_MOTE_BIRTH_R },
       uMoteSigma: { value: COHORT_MOTE_SIGMA },
@@ -224,6 +228,7 @@ export function makeColonyAccretionMaterial(): THREE.ShaderMaterial {
       uniform float uThroat;
       uniform float uRim;
       uniform float uRimSigma;
+      uniform float uPhotonSigma;
       uniform float uDiscFlatten;
       uniform float uRimAmp;
       uniform float uBirth;
@@ -303,8 +308,8 @@ export function makeColonyAccretionMaterial(): THREE.ShaderMaterial {
         // gravity well rather than a flat icon, even before a mote moves.
         float photon = gaussian(
           rw - uHorizon * 1.075,
-          uRimSigma * 0.24
-        ) * (0.72 + 0.28 * cos(discAngle * 2.0)) * uRimAmp;
+          uPhotonSigma
+        ) * (0.82 + 0.18 * cos(discAngle * 2.0)) * uRimAmp;
         float polar = pow(
           clamp(abs(discP.y) / max(rw, 0.001), 0.0, 1.0),
           4.0
