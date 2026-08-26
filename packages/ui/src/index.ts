@@ -66,6 +66,10 @@ export * from './derives/cellCausalLens.derive';
 export * from './derives/consensusBraid.derive';
 export * from './derives/consensusFlow.derive';
 export * from './derives/cellPopulationField.derive';
+// The chain's recent producers, and the fingerprint join that narrows one to a
+// set of crawled peers without ever narrowing it to a name. App builds the view
+// and hands it to the colony (staging), the flood (origin) and the cards.
+export * from './derives/blockProducers.derive';
 export * from './derives/networkTopology.derive';
 export * from './derives/networkFlood.derive';
 // Only the placement quantizer: a memo signature over the peer list has to

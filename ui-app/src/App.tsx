@@ -35,6 +35,7 @@ import {
   cellIdentityProofBindingComplete,
   consensusMemoryRouteHopFocusEqual,
   consensusMemoryTraceRequestKey,
+  deriveBlockProducers,
   deriveCellCausalLens,
   deriveConsensusMemoryRouteHopFocus,
   colonyFlood,
@@ -712,21 +713,73 @@ export default function App({
   // only when a crawl round actually lands (the reducer replaces the record),
   // so keying on the reference rebuilds the colony per round, not per poll.
   const networkRoster = enrichmentConfig.enabled ? semanticsCache.networkRoster : null;
+  // The chain's recent block producers, joined against that roster: the staging
+  // set the colony stands attested nodes from, and the live window every share
+  // is measured over. `chain` is shallow-cloned by every batch that touches it
+  // — a mempool tick, a peer refresh, a transaction — but `chain.producers` is
+  // COPY-ON-WRITE in the reducer and only an attributed block (or a reorg
+  // clearing the window) replaces it. Keying on the array rather than the
+  // entity therefore runs this join once per attributed block instead of once
+  // per delta, and `producer_window_blocks` rides along because it is the
+  // denominator the derive checks the numerators against.
+  const producerView = useMemo(
+    // The derive takes the whole entity on purpose — there is no call site at
+    // which the numerators reach it without the window they were counted over.
+    () => deriveBlockProducers(chain, networkRoster),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [chain.producers, chain.producer_window_blocks, networkRoster],
+  );
+  // ⚠️⚠️ THE PRODUCER SIGNATURE IS THE KEY SET, AND NOTHING A BLOCK MOVES.
+  // Every producer standing changes on EVERY BLOCK — a block bumps one
+  // producer's count and re-divides every share against the window — while the
+  // SET OF KEYS changes only when a producer enters or leaves the rolling
+  // window. Only the key set can move the geometry (one node per key, placed
+  // from the key alone, displacing exactly one ghost), so only the key set may
+  // re-key the topology. Letting tallies, shares, messages or fans in here
+  // would rebuild the whole colony once a block because a numerator moved,
+  // which is precisely the failure `best_known` is excluded above to avoid:
+  // ColonyEdges owns its line geometry on `[topology]`, so a rebuild hands an
+  // in-flight wave fresh surge lanes and truncates the wavefront. It is the
+  // same distinction one level in, where `inferredScaffold` is keyed on the
+  // staged ids and never on the standings.
+  //
+  // ⭐ The live tally still reaches the nodes. `inferredTopology` re-stages
+  // both tails on every call and hangs the standing on the node BY REFERENCE,
+  // so whenever this memo does run the nodes carry the window as it stands
+  // then; and between runs the live reading is `producerView` itself, which is
+  // where a card asks — exactly as `selectedSighted` below asks the live
+  // roster rather than the `sighted` row hanging off a staged node.
+  //
+  // Absent, null and empty collapse onto one signature deliberately:
+  // `inferredTopology` emits a byte-identical topology for all three.
+  const producerKeysSig = useMemo(
+    () => (producerView?.producers ?? []).map((p) => p.key).join('\u0000'),
+    [producerView],
+  );
   const topology = useMemo(
     () => inferredTopology(
       peers, universeSeed, localNode?.id ?? 'ckb:local', localCkbPos, networkRoster,
       // `localNode.id` is cknerv's own key for the endpoint; the crawler files
       // us under our base58 p2p id. Only this excludes us from our own roster.
       localNode?.p2p_node_id,
+      producerView?.producers,
     ),
-    // peers is read via the stable peersSig; keying on `peers` directly would
-    // rebuild the geometry every poll. localCkbPos is stably memoized (no churn).
+    // peers is read via the stable peersSig and the producer standings via
+    // producerKeysSig; keying on either directly would rebuild the geometry
+    // every poll / every block. localCkbPos is stably memoized (no churn).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [peersSig, universeSeed, localNode?.id, localNode?.p2p_node_id, localCkbPos, networkRoster],
+    [peersSig, universeSeed, localNode?.id, localNode?.p2p_node_id, localCkbPos, networkRoster, producerKeysSig],
   );
   const cf = useMemo(
-    () => colonyFlood(topology, cellsCache.lastPulseAtMs),
-    [topology, cellsCache.lastPulseAtMs],
+    // The producer of the block that FIRED THIS PULSE, carried by value on the
+    // pulse delta rather than looked up off the chain cache — that lookup is a
+    // cross-stream race whose wrong answers are rare, plausible and silent. The
+    // wave starts where the block was made when the colony is standing a node
+    // for that producer, and on the anonymous scatter when it is not. The key
+    // moves in lockstep with the stamp, so it costs no recompute the pulse was
+    // not already causing.
+    () => colonyFlood(topology, cellsCache.lastPulseAtMs, cellsCache.lastPulseProducerKey),
+    [topology, cellsCache.lastPulseAtMs, cellsCache.lastPulseProducerKey],
   );
   const livePulseDelayS = livePulseDepartureDelayS(cf.localReceiveDelayS);
 

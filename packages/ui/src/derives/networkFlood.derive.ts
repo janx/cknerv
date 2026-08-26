@@ -3,33 +3,69 @@
 
 import { mulberry32 } from '../layout';
 import { fnv1a } from '../geometry/edgeBezier';
-import { dist2 } from './networkTopology.derive';
+import { attestedNodeId, dist2 } from './networkTopology.derive';
 import type { NetworkTopology } from '../types';
 
 /**
  * Pick a flood origin among the ANONYMOUS scatter, biased FAR from local so the
- * front travels to us.
+ * front travels to us. THE FALLBACK HALF of the origin rule: `colonyFlood` asks
+ * `attestedOrigin` first, and lands here whenever the chain named nobody this
+ * colony is standing a node for.
  *
- * ⭐ NEVER a node that has a name. The origin is the one part of this flood
- * that singles a node out — "the block entered the network HERE" — and nothing
- * observable backs it: the tree is geometric fiction end to end
- * (`provenance: 'inferred'`, every scaffold edge `kind: 'inferred'`), and no
- * source we read reports who relayed a block. Landing that claim on an
- * `inferred` ghost leaves it unattributable, which is what a declared fiction
- * should be. Landing it on a `sighted` node would pin an invented "first" onto
- * a REAL base58 identity whose card carries real crawler facts (country, ASN,
- * client version, last_seen); landing it on a `measured` peer would in
- * addition leave `arrivals[id] = 0` below, launching a delivery carrier into
- * the Cell canopy at t=0 — the scene physically asserting that named peer
- * handed us this block.
+ * ⭐ ORIGIN AND RELAY ARE DIFFERENT CLAIMS, and this comment used to run them
+ * together. It said the origin may only ever be anonymous because "no source we
+ * read reports who relayed a block". One half of that is still exactly true and
+ * the other half is now false:
  *
- * Named nodes still relay, and still light as the front crosses them:
- * RECEIVING a block is the true part (every peer really does), being its
- * source is not.
+ *   RELAY IS STILL UNREPORTED. Nothing cknerv reads says which node handed us a
+ *   block. Every hop this flood draws is geometric fiction end to end
+ *   (`provenance: 'inferred'`, every scaffold edge `kind: 'inferred'`), and
+ *   named nodes light as the front crosses them only because RECEIVING a block
+ *   is the true part — every peer really does.
  *
- * The fallback keeps a scatter-less topology (labs, fixtures, the degenerate
- * few-node case) choosing exactly as it did before, rather than collapsing the
- * origin onto local.
+ *   ORIGIN IS NOW REPORTED. The cellbase witness names the block's CREATOR, and
+ *   creating is not relaying: it is the chain stating which entity made this
+ *   block, inside the block. `attestedOrigin` reads that name, and the wave
+ *   starts where the block was made.
+ *
+ * ⭐⭐ THE 2026-08-24 SHOCKWAVE RULING (`45270d0`, "the block enters the colony
+ * through no one's name") IS AMENDED, NOT EXCEPTED. It held that a named node
+ * may RECEIVE a wave and may never SOURCE one, and it decided that on a stated
+ * criterion — SINGLE-POINT ACCUSATION vs DIFFUSE FACT: a fiction may lie on
+ * anonymous scatter, and may never be pinned onto an identity carrying real
+ * crawler values. An `attested` node MEETS that criterion rather than escaping
+ * it, on both halves at once:
+ *
+ *   - IT HAS NO IDENTITY TO ACCUSE. No base58 id, no address, no country, no
+ *     ASN, no client version — `ProducerStanding` has no field one could land
+ *     in. The only string on it is a payout key, which is what the chain
+ *     attests, and a payout key is not a machine.
+ *   - AND THE CLAIM IS BACKED. "This entity made this block" is the one origin
+ *     statement in this whole scene that nobody invented.
+ *
+ * So the ruling stands UNCHANGED for `measured` and `sighted`, and the filter
+ * below is where it stands: landing an origin on a `sighted` node would pin an
+ * invented "first" onto a REAL base58 identity whose card carries real crawler
+ * facts (country, ASN, client version, last_seen); landing it on a `measured`
+ * peer would in addition leave `arrivals[id] = 0` below, launching a delivery
+ * carrier into the Cell canopy at t=0 — the scene physically asserting that
+ * named peer handed us this block. `attested` is a third evidence class the
+ * ruling's author had no example of, not a hole in the ruling.
+ *
+ * ⚠️ THIS IS A LIVE PATH, not a defensive branch, and three ordinary things
+ * arrive on it: a block whose cellbase names nobody; a producer that left the
+ * rolling window between the pulse and this render; and a MID-SESSION RESYNC —
+ * lag → reconnect `?since=0` → server re-snapshot, which restores a pulse stamp
+ * and deliberately carries no producer across it, because a snapshot knows when
+ * the server last pulsed and nothing whatever about who earned it.
+ *
+ * ⇒ Everything below — the anonymity filter, the distance weighting, the rng
+ * seeding, the scatter-less fallback — is UNCHANGED and must stay so. With no
+ * producer resolved this function chooses exactly what it chose before
+ * producers existed, so an unnamed block still draws the wave it drew
+ * yesterday, and a scatter-less topology (labs, fixtures, the degenerate
+ * few-node case) still narrows the choice rather than collapsing the origin
+ * onto local.
  */
 export function pickOrigin(topology: NetworkTopology, nonce: number): string {
   const rng = mulberry32((fnv1a(topology.localId) ^ (Math.floor(nonce) >>> 0)) >>> 0);
@@ -45,6 +81,39 @@ export function pickOrigin(topology: NetworkTopology, nonce: number): string {
   let r = rng() * total;
   for (let i = 0; i < cands.length; i++) { r -= weights[i]; if (r <= 0) return cands[i].id; }
   return cands[cands.length - 1].id;
+}
+
+/**
+ * The origin the CHAIN named, when the colony is standing a node for it.
+ *
+ * `producerKey` rides the block pulse BY VALUE (`CellDelta::Pulse`), because
+ * the producer window lives on the `Chain` entity and reaches a client on a
+ * DIFFERENT stream with its own revision and its own flush — resolving a name
+ * at draw time is a race whose wrong answers are rare, plausible and silent.
+ * `pickOrigin` above carries the argument for why an `attested` node may hold
+ * an origin at all, and why no other named tier ever may.
+ *
+ * ⚠️ A KEY THAT IS PRESENT BUT NOT STAGED FALLS BACK. It must never throw and
+ * must never invent the node, and that is not defensive coding: the pulse's
+ * producer and the colony's producer window are two readings of one rolling
+ * window taken at different moments on different streams, so a producer that
+ * fired this wave and then left the window before this render is an ORDINARY
+ * event. So is a key that arrives before the chain stream has caught up. An
+ * anonymous wave is the honest answer to both, and it is the answer
+ * `pickOrigin` has always given.
+ *
+ * The `kind` is asked for as well as the id. `attestedNodeId` already files the
+ * key under a namespace no peer id wears, so matching the id alone would be
+ * safe today — but the rule is "the node the chain attests", and asking the
+ * graph for the rule costs one field read and does not rest on an alphabet.
+ */
+export function attestedOrigin(
+  topology: NetworkTopology, producerKey?: string | null,
+): string | null {
+  if (typeof producerKey !== 'string' || producerKey.length === 0) return null;
+  const id = attestedNodeId(producerKey);
+  const node = topology.nodes.find((n) => n.id === id);
+  return node !== undefined && node.kind === 'attested' ? node.id : null;
 }
 
 /**
@@ -179,7 +248,9 @@ export function clampHeroDelayS(rawSec: number): number {
 }
 
 export interface ColonyFlood {
-  entryId: string | null;                            // flood origin (anonymous — see pickOrigin)
+  // The block's producer when the chain named one we are standing a node
+  // for, else the anonymous ghost pick — see `pickOrigin`.
+  entryId: string | null;
   localReceiveDelayS: number;                        // hero timing (measured-worker feed)
   arrivals: Record<string, number>;                  // MEASURED peers → carrier arrival age
   senders: Record<string, string | null>;            // MEASURED peers → flood predecessor
@@ -187,11 +258,27 @@ export interface ColonyFlood {
   colonyPredecessor: Record<string, string | null>;  // ALL nodes → predecessor (edge-pulse direction)
 }
 
-export function colonyFlood(topology: NetworkTopology, nonce: number): ColonyFlood {
+/**
+ * The whole per-block schedule: where the wave starts, when it reaches every
+ * node, and when the local Cell field commits.
+ *
+ * `producerKey` is the producer of the block that FIRED THIS PULSE, carried by
+ * value on the pulse delta. Standing in this colony ⇒ the wave starts at that
+ * node, which is the one origin claim in the scene the chain actually backs.
+ * Absent, or naming a producer this topology holds no node for ⇒ the anonymous
+ * ghost pick, unchanged in every detail. Both halves are argued on
+ * `pickOrigin`; `attestedOrigin` is the one that decides between them.
+ */
+export function colonyFlood(
+  topology: NetworkTopology, nonce: number, producerKey?: string | null,
+): ColonyFlood {
   if (topology.nodes.length <= 1) {
     return { entryId: null, localReceiveDelayS: 0, arrivals: {}, senders: {}, colonyArrivalS: {}, colonyPredecessor: {} };
   }
-  const originId = pickOrigin(topology, nonce);
+  // The chain's name first, the anonymous scatter when there is none to
+  // stand on. `nonce` still seeds the fallback exactly as it always did, so
+  // an unnamed block draws the wave it drew before producers existed.
+  const originId = attestedOrigin(topology, producerKey) ?? pickOrigin(topology, nonce);
   const { arrival, predecessor } = floodArrivalTimes(topology, originId);
 
   let maxA = 0;

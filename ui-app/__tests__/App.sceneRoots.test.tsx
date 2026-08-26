@@ -66,6 +66,26 @@ function bindingsRead(body: string): string[] {
   return [...found];
 }
 
+/** The source of `const <name> = useMemo(...)`, up to its terminator. */
+function memoBody(name: string): string {
+  const start = APP_SOURCE.indexOf(`const ${name} = useMemo(`);
+  expect(start, `${name} is not a useMemo`).toBeGreaterThan(-1);
+  const end = APP_SOURCE.indexOf('\n  );', start);
+  expect(end, `${name}'s memo is unterminated`).toBeGreaterThan(start);
+  return APP_SOURCE.slice(start, end);
+}
+
+/** Its dep list, as written. The LAST bracketed group in the memo, so a `[]`
+ *  default or an index inside the body cannot be mistaken for it. */
+function memoDeps(name: string): string[] {
+  const body = memoBody(name);
+  const open = body.lastIndexOf('[');
+  return body.slice(open + 1, body.indexOf(']', open))
+    .split(',')
+    .map((dep) => dep.trim())
+    .filter((dep) => dep.length > 0);
+}
+
 function coveredByDeps(path: string, deps: string[]): boolean {
   // A dep may name the whole path (`galaxyConfig.cellCap`) or its root
   // (`selectedCell` covering `selectedCell.id`); either pins the identity the
@@ -175,5 +195,39 @@ describe('colony topology signature', () => {
     expect(sig).toContain('${p.node_id}|${latencyPlacementStep(p.latency_ms)}|${p.direction}|${p.version ?? \'\'}');
     expect(sig).not.toContain('p.latency_ms ??');
     expect(sig).not.toContain('best_known');
+  });
+
+  it('keys the producer tail on its key set, and on nothing a block moves', () => {
+    // The same trap one tier along, and a worse one to read: a block bumps its
+    // producer's count and re-divides EVERY share against the window, so the
+    // standings move about every ten seconds while the key set does not. Only
+    // the key set moves geometry — one node per key, each displacing one ghost
+    // — so a memo that re-keyed on a numerator would rebuild the whole colony
+    // once a block, and ColonyEdges owns its line geometry on the topology:
+    // the symptom is a wave that stops halfway, not an error.
+    //
+    // Structural rather than a text match: EVERY field the signature reads off
+    // a standing, and there had better be exactly one of them. `blocks`,
+    // `share`, `windowBlocks`, `message`, `lastSeenMs` and `fan` all move under
+    // a live window and not one of them may appear here.
+    const sig = memoBody('producerKeysSig');
+    expect([...sig.matchAll(/\bp\.([A-Za-z_$][\w$]*)/g)].map((m) => m[1])).toEqual(['key']);
+
+    const deps = memoDeps('topology');
+    expect(deps).toContain('producerKeysSig');
+    // The VIEW's identity moves on every attributed block and the chain
+    // entity's on every delta that touches it; neither may key the geometry.
+    expect(deps).not.toContain('producerView');
+    expect(deps.some((dep) => /^chain\b/.test(dep))).toBe(false);
+  });
+
+  it('reads the producer window off the copy-on-write array, not the entity', () => {
+    // `chain` is shallow-cloned by every batch that touches it -- a mempool
+    // tick, a peer refresh, a transaction — while `chain.producers` is
+    // replaced only by an attributed block or a reorg. Keying the join on the
+    // entity would re-run it many times a block for an answer that did not
+    // change, and would hand every consumer a fresh view each time.
+    expect(memoDeps('producerView'))
+      .toEqual(['chain.producers', 'chain.producer_window_blocks', 'networkRoster']);
   });
 });

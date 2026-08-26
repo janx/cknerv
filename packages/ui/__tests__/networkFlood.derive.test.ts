@@ -1,8 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { pickOrigin, floodArrivalTimes, colonyFlood, clampHeroDelayS, FLOOD_DURATION_S, HERO_MIN_FRAC, HERO_MAX_FRAC } from '../src/derives/networkFlood.derive';
-import { buildAdjacency, inferredTopology } from '../src/derives/networkTopology.derive';
+import { attestedOrigin, pickOrigin, floodArrivalTimes, colonyFlood, clampHeroDelayS, FLOOD_DURATION_S, HERO_MIN_FRAC, HERO_MAX_FRAC } from '../src/derives/networkFlood.derive';
+import { attestedNodeId, buildAdjacency, inferredTopology } from '../src/derives/networkTopology.derive';
+import { deriveBlockProducers, type ProducerStanding } from '../src/derives/blockProducers.derive';
+import {
+  applyCellDelta, emptyCellsCache, emptyChainCache, fromCellsSnapshot,
+} from '@cknerv/cache';
 import type { NetworkEdge, NetworkNode, NetworkTopology } from '../src/types';
-import type { NetworkRosterRecord, Peer, RosterNode } from '@cknerv/types';
+import type {
+  BlockProducer, ChainEntry, NetworkRosterRecord, Peer, RosterNode,
+} from '@cknerv/types';
 
 function peer(p: Partial<Peer>): Peer {
   return { node_id: 'Qm', addr: '1.2.3.4:8115', direction: 'outbound', version: '0.1', connected_ms: 0, ...p };
@@ -229,5 +235,279 @@ describe('colonyFlood schedule', () => {
     expect(Object.keys(f.colonyArrivalS).length).toBe(lone.nodes.length);
     for (const n of lone.nodes) expect(Number.isFinite(f.colonyArrivalS[n.id])).toBe(true);
     expect(f.entryId).not.toBe('ckb:local'); // origin is a real (inferred) node, not us
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE ORIGIN THE CHAIN NAMES.
+//
+// §4.2: relay is still unreported and origin is now reported, so the
+// 2026-08-24 ruling (`45270d0`, a named node may receive a wave and never
+// source one) is AMENDED rather than excepted — `attested` is a third evidence
+// class, certain in existence and empty of identity. The tests below ask both
+// halves: the chain's name is honoured when the colony is standing a node for
+// it, and NOTHING ELSE about the old behaviour moves.
+//
+// ⚠️ Every key here is CONSTRUCTED. The live producer set drifts with the
+// pools and the crawl drifts with the round; nothing below pins a real hash or
+// a real count.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A lock-script-hash-shaped key: `0x` + 64 hex, the shape the adapter emits.
+ *  Hex-encoded per character so two distinct tags cannot fold onto one key. */
+function producerKey(tag: string): string {
+  const encoded = [...tag].map((c) => c.charCodeAt(0).toString(16).padStart(2, '0')).join('');
+  return `0x${encoded.padEnd(64, '0').slice(0, 64)}`;
+}
+
+/** One producer's standing. The fan is always WITHHELD: the flood never reads a
+ *  fan, and a drawn one would smuggle roster rows into a test about where a
+ *  wave starts. */
+function standing(over: Partial<ProducerStanding> & { key: string }): ProducerStanding {
+  const blocks = over.blocks ?? 10;
+  const windowBlocks = over.windowBlocks ?? 100;
+  return {
+    role: 'producer',
+    message: '0.209.0 (aaaaaaa 2026-07-30)',
+    blocks,
+    windowBlocks,
+    share: blocks / windowBlocks,
+    lastSeenMs: 1_700_000_000_000,
+    fan: { drawn: false, reason: 'roster_absent', matchedVersion: null, matched: 0, shareOfVersioned: 0 },
+    ...over,
+  };
+}
+
+function standings(n: number): ProducerStanding[] {
+  return Array.from({ length: n }, (_, i) => standing({ key: producerKey(`p${i}`) }));
+}
+
+/** The colony the rest of this section floods: two measured peers, a crawl
+ *  round of 24 sighted rows, six producers standing on the ghosts' places. */
+const PRODUCERS = standings(6);
+const mined = inferredTopology(
+  peers, 0xc0ffee, 'ckb:local', undefined, roster(24), undefined, PRODUCERS,
+);
+/** Today's colony — the same scene with no producers at all. */
+const unmined = inferredTopology(peers, 0xc0ffee, 'ckb:local', undefined, roster(24));
+
+describe('flood origin: the chain names it (⭐ §4.2, amending 45270d0)', () => {
+  const kindById = new Map(mined.nodes.map((n) => [n.id, n.kind]));
+
+  it('⭐ no producer key ⇒ the flood is what it was before producers existed', () => {
+    // The whole fallback contract in one comparison: with nothing resolved, the
+    // third argument may not perturb the origin, the arrival scale, the hero
+    // clamp or a single map entry. Absent, null and the empty string are one
+    // answer — absence — and none of them is a key.
+    for (const t of [topo, unmined, mined]) {
+      for (let nonce = 0; nonce < 24; nonce += 1) {
+        const today = colonyFlood(t, nonce);
+        expect(today.entryId).toBe(pickOrigin(t, nonce));
+        for (const absent of [undefined, null, ''] as const) {
+          expect(colonyFlood(t, nonce, absent)).toEqual(today);
+        }
+      }
+    }
+  });
+
+  it('an unnamed wave still starts on the ANONYMOUS scatter, producers on stage or not', () => {
+    // The ruling's own test, re-run with the new rung present: staging
+    // producers must not quietly hand `pickOrigin` a fourth candidate pool.
+    expect(new Set(kindById.values()))
+      .toEqual(new Set(['local', 'measured', 'inferred', 'sighted', 'attested']));
+    for (let nonce = 0; nonce < 512; nonce += 1) {
+      expect(kindById.get(pickOrigin(mined, nonce))).toBe('inferred');
+      expect(kindById.get(colonyFlood(mined, nonce).entryId!)).toBe('inferred');
+    }
+  });
+
+  it('⭐ a staged producer key IS the origin, whatever the nonce would have chosen', () => {
+    for (const producer of PRODUCERS) {
+      const id = attestedNodeId(producer.key);
+      const chosen = new Set<string | null>();
+      for (const nonce of [0, 1, 7, 41, 512, 20_259_445]) {
+        const f = colonyFlood(mined, nonce, producer.key);
+        chosen.add(f.entryId);
+        expect(f.entryId).toBe(id);
+        // it really is the source: it arrives at t=0 and has no sender
+        expect(f.colonyArrivalS[id]).toBe(0);
+        expect(f.colonyPredecessor[id]).toBeNull();
+        // …and the wave still travels — local is never first
+        expect(f.colonyArrivalS['ckb:local']).toBeGreaterThan(0);
+        expect(f.localReceiveDelayS).toBeGreaterThanOrEqual(FLOOD_DURATION_S * HERO_MIN_FRAC - 1e-6);
+      }
+      // the chain decided, not the rng: one origin across every nonce
+      expect(chosen.size).toBe(1);
+    }
+  });
+
+  it('⭐ THE RULING STANDS for measured and sighted — neither can be named into an origin', () => {
+    // A key is matched against the `attested:` namespace AND the rung, not
+    // against the node list at large. Handing this function a peer's base58 id
+    // or a ghost's `inf:n` therefore resolves nothing, and the wave falls back
+    // to the anonymous pick rather than pinning a claim on a real identity.
+    for (const node of mined.nodes) {
+      if (node.kind === 'attested') continue;
+      expect(attestedOrigin(mined, node.id)).toBeNull();
+      expect(colonyFlood(mined, 9, node.id)).toEqual(colonyFlood(mined, 9));
+    }
+    // and no measured peer is ever handed `arrivals[id] = 0`, which is the
+    // reading that would launch a delivery carrier into the canopy at t=0
+    for (const producer of PRODUCERS) {
+      const f = colonyFlood(mined, 9, producer.key);
+      for (const arrival of Object.values(f.arrivals)) expect(arrival).toBeGreaterThan(0);
+    }
+  });
+
+  it('a producer wearing a measured peer’s own string cannot make that peer the source', () => {
+    // The one collision the namespace exists for. Both nodes stand; the origin
+    // is the attested one, and the measured peer RECEIVES the wave — which is
+    // exactly the half of the ruling that was always true.
+    const shared = producerKey('collision');
+    const t = inferredTopology(
+      [peer({ node_id: shared, latency_ms: 40 })], 0xc0ffee, 'ckb:local', undefined,
+      null, undefined, [standing({ key: shared })],
+    );
+    const f = colonyFlood(t, 3, shared);
+    expect(f.entryId).toBe(attestedNodeId(shared));
+    expect(f.entryId).not.toBe(shared);
+    expect(f.arrivals[shared]).toBeGreaterThan(0);
+  });
+});
+
+describe('flood origin: a key the colony cannot stand on (⚠️ a LIVE path)', () => {
+  it('⭐ a key present but not staged falls back, and invents no node', () => {
+    // Ordinary, not corrupt: the pulse's producer and the colony's producer
+    // window are two readings of one rolling window taken at different moments
+    // on different streams, so a producer that fired this wave and then left
+    // the window before this render is a Tuesday.
+    const departed = producerKey('left-the-window');
+    expect(mined.nodes.some((n) => n.id === attestedNodeId(departed))).toBe(false);
+    expect(attestedOrigin(mined, departed)).toBeNull();
+    for (let nonce = 0; nonce < 24; nonce += 1) {
+      const f = colonyFlood(mined, nonce, departed);
+      expect(f).toEqual(colonyFlood(mined, nonce));
+      expect(f.entryId).toBe(pickOrigin(mined, nonce));
+    }
+    // nothing was added to the graph on the way past
+    expect(Object.keys(colonyFlood(mined, 3, departed).colonyArrivalS))
+      .toHaveLength(mined.nodes.length);
+  });
+
+  it('a colony with no producers at all reads every key as absence', () => {
+    // A devnet that has not mined, a boot whose window is still empty, a chain
+    // stream that has not arrived yet. Every one of them is a wave with no
+    // name, and none of them is an error.
+    for (const producer of PRODUCERS) {
+      expect(attestedOrigin(unmined, producer.key)).toBeNull();
+      expect(colonyFlood(unmined, 5, producer.key)).toEqual(colonyFlood(unmined, 5));
+    }
+  });
+
+  it('a malformed key resolves to nothing rather than throwing', () => {
+    for (const junk of ['', 'attested:', 'inf:0', 'ckb:local', '0x', PRODUCERS[0].key.slice(2)]) {
+      expect(attestedOrigin(mined, junk)).toBeNull();
+    }
+  });
+});
+
+describe('flood origin: the resync path (⚠️ the fallback runs in production)', () => {
+  it('a mid-session resync drops the name and the wave returns to the scatter', () => {
+    const key = PRODUCERS[0].key;
+    const pulsed = applyCellDelta(emptyCellsCache(), {
+      type: 'pulse', at_ms: 1_000, producer_key: key,
+    });
+    expect(colonyFlood(mined, pulsed.lastPulseAtMs, pulsed.lastPulseProducerKey).entryId)
+      .toBe(attestedNodeId(key));
+
+    // lag → markLagged → reconnect `?since=0` → server re-snapshot, with the
+    // tree already mounted. The restored stamp is a REAL pulse edge, and the
+    // snapshot knows when the server last pulsed and nothing about who earned
+    // it — so the producer is cleared rather than carried across a stamp that
+    // belongs to a different block.
+    const resynced = fromCellsSnapshot(9, { cells: [], last_pulse_at_ms: 5_000 }, {}, pulsed);
+    expect(resynced.lastPulseProducerKey).toBeNull();
+    const after = colonyFlood(mined, resynced.lastPulseAtMs, resynced.lastPulseProducerKey);
+    expect(after).toEqual(colonyFlood(mined, resynced.lastPulseAtMs));
+    expect(after.entryId).toBe(pickOrigin(mined, resynced.lastPulseAtMs));
+    expect(mined.nodes.find((n) => n.id === after.entryId)!.kind).toBe('inferred');
+  });
+
+  it('a block that named nobody is anonymous, not the last name repeated', () => {
+    const named = applyCellDelta(emptyCellsCache(), {
+      type: 'pulse', at_ms: 1_000, producer_key: PRODUCERS[1].key,
+    });
+    const anonymous = applyCellDelta(named, { type: 'pulse', at_ms: 2_000 });
+    expect(anonymous.lastPulseProducerKey).toBeNull();
+    const f = colonyFlood(mined, anonymous.lastPulseAtMs, anonymous.lastPulseProducerKey);
+    expect(f.entryId).not.toBe(attestedNodeId(PRODUCERS[1].key));
+    expect(f).toEqual(colonyFlood(mined, anonymous.lastPulseAtMs));
+  });
+});
+
+describe('the producer signature the topology memo is keyed on', () => {
+  /** A chain whose window holds `blocks[i]` blocks for producer `i`. */
+  function chainWith(blocks: number[]): ChainEntry {
+    const producers: BlockProducer[] = blocks.map((count, i) => ({
+      key: producerKey(`p${i}`),
+      message: '0.209.0 (aaaaaaa 2026-07-30)',
+      blocks: count,
+      last_seen_ms: 1_700_000_000_000 + i,
+    }));
+    return {
+      ...emptyChainCache(),
+      producers,
+      producer_window: producers.flatMap((p, i) => Array<number>(p.blocks).fill(i)),
+      producer_window_blocks: blocks.reduce((s, b) => s + b, 0),
+    };
+  }
+  const keySet = (chain: ChainEntry) => (
+    deriveBlockProducers(chain, null)!.producers.map((p) => p.key).join(' ')
+  );
+
+  // ⚠️⚠️ THE FAILURE THIS PINS. A block bumps its producer's count and re-divides
+  // every share against the window, so the STANDINGS move on every block while
+  // the KEY SET does not. App keys the topology memo on the key set alone; had
+  // it keyed on anything a block moves, the colony would rebuild once a block
+  // because a numerator moved — and ColonyEdges owns its line geometry on
+  // `[topology]`, so that rebuild lands new surge lanes under an in-flight wave
+  // and truncates the wavefront.
+  it('⭐ a block landing on an existing producer does not move the key set', () => {
+    const before = chainWith([9, 5, 3]);
+    const after = chainWith([10, 5, 3]);          // one more block for the leader
+    expect(keySet(after)).toBe(keySet(before));
+    // …while the standings genuinely moved, which is the half that must cross
+    const shares = (chain: ChainEntry) => deriveBlockProducers(chain, null)!.producers
+      .map((p) => [p.blocks, p.windowBlocks, p.share] as const);
+    expect(shares(after)).not.toEqual(shares(before));
+  });
+
+  it('…and a producer entering or leaving the window does move it', () => {
+    // The other half: the key set is what the GEOMETRY follows (one node per
+    // key, one displaced ghost each), so a changed set has to re-key.
+    expect(keySet(chainWith([9, 5, 3, 1]))).not.toBe(keySet(chainWith([9, 5, 3])));
+    expect(keySet(chainWith([9, 5]))).not.toBe(keySet(chainWith([9, 5, 3])));
+  });
+
+  it('⭐ the live tally reaches the nodes whenever the topology IS rebuilt', () => {
+    // T5 hangs the standing on the node by reference and re-stages both tails
+    // on every call, so the window the nodes carry is the window as it stood
+    // when the memo last ran — never a copy taken when the tier was created.
+    const view = (chain: ChainEntry) => deriveBlockProducers(chain, null)!.producers;
+    const rows = roster(9);
+    const first = inferredTopology(
+      peers, 0xc0ffee, 'ckb:local', undefined, rows, undefined, view(chainWith([9, 5, 3])),
+    );
+    const later = inferredTopology(
+      peers, 0xc0ffee, 'ckb:local', undefined, rows, undefined, view(chainWith([10, 5, 3])),
+    );
+    const tally = (t: typeof first) => t.nodes
+      .filter((n) => n.kind === 'attested')
+      .map((n) => [n.attested!.blocks, n.attested!.windowBlocks]);
+    expect(tally(first)).toEqual([[9, 17], [5, 17], [3, 17]]);
+    expect(tally(later)).toEqual([[10, 18], [5, 18], [3, 18]]);
+    // and the geometry did not move under them
+    expect(later.nodes.map((n) => n.id)).toEqual(first.nodes.map((n) => n.id));
+    expect(later.nodes.map((n) => n.pos)).toEqual(first.nodes.map((n) => n.pos));
   });
 });
