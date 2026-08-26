@@ -2,6 +2,10 @@ import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, it, expect } from 'vitest';
 import type { EnrichmentSourceStatus, NetworkAtlasRecord } from '@cknerv/types';
 import NetworkPanel from '../../../src/components/hud/NetworkPanel';
+import type {
+  BlockProducerView,
+  ProducerStanding,
+} from '../../../src/derives/blockProducers.derive';
 import { HUD_COLORS } from '../../../src/components/hud/hudTheme';
 
 afterEach(cleanup);
@@ -419,5 +423,107 @@ describe('NetworkPanel', () => {
     const mark = container.querySelector('[data-direction-mark]');
     expect(mark?.getAttribute('data-direction-mark')).toBe('up');
     expect(mark?.getAttribute('aria-hidden')).toBe('true');
+  });
+});
+
+describe('NetworkPanel producers', () => {
+  /** Shapes, never live counts: the producer set drifts with the pools and the
+   *  window rolls, so nothing here is a reading of any real chain. */
+  function standing(blocks: number, windowBlocks: number, at: number): ProducerStanding {
+    return {
+      role: 'producer',
+      key: `0x${String(at).repeat(4).padEnd(64, '0')}`,
+      message: '0.209.0 (d166e28 2026-07-29)',
+      blocks,
+      windowBlocks,
+      share: blocks / windowBlocks,
+      lastSeenMs: 1_700_000_000_000,
+      fan: { drawn: false, reason: 'modal', matchedVersion: null, matched: 0, shareOfVersioned: 0 },
+    };
+  }
+
+  function view(shares: readonly number[]): BlockProducerView {
+    const windowBlocks = shares.reduce((sum, blocks) => sum + blocks, 0);
+    return {
+      windowBlocks,
+      producers: shares.map((blocks, at) => standing(blocks, windowBlocks, at)),
+      versionedRosterSize: 32,
+      candidacyByPeer: new Map(),
+    };
+  }
+
+  it('says who is making the blocks, with the window the share is taken over', () => {
+    const { container } = render(
+      <NetworkPanel {...props} producers={view([96, 48, 32, 24])} />,
+    );
+    const row = container.querySelector('[data-network-producers]');
+    expect(row?.textContent).toContain('Producers');
+    expect(row?.textContent).toContain('4 · TOP 48% · 200 BLK');
+  });
+
+  it('never prints the top share without that window', () => {
+    // ⭐ §9.6, structurally: every element in the row whose own text reaches a
+    // percentage also reaches the window. Break `TOP 48%` and `200 BLK` into
+    // two spans — the obvious way to tint the units — and the leaf carrying
+    // the percentage alone fails here.
+    for (const shares of [[96, 48, 32, 24], [1, 199], [200]]) {
+      const { container } = render(<NetworkPanel {...props} producers={view(shares)} />);
+      const row = container.querySelector('[data-network-producers]') as HTMLElement;
+      const withPercent = Array.from(row.querySelectorAll<HTMLElement>('*'))
+        .filter((element) => (element.textContent ?? '').includes('%'));
+      expect(withPercent.length).toBeGreaterThan(0);
+      for (const element of withPercent) expect(element.textContent).toContain('BLK');
+      cleanup();
+    }
+  });
+
+  it('reports an empty window as an empty window, and claims no top', () => {
+    // A fresh boot, a devnet nobody has mined and the first block after a reorg
+    // all look like this. A row that vanished on zero would make them
+    // indistinguishable from a dashboard that has stopped reporting producers.
+    const { container } = render(<NetworkPanel {...props} producers={view([])} />);
+    const row = container.querySelector('[data-network-producers]');
+    expect(row?.textContent).toContain('0 · 0 BLK');
+    expect(row?.textContent).not.toContain('TOP');
+  });
+
+  it('prints nothing at all when the derive refused the window', () => {
+    // `deriveBlockProducers` yields null when the numerators do not add up to
+    // the denominator, and a refusal is not a zero: drawing part of a whole the
+    // parts are not parts of makes every number on the row wrong.
+    const { container } = render(<NetworkPanel {...props} producers={null} />);
+    expect(container.querySelector('[data-network-producers]')).toBeNull();
+    cleanup();
+    expect(render(<NetworkPanel {...props} />).container
+      .querySelector('[data-network-producers]')).toBeNull();
+  });
+
+  it('needs no crawler to say it', () => {
+    // Local-first, and load-bearing: the producers are read off the chain by
+    // this node, so the row stands with the enrichment source absent entirely
+    // while the atlas below it does not.
+    const { container } = render(
+      <NetworkPanel {...props} producers={view([96, 104])} />,
+    );
+    expect(container.querySelector('[data-network-producers]')).not.toBeNull();
+    expect(container.querySelectorAll('[data-network-detail-mode]')).toHaveLength(0);
+  });
+
+  it('spends one row on it, and does not spend the height the panel got back', () => {
+    // ⚠️ MESH·02 was cut by 53% when five StatRows became a percentage bar, and
+    // that saving is not this feature's to spend. One row, and no second bar:
+    // the ranking a producer bar would draw is already drawn out on the stage,
+    // as the radius of every producer's ring.
+    const bare = render(<NetworkPanel {...props} />).container;
+    const bars = bare.querySelectorAll('div').length;
+    cleanup();
+    const withProducers = render(
+      <NetworkPanel {...props} producers={view([96, 104])} />,
+    ).container;
+    const row = withProducers.querySelector('[data-network-producers]') as HTMLElement;
+    // One StatRow inside one wrapper, and nothing else.
+    expect(row.children).toHaveLength(1);
+    expect(row.querySelectorAll('div')).toHaveLength(1);
+    expect(withProducers.querySelectorAll('div').length).toBe(bars + 2);
   });
 });

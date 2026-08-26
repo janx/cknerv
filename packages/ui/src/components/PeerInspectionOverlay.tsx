@@ -8,6 +8,7 @@ import {
 import type { Peer } from '@cknerv/types';
 import PeerLinkCard from './hud/PeerLinkCard';
 import type { PeerSightingState } from './hud/PeerSightingPlate';
+import type { PeerMiningCandidacy } from '../derives/blockProducers.derive';
 import { HUD_COLORS } from './hud/hudTheme';
 import { useReducedMotion } from './hud/useReducedMotion';
 import {
@@ -84,6 +85,10 @@ export interface PeerInspectionOverlayProps {
    *  outlives the link: a dropped connection says nothing about how the rest
    *  of the network last saw the node at the other end. */
   sighting?: PeerSightingState;
+  /** Whether this peer runs a build one of the chain's recent producers
+   *  declared — a chain fact joined against the crawler's roster, resolved by
+   *  the host off the LIVE producer view. */
+  candidacy?: PeerMiningCandidacy | null;
   onClose: () => void;
 }
 
@@ -101,6 +106,7 @@ export default function PeerInspectionOverlay({
   localVersion,
   linkLost,
   sighting,
+  candidacy,
   onClose,
 }: PeerInspectionOverlayProps) {
   const reduced = useReducedMotion();
@@ -176,6 +182,7 @@ export default function PeerInspectionOverlay({
           layoutSide={layoutSide}
           linkLost={linkLost}
           sighting={sighting}
+          candidacy={candidacy}
           onFacetChange={handleFacetChange}
           onClose={onClose}
         />

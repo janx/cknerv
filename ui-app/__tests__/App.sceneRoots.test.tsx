@@ -140,6 +140,19 @@ describe('scene-root memo inputs', () => {
     },
   );
 
+  it('hands the colony overlay a producer key, never the standing that moves', () => {
+    // The subject a MINER card renders is a fresh object on every attributed
+    // block — its tally moved — and the anchor in this fragment needs none of
+    // it but the identity. Listing the subject here would defeat
+    // `NetworkColony`'s memo once a block for a fragment whose only moving part
+    // is a projected point, which is the same trap `producerKeysSig` keeps out
+    // of the topology memo one tier up.
+    const { body, deps } = hoistedOverlay('colonyOverlay');
+    expect(body).toContain('selectedMinerKey');
+    expect(body).not.toContain('selectedMiner.');
+    expect(deps).not.toContain('selectedMiner');
+  });
+
   it('keeps the nerve inside the galaxy overlay, where the canopy turns', () => {
     const { body } = hoistedOverlay('galaxyOverlay');
 
@@ -219,6 +232,50 @@ describe('colony topology signature', () => {
     // entity's on every delta that touches it; neither may key the geometry.
     expect(deps).not.toContain('producerView');
     expect(deps.some((dep) => /^chain\b/.test(dep))).toBe(false);
+  });
+
+  it('reads an open MINER card off the live view, never off the staged node', () => {
+    // ⭐⭐⭐ §4.2b. The memo above is keyed on the producer KEY SET alone and has
+    // to be, so the standing hanging on a staged `attested` node is whatever it
+    // was at the last key-set change and is stale for every block in between.
+    // The node is the authority on IDENTITY and PLACEMENT; the view is the
+    // authority on the window. The precedent is `selectedSighted`, which asks
+    // the live roster rather than the `sighted` row on a staged node.
+    const start = APP_SOURCE.indexOf('const selectedMiner = useMemo');
+    expect(start, 'the miner selection is not a useMemo').toBeGreaterThan(-1);
+    const subject = APP_SOURCE.slice(
+      start,
+      APP_SOURCE.indexOf('const selectedMinerAnchor = useMemo'),
+    );
+    expect(subject).toContain('producerView.producers.find');
+    // The two ways this could go wrong, named rather than left to a reviewer.
+    expect(subject).not.toContain('.attested');
+    expect(subject).not.toContain('topology');
+    // …and the fraction the card prints comes off ONE read of ONE view, so its
+    // numerator and its denominator cannot be counted at two different moments.
+    expect(subject).toContain('producerView.versionedRosterSize');
+
+    // The other half of the same split: placement is asked of the staged node,
+    // which is exactly what a node IS the authority on.
+    const anchorAt = APP_SOURCE.indexOf('const selectedMinerAnchor = useMemo');
+    const anchor = APP_SOURCE.slice(anchorAt, APP_SOURCE.indexOf('useEffect(', anchorAt));
+    expect(anchor).toContain('topology.nodes.find');
+    expect(anchor).toContain("kind === 'attested'");
+    expect(anchor).not.toContain('producerView');
+  });
+
+  it('asks the same live view for the mining question on a named node', () => {
+    // The stamp a PEER or SIGHTED card carries is the same evidence one step
+    // over, and it comes from the same place for the same reason.
+    for (const reader of ['inspectedPeerCandidacy', 'selectedSightedCandidacy']) {
+      const at = APP_SOURCE.indexOf(`const ${reader} =`);
+      expect(at, `${reader} is not declared`).toBeGreaterThan(-1);
+      expect(APP_SOURCE.slice(at, APP_SOURCE.indexOf(';', at)))
+        .toContain('producerView?.candidacyByPeer.get');
+    }
+    // And MESH·02's row is handed the view whole rather than a tally, so the
+    // share it prints arrives attached to the window it was measured over.
+    expect(APP_SOURCE).toContain('producerView={producerView}');
   });
 
   it('reads the producer window off the copy-on-write array, not the entity', () => {

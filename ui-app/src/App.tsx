@@ -35,6 +35,7 @@ import {
   cellIdentityProofBindingComplete,
   consensusMemoryRouteHopFocusEqual,
   consensusMemoryTraceRequestKey,
+  attestedNodeId,
   deriveBlockProducers,
   deriveCellCausalLens,
   deriveConsensusMemoryRouteHopFocus,
@@ -74,6 +75,10 @@ import {
   SightedInspectionAnchor,
   SightedInspectionOverlay,
   createSightedInspectionHandles,
+  MINER_SELECTION_PREFIX,
+  MinerInspectionAnchor,
+  MinerInspectionOverlay,
+  createMinerInspectionHandles,
   SimClockTicker,
   setQualityMode,
   TweakSync,
@@ -88,6 +93,8 @@ import {
   type NodeInspectionHandles,
   type PeerInspectionHandles,
   type SightedInspectionHandles,
+  type MinerInspectionHandles,
+  type MinerNodeSubject,
   type CellIdentityProofEvent,
   type CellIdentityProofKind,
   type PeerSightingPhase,
@@ -290,6 +297,14 @@ export default function App({
     sightedInspectionHandlesRef.current = createSightedInspectionHandles();
   }
   const sightedInspectionHandles = sightedInspectionHandlesRef.current;
+  // …and one for the miner probe, which shares the same colony slot for the
+  // same reason and is shorter again: there is no dossier under it and no
+  // record of anybody having reached the node, because nobody has.
+  const minerInspectionHandlesRef = useRef<MinerInspectionHandles | null>(null);
+  if (minerInspectionHandlesRef.current === null) {
+    minerInspectionHandlesRef.current = createMinerInspectionHandles();
+  }
+  const minerInspectionHandles = minerInspectionHandlesRef.current;
   const [orbitInteractionRevision, noteOrbitInteraction] = useReducer(
     (revision: number) => revision + 1,
     0,
@@ -1379,6 +1394,57 @@ export default function App({
       peers.some((p) => p.node_id === id) ? `peer:${id}` : null,
     );
   }, [selectedNetId, selectedSighted, selectedSightedAnchor, peers]);
+  // ⭐⭐⭐ The producer behind an open MINER card, resolved out of the LIVE
+  // producer view — never off the standing hanging on the staged node. The
+  // topology memo is keyed on the producer KEY SET alone and has to be, so
+  // `node.attested` is whatever it was at the last key-set change and goes
+  // stale for every block in between; the node is the authority on identity
+  // and placement, the view is the authority on the window. Same split
+  // `selectedSighted` above draws against the live roster.
+  //
+  // The standing and the denominator its build share is measured against come
+  // out of ONE read of ONE view, deliberately: pairing a standing from one
+  // round with a roster size from another would print a fraction whose halves
+  // were counted at different moments.
+  const selectedMiner = useMemo<MinerNodeSubject | null>(() => {
+    if (!selectedNetId || !selectedNetId.startsWith(MINER_SELECTION_PREFIX)) return null;
+    if (!producerView) return null;
+    const key = selectedNetId.slice(MINER_SELECTION_PREFIX.length);
+    const producer = producerView.producers.find((p) => p.key === key);
+    if (!producer) return null;
+    return { producer, versionedRosterSize: producerView.versionedRosterSize };
+  }, [selectedNetId, producerView]);
+  // Where that producer was placed. Placement is a pure function of its key, so
+  // the point is stable for as long as the key is staged — and the kind is
+  // checked rather than the id alone, the same guard the sighted anchor keeps.
+  const selectedMinerAnchor = useMemo(() => {
+    if (!selectedNetId || !selectedNetId.startsWith(MINER_SELECTION_PREFIX)) return null;
+    const id = attestedNodeId(selectedNetId.slice(MINER_SELECTION_PREFIX.length));
+    const node = topology.nodes.find((n) => n.id === id);
+    return node?.kind === 'attested' ? node.pos : null;
+  }, [selectedNetId, topology]);
+  // ⚠️ The colony's overlay slot takes the KEY and not the subject. The subject
+  // is a fresh object on every attributed block (its tally moved), and handing
+  // that identity to the hoisted colony overlay would defeat `NetworkColony`'s
+  // memo once a block for a fragment whose only moving part is a position — the
+  // same trap `producerKeysSig` exists to keep out of the topology one tier up.
+  const selectedMinerKey = selectedMiner?.producer.key ?? null;
+  // A producer leaves this card exactly one way: its last block rolls out of
+  // the window and the colony stops standing a node for it. There is no
+  // promotion path — knowing WHICH machine it is is precisely what this
+  // evidence class does not carry — so unlike the sighted dialect there is
+  // nowhere richer for the selection to follow it to, and it simply ends.
+  useEffect(() => {
+    if (!selectedNetId?.startsWith(MINER_SELECTION_PREFIX)) return;
+    if (selectedMiner && selectedMinerAnchor) return;
+    setSelectedNetId(null);
+  }, [selectedNetId, selectedMiner, selectedMinerAnchor]);
+  // The mining question a SIGHTED card may carry. Read from the same live
+  // view for the same reason, and `null` for every node that is not in a drawn
+  // fan — which is almost all of them.
+  const selectedSightedCandidacy = selectedSighted
+    ? producerView?.candidacyByPeer.get(selectedSighted.node_id) ?? null
+    : null;
 
   // Stable identities: HudOverlay is memoized, so its object/callback props
   // must not be re-created per App render.
@@ -1450,6 +1516,13 @@ export default function App({
   });
   const inspectedPeer = peerInspection.peer;
   const inspectedPeerAnchor = peerInspection.position;
+  // The same question for the peer dialect, asked of the RETAINED snapshot
+  // rather than of `peers[]`: a link that just dropped does not change what
+  // build the node at the other end was reporting, and a stamp that vanished
+  // the instant the connection did would be describing the connection.
+  const inspectedPeerCandidacy = inspectedPeer
+    ? producerView?.candidacyByPeer.get(inspectedPeer.node_id) ?? null
+    : null;
 
   // The crawler's dossier on whichever network node is open — the only
   // enrichment lookup keyed by a node id rather than a chain object. Nothing
@@ -1697,11 +1770,21 @@ export default function App({
           handles={sightedInspectionHandles}
         />
       ) : null}
+      {selectedMinerKey && selectedMinerAnchor ? (
+        <MinerInspectionAnchor
+          key={selectedMinerKey}
+          position={selectedMinerAnchor}
+          handles={minerInspectionHandles}
+        />
+      ) : null}
     </>
   ), [
     inspectedPeer,
     inspectedPeerAnchor,
+    minerInspectionHandles,
     peerInspectionHandles,
+    selectedMinerAnchor,
+    selectedMinerKey,
     selectedSighted,
     selectedSightedAnchor,
     sightedInspectionHandles,
@@ -1746,6 +1829,7 @@ export default function App({
         streamHealth={hudStreamHealth}
         build={build}
         colonyCount={topology.nodes.length}
+        producerView={producerView}
       />
       <Jukebox blockPulseAtMs={cellsCache.lastPulseAtMs} />
       {/* Render-stats HUD overlay (DOM sibling of HudOverlay, NOT in-Canvas):
@@ -1987,6 +2071,7 @@ export default function App({
           localVersion={localNode?.version ?? ''}
           linkLost={peerInspection.linkLost}
           sighting={inspectedNetSighting}
+          candidacy={inspectedPeerCandidacy}
           onClose={clearNetSelection}
         />
       ) : null}
@@ -2001,6 +2086,22 @@ export default function App({
           handles={sightedInspectionHandles}
           node={selectedSighted}
           sighting={inspectedNetSighting}
+          candidacy={selectedSightedCandidacy}
+          onClose={clearNetSelection}
+        />
+      ) : null}
+
+      {/* DOM half of the miner probe — the shortest dialect on the same
+          chassis, for a subject the chain proves exists and nobody has ever
+          addressed. No dossier under it: the crawler indexes nodes by peer id
+          and this subject has none, so there is nothing to ask about. No
+          retention epilogue and no promotion: a producer leaves the window and
+          the selection ends. */}
+      {selectedMiner && selectedMinerAnchor ? (
+        <MinerInspectionOverlay
+          key={selectedMiner.producer.key}
+          handles={minerInspectionHandles}
+          subject={selectedMiner}
           onClose={clearNetSelection}
         />
       ) : null}

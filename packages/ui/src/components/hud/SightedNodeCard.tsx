@@ -31,6 +31,8 @@ import {
   useState,
 } from 'react';
 import type { RosterNode, RosterNodeState } from '@cknerv/types';
+import type { PeerMiningCandidacy } from '../../derives/blockProducers.derive';
+import { MiningCandidacyStamp } from './MinerNodeCard';
 import { formatAge, midTruncate } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import {
@@ -120,6 +122,10 @@ export interface SightedNodeCardProps {
    *  row above is instant and this is not, so the card is already complete
    *  before it lands. */
   sighting?: PeerSightingState;
+  /** Whether this node runs a build one of the chain's recent producers
+   *  declared. Absent for all but a handful of peers, and never a claim that
+   *  this one mines — see `MiningCandidacyStamp`. */
+  candidacy?: PeerMiningCandidacy | null;
   onClose: () => void;
   style?: CSSProperties;
 }
@@ -168,6 +174,7 @@ export default function SightedNodeCard({
   layoutSide = 'left',
   nowMs,
   sighting,
+  candidacy,
   onClose,
   style,
 }: SightedNodeCardProps) {
@@ -281,6 +288,14 @@ export default function SightedNodeCard({
           ) : null}
           {moduleTag('SGHT·01')}
         </span>
+        {/* The mining question, on its own line under the masthead — the same
+            place `NodeSelfCard` stamps the role it can actually MEASURE, which
+            is the point of putting it here rather than in the record below:
+            RECORD prints the crawler's row as-is and nothing derived, and this
+            is derived from a chain fact the crawler never saw. It is a
+            question and it carries the size of the set it is asked over; there
+            is no arrangement of it that says this node mines. */}
+        {candidacy ? <MiningCandidacyStamp candidacy={candidacy} /> : null}
         <CloseButton onClose={onClose} title="Close · ESC or click outside" />
       </section>
 

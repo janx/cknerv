@@ -1201,12 +1201,15 @@ describe('one shape grammar', () => {
         && code(source.text).includes('plateStateChip('),
     );
 
-    // Five surfaces, and the replay banner is the fifth: it is the one that
-    // hand-rolled its own for the life of the file, so naming it here is what
-    // stops the convergence being quietly undone.
+    // Six surfaces, and the replay banner is the one that hand-rolled its own
+    // for the life of the file, so naming it here is what stops the
+    // convergence being quietly undone. The miner card is the newest and wears
+    // three of them — the evidence class beside its masthead, the caveat on
+    // what the miner said about itself, and the verdict on the join over it.
     expect(wearers.map((source) => source.name).sort()).toEqual([
       'BackfillBar.tsx',
       'CellDetailPanel.tsx',
+      'MinerNodeCard.tsx',
       'NodeSelfCard.tsx',
       'PeerLinkCard.tsx',
       'SightedNodeCard.tsx',

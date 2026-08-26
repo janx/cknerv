@@ -155,6 +155,19 @@ export {
   createSightedInspectionHandles,
   type SightedInspectionHandles,
 } from './components/SightedInspectionOverlay';
+export {
+  default as MinerInspectionOverlay,
+  MinerInspectionAnchor,
+  createMinerInspectionHandles,
+  type MinerInspectionHandles,
+} from './components/MinerInspectionOverlay';
+export type { MinerNodeSubject } from './components/hud/MinerNodeCard';
+// The colony's fourth selection dialect. It has lived in `ColonyNodes` since
+// the mark was drawn and stayed out of this barrel because the barrel is
+// deliberately trimmed and takes an export only once something reads it — and
+// until the card existed, nothing outside the scene ever had to recognise a
+// `miner:` selection. `App` is that reader.
+export { MINER_SELECTION_PREFIX } from './components/ColonyNodes';
 
 // ── Consensus flow overlay (Cell→Cell protocol writes) ──────────────
 export { default as NeuralNetwork, MAX_ACTIVE_PULSES } from './nerve/NeuralNetwork';

@@ -9,6 +9,7 @@ import SightedNodeCard, {
   sightedNodeSpokenWord,
 } from './hud/SightedNodeCard';
 import type { PeerSightingState } from './hud/PeerSightingPlate';
+import type { PeerMiningCandidacy } from '../derives/blockProducers.derive';
 import { useReducedMotion } from './hud/useReducedMotion';
 import type { Vec3 } from '../types';
 import {
@@ -78,6 +79,10 @@ export interface SightedInspectionOverlayProps {
    *  the other two dialects use. Absent whenever the source advertises no
    *  `peer_sighting` capability; the card is complete without it. */
   sighting?: PeerSightingState;
+  /** Whether this node runs a build one of the chain's recent producers
+   *  declared — a chain fact joined against the crawler's roster, resolved by
+   *  the host off the LIVE producer view. */
+  candidacy?: PeerMiningCandidacy | null;
   onClose: () => void;
 }
 
@@ -96,6 +101,7 @@ export default function SightedInspectionOverlay({
   handles,
   node,
   sighting,
+  candidacy,
   onClose,
 }: SightedInspectionOverlayProps) {
   const reduced = useReducedMotion();
@@ -160,6 +166,7 @@ export default function SightedInspectionOverlay({
           node={node}
           layoutSide={layoutSide}
           sighting={sighting}
+          candidacy={candidacy}
           onClose={onClose}
         />
       </div>

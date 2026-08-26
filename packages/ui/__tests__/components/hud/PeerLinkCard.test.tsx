@@ -4,6 +4,7 @@ import type { Peer, PeerSightingRecord } from '@cknerv/types';
 import PeerLinkCard from '../../../src/components/hud/PeerLinkCard';
 import { NODE_SELF_ACCENT } from '../../../src/components/hud/NodeSelfCard';
 import type { PeerSightingState } from '../../../src/components/hud/PeerSightingPlate';
+import type { PeerMiningCandidacy } from '../../../src/derives/blockProducers.derive';
 import { PEER_LATENCY_CAP_MS } from '../../../src/derives/peers.derive';
 import { HUD_COLORS } from '../../../src/components/hud/hudTheme';
 import { PEER_NETWORK_HEX } from '../../../src/visualPalette';
@@ -405,5 +406,52 @@ describe('PeerLinkCard dossier', () => {
       sighting: { phase: 'unsighted', record: null, reason: 'no_crawler' },
     });
     expect(container.textContent).toContain('NO CRAWLER ON SOURCE');
+  });
+});
+
+describe('PeerLinkCard mining stamp', () => {
+  function candidacy(oneOf: number): PeerMiningCandidacy {
+    return {
+      role: 'candidate',
+      oneOf,
+      version: LOCAL_VERSION,
+      producerKeys: [`0x${'ab'.repeat(32)}`],
+    };
+  }
+
+  it('asks whether this peer mines, and never answers', () => {
+    const { container } = renderCard({ candidacy: candidacy(6) });
+    const stamp = container.querySelector('[data-mining-candidacy]');
+    // ⭐ §9.2. This card holds a live link to a real, named machine — which is
+    // exactly why it is the most dangerous surface in the HUD to let state
+    // anything about mining. The join behind the stamp is two self-declared
+    // strings meeting; it narrows a set and never names a member.
+    expect(stamp?.textContent).toBe('MINER? · 1 OF 6 ON THIS BUILD');
+    expect(stamp?.textContent).not.toMatch(/MINER(?!\?)/);
+    expect(stamp?.getAttribute('data-mining-candidacy')).toBe('6');
+  });
+
+  it('says nothing at all about mining for a peer in no drawn fan', () => {
+    const { container } = renderCard();
+    expect(container.querySelector('[data-mining-candidacy]')).toBeNull();
+    expect(container.textContent).not.toContain('MINER');
+  });
+
+  it('stands in the masthead rather than among the link readings', () => {
+    // The same slot `NodeSelfCard` stamps the role it can actually MEASURE.
+    // Not in LINE FACTS: those are readings off this connection, and nothing
+    // about a connection says anything about mining — the join that produced
+    // this sentence never touched the wire.
+    const { container } = renderCard({ candidacy: candidacy(4) });
+    expect(container.querySelector('[data-peer-probe-module="header"] [data-mining-candidacy]'))
+      .not.toBeNull();
+    expect(container.querySelector('[data-peer-probe-module="facts"] [data-mining-candidacy]'))
+      .toBeNull();
+  });
+
+  it('survives the link\'s ending, because it was never about the link', () => {
+    const { container } = renderCard({ linkLost: true, candidacy: candidacy(3) });
+    expect(container.querySelector('[data-mining-candidacy]')?.textContent)
+      .toBe('MINER? · 1 OF 3 ON THIS BUILD');
   });
 });

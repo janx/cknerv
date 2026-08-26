@@ -2,8 +2,10 @@ import type { CSSProperties } from 'react';
 import type { EnrichmentSourceStatus, NetworkAtlasRecord } from '@cknerv/types';
 import type { NetworkSummary } from '../../derives/peers.derive';
 import type { FleetConsensus } from '../../derives/fleetTelemetry';
+import type { BlockProducerView } from '../../derives/blockProducers.derive';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import { DirectionMark, HudPanel, PanelHeader, StatRow } from './primitives';
+import { producerFleetText } from './producerReadout';
 import NetworkAtlasReadout from './NetworkAtlasReadout';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
@@ -22,10 +24,15 @@ const AT_TIP_SYNC_RATIO = 0.999;
 // It reports the fleet, never one peer. Per-peer client version and RTT are on
 // the floating PEER card and the reference version is on the NODE card, so a
 // rail aggregate of the same two numbers was only duplicate telemetry.
-export default function NetworkPanel({ summary, consensus, syncRatio, enrichmentSource, networkAtlas, style }: {
+export default function NetworkPanel({ summary, consensus, syncRatio, enrichmentSource, networkAtlas, producers, style }: {
   summary: NetworkSummary; consensus: FleetConsensus; syncRatio: number;
   enrichmentSource?: EnrichmentSourceStatus;
   networkAtlas?: NetworkAtlasRecord | null;
+  /** Who has been making this network's blocks lately, off the chain itself.
+   *  Absent only when the window contradicts itself — the derive refuses a
+   *  window whose numerators do not add up to it — and a refusal prints
+   *  nothing rather than a partial truth. */
+  producers?: BlockProducerView | null;
   style?: CSSProperties;
 }) {
   const total = Math.max(1, consensus.total);
@@ -68,6 +75,29 @@ export default function NetworkPanel({ summary, consensus, syncRatio, enrichment
           <div style={{ height: 4, background: HUD_COLORS.trackGround, border: `1px solid ${rgba(HUD_COLORS.caution, 0.22)}`, margin: '2px 0 4px' }}>
             <span style={{ display: 'block', height: '100%', width: `${Math.max(0, syncRatio) * 100}%`, background: HUD_COLORS.caution, boxShadow: `0 0 6px ${rgba(HUD_COLORS.caution, 0.5)}` }} />
           </div>
+        </div>
+      ) : null}
+      {/* Who is making the blocks. A fact about the NETWORK, read off the
+        * chain by the local node and owed to nothing the crawler did — so it
+        * stands above the atlas, on the near side of this panel's one line
+        * between what the network is and what this crawl saw.
+        *
+        * ⚠️ ONE ROW, AND THE HEIGHT IS THE ARGUMENT. This panel was cut by 53%
+        * when five StatRows became a bar, and that saving is not this feature's
+        * to spend: a producer bar here would redraw the same ranking the colony
+        * already draws as ring radii, one instrument away from the rings.
+        *
+        * The share and the window arrive as ONE string from one formatter, so
+        * there is no arrangement of this row that prints a top share without
+        * the window it is a share of. */}
+      {producers ? (
+        <div data-network-producers>
+          <StatRow
+            label="Producers"
+            title="Distinct payout identities in the recent block window, read from each block's cellbase witness. Counted by payout identity, which may be one pool running many machines."
+          >
+            {producerFleetText(producers)}
+          </StatRow>
         </div>
       ) : null}
       <NetworkAtlasReadout source={enrichmentSource} record={networkAtlas} />

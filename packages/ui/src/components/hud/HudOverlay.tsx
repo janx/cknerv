@@ -21,6 +21,7 @@ import { ecgCondition, expectedBlockMs, windowMeanMs, ECG_WINDOW, type EcgCondit
 import { alertLevel } from '../../derives/alertLevel';
 import type { CellsStats } from '../../derives/cellsStats.derive';
 import type { CellPopulationFieldModel } from '../../derives/cellPopulationField.derive';
+import type { BlockProducerView } from '../../derives/blockProducers.derive';
 import { useBootSequence } from '../../boot/bootSequence';
 import { HUD_COLORS, injectHudTheme, rgba } from './hudTheme';
 import { revealStageStyle } from './primitives';
@@ -155,7 +156,7 @@ function prefersFullMotion(): boolean {
   return !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
-function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPopulation, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, scriptRegistry, backfill, streamHealth, build, topBarActions, colonyCount }: {
+function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPopulation, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, scriptRegistry, backfill, streamHealth, build, topBarActions, colonyCount, producerView }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
   /** The staged set counted by script identity, for the panel named after it.
    *  A different scope from `cellsStats.scripts`, which the backend counts
@@ -188,6 +189,10 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
   /** Whole inferred-colony node count — a count of what the scene draws, so
    *  it reads in the stage instrument and not in the peer mesh summary. */
   colonyCount?: number;
+  /** Who has been making the chain's blocks lately, with the window every
+   *  share is measured over. Chain-derived and local-first — it needs no
+   *  crawler — so it reads in the peer mesh beside the other network facts. */
+  producerView?: BlockProducerView | null;
 }) {
   useEffect(() => { injectHudTheme(document); }, []);
 
@@ -669,7 +674,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
           ) : null}
           {panelVisibility.peers ? (
             <div data-hud-panel="peers" style={bootPanelStyle('peers')}>
-              <NetworkPanel summary={summary} consensus={consensus} syncRatio={syncRatio} enrichmentSource={enrichmentSource} networkAtlas={networkAtlas} style={PANEL_FLOW} />
+              <NetworkPanel summary={summary} consensus={consensus} syncRatio={syncRatio} enrichmentSource={enrichmentSource} networkAtlas={networkAtlas} producers={producerView} style={PANEL_FLOW} />
             </div>
           ) : null}
         </div>

@@ -29,6 +29,8 @@ import {
 } from './primitives';
 import PeerSightingPlate, { type PeerSightingState } from './PeerSightingPlate';
 import { NODE_SELF_ACCENT } from './NodeSelfCard';
+import { MiningCandidacyStamp } from './MinerNodeCard';
+import type { PeerMiningCandidacy } from '../../derives/blockProducers.derive';
 import { PEER_LATENCY_CAP_MS } from '../../derives/peers.derive';
 import {
   derivePeerLinkInstrument,
@@ -73,6 +75,10 @@ export interface PeerLinkCardProps {
    *  advertises no `peer_sighting` capability — the dossier is additive, and a
    *  CKB-only probe is a complete card without it. */
   sighting?: PeerSightingState;
+  /** Whether this peer runs a build one of the chain's recent producers
+   *  declared. Absent for all but a handful of peers, and never a claim that
+   *  this one mines — see `MiningCandidacyStamp`. */
+  candidacy?: PeerMiningCandidacy | null;
   /** Mirrors the selected fact into the scene-to-card connector tint. */
   onFacetChange?: (facet: PeerLinkFacet | null) => void;
   onClose: () => void;
@@ -404,6 +410,7 @@ export default function PeerLinkCard({
   layoutSide = 'left',
   linkLost = false,
   sighting,
+  candidacy,
   onFacetChange,
   onClose,
   style,
@@ -594,6 +601,14 @@ export default function PeerLinkCard({
           </span>
           {moduleTag('LINK·01')}
         </span>
+        {/* The mining question, on its own line under the masthead — the same
+            place `NodeSelfCard` stamps the role it can actually MEASURE. Not in
+            LINE FACTS, which are readings off this link: nothing about this
+            peer's connection says anything about mining, and the join that
+            produced this sentence never touched the wire. It is a question and
+            it carries the size of the set it is asked over; there is no
+            arrangement of it that says this peer mines. */}
+        {candidacy ? <MiningCandidacyStamp candidacy={candidacy} /> : null}
         <CloseButton onClose={onClose} title="Close · ESC or click outside" />
       </section>
 
