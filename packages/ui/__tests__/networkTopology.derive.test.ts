@@ -1014,36 +1014,72 @@ describe('attested nodes in the colony (⭐ ghost displacement, one for one)', (
     }
   });
 
-  // The seam with the producer derive: what T4 hands over stages verbatim,
+  // The seam with the producer derive: what it hands over stages verbatim,
   // including its order, and a window that does not add up stages nothing
   // because there is no view to stage from.
-  it('stages the producer derive’s own view, in its own order', () => {
-    const wire = (key: string, blocks: number): BlockProducer => (
-      { key, message: '0.209.0 (aaaaaaa 2026-07-30)', blocks, last_seen_ms: 1_700_000_000_000 }
-    );
-    const producers = [wire(producerKey('bb'), 3), wire(producerKey('aa'), 9)];
-    const chain: ChainEntry = {
-      ...emptyChainCache(),
-      producers,
-      producer_window: producers.flatMap((p, i) => Array<number>(p.blocks).fill(i)),
-      producer_window_blocks: 12,
-    };
+  const wire = (key: string, blocks: number): BlockProducer => (
+    { key, message: '0.209.0 (aaaaaaa 2026-07-30)', blocks, last_seen_ms: 1_700_000_000_000 }
+  );
+  const chainOf = (rows: BlockProducer[]): ChainEntry => ({
+    ...emptyChainCache(),
+    producers: rows,
+    producer_window: rows.flatMap((p, i) => Array<number>(p.blocks).fill(i)),
+    producer_window_blocks: rows.reduce((sum, p) => sum + p.blocks, 0),
+  });
+
+  it('stages the producer derive’s STAGING view, in its own order', () => {
+    // The tallies are deliberately the wrong way round for the key order: the
+    // 9-block producer sorts LAST here, so a build that had followed the shares
+    // would stand the tier in the other order and this would catch it.
+    const chain = chainOf([wire(producerKey('bb'), 9), wire(producerKey('aa'), 3)]);
     const view = deriveBlockProducers(chain, null)!;
     expect(view).not.toBeNull();
     const t = inferredTopology(
-      peers, seed, 'ckb:local', undefined, null, undefined, view.producers,
+      peers, seed, 'ckb:local', undefined, null, undefined, view.staging,
     );
-    // blocks descending, so the 9-block producer stands first whatever the wire
-    // happened to send.
+    // Key ascending, whatever the wire sent and whatever the window says.
     expect(attestedOf(t).map((n) => n.attested!.key)).toEqual([producerKey('aa'), producerKey('bb')]);
-    expect(attestedOf(t).map((n) => n.attested!.blocks)).toEqual([9, 3]);
+    expect(attestedOf(t).map((n) => n.attested!.blocks)).toEqual([3, 9]);
+    // …while the reading order is the other one, on the same standings.
+    expect(view.ranked.map((p) => p.key)).toEqual([producerKey('bb'), producerKey('aa')]);
 
     // A window that contradicts itself yields no view at all — and a scene
     // handed `null` stands no producers rather than shares of a wrong whole.
     const broken = deriveBlockProducers({ ...chain, producer_window_blocks: 11 }, null);
     expect(broken).toBeNull();
     expect(attestedOf(inferredTopology(
-      peers, seed, 'ckb:local', undefined, null, undefined, broken?.producers,
+      peers, seed, 'ckb:local', undefined, null, undefined, broken?.staging,
     ))).toHaveLength(0);
+  });
+
+  // ⚠️⚠️ THE SCAFFOLD MEMO IS THE THING THIS ORDER EXISTS TO PROTECT, so the
+  // assertion is on the cache and not on a proxy for it. `inferredScaffold` is
+  // a single slot keyed on the two staged tails' id SEQUENCES, and it owns the
+  // O(V² log V) half of the build — the rejection scatter and a kNN sort per
+  // node. Its hit is observable exactly once: the ghost nodes and the scaffold
+  // edges are handed back BY REFERENCE, while both tails are re-staged fresh
+  // every call. Two miners trading rank must not cost that rebuild.
+  it('⭐ a rank swap between two miners reuses the cached scaffold', () => {
+    const before = deriveBlockProducers(
+      chainOf([wire(producerKey('aa'), 5), wire(producerKey('bb'), 4)]), null,
+    )!;
+    const after = deriveBlockProducers(
+      chainOf([wire(producerKey('aa'), 4), wire(producerKey('bb'), 5)]), null,
+    )!;
+    expect(before.ranked[0].key).not.toBe(after.ranked[0].key); // the swap is real
+    const build = (view: typeof before) => inferredTopology(
+      peers, seed, 'ckb:local', undefined, null, undefined, view.staging,
+    );
+    const first = build(before);
+    const second = build(after);
+    const ghost = (t: typeof first) => t.nodes.filter((n) => n.kind === 'inferred');
+    // Identity, not equality: an equal-looking ghost would prove the build is
+    // deterministic and say nothing about whether it ran again.
+    expect(ghost(second)[0]).toBe(ghost(first)[0]);
+    expect(second.edges[0]).toBe(first.edges[0]);
+    expect(second.nodes.map((n) => n.id)).toEqual(first.nodes.map((n) => n.id));
+    // …and the live tally still crossed into the tier that was reused.
+    expect(attestedOf(second).map((n) => n.attested!.blocks)).toEqual([4, 5]);
+    expect(attestedOf(first).map((n) => n.attested!.blocks)).toEqual([5, 4]);
   });
 });

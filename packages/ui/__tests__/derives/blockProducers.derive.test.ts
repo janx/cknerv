@@ -88,7 +88,7 @@ function view(chain: ChainEntry, r?: NetworkRosterRecord | null): BlockProducerV
 }
 
 function standingFor(v: BlockProducerView, key: string): ProducerStanding {
-  const found = v.producers.find((p) => p.key === key);
+  const found = v.staging.find((p) => p.key === key);
   expect(found).toBeDefined();
   return found as ProducerStanding;
 }
@@ -101,19 +101,87 @@ function fanReason(standing: ProducerStanding): string {
 }
 
 describe('blockProducers staging set', () => {
-  it('orders by blocks descending, then by key, whatever order the wire sent', () => {
+  /** The signature App keys its topology memo on, spelled here so the
+   *  assertions below are about the thing the colony actually rebuilds on. */
+  const stagingSig = (v: BlockProducerView) => v.staging.map((p) => p.key).join('\u0000');
+
+  it('stages in key order, whatever order the wire sent', () => {
     const rows = [
       producer({ key: '0xcc', blocks: 4 }),
       producer({ key: '0xaa', blocks: 9 }),
       producer({ key: '0xbb', blocks: 4 }),
     ];
     const forward = view(chainWith(rows));
-    expect(forward.producers.map((p) => p.key)).toEqual(['0xaa', '0xbb', '0xcc']);
+    expect(forward.staging.map((p) => p.key)).toEqual(['0xaa', '0xbb', '0xcc']);
     // The wire's own order is first-appearance in a rolling ring, so it
     // reshuffles as producers blink in and out of the window. The staging
     // order may not follow it.
     const reversed = view(chainWith([...rows].reverse()));
-    expect(reversed.producers.map((p) => p.key)).toEqual(forward.producers.map((p) => p.key));
+    expect(reversed.staging.map((p) => p.key)).toEqual(forward.staging.map((p) => p.key));
+  });
+
+  it('reads back in share order, over the very same standings', () => {
+    const v = view(chainWith([
+      producer({ key: '0xaa', blocks: 2 }),
+      producer({ key: '0xbb', blocks: 9 }),
+      producer({ key: '0xcc', blocks: 2 }),
+    ]));
+    expect(v.staging.map((p) => p.key)).toEqual(['0xaa', '0xbb', '0xcc']);
+    expect(v.ranked.map((p) => p.key)).toEqual(['0xbb', '0xaa', '0xcc']);
+    // Permutations of one another over the SAME objects, which is what lets a
+    // card `find` in either without having to know which: a share and the
+    // window it was divided by can never come off two different readings.
+    expect(v.ranked).toHaveLength(v.staging.length);
+    for (const standing of v.ranked) expect(v.staging).toContain(standing);
+  });
+
+  it('⭐ two miners swapping rank moves nothing the colony is keyed on', () => {
+    // ⚠️⚠️ THE FAILURE THIS PINS, and it is not the one a block-count key
+    // already guards. The staging array was ordered by BLOCKS, so a swap
+    // between two neighbouring shares — which a rolling window produces
+    // constantly, and which changes NO miner's membership — re-sequenced an
+    // identical set. An identical set in a new sequence is a new signature, a
+    // missed scaffold cache, and a full O(V² log V) colony rebuild on the
+    // render path; land it mid-wave and `ColonyEdges` gets fresh surge lanes
+    // under an in-flight wavefront.
+    const before = view(chainWith([
+      producer({ key: '0xaa', blocks: 5 }),
+      producer({ key: '0xbb', blocks: 4 }),
+      producer({ key: '0xcc', blocks: 1 }),
+    ]));
+    const after = view(chainWith([
+      producer({ key: '0xaa', blocks: 4 }),
+      producer({ key: '0xbb', blocks: 5 }),
+      producer({ key: '0xcc', blocks: 1 }),
+    ]));
+    expect(after.staging.map((p) => p.key)).toEqual(before.staging.map((p) => p.key));
+    expect(stagingSig(after)).toBe(stagingSig(before));
+
+    // …and the swap still CROSSES, on the half that is allowed to move. A fix
+    // that froze both orders would have hidden the overtake rather than routed
+    // it, and MESH·02's `TOP` would name the wrong miner.
+    expect(before.ranked[0].key).toBe('0xaa');
+    expect(after.ranked[0].key).toBe('0xbb');
+  });
+
+  it('…and a miner entering or leaving the window does move the signature', () => {
+    // The other half: the SET is what the geometry follows — one node per key,
+    // one displaced ghost each — so a changed set has to re-key.
+    const two = view(chainWith([
+      producer({ key: '0xaa', blocks: 5 }), producer({ key: '0xbb', blocks: 4 }),
+    ]));
+    const three = view(chainWith([
+      producer({ key: '0xaa', blocks: 5 }), producer({ key: '0xbb', blocks: 4 }),
+      producer({ key: '0xcc', blocks: 1 }),
+    ]));
+    expect(stagingSig(three)).not.toBe(stagingSig(two));
+    // A newcomer lands at its own place in the key order rather than at the
+    // tail, so the staging array stays a function of the set alone.
+    const middle = view(chainWith([
+      producer({ key: '0xaa', blocks: 5 }), producer({ key: '0xbb', blocks: 4 }),
+      producer({ key: '0xab', blocks: 1 }),
+    ]));
+    expect(middle.staging.map((p) => p.key)).toEqual(['0xaa', '0xab', '0xbb']);
   });
 
   it('stands every producer in the window, whether or not its fan is drawable', () => {
@@ -123,7 +191,7 @@ describe('blockProducers staging set', () => {
       producer({ key: '0xquiet', blocks: 1, message: '' }),
     ]);
     const v = view(chain, splitRoster(3, 40));
-    expect(v.producers).toHaveLength(3);
+    expect(v.staging).toHaveLength(3);
     expect(fanReason(standingFor(v, '0xrare'))).toBe('drawn');
     expect(fanReason(standingFor(v, '0xstock'))).toBe('modal');
     expect(fanReason(standingFor(v, '0xquiet'))).toBe('no_declaration');
@@ -135,12 +203,12 @@ describe('blockProducers staging set', () => {
       producer({ key: '0xbb', blocks: 2 }),
     ]));
     expect(v.windowBlocks).toBe(8);
-    for (const standing of v.producers) {
+    for (const standing of v.staging) {
       expect(standing.windowBlocks).toBe(8);
       expect(standing.share).toBeCloseTo(standing.blocks / 8, 12);
     }
     // The shares of one window are the window.
-    const total = v.producers.reduce((sum, p) => sum + p.share, 0);
+    const total = v.staging.reduce((sum, p) => sum + p.share, 0);
     expect(total).toBeCloseTo(1, 12);
   });
 
@@ -179,7 +247,8 @@ describe('blockProducers window identity', () => {
 
   it('accepts an empty window as an empty view rather than as a refusal', () => {
     const v = view(chainWith([]));
-    expect(v.producers).toEqual([]);
+    expect(v.staging).toEqual([]);
+    expect(v.ranked).toEqual([]);
     expect(v.windowBlocks).toBe(0);
     expect(v.candidacyByPeer.size).toBe(0);
   });
@@ -201,7 +270,10 @@ describe('blockProducers window identity', () => {
     });
     const v = view(chain, null);
     expect(v.windowBlocks).toBe(keys.length);
-    expect(v.producers.map((p) => [p.key, p.blocks])).toEqual([
+    expect(v.staging.map((p) => [p.key, p.blocks])).toEqual([
+      ['0xaa', 4], ['0xbb', 1], ['0xcc', 1],
+    ]);
+    expect(v.ranked.map((p) => [p.key, p.blocks])).toEqual([
       ['0xaa', 4], ['0xbb', 1], ['0xcc', 1],
     ]);
     // And a block the adapter could not attribute moves neither half of the
@@ -385,7 +457,7 @@ describe('blockProducers withheld reasons', () => {
       const v = view(chainWith(rows), absent);
       // Every producer still stages — existence is a fact about the chain, and
       // the crawler has no vote in it.
-      expect(v.producers).toHaveLength(2);
+      expect(v.staging).toHaveLength(2);
       expect(v.versionedRosterSize).toBe(0);
       expect(v.candidacyByPeer.size).toBe(0);
       expect(fanReason(standingFor(v, '0xrare'))).toBe('roster_absent');

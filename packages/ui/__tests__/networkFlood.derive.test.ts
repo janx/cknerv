@@ -467,7 +467,7 @@ describe('the producer signature the topology memo is keyed on', () => {
     };
   }
   const keySet = (chain: ChainEntry) => (
-    deriveBlockProducers(chain, null)!.producers.map((p) => p.key).join(' ')
+    deriveBlockProducers(chain, null)!.staging.map((p) => p.key).join(' ')
   );
 
   // ⚠️⚠️ THE FAILURE THIS PINS. A block bumps its producer's count and re-divides
@@ -482,9 +482,27 @@ describe('the producer signature the topology memo is keyed on', () => {
     const after = chainWith([10, 5, 3]);          // one more block for the leader
     expect(keySet(after)).toBe(keySet(before));
     // …while the standings genuinely moved, which is the half that must cross
-    const shares = (chain: ChainEntry) => deriveBlockProducers(chain, null)!.producers
+    const shares = (chain: ChainEntry) => deriveBlockProducers(chain, null)!.staging
       .map((p) => [p.blocks, p.windowBlocks, p.share] as const);
     expect(shares(after)).not.toEqual(shares(before));
+  });
+
+  it('⭐ …nor does one miner overtaking another, which is a set that did not change', () => {
+    // ⚠️ THE SECOND DOOR INTO THE SAME FAILURE, and the one a field-by-field key
+    // cannot close: the staging array's ORDER. While it was sequenced by
+    // blocks, a swap between two neighbouring shares — the commonest thing a
+    // rolling window does that is not a block for the leader — re-sequenced an
+    // identical set and re-keyed the whole colony.
+    const before = chainWith([9, 5, 3]);
+    const after = chainWith([5, 9, 3]);            // p0 and p1 trade places
+    expect(keySet(after)).toBe(keySet(before));
+    // The swap is real: the standings moved even though nobody joined or left.
+    const tallies = (chain: ChainEntry) => deriveBlockProducers(chain, null)!.staging
+      .map((p) => p.blocks);
+    expect(tallies(after)).not.toEqual(tallies(before));
+    // …and the reading order is where it is allowed to show.
+    const top = (chain: ChainEntry) => deriveBlockProducers(chain, null)!.ranked[0].key;
+    expect(top(after)).not.toBe(top(before));
   });
 
   it('…and a producer entering or leaving the window does move it', () => {
@@ -498,7 +516,7 @@ describe('the producer signature the topology memo is keyed on', () => {
     // T5 hangs the standing on the node by reference and re-stages both tails
     // on every call, so the window the nodes carry is the window as it stood
     // when the memo last ran — never a copy taken when the tier was created.
-    const view = (chain: ChainEntry) => deriveBlockProducers(chain, null)!.producers;
+    const view = (chain: ChainEntry) => deriveBlockProducers(chain, null)!.staging;
     const rows = roster(9);
     const first = inferredTopology(
       peers, 0xc0ffee, 'ckb:local', undefined, rows, undefined, view(chainWith([9, 5, 3])),

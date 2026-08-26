@@ -295,6 +295,12 @@ export function stageSighted(
  * reason `stageSighted` tolerates a duplicated roster row: the wire's contract
  * says it cannot happen, and a double-booked hit-mesh instance is not the way
  * to find out it did.
+ *
+ * ⚠️ THE ORDER IT IS HANDED IS THE ORDER IT STAGES, and that order goes on to be
+ * node order, scaffold cache key and flood tie-break. So the array reaching here
+ * has to be sequenced by something only the SET can move: `BlockProducerView`'s
+ * `staging`, which is key-ascending — never `ranked`, which is ordered by a
+ * number every block changes.
  */
 export function stageAttested(
   producers?: readonly ProducerStanding[] | null,
@@ -353,6 +359,17 @@ interface InferredScaffold {
 // BLOCK while its key does not, so a key that read the standings would miss
 // once a block and pay a full rebuild every ~10 seconds — the geometry
 // re-derived because a numerator moved.
+//
+// ⭐⭐ AND ITS SEQUENCE IS PART OF THE KEY, WHICH IS WHY THE ARRAY MAY NOT BE
+// SEQUENCED BY A TALLY. `stagedKey` is order-sensitive on purpose and cannot
+// safely be anything else: the build below walks `nodes` BY INDEX, so a
+// permuted tail draws a different `rng()` for each long-range link and comes
+// out with different edges. An order-insensitive key would hand back a
+// scaffold whose edges disagree with the order it was asked for — a cache that
+// lies rather than one that misses. The defence sits one level up instead:
+// `deriveBlockProducers` sequences the staging array by KEY, so its order is
+// already a function of the id set, and an order-sensitive key misses only
+// when the set really moved.
 let scaffoldCacheSeed: number | null = null;
 let scaffoldCacheSightedKey: string | null = null;
 let scaffoldCacheAttestedKey: string | null = null;
@@ -374,7 +391,12 @@ let scaffoldCache: InferredScaffold | null = null;
  *  re-staged live and the EDGES are not, so the damage would not even surface as
  *  a node in the wrong place — it would surface as a cached edge pointing at an
  *  id that is no longer in the node list. Two fields, two comparisons, and no
- *  reliance on the alphabet. */
+ *  reliance on the alphabet.
+ *
+ *  ⚠️ IT IS A SEQUENCE, NOT A SET, and it must stay one — see the note above
+ *  the cache slots. Sorting the ids here would let two genuinely different
+ *  scaffolds share a key. The stability this memo wants is bought by handing it
+ *  a sequence only the set can move, which is what `staging` is. */
 function stagedKey(staged: readonly NetworkNode[]): string {
   return staged.map((n) => n.id).join('\u0000');
 }
@@ -465,13 +487,17 @@ function inferredScaffold(
  *  roster row. Optional so every existing caller keeps working; a node whose
  *  server reported no identity simply has no id to be excluded by.
  *
- *  `producers` is the chain's recent producer window, already ordered and
- *  joined by `deriveBlockProducers`. Optional for the same reason and with one
- *  more behind it: `null`, `undefined` and `[]` all produce a topology
- *  byte-identical to the pre-producer build — same nodes, same order, same
- *  edges, same rng stream — so a devnet that has not mined, a boot whose window
- *  is still empty and a caller that never learned about producers are one code
- *  path rather than three. */
+ *  `producers` is the chain's recent producer window, already joined by
+ *  `deriveBlockProducers` and in its STAGING order — key-ascending, and a pure
+ *  function of which miners exist. Handing it the `ranked` view instead would
+ *  re-sequence this whole build whenever two miners swapped rank: a full
+ *  O(V² log V) scaffold rebuild for a set that did not change. Optional for the
+ *  same reason as the arguments above and with one more behind it: `null`,
+ *  `undefined` and `[]` all produce a topology byte-identical to the
+ *  pre-producer build — same nodes, same order, same edges, same rng stream —
+ *  so a devnet that has not mined, a boot whose window is still empty and a
+ *  caller that never learned about producers are one code path rather than
+ *  three. */
 export function inferredTopology(
   peers: Peer[], seed: number, localId: string = LOCAL_ID_FALLBACK, localPos?: Vec3,
   roster?: NetworkRosterRecord | null, localP2pId?: string | null,

@@ -130,6 +130,15 @@ export function attestedOrigin(
  * edges are mirrored geometry, and the winner is the `predecessor` an edge
  * pulse draws its direction from — leave it to chance and the colony's relay
  * arrows reshuffle between two identical floods.
+ *
+ * ⚠️ WHICH MAKES NODE ORDER LOAD-BEARING ALL THE WAY BACK TO WHOEVER SEQUENCED
+ * THE STAGED TAILS. The producer tail arrives in `BlockProducerView`'s
+ * `staging` order — key ascending — precisely so this tie-break is a function
+ * of WHICH miners exist. While that array was sequenced by blocks, two miners
+ * trading rank permuted the tail and re-decided every tie among them, for a set
+ * that had not changed; it also missed the scaffold memo, so the edges being
+ * tied over were rebuilt at the same time. Under a key order the tail moves
+ * only when the set does, which is the one occasion a reshuffle is honest.
  */
 export function floodArrivalTimes(
   topology: NetworkTopology, originId: string,

@@ -758,6 +758,18 @@ export default function App({
   // same distinction one level in, where `inferredScaffold` is keyed on the
   // staged ids and never on the standings.
   //
+  // ⭐⭐⭐ AND THE SET HAS TO REACH IT IN AN ORDER THE SET DECIDES — which is why
+  // this reads `staging` and never `ranked`. A signature over keys is a
+  // SEQUENCE of keys, and the topology it guards really is a function of the
+  // sequence (the scaffold draws its long-range links per index), so an
+  // identical set arriving in a new order is correctly a new signature and
+  // correctly a rebuild. The bug that fixes is one door back: while this array
+  // was ordered by BLOCKS, two miners swapping rank re-sequenced a set that had
+  // not changed, and the rebuild fired for a numerator after all — through the
+  // order rather than through a field. `staging` is key-ascending, so its
+  // sequence follows only from which miners exist, and this stays an
+  // order-SENSITIVE key that can still catch a reordering somebody means.
+  //
   // ⭐ The live tally still reaches the nodes. `inferredTopology` re-stages
   // both tails on every call and hangs the standing on the node BY REFERENCE,
   // so whenever this memo does run the nodes carry the window as it stands
@@ -768,7 +780,7 @@ export default function App({
   // Absent, null and empty collapse onto one signature deliberately:
   // `inferredTopology` emits a byte-identical topology for all three.
   const producerKeysSig = useMemo(
-    () => (producerView?.producers ?? []).map((p) => p.key).join('\u0000'),
+    () => (producerView?.staging ?? []).map((p) => p.key).join('\u0000'),
     [producerView],
   );
   const topology = useMemo(
@@ -777,7 +789,7 @@ export default function App({
       // `localNode.id` is cknerv's own key for the endpoint; the crawler files
       // us under our base58 p2p id. Only this excludes us from our own roster.
       localNode?.p2p_node_id,
-      producerView?.producers,
+      producerView?.staging,
     ),
     // peers is read via the stable peersSig and the producer standings via
     // producerKeysSig; keying on either directly would rebuild the geometry
@@ -1406,11 +1418,17 @@ export default function App({
   // out of ONE read of ONE view, deliberately: pairing a standing from one
   // round with a roster size from another would print a fraction whose halves
   // were counted at different moments.
+  //
+  // It asks `ranked` because this is the HUD side of the view — the scene is
+  // the only thing that may read `staging`, whose sequence is a cache key.
+  // Which one is asked cannot change the answer: the two arrays are
+  // permutations of each other over the SAME standing objects, so a lookup by
+  // key finds the identical one either way.
   const selectedMiner = useMemo<MinerNodeSubject | null>(() => {
     if (!selectedNetId || !selectedNetId.startsWith(MINER_SELECTION_PREFIX)) return null;
     if (!producerView) return null;
     const key = selectedNetId.slice(MINER_SELECTION_PREFIX.length);
-    const producer = producerView.producers.find((p) => p.key === key);
+    const producer = producerView.ranked.find((p) => p.key === key);
     if (!producer) return null;
     return { producer, versionedRosterSize: producerView.versionedRosterSize };
   }, [selectedNetId, producerView]);
@@ -1976,7 +1994,7 @@ export default function App({
             flashDirtyRef={flashDirtyRef}
             flashDirtyIdsRef={flashDirtyIdsRef}
             localVersion={localNode?.version ?? ''}
-            producers={producerView?.producers}
+            producers={producerView?.staging}
             cellDetailViewFocusRef={cellDetailViewFocusRef}
             overlay={colonyOverlay}
           />

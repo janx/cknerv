@@ -226,6 +226,19 @@ describe('colony topology signature', () => {
     const sig = memoBody('producerKeysSig');
     expect([...sig.matchAll(/\bp\.([A-Za-z_$][\w$]*)/g)].map((m) => m[1])).toEqual(['key']);
 
+    // ⭐⭐ AND THE OTHER DOOR INTO THE SAME REBUILD, which the field check above
+    // cannot see: the ORDER the keys arrive in. A signature over keys is a
+    // sequence of keys, and the scaffold it guards really is a function of that
+    // sequence — so the array reaching it has to be one only the SET can
+    // reorder. `staging` is key-ascending; `ranked` is ordered by blocks, and
+    // keying on it would rebuild the whole colony every time two miners traded
+    // rank without either of them joining or leaving the window.
+    expect(sig).toContain('producerView?.staging');
+    expect(sig).not.toContain('ranked');
+    for (const source of [memoBody('topology'), sig]) {
+      expect(source).not.toContain('producerView?.ranked');
+    }
+
     const deps = memoDeps('topology');
     expect(deps).toContain('producerKeysSig');
     // The VIEW's identity moves on every attributed block and the chain
@@ -247,7 +260,7 @@ describe('colony topology signature', () => {
       start,
       APP_SOURCE.indexOf('const selectedMinerAnchor = useMemo'),
     );
-    expect(subject).toContain('producerView.producers.find');
+    expect(subject).toContain('producerView.ranked.find');
     // The two ways this could go wrong, named rather than left to a reviewer.
     expect(subject).not.toContain('.attested');
     expect(subject).not.toContain('topology');

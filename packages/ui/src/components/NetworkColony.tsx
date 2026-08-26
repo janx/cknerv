@@ -87,7 +87,12 @@ interface NetworkColonyProps {
    *  sets: the topology is keyed on the producer key set alone (a per-block key
    *  would rebuild the colony's geometry once a block and truncate every
    *  in-flight wave), so the standings hanging off the staged nodes are stale
-   *  between key-set changes and this is the live reading. */
+   *  between key-set changes and this is the live reading.
+   *
+   *  ⚠️ It is `BlockProducerView`'s `staging` array — key-ascending, the same
+   *  sequence the topology was built from — and never `ranked`, which is
+   *  ordered by a tally. Nothing below reads it positionally today; the intake
+   *  planner walks EDGE order and looks each miner's share up by key. */
   producers?: readonly ProducerStanding[] | null;
   /** Shared camera-distance focus. Optional keeps standalone scenes unchanged. */
   cellDetailViewFocusRef?: { readonly current: number };

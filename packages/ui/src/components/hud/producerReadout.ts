@@ -74,6 +74,12 @@ export function producerShareText(standing: ProducerStanding): string {
  * view, so the percentage and the `BLK` beside it come from the same object and
  * cannot be assembled from two different windows.
  *
+ * ⭐ `TOP` IS THE ONE THING HERE THAT NEEDS AN ORDER, so it reads `ranked` and
+ * says so. `staging` holds the same standings sequenced by key — a colony
+ * cache key may not be ordered by a number a block moves — and its first
+ * element is merely the lowest key, which would print a share belonging to
+ * whoever happened to sort first. A reader would have no way to tell.
+ *
  * An empty window prints `0 · 0 BLK` rather than disappearing — a fresh boot, a
  * devnet nobody has mined and the first block after a reorg all look like this,
  * and a row that vanished on zero would make them indistinguishable from a
@@ -81,8 +87,8 @@ export function producerShareText(standing: ProducerStanding): string {
  * that sentence because there is no producer to take a share.
  */
 export function producerFleetText(view: BlockProducerView): string {
-  const top = view.producers[0];
-  const count = view.producers.length;
+  const top = view.ranked[0];
+  const count = view.ranked.length;
   if (top === undefined) {
     return `${count} · ${view.windowBlocks} ${WINDOW_UNIT}`;
   }

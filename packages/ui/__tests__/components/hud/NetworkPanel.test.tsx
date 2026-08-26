@@ -442,11 +442,23 @@ describe('NetworkPanel producers', () => {
     };
   }
 
+  /** A view with BOTH of the derive's orders on it, built the way the derive
+   *  builds them: one set of standings, sequenced two ways. `staging` is key
+   *  ascending because a colony cache key may not follow a tally; `ranked` is
+   *  the reading order, and it is the one `TOP` is a reading of. The two are
+   *  the same standings twice, exactly as the derive hands them over. */
   function view(shares: readonly number[]): BlockProducerView {
     const windowBlocks = shares.reduce((sum, blocks) => sum + blocks, 0);
+    const staging = shares
+      .map((blocks, at) => standing(blocks, windowBlocks, at))
+      .sort((left, right) => (left.key < right.key ? -1 : left.key > right.key ? 1 : 0));
     return {
       windowBlocks,
-      producers: shares.map((blocks, at) => standing(blocks, windowBlocks, at)),
+      staging,
+      ranked: staging.slice().sort((left, right) => (
+        right.blocks - left.blocks
+          || (left.key < right.key ? -1 : left.key > right.key ? 1 : 0)
+      )),
       versionedRosterSize: 32,
       candidacyByPeer: new Map(),
     };
@@ -459,6 +471,17 @@ describe('NetworkPanel producers', () => {
     const row = container.querySelector('[data-network-producers]');
     expect(row?.textContent).toContain('Miners');
     expect(row?.textContent).toContain('4 · TOP 48% · 200 BLK');
+    cleanup();
+
+    // ⭐ `TOP` IS A READING OF THE SHARES, not of whatever stands first in the
+    // colony. The staging array is sequenced by KEY — a cache key over the
+    // geometry may not follow a number every block moves — so its head is
+    // simply the lowest key, and a row that read it would print one miner's
+    // percentage under another miner's name with nothing on screen to say so.
+    const unsorted = render(
+      <NetworkPanel {...props} producers={view([40, 120, 40])} />,
+    ).container.querySelector('[data-network-producers]');
+    expect(unsorted?.textContent).toContain('3 · TOP 60% · 200 BLK');
   });
 
   it('calls them what the rest of the HUD calls them, and never a second word', () => {

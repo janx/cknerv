@@ -211,19 +211,40 @@ export interface PeerMiningCandidacy {
   readonly oneOf: number;
   /** The build string that put it in the set — its own reported version. */
   readonly version: string;
-  /** The producers this peer is a candidate for, in staging order. Usually
-   *  one; more than one when two payout identities declared the same build,
-   *  which is a fact about the fleet and not a stronger claim about the peer. */
+  /** The producers this peer is a candidate for, in staging order — which is
+   *  key ascending, so it does not reshuffle when two miners swap rank.
+   *  Usually one; more than one when two payout identities declared the same
+   *  build, which is a fact about the fleet and not a stronger claim about the
+   *  peer. */
   readonly producerKeys: readonly string[];
 }
 
 /** Everything T5 (staging), T7 (render) and T8 (cards) need without asking the
- *  chain or the roster a second question. */
+ *  chain or the roster a second question.
+ *
+ *  ⭐⭐⭐ TWO ORDERS, AND THERE IS NO FIELD THAT IS BOTH. One decides GEOMETRY
+ *  and one decides READING, they are ordered on different things, and a single
+ *  array serving both is how a rank swap came to rebuild a colony. Two names
+ *  is the cheapest way for a call site to be unable to reach one while meaning
+ *  the other — the same move `producerReadout` makes when it refuses to return
+ *  a bare percentage.
+ *
+ *  They are permutations of each other over the SAME standing objects, so a
+ *  lookup BY KEY finds the identical object in either and it does not matter
+ *  which one a `find` is asked of. Only the sequence differs, and the sequence
+ *  is the whole of what one is for and none of what the other is for. */
 export interface BlockProducerView {
-  /** The window every share in `producers` is measured over. */
+  /** The window every share in this view is measured over. */
   readonly windowBlocks: number;
-  /** The staging set, in the order the colony stands it up. */
-  readonly producers: readonly ProducerStanding[];
+  /** The staging set, in the order the colony stands it up: KEY ASCENDING, a
+   *  pure function of WHICH miners exist and of nothing a block moves. This is
+   *  the array that may reach `inferredTopology` and any cache key over the
+   *  geometry — see `deriveBlockProducers` for why it may read no tally. */
+  readonly staging: readonly ProducerStanding[];
+  /** The same standings in reading order: blocks descending, then key
+   *  ascending. This is what MESH·02's `TOP` and a share list are. ⚠️ Nothing
+   *  the geometry follows may be ordered by it. */
+  readonly ranked: readonly ProducerStanding[];
   /** Roster rows carrying a usable version — the modal gate's denominator,
    *  and the number a card needs beside a withheld fan's `matched`. */
   readonly versionedRosterSize: number;
@@ -422,16 +443,36 @@ function producerWindowIsCoherent(chain: ChainEntry): boolean {
  * numerators can be handed to this function without the window they were
  * counted over, so they cannot drift apart on the way in either.
  *
- * ORDER: blocks descending, then key ascending. Both halves are load-bearing.
- * Descending blocks is the reading order of a share list and it puts the one
- * producer whose fan is usually worth drawing first. The key tie-break is what
- * makes the order STABLE: the wire's own order is first-appearance in the
- * ring, which reshuffles as the window rolls — a producer whose last block is
- * evicted loses its row, and the same producer's next block appends a fresh
- * row at the tail. Left alone, a tail producer blinking in and out would
- * renumber the staging set under T5 every few minutes. The key is a lock
- * script hash, distinct per row by construction, so the order below is total
- * and never falls through to arrival.
+ * ⭐⭐⭐ TWO ORDERS, BECAUSE ORDERING BY A TALLY IS ITSELF A CHURN SOURCE.
+ *
+ * `staging` is KEY ASCENDING and reads no tally at all. It is the array that
+ * reaches `stageAttested`, and through it the colony's node list, the scaffold
+ * memo's `stagedKey`, and App's `producerKeysSig` — every one of which is a
+ * cache key over GEOMETRY. So what is handed to them has to be a function of
+ * WHICH miners exist and of nothing a block moves.
+ *
+ * Ordering by blocks made it a function of the tallies too. Two miners swapping
+ * rank re-sequenced an IDENTICAL SET, and an identical set in a new sequence is
+ * a new signature, a missed scaffold cache and a full O(V² log V) rebuild on
+ * the render path — which, often enough, lands mid-wave, hands `ColonyEdges`
+ * fresh surge lanes and truncates the wavefront. Neighbouring shares cross
+ * constantly in a rolling window, so this was never a corner case: it is
+ * exactly the failure `producerKeysSig` excludes `blocks` to avoid, arriving
+ * through the door the ORDER left open.
+ *
+ * `ranked` is blocks descending, then key ascending — the reading order of a
+ * share list, which is genuinely what a reader wants and what MESH·02's `TOP`
+ * means. It is a presentation view and nothing geometric may follow it.
+ *
+ * ⭐ The key comparison was always the load-bearing half; only its job changed.
+ * The wire's own order is first-appearance in a rolling ring, which reshuffles
+ * as the window rolls — a producer whose last block is evicted loses its row,
+ * and that producer's next block appends a fresh row at the tail — so an order
+ * that fell through to arrival would renumber the staging set every few
+ * minutes. Promoting the key from tie-break to sole key serves that goal
+ * strictly better rather than differently: the key is a lock script hash,
+ * distinct per row by construction, so key ascending is already a total order
+ * and falls through to nothing.
  */
 export function deriveBlockProducers(
   chain: ChainEntry,
@@ -441,12 +482,16 @@ export function deriveBlockProducers(
   const index = indexRosterVersions(roster);
   const windowBlocks = chain.producer_window_blocks;
 
-  const ordered = chain.producers.slice().sort((left, right) => (
-    right.blocks - left.blocks
-      || (left.key < right.key ? -1 : left.key > right.key ? 1 : 0)
+  // ⚠️ THIS SORT READS NO TALLY, AND THAT IS THE POINT — see above. Code units,
+  // not `localeCompare`: these are hex digests, not words, and a collation that
+  // varied with the host's locale would stand one machine's colony in a
+  // different order from another's over the same window (`byNodeId` keeps the
+  // same rule for the same reason).
+  const staged = chain.producers.slice().sort((left, right) => (
+    left.key < right.key ? -1 : left.key > right.key ? 1 : 0
   ));
 
-  const producers: ProducerStanding[] = ordered.map((producer) => {
+  const staging: ProducerStanding[] = staged.map((producer) => {
     const declared = producer.message.trim().length > 0;
     const matchedVersion = declared ? matchVersion(producer.message, index) : null;
     const candidates = matchedVersion === null
@@ -472,7 +517,7 @@ export function deriveBlockProducers(
   // peers alongside it, and `oneOf` is well defined however many producers
   // share a build.
   const candidacyByPeer = new Map<string, PeerMiningCandidacy>();
-  for (const standing of producers) {
+  for (const standing of staging) {
     if (!standing.fan.drawn) continue;
     for (const candidate of standing.fan.candidates) {
       const existing = candidacyByPeer.get(candidate.node_id);
@@ -492,9 +537,19 @@ export function deriveBlockProducers(
     }
   }
 
+  // The reading order, over the SAME objects rather than over copies of them:
+  // a surface that finds a standing by key gets the identical one from either
+  // array, and a share can never be read off one while its window is read off
+  // the other.
+  const ranked = staging.slice().sort((left, right) => (
+    right.blocks - left.blocks
+      || (left.key < right.key ? -1 : left.key > right.key ? 1 : 0)
+  ));
+
   return {
     windowBlocks,
-    producers,
+    staging,
+    ranked,
     versionedRosterSize: index.versionedRosterSize,
     candidacyByPeer,
   };
