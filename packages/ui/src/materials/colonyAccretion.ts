@@ -10,9 +10,14 @@ import { PEER_NETWORK_PALETTE } from '../visualPalette';
  * ring. The new mark therefore has two deliberately different passes:
  *
  *  1. a normal-blended aperture that actually removes light from the scene;
- *  2. an additive phenomenon around it: a white-hot photon ring, a flattened
+ *  2. an additive phenomenon around it: a cyan-white photon ring, a flattened
  *     asymmetric accretion disc, lensed polar arcs, and matter dragged out of
  *     otherwise empty space along accelerating spiral trajectories.
+ *
+ * The aperture stays semantically distinct, but its resting visual grammar is
+ * the peer mesh's own: the same soft halo exponent and amplitude, the same
+ * 1.2-radian breathing cadence, and the same scaffold cyan. Cold white is only
+ * mixed into the photon crest rather than worn as a permanent event signal.
  *
  * It remains continuous idle behaviour. It takes no block pulse, flood, or
  * shockwave; the colony's existing outward surge already identifies the cohort
@@ -71,8 +76,18 @@ export const COHORT_SWIRL_TURNS = 1.6;
 /** Slow rotation of brightness structure within the standing disc. */
 export const COHORT_RIM_SPIN_HZ = 0.035;
 
-/** Broad, faint lensing atmosphere that makes the aperture discoverable. */
-export const COHORT_VEIL_AMP = 0.15;
+/** Strength of the peer-style cyan halo that seats the aperture in the mesh. */
+export const COHORT_MESH_HALO_AMP = 0.62;
+
+/** Cold-white share of the photon crest; the balance remains scaffold cyan. */
+export const COHORT_PHOTON_WHITE_MIX = 0.62;
+
+/** POW cohorts breathe on the measured-peer cadence, but with less contrast. */
+export const COHORT_BREATHE_HZ = 1.2;
+export const COHORT_BREATHE_DEPTH = 0.1;
+
+/** Keeps the light-removing centre a near-black member of the cyan palette. */
+export const COHORT_VOID_TINT = 0.012;
 
 /** Number of independently paced pieces of matter around each cohort. */
 export const COHORT_MOTES = 18;
@@ -117,7 +132,13 @@ export function makeColonyHorizonMaterial(): THREE.ShaderMaterial {
     blending: THREE.NormalBlending,
     toneMapped: false,
     uniforms: {
-      uVoidColor: { value: new THREE.Color().setRGB(0.0008, 0.002, 0.006) },
+      uVoidColor: {
+        value: new THREE.Color().setRGB(
+          PEER_NETWORK_PALETTE.scaffold[0] * COHORT_VOID_TINT,
+          PEER_NETWORK_PALETTE.scaffold[1] * COHORT_VOID_TINT,
+          PEER_NETWORK_PALETTE.scaffold[2] * COHORT_VOID_TINT,
+        ),
+      },
       uContextEnergy: { value: 1 },
       uHalf: { value: COHORT_SHADOW_HALF_EXTENT },
       uHorizon: { value: COHORT_HORIZON_R },
@@ -134,7 +155,7 @@ export function makeColonyHorizonMaterial(): THREE.ShaderMaterial {
       void main() {
         vec2 p = (vUv - 0.5) * 2.0;
         float rw = length(p) * uHalf;
-        float outer = uHorizon * 1.62;
+        float outer = uHorizon * 1.48;
         if (rw > outer) discard;
 
         float core = 1.0 - smoothstep(
@@ -144,8 +165,8 @@ export function makeColonyHorizonMaterial(): THREE.ShaderMaterial {
         );
         float well = 1.0 - smoothstep(uHorizon * 0.92, outer, rw);
         float alpha = (
-          core * 0.985
-          + (1.0 - core) * well * 0.42
+          core * 0.965
+          + (1.0 - core) * well * 0.28
         ) * uContextEnergy;
         if (alpha < 0.002) discard;
         gl_FragColor = vec4(uVoidColor, alpha);
@@ -187,7 +208,10 @@ export function makeColonyAccretionMaterial(): THREE.ShaderMaterial {
       uMoteSigma: { value: COHORT_MOTE_SIGMA },
       uEase: { value: COHORT_INFALL_EASE },
       uInfallFloor: { value: COHORT_INFALL_FLOOR },
-      uVeil: { value: COHORT_VEIL_AMP },
+      uMeshHaloAmp: { value: COHORT_MESH_HALO_AMP },
+      uPhotonWhiteMix: { value: COHORT_PHOTON_WHITE_MIX },
+      uBreatheHz: { value: COHORT_BREATHE_HZ },
+      uBreatheDepth: { value: COHORT_BREATHE_DEPTH },
       uRimAmp: { value: COHORT_RIM_AMP },
       uMoteAmp: { value: COHORT_MOTE_AMP },
       uInfall: { value: COHORT_INFALL_HZ },
@@ -239,7 +263,10 @@ export function makeColonyAccretionMaterial(): THREE.ShaderMaterial {
       uniform float uInfallFloor;
       uniform float uSwirl;
       uniform float uSpin;
-      uniform float uVeil;
+      uniform float uMeshHaloAmp;
+      uniform float uPhotonWhiteMix;
+      uniform float uBreatheHz;
+      uniform float uBreatheDepth;
       varying vec2 vUv;
       varying float vShare;
       varying float vSeed;
@@ -404,8 +431,14 @@ export function makeColonyAccretionMaterial(): THREE.ShaderMaterial {
           }
         }
 
-        float veil = uVeil * exp(
-          -(rw * rw) / max(10.0 * uRim * uRim, 0.001)
+        // Seat the exceptional aperture in the ordinary peer mesh. This is
+        // the exact skirt profile used by peerNodeMaterial; unlike the old
+        // Gaussian veil it ends near the node instead of tinting the whole
+        // infall field as a separate aura.
+        float haloR = clamp(rw / max(uRim * 1.9, 0.001), 0.0, 1.0);
+        float meshHalo = pow(1.0 - haloR, 1.6) * 0.42 * uMeshHaloAmp;
+        float restBreathe = 1.0 - uBreatheDepth * (
+          0.5 + 0.5 * sin(uTime * uBreatheHz + vSeed * TAU)
         );
         float horizon = smoothstep(
           uHorizon * 0.92,
@@ -414,16 +447,21 @@ export function makeColonyAccretionMaterial(): THREE.ShaderMaterial {
         );
         float edge = 1.0 - smoothstep(uHalf * 0.9, uHalf, rw);
 
-        float cold = rim * 0.68
+        float cold = (rim * 0.68
           + lens * 0.58
+          + meshHalo) * restBreathe
           + streams
-          + motes * uMoteAmp
-          + veil;
-        float hot = photon * 1.18 + rim * 0.38 + lens * 0.82;
+          + motes * uMoteAmp;
+        float hot = (
+          photon * 1.18 + rim * 0.38 + lens * 0.82
+        ) * restBreathe;
         float amp = (cold + hot) * horizon * edge;
         if (amp < 0.002) discard;
 
-        vec3 light = (uColor * cold + uHotColor * hot) * horizon * edge;
+        vec3 photonColor = mix(uColor, uHotColor, uPhotonWhiteMix);
+        vec3 light = (
+          uColor * cold + photonColor * hot
+        ) * horizon * edge;
         // Additive blending uses source alpha as its factor. Keeping context
         // energy in RGB only preserves linear scene-focus damping.
         gl_FragColor = vec4(

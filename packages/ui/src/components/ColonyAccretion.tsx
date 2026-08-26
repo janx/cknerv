@@ -1,7 +1,8 @@
 // ColonyAccretion — what a POW cohort looks like: an accreting void.
 //
-// A true light-removing event horizon sits under a white-hot photon ring,
-// lensed accretion disc, and matter streaks drawn out of the surrounding void.
+// A true light-removing event horizon sits under a cyan-white photon ring,
+// peer-profile halo, lensed accretion disc, and matter streaks drawn out of the
+// surrounding void.
 // It runs continuously for as long as the payout identity is in the recent
 // window. On the block it wins, the colony's own outward surge already erupts
 // from that node, so nothing here fires and nothing here reads the pulse.

@@ -21,11 +21,12 @@ import {
 // …and the five `hole*` knobs take theirs from the accretion material, on the
 // same rule: the material seeds its own uniforms from these constants and
 // ColonyAccretion overwrites them from LIVE.peer.* each frame, so there is ONE
-// authority. (`COHORT_INFALL_FLOOR`, `COHORT_INFALL_EASE` and `COHORT_VEIL_AMP`
-// are deliberately NOT knobs: one says a cohort holding almost nothing is still
-// mining, one that a mote FALLS rather than coasts, and one that the mark has
-// to be findable before it is legible. All three are statements this layer
-// makes rather than tastes to settle against pixels.)
+// authority. (`COHORT_INFALL_FLOOR`, `COHORT_INFALL_EASE` and the mesh-halo /
+// breathe constants are deliberately NOT knobs: one says a cohort holding
+// almost nothing is still mining, one that a mote FALLS rather than coasts, and
+// the rest that this exceptional mark still belongs to the peer plane's visual
+// grammar. Those are layer statements rather than tastes to settle against
+// pixels.)
 import {
   COHORT_INFALL_HZ,
   COHORT_MOTE_AMP,

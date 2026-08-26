@@ -31,13 +31,17 @@ import ColonyAccretion, {
   sameCohortMark,
 } from '../../src/components/ColonyAccretion';
 import {
+  COHORT_BREATHE_DEPTH,
+  COHORT_BREATHE_HZ,
   COHORT_DISC_FLATTEN,
   COHORT_HIT_RADIUS,
   COHORT_HORIZON_R,
   COHORT_MARK_HALF_EXTENT,
+  COHORT_MESH_HALO_AMP,
   COHORT_MOTE_BIRTH_R,
   COHORT_MOTE_SIGMA,
   COHORT_PHOTON_SIGMA,
+  COHORT_PHOTON_WHITE_MIX,
   COHORT_RIM_R,
   COHORT_RIM_SIGMA,
   COHORT_SHADOW_HALF_EXTENT,
@@ -46,6 +50,7 @@ import {
   makeColonyHorizonMaterial,
 } from '../../src/materials/colonyAccretion';
 import {
+  makePeerCloudMaterial,
   peerCloudHitRadius,
   PEER_CLOUD_ADVERTISED_TONE,
   PEER_CLOUD_GHOST_TONE,
@@ -882,8 +887,8 @@ describe('what a POW cohort looks like', () => {
     const accretion = makeColonyAccretionMaterial();
     expect(horizon.blending).toBe(THREE.NormalBlending);
     expect(horizon.depthWrite).toBe(false);
-    expect(horizonFragment()).toContain('core * 0.985');
-    expect(horizonFragment()).toContain('well * 0.42');
+    expect(horizonFragment()).toContain('core * 0.965');
+    expect(horizonFragment()).toContain('well * 0.28');
     expect(horizonFragment()).toContain('gl_FragColor = vec4(uVoidColor, alpha);');
     expect(COHORT_SHADOW_HALF_EXTENT).toBeGreaterThan(COHORT_HORIZON_R);
 
@@ -909,9 +914,35 @@ describe('what a POW cohort looks like', () => {
     expect(fragment).toContain('float photon = gaussian(');
     expect(fragment).toContain('uPhotonSigma');
     expect(fragment).toContain('float lens = gaussian(');
-    expect(fragment).toContain('uHotColor * hot');
+    expect(fragment).toContain('mix(uColor, uHotColor, uPhotonWhiteMix)');
     expect(fragment).toContain('- uTime * uSpin * TAU');
     expect(fragment).toContain('vSeed * TAU');
+  });
+
+  it('rests in the peer mesh visual language without losing its aperture', () => {
+    const accretion = makeColonyAccretionMaterial();
+    const fragment = accretion.fragmentShader;
+    const peerFragment = makePeerCloudMaterial().fragmentShader;
+
+    // Same soft cyan skirt as an ordinary peer node, rather than a broad
+    // Gaussian aura that makes the cohort look composited over the mesh.
+    expect(peerFragment).toContain('pow(1.0 - r, 1.6) * 0.42');
+    expect(fragment).toContain('pow(1.0 - haloR, 1.6) * 0.42');
+    expect(fragment).not.toContain('exp(\n          -(rw * rw)');
+    expect(accretion.uniforms.uMeshHaloAmp.value).toBe(COHORT_MESH_HALO_AMP);
+
+    // A common cadence ties the layers together; the shallower cohort depth
+    // keeps its continuous accretion from competing with measured peers.
+    expect(accretion.uniforms.uBreatheHz.value).toBe(COHORT_BREATHE_HZ);
+    expect(COHORT_BREATHE_HZ).toBe(1.2);
+    expect(COHORT_BREATHE_DEPTH).toBeLessThan(0.15);
+    expect(fragment).toContain('uTime * uBreatheHz + vSeed * TAU');
+
+    // Cold white is retained as a crest, not as an always-on event colour.
+    expect(accretion.uniforms.uPhotonWhiteMix.value)
+      .toBe(COHORT_PHOTON_WHITE_MIX);
+    expect(COHORT_PHOTON_WHITE_MIX).toBeGreaterThan(0.5);
+    expect(COHORT_PHOTON_WHITE_MIX).toBeLessThan(0.75);
   });
 
   it('pulls directional streaks and filaments out of the surrounding void', () => {
