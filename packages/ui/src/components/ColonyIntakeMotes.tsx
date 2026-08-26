@@ -313,6 +313,14 @@ export default function ColonyIntakeMotes({
     mat.uniforms.uSpentS.value = LIVE.peer.intakeSpentS;
   });
 
+  // ⭐ NO MINERS ⇒ NO DRAW, NOT AN EMPTY ONE. Every hook above still runs, so
+  // the buffers are ready the instant one appears — but nothing enters the
+  // scene graph, and a material that is never rendered is never COMPILED. A
+  // devnet nobody mines and a review lab that passes no window carry an empty
+  // vertex program otherwise, for the whole life of the scene. Same rule the
+  // colony's own tier keeps for a stop with nobody standing at it.
+  if (segments.length === 0) return null;
+
   // ⚠️ Never a pick target. The stream is a mark on a link and the thing it is
   // about is the node at its end, which stands its own hit sphere; a live
   // raycast here would put a hundred invisible lines in front of the colony.

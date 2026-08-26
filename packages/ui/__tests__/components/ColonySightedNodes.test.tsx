@@ -985,9 +985,21 @@ describe('what a mining node draws in', () => {
     })).toBe(false);
   });
 
-  it('stands no geometry at all for a colony with no miners in its window', () => {
+  it('stands nothing at all for a colony with no miners in its window', () => {
     const bare = inferredTopology(peers, 0xc0ffee, 'ckb:local', undefined, ROSTER);
     expect(colonyIntakeSegments(bare)).toEqual([]);
+    // …and it is a NO DRAW rather than an empty one. A material that never
+    // enters the scene graph is never compiled, and a devnet nobody mines or a
+    // review lab that passes no window would otherwise carry an empty vertex
+    // program for the whole life of the scene. Same rule the colony's own tier
+    // keeps for a stop with nobody standing at it.
+    expect(source('ColonyIntakeMotes.tsx'))
+      .toContain('if (segments.length === 0) return null;');
+    expect(() => render(
+      <Canvas>
+        <ColonyIntakeMotes topology={bare} cf={colonyFlood(bare, 1)} blockPulseAtMs={0} />
+      </Canvas>,
+    )).not.toThrow();
   });
 
   it('stops at a cap and says so, rather than sizing a buffer off the wire', () => {
