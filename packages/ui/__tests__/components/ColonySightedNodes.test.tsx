@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import * as THREE from 'three';
 import { render, renderHook } from '@testing-library/react';
 import { Canvas } from '@react-three/fiber';
 import ColonyNodes, {
@@ -14,10 +15,12 @@ import ColonyNodes, {
   SIGHTED_HIT_RADII,
   SIGHTED_STOPS,
   sightedStop,
+  stagedPickBounds,
   stagedPickTargets,
   useStableList,
   type ColonyDraw,
   type SightedStop,
+  type StagedPickTarget,
 } from '../../src/components/ColonyNodes';
 import {
   attestedNodeId,
@@ -32,6 +35,15 @@ import {
   PEER_CLOUD_GHOST_TONE,
   type PeerCloudTone,
 } from '../../src/materials/peerNodeMaterial';
+import {
+  makeProducerRingMaterial,
+  producerAnnulusHit,
+  producerRingRadius,
+  PRODUCER_RING_HIT_BAND,
+  PRODUCER_RING_MIN_RADIUS,
+  PRODUCER_RING_SHARE_RADIUS,
+  PRODUCER_RING_WIDTH,
+} from '../../src/materials/producerRingMaterial';
 import type { ProducerStanding } from '../../src/derives/blockProducers.derive';
 import type { NetworkNode, NodeKind, Vec3 } from '../../src/types';
 import type {
@@ -331,7 +343,7 @@ describe('ColonyNodes sighted tier', () => {
     // spoken and the crawler is optional, would have left a cknerv with
     // producers and no roster unable to click any of them.
     expect(nodes).toContain('onSelect(target.selectionId)');
-    expect(nodes).toContain('stagedPickTargets(sighted, attested)');
+    expect(nodes).toContain('stagedPickTargets(sighted, attested, ringInstances)');
     expect(nodes).not.toContain('onSelect(`${SIGHTED_SELECTION_PREFIX}${id}`)');
     expect(nodes).toContain('e.stopPropagation()');
   });
@@ -349,7 +361,7 @@ describe('ColonyNodes sighted tier', () => {
     }
     expect(nodes).toContain('peerCloudHitRadius(SIGHTED_STOPS[stop])');
     expect(nodes).toContain('new THREE.SphereGeometry(1, 8, 8)');
-    expect(nodes).toContain('SCRATCH_MATRIX.makeScale(radius, radius, radius)');
+    expect(nodes).toContain('SCRATCH_MATRIX.makeScale(scale, scale, scale)');
     expect(nodes).toContain('SCRATCH_MATRIX.setPosition(');
     expect(nodes).not.toContain('const SIGHTED_SIZE');
   });
@@ -733,7 +745,7 @@ describe('ColonyNodes attested tier', () => {
   it('stands one hit target per staged node across BOTH tiers, sized from its own mark', () => {
     const sighted = topology.nodes.filter((n) => n.kind === 'sighted');
     const attested = topology.nodes.filter((n) => n.kind === 'attested');
-    const targets = stagedPickTargets(sighted, attested);
+    const targets = stagedPickTargets(sighted, attested, []);
     expect(attested).toHaveLength(producers.length);
     expect(targets).toHaveLength(sighted.length + attested.length);
     // Sighted first, so a colony with no producers keeps every instance index
@@ -749,11 +761,13 @@ describe('ColonyNodes attested tier', () => {
     for (const [index, target] of targets.slice(sighted.length).entries()) {
       expect(target.id).toBe(attestedNodeId(producers[index].key));
       expect(target.selectionId).toBe(`${MINER_SELECTION_PREFIX}${producers[index].key}`);
-      expect(target.radius).toBe(ATTESTED_HIT_RADIUS);
+      expect(target.bodyRadius).toBe(ATTESTED_HIT_RADIUS);
+      expect(target.ringShare).toBeNull();
     }
-    // ⚠️ The target is the MARK, never the ring. A sphere at the ring's radius
-    // would be a solid ball where the ring is a hollow stroke, and it would
-    // take that whole disc off the Cell canopy that yields this pixel.
+    // The BODY target is the sprite and nothing else. It is deliberately the
+    // smallest thing on this list — an anonymous rung buys no footprint on the
+    // confidence axis — and it is why the ring's own stroke has to be a target
+    // too; see 'the ring stroke is the producer's target' below.
     expect(ATTESTED_HIT_RADIUS).toBe(peerCloudHitRadius(PEER_CLOUD_ATTESTED_TONE));
     expect(ATTESTED_HIT_RADIUS).toBeLessThan(SIGHTED_HIT_RADII.advertised);
   });
@@ -949,5 +963,278 @@ describe('the producer rings', () => {
     const guard = nodes.indexOf('raycast={() => null}', rings);
     expect(rings).toBeGreaterThan(0);
     expect(guard).toBeGreaterThan(rings);
+  });
+});
+
+/**
+ * THE MARK IS ALSO THE TARGET — the half of "a staged node's invisible hit
+ * sphere IS its mark" that the attested rung was missing.
+ *
+ * ⭐⭐ FOUND ON A REAL GPU, NOT IN THE SOURCE, and nothing in this suite could
+ * have found it: no test here knows how big anything is on screen. A full-canvas
+ * 13-pixel hover sweep of the running app came back with forty peers and ZERO
+ * producers. The arithmetic underneath was plain once measured — the producer's
+ * only target was its point sprite at 0.375 world units, UNDER the faintest
+ * roster rung's 0.425 and therefore the smallest target in the colony, while
+ * the ring around it was drawn from 1.4 out to 3.0. The node wearing the
+ * largest mark in the scene was the hardest thing in it to click.
+ *
+ * The ruling: the ring's STROKE is a target, its INTERIOR is not. Everything
+ * below is that sentence, in numbers.
+ */
+describe("the ring stroke is the producer's target", () => {
+  /** CSS pixels per world unit at the default camera. Read off the plan's own
+   *  measured ring radii (8-17 px drawn for world radii of 1.4-3.0, which agree
+   *  to within a percent). A yardstick for an order-of-magnitude check on the
+   *  ONE number this feature had to guess — never a claim about a camera, and
+   *  never something a later retune has to keep true. */
+  const PX_PER_WORLD = 5.7;
+
+  const KEY = producerKey('a');
+  const NODE_ID = attestedNodeId(KEY);
+  const CANDIDATE_IDS = ['Qm0001', 'Qm0002', 'Qm0004'];
+  const candidates = CANDIDATE_IDS.map((id) => rosterNode(id, true));
+  const places = new Map<string, Vec3>([
+    [NODE_ID, [1, 0, 0]],
+    ...CANDIDATE_IDS.map((id, i): [string, Vec3] => [id, [10 + i, 0, 0]]),
+  ]);
+
+  /** The colony as App composes it: the ring plan first, the pick plan cut from
+   *  it. Building them in that order here is the point of the fixture. */
+  function stage(share: number, fan: RosterNode[] | null) {
+    const producers = [standing(KEY, share, fan)];
+    const topology = inferredTopology(
+      [peer('A')], 0xc0ffee, 'ckb:local', undefined, ROSTER, undefined, producers,
+    );
+    const sighted = topology.nodes.filter((n) => n.kind === 'sighted');
+    const attested = topology.nodes.filter((n) => n.kind === 'attested');
+    const posById = new Map<string, Vec3>(topology.nodes.map((n) => [n.id, n.pos]));
+    const rings = producerRingInstances(producers, posById);
+    return {
+      producers, topology, sighted, attested, rings,
+      targets: stagedPickTargets(sighted, attested, rings),
+    };
+  }
+
+  const annulus = (share: number): StagedPickTarget => ({
+    id: NODE_ID,
+    selectionId: `${MINER_SELECTION_PREFIX}${KEY}`,
+    pos: [0, 0, 0],
+    bodyRadius: null,
+    ringShare: share,
+  });
+
+  it('cuts every annulus from the very list that draws the rings', () => {
+    const { rings, targets } = stage(0.62, null);
+    const drawn = rings.filter((r) => r.fires);
+    const annuli = targets.filter((t) => t.ringShare !== null);
+    expect(drawn).toHaveLength(1);
+    // One target per DRAWN ring, standing where that ring stands, sized by the
+    // share that ring is sized by. There is no second source for either.
+    expect(annuli).toHaveLength(drawn.length);
+    expect(annuli.map((t) => t.pos)).toEqual(drawn.map((r) => r.pos));
+    expect(annuli.map((t) => t.ringShare)).toEqual(drawn.map((r) => r.share));
+    expect(annuli.map((t) => t.selectionId))
+      .toEqual(drawn.map((r) => `${MINER_SELECTION_PREFIX}${r.producerKey}`));
+    // …so a producer the colony stands no node for has neither ring nor target.
+    expect(producerRingInstances([standing(producerKey('z'), 0.5)], places)).toEqual([]);
+    expect(stagedPickTargets([], [], []).filter((t) => t.ringShare !== null)).toEqual([]);
+  });
+
+  it('follows the same share-scaled radius the ring is drawn at, under a retune too', () => {
+    const material = makeProducerRingMaterial();
+    // The vertex shader sizes the quad from these two uniforms; the annulus is
+    // resolved from the same two numbers through `producerRingRadius`. Their
+    // ZERO-DRIFT seeds are what makes "the same radius" checkable at rest.
+    expect(material.uniforms.uRingMinRadius.value).toBe(PRODUCER_RING_MIN_RADIUS);
+    expect(material.uniforms.uRingShareRadius.value).toBe(PRODUCER_RING_SHARE_RADIUS);
+    material.dispose();
+    expect(producerRingRadius(0)).toBe(PRODUCER_RING_MIN_RADIUS);
+    expect(producerRingRadius(1)).toBe(PRODUCER_RING_MIN_RADIUS + PRODUCER_RING_SHARE_RADIUS);
+    // The band is centred exactly on the stroke, at every share…
+    for (const share of [0, 0.02, 0.25, 0.62, 1]) {
+      const { inner, outer } = stagedPickBounds(annulus(share));
+      expect((inner + outer) / 2).toBeCloseTo(producerRingRadius(share), 12);
+      expect(outer - inner).toBeCloseTo(2 * PRODUCER_RING_HIT_BAND, 12);
+    }
+    // …and under a live retune of either knob, which is the case a plan
+    // captured at memo time would have got wrong while somebody was tuning.
+    const retuned = stagedPickBounds(annulus(0.62), 4, 8);
+    expect((retuned.inner + retuned.outer) / 2)
+      .toBeCloseTo(producerRingRadius(0.62, 4, 8), 12);
+    const nodes = source('ColonyNodes.tsx');
+    // Both halves read the SAME two knobs — the ring's uniforms and the pick
+    // plan's radii — which is the whole of "one source".
+    expect(nodes).toContain('material.uniforms.uRingMinRadius.value = LIVE.peer.ringRadiusMin');
+    expect(nodes).toContain('material.uniforms.uRingShareRadius.value = LIVE.peer.ringRadiusShare');
+    expect(nodes).toContain('const ringMinRadius = LIVE.peer.ringRadiusMin');
+    expect(nodes).toContain('const ringShareRadius = LIVE.peer.ringRadiusShare');
+    // …and the pick surface notices a drag on either, rather than waiting for
+    // the next topology rebuild to catch up.
+    expect(nodes).toContain('if (LIVE.peer.ringRadiusMin === minRadius');
+    expect(nodes).toContain('&& LIVE.peer.ringRadiusShare === shareRadius) return;');
+  });
+
+  it('is a band on the stroke and never the disc inside it', () => {
+    const { inner, outer } = stagedPickBounds(annulus(0.62));
+    const radius = producerRingRadius(0.62);
+    expect(inner).toBeGreaterThan(0);
+    // The ruling, as four samples: the middle of the ring belongs to whatever
+    // stands there, the stroke belongs to the producer, and past the tolerance
+    // it is somebody else's pixel again.
+    expect(producerAnnulusHit(0, inner, outer)).toBe(false);
+    expect(producerAnnulusHit(inner * 0.99, inner, outer)).toBe(false);
+    expect(producerAnnulusHit(radius, inner, outer)).toBe(true);
+    expect(producerAnnulusHit(outer * 1.01, inner, outer)).toBe(false);
+    // A REJECTED alternative, kept measurable: the full disc would have taken
+    // the whole interior off everything standing in it, and on the dominant
+    // producer that interior is most of a 17-pixel circle.
+    expect(inner * PX_PER_WORLD).toBeGreaterThan(10);
+  });
+
+  it('is a band a pointer can land on, over a stroke that is not', () => {
+    // The one number this feature had to guess. A tolerance of ±0.8 world units
+    // is 1.6 across — about nine CSS pixels, the ordinary allowance a hairline
+    // gets in any interface, and the middle of the 8-12 px it was aimed at.
+    expect(2 * PRODUCER_RING_HIT_BAND * PX_PER_WORLD).toBeGreaterThanOrEqual(8);
+    expect(2 * PRODUCER_RING_HIT_BAND * PX_PER_WORLD).toBeLessThanOrEqual(12);
+    // The drawn stroke is a Gaussian sigma, and on its own it is nowhere near
+    // clickable — which is why the target is a tolerance and not the stroke.
+    expect(2 * PRODUCER_RING_WIDTH * PX_PER_WORLD).toBeLessThan(4);
+    expect(PRODUCER_RING_HIT_BAND / PRODUCER_RING_WIDTH).toBeGreaterThan(2);
+    // …and the band alone is wider than the whole mark of the rung this node's
+    // own sprite used to sit UNDER. That inversion is the defect.
+    const { inner, outer } = stagedPickBounds(annulus(0.62));
+    expect(outer - inner).toBeGreaterThan(2 * SIGHTED_HIT_RADII.advertised);
+    expect(ATTESTED_HIT_RADIUS).toBeLessThan(SIGHTED_HIT_RADII.advertised);
+  });
+
+  it('never closes over the body target inside it, at any share', () => {
+    // ⚠️ ANNULUS OR BODY, never annulus instead of body. A user aiming at the
+    // node itself must still hit the node, and the hole is where that happens —
+    // so the tolerance may never reach in as far as the sprite, at the smallest
+    // ring this colony can draw or any larger one.
+    for (const share of [0, 0.001, 0.02, 0.25, 0.62, 1]) {
+      expect(stagedPickBounds(annulus(share)).inner).toBeGreaterThan(ATTESTED_HIT_RADIUS);
+    }
+    const { targets } = stage(0.62, null);
+    const mine = targets.filter((t) => t.selectionId === `${MINER_SELECTION_PREFIX}${KEY}`);
+    expect(mine).toHaveLength(2);
+    expect(mine.map((t) => t.id)).toEqual([NODE_ID, NODE_ID]);
+    // The BODY is planned first, so a `find` by selection id reaches the node's
+    // own radius — a reticle drawn at the annulus would circle the ring.
+    expect(mine[0].bodyRadius).toBe(ATTESTED_HIT_RADIUS);
+    expect(mine[0].ringShare).toBeNull();
+    expect(mine[1].bodyRadius).toBeNull();
+    expect(mine[1].ringShare).toBe(0.62);
+    expect(source('ColonyNodes.tsx'))
+      .toContain("(t) => t.selectionId === selectedId && t.bodyRadius !== null,");
+    // Exactly one of the two fields is ever set, across every tier.
+    for (const target of targets) {
+      expect([target.bodyRadius === null, target.ringShare === null]).toEqual(
+        [target.bodyRadius === null, !(target.bodyRadius === null)],
+      );
+    }
+  });
+
+  // ⚠️⚠️ AN ARC IS NOT A PRODUCER TARGET. It stands on a CANDIDATE PEER and
+  // means "may be the same machine"; clicking that peer must open its own
+  // PEER / SIGHTED card, which carries the `MINER?` stamp and the size of the
+  // set. Note that an arc carries the PRODUCER's key and the PRODUCER's share —
+  // filtering the pick plan on either would have turned every candidate into a
+  // MINER target, which is the exact identification the fan refuses to make.
+  it('gives a candidate arc no producer target at all', () => {
+    const { rings, targets, sighted } = stage(0.4, candidates);
+    const arcs = rings.filter((r) => !r.fires);
+    expect(arcs).toHaveLength(candidates.length);
+    expect(arcs.every((a) => a.producerKey === KEY && a.share === 0.4)).toBe(true);
+    const annuli = targets.filter((t) => t.ringShare !== null);
+    expect(annuli).toHaveLength(1);
+    expect(annuli[0].id).toBe(NODE_ID);
+    // No target stands where an arc stands, other than that peer's own body.
+    for (const arc of arcs) {
+      const here = targets.filter((t) => t.pos === arc.pos);
+      expect(here).toHaveLength(1);
+      expect(here[0].ringShare).toBeNull();
+      expect(here[0].selectionId).toBe(`sighted:${here[0].id}`);
+      expect(here[0].selectionId.startsWith(MINER_SELECTION_PREFIX)).toBe(false);
+    }
+    // …and every candidate the colony IS standing a node for is still a plain
+    // sighted target, at its own stop's radius.
+    const staged = sighted.filter((n) => CANDIDATE_IDS.includes(n.id));
+    expect(staged.length).toBeGreaterThan(0);
+    for (const node of staged) {
+      const target = targets.find((t) => t.id === node.id)!;
+      expect(target.selectionId).toBe(`sighted:${node.id}`);
+      expect(target.bodyRadius).toBe(SIGHTED_HIT_RADII[sightedStop(node)]);
+    }
+    expect(source('ColonyNodes.tsx')).toContain('if (!ring.fires) continue;');
+  });
+
+  it('is the same band from any camera angle, because a billboard has no plane', () => {
+    // The ring faces the camera, so the world points that project onto its
+    // stroke are the ones standing a ring-radius off the node ACROSS THE VIEW —
+    // which is the perpendicular distance from the pointer ray to that node,
+    // and nothing that has to be kept in sync with an orientation.
+    const { inner, outer } = stagedPickBounds(annulus(0.62));
+    const radius = producerRingRadius(0.62);
+    const node = new THREE.Vector3(3, -2, 5);
+    const looks = [[0, 0, -1], [1, 0.2, -1], [0.4, 0.9, -0.2], [-0.7, -0.3, 0.6]];
+    for (const look of looks) {
+      const direction = new THREE.Vector3(look[0], look[1], look[2]).normalize();
+      const side = new THREE.Vector3(0.31, 0.77, 0.55)
+        .cross(direction).normalize();
+      const eye = node.clone().addScaledVector(direction, -40);
+      const at = (off: number) => producerAnnulusHit(
+        new THREE.Ray(eye.clone().addScaledVector(side, off), direction)
+          .distanceToPoint(node),
+        inner, outer,
+      );
+      expect([look, at(0)]).toEqual([look, false]);
+      expect([look, at(inner * 0.9)]).toEqual([look, false]);
+      expect([look, at(radius)]).toEqual([look, true]);
+      expect([look, at(outer * 1.1)]).toEqual([look, false]);
+    }
+  });
+
+  it('keeps ONE hit mesh, and re-bounds it over the annulus every time it moves', () => {
+    const nodes = source('ColonyNodes.tsx');
+    // ⚠️ three computes an InstancedMesh's bounding sphere ONCE and caches it,
+    // and rejects every raycast against it before looking at an instance. The
+    // annulus is several times the widest sphere this mesh used to hold, so a
+    // stale volume here does not cost producers their clicks — it costs EVERY
+    // staged node its click, silently.
+    const walk = nodes.indexOf('const applyInstances = () => {');
+    const after = nodes.indexOf('useEffect(() => {\n    applyInstances();', walk);
+    expect(walk).toBeGreaterThan(0);
+    expect(after).toBeGreaterThan(walk);
+    const body = nodes.slice(walk, after);
+    expect(body).toContain('mesh.setMatrixAt(index, SCRATCH_MATRIX)');
+    expect(body).toContain('mesh.computeBoundingSphere()');
+    expect(body).toContain('outer / HIT_SPHERE_INSCRIBED');
+    // One walk writes the matrices AND the bounds the filter reads, so the two
+    // cannot describe different spheres.
+    expect(body).toContain('bounds.inner[index] = inner');
+    expect(body).toContain('bounds.outer[index] = outer');
+    expect(nodes.match(/mesh\.computeBoundingSphere\(\)/g)).toHaveLength(1);
+    // Still ONE instanced mesh over both staged tiers, on the existing
+    // arbitration path — the annulus is a filter on three's own raycast, not a
+    // second target layer with its own reject and its own hover guards.
+    expect(nodes.match(/<instancedMesh/g)).toHaveLength(3);
+    expect(nodes).toContain('BASE_INSTANCED_RAYCAST.call(this, raycaster, SCRATCH_HITS)');
+    expect(nodes).toContain('const hitUserData = useMemo(() => ({ [NETWORK_PEER_PICK_FLAG]: true }), [])');
+    expect(nodes).toContain('raycast={hitRaycast}');
+  });
+
+  it('resolves the annulus at the depth the ring is drawn at', () => {
+    // ⚠️ The instance is a BALL and the ring is a BILLBOARD. The ball's near
+    // face stands up to a couple of world units in front of the node, so left
+    // alone it would win the distance sort against anything that happened to
+    // lie under the stroke. The hit is re-stamped onto the plane the ring is
+    // actually on, so two overlapping marks resolve by which is really nearer.
+    const nodes = source('ColonyNodes.tsx');
+    expect(nodes).toContain('hit.distance = SCRATCH_TOWARDS.copy(SCRATCH_CENTER)');
+    expect(nodes).toContain('.dot(ray.direction);');
+    expect(nodes).toContain('ray.at(hit.distance, hit.point);');
   });
 });

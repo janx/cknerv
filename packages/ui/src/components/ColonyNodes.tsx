@@ -48,7 +48,7 @@
 // field keeps only delivery/commit feedback; the broad wave belongs here.
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { useThree } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import {
   cellCanvasCursor,
   NETWORK_PEER_PICK_FLAG,
@@ -87,10 +87,15 @@ import {
 } from '../materials/peerNodeMaterial';
 import {
   makeProducerRingMaterial,
+  producerAnnulusHit,
+  producerRingRadius,
   PRODUCER_RING_FIRE_S,
+  PRODUCER_RING_HIT_BAND,
+  PRODUCER_RING_MIN_RADIUS,
+  PRODUCER_RING_SHARE_RADIUS,
   PRODUCER_RING_UNFIRED,
 } from '../materials/producerRingMaterial';
-import { ATTESTED_ID_PREFIX } from '../derives/networkTopology.derive';
+import { attestedNodeId, ATTESTED_ID_PREFIX } from '../derives/networkTopology.derive';
 
 // Measured core: bright, saturated, larger than the ghost haze.
 const MEASURED_SIZE = 1.4;
@@ -285,27 +290,81 @@ export function partitionByKind(
   return groups;
 }
 
-/** An attested node's hit sphere IS its mark, exactly as a sighted stop's is.
+/** An attested node's BODY target — its point sprite, exactly as a sighted
+ *  stop's hit sphere is its own.
  *
- *  ⚠️ NOT THE RING. The ring is a rhythm drawn AROUND the node and is many
- *  times the sprite across; a pick sphere at that radius would be a solid ball
- *  where the ring is a hollow stroke, and it would take that whole disc off the
- *  Cell canopy below — which yields this pixel through NETWORK_PEER_PICK_FLAG
- *  and gets nothing back. The target is the body; the ring makes it easier to
- *  aim at by being a bullseye around it. */
+ *  ⭐ IT IS ONE OF THIS NODE'S TWO TARGETS, not the whole of it, and the
+ *  difference was found on a real GPU rather than argued from the source. This
+ *  radius alone made the producer the smallest target in the colony — 0.375
+ *  world units, under the faintest roster rung's 0.425 — while it wore the
+ *  largest mark in it, a ring drawn from 1.4 out to 3.0. A 13-pixel hover sweep
+ *  of the whole canvas found forty peers and zero producers. The file's own
+ *  rule ("a staged node's invisible hit sphere IS its mark") had been applied
+ *  to the sprite, and for a producer the mark is the RING — so the ring's
+ *  stroke is a target too (`stagedPickBounds`).
+ *
+ *  ⚠️ THE BODY KEEPS ITS OWN TARGET ANYWAY. Annulus OR body, never annulus
+ *  instead of body: a user who aims at the node itself must still hit the node,
+ *  and the hole the ring encloses is where that happens. */
 export const ATTESTED_HIT_RADIUS = peerCloudHitRadius(PEER_CLOUD_ATTESTED_TONE);
 
 /** One clickable staged node: where it stands, how big its mark is, and what
- *  selecting it says. Two tiers, one shape — see `stagedPickTargets`. */
+ *  selecting it says. Three targets, one shape — see `stagedPickTargets`. */
 export interface StagedPickTarget {
   /** The node's graph id. It is also the hover word this layer publishes, so
-   *  it has to be the id every other layer would recognise. */
+   *  it has to be the id every other layer would recognise. A producer's ring
+   *  carries the SAME id as its body: they are two ways to press one node, and
+   *  the hover word may not depend on which one the pointer found. */
   readonly id: string;
-  /** What `onSelect` is handed. The two tiers speak different dialects and the
-   *  hit mesh must not have to know which. */
+  /** What `onSelect` is handed. The tiers speak different dialects and the hit
+   *  mesh must not have to know which. */
   readonly selectionId: string;
   readonly pos: Vec3;
-  readonly radius: number;
+  /** A SOLID target's world radius — its own mark — or `null` when this target
+   *  is the hollow ring annulus below. */
+  readonly bodyRadius: number | null;
+  /** The producer share the RING ANNULUS's radius follows, or `null` when this
+   *  target is a solid body. Exactly one of the two is ever non-null.
+   *
+   *  ⭐ THE SHARE AND NOT A RADIUS, because the radius is the ring material's
+   *  to compute: it is resolved through `producerRingRadius` against the same
+   *  two live knobs the vertex shader sizes the quad from, so a retune moves
+   *  the stroke and its tolerance together. Storing a radius here would be the
+   *  second constant this whole change exists to remove. */
+  readonly ringShare: number | null;
+}
+
+/** The world radii one pick target occupies: a solid ball out to `outer` when
+ *  `inner` is zero, and the hollow band between the two otherwise. */
+export interface StagedPickBounds {
+  readonly inner: number;
+  readonly outer: number;
+}
+
+/**
+ * Where one target's surface stands, resolved against the ring knobs in force.
+ *
+ * A body is a ball from the centre out to its own mark. A producer's ring is a
+ * BAND: `PRODUCER_RING_HIT_BAND` either side of wherever the stroke is being
+ * drawn this frame, which is `producerRingRadius` of its share and nothing
+ * else. The hole inside stays empty on purpose — the ring's interior belongs to
+ * whatever stands there, and a producer's own body target is one of the things
+ * that stands there.
+ *
+ * Pure, and exported to be tested directly: an r3f pick surface cannot be
+ * asked in jsdom what it is clickable at, so this is where that coverage lives.
+ */
+export function stagedPickBounds(
+  target: StagedPickTarget,
+  ringMinRadius: number = PRODUCER_RING_MIN_RADIUS,
+  ringShareRadius: number = PRODUCER_RING_SHARE_RADIUS,
+): StagedPickBounds {
+  if (target.ringShare === null) return { inner: 0, outer: target.bodyRadius ?? 0 };
+  const radius = producerRingRadius(target.ringShare, ringMinRadius, ringShareRadius);
+  return {
+    inner: Math.max(0, radius - PRODUCER_RING_HIT_BAND),
+    outer: radius + PRODUCER_RING_HIT_BAND,
+  };
 }
 
 /** Every staged node the colony lets you click, in mount order.
@@ -318,11 +377,31 @@ export interface StagedPickTarget {
  *  crawler has spoken, and ckbadger is OPTIONAL — a cknerv with no crawler at
  *  all still has producers, and they would have been unclickable.
  *
- *  Sighted first, then attested, so instance indices stay where they were for
- *  a colony that has no producers. */
+ *  Sighted bodies first, then attested bodies, then the ring annuli, so
+ *  instance indices stay where they were for a colony that has no producers —
+ *  and so a `find` by selection id reaches a producer's BODY before its ring,
+ *  which is what keeps the selection reticle the size of the node rather than
+ *  the size of the ring.
+ *
+ *  ⭐⭐ THE ANNULI ARE BUILT FROM THE RING PLAN ITSELF, which is the whole
+ *  answer to "how do the mark and the target stay one thing". They take the
+ *  ring's own `pos` and the ring's own `share`, so an instance nobody draws has
+ *  no target, a producer the colony is standing no node for has neither, and
+ *  the two cannot end up at different places or different sizes.
+ *
+ *  ⚠️ A CANDIDATE ARC IS NOT A PRODUCER TARGET, and `fires` is the field that
+ *  says so. An arc stands on a CANDIDATE PEER and means "may be the same
+ *  machine"; clicking that peer must open its own PEER / SIGHTED card, which
+ *  carries the `MINER?` stamp and its denominator, and must never open the
+ *  MINER card — a set of one is refused outright precisely so no arrangement of
+ *  this scene reads as an identification. Note that an arc carries the
+ *  PRODUCER's key, so filtering on `producerKey` would have made every
+ *  candidate a producer target; `fires` is the one field that separates a
+ *  producer's own ring from a slice of it standing on somebody else. */
 export function stagedPickTargets(
   sighted: readonly NetworkNode[],
   attested: readonly NetworkNode[],
+  rings: readonly ProducerRingInstance[],
 ): StagedPickTarget[] {
   const out: StagedPickTarget[] = [];
   for (const node of sighted) {
@@ -330,7 +409,8 @@ export function stagedPickTargets(
       id: node.id,
       selectionId: `${SIGHTED_SELECTION_PREFIX}${node.id}`,
       pos: node.pos,
-      radius: sightedHitRadius(node),
+      bodyRadius: sightedHitRadius(node),
+      ringShare: null,
     });
   }
   for (const node of attested) {
@@ -343,7 +423,18 @@ export function stagedPickTargets(
       id: node.id,
       selectionId: `${MINER_SELECTION_PREFIX}${key}`,
       pos: node.pos,
-      radius: ATTESTED_HIT_RADIUS,
+      bodyRadius: ATTESTED_HIT_RADIUS,
+      ringShare: null,
+    });
+  }
+  for (const ring of rings) {
+    if (!ring.fires) continue;
+    out.push({
+      id: attestedNodeId(ring.producerKey),
+      selectionId: `${MINER_SELECTION_PREFIX}${ring.producerKey}`,
+      pos: ring.pos,
+      bodyRadius: null,
+      ringShare: ring.share,
     });
   }
   return out;
@@ -485,11 +576,32 @@ function StagedCloud({
   return <points geometry={geom} material={mat} frustumCulled={false} raycast={() => null} />;
 }
 
+/** How much of its own radius the hit mesh's 8×8 unit sphere actually covers.
+ *
+ *  The geometry is a polyhedron whose VERTICES sit on the sphere, so its faces
+ *  dip inside it — deepest in the middle of a face, by a conservative
+ *  `cos(π/8)²` of the radius. A solid body has always paid that quietly and it
+ *  costs a target nobody measures a few percent. A BAND cannot pay it: a
+ *  nine-pixel ring that loses three of them in eight places is thin exactly
+ *  where somebody happens to aim. So an annulus instance is inflated until its
+ *  faces reach its true outer radius and `producerAnnulusHit` cuts the surplus
+ *  back off. The geometry over-covers; the arithmetic decides where the edge
+ *  is, and it decides it as a circle. */
+const HIT_SPHERE_INSCRIBED = Math.cos(Math.PI / 8) ** 2;
+
+/** Scratch for the pick filter below. Module scope for the same reason three's
+ *  own raycast keeps its own: a raycast runs on every pointer move. */
+const SCRATCH_HITS: THREE.Intersection[] = [];
+const SCRATCH_INSTANCE = new THREE.Matrix4();
+const SCRATCH_CENTER = new THREE.Vector3();
+const SCRATCH_TOWARDS = new THREE.Vector3();
+const BASE_INSTANCED_RAYCAST = THREE.InstancedMesh.prototype.raycast;
+
 /**
  * Every staged node's INTERACTION surface, once for the whole colony: ONE
  * instanced invisible hit mesh over both staged tiers, and the reticle for the
- * selected one. The visible marks are the point clouds above; nothing here is
- * drawn at all.
+ * selected one. The visible marks are the point clouds and the rings above;
+ * nothing here is drawn at all.
  *
  * Hundreds of one-mesh-per-node targets would be the wrong shape for the
  * raycaster, so a single InstancedMesh answers once and hands back
@@ -510,6 +622,22 @@ function StagedCloud({
  * target is the mark, so it takes exactly its own glow from the Cell canopy
  * below and not one pixel more, and the faintest stop draws the smallest mark
  * precisely because it has the weakest claim.
+ *
+ * ⭐⭐ AND FOR A PRODUCER THE MARK IS THE RING, which is the one place this
+ * layer needs more than a sphere. `InstancedMesh.raycast` answers with a solid
+ * ball per instance, and a ball at the ring's radius would swallow everything
+ * inside the dominant producer's ring. So the instance is scaled to the band's
+ * OUTER edge and one comparison cuts the hole back out of it: a ray closer to
+ * the node than the band's inner edge is dropped before it reaches `intersects`
+ * at all, so the interior falls through to whatever stands there — a sighted
+ * peer, a ghost, a Cell, the producer's own body, or nothing.
+ *
+ * ⚠️ AND THE ANNULUS COMPETES AT ITS OWN DEPTH, not at the front of that ball.
+ * The ring is a billboard standing at the node's own distance; the ball's near
+ * face is up to a couple of world units closer, and left alone it would have
+ * won the distance sort against every mark that happened to lie under the
+ * stroke. The hit is re-stamped onto the plane the ring is actually drawn on,
+ * so two overlapping marks resolve by which one is really in front.
  */
 function PickableStagedNodes({
   targets,
@@ -523,12 +651,19 @@ function PickableStagedNodes({
   const gl = useThree((state) => state.gl);
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const hitUserData = useMemo(() => ({ [NETWORK_PEER_PICK_FLAG]: true }), []);
+  // The BODY, never the ring: a producer has two targets under one selection
+  // id, and a reticle sized from the annulus would be a circle drawn around the
+  // ring instead of around the node. Bodies are planned first, so this would
+  // find the right one anyway; asking for it means a later reorder cannot
+  // quietly change the answer.
   const selected = useMemo(
-    () => targets.find((t) => t.selectionId === selectedId) ?? null,
+    () => targets.find(
+      (t) => t.selectionId === selectedId && t.bodyRadius !== null,
+    ) ?? null,
     [selectedId, targets],
   );
 
-  // A UNIT sphere: each instance is scaled to its own stop's mark below.
+  // A UNIT sphere: each instance is scaled to its own target's extent below.
   const geometry = useMemo(() => new THREE.SphereGeometry(1, 8, 8), []);
   const material = useMemo(() => new THREE.MeshBasicMaterial({ visible: false }), []);
   useEffect(() => () => {
@@ -536,24 +671,134 @@ function PickableStagedNodes({
     material.dispose();
   }, [geometry, material]);
 
-  // Per-instance placement, written once per topology (never per frame).
   const capacity = Math.max(1, targets.length);
-  useEffect(() => {
+  // Where each instance's surface stands, in the mesh's own units — read by the
+  // raycast filter, which only ever has an `instanceId` to go on. Allocated per
+  // capacity and written in place, the same discipline the instanced lanes
+  // elsewhere in this file keep.
+  const hitBounds = useMemo(() => ({
+    inner: new Float32Array(capacity),
+    outer: new Float32Array(capacity),
+  }), [capacity]);
+  const hitBoundsRef = useRef(hitBounds);
+  hitBoundsRef.current = hitBounds;
+  const targetsRef = useRef(targets);
+  targetsRef.current = targets;
+  // The ring knobs the placement below was last resolved against, so a live
+  // retune can be noticed without keeping a leva subscription here.
+  const ringKnobsRef = useRef<[number, number]>([NaN, NaN]);
+  const hasAnnulusRef = useRef(false);
+
+  // Per-instance placement, written once per topology — and again only when a
+  // ring knob moves under it.
+  const applyInstances = () => {
     const mesh = meshRef.current;
     if (!mesh) return;
-    mesh.count = targets.length;
-    targets.forEach((target, index) => {
-      const radius = target.radius;
-      SCRATCH_MATRIX.makeScale(radius, radius, radius);
+    const ringMinRadius = LIVE.peer.ringRadiusMin;
+    const ringShareRadius = LIVE.peer.ringRadiusShare;
+    ringKnobsRef.current = [ringMinRadius, ringShareRadius];
+    const list = targetsRef.current;
+    const bounds = hitBoundsRef.current;
+    let hasAnnulus = false;
+    mesh.count = list.length;
+    list.forEach((target, index) => {
+      const { inner, outer } = stagedPickBounds(target, ringMinRadius, ringShareRadius);
+      bounds.inner[index] = inner;
+      bounds.outer[index] = outer;
+      if (inner > 0) hasAnnulus = true;
+      // A hollow band gets the inflation its faces need; a solid body is sized
+      // exactly at its mark, as it always has been.
+      const scale = inner > 0 ? outer / HIT_SPHERE_INSCRIBED : outer;
+      SCRATCH_MATRIX.makeScale(scale, scale, scale);
       SCRATCH_MATRIX.setPosition(target.pos[0], target.pos[1], target.pos[2]);
       mesh.setMatrixAt(index, SCRATCH_MATRIX);
     });
+    hasAnnulusRef.current = hasAnnulus;
     mesh.instanceMatrix.needsUpdate = true;
-    // An instanced raycast rejects on the bounding sphere first, and the one
-    // three computed for the previous matrices would answer for the wrong
-    // volume — recompute it or the whole tier silently stops being clickable.
+    // An instanced raycast rejects on the bounding sphere first, and three
+    // computes that ONCE and caches it — so the volume left over from the
+    // previous matrices would answer for these. A producer's annulus is several
+    // times the widest sphere this mesh used to hold, which makes getting this
+    // wrong the difference between a clickable colony and a colony where NO
+    // staged node can be picked at all, producers included.
     mesh.computeBoundingSphere();
-  }, [targets, capacity]);
+  };
+
+  useEffect(() => {
+    applyInstances();
+    // `applyInstances` reads the live targets through a ref, so it is stable in
+    // everything this effect is keyed on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targets, capacity, hitBounds]);
+
+  // ⭐ THE MARK AND THE TARGET MOVE TOGETHER, INCLUDING UNDER A LIVE RETUNE.
+  // The ring's radius uniforms are refreshed from these two knobs every frame,
+  // so a drag on either reshapes rings already on screen; a plan captured at
+  // memo time would leave the target behind and re-open, mid-tuning, exactly
+  // the gap between mark and target this whole surface exists to close. Raw
+  // `useFrame` rather than the sim clock — this is pointer behaviour, and a
+  // paused scene is still a scene somebody is tuning.
+  useFrame(() => {
+    if (!hasAnnulusRef.current) return;
+    const [minRadius, shareRadius] = ringKnobsRef.current;
+    if (LIVE.peer.ringRadiusMin === minRadius
+      && LIVE.peer.ringRadiusShare === shareRadius) return;
+    applyInstances();
+  });
+
+  /**
+   * The hit test: three's own instanced raycast, with the ring holes cut out.
+   *
+   * Everything that makes the answer correct — the mesh bounding-sphere reject,
+   * the per-instance test, `instanceId` — is three's, and this only ever
+   * REMOVES hits from it. What it removes is a ray that struck a producer's
+   * annulus inside the hole, which in screen terms is a ray landing within the
+   * ring rather than on it. The perpendicular distance from the pointer ray to
+   * the node is the screen-space radius the ring is billboarded at, so one
+   * comparison answers it at any camera angle with no plane to keep in sync.
+   */
+  const hitRaycast = useMemo(() => function stagedNodesRaycast(
+    this: THREE.InstancedMesh,
+    raycaster: THREE.Raycaster,
+    intersects: THREE.Intersection[],
+  ): void {
+    SCRATCH_HITS.length = 0;
+    BASE_INSTANCED_RAYCAST.call(this, raycaster, SCRATCH_HITS);
+    const list = targetsRef.current;
+    const bounds = hitBoundsRef.current;
+    const { ray } = raycaster;
+    // The mesh's own frame is a rotation in production (the colony counter-
+    // rotates and is never scaled), but a bound written in mesh units has to be
+    // compared against a WORLD distance either way. Resolved lazily, so a
+    // colony with no producers never pays for it.
+    let worldScale = -1;
+    for (const hit of SCRATCH_HITS) {
+      const index = hit.instanceId;
+      if (index === undefined) continue;
+      const target = list[index];
+      if (target === undefined) continue;
+      if (target.ringShare !== null) {
+        if (worldScale < 0) worldScale = this.matrixWorld.getMaxScaleOnAxis();
+        this.getMatrixAt(index, SCRATCH_INSTANCE);
+        SCRATCH_CENTER.setFromMatrixPosition(SCRATCH_INSTANCE)
+          .applyMatrix4(this.matrixWorld);
+        if (!producerAnnulusHit(
+          ray.distanceToPoint(SCRATCH_CENTER),
+          bounds.inner[index] * worldScale,
+          bounds.outer[index] * worldScale,
+        )) continue;
+        // Re-stamped onto the billboard the ring is drawn on — see the note on
+        // this component. `hit.face` / `hit.uv` describe the sphere that stood
+        // in for it and nothing downstream reads them.
+        hit.distance = SCRATCH_TOWARDS.copy(SCRATCH_CENTER)
+          .sub(ray.origin)
+          .dot(ray.direction);
+        ray.at(hit.distance, hit.point);
+      }
+      intersects.push(hit);
+    }
+    SCRATCH_HITS.length = 0;
+  }, []);
 
   const syncCursor = () => {
     const canvas = gl.domElement;
@@ -605,6 +850,7 @@ function PickableStagedNodes({
         args={[geometry, material, capacity]}
         frustumCulled={false}
         userData={hitUserData}
+        raycast={hitRaycast}
         onClick={(e) => {
           const target = targetAt(e.instanceId);
           if (target === undefined) return;
@@ -630,7 +876,7 @@ function PickableStagedNodes({
       />
       {selected ? (
         <group position={selected.pos}>
-          <CkbSelectionReticle size={selected.radius * 2.4} />
+          <CkbSelectionReticle size={(selected.bodyRadius ?? 0) * 2.4} />
         </group>
       ) : null}
     </group>
@@ -1151,10 +1397,6 @@ export default function ColonyNodes({
   // a node it has never reached is still one the network keeps naming. Both are
   // real, dimmer information, and each costs one extra draw rather than a slot.
   const byStop = useMemo(() => partitionByStop(sighted), [sighted]);
-  const pickTargets = useMemo(
-    () => stagedPickTargets(sighted, attested),
-    [sighted, attested],
-  );
   // The ring plan follows PLACEMENT from the topology and every NUMBER from the
   // live view — see `producerRingInstances`.
   const posById = useMemo(() => {
@@ -1165,6 +1407,15 @@ export default function ColonyNodes({
   const ringInstances = useMemo(
     () => producerRingInstances(producers, posById),
     [producers, posById],
+  );
+  // ⭐ THE PICK PLAN IS DOWNSTREAM OF THE RING PLAN, and that ordering is the
+  // whole guarantee: a producer's ring stroke is clickable because the very
+  // list that draws it is the list the target is cut from. It re-plans once per
+  // attributed block, which is when the ring plan re-plans anyway — a share
+  // moves, so a radius moves, so a target moves with it.
+  const pickTargets = useMemo(
+    () => stagedPickTargets(sighted, attested, ringInstances),
+    [sighted, attested, ringInstances],
   );
   const shockwaveUniforms = useMemo(() => makeShockwaveUniforms(), []);
   const shockwaveSlotRef = useRef(0);

@@ -57,6 +57,78 @@ export const PRODUCER_RING_MIN_RADIUS = 1.4;
  *  the 56% producer look like 75% of the one below it. */
 export const PRODUCER_RING_SHARE_RADIUS = 2.6;
 
+/**
+ * How far out the ring stands for a producer holding `share` of the window.
+ *
+ * ⭐⭐ THE ONE SOURCE FOR HOW BIG A RING IS, and it exists because the mark and
+ * the target were once two different numbers. The first cut of this material
+ * drew the ring here and let the colony size a producer's PICK TARGET off the
+ * point sprite underneath it — a hit sphere of 0.375 world units under a ring
+ * drawn at 1.4 to 3.0. That made the node carrying the largest mark in the
+ * colony the smallest target in it, four to eight times over, and a full-canvas
+ * 13-pixel hover sweep of the running app found forty peers and not one
+ * producer. Nothing in a unit suite could see it: no test knows how big
+ * anything is on screen. So the radius is a function now, and everything that
+ * needs to know where the stroke IS asks it.
+ *
+ * The vertex shader evaluates this same expression from `uRingMinRadius` and
+ * `uRingShareRadius` — the two uniforms the ring's owner refreshes every frame
+ * from `LIVE.peer.ringRadiusMin` / `ringRadiusShare`, which is exactly what
+ * this function's callers pass in. A retune therefore moves the mark and the
+ * target on the same frame, and there is no pair of constants left that could
+ * drift apart.
+ */
+export function producerRingRadius(
+  share: number,
+  minRadius: number = PRODUCER_RING_MIN_RADIUS,
+  shareRadius: number = PRODUCER_RING_SHARE_RADIUS,
+): number {
+  return minRadius + Math.min(Math.max(share, 0), 1) * shareRadius;
+}
+
+/**
+ * Half-width of the CLICKABLE band around the ring stroke, in world units.
+ *
+ * ⚠️ THE DRAWN STROKE IS FAR TOO THIN TO CLICK, so the tolerance cannot be the
+ * stroke's own width. `PRODUCER_RING_WIDTH` is a Gaussian sigma of 0.22 world
+ * units — a visible line about two and a half CSS pixels across at the default
+ * camera, where a world unit measures roughly 5.7 px (ring radii of 8 to 17 px
+ * for world radii of 1.4 to 3.0). A band of ±0.8 world units is 1.6 across, or
+ * about 9 CSS px: the ordinary tolerance a one-pixel line is given in any
+ * interface, and the middle of the 8-12 px this was aimed at.
+ *
+ * ⭐ IT IS A TOLERANCE ON THE STROKE AND NEVER THE DISC. The interior of a
+ * producer's ring keeps belonging to whatever stands there — a sighted peer, a
+ * ghost, a Cell, or nothing at all. A filled disc was the tempting shortcut and
+ * it would have let the dominant producer's ring swallow every mark inside a
+ * 17-pixel radius, which on this colony is a great many of them.
+ *
+ * ⚠️ AND IT MAY NEVER REACH THE BODY. The producer's own point sprite keeps its
+ * own small target inside the hole, so a user aiming at the node still hits the
+ * node: at the smallest ring this band leaves the hole 1.4 − 0.8 = 0.6 world
+ * units of radius against the attested sprite's 0.375, and the colony's tests
+ * hold that clearance rather than trusting the two numbers to stay in step.
+ */
+export const PRODUCER_RING_HIT_BAND = 0.8;
+
+/**
+ * Does a ray passing `perpendicular` world units off a producer's node stand on
+ * its ring STROKE, rather than inside the hole the ring encloses?
+ *
+ * The whole geometry of the annulus, in one comparison, because the annulus is
+ * a screen-space band and this is what a screen-space band is in world terms.
+ * The ring is billboarded, so the set of world points that project onto the
+ * drawn stroke is the set standing a ring-radius away from the node MEASURED
+ * ACROSS THE VIEW — which is exactly the perpendicular distance from the
+ * pointer ray to that node, at any camera angle and with no plane to keep in
+ * sync. `inner` is where the hole ends and `outer` where the tolerance does.
+ */
+export function producerAnnulusHit(
+  perpendicular: number, inner: number, outer: number,
+): boolean {
+  return perpendicular >= inner && perpendicular <= outer;
+}
+
 /** How much room past the ring the quad carries, as a multiple of the radius.
  *
  *  It is the DISCHARGE's runway: the fired band leaves the ring and rides out
