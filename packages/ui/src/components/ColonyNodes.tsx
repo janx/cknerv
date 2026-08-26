@@ -198,8 +198,8 @@ export function partitionByStop(
  *  fresh arrays; a layer that keys its geometry on one of them pays a GPU
  *  delete/alloc/upload for something that did not move. What "did not move"
  *  MEANS differs per layer, so each caller supplies its own test — the ghosts
- *  by object identity, the staged clouds by id, the intake streams by their two
- *  ends. Exported for those callers and for out-of-band testing. */
+ *  by object identity, the staged clouds by id. Exported for those callers and
+ *  for out-of-band testing. */
 export function useStableList<T>(next: T[], matches: (a: T, b: T) => boolean): T[] {
   const held = useRef(next);
   const prev = held.current;

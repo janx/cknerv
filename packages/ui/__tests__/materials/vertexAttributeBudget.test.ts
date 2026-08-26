@@ -20,7 +20,6 @@ import {
 } from '../../src/materials/populationFieldMaterial';
 import { makeHaloMaterial } from '../../src/components/GlowNode';
 import { makeColonyEdgeMaterial } from '../../src/components/ColonyEdges';
-import { makeColonyIntakeMaterial } from '../../src/materials/colonyIntakeMotes';
 import {
   makeCanonicalRewriteEchoMaterial,
 } from '../../src/components/CanonicalRewriteEcho';
@@ -295,13 +294,6 @@ const ROWS: readonly BudgetRow[] = [
     material: makeColonyEdgeMaterial,
   },
   {
-    name: 'colonyIntakeMaterial',
-    sources: ['src/materials/colonyIntakeMotes.ts'],
-    material: makeColonyIntakeMaterial,
-    // A plain lineSegments over the miners' own links — no instancing, so it
-    // pays only its own five lanes plus what three injects into every shader.
-  },
-  {
     name: 'canonicalRewriteEchoMaterial',
     sources: ['src/components/CanonicalRewriteEcho.tsx'],
     material: makeCanonicalRewriteEchoMaterial,
@@ -452,19 +444,15 @@ describe('vertex attribute budget', () => {
     expect(hybridAttributes.get('aStageAt')).toBe('vec2');
   });
 
-  it('keeps the mining channel off the mesh program it draws beside', () => {
-    // ⚠️ THE INTAKE IS ITS OWN PROGRAM, AND THE BUDGET IS HALF THE REASON. The
-    // obvious shape was an intake term folded into `colonyEdgeMaterial` — one
-    // draw instead of two — and it would have put two more lanes on the busiest
-    // vertex program in this scene AND made every producer-set change rewrite a
-    // lane across every edge in the colony, most of them zero. Drawn on its own
-    // geometry it touches only the miners' own links, and the shared program is
-    // exactly where it was. Both stated as exact numbers so a sixth lane on
-    // either is a deliberate edit rather than a drift the browser console alone
-    // would report.
-    const intake = measured.find(({ name }) => name === 'colonyIntakeMaterial');
-    expect(intake).toBeDefined();
-    expect([intake?.custom, intake?.injected, intake?.total]).toEqual([5, 3, 8]);
+  it('keeps the colony edge program exactly where it was', () => {
+    // ⚠️ THE MINING CHANNEL IS ITS OWN PROGRAM, AND THE BUDGET IS HALF THE
+    // REASON. The obvious shape was a mining term folded into
+    // `colonyEdgeMaterial` — one draw instead of two — and it would have put
+    // more lanes on the busiest vertex program in this scene AND made every
+    // producer-set change rewrite a lane across every edge in the colony, most
+    // of them zero. Stated as an exact number so a seventh lane here is a
+    // deliberate edit rather than a drift the browser console alone would
+    // report.
     const edges = measured.find(({ name }) => name === 'colonyEdgeMaterial');
     expect(edges).toBeDefined();
     expect([edges?.custom, edges?.injected, edges?.total]).toEqual([6, 3, 9]);

@@ -1994,7 +1994,6 @@ export default function App({
             flashDirtyRef={flashDirtyRef}
             flashDirtyIdsRef={flashDirtyIdsRef}
             localVersion={localNode?.version ?? ''}
-            producers={producerView?.staging}
             cellDetailViewFocusRef={cellDetailViewFocusRef}
             overlay={colonyOverlay}
           />
