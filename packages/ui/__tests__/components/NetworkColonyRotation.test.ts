@@ -60,11 +60,15 @@ describe('NetworkColony counter-rotation frame contract', () => {
     expect(publish).toBeGreaterThan(rawFrame);
   });
 
-  it('rotates edges, nodes and the inspection overlay; leaves courier + delivery in world space', () => {
+  it('rotates edges, intake, nodes and the inspection overlay; leaves courier + delivery in world space', () => {
     const network = source('NetworkColony.tsx');
 
     const rotatingOpen = network.indexOf('<group ref={rotationGroupRef}>');
     const edges = network.indexOf('<ColonyEdges');
+    // The mining channel rides real links of the colony, so it inherits the
+    // turn from the group exactly as the links do — no colonyFrame bridging,
+    // and nothing for a world-frame basis to have to undo.
+    const intake = network.indexOf('<ColonyIntakeMotes');
     const nodes = network.indexOf('<ColonyNodes');
     const overlay = network.indexOf('{overlay}');
     const rotatingClose = network.indexOf('</group>', rotatingOpen);
@@ -74,9 +78,11 @@ describe('NetworkColony counter-rotation frame contract', () => {
     expect(rotatingOpen).toBeGreaterThan(-1);
     // Inside the rotating group…
     expect(edges).toBeGreaterThan(rotatingOpen);
+    expect(intake).toBeGreaterThan(rotatingOpen);
     expect(nodes).toBeGreaterThan(rotatingOpen);
     expect(overlay).toBeGreaterThan(rotatingOpen);
     expect(edges).toBeLessThan(rotatingClose);
+    expect(intake).toBeLessThan(rotatingClose);
     expect(nodes).toBeLessThan(rotatingClose);
     expect(overlay).toBeLessThan(rotatingClose);
     // …and outside it.

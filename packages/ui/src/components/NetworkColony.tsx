@@ -49,8 +49,10 @@ import { LIVE } from '../tweaks/liveTweaks';
 import { colonyFrame } from '../tweaks/colonyFrame';
 import type { NetworkTopology, Vec3 } from '../types';
 import type { ColonyFlood } from '../derives/networkFlood.derive';
+import type { ProducerStanding } from '../derives/blockProducers.derive';
 import ColonyNodes from './ColonyNodes';
 import ColonyEdges from './ColonyEdges';
+import ColonyIntakeMotes from './ColonyIntakeMotes';
 import ColonyCourierLayer from './ColonyCourierLayer';
 import BlockDeliveryLayer, { type BlockDeliveryPulse } from './BlockDeliveryLayer';
 import { consensusBlockColor } from '../derives/consensusFlow.derive';
@@ -80,6 +82,13 @@ interface NetworkColonyProps {
   flashDirtyIdsRef?: CellFlashDirtyIdsRef;
   /** Local node version — drives measured version-mismatch coloring (violet). */
   localVersion: string;
+  /** The chain's recent miners, LIVE. Passed straight through to the intake
+   *  layer, which draws each one's streams at a rate its share of the window
+   *  sets: the topology is keyed on the producer key set alone (a per-block key
+   *  would rebuild the colony's geometry once a block and truncate every
+   *  in-flight wave), so the standings hanging off the staged nodes are stale
+   *  between key-set changes and this is the live reading. */
+  producers?: readonly ProducerStanding[] | null;
   /** Shared camera-distance focus. Optional keeps standalone scenes unchanged. */
   cellDetailViewFocusRef?: { readonly current: number };
   /** Optional overlay rendered inside the colony's ROTATING group, so
@@ -104,6 +113,7 @@ function NetworkColony({
   flashDirtyRef,
   flashDirtyIdsRef,
   localVersion,
+  producers,
   cellDetailViewFocusRef,
   overlay,
   rotationEnabled = true,
@@ -234,6 +244,16 @@ function NetworkColony({
       <group ref={rotationGroupRef}>
         <ColonyEdges
           topology={topology}
+          cf={cf}
+          blockPulseAtMs={blockPulseAtMs}
+          backfillActive={backfillActive}
+          contextEnergyRef={linkContextEnergyRef}
+        />
+        {/* Drawn between the links and the marks, because that is what it is:
+            a mote riding a link, swallowed by the node at its end. */}
+        <ColonyIntakeMotes
+          topology={topology}
+          producers={producers}
           cf={cf}
           blockPulseAtMs={blockPulseAtMs}
           backfillActive={backfillActive}

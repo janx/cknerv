@@ -18,6 +18,20 @@ import {
   SHOCKWAVE_COLOR_CEIL,
   SHOCKWAVE_ALPHA_CEIL,
 } from '../materials/shockwaveMaterial';
+// …and the five `intake*` knobs take theirs from the intake material, on the
+// same rule: the material seeds its own uniforms from these constants and
+// ColonyIntakeMotes overwrites them from LIVE.peer.* each frame, so there is
+// ONE authority. (`COLONY_INTAKE_BIRTH` and `COLONY_INTAKE_RATE_FLOOR` are
+// deliberately NOT knobs: one says a mote is born softly and dies by arriving,
+// the other that a miner holding almost nothing is still mining. Both are
+// statements this layer makes rather than tastes to settle against pixels.)
+import {
+  COLONY_INTAKE_AMP,
+  COLONY_INTAKE_EASE,
+  COLONY_INTAKE_SPEED,
+  COLONY_INTAKE_SPENT_S,
+  COLONY_INTAKE_WIDTH,
+} from '../materials/colonyIntakeMotes';
 // The Cell-field contact front is a scaled-down version of the peer-plane
 // brightness wave: same shape, same timing, its reach divided by
 // CONTACT_WAVE_SCALE — so both planes still read as sections of one event
@@ -138,6 +152,17 @@ export const peerSchema = {
   flameBloom: { value: 0.7, min: 0.1, max: 2, step: 0.05, label: 'flame bloom' },
   glintBloomOpacity: { value: 0.55, min: 0, max: 1, step: 0.05, label: 'glint bloom op' },
   glintPlumeOpacity: { value: 0.3, min: 0, max: 1, step: 0.05, label: 'glint plume op' },
+  // The intake motes — the mining channel. A mote drifts along each of a
+  // miner's own links and is swallowed at the node; `intakeSpeed` is a WORLD
+  // speed (so a long link takes longer rather than travelling faster) and
+  // `intakeEase` above 1 is what makes the mote accelerate INTO the node
+  // instead of coasting to rest like a courier. `intakeSpentS` is how long the
+  // winner's stream stays dark after the block leaves it.
+  intakeAmp: { value: COLONY_INTAKE_AMP, min: 0, max: 2, step: 0.05, label: 'intake amp' },
+  intakeSpeed: { value: COLONY_INTAKE_SPEED, min: 0.2, max: 20, step: 0.1, label: 'intake speed w/s' },
+  intakeWidth: { value: COLONY_INTAKE_WIDTH, min: 0.05, max: 4, step: 0.05, label: 'intake mote width' },
+  intakeEase: { value: COLONY_INTAKE_EASE, min: 1, max: 4, step: 0.1, label: 'intake ease-in' },
+  intakeSpentS: { value: COLONY_INTAKE_SPENT_S, min: 0, max: 4, step: 0.05, label: 'intake spent s' },
 } satisfies FolderSchema;
 
 export const cellSchema = {

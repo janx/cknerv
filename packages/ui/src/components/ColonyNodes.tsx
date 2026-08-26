@@ -187,12 +187,13 @@ export function partitionByStop(
   return groups;
 }
 
-/** Keep handing back the list a point buffer was already built from, for as long
- *  as `matches` holds pairwise. Every topology rebuild re-splits the node list
- *  into fresh arrays; a cloud that keys its geometry on one of them pays a GPU
- *  delete/alloc/upload for points that did not move. What "did not move" MEANS
- *  differs per tier, so each caller supplies its own test. Exported for
- *  out-of-band testing — nothing outside this file renders a colony cloud. */
+/** Keep handing back the list a buffer was already built from, for as long as
+ *  `matches` holds pairwise. Every topology rebuild re-splits the node list into
+ *  fresh arrays; a layer that keys its geometry on one of them pays a GPU
+ *  delete/alloc/upload for something that did not move. What "did not move"
+ *  MEANS differs per layer, so each caller supplies its own test — the ghosts
+ *  by object identity, the staged clouds by id, the intake streams by their two
+ *  ends. Exported for those callers and for out-of-band testing. */
 export function useStableList<T>(next: T[], matches: (a: T, b: T) => boolean): T[] {
   const held = useRef(next);
   const prev = held.current;

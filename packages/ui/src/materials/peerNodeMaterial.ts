@@ -160,8 +160,9 @@ export const PEER_CLOUD_GHOST_TONE = {
  *
  * It rests UNDER the additive clip (no saturated plateau at all, like the haze)
  * on purpose: what a viewer gets is a wide, soft, dim pool of light, which is
- * the honest look of a presence nobody can name. `event` clears the haze's 0.9
- * for the reason the stop below spells out: a stop that answers a block more
+ * the honest look of a presence nobody can name — and the thing the intake
+ * motes converge into and are swallowed by. `event` clears the haze's 0.9 for
+ * the reason the stop below spells out: a stop that answers a block more
  * quietly than the fiction underneath it gets swallowed for the length of every
  * wave.
  */
