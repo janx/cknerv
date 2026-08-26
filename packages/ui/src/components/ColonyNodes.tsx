@@ -6,12 +6,14 @@
 //     core+halo radial as the measured halo, drawn small and — this is the
 //     part that has to hold — under the additive clip, so it stays haze
 //     instead of a white speck the eye reads as a node. Non-selectable.
-//   • attested nodes    — ONE more <points> draw at a stop directly above the
-//     haze: a node the CHAIN proves exists and cannot name. It is the exact
-//     inverse of the faintest roster rung — certain existence, zero identity —
-//     so it rests near the haze on this axis on purpose and asserts its
-//     presence on the OTHER one (see the rings below). Clickable, because the
-//     chain has real things to say about it.
+//   • attested nodes    — ONE more <points> draw for a node the CHAIN proves
+//     exists and cannot name. It is the exact inverse of the faintest roster
+//     rung — certain existence, zero identity — so its BRIGHTNESS rests near
+//     the haze on purpose, while its DIAMETER is the largest of any anonymous
+//     mark here. Those two fields are answering different questions: light is
+//     the identification claim (none), size is the pick target, and the chain
+//     has a card's worth to say about this node. Clickable, and its hit sphere
+//     IS that mark, like every other staged node's.
 //   • roster nodes      — THREE more <points> draws off the same factory, one
 //     per rung of the crawler's evidence gradient (it reached the node / it
 //     only remembers reaching it / the network names it and nobody has ever
@@ -32,23 +34,13 @@
 // galaxy's labeled CkbNodeAnchor (App feeds inferredTopology its world pos), so
 // that single cyan anchor is the one "you" and the measured belts converge on it.
 //
-// ⭐ AND ONE SECOND AXIS, which is the only thing in this file that is not a
-// stop on the confidence gradient: the PRODUCER RINGS. The gradient answers "how
-// do we know this node exists" and spends both brightness and footprint doing
-// it; mining answers "what does this node do", so it is drawn in the one channel
-// left — motion. A ring whose radius is that producer's share of the recent
-// window charges between blocks and discharges on the block it wins, and the
-// candidates a build-string join narrows to carry a 1/N arc of that same ring
-// rather than an edge, because an edge here means "talks to" and a candidate tie
-// means "may be the same machine". See `producerRingMaterial`.
-//
 // A new block stamps a radial brightness shockwave at the colony flood's entry
 // node. It brightens these existing topology nodes while ColonyEdges carries the
 // graph-accurate surge and ColonyCourierLayer supplies the moving glint. The Cell
 // field keeps only delivery/commit feedback; the broad wave belongs here.
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { useFrame, useThree } from '@react-three/fiber';
+import { useThree } from '@react-three/fiber';
 import {
   cellCanvasCursor,
   NETWORK_PEER_PICK_FLAG,
@@ -67,7 +59,6 @@ import {
 import type { RosterNodeState } from '@cknerv/types';
 import type { NetworkNode, NetworkTopology, NodeKind, Vec3 } from '../types';
 import type { ColonyFlood } from '../derives/networkFlood.derive';
-import type { ProducerStanding } from '../derives/blockProducers.derive';
 import { consensusBlockColor } from '../derives/consensusFlow.derive';
 import {
   makeShockwaveUniforms,
@@ -85,17 +76,7 @@ import {
   PEER_CLOUD_SIGHTED_TONE,
   type PeerCloudTone,
 } from '../materials/peerNodeMaterial';
-import {
-  makeProducerRingMaterial,
-  producerAnnulusHit,
-  producerRingRadius,
-  PRODUCER_RING_FIRE_S,
-  PRODUCER_RING_HIT_BAND,
-  PRODUCER_RING_MIN_RADIUS,
-  PRODUCER_RING_SHARE_RADIUS,
-  PRODUCER_RING_UNFIRED,
-} from '../materials/producerRingMaterial';
-import { attestedNodeId, ATTESTED_ID_PREFIX } from '../derives/networkTopology.derive';
+import { ATTESTED_ID_PREFIX } from '../derives/networkTopology.derive';
 import { producerOriginStats } from '../derives/producerOriginStats';
 
 // Measured core: bright, saturated, larger than the ghost haze.
@@ -291,81 +272,35 @@ export function partitionByKind(
   return groups;
 }
 
-/** An attested node's BODY target — its point sprite, exactly as a sighted
- *  stop's hit sphere is its own.
+/** An attested node's hit sphere — its point sprite, exactly as a sighted
+ *  stop's is its own. One rule, one exception nowhere.
  *
- *  ⭐ IT IS ONE OF THIS NODE'S TWO TARGETS, not the whole of it, and the
- *  difference was found on a real GPU rather than argued from the source. This
- *  radius alone made the producer the smallest target in the colony — 0.375
- *  world units, under the faintest roster rung's 0.425 — while it wore the
- *  largest mark in it, a ring drawn from 1.4 out to 3.0. A 13-pixel hover sweep
- *  of the whole canvas found forty peers and zero producers. The file's own
- *  rule ("a staged node's invisible hit sphere IS its mark") had been applied
- *  to the sprite, and for a producer the mark is the RING — so the ring's
- *  stroke is a target too (`stagedPickBounds`).
- *
- *  ⚠️ THE BODY KEEPS ITS OWN TARGET ANYWAY. Annulus OR body, never annulus
- *  instead of body: a user who aims at the node itself must still hit the node,
- *  and the hole the ring encloses is where that happens. */
+ *  ⭐ THE FILE'S RULE WAS ALWAYS RIGHT; IT WAS THE MARK THAT WAS WRONG. This
+ *  radius once made the producer the smallest target in the colony — 0.375
+ *  world units, under the faintest roster rung's 0.425 — and a full-canvas
+ *  13-pixel hover sweep of the running app found forty peers and zero miners.
+ *  The answer taken then was a second target cut from the ring drawn around it;
+ *  the ring is gone and the answer now is the one this file already had. The
+ *  mark itself is 1.8 world units, so the target is 0.9 and there is exactly
+ *  one of it — no annulus, no hole, nothing to keep in step with a second
+ *  number. See `PEER_CLOUD_ATTESTED_TONE` for why a size step here is not a
+ *  brightness step, and cannot be read as one. */
 export const ATTESTED_HIT_RADIUS = peerCloudHitRadius(PEER_CLOUD_ATTESTED_TONE);
 
 /** One clickable staged node: where it stands, how big its mark is, and what
- *  selecting it says. Three targets, one shape — see `stagedPickTargets`. */
+ *  selecting it says. Two tiers, one shape — see `stagedPickTargets`. */
 export interface StagedPickTarget {
   /** The node's graph id. It is also the hover word this layer publishes, so
-   *  it has to be the id every other layer would recognise. A producer's ring
-   *  carries the SAME id as its body: they are two ways to press one node, and
-   *  the hover word may not depend on which one the pointer found. */
+   *  it has to be the id every other layer would recognise. */
   readonly id: string;
   /** What `onSelect` is handed. The tiers speak different dialects and the hit
    *  mesh must not have to know which. */
   readonly selectionId: string;
   readonly pos: Vec3;
-  /** A SOLID target's world radius — its own mark — or `null` when this target
-   *  is the hollow ring annulus below. */
-  readonly bodyRadius: number | null;
-  /** The producer share the RING ANNULUS's radius follows, or `null` when this
-   *  target is a solid body. Exactly one of the two is ever non-null.
-   *
-   *  ⭐ THE SHARE AND NOT A RADIUS, because the radius is the ring material's
-   *  to compute: it is resolved through `producerRingRadius` against the same
-   *  two live knobs the vertex shader sizes the quad from, so a retune moves
-   *  the stroke and its tolerance together. Storing a radius here would be the
-   *  second constant this whole change exists to remove. */
-  readonly ringShare: number | null;
-}
-
-/** The world radii one pick target occupies: a solid ball out to `outer` when
- *  `inner` is zero, and the hollow band between the two otherwise. */
-export interface StagedPickBounds {
-  readonly inner: number;
-  readonly outer: number;
-}
-
-/**
- * Where one target's surface stands, resolved against the ring knobs in force.
- *
- * A body is a ball from the centre out to its own mark. A producer's ring is a
- * BAND: `PRODUCER_RING_HIT_BAND` either side of wherever the stroke is being
- * drawn this frame, which is `producerRingRadius` of its share and nothing
- * else. The hole inside stays empty on purpose — the ring's interior belongs to
- * whatever stands there, and a producer's own body target is one of the things
- * that stands there.
- *
- * Pure, and exported to be tested directly: an r3f pick surface cannot be
- * asked in jsdom what it is clickable at, so this is where that coverage lives.
- */
-export function stagedPickBounds(
-  target: StagedPickTarget,
-  ringMinRadius: number = PRODUCER_RING_MIN_RADIUS,
-  ringShareRadius: number = PRODUCER_RING_SHARE_RADIUS,
-): StagedPickBounds {
-  if (target.ringShare === null) return { inner: 0, outer: target.bodyRadius ?? 0 };
-  const radius = producerRingRadius(target.ringShare, ringMinRadius, ringShareRadius);
-  return {
-    inner: Math.max(0, radius - PRODUCER_RING_HIT_BAND),
-    outer: radius + PRODUCER_RING_HIT_BAND,
-  };
+  /** The target's world radius, which is this node's own mark and nothing
+   *  else. One number, resolved from the tone the cloud is drawn with — so a
+   *  retune of a stop moves the mark and the target on the same line. */
+  readonly bodyRadius: number;
 }
 
 /** Every staged node the colony lets you click, in mount order.
@@ -376,33 +311,22 @@ export function stagedPickBounds(
  *  keep a second copy of the hover-ownership guards. It also fixes a hole the
  *  per-tier arrangement would have left: the sighted mesh only mounts when a
  *  crawler has spoken, and ckbadger is OPTIONAL — a cknerv with no crawler at
- *  all still has producers, and they would have been unclickable.
+ *  all still has miners, and they would have been unclickable.
  *
- *  Sighted bodies first, then attested bodies, then the ring annuli, so
- *  instance indices stay where they were for a colony that has no producers —
- *  and so a `find` by selection id reaches a producer's BODY before its ring,
- *  which is what keeps the selection reticle the size of the node rather than
- *  the size of the ring.
+ *  Sighted bodies first, then attested, so instance indices stay where they
+ *  were for a colony that has no miners in its window.
  *
- *  ⭐⭐ THE ANNULI ARE BUILT FROM THE RING PLAN ITSELF, which is the whole
- *  answer to "how do the mark and the target stay one thing". They take the
- *  ring's own `pos` and the ring's own `share`, so an instance nobody draws has
- *  no target, a producer the colony is standing no node for has neither, and
- *  the two cannot end up at different places or different sizes.
- *
- *  ⚠️ A CANDIDATE ARC IS NOT A PRODUCER TARGET, and `fires` is the field that
- *  says so. An arc stands on a CANDIDATE PEER and means "may be the same
- *  machine"; clicking that peer must open its own PEER / SIGHTED card, which
- *  carries the `MINER?` stamp and its denominator, and must never open the
- *  MINER card — a set of one is refused outright precisely so no arrangement of
- *  this scene reads as an identification. Note that an arc carries the
- *  PRODUCER's key, so filtering on `producerKey` would have made every
- *  candidate a producer target; `fires` is the one field that separates a
- *  producer's own ring from a slice of it standing on somebody else. */
+ *  ⭐ EVERY TARGET IS ONE BALL AT ONE MARK, and keeping it that way is worth
+ *  more than it looks. The tier briefly carried a second, hollow target cut
+ *  from a ring drawn around a producer — mark and target were two numbers, and
+ *  the arithmetic that had to hold between them (a band that never reached the
+ *  body inside it, a bounding volume that had to be recomputed because the
+ *  widest instance was several times what this mesh used to hold) was all of
+ *  it. The ring is gone; a miner's mark is its own sprite, sized so it can be
+ *  pressed, and there is nothing left for a second number to drift against. */
 export function stagedPickTargets(
   sighted: readonly NetworkNode[],
   attested: readonly NetworkNode[],
-  rings: readonly ProducerRingInstance[],
 ): StagedPickTarget[] {
   const out: StagedPickTarget[] = [];
   for (const node of sighted) {
@@ -411,7 +335,6 @@ export function stagedPickTargets(
       selectionId: `${SIGHTED_SELECTION_PREFIX}${node.id}`,
       pos: node.pos,
       bodyRadius: sightedHitRadius(node),
-      ringShare: null,
     });
   }
   for (const node of attested) {
@@ -425,17 +348,6 @@ export function stagedPickTargets(
       selectionId: `${MINER_SELECTION_PREFIX}${key}`,
       pos: node.pos,
       bodyRadius: ATTESTED_HIT_RADIUS,
-      ringShare: null,
-    });
-  }
-  for (const ring of rings) {
-    if (!ring.fires) continue;
-    out.push({
-      id: attestedNodeId(ring.producerKey),
-      selectionId: `${MINER_SELECTION_PREFIX}${ring.producerKey}`,
-      pos: ring.pos,
-      bodyRadius: null,
-      ringShare: ring.share,
     });
   }
   return out;
@@ -577,32 +489,11 @@ function StagedCloud({
   return <points geometry={geom} material={mat} frustumCulled={false} raycast={() => null} />;
 }
 
-/** How much of its own radius the hit mesh's 8×8 unit sphere actually covers.
- *
- *  The geometry is a polyhedron whose VERTICES sit on the sphere, so its faces
- *  dip inside it — deepest in the middle of a face, by a conservative
- *  `cos(π/8)²` of the radius. A solid body has always paid that quietly and it
- *  costs a target nobody measures a few percent. A BAND cannot pay it: a
- *  nine-pixel ring that loses three of them in eight places is thin exactly
- *  where somebody happens to aim. So an annulus instance is inflated until its
- *  faces reach its true outer radius and `producerAnnulusHit` cuts the surplus
- *  back off. The geometry over-covers; the arithmetic decides where the edge
- *  is, and it decides it as a circle. */
-const HIT_SPHERE_INSCRIBED = Math.cos(Math.PI / 8) ** 2;
-
-/** Scratch for the pick filter below. Module scope for the same reason three's
- *  own raycast keeps its own: a raycast runs on every pointer move. */
-const SCRATCH_HITS: THREE.Intersection[] = [];
-const SCRATCH_INSTANCE = new THREE.Matrix4();
-const SCRATCH_CENTER = new THREE.Vector3();
-const SCRATCH_TOWARDS = new THREE.Vector3();
-const BASE_INSTANCED_RAYCAST = THREE.InstancedMesh.prototype.raycast;
-
 /**
  * Every staged node's INTERACTION surface, once for the whole colony: ONE
  * instanced invisible hit mesh over both staged tiers, and the reticle for the
- * selected one. The visible marks are the point clouds and the rings above;
- * nothing here is drawn at all.
+ * selected one. The visible marks are the point clouds above; nothing here is
+ * drawn at all.
  *
  * Hundreds of one-mesh-per-node targets would be the wrong shape for the
  * raycaster, so a single InstancedMesh answers once and hands back
@@ -624,21 +515,13 @@ const BASE_INSTANCED_RAYCAST = THREE.InstancedMesh.prototype.raycast;
  * below and not one pixel more, and the faintest stop draws the smallest mark
  * precisely because it has the weakest claim.
  *
- * ⭐⭐ AND FOR A PRODUCER THE MARK IS THE RING, which is the one place this
- * layer needs more than a sphere. `InstancedMesh.raycast` answers with a solid
- * ball per instance, and a ball at the ring's radius would swallow everything
- * inside the dominant producer's ring. So the instance is scaled to the band's
- * OUTER edge and one comparison cuts the hole back out of it: a ray closer to
- * the node than the band's inner edge is dropped before it reaches `intersects`
- * at all, so the interior falls through to whatever stands there — a sighted
- * peer, a ghost, a Cell, the producer's own body, or nothing.
- *
- * ⚠️ AND THE ANNULUS COMPETES AT ITS OWN DEPTH, not at the front of that ball.
- * The ring is a billboard standing at the node's own distance; the ball's near
- * face is up to a couple of world units closer, and left alone it would have
- * won the distance sort against every mark that happened to lie under the
- * stroke. The hit is re-stamped onto the plane the ring is actually drawn on,
- * so two overlapping marks resolve by which one is really in front.
+ * ⭐ ONE MARK, ONE BALL, THREE'S OWN RAYCAST. This surface briefly carried a
+ * second target shape — a hollow band cut from the ring a producer used to
+ * wear — with a raycast filter to cut its hole back out, a face-inscription
+ * correction so the band did not go thin where somebody aimed, and a re-stamp
+ * of the hit onto the billboard plane the ring was drawn on. All three existed
+ * because the mark and the target were two different numbers. They are one
+ * number again, so none of it is here.
  */
 function PickableStagedNodes({
   targets,
@@ -652,19 +535,12 @@ function PickableStagedNodes({
   const gl = useThree((state) => state.gl);
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const hitUserData = useMemo(() => ({ [NETWORK_PEER_PICK_FLAG]: true }), []);
-  // The BODY, never the ring: a producer has two targets under one selection
-  // id, and a reticle sized from the annulus would be a circle drawn around the
-  // ring instead of around the node. Bodies are planned first, so this would
-  // find the right one anyway; asking for it means a later reorder cannot
-  // quietly change the answer.
   const selected = useMemo(
-    () => targets.find(
-      (t) => t.selectionId === selectedId && t.bodyRadius !== null,
-    ) ?? null,
+    () => targets.find((t) => t.selectionId === selectedId) ?? null,
     [selectedId, targets],
   );
 
-  // A UNIT sphere: each instance is scaled to its own target's extent below.
+  // A UNIT sphere: each instance is scaled to its own target's mark below.
   const geometry = useMemo(() => new THREE.SphereGeometry(1, 8, 8), []);
   const material = useMemo(() => new THREE.MeshBasicMaterial({ visible: false }), []);
   useEffect(() => () => {
@@ -673,133 +549,25 @@ function PickableStagedNodes({
   }, [geometry, material]);
 
   const capacity = Math.max(1, targets.length);
-  // Where each instance's surface stands, in the mesh's own units — read by the
-  // raycast filter, which only ever has an `instanceId` to go on. Allocated per
-  // capacity and written in place, the same discipline the instanced lanes
-  // elsewhere in this file keep.
-  const hitBounds = useMemo(() => ({
-    inner: new Float32Array(capacity),
-    outer: new Float32Array(capacity),
-  }), [capacity]);
-  const hitBoundsRef = useRef(hitBounds);
-  hitBoundsRef.current = hitBounds;
-  const targetsRef = useRef(targets);
-  targetsRef.current = targets;
-  // The ring knobs the placement below was last resolved against, so a live
-  // retune can be noticed without keeping a leva subscription here.
-  const ringKnobsRef = useRef<[number, number]>([NaN, NaN]);
-  const hasAnnulusRef = useRef(false);
 
-  // Per-instance placement, written once per topology — and again only when a
-  // ring knob moves under it.
-  const applyInstances = () => {
+  // Per-instance placement, written once per target list.
+  useEffect(() => {
     const mesh = meshRef.current;
     if (!mesh) return;
-    const ringMinRadius = LIVE.peer.ringRadiusMin;
-    const ringShareRadius = LIVE.peer.ringRadiusShare;
-    ringKnobsRef.current = [ringMinRadius, ringShareRadius];
-    const list = targetsRef.current;
-    const bounds = hitBoundsRef.current;
-    let hasAnnulus = false;
-    mesh.count = list.length;
-    list.forEach((target, index) => {
-      const { inner, outer } = stagedPickBounds(target, ringMinRadius, ringShareRadius);
-      bounds.inner[index] = inner;
-      bounds.outer[index] = outer;
-      if (inner > 0) hasAnnulus = true;
-      // A hollow band gets the inflation its faces need; a solid body is sized
-      // exactly at its mark, as it always has been.
-      const scale = inner > 0 ? outer / HIT_SPHERE_INSCRIBED : outer;
+    mesh.count = targets.length;
+    targets.forEach((target, index) => {
+      const scale = target.bodyRadius;
       SCRATCH_MATRIX.makeScale(scale, scale, scale);
       SCRATCH_MATRIX.setPosition(target.pos[0], target.pos[1], target.pos[2]);
       mesh.setMatrixAt(index, SCRATCH_MATRIX);
     });
-    hasAnnulusRef.current = hasAnnulus;
     mesh.instanceMatrix.needsUpdate = true;
     // An instanced raycast rejects on the bounding sphere first, and three
     // computes that ONCE and caches it — so the volume left over from the
-    // previous matrices would answer for these. A producer's annulus is several
-    // times the widest sphere this mesh used to hold, which makes getting this
-    // wrong the difference between a clickable colony and a colony where NO
-    // staged node can be picked at all, producers included.
+    // previous matrices would answer for these. Getting it wrong is not a
+    // producer losing its click; it is EVERY staged node losing its click.
     mesh.computeBoundingSphere();
-  };
-
-  useEffect(() => {
-    applyInstances();
-    // `applyInstances` reads the live targets through a ref, so it is stable in
-    // everything this effect is keyed on.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [targets, capacity, hitBounds]);
-
-  // ⭐ THE MARK AND THE TARGET MOVE TOGETHER, INCLUDING UNDER A LIVE RETUNE.
-  // The ring's radius uniforms are refreshed from these two knobs every frame,
-  // so a drag on either reshapes rings already on screen; a plan captured at
-  // memo time would leave the target behind and re-open, mid-tuning, exactly
-  // the gap between mark and target this whole surface exists to close. Raw
-  // `useFrame` rather than the sim clock — this is pointer behaviour, and a
-  // paused scene is still a scene somebody is tuning.
-  useFrame(() => {
-    if (!hasAnnulusRef.current) return;
-    const [minRadius, shareRadius] = ringKnobsRef.current;
-    if (LIVE.peer.ringRadiusMin === minRadius
-      && LIVE.peer.ringRadiusShare === shareRadius) return;
-    applyInstances();
-  });
-
-  /**
-   * The hit test: three's own instanced raycast, with the ring holes cut out.
-   *
-   * Everything that makes the answer correct — the mesh bounding-sphere reject,
-   * the per-instance test, `instanceId` — is three's, and this only ever
-   * REMOVES hits from it. What it removes is a ray that struck a producer's
-   * annulus inside the hole, which in screen terms is a ray landing within the
-   * ring rather than on it. The perpendicular distance from the pointer ray to
-   * the node is the screen-space radius the ring is billboarded at, so one
-   * comparison answers it at any camera angle with no plane to keep in sync.
-   */
-  const hitRaycast = useMemo(() => function stagedNodesRaycast(
-    this: THREE.InstancedMesh,
-    raycaster: THREE.Raycaster,
-    intersects: THREE.Intersection[],
-  ): void {
-    SCRATCH_HITS.length = 0;
-    BASE_INSTANCED_RAYCAST.call(this, raycaster, SCRATCH_HITS);
-    const list = targetsRef.current;
-    const bounds = hitBoundsRef.current;
-    const { ray } = raycaster;
-    // The mesh's own frame is a rotation in production (the colony counter-
-    // rotates and is never scaled), but a bound written in mesh units has to be
-    // compared against a WORLD distance either way. Resolved lazily, so a
-    // colony with no producers never pays for it.
-    let worldScale = -1;
-    for (const hit of SCRATCH_HITS) {
-      const index = hit.instanceId;
-      if (index === undefined) continue;
-      const target = list[index];
-      if (target === undefined) continue;
-      if (target.ringShare !== null) {
-        if (worldScale < 0) worldScale = this.matrixWorld.getMaxScaleOnAxis();
-        this.getMatrixAt(index, SCRATCH_INSTANCE);
-        SCRATCH_CENTER.setFromMatrixPosition(SCRATCH_INSTANCE)
-          .applyMatrix4(this.matrixWorld);
-        if (!producerAnnulusHit(
-          ray.distanceToPoint(SCRATCH_CENTER),
-          bounds.inner[index] * worldScale,
-          bounds.outer[index] * worldScale,
-        )) continue;
-        // Re-stamped onto the billboard the ring is drawn on — see the note on
-        // this component. `hit.face` / `hit.uv` describe the sphere that stood
-        // in for it and nothing downstream reads them.
-        hit.distance = SCRATCH_TOWARDS.copy(SCRATCH_CENTER)
-          .sub(ray.origin)
-          .dot(ray.direction);
-        ray.at(hit.distance, hit.point);
-      }
-      intersects.push(hit);
-    }
-    SCRATCH_HITS.length = 0;
-  }, []);
+  }, [targets, capacity]);
 
   const syncCursor = () => {
     const canvas = gl.domElement;
@@ -851,7 +619,6 @@ function PickableStagedNodes({
         args={[geometry, material, capacity]}
         frustumCulled={false}
         userData={hitUserData}
-        raycast={hitRaycast}
         onClick={(e) => {
           const target = targetAt(e.instanceId);
           if (target === undefined) return;
@@ -877,272 +644,10 @@ function PickableStagedNodes({
       />
       {selected ? (
         <group position={selected.pos}>
-          <CkbSelectionReticle size={(selected.bodyRadius ?? 0) * 2.4} />
+          <CkbSelectionReticle size={selected.bodyRadius * 2.4} />
         </group>
       ) : null}
     </group>
-  );
-}
-
-/** One instance of the producer ring material: a whole ring for a producer, or
- *  one candidate's slice of that same ring, standing on the candidate. */
-export interface ProducerRingInstance {
-  /** Stable per-instance identity. Not used by the GPU; it is what a test can
-   *  read the plan by, and what the fire lane is remapped through. */
-  readonly key: string;
-  /** Whose ring this is. An arc carries the PRODUCER's key, never the peer's —
-   *  the arc is a slice of the producer's claim, not a claim about the peer. */
-  readonly producerKey: string;
-  readonly pos: Vec3;
-  /** The producer's share of the window. The radius, and nothing else. */
-  readonly share: number;
-  /** First turn of the ring this instance covers, in [0,1). */
-  readonly arcStart: number;
-  /** Turns it covers: 1 for a producer's whole ring, 1/N for a candidate. */
-  readonly arcSweep: number;
-  /** Whether this instance may ever discharge. Only a producer's own ring can:
-   *  a candidate is not KNOWN to have mined anything, and a discharging arc
-   *  would be exactly the accusation the whole fan construction refuses. */
-  readonly fires: boolean;
-}
-
-/**
- * The ring plan: one instance per staged producer, plus one arc per candidate
- * of every producer whose fan T4 already decided may be drawn.
- *
- * ⭐⭐ READ THE STANDINGS FROM THE VIEW, NEVER FROM `node.attested`. The App's
- * topology memo is keyed on the producer KEY SET alone — it has to be, or the
- * colony's geometry rebuilds once a block and truncates every in-flight wave —
- * so `inferredTopology` is not re-invoked when a tally moves, and the standing
- * hanging off a staged node is the one captured at the last key-set change.
- * Stale between changes. The node is the authority on IDENTITY and PLACEMENT;
- * the view is the authority on the window. Same split `selectedSighted` already
- * draws, asking the live roster rather than the row on the node.
- *
- * ⭐ THE ARCS OF ONE FAN COMPOSE EXACTLY ONE RING. N candidates, 1/N turns
- * each, laid end to end from 0 — so six peers each show sixty degrees, and the
- * six of them overlaid are one whole producer. That is the claim the join
- * actually supports ("the machine is somewhere in this set") drawn as the thing
- * it is, and it is why a candidate mark is not an edge: an edge in this colony
- * means "talks to", and this means "may be the same machine".
- *
- * ⚠️ A CANDIDATE THIS COLONY IS NOT STANDING A NODE FOR IS DROPPED, AND THE
- * REMAINING ARCS KEEP THEIR OWN SLOTS. The roster is a bounded sample and the
- * staging set is smaller still, so a fan can name a peer with nowhere to stand.
- * Re-dividing the ring among the ones that are left would redraw N as M and
- * make the claim look narrower than it is; leaving gaps says "and some of them
- * are not on this stage", which is true.
- */
-export function producerRingInstances(
-  producers: readonly ProducerStanding[] | null | undefined,
-  posById: ReadonlyMap<string, Vec3>,
-): ProducerRingInstance[] {
-  if (!producers || producers.length === 0) return [];
-  const out: ProducerRingInstance[] = [];
-  for (const producer of producers) {
-    const pos = posById.get(`${ATTESTED_ID_PREFIX}${producer.key}`);
-    // A producer the colony is not standing a node for has no ring: the ring
-    // is drawn AROUND a node, and there is no node.
-    if (pos === undefined) continue;
-    out.push({
-      key: producer.key,
-      producerKey: producer.key,
-      pos,
-      share: producer.share,
-      arcStart: 0,
-      arcSweep: 1,
-      fires: true,
-    });
-    // T4 applied the four gates; this reads the verdict and never re-litigates
-    // it. A withheld fan carries a count and no identities at all, so there is
-    // nothing here to draw even if somebody wanted to.
-    if (!producer.fan.drawn) continue;
-    const total = producer.fan.candidates.length;
-    producer.fan.candidates.forEach((candidate, index) => {
-      const at = posById.get(candidate.node_id);
-      if (at === undefined) return;
-      out.push({
-        key: `${producer.key}|${candidate.node_id}`,
-        producerKey: producer.key,
-        pos: at,
-        share: producer.share,
-        arcStart: index / total,
-        arcSweep: 1 / total,
-        fires: false,
-      });
-    });
-  }
-  return out;
-}
-
-/**
- * Every producer ring and every candidate arc in ONE additive instanced draw.
- *
- * ⭐ THE RHYTHM IS THE MARK. All producers charge from the same instant — one
- * shared uniform, stamped on the block that just landed — and exactly one
- * discharges, on the block it won. That is proof of work drawn as what it is,
- * and it costs one uniform and one per-instance stamp.
- *
- * The fire lane is kept in a ref keyed by PRODUCER KEY rather than by instance
- * index, and both writers go through one helper. Indices move: the staging
- * order is blocks-descending, so the block that arms a discharge is frequently
- * the same block that reorders the list under it, and a lane written by index
- * would land a producer's win on whoever took its slot.
- */
-function ProducerRings({
-  instances,
-  cf,
-  blockPulseAtMs,
-  backfillActive,
-  contextEnergyRef,
-}: {
-  instances: ProducerRingInstance[];
-  cf: ColonyFlood;
-  blockPulseAtMs: number;
-  backfillActive: boolean;
-  contextEnergyRef?: { readonly current: number };
-}) {
-  const simClock = useSimClock();
-  const meshRef = useRef<THREE.InstancedMesh>(null);
-  const material = useMemo(() => makeProducerRingMaterial(), []);
-  // A UNIT quad: the vertex shader sizes it from `aShare`, so a live retune of
-  // the radius moves every ring next frame with no buffer rewrite.
-  const geometry = useMemo(() => new THREE.PlaneGeometry(2, 2), []);
-  const capacity = Math.max(1, instances.length);
-
-  // ⚠️ Wrapping data in a NEW InstancedBufferAttribute is what orphans its GL
-  // buffer, and the static walk runs on every block. The WRAPPERS persist for a
-  // capacity; the walks write through `.array` and mark them.
-  const lanes = useMemo(() => ({
-    share: new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1),
-    fireAt: new THREE.InstancedBufferAttribute(
-      new Float32Array(capacity).fill(PRODUCER_RING_UNFIRED), 1,
-    ),
-    arcStart: new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1),
-    arcSweep: new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1),
-  }), [capacity]);
-
-  // producer key → the absolute simClock second it last discharged. Pruned to
-  // the decay window, so it cannot grow with the chain.
-  const firedRef = useRef(new Map<string, number>());
-  const instancesRef = useRef(instances);
-  instancesRef.current = instances;
-
-  // The one writer of the fire lane, called from both effects below. Reading
-  // the map by key is what survives a reorder landing in the same flush as a
-  // discharge.
-  const writeFireLane = () => {
-    const fired = firedRef.current;
-    const lane = lanes.fireAt.array as Float32Array;
-    instancesRef.current.forEach((instance, index) => {
-      lane[index] = instance.fires
-        ? fired.get(instance.producerKey) ?? PRODUCER_RING_UNFIRED
-        : PRODUCER_RING_UNFIRED;
-    });
-    lanes.fireAt.needsUpdate = true;
-  };
-
-  useEffect(() => {
-    const mesh = meshRef.current;
-    if (!mesh) return;
-    mesh.count = instances.length;
-    const share = lanes.share.array as Float32Array;
-    const arcStart = lanes.arcStart.array as Float32Array;
-    const arcSweep = lanes.arcSweep.array as Float32Array;
-    instances.forEach((instance, index) => {
-      SCRATCH_MATRIX.makeTranslation(instance.pos[0], instance.pos[1], instance.pos[2]);
-      mesh.setMatrixAt(index, SCRATCH_MATRIX);
-      share[index] = instance.share;
-      arcStart[index] = instance.arcStart;
-      arcSweep[index] = instance.arcSweep;
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-    lanes.share.needsUpdate = true;
-    lanes.arcStart.needsUpdate = true;
-    lanes.arcSweep.needsUpdate = true;
-    // The lane a block writes, rewritten from the same map: a producer that
-    // discharged half a second ago keeps its flash across a re-plan.
-    writeFireLane();
-    // Bound on the first pass and again only when a capacity change built new
-    // lanes. The geometry outlives the InstancedMesh (a capacity change
-    // rebuilds the mesh through `args`), so it can still hold the previous set.
-    if (mesh.geometry.getAttribute('aShare') !== lanes.share) {
-      mesh.geometry.setAttribute('aShare', lanes.share);
-      mesh.geometry.setAttribute('aFireAt', lanes.fireAt);
-      mesh.geometry.setAttribute('aArcStart', lanes.arcStart);
-      mesh.geometry.setAttribute('aArcSweep', lanes.arcSweep);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [instances, lanes]);
-
-  // Per-block: everyone's charge restarts, and the producer the flood is
-  // entering through — which is the producer the chain named on this block, or
-  // nobody — discharges. `t0` is captured HERE, in this owner's own effect, the
-  // way every per-block armer in the colony captures its own: simClock is
-  // constant across React's effect flush, so the stamps are synced without a
-  // parent ref that a child could read before it was written.
-  const lastPulseRef = useRef(blockPulseAtMs);
-  useEffect(() => {
-    if (blockPulseAtMs <= lastPulseRef.current) return;
-    // Consume while backfilling so a historical backlog cannot replay as one
-    // strobe of discharges when live mode resumes.
-    lastPulseRef.current = blockPulseAtMs;
-    if (backfillActive) return;
-
-    const t0 = simClock.elapsedSec;
-    material.uniforms.uChargeSince.value = t0;
-    const fired = firedRef.current;
-    // Forget a stamp once its flash is long over — measured against the LIVE
-    // duration the shader is drawing with, so raising the knob cannot prune a
-    // discharge that is still on screen.
-    const forgetAfterS = Math.max(PRODUCER_RING_FIRE_S, LIVE.peer.ringFireS) * 4;
-    for (const [key, at] of fired) {
-      if (t0 - at > forgetAfterS) fired.delete(key);
-    }
-    // ⭐ THE WINNER IS THE FLOOD'S OWN ENTRY NODE, not a second lookup. The
-    // flood already resolved the block's producer key against the staged
-    // colony (`attestedOrigin`), and asking that question twice is how the ring
-    // and the wave would come to disagree about which block this was. An
-    // anonymous block enters through a ghost and no ring fires — which is the
-    // truth: nobody we can name won it.
-    if (cf.entryId !== null && cf.entryId.startsWith(ATTESTED_ID_PREFIX)) {
-      fired.set(cf.entryId.slice(ATTESTED_ID_PREFIX.length), t0);
-    }
-    writeFireLane();
-    // cf/backfillActive are recomputed in the same render that advances
-    // blockPulseAtMs; use the pulse as the sole event edge.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [blockPulseAtMs]);
-
-  useEffect(() => () => geometry.dispose(), [geometry]);
-  // Memoized on [] (stable for this component's life) → dispose on UNMOUNT
-  // ONLY, or every capacity change would force a shader recompile.
-  useEffect(() => () => material.dispose(), [material]);
-
-  useSimFrame(() => {
-    material.uniforms.uTime.value = simClock.elapsedSec;
-    material.uniforms.uContextEnergy.value = contextEnergyRef?.current ?? 1;
-    material.uniforms.uRingMinRadius.value = LIVE.peer.ringRadiusMin;
-    material.uniforms.uRingShareRadius.value = LIVE.peer.ringRadiusShare;
-    material.uniforms.uRingWidth.value = LIVE.peer.ringWidth;
-    material.uniforms.uRingDim.value = LIVE.peer.ringDim;
-    material.uniforms.uRingCharge.value = LIVE.peer.ringCharge;
-    material.uniforms.uChargeTau.value = LIVE.peer.ringChargeTau;
-    material.uniforms.uFireS.value = LIVE.peer.ringFireS;
-    material.uniforms.uFireAmp.value = LIVE.peer.ringFireAmp;
-    material.uniforms.uArcFallback.value = LIVE.peer.ringArcFallback;
-  });
-
-  return (
-    <instancedMesh
-      ref={meshRef}
-      args={[geometry, material, capacity]}
-      frustumCulled={false}
-      // ⚠️ A ring quad is centred on its own node and many times the node's
-      // mark across, so a live raycast here would sit in front of that node's
-      // hit sphere and swallow every click aimed at it.
-      raycast={() => null}
-    />
   );
 }
 
@@ -1353,10 +858,10 @@ function MeasuredNode({
 /**
  * Composes the colony: the inferred ghost cloud + the attested rung + the
  * sighted tier + one measured glow-node per real peer, unified as a single glow
- * primitive on a confidence gradient — and, on the second axis, the producer
- * rings. The local "you" is drawn by the galaxy (its labeled CkbNodeAnchor),
- * NOT here. This owner stamps one shared ring-buffer slot per block so inferred
- * and measured nodes cannot drift or cancel an older in-flight wave.
+ * primitive on a confidence gradient. The local "you" is drawn by the galaxy
+ * (its labeled CkbNodeAnchor), NOT here. This owner stamps one shared
+ * ring-buffer slot per block so inferred and measured nodes cannot drift or
+ * cancel an older in-flight wave.
  */
 export default function ColonyNodes({
   topology,
@@ -1366,7 +871,6 @@ export default function ColonyNodes({
   selectedId,
   onSelect,
   localVersion,
-  producers,
   contextEnergyRef,
 }: {
   topology: NetworkTopology;
@@ -1376,15 +880,6 @@ export default function ColonyNodes({
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   localVersion: string;
-  /** ⭐⭐ THE LIVE WINDOW, and the only thing here allowed to say what a
-   *  producer's standing is. The staged node carries the standing it had at the
-   *  last KEY-SET change, because that is what the topology memo is keyed on
-   *  and it must be — anything a block moves would rebuild the colony's
-   *  geometry once a block and truncate every wave in flight. So the node is
-   *  identity and placement; this is blocks, share, window and fan. Optional:
-   *  a scene with no producers, a devnet that has not mined and a caller that
-   *  never learned about producers are one code path. */
-  producers?: readonly ProducerStanding[] | null;
   contextEnergyRef?: { readonly current: number };
 }) {
   const simClock = useSimClock();
@@ -1398,25 +893,13 @@ export default function ColonyNodes({
   // a node it has never reached is still one the network keeps naming. Both are
   // real, dimmer information, and each costs one extra draw rather than a slot.
   const byStop = useMemo(() => partitionByStop(sighted), [sighted]);
-  // The ring plan follows PLACEMENT from the topology and every NUMBER from the
-  // live view — see `producerRingInstances`.
-  const posById = useMemo(() => {
-    const m = new Map<string, Vec3>();
-    for (const n of topology.nodes) m.set(n.id, n.pos);
-    return m;
-  }, [topology]);
-  const ringInstances = useMemo(
-    () => producerRingInstances(producers, posById),
-    [producers, posById],
-  );
-  // ⭐ THE PICK PLAN IS DOWNSTREAM OF THE RING PLAN, and that ordering is the
-  // whole guarantee: a producer's ring stroke is clickable because the very
-  // list that draws it is the list the target is cut from. It re-plans once per
-  // attributed block, which is when the ring plan re-plans anyway — a share
-  // moves, so a radius moves, so a target moves with it.
+  // ⭐ THE TARGETS ARE CUT FROM THE STAGED NODES THEMSELVES, so a mark nothing
+  // draws has no target and a target with no mark cannot exist. It re-plans
+  // when a crawl round or the producer key set moves the staged lists, which
+  // is exactly when a mark moves.
   const pickTargets = useMemo(
-    () => stagedPickTargets(sighted, attested, ringInstances),
-    [sighted, attested, ringInstances],
+    () => stagedPickTargets(sighted, attested),
+    [sighted, attested],
   );
   const shockwaveUniforms = useMemo(() => makeShockwaveUniforms(), []);
   const shockwaveSlotRef = useRef(0);
@@ -1516,17 +999,7 @@ export default function ColonyNodes({
           shockwaveUniforms={shockwaveUniforms}
         />
       ) : null}
-      {/* The second axis. No producers ⇒ no draw, not an empty one. */}
-      {ringInstances.length > 0 ? (
-        <ProducerRings
-          instances={ringInstances}
-          cf={cf}
-          blockPulseAtMs={blockPulseAtMs}
-          backfillActive={backfillActive}
-          contextEnergyRef={contextEnergyRef}
-        />
-      ) : null}
-      {/* No crawler and no producers: the whole staged tier costs the scene
+      {/* No crawler and no miners: the whole staged tier costs the scene
           nothing at all — not an empty draw, not an idle hit mesh. */}
       {pickTargets.length > 0 ? (
         <PickableStagedNodes

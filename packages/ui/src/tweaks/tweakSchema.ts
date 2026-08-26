@@ -18,20 +18,6 @@ import {
   SHOCKWAVE_COLOR_CEIL,
   SHOCKWAVE_ALPHA_CEIL,
 } from '../materials/shockwaveMaterial';
-// …and the nine producer-ring knobs take theirs from the ring material, on the
-// same rule: the material seeds its own uniforms from these constants and
-// ColonyNodes overwrites them from LIVE.peer.* each frame, so one authority.
-import {
-  PRODUCER_ARC_FALLBACK,
-  PRODUCER_RING_CHARGE,
-  PRODUCER_RING_CHARGE_TAU,
-  PRODUCER_RING_DIM,
-  PRODUCER_RING_FIRE_AMP,
-  PRODUCER_RING_FIRE_S,
-  PRODUCER_RING_MIN_RADIUS,
-  PRODUCER_RING_SHARE_RADIUS,
-  PRODUCER_RING_WIDTH,
-} from '../materials/producerRingMaterial';
 // The Cell-field contact front is a scaled-down version of the peer-plane
 // brightness wave: same shape, same timing, its reach divided by
 // CONTACT_WAVE_SCALE — so both planes still read as sections of one event
@@ -152,21 +138,6 @@ export const peerSchema = {
   flameBloom: { value: 0.7, min: 0.1, max: 2, step: 0.05, label: 'flame bloom' },
   glintBloomOpacity: { value: 0.55, min: 0, max: 1, step: 0.05, label: 'glint bloom op' },
   glintPlumeOpacity: { value: 0.3, min: 0, max: 1, step: 0.05, label: 'glint plume op' },
-  // The producer rings — the mining channel. Radius is a share of the recent
-  // window, so the two radius knobs together decide how loudly a 56% producer
-  // reads against a 2% one; `ringArcFallback` is the arc-vs-alpha call for a
-  // candidate mark, left as a knob because it is a decision to make against
-  // pixels rather than against reasoning (0 = the 1/N arc, 1 = the whole ring
-  // at 1/N of the light).
-  ringRadiusMin: { value: PRODUCER_RING_MIN_RADIUS, min: 0.2, max: 6, step: 0.1, label: 'ring min radius' },
-  ringRadiusShare: { value: PRODUCER_RING_SHARE_RADIUS, min: 0, max: 12, step: 0.1, label: 'ring share radius' },
-  ringWidth: { value: PRODUCER_RING_WIDTH, min: 0.02, max: 1, step: 0.01, label: 'ring width' },
-  ringDim: { value: PRODUCER_RING_DIM, min: 0, max: 2, step: 0.02, label: 'ring rest' },
-  ringCharge: { value: PRODUCER_RING_CHARGE, min: 0, max: 3, step: 0.05, label: 'ring charge' },
-  ringChargeTau: { value: PRODUCER_RING_CHARGE_TAU, min: 0.5, max: 30, step: 0.5, label: 'ring charge tau s' },
-  ringFireS: { value: PRODUCER_RING_FIRE_S, min: 0.1, max: 4, step: 0.05, label: 'ring fire s' },
-  ringFireAmp: { value: PRODUCER_RING_FIRE_AMP, min: 0, max: 6, step: 0.1, label: 'ring fire amp' },
-  ringArcFallback: { value: PRODUCER_ARC_FALLBACK, min: 0, max: 1, step: 1, label: 'ring arc→alpha' },
 } satisfies FolderSchema;
 
 export const cellSchema = {

@@ -13,7 +13,6 @@ import {
   makePeerCloudMaterial,
   makePeerHaloMaterial,
 } from '../../src/materials/peerNodeMaterial';
-import { makeProducerRingMaterial } from '../../src/materials/producerRingMaterial';
 import {
   makePopulationBackboneMaterial,
   makePopulationFibreMaterial,
@@ -234,14 +233,6 @@ const ROWS: readonly BudgetRow[] = [
     material: () => makePeerHaloMaterial('#ffffff'),
   },
   {
-    name: 'producerRingMaterial',
-    sources: ['src/materials/producerRingMaterial.ts'],
-    material: makeProducerRingMaterial,
-    // ColonyNodes draws every producer ring AND every candidate arc as one
-    // InstancedMesh, so it pays the mat4 as well as its own four lanes.
-    usage: { instanced: true },
-  },
-  {
     name: 'populationPointMaterial',
     sources: ['src/materials/populationFieldMaterial.ts'],
     material: makePopulationPointMaterial,
@@ -451,18 +442,6 @@ describe('vertex attribute budget', () => {
     expect(flareAttributes.get('aStageAt')).toBe('vec2');
     expect(hybridAttributes.get('aRecordAt')).toBe('vec2');
     expect(hybridAttributes.get('aStageAt')).toBe('vec2');
-  });
-
-  it('leaves the newest instanced program room it has not spent', () => {
-    // Four scalar lanes rather than two packed vec2s, and the room is why: the
-    // static three (`aShare`, `aArcStart`, `aArcSweep`) are rewritten when the
-    // producer set changes and `aFireAt` on every block, so packing them into
-    // shared buffers would re-upload the static half on every discharge. Stated
-    // as an exact number so a fifth lane is a deliberate edit rather than a
-    // drift only the browser console would report.
-    const ring = measured.find(({ name }) => name === 'producerRingMaterial');
-    expect(ring).toBeDefined();
-    expect([ring?.custom, ring?.injected, ring?.total]).toEqual([4, 7, 11]);
   });
 
   it('leaves the cell body one packing away from the ceiling', () => {

@@ -130,35 +130,43 @@ export const PEER_CLOUD_GHOST_TONE = {
  * Proved by the chain, named by nobody — a node whose EXISTENCE is certain and
  * whose identity is zero. The exact inverse of the stop below this comment.
  *
- * ⭐⭐ IT SITS BETWEEN THE HAZE AND THE HEARSAY STOP AND DELIBERATELY DOES NOT
- * SEPARATE FROM EITHER, which is the one thing about this tone worth reading
- * twice. Every other stop on this axis buys legibility with footprint, under a
- * rule the tier's own tests enforce: each step is at least a quarter again as
- * much visible mark, because two stops closer than that are one stop as far as
- * a viewer is concerned. This stop CANNOT hold that rule and must not pretend
- * to. Ghost → hearsay is only 1.35x of visible extent end to end, so a rung
- * inserted between them splits that into two ~1.16x steps — under the bar on
- * both sides, whatever numbers are chosen. Squeezing it in is arithmetically
- * impossible, and reaching past the hearsay stop to make room would assert
- * identification this rung has NONE of, which is the only thing brightness
- * means here.
+ * ⭐⭐ IT IS THE ONE TONE ON THIS AXIS THAT MOVES ITS TWO FIELDS APART, and the
+ * split is the whole statement. Every stop the crawler's ladder draws buys
+ * brightness AND footprint together — the tier's own tests hold each step to a
+ * quarter again as much of both — because both are answering the same question,
+ * "how well do we know this node". This rung answers it with `dim`, and the
+ * answer is *barely at all*: it stays wedged between the invented haze and the
+ * faintest named stop, because the chain proves the node is there and we cannot
+ * say one word about which machine it is. Brightness is the identification
+ * claim, and this rung makes none.
  *
- * ⇒ So brightness and footprint are a CEILING AND A FLOOR for this rung rather
- * than a claim: strictly above the invented haze because the chain proves the
- * node is there, strictly below the faintest named stop because we cannot say
- * one word about which machine it is. What asserts its presence is the producer
- * ring on the other channel, and that is the whole point of there BEING another
- * channel — mining is a rate, this axis is a state, and a rate drawn as
- * brightness would be competing for the one signal the ladder already owns.
+ * ⭐ ITS SIZE IS NOT ON THAT AXIS AT ALL. `size` is a world DIAMETER and it is
+ * also, through `peerCloudHitRadius`, the node's whole pick target — so it is
+ * answering a different question: is there something here to press, and does
+ * pressing it say anything. For a producer the answer is a card with blocks, a
+ * share, a window, a declared build and a candidate fan. At 0.75 that card was
+ * unreachable: 0.375 world units of target, the smallest in the colony, and a
+ * full-canvas 13-pixel hover sweep of the running app came back with forty
+ * peers and not one miner. 1.8 is 5.8x that target's area (~10 CSS px of sprite
+ * at the default camera, against ~4), which is the ordinary size of a small
+ * thing an interface expects to be clicked.
  *
- * It therefore rests UNDER the additive clip (no saturated plateau at all, like
- * the haze) on purpose: the point is a body and a pick target, and the ring is
- * the mark. `event` clears the haze's 0.9 for the reason the stop below spells
- * out — a stop that answers a block more quietly than the fiction underneath it
- * gets swallowed for the length of every wave.
+ * ⚠️ AND A LARGE DIM MARK IS ON NO LADDER, which is what keeps the step from
+ * reading as a confidence claim. On the crawler's gradient a bigger mark is
+ * always a brighter one; this rung is wider than two of those stops while
+ * resting dimmer than every one of them, so it matches no rung and cannot be
+ * mistaken for one. Its own tests hold exactly that — the brightness bracket,
+ * and the rule that it never buys the two together.
+ *
+ * It rests UNDER the additive clip (no saturated plateau at all, like the haze)
+ * on purpose: what a viewer gets is a wide, soft, dim pool of light, which is
+ * the honest look of a presence nobody can name. `event` clears the haze's 0.9
+ * for the reason the stop below spells out: a stop that answers a block more
+ * quietly than the fiction underneath it gets swallowed for the length of every
+ * wave.
  */
 export const PEER_CLOUD_ATTESTED_TONE = {
-  dim: 0.7, size: 0.75, event: 0.92,
+  dim: 0.7, size: 1.8, event: 0.92,
 } satisfies PeerCloudTone;
 /**
  * Named by the network, answered by nobody — hearsay carrying a real identity.
