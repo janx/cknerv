@@ -82,10 +82,19 @@ export default function NetworkPanel({ summary, consensus, syncRatio, enrichment
         * stands above the atlas, on the near side of this panel's one line
         * between what the network is and what this crawl saw.
         *
+        * ⭐ THE WORD IS `MINERS`, AND THE HUD ONLY GETS ONE. The card this row
+        * leads to is masted `MINER //`, the stamp a peer may carry is `MINER?`,
+        * and the local node's own probe has said `MINER` since long before any
+        * of this. `PRODUCER` was a second word for the same thing, borrowed
+        * from the derive that computes it — and an internal name is not a
+        * reason for a panel to speak a dialect nothing else on screen speaks.
+        * The derive keeps its own vocabulary (`BlockProducer`, `producer_key`,
+        * `attested`); those are names for code and never appear to a reader.
+        *
         * ⚠️ ONE ROW, AND THE HEIGHT IS THE ARGUMENT. This panel was cut by 53%
         * when five StatRows became a bar, and that saving is not this feature's
-        * to spend: a producer bar here would redraw the same ranking the colony
-        * already draws as ring radii, one instrument away from the rings.
+        * to spend: a share bar here would redraw a ranking the colony already
+        * draws on the stage, one instrument away from it.
         *
         * The share and the window arrive as ONE string from one formatter, so
         * there is no arrangement of this row that prints a top share without
@@ -93,7 +102,7 @@ export default function NetworkPanel({ summary, consensus, syncRatio, enrichment
       {producers ? (
         <div data-network-producers>
           <StatRow
-            label="Producers"
+            label="Miners"
             title="Distinct payout identities in the recent block window, read from each block's cellbase witness. Counted by payout identity, which may be one pool running many machines."
           >
             {producerFleetText(producers)}

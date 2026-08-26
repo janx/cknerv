@@ -457,8 +457,24 @@ describe('NetworkPanel producers', () => {
       <NetworkPanel {...props} producers={view([96, 48, 32, 24])} />,
     );
     const row = container.querySelector('[data-network-producers]');
-    expect(row?.textContent).toContain('Producers');
+    expect(row?.textContent).toContain('Miners');
     expect(row?.textContent).toContain('4 · TOP 48% · 200 BLK');
+  });
+
+  it('calls them what the rest of the HUD calls them, and never a second word', () => {
+    // ⭐ ONE WORD PER THING. The card this row leads to is masted `MINER //`,
+    // the stamp a named peer may carry is `MINER?`, and the local node's own
+    // probe has said `MINER` since long before any of this existed. `PRODUCER`
+    // was the derive's name for the same fact, and a panel that borrowed it
+    // made the HUD speak two dialects about one thing. The internal vocabulary
+    // is untouched and deliberately so — it is a name for code, and nothing
+    // here can see it.
+    const { container } = render(
+      <NetworkPanel {...props} producers={view([96, 104])} />,
+    );
+    expect(container.textContent).not.toMatch(/producer/i);
+    expect(container.querySelector('[data-network-producers]')?.textContent)
+      .toMatch(/MINERS/i);
   });
 
   it('never prints the top share without that window', () => {
