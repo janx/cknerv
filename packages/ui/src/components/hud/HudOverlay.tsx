@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import type {
   ActivityFeedRecord,
@@ -47,10 +47,12 @@ import WarningBar, { WARNING_BAR_HEIGHT, warningBarStanding } from './WarningBar
 import { useReducedMotion } from './useReducedMotion';
 import { useMediaQuery } from './useMediaQuery';
 import {
+  deriveStreamHealthPhase,
   deriveStreamHealthSummary,
   type StreamHealthChannels,
 } from '../../derives/streamHealth.derive';
 import StreamHealthBanner from './StreamHealthBanner';
+import { subscribeHudClock, useHudClockMs, useHudClockSelector } from './hudClock';
 
 // We're "syncing" (catching up, benign) if the node is in IBD, our tip trails the
 // network best-known by more than a couple of blocks, or most peers are ahead of us.
@@ -99,6 +101,31 @@ const PANEL_SCROLL_STYLE: CSSProperties = {
 const CHAIN_CLUSTER_STYLE: CSSProperties = { display: 'flex', flex: '1 1 auto', flexDirection: 'row', gap: LEFT_PANEL_GAP_PX, alignItems: 'flex-start', minHeight: 0, maxWidth: '100%', overflowX: 'auto', overflowY: 'hidden', overscrollBehavior: 'contain', scrollbarWidth: 'thin', scrollbarColor: `${rgba(HUD_COLORS.orange, 0.35)} transparent`, pointerEvents: 'none' };
 const PANEL_FLOW: CSSProperties = { position: 'relative' };
 const PULSE_ANCHOR_STYLE: CSSProperties = { position: 'relative', flex: '0 0 auto', maxWidth: '100%' };
+// The panel widths are constants, so their flow styles are constants too: a
+// memoized panel handed a fresh `{ ...PANEL_FLOW, width }` per render is not
+// memoized at all.
+const CHAIN_PANEL_STYLE: CSSProperties = { ...PANEL_FLOW, width: `min(${CHAIN_PANEL_WIDTH_PX}px, calc(100vw - 58px))` };
+// ECG·04 is the lower companion to CKB·01, not a footer for the whole
+// CKB + DAO cluster. Keep their outer edges aligned even when DAO·05 is
+// visible or CKB·01 is temporarily hidden from the panel menu.
+const PULSE_PANEL_STYLE: CSSProperties = { ...PANEL_FLOW, width: `min(${CHAIN_PANEL_WIDTH_PX}px, calc(100vw - 58px))` };
+
+/** The stream banner with its own clock: its `LAST FRAME` age is the one
+ *  reading in the top slot that changes every second, so the summary is
+ *  derived here, in a leaf, and the overlay renders nothing for the tick. The
+ *  banner itself renders nothing while every channel is live. */
+function LiveStreamHealthBanner({ channels, reducedMotion, top }: {
+  channels: StreamHealthChannels;
+  reducedMotion: boolean;
+  top: number;
+}) {
+  const nowMs = useHudClockMs();
+  const summary = useMemo(
+    () => deriveStreamHealthSummary(channels, nowMs),
+    [channels, nowMs],
+  );
+  return <StreamHealthBanner summary={summary} reducedMotion={reducedMotion} top={top} />;
+}
 
 const HUD_PANEL_IDS = ['chain', 'stage', 'render', 'dao', 'pulse', 'cells', 'peers'] as const;
 type HudPanelId = typeof HUD_PANEL_IDS[number];
@@ -290,7 +317,8 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
   const bootCounting = bootRitual && bootLit < bootRoster.length;
   // One timeout alive at a time, re-armed by its own result: the ritual costs
   // exactly one re-render per module and stops re-arming when the roster runs
-  // out, leaving the 1 Hz uptime tick as the HUD's only steady-state heartbeat.
+  // out, leaving this body with no steady-state heartbeat at all — the 1 Hz
+  // clock lives in `hudClock` and reaches only the spans that print it.
   useEffect(() => {
     if (!bootCounting) return;
     const id = setTimeout(() => setBootLit((lit) => lit + 1), BOOT_SLOT_MS);
@@ -316,14 +344,12 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
     return { ...base, opacity, transition, pointerEvents: lit ? base?.pointerEvents : 'none' };
   };
 
-  // ECG·04 is the lower companion to CKB·01, not a footer for the whole
-  // CKB + DAO cluster. Keep their outer edges aligned even when DAO·05 is
-  // visible or CKB·01 is temporarily hidden from the panel menu.
-  const pulsePanelWidth = `min(${CHAIN_PANEL_WIDTH_PX}px, calc(100vw - 58px))`;
   // Menu order is module-number order — the codes ARE the registry, so the
   // list reads 01→08 regardless of which rail a panel docks on. ·06 is the
-  // app-side Jukebox chip, which has no HUD visibility entry.
-  const panelControls: HudPanelControl[] = [
+  // app-side Jukebox chip, which has no HUD visibility entry. Memoized on the
+  // visibility record: the strip that renders it is memoized, and a fresh
+  // array per render would hand it a new prop every time.
+  const panelControls = useMemo<HudPanelControl[]>(() => [
     {
       id: 'chain',
       code: 'CKB·01',
@@ -366,11 +392,11 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
       label: 'RENDER STATS',
       visible: panelVisibility.render,
     },
-  ];
-  const setPanelVisible = (id: string, visible: boolean) => {
+  ], [panelVisibility, daoPanelAvailable]);
+  const setPanelVisible = useCallback((id: string, visible: boolean) => {
     if (!isHudPanelId(id)) return;
     setPanelVisibility((current) => ({ ...current, [id]: visible }));
-  };
+  }, []);
   // The rail used to wrap each summary in a zone so a detail card could fan
   // out beside it. Every detail now follows its own entity in scene space, so
   // the summaries are the rail's whole content and need no zone around them.
@@ -383,14 +409,18 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
   const prevCond = useRef<EcgCondition>('FINE');
   const churn = useCellChurn(chain.tip, cellsStats.born, cellsStats.dead);
 
-  // session uptime + a 1s tick so msSinceLast / flatline re-evaluate
+  // The session's start; the uptime counts from it inside the status strip's
+  // own leaf. No clock is held here: this root used to tick `Date.now()` as
+  // state once a second, and every panel it owns re-rendered for the four
+  // spans that print a time. Those spans subscribe to the shared HUD clock
+  // themselves now (`hudClock`), and this body renders when data changes — or
+  // when the one time-derived word below, the cadence condition, flips.
   const mountAt = useRef(Date.now());
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => { const id = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(id); }, []);
-  const streamSummary = streamHealth
-    ? deriveStreamHealthSummary(streamHealth, now)
-    : null;
-  const streamInterrupted = !!streamSummary && streamSummary.phase !== 'live';
+  // The phase needs no clock — it is the worst channel's own word — and it is
+  // what the layout below clears its rails under. The silence beside it is
+  // the banner's business, in its own leaf.
+  const streamPhase = streamHealth ? deriveStreamHealthPhase(streamHealth) : null;
+  const streamInterrupted = streamPhase !== null && streamPhase !== 'live';
   const mobileBarHasContext = Boolean(
     enrichmentSource || topBarActions,
   );
@@ -401,13 +431,18 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
     : compactTopBar
       ? STATUS_STRIP_HEIGHTS.compact
       : STATUS_STRIP_HEIGHTS.wide;
-  // Re-measure rail overflow on mode / selection change and each 1s tick (the
-  // latter catches viewport resize within a second). setRailScrolls no-ops when
-  // unchanged, so this doesn't churn renders.
+  // Re-measure rail overflow on mode / selection change and on each 1 Hz tick
+  // of the shared clock (the latter catches viewport resize within a second),
+  // subscribed from inside the effect so the tick never renders this body.
+  // setRailScrolls no-ops when unchanged, so this doesn't churn renders.
   useEffect(() => {
-    const el = railRef.current;
-    setRailScrolls(!!el && narrowRail && el.scrollHeight > el.clientHeight + 1);
-  }, [narrowRail, panelVisibility.cells, panelVisibility.peers, now]);
+    const measure = () => {
+      const el = railRef.current;
+      setRailScrolls(!!el && narrowRail && el.scrollHeight > el.clientHeight + 1);
+    };
+    measure();
+    return subscribeHudClock(measure);
+  }, [narrowRail, panelVisibility.cells, panelVisibility.peers]);
 
   // reorg delta across renders
   const prevReorgs = useRef(chain.reorgs);
@@ -418,19 +453,34 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
   // actual inputs instead of recomputing per render.
   const summary = useMemo(
     () => summarizeNetwork(peers, chain, localNode),
-    [peers, chain, localNode],
+    // Keyed on the three chain fields the summary reads, not on the entity:
+    // `chain` is shallow-cloned by every batch that touches it (a mempool tick
+    // above all), and MESH·02 is memoized behind this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [peers, chain.tip, chain.best_known_block, chain.ibd, localNode],
   );
   const consensus = useMemo(
     () => fleetConsensus(peers, chain.tip),
     [peers, chain.tip],
   );
   const targetMs = expectedBlockMs(chain.epoch.length);
-  // clamp >=0: last_block_ts_ms is fresh receive time but `now` only re-ticks once
-  // a second, so right after a block `now - last` is briefly negative (negative hero).
-  const msSinceLast = chain.last_block_ts_ms ? Math.max(0, now - chain.last_block_ts_ms) : 0;
   const blocksBehind = Math.max(0, chain.best_known_block - chain.tip);
   const syncing = chain.ibd || blocksBehind > SYNC_LAG_THRESHOLD || consensus.aheadRatio > SYNC_AHEAD_RATIO;
-  const condition = ecgCondition({ intervalsMs: chain.recent_block_intervals_ms, targetMs, msSinceLast, syncing, prev: prevCond.current });
+  // The condition word rides the clock — a silent chain flatlines by the
+  // second passing — so it is a selector on the shared tick: the string is
+  // re-derived per tick and this body re-renders only when it flips. The gap
+  // clamps at 0 because last_block_ts_ms is fresh receive time and the clock
+  // only re-ticks once a second, so right after a block the difference is
+  // briefly negative.
+  const intervalsMs = chain.recent_block_intervals_ms;
+  const lastBlockTsMs = chain.last_block_ts_ms;
+  const condition = useHudClockSelector((nowMs) => ecgCondition({
+    intervalsMs,
+    targetMs,
+    msSinceLast: lastBlockTsMs ? Math.max(0, nowMs - lastBlockTsMs) : 0,
+    syncing,
+    prev: prevCond.current,
+  }));
   const avgMs = windowMeanMs(chain.recent_block_intervals_ms, ECG_WINDOW);
   const alert = alertLevel({ ecg: condition, reorgDepth, syncing });
   const syncRatio = chain.best_known_block > 0 ? Math.min(1, chain.tip / chain.best_known_block) : 1;
@@ -481,7 +531,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
   return (
     <div
       style={ROOT_STYLE}
-      data-stream-phase={streamSummary?.phase}
+      data-stream-phase={streamPhase ?? undefined}
       data-hud-boot={bootCounting ? 'counting' : 'done'}
     >
       {!reduced && <div style={SCAN_STYLE} />}
@@ -491,7 +541,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
           fault may be dimmed for style. */}
       <StatusStrip
         level={alert.level}
-        uptimeMs={now - mountAt.current}
+        uptimeSinceMs={mountAt.current}
         build={build}
         cellCount={cellCount ?? cellsStats.inView}
         cellCapacity={cellCapacity}
@@ -537,9 +587,9 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
           top={topBarHeight}
         />
       ) : null}
-      {streamSummary && !topBandVisible ? (
-        <StreamHealthBanner
-          summary={streamSummary}
+      {streamHealth && !topBandVisible ? (
+        <LiveStreamHealthBanner
+          channels={streamHealth}
           reducedMotion={reduced}
           top={topBarHeight}
         />
@@ -581,7 +631,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
                     activityFeed={activityFeed}
                     transactionHorizon={transactionHorizon}
                     compactActivity={shortViewport}
-                    style={{ ...PANEL_FLOW, width: `min(${CHAIN_PANEL_WIDTH_PX}px, calc(100vw - 58px))` }}
+                    style={CHAIN_PANEL_STYLE}
                   />
                 </div>
               ) : null}
@@ -628,8 +678,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
                   <DaoStatePanel
                     source={enrichmentSource}
                     record={daoState}
-                    nowMs={now}
-                    style={{ ...PANEL_FLOW, width: pulsePanelWidth }}
+                    style={PULSE_PANEL_STYLE}
                   />
                 </div>
               ) : null}
@@ -646,10 +695,9 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
                     lastBlockTsMs={chain.last_block_ts_ms ?? null}
                     targetMs={targetMs}
                     avgMs={avgMs}
-                    gapMs={msSinceLast}
                     condition={condition}
                     reducedMotion={reduced}
-                    style={{ ...PANEL_FLOW, width: pulsePanelWidth }}
+                    style={PULSE_PANEL_STYLE}
                   />
                 </div>
               ) : null}
@@ -695,5 +743,6 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
 // Memoized: App re-renders on selection/scene state that never reaches the
 // HUD — no scene selection is a prop here at all any more — so with the
 // App-side props held stable (build / streamHealth), this shallow compare
-// limits HUD re-renders to genuine data changes plus the internal 1 Hz tick.
+// limits HUD re-renders to genuine data changes. The 1 Hz clock is not one of
+// them: it reaches its leaves through `hudClock`, never this body.
 export default memo(HudOverlay);

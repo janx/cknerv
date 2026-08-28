@@ -6,10 +6,10 @@
 // (ring = latency, bearing = id hash, tint = version/direction), which is what
 // makes the card an explanation of the scene rather than a second opinion.
 //
-// Instruments update at data cadence only — the 4s adapter poll, the block
-// pulse, and one 1 Hz uptime tick. No animation loops: motion is CSS
-// transitions, so an open card costs nothing per frame beyond the shared
-// anchor transform write.
+// Instruments update at data cadence only — the 4s adapter poll and the block
+// pulse; the shared HUD clock's 1 Hz tick reaches only the two spans that
+// print a time. No animation loops: motion is CSS transitions, so an open
+// card costs nothing per frame beyond the shared anchor transform write.
 import {
   type CSSProperties,
   memo,
@@ -18,6 +18,7 @@ import {
   useState,
 } from 'react';
 import type { Peer } from '@cknerv/types';
+import { useHudClockSelector } from './hudClock';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import {
   CloseButton,
@@ -172,6 +173,16 @@ const PeerScanFact = memo(function PeerScanFact({
   && previous.color === next.color
   && previous.selected === next.selected
 ));
+
+/** `LINKED · 1h 2m` as a leaf: the base is the last poll's snapshot, the rest
+ *  is the shared HUD clock counting from the instant the card took it, and a
+ *  lost link (`sinceMs` null) prints the base alone. */
+function LinkUptimeReadout({ baseMs, sinceMs }: { baseMs: number; sinceMs: number | null }) {
+  const text = useHudClockSelector((clock) => formatLinkUptime(
+    baseMs + (sinceMs === null ? 0 : Math.max(0, clock - sinceMs)),
+  ));
+  return <>{text}</>;
+}
 
 /** The colony compass: our node at the center, the peer on its true latency
  *  ring at its true bearing. The scene lays measured peers out on the XZ plane
@@ -437,7 +448,14 @@ export default function PeerLinkCard({
       samples: instrument.latencyMs == null ? [] : [instrument.latencyMs],
     }),
   );
-  const [uptimeTick, setUptimeTick] = useState(() => ({ elapsedMs: 0, nowMs: Date.now() }));
+  // The uptime counts from the last poll's snapshot, and the count starts
+  // over whenever that snapshot or the link changes — the instant the
+  // interval this replaces took as its origin. A lost link freezes it: no
+  // seconds are invented for a peer we are no longer connected to, and the
+  // dossier's clock freezes at the same instant, exactly as it did when one
+  // interval carried both. The seconds themselves are the shared HUD clock's,
+  // read by the two spans that print them and by nothing else on the card.
+  const [uptimeEpochMs, setUptimeEpochMs] = useState(() => Date.now());
 
   useEffect(() => {
     onFacetChange?.(selectedFacet);
@@ -464,23 +482,10 @@ export default function PeerLinkCard({
     });
   }, [peer.node_id, latencySample]);
 
-  // The uptime clock advances from the last poll's snapshot; a lost link stops
-  // the clock rather than inventing seconds the peer was not connected for.
-  // The same beat carries the wall clock the dossier stamps its crawler ages
-  // from — one interval for both, since both are the same second passing.
   useEffect(() => {
-    const startedAtMs = Date.now();
-    setUptimeTick({ elapsedMs: 0, nowMs: startedAtMs });
-    if (linkLost) return;
-    const interval = window.setInterval(
-      () => {
-        const atMs = Date.now();
-        setUptimeTick({ elapsedMs: atMs - startedAtMs, nowMs: atMs });
-      },
-      1000,
-    );
-    return () => window.clearInterval(interval);
+    setUptimeEpochMs(Date.now());
   }, [peer.node_id, instrument.uptimeMs, linkLost]);
+  const uptimeSinceMs = linkLost ? null : uptimeEpochMs;
 
   const activateFacet = (facet: PeerLinkFacet) => {
     setSelectedFacetState((current) => ({
@@ -496,8 +501,6 @@ export default function PeerLinkCard({
   }, [instrument]);
 
   const pingSamples = pings.nodeId === peer.node_id ? pings.samples : [];
-  const linkAgeMs = instrument.uptimeMs + uptimeTick.elapsedMs;
-  const liveUptime = formatLinkUptime(linkAgeMs);
   const verticalLayout = layoutSide === 'above' || layoutSide === 'below';
 
   return (
@@ -597,7 +600,7 @@ export default function PeerLinkCard({
               letterSpacing: 0.9,
             }}
           >
-            LINKED · {liveUptime}
+            LINKED · <LinkUptimeReadout baseMs={instrument.uptimeMs} sinceMs={uptimeSinceMs} />
           </span>
           {moduleTag('LINK·01')}
         </span>
@@ -758,9 +761,10 @@ export default function PeerLinkCard({
         <PeerSightingPlate
           {...sighting}
           module="LINK·05"
-          nowMs={uptimeTick.nowMs}
+          nowMs={linkLost ? uptimeEpochMs : undefined}
           liveVersion={peer.version}
-          linkAgeMs={linkAgeMs}
+          linkAgeMs={instrument.uptimeMs}
+          linkAgeSinceMs={uptimeSinceMs}
           liveRttMs={instrument.latencyMs}
         />
       ) : null}

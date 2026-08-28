@@ -6,7 +6,8 @@
 // no standing to answer (where the node is, whether anyone can dial it, how
 // long the network has carried it) — and it is also why nothing in it may sit
 // unstamped beside live telemetry. The header carries the observation age, and
-// every span in the body is measured from the card's own 1 Hz tick.
+// every span in the body that ages is a leaf on the shared HUD clock: the
+// second passing re-renders the span, never the plate around it.
 //
 // One component, two dialects: the peer card reads it as a foreign dossier,
 // the node card as a mirror, which promotes EXPOSURE to the headline. DOM only
@@ -19,6 +20,7 @@ import type {
   PeerSightingRecord,
 } from '@cknerv/types';
 import { formatAge, midTruncate } from './cellFormat';
+import { HudAge, useHudClockSelector } from './hudClock';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE } from './hudTheme';
 import {
   moduleTag,
@@ -60,9 +62,11 @@ export interface PeerSightingState {
 export interface PeerSightingPlateProps extends PeerSightingState {
   /** Module stamp in the host card's own numbering — `LINK·05` / `SELF·04`. */
   module: string;
-  /** Wall clock every CRAWLER age is measured from. The cards run one 1 Hz
-   *  tick each and lend it here; the plate starts no clock of its own. */
-  nowMs: number;
+  /** Wall clock every CRAWLER age is measured from, when a host holds one —
+   *  a lab, a deterministic test, or a card freezing its clock at the instant
+   *  a link was lost. Absent, each age is a leaf on the shared HUD clock; the
+   *  plate starts no clock of its own either way. */
+  nowMs?: number;
   /** `self` is the mirror dialect: EXPOSURE leads, under its own caption.
    *  `sighted` is the crawler-only dialect: its host card holds no live
    *  telemetry about the subject at all, so the rows that exist to set this
@@ -74,6 +78,10 @@ export interface PeerSightingPlateProps extends PeerSightingState {
   /** How long OUR link to this node has stood, printed against how long the
    *  network has known it. The local node holds no link to itself. */
   linkAgeMs?: number | null;
+  /** The instant `linkAgeMs` was snapshotted, while the link is still up: the
+   *  caption adds the seconds since, off the same clock as every other age.
+   *  Null or absent prints `linkAgeMs` as it stands (a lost link, a lab). */
+  linkAgeSinceMs?: number | null;
   /** Our own last measured round trip, beside the crawler's dial time. */
   liveRttMs?: number | null;
 }
@@ -147,6 +155,44 @@ function SightingRow({
  *  self probe's vitals use. */
 function SightingCaption({ tone, children }: { tone?: string; children: ReactNode }) {
   return <PlateReadoutCaption tone={tone}>{children}</PlateReadoutCaption>;
+}
+
+/** The unverified peer's clock line as a leaf — see `advertisedStamp`. */
+function AdvertisedStampCaption({ advertised, nowMs }: {
+  advertised: PeerAdvertisedEvidence;
+  nowMs?: number;
+}) {
+  const text = useHudClockSelector((clock) => advertisedStamp(advertised, nowMs ?? clock));
+  return <SightingCaption>{text}</SightingCaption>;
+}
+
+/** NETWORK AGE, and the link held against it: both readings move with the
+ *  second, so the row is a leaf of its own. */
+function NetworkAgeRow({ firstSeenMs, linkAgeMs, linkAgeSinceMs, nowMs }: {
+  firstSeenMs: number;
+  linkAgeMs?: number | null;
+  linkAgeSinceMs?: number | null;
+  nowMs?: number;
+}) {
+  const value = useHudClockSelector((clock) => (
+    `ON NET ${formatNetworkSpan(Math.max(0, (nowMs ?? clock) - firstSeenMs))}`
+  ));
+  const held = useHudClockSelector((clock) => (
+    linkAgeMs == null
+      ? null
+      : formatLinkUptime(linkAgeMs + (
+        linkAgeSinceMs == null ? 0 : Math.max(0, (nowMs ?? clock) - linkAgeSinceMs)
+      ))
+  ));
+  return (
+    <SightingRow row="network-age" label="NETWORK AGE" value={value}>
+      {held !== null ? (
+        <SightingCaption>
+          WE HAVE HELD THIS LINK {held}
+        </SightingCaption>
+      ) : null}
+    </SightingRow>
+  );
 }
 
 /** How far the crawler's furthest dial got, said the way a pilot reads it.
@@ -316,6 +362,7 @@ export default function PeerSightingPlate({
   variant = 'peer',
   liveVersion,
   linkAgeMs,
+  linkAgeSinceMs,
   liveRttMs,
 }: PeerSightingPlateProps) {
   // Nothing was asked, so nothing is claimed. The card must read as complete
@@ -379,7 +426,7 @@ export default function PeerSightingPlate({
           {dialedAt}
         </SightingCaption>
       ) : null}
-      <SightingCaption>{advertisedStamp(evidence, nowMs)}</SightingCaption>
+      <AdvertisedStampCaption advertised={evidence} nowMs={nowMs} />
     </SightingRow>
   ) : null;
 
@@ -396,7 +443,7 @@ export default function PeerSightingPlate({
       {sighting.reachable ? null : (
         <SightingCaption>
           {sighting.last_reachable_at_ms != null
-            ? `LAST DIAL ${formatAge(sighting.last_reachable_at_ms, nowMs)} AGO`
+            ? <>LAST DIAL <HudAge atMs={sighting.last_reachable_at_ms} nowMs={nowMs} /> AGO</>
             : 'NO SUCCESSFUL DIAL ON RECORD'}
         </SightingCaption>
       )}
@@ -428,18 +475,13 @@ export default function PeerSightingPlate({
   ) : null;
 
   const networkAge = sighting ? (
-    <SightingRow
+    <NetworkAgeRow
       key="network-age"
-      row="network-age"
-      label="NETWORK AGE"
-      value={`ON NET ${formatNetworkSpan(Math.max(0, nowMs - sighting.first_seen_ms))}`}
-    >
-      {linkAgeMs != null ? (
-        <SightingCaption>
-          WE HAVE HELD THIS LINK {formatLinkUptime(linkAgeMs)}
-        </SightingCaption>
-      ) : null}
-    </SightingRow>
+      firstSeenMs={sighting.first_seen_ms}
+      linkAgeMs={linkAgeMs}
+      linkAgeSinceMs={linkAgeSinceMs}
+      nowMs={nowMs}
+    />
   ) : null;
 
   const crawlerVersion = sighting?.client_version.trim() ?? '';
@@ -561,7 +603,7 @@ export default function PeerSightingPlate({
                 data-sighting-stamp
                 style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.6 }}
               >
-                SIGHTED {formatAge(sighting.last_seen_ms, nowMs)} AGO
+                SIGHTED <HudAge atMs={sighting.last_seen_ms} nowMs={nowMs} /> AGO
               </span>
             ) : null}
             {moduleTag(module)}

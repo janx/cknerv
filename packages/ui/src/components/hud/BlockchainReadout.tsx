@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import { memo, type CSSProperties } from 'react';
 import type {
   ActivityFeedRecord,
   AssetEcosystemRecord,
@@ -18,7 +18,7 @@ import { formatEpochReadout } from './epochReadout';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
 
-export default function BlockchainReadout({ chain, cellPopulation, enrichmentSource, assetEcosystem, protocolEra, activityFeed, transactionHorizon, compactActivity = false, style }: {
+function BlockchainReadout({ chain, cellPopulation, enrichmentSource, assetEcosystem, protocolEra, activityFeed, transactionHorizon, compactActivity = false, style }: {
   chain: ChainEntry;
   /** Population model, or null for a consumer that derives none. Absent means
    *  the panel is absent — it never guesses a scope. */
@@ -68,3 +68,10 @@ export default function BlockchainReadout({ chain, cellPopulation, enrichmentSou
     </HudPanel>
   );
 }
+
+// Memoized with the other rail panels: the overlay re-renders for its own
+// state (a panel toggle, the boot count-off, a rail overflow flip) and used to
+// tick a clock at its root, and every one of those carried this panel with it.
+// With its style hoisted to a constant, the shallow compare lets it render
+// exactly when the chain or a record it prints changed.
+export default memo(BlockchainReadout);

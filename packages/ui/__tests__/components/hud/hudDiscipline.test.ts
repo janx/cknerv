@@ -1716,7 +1716,9 @@ describe('the edge-bound stack', () => {
     // …while the tenants are alternatives, which is the whole reason they are
     // allowed to be one shape: the health band waits for an empty slot, and
     // the composing chapter waits for the boot chapter to finish speaking.
-    expect(text).toContain('streamSummary && !topBandVisible');
+    // (The band derives its own summary inside a clock leaf; the slot is
+    // still arbitrated on the record's presence, here, before it mounts.)
+    expect(text).toContain('streamHealth && !topBandVisible');
     expect(text).toContain('const stageComposingVisible = stageCompose.visible');
     expect(text).toContain('&& !bootReadoutVisible');
   });

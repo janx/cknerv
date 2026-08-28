@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef } from 'react';
 import type { CSSProperties } from 'react';
 import type { EcgCondition } from '../../derives/ecgCondition';
 import { reconstructArrivals, drawStripChart } from './ecgTrace';
@@ -51,8 +51,8 @@ function fmtS(ms: number | null | undefined): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-export default function BlockCadenceEcg({
-  intervalsMs, sizes, txCounts, lastBlockTsMs, targetMs, avgMs, gapMs, condition, reducedMotion = false, style,
+function BlockCadenceEcg({
+  intervalsMs, sizes, txCounts, lastBlockTsMs, targetMs, avgMs, gapMs = 0, condition, reducedMotion = false, style,
 }: {
   intervalsMs: number[];
   sizes: number[];
@@ -60,7 +60,11 @@ export default function BlockCadenceEcg({
   lastBlockTsMs: number | null | undefined;
   targetMs: number;
   avgMs: number | null;
-  gapMs: number;
+  /** The gap to draw when there is no last block to measure one from. With a
+   *  `lastBlockTsMs` the panel measures its own live gap on its own timers and
+   *  never reads this, which is why the HUD stopped handing it a per-second
+   *  value: it was a fresh prop every tick for a number nothing printed. */
+  gapMs?: number;
   condition: EcgCondition;
   reducedMotion?: boolean;
   style?: CSSProperties;
@@ -158,3 +162,8 @@ export default function BlockCadenceEcg({
     </HudPanel>
   );
 }
+
+// Memoized with the other rail panels — see `BlockchainReadout`. The three
+// rings are aliased across every batch that is not a block, so the panel
+// renders once a block and its two timers carry the seconds in between.
+export default memo(BlockCadenceEcg);

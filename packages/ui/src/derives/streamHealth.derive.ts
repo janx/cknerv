@@ -27,20 +27,18 @@ const PHASE_PRIORITY: Record<StreamHealthPhase, number> = {
   stale: 4,
 };
 
-/** Collapse independent chain/cells transports without confusing their state
- * with CKB node sync. The worst transport phase wins; channel attribution
- * remains explicit so a healthy stream is never painted as failed. */
-export function deriveStreamHealthSummary(
-  channels: StreamHealthChannels,
-  nowMs: number,
-): StreamHealthSummary {
-  const entries = (Object.entries(channels) as Array<
+type StreamHealthEntry = [keyof StreamHealthChannels, StreamHealth];
+
+function presentChannels(channels: StreamHealthChannels): StreamHealthEntry[] {
+  return (Object.entries(channels) as Array<
     [keyof StreamHealthChannels, StreamHealth | undefined]
   >).filter(
-    (entry): entry is [keyof StreamHealthChannels, StreamHealth] =>
-      entry[1] !== undefined,
+    (entry): entry is StreamHealthEntry => entry[1] !== undefined,
   );
-  const phase = entries.reduce<StreamHealthPhase>(
+}
+
+function worstPhase(entries: readonly StreamHealthEntry[]): StreamHealthPhase {
+  return entries.reduce<StreamHealthPhase>(
     (worst, [, health]) => (
       PHASE_PRIORITY[health.phase] > PHASE_PRIORITY[worst]
         ? health.phase
@@ -48,6 +46,27 @@ export function deriveStreamHealthSummary(
     ),
     'live',
   );
+}
+
+/** The worst transport phase alone — the half of the summary that needs no
+ * clock. The overlay lays its rails out under this word, so it must not be
+ * paid for with a per-second render; the silence beside it is the banner's
+ * own leaf (`deriveStreamHealthSummary`). */
+export function deriveStreamHealthPhase(
+  channels: StreamHealthChannels,
+): StreamHealthPhase {
+  return worstPhase(presentChannels(channels));
+}
+
+/** Collapse independent chain/cells transports without confusing their state
+ * with CKB node sync. The worst transport phase wins; channel attribution
+ * remains explicit so a healthy stream is never painted as failed. */
+export function deriveStreamHealthSummary(
+  channels: StreamHealthChannels,
+  nowMs: number,
+): StreamHealthSummary {
+  const entries = presentChannels(channels);
+  const phase = worstPhase(entries);
   const interrupted = entries.filter(([, health]) => health.phase !== 'live');
   const affectedChannels = interrupted.map(([name]) => name);
   // Only an interrupted channel's silence is measurable: a live tracker

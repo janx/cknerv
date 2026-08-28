@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import { memo, type CSSProperties } from 'react';
 import type { EnrichmentSourceStatus, NetworkAtlasRecord } from '@cknerv/types';
 import type { NetworkSummary } from '../../derives/peers.derive';
 import type { FleetConsensus } from '../../derives/fleetTelemetry';
@@ -24,7 +24,7 @@ const AT_TIP_SYNC_RATIO = 0.999;
 // It reports the fleet, never one peer. Per-peer client version and RTT are on
 // the floating PEER card and the reference version is on the NODE card, so a
 // rail aggregate of the same two numbers was only duplicate telemetry.
-export default function NetworkPanel({ summary, consensus, syncRatio, enrichmentSource, networkAtlas, producers, style }: {
+function NetworkPanel({ summary, consensus, syncRatio, enrichmentSource, networkAtlas, producers, style }: {
   summary: NetworkSummary; consensus: FleetConsensus; syncRatio: number;
   enrichmentSource?: EnrichmentSourceStatus;
   networkAtlas?: NetworkAtlasRecord | null;
@@ -128,3 +128,8 @@ export default function NetworkPanel({ summary, consensus, syncRatio, enrichment
     </HudPanel>
   );
 }
+
+// Memoized with the other rail panels — see `BlockchainReadout`. `summary`
+// and `consensus` are keyed upstream on the peer list and the chain fields
+// they read, so a mempool tick leaves both where they were.
+export default memo(NetworkPanel);

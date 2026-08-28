@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useMemo, useRef } from 'react';
 import { cellChurnRates, CHURN_WINDOW_BLOCKS, type ChurnRates, type ChurnSample } from '../../derives/cellChurn';
 
 // Holds a rolling buffer of (tip, born, dead) samples and returns the smoothed
@@ -10,5 +10,10 @@ export function useCellChurn(tip: number, born: number, dead: number): ChurnRate
   if (!last || tip > last.tip) {
     samples.current = [...samples.current, { tip, born, dead }].slice(-(CHURN_WINDOW_BLOCKS + 1));
   }
-  return cellChurnRates(samples.current);
+  // One rates object per sample list: the panel that prints it is memoized,
+  // and a fresh object on every render re-rendered it for a batch that added
+  // no sample. The list is replaced only when the tip advances, so the rates
+  // are recomputed exactly then.
+  const window = samples.current;
+  return useMemo(() => cellChurnRates(window), [window]);
 }

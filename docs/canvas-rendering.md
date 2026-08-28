@@ -1055,6 +1055,11 @@ current staged structure.
 - Pure reducers publish immutable state and compact journals.
 - A stream batch that advances only the reconnect revision is never published:
   the cursor moves, the React commit does not.
+- The HUD's 1 Hz clock is a store with leaf subscribers (`hudClock`): the
+  uptime, freshness and silence readouts re-render per tick, while the overlay
+  root and its memoized panels render on data changes only. Producer standings
+  reach the colony by reference and are read once a frame by identity, so a
+  block moves one instanced lane without a React render in the colony.
 - Render-set cursors turn adjacent journals into slot-local changes.
 - The Cell source index for a link batch scans the staged Cell Map once, not
   once per link.

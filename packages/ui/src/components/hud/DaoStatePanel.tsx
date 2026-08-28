@@ -1,19 +1,26 @@
-import type { CSSProperties } from 'react';
+import { memo, type CSSProperties } from 'react';
 import type {
   DaoStateRecord,
   EnrichmentSourceStatus,
 } from '@cknerv/types';
 import DaoStateReadout, { canRenderDaoStateReadout } from './DaoStateReadout';
+import { useHudClockSelector } from './hudClock';
 import { HudPanel, PanelHeader } from './primitives';
 
-export default function DaoStatePanel({ source, record, style, nowMs = Date.now() }: {
+function DaoStatePanel({ source, record, style, nowMs }: {
   source?: EnrichmentSourceStatus;
   record?: DaoStateRecord | null;
   style?: CSSProperties;
-  /** Shared HUD clock for freshness and deterministic tests. */
+  /** A host's clock, for labs and deterministic tests. Absent, the gate below
+   *  and the readout's freshness line read the shared HUD clock themselves. */
   nowMs?: number;
 }) {
-  if (!canRenderDaoStateReadout(source, record, nowMs)) return null;
+  // A boolean off the clock: it flips when the record ages past the stale
+  // window, and sleeps through every tick that leaves it where it was.
+  const renderable = useHudClockSelector(
+    (clock) => canRenderDaoStateReadout(source, record, nowMs ?? clock),
+  );
+  if (!renderable) return null;
 
   return (
     <HudPanel watermark="道" style={{ width: 300, ...style }}>
@@ -25,3 +32,7 @@ export default function DaoStatePanel({ source, record, style, nowMs = Date.now(
     </HudPanel>
   );
 }
+
+// Memoized with the other rail panels — see `BlockchainReadout`. The clock
+// no longer arrives as a prop: the freshness line is a leaf of its own.
+export default memo(DaoStatePanel);

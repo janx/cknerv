@@ -14,9 +14,7 @@
 import {
   type CSSProperties,
   type ReactNode,
-  useEffect,
   useMemo,
-  useState,
 } from 'react';
 import type { ChainEntry, ChainNode, Peer } from '@cknerv/types';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
@@ -131,16 +129,8 @@ export default function NodeSelfCard({
   );
 
   // The self probe counts no duration of its own — a node holds no link to
-  // itself — so it runs no wall clock until the dossier brings ages that have
-  // to keep moving. The tick lives exactly as long as one is on screen.
-  const sightingRecord = sighting?.phase === 'ready' ? sighting.record ?? null : null;
-  const [dossierNowMs, setDossierNowMs] = useState(() => Date.now());
-  useEffect(() => {
-    if (!sightingRecord) return;
-    setDossierNowMs(Date.now());
-    const interval = window.setInterval(() => setDossierNowMs(Date.now()), 1000);
-    return () => window.clearInterval(interval);
-  }, [sightingRecord]);
+  // itself — so nothing here runs a clock. The dossier's ages are leaves on
+  // the shared HUD clock and tick only while one is on screen.
 
   // Peers past our head are the one reading on this card that indicts us: it
   // is the local node that lags. The link probe gives AHEAD the same danger
@@ -413,7 +403,6 @@ export default function NodeSelfCard({
           {...sighting}
           module="SELF·04"
           variant="self"
-          nowMs={dossierNowMs}
           liveVersion={node.version}
         />
       ) : null}

@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import { memo, type CSSProperties } from 'react';
 import type { CellsStats } from '../../derives/cellsStats.derive';
 import type { ChurnRates } from '../../derives/cellChurn';
 import { CELL_PANEL_ACCENT, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
@@ -22,7 +22,7 @@ function FlowRow({ label, direction, color, width, value }: { label: string; dir
   );
 }
 
-export default function CellsPanel({ stats, churn, reducedMotion = false, style }: {
+function CellsPanel({ stats, churn, reducedMotion = false, style }: {
   stats: CellsStats;
   churn: ChurnRates;
   reducedMotion?: boolean;
@@ -88,3 +88,8 @@ export default function CellsPanel({ stats, churn, reducedMotion = false, style 
     </HudPanel>
   );
 }
+
+// Memoized with the other rail panels — see `BlockchainReadout`. `churn` is
+// one object per churn window (`useCellChurn`), so a chain batch that added
+// no sample leaves every prop here where it was.
+export default memo(CellsPanel);

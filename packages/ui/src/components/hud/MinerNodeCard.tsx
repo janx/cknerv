@@ -54,17 +54,13 @@
 // Everything on it is known the moment it opens, so nothing reveals, nothing
 // animates in and nothing is selectable. DOM only: nothing here may touch
 // three.js.
-import {
-  type CSSProperties,
-  type ReactNode,
-  useEffect,
-  useState,
-} from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import type {
   PeerMiningCandidacy,
   ProducerStanding,
 } from '../../derives/blockProducers.derive';
-import { formatAge, midTruncate } from './cellFormat';
+import { midTruncate } from './cellFormat';
+import { HudAge } from './hudClock';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import {
   CloseButton,
@@ -142,8 +138,9 @@ export interface MinerNodeCardProps {
   /** Spatial fan direction chosen by the scene-anchor placement solver. */
   layoutSide?: MinerNodeLayoutSide;
   /** Wall clock the header's block age is measured from. Supplied by a host
-   *  that already runs a clock; otherwise the card keeps its own 1 Hz tick,
-   *  which is the only timer it ever starts. */
+   *  that already runs one (labs, deterministic tests); otherwise the age is a
+   *  leaf on the shared HUD clock, and nothing else on the card renders for a
+   *  tick. The card starts no timer of its own. */
   nowMs?: number;
   onClose: () => void;
   style?: CSSProperties;
@@ -261,18 +258,6 @@ export default function MinerNodeCard({
   const declared = producer.message.trim().length > 0;
   const buildShare = producerBuildShareText(producer.fan, versionedRosterSize);
 
-  // The card prints one age, so it needs a wall clock that keeps moving. A host
-  // that already runs one hands it down and no interval starts here at all; on
-  // its own the card runs exactly one, at the 1 Hz the other dialects tick at.
-  const [tickNowMs, setTickNowMs] = useState(() => Date.now());
-  useEffect(() => {
-    if (nowMs != null) return;
-    setTickNowMs(Date.now());
-    const interval = window.setInterval(() => setTickNowMs(Date.now()), 1000);
-    return () => window.clearInterval(interval);
-  }, [nowMs, producer.key]);
-  const atMs = nowMs ?? tickNowMs;
-
   const verticalLayout = layoutSide === 'above' || layoutSide === 'below';
 
   return (
@@ -351,7 +336,7 @@ export default function MinerNodeCard({
               letterSpacing: 0.9,
             }}
           >
-            LAST BLOCK {formatAge(producer.lastSeenMs, atMs)}
+            LAST BLOCK <HudAge atMs={producer.lastSeenMs} nowMs={nowMs} />
           </span>
           {moduleTag('MINE·01')}
         </span>

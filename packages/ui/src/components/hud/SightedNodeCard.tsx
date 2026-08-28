@@ -24,16 +24,12 @@
 // Everything on it is known the moment it opens — the roster row arrived with
 // the round that staged the node — so nothing reveals, nothing animates in and
 // nothing is selectable. DOM only: nothing here may touch three.js.
-import {
-  type CSSProperties,
-  type ReactNode,
-  useEffect,
-  useState,
-} from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import type { RosterNode, RosterNodeState } from '@cknerv/types';
 import type { PeerMiningCandidacy } from '../../derives/blockProducers.derive';
 import { MiningCandidacyStamp } from './MinerNodeCard';
 import { formatAge, midTruncate } from './cellFormat';
+import { HudAge, useHudClockSelector } from './hudClock';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import {
   CloseButton,
@@ -115,8 +111,9 @@ export interface SightedNodeCardProps {
   /** Spatial fan direction chosen by the scene-anchor placement solver. */
   layoutSide?: SightedNodeLayoutSide;
   /** Wall clock both the header age and the dossier's ages are measured from.
-   *  Supplied by a host that already runs a clock; otherwise the card keeps
-   *  its own 1 Hz tick, which is the only timer it ever starts. */
+   *  Supplied by a host that already runs one (labs, deterministic tests);
+   *  otherwise every age is a leaf on the shared HUD clock, and nothing else
+   *  on the card renders for a tick. The card starts no timer of its own. */
   nowMs?: number;
   /** The crawler's fuller dossier on the same node, fetched lazily. The roster
    *  row above is instant and this is not, so the card is already complete
@@ -169,6 +166,24 @@ function ReadoutCaption({ children }: { children: ReactNode }) {
   return <PlateReadoutCaption>{children}</PlateReadoutCaption>;
 }
 
+/** The one RECORD row that ages, as a leaf: the second passing re-renders
+ *  this row and nothing around it. The value is the row's own tooltip too,
+ *  which is why the whole row lives here rather than only its text. */
+function SightedTriedRow({ atMs, nowMs }: { atMs: number; nowMs?: number }) {
+  const value = useHudClockSelector((clock) => formatAge(atMs, nowMs ?? clock));
+  return (
+    <SightedReadout
+      row="tried"
+      label="LAST TRIED"
+      value={value}
+    >
+      <ReadoutCaption>
+        THE LAST COMPLETED ROUND THAT DIALED IT
+      </ReadoutCaption>
+    </SightedReadout>
+  );
+}
+
 export default function SightedNodeCard({
   node,
   layoutSide = 'left',
@@ -182,19 +197,6 @@ export default function SightedNodeCard({
   const id8 = node.node_id.slice(0, 8);
   const dialect = sightedNodeDialect(node.state);
   const word = DIALECT_WORD[dialect];
-
-  // The card prints one age and lends it to the dossier's ages, so it needs a
-  // wall clock that keeps moving. A host that already runs one hands it down
-  // and no interval starts here at all; on its own the card runs exactly one,
-  // at the 1 Hz the other dialects tick at.
-  const [tickNowMs, setTickNowMs] = useState(() => Date.now());
-  useEffect(() => {
-    if (nowMs != null) return;
-    setTickNowMs(Date.now());
-    const interval = window.setInterval(() => setTickNowMs(Date.now()), 1000);
-    return () => window.clearInterval(interval);
-  }, [nowMs, node.node_id]);
-  const atMs = nowMs ?? tickNowMs;
 
   const verticalLayout = layoutSide === 'above' || layoutSide === 'below';
 
@@ -283,7 +285,7 @@ export default function SightedNodeCard({
                 letterSpacing: 0.9,
               }}
             >
-              LAST SEEN {formatAge(node.last_reachable_ms, atMs)}
+              LAST SEEN <HudAge atMs={node.last_reachable_ms} nowMs={nowMs} />
             </span>
           ) : null}
           {moduleTag('SGHT·01')}
@@ -359,15 +361,7 @@ export default function SightedNodeCard({
               Three clocks ride the roster row and none may stand in for
               another, so this one is labelled for the only thing it means. */}
           {dialect === 'advertised' && node.last_observed_ms != null ? (
-            <SightedReadout
-              row="tried"
-              label="LAST TRIED"
-              value={formatAge(node.last_observed_ms, atMs)}
-            >
-              <ReadoutCaption>
-                THE LAST COMPLETED ROUND THAT DIALED IT
-              </ReadoutCaption>
-            </SightedReadout>
+            <SightedTriedRow atMs={node.last_observed_ms} nowMs={nowMs} />
           ) : null}
         </div>
       </section>
@@ -381,7 +375,7 @@ export default function SightedNodeCard({
           {...sighting}
           module="SGHT·03"
           variant="sighted"
-          nowMs={atMs}
+          nowMs={nowMs}
         />
       ) : null}
 

@@ -7,7 +7,8 @@ import {
   daoStateVisualState,
   deriveDaoStateVisual,
 } from '../../derives/daoState.derive';
-import { formatAge, formatCkb } from './cellFormat';
+import { formatCkb } from './cellFormat';
+import { HudAge, useHudClockSelector } from './hudClock';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 
 const SHANNONS_PER_CKB = 100_000_000n;
@@ -117,19 +118,25 @@ export function canRenderDaoStateReadout(
  *  A palette-bearing file is the worst place to keep an unrendered branch: it
  *  carried two more readers of `accent` that nothing could see, so a retune
  *  here would have been judged against a shape that does not ship. */
-export default function DaoStateReadout({ source, record, nowMs = Date.now() }: {
+export default function DaoStateReadout({ source, record, nowMs }: {
   source?: EnrichmentSourceStatus;
   record?: DaoStateRecord | null;
-  /** Shared HUD clock for deterministic freshness text and stale state. */
+  /** A host's clock, for deterministic freshness text and stale state. Absent,
+   *  the stale gate and the freshness line read the shared HUD clock. */
   nowMs?: number;
 }) {
+  // The stale gate is a selector on the clock: it flips once, when the record
+  // ages past the window, and never wakes this body for a tick that leaves it
+  // where it was. The freshness line is the one span that moves every second,
+  // and it is a leaf of its own below.
+  const visualState = useHudClockSelector((clock) => (
+    source && record ? daoStateVisualState(source, record, nowMs ?? clock) : null
+  ));
   if (!source || !record) return null;
-  const visualState = daoStateVisualState(source, record, nowMs);
   const visual = deriveDaoStateVisual(record);
   if (!visualState || !visual) return null;
   const stale = visualState === 'stale';
   const accent = stale ? HUD_COLORS.caution : HUD_COLORS.orange;
-  const updatedAge = formatAge(record.updated_at_ms, nowMs);
   const depositChangePercent = visual.depositChange24hShannons === null
     ? null
     : formatChangePercent(
@@ -171,7 +178,7 @@ export default function DaoStateReadout({ source, record, nowMs = Date.now() }: 
             boxShadow: `0 0 6px ${stale ? HUD_COLORS.caution : HUD_COLORS.nominal}`,
           }}
         />
-        <span>{stale ? 'STALE' : 'LIVE'} · UPDATED {updatedAge} AGO</span>
+        <span>{stale ? 'STALE' : 'LIVE'} · UPDATED <HudAge atMs={record.updated_at_ms} nowMs={nowMs} /> AGO</span>
       </div>
 
       <div data-dao-content style={{ opacity: stale ? 0.72 : 1 }}>
