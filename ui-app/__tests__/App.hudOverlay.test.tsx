@@ -208,6 +208,7 @@ describe('HudOverlay wiring', () => {
     expect(sentinel).toContain('gestureRef={orbitGestureRef}');
     expect(sentinel).toContain('automationActiveRef={cameraAutomationActiveRef}');
     expect(sentinel).toContain('pickingSuspendedRef={orbitPickingSuspendedRef}');
+    expect(sentinel).toContain('motionActiveRef={cameraMotionActiveRef}');
     expect(APP_SOURCE.indexOf('<CameraMotionSentinel'))
       .toBeGreaterThan(APP_SOURCE.indexOf('<OrbitControls'));
     expect(APP_SOURCE.indexOf('<CameraMotionSentinel'))
@@ -223,6 +224,22 @@ describe('HudOverlay wiring', () => {
       /const endOrbitInteraction = useCallback\(\(\) => \{[^}]*orbitPickingSuspendedRef\.current = false/,
     );
     expect(APP_SOURCE).toContain('noteOrbitCameraChange(gesture);');
+  });
+
+  it('keeps motion windows out of the adaptive-quality sample', () => {
+    // The sampler reads the sentinel's second verdict — the picking OR
+    // widened by the un-moved press — through the same kind of ref replay
+    // already uses, and only the sentinel writes it.
+    const controller = APP_SOURCE.match(
+      /<AdaptiveQualityController[\s\S]*?\/>/,
+    )?.[0];
+    expect(controller).toBeDefined();
+    expect(controller).toContain('hydrationActiveRef={hydrationActiveRef}');
+    expect(controller).toContain('motionActiveRef={cameraMotionActiveRef}');
+    expect(APP_SOURCE).toContain(
+      'motionActiveRef.current = orbitInMotion(gesture) || automation;',
+    );
+    expect(APP_SOURCE.match(/motionActiveRef\.current =/g)).toHaveLength(1);
   });
 
   it('keeps Cell detail selection independent from camera automation', () => {

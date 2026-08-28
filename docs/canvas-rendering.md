@@ -824,8 +824,9 @@ not an expensive topology rebuild.
   update (`settleOrbitCameraFrame`), and `ConsensusRouteCamera` publishes
   `automationActiveRef` while a transition, release hold, or queued
   transition is live. The picker consumes the OR of the three
-  (`orbitPickingSuspendedRef`); the adaptive-quality sampler can exclude the
-  same frames.
+  (`orbitPickingSuspendedRef`); the adaptive-quality sampler consumes the
+  same OR widened by the un-moved press (`orbitInMotion` →
+  `cameraMotionActiveRef`) and drops those frames from its sample (§13).
 - The scissored Cell portrait owns pointer input within its DOM rectangle and
   disables main Galaxy controls until release.
 - Pointer miss and Escape clear inspection only when no other gesture owns the
@@ -921,9 +922,46 @@ authoritative.
 AUTO then samples 750 ms windows, uses a 1,500 ms exponential average, begins
 with a 4,000 ms warmup, and waits 6,000 ms after a switch. Sustained slow
 evidence may move it down one adjacent preset; it never moves up during the
-page lifetime. Hidden tabs, delayed callbacks, debugger pauses, and
-backfill/replay windows are rejected as performance evidence. Manual
-High/Med/Low takes ownership immediately.
+page lifetime. Hidden tabs, delayed callbacks, debugger pauses,
+backfill/replay windows, and motion windows are rejected as performance
+evidence. Manual High/Med/Low takes ownership immediately.
+
+Three kinds of frame are never evidence — in calibration and after the lock
+alike, since the sampler outlives the lock — and all three take the same
+exit: the partial 750 ms window is dropped, the frames before it with it, and
+the next admitted frame primes a fresh one. They are a hidden tab's frames, a
+backfill/replay storm's frames (which alone also re-arm the warmup, because
+the seconds after a replay are not trustworthy either), and the frames of a
+**motion window**. A frame is inside a motion window when a pointer gesture is
+held (`OrbitControls` `start` to `end`, an un-moved press included), the
+camera moved during the last settled frame (a drag, or the damping tail after
+a release), or a route-camera flight owns the camera. `App` settles the OR of
+the three once per frame (`CameraMotionSentinel` → `cameraMotionActiveRef`,
+§11.1) and hands it to `AdaptiveQualityController` as `motionActiveRef`, the
+same way replay hands it `hydrationActiveRef`. Rationale, measured
+2026-08-28: a 4 s orbit drag at 35 fps, counted, stepped a settled page
+MED → LOW and the page stayed there. A moving camera re-projects the field
+and rebuilds LOD and hit indexes, ends when the hand or the flight does, and
+says nothing about the steady state the tier is chosen for.
+
+There is no settle constant after a motion window and no restart, on purpose.
+The sentinel writes the flag after the controller has read it in the same
+frame, so the controller sees each verdict one frame late: the first at-rest
+frame is still dropped, the second only primes, and the first interval
+averaged runs from the second at-rest frame to the third — two frames of
+pipeline drain absorbed structurally, past which the 1,500 ms average and
+the 5–12 s holds with 2× decay make a single slow frame invisible (one 30 ms
+frame moves a 45-frame window's mean by 0.3 ms). A restart — the replay rule
+— would zero stability and evidence on every drag: a hand on the camera every
+few seconds could then never lock during calibration, and after the lock
+could shield a tier the machine cannot carry for as long as it kept moving.
+Motion windows are bounded by construction: the damping tail ends ~100–130
+frames after a release of any strength (`dampingFactor` 0.08 against
+OrbitControls' 1e-3 change threshold), and a route flight settles within
+~1.4 s plus a 0.32 s release hold and at most a 0.52 s queued entry delay.
+Only a hand that never lets go keeps the sampler waiting, which is that
+user's choice and not a fault to time out — the page simply keeps the tier it
+has.
 
 ## 14. Capacity and Resource Budgets
 

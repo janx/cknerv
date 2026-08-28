@@ -11,6 +11,7 @@ import {
   noteOrbitPointerMove,
   orbitCameraSuspendsPicking,
   orbitGestureSuppressesPointerAction,
+  orbitInMotion,
   settleOrbitCameraFrame,
 } from '../src/orbit-gesture-state';
 
@@ -152,5 +153,72 @@ describe('orbit camera motion latch', () => {
     expect(orbitCameraSuspendsPicking(state)).toBe(true);
     expect(settleOrbitCameraFrame(state)).toBe(false);
     expect(orbitCameraSuspendsPicking(state)).toBe(false);
+  });
+});
+
+describe('orbit motion window', () => {
+  it('opens at the press and closes on the first settled frame without a change', () => {
+    const state = createOrbitGestureState();
+    expect(orbitInMotion(state)).toBe(false);
+
+    // A press that has not moved the camera: picking still answers it, the
+    // sampler already looks away — the gesture has begun.
+    noteOrbitPointerDown(state, 400, 300);
+    beginOrbitGesture(state);
+    expect(settleOrbitCameraFrame(state)).toBe(false);
+    expect(orbitCameraSuspendsPicking(state)).toBe(false);
+    expect(orbitInMotion(state)).toBe(true);
+
+    // The drag proper, and a frame the pointer paused in.
+    changeOrbitGesture(state);
+    noteOrbitCameraChange(state);
+    expect(settleOrbitCameraFrame(state)).toBe(true);
+    expect(orbitInMotion(state)).toBe(true);
+    expect(settleOrbitCameraFrame(state)).toBe(false);
+    expect(orbitInMotion(state)).toBe(true);
+
+    // Release into a damping tail: `end` has fired, `change` keeps coming.
+    endOrbitGesture(state, 100);
+    noteOrbitCameraChange(state);
+    expect(settleOrbitCameraFrame(state)).toBe(true);
+    expect(orbitInMotion(state)).toBe(true);
+
+    // The first frame that passes without a change closes the window.
+    expect(settleOrbitCameraFrame(state)).toBe(false);
+    expect(orbitInMotion(state)).toBe(false);
+  });
+
+  it('is the picking suspension widened by exactly the un-moved press', () => {
+    // Over the whole (active, revisionNoted, cameraMoving) space: whatever
+    // suspends picking is in the motion window, and the only frames in the
+    // window that picking still serves are a held press before its first
+    // camera change.
+    for (const active of [false, true]) {
+      for (const revisionNoted of [false, true]) {
+        for (const cameraMoving of [false, true]) {
+          const state = {
+            ...createOrbitGestureState(), active, revisionNoted, cameraMoving,
+          };
+          const picking = orbitCameraSuspendsPicking(state);
+          const motion = orbitInMotion(state);
+          if (picking) expect(motion).toBe(true);
+          expect(motion && !picking)
+            .toBe(active && !revisionNoted && !cameraMoving);
+        }
+      }
+    }
+  });
+
+  it('treats a wheel notch as one frame of motion', () => {
+    const state = createOrbitGestureState();
+    beginOrbitGesture(state);
+    changeOrbitGesture(state);
+    noteOrbitCameraChange(state);
+    endOrbitGesture(state, 10);
+    expect(orbitInMotion(state)).toBe(false);
+    expect(settleOrbitCameraFrame(state)).toBe(true);
+    expect(orbitInMotion(state)).toBe(true);
+    expect(settleOrbitCameraFrame(state)).toBe(false);
+    expect(orbitInMotion(state)).toBe(false);
   });
 });

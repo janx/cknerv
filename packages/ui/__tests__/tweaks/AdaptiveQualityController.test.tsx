@@ -167,3 +167,184 @@ describe('AdaptiveQualityController', () => {
     expect(getQualityRuntimeSnapshot().locked).toBe(true);
   });
 });
+
+/** Windows the controller needs to spend the locked tier on 40 ms frames.
+ * 40 ms is past DOWN_FRAME_MS.high from its first window, so this is the
+ * doubled 10 s hold in windows, plus the priming frame: the existing tests
+ * above pin it between 13 and 18. */
+function lockedStepDownWindows(): number {
+  render(<AdaptiveQualityController />);
+  windowsToLock(16);
+  sampleWindows(16, 8);
+  const windows = windowsToStepDown(40);
+  cleanup();
+  setQualityMode('auto');
+  setAdaptiveQuality('high');
+  return windows;
+}
+
+describe('AdaptiveQualityController motion windows', () => {
+  it('is unchanged by a motion ref that never fires', () => {
+    // Equivalence pin: with the ref present and false, today's behaviour to
+    // the window — the flag is the whole difference the tests below measure.
+    const bare = lockedStepDownWindows();
+    const motionActiveRef = { current: false };
+    render(<AdaptiveQualityController motionActiveRef={motionActiveRef} />);
+    windowsToLock(16);
+    sampleWindows(16, 8);
+    expect(windowsToStepDown(40)).toBe(bare);
+  });
+
+  it('counts a drag as evidence when nothing flags it (the finding)', () => {
+    // Today's behaviour, pinned before the exclusion is exercised: 15 s of
+    // 40 ms frames — a hand on the camera at 25 fps — spends the locked
+    // tier. Measured live 2026-08-28 as MED -> LOW, kept for the session.
+    const motionActiveRef = { current: false };
+    render(<AdaptiveQualityController motionActiveRef={motionActiveRef} />);
+    windowsToLock(16);
+    const switches = getQualityRuntimeSnapshot().switches;
+
+    sampleWindows(40, 20);
+    expect(getQualityRuntimeSnapshot()).toMatchObject({
+      effective: 'med', locked: true, switches: switches + 1,
+    });
+  });
+
+  it('drops the same drag from the sample after the lock, and keeps listening', () => {
+    const motionActiveRef = { current: false };
+    render(<AdaptiveQualityController motionActiveRef={motionActiveRef} />);
+    windowsToLock(16);
+    const switches = getQualityRuntimeSnapshot().switches;
+    const reads = clockReads;
+
+    // The identical 15 s of 40 ms frames, inside a motion window.
+    motionActiveRef.current = true;
+    sampleWindows(40, 20);
+    motionActiveRef.current = false;
+
+    // Skipped exactly as replay is skipped: not sampled, not even clocked.
+    expect(clockReads).toBe(reads);
+    expect(getQualityRuntimeSnapshot()).toMatchObject({
+      effective: 'high', locked: true, switches,
+    });
+
+    // Nothing of the drag lingers once the hand lets go: the average never
+    // saw a 40 ms window, so at-rest frames carry no evidence forward.
+    sampleWindows(16, 8);
+    expect(getQualityRuntimeSnapshot()).toMatchObject({
+      effective: 'high', locked: true, switches,
+    });
+
+    // The sampler is still alive, and on the post-lock hold — not on a
+    // re-armed warmup: a replay-style restart would have pushed this past
+    // window 17 (see the hydration test above).
+    const windows = windowsToStepDown(40);
+    expect(windows).toBeGreaterThan(12);
+    expect(windows).toBeLessThanOrEqual(18);
+    expect(getQualityRuntimeSnapshot()).toMatchObject({
+      mode: 'auto', effective: 'med', locked: true, switches: switches + 1,
+    });
+  });
+
+  it('drops a drag from the sample before the lock, costing calibration nothing', () => {
+    const motionActiveRef = { current: false };
+    render(<AdaptiveQualityController motionActiveRef={motionActiveRef} />);
+    sampleWindows(16, 7); // warmup spent (six samples), no stability yet
+    const switches = getQualityRuntimeSnapshot().switches;
+
+    // Unflagged, 40 ms completes the 5 s calibration hold at the seventh
+    // window (pinned in adaptiveQuality.test.ts); twelve of them, flagged,
+    // move nothing — not the tier, not the lock.
+    motionActiveRef.current = true;
+    sampleWindows(40, 12);
+    motionActiveRef.current = false;
+    expect(getQualityRuntimeSnapshot()).toMatchObject({
+      effective: 'high', locked: false, switches,
+    });
+
+    // Neither stability nor calibration time advanced through the drag: the
+    // lock lands on the full 10 s stable window from here, as if the drag had
+    // not happened — and at the opening tier.
+    const windows = windowsToLock(16);
+    expect(windows).toBeGreaterThanOrEqual(Math.floor(10_000 / WINDOW_MS));
+    expect(windows).toBeLessThanOrEqual(Math.ceil(10_000 / WINDOW_MS) + 2);
+    expect(getQualityRuntimeSnapshot()).toMatchObject({
+      effective: 'high', locked: true, switches,
+    });
+  });
+
+  it('turns repeated short drags into a lost tier only when they are counted', () => {
+    // The review machine's shape: 4 s drags at 30 ms with a 1.5 s rest
+    // between them. Counted, the 1.5 s average rides each drag over the
+    // 22 ms deadband and the rests are too short for the 2x decay to clear
+    // it, so evidence compounds across drags until the 10 s hold falls.
+    const cycle = (motionActiveRef: { current: boolean }, flagged: boolean) => {
+      motionActiveRef.current = flagged;
+      sampleWindows(30, 5);
+      motionActiveRef.current = false;
+      sampleWindows(16, 2);
+    };
+
+    const counted = { current: false };
+    render(<AdaptiveQualityController motionActiveRef={counted} />);
+    windowsToLock(16);
+    let switches = getQualityRuntimeSnapshot().switches;
+    let cycles = 0;
+    while (getQualityRuntimeSnapshot().effective === 'high') {
+      cycle(counted, false);
+      cycles += 1;
+      if (cycles > 8) throw new Error('counted drags never stepped down');
+    }
+    expect(cycles).toBeLessThanOrEqual(6);
+    expect(getQualityRuntimeSnapshot()).toMatchObject({
+      effective: 'med', locked: true, switches: switches + 1,
+    });
+    cleanup();
+    setQualityMode('auto');
+    setAdaptiveQuality('high');
+
+    // Flagged, the same hand for twice as long moves nothing.
+    const flagged = { current: false };
+    render(<AdaptiveQualityController motionActiveRef={flagged} />);
+    windowsToLock(16);
+    switches = getQualityRuntimeSnapshot().switches;
+    for (let index = 0; index < 2 * cycles; index += 1) cycle(flagged, true);
+    expect(getQualityRuntimeSnapshot()).toMatchObject({
+      effective: 'high', locked: true, switches,
+    });
+  });
+
+  it('leaves the replay restart in place when replay ends inside a drag', () => {
+    const hydrationActiveRef = { current: false };
+    const motionActiveRef = { current: false };
+    render(
+      <AdaptiveQualityController
+        hydrationActiveRef={hydrationActiveRef}
+        motionActiveRef={motionActiveRef}
+      />,
+    );
+    windowsToLock(16);
+    const switches = getQualityRuntimeSnapshot().switches;
+
+    hydrationActiveRef.current = true;
+    sampleWindows(120, 6);
+    // Replay ends while the hand is still on the camera.
+    motionActiveRef.current = true;
+    hydrationActiveRef.current = false;
+    sampleWindows(40, 5);
+    motionActiveRef.current = false;
+    expect(getQualityRuntimeSnapshot()).toMatchObject({
+      effective: 'high', locked: true, switches,
+    });
+
+    // The replay rule kept its restart: the re-armed 4 s warmup precedes
+    // the doubled hold, so the step lands where the hydration test above
+    // puts it, not at the bare post-lock count.
+    const windows = windowsToStepDown(40);
+    expect(windows).toBeGreaterThan(17);
+    expect(windows).toBeLessThanOrEqual(24);
+    expect(getQualityRuntimeSnapshot()).toMatchObject({
+      effective: 'med', locked: true, switches: switches + 1,
+    });
+  });
+});

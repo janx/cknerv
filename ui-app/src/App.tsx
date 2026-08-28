@@ -152,6 +152,7 @@ import {
   noteOrbitPointerMove,
   orbitCameraSuspendsPicking,
   orbitGestureSuppressesPointerAction,
+  orbitInMotion,
   settleOrbitCameraFrame,
   type OrbitGestureState,
 } from './orbit-gesture-state';
@@ -203,27 +204,38 @@ const STREAM_STALE_AFTER_MS = 15_000;
  * Settles, once per frame, whether the camera is being moved by something
  * other than a pointer that is still down: OrbitControls' damping tail keeps
  * reporting `change` for a second or two after `end`, and the route camera
- * flies without any gesture at all. The Cell picker reads the one ref this
- * writes and skips hover probes while it is set; presses and clicks still
- * answer, and the index rebuilds once, lazily, on the first probe after the
- * motion settles. Mounted after the route camera so a frame's verdict includes
- * that frame's flight step; at default priority it runs after the controls'
- * own update (drei schedules that at -1).
+ * flies without any gesture at all. Two refs come out of it, from the same
+ * three sources. The Cell picker reads `pickingSuspendedRef` and skips hover
+ * probes while it is set; presses and clicks still answer, and the index
+ * rebuilds once, lazily, on the first probe after the motion settles. The
+ * adaptive-quality sampler reads `motionActiveRef` — the same OR widened by
+ * the un-moved press (`orbitInMotion`) — and drops every frame it flags from
+ * its sample: a drag is transient by construction and must not cost the page
+ * a tier. Mounted after the route camera so a frame's verdict includes that
+ * frame's flight step; at default priority it runs after the controls' own
+ * update (drei schedules that at -1) and after the sampler, which therefore
+ * reads each verdict one frame late — a lag that only lengthens the
+ * exclusion at the end of a window, and is why the sampler needs no settle
+ * of its own.
  */
 function CameraMotionSentinel({
   gestureRef,
   automationActiveRef,
   pickingSuspendedRef,
+  motionActiveRef,
 }: {
   gestureRef: { readonly current: OrbitGestureState };
   automationActiveRef: { readonly current: boolean };
   pickingSuspendedRef: { current: boolean };
+  motionActiveRef: { current: boolean };
 }) {
   useFrame(() => {
     const gesture = gestureRef.current;
     settleOrbitCameraFrame(gesture);
+    const automation = automationActiveRef.current;
     pickingSuspendedRef.current = orbitCameraSuspendsPicking(gesture)
-      || automationActiveRef.current;
+      || automation;
+    motionActiveRef.current = orbitInMotion(gesture) || automation;
   });
   return null;
 }
@@ -353,6 +365,10 @@ export default function App({
   // gesture in progress. These refs change outside React's render path.
   const orbitPickingSuspendedRef = useRef(false);
   const cameraAutomationActiveRef = useRef(false);
+  // The sampler's view of the same motion: a gesture held, the camera moving,
+  // or a flight — settled once per frame by the sentinel, read by
+  // AdaptiveQualityController, which drops the frames it flags.
+  const cameraMotionActiveRef = useRef(false);
   const beginOrbitInteraction = useCallback(() => {
     beginOrbitGesture(orbitGestureRef.current);
   }, []);
@@ -1968,10 +1984,14 @@ export default function App({
               onInteractionChange={setCellScanInteractionActive}
             />
           ) : null}
-          {/* Auto mode samples raw frame time with long hysteresis. Manual
-              high/med/low in the backtick panel overrides it immediately. */}
+          {/* Auto mode samples raw frame time with long hysteresis, outside
+              replay and outside motion windows. Manual high/med/low in the
+              backtick panel overrides it immediately. */}
           {qualityOverride ? null : (
-            <AdaptiveQualityController hydrationActiveRef={hydrationActiveRef} />
+            <AdaptiveQualityController
+              hydrationActiveRef={hydrationActiveRef}
+              motionActiveRef={cameraMotionActiveRef}
+            />
           )}
           {/* Mirrors the backtick leva panel into the LIVE tuning store.
               Re-renders only on knob drag (no per-frame cost); mount once. */}
@@ -2081,6 +2101,7 @@ export default function App({
             gestureRef={orbitGestureRef}
             automationActiveRef={cameraAutomationActiveRef}
             pickingSuspendedRef={orbitPickingSuspendedRef}
+            motionActiveRef={cameraMotionActiveRef}
           />
         </Canvas>
       </CellGalaxyProvider>

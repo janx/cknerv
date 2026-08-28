@@ -148,3 +148,25 @@ export function settleOrbitCameraFrame(state: OrbitGestureState): boolean {
 export function orbitCameraSuspendsPicking(state: OrbitGestureState): boolean {
   return state.cameraMoving || (state.active && state.revisionNoted);
 }
+
+/**
+ * Whether the frame that just settled lies inside a MOTION WINDOW: a pointer
+ * gesture is held (`start` to `end` — a press that has not yet moved the
+ * camera included), or the camera moved during that frame, by the hand or by
+ * the damping tail after it let go. This is what the adaptive-quality sampler
+ * reads, and it is {@link orbitCameraSuspendsPicking} widened by exactly the
+ * un-moved press: picking must keep answering a still hand, but the sampler
+ * is asking "may these frames be counted", and a press is the opening of a
+ * gesture whose frames it must not count — so the window closes at the press
+ * rather than one settled frame after the first change. Route automation is
+ * the third source and is OR'd in by the caller, as for picking.
+ *
+ * Bounded by construction: the tail decays geometrically (`dampingFactor`
+ * 0.08, so the pending delta shrinks by 8% an update) and OrbitControls stops
+ * reporting `change` once the camera moves less than 1e-3 units or radians
+ * a frame — about 100–130 frames after a release of any strength, the last
+ * ~30 of them sporadic. Only a hand that never lets go keeps it open.
+ */
+export function orbitInMotion(state: OrbitGestureState): boolean {
+  return state.active || state.cameraMoving;
+}
