@@ -126,6 +126,9 @@ function injectJukeboxStyles(doc: Document = document): void {
     '@keyframes cknerv-jukebox-eq-c{0%,100%{transform:scaleY(.6)}32%{transform:scaleY(.95)}}',
     '@keyframes cknerv-jukebox-tick{0%{transform:scaleY(1)}16%{transform:scaleY(1.55)}100%{transform:scaleY(1)}}',
     '@keyframes cknerv-jukebox-breathe{0%,100%{opacity:.72}50%{opacity:1}}',
+    // The origins are set inline per element now (each bar's rect bottom
+    // centre, the group's union bottom centre — see `JukeboxGlyph`); these
+    // rules stay as the declared intent and the fallback for either.
     '.cknerv-jukebox-bar{transform-box:fill-box;transform-origin:bottom}',
     '.cknerv-jukebox-bars{transform-box:fill-box;transform-origin:bottom}',
     // Live only while the Jukebox has never been opened: a quiet corner that
@@ -290,72 +293,141 @@ export function getRandomJukeboxTrackId(
   return candidates[index].id;
 }
 
+/** The glyph's box, in CSS px — the old single SVG's viewport, which is also
+ *  what the wrapper clips to and what the glow is cast from. */
+const GLYPH_W = 23;
+const GLYPH_H = 14;
+
+/** The three equalizer bars, in TENTHS of a CSS px of the glyph's own
+ *  coordinates — exactly the rects the single SVG drew (12.2 × 7.3, 2.4 wide,
+ *  5.1 tall, …), kept as integers so every offset derived below prints as
+ *  the clean decimal it is rather than a float sum's rounding. Every bar
+ *  stands on one baseline (`y + height` is 124 for all three), which is what
+ *  lets the group tick scale about one line. */
+const EQ_BARS = [
+  { id: 'a', x10: 122, y10: 73, h10: 51 },
+  { id: 'b', x10: 156, y10: 33, h10: 91 },
+  { id: 'c', x10: 190, y10: 58, h10: 66 },
+] as const;
+const EQ_BAR_W10 = 24;
+const EQ_BASELINE10 = 124;
+/** The bars' union box (12..22 × 3..13): where the group span stands, and
+ *  whose bottom centre is the scale origin the old `<g>` had under
+ *  `transform-box: fill-box`. */
+const EQ_GROUP_LEFT = 12;
+const EQ_GROUP_TOP = 3;
+const EQ_GROUP_W = 10;
+const EQ_GROUP_H = 10;
+/** Each bar's own SVG root sits at an integer offset so its rect keeps the
+ *  fractional, anti-aliased edges the old rect had; this is the box's width. */
+const EQ_BAR_BOX_W = 3;
+const px10 = (tenths: number): number => tenths / 10;
+
 /** The mark is the affordance: a drawn eighth note — the mono face carries no
  *  ♪ glyph — beside a three-bar equalizer, the same bar-meter vocabulary the
  *  HUD already uses for BORN/DIED and SYNC RATIO. The retired jukebox-cabinet
  *  silhouette was unreadable at 14px and said nothing about sound. `pulseKey`
- *  remounts the bars so each new block ticks them once. */
+ *  remounts the bars so each new block ticks them once.
+ *
+ *  ⚠️ THE BARS ARE NOT RECTS INSIDE THE NOTE'S SVG ANY MORE. A CSS transform
+ *  animating an inner SVG element runs on the main thread — style, paint and
+ *  commit every frame, for as long as the chip attracts, which is the whole
+ *  session for a visitor who never opens it. Each bar is its own outermost
+ *  `<svg>`: an HTML-layout box whose transform the compositor animates alone,
+ *  drawing the same rect at the same fractional coordinates inside it, so the
+ *  bar's anti-aliased edges are the ones it always had. The wrapper carries
+ *  what the single SVG carried — the breathe class, the glow filter (cast
+ *  from the union of note and bars, as before) and the viewport clip the
+ *  group tick used to hit at the top edge. Each root's scale origin is pinned
+ *  to its rect's bottom centre, the origin `transform-box: fill-box` gave the
+ *  rect; the group's is the union's, as the `<g>` had. */
 function JukeboxGlyph({ pulseKey }: { pulseKey: number }) {
   return (
-    <svg
+    <span
       aria-hidden="true"
       className="cknerv-jukebox-glyph"
-      width="23"
-      height="14"
-      viewBox="0 0 23 14"
-      fill="none"
       style={{
+        position: 'relative',
+        display: 'inline-block',
         flex: '0 0 auto',
+        width: GLYPH_W,
+        height: GLYPH_H,
+        overflow: 'hidden',
         filter: 'drop-shadow(0 0 4px rgba(32,240,255,.55))',
       }}
     >
-      <ellipse
-        cx="4.1"
-        cy="10.7"
-        rx="2.5"
-        ry="1.9"
-        transform="rotate(-20 4.1 10.7)"
-        fill={CYAN}
-      />
-      <path
-        d="M6.5 10.6V2.3"
-        stroke={CYAN}
-        strokeWidth="1.1"
-        strokeLinecap="round"
-      />
-      <path
-        d="M6.5 2.4c2.2.7 3.3 1.6 3 3.4"
-        stroke={CYAN}
-        strokeWidth="1.1"
-        strokeLinecap="round"
-      />
-      <g key={pulseKey} className="cknerv-jukebox-bars">
-        <rect
-          className="cknerv-jukebox-bar cknerv-jukebox-bar-a"
-          x="12.2"
-          y="7.3"
-          width="2.4"
-          height="5.1"
+      <svg
+        width={GLYPH_W}
+        height={GLYPH_H}
+        viewBox={`0 0 ${GLYPH_W} ${GLYPH_H}`}
+        fill="none"
+        style={{ display: 'block' }}
+      >
+        <ellipse
+          cx="4.1"
+          cy="10.7"
+          rx="2.5"
+          ry="1.9"
+          transform="rotate(-20 4.1 10.7)"
           fill={CYAN}
         />
-        <rect
-          className="cknerv-jukebox-bar cknerv-jukebox-bar-b"
-          x="15.6"
-          y="3.3"
-          width="2.4"
-          height="9.1"
-          fill={CYAN}
+        <path
+          d="M6.5 10.6V2.3"
+          stroke={CYAN}
+          strokeWidth="1.1"
+          strokeLinecap="round"
         />
-        <rect
-          className="cknerv-jukebox-bar cknerv-jukebox-bar-c"
-          x="19"
-          y="5.8"
-          width="2.4"
-          height="6.6"
-          fill={CYAN}
+        <path
+          d="M6.5 2.4c2.2.7 3.3 1.6 3 3.4"
+          stroke={CYAN}
+          strokeWidth="1.1"
+          strokeLinecap="round"
         />
-      </g>
-    </svg>
+      </svg>
+      <span
+        key={pulseKey}
+        className="cknerv-jukebox-bars"
+        style={{
+          position: 'absolute',
+          left: EQ_GROUP_LEFT,
+          top: EQ_GROUP_TOP,
+          width: EQ_GROUP_W,
+          height: EQ_GROUP_H,
+          transformOrigin: `${px10((EQ_BARS[0].x10 + EQ_BARS[2].x10 + EQ_BAR_W10) / 2 - EQ_GROUP_LEFT * 10)}px ${px10(EQ_BASELINE10 - EQ_GROUP_TOP * 10)}px`,
+        }}
+      >
+        {EQ_BARS.map((bar) => {
+          const left = Math.floor(bar.x10 / 10);
+          const rectX10 = bar.x10 - left * 10;
+          const rectY10 = bar.y10 - EQ_GROUP_TOP * 10;
+          return (
+            <svg
+              key={bar.id}
+              className={`cknerv-jukebox-bar cknerv-jukebox-bar-${bar.id}`}
+              width={EQ_BAR_BOX_W}
+              height={EQ_GROUP_H}
+              viewBox={`0 0 ${EQ_BAR_BOX_W} ${EQ_GROUP_H}`}
+              fill="none"
+              style={{
+                position: 'absolute',
+                left: left - EQ_GROUP_LEFT,
+                top: 0,
+                overflow: 'visible',
+                transformOrigin: `${px10(rectX10 + EQ_BAR_W10 / 2)}px ${px10(rectY10 + bar.h10)}px`,
+              }}
+            >
+              <rect
+                x={px10(rectX10)}
+                y={px10(rectY10)}
+                width={px10(EQ_BAR_W10)}
+                height={px10(bar.h10)}
+                fill={CYAN}
+              />
+            </svg>
+          );
+        })}
+      </span>
+    </span>
   );
 }
 

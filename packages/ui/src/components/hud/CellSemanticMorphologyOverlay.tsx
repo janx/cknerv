@@ -297,6 +297,10 @@ export default function CellSemanticMorphologyOverlay({
             zIndexRange={[4, 4]}
             occlude={false}
             portal={CELL_PORTRAIT_LABEL_PORTAL as MutableRefObject<HTMLElement>}
+            // The wrapper drei positions every frame gets its own compositor
+            // layer through this class (`hudTheme` injects it), so the
+            // per-frame `transform` write never paints — see `hudTheme.ts`.
+            wrapperClass="cknerv-portrait-label"
             style={{ pointerEvents: 'none' }}
           >
             <div

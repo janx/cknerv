@@ -212,6 +212,12 @@ export default function ConsensusMemory({
   const focusedKnotOuterMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
   const focusedKnotInnerMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
   const evidenceLabelRefs = useRef<Array<HTMLDivElement | null>>([]);
+  /** The opacity last written to each label, in thousandths — the resolution
+   *  `toFixed(3)` prints at. A label's opacity sits still for most of the
+   *  card's life, and writing `style.opacity` every frame was a string
+   *  allocation and a style recalc for the same value. −1 after a (re)mount:
+   *  a fresh node starts at the JSX's 0 and owes its first write. */
+  const evidenceLabelOpacityRef = useRef<number[]>([]);
   const recallStrengthRef = useRef(0);
   const recallConvergenceRef = useRef(0);
   const recallPhaseRef = useRef(0);
@@ -679,10 +685,15 @@ export default function ConsensusMemory({
         binding?.sourceId ?? null,
         traceEvidenceFocusSourceId,
       );
-      label.style.opacity = (
-        recallStrength * (0.42 + Math.max(0, Math.min(1, evidenceConvergence)) * 0.58)
-        * evidenceFocusScale
-      ).toFixed(3);
+      const opacity = recallStrength
+        * (0.42 + Math.max(0, Math.min(1, evidenceConvergence)) * 0.58)
+        * evidenceFocusScale;
+      // Written only when the printed value would change: the same
+      // thousandth is the same string, and the DOM has it already.
+      const quantized = Math.round(opacity * 1000);
+      if (evidenceLabelOpacityRef.current[index] === quantized) return;
+      evidenceLabelOpacityRef.current[index] = quantized;
+      label.style.opacity = opacity.toFixed(3);
     });
     const target = consensusMemoryPortraitLayerOpacity(
       consensusBraidLayerOpacity(focusField, built.strandCount),
@@ -1019,10 +1030,17 @@ export default function ConsensusMemory({
             // and their stacking stays inside the card. Falls back to the
             // canvas parent when no square is registered (labs).
             portal={CELL_PORTRAIT_LABEL_PORTAL as MutableRefObject<HTMLElement>}
+            // The wrapper drei positions every frame gets its own compositor
+            // layer through this class (`hudTheme` injects it), so the
+            // per-frame `transform` write never paints — see `hudTheme.ts`.
+            wrapperClass="cknerv-portrait-label"
             style={{ pointerEvents: 'none' }}
           >
             <div
-              ref={(node) => { evidenceLabelRefs.current[index] = node; }}
+              ref={(node) => {
+                evidenceLabelRefs.current[index] = node;
+                evidenceLabelOpacityRef.current[index] = -1;
+              }}
               data-memory-knot-evidence={binding.ordinal}
               data-memory-knot-index={binding.knotIndex + 1}
               data-memory-knot-state={evidence.state}

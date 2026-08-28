@@ -637,6 +637,12 @@ export function injectHudTheme(doc: Document = document): void {
     + `\n.cknerv-chain-panel-scroll::-webkit-scrollbar-track{background:transparent}`
     + `\n.cknerv-status-controls::-webkit-scrollbar{display:none}`
     + `\n.cknerv-status-context::-webkit-scrollbar{display:none}`
+    // The portrait's drei `Html` labels are moved every frame the braid turns
+    // by a `transform` on the wrapper drei owns — and it rewrites that
+    // wrapper's whole inline style per move, which is why the hint is a class
+    // rule and not an inline property: a layer of its own makes the move
+    // compositor-only instead of a repaint of the square beneath.
+    + `\n.cknerv-portrait-label{will-change:transform}`
     + `\n.cknerv-memory-route-ledger{position:absolute;right:calc(100% + 30px);top:-1px;width:272px}`
     + `\n.cknerv-memory-route-ledger-lens{width:312px}`
     + `\n.cknerv-memory-route-ledger-viewport{position:relative;display:flex;flex:1 1 auto;min-height:0}`
