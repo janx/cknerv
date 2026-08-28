@@ -347,7 +347,10 @@ CellGalaxy is the main structural projection. It maintains:
 The canonical Cell limit is 50,000. Cap eviction enters the same death
 animation and final-GC path as a spend, but it does not increment the real-chain
 `total_deaths` counter. An ordinary spend sets `death_at_ms`; the record remains
-for a 600 ms death tail before removal.
+for a 4,500 ms corpse hold (`CORPSE_HOLD_MS`) before removal — long enough to
+dominate the browser's 4,150 ms death rite (the 2.35 s block-highlight delay
+plus the 1,800 ms death envelope), the pair being pinned together by
+`tests/fixtures/death_rite.json`.
 
 ### 6.2 Mutation-to-delta Mapping
 
@@ -842,7 +845,11 @@ an artificial empty world followed by a full-scene jump.
   and pulse evidence; link sequence numbers never rewind.
 - Every applied batch publishes `CellChangeSet`, `DisplayChangeSet`, and tokens
   so render consumers can verify an O(churn) journal chain. A broken chain
-  triggers a full rebuild rather than an inferred partial state.
+  triggers a full rebuild rather than an inferred partial state. A batch whose
+  deltas all reduced to no-ops advances only the reconnect revision: the
+  connector keeps that cursor in its own copy and skips the React publish,
+  deciding from a predicate defined beside each reducer
+  (`cellsCacheRevisionOnly`, `semanticsCacheRevisionOnly`).
 - Statistics are seeded from the snapshot's `CellViewStats` segment and then
   updated incrementally, avoiding a full Cell scan during every UI frame.
   Against a server without that segment the client falls back to its own scan,
@@ -934,8 +941,7 @@ Cell subset. Client-only selection/inspection overlay Cells do not enter this
 graph. Every neural consumer reads the same adjacency:
 
 - live `CellLink` pulse planning;
-- historical memory-route planning;
-- graph-hop inspection fields; and
+- historical memory-route planning; and
 - passive-fibre selection.
 
 The resting fabric is a bounded edge selection from that graph, not a second
@@ -952,14 +958,21 @@ Topology performance rules are:
 
 - At 512 Cells or more, builds prefer a long-lived Web Worker.
 - The worker receives packed typed arrays and retains the previous graph.
-- With a continuous journal, only upserts and removals are sent; the response
-  reuses adjacency `Set` instances for unchanged nodes.
+- With a continuous journal, only upserts and removals are sent, and the
+  response is a patch against the generation the request named: the display
+  graph as the adjacency runs that changed plus the ids that left (adjacency
+  only — no edge list crosses the wire for it), applied in place on the graph
+  the main thread holds; the passive selection as the edges that entered, the
+  keys that left, and the current values of the merged edge list, merged in
+  place and in order. A whole response still reuses adjacency `Set` instances
+  wherever a run is order-identical.
 - Builds are latest-only. Superseded results are discarded instead of queuing
   stale work behind backfill or config churn.
-- Worker failure or a generation gap falls back to one complete, correct
-  synchronous build.
-- Passive-selection deltas can add or remove NeuralFabric edges directly, with
-  periodic full reconciliation to bound drift.
+- A generation gap makes the worker answer `stale` and the builder resend a
+  full pack; worker failure falls back to one complete, correct synchronous
+  build. Both are counted (`neighborGraphBuilderStats`).
+- The passive patch's merge yields the delta NeuralFabric grows and kills
+  from; periodic full reconciliation bounds drift.
 
 The complete staged adjacency and its bounded passive edge selection are
 different representations with one node boundary. They must not drift into
@@ -1283,7 +1296,7 @@ tip advancement, Ctrl-C persistence, and port release.
 | Display activity quota | 512 Cells | Display policy |
 | Display tip window | 1,200 Cells | Display plane (recency law) |
 | Curated field | 10,800 Cells (budget − tip window) | Display plane |
-| Death animation tail | 600 ms | Core/UI parity |
+| Corpse hold before GC / browser death rite | 4,500 ms / 4,150 ms | Core/UI parity (`tests/fixtures/death_rite.json`) |
 | Exact reorg journal | 48 blocks | Core and CKB adapter |
 | Chain recent-block evidence | 50 blocks | Server entity |
 | Chain recent transactions | 50 transactions | Server entity |

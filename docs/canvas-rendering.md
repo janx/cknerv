@@ -336,8 +336,7 @@ The renderer distinguishes three populations:
 2. The server-owned display plane in `displayMembers` and `displayResidents`.
    Residents can preserve displayable records even when they are no longer in
    the canonical live Map.
-3. A client-only inspection overlay containing an off-stage selected Cell and
-   its bounded inspection neighborhood.
+3. A client-only overlay holding the selected Cell while it sits off-stage.
 
 AUTO uses the server display budget when one is streamed and otherwise uses a
 fixed 12,000-Cell compatibility budget. High, Med, and Low render the same AUTO
@@ -351,11 +350,12 @@ mismatch, structural budget change, or active manual clamp uses one canonical
 rebuild. Against an older server without a display plane, the compatibility
 path maintains the canonical insertion-order prefix through `cellChanges`.
 
-The inspection overlay is appended after the staged list, selected Cell first
-and then field members in ascending hop order. It is capped at 256 entries and
-clamped to remaining GPU capacity. Overlay entries are visible and pickable but
-never enter shared display membership, passive topology, live routing, or
-memory routing.
+The overlay is appended after the staged list and holds one record: the
+selected Cell, resolved canonical-first and skipped when it is already staged
+(`cellRenderOverlay`). Buffer allocations reserve a 256-slot pool past the
+display budget for it. An overlay entry is visible and pickable but never
+enters shared display membership, passive topology, live routing, or memory
+routing.
 
 This separation is intentional: interaction can reveal a retained record
 without silently changing the topology seen by every other renderer.
@@ -385,9 +385,11 @@ records. The important attribute families are:
 
 - position and deterministic position seed;
 - body color, size, birth time, death time, and flash time;
+- stage enter and exit time (a view event, kept distinct from the record's
+  own birth and death);
 - identity/memory seed and focus or recall state;
-- detail level; and
-- inspection source, target, hop, and role masks.
+- the sparse flare index; and
+- the near-detail level `CellNucleus` writes each frame.
 
 Presentation descriptors are deterministic functions of Cell data. Capacity
 uses logarithmic compression for perceptual mass, payload density influences
@@ -462,9 +464,8 @@ reads this graph:
 
 - passive-fibre selection;
 - live pulse planning;
-- warm route reinforcement;
-- memory recall; and
-- graph-hop inspection fields.
+- warm route reinforcement; and
+- memory recall.
 
 This is a correctness boundary. A live or recalled packet cannot traverse an
 edge that has no corresponding display graph edge, and it cannot route to an
@@ -647,7 +648,9 @@ For each link, the planner:
    graph still holds a corpse it has not pruned);
 3. uses the link's real `to_ids` as destinations;
 4. performs one breadth-first search per origin over the staged display graph;
-5. rejects missing, disconnected, or longer-than-40-hop paths; and
+5. rejects missing, disconnected, or longer-than-80-hop paths
+   (`DEFAULT_MAX_HOPS`, also the runtime `[galaxy.topology] max_hops`
+   default; the review Labs plan with 24); and
 6. emits at most six pulses per link and 128 planned pulses per batch.
 
 Timing is deterministic per transaction/consumed anchor/destination — the entry
@@ -773,10 +776,14 @@ link endpoint is unavailable or the current graph cannot connect it, the UI
 reports or displays the available evidence without inventing a substitute
 path.
 
-The graph-hop inspection field is a bounded breadth-first neighborhood, by
-default no more than two hops. Energy decreases by hop, and only the selected
-Cell and first-hop records become direct navigation targets. Background dimming
-and transition masks are shader state over the existing topology.
+Selecting a Cell neither dims the field around it nor expands a graph-hop
+neighbourhood: the graph-hop inspection field and its hop masks were removed
+(1d0d7c0, 2026-08-21), every lit Cell answers a click, and the navigation
+targets are the selected record and the causal lens's real endpoints below.
+The context damping left in the scene is the camera-proximity recede of the
+Cell close view (`nerve/contextDamp.ts`, one rate and snap for every layer so
+node, link and fibre context settle together) and the memory layer's recall
+aperture (§8.4); neither changes membership or topology.
 
 The causal lens uses immutable link endpoint anchors and bounded real input and
 sibling sets. Missing retained positions remain missing; it never fabricates a
@@ -893,7 +900,6 @@ real endpoints while keeping presentation-only carriers in view when useful.
 CellPicker hit
     -> App selectedCellId
        |-> overlay pool guarantees bounded body visibility
-       |-> inspection field derives graph hops
        |-> R3F anchor projects to DOM inspection panel
        |-> optional portrait scissor pass
        |-> lazy semantic/identity evidence request
@@ -1019,7 +1025,7 @@ has.
 |---|---:|---|
 | Cell GPU slots | 50,000 total | `geometry/cellPositions.ts` |
 | AUTO staged Cells | server budget or 12,000 fallback, quality-independent | `tweaks/cellDisplay.ts` |
-| Client inspection overlay | up to 256, within remaining Cell slots | `geometry/cellRenderSet.ts` |
+| Selected-Cell overlay pool | 256 slots reserved past the display budget; holds the selected Cell while it is off-stage | `geometry/cellRenderSet.ts` |
 | Passive nerves | `min(effective server/tuned screen budget, staged Cells * 4/3)`; 8,000 fallback, 20,000 ceiling | `geometry/passiveNeighborGraph.ts` |
 | Passive curve samples | 4 per edge | `nerve/fabricCapacity.ts` |
 | Passive lifecycle generations | 3 | `nerve/fabricCapacity.ts` |
@@ -1030,7 +1036,7 @@ has.
 | Route-hop acknowledgement | 48 segments | `nerve/NeuralFabric.tsx` |
 | Default active pulses | 256 before quality multiplier | `nerve/NeuralNetwork.tsx` |
 | Spike object pool | 1,024 | `nerve/NeuralNetwork.tsx` |
-| Planned pulses per link / batch | 6 / 128 | `nerve/pulseRunner.ts`, `pulseBatch.ts` |
+| Planned pulses per link / batch | 6 / 128 | `nerve/pulseRunner.ts`, `nerve/pulseBatch.ts` |
 | Recent evidence links | 2,048 by default | `@cknerv/cache` `cellsReducer.ts` |
 | Live pulse-link ring | 128 by default | `@cknerv/cache` `cellsReducer.ts` |
 | Canonical rewrite echo | up to 50,000 records in one point draw | `components/CanonicalRewriteEcho.tsx` |
@@ -1038,7 +1044,8 @@ has.
 | Local impact ignitions | 128 | `ui/topologyConstants.ts` |
 | Contact ignitions per block | 300 across all workers | `tweaks/tweakSchema.ts` |
 | Contact front scale | peer-plane wave / `CONTACT_WAVE_SCALE` | `materials/contactWaveMaterial.ts` |
-| Cell birth / death envelope | 500 ms / 600 ms | `geometry/cellPositions.ts` |
+| Cell birth / death envelope | 1,200 ms / 1,800 ms (`BIRTH_DURATION_MS` / `DEATH_DURATION_MS`); the death rite — `BLOCK_HIGHLIGHT_DELAY_S` (2.35 s) plus the envelope, 4,150 ms — is pinned under the server's 4,500 ms corpse hold by `tests/fixtures/death_rite.json` | `geometry/cellPositions.ts`, `ui/topologyConstants.ts` |
+| Stage enter / exit fade | 900 ms / 900 ms, a departing Cell keeping its slot for the exit; 768 exit-hold slots, past which the oldest fades complete at once | `geometry/cellPositions.ts` |
 
 Passive and warm allocations quantize to the 8,000-edge default class or the
 20,000-edge ceiling class. Raising the live tuning budget across the class
@@ -1052,7 +1059,11 @@ current staged structure.
 
 ### 15.1 Main-thread strategy
 
-- Pure reducers publish immutable state and compact journals.
+- Pure reducers publish immutable state and compact journals, and keep the
+  aggregates the HUD reads: the staged population (alive members by home and
+  by census class, `stagePopulation`) is tallied per touched id in the same
+  reducer pass as the stage script census, so the population field reads
+  five integers instead of walking the 12,000-member stage per block.
 - A stream batch that advances only the reconnect revision is never published:
   the cursor moves, the React commit does not.
 - The HUD's 1 Hz clock is a store with leaf subscribers (`hudClock`): the
@@ -1063,24 +1074,60 @@ current staged structure.
 - Render-set cursors turn adjacent journals into slot-local changes.
 - The Cell source index for a link batch scans the staged Cell Map once, not
   once per link.
-- Topology construction moves to a worker for non-trivial fields.
+- Topology construction moves to a worker for non-trivial fields, and a build
+  comes back as a patch applied in place (§8.2): the display graph as the
+  adjacency runs that changed plus the ids that left, the passive selection
+  as the edges that entered, the keys that left and the merged list's values.
+  A whole rebuild is the fallback for a broken generation chain, not the
+  steady state.
+- Live route planning is sliced across frames (§9.1): a link batch opens the
+  instant its delta arrives and its searches run from a FIFO queue at about
+  2 ms a frame on an epoch-stamped typed-array scratch, with a batch near its
+  departure finishing in the frame regardless.
+- The bridge layer's host registry decides whether a build changed anything
+  its selection reads: an unchanged host set runs no selection, and a changed
+  one writes only the strokes that moved — a birth into a parked hole or the
+  end of the prefix, a death retracting in its own span — with the full walk
+  kept for the knob repaint and an allocation overflow.
+- Near-identity admission runs behind a bounding-sphere gate (§7.4): while
+  the whole field is beyond the admission radius no spatial index is built or
+  refreshed, and inside it a flat typed grid is rebuilt lazily per field
+  version.
 - High-frequency state stays in refs and reusable scratch objects: the pulse
-  walk writes every hop through one scratch record, the warm overlay's render
-  records are a pool, and birth admission ranks its k nearest with parallel
-  scalars rather than a record per candidate.
+  walk writes every hop through one scratch record and resolves its curve
+  through a numeric two-level edge index rather than a key string, the warm
+  overlay's render records are a pool, and birth admission ranks its k
+  nearest with parallel scalars rather than a record per candidate.
 - Peer topology excludes rapidly changing height from its memo signature.
-- Picking projects only when its input epoch changes and pauses during orbit.
+- Picking rebuilds only when an input it bakes changes — field version, draw
+  count, pick-size epoch, detail epoch, viewport, projection — allocates
+  nothing when it does, budgets camera drift against its own envelope, and
+  suspends hover probes while the camera is in motion: a drag, the damping
+  tail, or a route flight (§7.5, §11.1).
+- Adaptive quality never samples a motion window: frames inside a held
+  gesture, the damping tail or a route flight are dropped from the sample the
+  way hidden-tab and replay frames are (§13).
+- Diagnostics cost nothing when off: every probe site is a boolean gate and
+  the always-on counters are integer increments (§19.5).
 
 ### 15.2 GPU strategy
 
 - Cell attributes are shared across body, flare, nucleus, and picking
   consumers where their semantics match.
-- Only populated prefixes or dirty ranges upload; a range merge bridges a
-  parked gap only where its bytes cost less than the bufferSubData calls it
-  saves, and never past the dirty set's hull.
+- Only populated prefixes or dirty ranges upload; each lane prices its own
+  ranges from what a slot costs it (bytes a slot × calls a range), a range
+  merge bridges a parked gap only where its bytes cost less than the
+  bufferSubData calls it saves, and never past the dirty set's hull. The
+  bytes every lane flags are summed in `gpuUploadLedger` — GL·08 `UPLD`,
+  `__uploadStats()` — so upload traffic is a reading, not an estimate.
 - Sparse indexed passes avoid transparent work for inactive effects, and a
   pass or layer with nothing committed is an invisible object, never a
   zero-count draw.
+- A program that strips a stock attribute lane carries no populated buffer
+  for it: the fabric's lifecycle layer binds a one-instance dummy to the
+  stripped `instanceStart/End` and colour lanes instead of two capacity-sized
+  buffers nothing reads (2 × 2.3 MB of RAM and as much VRAM at the
+  8,000-edge class).
 - Fragments that are provably dark discard before the expensive body: the
   cohort accretion drops the annulus beyond its gas birth radius before its
   noise field.
@@ -1090,8 +1137,9 @@ current staged structure.
 - Draw and pool bounds are explicit at worst-case staged size.
 
 Transparent overdraw remains the dominant large-field GPU risk. Draw calls,
-triangles, upload bytes, and program counts are useful diagnostics, but none of
-them alone proves visual equivalence or perceived smoothness.
+triangles, upload bytes, program counts and the timer-query readings (GL·08
+`GPU` and `OTHER`, §19.5) are useful diagnostics, but none of them alone
+proves visual equivalence or perceived smoothness.
 
 ### 15.3 Preferred optimization order
 
@@ -1212,6 +1260,15 @@ Tests should pin semantic invariants and budget ownership, not merely search
 for a particular implementation spelling when a pure behavior test is
 possible.
 
+A quality-neutral optimization ships with two kinds of test: an equivalence
+test (the old output against the new on realistic input — the same pixels,
+picks, routes and selections) and a gate test that reads the counter proving
+the skipped work was skipped. The counters are the ones the runbook reads
+(§19.5): `__fabricStats().bridge` and `.topology`, `__cellPickStats()`,
+`__colonyStats()`, `__uploadStats()`, `__pulseStats()`, and inside the
+package the modules behind them (§21). A change that silently re-enables the
+work then fails a test rather than a review.
+
 ### 19.2 Browser matrix
 
 Use a fresh visible browser context for each explicit preset. A page left
@@ -1252,9 +1309,22 @@ captures, name the changed invariant, and verify every affected quality preset.
 
 - Use the same browser, GPU path, viewport, DPR, quality, data snapshot, and
   warmup.
-- Measure idle and pointer/camera interaction separately.
-- Record draw calls, triangles, geometries, textures, programs, frame samples,
-  and main-thread samples.
+- Measure idle and pointer/camera interaction separately. An interaction
+  window is a motion window (§13): its frames are excluded from adaptive
+  sampling and its hover probes are suspended, so read `__cellPickStats()`
+  (`suspendedSkips`, `rebuilds`) and `__qualityStats()` beside the frame
+  times to know what the window actually exercised.
+- Record every GL·08 row — `DRAW`, `TRIS`, `GEO`, `TEX`, `PROG`, `UPLD`
+  (bufferSubData bytes per frame across the fabric, bridge and Cell lanes),
+  `GPU` and `OTHER` (GPU ms per frame for the whole scene pass and the part
+  of it no scoped draw accounts for; both print `—`, never zero, without the
+  timer-query extension or before the first bracket frame resolves) — plus
+  the probe's frame and main-thread samples (§19.5).
+- Read the always-on counters around the same window — `__fabricStats()`
+  with its `.bridge` and `.topology` blocks, `__uploadStats()`,
+  `__colonyStats()`, `__cellPickStats()`, `__pulseStats()` — so a saving is
+  attributed to a skip that actually happened, not inferred from a frame
+  time.
 - Prefer multiple steady samples or medians.
 - Treat software-GPU frame times as relative comparisons, not production FPS
   promises.
@@ -1417,21 +1487,25 @@ Before merging a Canvas change, answer:
 | Cache context | `packages/ui/src/hooks/cellGalaxyContext.tsx` |
 | Scene planes and chain anchors | `packages/ui/src/layout.ts` |
 | DPR and query quality resolution | `ui-app/src/render-quality.ts` |
-| Quality presets and adaptive state | `packages/ui/src/tweaks/qualityPresets.ts`, `packages/ui/src/tweaks/adaptiveQuality.ts` |
+| Quality presets and adaptive state | `packages/ui/src/tweaks/qualityPresets.ts`, `packages/ui/src/tweaks/adaptiveQuality.ts`, `packages/ui/src/tweaks/AdaptiveQualityController.tsx` |
 | Stable Cell display budget | `packages/ui/src/tweaks/cellDisplay.ts` |
 | Cell body, lifecycle, flash, and picking | `packages/ui/src/components/CellGalaxy.tsx` |
 | Staged render cursor and inspection overlay | `packages/ui/src/geometry/cellRenderSet.ts` |
 | Stable Cell GPU slot assignment | `packages/ui/src/geometry/cellSlotAssignment.ts` |
+| Screen-space hit index, drift envelope, and camera-motion gate | `packages/ui/src/geometry/screenSpaceHitIndex.ts`, `packages/ui/src/geometry/cellPickDriftEnvelope.ts`, `ui-app/src/orbit-gesture-state.ts`, `packages/ui/src/nerve/ConsensusRouteCamera.tsx` |
+| Staged population and stage census tallies | `packages/cache/src/cellsStats.ts`, `packages/ui/src/derives/cellPopulationField.derive.ts` |
 | Cell visual descriptors and shaders | `packages/ui/src/derives/cellVisual.derive.ts`, `packages/ui/src/materials/cellHybridMaterial.ts`, `packages/ui/src/materials/cellFlareMaterial.ts` |
 | Batched near identity, far-field gate and local LOD index | `packages/ui/src/components/CellNucleus.tsx`, `packages/ui/src/derives/cellNucleusFarField.derive.ts`, `packages/ui/src/derives/cellNucleusSpatialLod.derive.ts` |
 | One staged neighbor topology | `packages/ui/src/geometry/neighborGraph.ts` |
-| Worker and topology journal | `packages/ui/src/geometry/neighborGraphBuilder.ts`, `packages/ui/src/geometry/topologyJournal.ts` |
+| Worker, wire protocol, and topology journal | `packages/ui/src/geometry/neighborGraphBuilder.ts`, `packages/ui/src/geometry/neighborGraphWorkerProtocol.ts`, `packages/ui/src/geometry/neighborGraph.worker.ts`, `packages/ui/src/geometry/topologyJournal.ts` |
+| Eager living mesh and its undo log | `packages/ui/src/nerve/incrementalGraph.ts`, `packages/ui/src/nerve/livingMeshDriver.ts` |
 | Passive edge selection | `packages/ui/src/geometry/passiveNeighborGraph.ts` |
 | Shared edge curve and route search | `packages/ui/src/geometry/edgeBezier.ts`, `packages/ui/src/geometry/pathRouter.ts` |
 | Neural orchestration and pulse state | `packages/ui/src/nerve/NeuralNetwork.tsx` |
-| Pulse planning and batch bounds | `packages/ui/src/nerve/pulseRunner.ts`, `packages/ui/src/nerve/pulseBatch.ts` |
-| Inspection fields and memory routes | `packages/ui/src/nerve/cellInspectionField.ts`, `packages/ui/src/nerve/consensusMemoryTrace.ts` |
-| Persistent and active nerve rendering | `packages/ui/src/nerve/NeuralFabric.tsx`, `packages/ui/src/nerve/recallApertureIndex.ts`, `packages/ui/src/nerve/activeHopCurve.ts` |
+| Pulse planning, frame slicing, and batch bounds | `packages/ui/src/nerve/pulseRunner.ts`, `packages/ui/src/nerve/pulseBatch.ts`, `packages/ui/src/nerve/livePulseQueue.ts` |
+| Memory routes and context damping | `packages/ui/src/nerve/consensusMemoryTrace.ts`, `packages/ui/src/nerve/contextDamp.ts` |
+| Persistent and active nerve rendering | `packages/ui/src/nerve/NeuralFabric.tsx`, `packages/ui/src/nerve/recallApertureIndex.ts`, `packages/ui/src/nerve/activeHopCurve.ts`, `packages/ui/src/nerve/fabricOrder.ts` |
+| Secondary nerves (bridges) and their host registry | `packages/ui/src/nerve/CellBridgeNerves.tsx`, `packages/ui/src/geometry/bridgeEdges.ts`, `packages/ui/src/nerve/bridgeStroke.ts` |
 | Nerve allocation classes | `packages/ui/src/nerve/fabricCapacity.ts` |
 | Fixed-slot layout and the upload cost model | `packages/ui/src/nerve/fabricSlots.ts`, `packages/ui/src/nerve/fabricLifecycleSlots.ts` |
 | Screen-space capsule geometry | `packages/ui/src/geometry/screenSpaceCapsuleLine.ts` |
@@ -1441,6 +1515,7 @@ Before merging a Canvas change, answer:
 | Canonical rewrite echo | `packages/ui/src/components/CanonicalRewriteEcho.tsx` |
 | Simulation clock | `packages/ui/src/tweaks/simClock.ts`, `packages/ui/src/tweaks/SimClockTicker.tsx`, `packages/ui/src/tweaks/useSimFrame.ts` |
 | Portrait scissor pass | `packages/ui/src/components/hud/CellPortraitInset.tsx` |
+| HUD wall clock | `packages/ui/src/components/hud/hudClock.tsx` |
 | Render diagnostics | `packages/ui/src/tweaks/RenderStatsSampler.tsx`, `packages/ui/src/tweaks/performanceProbeStore.ts`, `packages/ui/src/tweaks/gpuTimerQuery.ts`, `packages/ui/src/tweaks/nonEmptyGpuProbeCallbacks.ts`, `packages/ui/src/tweaks/gpuUploadLedger.ts`, `packages/ui/src/components/hud/RenderStatsPanel.tsx` |
 | Always-on churn counters and their window hook | `packages/ui/src/nerve/fabricStats.ts`, `packages/ui/src/nerve/bridgeStats.ts`, `packages/ui/src/geometry/neighborGraphBuilderStats.ts`, `packages/ui/src/derives/colonyStats.ts`, `packages/ui/src/geometry/cellPickStats.ts`, `packages/ui/src/derives/producerOriginStats.ts`, `packages/ui/src/nerve/pulseStats.ts`, `ui-app/src/pulse-stats-hook.ts` |
 | Deterministic browser review | `ui-app/VISUAL_REVIEW.md`, `ui-app/src/ProtocolEventLab.tsx` |
@@ -1461,4 +1536,6 @@ Before merging a Canvas change, answer:
 | Rewrite echo | A compact visual witness of the invalidated canonical suffix |
 | Measured peer | A peer present in observed local-node entity state |
 | Inferred peer | A seeded presentation node used to make propagation context legible |
+| Motion window | The frames of a held pointer gesture, the orbit damping tail, or a route-camera flight; excluded from adaptive sampling, with hover picking suspended |
+| Topology patch | A worker response carrying only what changed against the generation the main thread named — adjacency runs for the display graph, edges for the passive selection — applied in place |
 | Simulation time | The controlled semantic animation timeline, distinct from raw render-frame time |
