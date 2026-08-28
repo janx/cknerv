@@ -1064,6 +1064,9 @@ current staged structure.
 - Sparse indexed passes avoid transparent work for inactive effects, and a
   pass or layer with nothing committed is an invisible object, never a
   zero-count draw.
+- Fragments that are provably dark discard before the expensive body: the
+  cohort accretion drops the annulus beyond its gas birth radius before its
+  noise field.
 - Passive topology and color/mask updates have separate dirty paths.
 - Screen-space capsule nerves use two triangles per sampled segment.
 - Shader time advances lifecycle without per-frame full-buffer rewrites.

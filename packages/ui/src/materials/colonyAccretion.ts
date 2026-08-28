@@ -325,6 +325,14 @@ export function makeColonyAccretionMaterial(): THREE.ShaderMaterial {
         if (rq > 1.0) discard;
         vec2 pw = p * uHalf;
         float rw = rq * uHalf;
+        // Beyond the gas birth radius every additive term below is zero or
+        // a Gaussian tail under 1e-18 — the field and gas windows close
+        // EXACTLY at uBirth, the mesh halo at 1.9 uRim, and the rim, photon
+        // and lens Gaussians sit 6.5, 14 and 17 sigma out — so the closing
+        // amp < 0.002 test discarded this annulus (18 % of the quad's area)
+        // after running the whole body. Same pixels, without the body; the
+        // bound is pinned in materials/colonyAccretion.test.ts.
+        if (rw > uBirth) discard;
 
         // Share has one visual meaning: how quickly this aperture consumes.
         float rate = uInfall * mix(
