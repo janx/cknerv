@@ -1184,6 +1184,9 @@ export function applyRevisionedCellDeltas(
     if (mutateCellDelta(draft, rd.delta, opts)) changed = true;
     if (rd.revision > maxRev) maxRev = rd.revision;
   }
+  // A batch that wrote nothing but carries a newer revision still returns a
+  // fresh cache: the stream's reconnect cursor lives in it. The connector asks
+  // `cellsCacheRevisionOnly` below before publishing such a cache to React.
   if (!changed && maxRev === prev.revision) return prev;
   draft.value.revision = maxRev;
   draft.value.cellChanges = summarizeCellChanges(
@@ -1214,4 +1217,40 @@ export function applyRevisionedCellDeltas(
   );
   advanceStageTallies(prev, draft);
   return draft.value;
+}
+
+/** The cursor and the two journals: the only keys a revision-only batch may
+ *  legitimately differ in. Every other key on the cache is content. */
+const REVISION_ONLY_KEYS: ReadonlySet<keyof CellGalaxyCache> = new Set<
+  keyof CellGalaxyCache
+>(['revision', 'cellChanges', 'displayChanges']);
+
+/**
+ * True when `next` is `prev` with only its revision moved — every delta in
+ * the batch reduced to a no-op, and a stream may keep the cursor without
+ * publishing the cache to React.
+ *
+ * Exact under this reducer's own identity rules, not a heuristic: every
+ * content write replaces the field it touches (`writableCells` /
+ * `writableDisplay` / the two link rings copy before the first write, a
+ * patched record is a fresh object, and the stats and stage tallies are
+ * identity-stable across a batch that moves none of their numbers), and both
+ * journals collapse to their frozen empties exactly when no map was touched.
+ * The keys are walked off the cache itself, so a content lane added later is
+ * compared by construction rather than by remembering to list it here.
+ */
+export function cellsCacheRevisionOnly(
+  prev: CellGalaxyCache,
+  next: CellGalaxyCache,
+): boolean {
+  if (next === prev) return false;
+  if (
+    next.cellChanges !== NO_CELL_CHANGES
+    || next.displayChanges !== NO_DISPLAY_CHANGES
+  ) return false;
+  for (const key of Object.keys(next) as Array<keyof CellGalaxyCache>) {
+    if (REVISION_ONLY_KEYS.has(key)) continue;
+    if (next[key] !== prev[key]) return false;
+  }
+  return true;
 }

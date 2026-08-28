@@ -8,9 +8,16 @@ import {
 } from '../src/entityStream';
 import {
   connectCellsStream,
+  connectSemanticsStream,
 } from '../src/projectionStream';
 import { emptyCellsCache, type CellGalaxyCache } from '../src/cellsReducer';
-import type { Cell } from '@cknerv/types';
+import { emptySemanticsCache } from '../src/semanticsReducer';
+import type {
+  Cell,
+  CellSemanticRecord,
+  ChainCensus,
+  EnrichmentSourceStatus,
+} from '@cknerv/types';
 import type { StreamHealth } from '../src/streamHealth';
 
 class MockWebSocket {
@@ -750,5 +757,151 @@ describe('server frame envelopes', () => {
     expect(warn).not.toHaveBeenCalled();
     handle.disconnect();
     warn.mockRestore();
+  });
+});
+
+describe('revision-only projection batches', () => {
+  /** One scheduled flush at a time, driven by hand: the connector coalesces a
+   *  frame's deltas behind requestAnimationFrame. */
+  function frameStub(): () => void {
+    const scheduled: { flush?: FrameRequestCallback } = {};
+    vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => {
+      scheduled.flush = callback;
+      return 7;
+    }));
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    return () => {
+      const flush = scheduled.flush;
+      scheduled.flush = undefined;
+      if (!flush) throw new Error('projection delta flush was not scheduled');
+      flush(16);
+    };
+  }
+
+  /** Let a `reconnectMs: 0` retry fire, so the next socket's `?since=` can
+   *  be read as the cursor the connector actually kept. */
+  const nextTick = () => new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+
+  it('keeps the cells cursor but skips the publish when a replayed birth changes nothing', async () => {
+    vi.stubGlobal('WebSocket', MockWebSocket);
+    const flush = frameStub();
+    const changes = vi.fn();
+    const handle = connectCellsStream(
+      'ws://localhost/api/projections/cells/stream',
+      emptyCellsCache(),
+      changes,
+      { reconnectMs: 0 },
+    );
+    const socket = MockWebSocket.instances[0];
+
+    socket.message({
+      kind: 'delta',
+      revision: 1,
+      deltas: [{ revision: 1, delta: { type: 'birth', cell: cell(1) } }],
+    });
+    flush();
+    expect(changes).toHaveBeenCalledTimes(1);
+
+    // Reconnect catch-up replays the birth this cache already retains. The
+    // reducer moves only the revision, and React hears nothing about it.
+    socket.message({
+      kind: 'delta',
+      revision: 2,
+      deltas: [{ revision: 2, delta: { type: 'birth', cell: cell(1) } }],
+    });
+    flush();
+    expect(changes).toHaveBeenCalledTimes(1);
+
+    // …but the cursor did move: a retry asks the server from 2, not from 1,
+    // so the skipped batch is never replayed a third time.
+    socket.close();
+    await nextTick();
+    expect(MockWebSocket.instances[1].url).toContain('since=2');
+
+    // A real change on top of the skipped one publishes, and publishes the
+    // cache the skipped batch advanced — one Cell, revision 3.
+    const resumed = MockWebSocket.instances[1];
+    resumed.message({
+      kind: 'delta',
+      revision: 3,
+      deltas: [{ revision: 3, delta: { type: 'pulse', at_ms: 3000 } }],
+    });
+    flush();
+    expect(changes).toHaveBeenCalledTimes(2);
+    expect(changes.mock.calls[1][0]).toMatchObject({ revision: 3, lastPulseAtMs: 3000 });
+    expect(changes.mock.calls[1][0].cells.size).toBe(1);
+    handle.disconnect();
+  });
+
+  it('keeps the semantics cursor but skips the publish when a refresh re-delivers retained records', async () => {
+    const ready: EnrichmentSourceStatus = {
+      source: 'ckbadger',
+      status: 'ready',
+      capabilities: ['cell_detail'],
+      validated_anchor: { block: 10, hash: '0xblock10' },
+    };
+    const record = (block: number): CellSemanticRecord => ({
+      out_point: { tx_hash: '0xa', index: 0 },
+      source: 'ckbadger',
+      as_of: { block, hash: `0xblock${block}` },
+      observed_at_block: 10,
+      updated_at_ms: block,
+      facets: [],
+    });
+    const census: ChainCensus = {
+      source: 'ckbadger',
+      as_of: { block: 11, hash: '0xblock11' },
+      updated_at_ms: 11,
+      live_cells: 2_400_000,
+      total_cells: 3_000_000,
+      dead_cells: 600_000,
+    };
+    vi.stubGlobal('WebSocket', MockWebSocket);
+    const flush = frameStub();
+    const changes = vi.fn();
+    const handle = connectSemanticsStream(
+      'ws://localhost/api/projections/semantics/stream',
+      emptySemanticsCache(),
+      changes,
+      { reconnectMs: 0 },
+    );
+    const socket = MockWebSocket.instances[0];
+
+    socket.message({
+      kind: 'snapshot',
+      revision: 1,
+      snapshot: { source: ready, cells: [record(10)], transactions: [] },
+    });
+    expect(changes).toHaveBeenCalledTimes(1);
+
+    // The refresh loop re-emits the source status and re-upserts the record
+    // with only its freshness anchors advanced: both arms are no-ops, the
+    // cache is a fresh object with a newer revision, and nothing publishes.
+    socket.message({
+      kind: 'delta',
+      revision: 3,
+      deltas: [
+        { revision: 2, delta: { type: 'source_status', source: { ...ready, capabilities: ['cell_detail'] } } },
+        { revision: 3, delta: { type: 'cell_upsert', cell: record(12) } },
+      ],
+    });
+    flush();
+    expect(changes).toHaveBeenCalledTimes(1);
+
+    socket.close();
+    await nextTick();
+    expect(MockWebSocket.instances[1].url).toContain('since=3');
+
+    // A record replacement is content whichever anchor it carries.
+    const resumed = MockWebSocket.instances[1];
+    resumed.message({
+      kind: 'delta',
+      revision: 4,
+      deltas: [{ revision: 4, delta: { type: 'census_replace', census } }],
+    });
+    flush();
+    expect(changes).toHaveBeenCalledTimes(2);
+    expect(changes.mock.calls[1][0]).toMatchObject({ revision: 4, census });
+    handle.disconnect();
   });
 });

@@ -21,6 +21,7 @@ import type {
 import { cellsSnapshotFromColumnar, decodeCellsColumnar } from './cellsColumnar';
 import {
   applyRevisionedCellDeltas,
+  cellsCacheRevisionOnly,
   emptyCellsCache,
   fromCellsSnapshot,
   type CellGalaxyCache,
@@ -29,6 +30,7 @@ import {
   applyRevisionedSemanticsDeltas,
   emptySemanticsCache,
   fromSemanticsSnapshot,
+  semanticsCacheRevisionOnly,
   type SemanticsCache,
 } from './semanticsReducer';
 import {
@@ -93,6 +95,13 @@ export function connectProjectionStream<Cache, Snapshot, Delta>(
     getRevision: (cache: Cache) => number;
     markLagged: (cache: Cache) => Cache;
     decodeBinarySnapshot?: BinarySnapshotDecoder<Snapshot>;
+    /** True when `next` is `prev` with only the `?since=` cursor moved — every
+     *  delta in the batch reduced to a no-op. The connector keeps the cursor
+     *  (it lives in its own copy of the cache) and skips the React publish,
+     *  the rule the entity stream already applies to a revision-only poll
+     *  re-broadcast. Absent, every batch publishes. Defined beside each
+     *  reducer from its own copy-on-write rules, never guessed here. */
+    revisionOnly?: (prev: Cache, next: Cache) => boolean;
   },
   onChange: (next: Cache) => void,
   opts: ProjectionStreamOptions = {},
@@ -116,7 +125,14 @@ export function connectProjectionStream<Cache, Snapshot, Delta>(
     if (stopped || pendingDeltas.length === 0) return;
     const deltas = pendingDeltas;
     pendingDeltas = [];
-    cache = hooks.applyDeltas(cache, deltas);
+    const prev = cache;
+    cache = hooks.applyDeltas(prev, deltas);
+    // A batch of replayed no-op deltas — a birth this cache already retains
+    // after a reconnect catch-up, an enrichment refresh re-delivering records
+    // it holds — advances only the reconnect cursor. The cursor is kept above;
+    // the publish is what costs (a React commit plus every memo keyed on the
+    // cache's identity), so it is the part that is skipped.
+    if (cache !== prev && hooks.revisionOnly?.(prev, cache)) return;
     onChange(cache);
   };
 
@@ -357,6 +373,7 @@ export function connectCellsStream(
         const view = decodeCellsColumnar(buffer);
         return { revision: view.revision, snapshot: cellsSnapshotFromColumnar(view) };
       },
+      revisionOnly: cellsCacheRevisionOnly,
     },
     onChange,
     opts,
@@ -384,6 +401,7 @@ export function connectSemanticsStream(
         ),
       getRevision: (cache) => cache.revision,
       markLagged: (cache) => ({ ...cache, revision: 0 }),
+      revisionOnly: semanticsCacheRevisionOnly,
     },
     onChange,
     opts,

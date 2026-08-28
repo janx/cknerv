@@ -16,6 +16,7 @@ import {
   applyCellDelta,
   applyRevisionedCellDeltas,
   cellContentEquals,
+  cellsCacheRevisionOnly,
   DEFAULT_LINK_RING_CAPACITY,
   emptyCellsCache,
   fromCellsSnapshot,
@@ -1115,5 +1116,39 @@ describe('script_census deltas', () => {
     expect(c.stats.born).toBe(seeded.stats.born);
     expect(c.stats.byKind).toEqual(seeded.stats.byKind);
     expect(c.stats.scripts.locks).toHaveLength(1);
+  });
+});
+
+describe('cellsCacheRevisionOnly', () => {
+  it('names a batch that advanced only the cursor, and nothing that moved content', () => {
+    const seeded = applyRevisionedCellDeltas(emptyCellsCache(), [
+      { revision: 1, delta: { type: 'birth', cell: cell(1) } },
+    ]);
+    // A reconnect catch-up replays the birth this cache already retains: the
+    // batch is a no-op and only its revision is new.
+    const replayed = applyRevisionedCellDeltas(seeded, [
+      { revision: 2, delta: { type: 'birth', cell: cell(1) } },
+    ]);
+    expect(replayed).not.toBe(seeded);
+    expect(replayed.revision).toBe(2);
+    expect(replayed.cellChanges).toBe(NO_CELL_CHANGES);
+    expect(cellsCacheRevisionOnly(seeded, replayed)).toBe(true);
+
+    // A record, an event and a lifecycle patch are each content, whichever
+    // field they land on.
+    const born = applyRevisionedCellDeltas(seeded, [
+      { revision: 2, delta: { type: 'birth', cell: cell(2) } },
+    ]);
+    expect(cellsCacheRevisionOnly(seeded, born)).toBe(false);
+    const pulsed = applyRevisionedCellDeltas(seeded, [
+      { revision: 2, delta: { type: 'pulse', at_ms: 3000 } },
+    ]);
+    expect(cellsCacheRevisionOnly(seeded, pulsed)).toBe(false);
+    const died = applyRevisionedCellDeltas(seeded, [
+      { revision: 2, delta: { type: 'death', id: 1, at_ms: 5000 } },
+    ]);
+    expect(cellsCacheRevisionOnly(seeded, died)).toBe(false);
+    // An identical object did not move its revision either.
+    expect(cellsCacheRevisionOnly(seeded, seeded)).toBe(false);
   });
 });

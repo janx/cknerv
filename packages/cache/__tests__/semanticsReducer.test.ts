@@ -24,6 +24,7 @@ import {
   deepEqualsIgnoringAnchors,
   emptySemanticsCache,
   outPointKey,
+  semanticsCacheRevisionOnly,
   MAX_RETAINED_CELLS,
   MAX_RETAINED_TRANSACTIONS,
   type SemanticsCache,
@@ -1135,5 +1136,41 @@ describe('unknown wire variants', () => {
     expect(next.revision).toBe(5);
     expect(next.cells.get(outPointKey(record.out_point))).toBe(record);
     expect(next.cells.size).toBe(2);
+  });
+});
+
+describe('semanticsCacheRevisionOnly', () => {
+  it('names a refresh that re-delivered retained content, and nothing that replaced a record', () => {
+    const seeded = applyRevisionedSemanticsDeltas(emptySemanticsCache(), [
+      { revision: 1, delta: { type: 'source_status', source: ready } },
+      { revision: 2, delta: { type: 'cell_upsert', cell: cell(10, '0xa') } },
+    ]);
+    // The refresh loop's re-emit: same status, same record under advanced
+    // anchors. Both arms are no-ops, so only the cursor moves.
+    const refreshed = applyRevisionedSemanticsDeltas(seeded, [
+      { revision: 3, delta: { type: 'source_status', source: structuredClone(ready) } },
+      { revision: 4, delta: { type: 'cell_upsert', cell: reanchored(cell(10, '0xa'), 12) } },
+    ]);
+    expect(refreshed).not.toBe(seeded);
+    expect(refreshed.revision).toBe(4);
+    expect(semanticsCacheRevisionOnly(seeded, refreshed)).toBe(true);
+
+    // Every kind of content still counts: a replaced record, a grown Map, a
+    // status that moved. The predicate walks the cache's own keys, so none of
+    // these depends on it knowing the slot by name.
+    const counted = applyRevisionedSemanticsDeltas(seeded, [
+      { revision: 3, delta: { type: 'census_replace', census: census(11) } },
+    ]);
+    expect(semanticsCacheRevisionOnly(seeded, counted)).toBe(false);
+    const grown = applyRevisionedSemanticsDeltas(seeded, [
+      { revision: 3, delta: { type: 'cell_upsert', cell: cell(11, '0xb') } },
+    ]);
+    expect(semanticsCacheRevisionOnly(seeded, grown)).toBe(false);
+    const degraded = applyRevisionedSemanticsDeltas(seeded, [
+      { revision: 3, delta: { type: 'source_status', source: { ...ready, status: 'stale' } } },
+    ]);
+    expect(semanticsCacheRevisionOnly(seeded, degraded)).toBe(false);
+    // An identical object did not move its revision either.
+    expect(semanticsCacheRevisionOnly(seeded, seeded)).toBe(false);
   });
 });

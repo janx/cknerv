@@ -183,6 +183,16 @@ measurements.
 The reducer remains pure and owns ordering semantics. Components may derive
 GPU-ready state but must not repeat domain reduction.
 
+Every stream connector (`packages/cache/src/projectionStream.ts`,
+`entityStream.ts`) coalesces a frame's deltas into one reducer apply and
+publishes the result to React once. A batch whose deltas all reduced to no-ops
+— a replayed birth the cache already retains, an enrichment refresh
+re-delivering retained records, an unchanged poll re-broadcast — moves only the
+reconnect cursor. The connector keeps that cursor in its own copy of the cache
+and skips the publish; the decision comes from a predicate defined beside each
+reducer out of its own copy-on-write rules (`cellsCacheRevisionOnly`,
+`semanticsCacheRevisionOnly`), never from the connector guessing at the shape.
+
 `ui-app/src/cell-field-hook.ts` currently maintains a mutable structure-of-
 arrays mirror and parity diagnostics. It is a verified migration seam, not yet
 the production Canvas read path: current Canvas consumers still read the
@@ -1043,6 +1053,8 @@ current staged structure.
 ### 15.1 Main-thread strategy
 
 - Pure reducers publish immutable state and compact journals.
+- A stream batch that advances only the reconnect revision is never published:
+  the cursor moves, the React commit does not.
 - Render-set cursors turn adjacent journals into slot-local changes.
 - The Cell source index for a link batch scans the staged Cell Map once, not
   once per link.

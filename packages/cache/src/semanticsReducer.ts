@@ -481,3 +481,27 @@ export function applyRevisionedSemanticsDeltas(
   if (revision !== draft.value.revision) writable(draft).revision = revision;
   return draft.value;
 }
+
+/**
+ * True when `next` is `prev` with only its revision moved — the batch was
+ * the refresh loop re-delivering records this cache already retains (see the
+ * dedup note above), and a stream may keep the cursor without publishing.
+ *
+ * Exact under the copy-on-write rules above: an arm that changes content goes
+ * through `writable(draft)` and replaces the field it touches — the two Maps
+ * are copied before any write — so a batch that left every other field's
+ * identity alone wrote nothing a consumer can read. Compared key by key off
+ * the cache itself rather than against a list of names, so a record slot
+ * added later is covered by construction.
+ */
+export function semanticsCacheRevisionOnly(
+  prev: SemanticsCache,
+  next: SemanticsCache,
+): boolean {
+  if (next === prev) return false;
+  for (const key of Object.keys(next) as Array<keyof SemanticsCache>) {
+    if (key === 'revision') continue;
+    if (next[key] !== prev[key]) return false;
+  }
+  return true;
+}
