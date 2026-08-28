@@ -1074,7 +1074,7 @@ function CellScanTraceBlock({
   );
 }
 
-export default function CellDetailPanel({
+function CellDetailPanel({
   cell,
   recentLinks = EMPTY_RECENT_LINKS,
   routeCellById,
@@ -2277,3 +2277,10 @@ export default function CellDetailPanel({
     </CellScanClockContext.Provider>
   );
 }
+
+// Memoized behind the overlay's own memo: the overlay re-renders itself for a
+// facet focus (it re-tints the connector from state), and that render carried
+// the whole dossier with it — the same props, spread through unchanged. The
+// facet's click already re-renders this body once for its own selection state;
+// this saves the second pass.
+export default memo(CellDetailPanel);

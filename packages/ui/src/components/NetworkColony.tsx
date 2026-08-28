@@ -52,7 +52,7 @@ import type { ColonyFlood } from '../derives/networkFlood.derive';
 import type { ProducerStanding } from '../derives/blockProducers.derive';
 import ColonyNodes from './ColonyNodes';
 import ColonyEdges from './ColonyEdges';
-import ColonyAccretion from './ColonyAccretion';
+import ColonyAccretion, { type ProducerSharesRef } from './ColonyAccretion';
 import ColonyCourierLayer from './ColonyCourierLayer';
 import BlockDeliveryLayer, { type BlockDeliveryPulse } from './BlockDeliveryLayer';
 import { consensusBlockColor } from '../derives/consensusFlow.derive';
@@ -82,19 +82,24 @@ interface NetworkColonyProps {
   flashDirtyIdsRef?: CellFlashDirtyIdsRef;
   /** Local node version — drives measured version-mismatch coloring (violet). */
   localVersion: string;
-  /** The chain's recent mining cohorts, LIVE. Passed straight through to the
-   *  accretion layer, where a cohort's share of the window sets the rate its
-   *  black hole pulls matter in at: the topology is keyed on the producer key
-   *  set alone (a per-block key would rebuild the colony's geometry once a
-   *  block and truncate every in-flight wave), so the standings hanging off the
-   *  staged nodes are stale between key-set changes and this is the live
-   *  reading.
+  /** The chain's recent mining cohorts, LIVE, by reference. Passed straight
+   *  through to the accretion layer, where a cohort's share of the window sets
+   *  the rate its black hole pulls matter in at: the topology is keyed on the
+   *  producer key set alone (a per-block key would rebuild the colony's
+   *  geometry once a block and truncate every in-flight wave), so the standings
+   *  hanging off the staged nodes are stale between key-set changes and this is
+   *  the live reading.
    *
-   *  ⚠️ It is `BlockProducerView`'s `staging` array — key-ascending, the same
-   *  sequence the topology was built from — and never `ranked`, which is
+   *  ⚠️ It holds `BlockProducerView`'s `staging` array — key-ascending, the
+   *  same sequence the topology was built from — and never `ranked`, which is
    *  ordered by a tally. Nothing below reads it positionally; the accretion
-   *  layer walks the staged nodes and looks each share up by key. */
-  producers?: readonly ProducerStanding[] | null;
+   *  layer walks the staged nodes and looks each share up by key.
+   *
+   *  ⭐ A REF, NOT THE ARRAY. The array is fresh on every attributed block,
+   *  and as a prop it defeated this root's memo once a block for a change
+   *  that moves one instanced lane. The holder is stable for the app's life;
+   *  the accretion layer reads it once a frame by identity. */
+  producersRef?: ProducerSharesRef | null;
   /** Shared camera-distance focus. Optional keeps standalone scenes unchanged. */
   cellDetailViewFocusRef?: { readonly current: number };
   /** Optional overlay rendered inside the colony's ROTATING group, so
@@ -119,7 +124,7 @@ function NetworkColony({
   flashDirtyRef,
   flashDirtyIdsRef,
   localVersion,
-  producers,
+  producersRef,
   cellDetailViewFocusRef,
   overlay,
   rotationEnabled = true,
@@ -261,7 +266,7 @@ function NetworkColony({
             order a viewer already reads the colony in. */}
         <ColonyAccretion
           topology={topology}
-          producers={producers}
+          producersRef={producersRef}
           contextEnergyRef={nodeContextEnergyRef}
         />
         <ColonyNodes

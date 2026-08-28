@@ -844,7 +844,7 @@ describe('what a POW cohort looks like', () => {
   it('mounts a colony of cohorts inside an r3f Canvas without throwing', () => {
     expect(() => render(
       <Canvas>
-        <ColonyAccretion topology={topology} producers={producers} />
+        <ColonyAccretion topology={topology} producersRef={{ current: producers }} />
       </Canvas>,
     )).not.toThrow();
   });
@@ -1086,10 +1086,14 @@ describe('what a POW cohort looks like', () => {
     expect(cohortAccretionMarks.length).toBeLessThanOrEqual(2); // (topology, cap)
     const layer = source('ColonyAccretion.tsx');
     expect(layer).toContain('const plan = useMemo(() => cohortAccretionMarks(topology), [topology]);');
-    // The share reaches the GPU through a lane written in place instead, and
-    // the lane is marked ONCE for the whole walk.
-    expect(layer).toContain('}, [lanes, marks, producers]);');
+    // The share reaches the GPU through a lane written in place instead — off
+    // the window's REF, once per identity change, never off a prop that would
+    // re-render the memoized colony once a block — and the lane is marked
+    // ONCE for the whole walk.
+    expect(layer).toContain('}, [producersRef, writeShares]);');
+    expect(layer).toContain('if (live === writtenSharesRef.current) return;');
     expect(layer).toContain('lanes.share.needsUpdate = true;');
+    expect(layer).not.toContain('[lanes, marks, producers]');
     expect(layer).not.toMatch(/useMemo\([^)]*producers[^)]*\)/);
   });
 

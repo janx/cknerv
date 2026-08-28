@@ -24,7 +24,8 @@
 // won; and the win itself is already drawn, by the wave that starts at this
 // very node. A layer with no per-block input is structurally incapable of
 // discharging for the wrong cohort.
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { useSimClock } from '../tweaks/SimClockScope';
@@ -118,6 +119,36 @@ export function sameCohortMark(a: CohortMark, b: CohortMark): boolean {
 
 const SCRATCH_MATRIX = new THREE.Matrix4();
 
+/** The live window, carried BY REFERENCE.
+ *
+ *  `BlockProducerView.staging` is a fresh array on every attributed block —
+ *  its tallies moved — and handing it to the colony as a prop re-rendered the
+ *  whole memoized colony subtree once a block, on top of the render the pulse
+ *  itself already costs. The holder's identity never changes, so the colony's
+ *  memo holds; this layer reads `current` once a frame and rewrites its share
+ *  lane exactly when the array does. Read-only from here: the app owns it. */
+export interface ProducerSharesRef {
+  readonly current: readonly ProducerStanding[] | null;
+}
+
+/** Fill the share lane: one entry per staged mark, looked up by payout key.
+ *
+ *  A cohort the view has dropped keeps eating at the floor rate rather than
+ *  stopping: its node is still standing, and a hole that had gone still would
+ *  say the machines behind it had. The next topology rebuild retires both.
+ *  Pure, so the lane's contents can be pinned without a renderer. */
+export function cohortShareLane(
+  marks: readonly CohortMark[],
+  producers: readonly ProducerStanding[] | null | undefined,
+  share: Float32Array,
+): void {
+  const shareByKey = new Map<string, number>();
+  for (const producer of producers ?? []) shareByKey.set(producer.key, producer.share);
+  marks.forEach((mark, index) => {
+    share[index] = shareByKey.get(mark.producerKey) ?? 0;
+  });
+}
+
 /**
  * Every cohort's accreting void, in two instanced draws.
  *
@@ -129,7 +160,7 @@ const SCRATCH_MATRIX = new THREE.Matrix4();
  */
 export default function ColonyAccretion({
   topology,
-  producers,
+  producersRef,
   contextEnergyRef,
 }: {
   topology: NetworkTopology;
@@ -138,8 +169,10 @@ export default function ColonyAccretion({
    *  change, because that is what the topology memo is keyed on and it must be.
    *  So the node is identity and placement; this is the share. Optional: a
    *  scene with no cohorts, a devnet that has not mined and a caller that never
-   *  learned about producers are one code path. */
-  producers?: readonly ProducerStanding[] | null;
+   *  learned about producers are one code path. By reference, and read once a
+   *  frame, so the window can move once a block without a React render
+   *  anywhere in the colony — see `ProducerSharesRef`. */
+  producersRef?: ProducerSharesRef | null;
   contextEnergyRef?: { readonly current: number };
 }) {
   const simClock = useSimClock();
@@ -216,22 +249,33 @@ export default function ColonyAccretion({
   }, [lanes, marks]);
 
   // The live share, written in place whenever the window moves — which is once
-  // per attributed block, and never touches the geometry.
-  useEffect(() => {
-    if (!accretionMeshRef.current) return;
-    const shareByKey = new Map<string, number>();
-    for (const producer of producers ?? []) shareByKey.set(producer.key, producer.share);
-    const share = lanes.share.array as Float32Array;
-    marks.forEach((mark, index) => {
-      // A cohort the view has dropped keeps eating at the floor rate rather
-      // than stopping: its node is still standing, and a hole that had gone
-      // still would say the machines behind it had. The next topology rebuild
-      // retires both.
-      share[index] = shareByKey.get(mark.producerKey) ?? 0;
-    });
+  // per attributed block — and never touching the geometry. The window last
+  // written is remembered by identity: the app replaces the array exactly
+  // once per attributed block, so an identity test once a frame is the whole
+  // cost of following it, and the walk runs exactly as often as the effect
+  // keyed on the array used to.
+  const writtenSharesRef = useRef<readonly ProducerStanding[] | null | undefined>(
+    undefined,
+  );
+  const writeShares = useCallback((producers: readonly ProducerStanding[] | null) => {
+    cohortShareLane(marks, producers, lanes.share.array as Float32Array);
     // Marked ONCE for the whole walk, never once per write.
     lanes.share.needsUpdate = true;
-  }, [lanes, marks, producers]);
+    writtenSharesRef.current = producers;
+  }, [lanes, marks]);
+  // A new lane or a moved cohort set needs the walk regardless of whether the
+  // window moved: the slots behind the marks are not the ones written before.
+  useEffect(() => {
+    writeShares(producersRef?.current ?? null);
+  }, [producersRef, writeShares]);
+  // Raw frame, not the sim frame: the standings are chain state, and a paused
+  // clock must not hold a hole at a rate the window has already left behind —
+  // the effect this replaces ran under a pause too.
+  useFrame(() => {
+    const live = producersRef?.current ?? null;
+    if (live === writtenSharesRef.current) return;
+    writeShares(live);
+  });
 
   useEffect(() => () => {
     horizonGeometry.dispose();

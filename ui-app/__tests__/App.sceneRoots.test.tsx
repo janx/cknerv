@@ -300,4 +300,45 @@ describe('colony topology signature', () => {
     expect(memoDeps('producerView'))
       .toEqual(['chain.producers', 'chain.producer_window_blocks', 'networkRoster']);
   });
+
+  it('hands the colony the live standings by reference, never by array', () => {
+    // `staging` is a fresh array on every attributed block. As a prop it
+    // defeated `memo(NetworkColony)` once a block — a second colony render on
+    // top of the pulse's — for a change that moves one instanced lane. The
+    // holder is a ref written during render, so the accretion layer's frame
+    // callback reads the window the memo above just produced.
+    expect(APP_SOURCE).toContain(
+      'const producerSharesRef = useRef<readonly ProducerStanding[] | null>(null);',
+    );
+    expect(APP_SOURCE).toContain('producerSharesRef.current = producerView?.staging ?? null;');
+    expect(APP_SOURCE).toContain('producersRef={producerSharesRef}');
+    expect(APP_SOURCE).not.toContain('producers={producerView?.staging}');
+  });
+});
+
+describe('inspector memo inputs', () => {
+  it('holds the causal navigation readout by identity across App renders', () => {
+    // `memo(CellInspectionOverlay)` is only as good as its least stable prop.
+    // A step object rebuilt per render re-created both callbacks and the
+    // readout, and the dossier re-rendered on every mempool tick.
+    for (const name of ['causalBackStep', 'causalForwardStep', 'selectedCausalNavigation']) {
+      expect(APP_SOURCE, `${name} is not a useMemo`).toContain(`const ${name} = useMemo(`);
+    }
+    // The steps key on retention as a signal, never on the cells Map: the Map
+    // is replaced by every cells batch, and the answer moves only when a
+    // trail entry appears in or leaves it.
+    for (const name of ['causalBackStep', 'causalForwardStep']) {
+      expect(memoDeps(name)).toEqual(['cellCausalNavigation', 'causalRetainedSig']);
+    }
+    expect(memoDeps('causalRetainedSig')).toEqual(['cellCausalNavigation.entries', 'retainedCells']);
+    expect(memoDeps('selectedCausalNavigation')).toEqual([
+      'selectedCellRecordId',
+      'cellCausalNavigation',
+      'causalBackStep',
+      'causalForwardStep',
+      'navigateCausalBack',
+      'navigateCausalForward',
+    ]);
+    expect(APP_SOURCE).toContain('causalNavigation={selectedCausalNavigation}');
+  });
 });

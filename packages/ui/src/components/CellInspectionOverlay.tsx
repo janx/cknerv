@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -161,7 +162,7 @@ export type CellInspectionOverlayProps = CellDetailPanelProps & {
  * card can never reach the R3F root, so no stopPropagation shims are needed
  * and onPointerMissed only ever sees genuine scene clicks.
  */
-export default function CellInspectionOverlay(props: CellInspectionOverlayProps) {
+function CellInspectionOverlay(props: CellInspectionOverlayProps) {
   const {
     handles,
     ...panelProps
@@ -263,3 +264,11 @@ export default function CellInspectionOverlay(props: CellInspectionOverlayProps)
     </div>
   );
 }
+
+// Memoized: App renders several times a second for things no card reads — a
+// mempool tick, a peer poll, a hover the scene answered — and this is the
+// 2,200-line dossier on the far side of every one of them. With App holding
+// the callbacks and the navigation readout by identity, the shallow compare
+// lets a card open for a minute skip the renders that carry nothing for it,
+// and still re-render on every cells or links batch, which do.
+export default memo(CellInspectionOverlay);

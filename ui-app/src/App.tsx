@@ -52,6 +52,7 @@ import {
   CellInspectionOverlay,
   CellPortraitInset,
   createCellInspectionHandles,
+  type ProducerStanding,
   CellSemanticOrbit,
   ConsensusRouteCamera,
   ConsensusWriteSeal,
@@ -803,6 +804,16 @@ export default function App({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [chain.producers, chain.producer_window_blocks, networkRoster],
   );
+  // The live standings reach the colony BY REFERENCE. `staging` is a fresh
+  // array on every attributed block (its tallies moved), and handing it to
+  // `memo(NetworkColony)` as a prop re-rendered the whole colony subtree once
+  // a block on top of the pulse's own render — for a change that moves one
+  // instanced lane. The holder's identity never changes; the accretion layer
+  // reads `.current` once a frame and rewrites its share lane exactly when
+  // the array does. Written during render: the value is the memo above, and
+  // the readers are frame callbacks that run after every commit.
+  const producerSharesRef = useRef<readonly ProducerStanding[] | null>(null);
+  producerSharesRef.current = producerView?.staging ?? null;
   // ⚠️⚠️ THE PRODUCER SIGNATURE IS THE KEY SET, AND NOTHING A BLOCK MOVES.
   // Every producer standing changes on EVERY BLOCK — a block bumps one
   // producer's count and re-divides every share against the window — while the
@@ -1141,15 +1152,41 @@ export default function App({
       : null,
     [selectedCell, cellsCache.cells, cellsCache.recentLinks],
   );
-  const causalBackStep = cellCausalNavigationStep(
-    cellCausalNavigation,
-    -1,
-    (cellId) => cellsCache.cells.has(cellId),
+  // ——— Causal navigation, held by identity ————————————————————————
+  // `cellCausalNavigationStep` returns a fresh object per call, and App
+  // renders several times a second — a mempool tick, a peer poll, a links
+  // batch. Each fresh step re-created the two callbacks below and the readout
+  // they ride in, which reached `memo(CellInspectionOverlay)` as a new prop
+  // and re-rendered the 2,200-line dossier on every one of those renders.
+  // Retention is the only input that moves without the trail moving, and it
+  // moves only when a trail entry appears in or leaves `cells`: a string over
+  // the trail's ≤24 entries is that signal, so the steps re-derive exactly
+  // then, and the cells Map itself is deliberately not a key.
+  const retainedCells = cellsCache.cells;
+  const causalRetainedSig = useMemo(
+    () => cellCausalNavigation.entries
+      .map((cellId) => (retainedCells.has(cellId) ? '1' : '0'))
+      .join(''),
+    [cellCausalNavigation.entries, retainedCells],
   );
-  const causalForwardStep = cellCausalNavigationStep(
-    cellCausalNavigation,
-    1,
-    (cellId) => cellsCache.cells.has(cellId),
+  const causalBackStep = useMemo(
+    () => cellCausalNavigationStep(
+      cellCausalNavigation,
+      -1,
+      (cellId) => retainedCells.has(cellId),
+    ),
+    // `retainedCells` is read through `causalRetainedSig` — see above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [cellCausalNavigation, causalRetainedSig],
+  );
+  const causalForwardStep = useMemo(
+    () => cellCausalNavigationStep(
+      cellCausalNavigation,
+      1,
+      (cellId) => retainedCells.has(cellId),
+    ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [cellCausalNavigation, causalRetainedSig],
   );
   const navigateCausalBack = useCallback(() => {
     if (!causalBackStep) return;
@@ -1167,19 +1204,33 @@ export default function App({
     });
     inspectCell(causalForwardStep.cellId);
   }, [causalForwardStep, inspectCell]);
-  const selectedCausalNavigation = selectedCell
-    && cellCausalNavigation.entries[cellCausalNavigation.index]
-      === selectedCell.id
-    && cellCausalNavigation.entries.length > 1
-    ? {
-      position: cellCausalNavigation.index + 1,
-      total: cellCausalNavigation.entries.length,
-      backCellId: causalBackStep?.cellId ?? null,
-      forwardCellId: causalForwardStep?.cellId ?? null,
-      onBack: navigateCausalBack,
-      onForward: navigateCausalForward,
-    }
-    : null;
+  // The readout the card receives, held for as long as its six inputs hold:
+  // the id rather than the record, because a record patched by a cells
+  // batch (a death, a tag) is the same subject in the same trail.
+  const selectedCellRecordId = selectedCell?.id ?? null;
+  const selectedCausalNavigation = useMemo(
+    () => selectedCellRecordId !== null
+      && cellCausalNavigation.entries[cellCausalNavigation.index]
+        === selectedCellRecordId
+      && cellCausalNavigation.entries.length > 1
+      ? {
+        position: cellCausalNavigation.index + 1,
+        total: cellCausalNavigation.entries.length,
+        backCellId: causalBackStep?.cellId ?? null,
+        forwardCellId: causalForwardStep?.cellId ?? null,
+        onBack: navigateCausalBack,
+        onForward: navigateCausalForward,
+      }
+      : null,
+    [
+      selectedCellRecordId,
+      cellCausalNavigation,
+      causalBackStep,
+      causalForwardStep,
+      navigateCausalBack,
+      navigateCausalForward,
+    ],
+  );
   // The causal lens already scanned the link ring for this exact record; a
   // second scan per links batch would only risk disagreeing with it.
   const selectedOriginLink = selectedCausalLens?.originLink ?? null;
@@ -2061,7 +2112,7 @@ export default function App({
             flashDirtyRef={flashDirtyRef}
             flashDirtyIdsRef={flashDirtyIdsRef}
             localVersion={localNode?.version ?? ''}
-            producers={producerView?.staging}
+            producersRef={producerSharesRef}
             cellDetailViewFocusRef={cellDetailViewFocusRef}
             overlay={colonyOverlay}
           />
