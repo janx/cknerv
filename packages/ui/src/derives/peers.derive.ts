@@ -750,6 +750,78 @@ export function cellIdsWithinRadiusFromIndex(
   return hits.map((hit) => ({ id: hit.id, dist: Math.sqrt(hit.d2) }));
 }
 
+// ————— Landing flashes —————
+//
+// The third medium of the same wave. The annulus draws the crest, the fabric
+// flushes as the crest crosses a fibre, and a Cell flashes at the instant the
+// crest passes it — one radius function, read here backwards: not "where is
+// the crest at time t" but "when does the crest reach a Cell at distance d".
+
+export interface LandingFlash {
+  id: number;
+  /** Sim seconds at which the crest passes this Cell. */
+  at: number;
+  /** The front's own strength where it passes this Cell — the spatial half
+   *  of `contactFrontState` (1/r falloff × reach extinction) — so a flash at
+   *  the rim is as quiet as the crest that caused it and one inside the knee
+   *  is as loud. In [0, 1]. */
+  amp: number;
+}
+
+/**
+ * Schedule the flashes one released front owes the Cells it will cross.
+ * `landingLocalXZ` is the landing in the galaxy's LOCAL frame — the frame
+ * `pos_seed` lives in; the caller projects it with the same map the flush
+ * stamp uses, so all three media share one origin. Only Cells within the
+ * reach the front can actually complete (`min(reach, ceiling)`) are
+ * scheduled — never one the crest would pass after extinction — nearest
+ * first, at most `budget` of them, each at
+ * `contact + max(0, dist − CONTACT_FRONT_START_RADIUS) / speed`: a Cell
+ * inside the release radius flashes AT contact, every other one exactly when
+ * the crest gets there. Pure.
+ */
+export function landingFlashSchedule(
+  landingLocalXZ: readonly [number, number],
+  contactSceneS: number,
+  reach: number,
+  budget: number,
+  live: ContactFrontLive,
+  index: CellNearestIndex,
+): LandingFlash[] {
+  const limit = Number.isFinite(budget)
+    ? Math.max(0, Math.floor(budget))
+    : budget === Number.POSITIVE_INFINITY
+      ? index.count
+      : 0;
+  if (limit === 0 || !(live.speed > 0)) return [];
+  const radius = Math.min(
+    reach,
+    contactFrontReachCeiling(live.speed, live.windowS),
+  );
+  const hits = cellIdsWithinRadiusFromIndex(
+    landingLocalXZ[0],
+    landingLocalXZ[1],
+    radius,
+    index,
+  );
+  // Nearest first. The sort is stable, so equidistant Cells keep the index's
+  // input order — exactly as the radius walk returned them.
+  hits.sort((a, b) => a.dist - b.dist);
+  const count = Math.min(limit, hits.length);
+  const out: LandingFlash[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const { id, dist } = hits[i];
+    const ageS = Math.max(0, dist - CONTACT_FRONT_START_RADIUS) / live.speed;
+    const front = contactFrontState(ageS, reach, live);
+    out.push({
+      id,
+      at: contactSceneS + ageS,
+      amp: front.falloff * front.reachFade,
+    });
+  }
+  return out;
+}
+
 let sharedNearestIndexToken: unknown = Symbol('unset');
 let sharedNearestIndexValue: CellNearestIndex | null = null;
 /** Journal chain: cellsToken the shared index was last synced to. */
@@ -802,8 +874,9 @@ export interface NearestIndexJournal {
 }
 
 /**
- * One nearest index shared across consumers (delivery ignition + galaxy
- * local ignition today), keyed on `cellsToken` and maintained INCREMENTALLY
+ * One nearest index shared across consumers (today the delivery layer's
+ * landing schedule, `landingFlashSchedule`, for every front of a pulse),
+ * keyed on `cellsToken` and maintained INCREMENTALLY
  * from the reducer journal: births append (O(1) bucket insert), removals
  * tombstone (walkers skip; a reborn id un-tombstones — `pos_seed` is a pure
  * function of the id, so the retained entry is exact), and any journal gap,

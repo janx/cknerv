@@ -20,6 +20,9 @@ function read(path: string): string {
 
 const FIELD_SOURCE = read('src/components/CellPopulationField.tsx');
 const GALAXY_SOURCE = read('src/components/CellGalaxy.tsx');
+// The Cell sprite sizes live with `cellPointSize`, beside the other pure Cell
+// derivations (the galaxy re-exports it; the landing layer reads it there).
+const CELL_VISUAL_SOURCE = read('src/derives/cellVisual.derive.ts');
 const PLACEMENT_SOURCE = read('src/geometry/populationFieldPlacement.ts');
 const MATERIAL_SOURCE = read('src/materials/populationFieldMaterial.ts');
 const WORKER_SOURCE = read('src/geometry/populationField.worker.ts');
@@ -416,7 +419,7 @@ describe('the halo is smaller and dimmer than a Cell, and differs in nothing els
   it('is smaller than the smallest Cell sprite on the stage', () => {
     // Cell sprite = base * morphology, morphology = 0.58 + 0.72 * u^2 (+ a
     // rare plain-Cell bonus), so the floor is the generic base at u = 0.
-    const generic = constant(GALAXY_SOURCE, 'GENERIC_CELL_POINT_SIZE');
+    const generic = constant(CELL_VISUAL_SOURCE, 'GENERIC_CELL_POINT_SIZE');
     const morphologyFloor = 0.58;
     const smallestCell = generic * morphologyFloor;
     const ceiling = constant(MATERIAL_SOURCE, 'POPULATION_FIELD_POINT_SIZE_MAX');
@@ -425,7 +428,7 @@ describe('the halo is smaller and dimmer than a Cell, and differs in nothing els
     expect(ceiling).toBeLessThan(smallestCell);
     expect(floor).toBeLessThan(ceiling);
     // And well under a typical one — a tagged Cell at mean morphology.
-    const tagged = constant(GALAXY_SOURCE, 'TAGGED_CELL_POINT_SIZE');
+    const tagged = constant(CELL_VISUAL_SOURCE, 'TAGGED_CELL_POINT_SIZE');
     expect(ceiling).toBeLessThan(tagged * (0.58 + 0.72 / 3) * 0.5);
     // The ceiling has to be APPROACHED or it guarantees the gap it was meant
     // to prevent: a flat size next to a varied one reads as two classes, which

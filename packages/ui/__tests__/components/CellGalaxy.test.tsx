@@ -5,6 +5,7 @@ import { render } from '@testing-library/react';
 import { Canvas } from '@react-three/fiber';
 import * as THREE from 'three';
 import CellGalaxy from '../../src/components/CellGalaxy';
+import { createLandingFlashQueue } from '../../src/components/landingFlashQueue';
 import {
   ckbNodeAnchorHaloTarget,
   ckbNodeAnchorPresentation,
@@ -121,6 +122,7 @@ describe('CellGalaxy', () => {
               onSelect={() => {}}
               cellFlashRef={cellFlashRef}
               flashDirtyRef={flashDirtyRef}
+              landingFlashRef={{ current: createLandingFlashQueue() }}
             />
           </Canvas>
         </CellGalaxyProvider>,
@@ -227,7 +229,11 @@ describe('CellGalaxy', () => {
     expect(source).toContain('mergeCellFlashRanges(');
     expect(source).toContain('dirtyFlashIds?.clear()');
     expect(source).toContain('writeFlashSlots(');
-    expect(source.match(/markCellFlashDirty\(/g)).toHaveLength(3);
+    // Two writers, both real writes: canonical rewrite arrivals and the
+    // fresh-link touched Cells. The local-ignition sweep that used to be the
+    // third is gone — a block landing flashes on LandingFlashLayer's own
+    // geometry, never through the write seal.
+    expect(source.match(/markCellFlashDirty\(/g)).toHaveLength(2);
   });
 
   it('submits only currently active protocol-write slots to the flare draw', () => {
@@ -450,6 +456,7 @@ describe('CellGalaxy', () => {
               onSelect={() => {}}
               cellFlashRef={cellFlashRef}
               flashDirtyRef={flashDirtyRef}
+              landingFlashRef={{ current: createLandingFlashQueue() }}
               localReceiveDelayS={0.3}
             />
           </Canvas>

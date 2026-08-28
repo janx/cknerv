@@ -45,6 +45,13 @@ import { SHOCKWAVE_SPEED, CONTACT_WAVE_SCALE } from '../ui/topologyConstants';
 // (the halo shaders inject the rest of it from the same module) — imported
 // on the one-authority rule, so a retune there moves the knob's default too.
 import { COMPRESS_DEPTH, COMPRESS_GAIN } from '../derives/peers.derive';
+// The landing flash's two form knobs live on its material, which seeds its
+// own uniforms from them and is overwritten from LIVE each frame — the same
+// one-authority rule as the shockwave and accretion knobs.
+import {
+  LANDING_FLASH_DURATION_S,
+  LANDING_FLASH_SIZE_SCALE,
+} from '../materials/landingFlashMaterial';
 // ② reinforcement defaults live in fabricReinforce.ts — import so there's ONE
 // authority (the module owns the numbers; these knobs just expose them live).
 import {
@@ -152,10 +159,17 @@ export const deliverySchema = {
   // far a flushed fibre's hue leans toward the front's own (carrier → rose).
   flushAmp: { value: 1.0, min: 0, max: 3, step: 0.05, label: 'flush amp' },
   flushMix: { value: 0.6, min: 0, max: 1, step: 0.05, label: 'flush mix' },
-  igniteKHero: { value: 8, min: 0, max: 30, step: 1, label: 'ignite k hero' },
-  igniteKPeer: { value: 3, min: 0, max: 15, step: 1, label: 'ignite k peer' },
-  igniteMax: { value: 300, min: 0, max: 1000, step: 10, label: 'ignite max' },
-  igniteRipple: { value: 0.015, min: 0, max: 0.1, step: 0.005, label: 'ignite ripple s' },
+  // The landing flashes — plain blooms on the Cells a released front passes,
+  // at the instant its crest passes them (landingFlashSchedule → the galaxy's
+  // LandingFlashLayer). Three budgets: per hero front and per peer front
+  // (nearest Cells first), then per pulse across every front. Then the
+  // flash's own window and its sprite as a multiple of the Cell's
+  // presentation size, both seeded from the material.
+  landingHero: { value: 128, min: 0, max: 512, step: 8, label: 'landing budget hero' },
+  landingPeer: { value: 24, min: 0, max: 128, step: 1, label: 'landing budget peer' },
+  landingMax: { value: 300, min: 0, max: 1000, step: 10, label: 'landing budget pulse' },
+  landingDur: { value: LANDING_FLASH_DURATION_S, min: 0.1, max: 2, step: 0.05, label: 'landing dur s' },
+  landingSize: { value: LANDING_FLASH_SIZE_SCALE, min: 0.5, max: 6, step: 0.1, label: 'landing size' },
 } satisfies FolderSchema;
 
 export const peerSchema = {

@@ -61,6 +61,7 @@ import {
 import { ConsensusMemoryFocusScope } from '../hooks/consensusMemoryFocusContext';
 import {
   capacityMass,
+  cellPointSize,
   deriveCellVisual,
   hasCellTagAccent,
 } from '../derives/cellVisual.derive';
@@ -106,12 +107,9 @@ import CellIdentityProofMarker, {
 import CellIdentityBindingMarker from './CellIdentityBindingMarker';
 import CanonicalRewriteEcho from './CanonicalRewriteEcho';
 import { deriveCanonicalRewriteArrivals } from '../derives/canonicalRewrite.derive';
-import {
-  cellIdsWithinRadiusFromIndex,
-  PEER_LAUNCH_SENTINEL,
-  rotYWorldToLocalXZ,
-  sharedCellNearestIndex,
-} from '../derives/peers.derive';
+import { PEER_LAUNCH_SENTINEL } from '../derives/peers.derive';
+import LandingFlashLayer from './LandingFlashLayer';
+import type { LandingFlashQueue } from './landingFlashQueue';
 import {
   collectCellFlashCandidates,
   markCellFlashDirty,
@@ -138,12 +136,8 @@ import CellNucleus from './CellNucleus';
 // ---------------------------------------------------------------------------
 
 import {
-  BEAM_GROW_DUR_S,
   BLOCK_HIGHLIGHT_DELAY_S,
-  LOCAL_IGNITION_RADIUS,
-  LOCAL_IGNITION_SPEED,
   MAX_BLOCK_HIGHLIGHTS,
-  MAX_LOCAL_IGNITIONS,
 } from '../ui/topologyConstants';
 
 interface CellGalaxyProps {
@@ -185,6 +179,13 @@ interface CellGalaxyProps {
   /** Exact Cell ids changed since the last GPU commit. When omitted,
    *  CellGalaxy preserves the legacy full-visible-buffer fallback. */
   flashDirtyIdsRef?: CellFlashDirtyIdsRef;
+  /** The landing queue (`createLandingFlashQueue`), owned by the consumer
+   *  and shared with `NetworkColony`, whose delivery layer pushes each block
+   *  landing's flashes here. CellGalaxy mounts the layer that drains it
+   *  (`LandingFlashLayer`) inside its rotating group. Distinct from
+   *  `cellFlashRef` on purpose: that map is the protocol write seal, and a
+   *  landing is not a write. */
+  landingFlashRef: { readonly current: LandingFlashQueue };
   /** Optional overlay rendered inside the cell galaxy's rotating
    *  world-space group. Used by consumers to add domain-specific
    *  animations (e.g. consensus routes + write seals) atop the
@@ -206,20 +207,11 @@ interface CellGalaxyProps {
   localReceiveDelayS?: number;
 }
 
-// Cell point sizes in world units. A stable per-id range prevents the far field
-// from becoming an evenly punched dot screen; tags remain larger landmarks.
-const GENERIC_CELL_POINT_SIZE = 1.35;
-const TAGGED_CELL_POINT_SIZE = 2.75;
-
-export function cellPointSize(cell: Pick<Cell, 'id' | 'tag'>): number {
-  let hash = Math.imul(cell.id >>> 0, 0x9e3779b1) >>> 0;
-  hash = Math.imul(hash ^ (hash >>> 16), 0x85ebca6b) >>> 0;
-  const u = ((hash >>> 8) & 0xffff) / 0xffff;
-  const morphology = 0.58 + 0.72 * u * u
-    + (cell.tag === null && u > 0.975 ? 0.48 : 0);
-  return (cell.tag === null ? GENERIC_CELL_POINT_SIZE : TAGGED_CELL_POINT_SIZE)
-    * morphology;
-}
+// A Cell's presentation size (`cellPointSize`) lives with the other pure Cell
+// derivations (derives/cellVisual.derive) so the landing layer can size its
+// bloom from the very number the body writes into `aSize`; re-exported here
+// because this is where every reader of the body's buffers looks for it.
+export { cellPointSize };
 
 /**
  * Write per-cell flash timestamps into the shared flash buffer (consumed by
@@ -1387,6 +1379,7 @@ function CellGalaxy({
   cellFlashRef,
   flashDirtyRef,
   flashDirtyIdsRef,
+  landingFlashRef,
   overlay,
   pickingSuspendedRef,
   populationGain = 0,
@@ -2071,12 +2064,6 @@ function CellGalaxy({
         blockOriginIdxRef.current = (blockOriginIdxRef.current + 1) >>> 0;
         const idx = ckbNodeIds.indexOf(sourceId);
         const safeIdx = idx >= 0 ? idx : 0;
-        // World-space origin of this block's miner icosahedron.
-        const worldOrigin = chainNodeWorldPosition(
-          safeIdx,
-          Math.max(1, ckbNodeIds.length),
-          universeSeed,
-        );
 
         // The local node is not a miner: it APPLIES a block it received from a
         // peer. Delay the whole ledger reaction by localReceiveDelayS (the entry
@@ -2097,13 +2084,11 @@ function CellGalaxy({
 
         // Exact block-cell acknowledgement: flash only Cells touched by the
         // block at the end of the shared carrier/commit phase. There is no
-        // distance sweep here; a broad radial wave would falsely make unrelated
-        // Cell state read as network propagation.
-        const [originLocalX, originLocalZ] = rotYWorldToLocalXZ(
-          worldOrigin[0],
-          worldOrigin[2],
-          group.rotation.y,
-        );
+        // distance sweep here: the block's LANDING — the Cells its released
+        // front passes — is the delivery layer's to flash, plainly, on its
+        // own geometry (landingFlashSchedule → LandingFlashLayer), and a
+        // radial sweep of the write seal would falsely make unrelated Cell
+        // state read as writes.
         const freshLinks = cellsCache.pulseLinks.filter(
           (lk) => lk.at_ms >= prevPulseAtMs,
         );
@@ -2124,35 +2109,6 @@ function CellGalaxy({
             }
             highlights += 1;
           }
-        }
-
-        // Local-ignition pass: at the strike moment (block trigger +
-        // BEAM_GROW_DUR_S), cells geographically near the impact xz
-        // ignite in a fast radial sweep at LOCAL_IGNITION_SPEED. This
-        // bridges the "carrier → cells" narrative: nearby Cells visibly receive
-        // the delivered block at the field contact. It is deliberately bounded
-        // to the landing area, while the broad wave stays in the peer network.
-        // The shared spatial index (one build per Cell-set revision, paid by
-        // the delivery layer already) replaces the old full-map distance walk;
-        // in-radius hits come back in Cell-map scan order, so the first-N cap
-        // selects exactly the cells the walk did.
-        const strikeSceneS = blockTriggerSceneS + BEAM_GROW_DUR_S;
-        const withinRadius = cellIdsWithinRadiusFromIndex(
-          originLocalX,
-          originLocalZ,
-          LOCAL_IGNITION_RADIUS,
-          sharedCellNearestIndex(
-            cellsCache.cellsToken,
-            cellsCache.cells,
-            cellsCache.cellChanges,
-          ),
-        );
-        const ignitionCount = Math.min(withinRadius.length, MAX_LOCAL_IGNITIONS);
-        for (let hit = 0; hit < ignitionCount; hit += 1) {
-          const { id, dist } = withinRadius[hit];
-          const flashAtS = strikeSceneS + dist / LOCAL_IGNITION_SPEED;
-          cellFlashRef.current.set(id, flashAtS);
-          markCellFlashDirty(id, flashDirtyRef, flashDirtyIdsRef);
         }
       }
     }
@@ -2203,6 +2159,12 @@ function CellGalaxy({
           frustumCulled={false}
           renderOrder={1}
         />
+        {/* Block landings, flashing plainly on the Cells the released front
+            passes — on their OWN geometry (the body's is at its attribute
+            ceiling), fed by the delivery layer through the landing queue.
+            Inside the rotating group because it resolves galaxy-local
+            pos_seed, exactly as the body does. Draws nothing at rest. */}
+        <LandingFlashLayer queueRef={landingFlashRef} />
         {/* Canonical correction is not hidden as a cache reset. The exact
             suffix records invalidated by link_prune briefly fracture inward;
             real replacement Birth deltas then use the ordinary Cell body with

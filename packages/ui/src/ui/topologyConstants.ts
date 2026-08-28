@@ -88,14 +88,3 @@ export const CONTACT_WAVE_SCALE = 8;
  *  would otherwise stall the highlight write loop on a large freshLinks
  *  ring. */
 export const MAX_BLOCK_HIGHLIGHTS = 256;
-
-/** Local-ignition feature — at the strike moment (block trigger +
- *  BEAM_GROW_DUR_S), cells geographically within LOCAL_IGNITION_RADIUS
- *  of the impact xz ignite in a fast radial sweep at
- *  LOCAL_IGNITION_SPEED. Bridges the "beam → cells" narrative
- *  directly: cells visibly *receive* the injected energy at the strike
- *  moment. Independent from the existing freshLinks-based exact
- *  per-cell acknowledgements. */
-export const LOCAL_IGNITION_RADIUS = 14;
-export const LOCAL_IGNITION_SPEED = 60;
-export const MAX_LOCAL_IGNITIONS = 128;

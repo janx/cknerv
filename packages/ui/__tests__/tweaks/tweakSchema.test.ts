@@ -24,7 +24,12 @@ const EXPECTED_DEFAULTS = {
   // ≥2.5 px), wake 0.14 → 0.45, gaps 0.55 → 0.3, opacity 2.0 → 0.9 for the
   // extra area; and the fibre flush arrived with its two knobs (amp 1.0 = a
   // full core-floor reclaim at the crest, mix 0.6 toward the front's hue).
-  delivery: { ingestDur: 1.2, compressDepth: 0.45, compressGain: 0.8, moteHero: 1.6, motePeer: 0.9, plumeWidth: 0.7, plumeMinLen: 0.9, plumeMaxLen: 3.2, hopBloomOpacity: 0.85, hopPlumeOpacity: 0.5, waveSpeed: 4.5, waveWidth: 3.2 / 8, waveOpacity: 0.9, waveFalloff: 0.5, waveReachHero: 6.5, waveReachPeer: 4.25, waveWake: 0.45, waveSegments: 0.3, peerPunchScale: 0.7, flushAmp: 1.0, flushMix: 0.6, igniteKHero: 8, igniteKPeer: 3, igniteMax: 300, igniteRipple: 0.015 },
+  // The landing flashes replaced the k-nearest ignition the same day (the
+  // `ignite*` knobs left with it): three budgets — per hero front 128, per
+  // peer front 24, per pulse 300 (the old `igniteMax`) — and the flash's own
+  // window 0.45 s and sprite 2.2× the Cell's presentation size
+  // (LANDING_FLASH_* on landingFlashMaterial, one authority).
+  delivery: { ingestDur: 1.2, compressDepth: 0.45, compressGain: 0.8, moteHero: 1.6, motePeer: 0.9, plumeWidth: 0.7, plumeMinLen: 0.9, plumeMaxLen: 3.2, hopBloomOpacity: 0.85, hopPlumeOpacity: 0.5, waveSpeed: 4.5, waveWidth: 3.2 / 8, waveOpacity: 0.9, waveFalloff: 0.5, waveReachHero: 6.5, waveReachPeer: 4.25, waveWake: 0.45, waveSegments: 0.3, peerPunchScale: 0.7, flushAmp: 1.0, flushMix: 0.6, landingHero: 128, landingPeer: 24, landingMax: 300, landingDur: 0.45, landingSize: 2.2 },
   // The five `hole*` knobs are the POW channel — one accreting void per cohort
   // — whose defaults live on `colonyAccretion` under the same one-authority
   // rule the shockwave knobs follow. `holeInfall` is a RATE and the only thing

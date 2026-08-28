@@ -33,6 +33,7 @@ import {
   CONTACT_FRONT_WIDTH_RADIUS_CAP,
   buildCellNearestIndex,
   cellIdsWithinRadiusFromIndex,
+  landingFlashSchedule,
   sharedCellNearestIndex,
   nearestCellIds,
   nearestCellIdsFromIndex,
@@ -801,6 +802,95 @@ describe('peers.derive', () => {
       expect(cellIdsWithinRadiusFromIndex(0, 0, 5, buildCellNearestIndex([]))).toEqual([]);
       const index = buildCellNearestIndex(scatter(10));
       expect(cellIdsWithinRadiusFromIndex(0, 0, 0, index)).toEqual([]);
+    });
+  });
+
+  describe('landingFlashSchedule (the third medium of one wave)', () => {
+    const live = {
+      speed: deliverySchema.waveSpeed.value,        // 4.5
+      width: deliverySchema.waveWidth.value,
+      falloffPower: deliverySchema.waveFalloff.value,
+      windowS: deliverySchema.ingestDur.value,      // 1.2 → ceiling 5.7
+    };
+    // A ring of Cells at known distances from the origin, listed FAR to near
+    // so the ordering is visibly the schedule's doing and not the input's.
+    const ring: Array<{ id: number; pos_seed: [number, number, number] }> = [
+      { id: 50, pos_seed: [5.0, 0, 0] },
+      { id: 40, pos_seed: [0, 0, 4.0] },
+      { id: 30, pos_seed: [-3.0, 0, 0] },
+      { id: 20, pos_seed: [0, 0, -2.0] },
+      { id: 10, pos_seed: [1.0, 0, 0] },
+      { id: 1, pos_seed: [0.1, 0, 0] },  // inside the release radius (0.3)
+      { id: 99, pos_seed: [7.0, 0, 0] }, // past every reach the window allows
+    ];
+    const index = buildCellNearestIndex(ring);
+
+    it('flashes nearest first, each at the instant the crest passes it — never before contact', () => {
+      const out = landingFlashSchedule([0, 0], 100, 4.25, 999, live, index);
+      expect(out.map((l) => l.id)).toEqual([1, 10, 20, 30, 40]);
+      // Inside the release radius: AT contact, not before it.
+      expect(out[0].at).toBe(100);
+      // Beyond it: contact + (dist − start radius) / the shared speed.
+      expect(out[1].at).toBeCloseTo(100 + (1 - CONTACT_FRONT_START_RADIUS) / live.speed, 12);
+      expect(out[4].at).toBeCloseTo(100 + (4 - CONTACT_FRONT_START_RADIUS) / live.speed, 12);
+      for (let i = 1; i < out.length; i += 1) {
+        expect(out[i].at).toBeGreaterThanOrEqual(out[i - 1].at);
+      }
+      for (const l of out) expect(l.at).toBeGreaterThanOrEqual(100);
+      // The instant IS the crest's arrival: at `at`, the front's radius
+      // equals the Cell's distance (for every Cell outside the start radius).
+      expect(contactFrontState(out[4].at - 100, 4.25, live).crestRadius).toBeCloseTo(4.0, 12);
+    });
+
+    it('never schedules a Cell the crest would reach after extinction', () => {
+      // Peer reach 4.25: 5.0 and 7.0 are out.
+      const peer = landingFlashSchedule([0, 0], 0, 4.25, 999, live, index).map((l) => l.id);
+      expect(peer).not.toContain(50);
+      expect(peer).not.toContain(99);
+      // Hero reach 6.5 is clamped to what the window completes (5.7): 5.0 is
+      // in, 7.0 is out — the cut is at the ceiling, not at the reach.
+      expect(contactFrontReachCeiling(live.speed, live.windowS)).toBeCloseTo(5.7, 9);
+      const hero = landingFlashSchedule([0, 0], 0, 6.5, 999, live, index).map((l) => l.id);
+      expect(hero).toContain(50);
+      expect(hero).not.toContain(99);
+      const wide = landingFlashSchedule([0, 0], 0, 30, 999, live, index).map((l) => l.id);
+      expect(wide).toEqual(hero);
+    });
+
+    it('spends its budget on the nearest, and never a Cell more', () => {
+      expect(landingFlashSchedule([0, 0], 0, 4.25, 2, live, index).map((l) => l.id))
+        .toEqual([1, 10]);
+      expect(landingFlashSchedule([0, 0], 0, 4.25, 2.9, live, index)).toHaveLength(2);
+      expect(landingFlashSchedule([0, 0], 0, 4.25, 0, live, index)).toEqual([]);
+      expect(landingFlashSchedule([0, 0], 0, 4.25, -3, live, index)).toEqual([]);
+      expect(landingFlashSchedule([0, 0], 0, 4.25, Number.NaN, live, index)).toEqual([]);
+      expect(landingFlashSchedule([0, 0], 0, 4.25, Number.POSITIVE_INFINITY, live, index))
+        .toHaveLength(5);
+    });
+
+    it('is as loud as the crest where it passes: the front\'s own spatial strength', () => {
+      const out = landingFlashSchedule([0, 0], 100, 4.25, 999, live, index);
+      for (const l of out) {
+        const front = contactFrontState(l.at - 100, 4.25, live);
+        expect(l.amp).toBeCloseTo(front.falloff * front.reachFade, 12);
+        expect(l.amp).toBeGreaterThan(0);
+        expect(l.amp).toBeLessThanOrEqual(1);
+      }
+      // Inside the knee a flash is full but for the 1/r dimming; at 4.0 of a
+      // 4.25 reach (past the 0.72 knee) it is fading out with the front.
+      const near = out.find((l) => l.id === 10)!;
+      const rim = out.find((l) => l.id === 40)!;
+      expect(near.amp).toBeGreaterThan(0.8);
+      expect(rim.amp).toBeLessThan(0.2);
+      expect(near.amp).toBeGreaterThan(rim.amp);
+    });
+
+    it('reads the landing in the galaxy\'s local frame, and an empty field as nothing', () => {
+      // The centre moves with the landing: from (5, 0) the nearest is id 50.
+      expect(landingFlashSchedule([5, 0], 0, 4.25, 1, live, index)[0].id).toBe(50);
+      expect(landingFlashSchedule([0, 0], 0, 4.25, 9, live, buildCellNearestIndex([]))).toEqual([]);
+      expect(landingFlashSchedule([0, 0], 0, 4.25, 9, { ...live, speed: 0 }, index)).toEqual([]);
+      expect(landingFlashSchedule([0, 0], 0, 0, 9, live, index)).toEqual([]);
     });
   });
 

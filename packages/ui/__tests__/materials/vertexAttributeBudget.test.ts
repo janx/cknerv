@@ -6,6 +6,7 @@ import type { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 
 import { makeCellHybridMaterial } from '../../src/materials/cellHybridMaterial';
 import { makeCellFlareMaterial } from '../../src/materials/cellFlareMaterial';
+import { makeLandingFlashMaterial } from '../../src/materials/landingFlashMaterial';
 import { makeNucleusPointMaterial } from '../../src/materials/cellNucleusMaterial';
 import { makeContactWaveMaterial } from '../../src/materials/contactWaveMaterial';
 import {
@@ -205,6 +206,13 @@ const ROWS: readonly BudgetRow[] = [
     name: 'cellFlareMaterial',
     sources: ['src/materials/cellFlareMaterial.ts'],
     material: makeCellFlareMaterial,
+  },
+  {
+    name: 'landingFlashMaterial',
+    sources: ['src/materials/landingFlashMaterial.ts'],
+    // LandingFlashLayer: a block landing's OWN Points geometry, so the Cell
+    // body pays nothing for it.
+    material: makeLandingFlashMaterial,
   },
   {
     name: 'cellNucleusPointMaterial',
@@ -504,6 +512,19 @@ describe('vertex attribute budget', () => {
     expect(belt).toBeDefined();
     expect(belt?.names).toContain('aPeerLaunchAt');
     expect([belt?.custom, belt?.injected, belt?.total]).toEqual([5, 7, 12]);
+  });
+
+  it('charges the landing flash its own three lanes, and the cell body nothing for it', () => {
+    // ⭐ A block landing flashes on ITS OWN geometry. The Cell body sits one
+    // packing from the ceiling (13, below), and the landing was never going
+    // to be spent there: three lanes — onset, the Cell's size, and colour
+    // with amplitude in one vec4 — plus three's prefix. Stated exactly so a
+    // fourth lane is a deliberate edit rather than a drift only the browser
+    // console would report.
+    const landing = measured.find(({ name }) => name === 'landingFlashMaterial');
+    expect(landing).toBeDefined();
+    expect(landing?.names).toEqual(['aLandingAt', 'aLandingSize', 'aLandingColor']);
+    expect([landing?.custom, landing?.injected, landing?.total]).toEqual([3, 3, 6]);
   });
 
   it('leaves the cell body one packing away from the ceiling', () => {

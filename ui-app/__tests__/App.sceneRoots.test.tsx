@@ -114,6 +114,25 @@ describe('scene-root memo inputs', () => {
     expect(APP_SOURCE).not.toMatch(/overlay=\{\(?\s*\n\s*<>/);
   });
 
+  it('hands both ends of a block landing the same queue', () => {
+    // NetworkColony's delivery layer fills it; CellGalaxy's landing layer
+    // drains it. One ref, owned here beside the flash buffers, so a landing
+    // never has to go through the write-seal map to reach the tissue — and
+    // one stable object, so neither memoized root sees a fresh prop.
+    expect(APP_SOURCE).toContain('const landingFlashRef = useRef(createLandingFlashQueue());');
+    expect(APP_SOURCE.match(/landingFlashRef=\{landingFlashRef\}/g)).toHaveLength(2);
+    const galaxy = APP_SOURCE.indexOf('<CellGalaxy\n');
+    const colony = APP_SOURCE.indexOf('<NetworkColony\n');
+    expect(galaxy).toBeGreaterThan(-1);
+    expect(colony).toBeGreaterThan(-1);
+    const galaxyMount = APP_SOURCE.slice(galaxy, APP_SOURCE.indexOf('/>', galaxy));
+    const colonyMount = APP_SOURCE.slice(colony, APP_SOURCE.indexOf('/>', colony));
+    expect(galaxyMount).toContain('landingFlashRef={landingFlashRef}');
+    expect(colonyMount).toContain('landingFlashRef={landingFlashRef}');
+    // The colony no longer touches the write-seal buffers at all.
+    expect(colonyMount).not.toMatch(/cellFlashRef|flashDirty/);
+  });
+
   it.each(['galaxyOverlay', 'colonyOverlay'])(
     '%s lists every binding its body closes over',
     (name) => {

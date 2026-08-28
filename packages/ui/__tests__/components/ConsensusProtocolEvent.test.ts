@@ -213,13 +213,33 @@ describe('A protocol event relay', () => {
     expect(delivery).toContain('commitInstanceBatch(waveBatch, waveCount)');
   });
 
-  it('journals delivered Cell ids for sparse galaxy flash uploads', () => {
+  it('hands each landing to the galaxy\'s landing queue — never to the write seal', () => {
     const colony = source('NetworkColony.tsx');
     const delivery = source('BlockDeliveryLayer.tsx');
 
-    expect(colony).toContain('flashDirtyIdsRef={flashDirtyIdsRef}');
-    expect(delivery).toContain('flashDirtyIdsRef?: CellFlashDirtyIdsRef');
-    expect(delivery.match(/markCellFlashDirty\(/g)).toHaveLength(1);
+    expect(colony).toContain('landingFlashRef={landingFlashRef}');
+    expect(colony).not.toMatch(/cellFlashRef|flashDirty/);
+    expect(delivery).toContain('landingFlashRef: { readonly current: LandingFlashQueue };');
+    // No k-nearest ignition, no seal writes, no ripple: a landing is not a write.
+    expect(delivery).not.toMatch(/cellFlashRef|markCellFlashDirty|flashDirty|nearestCellIdsFromIndex|ignite/);
+    // The schedule is the pure, tested one, on the SAME origin and contact
+    // instant the flush is stamped with, within this front's budget and what
+    // is left of the pulse's; each flash carries the crest's own strength
+    // there, times the front's punch.
+    expect(delivery).toMatch(
+      /landingFlashSchedule\(\s*landingLocal,\s*contactSceneS,\s*reach,\s*budget,\s*FRONT_LIVE,\s*nearestCellIndex,\s*\)/,
+    );
+    expect(delivery).toContain('delivery.hero ? LIVE.delivery.landingHero : LIVE.delivery.landingPeer');
+    expect(delivery).toContain('landingBudgetRef.current = LIVE.delivery.landingMax;');
+    expect(delivery).toContain('landingBudgetRef.current -= landings.length;');
+    expect(delivery).toContain('queue.push(landing.id, landing.at, landing.amp * punch);');
+    // Scheduled inside the once-per-delivery-per-pulse gate the flush uses.
+    const gate = delivery.indexOf('if (!flushed.has(delivery.key)) {');
+    const schedule = delivery.indexOf('landingFlashSchedule(\n');
+    const front = delivery.indexOf('contactFrontState(contactAge, reach, FRONT_LIVE)');
+    expect(gate).toBeGreaterThan(-1);
+    expect(schedule).toBeGreaterThan(gate);
+    expect(front).toBeGreaterThan(schedule);
   });
 
   it('lays the front flat in the Cell plane whatever the hop\'s slant', () => {
@@ -266,9 +286,16 @@ describe('The exhale — the flush along the fibres', () => {
     // launch + the lob — NOT this frame's clock, so a late first ingest
     // frame still stamps the true instant), the landing in the galaxy's
     // local frame, the block's carrier hue, the front's own reach and punch.
+    expect(delivery).toContain('const contactSceneS = pulse.at + delivery.startAge + LOB_DUR_S;');
     expect(delivery).toMatch(
-      /stampTissueFlush\(\s*pulse\.at \+ delivery\.startAge \+ LOB_DUR_S,\s*rotYWorldToLocalXZ\(delivery\.to\[0\], delivery\.to\[2\], galaxyFrame\.rotationY\),\s*pulse\.color,\s*reach,\s*punch,\s*\)/,
+      /const landingLocal = rotYWorldToLocalXZ\(\s*delivery\.to\[0\],\s*delivery\.to\[2\],\s*galaxyFrame\.rotationY,\s*\);/,
     );
+    expect(delivery).toContain('stampTissueFlush(contactSceneS, landingLocal, pulse.color, reach, punch);');
+    // …and the landing schedule reads those SAME two values — three media,
+    // one origin — so there is exactly one projection in the file and no
+    // second one to drift from the stamp's.
+    expect(delivery.match(/rotYWorldToLocalXZ\(/g)).toHaveLength(1);
+    expect(delivery).toMatch(/landingFlashSchedule\(\s*landingLocal,\s*contactSceneS,/);
     // Exactly once per delivery per pulse, however many frames ingest spans:
     // keyed by the delivery's stable key (peer churn re-cuts the plan) and
     // cleared when the pulse changes or retires.
@@ -279,7 +306,7 @@ describe('The exhale — the flush along the fibres', () => {
     // Stamped from the ingest beat — after the hop, before the front is
     // composed from the same reach.
     const lob = delivery.indexOf("if (phase.phase === 'lob') {");
-    const stamp = delivery.indexOf('stampTissueFlush(\n');
+    const stamp = delivery.indexOf('stampTissueFlush(contactSceneS');
     const front = delivery.indexOf('contactFrontState(contactAge, reach, FRONT_LIVE)');
     expect(lob).toBeGreaterThan(-1);
     expect(stamp).toBeGreaterThan(lob);

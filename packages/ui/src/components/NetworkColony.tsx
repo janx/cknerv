@@ -65,7 +65,7 @@ import {
   cellDetailPeerContextEnergy,
   cellDetailPeerLinkContextEnergy,
 } from '../derives/sceneView.derive';
-import type { CellFlashDirtyIdsRef } from './cellFlash';
+import type { LandingFlashQueue } from './landingFlashQueue';
 
 interface NetworkColonyProps {
   topology: NetworkTopology;
@@ -74,12 +74,11 @@ interface NetworkColonyProps {
   blockPulseAtMs: number;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
-  /** Galaxy's cell.id → scene-seconds flash map (owned by App/CellGalaxy). Each
-   *  delivered carrier ignites the cells it lands on by writing here — the galaxy
-   *  visibly RECEIVES the delivery through its existing flare path. */
-  cellFlashRef: React.MutableRefObject<Map<number, number>>;
-  flashDirtyRef: React.MutableRefObject<boolean>;
-  flashDirtyIdsRef?: CellFlashDirtyIdsRef;
+  /** The galaxy's landing queue (owned by the app, drained by CellGalaxy's
+   *  LandingFlashLayer). Each released front schedules a plain flash on the
+   *  Cells its crest will pass by pushing here — the galaxy visibly RECEIVES
+   *  the delivery on its own landing geometry, never through the write seal. */
+  landingFlashRef: { readonly current: LandingFlashQueue };
   /** Local node version — drives measured version-mismatch coloring (violet). */
   localVersion: string;
   /** The chain's recent mining cohorts, LIVE. Passed straight through to the
@@ -115,9 +114,7 @@ function NetworkColony({
   blockPulseAtMs,
   selectedId,
   onSelect,
-  cellFlashRef,
-  flashDirtyRef,
-  flashDirtyIdsRef,
+  landingFlashRef,
   localVersion,
   producers,
   cellDetailViewFocusRef,
@@ -294,9 +291,7 @@ function NetworkColony({
         localOrigins={localOrigins}
         localReceiveDelayS={cf.localReceiveDelayS}
         pulseRef={pulseRef}
-        cellFlashRef={cellFlashRef}
-        flashDirtyRef={flashDirtyRef}
-        flashDirtyIdsRef={flashDirtyIdsRef}
+        landingFlashRef={landingFlashRef}
       />
     </group>
   );

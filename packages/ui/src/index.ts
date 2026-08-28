@@ -116,6 +116,13 @@ export {
   formatCkb, formatLockKind, formatAssetKind, ASSET_COLORS,
 } from './components/hud/cellFormat';
 export { default as CellGalaxy } from './components/CellGalaxy';
+// The landing queue: the app owns one and hands it to CellGalaxy (which
+// mounts the landing layer that drains it) and to NetworkColony (whose
+// delivery layer fills it), the way it already owns the shared flash buffers.
+export {
+  createLandingFlashQueue,
+  type LandingFlashQueue,
+} from './components/landingFlashQueue';
 export type {
   CellIdentityBindingPhase,
   CellIdentityProofBinding,

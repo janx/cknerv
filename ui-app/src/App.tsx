@@ -47,6 +47,7 @@ import {
   livePulseDepartureDelayS,
   CellGalaxy,
   CellGalaxyProvider,
+  createLandingFlashQueue,
   CellCausalLensLayer,
   CellInspectionAnchor,
   CellInspectionOverlay,
@@ -661,6 +662,10 @@ export default function App({
   const burstArrivalRef = useRef<
     Map<number, { firedAt: number; color: [number, number, number] }>
   >(new Map());
+  // The landing queue: NetworkColony's delivery layer pushes each block
+  // landing's flashes here and CellGalaxy's landing layer drains it. Its own
+  // channel beside the flash buffers, because a landing is not a write.
+  const landingFlashRef = useRef(createLandingFlashQueue());
 
   // ckb node ids drive the icosahedra scatter inside the cell canopy. The
   // CkbDirectAdapter registers `ckb:local` on boot; fall back to a single
@@ -1959,6 +1964,7 @@ export default function App({
             cellFlashRef={cellFlashRef}
             flashDirtyRef={flashDirtyRef}
             flashDirtyIdsRef={flashDirtyIdsRef}
+            landingFlashRef={landingFlashRef}
             pickingSuspendedRef={orbitPickingSuspendedRef}
             overlay={galaxyOverlay}
           />
@@ -1990,9 +1996,7 @@ export default function App({
             blockPulseAtMs={cellsCache.lastPulseAtMs}
             selectedId={selectedNetId}
             onSelect={handleSelect}
-            cellFlashRef={cellFlashRef}
-            flashDirtyRef={flashDirtyRef}
-            flashDirtyIdsRef={flashDirtyIdsRef}
+            landingFlashRef={landingFlashRef}
             localVersion={localNode?.version ?? ''}
             producers={producerView?.staging}
             cellDetailViewFocusRef={cellDetailViewFocusRef}

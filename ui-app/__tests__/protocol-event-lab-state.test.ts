@@ -71,6 +71,15 @@ describe('protocol event lab state', () => {
     expect(LAB_SOURCE).not.toContain('[...burstArrivalRef.current.keys()]');
   });
 
+  it('resets the landing queue with the rest of the review scene', () => {
+    // A review restarts on a fresh clock: a landing still queued from the
+    // previous cycle would flash on the new one at a stale sim second. One
+    // queue, shared by the reviewed colony (writer) and galaxy (reader).
+    expect(LAB_SOURCE).toContain('const landingFlashRef = useRef(createLandingFlashQueue());');
+    expect(LAB_SOURCE).toContain('landingFlashRef.current.clear()');
+    expect(LAB_SOURCE.match(/landingFlashRef=\{landingFlashRef\}/g)).toHaveLength(2);
+  });
+
   it('keeps a bounded real live-Cell field and resets only the review clock', () => {
     const selected = protocolEventLabSnapshot(
       snapshot([cell(1, false), cell(2), cell(3), cell(4)]),

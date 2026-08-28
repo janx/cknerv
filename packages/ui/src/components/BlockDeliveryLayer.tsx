@@ -20,7 +20,7 @@ import {
   peerAngle,
   rotYWorldToLocalXZ,
   sharedCellNearestIndex,
-  nearestCellIdsFromIndex,
+  landingFlashSchedule,
   type ContactFrontLive,
   type DeliveryPhaseConfig,
 } from '../derives/peers.derive';
@@ -46,10 +46,7 @@ import {
   writeCourierMote,
   writeCourierPlume,
 } from './courierGlyph';
-import {
-  markCellFlashDirty,
-  type CellFlashDirtyIdsRef,
-} from './cellFlash';
+import type { LandingFlashQueue } from './landingFlashQueue';
 
 // BlockDeliveryLayer — the block's LAST HOP: peer plane → Cell field.
 //
@@ -64,11 +61,15 @@ import {
 //            carrier hue. The mote's end ease shrinks it to nothing at the
 //            membrane — contact is absorption, not a pop. No glyph, no streak,
 //            no sear, nothing white.
-//   ingest — the tissue answers in its own vocabulary: a soft front released
-//            flat in the Cell field, carrier hue resolving into tissue rose —
-//            and, on the SAME radius function, a flush along the nerve fibres
-//            the front crosses: stamped once into the tissueFlush ring at the
-//            contact instant, drawn by the fabric lifecycle shader.
+//   ingest — the tissue answers in its own vocabulary, three media on ONE
+//            radius function: a soft front released flat in the Cell field,
+//            carrier hue resolving into tissue rose; a flush along the nerve
+//            fibres the front crosses (stamped once into the tissueFlush ring
+//            at the contact instant, drawn by the fabric lifecycle shader);
+//            and a plain flash on each Cell the crest passes, at the instant
+//            it passes (landingFlashSchedule → the galaxy's landing queue,
+//            drawn by LandingFlashLayer on its own geometry). The protocol
+//            write seal is never fired from here: a landing is not a write.
 //
 // EVERY worker gets its own front, all at ONE shared speed: the peer-plane
 // brightness wave's SHOCKWAVE_SPEED divided by CONTACT_WAVE_SCALE. Speed and
@@ -147,12 +148,11 @@ export interface BlockDeliveryLayerProps {
   localReceiveDelayS: number;
   /** Current block protocol carrier (null = no active block). */
   pulseRef: MutableRefObject<BlockDeliveryPulse | null>;
-  /** Galaxy's cell.id → scene-seconds flash map (owned by CellGalaxy). */
-  cellFlashRef: MutableRefObject<Map<number, number>>;
-  /** Set true when we add a flash CellGalaxy hasn't pushed to the GPU yet. */
-  flashDirtyRef: MutableRefObject<boolean>;
-  /** Exact dirty ids used by CellGalaxy's sparse flash upload path. */
-  flashDirtyIdsRef?: CellFlashDirtyIdsRef;
+  /** The galaxy's landing queue (`createLandingFlashQueue`, owned by the app
+   *  and drained by CellGalaxy's LandingFlashLayer). Each released front
+   *  schedules a plain flash on the Cells its crest will pass by pushing
+   *  `(cellId, atSec, amp)` here — never by writing the write-seal map. */
+  landingFlashRef: { readonly current: LandingFlashQueue };
 }
 
 /** The hop's two batches share the courier layer's material recipe (additive,
@@ -240,9 +240,7 @@ export default function BlockDeliveryLayer({
   localOrigins,
   localReceiveDelayS,
   pulseRef,
-  cellFlashRef,
-  flashDirtyRef,
-  flashDirtyIdsRef,
+  landingFlashRef,
 }: BlockDeliveryLayerProps) {
   const simClock = useSimClock();
   const cellsCache = useCellGalaxyOptional();
@@ -272,14 +270,17 @@ export default function BlockDeliveryLayer({
   );
   // One mote, one plume and one front per delivery, at most.
   const capacity = Math.max(1, deliveries.length);
-  const ignitedPulseAtRef = useRef<number | null>(null);
-  // Which deliveries have stamped their flush for the pulse in flight. A
-  // stamp carries the TRUE contact instant, so a delivery stamps exactly once
-  // however many frames its ingest window spans — and however late its first
-  // ingest frame lands after a hitch. Keyed by the delivery's stable key, not
-  // its index: peer churn re-cuts the plan mid-pulse.
+  // Which deliveries have stamped their flush (and scheduled their landing
+  // flashes) for the pulse in flight. A stamp carries the TRUE contact
+  // instant, so a delivery stamps exactly once however many frames its
+  // ingest window spans — and however late its first ingest frame lands
+  // after a hitch. Keyed by the delivery's stable key, not its index: peer
+  // churn re-cuts the plan mid-pulse.
   const flushedKeysRef = useRef(new Set<string>());
   const flushedPulseAtRef = useRef<number | null>(null);
+  // The pulse's landing budget (`landingMax`), spent front by front as each
+  // schedules — reset with the flush keys when the pulse changes.
+  const landingBudgetRef = useRef(0);
   const cellsToken = cellsCache?.cellsToken ?? null;
   const nearestCellIndex = useMemo(
     () => sharedCellNearestIndex(
@@ -288,8 +289,8 @@ export default function BlockDeliveryLayer({
       cellsCache?.cellChanges,
     ),
     // The cache publishes a fresh token exactly when Cell membership/position
-    // changes, so peer deliveries share one index without rebuilding per peer —
-    // and the galaxy's local-ignition pass shares the very same build.
+    // changes, so every front of a pulse (hero and peers alike) schedules its
+    // landing flashes off one index without rebuilding per delivery.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [cellsToken],
   );
@@ -378,7 +379,6 @@ export default function BlockDeliveryLayer({
       moteBatch.count = 0;
       plumeBatch.count = 0;
       waveBatch.count = 0;
-      ignitedPulseAtRef.current = null;
       return;
     }
 
@@ -391,13 +391,13 @@ export default function BlockDeliveryLayer({
       moteBatch.count = 0;
       plumeBatch.count = 0;
       waveBatch.count = 0;
-      ignitedPulseAtRef.current = null;
       flushedKeysRef.current.clear();
       return;
     }
     if (flushedPulseAtRef.current !== pulse.at) {
       flushedPulseAtRef.current = pulse.at;
       flushedKeysRef.current.clear();
+      landingBudgetRef.current = LIVE.delivery.landingMax;
     }
     // Three-arg setRGB: the spread form allocates an arguments array per frame.
     CARRIER_COLOR.setRGB(pulse.color[0], pulse.color[1], pulse.color[2]);
@@ -423,42 +423,6 @@ export default function BlockDeliveryLayer({
       Math.cos(galaxyFrame.rotationY),
       Math.sin(galaxyFrame.rotationY),
     );
-
-    // Galaxy RECEIVES the wave: once per real block, schedule a flare on the
-    // Cells nearest each real delivery landing. Batching never changes this data
-    // path or its event timing.
-    if (cellsCache && ignitedPulseAtRef.current !== pulse.at) {
-      ignitedPulseAtRef.current = pulse.at;
-      const rotY = galaxyFrame.rotationY;
-      let budget = LIVE.delivery.igniteMax;
-      for (const delivery of deliveries) {
-        if (budget <= 0) break;
-        const k = Math.min(
-          delivery.hero ? LIVE.delivery.igniteKHero : LIVE.delivery.igniteKPeer,
-          budget,
-        );
-        const ids = nearestCellIdsFromIndex(
-          [delivery.to[0], delivery.to[2]],
-          rotY,
-          nearestCellIndex,
-          k,
-        );
-        const ingestSceneS = pulse.at + delivery.startAge + LOB_DUR_S;
-        for (let index = 0; index < ids.length; index += 1) {
-          const flashAt = ingestSceneS + index * LIVE.delivery.igniteRipple;
-          const previous = cellFlashRef.current.get(ids[index]) ?? -1e9;
-          if (flashAt > previous) {
-            cellFlashRef.current.set(ids[index], flashAt);
-            markCellFlashDirty(
-              ids[index],
-              flashDirtyRef,
-              flashDirtyIdsRef,
-            );
-          }
-          budget -= 1;
-        }
-      }
-    }
 
     let hopCount = 0;
     let waveCount = 0;
@@ -540,23 +504,49 @@ export default function BlockDeliveryLayer({
         const reach = delivery.hero
           ? LIVE.delivery.waveReachHero
           : LIVE.delivery.waveReachPeer;
-        // The tissue's flush leaves with the front: ONE stamp per delivery
-        // per pulse, at the true contact instant rather than this frame's
-        // clock, its origin in the galaxy's rotating local frame (where the
-        // fabric geometry lives), its reach and punch exactly the front's
-        // own. From those five numbers the fabric lifecycle shader
-        // (fabricFlushGl) runs the same radius function the front below
-        // reads, so a fibre brightens exactly where the crest is drawn.
+        // The tissue's flush and its landing flashes leave with the front:
+        // ONE schedule per delivery per pulse, at the true contact instant
+        // rather than this frame's clock, from ONE projection of the landing
+        // into the galaxy's rotating local frame (where the fabric geometry
+        // and every Cell's pos_seed live), with the front's own reach and
+        // punch. From those numbers the fabric lifecycle shader
+        // (fabricFlushGl) and the landing schedule (landingFlashSchedule)
+        // run the same radius function the front below reads, so a fibre
+        // brightens and a Cell flashes exactly where — and when — the crest
+        // is drawn. Three media, one origin.
         const flushed = flushedKeysRef.current;
         if (!flushed.has(delivery.key)) {
           flushed.add(delivery.key);
-          stampTissueFlush(
-            pulse.at + delivery.startAge + LOB_DUR_S,
-            rotYWorldToLocalXZ(delivery.to[0], delivery.to[2], galaxyFrame.rotationY),
-            pulse.color,
-            reach,
-            punch,
+          const contactSceneS = pulse.at + delivery.startAge + LOB_DUR_S;
+          const landingLocal = rotYWorldToLocalXZ(
+            delivery.to[0],
+            delivery.to[2],
+            galaxyFrame.rotationY,
           );
+          stampTissueFlush(contactSceneS, landingLocal, pulse.color, reach, punch);
+          // Plain flashes on the Cells the crest will pass, nearest first,
+          // within this front's budget and what is left of the pulse's. The
+          // write seal (aFlashAt) is never written from here: a landing is
+          // not a write.
+          const budget = Math.min(
+            delivery.hero ? LIVE.delivery.landingHero : LIVE.delivery.landingPeer,
+            landingBudgetRef.current,
+          );
+          if (budget > 0) {
+            const landings = landingFlashSchedule(
+              landingLocal,
+              contactSceneS,
+              reach,
+              budget,
+              FRONT_LIVE,
+              nearestCellIndex,
+            );
+            const queue = landingFlashRef.current;
+            for (const landing of landings) {
+              queue.push(landing.id, landing.at, landing.amp * punch);
+            }
+            landingBudgetRef.current -= landings.length;
+          }
         }
         const release = contactRelease(phase.t);
         // Contact is an event boundary, not another travelling object: the
