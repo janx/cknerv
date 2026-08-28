@@ -394,6 +394,13 @@ ahead of the cap and remain legible at every preset. LOD admission is refreshed
 at a controlled cadence, and sparse ranges are updated without rebuilding the
 far body.
 
+Camera-distance admission runs behind a bounding-sphere gate over the drawn
+prefix (cached per field version): when the whole field is beyond the
+admission radius — every pose short of a hand dolly — no spatial index is
+built or refreshed and only focus / hover / recall / route-hop ids are
+resolved. Inside the field a flat typed bucket grid is rebuilt lazily for the
+current field version and the buckets around the camera are walked.
+
 ### 7.5 Picking
 
 `CellPicker` provides a custom `Object3D.raycast` path backed by a screen-space
@@ -1152,7 +1159,7 @@ Before merging a Canvas change, answer:
 | Staged render cursor and inspection overlay | `packages/ui/src/geometry/cellRenderSet.ts` |
 | Stable Cell GPU slot assignment | `packages/ui/src/geometry/cellSlotAssignment.ts` |
 | Cell visual descriptors and shaders | `packages/ui/src/derives/cellVisual.derive.ts`, `packages/ui/src/materials/cellHybridMaterial.ts`, `packages/ui/src/materials/cellFlareMaterial.ts` |
-| Batched near identity and local LOD index | `packages/ui/src/components/CellNucleus.tsx`, `packages/ui/src/derives/cellNucleusSpatialLod.derive.ts` |
+| Batched near identity, far-field gate and local LOD index | `packages/ui/src/components/CellNucleus.tsx`, `packages/ui/src/derives/cellNucleusFarField.derive.ts`, `packages/ui/src/derives/cellNucleusSpatialLod.derive.ts` |
 | One staged neighbor topology | `packages/ui/src/geometry/neighborGraph.ts` |
 | Worker and topology journal | `packages/ui/src/geometry/neighborGraphBuilder.ts`, `packages/ui/src/geometry/topologyJournal.ts` |
 | Passive edge selection | `packages/ui/src/geometry/passiveNeighborGraph.ts` |

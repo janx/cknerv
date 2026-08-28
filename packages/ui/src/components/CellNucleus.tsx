@@ -27,10 +27,8 @@ import {
   dampCellFocus,
 } from '../derives/cellInteraction.derive';
 import {
-  ensureCellNucleusSpatialIndex,
-  makeCellNucleusCandidateScratch,
-  makeCellNucleusSpatialIndex,
-  queryCellNucleusCandidateIndices,
+  collectCellNucleusCandidateIndices,
+  makeCellNucleusLodCandidateCache,
 } from '../derives/cellNucleusSpatialLod.derive';
 import { makeNucleusPointMaterial } from '../materials/cellNucleusMaterial';
 import {
@@ -273,8 +271,7 @@ export default function CellNucleus({
   const cameraPosition = useMemo(() => new THREE.Vector3(), []);
   const cameraLocalPosition = useMemo(() => new THREE.Vector3(), []);
   const groupWorldInverse = useMemo(() => new THREE.Matrix4(), []);
-  const lodSpatialIndex = useMemo(makeCellNucleusSpatialIndex, []);
-  const lodCandidateScratch = useMemo(makeCellNucleusCandidateScratch, []);
+  const lodCandidateCache = useMemo(makeCellNucleusLodCandidateCache, []);
 
   useFrame((state, deltaSeconds) => {
     const group = groupRef.current;
@@ -410,22 +407,18 @@ export default function CellNucleus({
       near.current.length = 0;
       // Camera-distance admission is local to the exact stable-slot list.
       // The shared/canonical index carries different membership, while this
-      // cache includes staged cells, selection overlays and exit holds.  It
-      // rebuilds only when CellGalaxy's position version moves; every 12 Hz
-      // tick then visits the FAR_DIST buckets plus the tiny semantic-id set.
-      // The opt-in scope spans both that spatial query and the exact candidate
-      // bake/sort below. Disabled beginCpuProbe returns before reading the
-      // clock or allocating a token, so ordinary frames pay two short gates
-      // only on a refresh tick.
+      // cache includes staged cells, selection overlays and exit holds.  A
+      // bounding-sphere gate answers the resting overview in O(1): with the
+      // whole field beyond FAR_DIST the spatial index is neither built nor
+      // refreshed, and only the tiny semantic-id set is resolved.  Inside the
+      // field the index rebuilds when CellGalaxy's position version moves and
+      // every 12 Hz tick then visits the FAR_DIST buckets.
+      // The opt-in scope spans both that candidate collection and the exact
+      // candidate bake/sort below. Disabled beginCpuProbe returns before
+      // reading the clock or allocating a token, so ordinary frames pay two
+      // short gates only on a refresh tick.
       const lodProbe = beginCpuProbe(
         PERFORMANCE_PROBE_LABELS.cellNucleusLod,
-      );
-      ensureCellNucleusSpatialIndex(
-        lodSpatialIndex,
-        cells,
-        count,
-        fieldVersionRef.current,
-        FAR_DIST,
       );
       const directIds = directLodCellIds.current;
       directIds.clear();
@@ -437,16 +430,17 @@ export default function CellNucleus({
       if (hoveredCellId !== null) directIds.add(hoveredCellId);
       for (const cellId of recallByCell.keys()) directIds.add(cellId);
       if (routeHopFocus !== null) directIds.add(routeHopFocus.cellId);
-      const candidateIndices = queryCellNucleusCandidateIndices(
-        lodSpatialIndex,
+      const candidateIndices = collectCellNucleusCandidateIndices(
+        lodCandidateCache,
         cells,
+        count,
+        fieldVersionRef.current,
         cameraLocalPosition.x,
         cameraLocalPosition.y,
         cameraLocalPosition.z,
         FAR_DIST,
         visibleIndexByCell,
         directIds,
-        lodCandidateScratch,
       );
       for (const index of candidateIndices) {
         const cell = cells[index];

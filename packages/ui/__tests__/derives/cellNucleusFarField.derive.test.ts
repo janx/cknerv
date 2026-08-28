@@ -3,7 +3,6 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   cellNucleusFarFieldBeyond,
-  cellNucleusFarFieldSkip,
   ensureCellFieldBounds,
   makeCellFieldBoundsCache,
   type CellFieldBoundsCache,
@@ -96,9 +95,32 @@ describe('ensureCellFieldBounds', () => {
     expect(freshBounds(field, 0).radius).toBe(0);
     expect(freshBounds([], 4).radius).toBe(0);
   });
+
+  it('reads each drawn record exactly twice per rescan and never on a steady tick', () => {
+    const cells = Array.from({ length: 512 }, (_, index) => (
+      cellAt(index * 0.3, (index % 5) * 0.7, -index * 0.2)
+    ));
+    let reads = 0;
+    const measured = new Proxy(cells, {
+      get(target, property, receiver) {
+        if (typeof property === 'string' && /^\d+$/.test(property)) reads += 1;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const cache = makeCellFieldBoundsCache();
+    ensureCellFieldBounds(cache, measured, cells.length, 1);
+    // Box pass plus exact-radius pass: the 0.08 ms-class rescan the gate
+    // costs per field version, against a grid rebuild it now avoids.
+    expect(reads).toBe(2 * cells.length);
+    reads = 0;
+    for (let tick = 0; tick < 24; tick += 1) {
+      ensureCellFieldBounds(cache, measured, cells.length, 1);
+    }
+    expect(reads).toBe(0);
+  });
 });
 
-describe('cellNucleusFarFieldSkip', () => {
+describe('cellNucleusFarFieldBeyond', () => {
   const bounds = freshBounds(field);
 
   function cameraBeyond(margin: number): [number, number, number] {
@@ -109,41 +131,31 @@ describe('cellNucleusFarFieldSkip', () => {
     ];
   }
 
-  it('skips when the whole field is beyond FAR_DIST and nothing is focused', () => {
+  it('is true when the whole field is beyond FAR_DIST', () => {
     const [x, y, z] = cameraBeyond(0.001);
-    expect(cellNucleusFarFieldSkip(x, y, z, bounds, FAR_DIST, 0, false, false))
-      .toBe(true);
+    expect(cellNucleusFarFieldBeyond(x, y, z, bounds, FAR_DIST)).toBe(true);
   });
 
-  it('never skips while a hover/selection focus envelope is alive', () => {
-    const [x, y, z] = cameraBeyond(50);
-    expect(cellNucleusFarFieldSkip(x, y, z, bounds, FAR_DIST, 1, false, false))
-      .toBe(false);
-  });
-
-  it('never skips while a recall or route-hop focus is active', () => {
-    const [x, y, z] = cameraBeyond(50);
-    expect(cellNucleusFarFieldSkip(x, y, z, bounds, FAR_DIST, 0, true, false))
-      .toBe(false);
-    expect(cellNucleusFarFieldSkip(x, y, z, bounds, FAR_DIST, 0, false, true))
-      .toBe(false);
-  });
-
-  it('does not skip when any cell could sit within FAR_DIST', () => {
+  it('is false when any cell could sit within FAR_DIST', () => {
     const [x, y, z] = cameraBeyond(-0.001);
-    expect(cellNucleusFarFieldSkip(x, y, z, bounds, FAR_DIST, 0, false, false))
-      .toBe(false);
+    expect(cellNucleusFarFieldBeyond(x, y, z, bounds, FAR_DIST)).toBe(false);
     // Camera inside the field itself.
-    expect(cellNucleusFarFieldSkip(
+    expect(cellNucleusFarFieldBeyond(
       bounds.centerX,
       bounds.centerY,
       bounds.centerZ,
       bounds,
       FAR_DIST,
-      0,
-      false,
-      false,
     )).toBe(false);
+  });
+
+  it('ignores interaction entirely: focus ids ride the direct lane, not this gate', () => {
+    // The pre-5c4394d gate composed this predicate with focus / recall /
+    // route-hop vetoes because the far-camera walk had to admit those cells
+    // by hand. The gated collector resolves semantic ids on every tick
+    // regardless of the gate's answer, so the predicate is pure distance.
+    const [x, y, z] = cameraBeyond(50);
+    expect(cellNucleusFarFieldBeyond(x, y, z, bounds, FAR_DIST)).toBe(true);
   });
 
   it('fails open on an unknown radius', () => {
@@ -153,14 +165,15 @@ describe('cellNucleusFarFieldSkip', () => {
       centerZ: 0,
       radius: Number.POSITIVE_INFINITY,
     };
-    expect(cellNucleusFarFieldSkip(1e6, 0, 0, unknown, FAR_DIST, 0, false, false))
-      .toBe(false);
+    expect(cellNucleusFarFieldBeyond(1e6, 0, 0, unknown, FAR_DIST)).toBe(false);
+    expect(cellNucleusFarFieldBeyond(1e6, 0, 0, unknown, Number.NaN)).toBe(false);
   });
 
-  it('skip implies every cell the walk would test is beyond FAR_DIST', () => {
+  it('beyond implies every cell the walk would test is at least FAR_DIST away', () => {
     // Deterministic pseudo-random field + camera orbit sweep: whenever the
-    // predicate says skip, the per-cell walk's rejection distance must hold
-    // for every cell, so skipping is behaviour-equivalent to walking.
+    // predicate says beyond, the per-cell walk's rejection distance must hold
+    // for every cell, so skipping the spatial lane is behaviour-equivalent to
+    // walking it.
     let seed = 42;
     const random = (): number => {
       seed = (seed * 1664525 + 1013904223) >>> 0;
@@ -184,17 +197,14 @@ describe('cellNucleusFarFieldSkip', () => {
         (random() - 0.5) * 6,
         Math.sin(angle) * orbit,
       ];
-      const skip = cellNucleusFarFieldSkip(
+      const beyond = cellNucleusFarFieldBeyond(
         camera[0],
         camera[1],
         camera[2],
         sweepBounds,
         FAR_DIST,
-        0,
-        false,
-        false,
       );
-      if (!skip) continue;
+      if (!beyond) continue;
       skips += 1;
       for (const cell of cells) {
         expect(Math.hypot(
@@ -204,73 +214,35 @@ describe('cellNucleusFarFieldSkip', () => {
         )).toBeGreaterThanOrEqual(FAR_DIST);
       }
     }
-    // The sweep must actually exercise the skip branch.
+    // The sweep must actually exercise the beyond branch.
     expect(skips).toBeGreaterThan(0);
   });
-});
 
-describe('cellNucleusFarFieldBeyond', () => {
-  const bounds = freshBounds(field);
-
-  it('is the pure distance predicate the skip composes with envelope gates', () => {
-    const beyondCamera: [number, number, number] = [
-      bounds.centerX + bounds.radius + FAR_DIST + 0.001,
-      bounds.centerY,
-      bounds.centerZ,
-    ];
-    const nearCamera: [number, number, number] = [
-      bounds.centerX + bounds.radius + FAR_DIST - 0.001,
-      bounds.centerY,
-      bounds.centerZ,
-    ];
-    expect(cellNucleusFarFieldBeyond(...beyondCamera, bounds, FAR_DIST))
-      .toBe(true);
-    expect(cellNucleusFarFieldBeyond(...nearCamera, bounds, FAR_DIST))
-      .toBe(false);
-    // Ignores focus entirely — the frame loop pairs it with an
-    // envelope-only walk instead of a veto…
-    expect(cellNucleusFarFieldSkip(
-      ...beyondCamera,
-      bounds,
-      FAR_DIST,
-      3,
-      false,
-      false,
-    )).toBe(false);
-    // …while the composed skip is exactly beyond ∧ no-envelope.
-    expect(cellNucleusFarFieldSkip(
-      ...beyondCamera,
-      bounds,
-      FAR_DIST,
-      0,
-      false,
-      false,
-    )).toBe(true);
-  });
-
-  it('fails open on an unknown radius', () => {
-    const unknown = {
-      centerX: 0,
-      centerY: 0,
-      centerZ: 0,
-      radius: Number.POSITIVE_INFINITY,
-    };
-    expect(cellNucleusFarFieldBeyond(1e6, 0, 0, unknown, FAR_DIST)).toBe(false);
-  });
-
-  it('has been superseded in production by the private stable-slot index', () => {
-    // The sphere predicate remains independently tested because it is useful
-    // algebra, but production no longer needs a full-walk fallback when the
-    // camera enters the field or recall is active.  Every case now queries the
-    // exact staged + overlay + exit-hold slot index.
+  it('is the gate in front of the production spatial index, never bypassed', () => {
+    // 5c4394d orphaned this module and let CellNucleus build the bucket index
+    // on every field version — twice per block at the overview, for a query
+    // that cannot admit anything there. The renderer now reaches the index
+    // only through the gated collector; calling the index directly from the
+    // component would recreate that regression.
     const NUCLEUS_SOURCE = readFileSync(
       resolve(process.cwd(), 'src/components/CellNucleus.tsx'),
       'utf8',
     );
-    expect(NUCLEUS_SOURCE).toContain('ensureCellNucleusSpatialIndex(');
-    expect(NUCLEUS_SOURCE).toContain('queryCellNucleusCandidateIndices(');
-    expect(NUCLEUS_SOURCE).toContain('for (const cellId of recallByCell.keys())');
-    expect(NUCLEUS_SOURCE).toContain('for (const index of candidateIndices)');
+    expect(NUCLEUS_SOURCE).toContain('collectCellNucleusCandidateIndices(');
+    expect(NUCLEUS_SOURCE).toContain('makeCellNucleusLodCandidateCache');
+    expect(NUCLEUS_SOURCE).not.toContain('ensureCellNucleusSpatialIndex(');
+    expect(NUCLEUS_SOURCE).not.toContain('queryCellNucleusCandidateIndices(');
     expect(NUCLEUS_SOURCE).not.toContain('const lodWalkCount');
+    const COLLECTOR_SOURCE = readFileSync(
+      resolve(process.cwd(), 'src/derives/cellNucleusSpatialLod.derive.ts'),
+      'utf8',
+    );
+    const collector = COLLECTOR_SOURCE.slice(
+      COLLECTOR_SOURCE.indexOf('export function collectCellNucleusCandidateIndices('),
+    );
+    const gate = collector.indexOf('cellNucleusFarFieldBeyond(');
+    const build = collector.indexOf('ensureCellNucleusSpatialIndex(');
+    expect(gate).toBeGreaterThan(0);
+    expect(build).toBeGreaterThan(gate);
   });
 });

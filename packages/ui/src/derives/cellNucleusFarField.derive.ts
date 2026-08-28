@@ -1,10 +1,11 @@
-// cellNucleusFarField — whole-field early-out for the CellNucleus LOD walk.
+// cellNucleusFarField — whole-field early-out for the CellNucleus LOD tick.
 //
 // Nucleus identity is a zoom-in detail: under the resting overview camera
-// every retained Cell sits beyond FAR_DIST, the 12 Hz O(count) selection walk
-// admits nothing, and its only product is an empty `near` set. These pure
-// helpers let the frame loop prove that outcome from a single bounding-sphere
-// distance instead of `count` per-Cell distance checks.
+// every retained Cell sits beyond FAR_DIST, so camera-distance admission can
+// only ever produce an empty `near` set. These pure helpers let the LOD tick
+// prove that outcome from a single bounding-sphere distance — the gate in
+// front of the spatial index in `cellNucleusSpatialLod.derive.ts`, which is
+// therefore neither built nor refreshed while the proof holds.
 
 /** Structural slice of a retained Cell needed for field bounds. `pos_seed`
  * is the Cell's static position in the galaxy group's local frame — the same
@@ -28,7 +29,7 @@ export interface CellFieldBoundsCache {
   centerY: number;
   centerZ: number;
   /** Non-finite marks "unknown" (e.g. a NaN pos_seed); the far-field
-   * predicate then fails open and the ordinary walk runs. */
+   * predicate then fails open and the spatial index runs. */
   radius: number;
 }
 
@@ -114,10 +115,11 @@ export function ensureCellFieldBounds(
  * True when even the nearest possible Cell — the bounding sphere's closest
  * surface point — is at least `farDist` away, the walk's own per-Cell
  * rejection distance (`distSq >= FAR_DIST_SQ`). Under this condition every
- * drawn Cell fails the walk's distance test, so only Cells with a live
- * focus can be admitted. Camera coordinates must be the group-local values
- * the walk itself would use, sampled on the same LOD tick. Any non-finite
- * radius fails open.
+ * drawn Cell fails the distance test, so the spatial index has nothing to
+ * say and only explicit semantic ids (focus, hover, recall, route hop) can be
+ * admitted — the direct lane the LOD tick runs regardless of this answer.
+ * Camera coordinates must be the group-local values the walk itself would
+ * use, sampled on the same LOD tick. Any non-finite radius fails open.
  */
 export function cellNucleusFarFieldBeyond(
   cameraLocalX: number,
@@ -135,36 +137,4 @@ export function cellNucleusFarFieldBeyond(
   const dz = cameraLocalZ - bounds.centerZ;
   const cameraDist = Math.sqrt(dx * dx + dy * dy + dz * dz);
   return cameraDist - bounds.radius >= farDist;
-}
-
-/**
- * True when the LOD walk provably cannot admit a single Cell this tick: no
- * focus / recall / route-hop envelope is alive (interaction reveals identity
- * at any distance) and the whole field is beyond `farDist`. A skip is then
- * behaviour-equivalent to walking. The frame loop also handles the
- * far-camera-WITH-focus case itself: it walks just the envelope entries via
- * the visible-index map instead of every drawn Cell, because
- * `cellNucleusFarFieldBeyond` proves distance admits nothing else.
- */
-export function cellNucleusFarFieldSkip(
-  cameraLocalX: number,
-  cameraLocalY: number,
-  cameraLocalZ: number,
-  bounds: Pick<
-    CellFieldBoundsCache,
-    'centerX' | 'centerY' | 'centerZ' | 'radius'
-  >,
-  farDist: number,
-  focusEnvelopeCount: number,
-  recallActive: boolean,
-  routeHopActive: boolean,
-): boolean {
-  if (focusEnvelopeCount > 0 || recallActive || routeHopActive) return false;
-  return cellNucleusFarFieldBeyond(
-    cameraLocalX,
-    cameraLocalY,
-    cameraLocalZ,
-    bounds,
-    farDist,
-  );
 }

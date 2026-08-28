@@ -186,22 +186,20 @@ describe('CellNucleus dynamic attributes', () => {
     expect(SOURCE).not.toContain('recallArray.fill');
   });
 
-  it('profiles the bounded spatial LOD query and candidate bake as one CPU scope', () => {
+  it('profiles the gated spatial LOD collection and candidate bake as one CPU scope', () => {
     const refresh = SOURCE.slice(
       SOURCE.indexOf('    if (refreshLod) {'),
       SOURCE.indexOf('    } else if (focusNeedsWrite || recallNeedsWrite)'),
     );
     const begin = refresh.indexOf('const lodProbe = beginCpuProbe(');
-    const ensure = refresh.indexOf('ensureCellNucleusSpatialIndex(');
-    const query = refresh.indexOf('queryCellNucleusCandidateIndices(');
+    const collect = refresh.indexOf('collectCellNucleusCandidateIndices(');
     const bake = refresh.indexOf('for (const index of candidateIndices)');
     const sort = refresh.indexOf('near.current.sort(');
     const end = refresh.indexOf('endCpuProbe(lodProbe);');
 
     expect(begin).toBeGreaterThanOrEqual(0);
-    expect(begin).toBeLessThan(ensure);
-    expect(ensure).toBeLessThan(query);
-    expect(query).toBeLessThan(bake);
+    expect(begin).toBeLessThan(collect);
+    expect(collect).toBeLessThan(bake);
     expect(bake).toBeLessThan(sort);
     expect(sort).toBeLessThan(end);
     expect(refresh).toContain('PERFORMANCE_PROBE_LABELS.cellNucleusLod');
