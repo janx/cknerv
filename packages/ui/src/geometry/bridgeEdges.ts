@@ -290,6 +290,144 @@ export interface BridgeHostCell {
   degree: number;
 }
 
+/** What a staged Cell has to offer the host registry: its identity, whether
+ *  it is still alive, and its galaxy-local seat. The same seam
+ *  `NeighborGraphCell` cuts, for the same reason — the layer hands the
+ *  registry the display map it already holds, and this module stays a pure
+ *  function of plain records. */
+export interface BridgeHostSourceCell {
+  readonly id: number;
+  readonly death_at_ms: number | null;
+  readonly pos_seed: readonly [number, number, number];
+}
+
+/**
+ * The selection's input, kept across topology builds.
+ *
+ * `hosts` holds one record per living staged Cell and the records persist:
+ * a Cell's seat never moves while it is on the stage (the display map is
+ * patched in place with `id` and `pos_seed` unchanged by construction), so
+ * only its drawn-fabric degree is ever rewritten. A build therefore costs no
+ * host allocation, and — the point — {@link syncBridgeHosts} can say whether
+ * the build changed anything the selection reads, which is what lets the
+ * layer skip the selection instead of re-running it to discover that nothing
+ * moved.
+ */
+export interface BridgeHostRegistry {
+  hosts: Map<number, BridgeHostRecord>;
+  /** The build being synced; every living record is stamped with it. */
+  generation: number;
+}
+
+/** A host as the registry keeps it: the selection's record plus the two
+ *  fields one sync needs to count a degree and notice a departure without a
+ *  second map or a second pass over the stage. */
+export interface BridgeHostRecord extends BridgeHostCell {
+  /** The degree being counted for the build in progress. */
+  next: number;
+  /** The last build this Cell was seen alive in. */
+  seen: number;
+}
+
+export function createBridgeHostRegistry(): BridgeHostRegistry {
+  return { hosts: new Map(), generation: 0 };
+}
+
+/** The degree as the selection sees it. Every degree past the host ceiling
+ *  is the same non-candidate, so a change inside that range is not a change. */
+function hostDegreeRung(degree: number, maxHostDegree: number): number {
+  return degree > maxHostDegree ? maxHostDegree + 1 : degree;
+}
+
+/** A record's degree before it has ever been counted. */
+const UNCOUNTED = -1;
+
+/**
+ * Bring the registry up to date with one completed topology build, and report
+ * whether anything {@link selectBridgeEdges} reads has moved since the last.
+ *
+ * ⭐ The report is exact, not a heuristic, and this is the argument. Per host
+ * the selection reads `degree` — as the candidate gate (`> maxHostDegree`
+ * excludes), as the first sort key, as `bridgesForDegree`'s input, and as the
+ * plan cache's validity key — `id` (the hash order, the tie-break, the
+ * identity of every stroke), and `x/y/z` (the coverage gate and the plan,
+ * both pure in the id because the seat is). So the selection is a pure
+ * function of the SET of `(id, degree)` over living Cells — with every degree
+ * past the ceiling collapsed onto one rung, since a Cell at degree 3 and one
+ * at degree 7 are the same non-candidate — together with the anchor index,
+ * which the caller tracks. A Cell that enters or leaves at an excluded
+ * degree, or whose degree moves within the excluded range, cannot change the
+ * output, and is reported as no movement.
+ *
+ * `edges` is the DRAWN passive selection: a Cell whose neighbours exist but
+ * were never selected has to look exactly as bare as one with none.
+ *
+ * Three passes and no scratch map: the stage stamps every living record (and
+ * creates the missing ones), the edges count degrees straight onto those
+ * records, and the registry then judges each record against what it was —
+ * an unstamped record is a Cell that left. Measured on a 12,000-Cell stage
+ * with 8,000 drawn edges this is the whole cost of a build that moved
+ * nothing.
+ */
+export function syncBridgeHosts(
+  registry: BridgeHostRegistry,
+  cells: ReadonlyMap<number, BridgeHostSourceCell>,
+  edges: Iterable<{ readonly from: number; readonly to: number }>,
+  maxHostDegree: number = BRIDGE_MAX_HOST_DEGREE,
+): boolean {
+  const hosts = registry.hosts;
+  const generation = registry.generation + 1;
+  registry.generation = generation;
+  for (const cell of cells.values()) {
+    // A dead-but-not-yet-collected Cell contributes no fabric edge, and it
+    // must contribute no bridge either — a retracting fibre that a rebuild
+    // resurrects is the exact bug `buildNeighborGraph` guards against.
+    if (cell.death_at_ms != null) continue;
+    const host = hosts.get(cell.id);
+    if (host === undefined) {
+      hosts.set(cell.id, {
+        id: cell.id,
+        x: cell.pos_seed[0],
+        y: cell.pos_seed[1],
+        z: cell.pos_seed[2],
+        degree: UNCOUNTED,
+        next: 0,
+        seen: generation,
+      });
+    } else {
+      host.seen = generation;
+    }
+  }
+  for (const edge of edges) {
+    const from = hosts.get(edge.from);
+    if (from !== undefined) from.next += 1;
+    const to = hosts.get(edge.to);
+    if (to !== undefined) to.next += 1;
+  }
+  let moved = false;
+  for (const [id, host] of hosts) {
+    if (host.seen !== generation) {
+      // Left the stage, or died on it. Judged at the degree the last
+      // selection saw: a Cell that was never a candidate takes no stroke.
+      hosts.delete(id);
+      if (host.degree <= maxHostDegree) moved = true;
+      continue;
+    }
+    const next = host.next;
+    host.next = 0;
+    if (host.degree === UNCOUNTED) {
+      if (next <= maxHostDegree) moved = true;
+    } else if (
+      hostDegreeRung(host.degree, maxHostDegree)
+      !== hostDegreeRung(next, maxHostDegree)
+    ) {
+      moved = true;
+    }
+    host.degree = next;
+  }
+  return moved;
+}
+
 /** The halo's placed buffers, read-only. This module never writes them and
  *  never asks the placement for anything extra: filament identity is
  *  RE-DERIVED here by union-find rather than exported from the worker, so the
@@ -817,10 +955,15 @@ export function selectBridgeEdges(
     if (plans.length >= breadth) break;
     const cell = candidate.cell;
     const cached = planCache?.get(cell.id);
-    const picks = cached !== undefined && cached.degree === cell.degree
-      ? cached.picks
-      : planHostBridges(cell, index, reach, scratch);
-    planCache?.set(cell.id, { degree: cell.degree, picks });
+    let picks: BridgeEdge[];
+    if (cached !== undefined && cached.degree === cell.degree) {
+      picks = cached.picks;
+    } else {
+      picks = planHostBridges(cell, index, reach, scratch);
+      // Only a miss writes the cache: a hit that re-set the same entry
+      // allocated a record per planned host per build for nothing.
+      planCache?.set(cell.id, { degree: cell.degree, picks });
+    }
     if (picks.length > 0) plans.push(picks);
   }
 

@@ -6,6 +6,12 @@
 // mutated directly, reset by tests. Always-on (a handful of integer
 // increments per diff/frame — negligible). The WINDOW hook that surfaces this
 // lives in ui-app, so the library stays free of `window` coupling.
+//
+// The bridge layer's counters (`bridgeStats`) ride along in the snapshot as
+// `bridge`: it is the fabric's sibling, built from the fabric's parts, and a
+// live probe reading one hook should see both layers' churn side by side.
+
+import { bridgeStats, type BridgeStatsSnapshot } from './bridgeStats';
 
 export type FabricDiffKind = 'setFabric' | 'growEdges' | 'killEdges';
 
@@ -96,6 +102,9 @@ export interface FabricStatsSnapshot {
   uploadedBytesLast: number;
   /** Largest single-commit upload observed. */
   uploadedBytesMax: number;
+  /** The bridge layer (次级神经): builds skipped by its host registry,
+   *  strokes moved per selection, writes and uploads per build frame. */
+  bridge: BridgeStatsSnapshot;
 }
 
 const RECENT_DIFF_CAP = 32;
@@ -241,6 +250,7 @@ export const fabricStats: FabricStatsState = {
       uploadedBytes: this.uploadedBytes,
       uploadedBytesLast: this.uploadedBytesLast,
       uploadedBytesMax: this.uploadedBytesMax,
+      bridge: bridgeStats.snapshot(),
     };
   },
 
@@ -261,6 +271,7 @@ export const fabricStats: FabricStatsState = {
     this.uploadedBytes = 0;
     this.uploadedBytesLast = 0;
     this.uploadedBytesMax = 0;
+    bridgeStats.reset();
   },
 };
 

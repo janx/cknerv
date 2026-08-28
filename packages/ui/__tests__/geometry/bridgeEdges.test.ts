@@ -10,10 +10,14 @@ import {
   bridgeKey,
   bridgesForDegree,
   buildBridgeAnchorIndex,
+  createBridgeHostRegistry,
   planHostBridges,
   selectBridgeEdges,
+  syncBridgeHosts,
   type BridgeAnchorIndex,
   type BridgeHostCell,
+  type BridgeHostPlan,
+  type BridgeHostSourceCell,
 } from '../../src/geometry/bridgeEdges';
 import {
   placePopulationField,
@@ -419,4 +423,146 @@ describe('bridge selection', () => {
     expect(selection.bridges).toEqual([]);
     expect(selection.hosts).toBe(0);
   });
+
+  it('keeps a cached plan across a hit instead of re-recording it', () => {
+    const cells = stagedCells(400);
+    const cache = new Map<number, BridgeHostPlan>();
+    selectBridgeEdges(cells, index, { planCache: cache });
+    const recorded = new Map(cache);
+    expect(recorded.size).toBeGreaterThan(0);
+    selectBridgeEdges(cells, index, { planCache: cache });
+    // A hit used to re-set the same entry — one allocation per planned host
+    // per build for nothing. Identity proves it no longer does.
+    for (const [id, entry] of cache) expect(entry).toBe(recorded.get(id));
+  });
 });
+
+describe('bridge host registry', () => {
+  /** A staged map plus the drawn edges that give each Cell its degree: a
+   *  Cell of degree d is wired to d partner ids that are not on the stage,
+   *  so the partners' own degrees reach nothing. */
+  function stage(cells: readonly BridgeHostCell[]): {
+    map: Map<number, BridgeHostSourceCell>;
+    edges: { from: number; to: number }[];
+  } {
+    const map = new Map<number, BridgeHostSourceCell>();
+    const edges: { from: number; to: number }[] = [];
+    for (const c of cells) {
+      map.set(c.id, { id: c.id, death_at_ms: null, pos_seed: [c.x, c.y, c.z] });
+      for (let k = 0; k < c.degree; k += 1) edges.push({ from: c.id, to: 1e9 + k });
+    }
+    return { map, edges };
+  }
+
+  function source(cell: BridgeHostCell): BridgeHostSourceCell {
+    return { id: cell.id, death_at_ms: null, pos_seed: [cell.x, cell.y, cell.z] };
+  }
+
+  it('reports movement only for what the selection reads', () => {
+    const cells = stagedCells(400, (id) => id % 5);
+    const registry = createBridgeHostRegistry();
+    const { map, edges } = stage(cells);
+    // The first build is all arrivals.
+    expect(syncBridgeHosts(registry, map, edges)).toBe(true);
+    expect(registry.hosts.size).toBe(400);
+    // The same stage against the same fabric is the steady state.
+    expect(syncBridgeHosts(registry, map, edges)).toBe(false);
+
+    // A degree that moves INSIDE the excluded range is not movement: a Cell
+    // at 3 and one at 4 are the same non-candidate. The record still carries
+    // the exact degree — it is the rung that is judged.
+    const excluded = cells.find((c) => c.degree === 3)!;
+    const within = [...edges, { from: excluded.id, to: 1e9 + 50 }];
+    expect(syncBridgeHosts(registry, map, within)).toBe(false);
+    expect(registry.hosts.get(excluded.id)!.degree).toBe(4);
+    // Crossing the ceiling is, in both directions.
+    const rim = cells.find((c) => c.degree === BRIDGE_MAX_HOST_DEGREE)!;
+    const crossed = [...within, { from: rim.id, to: 1e9 + 60 }];
+    expect(syncBridgeHosts(registry, map, crossed)).toBe(true);
+    expect(syncBridgeHosts(registry, map, within)).toBe(true);
+    // So is a move between candidate rungs — the sort key and the ladder.
+    const bare = cells.find((c) => c.degree === 0)!;
+    const promoted = [...within, { from: bare.id, to: 1e9 + 70 }];
+    expect(syncBridgeHosts(registry, map, promoted)).toBe(true);
+    expect(syncBridgeHosts(registry, map, within)).toBe(true);
+
+    // An arrival at an excluded degree changes nothing the selection sees;
+    // the same Cell dropping to a candidate degree does.
+    const newcomer: BridgeHostCell = { id: 777_777, ...seat(777_777), degree: 3 };
+    const arrivals = new Map(map);
+    arrivals.set(newcomer.id, source(newcomer));
+    const wired = [...within, ...stage([newcomer]).edges];
+    expect(syncBridgeHosts(registry, arrivals, wired)).toBe(false);
+    expect(registry.hosts.has(newcomer.id)).toBe(true);
+    expect(syncBridgeHosts(registry, arrivals, within)).toBe(true);
+
+    // A departure — off the map, or dead on it — is movement exactly when
+    // the Cell was a candidate, judged at the degree the last build saw.
+    const gone = new Map(arrivals);
+    gone.delete(newcomer.id);
+    expect(syncBridgeHosts(registry, gone, within)).toBe(true);
+    expect(registry.hosts.has(newcomer.id)).toBe(false);
+    const dying = new Map(gone);
+    dying.set(bare.id, { ...gone.get(bare.id)!, death_at_ms: 5 });
+    expect(syncBridgeHosts(registry, dying, within)).toBe(true);
+    expect(registry.hosts.has(bare.id)).toBe(false);
+    const four = cells.find((c) => c.degree === 4)!;
+    const fewer = new Map(dying);
+    fewer.delete(four.id);
+    expect(syncBridgeHosts(registry, fewer, within)).toBe(false);
+    expect(registry.hosts.has(four.id)).toBe(false);
+
+    // ⚠️ A departure and an arrival in the same build leave the map the same
+    // size; the registry still sees both.
+    const swapped = new Map(fewer);
+    const leaver = cells.find((c) => c.degree === 1)!;
+    swapped.delete(leaver.id);
+    const replacement: BridgeHostCell = { id: 888_888, ...seat(888_888), degree: 0 };
+    swapped.set(replacement.id, source(replacement));
+    expect(syncBridgeHosts(registry, swapped, within)).toBe(true);
+    expect(registry.hosts.has(leaver.id)).toBe(false);
+    expect(registry.hosts.has(replacement.id)).toBe(true);
+    // The registry is the LIVING stage: the dead-but-uncollected Cell above
+    // is still on the map and has no record.
+    expect(registry.hosts.size).toBe(
+      [...swapped.values()].filter((c) => c.death_at_ms == null).length,
+    );
+  });
+
+  it('feeds the selection the same answer a fresh host list gives, across churn', () => {
+    const cells = stagedCells(3000, (id) => id % 4);
+    const registry = createBridgeHostRegistry();
+    const planCache = new Map<number, BridgeHostPlan>();
+    const coverageCache = new Map<number, number>();
+    const { map, edges } = stage(cells);
+    expect(syncBridgeHosts(registry, map, edges)).toBe(true);
+    const first = selectBridgeEdges(registry.hosts.values(), index, { planCache, coverageCache });
+    expect(first.bridges).toEqual(selectBridgeEdges(cells, index).bridges);
+    expect(first.bridges.length).toBeGreaterThan(0);
+
+    // One selected host leaves, one bare Cell arrives, one selected host
+    // gains a drawn fibre: the shape of a membership block.
+    const victim = first.bridges[5].cellId;
+    const promotedId = first.bridges.find(
+      (bridge) => bridge.cellId !== victim
+        && cells.find((c) => c.id === bridge.cellId)!.degree === 0,
+    )!.cellId;
+    const next: BridgeHostCell[] = cells
+      .filter((c) => c.id !== victim)
+      .map((c) => (c.id === promotedId ? { ...c, degree: 1 } : c));
+    next.push({ id: 4_000_001, ...seat(4_000_001), degree: 0 });
+    const churned = stage(next);
+    expect(syncBridgeHosts(registry, churned.map, churned.edges)).toBe(true);
+    const revised = selectBridgeEdges(registry.hosts.values(), index, { planCache, coverageCache });
+    expect(revised.bridges).toEqual(selectBridgeEdges(next, index).bridges);
+    expect(revised.bridges).not.toEqual(first.bridges);
+    // And the block after that, with nothing moved, is not a selection at all
+    // — the caller's skip — which the registry says in one word.
+    expect(syncBridgeHosts(registry, churned.map, churned.edges)).toBe(false);
+  });
+});
+
+function seat(id: number): { x: number; y: number; z: number } {
+  const [x, y, z] = helixSeedF64(id);
+  return { x, y, z };
+}

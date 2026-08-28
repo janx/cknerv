@@ -3,26 +3,43 @@
 // A bridge's grow and retract run on the CPU, so every frame of a 1.2 s growth
 // window reaches the layer's buffers — and the whole question is how much of
 // them. Each stroke owns a fixed span, so the answer is: the spans of the
-// strokes that actually moved, and on a settled frame nothing at all.
+// strokes that actually moved, and on a settled frame nothing at all. Since
+// 2026-08-28 the same answer holds for a BUILD: a topology build that moved a
+// handful of strokes admits those into spans of their own and writes nothing
+// else, and a build that moved none runs no selection at all.
 //
 // The component is Canvas-bound only through `useFrame` / `useThree` (the
 // fabricApertureRanges precedent), and it is the scene's ONLY tapered-width
 // capsule layer, so intercepting the capsule geometry factory hands the test
 // the very buffers the renderer reads — including the width lane no other
 // layer allocates.
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, type RenderResult } from '@testing-library/react';
 import type { InstancedInterleavedBuffer, InterleavedBufferAttribute } from 'three';
 import type { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import type { Cell } from '@cknerv/types';
 
-import { BRIDGE_ANCHOR_PREFIX } from '../../src/geometry/bridgeEdges';
-import { emptyNeighborGraph } from '../../src/geometry/neighborGraph';
+import {
+  BRIDGE_ALLOCATION_BRIDGES,
+  BRIDGE_ANCHOR_PREFIX,
+  BRIDGE_BUDGET,
+  buildBridgeAnchorIndex,
+  selectBridgeEdges,
+  type BridgeHostCell,
+} from '../../src/geometry/bridgeEdges';
+import { emptyNeighborGraph, type NeighborGraph } from '../../src/geometry/neighborGraph';
 import {
   resetPopulationPlacement,
   setPopulationPlacement,
   type PopulationPlacementSnapshot,
 } from '../../src/geometry/populationPlacementStore';
+import { bridgeStats, resetBridgeStats } from '../../src/nerve/bridgeStats';
+import {
+  bridgeRenderState,
+  reconcileBridgeStrokes,
+  writeBridgeStroke,
+  type BridgeStrokeState,
+} from '../../src/nerve/bridgeStroke';
 import { DEATH_RETRACT_MS, GROWTH_MS } from '../../src/nerve/fabricEdgeRender';
 import { FABRIC_SLOT_FILLER_Y, FABRIC_SLOT_SEGMENTS } from '../../src/nerve/fabricSlots';
 import { LIVE } from '../../src/tweaks/liveTweaks';
@@ -59,6 +76,23 @@ vi.mock('../../src/geometry/screenSpaceCapsuleLine', async (importOriginal) => {
       return geometry;
     },
   };
+});
+
+// The selection is the work the registry exists to skip, so the proof that
+// it was skipped is a call count on the real function.
+vi.mock('../../src/geometry/bridgeEdges', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('../../src/geometry/bridgeEdges')
+  >();
+  return { ...actual, selectBridgeEdges: vi.fn(actual.selectBridgeEdges) };
+});
+
+type BridgeEdgesModule = typeof import('../../src/geometry/bridgeEdges');
+let actualBridgeEdges: BridgeEdgesModule;
+beforeAll(async () => {
+  actualBridgeEdges = await vi.importActual<BridgeEdgesModule>(
+    '../../src/geometry/bridgeEdges',
+  );
 });
 
 /** Points a bridge may anchor in — the lowest quality preset's prefix, which
@@ -125,6 +159,27 @@ function cellsFor(ids: readonly number[]): Map<number, Cell> {
   return new Map(ids.map((id) => [id, HOSTS.get(id)!]));
 }
 
+/** The selection's own view of a Cell map, for the from-scratch oracle. */
+function hostsOf(cells: ReadonlyMap<number, Cell>, graph: NeighborGraph): BridgeHostCell[] {
+  const degree = new Map<number, number>();
+  for (const edge of graph.edges) {
+    degree.set(edge.from, (degree.get(edge.from) ?? 0) + 1);
+    degree.set(edge.to, (degree.get(edge.to) ?? 0) + 1);
+  }
+  const hosts: BridgeHostCell[] = [];
+  for (const c of cells.values()) {
+    if (c.death_at_ms != null) continue;
+    hosts.push({
+      id: c.id,
+      x: c.pos_seed[0],
+      y: c.pos_seed[1],
+      z: c.pos_seed[2],
+      degree: degree.get(c.id) ?? 0,
+    });
+  }
+  return hosts;
+}
+
 interface BridgeBuffers {
   positions: InstancedInterleavedBuffer;
   colors: InstancedInterleavedBuffer;
@@ -166,12 +221,78 @@ function spans(buffer: InstancedInterleavedBuffer, stride: number): Span[] {
   }));
 }
 
+/** The slots a set of segment ranges covers. */
+function coveredSlots(ranges: readonly Span[]): Set<number> {
+  const slots = new Set<number>();
+  for (const range of ranges) {
+    for (let seg = range.start; seg < range.start + range.count; seg += 1) {
+      slots.add(Math.floor(seg / FABRIC_SLOT_SEGMENTS));
+    }
+  }
+  return slots;
+}
+
 /** Stand in for the renderer, which clears an attribute's ranges as it
  *  uploads them. Every assertion below is therefore about ONE frame's marks. */
 function consumeUploads(buffers: BridgeBuffers): void {
   buffers.positions.clearUpdateRanges();
   buffers.colors.clearUpdateRanges();
   buffers.widths.clearUpdateRanges();
+}
+
+/** One stroke's span, read back as content. A span is fully written or fully
+ *  parked — `writeBridgeStroke` writes its whole sample count or nothing —
+ *  and a written stroke's first vertex sits on its host Cell, which is how a
+ *  test tells whose span it is looking at without the layer's private map. */
+interface SlotBlock {
+  slot: number;
+  parked: boolean;
+  hostX: number;
+  floats: number[];
+}
+
+function blocks(buffers: BridgeBuffers): SlotBlock[] {
+  const positions = buffers.positions.array as Float32Array;
+  const colors = buffers.colors.array as Float32Array;
+  const widths = buffers.widths.array as Float32Array;
+  const out: SlotBlock[] = [];
+  const slots = buffers.geometry.instanceCount / FABRIC_SLOT_SEGMENTS;
+  expect(Number.isInteger(slots)).toBe(true);
+  for (let slot = 0; slot < slots; slot += 1) {
+    const seg0 = slot * FABRIC_SLOT_SEGMENTS;
+    const parked = positions[seg0 * 6 + 1] === FABRIC_SLOT_FILLER_Y;
+    for (let seg = seg0; seg < seg0 + FABRIC_SLOT_SEGMENTS; seg += 1) {
+      expect(positions[seg * 6 + 1] === FABRIC_SLOT_FILLER_Y).toBe(parked);
+      expect(positions[seg * 6 + 4] === FABRIC_SLOT_FILLER_Y).toBe(parked);
+    }
+    out.push({
+      slot,
+      parked,
+      hostX: positions[seg0 * 6],
+      floats: [
+        ...positions.subarray(seg0 * 6, (seg0 + FABRIC_SLOT_SEGMENTS) * 6),
+        ...colors.subarray(seg0 * 6, (seg0 + FABRIC_SLOT_SEGMENTS) * 6),
+        ...widths.subarray(seg0 * 2, (seg0 + FABRIC_SLOT_SEGMENTS) * 2),
+      ],
+    });
+  }
+  return out;
+}
+
+function slotsOfHost(buffers: BridgeBuffers, hostX: number): number[] {
+  return blocks(buffers)
+    .filter((block) => !block.parked && block.hostX === hostX)
+    .map((block) => block.slot);
+}
+
+/** The layer's written spans as a sorted multiset of their bytes — the shape
+ *  an equivalence is stated in, since where a stroke sits is the layer's
+ *  business and what it contains is not. */
+function writtenBlocks(buffers: BridgeBuffers): string[] {
+  return blocks(buffers)
+    .filter((block) => !block.parked)
+    .map((block) => JSON.stringify(block.floats))
+    .sort();
 }
 
 const cellsRef = { current: new Map<number, Cell>() };
@@ -186,10 +307,14 @@ function frame(atSec: number): void {
 }
 
 /** A completed topology build — the staged Cells change and the version bumps,
- *  which is the one thing that re-selects — followed by its own frame. */
-function build(ids: readonly number[], atSec: number): void {
-  cellsRef.current = cellsFor(ids);
+ *  which is the one thing that re-selects — followed by its own frame. The
+ *  clock is set BEFORE the effect runs, so the build's strokes are born (or
+ *  start dying) at exactly `atSec`, which is what a replay through the pure
+ *  functions has to assume. */
+function build(cells: readonly number[] | Map<number, Cell>, atSec: number): void {
+  cellsRef.current = cells instanceof Map ? cells : cellsFor(cells);
   version += 1;
+  resetSimClock(simClock, atSec);
   // Each render registers its own frame callbacks; only the live ones drive.
   frames.callbacks.length = 0;
   const element = (
@@ -214,7 +339,11 @@ beforeEach(() => {
   view = null;
   version = 0;
   LIVE.cell.fabricAlpha = restingAlpha;
+  cellsRef.current = new Map();
+  passiveGraphRef.current = emptyNeighborGraph();
   resetSimClock();
+  resetBridgeStats();
+  vi.mocked(selectBridgeEdges).mockClear();
   setPopulationPlacement(placementFixture());
 });
 
@@ -273,60 +402,86 @@ describe('the bridge layer rewrites the strokes that moved, not the layer', () =
       .toEqual([...stable]);
   });
 
-  it('parks the span a retract leaves behind, on the frame it leaves it', () => {
+  it('parks the span a retract leaves behind, and the next birth takes it', () => {
     build([1, 2], 0);
     const buffers = bridgeBuffers();
     frame(SETTLED_SEC);
     consumeUploads(buffers);
     const both = buffers.geometry.instanceCount;
+    const dyingSlots = slotsOfHost(buffers, 64);
+    const livingSlots = slotsOfHost(buffers, 61);
+    expect(dyingSlots.length).toBeGreaterThan(0);
+    expect(livingSlots.length).toBeGreaterThan(0);
+    expect(dyingSlots.length + livingSlots.length).toBe(both / FABRIC_SLOT_SEGMENTS);
 
-    // The second host leaves the selection: its strokes retract, and only
-    // theirs move.
+    // The second host leaves the selection: its strokes retract IN PLACE —
+    // the spans they were admitted into, wherever those are — and only
+    // theirs move. The first host's bytes are not touched from here on.
+    const stable = () => livingSlots.map((slot) => JSON.stringify(blocks(buffers)[slot].floats));
+    const stableBefore = stable();
     build([1], SETTLED_SEC);
     consumeUploads(buffers);
     frame(SETTLED_SEC + 0.3);
-    // They sit at the tail of the prefix — their host entered the layer
-    // second, and a build hands out spans in that order.
-    const dying = spans(buffers.positions, 6)[0];
-    expect(spans(buffers.positions, 6)).toHaveLength(1);
-    expect(dying.start).toBeGreaterThan(0);
-    expect(dying.start + dying.count).toBe(both);
+    const marked = coveredSlots(spans(buffers.positions, 6));
+    for (const slot of dyingSlots) expect(marked.has(slot)).toBe(true);
+    // The merge may bridge a small gap between two dying spans (one
+    // bufferSubData instead of two); it never reaches outside their hull.
+    for (const slot of marked) {
+      expect(slot).toBeGreaterThanOrEqual(Math.min(...dyingSlots));
+      expect(slot).toBeLessThanOrEqual(Math.max(...dyingSlots));
+    }
+    expect(stable()).toEqual(stableBefore);
     consumeUploads(buffers);
 
     // Past the retract window the strokes are reaped. Their spans must go
     // degenerate on the way out: a hole nobody rewrites keeps drawing the last
-    // frame of the retract until some later build happens to reuse it.
+    // frame of the retract until some later birth happens to reuse it.
     frame(SETTLED_SEC + REAPED_SEC);
-    expect(spans(buffers.positions, 6)).toEqual([dying]);
-    for (let segment = dying.start; segment < dying.start + dying.count; segment += 1) {
-      expect(buffers.positions.array[segment * 6 + 1]).toBe(FABRIC_SLOT_FILLER_Y);
-      expect(buffers.positions.array[segment * 6 + 4]).toBe(FABRIC_SLOT_FILLER_Y);
-      expect(buffers.colors.array[segment * 6]).toBe(0);
-      expect(buffers.widths.array[segment * 2]).toBe(0);
-      expect(buffers.widths.array[segment * 2 + 1]).toBe(0);
+    expect(coveredSlots(spans(buffers.positions, 6))).toEqual(marked);
+    for (const slot of dyingSlots) {
+      const block = blocks(buffers)[slot];
+      expect(block.parked).toBe(true);
+      for (let seg = 0; seg < FABRIC_SLOT_SEGMENTS; seg += 1) {
+        expect(buffers.colors.array[(slot * FABRIC_SLOT_SEGMENTS + seg) * 6]).toBe(0);
+        expect(buffers.widths.array[(slot * FABRIC_SLOT_SEGMENTS + seg) * 2]).toBe(0);
+        expect(buffers.widths.array[(slot * FABRIC_SLOT_SEGMENTS + seg) * 2 + 1]).toBe(0);
+      }
     }
-    // The hole stays a hole — vertex-only cost — until a build compacts it,
-    // and the frame after the last reap is quiet again.
+    expect(stable()).toEqual(stableBefore);
+    // The hole stays a hole — vertex-only cost, and the prefix does not
+    // shrink — and the frame after the last reap is quiet again.
     expect(buffers.geometry.instanceCount).toBe(both);
     consumeUploads(buffers);
     frame(SETTLED_SEC + REAPED_SEC + 0.1);
     expect(buffers.positions.updateRanges).toEqual([]);
 
     // ⚠️ A build that re-selected the same hosts is NOT where the debt is
-    // paid. Nothing moved, so there is nothing for the walk to say and it does
-    // not run: the layer already draws exactly what that selection asks for,
-    // holes and all, and re-walking it would re-upload the whole prefix to
-    // restate it.
+    // paid, and it costs nothing: the registry reports no movement, so no
+    // selection runs, nothing is reconciled, nothing is marked.
+    const selections = vi.mocked(selectBridgeEdges).mock.calls.length;
     build([1], SETTLED_SEC + REAPED_SEC + 0.2);
+    expect(vi.mocked(selectBridgeEdges).mock.calls.length).toBe(selections);
     expect(buffers.geometry.instanceCount).toBe(both);
     expect(buffers.positions.updateRanges).toEqual([]);
+    expect(stable()).toEqual(stableBefore);
 
-    // A build that MOVED something is. Spans are handed out from zero and the
-    // prefix shrinks back to what is actually drawn — here the last host's own
-    // strokes, retracting. Hole debt is therefore bounded by one block's reaps
-    // and can never outlive the next selection that changed.
-    build([], SETTLED_SEC + REAPED_SEC + 0.3);
-    expect(buffers.geometry.instanceCount).toBe(both - dying.count);
+    // ⭐ The next BIRTH is. A stroke born between two full walks takes a
+    // parked hole before the prefix grows — the fabric's own allocator — so
+    // the prefix stays where it was, the marks on the build frame are the
+    // reused holes and nothing else, and the survivors are still untouched.
+    build([1, 2], SETTLED_SEC + REAPED_SEC + 0.3);
+    expect(buffers.geometry.instanceCount).toBe(both);
+    const reborn = coveredSlots(spans(buffers.positions, 6));
+    for (const slot of dyingSlots) expect(reborn.has(slot)).toBe(true);
+    for (const slot of reborn) {
+      expect(slot).toBeGreaterThanOrEqual(Math.min(...dyingSlots));
+      expect(slot).toBeLessThanOrEqual(Math.max(...dyingSlots));
+    }
+    expect(stable()).toEqual(stableBefore);
+    frame(SETTLED_SEC + REAPED_SEC + 0.3 + SETTLED_SEC);
+    expect(slotsOfHost(buffers, 64).sort()).toEqual([...dyingSlots].sort());
+    expect(slotsOfHost(buffers, 61)).toEqual(livingSlots);
+    expect(bridgeStats.freeSlotsLast).toBe(0);
   });
 
   it('lands a knob drag on every stroke, settled or not', () => {
@@ -350,6 +505,7 @@ describe('the bridge layer rewrites the strokes that moved, not the layer', () =
     for (let float = 0; float < after.length; float += 1) {
       expect(after[float]).toBeCloseTo(before[float] * 0.5, 9);
     }
+    expect(bridgeStats.fullWalkReasons.repaint).toBe(1);
     consumeUploads(buffers);
 
     // ...and it is a one-frame debt, not a new animation.
@@ -357,20 +513,33 @@ describe('the bridge layer rewrites the strokes that moved, not the layer', () =
     expect(buffers.positions.updateRanges).toEqual([]);
   });
 
-  it('reassigns every span on a build and uploads the whole prefix', () => {
+  it('marks the spans of the strokes a build moved and uploads no other', () => {
     build([1], 0);
     const buffers = bridgeBuffers();
     const settled = buffers.geometry.instanceCount;
-    // The build frame is a full rewrite: this is where strokes enter and leave.
+    // The boot build: every stroke is a birth, so every span is admitted and
+    // the whole prefix is what moved.
     expect(spans(buffers.positions, 6)).toEqual([{ start: 0, count: settled }]);
+    expect(bridgeStats.uploadedBytesLastBuild).toBe(settled * 14 * 4);
     frame(SETTLED_SEC);
     consumeUploads(buffers);
+    const stable = buffers.positions.array.slice(0, settled * 6);
 
+    // ⭐ A build that moved a handful of strokes used to be a full walk: every
+    // span re-written, the whole populated prefix re-uploaded, to move them.
+    // Now the second host's births are admitted into spans of their own at
+    // the end of the prefix, those spans are the frame's only marks, and the
+    // first host's bytes are not touched.
     build([1, 2], SETTLED_SEC);
     const total = buffers.geometry.instanceCount;
-    expect(spans(buffers.positions, 6)).toEqual([{ start: 0, count: total }]);
-    expect(spans(buffers.colors, 6)).toEqual([{ start: 0, count: total }]);
-    expect(spans(buffers.widths, 2)).toEqual([{ start: 0, count: total }]);
+    const admitted: Span = { start: settled, count: total - settled };
+    expect(spans(buffers.positions, 6)).toEqual([admitted]);
+    expect(spans(buffers.colors, 6)).toEqual([admitted]);
+    expect(spans(buffers.widths, 2)).toEqual([admitted]);
+    expect([...buffers.positions.array.slice(0, settled * 6)]).toEqual([...stable]);
+    expect(bridgeStats.strokesWrittenLastBuild).toBe(admitted.count / FABRIC_SLOT_SEGMENTS);
+    expect(bridgeStats.uploadedBytesLastBuild).toBe(admitted.count * 14 * 4);
+    expect(bridgeStats.fullWalks).toBe(0);
     // Every stroke is a whole number of spans, and each span is one curve's
     // sample budget — the fabric's slot, for the same reason.
     expect(total % FABRIC_SLOT_SEGMENTS).toBe(0);
@@ -403,5 +572,264 @@ describe('the bridge layer rewrites the strokes that moved, not the layer', () =
         .toBeLessThan(FABRIC_SLOT_FILLER_Y);
       expect(buffers.widths.array[segment * 2]).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('the bridge layer runs the selection only for a build that moved a host', () => {
+  it('skips the selection and the reconcile when nothing it reads moved', () => {
+    const select = vi.mocked(selectBridgeEdges);
+    build([1], 0);
+    expect(select).toHaveBeenCalledTimes(1);
+    const buffers = bridgeBuffers();
+    frame(SETTLED_SEC);
+    consumeUploads(buffers);
+
+    // The same hosts, the same drawn fabric, a new version: the steady state
+    // of a composed stage. Zero selection work — not a call, not a mark.
+    build([1], SETTLED_SEC);
+    build([1], SETTLED_SEC);
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(bridgeStats.builds).toBe(3);
+    expect(bridgeStats.selectionsSkipped).toBe(2);
+    expect(bridgeStats.selectionsRun).toBe(1);
+    expect(buffers.positions.updateRanges).toEqual([]);
+
+    // A degree change the selection cannot see — a Cell that is not on the
+    // stage at all — is not movement either.
+    passiveGraphRef.current = {
+      adjacency: new Map(),
+      edges: [{ from: 900, to: 901, d: 1 }],
+    };
+    build([1], SETTLED_SEC);
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(bridgeStats.selectionsSkipped).toBe(3);
+  });
+
+  it('re-selects for a moved host and lands where a from-scratch selection would', () => {
+    const select = vi.mocked(selectBridgeEdges);
+    build([1], 0);
+    frame(SETTLED_SEC);
+
+    // A host arrives.
+    build([1, 2], SETTLED_SEC);
+    expect(select).toHaveBeenCalledTimes(2);
+    const index = actualBridgeEdges.buildBridgeAnchorIndex(placementFixture());
+    const fresh = () => actualBridgeEdges.selectBridgeEdges(
+      hostsOf(cellsRef.current, passiveGraphRef.current), index,
+    ).bridges;
+    expect(select.mock.results[1].value.bridges).toEqual(fresh());
+
+    // A host's drawn-fabric degree moves: it is the same Cell, and the
+    // selection reads it differently.
+    passiveGraphRef.current = {
+      adjacency: new Map(),
+      edges: [{ from: 1, to: 2, d: 1 }],
+    };
+    build([1, 2], SETTLED_SEC + 0.1);
+    expect(select).toHaveBeenCalledTimes(3);
+    expect(select.mock.results[2].value.bridges).toEqual(fresh());
+    // ...and the same fabric again is the steady state again.
+    build([1, 2], SETTLED_SEC + 0.2);
+    expect(select).toHaveBeenCalledTimes(3);
+
+    // A host dies on the stage before it is collected: it stops hosting on
+    // the build that sees the death, exactly as a fabric edge stops.
+    const dead = { ...HOSTS.get(2)!, death_at_ms: 1 };
+    build(new Map([[1, HOSTS.get(1)!], [2, dead]]), SETTLED_SEC + 0.3);
+    expect(select).toHaveBeenCalledTimes(4);
+    expect(select.mock.results[3].value.bridges).toEqual(fresh());
+    expect(select.mock.results[3].value.bridges.every(
+      (bridge: { cellId: number }) => bridge.cellId === 1,
+    )).toBe(true);
+  });
+});
+
+interface Step { ids: readonly number[] | Map<number, Cell>; atSec: number }
+
+function cellsOf(step: Step): Map<number, Cell> {
+  return step.ids instanceof Map ? step.ids : cellsFor(step.ids);
+}
+
+/** The oracle: the same builds replayed through the pure functions the layer
+ *  is made of, then every surviving stroke drawn the way the old full walk
+ *  drew it — settled, at its own final geometry. Compared as a sorted
+ *  multiset of span contents, because WHERE the layer put a stroke is the
+ *  layer's business and what the span contains is not. */
+function reference(steps: readonly Step[], settleSec: number): string[] {
+  const index = actualBridgeEdges.buildBridgeAnchorIndex(placementFixture());
+  const strokes = new Map<string, BridgeStrokeState>();
+  for (const step of steps) {
+    const selection = actualBridgeEdges.selectBridgeEdges(
+      hostsOf(cellsOf(step), passiveGraphRef.current), index,
+    );
+    reconcileBridgeStrokes(strokes, selection.bridges, step.atSec);
+  }
+  const positions = new Float32Array(FABRIC_SLOT_SEGMENTS * 6);
+  const colors = new Float32Array(FABRIC_SLOT_SEGMENTS * 6);
+  const widths = new Float32Array(FABRIC_SLOT_SEGMENTS * 2);
+  const out: string[] = [];
+  for (const stroke of strokes.values()) {
+    const render = bridgeRenderState(stroke, settleSec);
+    if (render.reap) continue;
+    expect(render.animating).toBe(false);
+    positions.fill(0);
+    colors.fill(0);
+    widths.fill(1);
+    writeBridgeStroke(
+      positions, colors, widths, 0, FABRIC_SLOT_SEGMENTS,
+      stroke, render, LIVE.cell.fabricAlpha, LIVE.cell.centerDim,
+      new Float32Array(3),
+    );
+    out.push(JSON.stringify([...positions, ...colors, ...widths]));
+  }
+  return out.sort();
+}
+
+describe('after every stroke settles, the layer holds exactly what a from-scratch layer would', () => {
+  /** Drive the layer through the same steps and settle it. */
+  function layerAfter(steps: readonly Step[], settleSec: number): BridgeBuffers {
+    for (const step of steps) build(step.ids, step.atSec);
+    frame(settleSec);
+    frame(settleSec + 0.05);
+    return bridgeBuffers();
+  }
+
+  const S = SETTLED_SEC;
+  const R = REAPED_SEC;
+
+  it('an unchanged build', () => {
+    const steps: Step[] = [{ ids: [1, 2], atSec: 0 }, { ids: [1, 2], atSec: S }];
+    const buffers = layerAfter(steps, 2 * S);
+    const expected = reference(steps, 2 * S);
+    expect(expected.length).toBeGreaterThan(0);
+    expect(writtenBlocks(buffers)).toEqual(expected);
+  });
+
+  it('one added host', () => {
+    const steps: Step[] = [{ ids: [1], atSec: 0 }, { ids: [1, 2], atSec: S }];
+    const buffers = layerAfter(steps, 2 * S);
+    const expected = reference(steps, 2 * S);
+    expect(writtenBlocks(buffers)).toEqual(expected);
+    // And it is strictly more than the first build drew.
+    expect(expected.length).toBeGreaterThan(reference(steps.slice(0, 1), S).length);
+  });
+
+  it('one removed host, past its retract', () => {
+    const steps: Step[] = [{ ids: [1, 2], atSec: 0 }, { ids: [1], atSec: S }];
+    const buffers = layerAfter(steps, S + R);
+    const expected = reference(steps, S + R);
+    expect(writtenBlocks(buffers)).toEqual(expected);
+    // The reaped strokes left holes, parked and excluded above — and the
+    // prefix is not compacted for it.
+    expect(blocks(buffers).some((block) => block.parked)).toBe(true);
+    expect(blocks(buffers).length).toBe(reference(steps.slice(0, 1), S).length);
+  });
+
+  it('one host re-admitted in the middle of its retract', () => {
+    const steps: Step[] = [
+      { ids: [1, 2], atSec: 0 },
+      { ids: [1], atSec: S },
+      { ids: [1, 2], atSec: S + 0.3 },
+    ];
+    // Drive the retract a little way before the revival so the revived
+    // strokes really were part-way withdrawn on screen.
+    build(steps[0].ids, steps[0].atSec);
+    frame(S);
+    build(steps[1].ids, steps[1].atSec);
+    frame(S + 0.15);
+    const buffers = bridgeBuffers();
+    expect(buffers.positions.updateRanges.length).toBeGreaterThan(0);
+    build(steps[2].ids, steps[2].atSec);
+    frame(S + 0.3 + S);
+    frame(S + 0.3 + S + 0.05);
+    const expected = reference(steps, S + 0.3 + S);
+    expect(writtenBlocks(buffers)).toEqual(expected);
+    // Revived, not reborn: the same strokes as the untouched pair.
+    expect(expected).toEqual(reference([{ ids: [1, 2], atSec: 0 }], S));
+    expect(blocks(buffers).some((block) => block.parked)).toBe(false);
+  });
+});
+
+describe('the allocation overflow is the compaction, and it clips afterimages only', () => {
+  /** Enough hosts to fill the live budget from this placement — every one
+   *  within reach of the four anchors and at the rim's near-zero coverage. */
+  function crowd(count: number, firstId: number): Map<number, Cell> {
+    const cells = new Map<number, Cell>();
+    for (let n = 0; n < count; n += 1) {
+      const id = firstId + n;
+      cells.set(id, cell(id, 58 + ((n * 7) % 100) / 10, -1.5 + ((n * 13) % 30) / 10));
+    }
+    return cells;
+  }
+
+  /** The stroke identities a from-scratch selection of a stage draws. With
+   *  four anchors and the separation rule most hosts get one or two strokes,
+   *  so the count is the oracle's, never assumed. */
+  function selectedKeys(cells: Map<number, Cell>): Set<string> {
+    const index = actualBridgeEdges.buildBridgeAnchorIndex(placementFixture());
+    return new Set(actualBridgeEdges.selectBridgeEdges(
+      hostsOf(cells, passiveGraphRef.current), index,
+    ).bridges.map((bridge) => actualBridgeEdges.bridgeKey(bridge.cellId, bridge.anchorIndex)));
+  }
+
+  it('hands spans to living strokes first when live and dying strokes exceed the allocation', () => {
+    const first = crowd(1000, 1000);
+    const firstKeys = selectedKeys(first);
+    build(first, 0);
+    const buffers = bridgeBuffers();
+    frame(SETTLED_SEC);
+    expect(firstKeys.size).toBeGreaterThan(1000);
+    expect(firstKeys.size).toBeLessThanOrEqual(BRIDGE_BUDGET);
+    expect(writtenBlocks(buffers).length).toBe(firstKeys.size);
+    expect(buffers.geometry.instanceCount).toBe(firstKeys.size * FABRIC_SLOT_SEGMENTS);
+    expect(bridgeStats.fullWalks).toBe(0);
+
+    // Swap out half the stage. The departing hosts' strokes retract in place
+    // while the newcomers' births need spans of their own, and together they
+    // exceed the 2,000-stroke allocation: the admission overflows and the
+    // full walk compacts — living strokes first, so what the allocation
+    // could not house is an afterimage, never live form.
+    const swapped = new Map(first);
+    let dropped = 0;
+    for (const id of [...first.keys()]) {
+      if (dropped >= 500) break;
+      swapped.delete(id);
+      dropped += 1;
+    }
+    for (const [id, c] of crowd(500, 5000)) swapped.set(id, c);
+    const secondKeys = selectedKeys(swapped);
+    const dying = [...firstKeys].filter((key) => !secondKeys.has(key)).length;
+    const born = [...secondKeys].filter((key) => !firstKeys.has(key)).length;
+    // The precondition this test is about: more strokes than spans.
+    expect(secondKeys.size + dying).toBeGreaterThan(BRIDGE_ALLOCATION_BRIDGES);
+    expect(born).toBeGreaterThan(0);
+
+    build(swapped, SETTLED_SEC);
+    expect(bridgeStats.fullWalkReasons.overflow).toBe(1);
+    expect(bridgeStats.strokesMoved).toBe(firstKeys.size + dying + born);
+    expect(buffers.geometry.instanceCount)
+      .toBe(BRIDGE_ALLOCATION_BRIDGES * FABRIC_SLOT_SEGMENTS);
+    frame(SETTLED_SEC + 0.3);
+    // Every span is drawn: the live set in full, and as many afterimages as
+    // the headroom holds.
+    expect(blocks(buffers).filter((block) => !block.parked).length)
+      .toBe(BRIDGE_ALLOCATION_BRIDGES);
+
+    // Past the retract every afterimage is gone, the live set remains —
+    // every stroke of it, byte-for-byte what a from-scratch layer holds — and
+    // the holes are the spans the reaped afterimages gave back.
+    const settleSec = SETTLED_SEC + SETTLED_SEC + REAPED_SEC;
+    frame(settleSec);
+    const settled = blocks(buffers);
+    expect(settled.filter((block) => !block.parked).length).toBe(secondKeys.size);
+    expect(settled.filter((block) => block.parked).length)
+      .toBe(BRIDGE_ALLOCATION_BRIDGES - secondKeys.size);
+    expect(writtenBlocks(buffers)).toEqual(reference(
+      [{ ids: first, atSec: 0 }, { ids: swapped, atSec: SETTLED_SEC }],
+      settleSec,
+    ));
+    consumeUploads(buffers);
+    frame(settleSec + 0.1);
+    expect(buffers.positions.updateRanges).toEqual([]);
   });
 });

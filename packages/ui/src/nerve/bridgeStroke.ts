@@ -325,16 +325,19 @@ export function makeBridgeStrokeState(
  * produced is the same stroke against the same anchor, already drawn where it
  * belongs.
  *
- * ⭐ The COUNT is what the layer is here for. A composed stage re-selects on
- * every completed topology build and the overwhelmingly common answer is that
- * nothing moved, while the walk that answer used to arm re-writes every span
- * and re-uploads the layer's whole populated prefix. Zero means that walk has
- * nothing to say.
+ * ⭐ The COUNT — and, through `moved`, the LIST — is what the layer is here
+ * for. A composed stage re-selects on every completed topology build and the
+ * overwhelmingly common answer is that nothing moved; on a live chain the
+ * next most common answer is that a handful of strokes did. The layer admits
+ * exactly the strokes pushed onto `moved` into their own spans and touches
+ * nothing else, where it used to re-write every span and re-upload its whole
+ * populated prefix for either answer.
  */
 export function reconcileBridgeStrokes(
   strokes: Map<string, BridgeStrokeState>,
   bridges: readonly BridgeEdge[],
   nowSec: number,
+  moved?: BridgeStrokeState[],
 ): number {
   let changed = 0;
   const live = new Set<string>();
@@ -343,7 +346,9 @@ export function reconcileBridgeStrokes(
     live.add(key);
     const existing = strokes.get(key);
     if (existing === undefined) {
-      strokes.set(key, makeBridgeStrokeState(bridge, nowSec));
+      const born = makeBridgeStrokeState(bridge, nowSec);
+      strokes.set(key, born);
+      moved?.push(born);
       changed += 1;
       continue;
     }
@@ -351,12 +356,14 @@ export function reconcileBridgeStrokes(
     // it is rather than restarting: the clock is left alone.
     if (existing.dyingAt !== null) {
       existing.dyingAt = null;
+      moved?.push(existing);
       changed += 1;
     }
   }
   for (const [key, stroke] of strokes) {
     if (live.has(key) || stroke.dyingAt !== null) continue;
     stroke.dyingAt = nowSec;
+    moved?.push(stroke);
     changed += 1;
   }
   return changed;

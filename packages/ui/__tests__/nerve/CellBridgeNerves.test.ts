@@ -92,18 +92,46 @@ describe('the bridge layer stays inside its own budget', () => {
     expect(LAYER.match(/makeFatLineLayer\(/g)).toHaveLength(1);
   });
 
-  it('arms the full walk only for a selection that moved', () => {
-    // The walk re-writes every span and re-uploads the layer's whole populated
-    // prefix; a build that re-selected the same hosts has nothing for it to
-    // say. `reconcileBridgeStrokes` counts the strokes that actually moved.
-    expect(LAYER_CODE).toContain('if (changed > 0) dirtyRef.current = true;');
-    // Two arms and no third: the moved selection, and the knob drag that moves
-    // every stroke's energy at once.
-    expect(LAYER_CODE.match(/dirtyRef\.current = true/g)).toHaveLength(2);
-    // The boot deadline is NOT behind the gate — the first real build reports
-    // it whether or not that build moved anything.
+  it('selects only for a build whose hosts moved, and walks only to repaint or compact', () => {
+    // The registry is exact about what the selection reads, so a build it
+    // reports as unmoved skips the selection and the reconcile alike — the
+    // gate sits in front of `selectBridgeEdges`, not behind it.
+    expect(LAYER_CODE).toContain('const moved = syncBridgeHosts(');
+    expect(LAYER_CODE)
+      .toContain('if (!moved && selectedAgainstRef.current === anchorIndex) {');
+    expect(LAYER_CODE.indexOf('if (!moved &&'))
+      .toBeLessThan(LAYER_CODE.indexOf('selectBridgeEdges('));
+    // A selection that moved reaches the layer as the LIST of strokes it
+    // moved, which the next frame admits into spans of their own. It never
+    // arms a walk.
+    expect(LAYER_CODE)
+      .toContain('strokesRef.current, selection.bridges, now, pendingRef.current');
+    // Two arms for the full walk and no third: the knob that moves every
+    // stroke's energy at once, and the allocation overflow the walk compacts.
+    expect(LAYER_CODE.match(/fullWalkRef\.current = '/g)).toHaveLength(2);
+    expect(LAYER_CODE).toContain("fullWalkRef.current = 'repaint'");
+    expect(LAYER_CODE).toContain("fullWalkRef.current = 'overflow'");
+    // The boot deadline is reported on BOTH paths — the skipped build answers
+    // with the last selection, and first report wins in the gate — and on the
+    // selecting path it is not behind any movement test.
+    expect(LAYER_CODE.match(/reportBootBridgeSelected\(/g)).toHaveLength(2);
     expect(LAYER_CODE.indexOf('reportBootBridgeSelected('))
-      .toBeLessThan(LAYER_CODE.indexOf('if (changed > 0)'));
+      .toBeLessThan(LAYER_CODE.indexOf('selectBridgeEdges('));
+  });
+
+  it('gives a birth a parked hole before it grows the prefix', () => {
+    // The fabric's `allocateFabricSlot` rule: reuse first, high-water mark
+    // next, and at capacity fall back to the compacting walk.
+    const allocator = LAYER_CODE.slice(
+      LAYER_CODE.indexOf('function allocateBridgeSlot('),
+      LAYER_CODE.indexOf('function commitBridgeSlotRanges('),
+    );
+    expect(allocator).toContain('free.pop()');
+    expect(allocator.indexOf('free.pop()'))
+      .toBeLessThan(allocator.indexOf('layer.count += BRIDGE_SLOT_SEGMENTS'));
+    expect(allocator).toContain('if (next >= BRIDGE_ALLOCATION_BRIDGES) return BRIDGE_NO_SLOT;');
+    // And a reap hands its slot back on the frame it parks it.
+    expect(LAYER_CODE).toContain('free.push(stroke.slot);');
   });
 
   it('draws living strokes before retracting ones', () => {

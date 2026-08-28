@@ -34,6 +34,21 @@
 // retired the same pattern for the same reason; this class now borrows the
 // answer along with the rest of the parts.
 //
+// ⭐ The BUILD had the same disease one level up, and it was retired the same
+// way (2026-08-28). Every completed topology build re-ran the selection over
+// ~12,000 hosts, and a selection that moved a handful of strokes armed a walk
+// that re-wrote every span and re-uploaded the whole populated prefix (~350
+// KB) to move them. Now a host REGISTRY (`syncBridgeHosts`) persists across
+// builds and says exactly whether anything the selection reads has changed —
+// a build that changed nothing runs no selection at all — and a build that
+// did change something hands the layer the strokes it moved, which are
+// ADMITTED into spans of their own: a birth takes a parked hole first and the
+// end of the prefix next (the fabric's `allocateFabricSlot` rule), a death
+// retracts in the span it already has, and nothing else is written. The full
+// walk survives for the two cases that are genuinely about every stroke: a
+// knob drag, which moves every stroke's energy, and an allocation overflow,
+// where the walk is the compaction and hands spans to living strokes first.
+//
 // ⭐ The one part this class needed that did not exist is per-instance WIDTH
 // (`enableTaperedCapsuleWidthMaterial`), and it was built the same way: two
 // more attributes and three more shader patches on the SAME capsule material,
@@ -55,8 +70,10 @@ import {
   BRIDGE_ALLOCATION_BRIDGES,
   buildBridgeAnchorIndex,
   bridgeKey,
+  createBridgeHostRegistry,
   selectBridgeEdges,
-  type BridgeHostCell,
+  syncBridgeHosts,
+  type BridgeAnchorIndex,
   type BridgeHostPlan,
 } from '../geometry/bridgeEdges';
 import type { NeighborGraph } from '../geometry/neighborGraph';
@@ -68,6 +85,11 @@ import {
 import { LIVE } from '../tweaks/liveTweaks';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { useSimFrame } from '../tweaks/useSimFrame';
+import {
+  bridgeStats,
+  bridgeUploadBytes,
+  type BridgeFullWalkReason,
+} from './bridgeStats';
 import {
   BRIDGE_NO_SLOT,
   BRIDGE_WIDTH_RATIO,
@@ -169,9 +191,10 @@ function drawBridgeSlot(
 }
 
 /** Hand a stroke the next span and draw it there, returning the next free
- *  slot. Past the allocation the stroke is left unslotted and undrawn, which
- *  is where the class's overflow rule lands: the walk offers spans to living
- *  strokes first, so what an overflow drops is an afterimage. */
+ *  slot — the full walk's allocator. Past the allocation the stroke is left
+ *  unslotted and undrawn, which is where the class's overflow rule lands: the
+ *  walk offers spans to living strokes first, so what an overflow drops is an
+ *  afterimage. */
 function admitBridgeSlot(
   layer: FatLineLayer,
   stroke: BridgeStrokeState,
@@ -190,28 +213,55 @@ function admitBridgeSlot(
   return slot + 1;
 }
 
+/**
+ * A span for one stroke born between two full walks — the fabric's
+ * `allocateFabricSlot` rule. A hole a reap left below the populated prefix
+ * is reused before the prefix grows, so hole debt is paid by the next birth
+ * rather than carried; the prefix advances only past the last hole and never
+ * past the allocation. {@link BRIDGE_NO_SLOT} at capacity: the caller falls
+ * back to the compacting full walk, which is the one place living strokes
+ * are allowed to displace afterimages.
+ */
+function allocateBridgeSlot(layer: FatLineLayer, free: number[]): number {
+  const reused = free.pop();
+  if (reused !== undefined) return reused;
+  const next = layer.count / BRIDGE_SLOT_SEGMENTS;
+  if (next >= BRIDGE_ALLOCATION_BRIDGES) return BRIDGE_NO_SLOT;
+  layer.count += BRIDGE_SLOT_SEGMENTS;
+  return next;
+}
+
 /** Upload only the given SLOT ranges. The strokes that did not move kept
  *  their spans, so the populated prefix and the instance count are unchanged
  *  and the three lanes are cleared-and-marked exactly once each, as they are
  *  on any other frame. The width lane rides the positions here too: a tapered
- *  stroke's width is a function of where it is along its own curve. */
+ *  stroke's width is a function of where it is along its own curve. Returns
+ *  the bytes flagged. */
 function commitBridgeSlotRanges(
   layer: FatLineLayer,
   ranges: readonly FabricSlotRange[],
-): void {
-  if (ranges.length === 0) return;
+): number {
+  // The instance count follows the prefix on every commit, marks or not: an
+  // admission grows `layer.count`, and the draw's truth should not depend on
+  // whether the frame that grew it also had bytes to flag (it always does —
+  // an admitted span is drawn or parked the same frame — but the count is
+  // not the place to rely on that).
+  layer.geometry.instanceCount = layer.count;
+  if (ranges.length === 0) return 0;
   layer.posBuf.clearUpdateRanges();
   layer.colBuf.clearUpdateRanges();
   layer.widthBuf?.clearUpdateRanges();
+  let segments = 0;
   for (const range of ranges) {
     layer.posBuf.addUpdateRange(range.start * 6, range.count * 6);
     layer.colBuf.addUpdateRange(range.start * 6, range.count * 6);
     layer.widthBuf?.addUpdateRange(range.start * 2, range.count * 2);
+    segments += range.count;
   }
   layer.posBuf.needsUpdate = true;
   layer.colBuf.needsUpdate = true;
   if (layer.widthBuf) layer.widthBuf.needsUpdate = true;
-  layer.geometry.instanceCount = layer.count;
+  return bridgeUploadBytes(segments);
 }
 
 export interface CellBridgeNervesProps {
@@ -265,15 +315,28 @@ export default function CellBridgeNerves({
   }, []);
 
   const strokesRef = useRef<Map<string, BridgeStrokeState>>(new Map());
+  /** The selection's input across builds — see `syncBridgeHosts`. */
+  const registryRef = useRef(createBridgeHostRegistry());
   const coverageCacheRef = useRef<Map<number, number>>(new Map());
   const planCacheRef = useRef<Map<number, BridgeHostPlan>>(new Map());
-  const dirtyRef = useRef(false);
-  /** The strokes still moving, in ascending slot order — and the whole of what
-   *  a frame between two builds looks at. Every full walk rebuilds it; a
-   *  stroke leaves on the frame it settles or reaps and re-enters only through
-   *  another full walk, because a build is the only thing that can start an
-   *  animation here. */
-  const animatingRef = useRef<BridgeStrokeState[]>([]);
+  /** The anchor index the last selection ran against, and how many bridges
+   *  it chose — what a skipped build reports to the boot gate in place of the
+   *  selection it did not need to run. */
+  const selectedAgainstRef = useRef<BridgeAnchorIndex | null>(null);
+  const selectedCountRef = useRef(0);
+  /** Strokes the last build moved that no frame has admitted yet. */
+  const pendingRef = useRef<BridgeStrokeState[]>([]);
+  /** Arms the full walk, and says why. Null between walks. */
+  const fullWalkRef = useRef<BridgeFullWalkReason | null>(null);
+  /** The strokes still moving — the whole of what a frame between two builds
+   *  looks at. A stroke enters when a build moves it and leaves on the frame
+   *  it settles or reaps. A Set rather than a list because a build can move
+   *  a stroke that is still moving — born, then displaced inside its 1.2 s
+   *  growth — and it has to be listed exactly once. */
+  const animatingRef = useRef<Set<BridgeStrokeState>>(new Set());
+  /** Slots below the populated prefix whose stroke reaped: the holes the next
+   *  births take before the prefix grows. Emptied by every full walk. */
+  const freeSlotsRef = useRef<number[]>([]);
   /** Reused so a growth window allocates nothing per frame. */
   const dirtySlotsRef = useRef<number[]>([]);
   const sampleRef = useRef(new Float32Array(3));
@@ -317,30 +380,33 @@ export default function CellBridgeNerves({
   }, [cellDetailViewFocusRef, layer.material]);
   useFrame(applyViewWeight);
 
-  // Re-select on every completed topology build. Hosts are keyed on the DRAWN
-  // fabric, so this has to follow the same build the fabric does.
+  // Re-select on every completed topology build whose hosts moved. Hosts are
+  // keyed on the DRAWN fabric, so this has to follow the same build the
+  // fabric does.
   useEffect(() => {
     if (anchorIndex === null) return;
-    const cells = cellsRef.current;
-    const graph = passiveGraphRef.current;
-    const degree = new Map<number, number>();
-    for (const edge of graph.edges) {
-      degree.set(edge.from, (degree.get(edge.from) ?? 0) + 1);
-      degree.set(edge.to, (degree.get(edge.to) ?? 0) + 1);
-    }
-    const hosts: BridgeHostCell[] = [];
-    for (const cell of cells.values()) {
-      // A dead-but-not-yet-collected Cell contributes no fabric edge, and it
-      // must contribute no bridge either — a retracting fibre that a rebuild
-      // resurrects is the exact bug `buildNeighborGraph` guards against.
-      if (cell.death_at_ms != null) continue;
-      hosts.push({
-        id: cell.id,
-        x: cell.pos_seed[0],
-        y: cell.pos_seed[1],
-        z: cell.pos_seed[2],
-        degree: degree.get(cell.id) ?? 0,
-      });
+    const registry = registryRef.current;
+    const moved = syncBridgeHosts(
+      registry,
+      cellsRef.current,
+      passiveGraphRef.current.edges,
+    );
+    const now = simClock.elapsedSec;
+    // ⭐ The skip. The registry is exact about what the selection reads, so a
+    // build that moved no host against the same anchors would select the
+    // same bridges, reconcile them to zero movement, and leave the layer as
+    // it is — the steady state of a composed stage, and every refill build
+    // on a cold server. None of that work is done. The boot record still
+    // hears from this build: first report wins in the gate, and the answer
+    // is the last selection's, which is what this build's would have been.
+    if (!moved && selectedAgainstRef.current === anchorIndex) {
+      bridgeStats.observeBuild(true, 0);
+      if (version >= 1) {
+        reportBootBridgeSelected(
+          selectedCountRef.current > 0 ? now + GROWTH_MS / 1000 : now,
+        );
+      }
+      return;
     }
 
     if (coverageCacheRef.current.size > MEMO_CAP) {
@@ -349,15 +415,23 @@ export default function CellBridgeNerves({
     if (planCacheRef.current.size > MEMO_CAP) {
       planCacheRef.current = new Map();
     }
-    const selection = selectBridgeEdges(hosts, anchorIndex, {
+    const selection = selectBridgeEdges(registry.hosts.values(), anchorIndex, {
       coverageCache: coverageCacheRef.current,
       planCache: planCacheRef.current,
     });
+    selectedAgainstRef.current = anchorIndex;
+    selectedCountRef.current = selection.bridges.length;
 
-    const now = simClock.elapsedSec;
+    // ⚠️ Only the strokes the selection MOVED reach the layer, through
+    // `pending`: a birth, a revival mid-retract, a death. The next frame
+    // admits them into spans of their own and writes nothing else — a build
+    // that moves six strokes writes six, not the ~1,600 the full walk used
+    // to restate. The knob gate in the frame is the other arm and stays
+    // unconditional: a knob moves every stroke's energy at once.
     const changed = reconcileBridgeStrokes(
-      strokesRef.current, selection.bridges, now,
+      strokesRef.current, selection.bridges, now, pendingRef.current,
     );
+    bridgeStats.observeBuild(false, changed);
     // The boot record's outer-nerve deadline. The first selection against a
     // real topology build (version 0 is the pre-build mount pass over an
     // empty host map) is the boot cohort of bridges: born just above, fully
@@ -370,13 +444,6 @@ export default function CellBridgeNerves({
         selection.bridges.length > 0 ? now + GROWTH_MS / 1000 : now,
       );
     }
-    // ⚠️ Only a selection that MOVED arms the walk. A build that re-selected
-    // the same hosts against the same anchors — the steady state of a composed
-    // stage, and every refill build on a cold server — leaves the layer
-    // exactly as it already is, so re-walking it would re-upload the whole
-    // populated prefix to restate it. The tweak gate below is the other arm
-    // and stays unconditional: a knob moves every stroke's energy at once.
-    if (changed > 0) dirtyRef.current = true;
   }, [anchorIndex, version, cellsRef, passiveGraphRef, simClock]);
 
   useSimFrame(() => {
@@ -389,33 +456,65 @@ export default function CellBridgeNerves({
     ) {
       tweaks.alpha = LIVE.cell.fabricAlpha;
       tweaks.centerDim = LIVE.cell.centerDim;
-      dirtyRef.current = true;
+      fullWalkRef.current = 'repaint';
     }
     const animating = animatingRef.current;
-    if (!dirtyRef.current && animating.length === 0) return;
+    const pending = pendingRef.current;
+    if (
+      fullWalkRef.current === null
+      && pending.length === 0
+      && animating.size === 0
+    ) return;
 
     const now = simClock.elapsedSec;
     const strokes = strokesRef.current;
     const sample = sampleRef.current;
     const baseEnergy = LIVE.cell.fabricAlpha;
     const centerDim = LIVE.cell.centerDim;
+    const free = freeSlotsRef.current;
 
-    if (dirtyRef.current) {
-      // The stroke SET changed (a topology build) or every stroke's energy did
-      // (a knob drag). Spans are handed out here and NOWHERE else, so this
-      // walk is also the compaction: the holes a window's reaps left behind
-      // are reclaimed by the next build, and hole debt can never outlive one.
-      animating.length = 0;
+    // Admission: the strokes the last build moved, and no other. A birth (or
+    // a revived stroke the allocation had dropped) takes a span; a death and
+    // a revival keep the span they have. Every one of them joins the moving
+    // set, and the pass below draws it this frame — the birth frame writes
+    // nothing and parks the span, exactly as the walk did. Only an
+    // allocation overflow falls through to the walk, which is the compaction.
+    let admitted = 0;
+    if (fullWalkRef.current === null && pending.length > 0) {
+      for (const stroke of pending) {
+        if (stroke.dyingAt === null && stroke.slot === BRIDGE_NO_SLOT) {
+          const slot = allocateBridgeSlot(layer, free);
+          if (slot === BRIDGE_NO_SLOT) {
+            fullWalkRef.current = 'overflow';
+            break;
+          }
+          stroke.slot = slot;
+        }
+        animating.add(stroke);
+      }
+      if (fullWalkRef.current === null) {
+        admitted = pending.length;
+        pending.length = 0;
+      }
+    }
+
+    if (fullWalkRef.current !== null) {
+      // Every stroke's energy changed (a knob drag), or the allocation
+      // overflowed. Spans are handed out afresh from zero, so this walk is
+      // also the compaction: every hole is reclaimed, and living strokes
+      // come first so an overflow may clip an afterimage, never live form.
+      const reason = fullWalkRef.current;
+      pending.length = 0;
+      free.length = 0;
+      animating.clear();
       let slot = 0;
-      // Living strokes first: an allocation overflow may clip an afterimage,
-      // never live form.
       for (const stroke of strokes.values()) {
         if (stroke.dyingAt !== null) continue;
         const render = bridgeRenderState(stroke, now);
         slot = admitBridgeSlot(
           layer, stroke, render, slot, baseEnergy, centerDim, sample,
         );
-        if (render.animating) animating.push(stroke);
+        if (render.animating) animating.add(stroke);
       }
       for (const [key, stroke] of strokes) {
         if (stroke.dyingAt === null) continue;
@@ -427,11 +526,14 @@ export default function CellBridgeNerves({
         slot = admitBridgeSlot(
           layer, stroke, render, slot, baseEnergy, centerDim, sample,
         );
-        if (render.animating) animating.push(stroke);
+        if (render.animating) animating.add(stroke);
       }
       layer.count = slot * BRIDGE_SLOT_SEGMENTS;
       commitLayer(layer);
-      dirtyRef.current = false;
+      bridgeStats.observeFullWalk(
+        reason, slot, bridgeUploadBytes(layer.count), slot,
+      );
+      fullWalkRef.current = null;
       return;
     }
 
@@ -440,20 +542,22 @@ export default function CellBridgeNerves({
     // is a small minority of the layer, and rewriting the rest said nothing.
     const dirtySlots = dirtySlotsRef.current;
     dirtySlots.length = 0;
-    let kept = 0;
-    for (let index = 0; index < animating.length; index += 1) {
-      const stroke = animating[index];
+    for (const stroke of animating) {
       const render = bridgeRenderState(stroke, now);
       if (render.reap) {
         // The afterimage's last frame. Its span goes degenerate before the
         // stroke lets go of it, or the final retract geometry stays lit until
-        // some later build happens to reuse the slot.
+        // some later birth happens to reuse the slot — and the slot becomes
+        // that hole, first in line for the next birth.
         if (stroke.slot !== BRIDGE_NO_SLOT) {
           const from = stroke.slot * BRIDGE_SLOT_SEGMENTS;
           parkBridgeSegments(layer, from, from + BRIDGE_SLOT_SEGMENTS);
           dirtySlots.push(stroke.slot);
+          free.push(stroke.slot);
+          stroke.slot = BRIDGE_NO_SLOT;
         }
         strokes.delete(bridgeKey(stroke.cellId, stroke.anchorIndex));
+        animating.delete(stroke);
         continue;
       }
       if (stroke.slot !== BRIDGE_NO_SLOT) {
@@ -462,15 +566,23 @@ export default function CellBridgeNerves({
       }
       // Drawn before the test rather than after it: the frame a stroke settles
       // on is the frame its finished geometry lands. It leaves after that.
-      if (render.animating) {
-        animating[kept] = stroke;
-        kept += 1;
-      }
+      if (!render.animating) animating.delete(stroke);
     }
-    animating.length = kept;
-    // Already ascending — spans were handed out in walk order and this walk
-    // preserves it — so the merge is only deciding which runs to bridge.
-    commitBridgeSlotRanges(layer, mergeFabricSlotRanges(dirtySlots));
+    // Reused holes put the moving set out of slot order, so the merge sorts
+    // before it decides which runs to bridge — which it always did.
+    const bytes = commitBridgeSlotRanges(
+      layer, mergeFabricSlotRanges(dirtySlots),
+    );
+    if (admitted > 0) {
+      bridgeStats.observeAdmission(
+        dirtySlots.length,
+        bytes,
+        layer.count / BRIDGE_SLOT_SEGMENTS,
+        free.length,
+      );
+    } else {
+      bridgeStats.observeMovingFrame(dirtySlots.length, bytes);
+    }
   });
 
   return <primitive object={layer.mesh} />;

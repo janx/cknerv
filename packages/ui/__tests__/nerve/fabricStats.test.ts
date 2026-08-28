@@ -6,12 +6,46 @@ import {
   snapshotFabricStats,
 } from '../../src/nerve/fabricStats';
 import { FABRIC_SLOT_SEGMENTS } from '../../src/nerve/fabricSlots';
+import {
+  BRIDGE_SLOT_UPLOAD_BYTES,
+  bridgeStats,
+} from '../../src/nerve/bridgeStats';
 
 afterEach(() => {
   resetFabricStats();
 });
 
 describe('fabricStats', () => {
+  it('carries the bridge layer counters and resets them with its own', () => {
+    bridgeStats.observeBuild(true, 0);
+    bridgeStats.observeBuild(false, 6);
+    bridgeStats.observeAdmission(6, 6 * BRIDGE_SLOT_UPLOAD_BYTES, 1600, 0);
+    bridgeStats.observeMovingFrame(6, 6 * BRIDGE_SLOT_UPLOAD_BYTES);
+    bridgeStats.observeFullWalk('repaint', 1600, 358_400, 1600);
+    const s = snapshotFabricStats();
+    expect(s.bridge.builds).toBe(2);
+    expect(s.bridge.selectionsSkipped).toBe(1);
+    expect(s.bridge.selectionsRun).toBe(1);
+    expect(s.bridge.strokesMoved).toBe(6);
+    expect(s.bridge.admissionFrames).toBe(1);
+    expect(s.bridge.fullWalks).toBe(1);
+    expect(s.bridge.fullWalkReasons).toEqual({ repaint: 1, overflow: 0 });
+    expect(s.bridge.strokesWritten).toBe(6 + 6 + 1600);
+    expect(s.bridge.strokesWrittenLastBuild).toBe(1600);
+    expect(s.bridge.uploadedBytes).toBe(12 * BRIDGE_SLOT_UPLOAD_BYTES + 358_400);
+    expect(s.bridge.uploadedBytesLastBuild).toBe(358_400);
+    expect(s.bridge.usedSlotsLast).toBe(1600);
+    expect(s.bridge.freeSlotsLast).toBe(0);
+    // One span: positions and colours at six floats, the width lane at two.
+    expect(BRIDGE_SLOT_UPLOAD_BYTES).toBe(FABRIC_SLOT_SEGMENTS * 14 * 4);
+    // Copies, not live references — and one reset clears both layers.
+    s.bridge.fullWalkReasons.repaint = 99;
+    expect(snapshotFabricStats().bridge.fullWalkReasons.repaint).toBe(1);
+    resetFabricStats();
+    expect(snapshotFabricStats().bridge.builds).toBe(0);
+    expect(snapshotFabricStats().bridge.strokesWritten).toBe(0);
+  });
+
   it('accumulates diffs, frame paths, and animating extents', () => {
     fabricStats.observeDiff({
       atSec: 1, kind: 'setFabric', added: 120, revived: 4, dying: 80, stable: 7800, totalStates: 8000,
