@@ -657,3 +657,106 @@ describe('ConsensusRouteCamera record composition', () => {
     expect(controls.target).toEqual(manuallyOwnedTarget);
   });
 });
+
+describe('ConsensusRouteCamera automation flag', () => {
+  beforeEach(() => {
+    frameMock.callback = null;
+    document.body.innerHTML = '';
+    viewportMock.width = 1440;
+    viewportMock.height = 800;
+    canvasMock.current = document.createElement('canvas');
+    vi.spyOn(canvasMock.current, 'getBoundingClientRect').mockImplementation(() => (
+      rect(0, 0, viewportMock.width, viewportMock.height)
+    ));
+    cameraMock.current = new THREE.PerspectiveCamera(
+      50,
+      viewportMock.width / viewportMock.height,
+      0.1,
+      1000,
+    );
+    cameraMock.current.position.set(30, 50, 20);
+    galaxyFrame.rotationY = 0;
+  });
+
+  it('is set for every frame the controller owns the camera, and only those', () => {
+    // What the Cell picker suspends its hover probes on, and what the
+    // adaptive sampler can exclude: true from the frame a transition is
+    // live until the frame it lands, false before and after. Plain ref, no
+    // render.
+    const cache = emptyCellsCache();
+    cache.cells.set(2, cell(2, [20, 1, -8]));
+    const controls = {
+      target: new THREE.Vector3(0, 30, 0),
+      update: vi.fn(() => {
+        cameraMock.current!.lookAt(controls.target);
+        cameraMock.current!.updateMatrixWorld();
+      }),
+    } satisfies ConsensusRouteCameraControls;
+    controls.update();
+    const controlsRef: { current: ConsensusRouteCameraControls | null } = {
+      current: controls,
+    };
+    const automationActiveRef = { current: false };
+    const view = (children: ReactNode) => (
+      <CellGalaxyProvider value={cache}>{children}</CellGalaxyProvider>
+    );
+    const rendered = render(view(
+      <ConsensusRouteCamera
+        controlsRef={controlsRef}
+        automationActiveRef={automationActiveRef}
+      />,
+    ));
+    // Idle frames: nothing owns the camera.
+    act(() => { frameMock.callback?.({}, 0.016); });
+    expect(automationActiveRef.current).toBe(false);
+
+    rendered.rerender(view(
+      <ConsensusRouteCamera
+        controlsRef={controlsRef}
+        automationActiveRef={automationActiveRef}
+        recordIdentity="19:2"
+        recordTargetCellId={2}
+      />,
+    ));
+    const flags: boolean[] = [];
+    const moved: boolean[] = [];
+    act(() => {
+      for (let frame = 0; frame < 60; frame += 1) {
+        const before = cameraMock.current!.position.clone();
+        frameMock.callback?.({}, 0.1);
+        moved.push(before.distanceToSquared(cameraMock.current!.position) > 0);
+        flags.push(automationActiveRef.current);
+      }
+    });
+    // Live from the first flight frame; the frame that lands is the first
+    // reported at rest; everything after stays at rest.
+    expect(flags[0]).toBe(true);
+    const landed = flags.indexOf(false);
+    expect(landed).toBeGreaterThan(3);
+    expect(flags.slice(landed).every((flag) => !flag)).toBe(true);
+    // The flag never reads false on a frame that moved the camera, and the
+    // (delayed record) flight moved the camera on most of the flagged ones.
+    for (let frame = 0; frame < flags.length; frame += 1) {
+      if (moved[frame]) expect(flags[frame] || frame === landed).toBe(true);
+    }
+    expect(moved.slice(0, landed).filter(Boolean).length).toBeGreaterThan(3);
+
+    // Manual control cancels the session; the next frame reports at rest.
+    rendered.rerender(view(
+      <ConsensusRouteCamera
+        controlsRef={controlsRef}
+        automationActiveRef={automationActiveRef}
+        recordIdentity="19:2"
+        recordTargetCellId={2}
+        manualRevision={1}
+      />,
+    ));
+    act(() => { frameMock.callback?.({}, 0.016); });
+    expect(automationActiveRef.current).toBe(false);
+
+    // Unmounting never leaves the flag set.
+    automationActiveRef.current = true;
+    rendered.unmount();
+    expect(automationActiveRef.current).toBe(false);
+  });
+});

@@ -29,16 +29,20 @@ export interface CellSlotState {
   /** Dense slot → cell array; `[0, count)` is always fully occupied. */
   cells: Cell[];
   /** Immutable snapshot republished only when a sync changed something —
-   * consumers keep identity-based memos (raycast index, effect deps).
+   * consumers keep identity-based memos (effect deps, cached derivations).
    *
    * Both halves of that sentence are load-bearing, and neither can be paid
    * for by handing out a reference instead of a copy. `cells` above is
    * MUTATED IN PLACE by every sync, so publishing it would hand consumers a
-   * live array; and the screen-space hit index rebuilds on exactly this
-   * array's identity (`indexedCells !== cells` in CellGalaxy's raycast), so
-   * an identity that outlived a content change would aim clicks at the
-   * previous frame's cells. Nor can the sync's INPUT list stand in: this is
-   * slot order, and slot order deliberately ignores list order. */
+   * live array; and a consumer that reads `published[slot]` after the fact
+   * (the screen-space hit index resolves its hits that way) must see the
+   * cell that slot holds NOW, so an identity that outlived a content change
+   * would hand it the previous frame's cells. The index does not rebuild on
+   * this identity — it keys on `positionsChanged` (as the field version) and
+   * on the per-slot inputs the buffer writer reports — which is what lets a
+   * payload-only republish cost it nothing. Nor can the sync's INPUT list
+   * stand in: this is slot order, and slot order deliberately ignores list
+   * order. */
   published: Cell[];
   /** cell id → slot. */
   slotOf: Map<number, number>;

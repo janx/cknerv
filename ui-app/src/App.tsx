@@ -147,9 +147,13 @@ import {
   changeOrbitGesture,
   createOrbitGestureState,
   endOrbitGesture,
+  noteOrbitCameraChange,
   noteOrbitPointerDown,
   noteOrbitPointerMove,
+  orbitCameraSuspendsPicking,
   orbitGestureSuppressesPointerAction,
+  settleOrbitCameraFrame,
+  type OrbitGestureState,
 } from './orbit-gesture-state';
 import {
   CELL_MEMORY_RECALL_MAX_PULSES,
@@ -194,6 +198,35 @@ interface AppProps {
 
 const DEFAULT_CAMERA_TARGET: [number, number, number] = [0, CELLS_Y, 0];
 const STREAM_STALE_AFTER_MS = 15_000;
+
+/**
+ * Settles, once per frame, whether the camera is being moved by something
+ * other than a pointer that is still down: OrbitControls' damping tail keeps
+ * reporting `change` for a second or two after `end`, and the route camera
+ * flies without any gesture at all. The Cell picker reads the one ref this
+ * writes and skips hover probes while it is set; presses and clicks still
+ * answer, and the index rebuilds once, lazily, on the first probe after the
+ * motion settles. Mounted after the route camera so a frame's verdict includes
+ * that frame's flight step; at default priority it runs after the controls'
+ * own update (drei schedules that at -1).
+ */
+function CameraMotionSentinel({
+  gestureRef,
+  automationActiveRef,
+  pickingSuspendedRef,
+}: {
+  gestureRef: { readonly current: OrbitGestureState };
+  automationActiveRef: { readonly current: boolean };
+  pickingSuspendedRef: { current: boolean };
+}) {
+  useFrame(() => {
+    const gesture = gestureRef.current;
+    settleOrbitCameraFrame(gesture);
+    pickingSuspendedRef.current = orbitCameraSuspendsPicking(gesture)
+      || automationActiveRef.current;
+  });
+  return null;
+}
 
 function CellDetailViewTracker({
   controlsRef,
@@ -310,22 +343,32 @@ export default function App({
     0,
   );
   const orbitGestureRef = useRef(createOrbitGestureState());
-  // CellPicker still raycasts pointer-down/click for correct R3F selection,
-  // then skips its O(N) screen projections once OrbitControls reports real
-  // camera movement. This ref changes outside React's render path.
+  // While set, CellPicker skips its hover probes — the O(N) screen
+  // re-projection a moving camera would force on every pointer move — and
+  // still answers pointer-down and click from a precise snapshot. Set
+  // synchronously by the first camera change of a gesture, and otherwise
+  // owned by CameraMotionSentinel, which settles it once per frame from the
+  // change latch below and the route camera's automation flag: the damping
+  // tail after a release and a route flight both move the camera with no
+  // gesture in progress. These refs change outside React's render path.
   const orbitPickingSuspendedRef = useRef(false);
+  const cameraAutomationActiveRef = useRef(false);
   const beginOrbitInteraction = useCallback(() => {
-    orbitPickingSuspendedRef.current = false;
     beginOrbitGesture(orbitGestureRef.current);
   }, []);
   const changeOrbitInteraction = useCallback(() => {
-    if (orbitGestureRef.current.active) {
-      orbitPickingSuspendedRef.current = true;
-    }
-    if (changeOrbitGesture(orbitGestureRef.current)) noteOrbitInteraction();
+    const gesture = orbitGestureRef.current;
+    noteOrbitCameraChange(gesture);
+    // A drag's own moves must not wait for the frame: the pointer move that
+    // follows this change would re-project the field before the sentinel
+    // runs.
+    if (gesture.active) orbitPickingSuspendedRef.current = true;
+    if (changeOrbitGesture(gesture)) noteOrbitInteraction();
   }, []);
   const endOrbitInteraction = useCallback(() => {
-    orbitPickingSuspendedRef.current = false;
+    // Not cleared here: with damping the camera is still moving, and the
+    // sentinel lifts the suspension on the first frame that passes without a
+    // change.
     endOrbitGesture(orbitGestureRef.current, performance.now());
   }, []);
   // A click must not move the camera. OrbitControls rotates on the FIRST pixel
@@ -2011,6 +2054,7 @@ export default function App({
             focus={memoryRouteHopLock}
             controlsRef={orbitControlsRef}
             manualRevision={orbitInteractionRevision}
+            automationActiveRef={cameraAutomationActiveRef}
             recordIdentity={memoryRecordIdentity}
             recordTargetCellId={memoryTraceRequest?.targetCellId ?? null}
             recordTraceReadout={memoryTraceReadout}
@@ -2030,6 +2074,13 @@ export default function App({
             onStart={beginOrbitInteraction}
             onChange={changeOrbitInteraction}
             onEnd={endOrbitInteraction}
+          />
+          {/* Last in the Canvas on purpose: its frame verdict has to follow
+              the route camera's step and the controls' update above. */}
+          <CameraMotionSentinel
+            gestureRef={orbitGestureRef}
+            automationActiveRef={cameraAutomationActiveRef}
+            pickingSuspendedRef={orbitPickingSuspendedRef}
           />
         </Canvas>
       </CellGalaxyProvider>

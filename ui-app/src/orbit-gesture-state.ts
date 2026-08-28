@@ -23,6 +23,12 @@ export interface OrbitGestureState {
   originX: number;
   originY: number;
   suppressPointerActionUntilMs: number;
+  /** OrbitControls reported a camera change since the last frame settled.
+   *  Latched by `change`, read and cleared once per frame. */
+  cameraChangedSinceFrame: boolean;
+  /** The camera moved during the frame that last settled — by the hand, or
+   *  by the damping tail OrbitControls runs after the hand lets go. */
+  cameraMoving: boolean;
 }
 
 export function createOrbitGestureState(): OrbitGestureState {
@@ -33,6 +39,8 @@ export function createOrbitGestureState(): OrbitGestureState {
     originX: Number.NaN,
     originY: Number.NaN,
     suppressPointerActionUntilMs: 0,
+    cameraChangedSinceFrame: false,
+    cameraMoving: false,
   };
 }
 
@@ -108,4 +116,35 @@ export function orbitGestureSuppressesPointerAction(
   const safeAtMs = Number.isFinite(atMs) ? atMs : 0;
   return (state.active && state.dragged)
     || safeAtMs < state.suppressPointerActionUntilMs;
+}
+
+/**
+ * OrbitControls reported a camera change — inside a gesture or not. `end`
+ * fires at pointer-up, but with damping the camera keeps moving for a second
+ * or two afterwards and `update()` keeps reporting `change` every frame it
+ * does; this latch is how the frame loop learns that, since the events
+ * themselves carry no "still moving" bit.
+ */
+export function noteOrbitCameraChange(state: OrbitGestureState): void {
+  state.cameraChangedSinceFrame = true;
+}
+
+/** Once per frame, after OrbitControls has had its update: settle the latch
+ *  into `cameraMoving` and return it. A frame that passes with no change is
+ *  the camera at rest. */
+export function settleOrbitCameraFrame(state: OrbitGestureState): boolean {
+  state.cameraMoving = state.cameraChangedSinceFrame;
+  state.cameraChangedSinceFrame = false;
+  return state.cameraMoving;
+}
+
+/**
+ * Whether the Cell picker should skip hover probes for the frame that just
+ * settled: the camera is moving, or a gesture that has already moved it is
+ * still held (a paused drag keeps its suspension until release, so the drag
+ * resumes without a rebuild). Automation — a route flight — is the third
+ * source, and is OR'd in by the caller from the camera controller's own flag.
+ */
+export function orbitCameraSuspendsPicking(state: OrbitGestureState): boolean {
+  return state.cameraMoving || (state.active && state.revisionNoted);
 }

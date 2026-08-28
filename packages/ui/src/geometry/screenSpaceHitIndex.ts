@@ -66,13 +66,42 @@ export class ScreenSpaceHitIndex {
     this.maxRadius = 0;
   }
 
+  /** The largest radius admitted since `begin`; zero for an empty index. */
+  get maxRadiusPx(): number {
+    return this.maxRadius;
+  }
+
+  /** Staging for `insertEntry`: centre x, centre y, radius, depth. A hot
+   *  rebuild loop writes these four lanes and passes only the index, so no
+   *  double crosses a call boundary the engine might not inline — a boxed
+   *  argument per entry is the difference between a rebuild that allocates
+   *  nothing and one that leaves a megabyte behind. */
+  readonly entry = new Float64Array(4);
+
+  /** Returns whether the entry was admitted, so a caller can keep its own
+   *  record of exactly the entries the index holds. */
   insert(
     index: number,
     centerX: number,
     centerY: number,
     radius: number,
     depth: number,
-  ): void {
+  ): boolean {
+    const entry = this.entry;
+    entry[0] = centerX;
+    entry[1] = centerY;
+    entry[2] = radius;
+    entry[3] = depth;
+    return this.insertEntry(index);
+  }
+
+  /** `insert` for the values staged in `entry`. */
+  insertEntry(index: number): boolean {
+    const entry = this.entry;
+    const centerX = entry[0];
+    const centerY = entry[1];
+    const radius = entry[2];
+    const depth = entry[3];
     if (
       index < 0
       || index >= this.capacity
@@ -84,7 +113,7 @@ export class ScreenSpaceHitIndex {
       || centerX - radius - this.admitPad > this.width
       || centerY + radius + this.admitPad < 0
       || centerY - radius - this.admitPad > this.height
-    ) return;
+    ) return false;
 
     const bx = Math.max(
       0,
@@ -102,6 +131,7 @@ export class ScreenSpaceHitIndex {
     this.next[index] = this.heads[bucket];
     this.heads[bucket] = index;
     this.maxRadius = Math.max(this.maxRadius, radius);
+    return true;
   }
 
   find(

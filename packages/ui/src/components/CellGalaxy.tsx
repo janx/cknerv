@@ -52,6 +52,7 @@ import {
   ScreenSpaceHitIndex,
   type ScreenSpaceRadiusPad,
 } from '../geometry/screenSpaceHitIndex';
+import { CellPickDriftEnvelope } from '../geometry/cellPickDriftEnvelope';
 import type { ScalarThresholdEpoch } from '../geometry/sparseScalarAttribute';
 import type { Cell } from '@cknerv/types';
 import {
@@ -75,9 +76,12 @@ import {
 import {
   CELL_CLICK_MAX_POINTER_DELTA_PX,
   CELL_EXPANDED_DETAIL_THRESHOLD,
+  CELL_EXPANDED_PICK_MIN_RADIUS_PX,
+  CELL_EXPANDED_PICK_PADDING_PX,
   CELL_HOVER_FOCUS,
   CELL_PICK_FOCUS_PAD_CEILING_PX,
   CELL_SELECTED_FOCUS,
+  CONSENSUS_BRAID_BASE_SCALE,
   CONSENSUS_BRAID_LOCAL_RADIUS,
   NETWORK_PEER_PICK_FLAG,
   cellCanvasCursor,
@@ -275,6 +279,10 @@ export interface CellBufferTargets {
   sizeArr:  Float32Array;
   memoryIdentityArr: Float32Array;
   memorySeedArr: Float32Array;
+  /** Picker-owned, never uploaded: the capacity-derived braid presence per
+   * slot, in full precision so the screen index reads exactly the value the
+   * derive returns. Optional only for callers that draw without picking. */
+  pickPresenceArr?: Float64Array;
 }
 
 /** Client-clock lifecycle stamps keyed by cell id. Every one of them is
@@ -293,6 +301,9 @@ export interface CellBufferPresentation {
   size: number;
   memoryIdentity: readonly [number, number, number, number];
   memorySeed: number;
+  /** `consensusBraidPresenceScale(capacityMass(capacity))`, the one
+   * capacity-derived term the pick disc reads. */
+  braidPresence: number;
 }
 
 function cellBufferPresentation(
@@ -308,13 +319,22 @@ function cellBufferPresentation(
     size: cellPointSize(cell),
     memoryIdentity: identity.semantic,
     memorySeed: identity.hashSeed,
+    braidPresence: consensusBraidPresenceScale(capacityMass(cell.capacity)),
   };
   cache?.set(cell, presentation);
   return presentation;
 }
 
 /** Write all visible Cell buffers, or only the supplied changed ranges for a
- * live block delta. Caller owns GPU update ranges and `needsUpdate` flags. */
+ * live block delta. Caller owns GPU update ranges and `needsUpdate` flags.
+ *
+ * Returns how many written slots changed a PICK input — point size or braid
+ * presence — against what the slot held before. The screen-space hit index
+ * bakes exactly those two per-slot values besides position, so this is the
+ * one signal (beside the field version, which covers position) that can make
+ * it stale; a rewrite that leaves both where they were, which is what every
+ * enrichment refresh and every death does, returns zero and costs no
+ * re-projection. */
 export function writeCellBuffers(
   cells: Cell[],
   count: number,
@@ -324,8 +344,10 @@ export function writeCellBuffers(
   stamps?: CellBufferStamps,
   ranges?: readonly CellBufferRange[],
   presentationCache?: WeakMap<Cell, CellBufferPresentation>,
-): void {
+): number {
   const activeRanges = ranges ?? [{ start: 0, count }];
+  const pickPresenceArr = targets.pickPresenceArr;
+  let pickInputsChanged = 0;
   for (const range of activeRanges) {
     const end = Math.min(count, cells.length, range.start + range.count);
     for (let i = Math.max(0, range.start); i < end; i += 1) {
@@ -338,6 +360,20 @@ export function writeCellBuffers(
       const flashAtS = flashMap.get(c.id) ?? -1e9;
 
       const presentation = cellBufferPresentation(c, presentationCache);
+      // Compared as stored: the size lane is float32, the presence lane is
+      // not, and the index reads both back from these arrays.
+      if (
+        Math.fround(presentation.size) !== targets.sizeArr[i]
+        || (
+          pickPresenceArr !== undefined
+          && pickPresenceArr[i] !== presentation.braidPresence
+        )
+      ) {
+        pickInputsChanged += 1;
+      }
+      if (pickPresenceArr !== undefined) {
+        pickPresenceArr[i] = presentation.braidPresence;
+      }
       targets.posArr[i * 3 + 0]   = c.pos_seed[0];
       targets.posArr[i * 3 + 1]   = c.pos_seed[1];
       targets.posArr[i * 3 + 2]   = c.pos_seed[2];
@@ -359,6 +395,7 @@ export function writeCellBuffers(
       targets.memorySeedArr[i]    = presentation.memorySeed;
     }
   }
+  return pickInputsChanged;
 }
 
 const MAX_CELL_BUFFER_UPLOAD_RANGES = 8;
@@ -775,15 +812,25 @@ export function CkbSelectionReticle({ size }: { size: number }) {
 //
 // Performance: one O(N) projection refresh per index revision feeds an
 // allocation-stable screen-space grid, and every pointer query reuses it until
-// something a pick answer reads has moved further than a pixel budget. Two
-// inputs are deliberately NOT revisions: focus, which changes at most two
-// discs and is padded at query time, and sub-budget camera motion, which the
-// damping tail and every route flight produce on every frame. Camera drags
-// suspend the picker entirely; pointerdown forces a precise snapshot.
+// something a pick answer reads has moved further than a pixel budget. The
+// index bakes four per-slot inputs — position, point size, braid presence,
+// expanded detail — and goes stale on their own counters (field version,
+// pick-size epoch, detail epoch) and the draw count, never on the identity of
+// the drawn list: a payload delta that moves no cell republishes the list and
+// re-projects nothing. Two more inputs are deliberately NOT revisions: focus,
+// which changes at most two discs and is padded at query time, and sub-budget
+// camera motion, which is measured against the index's own drift envelope.
+// While the camera is being moved — by a drag, by the damping tail after one,
+// or by a route flight — hover probes are skipped altogether and the index is
+// rebuilt once, lazily, on the first probe after the motion settles; presses
+// and clicks are answered throughout, pointerdown from a precise snapshot.
 
 interface CellPickerProps {
   cellsListRef: React.MutableRefObject<Cell[]>;
   drawCountRef: React.MutableRefObject<number>;
+  fieldVersionRef: { readonly current: number };
+  sizeEpochRef: { readonly current: number };
+  pickPresenceArr: Float64Array;
   detailAttr: THREE.BufferAttribute;
   detailPickEpoch: ScalarThresholdEpoch;
   sizeAttr: THREE.BufferAttribute;
@@ -797,6 +844,22 @@ export function cellPointerGestureIsClick(delta: number): boolean {
   return Number.isFinite(delta)
     && delta >= 0
     && delta <= CELL_CLICK_MAX_POINTER_DELTA_PX;
+}
+
+/** The DOM events whose raycast a suspended picker still answers. R3F takes
+ *  a click's target from the pointerdown raycast and reports a click that hit
+ *  nothing as a miss, so skipping either during camera motion would turn a
+ *  click on a Cell into a cleared selection; pointer moves — hover probes —
+ *  are the only raycasts the suspension may drop. */
+export function isCellPickPointerAction(
+  event: { readonly type: string } | null,
+): boolean {
+  if (event === null) return false;
+  const { type } = event;
+  return type === 'pointerdown'
+    || type === 'click'
+    || type === 'dblclick'
+    || type === 'contextmenu';
 }
 
 /** Screen-space error the hover index may accumulate from galaxy spin before
@@ -884,18 +947,36 @@ export function cellPickDiscRadiusPx(
 }
 
 export interface CellPickRaycastSources {
+  /** Read for `cells[hit.index]` and the focus-pad id lookup only. Its
+   *  identity is NOT an index key: a payload delta republishes a fresh list
+   *  with every slot where it was, and the index answers that list exactly. */
   cellsListRef: React.MutableRefObject<Cell[]>;
   drawCountRef: React.MutableRefObject<number>;
+  /** Bumped when the drawn set's positions moved — a slot changed occupant or
+   *  a replacement carried a different `pos_seed`. */
+  fieldVersionRef: { readonly current: number };
+  /** Bumped when `writeCellBuffers` changed a drawn slot's point size or
+   *  braid presence. With the field version and the draw count, that is
+   *  every per-slot input the index bakes. */
+  sizeEpochRef: { readonly current: number };
+  /** Per-slot `consensusBraidPresenceScale(capacityMass(capacity))`, filled
+   *  by `writeCellBuffers` beside `sizeAttr`. */
+  pickPresenceArr: Float64Array;
   detailAttr: THREE.BufferAttribute;
   detailPickEpoch: ScalarThresholdEpoch;
   /** Authoritative per-slot point size. `writeCellBuffers` fills it in the
-   *  same synchronous block that publishes `cellsListRef`, and every slot
-   *  rewrite makes a fresh list — so a slot's size can never disagree with
-   *  the cell the picker reads at that index. */
+   *  same synchronous block that publishes `cellsListRef` and bumps the
+   *  epochs above, so a slot's size can never disagree with the cell the
+   *  picker reads at that index. */
   sizeAttr: THREE.BufferAttribute;
   selectedCellIdRef: React.MutableRefObject<number | null>;
   hoveredCellIdRef: React.MutableRefObject<number | null>;
+  /** While true, hover probes are skipped; presses and clicks still answer
+   *  (see `isCellPickPointerAction`). */
   pickingSuspendedRef?: React.RefObject<boolean>;
+  /** The DOM event R3F is dispatching this raycast for — its `lastEvent`. A
+   *  raycast with no event on record counts as a hover probe. */
+  pointerEventRef?: { readonly current: { readonly type: string } | null };
   forcePreciseRef: React.MutableRefObject<boolean>;
   viewportRef: React.MutableRefObject<{ width: number; height: number }>;
 }
@@ -906,12 +987,16 @@ export interface CellPickRaycastSources {
 export function createCellPickRaycast({
   cellsListRef,
   drawCountRef,
+  fieldVersionRef,
+  sizeEpochRef,
+  pickPresenceArr,
   detailAttr,
   detailPickEpoch,
   sizeAttr,
   selectedCellIdRef,
   hoveredCellIdRef,
   pickingSuspendedRef,
+  pointerEventRef,
   forcePreciseRef,
   viewportRef,
 }: CellPickRaycastSources) {
@@ -921,13 +1006,18 @@ export function createCellPickRaycast({
   const rayNdc = new THREE.Vector3();
   const bestPoint = new THREE.Vector3();
   const modelView = new THREE.Matrix4();
+  const viewDelta = new THREE.Matrix4();
   const cameraPosition = new THREE.Vector3();
   const cameraQuaternion = new THREE.Quaternion();
   const cameraScale = new THREE.Vector3();
   const screenIndex = new ScreenSpaceHitIndex(INSTANCE_CAPACITY);
+  // The image-plane box of the admitted entries, refilled with every
+  // rebuild: what the camera-motion budget is measured against.
+  const envelope = new CellPickDriftEnvelope();
   const indexedMatrixWorld = new THREE.Matrix4();
   const indexedModelView = new THREE.Matrix4();
   const indexedProjection = new THREE.Matrix4();
+  const indexedCameraMatrixWorld = new THREE.Matrix4();
   const indexedCameraPosition = new THREE.Vector3();
   const indexedCameraQuaternion = new THREE.Quaternion();
   // Two pad slots because `cellFocusTarget` has two inputs, selected first: a
@@ -936,7 +1026,8 @@ export function createCellPickRaycast({
     { index: -1, radius: 0 },
     { index: -1, radius: 0 },
   ];
-  let indexedCells: Cell[] | null = null;
+  let indexedFieldVersion = -1;
+  let indexedSizeEpoch = -1;
   let indexedCount = -1;
   let indexedDetailEpoch = -1;
   let indexedWidth = -1;
@@ -957,7 +1048,14 @@ export function createCellPickRaycast({
     raycaster: THREE.Raycaster,
     intersects: THREE.Intersection[],
   ): void {
-    if (pickingSuspendedRef?.current) return;
+    // Suspension drops hover probes only. A press or a click during camera
+    // motion is answered as it always was — from a precise snapshot — because
+    // R3F's click contract runs through both raycasts (see
+    // `isCellPickPointerAction`).
+    if (
+      pickingSuspendedRef?.current
+      && !isCellPickPointerAction(pointerEventRef?.current ?? null)
+    ) return;
     const cells = cellsListRef.current;
     const count = Math.min(drawCountRef.current, cells.length);
     if (count === 0) return;
@@ -988,19 +1086,54 @@ export function createCellPickRaycast({
       && (rotationDrift === 0
         || rotationDrift * indexedDriftPxPerRadian
           > CELL_PICK_ROTATION_DRIFT_BUDGET_PX);
-    // Viewport and projection are pinned exactly below, so reading them live
-    // for the bound is reading what the index was built with. The projection
-    // stays an exact compare: it moves on resize and fov alone.
-    camera.matrixWorld.decompose(cameraPosition, cameraQuaternion, cameraScale);
-    const cameraStale = cellPickCameraDriftPx(
-      indexedCameraQuaternion.angleTo(cameraQuaternion),
-      indexedCameraPosition.distanceTo(cameraPosition),
-      camera.projectionMatrix.elements[5],
-      halfW,
-      halfH,
-      indexedMinViewZ,
-    ) > CELL_PICK_ROTATION_DRIFT_BUDGET_PX;
-    const structuralIndexChange = indexedCells !== cells
+    // Camera motion is budgeted against the index's own drift envelope: the
+    // exact worst case over the box its admitted entries span, so a damping
+    // tail's last creep and a flight's final approach ride the index they
+    // have, and anything that could have moved a disc past the budget does
+    // not. Viewport and projection are pinned exactly below, so reading them
+    // live for the bound is reading what the index was built with; the
+    // projection stays an exact compare, it moves on resize and fov alone.
+    // A camera that has not moved at all costs sixteen compares and nothing
+    // else. An index holding no admitted entry has no envelope, and falls
+    // back to the viewport-corner bound, which needs no entries to reason.
+    let cameraStale = false;
+    if (!indexedCameraMatrixWorld.equals(camera.matrixWorld)) {
+      let cameraDriftPx: number;
+      if (envelope.empty) {
+        camera.matrixWorld.decompose(
+          cameraPosition,
+          cameraQuaternion,
+          cameraScale,
+        );
+        cameraDriftPx = cellPickCameraDriftPx(
+          indexedCameraQuaternion.angleTo(cameraQuaternion),
+          indexedCameraPosition.distanceTo(cameraPosition),
+          camera.projectionMatrix.elements[5],
+          halfW,
+          halfH,
+          indexedMinViewZ,
+        );
+      } else {
+        viewDelta.multiplyMatrices(
+          camera.matrixWorldInverse,
+          indexedCameraMatrixWorld,
+        );
+        cameraDriftPx = envelope.driftPx(
+          viewDelta,
+          halfW * camera.projectionMatrix.elements[0],
+          halfH * camera.projectionMatrix.elements[5],
+          // A padded disc scales like any other, so the largest radius a
+          // query can see is the largest admitted one plus the pad ceiling.
+          screenIndex.maxRadiusPx + CELL_PICK_FOCUS_PAD_CEILING_PX,
+        );
+      }
+      cameraStale = cameraDriftPx > CELL_PICK_ROTATION_DRIFT_BUDGET_PX;
+    }
+    // The drawn list's identity is not a key: `cellSlotAssignment` republishes
+    // a fresh array for any slot rewrite, including the ones that move no
+    // cell, while the counters below move exactly when a baked input did.
+    const structuralIndexChange = indexedFieldVersion !== fieldVersionRef.current
+      || indexedSizeEpoch !== sizeEpochRef.current
       || indexedCount !== count
       // Detail reaches the index ONLY through cellPickRadiusPx's expanded
       // branch, which is a threshold test — so the attribute's version is
@@ -1025,49 +1158,93 @@ export function createCellPickRaycast({
       const projectionScaleY = camera.projectionMatrix.elements[5];
       let maxDriftPxPerRadian = 0;
       let minViewZ = Infinity;
+      // The drift envelope's extremes, tracked in locals for the same reason
+      // as everything else in the loop, and handed over once at the end.
+      let minU = Infinity;
+      let maxU = -Infinity;
+      let minV = Infinity;
+      let maxV = -Infinity;
+      let minW = Infinity;
+      let maxW = -Infinity;
+      // This loop is the picker's whole cost, and it allocates nothing. Every
+      // per-slot input is read from a typed array, and no double is passed
+      // through a call: the engine boxes a double argument whenever it
+      // decides not to inline the callee, and with a closure this size that
+      // decision moves with every edit — `Math.hypot` alone left ~430 KB per
+      // rebuild at 12K, three heap numbers per cell. So the disc arithmetic
+      // is `cellPickDiscRadiusPx` at focus 0 written out in place (the braid
+      // scale at rest is the base scale times presence — same operations,
+      // same order, same bits; the pick oracle test pins the two together),
+      // the spin bound is `cellPickDriftPxPerRadian` in place, the vectors
+      // are written by field, and the index takes its entry through a typed
+      // scratch. What remains callable takes an object or an integer.
+      const indexEntry = screenIndex.entry;
       for (let i = 0; i < count; i += 1) {
-        const c = cells[i];
-        cellView
-          .set(c.pos_seed[0], c.pos_seed[1], c.pos_seed[2])
-          .applyMatrix4(modelView);
+        const seed = cells[i].pos_seed;
+        const localX = seed[0];
+        const localZ = seed[2];
+        cellView.x = localX;
+        cellView.y = seed[1];
+        cellView.z = localZ;
+        cellView.applyMatrix4(modelView);
 
         // View-space depth feeds both visual footprint and frustum rejection.
         const viewZ = -cellView.z;
         if (viewZ <= 0) continue;
-        const pickPxR = cellPickDiscRadiusPx(
-          sizeArray[i],
-          c.capacity,
-          detailArray[i] ?? 0,
-          0,
-          viewZ,
-          height,
-          halfH,
-          projectionScaleY,
-        );
+        const depthToPx = halfH / viewZ;
+        const braidScale = CONSENSUS_BRAID_BASE_SCALE
+          * Math.max(0, pickPresenceArr[i]);
+        const pointRadiusPx = sizeArray[i] * depthToPx;
+        const braidRadiusPx = CONSENSUS_BRAID_LOCAL_RADIUS * braidScale
+          * projectionScaleY * depthToPx;
+        const pointRadius = Number.isFinite(pointRadiusPx)
+          ? Math.max(0, pointRadiusPx)
+          : 0;
+        const braidRadius = Number.isFinite(braidRadiusPx)
+          ? Math.max(0, braidRadiusPx)
+          : 0;
+        const visibleRadius = Math.max(pointRadius, braidRadius);
+        const detail = detailArray[i] ?? 0;
+        const pickPxR = !Number.isFinite(detail)
+          || detail <= CELL_EXPANDED_DETAIL_THRESHOLD
+          ? visibleRadius
+          : Math.max(
+            visibleRadius,
+            CELL_EXPANDED_PICK_MIN_RADIUS_PX,
+            braidRadius + CELL_EXPANDED_PICK_PADDING_PX,
+          );
 
         // Reuse the view-space result instead of applying the camera inverse
         // a second time through Vector3.project().
         cellNdc.copy(cellView).applyMatrix4(camera.projectionMatrix);
         if (cellNdc.z < -1 || cellNdc.z > 1) continue;
-        const driftPxPerRadian = cellPickDriftPxPerRadian(
-          Math.hypot(c.pos_seed[0], c.pos_seed[2]),
-          projectionScaleY,
-          halfH,
-          viewZ,
-        );
+        const driftPxPerRadian = (
+          Math.sqrt(localX * localX + localZ * localZ)
+          * projectionScaleY * halfH
+        ) / viewZ;
         if (driftPxPerRadian > maxDriftPxPerRadian) {
           maxDriftPxPerRadian = driftPxPerRadian;
         }
         if (viewZ < minViewZ) minViewZ = viewZ;
-        screenIndex.insert(
-          i,
-          (cellNdc.x + 1) * halfW,
-          (1 - cellNdc.y) * halfH,
-          pickPxR,
-          cellNdc.z,
-        );
+        indexEntry[0] = (cellNdc.x + 1) * halfW;
+        indexEntry[1] = (1 - cellNdc.y) * halfH;
+        indexEntry[2] = pickPxR;
+        indexEntry[3] = cellNdc.z;
+        if (screenIndex.insertEntry(i)) {
+          const w = 1 / viewZ;
+          const u = cellView.x * w;
+          const v = cellView.y * w;
+          if (u < minU) minU = u;
+          if (u > maxU) maxU = u;
+          if (v < minV) minV = v;
+          if (v > maxV) maxV = v;
+          if (w < minW) minW = w;
+          if (w > maxW) maxW = w;
+        }
       }
-      indexedCells = cells;
+      envelope.set(minU, maxU, minV, maxV, minW, maxW);
+      indexedFieldVersion = fieldVersionRef.current;
+      indexedSizeEpoch = sizeEpochRef.current;
       indexedCount = count;
       indexedDetailEpoch = detailPickEpoch.epoch;
       indexedWidth = width;
@@ -1078,8 +1255,12 @@ export function createCellPickRaycast({
       indexedMinViewZ = Number.isFinite(minViewZ) ? minViewZ : 0;
       indexedModelView.copy(modelView);
       indexedMatrixWorld.copy(matrix);
-      indexedCameraPosition.copy(cameraPosition);
-      indexedCameraQuaternion.copy(cameraQuaternion);
+      indexedCameraMatrixWorld.copy(camera.matrixWorld);
+      camera.matrixWorld.decompose(
+        indexedCameraPosition,
+        indexedCameraQuaternion,
+        cameraScale,
+      );
       indexedProjection.copy(camera.projectionMatrix);
       indexedRevision += 1;
     }
@@ -1174,6 +1355,9 @@ export function createCellPickRaycast({
 function CellPicker({
   cellsListRef,
   drawCountRef,
+  fieldVersionRef,
+  sizeEpochRef,
+  pickPresenceArr,
   detailAttr,
   detailPickEpoch,
   sizeAttr,
@@ -1185,6 +1369,10 @@ function CellPicker({
   const ref = useRef<THREE.Object3D>(null);
   const forcePreciseRaycastRef = useRef(false);
   const { gl, size } = useThree();
+  // R3F records the DOM event it is dispatching before it raycasts, in one
+  // ref for the root's lifetime: how the raycast tells a hover probe from a
+  // press or a click while the picker is suspended.
+  const pointerEventRef = useThree((state) => state.internal.lastEvent);
   // Live viewport ref keeps the raycast closure current without rebinding.
   const sizeRef = useRef(size);
   sizeRef.current = size;
@@ -1196,12 +1384,16 @@ function CellPicker({
     node.raycast = createCellPickRaycast({
       cellsListRef,
       drawCountRef,
+      fieldVersionRef,
+      sizeEpochRef,
+      pickPresenceArr,
       detailAttr,
       detailPickEpoch,
       sizeAttr,
       selectedCellIdRef,
       hoveredCellIdRef,
       pickingSuspendedRef,
+      pointerEventRef,
       forcePreciseRef: forcePreciseRaycastRef,
       viewportRef: sizeRef,
     });
@@ -1216,10 +1408,14 @@ function CellPicker({
     detailAttr,
     detailPickEpoch,
     drawCountRef,
+    fieldVersionRef,
     hoveredCellIdRef,
+    pickPresenceArr,
     pickingSuspendedRef,
+    pointerEventRef,
     selectedCellIdRef,
     sizeAttr,
+    sizeEpochRef,
   ]);
 
   useEffect(() => {
@@ -1433,6 +1629,10 @@ function CellGalaxy({
    * beside `cellsListRef` in the same synchronous block, so a reader that
    * takes both takes one consistent generation of them. */
   const cellFieldVersionRef = useRef(0);
+  /** Bumped when `writeCellBuffers` changed a drawn slot's point size or
+   * braid presence — with the field version and the draw count, every
+   * per-slot input the pick index bakes. Published in the same block. */
+  const cellPickSizeEpochRef = useRef(0);
   /** Unchanged immutable Cell objects retain their expensive hash/taxonomy
    * presentation even when GC moves them to a different visible slot. */
   const cellBufferPresentationCacheRef = useRef(
@@ -1534,6 +1734,12 @@ function CellGalaxy({
   );
   const cellSizeAttr = useMemo(
     () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1),
+    [],
+  );
+  // Picker-owned twin of the size lane: the per-slot braid presence, written
+  // by the same `writeCellBuffers` pass and never uploaded.
+  const cellPickPresenceArr = useMemo(
+    () => new Float64Array(INSTANCE_CAPACITY),
     [],
   );
   // Compact A identity for the far retained core: asset orientation, lock
@@ -1886,7 +2092,7 @@ function CellGalaxy({
     );
 
     if (cellBufferRanges.length > 0 || drawCountChanged) {
-      writeCellBuffers(
+      const pickInputsChanged = writeCellBuffers(
         cellsList,
         count,
         toSceneSeconds,
@@ -1900,6 +2106,7 @@ function CellGalaxy({
           sizeArr:  cellSizeAttr.array as Float32Array,
           memoryIdentityArr: cellMemoryIdentityAttr.array as Float32Array,
           memorySeedArr: cellMemorySeedAttr.array as Float32Array,
+          pickPresenceArr: cellPickPresenceArr,
         },
         {
           bornAt: rewriteBirthAtRef.current,
@@ -1909,6 +2116,9 @@ function CellGalaxy({
         cellBufferRanges,
         cellBufferPresentationCacheRef.current,
       );
+      // Published beside the list, the count and the field version above: a
+      // reader that takes them in one raycast takes one generation of all.
+      if (pickInputsChanged > 0) cellPickSizeEpochRef.current += 1;
 
       cellGeometry.setDrawRange(0, count);
       markCellBufferUpdateRanges(cellPosAttr, cellBufferRanges, count);
@@ -2238,6 +2448,9 @@ function CellGalaxy({
         <CellPicker
           cellsListRef={cellsListRef}
           drawCountRef={drawCountRef}
+          fieldVersionRef={cellFieldVersionRef}
+          sizeEpochRef={cellPickSizeEpochRef}
+          pickPresenceArr={cellPickPresenceArr}
           detailAttr={cellDetailAttr}
           detailPickEpoch={cellDetailPickEpoch}
           sizeAttr={cellSizeAttr}

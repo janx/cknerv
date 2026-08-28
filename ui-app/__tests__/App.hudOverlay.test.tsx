@@ -198,6 +198,33 @@ describe('HudOverlay wiring', () => {
     expect(APP_SOURCE).not.toContain('<NetworkAtlasOrbit');
   });
 
+  it('suspends Cell hover on camera motion the hand is not making', () => {
+    // The damping tail after a release and a route flight both move the
+    // camera with no gesture in progress. One sentinel settles the verdict
+    // per frame, mounted after the route camera and the controls so its
+    // frame includes theirs; the route camera publishes its own flag.
+    const sentinel = APP_SOURCE.match(/<CameraMotionSentinel[\s\S]*?\/>/)?.[0];
+    expect(sentinel).toBeDefined();
+    expect(sentinel).toContain('gestureRef={orbitGestureRef}');
+    expect(sentinel).toContain('automationActiveRef={cameraAutomationActiveRef}');
+    expect(sentinel).toContain('pickingSuspendedRef={orbitPickingSuspendedRef}');
+    expect(APP_SOURCE.indexOf('<CameraMotionSentinel'))
+      .toBeGreaterThan(APP_SOURCE.indexOf('<OrbitControls'));
+    expect(APP_SOURCE.indexOf('<CameraMotionSentinel'))
+      .toBeGreaterThan(APP_SOURCE.indexOf('<ConsensusRouteCamera'));
+    expect(APP_SOURCE.match(/<ConsensusRouteCamera[\s\S]*?\/>/)?.[0])
+      .toContain('automationActiveRef={cameraAutomationActiveRef}');
+    // `end` no longer lifts the suspension: the sentinel does, on the first
+    // frame that passes without a change.
+    expect(APP_SOURCE).toMatch(
+      /const endOrbitInteraction = useCallback\(\(\) => \{[^}]*endOrbitGesture\(orbitGestureRef\.current, performance\.now\(\)\);\s*\}, \[\]\);/,
+    );
+    expect(APP_SOURCE).not.toMatch(
+      /const endOrbitInteraction = useCallback\(\(\) => \{[^}]*orbitPickingSuspendedRef\.current = false/,
+    );
+    expect(APP_SOURCE).toContain('noteOrbitCameraChange(gesture);');
+  });
+
   it('keeps Cell detail selection independent from camera automation', () => {
     const cameraWiring = APP_SOURCE.match(
       /<ConsensusRouteCamera[\s\S]*?\/>/,

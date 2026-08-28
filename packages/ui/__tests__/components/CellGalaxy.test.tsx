@@ -16,11 +16,13 @@ import {
   cellPointSize,
   createCellPickRaycast,
   diffCellBufferSlots,
+  isCellPickPointerAction,
   type CellBufferPresentation,
   writeFlashSlots,
   writeCellBuffers,
   writeCellExitStampSlots,
 } from '../../src/components/CellGalaxy';
+import { getHeapSpaceStatistics } from 'node:v8';
 import {
   CELL_HOVER_FOCUS,
   CELL_PICK_FOCUS_PAD_CEILING_PX,
@@ -265,11 +267,21 @@ describe('CellGalaxy', () => {
     expect(source).toContain('detailAttr={cellDetailAttr}');
   });
 
-  it('can suspend full-field picking during camera drags', () => {
+  it('suspends hover probes during camera motion, never presses or clicks', () => {
     const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
 
     expect(source).toContain('pickingSuspendedRef?: React.RefObject<boolean>');
-    expect(source).toContain('if (pickingSuspendedRef?.current) return;');
+    // The gate is the suspension AND "this is not a press or a click": R3F
+    // takes a click's target from the pointerdown raycast and reports a
+    // click with no hit as a miss, so the old all-events skip would have
+    // turned a click during the damping tail into a cleared selection.
+    expect(source).toMatch(
+      /if \(\s*pickingSuspendedRef\?\.current\s*&& !isCellPickPointerAction\(pointerEventRef\?\.current \?\? null\)\s*\) return;/,
+    );
+    expect(source).not.toContain('if (pickingSuspendedRef?.current) return;');
+    // The event comes from R3F's own record of what it is dispatching, not
+    // from a second set of DOM listeners racing the first.
+    expect(source).toContain('useThree((state) => state.internal.lastEvent)');
   });
 
   it('reuses one exact screen index until a projection input changes', () => {
@@ -619,6 +631,61 @@ describe('writeFlashSlots', () => {
 });
 
 describe('writeCellBuffers', () => {
+  it('reports the slots whose pick inputs changed, and fills the presence lane', () => {
+    const cells = [mkCell(10), mkCell(20), mkCell(30)];
+    cells[1].capacity = 900e8;
+    const n = cells.length;
+    const t = {
+      posArr: new Float32Array(n * 3),
+      colorArr: new Float32Array(n * 3),
+      recordAtArr: new Float32Array(n * 2),
+      stageAtArr: new Float32Array(n * 2),
+      flashArr: new Float32Array(n),
+      sizeArr: new Float32Array(n),
+      memoryIdentityArr: new Float32Array(n * 4),
+      memorySeedArr: new Float32Array(n),
+      pickPresenceArr: new Float64Array(n),
+    };
+    const write = (list: Cell[]) => writeCellBuffers(
+      list, n, (ms: number) => ms / 1000, new Map(), t,
+    );
+
+    // First fill: every slot is new to the lanes.
+    expect(write(cells)).toBe(3);
+    for (let i = 0; i < n; i += 1) {
+      expect(t.sizeArr[i]).toBe(Math.fround(cellPointSize(cells[i])));
+      expect(t.pickPresenceArr[i])
+        .toBe(consensusBraidPresenceScale(capacityMass(cells[i].capacity)));
+    }
+    // A payload delta — new objects, same size and capacity — reports none.
+    const refreshed = cells.map((cell) => ({
+      ...cell,
+      data_hex: '0xff',
+      death_at_ms: 5,
+    }));
+    expect(write(refreshed)).toBe(0);
+    // A tag changes the point size; a capacity changes the presence.
+    const tagged = refreshed.map((cell, i) => (
+      i === 0 ? { ...cell, tag: 'tagged' as const } : cell
+    ));
+    expect(write(tagged)).toBe(1);
+    expect(t.sizeArr[0]).toBe(Math.fround(cellPointSize(tagged[0])));
+    const heavier = tagged.map((cell, i) => (
+      i === 2 ? { ...cell, capacity: 3e12 } : cell
+    ));
+    expect(write(heavier)).toBe(1);
+    expect(t.pickPresenceArr[2])
+      .toBe(consensusBraidPresenceScale(capacityMass(3e12)));
+    // Rewriting the same records again changes nothing.
+    expect(write(heavier)).toBe(0);
+    // Without the lane, only the size counts.
+    const { pickPresenceArr: _omit, ...withoutLane } = t;
+    expect(writeCellBuffers(
+      heavier.map((cell, i) => (i === 1 ? { ...cell, capacity: 1 } : cell)),
+      n, (ms: number) => ms / 1000, new Map(), withoutLane,
+    )).toBe(0);
+  });
+
   it('coalesces only changed immutable Cell slots after a block delta', () => {
     const first = mkCell(1);
     const second = mkCell(2);
@@ -1278,11 +1345,11 @@ describe('cell pick index rotation tolerance', () => {
 const PICK_WIDTH = 960;
 const PICK_HEIGHT = 640;
 
-function pickField(): Cell[] {
+function pickField(count = 260): Cell[] {
   // A spiral shell, deliberately crowded: overlapping discs are what make the
   // find()'s distance/depth tie-break — and therefore the oracle — load
   // bearing. Tagged cells and a capacity spread vary point size and presence.
-  return Array.from({ length: 260 }, (_, i) => {
+  return Array.from({ length: count }, (_, i) => {
     const angle = i * 2.399963;
     const radius = 4 + 2.4 * Math.sqrt(i);
     const cell = mkCell(i + 1);
@@ -1299,13 +1366,19 @@ function pickField(): Cell[] {
 
 interface PickHarness {
   cells: Cell[];
+  cellsListRef: { current: Cell[] };
   sizes: Float32Array;
+  presence: Float64Array;
   details: Float32Array;
   object: THREE.Object3D;
   camera: THREE.PerspectiveCamera;
   selectedCellIdRef: { current: number | null };
   hoveredCellIdRef: { current: number | null };
   forcePreciseRef: { current: boolean };
+  fieldVersionRef: { current: number };
+  sizeEpochRef: { current: number };
+  pickingSuspendedRef: { current: boolean };
+  pointerEventRef: { current: { type: string } | null };
   raycast: (
     this: THREE.Object3D,
     raycaster: THREE.Raycaster,
@@ -1313,11 +1386,24 @@ interface PickHarness {
   ) => void;
 }
 
-function pickHarness(): PickHarness {
-  const cells = pickField();
+/** The per-slot lanes exactly as `writeCellBuffers` fills them. */
+function fillPickLanes(
+  cells: readonly Cell[],
+  sizes: Float32Array,
+  presence: Float64Array,
+): void {
+  for (let i = 0; i < cells.length; i += 1) {
+    sizes[i] = cellPointSize(cells[i]);
+    presence[i] = consensusBraidPresenceScale(capacityMass(cells[i].capacity));
+  }
+}
+
+function pickHarness(count = 260): PickHarness {
+  const cells = pickField(count);
   const sizes = new Float32Array(cells.length);
+  const presence = new Float64Array(cells.length);
   const details = new Float32Array(cells.length);
-  for (let i = 0; i < cells.length; i += 1) sizes[i] = cellPointSize(cells[i]);
+  fillPickLanes(cells, sizes, presence);
   // A handful of near cells sit past the expanded-detail line, so the padded
   // branch of `cellPickRadiusPx` is exercised and not merely declared.
   for (const i of [3, 17, 88, 201]) details[i] = 0.5;
@@ -1331,23 +1417,37 @@ function pickHarness(): PickHarness {
   camera.lookAt(0, 0, 0);
   camera.updateMatrixWorld(true);
 
+  const cellsListRef = { current: cells };
   const selectedCellIdRef = { current: null as number | null };
   const hoveredCellIdRef = { current: null as number | null };
   const forcePreciseRef = { current: false };
+  const fieldVersionRef = { current: 0 };
+  const sizeEpochRef = { current: 0 };
+  const pickingSuspendedRef = { current: false };
+  // What R3F's `lastEvent` holds while it raycasts: a hover probe unless a
+  // test says otherwise.
+  const pointerEventRef = { current: { type: 'pointermove' } as { type: string } | null };
   const raycast = createCellPickRaycast({
-    cellsListRef: { current: cells },
+    cellsListRef,
     drawCountRef: { current: cells.length },
+    fieldVersionRef,
+    sizeEpochRef,
+    pickPresenceArr: presence,
     detailAttr: new THREE.BufferAttribute(details, 1),
     detailPickEpoch: { threshold: 0.02, epoch: 0 },
     sizeAttr: new THREE.BufferAttribute(sizes, 1),
     selectedCellIdRef,
     hoveredCellIdRef,
+    pickingSuspendedRef,
+    pointerEventRef,
     forcePreciseRef,
     viewportRef: { current: { width: PICK_WIDTH, height: PICK_HEIGHT } },
   });
   return {
-    cells, sizes, details, object, camera,
-    selectedCellIdRef, hoveredCellIdRef, forcePreciseRef, raycast,
+    cells, cellsListRef, sizes, presence, details, object, camera,
+    selectedCellIdRef, hoveredCellIdRef, forcePreciseRef,
+    fieldVersionRef, sizeEpochRef, pickingSuspendedRef, pointerEventRef,
+    raycast,
   };
 }
 
@@ -1671,5 +1771,257 @@ describe('cell pick camera budget', () => {
     h.forcePreciseRef.current = true;
     expect(countRebuilds(() => livePick(h, 481, 320))).toBe(1);
     expect(countRebuilds(() => livePick(h, 481, 320))).toBe(0);
+  });
+
+  it('rides the damping tail and a flight on the index it has, once they settle', () => {
+    // OrbitControls' damping law exactly (dampingFactor 0.08, change while
+    // the frame moved the camera past EPS), with the pointer moving twice a
+    // frame, then the route camera's exponential lerp. Suspension is what
+    // App's sentinel publishes: the frame's `change` verdict.
+    const h = pickHarness();
+    livePick(h, 480, 320);
+    const target = new THREE.Vector3(0, 0, 0);
+    const spherical = new THREE.Spherical()
+      .setFromVector3(h.camera.position.clone().sub(target));
+    let delta = 0.5;
+    let px = 300;
+    const lastPosition = h.camera.position.clone();
+    const lastQuaternion = h.camera.quaternion.clone();
+    let changeFrames = 0;
+    let settledProbeRebuilds = -1;
+    const tail = countRebuilds(() => {
+      for (let frame = 0; frame < 240; frame += 1) {
+        spherical.theta += delta * 0.08;
+        delta *= 0.92;
+        h.camera.position.setFromSpherical(spherical).add(target);
+        h.camera.lookAt(target);
+        h.camera.updateMatrixWorld(true);
+        const changed = lastPosition.distanceToSquared(h.camera.position) > 1e-6
+          || 8 * (1 - lastQuaternion.dot(h.camera.quaternion)) > 1e-6;
+        if (changed) {
+          changeFrames = frame + 1;
+          lastPosition.copy(h.camera.position);
+          lastQuaternion.copy(h.camera.quaternion);
+        }
+        h.pickingSuspendedRef.current = changed;
+        livePick(h, (px += 3) % PICK_WIDTH, 320);
+        livePick(h, (px += 3) % PICK_WIDTH, 323);
+      }
+    });
+    // The tail is real (over a second of change frames), the picker spent
+    // one rebuild on it — the settle — and nothing on the sub-EPS creep that
+    // follows a settle, which the envelope measures as under budget.
+    expect(changeFrames).toBeGreaterThan(60);
+    expect(tail).toBe(1);
+    settledProbeRebuilds = countRebuilds(() => {
+      for (let i = 0; i < 20; i += 1) livePick(h, (px += 3) % PICK_WIDTH, 320);
+    });
+    expect(settledProbeRebuilds).toBe(0);
+    // And what it answers after settling is the settled camera, exactly.
+    expect(liveSweep(h)).toEqual(oracleSweep(h));
+
+    // A flight: the automation flag holds the suspension for its whole
+    // duration; the one rebuild is the first probe after it lands.
+    const goal = h.camera.position.clone().add(new THREE.Vector3(-30, -12, -20));
+    let frames = 0;
+    const flight = countRebuilds(() => {
+      h.pickingSuspendedRef.current = true;
+      for (frames = 0; frames < 400; frames += 1) {
+        h.camera.position.lerp(goal, 1 - Math.exp(-6.5 / 60));
+        h.camera.lookAt(target);
+        h.camera.updateMatrixWorld(true);
+        livePick(h, (px += 3) % PICK_WIDTH, 320);
+        livePick(h, (px += 3) % PICK_WIDTH, 323);
+        if (h.camera.position.distanceToSquared(goal) <= 0.0025) break;
+      }
+      h.pickingSuspendedRef.current = false;
+      livePick(h, (px += 3) % PICK_WIDTH, 320);
+    });
+    expect(frames).toBeGreaterThan(30);
+    expect(flight).toBe(1);
+    expect(liveSweep(h)).toEqual(oracleSweep(h));
+  });
+});
+
+describe('cell pick suspension', () => {
+  it('answers presses and clicks while suspended, and hover probes only when not', () => {
+    const h = pickHarness();
+    expect(isCellPickPointerAction(null)).toBe(false);
+    expect(isCellPickPointerAction({ type: 'pointermove' })).toBe(false);
+    expect(isCellPickPointerAction({ type: 'pointerup' })).toBe(false);
+    expect(isCellPickPointerAction({ type: 'wheel' })).toBe(false);
+    for (const type of ['pointerdown', 'click', 'dblclick', 'contextmenu']) {
+      expect(isCellPickPointerAction({ type })).toBe(true);
+    }
+
+    // A pointer position that hits at rest.
+    const hits = sweep((px, py) => livePick(h, px, py));
+    const at = hits.findIndex((hit) => hit !== null);
+    expect(at).toBeGreaterThanOrEqual(0);
+    const px = 6 + (at % Math.ceil((PICK_WIDTH - 6) / 11)) * 11;
+    const py = 6 + Math.floor(at / Math.ceil((PICK_WIDTH - 6) / 11)) * 11;
+    const expected = livePick(h, px, py);
+    expect(expected).not.toBeNull();
+
+    h.pickingSuspendedRef.current = true;
+    // Hover probes: nothing, and no rebuild spent on them.
+    expect(countRebuilds(() => {
+      expect(livePick(h, px, py)).toBeNull();
+      h.pointerEventRef.current = null;
+      expect(livePick(h, px, py)).toBeNull();
+      h.pointerEventRef.current = { type: 'pointerup' };
+      expect(livePick(h, px, py)).toBeNull();
+    })).toBe(0);
+    // The press and the click that R3F's click contract runs through, and
+    // the two other click-class events it reports misses for: all answered,
+    // and the press from its precise snapshot.
+    for (const type of ['pointerdown', 'click', 'dblclick', 'contextmenu']) {
+      h.pointerEventRef.current = { type };
+      expect(livePick(h, px, py)).toBe(expected);
+    }
+    h.forcePreciseRef.current = true;
+    h.pointerEventRef.current = { type: 'pointerdown' };
+    expect(countRebuilds(() => livePick(h, px, py))).toBe(1);
+    // Lifted: hover answers again.
+    h.pickingSuspendedRef.current = false;
+    h.pointerEventRef.current = { type: 'pointermove' };
+    expect(livePick(h, px, py)).toBe(expected);
+  });
+
+  it('treats a raycast with no event source as a hover probe', () => {
+    // Harnesses without an event ref (and R3F before its first event) get
+    // the conservative answer: suspended means skipped.
+    const h = pickHarness();
+    const cells = h.cells;
+    const raycast = createCellPickRaycast({
+      cellsListRef: { current: cells },
+      drawCountRef: { current: cells.length },
+      fieldVersionRef: h.fieldVersionRef,
+      sizeEpochRef: h.sizeEpochRef,
+      pickPresenceArr: h.presence,
+      detailAttr: new THREE.BufferAttribute(h.details, 1),
+      detailPickEpoch: { threshold: 0.02, epoch: 0 },
+      sizeAttr: new THREE.BufferAttribute(h.sizes, 1),
+      selectedCellIdRef: h.selectedCellIdRef,
+      hoveredCellIdRef: h.hoveredCellIdRef,
+      pickingSuspendedRef: { current: true },
+      forcePreciseRef: h.forcePreciseRef,
+      viewportRef: { current: { width: PICK_WIDTH, height: PICK_HEIGHT } },
+    });
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), h.camera);
+    const intersects: THREE.Intersection[] = [];
+    expect(countRebuilds(() => raycast.call(h.object, raycaster, intersects)))
+      .toBe(0);
+    expect(intersects).toEqual([]);
+  });
+});
+
+describe('cell pick index keys', () => {
+  /** A payload delta as the slot sync republishes one: every cell a fresh
+   *  object, every slot where it was. */
+  const republish = (h: PickHarness, patch: (cell: Cell, i: number) => Cell) => {
+    const next = h.cells.map((cell, i) => patch({ ...cell }, i));
+    h.cellsListRef.current = next;
+    // The writer's lanes, as `writeCellBuffers` would leave them.
+    fillPickLanes(next, h.sizes, h.presence);
+    return next;
+  };
+
+  it('re-projects nothing for a payload-only delta, and answers the new list', () => {
+    const h = pickHarness();
+    livePick(h, 480, 320);
+    const before = liveSweep(h);
+
+    // Enrichment refreshes and deaths change the records, not the field.
+    let next: Cell[] = [];
+    expect(countRebuilds(() => {
+      next = republish(h, (cell, i) => ({
+        ...cell,
+        data_hex: '0xabcd',
+        death_at_ms: i % 5 === 0 ? 1_000 : null,
+      }));
+      for (let k = 0; k < 8; k += 1) livePick(h, 480 + k, 320);
+    })).toBe(0);
+    expect(h.cellsListRef.current).toBe(next);
+    expect(h.cellsListRef.current).not.toBe(h.cells);
+    // Same picks, resolved against the republished list.
+    const after = liveSweep(h);
+    expect(after).toEqual(before);
+    expect(after).toEqual(oracleSweep(h));
+  });
+
+  it('rebuilds on a size change, on a presence change, and on a move', () => {
+    const h = pickHarness();
+    livePick(h, 480, 320);
+
+    // A tag arriving through enrichment changes the point size of its cell:
+    // the writer reports it, the epoch moves, the index follows — and the
+    // answer is what a fresh projection gives.
+    expect(countRebuilds(() => {
+      republish(h, (cell, i) => (i === 41 ? { ...cell, tag: 'tagged' } : cell));
+      h.sizeEpochRef.current += 1;
+      livePick(h, 480, 320);
+      livePick(h, 481, 320);
+    })).toBe(1);
+    expect(liveSweep(h)).toEqual(oracleSweep(h));
+
+    // Capacity feeds the braid presence, the disc's other baked term.
+    expect(countRebuilds(() => {
+      republish(h, (cell, i) => (i === 7 ? { ...cell, capacity: 5e12 } : cell));
+      h.sizeEpochRef.current += 1;
+      livePick(h, 480, 320);
+    })).toBe(1);
+    expect(liveSweep(h)).toEqual(oracleSweep(h));
+
+    // A relocation is a field version, whatever else the record carries.
+    expect(countRebuilds(() => {
+      republish(h, (cell, i) => (
+        i === 12 ? { ...cell, pos_seed: [cell.pos_seed[0] + 3, cell.pos_seed[1], cell.pos_seed[2]] } : cell
+      ));
+      h.fieldVersionRef.current += 1;
+      livePick(h, 480, 320);
+      livePick(h, 482, 320);
+    })).toBe(1);
+    expect(liveSweep(h)).toEqual(oracleSweep(h));
+  });
+});
+
+describe('cell pick rebuild allocation', () => {
+  it('rebuilds a large field without allocating', () => {
+    // The loop passes no double through a call boundary and reads only typed
+    // lanes, so the engine has nothing to box. Measured on V8's new space
+    // after the function has tiered up: the first rebuilds run through the
+    // interpreter and baseline tiers, which box everything, so the warm-up
+    // is long on purpose. A scavenge inside a measured round (the space
+    // reads lower afterwards than before) voids that round.
+    const h = pickHarness(6000);
+    for (let i = 0; i < 300; i += 1) {
+      h.forcePreciseRef.current = true;
+      livePick(h, 300 + (i % 400), 200 + (i % 200));
+      livePick(h, 500 + (i % 300), 300);
+    }
+    const newSpaceUsed = () => (
+      getHeapSpaceStatistics().find((space) => space.space_name === 'new_space')
+        ?.space_used_size ?? Number.NaN
+    );
+    const REBUILDS = 20;
+    let measured = false;
+    let growthPerRebuild = Number.NaN;
+    for (let round = 0; round < 6 && !measured; round += 1) {
+      const before = newSpaceUsed();
+      for (let i = 0; i < REBUILDS; i += 1) {
+        h.forcePreciseRef.current = true;
+        livePick(h, 300 + i * 7, 200 + i * 3);
+      }
+      const after = newSpaceUsed();
+      if (!(after >= before)) continue;
+      growthPerRebuild = (after - before) / REBUILDS;
+      measured = true;
+    }
+    expect(measured).toBe(true);
+    // 6,000 cells: one boxed double per cell would already be ~70 KB per
+    // rebuild; the whole budget here is the pick's own hit object.
+    expect(growthPerRebuild).toBeLessThan(8 * 1024);
   });
 });

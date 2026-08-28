@@ -404,14 +404,34 @@ current field version and the buckets around the camera are walked.
 ### 7.5 Picking
 
 `CellPicker` provides a custom `Object3D.raycast` path backed by a screen-space
-hit index. It projects eligible Cell slots when the camera, viewport, or Cell
-state changes, then answers pointer actions without scanning the full field on
-every event.
+hit index (`geometry/screenSpaceHitIndex.ts`, typed arrays and a reused bucket
+grid). It projects the drawn Cell slots into one index and answers every
+pointer event from it; the projection loop reads only typed per-slot lanes
+plus `pos_seed` and allocates nothing.
 
-Picking is suspended only after actual orbit movement begins. A press/release
-with at most a small pointer displacement remains a click. Selection and
-inspection eligibility are applied at index construction so hidden or
-non-navigable records cannot win a hit by accident.
+The index is keyed on the inputs it bakes, never on the drawn list's identity:
+the field version (`cellSlotAssignment`'s `positionsChanged`), the draw count,
+the pick-size epoch (`writeCellBuffers` reports slots whose point size or
+capacity-derived braid presence changed), the expanded-detail epoch, the
+viewport, and the projection matrix. A payload-only delta — an enrichment
+refresh, a death — republishes the list and rebuilds nothing.
+
+Camera motion is budgeted (1.5 px) against the index's own drift envelope
+(`geometry/cellPickDriftEnvelope.ts`): the image-plane box of the admitted
+entries, over which the exact maximum of the projective drift — centre
+displacement plus radius change — is evaluated in closed form per query. It is
+a sound bound measured from the index, replacing the viewport-corner analytic
+bound (kept as the fallback for an index with no admitted entry). Galaxy spin
+keeps its exact per-cell bound.
+
+While the camera is being moved — by a drag, by OrbitControls' damping tail
+after a release, or by a `ConsensusRouteCamera` flight — the picker skips
+hover probes (pointer moves) and rebuilds once, lazily, on the first probe
+after the motion settles. Pointer-down, click, double-click and context-menu
+raycasts are answered throughout, pointer-down from a precise snapshot, so a
+click during motion selects what it hit and never reads as a miss (see §11).
+Selection and inspection eligibility are applied at index construction so
+hidden or non-navigable records cannot win a hit by accident.
 
 ## 8. Display Topology and Neural Fabric
 
@@ -788,8 +808,24 @@ not an expensive topology rebuild.
 ### 11.1 Ownership rules
 
 - Main `OrbitControls` owns background orbit gestures.
-- `CellPicker` owns Cell click resolution but suspends expensive hit work during
-  real orbit movement.
+- `CellPicker` owns Cell click resolution but suspends its hover probes while
+  the camera is in motion — a drag, the damping tail OrbitControls runs after
+  a release (`change` keeps firing every frame after `end`, for ~1–1.8 s at
+  `dampingFactor 0.08`), or a route-camera flight. Design note: the hover
+  affordance (cursor, focus envelope) is therefore absent while the scene is
+  still moving after a fling and returns on the first pointer move after it
+  settles. Presses and clicks are never suspended: R3F takes a click's target
+  from the pointer-down raycast and reports a click that hit nothing as a
+  miss, so a click on a Cell during motion still selects it and
+  `onPointerMissed` behaves exactly as at rest.
+- Motion is detected in `App`, not inferred from the camera: `changeOrbit-
+  Interaction` latches "camera changed" (`noteOrbitCameraChange`),
+  `CameraMotionSentinel` settles the latch once per frame after the controls'
+  update (`settleOrbitCameraFrame`), and `ConsensusRouteCamera` publishes
+  `automationActiveRef` while a transition, release hold, or queued
+  transition is live. The picker consumes the OR of the three
+  (`orbitPickingSuspendedRef`); the adaptive-quality sampler can exclude the
+  same frames.
 - The scissored Cell portrait owns pointer input within its DOM rectangle and
   disables main Galaxy controls until release.
 - Pointer miss and Escape clear inspection only when no other gesture owns the

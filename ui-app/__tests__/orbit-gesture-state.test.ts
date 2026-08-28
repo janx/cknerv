@@ -6,9 +6,12 @@ import {
   changeOrbitGesture,
   createOrbitGestureState,
   endOrbitGesture,
+  noteOrbitCameraChange,
   noteOrbitPointerDown,
   noteOrbitPointerMove,
+  orbitCameraSuspendsPicking,
   orbitGestureSuppressesPointerAction,
+  settleOrbitCameraFrame,
 } from '../src/orbit-gesture-state';
 
 describe('orbit gesture state', () => {
@@ -93,5 +96,61 @@ describe('orbit gesture state', () => {
     expect(changeOrbitGesture(state)).toBe(false);
     endOrbitGesture(state, Number.NaN);
     expect(orbitGestureSuppressesPointerAction(state, Number.NaN)).toBe(false);
+  });
+});
+
+describe('orbit camera motion latch', () => {
+  it('settles a change into one frame of motion and clears the latch', () => {
+    const state = createOrbitGestureState();
+    expect(orbitCameraSuspendsPicking(state)).toBe(false);
+
+    // The damping tail: `end` has fired, `change` keeps arriving per frame.
+    noteOrbitCameraChange(state);
+    expect(settleOrbitCameraFrame(state)).toBe(true);
+    expect(state.cameraMoving).toBe(true);
+    expect(orbitCameraSuspendsPicking(state)).toBe(true);
+    // A frame with no change: at rest, on that very frame.
+    expect(settleOrbitCameraFrame(state)).toBe(false);
+    expect(orbitCameraSuspendsPicking(state)).toBe(false);
+    // Two changes inside one frame are one frame of motion.
+    noteOrbitCameraChange(state);
+    noteOrbitCameraChange(state);
+    expect(settleOrbitCameraFrame(state)).toBe(true);
+    expect(settleOrbitCameraFrame(state)).toBe(false);
+  });
+
+  it('keeps a paused drag suspended until its release', () => {
+    const state = createOrbitGestureState();
+    noteOrbitPointerDown(state, 400, 300);
+    beginOrbitGesture(state);
+    // A press that has not moved the camera suspends nothing.
+    expect(settleOrbitCameraFrame(state)).toBe(false);
+    expect(orbitCameraSuspendsPicking(state)).toBe(false);
+    // The first change of the gesture: suspended, and it stays so across a
+    // frame the pointer paused in, so the drag resumes on the index it had.
+    changeOrbitGesture(state);
+    noteOrbitCameraChange(state);
+    expect(settleOrbitCameraFrame(state)).toBe(true);
+    expect(orbitCameraSuspendsPicking(state)).toBe(true);
+    expect(settleOrbitCameraFrame(state)).toBe(false);
+    expect(orbitCameraSuspendsPicking(state)).toBe(true);
+    // Release with no tail: the next settled frame is at rest.
+    endOrbitGesture(state, 100);
+    expect(settleOrbitCameraFrame(state)).toBe(false);
+    expect(orbitCameraSuspendsPicking(state)).toBe(false);
+  });
+
+  it('treats a wheel notch as one frame of motion', () => {
+    // start → change → end in one call: the latch is what outlives it.
+    const state = createOrbitGestureState();
+    beginOrbitGesture(state);
+    changeOrbitGesture(state);
+    noteOrbitCameraChange(state);
+    endOrbitGesture(state, 10);
+    expect(orbitCameraSuspendsPicking(state)).toBe(false);
+    expect(settleOrbitCameraFrame(state)).toBe(true);
+    expect(orbitCameraSuspendsPicking(state)).toBe(true);
+    expect(settleOrbitCameraFrame(state)).toBe(false);
+    expect(orbitCameraSuspendsPicking(state)).toBe(false);
   });
 });

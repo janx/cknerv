@@ -63,6 +63,12 @@ export interface ConsensusRouteCameraProps {
   recordSwitchPending?: boolean;
   /** Delay broad record framing until endpoint entry has completed. */
   recordEntryDelaySeconds?: number;
+  /** Written every frame, never read here: true while this controller owns
+   *  the camera — a transition is flying, a release hold is counting down to
+   *  one, or a queued transition is waiting its turn. The Cell picker skips
+   *  hover probes while it is set, and the adaptive-quality sampler can
+   *  exclude those frames; a plain ref, so no render is spent on it. */
+  automationActiveRef?: { current: boolean };
 }
 
 interface CameraPoseVectors {
@@ -165,6 +171,7 @@ export default function ConsensusRouteCamera({
   recordTraceReadout = null,
   recordSwitchPending = false,
   recordEntryDelaySeconds = CONSENSUS_RECORD_CAMERA_ENTRY_DELAY_SECONDS,
+  automationActiveRef,
 }: ConsensusRouteCameraProps) {
   const reducedMotion = useReducedMotion();
   const camera = useThree((state) => state.camera);
@@ -685,7 +692,7 @@ export default function ConsensusRouteCamera({
     viewportWidth,
   ]);
 
-  useFrame((_, deltaSeconds) => {
+  const stepCamera = (deltaSeconds: number): void => {
     const safeDeltaSeconds = Math.min(Math.max(deltaSeconds, 0), 0.1);
     const queued = queuedTransitionRef.current;
     if (queued) {
@@ -726,7 +733,24 @@ export default function ConsensusRouteCamera({
     controls.update();
     transitionRef.current = null;
     if (transition.restoring) sessionRef.current = null;
+  };
+
+  useFrame((_, deltaSeconds) => {
+    stepCamera(deltaSeconds);
+    // Published after the step, so the frame the flight settles on is the
+    // first frame reported at rest — and a manual cancel (the effect above)
+    // reads as at rest on the very next frame.
+    if (automationActiveRef) {
+      automationActiveRef.current = transitionRef.current !== null
+        || releaseHoldRef.current !== null
+        || queuedTransitionRef.current !== null;
+    }
   });
+
+  useEffect(() => () => {
+    // A flag that outlived its writer would keep hover suspended for good.
+    if (automationActiveRef) automationActiveRef.current = false;
+  }, [automationActiveRef]);
 
   return null;
 }
