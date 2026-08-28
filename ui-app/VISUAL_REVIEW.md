@@ -29,7 +29,7 @@ real Cell snapshot:
 | Stage | Time | Composition | Expected evidence |
 |---|---:|---|---|
 | network | 0.30 s | Distributed wide view | Propagation across independent witnesses |
-| carrier | 1.10 s | Local handoff close-up | Compressed glyph at the membrane — one interrupted twelve-sided rim with three gaps and three trailing keels, releasing a front of the same shape into the Cell field |
+| carrier | 1.10 s | Local handoff close-up | The block's last hop in flight: a courier mote with its plume, in the block's carrier hue, most of the way up the axis from the anchor (whose halo has just let its held breath go) toward the membrane — no wireframe, no streak, nothing white. Its absorption at contact and the tissue's answer (annulus front, fibre flush, plain landing flashes) release at 1.6 s, into the commit window |
 | commit | 3.40 s | Target Cell close-up | Verified write label and expanding agreement seal |
 | settled | 6.20 s | Memory-latch close-up | Same Cell/content identity with persistent seal |
 

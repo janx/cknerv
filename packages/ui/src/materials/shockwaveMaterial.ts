@@ -61,18 +61,20 @@ export const SHOCKWAVE_TRAIL_BOOST = 0.18;
 export const SHOCKWAVE_COLOR_CEIL = 1.4;
 export const SHOCKWAVE_ALPHA_CEIL = 1.1;
 
-/** Wake length as a multiple of the crest half-width — one number for both
- *  planes of the block event (the peer shockwave here, the Cell-field contact
- *  front in contactWaveMaterial). */
+/** Wake length as a multiple of the crest half-width — one number for every
+ *  medium of the block event: the peer shockwave here, and on the Cell plane
+ *  the contact front (contactWaveMaterial) and the fibre flush
+ *  (nerve/fabricLifecycleShader). */
 export const WAVE_WAKE_LENGTH = 3.2;
 
 /**
  * The ONE crest+wake waveform of a block event, at any scale: a gaussian
  * band `offset` half-widths from the crest, plus an exponential wake gated to
- * the side the wave came from (`signedBehind` > 0). The peer-plane shockwave
- * and the scale-divided Cell-field front both draw THIS profile — the tests
- * pin them as one shape at two sizes, and the shape math living twice is how
- * they had already drifted (wake 3.4 vs 3.2) within a single feature.
+ * the side the wave came from (`signedBehind` > 0). The peer-plane shockwave,
+ * the scale-divided Cell-field front and the fibre flush along the nerve
+ * fibres all draw THIS profile — the tests pin them as one shape at every
+ * size, and the shape math living twice is how the first two had already
+ * drifted (wake 3.4 vs 3.2) within a single feature.
  */
 export const WAVE_CREST_WAKE_GLSL = /* glsl */ `
   float waveCrestWake(

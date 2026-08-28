@@ -71,7 +71,9 @@ export function easeOutCubic(t: number): number {
 }
 
 export interface Delivery {
-  /** Stable per-node key for the pooled protocol-carrier child. */
+  /** Stable per-delivery key (`local:i` / `peer:<node id>`). The renderer
+   *  keys its once-per-pulse contact stamp (flush + landing schedule) on it
+   *  and hashes the front's roll from it (`peerAngle`). */
   key: string;
   /** Launch position in the COLONY's rotating frame (the coordinates the
    *  topology stores). The renderer carries it through the live colony
@@ -939,13 +941,15 @@ export function sharedCellNearestIndex(
   return sharedNearestIndexValue;
 }
 
-/** The `k` Cell ids nearest (in the xz plane) to a carrier `landing`,
+/** The `k` Cell ids nearest (in the xz plane) to a world `landing`,
  *  nearest first. Cells live in the galaxy group's rotating LOCAL frame
  *  (`pos_seed`), so the world landing is projected back through the group's
- *  `rotationY` before comparing. Used to illuminate the Cells a carrier reaches so
- *  the galaxy visibly RECEIVES each delivery (sparse-rim-safe: "nearest k"
- *  always finds cells, unlike a fixed radius). Pure. O(n log min(k,n)) time
- *  and O(min(k,n)) memory — called per block, not per frame. */
+ *  `rotationY` before comparing. No longer on the delivery path: a landing
+ *  is a radius, not a k — the Cells a released front flashes are the ones
+ *  within its reach (`landingFlashSchedule`) — so nothing in the scene calls
+ *  this one-shot wrapper any more; it stays as the index's exact-k query,
+ *  exercised by its tests. Pure. O(n log min(k,n)) time and O(min(k,n))
+ *  memory. */
 export function nearestCellIds(
   landing: [number, number],
   rotationY: number,

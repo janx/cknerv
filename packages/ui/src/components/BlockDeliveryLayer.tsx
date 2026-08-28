@@ -254,10 +254,11 @@ export default function BlockDeliveryLayer({
       {
         halfX: FIELD_HALF_X,
         halfZ: FIELD_HALF_Z,
-        // Plan-time rotation, same trick as the ignition pass below: the galaxy
-        // turns ≤ ~0.02 rad across a whole pulse at the default rate, so pinning
-        // the ellipse where it stood when the plan was made is exact enough for
-        // a landing clamp and keeps this memo off the frame clock.
+        // Plan-time rotation, the same pin the contact stamp below takes at
+        // its own instant: the galaxy turns ≤ ~0.02 rad across a whole pulse
+        // at the default rate, so pinning the ellipse where it stood when the
+        // plan was made is exact enough for a landing clamp and keeps this
+        // memo off the frame clock.
         rotationY: galaxyFrame.rotationY,
       },
       // The colony's rotation gets the same plan-time pin for the LANDING

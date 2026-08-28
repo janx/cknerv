@@ -214,6 +214,7 @@ App
         |   `-- rotating overlay group
         |       |-- inspection anchor and semantic orbit
         |       |-- causal lens and write seal
+        |       |-- plain block-landing flashes (LandingFlashLayer)
         |       `-- NeuralNetwork -> NeuralFabric
         |-- NetworkColony
         |-- optional CellPortraitInset scissor pass
@@ -302,6 +303,7 @@ tethered without turning text and controls into scene textures.
 | Passive Cell nerves | Crimson/rose neural tissue | Deterministic graph over staged Cells | Abundant at rest and stable through ordinary churn |
 | Warm reinforcement | Recently used display conduits | Real link event plus derived graph route | Uses the same edge curve as the passive fibre |
 | Active writes | Bright packet wavefront and terminal response | Real live `CellLink`, derived route | Quality may reduce sampling and bounded concurrency, but not route derivation |
+| Block landing | Plain warm flash resolving to rose on the Cells a released front passes | Real block arrival on presentation timing (crest passage) | Own point geometry inside the Cell group; never the write seal |
 | Memory route | Explicit historical recall | Retained link evidence, derived route | Separate screen-weighted layer and readable at distance |
 | Rewrite echo | Fractured invalidated suffix | Canonical prune witness | Must not imply a replacement fork that was not observed |
 | HUD and inspectors | State, controls, provenance, evidence | DOM application state | Kept outside the main scene color buffer |
@@ -500,6 +502,13 @@ recall without rewriting every position each frame. Normal topology churn uses
 slot-level dirty uploads; full walks are reserved for global or structural
 changes.
 
+The same vertex stage carries the tissue flush: a landed block's contact front
+(§9.2) is sampled per capsule endpoint from a 16-slot ring the delivery layer
+stamps once per contact, through a template-injected twin of the front's radius
+function, and folded into the fabric's reclaim path so a landing at the galaxy
+core lifts fibres out of the centre-dim floor. With no live slot the shader's
+output is unchanged.
+
 Real Cell death produces retraction and an energy response. Quiet graph garbage
 collection fades without implying a canonical spend. This difference must not
 be collapsed into one generic removal animation.
@@ -579,20 +588,57 @@ claim about actual unobserved peers.
 |---:|---|
 | `0` | Deterministic two-second peer-colony flood begins |
 | `0.3..1.7 s` | Local receive point, clamped into the flood's hero band |
-| `local receive - 0.4 s` | Gather: the worker holds still while its glyph tightens and brightens, when lead time exists |
-| `local receive` | The glyph rises toward the Cell field, contracting and heating as it goes |
-| `local receive + 1.0 s` | Contact: the glyph is released as a front |
+| `local receive - 0.4 s` | Gather: the worker's own halo draws in — extent contracting, light concentrating — when lead time exists; the delivery layer draws nothing for it |
+| `local receive` | The block leaves as a courier hop — the propagation tree's last hop, mote and plume in the block's carrier hue — and the halo lets go |
+| `local receive + 1.0 s` | Contact: the mote is absorbed at the membrane and the tissue answers on one radius function through three media — the soft annulus front, the fibre flush, and plain landing flashes timed by crest passage |
 | `local receive + 2.2 s` | Contact window closes and the Cell ledger acknowledgement completes |
 | `local receive + 2.35 s` | One acknowledgement instant, after an additional 150 ms readability offset: the exact touched-Cell highlight, each newborn's arrival, each corpse's fade — and the median live packet's departure from the corpse it consumed |
 
-The handoff is one idea in three beats: compression, then release. The glyph a
-worker lifts and the front it releases into the field are the same interrupted
-polygon — twelve sides with every fourth left open — at two scales, so the
-arriving object and the spreading pressure are one shape rather than two
-languages meeting at the membrane. Every measured worker releases its own
-front. Latency-staggered releases compose into one interference field instead
-of dozens of independent events because they share that one shape and one
-speed: the Cell-field front travels at the peer plane's `SHOCKWAVE_SPEED`
+The handoff is one idea in three beats: compression, then release — expressed
+in the two dialects the scene already has, with nothing invented for it.
+
+The compression is the light that is already there. Over the 0.4 s before its
+hop leaves, a delivering node's own halo — the instanced measured halo, or the
+local anchor's — draws in and concentrates rather than dims (extent to 0.55 of
+rest, intensity ×1.8, short of light conservation so it never pops white), then
+lets go over 0.25 s after the launch. One pure envelope (`peerCompression`)
+drives both halo shaders through a template-injected GLSL twin. Only nodes that
+deliver breathe: measured peers and the local node; ghost, sighted and attested
+nodes do not, because compression means "about to deliver".
+
+The crossing is the propagation tree's last hop, drawn in the courier
+vocabulary: the same mote-and-plume construction the colony's glints use,
+shared by construction through one helper (`components/courierGlyph.ts`) so
+the two layers cannot fork, thrown with the same ease-out every courier hop
+has, at a higher weight because this hop is the block's climax, and in the
+block's own carrier hue — the colour the surge, the glint and the peer-plane
+shockwave already carry. The mote shrinks to nothing at the membrane: contact
+is absorption, not a pop. The delivery paints nothing white and draws no
+wireframe and no streak; warm white belongs to the tissue's own landing
+flashes, and the protocol write seal is reserved for writes.
+
+At contact the tissue answers in its own vocabulary, and everything it does is
+one expanding wave with one radius function (`contactFrontState`): crest
+radius from real seconds at the shared speed, a knee extinction at the reach,
+a 1/r falloff. Three media read it. The annulus front draws the crest between
+the Cells — a soft bloom, crest half-width 3.2 / `CONTACT_WAVE_SCALE`, a 0.45
+wake, three gaps at 0.3 depth — resolving from the carrier hue into tissue
+rose over the contact window. The fibre flush brightens the nerve fibres the
+crest crosses: a template-injected GLSL twin of the same function in the
+fabric lifecycle shader, fed by a 16-slot ring the delivery layer stamps once
+per contact, sampled per capsule endpoint rather than per fragment — a fabric
+edge is four capsules, so a razor crest would flicker segment to segment,
+while a 0.9-world-unit crest with a wake of about 2.9 interpolates cleanly —
+and folded into the fabric's reclaim path so a landing at the galaxy core
+lifts fibres out of the centre-dim floor instead of multiplying a small
+number. The landing flashes fire on the Cells within the front's reach, each
+at the instant the crest passes it, as loud as the crest is there. Hero and
+peer differ only in reach and a scalar punch, never in shape, and the three
+gaps are the agreement motif the write seal's loops also carry.
+
+Every measured worker releases its own front (about a dozen on mainnet today,
+so fronts read as isolated releases rather than an interference field), all at
+one speed: the Cell-field front travels at the peer plane's `SHOCKWAVE_SPEED`
 divided by `CONTACT_WAVE_SCALE`, so both planes read as sections of the same
 event while the released ring stays a local ripple in the tissue. Every spatial
 constant of the front — speed, reach, start radius, crest width, falloff
@@ -607,25 +653,39 @@ past the field's rim (the chain annulus runs wider than the tissue on x) has
 its landing pulled radially onto the footprint ellipse, and the front's
 extinction band is that same ellipse — exported by the helix module and
 projected through the galaxy's live rotation — rather than a second
-hand-typed radius. Overlap is kept off the white rail by thin crests, a 1/r
-falloff, the rim's three gaps, and that rim extinction. Reach is extinction
+hand-typed radius. Overlap is kept off the white rail by the 1/r falloff, the
+rim's three gaps, and that rim extinction. Reach is extinction
 rather than a clamp: a clamped radius would freeze fronts mid-field and break
 the shared-speed reading. A reach configured past what the contact window can
 complete clamps to the completable ceiling, so the knee extinction always
 finishes inside the window instead of being cut off mid-fade by the time
-envelope. Crest half-width is capped as a fraction of the crest radius,
-without which a young front is mostly crest and the release reads as a
-soft doughnut instead of a ring leaving. The front is resolved analytically in
-an instanced material drawn on an annulus rather than scaled from a sprite,
-which smears the moment a front grows past a few world units; delivery count
-changes instance and vertex counts, never draw-call count.
+envelope. Crest half-width is capped as a fraction of the crest radius (half,
+now that the front is a soft bloom), without which a young front is mostly
+crest and the release reads as a soft doughnut instead of a ring leaving. The
+front is resolved analytically in an instanced material drawn on an annulus
+rather than scaled from a sprite, which smears the moment a front grows past a
+few world units; delivery count changes instance and vertex counts, never
+draw-call count.
 
 The exact touched set is derived from fresh links and bounded to 256 Cells per
-block. Contact also ignites a small k-nearest neighbourhood per worker (more
-for the hero, fewer per peer, bounded in total and rippled by arrival order),
-and a local impact can ignite up to 128 nearby staged Cells within a
-14-world-unit radius as a presentation bridge from carrier to field. Neither
-radial response may be described as additional chain linkage.
+block, and it — with live packet arrivals and canonical rewrite arrivals — is
+the only thing that stamps the write seal (`aFlashAt`, `cellFlareMaterial`). A
+landing is not a write. The Cells a released front passes flash plainly
+instead: a warm-white bloom resolving into rose on the landing layer's own
+point geometry inside the Cell group (the shared Cell geometry gains no
+attribute), each scheduled nearest-first at the instant the crest reaches it,
+never before contact and never beyond the reach, bounded to 128 for the hero
+front, 24 per peer front and 300 per block. No radial response may be
+described as additional chain linkage.
+
+So that the tissue's exhale is the loudest beat of a block, the measured
+halos' event response under the peer-plane shockwave is trimmed
+(`MEASURED_EVENT_SCALE` 0.6, on the measured material only; the ghost and
+sighted clouds keep their tuning). The intended loudness order inside one
+block window is: real write pulses ≥ the hero exhale > peer exhales > surge
+band > measured halo flare > glint. The timing anchors — 0.4 s gather, 1.0 s
+hop, 1.2 s contact window, 2.2 s commit, 2.35 s acknowledgement — did not
+move.
 
 Backfill consumes block and link cursors without firing this choreography.
 
@@ -706,8 +766,9 @@ the node did not observe those Internet links.
 For each block pulse, a deterministic nonce selects a non-local origin biased
 away from the local node. Dijkstra arrival times over the presentation graph
 are normalized into a two-second flood. Colony edges and nodes show the wave;
-couriers show hop-level glints; measured arrivals can launch protocol carriers;
-and the local carrier hands the event to the Cell field.
+couriers show hop-level glints; each measured arrival, and the local node,
+throws the block's last hop — a courier — into the Cell field, where the
+tissue answers with its contact front (§9.2).
 
 This sequence communicates propagation and local receipt. Only the block event,
 local node, measured peers, and measured metadata are observations. The origin,
@@ -846,9 +907,11 @@ High/Med/Low takes ownership immediately.
 | Live pulse-link ring | 128 by default | `@cknerv/cache` `cellsReducer.ts` |
 | Canonical rewrite echo | up to 50,000 records in one point draw | `components/CanonicalRewriteEcho.tsx` |
 | Exact touched Cells per block | 256 | `ui/topologyConstants.ts` |
-| Local impact ignitions | 128 | `ui/topologyConstants.ts` |
-| Contact ignitions per block | 300 across all workers | `tweaks/tweakSchema.ts` |
-| Contact front scale | peer-plane wave / `CONTACT_WAVE_SCALE` | `materials/contactWaveMaterial.ts` |
+| Landing flashes per front | 128 hero / 24 peer (`landingHero` / `landingPeer`) | `tweaks/tweakSchema.ts` |
+| Landing flashes per block | 300 across all fronts (`landingMax`) | `tweaks/tweakSchema.ts` |
+| Landing flash slots | 512 | `components/landingFlashRing.ts` |
+| Tissue flush slots | 16 | `tweaks/tissueFlush.ts` |
+| Contact front scale | peer-plane wave / `CONTACT_WAVE_SCALE` | `ui/topologyConstants.ts` |
 | Cell birth / death envelope | 500 ms / 600 ms | `geometry/cellPositions.ts` |
 
 Passive and warm allocations quantize to the 8,000-edge default class or the
@@ -1144,7 +1207,10 @@ Before merging a Canvas change, answer:
 | Screen-space capsule geometry | `packages/ui/src/geometry/screenSpaceCapsuleLine.ts` |
 | Peer topology and block flood | `packages/ui/src/derives/networkTopology.derive.ts`, `packages/ui/src/derives/networkFlood.derive.ts` |
 | Peer render layers and Cell delivery | `packages/ui/src/components/NetworkColony.tsx`, `packages/ui/src/components/BlockDeliveryLayer.tsx` |
-| Carrier glyph and contact front | `packages/ui/src/geometry/protocolCarrier.ts`, `packages/ui/src/materials/contactWaveMaterial.ts` |
+| Held breath (halo compression) | `packages/ui/src/derives/peers.derive.ts`, `packages/ui/src/materials/peerNodeMaterial.ts`, `packages/ui/src/components/GlowNode.tsx` |
+| Courier vocabulary and contact front | `packages/ui/src/components/courierGlyph.ts`, `packages/ui/src/materials/contactWaveMaterial.ts` |
+| Fibre flush | `packages/ui/src/tweaks/tissueFlush.ts`, `packages/ui/src/nerve/fabricLifecycleShader.ts` |
+| Plain landing flashes | `packages/ui/src/components/LandingFlashLayer.tsx`, `packages/ui/src/materials/landingFlashMaterial.ts`, `packages/ui/src/components/landingFlashRing.ts`, `packages/ui/src/components/landingFlashQueue.ts` |
 | Canonical rewrite echo | `packages/ui/src/components/CanonicalRewriteEcho.tsx` |
 | Simulation clock | `packages/ui/src/tweaks/simClock.ts`, `packages/ui/src/tweaks/SimClockTicker.tsx`, `packages/ui/src/tweaks/useSimFrame.ts` |
 | Portrait scissor pass | `packages/ui/src/components/hud/CellPortraitInset.tsx` |
@@ -1168,3 +1234,7 @@ Before merging a Canvas change, answer:
 | Measured peer | A peer present in observed local-node entity state |
 | Inferred peer | A seeded presentation node used to make propagation context legible |
 | Simulation time | The controlled semantic animation timeline, distinct from raw render-frame time |
+| Last hop | The block's crossing from a delivering node into the Cell field, drawn as a courier mote and plume in the block's carrier hue |
+| Contact front | The one expanding wave a landed block releases in the tissue, read through three media: the annulus, the fibre flush, and the landing flashes |
+| Landing flash | A plain warm flash on a Cell the contact front passes; presentation, never the write seal |
+| Write seal | The protocol glyph a real write stamps on a Cell (`aFlashAt`, `cellFlareMaterial`); no landing may fire it |

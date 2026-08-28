@@ -6,34 +6,44 @@ import {
 } from './shockwaveMaterial';
 
 /**
- * The contact front every worker releases into the Cell field.
+ * The contact front every worker releases into the Cell field — the annulus
+ * medium of the tissue's answer to a landed block. (The other two media, the
+ * fibre flush and the landing flashes, read the same radius function; this
+ * material draws the crest between the Cells.)
  *
- * A block lands on a disc, so the front lives IN that disc: a thin, hard-edged
- * crest racing outward across the tissue with a faint bleached wake behind it.
- * Its punch comes from edge sharpness against a dark field, never from area or
- * raw brightness — the same discipline that de-glared the peer-plane wave.
+ * A block lands on a disc, so the front lives IN that disc: a soft crest
+ * expanding flat across the tissue with a wake behind it, the block's carrier
+ * hue resolving into tissue rose over the window. It is a soft bloom, not a
+ * hairline: the crest half-width is 3.2 / CONTACT_WAVE_SCALE = 0.40 world
+ * units at release (legible at the overview camera, where the old 0.069 wu
+ * crest was sub-pixel), the wake is the body of the front, and its punch
+ * comes from the 1/r falloff and the reach extinction, never from raw
+ * brightness — the same discipline that de-glared the peer-plane wave. It
+ * paints nothing white: warm white is the landing flashes', and the write
+ * seal is reserved for writes.
  *
  * WHY A SHADER AND NOT A SPRITE: the crest is resolved analytically from the
- * fragment's radius, so it stays razor-thin at ANY world radius. The texture it
- * replaces was 128px, which smeared into a soft doughnut the moment a front
- * grew past a few world units — the exact failure that made the old ring read
- * as decoration rather than pressure.
+ * fragment's radius, so it keeps its shape at ANY world radius. The texture it
+ * replaces was 128px, which smeared into a shapeless doughnut the moment a
+ * front grew past a few world units — the exact failure that made the old
+ * ring read as decoration rather than pressure.
  *
  * WHY EVERY FRONT IS THE SAME SPEED (the renderer drives radius from
- * `SHOCKWAVE_SPEED / CONTACT_WAVE_SCALE`): ~81 workers commit the same block
- * at latency-staggered times. Identical speed and shape make their fronts ONE
- * interference field instead of 81 independent fireworks — and because speed
- * and reach carry the SAME division, a front's lifetime still matches
- * the peer-plane wave's structure, so the two planes read as two sections of
- * one event at two sizes.
+ * `SHOCKWAVE_SPEED / CONTACT_WAVE_SCALE`): every measured peer commits the
+ * same block at a latency-staggered time (about a dozen on mainnet today —
+ * the roster's count, not a constant), and the hero differs only in reach
+ * and a scalar punch. Identical speed and shape make their fronts one wave
+ * field rather than independent fireworks — and because speed and reach
+ * carry the SAME division, a front's lifetime still matches the peer-plane
+ * wave's structure, so the two planes read as two sections of one event at
+ * two sizes.
  *
- * Overlap safety (this is what keeps 81 additive fronts off the white rail):
- *  • the crest is thin, so crossings are line crossings, not area sums;
+ * Overlap safety (what keeps additive fronts off the white rail):
  *  • the renderer folds a 1/r falloff into each instance colour, so a front is
  *    already dim by the time it can meet a neighbour;
  *  • `uSegmentDepth` carves three gaps into the crest, breaking the circle
- *    into an interrupted polygon (the write seal's agreement loops carry the
- *    same three-gap motif);
+ *    into an interrupted polygon — the agreement motif the write seal's
+ *    three-gap loops also carry;
  *  • the rim fade extinguishes a front where the tissue ends — workers ring
  *    the galaxy wider than the tissue, so their landings are pulled onto the
  *    rim (peers.derive `clampLandingToField`) and each front's outbound half
@@ -53,8 +63,9 @@ export const CONTACT_RING_GAP_EVERY = CONTACT_RING_SIDES / CONTACT_RING_GAPS;
  *  at every radius: the shader's job never changes, only the scale does. */
 export const CONTACT_WAVE_CREST_UV = 0.74;
 /** Annulus bounds in the same UV space. The band is deliberately narrow — a
- *  full quad per front would cost ~81 large overlapping fills per block. Inner
- *  0.30 still leaves ~0.44 UV of room behind the crest for the wake. */
+ *  full quad per front would cost one large overlapping fill per front per
+ *  block. Inner 0.30 still leaves ~0.44 UV of room behind the crest for the
+ *  wake. */
 const CONTACT_WAVE_INNER_UV = 0.30;
 const CONTACT_WAVE_OUTER_UV = 1.0;
 const CONTACT_WAVE_SEGMENTS = 96;
@@ -200,8 +211,9 @@ export function makeContactWaveMaterial(): THREE.ShaderMaterial {
         if (abs(offset) > 2.6 && signedBehind <= 0.0) discard;
 
         // The crest+wake waveform is shared with the peer-plane shockwave
-        // (shockwaveMaterial.WAVE_CREST_WAKE_GLSL): one shape, two planes,
-        // and a retune of either can no longer silently fork the other.
+        // and the fibre flush (shockwaveMaterial.WAVE_CREST_WAKE_GLSL): one
+        // shape, three media, and a retune of one can no longer silently
+        // fork the others.
         float signal = waveCrestWake(
           offset,
           signedBehind,

@@ -974,8 +974,11 @@ nervous system:
   propagation surges.
 - `ColonyNodes` renders measured nodes, an inferred cloud, and a shockwave.
 - `ColonyCourierLayer` moves a glint along the flood shortest-path tree.
-- `BlockDeliveryLayer` carries arrivals from peer/network space into the Cell
-  field and fires real Cell flashes.
+- `BlockDeliveryLayer` throws each arrival's block from peer space into the
+  Cell field as the propagation tree's last hop — a courier mote and plume —
+  and releases the contact front there (annulus, fibre flush, and plain
+  landing flashes on the Cells the front passes), never the protocol write
+  seal, which only real writes stamp.
 
 Topology derives from live peer snapshots and local-node information. It uses
 a stable content signature rather than array identity for memoization. During
