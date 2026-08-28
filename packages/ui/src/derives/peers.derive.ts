@@ -261,8 +261,10 @@ export interface ContactRelease {
 
 /** Fraction of the contact window the front takes to reach full strength.
  *  Non-zero so the front grows out of the absorbed mote instead of switching
- *  on beside it. */
-const FRONT_ONSET = 0.05;
+ *  on beside it. Exported for the fabric's GLSL twin (`fabricFlushGl`,
+ *  nerve/fabricLifecycleShader.ts), which runs this same envelope along the
+ *  fibres so the flush and the front never disagree about when they exist. */
+export const CONTACT_FRONT_ONSET = 0.05;
 
 function clampUnit(value: number): number {
   return Math.max(0, Math.min(1, value));
@@ -350,7 +352,7 @@ export function contactRelease(t: number): ContactRelease {
     // Linear life on purpose: the renderer's 1/r falloff already dims a front
     // as it spreads, and curving the time decay on top of it killed the front
     // long before it had crossed anything.
-    frontOpacity: (1 - u) * smoothUnit(u / FRONT_ONSET),
+    frontOpacity: (1 - u) * smoothUnit(u / CONTACT_FRONT_ONSET),
     colorT: easeOutCubic(u),
   };
 }
@@ -361,6 +363,13 @@ export function contactRelease(t: number): ContactRelease {
 // from the renderer's frame callback so it can be numerically tested: jsdom
 // cannot run an R3F frame loop, and source-string assertions cannot catch a
 // front that silently extinguishes early or never completes.
+//
+// ONE radius function, more than one medium. The annulus front reads it here
+// (TypeScript, per frame); the fibre flush reads a GLSL twin (`fabricFlushGl`
+// in nerve/fabricLifecycleShader.ts) that is template-injected from these
+// same constants and kept structurally identical to `contactFrontState` +
+// `contactRelease`, so a fibre brightens exactly where the crest is drawn.
+// Retune a number here and both media move together.
 
 /** Front radius at the instant of release. Also anchors the 1/r falloff away
  *  from its singularity. Both are on the front's divided scale. */
@@ -376,10 +385,13 @@ export const CONTACT_FRONT_FALLOFF_REFERENCE = 24 / CONTACT_WAVE_SCALE;
 export const CONTACT_FRONT_WIDTH_GROW_RATE = 0.45;
 /** Fraction of a front's reach where its extinction begins. */
 export const CONTACT_FRONT_REACH_KNEE = 0.72;
-/** Ceiling on the crest half-width as a fraction of the crest radius. Without
- *  it a young front — radius still a world unit or two — is mostly crest, and
- *  the release reads as a soft doughnut instead of a thin ring leaving. */
-export const CONTACT_FRONT_WIDTH_RADIUS_CAP = 0.22;
+/** Ceiling on the crest half-width as a fraction of the crest radius. It
+ *  keeps a newborn front — radius still a fraction of a world unit — from
+ *  being ALL crest: the release must still read as a ring leaving a point.
+ *  0.22 → 0.5 (2026-08-28), with the crest itself widened to 0.40 wu: the
+ *  front is a soft bloom now, legible at the overview camera, and a soft
+ *  bloom may be half its radius when young. */
+export const CONTACT_FRONT_WIDTH_RADIUS_CAP = 0.5;
 
 /** The live knobs the front algebra runs on (renderer refreshes per frame). */
 export interface ContactFrontLive {

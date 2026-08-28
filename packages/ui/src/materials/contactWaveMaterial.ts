@@ -117,8 +117,8 @@ export function makeContactWaveMaterial(): THREE.ShaderMaterial {
     // string: those numbers are module constants, and a uniform that nothing
     // drives is just a second place for them to rot.
     uniforms: {
-      uWake: { value: 0.14 },
-      uSegmentDepth: { value: 0.55 },
+      uWake: { value: 0.45 },
+      uSegmentDepth: { value: 0.3 },
       // The tissue ellipse turns with the galaxy while fronts hold world
       // positions; the renderer mirrors the group's live rotation in here.
       //

@@ -121,13 +121,16 @@ export const deliverySchema = {
     value: SHOCKWAVE_SPEED / CONTACT_WAVE_SCALE,
     min: 1, max: 40, step: 0.5, label: 'front speed',
   },
-  // The pre-shrink 0.55 on the front's scale: the crest is part of the ring's
-  // form, so it scales with it — holding it fixed would make the smaller ring
+  // 3.2 on the front's scale = 0.40 wu: the crest is part of the ring's form,
+  // so it scales with it — holding it fixed would make the smaller ring
   // proportionally chunkier instead of simply smaller. Derived, not
   // hand-rounded, so a CONTACT_WAVE_SCALE retune rescales the width with
-  // everything else.
-  waveWidth: { value: 0.55 / CONTACT_WAVE_SCALE, min: 0.02, max: 1.5, step: 0.01, label: 'front width' },
-  waveOpacity: { value: 2.0, min: 0, max: 3, step: 0.05, label: 'front opacity' },
+  // everything else. 0.55 → 3.2 (2026-08-28): at the overview camera (≈7 px
+  // per world unit) the old crest was ≈0.5 px — a hairline — and this one is
+  // ≥2.5 px, a soft crest the tissue's exhale can actually be read from.
+  waveWidth: { value: 3.2 / CONTACT_WAVE_SCALE, min: 0.02, max: 1.5, step: 0.01, label: 'front width' },
+  // A wider crest is more area: 2.0 → 0.9 with the width (same day).
+  waveOpacity: { value: 0.9, min: 0, max: 3, step: 0.05, label: 'front opacity' },
   waveFalloff: { value: 0.5, min: 0, max: 2.5, step: 0.05, label: 'front 1/r falloff' },
   // Reach past what the window can complete — start + speed×ingestDur, 5.7 at
   // these defaults — clamps at render time (peers.derive
@@ -135,9 +138,20 @@ export const deliverySchema = {
   // inside the ingest window instead of being cut off by the time envelope.
   waveReachHero: { value: 52 / CONTACT_WAVE_SCALE, min: 0.5, max: 30, step: 0.5, label: 'front reach hero' },
   waveReachPeer: { value: 34 / CONTACT_WAVE_SCALE, min: 0.5, max: 30, step: 0.5, label: 'front reach peer' },
-  waveWake: { value: 0.14, min: 0, max: 1, step: 0.02, label: 'front wake' },
-  waveSegments: { value: 0.55, min: 0, max: 1, step: 0.05, label: 'front gaps' },
+  // The wake is the body of a soft front (0.14 → 0.45, 2026-08-28); the three
+  // gaps stay as the agreement motif, softened (0.55 → 0.3).
+  waveWake: { value: 0.45, min: 0, max: 1, step: 0.02, label: 'front wake' },
+  waveSegments: { value: 0.3, min: 0, max: 1, step: 0.05, label: 'front gaps' },
+  // A peer's exhale against the hero's: scales its plume length, its front's
+  // intensity and its flush's amplitude (the mote is already sized per tier).
   peerPunchScale: { value: 0.7, min: 0, max: 1.5, step: 0.05, label: 'peer punch' },
+  // The fibre flush — the same front, sampled along the nerve fibres it
+  // crosses (nerve/fabricLifecycleShader `fabricFlushGl`). `flushAmp` scales
+  // how far the flush reclaims the fabric's core-dim floor (1 = a full
+  // reclaim at the crest, the way a death flash reclaims it); `flushMix` how
+  // far a flushed fibre's hue leans toward the front's own (carrier → rose).
+  flushAmp: { value: 1.0, min: 0, max: 3, step: 0.05, label: 'flush amp' },
+  flushMix: { value: 0.6, min: 0, max: 1, step: 0.05, label: 'flush mix' },
   igniteKHero: { value: 8, min: 0, max: 30, step: 1, label: 'ignite k hero' },
   igniteKPeer: { value: 3, min: 0, max: 15, step: 1, label: 'ignite k peer' },
   igniteMax: { value: 300, min: 0, max: 1000, step: 10, label: 'ignite max' },

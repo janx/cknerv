@@ -5,6 +5,7 @@ import { useSimFrame } from '../tweaks/useSimFrame';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { galaxyFrame } from '../tweaks/galaxyFrame';
 import { colonyFrame } from '../tweaks/colonyFrame';
+import { stampTissueFlush } from '../tweaks/tissueFlush';
 import { LIVE } from '../tweaks/liveTweaks';
 import { useCellGalaxyOptional } from '../hooks/cellGalaxyContext';
 import type { Vec3 } from '../types';
@@ -17,6 +18,7 @@ import {
   contactRelease,
   contactFrontState,
   peerAngle,
+  rotYWorldToLocalXZ,
   sharedCellNearestIndex,
   nearestCellIdsFromIndex,
   type ContactFrontLive,
@@ -63,7 +65,10 @@ import {
 //            membrane — contact is absorption, not a pop. No glyph, no streak,
 //            no sear, nothing white.
 //   ingest — the tissue answers in its own vocabulary: a soft front released
-//            flat in the Cell field, carrier hue resolving into tissue rose.
+//            flat in the Cell field, carrier hue resolving into tissue rose —
+//            and, on the SAME radius function, a flush along the nerve fibres
+//            the front crosses: stamped once into the tissueFlush ring at the
+//            contact instant, drawn by the fabric lifecycle shader.
 //
 // EVERY worker gets its own front, all at ONE shared speed: the peer-plane
 // brightness wave's SHOCKWAVE_SPEED divided by CONTACT_WAVE_SCALE. Speed and
@@ -268,6 +273,13 @@ export default function BlockDeliveryLayer({
   // One mote, one plume and one front per delivery, at most.
   const capacity = Math.max(1, deliveries.length);
   const ignitedPulseAtRef = useRef<number | null>(null);
+  // Which deliveries have stamped their flush for the pulse in flight. A
+  // stamp carries the TRUE contact instant, so a delivery stamps exactly once
+  // however many frames its ingest window spans — and however late its first
+  // ingest frame lands after a hitch. Keyed by the delivery's stable key, not
+  // its index: peer churn re-cuts the plan mid-pulse.
+  const flushedKeysRef = useRef(new Set<string>());
+  const flushedPulseAtRef = useRef<number | null>(null);
   const cellsToken = cellsCache?.cellsToken ?? null;
   const nearestCellIndex = useMemo(
     () => sharedCellNearestIndex(
@@ -380,7 +392,12 @@ export default function BlockDeliveryLayer({
       plumeBatch.count = 0;
       waveBatch.count = 0;
       ignitedPulseAtRef.current = null;
+      flushedKeysRef.current.clear();
       return;
+    }
+    if (flushedPulseAtRef.current !== pulse.at) {
+      flushedPulseAtRef.current = pulse.at;
+      flushedKeysRef.current.clear();
     }
     // Three-arg setRGB: the spread form allocates an arguments array per frame.
     CARRIER_COLOR.setRGB(pulse.color[0], pulse.color[1], pulse.color[2]);
@@ -520,6 +537,27 @@ export default function BlockDeliveryLayer({
         );
         hopCount += 1;
       } else {
+        const reach = delivery.hero
+          ? LIVE.delivery.waveReachHero
+          : LIVE.delivery.waveReachPeer;
+        // The tissue's flush leaves with the front: ONE stamp per delivery
+        // per pulse, at the true contact instant rather than this frame's
+        // clock, its origin in the galaxy's rotating local frame (where the
+        // fabric geometry lives), its reach and punch exactly the front's
+        // own. From those five numbers the fabric lifecycle shader
+        // (fabricFlushGl) runs the same radius function the front below
+        // reads, so a fibre brightens exactly where the crest is drawn.
+        const flushed = flushedKeysRef.current;
+        if (!flushed.has(delivery.key)) {
+          flushed.add(delivery.key);
+          stampTissueFlush(
+            pulse.at + delivery.startAge + LOB_DUR_S,
+            rotYWorldToLocalXZ(delivery.to[0], delivery.to[2], galaxyFrame.rotationY),
+            pulse.color,
+            reach,
+            punch,
+          );
+        }
         const release = contactRelease(phase.t);
         // Contact is an event boundary, not another travelling object: the
         // front is released at the real landing and stays there.
@@ -530,9 +568,6 @@ export default function BlockDeliveryLayer({
         // contactFrontState in peers.derive, numerically tested there. This
         // loop only composes strengths on top.
         const contactAge = phase.t * CFG.ingestDur;
-        const reach = delivery.hero
-          ? LIVE.delivery.waveReachHero
-          : LIVE.delivery.waveReachPeer;
         const front = contactFrontState(contactAge, reach, FRONT_LIVE);
         const intensity = LIVE.delivery.waveOpacity
           * release.frontOpacity

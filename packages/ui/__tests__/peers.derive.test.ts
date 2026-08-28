@@ -26,6 +26,7 @@ import {
   COMPRESS_GAIN,
   COMPRESS_RELEASE_S,
   PEER_LAUNCH_SENTINEL,
+  CONTACT_FRONT_ONSET,
   CONTACT_FRONT_START_RADIUS,
   CONTACT_FRONT_REACH_KNEE,
   CONTACT_FRONT_WIDTH_GROW_RATE,
@@ -289,12 +290,21 @@ describe('peers.derive', () => {
       expect(contactRelease(-1)).toEqual(contactRelease(0));
       expect(contactRelease(2)).toEqual(contactRelease(1));
     });
+
+    it('is at full strength exactly at the onset fraction — the number the fabric flush twin injects', () => {
+      expect(CONTACT_FRONT_ONSET).toBe(0.05);
+      expect(contactRelease(CONTACT_FRONT_ONSET).frontOpacity)
+        .toBeCloseTo(1 - CONTACT_FRONT_ONSET, 12);
+      expect(contactRelease(CONTACT_FRONT_ONSET / 2).frontOpacity)
+        .toBeLessThan(1 - CONTACT_FRONT_ONSET);
+    });
   });
 
   describe('contactFrontState', () => {
     // Shipped defaults: speed 4.5 (= SHOCKWAVE_SPEED / CONTACT_WAVE_SCALE),
-    // window 1.2 s — the numbers the completion contract must hold at.
-    const live = { speed: 4.5, width: 0.07, falloffPower: 0.5, windowS: 1.2 };
+    // crest 0.4 (= 3.2 / CONTACT_WAVE_SCALE), window 1.2 s — the numbers the
+    // completion contract must hold at.
+    const live = { speed: 4.5, width: 0.4, falloffPower: 0.5, windowS: 1.2 };
 
     it('expands linearly from the start radius at the shared field speed', () => {
       expect(contactFrontState(0, 4.25, live).crestRadius)
@@ -358,17 +368,28 @@ describe('peers.derive', () => {
     });
 
     it('widens the crest as a RATE on the already-scale-divided width, under the radius cap', () => {
-      // Young front: the cap owns the width (a release that is mostly crest
-      // reads as a soft doughnut, not a thin ring leaving).
+      // Newborn front: the cap owns the width — a release that is ALL crest
+      // would read as a disc appearing, not a ring leaving a point. The soft
+      // front's cap is half the radius (0.22 → 0.5 with the crest widened to
+      // 0.40 wu, 2026-08-28): at release the radius is 0.3, so the cap binds
+      // at 0.15 against the 0.4 crest…
+      expect(CONTACT_FRONT_WIDTH_RADIUS_CAP).toBe(0.5);
+      expect(live.width).toBeGreaterThan(
+        CONTACT_FRONT_START_RADIUS * CONTACT_FRONT_WIDTH_RADIUS_CAP,
+      );
       expect(contactFrontState(0, 4.25, live).crestHalfWidth).toBeCloseTo(
         CONTACT_FRONT_START_RADIUS * CONTACT_FRONT_WIDTH_RADIUS_CAP,
         12,
       );
+      // …and lets go inside the first ~0.12 s (radius ≈ 0.85 wu), after
+      // which the crest is its own widening width again.
+      expect(contactFrontState(0.2, 4.25, live).crestHalfWidth)
+        .toBeCloseTo(0.4 * (1 + 0.45 * 0.2), 12);
       // Mature front: ×(1 + 0.45·t) — the same ×1.54-over-a-window widening
       // the peer-plane wave carries. A scale-divided "rate" flattened this
       // toward ×1, the rigid-decal failure the constant exists to prevent.
       expect(contactFrontState(1.2, 4.25, live).crestHalfWidth)
-        .toBeCloseTo(0.07 * (1 + 0.45 * 1.2), 12);
+        .toBeCloseTo(0.4 * (1 + 0.45 * 1.2), 12);
       expect(CONTACT_FRONT_WIDTH_GROW_RATE).toBe(0.45);
     });
 

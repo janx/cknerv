@@ -6,6 +6,7 @@ import {
   CONTACT_RING_GAPS,
   CONTACT_RING_GAP_EVERY,
   CONTACT_RING_SIDES,
+  makeContactWaveMaterial,
 } from '../../src/materials/contactWaveMaterial';
 import { SHOCKWAVE_SPEED, CONTACT_WAVE_SCALE } from '../../src/ui/topologyConstants';
 import { deliverySchema } from '../../src/tweaks/tweakSchema';
@@ -89,7 +90,9 @@ describe('A protocol event relay', () => {
     // is a power of two — the relationship, not the bit pattern, is the pin.
     expect(deliverySchema.waveReachHero.value * CONTACT_WAVE_SCALE).toBeCloseTo(52, 10);
     expect(deliverySchema.waveReachPeer.value * CONTACT_WAVE_SCALE).toBeCloseTo(34, 10);
-    expect(deliverySchema.waveWidth.value * CONTACT_WAVE_SCALE).toBeCloseTo(0.55, 10);
+    // The crest is derived on the same scale so a scale retune moves it too;
+    // 3.2 (0.40 wu) is the soft, overview-legible crest of 2026-08-28.
+    expect(deliverySchema.waveWidth.value * CONTACT_WAVE_SCALE).toBeCloseTo(3.2, 10);
     // The front's spatial algebra lives in peers.derive (numerically tested
     // there — radius from real seconds, reach completion, knee fade, 1/r,
     // width rate+cap); the frame loop only composes strengths on top.
@@ -160,6 +163,15 @@ describe('A protocol event relay', () => {
     expect(wave).not.toMatch(/uDiskFade|smoothstep\(\s*44/);
     // An annulus, not a quad: full-screen-ish fills per front are not free.
     expect(wave).toContain('THREE.RingGeometry');
+    // The two LIVE-driven uniforms are seeded with the schema's own defaults
+    // for the frames before the first pulse — a mirror, and a mirror that
+    // must not rot: the soft front's wake and gaps (2026-08-28).
+    const seeded = makeContactWaveMaterial();
+    expect(seeded.uniforms.uWake.value).toBe(deliverySchema.waveWake.value);
+    expect(seeded.uniforms.uSegmentDepth.value).toBe(deliverySchema.waveSegments.value);
+    expect(deliverySchema.waveWake.value).toBe(0.45);
+    expect(deliverySchema.waveSegments.value).toBe(0.3);
+    expect(deliverySchema.waveOpacity.value).toBe(0.9);
   });
 
   it('keeps one block carrier hue across P2P surge, courier, and delivery', () => {
@@ -237,6 +249,41 @@ describe('A protocol event relay', () => {
     expect(nodes).toContain('consensusBlockColor(blockPulseAtMs)');
     expect(nodes).toContain('writeShockwaveSlot(');
     expect(source('CellGalaxy.tsx')).not.toContain('writeShockwaveSlot(');
+  });
+});
+
+describe('The exhale — the flush along the fibres', () => {
+  it('is stamped by the delivery layer once per delivery per pulse, at the true contact instant, in the tissue\'s own frame', () => {
+    const delivery = source('BlockDeliveryLayer.tsx');
+
+    // The tissue's ring is the singleton the fabric shader is bound to; the
+    // origin is projected into the galaxy's rotating local frame with the
+    // one world→local map (never a private re-derivation of the rotation).
+    expect(delivery).toContain("import { stampTissueFlush } from '../tweaks/tissueFlush';");
+    expect(delivery).toContain('rotYWorldToLocalXZ,');
+    expect(delivery.match(/stampTissueFlush\(/g)).toHaveLength(1);
+    // The five lanes, in order: the contact instant (pulse + this delivery's
+    // launch + the lob — NOT this frame's clock, so a late first ingest
+    // frame still stamps the true instant), the landing in the galaxy's
+    // local frame, the block's carrier hue, the front's own reach and punch.
+    expect(delivery).toMatch(
+      /stampTissueFlush\(\s*pulse\.at \+ delivery\.startAge \+ LOB_DUR_S,\s*rotYWorldToLocalXZ\(delivery\.to\[0\], delivery\.to\[2\], galaxyFrame\.rotationY\),\s*pulse\.color,\s*reach,\s*punch,\s*\)/,
+    );
+    // Exactly once per delivery per pulse, however many frames ingest spans:
+    // keyed by the delivery's stable key (peer churn re-cuts the plan) and
+    // cleared when the pulse changes or retires.
+    expect(delivery).toContain('if (!flushed.has(delivery.key)) {');
+    expect(delivery).toContain('flushed.add(delivery.key);');
+    expect(delivery).toContain('if (flushedPulseAtRef.current !== pulse.at) {');
+    expect(delivery.match(/flushedKeysRef\.current\.clear\(\)/g)).toHaveLength(2);
+    // Stamped from the ingest beat — after the hop, before the front is
+    // composed from the same reach.
+    const lob = delivery.indexOf("if (phase.phase === 'lob') {");
+    const stamp = delivery.indexOf('stampTissueFlush(\n');
+    const front = delivery.indexOf('contactFrontState(contactAge, reach, FRONT_LIVE)');
+    expect(lob).toBeGreaterThan(-1);
+    expect(stamp).toBeGreaterThan(lob);
+    expect(front).toBeGreaterThan(stamp);
   });
 });
 

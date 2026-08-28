@@ -1,12 +1,14 @@
 // GPU-parametric fabric lifecycle (P1.7). Injects the complete per-edge
 // lifecycle evaluation — grow/decay/death interval, alpha, death flash, taper,
-// spatial energy compression, gold reinforcement tint, and usage half-life
-// decay — into the fabric layer's LineMaterial vertex stage. Slots then hold
-// STATIC records (curve + colors + event timestamps) written once per event;
-// the only per-frame CPU is three uniform scalars. Every constant below is
-// template-injected from the TypeScript reference implementations
-// (fabricEdgeRender / fabricLuminance / consensusFlow / fabricReinforce), so
-// the GLSL and CPU forms cannot drift apart numerically.
+// spatial energy compression, gold reinforcement tint, usage half-life decay,
+// and the tissue flush a landed block sends along the fibres — into the
+// fabric layer's LineMaterial vertex stage. Slots then hold STATIC records
+// (curve + colors + event timestamps) written once per event; the only
+// per-frame CPU is a handful of uniform scalars (the flush's slot lanes are
+// the tissueFlush singleton's own arrays, bound by reference). Every constant
+// below is template-injected from the TypeScript reference implementations
+// (fabricEdgeRender / fabricLuminance / consensusFlow / fabricReinforce /
+// peers.derive), so the GLSL and CPU forms cannot drift apart numerically.
 //
 // Must be applied AFTER optimizeScreenSpaceCapsuleMaterial: the color hook
 // anchors on the capsule variant's endpoint-constant assignments. Follows the
@@ -35,10 +37,33 @@ import {
 import { GOLD_MIX_TRUNK_GAIN } from '../derives/consensusFlow.derive';
 import { CONSENSUS_BRAID_PALETTE } from '../derives/consensusBraid.derive';
 import { LIVE } from '../tweaks/liveTweaks';
+import {
+  CONTACT_FRONT_FALLOFF_REFERENCE,
+  CONTACT_FRONT_ONSET,
+  CONTACT_FRONT_REACH_KNEE,
+  CONTACT_FRONT_START_RADIUS,
+} from '../derives/peers.derive';
+import {
+  WAVE_CREST_WAKE_GLSL,
+  WAVE_WAKE_LENGTH,
+} from '../materials/shockwaveMaterial';
+import { CELL_GALAXY_PALETTE } from '../visualPalette';
+import { TISSUE_FLUSH_SLOTS, tissueFlush } from '../tweaks/tissueFlush';
 
 /** `fabricLifecycle.y` value meaning "alive" (no dying timestamp). Any real
  * sim-second is far below this. */
 export const FABRIC_LIFECYCLE_ALIVE_SENTINEL = 1.0e30;
+
+/** The flush crest's half-width, world units. Deliberately far wider than the
+ * annulus front's crest (0.40 wu at release): the flush is sampled at capsule
+ * ENDPOINTS — a fabric edge is four capsules — so a razor crest would flicker
+ * segment to segment as it crossed, while a 0.9 wu edge with a ~2.9 wu wake
+ * (WAVE_WAKE_LENGTH × this) interpolates cleanly. Body-dominant by
+ * construction. */
+export const FLUSH_HALF_WIDTH = 0.9;
+/** Wake amplitude behind the flush crest, on the crest+wake profile every
+ * plane of a block event draws (shockwaveMaterial.waveCrestWake). */
+export const FLUSH_WAKE_AMP = 0.6;
 
 /** GLSL float literal — guarantees a decimal point so ints stay floats. */
 function glf(value: number): string {
@@ -89,6 +114,21 @@ const LIFECYCLE_DECLARATIONS = `
 		// and cannot both draw it.
 		uniform float fabricTrunkThreshold;
 		uniform float fabricTrunkPass;
+		// The tissue flush: a landed block's contact front, sampled along the
+		// fibres it crosses. The five slot lanes ARE the tissueFlush
+		// singleton's typed arrays, bound by reference (three uploads a
+		// numeric typed array as-is on every draw); the scalars are the
+		// block-impact knobs, synced per frame.
+		uniform float fabricFlushAt[${TISSUE_FLUSH_SLOTS}];
+		uniform vec2 fabricFlushOrigin[${TISSUE_FLUSH_SLOTS}];
+		uniform vec3 fabricFlushColor[${TISSUE_FLUSH_SLOTS}];
+		uniform float fabricFlushReach[${TISSUE_FLUSH_SLOTS}];
+		uniform float fabricFlushPunch[${TISSUE_FLUSH_SLOTS}];
+		uniform float fabricFlushWindow;
+		uniform float fabricFlushSpeed;
+		uniform float fabricFlushFalloff;
+		uniform float fabricFlushAmp;
+		uniform float fabricFlushMix;
 
 		bool fabricLifeComputed = false;
 		bool fabricLifeHidden = false;
@@ -109,11 +149,64 @@ const LIFECYCLE_DECLARATIONS = `
 			return ${glf(TAPER_MIN)} + ( 1.0 - ${glf(TAPER_MIN)} ) * k * k;
 		}
 
+		${WAVE_CREST_WAKE_GLSL}
+
+		// Twin of contactFrontState + contactRelease (peers.derive), run per
+		// slot at ONE fibre endpoint: the front's radius from real seconds at
+		// the shared wave speed, its reach clamped to what the window can
+		// complete, the knee extinction, the 1/r falloff at the LIVE power,
+		// the strength envelope, and the crest+wake profile every plane of a
+		// block event draws. Returns the flush colour premultiplied by the
+		// signal in rgb — the block's carrier hue resolving into tissue rose
+		// over the window, exactly as the annulus front does — and the signal
+		// itself in a. A slot at the sentinel (or outside its window) is
+		// skipped on the first compare and contributes exactly 0.
+		vec4 fabricFlushGl( const in vec2 xz ) {
+			float total = 0.0;
+			vec3 carrier = vec3( 0.0 );
+			for ( int i = 0; i < ${TISSUE_FLUSH_SLOTS}; i ++ ) {
+				float age = fabricSimTimeSec - fabricFlushAt[ i ];
+				if ( age < 0.0 || age >= fabricFlushWindow ) continue;
+				float crestRadius = ${glf(CONTACT_FRONT_START_RADIUS)} + fabricFlushSpeed * age;
+				float cappedReach = min(
+					fabricFlushReach[ i ],
+					${glf(CONTACT_FRONT_START_RADIUS)} + fabricFlushSpeed * fabricFlushWindow
+				);
+				float reachFade = 1.0 - smoothstep(
+					0.0,
+					1.0,
+					( crestRadius - cappedReach * ${glf(CONTACT_FRONT_REACH_KNEE)} )
+						/ max( cappedReach * ( 1.0 - ${glf(CONTACT_FRONT_REACH_KNEE)} ), 1e-4 )
+				);
+				// The base is in (0, 1] by construction (radius >= start > 0),
+				// so pow is defined on every driver.
+				float falloff = pow(
+					${glf(CONTACT_FRONT_FALLOFF_REFERENCE)} / ( ${glf(CONTACT_FRONT_FALLOFF_REFERENCE)} + crestRadius ),
+					fabricFlushFalloff
+				);
+				float u = clamp( age / fabricFlushWindow, 0.0, 1.0 );
+				float life = ( 1.0 - u ) * smoothstep( 0.0, 1.0, u / ${glf(CONTACT_FRONT_ONSET)} );
+				float dist = length( xz - fabricFlushOrigin[ i ] );
+				float signal = waveCrestWake(
+					( dist - crestRadius ) / ${glf(FLUSH_HALF_WIDTH)},
+					crestRadius - dist,
+					${glf(FLUSH_HALF_WIDTH)},
+					${glf(WAVE_WAKE_LENGTH)},
+					${glf(FLUSH_WAKE_AMP)}
+				) * reachFade * falloff * life * fabricFlushPunch[ i ];
+				float colorT = 1.0 - ( 1.0 - u ) * ( 1.0 - u ) * ( 1.0 - u );
+				carrier += mix( fabricFlushColor[ i ], ${glv3(CELL_GALAXY_PALETTE.tissueRose)}, colorT ) * signal;
+				total += signal;
+			}
+			return vec4( carrier, total );
+		}
+
 		float fabricEnergyScaleGl(
 			const in vec2 xz,
 			const in float hierarchy,
 			const in float usage,
-			const in float flash
+			const in float flash,
+			const in float flush
 		) {
 			float radius = length( xz );
 			float radialMix = smoothstep(
@@ -124,8 +217,13 @@ const LIFECYCLE_DECLARATIONS = `
 			float coreFloor = clamp( fabricCenterDimLive, 0.0, 1.0 );
 			coreFloor = coreFloor * coreFloor;
 			float radial = coreFloor + ( 1.0 - coreFloor ) * radialMix;
+			// A death flash and a block's flush reclaim the core floor the
+			// same way — each clamped, so neither exceeds a full reclaim, and
+			// a flush of exactly 0 leaves the max exactly where it was. This
+			// is what lets a flush at the galaxy core lift fibres OUT of the
+			// centerDim² floor instead of multiplying 9 % by a little.
 			float semanticReclaim = max(
-				clamp( flash, 0.0, 1.0 ),
+				max( clamp( flash, 0.0, 1.0 ), clamp( flush, 0.0, 1.0 ) ),
 				max(
 					clamp( hierarchy, 0.0, 1.0 ) * ${glf(FABRIC_TRUNK_RECLAIM)},
 					clamp( usage, 0.0, 1.0 ) * ${glf(FABRIC_USAGE_RECLAIM)}
@@ -186,13 +284,26 @@ const LIFECYCLE_DECLARATIONS = `
 			const in float hierarchy,
 			const in float usage,
 			const in float flash,
-			const in float apertureScale
+			const in float apertureScale,
+			const in vec4 flush
 		) {
 			float energy = energyBase
 				* fabricTaperGl( t )
-				* fabricEnergyScaleGl( position.xz, hierarchy, usage, flash )
+				* fabricEnergyScaleGl(
+					position.xz, hierarchy, usage, flash,
+					flush.a * fabricFlushAmp
+				)
 				* apertureScale;
 			vec3 sem = semFrom + ( semTo - semFrom ) * t;
+			// The flush tints as it lifts: the semantic colour leans toward
+			// the front's own (carrier resolving to rose) by the signal. At a
+			// signal of 0 the mix is the identity, so an idle fibre is the
+			// same bits it was before the flush existed.
+			sem = mix(
+				sem,
+				flush.rgb / max( flush.a, 1e-5 ),
+				clamp( flush.a * fabricFlushMix, 0.0, 1.0 )
+			);
 			return sem * energy;
 		}
 
@@ -249,13 +360,19 @@ const LIFECYCLE_DECLARATIONS = `
 				+ ( 1.0 - fabricColorFrom.w ) * flash;
 			float apertureEnd = fabricColorTo.w
 				+ ( 1.0 - fabricColorTo.w ) * flash;
+			// The tissue flush, sampled at each ENDPOINT and never per fragment:
+			// an edge is four capsules, and the wide crest + wake interpolate
+			// cleanly between endpoint samples where a razor crest would
+			// flicker segment to segment.
+			vec4 flushStart = fabricFlushGl( fabricLifeStart.xz );
+			vec4 flushEnd = fabricFlushGl( fabricLifeEnd.xz );
 			fabricLifeColorStart = fabricSampleColorGl(
 				tA, fabricLifeStart, semFrom, semTo, energyBase,
-				hierarchy, usage, flash, apertureStart
+				hierarchy, usage, flash, apertureStart, flushStart
 			);
 			fabricLifeColorEnd = fabricSampleColorGl(
 				tB, fabricLifeEnd, semFrom, semTo, energyBase,
-				hierarchy, usage, flash, apertureEnd
+				hierarchy, usage, flash, apertureEnd, flushEnd
 			);
 		}
 `;
@@ -306,6 +423,22 @@ export function enableFabricLifecycleMaterial(
   material.uniforms.fabricTrunkThreshold = {
     value: FABRIC_TRUNK_THRESHOLD_DISABLED,
   };
+  // The flush slot lanes are the tissueFlush singleton's typed arrays, bound
+  // by REFERENCE: three hands a numeric typed array to gl.uniformNfv as-is on
+  // every draw (WebGLUniforms `flatten` returns it untouched), so a stamp
+  // reaches BOTH passive passes on their next draw with no per-frame copy and
+  // no second place for a slot to rot. The singleton never reallocates them
+  // (resetTissueFlush fills in place).
+  material.uniforms.fabricFlushAt = { value: tissueFlush.at };
+  material.uniforms.fabricFlushOrigin = { value: tissueFlush.originXZ };
+  material.uniforms.fabricFlushColor = { value: tissueFlush.color };
+  material.uniforms.fabricFlushReach = { value: tissueFlush.reach };
+  material.uniforms.fabricFlushPunch = { value: tissueFlush.amp };
+  material.uniforms.fabricFlushWindow = { value: LIVE.delivery.ingestDur };
+  material.uniforms.fabricFlushSpeed = { value: LIVE.delivery.waveSpeed };
+  material.uniforms.fabricFlushFalloff = { value: LIVE.delivery.waveFalloff };
+  material.uniforms.fabricFlushAmp = { value: LIVE.delivery.flushAmp };
+  material.uniforms.fabricFlushMix = { value: LIVE.delivery.flushMix };
   // The stock per-segment attributes become dead inputs here, and vertex
   // attribute LOCATIONS are a hard GPU budget (16 on common hardware) that
   // this stack would otherwise exceed — strip their declarations so no
@@ -372,12 +505,22 @@ export function setFabricTrunkThreshold(
     : FABRIC_TRUNK_THRESHOLD_DISABLED;
 }
 
-/** Per-frame uniform sync — the entire CPU cost of fabric animation. */
+/** Per-frame uniform sync — the entire CPU cost of fabric animation: the sim
+ * clock, the two fabric knobs, and the five block-impact scalars the flush
+ * twin runs on (its window, the shared wave speed and falloff power, and its
+ * own amplitude / mix). The flush slot lanes need no sync — they are the
+ * singleton's arrays, bound by reference at build time. */
 export function syncFabricLifecycleUniforms(
   material: LineMaterial,
   simTimeSec: number,
 ): void {
-  material.uniforms.fabricSimTimeSec.value = simTimeSec;
-  material.uniforms.fabricEnergyLive.value = LIVE.cell.fabricAlpha;
-  material.uniforms.fabricCenterDimLive.value = LIVE.cell.centerDim;
+  const uniforms = material.uniforms;
+  uniforms.fabricSimTimeSec.value = simTimeSec;
+  uniforms.fabricEnergyLive.value = LIVE.cell.fabricAlpha;
+  uniforms.fabricCenterDimLive.value = LIVE.cell.centerDim;
+  uniforms.fabricFlushWindow.value = LIVE.delivery.ingestDur;
+  uniforms.fabricFlushSpeed.value = LIVE.delivery.waveSpeed;
+  uniforms.fabricFlushFalloff.value = LIVE.delivery.waveFalloff;
+  uniforms.fabricFlushAmp.value = LIVE.delivery.flushAmp;
+  uniforms.fabricFlushMix.value = LIVE.delivery.flushMix;
 }
