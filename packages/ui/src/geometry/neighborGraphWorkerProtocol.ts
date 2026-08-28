@@ -6,12 +6,21 @@ import {
   type NeighborGraph,
   type NeighborGraphCell,
   type NeighborGraphOptions,
+  type PassiveSelection,
 } from './neighborGraph';
 import { buildPassiveNeighborGraph } from './passiveNeighborGraph';
 
 export const PACKED_TOPOLOGY_CELL_STRIDE = 4;
-export const PACKED_TOPOLOGY_EDGE_STRIDE = 4;
 export const PACKED_PREFERRED_EDGE_STRIDE = 2;
+/** One passive edge on the wire: `[from, to, distance, arborWeight]`, `NaN`
+ * for no weight. */
+export const PACKED_PASSIVE_EDGE_STRIDE = 4;
+/** One passive edge KEY on the wire: `[from, to]`. A removal names an edge
+ * the receiver already holds, so the record's other fields never ride. */
+export const PACKED_PASSIVE_KEY_STRIDE = 2;
+/** One passive edge's VALUES on the wire: `[distance, arborWeight]`, `NaN`
+ * for no weight — the fields of a record that can move while its key stays. */
+export const PACKED_PASSIVE_VALUE_STRIDE = 2;
 
 /** CSR adjacency preserving each Set's insertion order for deterministic
  * equal-hop routing choices. */
@@ -19,15 +28,6 @@ export interface SerializedNeighborAdjacency {
   nodeIds: Float64Array;
   adjacencyOffsets: Uint32Array;
   adjacentNodeIds: Float64Array;
-}
-
-/** Adjacency plus the dense edge list: the PASSIVE graph's wire form. The
- * display graph never carries `edges` — at ~36K edges × 4 doubles that was
- * a 1.15 MB buffer per build rebuilt into as many fresh objects on the main
- * thread, and nothing there reads a display edge. */
-export interface SerializedNeighborGraph extends SerializedNeighborAdjacency {
-  /** Repeated `[from, to, distance, arborWeight]`; `NaN` means no weight. */
-  edges: Float64Array;
 }
 
 /** Change set of one display adjacency against the session's previous
@@ -48,6 +48,38 @@ export type SerializedDisplayGraph =
   | { kind: 'full'; adjacency: SerializedNeighborAdjacency }
   | { kind: 'patch'; patch: SerializedNeighborAdjacencyPatch };
 
+/** Change set of one passive selection against the session's previous one,
+ * both in canonical order (see `PassiveSelection`): the edges that entered,
+ * as whole records, the keys of those that left, and the values of every
+ * edge in the resulting list.
+ *
+ * The values ride whole because they are not stable while the keys are:
+ * an arbor weight is `sqrt(subtreeSize / maxSubtreeSize)` over the whole
+ * forest, so one birth or death in the largest of the 14 trees rescales
+ * every weight in the selection — nearly every build. The main thread reads
+ * every edge's weight on every build (the trunk tier is derived from the
+ * whole drawn selection), so the current values have to arrive; as one flat
+ * array they cost 16 bytes an edge, against the 32 of a record. */
+export interface SerializedPassiveSelectionPatch {
+  /** `PACKED_PASSIVE_EDGE_STRIDE` per edge, canonical order. */
+  added: Float64Array;
+  /** `PACKED_PASSIVE_KEY_STRIDE` per key, canonical order. */
+  removedKeys: Float64Array;
+  /** `PACKED_PASSIVE_VALUE_STRIDE` per edge of the MERGED list (previous
+   * minus `removedKeys` plus `added`), in that list's canonical order. */
+  values: Float64Array;
+}
+
+/** How the passive selection rides a response: the whole drawn edge list,
+ * or a patch against the selection the request's `patchBaseGeneration`
+ * named. Never an adjacency — nothing on the main thread reads one for the
+ * passive graph (the fabric diff, the trunk tier, the bridges' host degrees,
+ * the stray prune and the continuity preference all read `edges`), so the
+ * 12K-entry Map the old whole form rebuilt per block served no reader. */
+export type SerializedPassiveSelection =
+  | { kind: 'full'; edges: Float64Array }
+  | { kind: 'patch'; patch: SerializedPassiveSelectionPatch };
+
 export interface NeighborGraphWorkerCellsDelta {
   /** Session generation this delta chains from; a mismatch (superseded or
    * dropped build, fresh worker) makes the worker answer `stale` and the
@@ -65,13 +97,14 @@ export interface NeighborGraphWorkerRequest {
   /** Full topology pack, or null when `cellsDelta` carries the change set. */
   cells: Float64Array | null;
   cellsDelta: NeighborGraphWorkerCellsDelta | null;
-  /** Session generation of the display graph the requester currently holds
-   * (0 = none, or a caller that cannot patch). When it names the session's
-   * previous build, the response carries a patch against that build instead
-   * of the whole adjacency; otherwise the whole adjacency rides, which is
-   * always correct. Independent of `cellsDelta`: a full cell pack can still
-   * be answered with a patch, and the chain is decided here, not in the
-   * builder after the fact. */
+  /** Session generation of the build the requester currently holds — its
+   * display graph AND its passive selection, which land together (0 = none,
+   * or a caller that cannot patch). When it names the session's previous
+   * build, the response carries patches against that build instead of the
+   * whole adjacency and the whole edge list; otherwise the whole forms ride,
+   * which is always correct. Independent of `cellsDelta`: a full cell pack
+   * can still be answered with patches, and the chain is decided here, not
+   * in the builder after the fact. */
   patchBaseGeneration: number;
   options: NeighborGraphOptions;
   includePassive: boolean;
@@ -95,26 +128,18 @@ export interface NeighborGraphWorkerRequest {
 export interface NeighborGraphWorkerSuccess {
   kind: 'built';
   requestId: number;
-  /** Monotonic per-session build counter. The main thread only trusts the
-   * incremental hints below when generations chain without a gap; otherwise
-   * it falls back to the full order-strict probe, which is always correct. */
+  /** Monotonic per-session build counter. The main thread only applies a
+   * patch when generations chain without a gap; a patch is only ever sent
+   * when the request's `patchBaseGeneration` was this session's previous
+   * build, so it always chains. */
   generation: number;
-  /** Display adjacency, whole or patched — see {@link SerializedDisplayGraph}.
-   * A patch is only ever sent when the request's `patchBaseGeneration` was
-   * this session's previous build, so it always chains. */
+  /** Display adjacency, whole or patched — see {@link SerializedDisplayGraph}. */
   graph: SerializedDisplayGraph;
-  passiveGraph: SerializedNeighborGraph | null;
-  /** Ids (passive graph) whose adjacency differs from this session's PREVIOUS
-   * passive graph — compared in the worker with the same order-strict probe
-   * the main thread would run. Null = no previous build in this session.
-   * Without it the passive deserialize runs the O(V) probing path on every
-   * block. */
-  passiveChangedNodeIds: Float64Array | null;
-  /** Passive-selection delta vs this session's previous selection, packed
-   * `[from, to, d, w(NaN=none)]` / `[from, to]`. Null when no previous
-   * selection exists (consumer must treat passiveGraph as a full set). */
-  passiveAdded: Float64Array | null;
-  passiveRemoved: Float64Array | null;
+  /** Passive selection, whole or patched — see
+   * {@link SerializedPassiveSelection}. A patch rides under exactly the
+   * condition the display patch does, and only when this session's previous
+   * build carried a passive selection to patch against. */
+  passiveGraph: SerializedPassiveSelection | null;
 }
 
 export interface NeighborGraphWorkerFailure {
@@ -247,21 +272,6 @@ export function serializeNeighborAdjacency(
   return serializeAdjacencyRuns(graph.adjacency, null);
 }
 
-export function serializeNeighborGraph(
-  graph: NeighborGraph,
-): SerializedNeighborGraph {
-  const edges = new Float64Array(graph.edges.length * PACKED_TOPOLOGY_EDGE_STRIDE);
-  let edgeOffset = 0;
-  for (const edge of graph.edges) {
-    edges[edgeOffset] = edge.from;
-    edges[edgeOffset + 1] = edge.to;
-    edges[edgeOffset + 2] = edge.d;
-    edges[edgeOffset + 3] = edge.w ?? Number.NaN;
-    edgeOffset += PACKED_TOPOLOGY_EDGE_STRIDE;
-  }
-  return { ...serializeNeighborAdjacency(graph), edges };
-}
-
 /** Same order-strict comparison as {@link reusableNeighbourSet}, between two
  * live Sets: true iff `next` is exactly `before` (members AND order). */
 function sameNeighbourRun(
@@ -300,19 +310,102 @@ export function collectNeighborAdjacencyPatch(
   };
 }
 
-/** Ids whose passive adjacency differs from the previous build's (the
- * passive graph still deserializes whole, so only the id list rides). */
-function collectChangedNodeIds(
-  previous: NeighborAdjacency,
-  next: NeighborAdjacency,
-): Float64Array {
-  const changed: number[] = [];
-  for (const [id, neighbours] of next.adjacency) {
-    if (!sameNeighbourRun(previous.adjacency.get(id), neighbours)) {
-      changed.push(id);
+// ── passive selection: serialize ────────────────────────────────────────
+
+/** Canonical edge order — `from` ascending, then `to` — as
+ * `buildPassiveNeighborGraph` emits it and `PassiveSelection` keeps it. */
+function compareEdgeKeys(
+  aFrom: number,
+  aTo: number,
+  bFrom: number,
+  bTo: number,
+): number {
+  return aFrom - bFrom || aTo - bTo;
+}
+
+export function packPassiveEdges(edges: readonly NeighborEdge[]): Float64Array {
+  const packed = new Float64Array(edges.length * PACKED_PASSIVE_EDGE_STRIDE);
+  let offset = 0;
+  for (const edge of edges) {
+    packed[offset] = edge.from;
+    packed[offset + 1] = edge.to;
+    packed[offset + 2] = edge.d;
+    packed[offset + 3] = edge.w ?? Number.NaN;
+    offset += PACKED_PASSIVE_EDGE_STRIDE;
+  }
+  return packed;
+}
+
+function packPassiveKeys(edges: readonly NeighborEdge[]): Float64Array {
+  const packed = new Float64Array(edges.length * PACKED_PASSIVE_KEY_STRIDE);
+  let offset = 0;
+  for (const edge of edges) {
+    packed[offset] = edge.from;
+    packed[offset + 1] = edge.to;
+    offset += PACKED_PASSIVE_KEY_STRIDE;
+  }
+  return packed;
+}
+
+function packPassiveValues(edges: readonly NeighborEdge[]): Float64Array {
+  const packed = new Float64Array(edges.length * PACKED_PASSIVE_VALUE_STRIDE);
+  let offset = 0;
+  for (const edge of edges) {
+    packed[offset] = edge.d;
+    packed[offset + 1] = edge.w ?? Number.NaN;
+    offset += PACKED_PASSIVE_VALUE_STRIDE;
+  }
+  return packed;
+}
+
+/**
+ * Worker-side diff of the new passive selection against the session's
+ * previous one: one merge walk over the two canonically ordered lists, no
+ * keys built, plus the new list's values. Both lists come from
+ * `buildPassiveNeighborGraph`, which sorts its selection and admits each key
+ * once; the walk re-checks the new list's order as it goes, because a merge
+ * over an unordered list would produce a wrong diff in silence, and a thrown
+ * build lands in the builder's counted fallback instead.
+ */
+export function collectPassiveSelectionPatch(
+  previous: readonly NeighborEdge[],
+  next: readonly NeighborEdge[],
+): SerializedPassiveSelectionPatch {
+  const added: NeighborEdge[] = [];
+  const removed: NeighborEdge[] = [];
+  let previousIndex = 0;
+  let nextIndex = 0;
+  while (previousIndex < previous.length && nextIndex < next.length) {
+    const before = previous[previousIndex];
+    const after = next[nextIndex];
+    const order = compareEdgeKeys(before.from, before.to, after.from, after.to);
+    if (order === 0) {
+      previousIndex += 1;
+      nextIndex += 1;
+    } else if (order < 0) {
+      removed.push(before);
+      previousIndex += 1;
+    } else {
+      added.push(after);
+      nextIndex += 1;
     }
   }
-  return Float64Array.from(changed);
+  for (; previousIndex < previous.length; previousIndex += 1) {
+    removed.push(previous[previousIndex]);
+  }
+  for (; nextIndex < next.length; nextIndex += 1) added.push(next[nextIndex]);
+  for (let index = 1; index < next.length; index += 1) {
+    const a = next[index - 1];
+    const b = next[index];
+    if (compareEdgeKeys(a.from, a.to, b.from, b.to) >= 0) {
+      throw new Error('passive selection is not in canonical order');
+    }
+  }
+  return {
+    added: packPassiveEdges(added),
+    removedKeys: packPassiveKeys(removed),
+    values: packPassiveValues(next),
+  };
 }
 
 // ── deserialize ─────────────────────────────────────────────────────────
@@ -468,143 +561,16 @@ export function applyNeighborAdjacencyPatch(
   return graph;
 }
 
-/** Positional edge-record value-reuse: an edge record whose four values
- * sit at the same index in the previous list keeps its object identity.
- * Passive lists are canonically sorted and small, so per-block churn shifts
- * only a suffix. */
-function reuseEdgeRecords(
-  previousEdges: readonly NeighborEdge[] | null,
-  serialized: SerializedNeighborGraph,
-): NeighborEdge[] {
-  if (serialized.edges.length % PACKED_TOPOLOGY_EDGE_STRIDE !== 0) {
-    throw new Error('invalid packed topology edge buffer');
+// ── passive selection: deserialize ──────────────────────────────────────
+
+/** Unpack a `PACKED_PASSIVE_EDGE_STRIDE` edge list into records, in wire
+ * order (shared by the whole form, the patch and the tests). */
+export function unpackPassiveEdges(packed: Float64Array): NeighborEdge[] {
+  if (packed.length % PACKED_PASSIVE_EDGE_STRIDE !== 0) {
+    throw new Error('invalid packed passive edge buffer');
   }
   const edges: NeighborEdge[] = [];
-  let edgeIndex = 0;
-  for (
-    let offset = 0;
-    offset < serialized.edges.length;
-    offset += PACKED_TOPOLOGY_EDGE_STRIDE
-  ) {
-    const from = serialized.edges[offset];
-    const to = serialized.edges[offset + 1];
-    const d = serialized.edges[offset + 2];
-    const weight = serialized.edges[offset + 3];
-    const hasWeight = !Number.isNaN(weight);
-    const candidate = previousEdges !== null && edgeIndex < previousEdges.length
-      ? previousEdges[edgeIndex]
-      : undefined;
-    if (
-      candidate !== undefined
-      && candidate.from === from
-      && candidate.to === to
-      && candidate.d === d
-      && (hasWeight ? candidate.w === weight : candidate.w === undefined)
-    ) {
-      edges.push(candidate);
-    } else {
-      const edge: NeighborEdge = { from, to, d };
-      if (hasWeight) edge.w = weight;
-      edges.push(edge);
-    }
-    edgeIndex += 1;
-  }
-  return edges;
-}
-
-export function deserializeNeighborGraph(
-  serialized: SerializedNeighborGraph,
-): NeighborGraph {
-  return deserializeNeighborGraphInto(null, serialized);
-}
-
-/**
- * Deserialize a whole graph (adjacency + edges — the passive graph), reusing
- * the previous graph's per-node Sets and positionally unchanged edge records
- * wherever the payload is value-identical. The returned graph is a new
- * object and the previous one must be discarded by the caller.
- */
-export function deserializeNeighborGraphInto(
-  previous: NeighborGraph | null,
-  serialized: SerializedNeighborGraph,
-): NeighborGraph {
-  const edges = reuseEdgeRecords(previous?.edges ?? null, serialized);
-  return {
-    adjacency: deserializeAdjacencyInto(previous?.adjacency ?? null, serialized),
-    edges,
-  };
-}
-
-/**
- * Hint-guided variant of `deserializeNeighborGraphInto` for the passive
- * graph: nodes absent from `changedNodeIds` adopt the previous graph's Set
- * instance WITHOUT the per-neighbour probe (the worker already ran the
- * identical order-strict comparison against the same previous build).
- * Callers must only pass hints whose generation chains from the previously
- * applied response; with null hints this is exactly the probing deserialize.
- */
-export function deserializeNeighborGraphWithHints(
-  previous: NeighborGraph | null,
-  serialized: SerializedNeighborGraph,
-  changedNodeIds: Float64Array | null,
-): NeighborGraph {
-  if (previous === null || changedNodeIds === null) {
-    return deserializeNeighborGraphInto(previous, serialized);
-  }
-  validateAdjacencyRuns(serialized);
-  const changed = new Set(changedNodeIds);
-  const adjacency = new Map<number, Set<number>>();
-  for (let index = 0; index < serialized.nodeIds.length; index += 1) {
-    const nodeId = serialized.nodeIds[index];
-    const start = serialized.adjacencyOffsets[index];
-    const end = serialized.adjacencyOffsets[index + 1];
-    if (end < start || end > serialized.adjacentNodeIds.length) {
-      throw new Error('invalid packed topology adjacency offsets');
-    }
-    if (!changed.has(nodeId)) {
-      const before = previous.adjacency.get(nodeId);
-      // Defensive: a missing/mis-sized previous Set means the hint cannot
-      // be honored for this node; rebuilding is always correct.
-      if (before !== undefined && before.size === end - start) {
-        adjacency.set(nodeId, before);
-        continue;
-      }
-    }
-    adjacency.set(
-      nodeId,
-      neighbourSetFromRun(serialized.adjacentNodeIds, start, end),
-    );
-  }
-  // Edge records keep the positional value-reuse of the probing path,
-  // without paying for that path's adjacency rebuild.
-  return { adjacency, edges: reuseEdgeRecords(previous.edges, serialized) };
-}
-
-// ── passive delta packing ───────────────────────────────────────────────
-
-const PACKED_DELTA_EDGE_STRIDE = 4;
-
-function packEdgeList(edges: readonly NeighborEdge[]): Float64Array {
-  const packed = new Float64Array(edges.length * PACKED_DELTA_EDGE_STRIDE);
-  let offset = 0;
-  for (const edge of edges) {
-    packed[offset] = edge.from;
-    packed[offset + 1] = edge.to;
-    packed[offset + 2] = edge.d;
-    packed[offset + 3] = edge.w ?? Number.NaN;
-    offset += PACKED_DELTA_EDGE_STRIDE;
-  }
-  return packed;
-}
-
-/** Unpack a `[from,to,d,w]` delta edge list (shared by tests + consumers). */
-export function unpackDeltaEdges(packed: Float64Array | null): NeighborEdge[] {
-  if (packed === null) return [];
-  if (packed.length % PACKED_DELTA_EDGE_STRIDE !== 0) {
-    throw new Error('invalid packed delta edge buffer');
-  }
-  const edges: NeighborEdge[] = [];
-  for (let offset = 0; offset < packed.length; offset += PACKED_DELTA_EDGE_STRIDE) {
+  for (let offset = 0; offset < packed.length; offset += PACKED_PASSIVE_EDGE_STRIDE) {
     const edge: NeighborEdge = {
       from: packed[offset],
       to: packed[offset + 1],
@@ -617,8 +583,177 @@ export function unpackDeltaEdges(packed: Float64Array | null): NeighborEdge[] {
   return edges;
 }
 
-function edgeSetKey(edge: NeighborEdge): string {
-  return `${edge.from}:${edge.to}`;
+/** Every key strictly ascending in canonical order — the precondition of
+ * both merges below. `stride` is where the key sits in each record. */
+function assertCanonicalKeyOrder(
+  packed: Float64Array,
+  stride: number,
+  what: string,
+): void {
+  for (let offset = stride; offset < packed.length; offset += stride) {
+    if (
+      compareEdgeKeys(
+        packed[offset - stride],
+        packed[offset - stride + 1],
+        packed[offset],
+        packed[offset + 1],
+      ) >= 0
+    ) {
+      throw new Error(`${what} is not in canonical order`);
+    }
+  }
+}
+
+/** Whole passive selection from a `full` response: fresh records, order
+ * validated. The previous selection is superseded wholesale. */
+export function deserializePassiveSelection(
+  serialized: { edges: Float64Array },
+): PassiveSelection {
+  assertCanonicalKeyOrder(
+    serialized.edges,
+    PACKED_PASSIVE_EDGE_STRIDE,
+    'passive selection',
+  );
+  return { edges: unpackPassiveEdges(serialized.edges) };
+}
+
+/** What one passive patch did to the held list, in the list's own records. */
+export interface PassiveSelectionDelta {
+  /** The records now in the list for the edges that entered. */
+  added: NeighborEdge[];
+  /** The very records the list dropped — `d` and `w` intact, though the
+   * wire carried only their keys. */
+  removed: NeighborEdge[];
+  /** Surviving edges whose values moved: each got a fresh record (records
+   * are immutable values — the fabric's deferred cohorts hold them across
+   * builds and read the weight they were queued with). */
+  rewritten: number;
+}
+
+/**
+ * Apply a passive patch to the selection it was computed against, IN PLACE:
+ * a sorted merge over the held list, then the list's values — O(edges +
+ * churn), with no Map or Set built, and a record allocated only for an edge
+ * that entered or whose values moved (see `SerializedPassiveSelectionPatch`
+ * for why the latter is most of the arbor on most builds; every record the
+ * merge keeps is one the worker's values confirm unchanged).
+ *
+ * Validates before it mutates, so a rejected patch leaves the selection
+ * untouched: the buffers must be canonically ordered, every removed key must
+ * name an edge the selection holds, no added key may already be in it, and
+ * the values must cover exactly the merged list — anything else means the
+ * patch was not computed against this list, and the builder's fallback
+ * rebuilds rather than letting the fabric drift.
+ */
+export function applyPassiveSelectionPatch(
+  selection: PassiveSelection,
+  patch: SerializedPassiveSelectionPatch,
+): PassiveSelectionDelta {
+  const { edges } = selection;
+  const { removedKeys, values } = patch;
+  if (removedKeys.length % PACKED_PASSIVE_KEY_STRIDE !== 0) {
+    throw new Error('invalid packed passive key buffer');
+  }
+  assertCanonicalKeyOrder(removedKeys, PACKED_PASSIVE_KEY_STRIDE, 'passive patch removals');
+  assertCanonicalKeyOrder(patch.added, PACKED_PASSIVE_EDGE_STRIDE, 'passive patch additions');
+  const added = unpackPassiveEdges(patch.added);
+  const removedCount = removedKeys.length / PACKED_PASSIVE_KEY_STRIDE;
+  if (
+    values.length
+    !== (edges.length - removedCount + added.length) * PACKED_PASSIVE_VALUE_STRIDE
+  ) {
+    throw new Error('passive patch values do not cover the merged selection');
+  }
+
+  // The next removed key, held in locals: the walks below compare it against
+  // every edge, and are cheapest reading the buffer once per removal.
+  let keyIndex = 0;
+  let nextKeyFrom = removedCount > 0 ? removedKeys[0] : Number.NaN;
+  let nextKeyTo = removedCount > 0 ? removedKeys[1] : Number.NaN;
+  const advanceKey = (): void => {
+    keyIndex += 1;
+    const offset = keyIndex * PACKED_PASSIVE_KEY_STRIDE;
+    nextKeyFrom = keyIndex < removedCount ? removedKeys[offset] : Number.NaN;
+    nextKeyTo = keyIndex < removedCount ? removedKeys[offset + 1] : Number.NaN;
+  };
+
+  // Dry run of both merges: every removal must hit, no addition may collide
+  // with a surviving edge.
+  let addIndex = 0;
+  for (let index = 0; index < edges.length; index += 1) {
+    const edge = edges[index];
+    if (edge.from === nextKeyFrom && edge.to === nextKeyTo) {
+      advanceKey();
+      continue;
+    }
+    while (
+      addIndex < added.length
+      && compareEdgeKeys(added[addIndex].from, added[addIndex].to, edge.from, edge.to) < 0
+    ) {
+      addIndex += 1;
+    }
+    if (
+      addIndex < added.length
+      && added[addIndex].from === edge.from
+      && added[addIndex].to === edge.to
+    ) {
+      throw new Error('passive patch adds an edge the selection already holds');
+    }
+  }
+  if (keyIndex !== removedCount) {
+    throw new Error('passive patch removes an edge the selection does not hold');
+  }
+
+  // Pass 1: compact the removals out, in place.
+  const removed: NeighborEdge[] = [];
+  let write = 0;
+  keyIndex = -1;
+  advanceKey();
+  for (let read = 0; read < edges.length; read += 1) {
+    const edge = edges[read];
+    if (edge.from === nextKeyFrom && edge.to === nextKeyTo) {
+      removed.push(edge);
+      advanceKey();
+      continue;
+    }
+    edges[write] = edge;
+    write += 1;
+  }
+  // Pass 2: merge the additions in from the back, so every surviving record
+  // moves at most once and the list ends in canonical order.
+  const kept = write;
+  edges.length = kept + added.length;
+  let survivor = kept - 1;
+  let addition = added.length - 1;
+  for (let slot = edges.length - 1; addition >= 0; slot -= 1) {
+    const next = added[addition];
+    if (
+      survivor >= 0
+      && compareEdgeKeys(edges[survivor].from, edges[survivor].to, next.from, next.to) > 0
+    ) {
+      edges[slot] = edges[survivor];
+      survivor -= 1;
+    } else {
+      edges[slot] = next;
+      addition -= 1;
+    }
+  }
+  // Pass 3: the values. A record whose distance or weight moved is replaced,
+  // never edited; an added record already carries this build's values, so
+  // it is confirmed here, not rewritten.
+  let rewritten = 0;
+  for (let index = 0; index < edges.length; index += 1) {
+    const edge = edges[index];
+    const d = values[index * PACKED_PASSIVE_VALUE_STRIDE];
+    const w = values[index * PACKED_PASSIVE_VALUE_STRIDE + 1];
+    const hasWeight = !Number.isNaN(w);
+    if (edge.d === d && (hasWeight ? edge.w === w : edge.w === undefined)) continue;
+    const replacement: NeighborEdge = { from: edge.from, to: edge.to, d };
+    if (hasWeight) replacement.w = w;
+    edges[index] = replacement;
+    rewritten += 1;
+  }
+  return { added, removed, rewritten };
 }
 
 // ── session ─────────────────────────────────────────────────────────────
@@ -630,14 +765,14 @@ export interface NeighborGraphWorkerSession {
 }
 
 /** Stateful worker session: retains the previous build so each response can
- * carry incremental hints (display patch, passive changed nodes, passive
- * selection delta) computed OFF the main thread, and reuses its own
- * previous passive selection as the continuity preference instead of
- * having the main thread pack it back. */
+ * carry patches (display adjacency, passive selection) computed OFF the
+ * main thread, and reuses its own previous passive selection as the
+ * continuity preference instead of having the main thread pack it back. */
 export function createNeighborGraphWorkerSession(): NeighborGraphWorkerSession {
   let generation = 0;
   let lastGraph: NeighborGraph | null = null;
-  let lastPassiveGraph: NeighborGraph | null = null;
+  /** The previous build's passive selection, canonical order. It doubles as
+   * the continuity preference and as the base of the next passive patch. */
   let lastPassiveEdges: NeighborEdge[] | null = null;
   let lastCells: Map<number, NeighborGraphCell> | null = null;
 
@@ -691,53 +826,37 @@ export function createNeighborGraphWorkerSession(): NeighborGraphWorkerSession {
       // A patch is exact only against the build the requester holds. The
       // requester names it by generation; anything else (fresh session, a
       // superseded build in between, a caller that cannot patch) gets the
-      // whole adjacency, which is always correct.
-      const displayGraph: SerializedDisplayGraph =
+      // whole forms, which are always correct. One decision for both
+      // graphs: they were applied together from that generation.
+      const patchable =
         lastGraph !== null
         && request.patchBaseGeneration > 0
-        && request.patchBaseGeneration === generation
-          ? { kind: 'patch', patch: collectNeighborAdjacencyPatch(lastGraph, graph) }
-          : { kind: 'full', adjacency: serializeNeighborAdjacency(graph) };
-      const passiveChangedNodeIds =
-        passiveGraph !== null && lastPassiveGraph !== null
-          ? collectChangedNodeIds(lastPassiveGraph, passiveGraph)
-          : null;
-
-      let passiveAdded: Float64Array | null = null;
-      let passiveRemoved: Float64Array | null = null;
-      if (passiveGraph !== null && lastPassiveEdges !== null) {
-        const beforeByKey = new Map(
-          lastPassiveEdges.map((edge) => [edgeSetKey(edge), edge]),
-        );
-        const added: NeighborEdge[] = [];
-        const afterKeys = new Set<string>();
-        for (const edge of passiveGraph.edges) {
-          const key = edgeSetKey(edge);
-          afterKeys.add(key);
-          if (!beforeByKey.has(key)) added.push(edge);
-        }
-        const removed: NeighborEdge[] = [];
-        for (const edge of lastPassiveEdges) {
-          if (!afterKeys.has(edgeSetKey(edge))) removed.push(edge);
-        }
-        passiveAdded = packEdgeList(added);
-        passiveRemoved = packEdgeList(removed);
+        && request.patchBaseGeneration === generation;
+      const displayGraph: SerializedDisplayGraph = patchable
+        ? { kind: 'patch', patch: collectNeighborAdjacencyPatch(lastGraph!, graph) }
+        : { kind: 'full', adjacency: serializeNeighborAdjacency(graph) };
+      let passiveSelection: SerializedPassiveSelection | null = null;
+      if (passiveGraph !== null) {
+        passiveSelection = patchable && lastPassiveEdges !== null
+          ? {
+            kind: 'patch',
+            patch: collectPassiveSelectionPatch(lastPassiveEdges, passiveGraph.edges),
+          }
+          : { kind: 'full', edges: packPassiveEdges(passiveGraph.edges) };
       }
 
       generation += 1;
       lastGraph = graph;
-      lastPassiveGraph = passiveGraph;
-      lastPassiveEdges = passiveGraph ? [...passiveGraph.edges] : null;
+      // The selection's own array: the builder returns it sorted and nothing
+      // in the session writes to it afterwards.
+      lastPassiveEdges = passiveGraph ? passiveGraph.edges : null;
 
       return {
         kind: 'built',
         requestId: request.requestId,
         generation,
         graph: displayGraph,
-        passiveGraph: passiveGraph ? serializeNeighborGraph(passiveGraph) : null,
-        passiveChangedNodeIds,
-        passiveAdded,
-        passiveRemoved,
+        passiveGraph: passiveSelection,
       };
     },
   };
@@ -774,14 +893,16 @@ export function neighborGraphResponseTransferList(
     pushRuns(response.graph.patch.changed);
     transfer.push(response.graph.patch.removedNodeIds.buffer);
   }
-  if (response.passiveChangedNodeIds) {
-    transfer.push(response.passiveChangedNodeIds.buffer);
-  }
-  if (response.passiveAdded) transfer.push(response.passiveAdded.buffer);
-  if (response.passiveRemoved) transfer.push(response.passiveRemoved.buffer);
-  if (response.passiveGraph) {
-    pushRuns(response.passiveGraph);
-    transfer.push(response.passiveGraph.edges.buffer);
+  if (response.passiveGraph !== null) {
+    if (response.passiveGraph.kind === 'full') {
+      transfer.push(response.passiveGraph.edges.buffer);
+    } else {
+      transfer.push(
+        response.passiveGraph.patch.added.buffer,
+        response.passiveGraph.patch.removedKeys.buffer,
+        response.passiveGraph.patch.values.buffer,
+      );
+    }
   }
   return transfer;
 }

@@ -25,7 +25,7 @@ import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import type { Cell } from '@cknerv/types';
-import type { NeighborGraph, NeighborEdge } from '../geometry/neighborGraph';
+import type { NeighborEdge, PassiveSelection } from '../geometry/neighborGraph';
 import { bezierAtInto, bezierControlInto, fabricEdgeSeed } from '../geometry/edgeBezier';
 import {
   canonicalizeFabricRenderOrder,
@@ -242,13 +242,13 @@ export interface NeuralFabricHandles {
    *  the boot and remount paths need no extra call. Publishes ONE threshold to
    *  both passive passes: they must agree, or an edge is drawn twice or not at
    *  all. */
-  setTrunkTier(graph: NeighborGraph): void;
+  setTrunkTier(graph: PassiveSelection): void;
   /** Diff a new neighbour graph into the persistent edge map. New
    *  edges enter growing phase (bornAt=now); missing edges enter
    *  dying phase (dyingAt=now); stable edges are untouched. Does
    *  NOT emit — the actual draw happens in `emitFabric` so that
    *  growth/decay can animate frame-by-frame. */
-  setFabric(graph: NeighborGraph, cells: ReadonlyMap<number, Cell>, now: number): void;
+  setFabric(graph: PassiveSelection, cells: ReadonlyMap<number, Cell>, now: number): void;
   /** Emit the fabric layer for the current frame. Walks the edge
    *  state map, applies growth/decay math, commits the buffer.
    *  Gated internally: returns immediately when nothing is dirty
@@ -1621,7 +1621,7 @@ export default function NeuralFabric({
      * the selection. Both materials take the SAME threshold: that identity is
      * the partition, and with it each edge's summed light across the two
      * passes is exactly 1.0× of what it draws today. */
-    const applyTrunkTier = (graph: NeighborGraph): void => {
+    const applyTrunkTier = (graph: PassiveSelection): void => {
       const tier = fabricTrunkTier(graph.edges);
       fabricStats.trunkTierEdges = tier.edges;
       fabricStats.trunkTierThreshold = tier.threshold;

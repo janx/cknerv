@@ -5,30 +5,33 @@ import {
   emptyLivingNeighborGraph,
   type LivingNeighborGraph,
   type NeighborAdjacency,
+  type NeighborEdge,
   type NeighborGraphCell,
+  type PassiveSelection,
 } from '../../src/geometry/neighborGraph';
 import { shortestPath } from '../../src/geometry/pathRouter';
 import { buildPassiveNeighborGraph } from '../../src/geometry/passiveNeighborGraph';
 import { addCell, removeCells } from '../../src/nerve/incrementalGraph';
 import {
   applyNeighborAdjacencyPatch,
+  applyPassiveSelectionPatch,
   collectNeighborAdjacencyPatch,
+  collectPassiveSelectionPatch,
   createNeighborGraphWorkerSession,
   deserializeLivingNeighborGraphInto,
   deserializeNeighborAdjacency,
-  deserializeNeighborGraph,
-  deserializeNeighborGraphInto,
-  deserializeNeighborGraphWithHints,
+  deserializePassiveSelection,
   executeNeighborGraphWorkerRequest,
   neighborGraphResponseTransferList,
+  packPassiveEdges,
   packPreferredEdges,
   packTopologyCells,
   serializeNeighborAdjacency,
-  serializeNeighborGraph,
-  unpackDeltaEdges,
+  unpackPassiveEdges,
   unpackTopologyCells,
   type NeighborGraphWorkerRequest,
   type NeighborGraphWorkerSuccess,
+  type SerializedPassiveSelectionPatch,
 } from '../../src/geometry/neighborGraphWorkerProtocol';
 
 function cell(
@@ -77,6 +80,26 @@ function fullAdjacency(response: NeighborGraphWorkerSuccess): NeighborAdjacency 
   return deserializeNeighborAdjacency(response.graph.adjacency);
 }
 
+/** The whole passive selection of a response that carried one whole. */
+function fullPassive(response: NeighborGraphWorkerSuccess): PassiveSelection {
+  if (response.passiveGraph?.kind !== 'full') {
+    throw new Error('expected a whole passive selection');
+  }
+  return deserializePassiveSelection(response.passiveGraph);
+}
+
+const edgeKeyOf = (edge: { from: number; to: number }) => `${edge.from}:${edge.to}`;
+
+/** Canonical order: `from` ascending, then `to`, each key once. */
+function expectCanonicalOrder(edges: readonly NeighborEdge[], label: string): void {
+  for (let index = 1; index < edges.length; index += 1) {
+    const a = edges[index - 1];
+    const b = edges[index];
+    expect(a.from < b.from || (a.from === b.from && a.to < b.to), `${label}: ${edgeKeyOf(a)} before ${edgeKeyOf(b)}`)
+      .toBe(true);
+  }
+}
+
 /** Order-strict node-by-node equality, with a readable failure. */
 function expectSameAdjacency(
   actual: NeighborAdjacency,
@@ -106,24 +129,38 @@ describe('neighbor graph Worker protocol', () => {
     expect(JSON.stringify([...unpacked.values()])).not.toContain('data_hex');
   });
 
-  it('round-trips graph nodes, ordered edges, distances, and arbor weights', () => {
+  it('round-trips an adjacency-only CSR in Set order, with the routes it decides', () => {
     const graph = buildNeighborGraph(fixtureCells(), { k: 2, maxEdgeLength: 8 });
-    const restored = deserializeNeighborGraph(serializeNeighborGraph(graph));
-    expect(restored).toEqual(graph);
-    for (const [id, neighbours] of graph.adjacency) {
-      expect([...(restored.adjacency.get(id) ?? [])]).toEqual([...neighbours]);
-    }
+    const restored = deserializeNeighborAdjacency(serializeNeighborAdjacency(graph));
+    expectSameAdjacency(restored, graph, 'adjacency round trip');
+    expect('edges' in restored).toBe(false);
     for (const [from, to] of [[1, 7], [2, 6], [5, 3]]) {
       expect(shortestPath(restored, from, to))
         .toEqual(shortestPath(graph, from, to));
     }
   });
 
-  it('round-trips an adjacency-only CSR in Set order', () => {
+  it('round-trips the passive selection as records: order, distances and arbor weights, no adjacency', () => {
     const graph = buildNeighborGraph(fixtureCells(), { k: 2, maxEdgeLength: 8 });
-    const restored = deserializeNeighborAdjacency(serializeNeighborAdjacency(graph));
-    expectSameAdjacency(restored, graph, 'adjacency round trip');
-    expect('edges' in restored).toBe(false);
+    const selection = buildPassiveNeighborGraph(graph, { edgeBudget: 5 });
+    const restored = deserializePassiveSelection({ edges: packPassiveEdges(selection.edges) });
+    expect(restored.edges).toEqual(selection.edges);
+    expect('adjacency' in restored).toBe(false);
+    expectCanonicalOrder(restored.edges, 'round trip');
+    // Weighted and unweighted records both survive the trip exactly.
+    const mixed: NeighborEdge[] = [
+      { from: 1, to: 2, d: 1.25, w: 0.5 },
+      { from: 1, to: 3, d: 2.5 },
+      { from: 2, to: 3, d: 0.75, w: 1 },
+    ];
+    expect(unpackPassiveEdges(packPassiveEdges(mixed))).toEqual(mixed);
+    // A whole list that is not in canonical order is rejected on arrival:
+    // the in-place merge below depends on the order, so it is a contract.
+    const reversed = packPassiveEdges([...selection.edges].reverse());
+    expect(() => deserializePassiveSelection({ edges: reversed }))
+      .toThrow(/canonical order/);
+    expect(() => unpackPassiveEdges(new Float64Array(3)))
+      .toThrow(/invalid packed passive edge buffer/);
   });
 
   it('builds the same full and preferred passive graphs as the main-thread path', () => {
@@ -154,68 +191,28 @@ describe('neighbor graph Worker protocol', () => {
     // edge list at all.
     expect(response.graph.kind).toBe('full');
     expectSameAdjacency(fullAdjacency(response), expectedGraph, 'display');
-    expect(response.passiveGraph).not.toBeNull();
-    expect(deserializeNeighborGraph(response.passiveGraph!))
-      .toEqual(expectedPassive);
+    // The passive graph rides edges-only: the same records the main-thread
+    // selection holds, and no adjacency at all.
+    expect(fullPassive(response).edges).toEqual(expectedPassive.edges);
+    expect(response.passiveGraph).not.toHaveProperty('nodeIds');
   });
 
-  describe('patch deserialization (deserializeNeighborGraphInto)', () => {
-    it('reuses every Set and edge when the payload is unchanged', () => {
-      const graph = buildNeighborGraph(fixtureCells(), { k: 2, maxEdgeLength: 8 });
-      const serialized = serializeNeighborGraph(graph);
-      const base = deserializeNeighborGraph(serialized);
-      const patched = deserializeNeighborGraphInto(base, serialized);
+  it('deserializeLivingNeighborGraphInto rejects a previous Set whose members match but whose order differs', () => {
+    const graph = buildNeighborGraph(fixtureCells(), { k: 2, maxEdgeLength: 8 });
+    const serialized = serializeNeighborAdjacency(graph);
+    const base = deserializeLivingNeighborGraphInto(null, serialized);
+    // Reverse one node's Set order in the "previous" graph.
+    const someNode = [...base.adjacency.entries()]
+      .find(([, neighbours]) => neighbours.size >= 2);
+    expect(someNode).toBeDefined();
+    const [nodeId, neighbours] = someNode!;
+    base.adjacency.set(nodeId, new Set([...neighbours].reverse()));
 
-      expect(patched).not.toBe(base);
-      expect(patched).toEqual(base);
-      for (const [id, neighbours] of base.adjacency) {
-        expect(patched.adjacency.get(id)).toBe(neighbours);
-      }
-      for (let index = 0; index < base.edges.length; index += 1) {
-        expect(patched.edges[index]).toBe(base.edges[index]);
-      }
-    });
-
-    it('patches only changed nodes and deep-equals a fresh deserialize', () => {
-      const cells = fixtureCells();
-      const before = buildNeighborGraph(cells, { k: 2, maxEdgeLength: 8 });
-      const base = deserializeNeighborGraph(serializeNeighborGraph(before));
-
-      // One new cell near the 1–4 cluster changes a few nodes' adjacency and
-      // appends edges; distant nodes keep their exact runs.
-      cells.set(9, cell(9, 1, 1));
-      const after = buildNeighborGraph(cells, { k: 2, maxEdgeLength: 8 });
-      const serializedAfter = serializeNeighborGraph(after);
-      const fresh = deserializeNeighborGraph(serializedAfter);
-      const patched = deserializeNeighborGraphInto(base, serializedAfter);
-
-      expect(patched).toEqual(fresh);
-      let reusedSets = 0;
-      for (const [id, neighbours] of patched.adjacency) {
-        if (base.adjacency.get(id) === neighbours) reusedSets += 1;
-        expect([...neighbours]).toEqual([...(fresh.adjacency.get(id) ?? [])]);
-      }
-      expect(reusedSets).toBeGreaterThan(0);
-      expect(reusedSets).toBeLessThan(patched.adjacency.size);
-    });
-
-    it('rejects a previous Set whose members match but whose order differs', () => {
-      const graph = buildNeighborGraph(fixtureCells(), { k: 2, maxEdgeLength: 8 });
-      const serialized = serializeNeighborGraph(graph);
-      const base = deserializeNeighborGraph(serialized);
-      // Reverse one node's Set order in the "previous" graph.
-      const someNode = [...base.adjacency.entries()]
-        .find(([, neighbours]) => neighbours.size >= 2);
-      expect(someNode).toBeDefined();
-      const [nodeId, neighbours] = someNode!;
-      base.adjacency.set(nodeId, new Set([...neighbours].reverse()));
-
-      const patched = deserializeNeighborGraphInto(base, serialized);
-      expect(patched.adjacency.get(nodeId)).not.toBe(base.adjacency.get(nodeId));
-      // CSR order wins — deterministic equal-hop routing depends on it.
-      expect([...patched.adjacency.get(nodeId)!])
-        .toEqual([...(deserializeNeighborGraph(serialized).adjacency.get(nodeId)!)]);
-    });
+    const rebuilt = deserializeLivingNeighborGraphInto(base, serialized);
+    expect(rebuilt.adjacency.get(nodeId)).not.toBe(base.adjacency.get(nodeId));
+    // CSR order wins — deterministic equal-hop routing depends on it.
+    expect([...rebuilt.adjacency.get(nodeId)!])
+      .toEqual([...(deserializeNeighborAdjacency(serialized).adjacency.get(nodeId)!)]);
   });
 
   it('deserializeLivingNeighborGraphInto reuses value-identical Sets and starts an empty eager log', () => {
@@ -439,20 +436,61 @@ describe('createNeighborGraphWorkerSession (stateful increments)', () => {
     expect(fresh.graph.kind).toBe('full');
   });
 
-  it('reports a display patch and passive deltas that reproduce a full build', () => {
+  it('answers with a passive patch exactly when it answers with a display patch and its previous build had a selection', () => {
+    const session = createNeighborGraphWorkerSession();
+    const ids = Array.from({ length: 40 }, (_, i) => i + 1);
+    const execute = (requestId: number, patchBaseGeneration: number, includePassive: boolean) => {
+      const response = session.execute({
+        ...request(ids, requestId, patchBaseGeneration),
+        includePassive,
+      });
+      if (response.kind !== 'built') throw new Error('expected built');
+      return response;
+    };
+    // No selection requested: nothing rides.
+    const first = execute(1, 0, false);
+    expect(first.passiveGraph).toBeNull();
+    // The display chains, but the previous build had no selection to patch
+    // against: the selection rides whole.
+    const second = execute(2, 1, true);
+    expect(second.graph.kind).toBe('patch');
+    expect(second.passiveGraph?.kind).toBe('full');
+    // Both chain.
+    const third = execute(3, 2, true);
+    expect(third.graph.kind).toBe('patch');
+    expect(third.passiveGraph?.kind).toBe('patch');
+    // Names a build that is no longer the previous one: both ride whole.
+    const fourth = execute(4, 2, true);
+    expect(fourth.graph.kind).toBe('full');
+    expect(fourth.passiveGraph?.kind).toBe('full');
+    // A caller that cannot patch (0): both ride whole.
+    const fifth = execute(5, 0, true);
+    expect(fifth.graph.kind).toBe('full');
+    expect(fifth.passiveGraph?.kind).toBe('full');
+    // The selection is dropped for a build, then requested again: the
+    // display still chains, the selection has no base and rides whole.
+    const sixth = execute(6, 5, false);
+    expect(sixth.graph.kind).toBe('patch');
+    expect(sixth.passiveGraph).toBeNull();
+    const seventh = execute(7, 6, true);
+    expect(seventh.graph.kind).toBe('patch');
+    expect(seventh.passiveGraph?.kind).toBe('full');
+  });
+
+  it('reports a display patch and a passive patch that reproduce a whole build', () => {
     const session = createNeighborGraphWorkerSession();
     const ids = Array.from({ length: 40 }, (_, i) => i + 1);
     const first = session.execute(request(ids, 1));
     if (first.kind !== 'built') throw new Error('expected built');
     expect(first.generation).toBe(1);
-    expect(first.passiveChangedNodeIds).toBeNull();
-    expect(first.passiveAdded).toBeNull();
+    expect(first.passiveGraph?.kind).toBe('full');
 
     const ids2 = [...ids.filter((id) => id !== 17), 99];
     const second = session.execute(request(ids2, 2, first.generation));
     if (second.kind !== 'built') throw new Error('expected built');
     expect(second.generation).toBe(2);
     if (second.graph.kind !== 'patch') throw new Error('expected patch');
+    if (second.passiveGraph?.kind !== 'patch') throw new Error('expected passive patch');
 
     // Oracle: the patch applied to the first build reproduces exactly what
     // a whole deserialize of the second build gives, node for node.
@@ -479,52 +517,53 @@ describe('createNeighborGraphWorkerSession (stateful increments)', () => {
     // The patch is a small fraction of the whole graph.
     expect(changed.size).toBeLessThan(living.adjacency.size);
 
-    // Passive delta oracle: previous selection + delta === new selection.
-    const before = new Set(
-      deserializeNeighborGraph(first.passiveGraph!).edges.map(
-        (edge) => `${edge.from}:${edge.to}`,
-      ),
-    );
-    for (const edge of unpackDeltaEdges(second.passiveRemoved)) {
-      before.delete(`${edge.from}:${edge.to}`);
-    }
-    for (const edge of unpackDeltaEdges(second.passiveAdded)) {
-      before.add(`${edge.from}:${edge.to}`);
-    }
-    const after = new Set(
-      deserializeNeighborGraph(second.passiveGraph!).edges.map(
-        (edge) => `${edge.from}:${edge.to}`,
-      ),
-    );
-    expect([...before].sort()).toEqual([...after].sort());
-
-    // Passive hints still reproduce the probing path.
-    const firstPassive = deserializeNeighborGraph(first.passiveGraph!);
-    const viaHints = deserializeNeighborGraphWithHints(
-      firstPassive,
-      second.passiveGraph!,
-      second.passiveChangedNodeIds,
-    );
-    expect(viaHints).toEqual(deserializeNeighborGraph(second.passiveGraph!));
+    // Passive oracle: the held selection merged with the patch IS the
+    // session's own selection for this build — which a mirror session fed
+    // the same two builds and asked for whole forms hands over whole (the
+    // selection depends on the graph, the options and the session's own
+    // previous selection, never on the form it rides in).
+    const mirror = createNeighborGraphWorkerSession();
+    mirror.execute(request(ids, 1));
+    const wholeSecond = mirror.execute(request(ids2, 2, 0));
+    if (wholeSecond.kind !== 'built') throw new Error('expected built');
+    const held = fullPassive(first);
+    const beforeKeys = held.edges.map(edgeKeyOf);
+    const delta = applyPassiveSelectionPatch(held, second.passiveGraph.patch);
+    expect(held.edges).toEqual(fullPassive(wholeSecond).edges);
+    expectCanonicalOrder(held.edges, 'patched selection');
+    // ...and the delta the fabric is handed reproduces the same set from
+    // the previous keys.
+    const keys = new Set(beforeKeys);
+    for (const edge of delta.removed) keys.delete(edgeKeyOf(edge));
+    for (const edge of delta.added) keys.add(edgeKeyOf(edge));
+    expect([...keys].sort()).toEqual(held.edges.map(edgeKeyOf).sort());
+    expect(delta.added.length + delta.removed.length).toBeGreaterThan(0);
+    expect(delta.added.length + delta.removed.length).toBeLessThan(held.edges.length);
   });
 
-  it('transfers every buffer of either display form and never an edge list for the display graph', () => {
+  it('transfers every buffer of either form: never an edge list for the display graph, never an adjacency for the passive one', () => {
     const session = createNeighborGraphWorkerSession();
     const ids = Array.from({ length: 40 }, (_, i) => i + 1);
     const first = session.execute(request(ids, 1));
     if (first.kind !== 'built' || first.graph.kind !== 'full') throw new Error('x');
+    if (first.passiveGraph?.kind !== 'full') throw new Error('x');
     const fullTransfer = neighborGraphResponseTransferList(first);
-    // display CSR (3) + passive CSR (3) + passive edges (1); no hints yet.
-    expect(fullTransfer).toHaveLength(7);
+    // display CSR (3) + passive edge list (1).
+    expect(fullTransfer).toHaveLength(4);
     expect(fullTransfer).toContain(first.graph.adjacency.adjacentNodeIds.buffer);
+    expect(fullTransfer).toContain(first.passiveGraph.edges.buffer);
 
     const second = session.execute(request([...ids, 41], 2, 1));
     if (second.kind !== 'built' || second.graph.kind !== 'patch') throw new Error('x');
+    if (second.passiveGraph?.kind !== 'patch') throw new Error('x');
     const patchTransfer = neighborGraphResponseTransferList(second);
-    // patch CSR (3) + removed (1) + passive changed (1) + added (1) +
-    // removed (1) + passive CSR (3) + passive edges (1).
-    expect(patchTransfer).toHaveLength(11);
+    // patch CSR (3) + removed ids (1) + passive added (1) + passive
+    // removed keys (1) + passive values (1).
+    expect(patchTransfer).toHaveLength(7);
     expect(patchTransfer).toContain(second.graph.patch.removedNodeIds.buffer);
+    expect(patchTransfer).toContain(second.passiveGraph.patch.added.buffer);
+    expect(patchTransfer).toContain(second.passiveGraph.patch.removedKeys.buffer);
+    expect(patchTransfer).toContain(second.passiveGraph.patch.values.buffer);
     for (const buffer of patchTransfer) expect(buffer).toBeInstanceOf(ArrayBuffer);
     const patchBytes = second.graph.patch.changed.nodeIds.byteLength
       + second.graph.patch.changed.adjacencyOffsets.byteLength
@@ -534,6 +573,183 @@ describe('createNeighborGraphWorkerSession (stateful increments)', () => {
       + first.graph.adjacency.adjacencyOffsets.byteLength
       + first.graph.adjacency.adjacentNodeIds.byteLength;
     expect(patchBytes).toBeLessThan(fullBytes);
+    // The values of the whole merged list ride with the patch (16 bytes an
+    // edge), so a patch is bounded above by half a whole list plus churn.
+    const passivePatchBytes = second.passiveGraph.patch.added.byteLength
+      + second.passiveGraph.patch.removedKeys.byteLength
+      + second.passiveGraph.patch.values.byteLength;
+    expect(passivePatchBytes).toBeLessThan(first.passiveGraph.edges.byteLength);
+  });
+});
+
+describe('passive selection patch', () => {
+  const edge = (from: number, to: number, w?: number, d = 1): NeighborEdge =>
+    (w === undefined ? { from, to, d } : { from, to, d, w });
+  const sameKey = (a: NeighborEdge, b: NeighborEdge) => a.from === b.from && a.to === b.to;
+  /** A patch against `held` as the worker would compute it for the list
+   *  `held − removed + added` (values from that merged list, or `values`
+   *  when a test wants to move them). */
+  const patchOf = (
+    held: readonly NeighborEdge[],
+    added: NeighborEdge[],
+    removed: NeighborEdge[],
+    values?: NeighborEdge[],
+  ): SerializedPassiveSelectionPatch => {
+    const merged = values ?? [
+      ...held.filter((e) => !removed.some((r) => sameKey(e, r))),
+      ...added,
+    ].sort((a, b) => a.from - b.from || a.to - b.to);
+    // A malformed patch (a removal that misses, an addition that collides)
+    // still carries the value count its counts imply, so the apply reaches
+    // the check under test rather than the coverage check.
+    const count = held.length - removed.length + added.length;
+    return {
+      added: packPassiveEdges(added),
+      removedKeys: Float64Array.from(removed.flatMap((e) => [e.from, e.to])),
+      values: merged.length === count
+        ? Float64Array.from(merged.flatMap((e) => [e.d, e.w ?? Number.NaN]))
+        : new Float64Array(count * 2),
+    };
+  };
+
+  it('names the edges that entered as records, those that left as keys, and the merged list\'s values, in canonical order', () => {
+    const previous = [edge(1, 2, 0.5), edge(1, 3), edge(2, 4), edge(5, 6)];
+    const next = [edge(1, 2, 0.7), edge(1, 7), edge(2, 4), edge(3, 4, 0.25)];
+    const patch = collectPassiveSelectionPatch(previous, next);
+    expect(unpackPassiveEdges(patch.added)).toEqual([edge(1, 7), edge(3, 4, 0.25)]);
+    expect([...patch.removedKeys]).toEqual([1, 3, 5, 6]);
+    expect([...patch.values]).toEqual([1, 0.7, 1, Number.NaN, 1, Number.NaN, 1, 0.25]);
+  });
+
+  it('is empty (bar the values) for an identical selection and rejects one out of canonical order', () => {
+    const selection = [edge(1, 2), edge(1, 3), edge(2, 3)];
+    const patch = collectPassiveSelectionPatch(selection, selection);
+    expect(patch.added).toHaveLength(0);
+    expect(patch.removedKeys).toHaveLength(0);
+    expect(patch.values).toHaveLength(6);
+    expect(() => collectPassiveSelectionPatch(selection, [edge(1, 3), edge(1, 2)]))
+      .toThrow(/canonical order/);
+    expect(() => collectPassiveSelectionPatch(selection, [edge(1, 2), edge(1, 2)]))
+      .toThrow(/canonical order/);
+  });
+
+  it('replaces exactly the surviving records whose values moved and keeps every other object', () => {
+    const held: PassiveSelection = {
+      edges: [edge(1, 2, 0.5), edge(1, 3), edge(2, 3, 0.2), edge(3, 4)],
+    };
+    const before = [...held.edges];
+    // A rescaled weight, a weight gained, a weight lost, and one untouched.
+    const delta = applyPassiveSelectionPatch(held, patchOf(held.edges, [], [], [
+      edge(1, 2, 0.7), edge(1, 3, 0.1), edge(2, 3), edge(3, 4),
+    ]));
+    expect(delta.added).toHaveLength(0);
+    expect(delta.removed).toHaveLength(0);
+    expect(delta.rewritten).toBe(3);
+    expect(held.edges).toEqual([edge(1, 2, 0.7), edge(1, 3, 0.1), edge(2, 3), edge(3, 4)]);
+    expect(held.edges[0]).not.toBe(before[0]);
+    expect(held.edges[1]).not.toBe(before[1]);
+    expect(held.edges[2]).not.toBe(before[2]);
+    expect(held.edges[3]).toBe(before[3]);
+    // The replaced records were not edited: a holder of the old record
+    // still reads the weight it was handed.
+    expect(before[0].w).toBe(0.5);
+    // An added record carries this build's values and is confirmed, not
+    // rewritten; a moved distance is a moved value like any other.
+    const grown = applyPassiveSelectionPatch(held, patchOf(held.edges, [edge(2, 4, 0.3)], [], [
+      edge(1, 2, 0.7), edge(1, 3, 0.1), edge(2, 3), edge(2, 4, 0.3), edge(3, 4, undefined, 9),
+    ]));
+    expect(grown.rewritten).toBe(1);
+    expect(held.edges[3]).toBe(grown.added[0]);
+    expect(held.edges[4]).toEqual(edge(3, 4, undefined, 9));
+    expect(held.edges[4]).not.toBe(before[3]);
+  });
+
+  it('merges in place: same array, surviving records kept, dropped records handed back, canonical order', () => {
+    const cells = fixtureCells();
+    const options = { k: 2, maxEdgeLength: 8 };
+    const before = buildPassiveNeighborGraph(
+      buildNeighborGraph(cells, options),
+      { edgeBudget: 6 },
+    );
+    cells.set(9, cell(9, 1, 1));
+    cells.delete(7);
+    const after = buildPassiveNeighborGraph(
+      buildNeighborGraph(cells, options),
+      { edgeBudget: 6, preferredEdges: before.edges },
+    );
+    const patch = collectPassiveSelectionPatch(before.edges, after.edges);
+
+    const held = deserializePassiveSelection({ edges: packPassiveEdges(before.edges) });
+    const array = held.edges;
+    const survivors = new Map(held.edges.map((e) => [edgeKeyOf(e), e]));
+    const delta = applyPassiveSelectionPatch(held, patch);
+
+    expect(held.edges).toBe(array);
+    expect(held.edges).toEqual(after.edges);
+    expectCanonicalOrder(held.edges, 'merged');
+    expect(delta.added.length).toBe(patch.added.length / 4);
+    expect(delta.removed.length).toBe(patch.removedKeys.length / 2);
+    expect(delta.added.length + delta.removed.length).toBeGreaterThan(0);
+    // Every surviving key keeps its record unless its values moved, in
+    // which case it has a fresh one — counted exactly.
+    let kept = 0;
+    let moved = 0;
+    for (const e of held.edges) {
+      const survivor = survivors.get(edgeKeyOf(e));
+      if (survivor === undefined) {
+        expect(delta.added).toContain(e);
+      } else if (survivor.d === e.d && survivor.w === e.w) {
+        expect(e).toBe(survivor);
+        kept += 1;
+      } else {
+        expect(e).not.toBe(survivor);
+        moved += 1;
+      }
+    }
+    expect(kept + moved).toBeGreaterThan(0);
+    expect(delta.rewritten).toBe(moved);
+    for (const e of delta.removed) expect(survivors.get(edgeKeyOf(e))).toBe(e);
+  });
+
+  it('rejects a patch that does not fit the held list and leaves it untouched', () => {
+    const held: PassiveSelection = { edges: [edge(1, 2), edge(1, 3), edge(2, 3)] };
+    const snapshot = [...held.edges];
+    expect(() => applyPassiveSelectionPatch(held, patchOf(held.edges, [], [edge(4, 5)])))
+      .toThrow(/does not hold/);
+    expect(() => applyPassiveSelectionPatch(held, patchOf(held.edges, [], [edge(0, 1)])))
+      .toThrow(/does not hold/);
+    expect(() => applyPassiveSelectionPatch(held, patchOf(held.edges, [edge(1, 3)], [])))
+      .toThrow(/already holds/);
+    expect(() => applyPassiveSelectionPatch(held, patchOf(held.edges, [edge(3, 4), edge(2, 4)], [])))
+      .toThrow(/canonical order/);
+    expect(() => applyPassiveSelectionPatch(held, patchOf(held.edges, [], [edge(2, 3), edge(1, 2)])))
+      .toThrow(/canonical order/);
+    expect(() => applyPassiveSelectionPatch(held, {
+      ...patchOf(held.edges, [], []),
+      removedKeys: new Float64Array(3),
+    })).toThrow(/invalid packed passive key buffer/);
+    expect(() => applyPassiveSelectionPatch(held, {
+      ...patchOf(held.edges, [edge(3, 4)], []),
+      values: new Float64Array(6),
+    })).toThrow(/values do not cover/);
+    expect(held.edges).toEqual(snapshot);
+    for (let i = 0; i < snapshot.length; i += 1) expect(held.edges[i]).toBe(snapshot[i]);
+
+    // A removal plus additions at both ends and in the middle land in order.
+    const delta = applyPassiveSelectionPatch(
+      held,
+      patchOf(held.edges, [edge(0, 9), edge(1, 4), edge(7, 8)], [edge(1, 3)]),
+    );
+    expect(held.edges.map(edgeKeyOf)).toEqual(['0:9', '1:2', '1:4', '2:3', '7:8']);
+    expect(delta.removed).toEqual([edge(1, 3)]);
+    expect(delta.removed[0]).toBe(snapshot[1]);
+    expect(delta.rewritten).toBe(0);
+    expect(held.edges[1]).toBe(snapshot[0]);
+    expect(held.edges[3]).toBe(snapshot[2]);
+    // Removing everything and adding nothing empties the list in place.
+    const emptied = applyPassiveSelectionPatch(held, patchOf(held.edges, [], [...held.edges]));
+    expect(held.edges).toHaveLength(0);
+    expect(emptied.removed).toHaveLength(5);
   });
 });
 
@@ -665,6 +881,24 @@ describe('applyNeighborAdjacencyPatch under living-mesh churn (lattice, ties)', 
     // session applies them) vs `cells`, the main thread's map.
     const sessionCells = new Map(cells);
     const session = createNeighborGraphWorkerSession();
+    // The passive oracle: a session fed the very requests the real one gets
+    // (superseded ones included — they advance the continuity preference;
+    // deltas as deltas — the arbor weights read the retained map's order),
+    // only ever asked for whole forms. Its selection is the real session's.
+    const mirror = createNeighborGraphWorkerSession();
+    let mirrorTruth: PassiveSelection | null = null;
+    const runBoth = (request: NeighborGraphWorkerRequest): NeighborGraphWorkerSuccess => {
+      const response = session.execute(request);
+      const mirrored = mirror.execute({
+        ...request,
+        requestId: 5000 + request.requestId,
+        patchBaseGeneration: 0,
+      });
+      if (response.kind !== 'built') throw new Error(`unexpected ${response.kind}`);
+      if (mirrored.kind !== 'built') throw new Error(`mirror: ${mirrored.kind}`);
+      mirrorTruth = fullPassive(mirrored);
+      return response;
+    };
     const pack = (map: Map<number, Cell>) =>
       packTopologyCells(map as ReadonlyMap<number, NeighborGraphCell>);
     const passiveOff = {
@@ -673,8 +907,17 @@ describe('applyNeighborAdjacencyPatch under living-mesh churn (lattice, ties)', 
       passiveTuning: null,
       preferredEdges: null,
     } as const;
+    // Over-budget regime, as the 12K stage is: the forest exceeds the budget,
+    // so the selection scatters and churns on every build.
+    const passiveOn = {
+      includePassive: true,
+      passiveEdgeBudget: 400,
+      passiveTuning: null,
+      preferredEdges: null,
+    } as const;
 
     let living: LivingNeighborGraph = emptyLivingNeighborGraph();
+    let held: PassiveSelection | null = null;
     let applied = 0;
     let requestId = 1;
     const journalUpserts = new Map<number, Cell>();
@@ -682,6 +925,8 @@ describe('applyNeighborAdjacencyPatch under living-mesh churn (lattice, ties)', 
     let restoredTotal = 0;
     let patchApplies = 0;
     let fullApplies = 0;
+    let passivePatchApplies = 0;
+    let passiveChurn = 0;
 
     const die = (count: number) => {
       const live = [...cells.keys()];
@@ -732,18 +977,16 @@ describe('applyNeighborAdjacencyPatch under living-mesh churn (lattice, ties)', 
       for (const c of journalUpserts.values()) sessionCells.set(c.id, c);
       journalRemoved.clear();
       journalUpserts.clear();
-      const response = applied === 0
-        ? session.execute({
+      return applied === 0
+        ? runBoth({
           kind: 'build', requestId: requestId++, cells: pack(sessionCells),
-          cellsDelta: null, patchBaseGeneration: 0, options, ...passiveOff,
+          cellsDelta: null, patchBaseGeneration: 0, options, ...passiveOn,
         })
-        : session.execute({
+        : runBoth({
           kind: 'build', requestId: requestId++, cells: null,
           cellsDelta: { baseGeneration: applied, upserts, removedIds },
-          patchBaseGeneration: applied, options, ...passiveOff,
+          patchBaseGeneration: applied, options, ...passiveOn,
         });
-      if (response.kind !== 'built') throw new Error(`unexpected ${response.kind}`);
-      return response;
     };
     const apply = (response: NeighborGraphWorkerSuccess, label: string) => {
       if (response.graph.kind === 'patch') {
@@ -758,6 +1001,35 @@ describe('applyNeighborAdjacencyPatch under living-mesh churn (lattice, ties)', 
         living = deserializeLivingNeighborGraphInto(living, response.graph.adjacency);
         fullApplies += 1;
       }
+      // The passive selection rides in the same form as the display graph
+      // (every build here carries one), lands on the mirror's whole
+      // selection record for record, and the delta handed to the fabric is
+      // exactly the difference from the list held before.
+      if (response.passiveGraph === null) throw new Error(`${label}: no selection`);
+      expect(response.passiveGraph.kind, `${label}: passive form`).toBe(response.graph.kind);
+      const truthPassive = mirrorTruth!;
+      if (response.passiveGraph.kind === 'patch') {
+        if (held === null) throw new Error(`${label}: patch without a base`);
+        const beforeKeys = new Set(held.edges.map(edgeKeyOf));
+        const array = held.edges;
+        const delta = applyPassiveSelectionPatch(held, response.passiveGraph.patch);
+        expect(held.edges, `${label}: same array`).toBe(array);
+        for (const edge of delta.removed) {
+          expect(beforeKeys.delete(edgeKeyOf(edge)), `${label}: removed ${edgeKeyOf(edge)} was held`).toBe(true);
+        }
+        for (const edge of delta.added) {
+          expect(beforeKeys.has(edgeKeyOf(edge)), `${label}: added ${edgeKeyOf(edge)} was not held`).toBe(false);
+          beforeKeys.add(edgeKeyOf(edge));
+        }
+        expect([...beforeKeys].sort(), `${label}: delta reproduces the list`)
+          .toEqual(held.edges.map(edgeKeyOf).sort());
+        passivePatchApplies += 1;
+        passiveChurn += delta.added.length + delta.removed.length;
+      } else {
+        held = deserializePassiveSelection(response.passiveGraph);
+      }
+      expect(held.edges, `${label}: passive vs mirror`).toEqual(truthPassive.edges);
+      expectCanonicalOrder(held.edges, label);
       applied = response.generation;
       const truth = fullAdjacency(executeNeighborGraphWorkerRequest({
         kind: 'build', requestId: 999, cells: pack(sessionCells), cellsDelta: null,
@@ -778,20 +1050,20 @@ describe('applyNeighborAdjacencyPatch under living-mesh churn (lattice, ties)', 
       bear(1 + Math.floor(rnd() * 3), step % 5 === 0);
       if (step % 7 === 0) {
         // A superseded build: the session advances, nothing is applied, so
-        // the next response must come back whole and unchained.
-        session.execute({
+        // the next response must come back whole and unchained. The mirror
+        // sees it too: it moved the session's continuity preference.
+        runBoth({
           kind: 'build', requestId: requestId++, cells: pack(sessionCells),
-          cellsDelta: null, patchBaseGeneration: 0, options, ...passiveOff,
+          cellsDelta: null, patchBaseGeneration: 0, options, ...passiveOn,
         });
         for (const id of journalRemoved) sessionCells.delete(id);
         for (const c of journalUpserts.values()) sessionCells.set(c.id, c);
         journalRemoved.clear();
         journalUpserts.clear();
-        const response = session.execute({
+        const response = runBoth({
           kind: 'build', requestId: requestId++, cells: pack(sessionCells),
-          cellsDelta: null, patchBaseGeneration: applied, options, ...passiveOff,
+          cellsDelta: null, patchBaseGeneration: applied, options, ...passiveOn,
         });
-        if (response.kind !== 'built') throw new Error('x');
         expect(response.graph.kind).toBe('full');
         apply(response, `step ${step} (chain break)`);
         continue;
@@ -810,5 +1082,9 @@ describe('applyNeighborAdjacencyPatch under living-mesh churn (lattice, ties)', 
     // The log did real work: nodes the eager mesh touched that the worker
     // reported unchanged were put back from the log.
     expect(restoredTotal).toBeGreaterThan(0);
+    // The passive merge did real work too: every chained build patched the
+    // held list, and the selection moved under the churn.
+    expect(passivePatchApplies).toBe(patchApplies);
+    expect(passiveChurn).toBeGreaterThan(0);
   });
 });

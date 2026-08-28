@@ -76,7 +76,7 @@ import {
   type BridgeAnchorIndex,
   type BridgeHostPlan,
 } from '../geometry/bridgeEdges';
-import type { NeighborGraph } from '../geometry/neighborGraph';
+import type { PassiveSelection } from '../geometry/neighborGraph';
 import { usePopulationPlacement } from '../geometry/populationPlacementStore';
 import {
   cellDetailFabricEnergyGain,
@@ -270,7 +270,7 @@ export interface CellBridgeNervesProps {
   /** The DRAWN passive fabric selection, for host degree — a Cell whose
    *  neighbours exist but were never selected looks exactly as bare as one
    *  with no neighbours. */
-  passiveGraphRef: { readonly current: NeighborGraph };
+  passiveGraphRef: { readonly current: PassiveSelection };
   /** Bumped by the owner whenever both refs above hold a completed build. */
   version: number;
   /** Shared camera-distance focus, so the class keeps its rung on the width

@@ -93,6 +93,23 @@ describe('buildPassiveNeighborGraph', () => {
     expect(highIds / coveredIds.length).toBeGreaterThan(0.25);
   });
 
+  it('emits the selection in canonical order, each key once', () => {
+    // The worker diffs consecutive selections with one merge walk and the
+    // main thread merges the patch into the list it holds the same way;
+    // both read this order as a contract (`PassiveSelection`).
+    for (const edgeBudget of [80, Math.round(cells.size * (8 / 9)), undefined]) {
+      const selection = buildPassiveNeighborGraph(full, { edgeBudget });
+      for (let index = 1; index < selection.edges.length; index += 1) {
+        const a = selection.edges[index - 1];
+        const b = selection.edges[index];
+        expect(
+          a.from < b.from || (a.from === b.from && a.to < b.to),
+          `budget ${edgeBudget}: ${a.from}:${a.to} before ${b.from}:${b.to}`,
+        ).toBe(true);
+      }
+    }
+  });
+
   it('selects a deterministic subset of authoritative graph edges', () => {
     const options = { edgeBudget: 80 };
     const a = buildPassiveNeighborGraph(full, options);

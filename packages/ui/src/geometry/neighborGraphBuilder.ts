@@ -2,19 +2,19 @@ import {
   buildNeighborGraph,
   type LivingNeighborGraph,
   type NeighborEdge,
-  type NeighborGraph,
   type NeighborGraphCell,
   type NeighborGraphOptions,
+  type PassiveSelection,
 } from './neighborGraph';
 import { buildPassiveNeighborGraph } from './passiveNeighborGraph';
 import {
   PACKED_TOPOLOGY_CELL_STRIDE,
   applyNeighborAdjacencyPatch,
+  applyPassiveSelectionPatch,
   deserializeLivingNeighborGraphInto,
-  deserializeNeighborGraphWithHints,
+  deserializePassiveSelection,
   packPreferredEdges,
   packTopologyCells,
-  unpackDeltaEdges,
   type NeighborGraphWorkerRequest,
   type NeighborGraphWorkerResponse,
 } from './neighborGraphWorkerProtocol';
@@ -47,11 +47,19 @@ export const neighborGraphBuilderStats = {
   fullApplies: 0,
   /** Whole applies forced by a generation gap — a superseded, dropped or
    * failed build between two applied ones broke the chain. Each one is a
-   * full O(V) rebuild AND, for the passive graph, the probing path. */
+   * whole O(V) display rebuild and, when a selection rides, a whole passive
+   * list. */
   unchainedApplies: 0,
   /** Delta requests the session refused (`stale`): each costs a full
    * re-pack and a second worker round trip before the graph lands. */
   staleResends: 0,
+  /** Passive selections merged in place from a patch — one per chained
+   * build that carried a selection; the O(edges + churn) steady state. */
+  passivePatchedApplies: 0,
+  /** Passive selections rebuilt from a whole edge list (bootstrap, fresh
+   * worker, a caller that cannot patch, or the first selection after a build
+   * without one). */
+  passiveFullApplies: 0,
 };
 
 let workerFallbackWarned = false;
@@ -96,26 +104,32 @@ export interface NeighborGraphBuildOptions {
     >;
     removedIds: Iterable<number>;
   };
-  /** Read at completion time. The display graph is PATCHED IN PLACE when
-   * the response chains from the build it was applied from (the result's
-   * `graph` is then this very object, with the eager log consumed); a whole
-   * response deserializes against it instead (unchanged nodes keep their
-   * Set instances, the previous graph must be discarded). The passive graph
-   * always deserializes against `passiveGraph` the same way. Without this
-   * option the builder asks the worker for whole graphs only. */
+  /** Read at completion time. BOTH are PATCHED IN PLACE when the response
+   * chains from the build they were applied from: the result's `graph` is
+   * then this very object with the eager log consumed, and its
+   * `passiveGraph` this very selection with the patch merged in. A whole
+   * response deserializes the display graph against `graph` instead
+   * (unchanged nodes keep their Set instances, the previous graph must be
+   * discarded) and replaces the passive selection outright. A caller that
+   * holds one must hand over both: a chained response carries a passive
+   * patch whenever the session's previous build had a selection. Without
+   * this option the builder asks the worker for whole forms only. */
   reuseFrom?: () => {
     graph: LivingNeighborGraph | null;
-    passiveGraph: NeighborGraph | null;
+    passiveGraph: PassiveSelection | null;
   };
 }
 
 export interface NeighborGraphBuildResult {
   /** Adjacency only: the display graph carries no edge list. */
   graph: LivingNeighborGraph;
-  passiveGraph: NeighborGraph | null;
-  /** Passive-selection delta vs the PREVIOUS applied build, available when
-   * the worker session's generations chained without a gap. Null means the
-   * consumer must treat `passiveGraph` as a full replacement. */
+  /** Edge list only, canonical order: the passive graph carries no
+   * adjacency (see `PassiveSelection`). */
+  passiveGraph: PassiveSelection | null;
+  /** Passive-selection delta vs the PREVIOUS applied build — exactly the
+   * patch the selection above was merged from, in its own records (`removed`
+   * are the instances the list dropped). Null means the selection arrived
+   * whole and the consumer must treat it as a full replacement. */
   passiveDelta: {
     added: NeighborEdge[];
     removed: NeighborEdge[];
@@ -386,25 +400,30 @@ export function createNeighborGraphBuilder(
           response.graph.adjacency,
         );
       }
-      const result: NeighborGraphBuildResult = {
-        graph,
-        passiveGraph: response.passiveGraph
-          ? deserializeNeighborGraphWithHints(
-            reuse?.passiveGraph ?? null,
-            response.passiveGraph,
-            chained ? response.passiveChangedNodeIds : null,
-          )
-          : null,
-        passiveDelta:
-          chained
-          && response.passiveAdded !== null
-          && response.passiveRemoved !== null
-            ? {
-              added: unpackDeltaEdges(response.passiveAdded),
-              removed: unpackDeltaEdges(response.passiveRemoved),
-            }
-            : null,
-      };
+      let passiveGraph: PassiveSelection | null = null;
+      let passiveDelta: NeighborGraphBuildResult['passiveDelta'] = null;
+      if (response.passiveGraph !== null) {
+        if (response.passiveGraph.kind === 'patch') {
+          // Same argument as the display patch: it targets the selection
+          // applied from the generation the request named, which is the one
+          // `reuseFrom` returns. The merge validates before it mutates, so
+          // a patch that does not fit the held list throws here, untouched,
+          // into the counted fallback.
+          if (!chained || reuse?.passiveGraph == null) {
+            throw new Error('passive selection patch without its base selection');
+          }
+          neighborGraphBuilderStats.passivePatchedApplies += 1;
+          passiveGraph = reuse.passiveGraph;
+          passiveDelta = applyPassiveSelectionPatch(
+            passiveGraph,
+            response.passiveGraph.patch,
+          );
+        } else {
+          neighborGraphBuilderStats.passiveFullApplies += 1;
+          passiveGraph = deserializePassiveSelection(response.passiveGraph);
+        }
+      }
+      const result: NeighborGraphBuildResult = { graph, passiveGraph, passiveDelta };
       lastAppliedGeneration = response.generation;
       active = null;
       current.resolve(result);

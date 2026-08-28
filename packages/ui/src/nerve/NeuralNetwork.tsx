@@ -67,9 +67,9 @@ import {
 } from '../tweaks/cellDisplay';
 import {
   emptyLivingNeighborGraph,
-  emptyNeighborGraph,
+  emptyPassiveSelection,
   type LivingNeighborGraph,
-  type NeighborGraph,
+  type PassiveSelection,
 } from '../geometry/neighborGraph';
 import { createNeighborGraphBuilder } from '../geometry/neighborGraphBuilder';
 import {
@@ -455,7 +455,7 @@ function NeuralNetwork({
   // Live changes stay incremental. Full rebuilds run in a latest-only Worker
   // for bootstrap, recovery, or explicit topology changes; doing them on every
   // birth would continually cancel useful topology work.
-  const passiveGraphRef = useRef<NeighborGraph>(emptyNeighborGraph());
+  const passiveGraphRef = useRef<PassiveSelection>(emptyPassiveSelection());
   /** Consecutive delta-applied builds since the last full setFabric
    * reconcile (see the delta path below). */
   const fabricDeltaStreakRef = useRef(0);
@@ -669,9 +669,10 @@ function NeuralNetwork({
         ? consumeTopologyJournal(displayFeedRef.current.journal)
         : invalidateTopologyJournal(displayFeedRef.current.journal),
       preferredEdges: passiveGraphRef.current.edges,
-      // Patch-deserialize both display CSRs against the graphs being
-      // replaced (read at completion): per-block churn touches a small
-      // fraction of nodes, so the Set/object churn collapses to O(changed).
+      // Read at completion: a chained response PATCHES both in place — the
+      // display adjacency node by node, the passive list as a sorted merge —
+      // so per-block churn costs O(changed) and no Map, Set or edge record
+      // is rebuilt for a node or edge that did not move.
       reuseFrom: () => ({
         graph: displayGraphRef.current,
         passiveGraph: passiveGraphRef.current,
@@ -685,7 +686,7 @@ function NeuralNetwork({
         || displayRequestedTopologyVersionRef.current
           !== requestedTopologyVersion
       ) return;
-      const passiveGraph = result.passiveGraph ?? emptyNeighborGraph();
+      const passiveGraph = result.passiveGraph ?? emptyPassiveSelection();
       displayRequestedCellsRef.current = null;
       displayRequestedTopologyVersionRef.current = -1;
       displayGraphRef.current = result.graph;

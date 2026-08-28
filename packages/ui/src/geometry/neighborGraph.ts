@@ -100,6 +100,32 @@ export function emptyLivingNeighborGraph(): LivingNeighborGraph {
   return { adjacency: new Map(), eagerBase: new Map() };
 }
 
+/** The main thread's passive graph: the DRAWN edge list and nothing else.
+ *  Every reader of it there — the fabric diff and its trunk tier, the
+ *  bridges' host degrees, the periodic stray prune, the continuity
+ *  preference — reads `edges`; none reads an adjacency, so the worker ships
+ *  none and none is built. (`buildPassiveNeighborGraph` still returns a whole
+ *  `NeighborGraph`, which is one of these by structure — the synchronous
+ *  fallback hands it over as is.)
+ *
+ *  INVARIANT (canonical order): `edges` is sorted by `from`, then `to`, and
+ *  holds each key once — the order the worker's selection emits and the
+ *  order the fabric admits a whole selection in (slot order, cohort
+ *  stagger). A chained build patches the list IN PLACE as a sorted merge,
+ *  so the order survives every build; a whole list is validated on arrival.
+ *
+ *  INVARIANT (records are values): a `NeighborEdge` in `edges` is never
+ *  edited — a build that moves an edge's distance or weight REPLACES the
+ *  record. The fabric's deferred cohorts keep a record across builds and
+ *  read, at admission, the weight it was queued with. */
+export interface PassiveSelection {
+  edges: NeighborEdge[];
+}
+
+export function emptyPassiveSelection(): PassiveSelection {
+  return { edges: [] };
+}
+
 export interface NeighborGraphOptions {
   k?: number;
   maxEdgeLength?: number;

@@ -465,13 +465,29 @@ The pipeline is latest-only:
   dropped or failed build, a fresh worker, a caller that cannot patch — makes
   the response carry the whole adjacency, rebuilt into a new Map with the
   previous Sets reused wherever a run is order-identical;
-- the passive graph still crosses whole (adjacency plus its edge list, which
-  the fabric, the bridges and continuity all read) with changed-node hints
-  and a selection delta; and
+- the passive graph crosses the wire as its drawn edge list only (`[from, to,
+  distance, arbor weight]` per edge, in canonical `from`-then-`to` order —
+  never an adjacency: the fabric diff and its trunk tier, the bridges' host
+  degrees, the stray prune and the continuity preference all read edges, and
+  nothing on the main thread reads a passive adjacency, so none is built
+  there), and in the steady state as a *patch* too, under exactly the
+  condition the display patch rides: the edges that entered, the keys of
+  those that left, and the values (`[distance, weight]`) of the whole merged
+  list, against the selection the request named. The values ride whole
+  because they are not stable while the keys are — an arbor weight is
+  `sqrt(subtreeSize / maxSubtreeSize)` over the forest, so one birth or death
+  in the largest tree rescales every weight, and the trunk tier reads every
+  edge's weight on every build. The main thread merges the patch into the
+  list it holds, in place and in order (O(edges + churn), no Map or Set
+  built), replacing only the records whose values moved (records are values:
+  the fabric's deferred cohorts hold them across builds); the same merge
+  yields the selection delta the fabric grows and kills from, `removed` being
+  the very records the list dropped. Any generation gap sends the whole list;
+  and
 - worker creation or execution failure falls back to the same synchronous pure
   builder and records the fallback in diagnostics
   (`neighborGraphBuilderStats` also counts patched, whole, unchained applies
-  and stale resends).
+  and stale resends, and the passive selection's patched and whole applies).
 
 While a worker build is pending, an eager living mesh applies same-frame births
 and removals to the currently published graph, replacing — never editing — the

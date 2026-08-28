@@ -9,11 +9,15 @@ import type { NeighborGraphBuildResult } from '../../src/geometry/neighborGraphB
 import {
   createNeighborGraphWorkerSession,
   deserializeNeighborAdjacency,
+  deserializePassiveSelection,
   executeNeighborGraphWorkerRequest,
+  packPreferredEdges,
   packTopologyCells,
   type NeighborGraphWorkerRequest,
   type NeighborGraphWorkerResponse,
 } from '../../src/geometry/neighborGraphWorkerProtocol';
+import type { PassiveSelection } from '../../src/geometry/neighborGraph';
+import { createBridgeHostRegistry, syncBridgeHosts } from '../../src/geometry/bridgeEdges';
 import {
   consumeTopologyJournal,
   createTopologyJournal,
@@ -303,6 +307,136 @@ describe('createNeighborGraphBuilder', () => {
     builder.dispose();
   });
 
+  /** The passive selection follows the display graph: a chained response
+   *  merges the worker's patch into the very selection the caller holds
+   *  (same object, same array, in order), and the delta the fabric grows
+   *  and kills from is that same patch, in the list's own records. */
+  it('patches the held passive selection in place when the session chains, with the fabric delta and the bridge degrees of a whole build', async () => {
+    const worker = new SessionFakeWorker();
+    const builder = createNeighborGraphBuilder({
+      minWorkerCells: 0,
+      workerFactory: () => worker as unknown as Worker,
+    });
+    const patchedBefore = neighborGraphBuilderStats.passivePatchedApplies;
+    const fullBefore = neighborGraphBuilderStats.passiveFullApplies;
+    const held: {
+      graph: NeighborGraphBuildResult['graph'] | null;
+      passiveGraph: PassiveSelection | null;
+    } = { graph: null, passiveGraph: null };
+    const reuseFrom = () => ({ graph: held.graph, passiveGraph: held.passiveGraph });
+    const passiveOptions = {
+      topology: { k: 2 },
+      includePassive: true,
+      passiveEdgeBudget: 4,
+      reuseFrom,
+    };
+
+    const firstPending = builder.build(cells(), passiveOptions);
+    worker.complete();
+    const first = await firstPending;
+    held.graph = first!.graph;
+    held.passiveGraph = first!.passiveGraph;
+    expect(first!.passiveGraph!.edges).toHaveLength(4);
+    expect(first!.passiveDelta).toBeNull();
+    expect(neighborGraphBuilderStats.passiveFullApplies).toBe(fullBefore + 1);
+    const heldArray = first!.passiveGraph!.edges;
+    const heldBefore = [...heldArray];
+
+    const staged = cells();
+    staged.set(7, cellAt(7, 6));
+    staged.delete(1);
+    const journal = chainedJournal();
+    journal.upserts.set(7, staged.get(7)!);
+    journal.removedIds.add(1);
+    const secondPending = builder.build(staged, {
+      ...passiveOptions,
+      cellsJournal: consumeTopologyJournal(journal),
+    });
+    worker.complete();
+    const second = await secondPending;
+
+    expect(second!.passiveGraph).toBe(first!.passiveGraph);
+    expect(second!.passiveGraph!.edges).toBe(heldArray);
+    expect(neighborGraphBuilderStats.passivePatchedApplies).toBe(patchedBefore + 1);
+    expect(neighborGraphBuilderStats.passiveFullApplies).toBe(fullBefore + 1);
+    const delta = second!.passiveDelta;
+    expect(delta).not.toBeNull();
+    expect(delta!.added.length + delta!.removed.length).toBeGreaterThan(0);
+
+    // The whole selection the session would have shipped: the same cells,
+    // the same budget, its previous selection as the continuity preference.
+    const truth = executeNeighborGraphWorkerRequest({
+      kind: 'build',
+      requestId: 99,
+      cells: packTopologyCells(staged),
+      cellsDelta: null,
+      patchBaseGeneration: 0,
+      options: { k: 2 },
+      includePassive: true,
+      passiveEdgeBudget: 4,
+      passiveTuning: null,
+      preferredEdges: packPreferredEdges(heldBefore),
+    });
+    if (truth.passiveGraph?.kind !== 'full') throw new Error('expected a whole selection');
+    const whole = deserializePassiveSelection(truth.passiveGraph);
+    expect(heldArray).toEqual(whole.edges);
+    // The fabric's kills are the records the list dropped, its grows the
+    // records the list now holds.
+    for (const edge of delta!.removed) {
+      expect(heldBefore).toContain(edge);
+      expect(heldArray).not.toContain(edge);
+    }
+    for (const edge of delta!.added) {
+      expect(heldBefore).not.toContain(edge);
+      expect(heldArray).toContain(edge);
+    }
+    // The bridges count the same host degrees off either list.
+    const degreesOf = (selection: PassiveSelection) => {
+      const registry = createBridgeHostRegistry();
+      syncBridgeHosts(registry, staged, selection.edges);
+      return [...registry.hosts.values()].map((host) => [host.id, host.degree]);
+    };
+    expect(degreesOf(second!.passiveGraph!)).toEqual(degreesOf(whole));
+    builder.dispose();
+  });
+
+  /** A caller that reuses its display graph but withholds its selection
+   *  cannot be handed a passive patch: the builder refuses it, untouched,
+   *  into the counted synchronous fallback rather than merging it into
+   *  nothing. */
+  it('falls back, counted, when a passive patch arrives without its base selection', async () => {
+    const worker = new SessionFakeWorker();
+    const builder = createNeighborGraphBuilder({
+      minWorkerCells: 0,
+      workerFactory: () => worker as unknown as Worker,
+    });
+    const fallbacksBefore = neighborGraphBuilderStats.workerFallbacks;
+    const held: { graph: NeighborGraphBuildResult['graph'] | null } = { graph: null };
+    const reuseFrom = () => ({ graph: held.graph, passiveGraph: null });
+    const options = {
+      topology: { k: 2 },
+      includePassive: true,
+      passiveEdgeBudget: 4,
+      reuseFrom,
+    };
+
+    const firstPending = builder.build(cells(), options);
+    worker.complete();
+    held.graph = (await firstPending)!.graph;
+
+    const secondPending = builder.build(cells(), {
+      ...options,
+      cellsJournal: consumeTopologyJournal(chainedJournal()),
+    });
+    worker.complete();
+    const second = await secondPending;
+    expect(neighborGraphBuilderStats.workerFallbacks).toBe(fallbacksBefore + 1);
+    expect(worker.terminated).toBe(true);
+    expect(second!.passiveGraph!.edges).toHaveLength(4);
+    expect(second!.passiveDelta).toBeNull();
+    builder.dispose();
+  });
+
   /** Without `reuseFrom` there is no graph to patch, so the builder must
    *  never let the session answer with one. */
   it('asks for whole graphs when the caller cannot patch', async () => {
@@ -311,14 +445,18 @@ describe('createNeighborGraphBuilder', () => {
       minWorkerCells: 0,
       workerFactory: () => worker as unknown as Worker,
     });
-    const first = builder.build(cells(), { topology: { k: 2 } });
+    const options = { topology: { k: 2 }, includePassive: true, passiveEdgeBudget: 4 };
+    const first = builder.build(cells(), options);
     worker.complete();
     expect(await first).not.toBeNull();
-    const second = builder.build(cells(), { topology: { k: 2 } });
+    const second = builder.build(cells(), options);
     expect(worker.posted[1].patchBaseGeneration).toBe(0);
     worker.complete();
     const result = await second;
     expect(result!.graph.adjacency.size).toBe(6);
+    // The selection arrives whole too, with no delta to apply.
+    expect(result!.passiveGraph!.edges).toHaveLength(4);
+    expect(result!.passiveDelta).toBeNull();
     builder.dispose();
   });
 
