@@ -4,10 +4,18 @@
 // record removes repeated Cell lookups and control-point derivation while also
 // making the active light follow the exact passive curve. Ghost overrides and
 // edges outside the passive selection retain the historical fallback.
+//
+// The passive lookup is a numeric two-level index (`lo → hi → state`), never
+// the string edge key: this runs once per hop per frame — up to 1,792 times a
+// storm frame — and a `lo|hi` key string built per call was the hop path's
+// whole remaining garbage (~140 B a hop). Nothing here allocates.
 
 import { bezierControlInto, fabricEdgeSeed } from '../geometry/edgeBezier';
 import type { CellById, Vec3 } from '../types';
-import { fabricEdgeKey } from './fabricOrder';
+import {
+  fabricEdgeIndexGet,
+  type ReadonlyFabricEdgeIndex,
+} from './fabricOrder';
 
 export interface ActiveHopCurveRequest {
   fromCellId: number;
@@ -65,10 +73,10 @@ export function resolveActiveHopCurveInto(
   controlScratch: Float32Array,
   hop: ActiveHopCurveRequest,
   cells: CellById,
-  passiveEdges: ReadonlyMap<string, PassiveHopCurveState>,
+  passiveEdges: ReadonlyFabricEdgeIndex<PassiveHopCurveState>,
 ): ActiveHopCurveSource | null {
   if (hop.fromPos === undefined && hop.toPos === undefined) {
-    const state = passiveEdges.get(fabricEdgeKey(hop.fromCellId, hop.toCellId));
+    const state = fabricEdgeIndexGet(passiveEdges, hop.fromCellId, hop.toCellId);
     if (
       state
       && state.fromCellId === hop.fromCellId

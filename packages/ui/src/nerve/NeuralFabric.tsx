@@ -17,6 +17,15 @@
 // over GROWTH_MS) and missing entries as dying (alpha ramp over
 // DECAY_MS, length stays). Endpoint positions + control point are
 // snapshotted at birth, so a dying edge can outlive its endpoint cell.
+// A numeric two-level index (`lo → hi → state`) mirrors that map for the
+// one reader that runs per hop per frame — the active-hop curve lookup —
+// so no frame builds a key string; every writer of the map writes both.
+//
+// Empty layers are invisible OBJECTS, not empty draws: a layer whose
+// committed count is zero flips `mesh.visible = false` at the commit, so
+// three's render walk never binds its program/VAO or runs its before-render
+// hooks for nothing (the boot precompile walks with `traverse`, which ignores
+// visibility, so every program is still linked at first light).
 
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
@@ -29,8 +38,11 @@ import type { NeighborEdge, PassiveSelection } from '../geometry/neighborGraph';
 import { bezierAtInto, bezierControlInto, fabricEdgeSeed } from '../geometry/edgeBezier';
 import {
   canonicalizeFabricRenderOrder,
+  fabricEdgeIndexDelete,
+  fabricEdgeIndexSet,
   fabricEdgeKey,
   orderFabricStateKeys,
+  type FabricEdgeIndex,
 } from './fabricOrder';
 import {
   FABRIC_SAMPLES_PER_EDGE,
@@ -65,8 +77,9 @@ import {
   type FabricLifecycleArrays,
 } from './fabricLifecycleSlots';
 import {
-  fabricEdgeRenderState,
+  fabricEdgeRenderStateInto,
   GROWTH_MS,
+  makeEdgeRenderScratch,
   type DeathKind,
   type EdgeRender,
 } from './fabricEdgeRender';
@@ -221,6 +234,58 @@ export interface ActiveHop {
   color: Vec3;
 }
 
+const ZERO_COLOR: Vec3 = [0, 0, 0];
+
+/** One reusable hop record for a frame loop. `pushActiveHop` reads its
+ *  argument synchronously and retains nothing, so a walk that pushes up to
+ *  MAX_ACTIVE_PULSES × (head + TRAIL_HOPS) hops a frame can write them all
+ *  through one object instead of allocating one per hop. Every lane —
+ *  the optional ones included — is present from the start so the record
+ *  keeps one shape. */
+export function makeActiveHopScratch(): ActiveHop {
+  return {
+    fromCellId: 0,
+    toCellId: 0,
+    mode: 'live',
+    frontT: 0,
+    brightness: 0,
+    color: ZERO_COLOR,
+    direction: undefined,
+    tailDecay: undefined,
+    fromPos: undefined,
+    toPos: undefined,
+  };
+}
+
+/** Write one hop into the scratch and hand it back for the push. The
+ *  optional lanes are assigned on every call (to `undefined` when absent), so
+ *  a hop never inherits the previous one's direction, tail or ghost ends. */
+export function writeActiveHop(
+  out: ActiveHop,
+  fromCellId: number,
+  toCellId: number,
+  mode: ActiveHop['mode'],
+  frontT: number,
+  brightness: number,
+  color: Vec3,
+  direction?: 1 | -1,
+  tailDecay?: number,
+  fromPos?: Vec3,
+  toPos?: Vec3,
+): ActiveHop {
+  out.fromCellId = fromCellId;
+  out.toCellId = toCellId;
+  out.mode = mode;
+  out.frontT = frontT;
+  out.brightness = brightness;
+  out.color = color;
+  out.direction = direction;
+  out.tailDecay = tailDecay;
+  out.fromPos = fromPos;
+  out.toPos = toPos;
+  return out;
+}
+
 export interface NeuralFabricHandles {
   /** Clear passive noise only behind exact recalled-route wavefronts. */
   setRecallAperture(
@@ -305,6 +370,12 @@ export interface NeuralFabricProps {
  * build on `makeFatLineLayer` / `commitLayer` instead of standing up a second
  * line-rendering system. */
 export interface FatLineLayer {
+  /** Stock endpoint lanes. On a lifecycle layer these are a ONE-instance
+   *  dummy: the patched program strips the stock attributes, three uploads
+   *  every geometry attribute at the first draw regardless, and a
+   *  full-capacity pair cost 4.6 MB of RAM and the same of VRAM at the 8K
+   *  class (11.5 MB at 20K) for lanes nothing read. Capacity therefore comes
+   *  from `fatLineLayerCapacity`, never from `positions.length`. */
   positions: Float32Array;
   colors: Float32Array;
   /** Per-endpoint width FACTOR on the material's own `linewidth`, present only
@@ -332,6 +403,39 @@ interface FabricLifecycleBuffers {
   curveBuf: THREE.InstancedInterleavedBuffer;
   colorBuf: THREE.InstancedInterleavedBuffer;
   scalarBuf: THREE.InstancedInterleavedBuffer;
+}
+
+/** Segments a layer can hold. A lifecycle layer is sized by its static
+ *  records (the stock lanes are a dummy); every other layer by its stock
+ *  endpoint lane. Exported for the construction tests. */
+export function fatLineLayerCapacity(
+  layer: Pick<FatLineLayer, 'positions' | 'lifecycle'>,
+): number {
+  return layer.lifecycle
+    ? layer.lifecycle.arrays.scalar.length / FABRIC_LIFE_SCALAR_STRIDE
+    : layer.positions.length / 6;
+}
+
+/** Empty layers leave the render list entirely. three r169 binds the
+ *  program, material state and VAO and runs the object's before-render hooks
+ *  BEFORE its zero-count early-out (`WebGLRenderer.renderBufferDirect` →
+ *  `WebGLBufferRenderer.renderInstances`), and `projectObject` drops an
+ *  invisible object before any of that (`WebGLRenderer.js:1321`). The hooks
+ *  this skips are per-draw uniform syncs — LineSegments2's resolution and the
+ *  capsule viewport — whose only reader is the draw of this very object, and
+ *  the first visible frame runs them again before it draws. Called at every
+ *  commit, from the count the commit just published. */
+function syncFatLineLayerVisibility(layer: FatLineLayer): void {
+  layer.mesh.visible = layer.count > 0;
+}
+
+/** A freshly built layer holds nothing, so it enters the scene hidden. Only
+ *  this component's own layers take this: the bridge class builds on
+ *  `makeFatLineLayer` too, commits its slots on its own path, and keeps the
+ *  default. */
+function hiddenUntilCommitted(layer: FatLineLayer): FatLineLayer {
+  syncFatLineLayerVisibility(layer);
+  return layer;
 }
 
 /** One persistent fabric edge. Endpoint positions + control point
@@ -716,8 +820,18 @@ export function makeFatLineLayer(
   lifecycle = false,
   taperedWidth = false,
 ): FatLineLayer {
-  const positions = new Float32Array(maxSegments * 6);
-  const colors = new Float32Array(maxSegments * 6);
+  // A lifecycle layer never reads its stock endpoint lanes (the patched
+  // program declares neither `instanceStart/End` nor `instanceColorStart/End`,
+  // see fabricLifecycleShader), so it binds a one-instance dummy parked at
+  // the filler height with zero colour — enough for LineSegmentsGeometry's
+  // plumbing to stay well-formed, and nothing for three to upload.
+  const stockSegments = lifecycle ? 1 : maxSegments;
+  const positions = new Float32Array(stockSegments * 6);
+  const colors = new Float32Array(stockSegments * 6);
+  if (lifecycle) {
+    positions[1] = FABRIC_SLOT_FILLER_Y;
+    positions[4] = FABRIC_SLOT_FILLER_Y;
+  }
   // 1, not 0: an instance the emit never reaches draws the material's own
   // width rather than vanishing.
   const widths = taperedWidth
@@ -792,6 +906,13 @@ export function makeFatLineLayer(
     lifecycleBuffers = { arrays, curveBuf, colorBuf, scalarBuf };
   }
   const mesh = makeFatLineMesh(geometry, material, useScreenCapsule);
+  if (lifecycle) {
+    // Render-only, structurally: nothing in the scene raycasts the fabric
+    // (r3f only casts at objects with pointer handlers, and the fabric has
+    // none), and LineSegments2's own raycast would read the dummy stock
+    // lanes. Same rule the trunk pass over this geometry already keeps.
+    mesh.raycast = neverRaycast;
+  }
   return {
     positions,
     colors,
@@ -853,7 +974,7 @@ function pushSegment(
   bx: number, by: number, bz: number,
   r: number, g: number, b: number,
 ): void {
-  if (layer.count >= layer.positions.length / 6) return;
+  if (layer.count >= fatLineLayerCapacity(layer)) return;
   const off = layer.count * 6;
   layer.positions[off + 0] = ax;
   layer.positions[off + 1] = ay;
@@ -884,7 +1005,7 @@ function pushSegmentGradient(
   rB: number, gB: number, bB: number,
   writePositions: boolean,
 ): void {
-  if (layer.count >= layer.positions.length / 6) return;
+  if (layer.count >= fatLineLayerCapacity(layer)) return;
   const off = layer.count * 6;
   if (writePositions) {
     layer.positions[off + 0] = ax;
@@ -988,6 +1109,7 @@ function commitFabricLifecycleSlotRanges(
   if (colorBuf) colorBuf.needsUpdate = true;
   lifecycle.scalarBuf.needsUpdate = true;
   layer.geometry.instanceCount = layer.count;
+  syncFatLineLayerVisibility(layer);
   fabricStats.observeUpload(
     rangeSegments * (colorClaimedByAperture
       ? FABRIC_LIFECYCLE_CURVE_SCALAR_BYTES_PER_SEGMENT
@@ -1013,6 +1135,7 @@ function commitFabricLifecycleFull(layer: FatLineLayer): void {
     lifecycle.scalarBuf.needsUpdate = true;
   }
   layer.geometry.instanceCount = segments;
+  syncFatLineLayerVisibility(layer);
   fabricStats.observeUpload(
     segments * FABRIC_LIFECYCLE_BYTES_PER_SEGMENT,
   );
@@ -1064,24 +1187,30 @@ export default function NeuralFabric({
   const { effective: quality } = useQualityRuntime();
   const { activeSamplesPerHop } = QUALITY_PRESETS[quality];
 
+  // Every layer starts with nothing committed, so every mesh starts hidden;
+  // the commit that first publishes a count is the one that shows it.
   const fabric = useMemo(
-    () => makeFatLineLayer(
+    () => hiddenUntilCommitted(makeFatLineLayer(
       fabricSegmentAllocation(allocationEdges),
       LIVE.cell.fabricWidth,
       'screen',
       true,
       true, // GPU-parametric lifecycle: static slots, sim-time evaluation
-    ),
+    )),
     [allocationEdges],
   );
   // 中央神经 — the wide rung, over the passive layer's own geometry. Not a
   // sixth allocation: `makeFabricTrunkPass` binds a second material and mesh
   // to `fabric`'s buffers, so the subset costs one draw call and zero bytes.
   const trunk = useMemo(
-    () => makeFabricTrunkPass(
-      fabric,
-      fabricTrunkLineWidth(LIVE.cell.fabricWidth, 1),
-    ),
+    () => {
+      const pass = makeFabricTrunkPass(
+        fabric,
+        fabricTrunkLineWidth(LIVE.cell.fabricWidth, 1),
+      );
+      pass.mesh.visible = fabric.mesh.visible;
+      return pass;
+    },
     [fabric],
   );
   // The reinforcement overlay stays at the MESH rung on purpose: it carries
@@ -1090,27 +1219,31 @@ export default function NeuralFabric({
   // traffic ON a trunk — which is the right picture and costs no third
   // material.
   const warmRoutes = useMemo(
-    () => makeFatLineLayer(
+    () => hiddenUntilCommitted(makeFatLineLayer(
       warmSegmentAllocation(allocationEdges),
       LIVE.cell.fabricWidth,
       'screen',
-    ),
+    )),
     [allocationEdges],
   );
   const active = useMemo(
-    () => makeFatLineLayer(MAX_ACTIVE_SEGMENTS, LIVE.cell.activeWidth, 'additive'),
+    () => hiddenUntilCommitted(
+      makeFatLineLayer(MAX_ACTIVE_SEGMENTS, LIVE.cell.activeWidth, 'additive'),
+    ),
     [],
   );
   const memory = useMemo(
-    () => makeFatLineLayer(MAX_MEMORY_SEGMENTS, LIVE.cell.activeWidth, 'additive'),
+    () => hiddenUntilCommitted(
+      makeFatLineLayer(MAX_MEMORY_SEGMENTS, LIVE.cell.activeWidth, 'additive'),
+    ),
     [],
   );
   const routeHopPulse = useMemo(
-    () => makeFatLineLayer(
+    () => hiddenUntilCommitted(makeFatLineLayer(
       MAX_ROUTE_HOP_PULSE_SEGMENTS,
       LIVE.cell.activeWidth * ROUTE_HOP_PULSE_WIDTH_SCALE,
       'additive',
-    ),
+    )),
     [],
   );
   // True per-draw GPU timings. Empty instanced passes do not enter the timer
@@ -1171,6 +1304,11 @@ export default function NeuralFabric({
   // Persistent across handle re-creations so Canvas remounts and quality-view
   // reconciliation never drop an edge's growth/decay lifecycle state.
   const edgeStatesRef = useRef<Map<string, EdgeState>>(new Map());
+  /** `lo → hi → state`, the same states under numeric keys, for the one
+   * per-hop-per-frame reader (`pushActiveHop`'s curve lookup). Written
+   * wherever `edgeStatesRef` is written: admission, live growth, and the
+   * two reap paths. Persistent for the same reason the map is. */
+  const edgeIndexRef = useRef<FabricEdgeIndex<EdgeState>>(new Map());
   /** Only edges with positive usage live here. Reinforcement updates this
    * sparse set without dirtying the complete passive-fabric prefix. */
   const warmRouteKeysRef = useRef<Set<string>>(new Set());
@@ -1298,8 +1436,9 @@ export default function NeuralFabric({
     };
 
     const fabricSlotCapacity = Math.floor(
-      fabric.positions.length / 6 / FABRIC_SLOT_SEGMENTS,
+      fatLineLayerCapacity(fabric) / FABRIC_SLOT_SEGMENTS,
     );
+    const edgeIndex = edgeIndexRef.current;
     /** Stable-slot spatial index for recall aperture frames. It is rebuilt
      * from the persistent maps when this effect is recreated (for example on
      * a quality change), then maintained incrementally with slot ownership. */
@@ -1463,9 +1602,11 @@ export default function NeuralFabric({
       baked.dimmed = apertureDimmedSlotsRef.current.size > 0;
     };
     /** One warm walk's surviving members and their render state, so the
-     * presentation pass never re-derives what the bookkeeping pass read. */
+     * presentation pass never re-derives what the bookkeeping pass read.
+     * The render records are a pool indexed like the keys — one scratch per
+     * draw slot, written in place every frame, never reallocated. */
     const warmDrawKeys: string[] = [];
-    const warmDrawRenders: EdgeRender[] = [];
+    const warmRenderPool: EdgeRender[] = [];
     /** Rewrite one edge's static record into its slot and mark it dirty.
      * Fabric-layer usage is deliberately 0 — reinforcement lives on the warm
      * overlay; the shader's gold/reclaim terms match the old CPU walk which
@@ -1511,7 +1652,8 @@ export default function NeuralFabric({
       slots: slotByKeyRef.current,
       freeSlots: freeSlotsRef.current,
       warmKeys: warmRouteKeysRef.current,
-      onReap: (key) => {
+      onReap: (key, reaped) => {
+        fabricEdgeIndexDelete(edgeIndex, reaped.fromCellId, reaped.toCellId);
         const removed = apertureIndex.removeKey(key);
         if (removed) apertureDimmedSlotsRef.current.delete(removed.slot);
         renderOrderTombstonesRef.current += 1;
@@ -1673,6 +1815,7 @@ export default function NeuralFabric({
         usage: 0,
       };
       edgeStatesRef.current.set(key, state);
+      fabricEdgeIndexSet(edgeIndex, state.fromCellId, state.toCellId, state);
       // One static-record write; the shader grows it from bornAt onward.
       if (slotted) {
         indexApertureSlot(key, state);
@@ -2004,6 +2147,7 @@ export default function NeuralFabric({
             usage: 0,
           };
           states.set(key, grown);
+          fabricEdgeIndexSet(edgeIndex, grown.fromCellId, grown.toCellId, grown);
           indexApertureSlot(key, grown);
           writeLifecycleSlot(key, grown);
           renderOrderRef.current.push(key); // append; reaps clean up lazily
@@ -2313,7 +2457,6 @@ export default function NeuralFabric({
           // ahead of every gate below — what a frame chooses to upload is
           // presentation, and presentation may never move the simulation.
           warmDrawKeys.length = 0;
-          warmDrawRenders.length = 0;
           let warmEndpointsMoved = false;
           let warmPeakUsage = 0;
           for (const key of warmRouteKeys) {
@@ -2333,7 +2476,17 @@ export default function NeuralFabric({
               warmMembershipMovedRef.current = true;
               continue;
             }
-            const render = fabricEdgeRenderState(st, now);
+            // The record for the draw slot this key would take; a key that
+            // drops out below leaves it for the next key to overwrite.
+            const renderSlot = warmDrawKeys.length;
+            if (renderSlot >= warmRenderPool.length) {
+              warmRenderPool.push(makeEdgeRenderScratch());
+            }
+            const render = fabricEdgeRenderStateInto(
+              warmRenderPool[renderSlot],
+              st,
+              now,
+            );
             if (render.reap) {
               st.usage = 0;
               warmRouteKeys.delete(key);
@@ -2349,7 +2502,6 @@ export default function NeuralFabric({
             }
             if (st.usage > warmPeakUsage) warmPeakUsage = st.usage;
             warmDrawKeys.push(key);
-            warmDrawRenders.push(render);
           }
           const warmSinceCommit = now - warmCommittedSecRef.current;
           // Deep tail: every member is faint enough that a frame's colour
@@ -2370,7 +2522,7 @@ export default function NeuralFabric({
               writeFabricEdgeSegments(
                 warmRoutes,
                 st,
-                warmDrawRenders[i],
+                warmRenderPool[i],
                 sample,
                 now,
                 st.usage,
@@ -2389,6 +2541,7 @@ export default function NeuralFabric({
               || warmEndpointsMoved
               || warmRoutes.count !== warmRoutes.geometry.instanceCount;
             commitLayer(warmRoutes, warmPositionsMoved, true);
+            syncFatLineLayerVisibility(warmRoutes);
             fabricStats.observeUpload(fabricUploadBytes(warmRoutes.count, {
               positions: warmPositionsMoved,
               colors: true,
@@ -2431,6 +2584,8 @@ export default function NeuralFabric({
               ),
               apertureClaimedColorBuffer,
             );
+            // The wide pass draws this same geometry: same count, same state.
+            trunk.mesh.visible = fabric.mesh.visible;
             fabricStats.observeIncrementalFrame(lifeDirtySlots.length, 0);
             lifeDirtySlots.length = 0;
           }
@@ -2449,9 +2604,7 @@ export default function NeuralFabric({
         const slots = slotByKeyRef.current;
         slots.clear();
         apertureIndex.clear();
-        const slotCapacity = Math.floor(
-          fabric.positions.length / 6 / FABRIC_SLOT_SEGMENTS,
-        );
+        const slotCapacity = fabricSlotCapacity;
         let slotIndex = 0;
         // Reap list deferred so we don't mutate the map mid-iteration.
         let toReap: string[] | null = null;
@@ -2500,6 +2653,10 @@ export default function NeuralFabric({
 
         if (toReap) {
           for (const key of toReap) {
+            const reaped = states.get(key);
+            if (reaped) {
+              fabricEdgeIndexDelete(edgeIndex, reaped.fromCellId, reaped.toCellId);
+            }
             states.delete(key);
             warmRouteKeys.delete(key);
           }
@@ -2536,6 +2693,7 @@ export default function NeuralFabric({
         completeApertureBake(recallAperture);
 
         commitFabricLifecycleFull(fabric);
+        trunk.mesh.visible = fabric.mesh.visible;
         globalRepaintRef.current = false;
         passivePositionsDirtyRef.current = false;
         emitDirtyRef.current = false;
@@ -2548,7 +2706,7 @@ export default function NeuralFabric({
           : hop.mode === 'lock'
             ? routeHopPulse
             : active;
-        const layerCapacity = layer.positions.length / 6;
+        const layerCapacity = fatLineLayerCapacity(layer);
         // Once a per-frame layer is saturated, later low-priority trails must
         // not continue doing Cell lookups and Bezier sampling for data that
         // pushSegment would discard.
@@ -2557,13 +2715,16 @@ export default function NeuralFabric({
         // exactly, avoiding two Cell lookups and one control-point derive per
         // active pulse per frame. A by-value ghost override must remain its own
         // geometry, and an edge outside the passive selection follows the
-        // historical Cell lookup + seeded-control fallback.
+        // historical Cell lookup + seeded-control fallback. The lookup goes
+        // through the numeric index (edgeIndexRef mirrors edgeStatesRef): this
+        // is the one reader that runs per hop per frame, and a key string
+        // built here was the hop path's whole remaining garbage.
         if (!resolveActiveHopCurveInto(
           activeCurve,
           ctrl,
           hop,
           cells,
-          edgeStatesRef.current,
+          edgeIndex,
         )) return;
         // Walk the hop's Bezier in N+1 sample points; for each pair
         // of consecutive samples emit one sub-segment. Per-segment
@@ -2613,6 +2774,8 @@ export default function NeuralFabric({
       flushActive() {
         commitLayer(active);
         commitLayer(memory);
+        syncFatLineLayerVisibility(active);
+        syncFatLineLayerVisibility(memory);
         active.count = 0;
         memory.count = 0;
       },
@@ -2622,6 +2785,7 @@ export default function NeuralFabric({
           && routeHopPulse.geometry.instanceCount === 0
         ) return;
         commitLayer(routeHopPulse);
+        syncFatLineLayerVisibility(routeHopPulse);
         routeHopPulse.count = 0;
       },
     };

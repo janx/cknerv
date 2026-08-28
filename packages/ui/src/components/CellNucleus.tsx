@@ -5,7 +5,7 @@
 // portrait: mid LOD reveals the braid, near LOD resolves stitches, agreement
 // bridges and knots. All admitted Cells share two Line2 draws plus one point
 // draw; there are no per-Cell React objects or WebGL materials.
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
@@ -210,18 +210,27 @@ export default function CellNucleus({
     material.uniforms.uWarmth.value = 0;
     return material;
   }, []);
+  // Both braid passes and the node points follow their committed counts:
+  // an empty pass is an invisible object, not a zero-instance draw. three
+  // binds program, material and VAO and runs the before-render hook before
+  // its zero-count early-out, and the resting overview holds no near Cell at
+  // all — three program switches a frame for nothing. The boot precompile
+  // walks with `traverse`, so a hidden pass is still linked at first light.
   const glow = useMemo(() => {
     const line = new LineSegments2(lineGeometry, glowMaterial);
     line.frustumCulled = false;
     line.renderOrder = 2;
+    line.visible = false;
     return line;
   }, [lineGeometry, glowMaterial]);
   const core = useMemo(() => {
     const line = new LineSegments2(lineGeometry, coreMaterial);
     line.frustumCulled = false;
     line.renderOrder = 3;
+    line.visible = false;
     return line;
   }, [lineGeometry, coreMaterial]);
+  const nodePointsRef = useRef<THREE.Points>(null);
 
   useEffect(() => () => {
     lineGeometry.dispose();
@@ -273,6 +282,14 @@ export default function CellNucleus({
   const groupWorldInverse = useMemo(() => new THREE.Matrix4(), []);
   const lodCandidateCache = useMemo(makeCellNucleusLodCandidateCache, []);
 
+  // The node points mount with an empty draw range; they show on the first
+  // commit that publishes one. (A StrictMode remount re-runs this against
+  // the same committed count.)
+  useLayoutEffect(() => {
+    const points = nodePointsRef.current;
+    if (points) points.visible = committedDrawCounts.current.nodes > 0;
+  }, []);
+
   useFrame((state, deltaSeconds) => {
     const group = groupRef.current;
     const cells = cellsListRef.current;
@@ -282,10 +299,13 @@ export default function CellNucleus({
       if (committed.lineSegments !== 0) {
         lineGeometry.instanceCount = 0;
         committed.lineSegments = 0;
+        glow.visible = false;
+        core.visible = false;
       }
       if (committed.nodes !== 0) {
         nodeGeometry.setDrawRange(0, 0);
         committed.nodes = 0;
+        if (nodePointsRef.current) nodePointsRef.current.visible = false;
       }
       return;
     }
@@ -670,6 +690,8 @@ export default function CellNucleus({
     if (lineSegmentCount !== committed.lineSegments) {
       lineGeometry.instanceCount = lineSegmentCount;
       committed.lineSegments = lineSegmentCount;
+      glow.visible = lineSegmentCount > 0;
+      core.visible = lineSegmentCount > 0;
     }
     const positionAttribute = lineGeometry.getAttribute(
       'instanceStart',
@@ -683,6 +705,9 @@ export default function CellNucleus({
     if (writeCursor.nodes !== committed.nodes) {
       nodeGeometry.setDrawRange(0, writeCursor.nodes);
       committed.nodes = writeCursor.nodes;
+      if (nodePointsRef.current) {
+        nodePointsRef.current.visible = writeCursor.nodes > 0;
+      }
     }
     const nodePositionAttribute = nodeGeometry.getAttribute(
       'position',
@@ -710,6 +735,7 @@ export default function CellNucleus({
       <primitive object={glow} />
       <primitive object={core} />
       <points
+        ref={nodePointsRef}
         geometry={nodeGeometry}
         material={nodeMaterial}
         frustumCulled={false}

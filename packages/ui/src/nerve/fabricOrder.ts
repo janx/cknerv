@@ -1,12 +1,71 @@
-/** Canonical edge map key. We use a string rather than a packed
- *  numeric key because cell ids in long-running sessions can exceed the
- *  2^16 bit width a comfy pack would need, and the ~3k entries ×
- *  few-hundred-millis-per-rebuild domain makes string Map performance
- *  a non-issue. */
+/** Canonical edge map key — the STRUCTURAL vocabulary: render order, slot
+ *  ownership, reap queues, warm membership and every kill list speak it, at
+ *  event rate. A string rather than a packed number because cell ids span two
+ *  families (sequential-small and ~2^52) and never fit a 32-bit pack. It is
+ *  deliberately absent from the per-frame hop path: building one per hop per
+ *  frame cost two number→string conversions, a cons string and its flatten on
+ *  every lookup (~140 B a hop, ~250 KB a storm frame) — the frame path reads
+ *  the numeric two-level index below instead. */
 export function fabricEdgeKey(a: number, b: number): string {
   const lo = a < b ? a : b;
   const hi = a < b ? b : a;
   return `${lo}|${hi}`;
+}
+
+/** Allocation-free edge lookup for the frame loop: `lo → hi → value`, the
+ *  same canonical (min, max) pair the string key spells, with no string built
+ *  to ask. Ids are never packed into one number (see `fabricEdgeKey`). */
+export type FabricEdgeIndex<T> = Map<number, Map<number, T>>;
+export type ReadonlyFabricEdgeIndex<T> = ReadonlyMap<number, ReadonlyMap<number, T>>;
+
+export function fabricEdgeIndexGet<T>(
+  index: ReadonlyFabricEdgeIndex<T>,
+  a: number,
+  b: number,
+): T | undefined {
+  const lo = a < b ? a : b;
+  const hi = a < b ? b : a;
+  return index.get(lo)?.get(hi);
+}
+
+export function fabricEdgeIndexSet<T>(
+  index: FabricEdgeIndex<T>,
+  a: number,
+  b: number,
+  value: T,
+): void {
+  const lo = a < b ? a : b;
+  const hi = a < b ? b : a;
+  let inner = index.get(lo);
+  if (inner === undefined) {
+    inner = new Map<number, T>();
+    index.set(lo, inner);
+  }
+  inner.set(hi, value);
+}
+
+/** Remove one edge; an inner map left empty goes with it, so the index never
+ *  holds more first-level entries than there are edges. */
+export function fabricEdgeIndexDelete<T>(
+  index: FabricEdgeIndex<T>,
+  a: number,
+  b: number,
+): boolean {
+  const lo = a < b ? a : b;
+  const hi = a < b ? b : a;
+  const inner = index.get(lo);
+  if (inner === undefined) return false;
+  const removed = inner.delete(hi);
+  if (removed && inner.size === 0) index.delete(lo);
+  return removed;
+}
+
+/** Number of edges the index holds — for the mirror test against the
+ *  string-keyed state map, never for a frame path. */
+export function fabricEdgeIndexSize<T>(index: ReadonlyFabricEdgeIndex<T>): number {
+  let size = 0;
+  for (const inner of index.values()) size += inner.size;
+  return size;
 }
 
 export function orderFabricStateKeys(

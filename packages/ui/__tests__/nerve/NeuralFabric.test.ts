@@ -126,8 +126,17 @@ describe('NeuralFabric living-mesh handles', () => {
       SRC.lastIndexOf('flushActive()'),
     );
     expect(activeImplementation).toContain('resolveActiveHopCurveInto(');
-    expect(activeImplementation).toContain('edgeStatesRef.current');
+    // Through the numeric index that mirrors edgeStatesRef — never the
+    // string-keyed map, whose key would be built per hop per frame.
+    expect(activeImplementation).toContain('edgeIndex,');
+    expect(activeImplementation).not.toContain('edgeStatesRef.current');
+    expect(activeImplementation).not.toContain('fabricEdgeKey(');
     expect(activeImplementation).toContain('activeCurve.ctrlX');
+    // Every writer of the state map writes the index: admission, live
+    // growth, the two reap paths.
+    expect(SRC.match(/fabricEdgeIndexSet\(edgeIndex,/g)).toHaveLength(2);
+    expect(SRC.match(/fabricEdgeIndexDelete\(edgeIndex,/g)).toHaveLength(2);
+    expect(SRC.match(/edgeStatesRef\.current\.set\(|\bstates\.set\(/g)).toHaveLength(2);
   });
 
   it('installs honest GPU draw probes and nested CPU hot-path spans', () => {

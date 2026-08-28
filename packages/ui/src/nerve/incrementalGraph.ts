@@ -44,13 +44,6 @@ export type MutableNeighborGraph = NeighborAdjacency & {
   eagerBase?: Map<number, Set<number> | undefined>;
 };
 
-function distSq(a: Cell, b: Cell): number {
-  const dx = a.pos_seed[0] - b.pos_seed[0];
-  const dy = a.pos_seed[1] - b.pos_seed[1];
-  const dz = a.pos_seed[2] - b.pos_seed[2];
-  return dx * dx + dy * dy + dz * dz;
-}
-
 /** Publish a node's replacement Set (or its removal, `undefined`), logging
  *  the instance it displaces on the node's FIRST touch since the last
  *  worker apply — later touches keep that first entry, because it is the
@@ -107,44 +100,96 @@ export function addCell(
   // O(N × k) fixed-size selection for the k nearest LIVE others. The former
   // collect-all + full sort path allocated and sorted thousands of candidates
   // once per birth, which amplified high-output blocks into seconds of work.
-  const near: { id: number; dSq: number; order: number }[] = [];
-  let lifeline: { id: number; dSq: number } | null = null;
+  // The selection keeps parallel scalars — id, squared distance, scan order —
+  // for its at-most-k entries and allocates nothing per candidate: the earlier
+  // per-candidate record cost one object for every live cell inside the edge
+  // cap (~2.3K a birth on the mainnet stage) to keep at most four of them.
+  const nearId: number[] = [];
+  const nearDSq: number[] = [];
+  const nearOrder: number[] = [];
+  let hasLifeline = false;
+  let lifelineId = 0;
+  let lifelineDSq = 0;
   let order = 0;
-  for (const [id, c] of cells) {
+  const selfX = self.pos_seed[0];
+  const selfY = self.pos_seed[1];
+  const selfZ = self.pos_seed[2];
+  // Values, not entries: the map is keyed by the cell's own id (every
+  // builder and reducer publishes it that way), and the destructured entry
+  // pair was one array per scanned cell — most of what a birth still
+  // allocated once the candidate records were gone. The distance is written
+  // out in place so no double crosses a call boundary per scanned cell.
+  for (const c of cells.values()) {
+    const id = c.id;
     if (id === cellId || c.death_at_ms != null) continue;
-    const dSq = distSq(self, c);
-    if (lifeline === null || dSq < lifeline.dSq) lifeline = { id, dSq };
+    const dx = selfX - c.pos_seed[0];
+    const dy = selfY - c.pos_seed[1];
+    const dz = selfZ - c.pos_seed[2];
+    const dSq = dx * dx + dy * dy + dz * dz;
+    if (!hasLifeline || dSq < lifelineDSq) {
+      hasLifeline = true;
+      lifelineId = id;
+      lifelineDSq = dSq;
+    }
     if (dSq <= maxLenSq && k > 0) {
-      const candidate = { id, dSq, order };
-      if (near.length < k) {
-        near.push(candidate);
+      if (nearId.length < k) {
+        nearId.push(id);
+        nearDSq.push(dSq);
+        nearOrder.push(order);
       } else {
+        // The worst entry is the farthest, ties broken toward the later
+        // scan position — the same entry the record-based pass evicted.
         let worst = 0;
-        for (let i = 1; i < near.length; i += 1) {
+        for (let i = 1; i < nearId.length; i += 1) {
           if (
-            near[i].dSq > near[worst].dSq
+            nearDSq[i] > nearDSq[worst]
             || (
-              near[i].dSq === near[worst].dSq
-              && near[i].order > near[worst].order
+              nearDSq[i] === nearDSq[worst]
+              && nearOrder[i] > nearOrder[worst]
             )
           ) worst = i;
         }
-        if (dSq < near[worst].dSq) near[worst] = candidate;
+        if (dSq < nearDSq[worst]) {
+          nearId[worst] = id;
+          nearDSq[worst] = dSq;
+          nearOrder[worst] = order;
+        }
       }
     }
     order += 1;
   }
-  near.sort((a, b) => a.dSq - b.dSq || a.order - b.order);
+  // Nearest first, scan order breaking ties — a total order, so this
+  // insertion sort lands exactly where the comparator sort did.
+  for (let i = 1; i < nearId.length; i += 1) {
+    const id = nearId[i];
+    const dSq = nearDSq[i];
+    const at = nearOrder[i];
+    let j = i - 1;
+    while (
+      j >= 0
+      && (nearDSq[j] > dSq || (nearDSq[j] === dSq && nearOrder[j] > at))
+    ) {
+      nearId[j + 1] = nearId[j];
+      nearDSq[j + 1] = nearDSq[j];
+      nearOrder[j + 1] = nearOrder[j];
+      j -= 1;
+    }
+    nearId[j + 1] = id;
+    nearDSq[j + 1] = dSq;
+    nearOrder[j + 1] = at;
+  }
 
   const addedEdges: NeighborEdge[] = [];
-  if (near.length === 0) {
+  if (nearId.length === 0) {
     // rim outlier: one lifeline edge to the globally nearest, ignoring cap
-    if (lifeline) { const e = addEdge(graph, cellId, lifeline.id, Math.sqrt(lifeline.dSq)); if (e) addedEdges.push(e); }
-    else if (!graph.adjacency.has(cellId)) publish(graph, cellId, new Set());
+    if (hasLifeline) {
+      const e = addEdge(graph, cellId, lifelineId, Math.sqrt(lifelineDSq));
+      if (e) addedEdges.push(e);
+    } else if (!graph.adjacency.has(cellId)) publish(graph, cellId, new Set());
     return { addedEdges };
   }
-  for (let i = 0; i < Math.min(k, near.length); i++) {
-    const e = addEdge(graph, cellId, near[i].id, Math.sqrt(near[i].dSq));
+  for (let i = 0; i < Math.min(k, nearId.length); i++) {
+    const e = addEdge(graph, cellId, nearId[i], Math.sqrt(nearDSq[i]));
     if (e) addedEdges.push(e);
   }
   return { addedEdges };

@@ -71,6 +71,124 @@ describe('addCell', () => {
   });
 });
 
+/** The selection as it stood before the parallel-scalar rewrite: one
+ *  candidate record per live cell inside the cap, the same worst-eviction
+ *  rule, the same closing sort. What `addCell` must still choose, in order. */
+function referenceNearest(
+  self: Cell,
+  cells: ReadonlyMap<number, Cell>,
+  k: number,
+  maxLen: number,
+): { ids: number[]; dSq: number[]; lifeline: { id: number; dSq: number } | null } {
+  const maxLenSq = maxLen * maxLen;
+  const near: { id: number; dSq: number; order: number }[] = [];
+  let lifeline: { id: number; dSq: number } | null = null;
+  let order = 0;
+  for (const [id, c] of cells) {
+    if (id === self.id || c.death_at_ms != null) continue;
+    const dx = self.pos_seed[0] - c.pos_seed[0];
+    const dy = self.pos_seed[1] - c.pos_seed[1];
+    const dz = self.pos_seed[2] - c.pos_seed[2];
+    const dSq = dx * dx + dy * dy + dz * dz;
+    if (lifeline === null || dSq < lifeline.dSq) lifeline = { id, dSq };
+    if (dSq <= maxLenSq && k > 0) {
+      const candidate = { id, dSq, order };
+      if (near.length < k) {
+        near.push(candidate);
+      } else {
+        let worst = 0;
+        for (let i = 1; i < near.length; i += 1) {
+          if (
+            near[i].dSq > near[worst].dSq
+            || (near[i].dSq === near[worst].dSq && near[i].order > near[worst].order)
+          ) worst = i;
+        }
+        if (dSq < near[worst].dSq) near[worst] = candidate;
+      }
+    }
+    order += 1;
+  }
+  near.sort((a, b) => a.dSq - b.dSq || a.order - b.order);
+  return {
+    ids: near.slice(0, k).map((n) => n.id),
+    dSq: near.slice(0, k).map((n) => n.dSq),
+    lifeline,
+  };
+}
+
+/** Deterministic PRNG (mulberry32) so a failure names its seed. */
+function rng(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+describe('addCell — allocate-on-insert selection equals the record-based one', () => {
+  it('chooses the same neighbours in the same order, ties and lifelines included, over random fields', () => {
+    for (let seed = 1; seed <= 40; seed += 1) {
+      const random = rng(seed);
+      // A coarse lattice forces exact distance ties; a few dead cells and
+      // a spread of k and cap exercise every branch (empty, partial, full,
+      // lifeline-only, isolated).
+      const size = 2 + Math.floor(random() * 60);
+      const cells = new Map<number, Cell>();
+      for (let id = 1; id <= size; id += 1) {
+        const x = Math.floor(random() * 7) * 3;
+        const z = Math.floor(random() * 7) * 3;
+        const dead = random() < 0.15 ? 1 : null;
+        cells.set(id, cell(id, x, z, dead));
+      }
+      const subjectId = 1 + Math.floor(random() * size);
+      const k = Math.floor(random() * 6);
+      const maxLen = random() < 0.2 ? 0.5 : [4, 7, 25, 200][Math.floor(random() * 4)];
+      const subject = cells.get(subjectId)!;
+      if (subject.death_at_ms != null) continue;
+
+      const expected = referenceNearest(subject, cells, k, maxLen);
+      const g = emptyNeighborGraph();
+      const { addedEdges } = addCell(g, subjectId, cells, { k, maxEdgeLength: maxLen });
+
+      const label = `seed ${seed} (n=${size}, subject=${subjectId}, k=${k}, cap=${maxLen})`;
+      if (expected.ids.length === 0) {
+        if (expected.lifeline) {
+          expect(addedEdges.map((e) => e.to === subjectId ? e.from : e.to), label)
+            .toEqual([expected.lifeline.id]);
+          expect(addedEdges[0].d, label).toBe(Math.sqrt(expected.lifeline.dSq));
+        } else {
+          expect(addedEdges, label).toEqual([]);
+          expect(g.adjacency.has(subjectId), label).toBe(true);
+        }
+        continue;
+      }
+      expect(addedEdges.map((e) => e.to === subjectId ? e.from : e.to), label)
+        .toEqual(expected.ids);
+      expect(addedEdges.map((e) => e.d), label)
+        .toEqual(expected.dSq.map((d) => Math.sqrt(d)));
+      // Adjacency order is insertion order, so it carries the same ranking.
+      expect([...g.adjacency.get(subjectId)!], label).toEqual(expected.ids);
+    }
+  });
+
+  it('keeps the eager log and the copy-on-write rule under the scalar selection', () => {
+    const cells = new Map<number, Cell>([
+      [1, cell(1, 0, 0)], [2, cell(2, 2, 0)], [3, cell(3, 4, 0)], [4, cell(4, 60, 0)],
+    ]);
+    const g = emptyLivingNeighborGraph();
+    g.adjacency.set(2, new Set([3])); g.adjacency.set(3, new Set([2])); g.adjacency.set(4, new Set());
+    const before2 = g.adjacency.get(2)!;
+    addCell(g, 1, cells, { k: 2 });
+    expect([...g.eagerBase.keys()].sort()).toEqual([1, 2, 3]);
+    expect(g.eagerBase.get(2)).toBe(before2);
+    expect([...before2]).toEqual([3]);
+    expect([...g.adjacency.get(2)!]).toEqual([3, 1]);
+  });
+});
+
 describe('removeCell', () => {
   it('removes the cell and its edges, returning canonical keys', () => {
     const g = emptyNeighborGraph();

@@ -248,6 +248,17 @@ describe('CellGalaxy', () => {
       'cellFlareGeometry.setDrawRange(0, flareIndexWrite.count)',
     );
     expect(source).toContain('geometry={cellFlareGeometry}');
+    // And with no active slot at all it is an invisible object, not a
+    // zero-vertex draw that still binds its program every frame; the flip
+    // rides the same commit as the draw range.
+    expect(source).toContain('ref={flarePointsRef}');
+    const flareCommit = source.slice(
+      source.indexOf('if (flareIndexWrite.changed) {'),
+      source.indexOf('// 4. Material uniforms.'),
+    );
+    expect(flareCommit).toContain('cellFlareGeometry.setDrawRange(0, flareIndexWrite.count);');
+    expect(flareCommit).toContain('flarePointsRef.current.visible = flareIndexWrite.count > 0;');
+    expect(source).toContain('points.visible = flareDrawCountRef.current > 0;');
   });
 
   it('keeps every drawn cell pickable — no inspection navigation gate', () => {

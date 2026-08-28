@@ -116,6 +116,22 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
     expect(NETWORK_SOURCE).not.toMatch(/livePlanQueueRef\.current = createLivePulseQueue\(\)/);
   });
 
+  // A storm frame pushes up to MAX_ACTIVE_PULSES × (head + TRAIL_HOPS)
+  // hops; a literal per push was one object per hop per frame, and the
+  // memory-distance loop allocated a pair array on every frame, pulses or
+  // none. Every push now goes through the one scratch record.
+  it('pushes every hop through one scratch record and allocates no per-frame pair', () => {
+    const pushes = NETWORK_SOURCE.match(/handles\.pushActiveHop\(/g) ?? [];
+    const scratchPushes = NETWORK_SOURCE.match(
+      /handles\.pushActiveHop\(\s*writeActiveHop\(\s*hopScratch,/g,
+    ) ?? [];
+    expect(pushes.length).toBe(6);
+    expect(scratchPushes.length).toBe(pushes.length);
+    expect(NETWORK_SOURCE).not.toMatch(/pushActiveHop\(\s*\{/);
+    expect(NETWORK_SOURCE).toContain('const hopScratch = useMemo(() => makeActiveHopScratch(), [])');
+    expect(NETWORK_SOURCE).not.toContain('[traceFocusRef.current, departingFocus]');
+  });
+
   it('journals exact Cell ids for sparse flash-buffer uploads', () => {
     expect(NETWORK_SOURCE).toContain('flashDirtyIdsRef?: CellFlashDirtyIdsRef');
     expect(NETWORK_SOURCE.match(/markCellFlashDirty\(/g)).toHaveLength(2);

@@ -1,4 +1,11 @@
-import { memo, useEffect, useMemo, useRef, type ReactNode } from 'react';
+import {
+  memo,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  type ReactNode,
+} from 'react';
 import { useThree } from '@react-three/fiber';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { useSimClock } from '../tweaks/SimClockScope';
@@ -1695,6 +1702,12 @@ function CellGalaxy({
    * read by the flash-only fast path so neither path recomputes the clamp. */
   const drawCountRef = useRef<number>(0);
   const flareDrawCountRef = useRef<number>(0);
+  /** The sparse flare pass follows its committed index count: with no
+   *  protocol write in its window it is an invisible object, not a
+   *  zero-vertex draw that still binds its program and VAO every frame (the
+   *  resting case). The boot precompile walks with `traverse`, so a hidden
+   *  pass is still linked at first light. */
+  const flarePointsRef = useRef<THREE.Points>(null);
   // Flash-index candidates: slots whose aFlashAt window is open or still to
   // open. Fed by every aFlashAt write path below; the resting frame then costs
   // nothing instead of scanning every visible slot. Stale entries retire
@@ -1945,6 +1958,13 @@ function CellGalaxy({
     cellGeometry,
     cellFlareGeometry,
   ]);
+
+  // The flare pass mounts with an empty draw range and shows on the first
+  // commit that publishes one (a StrictMode remount re-reads the same count).
+  useLayoutEffect(() => {
+    const points = flarePointsRef.current;
+    if (points) points.visible = flareDrawCountRef.current > 0;
+  }, []);
 
   useSimFrame((state, dt) => {
     const group = groupRef.current;
@@ -2313,6 +2333,9 @@ function CellGalaxy({
       );
       cellFlareGeometry.setDrawRange(0, flareIndexWrite.count);
       flareDrawCountRef.current = flareIndexWrite.count;
+      if (flarePointsRef.current) {
+        flarePointsRef.current.visible = flareIndexWrite.count > 0;
+      }
     }
 
     // 4. Material uniforms.
@@ -2478,6 +2501,7 @@ function CellGalaxy({
             per-frame aFlashAt writes feed it for free) and renders only the
             contributor rails + agreement loops over a steady cell body. */}
         <points
+          ref={flarePointsRef}
           geometry={cellFlareGeometry}
           material={flareMaterial}
           frustumCulled={false}

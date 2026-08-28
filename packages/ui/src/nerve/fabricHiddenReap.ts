@@ -104,15 +104,16 @@ export interface ReapableEdge {
   deathKind: DeathKind | null;
 }
 
-/** Bookkeeping one reaped edge is removed from. `onReap` reports each key so
- *  the caller keeps its own counters (renderOrder tombstones, stats) without
- *  this module knowing about them. */
+/** Bookkeeping one reaped edge is removed from. `onReap` reports each key
+ *  and the state it held so the caller keeps its own counters and indexes
+ *  (renderOrder tombstones, stats, the numeric edge index the frame loop
+ *  reads) without this module knowing about them. */
 export interface FabricReapTargets<T extends ReapableEdge> {
   states: Map<string, T>;
   slots: Map<string, number>;
   freeSlots: number[];
   warmKeys: Set<string>;
-  onReap: (key: string) => void;
+  onReap: (key: string, state: T) => void;
 }
 
 /** Retire one edge in place: its slot returns to the recycle list (the
@@ -120,6 +121,7 @@ export interface FabricReapTargets<T extends ReapableEdge> {
 function reapFabricEdge<T extends ReapableEdge>(
   targets: FabricReapTargets<T>,
   key: string,
+  state: T,
 ): void {
   const slot = targets.slots.get(key);
   if (slot !== undefined) {
@@ -128,7 +130,7 @@ function reapFabricEdge<T extends ReapableEdge>(
   }
   targets.states.delete(key);
   targets.warmKeys.delete(key);
-  targets.onReap(key);
+  targets.onReap(key, state);
 }
 
 /**
@@ -160,7 +162,7 @@ export function drainFabricReapQueue<T extends ReapableEdge>(
       || st.dyingAt === null
       || fabricLifecycleEndSec(st.dyingAt, st.deathKind) > now
     ) continue; // revived or already gone — the stale entry just drops
-    reapFabricEdge(targets, key);
+    reapFabricEdge(targets, key, st);
   }
   if (queue.head > 256 && queue.head * 2 > queue.entries.length) {
     queue.entries = queue.entries.slice(queue.head);
@@ -193,7 +195,7 @@ export function evictDeadFabricEdges<T extends ReapableEdge>(
   for (const [key, st] of states) {
     if (st.dyingAt === null) continue;
     if (fabricLifecycleEndSec(st.dyingAt, st.deathKind) > now) continue;
-    reapFabricEdge(targets, key);
+    reapFabricEdge(targets, key, st);
     evicted += 1;
     if (states.size <= ceiling) break;
   }

@@ -1,8 +1,11 @@
 // The other half of `BootFrameSentinel`, tested where the frame loop is not:
 // R3F callbacks cannot run under jsdom and no test environment here has a GL
 // context, so the kick takes the narrowest renderer surface it can use.
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PerspectiveCamera, Scene } from 'three';
+import { Mesh, PerspectiveCamera, Points, Scene } from 'three';
 import {
   bootShaderPrecompileState,
   kickBootShaderPrecompile,
@@ -172,6 +175,68 @@ describe('boot shader precompile — drivers that cannot do it', () => {
     kickBootShaderPrecompile(gl, scene, camera);
     vi.runAllTimers();
     expect(gl.calls).toHaveLength(1);
+  });
+});
+
+describe('boot shader precompile — what the compile walk reaches', () => {
+  // The zero-count pools (fabric layers, flare, near-identity braids) flip
+  // `visible = false` while they hold nothing. The precompile must still
+  // link them, and the render walk must still skip them: both are facts
+  // about three's source, pinned here against the installed version so an
+  // upgrade re-asks the question.
+  const require = createRequire(import.meta.url);
+  // `three` exports no package.json subpath; its main entry sits one level
+  // below the package root (`build/three.cjs`).
+  const threeRoot = join(dirname(require.resolve('three')), '..');
+  const rendererSource = readFileSync(
+    join(threeRoot, 'src/renderers/WebGLRenderer.js'),
+    'utf8',
+  );
+  const threeVersion = (
+    JSON.parse(readFileSync(join(threeRoot, 'package.json'), 'utf8')) as { version: string }
+  ).version;
+
+  it('three r169: compile walks with traverse; the render walk drops invisible objects first', () => {
+    expect(threeVersion).toBe('0.169.0');
+    const compile = rendererSource.slice(
+      rendererSource.indexOf('this.compile = function'),
+      rendererSource.indexOf('this.compileAsync = function'),
+    );
+    // The material walk (not the light gather, which is `traverseVisible`).
+    expect(compile).toContain('scene.traverse( function ( object ) {');
+    expect(compile).toContain('if ( ! ( object.isMesh || object.isPoints || object.isLine || object.isSprite ) )');
+    expect(compile).not.toContain('object.visible');
+    const project = rendererSource.slice(
+      rendererSource.indexOf('function projectObject('),
+      rendererSource.indexOf('function renderScene('),
+    );
+    expect(project.indexOf('if ( object.visible === false ) return;')).toBeGreaterThan(-1);
+    // …and the before-render hook runs only from renderObject, which only
+    // the render list reaches.
+    const renderObject = rendererSource.slice(
+      rendererSource.indexOf('function renderObject('),
+      rendererSource.indexOf('function getProgram('),
+    );
+    expect(renderObject).toContain('object.onBeforeRender( _this, scene, camera, geometry, material, group );');
+    expect(rendererSource.match(/object\.onBeforeRender\(/g)).toHaveLength(1);
+  });
+
+  it('a hidden pool is on the compile walk and off the render walk', () => {
+    const root = new Scene();
+    const hiddenMesh = new Mesh();
+    hiddenMesh.visible = false;
+    const hiddenPoints = new Points();
+    hiddenPoints.visible = false;
+    const shown = new Points();
+    root.add(hiddenMesh, hiddenPoints, shown);
+    const compiled: unknown[] = [];
+    root.traverse((object) => { compiled.push(object); });
+    const rendered: unknown[] = [];
+    root.traverseVisible((object) => { rendered.push(object); });
+    expect(compiled).toEqual(expect.arrayContaining([hiddenMesh, hiddenPoints, shown]));
+    expect(rendered).toContain(shown);
+    expect(rendered).not.toContain(hiddenMesh);
+    expect(rendered).not.toContain(hiddenPoints);
   });
 });
 

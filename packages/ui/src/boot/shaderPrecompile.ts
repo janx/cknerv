@@ -14,13 +14,16 @@ import type { Camera, Object3D } from 'three';
  * measured in seconds, once per browser session (an in-session reload is
  * clean: the GPU-process cache survives it, the page's own state does not).
  *
- * `WebGLRenderer.compile` walks with `traverse`, not `traverseVisible`, and
+ * `WebGLRenderer.compile` walks with `traverse`, not `traverseVisible`
+ * (three r169 `src/renderers/WebGLRenderer.js:989`, `scene.traverse(`), and
  * derives its program keys from object KIND, geometry attributes and
- * material alone — never from instance counts, draw ranges, or camera
- * layers. One call over the live scene therefore reaches every mounted
- * material whether or not it has ever been drawn, and nothing has to be
- * lifted into drawable form for it. What it cannot reach is what is not
- * mounted: the inspection overlays that exist only while something is
+ * material alone — never from instance counts, draw ranges, visibility, or
+ * camera layers. One call over the live scene therefore reaches every
+ * mounted material whether or not it has ever been drawn — including the
+ * pools that flip `visible = false` while they hold nothing (the render
+ * walk, `projectObject` at `:1321`, is the one that skips those). Nothing
+ * has to be lifted into drawable form for it. What it cannot reach is what
+ * is not mounted: the inspection overlays that exist only while something is
  * selected compile on their own first draw, as they always did.
  *
  * ONLY on drivers that offer KHR_parallel_shader_compile. Without it the

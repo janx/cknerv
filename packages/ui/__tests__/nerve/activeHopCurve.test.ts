@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { Cell } from '@cknerv/types';
 import { describe, expect, it } from 'vitest';
 import { bezierAtInto } from '../../src/geometry/edgeBezier';
@@ -7,8 +9,28 @@ import {
   type PassiveHopCurveState,
   type ResolvedActiveHopCurve,
 } from '../../src/nerve/activeHopCurve';
-import { fabricEdgeKey } from '../../src/nerve/fabricOrder';
+import {
+  fabricEdgeIndexDelete,
+  fabricEdgeIndexGet,
+  fabricEdgeIndexSet,
+  fabricEdgeIndexSize,
+  type FabricEdgeIndex,
+} from '../../src/nerve/fabricOrder';
 import type { CellById, Vec3 } from '../../src/types';
+
+const HOP_CURVE_SOURCE = readFileSync(
+  resolve(process.cwd(), 'src/nerve/activeHopCurve.ts'),
+  'utf8',
+);
+
+/** The passive index the fabric maintains, from (a, b, state) triples. */
+function indexOf(
+  entries: ReadonlyArray<readonly [number, number, PassiveHopCurveState]>,
+): FabricEdgeIndex<PassiveHopCurveState> {
+  const index: FabricEdgeIndex<PassiveHopCurveState> = new Map();
+  for (const [a, b, state] of entries) fabricEdgeIndexSet(index, a, b, state);
+  return index;
+}
 
 function cellLookup(entries: ReadonlyArray<readonly [number, Vec3]>): CellById {
   const positions = new Map(entries);
@@ -28,10 +50,10 @@ function curveScratch(): ResolvedActiveHopCurve {
   };
 }
 
-function resolve(
+function resolveHop(
   hop: ActiveHopCurveRequest,
   cells: CellById,
-  states: ReadonlyMap<string, PassiveHopCurveState>,
+  states: FabricEdgeIndex<PassiveHopCurveState>,
 ): { source: ReturnType<typeof resolveActiveHopCurveInto>; curve: ResolvedActiveHopCurve } {
   const curve = curveScratch();
   const source = resolveActiveHopCurveInto(
@@ -102,15 +124,15 @@ function passiveStateFrom(
 
 describe('resolveActiveHopCurveInto', () => {
   it('reuses passive geometry with exact forward and reverse travel parity', () => {
-    const fallback = resolve(HOP, CELLS, new Map());
+    const fallback = resolveHop(HOP, CELLS, new Map());
     expect(fallback.source).toBe('fallback');
 
     for (const stateReversed of [false, true]) {
       const state = passiveStateFrom(fallback.curve, stateReversed);
-      const reused = resolve(
+      const reused = resolveHop(
         HOP,
         CELLS,
-        new Map([[fabricEdgeKey(FROM_ID, TO_ID), state]]),
+        indexOf([[FROM_ID, TO_ID, state]]),
       );
       expect(reused.source).toBe('passive');
       expect(reused.curve).toEqual(fallback.curve);
@@ -120,19 +142,19 @@ describe('resolveActiveHopCurveInto', () => {
   });
 
   it('keeps an explicit ghost endpoint on the historical fallback curve', () => {
-    const fallback = resolve(HOP, CELLS, new Map());
+    const fallback = resolveHop(HOP, CELLS, new Map());
     const passive = passiveStateFrom(fallback.curve, false);
     const ghost: Vec3 = [-90.5, 12.25, 44.75];
     const ghostHop: ActiveHopCurveRequest = { ...HOP, fromPos: ghost };
 
-    const withPassivePresent = resolve(
+    const withPassivePresent = resolveHop(
       ghostHop,
       // The consumed source is deliberately absent: the by-value ghost is the
       // only legal way this hop remains resolvable.
       cellLookup([[TO_ID, TO]]),
-      new Map([[fabricEdgeKey(FROM_ID, TO_ID), passive]]),
+      indexOf([[FROM_ID, TO_ID, passive]]),
     );
-    const historicalFallback = resolve(
+    const historicalFallback = resolveHop(
       ghostHop,
       cellLookup([[TO_ID, TO]]),
       new Map(),
@@ -147,14 +169,75 @@ describe('resolveActiveHopCurveInto', () => {
   });
 
   it('retains Cell lookup fallback for edges outside the passive selection', () => {
-    const fallback = resolve(HOP, CELLS, new Map());
+    const fallback = resolveHop(HOP, CELLS, new Map());
     expect(fallback.source).toBe('fallback');
     expect(fallback.curve.fromX).toBe(FROM[0]);
     expect(fallback.curve.toZ).toBe(TO[2]);
-    expect(resolve(
+    expect(resolveHop(
       HOP,
       cellLookup([[FROM_ID, FROM]]),
       new Map(),
     ).source).toBeNull();
+  });
+
+  it('asks the numeric index in either orientation and builds no key string', () => {
+    const fallback = resolveHop(HOP, CELLS, new Map());
+    const state = passiveStateFrom(fallback.curve, false);
+    // Stored (lo, hi); asked both ways round.
+    const index = indexOf([[TO_ID, FROM_ID, state]]);
+    expect(resolveHop({ fromCellId: FROM_ID, toCellId: TO_ID }, CELLS, index).source)
+      .toBe('passive');
+    expect(resolveHop({ fromCellId: TO_ID, toCellId: FROM_ID }, CELLS, index).source)
+      .toBe('passive');
+    // This runs once per hop per frame: the string edge key — two
+    // number→string conversions, a cons string and its flatten — is the one
+    // thing it must never build.
+    expect(HOP_CURVE_SOURCE).not.toContain('fabricEdgeKey');
+    expect(HOP_CURVE_SOURCE).not.toMatch(/\$\{/);
+    expect(HOP_CURVE_SOURCE).toContain('fabricEdgeIndexGet(');
+  });
+});
+
+describe('fabricEdgeIndex — lo → hi → value, with no key built', () => {
+  it('stores and finds an edge under its canonical pair from either order', () => {
+    const index: FabricEdgeIndex<string> = new Map();
+    fabricEdgeIndexSet(index, 20, 10, 'a');
+    expect(fabricEdgeIndexGet(index, 10, 20)).toBe('a');
+    expect(fabricEdgeIndexGet(index, 20, 10)).toBe('a');
+    expect(fabricEdgeIndexGet(index, 10, 21)).toBeUndefined();
+    expect([...index.keys()]).toEqual([10]);
+    expect(fabricEdgeIndexSize(index)).toBe(1);
+    // Overwrite in place: one entry per pair.
+    fabricEdgeIndexSet(index, 10, 20, 'b');
+    expect(fabricEdgeIndexGet(index, 20, 10)).toBe('b');
+    expect(fabricEdgeIndexSize(index)).toBe(1);
+  });
+
+  it('holds a first-level entry only while an edge is under it', () => {
+    const index: FabricEdgeIndex<number> = new Map();
+    fabricEdgeIndexSet(index, 1, 2, 12);
+    fabricEdgeIndexSet(index, 1, 3, 13);
+    fabricEdgeIndexSet(index, 5, 4, 45);
+    expect(fabricEdgeIndexSize(index)).toBe(3);
+    expect(fabricEdgeIndexDelete(index, 2, 1)).toBe(true);
+    expect(index.has(1)).toBe(true); // (1,3) still there
+    expect(fabricEdgeIndexDelete(index, 3, 1)).toBe(true);
+    expect(index.has(1)).toBe(false); // emptied → pruned
+    expect(fabricEdgeIndexDelete(index, 1, 3)).toBe(false);
+    expect(fabricEdgeIndexDelete(index, 4, 5)).toBe(true);
+    expect(index.size).toBe(0);
+  });
+
+  it('keeps the two id families apart — nothing is packed into one number', () => {
+    // Sequential-small ids and ~2^52 ids coexist; a 32-bit pack would alias.
+    const index: FabricEdgeIndex<string> = new Map();
+    const big = 2 ** 52 + 7;
+    fabricEdgeIndexSet(index, 7, big, 'big');
+    fabricEdgeIndexSet(index, 7, 0x1_0000_0007, 'mid');
+    fabricEdgeIndexSet(index, 7, 7 + 1, 'small');
+    expect(fabricEdgeIndexGet(index, big, 7)).toBe('big');
+    expect(fabricEdgeIndexGet(index, 0x1_0000_0007, 7)).toBe('mid');
+    expect(fabricEdgeIndexGet(index, 8, 7)).toBe('small');
+    expect(fabricEdgeIndexSize(index)).toBe(3);
   });
 });

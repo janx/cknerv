@@ -44,7 +44,46 @@ export const DEATH_FLASH_MS = 220;
 
 const HIDDEN: EdgeRender = { visible: false, alphaMul: 0, tStart: 0, tEnd: 0, flash: 0, reap: false, animating: false };
 
+/** A fresh render record. The frame paths write into a caller-owned one
+ *  through `fabricEdgeRenderStateInto`; this form is for event-rate callers
+ *  and tests, and returns exactly what the scratch form writes. */
 export function fabricEdgeRenderState(st: EdgeLifecycle, nowSec: number): EdgeRender {
+  return fabricEdgeRenderStateInto({ ...HIDDEN }, st, nowSec);
+}
+
+export function makeEdgeRenderScratch(): EdgeRender {
+  return { ...HIDDEN };
+}
+
+function writeEdgeRender(
+  out: EdgeRender,
+  visible: boolean,
+  alphaMul: number,
+  tStart: number,
+  tEnd: number,
+  flash: number,
+  reap: boolean,
+  animating: boolean,
+): EdgeRender {
+  out.visible = visible;
+  out.alphaMul = alphaMul;
+  out.tStart = tStart;
+  out.tEnd = tEnd;
+  out.flash = flash;
+  out.reap = reap;
+  out.animating = animating;
+  return out;
+}
+
+/** The render state written into `out` (returned for chaining). Every field
+ *  is assigned on every call, so a reused scratch never carries a previous
+ *  edge's value. The warm-route walk runs this once per warm edge per frame;
+ *  a fresh record there was one allocation per edge per frame. */
+export function fabricEdgeRenderStateInto(
+  out: EdgeRender,
+  st: EdgeLifecycle,
+  nowSec: number,
+): EdgeRender {
   if (st.dyingAt !== null) {
     // Clamp at 0 so a defensively future-dated dyingAt (dyingAt > nowSec)
     // can't drive decayMs negative — which would overdrive the death
@@ -53,29 +92,36 @@ export function fabricEdgeRenderState(st: EdgeLifecycle, nowSec: number): EdgeRe
     // so this is a no-op there; it closes the footgun against refactors.
     const decayMs = Math.max(0, (nowSec - st.dyingAt) * 1000);
     if (st.deathKind === 'death') {
-      if (decayMs >= DEATH_RETRACT_MS) return { ...HIDDEN, reap: true };
+      if (decayMs >= DEATH_RETRACT_MS) {
+        return writeEdgeRender(out, false, 0, 0, 0, 0, true, false);
+      }
       const r = decayMs / DEATH_RETRACT_MS;
       // Retirement spike at t=0 that falls off exponentially (τ=DEATH_FLASH_MS)
       // yet stays > 0 through the retract so the dying tendril keeps a hot tip.
       const flash = Math.exp(-decayMs / DEATH_FLASH_MS);
       const tStart = st.deadEnd === 'from' ? r : 0;
       const tEnd = st.deadEnd === 'to' ? 1 - r : 1;
-      return { visible: tEnd > tStart, alphaMul: 1, tStart, tEnd, flash, reap: false, animating: true };
+      return writeEdgeRender(out, tEnd > tStart, 1, tStart, tEnd, flash, false, true);
     }
     // gc / reconciliation: quiet fade, full length
-    if (decayMs >= DECAY_MS) return { ...HIDDEN, reap: true };
-    return { visible: true, alphaMul: 1 - decayMs / DECAY_MS, tStart: 0, tEnd: 1, flash: 0, reap: false, animating: true };
+    if (decayMs >= DECAY_MS) {
+      return writeEdgeRender(out, false, 0, 0, 0, 0, true, false);
+    }
+    return writeEdgeRender(out, true, 1 - decayMs / DECAY_MS, 0, 1, 0, false, true);
   }
   // growing / stable
   const ageMs = (nowSec - st.bornAt) * 1000;
-  if (ageMs < 0) return { ...HIDDEN, animating: true }; // staggered start in the future
+  if (ageMs < 0) {
+    // staggered start in the future
+    return writeEdgeRender(out, false, 0, 0, 0, 0, false, true);
+  }
   if (ageMs < GROWTH_MS) {
     const p = ageMs / GROWTH_MS;
     const u = 1 - p;
     const alphaMul = 1 - u * u * u; // easeOutCubic
     const tStart = st.growDir === -1 ? 1 - p : 0;
     const tEnd = st.growDir === -1 ? 1 : p;
-    return { visible: true, alphaMul, tStart, tEnd, flash: 0, reap: false, animating: true };
+    return writeEdgeRender(out, true, alphaMul, tStart, tEnd, 0, false, true);
   }
-  return { visible: true, alphaMul: 1, tStart: 0, tEnd: 1, flash: 0, reap: false, animating: false };
+  return writeEdgeRender(out, true, 1, 0, 1, 0, false, false);
 }

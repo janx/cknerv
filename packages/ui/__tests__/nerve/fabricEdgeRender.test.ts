@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { fabricEdgeRenderState, GROWTH_MS, DECAY_MS, DEATH_RETRACT_MS } from '../../src/nerve/fabricEdgeRender';
+import {
+  fabricEdgeRenderState,
+  fabricEdgeRenderStateInto,
+  makeEdgeRenderScratch,
+  GROWTH_MS,
+  DECAY_MS,
+  DEATH_RETRACT_MS,
+  type EdgeLifecycle,
+} from '../../src/nerve/fabricEdgeRender';
 
 const base = { bornAt: 0, dyingAt: null, deathKind: null, deadEnd: null, growDir: 1 as const };
 
@@ -49,6 +57,53 @@ describe('fabricEdgeRenderState death retract', () => {
     const mid = fabricEdgeRenderState(st, DEATH_RETRACT_MS / 1000 / 2);
     expect(mid.tStart).toBe(0);
     expect(mid.tEnd).toBeCloseTo(0.5, 2);
+  });
+});
+
+describe('fabricEdgeRenderStateInto — the warm walk\'s scratch form', () => {
+  const lifecycles: EdgeLifecycle[] = [
+    base,
+    { ...base, growDir: -1 },
+    { ...base, bornAt: 5 },
+    { ...base, dyingAt: 0, deathKind: 'gc' },
+    { ...base, dyingAt: 0, deathKind: 'death', deadEnd: 'from' },
+    { ...base, dyingAt: 0, deathKind: 'death', deadEnd: 'to' },
+    { ...base, dyingAt: 10, deathKind: 'death', deadEnd: 'from' },
+    { ...base, dyingAt: 10, deathKind: 'gc' },
+  ];
+  const clocks = [
+    -1, 0, 0.001, 0.3, GROWTH_MS / 2000, GROWTH_MS / 1000, GROWTH_MS / 1000 + 1,
+    DEATH_RETRACT_MS / 2000, DEATH_RETRACT_MS / 1000, DEATH_RETRACT_MS / 1000 + 0.1,
+    DECAY_MS / 2000, DECAY_MS / 1000, DECAY_MS / 1000 + 0.1, 4, 9, 11, 60,
+  ];
+
+  it('writes exactly what the allocating form returns, into the same object', () => {
+    const scratch = makeEdgeRenderScratch();
+    for (const st of lifecycles) {
+      for (const now of clocks) {
+        const fresh = fabricEdgeRenderState(st, now);
+        const written = fabricEdgeRenderStateInto(scratch, st, now);
+        expect(written).toBe(scratch);
+        expect(written).toEqual(fresh);
+      }
+    }
+  });
+
+  it('a reused scratch never carries a previous edge\'s field', () => {
+    // Every branch assigns all seven fields: after a flashing retract, a
+    // stable edge reads flash 0 and reap false; after a reap, growth reads
+    // visible again.
+    const scratch = makeEdgeRenderScratch();
+    fabricEdgeRenderStateInto(scratch, { ...base, dyingAt: 0, deathKind: 'death', deadEnd: 'from' }, 0.1);
+    expect(scratch.flash).toBeGreaterThan(0);
+    fabricEdgeRenderStateInto(scratch, base, 5);
+    expect(scratch).toEqual({ visible: true, alphaMul: 1, tStart: 0, tEnd: 1, flash: 0, reap: false, animating: false });
+    fabricEdgeRenderStateInto(scratch, { ...base, dyingAt: 0, deathKind: 'gc' }, 60);
+    expect(scratch.reap).toBe(true);
+    expect(scratch.visible).toBe(false);
+    fabricEdgeRenderStateInto(scratch, base, GROWTH_MS / 2000);
+    expect(scratch.reap).toBe(false);
+    expect(scratch.visible).toBe(true);
   });
 });
 

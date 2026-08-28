@@ -5,15 +5,21 @@
 // for dozens, and the packets do not leave for `livePulseDepartureDelayS`
 // (≥ 2.2 s ≈ 130 frames) — slack the one-task planner never used.
 //
-// What stays exactly as the one-task planner had it: the routes (each batch
-// plans against the display pair captured when its delta arrived — the
-// request-time contract — and the frame loop validates every hop against the
-// live graph anyway), the departure times (`startSec` is stamped at arrival),
-// the per-batch pulse budget, the pulse order, and every stats bump in link
-// order. What a slice must never do is let a packet depart late: a batch
-// whose earliest departure is within `LIVE_PLAN_DEADLINE_MARGIN_S` finishes
-// in the current frame regardless of the budget — the worst case is the one
-// task the planner always was, never a packet appearing mid-flight.
+// What stays exactly as the one-task planner had it: the departure times
+// (`startSec` is stamped at arrival), the per-batch pulse budget, the pulse
+// order, and every stats bump in link order. The routes are planned against
+// the display pair the batch captured when its delta arrived — the staged map
+// and the display graph BY REFERENCE, not a snapshot. A chained worker build
+// patches that graph's adjacency in place (and the staged map is patched the
+// same way), so a slice that runs after a build lands searches the landed
+// graph: a route it finds is made of live edges and never of one the build
+// just removed. Only a whole (non-chained) rebuild replaces the object, and a
+// batch opened before it keeps planning on the graph it captured — the frame
+// loop validates every hop against the live graph either way. What a slice
+// must never do is let a packet depart late: a batch whose earliest departure
+// is within `LIVE_PLAN_DEADLINE_MARGIN_S` finishes in the current frame
+// regardless of the budget — the worst case is the one task the planner
+// always was, never a packet appearing mid-flight.
 
 import type { Cell, CellLink } from '@cknerv/types';
 import type { NeighborAdjacency } from '../geometry/neighborGraph';
@@ -41,9 +47,10 @@ export const LIVE_PLAN_BUDGET_MS = 2;
 export const LIVE_PLAN_DEADLINE_MARGIN_S = 0.05;
 
 /** One opened batch awaiting (or in) planning. The display pair is captured
- *  at arrival: routes are planned against the map and graph the delta was
- *  seen with, so `path[0]` and every `to_id` are present by construction
- *  and the ghost leg resolves against the same map. */
+ *  at arrival by reference: the map and graph the delta was seen with, as
+ *  they stand when each slice runs (chained builds and stage churn patch
+ *  both in place), so `path[0]` and every `to_id` present at planning time
+ *  are the live ones and the ghost leg resolves against the same map. */
 export interface LivePulseBatch {
   toFire: CellLink[];
   cells: ReadonlyMap<number, Cell>;

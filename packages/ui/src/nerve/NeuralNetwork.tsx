@@ -118,7 +118,11 @@ import {
   shouldDeferBirthsToBulkRebuild,
 } from './livingMeshDriver';
 import CellBridgeNerves from './CellBridgeNerves';
-import NeuralFabric, { type NeuralFabricHandles } from './NeuralFabric';
+import NeuralFabric, {
+  makeActiveHopScratch,
+  writeActiveHop,
+  type NeuralFabricHandles,
+} from './NeuralFabric';
 import {
   bezierAtInto,
   bezierControlInto,
@@ -909,10 +913,13 @@ function NeuralNetwork({
     // can see the fibre it rides, and the retained map holds four cells
     // off-stage for every one on it. Pairing them also makes residents
     // routable: they are most of the stage and `cellsCache.cells` never held
-    // them at all. The pair is captured HERE, at request time, exactly as the
-    // one-task planner read it: a later build swaps the live graph out from
-    // under a batch still planning, and the frame loop validates every hop
-    // against the live graph regardless.
+    // them at all. The pair is captured HERE, at request time, BY REFERENCE:
+    // a chained build patches this graph's adjacency in place (and the staged
+    // map is patched in place too), so a slice that plans after a build lands
+    // searches the landed graph — live edges only, never one the build just
+    // removed. Only a whole rebuild replaces the object, leaving a batch
+    // opened before it on the graph it captured; the frame loop validates
+    // every hop against the live graph either way.
     enqueueLivePulseBatch(
       livePlanQueueRef.current,
       toFire,
@@ -1412,6 +1419,11 @@ function NeuralNetwork({
   // One scratch head for the whole walk: it touches every active pulse each
   // frame, and a per-pulse result object would allocate at frame rate.
   const legHead = useMemo(() => makePulseLegHead(), []);
+  // One scratch hop for every push below (both frame callbacks, which run
+  // one after the other and consume it synchronously): a storm frame pushes
+  // up to MAX_ACTIVE_PULSES × (head + TRAIL_HOPS) hops, and a literal per
+  // push was one object per hop per frame.
+  const hopScratch = useMemo(() => makeActiveHopScratch(), []);
   useEffect(() => () => spikePool.dispose(), [spikePool]);
 
   // NeuralFabric hands us imperative draw handles via onReady.
@@ -1467,19 +1479,20 @@ function NeuralNetwork({
         )) {
           if (!cells.has(edge.fromCellId) || !cells.has(edge.toCellId)) continue;
           if (!adjacency.get(edge.fromCellId)?.has(edge.toCellId)) continue;
-          handles.pushActiveHop({
-            fromCellId: edge.fromCellId,
-            toCellId: edge.toCellId,
-            mode: 'lock',
-            frontT: edge.frontT,
-            direction: edge.direction,
-            brightness: MEMORY_ROUTE_HOP_LOCK_PULSE_BRIGHT
+          handles.pushActiveHop(writeActiveHop(
+            hopScratch,
+            edge.fromCellId,
+            edge.toCellId,
+            'lock',
+            edge.frontT,
+            MEMORY_ROUTE_HOP_LOCK_PULSE_BRIGHT
               * pulseClock.frame.strength
               * focusStrength
               * distancePresentation.routeEnergyScale,
-            tailDecay: MEMORY_ROUTE_HOP_LOCK_PULSE_TAIL_DECAY,
-            color: route.color,
-          }, cells);
+            route.color,
+            edge.direction,
+            MEMORY_ROUTE_HOP_LOCK_PULSE_TAIL_DECAY,
+          ), cells);
         }
       }
     }
@@ -1621,7 +1634,10 @@ function NeuralNetwork({
       );
       let memoryCameraDistance = CONSENSUS_MEMORY_NEAR_PRESENTATION.cameraDistance;
       let hasMemoryTarget = false;
-      for (const candidateFocus of [traceFocusRef.current, departingFocus]) {
+      // The live focus, then the departing one — two reads, no pair array
+      // (this ran on every frame, pulses or none).
+      for (let side = 0; side < 2; side += 1) {
+        const candidateFocus = side === 0 ? traceFocusRef.current : departingFocus;
         if (!candidateFocus) continue;
         for (const targetId of candidateFocus.targetIds) {
           const target = cells.get(targetId);
@@ -1767,18 +1783,20 @@ function NeuralNetwork({
                   const hopAdjacency = adjacency.get(fromId);
                   if (!hopAdjacency?.has(toId)) continue;
                   handles.pushActiveHop(
-                    {
-                      fromCellId: fromId,
-                      toCellId: toId,
-                      mode: 'memory',
-                      frontT: 1,
-                      brightness: MEMORY_RESONANCE_BRIGHT
+                    writeActiveHop(
+                      hopScratch,
+                      fromId,
+                      toId,
+                      'memory',
+                      1,
+                      MEMORY_RESONANCE_BRIGHT
                         * resonance
                         * handoffScale
                         * routeActivityScale,
-                      tailDecay: MEMORY_RESONANCE_TAIL_DECAY,
-                      color: pulse.color,
-                    },
+                      pulse.color,
+                      undefined,
+                      MEMORY_RESONANCE_TAIL_DECAY,
+                    ),
                     cells,
                   );
                 }
@@ -1848,16 +1866,19 @@ function NeuralNetwork({
               : HOP_TAIL_BRIGHT * Math.exp(-ageHops * HOP_TAIL_DECAY);
             if (ghost && h === PULSE_LEG_GHOST) {
               handles.pushActiveHop(
-                {
-                  fromCellId: ghost.origin.anchorId,
-                  toCellId: pulse.path[0],
-                  fromPos: ghost.origin.pos,
-                  toPos: ghost.to,
-                  mode: pulse.mode,
+                writeActiveHop(
+                  hopScratch,
+                  ghost.origin.anchorId,
+                  pulse.path[0],
+                  pulse.mode,
                   frontT,
-                  brightness: brightness * routeActivityScale,
-                  color: pulse.color,
-                },
+                  brightness * routeActivityScale,
+                  pulse.color,
+                  undefined,
+                  undefined,
+                  ghost.origin.pos,
+                  ghost.to,
+                ),
                 cells,
               );
               continue;
@@ -1874,14 +1895,15 @@ function NeuralNetwork({
               if (!hAdj || !hAdj.has(hToId)) continue;
             }
             handles.pushActiveHop(
-              {
-                fromCellId: hFromId,
-                toCellId: hToId,
-                mode: pulse.mode,
+              writeActiveHop(
+                hopScratch,
+                hFromId,
+                hToId,
+                pulse.mode,
                 frontT,
-                brightness: brightness * routeActivityScale,
-                color: pulse.color,
-              },
+                brightness * routeActivityScale,
+                pulse.color,
+              ),
               cells,
             );
           }
@@ -1990,18 +2012,20 @@ function NeuralNetwork({
             const toCellId = resolved.route.path[segmentIndex + 1];
             if (!cells.has(fromCellId) || !cells.has(toCellId)) continue;
             if (!adjacency.get(fromCellId)?.has(toCellId)) continue;
-            handles.pushActiveHop({
+            handles.pushActiveHop(writeActiveHop(
+              hopScratch,
               fromCellId,
               toCellId,
-              mode: 'memory',
-              frontT: 1,
-              brightness: MEMORY_ROUTE_HOP_INSPECT_BRIGHT
+              'memory',
+              1,
+              MEMORY_ROUTE_HOP_INSPECT_BRIGHT
                 * focusStrength
                 * brightnessScale
                 * distancePresentation.routeEnergyScale,
-              tailDecay: MEMORY_ROUTE_HOP_INSPECT_TAIL_DECAY,
-              color: resolved.route.color,
-            }, cells);
+              resolved.route.color,
+              undefined,
+              MEMORY_ROUTE_HOP_INSPECT_TAIL_DECAY,
+            ), cells);
           }
         };
         const pushRouteFlare = (
@@ -2025,18 +2049,20 @@ function NeuralNetwork({
             const toCellId = resolved.route.path[segmentIndex + 1];
             if (!cells.has(fromCellId) || !cells.has(toCellId)) continue;
             if (!adjacency.get(fromCellId)?.has(toCellId)) continue;
-            handles.pushActiveHop({
+            handles.pushActiveHop(writeActiveHop(
+              hopScratch,
               fromCellId,
               toCellId,
-              mode: 'memory',
-              frontT: 1,
-              brightness: MEMORY_SOURCE_HANDOFF_FLARE_BRIGHT
+              'memory',
+              1,
+              MEMORY_SOURCE_HANDOFF_FLARE_BRIGHT
                 * focusStrength
                 * flareScale
                 * distancePresentation.routeEnergyScale,
-              tailDecay: MEMORY_SOURCE_HANDOFF_FLARE_TAIL_DECAY,
-              color: resolved.route.color,
-            }, cells);
+              resolved.route.color,
+              undefined,
+              MEMORY_SOURCE_HANDOFF_FLARE_TAIL_DECAY,
+            ), cells);
           }
         };
         const handoff = sourceHandoffRef.current;

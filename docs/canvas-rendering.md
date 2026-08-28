@@ -386,8 +386,13 @@ falls back deterministically; it does not introduce a random layout.
 
 The far-field body is one shared point pass using the Cell hybrid material.
 Exact active flashes are drawn through a separate sparse indexed point pass so
-inactive slots do not produce transparent fragments. Birth and death envelopes
-are evaluated in shader time, while CPU writes only changed records.
+inactive slots do not produce transparent fragments; with no slot in its window
+that pass is an invisible object rather than a zero-vertex draw, and the
+near-identity braid passes and node points follow their committed counts the
+same way (three binds program, material and VAO before its zero-count
+early-out; the boot precompile walks with `traverse`, so a hidden pass is still
+linked at first light). Birth and death envelopes are evaluated in shader time,
+while CPU writes only changed records.
 
 ### 7.4 Near identity LOD
 
@@ -560,7 +565,16 @@ the screen composition, not full per-Cell coverage.
 
 `NeuralFabric` keeps keyed edge state by canonical `minId:maxId`. An edge
 captures its endpoints and deterministic control point when born, so a dying
-fibre can retract after its Cell record has left the current graph.
+fibre can retract after its Cell record has left the current graph. A numeric
+two-level index (`lo → hi → state`) mirrors that map for the one reader that
+runs per hop per frame — the active-hop curve lookup — so the frame loop never
+builds a key string; every writer of the map writes both.
+
+The GPU lifecycle layer binds a one-instance dummy to the stock
+`instanceStart/End` and `instanceColorStart/End` lanes that its patched program
+strips (three uploads every geometry attribute at the first draw whether or not
+the program reads it); its capacity comes from the static records, and the
+fabric mesh, like its wide pass, answers no raycast.
 
 Graph diffs grow new edges, preserve surviving slots, and mark removed edges
 for decay. GPU lifecycle uniforms advance growth, death, warmth, masks, and
@@ -601,6 +615,12 @@ without the heavier generic line geometry. The shader patch fails loudly if an
 upstream shader layout no longer matches; silently falling back to a different
 silhouette is not acceptable.
 
+A layer whose committed count is zero is an invisible object, not an empty draw
+call: each commit flips the mesh's `visible` from the count it publishes, so
+the render walk never binds a program or runs a before-render hook for a layer
+with nothing in it (the hooks are per-draw uniform syncs that the first showing
+frame runs again). The bridge class keeps its own commit path and the default.
+
 ## 9. Live Transactions, Recall, and Canonical Rewrite
 
 ### 9.1 Live pulse planning
@@ -629,14 +649,19 @@ start jitter.
 The planning itself is sliced across frames. When a link delta arrives the
 batch is *opened* at once — the link cursor advances and the batch's departure
 clock (`startSec`) is stamped — and the display pair (staged map and display
-graph) it will plan against is captured then, at request time, exactly as the
-one-task planner read it. The searches run from a FIFO queue on the raw frame,
+graph) it will plan against is captured then, at request time, by reference. A
+chained worker build patches that graph's adjacency in place and the staged
+map is patched the same way, so a slice that runs after a build lands searches
+the landed graph: its routes are made of live edges and never of one the build
+just removed; only a whole rebuild replaces the object, and a batch opened
+before it keeps the graph it captured (the frame loop validates every hop
+against the live graph either way). The searches run from a FIFO queue on the raw frame,
 before the pulse walk: about 2 ms per frame (`LIVE_PLAN_BUDGET_MS` — a frame
 never starts a step its previous step's cost predicts would overrun it), never
 less than one step per frame, batches in arrival order; the batch's entry grid
 is built as a step of its own. Pulses admitted from a
-slice carry the batch's `startSec`, so departure times, routes, pulse order,
-the 128-per-batch budget, the rescue pass and every stats bump are those the
+slice carry the batch's `startSec`, so departure times, pulse order, the
+128-per-batch budget, the rescue pass and every stats bump are those the
 one-task planner produced. A batch whose earliest departure is within
 `LIVE_PLAN_DEADLINE_MARGIN_S` of now finishes in the current frame regardless
 of the budget: no packet is ever admitted after it should have left, and the
@@ -1022,7 +1047,10 @@ current staged structure.
 - The Cell source index for a link batch scans the staged Cell Map once, not
   once per link.
 - Topology construction moves to a worker for non-trivial fields.
-- High-frequency state stays in refs and reusable scratch objects.
+- High-frequency state stays in refs and reusable scratch objects: the pulse
+  walk writes every hop through one scratch record, the warm overlay's render
+  records are a pool, and birth admission ranks its k nearest with parallel
+  scalars rather than a record per candidate.
 - Peer topology excludes rapidly changing height from its memo signature.
 - Picking projects only when its input epoch changes and pauses during orbit.
 
@@ -1033,7 +1061,9 @@ current staged structure.
 - Only populated prefixes or dirty ranges upload; a range merge bridges a
   parked gap only where its bytes cost less than the bufferSubData calls it
   saves, and never past the dirty set's hull.
-- Sparse indexed passes avoid transparent work for inactive effects.
+- Sparse indexed passes avoid transparent work for inactive effects, and a
+  pass or layer with nothing committed is an invisible object, never a
+  zero-count draw.
 - Passive topology and color/mask updates have separate dirty paths.
 - Screen-space capsule nerves use two triangles per sampled segment.
 - Shader time advances lifecycle without per-frame full-buffer rewrites.

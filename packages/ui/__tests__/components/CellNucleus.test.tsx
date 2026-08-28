@@ -226,6 +226,28 @@ describe('CellNucleus dynamic attributes', () => {
     expect(SOURCE).not.toContain('cellNucleusSpatialIndexOf');
   });
 
+  it('hides each pass while its committed count is zero', () => {
+    // three binds program, material and VAO and runs the before-render hook
+    // before the zero-instance early-out; the resting overview holds no near
+    // Cell, so the two braid passes and the node points were three program
+    // switches a frame for nothing. Hidden objects leave the render list;
+    // the boot precompile still links them (it walks with `traverse`).
+    expect(SOURCE).toContain('line.visible = false;');
+    expect(SOURCE.match(/line\.visible = false;/g)).toHaveLength(2);
+    expect(SOURCE).toContain('glow.visible = lineSegmentCount > 0;');
+    expect(SOURCE).toContain('core.visible = lineSegmentCount > 0;');
+    expect(SOURCE).toContain('nodePointsRef.current.visible = writeCursor.nodes > 0;');
+    expect(SOURCE).toContain('ref={nodePointsRef}');
+    // The empty-field early return commits zeros and hides with them.
+    const emptyBranch = SOURCE.slice(
+      SOURCE.indexOf('if (!group || !cells || count === 0) {'),
+      SOURCE.indexOf('const pointPixelRatio = resolvePointSpritePixelRatio('),
+    );
+    expect(emptyBranch).toContain('glow.visible = false;');
+    expect(emptyBranch).toContain('core.visible = false;');
+    expect(emptyBranch).toContain('nodePointsRef.current.visible = false;');
+  });
+
   it('streams only populated line and node geometry ranges', () => {
     expect(SOURCE).toContain('setUsage(THREE.DynamicDrawUsage)');
     expect(SOURCE).toContain(

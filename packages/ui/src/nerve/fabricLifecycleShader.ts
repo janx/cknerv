@@ -287,7 +287,10 @@ const CAMERA_SPACE_LIFECYCLE = `
  * Patch a capsule-optimized fabric LineMaterial so segment endpoints and
  * endpoint colors are evaluated from static lifecycle records + sim time.
  * `instanceStart/End` and `instanceColorStart/End` become dead inputs on this
- * layer (the geometry keeps supplying them so shared plumbing is untouched).
+ * layer: their declarations are stripped below, so the linked program has no
+ * such active attribute, and `makeFatLineLayer` binds them to a one-instance
+ * dummy buffer rather than a full-capacity one (three uploads every geometry
+ * attribute on the first draw whether the program reads it or not).
  *
  * `trunkPass` picks which half of the width partition this material draws.
  * Two materials over ONE geometry is the whole implementation of the trunk
