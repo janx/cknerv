@@ -452,15 +452,36 @@ The pipeline is latest-only:
 
 - superseded requests are ignored;
 - stale worker generations trigger a safe full resend;
-- packed output is rebuilt into reusable adjacency sets; and
+- the display graph crosses the wire as adjacency only (a CSR of node ids and
+  neighbour runs in Set order — never an edge list, which nothing on the main
+  thread reads), and, in the steady state, as a *patch*: the request names the
+  generation the main thread holds, and a session whose previous build is that
+  generation answers with only the nodes whose neighbour run changed (new
+  nodes included) plus the ids that left. The main thread applies the patch to
+  the graph it holds, in place, replacing exactly those nodes' Sets and
+  restoring every node the eager mesh had touched since the last apply from
+  the eager log (the worker compared against its previous build, which is
+  that graph *before* the eager edits). Any generation gap — a superseded,
+  dropped or failed build, a fresh worker, a caller that cannot patch — makes
+  the response carry the whole adjacency, rebuilt into a new Map with the
+  previous Sets reused wherever a run is order-identical;
+- the passive graph still crosses whole (adjacency plus its edge list, which
+  the fabric, the bridges and continuity all read) with changed-node hints
+  and a selection delta; and
 - worker creation or execution failure falls back to the same synchronous pure
-  builder and records the fallback in diagnostics.
+  builder and records the fallback in diagnostics
+  (`neighborGraphBuilderStats` also counts patched, whole, unchained applies
+  and stale resends).
 
 While a worker build is pending, an eager living mesh applies same-frame births
-and removals to the currently published graph. The request-time Cell map also
-closes the gap for links arriving in the same frame. The worker result remains
-authoritative once published; periodic cleanup removes eager edges that are no
-longer part of the resolved graph.
+and removals to the currently published graph, replacing — never editing — the
+adjacency Sets it touches and logging the displaced instance on a node's first
+touch. The request-time Cell map also closes the gap for links arriving in the
+same frame. The worker result remains authoritative once published: a patch
+lands node for node on the worker's build (a death retracted while a build was
+in flight comes back until the next build learns of it, exactly as the whole
+rebuild brought it back); periodic cleanup removes eager fabric edges that are
+no longer part of the resolved selection.
 
 ### 8.3 Passive selection
 

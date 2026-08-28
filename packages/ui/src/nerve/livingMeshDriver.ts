@@ -6,8 +6,12 @@
 // addresses the fabric in the only edge vocabulary it answers to.
 
 import type { Cell } from '@cknerv/types';
-import type { NeighborGraph, NeighborEdge } from '../geometry/neighborGraph';
-import { addCell, removeCells } from './incrementalGraph';
+import type { NeighborAdjacency, NeighborEdge } from '../geometry/neighborGraph';
+import {
+  addCell,
+  removeCells,
+  type MutableNeighborGraph,
+} from './incrementalGraph';
 import { fabricEdgeKey } from './fabricOrder';
 
 /** Lifecycle subset consumed from the cache reducer's compact Cell journal. */
@@ -50,7 +54,7 @@ export interface DisplayMembershipDiff {
  */
 export function planDisplayMeshDiff(
   changes: DisplayMembershipDiff,
-  graph: NeighborGraph,
+  graph: NeighborAdjacency,
   resolve: (id: number) => Cell | undefined,
 ): CellsDiff {
   const exiting = new Set(changes.exited);
@@ -192,7 +196,7 @@ export interface MeshUpdate {
  *  return value; the only side effect is mutating `graph`. */
 export function planMeshUpdate(
   diff: CellsDiff,
-  graph: NeighborGraph,
+  graph: MutableNeighborGraph,
   cells: ReadonlyMap<number, Cell>,
   nowSec: number,
   opts: { k?: number; maxEdgeLength?: number },

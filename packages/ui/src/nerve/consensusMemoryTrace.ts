@@ -1,6 +1,6 @@
 import type { Cell, CellLink, OutPoint } from '@cknerv/types';
 import { fnv1a } from '../geometry/edgeBezier';
-import type { NeighborGraph } from '../geometry/neighborGraph';
+import type { NeighborAdjacency } from '../geometry/neighborGraph';
 import { DEFAULT_MAX_HOPS, shortestPath } from '../geometry/pathRouter';
 import { consensusMemoryTraceColor } from '../derives/consensusFlow.derive';
 import type { Pulse } from './pulseRunner';
@@ -1483,7 +1483,7 @@ function memoryTraceTiming(
 export function planConsensusMemoryTrace(
   link: CellLink,
   cells: ReadonlyMap<number, Cell>,
-  graph: NeighborGraph,
+  graph: NeighborAdjacency,
   options: ConsensusMemoryTraceOptions = {},
 ): ConsensusMemoryTracePlan {
   const endpoints = deriveConsensusMemoryTraceEndpoints(

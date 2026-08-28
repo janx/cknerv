@@ -1,5 +1,6 @@
 import {
   createNeighborGraphWorkerSession,
+  neighborGraphResponseTransferList,
   type NeighborGraphWorkerRequest,
   type NeighborGraphWorkerResponse,
 } from './neighborGraphWorkerProtocol';
@@ -21,27 +22,10 @@ workerScope.onmessage = (event) => {
       workerScope.postMessage(response, []);
       return;
     }
-    const transfer: Transferable[] = [
-      response.graph.nodeIds.buffer,
-      response.graph.adjacencyOffsets.buffer,
-      response.graph.adjacentNodeIds.buffer,
-      response.graph.edges.buffer,
-    ];
-    if (response.changedNodeIds) transfer.push(response.changedNodeIds.buffer);
-    if (response.passiveChangedNodeIds) {
-      transfer.push(response.passiveChangedNodeIds.buffer);
-    }
-    if (response.passiveAdded) transfer.push(response.passiveAdded.buffer);
-    if (response.passiveRemoved) transfer.push(response.passiveRemoved.buffer);
-    if (response.passiveGraph) {
-      transfer.push(
-        response.passiveGraph.nodeIds.buffer,
-        response.passiveGraph.adjacencyOffsets.buffer,
-        response.passiveGraph.adjacentNodeIds.buffer,
-        response.passiveGraph.edges.buffer,
-      );
-    }
-    workerScope.postMessage(response, transfer);
+    workerScope.postMessage(
+      response,
+      neighborGraphResponseTransferList(response),
+    );
   } catch (error) {
     workerScope.postMessage({
       kind: 'failed',

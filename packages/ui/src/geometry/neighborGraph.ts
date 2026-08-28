@@ -58,11 +58,46 @@ export interface NeighborEdge {
   w?: number;
 }
 
-export interface NeighborGraph {
-  /** Cell id → set of neighbour cell ids. Symmetric. */
+/** The routing view of a graph: cell id → set of neighbour cell ids,
+ *  symmetric. Every route search, entry index, mesh diff and recall reads
+ *  exactly this and nothing more.
+ *
+ *  INVARIANT (copy on write): a `Set` instance sitting in `adjacency` is
+ *  never edited in place — a change REPLACES the instance — so across the
+ *  whole system "same Set instance" means "same neighbours, same order".
+ *  The route search's per-node neighbour cache (`pathRouter.ts`) keys on
+ *  exactly that. */
+export interface NeighborAdjacency {
   adjacency: Map<number, Set<number>>;
+}
+
+/** Adjacency plus the dense edge list with distances and arbor weights:
+ *  what the builder produces and what the passive selection is drawn from. */
+export interface NeighborGraph extends NeighborAdjacency {
   /** Deduplicated edge list, canonical (from < to). */
   edges: NeighborEdge[];
+}
+
+/** The main thread's display graph. Adjacency only — the worker ships no
+ *  edge list for it and nothing on the main thread reads one — plus the undo
+ *  log of the eager living mesh (`nerve/incrementalGraph.ts`).
+ *
+ *  `eagerBase` holds, for every node whose Set the eager mutators replaced
+ *  since the last worker apply, the instance that stood there before the
+ *  FIRST replacement (`undefined` = the node was absent). A worker patch is
+ *  a diff against the worker's previous build, which is this graph as it was
+ *  BEFORE those eager edits; so for every node the patch leaves alone the
+ *  apply restores the logged instance, then clears the log. That is what
+ *  makes an O(churn) patch exact: the eager mesh may disagree with the worker
+ *  on an equal-distance tie-break, or retract a death the worker has not
+ *  heard of yet, and without the log such a node would keep an edge the
+ *  authoritative build does not have. */
+export interface LivingNeighborGraph extends NeighborAdjacency {
+  eagerBase: Map<number, Set<number> | undefined>;
+}
+
+export function emptyLivingNeighborGraph(): LivingNeighborGraph {
+  return { adjacency: new Map(), eagerBase: new Map() };
 }
 
 export interface NeighborGraphOptions {

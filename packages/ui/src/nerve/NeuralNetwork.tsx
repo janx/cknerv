@@ -65,7 +65,12 @@ import {
   resolveCellDisplayLimit,
   useCellDisplayRuntime,
 } from '../tweaks/cellDisplay';
-import { emptyNeighborGraph, type NeighborGraph } from '../geometry/neighborGraph';
+import {
+  emptyLivingNeighborGraph,
+  emptyNeighborGraph,
+  type LivingNeighborGraph,
+  type NeighborGraph,
+} from '../geometry/neighborGraph';
 import { createNeighborGraphBuilder } from '../geometry/neighborGraphBuilder';
 import {
   cellRenderClampActive,
@@ -471,7 +476,10 @@ function NeuralNetwork({
    * response race clipped the fabric at the old class in live testing). */
   const fabricEpochRef = useRef(0);
   const fabricEpochAppliedRef = useRef(0);
-  const displayGraphRef = useRef<NeighborGraph>(emptyNeighborGraph());
+  /** Adjacency only, plus the eager mesh's undo log; a chained worker build
+   * PATCHES this object in place (the result's `graph` is then this same
+   * object), a whole build replaces it. */
+  const displayGraphRef = useRef<LivingNeighborGraph>(emptyLivingNeighborGraph());
   const displayCellsRef = useRef<Map<number, Cell>>(new Map());
   const displayRenderSetRef = useRef(createCellRenderSetState());
   /** The staged id→Cell map the topology builder packs, kept in step with

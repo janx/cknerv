@@ -8,7 +8,7 @@
 
 import type { Cell, CellLink, CellLinkEndpointAnchor } from '@cknerv/types';
 import { fnv1a } from '../geometry/edgeBezier';
-import type { NeighborGraph } from '../geometry/neighborGraph';
+import type { NeighborAdjacency } from '../geometry/neighborGraph';
 import {
   buildOriginEntryIndex,
   type OriginEntryIndex,
@@ -154,7 +154,7 @@ export function pulseTiming(
 export function planPulses(
   link: CellLink,
   cells: ReadonlyMap<number, Cell>,
-  graph: NeighborGraph,
+  graph: NeighborAdjacency,
   optionsOrMaxHops: PulsePlanningOptions | number = DEFAULT_MAX_HOPS,
   nowMs: number = link.at_ms,
   stats?: PulseStatsSink,

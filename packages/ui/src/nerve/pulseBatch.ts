@@ -6,7 +6,7 @@
 // per-block counter ticks.
 
 import type { Cell, CellLink } from '@cknerv/types';
-import type { NeighborGraph } from '../geometry/neighborGraph';
+import type { NeighborAdjacency } from '../geometry/neighborGraph';
 import {
   buildOriginEntryIndex,
   type OriginEntryIndex,
@@ -71,7 +71,7 @@ export interface PulseBatchStats extends PulseStatsSink {
 function planRescuePulse(
   link: CellLink,
   cells: ReadonlyMap<number, Cell>,
-  graph: NeighborGraph,
+  graph: NeighborAdjacency,
   stats: PulseBatchStats,
   entryIndex: () => OriginEntryIndex,
   routeScratch: RouteScratch | undefined,
@@ -213,7 +213,7 @@ export interface LinkBatchPlanner {
 export function createLinkBatchPlanner(
   toFire: readonly CellLink[],
   cells: ReadonlyMap<number, Cell>,
-  graph: NeighborGraph,
+  graph: NeighborAdjacency,
   opts: PulsePlanningOptions,
   stats: PulseBatchStats,
   lastGuaranteedBlock: number,
@@ -379,7 +379,7 @@ export function planLinkBatch(
   lastSeq: number,
   backfillActive: boolean,
   cells: ReadonlyMap<number, Cell>,
-  graph: NeighborGraph,
+  graph: NeighborAdjacency,
   opts: PulsePlanningOptions,
   stats: PulseBatchStats,
   lastGuaranteedBlock: number,

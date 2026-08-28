@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { Cell } from '@cknerv/types';
-import { emptyNeighborGraph } from '../../src/geometry/neighborGraph';
+import {
+  emptyLivingNeighborGraph,
+  emptyNeighborGraph,
+} from '../../src/geometry/neighborGraph';
 import {
   addCell,
   removeCell,
@@ -154,5 +157,71 @@ describe('copy on write — a published adjacency Set is replaced, never edited'
     expect([...before4]).toEqual([1, 3, 5]);
     expect([...g.adjacency.get(4)!]).toEqual([1, 5]);
     expect(g.adjacency.get(5)).toBe(before5); // never adjacent to the dead: untouched
+  });
+});
+
+describe('eager log — the instance displaced by the FIRST touch since the last worker apply', () => {
+  // The display graph carries `eagerBase`; a worker patch is a diff against
+  // the graph as it stood before these edits, so the apply needs exactly the
+  // instance each touched node held then — and nothing for nodes the mesh
+  // never touched.
+  it('addCell logs the newborn as absent and each new neighbour\'s previous instance, once', () => {
+    const cells = new Map<number, Cell>([
+      [1, cell(1, 0, 0)], [2, cell(2, 2, 0)], [3, cell(3, 4, 0)], [4, cell(4, 60, 0)],
+    ]);
+    const g = emptyLivingNeighborGraph();
+    g.adjacency.set(2, new Set([3])); g.adjacency.set(3, new Set([2])); g.adjacency.set(4, new Set());
+    const before2 = g.adjacency.get(2)!;
+    const before3 = g.adjacency.get(3)!;
+    addCell(g, 1, cells, { k: 2 });
+    expect([...g.eagerBase.keys()].sort()).toEqual([1, 2, 3]);
+    expect(g.eagerBase.get(1)).toBeUndefined();
+    expect(g.eagerBase.has(1)).toBe(true);
+    expect(g.eagerBase.get(2)).toBe(before2);
+    expect(g.eagerBase.get(3)).toBe(before3);
+    expect(g.eagerBase.has(4)).toBe(false);
+
+    // A second touch of node 2 keeps the FIRST logged instance.
+    cells.set(5, cell(5, 2.5, 0));
+    addCell(g, 5, cells, { k: 1 });
+    expect(g.adjacency.get(2)!.has(5)).toBe(true);
+    expect(g.eagerBase.get(2)).toBe(before2);
+    expect(g.eagerBase.get(5)).toBeUndefined();
+    expect(g.eagerBase.has(5)).toBe(true);
+  });
+
+  it('removeCells logs the dead node\'s instance and each surviving neighbour\'s, once', () => {
+    const g = emptyLivingNeighborGraph();
+    g.adjacency.set(1, new Set([2, 4]));
+    g.adjacency.set(2, new Set([1, 3]));
+    g.adjacency.set(3, new Set([2, 4]));
+    g.adjacency.set(4, new Set([1, 3, 5]));
+    g.adjacency.set(5, new Set([4]));
+    const before = new Map(g.adjacency);
+    removeCells(g, [2, 3]);
+    expect([...g.eagerBase.keys()].sort()).toEqual([1, 2, 3, 4]);
+    for (const id of [1, 2, 3, 4]) expect(g.eagerBase.get(id)).toBe(before.get(id));
+    expect(g.eagerBase.has(5)).toBe(false);
+    // Node 1 lost 2 and node 4 lost 3: one touch each, one log entry each.
+    expect([...g.adjacency.get(4)!]).toEqual([1, 5]);
+  });
+
+  it('a graph without an edge list never grows one, and one with a list keeps it compacted', () => {
+    const cells = new Map<number, Cell>([[1, cell(1, 0, 0)], [2, cell(2, 2, 0)]]);
+    const living = emptyLivingNeighborGraph();
+    living.adjacency.set(2, new Set());
+    addCell(living, 1, cells, { k: 1 });
+    expect('edges' in living).toBe(false);
+    removeCells(living, [1]);
+    expect('edges' in living).toBe(false);
+    expect(living.adjacency.has(1)).toBe(false);
+
+    const whole = emptyNeighborGraph();
+    whole.adjacency.set(2, new Set());
+    addCell(whole, 1, cells, { k: 1 });
+    expect(whole.edges).toEqual([{ from: 1, to: 2, d: 2 }]);
+    removeCells(whole, [1]);
+    expect(whole.edges).toEqual([]);
+    expect('eagerBase' in whole).toBe(false);
   });
 });

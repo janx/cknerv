@@ -16,7 +16,7 @@
 // task the planner always was, never a packet appearing mid-flight.
 
 import type { Cell, CellLink } from '@cknerv/types';
-import type { NeighborGraph } from '../geometry/neighborGraph';
+import type { NeighborAdjacency } from '../geometry/neighborGraph';
 import type { Pulse, PulsePlanningOptions } from './pulseRunner';
 import {
   createLinkBatchPlanner,
@@ -47,7 +47,7 @@ export const LIVE_PLAN_DEADLINE_MARGIN_S = 0.05;
 export interface LivePulseBatch {
   toFire: CellLink[];
   cells: ReadonlyMap<number, Cell>;
-  graph: NeighborGraph;
+  graph: NeighborAdjacency;
   opts: PulsePlanningOptions;
   /** Departure clock, stamped when the delta arrived. */
   startSec: number;
@@ -99,7 +99,7 @@ export function enqueueLivePulseBatch(
   queue: LivePulseQueue,
   toFire: CellLink[],
   cells: ReadonlyMap<number, Cell>,
-  graph: NeighborGraph,
+  graph: NeighborAdjacency,
   opts: PulsePlanningOptions,
   startSec: number,
   linksEpoch: object,

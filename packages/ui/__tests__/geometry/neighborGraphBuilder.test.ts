@@ -5,9 +5,12 @@ import {
   neighborGraphBuilderStats,
   TOPOLOGY_WORKER_REQUEST_TIMEOUT_MS,
 } from '../../src/geometry/neighborGraphBuilder';
+import type { NeighborGraphBuildResult } from '../../src/geometry/neighborGraphBuilder';
 import {
   createNeighborGraphWorkerSession,
+  deserializeNeighborAdjacency,
   executeNeighborGraphWorkerRequest,
+  packTopologyCells,
   type NeighborGraphWorkerRequest,
   type NeighborGraphWorkerResponse,
 } from '../../src/geometry/neighborGraphWorkerProtocol';
@@ -227,11 +230,135 @@ describe('createNeighborGraphBuilder', () => {
     worker.complete();
     const second = await secondPending;
 
+    // A one-shot session has no previous build, so this is the whole-graph
+    // path: a new object whose unchanged Sets are still the old instances.
     expect(second!.graph).not.toBe(first!.graph);
     expect(second!.graph).toEqual(first!.graph);
     for (const [id, neighbours] of first!.graph.adjacency) {
       expect(second!.graph.adjacency.get(id)).toBe(neighbours);
     }
+    builder.dispose();
+  });
+
+  /** The steady state of a live session: the response carries only the
+   *  change set, and the builder applies it to the very graph the caller
+   *  holds — no 12K-entry Map, no edge list, no per-node probe. */
+  it('patches the held display graph in place when the session chains', async () => {
+    const worker = new SessionFakeWorker();
+    const builder = createNeighborGraphBuilder({
+      minWorkerCells: 0,
+      workerFactory: () => worker as unknown as Worker,
+    });
+    const patchedBefore = neighborGraphBuilderStats.patchedApplies;
+    const fullBefore = neighborGraphBuilderStats.fullApplies;
+    const unchainedBefore = neighborGraphBuilderStats.unchainedApplies;
+    const held: { graph: NeighborGraphBuildResult['graph'] | null } = { graph: null };
+    const reuseFrom = () => ({ graph: held.graph, passiveGraph: null });
+
+    const firstPending = builder.build(cells(), { topology: { k: 2 }, reuseFrom });
+    expect(worker.posted[0].patchBaseGeneration).toBe(0);
+    worker.complete();
+    const first = await firstPending;
+    held.graph = first!.graph;
+    expect(neighborGraphBuilderStats.fullApplies).toBe(fullBefore + 1);
+
+    const staged = cells();
+    staged.set(7, cellAt(7, 6));
+    const journal = chainedJournal();
+    journal.upserts.set(7, staged.get(7)!);
+    const secondPending = builder.build(staged, {
+      topology: { k: 2 },
+      reuseFrom,
+      cellsJournal: consumeTopologyJournal(journal),
+    });
+    // The request names the applied generation, so the session answers
+    // with a patch against it.
+    expect(worker.posted[1].patchBaseGeneration).toBe(1);
+    worker.complete();
+    const second = await secondPending;
+
+    expect(second!.graph).toBe(first!.graph);
+    expect(neighborGraphBuilderStats.patchedApplies).toBe(patchedBefore + 1);
+    expect(neighborGraphBuilderStats.unchainedApplies).toBe(unchainedBefore);
+    const fresh = executeNeighborGraphWorkerRequest({
+      kind: 'build',
+      requestId: 99,
+      cells: packTopologyCells(staged),
+      cellsDelta: null,
+      patchBaseGeneration: 0,
+      options: { k: 2 },
+      includePassive: false,
+      passiveEdgeBudget: null,
+      passiveTuning: null,
+      preferredEdges: null,
+    });
+    if (fresh.graph.kind !== 'full') throw new Error('expected full');
+    const truth = deserializeNeighborAdjacency(fresh.graph.adjacency);
+    expect([...second!.graph.adjacency.keys()].sort((a, b) => a - b))
+      .toEqual([...truth.adjacency.keys()].sort((a, b) => a - b));
+    for (const [id, neighbours] of truth.adjacency) {
+      expect([...second!.graph.adjacency.get(id)!]).toEqual([...neighbours]);
+    }
+    expect(second!.graph.eagerBase.size).toBe(0);
+    builder.dispose();
+  });
+
+  /** Without `reuseFrom` there is no graph to patch, so the builder must
+   *  never let the session answer with one. */
+  it('asks for whole graphs when the caller cannot patch', async () => {
+    const worker = new SessionFakeWorker();
+    const builder = createNeighborGraphBuilder({
+      minWorkerCells: 0,
+      workerFactory: () => worker as unknown as Worker,
+    });
+    const first = builder.build(cells(), { topology: { k: 2 } });
+    worker.complete();
+    expect(await first).not.toBeNull();
+    const second = builder.build(cells(), { topology: { k: 2 } });
+    expect(worker.posted[1].patchBaseGeneration).toBe(0);
+    worker.complete();
+    const result = await second;
+    expect(result!.graph.adjacency.size).toBe(6);
+    builder.dispose();
+  });
+
+  /** A superseded build advances the session without an apply: the next
+   *  response cannot chain, so it comes back whole and is counted as the
+   *  chain break it is. */
+  it('counts unchained whole applies and stale resends', async () => {
+    const worker = new SessionFakeWorker();
+    const builder = createNeighborGraphBuilder({
+      minWorkerCells: 0,
+      workerFactory: () => worker as unknown as Worker,
+    });
+    const unchainedBefore = neighborGraphBuilderStats.unchainedApplies;
+    const staleBefore = neighborGraphBuilderStats.staleResends;
+    const held: { graph: NeighborGraphBuildResult['graph'] | null } = { graph: null };
+    const reuseFrom = () => ({ graph: held.graph, passiveGraph: null });
+
+    const first = builder.build(cells(), { topology: { k: 2 }, reuseFrom });
+    worker.complete();
+    held.graph = (await first)!.graph;
+
+    const journal = chainedJournal();
+    const second = builder.build(cells(), {
+      topology: { k: 2 }, reuseFrom, cellsJournal: consumeTopologyJournal(journal),
+    });
+    const third = builder.build(cells(10), {
+      topology: { k: 2 }, reuseFrom, cellsJournal: consumeTopologyJournal(journal),
+    });
+    // The superseded delta executes in the session (generation 2, never
+    // applied); the queued build's delta then names generation 1 → stale →
+    // full re-pack → generation 3, which does not chain from 1.
+    worker.complete();
+    expect(await second).toBeNull();
+    worker.complete();
+    expect(neighborGraphBuilderStats.staleResends).toBe(staleBefore + 1);
+    worker.complete();
+    const result = await third;
+    expect(result!.graph).not.toBe(held.graph);
+    expect([...result!.graph.adjacency.keys()]).toEqual([11, 12, 13, 14, 15, 16]);
+    expect(neighborGraphBuilderStats.unchainedApplies).toBe(unchainedBefore + 1);
     builder.dispose();
   });
 

@@ -1,5 +1,6 @@
 import {
   buildNeighborGraph,
+  type LivingNeighborGraph,
   type NeighborEdge,
   type NeighborGraph,
   type NeighborGraphCell,
@@ -8,6 +9,8 @@ import {
 import { buildPassiveNeighborGraph } from './passiveNeighborGraph';
 import {
   PACKED_TOPOLOGY_CELL_STRIDE,
+  applyNeighborAdjacencyPatch,
+  deserializeLivingNeighborGraphInto,
   deserializeNeighborGraphWithHints,
   packPreferredEdges,
   packTopologyCells,
@@ -36,6 +39,19 @@ export const neighborGraphBuilderStats = {
   belowThresholdBuilds: 0,
   /** In-flight requests the watchdog had to give up on (worker gone). */
   workerTimeouts: 0,
+  /** Display graphs applied as an in-place patch against the graph the
+   * requester held — the O(churn) steady state of a chained session. */
+  patchedApplies: 0,
+  /** Display graphs rebuilt from a whole adjacency (bootstrap, fresh
+   * worker, or a caller that cannot patch). */
+  fullApplies: 0,
+  /** Whole applies forced by a generation gap — a superseded, dropped or
+   * failed build between two applied ones broke the chain. Each one is a
+   * full O(V) rebuild AND, for the passive graph, the probing path. */
+  unchainedApplies: 0,
+  /** Delta requests the session refused (`stale`): each costs a full
+   * re-pack and a second worker round trip before the graph lands. */
+  staleResends: 0,
 };
 
 let workerFallbackWarned = false;
@@ -80,17 +96,22 @@ export interface NeighborGraphBuildOptions {
     >;
     removedIds: Iterable<number>;
   };
-  /** Read at completion time; when provided, the worker CSR deserializes by
-   * patching against these graphs (unchanged nodes reuse their neighbour Set
-   * instances — the previous graphs must be discarded after the swap). */
+  /** Read at completion time. The display graph is PATCHED IN PLACE when
+   * the response chains from the build it was applied from (the result's
+   * `graph` is then this very object, with the eager log consumed); a whole
+   * response deserializes against it instead (unchanged nodes keep their
+   * Set instances, the previous graph must be discarded). The passive graph
+   * always deserializes against `passiveGraph` the same way. Without this
+   * option the builder asks the worker for whole graphs only. */
   reuseFrom?: () => {
-    graph: NeighborGraph | null;
+    graph: LivingNeighborGraph | null;
     passiveGraph: NeighborGraph | null;
   };
 }
 
 export interface NeighborGraphBuildResult {
-  graph: NeighborGraph;
+  /** Adjacency only: the display graph carries no edge list. */
+  graph: LivingNeighborGraph;
   passiveGraph: NeighborGraph | null;
   /** Passive-selection delta vs the PREVIOUS applied build, available when
    * the worker session's generations chained without a gap. Null means the
@@ -140,7 +161,9 @@ function buildSynchronously(
 ): NeighborGraphBuildResult {
   const graph = buildNeighborGraph(cells, options.topology);
   return {
-    graph,
+    // The dense edge list serves the passive selection below and nothing
+    // else on this thread; the display graph drops it.
+    graph: { adjacency: graph.adjacency, eagerBase: new Map() },
     passiveGraph: options.includePassive
       ? buildPassiveNeighborGraph(graph, {
         edgeBudget: options.passiveEdgeBudget,
@@ -330,6 +353,7 @@ export function createNeighborGraphBuilder(
       // Ordinary after a superseded/dropped build: re-send a freshly
       // packed full request under the same requestId (full requests
       // never go stale).
+      neighborGraphBuilderStats.staleResends += 1;
       try {
         postToWorker(current.fullRequest());
       } catch (error) {
@@ -340,12 +364,30 @@ export function createNeighborGraphBuilder(
     try {
       const reuse = current.reuseFrom?.() ?? null;
       const chained = response.generation === lastAppliedGeneration + 1;
-      const result: NeighborGraphBuildResult = {
-        graph: deserializeNeighborGraphWithHints(
+      let graph: LivingNeighborGraph;
+      if (response.graph.kind === 'patch') {
+        // The session only patches against the generation the request
+        // named, and the request named the one applied here — so a patch
+        // chains by construction, and the graph it targets is the one
+        // `reuseFrom` returns. Anything else is a protocol violation and
+        // must not be applied to a base it was not computed against.
+        if (!chained || reuse?.graph == null) {
+          throw new Error('display graph patch without its base graph');
+        }
+        neighborGraphBuilderStats.patchedApplies += 1;
+        graph = applyNeighborAdjacencyPatch(reuse.graph, response.graph.patch);
+      } else {
+        neighborGraphBuilderStats.fullApplies += 1;
+        if (!chained && lastAppliedGeneration !== 0) {
+          neighborGraphBuilderStats.unchainedApplies += 1;
+        }
+        graph = deserializeLivingNeighborGraphInto(
           reuse?.graph ?? null,
-          response.graph,
-          chained ? response.changedNodeIds : null,
-        ),
+          response.graph.adjacency,
+        );
+      }
+      const result: NeighborGraphBuildResult = {
+        graph,
         passiveGraph: response.passiveGraph
           ? deserializeNeighborGraphWithHints(
             reuse?.passiveGraph ?? null,
@@ -439,8 +481,18 @@ export function createNeighborGraphBuilder(
         passiveEdgeBudget: options.passiveEdgeBudget ?? null,
         passiveTuning: options.passiveTuning ?? null,
       };
+      // The display graph the caller holds is the one applied from
+      // `lastAppliedGeneration`; naming it lets the session answer with a
+      // patch against exactly that build. Evaluated at SEND time like the
+      // continuity edges (the single in-flight gate means no apply can land
+      // between packing and posting), and zero for a caller without
+      // `reuseFrom` — it has no graph to patch, so it must be sent a whole one.
+      const patchBase = () => (
+        options.reuseFrom !== undefined ? lastAppliedGeneration : 0
+      );
       const fullRequest = (): NeighborGraphWorkerRequest => ({
         ...baseRequest,
+        patchBaseGeneration: patchBase(),
         preferredEdges: packEdges(),
         cells: packTopologyCells(cells),
         cellsDelta: null,
@@ -461,6 +513,7 @@ export function createNeighborGraphBuilder(
         }
         return {
           ...baseRequest,
+          patchBaseGeneration: patchBase(),
           preferredEdges: packEdges(),
           cells: null,
           cellsDelta: {

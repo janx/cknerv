@@ -14,7 +14,7 @@
 // directly in the tests, so this module is an accelerator and never a second
 // opinion.
 
-import type { NeighborGraph } from './neighborGraph';
+import type { NeighborAdjacency } from './neighborGraph';
 
 /** Bucket side in world units, ~4x the fabric's median edge (1.89 world
  *  units after the k-NN search was corrected — the same calibration
@@ -83,7 +83,7 @@ export interface OriginEntryIndex {
  */
 export function buildOriginEntryIndex(
   cells: ReadonlyMap<number, OriginEntryPositioned>,
-  graph: NeighborGraph,
+  graph: NeighborAdjacency,
   options: OriginEntryOptions = {},
 ): OriginEntryIndex {
   const ids: number[] = [];

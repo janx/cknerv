@@ -1,9 +1,9 @@
 // Eager incremental maintenance of the spatial neighbour graph. Mutates a
-// NeighborGraph in place (it is the live graphRef) and returns the edge
-// delta for the fabric to animate. addCell adds a newborn's real k-NN
-// out-edges (symmetric); the symmetric in-edges an existing cell would gain
-// are left to periodic reconciliation (buildNeighborGraph). Operates on
-// LIVE cells only (death_at_ms == null), matching the canonical builder.
+// graph in place (it is the live graphRef) and returns the edge delta for
+// the fabric to animate. addCell adds a newborn's real k-NN out-edges
+// (symmetric); the symmetric in-edges an existing cell would gain are left
+// to periodic reconciliation (buildNeighborGraph). Operates on LIVE cells
+// only (death_at_ms == null), matching the canonical builder.
 //
 // INVARIANT (copy on write): an adjacency `Set` instance is never changed in
 // place once it sits in `graph.adjacency` — every change REPLACES the node's
@@ -14,13 +14,35 @@
 // preserved by the copy: `new Set(old)` keeps insertion order, an append
 // lands last, a delete leaves the rest in place — the same order an in-place
 // mutation would have produced.
+//
+// Every replacement is also LOGGED when the graph carries an eager log
+// (`LivingNeighborGraph.eagerBase`): the instance displaced by the first
+// touch of a node since the last worker apply. The worker's next patch is a
+// diff against the graph as it stood before these edits, and the apply puts
+// that instance back for every node the patch does not name — which is what
+// lets the apply be O(churn) and still land exactly on the worker's build.
 
 import type { Cell } from '@cknerv/types';
-import type { NeighborGraph, NeighborEdge } from '../geometry/neighborGraph';
+import type {
+  NeighborAdjacency,
+  NeighborEdge,
+} from '../geometry/neighborGraph';
 import { fabricEdgeKey } from './fabricOrder';
 
 const DEFAULT_K = 4;
 const MAX_EDGE_LENGTH = 25; // mirror neighborGraph.ts
+
+/** What the eager mutators operate on. Every graph carries adjacency; the
+ *  dense edge list is kept compacted only where one exists (a whole
+ *  `NeighborGraph` — the synchronous builder's output and test fixtures),
+ *  and the eager log is written only where one exists (the display graph,
+ *  a `LivingNeighborGraph`). The display graph carries no edge list
+ *  precisely so a death costs O(degree) here rather than a filter over the
+ *  whole field's edges. */
+export type MutableNeighborGraph = NeighborAdjacency & {
+  edges?: NeighborEdge[];
+  eagerBase?: Map<number, Set<number> | undefined>;
+};
 
 function distSq(a: Cell, b: Cell): number {
   const dx = a.pos_seed[0] - b.pos_seed[0];
@@ -29,16 +51,36 @@ function distSq(a: Cell, b: Cell): number {
   return dx * dx + dy * dy + dz * dz;
 }
 
+/** Publish a node's replacement Set (or its removal, `undefined`), logging
+ *  the instance it displaces on the node's FIRST touch since the last
+ *  worker apply — later touches keep that first entry, because it is the
+ *  instance the worker's previous build holds. */
+function publish(
+  graph: MutableNeighborGraph,
+  id: number,
+  next: Set<number> | undefined,
+): void {
+  const log = graph.eagerBase;
+  if (log !== undefined && !log.has(id)) log.set(id, graph.adjacency.get(id));
+  if (next === undefined) graph.adjacency.delete(id);
+  else graph.adjacency.set(id, next);
+}
+
 /** Publish `id`'s neighbour set as a fresh instance with `add` appended —
  *  the copy-on-write step of every edge insertion. */
-function withNeighbour(graph: NeighborGraph, id: number, add: number): void {
+function withNeighbour(graph: MutableNeighborGraph, id: number, add: number): void {
   const previous = graph.adjacency.get(id);
   const next = previous === undefined ? new Set<number>() : new Set(previous);
   next.add(add);
-  graph.adjacency.set(id, next);
+  publish(graph, id, next);
 }
 
-function addEdge(graph: NeighborGraph, a: number, b: number, d: number): NeighborEdge | null {
+function addEdge(
+  graph: MutableNeighborGraph,
+  a: number,
+  b: number,
+  d: number,
+): NeighborEdge | null {
   if (a === b) return null;
   const sa = graph.adjacency.get(a);
   if (sa !== undefined && sa.has(b)) return null;
@@ -46,12 +88,12 @@ function addEdge(graph: NeighborGraph, a: number, b: number, d: number): Neighbo
   const edge: NeighborEdge = { from: lo, to: hi, d };
   withNeighbour(graph, a, b);
   withNeighbour(graph, b, a);
-  graph.edges.push(edge);
+  if (graph.edges !== undefined) graph.edges.push(edge);
   return edge;
 }
 
 export function addCell(
-  graph: NeighborGraph,
+  graph: MutableNeighborGraph,
   cellId: number,
   cells: ReadonlyMap<number, Cell>,
   opts?: { k?: number; maxEdgeLength?: number },
@@ -98,7 +140,7 @@ export function addCell(
   if (near.length === 0) {
     // rim outlier: one lifeline edge to the globally nearest, ignoring cap
     if (lifeline) { const e = addEdge(graph, cellId, lifeline.id, Math.sqrt(lifeline.dSq)); if (e) addedEdges.push(e); }
-    else if (!graph.adjacency.has(cellId)) graph.adjacency.set(cellId, new Set());
+    else if (!graph.adjacency.has(cellId)) publish(graph, cellId, new Set());
     return { addedEdges };
   }
   for (let i = 0; i < Math.min(k, near.length); i++) {
@@ -109,7 +151,7 @@ export function addCell(
 }
 
 export function removeCell(
-  graph: NeighborGraph,
+  graph: MutableNeighborGraph,
   cellId: number,
 ): { removedEdgeKeys: string[] } {
   return removeCells(graph, [cellId])[0] ?? { removedEdgeKeys: [] };
@@ -120,17 +162,16 @@ export interface RemovedCellEdges {
 }
 
 /**
- * Remove one lifecycle batch while filtering the complete edge array once.
+ * Remove one lifecycle batch in O(removed degrees) on the adjacency.
  *
  * Results retain `cellIds` order. Adjacency is detached in that same order, so
  * when both endpoints of one edge disappear in a batch the first Cell owns the
- * returned edge key exactly as repeated `removeCell` calls did. The expensive
- * dense edge storage is compacted only after every adjacency change, reducing
- * block application from O(removed Cells × graph edges) to O(graph edges plus
- * removed degrees).
+ * returned edge key exactly as repeated `removeCell` calls did. Where the
+ * graph carries a dense edge list it is compacted once, after every adjacency
+ * change (O(graph edges) — which is why the display graph carries none).
  */
 export function removeCells(
-  graph: NeighborGraph,
+  graph: MutableNeighborGraph,
   cellIds: readonly number[],
 ): RemovedCellEdges[] {
   if (cellIds.length === 0) return [];
@@ -150,18 +191,18 @@ export function removeCells(
           // edited — see the module invariant.
           const next = new Set(theirs);
           next.delete(cellId);
-          graph.adjacency.set(neighbourId, next);
+          publish(graph, neighbourId, next);
         }
         removedEdgeKeys.push(fabricEdgeKey(cellId, neighbourId));
       }
-      graph.adjacency.delete(cellId);
+      publish(graph, cellId, undefined);
     }
     if (removedEdgeKeys.length > 0) removedAnyEdge = true;
     removedIds.add(cellId);
     removals.push({ removedEdgeKeys });
   }
 
-  if (removedAnyEdge) {
+  if (removedAnyEdge && graph.edges !== undefined) {
     graph.edges = graph.edges.filter(
       (edge) => !removedIds.has(edge.from) && !removedIds.has(edge.to),
     );

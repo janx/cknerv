@@ -15,7 +15,7 @@
 // byte-identical results (pinned against the Set/Map reference in the tests).
 
 import { FIELD_HALF_X, FIELD_HALF_Z } from '../helix';
-import type { NeighborGraph } from './neighborGraph';
+import type { NeighborAdjacency } from './neighborGraph';
 
 /** Maximum hops a pulse will travel. Has to be high enough that
  *  paths spanning distant tissue lobes can complete; short hop caps
@@ -239,7 +239,7 @@ function pathToRoot(
  * The missing-endpoint early returns touch no scratch.
  */
 export function shortestPathsToTargets(
-  graph: NeighborGraph,
+  graph: NeighborAdjacency,
   source: number,
   targets: readonly number[],
   maxHops: number = DEFAULT_MAX_HOPS,
@@ -355,7 +355,7 @@ export interface RescueOriginOptions {
  * insertion order: equal scores break toward the lower node id.
  */
 export function rescueOrigin(
-  graph: NeighborGraph,
+  graph: NeighborAdjacency,
   dst: number,
   score: (id: number) => number,
   options: RescueOriginOptions = {},
@@ -502,7 +502,7 @@ export function anchorProximityScore(
  */
 export function nearestGraphNode(
   cells: ReadonlyMap<number, RescuePositioned>,
-  graph: NeighborGraph,
+  graph: NeighborAdjacency,
   pos: readonly [number, number, number],
 ): number | null {
   let best = -1;
@@ -524,7 +524,7 @@ export function nearestGraphNode(
 }
 
 export function shortestPath(
-  graph: NeighborGraph,
+  graph: NeighborAdjacency,
   source: number,
   target: number,
   maxHops: number = DEFAULT_MAX_HOPS,
