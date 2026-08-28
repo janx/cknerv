@@ -84,30 +84,28 @@ export const galaxySchema = {
   rotationRate: { value: 0.00125, min: 0, max: 0.02, step: 0.00025, label: 'rotation rate' },
 } satisfies FolderSchema;
 
-// Carrier glyph → contact front. The wave block is where this event lives now:
-// every worker releases its own front, and they only compose into one field
+// Block impact: the last hop → the contact front. The hop is a courier (the
+// same mote + plume form as the peer mesh's glints, at a higher weight because
+// this hop is the block's climax); the wave block is where the tissue answers.
+// Every worker releases its own front, and they only compose into one field
 // because they share `waveSpeed` — the peer plane's `SHOCKWAVE_SPEED` divided
 // by CONTACT_WAVE_SCALE — and one shape. Retune reach/opacity freely; change
 // speed WITHOUT moving reach by the same factor and fronts extinguish early
 // or never complete, and the two planes stop reading as one event at two
 // sizes.
 export const deliverySchema = {
-  heroSize: { value: 1.16, min: 0.2, max: 2, step: 0.02, label: 'hero size' },
-  peerSize: { value: 0.46, min: 0.1, max: 1.5, step: 0.02, label: 'peer size' },
   ingestDur: { value: 1.2, min: 0.1, max: 1.5, step: 0.05, label: 'contact dur' },
-  glyphBloom: { value: 1.6, min: 0.5, max: 5, step: 0.1, label: 'glyph core' },
-  glyphCompress: { value: 0.45, min: 0, max: 0.9, step: 0.05, label: 'glyph compress' },
-  // The sear at the landing is on the CARRIER's scale — it consumes the glyph
-  // — so it is not divided by CONTACT_WAVE_SCALE. It was trimmed 2.2 → 1.4
-  // when the ring halved (2026-08-15) so the flash no longer outweighs the
-  // front it releases: it still opens wider than the travelling core it
-  // replaces, by ×1.09 of its width instead of the old ×1.72.
-  coreSize: { value: 1.4, min: 0.5, max: 8, step: 0.1, label: 'contact core' },
-  trailWidth: { value: 0.55, min: 0.1, max: 3, step: 0.05, label: 'streak width' },
-  trailLenBase: { value: 1.0, min: 0, max: 4, step: 0.1, label: 'streak len base' },
-  trailLenGain: { value: 1.6, min: 0, max: 6, step: 0.1, label: 'streak len gain' },
-  trailOpacity: { value: 0.6, min: 0, max: 1, step: 0.05, label: 'streak opacity' },
-  inhaleAmount: { value: 0.55, min: 0, max: 1.5, step: 0.05, label: 'drawn breath' },
+  // The hop's mote is the block itself, sized per tier in world units; the
+  // plume is the courier plume (courierGlyph) with its own width and its
+  // length range, stretched by the hop's analytic speed like every glint.
+  moteHero: { value: 1.6, min: 0.2, max: 4, step: 0.05, label: 'hop mote hero' },
+  motePeer: { value: 0.9, min: 0.1, max: 3, step: 0.05, label: 'hop mote peer' },
+  plumeWidth: { value: 0.7, min: 0.1, max: 2, step: 0.05, label: 'hop plume width' },
+  plumeMinLen: { value: 0.9, min: 0.1, max: 3, step: 0.05, label: 'hop plume min len' },
+  plumeMaxLen: { value: 3.2, min: 0.5, max: 8, step: 0.1, label: 'hop plume max len' },
+  // The glint's form (0.55 / 0.3) at a higher weight: this hop is the climax.
+  hopBloomOpacity: { value: 0.85, min: 0, max: 1, step: 0.05, label: 'hop bloom op' },
+  hopPlumeOpacity: { value: 0.5, min: 0, max: 1, step: 0.05, label: 'hop plume op' },
   waveSpeed: {
     value: SHOCKWAVE_SPEED / CONTACT_WAVE_SCALE,
     min: 1, max: 40, step: 0.5, label: 'front speed',
@@ -222,7 +220,7 @@ export const nerveSchema = {
 
 export const FOLDER_LABELS = {
   galaxy: 'Galaxy',
-  delivery: 'Consensus carrier',
+  delivery: 'Block impact',
   peer: 'Peer mesh',
   cell: 'Cell structure',
   nerve: 'Nerve fabric',

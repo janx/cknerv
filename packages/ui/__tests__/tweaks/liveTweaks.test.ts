@@ -15,7 +15,7 @@ describe('defaultsFrom', () => {
 describe('LIVE', () => {
   it('is initialized to the schema defaults', () => {
     expect(LIVE.galaxy.rotationRate).toBe(0.00125);
-    expect(LIVE.delivery.heroSize).toBe(1.16);
+    expect(LIVE.delivery.moteHero).toBe(1.6);
     expect(LIVE.peer.surgeAmp).toBe(1.1);
     expect(LIVE.peer.colorBoost).toBe(3.75);
     expect(LIVE.cell.activeColorG).toBe(1);
@@ -24,11 +24,11 @@ describe('LIVE', () => {
 
 describe('applyTweaks', () => {
   it('merges present folders in place without reallocating LIVE or its folders', () => {
-    const live = { galaxy: { rotationRate: 0.0025 }, delivery: { heroSize: 0.82 } } as any;
+    const live = { galaxy: { rotationRate: 0.0025 }, delivery: { moteHero: 0.82 } } as any;
     const galaxyRef = live.galaxy;
     applyTweaks(live, { galaxy: { rotationRate: 0.01 } });
     expect(live.galaxy.rotationRate).toBe(0.01); // updated
-    expect(live.delivery.heroSize).toBe(0.82);   // untouched folder unchanged
+    expect(live.delivery.moteHero).toBe(0.82);   // untouched folder unchanged
     expect(live.galaxy).toBe(galaxyRef);         // same object identity (no realloc)
   });
 

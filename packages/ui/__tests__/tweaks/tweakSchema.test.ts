@@ -14,7 +14,10 @@ const EXPECTED_DEFAULTS = {
   // replaced by the derivation, 2026-08-14; → 0.06875 when the scale went
   // 4 → 8 to halve the ring's radius, 2026-08-15 — speed, both reaches and
   // the width all moved with it).
-  delivery: { heroSize: 1.16, peerSize: 0.46, ingestDur: 1.2, glyphBloom: 1.6, glyphCompress: 0.45, coreSize: 1.4, trailWidth: 0.55, trailLenBase: 1.0, trailLenGain: 1.6, trailOpacity: 0.6, inhaleAmount: 0.55, waveSpeed: 4.5, waveWidth: 0.55 / 8, waveOpacity: 2.0, waveFalloff: 0.5, waveReachHero: 6.5, waveReachPeer: 4.25, waveWake: 0.14, waveSegments: 0.55, peerPunchScale: 0.7, igniteKHero: 8, igniteKPeer: 3, igniteMax: 300, igniteRipple: 0.015 },
+  // The hop knobs (mote / plume / hop opacities) are the courier form at the
+  // block's own weight (2026-08-28: the glyph, streak, sear and inhale knobs
+  // left with the glyph dialect).
+  delivery: { ingestDur: 1.2, moteHero: 1.6, motePeer: 0.9, plumeWidth: 0.7, plumeMinLen: 0.9, plumeMaxLen: 3.2, hopBloomOpacity: 0.85, hopPlumeOpacity: 0.5, waveSpeed: 4.5, waveWidth: 0.55 / 8, waveOpacity: 2.0, waveFalloff: 0.5, waveReachHero: 6.5, waveReachPeer: 4.25, waveWake: 0.14, waveSegments: 0.55, peerPunchScale: 0.7, igniteKHero: 8, igniteKPeer: 3, igniteMax: 300, igniteRipple: 0.015 },
   // The five `hole*` knobs are the POW channel — one accreting void per cohort
   // — whose defaults live on `colonyAccretion` under the same one-authority
   // rule the shockwave knobs follow. `holeInfall` is a RATE and the only thing
@@ -52,7 +55,7 @@ describe('tweakSchema', () => {
 
   it('exposes protocol-oriented folder labels', () => {
     expect(FOLDER_LABELS).toEqual({
-      galaxy: 'Galaxy', delivery: 'Consensus carrier', peer: 'Peer mesh', cell: 'Cell structure', nerve: 'Nerve fabric',
+      galaxy: 'Galaxy', delivery: 'Block impact', peer: 'Peer mesh', cell: 'Cell structure', nerve: 'Nerve fabric',
     });
   });
 });

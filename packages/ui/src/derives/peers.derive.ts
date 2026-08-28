@@ -70,20 +70,13 @@ export function easeOutCubic(t: number): number {
   return 1 - Math.pow(1 - t, 3);
 }
 
-/** Accelerate-in carrier easing: some launch velocity (0.15) plus acceleration,
- *  so the signal is fastest at the Cell-field boundary, unlike easeOutCubic.
- *  f(0)=0, f(1)=1; slope grows from 0.15 to 1.85 (accelerating). */
-export function easeInLob(t: number): number {
-  return 0.15 * t + 0.85 * t * t;
-}
-
 export interface Delivery {
   /** Stable per-node key for the pooled protocol-carrier child. */
   key: string;
   /** Launch position in the COLONY's rotating frame (the coordinates the
    *  topology stores). The renderer carries it through the live colony
    *  rotation each frame (`rotYLocalToWorldXZ` at `colonyFrame.rotationY`),
-   *  which is what keeps the gather glyph glued to its turning node. The
+   *  which is what keeps the hop leaving from its turning node. The
    *  production hero origin sits ON the rotation axis, so its colony and
    *  world positions coincide. */
   from: Vec3;
@@ -259,29 +252,16 @@ export function deliveryScheduleHorizon(
 }
 
 export interface ContactRelease {
-  /** Seed-glyph scale: 1 at contact → 0 once the ring has been released. */
-  glyphScale: number;
-  /** Seed-glyph opacity, on the same short window as `glyphScale`. */
-  glyphOpacity: number;
-  /** Compact core at the landing: searing onset, resolved before the end. */
-  coreOpacity: number;
-  /** Contracting pre-release ring: 1 at its widest → 0 at the landing. */
-  inhaleRadius: number;
-  /** Strength of that ring; nonzero only inside the pre-release window. */
-  inhaleOpacity: number;
   /** Expanding front intensity across the whole window. */
   frontOpacity: number;
-  /** 0 = white-hot contact, 1 = resolved into the Cell field's own tissue. */
+  /** 0 = the block's carrier hue at contact, 1 = resolved into the Cell
+   *  field's own tissue. */
   colorT: number;
 }
 
-/** Fraction of the contact phase the seed glyph takes to release. */
-const RELEASE_WINDOW = 0.35;
-/** Fraction the pre-release ring contracts over — short, so the drawn breath
- *  lands just before the front leaves rather than reading as its own event. */
-const INHALE_WINDOW = 0.14;
-/** Fraction the front takes to reach full strength. Non-zero so the front
- *  grows out of the contact core instead of appearing beside it. */
+/** Fraction of the contact window the front takes to reach full strength.
+ *  Non-zero so the front grows out of the absorbed mote instead of switching
+ *  on beside it. */
 const FRONT_ONSET = 0.05;
 
 function clampUnit(value: number): number {
@@ -300,24 +280,17 @@ export function smoothUnit(value: number): number {
 /** Per-frame Cell-contact envelope for one delivered block (t∈[0,1]).
  *
  *  The whole handoff is one idea — compression then release — and this is its
- *  second half: the carrier's seed ring collapses, a small ring is drawn INWARD
- *  to the landing, a compact core sears, and the front leaves. Front RADIUS is
- *  deliberately absent: the renderer drives it from a shared wave speed in real
- *  seconds so every worker's front belongs to one wave field, and this envelope
- *  supplies only strengths.
+ *  second half: the mote is absorbed at the landing and the front leaves.
+ *  Front RADIUS is deliberately absent: the renderer drives it from a shared
+ *  wave speed in real seconds so every worker's front belongs to one wave
+ *  field, and this envelope supplies only the strength and the colour arc.
  *
- *  THE INVARIANT: every opacity and the glyph scale reach EXACTLY 0 at t=1, so
- *  the phase→done hard-hide has nothing left to blink off. Pure. */
+ *  THE INVARIANT: the front's opacity reaches EXACTLY 0 and its colour
+ *  exactly 1 at t=1, so the phase→done hard-hide has nothing left to blink
+ *  off. Pure. */
 export function contactRelease(t: number): ContactRelease {
   const u = clampUnit(t);
-  const released = clampUnit(1 - u / RELEASE_WINDOW);
-  const drawn = clampUnit(u / INHALE_WINDOW);
   return {
-    glyphScale: Math.pow(released, 0.7),
-    glyphOpacity: Math.pow(released, 1.2),
-    coreOpacity: Math.exp(-9 * u) * (1 - u),
-    inhaleRadius: 1 - easeInLob(drawn),
-    inhaleOpacity: Math.sin(Math.PI * drawn) * (1 - u),
     // Linear life on purpose: the renderer's 1/r falloff already dims a front
     // as it spreads, and curving the time decay on top of it killed the front
     // long before it had crossed anything.

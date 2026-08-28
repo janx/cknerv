@@ -1,17 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as THREE from 'three';
 import {
-  CARRIER_KEEL_COUNT,
-  CARRIER_KEEL_DEPTH,
   CONTACT_RING_GAPS,
   CONTACT_RING_GAP_EVERY,
   CONTACT_RING_SIDES,
-  isContactRingGap,
-  makeProtocolCarrierGeometry,
-  setProtocolCarrierFacing,
-} from '../../src/geometry/protocolCarrier';
+} from '../../src/materials/contactWaveMaterial';
 import { SHOCKWAVE_SPEED, CONTACT_WAVE_SCALE } from '../../src/ui/topologyConstants';
 import { deliverySchema } from '../../src/tweaks/tweakSchema';
 
@@ -26,58 +21,60 @@ const material = (file: string): string => readFileSync(
 );
 
 describe('A protocol event relay', () => {
-  it('carries the block as an interrupted rim with three trailing keels', () => {
-    const geometry = makeProtocolCarrierGeometry();
-    const positions = geometry.getAttribute('position');
-    const depths = new Set<number>();
-    for (let vertex = 0; vertex < positions.count; vertex += 1) {
-      depths.add(Number(positions.getZ(vertex).toFixed(3)));
-    }
-
-    expect(geometry).toBeInstanceOf(THREE.BufferGeometry);
-    expect(CONTACT_RING_SIDES).toBe(12);
-    expect(CONTACT_RING_GAPS).toBe(3);
-    expect(CONTACT_RING_GAP_EVERY).toBe(4);
-    // Nine kept rim sides plus three keels, two vertices each.
-    expect(positions.count).toBe((CONTACT_RING_SIDES - CONTACT_RING_GAPS) * 2 + CARRIER_KEEL_COUNT * 2);
-    expect(depths).toEqual(new Set([0, -CARRIER_KEEL_DEPTH]));
-    expect(geometry.index).toBeNull();
-    // Keels hang off kept corners, never off an open side.
-    for (let keel = 0; keel < CARRIER_KEEL_COUNT; keel += 1) {
-      expect(isContactRingGap(1 + keel * CONTACT_RING_GAP_EVERY)).toBe(false);
-    }
-    expect(source('BlockDeliveryLayer.tsx')).not.toContain('BoxGeometry');
-    // The rim lives flat in the Cell plane for its whole life — a clamped
-    // rim landing slants the flight, and only the streak may follow that.
-    expect(source('BlockDeliveryLayer.tsx')).toContain('const CARRIER_FLAT_FACING');
-    expect(source('BlockDeliveryLayer.tsx')).not.toContain(
-      'setProtocolCarrierFacing(_carrierFacingQuaternion',
-    );
-    expect(source('BlockDeliveryLayer.tsx')).not.toMatch(/A\.T\.-Field|octagon/i);
-    expect(source('BlockDeliveryLayer.tsx')).not.toContain('getWorldQuaternion');
-    geometry.dispose();
-  });
-
-  it('abandons the swimming carrier for compression into a released front', () => {
+  it('throws the last hop as a courier — no glyph, no streak, no sear, nothing white', () => {
     const delivery = source('BlockDeliveryLayer.tsx');
 
-    // Nothing survives of the organism that used to drift in: no swim cycle, no
-    // bell contraction, no tentacles, no shed propulsion rings.
+    // The glyph dialect is gone: no line-drawn rim, no carrier geometry, no
+    // hard streak texture, no searing core, no inhale ring.
+    expect(delivery).not.toMatch(/LineSegments|lineSegments|BoxGeometry/);
+    expect(delivery).not.toMatch(/protocolCarrier|deliveryTextures|makeCarrier\w+Texture/);
+    expect(delivery).not.toMatch(/GATHER_SWELL|LOB_CORE|INHALE_|glyphScale|glyphOpacity|coreOpacity|inhaleRadius|inhaleOpacity/);
+    expect(existsSync(resolve(process.cwd(), 'src/geometry/protocolCarrier.ts'))).toBe(false);
+    expect(existsSync(resolve(process.cwd(), 'src/materials/deliveryTextures.ts'))).toBe(false);
+    // Nothing survives of the organism that used to drift in, either.
     expect(delivery).not.toMatch(/jellyfish|bellPulse|tentacle|swimPhase|propulsion/i);
-    // Gather holds still; the lob compresses the rim while the core heats.
-    expect(delivery).toContain('LIVE.delivery.glyphCompress * progress');
-    expect(delivery).toContain('GATHER_SWELL * (1 - phase.t)');
-    expect(delivery).toContain('LOB_CORE_COMPRESS * progress');
-    // And the release keeps the compressed size the lob arrived at — scale is
-    // continuous across the contact boundary, no full-size pop at the strike.
-    expect(delivery).toContain('(1 - LIVE.delivery.glyphCompress) * release.glyphScale');
+
+    // Nothing white: the delivery paints only the carrier hue and tissue rose.
+    expect(delivery).not.toContain('WHITE');
+    expect(delivery).not.toMatch(/Color\(\s*1\s*,\s*1\s*,\s*1\s*\)|#fff|0xffffff/i);
+
+    // The hop IS the courier vocabulary: the shared helper, the shared textures.
+    expect(delivery).toContain("from './courierGlyph'");
+    expect(delivery).toContain("from '../materials/courierFlameTexture'");
+    expect(delivery).toContain('makeCourierBloomTexture()');
+    expect(delivery).toContain('makeCourierPlumeTexture()');
+    // Thrown, as every courier hop is thrown — never the old accelerate-in lob.
+    expect(delivery).toContain('const progress = easeOutCubic(phase.t)');
+    expect(delivery).not.toContain('easeInLob');
+    // Absorbed at contact: the end ease shrinks the mote to nothing at t = 1.
+    expect(delivery).toContain('const edge = courierEdgeEase(phase.t)');
+    // Per-tier mote; the peer's punch lands on its plume length only.
+    expect(delivery).toContain('delivery.hero ? LIVE.delivery.moteHero : LIVE.delivery.motePeer');
+    expect(delivery).toMatch(/courierHopSpeed\(legDist, LOB_DUR_S, phase\.t\),\n\s*\) \* punch;/);
+    expect(delivery).toContain('LIVE.delivery.plumeWidth,');
+    expect(delivery).toContain('LIVE.delivery.hopBloomOpacity,');
+    expect(delivery).toContain('LIVE.delivery.hopPlumeOpacity,');
+    // The nozzle edge sits at the origin so the plume trails the mote.
+    expect(delivery).toContain('g.translate(0, -0.5, 0)');
+
+    // The camera is read ONCE per frame for every mote and plume, before the
+    // render loop — never per delivery.
+    const camRead = delivery.indexOf('state.camera.getWorldQuaternion(_cameraQuaternion)');
+    const renderLoop = delivery.indexOf('const phase = deliveryPhase(age - delivery.startAge, CFG)');
+    expect(camRead).toBeGreaterThan(-1);
+    expect(renderLoop).toBeGreaterThan(camRead);
+    expect(delivery.match(/getWorldQuaternion/g)).toHaveLength(1);
+
+    // Gather draws nothing here: the held breath belongs to the peer halos.
+    expect(delivery).toContain("if (phase.phase !== 'lob' && phase.phase !== 'ingest') continue;");
+    expect(delivery).not.toContain("phase.phase === 'gather'");
   });
 
   it('gives every worker its own front, and all of them one wave field', () => {
     const delivery = source('BlockDeliveryLayer.tsx');
 
-    // One shape at one speed is the whole reason ~81 staggered commits read as
-    // one interference field instead of 81 independent events. The Cell-field
+    // One shape at one speed is the whole reason staggered commits read as
+    // one interference field instead of independent events. The Cell-field
     // front is the peer-plane wave divided by CONTACT_WAVE_SCALE — same shape,
     // same timing, a fraction of the reach — so the two planes stay one
     // synchronised event.
@@ -101,11 +98,13 @@ describe('A protocol event relay', () => {
     // Overlap safety: a 1/r falloff dims a front before it can meet a neighbour.
     expect(delivery).toContain('front.falloff');
     // The rim-gap roll is keyed to the WORKER, not to a queue position: an
-    // array index shifts under peer churn and snap-rotates in-flight fronts.
+    // array index shifts under peer churn and snap-rotates released fronts.
     expect(delivery).toContain('peerAngle(delivery.key)');
     expect(delivery).not.toContain('deliveryIndex');
-    // And the glyph rim carries the same roll as the front it is released as.
-    expect(delivery).toContain('_bodyQuaternion.multiply(_bodyRollQuaternion)');
+    expect(delivery).toContain('_frontQuaternion.multiply(_frontRollQuaternion)');
+    // One front per delivery: the annulus batch is sized to the plan, not 2×.
+    expect(delivery).toContain('makeContactWaveAttribute(capacity)');
+    expect(delivery).not.toContain('waveCapacity');
   });
 
   it('resolves the contact into the Cell field\'s own tissue, not a cool pale', () => {
@@ -113,8 +112,9 @@ describe('A protocol event relay', () => {
 
     expect(delivery).toContain('CELL_GALAXY_PALETTE.tissueRose');
     expect(delivery).toContain('_waveColor.copy(CARRIER_COLOR).lerp(TISSUE_ROSE, release.colorT)');
-    // White at the strike, cooling into the block's own carrier hue.
-    expect(delivery).toContain('_coreColor.copy(WHITE).lerp(CARRIER_COLOR, release.colorT)');
+    // Carrier hue → rose is the ONLY colour arc: no white strike cooling into
+    // the carrier, no second lerp.
+    expect(delivery.match(/\.lerp\(/g)).toHaveLength(1);
     expect(delivery).not.toContain('PALE_CONSENSUS');
   });
 
@@ -131,9 +131,15 @@ describe('A protocol event relay', () => {
     // The front blends against built-in sprite materials inside one release
     // event, so it must encode to the output colour space like they do.
     expect(wave).toContain('#include <colorspace_fragment>');
-    // One vocabulary: the front's gaps come from the carrier rim's own numbers.
-    expect(wave).toContain("from '../geometry/protocolCarrier'");
-    expect(wave).toContain('CONTACT_RING_SIDES');
+    // The interrupted 12-gon with three gaps is the front's own: the numbers
+    // live with their only reader now that the carrier glyph is gone.
+    expect(wave).not.toContain('protocolCarrier');
+    expect(CONTACT_RING_SIDES).toBe(12);
+    expect(CONTACT_RING_GAPS).toBe(3);
+    expect(CONTACT_RING_GAP_EVERY).toBe(4);
+    expect(wave).toContain('export const CONTACT_RING_SIDES = 12');
+    expect(wave).toContain('${CONTACT_RING_SIDES.toFixed(1)}');
+    expect(wave).toContain('${CONTACT_RING_GAP_EVERY.toFixed(1)}');
     // A front only propagates through tissue: the extinction band is the
     // helix footprint's own ellipse, tracked through the galaxy's rotation —
     // never a second hand-typed radius.
@@ -146,7 +152,7 @@ describe('A protocol event relay', () => {
     expect(source('BlockDeliveryLayer.tsx'))
       .toContain('waveMaterial.uniforms.uGalaxyRot.value.set(');
     expect(wave).not.toMatch(/uDiskFade|smoothstep\(\s*44/);
-    // An annulus, not a quad: ~81 full-screen-ish fills per block is not free.
+    // An annulus, not a quad: full-screen-ish fills per front are not free.
     expect(wave).toContain('THREE.RingGeometry');
   });
 
@@ -166,14 +172,16 @@ describe('A protocol event relay', () => {
     expect(courier).toContain('instanceMatrix.setUsage(THREE.DynamicDrawUsage)');
     expect(courier).not.toContain('<CourierSlot');
     expect(courier).not.toContain('<sprite');
+    // …drawn in the shared courier vocabulary, the same one the last hop uses.
+    expect(courier).toContain("from './courierGlyph'");
   });
 
-  it('submits every concurrent field delivery in four semantic batches', () => {
+  it('submits every concurrent field delivery in three semantic batches', () => {
     const delivery = source('BlockDeliveryLayer.tsx');
 
     expect(delivery.match(/<instancedMesh/g)).toHaveLength(3);
-    expect(delivery.match(/<lineSegments/g)).toHaveLength(1);
-    expect(delivery).toContain('Delivery count changes instance/vertex counts, never draw-call count.');
+    expect(delivery).not.toContain('<lineSegments');
+    expect(delivery).toContain('Delivery count changes instance counts, never draw-call count.');
     expect(delivery).toContain('delivery.to[0]');
     expect(delivery).not.toContain('ingestPull');
     expect(delivery).not.toContain('sealBatch');
@@ -181,6 +189,10 @@ describe('A protocol event relay', () => {
     expect(delivery).toContain('colorAttr.needsUpdate = true');
     expect(delivery).not.toContain('<ProtocolCarrier');
     expect(delivery).not.toContain('registry.current');
+    // The mote and plume batches share one slot index — a hop is one thing.
+    expect(delivery).toContain('commitInstanceBatch(moteBatch, hopCount)');
+    expect(delivery).toContain('commitInstanceBatch(plumeBatch, hopCount)');
+    expect(delivery).toContain('commitInstanceBatch(waveBatch, waveCount)');
   });
 
   it('journals delivered Cell ids for sparse galaxy flash uploads', () => {
@@ -192,19 +204,25 @@ describe('A protocol event relay', () => {
     expect(delivery.match(/markCellFlashDirty\(/g)).toHaveLength(1);
   });
 
-  it('lays the glyph — and the front it becomes — flat in the Cell plane', () => {
+  it('lays the front flat in the Cell plane whatever the hop\'s slant', () => {
     const delivery = source('BlockDeliveryLayer.tsx');
-    const direction = new THREE.Vector3(0.25, 1, -0.4).normalize();
-    const facing = setProtocolCarrierFacing(new THREE.Quaternion(), direction);
-    const transformedNormal = new THREE.Vector3(0, 0, 1).applyQuaternion(facing);
-
-    expect(transformedNormal.distanceTo(direction)).toBeLessThan(1e-9);
-    // The streak still reads the true node→landing velocity (fromX/Y/Z is the
+    // The annulus spans local XY; the one flat facing aims local +Z up the
+    // world axis, which lays the ring in the tissue.
+    const facing = new THREE.Quaternion().setFromUnitVectors(
+      new THREE.Vector3(0, 0, 1),
+      new THREE.Vector3(0, 1, 0),
+    );
+    const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(facing);
+    expect(normal.distanceTo(new THREE.Vector3(0, 1, 0))).toBeLessThan(1e-9);
+    expect(delivery).toContain('const FRONT_FLAT_FACING = new THREE.Quaternion().setFromUnitVectors(');
+    expect(delivery).toContain('_frontQuaternion.copy(FRONT_FLAT_FACING)');
+    // The plume reads the true node→landing velocity (fromX/Y/Z is the
     // launch carried through the live colony rotation)…
     expect(delivery).toContain('delivery.to[1] - fromY');
-    // …but the rim itself rides the one flat basis, so a slanted (rim-clamped)
+    expect(delivery).toMatch(/writeCourierPlume\(\s*plumeBatch,\s*hopCount,\s*_position,\s*_flightDirection,\s*_cameraPosition/);
+    // …but the front rides the one flat basis, so a slanted (rim-clamped)
     // arrival can never release a front tilted out of the disc.
-    expect(delivery).toContain('_bodyQuaternion.copy(CARRIER_FLAT_FACING)');
+    expect(delivery).not.toMatch(/writeWaveInstance\([^)]*_flightDirection/);
     expect(delivery).toContain('side: THREE.DoubleSide');
   });
 

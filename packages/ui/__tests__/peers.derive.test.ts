@@ -14,7 +14,6 @@ import {
   peerCrystalSize,
   peerCrystalBrightness,
   easeOutCubic,
-  easeInLob,
   planDeliveries,
   deliveryPhase,
   deliveryScheduleHorizon,
@@ -171,24 +170,6 @@ describe('peers.derive', () => {
     });
   });
 
-  describe('easeInLob', () => {
-    it('pins endpoints and is back-loaded (accelerating launch)', () => {
-      expect(easeInLob(0)).toBe(0);
-      expect(easeInLob(1)).toBeCloseTo(1, 6);
-      expect(easeInLob(0.5)).toBeCloseTo(0.2875, 6); // 0.15*0.5 + 0.85*0.25
-      expect(easeInLob(0.5)).toBeLessThan(0.5); // behind a linear ramp at the midpoint
-    });
-    it('is monotonic and accelerating (slope grows toward 1)', () => {
-      let prev = -Infinity;
-      for (let i = 0; i <= 20; i += 1) {
-        const v = easeInLob(i / 20);
-        expect(v).toBeGreaterThanOrEqual(prev);
-        prev = v;
-      }
-      expect(easeInLob(1) - easeInLob(0.9)).toBeGreaterThan(easeInLob(0.1) - easeInLob(0));
-    });
-  });
-
   describe('deliveryPhase', () => {
     const CFG = { chargeDur: 0.4, lobDur: 1.0, ingestDur: 0.3 };
 
@@ -257,59 +238,50 @@ describe('peers.derive', () => {
   describe('contactRelease', () => {
     const samples = Array.from({ length: 21 }, (_, i) => i / 20);
 
-    it('the seed glyph is released: scale & opacity start full and reach exactly 0', () => {
-      expect(contactRelease(0).glyphScale).toBeCloseTo(1, 6);
-      expect(contactRelease(0).glyphOpacity).toBeCloseTo(1, 6);
-      expect(contactRelease(1).glyphScale).toBe(0);
-      expect(contactRelease(1).glyphOpacity).toBe(0);
-      // Released early in the window — the front, not the glyph, carries the rest.
-      expect(contactRelease(0.4).glyphScale).toBe(0);
-    });
-
-    it('glyph scale & opacity are monotonically decreasing (no re-grow)', () => {
-      for (let i = 1; i < samples.length; i += 1) {
-        expect(contactRelease(samples[i]).glyphScale).toBeLessThanOrEqual(
-          contactRelease(samples[i - 1]).glyphScale + 1e-9,
-        );
-        expect(contactRelease(samples[i]).glyphOpacity).toBeLessThanOrEqual(
-          contactRelease(samples[i - 1]).glyphOpacity + 1e-9,
-        );
-      }
+    it('is only the front: a strength and a colour arc, nothing else left to release', () => {
+      // The mote is absorbed by the courier's own end ease before contact, so
+      // the envelope has no glyph, core or inhale fields left to reach zero.
+      expect(Object.keys(contactRelease(0.5)).sort()).toEqual(['colorT', 'frontOpacity']);
     });
 
     it('THE INVARIANT: nothing visible remains at t=1, so the phase→done hard-hide is imperceptible', () => {
       const end = contactRelease(1);
-      expect(end.glyphScale * end.glyphOpacity).toBe(0);
-      expect(end.coreOpacity).toBe(0);
-      expect(end.inhaleOpacity).toBe(0);
       expect(end.frontOpacity).toBe(0);
+      expect(end.colorT).toBeCloseTo(1, 6);
     });
 
-    it('the contact core sears and is gone well before the front is', () => {
-      expect(contactRelease(0).coreOpacity).toBeCloseTo(1, 6);
-      expect(contactRelease(0.3).coreOpacity).toBeLessThan(0.1);
-      expect(contactRelease(0.3).frontOpacity).toBeGreaterThan(0.5);
-      expect(contactRelease(1).coreOpacity).toBe(0);
-    });
-
-    it('the breath is drawn inward only in the pre-release window', () => {
-      expect(contactRelease(0).inhaleRadius).toBeCloseTo(1, 6);
-      expect(contactRelease(0).inhaleOpacity).toBeCloseTo(0, 6);
-      expect(contactRelease(0.07).inhaleOpacity).toBeGreaterThan(0.9);
-      // Fully contracted (and silent) once the window closes.
-      expect(contactRelease(0.14).inhaleRadius).toBeCloseTo(0, 6);
-      expect(contactRelease(0.5).inhaleOpacity).toBeCloseTo(0, 6);
-    });
-
-    it('the front grows out of the core rather than appearing beside it', () => {
+    it('the front grows out of the absorbed mote rather than switching on beside it', () => {
       expect(contactRelease(0).frontOpacity).toBe(0);
       expect(contactRelease(0.05).frontOpacity).toBeGreaterThan(0.9);
       expect(contactRelease(1).frontOpacity).toBe(0);
     });
 
+    it('decays linearly past the onset — the renderer\'s 1/r falloff owns the rest', () => {
+      for (const u of samples) {
+        if (u < 0.05) continue;
+        expect(contactRelease(u).frontOpacity).toBeCloseTo(1 - u, 12);
+      }
+      for (let i = 1; i < samples.length; i += 1) {
+        if (samples[i] <= 0.05) continue;
+        expect(contactRelease(samples[i]).frontOpacity).toBeLessThan(
+          contactRelease(samples[i - 1]).frontOpacity,
+        );
+      }
+    });
+
     it('colour resolves carrier hue → the Cell field\'s own tissue across contact', () => {
       expect(contactRelease(0).colorT).toBe(0);
       expect(contactRelease(1).colorT).toBeCloseTo(1, 6);
+      for (let i = 1; i < samples.length; i += 1) {
+        expect(contactRelease(samples[i]).colorT).toBeGreaterThan(
+          contactRelease(samples[i - 1]).colorT,
+        );
+      }
+    });
+
+    it('clamps t outside [0, 1]', () => {
+      expect(contactRelease(-1)).toEqual(contactRelease(0));
+      expect(contactRelease(2)).toEqual(contactRelease(1));
     });
   });
 

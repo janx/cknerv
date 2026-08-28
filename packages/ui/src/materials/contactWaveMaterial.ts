@@ -1,8 +1,4 @@
 import * as THREE from 'three';
-import {
-  CONTACT_RING_GAP_EVERY,
-  CONTACT_RING_SIDES,
-} from '../geometry/protocolCarrier';
 import { FIELD_HALF_X, FIELD_HALF_Z } from '../helix';
 import {
   WAVE_CREST_WAKE_GLSL,
@@ -35,13 +31,22 @@ import {
  *  • the crest is thin, so crossings are line crossings, not area sums;
  *  • the renderer folds a 1/r falloff into each instance colour, so a front is
  *    already dim by the time it can meet a neighbour;
- *  • `uSegmentDepth` carves the rim's three gaps into the crest, breaking the
- *    circle into the same interrupted polygon the carrier glyph uses;
+ *  • `uSegmentDepth` carves three gaps into the crest, breaking the circle
+ *    into an interrupted polygon (the write seal's agreement loops carry the
+ *    same three-gap motif);
  *  • the rim fade extinguishes a front where the tissue ends — workers ring
  *    the galaxy wider than the tissue, so their landings are pulled onto the
  *    rim (peers.derive `clampLandingToField`) and each front's outbound half
  *    dies across the halo band instead of glowing over empty space.
  */
+
+/** The front's interrupted polygon: a 12-gon with every fourth side left
+ *  open. Three gaps is the agreement motif the write seal's loops also carry;
+ *  the fragment stage below is the only reader, so the numbers live here. */
+export const CONTACT_RING_SIDES = 12;
+export const CONTACT_RING_GAPS = 3;
+/** Sides per gap period; every `GAP_EVERY`-th side is left open. */
+export const CONTACT_RING_GAP_EVERY = CONTACT_RING_SIDES / CONTACT_RING_GAPS;
 
 /** Fixed UV radius the crest always sits at. The renderer scales each instance
  *  so its world crest lands exactly here, which is what keeps the front sharp
@@ -54,9 +59,10 @@ const CONTACT_WAVE_INNER_UV = 0.30;
 const CONTACT_WAVE_OUTER_UV = 1.0;
 const CONTACT_WAVE_SEGMENTS = 96;
 
-/** Wake side markers written into the `aWave` instance attribute. */
+/** Wake side marker written into the `aWave` instance attribute: the wake
+ *  trails INWARD, on the side an expanding front came from. (The shader reads
+ *  the sign generically — a negative value would trail the wake outward.) */
 export const CONTACT_WAVE_WAKE_BEHIND = 1;
-export const CONTACT_WAVE_WAKE_AHEAD = -1;
 
 // The front's scale relationship to the peer-plane wave
 // (CONTACT_WAVE_SCALE) lives in ui/topologyConstants.ts beside
@@ -90,7 +96,7 @@ export function makeContactWaveGeometry(): THREE.BufferGeometry {
 
 /** Per-instance front shape: `(crestHalfWidthUV, wakeSide)`. Width has to be
  *  per-instance because each front carries its own world scale; the wake side
- *  flips for the contracting pre-release ring, whose wake trails outward. */
+ *  is a signed lane so the shader never assumes which way a front travels. */
 export function makeContactWaveAttribute(
   capacity: number,
 ): THREE.InstancedBufferAttribute {
@@ -181,8 +187,8 @@ export function makeContactWaveMaterial(): THREE.ShaderMaterial {
         float halfWidth = max(vWave.x, 1e-4);
 
         // Crest pinned at the fixed UV radius; the wake trails on the side
-        // the front came from (positive vWave.y trails inward for the
-        // expanding front, negative outward for the contracting inhale ring).
+        // the front came from (positive vWave.y trails inward for an
+        // expanding front, negative would trail outward).
         float offset = (radius - ${CONTACT_WAVE_CREST_UV.toFixed(2)}) / halfWidth;
         float signedBehind = vWave.y * (${CONTACT_WAVE_CREST_UV.toFixed(2)} - radius);
 
@@ -210,11 +216,10 @@ export function makeContactWaveMaterial(): THREE.ShaderMaterial {
         signal *= smoothstep(${CONTACT_WAVE_INNER_UV.toFixed(2)}, ${(CONTACT_WAVE_INNER_UV + 0.07).toFixed(2)}, radius)
           * (1.0 - smoothstep(0.93, 1.0, radius));
 
-        // Three open sides, the same break the carrier rim carries — and at
-        // the same side indices (CONTACT_RING_SIDES / CONTACT_RING_GAP_EVERY),
-        // so the glyph and the front it becomes agree. Phase runs 0..gapEvery
-        // inside each period; the last unit of the period is the gap,
-        // softened so its edges never alias into hard spokes.
+        // Three open sides (CONTACT_RING_SIDES / CONTACT_RING_GAP_EVERY).
+        // Phase runs 0..gapEvery inside each period; the last unit of the
+        // period is the gap, softened so its edges never alias into hard
+        // spokes.
         float turn = fract(atan(vPlane.y, vPlane.x) / TAU + 1.0);
         float phase = mod(turn * ${CONTACT_RING_SIDES.toFixed(1)}, ${CONTACT_RING_GAP_EVERY.toFixed(1)});
         float intoGap = min(phase - ${(CONTACT_RING_GAP_EVERY - 1).toFixed(1)}, ${CONTACT_RING_GAP_EVERY.toFixed(1)} - phase);
@@ -244,9 +249,9 @@ export function makeContactWaveMaterial(): THREE.ShaderMaterial {
         // Additive blending with alpha 1: the instance colour already carries
         // this front's intensity, so RGB is the final premultiplied light —
         // encoded to the output colour space exactly like the built-in sprite
-        // materials in this same release event (core, streak, glyph lines).
-        // Without the encode the front tracked a second gamma curve and could
-        // never resolve continuously out of the searing core it grows from.
+        // materials in this same event (the hop's mote and plume). Without
+        // the encode the front tracked a second gamma curve and could never
+        // resolve continuously out of the mote it grows from.
         gl_FragColor = vec4(vCarrier * signal, 1.0);
         #include <colorspace_fragment>
       }
