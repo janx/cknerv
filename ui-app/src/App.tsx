@@ -73,6 +73,10 @@ import {
   QUALITY_PRESETS,
   RenderStatsPanel,
   RenderStatsSampler,
+  PERFORMANCE_PROBE_LABELS,
+  createGpuProbeCallbacks,
+  createNonEmptyDrawGpuProbeCallbacks,
+  measureCpuProbe,
   SightedInspectionAnchor,
   SightedInspectionOverlay,
   createSightedInspectionHandles,
@@ -446,6 +450,25 @@ export default function App({
     typeof window !== 'undefined'
     && hasQuerySwitch(window.location.search, 'render-stats')
   ), []);
+  // The drei starfield takes no render-callback props, so its GPU scope is
+  // installed on the Points object it forwards: one timer query around the
+  // draw while the opt-in render probe is on, a boolean gate otherwise. The
+  // object outlives every `count` change (only its geometry is rebuilt), so
+  // this is mount-time wiring.
+  const starsRef = useRef<ElementRef<typeof Stars>>(null);
+  useEffect(() => {
+    const points = starsRef.current;
+    if (!points) return undefined;
+    const probe = createNonEmptyDrawGpuProbeCallbacks(
+      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.stars),
+    );
+    points.onBeforeRender = probe.onBeforeRender;
+    points.onAfterRender = probe.onAfterRender;
+    return () => {
+      points.onBeforeRender = () => {};
+      points.onAfterRender = () => {};
+    };
+  }, []);
   const canvasDpr = resolveCanvasDpr(
     typeof window === 'undefined' ? 1 : window.devicePixelRatio,
     qualityCascade.maxDpr,
@@ -674,6 +697,13 @@ export default function App({
         linkRingCapacity: galaxyConfig.pulses.linkRingCapacity,
         onHealth: setCellsStreamHealth,
         staleAfterMs: STREAM_STALE_AFTER_MS,
+        // The reducer apply behind every cells batch, under the opt-in render
+        // probe: the cache package owns no clock, so the span is handed in.
+        // Off, the probe runs the apply bare.
+        instrumentApply: <T,>(apply: () => T): T => measureCpuProbe(
+          PERFORMANCE_PROBE_LABELS.cellsCacheApply,
+          apply,
+        ),
       },
     );
     const semantics = enrichmentConfig.enabled
@@ -853,13 +883,19 @@ export default function App({
     () => (producerView?.staging ?? []).map((p) => p.key).join('\u0000'),
     [producerView],
   );
+  // Both colony derives run under the opt-in render probe's CPU spans: they
+  // are the block-frame work the review could only estimate. Off, the probe
+  // runs the derive bare.
   const topology = useMemo(
-    () => inferredTopology(
-      peers, universeSeed, localNode?.id ?? 'ckb:local', localCkbPos, networkRoster,
-      // `localNode.id` is cknerv's own key for the endpoint; the crawler files
-      // us under our base58 p2p id. Only this excludes us from our own roster.
-      localNode?.p2p_node_id,
-      producerView?.staging,
+    () => measureCpuProbe(
+      PERFORMANCE_PROBE_LABELS.colonyTopology,
+      () => inferredTopology(
+        peers, universeSeed, localNode?.id ?? 'ckb:local', localCkbPos, networkRoster,
+        // `localNode.id` is cknerv's own key for the endpoint; the crawler files
+        // us under our base58 p2p id. Only this excludes us from our own roster.
+        localNode?.p2p_node_id,
+        producerView?.staging,
+      ),
     ),
     // peers is read via the stable peersSig and the producer standings via
     // producerKeysSig; keying on either directly would rebuild the geometry
@@ -875,7 +911,10 @@ export default function App({
     // for that producer, and on the anonymous scatter when it is not. The key
     // moves in lockstep with the stamp, so it costs no recompute the pulse was
     // not already causing.
-    () => colonyFlood(topology, cellsCache.lastPulseAtMs, cellsCache.lastPulseProducerKey),
+    () => measureCpuProbe(
+      PERFORMANCE_PROBE_LABELS.colonyFlood,
+      () => colonyFlood(topology, cellsCache.lastPulseAtMs, cellsCache.lastPulseProducerKey),
+    ),
     [topology, cellsCache.lastPulseAtMs, cellsCache.lastPulseProducerKey],
   );
   const livePulseDelayS = livePulseDepartureDelayS(cf.localReceiveDelayS);
@@ -2052,6 +2091,7 @@ export default function App({
           <RenderStatsSampler forceEnabled={forceRenderStats} />
 
           <Stars
+            ref={starsRef}
             radius={400}
             depth={120}
             count={qualityCascade.starsCount}

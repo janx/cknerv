@@ -30,6 +30,7 @@ export { default as SimClockTicker } from './tweaks/SimClockTicker';
 export { default as TweakSync } from './tweaks/TweakSync';
 export { default as RenderStatsSampler } from './tweaks/RenderStatsSampler';
 export {
+  GPU_FRAME_BRACKET_PERIOD,
   PERFORMANCE_PROBE_LABELS,
   PERFORMANCE_PROBE_SAMPLE_CAPACITY,
   PERFORMANCE_PROBE_SCHEMA_VERSION,
@@ -40,6 +41,7 @@ export {
   exportPerformanceProbeJson,
   resetPerformanceProbe,
   type CpuProbeSpan,
+  type GpuFrameLedgerSnapshot,
   type PerformanceProbeMetricSummary,
   type PerformanceProbeSnapshot,
 } from './tweaks/performanceProbeStore';
@@ -49,6 +51,9 @@ export {
   createGpuProbeCallbacks,
   type GpuProbeSpan,
 } from './tweaks/gpuTimerQuery';
+export {
+  createNonEmptyDrawGpuProbeCallbacks,
+} from './tweaks/nonEmptyGpuProbeCallbacks';
 
 // ── Boot sequence (page-boot progress, written from the entry point) ─
 export {
@@ -231,3 +236,7 @@ export {
 // each block wave started, which is the only way to observe from outside that
 // the flood's origin follows the chain rather than the scatter.
 export * from './derives/producerOriginStats';
+// The colony's rebuild cadence and the Cell picker's index rebuilds, on the
+// same surface: both were argued from source until they had a counter.
+export * from './derives/colonyStats';
+export * from './geometry/cellPickStats';

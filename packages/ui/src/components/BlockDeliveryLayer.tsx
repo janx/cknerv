@@ -51,6 +51,10 @@ import {
   markCellFlashDirty,
   type CellFlashDirtyIdsRef,
 } from './cellFlash';
+import { colonyStats } from '../derives/colonyStats';
+import { PERFORMANCE_PROBE_LABELS } from '../tweaks/performanceProbeStore';
+import { createGpuProbeCallbacks } from '../tweaks/gpuTimerQuery';
+import { createNonEmptyDrawGpuProbeCallbacks } from '../tweaks/nonEmptyGpuProbeCallbacks';
 
 // BlockDeliveryLayer — the network→Cell-field handoff in the A visual language.
 //
@@ -352,27 +356,33 @@ export default function BlockDeliveryLayer({
   const simClock = useSimClock();
   const cellsCache = useCellGalaxyOptional();
   const deliveries = useMemo(
-    () => planDeliveries(
-      localOrigins,
-      localReceiveDelayS,
-      posById,
-      arrivals,
-      CELLS_Y,
-      {
-        halfX: FIELD_HALF_X,
-        halfZ: FIELD_HALF_Z,
-        // Plan-time rotation, same trick as the ignition pass below: the galaxy
-        // turns ≤ ~0.02 rad across a whole pulse at the default rate, so pinning
-        // the ellipse where it stood when the plan was made is exact enough for
-        // a landing clamp and keeps this memo off the frame clock.
-        rotationY: galaxyFrame.rotationY,
-      },
-      // The colony's rotation gets the same plan-time pin for the LANDING
-      // (Delivery.to is world); the launch stays colony-frame and is carried
-      // through the live rotation every frame below, so the gather glyph
-      // never detaches from its turning node however long a pulse runs.
-      colonyFrame.rotationY,
-    ),
+    () => {
+      // Counted where it is paid: a topology rebuild or a flood re-plans
+      // every carrier (`colonyStats`).
+      colonyStats.observeDeliveryPlan();
+      return planDeliveries(
+        localOrigins,
+        localReceiveDelayS,
+        posById,
+        arrivals,
+        CELLS_Y,
+        {
+          halfX: FIELD_HALF_X,
+          halfZ: FIELD_HALF_Z,
+          // Plan-time rotation, same trick as the ignition pass below: the
+          // galaxy turns ≤ ~0.02 rad across a whole pulse at the default rate,
+          // so pinning the ellipse where it stood when the plan was made is
+          // exact enough for a landing clamp and keeps this memo off the frame
+          // clock.
+          rotationY: galaxyFrame.rotationY,
+        },
+        // The colony's rotation gets the same plan-time pin for the LANDING
+        // (Delivery.to is world); the launch stays colony-frame and is carried
+        // through the live rotation every frame below, so the gather glyph
+        // never detaches from its turning node however long a pulse runs.
+        colonyFrame.rotationY,
+      );
+    },
     [localOrigins, localReceiveDelayS, posById, arrivals],
   );
   const capacity = Math.max(1, deliveries.length);
@@ -436,6 +446,24 @@ export default function BlockDeliveryLayer({
   const coreMaterial = useMemo(() => makeSpriteBatchMaterial(coreTex), [coreTex]);
   const trailMaterial = useMemo(() => makeSpriteBatchMaterial(trailTex), [trailTex]);
   const waveMaterial = useMemo(() => makeContactWaveMaterial(), []);
+  // True per-draw GPU timings for the four semantic batches when the opt-in
+  // render probe owns a timer-query context; a boolean gate otherwise, and no
+  // query for a batch with nothing in flight (an empty draw range or a zero
+  // instance count — the resting state between blocks).
+  const deliveryGpuProbes = useMemo(() => ({
+    body: createNonEmptyDrawGpuProbeCallbacks(
+      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.deliveryBody),
+    ),
+    core: createNonEmptyDrawGpuProbeCallbacks(
+      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.deliveryCore),
+    ),
+    trail: createNonEmptyDrawGpuProbeCallbacks(
+      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.deliveryTrail),
+    ),
+    wave: createNonEmptyDrawGpuProbeCallbacks(
+      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.deliveryWave),
+    ),
+  }), []);
   const waveShape = useMemo(
     () => makeContactWaveAttribute(waveCapacity),
     [waveCapacity],
@@ -832,24 +860,28 @@ export default function BlockDeliveryLayer({
       <lineSegments
         geometry={bodyGeometry}
         material={bodyMaterial}
+        {...deliveryGpuProbes.body}
         frustumCulled={false}
         renderOrder={1}
       />
       <instancedMesh
         ref={coreBatchRef}
         args={[spriteGeometry, coreMaterial, capacity]}
+        {...deliveryGpuProbes.core}
         frustumCulled={false}
         renderOrder={2}
       />
       <instancedMesh
         ref={trailBatchRef}
         args={[spriteGeometry, trailMaterial, capacity]}
+        {...deliveryGpuProbes.trail}
         frustumCulled={false}
         renderOrder={3}
       />
       <instancedMesh
         ref={waveBatchRef}
         args={[waveGeometry, waveMaterial, waveCapacity]}
+        {...deliveryGpuProbes.wave}
         frustumCulled={false}
         renderOrder={4}
       />

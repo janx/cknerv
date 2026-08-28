@@ -41,6 +41,33 @@ describe('computeRuntimeStats', () => {
     expect(computeRuntimeStats(0, 0, info, 1500).uploadBytesPerFrame).toBe(0);
     expect(ZERO_STATS.uploadBytesPerFrame).toBe(0);
   });
+  it('averages each GPU stream over its own frames and reads null, never zero, without one', () => {
+    // A bracket frame carries no scopes and a scope frame no bracket, so the
+    // two are ms per frame OF THEIR KIND, and the remainder is their difference.
+    const both = computeRuntimeStats(15, 250, info, 0, {
+      bracketMs: 10, bracketFrames: 4, scopedMs: 9, scopeFrames: 6,
+    });
+    expect(both.gpuFrameMs).toBeCloseTo(2.5);
+    expect(both.gpuUnscopedMs).toBeCloseTo(1);
+    // Signed: scopes summing past the frame is a reading, not noise.
+    expect(computeRuntimeStats(15, 250, info, 0, {
+      bracketMs: 4, bracketFrames: 4, scopedMs: 9, scopeFrames: 6,
+    }).gpuUnscopedMs).toBeCloseTo(-0.5);
+    // No bracket resolved yet, or timer queries unsupported: nothing to print.
+    const bracketless = computeRuntimeStats(15, 250, info, 0, {
+      bracketMs: 0, bracketFrames: 0, scopedMs: 9, scopeFrames: 6,
+    });
+    expect(bracketless.gpuFrameMs).toBeNull();
+    expect(bracketless.gpuUnscopedMs).toBeNull();
+    const scopeless = computeRuntimeStats(15, 250, info, 0, {
+      bracketMs: 10, bracketFrames: 4, scopedMs: 0, scopeFrames: 0,
+    });
+    expect(scopeless.gpuFrameMs).toBeCloseTo(2.5);
+    expect(scopeless.gpuUnscopedMs).toBeNull();
+    expect(computeRuntimeStats(15, 250, info).gpuFrameMs).toBeNull();
+    expect(ZERO_STATS.gpuFrameMs).toBeNull();
+    expect(ZERO_STATS.gpuUnscopedMs).toBeNull();
+  });
 });
 
 describe('fpsColor', () => {

@@ -39,7 +39,11 @@ import {
   consensusBlockColor,
   type ConsensusFlowColor,
 } from '../derives/consensusFlow.derive';
+import { colonyStats } from '../derives/colonyStats';
 import { PEER_NETWORK_PALETTE } from '../visualPalette';
+import { PERFORMANCE_PROBE_LABELS } from '../tweaks/performanceProbeStore';
+import { createGpuProbeCallbacks } from '../tweaks/gpuTimerQuery';
+import { createNonEmptyDrawGpuProbeCallbacks } from '../tweaks/nonEmptyGpuProbeCallbacks';
 
 /** Fixed courier pool. The tree has ~277 hops but only dozens are ever in flight
  *  at once (each visible for ≥ MIN_THROW_S of the ~2s flood); 64 covers the
@@ -97,7 +101,12 @@ export default function ColonyCourierLayer({
   const simClock = useSimClock();
   // The node→node throws for this block's tree. Pure; recomputed only when the
   // flood (new block / new origin) or the positions (topology) change.
-  const schedule = useMemo(() => colonyCourierSchedule(cf, posById), [cf, posById]);
+  const schedule = useMemo(() => {
+    // Counted where it is paid: a topology rebuild or a block re-plans every
+    // hop of the tree (`colonyStats`).
+    colonyStats.observeCourierSchedule();
+    return colonyCourierSchedule(cf, posById);
+  }, [cf, posById]);
   const scheduleHorizon = useMemo(() => courierScheduleHorizon(schedule), [schedule]);
 
   // Two fixed GPU batches replace 128 independently submitted scene objects.
@@ -160,6 +169,17 @@ export default function ColonyCourierLayer({
       }),
     [bloomTex],
   );
+  // True per-draw GPU timings for the two instanced batches when the opt-in
+  // render probe owns a timer-query context; a boolean gate otherwise, and no
+  // query while no courier is in flight (the batches count zero then).
+  const courierGpuProbes = useMemo(() => ({
+    plume: createNonEmptyDrawGpuProbeCallbacks(
+      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.colonyCourierPlume),
+    ),
+    bloom: createNonEmptyDrawGpuProbeCallbacks(
+      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.colonyCourierBloom),
+    ),
+  }), []);
 
   useLayoutEffect(() => {
     const plume = plumeMesh.current;
@@ -325,12 +345,14 @@ export default function ColonyCourierLayer({
       <instancedMesh
         ref={plumeMesh}
         args={[plumeGeom, plumeMat, COURIER_POOL]}
+        {...courierGpuProbes.plume}
         frustumCulled={false}
         renderOrder={1}
       />
       <instancedMesh
         ref={bloomMesh}
         args={[bloomGeom, bloomMat, COURIER_POOL]}
+        {...courierGpuProbes.bloom}
         frustumCulled={false}
         renderOrder={2}
       />

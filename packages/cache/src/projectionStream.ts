@@ -50,6 +50,12 @@ export interface ProjectionStreamOptions extends StreamHealthOptions {
   reconnectMs?: number;
   recentLinksCapacity?: number;
   linkRingCapacity?: number;
+  /** Diagnostics: wraps each batch's reducer apply — the one `applyDeltas`
+   *  call a flush makes — so a caller can time it. The wrapper must run the
+   *  apply it is handed exactly once and return its result; absent, the apply
+   *  runs bare. This package owns no clock and no probe, so the measurement
+   *  is the caller's (the dashboard hands in its opt-in CPU probe). */
+  instrumentApply?: <T>(apply: () => T) => T;
 }
 
 /** Decoder for a binary resync frame. Supplying one opts the socket into
@@ -107,6 +113,7 @@ export function connectProjectionStream<Cache, Snapshot, Delta>(
   opts: ProjectionStreamOptions = {},
 ): ProjectionStreamHandle {
   const reconnectMs = opts.reconnectMs ?? 2000;
+  const instrumentApply = opts.instrumentApply;
   let stopped = false;
   let socket: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -126,7 +133,9 @@ export function connectProjectionStream<Cache, Snapshot, Delta>(
     const deltas = pendingDeltas;
     pendingDeltas = [];
     const prev = cache;
-    cache = hooks.applyDeltas(prev, deltas);
+    cache = instrumentApply !== undefined
+      ? instrumentApply(() => hooks.applyDeltas(prev, deltas))
+      : hooks.applyDeltas(prev, deltas);
     // A batch of replayed no-op deltas — a birth this cache already retains
     // after a reconnect catch-up, an enrichment refresh re-delivering records
     // it holds — advances only the reconnect cursor. The cursor is kept above;

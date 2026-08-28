@@ -41,6 +41,11 @@ import {
   beginCpuProbe,
   endCpuProbe,
 } from '../tweaks/performanceProbeStore';
+import { createGpuProbeCallbacks } from '../tweaks/gpuTimerQuery';
+import {
+  createNonEmptyDrawGpuProbeCallbacks,
+  createNonEmptyInstanceGpuProbeCallbacks,
+} from '../tweaks/nonEmptyGpuProbeCallbacks';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { useConsensusMemoryFocusRef } from '../hooks/consensusMemoryFocusContext';
 import {
@@ -231,6 +236,24 @@ export default function CellNucleus({
     return line;
   }, [lineGeometry, coreMaterial]);
   const nodePointsRef = useRef<THREE.Points>(null);
+  // True per-draw GPU timings for the three nucleus passes when the opt-in
+  // render probe owns a timer-query context. The two capsule passes compose
+  // with LineSegments2's own before-render hook (its resolution sync) and
+  // skip the timer while their instance count is zero; the node points skip
+  // it on an empty draw range. Disabled callbacks stop at the boolean gate.
+  const nucleusGpuProbes = useMemo(() => ({
+    glow: createNonEmptyInstanceGpuProbeCallbacks(
+      glow,
+      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.cellNucleusGlow),
+    ),
+    core: createNonEmptyInstanceGpuProbeCallbacks(
+      core,
+      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.cellNucleusCore),
+    ),
+    nodes: createNonEmptyDrawGpuProbeCallbacks(
+      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.cellNucleusNodes),
+    ),
+  }), [glow, core]);
 
   useEffect(() => () => {
     lineGeometry.dispose();
@@ -732,12 +755,13 @@ export default function CellNucleus({
 
   return (
     <group>
-      <primitive object={glow} />
-      <primitive object={core} />
+      <primitive object={glow} {...nucleusGpuProbes.glow} />
+      <primitive object={core} {...nucleusGpuProbes.core} />
       <points
         ref={nodePointsRef}
         geometry={nodeGeometry}
         material={nodeMaterial}
+        {...nucleusGpuProbes.nodes}
         frustumCulled={false}
         renderOrder={4}
       />

@@ -202,6 +202,31 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
     expect(gatedAt).toBeGreaterThan(resolvedAt);
   });
 
+  // The block-frame stack under the opt-in render probe: one span per cache
+  // generation around the display sync, one per landed build around the
+  // fabric's commit, and one per planning frame around the slice — each at
+  // its real call site, each the bare call while the probe is off.
+  it('spans the display sync, the fabric commit and the planning slice under the opt-in probe', () => {
+    expect(NETWORK_SOURCE).toContain(
+      'measureCpuProbe(PERFORMANCE_PROBE_LABELS.syncDisplayFabric, syncDisplayFabric)',
+    );
+    expect(NETWORK_SOURCE).not.toMatch(/useEffect\(\(\) => \{\n\s*syncDisplayFabric\(\);/);
+    const commitAt = NETWORK_SOURCE.indexOf('beginCpuProbe(PERFORMANCE_PROBE_LABELS.fabricCommit)');
+    expect(commitAt).toBeGreaterThan(-1);
+    // Opened after the response guards, closed before the invalidate that
+    // ends the commit — the handler's whole body, nothing outside it.
+    expect(NETWORK_SOURCE.lastIndexOf(') return;', commitAt)).toBeGreaterThan(-1);
+    expect(NETWORK_SOURCE.indexOf('endCpuProbe(commitProbe);', commitAt))
+      .toBeLessThan(NETWORK_SOURCE.indexOf('invalidate();\n    }).catch(', commitAt));
+    const sliceAt = NETWORK_SOURCE.indexOf('beginCpuProbe(PERFORMANCE_PROBE_LABELS.livePlanSlice)');
+    expect(sliceAt).toBeGreaterThan(-1);
+    // Taken only on frames that plan: the empty-queue return comes first.
+    expect(NETWORK_SOURCE.lastIndexOf('if (queue.batches.length === 0) return;', sliceAt))
+      .toBeGreaterThan(-1);
+    expect(NETWORK_SOURCE.indexOf('stepLivePulseQueue(queue, livePlanStep)', sliceAt))
+      .toBeLessThan(NETWORK_SOURCE.indexOf('endCpuProbe(sliceProbe);', sliceAt));
+  });
+
   // Integration mount-safety test — the level this jsdom harness supports
   // (same precedent as __tests__/components/CellGalaxy.test.tsx). r3f v8's
   // <Canvas> never mounts its children at 0×0 (the no-op ResizeObserver in

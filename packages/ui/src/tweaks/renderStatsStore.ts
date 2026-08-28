@@ -18,6 +18,26 @@ export interface RuntimeStats {
    *  `gpuUploadLedger`). gl.info counts no buffer traffic, so without this
    *  the panel could see draws and triangles but never an upload burst. */
   uploadBytesPerFrame: number;
+  /** GPU ms per frame from the whole-scene bracket — one TIME_ELAPSED query
+   *  around the main pass, taken on alternate sampled frames — averaged over
+   *  the window's bracket frames. Null until a bracket resolved in the window,
+   *  and whenever timer queries are unavailable. */
+  gpuFrameMs: number | null;
+  /** The bracket minus Σ of the per-draw scopes on the frames between them:
+   *  GPU time no probed draw accounts for. Signed on purpose — a negative
+   *  reading says the scopes summed to more than the frame, i.e. the driver
+   *  serialises adjacent queries, which is worth seeing rather than clamping.
+   *  Null until both streams have resolved in the window. */
+  gpuUnscopedMs: number | null;
+}
+
+/** One sampling window's slice of the probe's GPU frame ledger: Σ ms and the
+ *  frame count of each of the two query streams (see `performanceProbeStore`). */
+export interface GpuFrameWindow {
+  bracketMs: number;
+  bracketFrames: number;
+  scopedMs: number;
+  scopeFrames: number;
 }
 
 /** The subset of THREE.WebGLInfo we read — structural so tests pass a plain
@@ -37,6 +57,8 @@ export const ZERO_STATS: RuntimeStats = {
   textures: 0,
   programs: 0,
   uploadBytesPerFrame: 0,
+  gpuFrameMs: null,
+  gpuUnscopedMs: null,
 };
 
 // Sampling demand: the GL·08 panel (and any lab that mounts it) retains a
@@ -72,13 +94,22 @@ export function getStatsDemand(): boolean {
  *  render.triangles accumulate across the frame's passes while autoReset is
  *  off, so divide by the frame count. memory/programs are instantaneous.
  *  `uploadedBytes` is the window's delta of the upload ledger, averaged the
- *  same way. */
+ *  same way. `gpu` is the window's slice of the frame ledger; each stream is
+ *  averaged over ITS OWN frames (a bracket frame carries no scopes and a
+ *  scope frame no bracket), and the remainder is the difference of the two. */
 export function computeRuntimeStats(
   frames: number,
   elapsedMs: number,
   info: RenderInfoLike,
   uploadedBytes = 0,
+  gpu?: Readonly<GpuFrameWindow>,
 ): RuntimeStats {
+  const gpuFrameMs = gpu !== undefined && gpu.bracketFrames > 0
+    ? gpu.bracketMs / gpu.bracketFrames
+    : null;
+  const gpuScopedMs = gpu !== undefined && gpu.scopeFrames > 0
+    ? gpu.scopedMs / gpu.scopeFrames
+    : null;
   return {
     fps: elapsedMs > 0 ? (frames * 1000) / elapsedMs : 0,
     msPerFrame: frames > 0 ? elapsedMs / frames : 0,
@@ -90,6 +121,10 @@ export function computeRuntimeStats(
     uploadBytesPerFrame: frames > 0 && uploadedBytes > 0
       ? uploadedBytes / frames
       : 0,
+    gpuFrameMs,
+    gpuUnscopedMs: gpuFrameMs !== null && gpuScopedMs !== null
+      ? gpuFrameMs - gpuScopedMs
+      : null,
   };
 }
 

@@ -10,8 +10,17 @@
 // The bridge layer's counters (`bridgeStats`) ride along in the snapshot as
 // `bridge`: it is the fabric's sibling, built from the fabric's parts, and a
 // live probe reading one hook should see both layers' churn side by side.
+// The topology builder's counters ride along as `topology` for the mirror
+// reason: every build the fabric grows and kills from came through it, and a
+// chain break there (a `stale` resend, an unchained whole apply) is the
+// upstream cause of a full-set reconcile here.
 
 import { bridgeStats, type BridgeStatsSnapshot } from './bridgeStats';
+import {
+  resetNeighborGraphBuilderStats,
+  snapshotNeighborGraphBuilderStats,
+  type NeighborGraphBuilderStatsSnapshot,
+} from '../geometry/neighborGraphBuilderStats';
 import { observeGpuUpload } from '../tweaks/gpuUploadLedger';
 
 export type FabricDiffKind = 'setFabric' | 'growEdges' | 'killEdges';
@@ -106,6 +115,10 @@ export interface FabricStatsSnapshot {
   /** The bridge layer (次级神经): builds skipped by its host registry,
    *  strokes moved per selection, writes and uploads per build frame. */
   bridge: BridgeStatsSnapshot;
+  /** The topology worker pipeline every build arrives through: patched vs
+   *  whole applies, chain breaks (`unchainedApplies`, `staleResends`), and
+   *  the main-thread fallbacks. */
+  topology: NeighborGraphBuilderStatsSnapshot;
 }
 
 const RECENT_DIFF_CAP = 32;
@@ -255,6 +268,7 @@ export const fabricStats: FabricStatsState = {
       uploadedBytesLast: this.uploadedBytesLast,
       uploadedBytesMax: this.uploadedBytesMax,
       bridge: bridgeStats.snapshot(),
+      topology: snapshotNeighborGraphBuilderStats(),
     };
   },
 
@@ -276,6 +290,7 @@ export const fabricStats: FabricStatsState = {
     this.uploadedBytesLast = 0;
     this.uploadedBytesMax = 0;
     bridgeStats.reset();
+    resetNeighborGraphBuilderStats();
   },
 };
 

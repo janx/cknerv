@@ -41,6 +41,10 @@ import { consensusBraidPresenceScale } from '../../src/derives/consensusBraid.de
 import { capacityMass } from '../../src/derives/cellVisual.derive';
 import { ScreenSpaceHitIndex } from '../../src/geometry/screenSpaceHitIndex';
 import {
+  resetCellPickStats,
+  snapshotCellPickStats,
+} from '../../src/geometry/cellPickStats';
+import {
   cellLifecycleSceneTimes,
   createCellLifecycleStampState,
   ENTER_STAMP_SENTINEL,
@@ -2166,5 +2170,69 @@ describe('planCellBufferUploadRanges', () => {
       expect(gpu).toEqual(cpu);
       for (const slot of dirty) expect(covered(plan, slot)).toBe(true);
     }
+  });
+});
+
+// ── the picker's own counters ─────────────────────────────────────────
+// What a live probe reads to tell a rebuild storm from a reuse: every
+// raycast, the hover probes the motion gate declined, the rebuilds, and the
+// gate that was open at each.
+describe('cell pick stats', () => {
+  it('counts raycasts, reuses, suspended skips, rebuilds and the gate behind each rebuild', () => {
+    resetCellPickStats();
+    const h = pickHarness();
+    // The first raycast builds: every counter-keyed gate is open on an index
+    // that has never been built.
+    livePick(h, 480, 320);
+    let s = snapshotCellPickStats();
+    expect(s).toMatchObject({ raycasts: 1, rebuilds: 1, reuses: 0, suspendedSkips: 0 });
+    expect(s.rebuildReasons).toMatchObject({
+      pointerdown: 0, fieldVersion: 1, sizeEpoch: 1, count: 1,
+      detailEpoch: 1, viewport: 1, projection: 1,
+    });
+    expect(s.padRefreshes).toBe(1);
+
+    // Nothing changed: the pointermove path reuses.
+    livePick(h, 481, 320);
+    s = snapshotCellPickStats();
+    expect(s).toMatchObject({ raycasts: 2, rebuilds: 1, reuses: 1 });
+
+    // A press: the precise snapshot, and only that gate is counted.
+    h.forcePreciseRef.current = true;
+    livePick(h, 481, 320);
+    s = snapshotCellPickStats();
+    expect(s.rebuilds).toBe(2);
+    expect(s.rebuildReasons.pointerdown).toBe(1);
+    expect(s.rebuildReasons.fieldVersion).toBe(1);
+
+    // A moved field: that gate alone.
+    h.fieldVersionRef.current += 1;
+    livePick(h, 481, 320);
+    s = snapshotCellPickStats();
+    expect(s.rebuilds).toBe(3);
+    expect(s.rebuildReasons.fieldVersion).toBe(2);
+    expect(s.rebuildReasons.pointerdown).toBe(1);
+
+    // Camera in motion: a hover probe is declined and counted as such, a
+    // press is still answered.
+    h.pickingSuspendedRef.current = true;
+    livePick(h, 481, 320);
+    s = snapshotCellPickStats();
+    expect(s).toMatchObject({ raycasts: 5, suspendedSkips: 1, rebuilds: 3 });
+    h.pointerEventRef.current = { type: 'pointerdown' };
+    h.forcePreciseRef.current = true;
+    livePick(h, 481, 320);
+    s = snapshotCellPickStats();
+    expect(s).toMatchObject({ raycasts: 6, suspendedSkips: 1, rebuilds: 4 });
+    expect(s.rebuildReasons.pointerdown).toBe(2);
+    h.pickingSuspendedRef.current = false;
+    h.pointerEventRef.current = { type: 'pointermove' };
+
+    // Hits are a subset of the raycasts answered, and the snapshot is a copy.
+    expect(s.hits).toBeLessThanOrEqual(s.raycasts - s.suspendedSkips);
+    s.rebuilds = 99;
+    expect(snapshotCellPickStats().rebuilds).toBe(4);
+    resetCellPickStats();
+    expect(snapshotCellPickStats().raycasts).toBe(0);
   });
 });

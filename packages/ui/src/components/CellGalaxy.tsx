@@ -10,6 +10,9 @@ import { useThree } from '@react-three/fiber';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { observeGpuUpload } from '../tweaks/gpuUploadLedger';
+import { PERFORMANCE_PROBE_LABELS } from '../tweaks/performanceProbeStore';
+import { createGpuProbeCallbacks } from '../tweaks/gpuTimerQuery';
+import { createNonEmptyDrawGpuProbeCallbacks } from '../tweaks/nonEmptyGpuProbeCallbacks';
 import {
   mergeSlotRuns,
   slotUploadPolicy,
@@ -66,6 +69,7 @@ import {
   type ScreenSpaceRadiusPad,
 } from '../geometry/screenSpaceHitIndex';
 import { CellPickDriftEnvelope } from '../geometry/cellPickDriftEnvelope';
+import { cellPickStats } from '../geometry/cellPickStats';
 import type { ScalarThresholdEpoch } from '../geometry/sparseScalarAttribute';
 import type { Cell } from '@cknerv/types';
 import {
@@ -1098,10 +1102,14 @@ export function createCellPickRaycast({
     // motion is answered as it always was — from a precise snapshot — because
     // R3F's click contract runs through both raycasts (see
     // `isCellPickPointerAction`).
+    cellPickStats.observeRaycast();
     if (
       pickingSuspendedRef?.current
       && !isCellPickPointerAction(pointerEventRef?.current ?? null)
     ) return;
+    // Past the motion gate: the difference between this and the count above
+    // is exactly the hover probes the gate declined.
+    cellPickStats.observeAnswered();
     const cells = cellsListRef.current;
     const count = Math.min(drawCountRef.current, cells.length);
     if (count === 0) return;
@@ -1178,23 +1186,40 @@ export function createCellPickRaycast({
     // The drawn list's identity is not a key: `cellSlotAssignment` republishes
     // a fresh array for any slot rewrite, including the ones that move no
     // cell, while the counters below move exactly when a baked input did.
-    const structuralIndexChange = indexedFieldVersion !== fieldVersionRef.current
-      || indexedSizeEpoch !== sizeEpochRef.current
-      || indexedCount !== count
-      // Detail reaches the index ONLY through cellPickRadiusPx's expanded
-      // branch, which is a threshold test — so the attribute's version is
-      // the wrong signal. A hover envelope eases for 0.3–0.7s and rewrites
-      // its slots on every frame of it, and gating on the version made every
-      // pointermove of a sweep re-project the whole field for magnitudes no
-      // pick answer reads. The epoch counts crossings, so it moves exactly
-      // when a cell's pick disc changes width.
-      || indexedDetailEpoch !== detailPickEpoch.epoch
-      || indexedWidth !== width
-      || indexedHeight !== height
+    const fieldVersionStale = indexedFieldVersion !== fieldVersionRef.current;
+    const sizeEpochStale = indexedSizeEpoch !== sizeEpochRef.current;
+    const countStale = indexedCount !== count;
+    // Detail reaches the index ONLY through cellPickRadiusPx's expanded
+    // branch, which is a threshold test — so the attribute's version is
+    // the wrong signal. A hover envelope eases for 0.3–0.7s and rewrites
+    // its slots on every frame of it, and gating on the version made every
+    // pointermove of a sweep re-project the whole field for magnitudes no
+    // pick answer reads. The epoch counts crossings, so it moves exactly
+    // when a cell's pick disc changes width.
+    const detailEpochStale = indexedDetailEpoch !== detailPickEpoch.epoch;
+    const viewportStale = indexedWidth !== width || indexedHeight !== height;
+    const projectionStale = !indexedProjection.equals(camera.projectionMatrix);
+    const structuralIndexChange = fieldVersionStale
+      || sizeEpochStale
+      || countStale
+      || detailEpochStale
+      || viewportStale
       || matrixStale
       || cameraStale
-      || !indexedProjection.equals(camera.projectionMatrix);
+      || projectionStale;
     if (forcePrecise || structuralIndexChange) {
+      // Every gate that is open is counted, not only the first: a reader
+      // tuning one gate has to know when another would have fired anyway.
+      cellPickStats.observeRebuild();
+      if (forcePrecise) cellPickStats.observeRebuildReason('pointerdown');
+      if (fieldVersionStale) cellPickStats.observeRebuildReason('fieldVersion');
+      if (sizeEpochStale) cellPickStats.observeRebuildReason('sizeEpoch');
+      if (countStale) cellPickStats.observeRebuildReason('count');
+      if (detailEpochStale) cellPickStats.observeRebuildReason('detailEpoch');
+      if (viewportStale) cellPickStats.observeRebuildReason('viewport');
+      if (matrixStale) cellPickStats.observeRebuildReason('spin');
+      if (cameraStale) cellPickStats.observeRebuildReason('camera');
+      if (projectionStale) cellPickStats.observeRebuildReason('projection');
       // Focus is NOT baked in: every disc goes in unfocused and the ≤2
       // focused ones are padded at query time. The admit pad keeps entries
       // a pad could still reach inside the grid, so membership stays what a
@@ -1309,6 +1334,8 @@ export function createCellPickRaycast({
       );
       indexedProjection.copy(camera.projectionMatrix);
       indexedRevision += 1;
+    } else {
+      cellPickStats.observeReuse();
     }
 
     const selectedCellId = selectedCellIdRef.current;
@@ -1318,6 +1345,7 @@ export function createCellPickRaycast({
       || padSelectedCellId !== selectedCellId
       || padHoveredCellId !== hoveredCellId
     ) {
+      cellPickStats.observePadRefresh();
       padRevision = indexedRevision;
       padSelectedCellId = selectedCellId;
       padHoveredCellId = hoveredCellId;
@@ -1379,6 +1407,7 @@ export function createCellPickRaycast({
       .set(hitCell.pos_seed[0], hitCell.pos_seed[1], hitCell.pos_seed[2])
       .applyMatrix4(matrix);
 
+    cellPickStats.observeHit();
     intersects.push({
       // World distance from the ray origin (camera) to the picked
       // cell's pos_seed. r3f sorts intersects by this when multiple
@@ -1872,6 +1901,18 @@ function CellGalaxy({
   );
   const hybridMaterial = useMemo(() => makeCellHybridMaterial(), []);
   const flareMaterial = useMemo(() => makeCellFlareMaterial(), []);
+  // True per-draw GPU timings for the two Cell passes when the opt-in render
+  // probe owns a timer-query context. Disabled callbacks stop at the probe's
+  // boolean gate, and a pass whose draw range is empty never enters the
+  // timer stream (the flare is also hidden then — belt and braces).
+  const cellGpuProbes = useMemo(() => ({
+    body: createNonEmptyDrawGpuProbeCallbacks(
+      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.cellBody),
+    ),
+    flare: createNonEmptyDrawGpuProbeCallbacks(
+      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.cellFlare),
+    ),
+  }), []);
 
   const cellGeometry = useMemo(() => {
     const g = new THREE.BufferGeometry();
@@ -2495,6 +2536,7 @@ function CellGalaxy({
         <points
           geometry={cellGeometry}
           material={hybridMaterial}
+          {...cellGpuProbes.body}
           frustumCulled={false}
         />
         {/* Co-located protocol-write signal — shares the cell geometry (so the
@@ -2504,6 +2546,7 @@ function CellGalaxy({
           ref={flarePointsRef}
           geometry={cellFlareGeometry}
           material={flareMaterial}
+          {...cellGpuProbes.flare}
           frustumCulled={false}
           renderOrder={1}
         />

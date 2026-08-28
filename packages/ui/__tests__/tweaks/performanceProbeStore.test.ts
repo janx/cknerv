@@ -1,13 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  GPU_FRAME_BRACKET_PERIOD,
   PERFORMANCE_PROBE_LABELS,
   PERFORMANCE_PROBE_SAMPLE_CAPACITY,
+  advanceGpuProbeFrame,
   beginCpuProbe,
   endCpuProbe,
   exportPerformanceProbeJson,
+  gpuProbeFrameIndex,
+  gpuProbeFrameMode,
   isPerformanceProbeEnabled,
   measureCpuProbe,
+  observeGpuFrameLedger,
+  observeGpuProbeDrop,
   observePerformanceProbeSample,
+  readGpuFrameLedger,
   resetPerformanceProbe,
   retainPerformanceProbe,
   snapshotPerformanceProbe,
@@ -127,11 +134,77 @@ describe('performanceProbeStore', () => {
         sampleCapacity: number;
         invalidSamples: { cpu: number };
       };
-      expect(snapshot.schemaVersion).toBe(1);
+      // Schema 2: the `gpu.frameLedger` block and the `frame.gpu` bracket
+      // joined the export.
+      expect(snapshot.schemaVersion).toBe(2);
       expect(snapshot.sampleCapacity).toBe(PERFORMANCE_PROBE_SAMPLE_CAPACITY);
       expect(snapshot.invalidSamples.cpu).toBe(1);
     } finally {
       release();
     }
+  });
+
+  it('alternates the frame mode only while retained, and counts each stream per frame', () => {
+    resetPerformanceProbe(60);
+    // Off: the mode never leaves `scopes` and no frame is counted.
+    expect(advanceGpuProbeFrame()).toBe('scopes');
+    expect(advanceGpuProbeFrame()).toBe('scopes');
+    expect(gpuProbeFrameIndex()).toBe(0);
+    const release = retainPerformanceProbe();
+    try {
+      const modes: string[] = [];
+      for (let frame = 0; frame < 2 * GPU_FRAME_BRACKET_PERIOD; frame += 1) {
+        modes.push(advanceGpuProbeFrame());
+      }
+      // Every Nth sampled frame is the bracket's; the rest belong to the scopes.
+      expect(modes.filter((mode) => mode === 'bracket')).toHaveLength(2);
+      expect(modes[GPU_FRAME_BRACKET_PERIOD - 1]).toBe('bracket');
+      expect(gpuProbeFrameMode()).toBe(modes[modes.length - 1]);
+      expect(gpuProbeFrameIndex()).toBe(2 * GPU_FRAME_BRACKET_PERIOD);
+
+      // Two scopes on one frame are one scope frame; a bracket is one bracket
+      // frame; ms accumulate per stream.
+      observeGpuFrameLedger('scope', 1, 0.5);
+      observeGpuFrameLedger('scope', 1, 0.25);
+      observeGpuFrameLedger('scope', 3, 1);
+      observeGpuFrameLedger('bracket', 2, 2);
+      expect(readGpuFrameLedger()).toMatchObject({
+        scopedMs: 1.75,
+        scopeFrames: 2,
+        bracketMs: 2,
+        bracketFrames: 1,
+        bracketPeriod: GPU_FRAME_BRACKET_PERIOD,
+      });
+      expect(snapshotPerformanceProbe().gpu.frameLedger).toEqual(readGpuFrameLedger());
+
+      resetPerformanceProbe(61);
+      expect(readGpuFrameLedger()).toMatchObject({
+        frames: 0,
+        mode: 'scopes',
+        scopedMs: 0,
+        scopeFrames: 0,
+        bracketMs: 0,
+        bracketFrames: 0,
+      });
+    } finally {
+      release();
+    }
+  });
+
+  it('mutates the GPU state in place and hands out isolated copies', () => {
+    resetPerformanceProbe(70);
+    observeGpuProbeDrop('overlap');
+    observeGpuProbeDrop('capacity', 2);
+    const first = snapshotPerformanceProbe().gpu.state;
+    expect(first.droppedQueries).toBe(3);
+    expect(first.droppedByReason).toMatchObject({ overlap: 1, capacity: 2 });
+    // A reader scribbling on its copy cannot reach the store.
+    first.droppedByReason.overlap = 99;
+    first.droppedQueries = 99;
+    const second = snapshotPerformanceProbe().gpu.state;
+    expect(second.droppedByReason.overlap).toBe(1);
+    expect(second.droppedQueries).toBe(3);
+    resetPerformanceProbe(71);
+    expect(snapshotPerformanceProbe().gpu.state.droppedQueries).toBe(0);
   });
 });

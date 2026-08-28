@@ -1271,9 +1271,9 @@ captures, name the changed invariant, and verify every affected quality preset.
    `window.__renderPerformanceStatsReset()` in DevTools immediately before the
    measured interval.
 3. Read the bounded snapshot with `window.__renderPerformanceStats()`. Export
-   its versioned JSON with `window.__renderPerformanceStatsJson()`; Chromium
-   DevTools can place it on the clipboard with
-   `copy(window.__renderPerformanceStatsJson())`.
+   its versioned JSON (`schemaVersion` 2) with
+   `window.__renderPerformanceStatsJson()`; Chromium DevTools can place it on
+   the clipboard with `copy(window.__renderPerformanceStatsJson())`.
 4. Let at least two visible frames elapse after a transient before exporting,
    because GPU timer queries resolve asynchronously. `pendingQueries` names
    still-in-flight samples and those samples are not included in percentiles.
@@ -1289,6 +1289,92 @@ Use the same snapshot and capture settings for these minimum scenarios:
   `/?protocol-event-lab=1&memory-trace=1&render-stats=1&quality=high`; wait for
   `[data-review-ready="true"]`, reset, and capture a complete cycle including
   the memory trace after the settled write.
+
+#### What the snapshot contains
+
+- `gpu.metrics`: one entry per PHYSICAL DRAW, so a mean is a draw mean and Σ
+  over the map is the scoped total. Halo: `population.points`,
+  `population.residual-fibres`, `population.backbone-capsules`. Cells:
+  `cell.body`, `cell.flare`, `cell.nucleus.glow`, `cell.nucleus.core`,
+  `cell.nucleus.nodes`. Nerves: `nerve.passive-fabric.base`,
+  `nerve.passive-fabric.trunk`, `nerve.active-route`, `nerve.memory-route`,
+  `nerve.bridge`. Colony: `colony.cloud.haze`, `colony.cloud.advertised`,
+  `colony.cloud.remembered`, `colony.cloud.reached`, `colony.measured-halos`,
+  `colony.edges`, `colony.accretion.horizon`, `colony.accretion.disc`,
+  `colony.courier.plume`, `colony.courier.bloom`. Delivery: `delivery.body`,
+  `delivery.core`, `delivery.trail`, `delivery.wave`. Backdrop: `stars`. A draw
+  that would submit nothing — zero instances, an empty draw range, a hidden
+  object — takes no sample, so a label that only sometimes draws (a courier,
+  a contact front) has a count below the frame count: that is its draw count,
+  not a drop. Unscoped on purpose, and therefore part of the remainder below:
+  the chain anchor's three small draws, the selection reticles, the
+  canonical-rewrite echo, and the portrait inset's own braid `Scene`.
+- `frame.gpu` (in `frame`, beside `frame.interval`): the WHOLE scene pass, one
+  `TIME_ELAPSED` query opened by the pass's first probed draw and closed by
+  the scene's `onAfterRender` — at the first draw command rather than at the
+  render-list build ahead of it, where an idle GPU would wait inside the
+  query and read as draw cost; the unprobed draws three may sort ahead of the
+  first probed one fall outside both streams. WebGL allows one query of that
+  target at a time, so the bracket cannot coexist with the draw scopes: every
+  `GPU_FRAME_BRACKET_PERIOD`th (second) sampled frame is a bracket frame, on
+  which the draw scopes stand down, and the frames between are scope frames,
+  on which no bracket is taken. Both streams sample the same steady state on
+  interleaved frames; neither can nest in the other, so
+  `droppedByReason.overlap` stays a genuine fault. `gpu.frameLedger` carries
+  the running totals: `bracketMs / bracketFrames` is GPU ms per bracket
+  frame, `scopedMs / scopeFrames` is GPU ms per scope frame (Σ of that
+  frame's scopes, divided by frames so an intermittent draw weighs exactly as
+  often as it drew), and the difference is the unscoped remainder — what
+  GL·08 prints as `GPU` and `OTHER`. A negative remainder is a reading, not
+  noise to clamp: the scopes summed to more than the frame, i.e. the driver
+  serialised adjacent queries (the open Mesa/ANGLE question), and the per-draw
+  figures should then be read as upper bounds. The bracket covers the main
+  pass only: the portrait inset re-renders the main scene through the same
+  hooks (one pass, counted once) and then its own braid `Scene`, which has no
+  hooks and is in neither stream.
+- `cpu`: `cpu.cell-field.ingest` (the columnar mirror, every generation),
+  `cpu.cells-cache.apply-deltas` (the reducer behind every cells batch),
+  `cpu.topology.commit` (the builder applying a worker response on the main
+  thread; the worker's own time is not in it), `cpu.neural-network.sync-
+  display-fabric` (per cache generation: journal feed, eager mesh diff,
+  render-set sync, build request), `cpu.neural-network.fabric-commit` (the
+  fabric's half of a landed build: graph swap, delta grow/kill or full
+  reconcile), `cpu.neural-network.live-plan-slice` (per planning frame; frames
+  that plan nothing take no sample), `cpu.neural-network.active-pulse-frame`,
+  `cpu.neural-fabric.emit`, `cpu.neural-fabric.recall-aperture`,
+  `cpu.cell-nucleus.lod`, `cpu.bridge.sync-hosts` (every build) and
+  `cpu.bridge.select` (only builds whose hosts moved — two labels because a
+  mean over both populations would describe neither), `cpu.colony.topology`
+  and `cpu.colony.flood` (the App memos). Every span is a
+  `beginCpuProbe`/`endCpuProbe` pair or a `measureCpuProbe` around the real
+  call site; nothing is sampled on a substitute path.
+
+#### Counters beside the probe
+
+Always-on integer counters on `window`, each with a `…Reset()`; read them
+around a window the way the probe is read. `__fabricStats().bridge` (host-
+registry skips, strokes moved, uploads) and `__fabricStats().topology`
+(patched vs whole applies, the `unchainedApplies` and `staleResends` chain
+breaks, worker fallbacks); `__uploadStats()` (bufferSubData bytes by lane,
+the cell attributes included); `__colonyStats()` (`topologyBuilds` against
+`scaffoldMisses`, `floods`, `edgeGeometryBuilds`, `courierSchedules`,
+`deliveryPlans`); `__cellPickStats()` (raycasts, `suspendedSkips`, `reuses`,
+`rebuilds`, and `rebuildReasons`, which counts every gate open at a rebuild
+and so sums to more than `rebuilds`); `__pulseStats()`,
+`__producerOriginStats()` and `__qualityStats()` as before. Under a
+development StrictMode mount the colony's memo-driven counters read double;
+production is exact.
+
+#### The off path
+
+With sampling off — no GL·08 panel, no `render-stats=1` — every probe site
+is a boolean gate: `beginCpuProbe`/`beginGpuProbe` return `null` before any
+clock read, GL call or allocation, the draw callbacks read one count and
+return, the scene bracket is not installed at all, and the counters above are
+plain integer increments. `packages/ui/__tests__/tweaks/gpuProbeFrame.test.ts`
+pins a full frame of every scoped draw against a spied clock, a spied
+timer-query context and V8's new-space growth. When sampling is on, query
+objects are pooled: a steady-state frame creates and deletes none.
 
 `gpu.state.availability: "unsupported"` means WebGL2 timer queries or
 `EXT_disjoint_timer_query_webgl2` are unavailable; missing GPU metrics are
@@ -1355,7 +1441,8 @@ Before merging a Canvas change, answer:
 | Canonical rewrite echo | `packages/ui/src/components/CanonicalRewriteEcho.tsx` |
 | Simulation clock | `packages/ui/src/tweaks/simClock.ts`, `packages/ui/src/tweaks/SimClockTicker.tsx`, `packages/ui/src/tweaks/useSimFrame.ts` |
 | Portrait scissor pass | `packages/ui/src/components/hud/CellPortraitInset.tsx` |
-| Render diagnostics | `packages/ui/src/tweaks/RenderStatsSampler.tsx`, `packages/ui/src/tweaks/performanceProbeStore.ts`, `packages/ui/src/tweaks/gpuTimerQuery.ts`, `packages/ui/src/tweaks/gpuUploadLedger.ts` |
+| Render diagnostics | `packages/ui/src/tweaks/RenderStatsSampler.tsx`, `packages/ui/src/tweaks/performanceProbeStore.ts`, `packages/ui/src/tweaks/gpuTimerQuery.ts`, `packages/ui/src/tweaks/nonEmptyGpuProbeCallbacks.ts`, `packages/ui/src/tweaks/gpuUploadLedger.ts`, `packages/ui/src/components/hud/RenderStatsPanel.tsx` |
+| Always-on churn counters and their window hook | `packages/ui/src/nerve/fabricStats.ts`, `packages/ui/src/nerve/bridgeStats.ts`, `packages/ui/src/geometry/neighborGraphBuilderStats.ts`, `packages/ui/src/derives/colonyStats.ts`, `packages/ui/src/geometry/cellPickStats.ts`, `packages/ui/src/derives/producerOriginStats.ts`, `packages/ui/src/nerve/pulseStats.ts`, `ui-app/src/pulse-stats-hook.ts` |
 | Deterministic browser review | `ui-app/VISUAL_REVIEW.md`, `ui-app/src/ProtocolEventLab.tsx` |
 
 ## 22. Glossary

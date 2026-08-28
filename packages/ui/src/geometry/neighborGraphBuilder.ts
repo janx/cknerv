@@ -18,6 +18,18 @@ import {
   type NeighborGraphWorkerRequest,
   type NeighborGraphWorkerResponse,
 } from './neighborGraphWorkerProtocol';
+import { neighborGraphBuilderStats } from './neighborGraphBuilderStats';
+import {
+  PERFORMANCE_PROBE_LABELS,
+  beginCpuProbe,
+  endCpuProbe,
+} from '../tweaks/performanceProbeStore';
+
+/** Dev-observable counters for paths that used to fail silently. They live in
+ * their own module so the fabric's window hook can carry them without pulling
+ * in the worker factory; re-exported here under the name the builder's
+ * readers and tests have always used. */
+export { neighborGraphBuilderStats } from './neighborGraphBuilderStats';
 
 export const DEFAULT_TOPOLOGY_WORKER_MIN_CELLS = 512;
 
@@ -28,39 +40,6 @@ export const DEFAULT_TOPOLOGY_WORKER_MIN_CELLS = 512;
  * design: even a 50K full pack on a slow machine is seconds, never half a
  * minute, so this only ever fires on a worker that is gone. */
 export const TOPOLOGY_WORKER_REQUEST_TIMEOUT_MS = 30_000;
-
-/** Dev-observable counters for paths that used to fail silently. A sync
- * fallback quietly re-runs the FULL topology build on the main thread — worth
- * seeing in a profile session, not worth a hard failure. */
-export const neighborGraphBuilderStats = {
-  /** Worker error / postMessage / deserialize failures → main-thread build. */
-  workerFallbacks: 0,
-  /** Builds below the worker threshold (expected, small fields). */
-  belowThresholdBuilds: 0,
-  /** In-flight requests the watchdog had to give up on (worker gone). */
-  workerTimeouts: 0,
-  /** Display graphs applied as an in-place patch against the graph the
-   * requester held — the O(churn) steady state of a chained session. */
-  patchedApplies: 0,
-  /** Display graphs rebuilt from a whole adjacency (bootstrap, fresh
-   * worker, or a caller that cannot patch). */
-  fullApplies: 0,
-  /** Whole applies forced by a generation gap — a superseded, dropped or
-   * failed build between two applied ones broke the chain. Each one is a
-   * whole O(V) display rebuild and, when a selection rides, a whole passive
-   * list. */
-  unchainedApplies: 0,
-  /** Delta requests the session refused (`stale`): each costs a full
-   * re-pack and a second worker round trip before the graph lands. */
-  staleResends: 0,
-  /** Passive selections merged in place from a patch — one per chained
-   * build that carried a selection; the O(edges + churn) steady state. */
-  passivePatchedApplies: 0,
-  /** Passive selections rebuilt from a whole edge list (bootstrap, fresh
-   * worker, a caller that cannot patch, or the first selection after a build
-   * without one). */
-  passiveFullApplies: 0,
-};
 
 let workerFallbackWarned = false;
 
@@ -375,6 +354,11 @@ export function createNeighborGraphBuilder(
       }
       return;
     }
+    // The main-thread half of a topology build: patching (or, off a broken
+    // chain, rebuilding) the display adjacency and the passive selection the
+    // caller holds. The worker's own time is not in it. Disabled, the probe
+    // returns before any clock read.
+    const commitProbe = beginCpuProbe(PERFORMANCE_PROBE_LABELS.topologyCommit);
     try {
       const reuse = current.reuseFrom?.() ?? null;
       const chained = response.generation === lastAppliedGeneration + 1;
@@ -429,6 +413,8 @@ export function createNeighborGraphBuilder(
       current.resolve(result);
     } catch (error) {
       failWorker(error);
+    } finally {
+      endCpuProbe(commitProbe);
     }
   };
 

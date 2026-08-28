@@ -41,6 +41,9 @@ import {
   makeColonyHorizonMaterial,
 } from '../materials/colonyAccretion';
 import { useStableList } from './ColonyNodes';
+import { PERFORMANCE_PROBE_LABELS } from '../tweaks/performanceProbeStore';
+import { createGpuProbeCallbacks } from '../tweaks/gpuTimerQuery';
+import { createNonEmptyDrawGpuProbeCallbacks } from '../tweaks/nonEmptyGpuProbeCallbacks';
 
 /** Ceiling on the holes this layer will draw at once.
  *
@@ -207,6 +210,17 @@ export default function ColonyAccretion({
   // forces a shader recompile; disposed on unmount only, for the same reason.
   const horizonMaterial = useMemo(() => makeColonyHorizonMaterial(), []);
   const accretionMaterial = useMemo(() => makeColonyAccretionMaterial(), []);
+  // True per-draw GPU timings for the two instanced passes when the opt-in
+  // render probe owns a timer-query context; a boolean gate otherwise, and no
+  // query while no cohort stands (the layer unmounts then anyway).
+  const accretionGpuProbes = useMemo(() => ({
+    horizon: createNonEmptyDrawGpuProbeCallbacks(
+      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.colonyAccretionHorizon),
+    ),
+    disc: createNonEmptyDrawGpuProbeCallbacks(
+      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.colonyAccretionDisc),
+    ),
+  }), []);
   const capacity = Math.max(1, marks.length);
 
   // The two per-cohort lanes, allocated once for a capacity and rewritten in
@@ -313,6 +327,7 @@ export default function ColonyAccretion({
       <instancedMesh
         ref={horizonMeshRef}
         args={[horizonGeometry, horizonMaterial, capacity]}
+        {...accretionGpuProbes.horizon}
         frustumCulled={false}
         renderOrder={1}
         raycast={() => null}
@@ -320,6 +335,7 @@ export default function ColonyAccretion({
       <instancedMesh
         ref={accretionMeshRef}
         args={[accretionGeometry, accretionMaterial, capacity]}
+        {...accretionGpuProbes.disc}
         frustumCulled={false}
         renderOrder={2}
         raycast={() => null}

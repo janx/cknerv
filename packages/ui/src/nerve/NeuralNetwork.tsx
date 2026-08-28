@@ -40,6 +40,7 @@ import {
   PERFORMANCE_PROBE_LABELS,
   beginCpuProbe,
   endCpuProbe,
+  measureCpuProbe,
 } from '../tweaks/performanceProbeStore';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
 import { fabricAllocationEdges } from './fabricCapacity';
@@ -690,6 +691,10 @@ function NeuralNetwork({
         || displayRequestedTopologyVersionRef.current
           !== requestedTopologyVersion
       ) return;
+      // The fabric's half of a landed build — the graph swap, then the delta
+      // grow/kill or the full setFabric reconcile — on the main thread. Off,
+      // the probe returns before any clock read.
+      const commitProbe = beginCpuProbe(PERFORMANCE_PROBE_LABELS.fabricCommit);
       const passiveGraph = result.passiveGraph ?? emptyPassiveSelection();
       displayRequestedCellsRef.current = null;
       displayRequestedTopologyVersionRef.current = -1;
@@ -773,6 +778,7 @@ function NeuralNetwork({
           simClock.elapsedSec,
         );
       }
+      endCpuProbe(commitProbe);
       invalidate();
     }).catch((error: unknown) => {
       if (displayBuildGenerationRef.current !== generation) return;
@@ -801,7 +807,10 @@ function NeuralNetwork({
   ]);
 
   useEffect(() => {
-    syncDisplayFabric();
+    // One opt-in CPU span per cache generation: the journal feed, the eager
+    // mesh diff, the render-set sync and the build request together. Off,
+    // this is the bare call.
+    measureCpuProbe(PERFORMANCE_PROBE_LABELS.syncDisplayFabric, syncDisplayFabric);
   }, [syncDisplayFabric]);
 
   // Pulse queue. Pulses are removed when their head reaches the
@@ -1523,8 +1532,12 @@ function NeuralNetwork({
   useFrame(() => {
     const queue = livePlanQueueRef.current;
     if (queue.batches.length === 0) return;
+    // Opt-in CPU span over the slice, taken only on frames that plan, so its
+    // mean is a slice mean and not one over the empty frames between.
+    const sliceProbe = beginCpuProbe(PERFORMANCE_PROBE_LABELS.livePlanSlice);
     livePlanStep.nowSec = simClock.elapsedSec;
     const report = stepLivePulseQueue(queue, livePlanStep);
+    endCpuProbe(sliceProbe);
     if (report.admitted > 0) {
       // Soft cap — drop oldest if we're way over, shedding rescue pulses
       // last (each is some block's only light).

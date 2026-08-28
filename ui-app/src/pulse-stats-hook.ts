@@ -4,8 +4,17 @@
 //                                    recallOutcomes, rescues, ringEvicted,
 //                                    blocks*, firedRatePct, recalledRatePct }
 //   window.__pulseStatsReset()   → zero the pulse counters for a clean observation
-//   window.__fabricStats()       → { diffCalls, recentDiffs, frames, fullWalkReasons, animating* }
-//   window.__fabricStatsReset()  → zero the fabric-churn counters
+//   window.__fabricStats()       → { diffCalls, recentDiffs, frames, fullWalkReasons,
+//                                    animating*, bridge, topology }
+//                                  — `bridge` is the bridge layer's own churn
+//                                    (selections skipped/run, strokes moved,
+//                                    uploads); `topology` is the worker
+//                                    pipeline every build came through
+//                                    (patched vs whole applies, chain breaks:
+//                                    `unchainedApplies`, `staleResends`,
+//                                    fallbacks)
+//   window.__fabricStatsReset()  → zero the fabric-churn counters (bridge and
+//                                  topology included)
 //   window.__uploadStats()       → { lanes: { fabric, bridge, cells }, bytes,
 //                                    commits } — bytes flagged for
 //                                    bufferSubData by lane (Σ, last, max)
@@ -25,6 +34,19 @@
 //                                    one thing a live pass cannot see by
 //                                    looking at the scene.
 //   window.__producerOriginStatsReset() → zero the origin counters
+//   window.__colonyStats()       → { topologyBuilds, scaffoldHits, scaffoldMisses,
+//                                    floods, edgeGeometryBuilds, courierSchedules,
+//                                    deliveryPlans } — how often the colony
+//                                    REBUILT, and how much each rebuild
+//                                    dragged with it. Reset, wait out a few
+//                                    peer polls and blocks, and read.
+//   window.__colonyStatsReset()  → zero the colony rebuild counters
+//   window.__cellPickStats()     → { raycasts, suspendedSkips, reuses, rebuilds,
+//                                    rebuildReasons, padRefreshes, hits } — the
+//                                    Cell picker's index rebuilds and which
+//                                    gate tripped each one. Reset, sweep the
+//                                    pointer or drag the camera, and read.
+//   window.__cellPickStatsReset() → zero the picker counters
 //   window.__renderPerformanceStats()   → bounded p50/p95/p99 CPU/GPU/frame data
 //   window.__renderPerformanceStatsJson() → versioned JSON export
 //   window.__renderPerformanceStatsReset() → clean measurement window
@@ -39,6 +61,10 @@ import {
   resetGpuUploads,
   snapshotProducerOriginStats,
   resetProducerOriginStats,
+  snapshotColonyStats,
+  resetColonyStats,
+  snapshotCellPickStats,
+  resetCellPickStats,
   snapshotPerformanceProbe,
   exportPerformanceProbeJson,
   resetPerformanceProbe,
@@ -55,6 +81,10 @@ declare global {
     __qualityStats?: typeof getQualityRuntimeSnapshot;
     __producerOriginStats?: typeof snapshotProducerOriginStats;
     __producerOriginStatsReset?: typeof resetProducerOriginStats;
+    __colonyStats?: typeof snapshotColonyStats;
+    __colonyStatsReset?: typeof resetColonyStats;
+    __cellPickStats?: typeof snapshotCellPickStats;
+    __cellPickStatsReset?: typeof resetCellPickStats;
     __renderPerformanceStats?: typeof snapshotPerformanceProbe;
     __renderPerformanceStatsJson?: typeof exportPerformanceProbeJson;
     __renderPerformanceStatsReset?: typeof resetPerformanceProbe;
@@ -72,6 +102,10 @@ export function installPulseStatsHook(): void {
   window.__qualityStats = getQualityRuntimeSnapshot;
   window.__producerOriginStats = snapshotProducerOriginStats;
   window.__producerOriginStatsReset = resetProducerOriginStats;
+  window.__colonyStats = snapshotColonyStats;
+  window.__colonyStatsReset = resetColonyStats;
+  window.__cellPickStats = snapshotCellPickStats;
+  window.__cellPickStatsReset = resetCellPickStats;
   window.__renderPerformanceStats = snapshotPerformanceProbe;
   window.__renderPerformanceStatsJson = exportPerformanceProbeJson;
   window.__renderPerformanceStatsReset = resetPerformanceProbe;

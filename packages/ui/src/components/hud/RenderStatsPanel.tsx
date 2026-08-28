@@ -59,6 +59,21 @@ export default function RenderStatsPanel({ style }: RenderStatsPanelProps) {
       >
         {fmtCompact(stats.uploadBytesPerFrame)}
       </StatRow>
+      {/* The two GPU readings need the timer-query extension; without it, or
+          before the first bracket frame resolves, they honestly read nothing
+          rather than zero. */}
+      <StatRow
+        label="GPU"
+        title="GPU ms per frame: one timer query around the whole scene pass, taken on alternate sampled frames (frame.gpu)"
+      >
+        {stats.gpuFrameMs === null ? '—' : stats.gpuFrameMs.toFixed(2)}
+      </StatRow>
+      <StatRow
+        label="OTHER"
+        title="GPU ms per frame no scoped draw accounts for: the scene bracket minus the sum of the per-draw scopes on the frames between"
+      >
+        {stats.gpuUnscopedMs === null ? '—' : stats.gpuUnscopedMs.toFixed(2)}
+      </StatRow>
     </HudPanel>
   );
 }

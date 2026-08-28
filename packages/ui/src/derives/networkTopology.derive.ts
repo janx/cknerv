@@ -10,6 +10,7 @@ import {
 import type { Vec3, NetworkNode, NetworkEdge, NetworkTopology, EdgeKind } from '../types';
 import type { ProducerStanding } from './blockProducers.derive';
 import type { NetworkRosterRecord, RosterNodeState, Peer } from '@cknerv/types';
+import { colonyStats } from './colonyStats';
 
 /** Peer-independent inferred-node count (seeded ±). Tune live. */
 export const COLONY_INFERRED_COUNT = 240;
@@ -424,8 +425,12 @@ function inferredScaffold(
     && scaffoldCacheSightedKey === sightedCacheKey
     && scaffoldCacheAttestedKey === attestedCacheKey
   ) {
+    colonyStats.observeScaffold(true);
     return scaffoldCache;
   }
+  // The expensive half, counted where it is paid: the review that asked how
+  // often this fires could only answer "unmeasurable" (`colonyStats`).
+  colonyStats.observeScaffold(false);
   const infPts = scatterInferred(seed);
   // ⭐ Prefix fill: staged nodes take the ghosts' places one for one, and the
   // ghosts that remain are the FIRST points of the untouched seed-pure scatter.
@@ -503,6 +508,7 @@ export function inferredTopology(
   roster?: NetworkRosterRecord | null, localP2pId?: string | null,
   producers?: readonly ProducerStanding[] | null,
 ): NetworkTopology {
+  colonyStats.observeTopologyBuild();
   // 1) local anchor. When a `localPos` is supplied (App pins it onto the galaxy's
   //    labeled CkbNodeAnchor so there's a single "you"), it IS the local node's
   //    position AND the anchor the measured peers scatter around. Otherwise fall

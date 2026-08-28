@@ -4,6 +4,7 @@
 import { mulberry32 } from '../layout';
 import { fnv1a } from '../geometry/edgeBezier';
 import { attestedNodeId, dist2 } from './networkTopology.derive';
+import { colonyStats } from './colonyStats';
 import type { NetworkTopology } from '../types';
 
 /**
@@ -281,6 +282,7 @@ export interface ColonyFlood {
 export function colonyFlood(
   topology: NetworkTopology, nonce: number, producerKey?: string | null,
 ): ColonyFlood {
+  colonyStats.observeFlood();
   if (topology.nodes.length <= 1) {
     return { entryId: null, localReceiveDelayS: 0, arrivals: {}, senders: {}, colonyArrivalS: {}, colonyPredecessor: {} };
   }

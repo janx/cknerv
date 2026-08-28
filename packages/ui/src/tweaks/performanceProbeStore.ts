@@ -3,30 +3,74 @@
 // typed array. RenderStatsSampler retains it only while GL·08 is mounted or a
 // review URL explicitly enables `?render-stats=1`.
 
-export const PERFORMANCE_PROBE_SCHEMA_VERSION = 1;
+export const PERFORMANCE_PROBE_SCHEMA_VERSION = 2;
 export const PERFORMANCE_PROBE_SAMPLE_CAPACITY = 512;
 const PERFORMANCE_PROBE_LABEL_CAPACITY = 64;
 
+/** Every Nth sampled frame is a BRACKET frame: the per-draw GPU scopes stand
+ * down and one TIME_ELAPSED query wraps the whole scene pass instead (see
+ * `gpuTimerQuery`). WebGL allows one query of that target at a time, so the
+ * two can never share a frame; alternating them samples both streams from the
+ * same steady state, and the difference between them is the GPU time no scope
+ * accounts for. */
+export const GPU_FRAME_BRACKET_PERIOD = 2;
+
 /** Canonical names for the passes and CPU paths in the Canvas performance
  * contract. Registering a name does not manufacture a sample: an absent key in
- * a snapshot means the corresponding renderer has not installed a scope yet. */
+ * a snapshot means the corresponding renderer has not installed a scope yet.
+ *
+ * GPU labels are one physical draw each — a mean is a draw mean, never a
+ * mixture whose sample count is some multiple of frames — and every one of
+ * them lives in the `gpu` domain. `frameGpu` is the exception: the whole
+ * scene pass, sampled on bracket frames and filed in the `frame` domain, so
+ * Σ over `gpu` is exactly the scoped total. */
 export const PERFORMANCE_PROBE_LABELS = {
   frameInterval: 'frame.interval',
+  frameGpu: 'frame.gpu',
   populationPoints: 'population.points',
   populationResidualFibres: 'population.residual-fibres',
   populationBackboneCapsules: 'population.backbone-capsules',
+  cellBody: 'cell.body',
+  cellFlare: 'cell.flare',
+  cellNucleusGlow: 'cell.nucleus.glow',
+  cellNucleusCore: 'cell.nucleus.core',
+  cellNucleusNodes: 'cell.nucleus.nodes',
   // Passive fabric is two physical draws; keep them separate so a mean is a
   // draw mean, not an accidental mixture whose sample count is 2× frames.
   passiveFabricBase: 'nerve.passive-fabric.base',
   passiveFabricTrunk: 'nerve.passive-fabric.trunk',
   activeRoute: 'nerve.active-route',
   memoryRoute: 'nerve.memory-route',
+  bridgeNerves: 'nerve.bridge',
+  colonyHaze: 'colony.cloud.haze',
+  colonyCloudAdvertised: 'colony.cloud.advertised',
+  colonyCloudRemembered: 'colony.cloud.remembered',
+  colonyCloudReached: 'colony.cloud.reached',
+  colonyMeasuredHalos: 'colony.measured-halos',
+  colonyEdges: 'colony.edges',
+  colonyAccretionHorizon: 'colony.accretion.horizon',
+  colonyAccretionDisc: 'colony.accretion.disc',
+  colonyCourierPlume: 'colony.courier.plume',
+  colonyCourierBloom: 'colony.courier.bloom',
+  deliveryBody: 'delivery.body',
+  deliveryCore: 'delivery.core',
+  deliveryTrail: 'delivery.trail',
+  deliveryWave: 'delivery.wave',
+  stars: 'stars',
   neuralFabricEmit: 'cpu.neural-fabric.emit',
   recallAperture: 'cpu.neural-fabric.recall-aperture',
   cellNucleusLod: 'cpu.cell-nucleus.lod',
   activePulseFrame: 'cpu.neural-network.active-pulse-frame',
+  livePlanSlice: 'cpu.neural-network.live-plan-slice',
+  syncDisplayFabric: 'cpu.neural-network.sync-display-fabric',
+  fabricCommit: 'cpu.neural-network.fabric-commit',
   cellFieldIngest: 'cpu.cell-field.ingest',
+  cellsCacheApply: 'cpu.cells-cache.apply-deltas',
   topologyCommit: 'cpu.topology.commit',
+  bridgeHostsSync: 'cpu.bridge.sync-hosts',
+  bridgeSelect: 'cpu.bridge.select',
+  colonyTopology: 'cpu.colony.topology',
+  colonyFlood: 'cpu.colony.flood',
 } as const;
 
 export type PerformanceProbeLabel = string;
@@ -73,6 +117,28 @@ export interface GpuProbeStateSnapshot {
   droppedByReason: Record<GpuProbeDropReason, number>;
 }
 
+/** Which of the two mutually exclusive query streams a sampled frame carries. */
+export type GpuProbeFrameMode = 'scopes' | 'bracket';
+/** What one TIME_ELAPSED query measured: a single draw or the scene pass. */
+export type GpuProbeQueryKind = 'scope' | 'bracket';
+
+/** Running totals behind the "unscoped remainder" reading. Both streams are
+ * ms per frame OF THEIR OWN KIND: `bracketMs / bracketFrames` is the scene
+ * pass, `scopedMs / scopeFrames` is Σ of the per-draw scopes over the frames
+ * that carried them — divided by frames, not by samples, so a draw that is
+ * only sometimes non-empty is weighed exactly as often as it drew. */
+export interface GpuFrameLedgerSnapshot {
+  /** Sampled frames so far, both kinds, and what the current one carries. */
+  frames: number;
+  mode: GpuProbeFrameMode;
+  bracketPeriod: number;
+  bracketMs: number;
+  bracketFrames: number;
+  scopedMs: number;
+  /** Distinct scope frames that resolved at least one scope. */
+  scopeFrames: number;
+}
+
 export interface PerformanceProbeSnapshot {
   schemaVersion: typeof PERFORMANCE_PROBE_SCHEMA_VERSION;
   enabled: boolean;
@@ -85,6 +151,7 @@ export interface PerformanceProbeSnapshot {
   cpu: Record<string, PerformanceProbeMetricSummary>;
   gpu: {
     state: GpuProbeStateSnapshot;
+    frameLedger: GpuFrameLedgerSnapshot;
     metrics: Record<string, PerformanceProbeMetricSummary>;
   };
 }
@@ -165,17 +232,20 @@ const metrics: Record<PerformanceProbeDomain, Map<string, MetricWindow>> = {
 let demand = 0;
 let startedAtMs: number | null = null;
 let generation = 0;
-let invalidSamples: Record<PerformanceProbeDomain, number> = {
+const invalidSamples: Record<PerformanceProbeDomain, number> = {
   frame: 0,
   cpu: 0,
   gpu: 0,
 };
-let rejectedLabels: Record<PerformanceProbeDomain, number> = {
+const rejectedLabels: Record<PerformanceProbeDomain, number> = {
   frame: 0,
   cpu: 0,
   gpu: 0,
 };
-let gpuState: GpuProbeStateSnapshot = {
+// Mutable fields, mutated in place: the GPU core reports a pending count on
+// every end() and poll(), and spreading a fresh record for each of those was
+// a per-draw allocation on the ON path. Snapshots copy on the way out.
+const gpuState: GpuProbeStateSnapshot = {
   availability: 'detached',
   reason: null,
   pendingQueries: 0,
@@ -183,6 +253,18 @@ let gpuState: GpuProbeStateSnapshot = {
   droppedQueries: 0,
   droppedByReason: zeroDropReasons(),
 };
+const frameLedger: GpuFrameLedgerSnapshot = {
+  frames: 0,
+  mode: 'scopes',
+  bracketPeriod: GPU_FRAME_BRACKET_PERIOD,
+  bracketMs: 0,
+  bracketFrames: 0,
+  scopedMs: 0,
+  scopeFrames: 0,
+};
+/** The last frame index a resolved scope was counted for, so a frame with
+ * many scopes is one scope frame. */
+let lastScopeFrame = -1;
 
 function probeNowMs(): number {
   return typeof performance === 'undefined' ? Date.now() : performance.now();
@@ -306,18 +388,16 @@ export function setGpuProbeAvailability(
   availability: GpuProbeAvailability,
   reason: string | null = null,
 ): void {
-  gpuState = { ...gpuState, availability, reason };
+  gpuState.availability = availability;
+  gpuState.reason = reason;
 }
 
 export function setGpuProbePendingQueries(pendingQueries: number): void {
-  gpuState = {
-    ...gpuState,
-    pendingQueries: Math.max(0, Math.floor(pendingQueries)),
-  };
+  gpuState.pendingQueries = Math.max(0, Math.floor(pendingQueries));
 }
 
 export function observeGpuProbeDisjointEvent(): void {
-  gpuState = { ...gpuState, disjointEvents: gpuState.disjointEvents + 1 };
+  gpuState.disjointEvents += 1;
 }
 
 export function observeGpuProbeDrop(
@@ -325,14 +405,54 @@ export function observeGpuProbeDrop(
   count = 1,
 ): void {
   if (count <= 0) return;
-  gpuState = {
-    ...gpuState,
-    droppedQueries: gpuState.droppedQueries + count,
-    droppedByReason: {
-      ...gpuState.droppedByReason,
-      [reason]: gpuState.droppedByReason[reason] + count,
-    },
-  };
+  gpuState.droppedQueries += count;
+  gpuState.droppedByReason[reason] += count;
+}
+
+/** Called once per rendered frame by the sampler, BEFORE the frame's draws,
+ * so every query begun in that frame knows which stream it belongs to. Inert
+ * while disabled: the mode stays `scopes` and nothing counts. */
+export function advanceGpuProbeFrame(): GpuProbeFrameMode {
+  if (demand === 0) return frameLedger.mode;
+  frameLedger.frames += 1;
+  frameLedger.mode = frameLedger.frames % GPU_FRAME_BRACKET_PERIOD === 0
+    ? 'bracket'
+    : 'scopes';
+  return frameLedger.mode;
+}
+
+export function gpuProbeFrameMode(): GpuProbeFrameMode {
+  return frameLedger.mode;
+}
+
+/** Index of the frame currently being sampled; queries carry it so a resolved
+ * scope can be attributed to the frame that drew it. */
+export function gpuProbeFrameIndex(): number {
+  return frameLedger.frames;
+}
+
+/** One resolved TIME_ELAPSED result, after the metric window accepted it. */
+export function observeGpuFrameLedger(
+  kind: GpuProbeQueryKind,
+  frame: number,
+  elapsedMs: number,
+): void {
+  if (kind === 'bracket') {
+    frameLedger.bracketMs += elapsedMs;
+    frameLedger.bracketFrames += 1;
+    return;
+  }
+  frameLedger.scopedMs += elapsedMs;
+  if (frame !== lastScopeFrame) {
+    lastScopeFrame = frame;
+    frameLedger.scopeFrames += 1;
+  }
+}
+
+/** The live ledger, by reference: the sampler differences four numbers per
+ * window and must not be handed a fresh object to do it. Read-only. */
+export function readGpuFrameLedger(): Readonly<GpuFrameLedgerSnapshot> {
+  return frameLedger;
 }
 
 export function snapshotPerformanceProbe(): PerformanceProbeSnapshot {
@@ -351,6 +471,7 @@ export function snapshotPerformanceProbe(): PerformanceProbeSnapshot {
         ...gpuState,
         droppedByReason: { ...gpuState.droppedByReason },
       },
+      frameLedger: { ...frameLedger },
       metrics: snapshotMetrics(metrics.gpu),
     },
   };
@@ -367,15 +488,23 @@ export function resetPerformanceProbe(nowMs = probeNowMs()): void {
   metrics.frame.clear();
   metrics.cpu.clear();
   metrics.gpu.clear();
-  invalidSamples = { frame: 0, cpu: 0, gpu: 0 };
-  rejectedLabels = { frame: 0, cpu: 0, gpu: 0 };
-  gpuState = {
-    ...gpuState,
-    pendingQueries: 0,
-    disjointEvents: 0,
-    droppedQueries: 0,
-    droppedByReason: zeroDropReasons(),
-  };
+  invalidSamples.frame = 0;
+  invalidSamples.cpu = 0;
+  invalidSamples.gpu = 0;
+  rejectedLabels.frame = 0;
+  rejectedLabels.cpu = 0;
+  rejectedLabels.gpu = 0;
+  gpuState.pendingQueries = 0;
+  gpuState.disjointEvents = 0;
+  gpuState.droppedQueries = 0;
+  gpuState.droppedByReason = zeroDropReasons();
+  frameLedger.frames = 0;
+  frameLedger.mode = 'scopes';
+  frameLedger.bracketMs = 0;
+  frameLedger.bracketFrames = 0;
+  frameLedger.scopedMs = 0;
+  frameLedger.scopeFrames = 0;
+  lastScopeFrame = -1;
   generation += 1;
   startedAtMs = nowMs;
 }

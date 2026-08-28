@@ -79,6 +79,12 @@ import {
 import { COHORT_HIT_RADIUS } from '../materials/colonyAccretion';
 import { ATTESTED_ID_PREFIX } from '../derives/networkTopology.derive';
 import { producerOriginStats } from '../derives/producerOriginStats';
+import {
+  PERFORMANCE_PROBE_LABELS,
+  type PerformanceProbeLabel,
+} from '../tweaks/performanceProbeStore';
+import { createGpuProbeCallbacks } from '../tweaks/gpuTimerQuery';
+import { createNonEmptyDrawGpuProbeCallbacks } from '../tweaks/nonEmptyGpuProbeCallbacks';
 
 // Measured core: bright, saturated, larger than the ghost haze.
 const MEASURED_SIZE = 1.4;
@@ -175,6 +181,16 @@ export const SIGHTED_HIT_RADII = Object.fromEntries(
 function sightedHitRadius(node: NetworkNode): number {
   return SIGHTED_HIT_RADII[sightedStop(node)];
 }
+
+/** The GPU probe label each stop's cloud draws under — one label per
+ *  physical draw, so a mean is a draw mean and never a mixture of stops.
+ *  Exhaustive by type like the stop table above: a stop with no label does
+ *  not compile. */
+const SIGHTED_PROBE_LABELS: Readonly<Record<SightedStop, PerformanceProbeLabel>> = {
+  advertised: PERFORMANCE_PROBE_LABELS.colonyCloudAdvertised,
+  remembered: PERFORMANCE_PROBE_LABELS.colonyCloudRemembered,
+  reached: PERFORMANCE_PROBE_LABELS.colonyCloudReached,
+};
 
 /** The staged nodes split into one bucket per stop, faintest first.
  *
@@ -395,6 +411,11 @@ function InferredCloud({
   const simClock = useSimClock();
   const gl = useThree((state) => state.gl);
   const inferred = useStableList(staged, sameNodeObject);
+  // True per-draw GPU timing when the opt-in render probe owns a timer-query
+  // context; a boolean gate otherwise, and no query for an empty cloud.
+  const hazeGpuProbe = useMemo(() => createNonEmptyDrawGpuProbeCallbacks(
+    createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.colonyHaze),
+  ), []);
 
   const geom = useMemo(() => {
     const g = new THREE.BufferGeometry();
@@ -431,7 +452,15 @@ function InferredCloud({
   // picked. r3f's pointer events already skip it (no handlers), but — unlike a
   // plain Object3D — THREE.Points ships a real default raycast, so guard it
   // defensively. Only the measured nodes carry onClick → onSelect('peer:…').
-  return <points geometry={geom} material={mat} frustumCulled={false} raycast={() => null} />;
+  return (
+    <points
+      geometry={geom}
+      material={mat}
+      {...hazeGpuProbe}
+      frustumCulled={false}
+      raycast={() => null}
+    />
+  );
 }
 
 /**
@@ -454,16 +483,22 @@ function InferredCloud({
 function StagedCloud({
   nodes,
   tone,
+  probeLabel,
   contextEnergyRef,
   shockwaveUniforms,
 }: {
   nodes: NetworkNode[];
   tone: PeerCloudTone;
+  /** The GPU probe label this stop's one draw samples under. */
+  probeLabel: PerformanceProbeLabel;
   contextEnergyRef?: { readonly current: number };
   shockwaveUniforms: ShockwaveUniforms;
 }) {
   const simClock = useSimClock();
   const gl = useThree((state) => state.gl);
+  const cloudGpuProbe = useMemo(() => createNonEmptyDrawGpuProbeCallbacks(
+    createGpuProbeCallbacks(probeLabel),
+  ), [probeLabel]);
 
   // Unlike the ghosts, these node objects are re-staged from the crawler's row
   // on every build, so identity says nothing. Their POSITIONS are `sightedPos`
@@ -499,7 +534,15 @@ function StagedCloud({
     mat.uniforms.uViewportHeight.value = gl.domElement.height;
   });
 
-  return <points geometry={geom} material={mat} frustumCulled={false} raycast={() => null} />;
+  return (
+    <points
+      geometry={geom}
+      material={mat}
+      {...cloudGpuProbe}
+      frustumCulled={false}
+      raycast={() => null}
+    />
+  );
 }
 
 /**
@@ -697,6 +740,11 @@ function MeasuredPeerHalos({
     return plane;
   }, []);
   const capacity = Math.max(1, measured.length);
+  // True per-draw GPU timing for the belt's one instanced draw; skipped while
+  // no peer is measured, a boolean gate while the probe is off.
+  const halosGpuProbe = useMemo(() => createNonEmptyDrawGpuProbeCallbacks(
+    createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.colonyMeasuredHalos),
+  ), []);
 
   // The four per-peer lanes, allocated once for a capacity and rewritten in
   // place. ⚠️ Wrapping data in a NEW InstancedBufferAttribute is what orphans
@@ -768,6 +816,7 @@ function MeasuredPeerHalos({
     <instancedMesh
       ref={meshRef}
       args={[geometry, material, capacity]}
+      {...halosGpuProbe}
       frustumCulled={false}
     />
   );
@@ -997,6 +1046,7 @@ export default function ColonyNodes({
           key={stop}
           nodes={byStop[stop]}
           tone={SIGHTED_STOPS[stop]}
+          probeLabel={SIGHTED_PROBE_LABELS[stop]}
           contextEnergyRef={contextEnergyRef}
           shockwaveUniforms={shockwaveUniforms}
         />

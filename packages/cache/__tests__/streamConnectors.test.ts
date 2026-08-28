@@ -760,6 +760,69 @@ describe('server frame envelopes', () => {
   });
 });
 
+describe('instrumented reducer apply', () => {
+  it('runs each batch apply through the caller\'s wrapper exactly once and publishes what it returns', () => {
+    vi.stubGlobal('WebSocket', MockWebSocket);
+    const scheduled: { flush?: FrameRequestCallback } = {};
+    vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => {
+      scheduled.flush = callback;
+      return 7;
+    }));
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    const flush = () => {
+      const run = scheduled.flush;
+      scheduled.flush = undefined;
+      if (!run) throw new Error('projection delta flush was not scheduled');
+      run(16);
+    };
+    // The dashboard hands in its CPU probe; here the wrapper only counts and
+    // proves the connector neither drops nor double-runs the apply it is
+    // handed, and publishes the cache that apply produced.
+    const wrapped: number[] = [];
+    const instrumentApply = <T>(apply: () => T): T => {
+      wrapped.push(wrapped.length + 1);
+      return apply();
+    };
+    const changes = vi.fn();
+    const handle = connectCellsStream(
+      'ws://localhost/api/projections/cells/stream',
+      emptyCellsCache(),
+      changes,
+      { instrumentApply },
+    );
+    const socket = MockWebSocket.instances[0];
+
+    socket.message({
+      kind: 'delta',
+      revision: 1,
+      deltas: [{ revision: 1, delta: { type: 'birth', cell: cell(1) } }],
+    });
+    socket.message({
+      kind: 'delta',
+      revision: 2,
+      deltas: [{ revision: 2, delta: { type: 'birth', cell: cell(2) } }],
+    });
+    // Two frames coalesce into one apply, so one wrapped call.
+    expect(wrapped).toEqual([]);
+    flush();
+    expect(wrapped).toEqual([1]);
+    expect(changes).toHaveBeenCalledTimes(1);
+    expect(changes.mock.calls[0][0]).toMatchObject({ revision: 2 });
+    expect(changes.mock.calls[0][0].cells.size).toBe(2);
+
+    // A snapshot is not an apply: the wrapper never sees it.
+    socket.message({
+      kind: 'delta',
+      revision: 3,
+      deltas: [{ revision: 3, delta: { type: 'pulse', at_ms: 3000 } }],
+    });
+    flush();
+    expect(wrapped).toEqual([1, 2]);
+    expect(changes.mock.calls[1][0]).toMatchObject({ revision: 3, lastPulseAtMs: 3000 });
+    handle.disconnect();
+  });
+});
+
 describe('revision-only projection batches', () => {
   /** One scheduled flush at a time, driven by hand: the connector coalesces a
    *  frame's deltas behind requestAnimationFrame. */

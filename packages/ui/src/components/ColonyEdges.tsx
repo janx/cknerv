@@ -28,7 +28,11 @@ import { fnv1a } from '../geometry/edgeBezier';
 import type { NetworkTopology } from '../types';
 import type { ColonyFlood } from '../derives/networkFlood.derive';
 import { consensusBlockColor } from '../derives/consensusFlow.derive';
+import { colonyStats } from '../derives/colonyStats';
 import { PEER_NETWORK_PALETTE } from '../visualPalette';
+import { PERFORMANCE_PROBE_LABELS } from '../tweaks/performanceProbeStore';
+import { createGpuProbeCallbacks } from '../tweaks/gpuTimerQuery';
+import { createNonEmptyDrawGpuProbeCallbacks } from '../tweaks/nonEmptyGpuProbeCallbacks';
 
 // Gossamer line color for the whole mesh — the faint blue that matches ColonyNodes'
 // inferred ghost cloud so edges + cloud read as one structure. Confidence lives in
@@ -191,6 +195,9 @@ export default function ColonyEdges({
   const edges = topology.edges;
 
   const geom = useMemo(() => {
+    // Counted where it is paid: every topology identity rebuilds these seven
+    // attributes and their GPU buffers (`colonyStats`).
+    colonyStats.observeEdgeGeometryBuild();
     const posById = new Map(topology.nodes.map((n) => [n.id, n.pos] as const));
     const g = new THREE.BufferGeometry();
     const pos = new Float32Array(edges.length * 6);
@@ -242,6 +249,12 @@ export default function ColonyEdges({
   // Memoized on [] (stable for the component's life) so it survives topology
   // re-clones without a shader recompile; uTime/surge live in mutable uniforms.
   const mat = useMemo(() => makeColonyEdgeMaterial(), []);
+  // True per-draw GPU timing for the one link draw when the opt-in render
+  // probe owns a timer-query context; a boolean gate otherwise, and no query
+  // for a topology with no edges.
+  const edgesGpuProbe = useMemo(() => createNonEmptyDrawGpuProbeCallbacks(
+    createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.colonyEdges),
+  ), []);
 
   // Drive the ambient current every frame (surge reads the same uTime vs its stamps).
   // Ambient/surge tunables are refreshed from LIVE.peer.* each frame (panel drags
@@ -315,5 +328,12 @@ export default function ColonyEdges({
   // reused material and force a needless shader recompile on every re-clone.
   useEffect(() => () => mat.dispose(), [mat]);
 
-  return <lineSegments geometry={geom} material={mat} frustumCulled={false} />;
+  return (
+    <lineSegments
+      geometry={geom}
+      material={mat}
+      {...edgesGpuProbe}
+      frustumCulled={false}
+    />
+  );
 }

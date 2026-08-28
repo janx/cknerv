@@ -51,6 +51,37 @@ describe('installPulseStatsHook', () => {
     window.__uploadStatsReset!();
     expect(window.__uploadStats!().bytes).toBe(0);
 
+    // The bridge layer's counters and the topology pipeline's ride inside the
+    // fabric's snapshot: the layer the fabric is built beside, and the worker
+    // every build came through, read off one hook.
+    const fabric = window.__fabricStats!();
+    expect(fabric).toHaveProperty('bridge.selectionsSkipped');
+    expect(fabric).toHaveProperty('bridge.strokesMoved');
+    expect(fabric).toHaveProperty('topology.patchedApplies');
+    expect(fabric).toHaveProperty('topology.unchainedApplies');
+    expect(fabric).toHaveProperty('topology.staleResends');
+    expect(fabric).toHaveProperty('topology.workerFallbacks');
+
+    // The colony's rebuild cadence and the Cell picker's rebuilds: both were
+    // "unmeasurable today" in the review that asked, and each answers from
+    // the page now, on the same surface with the same reset discipline.
+    expect(typeof window.__colonyStats).toBe('function');
+    expect(typeof window.__colonyStatsReset).toBe('function');
+    const colony = window.__colonyStats!();
+    expect(colony).toHaveProperty('topologyBuilds');
+    expect(colony).toHaveProperty('scaffoldMisses');
+    expect(colony).toHaveProperty('edgeGeometryBuilds');
+    window.__colonyStatsReset!();
+    expect(window.__colonyStats!().topologyBuilds).toBe(0);
+    expect(typeof window.__cellPickStats).toBe('function');
+    expect(typeof window.__cellPickStatsReset).toBe('function');
+    const picker = window.__cellPickStats!();
+    expect(picker).toHaveProperty('rebuilds');
+    expect(picker).toHaveProperty('suspendedSkips');
+    expect(picker).toHaveProperty('rebuildReasons.pointerdown');
+    window.__cellPickStatsReset!();
+    expect(window.__cellPickStats!().raycasts).toBe(0);
+
     // The opt-in render probe rides the same devtools surface. The hooks are
     // always discoverable, but the snapshot proves measurement itself remains
     // disabled until RenderStatsSampler is demanded / ?render-stats=1.
@@ -58,11 +89,13 @@ describe('installPulseStatsHook', () => {
     expect(typeof window.__renderPerformanceStatsJson).toBe('function');
     expect(typeof window.__renderPerformanceStatsReset).toBe('function');
     const performance = window.__renderPerformanceStats!();
-    expect(performance.schemaVersion).toBe(1);
+    // Schema 2: the frame bracket and its ledger joined the export.
+    expect(performance.schemaVersion).toBe(2);
     expect(performance.enabled).toBe(false);
     expect(performance.gpu.metrics).toEqual({});
+    expect(performance.gpu.frameLedger.frames).toBe(0);
     expect(JSON.parse(window.__renderPerformanceStatsJson!())).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       enabled: false,
     });
   });

@@ -86,6 +86,13 @@ import { LIVE } from '../tweaks/liveTweaks';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import {
+  PERFORMANCE_PROBE_LABELS,
+  beginCpuProbe,
+  endCpuProbe,
+} from '../tweaks/performanceProbeStore';
+import { createGpuProbeCallbacks } from '../tweaks/gpuTimerQuery';
+import { createNonEmptyInstanceGpuProbeCallbacks } from '../tweaks/nonEmptyGpuProbeCallbacks';
+import {
   BRIDGE_SLOT_UPLOAD_BYTES,
   bridgeStats,
   bridgeUploadBytes,
@@ -320,6 +327,13 @@ export default function CellBridgeNerves({
     built.mesh.raycast = neverRaycast;
     return built;
   }, []);
+  // True per-draw GPU timing for the one bridge draw when the opt-in render
+  // probe owns a timer-query context, composed with LineSegments2's own
+  // before-render hook and skipped while the instance count is zero.
+  const bridgeGpuProbe = useMemo(() => createNonEmptyInstanceGpuProbeCallbacks(
+    layer.mesh,
+    createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.bridgeNerves),
+  ), [layer]);
 
   const strokesRef = useRef<Map<string, BridgeStrokeState>>(new Map());
   /** The selection's input across builds — see `syncBridgeHosts`. */
@@ -393,11 +407,16 @@ export default function CellBridgeNerves({
   useEffect(() => {
     if (anchorIndex === null) return;
     const registry = registryRef.current;
+    // Two opt-in CPU spans, one per population: the registry sync runs on
+    // every build, the selection only when the sync says a host moved, and a
+    // mean over both would be a mean of nothing.
+    const hostsProbe = beginCpuProbe(PERFORMANCE_PROBE_LABELS.bridgeHostsSync);
     const moved = syncBridgeHosts(
       registry,
       cellsRef.current,
       passiveGraphRef.current.edges,
     );
+    endCpuProbe(hostsProbe);
     const now = simClock.elapsedSec;
     // ⭐ The skip. The registry is exact about what the selection reads, so a
     // build that moved no host against the same anchors would select the
@@ -422,6 +441,7 @@ export default function CellBridgeNerves({
     if (planCacheRef.current.size > MEMO_CAP) {
       planCacheRef.current = new Map();
     }
+    const selectProbe = beginCpuProbe(PERFORMANCE_PROBE_LABELS.bridgeSelect);
     const selection = selectBridgeEdges(registry.hosts.values(), anchorIndex, {
       coverageCache: coverageCacheRef.current,
       planCache: planCacheRef.current,
@@ -438,6 +458,7 @@ export default function CellBridgeNerves({
     const changed = reconcileBridgeStrokes(
       strokesRef.current, selection.bridges, now, pendingRef.current,
     );
+    endCpuProbe(selectProbe);
     bridgeStats.observeBuild(false, changed);
     // The boot record's outer-nerve deadline. The first selection against a
     // real topology build (version 0 is the pre-build mount pass over an
@@ -592,5 +613,5 @@ export default function CellBridgeNerves({
     }
   });
 
-  return <primitive object={layer.mesh} />;
+  return <primitive object={layer.mesh} {...bridgeGpuProbe} />;
 }

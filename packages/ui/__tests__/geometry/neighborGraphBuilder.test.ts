@@ -23,6 +23,17 @@ import {
   createTopologyJournal,
   type TopologyJournal,
 } from '../../src/geometry/topologyJournal';
+import {
+  resetNeighborGraphBuilderStats,
+  snapshotNeighborGraphBuilderStats,
+} from '../../src/geometry/neighborGraphBuilderStats';
+import { snapshotFabricStats } from '../../src/nerve/fabricStats';
+import {
+  PERFORMANCE_PROBE_LABELS,
+  resetPerformanceProbe,
+  retainPerformanceProbe,
+  snapshotPerformanceProbe,
+} from '../../src/tweaks/performanceProbeStore';
 
 /** One cell of the shared lattice: index decides the position, so a birth
  *  lands where the k-NN actually links it. */
@@ -861,5 +872,60 @@ describe('createNeighborGraphBuilder (worker session chain integrity)', () => {
     expect(worker.posted[2].preferredEdges).not.toBeNull();
     builder.dispose();
     expect(await third).toBeNull();
+  });
+});
+
+describe('builder diagnostics', () => {
+  it('spans the main-thread apply of a worker response under the opt-in probe', async () => {
+    resetPerformanceProbe(0);
+    const release = retainPerformanceProbe();
+    const worker = new FakeWorker();
+    const builder = createNeighborGraphBuilder({
+      minWorkerCells: 0,
+      workerFactory: () => worker as unknown as Worker,
+    });
+    try {
+      const pending = builder.build(cells(), { topology: { k: 2 } });
+      // Nothing is spanned until the response lands: the worker's own time
+      // is not main-thread time.
+      expect(snapshotPerformanceProbe().cpu).toEqual({});
+      worker.complete();
+      expect(await pending).not.toBeNull();
+      const commit = snapshotPerformanceProbe().cpu[PERFORMANCE_PROBE_LABELS.topologyCommit];
+      expect(commit).toBeDefined();
+      expect(commit.count).toBe(1);
+      expect(commit.lastMs).toBeGreaterThanOrEqual(0);
+    } finally {
+      builder.dispose();
+      release();
+      resetPerformanceProbe(1);
+    }
+  });
+
+  it('carries its counters on the fabric snapshot, in their own module, with a reset', async () => {
+    resetNeighborGraphBuilderStats();
+    expect(snapshotNeighborGraphBuilderStats()).toMatchObject({
+      fullApplies: 0,
+      patchedApplies: 0,
+      unchainedApplies: 0,
+      staleResends: 0,
+      workerFallbacks: 0,
+    });
+    const worker = new FakeWorker();
+    const builder = createNeighborGraphBuilder({
+      minWorkerCells: 0,
+      workerFactory: () => worker as unknown as Worker,
+    });
+    const pending = builder.build(cells(), { topology: { k: 2 } });
+    worker.complete();
+    await pending;
+    builder.dispose();
+    // The builder mutates the shared object; the fabric's window hook reads
+    // a copy of it beside the bridge's counters.
+    expect(neighborGraphBuilderStats.fullApplies).toBe(1);
+    expect(snapshotFabricStats().topology).toEqual(snapshotNeighborGraphBuilderStats());
+    expect(snapshotFabricStats().topology.fullApplies).toBe(1);
+    resetNeighborGraphBuilderStats();
+    expect(neighborGraphBuilderStats.fullApplies).toBe(0);
   });
 });

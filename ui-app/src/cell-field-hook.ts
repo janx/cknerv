@@ -19,6 +19,11 @@ import {
   type CellGalaxyCache,
 } from '@cknerv/cache';
 import type { Cell } from '@cknerv/types';
+import {
+  PERFORMANCE_PROBE_LABELS,
+  beginCpuProbe,
+  endCpuProbe,
+} from '@cknerv/ui';
 
 const field = createCellField(4096);
 
@@ -54,6 +59,18 @@ function fieldRowEqualsCell(slot: number, cell: Cell): boolean {
 const SPOT_CHECK_CAP = 64;
 
 export function ingestCellsCacheIntoField(cache: CellGalaxyCache): void {
+  // The opt-in render probe's span for this ingest — every generation,
+  // no-ops included, so its mean is the cost of the path as taken. Disabled,
+  // the probe returns before any clock read.
+  const probe = beginCpuProbe(PERFORMANCE_PROBE_LABELS.cellFieldIngest);
+  try {
+    ingestUnprobed(cache);
+  } finally {
+    endCpuProbe(probe);
+  }
+}
+
+function ingestUnprobed(cache: CellGalaxyCache): void {
   const result = syncCellFieldFromCache(field, cache);
   lastCache = cache;
   counters.syncs += 1;
