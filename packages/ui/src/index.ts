@@ -217,6 +217,16 @@ export {
 } from './nerve/consensusMemoryTrace';
 export * from './nerve/pulseStats';
 export * from './nerve/fabricStats';
+// Bytes handed to bufferSubData by lane — what the fabric, bridge and Cell
+// commits actually flag, summed where GL·08 and a probe can read it.
+export {
+  observeGpuUpload,
+  resetGpuUploads,
+  snapshotGpuUploads,
+  type GpuUploadLane,
+  type GpuUploadLaneSnapshot,
+  type GpuUploadSnapshot,
+} from './tweaks/gpuUploadLedger';
 // The colony's own counter, on the same window surface those two ride: where
 // each block wave started, which is the only way to observe from outside that
 // the flood's origin follows the chain rather than the scatter.

@@ -13,6 +13,11 @@ export interface RuntimeStats {
   geometries: number;
   textures: number;
   programs: number;
+  /** Bytes the scene handed to gl.bufferSubData per frame, averaged over the
+   *  sampling window — fabric, bridge and Cell attribute lanes together (the
+   *  `gpuUploadLedger`). gl.info counts no buffer traffic, so without this
+   *  the panel could see draws and triangles but never an upload burst. */
+  uploadBytesPerFrame: number;
 }
 
 /** The subset of THREE.WebGLInfo we read — structural so tests pass a plain
@@ -24,7 +29,14 @@ export interface RenderInfoLike {
 }
 
 export const ZERO_STATS: RuntimeStats = {
-  fps: 0, msPerFrame: 0, drawCalls: 0, triangles: 0, geometries: 0, textures: 0, programs: 0,
+  fps: 0,
+  msPerFrame: 0,
+  drawCalls: 0,
+  triangles: 0,
+  geometries: 0,
+  textures: 0,
+  programs: 0,
+  uploadBytesPerFrame: 0,
 };
 
 // Sampling demand: the GL·08 panel (and any lab that mounts it) retains a
@@ -58,8 +70,15 @@ export function getStatsDemand(): boolean {
 
 /** Per-frame-average render metrics from a sampling window. render.calls /
  *  render.triangles accumulate across the frame's passes while autoReset is
- *  off, so divide by the frame count. memory/programs are instantaneous. */
-export function computeRuntimeStats(frames: number, elapsedMs: number, info: RenderInfoLike): RuntimeStats {
+ *  off, so divide by the frame count. memory/programs are instantaneous.
+ *  `uploadedBytes` is the window's delta of the upload ledger, averaged the
+ *  same way. */
+export function computeRuntimeStats(
+  frames: number,
+  elapsedMs: number,
+  info: RenderInfoLike,
+  uploadedBytes = 0,
+): RuntimeStats {
   return {
     fps: elapsedMs > 0 ? (frames * 1000) / elapsedMs : 0,
     msPerFrame: frames > 0 ? elapsedMs / frames : 0,
@@ -68,6 +87,9 @@ export function computeRuntimeStats(frames: number, elapsedMs: number, info: Ren
     geometries: info.memory.geometries,
     textures: info.memory.textures,
     programs: info.programs?.length ?? 0,
+    uploadBytesPerFrame: frames > 0 && uploadedBytes > 0
+      ? uploadedBytes / frames
+      : 0,
   };
 }
 

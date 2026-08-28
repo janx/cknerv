@@ -51,11 +51,14 @@ import {
   syncFabricLifecycleUniforms,
 } from './fabricLifecycleShader';
 import {
+  FABRIC_APERTURE_UPLOAD_POLICY,
   FABRIC_LIFE_APERTURE_END_OFFSET,
   FABRIC_LIFE_APERTURE_START_OFFSET,
   FABRIC_LIFE_COLOR_STRIDE,
   FABRIC_LIFE_CURVE_STRIDE,
   FABRIC_LIFE_SCALAR_STRIDE,
+  FABRIC_LIFECYCLE_CURVE_SCALAR_UPLOAD_POLICY,
+  FABRIC_LIFECYCLE_UPLOAD_POLICY,
   fabricLifecycleEndSec,
   makeFabricLifecycleArrays,
   writeFabricLifecycleSlot,
@@ -933,19 +936,15 @@ export function commitLayer(
   layer.geometry.instanceCount = layer.count;
 }
 
-/** Static-record bytes per segment across the four lifecycle buffers. */
-const FABRIC_LIFECYCLE_BYTES_PER_SEGMENT = 4 * (
-  FABRIC_LIFE_CURVE_STRIDE
-  + FABRIC_LIFE_COLOR_STRIDE
-  + FABRIC_LIFE_SCALAR_STRIDE
-);
+/** Static-record bytes per segment across the three lifecycle buffers — the
+ * event flush's upload policy, per segment. */
+const FABRIC_LIFECYCLE_BYTES_PER_SEGMENT = FABRIC_LIFECYCLE_UPLOAD_POLICY.bytesPerSlot
+  / FABRIC_SLOT_SEGMENTS;
 
 /** The same record minus its colours — what a slot commit actually uploads on
  * a frame the aperture bake already claimed the colour prefix. */
-const FABRIC_LIFECYCLE_CURVE_SCALAR_BYTES_PER_SEGMENT = 4 * (
-  FABRIC_LIFE_CURVE_STRIDE
-  + FABRIC_LIFE_SCALAR_STRIDE
-);
+const FABRIC_LIFECYCLE_CURVE_SCALAR_BYTES_PER_SEGMENT =
+  FABRIC_LIFECYCLE_CURVE_SCALAR_UPLOAD_POLICY.bytesPerSlot / FABRIC_SLOT_SEGMENTS;
 
 /** Upload only the given SLOT ranges of the static lifecycle records (curve,
  * colors, scalars — aperture has its own recall-window writer). Event-driven:
@@ -2283,9 +2282,11 @@ export default function NeuralFabric({
           // would mark colour there too; folding its slots in here is what
           // keeps the colour buffer to ONE mark set for the frame.
           for (const slot of lifeDirtySlots) apertureDirtySlots.push(slot);
+          // Colour records only, every frame of a recall: the cheapest lane,
+          // so its policy bridges the widest parked gaps (see fabricSlots).
           apertureClaimedColorBuffer = commitFabricApertureLanes(
             fabric,
-            mergeFabricSlotRanges(apertureDirtySlots),
+            mergeFabricSlotRanges(apertureDirtySlots, FABRIC_APERTURE_UPLOAD_POLICY),
           );
           completeApertureBake(recallAperture);
           endCpuProbe(recallApertureProbe);
@@ -2417,9 +2418,17 @@ export default function NeuralFabric({
         ) {
           if (lifeDirtySlots.length > 0) {
             fabric.count = usedSlotCountRef.current * FABRIC_SLOT_SEGMENTS;
+            // Three static buffers a range (two when the bake owns colour):
+            // 384 B a slot, so a parked gap is worth bridging only while it
+            // stays under the calls it saves — the policy carries the number.
             commitFabricLifecycleSlotRanges(
               fabric,
-              mergeFabricSlotRanges(lifeDirtySlots),
+              mergeFabricSlotRanges(
+                lifeDirtySlots,
+                apertureClaimedColorBuffer
+                  ? FABRIC_LIFECYCLE_CURVE_SCALAR_UPLOAD_POLICY
+                  : FABRIC_LIFECYCLE_UPLOAD_POLICY,
+              ),
               apertureClaimedColorBuffer,
             );
             fabricStats.observeIncrementalFrame(lifeDirtySlots.length, 0);

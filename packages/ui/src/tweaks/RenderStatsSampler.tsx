@@ -13,6 +13,7 @@ import {
   attachGpuTimerQueryContext,
   pollGpuTimerQueries,
 } from './gpuTimerQuery';
+import { gpuUploadedBytes } from './gpuUploadLedger';
 
 const UPDATE_INTERVAL_MS = 250;
 
@@ -36,6 +37,8 @@ export default function RenderStatsSampler({ forceEnabled = false }: RenderStats
   const frames = useRef(0);
   const lastAt = useRef(0);
   const previousFrameAt = useRef(0);
+  /** Ledger reading at the start of the current sampling window. */
+  const uploadedAtWindowStart = useRef(0);
 
   useEffect(() => {
     if (!enabled) return;
@@ -76,14 +79,26 @@ export default function RenderStatsSampler({ forceEnabled = false }: RenderStats
     // frame can beat the enable effect's flush; without this it would divide by
     // a bogus multi-second elapsed (lastAt still 0) and emit a garbage first
     // reading (fps ~ 0) that only self-heals after one interval.
-    if (lastAt.current === 0) { lastAt.current = now; frames.current = 0; return; }
+    if (lastAt.current === 0) {
+      lastAt.current = now;
+      frames.current = 0;
+      uploadedAtWindowStart.current = gpuUploadedBytes();
+      return;
+    }
     frames.current += 1;
     const elapsed = now - lastAt.current;
     if (elapsed < UPDATE_INTERVAL_MS) return;
-    setStats(computeRuntimeStats(frames.current, elapsed, gl.info));
+    const uploaded = gpuUploadedBytes();
+    setStats(computeRuntimeStats(
+      frames.current,
+      elapsed,
+      gl.info,
+      uploaded - uploadedAtWindowStart.current,
+    ));
     gl.info.reset();
     frames.current = 0;
     lastAt.current = now;
+    uploadedAtWindowStart.current = uploaded;
   });
 
   return null;

@@ -86,6 +86,7 @@ import { LIVE } from '../tweaks/liveTweaks';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import {
+  BRIDGE_SLOT_UPLOAD_BYTES,
   bridgeStats,
   bridgeUploadBytes,
   type BridgeFullWalkReason,
@@ -104,6 +105,7 @@ import { GROWTH_MS, type EdgeRender } from './fabricEdgeRender';
 import {
   FABRIC_SLOT_SEGMENTS,
   mergeFabricSlotRanges,
+  slotUploadPolicy,
   type FabricSlotRange,
 } from './fabricSlots';
 import {
@@ -135,6 +137,11 @@ const BRIDGE_MAX_SEGMENTS = BRIDGE_ALLOCATION_BRIDGES * FABRIC_SAMPLES_PER_EDGE;
  * moving.
  */
 const BRIDGE_SLOT_SEGMENTS = FABRIC_SLOT_SEGMENTS;
+
+/** A moving frame marks positions, colours and the width lane — three
+ *  bufferSubData calls a range at 224 B a slot. Exported for the policy
+ *  tests; the merge itself is the fabric family's (see `fabricSlots`). */
+export const BRIDGE_UPLOAD_POLICY = slotUploadPolicy(BRIDGE_SLOT_UPLOAD_BYTES, 3);
 
 /** Memo caches are keyed by Cell id and a Cell that leaves the stage never
  *  comes back with a different position, so nothing ever invalidates an entry
@@ -571,7 +578,7 @@ export default function CellBridgeNerves({
     // Reused holes put the moving set out of slot order, so the merge sorts
     // before it decides which runs to bridge — which it always did.
     const bytes = commitBridgeSlotRanges(
-      layer, mergeFabricSlotRanges(dirtySlots),
+      layer, mergeFabricSlotRanges(dirtySlots, BRIDGE_UPLOAD_POLICY),
     );
     if (admitted > 0) {
       bridgeStats.observeAdmission(

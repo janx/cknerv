@@ -10,9 +10,14 @@ import {
   BRIDGE_SLOT_UPLOAD_BYTES,
   bridgeStats,
 } from '../../src/nerve/bridgeStats';
+import {
+  resetGpuUploads,
+  snapshotGpuUploads,
+} from '../../src/tweaks/gpuUploadLedger';
 
 afterEach(() => {
   resetFabricStats();
+  resetGpuUploads();
 });
 
 describe('fabricStats', () => {
@@ -120,6 +125,26 @@ describe('fabricStats', () => {
     expect(s.uploadedBytes).toBe(4352);
     expect(s.uploadedBytesLast).toBe(256);
     expect(s.uploadedBytesMax).toBe(4096);
+  });
+
+  it('feeds the scene-wide upload ledger from both layers, by lane', () => {
+    resetGpuUploads();
+    fabricStats.observeUpload(4096);
+    fabricStats.observeUpload(0); // an empty commit reaches neither counter
+    bridgeStats.observeMovingFrame(6, 6 * BRIDGE_SLOT_UPLOAD_BYTES);
+    bridgeStats.observeAdmission(2, 2 * BRIDGE_SLOT_UPLOAD_BYTES, 1600, 0);
+    bridgeStats.observeFullWalk('repaint', 1600, 358_400, 1600);
+    const ledger = snapshotGpuUploads();
+    expect(ledger.lanes.fabric).toEqual({
+      bytes: 4096, commits: 1, bytesLast: 4096, bytesMax: 4096,
+    });
+    expect(ledger.lanes.bridge.bytes).toBe(8 * BRIDGE_SLOT_UPLOAD_BYTES + 358_400);
+    expect(ledger.lanes.bridge.commits).toBe(3);
+    expect(ledger.lanes.cells.bytes).toBe(0);
+    // The fabric's own readings are unchanged by the ledger riding along.
+    expect(snapshotFabricStats().uploadedBytes).toBe(4096);
+    expect(snapshotFabricStats().bridge.uploadedBytes)
+      .toBe(8 * BRIDGE_SLOT_UPLOAD_BYTES + 358_400);
   });
 
   it('computes upload bytes per actually-flagged buffer', () => {

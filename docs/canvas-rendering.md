@@ -361,8 +361,12 @@ List position is not GPU identity. `syncCellSlots` maintains an ID-to-slot map:
 
 This keeps ordinary update cost proportional to churn instead of field size
 and prevents list reordering from making the whole galaxy flicker or upload.
-If dirty intervals become too fragmented, the updater coalesces them and may
-fall back to one populated-prefix upload.
+Dirty intervals are bridged under the shared upload cost model (`fabricSlots`):
+a parked gap is uploaded only while its bytes cost less than the bufferSubData
+calls it saves (4 KB a call, six calls a range for the six static attributes),
+so a fragmented block can at worst reach the dirty set's hull — never the
+populated prefix beyond it. The bytes every lane flags are summed in
+`gpuUploadLedger` and shown on GL·08 as UPLD.
 
 ### 7.3 Cell GPU representation
 
@@ -563,6 +567,17 @@ for decay. GPU lifecycle uniforms advance growth, death, warmth, masks, and
 recall without rewriting every position each frame. Normal topology churn uses
 slot-level dirty uploads; full walks are reserved for global or structural
 changes.
+
+Slot order is spatially random (id-sorted boot order over hashed positions,
+LIFO hole reuse), so a clustered dirty set is uniformly scattered in slot space
+and the range merge decides the upload. Each lane carries an upload policy
+derived from what a slot costs it — the event flush marks three buffers at
+384 B a slot, the recall-aperture bake the colour records alone at 128 B —
+and `mergeFabricSlotRanges` bridges a parked gap only while its bytes cost less
+than the calls it saves (measured on the review machine: one call ≈ 0.5–0.9 µs
+main thread plus 1.2–1.9 µs GPU process; one byte ≈ 0.1–0.5 ns). A range cap
+bounds calls per commit and, when it binds, bridges the smallest gaps first;
+the worst case is the dirty set's hull, never the populated prefix.
 
 Real Cell death produces retraction and an energy response. Quiet graph garbage
 collection fades without implying a canonical spend. This difference must not
@@ -1015,7 +1030,9 @@ current staged structure.
 
 - Cell attributes are shared across body, flare, nucleus, and picking
   consumers where their semantics match.
-- Only populated prefixes or exact dirty ranges upload.
+- Only populated prefixes or dirty ranges upload; a range merge bridges a
+  parked gap only where its bytes cost less than the bufferSubData calls it
+  saves, and never past the dirty set's hull.
 - Sparse indexed passes avoid transparent work for inactive effects.
 - Passive topology and color/mask updates have separate dirty paths.
 - Screen-space capsule nerves use two triangles per sampled segment.
@@ -1280,6 +1297,7 @@ Before merging a Canvas change, answer:
 | Inspection fields and memory routes | `packages/ui/src/nerve/cellInspectionField.ts`, `packages/ui/src/nerve/consensusMemoryTrace.ts` |
 | Persistent and active nerve rendering | `packages/ui/src/nerve/NeuralFabric.tsx`, `packages/ui/src/nerve/recallApertureIndex.ts`, `packages/ui/src/nerve/activeHopCurve.ts` |
 | Nerve allocation classes | `packages/ui/src/nerve/fabricCapacity.ts` |
+| Fixed-slot layout and the upload cost model | `packages/ui/src/nerve/fabricSlots.ts`, `packages/ui/src/nerve/fabricLifecycleSlots.ts` |
 | Screen-space capsule geometry | `packages/ui/src/geometry/screenSpaceCapsuleLine.ts` |
 | Peer topology and block flood | `packages/ui/src/derives/networkTopology.derive.ts`, `packages/ui/src/derives/networkFlood.derive.ts` |
 | Peer render layers and Cell delivery | `packages/ui/src/components/NetworkColony.tsx`, `packages/ui/src/components/BlockDeliveryLayer.tsx` |
@@ -1287,7 +1305,7 @@ Before merging a Canvas change, answer:
 | Canonical rewrite echo | `packages/ui/src/components/CanonicalRewriteEcho.tsx` |
 | Simulation clock | `packages/ui/src/tweaks/simClock.ts`, `packages/ui/src/tweaks/SimClockTicker.tsx`, `packages/ui/src/tweaks/useSimFrame.ts` |
 | Portrait scissor pass | `packages/ui/src/components/hud/CellPortraitInset.tsx` |
-| Render diagnostics | `packages/ui/src/tweaks/RenderStatsSampler.tsx`, `packages/ui/src/tweaks/performanceProbeStore.ts`, `packages/ui/src/tweaks/gpuTimerQuery.ts` |
+| Render diagnostics | `packages/ui/src/tweaks/RenderStatsSampler.tsx`, `packages/ui/src/tweaks/performanceProbeStore.ts`, `packages/ui/src/tweaks/gpuTimerQuery.ts`, `packages/ui/src/tweaks/gpuUploadLedger.ts` |
 | Deterministic browser review | `ui-app/VISUAL_REVIEW.md`, `ui-app/src/ProtocolEventLab.tsx` |
 
 ## 22. Glossary

@@ -53,6 +53,12 @@ export default function RenderStatsPanel({ style }: RenderStatsPanelProps) {
       <StatRow label="GEO">{fmtCompact(stats.geometries)}</StatRow>
       <StatRow label="TEX">{fmtCompact(stats.textures)}</StatRow>
       <StatRow label="PROG">{fmtCompact(stats.programs)}</StatRow>
+      <StatRow
+        label="UPLD"
+        title="bytes handed to gl.bufferSubData per frame (fabric, bridge, cell attributes)"
+      >
+        {fmtCompact(stats.uploadBytesPerFrame)}
+      </StatRow>
     </HudPanel>
   );
 }

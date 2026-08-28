@@ -14,6 +14,7 @@
 // — unit-tested directly.
 
 import { FABRIC_SAMPLES_PER_EDGE } from './fabricCapacity';
+import { slotUploadPolicy, type SlotUploadPolicy } from './fabricSlots';
 import {
   DEATH_RETRACT_MS,
   DECAY_MS,
@@ -159,3 +160,31 @@ export function fabricLifecycleEndSec(
   const windowMs = deathKind === 'death' ? DEATH_RETRACT_MS : DECAY_MS;
   return dyingAt + windowMs / 1000;
 }
+
+// ——— Upload policies for the lifecycle lanes ———
+// One slot is FABRIC_SAMPLES_PER_EDGE records; a lane's bytes per slot is the
+// stride sum of the buffers it marks × 4 B × that count, and each marked
+// buffer is one bufferSubData call per range. See the cost model in
+// `fabricSlots`.
+
+/** The event flush: curve + colour + scalar records, three calls a range. */
+export const FABRIC_LIFECYCLE_UPLOAD_POLICY: SlotUploadPolicy = slotUploadPolicy(
+  FABRIC_SAMPLES_PER_EDGE * 4 * (
+    FABRIC_LIFE_CURVE_STRIDE + FABRIC_LIFE_COLOR_STRIDE + FABRIC_LIFE_SCALAR_STRIDE
+  ),
+  3,
+);
+
+/** The event flush on a frame whose colour buffer the aperture bake already
+ *  claimed: curve + scalar only, two calls a range. */
+export const FABRIC_LIFECYCLE_CURVE_SCALAR_UPLOAD_POLICY: SlotUploadPolicy = slotUploadPolicy(
+  FABRIC_SAMPLES_PER_EDGE * 4 * (FABRIC_LIFE_CURVE_STRIDE + FABRIC_LIFE_SCALAR_STRIDE),
+  2,
+);
+
+/** The recall-aperture bake: the colour records alone (the dim rides their
+ *  .w lanes), one call a range, every frame of a recall window. */
+export const FABRIC_APERTURE_UPLOAD_POLICY: SlotUploadPolicy = slotUploadPolicy(
+  FABRIC_SAMPLES_PER_EDGE * 4 * FABRIC_LIFE_COLOR_STRIDE,
+  1,
+);

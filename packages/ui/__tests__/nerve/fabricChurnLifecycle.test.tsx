@@ -39,7 +39,10 @@ import { resetSimClock, simClock } from '../../src/tweaks/simClock';
 import NeuralFabric, {
   type NeuralFabricHandles,
 } from '../../src/nerve/NeuralFabric';
-import type { FabricLifecycleRecord } from '../../src/nerve/fabricLifecycleSlots';
+import {
+  FABRIC_LIFECYCLE_UPLOAD_POLICY,
+  type FabricLifecycleRecord,
+} from '../../src/nerve/fabricLifecycleSlots';
 
 vi.mock('@react-three/fiber', () => ({
   useFrame: () => {},
@@ -556,5 +559,47 @@ describe('worker selection delta reaches the fabric it is addressed to', () => {
       fabricEdgeKey(1, 2),
       fabricEdgeKey(2, 3),
     ]));
+  });
+});
+
+describe('the event flush prices its slot ranges by the lifecycle lane policy', () => {
+  // Slot order follows the graph's edge order at boot, so slot i is edge
+  // (i+1)|(i+2). The flush marks three buffers a range at 384 B a slot; the
+  // policy bridges a parked gap only while it costs less than the three calls
+  // it saves (32 slots at 4 KB a call).
+  const EDGES = 80;
+  function longGraph(): NeighborGraph {
+    const pairs: [number, number][] = [];
+    for (let i = 1; i <= EDGES; i += 1) pairs.push([i, i + 1]);
+    return graphOf(pairs);
+  }
+  const ids = Array.from({ length: EDGES + 1 }, (_, i) => i + 1);
+
+  it('two kills far apart in slot space upload two slots, not the span between them', () => {
+    const handles = mountFabric();
+    handles.setFabric(longGraph(), cellsFor(ids), 40);
+    handles.emitFabric(40);
+
+    handles.killEdges([fabricEdgeKey(1, 2), fabricEdgeKey(71, 72)], 41, 'gc');
+    const before = snapshotFabricStats().uploadedBytes;
+    handles.emitFabric(41);
+
+    expect(snapshotFabricStats().uploadedBytesLast).toBe(2 * FABRIC_LIFECYCLE_UPLOAD_POLICY.bytesPerSlot);
+    expect(snapshotFabricStats().uploadedBytes - before)
+      .toBe(2 * FABRIC_LIFECYCLE_UPLOAD_POLICY.bytesPerSlot);
+  });
+
+  it('two kills within the policy gap upload one bridged span', () => {
+    const handles = mountFabric();
+    handles.setFabric(longGraph(), cellsFor(ids), 40);
+    handles.emitFabric(40);
+
+    // Slots 5 and 15: a gap of 9 parked slots, under the 32 the lane bridges.
+    handles.killEdges([fabricEdgeKey(6, 7), fabricEdgeKey(16, 17)], 41, 'gc');
+    handles.emitFabric(41);
+
+    expect(FABRIC_LIFECYCLE_UPLOAD_POLICY.gapMaxSlots).toBeGreaterThanOrEqual(9);
+    expect(snapshotFabricStats().uploadedBytesLast)
+      .toBe(11 * FABRIC_LIFECYCLE_UPLOAD_POLICY.bytesPerSlot);
   });
 });

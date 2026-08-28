@@ -12,6 +12,7 @@
 // live probe reading one hook should see both layers' churn side by side.
 
 import { bridgeStats, type BridgeStatsSnapshot } from './bridgeStats';
+import { observeGpuUpload } from '../tweaks/gpuUploadLedger';
 
 export type FabricDiffKind = 'setFabric' | 'growEdges' | 'killEdges';
 
@@ -225,6 +226,9 @@ export const fabricStats: FabricStatsState = {
     this.uploadedBytes += bytes;
     this.uploadedBytesLast = bytes;
     if (bytes > this.uploadedBytesMax) this.uploadedBytesMax = bytes;
+    // The scene-wide ledger GL·08 samples; the bridge feeds it from its own
+    // counters, so the two lanes stay distinguishable there.
+    observeGpuUpload('fabric', bytes);
   },
 
   snapshot() {

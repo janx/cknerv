@@ -42,6 +42,7 @@ import {
   FABRIC_LIFE_SCALAR_STRIDE,
 } from '../../src/nerve/fabricLifecycleSlots';
 import { FABRIC_SLOT_SEGMENTS } from '../../src/nerve/fabricSlots';
+import { FABRIC_APERTURE_UPLOAD_POLICY } from '../../src/nerve/fabricLifecycleSlots';
 import { fabricStats, resetFabricStats } from '../../src/nerve/fabricStats';
 import { resetSimClock } from '../../src/tweaks/simClock';
 import NeuralFabric, {
@@ -702,5 +703,100 @@ describe('recall aperture bake — what a still frame owes', () => {
     expect(Math.max(...apertureLanes(buffers, NEAR_SLOT))).toBeLessThan(1);
     expect(near.queries()).toBe(SAMPLES_PER_SLOT);
     expect(far.queries()).toBe(SAMPLES_PER_SLOT);
+  });
+});
+
+// The colour lanes are the cheapest upload in the scene (128 B a slot, one
+// call a range) and the one that recurs every frame of a recall. Slot order is
+// spatially random in the app, so a dimmed disc is a scattered slot set; the
+// merge bridges a parked gap only while it costs less than the call it saves,
+// and must never mark a slot the bake left alone unless it sits inside such a
+// gap. The oracle below is the strongest statement of correctness there is:
+// every float the frame changed lies inside a marked range.
+describe('recall aperture ranges under the lane policy', () => {
+  const EDGES = 400;
+  function longGraph(): NeighborGraph {
+    const pairs: [number, number][] = [];
+    for (let i = 1; i <= EDGES; i += 1) pairs.push([i, i + 1]);
+    return graphOf(pairs);
+  }
+  const ids = Array.from({ length: EDGES + 1 }, (_, i) => i + 1);
+
+  function changedSlots(before: ArrayLike<number>, after: ArrayLike<number>): Set<number> {
+    const slots = new Set<number>();
+    for (let i = 0; i < after.length; i += 1) {
+      if (before[i] !== after[i]) {
+        slots.add(Math.floor(i / FABRIC_LIFE_COLOR_STRIDE / FABRIC_SLOT_SEGMENTS));
+      }
+    }
+    return slots;
+  }
+  function inRanges(ranges: SlotRange[], slot: number): boolean {
+    return ranges.some((r) => slot >= r.start && slot < r.start + r.count);
+  }
+
+  it('two dimmed discs far apart in slot space are two ranges, priced per slot', () => {
+    const handles = mountFabric();
+    handles.setFabric(longGraph(), cellsFor(ids), 40);
+    handles.emitFabric(40);
+    const buffers = lifecycleBuffers();
+    consumeUploads(buffers);
+
+    // One field around x∈[0,2] (slot 0's neighbourhood), one around
+    // x∈[300,302] (slot ~299's): the union box reaches every slot, the dim
+    // reaches two clusters ~300 slots apart — far past the 32-slot bridge.
+    handles.setRecallAperture(
+      straightAperture(0, 2, 39, 60).field, 1,
+      straightAperture(300, 302, 39, 60).field, 1,
+    );
+    const before = buffers.color.array.slice();
+    handles.emitFabric(41);
+    const after = buffers.color.array;
+
+    const ranges = slotRanges(buffers.color, FABRIC_LIFE_COLOR_STRIDE);
+    expect(ranges).toHaveLength(2);
+    expect(ranges[0].start).toBe(0);
+    expect(ranges[1].start).toBeGreaterThan(
+      ranges[0].start + ranges[0].count + FABRIC_APERTURE_UPLOAD_POLICY.gapMaxSlots,
+    );
+    // Every slot the bake changed is marked, and the marks stop at the hull.
+    const changed = changedSlots(before, after);
+    expect(changed.size).toBeGreaterThan(2);
+    for (const slot of changed) expect(inRanges(ranges, slot), `slot ${slot}`).toBe(true);
+    const last = ranges[ranges.length - 1];
+    expect(last.start + last.count).toBeLessThanOrEqual(Math.max(...changed) + 1);
+    expect(ranges[0].start).toBeGreaterThanOrEqual(Math.min(...changed));
+    // Bytes: the marked slots at 128 B each — not the whole 400-slot prefix.
+    const markedSlots = ranges.reduce((sum, r) => sum + r.count, 0);
+    expect(fabricStats.uploadedBytesLast)
+      .toBe(markedSlots * FABRIC_APERTURE_UPLOAD_POLICY.bytesPerSlot);
+    expect(markedSlots).toBeLessThan(EDGES / 4);
+  });
+
+  it('a churn burst under a scattered recall folds into the bake\'s ranges, still slot-priced', () => {
+    const handles = mountFabric();
+    handles.setFabric(longGraph(), cellsFor(ids), 40);
+    handles.emitFabric(40);
+    const buffers = lifecycleBuffers();
+    consumeUploads(buffers);
+
+    handles.setRecallAperture(straightAperture(300, 302, 39, 60).field, 1, null, 0);
+    // A kill on slot 150: nowhere near the dim, so it is its own range on
+    // the colour buffer the bake owns this frame, and the flush's own two
+    // buffers mark that slot alone.
+    handles.killEdges([fabricEdgeKey(151, 152)], 41, 'gc');
+    const before = buffers.color.array.slice();
+    handles.emitFabric(41);
+
+    const colour = slotRanges(buffers.color, FABRIC_LIFE_COLOR_STRIDE);
+    expect(colour.length).toBeGreaterThanOrEqual(2);
+    expect(inRanges(colour, 150)).toBe(true);
+    for (const slot of changedSlots(before, buffers.color.array)) {
+      expect(inRanges(colour, slot), `slot ${slot}`).toBe(true);
+    }
+    expect(slotRanges(buffers.curve, FABRIC_LIFE_CURVE_STRIDE))
+      .toEqual([{ start: 150, count: 1 }]);
+    expect(slotRanges(buffers.scalar, FABRIC_LIFE_SCALAR_STRIDE))
+      .toEqual([{ start: 150, count: 1 }]);
   });
 });

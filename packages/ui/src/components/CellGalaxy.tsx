@@ -2,6 +2,12 @@ import { memo, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useThree } from '@react-three/fiber';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { useSimClock } from '../tweaks/SimClockScope';
+import { observeGpuUpload } from '../tweaks/gpuUploadLedger';
+import {
+  mergeSlotRuns,
+  slotUploadPolicy,
+  type SlotUploadPolicy,
+} from '../nerve/fabricSlots';
 import { galaxyFrame } from '../tweaks/galaxyFrame';
 import { LIVE } from '../tweaks/liveTweaks';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
@@ -398,29 +404,62 @@ export function writeCellBuffers(
   return pickInputsChanged;
 }
 
-const MAX_CELL_BUFFER_UPLOAD_RANGES = 8;
+/** The upload policy of one attribute family that shares a dirty-range set:
+ * every attribute in it is one bufferSubData call per range, and a slot
+ * costs the family's summed item bytes. Derived from the live attributes so
+ * the numbers cannot drift from the layout. */
+function cellAttributeUploadPolicy(
+  attributes: readonly THREE.BufferAttribute[],
+): SlotUploadPolicy {
+  let bytesPerSlot = 0;
+  for (const attribute of attributes) {
+    bytesPerSlot += attribute.itemSize * attribute.array.BYTES_PER_ELEMENT;
+  }
+  return slotUploadPolicy(bytesPerSlot, attributes.length);
+}
 
-/** Tell Three.js to upload only changed scalar runs. Highly fragmented block
- * updates fall back to one upload while retaining the cheaper partial CPU
- * derivation above. */
-function markCellBufferUpdateRanges(
-  attribute: THREE.BufferAttribute,
+/** Turn dirty SLOT runs into the ranges a family actually uploads: clamped
+ * to the drawn prefix, then bridged under the family's policy (the fabric's
+ * merge — see `fabricSlots`). A fragmented block used to fall back to the
+ * WHOLE populated prefix past eight runs; the policy can at worst reach the
+ * dirty set's hull, and reaches it only where a parked gap costs less than
+ * the calls it saves. Exported for the equivalence tests. */
+export function planCellBufferUploadRanges(
   ranges: readonly CellBufferRange[],
   visibleCount: number,
-): void {
-  if (ranges.length === 0 || visibleCount <= 0) return;
+  policy: SlotUploadPolicy,
+): CellBufferRange[] {
+  if (ranges.length === 0 || visibleCount <= 0) return EMPTY_CELL_BUFFER_RANGES;
+  const limit = Math.floor(visibleCount);
+  const clamped: CellBufferRange[] = [];
+  for (const range of ranges) {
+    const start = Math.max(0, Math.floor(range.start));
+    const end = Math.min(limit, Math.ceil(range.start + range.count));
+    if (end > start) clamped.push({ start, count: end - start });
+  }
+  if (clamped.length === 0) return EMPTY_CELL_BUFFER_RANGES;
+  return mergeSlotRuns(clamped, policy);
+}
+
+/** Tell Three.js to upload exactly the planned runs. Returns the bytes
+ * flagged, for the upload ledger. */
+function markCellBufferUpdateRanges(
+  attribute: THREE.BufferAttribute,
+  uploadRanges: readonly CellBufferRange[],
+): number {
+  if (uploadRanges.length === 0) return 0;
   attribute.clearUpdateRanges();
-  const uploadRanges = ranges.length <= MAX_CELL_BUFFER_UPLOAD_RANGES
-    ? ranges
-    : [{ start: 0, count: visibleCount }];
+  let items = 0;
   for (const range of uploadRanges) {
     if (range.count <= 0) continue;
     attribute.addUpdateRange(
       range.start * attribute.itemSize,
       range.count * attribute.itemSize,
     );
+    items += range.count;
   }
   attribute.needsUpdate = true;
+  return items * attribute.itemSize * attribute.array.BYTES_PER_ELEMENT;
 }
 
 /** Write the stage-exit stamps of exactly the ids whose stamp changed, and
@@ -1752,6 +1791,36 @@ function CellGalaxy({
     () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1),
     [],
   );
+  // Upload policies, derived from the attributes they cover. The six static
+  // attributes share one dirty set and so one plan; the stage clock and the
+  // flash lane are marked from their own merged ranges and cost one call
+  // each, so their gaps are cheap and their plans separate.
+  const cellStaticUploadPolicy = useMemo(
+    () => cellAttributeUploadPolicy([
+      cellPosAttr,
+      cellColorAttr,
+      cellRecordAtAttr,
+      cellSizeAttr,
+      cellMemoryIdentityAttr,
+      cellMemorySeedAttr,
+    ]),
+    [
+      cellPosAttr,
+      cellColorAttr,
+      cellRecordAtAttr,
+      cellSizeAttr,
+      cellMemoryIdentityAttr,
+      cellMemorySeedAttr,
+    ],
+  );
+  const cellStageAtUploadPolicy = useMemo(
+    () => cellAttributeUploadPolicy([cellStageAtAttr]),
+    [cellStageAtAttr],
+  );
+  const cellFlashUploadPolicy = useMemo(
+    () => cellAttributeUploadPolicy([cellFlashAtAttr]),
+    [cellFlashAtAttr],
+  );
   // LOD detail factor per cell (0 = far/unchanged glow, →1 = camera-near, peak
   // suppressed so the nucleus shows). Written each frame by <CellNucleus>.
   const cellDetailAttr = useMemo(
@@ -2083,13 +2152,16 @@ function CellGalaxy({
         lifecycle.exitAt,
         cellStageAtAttr.array as Float32Array,
       );
-    markCellBufferUpdateRanges(
+    observeGpuUpload('cells', markCellBufferUpdateRanges(
       cellStageAtAttr,
-      exitStampRanges.length === 0
-        ? cellBufferRanges
-        : mergeCellFlashRanges(cellBufferRanges, exitStampRanges, count),
-      count,
-    );
+      planCellBufferUploadRanges(
+        exitStampRanges.length === 0
+          ? cellBufferRanges
+          : mergeCellFlashRanges(cellBufferRanges, exitStampRanges, count),
+        count,
+        cellStageAtUploadPolicy,
+      ),
+    ));
 
     if (cellBufferRanges.length > 0 || drawCountChanged) {
       const pickInputsChanged = writeCellBuffers(
@@ -2121,19 +2193,21 @@ function CellGalaxy({
       if (pickInputsChanged > 0) cellPickSizeEpochRef.current += 1;
 
       cellGeometry.setDrawRange(0, count);
-      markCellBufferUpdateRanges(cellPosAttr, cellBufferRanges, count);
-      markCellBufferUpdateRanges(cellColorAttr, cellBufferRanges, count);
-      markCellBufferUpdateRanges(cellRecordAtAttr, cellBufferRanges, count);
-      markCellBufferUpdateRanges(cellSizeAttr, cellBufferRanges, count);
-      markCellBufferUpdateRanges(
-        cellMemoryIdentityAttr,
+      // One plan for the six static attributes — they share the dirty set,
+      // so they share its bridging — and one ledger entry for the family.
+      const staticUploadRanges = planCellBufferUploadRanges(
         cellBufferRanges,
         count,
+        cellStaticUploadPolicy,
       );
-      markCellBufferUpdateRanges(
-        cellMemorySeedAttr,
-        cellBufferRanges,
-        count,
+      observeGpuUpload(
+        'cells',
+        markCellBufferUpdateRanges(cellPosAttr, staticUploadRanges)
+          + markCellBufferUpdateRanges(cellColorAttr, staticUploadRanges)
+          + markCellBufferUpdateRanges(cellRecordAtAttr, staticUploadRanges)
+          + markCellBufferUpdateRanges(cellSizeAttr, staticUploadRanges)
+          + markCellBufferUpdateRanges(cellMemoryIdentityAttr, staticUploadRanges)
+          + markCellBufferUpdateRanges(cellMemorySeedAttr, staticUploadRanges),
       );
       // Rewritten slots may now hold a different cell's flash timestamp —
       // re-admit any whose window is open or pending. Rides a frame that is
@@ -2193,6 +2267,8 @@ function CellGalaxy({
         cellFlashAtAttr.clearUpdateRanges();
         cellFlashAtAttr.needsUpdate = true;
         flashNeedsFullUpload = true;
+        // No ranges: three uploads the whole backing array.
+        observeGpuUpload('cells', cellFlashAtAttr.array.byteLength);
         collectCellFlashCandidates(
           [{ start: 0, count: drawCountRef.current }],
           cellFlashAtAttr.array as Float32Array,
@@ -2206,11 +2282,14 @@ function CellGalaxy({
       flashDirtyRef.current = false;
     }
     if (!flashNeedsFullUpload) {
-      markCellBufferUpdateRanges(
+      observeGpuUpload('cells', markCellBufferUpdateRanges(
         cellFlashAtAttr,
-        flashBufferRanges,
-        count,
-      );
+        planCellBufferUploadRanges(
+          flashBufferRanges,
+          count,
+          cellFlashUploadPolicy,
+        ),
+      ));
     }
 
     // The additive write layer shares all Cell attributes but submits only

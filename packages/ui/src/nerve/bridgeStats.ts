@@ -9,6 +9,7 @@
 // own: the layer borrows the fabric's parts, and it borrows its window hook.
 
 import { FABRIC_SAMPLES_PER_EDGE } from './fabricCapacity';
+import { observeGpuUpload } from '../tweaks/gpuUploadLedger';
 
 /** Why a build frame rewrote every span instead of only the moved ones. */
 export type BridgeFullWalkReason = 'repaint' | 'overflow';
@@ -102,6 +103,7 @@ export const bridgeStats: BridgeStatsState = {
     this.uploadedBytes += bytes;
     this.usedSlotsLast = usedSlots;
     this.freeSlotsLast = freeSlots;
+    observeGpuUpload('bridge', bytes);
   },
   observeFullWalk(reason, strokesWritten, bytes, usedSlots) {
     this.fullWalks += 1;
@@ -113,10 +115,12 @@ export const bridgeStats: BridgeStatsState = {
     this.usedSlotsLast = usedSlots;
     // A full walk hands every span out afresh: no holes survive it.
     this.freeSlotsLast = 0;
+    observeGpuUpload('bridge', bytes);
   },
   observeMovingFrame(strokesWritten, bytes) {
     this.strokesWritten += strokesWritten;
     this.uploadedBytes += bytes;
+    observeGpuUpload('bridge', bytes);
   },
 
   snapshot() {

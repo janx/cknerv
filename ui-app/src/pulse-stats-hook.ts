@@ -6,6 +6,10 @@
 //   window.__pulseStatsReset()   → zero the pulse counters for a clean observation
 //   window.__fabricStats()       → { diffCalls, recentDiffs, frames, fullWalkReasons, animating* }
 //   window.__fabricStatsReset()  → zero the fabric-churn counters
+//   window.__uploadStats()       → { lanes: { fabric, bridge, cells }, bytes,
+//                                    commits } — bytes flagged for
+//                                    bufferSubData by lane (Σ, last, max)
+//   window.__uploadStatsReset()  → zero the upload ledger
 //   window.__qualityStats()      → { mode, effective, source, locked, switches }
 //                                  — after `locked` the tier is monotone
 //                                    non-increasing: read `switches` twice
@@ -31,6 +35,8 @@ import {
   resetPulseStats,
   snapshotFabricStats,
   resetFabricStats,
+  snapshotGpuUploads,
+  resetGpuUploads,
   snapshotProducerOriginStats,
   resetProducerOriginStats,
   snapshotPerformanceProbe,
@@ -44,6 +50,8 @@ declare global {
     __pulseStatsReset?: typeof resetPulseStats;
     __fabricStats?: typeof snapshotFabricStats;
     __fabricStatsReset?: typeof resetFabricStats;
+    __uploadStats?: typeof snapshotGpuUploads;
+    __uploadStatsReset?: typeof resetGpuUploads;
     __qualityStats?: typeof getQualityRuntimeSnapshot;
     __producerOriginStats?: typeof snapshotProducerOriginStats;
     __producerOriginStatsReset?: typeof resetProducerOriginStats;
@@ -59,6 +67,8 @@ export function installPulseStatsHook(): void {
   window.__pulseStatsReset = resetPulseStats;
   window.__fabricStats = snapshotFabricStats;
   window.__fabricStatsReset = resetFabricStats;
+  window.__uploadStats = snapshotGpuUploads;
+  window.__uploadStatsReset = resetGpuUploads;
   window.__qualityStats = getQualityRuntimeSnapshot;
   window.__producerOriginStats = snapshotProducerOriginStats;
   window.__producerOriginStatsReset = resetProducerOriginStats;

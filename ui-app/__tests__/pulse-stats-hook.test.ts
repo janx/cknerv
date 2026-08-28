@@ -39,6 +39,18 @@ describe('installPulseStatsHook', () => {
     window.__producerOriginStatsReset!();
     expect(window.__producerOriginStats!().waves).toBe(0);
 
+    // Bytes flagged for bufferSubData, by lane: the one upload reading
+    // gl.info cannot give, on the surface the fabric counters already use.
+    expect(typeof window.__uploadStats).toBe('function');
+    expect(typeof window.__uploadStatsReset).toBe('function');
+    const uploads = window.__uploadStats!();
+    expect(uploads).toHaveProperty('lanes.fabric');
+    expect(uploads).toHaveProperty('lanes.bridge');
+    expect(uploads).toHaveProperty('lanes.cells');
+    expect(typeof uploads.bytes).toBe('number');
+    window.__uploadStatsReset!();
+    expect(window.__uploadStats!().bytes).toBe(0);
+
     // The opt-in render probe rides the same devtools surface. The hooks are
     // always discoverable, but the snapshot proves measurement itself remains
     // disabled until RenderStatsSampler is demanded / ?render-stats=1.

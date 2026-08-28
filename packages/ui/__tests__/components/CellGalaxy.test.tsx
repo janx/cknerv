@@ -17,11 +17,16 @@ import {
   createCellPickRaycast,
   diffCellBufferSlots,
   isCellPickPointerAction,
+  planCellBufferUploadRanges,
   type CellBufferPresentation,
   writeFlashSlots,
   writeCellBuffers,
   writeCellExitStampSlots,
 } from '../../src/components/CellGalaxy';
+import {
+  slotRangesUploadCost,
+  slotUploadPolicy,
+} from '../../src/nerve/fabricSlots';
 import { getHeapSpaceStatistics } from 'node:v8';
 import {
   CELL_HOVER_FOCUS,
@@ -2023,5 +2028,132 @@ describe('cell pick rebuild allocation', () => {
     // 6,000 cells: one boxed double per cell would already be ~70 KB per
     // rebuild; the whole budget here is the pick's own hit object.
     expect(growthPerRebuild).toBeLessThan(8 * 1024);
+  });
+});
+
+// ── the upload plan behind the eight cell attributes ──────────────────
+// Six static attributes share one dirty set: every planned range is six
+// bufferSubData calls, and a slot costs their summed 56 B. The plan bridges
+// parked gaps only where that is cheaper than the calls it saves, and can at
+// worst reach the dirty set's hull — the whole-prefix fallback past eight runs
+// is gone. What the GPU holds after the upload must equal the CPU arrays
+// exactly, which is the same guarantee a whole-prefix write gave.
+describe('planCellBufferUploadRanges', () => {
+  /** Six static lanes: pos 3, colour 3, recordAt 2, size 1, identity 4, seed 1. */
+  const STATIC = slotUploadPolicy((3 + 3 + 2 + 1 + 4 + 1) * 4, 6);
+  const STAGE_AT = slotUploadPolicy(2 * 4, 1);
+
+  function seeded(seed: number): () => number {
+    let state = seed >>> 0;
+    return () => {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      return state / 0x100000000;
+    };
+  }
+  function runsOf(slots: Iterable<number>): { start: number; count: number }[] {
+    const sorted = [...new Set(slots)].sort((a, b) => a - b);
+    const runs: { start: number; count: number }[] = [];
+    if (sorted.length === 0) return runs;
+    let start = sorted[0];
+    let prev = sorted[0];
+    for (let i = 1; i < sorted.length; i += 1) {
+      if (sorted[i] === prev + 1) { prev = sorted[i]; continue; }
+      runs.push({ start, count: prev - start + 1 });
+      start = sorted[i];
+      prev = sorted[i];
+    }
+    runs.push({ start, count: prev - start + 1 });
+    return runs;
+  }
+  function covered(plan: readonly { start: number; count: number }[], slot: number): boolean {
+    return plan.some((r) => slot >= r.start && slot < r.start + r.count);
+  }
+
+  it('derives the family policy from the attributes: 4 KB a call, six calls a range', () => {
+    expect(STATIC).toEqual({
+      bytesPerSlot: 56, callsPerRange: 6, gapMaxSlots: 438, maxRanges: 85,
+    });
+    expect(STAGE_AT.gapMaxSlots).toBe(512);
+  });
+
+  it('clamps to the drawn prefix and returns nothing for nothing', () => {
+    expect(planCellBufferUploadRanges([], 100, STATIC)).toEqual([]);
+    expect(planCellBufferUploadRanges([{ start: 0, count: 4 }], 0, STATIC)).toEqual([]);
+    expect(planCellBufferUploadRanges(
+      [{ start: -2, count: 4 }, { start: 98, count: 10 }],
+      100,
+      STATIC,
+    )).toEqual([{ start: 0, count: 100 }]);
+  });
+
+  it('a fragmented block no longer becomes the whole prefix — the hull is the ceiling', () => {
+    // Forty single-slot runs, all inside [6000, 6500) of a 12,000-cell
+    // prefix: the old eight-run cap uploaded 12,000 × 56 B for this.
+    const random = seeded(7);
+    const slots = new Set<number>();
+    while (slots.size < 40) slots.add(6000 + Math.floor(random() * 500));
+    const plan = planCellBufferUploadRanges(runsOf(slots), 12_000, STATIC);
+    const cost = slotRangesUploadCost(plan, STATIC);
+    expect(cost.slots).toBeLessThanOrEqual(500);
+    expect(cost.slots).toBeLessThan(12_000 * 0.05);
+    expect(plan[0].start).toBeGreaterThanOrEqual(6000);
+    const last = plan[plan.length - 1];
+    expect(last.start + last.count).toBeLessThanOrEqual(6500);
+    for (const slot of slots) expect(covered(plan, slot)).toBe(true);
+  });
+
+  it('keeps a tail run and a few scattered replacements as separate, exact ranges', () => {
+    // Tail adds are one run; two replacements far from it and from each
+    // other stay their own calls — bridging 2,000 parked slots would cost
+    // more than the six calls it saves.
+    const ranges = [
+      { start: 3_000, count: 1 },
+      { start: 7_000, count: 1 },
+      { start: 11_950, count: 50 },
+    ];
+    expect(planCellBufferUploadRanges(ranges, 12_000, STATIC)).toEqual(ranges);
+    // Two replacements 200 slots apart DO bridge: 200 × 56 B = 11 KB for six
+    // calls saved, under the 4 KB-a-call model's 438-slot allowance.
+    expect(planCellBufferUploadRanges(
+      [{ start: 3_000, count: 1 }, { start: 3_200, count: 1 }],
+      12_000,
+      STATIC,
+    )).toEqual([{ start: 3_000, count: 201 }]);
+  });
+
+  it('what the GPU holds after the planned upload equals the CPU array, frame after frame', () => {
+    // A CPU-side attribute (3 floats a slot) and a GPU mirror. Each frame
+    // rewrites random slots on the CPU, plans the upload for the dirty runs,
+    // and copies only the planned ranges into the mirror — a whole-prefix
+    // write is the oracle, and the mirror must match it exactly.
+    const count = 2_000;
+    const itemSize = 3;
+    const cpu = new Float32Array(count * itemSize);
+    const gpu = new Float32Array(count * itemSize);
+    const random = seeded(11);
+    for (let i = 0; i < cpu.length; i += 1) cpu[i] = random();
+    gpu.set(cpu);
+    for (let frame = 0; frame < 40; frame += 1) {
+      const dirty = new Set<number>();
+      const scattered = 1 + Math.floor(random() * 60);
+      for (let i = 0; i < scattered; i += 1) dirty.add(Math.floor(random() * count));
+      const tail = Math.floor(random() * 30);
+      for (let i = 0; i < tail; i += 1) dirty.add(count - 1 - i);
+      for (const slot of dirty) {
+        for (let k = 0; k < itemSize; k += 1) cpu[slot * itemSize + k] = random();
+      }
+      const plan = planCellBufferUploadRanges(runsOf(dirty), count, STATIC);
+      for (let i = 1; i < plan.length; i += 1) {
+        expect(plan[i].start).toBeGreaterThan(plan[i - 1].start + plan[i - 1].count - 1);
+      }
+      for (const range of plan) {
+        gpu.set(
+          cpu.subarray(range.start * itemSize, (range.start + range.count) * itemSize),
+          range.start * itemSize,
+        );
+      }
+      expect(gpu).toEqual(cpu);
+      for (const slot of dirty) expect(covered(plan, slot)).toBe(true);
+    }
   });
 });

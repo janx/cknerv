@@ -33,6 +33,14 @@ describe('computeRuntimeStats', () => {
   it('programs defaults to 0 when null', () => {
     expect(computeRuntimeStats(1, 16, { ...info, programs: null }).programs).toBe(0);
   });
+  it('averages the window\'s uploaded bytes per frame, and reads 0 without a ledger delta', () => {
+    // gl.info counts no buffer traffic: the upload figure is the ledger's
+    // window delta, per frame like DRAW and TRIS.
+    expect(computeRuntimeStats(15, 250, info, 1500).uploadBytesPerFrame).toBe(100);
+    expect(computeRuntimeStats(15, 250, info).uploadBytesPerFrame).toBe(0);
+    expect(computeRuntimeStats(0, 0, info, 1500).uploadBytesPerFrame).toBe(0);
+    expect(ZERO_STATS.uploadBytesPerFrame).toBe(0);
+  });
 });
 
 describe('fpsColor', () => {
