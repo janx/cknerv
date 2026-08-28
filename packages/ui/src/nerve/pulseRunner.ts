@@ -13,7 +13,11 @@ import {
   buildOriginEntryIndex,
   type OriginEntryIndex,
 } from '../geometry/originEntry';
-import { shortestPathsToTargets, DEFAULT_MAX_HOPS } from '../geometry/pathRouter';
+import {
+  shortestPathsToTargets,
+  DEFAULT_MAX_HOPS,
+  type RouteScratch,
+} from '../geometry/pathRouter';
 import { consensusPacketColor } from '../derives/consensusFlow.derive';
 import type { PulseStatsSink, RescueKind } from './pulseStats';
 
@@ -105,6 +109,9 @@ export interface PulsePlanningOptions {
    *  names no origin and must not pay for a grid nobody queries. Absent →
    *  planPulses memoizes one of its own for this call. */
   entryIndex?: () => OriginEntryIndex;
+  /** Route-search scratch (typed-array BFS state + neighbour cache). Absent
+   *  → the router's shared default, which every graph can use. */
+  routeScratch?: RouteScratch;
 }
 
 /** Derive pulse start delay + hop duration from a deterministic seed
@@ -168,6 +175,10 @@ export function planPulses(
     typeof optionsOrMaxHops === 'number'
       ? undefined
       : optionsOrMaxHops.entryIndex;
+  const routeScratch =
+    typeof optionsOrMaxHops === 'number'
+      ? undefined
+      : optionsOrMaxHops.routeScratch;
   if (link.to_ids.length === 0) {
     stats?.bump('no-outputs');
     return [];
@@ -205,7 +216,13 @@ export function planPulses(
     const pathsByDst =
       entry === null
         ? null
-        : shortestPathsToTargets(graph, entry, link.to_ids, maxHops);
+        : shortestPathsToTargets(
+          graph,
+          entry,
+          link.to_ids,
+          maxHops,
+          routeScratch,
+        );
     // One ghost per origin, shared by its destinations — nothing mutates it.
     const origin: PulseOrigin = {
       pos: [anchor.pos_seed[0], anchor.pos_seed[1], anchor.pos_seed[2]],

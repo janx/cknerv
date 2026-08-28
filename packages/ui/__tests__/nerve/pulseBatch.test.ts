@@ -623,3 +623,112 @@ describe('scheduleLivePulseStartSec', () => {
     expect(scheduleLivePulseStartSec(10, Number.NaN)).toBe(10);
   });
 });
+
+// ── resumable planner ≡ one-shot planner ─────────────────────────────
+
+import { createLinkBatchPlanner, openLinkBatch } from '../../src/nerve/pulseBatch';
+
+/** A batch with everything the planner does: lit blocks, a dark block that
+ *  rescues from the rim, a block starved by the budget, a dark block after
+ *  the budget, and a link whose output never reached the graph. */
+function mixedFixture() {
+  const CH = '0x' + '00'.repeat(32);
+  const cells = new Map<number, Cell>([
+    [1, mkCell(1, '0xu1', [0, 0, 0])],
+    [2, mkCell(2, '0xu2', [10, 0, 0])],
+    [3, mkCell(3, '0xu3', [20, 0, 0])],
+    [4, mkCell(4, '0xu4', [30, 0, 0])],
+    [5, mkCell(5, '0xu5', [40, 0, 0])],
+  ]);
+  const graph = mkGraph([[1, 2], [2, 3], [3, 4], [4, 5]]);
+  const links: CellLink[] = [];
+  let seq = 0;
+  const spend = (block: number, to: number, pos: [number, number, number]) => mkLink({
+    seq: ++seq, block, tx_hash: `0xtx${seq}`, to_ids: [to],
+    endpoint_anchors: [mkAnchor(70 + seq, pos)],
+  });
+  const cold = (block: number, to: number) => mkLink({
+    seq: ++seq, block, tx_hash: `0xcold${seq}`, parents: ['0xcold'], to_ids: [to],
+    endpoint_anchors: [{ id: to, pos_seed: [10, 0, 0], content_hash: CH, resolved: true }],
+  });
+  links.push(spend(7, 4, [0, 0, 0]), spend(7, 5, [11, 0, 0]), cold(7, 2));
+  links.push(cold(8, 2));
+  for (let i = 0; i < 130; i++) links.push(spend(9, 2, [0, 0, i]));
+  links.push(cold(10, 2));
+  links.push(cold(11, 99));
+  links.push(spend(12, 3, [40, 0, 0]));
+  return { cells, graph, links };
+}
+
+describe('createLinkBatchPlanner — stepping the machine is the one-shot plan', () => {
+  it('drained step by step, yields the same pulses and the same stats as planLinkBatch', () => {
+    const { cells, graph, links } = mixedFixture();
+    const oneShot = planLinkBatch(links, 0, false, cells, graph, OPTS, pulseStats, 0);
+    const oneShotStats = snapshotPulseStats();
+    resetPulseStats();
+
+    const { toFire, nextSeq } = openLinkBatch(links, 0, false, pulseStats);
+    expect(nextSeq).toBe(oneShot.nextSeq);
+    const planner = createLinkBatchPlanner(toFire, cells, graph, OPTS, pulseStats, 0);
+    const stepped: ReturnType<typeof planner.step> = [];
+    let steps = 0;
+    expect(planner.pending).toBe(toFire.length);
+    while (!planner.done) {
+      const before = planner.pending;
+      for (const pulse of planner.step()) stepped.push(pulse);
+      steps += 1;
+      expect(before - planner.pending).toBeLessThanOrEqual(1);
+    }
+    // The entry grid's own step, one per link, and the closing flush.
+    expect(steps).toBe(toFire.length + 2);
+    expect(planner.pending).toBe(0);
+    expect(planner.step()).toEqual([]); // idempotent once done
+    expect(stepped).toEqual(oneShot.planned);
+    expect(planner.lastGuaranteedBlock).toBe(oneShot.lastGuaranteedBlock);
+    expect(snapshotPulseStats()).toEqual(oneShotStats);
+    // The fixture really exercised every branch.
+    expect(oneShot.planned.length).toBeGreaterThan(128);
+    expect(oneShotStats.rescues.rim).toBeGreaterThan(0);
+    expect(oneShotStats.rescues['dst-substituted']).toBe(1);
+    expect(oneShotStats.linkReasons['batch-budget']).toBeGreaterThan(0);
+  });
+
+  it('prune drops the stale suffix, forfeits an open rolled-back block, and rewinds both watermarks', () => {
+    const { cells, graph, links } = mixedFixture();
+    const { toFire } = openLinkBatch(links, 0, false, pulseStats);
+    const planner = createLinkBatchPlanner(toFire, cells, graph, OPTS, pulseStats, 0);
+    // The grid step, block 7 (3 links) and the first link of block 8 →
+    // block 8 is open.
+    for (let i = 0; i < 5; i++) planner.step();
+    expect(planner.lastGuaranteedBlock).toBe(7);
+    planner.prune(8);
+    expect(planner.pending).toBe(0);
+    // Closing the batch must not rescue the rolled-back block 8.
+    const before = snapshotPulseStats().rescues;
+    const rest: unknown[] = [];
+    while (!planner.done) rest.push(...planner.step());
+    expect(rest).toEqual([]);
+    expect(snapshotPulseStats().rescues).toEqual(before);
+    expect(planner.lastGuaranteedBlock).toBe(7);
+
+    // A prune below a lit block rewinds the watermark under it.
+    resetPulseStats();
+    const again = createLinkBatchPlanner(toFire, cells, graph, OPTS, pulseStats, 0);
+    for (let i = 0; i < 5; i++) again.step();
+    again.prune(7);
+    expect(again.lastGuaranteedBlock).toBe(6);
+  });
+
+  it('a block that lit in an earlier slice is judged by the ENTRY watermark even after pruning', () => {
+    const { cells, graph, links } = mixedFixture();
+    const { toFire } = openLinkBatch(links, 0, false, pulseStats);
+    // Entry watermark 10: blocks ≤ 10 count as lit earlier, so a dark block
+    // 8 slice never rescues — before and after a prune above it.
+    const planner = createLinkBatchPlanner(toFire, cells, graph, OPTS, pulseStats, 10);
+    for (let i = 0; i < 5; i++) planner.step();
+    planner.prune(9);
+    while (!planner.done) planner.step();
+    expect(snapshotPulseStats().rescues.rim).toBe(0);
+    expect(planner.lastGuaranteedBlock).toBe(8);
+  });
+});

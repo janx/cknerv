@@ -547,6 +547,27 @@ must not re-time itself between two clients. Base traversal is 33 ms per hop
 (`HOP_MS_BASE`), scaled into `0.7..1.4` of that value, with up to 300 ms of
 start jitter.
 
+The planning itself is sliced across frames. When a link delta arrives the
+batch is *opened* at once — the link cursor advances and the batch's departure
+clock (`startSec`) is stamped — and the display pair (staged map and display
+graph) it will plan against is captured then, at request time, exactly as the
+one-task planner read it. The searches run from a FIFO queue on the raw frame,
+before the pulse walk: about 2 ms per frame (`LIVE_PLAN_BUDGET_MS` — a frame
+never starts a step its previous step's cost predicts would overrun it), never
+less than one step per frame, batches in arrival order; the batch's entry grid
+is built as a step of its own. Pulses admitted from a
+slice carry the batch's `startSec`, so departure times, routes, pulse order,
+the 128-per-batch budget, the rescue pass and every stats bump are those the
+one-task planner produced. A batch whose earliest departure is within
+`LIVE_PLAN_DEADLINE_MARGIN_S` of now finishes in the current frame regardless
+of the budget: no packet is ever admitted after it should have left, and the
+worst case is the single task the planner always was. A reorg prunes queued
+links at or above the rewrite boundary before they can be admitted, the way it
+prunes packets already in flight. The searches themselves run over an
+epoch-stamped typed-array scratch with a per-node neighbour cache keyed on the
+adjacency `Set` instance — which is why an adjacency `Set` is never mutated in
+place anywhere in the system: a change replaces the instance.
+
 A packet's first leg is a ghost: it leaves the consumed cell's address, which
 no fabric edge reaches and no display map holds, and lands on the entry node.
 Its duration is one hop time scaled by the leg's length in median fabric edges

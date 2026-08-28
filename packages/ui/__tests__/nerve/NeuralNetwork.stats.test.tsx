@@ -50,6 +50,12 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
     expect(NETWORK_SOURCE).toContain(
       '      displayCellsRef.current,\n      displayGraphRef.current,',
     );
+    // …and the pair is captured when the batch is OPENED (request time), the
+    // planning itself being sliced across later frames.
+    expect(NETWORK_SOURCE).toContain(
+      'enqueueLivePulseBatch(\n      livePlanQueueRef.current,\n      toFire,\n'
+      + '      displayCellsRef.current,\n      displayGraphRef.current,',
+    );
     // Per-frame hop validation and hop geometry read the same pair.
     expect(NETWORK_SOURCE).toContain(
       'const adjacency = displayGraphRef.current.adjacency',
@@ -75,6 +81,39 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
     // the rebuild already in flight is left to do the work.
     expect(NETWORK_SOURCE).toContain('feed.fresh && feed.chained');
     expect(NETWORK_SOURCE).toContain('shouldDeferBirthsToBulkRebuild(');
+  });
+
+  // The one-task planner ran every route search of a block delta inside the
+  // effect that saw it. The effect now only opens the batch (cursor +
+  // departure clock) and the searches run a bounded slice per frame, on the
+  // raw frame and ahead of the pulse walk, so the packets it admits are in
+  // the pool before the walk that would move them.
+  it('opens link batches in the effect and plans them a slice per frame, before the pulse walk', () => {
+    expect(NETWORK_SOURCE).toContain('openLinkBatch(');
+    expect(NETWORK_SOURCE).not.toContain('planLinkBatch(');
+    expect(NETWORK_SOURCE).toContain('const startSec = scheduleLivePulseStartSec(');
+    const step = NETWORK_SOURCE.indexOf('stepLivePulseQueue(queue, livePlanStep)');
+    const walk = NETWORK_SOURCE.indexOf('// Per-frame: roll every active pulse forward');
+    expect(step).toBeGreaterThan(-1);
+    expect(walk).toBeGreaterThan(step);
+    // Raw frame, not the sim frame: a paused clock must not pause planning.
+    const stepFrame = NETWORK_SOURCE.lastIndexOf('useFrame(() => {', step);
+    const stepSimFrame = NETWORK_SOURCE.lastIndexOf('useSimFrame(', step);
+    expect(stepFrame).toBeGreaterThan(stepSimFrame);
+    // The departure clock is stamped at arrival, in the opening effect —
+    // never inside the slice that admits the pulse.
+    const enqueueAt = NETWORK_SOURCE.indexOf('enqueueLivePulseBatch(');
+    expect(NETWORK_SOURCE.indexOf('const startSec = scheduleLivePulseStartSec('))
+      .toBeLessThan(enqueueAt);
+    // A reorg prunes queued links beside the pulses already in flight.
+    const prunePool = NETWORK_SOURCE.indexOf('pulsesRef.current = prunePulsesFromBlock(');
+    const pruneQueue = NETWORK_SOURCE.indexOf('pruneLivePulseQueue(livePlanQueueRef.current, prune.fromBlock)');
+    expect(prunePool).toBeGreaterThan(-1);
+    expect(pruneQueue).toBeGreaterThan(prunePool);
+    // The queue is a ref that no effect cleanup clears: a dependency re-run
+    // must not drop a batch a previous run opened.
+    expect(NETWORK_SOURCE).not.toMatch(/livePlanQueueRef\.current\.batches\.length = 0/);
+    expect(NETWORK_SOURCE).not.toMatch(/livePlanQueueRef\.current = createLivePulseQueue\(\)/);
   });
 
   it('journals exact Cell ids for sparse flash-buffer uploads', () => {

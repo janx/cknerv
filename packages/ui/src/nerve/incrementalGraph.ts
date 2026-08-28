@@ -4,6 +4,16 @@
 // out-edges (symmetric); the symmetric in-edges an existing cell would gain
 // are left to periodic reconciliation (buildNeighborGraph). Operates on
 // LIVE cells only (death_at_ms == null), matching the canonical builder.
+//
+// INVARIANT (copy on write): an adjacency `Set` instance is never changed in
+// place once it sits in `graph.adjacency` — every change REPLACES the node's
+// Set. The worker deserializers already reuse an instance only when the node
+// is proven unchanged, so across the whole system "same Set instance" means
+// "same neighbours, same order", and the route search's per-node neighbour
+// cache (`geometry/pathRouter.ts`) keys on exactly that. Iteration order is
+// preserved by the copy: `new Set(old)` keeps insertion order, an append
+// lands last, a delete leaves the rest in place — the same order an in-place
+// mutation would have produced.
 
 import type { Cell } from '@cknerv/types';
 import type { NeighborGraph, NeighborEdge } from '../geometry/neighborGraph';
@@ -19,14 +29,24 @@ function distSq(a: Cell, b: Cell): number {
   return dx * dx + dy * dy + dz * dz;
 }
 
+/** Publish `id`'s neighbour set as a fresh instance with `add` appended —
+ *  the copy-on-write step of every edge insertion. */
+function withNeighbour(graph: NeighborGraph, id: number, add: number): void {
+  const previous = graph.adjacency.get(id);
+  const next = previous === undefined ? new Set<number>() : new Set(previous);
+  next.add(add);
+  graph.adjacency.set(id, next);
+}
+
 function addEdge(graph: NeighborGraph, a: number, b: number, d: number): NeighborEdge | null {
   if (a === b) return null;
-  let sa = graph.adjacency.get(a); if (!sa) { sa = new Set(); graph.adjacency.set(a, sa); }
-  if (sa.has(b)) return null;
-  let sb = graph.adjacency.get(b); if (!sb) { sb = new Set(); graph.adjacency.set(b, sb); }
+  const sa = graph.adjacency.get(a);
+  if (sa !== undefined && sa.has(b)) return null;
   const lo = a < b ? a : b, hi = a < b ? b : a;
   const edge: NeighborEdge = { from: lo, to: hi, d };
-  sa.add(b); sb.add(a); graph.edges.push(edge);
+  withNeighbour(graph, a, b);
+  withNeighbour(graph, b, a);
+  graph.edges.push(edge);
   return edge;
 }
 
@@ -124,7 +144,14 @@ export function removeCells(
     const removedEdgeKeys: string[] = [];
     if (nbrs) {
       for (const neighbourId of nbrs) {
-        graph.adjacency.get(neighbourId)?.delete(cellId);
+        const theirs = graph.adjacency.get(neighbourId);
+        if (theirs !== undefined && theirs.has(cellId)) {
+          // Copy on write: the neighbour's published Set is replaced, never
+          // edited — see the module invariant.
+          const next = new Set(theirs);
+          next.delete(cellId);
+          graph.adjacency.set(neighbourId, next);
+        }
         removedEdgeKeys.push(fabricEdgeKey(cellId, neighbourId));
       }
       graph.adjacency.delete(cellId);

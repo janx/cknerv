@@ -15,6 +15,7 @@ import {
   anchorProximityScore,
   rescueOrigin,
   rimEntryScore,
+  type RouteScratch,
 } from '../geometry/pathRouter';
 import { consensusPacketColor } from '../derives/consensusFlow.derive';
 import { advanceLinkCursor } from './linkCursor';
@@ -73,6 +74,7 @@ function planRescuePulse(
   graph: NeighborGraph,
   stats: PulseBatchStats,
   entryIndex: () => OriginEntryIndex,
+  routeScratch: RouteScratch | undefined,
 ): Pulse | null {
   // Degree-0 nodes are real in the live graph (death pruning can strand a
   // neighbourless key) — an isolated dst would dead-end the rescue while a
@@ -109,6 +111,7 @@ function planRescuePulse(
   // from the cells map, and this pulse is its block's only light.
   const path = rescueOrigin(graph, dst, score, {
     valid: (id) => cells.has(id),
+    scratch: routeScratch,
   });
   if (!path || path.length < 2) return null;
   if (substituted) stats.bumpRescue('dst-substituted');
@@ -151,6 +154,205 @@ function planRescuePulse(
 }
 
 /**
+ * Open a link batch: advance the cursor past every link this batch consumes
+ * and record the cursor-level stats (ring eviction, backfill suppression).
+ * Returns the links that fire, in link order. Cheap and synchronous — the
+ * cursor must move the instant a delta is seen so the next delta never
+ * re-plans the same links, however long the planning of these is deferred.
+ */
+export function openLinkBatch(
+  pulseLinks: CellLink[],
+  lastSeq: number,
+  backfillActive: boolean,
+  stats: PulseBatchStats,
+): { toFire: CellLink[]; nextSeq: number } {
+  const { toFire, nextSeq, suppressed, evictedGap } = advanceLinkCursor(
+    pulseLinks,
+    lastSeq,
+    backfillActive,
+  );
+  // Live links evicted from the bounded ring before the cursor saw them —
+  // silent block-guarantee loss, so count it. The caller rebases the cursor
+  // whenever the archive is re-sequenced (`linksEpoch`), so a hydration
+  // never reads as a gap; backfill storms are expected churn, not loss.
+  if (!backfillActive && evictedGap > 0) stats.bumpRingEvicted(evictedGap);
+  if (suppressed > 0) stats.bump('backfill', suppressed);
+  return { toFire, nextSeq };
+}
+
+/**
+ * The planning of one opened batch as a resumable machine. Each `step` plans
+ * one unit — the entry grid when the batch will need one, then a link at a
+ * time, then the closing rescue pass — and returns the pulses it produced,
+ * in the exact order the one-shot planner appended them; draining it IS
+ * `planLinkBatch`. The unit is a link because a link is the smallest work
+ * the stats observe (`observeLink` per link, in link order), and it bounds
+ * one step at two route searches plus, at a block boundary, one rescue
+ * pass. The grid gets a step of its own so the first slice of a batch is
+ * not the grid AND a link: the memo stays lazy, the step merely fills it
+ * early when an anchored link guarantees it will be read.
+ */
+export interface LinkBatchPlanner {
+  /** Every link has been planned and the last block flushed. */
+  readonly done: boolean;
+  /** Links not yet planned. */
+  readonly pending: number;
+  /** Block-guarantee watermark so far; the batch's result once `done`. */
+  readonly lastGuaranteedBlock: number;
+  step(): Pulse[];
+  /**
+   * Reorg: links at or above `fromBlock` are stale evidence. Unplanned ones
+   * are dropped, an open block at or above it forfeits its rescue, and both
+   * watermarks rewind below the boundary — exactly what the one-shot planner
+   * followed by `prunePulsesFromBlock` would have left behind, minus pulses
+   * that would only have been pruned again.
+   */
+  prune(fromBlock: number): void;
+}
+
+export function createLinkBatchPlanner(
+  toFire: readonly CellLink[],
+  cells: ReadonlyMap<number, Cell>,
+  graph: NeighborGraph,
+  opts: PulsePlanningOptions,
+  stats: PulseBatchStats,
+  lastGuaranteedBlock: number,
+): LinkBatchPlanner {
+  const links = toFire.slice();
+  let next = 0;
+  let closed = false;
+  // An input-side anchor (not one of the link's newborns) is exactly what
+  // `planPulses` will ask the entry grid about; without one nothing pays.
+  let prepared = !links.some((link) =>
+    link.to_ids.length > 0
+    && link.endpoint_anchors.some((a) => !link.to_ids.includes(a.id)));
+  // One entry index for the whole batch, built on first use. Origin
+  // planning and the rescue's destination substitution share this single
+  // memo: the grid is stage-wide, while most blocks carry only a cellbase
+  // link, which names no origin — so a batch that never queries it must
+  // not pay the build (backfill-suppressed links never pay it either).
+  let originIndex: OriginEntryIndex | null = null;
+  const entryIndex = () =>
+    (originIndex ??= buildOriginEntryIndex(cells, graph));
+  const batchOpts: PulsePlanningOptions = { ...opts, entryIndex };
+  // Normal pulses admitted under MAX_PULSES_PER_BATCH. Tracked apart from
+  // the planned count so rescues are budget-NEUTRAL, not merely exempt — a
+  // mid-batch rescue must not steal the next block's last budget slot.
+  let budgeted = 0;
+  // The entry watermark and the running one. Deliberately two values: the
+  // rescue's "lit in an earlier slice" test reads the ENTRY watermark, so
+  // after a reorg prune a replayed lower height is not suppressed by a
+  // higher block that lit earlier in this same batch.
+  let entryWatermark = lastGuaranteedBlock;
+  let guaranteed = lastGuaranteedBlock;
+  // Per-open-block rescue state, flushed at each block boundary so the
+  // rescue's `observeLink` stays monotonic with the per-link ones.
+  let curBlock = -1;
+  let curLit = false;
+  let curCandidates: CellLink[] = [];
+
+  const flushBlock = (): Pulse | null => {
+    if (curBlock === -1) return null;
+    if (curLit) {
+      if (curBlock > guaranteed) guaranteed = curBlock;
+      return null;
+    }
+    if (curBlock <= entryWatermark) return null; // lit in an earlier slice
+    if (curCandidates.length === 0) return null; // cellbase-only: stays silent
+    for (const link of curCandidates) {
+      const rescued = planRescuePulse(
+        link,
+        cells,
+        graph,
+        stats,
+        entryIndex,
+        opts.routeScratch,
+      );
+      if (rescued) {
+        stats.observeLink(curBlock, true);
+        if (curBlock > guaranteed) guaranteed = curBlock;
+        return rescued;
+      }
+    }
+    stats.bumpRescue('failed');
+    return null;
+  };
+
+  return {
+    get done() {
+      return closed;
+    },
+    get pending() {
+      return links.length - next;
+    },
+    get lastGuaranteedBlock() {
+      return guaranteed;
+    },
+    step(): Pulse[] {
+      if (closed) return [];
+      if (!prepared) {
+        prepared = true;
+        entryIndex();
+        return [];
+      }
+      if (next >= links.length) {
+        closed = true;
+        const rescued = flushBlock();
+        return rescued ? [rescued] : [];
+      }
+      const link = links[next++];
+      const out: Pulse[] = [];
+      if (link.block !== curBlock) {
+        const rescued = flushBlock();
+        if (rescued) out.push(rescued);
+        curBlock = link.block;
+        curLit = false;
+        curCandidates = [];
+      }
+      // Rescue candidates are only needed while the block is still dark;
+      // the attempt cap bounds the retry loop's worst case (each failed
+      // attempt pays a BFS).
+      if (
+        !curLit
+        && link.parents.length > 0
+        && curBlock > entryWatermark
+        && curCandidates.length < MAX_RESCUE_ATTEMPTS
+      ) {
+        curCandidates.push(link);
+      }
+      if (budgeted >= MAX_PULSES_PER_BATCH) {
+        stats.bump('batch-budget');
+        stats.observeLink(link.block, false);
+        return out;
+      }
+      const p = planPulses(link, cells, graph, batchOpts, link.at_ms, stats);
+      if (p.length > 0) {
+        curLit = true;
+        curCandidates = [];
+      }
+      stats.observeLink(link.block, p.length > 0);
+      budgeted += p.length;
+      for (const pulse of p) out.push(pulse);
+      return out;
+    },
+    prune(fromBlock: number): void {
+      // Links are in block order, so the stale ones are a suffix.
+      let keep = links.length;
+      while (keep > next && links[keep - 1].block >= fromBlock) keep -= 1;
+      links.length = keep;
+      if (curBlock >= fromBlock) {
+        // The open block was rolled back: nothing of it may still rescue.
+        curBlock = -1;
+        curLit = false;
+        curCandidates = [];
+      }
+      entryWatermark = Math.min(entryWatermark, fromBlock - 1);
+      guaranteed = Math.min(guaranteed, fromBlock - 1);
+    },
+  };
+}
+
+/**
  * Plan pulses for all newly-arrived links since `lastSeq`, recording drop
  * reasons + per-block rollup into `stats`. Pure: returns the planned pulses
  * (flat, in link order) + the advanced cursor. During backfill this returns
@@ -167,6 +369,10 @@ function planRescuePulse(
  * caller-threaded watermark (max height with ≥1 fired-or-rescued pulse):
  * a later batch slice of an already-guaranteed height never re-rescues.
  * Already-lit blocks plan byte-identically to the pre-rescue behaviour.
+ *
+ * This is the one-shot driver of {@link createLinkBatchPlanner}: opening
+ * the batch and draining the planner in one task. The live overlay drives
+ * the same planner a slice per frame instead (`livePulseQueue.ts`).
  */
 export function planLinkBatch(
   pulseLinks: CellLink[],
@@ -178,93 +384,27 @@ export function planLinkBatch(
   stats: PulseBatchStats,
   lastGuaranteedBlock: number,
 ): { planned: Pulse[]; nextSeq: number; lastGuaranteedBlock: number } {
-  const { toFire, nextSeq, suppressed, evictedGap } = advanceLinkCursor(
+  const { toFire, nextSeq } = openLinkBatch(
     pulseLinks,
     lastSeq,
     backfillActive,
+    stats,
   );
-  // Live links evicted from the bounded ring before the cursor saw them —
-  // silent block-guarantee loss, so count it. The caller rebases the cursor
-  // whenever the archive is re-sequenced (`linksEpoch`), so a hydration
-  // never reads as a gap; backfill storms are expected churn, not loss.
-  if (!backfillActive && evictedGap > 0) stats.bumpRingEvicted(evictedGap);
-  if (suppressed > 0) stats.bump('backfill', suppressed);
   const planned: Pulse[] = [];
   let guaranteed = lastGuaranteedBlock;
   if (toFire.length > 0) {
-    // One entry index for the whole batch, built on first use. Origin
-    // planning and the rescue's destination substitution share this single
-    // memo: the grid is stage-wide, while most blocks carry only a cellbase
-    // link, which names no origin — so a batch that never queries it must
-    // not pay the build (backfill-suppressed links never pay it either).
-    let originIndex: OriginEntryIndex | null = null;
-    const entryIndex = () =>
-      (originIndex ??= buildOriginEntryIndex(cells, graph));
-    const batchOpts: PulsePlanningOptions = { ...opts, entryIndex };
-    // Normal pulses admitted under MAX_PULSES_PER_BATCH. Tracked apart from
-    // planned.length so rescues are budget-NEUTRAL, not merely exempt — a
-    // mid-batch rescue must not steal the next block's last budget slot.
-    let budgeted = 0;
-    // Per-open-block rescue state, flushed at each block boundary so the
-    // rescue's `observeLink` stays monotonic with the per-link ones.
-    let curBlock = -1;
-    let curLit = false;
-    let curCandidates: CellLink[] = [];
-    const flushBlock = () => {
-      if (curBlock === -1) return;
-      if (curLit) {
-        if (curBlock > guaranteed) guaranteed = curBlock;
-        return;
-      }
-      // Deliberately the ENTRY watermark, not `guaranteed`: after a reorg
-      // prune, a replayed lower height must not be suppressed by a higher
-      // block that lit earlier in this same batch.
-      if (curBlock <= lastGuaranteedBlock) return; // lit in an earlier slice
-      if (curCandidates.length === 0) return; // cellbase-only: stays silent
-      for (const link of curCandidates) {
-        const rescued = planRescuePulse(link, cells, graph, stats, entryIndex);
-        if (rescued) {
-          planned.push(rescued);
-          stats.observeLink(curBlock, true);
-          if (curBlock > guaranteed) guaranteed = curBlock;
-          return;
-        }
-      }
-      stats.bumpRescue('failed');
-    };
-    for (const link of toFire) {
-      if (link.block !== curBlock) {
-        flushBlock();
-        curBlock = link.block;
-        curLit = false;
-        curCandidates = [];
-      }
-      // Rescue candidates are only needed while the block is still dark;
-      // the attempt cap bounds the retry loop's worst case (each failed
-      // attempt pays a BFS).
-      if (
-        !curLit
-        && link.parents.length > 0
-        && curBlock > lastGuaranteedBlock
-        && curCandidates.length < MAX_RESCUE_ATTEMPTS
-      ) {
-        curCandidates.push(link);
-      }
-      if (budgeted >= MAX_PULSES_PER_BATCH) {
-        stats.bump('batch-budget');
-        stats.observeLink(link.block, false);
-        continue;
-      }
-      const p = planPulses(link, cells, graph, batchOpts, link.at_ms, stats);
-      if (p.length > 0) {
-        curLit = true;
-        curCandidates = [];
-      }
-      stats.observeLink(link.block, p.length > 0);
-      budgeted += p.length;
-      for (const pulse of p) planned.push(pulse);
+    const planner = createLinkBatchPlanner(
+      toFire,
+      cells,
+      graph,
+      opts,
+      stats,
+      lastGuaranteedBlock,
+    );
+    while (!planner.done) {
+      for (const pulse of planner.step()) planned.push(pulse);
     }
-    flushBlock();
+    guaranteed = planner.lastGuaranteedBlock;
   }
   return { planned, nextSeq, lastGuaranteedBlock: guaranteed };
 }

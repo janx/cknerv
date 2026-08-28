@@ -91,11 +91,19 @@ import {
 } from './pulseSchedule';
 import {
   evictPulseOverflow,
-  planLinkBatch,
+  openLinkBatch,
   prunePulsesFromBlock,
   scheduleLivePulseStartSec,
   tickBlockIfAdvanced,
 } from './pulseBatch';
+import {
+  LIVE_PLAN_BUDGET_MS,
+  createLivePulseQueue,
+  enqueueLivePulseBatch,
+  pruneLivePulseQueue,
+  stepLivePulseQueue,
+  type LivePulseStepContext,
+} from './livePulseQueue';
 import { pulseStats } from './pulseStats';
 import {
   planDisplayMeshDiff,
@@ -795,6 +803,37 @@ function NeuralNetwork({
   // reset whenever the evidence archive is wholesale replaced.
   const lastGuaranteedBlockRef = useRef(0);
   const lastLinksEpochRef = useRef(cellsCache.linksEpoch);
+  // Opened link batches awaiting their planning slices (see the frame step
+  // below). Lives with the instance and is never cleared by an effect: a
+  // dependency re-run of the opening effect must not drop a batch a previous
+  // run opened, and an unmount takes the queue with it.
+  const livePlanQueueRef = useRef(createLivePulseQueue());
+  const livePlanStep = useMemo<LivePulseStepContext>(() => ({
+    nowSec: 0,
+    nowMs: () => performance.now(),
+    budgetMs: LIVE_PLAN_BUDGET_MS,
+    stats: pulseStats,
+    lastGuaranteedBlock: () => lastGuaranteedBlockRef.current,
+    // The only site that admits origin-bearing pulses, so the only site that
+    // has to resolve a ghost. The batch carries the map the routes were
+    // planned against, so `path[0]` is present there by construction.
+    admit: (pulse, batch) => {
+      pulsesRef.current.push({
+        ...pulse,
+        startSec: batch.startSec,
+        mode: 'live',
+        ghost: resolvePulseGhost(pulse, batch.cells),
+      });
+    },
+    // A batch from a replaced evidence archive still plans (its pair is
+    // still a valid stage), but the archive reset zeroed the watermark and
+    // an old-chain height must not be written back over that.
+    complete: (guaranteed, batch) => {
+      if (batch.linksEpoch === lastLinksEpochRef.current) {
+        lastGuaranteedBlockRef.current = guaranteed;
+      }
+    },
+  }), []);
   useEffect(() => {
     if (cellsCache.linksEpoch !== lastLinksEpochRef.current) {
       // The evidence archive was wholesale replaced: snapshot hydration
@@ -833,21 +872,41 @@ function NeuralNetwork({
         (cellsCache.pulseLinks[0]?.seq ?? 1) - 1,
       );
     }
-    // Decide which links fire + plan their pulses. While a backfill/catch-up
-    // is active this returns planned=[] but still advances the cursor, so the
-    // storm is suppressed and the window does not replay when `backfill`
-    // clears. Drop reasons + per-block rollup are recorded into pulseStats.
-    //
+    // Decide which links fire. While a backfill/catch-up is active this fires
+    // nothing but still advances the cursor, so the storm is suppressed and
+    // the window does not replay when `backfill` clears. The cursor moves
+    // NOW; the planning it opens — one route search per origin over the
+    // whole stage — is sliced across the following frames by the step
+    // below, inside the slack before the packets depart. Drop reasons +
+    // per-block rollup are recorded into pulseStats as each link plans.
+    const { toFire, nextSeq } = openLinkBatch(
+      cellsCache.pulseLinks,
+      lastLinksSeqRef.current,
+      !!cellsCache.backfill,
+      pulseStats,
+    );
+    lastLinksSeqRef.current = nextSeq;
+    if (toFire.length === 0) return;
+    // All links in this batch share one clock read — simClock only advances
+    // per frame, so stamping once == the prior per-link stamping. Stamped at
+    // ARRIVAL, not when a slice gets to the link: however many frames the
+    // planning takes, every packet keeps the departure it always had.
+    const startSec = scheduleLivePulseStartSec(
+      simClock.elapsedSec,
+      livePulseDelayS,
+    );
     // Sources and routes come from the DISPLAY pair — the staged map and the
     // graph built from it. A pulse only reads as consensus flow if the viewer
     // can see the fibre it rides, and the retained map holds four cells
     // off-stage for every one on it. Pairing them also makes residents
     // routable: they are most of the stage and `cellsCache.cells` never held
-    // them at all.
-    const { planned, nextSeq, lastGuaranteedBlock } = planLinkBatch(
-      cellsCache.pulseLinks,
-      lastLinksSeqRef.current,
-      !!cellsCache.backfill,
+    // them at all. The pair is captured HERE, at request time, exactly as the
+    // one-task planner read it: a later build swaps the live graph out from
+    // under a batch still planning, and the frame loop validates every hop
+    // against the live graph regardless.
+    enqueueLivePulseBatch(
+      livePlanQueueRef.current,
+      toFire,
       displayCellsRef.current,
       displayGraphRef.current,
       {
@@ -855,36 +914,11 @@ function NeuralNetwork({
         maxPulsesPerLink: pulses?.maxPulsesPerLink,
         maxOriginsPerLink: pulses?.maxOriginsPerLink,
       },
-      pulseStats,
-      lastGuaranteedBlockRef.current,
+      startSec,
+      cellsCache.linksEpoch,
     );
-    lastLinksSeqRef.current = nextSeq;
-    lastGuaranteedBlockRef.current = lastGuaranteedBlock;
-    // All links in this synchronous batch share one clock read — simClock only
-    // advances per frame, so stamping once == the prior per-link stamping.
-    const startSec = scheduleLivePulseStartSec(
-      simClock.elapsedSec,
-      livePulseDelayS,
-    );
-    // The only site that admits origin-bearing pulses, so the only site that
-    // has to resolve a ghost. `displayCellsRef` is the map the routes were
-    // planned against, so `path[0]` is present here by construction.
-    const admittedCells = displayCellsRef.current;
-    for (const p of planned) {
-      pulsesRef.current.push({
-        ...p,
-        startSec,
-        mode: 'live',
-        ghost: resolvePulseGhost(p, admittedCells),
-      });
-    }
-    // Soft cap — drop oldest if we're way over, shedding rescue pulses
-    // last (each is some block's only light).
-    const maxActivePulses = Math.max(
-      1,
-      Math.floor((pulses?.maxActivePulses ?? MAX_ACTIVE_PULSES) * particleCapMul),
-    );
-    pulsesRef.current = evictPulseOverflow(pulsesRef.current, maxActivePulses);
+    // A demand-driven canvas has to keep rendering until the batch closes.
+    invalidate();
   }, [
     cellsCache.pulseLinks,
     cellsCache.linksSeq,
@@ -893,9 +927,8 @@ function NeuralNetwork({
     topology?.maxHops,
     pulses?.maxPulsesPerLink,
     pulses?.maxOriginsPerLink,
-    pulses?.maxActivePulses,
     livePulseDelayS,
-    particleCapMul,
+    invalidate,
     displayGraphVersion,
   ]);
 
@@ -1154,6 +1187,9 @@ function NeuralNetwork({
       pulsesRef.current,
       prune.fromBlock,
     );
+    // Links still waiting for their planning slice are the same stale
+    // evidence: dropped before they can ever be admitted.
+    pruneLivePulseQueue(livePlanQueueRef.current, prune.fromBlock);
     // Replayed heights must re-qualify for the block guarantee: rewind the
     // watermark below the rewrite boundary.
     lastGuaranteedBlockRef.current = Math.min(
@@ -1452,6 +1488,37 @@ function NeuralNetwork({
       simClock.elapsedSec,
     );
   }, []);
+
+  // Per-frame planning slice for the opened link batches. Registered BEFORE
+  // the pulse walk below, so a packet planned this frame is in the pool
+  // before the walk that would move it; on the raw frame rather than the
+  // sim frame, because planning is main-thread work, not animation — a
+  // paused clock only means no departure can press. Each slice spends at
+  // most `LIVE_PLAN_BUDGET_MS`, always makes progress, and finishes a batch
+  // outright once its departure is within the deadline margin, so no packet
+  // is ever admitted after it should have left. The queue is normally empty:
+  // one length check per frame.
+  useFrame(() => {
+    const queue = livePlanQueueRef.current;
+    if (queue.batches.length === 0) return;
+    livePlanStep.nowSec = simClock.elapsedSec;
+    const report = stepLivePulseQueue(queue, livePlanStep);
+    if (report.admitted > 0) {
+      // Soft cap — drop oldest if we're way over, shedding rescue pulses
+      // last (each is some block's only light).
+      const maxActivePulses = Math.max(
+        1,
+        Math.floor(
+          (pulses?.maxActivePulses ?? MAX_ACTIVE_PULSES) * particleCapMul,
+        ),
+      );
+      pulsesRef.current = evictPulseOverflow(
+        pulsesRef.current,
+        maxActivePulses,
+      );
+    }
+    if (report.pending) invalidate();
+  });
 
   // Per-frame: roll every active pulse forward, light up the current
   // hop's edge, push the spike head sprite, flash the receiving

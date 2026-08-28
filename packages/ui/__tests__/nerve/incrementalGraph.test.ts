@@ -111,3 +111,48 @@ describe('removeCell', () => {
     expect([...g.adjacency.get(4)!]).toEqual([1, 5]);
   });
 });
+
+describe('copy on write — a published adjacency Set is replaced, never edited', () => {
+  // The route search caches each node's neighbour slots against the Set
+  // instance it read them from, so "same instance" must mean "same
+  // neighbours". Every mutator here replaces the instances it changes and
+  // leaves every other instance alone.
+  it('addCell replaces the Sets of the newborn and each new neighbour, nothing else', () => {
+    const cells = new Map<number, Cell>([
+      [1, cell(1, 0, 0)], [2, cell(2, 2, 0)], [3, cell(3, 4, 0)], [4, cell(4, 60, 0)],
+    ]);
+    const g = emptyNeighborGraph();
+    g.adjacency.set(2, new Set([3])); g.adjacency.set(3, new Set([2])); g.adjacency.set(4, new Set());
+    const before2 = g.adjacency.get(2)!;
+    const before3 = g.adjacency.get(3)!;
+    const before4 = g.adjacency.get(4)!;
+    addCell(g, 1, cells, { k: 2 });
+    expect([...g.adjacency.get(1)!]).toEqual([2, 3]);
+    expect(g.adjacency.get(2)).not.toBe(before2);
+    expect([...g.adjacency.get(2)!]).toEqual([3, 1]); // order kept, append last
+    expect([...before2]).toEqual([3]); // the old instance is untouched
+    expect(g.adjacency.get(3)).not.toBe(before3);
+    expect([...before3]).toEqual([2]);
+    expect(g.adjacency.get(4)).toBe(before4); // out of range: untouched
+  });
+
+  it('removeCells replaces each surviving neighbour\'s Set, keeps the rest, and preserves order', () => {
+    const g = emptyNeighborGraph();
+    g.adjacency.set(1, new Set([2, 4]));
+    g.adjacency.set(2, new Set([1, 3]));
+    g.adjacency.set(3, new Set([2, 4]));
+    g.adjacency.set(4, new Set([1, 3, 5]));
+    g.adjacency.set(5, new Set([4]));
+    const before1 = g.adjacency.get(1)!;
+    const before4 = g.adjacency.get(4)!;
+    const before5 = g.adjacency.get(5)!;
+    removeCells(g, [2, 3]);
+    expect(g.adjacency.get(1)).not.toBe(before1);
+    expect([...before1]).toEqual([2, 4]);
+    expect([...g.adjacency.get(1)!]).toEqual([4]);
+    expect(g.adjacency.get(4)).not.toBe(before4);
+    expect([...before4]).toEqual([1, 3, 5]);
+    expect([...g.adjacency.get(4)!]).toEqual([1, 5]);
+    expect(g.adjacency.get(5)).toBe(before5); // never adjacent to the dead: untouched
+  });
+});

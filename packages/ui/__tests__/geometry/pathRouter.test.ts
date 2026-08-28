@@ -333,3 +333,350 @@ describe('rescueOrigin + rimEntryScore (integration)', () => {
     expectRealEdges(g, path!);
   });
 });
+
+// ── typed-array engine vs the Set/Map reference ──────────────────────
+//
+// The searches above run on an epoch-stamped typed-array scratch with a
+// per-node neighbour cache. Results must be byte-identical to the Set/Map
+// walk they replaced — same paths, same first-discovery parents, same
+// tie-breaks — so the reference implementations are kept here verbatim and
+// the engine is checked against them over seeded graphs, hundreds of random
+// requests, both id families, and graphs mutated between searches.
+
+import type { Cell } from '@cknerv/types';
+import { buildNeighborGraph } from '../../src/geometry/neighborGraph';
+import {
+  createRouteScratch,
+  DEFAULT_MAX_HOPS,
+  RESCUE_MAX_HOPS,
+  type RouteScratch,
+} from '../../src/geometry/pathRouter';
+import { addCell, removeCells } from '../../src/nerve/incrementalGraph';
+
+function referenceShortestPathsToTargets(
+  graph: NeighborGraph,
+  source: number,
+  targets: readonly number[],
+  maxHops: number = DEFAULT_MAX_HOPS,
+): Map<number, number[]> {
+  const found = new Map<number, number[]>();
+  const remaining = new Set<number>();
+  for (const target of targets) {
+    if (target === source) {
+      found.set(target, [source]);
+      continue;
+    }
+    if (graph.adjacency.has(target)) remaining.add(target);
+  }
+  if (!graph.adjacency.has(source) || remaining.size === 0) return found;
+  const visited = new Set<number>([source]);
+  const parent = new Map<number, number>();
+  let frontier: number[] = [source];
+  for (let depth = 0; depth < maxHops; depth++) {
+    const next: number[] = [];
+    for (const cur of frontier) {
+      const neighbours = graph.adjacency.get(cur);
+      if (!neighbours) continue;
+      for (const nb of neighbours) {
+        if (visited.has(nb)) continue;
+        visited.add(nb);
+        parent.set(nb, cur);
+        if (remaining.delete(nb)) {
+          const path = [nb];
+          let walk: number | undefined = nb;
+          while (walk !== undefined && walk !== source) {
+            walk = parent.get(walk);
+            if (walk !== undefined) path.push(walk);
+          }
+          path.reverse();
+          found.set(nb, path);
+          if (remaining.size === 0) return found;
+        }
+        next.push(nb);
+      }
+    }
+    if (next.length === 0) return found;
+    frontier = next;
+  }
+  return found;
+}
+
+function referenceRescueOrigin(
+  graph: NeighborGraph,
+  dst: number,
+  score: (id: number) => number,
+  options: { maxHops?: number; minHops?: number; valid?: (id: number) => boolean } = {},
+): number[] | null {
+  const maxHops = options.maxHops ?? RESCUE_MAX_HOPS;
+  const minHops = options.minHops ?? RESCUE_MIN_HOPS;
+  const valid = options.valid;
+  if (!graph.adjacency.has(dst)) return null;
+  const parent = new Map<number, number>();
+  const visited = new Set<number>([dst]);
+  let frontier: number[] = [dst];
+  let bestAny = -1;
+  let bestAnyScore = Number.NEGATIVE_INFINITY;
+  let bestFar = -1;
+  let bestFarScore = Number.NEGATIVE_INFINITY;
+  for (let depth = 1; depth <= maxHops; depth++) {
+    const next: number[] = [];
+    for (const cur of frontier) {
+      const neighbours = graph.adjacency.get(cur);
+      if (!neighbours) continue;
+      for (const nb of neighbours) {
+        if (visited.has(nb)) continue;
+        visited.add(nb);
+        if (valid && !valid(nb)) continue;
+        parent.set(nb, cur);
+        next.push(nb);
+        const s = score(nb);
+        if (s > bestAnyScore || (s === bestAnyScore && nb < bestAny)) {
+          bestAny = nb;
+          bestAnyScore = s;
+        }
+        if (
+          depth >= minHops
+          && (s > bestFarScore || (s === bestFarScore && nb < bestFar))
+        ) {
+          bestFar = nb;
+          bestFarScore = s;
+        }
+      }
+    }
+    if (next.length === 0) break;
+    frontier = next;
+  }
+  const origin = bestFar !== -1 ? bestFar : bestAny;
+  if (origin === -1) return null;
+  const path = [origin];
+  let walk: number | undefined = origin;
+  while (walk !== undefined && walk !== dst) {
+    walk = parent.get(walk);
+    if (walk !== undefined) path.push(walk);
+  }
+  return path;
+}
+
+function mulberry32(seed: number): () => number {
+  let a = seed;
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function seededCell(id: number, pos: [number, number, number]): Cell {
+  return {
+    id,
+    born_at_ms: 0,
+    death_at_ms: null,
+    birth_block: 1,
+    tag: null,
+    pos_seed: pos,
+    out_point: { tx_hash: '0x', index: 0 },
+    capacity: 0,
+    data_hex: '0x',
+    data_bytes: 0,
+    content_hash: '0x' + '00'.repeat(32),
+    lock_shape_seed: [1, 2],
+    type_shape_seed: null,
+    data_shape_seed: [3, 4],
+  };
+}
+
+/** A staged field through the real builder: k-NN edges, lifelines and
+ *  component stitches — the graph shape the engine actually walks. */
+function seededField(
+  rand: () => number,
+  n: number,
+  idOf: (i: number) => number,
+): { cells: Map<number, Cell>; graph: NeighborGraph; ids: number[] } {
+  const cells = new Map<number, Cell>();
+  const ids: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const id = idOf(i);
+    let x = 0;
+    let z = 0;
+    do {
+      x = (rand() * 2 - 1) * 60;
+      z = (rand() * 2 - 1) * 54;
+    } while ((x / 60) ** 2 + (z / 54) ** 2 > 1);
+    cells.set(id, seededCell(id, [x, (rand() * 2 - 1) * 3, z]));
+    ids.push(id);
+  }
+  return { cells, graph: buildNeighborGraph(cells, { k: 4 }), ids };
+}
+
+function expectSameRoutes(
+  a: Map<number, number[]>,
+  b: Map<number, number[]>,
+): void {
+  expect([...b.entries()]).toEqual([...a.entries()]);
+}
+
+const ID_FAMILIES: ReadonlyArray<[string, (i: number) => number]> = [
+  ['sequential ids', (i) => 1 + i * 3],
+  ['2^52-family ids', (i) => 2 ** 52 + i * 7],
+  ['mixed families', (i) => (i % 4 === 0 ? 1 + i * 3 : 2 ** 52 + i * 7)],
+];
+
+describe('typed-array search engine — byte-identical to the Set/Map reference', () => {
+  it.each(ID_FAMILIES)(
+    'shortestPathsToTargets over a seeded builder graph, %s',
+    (_label, idOf) => {
+      const rand = mulberry32(0x5eed + idOf(1));
+      const { graph, ids } = seededField(rand, 1500, idOf);
+      const scratch = createRouteScratch(16); // grows many times over
+      const pick = () => ids[Math.floor(rand() * ids.length)];
+      const missing = (k: number) => 999_999_991 + k;
+      for (let q = 0; q < 400; q++) {
+        const source = rand() < 0.03 ? missing(q) : pick();
+        const targets: number[] = [];
+        const count = 1 + Math.floor(rand() * 3);
+        for (let t = 0; t < count; t++) {
+          const roll = rand();
+          targets.push(
+            roll < 0.05 ? missing(t)
+              : roll < 0.08 ? source
+                : pick(),
+          );
+        }
+        if (rand() < 0.1) targets.push(targets[0]); // duplicates
+        const maxHops = rand() < 0.7
+          ? DEFAULT_MAX_HOPS
+          : [1, 2, 3, 5, 8, 13][Math.floor(rand() * 6)];
+        expectSameRoutes(
+          referenceShortestPathsToTargets(graph, source, targets, maxHops),
+          shortestPathsToTargets(graph, source, targets, maxHops, scratch),
+        );
+        // The single-target search is the same engine asked for one target.
+        expect(shortestPath(graph, source, targets[0], maxHops, scratch))
+          .toEqual(
+            referenceShortestPathsToTargets(graph, source, [targets[0]], maxHops)
+              .get(targets[0]) ?? null,
+          );
+      }
+    },
+  );
+
+  it.each(ID_FAMILIES)('rescueOrigin with validity and score ties, %s', (_label, idOf) => {
+    const rand = mulberry32(0x7e5c + idOf(2));
+    const { cells, graph, ids } = seededField(rand, 900, idOf);
+    const scratch = createRouteScratch();
+    // Every 9th node is invalid (left the cells map), and scores are coarse
+    // so exact ties are common: the lower-id tie-break has to agree.
+    const valid = (id: number) => idOf(Math.floor((id - idOf(0)) / (idOf(1) - idOf(0)))) === id
+      && (Math.floor((id - idOf(0)) / (idOf(1) - idOf(0))) % 9) !== 0;
+    const score = (id: number) => {
+      const cell = cells.get(id);
+      return cell ? Math.round(Math.hypot(cell.pos_seed[0], cell.pos_seed[2]) / 10) : Number.NEGATIVE_INFINITY;
+    };
+    for (let q = 0; q < 120; q++) {
+      const dst = q % 17 === 0 ? 999_999_991 : ids[Math.floor(rand() * ids.length)];
+      const options = {
+        maxHops: rand() < 0.5 ? RESCUE_MAX_HOPS : 4 + Math.floor(rand() * 20),
+        minHops: rand() < 0.5 ? RESCUE_MIN_HOPS : Math.floor(rand() * 4),
+        ...(rand() < 0.6 ? { valid } : {}),
+      };
+      expect(rescueOrigin(graph, dst, score, { ...options, scratch }))
+        .toEqual(referenceRescueOrigin(graph, dst, score, options));
+    }
+  });
+
+  it('follows copy-on-write graph mutations between searches on one scratch', () => {
+    // The neighbour cache keys on the adjacency Set instance, and the eager
+    // living-mesh mutators replace instances rather than editing them. Route
+    // before and after several rounds of births and deaths, same scratch:
+    // every answer must be the reference's answer on the graph AS IT IS.
+    const rand = mulberry32(0xc0de);
+    const { cells, graph, ids } = seededField(rand, 800, (i) => 2 ** 52 + i * 5);
+    const scratch = createRouteScratch();
+    let live = ids.slice();
+    let nextId = 2 ** 52 + 800 * 5;
+    const check = (count: number) => {
+      for (let q = 0; q < count; q++) {
+        const source = live[Math.floor(rand() * live.length)];
+        const targets = [
+          live[Math.floor(rand() * live.length)],
+          live[Math.floor(rand() * live.length)],
+        ];
+        expectSameRoutes(
+          referenceShortestPathsToTargets(graph, source, targets),
+          shortestPathsToTargets(graph, source, targets, DEFAULT_MAX_HOPS, scratch),
+        );
+        const dst = live[Math.floor(rand() * live.length)];
+        const score = (id: number) => -(cells.get(id)?.pos_seed[0] ?? Infinity);
+        expect(rescueOrigin(graph, dst, score, { valid: (id) => cells.has(id), scratch }))
+          .toEqual(referenceRescueOrigin(graph, dst, score, { valid: (id) => cells.has(id) }));
+      }
+    };
+    check(60);
+    for (let round = 0; round < 5; round++) {
+      // Deaths: remove 20 random live nodes (edges retract in place).
+      const dying: number[] = [];
+      for (let i = 0; i < 20; i++) {
+        const victim = live[Math.floor(rand() * live.length)];
+        if (!dying.includes(victim)) dying.push(victim);
+      }
+      removeCells(graph, dying);
+      for (const id of dying) cells.delete(id);
+      live = live.filter((id) => !dying.includes(id));
+      // Births: admit 20 newborns beside random survivors.
+      for (let i = 0; i < 20; i++) {
+        const near = cells.get(live[Math.floor(rand() * live.length)])!;
+        const id = nextId;
+        nextId += 5;
+        cells.set(id, seededCell(id, [
+          near.pos_seed[0] + (rand() - 0.5) * 2,
+          near.pos_seed[1],
+          near.pos_seed[2] + (rand() - 0.5) * 2,
+        ]));
+        addCell(graph, id, cells, { k: 4 });
+        live.push(id);
+      }
+      check(60);
+    }
+  });
+
+  it('one scratch serves two unrelated graphs that reuse the same ids', () => {
+    const scratch = createRouteScratch();
+    const chain = mkGraph([[1, 2], [2, 3], [3, 4], [4, 5]]);
+    const star = mkGraph([[1, 5], [5, 2], [5, 3], [5, 4]]);
+    expect(shortestPath(chain, 1, 5, DEFAULT_MAX_HOPS, scratch)).toEqual([1, 2, 3, 4, 5]);
+    expect(shortestPath(star, 1, 5, DEFAULT_MAX_HOPS, scratch)).toEqual([1, 5]);
+    expect(shortestPath(chain, 1, 5, DEFAULT_MAX_HOPS, scratch)).toEqual([1, 2, 3, 4, 5]);
+    expect(shortestPath(star, 1, 4, DEFAULT_MAX_HOPS, scratch)).toEqual([1, 5, 4]);
+  });
+
+  it('compacts the slot registry once it dwarfs the live graph, without changing answers', () => {
+    // A 9,500-leaf star is walked whole by one search (slots are assigned
+    // on sight), so the registry fills; a tiny graph afterwards trips the
+    // compaction (registry > 2 × live + slack) and must still answer right,
+    // and so must the star once its caches are rebuilt from scratch.
+    const edges: [number, number][] = [];
+    for (let i = 2; i <= 9501; i++) edges.push([1, i]);
+    const star = mkGraph(edges);
+    const scratch = createRouteScratch();
+    expect(shortestPath(star, 2, 9501, DEFAULT_MAX_HOPS, scratch)).toEqual([2, 1, 9501]);
+    expect(scratch.slotCount).toBe(9501);
+    const small = mkGraph([[7, 8], [8, 9]]);
+    expect(shortestPath(small, 7, 9, DEFAULT_MAX_HOPS, scratch)).toEqual([7, 8, 9]);
+    expect(scratch.slotCount).toBe(3);
+    expect(shortestPath(star, 40, 41, DEFAULT_MAX_HOPS, scratch)).toEqual([40, 1, 41]);
+    expect(shortestPathsToTargets(star, 1, [3, 9501, 2], DEFAULT_MAX_HOPS, scratch))
+      .toEqual(new Map([[2, [1, 2]], [3, [1, 3]], [9501, [1, 9501]]]));
+  });
+
+  it('touches no scratch on the cheap early returns', () => {
+    const g = mkGraph([[1, 2]]);
+    const scratch: RouteScratch = createRouteScratch();
+    expect(shortestPathsToTargets(g, 99, [1, 2], DEFAULT_MAX_HOPS, scratch).size).toBe(0);
+    expect(shortestPathsToTargets(g, 1, [99], DEFAULT_MAX_HOPS, scratch).size).toBe(0);
+    expect(shortestPathsToTargets(g, 1, [1], DEFAULT_MAX_HOPS, scratch).get(1)).toEqual([1]);
+    expect(rescueOrigin(g, 99, () => 1, { scratch })).toBeNull();
+    expect(scratch.epoch).toBe(0);
+    expect(scratch.slotCount).toBe(0);
+  });
+});
