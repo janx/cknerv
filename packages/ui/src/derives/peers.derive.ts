@@ -3,7 +3,7 @@
 
 import type { ChainEntry, ChainNode, Peer, PeerDirection } from '@cknerv/types';
 import type { Vec3 } from '../types';
-import { CONTACT_WAVE_SCALE } from '../ui/topologyConstants';
+import { BEAM_CHARGE_DUR_S, CONTACT_WAVE_SCALE } from '../ui/topologyConstants';
 import {
   PEER_NETWORK_PALETTE,
   type SceneColor,
@@ -275,6 +275,62 @@ function clampUnit(value: number): number {
 export function smoothUnit(value: number): number {
   const u = clampUnit(value);
   return u * u * (3 - 2 * u);
+}
+
+// ————— The held breath —————
+//
+// The first half of the handoff. A peer about to deliver does not grow a
+// glyph: the light that is already there — its own halo — draws in over the
+// charge window and lets go the instant its hop leaves. This is that
+// envelope, in sim seconds relative to the launch. The halo shaders run a
+// GLSL twin (`PEER_COMPRESSION_GLSL`, materials/peerNodeMaterial.ts) that is
+// template-injected from these same constants and kept structurally
+// identical to `peerCompression` line for line; this mirror is what the twin
+// is held to.
+
+/** How far a halo contracts at full breath: its extent goes to
+ *  `1 − COMPRESS_DEPTH` of rest. */
+export const COMPRESS_DEPTH = 0.45;
+/** How much brighter the contracted halo burns at full breath.
+ *  Concentration, not dimming — and deliberately short of light conservation
+ *  (an extent of 0.55 would conserve at ×3.3), so a peer never pops white. */
+export const COMPRESS_GAIN = 0.8;
+/** The release after launch (s): a halo lets go faster than it drew in. */
+export const COMPRESS_RELEASE_S = 0.25;
+/** "No launch scheduled." Sim seconds: anything alive sits ~1e9 s past it, so
+ *  the envelope resolves to exactly 0 with no branch — the same sentinel
+ *  idiom the Cell lifecycle stamps use. */
+export const PEER_LAUNCH_SENTINEL = -1e9;
+
+export interface PeerCompression {
+  /** 0 at rest, exactly 1 at the launch instant. */
+  envelope: number;
+  /** Multiplier on the halo's extent: 1 at rest, `1 − COMPRESS_DEPTH` at launch. */
+  scale: number;
+  /** Multiplier on the halo's intensity: 1 at rest, `1 + COMPRESS_GAIN` at launch. */
+  gain: number;
+}
+
+/** The held breath, `dtS` seconds after (negative: before) a halo's launch.
+ *  Draws in over `[−chargeS, 0)` and lets go over `[0, releaseS)`; exactly 0
+ *  everywhere else, including at the sentinel. One clamped easing shapes both
+ *  halves (`smoothUnit`), so the envelope is continuous through the launch:
+ *  the draw-in arrives at 1 as the release leaves from 1. Pure. */
+export function peerCompression(
+  dtS: number,
+  chargeS: number = BEAM_CHARGE_DUR_S,
+  releaseS: number = COMPRESS_RELEASE_S,
+): PeerCompression {
+  // Structurally the GLSL twin: a clamped smoothstep on each side of the
+  // launch, selected by the sign of dt.
+  const charge = smoothUnit((dtS + chargeS) / chargeS);
+  const release = 1 - smoothUnit(dtS / releaseS);
+  const envelope = dtS < 0 ? charge : release;
+  return {
+    envelope,
+    scale: 1 - COMPRESS_DEPTH * envelope,
+    gain: 1 + COMPRESS_GAIN * envelope,
+  };
 }
 
 /** Per-frame Cell-contact envelope for one delivered block (t∈[0,1]).

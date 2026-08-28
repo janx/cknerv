@@ -41,6 +41,10 @@ import {
 // authorities are imported rather than re-typed, so the relationship survives
 // a retune of either side.
 import { SHOCKWAVE_SPEED, CONTACT_WAVE_SCALE } from '../ui/topologyConstants';
+// The held breath's two numbers live on the tested envelope in peers.derive
+// (the halo shaders inject the rest of it from the same module) — imported
+// on the one-authority rule, so a retune there moves the knob's default too.
+import { COMPRESS_DEPTH, COMPRESS_GAIN } from '../derives/peers.derive';
 // ② reinforcement defaults live in fabricReinforce.ts — import so there's ONE
 // authority (the module owns the numbers; these knobs just expose them live).
 import {
@@ -95,6 +99,13 @@ export const galaxySchema = {
 // sizes.
 export const deliverySchema = {
   ingestDur: { value: 1.2, min: 0.1, max: 1.5, step: 0.05, label: 'contact dur' },
+  // The held breath: over the charge window before its hop leaves, a
+  // delivering halo (every measured peer's, and the anchor's) draws in to
+  // `1 − compressDepth` of its extent and burns `1 + compressGain` brighter —
+  // concentration, not dimming, and short of light conservation so it never
+  // pops white. Read into both halo materials every frame.
+  compressDepth: { value: COMPRESS_DEPTH, min: 0, max: 0.9, step: 0.05, label: 'breath depth' },
+  compressGain: { value: COMPRESS_GAIN, min: 0, max: 3, step: 0.05, label: 'breath gain' },
   // The hop's mote is the block itself, sized per tier in world units; the
   // plume is the courier plume (courierGlyph) with its own width and its
   // length range, stretched by the hop's analytic speed like every glint.

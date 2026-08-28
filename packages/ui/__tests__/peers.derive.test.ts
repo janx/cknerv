@@ -21,6 +21,11 @@ import {
   contactFrontState,
   contactFrontReachCeiling,
   smoothUnit,
+  peerCompression,
+  COMPRESS_DEPTH,
+  COMPRESS_GAIN,
+  COMPRESS_RELEASE_S,
+  PEER_LAUNCH_SENTINEL,
   CONTACT_FRONT_START_RADIUS,
   CONTACT_FRONT_REACH_KNEE,
   CONTACT_FRONT_WIDTH_GROW_RATE,
@@ -36,6 +41,7 @@ import {
 } from '../src/derives/peers.derive';
 import { consensusRouteHopWorldPosition } from '../src/derives/consensusRouteCamera.derive';
 import { deliverySchema } from '../src/tweaks/tweakSchema';
+import { BEAM_CHARGE_DUR_S } from '../src/ui/topologyConstants';
 import { emptyChainCache } from '@cknerv/cache';
 import type { Peer, ChainNode } from '@cknerv/types';
 
@@ -385,6 +391,82 @@ describe('peers.derive', () => {
       expect(smoothUnit(0.5)).toBeCloseTo(0.5, 12);
       expect(smoothUnit(1)).toBe(1);
       expect(smoothUnit(7)).toBe(1);
+    });
+  });
+
+  describe('peerCompression (the held breath)', () => {
+    const charge = BEAM_CHARGE_DUR_S;
+    const release = COMPRESS_RELEASE_S;
+    const rest = { envelope: 0, scale: 1, gain: 1 };
+
+    it('is exactly 0 outside the window: before the draw-in, after the release, and at the sentinel', () => {
+      expect(peerCompression(-charge - 1e-9)).toEqual(rest);
+      expect(peerCompression(-5)).toEqual(rest);
+      expect(peerCompression(release)).toEqual(rest);
+      expect(peerCompression(9)).toEqual(rest);
+      // The lane's rest value. A halo with no launch scheduled sits ~1e9 s
+      // past it and must resolve to rest with no branch, at any sim time.
+      for (const now of [0, 17.3, 86_400]) {
+        expect(peerCompression(now - PEER_LAUNCH_SENTINEL)).toEqual(rest);
+      }
+      expect(PEER_LAUNCH_SENTINEL).toBe(-1e9);
+    });
+
+    it('draws in monotonically over the charge window and is exactly 1 as the hop leaves', () => {
+      expect(peerCompression(-charge).envelope).toBe(0);
+      let previous = 0;
+      for (let i = 1; i <= 40; i += 1) {
+        const envelope = peerCompression(-charge + (i / 40) * charge).envelope;
+        expect(envelope).toBeGreaterThan(previous);
+        previous = envelope;
+      }
+      expect(peerCompression(-1e-6).envelope).toBeCloseTo(1, 9);
+      expect(peerCompression(0).envelope).toBe(1);
+    });
+
+    it('is continuous through the launch: the draw-in arrives at 1 as the release leaves from 1', () => {
+      expect(peerCompression(-1e-9).envelope).toBeCloseTo(peerCompression(1e-9).envelope, 9);
+      expect(peerCompression(1e-9).envelope).toBeCloseTo(1, 9);
+    });
+
+    it('lets go over the release — faster than it drew in — and is back at rest by COMPRESS_RELEASE_S', () => {
+      expect(release).toBeLessThan(charge);
+      let previous = 1;
+      for (let i = 1; i <= 25; i += 1) {
+        const envelope = peerCompression((i / 25) * release).envelope;
+        expect(envelope).toBeLessThan(previous);
+        previous = envelope;
+      }
+      expect(peerCompression(release / 2).envelope).toBeCloseTo(0.5, 12);
+      expect(peerCompression(release).envelope).toBe(0);
+    });
+
+    it('contracts the extent to 0.55 and concentrates the light ×1.8 at full breath — short of conservation', () => {
+      expect(COMPRESS_DEPTH).toBe(0.45);
+      expect(COMPRESS_GAIN).toBe(0.8);
+      expect(COMPRESS_RELEASE_S).toBe(0.25);
+      const full = peerCompression(0);
+      expect(full.scale).toBeCloseTo(0.55, 12);
+      expect(full.gain).toBeCloseTo(1.8, 12);
+      // Conserving the light over a 0.55 extent would take ×3.3; the gain
+      // stays under it so a compressed halo never pops white.
+      expect(full.gain).toBeLessThan(1 / (full.scale * full.scale));
+      for (const dt of [-0.3, -0.1, 0.05, 0.2]) {
+        const breath = peerCompression(dt);
+        expect(breath.envelope).toBeGreaterThan(0);
+        expect(breath.scale).toBeCloseTo(1 - COMPRESS_DEPTH * breath.envelope, 12);
+        expect(breath.gain).toBeCloseTo(1 + COMPRESS_GAIN * breath.envelope, 12);
+      }
+    });
+
+    it('fills exactly the gather window the delivery layer no longer draws: BEAM_CHARGE_DUR_S', () => {
+      // The breath and the hop are one schedule: a halo draws in for the
+      // length of the charge window and lets go the instant its hop leaves.
+      expect(deliverySchema.compressDepth.value).toBe(COMPRESS_DEPTH);
+      expect(deliverySchema.compressGain.value).toBe(COMPRESS_GAIN);
+      expect(peerCompression(-0.2)).toEqual(peerCompression(-0.2, BEAM_CHARGE_DUR_S));
+      expect(peerCompression(-0.5, 1.0).envelope).toBeGreaterThan(0);
+      expect(peerCompression(-0.5).envelope).toBe(0);
     });
   });
 

@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import {
+  makeCompressionUniforms,
+  makeMeasuredPeerHalosMaterial,
   makePeerCloudMaterial,
   makePeerHaloMaterial,
+  MEASURED_EVENT_SCALE,
+  PEER_COMPRESSION_GLSL,
   peerCloudHitRadius,
   PEER_CLOUD_GHOST_TONE,
   PEER_CLOUD_SIGHTED_DARK_TONE,
@@ -13,6 +17,22 @@ import {
   makeShockwaveUniforms,
   SHOCKWAVE_SLOTS,
 } from '../../src/materials/shockwaveMaterial';
+import { makeHaloMaterial } from '../../src/components/GlowNode';
+import { BEAM_CHARGE_DUR_S } from '../../src/ui/topologyConstants';
+import {
+  COMPRESS_DEPTH,
+  COMPRESS_GAIN,
+  COMPRESS_RELEASE_S,
+  PEER_LAUNCH_SENTINEL,
+} from '../../src/derives/peers.derive';
+
+/** The six arguments of the ONE call a fragment makes into the shared
+ *  response: (baseColor, shape, halo, passiveEnergy, eventScale, restScale). */
+function responseCallArgs(fragment: string): string[] {
+  const call = fragment.match(/vec4 signal = peerShockwaveResponse\(([^)]*)\)/);
+  expect(call).not.toBeNull();
+  return call![1].split(',').map((arg) => arg.trim());
+}
 
 describe('peer node shockwave materials', () => {
   it('shares one in-flight wave ring across inferred and measured nodes', () => {
@@ -190,5 +210,107 @@ describe('peer cloud tones (the confidence axis)', () => {
     expect(sighted.uniforms.uContextEnergy.value).toBe(1);
     expect(sighted.blending).toBe(THREE.AdditiveBlending);
     expect(sighted.depthWrite).toBe(false);
+  });
+});
+
+describe('the held breath', () => {
+  it('runs the GLSL twin of peerCompression, injected from the derive\'s own constants', () => {
+    expect(PEER_COMPRESSION_GLSL).toContain('float peerCompressionGl(float dt)');
+    // The charge window IS the delivery timeline's, and the release is the
+    // derive's: neither number is typed in the shader.
+    expect(PEER_COMPRESSION_GLSL).toContain(
+      `(dt + ${BEAM_CHARGE_DUR_S.toFixed(2)}) / ${BEAM_CHARGE_DUR_S.toFixed(2)}`,
+    );
+    expect(PEER_COMPRESSION_GLSL).toContain(`dt / ${COMPRESS_RELEASE_S.toFixed(2)}`);
+    // Structurally the mirror, line for line: a clamped smoothstep on each
+    // side of the launch, selected by the sign of dt.
+    expect(PEER_COMPRESSION_GLSL).toContain('float charge = smoothstep(');
+    expect(PEER_COMPRESSION_GLSL).toContain('float release = 1.0 - smoothstep(0.0, 1.0,');
+    expect(PEER_COMPRESSION_GLSL).toContain('return dt < 0.0 ? charge : release;');
+    // …and its two multipliers seed from the same authority.
+    expect(makeCompressionUniforms()).toEqual({
+      uCompressDepth: { value: COMPRESS_DEPTH },
+      uCompressGain: { value: COMPRESS_GAIN },
+    });
+  });
+
+  it('gives every measured halo its own launch lane — one instanced float, sentinel at rest', () => {
+    const measured = makeMeasuredPeerHalosMaterial();
+    expect(measured.vertexShader).toContain('attribute float aPeerLaunchAt;');
+    expect(measured.vertexShader).toContain(PEER_COMPRESSION_GLSL);
+    expect(measured.vertexShader).toContain('float held = peerCompressionGl(uTime - aPeerLaunchAt);');
+    // The extent draws in ON the wave's size boost, never instead of it: a
+    // wave may still be crossing the peer as its hop goes.
+    expect(measured.vertexShader).toContain(
+      'float expand = 1.0 + min(1.0, vShockwave) * uShockwaveSizeBoost;',
+    );
+    expect(measured.vertexShader).toContain('float extent = expand * (1.0 - uCompressDepth * held);');
+    expect(measured.vertexShader).toContain('* extent;');
+    expect(measured.vertexShader).not.toContain('* expand;');
+    // …and the light concentrates in the fragment by the same envelope.
+    expect(measured.fragmentShader).toContain(
+      'float intensity = envelope * breathe * (1.0 + uCompressGain * vHeld);',
+    );
+    expect(measured.uniforms.uCompressDepth.value).toBe(COMPRESS_DEPTH);
+    expect(measured.uniforms.uCompressGain.value).toBe(COMPRESS_GAIN);
+    expect(PEER_LAUNCH_SENTINEL).toBe(-1e9);
+  });
+
+  it('the anchor halo breathes in with the same shape, from a uniform, and only when a launch is scheduled', () => {
+    const anchor = makeHaloMaterial({ edge: '#8ff', halo: '#8ff', fill: '#014' });
+    expect(anchor.uniforms.uLaunchAt.value).toBe(PEER_LAUNCH_SENTINEL);
+    expect(anchor.uniforms.uCompressDepth.value).toBe(COMPRESS_DEPTH);
+    expect(anchor.uniforms.uCompressGain.value).toBe(COMPRESS_GAIN);
+    // ONE definition of the envelope reaches both materials, verbatim.
+    expect(anchor.vertexShader).toContain(PEER_COMPRESSION_GLSL);
+    expect(anchor.vertexShader).toContain('float held = peerCompressionGl(uTime - uLaunchAt);');
+    expect(anchor.vertexShader).toContain('vec3 drawn = position * (1.0 - uCompressDepth * held);');
+    expect(anchor.fragmentShader).toContain('* (1.0 + uCompressGain * vHeld)');
+    // The anchor is one quad: its launch rides a uniform, never an attribute.
+    expect(anchor.vertexShader.match(/^\s*attribute\s/gm)).toBeNull();
+  });
+
+  it('leaves the clouds and the single-peer halo without a breath: only a deliverer compresses', () => {
+    const ghost = makePeerCloudMaterial();
+    const sighted = makePeerCloudMaterial(undefined, PEER_CLOUD_SIGHTED_TONE);
+    const single = makePeerHaloMaterial('#7df9ff');
+    for (const material of [ghost, sighted, single]) {
+      expect(material.vertexShader).not.toContain('peerCompressionGl');
+      expect(material.fragmentShader).not.toContain('uCompressGain');
+      expect(material.uniforms).not.toHaveProperty('uCompressDepth');
+      expect(material.uniforms).not.toHaveProperty('uLaunchAt');
+    }
+  });
+});
+
+describe('the measured event trim', () => {
+  it('scales the measured belt\'s answer to a wave by MEASURED_EVENT_SCALE — the event term, and nothing else', () => {
+    expect(MEASURED_EVENT_SCALE).toBe(0.6);
+    const scale = MEASURED_EVENT_SCALE.toFixed(2);
+    const measured = makeMeasuredPeerHalosMaterial();
+    const args = responseCallArgs(measured.fragmentShader);
+    expect(args).toHaveLength(6);
+    // (baseColor, shape, halo, passiveEnergy, eventScale, restScale): the
+    // resting light — colour AND alpha — is exactly what it was.
+    expect(args[3]).toBe('intensity * contextEnergy');
+    expect(args[4]).toBe(`intensity * ${scale}`);
+    expect(args[5]).toBe('intensity');
+    expect(measured.fragmentShader.match(/\* 0\.60/g)).toHaveLength(1);
+    // The wave's size boost in the vertex stage is not part of the trim.
+    expect(measured.vertexShader).toContain('min(1.0, vShockwave) * uShockwaveSizeBoost');
+    expect(measured.vertexShader).not.toContain(`* ${scale}`);
+  });
+
+  it('is the measured material\'s alone: the clouds keep their tuning', () => {
+    const scale = `* ${MEASURED_EVENT_SCALE.toFixed(2)}`;
+    const ghost = makePeerCloudMaterial();
+    const sighted = makePeerCloudMaterial(undefined, PEER_CLOUD_SIGHTED_TONE);
+    const single = makePeerHaloMaterial('#7df9ff');
+    expect(ghost.fragmentShader).not.toContain(scale);
+    expect(sighted.fragmentShader).not.toContain(scale);
+    expect(single.fragmentShader).not.toContain(scale);
+    expect(responseCallArgs(ghost.fragmentShader)[4]).toBe('uEvent');
+    expect(responseCallArgs(sighted.fragmentShader)[4]).toBe('uEvent');
+    expect(responseCallArgs(single.fragmentShader)[4]).toBe('intensity');
   });
 });

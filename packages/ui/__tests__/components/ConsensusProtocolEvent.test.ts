@@ -9,6 +9,12 @@ import {
 } from '../../src/materials/contactWaveMaterial';
 import { SHOCKWAVE_SPEED, CONTACT_WAVE_SCALE } from '../../src/ui/topologyConstants';
 import { deliverySchema } from '../../src/tweaks/tweakSchema';
+import {
+  stampPeerLaunches,
+  type PeerLaunchSchedule,
+} from '../../src/components/ColonyNodes';
+import { PEER_LAUNCH_SENTINEL } from '../../src/derives/peers.derive';
+import type { NetworkNode } from '../../src/types';
 
 const source = (file: string): string => readFileSync(
   resolve(process.cwd(), `src/components/${file}`),
@@ -231,5 +237,80 @@ describe('A protocol event relay', () => {
     expect(nodes).toContain('consensusBlockColor(blockPulseAtMs)');
     expect(nodes).toContain('writeShockwaveSlot(');
     expect(source('CellGalaxy.tsx')).not.toContain('writeShockwaveSlot(');
+  });
+});
+
+describe('The held breath', () => {
+  it('is scheduled in the measured belt, on the pulse edge, at the delivery layer\'s own launch instant', () => {
+    const nodes = source('ColonyNodes.tsx');
+    const belt = nodes.slice(
+      nodes.indexOf('function MeasuredPeerHalos('),
+      nodes.indexOf('const SCRATCH_MATRIX'),
+    );
+    // The lane is allocated with the other four and bound in the same
+    // one-time pass — one instanced float, never re-wrapped.
+    expect(belt).toContain('launchAt: new THREE.InstancedBufferAttribute(');
+    expect(belt).toContain('new Float32Array(capacity).fill(PEER_LAUNCH_SENTINEL)');
+    expect(belt).toContain("mesh.geometry.setAttribute('aPeerLaunchAt', lanes.launchAt);");
+    // Stamped on the pulse edge, consume-then-bail on backfill exactly as the
+    // shockwave slot is…
+    expect(belt).toContain('if (blockPulseAtMs <= lastPulseRef.current) return;');
+    expect(belt).toContain('if (backfillActive) return;');
+    expect(belt).toContain('}, [blockPulseAtMs]);');
+    // …at `now + cf.arrivals[id]`: the instant BlockDeliveryLayer lets that
+    // peer's hop go (pulse.at + startAge, startAge = arrivals[id]).
+    expect(belt).toContain('launchRef.current = { atSec: simClock.elapsedSec, arrivals: cf.arrivals };');
+    // Written from the schedule in BOTH walks: the pulse, and the identity
+    // pass a roster round re-runs — so a re-cut list re-derives by id.
+    expect(belt.match(/stampPeerLaunches\(lanes\.launchAt\.array as Float32Array, measured, launchRef\.current\)/g))
+      .toHaveLength(2);
+    // The belt is fed the pulse it stamps from.
+    expect(nodes).toMatch(
+      /<MeasuredPeerHalos[^>]*cf=\{cf\}[^>]*blockPulseAtMs=\{blockPulseAtMs\}[^>]*backfillActive=\{backfillActive\}[^>]*\/>/,
+    );
+    // The two knobs reach the material every frame.
+    expect(belt).toContain('material.uniforms.uCompressDepth.value = LIVE.delivery.compressDepth;');
+    expect(belt).toContain('material.uniforms.uCompressGain.value = LIVE.delivery.compressGain;');
+    // And the delivery layer draws no breath of its own.
+    expect(source('BlockDeliveryLayer.tsx')).not.toMatch(/peerCompression|uCompress|aPeerLaunchAt/);
+  });
+
+  it('stamps each peer by ID at now + its arrival, sentinel for a peer the flood never reached — never by slot', () => {
+    const node = (id: string): NetworkNode => ({ id, kind: 'measured', pos: [0, 0, 0] });
+    const schedule: PeerLaunchSchedule = { atSec: 100, arrivals: { A: 0.4, B: 1.7 } };
+    const lane = new Float32Array(4).fill(PEER_LAUNCH_SENTINEL);
+
+    stampPeerLaunches(lane, [node('A'), node('B'), node('C')], schedule);
+    expect(lane[0]).toBeCloseTo(100.4, 4);
+    expect(lane[1]).toBeCloseTo(101.7, 4);
+    expect(lane[2]).toBe(PEER_LAUNCH_SENTINEL);
+    expect(lane[3]).toBe(PEER_LAUNCH_SENTINEL);
+
+    // A roster round re-cuts the list: the stamp follows the id, not the index.
+    stampPeerLaunches(lane, [node('C'), node('B'), node('D'), node('A')], schedule);
+    expect(lane[0]).toBe(PEER_LAUNCH_SENTINEL);
+    expect(lane[1]).toBeCloseTo(101.7, 4);
+    expect(lane[2]).toBe(PEER_LAUNCH_SENTINEL);
+    expect(lane[3]).toBeCloseTo(100.4, 4);
+
+    // No block yet: everything rests.
+    stampPeerLaunches(lane, [node('A'), node('B')], null);
+    expect(lane[0]).toBe(PEER_LAUNCH_SENTINEL);
+    expect(lane[1]).toBe(PEER_LAUNCH_SENTINEL);
+  });
+
+  it('the hero breathes in from the anchor\'s own trigger, on the same envelope', () => {
+    const galaxy = source('CellGalaxy.tsx');
+    expect(galaxy).toContain(
+      'haloMat.uniforms.uLaunchAt.value = trigger ? trigger.firedAt : PEER_LAUNCH_SENTINEL;',
+    );
+    expect(galaxy).toContain('haloMat.uniforms.uCompressDepth.value = LIVE.delivery.compressDepth;');
+    expect(galaxy).toContain('haloMat.uniforms.uCompressGain.value = LIVE.delivery.compressGain;');
+    // `firedAt` IS the hero launch: the pulse instant plus the local receive
+    // delay — the delivery layer's own `localStartAge`.
+    expect(galaxy).toContain('const blockTriggerSceneS = simClock.elapsedSec + receiveDelayS;');
+    expect(galaxy).toContain('flashSlot.current = { firedAt: blockTriggerSceneS, color: blockColor };');
+    // Only the halo breathes: the icosahedron and its fill never see the launch.
+    expect(galaxy.match(/uLaunchAt/g)).toHaveLength(1);
   });
 });

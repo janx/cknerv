@@ -108,6 +108,7 @@ import CanonicalRewriteEcho from './CanonicalRewriteEcho';
 import { deriveCanonicalRewriteArrivals } from '../derives/canonicalRewrite.derive';
 import {
   cellIdsWithinRadiusFromIndex,
+  PEER_LAUNCH_SENTINEL,
   rotYWorldToLocalXZ,
   sharedCellNearestIndex,
 } from '../derives/peers.derive';
@@ -608,6 +609,14 @@ function CkbNodeAnchor({
     // makeHaloMaterial already carries one subtle breathing envelope. Avoid
     // multiplying a second one here: the anchor should not pulse at rest.
     haloMat.uniforms.uIntensity.value = intensityRef.current;
+    // The held breath. Over the charge window before its hop leaves at
+    // `firedAt` — the block's local receive instant, the delivery layer's own
+    // hero launch — the halo draws in, and it lets go after: the envelope
+    // every measured peer's halo runs, so the hero differs from a peer in
+    // scale and reach, never in shape. No trigger, no breath.
+    haloMat.uniforms.uLaunchAt.value = trigger ? trigger.firedAt : PEER_LAUNCH_SENTINEL;
+    haloMat.uniforms.uCompressDepth.value = LIVE.delivery.compressDepth;
+    haloMat.uniforms.uCompressGain.value = LIVE.delivery.compressGain;
   });
 
   return (

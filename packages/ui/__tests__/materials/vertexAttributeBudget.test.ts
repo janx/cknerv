@@ -493,6 +493,19 @@ describe('vertex attribute budget', () => {
     expect([edges?.custom, edges?.injected, edges?.total]).toEqual([6, 3, 9]);
   });
 
+  it('charges the measured belt its one breath lane, and nothing more', () => {
+    // ⭐ ONE instanced float for the held breath (`aPeerLaunchAt`) beside the
+    // four identity lanes, plus the mat4 three injects for instancing. Stated
+    // exactly so a sixth lane is a deliberate edit rather than a drift only
+    // the browser console would report — and because the Cell body, one
+    // packing from the ceiling, was the wrong place for the breath and gained
+    // nothing for it.
+    const belt = measured.find(({ name }) => name === 'measuredPeerHalosMaterial');
+    expect(belt).toBeDefined();
+    expect(belt?.names).toContain('aPeerLaunchAt');
+    expect([belt?.custom, belt?.injected, belt?.total]).toEqual([5, 7, 12]);
+  });
+
   it('leaves the cell body one packing away from the ceiling', () => {
     // The tightest material in the scene, and the one that overran last time.
     // Stated as an exact number so growth here is a deliberate edit, not a
