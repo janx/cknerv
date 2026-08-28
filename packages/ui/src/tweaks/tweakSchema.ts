@@ -116,14 +116,14 @@ export const deliverySchema = {
   // The hop's mote is the block itself, sized per tier in world units; the
   // plume is the courier plume (courierGlyph) with its own width and its
   // length range, stretched by the hop's analytic speed like every glint.
-  moteHero: { value: 1.6, min: 0.2, max: 4, step: 0.05, label: 'hop mote hero' },
-  motePeer: { value: 0.9, min: 0.1, max: 3, step: 0.05, label: 'hop mote peer' },
-  plumeWidth: { value: 0.7, min: 0.1, max: 2, step: 0.05, label: 'hop plume width' },
+  moteHero: { value: 2.2, min: 0.2, max: 4, step: 0.05, label: 'hop mote hero' },
+  motePeer: { value: 1.3, min: 0.1, max: 3, step: 0.05, label: 'hop mote peer' },
+  plumeWidth: { value: 1.0, min: 0.1, max: 2, step: 0.05, label: 'hop plume width' },
   plumeMinLen: { value: 0.9, min: 0.1, max: 3, step: 0.05, label: 'hop plume min len' },
-  plumeMaxLen: { value: 3.2, min: 0.5, max: 8, step: 0.1, label: 'hop plume max len' },
+  plumeMaxLen: { value: 4.0, min: 0.5, max: 8, step: 0.1, label: 'hop plume max len' },
   // The glint's form (0.55 / 0.3) at a higher weight: this hop is the climax.
-  hopBloomOpacity: { value: 0.85, min: 0, max: 1, step: 0.05, label: 'hop bloom op' },
-  hopPlumeOpacity: { value: 0.5, min: 0, max: 1, step: 0.05, label: 'hop plume op' },
+  hopBloomOpacity: { value: 1.0, min: 0, max: 1, step: 0.05, label: 'hop bloom op' },
+  hopPlumeOpacity: { value: 0.75, min: 0, max: 1, step: 0.05, label: 'hop plume op' },
   waveSpeed: {
     value: SHOCKWAVE_SPEED / CONTACT_WAVE_SCALE,
     min: 1, max: 40, step: 0.5, label: 'front speed',

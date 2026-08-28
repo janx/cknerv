@@ -15,7 +15,7 @@ describe('defaultsFrom', () => {
 describe('LIVE', () => {
   it('is initialized to the schema defaults', () => {
     expect(LIVE.galaxy.rotationRate).toBe(0.00125);
-    expect(LIVE.delivery.moteHero).toBe(1.6);
+    expect(LIVE.delivery.moteHero).toBe(2.2);
     expect(LIVE.peer.surgeAmp).toBe(1.1);
     expect(LIVE.peer.colorBoost).toBe(3.75);
     expect(LIVE.cell.activeColorG).toBe(1);

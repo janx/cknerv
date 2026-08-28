@@ -29,7 +29,7 @@ const EXPECTED_DEFAULTS = {
   // peer front 24, per pulse 300 (the old `igniteMax`) — and the flash's own
   // window 0.45 s and sprite 2.2× the Cell's presentation size
   // (LANDING_FLASH_* on landingFlashMaterial, one authority).
-  delivery: { ingestDur: 1.2, compressDepth: 0.45, compressGain: 0.8, moteHero: 1.6, motePeer: 0.9, plumeWidth: 0.7, plumeMinLen: 0.9, plumeMaxLen: 3.2, hopBloomOpacity: 0.85, hopPlumeOpacity: 0.5, waveSpeed: 4.5, waveWidth: 3.2 / 8, waveOpacity: 0.9, waveFalloff: 0.5, waveReachHero: 6.5, waveReachPeer: 4.25, waveWake: 0.45, waveSegments: 0.3, peerPunchScale: 0.7, flushAmp: 1.0, flushMix: 0.6, landingHero: 128, landingPeer: 24, landingMax: 300, landingDur: 0.45, landingSize: 2.2 },
+  delivery: { ingestDur: 1.2, compressDepth: 0.45, compressGain: 0.8, moteHero: 2.2, motePeer: 1.3, plumeWidth: 1.0, plumeMinLen: 0.9, plumeMaxLen: 4.0, hopBloomOpacity: 1.0, hopPlumeOpacity: 0.75, waveSpeed: 4.5, waveWidth: 3.2 / 8, waveOpacity: 0.9, waveFalloff: 0.5, waveReachHero: 6.5, waveReachPeer: 4.25, waveWake: 0.45, waveSegments: 0.3, peerPunchScale: 0.7, flushAmp: 1.0, flushMix: 0.6, landingHero: 128, landingPeer: 24, landingMax: 300, landingDur: 0.45, landingSize: 2.2 },
   // The five `hole*` knobs are the POW channel — one accreting void per cohort
   // — whose defaults live on `colonyAccretion` under the same one-authority
   // rule the shockwave knobs follow. `holeInfall` is a RATE and the only thing
