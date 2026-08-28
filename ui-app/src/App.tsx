@@ -857,20 +857,24 @@ export default function App({
     // Keyed on the INPUTS, not on the cache object. The projection stream
     // flushes on requestAnimationFrame and hands back a fresh cache for any
     // batch that advances the revision — pulses, links, backfill progress —
-    // none of which can change this answer. Keying on the object would walk
-    // 12,000 staged members per animation frame (measured ~0.9 ms) and would
-    // hand memo(HudOverlay) a new prop every time, breaking a bail-out that
-    // used to hold for cells-only frames.
+    // none of which can change this answer. Keying on the object would hand
+    // memo(HudOverlay) a new prop every time, breaking a bail-out that used
+    // to hold for cells-only frames. (The derive itself is cheap now: it
+    // reads the reducer's `stagePopulation` tally instead of walking 12,000
+    // staged members, so this list exists for the bail-out, not the walk.)
     //
-    // These six ARE the complete surface: `CellPopulationCache` picks exactly
+    // These ARE the complete surface: `CellPopulationCache` picks exactly
     // `cells`, `displayMembers`, `displayResidents`, `displayBudget`,
-    // `displayProvenance`, `stats` and `statsScope`, and the first three are
-    // covered by the two tokens the reducer turns over with them. Widen this
-    // list if that Pick ever widens.
+    // `displayProvenance`, `stagePopulation`, `stats` and `statsScope`. The
+    // first three are covered by the two tokens the reducer turns over with
+    // them, and so is `stagePopulation`, which only moves when they do — it
+    // is listed anyway so the dependency is visible. Widen this list if that
+    // Pick ever widens.
     cellsCache.cellsToken,
     cellsCache.displayToken,
     cellsCache.displayBudget,
     cellsCache.displayProvenance,
+    cellsCache.stagePopulation,
     cellsCache.stats,
     cellsCache.statsScope,
     cellDisplayLimit,

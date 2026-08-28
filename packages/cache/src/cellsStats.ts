@@ -468,3 +468,149 @@ export function stageScriptCensus(tally: StageScriptTally): ScriptCensus {
   censusMemo.set(tally, census);
   return census;
 }
+
+// ── stage-scoped population tally ────────────────────────────────────────
+//
+// The population field (`deriveCellPopulationField` in @cknerv/ui) reports
+// how many staged members are ALIVE, split by which home resolved them —
+// canonical retained record or display-lane resident — and by the three
+// disjoint bins the chain census reports, so the stage's curation can be
+// disclosed beside the chain's real composition. It used to count that by
+// walking all 12,000 members (two Map lookups each, plus a 12,000-entry Set
+// for the render prefix) on every batch that touched a Cell. The reducer
+// already visits exactly the ids whose staged payload a batch could have
+// moved, with the before and after record in hand, so the tally is kept
+// here, in that same pass, and the derive reads five integers.
+//
+// Two deliberate differences from `StageScriptTally` above, both inherited
+// from what the field discloses: dead members contribute NOTHING (a corpse
+// inside its death-animation window is on stage but is not population — the
+// same `death_at_ms !== null` skip as `adjustCellsStats`), and the count is
+// keyed on which home resolved the member, because retained and resident
+// coverage are reported as two numbers.
+
+/** The three disjoint bins the chain census reports. A DAO Cell always
+ *  carries a type script, so testing DAO first is what keeps them disjoint. */
+export type CellPopulationClass = 'dao' | 'typedNonDao' | 'plain';
+
+export function cellPopulationClass(
+  cell: Pick<Cell, 'asset_kind' | 'type_shape_seed'>,
+): CellPopulationClass {
+  if (cell.asset_kind === 'dao') return 'dao';
+  // `type_shape_seed` is explicitly null for a Cell with no type script, and
+  // is always present — unlike the optional `type_script`, which older
+  // persisted records can lack.
+  if (cell.type_shape_seed !== null) return 'typedNonDao';
+  return 'plain';
+}
+
+/** Live population of the staged set. Immutable once the batch that built it
+ *  returns; identity-stable across batches that move none of its numbers. */
+export interface StagePopulationTally {
+  /** Alive staged members resolved to their canonical retained record. */
+  readonly retainedLive: number;
+  /** Alive staged members resolved from the display lane's resident map. */
+  readonly residentLive: number;
+  /** Alive staged members per census bin. The three sum to
+   *  `retainedLive + residentLive`. */
+  readonly dao: number;
+  readonly typedNonDao: number;
+  readonly plain: number;
+}
+
+/** The writable form the reducer's copy-on-write path mutates. */
+export type MutableStagePopulation = {
+  -readonly [K in keyof StagePopulationTally]: StagePopulationTally[K];
+};
+
+export function emptyStagePopulation(): StagePopulationTally {
+  return { retainedLive: 0, residentLive: 0, dao: 0, typedNonDao: 0, plain: 0 };
+}
+
+/** Five-integer copy so a batch can mutate a draft. */
+export function cloneStagePopulation(
+  tally: StagePopulationTally,
+): MutableStagePopulation {
+  return {
+    retainedLive: tally.retainedLive,
+    residentLive: tally.residentLive,
+    dao: tally.dao,
+    typedNonDao: tally.typedNonDao,
+    plain: tally.plain,
+  };
+}
+
+/** Add (`sign` +1) or remove (−1) one staged record's contribution in place.
+ *  `canonical` says which home resolved it. Dead records contribute nothing. */
+function addStagePopulationContribution(
+  tally: MutableStagePopulation,
+  cell: Cell,
+  canonical: boolean,
+  sign: 1 | -1,
+): void {
+  if (cell.death_at_ms !== null) return;
+  if (canonical) tally.retainedLive += sign;
+  else tally.residentLive += sign;
+  tally[cellPopulationClass(cell)] += sign;
+}
+
+/**
+ * Replace one staged id's contribution: `before`/`after` are the payload the
+ * stage resolved for that id before and after the batch (either may be
+ * absent — off stage, or staged with no record this cache was ever sent),
+ * and the two flags say whether the canonical map supplied each one.
+ */
+export function adjustStagePopulation(
+  tally: MutableStagePopulation,
+  before: Cell | undefined,
+  beforeCanonical: boolean,
+  after: Cell | undefined,
+  afterCanonical: boolean,
+): void {
+  if (before !== undefined) {
+    addStagePopulationContribution(tally, before, beforeCanonical, -1);
+  }
+  if (after !== undefined) {
+    addStagePopulationContribution(tally, after, afterCanonical, 1);
+  }
+}
+
+/** Whether two payloads for one id would tally identically, so the batches
+ *  that dominate a live stream and move nothing here — a tag, a re-shipped
+ *  record with the same class, a pulse — keep the tally's identity. A death
+ *  is NOT one of those: it moves a live count, which is the whole point. */
+export function sameStagePopulationContribution(
+  before: Cell | undefined,
+  beforeCanonical: boolean,
+  after: Cell | undefined,
+  afterCanonical: boolean,
+): boolean {
+  if (before === undefined || before.death_at_ms !== null) {
+    return after === undefined || after.death_at_ms !== null;
+  }
+  if (after === undefined || after.death_at_ms !== null) return false;
+  return (
+    beforeCanonical === afterCanonical
+    && cellPopulationClass(before) === cellPopulationClass(after)
+  );
+}
+
+/** Full-scan tally over a staged membership, resolved canonical-first the
+ *  way the stage itself resolves it — the snapshot seed and the equivalence
+ *  oracle for the reducer's incremental upkeep. A member neither map holds
+ *  contributes nothing: the field counts records, not ids. */
+export function aggregateStagePopulation(
+  members: Iterable<number>,
+  cells: ReadonlyMap<number, Cell>,
+  residents: ReadonlyMap<number, Cell>,
+): StagePopulationTally {
+  const tally = cloneStagePopulation(emptyStagePopulation());
+  for (const id of members) {
+    const canonical = cells.get(id);
+    const cell = canonical ?? residents.get(id);
+    if (cell !== undefined) {
+      addStagePopulationContribution(tally, cell, canonical !== undefined, 1);
+    }
+  }
+  return tally;
+}

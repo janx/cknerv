@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Cell, ChainCensus, ShapeSeed } from '@cknerv/types';
+import { aggregateStagePopulation } from '@cknerv/cache';
 
 import {
   CENSUS_STALE_BLOCKS,
@@ -57,10 +58,16 @@ function cache(options: CacheOptions = {}): CellPopulationCache {
   const residents = options.residents ?? [];
   const members = options.members
     ?? [...retained.map((c) => c.id), ...residents.map((c) => c.id)];
+  const cells = new Map(retained.map((c) => [c.id, c]));
+  const displayMembers = new Set(members);
+  const displayResidents = new Map(residents.map((c) => [c.id, c]));
   return {
-    cells: new Map(retained.map((c) => [c.id, c])),
-    displayMembers: new Set(members),
-    displayResidents: new Map(residents.map((c) => [c.id, c])),
+    cells,
+    displayMembers,
+    displayResidents,
+    // What the reducer would hold for these maps — the one scan the snapshot
+    // path makes, so the fixture and the cache agree on the tally's source.
+    stagePopulation: aggregateStagePopulation(displayMembers, cells, displayResidents),
     displayBudget: options.displayBudget === undefined
       ? { cells: 12_000, nerveEdges: 8_000 }
       : options.displayBudget,

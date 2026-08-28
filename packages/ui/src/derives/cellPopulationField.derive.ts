@@ -15,8 +15,13 @@
 //     the stage falls short of it (`scope`, `ratio`, `gain`).
 //
 // It is a pure function of immutable cache inputs. Nothing here reads a frame
-// clock, and nothing here may be called per frame: it walks the staged
-// membership, which is the display budget in size.
+// clock. The staged counts are read off the reducer's `stagePopulation`
+// tally, which the cells reducer keeps in the same O(touched ids) pass as the
+// stage script census — this derive no longer walks the membership, and the
+// only two regimes in which it walks anything are the manual presentation
+// clamp (a prefix, the same one the render set rebuilds under a clamp) and
+// the no-display-plane fallback of a server that predates the stage. Still
+// never per frame: the overlay resolution alone is a handful of Map reads.
 
 import type { ChainCensus } from '@cknerv/types';
 import type { CellGalaxyCache, CellStatsScope } from '@cknerv/cache';
@@ -29,6 +34,7 @@ export type CellPopulationCache = Pick<
   | 'displayResidents'
   | 'displayBudget'
   | 'displayProvenance'
+  | 'stagePopulation'
   | 'stats'
   | 'statsScope'
 >;
@@ -41,7 +47,8 @@ export type CellPopulationScope = 'chain' | 'retained';
 /** The three disjoint bins the chain census reports, measured over a local
  *  Cell set so the stage's curation can be shown beside the chain's real
  *  composition. A DAO Cell always carries a type script, so testing DAO
- *  first is what keeps these bins disjoint. */
+ *  first is what keeps these bins disjoint (`cellPopulationClass` in
+ *  `@cknerv/cache`, where the reducer counts them). */
 export interface CellPopulationClasses {
   dao: number;
   typedNonDao: number;
@@ -175,30 +182,6 @@ export function chainCensusIsUsable(census: ChainCensus | null): boolean {
   );
 }
 
-interface ClassTally {
-  dao: number;
-  typedNonDao: number;
-  plain: number;
-}
-
-function tallyClass(tally: ClassTally, cell: {
-  asset_kind?: string;
-  type_shape_seed: unknown;
-}): void {
-  if (cell.asset_kind === 'dao') {
-    tally.dao += 1;
-    return;
-  }
-  // `type_shape_seed` is explicitly null for a Cell with no type script, and
-  // is always present — unlike the optional `type_script`, which older
-  // persisted records can lack.
-  if (cell.type_shape_seed !== null) {
-    tally.typedNonDao += 1;
-    return;
-  }
-  tally.plain += 1;
-}
-
 export interface CellPopulationFieldInput {
   cache: CellPopulationCache;
   /** Resolved presentation clamp — the number of staged Cells the renderer
@@ -209,7 +192,8 @@ export interface CellPopulationFieldInput {
   /** Current canonical chain tip, for census staleness. */
   chainTip?: number;
   /** Client-transient overlay ids (selected Cell and its inspection field).
-   *  They count as rendered, deduplicated, and never as staged. */
+   *  They count as rendered, deduplicated, and never as staged. A handful at
+   *  most — this list is tested by linear scan, never materialized. */
   overlayCellIds?: readonly number[];
 }
 
@@ -227,38 +211,62 @@ export function deriveCellPopulationField(
 
   const limit = normalizeDisplayLimit(displayLimit);
   const displayPlaneActive = cache.displayBudget !== null;
+  // The presentation clamp bites: the render set draws only the first `limit`
+  // resolved members. AUTO never enters this regime — the server keeps the
+  // membership within its own budget — so it is the manual knob's regime, and
+  // the one in which the render set itself falls back to a full rebuild.
+  const clamped = displayPlaneActive && limit < cache.displayMembers.size;
 
   let stagedRetainedLive = 0;
   let stagedResidentLive = 0;
+  let stagedDao = 0;
+  let stagedTypedNonDao = 0;
+  let stagedPlain = 0;
   let renderedRetainedLive = 0;
   let renderedResidentLive = 0;
-  const stagedClasses: ClassTally = { dao: 0, typedNonDao: 0, plain: 0 };
-  const renderedIds = new Set<number>();
+  // Overlay ids the rendered prefix was found to cover, in the two regimes
+  // that walk a prefix. Allocated only on a hit; the prefix's own ids are
+  // never materialized — the overlay is the short list, so each visited slot
+  // is tested against it, not the other way round.
+  let prefixOverlayHits: number[] | null = null;
 
   if (displayPlaneActive) {
-    // Mirror `rebuildCellRenderSet` exactly: staged members in enter order,
-    // resolved canonical-first, the first `limit` of which are drawn. A
-    // divergence here would report a coverage the renderer does not have.
-    const renderCount = Math.min(cache.displayMembers.size, limit);
-    let resolved = 0;
-    for (const id of cache.displayMembers) {
-      const canonical = cache.cells.get(id);
-      const cell = canonical ?? cache.displayResidents.get(id);
-      if (!cell) continue;
-      const alive = cell.death_at_ms === null;
-      const inRenderSet = resolved < renderCount;
-      resolved += 1;
-      if (alive) {
-        if (canonical) stagedRetainedLive += 1;
-        else stagedResidentLive += 1;
-        tallyClass(stagedClasses, cell);
-      }
-      if (inRenderSet) {
-        renderedIds.add(id);
-        if (alive) {
+    // The reducer counts the stage where it lives, in the same pass that
+    // keeps the stage script census: alive members by resolving home and by
+    // census bin, over exactly the payloads `rebuildCellRenderSet` resolves
+    // (canonical-first, unresolvable members skipped). Reading it here is
+    // what keeps this derive off the 12,000-member walk it used to make on
+    // every Cell-bearing batch.
+    const staged = cache.stagePopulation;
+    stagedRetainedLive = staged.retainedLive;
+    stagedResidentLive = staged.residentLive;
+    stagedDao = staged.dao;
+    stagedTypedNonDao = staged.typedNonDao;
+    stagedPlain = staged.plain;
+
+    if (!clamped) {
+      // Unclamped, every resolved member is drawn: the render set IS the
+      // stage, so its live coverage is the stage's.
+      renderedRetainedLive = stagedRetainedLive;
+      renderedResidentLive = stagedResidentLive;
+    } else if (limit > 0) {
+      // Mirror `rebuildCellRenderSet` exactly: staged members in enter order,
+      // resolved canonical-first, the first `limit` of which are drawn. A
+      // divergence here would report a coverage the renderer does not have.
+      let resolved = 0;
+      for (const id of cache.displayMembers) {
+        const canonical = cache.cells.get(id);
+        const cell = canonical ?? cache.displayResidents.get(id);
+        if (!cell) continue;
+        if (overlayCellIds.length > 0 && overlayCellIds.includes(id)) {
+          (prefixOverlayHits ??= []).push(id);
+        }
+        if (cell.death_at_ms === null) {
           if (canonical) renderedRetainedLive += 1;
           else renderedResidentLive += 1;
         }
+        resolved += 1;
+        if (resolved >= limit) break;
       }
     }
   } else {
@@ -268,20 +276,31 @@ export function deriveCellPopulationField(
     for (const cell of cache.cells.values()) {
       if (drawn >= limit) break;
       drawn += 1;
-      renderedIds.add(cell.id);
+      if (overlayCellIds.length > 0 && overlayCellIds.includes(cell.id)) {
+        (prefixOverlayHits ??= []).push(cell.id);
+      }
       if (cell.death_at_ms === null) renderedRetainedLive += 1;
     }
   }
 
   // Client inspection overlays are rendered records the server did not stage.
   // They count once, in `rendered*` only — counting them as staged would
-  // report a membership the display plane never published.
-  for (const id of overlayCellIds) {
-    if (renderedIds.has(id)) continue;
+  // report a membership the display plane never published. An overlay id the
+  // render set already draws is not a second body: unclamped, that is any
+  // staged member (a member with no record is drawn by neither, and resolves
+  // to nothing below either way); under a clamp or without a plane, it is
+  // whatever the prefix walk above met.
+  for (let index = 0; index < overlayCellIds.length; index += 1) {
+    const id = overlayCellIds[index];
+    // Named twice by the inspection field: counted once.
+    if (overlayCellIds.indexOf(id) !== index) continue;
+    const drawnByPrefix = displayPlaneActive && !clamped
+      ? cache.displayMembers.has(id)
+      : prefixOverlayHits !== null && prefixOverlayHits.includes(id);
+    if (drawnByPrefix) continue;
     const canonical = cache.cells.get(id);
     const cell = canonical ?? cache.displayResidents.get(id);
     if (!cell) continue;
-    renderedIds.add(id);
     if (cell.death_at_ms !== null) continue;
     if (canonical) renderedRetainedLive += 1;
     else renderedResidentLive += 1;
@@ -314,13 +333,13 @@ export function deriveCellPopulationField(
     stagedRetainedLive,
     stagedResidentLive,
     stagedClasses: {
-      dao: stagedClasses.dao,
-      typedNonDao: stagedClasses.typedNonDao,
-      plain: stagedClasses.plain,
+      dao: stagedDao,
+      typedNonDao: stagedTypedNonDao,
+      plain: stagedPlain,
     },
     stagedCurated: cache.displayProvenance?.mode === 'composed',
     stageComposedAtMs: cache.displayProvenance?.updated_at_ms ?? null,
-    clamped: displayPlaneActive && limit < cache.displayMembers.size,
+    clamped,
     stageBudget: cache.displayBudget?.cells ?? null,
     retainedLive,
     retainedScope: cache.statsScope,

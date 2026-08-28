@@ -19,17 +19,24 @@ import type {
 } from '@cknerv/types';
 import {
   adjustCellsStats,
+  adjustStagePopulation,
   adjustStageScripts,
   adoptCellViewStats,
   aggregateCellsStats,
+  aggregateStagePopulation,
   aggregateStageScripts,
   cloneCellsStats,
+  cloneStagePopulation,
   cloneStageScripts,
   emptyCellsStats,
+  emptyStagePopulation,
   emptyStageScripts,
   sameStageContribution,
+  sameStagePopulationContribution,
   type CellsStats,
+  type MutableStagePopulation,
   type MutableStageScripts,
+  type StagePopulationTally,
   type StageScriptTally,
 } from './cellsStats';
 
@@ -305,6 +312,16 @@ export interface CellGalaxyCache {
    *  is nothing to count, and a panel gated on that emptiness falls back to
    *  the taxonomy it can derive on its own. */
   stageScripts: StageScriptTally;
+  /** Live population of the STAGED set — alive members by resolving home
+   *  (canonical retained record vs display-lane resident) and by chain-census
+   *  class — counted here for the same reason `stageScripts` is: the staged
+   *  set lives here, and every batch already visits exactly the ids whose
+   *  staged payload it could have moved. Maintained in the same pass as
+   *  `stageScripts`, identity-stable across batches that move none of its
+   *  five numbers, and always equal to
+   *  `aggregateStagePopulation(displayMembers, cells, displayResidents)`.
+   *  The population field reads it instead of walking the membership. */
+  stagePopulation: StagePopulationTally;
 }
 
 /** Canonical-first resolution of a staged member id. The canonical retained
@@ -343,6 +360,7 @@ export function emptyCellsCache(): CellGalaxyCache {
     displayToken: {},
     displayChanges: RESET_DISPLAY_CHANGES,
     stageScripts: emptyStageScripts(),
+    stagePopulation: emptyStagePopulation(),
   };
 }
 
@@ -543,6 +561,12 @@ export function fromCellsSnapshot(
       displayMembers,
       (id) => cells.get(id) ?? displayResidents.get(id),
     ),
+    // Same scan, same resolution, for the population field's five numbers.
+    stagePopulation: aggregateStagePopulation(
+      displayMembers,
+      cells,
+      displayResidents,
+    ),
   };
 }
 
@@ -669,24 +693,6 @@ function nextCellsStats(
   return stats;
 }
 
-/** The three maps that decide who is on stage and what each staged id
- *  resolves to. Taken as a view so the same code reads a previous cache and a
- *  mid-batch draft. */
-type StageView = Pick<
-  CellGalaxyCache,
-  'cells' | 'displayMembers' | 'displayResidents'
->;
-
-/** What the stage resolves for one id — canonical-first, exactly like
- *  `resolveDisplayCell`, because that is the record the renderer draws.
- *  Undefined for an id that is not staged, and for a staged id whose record
- *  this cache was never sent (the bare-id enter lane an older server may
- *  still use): a census counts records, not ids. */
-function stagedPayload(view: StageView, id: number): Cell | undefined {
-  if (!view.displayMembers.has(id)) return undefined;
-  return view.cells.get(id) ?? view.displayResidents.get(id);
-}
-
 /** Every id whose staged payload this batch could have changed, each once.
  * Three sources, deduplicated in place rather than through a union Set: on a
  * 12,000-body reset `touchedCellIds` alone would make that set the batch's
@@ -706,8 +712,11 @@ function* stageTouchedIds(
 }
 
 /**
- * Advance the stage census across one batch: per touched id, swap the payload
- * the stage resolved before for the one it resolves after.
+ * Advance the two stage-scoped tallies across one batch: per touched id, swap
+ * the payload the stage resolved before for the one it resolves after. One
+ * pass feeds both — the script census and the population tally share their
+ * input (which record a staged id resolves to, and from which home) and
+ * differ only in what they count (`cellsStats.ts`).
  *
  * The input is wider than "stage and unstage", because which record a staged
  * id RESOLVES to moves without any membership event. A canonical birth for an
@@ -715,34 +724,68 @@ function* stageTouchedIds(
  * resident copy; a GC of a staged canonical record demotes it to whatever the
  * resident map still holds, or to nothing. Both arrive as canonical touches
  * and nothing in the display journal reports them — so `touchedCellIds` is
- * part of this census's input, filtered by membership at read time.
+ * part of both tallies' input, filtered by membership at read time.
  *
- * Identity-stable whenever nothing it reports moved, which is the common case
- * on a live stream: deaths and tags rewrite staged records without touching
- * their scripts, and a census that turned over for those would re-rank itself
- * every block for no change.
+ * Resolution is canonical-first, exactly like `resolveDisplayCell`, because
+ * that is the record the renderer draws. An id that is not staged, and a
+ * staged id whose record this cache was never sent (the bare-id enter lane
+ * an older server may still use), resolve to nothing: both tallies count
+ * records, not ids.
+ *
+ * Each tally keeps its identity whenever nothing it reports moved, which is
+ * the common case on a live stream: a tag rewrites a staged record without
+ * touching its scripts or its class, and a death moves the population but
+ * not the script mix. A tally that turned over for those would re-rank (or
+ * re-derive) itself every block for no change.
  */
-function nextStageScripts(
-  prevTally: StageScriptTally,
-  previous: StageView,
-  next: StageView,
-  touchedCellIds: ReadonlySet<number>,
-  touchedDisplayIds: ReadonlySet<number>,
-  residentUpdatedIds: ReadonlySet<number>,
-): StageScriptTally {
-  let tally: MutableStageScripts | null = null;
+function advanceStageTallies(
+  prev: CellGalaxyCache,
+  draft: CellGalaxyDraft,
+): void {
+  const next = draft.value;
+  let scripts: MutableStageScripts | null = null;
+  let population: MutableStagePopulation | null = null;
   for (const id of stageTouchedIds(
-    touchedCellIds,
-    touchedDisplayIds,
-    residentUpdatedIds,
+    draft.touchedCellIds,
+    draft.touchedDisplayIds,
+    draft.residentUpdatedIds,
   )) {
-    const before = stagedPayload(previous, id);
-    const after = stagedPayload(next, id);
-    if (sameStageContribution(before, after)) continue;
-    tally ??= cloneStageScripts(prevTally);
-    adjustStageScripts(tally, before, after);
+    let before: Cell | undefined;
+    let beforeCanonical = false;
+    if (prev.displayMembers.has(id)) {
+      before = prev.cells.get(id);
+      if (before !== undefined) beforeCanonical = true;
+      else before = prev.displayResidents.get(id);
+    }
+    let after: Cell | undefined;
+    let afterCanonical = false;
+    if (next.displayMembers.has(id)) {
+      after = next.cells.get(id);
+      if (after !== undefined) afterCanonical = true;
+      else after = next.displayResidents.get(id);
+    }
+    if (!sameStageContribution(before, after)) {
+      scripts ??= cloneStageScripts(prev.stageScripts);
+      adjustStageScripts(scripts, before, after);
+    }
+    if (!sameStagePopulationContribution(
+      before,
+      beforeCanonical,
+      after,
+      afterCanonical,
+    )) {
+      population ??= cloneStagePopulation(prev.stagePopulation);
+      adjustStagePopulation(
+        population,
+        before,
+        beforeCanonical,
+        after,
+        afterCanonical,
+      );
+    }
   }
-  return tally ?? prevTally;
+  next.stageScripts = scripts ?? prev.stageScripts;
+  next.stagePopulation = population ?? prev.stagePopulation;
 }
 
 function writableCells(draft: CellGalaxyDraft): Map<number, Cell> {
@@ -1121,14 +1164,7 @@ export function applyCellDelta(
     draft.value.totalBirths,
     draft.value.totalDeaths,
   );
-  draft.value.stageScripts = nextStageScripts(
-    prev.stageScripts,
-    prev,
-    draft.value,
-    draft.touchedCellIds,
-    draft.touchedDisplayIds,
-    draft.residentUpdatedIds,
-  );
+  advanceStageTallies(prev, draft);
   return draft.value;
 }
 
@@ -1176,13 +1212,6 @@ export function applyRevisionedCellDeltas(
     draft.value.totalBirths,
     draft.value.totalDeaths,
   );
-  draft.value.stageScripts = nextStageScripts(
-    prev.stageScripts,
-    prev,
-    draft.value,
-    draft.touchedCellIds,
-    draft.touchedDisplayIds,
-    draft.residentUpdatedIds,
-  );
+  advanceStageTallies(prev, draft);
   return draft.value;
 }

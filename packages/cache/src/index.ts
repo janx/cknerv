@@ -59,16 +59,21 @@ export {
 export {
   adoptCellViewStats,
   aggregateCellsStats,
+  aggregateStagePopulation,
   aggregateStageScripts,
   cellKindKey,
+  cellPopulationClass,
   cloneCellsStats,
   emptyCellsStats,
   emptyScriptCensus,
+  emptyStagePopulation,
   emptyStageScripts,
   stageScriptCensus,
   STAGE_CENSUS_CAP,
   type CellKindKey,
+  type CellPopulationClass,
   type CellsStats,
+  type StagePopulationTally,
   type StageScriptTally,
 } from './cellsStats';
 

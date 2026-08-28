@@ -11,6 +11,7 @@
 // and a 12,000-Cell stage.
 
 import type { Cell, ChainCensus, ShapeSeed } from '@cknerv/types';
+import { aggregateStagePopulation } from '@cknerv/cache';
 
 import {
   deriveCellPopulationField,
@@ -79,10 +80,14 @@ function cache(options: {
   displayBudget?: { cells: number; nerveEdges: number } | null;
 }): CellPopulationCache {
   const staged = options.staged;
+  const cells = new Map(staged.map((c) => [c.id, c]));
+  const displayMembers = new Set(staged.map((c) => c.id));
+  const displayResidents = new Map<number, Cell>();
   return {
-    cells: new Map(staged.map((c) => [c.id, c])),
-    displayMembers: new Set(staged.map((c) => c.id)),
-    displayResidents: new Map(),
+    cells,
+    displayMembers,
+    displayResidents,
+    stagePopulation: aggregateStagePopulation(displayMembers, cells, displayResidents),
     displayBudget: options.displayBudget === undefined
       ? { cells: STAGE_BUDGET, nerveEdges: 8_000 }
       : options.displayBudget,
