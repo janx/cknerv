@@ -70,7 +70,6 @@ import {
   rgba,
 } from '../../../src/components/hud/hudTheme';
 import {
-  PANEL_WATERMARK_PX,
   PLATE_CUT_CLIP,
   PLATE_CUT_PX,
   REVEAL_GHOST_OPACITY,
@@ -3727,9 +3726,8 @@ describe('one alpha for a rule', () => {
 // looks slightly wrong to somebody who is not looking for it. 样本 once shipped
 // a release ahead of the subset exactly this way.
 //
-// The watermark makes it worse by making it bigger: the same silent fallback at
-// 76px is a mismatched face across a whole corner of a panel. So this is the
-// oracle. The inventory is written out here rather than imported, on purpose —
+// So this is the oracle. The inventory is written out here rather than
+// imported, on purpose —
 // it is a claim about a binary file, and the copy that matters is the one in
 // `src/fonts/README.md` beside the `pyftsubset` command that produced it. If
 // this list and that list ever disagree, one of them is lying and the test
@@ -3778,11 +3776,11 @@ const CJK_FACE = 'HuiwenMincho-subset.woff2';
  *  to check, which is why every one of these is a literal at its call site. */
 const CJK_RUN = /[\u4E00-\u9FFF]+/g;
 
-/** The two props whose primitives put the face on for the writer — `HudPanel`'s
- *  `watermark`, and the `cjk` of `PanelHeader` / `SpatialPlateHeader`. A file
- *  that spells its Chinese as one of these has named the face by naming the
- *  primitive; anything else has to say `HUD_FONTS.cjk` itself. */
-const CJK_PROP = /(?:watermark|cjk)="([^"]*)"/g;
+/** The one prop whose primitive puts the face on for the writer — the `cjk` of
+ *  `PanelHeader` / `SpatialPlateHeader`. A file that spells its Chinese as this
+ *  prop has named the face by naming the primitive; anything else has to say
+ *  `HUD_FONTS.cjk` itself. */
+const CJK_PROP = /cjk="([^"]*)"/g;
 
 function cjkRuns(text: string): string[] {
   const found: string[] = [];
@@ -3846,7 +3844,7 @@ describe('the hand-cut face', () => {
     const literals = cjkLiterals();
     expect(literals.length).toBeGreaterThanOrEqual(11);
     expect(literals.filter((literal) => literal.text === '神经元').length)
-      .toBeGreaterThanOrEqual(2);
+      .toBeGreaterThanOrEqual(1);
 
     // And the form that hid the defect this section was widened for: three
     // fields on an object returned by a helper, in a scene file the old sweep
@@ -3888,15 +3886,6 @@ describe('the hand-cut face', () => {
     }
 
     expect(offenders).toEqual([]);
-  });
-
-  it('the watermark is off the type ladder on purpose, not by drift', () => {
-    // The one DOM size in the overlay that is not a rung of `HUD_TYPE`, and the
-    // only reason it is allowed to be: the ladder ranks reading sizes, and the
-    // watermark is a graphic. Declared here so the exception is a decision on
-    // the record rather than a constant that happened to dodge the regex.
-    expect(DECLARED_SIZES.has(PANEL_WATERMARK_PX)).toBe(false);
-    expect(PANEL_WATERMARK_PX).toBeGreaterThan(HUD_TYPE.hero * 2);
   });
 });
 

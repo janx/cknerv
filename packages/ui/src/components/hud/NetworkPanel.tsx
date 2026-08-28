@@ -38,7 +38,7 @@ function NetworkPanel({ summary, consensus, syncRatio, enrichmentSource, network
   const total = Math.max(1, consensus.total);
   const seg = (n: number) => `${(n / total) * 100}%`;
   return (
-    <HudPanel watermark="节点场" style={{ width: 302, paddingTop: 14, ...style }}>
+    <HudPanel style={{ width: 302, paddingTop: 14, ...style }}>
       <PanelHeader en="PEER MESH" cjk="节点场" idx="MESH·02" accent={HUD_COLORS.peerWire} />
       {/* The link-direction pair reads as `OUT n / IN n`, which is how
         * `NodeSelfCard` states the identical reading and how every other

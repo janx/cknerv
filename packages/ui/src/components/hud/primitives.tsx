@@ -177,86 +177,12 @@ export function DragAxisMark({ width = 11 }: { width?: number }) {
   );
 }
 
-// ——— The panel's own name, printed as a mark —————————————————————————————
-//
-// A docked panel already says what it is twice, at reading size: the English
-// title and the CJK companion beside it. The watermark is a third saying, and
-// the only one not meant to be read — the panel's name set enormous in the
-// mincho face, dropped into the bottom-right corner, running off the edge, at
-// an alpha that loses to every number on the surface. It is texture rather than
-// text: the thing you notice on the second look at a panel you have already
-// read a hundred times, and never while you are reading one.
-//
-// One size for every panel, and the crop is the reason. Sizing the mark to fit
-// each panel would make it read as a label that was measured; letting a 76px
-// glyph run off a 109px-tall PULSE and sit quietly inside a 475px CKB·01 is what
-// makes it read as a stamp the panel was cut out of.
-//
-// ⚠️ The CJK face is a HAND-SUBSET woff2 carrying exactly 32 glyphs, inventoried
-// in `src/fonts/README.md`. A watermark using anything outside that set silently
-// falls back to a system serif — no error, just the wrong face — so every
-// literal passed here is checked against the inventory in
-// `__tests__/components/hud/hudDiscipline.test.ts`.
-//
-// D-4 escape hatch: if the running HUD says this is decoration rather than
-// character, it leaves in two edits — drop the `watermark` prop at the six call
-// sites, then delete the prop and the span below. Nothing else reads either,
-// and `overflow: hidden` is the only trace it leaves on the panel.
-
-/** Deliberately not a rung of `HUD_TYPE`, and named here instead. That ladder
- *  ranks things a person reads, and its top step (`hero`, 22) is the single
- *  numeral a panel exists to show; this is a graphic that happens to be made of
- *  a glyph. Pinned as an explicit exception in `hudDiscipline.test.ts`. */
-export const PANEL_WATERMARK_PX = 76;
-
-/** Low enough that the mark is a change in the black rather than a thing on it.
- *  Tuned at the running HUD against the loudest case — a panel whose ground is
- *  sitting on empty stage — because the panel is only `rgba(0,0,0,0.45)` and the
- *  mark therefore competes with the galaxy as much as with the telemetry. Where
- *  the stage is bright behind a panel the watermark simply goes, and that is the
- *  correct behaviour for something painted in the panel's own black: raising the
- *  alpha until it survived the galaxy would make it shout everywhere else. */
-const PANEL_WATERMARK_ALPHA = 0.06;
-
-/** Bottom-right, pushed out past both edges so the glyph is cut by the panel
- *  rather than parked inside it. `zIndex: -1` under the panel's `isolation`
- *  puts it below every child: an absolutely positioned span would otherwise
- *  paint ABOVE the panel's static text no matter how early it appears in the
- *  DOM, and the one thing this mark may never do is sit on top of a reading. */
-const PANEL_WATERMARK_STYLE: CSSProperties = {
-  position: 'absolute',
-  right: -7,
-  bottom: -13,
-  zIndex: -1,
-  fontFamily: HUD_FONTS.cjk,
-  fontSize: PANEL_WATERMARK_PX,
-  lineHeight: 1,
-  whiteSpace: 'nowrap',
-  color: rgba(HUD_COLORS.orange, PANEL_WATERMARK_ALPHA),
-  pointerEvents: 'none',
-  userSelect: 'none',
-};
-
-export function HudPanel({ style, watermark, children }: {
-  style?: CSSProperties;
-  /** The panel's CJK name, printed huge and faint under the telemetry. Subset
-   *  glyphs only — see the note above. */
-  watermark?: string;
-  children: ReactNode;
-}) {
+export function HudPanel({ style, children }: { style?: CSSProperties; children: ReactNode }) {
   return (
     <div
       data-hud-occlusion="true"
-      // `overflow: hidden` is what crops the watermark at the panel edge, and
-      // `isolation` is what keeps its negative z-index inside this box instead
-      // of dropping it behind the panel's own background. Nothing else in a
-      // panel reaches past its bounds — the scroll panes wrap these from the
-      // outside, in `HudOverlay`, and the corner brackets sit on the edge.
-      style={{ position: 'absolute', padding: '13px 15px', background: HUD_COLORS.panel, overflow: 'hidden', isolation: 'isolate', ...style }}
+      style={{ position: 'absolute', padding: '13px 15px', background: HUD_COLORS.panel, ...style }}
     >
-      {watermark ? (
-        <span data-hud-watermark aria-hidden="true" style={PANEL_WATERMARK_STYLE}>{watermark}</span>
-      ) : null}
       <span style={bracket('tl')} /><span style={bracket('br')} />
       {children}
     </div>

@@ -282,7 +282,7 @@ export default function StageCapacityPanel({ stats, stageScripts, scriptRegistry
   const mixes = model ? populationCompositionMixes(model) : [];
 
   return (
-    <HudPanel watermark="样本" style={{ width: 302, ...style }}>
+    <HudPanel style={{ width: 302, ...style }}>
       {/* Untinted, with DAO·05 and the rest: only MESH·02 and MESH·03 spend an
           accent on their module tag, because only they are naming which of the
           two meshes you are looking at. */}

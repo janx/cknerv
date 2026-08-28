@@ -135,7 +135,7 @@ function BlockCadenceEcg({
   // Compact by design: ECG·04 shares the left rail's fixed floor with
   // DAO·05, and every pixel it gives up is scroll-free room for CKB·01.
   return (
-    <HudPanel watermark="脉搏" style={{ width: 430, zIndex: 12, padding: '10px 15px 9px', ...style }}>
+    <HudPanel style={{ width: 430, zIndex: 12, padding: '10px 15px 9px', ...style }}>
       <PanelHeader en="PULSE" cjk="脉搏" idx="ECG·04" compact />
       <div style={{ display: 'flex', gap: 12 }}>
         <div style={{ flex: '0 0 86px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
