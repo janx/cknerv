@@ -839,3 +839,678 @@ export function makeCohortCoreMaterial(): THREE.ShaderMaterial {
     `,
   });
 }
+
+/* -------------------------------------------------------------------------- *
+ * The aperture — a cohort's mark as a hole in the colony plane.
+ * -------------------------------------------------------------------------- */
+
+/**
+ * The mark IS the aperture, and it is drawn as two faces of one hole.
+ *
+ * ⭐⭐⭐ A PLANET BLOCKS THE BACKGROUND; A HOLE BENDS IT. Every volumetric form
+ * this feature tried put a 20–40 world-unit body next to a mesh built from 1–2
+ * wu sprites and thin lines, and each read as a landscape feature rather than
+ * as a junction — a searchlight, a cooling tower, a drain. What survived every
+ * round was the aperture itself, so this drops the volume entirely and draws
+ * only the opening.
+ *
+ * 1. `makeCohortFaceMaterial` — a disc LYING IN THE COLONY PLANE: a bright rim,
+ *    a small dark pupil, and a fine radial intake grain. ⭐ It draws a CIRCLE;
+ *    every ellipse a viewer sees is projection, and because all cohorts
+ *    foreshorten identically that agreement is what makes the colony plane
+ *    itself legible.
+ * 2. `makeCohortAuraMaterial` — a small camera-facing quad whose halo carries
+ *    THE SAME HOLE, cut by crossing the view ray with the colony plane. ⚠️ It
+ *    is not decoration: below roughly 15° of elevation it is the only thing
+ *    keeping the mark from reading as a dash among the peer links.
+ *
+ * ⭐ ORIENTATION IS SHARED WITH THE COLONY'S OWN PLANE AND IS NEVER PER-COHORT.
+ * The plane's normal is world Y, which is also the colony's rotation axis, so
+ * the face needs no matrix of its own and turns with the plate for free. The
+ * register violation this stays clear of is a mark with an axis a viewer could
+ * read as pointing somewhere; a circle in the shared plane has none.
+ *
+ * ⚠️ 「从下方汲取能量」 IS NOT EXPRESSED HERE, AND THAT IS A DECISION. Measured
+ * in the lab: a sub-plane shaft gated through the hole is invisible except from
+ * directly overhead, and ungated it is a searchlight in miniature. It does not
+ * earn a draw, so it is not in this file — do not smuggle a substitute in.
+ */
+
+/**
+ * The outer radius of the mark, in world units. ⭐ THE size parameter: every
+ * other length here is a fraction of it.
+ *
+ * Measured sweet spot of a 2.4–3.8 band: 6.0 wu across, with a bright ring at
+ * 1.68 wu against a sighted peer's 1.5. Below 2.4 the structure stops resolving
+ * at the app camera; above 4 the mark starts to dominate the colony.
+ */
+export const COHORT_AP_R = 3.0;
+
+/** Rim radius, as a fraction of `COHORT_AP_R` — 0.84 wu at the shipped size. */
+export const COHORT_AP_RIM_FRAC = 0.28;
+
+/**
+ * Pupil radius, as a fraction of the RIM radius. A small dark pupil: 0.52 wu.
+ *
+ * ⭐ BOTH FACES READ THIS ONE NUMBER, which is what makes the aura's hole and
+ * the face's the same hole rather than two that were tuned to agree.
+ */
+export const COHORT_AP_PUPIL_FRAC = 0.62;
+
+/**
+ * Depth of the shared breathe, as a fraction. The RATE is `COHORT_BREATHE_HZ` —
+ * this file has one clock and the aperture does not get a second one.
+ *
+ * ⚠️ THE LAB SOURCE HARD-CODED 1.1 Hz HERE and that would have been a second
+ * cadence in a file whose whole argument is that the intake and the emission
+ * are told apart by NOT sharing a clock. The depth travels per-face (the centre
+ * carries 0.22 inline); the rate does not.
+ */
+export const COHORT_AP_BREATHE_DEPTH = 0.09;
+
+/* ------------------------------------------------------------------ the face */
+
+/** Softness of the pupil's edge, as a fraction of the pupil radius. */
+export const COHORT_FACE_PUPIL_SOFT = 0.5;
+
+/** Gaussian half-width of the rim, as a fraction of the rim radius. */
+export const COHORT_FACE_RIM_W = 0.34;
+
+/** How hard the rim burns, before the knee. */
+export const COHORT_FACE_RIM_AMP = 1.05;
+
+/** How far the rim tips toward cold white at its own peak. */
+export const COHORT_FACE_HOT_MIX = 0.45;
+
+/** Amplitude of the intake skirt, from the rim out to `COHORT_AP_R`. */
+export const COHORT_FACE_INTAKE_AMP = 0.72;
+
+/**
+ * Fall-off exponent across the skirt. ⭐ THE SMOOTH HALO HAS TO OUTREACH THE
+ * GRAIN, or the silhouette stops being a clean ellipse.
+ */
+export const COHORT_FACE_INTAKE_GAMMA = 2.4;
+
+/**
+ * Fill just outside the rim, so the pupil is a hole in a LIT SURFACE and not a
+ * gap between two rings.
+ */
+export const COHORT_FACE_INTAKE_CORE = 0.6;
+
+/**
+ * ⭐⭐⭐ THE NUMBER OF RADIAL STRIAE, AND THE ONE LAW THAT DECIDES WHETHER THIS
+ * MARK IS A GRAIN OR A SUNFLOWER.
+ *
+ * Measured over 48 variants and four sweeps: at 44 striae or fewer, radial
+ * structure on a small bright mark reads as a STAR — regardless of the
+ * modulation's sign (additive, subtractive or symmetric), its contrast
+ * (0.22–0.9) or its reach. Nothing else recovers it. COUNT IS THE ONLY ESCAPE:
+ * past roughly 64 the striae stop being countable and become a texture, which
+ * is what a medium being drawn inward actually looks like.
+ *
+ * `COHORT_FACE_STRIAE_FLOOR` is that measured floor, exported so the law is
+ * visible in the source and pinned in `materials/cohortAperture.test.ts`.
+ */
+export const COHORT_FACE_STRIAE = 88;
+
+/** The measured floor the count above must never fall below. See it for why. */
+export const COHORT_FACE_STRIAE_FLOOR = 64;
+
+/**
+ * Depth of the stria modulation.
+ *
+ * ⭐⭐⭐ IT IS PURELY SUBTRACTIVE, AND THAT IS WHAT KEEPS THE SILHOUETTE ROUND.
+ * `COHORT_FACE_STRIA_LIFT` at 1 makes the modulation `1 + amt * (cos-bump - 1)`,
+ * which lies in `[1 - amt, 1]` — the striae can only ever REMOVE light. A
+ * mean-preserving or additive modulation displaces the iso-brightness contour
+ * OUTWARD wherever a stria sits, so the outline scallops and the mark reads as
+ * a sunflower; that happened in every variant of the first two sweeps. Taking
+ * light away instead leaves the outline exactly where the smooth halo put it
+ * and carves the grain into the interior.
+ */
+export const COHORT_FACE_STRIA_AMP = 0.38;
+
+/** 1 = purely subtractive, 0.5 = symmetric, 0 = purely additive. See above. */
+export const COHORT_FACE_STRIA_LIFT = 1;
+
+/** Where the grain fades in, as a fraction of the skirt. */
+export const COHORT_FACE_STRIA_R0 = 0.02;
+
+/** Where it is completely gone — well inside the smooth halo. */
+export const COHORT_FACE_STRIA_R1 = 0.9;
+
+/** Width of each of those two fades. */
+export const COHORT_FACE_STRIA_W = 0.08;
+
+/**
+ * Azimuthal drift of the grain, in turns per second.
+ *
+ * ⚠️ IT IS NOT A SHARE LANE AND MUST NOT BECOME ONE WITHOUT A MEASUREMENT.
+ * At 88 striae a drift of 0.022 turns/s carries one stria past a fixed azimuth
+ * every 0.52 s — a rate a viewer could read. But the grain prefilters to
+ * nothing past roughly 25 wu (see `uAa`), so any rate written here is legible
+ * only in close-up, which is why the shipped form leaves share out of both
+ * aperture programs entirely.
+ */
+export const COHORT_FACE_DRIFT = 0.022;
+
+/**
+ * ONE broad inward swell, and never crests: structure ACROSS the flow reads as
+ * the layers of an object, which is the reading this form exists to avoid.
+ */
+export const COHORT_FACE_SWELL = 0.16;
+
+/** How fast that one swell runs inward, in turns per second. */
+export const COHORT_FACE_SWELL_RATE = 0.4;
+
+/**
+ * Prefilter strength for the grain, against its own screen footprint.
+ *
+ * ⭐ IT IS WHAT MAKES THE GRAIN A ZOOM-IN DETAIL RATHER THAN SCENE-SCALE NOISE.
+ * 88 striae across a 6 wu mark alias into moiré the moment the mark is small on
+ * screen; `dFdx`/`dFdy` give the footprint of one plane unit, and the grain is
+ * damped by `exp(-0.16 * dph²)` as that footprint approaches a stria's width.
+ * Past roughly 25 wu it prefilters to nothing and the face is a smooth ring.
+ */
+export const COHORT_FACE_AA = 1;
+
+/** The face's own amplitude, before the knee. */
+export const COHORT_FACE_AMP = 1;
+
+/**
+ * Half-extent of the face's quad, in world units.
+ *
+ * The face is a disc of radius `apR` lying in the plane, and the quad is a
+ * SQUARE in that same plane, so it needs no margin at all: a square of
+ * half-extent `apR` strictly contains the disc, and the 21.5 % of its area
+ * outside discards on the first line of the fragment.
+ *
+ * ⚠️ IT IS A FUNCTION AND THE LAYER HAS TO KEEP IT ONE, exactly as
+ * `cohortIntakeHalfExtent` is. If a knob drives `uApR` while `uHalf` stays,
+ * the face crops against its own quad — the ray clip inside stays exact, but
+ * the pixels carrying the rim are never rasterised to run it.
+ */
+export function cohortFaceHalfExtent(apR: number): number {
+  return apR;
+}
+
+/** The same extent at the shipped radius: 3 world units. */
+export const COHORT_FACE_HALF = cohortFaceHalfExtent(COHORT_AP_R);
+
+/* ------------------------------------------------------------------ the aura */
+
+/** The aura's own amplitude, before the knee. */
+export const COHORT_AURA_AMP = 1;
+
+/** Fall-off exponent of the halo, from the mark's centre outward. */
+export const COHORT_AURA_HALO_EXP = 1.7;
+
+/** Halo radius, as a multiple of `COHORT_AP_R` — 4.05 wu at the shipped size. */
+export const COHORT_AURA_HALO_R = 1.35;
+
+/**
+ * How far the halo is weighted DOWNWARD in world Y.
+ *
+ * ⭐ THE ONLY CUE FOR "THE ENERGY IS UNDER THE PLANE" THAT COSTS NO SILHOUETTE.
+ * It is a gradient inside a glow that is already there, so there is no cone, no
+ * stub and nothing that can read as a beam, and it vanishes on its own from
+ * overhead — where "below" is not a direction a viewer can see.
+ */
+export const COHORT_AURA_HALO_BIAS = 0.3;
+
+/** How fast that bias falls off upward, in units of the halo radius. */
+export const COHORT_AURA_HALO_BIAS_K = 0.55;
+
+/**
+ * The halo's own hole, in units of the aperture's pupil.
+ *
+ * ⭐⭐⭐ THE HALO HAS THE SAME HOLE, AND ONE TEST RESOLVES A CONFLICT THAT
+ * OTHERWISE HAS NO ANSWER. A halo strong enough to stop the mark collapsing
+ * into a dash at 12° of elevation also floods the pupil at 30° and kills the
+ * one cue the whole form rests on. Cutting it with the aperture's own pupil
+ * settles it EXACTLY, because the cut is computed by crossing the view ray with
+ * the colony plane: from above, the ray lands inside the pupil and the halo is
+ * cut, so the mark is a ring; at grazing incidence almost no ray lands in the
+ * pupil at all, so the halo fills in and the mark stays a blob. The hole is
+ * therefore never restated — it is the same disc, in the same plane, about the
+ * same centre, read through a different ray.
+ */
+export const COHORT_AURA_PUPIL_SCALE = 1.35;
+
+/** How far the halo tips toward cold white. Far less than the rim: the halo is
+ *  support, and a white halo would compete with the structure it supports. */
+export const COHORT_AURA_HOT_MIX = 0.1;
+
+/**
+ * The aura's soft knee — and the one number on this layer that is NOT the lab's.
+ *
+ * ⚠️⚠️⚠️ TWO ADDITIVE DRAWS OF ONE MARK SHARE A CEILING, AND NEITHER CAN SEE IT.
+ * Additive blending takes source alpha as its factor, so each draw contributes
+ * `uColor * shape²`, and blue is EXACTLY 1.0 in both `scaffold` and `coldWhite`
+ * — so the blue a pixel receives is exactly `shapeFace² + shapeAura²`. The lab
+ * kneed both faces at `COHORT_CLIP_KNEE` because it measured them one at a
+ * time. Swept together over 700 cameras, their SUM reaches **1.067** in blue at
+ * every distance from 8 to 300 wu: at low elevation the rim's near and far arcs
+ * fold onto the halo's own peak, and the mark's brightest ring clips to flat
+ * white-cyan with its structure gone. That is the failure that has already cost
+ * this feature a full live leg.
+ *
+ * ⭐ SO THE TWO KNEES ARE A PYTHAGOREAN PAIR: `sqrt(1 - COHORT_CLIP_KNEE²)`.
+ * Since `k * (1 - exp(-s / k)) < k` strictly for every finite input, the two
+ * shapes lie STRICTLY inside the unit circle, so `shapeFace² + shapeAura² < 1`
+ * at every pixel, every camera, every time and every knob setting. The ceiling
+ * is arithmetic rather than a swept observation, which is what a ceiling this
+ * expensive should be. Measured, it lands at 0.850 in blue.
+ *
+ * ⭐ THE FACE KEEPS `COHORT_CLIP_KNEE` UNTOUCHED, so the whole correction is
+ * taken out of the halo and none of it out of the mark's structure. What that
+ * costs is measured and small: the halo's peak drops, but the LIT AREA it
+ * contributes at low elevation — the job it is actually here for — falls only
+ * from 421 to 383 wu², 91 % of the lab's. A knee, never a scale.
+ */
+export const COHORT_AURA_KNEE = Math.sqrt(1 - COHORT_CLIP_KNEE ** 2);
+
+/**
+ * Half-extent of the aura's camera-facing quad, in world units.
+ *
+ * ⭐ THE 1.06 IS A PERSPECTIVE MARGIN AND NOT A GUESS. The halo is measured by
+ * the PERPENDICULAR DISTANCE FROM THE VIEW RAY to the cohort, and for a camera
+ * `D` from the mark a fragment sitting `d` out on the quad has a ray that
+ * passes at `d / sqrt(1 + d²/D²)` — strictly LESS than `d`. So a quad of
+ * half-extent exactly `haloR` leaves the halo's outer edge off its own quad.
+ * The margin needed is `1 / sqrt(1 - (haloR/D)²)`, which is 1.062 at `D` = 12
+ * wu — nearer than the orbit reaches. Beyond 12.2 wu the margin is slack.
+ *
+ * ⚠️ A FUNCTION FOR THE SAME REASON `cohortIntakeHalfExtent` IS ONE: `uApR` and
+ * `uHaloR` are both live knobs, and a quad left behind crops the halo it
+ * carries.
+ */
+export function cohortAuraHalfExtent(apR: number, haloR: number): number {
+  return apR * haloR * 1.06;
+}
+
+/** The same extent at the shipped radius and halo: 4.293 world units. */
+export const COHORT_AURA_HALF = cohortAuraHalfExtent(
+  COHORT_AP_R,
+  COHORT_AURA_HALO_R,
+);
+
+/**
+ * One cohort's face, as an instanced disc lying in the colony plane.
+ *
+ * ⚠️ THE GEOMETRY MUST BE `PlaneGeometry(1, 1)` — the SAME shared unit plane
+ * the other draws in this layer take. The vertex shader lays it into the
+ * instance's own XZ and scales it by the `uHalf` UNIFORM, so `mesh.scale` and a
+ * scaled instance matrix are both irrelevant, exactly as they are for the two
+ * billboards above. Two triangles are enough: the disc is flat, and the lab's
+ * 64x6 ring existed only to demonstrate a bowl that was rejected at every
+ * amplitude tested.
+ *
+ * ⭐ NO MATRIX AND NO ORIENTATION LANE. The plane's normal is world Y, which is
+ * the colony's rotation axis, so laying the quad into local XZ and letting
+ * `modelMatrix * instanceMatrix` carry it is all the orientation this mark ever
+ * has. Rotation about Y maps that local plane onto the colony plane and
+ * preserves lengths inside it, which is why `length(vP)` here and the aura's
+ * ray/plane crossing measure the same radius about the same centre.
+ *
+ * ⚠️ THAT TIE ASSUMES THE INSTANCE MATRIX CARRIES NO SCALE. `ColonyCohorts`
+ * builds it with `makeTranslation`; a scaled instance would move the face's
+ * radius without moving the aura's, and the one hole would become two.
+ *
+ * `aSeed` is the same per-instance lane the other faces read. There is NO
+ * `aShare` lane: share means rate on this layer, and neither aperture program
+ * has a rate share could drive that survives the grain's own prefilter.
+ */
+export function makeCohortFaceMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthTest: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+    // The disc lies IN the plane, so it is seen from below as often as from
+    // above. It is the only draw in this layer that needs both faces.
+    side: THREE.DoubleSide,
+    uniforms: {
+      uColor: {
+        value: new THREE.Color().setRGB(...PEER_NETWORK_PALETTE.scaffold),
+      },
+      uHot: {
+        value: new THREE.Color().setRGB(...PEER_NETWORK_PALETTE.coldWhite),
+      },
+      uTime: { value: 0 },
+      uContextEnergy: { value: 1 },
+      uHalf: { value: COHORT_FACE_HALF },
+      uApR: { value: COHORT_AP_R },
+      uRimFrac: { value: COHORT_AP_RIM_FRAC },
+      uPupilFrac: { value: COHORT_AP_PUPIL_FRAC },
+      uPupilSoft: { value: COHORT_FACE_PUPIL_SOFT },
+      uRimW: { value: COHORT_FACE_RIM_W },
+      uRimAmp: { value: COHORT_FACE_RIM_AMP },
+      uHotMix: { value: COHORT_FACE_HOT_MIX },
+      uInAmp: { value: COHORT_FACE_INTAKE_AMP },
+      uInGamma: { value: COHORT_FACE_INTAKE_GAMMA },
+      uInCore: { value: COHORT_FACE_INTAKE_CORE },
+      uStriae: { value: COHORT_FACE_STRIAE },
+      uStriaAmp: { value: COHORT_FACE_STRIA_AMP },
+      uStriaLift: { value: COHORT_FACE_STRIA_LIFT },
+      uStriaR0: { value: COHORT_FACE_STRIA_R0 },
+      uStriaR1: { value: COHORT_FACE_STRIA_R1 },
+      uStriaW: { value: COHORT_FACE_STRIA_W },
+      uDrift: { value: COHORT_FACE_DRIFT },
+      uSwell: { value: COHORT_FACE_SWELL },
+      uSwellRate: { value: COHORT_FACE_SWELL_RATE },
+      uAa: { value: COHORT_FACE_AA },
+      uAmp: { value: COHORT_FACE_AMP },
+      uKnee: { value: COHORT_CLIP_KNEE },
+      uBreatheDepth: { value: COHORT_AP_BREATHE_DEPTH },
+      uBreatheHz: { value: COHORT_BREATHE_HZ },
+    },
+    vertexShader: /* glsl */ `
+      attribute float aSeed;
+
+      uniform float uHalf;
+
+      varying vec2 vP;
+      varying vec3 vOrigin;
+      varying float vSeed;
+
+      void main() {
+        vSeed = aSeed;
+        // The instance's own world point, for the proximity exemption. It is
+        // the SAME quantity every other face in this layer carries.
+        vec4 origin = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+        vOrigin = origin.xyz;
+        // ⚠️ uHalf IS A UNIFORM AND HAS TO BE — see the factory's comment.
+        // The unit plane is laid into the instance's local XZ, which the
+        // colony's rotation about world Y keeps parallel to the colony plane.
+        vec3 local = vec3(position.x, 0.0, position.y) * uHalf * 2.0;
+        // The offset from the cohort's centre, in the plane. A rotation about
+        // Y preserves its length, so this is the same radius the aura reads
+        // off its ray/plane crossing.
+        vP = local.xz;
+        vec4 world = modelMatrix * instanceMatrix * vec4(local, 1.0);
+        gl_Position = projectionMatrix * viewMatrix * world;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      precision highp float;
+
+      uniform vec3 uColor;
+      uniform vec3 uHot;
+      uniform float uTime;
+      uniform float uContextEnergy;
+      uniform float uApR;
+      uniform float uRimFrac;
+      uniform float uPupilFrac;
+      uniform float uPupilSoft;
+      uniform float uRimW;
+      uniform float uRimAmp;
+      uniform float uHotMix;
+      uniform float uInAmp;
+      uniform float uInGamma;
+      uniform float uInCore;
+      uniform float uStriae;
+      uniform float uStriaAmp;
+      uniform float uStriaLift;
+      uniform float uStriaR0;
+      uniform float uStriaR1;
+      uniform float uStriaW;
+      uniform float uDrift;
+      uniform float uSwell;
+      uniform float uSwellRate;
+      uniform float uAa;
+      uniform float uAmp;
+      uniform float uKnee;
+      uniform float uBreatheDepth;
+      uniform float uBreatheHz;
+
+      varying vec2 vP;
+      varying vec3 vOrigin;
+      varying float vSeed;
+
+      const float TAU = 6.28318530718;
+
+      float sq(float x) { return x * x; }
+
+      void main() {
+        float r = length(vP);
+        // The quad is a square and the mark is a disc: 21.5 % of the
+        // fragments are corner and leave here.
+        if (r > uApR) discard;
+
+        float rimR = max(uApR * uRimFrac, 0.02);
+        float rho = r / rimR;
+        float pup = max(uPupilFrac, 0.02);
+
+        // ⭐⭐⭐ THE PUPIL, AND IT REACHES EXACTLY ZERO. It is an absence of
+        // light and never a drawn dark disc — the same additive idiom the
+        // centre's refusal uses. ⚠️ The clamp keeps edge0 strictly below
+        // edge1: at uPupilSoft = 0 the two edges would be equal, and
+        // smoothstep with edge0 >= edge1 is UNDEFINED in GLSL ES and has
+        // rendered nothing at all on this project's own driver once already.
+        float pupil = smoothstep(
+          pup * (1.0 - clamp(uPupilSoft, 0.02, 0.98)),
+          pup,
+          rho
+        );
+        float rim = exp(-sq((rho - 1.0) / max(uRimW, 0.02)));
+
+        // The intake skirt, from the rim out to the mark's edge.
+        float outer = max(uApR / rimR, 1.2);
+        float uu = clamp((rho - 1.0) / (outer - 1.0), 0.0, 1.0);
+        float skirt = pow(1.0 - uu, max(uInGamma, 0.2));
+        float fill = uInCore * exp(-sq((rho - 1.0) / 0.85));
+
+        // ---- the grain: a modulation of the SAME light, running radially
+        // inward. A continuous cosine in azimuth, never beads and never
+        // particles.
+        float th = atan(vP.y, vP.x);
+        float ph = uStriae * th + (uTime * uDrift + vSeed) * TAU;
+        // Prefiltered against its own screen footprint, so the grain is a
+        // zoom-in detail and never scene-scale noise.
+        vec2 footX = dFdx(vP);
+        vec2 footY = dFdy(vP);
+        float foot = max(length(footX), length(footY));
+        float dph = uStriae * foot / max(r, 1e-3);
+        float pre = mix(1.0, exp(-0.16 * dph * dph), clamp(uAa, 0.0, 1.0));
+        // A bell envelope, so the grain is gone before the outer boundary.
+        float striaW = max(uStriaW, 0.02);
+        float striaAmt = uStriaAmp
+          * smoothstep(uStriaR0, uStriaR0 + striaW, uu)
+          * (1.0 - smoothstep(uStriaR1, uStriaR1 + striaW, uu));
+        // ⭐⭐⭐ SUBTRACTIVE. With uStriaLift at 1 this lies in [1 - amt, 1],
+        // so a stria can only ever REMOVE light and the outer iso-brightness
+        // contour stays exactly where the smooth halo put it. An additive or
+        // mean-preserving modulation pushes that contour outward under every
+        // stria, and the mark reads as a sunflower.
+        float stria = 1.0
+          + striaAmt * pre * ((0.5 + 0.5 * cos(ph)) - uStriaLift);
+
+        // ONE broad inward swell. Never crests: structure ACROSS the flow
+        // reads as the layers of an object.
+        float swell = 1.0
+          + uSwell * cos(uu * 1.10 * TAU + (uTime * uSwellRate + vSeed) * TAU);
+
+        float intake = uInAmp * (skirt + fill) * swell * stria;
+
+        float breathe = 1.0 - uBreatheDepth
+          + uBreatheDepth * sin(uTime * uBreatheHz + vSeed * TAU);
+        float shape = (rim * uRimAmp + intake) * pupil * uAmp * breathe;
+        if (shape < 0.0018) discard;
+        // ⭐ A KNEE AND NEVER A SCALE. See COHORT_AURA_KNEE for why the aura's
+        // is the Pythagorean partner of this one.
+        shape = uKnee * (1.0 - exp(-shape / uKnee));
+        ${COHORT_CONTEXT_ENERGY_GLSL}
+        vec3 tint = mix(uColor, uHot, uHotMix * rim * pupil);
+        // Energy multiplies RGB and NEVER alpha — the house idiom that keeps
+        // additive damping linear.
+        gl_FragColor = vec4(tint * shape * cohortEnergy, shape);
+      }
+    `,
+  });
+}
+
+/**
+ * One cohort's aura, as an instanced camera-facing billboard.
+ *
+ * ⭐ IT DOES THE ONE THING A PLANE-LYING QUAD CANNOT: keep the mark's AREA when
+ * the plane is seen edge-on. Below roughly 15° of elevation the face collapses
+ * to a bright horizontal sliver and is then indistinguishable from a peer link;
+ * the halo is view-independent, so the mark stays a blob at every elevation.
+ *
+ * ⭐⭐⭐ AND IT CARRIES THE SAME HOLE, cut by crossing the view ray with the
+ * colony plane rather than by restating the face's pupil. From above, a ray
+ * through the middle of the mark lands inside the pupil and the halo is cut, so
+ * the mark reads as a ring; at grazing incidence almost no ray lands in the
+ * pupil, so the halo fills in and the mark stays solid. One test, and the mark
+ * does the right thing at every elevation.
+ *
+ * ⚠️ THE GEOMETRY MUST BE `PlaneGeometry(1, 1)`, for the reason its two
+ * billboard neighbours above give: the quad is rebuilt from raw `position` and
+ * the view matrix's camera axes, which no model matrix ever touches, so the
+ * extent has to ride the `uHalf` UNIFORM.
+ *
+ * ⛔ NOTHING IS DRAWN ABOVE THE COLONY PLANE and nothing is marched below it.
+ * The lab carried a short converging medium under the slab behind a switch; it
+ * was measured invisible except from directly overhead and is not in this file.
+ *
+ * `aSeed` is the same per-instance lane the face reads, and there is no
+ * `aShare` lane — see `makeCohortFaceMaterial`.
+ */
+export function makeCohortAuraMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthTest: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+    uniforms: {
+      uColor: {
+        value: new THREE.Color().setRGB(...PEER_NETWORK_PALETTE.scaffold),
+      },
+      uHot: {
+        value: new THREE.Color().setRGB(...PEER_NETWORK_PALETTE.coldWhite),
+      },
+      uTime: { value: 0 },
+      uContextEnergy: { value: 1 },
+      uHalf: { value: COHORT_AURA_HALF },
+      uApR: { value: COHORT_AP_R },
+      uRimFrac: { value: COHORT_AP_RIM_FRAC },
+      uPupilFrac: { value: COHORT_AP_PUPIL_FRAC },
+      uHaloExp: { value: COHORT_AURA_HALO_EXP },
+      uHaloR: { value: COHORT_AURA_HALO_R },
+      uHaloBias: { value: COHORT_AURA_HALO_BIAS },
+      uHaloBiasK: { value: COHORT_AURA_HALO_BIAS_K },
+      uHaloPupil: { value: COHORT_AURA_PUPIL_SCALE },
+      uHotMix: { value: COHORT_AURA_HOT_MIX },
+      uAmp: { value: COHORT_AURA_AMP },
+      uKnee: { value: COHORT_AURA_KNEE },
+      uBreatheDepth: { value: COHORT_AP_BREATHE_DEPTH },
+      uBreatheHz: { value: COHORT_BREATHE_HZ },
+    },
+    vertexShader: /* glsl */ `
+      attribute float aSeed;
+
+      uniform float uHalf;
+
+      varying vec3 vWorld;
+      varying vec3 vOrigin;
+      varying float vSeed;
+
+      void main() {
+        vSeed = aSeed;
+        vec4 origin = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+        vOrigin = origin.xyz;
+        vec3 cameraRight = vec3(
+          viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]
+        );
+        vec3 cameraUp = vec3(
+          viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]
+        );
+        // ⚠️ uHalf IS A UNIFORM AND HAS TO BE — see the factory's comment.
+        vWorld = origin.xyz
+          + (cameraRight * position.x + cameraUp * position.y) * uHalf * 2.0;
+        gl_Position = projectionMatrix * viewMatrix * vec4(vWorld, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      precision highp float;
+
+      uniform vec3 uColor;
+      uniform vec3 uHot;
+      uniform float uTime;
+      uniform float uContextEnergy;
+      uniform float uApR;
+      uniform float uRimFrac;
+      uniform float uPupilFrac;
+      uniform float uHaloExp;
+      uniform float uHaloR;
+      uniform float uHaloBias;
+      uniform float uHaloBiasK;
+      uniform float uHaloPupil;
+      uniform float uHotMix;
+      uniform float uAmp;
+      uniform float uKnee;
+      uniform float uBreatheDepth;
+      uniform float uBreatheHz;
+
+      varying vec3 vWorld;
+      varying vec3 vOrigin;
+      varying float vSeed;
+
+      const float TAU = 6.28318530718;
+
+      void main() {
+        vec3 ro = cameraPosition;
+        vec3 rd = normalize(vWorld - ro);
+
+        // ---- the halo, measured from the COHORT and not from the quad, so it
+        // stays concentric with the aperture however the billboard is turned.
+        vec3 oc = vOrigin - ro;
+        float tc = dot(oc, rd);
+        float perp = length(oc - rd * tc);
+        float hR = max(uApR * uHaloR, 0.05);
+        if (perp > hR) discard;
+        float hx = clamp(perp / hR, 0.0, 1.0);
+        float halo = pow(1.0 - hx, max(uHaloExp, 0.2));
+
+        // ⭐⭐⭐ THE SAME HOLE, CUT BY THE RAY/PLANE CROSSING. The radius below
+        // is the aperture's own pupil scaled once, and the distance it is
+        // compared against is measured in the colony plane about the cohort's
+        // own centre — which is the very quantity the face calls length(vP).
+        // The two holes are therefore one hole seen through two rays, and
+        // there is no second radius anywhere for them to drift apart on.
+        float rimR = max(uApR * uRimFrac, 0.02);
+        float pupR = rimR * max(uPupilFrac, 0.05) * max(uHaloPupil, 0.1);
+        if (abs(rd.y) > 1e-5) {
+          float tp = (vOrigin.y - ro.y) / rd.y;
+          if (tp > 0.0) {
+            float planeR = length((ro + rd * tp).xz - vOrigin.xz);
+            halo *= smoothstep(pupR * 0.45, pupR, planeR);
+          }
+        }
+
+        // Weighted downward in world Y: a gradient inside a glow that is
+        // already there, so it adds no silhouette and cannot read as a beam.
+        float dy = vWorld.y - vOrigin.y;
+        halo *= 1.0 - uHaloBias * smoothstep(
+          -hR * uHaloBiasK * 0.35,
+          hR * max(uHaloBiasK, 0.05),
+          dy
+        );
+
+        float breathe = 1.0 - uBreatheDepth
+          + uBreatheDepth * sin(uTime * uBreatheHz + vSeed * TAU);
+        float shape = halo * uAmp * breathe;
+        if (shape < 0.0018) discard;
+        // ⭐ The Pythagorean partner of the face's knee, so the two draws sum
+        // strictly inside the unit circle. See COHORT_AURA_KNEE.
+        shape = uKnee * (1.0 - exp(-shape / uKnee));
+        ${COHORT_CONTEXT_ENERGY_GLSL}
+        vec3 tint = mix(uColor, uHot, uHotMix);
+        gl_FragColor = vec4(tint * shape * cohortEnergy, shape);
+      }
+    `,
+  });
+}

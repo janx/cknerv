@@ -38,7 +38,9 @@ import {
   COHORT_INTAKE_SWIRL,
   COHORT_INTAKE_THROAT_R,
   COHORT_INTAKE_WARP,
+  makeCohortAuraMaterial,
   makeCohortCoreMaterial,
+  makeCohortFaceMaterial,
   makeCohortIntakeMaterial,
 } from '../../src/materials/colonyCohort';
 
@@ -1305,6 +1307,12 @@ function programs(): { name: string; glsl: string; scope: Scope }[] {
   const built = [
     ['cohortIntake', makeCohortIntakeMaterial()],
     ['cohortCore', makeCohortCoreMaterial()],
+    // ⚠️ EVERY FACTORY IN THE FILE BELONGS HERE. The coverage test below is an
+    // EQUALITY between the calls in these programs and the calls in the source,
+    // so a factory added to the material file and not to this list fails there
+    // — which is the point of the equality.
+    ['cohortFace', makeCohortFaceMaterial()],
+    ['cohortAura', makeCohortAuraMaterial()],
   ] as const;
   return built.flatMap(([name, material]) => {
     const uniforms = new Map<string, number>();
