@@ -298,8 +298,13 @@ describe('cohort core — the resting supremum', () => {
       .toContain('float breathe = 0.78 + 0.22 * sin(uTime * uBreatheHz + vPhase);');
     expect(CORE_FRAGMENT)
       .toContain('float shape = (core + halo) * refuse * uAmp * breathe;');
+    // ⭐ THE ENERGY IN THE RGB TERM IS `cohortEnergy`, NOT `uContextEnergy`.
+    // The proximity exemption sits between them, and it is shared verbatim
+    // with the intake; `cohortContextEnergy.test.ts` owns that tie. What this
+    // line still says is the house idiom: energy multiplies RGB and NEVER
+    // alpha, which is what keeps additive damping linear.
     expect(CORE_FRAGMENT)
-      .toContain('gl_FragColor = vec4(uColor * shape * uContextEnergy, shape);');
+      .toContain('gl_FragColor = vec4(uColor * shape * cohortEnergy, shape);');
   });
 });
 
@@ -367,6 +372,11 @@ describe('cohort core — the material', () => {
     expect(guards).toContain('no pow anywhere can be handed a negative base');
     // This program really does give them something to check.
     expect([...CORE_FRAGMENT.matchAll(/\bpow\s*\(/g)]).toHaveLength(2);
-    expect([...CORE_FRAGMENT.matchAll(/\bsmoothstep\s*\(/g)]).toHaveLength(1);
+    // Two: the refusal, and the proximity exemption pasted in from
+    // `COHORT_CONTEXT_ENERGY_GLSL`. The second is written once and compiled
+    // into both programs, which is why the guards' coverage sum has to allow
+    // for it — see `covers every smoothstep and pow the file actually
+    // contains`.
+    expect([...CORE_FRAGMENT.matchAll(/\bsmoothstep\s*\(/g)]).toHaveLength(2);
   });
 });

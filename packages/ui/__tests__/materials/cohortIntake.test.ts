@@ -13,6 +13,10 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { PEER_NETWORK_PALETTE } from '../../src/visualPalette';
+// ⭐ The namespace is what makes the coverage claim below general: every
+// exported STRING in the material file is a shared GLSL snippet, and the
+// coverage sum finds them without being told their names.
+import * as colonyAccretion from '../../src/materials/colonyAccretion';
 import {
   COHORT_CLIP_KNEE,
   COHORT_INTAKE_AMP,
@@ -1283,10 +1287,11 @@ describe('colonyAccretion.ts — source-level shader guards', () => {
     expect(unprovable).toEqual([]);
     // ⚠️ Two of the four programs this list once held went with the accreting
     // void, and ten of the fifteen `smoothstep` calls went with them — so the
-    // floor came down from 10. It is only a says-the-parser-ran check: what
-    // makes the sweep COMPLETE is the coverage test below, which pins these
-    // against every call in the file.
-    expect(checked).toBeGreaterThanOrEqual(3);
+    // floor came down from 10, and back up by two when the proximity
+    // exemption put one in each surviving program. It is only a
+    // says-the-parser-ran check: what makes the sweep COMPLETE is the coverage
+    // test below, which pins these against every call in the file.
+    expect(checked).toBeGreaterThanOrEqual(5);
   });
 
   it('no pow anywhere can be handed a negative base', () => {
@@ -1315,9 +1320,25 @@ describe('colonyAccretion.ts — source-level shader guards', () => {
     // uniforms and locals. This is what says the programs are the whole file:
     // a GLSL string added to a material nobody built, or to a third factory,
     // shows up here as a count that no longer matches.
+    // ⚠️ A SHARED SNIPPET IS WRITTEN ONCE AND COMPILED ONCE PER USE SITE.
+    // `COHORT_CONTEXT_ENERGY_GLSL` holds one `smoothstep` and is pasted into
+    // both programs, so a raw file count is short by exactly one call per
+    // EXTRA use. Adding that surplus back keeps this an EQUALITY rather than
+    // weakening it to "at least", which would let a whole unbuilt program slip
+    // through. The surplus is clamped at zero on purpose: a snippet that is
+    // never interpolated then still fails here, which is the right verdict for
+    // GLSL nobody compiles.
     const file = stripComments(SOURCE);
+    const shared = Object.entries(colonyAccretion)
+      .filter((entry): entry is [string, string] => typeof entry[1] === 'string');
     for (const name of ['smoothstep', 'pow']) {
-      const inFile = [...file.matchAll(new RegExp(`\\b${name}\\s*\\(`, 'g'))].length;
+      const pattern = new RegExp(`\\b${name}\\s*\\(`, 'g');
+      const surplus = shared.reduce((total, [key, glsl]) => {
+        const uses = [...SOURCE.matchAll(new RegExp(`\\$\\{${key}\\}`, 'g'))].length;
+        const calls = [...stripComments(glsl).matchAll(pattern)].length;
+        return total + calls * Math.max(uses - 1, 0);
+      }, 0);
+      const inFile = [...file.matchAll(pattern)].length + surplus;
       const inPrograms = compiled
         .reduce((total, program) => total + callsOf(program.glsl, name).length, 0);
       expect(`${name}: ${inPrograms} of ${inFile}`).toBe(`${name}: ${inFile} of ${inFile}`);

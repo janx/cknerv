@@ -45,6 +45,92 @@ import { PEER_NETWORK_PALETTE } from '../visualPalette';
 export const COHORT_BREATHE_HZ = 1.2;
 
 /* -------------------------------------------------------------------------- *
+ * Shared by both faces — the proximity exemption.
+ * -------------------------------------------------------------------------- */
+
+/**
+ * A cohort keeps its light when the camera comes to it.
+ *
+ * ⭐⭐⭐ WITHOUT THIS THE MARK IS DIMMEST EXACTLY WHERE IT IS INSPECTED.
+ * `cellDetailPeerContextEnergy` winds passive peer context down to
+ * `CELL_DETAIL_VIEW_PEER_CONTEXT_FLOOR` — 0.28 — as the camera closes in, and
+ * `NetworkColony` hands this layer the same number it hands every other
+ * passive peer draw. So a cohort flown to loses 72 % of its light at the one
+ * range anybody ever looks at it from, which is also the range every
+ * screenshot is taken at. The damping is right for what it was written for: a
+ * hundred passive stops receding behind the subject. It is wrong for the
+ * object the camera came for.
+ *
+ * The precedent is `makeMeasuredPeerHalosMaterial`'s
+ * `mix(uContextEnergy, 1.0, vPeerSelected)` — a peer that IS the subject is
+ * exempt from the recession. A cohort carries no selection lane, so proximity
+ * stands in for one: the camera being here is the same statement as a click.
+ *
+ * ⚠️⚠️ IT MUST MEASURE FROM `cameraPosition`, AND `length(vOrigin)` IS THE
+ * TRAP. `vOrigin` is `modelMatrix * instanceMatrix * vec4(0, 0, 0, 1)` — WORLD
+ * space — so `length(vOrigin)` is the cohort's distance from the world ORIGIN:
+ * a per-cohort constant spanning ±115 wu across a colony centred near
+ * (0, 22, 0), with no relationship to where the camera is. It compiles, it
+ * runs, and the exemption then either never fires or fires permanently
+ * depending only on where that cohort happens to stand. `cameraPosition` is a
+ * three.js built-in and is already in world space.
+ *
+ * ⭐ IT READS THE ORIGIN AND NEVER THE MARCHED POINT OR THE QUAD CORNER. The
+ * far lip of a twenty-unit funnel is twenty units further from the camera than
+ * its throat, so a per-fragment distance would bring the volume up before its
+ * centre and fade the two faces of one mark apart. One distance per instance,
+ * and both faces read that one.
+ *
+ * ⭐ IT ONLY EVER ADDS LIGHT. `mix(uContextEnergy, 1.0, k)` with `k` in
+ * [0, 1] lies between its own two ends, so the result is never below
+ * `uContextEnergy` and never above 1 — at every distance, for every context
+ * energy. The exemption cannot dim anything, which is what makes it safe to
+ * apply unconditionally rather than behind a mode.
+ */
+
+/**
+ * Within this distance of the camera, the exemption is complete.
+ *
+ * ⭐ INSIDE `CELL_DETAIL_VIEW_NEAR_DISTANCE` (82), where the damping has
+ * already bottomed out — so the exemption's band strictly CONTAINS the
+ * damping's, and there is no range at which the mark is receding while the
+ * exemption has not yet started.
+ */
+export const COHORT_CONTEXT_EXEMPT_NEAR = 70;
+
+/**
+ * Beyond this distance nothing is exempt, and a cohort is damped exactly like
+ * every other passive stop around it.
+ *
+ * ⭐ OUTSIDE `CELL_DETAIL_VIEW_FAR_DISTANCE` (148), where the damping has not
+ * begun — the other half of the containment above. In the overview a cohort
+ * carries no privilege at all; what distinguishes it there is the twenty world
+ * units of moving volume hanging under it.
+ */
+export const COHORT_CONTEXT_EXEMPT_FAR = 150;
+
+/**
+ * The exemption itself, as ONE string pasted into both programs.
+ *
+ * ⭐ ONE STRING AND TWO USE SITES, SO THE TWO FACES CANNOT DRIFT APART. They
+ * are one mark: a funnel that came up while its centre stayed damped would be
+ * a worse artefact than the bug this fixes. `cohortContextEnergy.test.ts`
+ * asserts this exact text is inside both fragment sources.
+ *
+ * It leaves `cohortEnergy` in scope. Both fragments multiply that into RGB and
+ * NEVER into alpha — the house idiom that keeps additive damping linear.
+ */
+export const COHORT_CONTEXT_ENERGY_GLSL = /* glsl */ `float cohortEnergy = mix(
+          uContextEnergy,
+          1.0,
+          1.0 - smoothstep(
+            ${COHORT_CONTEXT_EXEMPT_NEAR.toFixed(1)},
+            ${COHORT_CONTEXT_EXEMPT_FAR.toFixed(1)},
+            distance(cameraPosition, vOrigin)
+          )
+        );`;
+
+/* -------------------------------------------------------------------------- *
  * The vertical throat — a cohort's INTAKE face.
  * -------------------------------------------------------------------------- */
 
@@ -428,9 +514,12 @@ export function makeCohortIntakeMaterial(): THREE.ShaderMaterial {
         // ⭐ A SOFT KNEE, NEVER A SCALE: a scale that bought this ceiling
         // would cost 91 % of the light everywhere the mark was not clipping.
         amp = uKnee * (1.0 - exp(-amp / uKnee));
+        ${COHORT_CONTEXT_ENERGY_GLSL}
         // Additive blending uses source alpha as its factor. Keeping context
-        // energy in RGB only preserves linear scene-focus damping.
-        gl_FragColor = vec4(uColor * amp * uContextEnergy, amp);
+        // energy in RGB only preserves linear scene-focus damping — and the
+        // exemption above rides that same channel, so a cohort the camera has
+        // come to keeps its light without its alpha ever moving.
+        gl_FragColor = vec4(uColor * amp * cohortEnergy, amp);
       }
     `,
   });
@@ -552,6 +641,7 @@ export function makeCohortCoreMaterial(): THREE.ShaderMaterial {
       uniform float uHalf;
 
       varying vec2 vUv;
+      varying vec3 vOrigin;
       varying float vPhase;
 
       const float TAU = 6.28318530718;
@@ -562,6 +652,14 @@ export function makeCohortCoreMaterial(): THREE.ShaderMaterial {
         // breathe measures its phase in radians, so it takes a whole turn.
         vPhase = aSeed * TAU;
         vec4 origin = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+        // The instance's own world point, carried to the fragment for the
+        // proximity exemption. It is the SAME quantity the intake's vOrigin
+        // carries -- one distance per instance, read identically by both
+        // faces, and never the quad corner, which would fade a mark's rim in
+        // ahead of its middle. (No backticks in a GLSL comment: one closes
+        // the template literal, and the error it raises is a TS parse error
+        // pointing at the shader.)
+        vOrigin = origin.xyz;
         vec3 cameraRight = vec3(
           viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]
         );
@@ -585,6 +683,7 @@ export function makeCohortCoreMaterial(): THREE.ShaderMaterial {
       uniform float uBreatheHz;
 
       varying vec2 vUv;
+      varying vec3 vOrigin;
       varying float vPhase;
 
       void main() {
@@ -604,9 +703,12 @@ export function makeCohortCoreMaterial(): THREE.ShaderMaterial {
         float breathe = 0.78 + 0.22 * sin(uTime * uBreatheHz + vPhase);
         float shape = (core + halo) * refuse * uAmp * breathe;
         if (shape < 0.0015) discard;
+        ${COHORT_CONTEXT_ENERGY_GLSL}
         // Additive blending uses source alpha as its factor. Keeping context
-        // energy in RGB only preserves linear scene-focus damping.
-        gl_FragColor = vec4(uColor * shape * uContextEnergy, shape);
+        // energy in RGB only preserves linear scene-focus damping — and the
+        // exemption above rides that same channel, so a cohort the camera has
+        // come to keeps its light without its alpha ever moving.
+        gl_FragColor = vec4(uColor * shape * cohortEnergy, shape);
       }
     `,
   });

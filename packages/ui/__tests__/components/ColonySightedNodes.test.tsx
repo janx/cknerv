@@ -947,12 +947,21 @@ describe('what a POW cohort looks like', () => {
       expect(glsl).not.toMatch(/fbm|valueNoise|hash31/);
     }
     // Both faces end on the same additive contract: colour scaled by the
-    // amplitude, context energy in RGB only so scene-focus damping stays
-    // linear under a blend factor that is the source alpha.
+    // amplitude, energy in RGB only so scene-focus damping stays linear under
+    // a blend factor that is the source alpha. ⭐ The energy is `cohortEnergy`
+    // rather than `uContextEnergy` because the proximity exemption sits
+    // between them — one shared expression pasted into both programs, so a
+    // cohort the camera has flown to keeps its light on BOTH faces at once.
+    // `materials/cohortContextEnergy.test.ts` owns that tie; what this says is
+    // that neither face has quietly gone back to the raw uniform, and that
+    // neither one puts the energy in alpha.
     expect(intakeFragment())
-      .toContain('gl_FragColor = vec4(uColor * amp * uContextEnergy, amp);');
+      .toContain('gl_FragColor = vec4(uColor * amp * cohortEnergy, amp);');
     expect(coreFragment())
-      .toContain('gl_FragColor = vec4(uColor * shape * uContextEnergy, shape);');
+      .toContain('gl_FragColor = vec4(uColor * shape * cohortEnergy, shape);');
+    for (const glsl of [intakeFragment(), coreFragment()]) {
+      expect([...glsl.matchAll(/\buContextEnergy\b/g)]).toHaveLength(2);
+    }
   });
 
   it('leaves the throat UNLIT rather than painting it dark', () => {
