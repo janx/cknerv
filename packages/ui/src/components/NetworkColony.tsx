@@ -83,13 +83,13 @@ interface NetworkColonyProps {
   /** Local node version — drives measured version-mismatch coloring (violet). */
   localVersion: string;
   /** The chain's recent mining cohorts, LIVE, by reference. Passed straight
-   *  through to the cohort layer, where a cohort's share of the window sets
-   *  the speed of the crests running down its throat — and nothing else about
-   *  the mark, ever: the topology is keyed on the
-   *  producer key set alone (a per-block key would rebuild the colony's
-   *  geometry once a block and truncate every in-flight wave), so the standings
-   *  hanging off the staged nodes are stale between key-set changes and this is
-   *  the live reading.
+   *  through to the cohort layer, which keeps a share lane written in place —
+   *  ⚠️ DORMANT under the aperture: neither of its programs declares `aShare`,
+   *  and the lane is held for the deferred 汲取 work rather than rebuilt later
+   *  (see that file's header). The topology is keyed on the producer key set
+   *  alone (a per-block key would rebuild the colony's geometry once a block and
+   *  truncate every in-flight wave), so the standings hanging off the staged
+   *  nodes are stale between key-set changes and this is the live reading.
    *
    *  ⚠️ It holds `BlockProducerView`'s `staging` array — key-ascending, the
    *  same sequence the topology was built from — and never `ranked`, which is
@@ -263,9 +263,10 @@ function NetworkColony({
         />
         {/* Drawn between the links and the marks: the widest structure in the
             colony, and the only one whose middle is deliberately empty. The
-            links do not pass behind it — a cohort's own links STOP AT ITS RIM,
-            in the layer above, because nothing here occludes or depth-rejects
-            anything and a line across the axis would simply be added to it. */}
+            links do not pass behind it — a cohort's own links STOP AT THE
+            APERTURE'S OUTER EDGE, in the layer above, because nothing here
+            occludes or depth-rejects anything and a line across the disc would
+            simply be added to it. */}
         <ColonyCohorts
           topology={topology}
           producersRef={producersRef}

@@ -21,8 +21,8 @@ import {
 import { makeHaloMaterial } from '../../src/components/GlowNode';
 import { makeColonyEdgeMaterial } from '../../src/components/ColonyEdges';
 import {
-  makeCohortCoreMaterial,
-  makeCohortIntakeMaterial,
+  makeCohortAuraMaterial,
+  makeCohortFaceMaterial,
 } from '../../src/materials/colonyCohort';
 import {
   makeCanonicalRewriteEchoMaterial,
@@ -298,20 +298,19 @@ const ROWS: readonly BudgetRow[] = [
     material: makeColonyEdgeMaterial,
   },
   {
-    name: 'cohortIntakeMaterial',
+    name: 'cohortFaceMaterial',
     sources: ['src/materials/colonyCohort.ts'],
-    material: makeCohortIntakeMaterial,
-    // The marched volume pays the mat4 plus its seed and live-share lanes.
+    material: makeCohortFaceMaterial,
+    // The disc lying in the colony plane: the mat4 plus one seed lane.
     usage: { instanced: true },
   },
   {
-    name: 'cohortCoreMaterial',
+    name: 'cohortAuraMaterial',
     sources: ['src/materials/colonyCohort.ts'],
-    material: makeCohortCoreMaterial,
-    // The centre shares the intake's instance positions and its seed lane —
-    // consumed differently, in radians rather than turns — and declares no
-    // share of its own, because a cohort's share moves crest speed and the
-    // centre has no crests.
+    material: makeCohortAuraMaterial,
+    // The halo around it takes the SAME instance positions and the SAME seed
+    // lane, consumed identically — they are two draws of one hole, not two
+    // marks, so there is nothing for a second lane to say.
     usage: { instanced: true },
   },
   {
@@ -468,22 +467,29 @@ describe('vertex attribute budget', () => {
   it('charges the mining channel its own row, and leaves the edge program alone', () => {
     // ⚠️ THE MINING CHANNEL IS ITS OWN PROGRAM. The row it replaced was a
     // `lineSegments` over the cohorts' own links at 5 custom + 3 injected = 8;
-    // these two are InstancedMeshes, so each pays its lanes plus the mat4
-    // three injects for instancing. Stated as exact numbers so a third lane is
-    // a deliberate edit rather than a drift only the browser console would
-    // report — and the intake's two lanes are split by WRITE CADENCE rather
-    // than packed into a vec2, because `aSeed` moves when the staged set does
-    // and `aShare` on every attributed block.
-    const intake = measured.find(({ name }) => name === 'cohortIntakeMaterial');
-    const core = measured.find(({ name }) => name === 'cohortCoreMaterial');
-    expect(intake).toBeDefined();
-    expect(core).toBeDefined();
-    expect([intake?.custom, intake?.injected, intake?.total]).toEqual([2, 7, 9]);
-    // ⭐ The centre is one lane cheaper because share has nothing to say to
-    // it: a cohort's share is crest speed, and the centre has no crests.
-    expect([core?.custom, core?.injected, core?.total]).toEqual([1, 7, 8]);
-    expect(intake?.names).toEqual(['aSeed', 'aShare']);
-    expect(core?.names).toEqual(['aSeed']);
+    // these two are InstancedMeshes, so each pays its lane plus the mat4 three
+    // injects for instancing. Stated as exact numbers so a second lane is a
+    // deliberate edit rather than a drift only the browser console would
+    // report.
+    const face = measured.find(({ name }) => name === 'cohortFaceMaterial');
+    const aura = measured.find(({ name }) => name === 'cohortAuraMaterial');
+    expect(face).toBeDefined();
+    expect(aura).toBeDefined();
+    expect([face?.custom, face?.injected, face?.total]).toEqual([1, 7, 8]);
+    expect([aura?.custom, aura?.injected, aura?.total]).toEqual([1, 7, 8]);
+    // ⭐ THE TWO ROWS ARE IDENTICAL, AND THAT IS THE POINT. They are two draws
+    // of ONE hole, so they take the same instance positions and the same seed
+    // lane and there is nothing for a second lane to carry. The pair this
+    // replaced was asymmetric — the marched intake declared `aShare` for its
+    // crest rate and the centre did not — and that asymmetry went with the
+    // rate: neither aperture program has one, so NEITHER declares the share.
+    // The layer still keeps that lane written; it simply reaches no program,
+    // and this row is where that shows up as a number rather than a comment.
+    expect(face?.names).toEqual(['aSeed']);
+    expect(aura?.names).toEqual(['aSeed']);
+    for (const row of [face, aura]) {
+      expect(row?.names).not.toContain('aShare');
+    }
   });
 
   it('keeps the colony edge program exactly where it was', () => {

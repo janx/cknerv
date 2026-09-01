@@ -13,9 +13,10 @@
 //     the block's edge-flow — the couriers are now only a faint glint accent on top.
 //
 // ALL edges live in a single additive <lineSegments> (~600, one draw). Per-vertex:
-//   position (the DRAWN endpoint — a cohort's own links stop at its rim rather
-//   than at its node, so nothing is added to the throat the mark keeps unlit;
-//   see `colonyEdgePositions`), aBright (base confidence), aEdgeParam (0 at a,
+//   position (the DRAWN endpoint — a cohort's own links stop at the outer edge
+//   of its aperture rather than at its node, so nothing is added to the mark or
+//   to the pupil it keeps unlit; see `colonyEdgePositions`), aBright (base
+//   confidence), aEdgeParam (0 at a,
 //   1 at b — position along the DRAWN link), aPhase (ambient de-sync).
 //   Per-block-DYNAMIC: aSurgeT0/T1
 //   (parent/child ABSOLUTE simClock arrival seconds; sentinel −1e9 ⇒ not a tree
@@ -58,32 +59,41 @@ function edgePhase(a: string, b: string): number {
  * then endpoint `b`. Pure — a function of the topology and nothing else — so
  * the geometry can be weighed without a renderer.
  *
- * ⭐⭐⭐ WHY THIS IS NOT SIMPLY THE TWO NODE POSITIONS. A POW cohort is a
- * VERTICAL THROAT, and the throat is unlit because bright structure refuses to
- * fill it — not because anything dark is drawn there
- * (`materials/colonyCohort.ts` carries the whole argument). Every face of the
- * mark is additive and depth-read-only, so there is no shadow to hide anything
- * and no depth to reject it: a link run to the node's centre is simply ADDED to
- * the axis, and the one pixel the form spends itself keeping empty is the one
- * the mesh fills in. So a cohort's links stop at its rim —
- * `COHORT_LINK_STOP_R`, the same radius a viewer aims at — pulled along their
- * own edge toward the other node, on BOTH ends when a link joins two cohorts.
+ * ⭐⭐⭐ WHY THIS IS NOT SIMPLY THE TWO NODE POSITIONS. A POW cohort is an
+ * APERTURE — a disc lying in this very plane, with a pupil that is unlit
+ * because bright structure refuses to fill it, not because anything dark is
+ * drawn there (`materials/colonyCohort.ts` carries the whole argument). Every
+ * face of the mark is additive and depth-read-only, so there is no shadow to
+ * hide anything and no depth to reject it: a link run to the node's centre is
+ * simply ADDED to it, and the one pixel the form spends itself keeping empty is
+ * the one the mesh fills in.
+ *
+ * ⭐⭐ AND UNDER THE APERTURE THERE IS A SECOND REASON THE THROAT NEVER GAVE.
+ * The face carries 88 radial striae, and the one measured law of that grain is
+ * that radial structure at LOW COUNT reads as a STAR — count is the only escape
+ * from it. A colony link is radial structure at count four, drawn in the same
+ * plane the disc lies in, so a link crossing the mark joins its grain as a
+ * spoke several times the width of any stria. So a cohort's links stop at the
+ * mark's OUTER EDGE — `COHORT_LINK_STOP_R`, which is `COHORT_AP_R` and the same
+ * radius the face's own fragment discards on — pulled along their own edge
+ * toward the other node, on BOTH ends when a link joins two cohorts.
  *
  * ⚠️ THE PULL IS CLAMPED AND CAN NEVER INVERT AN EDGE. Two stops on a link
  * barely longer than one would cross, and a crossed line is drawn backwards
  * through both marks. The cap keeps AT LEAST HALF of every link drawn, whatever
  * its length: `len / 2` of pull to divide among however many of its ends are
  * cohorts. It is continuous — a shrinking link keeps a proportional gap instead
- * of snapping back to a line through the throat, which is the failure mode a
+ * of snapping back to a line through the mark, which is the failure mode a
  * length threshold has — and on this colony's ~15 wu node spacing it never
- * binds at all. A zero-length edge takes no pull, because there is no direction
+ * binds at all (one cohort end at 3.0 wu of pull needs a link under 6 wu, which
+ * is `COLONY_MIN_SPACING` itself, to bind). A zero-length edge takes no pull, because there is no direction
  * to take it along and `d / 0` would write NaN into the buffer.
  *
  * ⭐ THE SHORTENED SEGMENT IS THE LINK, as far as everything downstream is
  * concerned. `aEdgeParam` stays 0 at `a` and 1 at `b`, so it still runs 0→1
  * over the DRAWN segment: the ambient band and the block surge cross what is
  * on screen in the same time they always did, and a cohort's win erupts from
- * its rim. Re-basing the parameter on the untrimmed endpoints instead would
+ * the mark's edge. Re-basing the parameter on the untrimmed endpoints instead would
  * hand every cohort-incident link a band that entered late and left early.
  *
  * Every endpoint that is not a cohort is written byte-identically to its node

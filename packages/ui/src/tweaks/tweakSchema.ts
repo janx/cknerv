@@ -18,26 +18,28 @@ import {
   SHOCKWAVE_COLOR_CEIL,
   SHOCKWAVE_ALPHA_CEIL,
 } from '../materials/shockwaveMaterial';
-// …and the eight `cohort*` knobs take theirs from the two throat materials, on
-// the same rule: each material seeds its own uniforms from these constants and
-// ColonyCohorts overwrites them from LIVE.peer.* each frame, so there is ONE
-// authority. Most of the throat is deliberately NOT a knob. The absorption
-// step's shape (`COHORT_INTAKE_SIGMA`, `_FLOOR`, `_EDGE`, `_WARP`, `_FLARE`),
-// its bounds (`COHORT_CLIP_KNEE`, `COHORT_INTAKE_RATE_FLOOR`), its cost
-// (`COHORT_INTAKE_STEPS`) and its seam rule (`COHORT_INTAKE_HELIX`, which must
-// stay an integer) are all layer statements — a medium rather than a stack of
-// shells, a share that changes rate and nothing else, a knee that is never a
-// scale — rather than tastes to settle against pixels. What is here is the
-// funnel's SIZE, its BRIGHTNESS and its MOTION.
+// …and the eight `cohort*` knobs take theirs from the two aperture materials,
+// on the same rule: each material seeds its own uniforms from these constants
+// and ColonyCohorts overwrites them from LIVE.peer.* each frame, so there is
+// ONE authority. Most of the aperture is deliberately NOT a knob. The two knees
+// (`COHORT_CLIP_KNEE` and `COHORT_AURA_KNEE`) are a PYTHAGOREAN PAIR that bound
+// the two additive draws' sum below 1.0 by arithmetic and cannot be moved
+// singly; the grain's sign (`COHORT_FACE_STRIA_LIFT`, purely subtractive, which
+// is what keeps the silhouette round), its prefilter (`COHORT_FACE_AA`) and the
+// halo's pupil (`COHORT_AURA_PUPIL_SCALE`, which is what makes the aura's hole
+// the SAME hole) are layer statements rather than tastes to settle against
+// pixels. What is here is the mark's SIZE, its HOLE, its BRIGHTNESS and its
+// GRAIN.
 import {
-  COHORT_CORE_AMP,
-  COHORT_INTAKE_AMP,
-  COHORT_INTAKE_CRESTS,
-  COHORT_INTAKE_DENSITY,
-  COHORT_INTAKE_GATHER,
-  COHORT_INTAKE_MOUTH,
-  COHORT_INTAKE_RATE,
-  COHORT_INTAKE_REACH,
+  COHORT_AP_PUPIL_FRAC,
+  COHORT_AP_R,
+  COHORT_AURA_HALO_BIAS,
+  COHORT_AURA_HALO_R,
+  COHORT_FACE_INTAKE_AMP,
+  COHORT_FACE_RIM_AMP,
+  COHORT_FACE_STRIA_AMP,
+  COHORT_FACE_STRIAE,
+  COHORT_FACE_STRIAE_FLOOR,
 } from '../materials/colonyCohort';
 // The Cell-field contact front is a scaled-down version of the peer-plane
 // brightness wave: same shape, same timing, its reach divided by
@@ -159,39 +161,56 @@ export const peerSchema = {
   flameBloom: { value: 0.7, min: 0.1, max: 2, step: 0.05, label: 'flame bloom' },
   glintBloomOpacity: { value: 0.55, min: 0, max: 1, step: 0.05, label: 'glint bloom op' },
   glintPlumeOpacity: { value: 0.3, min: 0, max: 1, step: 0.05, label: 'glint plume op' },
-  // The POW channel — one vertical throat per cohort, in two faces.
+  // The POW channel — one aperture per cohort, drawn as two faces of one hole.
   //
-  // ⭐ REACH FOR `cohortDensity` FIRST. It is the extinction per unit of
-  // density along the marched ray, and therefore the CREST-CONTRAST knob: the
-  // exact absorption step makes contrast fall MONOTONICALLY in it, from banded
-  // at a thin medium to a flat 1:1 once the volume has gone opaque, so it can
-  // be swept by eye without a dead zone to walk through. A non-monotone
-  // reading means something upstream is wrong, not that a better value lies
-  // further out. `cohortAmp` is brightness and NOT contrast; `uSteps` is cost
-  // and not either.
+  // ⭐ REACH FOR `cohortApR` FIRST. It is THE size parameter: every other length
+  // on this mark is a fraction of it, so it is the one knob that moves the
+  // whole form rather than a part of it. Measured band 2.4–3.8 and settled at
+  // 3.0 — below 2.4 the structure stops resolving at the app camera, above 4
+  // the mark starts to dominate the colony.
   //
-  // `cohortReach` and `cohortMouth` are the funnel's two dimensions, and the
-  // layer re-derives the bounding quad from BOTH every frame — neither can be
-  // turned without the proxy following it. `cohortRate` is crest speed for a
-  // cohort holding the WHOLE window (the share scales it, and it is still the
-  // only thing the share moves); it has no negative half, because a throat
-  // whose crests ran outward would be saying the opposite of what it is.
-  // `cohortGather` is flux conservation — the same throughput squeezed into a
-  // narrower cross-section — rather than a painted ramp.
-  cohortReach: { value: COHORT_INTAKE_REACH, min: 2, max: 40, step: 0.5, label: 'cohort reach' },
-  cohortMouth: { value: COHORT_INTAKE_MOUTH, min: 0.5, max: 16, step: 0.1, label: 'cohort mouth r' },
-  cohortAmp: { value: COHORT_INTAKE_AMP, min: 0, max: 3, step: 0.02, label: 'cohort intake amp' },
-  cohortDensity: { value: COHORT_INTAKE_DENSITY, min: 0.05, max: 4, step: 0.05, label: 'cohort density' },
-  cohortCrests: { value: COHORT_INTAKE_CRESTS, min: 0.5, max: 12, step: 0.1, label: 'cohort crests' },
-  cohortRate: { value: COHORT_INTAKE_RATE, min: 0, max: 2, step: 0.01, label: 'cohort crest hz' },
-  cohortGather: { value: COHORT_INTAKE_GATHER, min: 0, max: 3, step: 0.05, label: 'cohort gather' },
-  // ⚠️ THE CEILING HERE IS A CLIP GUARD AND NOT A TASTE. Additive blending
-  // hands the screen `uColor * shape²`, the scaffold cyan's BLUE IS EXACTLY
-  // FULL, and the centre's analytic ceiling is `amp * 1.42` — so at
-  // `amp = 1/1.42 = 0.7042` the mark's structure disappears inside a flat
-  // white-cyan blob. R16 spent a whole live leg finding that out from the far
-  // side. 0.7 is under it, so no drag of this knob can reach a clipped mark.
-  cohortCoreAmp: { value: COHORT_CORE_AMP, min: 0, max: 0.7, step: 0.02, label: 'cohort core amp' },
+  // ⚠️⚠️ `cohortApR` AND `cohortHaloR` BOTH MOVE A QUAD, AND THE LAYER
+  // RE-DERIVES BOTH EXTENTS THROUGH `cohortFaceHalfExtent` AND
+  // `cohortAuraHalfExtent` EVERY FRAME. A knob that grew a mark while its quad
+  // stayed put would crop it against its own proxy on the first drag — the
+  // radius tests inside the fragments stay exact, but the pixels carrying the
+  // rim are never rasterised to run them, which reads as a straight edge across
+  // a circle that has none. That bug has already shipped on this layer once.
+  //
+  // `cohortPupil` is the hole, as a fraction of the rim, and BOTH faces read
+  // it — which is what makes the halo's hole the same hole rather than a second
+  // one tuned to agree. `cohortRimAmp` and `cohortIntakeAmp` are the face's two
+  // brightnesses, the burning ring and the skirt drawn inward around it.
+  // `cohortHaloBias` weights the halo DOWNWARD in world Y: the only cue for
+  // "the energy is under the plane" that costs no silhouette, and it vanishes
+  // on its own from overhead, where "below" is not a direction a viewer sees.
+  //
+  // ⭐ NO KNOB HERE CAN CLIP THE MARK, and that is structural rather than a
+  // range chosen carefully. Both fragments apply their soft knee LAST, and
+  // `knee * (1 - exp(-s / knee))` is strictly below `knee` for every finite
+  // input — so every amplitude below multiplies into a quantity the knee then
+  // bounds anyway. The centre this replaced had no such property: its knob's
+  // MAXIMUM was the guard, which is a guard a later hand can move.
+  cohortApR: { value: COHORT_AP_R, min: 1.5, max: 6, step: 0.1, label: 'cohort radius' },
+  cohortPupil: { value: COHORT_AP_PUPIL_FRAC, min: 0.1, max: 1.5, step: 0.02, label: 'cohort pupil' },
+  cohortRimAmp: { value: COHORT_FACE_RIM_AMP, min: 0, max: 3, step: 0.05, label: 'cohort rim amp' },
+  cohortIntakeAmp: { value: COHORT_FACE_INTAKE_AMP, min: 0, max: 3, step: 0.02, label: 'cohort intake amp' },
+  // ⚠️⚠️ THE FLOOR HERE IS A MEASURED LAW AND NOT A TASTE. Over 48 variants and
+  // four sweeps, radial structure on a small bright mark reads as a STAR at 44
+  // striae or fewer — regardless of the modulation's sign, its contrast or its
+  // reach. COUNT IS THE ONLY ESCAPE, and past roughly 64 the striae stop being
+  // countable and become a texture. So the knob's MINIMUM is
+  // `COHORT_FACE_STRIAE_FLOOR` itself: no drag of this slider can turn the
+  // aperture back into a sunflower.
+  cohortStriae: { value: COHORT_FACE_STRIAE, min: COHORT_FACE_STRIAE_FLOOR, max: 200, step: 1, label: 'cohort striae' },
+  // ⚠️ AND THE CEILING IS THE SIGN. The modulation is `1 + amt * (bump - 1)`,
+  // which lies in `[1 - amt, 1]` — purely SUBTRACTIVE, which is what keeps the
+  // outer iso-brightness contour where the smooth halo put it. Past 1 the
+  // depth goes negative and the fragment starts discarding its own grain
+  // instead of carving it.
+  cohortStriaAmp: { value: COHORT_FACE_STRIA_AMP, min: 0, max: 1, step: 0.02, label: 'cohort grain' },
+  cohortHaloR: { value: COHORT_AURA_HALO_R, min: 1, max: 3, step: 0.05, label: 'cohort halo r' },
+  cohortHaloBias: { value: COHORT_AURA_HALO_BIAS, min: 0, max: 1, step: 0.02, label: 'cohort halo bias' },
 } satisfies FolderSchema;
 
 export const cellSchema = {

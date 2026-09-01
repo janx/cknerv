@@ -15,14 +15,17 @@ const EXPECTED_DEFAULTS = {
   // 4 → 8 to halve the ring's radius, 2026-08-15 — speed, both reaches and
   // the width all moved with it).
   delivery: { heroSize: 1.16, peerSize: 0.46, ingestDur: 1.2, glyphBloom: 1.6, glyphCompress: 0.45, coreSize: 1.4, trailWidth: 0.55, trailLenBase: 1.0, trailLenGain: 1.6, trailOpacity: 0.6, inhaleAmount: 0.55, waveSpeed: 4.5, waveWidth: 0.55 / 8, waveOpacity: 2.0, waveFalloff: 0.5, waveReachHero: 6.5, waveReachPeer: 4.25, waveWake: 0.14, waveSegments: 0.55, peerPunchScale: 0.7, igniteKHero: 8, igniteKPeer: 3, igniteMax: 300, igniteRipple: 0.015 },
-  // The eight `cohort*` knobs are the POW channel — one vertical throat per
-  // cohort, in two faces — whose defaults live on `colonyCohort` under the
-  // same one-authority rule the shockwave knobs follow. `cohortRate` is a
-  // crest RATE and the only thing a cohort's share scales; `cohortDensity` is
-  // the crest-contrast knob and the first one a tuner reaches for. The five
-  // `hole*` knobs they replaced (rim 1.45, gas 0.72, field 0.38, infall 0.4,
-  // spin 0.035) went with the accreting void that owned every one of them.
-  peer: { ambientAmp: 0.22, ambientSpeed: 0.05, ambientSigma: 0.17, surgeAmp: 1.1, surgeSigma: 0.13, surgeEase: 0.12, colorBoost: 3.75, alphaBoost: 2.75, sizeBoost: 0.5, trailBoost: 0.18, colorCeil: 1.4, alphaCeil: 1.1, flameWidth: 0.7, flameMinLen: 0.7, flameMaxLen: 2.5, flameBloom: 0.7, glintBloomOpacity: 0.55, glintPlumeOpacity: 0.3, cohortReach: 20, cohortMouth: 6, cohortAmp: 1.8, cohortDensity: 0.25, cohortCrests: 3.2, cohortRate: 0.23, cohortGather: 0.8, cohortCoreAmp: 0.62 },
+  // The eight `cohort*` knobs are the POW channel — one aperture per cohort,
+  // drawn as two faces of one hole — whose defaults live on `colonyCohort`
+  // under the same one-authority rule the shockwave knobs follow. `cohortApR`
+  // is THE size parameter and the first one a tuner reaches for; `cohortPupil`
+  // is read by BOTH faces, which is what makes the halo's hole the same hole.
+  // The eight raymarch knobs they replaced (reach 20, mouth 6, intake amp 1.8,
+  // density 0.25, crests 3.2, crest hz 0.23, gather 0.8, core amp 0.62) went
+  // with the marched vertical throat that owned every one of them, exactly as
+  // the five `hole*` knobs before them (rim 1.45, gas 0.72, field 0.38, infall
+  // 0.4, spin 0.035) went with the accreting void.
+  peer: { ambientAmp: 0.22, ambientSpeed: 0.05, ambientSigma: 0.17, surgeAmp: 1.1, surgeSigma: 0.13, surgeEase: 0.12, colorBoost: 3.75, alphaBoost: 2.75, sizeBoost: 0.5, trailBoost: 0.18, colorCeil: 1.4, alphaCeil: 1.1, flameWidth: 0.7, flameMinLen: 0.7, flameMaxLen: 2.5, flameBloom: 0.7, glintBloomOpacity: 0.55, glintPlumeOpacity: 0.3, cohortApR: 3.0, cohortPupil: 0.62, cohortRimAmp: 1.05, cohortIntakeAmp: 0.72, cohortStriae: 88, cohortStriaAmp: 0.38, cohortHaloR: 1.35, cohortHaloBias: 0.3 },
   cell: { fabricAlpha: 0.15, warmth: 0.12, centerDim: 0.3, activeColorR: 1.0, activeColorG: 1.0, activeColorB: 1.0, fabricWidth: 2.5, activeWidth: 4.6, reinforceAmount: 0.34, reinforceGain: 1.6, reinforceHalfLife: 3.0, fabricStaggerThreshold: 1500, fabricCohortSize: 750, fabricCohortInterval: 0.25 },
   nerve: { screenBudget: 8_000, coverageShare: 0.55, trunkShare: 0.72, twigShare: 0.18 },
 } as const;

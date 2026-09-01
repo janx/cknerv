@@ -21,8 +21,8 @@ import {
   COHORT_CONTEXT_ENERGY_GLSL,
   COHORT_CONTEXT_EXEMPT_FAR,
   COHORT_CONTEXT_EXEMPT_NEAR,
-  makeCohortCoreMaterial,
-  makeCohortIntakeMaterial,
+  makeCohortAuraMaterial,
+  makeCohortFaceMaterial,
 } from '../../src/materials/colonyCohort';
 import {
   CELL_DETAIL_VIEW_FAR_DISTANCE,
@@ -138,9 +138,9 @@ describe('cohort proximity exemption — what it measures', () => {
     expect(COHORT_CONTEXT_ENERGY_GLSL).not.toContain('length(');
 
     // ⭐ The instance origin, and never a per-fragment position. `vWorld` is
-    // the intake's quad corner, twenty world units from its own throat at the
-    // mouth; reading it here would bring a funnel's rim up ahead of its middle
-    // and fade the two faces of one mark apart.
+    // the AURA's quad corner, 4.29 world units out from the mark's centre;
+    // reading it here would bring one face up ahead of the other and fade the
+    // two halves of ONE hole apart.
     expect(COHORT_CONTEXT_ENERGY_GLSL).not.toContain('vWorld');
     expect(COHORT_CONTEXT_ENERGY_GLSL).not.toContain('gl_FragCoord');
 
@@ -314,8 +314,8 @@ describe('cohort proximity exemption — against the scene-focus damping', () =>
 
   it('leaves a distant cohort damped exactly like the rest of the mesh', () => {
     // ⭐ In the overview a cohort carries no privilege at all. What
-    // distinguishes it there is twenty world units of moving volume hanging
-    // under it — presence is size and structure, not a brighter pixel.
+    // distinguishes it there is six world units of open plane against a sighted
+    // peer's 1.5 — presence is size and structure, not a brighter pixel.
     const origin: Vec3 = [-70, 22, 55];
     for (const away of [COHORT_CONTEXT_EXEMPT_FAR, 200, 420]) {
       for (const context of [0, CELL_DETAIL_VIEW_PEER_CONTEXT_FLOOR, 0.5, 1]) {
@@ -330,16 +330,16 @@ describe('cohort proximity exemption — against the scene-focus damping', () =>
  * -------------------------------------------------------------------------- */
 
 describe('cohort proximity exemption — one expression in both programs', () => {
-  const intake = makeCohortIntakeMaterial();
-  const core = makeCohortCoreMaterial();
+  const face = makeCohortFaceMaterial();
+  const aura = makeCohortAuraMaterial();
 
   it('pastes the same string, character for character, into both fragments', () => {
-    // ⭐ They are ONE mark. A funnel that came up while its centre stayed
-    // damped would be a worse artefact than the bug this fixes, and two
-    // copies of an expression is exactly how that happens. The shared
-    // constant is the structural answer; this is the assertion that says it
-    // is still being used as one.
-    for (const fragment of [intake.fragmentShader, core.fragmentShader]) {
+    // ⭐ They are ONE HOLE. A halo that came up while the disc inside it stayed
+    // damped would be a worse artefact than the bug this fixes, and two copies
+    // of an expression is exactly how that happens. The shared constant is the
+    // structural answer; this is the assertion that says it is still being used
+    // as one.
+    for (const fragment of [face.fragmentShader, aura.fragmentShader]) {
       expect(fragment).toContain(COHORT_CONTEXT_ENERGY_GLSL);
       expect(fragment.split(COHORT_CONTEXT_ENERGY_GLSL)).toHaveLength(2);
     }
@@ -349,16 +349,19 @@ describe('cohort proximity exemption — one expression in both programs', () =>
     // ⚠️ THE HOUSE IDIOM, AND IT IS LOAD-BEARING. Additive blending uses
     // source alpha as its factor, so energy in alpha would damp the mark by
     // the square and stop the recession being linear. Both faces keep it in
-    // the colour term and pass the raw shape through as alpha.
-    expect(intake.fragmentShader)
-      .toContain('gl_FragColor = vec4(uColor * amp * cohortEnergy, amp);');
-    expect(core.fragmentShader)
-      .toContain('gl_FragColor = vec4(uColor * shape * cohortEnergy, shape);');
+    // the colour term and pass the raw shape through as alpha. ⭐ Both tint
+    // through `mix(uColor, uHot, …)` rather than writing `uColor` straight,
+    // which is what lets one hole be cyan at its skirt and cold white at its
+    // rim without a second draw.
+    for (const fragment of [face.fragmentShader, aura.fragmentShader]) {
+      expect(fragment)
+        .toContain('gl_FragColor = vec4(tint * shape * cohortEnergy, shape);');
+    }
 
     // And nothing bypasses the exemption: `uContextEnergy` occurs exactly
     // twice in each fragment — its uniform declaration, and the one read
     // inside the shared expression.
-    for (const fragment of [intake.fragmentShader, core.fragmentShader]) {
+    for (const fragment of [face.fragmentShader, aura.fragmentShader]) {
       expect([...fragment.matchAll(/\buContextEnergy\b/g)]).toHaveLength(2);
       expect(fragment).toContain('uniform float uContextEnergy;');
       expect([...fragment.matchAll(/\bcohortEnergy\b/g)]).toHaveLength(2);
@@ -366,17 +369,17 @@ describe('cohort proximity exemption — one expression in both programs', () =>
 
     // Both still take the damping from the layer at full by default, so an
     // instance drawn before the first frame loop is not silently dimmed.
-    expect(intake.uniforms.uContextEnergy.value).toBe(1);
-    expect(core.uniforms.uContextEnergy.value).toBe(1);
+    expect(face.uniforms.uContextEnergy.value).toBe(1);
+    expect(aura.uniforms.uContextEnergy.value).toBe(1);
   });
 
   it('carries the instance origin to the fragment on both faces', () => {
-    for (const material of [intake, core]) {
+    for (const material of [face, aura]) {
       // ⭐ The same quantity on both, derived the same way — the instance's
-      // own world point, taken before the camera-facing quad is built around
-      // it. A billboard corner would differ between the two faces by the
-      // difference in their extents, which is exactly the drift the shared
-      // expression exists to prevent.
+      // own world point, taken before either quad is built around it. A quad
+      // corner would differ between the two faces by the difference in their
+      // extents (3 world units against 4.293), which is exactly the drift the
+      // shared expression exists to prevent.
       expect(material.vertexShader).toContain('varying vec3 vOrigin;');
       expect(material.fragmentShader).toContain('varying vec3 vOrigin;');
       expect(material.vertexShader)

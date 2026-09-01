@@ -7,14 +7,14 @@
 //     part that has to hold — under the additive clip, so it stays haze
 //     instead of a white speck the eye reads as a node. Non-selectable.
 //   • attested nodes    — NOT DRAWN HERE. A node the CHAIN proves exists and
-//     cannot name wears a one-way vertical throat, and `ColonyCohorts` draws
-//     it: an analytic volume marched below the colony slab, converging on a
-//     centre whose own middle is refused. It had a <points> stop of its own
-//     until that mark arrived, and an additive sprite is brightest at its own
-//     centre — exactly the pixel the throat needs empty — so the stop was
-//     subsumed rather than left underneath. This file still stands its hit
-//     sphere, sized from the CENTRE's extent, because the pick target belongs
-//     with every other staged node's.
+//     cannot name wears an APERTURE, and `ColonyCohorts` draws it: a disc lying
+//     in the colony plane with a small unlit pupil, inside a camera-facing halo
+//     carrying the same hole. It had a <points> stop of its own until that mark
+//     arrived, and an additive sprite is brightest at its own centre — exactly
+//     the pixel the pupil needs empty — so the stop was subsumed rather than
+//     left underneath. This file still stands its hit sphere, sized from the
+//     aperture's radius, because the pick target belongs with every other
+//     staged node's.
 //   • roster nodes      — THREE more <points> draws off the same factory, one
 //     per rung of the crawler's evidence gradient (it reached the node / it
 //     only remembers reaching it / the network names it and nobody has ever
@@ -242,8 +242,8 @@ const sameNodeId = (a: NetworkNode, b: NetworkNode): boolean => a.id === b.id;
  *
  *  ⭐ `cohort` IS THE SECOND SUCH ANSWER, and naming it for the layer rather
  *  than for the kind is what keeps the table honest. An attested node's mark is
- *  the vertical throat `ColonyCohorts` draws; this file stands its hit sphere
- *  and nothing else. Calling the bucket `attested` would have named a draw this
+ *  the aperture `ColonyCohorts` draws; this file stands its hit sphere and
+ *  nothing else. Calling the bucket `attested` would have named a draw this
  *  file does not make, which is exactly the drift the table exists to stop. */
 export const COLONY_DRAWS = ['haze', 'cohort', 'sighted', 'measured', 'anchor'] as const;
 
@@ -310,14 +310,17 @@ export function partitionByKind(
  *  This radius once made the producer the smallest target in the colony — 0.375
  *  world units, under the faintest roster rung's 0.425 — and a full-canvas
  *  13-pixel hover sweep of the running app found forty peers and zero miners.
- *  The mark is a vertical throat now, so the target is half the extent of the
- *  CENTRE it converges on: 1.15 world units, ~6.6 CSS px of radius at the
- *  default camera. It is the only face with a bounded on-screen footprint —
- *  the intake is twenty world units of volume hanging BELOW the plane, and a
- *  sphere that covered it would be a wall of invisible target in front of the
- *  colony — and there is still exactly ONE number: no annulus, no second
- *  radius, nothing to keep in step. The value is unchanged to the bit; only
- *  where it is derived from moved. */
+ *  The mark is an APERTURE now — a 6 wu disc lying in the colony plane — so the
+ *  target is half its radius: 1.5 world units, half again over the brightest
+ *  sighted stop's 1.0.
+ *
+ *  ⚠️ HALF AND NOT ALL, because `COLONY_MIN_SPACING` is 6: a target of the
+ *  mark's full 3.0 would reach the MIDPOINT to the nearest stop the colony's
+ *  own scatter will place beside it and start taking its clicks. A drawn halo
+ *  may overlap a neighbour freely — additive light is not exclusive — but a hit
+ *  sphere may not, because a click has exactly one winner. The whole derivation
+ *  lives on `COHORT_HIT_RADIUS`; there is still exactly ONE number here: no
+ *  annulus, no second radius, nothing to keep in step. */
 export const ATTESTED_HIT_RADIUS = COHORT_HIT_RADIUS;
 
 /** One clickable staged node: where it stands, how big its mark is, and what
@@ -925,7 +928,7 @@ function MeasuredNode({
  * measured glow-node per real peer, unified as a single glow primitive on a
  * confidence gradient, plus ONE hit mesh over both staged tiers. The local
  * "you" is drawn by the galaxy (its labeled CkbNodeAnchor) and a cohort's
- * throat by `ColonyCohorts`, NOT here. This owner stamps one shared ring-buffer
+ * aperture by `ColonyCohorts`, NOT here. This owner stamps one shared ring-buffer
  * slot per block so inferred and measured nodes cannot drift or cancel an older
  * in-flight wave.
  */

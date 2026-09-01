@@ -1,19 +1,26 @@
-// A cohort's links end at its rim, and the throat stays unlit.
+// A cohort's links end at the aperture's outer edge, and the mark stays its
+// own.
 //
-// The mark's darkness is a REFUSAL, not a shadow: every face of a cohort is
+// The pupil's darkness is a REFUSAL, not a shadow: every face of a cohort is
 // additive and depth-read-only, so nothing rejects a link drawn across the
-// axis — it is simply added to it, and the convergence stops converging. These
-// pins hold the geometry that prevents it, the two degenerate cases the pull
-// could break on, and the one attribute the trim must NOT disturb.
+// disc — it is simply added to it. And under the aperture the link has a second
+// way to spoil the mark that the marched throat never gave it: the face carries
+// 88 radial striae whose one measured law is that radial structure at LOW COUNT
+// reads as a star, and a colony link is radial structure at count four, drawn
+// in the same plane. These pins hold the geometry that prevents both, the two
+// degenerate cases the pull could break on, and the one attribute the trim must
+// NOT disturb.
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  COHORT_CORE_HALF,
-  COHORT_CORE_REFUSE,
+  COHORT_AP_R,
+  COHORT_AP_PUPIL_FRAC,
+  COHORT_AP_RIM_FRAC,
   COHORT_HIT_RADIUS,
   COHORT_LINK_STOP_R,
 } from '../../src/materials/colonyCohort';
+import { COLONY_MIN_SPACING } from '../../src/derives/networkTopology.derive';
 import { colonyEdgePositions } from '../../src/components/ColonyEdges';
 import type { NetworkEdge, NetworkNode, NetworkTopology, Vec3 } from '../../src/types';
 
@@ -64,24 +71,53 @@ function dot3(u: Vec3, v: Vec3): number {
 const F32_SLACK = 1e-4;
 
 describe('COHORT_LINK_STOP_R', () => {
-  it("is the mark's ONE radius, never a second opinion about where it ends", () => {
-    // ⭐ Derived, not picked. The pick target and the link stop are the same
-    // claim — "this is the edge of the mark" — measured for a viewer's aim and
-    // for a line's end. A separate literal here would let the colony say two
-    // different things about one edge.
-    expect(COHORT_LINK_STOP_R).toBe(COHORT_HIT_RADIUS);
-    expect(COHORT_LINK_STOP_R).toBe(COHORT_CORE_HALF * 0.5);
-    expect(COHORT_LINK_STOP_R).toBe(1.15);
+  it("is the mark's OUTER EDGE, derived and never picked", () => {
+    // ⭐ It is `COHORT_AP_R` itself — the same number the face's fragment
+    // discards on, so a link ending here ends exactly where the disc does and
+    // adds light to no pixel of it. A literal would let the colony say
+    // something different from what the shader draws.
+    expect(COHORT_LINK_STOP_R).toBe(COHORT_AP_R);
+    expect(COHORT_LINK_STOP_R).toBe(3);
   });
 
-  it('stops OUTSIDE the refusal, which is the whole point of stopping at all', () => {
-    // The well the centre keeps unlit is `refuse * half` wide. A link ending
-    // inside it would be adding light to the one place the form spends itself
-    // keeping empty — the failure this constant exists to prevent.
-    const throat = COHORT_CORE_REFUSE * COHORT_CORE_HALF;
-    expect(throat).toBeCloseTo(0.69, 12);
-    expect(COHORT_LINK_STOP_R).toBeGreaterThan(throat);
-    expect(COHORT_LINK_STOP_R / throat).toBeCloseTo(1.6666666666666667, 12);
+  it('stops outside the WHOLE disc, not merely outside the pupil', () => {
+    // ⭐ The old throat only had to keep its unlit middle clear, so its stop
+    // sat inside the mark and cleared the refusal by 1.67x. The aperture asks
+    // for more: the disc's grain is radial, and a link crossing it lands in the
+    // same plane as the striae and joins them as a spoke several times any
+    // stria's width. So the stop is the outer edge and not a margin around the
+    // hole — it clears the pupil by nearly 6x on the way past.
+    const rim = COHORT_AP_R * COHORT_AP_RIM_FRAC;
+    const pupil = rim * COHORT_AP_PUPIL_FRAC;
+    expect(pupil).toBeCloseTo(0.5208, 5);
+    expect(COHORT_LINK_STOP_R).toBeGreaterThan(pupil);
+    expect(COHORT_LINK_STOP_R / pupil).toBeCloseTo(5.7604, 4);
+    // …and past the rim, the brightest ring on the mark, too.
+    expect(COHORT_LINK_STOP_R).toBeGreaterThan(rim);
+  });
+
+  it('is NOT the pick radius any more, and the split is why', () => {
+    // ⚠️⚠️ ONE NUMBER SERVED BOTH UNTIL THE MARK STOPPED HAVING SLACK IN IT.
+    // The centre this replaced was a bounding SQUARE around a profile that died
+    // well inside it, so half of it happened to answer both questions at once.
+    // The aperture's light really does reach `COHORT_AP_R` — so a line must
+    // stop out there — while `COLONY_MIN_SPACING` really does forbid a target
+    // that large, because a target reaching the midpoint to the nearest stop
+    // the colony will place beside it starts taking that stop's clicks.
+    //
+    // ⭐ THE TWO CONSUMERS ASK DIFFERENT QUESTIONS. A line asks where the LIGHT
+    // ends; a click asks how far a viewer may aim without taking a neighbour.
+    // Additive light may overlap a neighbour freely; a hit sphere may not,
+    // because a click has exactly one winner. Both still come off `COHORT_AP_R`
+    // and neither is a free literal, so a retune of the mark moves both.
+    expect(COHORT_LINK_STOP_R).not.toBe(COHORT_HIT_RADIUS);
+    expect(COHORT_HIT_RADIUS).toBe(COHORT_AP_R * 0.5);
+    expect(COHORT_LINK_STOP_R).toBe(COHORT_AP_R);
+    // The link stop reaches the midpoint between two stops at the colony's
+    // tightest spacing — which is exactly why the TARGET may not.
+    expect(COHORT_LINK_STOP_R).toBe(COLONY_MIN_SPACING / 2);
+    expect(COHORT_HIT_RADIUS).toBeLessThan(COLONY_MIN_SPACING / 2);
+    expect(COHORT_HIT_RADIUS).toBe(COLONY_MIN_SPACING / 4);
   });
 });
 

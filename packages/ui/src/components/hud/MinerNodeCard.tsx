@@ -91,16 +91,17 @@ const CARD_WIDTH_PX = 340;
 
 /** The tint the cohort's own mark is drawn in, in hex.
  *
- *  `makeCohortIntakeMaterial` and `makeCohortCoreMaterial` both draw in
- *  `PEER_NETWORK_PALETTE.scaffold` and nothing else — one colour for the whole
- *  mark, additive on both faces, with no second hue anywhere in it.
+ *  `makeCohortFaceMaterial` and `makeCohortAuraMaterial` both draw between
+ *  `PEER_NETWORK_PALETTE.scaffold` and the cold white the peer family already
+ *  tips toward — one colour family for the whole mark, additive on both faces,
+ *  with no hue of its own anywhere in it.
  *
  *  It is the SIGHTED card's accent too, and deliberately: a cohort is a member
  *  of the peer mesh rather than a species beside it, so the whole colony is one
  *  cyan and this card is the readout for the thing the chain proves. What tells
- *  them apart on stage is the SHAPE — a funnel converging on an unlit point,
- *  against a point of light — which is the same argument §3.1 makes about
- *  brightness, one channel over. */
+ *  them apart on stage is the SHAPE — a disc with an unlit pupil, against a
+ *  point of light — which is the same argument §3.1 makes about brightness, one
+ *  channel over. */
 export const MINER_NODE_ACCENT = PEER_NETWORK_HEX.scaffold;
 
 /** The word this dialect wears, in the register a screen reader speaks. One

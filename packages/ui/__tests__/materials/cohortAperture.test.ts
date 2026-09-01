@@ -986,8 +986,9 @@ describe('cohort aperture — the materials', () => {
       );
     }
     expect(AURA_VERTEX).toContain('viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]');
-    // ⚠️ And each extent is a FUNCTION of the form it bounds, as the intake's
-    // is, so a knob that grows the mark cannot leave the quad behind.
+    // ⚠️ And each extent is a FUNCTION of the form it bounds, so a knob that
+    // grows the mark cannot leave the quad behind — the bug that has already
+    // shipped once on this layer, on the proxy of the volume this replaced.
     expect(FACE.uniforms.uHalf.value).toBe(COHORT_FACE_HALF);
     expect(COHORT_FACE_HALF).toBe(cohortFaceHalfExtent(COHORT_AP_R));
     expect(AURA.uniforms.uHalf.value).toBe(COHORT_AURA_HALF);
@@ -1032,11 +1033,14 @@ describe('cohort aperture — the materials', () => {
   it('is swept by the file’s own shader guards, which is where they live', () => {
     // ⭐ The two source-level guards — no `smoothstep` with `edge0 >= edge1`,
     // no `pow` with a possibly-negative base — are implemented ONCE, over the
-    // whole file, in `cohortIntake.test.ts`. Both programs are in their list,
-    // and their coverage assertion means they HAVE to be: every `pow` and
-    // `smoothstep` in the file must appear in a program they were handed.
+    // whole file, in `cohortShaderGuards.test.ts`. They have their own file
+    // because they outlive every form this feature has drawn: they were written
+    // for the accreting void and twice travelled as a passenger in a test whose
+    // subject was then deleted. Both programs are in their list, and their
+    // coverage assertion means they HAVE to be: every `pow` and `smoothstep` in
+    // the file must appear in a program they were handed.
     const guards = readFileSync(
-      resolve(process.cwd(), '__tests__/materials/cohortIntake.test.ts'),
+      resolve(process.cwd(), '__tests__/materials/cohortShaderGuards.test.ts'),
       'utf8',
     );
     expect(guards).toContain("['cohortFace', makeCohortFaceMaterial()]");
@@ -1047,8 +1051,8 @@ describe('cohort aperture — the materials', () => {
     // These programs really do give the guards something to check. ⚠️ The
     // counts include the ONE `smoothstep` pasted in from
     // `COHORT_CONTEXT_ENERGY_GLSL`, which is why the guards' coverage sum has
-    // to credit a shared snippet once per EXTRA use site — there are four
-    // now, not two.
+    // to credit a shared snippet once per EXTRA use site — two use sites now,
+    // so exactly one call has to be added back.
     expect([...FACE_FRAGMENT.matchAll(/\bsmoothstep\s*\(/g)]).toHaveLength(4);
     expect([...AURA_FRAGMENT.matchAll(/\bsmoothstep\s*\(/g)]).toHaveLength(3);
     expect([...FACE_FRAGMENT.matchAll(/\bpow\s*\(/g)]).toHaveLength(1);
