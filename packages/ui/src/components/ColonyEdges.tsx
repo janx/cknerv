@@ -13,8 +13,11 @@
 //     the block's edge-flow — the couriers are now only a faint glint accent on top.
 //
 // ALL edges live in a single additive <lineSegments> (~600, one draw). Per-vertex:
-//   position, aBright (base confidence), aEdgeParam (0 at a, 1 at b — position
-//   along the link), aPhase (ambient de-sync). Per-block-DYNAMIC: aSurgeT0/T1
+//   position (the DRAWN endpoint — a cohort's own links stop at its rim rather
+//   than at its node, so nothing is added to the throat the mark keeps unlit;
+//   see `colonyEdgePositions`), aBright (base confidence), aEdgeParam (0 at a,
+//   1 at b — position along the DRAWN link), aPhase (ambient de-sync).
+//   Per-block-DYNAMIC: aSurgeT0/T1
 //   (parent/child ABSOLUTE simClock arrival seconds; sentinel −1e9 ⇒ not a tree
 //   edge this block) + aSurgeP0 (the parent's aEdgeParam, so the surge flows the
 //   right way down an undirected line). Ambient is driven by `uTime`; the surge by
@@ -33,6 +36,7 @@ import { PEER_NETWORK_PALETTE } from '../visualPalette';
 import { PERFORMANCE_PROBE_LABELS } from '../tweaks/performanceProbeStore';
 import { createGpuProbeCallbacks } from '../tweaks/gpuTimerQuery';
 import { createNonEmptyDrawGpuProbeCallbacks } from '../tweaks/nonEmptyGpuProbeCallbacks';
+import { COHORT_LINK_STOP_R } from '../materials/colonyCohort';
 
 // Gossamer line color for the whole mesh — the faint blue that matches ColonyNodes'
 // inferred ghost cloud so edges + cloud read as one structure. Confidence lives in
@@ -47,6 +51,82 @@ const MEASURED_LINE_BRIGHT = 0.72;
  *  drift starts at a different point (the mesh flows, but isn't a synced pulse). */
 function edgePhase(a: string, b: string): number {
   return (fnv1a(`${a}|${b}`) >>> 0) / 4294967296;
+}
+
+/**
+ * Every edge's two DRAWN endpoints: edge `i` → floats `6i`…`6i+5`, endpoint `a`
+ * then endpoint `b`. Pure — a function of the topology and nothing else — so
+ * the geometry can be weighed without a renderer.
+ *
+ * ⭐⭐⭐ WHY THIS IS NOT SIMPLY THE TWO NODE POSITIONS. A POW cohort is a
+ * VERTICAL THROAT, and the throat is unlit because bright structure refuses to
+ * fill it — not because anything dark is drawn there
+ * (`materials/colonyCohort.ts` carries the whole argument). Every face of the
+ * mark is additive and depth-read-only, so there is no shadow to hide anything
+ * and no depth to reject it: a link run to the node's centre is simply ADDED to
+ * the axis, and the one pixel the form spends itself keeping empty is the one
+ * the mesh fills in. So a cohort's links stop at its rim —
+ * `COHORT_LINK_STOP_R`, the same radius a viewer aims at — pulled along their
+ * own edge toward the other node, on BOTH ends when a link joins two cohorts.
+ *
+ * ⚠️ THE PULL IS CLAMPED AND CAN NEVER INVERT AN EDGE. Two stops on a link
+ * barely longer than one would cross, and a crossed line is drawn backwards
+ * through both marks. The cap keeps AT LEAST HALF of every link drawn, whatever
+ * its length: `len / 2` of pull to divide among however many of its ends are
+ * cohorts. It is continuous — a shrinking link keeps a proportional gap instead
+ * of snapping back to a line through the throat, which is the failure mode a
+ * length threshold has — and on this colony's ~15 wu node spacing it never
+ * binds at all. A zero-length edge takes no pull, because there is no direction
+ * to take it along and `d / 0` would write NaN into the buffer.
+ *
+ * ⭐ THE SHORTENED SEGMENT IS THE LINK, as far as everything downstream is
+ * concerned. `aEdgeParam` stays 0 at `a` and 1 at `b`, so it still runs 0→1
+ * over the DRAWN segment: the ambient band and the block surge cross what is
+ * on screen in the same time they always did, and a cohort's win erupts from
+ * its rim. Re-basing the parameter on the untrimmed endpoints instead would
+ * hand every cohort-incident link a band that entered late and left early.
+ *
+ * Every endpoint that is not a cohort is written byte-identically to its node
+ * position, so a colony with no producers keeps precisely the geometry it had.
+ */
+export function colonyEdgePositions(topology: NetworkTopology): Float32Array {
+  const posById = new Map(topology.nodes.map((n) => [n.id, n.pos] as const));
+  const cohortIds = new Set(
+    topology.nodes.filter((n) => n.kind === 'attested').map((n) => n.id),
+  );
+  const edges = topology.edges;
+  const pos = new Float32Array(edges.length * 6);
+  edges.forEach((e, i) => {
+    const a = posById.get(e.a)!;
+    const b = posById.get(e.b)!;
+    const stopA = cohortIds.has(e.a);
+    const stopB = cohortIds.has(e.b);
+    const ends = (stopA ? 1 : 0) + (stopB ? 1 : 0);
+    let sx = 0;
+    let sy = 0;
+    let sz = 0;
+    if (ends > 0) {
+      const dx = b[0] - a[0];
+      const dy = b[1] - a[1];
+      const dz = b[2] - a[2];
+      const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (len > 0) {
+        const pull = Math.min(COHORT_LINK_STOP_R, len / (2 * ends));
+        sx = (dx / len) * pull;
+        sy = (dy / len) * pull;
+        sz = (dz / len) * pull;
+      }
+    }
+    pos.set([
+      stopA ? a[0] + sx : a[0],
+      stopA ? a[1] + sy : a[1],
+      stopA ? a[2] + sz : a[2],
+      stopB ? b[0] - sx : b[0],
+      stopB ? b[1] - sy : b[1],
+      stopB ? b[2] - sz : b[2],
+    ], i * 6);
+  });
+  return pos;
 }
 
 /**
@@ -198,9 +278,11 @@ export default function ColonyEdges({
     // Counted where it is paid: every topology identity rebuilds these seven
     // attributes and their GPU buffers (`colonyStats`).
     colonyStats.observeEdgeGeometryBuild();
-    const posById = new Map(topology.nodes.map((n) => [n.id, n.pos] as const));
     const g = new THREE.BufferGeometry();
-    const pos = new Float32Array(edges.length * 6);
+    // The drawn endpoints, which are the node positions everywhere except at a
+    // cohort — see `colonyEdgePositions`. A second walk of the edge list, and
+    // the price of being able to ask what the geometry is without a renderer.
+    const pos = colonyEdgePositions(topology);
     // Per-vertex attributes; edge i → verts 2i (endpoint a), 2i+1 (endpoint b).
     const bright = new Float32Array(edges.length * 2); // base confidence brightness
     const param = new Float32Array(edges.length * 2);  // 0 at a, 1 at b
@@ -210,12 +292,13 @@ export default function ColonyEdges({
     const surgeT1 = new Float32Array(edges.length * 2).fill(-1e9);
     const surgeP0 = new Float32Array(edges.length * 2);
     edges.forEach((e, i) => {
-      const a = posById.get(e.a)!;
-      const b = posById.get(e.b)!;
-      pos.set([a[0], a[1], a[2], b[0], b[1], b[2]], i * 6);
       const v = e.kind === 'measured' ? MEASURED_LINE_BRIGHT : INFERRED_LINE_BASE;
       bright[2 * i] = v;
       bright[2 * i + 1] = v;
+      // ⭐ 0 AND 1 OVER THE DRAWN SEGMENT, whether or not it was trimmed. The
+      // ambient band and the surge are parameterised on the line the GPU
+      // rasterises, so a cohort's links carry their current at exactly the
+      // cadence every other link does.
       param[2 * i] = 0;
       param[2 * i + 1] = 1;
       const ph = edgePhase(e.a, e.b);

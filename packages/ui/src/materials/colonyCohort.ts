@@ -600,6 +600,34 @@ export const COHORT_HIT_RADIUS = COHORT_CORE_HALF * 0.5;
 export const COHORT_CORE_REFUSE = 0.3;
 
 /**
+ * How far short of a cohort's centre its own links stop, in world units.
+ *
+ * ⭐⭐⭐ A LINK RUNNING TO THE CENTRE FILLS THE ONE PLACE THIS WHOLE FORM KEEPS
+ * EMPTY. The throat is not painted dark — `smoothstep(0, uRefuse, r)` takes the
+ * centre's profile to exactly zero on the axis, and the hole is that refusal
+ * and nothing else. There is no shadow left to hide anything: every face here
+ * is additive and depth-read-only, so a bright line laid across the axis is
+ * simply added to it, and the convergence stops being a convergence. `ColonyEdges`
+ * therefore ends a cohort's links out here rather than at its node.
+ *
+ * ⭐ IT IS `COHORT_HIT_RADIUS`, BY DERIVATION AND NOT BY COINCIDENCE. A mark is
+ * allowed exactly one number for where it ends, and this layer must not invent
+ * a second: the pick target and the link stop are the same claim measured for
+ * two consumers — a viewer's aim and a line's end. Let them drift and the
+ * colony says two different things about one edge, either a target reaching
+ * past where the links stop or links stopping past where anything can be hit.
+ * So the radius comes from the face that has a footprint (the centre, half its
+ * billboard extent — 1.15 wu), through the constant that already says so.
+ *
+ * ⭐ AND IT CLEARS THE REFUSAL BY 1.67x. The well is
+ * `COHORT_CORE_REFUSE * COHORT_CORE_HALF` = 0.69 wu wide; a link ending at 1.15
+ * plugs into pixels that are still plainly lit — 37 % of the centre's own peak
+ * at `r = 0.5` — while never reaching the part that is dark on purpose. Both
+ * halves of that are pinned in `components/colonyEdgesCohortStop.test.ts`.
+ */
+export const COHORT_LINK_STOP_R = COHORT_HIT_RADIUS;
+
+/**
  * One cohort's centre, as an instanced camera-facing billboard.
  *
  * ⚠️ THE GEOMETRY MUST BE `PlaneGeometry(1, 1)`, for the same reason the
