@@ -80,7 +80,15 @@ export const COHORT_MESH_HALO_AMP = 0.62;
 /** Cold-white share of the photon crest; the balance remains scaffold cyan. */
 export const COHORT_PHOTON_WHITE_MIX = 0.62;
 
-/** POW cohorts breathe on the measured-peer cadence, but with less contrast. */
+/**
+ * POW cohorts breathe on the measured-peer cadence, but with less contrast.
+ *
+ * ⚠️ THE RATE AND THE DEPTH HAVE DIFFERENT LIFETIMES NOW. The rate is the
+ * layer's one cadence and `makeCohortCoreMaterial` reads it, so it outlives the
+ * accreting void; the depth is the void's own shallower envelope and has no
+ * second reader — the core takes the peer halo's 0.78/0.22 instead, because the
+ * point of that face is to be an ordinary peer stop at rest.
+ */
 export const COHORT_BREATHE_HZ = 1.2;
 export const COHORT_BREATHE_DEPTH = 0.1;
 
@@ -872,6 +880,155 @@ export function makeCohortIntakeMaterial(): THREE.ShaderMaterial {
         // Additive blending uses source alpha as its factor. Keeping context
         // energy in RGB only preserves linear scene-focus damping.
         gl_FragColor = vec4(uColor * amp * uContextEnergy, amp);
+      }
+    `,
+  });
+}
+
+/* -------------------------------------------------------------------------- *
+ * The vertical throat — a cohort's CENTRE.
+ * -------------------------------------------------------------------------- */
+
+/**
+ * The point the intake converges on, drawn as an ordinary member of the peer
+ * mesh — and then refused at its own middle.
+ *
+ * ⭐ THE PROFILE IS THE PEER FAMILY'S OWN, NOT A NEW ONE. Same core exponent,
+ * same skirt exponent and weight, same breathing cadence and depth as
+ * `makePeerHaloMaterial`. A cohort is a peer that mines; nothing about the
+ * resting grammar of a stop should have to be re-learned to read it, and the
+ * one thing that distinguishes it — the funnel hanging below — is structure
+ * and footprint rather than hue or heat.
+ *
+ * ⭐ IT IS DELIBERATELY NOT THE BRIGHTEST PIXEL ON SCREEN. The standing law
+ * from R16: PRESENCE IS SIZE AND STRUCTURE, NOT A SATURATED CORE. The whole
+ * mark is legible at a fraction of the light the old aperture spent, because
+ * what identifies it is twenty world units of moving volume, not a hot dot.
+ *
+ * ⭐⭐⭐ AND IT MUST STAY UNDER 1.0 IN EVERY CHANNEL. Additive blending applies
+ * source alpha to RGB, so the screen receives `uColor * shape²`; the scaffold
+ * cyan is `#1AD1FF`, whose BLUE IS EXACTLY FULL, so a shape reaching 1.0 clips
+ * that channel flat and the mark's structure becomes literally invisible
+ * inside a white-cyan blob. R16's T7 spent a whole live leg discovering this
+ * from the far side. The resting supremum here is 0.1843, pinned in
+ * `materials/cohortCore.test.ts`; red is the channel with headroom and is
+ * therefore the probe channel for anything measured off a screenshot.
+ *
+ * ⭐ THE THROAT IS REFUSED, NOT PAINTED DARK. `smoothstep(0, uRefuse, r)` takes
+ * the profile to EXACTLY zero on the axis, so the convergence point is the one
+ * place bright structure declines to fill. That is this scene's own additive
+ * idiom for a hole: no dark pixel is ever drawn, and nothing behind the mark is
+ * removed.
+ */
+
+/** Peak additive amplitude of the centre, before the breathe. */
+export const COHORT_CORE_AMP = 0.34;
+
+/** Half-extent of the centre's billboard, in world units. */
+export const COHORT_CORE_HALF = 2.3;
+
+/**
+ * Radius, as a fraction of the billboard's half-extent, over which the profile
+ * climbs out of the throat. Zero at the axis; fully lit beyond it.
+ */
+export const COHORT_CORE_REFUSE = 0.3;
+
+/**
+ * One cohort's centre, as an instanced camera-facing billboard.
+ *
+ * ⚠️ THE GEOMETRY MUST BE `PlaneGeometry(1, 1)`, for the same reason the
+ * intake's must: the quad is rebuilt from raw `position` and the view matrix's
+ * camera axes, which no model matrix ever touches, so `mesh.scale` and a scaled
+ * instance matrix are both silently ignored and the extent has to ride the
+ * `uHalf` UNIFORM. ⚠️ ITS TWO OLDER NEIGHBOURS IN THIS FILE DO THE OPPOSITE —
+ * `makeColonyHorizonMaterial` and `makeColonyAccretionMaterial` bake their
+ * extent into `PlaneGeometry(half * 2, half * 2)` and read `position` as world
+ * units — which is precisely why they never met this trap. A leg that reaches
+ * for `accretionGeometry` when wiring this up renders the mark 3.7x too big.
+ *
+ * `aSeed` is the same per-instance lane the intake reads, consumed differently:
+ * the intake wants turns of crest phase and takes it raw, the breathe wants
+ * radians and takes it times TAU.
+ */
+export function makeCohortCoreMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthTest: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+    uniforms: {
+      uColor: {
+        value: new THREE.Color().setRGB(...PEER_NETWORK_PALETTE.scaffold),
+      },
+      uTime: { value: 0 },
+      uContextEnergy: { value: 1 },
+      uHalf: { value: COHORT_CORE_HALF },
+      uAmp: { value: COHORT_CORE_AMP },
+      uRefuse: { value: COHORT_CORE_REFUSE },
+      uBreatheHz: { value: COHORT_BREATHE_HZ },
+    },
+    vertexShader: /* glsl */ `
+      attribute float aSeed;
+
+      uniform float uHalf;
+
+      varying vec2 vUv;
+      varying float vPhase;
+
+      const float TAU = 6.28318530718;
+
+      void main() {
+        vUv = uv;
+        // The seed is a fraction of a turn on both faces of this mark; the
+        // breathe measures its phase in radians, so it takes a whole turn.
+        vPhase = aSeed * TAU;
+        vec4 origin = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+        vec3 cameraRight = vec3(
+          viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]
+        );
+        vec3 cameraUp = vec3(
+          viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]
+        );
+        // ⚠️ uHalf IS A UNIFORM AND HAS TO BE — see the factory's comment.
+        vec3 world = origin.xyz
+          + (cameraRight * position.x + cameraUp * position.y) * uHalf * 2.0;
+        gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      precision highp float;
+
+      uniform vec3 uColor;
+      uniform float uTime;
+      uniform float uContextEnergy;
+      uniform float uAmp;
+      uniform float uRefuse;
+      uniform float uBreatheHz;
+
+      varying vec2 vUv;
+      varying float vPhase;
+
+      void main() {
+        float r = length(vUv - 0.5) * 2.0;
+        if (r > 1.0) discard;
+        // The peer mesh's own resting profile, exponent for exponent. The
+        // clamps are not decoration: pow with a negative base is undefined in
+        // GLSL, and the guard that proves it cannot see the discard above.
+        float core = pow(max(1.0 - r, 0.0), 4.0);
+        float halo = pow(max(1.0 - r, 0.0), 1.6) * 0.42;
+        // ⭐ THE THROAT, UNLIT. Exactly zero on the axis — a refusal to fill,
+        // not a dark disc laid over the scene. ⚠️ The max() keeps edge0 below
+        // edge1 if a knob ever drives uRefuse to zero; smoothstep with
+        // edge0 >= edge1 is UNDEFINED in GLSL ES and has rendered nothing at
+        // all on this project's own driver once already.
+        float refuse = smoothstep(0.0, max(uRefuse, 0.001), r);
+        float breathe = 0.78 + 0.22 * sin(uTime * uBreatheHz + vPhase);
+        float shape = (core + halo) * refuse * uAmp * breathe;
+        if (shape < 0.0015) discard;
+        // Additive blending uses source alpha as its factor. Keeping context
+        // energy in RGB only preserves linear scene-focus damping.
+        gl_FragColor = vec4(uColor * shape * uContextEnergy, shape);
       }
     `,
   });

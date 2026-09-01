@@ -34,6 +34,7 @@ import {
   COHORT_INTAKE_SWIRL,
   COHORT_INTAKE_THROAT_R,
   COHORT_INTAKE_WARP,
+  makeCohortCoreMaterial,
   makeCohortIntakeMaterial,
   makeColonyAccretionMaterial,
   makeColonyHorizonMaterial,
@@ -1235,6 +1236,7 @@ function programs(): { name: string; glsl: string; scope: Scope }[] {
     ['colonyHorizon', makeColonyHorizonMaterial()],
     ['colonyAccretion', makeColonyAccretionMaterial()],
     ['cohortIntake', makeCohortIntakeMaterial()],
+    ['cohortCore', makeCohortCoreMaterial()],
   ] as const;
   return built.flatMap(([name, material]) => {
     const uniforms = new Map<string, number>();
