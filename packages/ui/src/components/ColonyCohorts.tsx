@@ -4,8 +4,19 @@
 // twice: a disc lying IN the plane, and a camera-facing halo carrying the same
 // hole. Nothing volumetric, nothing hanging under the slab, and no second
 // cadence — one hole, two rays through it. The win itself is an instant the
-// colony's own outward surge and the upward carrier already draw, from this
-// very node, so nothing here fires and nothing here reads the pulse.
+// colony's own outward surge already draws, from this very node, so nothing
+// here fires and nothing here reads the pulse.
+//
+// ⛔⛔⛔ THE COHORT NEVER EMITS UPWARD, AT ANY TIME. A mined block goes SIDEWAYS
+// TO PEERS ONLY, because peers must verify it before it legitimately enters the
+// cell galaxy. `BlockDeliveryLayer` draws that later leg, launching from
+// MEASURED WORKERS on flood arrivals — never from the cohort: `planDeliveries`
+// emits a carrier only for ids in `cf.arrivals`, and the flood derive writes an
+// arrival only where `kind === 'measured'`, which an attested cohort is not.
+// THE TWO WORLDS MEET AT THE APERTURE IN THE PLANE. ⚠️ Three successive plans
+// said "the block leaves ABOVE and outward" from here; they were wrong, and the
+// rule is written positively so the next reader inherits it and not the
+// misconception.
 //
 // The face draws a CIRCLE; every ellipse a viewer sees is projection, and
 // because every cohort foreshortens identically that agreement is what makes
@@ -32,15 +43,23 @@
 //   • the live SHARE, which moves on every attributed block and must never be
 //     allowed to move the geometry with it.
 //
+// ⛔ AND 「从下方汲取能量」 IS NOT EXPRESSED BY THIS FORM AT ALL — deliberately,
+// by the user's decision, and not an oversight for a later reader to "fix". The
+// lab measured both halves of the only way there was to say it: a sub-plane
+// shaft gated through the hole is invisible except from directly overhead, and
+// an ungated one is a searchlight in miniature. So it is deferred as a separate
+// problem. The single surviving hint is the aura's downward halo weighting
+// (`COHORT_AURA_HALO_BIAS`, knob `cohortHaloBias`), documented as such where it
+// is declared — a gradient inside a glow that already exists, costing no
+// silhouette and unable to read as a beam.
+//
 // ⚠️ THE SHARE LANE IS DORMANT, AND DELIBERATELY SO. Neither aperture program
 // declares `aShare`: share means RATE on this layer, and the aperture has no
 // rate a share could drive that survives the grain's own prefilter (see
-// `COHORT_FACE_DRIFT`). 「从下方汲取能量」 is a separate problem, deferred on
-// purpose — a sub-plane shaft was measured invisible except from directly
-// overhead — and the lane is kept ready for it rather than rebuilt from
-// scratch. It is kept HONESTLY: the lane is written but NOT bound to the
-// geometry, because binding an attribute no program declares would tell the
-// next reader that something consumes it.
+// `COHORT_FACE_DRIFT`). The lane is kept ready for the deferred 汲取 work
+// rather than rebuilt from scratch, and kept HONESTLY: it is written but NOT
+// bound to the geometry, because binding an attribute no program declares would
+// tell the next reader that something consumes it.
 //
 // ⚠️ IT TAKES NO PULSE, NO FLOOD AND NO SHOCKWAVE, and all three absences are
 // deliberate. The front crosses the WHOLE colony on every block, so anything

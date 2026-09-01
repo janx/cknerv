@@ -844,12 +844,30 @@ The topology contains:
   disc; and
 - inferred k-nearest, small-world, and component-bridge edges.
 
-A cohort is drawn as a one-way vertical throat rather than a stop on the peer
-brightness ladder: an analytic volume raymarched below the colony slab, and a
-centre that is an ordinary peer profile with its own middle refused. Nothing
-dark is painted — the throat is where bright structure declines to fill, which
-is this scene's additive idiom for a hole — so the layer that would otherwise
-break it is the link mesh, and a cohort's own links stop at its rim.
+A cohort is drawn as an APERTURE rather than as a stop on the peer brightness
+ladder: a cohort is where the colony plane is OPEN, and the mark is that opening
+drawn twice. Two instanced draws, nothing volumetric and nothing under the slab
+— a FACE, a disc lying in the colony plane with a bright rim, a small unlit
+pupil and 88 radial striae; and an AURA, a small camera-facing quad whose halo
+carries the same hole, cut by crossing the view ray with the colony plane. The
+face draws a circle, so every ellipse a viewer sees is projection, and because
+every cohort foreshortens identically that agreement is what makes the colony
+plane itself legible.
+
+Nothing dark is painted — the pupil is where bright structure declines to fill
+(`smoothstep` up out of exactly zero on the face, the ray/plane crossing on the
+aura), which is this scene's additive idiom for a hole. So the layer that would
+otherwise break it is the link mesh, and a cohort's own links stop at the mark's
+OUTER EDGE (`COHORT_LINK_STOP_R` = `COHORT_AP_R` = 3.0 wu), for two independent
+reasons: a link run into the disc would be added to the one pixel the form
+spends itself keeping empty, and a colony link is radial structure coplanar with
+a radial grain, which at low count reads as a star.
+
+A cohort NEVER EMITS UPWARD, at any time. A mined block goes sideways to peers
+only, because peers must verify it before it legitimately enters the cell
+galaxy; the later leg is `BlockDeliveryLayer`'s carrier, which launches from
+MEASURED WORKERS on flood arrivals and never from a cohort. The two worlds meet
+at the aperture in the plane.
 
 The inferred scaffold is independent of the measured peer list, so peer churn
 does not reshuffle the ambient colony. It is memoized by universe seed. Edges
@@ -1142,9 +1160,12 @@ current staged structure.
   buffers nothing reads (2 × 2.3 MB of RAM and as much VRAM at the
   8,000-edge class).
 - Fragments that are provably dark discard before the expensive body: a
-  cohort's intake clips its ray against the throat's slab and bounding cylinder
-  — roughly 83 % of the bounding quad's area — before the raymarch begins, and
-  the march itself stops as soon as the medium ahead is opaque.
+  cohort's face discards its square quad's corners outside the mark's own
+  radius — roughly 21.5 % of the quad — and its aura discards outside the halo
+  radius, both before any profile is evaluated; then both faces discard again
+  once the accumulated shape falls under 0.0018. The face's grain is also
+  prefiltered against its own screen footprint, so a mark that is small on
+  screen stops paying for structure it could not resolve.
 - Passive topology and color/mask updates have separate dirty paths.
 - Screen-space capsule nerves use two triangles per sampled segment.
 - Shader time advances lifecycle without per-frame full-buffer rewrites.
@@ -1384,7 +1405,7 @@ Use the same snapshot and capture settings for these minimum scenarios:
   `nerve.passive-fabric.trunk`, `nerve.active-route`, `nerve.memory-route`,
   `nerve.bridge`. Colony: `colony.cloud.haze`, `colony.cloud.advertised`,
   `colony.cloud.remembered`, `colony.cloud.reached`, `colony.measured-halos`,
-  `colony.edges`, `colony.cohort.intake`, `colony.cohort.core`,
+  `colony.edges`, `colony.cohort.face`, `colony.cohort.aura`,
   `colony.courier.plume`, `colony.courier.bloom`. Delivery: `delivery.body`,
   `delivery.core`, `delivery.trail`, `delivery.wave`. Backdrop: `stars`. A draw
   that would submit nothing — zero instances, an empty draw range, a hidden
@@ -1525,7 +1546,7 @@ Before merging a Canvas change, answer:
 | Screen-space capsule geometry | `packages/ui/src/geometry/screenSpaceCapsuleLine.ts` |
 | Peer topology and block flood | `packages/ui/src/derives/networkTopology.derive.ts`, `packages/ui/src/derives/networkFlood.derive.ts` |
 | Peer render layers and Cell delivery | `packages/ui/src/components/NetworkColony.tsx`, `packages/ui/src/components/BlockDeliveryLayer.tsx` |
-| POW cohort throats and the link stop at their rim | `packages/ui/src/components/ColonyCohorts.tsx`, `packages/ui/src/materials/colonyCohort.ts`, `packages/ui/src/components/ColonyEdges.tsx` |
+| POW cohort apertures and the link stop at their outer edge | `packages/ui/src/components/ColonyCohorts.tsx`, `packages/ui/src/materials/colonyCohort.ts`, `packages/ui/src/components/ColonyEdges.tsx` |
 | Carrier glyph and contact front | `packages/ui/src/geometry/protocolCarrier.ts`, `packages/ui/src/materials/contactWaveMaterial.ts` |
 | Canonical rewrite echo | `packages/ui/src/components/CanonicalRewriteEcho.tsx` |
 | Simulation clock | `packages/ui/src/tweaks/simClock.ts`, `packages/ui/src/tweaks/SimClockTicker.tsx`, `packages/ui/src/tweaks/useSimFrame.ts` |

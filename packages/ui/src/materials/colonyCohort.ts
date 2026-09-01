@@ -24,11 +24,26 @@ import { PEER_NETWORK_PALETTE } from '../visualPalette';
  * world Y, which is also the rotation axis, so the mark turns with the plate
  * for free and has no axis anybody could read as pointing somewhere.
  *
- * ⭐⭐ NOTHING HERE DRAWS THE WIN, and that absence is the design rather than a
- * gap in it. `ColonyEdges`' outward surge and `BlockDeliveryLayer`'s carrier
- * already fire from the winning cohort's own node, both keyed on
- * `attestedOrigin`; a third mark for the same instant would be a second opinion
- * about an event two layers already agree on.
+ * ⛔⛔⛔ THE COHORT NEVER EMITS UPWARD, AT ANY TIME. A mined block goes
+ * SIDEWAYS TO PEERS ONLY, because peers must verify it before it legitimately
+ * enters the cell galaxy. `BlockDeliveryLayer` draws that later leg, and it
+ * launches from MEASURED WORKERS on flood arrivals — never from the cohort.
+ * That is structural rather than a convention: `planDeliveries` emits a carrier
+ * only for ids present in `cf.arrivals`, and `networkFlood.derive` writes an
+ * arrival only where `kind === 'measured'`, which an attested cohort is not. So
+ * THE TWO WORLDS MEET AT THE APERTURE IN THE PLANE, and the leg out of the
+ * colony is drawn by the peers that verified the block, from their own nodes.
+ *
+ * ⚠️ THAT CORRECTS A CLAIM THAT SHIPPED IN THREE SUCCESSIVE PLANS — "the block
+ * leaves ABOVE and outward" — and it is stated positively here so the next
+ * reader inherits the rule instead of the misconception. Nothing above the
+ * plane belongs to this layer, at any phase of a block's life.
+ *
+ * ⭐⭐ NOTHING HERE DRAWS THE WIN EITHER, and that absence is the design rather
+ * than a gap in it. `ColonyEdges`' outward surge already fires from the winning
+ * cohort's own node, keyed on `attestedOrigin`; a second mark for the same
+ * instant would be a second opinion about an event another layer already
+ * states.
  *
  * ⭐⭐ BOTH FACES ARE ADDITIVE, UNLIT AND DEPTH-READ-ONLY, AND NO DARK PIXEL IS
  * EVER DRAWN. The pupil is unlit because bright structure REFUSES TO FILL it —
@@ -45,6 +60,22 @@ import { PEER_NETWORK_PALETTE } from '../visualPalette';
  * across the pupil; it is simply added to it. `COHORT_LINK_STOP_R` below is
  * where that is paid for: a cohort's own links end at the mark's outer edge, in
  * `ColonyEdges`, and the aperture stays its own from every camera.
+ *
+ * ⛔ AND WHAT THIS FORM DELIBERATELY DOES NOT DO — do not "fix" the absence.
+ * 「从下方汲取能量」 is NOT EXPRESSED, by the user's decision, and after the lab
+ * measured both halves of the only way there was to express it: a sub-plane
+ * shaft gated through the hole is invisible except from directly overhead, and
+ * an ungated one is a searchlight in miniature — the exact failure the aperture
+ * exists to stop being. It is therefore deferred as a separate problem, and it
+ * is ABSENT ON PURPOSE rather than missing.
+ *
+ * ⭐ The one surviving hint is `COHORT_AURA_HALO_BIAS` (knob `cohortHaloBias`),
+ * which weights the halo DOWNWARD in world Y. It is the only cue for "the
+ * energy is under the plane" that costs no silhouette: a gradient inside a glow
+ * that is already there, so there is no cone, no stub, nothing that can read as
+ * a beam, and it vanishes on its own from overhead — where "below" is not a
+ * direction a viewer can see. That is the whole of it. Anything more has to
+ * earn a draw of its own first.
  *
  * The design argument for each face sits on its own factory below; read it
  * before touching either.
