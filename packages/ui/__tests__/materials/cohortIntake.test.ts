@@ -36,8 +36,6 @@ import {
   COHORT_INTAKE_WARP,
   makeCohortCoreMaterial,
   makeCohortIntakeMaterial,
-  makeColonyAccretionMaterial,
-  makeColonyHorizonMaterial,
 } from '../../src/materials/colonyAccretion';
 
 const SOURCE_PATH = resolve(process.cwd(), 'src/materials/colonyAccretion.ts');
@@ -1233,8 +1231,6 @@ function nonNegative(node: Node, scope: Scope, seen: ReadonlySet<string>): boole
  *  coverage test below checks rather than assumes. */
 function programs(): { name: string; glsl: string; scope: Scope }[] {
   const built = [
-    ['colonyHorizon', makeColonyHorizonMaterial()],
-    ['colonyAccretion', makeColonyAccretionMaterial()],
     ['cohortIntake', makeCohortIntakeMaterial()],
     ['cohortCore', makeCohortCoreMaterial()],
   ] as const;
@@ -1285,7 +1281,12 @@ describe('colonyAccretion.ts — source-level shader guards', () => {
       }
     }
     expect(unprovable).toEqual([]);
-    expect(checked).toBeGreaterThan(10);
+    // ⚠️ Two of the four programs this list once held went with the accreting
+    // void, and ten of the fifteen `smoothstep` calls went with them — so the
+    // floor came down from 10. It is only a says-the-parser-ran check: what
+    // makes the sweep COMPLETE is the coverage test below, which pins these
+    // against every call in the file.
+    expect(checked).toBeGreaterThanOrEqual(3);
   });
 
   it('no pow anywhere can be handed a negative base', () => {
@@ -1304,13 +1305,15 @@ describe('colonyAccretion.ts — source-level shader guards', () => {
       }
     }
     expect(unproven).toEqual([]);
-    expect(checked).toBeGreaterThan(8);
+    // Same story: nine of the fourteen `pow` calls belonged to the two deleted
+    // programs. The completeness claim is the coverage test below, not this.
+    expect(checked).toBeGreaterThanOrEqual(5);
   });
 
   it('covers every smoothstep and pow the file actually contains', () => {
     // The two guards run over the compiled PROGRAMS, so they can resolve
     // uniforms and locals. This is what says the programs are the whole file:
-    // a GLSL string added to a material nobody built, or to a fourth factory,
+    // a GLSL string added to a material nobody built, or to a third factory,
     // shows up here as a count that no longer matches.
     const file = stripComments(SOURCE);
     for (const name of ['smoothstep', 'pow']) {

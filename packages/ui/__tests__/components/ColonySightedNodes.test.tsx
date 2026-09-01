@@ -31,27 +31,19 @@ import ColonyAccretion, {
   sameCohortMark,
 } from '../../src/components/ColonyAccretion';
 import {
-  COHORT_BREATHE_DEPTH,
-  COHORT_BREATHE_HZ,
-  COHORT_DISC_FLATTEN,
-  COHORT_FIELD_AMP,
-  COHORT_GAS_AMP,
-  COHORT_GAS_BIRTH_R,
+  COHORT_CORE_AMP,
+  COHORT_CORE_HALF,
   COHORT_HIT_RADIUS,
-  COHORT_HORIZON_R,
-  COHORT_MARK_HALF_EXTENT,
-  COHORT_MESH_HALO_AMP,
-  COHORT_PHOTON_SIGMA,
-  COHORT_PHOTON_WHITE_MIX,
-  COHORT_RIM_R,
-  COHORT_RIM_SIGMA,
-  COHORT_SHADOW_HALF_EXTENT,
-  COHORT_THROAT_R,
-  makeColonyAccretionMaterial,
-  makeColonyHorizonMaterial,
+  COHORT_INTAKE_HALF_EXTENT,
+  COHORT_INTAKE_MOUTH,
+  COHORT_INTAKE_REACH,
+  cohortIntakeHalfExtent,
+  makeCohortCoreMaterial,
+  makeCohortIntakeMaterial,
 } from '../../src/materials/colonyAccretion';
+import { peerSchema } from '../../src/tweaks/tweakSchema';
+import { PERFORMANCE_PROBE_LABELS } from '../../src/tweaks/performanceProbeStore';
 import {
-  makePeerCloudMaterial,
   peerCloudHitRadius,
   PEER_CLOUD_ADVERTISED_TONE,
   PEER_CLOUD_GHOST_TONE,
@@ -775,10 +767,17 @@ describe('ColonyNodes attested tier', () => {
     // ⚠️ THE TARGET IS THE MARK, AND IT HAS TO BE BIG ENOUGH TO PRESS. At
     // 0.375 world units this was the SMALLEST target in the colony, under the
     // faintest roster rung's 0.425, and a full-canvas 13-pixel hover sweep of
-    // the running app found forty peers and not one miner. It is the accretion
-    // rim now — one number, taken straight off the thing a viewer aims at.
+    // the running app found forty peers and not one miner. It comes off the
+    // cohort's CENTRE now — half that billboard's extent — which is the only
+    // face with a bounded on-screen footprint: the intake is twenty world
+    // units of volume hanging below the plane, and a target that covered it
+    // would be a wall of invisible quad in front of the colony.
     expect(ATTESTED_HIT_RADIUS).toBe(COHORT_HIT_RADIUS);
-    expect(ATTESTED_HIT_RADIUS).toBe(COHORT_RIM_R);
+    expect(ATTESTED_HIT_RADIUS).toBe(COHORT_CORE_HALF * 0.5);
+    // ⭐ …and it is 1.15 EXACTLY, the radius the accreting void's disc gave
+    // it, so re-deriving the number off a mark that still exists changed no
+    // press, no hover and no miss.
+    expect(ATTESTED_HIT_RADIUS).toBe(1.15);
     // Bigger than the 0.9 the subsumed point sprite stood, which is the floor
     // this revision was given.
     expect(ATTESTED_HIT_RADIUS).toBeGreaterThan(0.9);
@@ -790,8 +789,9 @@ describe('ColonyNodes attested tier', () => {
     for (const stop of Object.values(SIGHTED_HIT_RADII)) {
       expect(ATTESTED_HIT_RADIUS).toBeGreaterThan(stop);
     }
-    // …and it covers the whole shadow, so aiming at the hole hits it too.
-    expect(ATTESTED_HIT_RADIUS).toBeGreaterThan(COHORT_HORIZON_R);
+    // …and it stops well inside the billboard it is taken from, where the
+    // profile is still plainly lit rather than out in its own tail.
+    expect(ATTESTED_HIT_RADIUS).toBeLessThan(COHORT_CORE_HALF);
   });
 });
 
@@ -823,7 +823,8 @@ describe('the block wave reports where it started', () => {
 });
 
 
-/** A POW cohort is an aperture plus the accretion phenomenon around it. */
+/** A POW cohort is a vertical throat: an intake hanging below the colony
+ *  plane, and the centre it converges on. */
 describe('what a POW cohort looks like', () => {
   const peers = [peer('A'), peer('B')];
   const producers = [
@@ -833,13 +834,14 @@ describe('what a POW cohort looks like', () => {
   const topology = inferredTopology(
     peers, 0xc0ffee, 'ckb:local', undefined, ROSTER, undefined, producers,
   );
-  const accretionSource = () => readFileSync(
+  const throatSource = () => readFileSync(
     resolve(process.cwd(), 'src/materials/colonyAccretion.ts'),
     'utf8',
   );
   /** The exact shader strings a driver receives, not comments describing them. */
-  const accretionFragment = () => makeColonyAccretionMaterial().fragmentShader;
-  const horizonFragment = () => makeColonyHorizonMaterial().fragmentShader;
+  const intakeFragment = () => makeCohortIntakeMaterial().fragmentShader;
+  const intakeVertex = () => makeCohortIntakeMaterial().vertexShader;
+  const coreFragment = () => makeCohortCoreMaterial().fragmentShader;
 
   it('mounts a colony of cohorts inside an r3f Canvas without throwing', () => {
     expect(() => render(
@@ -849,7 +851,7 @@ describe('what a POW cohort looks like', () => {
     )).not.toThrow();
   });
 
-  it('stands one hole on every cohort the colony stages, and on nothing else', () => {
+  it('stands one throat on every cohort the colony stages, and on nothing else', () => {
     const marks = cohortAccretionMarks(topology);
     const cohorts = topology.nodes.filter((n) => n.kind === 'attested');
     expect(cohorts).toHaveLength(producers.length);
@@ -857,162 +859,229 @@ describe('what a POW cohort looks like', () => {
     for (const mark of marks) {
       expect(mark.pos).toEqual(cohorts.find((n) => n.id === mark.nodeId)?.pos);
       expect(mark.nodeId).toBe(`attested:${mark.producerKey}`);
-      // A per-cohort de-sync, so six turbulent fields do not boil on one beat.
+      // A per-cohort de-sync, so six funnels do not run their crests on one
+      // beat. It is a fraction of a TURN, which is what both faces want: the
+      // intake takes it raw as crest phase, the centre's breathe times TAU.
       expect(mark.seed).toBeGreaterThanOrEqual(0);
       expect(mark.seed).toBeLessThan(1);
     }
     expect(new Set(marks.map((m) => m.seed)).size).toBe(marks.length);
   });
 
+  it('is TWO instanced draws and no more — the intake, then the centre over it', () => {
+    const layer = source('ColonyAccretion.tsx');
+    // Two meshes, two materials, one shared quad, and both counts written from
+    // the same staged list — so a cohort cannot wear one face without the
+    // other, whichever way the plan moves.
+    expect(layer.match(/<instancedMesh/g)).toHaveLength(2);
+    expect(layer).toContain('args={[quad, intakeMaterial, capacity]}');
+    expect(layer).toContain('args={[quad, coreMaterial, capacity]}');
+    expect(layer).toContain('intakeMesh.count = marks.length;');
+    expect(layer).toContain('coreMesh.count = marks.length;');
+    // ⭐ Order, and only order: both passes are additive, so this moves no
+    // pixel. It is the composition the two faces read in — a funnel running
+    // into a point rather than a point laid across a funnel.
+    const intakeDraw = layer.indexOf('ref={intakeMeshRef}');
+    const coreDraw = layer.indexOf('ref={coreMeshRef}');
+    expect(intakeDraw).toBeGreaterThan(-1);
+    expect(coreDraw).toBeGreaterThan(intakeDraw);
+    expect(layer.indexOf('renderOrder={1}')).toBeGreaterThan(intakeDraw);
+    expect(layer.indexOf('renderOrder={1}')).toBeLessThan(coreDraw);
+    expect(layer.indexOf('renderOrder={2}')).toBeGreaterThan(coreDraw);
+    // Neither is ever a pick target; the node's own hit sphere is.
+    expect(layer.match(/raycast=\{\(\) => null\}/g)).toHaveLength(2);
+    // Each pass carries its own GPU timer label, so the march can be measured
+    // against the billboard it is drawn beside rather than mixed with it.
+    expect(PERFORMANCE_PROBE_LABELS.colonyCohortIntake).toBe('colony.cohort.intake');
+    expect(PERFORMANCE_PROBE_LABELS.colonyCohortCore).toBe('colony.cohort.core');
+    expect(layer).toContain('PERFORMANCE_PROBE_LABELS.colonyCohortIntake');
+    expect(layer).toContain('PERFORMANCE_PROBE_LABELS.colonyCohortCore');
+    expect(layer).not.toMatch(/colonyAccretion(Horizon|Disc)/);
+  });
+
   it('is drawn on NO EDGE of this colony, which is the whole of this revision', () => {
-    // ⭐⭐ The second cut planned its geometry by walking `topology.edges` and
+    // ⭐⭐ An earlier cut planned its geometry by walking `topology.edges` and
     // drawing matter along each of a cohort's own links. That says the energy
     // arrives over the network. The planner cannot reach an edge now — it
-    // walks nodes and nothing else — and the gas condenses at a world radius,
-    // in empty space, on nothing.
+    // walks nodes and nothing else — and the intake hangs in the one region of
+    // this scene where nothing whatsoever is drawn: below the colony slab.
     const layer = source('ColonyAccretion.tsx');
     expect(layer).not.toContain('topology.edges');
     expect(layer).not.toContain('lineSegments');
     expect(layer).toContain("if (node.kind !== 'attested') continue;");
-    // Born well outside the rim, and swallowed well inside the horizon.
-    expect(COHORT_GAS_BIRTH_R).toBeGreaterThan(COHORT_RIM_R * 2);
-    expect(COHORT_THROAT_R).toBeLessThan(COHORT_HORIZON_R);
-    // …and the billboard is sized from the outermost feature rather than
-    // picked, so the gas never meets a rectangular clip at its outer fade.
-    expect(COHORT_MARK_HALF_EXTENT)
-      .toBeGreaterThanOrEqual(COHORT_GAS_BIRTH_R * 1.05);
+    // The volume is a body of revolution about the colony's own Y, hanging
+    // BELOW its throat: the fragment's height coordinate is negative-y, and it
+    // is exactly zero outside the slab it reaches through.
+    expect(intakeFragment()).toContain('float h = -rel.y / uReach;');
+    expect(intakeFragment()).toContain('if (h < 0.0 || h > 1.0) return 0.0;');
+    expect(COHORT_INTAKE_REACH).toBeGreaterThan(COHORT_INTAKE_MOUTH);
   });
 
-  it('softens light into a gravity depression before adding the phenomenon', () => {
-    const horizon = makeColonyHorizonMaterial();
-    const accretion = makeColonyAccretionMaterial();
-    expect(horizon.blending).toBe(THREE.NormalBlending);
-    expect(horizon.depthWrite).toBe(false);
-    expect(horizonFragment()).toContain('smoothstep(0.0, uHorizon * 0.98, rw)');
-    expect(horizonFragment()).toContain('core * 0.70');
-    expect(horizonFragment()).toContain('pupil * 0.12');
-    expect(horizonFragment()).toContain('well * 0.08');
-    expect(horizonFragment()).not.toContain('core * 0.965');
-    expect(horizonFragment()).toContain('gl_FragColor = vec4(uVoidColor, alpha);');
-    expect(COHORT_SHADOW_HALF_EXTENT).toBeGreaterThan(COHORT_HORIZON_R);
-
-    expect(accretion.blending).toBe(THREE.AdditiveBlending);
-    expect(accretionFragment()).toContain('float horizon = smoothstep(');
-    expect(accretionFragment()).toContain('float amp = (cold + hot) * horizon * edge;');
+  it('is ADDITIVE on both faces, so the layer has no second blend mode left', () => {
+    // ⚠️⚠️ THIS IS THE REGISTER VIOLATION THAT COST THE OLD MARK ITS PLACE IN
+    // THE MESH. What this replaced drew a normal-blended optical depression —
+    // the scene's only non-additive object, its only dark one, its only
+    // textured one (the whole scene's sole `fbm`), its only oriented one and
+    // its only screen-locked one. All five went together.
+    const intake = makeCohortIntakeMaterial();
+    const core = makeCohortCoreMaterial();
+    for (const material of [intake, core]) {
+      expect(material.blending).toBe(THREE.AdditiveBlending);
+      expect(material.transparent).toBe(true);
+      expect(material.depthTest).toBe(true);
+      expect(material.depthWrite).toBe(false);
+      expect(material.toneMapped).toBe(false);
+    }
     const layer = source('ColonyAccretion.tsx');
-    expect(layer).toContain('makeColonyHorizonMaterial()');
-    expect(layer).toContain('renderOrder={1}');
-    expect(layer).toContain('renderOrder={2}');
+    const material = throatSource();
+    expect(layer).not.toContain('NormalBlending');
+    expect(material).not.toContain('NormalBlending');
+    // …and nothing left in the file can paint one: no void tint to blend
+    // toward, and no noise volume to texture it with. (The file's prose still
+    // NAMES the violations it retired, which is why this reads the compiled
+    // programs and the GLSL definitions rather than the whole text.)
+    expect(material).not.toContain('uVoidColor');
+    expect(material).not.toContain('float fbm3(');
+    expect(material).not.toContain('float valueNoise3(');
+    for (const glsl of [intakeFragment(), coreFragment(), intakeVertex()]) {
+      expect(glsl).not.toMatch(/fbm|valueNoise|hash31/);
+    }
+    // Both faces end on the same additive contract: colour scaled by the
+    // amplitude, context energy in RGB only so scene-focus damping stays
+    // linear under a blend factor that is the source alpha.
+    expect(intakeFragment())
+      .toContain('gl_FragColor = vec4(uColor * amp * uContextEnergy, amp);');
+    expect(coreFragment())
+      .toContain('gl_FragColor = vec4(uColor * shape * uContextEnergy, shape);');
   });
 
-  it('has a tilted asymmetric disc, photon ring and gravitational lensing arcs', () => {
-    const fragment = accretionFragment();
-    expect(COHORT_DISC_FLATTEN).toBeLessThan(0.5);
-    // The aperture was deliberately tightened while the photon ring received
-    // its own wider band: the centre reads smaller without making the whole
-    // cohort or its white boundary disappear at colony scale.
-    expect(COHORT_HORIZON_R).toBeLessThanOrEqual(0.26);
-    expect(COHORT_HORIZON_R / COHORT_RIM_R).toBeLessThan(0.25);
-    expect(COHORT_PHOTON_SIGMA / COHORT_HORIZON_R).toBeGreaterThan(0.75);
-    expect(COHORT_RIM_SIGMA / COHORT_RIM_R).toBeGreaterThan(0.25);
-    expect(fragment).toContain('vec2 discQ = vec2(discP.x, discP.y / max(uDiscFlatten, 0.08));');
-    expect(fragment).toContain('float approaching = pow(');
-    expect(fragment).toContain('float photon = gaussian(');
-    expect(fragment).toContain('uPhotonSigma');
-    expect(fragment).toContain('float lens = gaussian(');
-    expect(fragment).toContain('mix(uColor, uHotColor, uPhotonWhiteMix)');
-    expect(fragment).toContain('- uTime * uSpin * TAU');
-    expect(fragment).toContain('vSeed * TAU');
+  it('leaves the throat UNLIT rather than painting it dark', () => {
+    // ⭐ The darkness at the convergence is bright structure declining to fill
+    // — this scene's own additive idiom for a hole. `smoothstep(0, uRefuse, r)`
+    // takes the centre's profile to EXACTLY zero on the axis, so no dark pixel
+    // is drawn anywhere and nothing behind the mark is removed. The accepted
+    // cost, stated when the depression went: nothing behind a cohort is
+    // occluded any more.
+    expect(coreFragment())
+      .toContain('float refuse = smoothstep(0.0, max(uRefuse, 0.001), r);');
+    expect(coreFragment())
+      .toContain('float shape = (core + halo) * refuse * uAmp * breathe;');
+    const core = makeCohortCoreMaterial();
+    expect(core.uniforms.uRefuse.value).toBeGreaterThan(0);
+    // The intake converges on the same point and does not fill it either: its
+    // density carries a throat fade that is zero at h = 0.
+    expect(intakeFragment())
+      .toContain('float throatFade = smoothstep(0.0, 0.10, h);');
+    expect(intakeFragment())
+      .toContain('return radial * crest * gather * mouthFade * throatFade;');
   });
 
-  it('rests in the peer mesh visual language without losing its aperture', () => {
-    const accretion = makeColonyAccretionMaterial();
-    const fragment = accretion.fragmentShader;
-    const peerFragment = makePeerCloudMaterial().fragmentShader;
-
-    // Same soft cyan skirt as an ordinary peer node, rather than a broad
-    // Gaussian aura that makes the cohort look composited over the mesh.
-    expect(peerFragment).toContain('pow(1.0 - r, 1.6) * 0.42');
-    expect(fragment).toContain('pow(1.0 - haloR, 1.6) * 0.42');
-    expect(fragment).not.toContain('exp(\n          -(rw * rw)');
-    expect(accretion.uniforms.uMeshHaloAmp.value).toBe(COHORT_MESH_HALO_AMP);
-
-    // A common cadence ties the layers together; the shallower cohort depth
-    // keeps its continuous accretion from competing with measured peers.
-    expect(accretion.uniforms.uBreatheHz.value).toBe(COHORT_BREATHE_HZ);
-    expect(COHORT_BREATHE_HZ).toBe(1.2);
-    expect(COHORT_BREATHE_DEPTH).toBeLessThan(0.15);
-    expect(fragment).toContain('uTime * uBreatheHz + vSeed * TAU');
-
-    // Cold white is retained as a crest, not as an always-on event colour.
-    expect(accretion.uniforms.uPhotonWhiteMix.value)
-      .toBe(COHORT_PHOTON_WHITE_MIX);
-    expect(COHORT_PHOTON_WHITE_MIX).toBeGreaterThan(0.5);
-    expect(COHORT_PHOTON_WHITE_MIX).toBeLessThan(0.75);
+  it('hands BOTH quads a unit plane, because the extent rides a uniform', () => {
+    // ⚠️⚠️ A hand-built billboard IGNORES `mesh.scale`. Both vertex programs
+    // rebuild their quad from raw `position` and the camera axes, which no
+    // model matrix ever touches — so a scale on the mesh or on the instance
+    // matrix is silently dropped and the world extent has to ride `uHalf`.
+    // The two materials this layer used to draw did the opposite, baking their
+    // extent into `PlaneGeometry(half * 2, half * 2)`; a quad carried over
+    // from that habit renders the intake 3.7x too big. (It cost a full lab
+    // round, and it hit both materials at once.)
+    const layer = source('ColonyAccretion.tsx');
+    expect(layer.match(/new THREE\.PlaneGeometry\([^)]*\)/g))
+      .toEqual(['new THREE.PlaneGeometry(1, 1)']);
+    expect(layer).toContain('const quad = useMemo(() => new THREE.PlaneGeometry(1, 1), []);');
+    // ⭐ ONE geometry, TWO extents, five world units apart — which is what
+    // makes the rule structural rather than remembered: there is no geometry
+    // in this layer that could carry an extent, right or wrong.
+    expect(makeCohortIntakeMaterial().uniforms.uHalf.value)
+      .toBe(COHORT_INTAKE_HALF_EXTENT);
+    expect(makeCohortCoreMaterial().uniforms.uHalf.value).toBe(COHORT_CORE_HALF);
+    expect(COHORT_INTAKE_HALF_EXTENT).toBeCloseTo(11.6619, 4);
+    expect(COHORT_CORE_HALF).toBe(2.3);
+    for (const stage of [intakeVertex(), makeCohortCoreMaterial().vertexShader]) {
+      expect(stage).toContain('uniform float uHalf;');
+      expect(stage).toContain('* uHalf * 2.0');
+    }
   });
 
-  it('disturbs an energy field and advects continuous gas inward without spiral lanes', () => {
-    const material = makeColonyAccretionMaterial();
-    const fragment = material.fragmentShader;
-
-    expect(material.uniforms.uGasAmp.value).toBe(COHORT_GAS_AMP);
-    expect(material.uniforms.uFieldAmp.value).toBe(COHORT_FIELD_AMP);
-    expect(fragment).toContain('float valueNoise3(vec3 p)');
-    expect(fragment).toContain('float fbm3(vec3 p)');
-    expect(fragment).toContain('float fieldRidges = 1.0 - smoothstep(');
-    expect(fragment).toContain('float fieldBreakup = smoothstep(');
-    expect(fragment).toContain('float disturbance = fieldRidges');
-    expect(fragment).toContain('float flowTravel = pow(gasRadial, uEase);');
-    expect(fragment).toContain(
-      'float flowPhase = flowTravel * 5.2 + uTime * rate * 1.16;',
-    );
-    expect(fragment).toContain('vec2 gasPlane = fieldP * 3.7');
-    expect(fragment).not.toContain('gravityBacktrace');
-    expect(fragment).toContain('float gasBody = smoothstep(');
-    expect(fragment).toContain('float gasWisps = pow(');
-    expect(fragment).toContain('float gasWindow = smoothstep(');
-    expect(fragment).toContain('float absorptionHeat = gaussian(');
-    expect(fragment).toContain('float gasHeat = gas * (');
-
-    // No independently positioned body, angular lane or radius-to-angle map
-    // remains. Gas back-traces through Cartesian noise, so it can billow and
-    // collapse but cannot settle into a family of neat orbit curves.
-    expect(fragment).not.toContain('const int MOTES');
-    expect(fragment).not.toContain('vec2 centre =');
-    expect(fragment).not.toContain('tailGate');
-    expect(fragment).not.toContain('spiralAngle');
-    expect(fragment).not.toContain('polarAngle');
-    expect(fragment).not.toContain('gasAngle');
-    expect(fragment).not.toContain('uSwirl');
-    expect(fragment).not.toMatch(/for\s*\(int\s+k/);
+  it('gives every live knob a uniform, and re-derives the proxy from the two that size it', () => {
+    const layer = source('ColonyAccretion.tsx');
+    // The retired accreting-void channel is gone from both the schema and the
+    // frame loop; nothing reads a knob that no longer has a material.
+    for (const retired of ['holeRim', 'holeGas', 'holeField', 'holeInfall', 'holeSpin']) {
+      expect(peerSchema).not.toHaveProperty(retired);
+      expect(layer).not.toContain(`LIVE.peer.${retired}`);
+    }
+    const knobs = [
+      'cohortReach', 'cohortMouth', 'cohortAmp', 'cohortDensity',
+      'cohortCrests', 'cohortRate', 'cohortGather', 'cohortCoreAmp',
+    ] as const;
+    for (const knob of knobs) {
+      expect(peerSchema, knob).toHaveProperty(knob);
+      expect(layer, knob).toContain(`LIVE.peer.${knob}`);
+    }
+    // ⚠️ `uHalf` IS NOT AN INDEPENDENT NUMBER. It is the bounding-sphere
+    // radius of a cylinder of radius `mouth` and height `reach`, so a knob
+    // that grew either one while the proxy stayed put would crop the funnel
+    // against its own quad — the ray clip inside stays exact, but the pixels
+    // carrying the far side of the mouth would never be rasterised to run it.
+    expect(layer).toContain('intake.uHalf.value = cohortIntakeHalfExtent(mouth, reach);');
+    expect(cohortIntakeHalfExtent(COHORT_INTAKE_MOUTH, COHORT_INTAKE_REACH))
+      .toBe(COHORT_INTAKE_HALF_EXTENT);
+    expect(cohortIntakeHalfExtent(12, 40)).toBeCloseTo(Math.hypot(12, 20), 12);
+    // ⭐ `cohortDensity` is the CREST-CONTRAST knob and the first one a tuner
+    // reaches for, so its range has to span the region contrast actually
+    // moves through — measured 2.5:1 near 0.25, falling monotonically to 1:1
+    // as the medium goes opaque.
+    expect(peerSchema.cohortDensity.min).toBeLessThanOrEqual(0.15);
+    expect(peerSchema.cohortDensity.max).toBeGreaterThanOrEqual(2);
+    // ⚠️⚠️ AND THE CENTRE'S KNOB MAY NOT REACH A CLIPPED MARK. Additive
+    // blending hands the screen `uColor * shape²`; the scaffold cyan's blue is
+    // exactly full, and the centre's analytic ceiling is `amp * 1.42` — so at
+    // `amp = 1/1.42` the mark's structure vanishes inside a flat blob. R16
+    // spent a whole live leg finding that out from the far side.
+    expect(peerSchema.cohortCoreAmp.value).toBe(COHORT_CORE_AMP);
+    expect(peerSchema.cohortCoreAmp.max).toBeLessThan(1 / 1.42);
   });
 
   it('cannot be mistaken for the canopy contact wave, and structurally cannot become one', () => {
-    // ⚠️⚠️ The nearest thing on stage to "a ring around a point" is the Cell
+    // ⚠️⚠️ The nearest thing on stage to "a form around a point" is the Cell
     // canopy's block contact wave, which draws expanding pale ellipses across
     // the tissue. The load-bearing difference is the RADIUS: that one grows
     // from its own age and this one never grows at all.
-    const fragment = accretionFragment();
-    // Every extent remains a uniform constant; time reaches disc and gas-flow
-    // phases but never writes or rescales one of those extents.
-    expect(fragment).not.toMatch(/u(?:Rim|Horizon|Half|Birth)\s*[+*/-]?=/);
-    expect(fragment).toContain('float discBand = gaussian(discRadius - rimRadius, uRimSigma);');
+    const fragment = intakeFragment();
+    // Every extent is a uniform; the clock reaches crest phase and swirl and
+    // never writes or rescales one of them.
+    expect(fragment).not.toMatch(/u(?:Reach|Mouth|Half|ThroatR)\s*[+*/-]?=/);
+    const layer = source('ColonyAccretion.tsx');
+    // …and on the CPU side the three size uniforms are written from knobs
+    // only. A clock in one of these lines is how a mark starts to breathe in
+    // size, which is the wave's whole grammar and never this one's.
+    const sizeWrites = layer
+      .split('\n')
+      .filter((line) => /\bu(?:Reach|Mouth|Half)\.value/.test(line))
+      .map((line) => line.trim());
+    expect(sizeWrites).toEqual([
+      'intake.uReach.value = reach;',
+      'intake.uMouth.value = mouth;',
+      'intake.uHalf.value = cohortIntakeHalfExtent(mouth, reach);',
+    ]);
+    // …and the two the third is derived from come from knobs, not a clock.
+    expect(layer).toContain('const reach = LIVE.peer.cohortReach;');
+    expect(layer).toContain('const mouth = LIVE.peer.cohortMouth;');
+    for (const line of sizeWrites) {
+      expect(line).not.toMatch(/elapsed|simClock|performance\.now|Date\.now/);
+    }
     // ⭐ The contact wave grows because its OWNER rescales every instance from
     // the front's age, once a frame. This layer writes a translation and never
     // a scale, so there is no arrangement of it that expands.
     expect(source('BlockDeliveryLayer.tsx'))
       .toContain('const extent = crestRadius / CONTACT_WAVE_CREST_UV;');
-    const layer = source('ColonyAccretion.tsx');
     expect(layer).toContain('SCRATCH_MATRIX.makeTranslation(');
     expect(layer).not.toMatch(/makeScale|\.scale\.set|setScalar/);
-    // …and it is compact against a front that crosses
-    // the canopy.
-    expect(COHORT_RIM_R * 2).toBeLessThan(2.4);
-    expect(COHORT_GAS_BIRTH_R).toBeLessThan(3.5);
   });
 
   it('cannot be mistaken for a courier glint either', () => {
-    const material = accretionSource();
+    const material = throatSource();
     const layer = source('ColonyAccretion.tsx');
     const courier = source('ColonyCourierLayer.tsx');
     // A courier is a billboarded bloom plus a comet plume, fired ONCE per
@@ -1033,9 +1102,10 @@ describe('what a POW cohort looks like', () => {
     // six of them discharging on a block exactly one of them won.
     const layer = source('ColonyAccretion.tsx');
     // The compiled GLSL, not the comment above it that says so.
-    expect(accretionFragment()).not.toMatch(/[Ss]hockwave/i);
+    expect(intakeFragment()).not.toMatch(/[Ss]hockwave/i);
+    expect(coreFragment()).not.toMatch(/[Ss]hockwave/i);
     // …and nothing in either file can import one.
-    expect(accretionSource()).not.toMatch(/^import .*shockwave/im);
+    expect(throatSource()).not.toMatch(/^import .*shockwave/im);
     expect(layer).not.toMatch(/shockwaveMaterial|shockwaveUniforms/);
   });
 
@@ -1059,26 +1129,30 @@ describe('what a POW cohort looks like', () => {
   });
 
   it('says the share as a RATE and never a second time as size or light', () => {
-    // ⭐ A cohort holding more of the window pulls its gas in FASTER; every
-    // rim is the same radius and light and every gas field the same density,
-    // whoever it belongs to. Saying the share twice would say one fact twice
-    // — and would make a cohort with four blocks look like a rounding error
-    // rather than one that made four blocks, which is why the rate has a floor
-    // rather than reaching zero.
-    const fragment = accretionFragment();
-    const rate = fragment.slice(fragment.indexOf('float rate = uInfall'));
-    expect(rate.replace(/\s+/g, ' '))
-      .toContain('mix( uInfallFloor, 1.0, clamp(vShare, 0.0, 1.0) )');
-    // vShare reaches the rate and nothing else: not an amplitude, not a radius.
-    expect(fragment.match(/vShare/g)).toHaveLength(2); // 1 declaration, 1 read
-    for (const statement of fragment.split(';')) {
-      if (!statement.includes('vShare') || statement.includes('varying')) continue;
-      expect([statement.trim().slice(0, 60), statement.includes('uInfall')])
+    // ⭐ A cohort holding more of the window runs its crests FASTER; every
+    // funnel is the same size and the same brightness, whoever it belongs to.
+    // Saying the share twice would say one fact twice — and would make a
+    // cohort with four blocks look like a rounding error rather than one that
+    // made four blocks, which is why the rate has a floor rather than reaching
+    // zero.
+    const vertex = intakeVertex();
+    expect(vertex)
+      .toContain('vRateScale = mix(uRateFloor, 1.0, clamp(aShare, 0.0, 1.0));');
+    // aShare reaches the rate scale and nothing else: 1 declaration, 1 read.
+    expect(vertex.match(/aShare/g)).toHaveLength(2);
+    for (const statement of vertex.split(';')) {
+      if (!statement.includes('aShare') || statement.includes('attribute')) continue;
+      expect([statement.trim().slice(0, 60), statement.includes('uRateFloor')])
         .toEqual([statement.trim().slice(0, 60), true]);
     }
+    // …and on the far side, the varying reaches the crest PHASE and nothing
+    // else: not an amplitude, not a radius, not a step count.
+    const fragment = intakeFragment();
+    expect(fragment.match(/vRateScale/g)).toHaveLength(2);
+    expect(fragment).toContain('+ uTime * uRate * vRateScale');
   });
 
-  it('reads no standing at all in its plan, so a window that moved cannot move a hole', () => {
+  it('reads no standing at all in its plan, so a window that moved cannot move a throat', () => {
     // ⭐⭐ THE SPLIT THAT KEEPS THE GEOMETRY STILL. A cohort's blocks and share
     // change on EVERY block while its key, its placement and its seed do not,
     // so a plan that read the window would rewrite this layer's instance
@@ -1112,9 +1186,9 @@ describe('what a POW cohort looks like', () => {
     held.rerender({ list: after });
     expect(held.result.current).toBe(before);
 
-    // ⚠️ …and a hole whose NODE MOVED must break it. A reseed keeps every id
+    // ⚠️ …and a throat whose NODE MOVED must break it. A reseed keeps every id
     // while moving every point, so a test on ids alone would call an entirely
-    // rearranged colony unchanged and leave these holes hanging in the space
+    // rearranged colony unchanged and leave these funnels hanging in the space
     // the old one used to occupy.
     const [mark] = before;
     expect(sameCohortMark(mark, { ...mark, pos: [...mark.pos] as Vec3 })).toBe(true);
@@ -1155,9 +1229,17 @@ describe('what a POW cohort looks like', () => {
     // basis for a rotation to have to undo.
     expect(source('ColonyAccretion.tsx')).not.toContain('colonyFrame');
     expect(source('ColonyCourierLayer.tsx')).toContain('colonyFrame.rotationY');
-    const material = accretionSource();
+    const material = throatSource();
     expect(material).toContain('viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]');
     expect(source('ColonyAccretion.tsx')).toContain('SCRATCH_MATRIX.makeTranslation(');
     expect(source('ColonyAccretion.tsx')).not.toContain('SCRATCH_MATRIX.makeScale(');
+    // ⭐ AND THE FUNNEL'S AXIS IS THE COLONY'S OWN. The throat is read off the
+    // instance origin in the VERTEX shader, on whatever frame the GPU is
+    // drawing, so the volume parallaxes and turns with the colony for free and
+    // a CPU-written origin can never lag behind the rotation.
+    expect(intakeVertex()).toContain(
+      'vec4 anchor = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);',
+    );
+    expect(Object.keys(makeCohortIntakeMaterial().uniforms)).not.toContain('uOrigin');
   });
 });

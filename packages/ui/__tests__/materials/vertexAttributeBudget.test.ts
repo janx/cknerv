@@ -21,8 +21,8 @@ import {
 import { makeHaloMaterial } from '../../src/components/GlowNode';
 import { makeColonyEdgeMaterial } from '../../src/components/ColonyEdges';
 import {
-  makeColonyAccretionMaterial,
-  makeColonyHorizonMaterial,
+  makeCohortCoreMaterial,
+  makeCohortIntakeMaterial,
 } from '../../src/materials/colonyAccretion';
 import {
   makeCanonicalRewriteEchoMaterial,
@@ -298,17 +298,20 @@ const ROWS: readonly BudgetRow[] = [
     material: makeColonyEdgeMaterial,
   },
   {
-    name: 'colonyAccretionMaterial',
+    name: 'cohortIntakeMaterial',
     sources: ['src/materials/colonyAccretion.ts'],
-    material: makeColonyAccretionMaterial,
-    // The luminous pass pays the mat4 plus its seed and live-share lanes.
+    material: makeCohortIntakeMaterial,
+    // The marched volume pays the mat4 plus its seed and live-share lanes.
     usage: { instanced: true },
   },
   {
-    name: 'colonyHorizonMaterial',
+    name: 'cohortCoreMaterial',
     sources: ['src/materials/colonyAccretion.ts'],
-    material: makeColonyHorizonMaterial,
-    // The aperture shares the instance positions but needs no custom lane.
+    material: makeCohortCoreMaterial,
+    // The centre shares the intake's instance positions and its seed lane —
+    // consumed differently, in radians rather than turns — and declares no
+    // share of its own, because a cohort's share moves crest speed and the
+    // centre has no crests.
     usage: { instanced: true },
   },
   {
@@ -465,18 +468,22 @@ describe('vertex attribute budget', () => {
   it('charges the mining channel its own row, and leaves the edge program alone', () => {
     // ⚠️ THE MINING CHANNEL IS ITS OWN PROGRAM. The row it replaced was a
     // `lineSegments` over the cohorts' own links at 5 custom + 3 injected = 8;
-    // this one is an InstancedMesh, so it pays two lanes plus the mat4 three
-    // injects for instancing. Stated as exact numbers so a third lane is a
-    // deliberate edit rather than a drift only the browser console would
-    // report — and the two lanes are split by WRITE CADENCE rather than packed
-    // into a vec2, because `aSeed` moves when the staged set does and `aShare`
-    // on every attributed block.
-    const light = measured.find(({ name }) => name === 'colonyAccretionMaterial');
-    const aperture = measured.find(({ name }) => name === 'colonyHorizonMaterial');
-    expect(light).toBeDefined();
-    expect(aperture).toBeDefined();
-    expect([light?.custom, light?.injected, light?.total]).toEqual([2, 7, 9]);
-    expect([aperture?.custom, aperture?.injected, aperture?.total]).toEqual([0, 7, 7]);
+    // these two are InstancedMeshes, so each pays its lanes plus the mat4
+    // three injects for instancing. Stated as exact numbers so a third lane is
+    // a deliberate edit rather than a drift only the browser console would
+    // report — and the intake's two lanes are split by WRITE CADENCE rather
+    // than packed into a vec2, because `aSeed` moves when the staged set does
+    // and `aShare` on every attributed block.
+    const intake = measured.find(({ name }) => name === 'cohortIntakeMaterial');
+    const core = measured.find(({ name }) => name === 'cohortCoreMaterial');
+    expect(intake).toBeDefined();
+    expect(core).toBeDefined();
+    expect([intake?.custom, intake?.injected, intake?.total]).toEqual([2, 7, 9]);
+    // ⭐ The centre is one lane cheaper because share has nothing to say to
+    // it: a cohort's share is crest speed, and the centre has no crests.
+    expect([core?.custom, core?.injected, core?.total]).toEqual([1, 7, 8]);
+    expect(intake?.names).toEqual(['aSeed', 'aShare']);
+    expect(core?.names).toEqual(['aSeed']);
   });
 
   it('keeps the colony edge program exactly where it was', () => {

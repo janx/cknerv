@@ -1,20 +1,22 @@
-// ColonyAccretion — what a POW cohort looks like: an accreting void.
+// ColonyAccretion — what a POW cohort looks like: a vertical throat.
 //
-// A tiny light-removing gravity throat sits under a thick cyan-white photon
-// collar, peer-profile halo, lensed accretion disc, turbulent field caustics,
-// and continuous gas collapsing inward from the surrounding void.
-// It runs continuously for as long as the payout identity is in the recent
-// window. On the block it wins, the colony's own outward surge already erupts
-// from that node, so nothing here fires and nothing here reads the pulse.
+// Energy enters from BELOW the colony slab, continuously, as an analytic
+// volume marched in the shader, and converges on a centre that is an ordinary
+// peer stop with its own middle refused. The block leaves above and outward,
+// briefly — and this layer does not draw that at all. It runs for as long as
+// the payout identity is in the recent window. On the block it wins, the
+// colony's own outward surge already erupts from that node, so nothing here
+// fires and nothing here reads the pulse.
 //
-// The whole design argument — why the aperture and light need separate passes,
-// and how this differs from the Cell canopy's contact wave — lives in
-// `materials/colonyAccretion`. Read it before touching either.
+// The whole design argument — why the intake is a marched volume rather than
+// shells or particles, why it accumulates optical depth instead of emission,
+// and why the centre is deliberately not the brightest pixel on stage — lives
+// in `materials/colonyAccretion`. Read it before touching either face.
 //
 // This file owns the two things that cannot live in a material:
 //   • WHICH nodes wear one — `cohortAccretionMarks`, pure and exported, one
 //     mark per attested node, carrying its placement and a stable per-cohort
-//     seed so no two fields boil or breathe on the same beat;
+//     seed so no two throats run their crests on the same beat;
 //   • the live SHARE, which moves on every attributed block and must never be
 //     allowed to move the geometry with it.
 //
@@ -35,17 +37,16 @@ import type { NetworkTopology, Vec3 } from '../types';
 import type { ProducerStanding } from '../derives/blockProducers.derive';
 import { ATTESTED_ID_PREFIX } from '../derives/networkTopology.derive';
 import {
-  COHORT_MARK_HALF_EXTENT,
-  COHORT_SHADOW_HALF_EXTENT,
-  makeColonyAccretionMaterial,
-  makeColonyHorizonMaterial,
+  cohortIntakeHalfExtent,
+  makeCohortCoreMaterial,
+  makeCohortIntakeMaterial,
 } from '../materials/colonyAccretion';
 import { useStableList } from './ColonyNodes';
 import { PERFORMANCE_PROBE_LABELS } from '../tweaks/performanceProbeStore';
 import { createGpuProbeCallbacks } from '../tweaks/gpuTimerQuery';
 import { createNonEmptyDrawGpuProbeCallbacks } from '../tweaks/nonEmptyGpuProbeCallbacks';
 
-/** Ceiling on the holes this layer will draw at once.
+/** Ceiling on the throats this layer will draw at once.
  *
  *  ⚠️ A SAFETY VALVE AND NOT A BUDGET. The count is bounded twice over already
  *  — a rolling window holds a handful of distinct payout identities, and the
@@ -56,17 +57,19 @@ import { createNonEmptyDrawGpuProbeCallbacks } from '../tweaks/nonEmptyGpuProbeC
  *  dropped deterministically (the tail of the staged list) and warned once. */
 export const COHORT_MARK_CAP = 64;
 
-/** One cohort's mark: where the hole stands, and what makes it its own. */
+/** One cohort's mark: where the throat stands, and what makes it its own. */
 export interface CohortMark {
-  /** The payout key this hole belongs to. The live share is looked up by it. */
+  /** The payout key this throat belongs to. The live share is looked up by it. */
   readonly producerKey: string;
   /** The cohort's graph id — `attested:<key>`. */
   readonly nodeId: string;
   /** Where it stands, in colony-frame coordinates. */
   readonly pos: Vec3;
   /** Per-cohort de-sync in [0,1), a stable hash of the payout key. Without it
-   *  every hole in the colony would boil on the same beat and six of them would
-   *  read as one animation stamped six times. */
+   *  every throat in the colony would run its crests on the same beat and six
+   *  of them would read as one animation stamped six times. It is a fraction
+   *  of a TURN, and both faces consume it: the intake takes it raw as crest
+   *  phase, the centre's breathe takes it in radians. */
   readonly seed: number;
 }
 
@@ -108,14 +111,14 @@ function samePoint(a: Vec3, b: Vec3): boolean {
   return a === b || (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]);
 }
 
-/** Whether two marks describe the same hole standing in the same place.
+/** Whether two marks describe the same throat standing in the same place.
  *
  *  ⚠️ IT COMPARES THE POSITION AND NOT ONLY THE ID, which is the trap the ghost
  *  cloud names on its own held list: a RESEED keeps every `inf:n` id while
  *  moving every point, so an id-only test would call an entirely rearranged
- *  colony unchanged and leave these holes hanging in the space the old one used
- *  to occupy. Every position here is a pure hash of the key under a seed, so a
- *  value test costs three comparisons and is exact in both directions. */
+ *  colony unchanged and leave these throats hanging in the space the old one
+ *  used to occupy. Every position here is a pure hash of the key under a seed,
+ *  so a value test costs three comparisons and is exact in both directions. */
 export function sameCohortMark(a: CohortMark, b: CohortMark): boolean {
   return a.nodeId === b.nodeId && samePoint(a.pos, b.pos);
 }
@@ -136,9 +139,10 @@ export interface ProducerSharesRef {
 
 /** Fill the share lane: one entry per staged mark, looked up by payout key.
  *
- *  A cohort the view has dropped keeps eating at the floor rate rather than
- *  stopping: its node is still standing, and a hole that had gone still would
- *  say the machines behind it had. The next topology rebuild retires both.
+ *  A cohort the view has dropped keeps running at the floor rate rather than
+ *  stopping: its node is still standing, and a throat that had gone still
+ *  would say the machines behind it had. The next topology rebuild retires
+ *  both.
  *  Pure, so the lane's contents can be pinned without a renderer. */
 export function cohortShareLane(
   marks: readonly CohortMark[],
@@ -153,13 +157,13 @@ export function cohortShareLane(
 }
 
 /**
- * Every cohort's accreting void, in two instanced draws.
+ * Every cohort's throat, in two instanced draws.
  *
- * The compact normal-blended pass makes the gravity depression able to soften
- * the mesh behind it; the larger additive pass supplies the photon ring, disc,
- * lensing arcs, disturbed energy field and gaseous infall. Both are
- * camera-facing and rebuilt in the vertex shader, so per-frame CPU work remains
- * a handful of uniform writes.
+ * The intake is the raymarched volume hanging below the node (`renderOrder` 1);
+ * the centre is a camera-facing billboard on the node itself (`renderOrder` 2),
+ * drawn after it so the convergence composites over the funnel that runs into
+ * it rather than under it. Both are additive, both rebuild their quad in the
+ * vertex shader, and per-frame CPU work stays a handful of uniform writes.
  */
 export default function ColonyAccretion({
   topology,
@@ -168,7 +172,7 @@ export default function ColonyAccretion({
 }: {
   topology: NetworkTopology;
   /** ⭐⭐ THE LIVE WINDOW, and the only thing here allowed to say how fast a
-   *  hole eats. The staged node carries the standing it had at the last KEY-SET
+   *  throat runs. The staged node carries the standing it had at the last KEY-SET
    *  change, because that is what the topology memo is keyed on and it must be.
    *  So the node is identity and placement; this is the share. Optional: a
    *  scene with no cohorts, a devnet that has not mined and a caller that never
@@ -181,8 +185,8 @@ export default function ColonyAccretion({
   const simClock = useSimClock();
   const plan = useMemo(() => cohortAccretionMarks(topology), [topology]);
   const marks = useStableList(plan, sameCohortMark);
-  const horizonMeshRef = useRef<THREE.InstancedMesh>(null);
-  const accretionMeshRef = useRef<THREE.InstancedMesh>(null);
+  const intakeMeshRef = useRef<THREE.InstancedMesh>(null);
+  const coreMeshRef = useRef<THREE.InstancedMesh>(null);
   const cappedLogged = useRef(false);
   useEffect(() => {
     if (marks.length < COHORT_MARK_CAP || cappedLogged.current) return;
@@ -192,33 +196,33 @@ export default function ColonyAccretion({
     );
   }, [marks]);
 
-  const horizonGeometry = useMemo(
-    () => new THREE.PlaneGeometry(
-      COHORT_SHADOW_HALF_EXTENT * 2,
-      COHORT_SHADOW_HALF_EXTENT * 2,
-    ),
-    [],
-  );
-  const accretionGeometry = useMemo(
-    () => new THREE.PlaneGeometry(
-      COHORT_MARK_HALF_EXTENT * 2,
-      COHORT_MARK_HALF_EXTENT * 2,
-    ),
-    [],
-  );
+  // ⚠️⚠️ ONE `PlaneGeometry(1, 1)`, SHARED BY BOTH DRAWS, AND NOT A DETAIL.
+  // Each vertex program rebuilds its quad from raw `position` and the camera
+  // axes, which no model matrix ever touches — so a scale on the mesh or on
+  // the instance matrix is silently ignored, and the world extent has to ride
+  // each material's own `uHalf` UNIFORM instead. The two materials this layer
+  // used to draw did the opposite, baking their extent into
+  // `PlaneGeometry(half * 2, half * 2)`, so a quad carried over from that
+  // habit renders the intake 3.7x too big. Sharing ONE unit plane between two
+  // draws of very different sizes — 11.662 world units and 2.3 — is what makes
+  // the rule structural instead of remembered: there is no geometry here that
+  // could carry an extent, right or wrong.
+  const quad = useMemo(() => new THREE.PlaneGeometry(1, 1), []);
   // Memoized on [] (stable for the component's life) so a plan rebuild never
   // forces a shader recompile; disposed on unmount only, for the same reason.
-  const horizonMaterial = useMemo(() => makeColonyHorizonMaterial(), []);
-  const accretionMaterial = useMemo(() => makeColonyAccretionMaterial(), []);
+  const intakeMaterial = useMemo(() => makeCohortIntakeMaterial(), []);
+  const coreMaterial = useMemo(() => makeCohortCoreMaterial(), []);
   // True per-draw GPU timings for the two instanced passes when the opt-in
   // render probe owns a timer-query context; a boolean gate otherwise, and no
-  // query while no cohort stands (the layer unmounts then anyway).
-  const accretionGpuProbes = useMemo(() => ({
-    horizon: createNonEmptyDrawGpuProbeCallbacks(
-      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.colonyAccretionHorizon),
+  // query while no cohort stands (the layer unmounts then anyway). ⚠️ The
+  // march is the one real perf risk on this layer — at inspection zoom the
+  // intake's proxy can fill the frame — and its own label is what says so.
+  const cohortGpuProbes = useMemo(() => ({
+    intake: createNonEmptyDrawGpuProbeCallbacks(
+      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.colonyCohortIntake),
     ),
-    disc: createNonEmptyDrawGpuProbeCallbacks(
-      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.colonyAccretionDisc),
+    core: createNonEmptyDrawGpuProbeCallbacks(
+      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.colonyCohortCore),
     ),
   }), []);
   const capacity = Math.max(1, marks.length);
@@ -234,33 +238,37 @@ export default function ColonyAccretion({
 
   // Placement and identity: written only when the staged cohort set moves.
   useEffect(() => {
-    const horizonMesh = horizonMeshRef.current;
-    const accretionMesh = accretionMeshRef.current;
-    if (!horizonMesh || !accretionMesh) return;
-    horizonMesh.count = marks.length;
-    accretionMesh.count = marks.length;
+    const intakeMesh = intakeMeshRef.current;
+    const coreMesh = coreMeshRef.current;
+    if (!intakeMesh || !coreMesh) return;
+    intakeMesh.count = marks.length;
+    coreMesh.count = marks.length;
     const seed = lanes.seed.array as Float32Array;
     marks.forEach((mark, index) => {
-      // TRANSLATION ONLY — the quad's own orientation is rebuilt from the view
-      // matrix in the shader, so a rotation here would be undone and a scale
-      // here would fight the geometry's world extent.
+      // TRANSLATION ONLY — each quad's orientation is rebuilt from the view
+      // matrix in the shader and its extent comes from a uniform, so a
+      // rotation here would be undone and a scale here ignored outright.
+      // ⭐ It is also what keeps the intake's throat exact: that vertex shader
+      // reads the instance origin AS the convergence point, so a pure
+      // translation is the whole of what the CPU has to say about placement.
       SCRATCH_MATRIX.makeTranslation(mark.pos[0], mark.pos[1], mark.pos[2]);
-      horizonMesh.setMatrixAt(index, SCRATCH_MATRIX);
-      accretionMesh.setMatrixAt(index, SCRATCH_MATRIX);
+      intakeMesh.setMatrixAt(index, SCRATCH_MATRIX);
+      coreMesh.setMatrixAt(index, SCRATCH_MATRIX);
       seed[index] = mark.seed;
     });
-    horizonMesh.instanceMatrix.needsUpdate = true;
-    accretionMesh.instanceMatrix.needsUpdate = true;
+    intakeMesh.instanceMatrix.needsUpdate = true;
+    coreMesh.instanceMatrix.needsUpdate = true;
     lanes.seed.needsUpdate = true;
     // Bound on the first pass and again only when a capacity change built new
-    // lanes. The geometry outlives the InstancedMesh (a capacity change
-    // rebuilds the mesh through `args`), so it can still be holding the
-    // previous set.
-    if (accretionMesh.geometry.getAttribute('aSeed') !== lanes.seed) {
-      accretionMesh.geometry.setAttribute('aSeed', lanes.seed);
-      accretionMesh.geometry.setAttribute('aShare', lanes.share);
+    // lanes. The quad outlives both InstancedMeshes (a capacity change rebuilds
+    // them through `args`), so it can still be holding the previous set. Both
+    // programs read `aSeed`; only the intake declares `aShare`, and an
+    // attribute a program never declares is never bound and costs nothing.
+    if (quad.getAttribute('aSeed') !== lanes.seed) {
+      quad.setAttribute('aSeed', lanes.seed);
+      quad.setAttribute('aShare', lanes.share);
     }
-  }, [lanes, marks]);
+  }, [lanes, marks, quad]);
 
   // The live share, written in place whenever the window moves — which is once
   // per attributed block — and never touching the geometry. The window last
@@ -283,7 +291,7 @@ export default function ColonyAccretion({
     writeShares(producersRef?.current ?? null);
   }, [producersRef, writeShares]);
   // Raw frame, not the sim frame: the standings are chain state, and a paused
-  // clock must not hold a hole at a rate the window has already left behind —
+  // clock must not hold a throat at a rate the window has already left behind —
   // the effect this replaces ran under a pause too.
   useFrame(() => {
     const live = producersRef?.current ?? null;
@@ -292,22 +300,39 @@ export default function ColonyAccretion({
   });
 
   useEffect(() => () => {
-    horizonGeometry.dispose();
-    accretionGeometry.dispose();
-    horizonMaterial.dispose();
-    accretionMaterial.dispose();
-  }, [accretionGeometry, accretionMaterial, horizonGeometry, horizonMaterial]);
+    quad.dispose();
+    intakeMaterial.dispose();
+    coreMaterial.dispose();
+  }, [coreMaterial, intakeMaterial, quad]);
 
   useSimFrame(() => {
     const contextEnergy = contextEnergyRef?.current ?? 1;
-    horizonMaterial.uniforms.uContextEnergy.value = contextEnergy;
-    accretionMaterial.uniforms.uTime.value = simClock.elapsedSec;
-    accretionMaterial.uniforms.uContextEnergy.value = contextEnergy;
-    accretionMaterial.uniforms.uRimAmp.value = LIVE.peer.holeRim;
-    accretionMaterial.uniforms.uGasAmp.value = LIVE.peer.holeGas;
-    accretionMaterial.uniforms.uFieldAmp.value = LIVE.peer.holeField;
-    accretionMaterial.uniforms.uInfall.value = LIVE.peer.holeInfall;
-    accretionMaterial.uniforms.uSpin.value = LIVE.peer.holeSpin;
+    const elapsed = simClock.elapsedSec;
+    const reach = LIVE.peer.cohortReach;
+    const mouth = LIVE.peer.cohortMouth;
+    const intake = intakeMaterial.uniforms;
+    intake.uTime.value = elapsed;
+    intake.uContextEnergy.value = contextEnergy;
+    intake.uReach.value = reach;
+    intake.uMouth.value = mouth;
+    // ⚠️ THE PROXY HAS TO FOLLOW THE VOLUME. `uHalf` is not an independent
+    // number: it is the bounding-sphere radius of a cylinder of radius `mouth`
+    // and height `reach`, so a knob that grows either one while the quad stays
+    // where it was crops the funnel against its own bounding proxy. The ray
+    // clip inside would still be exact — the pixels carrying the far side of
+    // the mouth would simply never be rasterised to run it, which reads as a
+    // straight edge across a volume that has none. Re-derived through the same
+    // function the constant is defined with, so there is one authority.
+    intake.uHalf.value = cohortIntakeHalfExtent(mouth, reach);
+    intake.uAmp.value = LIVE.peer.cohortAmp;
+    intake.uDensity.value = LIVE.peer.cohortDensity;
+    intake.uCrests.value = LIVE.peer.cohortCrests;
+    intake.uRate.value = LIVE.peer.cohortRate;
+    intake.uGather.value = LIVE.peer.cohortGather;
+    const core = coreMaterial.uniforms;
+    core.uTime.value = elapsed;
+    core.uContextEnergy.value = contextEnergy;
+    core.uAmp.value = LIVE.peer.cohortCoreAmp;
   });
 
   // ⭐ NO COHORTS ⇒ NO DRAW, NOT AN EMPTY ONE. Every hook above still runs, so
@@ -318,24 +343,30 @@ export default function ColonyAccretion({
   // colony's own tier keeps for a stop with nobody standing at it.
   if (marks.length === 0) return null;
 
-  // ⚠️ Never a pick target. The hole's target is the staged node's own hit
-  // sphere, sized from this mark's rim in `ColonyNodes`; a live raycast on a
-  // billboard several world units across would put a wall of invisible quads
-  // in front of the colony.
+  // ⚠️ Never a pick target. The cohort's target is the staged node's own hit
+  // sphere, sized from the CENTRE's extent in `ColonyNodes`; a live raycast on
+  // the intake's proxy — 23 world units across, hanging below a plane where
+  // nothing else is drawn — would put a wall of invisible quads in front of
+  // the colony.
+  //
+  // ⭐ THE INTAKE IS DRAWN FIRST AND THE CENTRE OVER IT. Both are additive, so
+  // the order moves no pixel; it is the composition order the two faces read
+  // in — a funnel running into a point, rather than a point with a funnel laid
+  // across it — and saying it costs nothing.
   return (
     <group>
       <instancedMesh
-        ref={horizonMeshRef}
-        args={[horizonGeometry, horizonMaterial, capacity]}
-        {...accretionGpuProbes.horizon}
+        ref={intakeMeshRef}
+        args={[quad, intakeMaterial, capacity]}
+        {...cohortGpuProbes.intake}
         frustumCulled={false}
         renderOrder={1}
         raycast={() => null}
       />
       <instancedMesh
-        ref={accretionMeshRef}
-        args={[accretionGeometry, accretionMaterial, capacity]}
-        {...accretionGpuProbes.disc}
+        ref={coreMeshRef}
+        args={[quad, coreMaterial, capacity]}
+        {...cohortGpuProbes.core}
         frustumCulled={false}
         renderOrder={2}
         raycast={() => null}

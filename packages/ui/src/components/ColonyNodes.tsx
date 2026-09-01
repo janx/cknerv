@@ -310,11 +310,14 @@ export function partitionByKind(
  *  This radius once made the producer the smallest target in the colony — 0.375
  *  world units, under the faintest roster rung's 0.425 — and a full-canvas
  *  13-pixel hover sweep of the running app found forty peers and zero miners.
- *  The mark is an accreting void now, so the target is its disc: 1.15 world
- *  units, ~6.6 CSS px of radius at the default camera. It covers the whole
- *  0.25-world-unit gravity throat, so aiming at the aperture hits it too,
- *  and there is exactly ONE number — no annulus, no second radius, nothing to
- *  keep in step. */
+ *  The mark is a vertical throat now, so the target is half the extent of the
+ *  CENTRE it converges on: 1.15 world units, ~6.6 CSS px of radius at the
+ *  default camera. It is the only face with a bounded on-screen footprint —
+ *  the intake is twenty world units of volume hanging BELOW the plane, and a
+ *  sphere that covered it would be a wall of invisible target in front of the
+ *  colony — and there is still exactly ONE number: no annulus, no second
+ *  radius, nothing to keep in step. The value is unchanged to the bit; only
+ *  where it is derived from moved. */
 export const ATTESTED_HIT_RADIUS = COHORT_HIT_RADIUS;
 
 /** One clickable staged node: where it stands, how big its mark is, and what

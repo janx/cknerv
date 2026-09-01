@@ -18,21 +18,26 @@ import {
   SHOCKWAVE_COLOR_CEIL,
   SHOCKWAVE_ALPHA_CEIL,
 } from '../materials/shockwaveMaterial';
-// …and the five `hole*` knobs take theirs from the accretion material, on the
-// same rule: the material seeds its own uniforms from these constants and
+// …and the eight `cohort*` knobs take theirs from the two throat materials, on
+// the same rule: each material seeds its own uniforms from these constants and
 // ColonyAccretion overwrites them from LIVE.peer.* each frame, so there is ONE
-// authority. (`COHORT_INFALL_FLOOR`, `COHORT_INFALL_EASE` and the mesh-halo /
-// breathe constants are deliberately NOT knobs: one says a cohort holding
-// almost nothing is still mining, one that gas ACCELERATES rather than coasts,
-// and the rest that this exceptional mark still belongs to the peer plane's
-// visual grammar. Those are layer statements rather than tastes to settle
-// against pixels.)
+// authority. Most of the throat is deliberately NOT a knob. The absorption
+// step's shape (`COHORT_INTAKE_SIGMA`, `_FLOOR`, `_EDGE`, `_WARP`, `_FLARE`),
+// its bounds (`COHORT_CLIP_KNEE`, `COHORT_INTAKE_RATE_FLOOR`), its cost
+// (`COHORT_INTAKE_STEPS`) and its seam rule (`COHORT_INTAKE_HELIX`, which must
+// stay an integer) are all layer statements — a medium rather than a stack of
+// shells, a share that changes rate and nothing else, a knee that is never a
+// scale — rather than tastes to settle against pixels. What is here is the
+// funnel's SIZE, its BRIGHTNESS and its MOTION.
 import {
-  COHORT_INFALL_HZ,
-  COHORT_FIELD_AMP,
-  COHORT_GAS_AMP,
-  COHORT_RIM_AMP,
-  COHORT_RIM_SPIN_HZ,
+  COHORT_CORE_AMP,
+  COHORT_INTAKE_AMP,
+  COHORT_INTAKE_CRESTS,
+  COHORT_INTAKE_DENSITY,
+  COHORT_INTAKE_GATHER,
+  COHORT_INTAKE_MOUTH,
+  COHORT_INTAKE_RATE,
+  COHORT_INTAKE_REACH,
 } from '../materials/colonyAccretion';
 // The Cell-field contact front is a scaled-down version of the peer-plane
 // brightness wave: same shape, same timing, its reach divided by
@@ -154,19 +159,39 @@ export const peerSchema = {
   flameBloom: { value: 0.7, min: 0.1, max: 2, step: 0.05, label: 'flame bloom' },
   glintBloomOpacity: { value: 0.55, min: 0, max: 1, step: 0.05, label: 'glint bloom op' },
   glintPlumeOpacity: { value: 0.3, min: 0, max: 1, step: 0.05, label: 'glint plume op' },
-  // The POW channel — one accreting void per cohort. `holeInfall` is the gas
-  // advection rate for a cohort holding the WHOLE window (the share scales it,
-  // and it is the only thing the share moves); `holeField` controls the broken
-  // caustics in the ambient energy field; `holeSpin` is how fast the accretion
-  // rim itself turns, and it may go NEGATIVE because which way a disc spins is
-  // arbitrary. `holeRim` and `holeGas` are the two principal brightnesses:
-  // reach for `holeRim` first, since the disc and photon ring make the aperture
-  // legible at colony scale.
-  holeRim: { value: COHORT_RIM_AMP, min: 0, max: 3, step: 0.05, label: 'hole rim amp' },
-  holeGas: { value: COHORT_GAS_AMP, min: 0, max: 3, step: 0.05, label: 'hole gas density' },
-  holeField: { value: COHORT_FIELD_AMP, min: 0, max: 2, step: 0.05, label: 'hole field disturbance' },
-  holeInfall: { value: COHORT_INFALL_HZ, min: 0.02, max: 3, step: 0.01, label: 'hole infall hz' },
-  holeSpin: { value: COHORT_RIM_SPIN_HZ, min: -0.5, max: 0.5, step: 0.005, label: 'hole rim spin hz' },
+  // The POW channel — one vertical throat per cohort, in two faces.
+  //
+  // ⭐ REACH FOR `cohortDensity` FIRST. It is the extinction per unit of
+  // density along the marched ray, and therefore the CREST-CONTRAST knob: the
+  // exact absorption step makes contrast fall MONOTONICALLY in it, from banded
+  // at a thin medium to a flat 1:1 once the volume has gone opaque, so it can
+  // be swept by eye without a dead zone to walk through. A non-monotone
+  // reading means something upstream is wrong, not that a better value lies
+  // further out. `cohortAmp` is brightness and NOT contrast; `uSteps` is cost
+  // and not either.
+  //
+  // `cohortReach` and `cohortMouth` are the funnel's two dimensions, and the
+  // layer re-derives the bounding quad from BOTH every frame — neither can be
+  // turned without the proxy following it. `cohortRate` is crest speed for a
+  // cohort holding the WHOLE window (the share scales it, and it is still the
+  // only thing the share moves); it has no negative half, because a throat
+  // whose crests ran outward would be saying the opposite of what it is.
+  // `cohortGather` is flux conservation — the same throughput squeezed into a
+  // narrower cross-section — rather than a painted ramp.
+  cohortReach: { value: COHORT_INTAKE_REACH, min: 2, max: 40, step: 0.5, label: 'cohort reach' },
+  cohortMouth: { value: COHORT_INTAKE_MOUTH, min: 0.5, max: 16, step: 0.1, label: 'cohort mouth r' },
+  cohortAmp: { value: COHORT_INTAKE_AMP, min: 0, max: 3, step: 0.02, label: 'cohort intake amp' },
+  cohortDensity: { value: COHORT_INTAKE_DENSITY, min: 0.05, max: 4, step: 0.05, label: 'cohort density' },
+  cohortCrests: { value: COHORT_INTAKE_CRESTS, min: 0.5, max: 12, step: 0.1, label: 'cohort crests' },
+  cohortRate: { value: COHORT_INTAKE_RATE, min: 0, max: 2, step: 0.01, label: 'cohort crest hz' },
+  cohortGather: { value: COHORT_INTAKE_GATHER, min: 0, max: 3, step: 0.05, label: 'cohort gather' },
+  // ⚠️ THE CEILING HERE IS A CLIP GUARD AND NOT A TASTE. Additive blending
+  // hands the screen `uColor * shape²`, the scaffold cyan's BLUE IS EXACTLY
+  // FULL, and the centre's analytic ceiling is `amp * 1.42` — so at
+  // `amp = 1/1.42 = 0.7042` the mark's structure disappears inside a flat
+  // white-cyan blob. R16 spent a whole live leg finding that out from the far
+  // side. 0.7 is under it, so no drag of this knob can reach a clipped mark.
+  cohortCoreAmp: { value: COHORT_CORE_AMP, min: 0, max: 0.7, step: 0.02, label: 'cohort core amp' },
 } satisfies FolderSchema;
 
 export const cellSchema = {
