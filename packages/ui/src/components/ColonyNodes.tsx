@@ -7,7 +7,7 @@
 //     part that has to hold — under the additive clip, so it stays haze
 //     instead of a white speck the eye reads as a node. Non-selectable.
 //   • attested nodes    — NOT DRAWN HERE. A node the CHAIN proves exists and
-//     cannot name wears a black hole, and `ColonyAccretion` draws it: a dark
+//     cannot name wears a black hole, and `ColonyCohorts` draws it: a dark
 //     gravity throat, a thick accretion halo, and disturbed gas collapsing from
 //     the surrounding void. It had a <points> stop of its own until that mark
 //     arrived, and an additive sprite is brightest at its own centre — exactly
@@ -76,7 +76,7 @@ import {
   PEER_CLOUD_SIGHTED_TONE,
   type PeerCloudTone,
 } from '../materials/peerNodeMaterial';
-import { COHORT_HIT_RADIUS } from '../materials/colonyAccretion';
+import { COHORT_HIT_RADIUS } from '../materials/colonyCohort';
 import { ATTESTED_ID_PREFIX } from '../derives/networkTopology.derive';
 import { producerOriginStats } from '../derives/producerOriginStats';
 import {
@@ -240,12 +240,12 @@ const sameNodeId = (a: NetworkNode, b: NetworkNode): boolean => a.id === b.id;
  *  mark, deliberately". A bucket that names it is what keeps that sentence
  *  checkable instead of a comment.
  *
- *  ⭐ `accretion` IS THE SECOND SUCH ANSWER, and naming it for the layer rather
+ *  ⭐ `cohort` IS THE SECOND SUCH ANSWER, and naming it for the layer rather
  *  than for the kind is what keeps the table honest. An attested node's mark is
- *  the black hole `ColonyAccretion` draws; this file stands its hit sphere and
+ *  the black hole `ColonyCohorts` draws; this file stands its hit sphere and
  *  nothing else. Calling the bucket `attested` would have named a draw this
  *  file does not make, which is exactly the drift the table exists to stop. */
-export const COLONY_DRAWS = ['haze', 'accretion', 'sighted', 'measured', 'anchor'] as const;
+export const COLONY_DRAWS = ['haze', 'cohort', 'sighted', 'measured', 'anchor'] as const;
 
 export type ColonyDraw = typeof COLONY_DRAWS[number];
 
@@ -275,7 +275,7 @@ export type ColonyDraw = typeof COLONY_DRAWS[number];
  *  borrowed mark that would say something false. */
 const DRAW_BY_NODE_KIND: Readonly<Record<NodeKind, ColonyDraw>> = {
   inferred: 'haze',
-  attested: 'accretion',
+  attested: 'cohort',
   sighted: 'sighted',
   measured: 'measured',
   local: 'anchor',
@@ -925,7 +925,7 @@ function MeasuredNode({
  * measured glow-node per real peer, unified as a single glow primitive on a
  * confidence gradient, plus ONE hit mesh over both staged tiers. The local
  * "you" is drawn by the galaxy (its labeled CkbNodeAnchor) and a cohort's black
- * hole by `ColonyAccretion`, NOT here. This owner stamps one shared ring-buffer
+ * hole by `ColonyCohorts`, NOT here. This owner stamps one shared ring-buffer
  * slot per block so inferred and measured nodes cannot drift or cancel an older
  * in-flight wave.
  */
@@ -954,7 +954,7 @@ export default function ColonyNodes({
   const byKind = useMemo(() => partitionByKind(topology.nodes), [topology]);
   const measured = byKind.measured;
   const sighted = byKind.sighted;
-  const attested = byKind.accretion;
+  const attested = byKind.cohort;
   // A crawler that could not reach a node this round still knows it exists, and
   // a node it has never reached is still one the network keeps naming. Both are
   // real, dimmer information, and each costs one extra draw rather than a slot.

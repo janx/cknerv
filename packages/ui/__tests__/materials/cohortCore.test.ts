@@ -20,7 +20,7 @@ import {
   COHORT_CORE_HALF,
   COHORT_CORE_REFUSE,
   makeCohortCoreMaterial,
-} from '../../src/materials/colonyAccretion';
+} from '../../src/materials/colonyCohort';
 
 const TAU = Math.PI * 2;
 const clamp = (x: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, x));

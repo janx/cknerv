@@ -23,7 +23,7 @@ import { makeColonyEdgeMaterial } from '../../src/components/ColonyEdges';
 import {
   makeCohortCoreMaterial,
   makeCohortIntakeMaterial,
-} from '../../src/materials/colonyAccretion';
+} from '../../src/materials/colonyCohort';
 import {
   makeCanonicalRewriteEchoMaterial,
 } from '../../src/components/CanonicalRewriteEcho';
@@ -299,14 +299,14 @@ const ROWS: readonly BudgetRow[] = [
   },
   {
     name: 'cohortIntakeMaterial',
-    sources: ['src/materials/colonyAccretion.ts'],
+    sources: ['src/materials/colonyCohort.ts'],
     material: makeCohortIntakeMaterial,
     // The marched volume pays the mat4 plus its seed and live-share lanes.
     usage: { instanced: true },
   },
   {
     name: 'cohortCoreMaterial',
-    sources: ['src/materials/colonyAccretion.ts'],
+    sources: ['src/materials/colonyCohort.ts'],
     material: makeCohortCoreMaterial,
     // The centre shares the intake's instance positions and its seed lane —
     // consumed differently, in radians rather than turns — and declares no

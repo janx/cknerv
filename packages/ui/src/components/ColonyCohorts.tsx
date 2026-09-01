@@ -1,4 +1,4 @@
-// ColonyAccretion — what a POW cohort looks like: a vertical throat.
+// ColonyCohorts — what a POW cohort looks like: a vertical throat.
 //
 // Energy enters from BELOW the colony slab, continuously, as an analytic
 // volume marched in the shader, and converges on a centre that is an ordinary
@@ -11,10 +11,10 @@
 // The whole design argument — why the intake is a marched volume rather than
 // shells or particles, why it accumulates optical depth instead of emission,
 // and why the centre is deliberately not the brightest pixel on stage — lives
-// in `materials/colonyAccretion`. Read it before touching either face.
+// in `materials/colonyCohort`. Read it before touching either face.
 //
 // This file owns the two things that cannot live in a material:
-//   • WHICH nodes wear one — `cohortAccretionMarks`, pure and exported, one
+//   • WHICH nodes wear one — `cohortMarks`, pure and exported, one
 //     mark per attested node, carrying its placement and a stable per-cohort
 //     seed so no two throats run their crests on the same beat;
 //   • the live SHARE, which moves on every attributed block and must never be
@@ -40,7 +40,7 @@ import {
   cohortIntakeHalfExtent,
   makeCohortCoreMaterial,
   makeCohortIntakeMaterial,
-} from '../materials/colonyAccretion';
+} from '../materials/colonyCohort';
 import { useStableList } from './ColonyNodes';
 import { PERFORMANCE_PROBE_LABELS } from '../tweaks/performanceProbeStore';
 import { createGpuProbeCallbacks } from '../tweaks/gpuTimerQuery';
@@ -85,7 +85,7 @@ export interface CohortMark {
  * the two cadences never meet. Same split `selectedSighted` has always kept:
  * the node carries placement and identity, the view carries the live window.
  */
-export function cohortAccretionMarks(
+export function cohortMarks(
   topology: NetworkTopology,
   cap: number = COHORT_MARK_CAP,
 ): CohortMark[] {
@@ -165,7 +165,7 @@ export function cohortShareLane(
  * it rather than under it. Both are additive, both rebuild their quad in the
  * vertex shader, and per-frame CPU work stays a handful of uniform writes.
  */
-export default function ColonyAccretion({
+export default function ColonyCohorts({
   topology,
   producersRef,
   contextEnergyRef,
@@ -183,7 +183,7 @@ export default function ColonyAccretion({
   contextEnergyRef?: { readonly current: number };
 }) {
   const simClock = useSimClock();
-  const plan = useMemo(() => cohortAccretionMarks(topology), [topology]);
+  const plan = useMemo(() => cohortMarks(topology), [topology]);
   const marks = useStableList(plan, sameCohortMark);
   const intakeMeshRef = useRef<THREE.InstancedMesh>(null);
   const coreMeshRef = useRef<THREE.InstancedMesh>(null);
@@ -192,7 +192,7 @@ export default function ColonyAccretion({
     if (marks.length < COHORT_MARK_CAP || cappedLogged.current) return;
     cappedLogged.current = true;
     console.warn(
-      `ColonyAccretion: >=${COHORT_MARK_CAP} cohorts staged; dropping excess.`,
+      `ColonyCohorts: >=${COHORT_MARK_CAP} cohorts staged; dropping excess.`,
     );
   }, [marks]);
 

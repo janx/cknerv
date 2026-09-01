@@ -16,7 +16,7 @@ import { PEER_NETWORK_PALETTE } from '../../src/visualPalette';
 // ⭐ The namespace is what makes the coverage claim below general: every
 // exported STRING in the material file is a shared GLSL snippet, and the
 // coverage sum finds them without being told their names.
-import * as colonyAccretion from '../../src/materials/colonyAccretion';
+import * as colonyCohort from '../../src/materials/colonyCohort';
 import {
   COHORT_CLIP_KNEE,
   COHORT_INTAKE_AMP,
@@ -40,9 +40,9 @@ import {
   COHORT_INTAKE_WARP,
   makeCohortCoreMaterial,
   makeCohortIntakeMaterial,
-} from '../../src/materials/colonyAccretion';
+} from '../../src/materials/colonyCohort';
 
-const SOURCE_PATH = resolve(process.cwd(), 'src/materials/colonyAccretion.ts');
+const SOURCE_PATH = resolve(process.cwd(), 'src/materials/colonyCohort.ts');
 const SOURCE = readFileSync(SOURCE_PATH, 'utf8');
 
 const TAU = Math.PI * 2;
@@ -1250,7 +1250,7 @@ function programs(): { name: string; glsl: string; scope: Scope }[] {
   });
 }
 
-describe('colonyAccretion.ts — source-level shader guards', () => {
+describe('colonyCohort.ts — source-level shader guards', () => {
   const compiled = programs();
 
   it('no smoothstep anywhere has edge0 >= edge1', () => {
@@ -1329,7 +1329,7 @@ describe('colonyAccretion.ts — source-level shader guards', () => {
     // never interpolated then still fails here, which is the right verdict for
     // GLSL nobody compiles.
     const file = stripComments(SOURCE);
-    const shared = Object.entries(colonyAccretion)
+    const shared = Object.entries(colonyCohort)
       .filter((entry): entry is [string, string] => typeof entry[1] === 'string');
     for (const name of ['smoothstep', 'pow']) {
       const pattern = new RegExp(`\\b${name}\\s*\\(`, 'g');

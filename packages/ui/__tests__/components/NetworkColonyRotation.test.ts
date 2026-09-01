@@ -69,7 +69,7 @@ describe('NetworkColony counter-rotation frame contract', () => {
     // point, so it rides the group exactly as the marks do: the group turns
     // the instance's translation and the quad is rebuilt from the view matrix,
     // with no colonyFrame bridging and nothing for a world basis to undo.
-    const accretion = network.indexOf('<ColonyAccretion');
+    const cohorts = network.indexOf('<ColonyCohorts');
     const nodes = network.indexOf('<ColonyNodes');
     const overlay = network.indexOf('{overlay}');
     const rotatingClose = network.indexOf('</group>', rotatingOpen);
@@ -79,11 +79,11 @@ describe('NetworkColony counter-rotation frame contract', () => {
     expect(rotatingOpen).toBeGreaterThan(-1);
     // Inside the rotating group…
     expect(edges).toBeGreaterThan(rotatingOpen);
-    expect(accretion).toBeGreaterThan(rotatingOpen);
+    expect(cohorts).toBeGreaterThan(rotatingOpen);
     expect(nodes).toBeGreaterThan(rotatingOpen);
     expect(overlay).toBeGreaterThan(rotatingOpen);
     expect(edges).toBeLessThan(rotatingClose);
-    expect(accretion).toBeLessThan(rotatingClose);
+    expect(cohorts).toBeLessThan(rotatingClose);
     expect(nodes).toBeLessThan(rotatingClose);
     expect(overlay).toBeLessThan(rotatingClose);
     // …and outside it.

@@ -23,7 +23,7 @@ import {
   COHORT_CONTEXT_EXEMPT_NEAR,
   makeCohortCoreMaterial,
   makeCohortIntakeMaterial,
-} from '../../src/materials/colonyAccretion';
+} from '../../src/materials/colonyCohort';
 import {
   CELL_DETAIL_VIEW_FAR_DISTANCE,
   CELL_DETAIL_VIEW_NEAR_DISTANCE,

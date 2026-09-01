@@ -20,7 +20,7 @@ import {
 } from '../materials/shockwaveMaterial';
 // …and the eight `cohort*` knobs take theirs from the two throat materials, on
 // the same rule: each material seeds its own uniforms from these constants and
-// ColonyAccretion overwrites them from LIVE.peer.* each frame, so there is ONE
+// ColonyCohorts overwrites them from LIVE.peer.* each frame, so there is ONE
 // authority. Most of the throat is deliberately NOT a knob. The absorption
 // step's shape (`COHORT_INTAKE_SIGMA`, `_FLOOR`, `_EDGE`, `_WARP`, `_FLARE`),
 // its bounds (`COHORT_CLIP_KNEE`, `COHORT_INTAKE_RATE_FLOOR`), its cost
@@ -38,7 +38,7 @@ import {
   COHORT_INTAKE_MOUTH,
   COHORT_INTAKE_RATE,
   COHORT_INTAKE_REACH,
-} from '../materials/colonyAccretion';
+} from '../materials/colonyCohort';
 // The Cell-field contact front is a scaled-down version of the peer-plane
 // brightness wave: same shape, same timing, its reach divided by
 // CONTACT_WAVE_SCALE — so both planes still read as sections of one event

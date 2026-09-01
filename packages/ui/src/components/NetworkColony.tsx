@@ -52,7 +52,7 @@ import type { ColonyFlood } from '../derives/networkFlood.derive';
 import type { ProducerStanding } from '../derives/blockProducers.derive';
 import ColonyNodes from './ColonyNodes';
 import ColonyEdges from './ColonyEdges';
-import ColonyAccretion, { type ProducerSharesRef } from './ColonyAccretion';
+import ColonyCohorts, { type ProducerSharesRef } from './ColonyCohorts';
 import ColonyCourierLayer from './ColonyCourierLayer';
 import BlockDeliveryLayer, { type BlockDeliveryPulse } from './BlockDeliveryLayer';
 import { consensusBlockColor } from '../derives/consensusFlow.derive';
@@ -83,7 +83,7 @@ interface NetworkColonyProps {
   /** Local node version — drives measured version-mismatch coloring (violet). */
   localVersion: string;
   /** The chain's recent mining cohorts, LIVE, by reference. Passed straight
-   *  through to the accretion layer, where a cohort's share of the window sets
+   *  through to the cohort layer, where a cohort's share of the window sets
    *  the rate its black hole pulls matter in at: the topology is keyed on the
    *  producer key set alone (a per-block key would rebuild the colony's
    *  geometry once a block and truncate every in-flight wave), so the standings
@@ -92,13 +92,13 @@ interface NetworkColonyProps {
    *
    *  ⚠️ It holds `BlockProducerView`'s `staging` array — key-ascending, the
    *  same sequence the topology was built from — and never `ranked`, which is
-   *  ordered by a tally. Nothing below reads it positionally; the accretion
+   *  ordered by a tally. Nothing below reads it positionally; the cohort
    *  layer walks the staged nodes and looks each share up by key.
    *
    *  ⭐ A REF, NOT THE ARRAY. The array is fresh on every attributed block,
    *  and as a prop it defeated this root's memo once a block for a change
    *  that moves one instanced lane. The holder is stable for the app's life;
-   *  the accretion layer reads it once a frame by identity. */
+   *  the cohort layer reads it once a frame by identity. */
   producersRef?: ProducerSharesRef | null;
   /** Shared camera-distance focus. Optional keeps standalone scenes unchanged. */
   cellDetailViewFocusRef?: { readonly current: number };
@@ -264,7 +264,7 @@ function NetworkColony({
             in the colony and the only one with a hole in the middle, so the
             links pass BEHIND it and the staged marks sit on top — which is the
             order a viewer already reads the colony in. */}
-        <ColonyAccretion
+        <ColonyCohorts
           topology={topology}
           producersRef={producersRef}
           contextEnergyRef={nodeContextEnergyRef}

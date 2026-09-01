@@ -299,7 +299,7 @@ export function cohortIntakeHalfExtent(mouth: number, reach: number): number {
  * and `cohortReach` are live knobs, and a proxy that stayed at this value
  * while the volume grew would crop the funnel against its own bounding quad —
  * the ray clip inside would still be exact, but the pixels carrying the far
- * side of the mouth would never be rasterised to run it. `ColonyAccretion`
+ * side of the mouth would never be rasterised to run it. `ColonyCohorts`
  * therefore re-derives `uHalf` through the function above every frame; this
  * constant is what the material is BUILT with, not the last word on it.
  */

@@ -16,7 +16,7 @@ const EXPECTED_DEFAULTS = {
   // the width all moved with it).
   delivery: { heroSize: 1.16, peerSize: 0.46, ingestDur: 1.2, glyphBloom: 1.6, glyphCompress: 0.45, coreSize: 1.4, trailWidth: 0.55, trailLenBase: 1.0, trailLenGain: 1.6, trailOpacity: 0.6, inhaleAmount: 0.55, waveSpeed: 4.5, waveWidth: 0.55 / 8, waveOpacity: 2.0, waveFalloff: 0.5, waveReachHero: 6.5, waveReachPeer: 4.25, waveWake: 0.14, waveSegments: 0.55, peerPunchScale: 0.7, igniteKHero: 8, igniteKPeer: 3, igniteMax: 300, igniteRipple: 0.015 },
   // The eight `cohort*` knobs are the POW channel — one vertical throat per
-  // cohort, in two faces — whose defaults live on `colonyAccretion` under the
+  // cohort, in two faces — whose defaults live on `colonyCohort` under the
   // same one-authority rule the shockwave knobs follow. `cohortRate` is a
   // crest RATE and the only thing a cohort's share scales; `cohortDensity` is
   // the crest-contrast knob and the first one a tuner reaches for. The five

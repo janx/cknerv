@@ -25,11 +25,11 @@ import {
   STAGEABLE_ROSTER_STATES,
 } from '../../src/derives/networkTopology.derive';
 import { colonyFlood } from '../../src/derives/networkFlood.derive';
-import ColonyAccretion, {
+import ColonyCohorts, {
   COHORT_MARK_CAP,
-  cohortAccretionMarks,
+  cohortMarks,
   sameCohortMark,
-} from '../../src/components/ColonyAccretion';
+} from '../../src/components/ColonyCohorts';
 import {
   COHORT_CORE_AMP,
   COHORT_CORE_HALF,
@@ -40,7 +40,7 @@ import {
   cohortIntakeHalfExtent,
   makeCohortCoreMaterial,
   makeCohortIntakeMaterial,
-} from '../../src/materials/colonyAccretion';
+} from '../../src/materials/colonyCohort';
 import { peerSchema } from '../../src/tweaks/tweakSchema';
 import { PERFORMANCE_PROBE_LABELS } from '../../src/tweaks/performanceProbeStore';
 import {
@@ -698,10 +698,10 @@ describe('ColonyNodes attested tier', () => {
     expect([...used].sort()).toEqual([...COLONY_DRAWS].sort());
     // The rungs land where this file says they land, one at a time.
     expect(buckets.haze).toEqual([KIND_SAMPLE.inferred]);
-    // ⭐ `accretion`, NOT `attested`: the table names the LAYER that claims a
-    // kind, and a cohort's mark is the black hole `ColonyAccretion` draws.
+    // ⭐ `cohort`, NOT `attested`: the table names the LAYER that claims a
+    // kind, and a cohort's mark is the black hole `ColonyCohorts` draws.
     // This file stands its hit sphere and nothing else.
-    expect(buckets.accretion).toEqual([KIND_SAMPLE.attested]);
+    expect(buckets.cohort).toEqual([KIND_SAMPLE.attested]);
     expect(buckets.sighted).toEqual([KIND_SAMPLE.sighted]);
     expect(buckets.measured).toEqual([KIND_SAMPLE.measured]);
     // `local` is not a hole: the galaxy's labeled anchor draws it, which is a
@@ -835,7 +835,7 @@ describe('what a POW cohort looks like', () => {
     peers, 0xc0ffee, 'ckb:local', undefined, ROSTER, undefined, producers,
   );
   const throatSource = () => readFileSync(
-    resolve(process.cwd(), 'src/materials/colonyAccretion.ts'),
+    resolve(process.cwd(), 'src/materials/colonyCohort.ts'),
     'utf8',
   );
   /** The exact shader strings a driver receives, not comments describing them. */
@@ -846,13 +846,13 @@ describe('what a POW cohort looks like', () => {
   it('mounts a colony of cohorts inside an r3f Canvas without throwing', () => {
     expect(() => render(
       <Canvas>
-        <ColonyAccretion topology={topology} producersRef={{ current: producers }} />
+        <ColonyCohorts topology={topology} producersRef={{ current: producers }} />
       </Canvas>,
     )).not.toThrow();
   });
 
   it('stands one throat on every cohort the colony stages, and on nothing else', () => {
-    const marks = cohortAccretionMarks(topology);
+    const marks = cohortMarks(topology);
     const cohorts = topology.nodes.filter((n) => n.kind === 'attested');
     expect(cohorts).toHaveLength(producers.length);
     expect(marks.map((m) => m.nodeId)).toEqual(cohorts.map((n) => n.id));
@@ -869,7 +869,7 @@ describe('what a POW cohort looks like', () => {
   });
 
   it('is TWO instanced draws and no more — the intake, then the centre over it', () => {
-    const layer = source('ColonyAccretion.tsx');
+    const layer = source('ColonyCohorts.tsx');
     // Two meshes, two materials, one shared quad, and both counts written from
     // the same staged list — so a cohort cannot wear one face without the
     // other, whichever way the plan moves.
@@ -905,7 +905,7 @@ describe('what a POW cohort looks like', () => {
     // arrives over the network. The planner cannot reach an edge now — it
     // walks nodes and nothing else — and the intake hangs in the one region of
     // this scene where nothing whatsoever is drawn: below the colony slab.
-    const layer = source('ColonyAccretion.tsx');
+    const layer = source('ColonyCohorts.tsx');
     expect(layer).not.toContain('topology.edges');
     expect(layer).not.toContain('lineSegments');
     expect(layer).toContain("if (node.kind !== 'attested') continue;");
@@ -932,7 +932,7 @@ describe('what a POW cohort looks like', () => {
       expect(material.depthWrite).toBe(false);
       expect(material.toneMapped).toBe(false);
     }
-    const layer = source('ColonyAccretion.tsx');
+    const layer = source('ColonyCohorts.tsx');
     const material = throatSource();
     expect(layer).not.toContain('NormalBlending');
     expect(material).not.toContain('NormalBlending');
@@ -994,7 +994,7 @@ describe('what a POW cohort looks like', () => {
     // extent into `PlaneGeometry(half * 2, half * 2)`; a quad carried over
     // from that habit renders the intake 3.7x too big. (It cost a full lab
     // round, and it hit both materials at once.)
-    const layer = source('ColonyAccretion.tsx');
+    const layer = source('ColonyCohorts.tsx');
     expect(layer.match(/new THREE\.PlaneGeometry\([^)]*\)/g))
       .toEqual(['new THREE.PlaneGeometry(1, 1)']);
     expect(layer).toContain('const quad = useMemo(() => new THREE.PlaneGeometry(1, 1), []);');
@@ -1013,7 +1013,7 @@ describe('what a POW cohort looks like', () => {
   });
 
   it('gives every live knob a uniform, and re-derives the proxy from the two that size it', () => {
-    const layer = source('ColonyAccretion.tsx');
+    const layer = source('ColonyCohorts.tsx');
     // The retired accreting-void channel is gone from both the schema and the
     // frame loop; nothing reads a knob that no longer has a material.
     for (const retired of ['holeRim', 'holeGas', 'holeField', 'holeInfall', 'holeSpin']) {
@@ -1061,7 +1061,7 @@ describe('what a POW cohort looks like', () => {
     // Every extent is a uniform; the clock reaches crest phase and swirl and
     // never writes or rescales one of them.
     expect(fragment).not.toMatch(/u(?:Reach|Mouth|Half|ThroatR)\s*[+*/-]?=/);
-    const layer = source('ColonyAccretion.tsx');
+    const layer = source('ColonyCohorts.tsx');
     // …and on the CPU side the three size uniforms are written from knobs
     // only. A clock in one of these lines is how a mark starts to breathe in
     // size, which is the wave's whole grammar and never this one's.
@@ -1091,7 +1091,7 @@ describe('what a POW cohort looks like', () => {
 
   it('cannot be mistaken for a courier glint either', () => {
     const material = throatSource();
-    const layer = source('ColonyAccretion.tsx');
+    const layer = source('ColonyCohorts.tsx');
     const courier = source('ColonyCourierLayer.tsx');
     // A courier is a billboarded bloom plus a comet plume, fired ONCE per
     // block, travelling OUTWARD down the propagation tree and tinted that
@@ -1109,7 +1109,7 @@ describe('what a POW cohort looks like', () => {
     // ⚠️ The front crosses the WHOLE colony on every block. A wave-receptive
     // mining mark would flare for every cohort as it passed — the scene showing
     // six of them discharging on a block exactly one of them won.
-    const layer = source('ColonyAccretion.tsx');
+    const layer = source('ColonyCohorts.tsx');
     // The compiled GLSL, not the comment above it that says so.
     expect(intakeFragment()).not.toMatch(/[Ss]hockwave/i);
     expect(coreFragment()).not.toMatch(/[Ss]hockwave/i);
@@ -1124,14 +1124,14 @@ describe('what a POW cohort looks like', () => {
     // with no per-block input is structurally incapable of discharging for
     // anybody, right or wrong — which is a stronger guarantee than a lookup
     // that happens to agree with the flood's.
-    const layer = source('ColonyAccretion.tsx');
+    const layer = source('ColonyCohorts.tsx');
     expect(layer).not.toContain('blockPulseAtMs');
     expect(layer).not.toContain('backfillActive');
     expect(layer).not.toContain('cf.entryId');
     expect(layer).not.toContain('ColonyFlood');
     // The mount passes none of the three either.
     const network = source('NetworkColony.tsx');
-    const open = network.indexOf('<ColonyAccretion');
+    const open = network.indexOf('<ColonyCohorts');
     const close = network.indexOf('/>', open);
     expect(open).toBeGreaterThan(-1);
     expect(network.slice(open, close)).not.toMatch(/cf=|blockPulseAtMs=|backfillActive=/);
@@ -1166,9 +1166,9 @@ describe('what a POW cohort looks like', () => {
     // change on EVERY block while its key, its placement and its seed do not,
     // so a plan that read the window would rewrite this layer's instance
     // matrices once a block for a numerator that moved.
-    expect(cohortAccretionMarks.length).toBeLessThanOrEqual(2); // (topology, cap)
-    const layer = source('ColonyAccretion.tsx');
-    expect(layer).toContain('const plan = useMemo(() => cohortAccretionMarks(topology), [topology]);');
+    expect(cohortMarks.length).toBeLessThanOrEqual(2); // (topology, cap)
+    const layer = source('ColonyCohorts.tsx');
+    expect(layer).toContain('const plan = useMemo(() => cohortMarks(topology), [topology]);');
     // The share reaches the GPU through a lane written in place instead — off
     // the window's REF, once per identity change, never off a prop that would
     // re-render the memoized colony once a block — and the lane is marked
@@ -1185,8 +1185,8 @@ describe('what a POW cohort looks like', () => {
       [{ ...peer('A'), latency_ms: 220 }, peer('B')],
       0xc0ffee, 'ckb:local', undefined, ROSTER, undefined, producers,
     );
-    const before = cohortAccretionMarks(topology);
-    const after = cohortAccretionMarks(later);
+    const before = cohortMarks(topology);
+    const after = cohortMarks(later);
     expect(after).not.toBe(before);
     expect(before.every((mark, i) => sameCohortMark(mark, after[i]))).toBe(true);
     const held = renderHook(({ list }) => useStableList(list, sameCohortMark), {
@@ -1208,23 +1208,23 @@ describe('what a POW cohort looks like', () => {
 
   it('stands nothing at all for a colony with no cohorts in its window', () => {
     const bare = inferredTopology(peers, 0xc0ffee, 'ckb:local', undefined, ROSTER);
-    expect(cohortAccretionMarks(bare)).toEqual([]);
+    expect(cohortMarks(bare)).toEqual([]);
     // …and it is a NO DRAW rather than an empty one. A material that never
     // enters the scene graph is never compiled, and a devnet nobody mines or a
     // review lab that passes no window would otherwise carry an empty vertex
     // program for the whole life of the scene.
-    expect(source('ColonyAccretion.tsx'))
+    expect(source('ColonyCohorts.tsx'))
       .toContain('if (marks.length === 0) return null;');
     expect(() => render(
-      <Canvas><ColonyAccretion topology={bare} /></Canvas>,
+      <Canvas><ColonyCohorts topology={bare} /></Canvas>,
     )).not.toThrow();
   });
 
   it('stops at a cap and says so, rather than sizing a buffer off the wire', () => {
-    const marks = cohortAccretionMarks(topology, 1);
+    const marks = cohortMarks(topology, 1);
     expect(marks).toHaveLength(1);
     expect(COHORT_MARK_CAP).toBeGreaterThan(marks.length);
-    const layer = source('ColonyAccretion.tsx');
+    const layer = source('ColonyCohorts.tsx');
     expect(layer).toContain('cappedLogged.current = true;');
     expect(layer).toContain('console.warn(');
   });
@@ -1236,12 +1236,12 @@ describe('what a POW cohort looks like', () => {
     // rides the group: the instance matrix carries a translation, the group
     // turns it, and the quad is rebuilt from the view matrix — so there is no
     // basis for a rotation to have to undo.
-    expect(source('ColonyAccretion.tsx')).not.toContain('colonyFrame');
+    expect(source('ColonyCohorts.tsx')).not.toContain('colonyFrame');
     expect(source('ColonyCourierLayer.tsx')).toContain('colonyFrame.rotationY');
     const material = throatSource();
     expect(material).toContain('viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]');
-    expect(source('ColonyAccretion.tsx')).toContain('SCRATCH_MATRIX.makeTranslation(');
-    expect(source('ColonyAccretion.tsx')).not.toContain('SCRATCH_MATRIX.makeScale(');
+    expect(source('ColonyCohorts.tsx')).toContain('SCRATCH_MATRIX.makeTranslation(');
+    expect(source('ColonyCohorts.tsx')).not.toContain('SCRATCH_MATRIX.makeScale(');
     // ⭐ AND THE FUNNEL'S AXIS IS THE COLONY'S OWN. The throat is read off the
     // instance origin in the VERTEX shader, on whatever frame the GPU is
     // drawing, so the volume parallaxes and turns with the colony for free and

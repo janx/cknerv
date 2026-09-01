@@ -1,7 +1,7 @@
 // The live producer window reaches the colony BY REFERENCE. `staging` is a
 // fresh array on every attributed block — its tallies moved — and as a prop
 // it defeated `memo(NetworkColony)` once a block, on top of the render the
-// pulse itself costs. The holder's identity never changes; the accretion layer
+// pulse itself costs. The holder's identity never changes; the cohort layer
 // reads it once a frame by identity and rewrites its share lane exactly when
 // the array does. These pins hold both halves: the lane's contents, and the
 // once-per-change discipline of the writer.
@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest';
 import {
   cohortShareLane,
   type CohortMark,
-} from '../../src/components/ColonyAccretion';
+} from '../../src/components/ColonyCohorts';
 import type { ProducerStanding } from '../../src/derives/blockProducers.derive';
 
 function source(file: string): string {
@@ -54,19 +54,19 @@ describe('cohortShareLane', () => {
 
 describe('the share lane follows the window by reference', () => {
   it('reads the standings off a ref once a frame and writes only when the array changed', () => {
-    const accretion = source('ColonyAccretion.tsx');
+    const cohorts = source('ColonyCohorts.tsx');
     // The writer: one identity test per frame, a walk only on a change.
-    expect(accretion).toContain('useFrame(() => {');
-    expect(accretion).toContain('const live = producersRef?.current ?? null;');
-    expect(accretion).toContain('if (live === writtenSharesRef.current) return;');
+    expect(cohorts).toContain('useFrame(() => {');
+    expect(cohorts).toContain('const live = producersRef?.current ?? null;');
+    expect(cohorts).toContain('if (live === writtenSharesRef.current) return;');
     // The walk itself is the pure function pinned above, and it marks the
     // lane once per walk.
-    expect(accretion).toContain('cohortShareLane(marks, producers, lanes.share.array as Float32Array);');
-    expect(accretion).toContain('lanes.share.needsUpdate = true;');
+    expect(cohorts).toContain('cohortShareLane(marks, producers, lanes.share.array as Float32Array);');
+    expect(cohorts).toContain('lanes.share.needsUpdate = true;');
     // A rebuilt lane or a moved cohort set re-walks regardless of the window.
-    expect(accretion).toContain('}, [producersRef, writeShares]);');
+    expect(cohorts).toContain('}, [producersRef, writeShares]);');
     // Never an effect keyed on the array: that is the render this replaces.
-    expect(accretion).not.toContain('[lanes, marks, producers]');
+    expect(cohorts).not.toContain('[lanes, marks, producers]');
   });
 
   it('threads the ref through the memoized colony root untouched', () => {

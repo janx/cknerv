@@ -130,7 +130,7 @@ export const PEER_CLOUD_GHOST_TONE = {
  * ⭐⭐ THERE IS NO ATTESTED STOP ON THIS AXIS, AND ITS ABSENCE IS A DECISION.
  * A node the chain proves and nobody can name once drew here, wedged between
  * the invented haze and the faintest named stop. It wears a black hole now
- * (`materials/colonyAccretion`), and the two could not co-exist: an additive
+ * (`materials/colonyCohort`), and the two could not co-exist: an additive
  * point sprite is brightest at its own centre, which is exactly the pixel an
  * event horizon needs empty, so keeping the stop would have been arithmetically
  * identical to filling the hole with light.

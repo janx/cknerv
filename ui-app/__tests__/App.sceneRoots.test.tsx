@@ -305,7 +305,7 @@ describe('colony topology signature', () => {
     // `staging` is a fresh array on every attributed block. As a prop it
     // defeated `memo(NetworkColony)` once a block — a second colony render on
     // top of the pulse's — for a change that moves one instanced lane. The
-    // holder is a ref written during render, so the accretion layer's frame
+    // holder is a ref written during render, so the cohort layer's frame
     // callback reads the window the memo above just produced.
     expect(APP_SOURCE).toContain(
       'const producerSharesRef = useRef<readonly ProducerStanding[] | null>(null);',
