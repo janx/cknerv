@@ -597,7 +597,19 @@ describe('cohort intake — the optical-depth march', () => {
     let previous = -1;
     for (const sum of [0, 1e-6, 0.1, 0.5, 0.9, 1, 1.51, 2, 5, 10, 20]) {
       const out = knee(COHORT_INTAKE_AMP * sum);
-      expect(out).toBeLessThan(COHORT_CLIP_KNEE);
+      // ⚠️ THE BOUND IS `<=`, NOT `<`, FOR THE SAME REASON THE MARCH'S IS.
+      // The knee approaches uKnee asymptotically and never reaches it in
+      // exact arithmetic, but `exp(-amp / uKnee)` UNDERFLOWS: past about
+      // amp / uKnee = 37 the term rounds to zero and the result lands exactly
+      // on uKnee. Nothing in this list gets there at the amplitude of the day,
+      // which is precisely why a strict `<` looked safe — it was pinned to a
+      // constant rather than to the arithmetic, and the hypothetical sums this
+      // loop sweeps reach it as soon as the amplitude is raised.
+      expect(out).toBeLessThanOrEqual(COHORT_CLIP_KNEE);
+      // Over the range the march can actually produce (sum + trans == 1, so
+      // sum <= 1) the strict bound does hold, and that is the one the mark
+      // depends on.
+      if (sum <= 1) expect(out).toBeLessThan(COHORT_CLIP_KNEE);
       expect(out).toBeGreaterThan(previous);
       previous = out;
     }
@@ -735,7 +747,22 @@ describe('cohort intake — the optical-depth march', () => {
       }
       return peak / trough;
     };
-    const densities = [0.25, 0.5, COHORT_INTAKE_DENSITY, 1.5, 2, 3, 5, 10, 20];
+    // ⚠️⚠️ THE LADDER IS FIXED AND SORTED, AND MUST NOT SPLICE THE SHIPPED
+    // CONSTANT INTO ITSELF. It used to read
+    // `[0.25, 0.5, COHORT_INTAKE_DENSITY, 1.5, ...]`, which is sorted only
+    // while that constant happens to sit between 0.5 and 1.5. Retune it below
+    // 0.5 and the ladder silently becomes unsorted, with a duplicate — so a
+    // MONOTONICITY test would be asked to prove monotonicity over a
+    // non-monotone input and would fail for a reason with nothing to do with
+    // the property it guards. A ladder that moves when the tuning moves cannot
+    // guard the tuning.
+    const densities = [0.15, 0.25, 0.5, 0.95, 1.5, 2, 3, 5, 10, 20];
+    expect([...densities].sort((a, b) => a - b)).toEqual(densities);
+    expect(new Set(densities).size).toBe(densities.length);
+    // …and the shipped density stays inside the range the ladder covers, so
+    // this sweep is still about the tuning it is meant to guard.
+    expect(COHORT_INTAKE_DENSITY).toBeGreaterThanOrEqual(densities[0]);
+    expect(COHORT_INTAKE_DENSITY).toBeLessThanOrEqual(densities[densities.length - 1]);
     const left = densities.map((density) => axisContrast(density, 'leftEndpoint'));
     const exact = densities.map((density) => axisContrast(density, 'exact'));
     // The left rule turns back up: its last reading beats its middle one.
@@ -749,8 +776,12 @@ describe('cohort intake — the optical-depth march', () => {
       expect(`${densities[i]}: ${exact[i] <= exact[i - 1] + 2e-3}`)
         .toBe(`${densities[i]}: true`);
     }
-    expect(exact[0]).toBeGreaterThan(2.4);
-    expect(Math.max(...exact.slice(4))).toBeLessThan(1.1);
+    // ⚠️ INDEXED BY VALUE, NOT BY POSITION. These read `exact[0]` and
+    // `.slice(4)`, which meant "the thin end" and "from density 2 on" only for
+    // the ladder of the day; inserting one rung would have moved both without
+    // changing a single assertion's text.
+    expect(exact[densities.indexOf(0.25)]).toBeGreaterThan(2.4);
+    expect(Math.max(...exact.slice(densities.indexOf(2)))).toBeLessThan(1.1);
     expect(exact[exact.length - 1]).toBeLessThan(1.02);
   });
 

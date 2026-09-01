@@ -13,6 +13,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { PEER_NETWORK_PALETTE, PEER_NETWORK_HEX } from '../../src/visualPalette';
+import { peerSchema } from '../../src/tweaks/tweakSchema';
 import { makePeerHaloMaterial } from '../../src/materials/peerNodeMaterial';
 import {
   COHORT_BREATHE_HZ,
@@ -281,11 +282,35 @@ describe('cohort core — the resting supremum', () => {
     const clippingAmp = 1 / 1.42;
     expect(COHORT_CORE_AMP).toBeLessThan(clippingAmp);
     expect(clippingAmp).toBeCloseTo(0.704, 3);
-    // At the shipped amp there is a factor of two of headroom before even the
-    // ANALYTIC ceiling reaches the clip, and more than five before the
-    // measured supremum does.
-    expect(clippingAmp / COHORT_CORE_AMP).toBeGreaterThan(2);
-    expect(1 / 0.1842).toBeGreaterThan(5);
+    // ⭐⭐⭐ THE GUARD IS THE KNOB'S CEILING, NOT THE DEFAULT'S DISTANCE FROM
+    // IT. This used to assert that the shipped amp sat a factor of two under
+    // the analytic clip, which conflated two different claims: "the mark
+    // cannot be blown out" and "the mark is dim". Only the first is a law, and
+    // stating it as the second means the assertion fires on any attempt to
+    // make the centre brighter — including a warranted one. What actually
+    // keeps the mark safe is that NO REACHABLE KNOB VALUE CLIPS.
+    expect(peerSchema.cohortCoreAmp.max).toBeLessThan(clippingAmp);
+    expect(peerSchema.cohortCoreAmp.value).toBe(COHORT_CORE_AMP);
+    expect(COHORT_CORE_AMP).toBeLessThanOrEqual(peerSchema.cohortCoreAmp.max);
+    // ⭐ AND THE ANALYTIC CEILING IS LOOSE BY 2.6x, WHICH IS THE HEADROOM THE
+    // BOUND ABOVE CANNOT SEE. `core + halo` peaks at r = 0, where `refuse` is
+    // exactly zero, so the two can never be at their maxima together: the
+    // measured supremum is 0.5418 of the amplitude against the bound's 1.42.
+    // Both numbers are true and they answer different questions — the loose
+    // one is what makes the knob safe under every combination, the tight one
+    // is how much light the mark actually has left.
+    // The profile's peak is a pure function of the shape, so the ratio to the
+    // amplitude is a constant of the design and not of the tuning.
+    let supremumPerAmp = 0;
+    for (let r = 0; r <= 1; r += 0.0001) {
+      const value = shapeAt(r, 0, Math.PI / 2) / COHORT_CORE_AMP;
+      if (value > supremumPerAmp) supremumPerAmp = value;
+    }
+    expect(supremumPerAmp).toBeCloseTo(0.54185, 4);
+    expect(1.42 / supremumPerAmp).toBeGreaterThan(2.6);
+    // On the screen, which receives shape² with blue exactly full:
+    const onScreen = (COHORT_CORE_AMP * supremumPerAmp) ** 2;
+    expect(onScreen).toBeLessThan(1);
   });
 
   it('the mirror above is the shipped shape, term for term', () => {
