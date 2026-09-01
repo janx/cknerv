@@ -1,12 +1,26 @@
-// ColonyCohorts — what a POW cohort looks like: a vertical throat.
+// ColonyCohorts — what a POW cohort looks like: a ONE-WAY VERTICAL THROAT.
 //
-// Energy enters from BELOW the colony slab, continuously, as an analytic
-// volume marched in the shader, and converges on a centre that is an ordinary
-// peer stop with its own middle refused. The block leaves above and outward,
-// briefly — and this layer does not draw that at all. It runs for as long as
-// the payout identity is in the recent window. On the block it wins, the
-// colony's own outward surge already erupts from that node, so nothing here
-// fires and nothing here reads the pulse.
+// Energy enters from BELOW the colony slab — continuously, as an analytic
+// field marched in the shader — and converges on a centre that is an ordinary
+// peer stop with its own middle refused. The block leaves ABOVE AND OUTWARD,
+// briefly, and THIS LAYER DOES NOT DRAW THAT AT ALL. Two faces, one axis, two
+// cadences: the intake runs for as long as the payout identity is in the
+// recent window and never flares; the emission is an instant the colony's own
+// outward surge and the upward carrier already draw, from this very node. So
+// nothing here fires, and nothing here reads the pulse.
+//
+// Below the slab is the one region of this scene where nothing is drawn at
+// all, which is what lets a volume hanging there be read as an intake rather
+// than as part of something else. The axis it hangs on is the colony's own
+// rotation axis, so the whole mark turns with the plate and needs no frame of
+// its own.
+//
+// The throat's darkness is a REFUSAL and never a painted disc: both draws are
+// additive and depth-read-only, and the middle is simply where bright
+// structure declines to fill. The corollary lives one layer over — `ColonyEdges`
+// stops a cohort's own links at its rim, because with nothing to occlude and
+// nothing to depth-reject, a link run to the centre would be ADDED to the one
+// pixel the form spends itself keeping empty.
 //
 // The whole design argument — why the intake is a marched volume rather than
 // shells or particles, why it accumulates optical depth instead of emission,
@@ -14,9 +28,9 @@
 // in `materials/colonyCohort`. Read it before touching either face.
 //
 // This file owns the two things that cannot live in a material:
-//   • WHICH nodes wear one — `cohortMarks`, pure and exported, one
-//     mark per attested node, carrying its placement and a stable per-cohort
-//     seed so no two throats run their crests on the same beat;
+//   • WHICH nodes wear one — `cohortMarks`, pure and exported, one mark per
+//     attested node, carrying its placement and a stable per-cohort seed so no
+//     two throats run their crests on the same beat;
 //   • the live SHARE, which moves on every attributed block and must never be
 //     allowed to move the geometry with it.
 //

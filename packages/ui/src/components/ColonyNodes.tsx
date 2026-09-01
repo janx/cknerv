@@ -7,14 +7,14 @@
 //     part that has to hold — under the additive clip, so it stays haze
 //     instead of a white speck the eye reads as a node. Non-selectable.
 //   • attested nodes    — NOT DRAWN HERE. A node the CHAIN proves exists and
-//     cannot name wears a black hole, and `ColonyCohorts` draws it: a dark
-//     gravity throat, a thick accretion halo, and disturbed gas collapsing from
-//     the surrounding void. It had a <points> stop of its own until that mark
-//     arrived, and an additive sprite is brightest at its own centre — exactly
-//     the pixel a shadow needs empty — so the stop was subsumed rather than
-//     left underneath. This file still stands its hit sphere, sized from the
-//     accretion rim, because the pick target belongs with every other staged
-//     node's.
+//     cannot name wears a one-way vertical throat, and `ColonyCohorts` draws
+//     it: an analytic volume marched below the colony slab, converging on a
+//     centre whose own middle is refused. It had a <points> stop of its own
+//     until that mark arrived, and an additive sprite is brightest at its own
+//     centre — exactly the pixel the throat needs empty — so the stop was
+//     subsumed rather than left underneath. This file still stands its hit
+//     sphere, sized from the CENTRE's extent, because the pick target belongs
+//     with every other staged node's.
 //   • roster nodes      — THREE more <points> draws off the same factory, one
 //     per rung of the crawler's evidence gradient (it reached the node / it
 //     only remembers reaching it / the network names it and nobody has ever
@@ -242,8 +242,8 @@ const sameNodeId = (a: NetworkNode, b: NetworkNode): boolean => a.id === b.id;
  *
  *  ⭐ `cohort` IS THE SECOND SUCH ANSWER, and naming it for the layer rather
  *  than for the kind is what keeps the table honest. An attested node's mark is
- *  the black hole `ColonyCohorts` draws; this file stands its hit sphere and
- *  nothing else. Calling the bucket `attested` would have named a draw this
+ *  the vertical throat `ColonyCohorts` draws; this file stands its hit sphere
+ *  and nothing else. Calling the bucket `attested` would have named a draw this
  *  file does not make, which is exactly the drift the table exists to stop. */
 export const COLONY_DRAWS = ['haze', 'cohort', 'sighted', 'measured', 'anchor'] as const;
 
@@ -924,8 +924,8 @@ function MeasuredNode({
  * Composes the colony: the inferred ghost cloud + the sighted tier + one
  * measured glow-node per real peer, unified as a single glow primitive on a
  * confidence gradient, plus ONE hit mesh over both staged tiers. The local
- * "you" is drawn by the galaxy (its labeled CkbNodeAnchor) and a cohort's black
- * hole by `ColonyCohorts`, NOT here. This owner stamps one shared ring-buffer
+ * "you" is drawn by the galaxy (its labeled CkbNodeAnchor) and a cohort's
+ * throat by `ColonyCohorts`, NOT here. This owner stamps one shared ring-buffer
  * slot per block so inferred and measured nodes cannot drift or cancel an older
  * in-flight wave.
  */

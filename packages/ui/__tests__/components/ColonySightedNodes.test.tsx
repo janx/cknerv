@@ -699,7 +699,7 @@ describe('ColonyNodes attested tier', () => {
     // The rungs land where this file says they land, one at a time.
     expect(buckets.haze).toEqual([KIND_SAMPLE.inferred]);
     // ⭐ `cohort`, NOT `attested`: the table names the LAYER that claims a
-    // kind, and a cohort's mark is the black hole `ColonyCohorts` draws.
+    // kind, and a cohort's mark is the vertical throat `ColonyCohorts` draws.
     // This file stands its hit sphere and nothing else.
     expect(buckets.cohort).toEqual([KIND_SAMPLE.attested]);
     expect(buckets.sighted).toEqual([KIND_SAMPLE.sighted]);

@@ -84,7 +84,8 @@ interface NetworkColonyProps {
   localVersion: string;
   /** The chain's recent mining cohorts, LIVE, by reference. Passed straight
    *  through to the cohort layer, where a cohort's share of the window sets
-   *  the rate its black hole pulls matter in at: the topology is keyed on the
+   *  the speed of the crests running down its throat — and nothing else about
+   *  the mark, ever: the topology is keyed on the
    *  producer key set alone (a per-block key would rebuild the colony's
    *  geometry once a block and truncate every in-flight wave), so the standings
    *  hanging off the staged nodes are stale between key-set changes and this is
@@ -260,10 +261,11 @@ function NetworkColony({
           backfillActive={backfillActive}
           contextEnergyRef={linkContextEnergyRef}
         />
-        {/* Drawn between the links and the marks. It is the widest structure
-            in the colony and the only one with a hole in the middle, so the
-            links pass BEHIND it and the staged marks sit on top — which is the
-            order a viewer already reads the colony in. */}
+        {/* Drawn between the links and the marks: the widest structure in the
+            colony, and the only one whose middle is deliberately empty. The
+            links do not pass behind it — a cohort's own links STOP AT ITS RIM,
+            in the layer above, because nothing here occludes or depth-rejects
+            anything and a line across the axis would simply be added to it. */}
         <ColonyCohorts
           topology={topology}
           producersRef={producersRef}

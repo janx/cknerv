@@ -129,16 +129,16 @@ export const PEER_CLOUD_GHOST_TONE = {
 /*
  * ⭐⭐ THERE IS NO ATTESTED STOP ON THIS AXIS, AND ITS ABSENCE IS A DECISION.
  * A node the chain proves and nobody can name once drew here, wedged between
- * the invented haze and the faintest named stop. It wears a black hole now
- * (`materials/colonyCohort`), and the two could not co-exist: an additive
- * point sprite is brightest at its own centre, which is exactly the pixel an
- * event horizon needs empty, so keeping the stop would have been arithmetically
- * identical to filling the hole with light.
+ * the invented haze and the faintest named stop. It wears a vertical throat now
+ * (`materials/colonyCohort`), and the two could not co-exist: an additive point
+ * sprite is brightest at its own centre, which is exactly the pixel the throat
+ * refuses to fill, so keeping the stop would have been arithmetically identical
+ * to filling the hole with light.
  *
  * The rung it left behind is on a DIFFERENT AXIS, which is why the ladder below
  * is unchanged rather than re-spaced. These five stops answer "how well do we
- * know this node"; a black hole answers "what does it do", and a mark on the
- * second axis was never a step on the first.
+ * know this node"; a throat answers "what does it do", and a mark on the second
+ * axis was never a step on the first.
  */
 /**
  * Named by the network, answered by nobody — hearsay carrying a real identity.

@@ -834,9 +834,22 @@ The topology contains:
 
 - one local CKB node, aligned with the shared chain-node anchor;
 - measured peers positioned deterministically by peer ID and reported latency;
+- sighted peers — roster identities the crawler names but the local node has no
+  link to — on placements we invented, so a real identity is never drawn as if
+  it were an observed connection;
+- attested cohorts, one per recent block producer, carrying the chain's payout
+  key and NO identity at all: the type they hold has no field an ID could land
+  in;
 - a seed-only inferred scaffold of roughly `240 +/- 30` nodes in an elliptical
   disc; and
 - inferred k-nearest, small-world, and component-bridge edges.
+
+A cohort is drawn as a one-way vertical throat rather than a stop on the peer
+brightness ladder: an analytic volume raymarched below the colony slab, and a
+centre that is an ordinary peer profile with its own middle refused. Nothing
+dark is painted — the throat is where bright structure declines to fill, which
+is this scene's additive idiom for a hole — so the layer that would otherwise
+break it is the link mesh, and a cohort's own links stop at its rim.
 
 The inferred scaffold is independent of the measured peer list, so peer churn
 does not reshuffle the ambient colony. It is memoized by universe seed. Edges
@@ -1128,9 +1141,10 @@ current staged structure.
   stripped `instanceStart/End` and colour lanes instead of two capacity-sized
   buffers nothing reads (2 × 2.3 MB of RAM and as much VRAM at the
   8,000-edge class).
-- Fragments that are provably dark discard before the expensive body: the
-  cohort accretion drops the annulus beyond its gas birth radius before its
-  noise field.
+- Fragments that are provably dark discard before the expensive body: a
+  cohort's intake clips its ray against the throat's slab and bounding cylinder
+  — roughly 83 % of the bounding quad's area — before the raymarch begins, and
+  the march itself stops as soon as the medium ahead is opaque.
 - Passive topology and color/mask updates have separate dirty paths.
 - Screen-space capsule nerves use two triangles per sampled segment.
 - Shader time advances lifecycle without per-frame full-buffer rewrites.
@@ -1370,7 +1384,7 @@ Use the same snapshot and capture settings for these minimum scenarios:
   `nerve.passive-fabric.trunk`, `nerve.active-route`, `nerve.memory-route`,
   `nerve.bridge`. Colony: `colony.cloud.haze`, `colony.cloud.advertised`,
   `colony.cloud.remembered`, `colony.cloud.reached`, `colony.measured-halos`,
-  `colony.edges`, `colony.accretion.horizon`, `colony.accretion.disc`,
+  `colony.edges`, `colony.cohort.intake`, `colony.cohort.core`,
   `colony.courier.plume`, `colony.courier.bloom`. Delivery: `delivery.body`,
   `delivery.core`, `delivery.trail`, `delivery.wave`. Backdrop: `stars`. A draw
   that would submit nothing — zero instances, an empty draw range, a hidden
@@ -1511,6 +1525,7 @@ Before merging a Canvas change, answer:
 | Screen-space capsule geometry | `packages/ui/src/geometry/screenSpaceCapsuleLine.ts` |
 | Peer topology and block flood | `packages/ui/src/derives/networkTopology.derive.ts`, `packages/ui/src/derives/networkFlood.derive.ts` |
 | Peer render layers and Cell delivery | `packages/ui/src/components/NetworkColony.tsx`, `packages/ui/src/components/BlockDeliveryLayer.tsx` |
+| POW cohort throats and the link stop at their rim | `packages/ui/src/components/ColonyCohorts.tsx`, `packages/ui/src/materials/colonyCohort.ts`, `packages/ui/src/components/ColonyEdges.tsx` |
 | Carrier glyph and contact front | `packages/ui/src/geometry/protocolCarrier.ts`, `packages/ui/src/materials/contactWaveMaterial.ts` |
 | Canonical rewrite echo | `packages/ui/src/components/CanonicalRewriteEcho.tsx` |
 | Simulation clock | `packages/ui/src/tweaks/simClock.ts`, `packages/ui/src/tweaks/SimClockTicker.tsx`, `packages/ui/src/tweaks/useSimFrame.ts` |

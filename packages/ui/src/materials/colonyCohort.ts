@@ -4,24 +4,44 @@ import { PEER_NETWORK_PALETTE } from '../visualPalette';
 /**
  * The two faces of a POW cohort's mark, and nothing else.
  *
- * A cohort is a ONE-WAY VERTICAL THROAT through the colony plane. Energy
- * enters from BELOW the slab, continuously, as an analytic volume
- * (`makeCohortIntakeMaterial`), and converges on a centre that is an ordinary
- * member of the peer mesh with its own middle refused
- * (`makeCohortCoreMaterial`). The block leaves above and outward, briefly —
- * and NOTHING HERE DRAWS THAT: `ColonyEdges`' outward surge and
- * `BlockDeliveryLayer`'s upward carrier already fire from the winning cohort's
- * own node. Two faces, one axis, two cadences.
+ * ⭐⭐⭐ A COHORT IS A ONE-WAY VERTICAL THROAT THROUGH THE COLONY PLANE, and
+ * the whole form follows from that one sentence. Energy enters from BELOW the
+ * slab — continuously, as an analytic field (`makeCohortIntakeMaterial`) —
+ * and converges on a centre that is an ordinary member of the peer mesh with
+ * its own middle refused (`makeCohortCoreMaterial`). The block leaves ABOVE
+ * AND OUTWARD, briefly, as an event. Two faces, one axis, TWO CADENCES: the
+ * intake never stops and never flares, the emission is a keyed instant, and a
+ * viewer can tell which is which because they do not share a clock.
  *
- * ⭐ BOTH FACES ARE ADDITIVE, UNLIT AND DEPTH-READ-ONLY. There is no second
- * blend mode in this file and no dark pixel anywhere in it: the darkness at
- * the convergence is bright structure DECLINING TO FILL, which is this scene's
- * own additive idiom for a hole. What this replaced spent five register
- * violations on the same idea — the only normal-blended object, the only dark
- * one, the only textured one (this scene's sole `fbm`), the only oriented one
- * and the only screen-locked one — and could still be seen through by any
- * colony edge behind it. The accepted cost of the swap is that nothing behind
- * a cohort is occluded any more.
+ * ⭐ "BELOW" IS THE ONLY READING THE SCENE MAKES AVAILABLE, which is what
+ * keeps it from being decoration. The colony slab is a 16:1 plate at
+ * `Y ∈ [15, 29]`, the cells canopy sits above it at 38, and under `Y ≈ 15`
+ * NOTHING WHATSOEVER IS DRAWN — the one empty region in the scene. A volume
+ * hanging there cannot be mistaken for part of anything else, and the axis it
+ * hangs on is the colony's own rotation axis, so it turns and parallaxes with
+ * the plate for free.
+ *
+ * ⭐⭐ NOTHING HERE DRAWS THE EMITTING FACE, and that absence is the design
+ * rather than a gap in it. `ColonyEdges`' outward surge and
+ * `BlockDeliveryLayer`'s upward carrier already fire from the winning cohort's
+ * own node, both keyed on `attestedOrigin`; a third mark for the same instant
+ * would be a second opinion about an event two layers already agree on.
+ *
+ * ⭐⭐ BOTH FACES ARE ADDITIVE, UNLIT AND DEPTH-READ-ONLY, AND NO DARK PIXEL IS
+ * EVER DRAWN. The throat is unlit because bright structure REFUSES TO FILL it
+ * — `smoothstep(0, uRefuse, r)` on the centre, a radial profile with no edge
+ * on the intake — which is this scene's own additive idiom for a hole. What
+ * this replaced spent five register violations on the same idea: the only
+ * normal-blended object, the only dark one, the only textured one (this
+ * scene's sole `fbm`), the only oriented one and the only screen-locked one —
+ * and could still be seen through by any colony edge behind it. The accepted
+ * cost of the swap is that nothing behind a cohort is occluded any more.
+ *
+ * ⚠️ WHICH MAKES THE UNLIT MIDDLE SOMETHING OTHER LAYERS CAN BREAK. With no
+ * shadow and no depth write there is nothing to reject a bright line laid
+ * across the axis; it is simply added to it. `COHORT_LINK_STOP_R` below is
+ * where that is paid for: a cohort's own links end at its rim, in
+ * `ColonyEdges`, and the throat stays empty from every camera.
  *
  * The design argument for each face sits on its own factory below; read it
  * before touching either.
