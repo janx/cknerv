@@ -252,9 +252,12 @@ describe('cohort core — the resting supremum', () => {
         }
       }
     }
-    // Today: 0.1842 at r = 0.2354. T6 re-tunes against the real light budget;
-    // what it may never do is take this over 1.
-    expect(supremum).toBeCloseTo(0.1842, 4);
+    // Today: 0.3359 at r = 0.2354. (It read 0.1842 at amp 0.34, which was
+    // 1/338 of the funnel by integrated light — a pick target with nothing
+    // drawn on it.) The RADIUS does not move: amplitude is a scalar on the
+    // profile, so a retune changes how bright the ring is and never where it
+    // is. What a retune may never do is take this over 1.
+    expect(supremum).toBeCloseTo(0.3359, 4);
     expect(atRadius).toBeCloseTo(0.2354, 3);
     expect(supremum).toBeLessThan(1);
     for (const channel of PEER_NETWORK_PALETTE.scaffold) {
@@ -310,7 +313,9 @@ describe('cohort core — the resting supremum', () => {
     expect(1.42 / supremumPerAmp).toBeGreaterThan(2.6);
     // On the screen, which receives shape² with blue exactly full:
     const onScreen = (COHORT_CORE_AMP * supremumPerAmp) ** 2;
+    expect(onScreen).toBeCloseTo(0.11286, 4);
     expect(onScreen).toBeLessThan(1);
+    expect(1 / onScreen).toBeGreaterThan(8.8);
   });
 
   it('the mirror above is the shipped shape, term for term', () => {

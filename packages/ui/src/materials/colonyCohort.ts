@@ -250,19 +250,42 @@ export const COHORT_INTAKE_FLOOR = 0.22;
 /**
  * Peak additive amplitude, before the knee.
  *
- * ⚠️ 0.74, NOT the preview's 0.66, and the difference is not a taste change.
- * The exact absorption step is dimmer than the left-endpoint rule it replaced
- * wherever `dA` is large — which is exactly the bright part, near the throat
- * and on the crests — so this is the scalar that puts the on-axis brightness
- * profile back where the approved preview had it: least squares over 392
- * height×phase samples, mean +1.3 %, worst −13 %. A single scalar cannot undo
- * a non-linear compression and is not meant to; the residual is the honest
- * size of the appearance change.
+ * ⚠️ IT IS PAIRED WITH `COHORT_INTAKE_DENSITY` AND NEITHER MOVES ALONE. The
+ * two together hold the funnel's light roughly constant while trading the one
+ * property this design actually rests on: density is contrast, amplitude is
+ * brightness, and the pair is chosen so that raising the first pays for the
+ * second. Measured live on the real GPU, integrated light over the whole
+ * funnel moves 1855 against the previous 1743 — 6 % — for a crest ratio that
+ * roughly doubles.
+ *
+ * ⚠️ 0.74 with density 0.95 was the lab's number and it was a SMOOTH CONE. At
+ * the camera the user inspects from, the axial profile at those constants has
+ * no local maximum anywhere along the funnel: the crests did not merely read
+ * weakly, they were not present in the image at all. That is the searchlight
+ * failure mode this design names as its main risk, and it was shipping.
  */
-export const COHORT_INTAKE_AMP = 0.74;
+export const COHORT_INTAKE_AMP = 1.8;
 
-/** Extinction per unit of density along the ray. */
-export const COHORT_INTAKE_DENSITY = 0.95;
+/**
+ * Extinction per unit of density along the ray.
+ *
+ * ⭐⭐⭐ THIS IS THE CONTRAST KNOB, AND CONTRAST IS THE WHOLE DESIGN. A still
+ * of a funnel narrowing to a bright point is ambiguous between a searchlight
+ * and a drain; only travelling crests decide it. The exact absorption step
+ * makes crest contrast fall MONOTONICALLY as this rises — measured live at
+ * 0.15/0.25/0.30/0.40/0.60/0.95 giving 3.91/3.03/3.02/2.51/2.05/(none) at the
+ * inspection camera — so low density is what keeps the near face dominant and
+ * the crests separate.
+ *
+ * ⭐ AND THE FLOOR IS NOT ZERO. Taken far enough down the medium turns
+ * optically thin, the march degenerates towards a plain emission integral, and
+ * the plan's original objection returns: the ray averages the whole chord and
+ * the structure goes back into a glow. 0.25 sits where the crests are fully
+ * separated while the supremum still leaves the mark 2x under the additive
+ * clip; 0.15 buys a little more ratio for a peak at 52 % of clip, which is
+ * headroom this mark has to spend on being ADDED to a lit scene.
+ */
+export const COHORT_INTAKE_DENSITY = 0.25;
 
 /** ⭐ FLUX CONSERVATION, not a brightness ramp: the same throughput squeezed
  *  into a narrower cross-section has to get denser, and that — not a painted
@@ -285,8 +308,21 @@ export const COHORT_INTAKE_HELIX = 0;
 /** Swirl of that helix about the axis, per second. Inert while helix is 0. */
 export const COHORT_INTAKE_SWIRL = 0.055;
 
-/** Samples along the clipped chord. The one real perf lever in this layer. */
-export const COHORT_INTAKE_STEPS = 28;
+/**
+ * Samples along the clipped chord. The one real perf lever in this layer.
+ *
+ * ⭐⭐⭐ 20, AND THE EIGHT STEPS IT GAVE UP WERE BUYING NOTHING. Cost is linear
+ * in this number at about 0.0145 ms a step, so 28 put the pair above the two
+ * draws it replaced; the question was what the extra steps bought. Measured on
+ * the real GPU at the inspection camera, against the 28-step frame:
+ * ZERO pixels differ by more than one 8-bit code at 20, at 16, or even at 12,
+ * and the first visible change is at 6. The density is analytic and smooth, so
+ * the absorption integral has already converged long before 20 — the step
+ * count was over-provisioned against a banding risk that this integrand does
+ * not have. 20 keeps a 2x margin over the 10 steps where the first sub-code
+ * differences appear at all.
+ */
+export const COHORT_INTAKE_STEPS = 20;
 
 /** Compile-time ceiling on the march. The loop is bounded by a literal so the
  *  program is legal under ESSL 1.00 as well; `uSteps` rides inside it. */
@@ -570,9 +606,16 @@ export function makeCohortIntakeMaterial(): THREE.ShaderMaterial {
  * cyan is `#1AD1FF`, whose BLUE IS EXACTLY FULL, so a shape reaching 1.0 clips
  * that channel flat and the mark's structure becomes literally invisible
  * inside a white-cyan blob. R16's T7 spent a whole live leg discovering this
- * from the far side. The resting supremum here is 0.1843, pinned in
- * `materials/cohortCore.test.ts`; red is the channel with headroom and is
- * therefore the probe channel for anything measured off a screenshot.
+ * from the far side. The resting supremum here is 0.3359, pinned in
+ * `materials/cohortCore.test.ts`, which puts 0.113 on the screen — nearly 9x
+ * under the clip.
+ *
+ * ⚠️ AND THE PROBE CHANNEL IS BLUE, NOT RED. R16's rule said red, because on
+ * a mark that was already blown out blue carried no information. This mark is
+ * nowhere near clipping, so the channel to measure is the one with the most
+ * signal, and on `#1AD1FF` that is blue by about 4x over red — red sits near
+ * the noise floor at 7/255. Red is the right probe only for a mark suspected
+ * of clipping; blue is the right probe for one that is not.
  *
  * ⭐ THE THROAT IS REFUSED, NOT PAINTED DARK. `smoothstep(0, uRefuse, r)` takes
  * the profile to EXACTLY zero on the axis, so the convergence point is the one
@@ -581,8 +624,36 @@ export function makeCohortIntakeMaterial(): THREE.ShaderMaterial {
  * removed.
  */
 
-/** Peak additive amplitude of the centre, before the breathe. */
-export const COHORT_CORE_AMP = 0.34;
+/**
+ * Peak additive amplitude of the centre, before the breathe.
+ *
+ * ⚠️⚠️ 0.34 WAS NOT A DIM CENTRE, IT WAS EFFECTIVELY NO CENTRE. Measured live
+ * and isolated on the real GPU it came to 1/15 of the intake by peak and
+ * **1/338 by integrated light** — and that is a correctness problem, not a
+ * matter of taste, because `COHORT_HIT_RADIUS` is anchored on this face. The
+ * pick target was 1.15 world units of nothing: the links already stop short of
+ * the centre so the throat stays unlit, so at 0.34 there was no longer
+ * anything drawn where the node a viewer aims at actually stands.
+ *
+ * ⭐ 0.62 IS STILL NOT THE BRIGHTEST PIXEL, AND MUST NOT BECOME ONE. It reads
+ * at 1/5 of the intake by peak and 1/98 by integrated light: a ring with an
+ * unlit middle, plainly visible at rest, and an order of magnitude short of
+ * the funnel that is what identifies the mark. The standing law is unmoved —
+ * PRESENCE IS SIZE AND STRUCTURE, NOT A SATURATED CORE.
+ *
+ * ⚠️ THE KNOB'S CEILING IS THE GUARD, AND IT IS GENUINELY AT THE EDGE — but
+ * of the ANALYTIC bound, not of the image. `core <= 1`, `halo <= 0.42`,
+ * `refuse <= 1` and `breathe <= 1` give `shape <= amp * 1.42`, so that bound
+ * reaches the clip at amp 0.704 and `cohortCoreAmp` stops at 0.7 to stay
+ * under it however the knobs are combined. The bound is loose by 2.6x,
+ * though, because `core + halo` peaks at `r = 0` where `refuse` is exactly
+ * zero and the two can never be at their maxima together: the real profile
+ * peaks at 0.542 of the amplitude, so the IMAGE would not clip until 1.845.
+ * 0.62 measures at 9.8 % of full scale on the real GPU. Both numbers are
+ * true and they answer different questions — do not quote the loose one as
+ * the distance to the clip, or the tight one as a licence to raise the knob.
+ */
+export const COHORT_CORE_AMP = 0.62;
 
 /** Half-extent of the centre's billboard, in world units. */
 export const COHORT_CORE_HALF = 2.3;

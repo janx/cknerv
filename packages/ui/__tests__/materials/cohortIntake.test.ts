@@ -690,9 +690,14 @@ describe('cohort intake — the optical-depth march', () => {
     // ⚠️ THE FIRST CUT OF THIS MATERIAL WROTE `sum += dA * trans`, and the
     // design note called it bounded "by construction". It is not: that is the
     // LEFT-endpoint rule for a decreasing integrand, over-estimating by about
-    // dA²/2 a step, and 28 steps across a 20-unit reach put dA above 1.1 near
-    // the throat. This keeps the measurement that settled it, because the
-    // number is the argument.
+    // dA²/2 a step, and at the constants of the day (density 0.95, 28 steps
+    // across a 20-unit reach) that put dA above 1.1 near the throat. The
+    // retune to density 0.25 and 20 steps takes the deepest step to 0.457, so
+    // the over-estimate at the SHIPPED density is much smaller now — 1.056
+    // rather than 1.516. It is still over 1, which is the whole point: the
+    // rule has no bound to lose, only a smaller violation in a thinner
+    // medium. This keeps the measurement that settled it, because the number
+    // is the argument.
     const supremum = (density: number, quadrature: 'exact' | 'leftEndpoint'): number => {
       let sumMax = 0;
       for (const { rel0, rd } of SWEEP_RAYS) {
@@ -701,8 +706,10 @@ describe('cohort intake — the optical-depth march', () => {
       }
       return sumMax;
     };
-    expect(supremum(COHORT_INTAKE_DENSITY, 'leftEndpoint')).toBeGreaterThan(1.5);
+    expect(supremum(COHORT_INTAKE_DENSITY, 'leftEndpoint')).toBeCloseTo(1.056, 2);
+    expect(supremum(COHORT_INTAKE_DENSITY, 'leftEndpoint')).toBeGreaterThan(1);
     expect(supremum(20, 'leftEndpoint')).toBeGreaterThan(6);
+    expect(supremum(20, 'leftEndpoint')).toBeCloseTo(14.65, 1);
     expect(supremum(COHORT_INTAKE_DENSITY, 'exact')).toBeLessThan(1);
     expect(supremum(20, 'exact')).toBeLessThanOrEqual(1);
     expect(supremum(20, 'leftEndpoint') / supremum(20, 'exact'))
@@ -766,8 +773,18 @@ describe('cohort intake — the optical-depth march', () => {
     const left = densities.map((density) => axisContrast(density, 'leftEndpoint'));
     const exact = densities.map((density) => axisContrast(density, 'exact'));
     // The left rule turns back up: its last reading beats its middle one.
-    expect(Math.min(...left)).toBeLessThan(1.3);
+    // Measured today, over the ladder above:
+    //   left  2.961 2.666 2.163 1.708 1.477 1.416 1.535 1.723 2.077 2.729
+    //   exact 2.848 2.502 1.921 1.419 1.179 1.089 1.024 1.004 1.004 1.004
+    // ⚠️ The left rule's floor DEPENDS ON THE STEP COUNT, because its error is
+    // O(dA²) a step and dA scales with the chord over uSteps. Taking uSteps
+    // from 28 to 20 raised the floor from under 1.3 to 1.416 — the SHAPE of
+    // this curve is the invariant, not its depth.
+    expect(Math.min(...left)).toBeCloseTo(1.416, 2);
+    // …and it turns back UP: the last reading beats the floor by nearly 2x,
+    // and the floor is not at the end of the ladder.
     expect(left[left.length - 1]).toBeGreaterThan(Math.min(...left) * 1.4);
+    expect(left.indexOf(Math.min(...left))).toBeLessThan(left.length - 1);
     // The exact form only ever falls, all the way to 1:1. The slack is there
     // because once the contrast has bottomed out ON 1 the remaining motion is
     // in the fourth decimal — a wobble at the floor, not a recovery, and the
@@ -781,6 +798,15 @@ describe('cohort intake — the optical-depth march', () => {
     // the ladder of the day; inserting one rung would have moved both without
     // changing a single assertion's text.
     expect(exact[densities.indexOf(0.25)]).toBeGreaterThan(2.4);
+    // ⭐ AND THIS IS THE RETUNE, STATED AS A NUMBER. The density this layer
+    // shipped with was reporting 1.42:1 on the axis, which on screen is a
+    // smooth cone with no local maximum anywhere along it; the one it ships
+    // with now reports 2.50:1. Crest contrast is the property the whole
+    // design rests on, and it is monotone in this knob, so the tuning has a
+    // direction rather than a search.
+    expect(exact[densities.indexOf(0.95)]).toBeCloseTo(1.419, 2);
+    expect(exact[densities.indexOf(0.25)]).toBeCloseTo(2.502, 2);
+    expect(exact[densities.indexOf(COHORT_INTAKE_DENSITY)]).toBeGreaterThan(2.4);
     expect(Math.max(...exact.slice(densities.indexOf(2)))).toBeLessThan(1.1);
     expect(exact[exact.length - 1]).toBeLessThan(1.02);
   });
@@ -796,15 +822,26 @@ describe('cohort intake — the optical-depth march', () => {
       depthMax = Math.max(depthMax, marched.maxStepDepth);
       ampMax = Math.max(ampMax, knee(COHORT_INTAKE_AMP * marched.sum));
     }
-    // Today, over this sweep: sum 0.9984, step depth 1.186, amplitude 0.5079
-    // (a denser sweep finds a step depth of 1.64). T6 re-tunes these against
-    // the real light budget; a leg that moves them a long way without meaning
-    // to will find out here.
-    expect(sumMax).toBeGreaterThan(0.99);
+    // Today, over this sweep: sum 0.9307, step depth 0.4569, amplitude
+    // 0.7711. (At density 0.95 and 28 steps it read sum 0.9984, step depth
+    // 1.186, amplitude 0.5079; a denser sweep found a step depth of 1.64.)
+    // The retune took density down and amplitude up: the medium is thinner,
+    // so the march absorbs less of each chord and the sum falls, while the
+    // brighter amplitude more than makes it back through the knee. A leg that
+    // moves these a long way without meaning to will find out here.
+    expect(sumMax).toBeCloseTo(0.9307, 3);
     expect(sumMax).toBeLessThan(1);
+    expect(depthMax).toBeCloseTo(0.4569, 3);
     expect(depthMax).toBeLessThan(2);
+    expect(ampMax).toBeCloseTo(0.7711, 3);
     expect(ampMax).toBeGreaterThan(0.4);
+    // ⭐ THE STANDING LAW, IN THE ONLY PLACE IT CAN BE CHECKED WITHOUT A GPU.
+    // Additive blending puts `uColor * amp²` on the screen and the scaffold's
+    // blue is exactly full, so the mark clips when amp reaches 1. At 0.7711 it
+    // stands 1.30x under that — headroom it needs, because what reaches the
+    // screen is this mark ADDED to whatever the scene has already lit there.
     expect(ampMax).toBeLessThan(COHORT_CLIP_KNEE);
+    expect(ampMax * ampMax).toBeLessThan(1);
   });
 
   it('the march above is the shipped march, and the shipped one absorbs exactly', () => {

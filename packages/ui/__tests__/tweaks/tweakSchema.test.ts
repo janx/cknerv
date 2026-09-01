@@ -22,7 +22,7 @@ const EXPECTED_DEFAULTS = {
   // the crest-contrast knob and the first one a tuner reaches for. The five
   // `hole*` knobs they replaced (rim 1.45, gas 0.72, field 0.38, infall 0.4,
   // spin 0.035) went with the accreting void that owned every one of them.
-  peer: { ambientAmp: 0.22, ambientSpeed: 0.05, ambientSigma: 0.17, surgeAmp: 1.1, surgeSigma: 0.13, surgeEase: 0.12, colorBoost: 3.75, alphaBoost: 2.75, sizeBoost: 0.5, trailBoost: 0.18, colorCeil: 1.4, alphaCeil: 1.1, flameWidth: 0.7, flameMinLen: 0.7, flameMaxLen: 2.5, flameBloom: 0.7, glintBloomOpacity: 0.55, glintPlumeOpacity: 0.3, cohortReach: 20, cohortMouth: 6, cohortAmp: 0.74, cohortDensity: 0.95, cohortCrests: 3.2, cohortRate: 0.23, cohortGather: 0.8, cohortCoreAmp: 0.34 },
+  peer: { ambientAmp: 0.22, ambientSpeed: 0.05, ambientSigma: 0.17, surgeAmp: 1.1, surgeSigma: 0.13, surgeEase: 0.12, colorBoost: 3.75, alphaBoost: 2.75, sizeBoost: 0.5, trailBoost: 0.18, colorCeil: 1.4, alphaCeil: 1.1, flameWidth: 0.7, flameMinLen: 0.7, flameMaxLen: 2.5, flameBloom: 0.7, glintBloomOpacity: 0.55, glintPlumeOpacity: 0.3, cohortReach: 20, cohortMouth: 6, cohortAmp: 1.8, cohortDensity: 0.25, cohortCrests: 3.2, cohortRate: 0.23, cohortGather: 0.8, cohortCoreAmp: 0.62 },
   cell: { fabricAlpha: 0.15, warmth: 0.12, centerDim: 0.3, activeColorR: 1.0, activeColorG: 1.0, activeColorB: 1.0, fabricWidth: 2.5, activeWidth: 4.6, reinforceAmount: 0.34, reinforceGain: 1.6, reinforceHalfLife: 3.0, fabricStaggerThreshold: 1500, fabricCohortSize: 750, fabricCohortInterval: 0.25 },
   nerve: { screenBudget: 8_000, coverageShare: 0.55, trunkShare: 0.72, twigShare: 0.18 },
 } as const;
