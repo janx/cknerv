@@ -507,3 +507,342 @@ export function makeColonyAccretionMaterial(): THREE.ShaderMaterial {
     `,
   });
 }
+
+/* -------------------------------------------------------------------------- *
+ * The vertical throat — a cohort's INTAKE face.
+ * -------------------------------------------------------------------------- */
+
+/**
+ * A POW cohort is a one-way vertical throat through the colony plane. Energy
+ * enters from BELOW the slab, continuously, as an analytic field; the block
+ * leaves above and outward, briefly, as an event two existing layers already
+ * draw. Two faces, one axis, two cadences.
+ *
+ * "Below" is the only reading the scene makes available. The colony slab is a
+ * 16:1 plate at `Y ∈ [15, 29]`, the cells canopy sits above it at 38, and under
+ * `Y ≈ 15` NOTHING is drawn at all — it is the one empty region in the scene,
+ * so a volume hanging there cannot be mistaken for part of anything else.
+ *
+ * ⭐ IT IS AN ANALYTIC VOLUME, NOT A SURFACE AND NOT PARTICLES. Both
+ * alternatives were built and both failed: nested lathe shells read as a stack
+ * of discs (the bead look, already rejected once), and smoothing them out read
+ * as smoke — continuous but structureless, so nothing carried the motion. One
+ * camera-facing instanced quad per cohort is a BOUNDING PROXY; the ray is
+ * rebuilt in world space and marched through a closed-form density.
+ *
+ * ⭐⭐⭐ IT ACCUMULATES OPTICAL DEPTH, NOT EMISSION. With pure emission the ray
+ * integrates the whole chord, and at the default camera it crosses roughly one
+ * and a half crest periods and averages them into a featureless glow.
+ * Extinction makes the near face dominate, which is what leaves a crest
+ * legible after the integral.
+ *
+ * ⚠️ THE MARCHED SUM IS NOT BOUNDED BY 1, and the design note that said it was
+ * is simply wrong. `sum += dA * trans` is a LEFT-endpoint quadrature of
+ * `∫ e^-s ds`, whose exact value is `1 - trans` and therefore under 1; but the
+ * rule over-estimates a decreasing integrand by about `dA²/2` a step, and at
+ * 28 steps across a 20-unit reach `dA` reaches ~1.6 near the throat. Measured
+ * supremum over a swept ray set at the shipped constants: `sum ≈ 1.51`, rising
+ * with `uDensity`. What actually bounds the output is the KNEE below, which is
+ * why it is a knee and never a scale — a scale would cost 91 % of the light to
+ * buy the same ceiling. The bound is pinned in `materials/cohortIntake.test.ts`.
+ *
+ * ⭐ THE FUNNEL'S AXIS IS THE COLONY'S ROTATION AXIS (world Y), so the local
+ * coordinate is just `p - throat`: no matrix, and the volume parallaxes and
+ * turns with the colony for free.
+ *
+ * Share keeps the single meaning it has always had on this layer — how fast
+ * the crests run — and never moves geometry, size or brightness.
+ */
+
+/** How far below its node the throat reaches, in world units. */
+export const COHORT_INTAKE_REACH = 20;
+
+/** Radius of the intake's mouth, at the bottom of that reach. */
+export const COHORT_INTAKE_MOUTH = 6;
+
+/**
+ * Radius at the throat itself — where the funnel converges on the node.
+ *
+ * ⚠️ NOT `COHORT_THROAT_R`, which is already taken by the accreting void's
+ * inner gas coordinate and means something else entirely (0.12 wu against the
+ * old horizon). The two coexist until the void is deleted.
+ */
+export const COHORT_INTAKE_THROAT_R = 0.5;
+
+/** Below one, the wall is convex: it opens fast and then converges slowly. */
+export const COHORT_INTAKE_FLARE = 0.75;
+
+/** Above one, crests accelerate INTO the throat rather than drift evenly. */
+export const COHORT_INTAKE_WARP = 1.3;
+
+/** Crests per unit of warped height — how many bands are in flight at once. */
+export const COHORT_INTAKE_CRESTS = 3.2;
+
+/** Crest speed for a cohort holding the whole producer window. */
+export const COHORT_INTAKE_RATE = 0.23;
+
+/** Gaussian half-width of one crest, in phase units. */
+export const COHORT_INTAKE_SIGMA = 0.1;
+
+/** Density between crests. Never zero: the funnel is a MEDIUM, not a stack of
+ *  shells, and the trough is what keeps it reading as one continuous body. */
+export const COHORT_INTAKE_FLOOR = 0.22;
+
+/** Peak additive amplitude, before the knee. */
+export const COHORT_INTAKE_AMP = 0.66;
+
+/** Extinction per unit of density along the ray. */
+export const COHORT_INTAKE_DENSITY = 0.95;
+
+/** ⭐ FLUX CONSERVATION, not a brightness ramp: the same throughput squeezed
+ *  into a narrower cross-section has to get denser, and that — not a painted
+ *  gradient — is what makes the convergence read as a convergence. */
+export const COHORT_INTAKE_GATHER = 0.8;
+
+/** Radial falloff exponent. There is no edge anywhere in the volume. */
+export const COHORT_INTAKE_EDGE = 3;
+
+/**
+ * Turns of helical twist per revolution.
+ *
+ * ⚠️ MUST BE AN INTEGER. `theta` comes from `atan(z, x)` and wraps by exactly
+ * one turn across the −x seam, so the phase jumps by `uHelix` there; only an
+ * integral jump is invisible under `fract`. Zero by default: at one turn with a
+ * facing fade the funnel read as a wisp of smoke.
+ */
+export const COHORT_INTAKE_HELIX = 0;
+
+/** Swirl of that helix about the axis, per second. Inert while helix is 0. */
+export const COHORT_INTAKE_SWIRL = 0.055;
+
+/** Samples along the clipped chord. The one real perf lever in this layer. */
+export const COHORT_INTAKE_STEPS = 28;
+
+/** Compile-time ceiling on the march. The loop is bounded by a literal so the
+ *  program is legal under ESSL 1.00 as well; `uSteps` rides inside it. */
+export const COHORT_INTAKE_MAX_STEPS = 48;
+
+/** Soft knee on the accumulated amplitude. ⭐ A KNEE AND NEVER A SCALE. */
+export const COHORT_CLIP_KNEE = 0.92;
+
+/** Crest speed for a cohort holding none of the window. Share moves the rate
+ *  between this and 1 and touches nothing else: `0.62 + 0.38 * share`. */
+export const COHORT_INTAKE_RATE_FLOOR = 0.62;
+
+/**
+ * Half-extent of the bounding quad, in world units.
+ *
+ * The volume is a cylinder of radius `uMouth` and height `uReach` hanging below
+ * the throat, so its bounding sphere is centred half a reach down and has this
+ * radius. A camera-facing square of the same half-extent covers that sphere's
+ * silhouette from every direction. Everything the square adds beyond the
+ * volume discards in the ray clip before the march — about 83 % of its area.
+ */
+export const COHORT_INTAKE_HALF_EXTENT = Math.sqrt(
+  COHORT_INTAKE_MOUTH * COHORT_INTAKE_MOUTH
+    + (COHORT_INTAKE_REACH * 0.5) * (COHORT_INTAKE_REACH * 0.5),
+);
+
+/**
+ * One cohort's intake, as an instanced raymarched volume.
+ *
+ * ⚠️ THE GEOMETRY MUST BE `PlaneGeometry(1, 1)`. Unlike the two billboards
+ * above it, this quad carries its world extent in the `uHalf` UNIFORM rather
+ * than baked into the geometry — because the shader builds the quad from raw
+ * `position` and camera axes, which no model matrix ever touches, so both
+ * `mesh.scale` and a scaled instance matrix are silently ignored. A unit plane
+ * with the extent baked in would render one world unit across and look like
+ * nothing at all. (This cost a full lab round; it hit two materials at once.)
+ *
+ * `aSeed` changes only when the cohort set moves; `aShare` is rewritten in
+ * place whenever the producer window does.
+ */
+export function makeCohortIntakeMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthTest: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+    uniforms: {
+      uColor: {
+        value: new THREE.Color().setRGB(...PEER_NETWORK_PALETTE.scaffold),
+      },
+      uTime: { value: 0 },
+      uContextEnergy: { value: 1 },
+      uHalf: { value: COHORT_INTAKE_HALF_EXTENT },
+      uRateFloor: { value: COHORT_INTAKE_RATE_FLOOR },
+      uAmp: { value: COHORT_INTAKE_AMP },
+      uReach: { value: COHORT_INTAKE_REACH },
+      uMouth: { value: COHORT_INTAKE_MOUTH },
+      uThroatR: { value: COHORT_INTAKE_THROAT_R },
+      uFlare: { value: COHORT_INTAKE_FLARE },
+      uWarp: { value: COHORT_INTAKE_WARP },
+      uCrests: { value: COHORT_INTAKE_CRESTS },
+      uRate: { value: COHORT_INTAKE_RATE },
+      uSigma: { value: COHORT_INTAKE_SIGMA },
+      uFloor: { value: COHORT_INTAKE_FLOOR },
+      uGather: { value: COHORT_INTAKE_GATHER },
+      uEdge: { value: COHORT_INTAKE_EDGE },
+      uHelix: { value: COHORT_INTAKE_HELIX },
+      uSwirl: { value: COHORT_INTAKE_SWIRL },
+      uSteps: { value: COHORT_INTAKE_STEPS },
+      uKnee: { value: COHORT_CLIP_KNEE },
+      uDensity: { value: COHORT_INTAKE_DENSITY },
+    },
+    vertexShader: /* glsl */ `
+      attribute float aSeed;
+      attribute float aShare;
+
+      uniform float uHalf;
+      uniform float uReach;
+      uniform float uRateFloor;
+
+      varying vec3 vWorld;
+      varying vec3 vOrigin;
+      varying float vSeed;
+      varying float vRateScale;
+
+      void main() {
+        vSeed = aSeed;
+        // Share has one visual meaning: how fast this throat's crests run.
+        vRateScale = mix(uRateFloor, 1.0, clamp(aShare, 0.0, 1.0));
+        // ⭐ THE THROAT IS DERIVED HERE AND IS NEVER A CPU UNIFORM. The
+        // colony turns about world Y under this layer, so a throat written
+        // once a frame from the CPU would lag the rotation and drag every
+        // funnel off the node it belongs to. The instance origin IS the
+        // throat, exactly, on whatever frame the GPU is drawing.
+        vec4 anchor = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+        vOrigin = anchor.xyz;
+        // The quad is a bounding proxy, so it is centred on the VOLUME —
+        // half a reach below the throat — not on the throat. Offsetting the
+        // mesh instead and adding the reach back would give the same point
+        // one operation later and only while the instance matrix stays a
+        // pure translation.
+        vec3 centre = anchor.xyz - vec3(0.0, uReach * 0.5, 0.0);
+        vec3 cameraRight = vec3(
+          viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]
+        );
+        vec3 cameraUp = vec3(
+          viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]
+        );
+        // ⚠️ uHalf IS A UNIFORM AND HAS TO BE — see the factory's comment.
+        vWorld = centre
+          + (cameraRight * position.x + cameraUp * position.y) * uHalf * 2.0;
+        gl_Position = projectionMatrix * viewMatrix * vec4(vWorld, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      precision highp float;
+
+      uniform vec3 uColor;
+      uniform float uTime;
+      uniform float uContextEnergy;
+      uniform float uAmp;
+      uniform float uReach;
+      uniform float uMouth;
+      uniform float uThroatR;
+      uniform float uFlare;
+      uniform float uWarp;
+      uniform float uCrests;
+      uniform float uRate;
+      uniform float uSigma;
+      uniform float uFloor;
+      uniform float uGather;
+      uniform float uEdge;
+      uniform float uHelix;
+      uniform float uSwirl;
+      uniform float uSteps;
+      uniform float uKnee;
+      uniform float uDensity;
+
+      varying vec3 vWorld;
+      varying vec3 vOrigin;
+      varying float vSeed;
+      varying float vRateScale;
+
+      const float TAU = 6.28318530718;
+
+      /** Radius of the wall at height h, 0 at the throat and 1 at the mouth. */
+      float intakeRadiusAt(float h) {
+        return uThroatR + (uMouth - uThroatR) * pow(max(h, 0.0), uFlare);
+      }
+
+      /** The whole form, in closed form, at one point of the funnel frame. */
+      float intakeDensityAt(vec3 rel) {
+        float h = -rel.y / uReach;
+        if (h < 0.0 || h > 1.0) return 0.0;
+        float rho = length(rel.xz);
+        float R = intakeRadiusAt(h);
+        float q = rho / max(R, 0.001);
+        float radial = exp(-q * q * uEdge);
+        float s = pow(max(h, 0.0), uWarp);
+        float theta = atan(rel.z, rel.x);
+        float w = fract(
+          s * uCrests
+            + uHelix * (theta / TAU + uTime * uSwirl)
+            + uTime * uRate * vRateScale
+            + vSeed
+        );
+        float dw = min(w, 1.0 - w);
+        float crest = uFloor
+          + (1.0 - uFloor) * exp(-(dw * dw) / (2.0 * uSigma * uSigma));
+        float gather = pow(uMouth / max(R, 0.001), uGather);
+        float mouthFade = 1.0 - smoothstep(0.74, 1.0, h);
+        float throatFade = smoothstep(0.0, 0.10, h);
+        return radial * crest * gather * mouthFade * throatFade;
+      }
+
+      void main() {
+        vec3 rayOrigin = cameraPosition;
+        vec3 rayDir = normalize(vWorld - rayOrigin);
+        vec3 rel0 = rayOrigin - vOrigin;
+
+        // Clip the ray to the y slab intersected with the bounding cylinder
+        // before marching anything. Most of the quad leaves here.
+        float t0 = 0.0;
+        float t1 = 1e9;
+        if (abs(rayDir.y) > 1e-6) {
+          float ta = (0.0 - rel0.y) / rayDir.y;
+          float tb = (-uReach - rel0.y) / rayDir.y;
+          t0 = max(t0, min(ta, tb));
+          t1 = min(t1, max(ta, tb));
+        } else if (rel0.y > 0.0 || rel0.y < -uReach) {
+          discard;
+        }
+        float a = dot(rayDir.xz, rayDir.xz);
+        float b = 2.0 * dot(rel0.xz, rayDir.xz);
+        float c = dot(rel0.xz, rel0.xz) - uMouth * uMouth;
+        float disc = b * b - 4.0 * a * c;
+        if (disc <= 0.0 || a < 1e-9) discard;
+        float sq = sqrt(disc);
+        t0 = max(t0, (-b - sq) / (2.0 * a));
+        t1 = min(t1, (-b + sq) / (2.0 * a));
+        if (t1 <= t0) discard;
+
+        // ⭐⭐⭐ EXTINCTION IS WHAT KEEPS THE STRUCTURE. Pure emission
+        // integrates the whole chord and averages the crests into a glow.
+        float steps = uSteps;
+        float dt = (t1 - t0) / steps;
+        float sum = 0.0;
+        float trans = 1.0;
+        for (int i = 0; i < ${COHORT_INTAKE_MAX_STEPS}; i++) {
+          if (float(i) >= steps) break;
+          vec3 p = rel0 + rayDir * (t0 + (float(i) + 0.5) * dt);
+          float dA = intakeDensityAt(p) * dt * uDensity;
+          sum += dA * trans;
+          trans *= exp(-dA);
+          if (trans < 0.004) break;
+        }
+        float amp = uAmp * sum;
+        if (amp < 0.0015) discard;
+        // ⭐ A SOFT KNEE, NEVER A SCALE: a scale that bought this ceiling
+        // would cost 91 % of the light everywhere the mark was not clipping.
+        amp = uKnee * (1.0 - exp(-amp / uKnee));
+        // Additive blending uses source alpha as its factor. Keeping context
+        // energy in RGB only preserves linear scene-focus damping.
+        gl_FragColor = vec4(uColor * amp * uContextEnergy, amp);
+      }
+    `,
+  });
+}
