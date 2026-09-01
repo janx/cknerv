@@ -628,15 +628,17 @@ export function makeCohortIntakeMaterial(): THREE.ShaderMaterial {
  * Peak additive amplitude of the centre, before the breathe.
  *
  * ⚠️⚠️ 0.34 WAS NOT A DIM CENTRE, IT WAS EFFECTIVELY NO CENTRE. Measured live
- * and isolated on the real GPU it came to 1/15 of the intake by peak and
- * **1/338 by integrated light** — and that is a correctness problem, not a
- * matter of taste, because `COHORT_HIT_RADIUS` is anchored on this face. The
+ * and isolated on the real GPU, in the same frame as the funnel it is compared
+ * against, it came to 1/17 of the intake by peak and **1/346 BY INTEGRATED
+ * LIGHT** — and that is a correctness problem, not a matter of taste, because
+ * `COHORT_HIT_RADIUS` is anchored on this face. The
  * pick target was 1.15 world units of nothing: the links already stop short of
  * the centre so the throat stays unlit, so at 0.34 there was no longer
  * anything drawn where the node a viewer aims at actually stands.
  *
  * ⭐ 0.62 IS STILL NOT THE BRIGHTEST PIXEL, AND MUST NOT BECOME ONE. It reads
- * at 1/5 of the intake by peak and 1/98 by integrated light: a ring with an
+ * at 1/5.2 of the intake by peak and 1/99 by integrated light — a 3.5x gain in
+ * the light ratio, both halves measured in one frame: a ring with an
  * unlit middle, plainly visible at rest, and an order of magnitude short of
  * the funnel that is what identifies the mark. The standing law is unmoved —
  * PRESENCE IS SIZE AND STRUCTURE, NOT A SATURATED CORE.
@@ -652,6 +654,11 @@ export function makeCohortIntakeMaterial(): THREE.ShaderMaterial {
  * 0.62 measures at 9.8 % of full scale on the real GPU. Both numbers are
  * true and they answer different questions — do not quote the loose one as
  * the distance to the clip, or the tight one as a licence to raise the knob.
+ *
+ * ⚠️ EVERY RATIO ABOVE IS FRAME-DEPENDENT TO A FEW PER CENT, because the
+ * producer set moves under a live chain and each cohort's funnel is a
+ * different size on screen. Compare the two faces WITHIN ONE FRAME or the
+ * comparison drifts by more than the effect being measured.
  */
 export const COHORT_CORE_AMP = 0.62;
 
