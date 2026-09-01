@@ -180,10 +180,12 @@ interface March {
 }
 
 /**
- * The shipped accumulation, and — behind `exact` — the accumulation it is a
- * quadrature OF. `sum += dA * trans` is the left-endpoint rule for
- * `∫ e^-s ds`; `sum += (1 - e^-dA) * trans` is that integral, exactly, over a
- * step of constant density. The two agree as `dA → 0` and diverge above it.
+ * The shipped accumulation — and, behind `quadrature: 'leftEndpoint'`, the rule
+ * it replaced. `sum += (1 - e^-dA) * trans` is the integral of the emission
+ * that survives to the eye over a step of constant density, EXACTLY;
+ * `sum += dA * trans` is the left-endpoint rule for the same integral. The two
+ * agree as `dA → 0` and diverge above it, and the divergence is what the suite
+ * below measures.
  */
 function march(
   rel0: readonly [number, number, number],
@@ -192,14 +194,14 @@ function march(
     funnel?: Funnel;
     steps?: number;
     density?: number;
-    exact?: boolean;
+    quadrature?: 'exact' | 'leftEndpoint';
   } = {},
 ): March | null {
   const {
     funnel = RESTING,
     steps = COHORT_INTAKE_STEPS,
     density = COHORT_INTAKE_DENSITY,
-    exact = false,
+    quadrature = 'exact',
   } = options;
   const clip = clipRay(rel0, rd);
   if (clip === null) return null;
@@ -212,8 +214,9 @@ function march(
     const p = step(rel0, rd, clip.t0 + (i + 0.5) * dt);
     const dA = intakeDensityAt(p, funnel) * dt * density;
     if (dA > maxStepDepth) maxStepDepth = dA;
-    sum += (exact ? 1 - Math.exp(-dA) : dA) * trans;
-    trans *= Math.exp(-dA);
+    const absorbed = 1 - Math.exp(-dA);
+    sum += (quadrature === 'exact' ? absorbed : dA) * trans;
+    trans *= 1 - absorbed;
     if (trans < 0.004) break;
   }
   return { sum, trans, maxStepDepth };
@@ -265,6 +268,27 @@ const SWEEP_RAYS: readonly Ray[] = (() => {
   }
   return rays;
 })();
+
+/**
+ * One ray from the default camera's elevation, aimed at the funnel's axis at
+ * height `h`. Sweeping `h` walks the eye down the funnel the way T6's contrast
+ * probe walks a line down the mark on screen.
+ */
+function axisRay(h: number): [[number, number, number], [number, number, number]] {
+  const elevation = (24 * Math.PI) / 180;
+  const rel0: [number, number, number] = [
+    Math.cos(elevation) * 60,
+    Math.sin(elevation) * 60,
+    0,
+  ];
+  const d: [number, number, number] = [
+    -rel0[0],
+    -h * COHORT_INTAKE_REACH - rel0[1],
+    -rel0[2],
+  ];
+  const length = Math.hypot(d[0], d[1], d[2]);
+  return [rel0, [d[0] / length, d[1] / length, d[2] / length]];
+}
 
 /* -------------------------------------------------------------------------- *
  * The density field.
@@ -595,50 +619,136 @@ describe('cohort intake — the optical-depth march', () => {
     }
   });
 
-  it('the integral it approximates is bounded by one — the 28-step quadrature is not', () => {
-    // ⚠️ THE DESIGN NOTE SAYING `sum < 1 by construction` IS WRONG, and this
-    // is the measurement that says so. `sum += dA * trans` is the LEFT-endpoint
-    // rule for `∫ e^-s ds`; the exact value of that integral is `1 - trans`,
-    // under 1 for every density and every step count — but the rule
-    // over-estimates a decreasing integrand by ~dA²/2 a step, and 28 steps
-    // across a 20-unit reach put dA above 1.5 near the throat.
+  it('telescopes: sum + trans is exactly one, so sum < 1 for every density and step count', () => {
+    // ⭐ THIS is what makes `sum` an OPACITY rather than a running total that
+    // happens to look like one. Each step moves `sum` up and `trans` down by
+    // the same `a * trans`, so their total is invariant — one, its starting
+    // value — however many steps run and however deep each one is. `uAmp` is
+    // therefore a fraction of a bounded quantity, and the knee downstream is a
+    // safety net rather than the only thing standing between the mark and the
+    // clip.
     for (const density of [0.1, COHORT_INTAKE_DENSITY, 4, 20]) {
       for (const steps of [4, 12, COHORT_INTAKE_STEPS, COHORT_INTAKE_MAX_STEPS]) {
-        let exactMax = 0;
-        let shippedMax = 0;
-        let depthMax = 0;
+        let sumMax = 0;
         let worstIdentity = 0;
+        let rays = 0;
+        let strict = true;
         for (const { rel0, rd } of SWEEP_RAYS) {
-          const options = { density, steps };
-          const exact = march(rel0, rd, { ...options, exact: true });
-          const shipped = march(rel0, rd, options);
-          if (exact === null || shipped === null) continue;
-          // The whole reason the exact form is bounded: it TELESCOPES. Every
-          // step moves `sum` and `trans` by the same amount in opposite
-          // directions, so their total is one however many steps run and
-          // however deep each one is.
+          const marched = march(rel0, rd, { density, steps });
+          if (marched === null) continue;
+          rays += 1;
           worstIdentity = Math.max(
             worstIdentity,
-            Math.abs(exact.sum + exact.trans - 1),
+            Math.abs(marched.sum + marched.trans - 1),
           );
-          exactMax = Math.max(exactMax, exact.sum);
-          shippedMax = Math.max(shippedMax, shipped.sum);
-          depthMax = Math.max(depthMax, shipped.maxStepDepth);
+          sumMax = Math.max(sumMax, marched.sum);
+          // ⚠️ `sum < 1` STRICTLY is an arithmetic claim, not a floating-point
+          // one, and the difference is real rather than pedantic. `sum` is
+          // `1 - trans` and `trans` is never zero in exact arithmetic — but a
+          // double cannot hold `1 - 1e-320`, so the moment the medium goes
+          // effectively opaque the sum rounds ONTO its bound. That is the
+          // physically right answer (an opaque medium absorbs everything), and
+          // it is still a bound, which is the only property anything
+          // downstream needs. The shader never gets near it either way: the
+          // loop breaks at `trans < 0.004`.
+          if (marched.trans > 1e-12) strict = strict && marched.sum < 1;
         }
+        expect(rays).toBeGreaterThan(100);
         expect(worstIdentity).toBeLessThan(1e-12);
-        // …so the quantity being approximated is bounded by one, always, and
-        // reaches it only where the volume is completely opaque.
-        expect(`${density}/${steps}: ${exactMax <= 1}`)
+        expect(`${density}/${steps}: ${sumMax <= 1}`)
           .toBe(`${density}/${steps}: true`);
-        // The quadrature of it is bounded by the step depth, and only tracks
-        // the integral where that depth is small.
-        expect(shippedMax).toBeGreaterThanOrEqual(exactMax - 1e-12);
-        if (density === COHORT_INTAKE_DENSITY) expect(exactMax).toBeLessThan(1);
-        // Where the steps are fine enough, the quadrature IS the integral and
-        // inherits its bound. That is the regime the design note assumed.
-        if (depthMax < 0.2) expect(shippedMax).toBeLessThan(1);
+        expect(`${density}/${steps} strict: ${strict}`)
+          .toBe(`${density}/${steps} strict: true`);
       }
     }
+    // At the shipped constants nothing is anywhere near opaque enough to
+    // underflow, so the bound is strict with room to spare.
+    let shippedMax = 0;
+    for (const { rel0, rd } of SWEEP_RAYS) {
+      const marched = march(rel0, rd);
+      if (marched !== null) shippedMax = Math.max(shippedMax, marched.sum);
+    }
+    expect(shippedMax).toBeLessThan(1);
+  });
+
+  it('the left-endpoint rule it replaced is unbounded, and non-monotone in density', () => {
+    // ⚠️ THE FIRST CUT OF THIS MATERIAL WROTE `sum += dA * trans`, and the
+    // design note called it bounded "by construction". It is not: that is the
+    // LEFT-endpoint rule for a decreasing integrand, over-estimating by about
+    // dA²/2 a step, and 28 steps across a 20-unit reach put dA above 1.1 near
+    // the throat. This keeps the measurement that settled it, because the
+    // number is the argument.
+    const supremum = (density: number, quadrature: 'exact' | 'leftEndpoint'): number => {
+      let sumMax = 0;
+      for (const { rel0, rd } of SWEEP_RAYS) {
+        const marched = march(rel0, rd, { density, quadrature });
+        if (marched !== null) sumMax = Math.max(sumMax, marched.sum);
+      }
+      return sumMax;
+    };
+    expect(supremum(COHORT_INTAKE_DENSITY, 'leftEndpoint')).toBeGreaterThan(1.5);
+    expect(supremum(20, 'leftEndpoint')).toBeGreaterThan(6);
+    expect(supremum(COHORT_INTAKE_DENSITY, 'exact')).toBeLessThan(1);
+    expect(supremum(20, 'exact')).toBeLessThanOrEqual(1);
+    expect(supremum(20, 'leftEndpoint') / supremum(20, 'exact'))
+      .toBeGreaterThan(6);
+    // The over-estimate is one-sided: the rule never returns LESS than the
+    // integral it approximates, and the gap closes as the steps get fine.
+    for (const steps of [COHORT_INTAKE_STEPS, COHORT_INTAKE_MAX_STEPS]) {
+      let worstUnder = 0;
+      let finestDepth = 0;
+      for (const { rel0, rd } of SWEEP_RAYS) {
+        const options = { steps, density: 0.05 };
+        const exact = march(rel0, rd, options);
+        const left = march(rel0, rd, { ...options, quadrature: 'leftEndpoint' });
+        if (exact === null || left === null) continue;
+        worstUnder = Math.min(worstUnder, left.sum - exact.sum);
+        finestDepth = Math.max(finestDepth, exact.maxStepDepth);
+      }
+      expect(worstUnder).toBeGreaterThanOrEqual(-1e-12);
+      // At a step depth this shallow the two forms are the same picture, which
+      // is the regime the design note silently assumed the whole time.
+      expect(finestDepth).toBeLessThan(0.1);
+    }
+    // ⭐⭐ AND THE REAL TRAP, worse than the missing bound: under the left
+    // rule the density knob is NON-MONOTONE in crest contrast. Contrast falls
+    // to a floor around uDensity 2 and then CLIMBS again, because once `trans`
+    // collapses inside one step the sum degenerates into a point sample of the
+    // first sample's density — bright, structured-looking, and meaningless. A
+    // tuner raising density in search of contrast walks through that dead zone
+    // and out the far side. The exact form falls monotonically to 1:1, which
+    // is the honest report that the medium has gone opaque.
+    const axisContrast = (
+      density: number,
+      quadrature: 'exact' | 'leftEndpoint',
+    ): number => {
+      let peak = 0;
+      let trough = Infinity;
+      for (let h = 0.10; h <= 0.74001; h += 0.01) {
+        const marched = march(...axisRay(h), { density, quadrature });
+        const value = marched === null ? 0 : marched.sum;
+        peak = Math.max(peak, value);
+        trough = Math.min(trough, value);
+      }
+      return peak / trough;
+    };
+    const densities = [0.25, 0.5, COHORT_INTAKE_DENSITY, 1.5, 2, 3, 5, 10, 20];
+    const left = densities.map((density) => axisContrast(density, 'leftEndpoint'));
+    const exact = densities.map((density) => axisContrast(density, 'exact'));
+    // The left rule turns back up: its last reading beats its middle one.
+    expect(Math.min(...left)).toBeLessThan(1.3);
+    expect(left[left.length - 1]).toBeGreaterThan(Math.min(...left) * 1.4);
+    // The exact form only ever falls, all the way to 1:1. The slack is there
+    // because once the contrast has bottomed out ON 1 the remaining motion is
+    // in the fourth decimal — a wobble at the floor, not a recovery, and the
+    // assertion after the loop is what says so.
+    for (let i = 1; i < exact.length; i += 1) {
+      expect(`${densities[i]}: ${exact[i] <= exact[i - 1] + 2e-3}`)
+        .toBe(`${densities[i]}: true`);
+    }
+    expect(exact[0]).toBeGreaterThan(2.4);
+    expect(Math.max(...exact.slice(4))).toBeLessThan(1.1);
+    expect(exact[exact.length - 1]).toBeLessThan(1.02);
   });
 
   it('measures what the shipped constants actually reach, so a tune has a baseline', () => {
@@ -652,15 +762,32 @@ describe('cohort intake — the optical-depth march', () => {
       depthMax = Math.max(depthMax, marched.maxStepDepth);
       ampMax = Math.max(ampMax, knee(COHORT_INTAKE_AMP * marched.sum));
     }
-    // Today, over this sweep: sum 1.516, step depth 1.186, amplitude 0.610
-    // (a denser sweep finds a step depth of 1.64). T6 re-tunes
-    // these against the real light budget; a leg that moves them a long way
-    // without meaning to will find out here.
-    expect(sumMax).toBeGreaterThan(1);
-    expect(sumMax).toBeLessThan(1.7);
+    // Today, over this sweep: sum 0.9984, step depth 1.186, amplitude 0.5079
+    // (a denser sweep finds a step depth of 1.64). T6 re-tunes these against
+    // the real light budget; a leg that moves them a long way without meaning
+    // to will find out here.
+    expect(sumMax).toBeGreaterThan(0.99);
+    expect(sumMax).toBeLessThan(1);
     expect(depthMax).toBeLessThan(2);
     expect(ampMax).toBeGreaterThan(0.4);
     expect(ampMax).toBeLessThan(COHORT_CLIP_KNEE);
+  });
+
+  it('the march above is the shipped march, and the shipped one absorbs exactly', () => {
+    // ⚠️ A MIRROR THAT DRIFTS PROVES NOTHING — R15 shipped exactly that. The
+    // density function has its own character-for-character tie above; this is
+    // the tie for the accumulation, which is the whole subject of this suite.
+    const fragment = makeCohortIntakeMaterial().fragmentShader;
+    expect(fragment).toContain('float a = 1.0 - exp(-dA);');
+    expect(fragment).toContain('sum += a * trans;');
+    expect(fragment).toContain('trans *= 1.0 - a;');
+    expect(fragment).toContain('if (trans < 0.004) break;');
+    // And the rule it replaced is gone, in either spelling. ⚠️ Comment-free
+    // text: the shader's own comment NAMES the rule it no longer uses, and a
+    // guard that read the comments would have called that a regression.
+    const code = stripComments(fragment);
+    expect(code).not.toContain('sum += dA * trans');
+    expect(code).not.toContain('trans *= exp(-dA)');
   });
 });
 

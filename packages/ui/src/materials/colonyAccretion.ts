@@ -536,15 +536,28 @@ export function makeColonyAccretionMaterial(): THREE.ShaderMaterial {
  * Extinction makes the near face dominate, which is what leaves a crest
  * legible after the integral.
  *
- * ⚠️ THE MARCHED SUM IS NOT BOUNDED BY 1, and the design note that said it was
- * is simply wrong. `sum += dA * trans` is a LEFT-endpoint quadrature of
- * `∫ e^-s ds`, whose exact value is `1 - trans` and therefore under 1; but the
- * rule over-estimates a decreasing integrand by about `dA²/2` a step, and at
- * 28 steps across a 20-unit reach `dA` reaches ~1.6 near the throat. Measured
- * supremum over a swept ray set at the shipped constants: `sum ≈ 1.51`, rising
- * with `uDensity`. What actually bounds the output is the KNEE below, which is
- * why it is a knee and never a scale — a scale would cost 91 % of the light to
- * buy the same ceiling. The bound is pinned in `materials/cohortIntake.test.ts`.
+ * ⭐⭐ THE STEP ABSORBS EXACTLY, so the sum is an OPACITY and not a running
+ * total that happens to look like one. `a = 1 - exp(-dA)` is the fraction this
+ * step really absorbs, and `sum` and `trans` then move by the same amount in
+ * opposite directions: `sum + trans == 1` after every step, however deep the
+ * step is, so `sum < 1` always and `uAmp` is a fraction of a bounded quantity.
+ *
+ * ⚠️ IT WAS WRITTEN `sum += dA * trans` FIRST, AND THAT IS NOT BOUNDED. That
+ * is the LEFT-endpoint rule for `∫ e^-s ds`: it over-estimates a decreasing
+ * integrand by about `dA²/2` a step, and at 28 steps across a 20-unit reach
+ * `dA` passes 1.1 near the throat. Measured supremum over a swept ray set:
+ * `1.516` at the shipped constants and `6.19` at `uDensity` 20, against
+ * `0.998` and `1.000` for the form above. The rule also makes the density knob
+ * NON-MONOTONE in crest contrast — 2.62:1 at `uDensity` 0.25, down to 1.29:1
+ * at 2, back up to 1.89:1 at 20, because once `trans` collapses in one step
+ * the sum degenerates into a point sample of the first sample's density. A
+ * tuner chasing contrast would walk through that dead zone and out the far
+ * side into an unbounded, meaningless image. Both are pinned in
+ * `materials/cohortIntake.test.ts`.
+ *
+ * The KNEE below is therefore a safety net and not the bound, which is what a
+ * knee should be. It is still never a scale: a scale that bought the same
+ * ceiling would cost 91 % of the light everywhere the mark was not clipping.
  *
  * ⭐ THE FUNNEL'S AXIS IS THE COLONY'S ROTATION AXIS (world Y), so the local
  * coordinate is just `p - throat`: no matrix, and the volume parallaxes and
@@ -588,8 +601,19 @@ export const COHORT_INTAKE_SIGMA = 0.1;
  *  shells, and the trough is what keeps it reading as one continuous body. */
 export const COHORT_INTAKE_FLOOR = 0.22;
 
-/** Peak additive amplitude, before the knee. */
-export const COHORT_INTAKE_AMP = 0.66;
+/**
+ * Peak additive amplitude, before the knee.
+ *
+ * ⚠️ 0.74, NOT the preview's 0.66, and the difference is not a taste change.
+ * The exact absorption step is dimmer than the left-endpoint rule it replaced
+ * wherever `dA` is large — which is exactly the bright part, near the throat
+ * and on the crests — so this is the scalar that puts the on-axis brightness
+ * profile back where the approved preview had it: least squares over 392
+ * height×phase samples, mean +1.3 %, worst −13 %. A single scalar cannot undo
+ * a non-linear compression and is not meant to; the residual is the honest
+ * size of the appearance change.
+ */
+export const COHORT_INTAKE_AMP = 0.74;
 
 /** Extinction per unit of density along the ray. */
 export const COHORT_INTAKE_DENSITY = 0.95;
@@ -830,8 +854,14 @@ export function makeCohortIntakeMaterial(): THREE.ShaderMaterial {
           if (float(i) >= steps) break;
           vec3 p = rel0 + rayDir * (t0 + (float(i) + 0.5) * dt);
           float dA = intakeDensityAt(p) * dt * uDensity;
-          sum += dA * trans;
-          trans *= exp(-dA);
+          // ⭐ THE EXACT EMISSION-ABSORPTION STEP, and never sum += dA * trans.
+          // Here a is the fraction this step actually absorbs, so the pair
+          // telescopes: sum + trans stays exactly 1 however deep the step is.
+          // It costs nothing — exp(-dA) was already needed for trans.
+          // (No backticks in this comment: one would close the literal.)
+          float a = 1.0 - exp(-dA);
+          sum += a * trans;
+          trans *= 1.0 - a;
           if (trans < 0.004) break;
         }
         float amp = uAmp * sum;
