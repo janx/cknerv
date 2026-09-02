@@ -44,6 +44,7 @@ import {
   COHORT_INTERIOR_COLD,
   COHORT_LINK_STOP_R,
   COHORT_NEVER_WON,
+  COHORT_RIM_R,
   cohortAuraHalfExtent,
   cohortFaceHalfExtent,
   makeCohortAuraMaterial,
@@ -804,10 +805,28 @@ describe('ColonyNodes attested tier', () => {
     for (const stop of Object.values(SIGHTED_HIT_RADII)) {
       expect(ATTESTED_HIT_RADIUS).toBeGreaterThan(stop);
     }
-    // …and it stops well inside the disc it is taken from, on pixels that are
-    // still plainly lit rather than out in the tail. (Measured at ~45 % of the
-    // face's own peak; `materials/cohortAperture.test.ts` owns the profile.)
+    // ⭐⭐ AND SINCE THE HOLE WAS RE-BASED TO THE PREVIEW'S 1.6 wu, THE WHOLE
+    // TARGET IS INSIDE THE HOLE — 1.5 against 1.6. That is right, and it
+    // replaces the old reasoning here, which said half the radius "lands at
+    // ~45 % of the face's own peak, plainly lit": that was an argument about a
+    // mark whose middle was EMPTY, and the middle is a window now. What a
+    // viewer aims at is the window — the largest and most obviously pressable
+    // thing on the mark — and the target stops 0.1 wu short of the lip, so a
+    // click is unambiguous everywhere inside it.
     expect(ATTESTED_HIT_RADIUS).toBeLessThan(COHORT_AP_R);
+    expect(ATTESTED_HIT_RADIUS).toBeLessThan(COHORT_RIM_R);
+    expect(COHORT_RIM_R - ATTESTED_HIT_RADIUS).toBeCloseTo(0.1, 12);
+    // ⚠️ AND THE CLEARANCE TO A NEIGHBOUR IS NOW WORTH WATCHING, WITHOUT BEING
+    // RETUNED HERE. T1 put every attested node exactly in the plane and thinned
+    // the slab, and the synthetic placement then gave a nearest non-self node
+    // of 4.87 wu median and 2.83 at p10 (min 1.48). A peer at 2.83 wu stands
+    // 1.2 wu outside the lip and inside the mark's own 3.0 wu disc; one at the
+    // synthetic minimum would stand INSIDE the hole. The hit spheres still do
+    // not overlap — 1.5 + a sighted peer's largest rung is under 2.83 — so
+    // nothing is retuned off a synthetic number. The live leg measures the real
+    // six and judges it there.
+    expect(ATTESTED_HIT_RADIUS + Math.max(...Object.values(SIGHTED_HIT_RADII)))
+      .toBeLessThan(2.83);
   });
 });
 

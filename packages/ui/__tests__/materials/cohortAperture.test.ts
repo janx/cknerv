@@ -44,6 +44,7 @@ import {
   COHORT_FACE_HOT_MIX,
   COHORT_FACE_INTAKE_AMP,
   COHORT_FACE_INTAKE_CORE,
+  COHORT_FACE_INTAKE_FILL_W,
   COHORT_FACE_INTAKE_GAMMA,
   COHORT_FACE_INTERIOR_AMP,
   COHORT_FACE_INTERIOR_SCALE,
@@ -66,6 +67,8 @@ import {
   COHORT_GULP_LIP,
   COHORT_INTAKE_LEVEL,
   COHORT_INTERIOR_COLD,
+  COHORT_RIM_R,
+  cohortRimRadius,
   cohortAuraHalfExtent,
   cohortFaceHalfExtent,
   makeCohortAuraMaterial,
@@ -340,7 +343,8 @@ function faceAt(
   const outer = Math.max(COHORT_AP_R / RIM_R, 1.2);
   const uu = clamp((rho - 1) / (outer - 1), 0, 1);
   const skirt = Math.pow(1 - uu, Math.max(COHORT_FACE_INTAKE_GAMMA, 0.2));
-  const fill = COHORT_FACE_INTAKE_CORE * Math.exp(-sq((rho - 1) / 0.85));
+  const fill = COHORT_FACE_INTAKE_CORE
+    * Math.exp(-sq((rho - 1) / Math.max(COHORT_FACE_INTAKE_FILL_W, 0.02)));
   const striaW = Math.max(COHORT_FACE_STRIA_W, 0.02);
   const striaAmt =
     COHORT_FACE_STRIA_AMP *
@@ -507,8 +511,16 @@ describe('cohort aperture — the hole', () => {
     // The middle is still not the network's; it now says whose it is.
     const darkTo = RIM_R * COHORT_AP_PUPIL_FRAC * (1 - COHORT_FACE_PUPIL_SOFT);
     const litFrom = RIM_R * COHORT_AP_PUPIL_FRAC;
-    expect(darkTo).toBeCloseTo(0.2604, 6);
-    expect(litFrom).toBeCloseTo(0.5208, 6);
+    // ⭐⭐ THE HOLE IS THE PREVIEW'S 1.6 wu, and the pupil REACHES the lip
+    // rather than sitting inside it — the lab's face shows wall and medium for
+    // the whole disc `r < R` and puts its faint lip AT `R`. The face's own
+    // light is therefore exactly zero out to 1.4 wu and full at 1.6, an inner
+    // edge 0.2 wu wide: the preview's own `sigIn`, twice over.
+    expect(RIM_R).toBe(COHORT_RIM_R);
+    expect(RIM_R).toBe(1.6);
+    expect(litFrom).toBeCloseTo(1.6, 12);
+    expect(darkTo).toBeCloseTo(1.4, 12);
+    expect(litFrom - darkTo).toBeCloseTo(0.2, 12);
     expect(PUPIL_R).toBe(litFrom);
 
     // Exactly zero — `toBe(0)`, never `toBeCloseTo` — everywhere inside.
@@ -572,6 +584,11 @@ describe('cohort aperture — the hole', () => {
     // design and cannot drift with the camera. Anything less would be a hole
     // that wandered off its own mark as the viewer moved.
     expect(AURA_PUPIL_R / (RIM_R * COHORT_AP_PUPIL_FRAC)).toBe(COHORT_AURA_PUPIL_SCALE);
+    expect(COHORT_AURA_PUPIL_SCALE).toBe(0.95);
+    expect(AURA_PUPIL_R).toBeCloseTo(1.52, 12);
+    // ⭐ The cut lands just INSIDE the lip rather than outside it, so no part
+    // of the halo is removed from beyond the mark's own edge.
+    expect(AURA_PUPIL_R).toBeLessThan(COHORT_RIM_R);
 
     let tested = 0;
     let cut = 0;
@@ -607,9 +624,17 @@ describe('cohort aperture — the hole', () => {
             }
             // ⭐ THE APPARENT RADIUS IS THE PROJECTION OF ONE DISC. Whatever
             // the camera, a ray is inside the aura's hole precisely when its
-            // plane crossing is inside 1.35x the face's pupil — so the two
-            // holes project to the same ellipse up to that one factor, at
-            // every pose, without either program restating the other's number.
+            // plane crossing is inside `COHORT_AURA_PUPIL_SCALE` times the
+            // face's hole — so the two project to the same ellipse up to that
+            // one factor, at every pose, without either program restating the
+            // other's number.
+            // ⚠️ THAT FACTOR IS BELOW ONE NOW (0.95, the preview's own
+            // `uRimR * 0.95`) AND USED TO BE 1.35. Above one made sense against
+            // a 0.52 wu pupil, where the halo had to be held clear of a very
+            // small hole; against the preview's 1.6 wu hole the same 1.35 cuts
+            // at 2.16 wu — 0.56 wu OUTSIDE the lip — which is not a hole in the
+            // glow, it is a bite out of it. At 0.95 the halo comes up exactly
+            // at the lip.
             const insideAura = crossing < AURA_PUPIL_R;
             const insideFaceScaled =
               crossing < RIM_R * COHORT_AP_PUPIL_FRAC * COHORT_AURA_PUPIL_SCALE;
@@ -710,13 +735,19 @@ describe('cohort aperture — the window in the hole', () => {
     // past the level and the window is showing surface.
     expect(seeMediumAt(depths[0])).toBe(0);
     expect(seeMediumAt(depths[4])).toBe(1);
-    // ⚠️ MEASURED, NOT ASSUMED: on a 0.521 wu pupil the medium first shows at
-    // about 34° of elevation, where the lab's 1.6 wu mouth showed it at 12°.
-    // That is a consequence of keeping R19's radii and is the single number
-    // most likely to want the level knob at the live leg.
+    // ⭐⭐ MEASURED, NOT ASSUMED, AND IT IS THE PREVIEW'S NUMBER. The depth a
+    // ray reaches is proportional to the hole it crosses, so this one figure is
+    // the sharpest test that the hole is the right SIZE: on the preview's
+    // 1.6 wu mouth the medium first shows at 12° of elevation, and on the
+    // 0.521 wu hole this branch carried until 2026-09-02 it did not show until
+    // 34°. From the CENTRE the ray leaves the cylinder after exactly one
+    // radius, so the boundary is `tanEl > (uLevel - 0.35) / R` = 12.34°, and
+    // the first WHOLE degree is 13.
     const firstDegree = [...Array(90).keys()]
       .find((d) => seeMediumAt(throatHit(centre, east, Math.tan((d * Math.PI) / 180)).h) > 0);
-    expect(firstDegree).toBe(34);
+    expect(firstDegree).toBe(13);
+    expect((Math.atan((COHORT_INTAKE_LEVEL - 0.35) / PUPIL_R) * 180) / Math.PI)
+      .toBeCloseTo(12.34, 2);
   });
 
   it('takes the medium point to the fragment itself for a vertical ray', () => {
@@ -738,6 +769,39 @@ describe('cohort aperture — the window in the hole', () => {
     const grazing = throatHit([0, 0], [1, 0], 0);
     expect(grazing.mp[0]).toBeCloseTo(COHORT_INTAKE_LEVEL / 0.06, 10);
     expect(grazing.h).toBe(0);
+  });
+
+  it('is the ONE radius the mist’s gate, eye, pile and wake will have to share', () => {
+    // ⭐⭐⭐ TWO HOLES AT ONE COHORT IS THE FAILURE THIS CONSTANT PREVENTS. The
+    // face draws its window inside `COHORT_RIM_R` and puts the lip on it; the
+    // skirt cuts its halo at a multiple of it; and the mist patch under a
+    // cohort scales its dark eye, its gate, the medium piling at the lip and
+    // the downstream wake by the SAME radius. A mist that went dark inside
+    // 1.6 wu while the mouth's hole was 0.52 would be two different holes at
+    // one cohort, drawn by two layers that both believed they were right.
+    expect(COHORT_RIM_R).toBe(1.6);
+    expect(COHORT_AP_RIM_FRAC).toBe(COHORT_RIM_R / COHORT_AP_R);
+    expect(RIM_R).toBe(COHORT_RIM_R);
+    expect(PUPIL_R).toBe(COHORT_RIM_R);
+    expect(FACE.uniforms.uRimFrac.value).toBe(COHORT_AP_RIM_FRAC);
+    expect(AURA.uniforms.uRimFrac.value).toBe(COHORT_AP_RIM_FRAC);
+    // ⚠️ AND UNDER THE KNOB IT IS A FUNCTION, not the shipped constant.
+    // `cohortApR` scales the whole mark, so a layer that hard-coded 1.6 while
+    // the face read `uApR * uRimFrac` would draw its gate at a radius the mouth
+    // no longer has — the same class of bug as a quad left behind by `uHalf`.
+    expect(cohortRimRadius(COHORT_AP_R)).toBe(COHORT_RIM_R);
+    for (const apR of [1.5, 2.4, 3.0, 4.2, 6]) {
+      expect(cohortRimRadius(apR)).toBeCloseTo(apR * COHORT_AP_RIM_FRAC, 12);
+      expect(cohortRimRadius(apR) / apR).toBeCloseTo(COHORT_RIM_R / COHORT_AP_R, 12);
+    }
+    // ⚠️ IT WAS 0.84 wu UNTIL 2026-09-02, AND THE CAUSE WAS A DIAMETER READ AS
+    // A RADIUS: R19's prose recorded "a bright ring at 1.68 wu" — its ring's
+    // DIAMETER — and the plan that ported the window matched it against the
+    // preview's 1.6 wu RADIUS and concluded they agreed. They were three times
+    // apart, and both symptoms were measurable (see the elevation and lobe
+    // counts above). Nothing here is written as a diameter any more.
+    expect(COHORT_RIM_R * 2).toBeCloseTo(3.2, 12);
+    expect(COHORT_RIM_R).not.toBeCloseTo(0.84, 2);
   });
 
   it('is the ONE level the mist’s mound will have to share', () => {
@@ -772,6 +836,16 @@ describe('cohort aperture — the window in the hole', () => {
     // also sum to one.
     expect(glsl).toContain('float g = 0.5 + 0.5 * ( 0.62 * cos(');
     expect(glsl).toContain('+ 0.38 * cos(');
+
+    // ⭐⭐ AND THE FEED CARRIES THE PREVIEW'S SEVEN LOBES AROUND THE LIP. The
+    // medium is sampled at `nrm * rimR` — a circle of radius `rimR` in the
+    // plane — scaled by `uInteriorScale` and read at `MEDIUM_CELLS` lattice
+    // cells per unit, so the number of features the lip is fed by is
+    // `2π * rimR * uInteriorScale * 8 / 2π` = `rimR * 0.55 * 8`. On the
+    // preview's 1.6 wu lip that is 7.04; on the 0.84 wu ring this branch
+    // carried until 2026-09-02 it was 3.7, and the lip read as two or three
+    // broad lobes instead of a fed edge. Same constant, right radius.
+    expect(COHORT_RIM_R * COHORT_FACE_INTERIOR_SCALE * 8).toBeCloseTo(7.04, 2);
 
     // ⭐ AND THE LIP'S FEED IS MEAN-PRESERVING-ISH RATHER THAN A BRIGHTENER:
     // `0.55 + 0.9 * feed` spans [0.55, 1.45] about a unity centre, so what the
@@ -873,13 +947,23 @@ describe('cohort aperture — the ceiling two additive draws share', () => {
     // amplitude on either draw now has a measured cost, and anyone adding one
     // should read that number first. The aura in particular is within 1.6e-5 of
     // its own knee: it is saturating it, which is exactly what a knee is for.
+    //
+    // ⭐ RE-BASING THE HOLE FROM 0.52 wu TO 1.6 wu MOVED NONE OF IT — face and
+    // aura suprema are bit-identical and blue shifted by 1.5e-4 — and the
+    // reason is worth keeping. The face's peak is AT THE LIP, where the pupil
+    // gate is 1 and nothing about the hole's size enters; the aura's peak is on
+    // GRAZING rays that pass close to the cohort while crossing the plane far
+    // away, so the cut never applies to them. Growing a hole moves the light
+    // that is inside it, and neither supremum was ever in there.
+    // eslint-disable-next-line no-console
+    console.log('MEASURED', faceSupremum, auraSupremum, supremum);
     expect(faceSupremum).toBeCloseTo(0.878861, 5);
     expect(faceSupremum).toBeLessThan(COHORT_CLIP_KNEE);
     expect(auraSupremum).toBeCloseTo(0.391902, 5);
     expect(auraSupremum).toBeLessThan(COHORT_AURA_KNEE);
-    expect(supremum[0]).toBeCloseTo(0.371400, 4);
-    expect(supremum[1]).toBeCloseTo(0.816722, 4);
-    expect(supremum[2]).toBeCloseTo(0.925629, 4);
+    expect(supremum[0]).toBeCloseTo(0.375250, 4);
+    expect(supremum[1]).toBeCloseTo(0.816652, 4);
+    expect(supremum[2]).toBeCloseTo(0.925777, 4);
     for (const channel of supremum) expect(channel).toBeLessThan(1);
     // Blue is the binding channel, because both colours are full in it.
     expect(supremum[2]).toBeGreaterThan(supremum[1]);
@@ -1136,7 +1220,11 @@ describe('cohort aperture — a circle in the colony plane', () => {
     // texture offset inside one stria, never a heading a viewer could read.
     const period = TAU / COHORT_FACE_STRIAE;
     let compared = 0;
-    for (const r of [0.4, 0.62, 0.84, 1.3, 2.1, 2.5]) {
+    // ⚠️ Sampled across the LIT ANNULUS, which is where the grain lives: the
+    // face's own light now starts at 1.4 wu (the pupil's inner edge) and runs
+    // to 3.0. Radii inside the hole would compare two discards and prove
+    // nothing, which is exactly what this list did before the hole grew.
+    for (const r of [1.45, 1.6, 1.9, 2.2, 2.6, 2.9]) {
       for (const seed of [0, 0.31, 0.77]) {
         for (const time of [0, 2.6]) {
           const here = faceAt(r, { azimuth: 0.37, seed, time });
@@ -1154,7 +1242,7 @@ describe('cohort aperture — a circle in the colony plane', () => {
     // Nothing else in the face depends on azimuth at all: the pupil, rim,
     // skirt and swell are functions of radius alone, so the silhouette is a
     // circle and every ellipse a viewer sees is projection.
-    for (const r of [0.4, 0.84, 1.7]) {
+    for (const r of [1.5, 1.6, 2.4]) {
       const shapes = new Set<number>();
       for (let k = 0; k < 64; k += 1) {
         shapes.add(Number((faceAt(r, { azimuth: (k / 64) * TAU, bound: true })?.shape ?? 0).toFixed(12)));
@@ -1214,7 +1302,8 @@ describe('cohort aperture — the mirrors above are the shipped shaders', () => 
     expect(glsl).toContain('float outer = max(uApR / rimR, 1.2);');
     expect(glsl).toContain('float uu = clamp((rho - 1.0) / (outer - 1.0), 0.0, 1.0);');
     expect(glsl).toContain('float skirt = pow(1.0 - uu, max(uInGamma, 0.2));');
-    expect(glsl).toContain('float fill = uInCore * exp(-sq((rho - 1.0) / 0.85));');
+    expect(glsl)
+      .toContain('float fill = uInCore * exp(-sq((rho - 1.0) / max(uInCoreW, 0.02)));');
     expect(glsl).toContain('float ph = uStriae * th + (uTime * uDrift + vSeed) * TAU;');
     expect(glsl).toContain('float dph = uStriae * foot / max(r, 1e-3);');
     expect(glsl).toContain('float pre = mix(1.0, exp(-0.16 * dph * dph), clamp(uAa, 0.0, 1.0));');
@@ -1254,7 +1343,7 @@ describe('cohort aperture — the mirrors above are the shipped shaders', () => 
     expect(glsl).toContain(
       'float surf = (0.30 + 0.95 * m) * uInteriorAmp * (1.0 + 2.2 * gulp);',
     );
-    expect(glsl).toContain('float shade = smoothstep(0.0, pupR * 0.14, pupR - r);');
+    expect(glsl).toContain('float shade = smoothstep(0.0, pupR * 0.1375, pupR - r);');
     expect(glsl).toContain('interior = mix(lit, surf, seeMedium) * shade;');
     expect(glsl).toContain('float feed = otherMedium(nrm * rimR, vSeed);');
     expect(glsl).toContain('lipFeed = (0.55 + 0.9 * feed) * (1.0 + 1.6 * gulp);');

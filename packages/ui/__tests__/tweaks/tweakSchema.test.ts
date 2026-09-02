@@ -20,12 +20,17 @@ const EXPECTED_DEFAULTS = {
   // under the same one-authority rule the shockwave knobs follow. `cohortApR`
   // is THE size parameter and the first one a tuner reaches for; `cohortPupil`
   // is read by BOTH faces, which is what makes the halo's hole the same hole.
+  // ⚠️ `cohortPupil` is 1 and not a fraction of the ring any more: the hole
+  // REACHES the lip, the way the approved preview draws it, so the pupil and
+  // the rim are one radius (1.6 wu) rather than two. Its knob still runs to
+  // 1.5, which is how a tuner finds out whether the lip wants to sit inside or
+  // outside the throat.
   // The eight raymarch knobs they replaced (reach 20, mouth 6, intake amp 1.8,
   // density 0.25, crests 3.2, crest hz 0.23, gather 0.8, core amp 0.62) went
   // with the marched vertical throat that owned every one of them, exactly as
   // the five `hole*` knobs before them (rim 1.45, gas 0.72, field 0.38, infall
   // 0.4, spin 0.035) went with the accreting void.
-  peer: { ambientAmp: 0.22, ambientSpeed: 0.05, ambientSigma: 0.17, surgeAmp: 1.1, surgeSigma: 0.13, surgeEase: 0.12, colorBoost: 3.75, alphaBoost: 2.75, sizeBoost: 0.5, trailBoost: 0.18, colorCeil: 1.4, alphaCeil: 1.1, flameWidth: 0.7, flameMinLen: 0.7, flameMaxLen: 2.5, flameBloom: 0.7, glintBloomOpacity: 0.55, glintPlumeOpacity: 0.3, cohortApR: 3.0, cohortPupil: 0.62, cohortRimAmp: 1.05, cohortIntakeAmp: 0.72, cohortStriae: 88, cohortStriaAmp: 0.38, cohortHaloR: 1.35, cohortHaloBias: 0.3 },
+  peer: { ambientAmp: 0.22, ambientSpeed: 0.05, ambientSigma: 0.17, surgeAmp: 1.1, surgeSigma: 0.13, surgeEase: 0.12, colorBoost: 3.75, alphaBoost: 2.75, sizeBoost: 0.5, trailBoost: 0.18, colorCeil: 1.4, alphaCeil: 1.1, flameWidth: 0.7, flameMinLen: 0.7, flameMaxLen: 2.5, flameBloom: 0.7, glintBloomOpacity: 0.55, glintPlumeOpacity: 0.3, cohortApR: 3.0, cohortPupil: 1, cohortRimAmp: 1.05, cohortIntakeAmp: 0.72, cohortStriae: 88, cohortStriaAmp: 0.38, cohortHaloR: 1.35, cohortHaloBias: 0.3 },
   cell: { fabricAlpha: 0.15, warmth: 0.12, centerDim: 0.3, activeColorR: 1.0, activeColorG: 1.0, activeColorB: 1.0, fabricWidth: 2.5, activeWidth: 4.6, reinforceAmount: 0.34, reinforceGain: 1.6, reinforceHalfLife: 3.0, fabricStaggerThreshold: 1500, fabricCohortSize: 750, fabricCohortInterval: 0.25 },
   nerve: { screenBudget: 8_000, coverageShare: 0.55, trunkShare: 0.72, twigShare: 0.18 },
 } as const;

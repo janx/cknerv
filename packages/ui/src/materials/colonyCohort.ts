@@ -246,22 +246,84 @@ export const COHORT_CONTEXT_ENERGY_GLSL = /* glsl */ `float cohortEnergy = mix(
  * The outer radius of the mark, in world units. ⭐ THE size parameter: every
  * other length here is a fraction of it.
  *
- * Measured sweet spot of a 2.4–3.8 band: 6.0 wu across, with a bright ring at
- * 1.68 wu against a sighted peer's 1.5. Below 2.4 the structure stops resolving
- * at the app camera; above 4 the mark starts to dominate the colony.
+ * Measured sweet spot of a 2.4–3.8 band: 6.0 wu across. Below 2.4 the structure
+ * stops resolving at the app camera; above 4 the mark starts to dominate the
+ * colony. ⭐ IT DID NOT MOVE WHEN THE HOLE WAS RE-BASED, and that is deliberate:
+ * `COHORT_HIT_RADIUS` and `COHORT_LINK_STOP_R` are both derived from it and the
+ * colony's own spacing is what bounds them, so the mark's OUTER extent answers
+ * to the colony while the hole inside it answers to the preview.
+ *
+ * ⚠️ THIS COMMENT ONCE READ "a bright ring at 1.68 wu", AND THAT SENTENCE COST
+ * A ROUND. 1.68 was the ring's DIAMETER — the radius was 0.84 — and the plan
+ * that ported the window read it as the preview's 1.6 wu RADIUS and concluded
+ * the two forms already agreed. They were three times apart. Diameters are not
+ * written here any more; `COHORT_RIM_R` is a radius and says so.
  */
 export const COHORT_AP_R = 3.0;
 
-/** Rim radius, as a fraction of `COHORT_AP_R` — 0.84 wu at the shipped size. */
-export const COHORT_AP_RIM_FRAC = 0.28;
+/**
+ * ⭐⭐⭐ THE HOLE'S RADIUS IN WORLD UNITS — THE ONE NUMBER EVERY PART OF THIS
+ * FEATURE MEASURES ITSELF AGAINST.
+ *
+ * The face's window is drawn inside it, the drawn lip sits ON it, the skirt's
+ * cut is a multiple of it (`COHORT_AURA_PUPIL_SCALE`), and the mist patch under
+ * a cohort scales its gate, its dark eye, the medium piling at the lip and the
+ * downstream wake by this same radius. It is exported so all of those read ONE
+ * number: two holes at one cohort — a mouth of one size and a mist gate of
+ * another — is the failure this constant exists to make impossible.
+ *
+ * 1.6 wu, from the approved preview (`AP_DEFAULTS.rimR` in the lab, and the
+ * `uRimR` its sea material is handed).
+ *
+ * ⚠️⚠️ IT WAS 0.84 wu UNTIL 2026-09-02, AND THAT WAS A TRANSCRIPTION ERROR
+ * RATHER THAN A DESIGN. R19's prose recorded "a bright ring at 1.68 wu" — a
+ * DIAMETER — and the plan that ported the window read it as the lab's 1.6 wu
+ * RADIUS and concluded the two agreed. They did not: the hole was three times
+ * too small, and the symptom was measurable — the medium inside the throat
+ * first became visible at 34° of elevation instead of the preview's 12°,
+ * because the depth a ray reaches is proportional to the hole it crosses. The
+ * lip's feed carried four lobes where the preview carried seven, for the same
+ * reason. Both came back to the preview's numbers the moment this did.
+ */
+export const COHORT_RIM_R = 1.6;
 
 /**
- * Pupil radius, as a fraction of the RIM radius. A small dark pupil: 0.52 wu.
+ * The same radius as a fraction of `COHORT_AP_R`, which is what the shader
+ * reads: every length on this mark is a fraction of the mark, so the live
+ * `cohortApR` knob scales the whole form together instead of shearing it.
+ */
+export const COHORT_AP_RIM_FRAC = COHORT_RIM_R / COHORT_AP_R;
+
+/**
+ * Pupil radius, as a fraction of the RIM radius — and it is now EXACTLY 1.
+ *
+ * ⭐⭐⭐ THE HOLE IS THE LIP, WHICH IS WHAT THE PREVIEW DRAWS. The lab's face
+ * shows wall and medium for the whole disc `r < R` and puts its faint drawn lip
+ * AT `R`; there is no second radius inside it. So the pupil does not sit inside
+ * the ring any more — it reaches it, and the ring is the hole's edge rather
+ * than a bright annulus with a smaller dark middle.
  *
  * ⭐ BOTH FACES READ THIS ONE NUMBER, which is what makes the aura's hole and
  * the face's the same hole rather than two that were tuned to agree.
+ *
+ * ⚠️ It is still a knob (`cohortPupil`, max 1.5), so a tuner can push the hole
+ * OUTSIDE the lip. That is deliberate — it is how you find out whether the lip
+ * wants to be inside or outside the throat — and it is safe: every consumer
+ * derives from the product, and the two faces read the same product.
  */
-export const COHORT_AP_PUPIL_FRAC = 0.62;
+export const COHORT_AP_PUPIL_FRAC = 1;
+
+/**
+ * The hole's radius under a live `cohortApR`, for any layer that has to agree
+ * with the drawn mark rather than with the shipped constant.
+ *
+ * ⚠️ A FUNCTION FOR THE SAME REASON `cohortFaceHalfExtent` IS ONE. `uApR` is a
+ * knob; a layer that hard-codes `COHORT_RIM_R` while the face reads
+ * `uApR * uRimFrac` draws its gate at a radius the mouth no longer has.
+ */
+export function cohortRimRadius(apR: number): number {
+  return apR * COHORT_AP_RIM_FRAC;
+}
 
 /**
  * Depth of the shared breathe, as a fraction. The RATE is `COHORT_BREATHE_HZ` —
@@ -284,8 +346,18 @@ export const COHORT_AP_BREATHE_DEPTH = 0.09;
  * kept, applied to the mark that replaced it. What moved is the extent, not the
  * rule: the centre was a 4.6 wu bounding square around a profile that died well
  * inside it, so half of it landed on lit pixels; the aperture is a 6.0 wu DISC
- * whose light is drawn all the way out to `COHORT_AP_R`, so half of it lands
- * at 45 % of the face's own peak — plainly lit, and nowhere near the tail.
+ * whose light is drawn all the way out to `COHORT_AP_R`.
+ *
+ * ⭐⭐ AND SINCE THE HOLE WAS RE-BASED TO 1.6 wu, THE WHOLE TARGET IS INSIDE THE
+ * HOLE — 1.5 against 1.6 — WHICH IS RIGHT AND NOT A REGRESSION. The old
+ * reasoning here said half the radius "lands at 45 % of the face's own peak,
+ * plainly lit"; that was measured against a mark whose middle was empty, and it
+ * is simply the wrong argument now. What a viewer aims at IS the window: the
+ * hole is the largest, brightest, most obviously clickable thing on the mark,
+ * and it is lit by the other world rather than by the face. A target that
+ * covered the lip instead would be a target on a fine ring. So the target is
+ * the hole, and it stops 0.1 wu short of the lip — inside the one region a
+ * viewer can be in no doubt about.
  *
  * ⚠️⚠️ AND ALL OF IT IS NOT AVAILABLE, WHICH IS WHAT SETTLES THE COEFFICIENT.
  * `COLONY_MIN_SPACING` is 6, so `COHORT_AP_R` — 3.0, exactly half of it —
@@ -334,6 +406,11 @@ export const COHORT_HIT_RADIUS = COHORT_AP_R * 0.5;
  * ending here ends exactly where the mark does and adds light to no pixel of
  * it.
  *
+ * ⭐ Since the hole was re-based it is 1.4 wu OUTSIDE the lip rather than 2.5,
+ * and the job is unchanged: what it clears is the SKIRT, which is where the
+ * striae live, and the skirt still runs from the lip at 1.6 out to here. What
+ * shrank is the skirt, not the margin.
+ *
  * ⚠️ IT IS NO LONGER `COHORT_HIT_RADIUS`, AND THE SPLIT IS DELIBERATE. Under
  * the old form one number served both, because the centre's bounding square had
  * slack in it and half of it happened to satisfy the aim and the ending at
@@ -349,11 +426,31 @@ export const COHORT_LINK_STOP_R = COHORT_AP_R;
 
 /* ------------------------------------------------------------------ the face */
 
-/** Softness of the pupil's edge, as a fraction of the pupil radius. */
-export const COHORT_FACE_PUPIL_SOFT = 0.5;
+/**
+ * Softness of the pupil's edge, as a fraction of the pupil radius.
+ *
+ * ⭐ IT IS THE PREVIEW'S SHARP INNER EDGE, DERIVED RATHER THAN CHOSEN. The lab
+ * draws its lip as `exp(-((R - r) / 0.10)²)` inside the hole — a Gaussian with
+ * a 0.10 wu sigma, so the lip is at 1.8 % of its peak 0.2 wu inside `R` and
+ * gone by 0.3. This face has no such asymmetry to spend: its ring is one
+ * Gaussian and the SHARP inner edge is the pupil gate's job. 0.2 wu of edge on
+ * a 1.6 wu hole is 0.125 of the radius, which is this number, and it is what
+ * makes the hole read as an edge against a hole rather than as a soft vignette.
+ */
+export const COHORT_FACE_PUPIL_SOFT = 0.125;
 
-/** Gaussian half-width of the rim, as a fraction of the rim radius. */
-export const COHORT_FACE_RIM_W = 0.34;
+/**
+ * Gaussian half-width of the rim, as a fraction of the rim radius.
+ *
+ * ⭐ THE PREVIEW'S OUTER SIGMA, IN THIS FACE'S OWN UNITS. The lab's lip falls
+ * off outside the hole as `exp(-((r - R) / 0.30)²)`: 0.30 wu, which on a 1.6 wu
+ * hole is 0.1875 of the radius. ⚠️ It came down from 0.34 when the hole was
+ * re-based: 0.34 was measured against an 0.84 wu ring and is 0.29 wu there, but
+ * the SAME fraction on a 1.6 wu hole is 0.54 wu — a lip nearly twice the
+ * preview's width, and a fat soft ring instead of the fine edge of a mouth. The
+ * fraction moved so the world-unit width did not.
+ */
+export const COHORT_FACE_RIM_W = 0.1875;
 
 /** How hard the rim burns, before the knee. */
 export const COHORT_FACE_RIM_AMP = 1.05;
@@ -371,10 +468,29 @@ export const COHORT_FACE_INTAKE_AMP = 0.72;
 export const COHORT_FACE_INTAKE_GAMMA = 2.4;
 
 /**
- * Fill just outside the rim, so the pupil is a hole in a LIT SURFACE and not a
- * gap between two rings.
+ * Fill just outside the rim, so the hole is an opening in a LIT SURFACE and not
+ * a gap between two rings.
  */
 export const COHORT_FACE_INTAKE_CORE = 0.6;
+
+/**
+ * Width of that fill, as a fraction of the rim radius.
+ *
+ * ⚠️⚠️ IT IS BOUNDED ABOVE BY THE MARK'S OWN SILHOUETTE, and the bound BINDS.
+ * The skirt reaches exactly zero at the disc's edge because `(1 - uu)^gamma`
+ * does; the fill is a Gaussian and only ever approaches zero, so if it is still
+ * measurable where the fragment discards, the mark ends on a hard circular cut
+ * — the one failure `COHORT_FACE_INTAKE_GAMMA`'s own comment is about.
+ *
+ * ⭐ THE BOUND IS ARITHMETIC. The skirt band is `outer - 1 = uApR / rimR - 1`
+ * wide in rho, which is 0.875 now that the hole is 1.6 wu (it was 2.571 when
+ * the hole was 0.84, which is why nobody had to think about this before). The
+ * face's own light at the edge is `uInAmp * uInCore * exp(-(0.875 / w)²) *
+ * (1 + uSwell)`, and it must land under the 0.0018 discard: that gives
+ * `w < 0.369`. 0.35 clears it with margin — 0.00097 against 0.0018 — so the
+ * disc still dies below its own threshold rather than at it.
+ */
+export const COHORT_FACE_INTAKE_FILL_W = 0.35;
 
 /**
  * ⭐⭐⭐ THE NUMBER OF RADIAL STRIAE, AND THE ONE LAW THAT DECIDES WHETHER THIS
@@ -655,7 +771,19 @@ export const COHORT_AURA_AMP = 1;
 /** Fall-off exponent of the halo, from the mark's centre outward. */
 export const COHORT_AURA_HALO_EXP = 1.7;
 
-/** Halo radius, as a multiple of `COHORT_AP_R` — 4.05 wu at the shipped size. */
+/**
+ * Halo radius, as a multiple of `COHORT_AP_R` — 4.05 wu at the shipped size.
+ *
+ * ⚠️ MEASURED AGAINST THE PREVIEW AND LEFT ALONE, WHICH IS A REPORTED CHOICE
+ * RATHER THAN AN OVERSIGHT. The lab's skirt reaches 2.6 wu — 1.63x its own
+ * 1.6 wu hole — while this one reaches 4.05, which is 2.53x the same hole. The
+ * two are not the same parameter: the lab's face draws ONLY a lip, so its skirt
+ * is sized against the lip, and this face carries R19's intake skirt out to
+ * `COHORT_AP_R`, so its halo is sized against the MARK — 1.35x the disc, which
+ * is the relationship R19 measured and which the re-basing did not touch. It is
+ * a live knob (`cohortHaloR`) and a look call; the live leg judges it with the
+ * ratio above in hand rather than a guess being made here.
+ */
 export const COHORT_AURA_HALO_R = 1.35;
 
 /**
@@ -684,8 +812,22 @@ export const COHORT_AURA_HALO_BIAS_K = 0.55;
  * pupil at all, so the halo fills in and the mark stays a blob. The hole is
  * therefore never restated — it is the same disc, in the same plane, about the
  * same centre, read through a different ray.
+ *
+ * ⚠️ IT CAME DOWN FROM 1.35 WHEN THE HOLE WAS RE-BASED, and the sign of the
+ * change is the whole point. A scale ABOVE one made sense against an 0.52 wu
+ * pupil: the halo had to be kept a little clear of a very small hole or it
+ * flooded it. Against a 1.6 wu hole the same 1.35 puts the cut at 2.16 wu —
+ * 0.56 wu OUTSIDE the lip — and carves a dark annulus out of the glow beyond
+ * the mark's own edge, which is not a hole, it is a bite. The preview cuts at
+ * `uRimR * 0.95`: the halo comes up exactly at the lip. This is that number.
+ *
+ * ⚠️ The branch cuts to ZERO where the preview cuts to 0.22, and that stays —
+ * it is the law `the aura's hole is the SAME hole` sweeps at every camera. The
+ * cost is measured and reported rather than hidden: with the hole tripled, the
+ * halo's core term now falls almost entirely inside the cut, so the aura's
+ * brightest surviving pixel is at the cut's edge rather than at its centre.
  */
-export const COHORT_AURA_PUPIL_SCALE = 1.35;
+export const COHORT_AURA_PUPIL_SCALE = 0.95;
 
 /** How far the halo tips toward cold white. Far less than the rim: the halo is
  *  support, and a white halo would compete with the structure it supports. */
@@ -857,6 +999,7 @@ export function makeCohortFaceMaterial(): THREE.ShaderMaterial {
       uInAmp: { value: COHORT_FACE_INTAKE_AMP },
       uInGamma: { value: COHORT_FACE_INTAKE_GAMMA },
       uInCore: { value: COHORT_FACE_INTAKE_CORE },
+      uInCoreW: { value: COHORT_FACE_INTAKE_FILL_W },
       uStriae: { value: COHORT_FACE_STRIAE },
       uStriaAmp: { value: COHORT_FACE_STRIA_AMP },
       uStriaLift: { value: COHORT_FACE_STRIA_LIFT },
@@ -944,6 +1087,7 @@ export function makeCohortFaceMaterial(): THREE.ShaderMaterial {
       uniform float uInAmp;
       uniform float uInGamma;
       uniform float uInCore;
+      uniform float uInCoreW;
       uniform float uStriae;
       uniform float uStriaAmp;
       uniform float uStriaLift;
@@ -1067,7 +1211,7 @@ export function makeCohortFaceMaterial(): THREE.ShaderMaterial {
         float outer = max(uApR / rimR, 1.2);
         float uu = clamp((rho - 1.0) / (outer - 1.0), 0.0, 1.0);
         float skirt = pow(1.0 - uu, max(uInGamma, 0.2));
-        float fill = uInCore * exp(-sq((rho - 1.0) / 0.85));
+        float fill = uInCore * exp(-sq((rho - 1.0) / max(uInCoreW, 0.02)));
 
         // ---- the grain: a modulation of the SAME light, running radially
         // inward. A continuous cosine in azimuth, never beads and never
@@ -1156,11 +1300,12 @@ export function makeCohortFaceMaterial(): THREE.ShaderMaterial {
           float surf = (0.30 + 0.95 * m) * uInteriorAmp
             * (1.0 + ${COHORT_GULP_INTERIOR.toFixed(1)} * gulp);
           // The near lip stands in front of the far wall: the throat darkens
-          // into the edge of the hole rather than ending at it. The band is a
-          // FRACTION of the pupil, not the lab's absolute 0.22 wu — this hole
-          // is 0.52 wu across where the lab's was 1.6, and an absolute band
-          // would have eaten 42 % of it.
-          float shade = smoothstep(0.0, pupR * 0.14, pupR - r);
+          // into the edge of the hole rather than ending at it. ⭐ It is written
+          // as a FRACTION so it follows the cohortApR knob — and now that the
+          // hole is the preview's own 1.6 wu, 0.1375 of it is 0.22 wu EXACTLY,
+          // which is the absolute band the preview uses. The two agree because
+          // the radius does; when the hole was 0.52 wu they could not.
+          float shade = smoothstep(0.0, pupR * 0.1375, pupR - r);
           interior = mix(lit, surf, seeMedium) * shade;
         }
 

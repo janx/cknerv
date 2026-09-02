@@ -80,20 +80,31 @@ describe('COHORT_LINK_STOP_R', () => {
     expect(COHORT_LINK_STOP_R).toBe(3);
   });
 
-  it('stops outside the WHOLE disc, not merely outside the pupil', () => {
+  it('stops outside the WHOLE disc, not merely outside the hole', () => {
     // ⭐ The old throat only had to keep its unlit middle clear, so its stop
     // sat inside the mark and cleared the refusal by 1.67x. The aperture asks
     // for more: the disc's grain is radial, and a link crossing it lands in the
     // same plane as the striae and joins them as a spoke several times any
-    // stria's width. So the stop is the outer edge and not a margin around the
-    // hole — it clears the pupil by nearly 6x on the way past.
+    // stria's width. So the stop is the mark's OUTER EDGE and not a margin
+    // around the hole.
+    //
+    // ⚠️ THE MARGIN SHRANK WHEN THE HOLE WAS RE-BASED, AND THE JOB DID NOT.
+    // The hole is the preview's 1.6 wu now (it was 0.52), so the clearance went
+    // from 5.76x the hole to 1.875x — 1.4 wu of skirt outside the lip instead
+    // of 2.5. What the stop protects is that SKIRT, because the skirt is where
+    // the 88 striae live and a coplanar link joins them as a spoke; the skirt
+    // still runs from the lip to exactly here, so a link still ends where the
+    // fragment discards and adds light to no pixel of the mark.
     const rim = COHORT_AP_R * COHORT_AP_RIM_FRAC;
-    const pupil = rim * COHORT_AP_PUPIL_FRAC;
-    expect(pupil).toBeCloseTo(0.5208, 5);
-    expect(COHORT_LINK_STOP_R).toBeGreaterThan(pupil);
-    expect(COHORT_LINK_STOP_R / pupil).toBeCloseTo(5.7604, 4);
-    // …and past the rim, the brightest ring on the mark, too.
-    expect(COHORT_LINK_STOP_R).toBeGreaterThan(rim);
+    const hole = rim * COHORT_AP_PUPIL_FRAC;
+    expect(rim).toBeCloseTo(1.6, 12);
+    expect(hole).toBeCloseTo(1.6, 12);
+    expect(COHORT_LINK_STOP_R).toBeGreaterThan(hole);
+    expect(COHORT_LINK_STOP_R / hole).toBeCloseTo(1.875, 4);
+    expect(COHORT_LINK_STOP_R - hole).toBeCloseTo(1.4, 12);
+    // ⭐ And the lip is the hole's edge rather than a ring inside the disc, so
+    // "past the pupil" and "past the rim" are now one statement.
+    expect(hole).toBe(rim);
   });
 
   it('is NOT the pick radius any more, and the split is why', () => {
