@@ -229,7 +229,21 @@ export function useStableList<T>(next: T[], matches: (a: T, b: T) => boolean): T
 }
 
 const sameNodeObject = (a: NetworkNode, b: NetworkNode): boolean => a === b;
-const sameNodeId = (a: NetworkNode, b: NetworkNode): boolean => a.id === b.id;
+/** ⚠️ ID AND PLACE, AND IT WAS `sameNodeId` — THE ID ALONE — UNTIL THE COHORTS
+ *  GOT A KEEP-OUT. A staged node's position used to follow from its id and
+ *  nothing else, so the id sequence really was the whole test for "these points
+ *  stand where they stood". `COHORT_KEEP_OUT_R` added a second input: a peer
+ *  inside a new cohort's disc is pushed clear of it under the SAME id, and a
+ *  comparator that only read ids would hand this layer back the buffer it built
+ *  before the hole opened — the peer drawn inside the mouth while its hit
+ *  sphere, which follows the topology directly, had already stepped aside.
+ *  Three float compares per staged node per rebuild, against a GPU
+ *  delete/alloc/upload for a cloud that did not move. Exported for
+ *  out-of-band testing, like the hook it is passed to. */
+export const sameStagedPoint = (a: NetworkNode, b: NetworkNode): boolean => (
+  a.id === b.id
+  && a.pos[0] === b.pos[0] && a.pos[1] === b.pos[1] && a.pos[2] === b.pos[2]
+);
 
 /** Every draw the colony splits into, in mount order — which is not the same
  *  list as "the draws this FILE makes", and never was.
@@ -507,13 +521,15 @@ function StagedCloud({
   ), [probeLabel]);
 
   // Unlike the ghosts, these node objects are re-staged from the crawler's row
-  // on every build, so identity says nothing. Their POSITIONS are `sightedPos`
-  // of the id and nothing else — the same fact the derive's scaffold cache is
-  // keyed on — so the id sequence is what this buffer follows. A round that
+  // on every build, so identity says nothing — this buffer follows the id
+  // sequence AND the places those ids landed on (`sameNodeId`). A round that
   // adds, drops or reorders a node changes it, and so does one that moves a
   // node up or down the gradient (it changes clouds); a round that only
-  // refreshed last_seen does not.
-  const points = useStableList(nodes, sameNodeId);
+  // refreshed last_seen does not. ⭐ A PRODUCER APPEARING CHANGES IT TOO, and
+  // that is why the position is compared: `sightedPos` of the id is where a
+  // staged node WANTS to stand, and the cohorts' keep-out is what it is allowed
+  // to.
+  const points = useStableList(nodes, sameStagedPoint);
 
   const geom = useMemo(() => {
     const g = new THREE.BufferGeometry();

@@ -359,6 +359,227 @@ export function stageAttested(
   return out;
 }
 
+/* -------------------------------------------------- the cohorts' keep-out */
+
+/**
+ * How far every OTHER node stands clear of an attested position, in world
+ * units, measured in XZ.
+ *
+ * ⭐⭐⭐ A COHORT IS A HOLE IN THE MEMBRANE, AND NOBODY MAY STAND IN THE HOLE.
+ * The mark is drawn as an opening the mist is being drawn through, and the one
+ * thing a viewer aims at is that opening. A peer standing inside it is a second
+ * target inside the first: two marks over one pixel, and a click that has to
+ * pick. Measured live on 2026-09-02 (T6), the six cohorts' nearest non-cohort
+ * neighbours stood at 1.274 / 2.355 / 4.602 / 5.337 / 7.794 / 8.247 wu, and the
+ * nearest of them was a SIGHTED — clickable — peer 1.274 wu away: inside the
+ * drawn hole (`COHORT_RIM_R` 1.6) and inside the cohort's own pick sphere
+ * (`COHORT_HIT_RADIUS` 1.5). Both marks resolved to their own cards, but at
+ * that peer's projected centre the HOVER readout named the cohort while the
+ * CLICK opened the peer, and one cohort's own hole opened its neighbour's card
+ * from one of two camera azimuths. So the fix is placement, not pick radius:
+ * the colony keeps the disc empty and the ambiguity has nowhere to occur.
+ *
+ * ⭐ 3.5 = `COHORT_AP_R` 3.0 + 0.5, AND BOTH HALVES ARE LOAD-BEARING. 3.0 is
+ * how far the mark's light reaches (the face's fragment discards past `uApR`)
+ * and it is also `COHORT_LINK_STOP_R`, where `ColonyEdges` ends every link
+ * incident on a cohort. A node displaced to exactly 3.0 would therefore have
+ * its own link trimmed to nothing — `colonyEdgePositions` guards `len > 0` so
+ * it writes no NaN, but the drawn segment would be a point, and a peer beside a
+ * cohort would look unlinked. 0.5 wu is the margin that keeps the stub a line.
+ * ⭐ MEASURED LIVE THE SAME DAY, ON THE SAME SIX COHORTS. The nearest
+ * non-cohort distances went 2.355 / 1.274 / 4.602 / 8.247 / 5.337 / 7.794 wu →
+ * 3.598 / 3.527 / 4.602 / 8.247 / 5.337 / 7.794: two neighbours stepped aside
+ * and four were already clear (one of them the 4.602 wu peer, which stands 3.764
+ * wu away in XZ — 2.65 wu of that distance was height, which is why this radius
+ * is measured in the plane and the 3-D number understates it). Minimum XZ
+ * clearance over all 258 staged nodes: exactly 3.500. All twelve hole clicks
+ * (six cohorts × two azimuths 90° apart, including the one that had failed)
+ * opened their own card, all six nearest clickable neighbours opened theirs, and
+ * no hover named a cohort at a peer's centre. The shortest cohort link left is
+ * that displaced peer's own, 3.527 wu long with 1.763 wu drawn — no degenerate
+ * segment anywhere.
+ *
+ * ⚠️ THE NUMBER IS RESTATED HERE RATHER THAN IMPORTED, and the layering is the
+ * reason. This file is a pure data shaper — no React, no three.js — and
+ * `materials/colonyCohort.ts` constructs `ShaderMaterial`s; importing it would
+ * drag three into every topology test to read one float. Placement belongs to
+ * the topology and the mark's radii belong to the material, so the two are
+ * pinned against each other from a third place instead:
+ * `__tests__/materials/cohortKeepOut.test.ts` imports BOTH files and asserts
+ * `COHORT_AP_R + 0.5 <= COHORT_KEEP_OUT_R` and
+ * `COHORT_HIT_RADIUS < COHORT_KEEP_OUT_R`, so they cannot drift apart silently.
+ *
+ * ⚠️ IT DOES NOT APPLY TO THE LOCAL OR MEASURED NODES. A measured peer's
+ * radius IS a measurement — `latencyToRadius01` of its round trip — so moving
+ * one would print a latency nobody observed, and the local node is the anchor
+ * the whole measured belt is scattered around. The keep-out only ever moves
+ * nodes whose position is already an invented placement: the ghost scatter and
+ * the id-hashed staged tiers (`sighted`, which is every roster rung including
+ * `advertised_unverified`). A measured peer inside a cohort's disc is a real
+ * overlap and stays one.
+ */
+export const COHORT_KEEP_OUT_R = 3.5;
+
+/** How many times a node may be pushed before the closed form finishes the job.
+ *
+ *  One push is enough for one disc: the node lands exactly on that cohort's
+ *  keep-out circle. Two cohorts closer than `2 * COHORT_KEEP_OUT_R` have
+ *  overlapping discs, and clearing one can drop a node into the other, so the
+ *  push repeats — always away from the disc the node is DEEPEST inside, which
+ *  is the choice that cannot depend on the producer list's order.
+ *
+ *  ⚠️ THAT LOOP IS NOT PROVABLY MONOTONE, so it does not get to be the whole
+ *  answer. Two discs a little over one radius apart can hand a node back and
+ *  forth; the loop is bounded here and `cohortKeepOutSweep` finishes any node
+ *  the bound leaves inside, in closed form and in one step. That is what makes
+ *  "no staged node stands within `COHORT_KEEP_OUT_R` of a cohort" a
+ *  postcondition of this file rather than an observation about today's data. */
+export const COHORT_KEEP_OUT_STEPS = 8;
+
+/** A node this far inside the circle counts as on it. The push lands the node
+ *  ON the boundary, and `c + (d/|d|) * R` re-measured against `c` can come back
+ *  a few ULP short of `R` — without this the loop would push the same node off
+ *  the same circle eight times and the sweep would then run with `t = 0`. */
+const KEEP_OUT_EPS = 1e-9;
+const KEEP_OUT_INSIDE_R2 = (COHORT_KEEP_OUT_R - KEEP_OUT_EPS) ** 2;
+
+/** The direction stream for a node standing on a cohort's exact centre — its
+ *  own mix, for the same reason every other placement stream here has one. */
+const KEEP_OUT_ANGLE_MIX = 0x7feb352d;
+
+/** Order among centres that cannot be the array's own, for the one case where
+ *  two discs are equally deep: their coordinates. `attestedPos` is a hash over
+ *  a 66-character key, so an exact tie is not something the chain can produce —
+ *  but "deepest disc" has to be a function of the SET of producers, and a tie
+ *  broken by index would make it a function of their order. */
+function centreBefore(a: Vec3, b: Vec3): boolean {
+  return a[0] !== b[0] ? a[0] < b[0] : a[2] < b[2];
+}
+
+/** Index of the cohort a point stands deepest inside, or -1 when it is clear of
+ *  all of them. Every disc has the same radius, so "deepest" is simply
+ *  "nearest centre". XZ only: the keep-out is about the hole a viewer aims into
+ *  and the hole lies in the plane. */
+function deepestCohort(x: number, z: number, centres: readonly Vec3[]): number {
+  let best = -1;
+  let bestD2 = KEEP_OUT_INSIDE_R2;
+  for (let i = 0; i < centres.length; i += 1) {
+    const c = centres[i];
+    const dx = x - c[0];
+    const dz = z - c[2];
+    const d2 = dx * dx + dz * dz;
+    if (d2 < bestD2 || (best >= 0 && d2 === bestD2 && centreBefore(c, centres[best]))) {
+      best = i;
+      bestD2 = d2;
+    }
+  }
+  return best;
+}
+
+/** How far along `(ux, uz)` a point has to travel to be past the far side of
+ *  EVERY disc the ray meets — the closed form of "keep pushing until it is
+ *  out". Beyond the largest exit parameter the ray is outside every circle by
+ *  construction, so this terminates in one step for any number of overlaps.
+ *  Exported for out-of-band testing: on real placement the bounded loop above
+ *  clears every node long before this is reached. */
+export function cohortKeepOutSweep(
+  x: number, z: number, ux: number, uz: number, centres: readonly Vec3[],
+): number {
+  const r2 = COHORT_KEEP_OUT_R * COHORT_KEEP_OUT_R;
+  let t = 0;
+  for (const c of centres) {
+    const fx = x - c[0];
+    const fz = z - c[2];
+    const b = fx * ux + fz * uz;
+    const disc = b * b - (fx * fx + fz * fz - r2);
+    if (disc <= 0) continue;
+    const exit = -b + Math.sqrt(disc);
+    if (exit > t) t = exit;
+  }
+  return t;
+}
+
+/** One node's position with the cohorts' discs taken out of it: unchanged (the
+ *  same array, by reference) when it already stands clear, and otherwise pushed
+ *  radially away from the cohort it is deepest inside, out to the keep-out
+ *  circle, at its own height.
+ *
+ *  ⭐ Y IS CARRIED, NEVER RECOMPUTED. The slab is what makes the colony read as
+ *  a membrane; a node that stepped aside AND changed height would be a second,
+ *  invisible edit riding on a click fix.
+ *
+ *  ⭐ IT IS A PURE FUNCTION OF (position, id, the set of attested positions).
+ *  Nothing about peers, latency, the crawl round or the producers' standings
+ *  enters, so a node moves when and only when a cohort appears over it — which
+ *  is the behaviour, not a side effect: the hole opens and the peer steps
+ *  aside. */
+export function cohortKeepOutPos(
+  pos: Vec3, nodeId: string, centres: readonly Vec3[],
+): Vec3 {
+  if (centres.length === 0) return pos;
+  let x = pos[0];
+  let z = pos[2];
+  let ux = 0;
+  let uz = 0;
+  let steps = 0;
+  while (steps < COHORT_KEEP_OUT_STEPS) {
+    const i = deepestCohort(x, z, centres);
+    if (i < 0) break;
+    const c = centres[i];
+    let dx = x - c[0];
+    let dz = z - c[2];
+    const d = Math.sqrt(dx * dx + dz * dz);
+    if (d > 0) {
+      dx /= d;
+      dz /= d;
+    } else {
+      // Exactly on a centre: there is no "away" to push along, so the node's
+      // own placement hash supplies one. Same id, same direction, forever.
+      const a = placementHash01(nodeId, KEEP_OUT_ANGLE_MIX) * Math.PI * 2;
+      dx = Math.cos(a);
+      dz = Math.sin(a);
+    }
+    ux = dx;
+    uz = dz;
+    x = c[0] + dx * COHORT_KEEP_OUT_R;
+    z = c[2] + dz * COHORT_KEEP_OUT_R;
+    steps += 1;
+  }
+  if (steps === 0) return pos;
+  if (deepestCohort(x, z, centres) >= 0) {
+    const t = cohortKeepOutSweep(x, z, ux, uz, centres);
+    x += ux * t;
+    z += uz * t;
+  }
+  return [x, pos[1], z];
+}
+
+/** The keep-out over a whole staged tier. Nodes that already stand clear are
+ *  handed back as the SAME objects, and a tier with nothing to move is handed
+ *  back as the same array — so a colony whose producers cover nobody keeps
+ *  precisely the geometry, and the object identities, it had.
+ *
+ *  ⭐ APPLIED WHERE THE CLOUD MEETS THE PEERS, NEVER INSIDE `scatterInferred`.
+ *  The scatter stays a pure function of the seed alone and stays cached, which
+ *  is what the ⭐ churn-stability invariant rests on: peers arriving and
+ *  leaving still cannot move a ghost. What CAN move one is a producer appearing
+ *  — the attested keys are part of the scaffold's cache key already, and the
+ *  ghosts a cohort's disc covers step aside with the sighted peers. */
+export function keepClearOfCohorts(
+  staged: NetworkNode[], attested: readonly NetworkNode[],
+): NetworkNode[] {
+  if (attested.length === 0 || staged.length === 0) return staged;
+  const centres = attested.map((n) => n.pos);
+  let moved = false;
+  const out = staged.map((node) => {
+    const pos = cohortKeepOutPos(node.pos, node.id, centres);
+    if (pos === node.pos) return node;
+    moved = true;
+    return { ...node, pos };
+  });
+  return moved ? out : staged;
+}
+
 export function buildAdjacency(
   nodes: NetworkNode[], edges: NetworkEdge[],
 ): Map<string, { to: string; weight: number }[]> {
@@ -476,9 +697,17 @@ function inferredScaffold(
   // because the scatter itself is never touched, ⭐ churn-stability survives a
   // producer appearing, leaving, or being re-tallied.
   const ghostCount = Math.max(0, infPts.length - sighted.length - attested.length);
-  const nodes: NetworkNode[] = infPts.slice(0, ghostCount).map((pos, n) => (
-    { id: `inf:${n}`, kind: 'inferred', pos }
-  ));
+  //
+  // ⭐ AND A GHOST THE DISC COVERS STEPS ASIDE — see `keepClearOfCohorts`. The
+  // scatter itself is still untouched and still seed-pure; the keep-out is a
+  // pure function applied where the cloud becomes staged nodes, so it is the
+  // ATTESTED KEYS that move a ghost and never a peer.
+  const nodes: NetworkNode[] = keepClearOfCohorts(
+    infPts.slice(0, ghostCount).map((pos, n): NetworkNode => (
+      { id: `inf:${n}`, kind: 'inferred', pos }
+    )),
+    attested,
+  );
   for (const s of sighted) nodes.push(s);
   for (const a of attested) nodes.push(a);
 
@@ -570,8 +799,14 @@ export function inferredTopology(
   //    subtracted from nobody. The producer tail is LAST so that with no
   //    producers every index in this array is exactly where it has always been.
   const infStart = nodes.length;
-  const sighted = stageSighted(roster, peers, localId, localP2pId);
   const attested = stageAttested(producers);
+  // The cohorts are staged FIRST because every other invented placement has to
+  // stand clear of them: a cohort is a hole in the membrane and the hole has to
+  // be empty (`COHORT_KEEP_OUT_R`). The measured belt above is deliberately not
+  // put through it — a peer's radius is its latency, not a placement.
+  const sighted = keepClearOfCohorts(
+    stageSighted(roster, peers, localId, localP2pId), attested,
+  );
   const scaffold = inferredScaffold(seed, sighted, attested);
   for (let i = 0; i < scaffold.ghostCount; i += 1) nodes.push(scaffold.nodes[i]);
   // The cache holds GEOMETRY, not the reports behind it: both tails are

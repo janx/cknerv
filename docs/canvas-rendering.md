@@ -837,6 +837,17 @@ The topology contains:
 - sighted peers — roster identities the crawler names but the local node has no
   link to — on placements we invented, so a real identity is never drawn as if
   it were an observed connection;
+- a KEEP-OUT around every cohort, `COHORT_KEEP_OUT_R` = 3.5 wu in XZ, applied to
+  the ghosts and to both staged tiers and to nothing else. A cohort is a hole in
+  the membrane and the hole has to be empty, so a ghost or a sighted peer inside
+  the disc is pushed radially out to its rim at its own height; the local node
+  and the measured belt are exempt, because a measured peer's radius IS its
+  latency and moving it would print a measurement nobody took. The scatter
+  itself is untouched and still seed-only, so peer churn still moves nobody —
+  what moves a node is a producer KEY appearing over it, which is the intended
+  behaviour: the hole opens and the peer steps aside. 3.5 is the mark's outer
+  radius `COHORT_AP_R` (3.0, which is also `COHORT_LINK_STOP_R`) plus the half
+  unit a displaced peer's own link needs to still be drawn as a line;
 - attested cohorts, one per recent block producer, carrying the chain's payout
   key and NO identity at all: the type they hold has no field an ID could land
   in. They lie EXACTLY on `COLONY_Y`, with no scatter in Y whatever, because a
@@ -981,24 +992,36 @@ attribution said where it went: the haze sheet was the app-camera cost, the
 patch is the close-up cost (0.14 -> 0.63 -> 1.53 ms as the mouth fills the
 screen).
 
-The layer's cost after the removal is not known yet, and no number is claimed
-for it here. What is measured: +1.06 ms WITH the sheet at the app camera, and
-the same frame with the layer's four amplitudes at 0 — every draw still issued —
-at +0.11 ms, so the expected cost of the three draws that remain is of that
-order. To be re-measured on the next live leg.
+The layer's cost after the removal was measured on the next live leg, on the
+same machine and by the same bracket. At the app camera the three remaining
+draws are **at or under the bracket's own noise floor**: three independent
+on/off pairs give +0.11 / +0.06 / +0.01 ms at `med` and -0.07 / +0.16 / -0.06 ms
+at `high`, so the sign is not even stable, against +1.06 and +1.44 ms with the
+sheet. At a 40 px/wu mouth the layer costs +0.26 to +0.96 ms, against +2.22 with
+the sheet, and the patch is still where it goes (0.54-0.60 ms of scope against
+0.11-0.12 for the face). The prediction from the amplitudes-at-zero frame, +0.11
+ms, was right.
 
-**One open finding from the same session**: thinning the slab tightened a
-cohort's clearance. The nearest non-cohort node measured 1.274 wu from a
-cohort — inside
-`COHORT_HIT_RADIUS` (1.5 wu) and inside the drawn hole (1.6 wu) — where R19
-measured 2.99 wu at the old thickness. Every cohort still opens its own card and
-every clickable neighbour still opens its own, but at the two closest peers'
-projected centres the HOVER readout names the cohort while the CLICK resolves to
-the peer: the cursor names one target and the click opens another. One cohort
-also failed its own hole from one azimuth, where a peer 4.6 wu away stood in
-front of the mark along that ray, and recovered 90 degrees round. Judge any
-hit-radius change against 1.274 wu, not against `COLONY_MIN_SPACING`, which
-bounds only the inferred scatter and not the sighted placements.
+**The clearance finding from the same session, and what closed it.** Thinning
+the slab tightened a cohort's clearance: the nearest non-cohort node measured
+1.274 wu from a cohort — inside `COHORT_HIT_RADIUS` (1.5 wu) and inside the
+drawn hole (1.6 wu) — where R19 measured 2.99 wu at the old thickness. Every
+cohort still opened its own card and every clickable neighbour still opened its
+own, but at the two closest peers' projected centres the HOVER readout named the
+cohort while the CLICK resolved to the peer, and one cohort failed its own hole
+from one azimuth because a peer 4.6 wu away stood in front of the mark along
+that ray. The fix is PLACEMENT rather than pick radius, and it is the
+`COHORT_KEEP_OUT_R` disc described above: nobody may stand in the hole, so the
+ambiguity has nowhere to occur. Re-measured live on the same six cohorts
+afterwards: the six nearest non-cohort distances went 2.355 / **1.274** / 4.602 /
+8.247 / 5.337 / 7.794 -> 3.598 / **3.527** / 4.602 / 8.247 / 5.337 / 7.794 wu (two
+neighbours stepped aside, four were already clear), the minimum XZ distance over
+all 258 staged nodes is exactly 3.500, all twelve hole clicks (six cohorts at two
+azimuths 90 degrees apart, including the one that failed) open their own
+`POW COHORT //` card, all six nearest clickable neighbours open their own, and no
+hover anywhere names a cohort at a peer's centre. Judge any hit-radius change
+against the keep-out and against 1.274 wu, never against `COLONY_MIN_SPACING`,
+which bounds only the inferred scatter and not the sighted placements.
 
 ### 10.2 Block flood and delivery
 

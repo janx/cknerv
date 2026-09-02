@@ -13,6 +13,7 @@ import ColonyNodes, {
   SIGHTED_FALLTHROUGH_STOP,
   SIGHTED_HIT_RADII,
   SIGHTED_STOPS,
+  sameStagedPoint,
   sightedStop,
   stagedPickTargets,
   useStableList,
@@ -21,6 +22,7 @@ import ColonyNodes, {
 } from '../../src/components/ColonyNodes';
 import {
   attestedNodeId,
+  COHORT_KEEP_OUT_R,
   COLONY_MIN_SPACING,
   inferredTopology,
   STAGEABLE_ROSTER_STATES,
@@ -559,12 +561,13 @@ describe('cloud point buffers outlive the rebuilds that do not move them', () =>
     expect(held.result.current).toBe(before); // …and the geometry key did not
   });
 
-  it('the two tiers test different things: ghosts by object, sighted by id', () => {
+  it('the two tiers test different things: ghosts by object, sighted by id and place', () => {
     // A ghost is the derive's cached scaffold object; a reseed keeps every
     // `inf:n` id while moving every point, so only identity is safe there. A
     // sighted node is re-staged from the crawler's row every build, so identity
-    // is never held — but `sightedPos` is a pure function of the id, so the id
-    // is exactly what its points follow.
+    // is never held — its id and the place that id landed on are what its
+    // points follow (⭐ the place, because the cohorts' keep-out can move a
+    // node without changing its id; pinned on its own below).
     const original: NetworkNode[] = [
       { id: 'inf:0', kind: 'inferred', pos: [0, 0, 0] },
       { id: 'inf:1', kind: 'inferred', pos: [1, 0, 0] },
@@ -604,10 +607,42 @@ describe('cloud point buffers outlive the rebuilds that do not move them', () =>
     expect(held.result.current).not.toBe(first);
   });
 
+  // ⭐⭐ THE ONE CASE THE ID COMPARISON GOT WRONG, and it is the case this
+  // session's whole change is about. A producer appearing over a sighted peer
+  // pushes that peer clear of the cohort's hole (`COHORT_KEEP_OUT_R`) under the
+  // SAME node id — so a comparator that read ids alone would hold the buffer
+  // and leave the peer drawn inside a mouth it had already stepped out of,
+  // while the hit sphere (which follows the topology directly) had moved.
+  it('⭐ a cohort opening over a sighted peer releases the buffer, id unchanged', () => {
+    const build = (producers?: ProducerStanding[]) => sightedOf(inferredTopology(
+      [measured('A', 40)], 0xc0ffee, 'ckb:local', undefined, ROSTER, undefined, producers,
+    ));
+    const bare = build();
+    // Staging producers cannot add, drop or reorder a sighted peer — only move
+    // one, which is exactly the change an id comparison cannot see.
+    expect(build([standing(producerKey('a'), 0.5), standing(producerKey('b'), 0.5)])
+      .map((n) => n.id)).toEqual(bare.map((n) => n.id));
+    const held = renderHook(({ list }) => useStableList(list, sameStagedPoint), {
+      initialProps: { list: bare },
+    });
+    // A rebuild that moved nobody still holds the buffer…
+    held.rerender({ list: bare.map((n) => ({ ...n })) });
+    expect(held.result.current).toBe(bare);
+    // …and one where a single peer stepped clear of a new hole does not.
+    const stepped: NetworkNode[] = bare.map((n) => ({ ...n }));
+    stepped[0] = {
+      ...stepped[0],
+      pos: [stepped[0].pos[0] + COHORT_KEEP_OUT_R, stepped[0].pos[1], stepped[0].pos[2]],
+    };
+    expect(stepped.map((n) => n.id)).toEqual(bare.map((n) => n.id));
+    held.rerender({ list: stepped });
+    expect(held.result.current).toBe(stepped);
+  });
+
   it('each cloud keys its buffer on the held list, under its own tier’s test', () => {
     const nodes = source('ColonyNodes.tsx');
     expect(nodes).toContain('const inferred = useStableList(staged, sameNodeObject)');
-    expect(nodes).toContain('const points = useStableList(nodes, sameNodeId)');
+    expect(nodes).toContain('const points = useStableList(nodes, sameStagedPoint)');
     // …and the geometry follows the held list, never the freshly split one.
     expect(nodes).toContain('}, [inferred]);');
     expect(nodes).toContain('}, [points]);');

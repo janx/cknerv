@@ -401,15 +401,30 @@ export const COHORT_AP_BREATHE_DEPTH = 0.09;
  * is bounded by nothing. With the slab thinned to `COLONY_Y_THICKNESS` 6 and a
  * cohort giving up its own height, the six live cohorts' nearest non-cohort
  * neighbours measured 1.274 / 2.355 / 4.602 / 5.337 / 7.794 / 8.247 wu, against
- * R19's 2.99 minimum at the old thickness. ⭐ THE MINIMUM IS NOW INSIDE BOTH
- * THIS RADIUS AND THE DRAWN HOLE (1.6). Clicks still resolve correctly — all
- * six cohorts open their own `POW COHORT //` card and every clickable
- * neighbour opens its own, hit spheres still do not overlap — but at the 1.274
- * and 4.602 wu peers' projected centres the HOVER readout names the cohort
- * while the CLICK resolves to the peer, so the cursor names one target and the
- * click opens another. ⚠️ OPEN, NOT FIXED, and deliberately not retuned off a
- * single session: if this radius is ever changed, judge it against 1.274 wu and
- * never against `COLONY_MIN_SPACING`.
+ * R19's 2.99 minimum at the old thickness — the minimum INSIDE both this radius
+ * and the drawn hole. Clicks still resolved correctly, but at the 1.274 and
+ * 4.602 wu peers' projected centres the HOVER readout named the cohort while
+ * the CLICK resolved to the peer, and one cohort's own hole opened its
+ * neighbour's card from one of two camera azimuths.
+ *
+ * ⭐⭐⭐ CLOSED BY PLACEMENT, NOT BY RETUNING THIS RADIUS.
+ * `COHORT_KEEP_OUT_R` in `derives/networkTopology.derive.ts` empties a 3.5 wu
+ * XZ disc around every attested position: a ghost or a staged peer inside it is
+ * pushed out to the rim, the measured belt and the local node are exempt. That
+ * is the right end of the problem — a hit sphere the size of the hole is what
+ * the mark WANTS, and shrinking it would only make the miner a smaller target
+ * again (see the paragraph below). Re-measured live afterwards on the same six
+ * cohorts: the nearest non-cohort distances are now 3.598 / 3.527 / 4.602 /
+ * 8.247 / 5.337 / 7.794 wu, the minimum XZ clearance over all 258 staged nodes
+ * is exactly 3.500, all twelve hole clicks (six cohorts × two azimuths 90°
+ * apart) open their own `POW COHORT //` card, all six nearest clickable
+ * neighbours open their own, and no hover anywhere names a cohort at a peer's
+ * centre. `__tests__/materials/cohortKeepOut.test.ts` pins the two radii
+ * against each other, since a derive may not import this file.
+ *
+ * ⚠️ If this radius is ever changed, judge it against the KEEP-OUT — the
+ * closest a staged peer may now stand — and never against `COLONY_MIN_SPACING`,
+ * which bounds only the inferred scatter.
  *
  * ⭐ AND IT GOES UP RATHER THAN DOWN, which is the direction the mark moved.
  * 1.15 wu was already the answer to a real failure — this radius once made the

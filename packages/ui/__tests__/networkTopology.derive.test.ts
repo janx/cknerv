@@ -4,6 +4,7 @@ import {
   scatterInferred, COLONY_INFERRED_COUNT, COLONY_INFERRED_JITTER, COLONY_MIN_SPACING,
   COLONY_RADIUS, COLONY_Y_THICKNESS, inferredTopology, ensureConnectedFrom, sightedPos,
   STAGEABLE_ROSTER_STATES, ATTESTED_ID_PREFIX, attestedNodeId, attestedPos, stageAttested,
+  COHORT_KEEP_OUT_R, cohortKeepOutPos,
 } from '../src/derives/networkTopology.derive';
 import { colonyFlood } from '../src/derives/networkFlood.derive';
 import { deriveBlockProducers, type ProducerStanding } from '../src/derives/blockProducers.derive';
@@ -827,6 +828,20 @@ describe('stageAttested (⭐ one node per producer, always anonymous)', () => {
   });
 });
 
+/** XZ distance from `p` to the nearest cohort centre — the metric the keep-out
+ *  is written in, because a cohort is a hole a viewer aims INTO and the hole
+ *  lies in the colony plane. `Infinity` when no cohort is standing. */
+function nearestDisc(p: Vec3, discs: readonly Vec3[]): number {
+  let best = Infinity;
+  for (const c of discs) best = Math.min(best, Math.hypot(p[0] - c[0], p[2] - c[2]));
+  return best;
+}
+
+/** Whether a point already stands clear of every cohort's keep-out disc. */
+function clearOfEvery(p: Vec3, discs: readonly Vec3[]): boolean {
+  return nearestDisc(p, discs) >= COHORT_KEEP_OUT_R - 1e-9;
+}
+
 describe('attested nodes in the colony (⭐ ghost displacement, one for one)', () => {
   const seed = 0xc0ffee;
   const peers = [
@@ -868,19 +883,37 @@ describe('attested nodes in the colony (⭐ ghost displacement, one for one)', (
   // §9.5, the half that is easy to lose: the ghosts that stay are the SAME
   // ghosts, standing where they stood. Displacement comes off the tail of an
   // untouched seed-pure scatter — nothing is re-rolled or re-parameterized.
-  it('⭐ no ghost moves when a producer appears, leaves, or is re-tallied', () => {
+  //
+  // ⚠️ THIS TEST ONCE SAID "no ghost moves" FULL STOP, and since the cohorts'
+  // keep-out that sentence is false — deliberately, and in exactly one way. A
+  // cohort is a HOLE in the membrane and the hole has to be empty, so a ghost
+  // the disc `COHORT_KEEP_OUT_R` opens over steps aside to the circle at its
+  // own height. Every ghost outside every disc is still byte-identical to the
+  // seed-pure scatter, which is the claim the ⭐ churn-stability invariant
+  // actually needs: the scatter is untouched and cached, and what moves a ghost
+  // is a producer KEY appearing — never a peer (pinned on its own below).
+  it('⭐ a ghost moves only where a cohort opens over it, and never otherwise', () => {
     const scatter = scatterInferred(seed);
     const rows = roster(sightedRoster(12));
     const none = inferredTopology(peers, seed, 'ckb:local', undefined, rows);
     const three = inferredTopology(peers, seed, 'ckb:local', undefined, rows, undefined, standings(3));
     const two = inferredTopology(peers, seed, 'ckb:local', undefined, rows, undefined, standings(2));
     for (const t of [none, three, two]) {
+      const discs = attestedOf(t).map((n) => n.pos);
       ghostsOf(t).forEach((g, i) => {
         expect(g.id).toBe(`inf:${i}`);
-        expect(g.pos).toEqual(scatter[i]);
+        if (clearOfEvery(scatter[i], discs)) {
+          expect(g.pos).toEqual(scatter[i]);      // byte-identical, as it always was
+          return;
+        }
+        expect(g.pos[1]).toBe(scatter[i][1]);      // the height is carried, never redrawn
+        expect(nearestDisc(g.pos, discs)).toBeGreaterThanOrEqual(COHORT_KEEP_OUT_R - 1e-9);
       });
       expectEdgesClosed(t);
     }
+    // With no producers there is no disc, so this is the old assertion intact.
+    expect(attestedOf(none)).toHaveLength(0);
+    ghostsOf(none).forEach((g, i) => expect(g.pos).toEqual(scatter[i]));
     expect(ghostsOf(three)).toHaveLength(ghostsOf(none).length - 3);
     expect(ghostsOf(two)).toHaveLength(ghostsOf(none).length - 2);
   });
@@ -1099,5 +1132,244 @@ describe('attested nodes in the colony (⭐ ghost displacement, one for one)', (
     // …and the live tally still crossed into the tier that was reused.
     expect(attestedOf(second).map((n) => n.attested!.blocks)).toEqual([4, 5]);
     expect(attestedOf(first).map((n) => n.attested!.blocks)).toEqual([5, 4]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE COHORTS' KEEP-OUT — a cohort is a HOLE in the membrane, and the hole has
+// to be empty. Live on 2026-09-02 (T6) the six cohorts' nearest non-cohort
+// neighbours stood at 1.274 / 2.355 / 4.602 / 5.337 / 7.794 / 8.247 wu: the
+// nearest was a clickable sighted peer INSIDE the drawn hole (1.6) and inside
+// the cohort's own pick sphere (1.5), the hover there named the cohort while
+// the click opened the peer, and one cohort's own hole opened its neighbour's
+// card from one of two camera azimuths. These pin the placement that makes all
+// of that impossible — and pin what it is NOT allowed to disturb.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('the cohorts’ keep-out (⭐ nobody stands in the hole)', () => {
+  const rows = roster([
+    ...sightedRoster(10),
+    ...sightedRoster(8, { state: 'verified_unavailable' }).map((r) => ({ ...r, node_id: `${r.node_id}u` })),
+    ...sightedRoster(8, { state: 'advertised_unverified' }).map((r) => ({ ...r, node_id: `${r.node_id}a` })),
+  ]);
+  const twoPeers = [
+    peer({ node_id: 'A', latency_ms: 40, direction: 'outbound' }),
+    peer({ node_id: 'B', latency_ms: 180, direction: 'inbound' }),
+  ];
+  /** Six producers whose keys are a function of `tag` alone — the live count. */
+  const sixProducers = (tag: string) => Array.from({ length: 6 }, (_, i) => standing({
+    key: producerKey(`${tag}m${i}`),
+  }));
+
+  // The sweep the plan asked for, run on the pure function so it can afford all
+  // 240 ghosts and 160 sighted placements at 40 different seeds. The wiring
+  // that carries it into a real colony is the test after this one.
+  it('⭐ over 40 seeds no ghost and no sighted placement stands inside a disc', () => {
+    let moved = 0;
+    let total = 0;
+    let minClear = Infinity;
+    let overlappingPairs = 0;
+    for (let seed = 1; seed <= 40; seed += 1) {
+      const discs = sixProducers(seed.toString(16)).map((p) => attestedPos(p.key));
+      for (let i = 0; i < discs.length; i += 1) {
+        for (let j = i + 1; j < discs.length; j += 1) {
+          if (nearestDisc(discs[i], [discs[j]]) < 2 * COHORT_KEEP_OUT_R) overlappingPairs += 1;
+        }
+      }
+      const ghosts = scatterInferred(seed);
+      // ⭐ THE CLOUD ITSELF IS UNTOUCHED. The keep-out is applied where the
+      // scatter becomes staged nodes, never inside `scatterInferred`, so the
+      // rejection sampler still accepts exactly what T1 measured (210–268).
+      expect(ghosts.length).toBeGreaterThanOrEqual(210);
+      expect(ghosts.length).toBeLessThanOrEqual(268);
+      const placements: [Vec3, string][] = ghosts.map((p, n) => [p, `inf:${n}`]);
+      for (let k = 0; k < 160; k += 1) {
+        const id = `Qm${seed}s${k}`;
+        placements.push([sightedPos(id), id]);
+      }
+      for (const [p, id] of placements) {
+        total += 1;
+        const out = cohortKeepOutPos(p, id, discs);
+        if (out !== p) {
+          moved += 1;
+          // ⭐ EXACTLY ON THE CIRCLE, every time: a node is pushed to the rim of
+          // the disc that took it and stands outside every other, so the
+          // NEAREST disc of a displaced node is always the keep-out radius.
+          expect(nearestDisc(out, discs)).toBeCloseTo(COHORT_KEEP_OUT_R, 9);
+        }
+        minClear = Math.min(minClear, nearestDisc(out, discs));
+      }
+    }
+    expect(minClear).toBeGreaterThanOrEqual(COHORT_KEEP_OUT_R - 1e-9);
+    // Measured 2026-09-02: 89 of 15 911 placements move (0.56 %) and 3 of the
+    // 600 centre pairs overlap. Bounded loosely on purpose — these are facts
+    // about a hash over constructed keys, not a contract anybody may rely on.
+    expect(moved).toBeGreaterThan(0);
+    expect(moved / total).toBeLessThan(0.05);
+    expect(overlappingPairs).toBeGreaterThan(0);
+  });
+
+  it('⭐ the assembled colony comes out clear — ghosts, sighted, remembered and advertised alike', () => {
+    for (const tag of ['aa', 'bb', 'cc', 'dd']) {
+      const t = inferredTopology(
+        twoPeers, 0xc0ffee, 'ckb:local', undefined, rows, undefined, sixProducers(tag),
+      );
+      const discs = t.nodes.filter((n) => n.kind === 'attested').map((n) => n.pos);
+      expect(discs).toHaveLength(6);
+      const staged = t.nodes.filter((n) => n.kind === 'inferred' || n.kind === 'sighted');
+      expect(staged.length).toBeGreaterThan(200);
+      for (const n of staged) {
+        expect(nearestDisc(n.pos, discs)).toBeGreaterThanOrEqual(COHORT_KEEP_OUT_R - 1e-9);
+      }
+      // Every rung the crawler reports is in there, so "advertised" is covered
+      // by name and not by the fact that it happens to stage as `sighted`.
+      const states = new Set(t.nodes.filter((n) => n.kind === 'sighted').map((n) => n.sighted!.state));
+      expect(states).toEqual(new Set(['reachable', 'verified_unavailable', 'advertised_unverified']));
+    }
+  });
+
+  it('⭐ a node the discs do not cover is byte-identical with and without producers', () => {
+    let touched = 0;
+    for (const tag of ['aa', 'bb', 'cc', 'dd', 'ee', 'ff']) {
+      const bare = inferredTopology(twoPeers, 0xc0ffee, 'ckb:local', undefined, rows);
+      const withCohorts = inferredTopology(
+        twoPeers, 0xc0ffee, 'ckb:local', undefined, rows, undefined, sixProducers(tag),
+      );
+      const discs = withCohorts.nodes.filter((n) => n.kind === 'attested').map((n) => n.pos);
+      const before = new Map(bare.nodes.map((n) => [n.id, n.pos] as const));
+      for (const n of withCohorts.nodes) {
+        // The staged tiers only: `local` and `measured` are deliberately outside
+        // the keep-out and have their own test below.
+        if (n.kind !== 'inferred' && n.kind !== 'sighted') continue;
+        const was = before.get(n.id);
+        if (!was) continue;                      // a ghost the tail cut, not a move
+        if (clearOfEvery(was, discs)) {
+          expect(n.pos).toEqual(was);            // untouched, to the last bit
+          continue;
+        }
+        touched += 1;
+        expect(n.pos[1]).toBe(was[1]);           // ⭐ the height is carried, never redrawn
+        expect(nearestDisc(n.pos, discs)).toBeCloseTo(COHORT_KEEP_OUT_R, 9);
+      }
+    }
+    // The test would pass vacuously if no disc ever covered anybody.
+    expect(touched).toBeGreaterThan(0);
+  });
+
+  // ⭐ THE ANSWER IS A FUNCTION OF THE PRODUCER SET, NEVER OF ITS SEQUENCE.
+  // Everything else in this file is order-sensitive on purpose — the node
+  // array, the scaffold's cache key, the long-range rng — so a displacement
+  // that read the list's order would be a placement that moved when two miners
+  // swapped rank. The tie between two equally deep discs is broken on their
+  // coordinates for exactly this reason.
+  it('⭐ the displacement is blind to the order the producers arrive in', () => {
+    const producers = sixProducers('zz');
+    const posById = (t: ReturnType<typeof inferredTopology>) => new Map(
+      t.nodes.map((n) => [n.id, n.pos] as const),
+    );
+    const forward = posById(inferredTopology(
+      twoPeers, 0xbeef, 'ckb:local', undefined, rows, undefined, producers,
+    ));
+    for (const order of [[...producers].reverse(), [producers[3], ...producers.filter((_, i) => i !== 3)]]) {
+      const other = posById(inferredTopology(
+        twoPeers, 0xbeef, 'ckb:local', undefined, rows, undefined, order,
+      ));
+      expect([...other.keys()].sort()).toEqual([...forward.keys()].sort());
+      for (const [id, pos] of forward) expect(other.get(id)).toEqual(pos);
+    }
+  });
+
+  it('steps straight out, keeps its height, and hands a clear node back untouched', () => {
+    const c: Vec3 = [10, COLONY_Y, -4];
+    const inside: Vec3 = [10.4, 19.5, -4.3];
+    const out = cohortKeepOutPos(inside, 'QmSomebody', [c]);
+    expect(out[1]).toBe(19.5);
+    expect(Math.hypot(out[0] - c[0], out[2] - c[2])).toBeCloseTo(COHORT_KEEP_OUT_R, 12);
+    // radial, so a peer beside a mark reads as having stepped back from it
+    expect(Math.atan2(out[2] - c[2], out[0] - c[0]))
+      .toBeCloseTo(Math.atan2(inside[2] - c[2], inside[0] - c[0]), 12);
+    // A node already clear comes back as the SAME array — nothing downstream
+    // re-uploads a buffer because a producer appeared on the far side of the
+    // colony.
+    const clear: Vec3 = [30, 21, -4];
+    expect(cohortKeepOutPos(clear, 'QmSomebody', [c])).toBe(clear);
+    expect(cohortKeepOutPos(clear, 'QmSomebody', [])).toBe(clear);
+  });
+
+  it('a node on a cohort’s exact centre takes its own placement hash for the direction', () => {
+    const c: Vec3 = [10, COLONY_Y, -4];
+    const centred: Vec3 = [c[0], 20.7, c[2]];
+    const a = cohortKeepOutPos(centred, 'QmSomebody', [c]);
+    const b = cohortKeepOutPos(centred, 'QmOther', [c]);
+    for (const p of [a, b]) {
+      expect(p[1]).toBe(20.7);
+      expect(Math.hypot(p[0] - c[0], p[2] - c[2])).toBeCloseTo(COHORT_KEEP_OUT_R, 12);
+    }
+    // Same id, same direction, forever; a different id, a different one.
+    expect(cohortKeepOutPos(centred, 'QmSomebody', [c])).toEqual(a);
+    expect(b).not.toEqual(a);
+  });
+
+  // ⚠️ TWO COHORTS CLOSER THAN `2 * COHORT_KEEP_OUT_R` HAVE OVERLAPPING DISCS,
+  // and clearing one can drop a node into the other. Three deeply nested discs
+  // here — far tighter than `attestedPos` produces — because the bound and the
+  // closed-form finish exist for a case the real data almost never reaches.
+  it('⭐ overlapping discs still let every node out, whatever the order', () => {
+    const a: Vec3 = [0, COLONY_Y, 0];
+    const b: Vec3 = [COHORT_KEEP_OUT_R * 0.6, COLONY_Y, 0];
+    const d: Vec3 = [-COHORT_KEEP_OUT_R * 0.5, COLONY_Y, COHORT_KEEP_OUT_R * 0.4];
+    const discs = [a, b, d];
+    for (let i = 0; i < 400; i += 1) {
+      const t = (i / 400) * Math.PI * 2;
+      const p: Vec3 = [Math.cos(t) * (i % 7) * 0.9, 19 + (i % 5), Math.sin(t) * (i % 5) * 1.1];
+      const out = cohortKeepOutPos(p, `probe:${i}`, discs);
+      expect(nearestDisc(out, discs)).toBeGreaterThanOrEqual(COHORT_KEEP_OUT_R - 1e-9);
+      expect(out[1]).toBe(p[1]);
+    }
+    const probe: Vec3 = [0.2, 20.1, -0.1];
+    const first = cohortKeepOutPos(probe, 'probe', [a, b, d]);
+    for (const perm of [[d, a, b], [b, d, a], [d, b, a], [b, a, d]]) {
+      expect(cohortKeepOutPos(probe, 'probe', perm)).toEqual(first);
+    }
+  });
+
+  // ⚠️ THE MEASURED BELT IS NOT PLACEMENT, IT IS A MEASUREMENT. A peer's radius
+  // is `latencyToRadius01` of its round trip, so pushing one off a cohort would
+  // print a latency nobody observed; the local node is the anchor that belt is
+  // scattered around. Both cases are FORCED here rather than hoped for:
+  // `localPos` is free, so it is chosen to stand a peer exactly on a mark.
+  it('⚠️ a measured peer and the local node stay put, even standing on a cohort', () => {
+    const producers = sixProducers('mm');
+    const p = peer({ node_id: 'QmMeasured', latency_ms: 90, direction: 'outbound' });
+    const centre = attestedPos(producers[0].key);
+    const offset = measuredPeerPos([0, COLONY_Y, 0], p);
+    const localPos: Vec3 = [centre[0] - offset[0], COLONY_Y, centre[2] - offset[2]];
+    const t = inferredTopology([p], 0xc0ffee, 'ckb:local', localPos, rows, undefined, producers);
+    const measured = t.nodes.find((n) => n.kind === 'measured')!;
+    expect(nearestDisc(measured.pos, [centre])).toBeCloseTo(0, 9);   // standing ON the mark
+    expect(measured.pos).toEqual(measuredPeerPos(localPos, p));      // and not moved off it
+
+    const onAMark = attestedPos(producers[1].key);
+    const u = inferredTopology([], 0xc0ffee, 'ckb:local', onAMark, rows, undefined, producers);
+    expect(u.nodes.find((n) => n.kind === 'local')!.pos).toBe(onAMark);
+  });
+
+  // ⭐ THE INVARIANT THE KEEP-OUT HAD TO SURVIVE. `scatterInferred` is still a
+  // pure function of the seed and still cached; the displacement is applied
+  // where the cloud meets the staged tiers and reads only the attested
+  // positions. So peers arriving and leaving still move nobody — with six
+  // cohorts standing, which is the case the old test could not cover.
+  it('⭐ churn-stability holds with cohorts standing: a peer coming or going moves nobody', () => {
+    const producers = sixProducers('ch');
+    const three = [
+      peer({ node_id: 'A', latency_ms: 40, direction: 'outbound' }),
+      peer({ node_id: 'B', latency_ms: 180, direction: 'inbound' }),
+      peer({ node_id: 'C', latency_ms: 300, direction: 'outbound' }),
+    ];
+    const cloud = (t: ReturnType<typeof inferredTopology>) => t.nodes
+      .filter((n) => n.kind !== 'local' && n.kind !== 'measured')
+      .map((n) => [n.id, n.pos] as const);
+    const many = inferredTopology(three, 0xc0ffee, 'ckb:local', undefined, rows, undefined, producers);
+    const few = inferredTopology(three.slice(0, 1), 0xc0ffee, 'ckb:local', undefined, rows, undefined, producers);
+    expect(cloud(few)).toEqual(cloud(many));
   });
 });
