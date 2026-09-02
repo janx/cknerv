@@ -6,13 +6,23 @@
 // NOBODY has ever addressed: the chain says an entity made these blocks, and
 // that is the entire evidence. So there is no compass (the bearing is a hash),
 // no ping strip (we never dialled it), no sync ladder (it never told us a
-// height), no uptime (nothing is up), no country, no ASN, no address and no
-// version — not as "Unknown", which is a word for a lookup that came back
-// empty, but structurally, because `ProducerStanding` has nowhere to put them.
+// height), no uptime (nothing is up), no country, no ASN and no version — not
+// as "Unknown", which is a word for a lookup that came back empty, but
+// structurally, because `ProducerStanding` has nowhere to put them.
+//
+// ⭐ AN ADDRESS IS THE ONE THAT CAME BACK, and it came back from somewhere
+// else. This card still computes nothing from the key it prints — that would
+// be inventing the one thing it exists to refuse to invent — but an INDEXER
+// resolved one, counted a week of blocks against it and read what it holds,
+// and saying so is a different sentence from minting it. It gets a plate of
+// its own for that reason, the only one on the card whose source is not this
+// machine.
+//
 // What is left is the chain's RECORD of the window, what the cohort wrote into
-// its own blocks, who else says they run that, and one line saying what the
-// scene is not claiming. There is less here than on any other card and that is
-// the honest amount.
+// its own blocks, who else says they run that, the week an indexer counted
+// with the harvest at the end of it, and one line saying what the scene is not
+// claiming. Nothing here is a reading off a machine, which is the honest
+// amount for a subject nobody has ever addressed.
 //
 // ⭐ THE MASTHEAD IS THE ONE CLAIM A CARD CANNOT MAKE QUIETLY. Per the P2-b
 // ruling a wrong masthead is itself a shipped lie, and this subject can wear
@@ -57,6 +67,7 @@
 import type { CSSProperties, ReactNode } from 'react';
 import type {
   PeerMiningCandidacy,
+  ProducerLedgerWindow,
   ProducerStanding,
 } from '../../derives/blockProducers.derive';
 import { midTruncate } from './cellFormat';
@@ -80,7 +91,12 @@ import {
   PRODUCER_NO_VALUE,
   peerCandidacyText,
   producerBuildShareText,
+  producerHarvestCaption,
+  producerHarvestText,
+  producerHashRateText,
+  producerLastPaidText,
   producerShareText,
+  producerWeekText,
 } from './producerReadout';
 import { PEER_NETWORK_HEX } from '../../visualPalette';
 import type { SceneInspectorPlacementSide } from '../sceneInspection';
@@ -113,20 +129,38 @@ export const MINER_NODE_SPOKEN_WORD = 'POW cohort';
 /** One line of the chain's record. A readout, never a button: nothing here
  *  re-tints the scene, because the scene has nothing to re-tint — the node
  *  carries no identity for a facet to select. */
-export type MinerNodeRow = 'blocks' | 'key' | 'message' | 'build';
+export type MinerNodeRow =
+  | 'blocks' | 'key' | 'message' | 'build'
+  | 'week' | 'hashrate' | 'payout' | 'harvest' | 'paid';
 
-/** The producer, and the population its build share is measured against.
+/** The producer, the population its build share is measured against, and the
+ *  two figures that belong to the whole view rather than to this standing.
  *
- *  ⚠️ BOTH FIELDS COME OFF ONE READ OF ONE `BlockProducerView`, and the host
+ *  ⚠️ EVERY FIELD COMES OFF ONE READ OF ONE `BlockProducerView`, and the host
  *  resolves them together for that reason. `versionedRosterSize` is the
- *  denominator the fan's own gates divided by; pairing a standing from one
- *  round's view with a roster size from another would print a fraction whose
- *  halves were counted at different moments. */
+ *  denominator the fan's own gates divided by; `ledgerWindow` is the
+ *  denominator every week share was divided by; pairing a standing from one
+ *  round's view with either of them from another would print a fraction whose
+ *  halves were counted at different moments.
+ *
+ *  ⭐ NONE OF THE THREE IS OPTIONAL, which is the shape doing the work. An
+ *  absent week is `ledgerWindow: null` — a thing the host had to write down —
+ *  and not a field somebody forgot to wire, which would look identical on
+ *  screen and be a bug that never raised its hand. */
 export interface MinerNodeSubject {
   readonly producer: ProducerStanding;
   /** Roster rows carrying a usable build string — see
    *  `producerBuildShareText` for why this and not the crawler's wider set. */
   readonly versionedRosterSize: number;
+  /** The week the standing's `ledger` figures were counted over, or null when
+   *  no week reached this view at all. */
+  readonly ledgerWindow: ProducerLedgerWindow | null;
+  /** The whole network's search rate in hashes per second, derived from the
+   *  chain's own difficulty and cadence (`networkHashRateHs`), or null before
+   *  this node has seen enough blocks to have a cadence. It is a fact about
+   *  the NETWORK; what makes it belong on a cohort's card is this cohort's
+   *  share of it. */
+  readonly networkHashRateHs: number | null;
 }
 
 export type MinerNodeLayoutSide = SceneInspectorPlacementSide;
@@ -248,7 +282,9 @@ export default function MinerNodeCard({
   style,
 }: MinerNodeCardProps) {
   const accent = MINER_NODE_ACCENT;
-  const { producer, versionedRosterSize } = subject;
+  const {
+    producer, versionedRosterSize, ledgerWindow, networkHashRateHs,
+  } = subject;
   const keyHead = minerKeyHead(producer.key);
   // Trimmed only to ASK the question. What gets RENDERED is the string the
   // cohort wrote, byte for byte — the adapter already stripped the control
@@ -256,6 +292,18 @@ export default function MinerNodeCard({
   // theirs and not this card's to tidy.
   const declared = producer.message.trim().length > 0;
   const buildShare = producerBuildShareText(producer.fan, versionedRosterSize);
+  // ⭐⭐ THE PLATE FOLLOWS THE WEEK, THE ROWS FOLLOW THE COHORT, and those are
+  // two different absences — which is this card's oldest idiom, applied to a
+  // new fact. No week at ALL (no source declares the capability, its route
+  // answered 404, or what it sent contradicted itself) is a lookup that was
+  // never made, and the plate is not there, exactly as the MESSAGE row is not
+  // there when the cohort declared nothing. A week that WAS counted and does
+  // not name this cohort is a lookup that came back empty, and that prints the
+  // house dash — the same distinction `SightedNodeCard` keeps when it refuses
+  // to write `Unknown` over a field nobody ever asked for.
+  const week = producer.ledger;
+  const lastPaid = producerLastPaidText(producer);
+  const harvestCaption = producerHarvestCaption(producer);
 
   const verticalLayout = layoutSide === 'above' || layoutSide === 'below';
 
@@ -497,6 +545,124 @@ export default function MinerNodeCard({
           </MinerReadout>
         </div>
       </section>
+
+      {/* The week, and where the reward for it lands. Everything on this plate
+          comes from an INDEXER rather than from this node: it is the only
+          third-party measurement on the card, and the only plate whose window
+          is a stretch of calendar rather than a count of blocks.
+
+          ⭐ IT IS LAST, AND IT IS LAST FOR THE TAGS. Evidence order would put
+          a third party's count above what a cohort says about itself — but a
+          plate that can be absent has to sit at the END of a module count-off,
+          or a card without a week reads MINE·01, ·02, ·04 and the registry has
+          a hole in it that means nothing. The two chain plates lead, the claim
+          follows them, and the outside reading closes.
+
+          ⚠️ AND IT IS WHY THE MASTHEAD ABOVE NO LONGER SAYS "NO ADDRESS". A
+          `ProducerStanding` still has nowhere to put a country or an ASN, and
+          this card still computes no address from the key it prints. What
+          changed is that somebody else looked one up and said so, which is a
+          different sentence and gets its own plate to be said on. */}
+      {ledgerWindow !== null ? (
+        <section
+          aria-label="Indexed week"
+          data-miner-probe-module="week"
+          style={{
+            ...stackedSatelliteBase,
+            padding: '9px 12px 10px 14px',
+            ...spatialPlate(accent),
+          }}
+        >
+          <SpatialPlateHeader
+            en="WEEK"
+            accent={accent}
+            status={moduleTag('MINE·04')}
+          />
+          <div style={{ display: 'grid', rowGap: 3 }}>
+            {/* The other window, and the whole reason it exists: this one is
+                warm on the first frame and survives a reorg that closed after
+                the days it counts did. The unit is still BLK because what was
+                counted is blocks; the days are the shape of the window and
+                they are in the title with the dates. */}
+            <MinerReadout
+              row="week"
+              label="WEEK"
+              value={producerWeekText(producer, ledgerWindow)}
+              title={week === null
+                ? `The indexer counted ${ledgerWindow.days} complete days, ${ledgerWindow.fromDate} to ${ledgerWindow.toDate}, and this cohort is in none of its rows — it is newer than that week, or smaller than the smallest row the record carries.`
+                : `Blocks the indexer attributed to this cohort over the ${ledgerWindow.days} complete days from ${ledgerWindow.fromDate} to ${ledgerWindow.toDate}, out of ${ledgerWindow.totalBlocks.toLocaleString('en-US')} it attributed in all.`}
+            >
+              <ReadoutCaption>
+                {week === null
+                  ? 'COUNTED BY AN INDEXER · THIS COHORT IS IN NO ROW OF IT'
+                  : 'COUNTED BY AN INDEXER OVER COMPLETE DAYS, NOT BY THIS NODE'}
+              </ReadoutCaption>
+            </MinerReadout>
+            {/* A scale rather than a reading, and the `≈` is the first
+                character of it for that reason — see `producerHashRateText`,
+                where refusing to print a zero is part of the same argument. */}
+            <MinerReadout
+              row="hashrate"
+              label="HASHRATE"
+              value={producerHashRateText(producer, networkHashRateHs)}
+              title="This cohort's share of the blocks multiplied by the network's own rate — the chain's difficulty over the mean interval between the blocks this node has seen. Nothing here measured a machine: a cohort that ran twice as hard for half the week lands in the same place."
+            >
+              <ReadoutCaption>
+                THE SHARE ABOVE × DIFFICULTY OVER BLOCK CADENCE · AN ESTIMATE
+              </ReadoutCaption>
+            </MinerReadout>
+            {/* The address, and it is the KEY in another notation rather than
+                a second identity — which is why the caption names who did the
+                rendering. This card still computes nothing from the hash it
+                prints. */}
+            <MinerReadout
+              row="payout"
+              label="PAYOUT"
+              value={week?.address == null
+                ? PRODUCER_NO_VALUE
+                : midTruncate(week.address, 14, 13)}
+              title={week?.address ?? undefined}
+            >
+              <ReadoutCaption>
+                WHAT THE INDEXER RESOLVED THE KEY ABOVE TO
+              </ReadoutCaption>
+            </MinerReadout>
+            {/* What is sitting at that address — through `BigInt` the whole
+                way, because the live figure is eight places past what a double
+                can hold exactly. The caption is what the balance is a balance
+                OF: live cells, each of them somewhere in the canopy this scene
+                draws above the membrane. */}
+            <MinerReadout
+              row="harvest"
+              label="HARVEST"
+              value={producerHarvestText(producer)}
+              title="What that one address held when the indexer last read it. A fact about the ADDRESS and not about the cohort: it may be swept, split across others, or shared with whatever else that lock pays for."
+            >
+              {harvestCaption !== null ? (
+                <ReadoutCaption>
+                  <span data-miner-probe-harvest-caption>{harvestCaption}</span>
+                </ReadoutCaption>
+              ) : null}
+            </MinerReadout>
+            {/* One sampled payout, and absent rather than dashed on every card
+                that was not the one sampled — a refresh reads a single height,
+                so a dash here would be fifteen cohorts reporting an empty
+                lookup that was never made about them. */}
+            {lastPaid !== null ? (
+              <MinerReadout
+                row="paid"
+                label="LAST PAID"
+                value={lastPaid}
+                title="One cellbase payout, sampled at a single height a few blocks behind the tip and matched to this cohort's payout address. It says this cohort was paid there; it is not a total and not a rate."
+              >
+                <ReadoutCaption>
+                  ONE SAMPLED CELLBASE · NOT A TOTAL AND NOT A RATE
+                </ReadoutCaption>
+              </MinerReadout>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       {/* The three things the scene cannot say for itself. The entity is really
           out there and really made these blocks; where it stands is the

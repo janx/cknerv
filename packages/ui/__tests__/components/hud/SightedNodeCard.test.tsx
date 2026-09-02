@@ -478,7 +478,15 @@ describe('MinerNodeCard', () => {
   function renderMiner(overrides: Partial<ProducerStanding> = {}, versioned = VERSIONED_ROSTER_SIZE) {
     return render(
       <MinerNodeCard
-        subject={{ producer: standing(overrides), versionedRosterSize: versioned }}
+        subject={{
+          producer: standing(overrides),
+          versionedRosterSize: versioned,
+          // This suite is the card WITHOUT a week, which is what every build
+          // before the ledger existed rendered. `MinerNodeCard.test.tsx` is
+          // the one that has one.
+          ledgerWindow: null,
+          networkHashRateHs: null,
+        }}
         layoutSide="left"
         nowMs={NOW_MS}
         onClose={() => {}}

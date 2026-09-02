@@ -4,6 +4,7 @@ import type { EnrichmentSourceStatus, NetworkAtlasRecord } from '@cknerv/types';
 import NetworkPanel from '../../../src/components/hud/NetworkPanel';
 import type {
   BlockProducerView,
+  ProducerLedgerWindow,
   ProducerStanding,
 } from '../../../src/derives/blockProducers.derive';
 import { HUD_COLORS } from '../../../src/components/hud/hudTheme';
@@ -462,8 +463,61 @@ describe('NetworkPanel producers', () => {
       )),
       versionedRosterSize: 32,
       candidacyByPeer: new Map(),
-      // The window's row is what this suite reads; the week's row is L5's.
+      // The window's row, which is what this row printed before an indexer's
+      // week could reach it. `weekView` below is the other branch.
       ledgerWindow: null,
+    };
+  }
+
+  /** The week an indexer counted, in the shape ckbadger sends: complete UTC+8
+   *  days ending yesterday, and every block it attributed in them. */
+  const WEEK: ProducerLedgerWindow = {
+    days: 7,
+    fromDate: '2026-08-26',
+    toDate: '2026-09-01',
+    totalBlocks: 67_800,
+    fetchedAtMs: 1_756_800_000_000,
+    indexedTip: 20_337_488,
+  };
+
+  /** The same two orders over a set the WEEK names, with `ranked` sequenced by
+   *  the week's blocks — which is what the derive does whenever a coherent
+   *  ledger exists, and therefore the only shape this row can be handed one
+   *  in. The window numbers are deliberately unrelated to the week's, and
+   *  shorter: a boot has five blocks in its ring and seven days behind it, and
+   *  the standings the week names and the window does not hold `blocks 0`. */
+  function weekView(
+    weekBlocks: readonly number[],
+    windowShares: readonly number[] = [],
+  ): BlockProducerView {
+    const windowBlocks = windowShares.reduce((sum, blocks) => sum + blocks, 0);
+    const staging = weekBlocks
+      .map((blocks, at) => ({
+        ...standing(windowShares[at] ?? 0, Math.max(1, windowBlocks), at),
+        windowBlocks,
+        share: windowBlocks === 0 ? 0 : (windowShares[at] ?? 0) / windowBlocks,
+        ledger: {
+          blocks,
+          share: blocks / WEEK.totalBlocks,
+          address: null,
+          balanceShannons: null,
+          liveCells: null,
+          txCount: null,
+          lastRewardShannons: null,
+          lastRewardBlock: null,
+        },
+      }))
+      .sort((left, right) => (left.key < right.key ? -1 : left.key > right.key ? 1 : 0));
+    return {
+      windowBlocks,
+      staging,
+      ranked: staging.slice().sort((left, right) => (
+        (right.ledger?.blocks ?? 0) - (left.ledger?.blocks ?? 0)
+          || (left.key < right.key ? -1 : left.key > right.key ? 1 : 0)
+      )),
+      versionedRosterSize: 32,
+      candidacyByPeer: new Map(),
+      ledgerWindow: WEEK,
     };
   }
 
@@ -559,6 +613,94 @@ describe('NetworkPanel producers', () => {
     );
     expect(container.querySelector('[data-network-producers]')).not.toBeNull();
     expect(container.querySelectorAll('[data-network-detail-mode]')).toHaveLength(0);
+  });
+
+  it('reads the week when an indexer counted one, in the week\'s own unit', () => {
+    // ⭐⭐ THE ROW THAT STOPS COLLAPSING. The 240-block window is emptied by
+    // every reorg and by every rebuild, so a minute after a boot this row
+    // honestly said `2 · TOP 60% · 5 BLK` — two cohorts, because two of them
+    // had landed the five blocks this node had seen. The week names seven from
+    // the first frame and keeps naming them through a fork that closed after
+    // the days it counts did.
+    const { container } = render(
+      <NetworkPanel
+        {...props}
+        producers={weekView([41_824, 8_909, 7_570, 6_797, 1_537, 1_159, 2], [3, 2])}
+      />,
+    );
+    const row = container.querySelector('[data-network-producers]');
+    expect(row?.textContent).toContain('POW COHORTS');
+    expect(row?.textContent).toContain('7 · TOP 62% · 7 D');
+    // …and `TOP` is the WEEK's share, off the standing `ranked` put first —
+    // which the derive already sequenced by the week's blocks, so the
+    // percentage and the window beside it are one reading by construction.
+    expect(row?.textContent).not.toContain('BLK');
+  });
+
+  it('states its window whichever window it is reading', () => {
+    // §9.6 on the other branch: every element whose own text reaches a
+    // percentage also reaches the unit of the window that percentage is of.
+    // Break `TOP 62%` and `7 D` into two spans and the leaf carrying the
+    // percentage alone fails here, exactly as it does for `240 BLK`.
+    const { container } = render(
+      <NetworkPanel {...props} producers={weekView([41_824, 8_909], [3, 2])} />,
+    );
+    const row = container.querySelector('[data-network-producers]') as HTMLElement;
+    const withPercent = Array.from(row.querySelectorAll<HTMLElement>('*'))
+      .filter((element) => (element.textContent ?? '').includes('%'));
+    expect(withPercent.length).toBeGreaterThan(0);
+    for (const element of withPercent) expect(element.textContent).toMatch(/\d+ D\b/);
+  });
+
+  it('keeps the window it gave up, whole, in the title', () => {
+    // ⚠️ ONE ROW HOLDS ONE WINDOW, so when the week takes the row the 240
+    // blocks this node read for ITSELF would simply vanish — and with them the
+    // only figure on this panel that nothing but this machine vouches for. It
+    // moves into the title instead, in the same string it prints as a row.
+    //
+    // ⭐ AND ITS COUNT IS TWO, NOT SEVEN. The standing set is the UNION of the
+    // two windows now, so five of these cohorts hold `blocks 0` — the week
+    // names them and the ring has never seen them. A window sentence that
+    // counted the whole set would report five cohorts into a window that holds
+    // none of them.
+    const { container } = render(
+      <NetworkPanel
+        {...props}
+        producers={weekView([41_824, 8_909, 7_570, 6_797, 1_537, 1_159, 2], [3, 2])}
+      />,
+    );
+    const title = container.querySelector('[data-network-producers] > div')
+      ?.getAttribute('title') ?? '';
+    expect(title).toContain('7 complete days');
+    expect(title).toContain('2026-08-26 to 2026-09-01');
+    expect(title).toContain('67,800 BLK');
+    expect(title).toContain('2 · TOP 60% · 5 BLK');
+  });
+
+  it('falls back to the window when the week names nobody', () => {
+    // A ledger with a positive total and no rows passes every check the derive
+    // makes, and there is then no week share to print. The row says what this
+    // node can see for itself, which is the true smaller statement.
+    const { container } = render(
+      <NetworkPanel {...props} producers={{ ...view([96, 104]), ledgerWindow: WEEK }} />,
+    );
+    expect(container.querySelector('[data-network-producers]')?.textContent)
+      .toContain('2 · TOP 52% · 200 BLK');
+  });
+
+  it('says neither of the two words it may not say, on either branch', () => {
+    // ⚠️ THE VOCABULARY GUARD, ASKED OF BOTH ROWS. `MINER` claims a machine
+    // this row has no evidence about; `PRODUCER` is the derive's own name for
+    // the fact and no reader has ever seen it. The week is a new string in an
+    // old slot, which is the kind of edit that reintroduces a word.
+    for (const producers of [view([96, 104]), weekView([41_824, 8_909], [3, 2])]) {
+      const { container } = render(<NetworkPanel {...props} producers={producers} />);
+      const text = container.textContent ?? '';
+      expect(text).toMatch(/POW COHORTS/);
+      expect(text).not.toMatch(/\bMINERS?\b/i);
+      expect(text).not.toMatch(/producer/i);
+      cleanup();
+    }
   });
 
   it('spends one row on it, and does not spend the height the panel got back', () => {

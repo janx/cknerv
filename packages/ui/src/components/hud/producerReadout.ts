@@ -30,6 +30,16 @@
 // the honest reading is that we cannot tell which. Every sentence below is
 // written to survive both.
 //
+// ⭐⭐ AND THERE ARE NOW TWO WINDOWS, WHICH IS WHY THE RULE ABOVE HAD TO GROW A
+// SECOND ARGUMENT RATHER THAN A SECOND HABIT. The 240-block window is RECENCY
+// and the indexer's week is SIZE; a share exists over each of them and the two
+// are never averaged. The week's denominator does not ride on the standing —
+// it is one number for the whole view (`BlockProducerView.ledgerWindow`), so a
+// week formatter takes the WINDOW OBJECT beside the standing and there is
+// still no call site at which a numerator arrives without the thing it is a
+// fraction of. Two arguments, one rule: `producerWeekText(standing, window)`
+// cannot be reached with only half of a share.
+//
 // ⚠️ ENGLISH ONLY, here and on every surface these strings reach. The hand-cut
 // CJK face carries about twenty-one glyphs and a new one costs a `pyftsubset`
 // re-subset of the woff2.
@@ -42,14 +52,31 @@ import {
   type PeerMiningCandidacy,
   type ProducerFan,
   type ProducerFanWithheld,
+  type ProducerLedgerWindow,
   type ProducerStanding,
 } from '../../derives/blockProducers.derive';
+import { formatHashRate } from '../../derives/networkHashRate.derive';
+import { formatBlockRef, formatCkb } from './cellFormat';
 
 /** The unit every window count is printed in. One spelling, because the card
  *  and MESH·02 print the same number in two different sentences and a reader
  *  has to be able to see that it is the same number. Not exported: nothing
  *  outside this module may assemble a window count of its own. */
 const WINDOW_UNIT = 'BLK';
+
+/** The unit the OTHER window is counted in, under the same rule and for the
+ *  same reason: MESH·02 and the card both name the indexer's week, and a
+ *  reader has to be able to see that `7 D` on the panel and the dates in the
+ *  card's title are one window. Not exported either — a surface that wanted to
+ *  say "seven days" of its own would be inventing a second window nothing
+ *  measured. */
+const WEEK_UNIT = 'D';
+
+/** Grouped, with the locale pinned, exactly as every other count in the HUD is
+ *  written. The 240-block window never reaches four digits so `producerShareText`
+ *  below has never needed this; the week's counts are five figures on the first
+ *  frame. */
+const fmt = (n: number) => n.toLocaleString('en-US');
 
 /** The house mark for a fact that is not there. Same one `SightedNodeCard`
  *  prints for a version the crawler never got. */
@@ -82,6 +109,149 @@ export function producerShareText(standing: ProducerStanding): string {
 }
 
 /**
+ * The same standing over the OTHER window: `41,824 / 67,800 BLK · 62%`.
+ *
+ * ⭐ THE UNIT IS STILL `BLK`, AND THE DAYS ARE NOT IN IT. What the indexer
+ * counted is blocks; seven days is the SHAPE of the window it counted them
+ * over, which the card prints in this row's title and MESH·02 prints beside
+ * its own count. A value that said `41,824 / 67,800 D` would be stating a
+ * number of days that does not exist, and one that said `62% OF 7 D` would be
+ * a share of a duration.
+ *
+ * ⚠️ THE DENOMINATOR COMES FROM THE WINDOW ARGUMENT AND NEVER FROM THE
+ * STANDING, because the standing does not have one: `ProducerLedgerStanding`
+ * carries `blocks` and `share` and the total is one figure for the whole view.
+ * Reconstructing it as `blocks / share` would be dividing the week back out of
+ * its own rounding, and the two callers would disagree in the last digit.
+ *
+ * `PRODUCER_NO_VALUE` when this producer is not in the week (new, or under the
+ * row cap) and when there is no week at all — the caller cannot tell those
+ * apart from here and must not: a surface that wants to say WHY the week is
+ * silent has the window object in its hand.
+ */
+export function producerWeekText(
+  standing: ProducerStanding,
+  window: ProducerLedgerWindow | null,
+): string {
+  const week = standing.ledger;
+  if (week === null || window === null) return PRODUCER_NO_VALUE;
+  return `${fmt(week.blocks)} / ${fmt(window.totalBlocks)} ${WINDOW_UNIT}`
+    + ` · ${percentOfWindow(week.share)}`;
+}
+
+/**
+ * What this cohort's share of the blocks implies about the machines behind it:
+ * `≈ 52.29 PH/s`.
+ *
+ * ⭐⭐ THE `≈` IS LOAD-BEARING AND IT IS THE FIRST CHARACTER FOR THAT REASON.
+ * Nothing here measured a machine. The network's own rate is difficulty over
+ * realized cadence — an estimate of a Poisson process from sixty samples — and
+ * this cohort's slice of it is a share of blocks it happened to win. A pool
+ * that ran twice as hard for half the week lands in exactly the same place.
+ * The row is a scale, not a reading, and the mark says so before the number
+ * does.
+ *
+ * The share is the WEEK's when the week names this producer and the 240-block
+ * window's otherwise, which is the same precedence `ranked` follows: whichever
+ * window this view is a reading of. Both are printed in full on the card
+ * above this row, so the reader can see which one is doing the work.
+ *
+ * `PRODUCER_NO_VALUE` when the chain has not said enough to have a rate at all
+ * (a boot with no cadence yet), and when the share is zero — a producer the
+ * week knows and the window does not would otherwise print `0 H/s`, which says
+ * its machines have stopped rather than that we counted none of its blocks
+ * lately.
+ */
+export function producerHashRateText(
+  standing: ProducerStanding,
+  networkHashRateHs: number | null,
+): string {
+  if (networkHashRateHs === null || !Number.isFinite(networkHashRateHs)) {
+    return PRODUCER_NO_VALUE;
+  }
+  const share = standing.ledger?.share ?? standing.share;
+  if (!(share > 0)) return PRODUCER_NO_VALUE;
+  return `≈ ${formatHashRate(share * networkHashRateHs)}`;
+}
+
+/**
+ * What the payout address is holding: `98.3 M CKB`.
+ *
+ * ⚠️⚠️ THROUGH `BigInt`, ALWAYS. The live top cohort's address held
+ * 9,829,812,162,369,360 shannons on 2026-09-02 — above
+ * `Number.MAX_SAFE_INTEGER`, and the danger is that `Number()` on it returns a
+ * figure that LOOKS right: the value is even, so it round-trips through a
+ * double exactly, and the loss only appears once something does arithmetic. It
+ * rides as a decimal string from the wire to here and the string is what
+ * `BigInt` is handed.
+ *
+ * `formatCkb` is the house's one CKB grammar and this spends it unchanged, so
+ * a cohort's balance and a Cell's capacity are the same unit at two
+ * magnitudes. That grammar drops a trailing zero — the live figure prints
+ * `98.3 M CKB`, not `98.30` — which is the price of there being one grammar.
+ *
+ * The catch is `formatExactCkb`'s: this is the last surface before a reader,
+ * and a record that reached it through some path `producerLedgerIsCoherent`
+ * did not screen must print "not there" rather than take the card down.
+ */
+export function producerHarvestText(standing: ProducerStanding): string {
+  const balance = standing.ledger?.balanceShannons ?? null;
+  if (balance === null) return PRODUCER_NO_VALUE;
+  try {
+    return formatCkb(BigInt(balance));
+  } catch {
+    return PRODUCER_NO_VALUE;
+  }
+}
+
+/**
+ * What that address is, beyond its balance: `155,450 LIVE CELLS · 4,094,449 TXS`.
+ *
+ * ⭐ IT IS A CAPTION AND NOT A VALUE because these two are what the balance is
+ * a balance OF — the live cells are the state the address is actually holding
+ * (each of them somewhere in the canopy this scene draws), and the transaction
+ * count is how often it has moved. A row of its own would rank them beside the
+ * harvest; underneath it, they read as its composition.
+ *
+ * `null` rather than a dash when neither is there: the caption is a sentence
+ * about a lookup, and an empty one is a sentence with nothing in it.
+ */
+export function producerHarvestCaption(standing: ProducerStanding): string | null {
+  const week = standing.ledger;
+  if (week === null) return null;
+  const parts: string[] = [];
+  if (week.liveCells !== null) parts.push(`${fmt(week.liveCells)} LIVE CELLS`);
+  if (week.txCount !== null) parts.push(`${fmt(week.txCount)} TXS`);
+  return parts.length === 0 ? null : parts.join(' · ');
+}
+
+/**
+ * The one cellbase payout this refresh happened to sample, and where it read
+ * it: `559.81 CKB · #20,337,476`.
+ *
+ * ⚠️ `null` RATHER THAN A DASH, AND THE DISTINCTION IS THE WHOLE ROW. A
+ * refresh samples ONE block, so at most one producer in a view carries this;
+ * absence means "this refresh did not sample this cohort" and never "this
+ * cohort was not paid". A dash on the other fifteen cards would be fifteen
+ * surfaces reporting an empty lookup that was never made — the same thing this
+ * dialect refuses when it prints no country rather than `Unknown`.
+ *
+ * Both fields or neither: the amount without its height is a payout at no
+ * particular time, which is not a fact about the chain.
+ */
+export function producerLastPaidText(standing: ProducerStanding): string | null {
+  const week = standing.ledger;
+  if (week === null) return null;
+  const { lastRewardShannons, lastRewardBlock } = week;
+  if (lastRewardShannons === null || lastRewardBlock === null) return null;
+  try {
+    return `${formatCkb(BigInt(lastRewardShannons))} · ${formatBlockRef(lastRewardBlock)}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * MESH·02's one row: `6 · TOP 47% · 240 BLK`.
  *
  * The count of distinct payout identities, the largest share in the window, and
@@ -101,14 +271,95 @@ export function producerShareText(standing: ProducerStanding): string {
  * dashboard that has stopped reporting producers at all. There is no `TOP` in
  * that sentence because there is no producer to take a share.
  */
-export function producerFleetText(view: BlockProducerView): string {
-  const top = view.ranked[0];
-  const count = view.ranked.length;
+function fleetWindowText(view: BlockProducerView): string {
+  // ⚠️⚠️ THE WINDOW'S COUNT IS THE STANDINGS THE WINDOW HOLDS, and that stopped
+  // being the whole set the moment the set became a UNION. A standing may now
+  // exist with `blocks 0` — a cohort the indexer's week names and the last 240
+  // blocks do not — and counting it here would report a cohort in a window
+  // that has never seen it, which is precisely the claim this row is not
+  // allowed to make about the machine it is running on.
+  //
+  // ⚠️ AND THE LEADER IS FOUND RATHER THAN TAKEN OFF THE FRONT, for the same
+  // reason: `ranked` is sequenced by the WEEK's blocks whenever a week exists,
+  // so its head is the week's leader and may hold none of this window at all.
+  // Without a week the two are the same array in the same order and this walk
+  // returns exactly what reading `ranked[0]` returned — which is what keeps
+  // every string this row has ever printed byte-identical.
+  const inWindow = view.ranked.filter((standing) => standing.blocks > 0);
+  const top = inWindow.reduce<ProducerStanding | undefined>(
+    (best, standing) => (best === undefined
+      || standing.blocks > best.blocks
+      || (standing.blocks === best.blocks && standing.key < best.key)
+      ? standing
+      : best),
+    undefined,
+  );
   if (top === undefined) {
-    return `${count} · ${view.windowBlocks} ${WINDOW_UNIT}`;
+    return `${inWindow.length} · ${view.windowBlocks} ${WINDOW_UNIT}`;
   }
-  return `${count} · TOP ${percentOfWindow(top.share)}`
+  return `${inWindow.length} · TOP ${percentOfWindow(top.share)}`
     + ` · ${top.windowBlocks} ${WINDOW_UNIT}`;
+}
+
+/**
+ * The same row read off the indexer's week instead: `7 · TOP 62% · 7 D`.
+ *
+ * ⭐⭐ THIS IS THE ROW THAT STOPS COLLAPSING, which is the whole reason the
+ * week exists. The 240-block window is emptied by every reorg and by every
+ * rebuild, and fifty-six seconds after a boot it honestly said `2 · TOP 60% ·
+ * 5 BLK` — two cohorts, because two of them had landed the five blocks this
+ * node had seen. The week names seven from the first frame and keeps naming
+ * them through a fork that closed after it did.
+ *
+ * ⚠️ `TOP` IS THE WEEK'S SHARE, not the window's, and `ranked` is already
+ * sequenced by the week's blocks whenever a week exists — so the head of that
+ * array and the percentage taken off it are readings of one window by
+ * construction rather than by this function remembering to agree.
+ *
+ * `null` — and the window row prints instead — in the one shape where a week
+ * exists and names nobody: a coherent ledger with no rows at all, whose
+ * leading standing therefore carries no week share to print. The row then says
+ * what the local node can see for itself, which is the true smaller statement.
+ */
+function fleetWeekText(view: BlockProducerView): string | null {
+  const window = view.ledgerWindow;
+  if (window === null) return null;
+  const top = view.ranked[0];
+  if (top?.ledger == null) return null;
+  return `${view.ranked.length} · TOP ${percentOfWindow(top.ledger.share)}`
+    + ` · ${window.days} ${WEEK_UNIT}`;
+}
+
+export function producerFleetText(view: BlockProducerView): string {
+  return fleetWeekText(view) ?? fleetWindowText(view);
+}
+
+/** The sentence under MESH·02's cohort row, on hover.
+ *
+ *  ⭐ THE WINDOW THAT IS NOT IN THE ROW GOES HERE, WHOLE. One row can hold one
+ *  window, and when the week is present it takes the row — so the 240 blocks
+ *  the local node read for itself would simply vanish, and with them the only
+ *  figure on this panel that nothing but this machine vouches for. The title
+ *  is where it goes: the same string the row prints without a week, named as
+ *  the local reading it is.
+ *
+ *  ⚠️ IT IS ASSEMBLED HERE AND NOT IN THE PANEL. The title carries a
+ *  percentage, and a percentage assembled in a component is exactly the thing
+ *  the header of this file exists to prevent — the row would be one edit away
+ *  from a hover sentence stating a share of a window it never named. */
+export function producerFleetTitle(view: BlockProducerView): string {
+  const window = view.ledgerWindow;
+  const cohorts = 'One payout address may pay many machines,'
+    + ' so this counts cohorts and never miners.';
+  if (window === null || fleetWeekText(view) === null) {
+    return 'Distinct payout identities in the recent block window, read from'
+      + ` each block's cellbase witness. ${cohorts}`;
+  }
+  return `Distinct payout identities over ${window.days} complete days`
+    + ` (${window.fromDate} to ${window.toDate}), counted by the indexer across`
+    + ` ${fmt(window.totalBlocks)} ${WINDOW_UNIT}. The recent block window this`
+    + ` node read for itself says ${fleetWindowText(view)}, from each block's`
+    + ` cellbase witness. ${cohorts}`;
 }
 
 /**

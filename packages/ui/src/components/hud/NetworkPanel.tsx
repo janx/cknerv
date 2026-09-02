@@ -5,7 +5,7 @@ import type { FleetConsensus } from '../../derives/fleetTelemetry';
 import type { BlockProducerView } from '../../derives/blockProducers.derive';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import { DirectionMark, HudPanel, PanelHeader, StatRow } from './primitives';
-import { producerFleetText } from './producerReadout';
+import { producerFleetText, producerFleetTitle } from './producerReadout';
 import NetworkAtlasReadout from './NetworkAtlasReadout';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
@@ -106,6 +106,16 @@ function NetworkPanel({ summary, consensus, syncRatio, enrichmentSource, network
         * neither a wrap nor a taller row is reachable from here — the 53% cut
         * this panel took stands untouched.
         *
+        * ⚠️ AND THE WEEK'S ROW IS THE SHORTER OF THE TWO, counted rather than
+        * re-measured. The window prints `16 · TOP 100% · 240 BLK` at its
+        * widest — 23 characters — and the week prints `16 · TOP 100% · 7 D` at
+        * its widest, which is 19: the day count is one digit where the block
+        * count is three, and `D` is two characters shorter than `BLK`. The
+        * ~143px above was measured on the longer string and therefore still
+        * bounds this row. The px reading against the 272px measure is L6's,
+        * live, where a rendered width can actually be taken — jsdom has no
+        * font and would answer zero for both.
+        *
         * ⚠️ ONE ROW, AND THE HEIGHT IS THE ARGUMENT. This panel was cut by 53%
         * when five StatRows became a bar, and that saving is not this feature's
         * to spend: a share bar here would redraw a ranking the colony already
@@ -113,12 +123,26 @@ function NetworkPanel({ summary, consensus, syncRatio, enrichmentSource, network
         *
         * The share and the window arrive as ONE string from one formatter, so
         * there is no arrangement of this row that prints a top share without
-        * the window it is a share of. */}
+        * the window it is a share of.
+        *
+        * ⭐⭐ AND WHEN AN INDEXER'S WEEK IS THERE, THE ROW IS A READING OF THE
+        * WEEK. `2 · TOP 60% · 5 BLK` fifty-six seconds after a boot was never
+        * wrong — it was the true count of a window holding five blocks — but a
+        * panel row that halves and doubles with the fill of a 240-block ring
+        * is reporting how long this process has been up, in the slot where a
+        * reader is looking for how many cohorts there are. The week is warm on
+        * the first frame and survives a reorg that closed after it did.
+        *
+        * ⚠️ THE WINDOW DOES NOT VANISH WITH IT: it moves into the title,
+        * whole, as the reading only this node vouches for. Both strings come
+        * out of `producerReadout` — the title too, because it carries a
+        * percentage and a percentage assembled in a component is the one thing
+        * that module exists to make unreachable. */}
       {producers ? (
         <div data-network-producers>
           <StatRow
             label="POW COHORTS"
-            title="Distinct payout identities in the recent block window, read from each block's cellbase witness. One payout address may pay many machines, so this counts cohorts and never miners."
+            title={producerFleetTitle(producers)}
           >
             {producerFleetText(producers)}
           </StatRow>

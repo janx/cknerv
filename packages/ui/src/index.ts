@@ -95,6 +95,7 @@ export * from './derives/cellPopulationField.derive';
 // set of crawled peers without ever narrowing it to a name. App builds the view
 // and hands it to the colony (staging), the flood (origin) and the cards.
 export * from './derives/blockProducers.derive';
+export * from './derives/networkHashRate.derive';
 export * from './derives/networkTopology.derive';
 export * from './derives/networkFlood.derive';
 // Only the placement quantizer: a memo signature over the peer list has to

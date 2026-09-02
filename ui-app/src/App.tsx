@@ -37,6 +37,7 @@ import {
   consensusMemoryTraceRequestKey,
   attestedNodeId,
   deriveBlockProducers,
+  networkHashRateHs,
   producerKeysSignature,
   deriveCellCausalLens,
   deriveConsensusMemoryRouteHopFocus,
@@ -851,6 +852,22 @@ export default function App({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [chain.producers, chain.producer_window_blocks, networkRoster, producerLedger],
   );
+  // What the whole network is searching at, which nothing on the wire carries:
+  // difficulty over the chain's own realized cadence. It belongs beside the
+  // producer view because the one surface that reads it is a cohort's card,
+  // where this figure times that cohort's share is the only thing anybody can
+  // say about the machines behind it — and it is derived here, once, rather
+  // than in the card, so the estimate a reader sees and the estimate the app
+  // holds are the same number.
+  const networkHashRate = useMemo(
+    () => networkHashRateHs(chain),
+    // The two fields it reads. `chain` is shallow-cloned by every batch; the
+    // difficulty moves once an epoch and the interval ring once a block, so
+    // keying on them runs this at the cadence of the fact rather than of the
+    // stream — the same bargain `producerView` above takes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [chain.difficulty, chain.recent_block_intervals_ms],
+  );
   // The live standings reach the colony BY REFERENCE. `staging` is a fresh
   // array on every attributed block (its tallies moved), and handing it to
   // `memo(NetworkColony)` as a prop re-rendered the whole colony subtree once
@@ -1588,8 +1605,18 @@ export default function App({
     const key = selectedNetId.slice(MINER_SELECTION_PREFIX.length);
     const producer = producerView.ranked.find((p) => p.key === key);
     if (!producer) return null;
-    return { producer, versionedRosterSize: producerView.versionedRosterSize };
-  }, [selectedNetId, producerView]);
+    return {
+      producer,
+      versionedRosterSize: producerView.versionedRosterSize,
+      // Both of these are facts about the WHOLE view rather than about this
+      // standing, and both ride along for the same reason the roster size
+      // does: the week is the denominator its share was divided by, and a card
+      // holding one from this round and the other from the last would print a
+      // fraction whose halves were counted at different moments.
+      ledgerWindow: producerView.ledgerWindow,
+      networkHashRateHs: networkHashRate,
+    };
+  }, [selectedNetId, producerView, networkHashRate]);
   // Where that producer was placed. Placement is a pure function of its key, so
   // the point is stable for as long as the key is staged — and the kind is
   // checked rather than the id alone, the same guard the sighted anchor keeps.
