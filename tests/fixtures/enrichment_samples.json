@@ -21,6 +21,7 @@
         "script_registry",
         "transaction_detail",
         "transaction_lifecycle",
+        "producer_ledger",
         "galaxy_composition"
       ],
       "indexed_tip": 100,
@@ -1228,6 +1229,7 @@
           "script_registry",
           "transaction_detail",
           "transaction_lifecycle",
+          "producer_ledger",
           "galaxy_composition"
         ],
         "indexed_tip": 100,

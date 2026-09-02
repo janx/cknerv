@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -16,21 +16,23 @@ use cknerv_core::{
     EnrichmentSourceStatus, ForkWatchDeepFork, ForkWatchEventKind, ForkWatchRecord, ForkWatchReorg,
     GalaxyCompositionRecord, GalaxyCompositionTopUp, HashType, NetworkAtlasBucket,
     NetworkAtlasRecord, NetworkRosterRecord, OutPoint, PeerAdvertisedEvidence, PeerProbeResult,
-    PeerSightingAbsence, PeerSightingLookup, PeerSightingRecord, ProtocolEra, ProtocolEraRecord,
-    RosterNode, RosterNodeState, ScriptId, ScriptNameRecord, ScriptRegistryRecord, SemanticAsset,
-    SemanticAttribute, SemanticCellConsumption, SemanticCellContent, SemanticContentDecode,
-    SemanticContentGuess, SemanticContentSegment, SemanticFacet, SemanticScript,
-    TransactionHorizonRecord, TransactionParticipantSemantic, TransactionSemanticRecord,
-    DATA_HEX_TRUNCATION_MARKER, MAX_SCRIPT_REGISTRY_ENTRIES,
+    PeerSightingAbsence, PeerSightingLookup, PeerSightingRecord, ProducerLedger, ProducerLedgerRow,
+    ProtocolEra, ProtocolEraRecord, RosterNode, RosterNodeState, ScriptId, ScriptNameRecord,
+    ScriptRegistryRecord, SemanticAsset, SemanticAttribute, SemanticCellConsumption,
+    SemanticCellContent, SemanticContentDecode, SemanticContentGuess, SemanticContentSegment,
+    SemanticFacet, SemanticScript, TransactionHorizonRecord, TransactionParticipantSemantic,
+    TransactionSemanticRecord, DATA_HEX_TRUNCATION_MARKER, MAX_SCRIPT_REGISTRY_ENTRIES,
+    PRODUCER_LEDGER_ROW_CAP,
 };
 use cknerv_server::{CanonicalContext, EnrichmentSource, GalaxyCompositionHydrator};
 
 use crate::dto::{
-    AdvertiserEvidenceResponse, AssetEcosystemResponse, BlockResponse, CandidateEvidenceResponse,
-    CellDataAnalysis, CellDetailResponse, ClusterDetailResponse, CollectionCompositionDto,
-    CommonKnowledgeSizeBreakdown, DaoInfo, DaoStatisticsResponse, HardforkEventResponse,
-    HardforkTimelineResponse, LabelCountResponse, LatestActivityResponse, LiveCellSummaryResponse,
-    LookupScriptsRequest, NetworkCrawlerSummaryResponse, NetworkDistributionsResponse,
+    AddressRecordResponse, AdvertiserEvidenceResponse, AssetEcosystemResponse, BlockMinerResponse,
+    BlockResponse, CandidateEvidenceResponse, CellDataAnalysis, CellDetailResponse,
+    ClusterDetailResponse, CollectionCompositionDto, CommonKnowledgeSizeBreakdown, DaoInfo,
+    DaoStatisticsResponse, HardforkEventResponse, HardforkTimelineResponse, LabelCountResponse,
+    LatestActivityResponse, LiveCellSummaryResponse, LookupScriptsRequest,
+    MinerDistributionResponse, NetworkCrawlerSummaryResponse, NetworkDistributionsResponse,
     NetworkPeersPageResponse, NetworkStats, NftCollectionDetailResponse, PeerDetailResponse,
     PeerDisplayState, PeerProbeResultResponse, PeerSummaryResponse, RecentReorgResponse,
     ReorgEventResponse, ScriptCatalogueResponse, ScriptFamilyResponse, ScriptLookupInfo,
@@ -69,6 +71,7 @@ const CAPABILITIES: &[&str] = &[
     "script_registry",
     "transaction_detail",
     "transaction_lifecycle",
+    "producer_ledger",
 ];
 /// The one conditional capability: announced only when a composition hydrator
 /// is wired with a non-zero target. Spelled once so the fixture pin below can
@@ -115,6 +118,21 @@ const MAX_NETWORK_DISTRIBUTION_BUCKETS: usize = 512;
 const PEERS_ROUTE_UNOBSERVED: u8 = 0;
 const PEERS_ROUTE_ANSWERING: u8 = 1;
 const PEERS_ROUTE_FAULTING: u8 = 2;
+/// How far back the ledger's reward sample looks, in blocks.
+///
+/// MEASURED, not chosen for safety margin. ckbadger's block detail names the
+/// miner the moment it indexes the block, but `miningReward` stays `null`
+/// until the cellbase that pays it matures — CKB pays a block's reward in the
+/// cellbase of block N+11, so a block eleven deep is the first that can carry
+/// one. Twelve is that plus one block of slack for ckbadger's own indexing
+/// lag, and it is the same number as [`DEFAULT_MAX_LAG_BLOCKS`] for the same
+/// reason: past it, this source is declared stale anyway.
+///
+/// One sample per refresh fills AT MOST ONE row, and only when that block's
+/// producer is in the ledger. See [`ProducerLedgerRow::last_reward_shannons`]:
+/// this is a sample, not a stream, because upstream has no route that answers
+/// "the last reward for this producer".
+const REWARD_SAMPLE_LAG_BLOCKS: u64 = 12;
 /// How many crawler-known nodes one roster may name. The scene stages the
 /// entries it has a mark for, so this is a stage budget before it is a wire
 /// budget: it sits just above the inferred cloud's own population, which is
@@ -295,6 +313,18 @@ pub struct CkbadgerEnrichmentSource {
     /// can tell a peer the crawler has never heard of from a route this build
     /// no longer knows the name of, without spending a request to find out.
     peers_route: AtomicU8,
+    /// How far the source had indexed at the last successful probe — the
+    /// number `probe` puts on [`EnrichmentSourceStatus::indexed_tip`], kept
+    /// here so a refresh can date its answer without spending a second
+    /// `statistics/network` request to re-ask what the health path already
+    /// asked five seconds ago.
+    ///
+    /// The producer ledger is its one reader, and it is NOT the validated
+    /// anchor: the anchor is the deepest block both sides have agreed on,
+    /// which is at or below this. `0` means no probe has succeeded in this
+    /// process; the supervisor cannot dispatch a refresh before one has,
+    /// because it gates on the anchor the same probe writes.
+    indexed_tip: AtomicU64,
 }
 
 impl CkbadgerEnrichmentSource {
@@ -316,6 +346,7 @@ impl CkbadgerEnrichmentSource {
             galaxy_composition_target: 0,
             candidate_tail: tokio::sync::Mutex::new(CandidateTail::default()),
             peers_route: AtomicU8::new(PEERS_ROUTE_UNOBSERVED),
+            indexed_tip: AtomicU64::new(0),
         })
     }
 
@@ -529,6 +560,185 @@ impl CkbadgerEnrichmentSource {
             .json()
             .await
             .context("decode ckbadger network distributions")
+    }
+
+    /// The producer ledger: who took the last complete week, what their payout
+    /// address holds, and — opportunistically — one sampled reward.
+    ///
+    /// ⭐ THE ONE THING TO KNOW ABOUT THIS REFRESH IS ITS SHAPE: `1 + N + 1`
+    /// requests, N being the rows kept after [`PRODUCER_LEDGER_ROW_CAP`]. One
+    /// chart, then one address record per row, then one block for the reward
+    /// sample. They run SEQUENTIALLY on purpose. The client's 4s timeout
+    /// therefore bounds the whole refresh at 18 × 4s worst case, and the
+    /// supervisor holds one refresh in flight per capability, so a slow
+    /// ckbadger delays this ledger and nothing else.
+    ///
+    /// Three different meanings of "no answer" live in here and they are not
+    /// interchangeable:
+    ///
+    /// - The CHART 404s: `Ok(None)`. The source does not compute a miner
+    ///   distribution, which is an absence rather than a fault, and the
+    ///   supervisor turns it into a `ProducerLedgerClear`. Any other non-2xx
+    ///   is `Err`: a route that is there and refusing is a fault, and the
+    ///   ledger already on the browser's side stays put.
+    /// - The CHART IS INCOHERENT: `Err`, with the broken rule named. A ledger
+    ///   whose rows outnumber the window they are shares of would print a
+    ///   share above 100%, and one with a duplicate key would stage the same
+    ///   cohort twice. Refusing it keeps the previous good ledger, which is
+    ///   the honest fallback; publishing a `Clear` would state that nobody
+    ///   mined last week.
+    /// - An ADDRESS RECORD fails: nothing at all. That row keeps its window
+    ///   figures and leaves the balance side absent, and the other rows are
+    ///   filled as usual. One address the index cannot read is not a reason to
+    ///   drop a week of block production, and an absent balance is already
+    ///   distinguishable from a zero one on the record.
+    ///
+    /// It takes no [`ChainAnchor`] and does not revalidate one. A seven-day
+    /// total over completed days is not a statement about the canonical tip,
+    /// so a reorg three blocks deep has nothing to say about it; `indexed_tip`
+    /// dates the answer instead. Every other aggregate here is anchored
+    /// because every other aggregate is a claim about now.
+    async fn read_producer_ledger(
+        &self,
+        context: &CanonicalContext,
+    ) -> anyhow::Result<Option<ProducerLedger>> {
+        let url = self.endpoint("charts/miner-address-distribution")?;
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .context("fetch ckbadger miner distribution")?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "ckbadger miner distribution returned HTTP {}",
+                response.status()
+            ));
+        }
+        let distribution: MinerDistributionResponse = response
+            .json()
+            .await
+            .context("decode ckbadger miner distribution")?;
+
+        let mut ledger = map_producer_ledger(
+            distribution,
+            now_ms(),
+            self.indexed_tip.load(Ordering::Relaxed),
+        )?;
+
+        let mut misses = 0usize;
+        for row in &mut ledger.rows {
+            match self.read_address_record(&row.key).await {
+                Ok(record) => {
+                    row.balance_shannons = Some(record.balance);
+                    row.live_cells = Some(record.live_cells);
+                    row.tx_count = Some(record.tx_count);
+                }
+                Err(error) => {
+                    misses += 1;
+                    tracing::debug!(
+                        target: "cknerv-adapter-ckbadger",
+                        key = row.key.as_str(),
+                        "producer payout record unreadable; the row keeps its \
+                         window figures and states no balance: {error:#}"
+                    );
+                }
+            }
+        }
+        if misses > 0 {
+            tracing::warn!(
+                target: "cknerv-adapter-ckbadger",
+                misses,
+                rows = ledger.rows.len(),
+                "producer ledger published with payout records missing"
+            );
+        }
+
+        self.sample_producer_reward(context, &mut ledger).await;
+        Ok(Some(ledger))
+    }
+
+    /// What one payout address holds. Returns the three figures the ledger
+    /// prints, already widened; a negative count is refused here rather than
+    /// clamped, because "absent" on the row means "not looked up, or looked
+    /// up and refused" and a nonsense count belongs in the second half of
+    /// that sentence.
+    async fn read_address_record(&self, lock_hash: &str) -> anyhow::Result<AddressRecord> {
+        let url = self.endpoint(&format!("addresses/{lock_hash}"))?;
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .context("fetch ckbadger payout address record")?;
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "ckbadger payout address record returned HTTP {}",
+                response.status()
+            ));
+        }
+        let record: AddressRecordResponse = response
+            .json()
+            .await
+            .context("decode ckbadger payout address record")?;
+        Ok(AddressRecord {
+            // Carried through as the string it arrived as: it is shannons,
+            // and mainnet payout balances are already past what a JS number
+            // can hold exactly. Parsing it here would only create a place to
+            // lose the last digits.
+            balance: record.balance,
+            live_cells: u64::try_from(record.live_cells_count)
+                .context("ckbadger reported a negative live-cell count")?,
+            tx_count: u64::try_from(record.transactions_count)
+                .context("ckbadger reported a negative transaction count")?,
+        })
+    }
+
+    /// One block, read for its cellbase payout, filling AT MOST one row.
+    ///
+    /// Opportunistic in the strict sense: every failure — the route, the
+    /// decode, an unmatured reward, a producer who is not in the ledger — is
+    /// silence. Nothing here can fail the refresh, because a reward sample is
+    /// a detail on a record whose subject is the week, and a week that
+    /// publishes without one is not degraded.
+    ///
+    /// The join is on the ADDRESS, not the key: upstream's block detail names
+    /// its miner by the `ckb1…` address and never by the lock hash, so a row
+    /// whose own address lookup came back absent cannot be matched and is
+    /// skipped.
+    async fn sample_producer_reward(
+        &self,
+        context: &CanonicalContext,
+        ledger: &mut ProducerLedger,
+    ) {
+        let height = context.tip.saturating_sub(REWARD_SAMPLE_LAG_BLOCKS);
+        let Ok(url) = self.endpoint(&format!("blocks/{height}")) else {
+            return;
+        };
+        let Ok(response) = self.client.get(url).send().await else {
+            return;
+        };
+        if !response.status().is_success() {
+            return;
+        }
+        let Ok(block) = response.json::<BlockMinerResponse>().await else {
+            return;
+        };
+        let (Some(address), Some(reward)) = (block.miner_address, block.mining_reward) else {
+            return;
+        };
+        let Some(row) = ledger
+            .rows
+            .iter_mut()
+            .find(|row| row.address.as_deref() == Some(address.as_str()))
+        else {
+            return;
+        };
+        row.last_reward_shannons = Some(reward);
+        row.last_reward_block = Some(height);
     }
 
     /// One bounded, scoped page of the crawler's candidates, and the single
@@ -1336,6 +1546,10 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         };
         status.indexed_tip = Some(indexed_tip);
         status.lag_blocks = Some(context.tip.saturating_sub(indexed_tip));
+        // Remembered for the producer ledger, which dates its answer by it.
+        // Written here rather than re-asked there: this is the only reader of
+        // `syncStatus` in the process and it runs every five seconds.
+        self.indexed_tip.store(indexed_tip, Ordering::Relaxed);
 
         let Some(canonical) = context
             .recent_blocks
@@ -1810,6 +2024,16 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         let record = map_network_roster(summary, pages, anchor.clone())?;
         self.revalidate_anchor(&anchor, "network roster").await?;
         Ok(Some(record))
+    }
+
+    async fn enrich_producer_ledger(
+        &self,
+        context: &CanonicalContext,
+    ) -> anyhow::Result<Option<ProducerLedger>> {
+        // No `current_anchor`, and no `revalidate_anchor` after: the record
+        // this builds carries no anchor because a week of completed days is
+        // not a claim about the tip. See `read_producer_ledger`.
+        self.read_producer_ledger(context).await
     }
 
     async fn enrich_peer(
@@ -4770,6 +4994,125 @@ fn wire_safe_u64(value: u64, field: &str) -> anyhow::Result<u64> {
     (value <= MAX_WIRE_SAFE_U64)
         .then_some(value)
         .ok_or_else(|| anyhow!("ckbadger returned {field} outside the JSON safe-integer range"))
+}
+
+/// The three figures a payout address record contributes to a ledger row,
+/// widened once at the boundary so the row-filling loop has nothing left to
+/// fail at.
+struct AddressRecord {
+    balance: String,
+    live_cells: u64,
+    tx_count: u64,
+}
+
+/// Turn one miner distribution into a ledger, or refuse it by name.
+///
+/// ⭐ EVERY REFUSAL HERE NAMES THE RULE IT BROKE, and that is the whole
+/// contract with the supervisor: an `Err` is logged as a warning and retried
+/// on the next cadence tick, and the ledger the browser is already holding
+/// stays exactly where it is. So a chart that has gone wrong costs a log line
+/// and a stale week, never a wrong week and never an empty panel. `Ok(None)`
+/// — reserved for a 404 on the route itself — is the only thing that takes
+/// the ledger away.
+///
+/// The five rules, and what each of them is protecting:
+///
+/// 1. `total_blocks > 0`. It is the denominator of every share in the record.
+/// 2. `blocks > 0` on every row. A producer that took no blocks is not a
+///    producer in this window, and staging a cohort for one would put a mouth
+///    in the membrane for somebody who was not there.
+/// 3. Every key non-empty and `0x`-prefixed. The key is joined against
+///    `BlockProducer::key` by string equality; anything that is not shaped
+///    like that hash cannot be that hash.
+/// 4. No duplicate keys. Two rows under one identity would stage the same
+///    cohort twice and double-count its share.
+/// 5. `sum(blocks) <= total_blocks`, checked over EVERY row upstream sent,
+///    before the cap cuts the tail — the cap is this side's budget, not a
+///    claim about the window, so checking after it would let a broken chart
+///    pass by being long.
+///
+/// Then the rows are sorted blocks-descending, key-ascending, and cut to
+/// [`PRODUCER_LEDGER_ROW_CAP`]. The tie-break on the key is what makes two
+/// refreshes of an unchanged chart the same list rather than whatever order
+/// upstream happened to answer in — an unchanged ledger has to compare equal
+/// or it goes back on the wire every two minutes forever.
+fn map_producer_ledger(
+    distribution: MinerDistributionResponse,
+    fetched_at_ms: u64,
+    indexed_tip: u64,
+) -> anyhow::Result<ProducerLedger> {
+    let total_blocks = nonnegative(distribution.total_blocks, "producer ledger total blocks")?;
+    if total_blocks == 0 {
+        return Err(anyhow!(
+            "producer ledger rejected: total_blocks must be positive, every share is a fraction of it"
+        ));
+    }
+    let window_days = u32::try_from(distribution.window_days)
+        .context("ckbadger returned a producer ledger window that is not a day count")?;
+
+    let mut seen: HashSet<&str> = HashSet::with_capacity(distribution.data.len());
+    let mut counted: u64 = 0;
+    for row in &distribution.data {
+        if row.miner_lock_hash.is_empty() || !row.miner_lock_hash.starts_with("0x") {
+            return Err(anyhow!(
+                "producer ledger rejected: every key must be a non-empty 0x-prefixed hash, found {:?}",
+                row.miner_lock_hash
+            ));
+        }
+        if !seen.insert(row.miner_lock_hash.as_str()) {
+            return Err(anyhow!(
+                "producer ledger rejected: keys must be unique, {} appears twice",
+                row.miner_lock_hash
+            ));
+        }
+        let blocks = nonnegative(row.blocks_mined, "producer ledger row blocks")?;
+        if blocks == 0 {
+            return Err(anyhow!(
+                "producer ledger rejected: every row must have taken at least one block, {} took none",
+                row.miner_lock_hash
+            ));
+        }
+        counted = counted.checked_add(blocks).ok_or_else(|| {
+            anyhow!("producer ledger rejected: row blocks overflowed a 64-bit total")
+        })?;
+    }
+    if counted > total_blocks {
+        return Err(anyhow!(
+            "producer ledger rejected: sum(blocks) must not exceed total_blocks, {counted} > {total_blocks}"
+        ));
+    }
+
+    let mut rows: Vec<ProducerLedgerRow> = distribution
+        .data
+        .into_iter()
+        .map(|row| ProducerLedgerRow {
+            key: row.miner_lock_hash,
+            address: row.address.filter(|address| !address.is_empty()),
+            blocks: row.blocks_mined.max(0) as u64,
+            balance_shannons: None,
+            live_cells: None,
+            tx_count: None,
+            last_reward_shannons: None,
+            last_reward_block: None,
+        })
+        .collect();
+    rows.sort_by(|left, right| {
+        right
+            .blocks
+            .cmp(&left.blocks)
+            .then_with(|| left.key.cmp(&right.key))
+    });
+    rows.truncate(PRODUCER_LEDGER_ROW_CAP);
+
+    Ok(ProducerLedger {
+        window_days,
+        from_date: distribution.from_date,
+        to_date: distribution.to_date,
+        total_blocks,
+        fetched_at_ms,
+        indexed_tip,
+        rows,
+    })
 }
 
 fn is_hash32(value: &str) -> bool {
@@ -10765,5 +11108,549 @@ mod tests {
             distinct_advertiser_count(Some(&advertisers)).unwrap(),
             Some(2)
         );
+    }
+    /// ckbadger's answer on mainnet, 2026-09-02, copied from the wire rather
+    /// than composed here — including the three fields the adapter refuses to
+    /// declare (`title`, `minerName`, `percentage`), because a decode that
+    /// only ever meets a body cknerv wrote is not a decode of upstream's
+    /// answer. Trimmed to the top three rows and the smallest one; the four
+    /// dropped rows are the same shape.
+    fn live_miner_distribution() -> serde_json::Value {
+        serde_json::json!({
+            "data": [
+                {
+                    "minerLockHash": "0xfc20a8c81a461efaf91585c631db784749d066f709d30243095efda7a7fdcfd9",
+                    "address": "ckb1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsq0tpsqq08mkay9ewrfrdwlcghv62qw704s93hhsj",
+                    "minerName": null,
+                    "blocksMined": 41824,
+                    "percentage": "61.6873"
+                },
+                {
+                    "minerLockHash": "0xbccf17b39f4295b62ce19f8475f873914021df57d15725dae390aa3317e2afb9",
+                    "address": "ckb1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsqvgqh40v2g5ps3rann79tvw9gq6ewrft7gp909qk",
+                    "minerName": null,
+                    "blocksMined": 8909,
+                    "percentage": "13.1401"
+                },
+                {
+                    "minerLockHash": "0x022a16773bb27eb8687da0d9dde07eefb7e258ab23781d4b13b292edd98108dd",
+                    "address": "ckb1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsq0259kv0x5jez6h0l5qr52k64weapapgyscsnmhn",
+                    "minerName": null,
+                    "blocksMined": 7572,
+                    "percentage": "11.1681"
+                },
+                {
+                    "minerLockHash": "0x6aa42538dd2de2ba4d022c7fdc92d35e760331a9d0f9992a03d2550e82cb7bc2",
+                    "address": "ckb1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsqft980n0alva2vjmkca85wujt5vhtwgzpgqczv9a",
+                    "minerName": null,
+                    "blocksMined": 2,
+                    "percentage": "0.0029"
+                }
+            ],
+            "title": "Miner Distribution (Last 7 Complete Days, UTC+8)",
+            "totalBlocks": 67800,
+            "windowDays": 7,
+            "fromDate": "2026-08-26",
+            "toDate": "2026-09-01"
+        })
+    }
+
+    const LIVE_TOP_KEY: &str = "0xfc20a8c81a461efaf91585c631db784749d066f709d30243095efda7a7fdcfd9";
+    const LIVE_TOP_ADDRESS: &str = "ckb1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsq0tpsqq08mkay9ewrfrdwlcghv62qw704s93hhsj";
+    /// The live top miner's balance on 2026-09-02, and the reason the field is
+    /// a string all the way to the browser: it is larger than
+    /// `Number.MAX_SAFE_INTEGER` (9,007,199,254,740,991).
+    const LIVE_TOP_BALANCE: &str = "9826509274171764";
+
+    /// One mock ckbadger for the ledger's three routes.
+    ///
+    /// `failing_address` 500s exactly one payout record so a miss can be
+    /// proved not to cost the ledger; `sample_block` is the body
+    /// `blocks/{tip-12}` answers with, or `None` for a 404 there. The counter
+    /// covers every route the LEDGER asks — the chart, each address record,
+    /// and the sampled block — so a test that resets it after `probe` reads
+    /// the refresh's true request count.
+    async fn spawn_producer_ledger_api(
+        chart_status: StatusCode,
+        chart: serde_json::Value,
+        failing_address: Option<&str>,
+        sample_block: Option<serde_json::Value>,
+    ) -> (Url, tokio::task::JoinHandle<()>, Arc<AtomicUsize>) {
+        let requests = Arc::new(AtomicUsize::new(0));
+        let chart_requests = requests.clone();
+        let address_requests = requests.clone();
+        let block_requests = requests.clone();
+        let failing_address = failing_address.map(str::to_string);
+        let app = Router::new()
+            .route(
+                "/api/v1/statistics/network",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "syncStatus": { "isSyncing": false, "syncedBlock": 100 }
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/charts/miner-address-distribution",
+                get(move || {
+                    let counted = chart_requests.clone();
+                    let body = chart.clone();
+                    async move {
+                        counted.fetch_add(1, Ordering::Relaxed);
+                        (chart_status, Json(body))
+                    }
+                }),
+            )
+            .route(
+                "/api/v1/addresses/:lock_hash",
+                get(
+                    move |axum::extract::Path(lock_hash): axum::extract::Path<String>| {
+                        let counted = address_requests.clone();
+                        let failing = failing_address.clone();
+                        async move {
+                            counted.fetch_add(1, Ordering::Relaxed);
+                            if failing.as_deref() == Some(lock_hash.as_str()) {
+                                return (
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                    Json(serde_json::json!({ "error": "address unavailable" })),
+                                );
+                            }
+                            (
+                                StatusCode::OK,
+                                Json(serde_json::json!({
+                                    "lockScriptHash": lock_hash,
+                                    "address": LIVE_TOP_ADDRESS,
+                                    "balance": LIVE_TOP_BALANCE,
+                                    "commonKnowledgeSize": "948934300000000",
+                                    "liveCellsCount": 155563,
+                                    "transactionsCount": 4094562,
+                                    "recentActivitiesCount": 4094562
+                                })),
+                            )
+                        }
+                    },
+                ),
+            )
+            .route(
+                "/api/v1/blocks/:number",
+                get(
+                    move |axum::extract::Path(number): axum::extract::Path<i64>| {
+                        let counted = block_requests.clone();
+                        let sample = sample_block.clone();
+                        async move {
+                            // Block 100 is the compatibility anchor `probe`
+                            // and `revalidate_anchor` read; everything else on
+                            // this route is the ledger's reward sample.
+                            if number == 100 {
+                                return (
+                                    StatusCode::OK,
+                                    Json(serde_json::json!({
+                                        "number": 100,
+                                        "hash": "0xblock100"
+                                    })),
+                                );
+                            }
+                            counted.fetch_add(1, Ordering::Relaxed);
+                            match sample {
+                                Some(body) => (StatusCode::OK, Json(body)),
+                                None => (
+                                    StatusCode::NOT_FOUND,
+                                    Json(serde_json::json!({ "error": "block not found" })),
+                                ),
+                            }
+                        }
+                    },
+                ),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (
+            Url::parse(&format!("http://{address}/api/v1")).unwrap(),
+            handle,
+            requests,
+        )
+    }
+
+    /// The `blocks/{tip-12}` body, verbatim from mainnet block 20336600 —
+    /// including `miningReward` as the STRING upstream sends and the six
+    /// fields around it this crate does not declare.
+    fn live_block_with_reward(miner_address: &str) -> serde_json::Value {
+        serde_json::json!({
+            "number": 20336600,
+            "hash": "0x3e893f28b1a57c2d5b2e59ff48234ee4b995d167238a16b5dc70112933b1f074",
+            "parentHash": "0x070a736c056ab34a49e31f9ece75b3597c2437d38397dba9f422cecd7fe423fb",
+            "timestamp": "2026-09-02T12:14:15.210+00:00",
+            "transactionsCount": 1,
+            "minerAddress": miner_address,
+            "minerMessage": "0x0000000020302e3230392e30",
+            "miningReward": "71011833086",
+            "miningRewardTxHash": "0x93e618a60829412a17bd90b2683263abc5898b8fe06ff7f81f91a483ed59b63d",
+            "hardforkActivation": null,
+            "version": 0
+        })
+    }
+
+    fn miner_row(key: &str, blocks: i64) -> serde_json::Value {
+        serde_json::json!({
+            "minerLockHash": key,
+            "address": format!("ckb1{key}"),
+            "minerName": null,
+            "blocksMined": blocks,
+            "percentage": "0.0"
+        })
+    }
+
+    fn miner_chart(rows: Vec<serde_json::Value>, total_blocks: i64) -> serde_json::Value {
+        serde_json::json!({
+            "data": rows,
+            "title": "Miner Distribution (Last 7 Complete Days, UTC+8)",
+            "totalBlocks": total_blocks,
+            "windowDays": 7,
+            "fromDate": "2026-08-26",
+            "toDate": "2026-09-01"
+        })
+    }
+
+    fn producer_ledger_of(chart: serde_json::Value) -> anyhow::Result<ProducerLedger> {
+        map_producer_ledger(
+            serde_json::from_value(chart).expect("miner distribution decodes"),
+            1_700_000_000_000,
+            20_336_612,
+        )
+    }
+
+    /// The decode is of upstream's real answer, and the pin is on both
+    /// directions of the field discipline: what the ledger keeps, and what it
+    /// deliberately never learned. `percentage`, `minerName` and `title` are
+    /// present in the body above and absent from the DTO, so the only way this
+    /// ledger can state a share is by dividing `blocks` by `total_blocks`
+    /// itself.
+    #[test]
+    fn the_live_miner_distribution_decodes_into_a_ledger() {
+        let ledger = producer_ledger_of(live_miner_distribution()).expect("live chart is coherent");
+        assert_eq!(ledger.window_days, 7);
+        assert_eq!(ledger.from_date, "2026-08-26");
+        assert_eq!(ledger.to_date, "2026-09-01");
+        assert_eq!(ledger.total_blocks, 67_800);
+        assert_eq!(ledger.fetched_at_ms, 1_700_000_000_000);
+        assert_eq!(ledger.indexed_tip, 20_336_612);
+        assert_eq!(ledger.rows.len(), 4);
+        assert_eq!(ledger.rows[0].key, LIVE_TOP_KEY);
+        assert_eq!(ledger.rows[0].address.as_deref(), Some(LIVE_TOP_ADDRESS));
+        assert_eq!(ledger.rows[0].blocks, 41_824);
+        // Everything a second request pays for is absent until it is paid
+        // for. `map_producer_ledger` reads one response and states one fact.
+        assert_eq!(ledger.rows[0].balance_shannons, None);
+        assert_eq!(ledger.rows[0].live_cells, None);
+        assert_eq!(ledger.rows[0].last_reward_shannons, None);
+        // The window's denominator is upstream's own count, never the sum of
+        // the rows: those four add up to 58,307 of 67,800.
+        let counted: u64 = ledger.rows.iter().map(|row| row.blocks).sum();
+        assert!(counted < ledger.total_blocks);
+    }
+
+    /// Two refreshes of one unchanged chart have to produce one equal record,
+    /// or the ledger goes back on the wire every two minutes forever — the
+    /// projection's `accept_refresh` gate compares by content. Upstream's
+    /// order is not something to rely on for that, so the rows are sorted
+    /// here: blocks descending, and the key ascending where blocks tie.
+    #[test]
+    fn a_producer_ledger_sorts_by_blocks_then_key_and_caps_the_tail() {
+        let mut rows = Vec::new();
+        for index in 0..20u32 {
+            rows.push(miner_row(
+                &format!("0x{index:064x}"),
+                100 - i64::from(index),
+            ));
+        }
+        // Two rows tied on blocks, deliberately answered in the wrong order.
+        rows.push(miner_row(&format!("0x{:064x}", 91u32), 50));
+        rows.push(miner_row(&format!("0x{:064x}", 90u32), 50));
+        rows.reverse();
+
+        let ledger = producer_ledger_of(miner_chart(rows, 10_000)).expect("coherent");
+        assert_eq!(ledger.rows.len(), PRODUCER_LEDGER_ROW_CAP);
+        assert_eq!(ledger.rows[0].blocks, 100);
+        assert_eq!(ledger.rows[0].key, format!("0x{:064x}", 0u32));
+        assert!(ledger
+            .rows
+            .windows(2)
+            .all(|pair| pair[0].blocks >= pair[1].blocks));
+        assert_eq!(ledger.rows[PRODUCER_LEDGER_ROW_CAP - 1].blocks, 85);
+        // The cap cut a tail off; the denominator is untouched by that,
+        // because it describes the window rather than the rows kept.
+        assert_eq!(ledger.total_blocks, 10_000);
+
+        // And the tie breaks by key, not by arrival.
+        let tied = producer_ledger_of(miner_chart(
+            vec![
+                miner_row(&format!("0x{:064x}", 91u32), 50),
+                miner_row(&format!("0x{:064x}", 90u32), 50),
+            ],
+            10_000,
+        ))
+        .expect("coherent");
+        assert_eq!(tied.rows[0].key, format!("0x{:064x}", 90u32));
+        assert_eq!(tied.rows[1].key, format!("0x{:064x}", 91u32));
+    }
+
+    /// A chart whose rows outnumber the window they are shares of would print
+    /// a share above 100%. It is refused, and the refusal NAMES THE RULE:
+    /// the supervisor warns and retries on cadence, and the ledger the
+    /// browser already holds stays — which is why the message has to say what
+    /// was wrong rather than that something was.
+    #[test]
+    fn a_producer_ledger_summing_past_its_window_is_refused_by_name() {
+        let error = producer_ledger_of(miner_chart(
+            vec![
+                miner_row(&format!("0x{:064x}", 1u32), 600),
+                miner_row(&format!("0x{:064x}", 2u32), 500),
+            ],
+            1_000,
+        ))
+        .expect_err("1100 blocks cannot come out of a 1000-block window");
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("sum(blocks) must not exceed total_blocks"),
+            "the refusal must name the rule: {message}"
+        );
+        assert!(message.contains("1100 > 1000"), "{message}");
+    }
+
+    /// Two rows under one identity would stage the same cohort twice and
+    /// count its share twice. The key is the join with `BlockProducer::key`
+    /// and a join needs it to be unique.
+    #[test]
+    fn a_producer_ledger_with_a_duplicate_key_is_refused_by_name() {
+        let key = format!("0x{:064x}", 7u32);
+        let error = producer_ledger_of(miner_chart(
+            vec![miner_row(&key, 10), miner_row(&key, 5)],
+            1_000,
+        ))
+        .expect_err("one identity cannot hold two rows");
+        let message = format!("{error:#}");
+        assert!(message.contains("keys must be unique"), "{message}");
+        assert!(message.contains(&key), "{message}");
+    }
+
+    /// The other three rules, each with the sentence it fails with. All five
+    /// exist for the same reason: an incoherent ledger reaches the HUD as a
+    /// confident number, and there is no later stage that can tell it apart
+    /// from a true one.
+    #[test]
+    fn a_producer_ledger_states_which_rule_refused_it() {
+        let empty_window = producer_ledger_of(miner_chart(
+            vec![miner_row(&format!("0x{:064x}", 1u32), 1)],
+            0,
+        ))
+        .expect_err("a zero window is no denominator");
+        assert!(
+            format!("{empty_window:#}").contains("total_blocks must be positive"),
+            "{empty_window:#}"
+        );
+
+        let idle_producer = producer_ledger_of(miner_chart(
+            vec![miner_row(&format!("0x{:064x}", 1u32), 0)],
+            1_000,
+        ))
+        .expect_err("a producer that took nothing is not in this window");
+        assert!(
+            format!("{idle_producer:#}").contains("must have taken at least one block"),
+            "{idle_producer:#}"
+        );
+
+        let unshaped_key = producer_ledger_of(miner_chart(vec![miner_row("", 10)], 1_000))
+            .expect_err("an empty key joins with nothing");
+        assert!(
+            format!("{unshaped_key:#}").contains("0x-prefixed"),
+            "{unshaped_key:#}"
+        );
+        let decimal_key = producer_ledger_of(miner_chart(vec![miner_row("12345", 10)], 1_000))
+            .expect_err("a key that is not a hash cannot be that hash");
+        assert!(
+            format!("{decimal_key:#}").contains("0x-prefixed"),
+            "{decimal_key:#}"
+        );
+    }
+
+    /// One address the index cannot read costs that row's balance side and
+    /// nothing else. The alternative — dropping the ledger — would trade a
+    /// week of block production for one HTTP 500, and `None` on the row
+    /// already says "not looked up, or looked up and refused" rather than
+    /// "zero".
+    #[tokio::test]
+    async fn a_failing_payout_record_empties_one_row_and_leaves_the_rest() {
+        let second_key = "0xbccf17b39f4295b62ce19f8475f873914021df57d15725dae390aa3317e2afb9";
+        let (api_base, handle, _requests) = spawn_producer_ledger_api(
+            StatusCode::OK,
+            live_miner_distribution(),
+            Some(second_key),
+            None,
+        )
+        .await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        source.probe(&context()).await;
+
+        let ledger = source
+            .enrich_producer_ledger(&context())
+            .await
+            .expect("one unreadable address is not a fault")
+            .expect("the ledger is published anyway");
+        assert_eq!(ledger.rows.len(), 4);
+        assert_eq!(ledger.rows[1].key, second_key);
+        assert_eq!(ledger.rows[1].balance_shannons, None);
+        assert_eq!(ledger.rows[1].live_cells, None);
+        assert_eq!(ledger.rows[1].tx_count, None);
+        for row in [&ledger.rows[0], &ledger.rows[2], &ledger.rows[3]] {
+            assert_eq!(row.balance_shannons.as_deref(), Some(LIVE_TOP_BALANCE));
+            assert_eq!(row.live_cells, Some(155_563));
+            assert_eq!(row.tx_count, Some(4_094_562));
+        }
+        // The indexed tip the probe learned dates the answer; the ledger
+        // never asks for it itself.
+        assert_eq!(ledger.indexed_tip, 100);
+        handle.abort();
+    }
+
+    /// A route that is not there is an ABSENCE: this source computes no miner
+    /// distribution, and the supervisor retires the ledger. A route that is
+    /// there and refusing is a FAULT: the ledger stays and the refresh is
+    /// retried on cadence. The two answers are one status code apart and mean
+    /// opposite things, which is exactly how the roster's rename cost the
+    /// colony twice.
+    #[tokio::test]
+    async fn a_missing_chart_route_is_an_absence_and_a_faulting_one_is_a_fault() {
+        let (api_base, handle, _requests) = spawn_producer_ledger_api(
+            StatusCode::NOT_FOUND,
+            serde_json::json!({ "error": "no such chart" }),
+            None,
+            None,
+        )
+        .await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        source.probe(&context()).await;
+        assert!(source
+            .enrich_producer_ledger(&context())
+            .await
+            .expect("a 404 is not a fault")
+            .is_none());
+        handle.abort();
+
+        let (api_base, handle, _requests) = spawn_producer_ledger_api(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            serde_json::json!({ "error": "chart unavailable" }),
+            None,
+            None,
+        )
+        .await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        source.probe(&context()).await;
+        let error = source
+            .enrich_producer_ledger(&context())
+            .await
+            .expect_err("a 500 is a fault");
+        assert!(format!("{error:#}").contains("HTTP 500"), "{error:#}");
+        handle.abort();
+    }
+
+    /// The reward sample fills AT MOST one row, and only the row whose own
+    /// address lookup came back — the join is on the `ckb1…` address, because
+    /// upstream's block detail never names the lock hash. A block whose miner
+    /// is in nobody's row fills nothing at all, silently: a missing sample is
+    /// not a degraded ledger.
+    #[tokio::test]
+    async fn the_reward_sample_fills_exactly_the_row_it_names() {
+        let (api_base, handle, _requests) = spawn_producer_ledger_api(
+            StatusCode::OK,
+            live_miner_distribution(),
+            None,
+            Some(live_block_with_reward(LIVE_TOP_ADDRESS)),
+        )
+        .await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        source.probe(&context()).await;
+        let ledger = source
+            .enrich_producer_ledger(&context())
+            .await
+            .unwrap()
+            .expect("ledger");
+        assert_eq!(
+            ledger.rows[0].last_reward_shannons.as_deref(),
+            Some("71011833086")
+        );
+        // `context().tip` is 101 and the sample looks twelve blocks back, so
+        // the reward dates itself at 89 — the height asked for, never a
+        // height read back off an answer this crate did not have to decode.
+        assert_eq!(ledger.rows[0].last_reward_block, Some(89));
+        assert!(ledger.rows[1..]
+            .iter()
+            .all(|row| row.last_reward_shannons.is_none() && row.last_reward_block.is_none()));
+        handle.abort();
+
+        let (api_base, handle, _requests) = spawn_producer_ledger_api(
+            StatusCode::OK,
+            live_miner_distribution(),
+            None,
+            Some(live_block_with_reward("ckb1qstrangeraddress")),
+        )
+        .await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        source.probe(&context()).await;
+        let ledger = source
+            .enrich_producer_ledger(&context())
+            .await
+            .unwrap()
+            .expect("ledger");
+        assert!(
+            ledger
+                .rows
+                .iter()
+                .all(|row| row.last_reward_shannons.is_none()),
+            "a block mined by nobody in the ledger fills no row"
+        );
+        handle.abort();
+    }
+
+    /// ⭐ THE COST OF THE CAPABILITY, PINNED. One refresh is `1 + N + 1`
+    /// requests — the chart, one payout record per kept row, one sampled
+    /// block — run sequentially under the client's 4s timeout. Nothing here
+    /// fans out and nothing here pages, so the ceiling is
+    /// `1 + PRODUCER_LEDGER_ROW_CAP + 1 = 18`. At the live row count of seven
+    /// it is nine requests every two minutes.
+    ///
+    /// The sample's request is unconditional on purpose: it is asked before
+    /// anything is known about whether the block will match a row, so the
+    /// count does not depend on the answer.
+    #[tokio::test]
+    async fn one_producer_ledger_refresh_costs_one_request_per_row_plus_two() {
+        let (api_base, handle, requests) = spawn_producer_ledger_api(
+            StatusCode::OK,
+            live_miner_distribution(),
+            None,
+            Some(live_block_with_reward(LIVE_TOP_ADDRESS)),
+        )
+        .await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        source.probe(&context()).await;
+        // The probe's own anchor read is not the ledger's; the counter starts
+        // at the refresh.
+        requests.store(0, Ordering::Relaxed);
+
+        let ledger = source
+            .enrich_producer_ledger(&context())
+            .await
+            .unwrap()
+            .expect("ledger");
+        let rows = ledger.rows.len();
+        assert_eq!(rows, 4);
+        assert_eq!(
+            requests.load(Ordering::Relaxed),
+            1 + rows + 1,
+            "one chart, one payout record per row, one sampled block"
+        );
+        handle.abort();
     }
 }

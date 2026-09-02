@@ -11,8 +11,9 @@ use cknerv_core::{
     ActivityFeedRecord, AssetEcosystemRecord, CellSemanticRecord, ChainCensus, CompositionDemand,
     DaoStateRecord, EnrichmentSourceStatus, ForkWatchRecord, GalaxyCompositionCandidates,
     GalaxyCompositionRecord, GalaxyCompositionTopUp, NetworkAtlasRecord, NetworkRosterRecord,
-    OutPoint, PeerSightingAbsence, PeerSightingLookup, ProtocolEraRecord, RecentBlock, RecentTx,
-    ScriptId, ScriptRegistryRecord, TransactionHorizonRecord, TransactionSemanticRecord,
+    OutPoint, PeerSightingAbsence, PeerSightingLookup, ProducerLedger, ProtocolEraRecord,
+    RecentBlock, RecentTx, ScriptId, ScriptRegistryRecord, TransactionHorizonRecord,
+    TransactionSemanticRecord,
 };
 
 /// Bounded canonical evidence supplied to an enrichment source when it
@@ -168,6 +169,33 @@ pub trait EnrichmentSource: Send + Sync + 'static {
         &self,
         _context: &CanonicalContext,
     ) -> anyhow::Result<Option<NetworkRosterRecord>> {
+        Ok(None)
+    }
+
+    /// Name who has been producing blocks over a window far wider than the
+    /// canonical stream can hold — and, for each of them, where the reward
+    /// lands.
+    ///
+    /// The twin of [`cknerv_core::Chain::producer_window`], not a replacement
+    /// for it: the window is 240 attributed blocks of RECENCY, emptied by
+    /// every reorg and every rebuild, and this is completed days of SIZE,
+    /// warm from the first frame. Both are published and each states its own
+    /// window.
+    ///
+    /// Sources must answer from a maintained aggregate plus a bounded number
+    /// of per-producer lookups — one per row, and the row count is capped by
+    /// [`cknerv_core::PRODUCER_LEDGER_ROW_CAP`]. A source that would have to
+    /// scan blocks to answer leaves this unsupported.
+    ///
+    /// `Ok(None)` means the source computes no such distribution at all,
+    /// which retires the ledger already published. An answer it cannot
+    /// vouch for is an `Err`: the ledger on the browser's side then stays,
+    /// which is the honest fallback, because a week of block production does
+    /// not stop being true because one refresh could not read it.
+    async fn enrich_producer_ledger(
+        &self,
+        _context: &CanonicalContext,
+    ) -> anyhow::Result<Option<ProducerLedger>> {
         Ok(None)
     }
 

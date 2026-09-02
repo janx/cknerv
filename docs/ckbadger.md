@@ -856,6 +856,76 @@ older state, the pinned families remain rather than an empty panel. A family
 nothing named keeps its code hash as its label. Losing the index therefore costs
 names, not counts: the bars still show the true distribution, spelled in hashes.
 
+### Producer Ledger
+
+With `producer_ledger`, cknerv reads ckbadger's miner-address distribution
+every 120 seconds and turns it into a week of block production. It is the twin
+of the canonical producer window, not a replacement: the window is 240
+attributed blocks of recency, emptied by every reorg and rebuild and empty for
+the first minute of a boot, and this is completed days of size, warm from the
+first frame. Both are published and each states its own window, because "62% of
+a week" and "60% of the last five blocks" are different sentences.
+
+The join is exact and is the reason the capability can exist at all. cknerv
+names a producer by the hash of the cellbase witness lock script, and ckbadger
+keys its miner records by that same hash, so a ledger row and a window entry
+are the same identity by string equality — nothing here is matched by name,
+address or heuristic.
+
+One refresh is **`1 + N + 1` requests**, sequential, N being the rows kept
+after the 16-row cap: `charts/miner-address-distribution` once, then
+`addresses/{lock_hash}` once per row for the payout balance, live-cell count
+and transaction count, then one `blocks/{tip-12}` for the reward sample. At the
+live mainnet row count of seven that is nine requests every two minutes, and
+the ceiling is eighteen. They run sequentially under the 4-second client
+timeout, and the supervisor holds one refresh in flight per capability, so a
+slow index delays this ledger and nothing else.
+
+The record carries **no chain anchor**, and is the only aggregate here that
+does not. A seven-day total over completed days is not a statement about the
+canonical tip, so anchoring it would let a three-block reorg discard a week the
+reorg never touched — and would do it at the exact moment the 240-block window
+it stands beside has also just been cleared. `indexed_tip` says how far the
+source had indexed when it answered, which dates the answer without pretending
+it is anchored to a block. A rebuild still clears it and the next refresh
+republishes.
+
+Field discipline follows the crawler routes, which have cost this adapter two
+schema breaks: only the fields that are printed are declared. Upstream also
+sends `title`, `minerName` and `percentage`, and none of the three is read.
+`percentage` in particular is a share, and a share is computed where it is
+printed against the denominator it belongs to — the ledger carries `blocks` and
+`total_blocks` and divides at the point of print, so there is exactly one place
+a share can be computed and exactly one window it can be computed over. The
+block detail's two miner fields are decoded through their own struct rather
+than added to the compatibility anchor's, so a rename there can cost the reward
+sample and can never cost the anchor.
+
+Balances are **decimal strings** end to end. The live top miner held
+9,826,509,274,171,764 shannons on 2026-09-02 against a JavaScript
+`Number.MAX_SAFE_INTEGER` of 9,007,199,254,740,991; the browser divides with
+`BigInt`. The same is true of the sampled reward.
+
+Coherence is checked before the record is admitted, and each refusal names the
+rule it broke: `total_blocks` positive, every row's `blocks` positive, every
+key non-empty and `0x`-prefixed, no duplicate keys, and `sum(blocks) <=
+total_blocks` over every row upstream sent — before the cap, because the cap is
+this side's budget rather than a claim about the window. A refusal is a warning
+and a retry on the next cadence tick, and the ledger already published stays:
+a week of block production does not stop being true because one refresh could
+not read it. Rows are ordered blocks-descending then key-ascending so an
+unchanged chart compares equal refresh after refresh, and capped at 16 — twice
+the live row count of seven, and the bound on what one refresh may cost, since
+every row is one more address lookup.
+
+Three absences are distinguished. A **404 on the chart** is "this source
+computes no miner distribution": the supervisor publishes a clear, once, and
+the panel falls back to the window it never stopped holding. Any other non-2xx
+is a fault. A **failed address record** costs that row's balance side and
+nothing else — the row keeps its window figures, the other rows are filled, and
+an absent balance is never rendered as a zero one, because "not looked up, or
+looked up and refused" is not "holds nothing".
+
 ## Persistence
 
 Optional semantics are bounded in memory and intentionally not persisted. They
@@ -897,3 +967,18 @@ staffing once the first refresh lands.
   live Cell of a class, not for a rank, and mainnet supply (~21k live deposits,
   ~64k typed Cells across 53 asset groups) is several times the quota either
   way.
+- ckbadger's miner records carry a `minerName`, and it is `null` for every
+  miner on mainnet — all seven of them, measured 2026-09-02. There is no
+  upstream pool registry behind the field, so the producer ledger names a
+  cohort by its lock hash and its payout address and never by a pool. Nothing
+  else anywhere maps a producer to a pool or to a peer either; the self-declared
+  client build string stays what it is.
+- The producer ledger's reward is a **sample, not a stream**. ckbadger's block
+  list carries no miner fields at all, and its block detail names the miner
+  immediately but carries `miningReward` only once the cellbase that pays it
+  has matured, about eleven blocks later. One refresh therefore reads one block
+  twelve deep and fills at most one row — the one whose payout address that
+  block names. An absent reward on a row says "this refresh did not sample this
+  producer", never "this producer was not paid", and a producer whose own
+  address lookup failed cannot be sampled at all, because the block detail
+  names its miner only by address.

@@ -757,6 +757,113 @@ pub(crate) struct BlockResponse {
     pub hash: String,
 }
 
+/// The SAME route as [`BlockResponse`], decoded separately on purpose.
+///
+/// `blocks/{number}` is the compatibility anchor: `probe` reads it to prove
+/// cknerv and ckbadger are on one chain, and `revalidate_anchor` reads it
+/// again around every aggregate. A decode failure there is not a missing
+/// field — it takes the whole source to `Error` and stops every capability.
+/// The producer ledger's reward sample reads two miner fields off the same
+/// response, and those two fields are the ones most likely to move: upstream
+/// renamed miner fields on the crawler routes twice in a week (see
+/// [`NetworkCrawlerRoundResponse`]).
+///
+/// Two structs rather than two more `Option` fields on one, because
+/// `#[serde(default)]` makes a rename survivable only for as long as nobody
+/// changes the attribute. Separate structs make it structural: whatever
+/// happens to `minerAddress`, the anchor path cannot see it, because the
+/// anchor path does not decode it. The cost is one extra `serde` derive over
+/// a response body that was fetched anyway.
+///
+/// `number` is deliberately NOT declared. The sample knows which height it
+/// asked for, so reading the height back would declare a field to learn
+/// something already held — and would let a rename of `number` cost a sample
+/// that has nothing to do with it.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BlockMinerResponse {
+    /// The payout address of the block's cellbase, in the `ckb1…` encoding
+    /// upstream answers with — the same encoding the miner distribution's
+    /// `address` carries, which is what lets the sample be joined to a row at
+    /// all. Optional because upstream answers it as `null` for a block whose
+    /// cellbase it has not attributed.
+    pub miner_address: Option<String>,
+    /// The cellbase payout, in shannons, as a DECIMAL STRING — upstream's own
+    /// type (`"71011833086"`, measured on block 20336600, 2026-09-02) and the
+    /// only honest one: a reward rides beside a balance that does not fit a
+    /// JS number, and the two are formatted by the same `BigInt` path.
+    ///
+    /// `null` until the cellbase that pays it matures, ~11 blocks after the
+    /// block is mined. That is why the sample looks 12 blocks back and why an
+    /// absent reward is never an error.
+    pub mining_reward: Option<String>,
+}
+
+/// `charts/miner-address-distribution`: who took the last N complete days.
+///
+/// Upstream also carries `title` on the response and `minerName` and
+/// `percentage` on every row. None of the three is declared, for the reason
+/// the roster spells out above — a field declared here is a field whose
+/// disappearance costs the whole record — plus one of its own each:
+///
+/// - `title` is upstream's English sentence about its own chart ("Miner
+///   Distribution (Last 7 Complete Days, UTC+8)"). The window is already
+///   stated as data in `windowDays`/`fromDate`/`toDate`; printing a sentence
+///   the source wrote would put a second, unversioned copy of the window in
+///   the HUD.
+/// - `minerName` was `null` for all 7 live rows on 2026-09-02. There is no
+///   upstream pool registry behind it, so declaring it would buy a column
+///   that is empty on mainnet and cost the ledger the day the field goes.
+/// - `percentage` is a share, and a share is computed where it is printed,
+///   against the denominator it belongs to. `ProducerLedger` carries
+///   `blocks` and `total_blocks` and derives the rest; taking upstream's
+///   pre-divided string would make two places able to disagree about what a
+///   share is over.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MinerDistributionResponse {
+    #[serde(default)]
+    pub data: Vec<MinerDistributionRow>,
+    /// Every attributed block in the window. The denominator — and never
+    /// `sum(blocksMined)`, which is what the rows this adapter kept add up
+    /// to rather than what the window held.
+    pub total_blocks: i64,
+    pub window_days: i64,
+    pub from_date: String,
+    pub to_date: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MinerDistributionRow {
+    /// The hash of the cellbase witness lock script — the exact string
+    /// `cknerv_core::BlockProducer::key` carries, which is the entire reason
+    /// this capability can exist. Nothing here is joined by name or address.
+    pub miner_lock_hash: String,
+    pub address: Option<String>,
+    pub blocks_mined: i64,
+}
+
+/// `addresses/{lock_hash}`: what one payout address holds.
+///
+/// The route answers far more — `lockScript`, `lockScriptInfo`,
+/// `commonKnowledgeSize`, `recentActivitiesCount`, and the address string
+/// this adapter already has off the chart. Three fields are declared because
+/// three fields are printed.
+///
+/// ⚠️ `balance` is a DECIMAL STRING and stays one all the way to the browser.
+/// The live top miner held 9,826,509,274,171,764 shannons on 2026-09-02
+/// against a `Number.MAX_SAFE_INTEGER` of 9,007,199,254,740,991: an `i64`
+/// here would be correct and a `number` on the twin would not, so the string
+/// is carried through untouched rather than parsed and re-formatted.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AddressRecordResponse {
+    pub balance: String,
+    pub live_cells_count: i64,
+    pub transactions_count: i64,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CellDetailResponse {

@@ -37,6 +37,15 @@ const ENRICHMENT_NETWORK_ATLAS_REFRESH: Duration = Duration::from_secs(60);
 /// costs one bounded page and nothing on the wire — the projection publishes
 /// a roster only when its round advances.
 const ENRICHMENT_NETWORK_ROSTER_REFRESH: Duration = Duration::from_secs(60);
+/// The producer ledger. A STARTING VALUE, not a measurement: the chart it
+/// reads is computed once a day over completed days, so the window itself
+/// barely moves, but the payout records beside it move with every reward the
+/// producers take. Two minutes is set by the second of those and by what the
+/// refresh costs — one chart, one address record per row, one block for the
+/// reward sample, sequentially — so at the live row count of seven it is
+/// nine requests every two minutes. Widen it if the row count grows; the
+/// chart will not notice.
+const ENRICHMENT_PRODUCER_LEDGER_REFRESH: Duration = Duration::from_secs(120);
 /// The whole-chain Cell census. Its source answers from a fixed-size record
 /// in constant work, and its subject — the live-cell count — moves with every
 /// block, so the cadence is set by how stale a printed `AS OF` height may get
@@ -111,6 +120,7 @@ struct RefreshCadence {
     fork_watch: Duration,
     network_atlas: Duration,
     network_roster: Duration,
+    producer_ledger: Duration,
     chain_census: Duration,
     script_registry: Duration,
     galaxy_composition: Option<Duration>,
@@ -136,6 +146,7 @@ impl Default for RefreshCadence {
             fork_watch: ENRICHMENT_FORK_WATCH_REFRESH,
             network_atlas: ENRICHMENT_NETWORK_ATLAS_REFRESH,
             network_roster: ENRICHMENT_NETWORK_ROSTER_REFRESH,
+            producer_ledger: ENRICHMENT_PRODUCER_LEDGER_REFRESH,
             chain_census: ENRICHMENT_CHAIN_CENSUS_REFRESH,
             script_registry: ENRICHMENT_SCRIPT_REGISTRY_REFRESH,
             galaxy_composition: ENRICHMENT_GALAXY_COMPOSITION_REFRESH,
@@ -158,13 +169,14 @@ enum RefreshKind {
     ForkWatch,
     NetworkAtlas,
     NetworkRoster,
+    ProducerLedger,
     ChainCensus,
     ScriptRegistry,
     GalaxyComposition,
     GalaxyTopUp,
 }
 
-const REFRESH_KINDS: [RefreshKind; 12] = [
+const REFRESH_KINDS: [RefreshKind; 13] = [
     RefreshKind::AssetEcosystem,
     RefreshKind::DaoState,
     RefreshKind::ProtocolEra,
@@ -173,6 +185,7 @@ const REFRESH_KINDS: [RefreshKind; 12] = [
     RefreshKind::ForkWatch,
     RefreshKind::NetworkAtlas,
     RefreshKind::NetworkRoster,
+    RefreshKind::ProducerLedger,
     RefreshKind::ChainCensus,
     RefreshKind::ScriptRegistry,
     RefreshKind::GalaxyComposition,
@@ -190,6 +203,7 @@ impl RefreshKind {
             Self::ForkWatch => "fork_watch",
             Self::NetworkAtlas => "network_atlas",
             Self::NetworkRoster => "network_roster",
+            Self::ProducerLedger => "producer_ledger",
             Self::ChainCensus => "chain_census",
             Self::ScriptRegistry => "script_registry",
             // The top-up is the same source feature as the composition:
@@ -212,6 +226,7 @@ impl RefreshKind {
             Self::ForkWatch => Some(cadence.fork_watch),
             Self::NetworkAtlas => Some(cadence.network_atlas),
             Self::NetworkRoster => Some(cadence.network_roster),
+            Self::ProducerLedger => Some(cadence.producer_ledger),
             Self::ChainCensus => Some(cadence.chain_census),
             Self::ScriptRegistry => Some(cadence.script_registry),
             Self::GalaxyComposition => cadence.galaxy_composition,
@@ -287,6 +302,12 @@ impl RefreshKind {
                 .map(|record| record.map(EnrichmentEvent::NetworkAtlasReplace)),
             Self::NetworkRoster => source.enrich_network_roster(context).await.map(|record| {
                 record.map(|roster| EnrichmentEvent::NetworkRosterReplace(Box::new(roster)))
+            }),
+            // The one aggregate that does not box its record: a ledger is
+            // ~104 bytes plus its rows, and clippy's large-variant lint is
+            // clean without it (see the note on `EnrichmentEvent`).
+            Self::ProducerLedger => source.enrich_producer_ledger(context).await.map(|record| {
+                record.map(|ledger| EnrichmentEvent::ProducerLedgerReplace { ledger })
             }),
             Self::ChainCensus => source
                 .enrich_chain_census(context)
@@ -611,6 +632,7 @@ async fn run(
     let mut refreshes = JoinSet::new();
     let mut network_atlas_present = false;
     let mut network_roster_present = false;
+    let mut producer_ledger_present = false;
 
     'supervisor: loop {
         tokio::select! {
@@ -737,6 +759,7 @@ async fn run(
                                 match kind {
                                     RefreshKind::NetworkAtlas => network_atlas_present = true,
                                     RefreshKind::NetworkRoster => network_roster_present = true,
+                                    RefreshKind::ProducerLedger => producer_ledger_present = true,
                                     _ => {}
                                 }
                             }
@@ -755,6 +778,25 @@ async fn run(
                                     break 'supervisor;
                                 }
                                 network_roster_present = false;
+                            }
+                            // A source that stops computing a miner
+                            // distribution takes the week's cohorts with it,
+                            // and the panel falls back to the 240-block
+                            // window it never stopped holding. ONCE: the flag
+                            // is what keeps a permanently-404ing route from
+                            // publishing a `Clear` every two minutes forever,
+                            // and a `Clear` is not free — every one is a
+                            // revision, a replay-ring entry and a broadcast
+                            // frame. An `Err` deliberately does NOT come
+                            // through here: a refresh that could not read the
+                            // chart has learned nothing about whether the
+                            // chart exists, so the ledger stays and the warn
+                            // below says why.
+                            Ok(None) if kind == RefreshKind::ProducerLedger && producer_ledger_present => {
+                                if out.send(EnrichmentEvent::ProducerLedgerClear).await.is_err() {
+                                    break 'supervisor;
+                                }
+                                producer_ledger_present = false;
                             }
                             Ok(None) => {}
                             Err(error) => tracing::warn!(
@@ -826,7 +868,8 @@ mod tests {
     use async_trait::async_trait;
     use cknerv_core::{
         ActivityFeedItem, ActivityFeedRecord, AssetEcosystemRecord, ChainAnchor, ChainCensus,
-        ChainCensusClasses, DaoStateRecord, Mutation, ReplayPhase,
+        ChainCensusClasses, DaoStateRecord, Mutation, ProducerLedger, ProducerLedgerRow,
+        ReplayPhase,
     };
 
     use super::*;
@@ -1115,6 +1158,7 @@ mod tests {
             fork_watch: Duration::from_secs(60),
             network_atlas: Duration::from_secs(60),
             network_roster: Duration::from_secs(60),
+            producer_ledger: Duration::from_secs(120),
             chain_census: Duration::from_secs(60),
             script_registry: Duration::from_secs(300),
             galaxy_composition: None,
@@ -1198,6 +1242,7 @@ mod tests {
             fork_watch: Duration::from_secs(60),
             network_atlas: Duration::from_secs(60),
             network_roster: Duration::from_secs(60),
+            producer_ledger: Duration::from_secs(120),
             chain_census: Duration::from_secs(60),
             script_registry: Duration::from_secs(300),
             galaxy_composition: periodic,
@@ -1910,6 +1955,7 @@ mod tests {
             fork_watch: Duration::from_secs(60),
             network_atlas: Duration::from_secs(60),
             network_roster: Duration::from_secs(60),
+            producer_ledger: Duration::from_secs(120),
             chain_census: Duration::from_secs(60),
             script_registry: Duration::from_secs(300),
             galaxy_composition: Some(Duration::from_secs(60)),
@@ -1953,6 +1999,7 @@ mod tests {
             fork_watch: Duration::from_secs(1),
             network_atlas: Duration::from_secs(1),
             network_roster: Duration::from_secs(1),
+            producer_ledger: Duration::from_secs(1),
             chain_census: Duration::from_secs(1),
             script_registry: Duration::from_secs(300),
             galaxy_composition: Some(Duration::from_secs(1)),
@@ -2044,6 +2091,160 @@ mod tests {
             .expect("supervisor stops")
             .unwrap();
         assert!(census_calls.load(Ordering::Relaxed) >= 1);
+    }
+
+    /// A source that offers a producer ledger exactly once and then reports
+    /// that it computes none — a crawler switched off, or a chart route that
+    /// went away between two refreshes.
+    struct VanishingLedgerSource {
+        ledger_calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl EnrichmentSource for VanishingLedgerSource {
+        fn name(&self) -> &'static str {
+            "ledger-fixture"
+        }
+
+        fn capabilities(&self) -> Vec<String> {
+            vec!["producer_ledger".to_string()]
+        }
+
+        async fn probe(&self, context: &CanonicalContext) -> EnrichmentSourceStatus {
+            let anchor = context.recent_blocks.last().map(|block| ChainAnchor {
+                block: block.number,
+                hash: block.hash.clone(),
+            });
+            EnrichmentSourceStatus {
+                source: self.name().to_string(),
+                status: EnrichmentSourceState::Ready,
+                capabilities: self.capabilities(),
+                indexed_tip: Some(context.tip),
+                lag_blocks: Some(0),
+                validated_anchor: anchor,
+                last_success_at_ms: Some(1),
+                message: None,
+            }
+        }
+
+        async fn enrich_cell(
+            &self,
+            _out_point: &cknerv_core::OutPoint,
+            _context: &CanonicalContext,
+        ) -> anyhow::Result<Option<cknerv_core::CellSemanticRecord>> {
+            Ok(None)
+        }
+
+        async fn enrich_producer_ledger(
+            &self,
+            _context: &CanonicalContext,
+        ) -> anyhow::Result<Option<ProducerLedger>> {
+            if self.ledger_calls.fetch_add(1, Ordering::Relaxed) == 0 {
+                return Ok(Some(ProducerLedger {
+                    window_days: 7,
+                    from_date: "2026-08-26".to_string(),
+                    to_date: "2026-09-01".to_string(),
+                    total_blocks: 67_800,
+                    fetched_at_ms: 1,
+                    indexed_tip: 20_336_612,
+                    rows: vec![ProducerLedgerRow {
+                        key: format!("0x{}", "fc".repeat(32)),
+                        address: Some("ckb1qzda0cr08m85hc8".to_string()),
+                        blocks: 41_824,
+                        balance_shannons: Some("9826509274171764".to_string()),
+                        live_cells: Some(155_563),
+                        tx_count: Some(4_094_562),
+                        last_reward_shannons: None,
+                        last_reward_block: None,
+                    }],
+                }));
+            }
+            Ok(None)
+        }
+    }
+
+    /// The absence half of the capability, end to end through the supervisor.
+    ///
+    /// A ledger that stops being offered is retired ONCE. The second half of
+    /// that sentence is the part with teeth: a route that stays gone answers
+    /// `Ok(None)` on every tick forever, and a `Clear` per tick would be a
+    /// revision, a replay-ring entry and a broadcast frame every two minutes
+    /// on a source that has said nothing new since the first one.
+    #[tokio::test]
+    async fn a_producer_ledger_that_stops_being_offered_is_cleared_once() {
+        let state = Arc::new(ServerState::new());
+        state.apply_mutation(Mutation::BlockMined {
+            number: 7,
+            hash: "0xblock7".to_string(),
+            tx_count: 1,
+            size: 1,
+            at: 1,
+            producer_key: None,
+            producer_message: None,
+        });
+
+        let ledger_calls = Arc::new(AtomicUsize::new(0));
+        let source: Arc<dyn EnrichmentSource> = Arc::new(VanishingLedgerSource {
+            ledger_calls: ledger_calls.clone(),
+        });
+        let (out, mut events) = mpsc::channel(16);
+        let (shutdown, shutdown_rx) = watch::channel(false);
+        let cadence = RefreshCadence {
+            probe: Duration::from_millis(10),
+            producer_ledger: Duration::from_millis(10),
+            ..top_up_cadence()
+        };
+        let handle = tokio::spawn(run(source, state, out, shutdown_rx, cadence, None));
+
+        let ledger = tokio::time::timeout(Duration::from_millis(300), async {
+            loop {
+                if let Some(EnrichmentEvent::ProducerLedgerReplace { ledger }) = events.recv().await
+                {
+                    break ledger;
+                }
+            }
+        })
+        .await
+        .expect("an advertised producer ledger must reach the event channel");
+        assert_eq!(ledger.total_blocks, 67_800);
+        assert_eq!(ledger.rows.len(), 1);
+
+        tokio::time::timeout(Duration::from_millis(300), async {
+            loop {
+                if matches!(
+                    events.recv().await,
+                    Some(EnrichmentEvent::ProducerLedgerClear)
+                ) {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("a ledger that stops being offered is retired");
+
+        // Several more refreshes run against a source that keeps answering
+        // `Ok(None)`; none of them may publish a second `Clear`.
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        shutdown.send(true).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("supervisor stops")
+            .unwrap();
+
+        assert!(
+            ledger_calls.load(Ordering::Relaxed) >= 3,
+            "the refresh must have run again after the clear"
+        );
+        let mut extra = Vec::new();
+        while let Ok(event) = events.try_recv() {
+            extra.push(event);
+        }
+        assert!(
+            !extra
+                .iter()
+                .any(|event| matches!(event, EnrichmentEvent::ProducerLedgerClear)),
+            "the ledger is cleared once, not once per tick: {extra:?}"
+        );
     }
 
     #[tokio::test]
