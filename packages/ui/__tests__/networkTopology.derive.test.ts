@@ -649,14 +649,28 @@ describe('attestedPos (⭐ pure hash of the producer key, and never a centroid)'
     `${'0123456789abcdef'[i % 16]}${'0123456789abcdef'[(i * 7) % 16]}${i}`,
   ));
 
-  it('stands inside the same elliptical disc and slab as everybody else', () => {
+  it('stands inside the same elliptical disc as everybody else', () => {
     for (const key of keys.slice(0, 60)) {
       const pos = attestedPos(key);
       const x = pos[0] / COLONY_ELLIPSE_X;
       const z = pos[2] / COLONY_ELLIPSE_Z;
       expect(Math.hypot(x, z)).toBeLessThanOrEqual(COLONY_RADIUS);
-      expect(Math.abs(pos[1] - COLONY_Y)).toBeLessThanOrEqual(COLONY_Y_THICKNESS / 2);
     }
+    // The height is not "inside the slab", it is exactly the plane — pinned on
+    // its own below, because that is a claim about the mark's form and not
+    // about the disc this tier shares with the others.
+  });
+
+  // ⭐⭐ THE PLANE IS THE POINT. The mark is a disc LYING IN the colony plane,
+  // and what makes that disc state the plane is that every cohort foreshortens
+  // identically; a private height per cohort turns the agreement into six
+  // unrelated ellipses. Under the plane the same constant carries the intake:
+  // one mist floor at a fixed depth below the membrane cannot sit a fixed depth
+  // below six different heights. So this is exact equality on purpose — a
+  // tolerance here would let a height stream creep back in unnoticed.
+  it('lies exactly in the colony plane, for every key', () => {
+    for (const key of keys) expect(attestedPos(key)[1]).toBe(COLONY_Y);
+    expect(new Set(keys.map((k) => attestedPos(k)[1])).size).toBe(1);
   });
 
   it('is a pure function of the key — stable, and blind to everything else', () => {
@@ -694,7 +708,13 @@ describe('attestedPos (⭐ pure hash of the producer key, and never a centroid)'
   // tier actually receives: a fixed `0x` behind 64 symbols out of an alphabet
   // of 16 is a much narrower input than a base58 peer id, so the decorrelation
   // has to be shown here rather than inherited.
-  it('angle, radius and height are three uncorrelated draws (no key spiral)', () => {
+  //
+  // ⭐ TWO DRAWS, NOT THREE. This used to carry a height stream and correlate
+  // all three pairs. The height is gone (the test above says where it went), so
+  // the only correlation left to refute is the one this test was written for:
+  // an angle and a radius off the same hash would stand every producer on one
+  // spiral arm.
+  it('angle and radius are two uncorrelated draws (no key spiral)', () => {
     const angleOf = (key: string) => {
       const pos = attestedPos(key);
       return Math.atan2(pos[2] / COLONY_ELLIPSE_Z, pos[0] / COLONY_ELLIPSE_X);
@@ -704,7 +724,6 @@ describe('attestedPos (⭐ pure hash of the producer key, and never a centroid)'
       const r = Math.hypot(pos[0] / COLONY_ELLIPSE_X, pos[2] / COLONY_ELLIPSE_Z) / COLONY_RADIUS;
       return r * r;              // undo the sqrt: this is the raw hash
     };
-    const heightOf = (key: string) => (attestedPos(key)[1] - COLONY_Y) / COLONY_Y_THICKNESS;
     const corr = (xs: number[], ys: number[]) => {
       const mean = (a: number[]) => a.reduce((s, v) => s + v, 0) / a.length;
       const mx = mean(xs), my = mean(ys);
@@ -717,11 +736,10 @@ describe('attestedPos (⭐ pure hash of the producer key, and never a centroid)'
     };
     const angles = keys.map(angleOf);
     const radii = keys.map(radiusOf);
-    const heights = keys.map(heightOf);
     expect(corr(angles, radii)).toBeLessThan(0.15);
-    expect(corr(angles, heights)).toBeLessThan(0.15);
-    expect(corr(radii, heights)).toBeLessThan(0.15);
-    // …and distinct keys land on distinct places rather than piling up.
+    // …and distinct keys land on distinct places rather than piling up — which
+    // now rests on the two XZ draws alone, since the height no longer separates
+    // anything.
     expect(new Set(keys.map((k) => attestedPos(k).join(','))).size).toBe(keys.length);
   });
 

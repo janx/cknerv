@@ -20,7 +20,22 @@ export const COLONY_RADIUS = 92;
 export const COLONY_ELLIPSE_X = 1.25;    // echo the cells-canopy footprint
 export const COLONY_ELLIPSE_Z = 0.85;
 export const COLONY_Y = CHAIN_Y;         // colony centered on the chain plane
-export const COLONY_Y_THICKNESS = 14;    // shallow vertical spread
+/** How deep the slab of ghosts and sighted nodes is, either side of the plane.
+ *
+ *  ⭐ THE MESH HAS TO READ AS A SURFACE, because a POW cohort is a HOLE in it.
+ *  The colony plane is the boundary between two universes — the cell canopy
+ *  above, the other one below — and an opening is only legible in a membrane.
+ *  Seen on the approved preview: at 14 the scatter reads as a VOLUME the marks
+ *  float inside; at 6 it reads as a membrane the marks are cut into. So 6 is
+ *  where that flipped by eye, a starting value to be judged live, not a
+ *  measurement of anything.
+ *
+ *  Thinning it does not starve `scatterInferred`, which was the one risk: the
+ *  min-spacing rejection now has less height to escape into. Measured over 40
+ *  seeds, the accepted count at 6 is IDENTICAL to the count at 14 (210–268,
+ *  which is exactly the jittered target every time), because this disc is
+ *  nowhere near a 2-D jam at spacing 6 even with no height at all. */
+export const COLONY_Y_THICKNESS = 6;
 export const COLONY_MIN_SPACING = 6;     // min distance between inferred nodes
 export const COLONY_KNN = 4;             // geometric base degree
 export const COLONY_LONGRANGE_PROB = 0.35; // expected long-range links / node
@@ -96,12 +111,18 @@ export function scatterInferred(seed: number): Vec3[] {
 const SIGHTED_RADIUS_MIX = 0x27220a95;
 const SIGHTED_Y_MIX = 0x165667b1;
 
-/** Mixing constants for an ATTESTED node's placement hashes — its own three,
+/** Mixing constants for an ATTESTED node's placement hashes — its own pair,
  *  and the separateness is the point rather than the constants.
  *
- *  Same reasoning as the pair above, one rung along: three decorrelated draws
- *  from one key, no two of them sharing a stream. What is new is why they are
- *  not simply `peerAngle` + the sighted mixes.
+ *  Same reasoning as the pair above, one rung along: decorrelated draws from
+ *  one key, no two of them sharing a stream. What is new is why they are not
+ *  simply `peerAngle` + the sighted mixes.
+ *
+ *  ⭐ THERE ARE TWO OF THEM, NOT THREE, and the missing one is the height. An
+ *  attested node has no height draw at all — it stands exactly on the colony
+ *  plane, for the reasons on `attestedPos` — so the third mix that used to
+ *  supply one (`ATTESTED_Y_MIX`) is deleted rather than left unread. A dead
+ *  constant is an invitation to put the stream back.
  *
  *  1. A TIER'S MIXES ARE ITS PLACEMENT'S IDENTITY. Shared, a future retune of
  *     the sighted scatter would silently drag every producer with it, and a
@@ -118,7 +139,6 @@ const SIGHTED_Y_MIX = 0x165667b1;
  *     lock script hash is the same category error as borrowing a roster mark. */
 const ATTESTED_ANGLE_MIX = 0xcc9e2d51;
 const ATTESTED_RADIUS_MIX = 0x1b873593;
-const ATTESTED_Y_MIX = 0xc2b2ae3d;
 
 /** [0,1) from an id under `mix`. Pure, order-independent, and stable for the
  *  life of the id — an id-placed node must land on the same spot after a
@@ -190,13 +210,27 @@ export function attestedNodeId(producerKey: string): string {
  *  strings. Let the fan do the talking and keep placement mute.
  *
  *  Like `sightedPos` this is placement and never geography: the chain says
- *  something made these blocks, not where it is. */
+ *  something made these blocks, not where it is.
+ *
+ *  ⭐⭐ EXACTLY IN THE PLANE — the one colony tier that gets no height draw,
+ *  and it is the mark's form that demands it rather than tidiness. A cohort is
+ *  drawn as a DISC LYING IN the colony plane, and what makes that disc state
+ *  the plane at all is that every cohort foreshortens IDENTICALLY: give each
+ *  one a private height and the agreement is gone, and each mark is just an
+ *  ellipse somewhere. Below the plane the same constant does a second job: the
+ *  intake is ONE floor at a fixed depth under the membrane, and one floor
+ *  cannot sit a fixed depth under six different heights.
+ *
+ *  So the height STREAM is gone, not flattened at the draw site — see
+ *  `ATTESTED_Y_MIX`'s deletion above. Nothing about the placement invariant
+ *  moves: Y is now a constant, which is at least as stable under a reconnect,
+ *  a re-crawl or a rolled window as the hash it replaces. */
 export function attestedPos(producerKey: string): Vec3 {
   const a = placementHash01(producerKey, ATTESTED_ANGLE_MIX) * Math.PI * 2;
   const r = Math.sqrt(placementHash01(producerKey, ATTESTED_RADIUS_MIX)) * COLONY_RADIUS;
   return [
     Math.cos(a) * r * COLONY_ELLIPSE_X,
-    COLONY_Y + (placementHash01(producerKey, ATTESTED_Y_MIX) - 0.5) * COLONY_Y_THICKNESS,
+    COLONY_Y,
     Math.sin(a) * r * COLONY_ELLIPSE_Z,
   ];
 }
