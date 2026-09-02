@@ -848,11 +848,18 @@ The topology contains:
   behaviour: the hole opens and the peer steps aside. 3.5 is the mark's outer
   radius `COHORT_AP_R` (3.0, which is also `COHORT_LINK_STOP_R`) plus the half
   unit a displaced peer's own link needs to still be drawn as a line;
-- attested cohorts, one per recent block producer, carrying the chain's payout
+- attested cohorts, one per block producer in the UNION OF TWO WINDOWS —
+  the 240 attributed blocks the local node holds, which is recency, and the
+  indexer's seven complete days, which is size — carrying the chain's payout
   key and NO identity at all: the type they hold has no field an ID could land
-  in. They lie EXACTLY on `COLONY_Y`, with no scatter in Y whatever, because a
-  cohort is an opening cut into the plane and an opening off its plane is a
-  disc floating beside one;
+  in. The union is what keeps a hole open: a cohort used to exist only while it
+  held a block in the ring, so its aperture closed on a reorg, on a rebuild and
+  through the first minute of a boot, while the week is warm on the first frame.
+  A key is a key in either window, so the two sets simply add; the ring is
+  capped upstream and the week at 16 rows, and `COHORT_MARK_CAP` (64) still
+  bounds what is drawn. They lie EXACTLY on `COLONY_Y`, with no scatter in Y
+  whatever, because a cohort is an opening cut into the plane and an opening off
+  its plane is a disc floating beside one;
 - a seed-only inferred scaffold of roughly `240 +/- 30` nodes in an elliptical
   disc, scattered through `COLONY_Y_THICKNESS` — 6 world units, +/- 3 either
   side, the depth at which the colony reads as a MEMBRANE with marks cut into
@@ -893,6 +900,28 @@ slab:
   `theta0 = theta + s*ln(r0/r)` — brightening as it gathers, dark inside the
   rim, thinner in the wake downstream, and flaring on the block that cohort
   won.
+
+A COHORT DRINKS AT ITS OWN RATE, and the patch is the only draw that reads the
+rate. Each mark carries its share of whatever window it was measured over — the
+indexer's week when there is one, the 240-block ring when there is not, never a
+blend of the two — on a per-instance lane the patch turns into one factor,
+`mix(cohortShareFloor, 1, share / shareMax)`, that scales both the sink's `k`
+and the pile it leaves at the lip. Those are the same quantity said twice, since
+`d(r^2)/dt = -k` is the speed the streamlines carry and the pile is what
+arriving at that speed leaves. So the largest cohort takes the medium at the
+full `k` and a small one creeps in at the floor, which is a knob
+(`cohortShareFloor`, 0.35) because how slow a small cohort may drink and still
+read as drinking is a judgement by eye. The factor is 1 at the largest share and
+below 1 everywhere else, so it only ever turns cohorts down and no ceiling
+moves. Neither aperture program declares the lane: a share means a RATE, and the
+mark has no rate to spend one on. NOTHING ELSE on the patch reads it either —
+not the colour, not the amplitude, and not the gulp, because one block is one
+block whoever won it.
+
+The implied hashrate the cohort card prints beside that share is a HUD FACT AND
+NOT A SCENE ONE: `networkHashRateHs` divides the chain's own difficulty by the
+mean of the block intervals this session observed, and nothing in the colony
+reads the result. The scene takes shares; the readouts take rates.
 
 There is NO FLOOR, NO SHEET AND NO GROUND TERM anywhere under the plane, and
 that is a measurement rather than an omission. A sibling `ColonyMist` layer drew
@@ -1700,6 +1729,7 @@ Before merging a Canvas change, answer:
 | Screen-space capsule geometry | `packages/ui/src/geometry/screenSpaceCapsuleLine.ts` |
 | Peer topology and block flood | `packages/ui/src/derives/networkTopology.derive.ts`, `packages/ui/src/derives/networkFlood.derive.ts` |
 | Peer render layers and Cell delivery | `packages/ui/src/components/NetworkColony.tsx`, `packages/ui/src/components/BlockDeliveryLayer.tsx` |
+| Who made the blocks, over both windows, and the rate the card implies from it | `packages/ui/src/derives/blockProducers.derive.ts`, `packages/ui/src/derives/networkHashRate.derive.ts`, `packages/ui/src/components/hud/producerReadout.ts`, `packages/ui/src/components/hud/MinerNodeCard.tsx` |
 | POW cohort apertures, their intake patch, and the link stop at their outer edge | `packages/ui/src/components/ColonyCohorts.tsx`, `packages/ui/src/materials/colonyCohort.ts`, `packages/ui/src/components/ColonyEdges.tsx` |
 | The mist the cohorts drink: the intake patch and its noise tile | `packages/ui/src/materials/colonyMist.ts` |
 | Carrier glyph and contact front | `packages/ui/src/geometry/protocolCarrier.ts`, `packages/ui/src/materials/contactWaveMaterial.ts` |

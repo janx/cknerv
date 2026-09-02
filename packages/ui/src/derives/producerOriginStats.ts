@@ -32,8 +32,10 @@ export interface ProducerOriginStatsSnapshot {
   /** Waves the colony actually stamped since the last reset.
    *
    *  ⚠️ WHAT FIRED, NEVER WHAT COMPLETED. A genuine producer key-set change —
-   *  a tail producer entering or leaving the 240-block window — rebuilds the
-   *  topology, and a rebuild landing mid-wave truncates the wave in flight.
+   *  a tail producer entering the union of the 240-block window and the
+   *  indexer's week, or leaving BOTH of them, since leaving one alone no longer
+   *  moves the set — rebuilds the topology, and a rebuild landing mid-wave
+   *  truncates the wave in flight.
    *  That is expected occasionally and it must not disturb this tally, so the
    *  count is taken at the instant the wave is armed and nothing ever looks
    *  back to see whether it finished crossing. */

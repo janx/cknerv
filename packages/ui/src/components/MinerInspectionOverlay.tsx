@@ -27,7 +27,16 @@ import {
 
 /** The shortest of the four dialects — a header, two chain facts, the declared
  *  build with its join, and one honesty line — so it places by its own small
- *  box until the card has been measured. */
+ *  box until the card has been measured.
+ *
+ *  ⚠️ THE HEIGHT IS A FIRST-FRAME ESTIMATE AND IT IS NOW AN UNDER-COUNT. Those
+ *  three plates were the whole card until the indexer's week gave it a fourth
+ *  (`MinerNodeCard`'s `WEEK`, five more rows), and a cohort in that week is
+ *  taller than 300 px. `ResizeObserver` corrects the box on the frame after the
+ *  first, so what this number can still cost is one frame of placement, not a
+ *  wrong placement — which is the only reason it is not simply raised: the
+ *  tallest dialect is not the same card every time, and sizing the estimate to
+ *  the tallest would move the other three's first frame the other way. */
 const DEFAULT_CARD_WIDTH_PX = 340;
 const DEFAULT_CARD_HEIGHT_PX = 300;
 

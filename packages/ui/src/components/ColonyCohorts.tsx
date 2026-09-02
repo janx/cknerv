@@ -208,10 +208,12 @@ import { createNonEmptyDrawGpuProbeCallbacks } from '../tweaks/nonEmptyGpuProbeC
 
 /** Ceiling on the marks this layer will draw at once.
  *
- *  ⚠️ A SAFETY VALVE AND NOT A BUDGET. The count is bounded twice over already
- *  — a rolling window holds a handful of distinct payout identities, and the
- *  producer window itself is capped upstream — so nothing on a real chain comes
- *  near this. It is here because "a handful" is a fact about today's mainnet
+ *  ⚠️ A SAFETY VALVE AND NOT A BUDGET. The count is bounded on BOTH sides of
+ *  the union it now stages: the rolling window holds a handful of distinct
+ *  payout identities and is capped upstream, and the indexer's week is capped
+ *  at `PRODUCER_LEDGER_ROW_CAP` (16) before it leaves the adapter — so their
+ *  sum on a real chain (7 rows over ~6 window producers, live 2026-09-02)
+ *  comes nowhere near this. It is here because "a handful" is a fact about today's mainnet
  *  rather than a property of the wire, and a layer whose instance count is
  *  sized from upstream data should say out loud where it stops. The excess is
  *  dropped deterministically (the tail of the staged list) and warned once. */

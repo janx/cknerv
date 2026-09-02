@@ -926,6 +926,41 @@ nothing else — the row keeps its window figures, the other rows are filled, an
 an absent balance is never rendered as a zero one, because "not looked up, or
 looked up and refused" is not "holds nothing".
 
+In the browser the ledger is reached **through the live capability list**, which
+no other pushed record needs. Every other aggregate expires on a clock or on an
+anchor and this one has neither, so nothing in the client would ever age a week
+out: a source that stops declaring `producer_ledger` is what stops feeding one.
+
+The two windows meet in one derive. `deriveBlockProducers` joins the ledger onto
+the canonical window by key, and the standing set is their UNION — a producer the
+week names and the ring has lost stands with zero window blocks and its week
+beside it, a producer the ring holds and the week does not carries no ledger at
+all. Ranking reads exactly one of them, the week when there is a week and the
+ring when there is not, and neither numerator is ever divided by the other's
+denominator. Coherence is re-checked on this side rather than trusted from the
+adapter, with one rule the adapter does not need: every shannon string has to be
+digits, because `BigInt` is what reads them and `BigInt('12 CKB')` throws inside
+a render. An incoherent record is treated as absent, so the worst a bad one can
+cost is the view every build before the ledger had.
+
+Three surfaces read the join, and only the last of them is a HUD readout. The
+**colony** takes the union as its cohort set, so an aperture stays cut into the
+peer membrane through a boot, a reorg and a quiet half hour — the hole used to
+close with its producer's last block. The **intake** under that aperture takes
+the week's share as a rate, because the sink's strength is one
+(`canvas-rendering.md` §10.1). And the **cohort card** grows a fourth plate,
+`WEEK`: the week's blocks and share, the payout address, the harvest that
+address holds with its live-cell and transaction counts, and the sampled reward
+when this refresh sampled this cohort. ⚠️ The implied hashrate printed beside
+them is NOT ckbadger's. `statistics/network.hashRate` is never read; the client
+multiplies the share by its own estimate off the chain's difficulty and its own
+observed block intervals, so the plate mixes an indexed share with a local
+measurement and states both windows rather than importing a third. The plate is
+absent when no week reached the view at all and dashes its rows when a week
+names other cohorts, and `MESH·02` states the week in its row while keeping the
+240-block window in that row's title. No pool name appears on any of them,
+because there is none to print.
+
 ## Persistence
 
 Optional semantics are bounded in memory and intentionally not persisted. They
