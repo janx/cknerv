@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { PEER_NETWORK_PALETTE } from '../visualPalette';
+import { PEER_NETWORK_PALETTE, type SceneColor } from '../visualPalette';
 
 /**
  * The two faces of a POW cohort's mark, and nothing else.
@@ -9,6 +9,17 @@ import { PEER_NETWORK_PALETTE } from '../visualPalette';
  * plane (`makeCohortFaceMaterial`), and a camera-facing halo carrying the same
  * hole (`makeCohortAuraMaterial`). Nothing volumetric, nothing hanging under
  * the slab, and no second cadence — one hole, two rays through it.
+ *
+ * ⭐⭐⭐ AND THE HOLE HAS A WINDOW IN IT. The peer mesh is the boundary between
+ * two universes — above it the cell canopy, below it the one a cohort drinks
+ * from — so looking into the aperture is looking at the other world: the
+ * throat's wall lit FROM BELOW, and, wherever the view ray reaches deeper than
+ * `COHORT_INTAKE_LEVEL`, the surface of the medium rising toward the lip. The
+ * lip itself is fed by what arrives at it and is uneven for that reason, and on
+ * the block this cohort wins the whole mouth GULPS (`aGulp`). ⛔ Every pixel of
+ * it is still drawn on the aperture's own two quads: nothing is drawn under the
+ * plane by this file, and nothing above it. The depth is the ray's, not a
+ * volume's.
  *
  * ⭐⭐⭐ A PLANET BLOCKS THE BACKGROUND; A HOLE BENDS IT. Every volume this
  * feature tried — a pillar, a vortex, a marched funnel — put a 20–40 world-unit
@@ -46,7 +57,7 @@ import { PEER_NETWORK_PALETTE } from '../visualPalette';
  * states.
  *
  * ⭐⭐ BOTH FACES ARE ADDITIVE, UNLIT AND DEPTH-READ-ONLY, AND NO DARK PIXEL IS
- * EVER DRAWN. The pupil is unlit because bright structure REFUSES TO FILL it —
+ * EVER DRAWN. The mark's own structure REFUSES TO FILL the middle —
  * `smoothstep` up out of zero on the face, the ray/plane crossing on the aura —
  * which is this scene's own additive idiom for a hole. What this replaced spent
  * five register violations on the same idea: the only normal-blended object,
@@ -55,33 +66,44 @@ import { PEER_NETWORK_PALETTE } from '../visualPalette';
  * by any colony edge behind it. The accepted cost of the swap is that nothing
  * behind a cohort is occluded any more.
  *
- * ⚠️ WHICH MAKES THE UNLIT MIDDLE SOMETHING OTHER LAYERS CAN BREAK. With no
- * shadow and no depth write there is nothing to reject a bright line laid
- * across the pupil; it is simply added to it. `COHORT_LINK_STOP_R` below is
- * where that is paid for: a cohort's own links end at the mark's outer edge, in
- * `ColonyEdges`, and the aperture stays its own from every camera.
+ * ⚠️ THE MIDDLE IS NO LONGER UNLIT, AND THAT INVARIANT MOVED ON PURPOSE. R19
+ * pinned the pupil at exactly zero; the window fills it with the other world.
+ * What replaces the old claim is stronger, not weaker: the face's OWN structure
+ * — rim, skirt, grain — still reaches EXACTLY zero in there, and every photon
+ * inside the pupil is `COHORT_INTERIOR_COLD`, a colour no other draw in the
+ * peer plane wears. The middle is still not the network's; it now says whose
+ * it is. (Do NOT restore the "no dark pixel" reading as "no pixel": the hole
+ * was never dark and is not dark now.)
  *
- * ⛔ AND WHAT THIS FORM DELIBERATELY DOES NOT DO — do not "fix" the absence.
- * 「从下方汲取能量」 is NOT EXPRESSED, by the user's decision, and after the lab
- * measured both halves of the only way there was to express it: a sub-plane
- * shaft gated through the hole is invisible except from directly overhead, and
- * an ungated one is a searchlight in miniature — the exact failure the aperture
- * exists to stop being. It is therefore deferred as a separate problem, and it
- * is ABSENT ON PURPOSE rather than missing.
+ * ⚠️ AND THE MIDDLE IS STILL SOMETHING OTHER LAYERS CAN BREAK. With no shadow
+ * and no depth write there is nothing to reject a bright line laid across it;
+ * it is simply added. `COHORT_LINK_STOP_R` below is where that is paid for: a
+ * cohort's own links end at the mark's outer edge, in `ColonyEdges`, and the
+ * aperture stays its own from every camera.
  *
- * ⭐ The one surviving hint is `COHORT_AURA_HALO_BIAS` (knob `cohortHaloBias`),
- * which weights the halo DOWNWARD in world Y. It is the only cue for "the
- * energy is under the plane" that costs no silhouette: a gradient inside a glow
- * that is already there, so there is no cone, no stub, nothing that can read as
- * a beam, and it vanishes on its own from overhead — where "below" is not a
- * direction a viewer can see. That is the whole of it. Anything more has to
- * earn a draw of its own first.
+ * ⛔ AND WHAT THIS FORM STILL DOES NOT DO — do not "fix" the absence. There is
+ * NO PLUME, COLUMN, FUNNEL OR PILLAR under the mouth, at any brightness
+ * profile. Twenty-five rounds measured that: a shaft gated through the hole is
+ * invisible except from directly overhead, and an ungated one is a searchlight
+ * in miniature — up close, a saucer with a tractor beam. ⭐ ONLY SURFACES BEING
+ * DRAWN EVER READ AS INTAKE, which is exactly what the window is and what the
+ * mist beside it will be. A volume is not an option that was left untried.
+ *
+ * ⭐ The second cue for "the energy is under the plane" costs no silhouette
+ * either: `COHORT_AURA_HALO_BIAS` (knob `cohortHaloBias`) weights the halo
+ * DOWNWARD in world Y, and `COHORT_AURA_UNDER_TINT` tips the half of it below
+ * the plane toward the window's own colour. Both are gradients inside a glow
+ * that is already there — no cone, no stub, nothing that can read as a beam —
+ * and both vanish from overhead on their own, where "below" is not a direction
+ * a viewer can see.
  *
  * The design argument for each face sits on its own factory below; read it
  * before touching either.
  *
- * It remains continuous idle behaviour. It takes no block pulse, flood or
- * shockwave, and neither program reads a cohort's share.
+ * It remains continuous idle behaviour, and neither program reads a cohort's
+ * share. The one per-block input is `aGulp` — the sim second of the block this
+ * cohort won — and it is a LANE rather than a pulse: the layer above holds it
+ * at `COHORT_NEVER_WON` and nothing writes it yet.
  */
 
 /**
@@ -195,15 +217,16 @@ export const COHORT_CONTEXT_ENERGY_GLSL = /* glsl */ `float cohortEnergy = mix(
  * round was the aperture itself, so this drops the volume entirely and draws
  * only the opening.
  *
- * 1. `makeCohortFaceMaterial` — a disc LYING IN THE COLONY PLANE: a bright rim,
- *    a small dark pupil, and a fine radial intake grain. ⭐ It draws a CIRCLE;
- *    every ellipse a viewer sees is projection, and because all cohorts
- *    foreshorten identically that agreement is what makes the colony plane
- *    itself legible.
+ * 1. `makeCohortFaceMaterial` — a disc LYING IN THE COLONY PLANE: a bright rim
+ *    fed by what arrives at it, a fine radial intake grain, and a WINDOW where
+ *    the pupil is. ⭐ It draws a CIRCLE; every ellipse a viewer sees is
+ *    projection, and because all cohorts foreshorten identically that agreement
+ *    is what makes the colony plane itself legible.
  * 2. `makeCohortAuraMaterial` — a small camera-facing quad whose halo carries
  *    THE SAME HOLE, cut by crossing the view ray with the colony plane. ⚠️ It
  *    is not decoration: below roughly 15° of elevation it is the only thing
- *    keeping the mark from reading as a dash among the peer links.
+ *    keeping the mark from reading as a dash among the peer links, which is why
+ *    it is lifted there (`COHORT_AURA_LOW_BOOST`).
  *
  * ⭐ ORIENTATION IS SHARED WITH THE COLONY'S OWN PLANE AND IS NEVER PER-COHORT.
  * The plane's normal is world Y, which is also the colony's rotation axis, so
@@ -211,10 +234,12 @@ export const COHORT_CONTEXT_ENERGY_GLSL = /* glsl */ `float cohortEnergy = mix(
  * register violation this stays clear of is a mark with an axis a viewer could
  * read as pointing somewhere; a circle in the shared plane has none.
  *
- * ⚠️ 「从下方汲取能量」 IS NOT EXPRESSED HERE, AND THAT IS A DECISION. Measured
- * in the lab: a sub-plane shaft gated through the hole is invisible except from
- * directly overhead, and ungated it is a searchlight in miniature. It does not
- * earn a draw, so it is not in this file — do not smuggle a substitute in.
+ * ⭐⭐ 「从下方汲取能量」 IS EXPRESSED BY THE WINDOW AND BY NOTHING ELSE. It took
+ * twenty-five rounds to find the one form that says it without lying: you SEE
+ * INTO the hole, and what is in there is a surface being drawn upward. ⛔ The
+ * rejected halves are still rejected — a sub-plane shaft gated through the hole
+ * is invisible except from directly overhead, and ungated it is a searchlight
+ * in miniature. Do not smuggle a volume back in beside the window.
  */
 
 /**
@@ -431,6 +456,160 @@ export const COHORT_FACE_AA = 1;
 /** The face's own amplitude, before the knee. */
 export const COHORT_FACE_AMP = 1;
 
+/* ----------------------------------------------------- the window in the face */
+
+/**
+ * ⭐⭐⭐ THE PUPIL IS A WINDOW, AND WHAT IS SEEN THROUGH IT IS THE OTHER WORLD.
+ *
+ * The peer mesh is the boundary between two universes: above it the cell
+ * canopy, below it the one a cohort drinks from. A cohort is a HOLE in that
+ * membrane, and R19 drew the hole as a refusal — bright structure declining to
+ * fill the middle. That was honest and it was also empty: a viewer at the
+ * default camera saw a ring and had no way to tell a hole from a doughnut.
+ *
+ * The window is what the hole SHOWS: the throat's wall, lit from below by what
+ * is rising in it, and above a certain depth the medium's own surface. It is
+ * the R22 form, approved on the live preview of 2026-09-02, and it is what
+ * makes 「从下方汲取能量」 sayable at last. ⛔ Note what it still is NOT: nothing
+ * is drawn UNDER the plane by this material and nothing is drawn above it. The
+ * window is a rendering of the inside of the aperture, on the aperture's own
+ * quad, and the only reason it reads as depth is the view ray's crossing.
+ *
+ * ⚠️ THE PUPIL IS NO LONGER UNLIT, AND THAT IS THE ONE INVARIANT THIS ROUND
+ * MOVES ON PURPOSE. What survives, and is pinned instead, is stronger: the
+ * face's OWN structure — rim, skirt, grain — still reaches EXACTLY zero inside
+ * the pupil, and every photon in there belongs to `COHORT_INTERIOR_COLD`, a
+ * colour no other draw in the peer plane wears. The middle is still not the
+ * network's; it now says whose it is.
+ */
+
+/**
+ * How far below the lip the other world's medium stands, in world units.
+ *
+ * ⭐⭐⭐ ONE CONSTANT, TWO CONSUMERS, AND THEY MUST NEVER BECOME TWO NUMBERS.
+ * This is the depth at which the window stops showing wall and starts showing
+ * surface, and it is ALSO the top of the mist's mound under the same cohort
+ * (`ColonyMist`, T4 of the intake-vortex plan): the patch of mist below the
+ * plane is lifted into a gentle mound whose summit is exactly what the hole
+ * shows. If the two ever drift, a viewer looking into the mouth sees a surface
+ * at one height and a viewer looking at the mist beside it sees another, and
+ * the two draws stop being one substance.
+ *
+ * 0.7 wu, from the approved preview (`mouth.level` in the lab's `field: mist`
+ * scene). It is a knob candidate — `cohortRise` in T4 — and the knob has to
+ * move BOTH readers, which is why the number lives here rather than in either.
+ */
+export const COHORT_INTAKE_LEVEL = 0.7;
+
+/**
+ * The other world's colour: the register nothing on the peer plane wears.
+ *
+ * ⚠️ IT IS DELIBERATELY NOT A `PEER_NETWORK_PALETTE` TOKEN, and the nearest one
+ * was measured rather than eyeballed: `inbound` is (0.369, 0.725, 1.0) against
+ * this (0.45, 0.80, 1.0) — about 8 % apart in red and green, so borrowing it
+ * would have been visually defensible. It is refused for a semantic reason. The
+ * peer palette's five tokens all name roles INSIDE the peer plane (the
+ * scaffold, an outbound link, an inbound one, a version, the hot end), and this
+ * colour's whole job is to belong to the universe on the other side of that
+ * plane. Naming it `inbound` would tell the next reader that the light in the
+ * pupil is a peer-link fact, and would tie the other world's register to the
+ * link grammar so that a future retune of one moved the other.
+ *
+ * ⭐ Its BLUE IS EXACTLY 1.0, like `scaffold` and `coldWhite`, which is what
+ * keeps the additive ceiling's arithmetic (see `COHORT_AURA_KNEE`) unchanged:
+ * every colour this layer can emit is full in blue, so the binding channel is
+ * still `shapeFace² + shapeAura²` and the Pythagorean pair still bounds it.
+ *
+ * The value is the approved preview's `mouth.cold`, with `warmth` at 0 — the
+ * lab could lerp it toward the HUD's chrome orange and the user left it cold.
+ */
+export const COHORT_INTERIOR_COLD: SceneColor = [0.45, 0.80, 1.0];
+
+/** How hard the medium's surface burns, seen through the hole. Lab: 1.15. */
+export const COHORT_FACE_INTERIOR_AMP = 1.15;
+
+/**
+ * The medium's feature size, in cycles per world unit of the sampling plane.
+ *
+ * ⚠️ IT IS THE LAB'S NUMBER ON A HOLE HALF THE LAB'S SIZE, and that is left
+ * alone on purpose rather than compensated. The lab's mouth had a 1.6 wu
+ * radius; this branch's pupil is 0.521 wu and its lip 0.84 wu, so the feed
+ * carries roughly four lobes around the lip where the lab carried seven. It may
+ * want doubling. T6 measures it at a 40 px/wu mouth; the knob is `cohortRise`'s
+ * neighbour and nobody should guess it from here.
+ */
+export const COHORT_FACE_INTERIOR_SCALE = 0.55;
+
+/** How fast the medium rises toward the lip, in zoom doublings per second. */
+export const COHORT_FACE_RISE = 0.16;
+
+/** How fast it churns, sideways, while it rises. */
+export const COHORT_FACE_BOIL = 0.35;
+
+/** How hard the throat's wall is lit from below, before the window's own 0.55. */
+export const COHORT_FACE_WALL_AMP = 0.85;
+
+/**
+ * Flutes around the throat's wall.
+ *
+ * ⚠️ AN INTEGER, AND THE SEAM IS WHY. The wall's grain is a function of the
+ * azimuth `phi ∈ (-π, π]`, so anything but a whole number of cycles around the
+ * throat leaves a discontinuity down one side of the hole. The lab got this for
+ * free from a repeating texture whose span happened to be integral; here it is
+ * a pair of cosines, and the constant has to carry the property itself.
+ */
+export const COHORT_FACE_WALL_GRAIN = 26;
+
+/* -------------------------------------------------------- the gulp, on a block */
+
+/**
+ * The lane's "this cohort has never won" sentinel, in sim seconds.
+ *
+ * ⚠️⚠️⚠️ ZERO WOULD READ AS "WON AT BOOT" AND FLARE EVERY COHORT ON LOAD. R16
+ * paid for that once: an unfilled `Float32Array` is all zeros, `uTime` starts at
+ * zero, and the envelope below is evaluated at `age = uTime - 0` — which is
+ * exactly the peak of the gulp for the first half second of every session, on
+ * every cohort at once, for a block none of them mined.
+ *
+ * ⭐ AND IT IS FAR-NEGATIVE RATHER THAN MERELY NEGATIVE, so no reachable
+ * `uTime` can walk back into the envelope's live band. At -1e6 the age is a
+ * million seconds — eleven days of sim time — before the envelope's `exp(-age /
+ * 0.45)` is anything but a denormal, and `exp(-2.2e6)` is zero in float32
+ * outright. `cohortGulp.test.ts` pins it as exactly 0 over `uTime ∈ [0, 1e5]`.
+ */
+export const COHORT_NEVER_WON = -1e6;
+
+/** Decay of the gulp, in seconds: how long the flare takes to leave. */
+export const COHORT_GULP_FALL = 0.45;
+
+/** Attack of the gulp, in seconds: how long it takes to arrive. */
+export const COHORT_GULP_RISE = 0.06;
+
+/** How much the gulp lifts the interior at its peak. Lab: 2.2. */
+export const COHORT_GULP_INTERIOR = 2.2;
+
+/** How much it lifts the lip. Lab: 1.6 — less, so the mouth reads as SWALLOWING
+ *  rather than as flashing. */
+export const COHORT_GULP_LIP = 1.6;
+
+/**
+ * The gulp envelope, as ONE string, leaving `gulp` in scope.
+ *
+ * ⭐ A SHARED SNIPPET BECAUSE THE MIST WILL WANT THE SAME CURVE. The mouth and
+ * the patch of mist under it gulp on the same block, and two hand-copied
+ * envelopes would drift apart the first time either was tuned. It needs `uTime`
+ * and `vGulp` in scope and nothing else.
+ *
+ * ⭐ IT IS EXACTLY ZERO FOR A NEGATIVE AGE, which is what makes
+ * `COHORT_NEVER_WON` a sentinel rather than a very old win: the `age > 0.0`
+ * branch is what a cohort that has never mined takes, at every `uTime`.
+ */
+export const COHORT_GULP_GLSL = /* glsl */ `float gulpAge = uTime - vGulp;
+        float gulp = gulpAge > 0.0
+          ? exp(-gulpAge / ${COHORT_GULP_FALL.toFixed(2)})
+            * (1.0 - exp(-gulpAge / ${COHORT_GULP_RISE.toFixed(2)}))
+          : 0.0;`;
+
 /**
  * The face's soft knee. ⭐ A KNEE AND NEVER A SCALE.
  *
@@ -513,6 +692,54 @@ export const COHORT_AURA_PUPIL_SCALE = 1.35;
 export const COHORT_AURA_HOT_MIX = 0.1;
 
 /**
+ * A second, tighter term added to the halo's profile — the peer sprite's own
+ * core, which the skirt alone does not have.
+ *
+ * ⭐ IT IS A GRAMMAR TIE AND NOT A BRIGHTNESS TWEAK. Every measured peer in
+ * this scene is drawn as a core inside a skirt; a cohort drawn as a skirt alone
+ * is the one stop in the colony built to a different rule, and at range that is
+ * exactly what it looked like. The hole then takes the core straight back out
+ * of the middle, so what survives is a peer's own profile with the pupil
+ * removed — which is precisely the claim the mark is making.
+ */
+export const COHORT_AURA_CORE_AMP = 0.6;
+
+/** Fall-off of that core term. Sharper than the skirt's, which is what makes it
+ *  a core rather than a second skirt. */
+export const COHORT_AURA_CORE_EXP = 3.2;
+
+/**
+ * How far the halo is lifted when the colony plane is seen nearly edge-on.
+ *
+ * ⭐⭐ THE FACE CLOSES TO A SLIT AT A LOW CAMERA, AND SOMETHING HAS TO CARRY THE
+ * MARK THERE. A disc lying in the plane has zero projected area at zero
+ * elevation, so below roughly 15° the face is a bright horizontal sliver
+ * indistinguishable from a peer link. The halo is view-independent and is the
+ * only thing left; at the elevations where it is the whole mark it is allowed
+ * to be 2.6x itself. Above `|dir.y|` 0.55 (33° of elevation) the boost is gone
+ * entirely and the face is doing the work again.
+ */
+export const COHORT_AURA_LOW_BOOST = 2.6;
+
+/** Where the low-elevation boost begins to fade, in `|dir.y|`. */
+export const COHORT_AURA_LOW_BOOST_IN = 0.05;
+
+/** Where it is completely gone. */
+export const COHORT_AURA_LOW_BOOST_OUT = 0.55;
+
+/**
+ * How far the halo BELOW the plane wears the other world's colour.
+ *
+ * ⭐ THE HALO STRADDLES THE MEMBRANE, so it is the one draw in this layer that
+ * can say which side is which without drawing anything new. Above the plane it
+ * is the network's cyan; below it, it tips toward `COHORT_INTERIOR_COLD` — the
+ * same colour the window shows through the hole. The cue costs no silhouette,
+ * exactly like `COHORT_AURA_HALO_BIAS` beside it, and it vanishes from overhead
+ * on its own, where "below" is not a direction a viewer can see.
+ */
+export const COHORT_AURA_UNDER_TINT = 0.8;
+
+/**
  * The aura's soft knee — and the one number on this layer that is NOT the lab's.
  *
  * ⚠️⚠️⚠️ TWO ADDITIVE DRAWS OF ONE MARK SHARE A CEILING, AND NEITHER CAN SEE IT.
@@ -586,11 +813,19 @@ export const COHORT_AURA_HALF = cohortAuraHalfExtent(
  *
  * ⚠️ THAT TIE ASSUMES THE INSTANCE MATRIX CARRIES NO SCALE. `ColonyCohorts`
  * builds it with `makeTranslation`; a scaled instance would move the face's
- * radius without moving the aura's, and the one hole would become two.
+ * radius without moving the aura's, and the one hole would become two. ⭐ THE
+ * WINDOW LEANS ON THE SAME ASSUMPTION FOR THE SAME REASON: the vertex stage
+ * takes the TRANSPOSE of `mat3(modelMatrix * instanceMatrix)` as its inverse to
+ * put the camera in the instance's own plane coordinates, which is exact for a
+ * rotation about Y and wrong for anything else.
  *
- * `aSeed` is the same per-instance lane the other faces read. There is NO
- * `aShare` lane: share means rate on this layer, and neither aperture program
- * has a rate share could drive that survives the grain's own prefilter.
+ * `aSeed` is the same per-instance lane the other faces read. `aGulp` is the
+ * new one: the SIM SECOND of the block this cohort won, or `COHORT_NEVER_WON`
+ * for a cohort that has never won one. ⚠️ It is on the same clock `uTime` is —
+ * `simClock.elapsedSec` — because the envelope is `uTime - aGulp` and two
+ * clocks would make that difference meaningless. There is still NO `aShare`
+ * lane: share means rate on this layer, and neither aperture program has a rate
+ * share could drive that survives the grain's own prefilter.
  */
 export function makeCohortFaceMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
@@ -636,18 +871,33 @@ export function makeCohortFaceMaterial(): THREE.ShaderMaterial {
       uKnee: { value: COHORT_CLIP_KNEE },
       uBreatheDepth: { value: COHORT_AP_BREATHE_DEPTH },
       uBreatheHz: { value: COHORT_BREATHE_HZ },
+      // ---- the window, and what it shows
+      uInterior: {
+        value: new THREE.Color().setRGB(...COHORT_INTERIOR_COLD),
+      },
+      uLevel: { value: COHORT_INTAKE_LEVEL },
+      uRise: { value: COHORT_FACE_RISE },
+      uBoil: { value: COHORT_FACE_BOIL },
+      uInteriorAmp: { value: COHORT_FACE_INTERIOR_AMP },
+      uInteriorScale: { value: COHORT_FACE_INTERIOR_SCALE },
+      uWallAmp: { value: COHORT_FACE_WALL_AMP },
+      uWallGrain: { value: COHORT_FACE_WALL_GRAIN },
     },
     vertexShader: /* glsl */ `
       attribute float aSeed;
+      attribute float aGulp;
 
       uniform float uHalf;
 
       varying vec2 vP;
+      varying vec3 vCam;
       varying vec3 vOrigin;
       varying float vSeed;
+      varying float vGulp;
 
       void main() {
         vSeed = aSeed;
+        vGulp = aGulp;
         // The instance's own world point, for the proximity exemption. It is
         // the SAME quantity every other face in this layer carries.
         vec4 origin = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
@@ -660,6 +910,19 @@ export function makeCohortFaceMaterial(): THREE.ShaderMaterial {
         // Y preserves its length, so this is the same radius the aura reads
         // off its ray/plane crossing.
         vP = local.xz;
+        // ⭐⭐ THE CAMERA, IN THE INSTANCE'S OWN PLANE COORDINATES — which is
+        // what lets the window do its ray arithmetic in the frame the disc is
+        // drawn in, so the throat and its wall turn with the plate exactly as
+        // the grain does. The colony group carries a ROTATION ABOUT WORLD Y and
+        // nothing else (no scale anywhere on the path, and the instance matrix
+        // is a pure translation), so this basis is orthonormal and its
+        // TRANSPOSE is its inverse — three dot products against the columns.
+        // ⚠️ That is the same assumption length(vP) already rests on: a scaled
+        // instance would move the face's radius without moving the aura's, and
+        // one hole would become two.
+        mat3 frame = mat3(modelMatrix * instanceMatrix);
+        vec3 toCam = cameraPosition - origin.xyz;
+        vCam = vec3(dot(frame[0], toCam), dot(frame[1], toCam), dot(frame[2], toCam));
         vec4 world = modelMatrix * instanceMatrix * vec4(local, 1.0);
         gl_Position = projectionMatrix * viewMatrix * world;
       }
@@ -695,14 +958,87 @@ export function makeCohortFaceMaterial(): THREE.ShaderMaterial {
       uniform float uKnee;
       uniform float uBreatheDepth;
       uniform float uBreatheHz;
+      uniform vec3 uInterior;
+      uniform float uLevel;
+      uniform float uRise;
+      uniform float uBoil;
+      uniform float uInteriorAmp;
+      uniform float uInteriorScale;
+      uniform float uWallAmp;
+      uniform float uWallGrain;
 
       varying vec2 vP;
+      varying vec3 vCam;
       varying vec3 vOrigin;
       varying float vSeed;
+      varying float vGulp;
 
       const float TAU = 6.28318530718;
 
+      // Lattice cells per unit of the medium's sampling coordinate. ⭐ IT IS
+      // THE LAB'S TILE, WRITTEN OUT: the preview drew this medium from a 256²
+      // value-noise texture whose two coarsest channels hold 8 and 16 cells
+      // across the tile, sampled in UV. The same two frequencies are stated
+      // here so the port is a change of MECHANISM and not of look.
+      const float MEDIUM_CELLS = 8.0;
+
       float sq(float x) { return x * x; }
+
+      // ---- the other world's medium --------------------------------------
+      //
+      // ⭐⭐ A HASH RATHER THAN A SAMPLER, DELIBERATELY. The medium below the
+      // plane has to be uneven or the window reads as a lit disc, and the lab
+      // fetched it from a 256² tile. A texture here would make this the only
+      // sampled draw in the peer plane — one of the five register violations
+      // the mark this replaced was retired for — and it would also hand this
+      // material an asset to own, dispose and share with the mist layer that
+      // has not been written yet. Bilinear value noise is what that tile
+      // CONTAINED, so it is written out instead: same construction, same two
+      // frequencies, no asset.
+      //
+      // ⚠️ IT IS PAID FOR ONLY WHERE IT SHOWS. The medium is evaluated inside
+      // the pupil (3 % of the disc) and again on the lip's own Gaussian, and
+      // nowhere else — see the two guards in main().
+      float hashOne(vec2 p) {
+        vec3 q = fract(p.xyx * 0.1031);
+        q += dot(q, q.yzx + 33.33);
+        return fract((q.x + q.y) * q.z);
+      }
+
+      float lattice(vec2 p) {
+        vec2 cell = floor(p);
+        vec2 f = p - cell;
+        vec2 u = f * f * (3.0 - 2.0 * f);
+        float a = hashOne(cell);
+        float b = hashOne(cell + vec2(1.0, 0.0));
+        float c = hashOne(cell + vec2(0.0, 1.0));
+        float d = hashOne(cell + vec2(1.0, 1.0));
+        return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+      }
+
+      // Ridged, RISING and churning: features expand toward the eye, with two
+      // zoom phases cross-faded so the octave's reset is never seen, while a
+      // slow drift slides the whole thing sideways. It exists nowhere in this
+      // scene except inside a hole.
+      float otherMedium(vec2 p, float seed) {
+        float ph = uTime * uRise;
+        float zA = exp2(fract(ph));
+        float zB = exp2(fract(ph + 0.5));
+        float wA = 1.0 - abs(2.0 * fract(ph) - 1.0);
+        vec2 drift = vec2(0.13, 0.07) * uTime * uBoil + seed * 7.0;
+        vec2 pa = p * uInteriorScale / zA + drift;
+        vec2 pb = p * uInteriorScale / zB + drift * 0.8 + 0.37;
+        float na = lattice(pa * MEDIUM_CELLS) * 0.62
+          + lattice((pa * 2.1 + 0.2) * MEDIUM_CELLS * 2.0) * 0.38;
+        float nb = lattice(pb * MEDIUM_CELLS) * 0.62
+          + lattice((pb * 2.1 + 0.2) * MEDIUM_CELLS * 2.0) * 0.38;
+        float n = mix(nb, na, wA);
+        // ⚠️ The max() is not decoration: a negative base is UNDEFINED for
+        // GLSL's power function, and the file's own guard refuses a base it
+        // cannot prove non-negative. The expression is in [0, 1] by
+        // construction; the clamp makes that visible to a reader and a parser.
+        return pow(max(1.0 - abs(2.0 * n - 1.0), 0.0), 1.6);
+      }
 
       void main() {
         float r = length(vP);
@@ -765,15 +1101,107 @@ export function makeCohortFaceMaterial(): THREE.ShaderMaterial {
 
         float intake = uInAmp * (skirt + fill) * swell * stria;
 
+        // ---- the block this cohort won, if it has ever won one.
+        ${COHORT_GULP_GLSL}
+
+        // ---- THE WINDOW: what the hole SHOWS. --------------------------------
+        // ⭐⭐⭐ THE PUPIL IS NOT UNLIT ANY MORE — it is a window onto the other
+        // world, and the face's own structure is still exactly zero in there
+        // (pupil multiplies it and reaches zero). Every photon below belongs
+        // to uInterior, a colour no other draw in the peer plane wears.
+        float pupR = rimR * pup;
+        float interior = 0.0;
+        if (r < pupR) {
+          // The view ray, IN THE INSTANCE'S OWN PLANE. vCam is the camera
+          // expressed in the same basis vP is, so the whole window turns with
+          // the plate and its wall does not slide as the colony rotates.
+          vec3 dir = normalize(vec3(vP.x, 0.0, vP.y) - vCam);
+          float lxz = length(dir.xz);
+          vec2 e = lxz > 1e-5 ? dir.xz / lxz : vec2(0.0, 1.0);
+          float tanEl = abs(dir.y) / max(lxz, 1e-5);
+          // Continue the ray past the plane and meet the throat's cylinder;
+          // the depth it reaches is the hit distance times tan(elevation). The
+          // FAR side of the hole shows wall under the lip, the near side looks
+          // away down the shaft — which is why this needs the ray and not the
+          // radius.
+          float b = dot(vP, e);
+          float t = -b + sqrt(max(b * b + pupR * pupR - r * r, 0.0));
+          float h = t * tanEl;
+          vec2 hitP = vP + e * t;
+          float phi = atan(hitP.y, hitP.x);
+          // The wall's own grain: uWallGrain flutes around the throat, CLIMBING
+          // toward the lip — the wall says which way the medium is going even
+          // where the medium itself is not yet in view. 0.35 wu/s is the lab's
+          // own rate, read off its tile (0.030 UV/s against 0.085 UV/wu).
+          // ⚠️ COSINES AND NOT THE LATTICE, because a value-noise lattice does
+          // not close on itself around a circle and would leave a seam down one
+          // side of the hole; a whole number of cycles around does.
+          float hw = h + uTime * 0.35;
+          float g = 0.5 + 0.5 * (
+            0.62 * cos(phi * uWallGrain + vSeed * TAU + hw * 3.0)
+            + 0.38 * cos(phi * uWallGrain * 0.5 - vSeed * 4.1 + hw * 7.0)
+          );
+          // The wall, LIT FROM BELOW: dark at the lip, brighter the deeper the
+          // ray reaches, because what is lighting it is down there.
+          float lit = (1.0 - exp(-h / max(uLevel, 0.05)))
+            * (0.55 + 0.6 * g) * uWallAmp * 0.55;
+          // ⭐ And past the medium's own level the ray stops meeting wall and
+          // meets SURFACE. The band is 0.7 wu wide about uLevel, so the two
+          // cross-fade rather than switching.
+          float seeMedium = smoothstep(uLevel - 0.35, uLevel + 0.35, h);
+          // Where the ray meets that level, in the plane: the point of the
+          // medium this fragment is actually looking at.
+          vec2 mp = vP + e * (uLevel / max(tanEl, 0.06));
+          float m = otherMedium(mp, vSeed);
+          float surf = (0.30 + 0.95 * m) * uInteriorAmp
+            * (1.0 + ${COHORT_GULP_INTERIOR.toFixed(1)} * gulp);
+          // The near lip stands in front of the far wall: the throat darkens
+          // into the edge of the hole rather than ending at it. The band is a
+          // FRACTION of the pupil, not the lab's absolute 0.22 wu — this hole
+          // is 0.52 wu across where the lab's was 1.6, and an absolute band
+          // would have eaten 42 % of it.
+          float shade = smoothstep(0.0, pupR * 0.14, pupR - r);
+          interior = mix(lit, surf, seeMedium) * shade;
+        }
+
+        // ---- the lip is fed by WHAT ARRIVES AT IT, so it is uneven, and it
+        // flares when the mouth swallows a block.
+        // ⚠️ Guarded on the rim's own Gaussian: feed costs the medium's whole
+        // evaluation and the rim is under a thousandth outside rho 0.11–1.89,
+        // which is 72 % of the disc. The step at that boundary is at most
+        // 0.001 * uRimAmp * 0.45 = 5e-4 of a shape that is 1.2 there.
+        float lipFeed = 1.0;
+        if (rim > 0.001) {
+          vec2 nrm = r > 1e-4 ? vP / r : vec2(1.0, 0.0);
+          float feed = otherMedium(nrm * rimR, vSeed);
+          lipFeed = (0.55 + 0.9 * feed)
+            * (1.0 + ${COHORT_GULP_LIP.toFixed(1)} * gulp);
+        }
+
         float breathe = 1.0 - uBreatheDepth
           + uBreatheDepth * sin(uTime * uBreatheHz + vSeed * TAU);
-        float shape = (rim * uRimAmp + intake) * pupil * uAmp * breathe;
+        // ⭐ THE FACE'S OWN STRUCTURE, WHICH STILL REACHES EXACTLY ZERO INSIDE
+        // THE PUPIL. pupil gates it and nothing else; the interior is ADDED
+        // outside that gate, which is what makes the middle the other world's
+        // rather than a dimmer version of this one's.
+        float structure = (rim * uRimAmp * lipFeed + intake) * pupil;
+        float shape = (structure + interior) * uAmp * breathe;
         if (shape < 0.0018) discard;
         // ⭐ A KNEE AND NEVER A SCALE. See COHORT_AURA_KNEE for why the aura's
         // is the Pythagorean partner of this one.
         shape = uKnee * (1.0 - exp(-shape / uKnee));
         ${COHORT_CONTEXT_ENERGY_GLSL}
-        vec3 tint = mix(uColor, uHot, uHotMix * rim * pupil);
+        // ⭐ TWO REGISTERS, SPLIT BY THE INTERIOR'S OWN SHARE OF THE LIGHT. The
+        // knee is applied to the TOTAL — one draw, one alpha, one ceiling — and
+        // the colour is the convex mix the two terms earned. Every colour in
+        // that mix is full in blue, so the additive ceiling's arithmetic is
+        // exactly the one COHORT_AURA_KNEE states.
+        float otherShare = clamp(interior / max(structure + interior, 1e-4), 0.0, 1.0);
+        vec3 tint = mix(
+          mix(uColor, uHot, uHotMix * rim * pupil),
+          uInterior,
+          otherShare
+        );
         // Energy multiplies RGB and NEVER alpha — the house idiom that keeps
         // additive damping linear.
         gl_FragColor = vec4(tint * shape * cohortEnergy, shape);
@@ -807,10 +1235,17 @@ export function makeCohortFaceMaterial(): THREE.ShaderMaterial {
  * ⛔ NOTHING IS DRAWN ABOVE THE COLONY PLANE AND NOTHING BELOW IT EITHER. The
  * lab carried a short converging medium under the slab behind a switch; it was
  * measured invisible except from directly overhead, and ungated it was the
- * searchlight this whole form exists to stop being. It is not in this file.
+ * searchlight this whole form exists to stop being. It is not in this file. The
+ * quad does STRADDLE the plane — it faces the camera — and the half of it below
+ * wears the window's colour (`COHORT_AURA_UNDER_TINT`), which is a tint on a
+ * glow that already exists and adds no silhouette at all.
  *
  * `aSeed` is the same per-instance lane the face reads, and there is no
- * `aShare` lane — see `makeCohortFaceMaterial`.
+ * `aShare` lane — see `makeCohortFaceMaterial`. ⭐ NOR `aGulp`: the skirt is the
+ * mark's support at a low camera, and a support that flared on the win would be
+ * a second opinion about an instant the mouth and `ColonyEdges` already state.
+ * One lane, one consumer, and the aura's row in the attribute budget stays at
+ * the face's old width.
  */
 export function makeCohortAuraMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
@@ -842,6 +1277,14 @@ export function makeCohortAuraMaterial(): THREE.ShaderMaterial {
       uKnee: { value: COHORT_AURA_KNEE },
       uBreatheDepth: { value: COHORT_AP_BREATHE_DEPTH },
       uBreatheHz: { value: COHORT_BREATHE_HZ },
+      // ---- the peer's own core, the low camera, and the world underneath
+      uCoreAmp: { value: COHORT_AURA_CORE_AMP },
+      uCoreExp: { value: COHORT_AURA_CORE_EXP },
+      uLowBoost: { value: COHORT_AURA_LOW_BOOST },
+      uUnderTint: { value: COHORT_AURA_UNDER_TINT },
+      uInterior: {
+        value: new THREE.Color().setRGB(...COHORT_INTERIOR_COLD),
+      },
     },
     vertexShader: /* glsl */ `
       attribute float aSeed;
@@ -888,6 +1331,11 @@ export function makeCohortAuraMaterial(): THREE.ShaderMaterial {
       uniform float uKnee;
       uniform float uBreatheDepth;
       uniform float uBreatheHz;
+      uniform float uCoreAmp;
+      uniform float uCoreExp;
+      uniform float uLowBoost;
+      uniform float uUnderTint;
+      uniform vec3 uInterior;
 
       varying vec3 vWorld;
       varying vec3 vOrigin;
@@ -907,7 +1355,27 @@ export function makeCohortAuraMaterial(): THREE.ShaderMaterial {
         float hR = max(uApR * uHaloR, 0.05);
         if (perp > hR) discard;
         float hx = clamp(perp / hR, 0.0, 1.0);
-        float halo = pow(1.0 - hx, max(uHaloExp, 0.2));
+        // ⭐ A CORE INSIDE A SKIRT — the profile every measured peer in this
+        // scene is drawn with. A cohort drawn as a skirt alone was the one stop
+        // in the colony built to a different rule. The hole below then takes
+        // the core straight back out of the middle, so what survives is a
+        // peer's own profile with its pupil removed.
+        float halo = pow(1.0 - hx, max(uHaloExp, 0.2))
+          + pow(1.0 - hx, max(uCoreExp, 0.2)) * uCoreAmp;
+        // ⭐⭐ AND IT IS LIFTED WHERE IT IS THE WHOLE MARK. Below roughly 33° of
+        // elevation the face — a disc lying IN the plane — has almost no
+        // projected area left, so the halo is all there is; between there and
+        // 3° it is allowed to be uLowBoost times itself. Above the band it is
+        // exactly what it always was.
+        halo *= mix(
+          1.0,
+          uLowBoost,
+          1.0 - smoothstep(
+            ${COHORT_AURA_LOW_BOOST_IN.toFixed(2)},
+            ${COHORT_AURA_LOW_BOOST_OUT.toFixed(2)},
+            abs(rd.y)
+          )
+        );
 
         // ⭐⭐⭐ THE SAME HOLE, CUT BY THE RAY/PLANE CROSSING. The radius below
         // is the aperture's own pupil scaled once, and the distance it is
@@ -942,7 +1410,14 @@ export function makeCohortAuraMaterial(): THREE.ShaderMaterial {
         // strictly inside the unit circle. See COHORT_AURA_KNEE.
         shape = uKnee * (1.0 - exp(-shape / uKnee));
         ${COHORT_CONTEXT_ENERGY_GLSL}
-        vec3 tint = mix(uColor, uHot, uHotMix);
+        // ⭐ THE HALO STRADDLES THE MEMBRANE, so it is the one draw here that
+        // can say which side is which without drawing anything new: above the
+        // plane it is the network's cyan, below it tips toward the colour the
+        // window shows through the hole. It costs no silhouette — a gradient
+        // inside a glow that is already there — and it vanishes from overhead
+        // on its own, where "below" is not a direction a viewer can see.
+        float under = 1.0 - smoothstep(-0.55, 0.15, dy / hR);
+        vec3 tint = mix(mix(uColor, uHot, uHotMix), uInterior, under * uUnderTint);
         gl_FragColor = vec4(tint * shape * cohortEnergy, shape);
       }
     `,

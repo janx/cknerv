@@ -301,7 +301,8 @@ const ROWS: readonly BudgetRow[] = [
     name: 'cohortFaceMaterial',
     sources: ['src/materials/colonyCohort.ts'],
     material: makeCohortFaceMaterial,
-    // The disc lying in the colony plane: the mat4 plus one seed lane.
+    // The disc lying in the colony plane: the mat4, one seed lane and the
+    // gulp lane the window's flare reads.
     usage: { instanced: true },
   },
   {
@@ -310,7 +311,9 @@ const ROWS: readonly BudgetRow[] = [
     material: makeCohortAuraMaterial,
     // The halo around it takes the SAME instance positions and the SAME seed
     // lane, consumed identically — they are two draws of one hole, not two
-    // marks, so there is nothing for a second lane to say.
+    // marks. It does NOT take the gulp: the skirt is the mark's support at a
+    // low camera, and a support that flared on the win would be a second
+    // opinion about an instant two other layers already state.
     usage: { instanced: true },
   },
   {
@@ -475,20 +478,25 @@ describe('vertex attribute budget', () => {
     const aura = measured.find(({ name }) => name === 'cohortAuraMaterial');
     expect(face).toBeDefined();
     expect(aura).toBeDefined();
-    expect([face?.custom, face?.injected, face?.total]).toEqual([1, 7, 8]);
+    expect([face?.custom, face?.injected, face?.total]).toEqual([2, 7, 9]);
     expect([aura?.custom, aura?.injected, aura?.total]).toEqual([1, 7, 8]);
-    // ⭐ THE TWO ROWS ARE IDENTICAL, AND THAT IS THE POINT. They are two draws
-    // of ONE hole, so they take the same instance positions and the same seed
-    // lane and there is nothing for a second lane to carry. The pair this
-    // replaced was asymmetric — the marched intake declared `aShare` for its
-    // crest rate and the centre did not — and that asymmetry went with the
-    // rate: neither aperture program has one, so NEITHER declares the share.
-    // The layer still keeps that lane written; it simply reaches no program,
-    // and this row is where that shows up as a number rather than a comment.
-    expect(face?.names).toEqual(['aSeed']);
+    // ⚠️ THE TWO ROWS DIVERGED BY EXACTLY ONE FLOAT, AND THE ARGUMENT FOR IT IS
+    // WHAT THIS COMMENT IS. They remain two draws of ONE hole and take the same
+    // instance positions and the same seed lane. What the face has and the aura
+    // has not is `aGulp` — the sim second of the block this cohort won, which
+    // the WINDOW reads: the mouth brightens from the inside on the block it
+    // swallowed. The skirt is the mark's support at a low camera and does not
+    // take it, so this asymmetry is a consumer and not a habit. That is the
+    // difference from the pair this replaced, which was asymmetric because the
+    // marched intake declared `aShare` for a crest rate the centre did not
+    // have; NEITHER aperture program declares the share, and the layer still
+    // writes that lane without binding it. One float, on one draw, with a
+    // reader — and 7 slots of the 16 still free on the busier of the two.
+    expect(face?.names).toEqual(['aSeed', 'aGulp']);
     expect(aura?.names).toEqual(['aSeed']);
     for (const row of [face, aura]) {
       expect(row?.names).not.toContain('aShare');
+      expect(row?.total).toBeLessThanOrEqual(9);
     }
   });
 

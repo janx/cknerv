@@ -7,6 +7,15 @@
 // colony's own outward surge already draws, from this very node, so nothing
 // here fires and nothing here reads the pulse.
 //
+// ⭐⭐⭐ AND THE HOLE HAS A WINDOW IN IT. The peer mesh is the boundary between
+// two universes — above it the cell canopy, below it the one a cohort drinks
+// from — so looking into the aperture is looking at the other world: the
+// throat's wall lit FROM BELOW, and, deeper than `COHORT_INTAKE_LEVEL`, the
+// surface of the medium rising toward the lip. That is how 「从下方汲取能量」 is
+// said, and it is the only way twenty-five rounds found to say it that does not
+// lie: ⛔ NO PLUME, COLUMN, FUNNEL OR PILLAR under the mouth at any brightness
+// profile — only SURFACES BEING DRAWN ever read as intake.
+//
 // ⛔⛔⛔ THE COHORT NEVER EMITS UPWARD, AT ANY TIME. A mined block goes SIDEWAYS
 // TO PEERS ONLY, because peers must verify it before it legitimately enters the
 // cell galaxy. `BlockDeliveryLayer` draws that later leg, launching from
@@ -36,30 +45,29 @@
 // not decoration, and why the two knees are a Pythagorean pair — lives in
 // `materials/colonyCohort`. Read it before touching either face.
 //
-// This file owns the two things that cannot live in a material:
+// This file owns the three things that cannot live in a material:
 //   • WHICH nodes wear one — `cohortMarks`, pure and exported, one mark per
 //     attested node, carrying its placement and a stable per-cohort seed so no
 //     two apertures breathe on the same beat;
 //   • the live SHARE, which moves on every attributed block and must never be
-//     allowed to move the geometry with it.
+//     allowed to move the geometry with it;
+//   • the GULP lane, `aGulp` — the sim second of the block each cohort won,
+//     which is what makes the mouth swallow.
 //
-// ⛔ AND 「从下方汲取能量」 IS NOT EXPRESSED BY THIS FORM AT ALL — deliberately,
-// by the user's decision, and not an oversight for a later reader to "fix". The
-// lab measured both halves of the only way there was to say it: a sub-plane
-// shaft gated through the hole is invisible except from directly overhead, and
-// an ungated one is a searchlight in miniature. So it is deferred as a separate
-// problem. The single surviving hint is the aura's downward halo weighting
-// (`COHORT_AURA_HALO_BIAS`, knob `cohortHaloBias`), documented as such where it
-// is declared — a gradient inside a glow that already exists, costing no
-// silhouette and unable to read as a beam.
+// ⚠️ THE GULP LANE IS ALLOCATED AND NOBODY WRITES IT YET. It is filled with
+// `COHORT_NEVER_WON`, a far-negative sentinel, and stays there: the block path
+// that stamps it lands in the next commit. That is why the paragraph below
+// still says this layer takes no pulse — it does not, today, and the lane reads
+// as "has never won" at every cohort until it does. ⚠️ The sentinel is not a
+// nicety: zero would read as "won at t = 0" and flare the whole colony on load.
 //
 // ⚠️ THE SHARE LANE IS DORMANT, AND DELIBERATELY SO. Neither aperture program
 // declares `aShare`: share means RATE on this layer, and the aperture has no
 // rate a share could drive that survives the grain's own prefilter (see
-// `COHORT_FACE_DRIFT`). The lane is kept ready for the deferred 汲取 work
-// rather than rebuilt from scratch, and kept HONESTLY: it is written but NOT
-// bound to the geometry, because binding an attribute no program declares would
-// tell the next reader that something consumes it.
+// `COHORT_FACE_DRIFT`). It is written but NOT bound to the geometry, because
+// binding an attribute no program declares would tell the next reader that
+// something consumes it. `aGulp` IS bound, because the face really does declare
+// it — which is the whole difference between the two.
 //
 // ⚠️ IT TAKES NO PULSE, NO FLOOD AND NO SHOCKWAVE, and all three absences are
 // deliberate. The front crosses the WHOLE colony on every block, so anything
@@ -78,6 +86,7 @@ import type { NetworkTopology, Vec3 } from '../types';
 import type { ProducerStanding } from '../derives/blockProducers.derive';
 import { ATTESTED_ID_PREFIX } from '../derives/networkTopology.derive';
 import {
+  COHORT_NEVER_WON,
   cohortAuraHalfExtent,
   cohortFaceHalfExtent,
   makeCohortAuraMaterial,
@@ -274,13 +283,33 @@ export default function ColonyCohorts({
   }), []);
   const capacity = Math.max(1, marks.length);
 
-  // The two per-cohort lanes, allocated once for a capacity and rewritten in
+  // The three per-cohort lanes, allocated once for a capacity and rewritten in
   // place. ⚠️ Wrapping data in a NEW InstancedBufferAttribute is what orphans
   // its GL buffer, and the share walk runs on every attributed block — so the
-  // WRAPPER is what has to persist, not just the array.
+  // WRAPPER is what has to persist, not just the array. That is also why the
+  // gulp lane is ONE wrapper rather than one per draw: the wrapper is the
+  // identity three uploads by, and a second wrapper around the same array would
+  // hand the GPU a second copy of it.
+  //
+  // ⚠️⚠️ `gulp` STARTS AT A FAR-NEGATIVE SENTINEL AND NEVER AT ZERO. The lane
+  // holds the SIM SECOND of the block each cohort won, and the mouth's envelope
+  // is a function of `uTime - aGulp`. A zero-filled lane therefore says "every
+  // cohort won at t = 0", and since `uTime` also starts at zero the whole
+  // colony gulps for the first half second of every session, for a block none
+  // of them mined. R16 shipped exactly that. `COHORT_NEVER_WON` is far enough
+  // below any reachable `uTime` that the envelope is identically zero.
+  //
+  // ⚠️ A CAPACITY CHANGE RESETS IT TO THE SENTINEL, which is correct rather
+  // than lossy: the slots behind the marks are not the ones that were written,
+  // and a win belongs to a NODE ID and not to a slot. Re-laying live wins into
+  // a rebuilt lane is the block path's job (T3), off a map keyed on the id.
   const lanes = useMemo(() => ({
     share: new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1),
     seed: new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1),
+    gulp: new THREE.InstancedBufferAttribute(
+      new Float32Array(capacity).fill(COHORT_NEVER_WON),
+      1,
+    ),
   }), [capacity]);
 
   // Placement and identity: written only when the staged cohort set moves.
@@ -311,12 +340,20 @@ export default function ColonyCohorts({
     // Bound on the first pass and again only when a capacity change built new
     // lanes. The quad outlives both InstancedMeshes (a capacity change rebuilds
     // them through `args`), so it can still be holding the previous set.
-    // ⚠️ ONLY `aSeed` IS BOUND. Both programs declare it and NEITHER declares
-    // `aShare`; an attribute no program declares would never be uploaded, so
-    // binding it costs nothing at runtime and buys a false claim in the source.
-    // The share lane is kept and written — see the file header — but it is not
-    // attached to a geometry until a program asks for it.
+    // ⚠️ `aSeed` AND `aGulp` ARE BOUND, `aShare` IS NOT. Both programs declare
+    // the seed and the face declares the gulp; nothing declares the share, and
+    // an attribute no program declares would never be uploaded — so binding it
+    // costs nothing at runtime and buys a false claim in the source. The share
+    // lane is kept and written (see the file header) but is not attached to a
+    // geometry until a program asks for it.
+    //
+    // ⭐ ONE GEOMETRY, SO "THE SAME OBJECT ON BOTH DRAWS" IS STRUCTURAL. Both
+    // InstancedMeshes take this one `quad`, so a lane bound here is by
+    // construction the same attribute — and the same GL buffer — on both. The
+    // aura simply does not declare `aGulp`, which costs it nothing: three binds
+    // only what a program asks for.
     if (quad.getAttribute('aSeed') !== lanes.seed) quad.setAttribute('aSeed', lanes.seed);
+    if (quad.getAttribute('aGulp') !== lanes.gulp) quad.setAttribute('aGulp', lanes.gulp);
   }, [lanes, marks, quad]);
 
   // The live share, written in place whenever the window moves — which is once

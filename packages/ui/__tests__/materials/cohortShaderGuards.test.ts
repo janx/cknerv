@@ -384,14 +384,22 @@ describe('colonyCohort.ts — source-level shader guards', () => {
       }
     }
     expect(unprovable).toEqual([]);
-    // ⚠️ THE FLOOR HAS MOVED THREE TIMES AND IS NOT THE CLAIM. It came down
-    // from 10 when the accreting void's two programs went, back up by two when
-    // the proximity exemption put one `smoothstep` in each surviving program,
-    // and down again when the marched throat's two went — the file has held
-    // two, four and two programs, and a floor tracking that says nothing. It is
-    // only a says-the-parser-ran check: what makes the sweep COMPLETE is the
-    // coverage test below, which pins these against every call in the file.
+    // ⚠️ THE FLOOR HAS MOVED FOUR TIMES AND IS NOT THE CLAIM. It came down from
+    // 10 when the accreting void's two programs went, back up by two when the
+    // proximity exemption put one `smoothstep` in each surviving program, down
+    // again when the marched throat's two went, and up by four when the window
+    // and the skirt's low-elevation boost landed — the file has held two, four
+    // and two programs, and a floor tracking that says nothing. It is only a
+    // says-the-parser-ran check: what makes the sweep COMPLETE is the coverage
+    // test below, which pins these against every call in the file.
     expect(checked).toBeGreaterThanOrEqual(5);
+    // ⭐ AND THE WINDOW'S TWO ARE THE INTERESTING ONES. `seeMedium`'s edges are
+    // `uLevel ± 0.35`, which are ORDERED for every level a knob can reach
+    // because their difference is the constant 0.7; the near-lip `shade`'s
+    // upper edge is a FRACTION of the pupil, so it stays strictly above its own
+    // zero at every radius the mark can be tuned to. Both are resolvable from
+    // uniforms, which is why `unprovable` above is still empty — an edge built
+    // from a varying would have to be argued rather than slipped past.
   });
 
   it('no pow anywhere can be handed a negative base', () => {
@@ -410,10 +418,15 @@ describe('colonyCohort.ts — source-level shader guards', () => {
       }
     }
     expect(unproven).toEqual([]);
-    // Same story, and the aperture is far thinner than what it replaced: two
-    // `pow` calls survive, one in each program. The completeness claim is the
-    // coverage test below, not this.
-    expect(checked).toBeGreaterThanOrEqual(2);
+    // Same story, and the aperture is still far thinner than what it replaced:
+    // four `pow` calls, two in each program. ⭐ THE ONE THAT NEEDED THE GUARD IS
+    // THE MEDIUM'S RIDGE — `1.0 - abs(2.0 * n - 1.0)` is in [0, 1] by
+    // construction and NOT provably so from the source, because `n` comes out
+    // of a value-noise lattice. It carries an explicit `max(…, 0.0)` for
+    // exactly that reason, which is what this guard is for: a base nobody has
+    // proven safe is a thing that has to be argued, not assumed. The
+    // completeness claim is the coverage test below, not this.
+    expect(checked).toBeGreaterThanOrEqual(4);
   });
 
   it('covers every smoothstep and pow the file actually contains', () => {
@@ -429,6 +442,13 @@ describe('colonyCohort.ts — source-level shader guards', () => {
     // through. The surplus is clamped at zero on purpose: a snippet that is
     // never interpolated then still fails here, which is the right verdict for
     // GLSL nobody compiles.
+    //
+    // ⭐ THERE ARE TWO SHARED SNIPPETS NOW, AND THE CREDIT IS AUTOMATIC. The
+    // sum below walks EVERY exported string in the material module and counts
+    // its interpolations, so `COHORT_GULP_GLSL` — the mouth's gulp envelope,
+    // which the mist layer will paste beside this one — is credited without
+    // being named. It happens to hold neither call, so its surplus is zero
+    // today; the point is that it stays right when that changes.
     const file = stripComments(SOURCE);
     const shared = Object.entries(colonyCohort)
       .filter((entry): entry is [string, string] => typeof entry[1] === 'string');

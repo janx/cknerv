@@ -31,6 +31,7 @@ import ColonyCohorts, {
   cohortMarks,
   sameCohortMark,
 } from '../../src/components/ColonyCohorts';
+import { PEER_NETWORK_PALETTE } from '../../src/visualPalette';
 import {
   COHORT_AP_PUPIL_FRAC,
   COHORT_AP_R,
@@ -40,7 +41,9 @@ import {
   COHORT_FACE_STRIAE,
   COHORT_FACE_STRIAE_FLOOR,
   COHORT_HIT_RADIUS,
+  COHORT_INTERIOR_COLD,
   COHORT_LINK_STOP_R,
+  COHORT_NEVER_WON,
   cohortAuraHalfExtent,
   cohortFaceHalfExtent,
   makeCohortAuraMaterial,
@@ -982,17 +985,21 @@ describe('what a POW cohort looks like', () => {
     }
   });
 
-  it('leaves the PUPIL unlit rather than painting it dark', () => {
-    // ⭐ The darkness in the middle is bright structure declining to fill — this
-    // scene's own additive idiom for a hole. No dark pixel is drawn anywhere
-    // and nothing behind the mark is removed. The accepted cost, stated when
-    // the depression went: nothing behind a cohort is occluded any more.
+  it('keeps its OWN light out of the pupil and puts the other world there', () => {
+    // ⭐ The middle is bright structure declining to fill — this scene's own
+    // additive idiom for a hole. No dark pixel is drawn anywhere and nothing
+    // behind the mark is removed. The accepted cost, stated when the depression
+    // went: nothing behind a cohort is occluded any more.
     //
-    // The FACE reaches exactly zero by multiplying its whole profile by a
-    // smoothstep that is zero at the axis — a refusal, not a disc.
+    // The FACE's own light reaches exactly zero by multiplying rim, skirt and
+    // grain by a smoothstep that is zero at the axis — a refusal, not a disc —
+    // and the WINDOW is added outside that gate, so what fills the hole is the
+    // other world and never a dimmer version of this one.
     expect(faceFragment()).toContain('float pupil = smoothstep(');
     expect(faceFragment())
-      .toContain('float shape = (rim * uRimAmp + intake) * pupil * uAmp * breathe;');
+      .toContain('float structure = (rim * uRimAmp * lipFeed + intake) * pupil;');
+    expect(faceFragment())
+      .toContain('float shape = (structure + interior) * uAmp * breathe;');
     // ⭐⭐⭐ …and the AURA carries THE SAME HOLE, cut by crossing the view ray
     // with the colony plane rather than by restating the face's pupil. That is
     // what makes it one hole seen through two rays: from above the ray lands
@@ -1010,12 +1017,25 @@ describe('what a POW cohort looks like', () => {
     for (const material of [makeCohortFaceMaterial(), makeCohortAuraMaterial()]) {
       expect(material.uniforms.uPupilFrac.value).toBe(COHORT_AP_PUPIL_FRAC);
     }
-    // …and neither program has a dark colour to paint it with: both tint
-    // between the scaffold cyan and cold white, and nothing else.
+    // …and neither program has a DARK colour to paint it with. Both still tint
+    // between the scaffold cyan and cold white for the mark's own light; the
+    // one addition is `COHORT_INTERIOR_COLD`, which is where the light below
+    // the plane goes. It is a full-blue cyan like everything else here — no
+    // channel under 0.45, blue at exactly 1 — so it is a REGISTER and not a
+    // shadow: the hole is filled by another world's light, never darkened.
     expect(markSource()).toContain('PEER_NETWORK_PALETTE.scaffold');
     for (const glsl of [faceFragment(), auraFragment()]) {
-      expect(glsl).toContain('vec3 tint = mix(uColor, uHot,');
+      expect(glsl).toContain('mix(uColor, uHot,');
+      expect(glsl).toContain('uInterior');
     }
+    for (const channel of COHORT_INTERIOR_COLD) expect(channel).toBeGreaterThan(0.44);
+    expect(COHORT_INTERIOR_COLD[2]).toBe(1);
+    expect(PEER_NETWORK_PALETTE.scaffold[2]).toBe(1);
+    // ⭐ It sits BETWEEN the scaffold and cold white on the same cyan axis —
+    // more red than the scaffold, less than the hot end — which is why it reads
+    // as another register rather than as a different hue.
+    expect(COHORT_INTERIOR_COLD[0]).toBeGreaterThan(PEER_NETWORK_PALETTE.scaffold[0]);
+    expect(COHORT_INTERIOR_COLD[0]).toBeLessThan(PEER_NETWORK_PALETTE.coldWhite[0]);
   });
 
   it('lies in the colony PLANE on the face and faces the CAMERA on the aura', () => {
@@ -1255,6 +1275,51 @@ describe('what a POW cohort looks like', () => {
     // ref, and still marked ONCE for the whole walk.
     expect(layer).toContain('cohortShareLane(marks, producers, lanes.share.array as Float32Array);');
     expect(layer).toContain('lanes.share.needsUpdate = true;');
+  });
+
+  it('lays the GULP lane as one wrapper, on one geometry, at a far-negative sentinel', () => {
+    const layer = source('ColonyCohorts.tsx');
+    // ⚠️⚠️⚠️ ZERO WOULD READ AS "WON AT BOOT" AND FLARE THE WHOLE COLONY ON
+    // LOAD. The lane holds the SIM SECOND of the block each cohort won and the
+    // mouth's envelope is a function of `uTime - aGulp`; an unfilled
+    // `Float32Array` is all zeros, and `uTime` also starts at zero. R16 shipped
+    // exactly that. `cohortGulp.test.ts` measures the sentinel's silence over
+    // every clock a session reaches; this is where the ALLOCATION is pinned.
+    expect(COHORT_NEVER_WON).toBe(-1e6);
+    expect(layer).toContain('new Float32Array(capacity).fill(COHORT_NEVER_WON),');
+
+    // ⭐⭐ ONE WRAPPER, AND THE WRAPPER IS THE IDENTITY THREE UPLOADS BY. A
+    // second `InstancedBufferAttribute` around the same array is a second GL
+    // buffer, and the first one is then orphaned — which is why the lane is
+    // built exactly once, inside the capacity memo, and bound rather than
+    // rebuilt. Exactly one construction and exactly one bind.
+    expect([...layer.matchAll(/new THREE\.InstancedBufferAttribute\(/g)]).toHaveLength(3);
+    expect([...layer.matchAll(/setAttribute\('aGulp'/g)]).toHaveLength(1);
+    expect(layer)
+      .toContain("if (quad.getAttribute('aGulp') !== lanes.gulp) quad.setAttribute('aGulp', lanes.gulp);");
+
+    // ⭐ AND "THE SAME OBJECT ON BOTH DRAWS" IS STRUCTURAL RATHER THAN CHECKED:
+    // there is exactly ONE geometry in this layer and both InstancedMeshes take
+    // it, so an attribute bound to it is by construction the same attribute —
+    // and the same buffer — on both. The aura simply does not declare `aGulp`,
+    // which costs nothing: three binds only what a program asks for.
+    expect(layer.match(/new THREE\.PlaneGeometry\([^)]*\)/g))
+      .toEqual(['new THREE.PlaneGeometry(1, 1)']);
+    expect(layer).toContain('args={[quad, faceMaterial, capacity]}');
+    expect(layer).toContain('args={[quad, auraMaterial, capacity]}');
+    expect(faceVertex()).toContain('attribute float aGulp;');
+    expect(auraVertex()).not.toContain('aGulp');
+    // ⚠️ THE LIVE OBJECT CANNOT BE REACHED FROM HERE, AND THAT IS WHY THIS IS A
+    // SOURCE TEST. `Canvas` never commits its r3f tree under jsdom — `onCreated`
+    // does not fire, the scene stays empty and no geometry exists to compare —
+    // which is exactly why the mount test above only asserts that it does not
+    // throw. The invariant is therefore pinned where it is decidable.
+
+    // ⚠️ NOTHING STAMPS IT YET, and the layer still takes no block input at
+    // all. The test above (`takes no pulse and no flood`) is the one that has
+    // to change when the block path lands, together with this line.
+    expect(layer).not.toContain('lanes.gulp.needsUpdate');
+    expect(layer).not.toContain('wonAtRef');
   });
 
   it('reads no standing at all in its plan, so a window that moved cannot move a mark', () => {

@@ -21,6 +21,8 @@ import {
   COHORT_AP_R,
   COHORT_AP_RIM_FRAC,
   COHORT_AURA_AMP,
+  COHORT_AURA_CORE_AMP,
+  COHORT_AURA_CORE_EXP,
   COHORT_AURA_HALF,
   COHORT_AURA_HALO_BIAS,
   COHORT_AURA_HALO_BIAS_K,
@@ -28,7 +30,11 @@ import {
   COHORT_AURA_HALO_R,
   COHORT_AURA_HOT_MIX,
   COHORT_AURA_KNEE,
+  COHORT_AURA_LOW_BOOST,
+  COHORT_AURA_LOW_BOOST_IN,
+  COHORT_AURA_LOW_BOOST_OUT,
   COHORT_AURA_PUPIL_SCALE,
+  COHORT_AURA_UNDER_TINT,
   COHORT_BREATHE_HZ,
   COHORT_CLIP_KNEE,
   COHORT_FACE_AA,
@@ -39,9 +45,12 @@ import {
   COHORT_FACE_INTAKE_AMP,
   COHORT_FACE_INTAKE_CORE,
   COHORT_FACE_INTAKE_GAMMA,
+  COHORT_FACE_INTERIOR_AMP,
+  COHORT_FACE_INTERIOR_SCALE,
   COHORT_FACE_PUPIL_SOFT,
   COHORT_FACE_RIM_AMP,
   COHORT_FACE_RIM_W,
+  COHORT_FACE_RISE,
   COHORT_FACE_STRIAE,
   COHORT_FACE_STRIAE_FLOOR,
   COHORT_FACE_STRIA_AMP,
@@ -51,6 +60,12 @@ import {
   COHORT_FACE_STRIA_W,
   COHORT_FACE_SWELL,
   COHORT_FACE_SWELL_RATE,
+  COHORT_FACE_WALL_AMP,
+  COHORT_FACE_WALL_GRAIN,
+  COHORT_GULP_INTERIOR,
+  COHORT_GULP_LIP,
+  COHORT_INTAKE_LEVEL,
+  COHORT_INTERIOR_COLD,
   cohortAuraHalfExtent,
   cohortFaceHalfExtent,
   makeCohortAuraMaterial,
@@ -155,19 +170,128 @@ function planeRadius(eye: Vec3, ray: Vec3): number | undefined {
 
 const SCAFFOLD = PEER_NETWORK_PALETTE.scaffold;
 const COLD_WHITE = PEER_NETWORK_PALETTE.coldWhite;
+const INTERIOR = COHORT_INTERIOR_COLD;
 const tintAt = (k: number): [number, number, number] => [
   mix(SCAFFOLD[0], COLD_WHITE[0], k),
   mix(SCAFFOLD[1], COLD_WHITE[1], k),
   mix(SCAFFOLD[2], COLD_WHITE[2], k),
 ];
+/** The face's final tint: the network's own colour, then the share of the
+ *  light that belongs to the OTHER world pulled toward that world's colour. */
+const faceTint = (hot: number, otherShare: number): [number, number, number] => {
+  const near = tintAt(hot);
+  return [
+    mix(near[0], INTERIOR[0], otherShare),
+    mix(near[1], INTERIOR[1], otherShare),
+    mix(near[2], INTERIOR[2], otherShare),
+  ];
+};
 
 interface Sample {
   readonly shape: number;
+  /** The face's OWN light — rim, skirt, grain — before the knee. Exactly zero
+   *  inside the pupil, which is the invariant the window did not take away. */
+  readonly structure: number;
+  /** What the window shows, before the knee. Zero outside the pupil. */
+  readonly interior: number;
   readonly tint: readonly [number, number, number];
 }
 
 /** The rim's radius in world units, which every other length here is against. */
 const RIM_R = Math.max(COHORT_AP_R * COHORT_AP_RIM_FRAC, 0.02);
+
+/** The hole itself, in world units: 0.5208 wu. */
+const PUPIL_R = RIM_R * Math.max(COHORT_AP_PUPIL_FRAC, 0.02);
+
+/* ------------------------------------------------- the window, term for term */
+
+/**
+ * The gulp envelope, exactly as `COHORT_GULP_GLSL` computes it.
+ *
+ * ⭐ ZERO FOR A NEGATIVE AGE, which is the whole of why `COHORT_NEVER_WON` is a
+ * sentinel rather than a very old win. `cohortGulp.test.ts` owns that claim;
+ * this is the copy the sweeps here need.
+ */
+const gulpEnvelope = (age: number): number =>
+  age > 0 ? Math.exp(-age / 0.45) * (1 - Math.exp(-age / 0.06)) : 0;
+
+/**
+ * `seeMedium`: how much of what the ray meets is SURFACE rather than wall.
+ *
+ * ⭐ It is a function of the DEPTH the ray reaches inside the throat and of
+ * nothing else — 0 where the ray only ever grazes the near wall, 1 where it
+ * reaches past the medium's own level. The band is 0.7 wu wide about
+ * `COHORT_INTAKE_LEVEL`, so wall and surface cross-fade instead of switching.
+ */
+const seeMediumAt = (h: number): number =>
+  smoothstep(COHORT_INTAKE_LEVEL - 0.35, COHORT_INTAKE_LEVEL + 0.35, h);
+
+/**
+ * The throat, hit by one view ray: where the ray leaves the cylinder, how deep
+ * that is, and where it meets the medium's level.
+ *
+ * `P` is the fragment's offset inside the disc and `e` the horizontal view
+ * direction, both in the colony plane; `tanEl` is the tangent of the ray's
+ * elevation. All three are what the fragment computes from `vP` and `vCam`.
+ */
+function throatHit(
+  P: readonly [number, number],
+  e: readonly [number, number],
+  tanEl: number,
+): { t: number; h: number; hit: [number, number]; mp: [number, number] } {
+  const r = Math.hypot(P[0], P[1]);
+  const b = P[0] * e[0] + P[1] * e[1];
+  const t = -b + Math.sqrt(Math.max(b * b + PUPIL_R * PUPIL_R - r * r, 0));
+  const s = COHORT_INTAKE_LEVEL / Math.max(tanEl, 0.06);
+  return {
+    t,
+    h: t * tanEl,
+    hit: [P[0] + e[0] * t, P[1] + e[1] * t],
+    mp: [P[0] + e[0] * s, P[1] + e[1] * s],
+  };
+}
+
+/**
+ * What the window shows at radius `r`, for a ray that reaches depth `h`.
+ *
+ * ⚠️ `grain` AND `medium` ARE PARAMETERS AND NOT A TRANSLITERATION, on purpose.
+ * R15 shipped a mirror that drifted from its shader, and the one thing here
+ * that would have to be copied character for character is a value-noise
+ * lattice. Both fields are bounded in [0, 1] by construction — the wall's grain
+ * is `0.5 + 0.5 * (0.62 cos + 0.38 cos)` and the medium is a ridged noise
+ * raised to 1.6 — so sweeping them over that interval is a STRONGER statement
+ * than pinning one sample of them, and `the medium is a field in [0, 1]` below
+ * is what ties that interval to the shipped source.
+ */
+function interiorAt(
+  r: number,
+  options: { h: number; grain?: number; medium?: number; gulp?: number },
+): number {
+  const { h, grain = 0, medium = 0, gulp = 0 } = options;
+  if (r >= PUPIL_R) return 0;
+  const lit = (1 - Math.exp(-h / Math.max(COHORT_INTAKE_LEVEL, 0.05)))
+    * (0.55 + 0.6 * grain) * COHORT_FACE_WALL_AMP * 0.55;
+  const surf = (0.3 + 0.95 * medium) * COHORT_FACE_INTERIOR_AMP
+    * (1 + COHORT_GULP_INTERIOR * gulp);
+  const shade = smoothstep(0, PUPIL_R * 0.14, PUPIL_R - r);
+  return mix(lit, surf, seeMediumAt(h)) * shade;
+}
+
+/**
+ * The window's own supremum at radius `r`, at rest.
+ *
+ * ⭐ `mix(lit, surf, s)` for `s ∈ [0, 1]` lies between its ends, so the largest
+ * value the window can take is `max(lit, surf)` with both fields at 1 — and the
+ * surface is the larger of the two at rest (1.4375 against 0.5376), which is
+ * the right way round: the window is brightest when it is showing MEDIUM.
+ */
+const interiorBound = (r: number, gulp = 0): number => {
+  if (r >= PUPIL_R) return 0;
+  const lit = 1 * (0.55 + 0.6) * COHORT_FACE_WALL_AMP * 0.55;
+  const surf = (0.3 + 0.95) * COHORT_FACE_INTERIOR_AMP
+    * (1 + COHORT_GULP_INTERIOR * gulp);
+  return Math.max(lit, surf) * smoothstep(0, PUPIL_R * 0.14, PUPIL_R - r);
+};
 
 /**
  * `pupil`, isolated: the term that makes the middle a hole.
@@ -193,9 +317,22 @@ function pupilAt(rho: number): number {
  */
 function faceAt(
   r: number,
-  options: { time?: number; seed?: number; footprint?: number; azimuth?: number; bound?: boolean } = {},
+  options: {
+    time?: number;
+    seed?: number;
+    footprint?: number;
+    azimuth?: number;
+    bound?: boolean;
+    /** The medium arriving at the lip, in [0, 1]. `bound` pins it at 1. */
+    feed?: number;
+    /** What the window shows, already computed by `interiorAt`. `bound` takes
+     *  `interiorBound(r)`. */
+    interior?: number;
+    /** The gulp envelope's value, in [0, 0.6634]. Rest is 0. */
+    gulp?: number;
+  } = {},
 ): Sample | undefined {
-  const { time = 0, seed = 0, footprint = 0, azimuth = 0, bound = false } = options;
+  const { time = 0, seed = 0, footprint = 0, azimuth = 0, bound = false, gulp = 0 } = options;
   if (r > COHORT_AP_R) return undefined; // discard: the quad's corners
   const rho = r / RIM_R;
   const pupil = pupilAt(rho);
@@ -231,10 +368,26 @@ function faceAt(
       COHORT_AP_BREATHE_DEPTH * Math.sin(time * COHORT_BREATHE_HZ + seed * TAU);
   }
   const intake = COHORT_FACE_INTAKE_AMP * (skirt + fill) * swell * stria;
-  let shape = (rim * COHORT_FACE_RIM_AMP + intake) * pupil * COHORT_FACE_AMP * breathe;
+  // ⭐ THE LIP IS FED BY WHAT ARRIVES AT IT, so it is uneven — and the feed's
+  // supremum is a SPATIAL fact, reached at some azimuth on the lip circle at
+  // every instant, independent of the three temporal factors above. That is
+  // what makes it legitimate to pin at 1 alongside them.
+  const feed = options.feed ?? (bound ? 1 : 0);
+  const lipFeed = rim > 0.001 ? (0.55 + 0.9 * feed) * (1 + COHORT_GULP_LIP * gulp) : 1;
+  const interior = options.interior ?? (bound ? interiorBound(r, gulp) : 0);
+  // ⭐ THE FACE'S OWN LIGHT, WHICH STILL REACHES EXACTLY ZERO INSIDE THE PUPIL:
+  // `pupil` gates it and nothing else. The window is ADDED outside that gate.
+  const structure = (rim * COHORT_FACE_RIM_AMP * lipFeed + intake) * pupil;
+  let shape = (structure + interior) * COHORT_FACE_AMP * breathe;
   if (shape < 0.0018) return undefined; // discard
   shape = COHORT_CLIP_KNEE * (1 - Math.exp(-shape / COHORT_CLIP_KNEE));
-  return { shape, tint: tintAt(COHORT_FACE_HOT_MIX * rim * pupil) };
+  const otherShare = clamp(interior / Math.max(structure + interior, 1e-4), 0, 1);
+  return {
+    shape,
+    structure,
+    interior,
+    tint: faceTint(COHORT_FACE_HOT_MIX * rim * pupil, otherShare),
+  };
 }
 
 /** The radius, in units of the halo's own, at which the halo is fully cut. */
@@ -253,7 +406,18 @@ function auraAt(
   const perp = norm3(sub(oc, scale(ray, dot(oc, ray))));
   const hR = Math.max(COHORT_AP_R * COHORT_AURA_HALO_R, 0.05);
   if (perp > hR) return undefined; // discard
-  let halo = Math.pow(1 - clamp(perp / hR, 0, 1), Math.max(COHORT_AURA_HALO_EXP, 0.2));
+  const hx = clamp(perp / hR, 0, 1);
+  // A core inside a skirt — the profile every measured peer in this scene is
+  // drawn with, and the one the hole then takes back out of the middle.
+  let halo = Math.pow(1 - hx, Math.max(COHORT_AURA_HALO_EXP, 0.2))
+    + Math.pow(1 - hx, Math.max(COHORT_AURA_CORE_EXP, 0.2)) * COHORT_AURA_CORE_AMP;
+  // ⭐ Lifted where it is the whole mark: below roughly 33° of elevation the
+  // face has almost no projected area left.
+  halo *= mix(
+    1,
+    COHORT_AURA_LOW_BOOST,
+    1 - smoothstep(COHORT_AURA_LOW_BOOST_IN, COHORT_AURA_LOW_BOOST_OUT, Math.abs(ray[1])),
+  );
   const crossing = planeRadius(eye, ray);
   if (crossing !== undefined) {
     halo *= smoothstep(AURA_PUPIL_R * 0.45, AURA_PUPIL_R, crossing);
@@ -275,7 +439,22 @@ function auraAt(
   let shape = halo * COHORT_AURA_AMP * breathe;
   if (shape < 0.0018) return undefined; // discard
   shape = COHORT_AURA_KNEE * (1 - Math.exp(-shape / COHORT_AURA_KNEE));
-  return { shape, tint: tintAt(COHORT_AURA_HOT_MIX) };
+  // ⭐ The half of the quad BELOW the plane wears the other world's colour: the
+  // halo is the one draw here that straddles the membrane, so it can say which
+  // side is which without a silhouette of its own.
+  const under = 1 - smoothstep(-0.55, 0.15, dy / hR);
+  const near = tintAt(COHORT_AURA_HOT_MIX);
+  const t = under * COHORT_AURA_UNDER_TINT;
+  return {
+    shape,
+    structure: shape,
+    interior: 0,
+    tint: [
+      mix(near[0], INTERIOR[0], t),
+      mix(near[1], INTERIOR[1], t),
+      mix(near[2], INTERIOR[2], t),
+    ],
+  };
 }
 
 /* -------------------------------------------------------------------------- *
@@ -316,16 +495,21 @@ function* sweep(): Generator<{ eye: Vec3; ray: Vec3; world: Vec3 }> {
  * -------------------------------------------------------------------------- */
 
 describe('cohort aperture — the hole', () => {
-  it('the face’s pupil reaches EXACTLY zero, and is a refusal rather than a dark disc', () => {
-    // ⭐⭐⭐ THE MARK'S MIDDLE IS UNLIT, NOT DIM. Every draw in this layer is
-    // additive and depth-read-only, so there is no shadow available and no dark
-    // pixel is ever written: the hole is the one place bright structure REFUSES
-    // to fill. "Nearly zero" would not be a hole — additive light from the aura
-    // behind it would simply fill it in.
+  it('the face’s OWN light reaches EXACTLY zero in the pupil, which is what makes it a hole', () => {
+    // ⭐⭐⭐ THE INVARIANT R25 MOVED, AND WHAT REPLACED IT. R19 pinned the whole
+    // fragment at zero inside the pupil: the middle was a refusal, and that was
+    // the only way an additive, depth-read-only layer could draw a hole at all.
+    // The window fills that middle with the OTHER WORLD, so "the pupil is
+    // unlit" is simply no longer true — and the claim that survives is
+    // stronger, not weaker: the face's own structure (rim, skirt, grain) still
+    // reaches EXACTLY zero in there, and every photon inside the pupil belongs
+    // to `COHORT_INTERIOR_COLD`, a colour nothing else on the peer plane wears.
+    // The middle is still not the network's; it now says whose it is.
     const darkTo = RIM_R * COHORT_AP_PUPIL_FRAC * (1 - COHORT_FACE_PUPIL_SOFT);
     const litFrom = RIM_R * COHORT_AP_PUPIL_FRAC;
     expect(darkTo).toBeCloseTo(0.2604, 6);
     expect(litFrom).toBeCloseTo(0.5208, 6);
+    expect(PUPIL_R).toBe(litFrom);
 
     // Exactly zero — `toBe(0)`, never `toBeCloseTo` — everywhere inside.
     // ⚠️ Stepped as an exact FRACTION of the edge rather than by accumulating
@@ -336,9 +520,14 @@ describe('cohort aperture — the hole', () => {
     for (let k = 0; k <= 400; k += 1) {
       const rho = darkEdge * (k / 400);
       expect(pupilAt(rho)).toBe(0);
-      // And so the whole fragment is zero there, whatever the time or seed.
+      // And so the face's own contribution is zero there, whatever the time,
+      // the seed or the medium arriving at the lip.
       for (const time of [0, 1.7, 4.4]) {
         for (const seed of [0, 0.37, 0.81]) {
+          const sample = faceAt(rho * RIM_R, { time, seed, azimuth: 1.1, feed: 1 });
+          expect(sample?.structure ?? 0).toBe(0);
+          // With the window dark too — a cohort seen edge-on reaches no depth
+          // at all — the whole fragment is gone, exactly as it was before.
           expect(faceAt(rho * RIM_R, { time, seed, azimuth: 1.1 })).toBeUndefined();
         }
       }
@@ -349,10 +538,30 @@ describe('cohort aperture — the hole', () => {
     expect(pupilAt(darkEdge * 1.02)).toBeGreaterThan(0);
     expect(pupilAt(Math.max(COHORT_AP_PUPIL_FRAC, 0.02))).toBe(1);
 
-    // ⭐ And the darkness is the PUPIL's, not the discard threshold's: the
-    // shape is identically zero well before anything is merely too faint.
-    expect(faceAt(darkTo * 0.5, { bound: true })).toBeUndefined();
-    expect(faceAt(litFrom, { bound: true })?.shape).toBeGreaterThan(0.4);
+    // ⭐ And it is the PUPIL's zero, not the discard threshold's: the structure
+    // is identically zero well before anything is merely too faint.
+    expect(faceAt(darkTo * 0.5, { bound: true })?.structure).toBe(0);
+    expect(faceAt(litFrom, { bound: true })?.structure).toBeGreaterThan(0.4);
+
+    // ⭐⭐ AND WHAT IS IN THERE IS ENTIRELY THE OTHER WORLD'S. Where the face
+    // contributes nothing, the tint is `COHORT_INTERIOR_COLD` EXACTLY — not a
+    // blend that happens to lean that way — so a viewer looking into a cohort
+    // is looking at a colour the peer plane never uses.
+    const inside = faceAt(darkTo * 0.5, { interior: interiorBound(darkTo * 0.5) });
+    expect(inside).toBeDefined();
+    expect(inside?.structure).toBe(0);
+    expect(inside?.interior).toBeGreaterThan(1);
+    // (`mix(a, b, 1)` is `a + (b - a)` and rounds, so this is exact to 1e-12
+    // rather than bit-identical — the claim is the colour, not the ulp.)
+    for (let c = 0; c < 3; c += 1) {
+      expect(inside?.tint[c]).toBeCloseTo(INTERIOR[c], 12);
+    }
+    // …and outside the hole the window contributes nothing at all, so the rim
+    // is the network's colour and no interior light leaks past the lip.
+    for (const r of [PUPIL_R, PUPIL_R * 1.001, RIM_R, COHORT_AP_R * 0.9]) {
+      expect(interiorBound(r)).toBe(0);
+      expect(interiorAt(r, { h: 9, medium: 1, grain: 1 })).toBe(0);
+    }
   });
 
   it('the aura’s hole is the SAME hole, at every camera, derived from the crossing', () => {
@@ -451,6 +660,154 @@ describe('cohort aperture — the hole', () => {
 });
 
 /* -------------------------------------------------------------------------- *
+ * The window in the hole.
+ * -------------------------------------------------------------------------- */
+
+describe('cohort aperture — the window in the hole', () => {
+  it('shows WALL at the lip and MEDIUM only where the ray reaches past the level', () => {
+    // ⭐⭐ `seeMedium` IS A FUNCTION OF DEPTH AND OF NOTHING ELSE. A ray that
+    // only grazes the near wall reaches no depth and sees wall; a ray that
+    // reaches past `COHORT_INTAKE_LEVEL` sees the medium's surface. That is
+    // what makes the hole read as a THROAT with something at the bottom rather
+    // than as a lit disc, and it is why the same mark is a ring from a low
+    // camera and a bright window from overhead.
+    expect(COHORT_INTAKE_LEVEL).toBe(0.7);
+    // Exactly zero at the far lip, where the ray has only just entered.
+    expect(seeMediumAt(0)).toBe(0);
+    expect(seeMediumAt(COHORT_INTAKE_LEVEL - 0.35)).toBe(0);
+    // Half at the level itself, complete once past the band, and monotone
+    // between — a cross-fade, never a switch.
+    expect(seeMediumAt(COHORT_INTAKE_LEVEL)).toBeCloseTo(0.5, 12);
+    expect(seeMediumAt(COHORT_INTAKE_LEVEL + 0.35)).toBe(1);
+    expect(seeMediumAt(40)).toBe(1);
+    let previous = -1;
+    for (let k = 0; k <= 400; k += 1) {
+      const value = seeMediumAt((k / 400) * 2);
+      expect(value).toBeGreaterThanOrEqual(previous);
+      previous = value;
+    }
+    // ⚠️ And the band's two edges are ORDERED for every level the knob can
+    // reach, because their difference is the constant 0.7 — `smoothstep` with
+    // `edge0 >= edge1` is undefined in GLSL ES and has rendered nothing twice.
+    expect((COHORT_INTAKE_LEVEL + 0.35) - (COHORT_INTAKE_LEVEL - 0.35)).toBeCloseTo(0.7, 12);
+  });
+
+  it('reaches no depth at a grazing camera and the whole hole from overhead', () => {
+    // The centre of the pupil, looked at along four elevations. ⭐ The depth is
+    // the hit distance times tan(elevation), so the window opens as the camera
+    // rises — which is exactly when the FACE is legible and the aura's
+    // low-elevation boost has switched off.
+    const centre: [number, number] = [0, 0];
+    const east: [number, number] = [1, 0];
+    const depths = [2, 10, 30, 60, 89].map((elevation) => {
+      const tanEl = Math.tan((elevation * Math.PI) / 180);
+      return throatHit(centre, east, tanEl).h;
+    });
+    for (let i = 1; i < depths.length; i += 1) {
+      expect(depths[i]).toBeGreaterThan(depths[i - 1]);
+    }
+    // At 2° the ray is still inside the wall's own band; by 60° it is well
+    // past the level and the window is showing surface.
+    expect(seeMediumAt(depths[0])).toBe(0);
+    expect(seeMediumAt(depths[4])).toBe(1);
+    // ⚠️ MEASURED, NOT ASSUMED: on a 0.521 wu pupil the medium first shows at
+    // about 34° of elevation, where the lab's 1.6 wu mouth showed it at 12°.
+    // That is a consequence of keeping R19's radii and is the single number
+    // most likely to want the level knob at the live leg.
+    const firstDegree = [...Array(90).keys()]
+      .find((d) => seeMediumAt(throatHit(centre, east, Math.tan((d * Math.PI) / 180)).h) > 0);
+    expect(firstDegree).toBe(34);
+  });
+
+  it('takes the medium point to the fragment itself for a vertical ray', () => {
+    // ⭐ `mp` IS WHERE THE RAY MEETS THE MEDIUM'S LEVEL, so from directly
+    // overhead it is the fragment's own point: the window is then a straight
+    // window down onto the surface, with no parallax to carry. Any drift here
+    // would slide the medium sideways under the mouth as the camera rose.
+    const overhead = 1 / 1e-5; // what `abs(dir.y) / max(lxz, 1e-5)` gives
+    for (const P of [[0, 0], [0.1, -0.2], [0.3, 0.35]] as const) {
+      const { mp } = throatHit(P, [0, 1], overhead);
+      expect(Math.hypot(mp[0] - P[0], mp[1] - P[1])).toBeLessThan(1e-5);
+    }
+    // …and it slides outward, along the view, as the camera comes down: at 45°
+    // it is exactly `COHORT_INTAKE_LEVEL` out along the horizontal view.
+    const { mp } = throatHit([0, 0], [1, 0], 1);
+    expect(mp[0]).toBeCloseTo(COHORT_INTAKE_LEVEL, 12);
+    // ⚠️ The 0.06 floor is what stops a near-horizontal ray taking `mp` to
+    // infinity; it caps the reach at 11.7 wu, well outside the mark.
+    const grazing = throatHit([0, 0], [1, 0], 0);
+    expect(grazing.mp[0]).toBeCloseTo(COHORT_INTAKE_LEVEL / 0.06, 10);
+    expect(grazing.h).toBe(0);
+  });
+
+  it('is the ONE level the mist’s mound will have to share', () => {
+    // ⭐⭐⭐ ONE CONSTANT, TWO CONSUMERS. What the hole shows and what the mist
+    // beside it does are one surface: the patch of mist under a cohort is
+    // lifted into a mound whose top is exactly this level. If they ever become
+    // two numbers, a viewer looking INTO the mouth sees a surface at one height
+    // and a viewer looking at the mist beside it sees another.
+    expect(FACE.uniforms.uLevel.value).toBe(COHORT_INTAKE_LEVEL);
+    // It is stated as a shared constant rather than a literal, which is the
+    // whole mechanism: a knob has one place to write.
+    expect(FACE_FRAGMENT_CODE).not.toMatch(/uLevel\s*=/);
+    expect(FACE_FRAGMENT_CODE).toContain('smoothstep(uLevel - 0.35, uLevel + 0.35, h)');
+  });
+
+  it('feeds the lip with a field bounded in [0, 1], which is why the sweeps may pin it at 1', () => {
+    // ⚠️ THE MIRRORS ABOVE TAKE THE MEDIUM AS A PARAMETER RATHER THAN COPYING
+    // IT, because a transliterated lattice is exactly the drift R15 shipped.
+    // What ties the parameter's INTERVAL to the shipped source is this chain,
+    // read off the GLSL itself:
+    const glsl = squash(FACE_FRAGMENT_CODE);
+    //   1. the hash returns `fract(...)`, which is [0, 1) by definition;
+    expect(glsl).toContain('return fract((q.x + q.y) * q.z);');
+    //   2. the lattice is a bilinear mix of four of those, so [0, 1];
+    expect(glsl).toContain('return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);');
+    //   3. each octave pair is weighted 0.62 + 0.38 = 1, so `n` is [0, 1];
+    expect(glsl).toContain('* 0.62');
+    expect(glsl).toContain('* 0.38;');
+    //   4. and the ridge is `1 - |2n - 1|` clamped at zero, raised to 1.6.
+    expect(glsl).toContain('return pow(max(1.0 - abs(2.0 * n - 1.0), 0.0), 1.6);');
+    // The wall's grain is bounded the same way, by two cosines whose weights
+    // also sum to one.
+    expect(glsl).toContain('float g = 0.5 + 0.5 * ( 0.62 * cos(');
+    expect(glsl).toContain('+ 0.38 * cos(');
+
+    // ⭐ AND THE LIP'S FEED IS MEAN-PRESERVING-ISH RATHER THAN A BRIGHTENER:
+    // `0.55 + 0.9 * feed` spans [0.55, 1.45] about a unity centre, so what the
+    // feed does is make the lip UNEVEN, not brighter. A rim modulated upward
+    // only would have moved the mark's outline, which is the sunflower failure
+    // the grain's own subtractive law exists to prevent.
+    expect(0.55 + 0.9 * 0.5).toBeCloseTo(1, 12);
+    const dim = faceAt(RIM_R, { bound: true, feed: 0 });
+    const bright = faceAt(RIM_R, { bound: true, feed: 1 });
+    expect(dim?.shape).toBeLessThan(bright?.shape ?? 0);
+    // …and it never removes the lip entirely: the rim survives its own worst
+    // feed, so the mark is never a hole with no edge.
+    expect(dim?.structure).toBeGreaterThan(1);
+  });
+
+  it('gulps only what the block path stamps, and by different amounts on lip and interior', () => {
+    // ⭐ THE INTERIOR GULPS HARDER THAN THE LIP (2.2 against 1.6), which is
+    // what makes the mouth read as SWALLOWING rather than as flashing: the
+    // brightening comes from INSIDE the hole and the edge follows it.
+    expect(COHORT_GULP_INTERIOR).toBeGreaterThan(COHORT_GULP_LIP);
+    const peak = gulpEnvelope(0.1284);
+    expect(peak).toBeCloseTo(0.6633, 4);
+    const restingLip = faceAt(RIM_R, { bound: true })?.shape ?? 0;
+    const gulpingLip = faceAt(RIM_R, { bound: true, gulp: peak })?.shape ?? 0;
+    expect(gulpingLip).toBeGreaterThan(restingLip);
+    const inner = PUPIL_R * 0.4;
+    expect(interiorBound(inner, peak) / interiorBound(inner))
+      .toBeCloseTo(1 + COHORT_GULP_INTERIOR * peak, 10);
+    // ⚠️ And at rest — which is every cohort until the block path lands — the
+    // gulp contributes exactly nothing, in both places.
+    expect(interiorBound(inner, 0)).toBe(interiorBound(inner));
+    expect(faceAt(RIM_R, { bound: true, gulp: 0 })?.shape).toBe(restingLip);
+  });
+});
+
+/* -------------------------------------------------------------------------- *
  * The ceiling the two draws share.
  * -------------------------------------------------------------------------- */
 
@@ -463,7 +820,19 @@ describe('cohort aperture — the ceiling two additive draws share', () => {
     // structure the whole form is about stops being visible.
     expect(SCAFFOLD[2]).toBe(1);
     expect(COLD_WHITE[2]).toBe(1);
+    // ⭐ AND THE WINDOW'S OWN COLOUR IS FULL IN BLUE TOO, which is what keeps
+    // this argument the same one after R25: every colour either draw can emit
+    // is 1.0 in blue, so the binding channel is still `shapeFace² + shapeAura²`
+    // and the Pythagorean knee pair still bounds it by arithmetic.
+    expect(INTERIOR[2]).toBe(1);
 
+    // ⚠️ `bound` NOW PINS FIVE THINGS AND NOT THREE. The breathe, the swell and
+    // the grain are pinned at their own maxima as before; the lip's feed is
+    // pinned at 1 (a spatial supremum, reached at some azimuth at every
+    // instant) and the WINDOW at `interiorBound` — its largest value over every
+    // camera, not this ray's. That makes the sweep a bound over the union of
+    // reachable states rather than over one pose, which is the right shape for
+    // a claim that has to hold at every camera at once.
     let supremum: [number, number, number] = [0, 0, 0];
     let faceSupremum = 0;
     let auraSupremum = 0;
@@ -495,13 +864,22 @@ describe('cohort aperture — the ceiling two additive draws share', () => {
 
     // Each draw against its own knee, and then the sum, which is the number
     // that matters and the one the lab never measured.
-    expect(faceSupremum).toBeCloseTo(0.851245, 5);
+    //
+    // ⚠️⚠️ THE HEADROOM HALVED IN R25 AND IS STILL HEADROOM. The window's
+    // interior, the lip's feed and the aura's new core and low-elevation boost
+    // all push the same way: blue went from 0.8475 to 0.9256, so what was 15 %
+    // of clearance under the clip is now 7 %. It is still a THEOREM rather than
+    // an observation — `and that ceiling is ARITHMETIC` below — but a further
+    // amplitude on either draw now has a measured cost, and anyone adding one
+    // should read that number first. The aura in particular is within 1.6e-5 of
+    // its own knee: it is saturating it, which is exactly what a knee is for.
+    expect(faceSupremum).toBeCloseTo(0.878861, 5);
     expect(faceSupremum).toBeLessThan(COHORT_CLIP_KNEE);
-    expect(auraSupremum).toBeCloseTo(0.357203, 5);
+    expect(auraSupremum).toBeCloseTo(0.391902, 5);
     expect(auraSupremum).toBeLessThan(COHORT_AURA_KNEE);
-    expect(supremum[0]).toBeCloseTo(0.338322, 4);
-    expect(supremum[1]).toBeCloseTo(0.748928, 4);
-    expect(supremum[2]).toBeCloseTo(0.847535, 4);
+    expect(supremum[0]).toBeCloseTo(0.371400, 4);
+    expect(supremum[1]).toBeCloseTo(0.816722, 4);
+    expect(supremum[2]).toBeCloseTo(0.925629, 4);
     for (const channel of supremum) expect(channel).toBeLessThan(1);
     // Blue is the binding channel, because both colours are full in it.
     expect(supremum[2]).toBeGreaterThan(supremum[1]);
@@ -555,20 +933,23 @@ describe('cohort aperture — the ceiling two additive draws share', () => {
   });
 
   it('the shared ceiling is REACHED, not merely bounded', () => {
-    // ⚠️ A supremum built by pinning each time factor at its own maximum is
-    // only a bound until the maxima are shown to be simultaneously reachable.
-    // They are: the breathe, the swell and the grain have incommensurate
-    // phases in `uTime` and `aSeed`, so a real (time, seed) gets arbitrarily
-    // close to all three at once. Measured at the rim, where the grain's
-    // envelope is zero and only two of the three have to meet.
+    // ⚠️ A supremum built by pinning each factor at its own maximum is only a
+    // bound until the maxima are shown to be simultaneously reachable. They
+    // are: the breathe, the swell and the grain have incommensurate phases in
+    // `uTime` and `aSeed`, so a real (time, seed) gets arbitrarily close to all
+    // three at once — and the lip's FEED is a spatial field, independent of all
+    // three, whose supremum of 1 is reached at some azimuth on the lip circle
+    // at every instant. Measured at the rim, where the grain's envelope is zero
+    // and where the window contributes nothing at all.
     const rim = RIM_R;
     const bound = faceAt(rim, { bound: true });
     expect(bound).toBeDefined();
+    expect(bound?.interior).toBe(0);
     let best = 0;
     for (let step = 0; step < 4000; step += 1) {
       const time = step * 0.0173;
       for (let s = 0; s < 200; s += 1) {
-        const live = faceAt(rim, { time, seed: s / 200, azimuth: 0.7 });
+        const live = faceAt(rim, { time, seed: s / 200, azimuth: 0.7, feed: 1 });
         if (live !== undefined && live.shape > best) best = live.shape;
       }
     }
@@ -710,19 +1091,33 @@ describe('cohort aperture — a circle in the colony plane', () => {
       expect(program).not.toMatch(/attribute\s+(float|vec\d|mat\d)\s+a(Angle|Axis|Turn|Rot|Orient|Basis|Normal|Up)/);
       // No rotation built in the shader either.
       expect(program).not.toMatch(/\bmat2\s*\(/);
-      expect(program).not.toMatch(/\bmat3\s*\(/);
       expect(program).not.toMatch(/\brotate\w*\s*\(/);
     }
-    // ⭐ The only per-instance lane on either face is the seed. `aShare` is
-    // deliberately ABSENT: share means RATE on this layer, and the only rate
-    // either aperture program has is the grain's drift — which the prefilter
-    // takes to nothing before the mark is small enough to compare cohorts
-    // against each other, so a share lane here would carry a fact no viewer
-    // could read. It stays off until something measurable wants it.
-    for (const vertex of [FACE_VERTEX_CODE, AURA_VERTEX_CODE]) {
-      const attributes = [...vertex.matchAll(/attribute\s+\w+\s+(\w+)\s*;/g)].map((m) => m[1]);
-      expect(attributes).toEqual(['aSeed']);
+    // ⚠️ THE ONE BASIS IN EITHER PROGRAM IS THE COLONY'S OWN, AND IT IS READ
+    // RATHER THAN BUILT. The window has to put the camera in the plane the disc
+    // is drawn in — otherwise the throat's wall slides sideways as the plate
+    // turns — so the face's vertex stage takes `mat3(modelMatrix *
+    // instanceMatrix)` and uses its TRANSPOSE as its inverse. That matrix is
+    // the colony's shared rotation about world Y and a translation, so every
+    // cohort gets the SAME basis: it is not an orientation any cohort owns, and
+    // there is nothing per-instance in it. Nowhere else may build one.
+    expect([...FACE_VERTEX_CODE.matchAll(/\bmat3\s*\(/g)]).toHaveLength(1);
+    expect(squash(FACE_VERTEX_CODE))
+      .toContain('mat3 frame = mat3(modelMatrix * instanceMatrix);');
+    for (const program of [FACE_FRAGMENT_CODE, AURA_VERTEX_CODE, AURA_FRAGMENT_CODE]) {
+      expect(program).not.toMatch(/\bmat3\s*\(/);
     }
+    // ⭐ The per-instance lanes are the seed and — on the face alone — the gulp.
+    // `aShare` is deliberately ABSENT: share means RATE on this layer, and the
+    // only rate either aperture program has is the grain's drift, which the
+    // prefilter takes to nothing before the mark is small enough to compare
+    // cohorts against each other. Neither lane is an orientation.
+    expect(
+      [...FACE_VERTEX_CODE.matchAll(/attribute\s+\w+\s+(\w+)\s*;/g)].map((m) => m[1]),
+    ).toEqual(['aSeed', 'aGulp']);
+    expect(
+      [...AURA_VERTEX_CODE.matchAll(/attribute\s+\w+\s+(\w+)\s*;/g)].map((m) => m[1]),
+    ).toEqual(['aSeed']);
     for (const fragment of [FACE_FRAGMENT_CODE, AURA_FRAGMENT_CODE]) {
       expect(fragment).not.toMatch(/\battribute\b/);
       expect(fragment).not.toMatch(/\baShare\b/);
@@ -838,15 +1233,54 @@ describe('cohort aperture — the mirrors above are the shipped shaders', () => 
     expect(glsl).toContain(
       'float breathe = 1.0 - uBreatheDepth + uBreatheDepth * sin(uTime * uBreatheHz + vSeed * TAU);',
     );
-    expect(glsl).toContain('float shape = (rim * uRimAmp + intake) * pupil * uAmp * breathe;');
+    // ---- the window, and the two registers it splits the face into
+    expect(glsl).toContain('float pupR = rimR * pup;');
+    expect(glsl).toContain('vec3 dir = normalize(vec3(vP.x, 0.0, vP.y) - vCam);');
+    expect(glsl).toContain('vec2 e = lxz > 1e-5 ? dir.xz / lxz : vec2(0.0, 1.0);');
+    expect(glsl).toContain('float tanEl = abs(dir.y) / max(lxz, 1e-5);');
+    expect(glsl).toContain('float b = dot(vP, e);');
+    expect(glsl).toContain(
+      'float t = -b + sqrt(max(b * b + pupR * pupR - r * r, 0.0));',
+    );
+    expect(glsl).toContain('float h = t * tanEl;');
+    expect(glsl).toContain(
+      'float lit = (1.0 - exp(-h / max(uLevel, 0.05))) * (0.55 + 0.6 * g) * uWallAmp * 0.55;',
+    );
+    expect(glsl).toContain(
+      'float seeMedium = smoothstep(uLevel - 0.35, uLevel + 0.35, h);',
+    );
+    expect(glsl).toContain('vec2 mp = vP + e * (uLevel / max(tanEl, 0.06));');
+    expect(glsl).toContain('float m = otherMedium(mp, vSeed);');
+    expect(glsl).toContain(
+      'float surf = (0.30 + 0.95 * m) * uInteriorAmp * (1.0 + 2.2 * gulp);',
+    );
+    expect(glsl).toContain('float shade = smoothstep(0.0, pupR * 0.14, pupR - r);');
+    expect(glsl).toContain('interior = mix(lit, surf, seeMedium) * shade;');
+    expect(glsl).toContain('float feed = otherMedium(nrm * rimR, vSeed);');
+    expect(glsl).toContain('lipFeed = (0.55 + 0.9 * feed) * (1.0 + 1.6 * gulp);');
+    expect(glsl).toContain(
+      'float structure = (rim * uRimAmp * lipFeed + intake) * pupil;',
+    );
+    expect(glsl).toContain('float shape = (structure + interior) * uAmp * breathe;');
     expect(glsl).toContain('if (shape < 0.0018) discard;');
     expect(glsl).toContain('shape = uKnee * (1.0 - exp(-shape / uKnee));');
-    expect(glsl).toContain('vec3 tint = mix(uColor, uHot, uHotMix * rim * pupil);');
+    expect(glsl).toContain(
+      'float otherShare = clamp(interior / max(structure + interior, 1e-4), 0.0, 1.0);',
+    );
+    expect(glsl).toContain(
+      'vec3 tint = mix( mix(uColor, uHot, uHotMix * rim * pupil), uInterior, otherShare );',
+    );
     // ⭐ Energy multiplies RGB and NEVER alpha — the house idiom that keeps
     // additive damping linear.
     expect(glsl).toContain('gl_FragColor = vec4(tint * shape * cohortEnergy, shape);');
     // The corner discard, which is what makes a square quad legal for a disc.
     expect(glsl).toContain('if (r > uApR) discard;');
+    // ⭐ And the gulp's envelope arrives as ONE shared string, so the mouth and
+    // the mist under it cannot drift apart on the curve.
+    expect(glsl).toContain('float gulpAge = uTime - vGulp;');
+    expect(glsl).toContain(
+      'float gulp = gulpAge > 0.0 ? exp(-gulpAge / 0.45) * (1.0 - exp(-gulpAge / 0.06)) : 0.0;',
+    );
   });
 
   it('the aura, term for term — and its hole is derived, never restated', () => {
@@ -856,7 +1290,17 @@ describe('cohort aperture — the mirrors above are the shipped shaders', () => 
     expect(glsl).toContain('float hR = max(uApR * uHaloR, 0.05);');
     expect(glsl).toContain('if (perp > hR) discard;');
     expect(glsl).toContain('float hx = clamp(perp / hR, 0.0, 1.0);');
-    expect(glsl).toContain('float halo = pow(1.0 - hx, max(uHaloExp, 0.2));');
+    expect(glsl).toContain(
+      'float halo = pow(1.0 - hx, max(uHaloExp, 0.2))'
+        + ' + pow(1.0 - hx, max(uCoreExp, 0.2)) * uCoreAmp;',
+    );
+    expect(glsl).toContain(
+      'halo *= mix( 1.0, uLowBoost, 1.0 - smoothstep( 0.05, 0.55, abs(rd.y) ) );',
+    );
+    expect(glsl).toContain('float under = 1.0 - smoothstep(-0.55, 0.15, dy / hR);');
+    expect(glsl).toContain(
+      'vec3 tint = mix(mix(uColor, uHot, uHotMix), uInterior, under * uUnderTint);',
+    );
     // ⭐⭐⭐ THE HOLE, CUT BY THE RAY/PLANE CROSSING. `pupR` is built from the
     // SAME `uApR`, `uRimFrac` and `uPupilFrac` the face reads, scaled once by
     // `uHaloPupil`; and the distance it is compared against is measured in the
@@ -886,20 +1330,45 @@ describe('cohort aperture — the mirrors above are the shipped shaders', () => 
     expect(squash(AURA_FRAGMENT_CODE)).not.toMatch(/\bfbm\b|\bnoise\b|\bsnoise\b|\bhash\b/);
   });
 
-  it('neither program contains noise of any kind', () => {
-    // ⭐ The mark this replaced was the scene's sole `fbm`, and one of five
-    // register violations it spent on the same idea.
+  it('samples NO TEXTURE anywhere, which is the register violation that mattered', () => {
+    // ⭐⭐ THE BAN THAT SURVIVED, AND THE ONE THAT DID NOT. The mark this layer
+    // replaced was the scene's sole textured object and its sole `fbm` — two of
+    // the five register violations it was retired for — and R19 banned both
+    // outright. The window needs an uneven medium below the plane or it reads
+    // as a lit disc, so ONE of the two bans had to go. The one that went is the
+    // arithmetic; the one that stayed is the ASSET. There is no sampler and no
+    // texture in this layer at all: the lab's 256² value-noise tile is written
+    // out as the same bilinear value noise instead, which costs this material
+    // nothing to own, nothing to dispose and nothing to share.
     for (const program of [
       FACE_VERTEX_CODE, FACE_FRAGMENT_CODE, AURA_VERTEX_CODE, AURA_FRAGMENT_CODE,
     ]) {
-      expect(program).not.toMatch(/\bfbm\b|\bnoise\b|\bsnoise\b|\bhash\b|\btexture2D\b|\bsampler/);
-      // `fract` is how a hash is usually spelled in this house; there is none.
+      expect(program).not.toMatch(/\btexture2D\b|\btexture\s*\(|\bsampler/);
+      expect(program).not.toMatch(/\bfbm\b/);
+    }
+    // ⭐ AND IT IS THE FACE ALONE THAT CARRIES ANY OF IT. The aura is still
+    // pure geometry — a profile, a ray/plane crossing and two tints — so the
+    // whole of the new arithmetic is inside the hole, where it is 3 % of the
+    // disc's area and nowhere else.
+    for (const program of [FACE_VERTEX_CODE, AURA_VERTEX_CODE, AURA_FRAGMENT_CODE]) {
+      expect(program).not.toMatch(/\bhashOne\b|\blattice\b|\botherMedium\b/);
       expect(program).not.toMatch(/\bfract\s*\(/);
     }
-    // ⚠️ And the sweep above really is comment-free, or it would be proving
-    // nothing: the face's own prose says the word "noise" out loud.
-    expect(FACE_FRAGMENT).toMatch(/\bnoise\b/);
-    expect(FACE_FRAGMENT_CODE).not.toMatch(/\bnoise\b/);
+    // ⚠️ And the sweep really is comment-free, or it would be proving nothing:
+    // the aura's prose says "texture" out loud and its code does not.
+    expect(FACE_FRAGMENT).toMatch(/\btexture\b/);
+    expect(FACE_FRAGMENT_CODE).not.toMatch(/\btexture\b/);
+    // ⚠️ THE MEDIUM IS PAID FOR ONLY WHERE IT SHOWS, and that is a property of
+    // the source rather than a hope: both call sites sit behind a guard — the
+    // hole (`r < pupR`) and the lip's own Gaussian (`rim > 0.001`).
+    const glsl = squash(FACE_FRAGMENT_CODE);
+    expect([...glsl.matchAll(/\botherMedium\s*\(/g)]).toHaveLength(3); // 1 def + 2 uses
+    expect(glsl).toContain('if (r < pupR) {');
+    expect(glsl).toContain('if (rim > 0.001) {');
+    const inHole = glsl.indexOf('if (r < pupR) {');
+    const atLip = glsl.indexOf('if (rim > 0.001) {');
+    expect(glsl.indexOf('otherMedium(mp, vSeed)')).toBeGreaterThan(inHole);
+    expect(glsl.indexOf('otherMedium(nrm * rimR, vSeed)')).toBeGreaterThan(atLip);
   });
 });
 
@@ -940,6 +1409,38 @@ describe('cohort aperture — the materials', () => {
     expect(AURA.uniforms.uHaloPupil.value).toBe(COHORT_AURA_PUPIL_SCALE);
     expect(AURA.uniforms.uHotMix.value).toBe(COHORT_AURA_HOT_MIX);
     expect(AURA.uniforms.uAmp.value).toBe(COHORT_AURA_AMP);
+    expect(AURA.uniforms.uCoreAmp.value).toBe(COHORT_AURA_CORE_AMP);
+    expect(AURA.uniforms.uCoreExp.value).toBe(COHORT_AURA_CORE_EXP);
+    expect(AURA.uniforms.uLowBoost.value).toBe(COHORT_AURA_LOW_BOOST);
+    expect(AURA.uniforms.uUnderTint.value).toBe(COHORT_AURA_UNDER_TINT);
+
+    // ---- the window's own numbers, all from the approved preview
+    expect(FACE.uniforms.uLevel.value).toBe(COHORT_INTAKE_LEVEL);
+    expect(FACE.uniforms.uRise.value).toBe(COHORT_FACE_RISE);
+    expect(FACE.uniforms.uInteriorAmp.value).toBe(COHORT_FACE_INTERIOR_AMP);
+    expect(FACE.uniforms.uInteriorScale.value).toBe(COHORT_FACE_INTERIOR_SCALE);
+    expect(FACE.uniforms.uWallAmp.value).toBe(COHORT_FACE_WALL_AMP);
+    expect(FACE.uniforms.uWallGrain.value).toBe(COHORT_FACE_WALL_GRAIN);
+    // ⚠️ AN INTEGER, AND THE SEAM IS WHY: the wall's grain is a function of the
+    // azimuth, so anything but a whole number of cycles around the throat draws
+    // a discontinuity down one side of the hole.
+    expect(Number.isInteger(COHORT_FACE_WALL_GRAIN)).toBe(true);
+
+    // ⭐ THE OTHER WORLD'S COLOUR IS ON BOTH DRAWS AND IS NOT A PEER TOKEN. The
+    // face shows it through the hole and the aura wears it below the plane, so
+    // the two halves of one mark agree about which side is which; and it is
+    // deliberately outside `PEER_NETWORK_PALETTE`, whose five tokens all name
+    // roles INSIDE the peer plane. The nearest one was measured rather than
+    // eyeballed — `inbound` is about 8 % away in red and green — and refused
+    // because borrowing it would tie the other world's register to the link
+    // grammar.
+    for (const material of [FACE, AURA]) {
+      const interior = material.uniforms.uInterior.value as THREE.Color;
+      expect([interior.r, interior.g, interior.b]).toEqual([...COHORT_INTERIOR_COLD]);
+    }
+    for (const token of Object.values(PEER_NETWORK_PALETTE)) {
+      expect([...token]).not.toEqual([...COHORT_INTERIOR_COLD]);
+    }
 
     // ⭐ THE THREE APERTURE NUMBERS BOTH FACES READ. They are the reason the
     // two holes are one hole; a copy on either side would be the drift.
@@ -1052,11 +1553,22 @@ describe('cohort aperture — the materials', () => {
     // counts include the ONE `smoothstep` pasted in from
     // `COHORT_CONTEXT_ENERGY_GLSL`, which is why the guards' coverage sum has
     // to credit a shared snippet once per EXTRA use site — two use sites now,
-    // so exactly one call has to be added back.
-    expect([...FACE_FRAGMENT.matchAll(/\bsmoothstep\s*\(/g)]).toHaveLength(4);
-    expect([...AURA_FRAGMENT.matchAll(/\bsmoothstep\s*\(/g)]).toHaveLength(3);
-    expect([...FACE_FRAGMENT.matchAll(/\bpow\s*\(/g)]).toHaveLength(1);
-    expect([...AURA_FRAGMENT.matchAll(/\bpow\s*\(/g)]).toHaveLength(1);
+    // so exactly one call has to be added back. ⭐ `COHORT_GULP_GLSL` is the
+    // second shared snippet and contributes NOTHING to either count (it is two
+    // exponentials and a comparison), which is why the credit did not have to
+    // move when it landed.
+    //
+    // Face: pupil, the grain's two envelope edges, the exemption, the window's
+    // `seeMedium` and its near-lip `shade` — six. Aura: the hole's cut, the
+    // halo's downward bias, the exemption, the low-elevation boost and the
+    // under-tint — five.
+    expect([...FACE_FRAGMENT.matchAll(/\bsmoothstep\s*\(/g)]).toHaveLength(6);
+    expect([...AURA_FRAGMENT.matchAll(/\bsmoothstep\s*\(/g)]).toHaveLength(5);
+    // Face: the intake skirt and the medium's ridge. Aura: the skirt and the
+    // core. Every one of the four has a base this file's guard can prove
+    // non-negative — the medium's by an explicit `max(…, 0.0)`.
+    expect([...FACE_FRAGMENT.matchAll(/\bpow\s*\(/g)]).toHaveLength(2);
+    expect([...AURA_FRAGMENT.matchAll(/\bpow\s*\(/g)]).toHaveLength(2);
     // ⚠️ And a square is `sq(x)`, never `pow(x, 2.0)`: a negative base is
     // undefined in GLSL and a square is the one case where it is free to avoid.
     expect(FACE_FRAGMENT).toContain('float sq(float x) { return x * x; }');
