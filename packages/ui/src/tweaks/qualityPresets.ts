@@ -124,9 +124,16 @@ export interface QualityCascade {
    * scene but a different claim about what a cohort does. What `low` gives up
    * is the ambience the intake is measured AGAINST, not the intake.
    *
-   * ⚠️ STARTING VALUES from the approved preview's two sheets, not a
-   * measurement: T6 has the per-draw GPU cost of `colony.mist.haze` in front of
-   * it and owns the numbers. */
+   * ⭐ MEASURED 2026-09-02 (AMD 890M / ANGLE-Vulkan, 2560 × 1440, min-of-N
+   * through `colony.mist.haze`), and the tier is a frame-time decision rather
+   * than a picture one. A sheet costs 0.899 ms of the 1.057 ms the whole
+   * cohort/mist feature adds at the app camera, so `med`'s single sheet saves
+   * 0.385 ms against `high`; and because the haze's own contribution peaks at
+   * 2/255 anywhere on the canvas, the three tiers are visually
+   * indistinguishable there. ⚠️ Which tier a viewer gets is the adaptive
+   * controller's: on the reference machine a cold boot locked `med` and a warm
+   * reload locked `high`, so ONE sheet is the common case. The values started
+   * as the approved preview's two sheets and did not move. */
   mistHazeSheets: number;
   /** Semantic memory marks retain one CSS-space footprint at every preset.
    * Lower sample density gets a slightly broader, dimmer filter rather than

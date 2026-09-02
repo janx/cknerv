@@ -44,9 +44,12 @@ import {
   COHORT_FACE_STRIAE_FLOOR,
   COHORT_INTAKE_LEVEL,
 } from '../materials/colonyCohort';
-// …and the mist under the mark brings six more, on the same rule: the two
-// materials in `colonyMist` seed their own uniforms from these constants and
-// `ColonyCohorts` / `ColonyMist` overwrite them from LIVE.peer.* each frame.
+// …and the mist under the mark brings NINE more knobs, on the same rule: the
+// two materials in `colonyMist` seed their own uniforms from these constants
+// and `ColonyCohorts` / `ColonyMist` overwrite them from LIVE.peer.* each
+// frame. Only six constants are imported for the nine, because `MIST_AMP` seeds
+// both amplitudes and the other two — the window's amp and the level — belong
+// to the aperture's own file above.
 // ⭐ `cohortLevel` is the one knob with TWO consumers — the window's medium
 // level in the face and the top of the mist's mound under it are ONE surface
 // (`COHORT_INTAKE_LEVEL`), and a tuner who could move one without the other
@@ -180,7 +183,9 @@ export const peerSchema = {
   flameBloom: { value: 0.7, min: 0.1, max: 2, step: 0.05, label: 'flame bloom' },
   glintBloomOpacity: { value: 0.55, min: 0, max: 1, step: 0.05, label: 'glint bloom op' },
   glintPlumeOpacity: { value: 0.3, min: 0, max: 1, step: 0.05, label: 'glint plume op' },
-  // The POW channel — one aperture per cohort, drawn as two faces of one hole.
+  // The POW channel — one aperture per cohort, drawn as two faces of one hole,
+  // over the mist that hole is drinking. Eight knobs for the mark, nine for the
+  // substance under it.
   //
   // ⭐ REACH FOR `cohortApR` FIRST. It is THE size parameter: every other length
   // on this mark is a fraction of it, so it is the one knob that moves the
@@ -255,14 +260,24 @@ export const peerSchema = {
   // pixels, and its ceiling is `cohortMistAmp` / `cohortHazeAmp` measured live
   // (see the ceiling paragraph in `colonyMist.ts` — the two draws above sum to
   // 0.808 in blue, so the substance under them has 0.192 to spend).
-  cohortMistAmp: { value: MIST_AMP, min: 0, max: 3, step: 0.05, label: 'cohort mist amp' },
+  // …and what each one moves, one line apiece.
+  // the intake patch's whole brightness: the mist under ONE mouth, nothing else
+  cohortMistAmp: { value: MIST_AMP, min: 0, max: 3, step: 0.05, label: 'cohort patch amp' },
+  // the ambient haze sheets' brightness: the same substance everywhere else
   cohortHazeAmp: { value: MIST_AMP, min: 0, max: 3, step: 0.05, label: 'cohort haze amp' },
+  // how hard that medium burns seen THROUGH the hole — the face's window
   cohortInteriorAmp: { value: COHORT_FACE_INTERIOR_AMP, min: 0, max: 3, step: 0.05, label: 'cohort window amp' },
+  // filament gain near the mouth: how sharply the gathering medium streaks
   cohortGather: { value: MIST_CONTRAST_NEAR, min: 0, max: 3, step: 0.05, label: 'cohort gather' },
+  // sink strength k, in wu²/s: how fast the medium falls in (`r0² = r² + k·τ`)
   cohortIntake: { value: MIST_SINK_K, min: 0, max: 40, step: 0.5, label: 'cohort sink k' },
+  // vortex-to-sink ratio: how far a streamline winds before it arrives
   cohortSwirl: { value: MIST_SWIRL, min: 0, max: 3, step: 0.05, label: 'cohort swirl' },
+  // the patch's half-extent AND its catchment radius, in world units
   cohortReach: { value: MIST_REACH, min: 4, max: 30, step: 0.5, label: 'cohort reach' },
+  // how far under the lip the medium stands: the window's level AND the mound's top
   cohortLevel: { value: COHORT_INTAKE_LEVEL, min: 0.2, max: 2, step: 0.02, label: 'cohort level' },
+  // how much medium the mouth has already taken downstream of itself
   cohortWake: { value: MIST_WAKE, min: 0, max: 1, step: 0.05, label: 'cohort wake' },
 } satisfies FolderSchema;
 

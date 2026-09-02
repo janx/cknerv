@@ -129,6 +129,16 @@
 // itself — the same guarantee, at the same strength, while now being able to
 // answer at all.
 //
+// ⭐ MEASURED ON LIVE MAINNET, 2026-09-02: over a 360-second window with
+// `backfillActive` false throughout, 29 block pulses arrived, all 29 named a
+// cohort, all 29 stamped a slot, and the stamped slot's `nodeId` equalled
+// `cf.entryId` all 29 times — 0 mismatches, 0 pulses naming a cohort without a
+// stamp, 0 stamps for a pulse that named no cohort (the anonymous ghost pick
+// never appeared in this window). Four distinct cohorts won; the mark count
+// never changed, so the re-lay was not exercised by a re-plan here and remains
+// pinned by test rather than by measurement. The flare was caught ~0.2 s after
+// the stamp at 1.82× the resting mean canvas value.
+//
 // ⚠️ THE DELIVERY PULSE REF WAS THE OTHER CANDIDATE, AND IT WAS REFUSED ON TWO
 // MEASURED FACTS RATHER THAN ON TASTE. `NetworkColony` already stamps
 // `{ at: simClock.elapsedSec, entryId, color }` into a ref for

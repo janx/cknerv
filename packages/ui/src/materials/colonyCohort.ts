@@ -5,10 +5,19 @@ import { PEER_NETWORK_PALETTE, type SceneColor } from '../visualPalette';
  * The two faces of a POW cohort's mark, and nothing else.
  *
  * ⭐⭐⭐ THE MARK IS THE APERTURE. A cohort is where the colony plane is
- * OPEN, and the whole form is that opening drawn twice: a disc lying IN the
+ * OPEN, and the MARK is that opening drawn twice: a disc lying IN the
  * plane (`makeCohortFaceMaterial`), and a camera-facing halo carrying the same
  * hole (`makeCohortAuraMaterial`). Nothing volumetric, nothing hanging under
  * the slab, and no second cadence — one hole, two rays through it.
+ *
+ * ⭐ `ColonyCohorts` issues a THIRD draw beside these two, and it is not in this
+ * file: the INTAKE PATCH, the surface of the mist the hole is drinking, whose
+ * material is `makeCohortIntakePatchMaterial` in `materials/colonyMist`. Three
+ * draws, one plan, one instance count, one `aGulp` lane — and the mark's own
+ * two are still all this file owns. The two files share
+ * `COHORT_INTAKE_LEVEL` (the window's medium level IS the mound's top) and
+ * `COHORT_RIM_R` (the drawn lip IS the radius the patch gates, piles and wakes
+ * against), which is what keeps one cohort from reading as two.
  *
  * ⭐⭐⭐ AND THE HOLE HAS A WINDOW IN IT. The peer mesh is the boundary between
  * two universes — above it the cell canopy, below it the one a cohort drinks
@@ -50,11 +59,16 @@ import { PEER_NETWORK_PALETTE, type SceneColor } from '../visualPalette';
  * reader inherits the rule instead of the misconception. Nothing above the
  * plane belongs to this layer, at any phase of a block's life.
  *
- * ⭐⭐ NOTHING HERE DRAWS THE WIN EITHER, and that absence is the design rather
- * than a gap in it. `ColonyEdges`' outward surge already fires from the winning
- * cohort's own node, keyed on `attestedOrigin`; a second mark for the same
- * instant would be a second opinion about an event another layer already
- * states.
+ * ⚠️ THIS HEADER USED TO SAY "NOTHING HERE DRAWS THE WIN EITHER", AND THAT IS
+ * NO LONGER TRUE — the correction is worth keeping, because the old reason was
+ * good. R19 left the block to `ColonyEdges`' outward surge, which fires from
+ * the winning cohort's own node keyed on `attestedOrigin`, on the argument that
+ * a second mark for the same instant would be a second OPINION about an event
+ * another layer already states. What ships now is not a second opinion: on the
+ * block a cohort wins, its lip, its window and the mist under it GULP together
+ * on one envelope (`aGulp`, below) — the mouth swallowing what the edges are
+ * already carrying away. One event in two places on one clock, and the edges
+ * are still the only layer that says which way it left.
  *
  * ⭐⭐ BOTH FACES ARE ADDITIVE, UNLIT AND DEPTH-READ-ONLY, AND NO DARK PIXEL IS
  * EVER DRAWN. The mark's own structure REFUSES TO FILL the middle —
@@ -87,7 +101,8 @@ import { PEER_NETWORK_PALETTE, type SceneColor } from '../visualPalette';
  * invisible except from directly overhead, and an ungated one is a searchlight
  * in miniature — up close, a saucer with a tractor beam. ⭐ ONLY SURFACES BEING
  * DRAWN EVER READ AS INTAKE, which is exactly what the window is and what the
- * mist beside it will be. A volume is not an option that was left untried.
+ * mist patch beside it IS — it ships, in `materials/colonyMist`. A volume is not
+ * an option that was left untried.
  *
  * ⭐ The second cue for "the energy is under the plane" costs no silhouette
  * either: `COHORT_AURA_HALO_BIAS` (knob `cohortHaloBias`) weights the halo
@@ -372,13 +387,29 @@ export const COHORT_AP_BREATHE_DEPTH = 0.09;
  * ⚠️⚠️ AND ALL OF IT IS NOT AVAILABLE, WHICH IS WHAT SETTLES THE COEFFICIENT.
  * `COLONY_MIN_SPACING` is 6, so `COHORT_AP_R` — 3.0, exactly half of it —
  * reaches the MIDPOINT between a cohort and the nearest stop the colony's own
- * scatter will place beside it, and a target that reaches a neighbour's half of
+ * SCATTER will place beside it, and a target that reaches a neighbour's half of
  * the gap steals its clicks. A drawn halo may overlap a neighbour freely,
  * because additive light is not exclusive; a hit sphere may not, because a
  * click has exactly one winner. So the two ends of the mark answer to different
  * bounds, and this one is bounded above by the geometry of the colony rather
  * than by the mark. Half is 1.5 — a quarter of the minimum spacing, leaving 3.0
  * wu of clear gap between two targets standing as close as the colony allows.
+ *
+ * ⚠️⚠️ THAT BOUND ONLY EVER COVERED THE SCATTER, AND THE COLONY MEASURED
+ * CLOSER (live, 2026-09-02). `COLONY_MIN_SPACING` rejects candidates in
+ * `scatterInferred` and nowhere else; a SIGHTED peer's placement is a hash and
+ * is bounded by nothing. With the slab thinned to `COLONY_Y_THICKNESS` 6 and a
+ * cohort giving up its own height, the six live cohorts' nearest non-cohort
+ * neighbours measured 1.274 / 2.355 / 4.602 / 5.337 / 7.794 / 8.247 wu, against
+ * R19's 2.99 minimum at the old thickness. ⭐ THE MINIMUM IS NOW INSIDE BOTH
+ * THIS RADIUS AND THE DRAWN HOLE (1.6). Clicks still resolve correctly — all
+ * six cohorts open their own `POW COHORT //` card and every clickable
+ * neighbour opens its own, hit spheres still do not overlap — but at the 1.274
+ * and 4.602 wu peers' projected centres the HOVER readout names the cohort
+ * while the CLICK resolves to the peer, so the cursor names one target and the
+ * click opens another. ⚠️ OPEN, NOT FIXED, and deliberately not retuned off a
+ * single session: if this radius is ever changed, judge it against 1.274 wu and
+ * never against `COLONY_MIN_SPACING`.
  *
  * ⭐ AND IT GOES UP RATHER THAN DOWN, which is the direction the mark moved.
  * 1.15 wu was already the answer to a real failure — this radius once made the
@@ -479,8 +510,14 @@ export const COHORT_FACE_RIM_W = 0.1875;
  * preview's value in the same change that adds the medium whose pile is the
  * rest of it, and the mouth stops being a ring with a hole in it.
  *
- * ⚠️ It is still a live knob (`cohortRimAmp`), and T6 judges the lip against
- * the window by eye with the patch drawn under it.
+ * ⭐ WHAT THE DROP BOUGHT, MEASURED over the same 700-camera sweep: face
+ * supremum 0.878861 → **0.808959** and the blue sum 0.925777 → **0.807773**,
+ * while the aura's is bit-identical (the halo never reads `uRimAmp`). Additive
+ * headroom 0.0742 → **0.1922**, which is the clearance the mist arrives into.
+ *
+ * ⚠️ It is still a live knob (`cohortRimAmp`). The live leg of 2026-09-02
+ * captured the elevation series with the pile drawn under the lip and left the
+ * verdict to the user rather than issuing one; nothing here was retuned.
  */
 export const COHORT_FACE_RIM_AMP = 0.42;
 
@@ -634,15 +671,23 @@ export const COHORT_FACE_AMP = 1;
  * ⭐⭐⭐ ONE CONSTANT, TWO CONSUMERS, AND THEY MUST NEVER BECOME TWO NUMBERS.
  * This is the depth at which the window stops showing wall and starts showing
  * surface, and it is ALSO the top of the mist's mound under the same cohort
- * (`ColonyMist`, T4 of the intake-vortex plan): the patch of mist below the
- * plane is lifted into a gentle mound whose summit is exactly what the hole
- * shows. If the two ever drift, a viewer looking into the mouth sees a surface
- * at one height and a viewer looking at the mist beside it sees another, and
- * the two draws stop being one substance.
+ * (`makeCohortIntakePatchMaterial` in `materials/colonyMist`, drawn by
+ * `ColonyCohorts` beside this mark): the patch of mist below the plane is
+ * lifted into a gentle mound whose summit is exactly what the hole shows. If
+ * the two ever drift, a viewer looking into the mouth sees a surface at one
+ * height and a viewer looking at the mist beside it sees another, and the two
+ * draws stop being one substance.
  *
  * 0.7 wu, from the approved preview (`mouth.level` in the lab's `field: mist`
- * scene). It is a knob candidate — `cohortRise` in T4 — and the knob has to
- * move BOTH readers, which is why the number lives here rather than in either.
+ * scene). The live knob is `cohortLevel`, and it writes `uLevel` on the FACE
+ * and on the PATCH in the same frame off one read — which is why the number
+ * lives here rather than in either material.
+ *
+ * ⭐ MEASURED 2026-09-02, AND EVERY COHORT SHOWS MEDIUM AT THE APP CAMERA. At
+ * this level the window first leaves wall at 13° of elevation over the pupil's
+ * centre (the exact boundary `atan((level − 0.35) / R)` is 12.34°); live, the
+ * production camera stands 19.0–50.4° above all six of the colony's cohorts, so
+ * none of them shows only wall. Not retuned.
  */
 export const COHORT_INTAKE_LEVEL = 0.7;
 
@@ -676,12 +721,14 @@ export const COHORT_FACE_INTERIOR_AMP = 1.15;
 /**
  * The medium's feature size, in cycles per world unit of the sampling plane.
  *
- * ⚠️ IT IS THE LAB'S NUMBER ON A HOLE HALF THE LAB'S SIZE, and that is left
- * alone on purpose rather than compensated. The lab's mouth had a 1.6 wu
- * radius; this branch's pupil is 0.521 wu and its lip 0.84 wu, so the feed
- * carries roughly four lobes around the lip where the lab carried seven. It may
- * want doubling. T6 measures it at a 40 px/wu mouth; the knob is `cohortRise`'s
- * neighbour and nobody should guess it from here.
+ * ⭐ IT IS THE LAB'S NUMBER ON THE LAB'S HOLE, WHICH IS WHY IT IS UNCHANGED.
+ * This comment used to argue the opposite — that a 0.521 wu pupil against the
+ * lab's 1.6 carried about four lobes where the lab carried seven, and that the
+ * scale might want doubling. That was a symptom of a DIAMETER read as a RADIUS:
+ * once the hole was re-based to the lab's own 1.6 wu, the feed re-measured at
+ * 7.04 lobes against the lab's 7. Nothing to compensate. There is no knob on
+ * this constant, deliberately — the medium's feature size is a statement about
+ * the substance, not a taste to settle against pixels.
  */
 export const COHORT_FACE_INTERIOR_SCALE = 0.55;
 
@@ -929,7 +976,11 @@ export const COHORT_AURA_UNDER_TINT = 0.8;
  * shapes lie STRICTLY inside the unit circle, so `shapeFace² + shapeAura² < 1`
  * at every pixel, every camera, every time and every knob setting. The ceiling
  * is arithmetic rather than a swept observation, which is what a ceiling this
- * expensive should be. Measured, it lands at 0.850 in blue.
+ * expensive should be. Measured, the SUM has moved with the mark and the
+ * theorem has not: 0.850 in blue when the pair was introduced, 0.925777 once
+ * the window landed in the hole, and **0.807773** now that the lip is the
+ * preview's 0.42 — `cohortAperture.test.ts` re-sweeps it on every run, so the
+ * number in this comment is never the only copy.
  *
  * ⭐ THE FACE KEEPS `COHORT_CLIP_KNEE` UNTOUCHED, so the whole correction is
  * taken out of the halo and none of it out of the mark's structure. What that

@@ -8,12 +8,22 @@
 // curtains, not a plume. Each of those was built and rejected by eye.
 //
 // ⭐⭐⭐ AND IT IS SECONDARY. It must never take focus from the peer mesh or the
-// cell galaxy, which is what makes this the plainest program in the colony: two
-// large flat sheets at a few percent of the mesh's brightness, ONE texture
-// fetch each, no filaments, no sinks, no clock. The sheets exist so the space
-// under the plane is not empty — and so the intake has something to be brighter
-// THAN. ⚠️ Motion in the far field is exactly what would pull focus, so there
-// is no `uTime` here and there must not be one.
+// cell galaxy, which is what makes this the plainest program in the colony: up
+// to two large flat sheets at a few percent of the mesh's brightness, ONE
+// texture fetch each, no filaments, no sinks, no clock. The sheets exist so the
+// space under the plane is not empty — and so the intake has something to be
+// brighter THAN. ⚠️ Motion in the far field is exactly what would pull focus, so
+// there is no `uTime` here and there must not be one.
+//
+// ⭐ MEASURED 2026-09-02, AND "SECONDARY" IS A NUMBER. On the real GPU at
+// 2560 × 1440, the haze's OWN additive contribution peaks at 2/255 anywhere on
+// the canvas (32.8 % of pixels get ≥ 1), and the brightest pixel in a haze-only
+// region reads 11/255 against a ghost sprite's core of 243 and a measured peer's
+// of 251 — ratios of 0.045 and 0.044. ⚠️ The same measurement says the three
+// tiers are visually indistinguishable at the app camera while one sheet is
+// 0.899 ms of the 1.057 ms the whole cohort/mist feature costs there, so
+// `mistHazeSheets` buys frame time and costs almost no picture. See
+// `makeMistHazeMaterial`.
 //
 // ⭐⭐⭐ THE INTAKE IS THE POINT, AND IT IS NOT IN THIS FILE. What the user asked
 // for is 「pow cohort 汲取能量的视觉效果」, so the mist is DRAWN where it is being

@@ -839,29 +839,73 @@ The topology contains:
   it were an observed connection;
 - attested cohorts, one per recent block producer, carrying the chain's payout
   key and NO identity at all: the type they hold has no field an ID could land
-  in;
+  in. They lie EXACTLY on `COLONY_Y`, with no scatter in Y whatever, because a
+  cohort is an opening cut into the plane and an opening off its plane is a
+  disc floating beside one;
 - a seed-only inferred scaffold of roughly `240 +/- 30` nodes in an elliptical
-  disc; and
+  disc, scattered through `COLONY_Y_THICKNESS` — 6 world units, +/- 3 either
+  side, the depth at which the colony reads as a MEMBRANE with marks cut into
+  it rather than as a volume the marks float inside; and
 - inferred k-nearest, small-world, and component-bridge edges.
 
-A cohort is drawn as an APERTURE rather than as a stop on the peer brightness
-ladder: a cohort is where the colony plane is OPEN, and the mark is that opening
-drawn twice. Two instanced draws, nothing volumetric and nothing under the slab
-— a FACE, a disc lying in the colony plane with a bright rim, a small unlit
-pupil and 88 radial striae; and an AURA, a small camera-facing quad whose halo
-carries the same hole, cut by crossing the view ray with the colony plane. The
-face draws a circle, so every ellipse a viewer sees is projection, and because
-every cohort foreshortens identically that agreement is what makes the colony
-plane itself legible.
+The inferred scaffold is independent of the measured peer list, so peer churn
+does not reshuffle the ambient colony. It is memoized by universe seed. Edges
+from measured peers into the scaffold remain classified as inferred because
+the node did not observe those Internet links.
 
-Nothing dark is painted — the pupil is where bright structure declines to fill
+The colony plane is the boundary between two universes: above it the cell
+canopy, CKB's own spacetime; below it the one a miner draws on. Three rules
+follow from that reading and settle every argument in the rest of this section.
+The energy under the plane is a DIFFUSE SUBSTANCE that permeates space — a mist
+with no shape of its own: not a sea, not a coast, not curtains. It is
+SECONDARY, and must never take focus from the peer mesh or the Cell galaxy. And
+THE INTAKE IS THE POINT: the field exists to be seen being drunk, at the default
+camera, at every cohort, including the ones standing under the mesh's body.
+
+A cohort is therefore drawn as an APERTURE rather than as a stop on the peer
+brightness ladder: a cohort is where the colony plane is OPEN. `ColonyCohorts`
+draws that opening THREE times, off one plan, one walk, one instance count and
+one pair of instanced lanes — nothing volumetric and nothing hanging under the
+slab:
+
+- a FACE, a disc lying in the colony plane with a bright lip, 88 radial striae,
+  and a WINDOW inside its hole: the throat's wall lit from below and, wherever
+  the view ray reaches deeper than `COHORT_INTAKE_LEVEL`, the surface of the
+  medium rising toward the lip;
+- an AURA, a small camera-facing quad whose halo carries the same hole, cut by
+  crossing the view ray with the colony plane; and
+- an intake PATCH, one instance per cohort with its sink at its own origin,
+  lying `MIST_FLOOR_DEPTH` (2.5 wu) under the membrane and lifted into a mound
+  whose top is that same `COHORT_INTAKE_LEVEL`. It carries the medium's own
+  texture advected along the streamlines of a SINK WITH A VORTEX — log spirals
+  winding into the mouth, `r0 = sqrt(r^2 + k*tau)` and
+  `theta0 = theta + s*ln(r0/r)` — brightening as it gathers, dark inside the
+  rim, thinner in the wake downstream, and flaring on the block that cohort
+  won.
+
+`ColonyMist` draws the rest of the substance and nothing else: large, flat,
+structureless haze sheets under the whole colony, at one texture fetch a
+fragment, with no clock at all — motion in the far field is exactly what would
+pull focus. They exist so the space under the plane is not empty, and so the
+intake has something to be brighter than.
+
+The face draws a circle, so every ellipse a viewer sees is projection, and
+because every cohort foreshortens identically that agreement is what makes the
+colony plane itself legible. The mound's top and the window's surface are ONE
+surface: `COHORT_INTAKE_LEVEL` has two readers and one knob, so a viewer
+looking into the mouth and a viewer looking at the mist beside it cannot see the
+medium at two depths.
+
+Nothing dark is painted — the mark's own structure declines to fill its middle
 (`smoothstep` up out of exactly zero on the face, the ray/plane crossing on the
-aura), which is this scene's additive idiom for a hole. So the layer that would
-otherwise break it is the link mesh, and a cohort's own links stop at the mark's
-OUTER EDGE (`COHORT_LINK_STOP_R` = `COHORT_AP_R` = 3.0 wu), for two independent
-reasons: a link run into the disc would be added to the one pixel the form
-spends itself keeping empty, and a colony link is radial structure coplanar with
-a radial grain, which at low count reads as a star.
+aura), which is this scene's additive idiom for a hole; what light there is
+inside the pupil is the window's, in a colour no other draw in the peer plane
+wears. So the layer that would otherwise break it is the link mesh, and a
+cohort's own links stop at the mark's OUTER EDGE (`COHORT_LINK_STOP_R` =
+`COHORT_AP_R` = 3.0 wu), for two independent reasons: a link run into the disc
+would be added to the one pixel the form spends itself keeping empty, and a
+colony link is radial structure coplanar with a radial grain, which at low count
+reads as a star.
 
 A cohort NEVER EMITS UPWARD, at any time. A mined block goes sideways to peers
 only, because peers must verify it before it legitimately enters the cell
@@ -869,10 +913,79 @@ galaxy; the later leg is `BlockDeliveryLayer`'s carrier, which launches from
 MEASURED WORKERS on flood arrivals and never from a cohort. The two worlds meet
 at the aperture in the plane.
 
-The inferred scaffold is independent of the measured peer list, so peer churn
-does not reshuffle the ambient colony. It is memoized by universe seed. Edges
-from measured peers into the scaffold remain classified as inferred because
-the node did not observe those Internet links.
+And NO COLUMN, PLUME, FUNNEL OR PILLAR is ever drawn under the mouth, at any
+brightness profile. Every one of them was built and rejected by eye: a shaft
+gated through the hole is invisible except from directly overhead, and an
+ungated one is a searchlight in miniature — up close, a saucer with a tractor
+beam. Only SURFACES BEING DRAWN read as intake, which is what the window is and
+what the patch is. The patch's vertex stage cannot place a vertex above its own
+instance origin, so "nothing above the membrane" is a property of the form
+rather than of the props handed to it.
+
+The layer takes exactly ONE input from the block path, and it is a string. On a
+block pulse increase, the mark whose `CohortMark.nodeId` equals
+`ColonyFlood.entryId` — both `attested:<key>`, both built by
+`attestedNodeId` — has the block's SIMULATION SECOND stamped into the shared
+`aGulp` lane, and its mouth and its patch swallow together on one envelope.
+Every other slot holds a far-negative sentinel, so a slot that has never won
+never flares. Wins are held against the node id in a map and re-laid into the
+lane under every re-plan, because a re-plan reshuffles slots and a win held by
+index would hand another cohort the moment somebody else won. While backfill is
+active the pulse is consumed and nothing is stamped. The shockwave and the flood
+object stay out for the reason they always had: a front that crosses the whole
+colony is one number every cohort reads, and it would flare all six of them on a
+block one of them won.
+
+Draw order inside the colony is composition order rather than a depth
+requirement — every one of these draws is additive and depth-read-only. The haze
+sheets are `renderOrder` -1, the intake patch 0, the face 1 and the aura 2:
+the substance, the surface being taken, the disc that opens onto it, and the
+glow around that. `ColonyMist` mounts FIRST inside the colony's rotation group,
+before `ColonyEdges`, which is what makes every coordinate in the mist a
+colony-frame constant: a sink that never moves in that frame needs no per-frame
+rotation uniform, and the medium cannot shimmer as the plate turns.
+
+Per-draw GPU cost is priced separately through `colony.mist.patch` and
+`colony.mist.haze` beside the existing `colony.cohort.face` and
+`colony.cohort.aura` (§19.5). Quality owns the haze sheet count and nothing
+else here: `mistHazeSheets` is 2 / 1 / 0 for High / Med / Low, and the intake
+patch is never gated, because what a low tier gives up is the ambience the
+intake is measured against, not the intake.
+
+**Measured on 2026-09-02**, on an AMD Radeon 890M through ANGLE/Vulkan at
+2560x1440, on live mainnet with six attested cohorts, load average 2.0-2.7,
+min-of-N `TIME_ELAPSED` readings through the probes above:
+
+| Quantity | Measured |
+|---|---|
+| Whole layer (four draws), app camera, Med — 1 haze sheet | +1.06 ms of frame GPU, 0.90 ms of it the haze sheet |
+| Whole layer, app camera, High — 2 haze sheets | +1.44 ms |
+| Whole layer, a mouth filling 40 px/wu | +2.22 ms |
+| Whole layer, a mouth at 13 wu | +2.74 ms |
+| The haze's own brightest contribution anywhere on the canvas | 2/255, and 11/255 on the pixel it sits on — 0.045 of a ghost sprite's core |
+| The sink's inflow, 5-12 wu annulus, block-matched on the mound plane | 2.23:1 inward by count; median radial -0.656 wu/s against the model's -0.75 at r = 8 |
+| The gulp, over six minutes of mainnet | 29 pulses, 29 stamps, 29 matching node ids, 0 mismatches |
+| Saturated pixels attributed to the layer (mark on minus mark off) | +513 app / +848 overhead / +1,105 low elevation / +7,298 at the mouth, on 3,686,400 px |
+
+The whole-layer figures are the frame bracket's on-minus-off delta, which is the
+honest number: the per-draw scopes sum higher because adjacent timer queries
+serialise on this driver (§19.5's negative-remainder note), so read the split as
+an upper bound. The measured cost is 1.8-3x the preview's estimate, and the
+attribution says where it went: the haze sheet is the app-camera cost, the patch
+is the close-up cost (0.14 -> 0.63 -> 1.53 ms as the mouth fills the screen).
+
+**One open finding from the same session**: thinning the slab tightened a
+cohort's clearance. The nearest non-cohort node measured 1.274 wu from a
+cohort — inside
+`COHORT_HIT_RADIUS` (1.5 wu) and inside the drawn hole (1.6 wu) — where R19
+measured 2.99 wu at the old thickness. Every cohort still opens its own card and
+every clickable neighbour still opens its own, but at the two closest peers'
+projected centres the HOVER readout names the cohort while the CLICK resolves to
+the peer: the cursor names one target and the click opens another. One cohort
+also failed its own hole from one azimuth, where a peer 4.6 wu away stood in
+front of the mark along that ray, and recovered 90 degrees round. Judge any
+hit-radius change against 1.274 wu, not against `COLONY_MIN_SPACING`, which
+bounds only the inferred scatter and not the sighted placements.
 
 ### 10.2 Block flood and delivery
 
@@ -980,6 +1093,7 @@ not own staged Cell membership or the resting nervous system.
 | Discharge arms | 3 | 2 | 1 | Transient write decoration |
 | Active samples per hop | 12 | 10 | 8 | Moving wavefront tessellation |
 | Expanded nearby Cell identities | 12 | 8 | 4 | Non-focused near-detail concurrency |
+| Mist haze sheets | 2 | 1 | 0 | Ambient density under the colony plane |
 
 Semantic memory keeps a minimum 24 CSS-pixel core at every preset. Lower
 presets compensate for reduced sampling with controlled line-width and energy
@@ -991,7 +1105,10 @@ The following remain identical across High, Med, and Low:
 - the passive nerve budget and selection rules;
 - four passive samples per edge;
 - passive curve geometry, width baseline, hierarchy, and animation cadence;
-- route planning and deterministic timing for every admitted pulse; and
+- route planning and deterministic timing for every admitted pulse;
+- every POW cohort's intake patch — the haze sheets around it are ambience the
+  cascade may trim, but the intake is the feature they are ambience for (§10.1);
+  and
 - selection, inspection evidence, and canonical counters.
 
 The particle multiplier can lower simultaneous active-pulse admission under
@@ -1163,9 +1280,11 @@ current staged structure.
   cohort's face discards its square quad's corners outside the mark's own
   radius — roughly 21.5 % of the quad — and its aura discards outside the halo
   radius, both before any profile is evaluated; then both faces discard again
-  once the accumulated shape falls under 0.0018. The face's grain is also
-  prefiltered against its own screen footprint, so a mark that is small on
-  screen stops paying for structure it could not resolve.
+  once the accumulated shape falls under 0.0018. Its intake patch discards the
+  same corner share of its own square, outside `MIST_REACH`, before either
+  spiral back-trace runs. The face's grain is also prefiltered against its own
+  screen footprint, so a mark that is small on screen stops paying for structure
+  it could not resolve.
 - Passive topology and color/mask updates have separate dirty paths.
 - Screen-space capsule nerves use two triangles per sampled segment.
 - Shader time advances lifecycle without per-frame full-buffer rewrites.
@@ -1406,6 +1525,11 @@ Use the same snapshot and capture settings for these minimum scenarios:
   `nerve.bridge`. Colony: `colony.cloud.haze`, `colony.cloud.advertised`,
   `colony.cloud.remembered`, `colony.cloud.reached`, `colony.measured-halos`,
   `colony.edges`, `colony.cohort.face`, `colony.cohort.aura`,
+  `colony.mist.patch`, `colony.mist.haze` (one program drawn once per haze
+  sheet, so its sample count is `sheets x frames` rather than `frames`; the
+  sheets differ only in two uniforms over the same fade, so a mean over them is
+  still a draw mean and not a mixture — how many there are is the quality
+  cascade's `mistHazeSheets`, §13),
   `colony.courier.plume`, `colony.courier.bloom`. Delivery: `delivery.body`,
   `delivery.core`, `delivery.trail`, `delivery.wave`. Backdrop: `stars`. A draw
   that would submit nothing — zero instances, an empty draw range, a hidden
@@ -1546,7 +1670,8 @@ Before merging a Canvas change, answer:
 | Screen-space capsule geometry | `packages/ui/src/geometry/screenSpaceCapsuleLine.ts` |
 | Peer topology and block flood | `packages/ui/src/derives/networkTopology.derive.ts`, `packages/ui/src/derives/networkFlood.derive.ts` |
 | Peer render layers and Cell delivery | `packages/ui/src/components/NetworkColony.tsx`, `packages/ui/src/components/BlockDeliveryLayer.tsx` |
-| POW cohort apertures and the link stop at their outer edge | `packages/ui/src/components/ColonyCohorts.tsx`, `packages/ui/src/materials/colonyCohort.ts`, `packages/ui/src/components/ColonyEdges.tsx` |
+| POW cohort apertures, their intake patch, and the link stop at their outer edge | `packages/ui/src/components/ColonyCohorts.tsx`, `packages/ui/src/materials/colonyCohort.ts`, `packages/ui/src/components/ColonyEdges.tsx` |
+| The mist under the colony plane and its ambient haze sheets | `packages/ui/src/materials/colonyMist.ts`, `packages/ui/src/components/ColonyMist.tsx` |
 | Carrier glyph and contact front | `packages/ui/src/geometry/protocolCarrier.ts`, `packages/ui/src/materials/contactWaveMaterial.ts` |
 | Canonical rewrite echo | `packages/ui/src/components/CanonicalRewriteEcho.tsx` |
 | Simulation clock | `packages/ui/src/tweaks/simClock.ts`, `packages/ui/src/tweaks/SimClockTicker.tsx`, `packages/ui/src/tweaks/useSimFrame.ts` |

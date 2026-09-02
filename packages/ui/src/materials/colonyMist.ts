@@ -71,8 +71,11 @@ import { mulberry32 } from '../layout';
  * the physics: two mouths drinking from the same parcel of mist take more of it
  * than one does. There is no cross-talk term and none is wanted.
  *
- * ⚠️⚠️ THE GEOMETRY CONTRACT, WHICH `ColonyMist` MUST FOLLOW EXACTLY (this file
- * cannot enforce it, so it states it):
+ * ⚠️⚠️ THE GEOMETRY CONTRACT, WHICH THE TWO COMPONENTS MUST FOLLOW EXACTLY
+ * (this file cannot enforce it, so it states it). ⭐ The PATCH's half of it is
+ * `ColonyCohorts`' — the patch is that layer's THIRD DRAW, beside the mark it
+ * feeds, off the same plan and the same two lanes — and only the HAZE belongs
+ * to `ColonyMist`:
  *
  * - The patch's geometry is a UNIT `PlaneGeometry(1, 1, MIST_PATCH_SEGMENTS,
  *   MIST_PATCH_SEGMENTS)` copied into an `InstancedBufferGeometry`. The extent
@@ -80,8 +83,7 @@ import { mulberry32 } from '../layout';
  *   `COHORT_FACE_HALF` rides `uHalf`: bake `2 * MIST_REACH` into the plane and
  *   the live `cohortReach` knob becomes a rebuild instead of a slider. The
  *   subdivision is what the MOUND needs — a mound on two triangles is a tent —
- *   and 24 is a starting value from the preview's own floor density, not a
- *   measurement.
+ *   and `MIST_PATCH_SEGMENTS` argues its own value.
  * - It is driven by `instanceMatrix`, built with `makeTranslation` and NOTHING
  *   ELSE, exactly as `ColonyCohorts` builds the face's and the aura's. The
  *   vertex stage takes the instance's origin from `instanceMatrix * vec4(0, 0,
@@ -95,21 +97,29 @@ import { mulberry32 } from '../layout';
  *   `COHORT_NEVER_WON`). ⭐ `aGulp` must be re-laid off the SAME `wonAtRef` map
  *   in the SAME effect `cohortWinLane` already runs in — a second map would let
  *   the mouth and the mist under it swallow different blocks.
- * - It is mounted INSIDE the colony's rotation group, before `ColonyEdges`,
- *   with a `renderOrder` below everything. That is what makes every coordinate
- *   below a colony-frame constant: the sink never moves in this frame, so the
- *   spiral needs no per-frame rotation uniform and the medium cannot shimmer as
- *   the plate turns.
+ * - BOTH draws are mounted INSIDE the colony's rotation group. That is what
+ *   makes every coordinate below a colony-frame constant: the sink never moves
+ *   in this frame, so the spiral needs no per-frame rotation uniform and the
+ *   medium cannot shimmer as the plate turns.
  * - The haze is NOT instanced: one plain `PlaneGeometry` per sheet, laid flat,
- *   at the depths `MIST_HAZE_SHEETS` names.
+ *   at the depths `MIST_HAZE_SHEETS` names, at `renderOrder` −1 — under
+ *   everything, and mounted FIRST in the rotation group, before `ColonyEdges`.
+ *   The patch is `renderOrder` 0 and the mark's two faces are 1 and 2. Every
+ *   one of them is additive and depth-read-only, so that order is COMPOSITION
+ *   and never a depth requirement: the substance, the surface being taken, the
+ *   disc that opens onto it, the glow around that.
  *
  * ⚠️⚠️ AND THE ONE THING THIS LAYER CANNOT PROVE ABOUT ITSELF: IT SHARES AN
  * ADDITIVE CEILING WITH THE MARK ABOVE IT, AND THE COLLISION IS STRUCTURAL.
- * `cohortAperture.test.ts` measures the face and the aura summing to 0.925777 in
- * blue over a 700-camera sweep (re-measured this leg, identical to T2b's), so
- * there are 0.0742 of headroom; every colour this
- * feature emits — `scaffold`, `coldWhite`, `COHORT_INTERIOR_COLD` — is EXACTLY
- * 1.0 in blue, so blue is the binding channel for this draw too. The patch's
+ * `cohortAperture.test.ts` measures the face and the aura summing to **0.807773**
+ * in blue over a 700-camera sweep, so there are **0.1922** of headroom; every
+ * colour this feature emits — `scaffold`, `coldWhite`, `COHORT_INTERIOR_COLD` —
+ * is EXACTLY 1.0 in blue, so blue is the binding channel for this draw too.
+ * ⚠️ It read 0.925777 and 0.0742 when this paragraph was first written: the
+ * commit that mounted the patch also took `COHORT_FACE_RIM_AMP` 1.05 → 0.42 (the
+ * approved preview's own faint lip), so the mist arrives into 2.6× the clearance
+ * the argument below was drafted against. `colonyMist.test.ts` carries both
+ * numbers and the reason. The patch's
  * brightest ring is where its gate finishes opening, `0.98 * COHORT_RIM_R`,
  * which is the SAME RADIUS the face's lip peaks at; the mound puts it 0.88 wu
  * under the plane there, so from anything but a grazing camera the two project
@@ -118,10 +128,19 @@ import { mulberry32 } from '../layout';
  * uniforms), and it is far above the headroom. ⭐ THAT IS NOT SOMETHING TO
  * INVENT A KNEE FOR HERE: the preview the user approved had exactly this
  * brightness beside exactly this mouth, and every invented threshold across 25
- * rounds was wrong. `uAmp` (knob `cohortMist`) is the single scale, and T6's
- * live leg measures the saturated pixels the R19 way — mark-on minus mark-off,
- * never a raw count — and turns it down by eye. This paragraph is the handover,
- * not a shrug.
+ * rounds was wrong. `uAmp` (knob `cohortMistAmp`) is the single scale.
+ *
+ * ⭐ MEASURED 2026-09-02 ON THE REAL GPU, AND IT DID NOT NEED TURNING DOWN.
+ * Saturated pixels (any channel ≥ 254) counted the R19 way — the four
+ * amplitudes at their material defaults MINUS the same paused frame with all
+ * four at zero, never a raw count — at 2560 × 1440 on an AMD 890M through
+ * ANGLE/Vulkan: **+513 at the app camera** (0.014 % of the canvas), +848
+ * overhead, +1,105 at 8° of elevation, **+7,298 with a mouth filling 40 px/wu**
+ * (0.20 %). Every pair's A/A control was 0 differing pixels, and R19's mark
+ * alone attributed 0 / 0 / 1 / 0 — so all of that is the mist, and none of it is
+ * a blown-out region. `MIST_AMP` stays 1. ⚠️ A knob CANNOT reach a uniform
+ * while `Time.paused` is on (every write here is inside `useSimFrame`), so an
+ * A/B on this layer has to write `material.uniforms.<x>.value` directly.
  */
 
 /* -------------------------------------------------------------------------- *
@@ -231,12 +250,16 @@ let mistNoiseTexture: THREE.DataTexture | null = null;
  * A TEXTURE — see `MIST_NOISE_SIZE`. Drop either and the medium aliases at the
  * app camera, which is the only camera anybody ever screenshots.
  *
- * ⚠️ IT COSTS 15–50 ms TO BUILD, MEASURED (four runs on the reference machine
- * at a load average of 6; 262,144 faded bilinear samples across four channels).
- * That is a MOUNT-TIME cost paid once for the module's life, not a per-frame
- * one — but it is one to two frames of hitch on the first colony mount, so if
- * T6 sees it, the fix is to build it off the critical path or at 128², NEVER to
- * drop the mips.
+ * ⭐ IT COSTS 7.5–10.5 ms TO BUILD, MEASURED IN THE BROWSER 2026-09-02 (five
+ * fresh module instances on the reference machine; 262,144 faded bilinear
+ * samples across four channels). That is a MOUNT-TIME cost paid once for the
+ * module's life, not a per-frame one, and it is UNDER the 50 ms `longtask`
+ * threshold: over the first five seconds after navigation the longest long task
+ * was 172 ms of the app's own boot work, and the tile never appeared as a task
+ * of its own. ⚠️ The estimate this replaces was 15–50 ms, taken from four runs
+ * of the pure function at a load average of 6 — it was 2–5× pessimistic. If a
+ * later machine does see a hitch, the fix is to build it off the critical path
+ * or at 128², NEVER to drop the mips.
  */
 export function makeMistNoiseTexture(): THREE.DataTexture {
   if (mistNoiseTexture !== null) return mistNoiseTexture;
@@ -266,9 +289,15 @@ export function makeMistNoiseTexture(): THREE.DataTexture {
  * ⭐ THE MOUND IS A VERTEX EFFECT, so this is the only thing that decides
  * whether it is a mound or a tent. At 24 the patch carries 625 vertices and
  * 1,152 triangles, and one mound radius (`MIST_MOUND_R` = 7 wu of a 28 wu quad)
- * spans 6 of the 24 spans. A STARTING VALUE from the preview's floor density
- * (220 × 150 over 460 × 312 wu, which is 2.1 wu per span against this 1.17), not
- * a measurement: T6 has the GPU cost and the silhouette in front of it.
+ * spans 6 of the 24 spans. It began as a STARTING VALUE from the preview's floor
+ * density (220 × 150 over 460 × 312 wu, which is 2.1 wu per span against this
+ * 1.17).
+ *
+ * ⭐ MEASURED 2026-09-02, AND THIS IS NOT WHERE THE PATCH'S COST IS. Its scope
+ * reads 0.138 ms at the app camera, 0.634 at a 40 px/wu mouth and 1.532 at
+ * 13 wu — an 11× spread driven entirely by how much SCREEN the same 3,750
+ * vertices cover, so the patch is fill-bound and the subdivision is the wrong
+ * thing to cut. Left at 24.
  */
 export const MIST_PATCH_SEGMENTS = 24;
 
@@ -372,7 +401,13 @@ export const MIST_PERIOD = 6;
  * STYLISTIC AMBIENT, NOT THE ROTATION, and it is honest about that: the medium
  * is sampled in COLONY-FRAME coordinates (constant per mark, no shimmer as the
  * plate turns), and this term is the relative streaming laid on top of it, in
- * the direction the world-static mist would move. T6 has both numbers.
+ * the direction the world-static mist would move.
+ *
+ * ⭐ CONFIRMED LIVE 2026-09-02. With the colony's own rotation set to zero, the
+ * medium at a 40 px/wu mouth block-matches to a median radial −0.656 wu/s in
+ * the 5–12 wu annulus and a median tangential −0.231 wu/s in the 2–5 wu one —
+ * an order above the 0.077 wu/s a cohort's rotation could contribute, exactly
+ * as the arithmetic above predicts. Not retuned.
  */
 export const MIST_DRIFT = 0.8;
 
@@ -386,7 +421,13 @@ export const MIST_DRIFT = 0.8;
  * along `(z, -x)` — the negative of the tangential vector the vertex stage
  * builds. Downstream is where the wake goes, so the sign has to be right or the
  * depleted band sits in FRONT of the mouth, which reads as a shadow rather than
- * as a wake. T6 looks at it.
+ * as a wake.
+ *
+ * ⚠️ STILL OPEN AFTER THE LIVE LEG OF 2026-09-02: measuring the spiral required
+ * `cohortWake` at 0 (a static depleted band survives the background subtraction
+ * and biases the block match), so that session turned the wake OFF and never
+ * put a screenshot of it in front of anybody. The sign is derived and it is
+ * still only derived.
  */
 export const MIST_DRIFT_SIGN = -1;
 
@@ -519,9 +560,14 @@ export const MIST_PATH_MAX = 1.6;
  * The layer's master scale, and the ONLY knob that changes its weight.
  *
  * ⚠️ IT IS THE HANDLE ON THE COLLISION IN THIS FILE'S HEADER: the patch's ring
- * lands where the mark's lip lands, and the mark has 0.0744 of additive
- * headroom in blue. `mistPatchSupremum` states what this layer can reach; T6
- * measures the saturated pixels the R19 way and turns this down.
+ * lands where the mark's lip lands, and the mark has **0.1922** of additive
+ * headroom in blue (0.0742 when this comment was written, before the lip came
+ * down to the preview's 0.42). `mistPatchSupremum` states what this layer can
+ * reach.
+ *
+ * ⭐ MEASURED 2026-09-02: the saturated-pixel attribution the header quotes —
+ * +513 / +848 / +1,105 / +7,298 at the four cameras, R19's mark-on-minus-off
+ * method — was taken at exactly this value, and it was NOT turned down.
  */
 export const MIST_AMP = 1;
 
@@ -1048,9 +1094,17 @@ export const MIST_HAZE_ELLIPSE: readonly [number, number] = [
  * sit BELOW the patch's own floor (`MIST_FLOOR_DEPTH`), so the intake is always
  * the nearest thing to the membrane.
  *
- * ⚠️ HOW MANY OF THEM ARE DRAWN IS A QUALITY DECISION, not a constant here: the
- * plan puts `mistHazeSheets` on the `QualityCascade` at 2 / 1 / 0, and the
- * numbers are T6's to measure.
+ * ⚠️ HOW MANY OF THEM ARE DRAWN IS A QUALITY DECISION, not a constant here:
+ * `mistHazeSheets` on the `QualityCascade` is 2 / 1 / 0 for high / med / low.
+ *
+ * ⭐ MEASURED 2026-09-02, AND THE TIER IS A FRAME-TIME DECISION AND NOT A
+ * PICTURE ONE. A sheet costs 0.899 ms of the 1.057 ms this whole feature adds
+ * at the app camera, so the second one is 0.385 ms of the high tier's 1.442;
+ * and since the haze contributes at most 2/255 anywhere on the canvas, the
+ * three tiers are visually indistinguishable there (`cam_app_q_high/med/low`).
+ * ⚠️ Which one a viewer gets is the adaptive controller's, not a default: on
+ * the reference machine a cold boot locked `med` (one sheet) and a warm reload
+ * locked `high` (two), so ONE sheet is the common case.
  */
 export interface MistHazeSheet {
   /** World units below the colony plane. */
@@ -1078,9 +1132,21 @@ export const MIST_HAZE_SHEETS: readonly MistHazeSheet[] = [
  * brightness with NO structure at all — no filaments, no back-trace, no sinks,
  * no time. One `texture2D`, a soft elliptical fade so the sheet has no edge
  * anywhere, the grazing-path thickening, and out. That is deliberately the
- * cheapest possible program: the preview measured the whole mist layer at
- * +0.6 ms with a FULL-PLANE floor, and the sheets are the part of it that is
+ * cheapest possible program, and it is still the part of this feature that is
  * paid for over the entire screen.
+ *
+ * ⚠️ MEASURED 2026-09-02, AND ONE SHEET IS THE APP CAMERA'S WHOLE COST. Against
+ * the same frame with the four draws hidden, the layer costs **+1.057 ms** of
+ * frame GPU at the app camera on `med` (one sheet) and +1.442 ms on `high`
+ * (two) — of which the haze scope alone reads **0.899 ms**, against 0.125 for
+ * the face, 0.124 for the aura and 0.138 for the patch. The preview's estimate
+ * was +0.6 ms for the whole mist with a FULL-PLANE floor; the real number is
+ * 1.8× that, and this program is where it went. ⭐ It DOES exit early at zero
+ * amplitude — dropping `uAmp` to 0 without hiding the draw takes the haze scope
+ * to 0.158 ms and recovers 0.947 of the 1.057. So the sheet count is the handle
+ * (`mistHazeSheets`, 2 / 1 / 0), and since the haze contributes at most 2/255
+ * anywhere on the canvas the three tiers are visually indistinguishable at the
+ * app camera. AMD 890M / ANGLE-Vulkan, 2560 × 1440, min-of-N.
  *
  * ⚠️ NO PROXIMITY EXEMPTION HERE, unlike the patch. The exemption measures the
  * camera against ONE instance origin — "the camera came for this" — and a sheet
