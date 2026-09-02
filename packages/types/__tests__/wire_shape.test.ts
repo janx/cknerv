@@ -698,12 +698,9 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
         'network_atlas_clear',
         'network_roster_replace',
         'network_roster_clear',
-        // On the wire and in the fixture, but deliberately not yet arms of the
-        // TS `SemanticsDelta` union: `semanticsReducer.ts` closes its switch
-        // on a `never` binding, so a union arm and the reducer arm that folds
-        // it are one change. Until that change lands these two reach the
-        // client's default arm and no-op, which is exactly what that arm is
-        // for — and the ledger still arrives, in the snapshot.
+        // Arms of the TS union since the reducer grew the fold beside them —
+        // `semanticsReducer.ts` closes its switch on a `never` binding, so the
+        // union arm and the arm that folds it were necessarily one change.
         'producer_ledger_replace',
         'producer_ledger_clear',
         'script_registry_replace',

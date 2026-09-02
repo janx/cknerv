@@ -815,12 +815,8 @@ export interface SemanticsSnapshot {
    * 404, and on every server that predates the field — all three of which a
    * consumer answers the same way, by falling back to `Chain.producer_window`.
    *
-   * ⚠️ The `producer_ledger_replace` / `producer_ledger_clear` deltas that
-   * refresh this slot are not in `SemanticsDelta` yet. They land with the
-   * reducer arm that folds them: `semanticsReducer.ts` ends its switch on a
-   * `never` binding, so a union arm with no arm beside it in the reducer does
-   * not compile, and the two are one change rather than two. Until then this
-   * slot is filled by the snapshot alone. */
+   * Refreshed by the `producer_ledger_replace` / `producer_ledger_clear`
+   * deltas below. */
   producer_ledger?: ProducerLedger;
 }
 
@@ -841,6 +837,14 @@ export type SemanticsDelta =
   | { type: 'network_atlas_clear' }
   | { type: 'network_roster_replace'; network_roster: NetworkRosterRecord }
   | { type: 'network_roster_clear' }
+  /** The ledger replaces WHOLE. It is never merged row by row: a row that left
+   *  the window is a row that must leave the reader's copy, and a merge would
+   *  keep a producer standing on a week it no longer holds a block in. */
+  | { type: 'producer_ledger_replace'; producer_ledger: ProducerLedger }
+  /** The source can no longer answer for the ledger at all — its route is gone,
+   *  not merely empty. Distinct from a replace carrying no rows, which is a
+   *  week nobody produced in and is not a sentence this source has ever said. */
+  | { type: 'producer_ledger_clear' }
   | { type: 'script_registry_replace'; script_registry: ScriptRegistryRecord }
   | { type: 'prune'; from_block: number }
   | { type: 'clear' };

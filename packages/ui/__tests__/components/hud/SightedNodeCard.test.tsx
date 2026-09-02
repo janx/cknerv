@@ -469,6 +469,8 @@ describe('MinerNodeCard', () => {
       share: blocks / windowBlocks,
       lastSeenMs: LAST_SEEN_MS,
       fan: drawnFan(),
+      // This suite is the 240-block window's card; the week's rows are L5's.
+      ledger: null,
       ...overrides,
     };
   }

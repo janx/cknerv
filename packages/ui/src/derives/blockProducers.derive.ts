@@ -18,9 +18,22 @@
 // The scene draws the second question only when narrowing it teaches
 // something. `PRODUCER_FAN_*` below are the three ways it can teach nothing,
 // and each one names a different sentence a card has to be able to say.
+//
+// ⭐ THE FIRST QUESTION IS ASKED OVER TWO WINDOWS AND THEY ARE NOT THE SAME
+// FACT. `ChainEntry.producers` is RECENCY: the last 240 attributed blocks
+// cknerv itself fetched, emptied by every reorg and by every rebuild, and
+// empty for the first minute of a boot. `ProducerLedger` is SIZE: seven
+// complete days as the indexer counted them, warm from the first frame, and
+// untouched by a reorg that closed after those days did. A standing may exist
+// in either, and the set below is their UNION, because a producer that took a
+// tenth of the week and has not landed a block in the last half hour is still
+// a producer — it was only ever missing because of which window we asked.
+// Every share still states the window it was divided by; the two are carried
+// on separate fields precisely so no reader can average them.
 
 import type {
-  BlockProducer, ChainEntry, NetworkRosterRecord, RosterNode,
+  BlockProducer, ChainEntry, NetworkRosterRecord, ProducerLedger,
+  ProducerLedgerRow, RosterNode,
 } from '@cknerv/types';
 
 /** Fewer candidates than this and the fan is not drawn.
@@ -157,6 +170,47 @@ export type ProducerFan =
     readonly shareOfVersioned: number;
   };
 
+/** What the indexer's week says about one producer, and where its reward
+ *  lands.
+ *
+ *  ⭐ EVERY NULL HERE IS AN ABSENCE, NEVER A ZERO. `blocks` and `share` come
+ *  off one request that answered for the whole week; everything below them
+ *  comes from a per-address request made afterwards, one per row, that can
+ *  fail on its own (`ProducerLedgerRow` says the same thing on the wire, where
+ *  the keys are simply missing). A card that printed `0 CKB` over a balance
+ *  nobody read would be stating something the source did not, so the wire's
+ *  absence is carried through as `null` rather than defaulted — and a reader
+ *  that wants a number has to say what it means by having none.
+ *
+ *  `balanceShannons` and `lastRewardShannons` stay DECIMAL STRINGS all the way
+ *  to the formatter: the live top miner held 9,820,183,392,640,200 shannons on
+ *  2026-09-02, above `Number.MAX_SAFE_INTEGER`, and `Number()` on it returns a
+ *  figure that looks right and is not. `producerLedgerIsCoherent` refuses a
+ *  record whose strings are not digits, so `BigInt` on either is total. */
+export interface ProducerLedgerStanding {
+  /** Blocks this producer took in the ledger's window — a numerator whose
+   *  denominator is `BlockProducerView.ledgerWindow.totalBlocks`, never
+   *  `windowBlocks`, which counts the other window entirely. */
+  readonly blocks: number;
+  /** `blocks / ledgerWindow.totalBlocks`, in [0,1]. Safe: the coherence check
+   *  refuses a total of zero, because every share here is a fraction of it. */
+  readonly share: number;
+  /** The payout address the source resolved, `ckb1…`, or null when it
+   *  resolved none. Never minted from the key: an address is a rendering of a
+   *  script under a network prefix, and inventing one would be inventing an
+   *  identity. */
+  readonly address: string | null;
+  readonly balanceShannons: string | null;
+  readonly liveCells: number | null;
+  readonly txCount: number | null;
+  /** One sampled cellbase payout, and the block it was read from. The two are
+   *  null together or present together — a refresh samples one block, so at
+   *  most one producer in a view carries them, and null says "this refresh did
+   *  not sample this producer", never "this producer was not paid". */
+  readonly lastRewardShannons: string | null;
+  readonly lastRewardBlock: number | null;
+}
+
 /** One producer the colony will stand a node for.
  *
  *  ⭐ THERE IS NOTHING IDENTIFYING IN HERE, and there is nowhere to put it:
@@ -181,20 +235,40 @@ export interface ProducerStanding {
    *  verbatim. Self-declared and trivially spoofable — a card renders it as a
    *  claim, and `bpool` is a word a miner typed, not a measurement. */
   readonly message: string;
-  /** Blocks of the window this producer holds — a numerator. */
+  /** Blocks of the 240-block window this producer holds — a numerator.
+   *
+   *  ZERO IS A REAL READING HERE, and it is what a producer the ledger knows
+   *  and the window does not looks like: it took blocks this week and none in
+   *  the last 240. Absence is not expressible — a standing with no window
+   *  reading still states the window it was measured against below. */
   readonly blocks: number;
   /** The window those blocks are a share OF. It rides on the same object as
    *  `blocks` and `share` so §9.6 costs a consumer nothing: there is no
    *  destructuring of the fraction that leaves the denominator behind. */
   readonly windowBlocks: number;
-  /** `blocks / windowBlocks`, in [0,1]. Never `0/0`: a row exists only while
-   *  it holds at least one block, and the window identity below then forces
-   *  the denominator above zero. */
+  /** `blocks / windowBlocks`, in [0,1]. Never `0/0`: a window row exists only
+   *  while it holds at least one block, and the window identity then forces
+   *  the denominator above zero — while a ledger-only standing is a plain 0,
+   *  written rather than divided, since its numerator and the window's
+   *  denominator can both be nothing at once. */
   readonly share: number;
-  /** Envelope timestamp of this producer's most recent block in the window. */
+  /** Envelope timestamp of this producer's most recent block in the window —
+   *  or, for a producer only the ledger knows, the ledger's `fetched_at_ms`.
+   *
+   *  ⚠️ THE SECOND READING IS "AS OF THE LEDGER", NOT A BLOCK. It dates the
+   *  answer and not the producer: the week says this identity was producing,
+   *  and says nothing about when it last did. A surface printing it as "last
+   *  block" would be inventing a block, so it reads it beside `blocks 0`,
+   *  which is the standing saying it holds none of this window. */
   readonly lastSeenMs: number;
   /** Whether this producer's fan may be drawn, and if not, why not. */
   readonly fan: ProducerFan;
+  /** What the indexer's week says about this producer, or null when the week
+   *  does not name it — a producer inside the 240 blocks and outside the seven
+   *  days (brand new, or too small to make the row cap), and every producer at
+   *  all when there is no ledger. Null is the shape every build before the
+   *  ledger existed had, which is what makes the fallback a type. */
+  readonly ledger: ProducerLedgerStanding | null;
 }
 
 /** The only mining attribute a NAMED node may ever carry.
@@ -219,6 +293,31 @@ export interface PeerMiningCandidacy {
   readonly producerKeys: readonly string[];
 }
 
+/** The ledger's window, stated once for the whole view.
+ *
+ *  ⭐ IT RIDES BESIDE THE STANDINGS FOR THE SAME REASON `windowBlocks` RIDES
+ *  ON EVERY ONE OF THEM: `totalBlocks` is the denominator of every
+ *  `ProducerLedgerStanding.share`, and a share that travels without its
+ *  denominator is a number a surface can restate against the wrong window
+ *  without noticing. The dates are carried verbatim, in the source's own
+ *  calendar (UTC+8, the last COMPLETE day — never today), because they are
+ *  what a card prints beside the share so a reader knows which week it is
+ *  looking at. */
+export interface ProducerLedgerWindow {
+  readonly days: number;
+  readonly fromDate: string;
+  readonly toDate: string;
+  /** Every attributed block in the week, and never `sum(rows.blocks)`, which
+   *  is smaller whenever the row cap has cut a tail off. */
+  readonly totalBlocks: number;
+  /** When the ledger was fetched. Nothing ages the view against it — the
+   *  window states its own days instead of a staleness verdict. */
+  readonly fetchedAtMs: number;
+  /** How far the source had indexed when it answered. Freshness, not content,
+   *  and deliberately not an anchor. */
+  readonly indexedTip: number;
+}
+
 /** Everything T5 (staging), T7 (render) and T8 (cards) need without asking the
  *  chain or the roster a second question.
  *
@@ -234,16 +333,19 @@ export interface PeerMiningCandidacy {
  *  which one a `find` is asked of. Only the sequence differs, and the sequence
  *  is the whole of what one is for and none of what the other is for. */
 export interface BlockProducerView {
-  /** The window every share in this view is measured over. */
+  /** The 240-block window every `ProducerStanding.share` is measured over.
+   *  The OTHER window is `ledgerWindow`, and nothing divides across the two. */
   readonly windowBlocks: number;
   /** The staging set, in the order the colony stands it up: KEY ASCENDING, a
    *  pure function of WHICH miners exist and of nothing a block moves. This is
    *  the array that may reach `inferredTopology` and any cache key over the
    *  geometry — see `deriveBlockProducers` for why it may read no tally. */
   readonly staging: readonly ProducerStanding[];
-  /** The same standings in reading order: blocks descending, then key
-   *  ascending. This is what MESH·02's `TOP` and a share list are. ⚠️ Nothing
-   *  the geometry follows may be ordered by it. */
+  /** The same standings in reading order: descending by the tally of
+   *  WHICHEVER WINDOW THIS VIEW IS A READING OF — the ledger's blocks when a
+   *  coherent ledger exists, the 240-block window's when it does not — then
+   *  key ascending. This is what MESH·02's `TOP` and a share list are.
+   *  ⚠️ Nothing the geometry follows may be ordered by it. */
   readonly ranked: readonly ProducerStanding[];
   /** Roster rows carrying a usable version — the modal gate's denominator,
    *  and the number a card needs beside a withheld fan's `matched`. */
@@ -251,6 +353,12 @@ export interface BlockProducerView {
   /** `node_id` → the stamp its PEER / SIGHTED card may carry. Built only from
    *  drawn fans, so a peer that appears here is never the only suspect. */
   readonly candidacyByPeer: ReadonlyMap<string, PeerMiningCandidacy>;
+  /** The week these standings' `ledger` figures were counted over, or null
+   *  when no ledger reached this view — no source declares the capability, its
+   *  route answered 404, or the record it did send contradicted itself
+   *  (`producerLedgerIsCoherent`). All three read the same way downstream, and
+   *  the view is then byte-identical to what it was before ledgers existed. */
+  readonly ledgerWindow: ProducerLedgerWindow | null;
 }
 
 /** The roster's version column, grouped, with the unusable rows already gone. */
@@ -429,6 +537,82 @@ function producerWindowIsCoherent(chain: ChainEntry): boolean {
   return counted === chain.producer_window_blocks;
 }
 
+/** A shannon figure the formatter can read: decimal digits and nothing else.
+ *
+ *  ⚠️ `BigInt('12 CKB')` THROWS, and it would throw inside a render. The
+ *  balances on this record are decimal STRINGS because they do not fit a
+ *  double, so every consumer reaches for `BigInt` — and the one input that
+ *  makes `BigInt` partial is a string that is not digits. Refusing it here
+ *  makes the conversion total everywhere downstream, which is cheaper than
+ *  every call site remembering a try/catch. An empty string is refused for
+ *  the same reason a blank key is: `BigInt('')` is `0n`, and a balance nobody
+ *  read must not become a balance of zero. */
+function shannonsAreReadable(value: string | undefined): boolean {
+  if (value === undefined) return true;
+  return typeof value === 'string' && /^[0-9]+$/.test(value);
+}
+
+/**
+ * Whether the indexer's week is a week the shares may be drawn against.
+ *
+ * ⭐ THE SAME CHECK THE ADAPTER ALREADY RAN, RUN AGAIN — deliberately, and for
+ * the reason `producerWindowIsCoherent` exists beside the two reducers that
+ * maintain the window: the check upstream proves what ckbadger sent, and this
+ * one proves what arrived. Between them sit a wire, a cache and any server
+ * claiming to be cknerv, and a record that lost its identity anywhere along
+ * that path would otherwise divide by it. `total_blocks: 0` alone would make
+ * every share `Infinity` or `NaN`, and a `NaN` share reaches a Float32 lane
+ * and a printed percentage without anything throwing.
+ *
+ * The rules mirror `map_producer_ledger`
+ * (`crates/cknerv-adapter-ckbadger/src/source.rs`): a positive total, every
+ * row holding at least one block, non-empty and unique keys, and a sum that
+ * does not exceed the total. `<=` and not `==`, unlike the 240-block window's
+ * identity: the row cap cuts the tail off a long week on purpose, so the rows
+ * are a PREFIX of the total and were never meant to add up to it.
+ *
+ * Two deliberate differences from the adapter's copy. It refuses a key that is
+ * not `0x`-prefixed; this does not, because nothing on this side parses a key
+ * — it is a lock script hash to group and count by, and a client that started
+ * validating its shape would be the one place a devnet spelling could break
+ * the colony. And this refuses a balance string that is not digits, which the
+ * adapter never has to: it built those strings from the source's own JSON,
+ * while what arrives here has been through a wire that may not have been
+ * cknerv's.
+ *
+ * Incoherent is treated as ABSENT by `deriveBlockProducers`, never as an
+ * error: falling back to the 240-block window is a view this repo has shipped
+ * for months, and it is the same fallback a source with no ledger at all gets.
+ */
+export function producerLedgerIsCoherent(
+  ledger: ProducerLedger | null | undefined,
+): ledger is ProducerLedger {
+  if (!ledger) return false;
+  if (!Array.isArray(ledger.rows)) return false;
+  if (!Number.isSafeInteger(ledger.total_blocks) || ledger.total_blocks <= 0) return false;
+  const keys = new Set<string>();
+  let counted = 0;
+  for (const row of ledger.rows) {
+    if (typeof row.key !== 'string' || row.key.length === 0) return false;
+    if (keys.has(row.key)) return false;
+    keys.add(row.key);
+    if (!Number.isSafeInteger(row.blocks) || row.blocks <= 0) return false;
+    counted += row.blocks;
+    if (!shannonsAreReadable(row.balance_shannons)) return false;
+    if (!shannonsAreReadable(row.last_reward_shannons)) return false;
+  }
+  return counted <= ledger.total_blocks;
+}
+
+/** Ascending by producer key, in code units. Deliberately not `localeCompare`:
+ *  these are hex digests, not words, and a collation that varied with the
+ *  host's locale would stand one machine's colony in a different order from
+ *  another's over the same window (`byNodeId` keeps the same rule for the same
+ *  reason). */
+function byKey(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 /**
  * The producers of the recent chain, ready to stand in the colony, joined
  * against the crawler's roster.
@@ -473,25 +657,59 @@ function producerWindowIsCoherent(chain: ChainEntry): boolean {
  * strictly better rather than differently: the key is a lock script hash,
  * distinct per row by construction, so key ascending is already a total order
  * and falls through to nothing.
+ *
+ * ⭐⭐ THE STANDING SET IS THE UNION OF THE TWO WINDOWS, and the union is the
+ * whole reason the third argument exists. A cohort used to blink out of the
+ * colony the moment its producer's last block left the 240-block ring — and
+ * out of every colony at once for the first minute of a boot, and again after
+ * every reorg, since the ring is cleared and refilled a block at a time. Those
+ * producers did not stop existing; we stopped asking a window that could see
+ * them. A key the week names and the ring does not now stands with `blocks 0`
+ * against the live `windowBlocks`, which is the honest reading: it holds none
+ * of the last 240 blocks and some share of the week, and both numbers sit on
+ * the standing beside the window each was counted over.
+ *
+ * A ledger that contradicts itself is treated as ABSENT — see
+ * `producerLedgerIsCoherent` — so a hostile or broken record can only cost the
+ * view what it had before ledgers existed, never a `NaN` share.
  */
 export function deriveBlockProducers(
   chain: ChainEntry,
   roster: NetworkRosterRecord | null | undefined,
+  ledger?: ProducerLedger | null,
 ): BlockProducerView | null {
   if (!producerWindowIsCoherent(chain)) return null;
   const index = indexRosterVersions(roster);
   const windowBlocks = chain.producer_window_blocks;
+  // Absent, missing and self-contradicting collapse onto one value on purpose:
+  // downstream there is exactly one question ("is there a week?") and exactly
+  // one fallback, which is the view this file produced before a week existed.
+  const week = producerLedgerIsCoherent(ledger) ? ledger : null;
+  const ledgerRows = new Map<string, ProducerLedgerRow>();
+  for (const row of week?.rows ?? []) ledgerRows.set(row.key, row);
 
-  // ⚠️ THIS SORT READS NO TALLY, AND THAT IS THE POINT — see above. Code units,
-  // not `localeCompare`: these are hex digests, not words, and a collation that
-  // varied with the host's locale would stand one machine's colony in a
-  // different order from another's over the same window (`byNodeId` keeps the
-  // same rule for the same reason).
-  const staged = chain.producers.slice().sort((left, right) => (
-    left.key < right.key ? -1 : left.key > right.key ? 1 : 0
-  ));
+  /** One producer's week, or null when the week does not name it. Absent
+   *  optionals become null and never zero: the wire's absence is a lookup that
+   *  failed, and `0 CKB` over it would state something nobody read. */
+  const weekFor = (key: string): ProducerLedgerStanding | null => {
+    if (week === null) return null;
+    const row = ledgerRows.get(key);
+    if (row === undefined) return null;
+    return {
+      blocks: row.blocks,
+      // Safe: coherence refuses a total of zero, because every share here is a
+      // fraction of it.
+      share: row.blocks / week.total_blocks,
+      address: row.address ?? null,
+      balanceShannons: row.balance_shannons ?? null,
+      liveCells: row.live_cells ?? null,
+      txCount: row.tx_count ?? null,
+      lastRewardShannons: row.last_reward_shannons ?? null,
+      lastRewardBlock: row.last_reward_block ?? null,
+    };
+  };
 
-  const staging: ProducerStanding[] = staged.map((producer) => {
+  const standings: ProducerStanding[] = chain.producers.map((producer) => {
     const declared = producer.message.trim().length > 0;
     const matchedVersion = declared ? matchVersion(producer.message, index) : null;
     const candidates = matchedVersion === null
@@ -508,8 +726,45 @@ export function deriveBlockProducers(
       share: producer.blocks / windowBlocks,
       lastSeenMs: producer.last_seen_ms,
       fan: decideFan(matchedVersion, candidates, index, declared),
+      ledger: weekFor(producer.key),
     };
   });
+
+  // The other half of the union: a producer the week names and the ring does
+  // not. It declares nothing — a declaration is a string a miner wrote into a
+  // block, and none of this producer's blocks is in the window to have carried
+  // one — so its fan is withheld as `no_declaration`, the same sentence the
+  // card already says for a miner that stayed silent. The reason is DECIDED
+  // rather than assumed, which keeps both halves of the union on one code path
+  // and means a later gate cannot apply to one half and not the other.
+  const windowKeys = new Set(chain.producers.map((producer) => producer.key));
+  if (week !== null) {
+    for (const row of week.rows) {
+      if (windowKeys.has(row.key)) continue;
+      standings.push({
+        role: 'producer',
+        key: row.key,
+        message: '',
+        // Zero of the live window, stated against the live window: the standing
+        // says "none of the last 240", never "no window". `share` is written
+        // rather than divided because both halves can be zero at once — on a
+        // fresh boot the ring is empty and `0 / 0` is `NaN`.
+        blocks: 0,
+        windowBlocks,
+        share: 0,
+        // As of the LEDGER, not a block — see `ProducerStanding.lastSeenMs`.
+        lastSeenMs: week.fetched_at_ms,
+        fan: decideFan(null, [], index, false),
+        ledger: weekFor(row.key),
+      });
+    }
+  }
+
+  // ⚠️ THIS SORT READS NO TALLY, AND THAT IS THE POINT — see above. It runs
+  // over the UNION, so the two windows decide membership and neither decides a
+  // position: a producer that enters the ring after a week in the ledger keeps
+  // the place its key already had, and moves no other cohort.
+  const staging = standings.sort((left, right) => byKey(left.key, right.key));
 
   // The reverse index, built ONLY from drawn fans. A peer belongs to exactly
   // one candidate set — the set is "every row reporting version V" and a peer
@@ -541,10 +796,21 @@ export function deriveBlockProducers(
   // a surface that finds a standing by key gets the identical one from either
   // array, and a share can never be read off one while its window is read off
   // the other.
-  const ranked = staging.slice().sort((left, right) => (
-    right.blocks - left.blocks
-      || (left.key < right.key ? -1 : left.key > right.key ? 1 : 0)
-  ));
+  //
+  // ⭐ IT READS THE WINDOW THIS VIEW IS A READING OF, and there is only ever
+  // one of them: with a week, `TOP` is the top of the WEEK, and a producer the
+  // week does not name reads as zero however many of the last 240 blocks it
+  // holds; without one, `TOP` is the top of the ring exactly as it has always
+  // been. Mixing them — ledger blocks where they exist and window blocks
+  // elsewhere — would be a list ordered by two different denominators, which is
+  // the one thing §9.6 exists to prevent, and it would reshuffle every time a
+  // producer entered or left the ring.
+  const ranked = staging.slice().sort(week === null
+    ? (left, right) => right.blocks - left.blocks || byKey(left.key, right.key)
+    : (left, right) => (
+      (right.ledger?.blocks ?? 0) - (left.ledger?.blocks ?? 0)
+        || byKey(left.key, right.key)
+    ));
 
   return {
     windowBlocks,
@@ -552,5 +818,49 @@ export function deriveBlockProducers(
     ranked,
     versionedRosterSize: index.versionedRosterSize,
     candidacyByPeer,
+    ledgerWindow: week === null ? null : {
+      days: week.window_days,
+      fromDate: week.from_date,
+      toDate: week.to_date,
+      totalBlocks: week.total_blocks,
+      fetchedAtMs: week.fetched_at_ms,
+      indexedTip: week.indexed_tip,
+    },
   };
+}
+
+/**
+ * The signature a colony cache key is built from: every staged producer's key,
+ * in staging order, joined with NUL.
+ *
+ * ⚠️⚠️ THE KEY SET, AND NOTHING A BLOCK MOVES. Every standing changes on every
+ * block — a block bumps one tally and re-divides every share — while the SET
+ * changes only when a producer enters or leaves one of the two windows. Only
+ * the set can move the geometry (one node per key, placed from the key alone),
+ * so only the set may re-key the topology; letting tallies, shares, messages,
+ * fans or ledger figures in here would rebuild the whole colony once a block
+ * because a numerator moved, hand an in-flight wavefront fresh surge lanes and
+ * truncate it.
+ *
+ * ⭐ It is order-SENSITIVE on purpose, and safe because `staging` is ordered by
+ * the set itself: the scaffold draws its long-range links per index, so an
+ * identical set in a new sequence really is a different colony — but the only
+ * thing that can re-sequence this array is a key entering or leaving it.
+ *
+ * ⭐ THE UNION IS WHY IT IS A FUNCTION AND NOT A ONE-LINER AT THE CALL SITE.
+ * `staging` now spans two windows, so this signature is what carries a
+ * ledger-only cohort into the topology's attested set — a key can reach it from
+ * a week's worth of blocks without holding a single block in the ring — and
+ * that is worth pinning in one place, with a test, rather than spelling twice.
+ *
+ * NUL is the separator because it cannot occur inside a lock script hash, so no
+ * pair of key sets can collide by concatenation.
+ *
+ * Absent, null and empty collapse onto one signature deliberately:
+ * `inferredTopology` emits a byte-identical topology for all three.
+ */
+export function producerKeysSignature(
+  view: BlockProducerView | null | undefined,
+): string {
+  return (view?.staging ?? []).map((standing) => standing.key).join('\u0000');
 }

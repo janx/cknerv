@@ -439,6 +439,7 @@ describe('NetworkPanel producers', () => {
       share: blocks / windowBlocks,
       lastSeenMs: 1_700_000_000_000,
       fan: { drawn: false, reason: 'modal', matchedVersion: null, matched: 0, shareOfVersioned: 0 },
+      ledger: null,
     };
   }
 
@@ -461,6 +462,8 @@ describe('NetworkPanel producers', () => {
       )),
       versionedRosterSize: 32,
       candidacyByPeer: new Map(),
+      // The window's row is what this suite reads; the week's row is L5's.
+      ledgerWindow: null,
     };
   }
 

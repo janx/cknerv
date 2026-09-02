@@ -37,6 +37,7 @@ import {
   consensusMemoryTraceRequestKey,
   attestedNodeId,
   deriveBlockProducers,
+  producerKeysSignature,
   deriveCellCausalLens,
   deriveConsensusMemoryRouteHopFocus,
   colonyFlood,
@@ -818,6 +819,22 @@ export default function App({
   // only when a crawl round actually lands (the reducer replaces the record),
   // so keying on the reference rebuilds the colony per round, not per poll.
   const networkRoster = enrichmentConfig.enabled ? semanticsCache.networkRoster : null;
+  // The indexer's week on the same producers the chain's 240-block window
+  // holds the last half hour of. Gated on the capability and not merely on the
+  // slot, unlike the roster above, because this is the one record NOTHING in
+  // the client expires: it carries no anchor, so no prune cuts it, and the
+  // server only emits `producer_ledger_clear` from a refresh that RAN — which
+  // a source no longer declaring the capability never runs. Reading it through
+  // the live capability list is what keeps a week from outliving the source's
+  // ability to answer for it, and it is the switch `CONSUMED_CAPABILITIES`
+  // pins the spelling of (`packages/cache/__tests__/wireFixtures.test.ts`): a
+  // rename on the Rust side turns the ledger off here rather than silently
+  // half-on. A stream that has not connected yet declares nothing and holds no
+  // ledger either, so the gate cannot subtract a record that is there.
+  const producerLedger = enrichmentConfig.enabled
+    && semanticsCache.source.capabilities.includes('producer_ledger')
+    ? semanticsCache.producerLedger
+    : null;
   // The chain's recent block producers, joined against that roster: the staging
   // set the colony stands attested nodes from, and the live window every share
   // is measured over. `chain` is shallow-cloned by every batch that touches it
@@ -830,9 +847,9 @@ export default function App({
   const producerView = useMemo(
     // The derive takes the whole entity on purpose — there is no call site at
     // which the numerators reach it without the window they were counted over.
-    () => deriveBlockProducers(chain, networkRoster),
+    () => deriveBlockProducers(chain, networkRoster, producerLedger),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [chain.producers, chain.producer_window_blocks, networkRoster],
+    [chain.producers, chain.producer_window_blocks, networkRoster, producerLedger],
   );
   // The live standings reach the colony BY REFERENCE. `staging` is a fresh
   // array on every attributed block (its tallies moved), and handing it to
@@ -844,43 +861,31 @@ export default function App({
   // the readers are frame callbacks that run after every commit.
   const producerSharesRef = useRef<readonly ProducerStanding[] | null>(null);
   producerSharesRef.current = producerView?.staging ?? null;
-  // ⚠️⚠️ THE PRODUCER SIGNATURE IS THE KEY SET, AND NOTHING A BLOCK MOVES.
-  // Every producer standing changes on EVERY BLOCK — a block bumps one
-  // producer's count and re-divides every share against the window — while the
-  // SET OF KEYS changes only when a producer enters or leaves the rolling
-  // window. Only the key set can move the geometry (one node per key, placed
-  // from the key alone, displacing exactly one ghost), so only the key set may
-  // re-key the topology. Letting tallies, shares, messages or fans in here
-  // would rebuild the whole colony once a block because a numerator moved,
-  // which is precisely the failure `best_known` is excluded above to avoid:
-  // ColonyEdges owns its line geometry on `[topology]`, so a rebuild hands an
-  // in-flight wave fresh surge lanes and truncates the wavefront. It is the
-  // same distinction one level in, where `inferredScaffold` is keyed on the
-  // staged ids and never on the standings.
+  // The colony's cache key over the producer tail: the KEY SET, in staging
+  // order, and nothing a block moves. `producerKeysSignature` is where that
+  // discipline is written down and tested — one node per key, placed from the
+  // key alone, so a signature that admitted a tally would rebuild the whole
+  // colony once a block and truncate any wavefront in flight.
   //
-  // ⭐⭐⭐ AND THE SET HAS TO REACH IT IN AN ORDER THE SET DECIDES — which is why
-  // this reads `staging` and never `ranked`. A signature over keys is a
-  // SEQUENCE of keys, and the topology it guards really is a function of the
-  // sequence (the scaffold draws its long-range links per index), so an
-  // identical set arriving in a new order is correctly a new signature and
-  // correctly a rebuild. The bug that fixes is one door back: while this array
-  // was ordered by BLOCKS, two miners swapping rank re-sequenced a set that had
-  // not changed, and the rebuild fired for a numerator after all — through the
-  // order rather than through a field. `staging` is key-ascending, so its
-  // sequence follows only from which miners exist, and this stays an
-  // order-SENSITIVE key that can still catch a reordering somebody means.
+  // ⭐ IT IS NOW A UNION OF TWO WINDOWS, and that is the point of the leg: a
+  // cohort the indexer's week names reaches the topology's attested set even
+  // while the chain's 240-block ring holds none of its blocks, so the mist
+  // keeps its holes through a boot, a reorg and a quiet half hour. The set is
+  // bounded: the ledger ships at most `PRODUCER_LEDGER_ROW_CAP` = 16 rows
+  // (`crates/cknerv-core/src/enrichment.rs`), so the week can add at most 16
+  // keys to whatever the ring already stands. The ring itself is the unbounded
+  // half in theory — 240 blocks could carry 240 distinct producers, which was
+  // already true before the week existed — and `COHORT_MARK_CAP` = 64 is the
+  // layer that bounds what is DRAWN, dropping the tail deterministically with
+  // one warning. Live on 2026-09-02: 7 ledger rows over ~6 window producers.
   //
-  // ⭐ The live tally still reaches the nodes. `inferredTopology` re-stages
-  // both tails on every call and hangs the standing on the node BY REFERENCE,
-  // so whenever this memo does run the nodes carry the window as it stands
-  // then; and between runs the live reading is `producerView` itself, which is
-  // where a card asks — exactly as `selectedSighted` below asks the live
-  // roster rather than the `sighted` row hanging off a staged node.
-  //
-  // Absent, null and empty collapse onto one signature deliberately:
-  // `inferredTopology` emits a byte-identical topology for all three.
+  // The live tally still reaches the nodes: `inferredTopology` re-stages both
+  // tails on every call and hangs the standing on the node BY REFERENCE, so
+  // whenever this memo does run the nodes carry the windows as they stand
+  // then; between runs the live reading is `producerView` itself, which is
+  // where a card asks.
   const producerKeysSig = useMemo(
-    () => (producerView?.staging ?? []).map((p) => p.key).join('\u0000'),
+    () => producerKeysSignature(producerView),
     [producerView],
   );
   // Both colony derives run under the opt-in render probe's CPU spans: they

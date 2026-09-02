@@ -678,6 +678,9 @@ function standing(
         candidates,
         shareOfVersioned: candidates.length / 57,
       },
+    // T7 stands a mark from a key and reads its share off a lane; the week is
+    // never in the geometry, so every standing here carries none.
+    ledger: null,
   };
 }
 

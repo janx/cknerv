@@ -11,6 +11,7 @@ import type {
   EnrichmentSourceStatus,
   NetworkAtlasRecord,
   NetworkRosterRecord,
+  ProducerLedger,
   ProtocolEraRecord,
   RevisionedSemanticsDelta,
   ScriptRegistryRecord,
@@ -257,6 +258,33 @@ function scriptRegistry(block: number): ScriptRegistryRecord {
       deprecated: false,
     }],
     unresolved: 3,
+  };
+}
+
+/** The indexer's week. It carries NO `as_of`, and that absence is the whole
+ *  shape of the record: it counts seven complete days that closed before any
+ *  reorg this session will see, so there is no block to cut it on. */
+function producerLedger(blocks: number, fetchedAtMs: number): ProducerLedger {
+  return {
+    window_days: 7,
+    from_date: '2026-08-26',
+    to_date: '2026-09-01',
+    total_blocks: 67_800,
+    fetched_at_ms: fetchedAtMs,
+    indexed_tip: 20_337_488,
+    rows: [
+      {
+        key: `0x${'fc'.repeat(32)}`,
+        address: 'ckb1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xws',
+        blocks,
+        balance_shannons: '9820183392640200',
+        live_cells: 155_450,
+        tx_count: 4_094_449,
+      },
+      // The row whose address lookup did not answer: window figures kept,
+      // everything below them absent rather than zeroed.
+      { key: `0x${'6a'.repeat(32)}`, blocks: 2 },
+    ],
   };
 }
 
@@ -516,6 +544,91 @@ describe('semantics reducer', () => {
     });
     expect(cleared.networkRoster).toBeNull();
     expect(cleared.cells).toBe(seeded.cells);
+  });
+
+  it('replaces the producer ledger whole, and never merges a row into it', () => {
+    const week = producerLedger(41_824, 1_700_000_000_012);
+    const seeded = applySemanticsDelta(emptySemanticsCache(), {
+      type: 'producer_ledger_replace',
+      producer_ledger: week,
+    });
+    expect(seeded.producerLedger).toBe(week);
+
+    // A refresh that found one producer where the last one found two is a
+    // WHOLE new answer: the producer that left the week has to leave this copy
+    // too, or a cohort keeps standing on days it no longer holds a block in.
+    const shorter: ProducerLedger = {
+      ...producerLedger(41_900, 1_700_000_600_000),
+      rows: [producerLedger(41_900, 1_700_000_600_000).rows[0]],
+    };
+    const next = applySemanticsDelta(seeded, {
+      type: 'producer_ledger_replace',
+      producer_ledger: shorter,
+    });
+    expect(next.producerLedger).toBe(shorter);
+    expect(next.producerLedger?.rows).toHaveLength(1);
+  });
+
+  it('⭐ keeps the ledger through the reorg that takes every anchored record', () => {
+    // The ONE record no prune touches, and the only one in this cache with no
+    // `as_of` to be cut on. Server parity (`enrichment.rs`,
+    // `Mutation::ChainReorganized`): a three-block fork must not discard seven
+    // days it never touched — and the 240-block producer window the cohorts
+    // would fall back to has just been emptied by that same reorg.
+    const week = producerLedger(41_824, 1_700_000_000_012);
+    const seeded = applyRevisionedSemanticsDeltas(emptySemanticsCache(), [
+      { revision: 1, delta: { type: 'census_replace', census: census(10) } },
+      {
+        revision: 2,
+        delta: { type: 'producer_ledger_replace', producer_ledger: week },
+      },
+    ]);
+    for (const from_block of [20, 10, 1]) {
+      const next = applySemanticsDelta(seeded, { type: 'prune', from_block });
+      expect(next.producerLedger, `prune from ${from_block}`).toBe(week);
+    }
+    // …and the anchored record beside it still drops, so this is the ledger
+    // being exempt rather than the prune arm being broken.
+    expect(applySemanticsDelta(seeded, { type: 'prune', from_block: 10 }).census)
+      .toBeNull();
+  });
+
+  it('empties the ledger only on its own clear, and on a rebuild', () => {
+    const week = producerLedger(41_824, 1_700_000_000_012);
+    const seeded = applySemanticsDelta(emptySemanticsCache(), {
+      type: 'producer_ledger_replace',
+      producer_ledger: week,
+    });
+    // The source can no longer answer for the week at all.
+    expect(applySemanticsDelta(seeded, { type: 'producer_ledger_clear' })
+      .producerLedger).toBeNull();
+    // A rebuilt source may be pointed at another network, where last week's
+    // producers are another chain's — `clear_records()` empties it there too.
+    expect(applySemanticsDelta(seeded, { type: 'clear' }).producerLedger).toBeNull();
+  });
+
+  it('stores a ledger that contradicts itself, because a mirror is not a judge', () => {
+    // ⭐ THE BOUNDARY, STATED FROM THIS SIDE. The reducer's job is to hold what
+    // the wire said; deciding whether a record may be DRAWN belongs to the
+    // derive, which refuses this exact shape — blocks summing past the total,
+    // and a key that appears twice — in `producerLedgerIsCoherent`
+    // (`packages/ui/__tests__/derives/blockProducers.derive.test.ts` pins the
+    // refusal, and pins that the view then falls back byte-identically). A
+    // reducer that dropped it instead would leave the two sides disagreeing
+    // about what arrived, which is the harder bug to see.
+    const impossible: ProducerLedger = {
+      ...producerLedger(41_824, 1_700_000_000_012),
+      total_blocks: 10,
+      rows: [
+        { key: '0xdup', blocks: 6 },
+        { key: '0xdup', blocks: 9 },
+      ],
+    };
+    const next = applySemanticsDelta(emptySemanticsCache(), {
+      type: 'producer_ledger_replace',
+      producer_ledger: impossible,
+    });
+    expect(next.producerLedger).toBe(impossible);
   });
 
   it('clear does not erase source health', () => {

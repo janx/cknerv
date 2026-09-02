@@ -279,6 +279,8 @@ function standing(over: Partial<ProducerStanding> & { key: string }): ProducerSt
     share: blocks / windowBlocks,
     lastSeenMs: 1_700_000_000_000,
     fan: { drawn: false, reason: 'roster_absent', matchedVersion: null, matched: 0, shareOfVersioned: 0 },
+    // The flood reads neither window: a wave starts at a key, not at a tally.
+    ledger: null,
     ...over,
   };
 }

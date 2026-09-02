@@ -235,6 +235,7 @@ describe('enrichment fixtures drive the real semantics reducer', () => {
     expect(cache.census).toEqual(snapshot.census);
     expect(cache.scriptRegistry).toEqual(snapshot.script_registry);
     expect(cache.networkRoster).toEqual(snapshot.network_roster);
+    expect(cache.producerLedger).toEqual(snapshot.producer_ledger);
     // The roster is the one snapshot record whose ORDER is part of the
     // contract: the server ships it sorted by `node_id` so the same known
     // set stages as the same set round after round.
@@ -279,6 +280,7 @@ describe('enrichment fixtures drive the real semantics reducer', () => {
       ['transaction_horizon_replace', 'transactionHorizon'],
       ['network_atlas_replace', 'networkAtlas'],
       ['network_roster_replace', 'networkRoster'],
+      ['producer_ledger_replace', 'producerLedger'],
       ['script_registry_replace', 'scriptRegistry'],
     ];
     for (const [name, slot] of landed) {
@@ -310,6 +312,39 @@ describe('enrichment fixtures drive the real semantics reducer', () => {
     const next = applySemanticsDelta(seeded(), empty);
     expect(next.networkRoster).toEqual(empty.network_roster);
     expect(next.networkRoster?.entries).toEqual([]);
+  });
+
+  it('the ledger folds whole, with the row whose lookup failed intact', () => {
+    const replace = deltas.producer_ledger_replace as Extract<
+      SemanticsDelta,
+      { type: 'producer_ledger_replace' }
+    >;
+    const next = applySemanticsDelta(emptySemanticsCache(), replace);
+    expect(next.producerLedger).toEqual(replace.producer_ledger);
+
+    // The fixture carries the pair on purpose: one row the address lookup
+    // answered for and one it did not. The absent keys are ABSENT on the wire
+    // — not null, not zero — and the reducer may not invent them, because a
+    // reader that spelled absence as zero would print `0 CKB` over a balance
+    // nobody read.
+    const [resolved, unresolved] = next.producerLedger?.rows ?? [];
+    expect(typeof resolved.balance_shannons).toBe('string');
+    // ⚠️ Above `Number.MAX_SAFE_INTEGER`: it rides as a decimal string all the
+    // way to the formatter, and `Number()` on it is the bug.
+    expect(BigInt(resolved.balance_shannons ?? '0')).toBeGreaterThan(
+      BigInt(Number.MAX_SAFE_INTEGER),
+    );
+    for (const absent of ['address', 'balance_shannons', 'live_cells'] as const) {
+      expect(unresolved).not.toHaveProperty(absent);
+    }
+
+    // A reorg is not an answer about last week: the ledger carries no anchor,
+    // so the prune that empties every other slot leaves it standing.
+    expect(applySemanticsDelta(next, deltas.prune).producerLedger)
+      .toEqual(replace.producer_ledger);
+    // Only its own clear takes it, and only then.
+    expect(applySemanticsDelta(next, deltas.producer_ledger_clear).producerLedger)
+      .toBeNull();
   });
 
   it('remove and clear arms retract what the snapshot seeded', () => {
@@ -366,6 +401,7 @@ describe('enrichment fixtures drive the real semantics reducer', () => {
       'networkAtlas',
       'networkRoster',
       'scriptRegistry',
+      'producerLedger',
     ] as const) {
       expect(next[slot], `clear left ${slot} standing`).toBeNull();
     }
@@ -385,6 +421,16 @@ describe('enrichment fixtures drive the real semantics reducer', () => {
     // ui-app/src/App.tsx — the transaction reader and the crawler dossier.
     'transaction_detail',
     'peer_sighting',
+    // ui-app/src/App.tsx — the POW cohort ledger. Gated on the capability and
+    // not merely on the slot, unlike every other pushed record, because this
+    // is the one record NOTHING in the client expires: it carries no anchor,
+    // so no prune cuts it, and the server emits `producer_ledger_clear` only
+    // from a refresh that RAN — which a source no longer declaring the
+    // capability never runs. So the live capability list is what keeps a week
+    // from outliving the source's ability to answer for it, and a rename on
+    // the Rust side has to fail here rather than silently fall the cohorts
+    // back to the 240-block window.
+    'producer_ledger',
     // packages/ui/src/derives/*.derive.ts — one gate each.
     'protocol_era',
     'transaction_horizon',

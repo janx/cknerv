@@ -633,6 +633,9 @@ function standing(over: Partial<ProducerStanding> & { key: string }): ProducerSt
     share: blocks / windowBlocks,
     lastSeenMs: 1_700_000_000_000,
     fan: { drawn: false, reason: 'roster_absent', matchedVersion: null, matched: 0, shareOfVersioned: 0 },
+    // T5 never reads the week either; a standing carries it, and staging is a
+    // function of the key alone whether or not one is there.
+    ledger: null,
     ...over,
   };
 }
@@ -785,10 +788,20 @@ describe('stageAttested (⭐ one node per producer, always anonymous)', () => {
     expect(node.peer).toBeUndefined();
     expect(node.sighted).toBeUndefined();
     expect(Object.keys(node.attested!).sort()).toEqual([
-      'blocks', 'fan', 'key', 'lastSeenMs', 'message', 'role', 'share', 'windowBlocks',
-    ]);
+      'blocks', 'fan', 'key', 'ledger', 'lastSeenMs', 'message', 'role', 'share',
+      'windowBlocks',
+    ].sort());
     const identityish = /node_id|addr|country|asn|version|host|ip|peer/i;
     for (const field of Object.keys(node.attested!)) expect(field).not.toMatch(identityish);
+    // ⚠️ `ledger` came through this test, which is what it is for. What it
+    // adds is the indexer's WEEK on the same payout identity — blocks, a
+    // share, a balance — and one name that would trip the regex above if it
+    // were run one level down: `address`. That is a `ckb1…` PAYOUT address,
+    // which is the identity `key` already is, rendered under a network prefix;
+    // it is not `RosterNode.addr`, which is a machine on the internet. §9.1 is
+    // about the second kind, and the shape of the first is pinned where it is
+    // built (`__tests__/derives/blockProducers.derive.test.ts`).
+    expect(node.attested!.ledger).toBeNull();
     // and the graph id is the payout key under a namespace, never a peer name
     expect(node.id).toBe(`${ATTESTED_ID_PREFIX}${node.attested!.key}`);
   });

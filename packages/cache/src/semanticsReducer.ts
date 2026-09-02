@@ -10,6 +10,7 @@ import type {
   NetworkRosterRecord,
   ScriptRegistryRecord,
   OutPoint,
+  ProducerLedger,
   ProtocolEraRecord,
   RevisionedSemanticsDelta,
   SemanticsDelta,
@@ -39,6 +40,21 @@ export interface SemanticsCache {
    *  Null without a source that can name them; the panel then falls back to
    *  the handful of families cknerv pins itself. */
   scriptRegistry: ScriptRegistryRecord | null;
+  /** Who took the last seven complete days, from the indexer — the other
+   *  window on the same producers `Chain.producer_window` holds the last 240
+   *  blocks of. Null without a source that can answer for it, and the reader
+   *  then falls back to that window, which is what every build before this
+   *  slot existed did.
+   *
+   *  ⭐ THE ONE SLOT NO PRUNE TOUCHES. Every record above is cut when a reorg
+   *  reaches its `as_of`; this record has no anchor to cut on, because it
+   *  counts days that closed before the reorg's blocks were mined. The server
+   *  says the same thing in the same words (`enrichment.rs`, the
+   *  `Mutation::ChainReorganized` arm), and dropping it here would throw a
+   *  week away over a fork that touched none of it — while the 240-block
+   *  window the cohorts would fall back to has just been emptied by that same
+   *  reorg. */
+  producerLedger: ProducerLedger | null;
 }
 
 export function outPointKey(outPoint: OutPoint): string {
@@ -65,6 +81,7 @@ export function emptySemanticsCache(): SemanticsCache {
     networkAtlas: null,
     networkRoster: null,
     scriptRegistry: null,
+    producerLedger: null,
   };
 }
 
@@ -89,6 +106,7 @@ export function fromSemanticsSnapshot(
     networkAtlas: snapshot.network_atlas ?? null,
     networkRoster: snapshot.network_roster ?? null,
     scriptRegistry: snapshot.script_registry ?? null,
+    producerLedger: snapshot.producer_ledger ?? null,
   };
 }
 
@@ -340,6 +358,28 @@ function reduceDelta(draft: SemanticsDraft, delta: SemanticsDelta): void {
       // offers no second opinion on it.
       writable(draft).networkRoster = delta.network_roster;
       return;
+    case 'producer_ledger_replace':
+      // WHOLE, never merged row by row — the server's own words on the arm
+      // (`enrichment.rs`, `SemanticsDelta::ProducerLedgerReplace`): a row that
+      // left the week is a row that must leave this copy, and a merge would
+      // keep a producer standing on days it no longer holds a block in.
+      //
+      // Unguarded like every other replace, and here the server has already
+      // done the comparing: `accept_refresh` withholds a ledger whose content
+      // is unchanged, so what arrives has moved. The record is also the one
+      // thing in this cache with no `as_of` to freeze — `deepEqualsIgnoringAnchors`
+      // would be comparing content against content, which is the same test the
+      // server just ran.
+      writable(draft).producerLedger = delta.producer_ledger;
+      return;
+    case 'producer_ledger_clear':
+      // The source can no longer answer for the week at all. A week nobody
+      // produced in would arrive as a replace with no rows and leave the slot
+      // standing — the roster's distinction exactly, and for the same reason:
+      // "we asked and got nothing" and "there is nobody to ask" are different
+      // sentences and only the second one empties a slot.
+      writable(draft).producerLedger = null;
+      return;
     case 'script_registry_replace':
       writable(draft).scriptRegistry = delta.script_registry;
       return;
@@ -417,6 +457,15 @@ function reduceDelta(draft: SemanticsDraft, delta: SemanticsDelta): void {
       ) {
         value.scriptRegistry = null;
       }
+      // ⭐ `producerLedger` is deliberately NOT dropped here, and it is the
+      // only record in this cache that is not. Every slot above is cut on its
+      // own `as_of`; the ledger has none, because it counts seven days that
+      // closed before this reorg's blocks were mined. Server parity, in the
+      // server's own words (`enrichment.rs`, the `Mutation::ChainReorganized`
+      // arm): dropping it would throw a week of history away over a fork that
+      // touched none of it, and would leave the POW cohorts on the 240-block
+      // window this same prune has just emptied for up to a whole refresh
+      // period.
       return;
     }
     case 'clear': {
@@ -439,6 +488,11 @@ function reduceDelta(draft: SemanticsDraft, delta: SemanticsDelta): void {
       value.networkAtlas = null;
       value.networkRoster = null;
       value.scriptRegistry = null;
+      // The ledger survives a reorg and not this: a rebuilt source may be
+      // pointed at another network, where last week's producers are another
+      // chain's. `clear_records()` empties it on the server for the same
+      // reason, and the next refresh republishes.
+      value.producerLedger = null;
       return;
     }
     default: {

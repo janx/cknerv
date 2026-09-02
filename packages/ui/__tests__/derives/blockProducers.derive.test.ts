@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { applyChainMutation, emptyChainCache } from '@cknerv/cache';
 import type {
-  BlockProducer, ChainEntry, Mutation, NetworkRosterRecord, RosterNode,
+  BlockProducer, ChainEntry, Mutation, NetworkRosterRecord, ProducerLedger,
+  ProducerLedgerRow, RosterNode,
 } from '@cknerv/types';
 import {
   deriveBlockProducers,
   producerCandidates,
+  producerKeysSignature,
+  producerLedgerIsCoherent,
   PRODUCER_FAN_MAX_CANDIDATES,
   PRODUCER_FAN_MAX_SHARE_OF_VERSIONED,
   PRODUCER_FAN_MIN_CANDIDATES,
@@ -81,8 +84,12 @@ function splitRoster(rare: number, stock: number): NetworkRosterRecord {
   return roster([...cohort('r', rare, RARE_BUILD), ...cohort('s', stock, STOCK_BUILD)]);
 }
 
-function view(chain: ChainEntry, r?: NetworkRosterRecord | null): BlockProducerView {
-  const derived = deriveBlockProducers(chain, r);
+function view(
+  chain: ChainEntry,
+  r?: NetworkRosterRecord | null,
+  ledger?: ProducerLedger | null,
+): BlockProducerView {
+  const derived = deriveBlockProducers(chain, r, ledger);
   expect(derived).not.toBeNull();
   return derived as BlockProducerView;
 }
@@ -552,5 +559,434 @@ describe('blockProducers determinism', () => {
     producerCandidates(chain.producers, r);
     expect(JSON.stringify(chain)).toBe(chainBefore);
     expect(JSON.stringify(r)).toBe(rosterBefore);
+  });
+});
+
+/* ─────────────────────────── the indexer's week ─────────────────────────── */
+
+/** A key in the shape the chain reports one, so the join below is made on the
+ *  identity both sides actually carry: a 32-byte lock script hash. */
+const LEDGER_KEY_A = `0x${'a'.repeat(64)}`;
+const LEDGER_KEY_B = `0x${'b'.repeat(64)}`;
+
+/** A ledger with its window stated. Every figure is constructed — the live
+ *  chart moves with the pools and the week rolls at midnight UTC+8 — except
+ *  the balance, which is the one value worth carrying verbatim: 9.82e15
+ *  shannons was READ off the live top miner on 2026-09-02 and is above
+ *  `Number.MAX_SAFE_INTEGER`, which is why it is a string all the way down. */
+function ledgerWith(
+  rows: ProducerLedgerRow[], over: Partial<ProducerLedger> = {},
+): ProducerLedger {
+  return {
+    window_days: 7,
+    from_date: '2026-08-26',
+    to_date: '2026-09-01',
+    total_blocks: 1_000,
+    fetched_at_ms: 1_700_000_500_000,
+    indexed_tip: 20_337_488,
+    rows,
+    ...over,
+  };
+}
+
+/** A fully resolved row: the window figures AND the per-address lookup that
+ *  can fail on its own. */
+function ledgerRow(
+  key: string, blocks: number, over: Partial<ProducerLedgerRow> = {},
+): ProducerLedgerRow {
+  return {
+    key,
+    blocks,
+    address: `ckb1${key.slice(2, 12)}`,
+    balance_shannons: '9820183392640200',
+    live_cells: 155_450,
+    tx_count: 4_094_449,
+    ...over,
+  };
+}
+
+/** The other kind of row: the address lookup did not answer, so everything
+ *  below the window figures is ABSENT — the keys are missing from the wire,
+ *  not null and not zero. */
+function bareLedgerRow(key: string, blocks: number): ProducerLedgerRow {
+  return { key, blocks };
+}
+
+describe('blockProducers ledger join', () => {
+  const rows = [
+    producer({ key: LEDGER_KEY_A, blocks: 6 }),
+    producer({ key: '0xwindow-only', blocks: 2 }),
+  ];
+
+  it('hangs the week on the producer the week and the window both name', () => {
+    const v = view(
+      chainWith(rows), null,
+      ledgerWith([ledgerRow(LEDGER_KEY_A, 250), bareLedgerRow(LEDGER_KEY_B, 10)]),
+    );
+    const both = standingFor(v, LEDGER_KEY_A);
+    // The two windows on one standing, each beside the denominator it was
+    // counted over: a quarter of the week, three quarters of the last eight
+    // blocks, and nothing anywhere divides one by the other.
+    expect(both.blocks).toBe(6);
+    expect(both.windowBlocks).toBe(8);
+    expect(both.share).toBeCloseTo(6 / 8, 12);
+    expect(both.ledger?.blocks).toBe(250);
+    expect(both.ledger?.share).toBeCloseTo(250 / 1_000, 12);
+    expect(v.ledgerWindow).toEqual({
+      days: 7,
+      fromDate: '2026-08-26',
+      toDate: '2026-09-01',
+      totalBlocks: 1_000,
+      fetchedAtMs: 1_700_000_500_000,
+      indexedTip: 20_337_488,
+    });
+  });
+
+  it('keeps ledger null for a producer the window knows and the week does not', () => {
+    const v = view(chainWith(rows), null, ledgerWith([ledgerRow(LEDGER_KEY_A, 250)]));
+    // Brand new, or too small to make the row cap. Either way the week has no
+    // reading of it, and a zero would be a reading.
+    expect(standingFor(v, '0xwindow-only').ledger).toBeNull();
+    expect(standingFor(v, LEDGER_KEY_A).ledger).not.toBeNull();
+  });
+
+  it('stands a producer the week names and the window has lost', () => {
+    // ⭐ THE FAILURE THE WHOLE LEG EXISTS FOR. A cohort used to vanish the
+    // moment its producer's last block left the 240-block ring — and for the
+    // first minute of every boot, and after every reorg, since the ring is
+    // cleared and refilled a block at a time. The week can still see it.
+    const v = view(
+      chainWith(rows), null,
+      ledgerWith([ledgerRow(LEDGER_KEY_A, 250), ledgerRow(LEDGER_KEY_B, 120)]),
+    );
+    expect(v.staging.map((p) => p.key)).toContain(LEDGER_KEY_B);
+    const only = standingFor(v, LEDGER_KEY_B);
+    expect(only.blocks).toBe(0);
+    // Zero OF THE LIVE WINDOW, so the standing still states which window it
+    // holds none of, and `0/0` never happens.
+    expect(only.windowBlocks).toBe(8);
+    expect(only.share).toBe(0);
+    expect(only.ledger?.blocks).toBe(120);
+    expect(only.ledger?.share).toBeCloseTo(120 / 1_000, 12);
+    // As of the LEDGER, not a block: the week says this identity was
+    // producing and says nothing about when it last did.
+    expect(only.lastSeenMs).toBe(1_700_000_500_000);
+    expect(only.message).toBe('');
+    // It declared nothing because none of its blocks is in the window to have
+    // carried a declaration — the same sentence a silent miner gets.
+    expect(fanReason(only)).toBe('no_declaration');
+  });
+
+  it('stands the week even when the window is empty, which is the boot case', () => {
+    const v = view(
+      chainWith([]), null,
+      ledgerWith([ledgerRow(LEDGER_KEY_A, 250), ledgerRow(LEDGER_KEY_B, 120)]),
+    );
+    expect(v.staging.map((p) => p.key)).toEqual([LEDGER_KEY_A, LEDGER_KEY_B]);
+    expect(v.windowBlocks).toBe(0);
+    for (const standing of v.staging) {
+      expect(standing.blocks).toBe(0);
+      // `0 / 0` is NaN and a NaN share reaches a Float32 lane and a printed
+      // percentage without anything throwing. It is written, not divided.
+      expect(standing.share).toBe(0);
+      expect(Number.isNaN(standing.share)).toBe(false);
+    }
+  });
+
+  it('carries an absent lookup as absent, and never as zero', () => {
+    const v = view(
+      chainWith(rows), null, ledgerWith([bareLedgerRow(LEDGER_KEY_A, 250)]),
+    );
+    const week = standingFor(v, LEDGER_KEY_A).ledger;
+    // The window figures survived the failed address lookup; everything the
+    // lookup would have filled is null. A card printing `0 CKB` over any of
+    // these would state something the source did not.
+    expect(week?.blocks).toBe(250);
+    expect(week?.address).toBeNull();
+    expect(week?.balanceShannons).toBeNull();
+    expect(week?.liveCells).toBeNull();
+    expect(week?.txCount).toBeNull();
+    expect(week?.lastRewardShannons).toBeNull();
+    expect(week?.lastRewardBlock).toBeNull();
+  });
+
+  it('passes the balance through as the string it arrived as', () => {
+    const v = view(
+      chainWith(rows), null,
+      ledgerWith([ledgerRow(LEDGER_KEY_A, 250, {
+        last_reward_shannons: '71011833086', last_reward_block: 20_337_476,
+      })]),
+    );
+    const week = standingFor(v, LEDGER_KEY_A).ledger;
+    // ⚠️ 9,820,183,392,640,200 > 9,007,199,254,740,991. Anything that touched
+    // this with `Number()` on the way through would hand the formatter a
+    // figure that looks right and is not.
+    expect(week?.balanceShannons).toBe('9820183392640200');
+    expect(BigInt(week?.balanceShannons ?? '0')).toBeGreaterThan(
+      BigInt(Number.MAX_SAFE_INTEGER),
+    );
+    expect(week?.lastRewardShannons).toBe('71011833086');
+    expect(week?.lastRewardBlock).toBe(20_337_476);
+  });
+
+  it('stages the union in key order, whichever window a key came from', () => {
+    // The staging order is a function of WHICH producers exist and of nothing
+    // else — a ledger-only key lands at its own place, not at the tail, so the
+    // colony's cache key does not depend on which window found a producer.
+    const v = view(
+      chainWith([producer({ key: '0xbb', blocks: 1 })]), null,
+      ledgerWith([ledgerRow('0xcc', 5), ledgerRow('0xaa', 9)]),
+    );
+    expect(v.staging.map((p) => p.key)).toEqual(['0xaa', '0xbb', '0xcc']);
+  });
+
+  it('reads back by the week when there is a week, and by the ring when not', () => {
+    const chain = chainWith([
+      producer({ key: '0xaa', blocks: 9 }), producer({ key: '0xbb', blocks: 1 }),
+    ]);
+    const week = ledgerWith([ledgerRow('0xbb', 400), ledgerRow('0xaa', 100)]);
+    // With a week, `TOP` is the top of the WEEK: the producer holding most of
+    // the last 240 blocks is not the producer that took the week.
+    expect(view(chain, null, week).ranked.map((p) => p.key)).toEqual(['0xbb', '0xaa']);
+    // Without one, it is the ring, exactly as it has always been.
+    expect(view(chain, null).ranked.map((p) => p.key)).toEqual(['0xaa', '0xbb']);
+    // …and a producer the week does not name reads as zero of it, however
+    // much of the ring it holds. Its recency is still on `blocks`.
+    const partial = view(chain, null, ledgerWith([ledgerRow('0xbb', 400)]));
+    expect(partial.ranked.map((p) => p.key)).toEqual(['0xbb', '0xaa']);
+    expect(partial.ranked[1].blocks).toBe(9);
+    // Ties fall through to the key, so the reading order is total either way.
+    const tied = view(chain, null, ledgerWith([ledgerRow('0xbb', 7), ledgerRow('0xaa', 7)]));
+    expect(tied.ranked.map((p) => p.key)).toEqual(['0xaa', '0xbb']);
+  });
+
+  it('is the same standings twice, over the union as over the window', () => {
+    const v = view(
+      chainWith(rows), null,
+      ledgerWith([ledgerRow(LEDGER_KEY_A, 250), ledgerRow(LEDGER_KEY_B, 120)]),
+    );
+    expect(v.ranked).toHaveLength(v.staging.length);
+    for (const standing of v.ranked) expect(v.staging).toContain(standing);
+  });
+
+  it('never lets a ledger-only standing into a candidate stamp', () => {
+    // §9.2 through the new door: a standing that declared nothing has a
+    // withheld fan, so it can put no peer in `candidacyByPeer` — the fan gate
+    // is decided for both halves of the union by one call.
+    const v = view(
+      chainWith([producer({ key: '0xrare', blocks: 5, message: RARE_BUILD })]),
+      splitRoster(3, 40),
+      ledgerWith([ledgerRow(LEDGER_KEY_B, 120)]),
+    );
+    expect([...v.candidacyByPeer.keys()]).toEqual(['Qmr0000', 'Qmr0001', 'Qmr0002']);
+    for (const stamp of v.candidacyByPeer.values()) {
+      expect(stamp.producerKeys).toEqual(['0xrare']);
+    }
+  });
+});
+
+describe('blockProducers ledger coherence', () => {
+  const chain = chainWith([producer({ key: '0xaa', blocks: 4 })]);
+  /** What the view looks like with no week at all — the fallback every refusal
+   *  below has to land back on, byte for byte. */
+  const withoutLedger = JSON.stringify(deriveBlockProducers(chain, null));
+
+  /** A record the derive must refuse, and the whole view it must refuse it
+   *  into: the one before ledgers existed. */
+  function refuses(name: string, ledger: ProducerLedger): void {
+    expect(producerLedgerIsCoherent(ledger), name).toBe(false);
+    const v = view(chain, null, ledger);
+    expect(v.ledgerWindow, name).toBeNull();
+    expect(standingFor(v, '0xaa').ledger, name).toBeNull();
+    expect(JSON.stringify(deriveBlockProducers(chain, null, ledger)), name)
+      .toBe(withoutLedger);
+  }
+
+  it('accepts the shape the adapter actually ships', () => {
+    const week = ledgerWith([ledgerRow('0xaa', 600), bareLedgerRow('0xbb', 2)]);
+    expect(producerLedgerIsCoherent(week)).toBe(true);
+    // `<=`, not `==`: the row cap cuts the tail off a long week on purpose, so
+    // the rows are a PREFIX of the total and never meant to add up to it.
+    expect(week.rows.reduce((sum, row) => sum + row.blocks, 0))
+      .toBeLessThan(week.total_blocks);
+  });
+
+  it('refuses a week nobody produced in, because every share divides by it', () => {
+    // `total_blocks: 0` alone makes every share Infinity or NaN, and a NaN
+    // share reaches a Float32 lane and a printed percentage without throwing.
+    refuses('zero total', ledgerWith([ledgerRow('0xaa', 5)], { total_blocks: 0 }));
+    refuses('negative total', ledgerWith([ledgerRow('0xaa', 5)], { total_blocks: -1 }));
+    refuses(
+      'fractional total',
+      ledgerWith([ledgerRow('0xaa', 5)], { total_blocks: 1.5 }),
+    );
+  });
+
+  it('refuses rows that do not fit the week they claim to be part of', () => {
+    refuses('sum over total', ledgerWith(
+      [ledgerRow('0xaa', 600), ledgerRow('0xbb', 500)], { total_blocks: 1_000 },
+    ));
+  });
+
+  it('refuses a row that took no blocks, or a fraction of one', () => {
+    refuses('zero blocks', ledgerWith([ledgerRow('0xaa', 0)]));
+    refuses('negative blocks', ledgerWith([ledgerRow('0xaa', -3)]));
+    refuses('fractional blocks', ledgerWith([ledgerRow('0xaa', 2.5)]));
+  });
+
+  it('refuses a blank key, and a key that appears twice', () => {
+    // The same two refusals the 240-block window makes, and for the same
+    // reason: a keyless row is blocks with nobody behind them, and a repeat
+    // would be one producer counted twice against one denominator.
+    refuses('blank key', ledgerWith([ledgerRow('', 5)]));
+    refuses('duplicate key', ledgerWith([ledgerRow('0xaa', 5), ledgerRow('0xaa', 6)]));
+  });
+
+  it('refuses a shannon figure BigInt could not read', () => {
+    // ⚠️ `BigInt('12 CKB')` throws, and it would throw inside a render. The
+    // check is here so the conversion is total at every call site downstream.
+    refuses('lettered balance', ledgerWith([
+      ledgerRow('0xaa', 5, { balance_shannons: '98 CKB' }),
+    ]));
+    refuses('signed balance', ledgerWith([
+      ledgerRow('0xaa', 5, { balance_shannons: '-1' }),
+    ]));
+    // An empty string is refused for the same reason a blank key is:
+    // `BigInt('')` is `0n`, so a balance nobody read would become a zero.
+    refuses('empty balance', ledgerWith([
+      ledgerRow('0xaa', 5, { balance_shannons: '' }),
+    ]));
+    refuses('lettered reward', ledgerWith([
+      ledgerRow('0xaa', 5, { last_reward_shannons: '0x1f' }),
+    ]));
+    // …and an absent one is not a refusal: it is the row whose address lookup
+    // failed, which is the shape the adapter ships on purpose.
+    expect(producerLedgerIsCoherent(ledgerWith([bareLedgerRow('0xaa', 5)]))).toBe(true);
+  });
+
+  it('treats no ledger, a null ledger and rows that are not an array alike', () => {
+    expect(producerLedgerIsCoherent(null)).toBe(false);
+    expect(producerLedgerIsCoherent(undefined)).toBe(false);
+    refuses('rows not an array', ledgerWith(
+      undefined as unknown as ProducerLedgerRow[],
+    ));
+  });
+
+  it('does not parse the key, only counts by it', () => {
+    // The adapter refuses a key that is not `0x`-prefixed; this side
+    // deliberately does not, because nothing here parses a key. A client that
+    // started validating the shape would be the one place a devnet spelling
+    // could empty the colony.
+    expect(producerLedgerIsCoherent(ledgerWith([ledgerRow('devnet-producer', 5)])))
+      .toBe(true);
+  });
+});
+
+describe('blockProducers ledger fallback', () => {
+  const chain = chainWith([
+    producer({ key: '0xaa', blocks: 5, message: RARE_BUILD }),
+    producer({ key: '0xbb', blocks: 3, message: STOCK_BUILD }),
+  ]);
+
+  it('is byte-identical with no ledger, however the absence is spelled', () => {
+    // The fallback is a test, not a hope: absent, null and undefined are one
+    // view, and it is the view this file produced before ledgers existed.
+    const r = splitRoster(3, 40);
+    const bare = JSON.stringify(deriveBlockProducers(chain, r));
+    expect(JSON.stringify(deriveBlockProducers(chain, r, null))).toBe(bare);
+    expect(JSON.stringify(deriveBlockProducers(chain, r, undefined))).toBe(bare);
+    // And every standing says so in the type rather than by omission.
+    for (const standing of view(chain, r).staging) expect(standing.ledger).toBeNull();
+    expect(view(chain, r).ledgerWindow).toBeNull();
+  });
+
+  it('refuses an incoherent WINDOW whether or not a week arrived', () => {
+    // The window's identity is not weakened by having a second window beside
+    // it: shares that are not parts of the whole they are drawn against stay
+    // undrawable, and a valid week cannot rescue them.
+    const broken = { ...chain, producer_window_blocks: 9 };
+    const week = ledgerWith([ledgerRow('0xaa', 600)]);
+    expect(deriveBlockProducers(broken, null)).toBeNull();
+    expect(deriveBlockProducers(broken, null, week)).toBeNull();
+  });
+
+  it('is a pure function of its three inputs and mutates none of them', () => {
+    const r = splitRoster(4, 40);
+    const week = ledgerWith([ledgerRow('0xaa', 600), ledgerRow(LEDGER_KEY_B, 120)]);
+    expect(JSON.stringify(deriveBlockProducers(chain, r, week)))
+      .toEqual(JSON.stringify(deriveBlockProducers(chain, r, week)));
+    const chainBefore = JSON.stringify(chain);
+    const rosterBefore = JSON.stringify(r);
+    const weekBefore = JSON.stringify(week);
+    deriveBlockProducers(chain, r, week);
+    expect(JSON.stringify(chain)).toBe(chainBefore);
+    expect(JSON.stringify(r)).toBe(rosterBefore);
+    expect(JSON.stringify(week)).toBe(weekBefore);
+  });
+});
+
+describe('producerKeysSignature', () => {
+  const chain = chainWith([
+    producer({ key: '0xbb', blocks: 5 }), producer({ key: '0xaa', blocks: 3 }),
+  ]);
+
+  it('is the staged key set, in staging order, NUL-joined', () => {
+    const v = view(chain, null);
+    expect(producerKeysSignature(v)).toBe(['0xaa', '0xbb'].join('\u0000'));
+    // Byte-identical to what App spelled inline before this function existed,
+    // which is what makes the move a refactor rather than a re-key.
+    expect(producerKeysSignature(v)).toBe(v.staging.map((p) => p.key).join('\u0000'));
+  });
+
+  it('⭐ ignores everything a block moves, which is the property App keys on', () => {
+    // Stronger than the field-by-field text check `App.sceneRoots.test.tsx`
+    // used to run over the inline expression: these two views differ in every
+    // tally, every share, every message, every fan, every ledger figure and in
+    // their whole `ranked` order — and the colony may not rebuild for any of
+    // it, because none of it moves a node.
+    const before = view(
+      chainWith([
+        producer({ key: '0xaa', blocks: 5, message: RARE_BUILD }),
+        producer({ key: '0xbb', blocks: 4, message: '' }),
+      ]),
+      splitRoster(3, 40),
+      ledgerWith([ledgerRow('0xaa', 600), ledgerRow('0xbb', 100)]),
+    );
+    const after = view(
+      chainWith([
+        producer({ key: '0xaa', blocks: 1, message: '' }),
+        producer({ key: '0xbb', blocks: 90, message: RARE_BUILD }),
+      ]),
+      splitRoster(1, 40),
+      ledgerWith([ledgerRow('0xbb', 900), bareLedgerRow('0xaa', 2)]),
+    );
+    expect(after.ranked.map((p) => p.key)).not.toEqual(before.ranked.map((p) => p.key));
+    expect(producerKeysSignature(after)).toBe(producerKeysSignature(before));
+  });
+
+  it('⭐ carries a ledger-only cohort into the set the topology stages', () => {
+    // The union reaching the attested tier is the whole point of the wiring:
+    // `inferredTopology` stages one node per staged key, and this signature is
+    // the memo key that decides when it runs.
+    const withoutWeek = producerKeysSignature(view(chain, null));
+    const withWeek = producerKeysSignature(
+      view(chain, null, ledgerWith([ledgerRow('0xcc', 400)])),
+    );
+    expect(withoutWeek).toBe(['0xaa', '0xbb'].join('\u0000'));
+    expect(withWeek).toBe(['0xaa', '0xbb', '0xcc'].join('\u0000'));
+    expect(withWeek).not.toBe(withoutWeek);
+    // A week that names only producers the ring already holds adds no key, so
+    // the ledger's arrival does not rebuild the colony by itself.
+    expect(producerKeysSignature(
+      view(chain, null, ledgerWith([ledgerRow('0xaa', 400)])),
+    )).toBe(withoutWeek);
+  });
+
+  it('collapses absent, null and empty onto one signature', () => {
+    // `inferredTopology` emits a byte-identical topology for all three, so a
+    // signature that told them apart would rebuild the colony for no move.
+    expect(producerKeysSignature(null)).toBe('');
+    expect(producerKeysSignature(undefined)).toBe('');
+    expect(producerKeysSignature(view(chainWith([])))).toBe('');
   });
 });

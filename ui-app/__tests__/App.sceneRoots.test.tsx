@@ -219,21 +219,27 @@ describe('colony topology signature', () => {
     // once a block, and ColonyEdges owns its line geometry on the topology:
     // the symptom is a wave that stops halfway, not an error.
     //
-    // Structural rather than a text match: EVERY field the signature reads off
-    // a standing, and there had better be exactly one of them. `blocks`,
-    // `share`, `windowBlocks`, `message`, `lastSeenMs` and `fan` all move under
-    // a live window and not one of them may appear here.
+    // The signature itself is `producerKeysSignature`, a pure function of the
+    // view, and the field discipline moved there WITH A STRONGER TEST than a
+    // regex over this file could be: `blockProducers.derive.test.ts` pins that
+    // two views differing in every tally, message, fan and ledger figure — and
+    // in their `ranked` order — produce one identical signature, which is the
+    // property, rather than the spelling that happens to have it today.
+    //
+    // What is still App's to guard is that this memo DELEGATES. A second
+    // signature spelled here could drift from the pinned one silently, and the
+    // only symptom would be a colony rebuilding on something it should not.
     const sig = memoBody('producerKeysSig');
-    expect([...sig.matchAll(/\bp\.([A-Za-z_$][\w$]*)/g)].map((m) => m[1])).toEqual(['key']);
+    expect(sig).toContain('producerKeysSignature(producerView)');
+    expect([...sig.matchAll(/\bproducerView\??\.([A-Za-z_$][\w$]*)/g)]).toEqual([]);
 
-    // ⭐⭐ AND THE OTHER DOOR INTO THE SAME REBUILD, which the field check above
-    // cannot see: the ORDER the keys arrive in. A signature over keys is a
-    // sequence of keys, and the scaffold it guards really is a function of that
-    // sequence — so the array reaching it has to be one only the SET can
-    // reorder. `staging` is key-ascending; `ranked` is ordered by blocks, and
-    // keying on it would rebuild the whole colony every time two miners traded
-    // rank without either of them joining or leaving the window.
-    expect(sig).toContain('producerView?.staging');
+    // ⭐⭐ AND THE OTHER DOOR INTO THE SAME REBUILD, which a field check cannot
+    // see: the ORDER the keys arrive in. A signature over keys is a sequence of
+    // keys, and the scaffold it guards really is a function of that sequence —
+    // so the array reaching it has to be one only the SET can reorder.
+    // `staging` is key-ascending; `ranked` is ordered by a tally, and keying on
+    // it would rebuild the whole colony every time two miners traded rank
+    // without either of them joining or leaving a window.
     expect(sig).not.toContain('ranked');
     for (const source of [memoBody('topology'), sig]) {
       expect(source).not.toContain('producerView?.ranked');
@@ -297,8 +303,15 @@ describe('colony topology signature', () => {
     // replaced only by an attributed block or a reorg. Keying the join on the
     // entity would re-run it many times a block for an answer that did not
     // change, and would hand every consumer a fresh view each time.
-    expect(memoDeps('producerView'))
-      .toEqual(['chain.producers', 'chain.producer_window_blocks', 'networkRoster']);
+    //
+    // The ledger joins the list rather than replacing anything: it is the
+    // OTHER window on the same producers, it lands on its own 120 s cadence,
+    // and the reducer replaces the record only when its content moved — so
+    // keying on it re-runs the join once per new week, not once per poll.
+    expect(memoDeps('producerView')).toEqual([
+      'chain.producers', 'chain.producer_window_blocks', 'networkRoster',
+      'producerLedger',
+    ]);
   });
 
   it('hands the colony the live standings by reference, never by array', () => {
