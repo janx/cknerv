@@ -2,6 +2,12 @@
 // hub-and-spoke peer constellation. The peer network has its OWN visual language,
 // a *data-flow mesh* (soft current along straight links), deliberately unlike the
 // cells' neural galaxy (sharp spikes on curved dendrites). It composes:
+//   • ColonyMist — the energy field under the colony plane: two large, faint,
+//     structureless haze sheets at a few percent of the mesh's brightness. The
+//     peer mesh is the boundary between two universes and this is the far side
+//     of it, so it is deliberately SECONDARY; the one place it becomes visible
+//     — the intake patch under each POW cohort — is drawn by ColonyCohorts,
+//     beside the mark that is drinking it.
 //   • ColonyEdges — ALL edges as ONE glow-line primitive on a confidence gradient
 //     (measured brighter, inferred fainter) carrying an ambient data-flow current
 //     PLUS a per-block bright surge that flows outward along the propagation tree.
@@ -52,6 +58,7 @@ import type { ColonyFlood } from '../derives/networkFlood.derive';
 import type { ProducerStanding } from '../derives/blockProducers.derive';
 import ColonyNodes from './ColonyNodes';
 import ColonyEdges from './ColonyEdges';
+import ColonyMist from './ColonyMist';
 import ColonyCohorts, { type ProducerSharesRef } from './ColonyCohorts';
 import ColonyCourierLayer from './ColonyCourierLayer';
 import BlockDeliveryLayer, { type BlockDeliveryPulse } from './BlockDeliveryLayer';
@@ -254,6 +261,16 @@ function NetworkColony({
           picking raycasts and the anchors' matrixWorld projections follow it
           without any per-layer math. */}
       <group ref={rotationGroupRef}>
+        {/* Under everything, and behind everything: the energy field the POW
+            cohorts drink from — a diffuse substance filling the space below the
+            membrane, at a few percent of the mesh's brightness. It is drawn
+            FIRST because it is the ground the rest of the colony stands on, and
+            it is mounted INSIDE the rotation group because that costs nothing:
+            its program reads the world point under each fragment, so the turn
+            reaches neither its noise nor its fade. Nothing is passed to it —
+            the field is context, and the only per-cohort part of the mist (the
+            intake patch) belongs to `ColonyCohorts`, beside the mark it feeds. */}
+        <ColonyMist />
         <ColonyEdges
           topology={topology}
           cf={cf}

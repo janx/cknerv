@@ -939,14 +939,25 @@ describe('cohort aperture — the ceiling two additive draws share', () => {
     // Each draw against its own knee, and then the sum, which is the number
     // that matters and the one the lab never measured.
     //
-    // ⚠️⚠️ THE HEADROOM HALVED IN R25 AND IS STILL HEADROOM. The window's
-    // interior, the lip's feed and the aura's new core and low-elevation boost
-    // all push the same way: blue went from 0.8475 to 0.9256, so what was 15 %
-    // of clearance under the clip is now 7 %. It is still a THEOREM rather than
-    // an observation — `and that ceiling is ARITHMETIC` below — but a further
-    // amplitude on either draw now has a measured cost, and anyone adding one
-    // should read that number first. The aura in particular is within 1.6e-5 of
-    // its own knee: it is saturating it, which is exactly what a knee is for.
+    // ⚠️⚠️ THE HEADROOM HALVED IN R25 AND WAS THEN GIVEN BACK BY THE LIP. The
+    // window's interior, the lip's feed and the aura's core and low-elevation
+    // boost all pushed the same way and took blue from 0.8475 to 0.9256 — 15 %
+    // of clearance under the clip down to 7 %. Bringing the drawn ring to the
+    // preview's own `lipAmp` (`COHORT_FACE_RIM_AMP` 1.05 → 0.42, in the commit
+    // that mounts the mist whose PILE is the rest of that brightness) takes it
+    // to 0.8078: **19 % of clearance**, the widest this form has ever had. It
+    // is still a THEOREM rather than an observation — `and that ceiling is
+    // ARITHMETIC` below — but a further amplitude on either draw has a measured
+    // cost, and anyone adding one should read that number first. The aura in
+    // particular is within 1.6e-5 of its own knee: it is saturating it, which
+    // is exactly what a knee is for.
+    //
+    // ⭐ AND THE LIP CHANGE MOVED THE FACE AND NOT THE AURA, which is the same
+    // structural fact stated a second way: `auraSupremum` is bit-identical
+    // across it (0.391902 both sides) because the halo never reads `uRimAmp`,
+    // while the face's peak IS the lip and fell 0.878861 → 0.808959 — 8 %, not
+    // the ring's own 60 %, because the knee it passes through is where most of
+    // that amplitude was already going.
     //
     // ⭐ RE-BASING THE HOLE FROM 0.52 wu TO 1.6 wu MOVED NONE OF IT — face and
     // aura suprema are bit-identical and blue shifted by 1.5e-4 — and the
@@ -957,25 +968,35 @@ describe('cohort aperture — the ceiling two additive draws share', () => {
     // that is inside it, and neither supremum was ever in there.
     // eslint-disable-next-line no-console
     console.log('MEASURED', faceSupremum, auraSupremum, supremum);
-    expect(faceSupremum).toBeCloseTo(0.878861, 5);
+    expect(faceSupremum).toBeCloseTo(0.808959, 5);
     expect(faceSupremum).toBeLessThan(COHORT_CLIP_KNEE);
     expect(auraSupremum).toBeCloseTo(0.391902, 5);
     expect(auraSupremum).toBeLessThan(COHORT_AURA_KNEE);
-    expect(supremum[0]).toBeCloseTo(0.375250, 4);
-    expect(supremum[1]).toBeCloseTo(0.816652, 4);
-    expect(supremum[2]).toBeCloseTo(0.925777, 4);
+    expect(supremum[0]).toBeCloseTo(0.323701, 4);
+    expect(supremum[1]).toBeCloseTo(0.711400, 4);
+    expect(supremum[2]).toBeCloseTo(0.807773, 4);
     for (const channel of supremum) expect(channel).toBeLessThan(1);
     // Blue is the binding channel, because both colours are full in it.
     expect(supremum[2]).toBeGreaterThan(supremum[1]);
     expect(supremum[2]).toBeGreaterThan(supremum[0]);
 
-    // ⚠️ WHAT THE LAB SHIPPED, FOR THE RECORD. Kneeing both faces at
-    // `COHORT_CLIP_KNEE` — each measured alone — puts the SUM at 1.067 in
-    // blue, at every distance from 8 to 300 wu, because at low elevation the
-    // rim's near and far arcs fold onto the halo's own peak.
+    // ⚠️ WHAT THE LAB SHIPPED, FOR THE RECORD — AND WHY THE PAIR IS STILL THE
+    // ANSWER AT A FAINT LIP. Kneeing both faces at `COHORT_CLIP_KNEE` — each
+    // measured alone — put the SUM at 1.067 in blue in the lab, and at 1.117
+    // here while the drawn ring stood at 1.05, at every distance from 8 to
+    // 300 wu, because at low elevation the rim's near and far arcs fold onto
+    // the halo's own peak. At the preview's own `lipAmp` it lands at 0.9989:
+    // UNDER one, by a thousandth. That is not a margin to ship on — it is a
+    // property of one live knob's current value, and `cohortRimAmp` runs to 3
+    // — which is the whole reason the ceiling is bought with a Pythagorean
+    // pair instead of with an amplitude.
     const auraAtHouseKnee =
       COHORT_CLIP_KNEE * (1 - Math.exp(-0.93468 / COHORT_CLIP_KNEE));
-    expect(sq(faceSupremum) + sq(auraAtHouseKnee)).toBeGreaterThan(1);
+    expect(sq(faceSupremum) + sq(auraAtHouseKnee)).toBeCloseTo(0.9989, 3);
+    // …and with the ring this branch carried before the mist arrived (face
+    // supremum 0.878861 at `COHORT_FACE_RIM_AMP` 1.05, measured by this same
+    // sweep) the single house knee is over 1 outright.
+    expect(sq(0.878861) + sq(auraAtHouseKnee)).toBeGreaterThan(1);
   });
 
   it('and that ceiling is ARITHMETIC, not merely a swept observation', () => {

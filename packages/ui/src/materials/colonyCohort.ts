@@ -462,8 +462,27 @@ export const COHORT_FACE_PUPIL_SOFT = 0.125;
  */
 export const COHORT_FACE_RIM_W = 0.1875;
 
-/** How hard the rim burns, before the knee. */
-export const COHORT_FACE_RIM_AMP = 1.05;
+/**
+ * How hard the rim burns, before the knee.
+ *
+ * ⭐⭐⭐ THE BRIGHT LIP IS THE MEDIUM ITSELF, WHICH IS WHY THIS IS 0.42 AND NOT
+ * 1.05. The approved preview's DRAWN lip (`lipAmp` 0.42 in the lab's mouth) is
+ * faint: what makes the edge of the mouth bright there is the mist PILING UP at
+ * it — `uConc * (R / r)³` on the patch, the area compression a 2-D sink applies
+ * to a parcel — and the drawn ring is only the thin edge that light sits on.
+ * The branch shipped 1.05 because T2b re-based the radii and deliberately left
+ * every amplitude alone: changing both in one commit would have made the
+ * supremum re-measurement uninterpretable. It measured what the deferral cost —
+ * at the lip the face peaks at 2.86 pre-knee against the window's 1.44, where
+ * the preview's faint lip is ~0.6 against the same 1.44 — and handed the number
+ * here, to the commit that mounts the mist. So the ring comes down to the
+ * preview's value in the same change that adds the medium whose pile is the
+ * rest of it, and the mouth stops being a ring with a hole in it.
+ *
+ * ⚠️ It is still a live knob (`cohortRimAmp`), and T6 judges the lip against
+ * the window by eye with the patch drawn under it.
+ */
+export const COHORT_FACE_RIM_AMP = 0.42;
 
 /** How far the rim tips toward cold white at its own peak. */
 export const COHORT_FACE_HOT_MIX = 0.45;

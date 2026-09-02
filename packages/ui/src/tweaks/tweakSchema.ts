@@ -18,9 +18,10 @@ import {
   SHOCKWAVE_COLOR_CEIL,
   SHOCKWAVE_ALPHA_CEIL,
 } from '../materials/shockwaveMaterial';
-// …and the eight `cohort*` knobs take theirs from the two aperture materials,
-// on the same rule: each material seeds its own uniforms from these constants
-// and ColonyCohorts overwrites them from LIVE.peer.* each frame, so there is
+// …and the seventeen `cohort*` knobs take theirs from the two aperture
+// materials and the two mist materials, on the same rule: each material seeds
+// its own uniforms from these constants and ColonyCohorts / ColonyMist overwrite
+// them from LIVE.peer.* each frame, so there is
 // ONE authority. Most of the aperture is deliberately NOT a knob. The two knees
 // (`COHORT_CLIP_KNEE` and `COHORT_AURA_KNEE`) are a PYTHAGOREAN PAIR that bound
 // the two additive draws' sum below 1.0 by arithmetic and cannot be moved
@@ -36,11 +37,29 @@ import {
   COHORT_AURA_HALO_BIAS,
   COHORT_AURA_HALO_R,
   COHORT_FACE_INTAKE_AMP,
+  COHORT_FACE_INTERIOR_AMP,
   COHORT_FACE_RIM_AMP,
   COHORT_FACE_STRIA_AMP,
   COHORT_FACE_STRIAE,
   COHORT_FACE_STRIAE_FLOOR,
+  COHORT_INTAKE_LEVEL,
 } from '../materials/colonyCohort';
+// …and the mist under the mark brings six more, on the same rule: the two
+// materials in `colonyMist` seed their own uniforms from these constants and
+// `ColonyCohorts` / `ColonyMist` overwrite them from LIVE.peer.* each frame.
+// ⭐ `cohortLevel` is the one knob with TWO consumers — the window's medium
+// level in the face and the top of the mist's mound under it are ONE surface
+// (`COHORT_INTAKE_LEVEL`), and a tuner who could move one without the other
+// would be able to make a viewer looking INTO the mouth and a viewer looking at
+// the mist beside it disagree about where the substance is.
+import {
+  MIST_AMP,
+  MIST_CONTRAST_NEAR,
+  MIST_REACH,
+  MIST_SINK_K,
+  MIST_SWIRL,
+  MIST_WAKE,
+} from '../materials/colonyMist';
 // The Cell-field contact front is a scaled-down version of the peer-plane
 // brightness wave: same shape, same timing, its reach divided by
 // CONTACT_WAVE_SCALE — so both planes still read as sections of one event
@@ -211,6 +230,40 @@ export const peerSchema = {
   cohortStriaAmp: { value: COHORT_FACE_STRIA_AMP, min: 0, max: 1, step: 0.02, label: 'cohort grain' },
   cohortHaloR: { value: COHORT_AURA_HALO_R, min: 1, max: 3, step: 0.05, label: 'cohort halo r' },
   cohortHaloBias: { value: COHORT_AURA_HALO_BIAS, min: 0, max: 1, step: 0.02, label: 'cohort halo bias' },
+  // …and the OTHER SIDE of the hole: the mist the cohort drinks. The mark is
+  // what a viewer sees THROUGH; these weigh and shape what is being taken.
+  //
+  // ⭐ `cohortInteriorAmp` is the medium seen through the window, and it sits
+  // here rather than with the mist because the face draws it — the window and
+  // the patch are one surface seen two ways, so the two amplitudes are read
+  // side by side and turned against each other.
+  //
+  // ⭐⭐ `cohortLevel` MOVES BOTH READERS OF ONE CONSTANT. The window stops
+  // showing wall and starts showing surface at `COHORT_INTAKE_LEVEL` below the
+  // lip, and the mist's mound rises to exactly that height; the two are the
+  // same surface, so the knob writes `uLevel` on the face AND on the patch in
+  // the same frame. A second knob, or a knob that reached only one of them,
+  // would let a viewer looking into the mouth and a viewer looking at the mist
+  // beside it see the medium at two different depths.
+  //
+  // ⚠️ `cohortIntake` is the SINK STRENGTH `k` in wu²/s (`r0² = r² + k·τ`),
+  // which is a different quantity from `cohortIntakeAmp` above — that one is
+  // the brightness of the face's skirt. The labels say which is which.
+  //
+  // ⚠️ NO KNOB HERE CAN CLIP EITHER APERTURE, because none of them reaches the
+  // mark's programs: the mist is its own two draws, additive over the same
+  // pixels, and its ceiling is `cohortMistAmp` / `cohortHazeAmp` measured live
+  // (see the ceiling paragraph in `colonyMist.ts` — the two draws above sum to
+  // 0.808 in blue, so the substance under them has 0.192 to spend).
+  cohortMistAmp: { value: MIST_AMP, min: 0, max: 3, step: 0.05, label: 'cohort mist amp' },
+  cohortHazeAmp: { value: MIST_AMP, min: 0, max: 3, step: 0.05, label: 'cohort haze amp' },
+  cohortInteriorAmp: { value: COHORT_FACE_INTERIOR_AMP, min: 0, max: 3, step: 0.05, label: 'cohort window amp' },
+  cohortGather: { value: MIST_CONTRAST_NEAR, min: 0, max: 3, step: 0.05, label: 'cohort gather' },
+  cohortIntake: { value: MIST_SINK_K, min: 0, max: 40, step: 0.5, label: 'cohort sink k' },
+  cohortSwirl: { value: MIST_SWIRL, min: 0, max: 3, step: 0.05, label: 'cohort swirl' },
+  cohortReach: { value: MIST_REACH, min: 4, max: 30, step: 0.5, label: 'cohort reach' },
+  cohortLevel: { value: COHORT_INTAKE_LEVEL, min: 0.2, max: 2, step: 0.02, label: 'cohort level' },
+  cohortWake: { value: MIST_WAKE, min: 0, max: 1, step: 0.05, label: 'cohort wake' },
 } satisfies FolderSchema;
 
 export const cellSchema = {

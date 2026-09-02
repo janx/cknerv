@@ -60,10 +60,17 @@ describe('NetworkColony counter-rotation frame contract', () => {
     expect(publish).toBeGreaterThan(rawFrame);
   });
 
-  it('rotates edges, cohort holes, nodes and the inspection overlay; leaves courier + delivery in world space', () => {
+  it('rotates the mist, the edges, cohort holes, nodes and the inspection overlay; leaves courier + delivery in world space', () => {
     const network = source('NetworkColony.tsx');
 
     const rotatingOpen = network.indexOf('<group ref={rotationGroupRef}>');
+    // ⭐ The energy field under the plane rides the group too, and it costs
+    // NOTHING to do so: the haze program reads the WORLD point under each
+    // fragment, so neither its noise nor its elliptical fade turns with the
+    // sheet — which is also why the sheet is square (see `ColonyMist`). It is
+    // mounted FIRST because it is the ground the rest of the colony stands on;
+    // it is drawn under everything at `renderOrder` -1 either way.
+    const mist = network.indexOf('<ColonyMist');
     const edges = network.indexOf('<ColonyEdges');
     // A cohort's black hole is a billboard whose ORIGIN is a colony-frame
     // point, so it rides the group exactly as the marks do: the group turns
@@ -78,10 +85,13 @@ describe('NetworkColony counter-rotation frame contract', () => {
 
     expect(rotatingOpen).toBeGreaterThan(-1);
     // Inside the rotating group…
+    expect(mist).toBeGreaterThan(rotatingOpen);
+    expect(mist).toBeLessThan(edges);
     expect(edges).toBeGreaterThan(rotatingOpen);
     expect(cohorts).toBeGreaterThan(rotatingOpen);
     expect(nodes).toBeGreaterThan(rotatingOpen);
     expect(overlay).toBeGreaterThan(rotatingOpen);
+    expect(mist).toBeLessThan(rotatingClose);
     expect(edges).toBeLessThan(rotatingClose);
     expect(cohorts).toBeLessThan(rotatingClose);
     expect(nodes).toBeLessThan(rotatingClose);
@@ -89,6 +99,13 @@ describe('NetworkColony counter-rotation frame contract', () => {
     // …and outside it.
     expect(courier).toBeGreaterThan(rotatingClose);
     expect(delivery).toBeGreaterThan(rotatingClose);
+    // ⚠️ THE MIST IS MOUNTED WITH NOTHING. The field is everywhere and answers
+    // to nobody: no topology, no flood, no pulse. The one part of it that IS
+    // per-cohort — the intake patch — is a draw inside `ColonyCohorts`, off
+    // that layer's own plan and its own two lanes, so there is no second
+    // planner and no prop to keep in step.
+    expect(network.slice(mist, network.indexOf('/>', mist) + 2))
+      .toBe('<ColonyMist />');
   });
 
   it('the courier carries hop points and flight axes through the live rotation', () => {

@@ -776,26 +776,31 @@ describe('colony mist — the materials', () => {
 describe('colony mist — the ceiling it shares with the mouth', () => {
   it('states its own arithmetic supremum, and it is ABOVE the mark’s headroom', () => {
     // ⚠️⚠️ THIS IS A HANDOVER TO T6 RATHER THAN A PASSING GRADE. The face and
-    // the aura sum to 0.925777 in blue over a 700-camera sweep — the number
-    // `cohortAperture.test.ts` re-measures beside this one — leaving 0.0742;
-    // every colour this feature emits is exactly 1.0 in blue, so blue binds
-    // here too. The patch's brightest ring is where its gate finishes opening
+    // the aura sum to 0.807773 in blue over a 700-camera sweep — the number
+    // `cohortAperture.test.ts` re-measures beside this one — leaving 0.1922.
+    // ⭐ It was 0.925777 and 0.0742 when this file was written: the commit that
+    // MOUNTS the patch also brings the drawn lip to the preview's own faint
+    // `lipAmp` (`COHORT_FACE_RIM_AMP` 1.05 → 0.42), because the bright edge of
+    // the mouth is this medium piling up at it and not a ring. So the mist
+    // arrives into two and a half times the clearance the material was written
+    // against. Every colour this feature emits is exactly 1.0 in blue, so blue
+    // binds here too. The patch's brightest ring is where its gate finishes opening
     // — 0.98 · COHORT_RIM_R — which is the SAME radius the face's lip peaks at,
     // and the mound puts it 0.88 wu under the plane there, so from anything but
     // a grazing camera the two project on top of each other.
     //
     // ⭐ THE COLLISION IS STRUCTURAL, NOT ACCIDENTAL, AND IT IS NOT SOMETHING
     // TO INVENT A KNEE FOR HERE: the preview the user approved had exactly this
-    // brightness beside exactly this mouth. `uAmp` (knob `cohortMist`) is the
-    // single scale, and T6 measures the saturated pixels the R19 way — mark-on
-    // minus mark-off, never a raw count.
+    // brightness beside exactly this mouth. `uAmp` (knob `cohortMistAmp`) is
+    // the single scale, and T6 measures the saturated pixels the R19 way —
+    // mark-on minus mark-off, never a raw count.
     const rest = mistPatchSupremum();
     const swallowing = mistPatchSupremum(true);
     expect(rest).toBeCloseTo(1.95, 2);
     expect(swallowing).toBeCloseTo(3.05, 2);
     expect(swallowing).toBeGreaterThan(rest);
-    const headroom = 1 - 0.925777;
-    expect(headroom).toBeCloseTo(0.0742, 4);
+    const headroom = 1 - 0.807773;
+    expect(headroom).toBeCloseTo(0.1922, 4);
     expect(rest).toBeGreaterThan(headroom);
     // The two rings really are at the same radius, and the mound really does
     // hold that radius under the plane rather than at it.

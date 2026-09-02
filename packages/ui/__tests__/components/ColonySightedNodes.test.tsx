@@ -41,15 +41,21 @@ import {
   COHORT_FACE_STRIAE,
   COHORT_FACE_STRIAE_FLOOR,
   COHORT_HIT_RADIUS,
+  COHORT_INTAKE_LEVEL,
   COHORT_INTERIOR_COLD,
   COHORT_LINK_STOP_R,
   COHORT_NEVER_WON,
   COHORT_RIM_R,
   cohortAuraHalfExtent,
   cohortFaceHalfExtent,
+  cohortRimRadius,
   makeCohortAuraMaterial,
   makeCohortFaceMaterial,
 } from '../../src/materials/colonyCohort';
+import {
+  MIST_PATCH_SEGMENTS,
+  makeCohortIntakePatchMaterial,
+} from '../../src/materials/colonyMist';
 import { peerSchema } from '../../src/tweaks/tweakSchema';
 import { PERFORMANCE_PROBE_LABELS } from '../../src/tweaks/performanceProbeStore';
 import {
@@ -904,42 +910,104 @@ describe('what a POW cohort looks like', () => {
     expect(new Set(marks.map((m) => m.seed)).size).toBe(marks.length);
   });
 
-  it('is TWO instanced draws and no more — the face, then the aura over it', () => {
+  it('is THREE instanced draws — the mist it drinks, the face, then the aura', () => {
     const layer = source('ColonyCohorts.tsx');
-    // Two meshes, two materials, one shared quad, and both counts written from
-    // the same staged list — so a cohort cannot wear one face without the
-    // other, whichever way the plan moves.
-    expect(layer.match(/<instancedMesh/g)).toHaveLength(2);
+    // Three meshes, three materials, ONE plan, and all three counts written
+    // from the same staged list — so a cohort cannot wear one face without the
+    // other, or a mouth without the substance under it, whichever way the plan
+    // moves. The two apertures share the unit quad; the patch cannot, because
+    // its mound is a VERTEX effect and a mound on two triangles is a tent.
+    expect(layer.match(/<instancedMesh/g)).toHaveLength(3);
+    expect(layer).toContain('args={[patchGeometry, patchMaterial, capacity]}');
     expect(layer).toContain('args={[quad, faceMaterial, capacity]}');
     expect(layer).toContain('args={[quad, auraMaterial, capacity]}');
     expect(layer).toContain('faceMesh.count = marks.length;');
     expect(layer).toContain('auraMesh.count = marks.length;');
-    // ⭐ Order, and only order: both passes are additive, so this moves no
-    // pixel. It is the composition the two faces read in — a disc inside its
-    // own glow, rather than a glow with a disc laid across it.
+    expect(layer).toContain('patchMesh.count = marks.length;');
+    // ⚠️ …and the patch's geometry carries the same number rather than the
+    // `Infinity` an `InstancedBufferGeometry` ships with. This renderer reads
+    // the MESH's count (the `isInstancedMesh` branch wins in
+    // `renderBufferDirect`), so the two must be written in one place or a
+    // reader will find two answers to "how many instances does this draw".
+    expect(layer).toContain('patchGeometry.instanceCount = marks.length;');
+    // ⭐ Order, and only order: all three passes are additive, so this moves no
+    // pixel. It is the composition they read in — the substance under the
+    // plane, the disc that opens onto it, then the glow around that.
+    const patchDraw = layer.indexOf('ref={patchMeshRef}');
     const faceDraw = layer.indexOf('ref={faceMeshRef}');
     const auraDraw = layer.indexOf('ref={auraMeshRef}');
-    expect(faceDraw).toBeGreaterThan(-1);
+    expect(patchDraw).toBeGreaterThan(-1);
+    expect(faceDraw).toBeGreaterThan(patchDraw);
     expect(auraDraw).toBeGreaterThan(faceDraw);
+    expect(layer.indexOf('renderOrder={0}')).toBeGreaterThan(patchDraw);
+    expect(layer.indexOf('renderOrder={0}')).toBeLessThan(faceDraw);
     expect(layer.indexOf('renderOrder={1}')).toBeGreaterThan(faceDraw);
     expect(layer.indexOf('renderOrder={1}')).toBeLessThan(auraDraw);
     expect(layer.indexOf('renderOrder={2}')).toBeGreaterThan(auraDraw);
-    // Neither is ever a pick target; the node's own hit sphere is.
-    expect(layer.match(/raycast=\{\(\) => null\}/g)).toHaveLength(2);
+    // None is ever a pick target; the node's own hit sphere is. The patch is
+    // the widest of the three by far — 28 wu across against the aura's 8.6 —
+    // so it is the one that would hurt most.
+    expect(layer.match(/raycast=\{\(\) => null\}/g)).toHaveLength(3);
     // Each pass carries its own GPU timer label, so the disc's grain can be
-    // measured against the halo's fill rather than mixed with it.
+    // measured against the halo's fill and the patch's back-traces rather than
+    // mixed with either.
     expect(PERFORMANCE_PROBE_LABELS.colonyCohortFace).toBe('colony.cohort.face');
     expect(PERFORMANCE_PROBE_LABELS.colonyCohortAura).toBe('colony.cohort.aura');
+    expect(PERFORMANCE_PROBE_LABELS.colonyMistPatch).toBe('colony.mist.patch');
+    expect(new Set([
+      PERFORMANCE_PROBE_LABELS.colonyCohortFace,
+      PERFORMANCE_PROBE_LABELS.colonyCohortAura,
+      PERFORMANCE_PROBE_LABELS.colonyMistPatch,
+      PERFORMANCE_PROBE_LABELS.colonyMistHaze,
+    ]).size).toBe(4);
     expect(layer).toContain('PERFORMANCE_PROBE_LABELS.colonyCohortFace');
     expect(layer).toContain('PERFORMANCE_PROBE_LABELS.colonyCohortAura');
-    // ⚠️ AND NOTHING OF THE TWO RETIRED FORMS IS LEFT TO DRAW A THIRD. The
+    expect(layer).toContain('PERFORMANCE_PROBE_LABELS.colonyMistPatch');
+    // ⚠️ AND NOTHING OF THE TWO RETIRED FORMS IS LEFT TO DRAW A FOURTH. The
     // accreting void's disc and horizon went two revisions ago; the marched
-    // vertical throat's intake and centre went with this one, and the material
-    // file exports exactly two factories.
+    // vertical throat's intake and centre went with the aperture, and the
+    // aperture's material file still exports exactly two factories. ⚠️ The
+    // names are matched WHOLE: the third draw's factory is
+    // `makeCohortIntakePatchMaterial`, which is a live material and not the
+    // retired `makeCohortIntakeMaterial` a looser pattern would confuse it with.
     expect(layer).not.toMatch(/colonyAccretion(Horizon|Disc)/);
-    expect(layer).not.toMatch(/makeCohort(Intake|Core)Material/);
+    expect(layer).not.toMatch(/\bmakeCohortIntakeMaterial\b/);
+    expect(layer).not.toMatch(/\bmakeCohortCoreMaterial\b/);
+    expect(layer).toContain('makeCohortIntakePatchMaterial');
     expect([...markSource().matchAll(/^export function makeCohort\w+Material/gm)])
       .toHaveLength(2);
+  });
+
+  it('drinks through a patch that is a SURFACE under the plane, never a column', () => {
+    // ⛔⛔⛔ THE ONE RULE TWENTY-FIVE ROUNDS PAID FOR. A column, plume, funnel or
+    // pillar under the mouth reads as a searchlight at every brightness profile
+    // that was tried — up close, as a saucer with a tractor beam — and only
+    // SURFACES BEING DRAWN ever read as intake. The material owns the proof
+    // (`colonyMist.test.ts` pins the vertex stage's height over the whole
+    // patch); what this pins is that the layer mounting it did not reintroduce
+    // one beside it.
+    const layer = source('ColonyCohorts.tsx');
+    // ⚠️ COMMENTS STRIPPED FIRST: the header names every rejected form in order
+    // to refuse it, and prose the compiler drops must not be able to fail an
+    // assertion about code.
+    const code = layer.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    expect(code).not.toMatch(/plume|pillar|funnel|beam/i);
+    // The patch's geometry is the UNIT plane of the contract, subdivided for
+    // the mound and copied into an InstancedBufferGeometry — the extent rides
+    // `uReach` (a live knob) and never the geometry.
+    expect(layer).toContain(
+      'new THREE.PlaneGeometry(1, 1, MIST_PATCH_SEGMENTS, MIST_PATCH_SEGMENTS)',
+    );
+    expect(layer).toContain('new THREE.InstancedBufferGeometry()');
+    expect(MIST_PATCH_SEGMENTS).toBe(24);
+    const patch = makeCohortIntakePatchMaterial();
+    expect(Object.keys(patch.uniforms)).toContain('uReach');
+    expect(patch.vertexShader).toContain('position.xy * (uReach * 2.0)');
+    // …and the instance matrix is the mark's own translation, unmodified: the
+    // DEPTH is the vertex stage's, so the mound's top lands exactly at the
+    // level the window shows and the sink sits under the mouth it belongs to.
+    expect(layer).toContain('patchMesh.setMatrixAt(index, SCRATCH_MATRIX);');
+    expect(layer).not.toMatch(/makeScale|\.scale\.set|setScalar/);
   });
 
   it('is drawn on NO EDGE of this colony, which is the whole of this revision', () => {
@@ -1088,7 +1156,7 @@ describe('what a POW cohort looks like', () => {
     }
   });
 
-  it('hands BOTH quads a unit plane, because the extent rides a uniform', () => {
+  it('hands ALL THREE draws a unit plane, because every extent rides a uniform', () => {
     // ⚠️⚠️ Neither vertex program reads `position` as world units — the face
     // lays the unit plane into local XZ and the aura rebuilds its quad from the
     // camera axes — and NEITHER path is touched by `mesh.scale` or by a scaled
@@ -1098,12 +1166,17 @@ describe('what a POW cohort looks like', () => {
     // habit renders the mark several times too big. (It cost a full lab round,
     // and it hit both materials at once.)
     const layer = source('ColonyCohorts.tsx');
-    expect(layer.match(/new THREE\.PlaneGeometry\([^)]*\)/g))
-      .toEqual(['new THREE.PlaneGeometry(1, 1)']);
+    expect(layer.match(/new THREE\.PlaneGeometry\([^)]*\)/g)).toEqual([
+      'new THREE.PlaneGeometry(1, 1)',
+      'new THREE.PlaneGeometry(1, 1, MIST_PATCH_SEGMENTS, MIST_PATCH_SEGMENTS)',
+    ]);
     expect(layer).toContain('const quad = useMemo(() => new THREE.PlaneGeometry(1, 1), []);');
-    // ⭐ ONE geometry, TWO extents — which is what makes the rule structural
+    // ⭐ TWO geometries, THREE extents — which is what makes the rule structural
     // rather than remembered: there is no geometry in this layer that could
-    // carry an extent, right or wrong.
+    // carry an extent, right or wrong. The second geometry exists for the
+    // MOUND's sake and not for a size: it is a unit plane like the first, only
+    // subdivided, because a mound raised in the vertex stage over two triangles
+    // is a tent.
     expect(makeCohortFaceMaterial().uniforms.uHalf.value).toBe(COHORT_FACE_HALF);
     expect(makeCohortAuraMaterial().uniforms.uHalf.value).toBe(COHORT_AURA_HALF);
     expect(COHORT_FACE_HALF).toBe(3);
@@ -1112,6 +1185,12 @@ describe('what a POW cohort looks like', () => {
       expect(stage).toContain('uniform float uHalf;');
       expect(stage).toContain('* uHalf * 2.0');
     }
+    // The patch says the same thing in its own units: `uReach` is a live knob,
+    // so baking `2 * MIST_REACH` into the plane would have turned a slider into
+    // a rebuild.
+    const patch = makeCohortIntakePatchMaterial();
+    expect(patch.vertexShader).toContain('uniform float uReach;');
+    expect(patch.vertexShader).toContain('position.xy * (uReach * 2.0)');
   });
 
   it('gives every live knob a uniform, and re-derives BOTH quads from the two that size them', () => {
@@ -1121,16 +1200,31 @@ describe('what a POW cohort looks like', () => {
     // material.
     const retired = [
       'holeRim', 'holeGas', 'holeField', 'holeInfall', 'holeSpin',
-      'cohortReach', 'cohortMouth', 'cohortAmp', 'cohortDensity',
-      'cohortCrests', 'cohortRate', 'cohortGather', 'cohortCoreAmp',
+      'cohortMouth', 'cohortAmp', 'cohortDensity',
+      'cohortCrests', 'cohortRate', 'cohortCoreAmp',
     ];
     for (const knob of retired) {
       expect(peerSchema, knob).not.toHaveProperty(knob);
       expect(layer, knob).not.toContain(`LIVE.peer.${knob}`);
     }
+    // ⚠️ TWO OF THE MARCHED THROAT'S NAMES CAME BACK, AND THEY ARE NOT ITS
+    // KNOBS. `cohortReach` was that form's raymarch reach (20 wu of a volume);
+    // it is now the mist patch's catchment radius (14 wu of a SURFACE), and
+    // `cohortGather` was its density gather (0.8) where it is now the medium's
+    // near-mouth filament gain (1.8). The quantities are cousins, which is why
+    // the names are worth reusing — but an old screenshot's number means
+    // nothing under the new one, and the defaults below are what a fresh panel
+    // shows.
+    expect(peerSchema.cohortReach.value).toBe(14);
+    expect(peerSchema.cohortGather.value).toBe(1.8);
     const knobs = [
       'cohortApR', 'cohortPupil', 'cohortRimAmp', 'cohortIntakeAmp',
       'cohortStriae', 'cohortStriaAmp', 'cohortHaloR', 'cohortHaloBias',
+      // …and the mist the mouth is drinking, on the same frame and the same
+      // clock. `cohortHazeAmp` is deliberately NOT here: the ambient sheets are
+      // `ColonyMist`'s draw, not this layer's.
+      'cohortInteriorAmp', 'cohortLevel', 'cohortMistAmp', 'cohortGather',
+      'cohortIntake', 'cohortSwirl', 'cohortReach', 'cohortWake',
     ] as const;
     for (const knob of knobs) {
       expect(peerSchema, knob).toHaveProperty(knob);
@@ -1420,7 +1514,7 @@ describe('what a POW cohort looks like', () => {
     expect(layer).toContain('lanes.share.needsUpdate = true;');
   });
 
-  it('lays the GULP lane as one wrapper, on one geometry, at a far-negative sentinel', () => {
+  it('lays the GULP lane as ONE wrapper across TWO geometries, at a far-negative sentinel', () => {
     const layer = source('ColonyCohorts.tsx');
     // ⚠️⚠️⚠️ ZERO WOULD READ AS "WON AT BOOT" AND FLARE THE WHOLE COLONY ON
     // LOAD. The lane holds the SIM SECOND of the block each cohort won and the
@@ -1435,23 +1529,50 @@ describe('what a POW cohort looks like', () => {
     // second `InstancedBufferAttribute` around the same array is a second GL
     // buffer, and the first one is then orphaned — which is why the lane is
     // built exactly once, inside the capacity memo, and bound rather than
-    // rebuilt. Exactly one construction and exactly one bind.
+    // rebuilt. Exactly THREE constructions in the file, one per lane, and never
+    // one per draw.
     expect([...layer.matchAll(/new THREE\.InstancedBufferAttribute\(/g)]).toHaveLength(3);
-    expect([...layer.matchAll(/setAttribute\('aGulp'/g)]).toHaveLength(1);
     expect(layer)
       .toContain("if (quad.getAttribute('aGulp') !== lanes.gulp) quad.setAttribute('aGulp', lanes.gulp);");
 
-    // ⭐ AND "THE SAME OBJECT ON BOTH DRAWS" IS STRUCTURAL RATHER THAN CHECKED:
-    // there is exactly ONE geometry in this layer and both InstancedMeshes take
-    // it, so an attribute bound to it is by construction the same attribute —
-    // and the same buffer — on both. The aura simply does not declare `aGulp`,
+    // ⭐⭐⭐ AND THE MIST'S PATCH BINDS THAT SAME OBJECT ONTO ITS OWN GEOMETRY,
+    // WHICH IS HOW THE MOUTH AND THE MIST UNDER IT SWALLOW THE SAME BLOCK. Two
+    // geometries, TWO binds, ONE attribute: three keys its upload on the
+    // ATTRIBUTE and not on the geometry, so this is one GL buffer whose
+    // `needsUpdate` serves all three draws — which is why the re-lay under a
+    // plan and the stamp on a pulse are each still written exactly once.
+    expect([...layer.matchAll(/setAttribute\('aGulp'/g)]).toHaveLength(2);
+    expect([...layer.matchAll(/setAttribute\('aSeed'/g)]).toHaveLength(2);
+    expect(layer).toContain("patchGeometry.setAttribute('aSeed', lanes.seed);");
+    expect(layer).toContain("patchGeometry.setAttribute('aGulp', lanes.gulp);");
+    // ⚠️ …and the patch's own lanes are NOT re-wrapped: the only three
+    // constructions in the file are the capacity memo's, asserted above.
+    expect(layer).not.toMatch(/setAttribute\('aGulp',\s*new /);
+    expect(layer).not.toMatch(/setAttribute\('aSeed',\s*new /);
+
+    // ⭐ AND "THE SAME OBJECT ON BOTH APERTURE DRAWS" IS STRUCTURAL RATHER THAN
+    // CHECKED: there is exactly one QUAD in this layer and both aperture
+    // InstancedMeshes take it, so an attribute bound to it is by construction
+    // the same attribute on both. The aura simply does not declare `aGulp`,
     // which costs nothing: three binds only what a program asks for.
-    expect(layer.match(/new THREE\.PlaneGeometry\([^)]*\)/g))
-      .toEqual(['new THREE.PlaneGeometry(1, 1)']);
+    //
+    // ⚠️ The patch's plane is the SECOND `PlaneGeometry` here and the only one
+    // that is subdivided — it is a unit plane too, because its extent rides
+    // `uReach`, and it is subdivided because the mound is a vertex effect.
+    expect(layer.match(/new THREE\.PlaneGeometry\([^)]*\)/g)).toEqual([
+      'new THREE.PlaneGeometry(1, 1)',
+      'new THREE.PlaneGeometry(1, 1, MIST_PATCH_SEGMENTS, MIST_PATCH_SEGMENTS)',
+    ]);
     expect(layer).toContain('args={[quad, faceMaterial, capacity]}');
     expect(layer).toContain('args={[quad, auraMaterial, capacity]}');
+    expect(layer).toContain('args={[patchGeometry, patchMaterial, capacity]}');
     expect(faceVertex()).toContain('attribute float aGulp;');
     expect(auraVertex()).not.toContain('aGulp');
+    // The patch declares BOTH, at the same names and the same widths as the
+    // face — `vertexAttributeBudget.test.ts` owns that row.
+    const patchVertex = makeCohortIntakePatchMaterial().vertexShader;
+    expect(patchVertex).toContain('attribute float aSeed;');
+    expect(patchVertex).toContain('attribute float aGulp;');
     // ⚠️ THE LIVE OBJECT CANNOT BE REACHED FROM HERE, AND THAT IS WHY THIS IS A
     // SOURCE TEST. `Canvas` never commits its r3f tree under jsdom — `onCreated`
     // does not fire, the scene stays empty and no geometry exists to compare —
@@ -1463,6 +1584,55 @@ describe('what a POW cohort looks like', () => {
     // walk and never once per slot, which is the discipline the share lane has
     // always kept — so what is asserted is the COUNT, not the flag's presence.
     expect([...layer.matchAll(/lanes\.gulp\.needsUpdate = true;/g)]).toHaveLength(2);
+  });
+
+  it('moves the window’s level and the mound’s top with ONE knob, off ONE read', () => {
+    // ⭐⭐⭐ THE MOUND'S TOP AND THE WINDOW'S SURFACE ARE ONE SURFACE. Looking
+    // INTO the mouth you see the medium at `COHORT_INTAKE_LEVEL` below the lip;
+    // looking at the mist beside it you see the same substance rising to
+    // exactly that height. Two knobs — or one knob reaching one uniform —
+    // would let a tuner make the two disagree, and the layer would be telling
+    // two stories about one thing.
+    const layer = source('ColonyCohorts.tsx');
+    expect(layer).toContain('const level = LIVE.peer.cohortLevel;');
+    expect(layer).toContain('face.uLevel.value = level;');
+    expect(layer).toContain('patch.uLevel.value = level;');
+    // Read ONCE per frame, so the two writes cannot straddle a knob change.
+    expect([...layer.matchAll(/LIVE\.peer\.cohortLevel/g)]).toHaveLength(1);
+    expect([...layer.matchAll(/uLevel\.value/g)]).toHaveLength(2);
+    // …and the knob's own default is the constant both materials seed from.
+    expect(peerSchema.cohortLevel.value).toBe(COHORT_INTAKE_LEVEL);
+    expect(makeCohortFaceMaterial().uniforms.uLevel.value).toBe(COHORT_INTAKE_LEVEL);
+    expect(makeCohortIntakePatchMaterial().uniforms.uLevel.value)
+      .toBe(COHORT_INTAKE_LEVEL);
+
+    // ⭐⭐ AND THE PATCH'S HOLE IS THE MOUTH'S HOLE, at the LIVE radius. The
+    // gate that darkens the mist inside the rim, the pile at the lip and the
+    // start of the wake are all fractions of `uRimR`, and `cohortApR` moves the
+    // mark; a patch holding the shipped constant while the face read
+    // `uApR * uRimFrac` would draw a second, disagreeing hole at every cohort.
+    expect(layer).toContain('patch.uRimR.value = cohortRimRadius(apR);');
+    expect(cohortRimRadius(peerSchema.cohortApR.value)).toBe(COHORT_RIM_R);
+    expect(makeCohortIntakePatchMaterial().uniforms.uRimR.value).toBe(COHORT_RIM_R);
+
+    // The mist's own knobs reach the patch and nothing else reaches it: one
+    // amplitude, and the four numbers that shape the flow.
+    for (const [knob, uniform] of [
+      ['cohortMistAmp', 'uAmp'],
+      ['cohortGather', 'uContrastNear'],
+      ['cohortIntake', 'uK'],
+      ['cohortSwirl', 'uSwirl'],
+      ['cohortReach', 'uReach'],
+      ['cohortWake', 'uWake'],
+    ] as const) {
+      expect(layer).toContain(`patch.${uniform}.value = LIVE.peer.${knob};`);
+      expect(peerSchema[knob]).toBeDefined();
+    }
+    // ⚠️ The HAZE's amplitude is a different knob on a different layer: the
+    // sheets are ambience over the whole screen and the patch is the intake, so
+    // a tuner must be able to dim one without the other.
+    expect(layer).not.toContain('cohortHazeAmp');
+    expect(source('ColonyMist.tsx')).toContain('LIVE.peer.cohortHazeAmp');
   });
 
   it('reads no standing at all in its plan, so a window that moved cannot move a mark', () => {

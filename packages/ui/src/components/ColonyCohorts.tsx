@@ -1,12 +1,34 @@
-// ColonyCohorts — what a POW cohort looks like: THE MARK IS THE APERTURE.
+// ColonyCohorts — what a POW cohort looks like: THE MARK IS THE APERTURE, AND
+// THE MIST UNDER IT IS WHAT THE APERTURE IS FOR.
 //
 // A cohort is where the colony plane is OPEN, and this layer draws that opening
-// twice: a disc lying IN the plane, and a camera-facing halo carrying the same
-// hole. Nothing volumetric, nothing hanging under the slab, and no second
-// cadence — one hole, two rays through it. And on the block a cohort wins, its
-// mouth SWALLOWS: the one thing this layer takes from the block path is the
-// flood's entry id, and the whole gate is a string compare — see the invariant
-// paragraph at the end of this header, which is the argument that moved here.
+// three times: a disc lying IN the plane, a camera-facing halo carrying the
+// same hole, and — under the plane — the PATCH of mist that hole is drinking.
+// Nothing volumetric, nothing hanging under the slab, and no second cadence:
+// one hole, two rays through it, and one surface being taken through it. And on
+// the block a cohort wins, its mouth SWALLOWS: the one thing this layer takes
+// from the block path is the flood's entry id, and the whole gate is a string
+// compare — see the invariant paragraph at the end of this header, which is the
+// argument that moved here.
+//
+// ⭐⭐⭐ THE PATCH IS THE INTAKE, AND IT IS THE POINT OF THE WHOLE FEATURE
+// (「重点是 pow cohort 汲取能量的视觉效果」). It is one instance per cohort, sharing
+// this layer's plan, its seed lane and its gulp lane — the same objects, so the
+// mouth and the mist under it cannot disagree about which cohort stands where
+// or which block it swallowed — lying 2.5 wu under the membrane and lifted into
+// a mound whose top is exactly the level the window shows. It carries the
+// medium's own texture advected along the streamlines of a sink with a vortex,
+// brightens as it gathers, goes dark inside the rim and thins in its wake. The
+// arithmetic and the design argument are in `materials/colonyMist`; the ambient
+// haze that same substance makes everywhere else is `ColonyMist`, one layer out.
+//
+// ⛔⛔⛔ AND IT NEVER DRAWS ABOVE THE PLANE, AT ANY KNOB SETTING. The patch's
+// vertex stage can only put a vertex BELOW its instance's origin, which is a
+// property of the form (`MIST_PATCH_NEVER_ABOVE_GLSL`) and not of this file's
+// props. ⛔ There is no column, plume, funnel or pillar under the mouth at any
+// brightness profile — each was built and rejected by eye, and each read as a
+// searchlight, up close as a saucer with a tractor beam. ⭐ ONLY SURFACES BEING
+// DRAWN EVER READ AS INTAKE.
 //
 // ⭐⭐⭐ AND THE HOLE HAS A WINDOW IN IT. The peer mesh is the boundary between
 // two universes — above it the cell canopy, below it the one a cohort drinks
@@ -136,9 +158,14 @@ import {
   COHORT_NEVER_WON,
   cohortAuraHalfExtent,
   cohortFaceHalfExtent,
+  cohortRimRadius,
   makeCohortAuraMaterial,
   makeCohortFaceMaterial,
 } from '../materials/colonyCohort';
+import {
+  MIST_PATCH_SEGMENTS,
+  makeCohortIntakePatchMaterial,
+} from '../materials/colonyMist';
 import { useStableList } from './ColonyNodes';
 import { PERFORMANCE_PROBE_LABELS } from '../tweaks/performanceProbeStore';
 import { createGpuProbeCallbacks } from '../tweaks/gpuTimerQuery';
@@ -318,13 +345,16 @@ export function cohortWinStamp(
 }
 
 /**
- * Every cohort's aperture, in two instanced draws.
+ * Every cohort's aperture, and the mist it is drinking, in three instanced
+ * draws off ONE plan.
  *
- * The face is the disc lying in the colony plane (`renderOrder` 1); the aura is
- * the camera-facing halo around it (`renderOrder` 2), drawn after so the mark
- * composites as a disc inside its own glow. Both are additive, both carry their
- * world extent in a uniform, and per-frame CPU work stays a handful of uniform
- * writes.
+ * The patch is the mist under the plane (`renderOrder` 0, drawn first because
+ * it is the thing the other two are an opening onto); the face is the disc
+ * lying in the colony plane (`renderOrder` 1); the aura is the camera-facing
+ * halo around it (`renderOrder` 2), drawn last so the mark composites as a disc
+ * inside its own glow. All three are additive and take their world extent from
+ * a uniform — `uHalf` on the two faces, `uReach` on the patch — and per-frame
+ * CPU work stays a handful of uniform writes.
  */
 export default function ColonyCohorts({
   topology,
@@ -372,6 +402,7 @@ export default function ColonyCohorts({
   const marks = useStableList(plan, sameCohortMark);
   const faceMeshRef = useRef<THREE.InstancedMesh>(null);
   const auraMeshRef = useRef<THREE.InstancedMesh>(null);
+  const patchMeshRef = useRef<THREE.InstancedMesh>(null);
   const cappedLogged = useRef(false);
   useEffect(() => {
     if (marks.length < COHORT_MARK_CAP || cappedLogged.current) return;
@@ -393,22 +424,48 @@ export default function ColonyCohorts({
   // and 4.293 — is what makes the rule structural instead of remembered: there
   // is no geometry here that could carry an extent, right or wrong.
   const quad = useMemo(() => new THREE.PlaneGeometry(1, 1), []);
+  // ⭐⭐ THE MIST'S PATCH IS THE ONE DRAW THAT CANNOT SHARE THAT QUAD, and the
+  // reason is the MOUND: the patch rises toward the mouth in its VERTEX stage,
+  // and a mound on two triangles is a tent. So it carries its own subdivided
+  // unit plane — still a UNIT plane, with the extent riding `uReach` exactly as
+  // the two faces' ride `uHalf`, so the live `cohortReach` knob stays a slider
+  // instead of a rebuild.
+  //
+  // ⚠️ AND IT IS AN `InstancedBufferGeometry` HOLDING THE PLANE'S OWN BUFFERS,
+  // per the geometry contract in `colonyMist.ts`'s header. The source plane is
+  // never rendered and owns no GL state — the attributes ARE the resource, and
+  // they live on here — so it is dropped rather than disposed, and disposing
+  // THIS geometry on unmount frees exactly one copy of them.
+  const patchGeometry = useMemo(() => {
+    const plane = new THREE.PlaneGeometry(1, 1, MIST_PATCH_SEGMENTS, MIST_PATCH_SEGMENTS);
+    const geometry = new THREE.InstancedBufferGeometry();
+    geometry.setIndex(plane.getIndex());
+    for (const [name, attribute] of Object.entries(plane.attributes)) {
+      geometry.setAttribute(name, attribute);
+    }
+    return geometry;
+  }, []);
   // Memoized on [] (stable for the component's life) so a plan rebuild never
   // forces a shader recompile; disposed on unmount only, for the same reason.
   const faceMaterial = useMemo(() => makeCohortFaceMaterial(), []);
   const auraMaterial = useMemo(() => makeCohortAuraMaterial(), []);
-  // True per-draw GPU timings for the two instanced passes when the opt-in
+  const patchMaterial = useMemo(() => makeCohortIntakePatchMaterial(), []);
+  // True per-draw GPU timings for the three instanced passes when the opt-in
   // render probe owns a timer-query context; a boolean gate otherwise, and no
-  // query while no cohort stands (the layer unmounts then anyway). ⭐ Two
-  // labels because the two draws fail differently: the face is a small disc
-  // whose cost is its grain, the aura is a bigger quad whose cost is fill, and
-  // a mean over both would hide either one growing.
+  // query while no cohort stands (the layer unmounts then anyway). ⭐ Three
+  // labels because the three draws fail differently: the face is a small disc
+  // whose cost is its grain, the aura is a bigger quad whose cost is fill, the
+  // patch is a 28 wu disc whose cost is two back-traces and four fetches per
+  // fragment — and a mean over any two of them would hide one growing.
   const cohortGpuProbes = useMemo(() => ({
     face: createNonEmptyDrawGpuProbeCallbacks(
       createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.colonyCohortFace),
     ),
     aura: createNonEmptyDrawGpuProbeCallbacks(
       createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.colonyCohortAura),
+    ),
+    patch: createNonEmptyDrawGpuProbeCallbacks(
+      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.colonyMistPatch),
     ),
   }), []);
   const capacity = Math.max(1, marks.length);
@@ -469,9 +526,22 @@ export default function ColonyCohorts({
   useEffect(() => {
     const faceMesh = faceMeshRef.current;
     const auraMesh = auraMeshRef.current;
-    if (!faceMesh || !auraMesh) return;
+    const patchMesh = patchMeshRef.current;
+    if (!faceMesh || !auraMesh || !patchMesh) return;
+    // ⭐ ONE COUNT, WRITTEN THREE TIMES FROM ONE LIST. A cohort cannot wear a
+    // mouth without the mist under it, or the mist without the mouth, whichever
+    // way the plan moves — the hole and what it is drinking are one object.
     faceMesh.count = marks.length;
     auraMesh.count = marks.length;
+    patchMesh.count = marks.length;
+    // ⚠️ …AND THE PATCH'S GEOMETRY CARRIES THE SAME NUMBER, written here so the
+    // two can never disagree. An `InstancedBufferGeometry` ships with
+    // `instanceCount = Infinity`; this renderer never reads it (r169's
+    // `renderBufferDirect` takes the `isInstancedMesh` branch first and uses
+    // `object.count`), but leaving an Infinity on a live object is a trap for
+    // the next reader — and for the `renderers/common` path, which reads the
+    // geometry's count in preference to the mesh's.
+    patchGeometry.instanceCount = marks.length;
     const seed = lanes.seed.array as Float32Array;
     marks.forEach((mark, index) => {
       // TRANSLATION ONLY — the face's quad is laid into local XZ and the
@@ -482,9 +552,16 @@ export default function ColonyCohorts({
       // radius off a ray/plane crossing in world space; a scaled instance
       // would move the first and not the second, and the two faces would stop
       // agreeing about where the pupil is.
+      // ⭐⭐ THE PATCH TAKES THE SAME TRANSLATION, UNMODIFIED. It lies under
+      // the plane, but the DEPTH belongs to its vertex stage (the statement
+      // `MIST_PATCH_NEVER_ABOVE_GLSL` names): lowering the instance here
+      // instead would put the mound's top somewhere other than the level the
+      // window shows, and the sink's origin somewhere other than the mouth it
+      // belongs to.
       SCRATCH_MATRIX.makeTranslation(mark.pos[0], mark.pos[1], mark.pos[2]);
       faceMesh.setMatrixAt(index, SCRATCH_MATRIX);
       auraMesh.setMatrixAt(index, SCRATCH_MATRIX);
+      patchMesh.setMatrixAt(index, SCRATCH_MATRIX);
       seed[index] = mark.seed;
     });
     // …and the GULP lane is RE-LAID under the new plan, in the same walk. A win
@@ -498,6 +575,7 @@ export default function ColonyCohorts({
     cohortWinLane(marks, wonAtRef.current, lanes.gulp.array as Float32Array);
     faceMesh.instanceMatrix.needsUpdate = true;
     auraMesh.instanceMatrix.needsUpdate = true;
+    patchMesh.instanceMatrix.needsUpdate = true;
     lanes.seed.needsUpdate = true;
     lanes.gulp.needsUpdate = true;
     // Bound on the first pass and again only when a capacity change built new
@@ -510,14 +588,30 @@ export default function ColonyCohorts({
     // lane is kept and written (see the file header) but is not attached to a
     // geometry until a program asks for it.
     //
-    // ⭐ ONE GEOMETRY, SO "THE SAME OBJECT ON BOTH DRAWS" IS STRUCTURAL. Both
-    // InstancedMeshes take this one `quad`, so a lane bound here is by
-    // construction the same attribute — and the same GL buffer — on both. The
-    // aura simply does not declare `aGulp`, which costs it nothing: three binds
-    // only what a program asks for.
+    // ⭐ ONE GEOMETRY, SO "THE SAME OBJECT ON BOTH APERTURE DRAWS" IS
+    // STRUCTURAL. Both InstancedMeshes take this one `quad`, so a lane bound
+    // here is by construction the same attribute — and the same GL buffer — on
+    // both. The aura simply does not declare `aGulp`, which costs it nothing:
+    // three binds only what a program asks for.
     if (quad.getAttribute('aSeed') !== lanes.seed) quad.setAttribute('aSeed', lanes.seed);
     if (quad.getAttribute('aGulp') !== lanes.gulp) quad.setAttribute('aGulp', lanes.gulp);
-  }, [lanes, marks, quad]);
+    // ⭐⭐⭐ …AND THE PATCH BINDS THE SAME TWO OBJECTS ONTO ITS OWN GEOMETRY,
+    // WHICH IS THE WHOLE MECHANISM. One `InstancedBufferAttribute` bound to two
+    // geometries is ONE GL buffer — three keys its upload on the ATTRIBUTE, not
+    // on the geometry — so the re-lay above and the stamp below reach the mist
+    // and the mouth in the same write, and `needsUpdate` set once serves both
+    // draws. ⚠️ Wrapping `lanes.gulp.array` in a second attribute for the patch
+    // would hand the GPU a second copy of the lane and orphan the first one's
+    // buffer on the next capacity change, and the two copies would fall out of
+    // step the first time only one of them was marked — a mouth swallowing one
+    // block while the mist under it swallowed another.
+    if (patchGeometry.getAttribute('aSeed') !== lanes.seed) {
+      patchGeometry.setAttribute('aSeed', lanes.seed);
+    }
+    if (patchGeometry.getAttribute('aGulp') !== lanes.gulp) {
+      patchGeometry.setAttribute('aGulp', lanes.gulp);
+    }
+  }, [lanes, marks, patchGeometry, quad]);
 
   // The live share, written in place whenever the window moves — which is once
   // per attributed block — and never touching the geometry. The window last
@@ -601,15 +695,26 @@ export default function ColonyCohorts({
 
   useEffect(() => () => {
     quad.dispose();
+    patchGeometry.dispose();
     faceMaterial.dispose();
     auraMaterial.dispose();
-  }, [auraMaterial, faceMaterial, quad]);
+    patchMaterial.dispose();
+  }, [auraMaterial, faceMaterial, patchGeometry, patchMaterial, quad]);
 
   useSimFrame(() => {
     const contextEnergy = contextEnergyRef?.current ?? 1;
     const elapsed = simClock.elapsedSec;
     const apR = LIVE.peer.cohortApR;
     const haloR = LIVE.peer.cohortHaloR;
+    // ⭐⭐⭐ ONE LEVEL, TWO CONSUMERS, READ ONCE AND WRITTEN TWICE. This is the
+    // depth at which the window stops showing the throat's wall and starts
+    // showing the medium's surface, and it is ALSO the top of the mound the
+    // patch below is lifted into. They are ONE SURFACE — a viewer looking into
+    // the mouth and a viewer looking at the mist beside it are looking at the
+    // same substance — so a knob that reached one of them would be a knob that
+    // makes the layer lie. `COHORT_INTAKE_LEVEL` says the same thing at the
+    // constant's own site.
+    const level = LIVE.peer.cohortLevel;
     const face = faceMaterial.uniforms;
     face.uTime.value = elapsed;
     face.uContextEnergy.value = contextEnergy;
@@ -626,6 +731,8 @@ export default function ColonyCohorts({
     face.uPupilFrac.value = LIVE.peer.cohortPupil;
     face.uRimAmp.value = LIVE.peer.cohortRimAmp;
     face.uInAmp.value = LIVE.peer.cohortIntakeAmp;
+    face.uInteriorAmp.value = LIVE.peer.cohortInteriorAmp;
+    face.uLevel.value = level;
     face.uStriae.value = LIVE.peer.cohortStriae;
     face.uStriaAmp.value = LIVE.peer.cohortStriaAmp;
     const aura = auraMaterial.uniforms;
@@ -639,6 +746,27 @@ export default function ColonyCohorts({
     aura.uHalf.value = cohortAuraHalfExtent(apR, haloR);
     aura.uPupilFrac.value = LIVE.peer.cohortPupil;
     aura.uHaloBias.value = LIVE.peer.cohortHaloBias;
+    // The mist being taken, on the same clock and the same energy as the mouth
+    // taking it: `uTime - aGulp` is only an age when both sides come from this
+    // one `simClock`, and the proximity exemption has to let a cohort the
+    // camera flew to keep BOTH its light and its substance.
+    const patch = patchMaterial.uniforms;
+    patch.uTime.value = elapsed;
+    patch.uContextEnergy.value = contextEnergy;
+    patch.uLevel.value = level;
+    // ⚠️ THE GATE, THE EYE, THE PILE AND THE WAKE ARE ALL FRACTIONS OF THE
+    // MOUTH'S OWN HOLE, so the patch's rim radius is re-derived from the LIVE
+    // `cohortApR` through the same function the mark's own radii come from. A
+    // patch that held `COHORT_RIM_R` while the face read `uApR * uRimFrac`
+    // would go dark inside a circle the mouth no longer has — two holes at one
+    // cohort, drawn by two layers that both believed they were right.
+    patch.uRimR.value = cohortRimRadius(apR);
+    patch.uAmp.value = LIVE.peer.cohortMistAmp;
+    patch.uContrastNear.value = LIVE.peer.cohortGather;
+    patch.uK.value = LIVE.peer.cohortIntake;
+    patch.uSwirl.value = LIVE.peer.cohortSwirl;
+    patch.uReach.value = LIVE.peer.cohortReach;
+    patch.uWake.value = LIVE.peer.cohortWake;
   });
 
   // ⭐ NO COHORTS ⇒ NO DRAW, NOT AN EMPTY ONE. Every hook above still runs, so
@@ -656,12 +784,30 @@ export default function ColonyCohorts({
   // overlapping its neighbours' — would put a wall of invisible target in front
   // of the colony.
   //
-  // ⭐ THE FACE IS DRAWN FIRST AND THE AURA OVER IT. Both are additive, so the
-  // order moves no pixel; it is the composition order the two faces read in —
-  // a disc inside its own glow, rather than a glow with a disc laid across it
-  // — and saying it costs nothing.
+  // ⭐ THE PATCH IS DRAWN FIRST, THEN THE FACE, THEN THE AURA OVER BOTH. All
+  // three are additive, so the order moves no pixel; it is the composition
+  // order they read in — the substance under the plane, the disc that opens
+  // onto it, and the glow around that — and saying it costs nothing.
   return (
     <group>
+      {/* ⛔ THE MIST BEING TAKEN, AND IT NEVER DRAWS ABOVE THE PLANE. One
+          instance per cohort, its sink at its own origin, lying
+          `MIST_FLOOR_DEPTH` under the membrane and rising into a mound whose
+          top is exactly what the window in the mouth shows. It is a SURFACE
+          seen from outside and moving, which is the only thing twenty-five
+          rounds found that reads as intake: a column, plume, funnel or pillar
+          under the mouth reads as a searchlight at every brightness profile
+          that was tried. The vertex stage cannot produce a vertex above its
+          own origin (`MIST_PATCH_NEVER_ABOVE_GLSL`), so that is a property of
+          the form and not of these props. */}
+      <instancedMesh
+        ref={patchMeshRef}
+        args={[patchGeometry, patchMaterial, capacity]}
+        {...cohortGpuProbes.patch}
+        frustumCulled={false}
+        renderOrder={0}
+        raycast={() => null}
+      />
       <instancedMesh
         ref={faceMeshRef}
         args={[quad, faceMaterial, capacity]}

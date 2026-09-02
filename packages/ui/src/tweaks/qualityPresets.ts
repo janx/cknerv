@@ -105,6 +105,29 @@ export interface QualityCascade {
    * limit-cycle, so the oscillation above stays retired, and a page that dips
    * to `med` still holds `med` until reload. */
   populationCapMul: number;
+  /** How many of the mist's ambient haze sheets under the colony are drawn
+   * (`MIST_HAZE_SHEETS`, deepest last) — 2 / 1 / 0.
+   *
+   * ⭐ THE SHEETS ARE THE ONLY PART OF THE INTAKE THAT IS PAID FOR OVER THE
+   * WHOLE SCREEN. Each is one large additive plane, ~460 wu square, whose cost
+   * is fill and whose content is one texture fetch; two of them exist to make
+   * the substance read as DEEP rather than as a floor (one sheet is a floor;
+   * two, seen through each other, are a volume with nothing volumetric in it).
+   * That is exactly the kind of ambience the cascade already trims — the tier
+   * that halves `particleCapMul` drops the deeper, fainter sheet, and the tier
+   * that is fighting for the frame drops both.
+   *
+   * ⚠️⚠️ THE INTAKE PATCH IS NEVER GATED AND MUST NOT BE ADDED HERE. It is one
+   * 28 wu disc per cohort — a handful of them on a real chain — and it IS the
+   * feature: 「pow cohort 汲取能量的视觉效果」. Dropping it at `low` would leave
+   * the mouths open onto nothing, which is not a coarser picture of the same
+   * scene but a different claim about what a cohort does. What `low` gives up
+   * is the ambience the intake is measured AGAINST, not the intake.
+   *
+   * ⚠️ STARTING VALUES from the approved preview's two sheets, not a
+   * measurement: T6 has the per-draw GPU cost of `colony.mist.haze` in front of
+   * it and owns the numbers. */
+  mistHazeSheets: number;
   /** Semantic memory marks retain one CSS-space footprint at every preset.
    * Lower sample density gets a slightly broader, dimmer filter rather than
    * dropping checksum lanes or allowing one-pixel glare. */
@@ -123,7 +146,7 @@ export const QUALITY_PRESETS: Record<QualityPreset, QualityCascade> = {
   high: {
     maxDpr: 2, starsCount: 2000, particleCapMul: 1,
     dischargeArms: 3, activeSamplesPerHop: 12,
-    nucleusNearCap: 12, populationCapMul: 1,
+    nucleusNearCap: 12, populationCapMul: 1, mistHazeSheets: 2,
     memorySignal: {
       coreMinPx: 24, compactLinePx: 0.55, energyScale: 1,
       expandedLineScale: 1,
@@ -132,7 +155,7 @@ export const QUALITY_PRESETS: Record<QualityPreset, QualityCascade> = {
   med: {
     maxDpr: 1.5, starsCount: 600, particleCapMul: 0.5,
     dischargeArms: 2, activeSamplesPerHop: 10,
-    nucleusNearCap: 8, populationCapMul: 0.5,
+    nucleusNearCap: 8, populationCapMul: 0.5, mistHazeSheets: 1,
     memorySignal: {
       coreMinPx: 24, compactLinePx: 0.62, energyScale: 0.94,
       expandedLineScale: 1.06,
@@ -141,7 +164,7 @@ export const QUALITY_PRESETS: Record<QualityPreset, QualityCascade> = {
   low: {
     maxDpr: 1, starsCount: 200, particleCapMul: 0.25,
     dischargeArms: 1, activeSamplesPerHop: 8,
-    nucleusNearCap: 4, populationCapMul: 0.25,
+    nucleusNearCap: 4, populationCapMul: 0.25, mistHazeSheets: 0,
     memorySignal: {
       coreMinPx: 24, compactLinePx: 0.72, energyScale: 0.86,
       expandedLineScale: 1.15,
