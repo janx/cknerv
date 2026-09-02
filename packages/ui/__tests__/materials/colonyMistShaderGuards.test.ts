@@ -37,10 +37,7 @@ import { describe, expect, it } from 'vitest';
 // finds them without being told their names.
 import * as colonyCohort from '../../src/materials/colonyCohort';
 import * as colonyMist from '../../src/materials/colonyMist';
-import {
-  makeCohortIntakePatchMaterial,
-  makeMistHazeMaterial,
-} from '../../src/materials/colonyMist';
+import { makeCohortIntakePatchMaterial } from '../../src/materials/colonyMist';
 
 const SOURCE_PATH = resolve(process.cwd(), 'src/materials/colonyMist.ts');
 const SOURCE = readFileSync(SOURCE_PATH, 'utf8');
@@ -156,7 +153,6 @@ function programs(): { name: string; glsl: string; uniforms: Map<string, number>
     // EQUALITY between the calls in these programs and the calls in the source,
     // so a factory added to the material file and not to this list fails there.
     ['mistPatch', makeCohortIntakePatchMaterial()],
-    ['mistHaze', makeMistHazeMaterial()],
   ] as const;
   return built.flatMap(([name, material]) => {
     const uniforms = new Map<string, number>();
@@ -204,7 +200,11 @@ describe('colonyMist.ts — source-level shader guards', () => {
     // every setting the schema allows because `uGateIn` is below 0.98 and the
     // wake is longer than two and a half rim radii. That is why `unprovable` is
     // still empty: an edge built off a varying would have to be argued.
-    expect(checked).toBeGreaterThanOrEqual(6);
+    // ⚠️ The floor was 6 until 2026-09-02: the sixth was the ambient sheets'
+    // elliptical fade (`smoothstep(uEdgeIn, uEdgeOut, rho)`), and it left with
+    // the sheets after a live leg measured them at 2/255 at their brightest
+    // pixel anywhere on the canvas.
+    expect(checked).toBeGreaterThanOrEqual(5);
   });
 
   it('no pow anywhere can be handed a negative base', () => {
@@ -284,10 +284,9 @@ describe('colonyMist.ts — source-level shader guards', () => {
     }
     // The raw sources too, comments and all: the guard above runs on stripped
     // text and the trap lives precisely in what it strips.
-    for (const material of [makeCohortIntakePatchMaterial(), makeMistHazeMaterial()]) {
-      for (const stage of ['vertexShader', 'fragmentShader'] as const) {
-        expect(material[stage].includes('`')).toBe(false);
-      }
+    const material = makeCohortIntakePatchMaterial();
+    for (const stage of ['vertexShader', 'fragmentShader'] as const) {
+      expect(material[stage].includes('`')).toBe(false);
     }
   });
 

@@ -9,11 +9,6 @@ import {
   COHORT_INTERIOR_COLD,
   COHORT_RIM_R,
 } from './colonyCohort';
-import {
-  COLONY_ELLIPSE_X,
-  COLONY_ELLIPSE_Z,
-  COLONY_RADIUS,
-} from '../derives/networkTopology.derive';
 import { mulberry32 } from '../layout';
 
 /**
@@ -28,21 +23,31 @@ import { mulberry32 } from '../layout';
  * focus from the peer mesh or the cell galaxy.
  *
  * ⭐⭐⭐ AND THE INTAKE IS THE POINT. What the user asked for is 「pow cohort
- * 汲取能量的视觉效果」, so the mist is drawn where it is BEING TAKEN and is almost
- * nothing everywhere else. Two materials say that:
+ * 汲取能量的视觉效果」, so the mist is drawn where it is BEING TAKEN and NOWHERE
+ * ELSE. This file holds exactly that draw and the tile it reads:
+ * `makeCohortIntakePatchMaterial` — one instance per cohort, its sink at its
+ * own origin. A patch of the substance lying `MIST_FLOOR_DEPTH` under the
+ * plane, lifted into a gentle mound whose top is exactly `COHORT_INTAKE_LEVEL`
+ * — the level the window in the mouth already shows — carrying the medium's own
+ * texture advected along the streamlines of a SINK WITH A VORTEX (log spirals
+ * winding into the mouth), brightening as it gathers, dark inside the rim,
+ * thinner in the wake downstream, and flaring on the block that cohort wins.
  *
- * 1. `makeMistHazeMaterial` — the ground. One fetch of the noise tile on a
- *    large plain sheet, a few percent of the mesh's brightness, no structure at
- *    all. It exists so the space under the plane is not empty, and it is the
- *    thing the patch below is measured as brighter THAN.
- * 2. `makeCohortIntakePatchMaterial` — one instance per cohort, its sink at its
- *    own origin. A patch of that same substance lying `MIST_FLOOR_DEPTH` under
- *    the plane, lifted into a gentle mound whose top is exactly
- *    `COHORT_INTAKE_LEVEL` — the level the window in the mouth already shows —
- *    carrying the medium's own texture advected along the streamlines of a SINK
- *    WITH A VORTEX (log spirals winding into the mouth), brightening as it
- *    gathers, dark inside the rim, thinner in the wake downstream, and flaring
- *    on the block that cohort wins.
+ * ⭐⭐⭐ AND THERE IS NO FLOOR, NO SHEET AND NO GROUND TERM ANYWHERE. That is
+ * not an omission: it is what "omnipresent" turned out to look like once it was
+ * measured. Until 2026-09-02 this file also shipped `makeMistHazeMaterial`, up
+ * to two flat 460 wu sheets under the whole colony at one texture fetch a
+ * fragment, and `ColonyMist` drew them. The live leg on an AMD 890M through
+ * ANGLE/Vulkan at 2560 × 1440 priced them: ONE sheet cost **0.90 ms of the
+ * layer's 1.06 ms** of frame GPU at the app camera, and its own additive
+ * contribution peaked at **2/255 anywhere on the canvas** — 0.045 of a ghost
+ * sprite's core, and the three quality tiers were indistinguishable by eye. It
+ * was 85 % of the price of the field for a picture nobody could see, and its
+ * elliptical fade left a faint curved silhouette where it dissolved. So the
+ * sheets went, and the CATCHMENT states the omnipresence instead: the patch
+ * reaches 14 wu around each mouth and shows the substance only where a cohort
+ * is taking it. ⛔ Do not put a floor back without a NEW measurement that says
+ * a viewer can see one.
  *
  * ⛔⛔⛔ NOTHING IS EVER DRAWN ABOVE THE PLANE, and there is NO COLUMN, PLUME,
  * FUNNEL OR PILLAR under the mouth AT ANY BRIGHTNESS PROFILE. Twenty-five
@@ -71,11 +76,10 @@ import { mulberry32 } from '../layout';
  * the physics: two mouths drinking from the same parcel of mist take more of it
  * than one does. There is no cross-talk term and none is wanted.
  *
- * ⚠️⚠️ THE GEOMETRY CONTRACT, WHICH THE TWO COMPONENTS MUST FOLLOW EXACTLY
- * (this file cannot enforce it, so it states it). ⭐ The PATCH's half of it is
- * `ColonyCohorts`' — the patch is that layer's THIRD DRAW, beside the mark it
- * feeds, off the same plan and the same two lanes — and only the HAZE belongs
- * to `ColonyMist`:
+ * ⚠️⚠️ THE GEOMETRY CONTRACT, WHICH `ColonyCohorts` MUST FOLLOW EXACTLY (this
+ * file cannot enforce it, so it states it). ⭐ There is only one consumer left:
+ * the patch is that layer's FIRST DRAW, beside the mark it feeds, off the same
+ * plan and the same two lanes.
  *
  * - The patch's geometry is a UNIT `PlaneGeometry(1, 1, MIST_PATCH_SEGMENTS,
  *   MIST_PATCH_SEGMENTS)` copied into an `InstancedBufferGeometry`. The extent
@@ -97,17 +101,14 @@ import { mulberry32 } from '../layout';
  *   `COHORT_NEVER_WON`). ⭐ `aGulp` must be re-laid off the SAME `wonAtRef` map
  *   in the SAME effect `cohortWinLane` already runs in — a second map would let
  *   the mouth and the mist under it swallow different blocks.
- * - BOTH draws are mounted INSIDE the colony's rotation group. That is what
- *   makes every coordinate below a colony-frame constant: the sink never moves
- *   in this frame, so the spiral needs no per-frame rotation uniform and the
+ * - The draw is mounted INSIDE the colony's rotation group. That is what makes
+ *   every coordinate below a colony-frame constant: the sink never moves in
+ *   this frame, so the spiral needs no per-frame rotation uniform and the
  *   medium cannot shimmer as the plate turns.
- * - The haze is NOT instanced: one plain `PlaneGeometry` per sheet, laid flat,
- *   at the depths `MIST_HAZE_SHEETS` names, at `renderOrder` −1 — under
- *   everything, and mounted FIRST in the rotation group, before `ColonyEdges`.
- *   The patch is `renderOrder` 0 and the mark's two faces are 1 and 2. Every
- *   one of them is additive and depth-read-only, so that order is COMPOSITION
- *   and never a depth requirement: the substance, the surface being taken, the
- *   disc that opens onto it, the glow around that.
+ * - The patch is `renderOrder` 0 and the mark's two faces are 1 and 2. All
+ *   three are additive and depth-read-only, so that order is COMPOSITION and
+ *   never a depth requirement: the surface being taken, the disc that opens
+ *   onto it, the glow around that.
  *
  * ⚠️⚠️ AND THE ONE THING THIS LAYER CANNOT PROVE ABOUT ITSELF: IT SHARES AN
  * ADDITIVE CEILING WITH THE MARK ABOVE IT, AND THE COLLISION IS STRUCTURAL.
@@ -138,7 +139,10 @@ import { mulberry32 } from '../layout';
  * overhead, +1,105 at 8° of elevation, **+7,298 with a mouth filling 40 px/wu**
  * (0.20 %). Every pair's A/A control was 0 differing pixels, and R19's mark
  * alone attributed 0 / 0 / 1 / 0 — so all of that is the mist, and none of it is
- * a blown-out region. `MIST_AMP` stays 1. ⚠️ A knob CANNOT reach a uniform
+ * a blown-out region. ⭐ The ambient sheets were one of those four amplitudes
+ * when this was taken and are gone now; at 2/255 they could never reach 254, so
+ * every count above is the patch's and stands. `MIST_AMP` stays 1. ⚠️ A knob
+ * CANNOT reach a uniform
  * while `Time.paused` is on (every write here is inside `useSimFrame`), so an
  * A/B on this layer has to write `material.uniforms.<x>.value` directly.
  */
@@ -153,9 +157,9 @@ import { mulberry32 } from '../layout';
  * because the window evaluates it inside the pupil (3 % of a 6 wu disc) and the
  * mark would otherwise be the only textured object in the peer plane — one of
  * the five register violations the form it replaced was retired for. The mist
- * is the opposite case in every respect: it covers a 28 wu disc per cohort plus
- * two sheets 230 wu across, it is sampled twice per fragment for the two
- * cross-faded phases, and — the decisive one — ⭐ IT MUST PREFILTER WITH
+ * is the opposite case in every respect: it covers a 28 wu disc per cohort, it
+ * is sampled twice per fragment for the two cross-faded phases, and — the
+ * decisive one — ⭐ IT MUST PREFILTER WITH
  * DISTANCE. R19 measured that unfiltered grain at this scale either aliases or
  * prefilters to nothing past about 25 wu; a mipmapped tile is what let the
  * preview's mist hold together at the app camera, where a cohort is 100+ wu
@@ -174,9 +178,14 @@ export const MIST_NOISE_SIZE = 256;
  * ⭐ THE COUNTS ARE WHAT MAKES THE TILE SEAMLESS. The lattice wraps modulo the
  * cell count, so a channel whose count divides the tile exactly repeats with no
  * seam under `RepeatWrapping` — which is why these are integers and why the
- * generator takes `% n` on both lattice corners. The patch reads R and G (the
- * medium's two octaves) and the haze reads B (the ground's slow patchiness);
- * A is generated for free and is unread today.
+ * generator takes `% n` on both lattice corners. The patch — since 2026-09-02
+ * the tile's ONLY reader — takes R and G, the medium's two octaves; B and A are
+ * generated for free and are unread. B was the ambient sheets' slow patchiness
+ * until the sheets were measured out on 2026-09-02 (see this file's header).
+ * ⭐ The four stay because the upload is `RGBAFormat` either way — there is no
+ * narrower tile to build — and because each channel's lattice is seeded
+ * independently, so the two the patch reads are bit-identical with or without
+ * them.
  */
 export const MIST_NOISE_CELLS: readonly number[] = [8, 16, 32, 64];
 
@@ -371,8 +380,11 @@ export const MIST_RIDGE_POW = 1.7;
  * ⚠️ THE PATCH HAS NO GROUND TERM AT ALL, which is the preview's own `uBase: 0`
  * and is what makes the mist "visible only where it is being taken": every term
  * below is multiplied by the catchment weight or by the gather, so a patch with
- * no mouth in it draws nothing. The ground under the whole plane is the HAZE's
- * job, and it is 0.03.
+ * no mouth in it draws nothing. ⭐ AND SINCE 2026-09-02 NOTHING ELSE DRAWS A
+ * GROUND EITHER — the ambient sheets that used to lie under the whole plane at
+ * 0.03 were measured invisible (2/255 at their brightest) and expensive
+ * (0.90 ms of 1.06) and removed, so this term's absence is now the whole
+ * layer's statement rather than a division of labour.
  */
 export const MIST_FIL = 0.24;
 
@@ -542,11 +554,11 @@ export const MIST_WAKE_W = 2.2;
 export const MIST_WAKE_LEN = 17;
 
 /* -------------------------------------------------------------------------- *
- * What every draw in the layer shares.
+ * What the patch's two stages share.
  * -------------------------------------------------------------------------- */
 
 /**
- * How far a grazing ray may thicken the sheet it crosses.
+ * How far a grazing ray may thicken the surface it crosses.
  *
  * ⭐ A SLAB, NOT A PLATE. A flat additive surface seen edge-on contributes the
  * same light as one seen face-on, which is exactly how a painted floor reads.
@@ -1025,8 +1037,10 @@ export function makeCohortIntakePatchMaterial(): THREE.ShaderMaterial {
           * smoothstep(0.0, uRimR * 1.2, along)
           * (1.0 - smoothstep(uRimR * 2.5, uWakeLen, along));
 
-        // ⚠️ NO GROUND TERM. The patch is the mist BEING TAKEN and nothing
-        // else; the substance simply being there is the haze's job.
+        // ⚠️ NO GROUND TERM, HERE OR ANYWHERE. The patch is the mist BEING
+        // TAKEN and nothing else; the ambient sheets that once drew the
+        // substance simply being there were measured invisible on 2026-09-02
+        // and removed (see this file's header).
         float v = uFil * g * (uContrastFar + uContrastNear * near) * gain * fine;
         v = max(v * gate, 0.0) * (1.0 - uWake * wake) * path * uAmp;
         if (v < 0.0015) discard;
@@ -1035,193 +1049,6 @@ export function makeCohortIntakePatchMaterial(): THREE.ShaderMaterial {
         // additive damping linear, and what stops the mist fighting an
         // inspection the way the mark above it refuses to.
         gl_FragColor = vec4(uColor * v * cohortEnergy, min(v, 1.0));
-      }
-    `,
-  });
-}
-
-/* -------------------------------------------------------------------------- *
- * The haze: the substance simply being there.
- * -------------------------------------------------------------------------- */
-
-/** The brighter sheet's weight — a few percent of the mesh's brightness. */
-export const MIST_HAZE_BASE = 0.03;
-
-/**
- * The ground's sampling frequency, in tile-widths per world unit.
- *
- * ⚠️ IT IS NOT THE PLAN'S `0.085 * 0.40`. The preview's sheets scale the medium
- * frequency per sheet before the ground's own 0.40 — `across: 0.085 * scale`
- * with `scale` 0.6 and 0.45 — so the two sheets read the tile at 0.0204 and
- * 0.0153, not at 0.034. Measured from `lab/scene.js`; the plan's table dropped
- * the per-sheet scale. At 0.0204 the tile repeats every 49 wu, which is what
- * makes the ground read as slow patchiness rather than as grain.
- */
-export const MIST_HAZE_GRAIN = 0.085 * 0.6 * 0.4;
-
-/**
- * Where the sheets start to dissolve, and where they are gone, as a fraction of
- * the colony's own elliptical footprint.
- *
- * ⭐ AN ELLIPSE AND NOT A CIRCLE, because the colony is one: `COLONY_ELLIPSE_X`
- * and `COLONY_ELLIPSE_Z` stretch the scatter 1.25 / 0.85, and a circular fade
- * over an elliptical colony would leave the sheet's edge visible off the long
- * axis and cut the short one short. ⚠️ THE SHEET MUST HAVE NO EDGE ANYWHERE: a
- * visible rim turns the substance into a plate, which is the register this
- * whole round is refusing.
- */
-export const MIST_HAZE_EDGE_IN = 1.35;
-
-/** The other end of that fade. Nothing is drawn past it. */
-export const MIST_HAZE_EDGE_OUT = 2;
-
-/**
- * The colony's own XZ radii, which the fade above is measured in.
- * 115 x 78.2 wu — the same numbers the preview used, derived rather than typed.
- */
-export const MIST_HAZE_ELLIPSE: readonly [number, number] = [
-  COLONY_RADIUS * COLONY_ELLIPSE_X,
-  COLONY_RADIUS * COLONY_ELLIPSE_Z,
-];
-
-/**
- * The sheets, deepest last: how far under `COLONY_Y` each lies, how strong it
- * is, and how coarsely it reads the tile.
- *
- * ⭐⭐ TWO SHEETS AT DIFFERENT DEPTHS AND DIFFERENT SCALES ARE WHAT MAKE THE
- * SUBSTANCE READ AS DEEP. One sheet is a floor; two, seen through each other at
- * any angle but straight down, are a volume with nothing volumetric in it. They
- * sit BELOW the patch's own floor (`MIST_FLOOR_DEPTH`), so the intake is always
- * the nearest thing to the membrane.
- *
- * ⚠️ HOW MANY OF THEM ARE DRAWN IS A QUALITY DECISION, not a constant here:
- * `mistHazeSheets` on the `QualityCascade` is 2 / 1 / 0 for high / med / low.
- *
- * ⭐ MEASURED 2026-09-02, AND THE TIER IS A FRAME-TIME DECISION AND NOT A
- * PICTURE ONE. A sheet costs 0.899 ms of the 1.057 ms this whole feature adds
- * at the app camera, so the second one is 0.385 ms of the high tier's 1.442;
- * and since the haze contributes at most 2/255 anywhere on the canvas, the
- * three tiers are visually indistinguishable there (`cam_app_q_high/med/low`).
- * ⚠️ Which one a viewer gets is the adaptive controller's, not a default: on
- * the reference machine a cold boot locked `med` (one sheet) and a warm reload
- * locked `high` (two), so ONE sheet is the common case.
- */
-export interface MistHazeSheet {
-  /** World units below the colony plane. */
-  readonly depth: number;
-  /** Its weight, before the grazing path. */
-  readonly base: number;
-  /** Tile widths per world unit. */
-  readonly grain: number;
-}
-
-export const MIST_HAZE_SHEETS: readonly MistHazeSheet[] = [
-  { depth: MIST_FLOOR_DEPTH + 4.5, base: MIST_HAZE_BASE, grain: MIST_HAZE_GRAIN },
-  {
-    depth: MIST_FLOOR_DEPTH + 11,
-    base: MIST_HAZE_BASE * 0.75,
-    grain: 0.085 * 0.45 * 0.4,
-  },
-];
-
-/**
- * One haze sheet: the mist simply being there, at ONE fetch per fragment.
- *
- * ⭐⭐⭐ THE FIELD IS SECONDARY, AND THIS IS THE DRAW THAT HAS TO PROVE IT. It
- * covers the whole space under the colony at a few percent of the mesh's
- * brightness with NO structure at all — no filaments, no back-trace, no sinks,
- * no time. One `texture2D`, a soft elliptical fade so the sheet has no edge
- * anywhere, the grazing-path thickening, and out. That is deliberately the
- * cheapest possible program, and it is still the part of this feature that is
- * paid for over the entire screen.
- *
- * ⚠️ MEASURED 2026-09-02, AND ONE SHEET IS THE APP CAMERA'S WHOLE COST. Against
- * the same frame with the four draws hidden, the layer costs **+1.057 ms** of
- * frame GPU at the app camera on `med` (one sheet) and +1.442 ms on `high`
- * (two) — of which the haze scope alone reads **0.899 ms**, against 0.125 for
- * the face, 0.124 for the aura and 0.138 for the patch. The preview's estimate
- * was +0.6 ms for the whole mist with a FULL-PLANE floor; the real number is
- * 1.8× that, and this program is where it went. ⭐ It DOES exit early at zero
- * amplitude — dropping `uAmp` to 0 without hiding the draw takes the haze scope
- * to 0.158 ms and recovers 0.947 of the 1.057. So the sheet count is the handle
- * (`mistHazeSheets`, 2 / 1 / 0), and since the haze contributes at most 2/255
- * anywhere on the canvas the three tiers are visually indistinguishable at the
- * app camera. AMD 890M / ANGLE-Vulkan, 2560 × 1440, min-of-N.
- *
- * ⚠️ NO PROXIMITY EXEMPTION HERE, unlike the patch. The exemption measures the
- * camera against ONE instance origin — "the camera came for this" — and a sheet
- * 230 wu across is not a thing anybody comes for. It is passive context and it
- * is damped like passive context.
- *
- * ⚠️ AND NO `uTime`: the preview's haze does not animate, and it should not.
- * Motion in the far field is exactly what would pull focus from the mesh.
- */
-export function makeMistHazeMaterial(): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
-    transparent: true,
-    depthTest: true,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-    toneMapped: false,
-    // Seen from below as often as from above: the camera goes under the plane.
-    side: THREE.DoubleSide,
-    uniforms: {
-      uNoise: { value: makeMistNoiseTexture() },
-      uColor: { value: new THREE.Color().setRGB(...MIST_COLOR) },
-      uBase: { value: MIST_HAZE_BASE },
-      uGrain: { value: MIST_HAZE_GRAIN },
-      uEllipse: {
-        value: new THREE.Vector2(MIST_HAZE_ELLIPSE[0], MIST_HAZE_ELLIPSE[1]),
-      },
-      uEdgeIn: { value: MIST_HAZE_EDGE_IN },
-      uEdgeOut: { value: MIST_HAZE_EDGE_OUT },
-      uPathMax: { value: MIST_PATH_MAX },
-      uAmp: { value: MIST_AMP },
-    },
-    vertexShader: /* glsl */ `
-      varying vec3 vWorld;
-
-      void main() {
-        // No instancing and no lanes: one sheet is one draw of one plane, laid
-        // flat by its own mesh. The world point is all the fragment needs.
-        vec4 world = modelMatrix * vec4(position, 1.0);
-        vWorld = world.xyz;
-        gl_Position = projectionMatrix * viewMatrix * world;
-      }
-    `,
-    fragmentShader: /* glsl */ `
-      precision highp float;
-
-      uniform sampler2D uNoise;
-      uniform vec3 uColor;
-      uniform vec2 uEllipse;
-      uniform float uEdgeIn;
-      uniform float uEdgeOut;
-      uniform float uBase;
-      uniform float uGrain;
-      uniform float uPathMax;
-      uniform float uAmp;
-
-      varying vec3 vWorld;
-
-      void main() {
-        vec2 q = vWorld.xz;
-        // ⚠️ THE SHEET HAS NO EDGE ANYWHERE. The fade is measured on the
-        // colony's OWN ellipse, so it dissolves at the same proportion off
-        // every axis instead of showing a rim off the long one.
-        float rho = length(q / uEllipse);
-        float edge = 1.0 - smoothstep(uEdgeIn, uEdgeOut, rho);
-        if (edge <= 0.0) discard;
-        // A slab, not a plate.
-        vec3 dir = normalize(vWorld - cameraPosition);
-        float path = clamp(1.0 / max(abs(dir.y), 0.0001), 1.0, uPathMax);
-        // ⭐ ONE FETCH, AND THE WHOLE PROGRAM REACHES ITS RETURN WITH THAT ONE.
-        // The third channel is the tile's slowest lattice, which is what makes
-        // this patchiness rather than grain.
-        float ground = texture2D(uNoise, q * uGrain).b;
-        float v = uBase * (0.70 + 0.60 * ground) * edge * path * uAmp;
-        if (v < 0.0015) discard;
-        gl_FragColor = vec4(uColor * v, min(v, 1.0));
       }
     `,
   });

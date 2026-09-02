@@ -18,11 +18,11 @@ import {
   SHOCKWAVE_COLOR_CEIL,
   SHOCKWAVE_ALPHA_CEIL,
 } from '../materials/shockwaveMaterial';
-// …and the seventeen `cohort*` knobs take theirs from the two aperture
-// materials and the two mist materials, on the same rule: each material seeds
-// its own uniforms from these constants and ColonyCohorts / ColonyMist overwrite
-// them from LIVE.peer.* each frame, so there is
-// ONE authority. Most of the aperture is deliberately NOT a knob. The two knees
+// …and the sixteen `cohort*` knobs take theirs from the two aperture materials
+// and the mist's one, on the same rule: each material seeds its own uniforms
+// from these constants and `ColonyCohorts` overwrites them from LIVE.peer.*
+// each frame, so there is ONE authority. Most of the aperture is deliberately
+// NOT a knob. The two knees
 // (`COHORT_CLIP_KNEE` and `COHORT_AURA_KNEE`) are a PYTHAGOREAN PAIR that bound
 // the two additive draws' sum below 1.0 by arithmetic and cannot be moved
 // singly; the grain's sign (`COHORT_FACE_STRIA_LIFT`, purely subtractive, which
@@ -44,12 +44,16 @@ import {
   COHORT_FACE_STRIAE_FLOOR,
   COHORT_INTAKE_LEVEL,
 } from '../materials/colonyCohort';
-// …and the mist under the mark brings NINE more knobs, on the same rule: the
-// two materials in `colonyMist` seed their own uniforms from these constants
-// and `ColonyCohorts` / `ColonyMist` overwrite them from LIVE.peer.* each
-// frame. Only six constants are imported for the nine, because `MIST_AMP` seeds
-// both amplitudes and the other two — the window's amp and the level — belong
-// to the aperture's own file above.
+// …and the mist under the mark brings EIGHT more knobs, on the same rule: the
+// intake patch in `colonyMist` seeds its own uniforms from these constants and
+// `ColonyCohorts` overwrites them from LIVE.peer.* each frame. Only six
+// constants are imported for the eight, because the other two — the window's
+// amp and the level — belong to the aperture's own file above.
+// ⚠️ There were NINE until 2026-09-02: `cohortHazeAmp` dimmed the ambient
+// sheets under the whole colony plane, and the sheets were removed after a live
+// leg measured them at 2/255 at their brightest pixel anywhere on the canvas
+// while costing 0.90 ms of the layer's 1.06 ms at the app camera. The mist has
+// ONE amplitude now.
 // ⭐ `cohortLevel` is the one knob with TWO consumers — the window's medium
 // level in the face and the top of the mist's mound under it are ONE surface
 // (`COHORT_INTAKE_LEVEL`), and a tuner who could move one without the other
@@ -256,15 +260,14 @@ export const peerSchema = {
   // the brightness of the face's skirt. The labels say which is which.
   //
   // ⚠️ NO KNOB HERE CAN CLIP EITHER APERTURE, because none of them reaches the
-  // mark's programs: the mist is its own two draws, additive over the same
-  // pixels, and its ceiling is `cohortMistAmp` / `cohortHazeAmp` measured live
-  // (see the ceiling paragraph in `colonyMist.ts` — the two draws above sum to
-  // 0.808 in blue, so the substance under them has 0.192 to spend).
+  // mark's programs: the mist is its own draw, additive over the same pixels,
+  // and its ceiling is `cohortMistAmp` measured live (see the ceiling paragraph
+  // in `colonyMist.ts` — the two faces above sum to 0.808 in blue, so the
+  // substance under them has 0.192 to spend).
   // …and what each one moves, one line apiece.
-  // the intake patch's whole brightness: the mist under ONE mouth, nothing else
+  // the intake patch's whole brightness, and the mist's ONLY amplitude: the
+  // substance is drawn under a mouth and nowhere else
   cohortMistAmp: { value: MIST_AMP, min: 0, max: 3, step: 0.05, label: 'cohort patch amp' },
-  // the ambient haze sheets' brightness: the same substance everywhere else
-  cohortHazeAmp: { value: MIST_AMP, min: 0, max: 3, step: 0.05, label: 'cohort haze amp' },
   // how hard that medium burns seen THROUGH the hole — the face's window
   cohortInteriorAmp: { value: COHORT_FACE_INTERIOR_AMP, min: 0, max: 3, step: 0.05, label: 'cohort window amp' },
   // filament gain near the mouth: how sharply the gathering medium streaks

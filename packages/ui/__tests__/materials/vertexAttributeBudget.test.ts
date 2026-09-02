@@ -26,7 +26,6 @@ import {
 } from '../../src/materials/colonyCohort';
 import {
   makeCohortIntakePatchMaterial,
-  makeMistHazeMaterial,
 } from '../../src/materials/colonyMist';
 import {
   makeCanonicalRewriteEchoMaterial,
@@ -331,15 +330,6 @@ const ROWS: readonly BudgetRow[] = [
     usage: { instanced: true },
   },
   {
-    name: 'mistHazeMaterial',
-    sources: ['src/materials/colonyMist.ts'],
-    material: makeMistHazeMaterial,
-    // The ambient sheets: NOT instanced, no lanes at all. One plain plane per
-    // sheet, one texture fetch, and three's own prefix — the cheapest vertex
-    // program in the package, which is what a draw covering the whole space
-    // under the colony has to be.
-  },
-  {
     name: 'canonicalRewriteEchoMaterial',
     sources: ['src/components/CanonicalRewriteEcho.tsx'],
     material: makeCanonicalRewriteEchoMaterial,
@@ -523,29 +513,26 @@ describe('vertex attribute budget', () => {
     }
   });
 
-  it('charges the mist the same two lanes as the mouth, and the haze none', () => {
+  it('charges the mist the same two lanes as the mouth, and nothing else', () => {
     // ⭐⭐ THE PATCH AND THE FACE ARE ONE SURFACE SEEN TWO WAYS — through the
     // hole and from outside it — so they take the SAME lanes: `aSeed` and
     // `aGulp`, in that order, at the same widths, off the same buffers. A
     // patch that read the gulp at a different width would swallow on a
     // different block, and nothing but this row would say so.
     const patch = measured.find(({ name }) => name === 'cohortIntakePatchMaterial');
-    const haze = measured.find(({ name }) => name === 'mistHazeMaterial');
     const face = measured.find(({ name }) => name === 'cohortFaceMaterial');
     expect(patch).toBeDefined();
-    expect(haze).toBeDefined();
     expect([patch?.custom, patch?.injected, patch?.total]).toEqual([2, 7, 9]);
     expect(patch?.names).toEqual(face?.names);
     expect(patch?.names).toEqual(['aSeed', 'aGulp']);
     expect(patch?.names).not.toContain('aShare');
-    // ⚠️ THE HAZE IS NOT INSTANCED AND MUST NOT BECOME SO. Two sheets are two
-    // draws of two different planes at two different depths and two different
-    // grains; instancing them would buy one draw call and cost the mat4 on a
-    // program that has no per-instance anything.
-    expect([haze?.custom, haze?.injected, haze?.total]).toEqual([0, 3, 3]);
-    expect(haze?.names).toEqual([]);
-    expect(haze?.defines.has('USE_INSTANCING')).toBe(false);
-    // Seven slots still free on the busier of the two.
+    // ⚠️ AND IT IS THE ONLY MIST ROW. A `mistHazeMaterial` stood beside it —
+    // uninstanced, no lanes, 3 injected slots — for the ambient sheets under
+    // the whole colony; they were removed on 2026-09-02 after a live leg
+    // measured them at 2/255 at their brightest pixel anywhere on the canvas
+    // while costing 0.90 ms of the layer's 1.06 ms at the app camera.
+    expect(measured.some(({ name }) => name === 'mistHazeMaterial')).toBe(false);
+    // Seven slots still free on the busiest program in the layer.
     expect(MAX_VERTEX_ATTRIBUTES - (patch?.total ?? 0)).toBe(7);
   });
 

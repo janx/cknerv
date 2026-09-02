@@ -883,11 +883,18 @@ slab:
   rim, thinner in the wake downstream, and flaring on the block that cohort
   won.
 
-`ColonyMist` draws the rest of the substance and nothing else: large, flat,
-structureless haze sheets under the whole colony, at one texture fetch a
-fragment, with no clock at all — motion in the far field is exactly what would
-pull focus. They exist so the space under the plane is not empty, and so the
-intake has something to be brighter than.
+There is NO FLOOR, NO SHEET AND NO GROUND TERM anywhere under the plane, and
+that is a measurement rather than an omission. A sibling `ColonyMist` layer drew
+up to two large, flat, structureless haze sheets under the whole colony until
+2026-09-02, so the substance would be present everywhere and the intake would
+have something to be brighter than. The live leg priced them: one sheet cost
+0.90 ms of the layer's 1.06 ms of frame GPU at the app camera while its own
+additive contribution peaked at 2/255 anywhere on the canvas — 0.045 of a ghost
+sprite's core, with the three quality tiers indistinguishable by eye — so they
+were removed. The mist's omnipresence is now stated by the CATCHMENT alone: the
+patch reaches 14 wu around each mouth and shows the substance only where a
+cohort is taking it. A floor comes back only on a new measurement that says a
+viewer can see one.
 
 The face draws a circle, so every ellipse a viewer sees is projection, and
 because every cohort foreshortens identically that agreement is what makes the
@@ -937,24 +944,23 @@ colony is one number every cohort reads, and it would flare all six of them on a
 block one of them won.
 
 Draw order inside the colony is composition order rather than a depth
-requirement — every one of these draws is additive and depth-read-only. The haze
-sheets are `renderOrder` -1, the intake patch 0, the face 1 and the aura 2:
-the substance, the surface being taken, the disc that opens onto it, and the
-glow around that. `ColonyMist` mounts FIRST inside the colony's rotation group,
-before `ColonyEdges`, which is what makes every coordinate in the mist a
-colony-frame constant: a sink that never moves in that frame needs no per-frame
-rotation uniform, and the medium cannot shimmer as the plate turns.
+requirement — all three of these draws are additive and depth-read-only. The
+intake patch is `renderOrder` 0, the face 1 and the aura 2: the surface being
+taken, the disc that opens onto it, and the glow around that. All three mount
+inside the colony's rotation group, which is what makes every coordinate in the
+mist a colony-frame constant: a sink that never moves in that frame needs no
+per-frame rotation uniform, and the medium cannot shimmer as the plate turns.
 
-Per-draw GPU cost is priced separately through `colony.mist.patch` and
-`colony.mist.haze` beside the existing `colony.cohort.face` and
-`colony.cohort.aura` (§19.5). Quality owns the haze sheet count and nothing
-else here: `mistHazeSheets` is 2 / 1 / 0 for High / Med / Low, and the intake
-patch is never gated, because what a low tier gives up is the ambience the
-intake is measured against, not the intake.
+Per-draw GPU cost is priced separately through `colony.mist.patch` beside the
+existing `colony.cohort.face` and `colony.cohort.aura` (§19.5). Quality owns
+NOTHING here: no cascade field reaches this layer, because what is left of the
+mist is the intake itself and not ambience a tier may trim.
 
 **Measured on 2026-09-02**, on an AMD Radeon 890M through ANGLE/Vulkan at
 2560x1440, on live mainnet with six attested cohorts, load average 2.0-2.7,
-min-of-N `TIME_ELAPSED` readings through the probes above:
+min-of-N `TIME_ELAPSED` readings through the probes above. ⚠️ Every row was
+taken with the haze sheets still in the layer, which is what the row marked
+REMOVED settled:
 
 | Quantity | Measured |
 |---|---|
@@ -962,7 +968,7 @@ min-of-N `TIME_ELAPSED` readings through the probes above:
 | Whole layer, app camera, High — 2 haze sheets | +1.44 ms |
 | Whole layer, a mouth filling 40 px/wu | +2.22 ms |
 | Whole layer, a mouth at 13 wu | +2.74 ms |
-| The haze's own brightest contribution anywhere on the canvas | 2/255, and 11/255 on the pixel it sits on — 0.045 of a ghost sprite's core |
+| ~~The haze's own brightest contribution anywhere on the canvas~~ REMOVED 2026-09-02 | 2/255, and 11/255 on the pixel it sits on — 0.045 of a ghost sprite's core. That reading is why the sheets were dropped: 85 % of the layer's app-camera cost for a picture nobody could see |
 | The sink's inflow, 5-12 wu annulus, block-matched on the mound plane | 2.23:1 inward by count; median radial -0.656 wu/s against the model's -0.75 at r = 8 |
 | The gulp, over six minutes of mainnet | 29 pulses, 29 stamps, 29 matching node ids, 0 mismatches |
 | Saturated pixels attributed to the layer (mark on minus mark off) | +513 app / +848 overhead / +1,105 low elevation / +7,298 at the mouth, on 3,686,400 px |
@@ -970,9 +976,16 @@ min-of-N `TIME_ELAPSED` readings through the probes above:
 The whole-layer figures are the frame bracket's on-minus-off delta, which is the
 honest number: the per-draw scopes sum higher because adjacent timer queries
 serialise on this driver (§19.5's negative-remainder note), so read the split as
-an upper bound. The measured cost is 1.8-3x the preview's estimate, and the
-attribution says where it went: the haze sheet is the app-camera cost, the patch
-is the close-up cost (0.14 -> 0.63 -> 1.53 ms as the mouth fills the screen).
+an upper bound. The measured cost was 1.8-3x the preview's estimate, and the
+attribution said where it went: the haze sheet was the app-camera cost, the
+patch is the close-up cost (0.14 -> 0.63 -> 1.53 ms as the mouth fills the
+screen).
+
+The layer's cost after the removal is not known yet, and no number is claimed
+for it here. What is measured: +1.06 ms WITH the sheet at the app camera, and
+the same frame with the layer's four amplitudes at 0 — every draw still issued —
+at +0.11 ms, so the expected cost of the three draws that remain is of that
+order. To be re-measured on the next live leg.
 
 **One open finding from the same session**: thinning the slab tightened a
 cohort's clearance. The nearest non-cohort node measured 1.274 wu from a
@@ -1093,7 +1106,6 @@ not own staged Cell membership or the resting nervous system.
 | Discharge arms | 3 | 2 | 1 | Transient write decoration |
 | Active samples per hop | 12 | 10 | 8 | Moving wavefront tessellation |
 | Expanded nearby Cell identities | 12 | 8 | 4 | Non-focused near-detail concurrency |
-| Mist haze sheets | 2 | 1 | 0 | Ambient density under the colony plane |
 
 Semantic memory keeps a minimum 24 CSS-pixel core at every preset. Lower
 presets compensate for reduced sampling with controlled line-width and energy
@@ -1106,9 +1118,8 @@ The following remain identical across High, Med, and Low:
 - four passive samples per edge;
 - passive curve geometry, width baseline, hierarchy, and animation cadence;
 - route planning and deterministic timing for every admitted pulse;
-- every POW cohort's intake patch — the haze sheets around it are ambience the
-  cascade may trim, but the intake is the feature they are ambience for (§10.1);
-  and
+- every POW cohort's intake patch — no cascade field reaches it, because what
+  is left of the mist is the feature itself and not ambience (§10.1); and
 - selection, inspection evidence, and canonical counters.
 
 The particle multiplier can lower simultaneous active-pulse admission under
@@ -1525,11 +1536,7 @@ Use the same snapshot and capture settings for these minimum scenarios:
   `nerve.bridge`. Colony: `colony.cloud.haze`, `colony.cloud.advertised`,
   `colony.cloud.remembered`, `colony.cloud.reached`, `colony.measured-halos`,
   `colony.edges`, `colony.cohort.face`, `colony.cohort.aura`,
-  `colony.mist.patch`, `colony.mist.haze` (one program drawn once per haze
-  sheet, so its sample count is `sheets x frames` rather than `frames`; the
-  sheets differ only in two uniforms over the same fade, so a mean over them is
-  still a draw mean and not a mixture — how many there are is the quality
-  cascade's `mistHazeSheets`, §13),
+  `colony.mist.patch`,
   `colony.courier.plume`, `colony.courier.bloom`. Delivery: `delivery.body`,
   `delivery.core`, `delivery.trail`, `delivery.wave`. Backdrop: `stars`. A draw
   that would submit nothing — zero instances, an empty draw range, a hidden
@@ -1671,7 +1678,7 @@ Before merging a Canvas change, answer:
 | Peer topology and block flood | `packages/ui/src/derives/networkTopology.derive.ts`, `packages/ui/src/derives/networkFlood.derive.ts` |
 | Peer render layers and Cell delivery | `packages/ui/src/components/NetworkColony.tsx`, `packages/ui/src/components/BlockDeliveryLayer.tsx` |
 | POW cohort apertures, their intake patch, and the link stop at their outer edge | `packages/ui/src/components/ColonyCohorts.tsx`, `packages/ui/src/materials/colonyCohort.ts`, `packages/ui/src/components/ColonyEdges.tsx` |
-| The mist under the colony plane and its ambient haze sheets | `packages/ui/src/materials/colonyMist.ts`, `packages/ui/src/components/ColonyMist.tsx` |
+| The mist the cohorts drink: the intake patch and its noise tile | `packages/ui/src/materials/colonyMist.ts` |
 | Carrier glyph and contact front | `packages/ui/src/geometry/protocolCarrier.ts`, `packages/ui/src/materials/contactWaveMaterial.ts` |
 | Canonical rewrite echo | `packages/ui/src/components/CanonicalRewriteEcho.tsx` |
 | Simulation clock | `packages/ui/src/tweaks/simClock.ts`, `packages/ui/src/tweaks/SimClockTicker.tsx`, `packages/ui/src/tweaks/useSimFrame.ts` |

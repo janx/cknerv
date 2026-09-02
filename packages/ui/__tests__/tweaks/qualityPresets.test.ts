@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   QUALITY_PRESETS,
-  type QualityPreset,
   getQualityRuntimeSnapshot,
   setAdaptiveQuality,
   setAdaptiveQualityLocked,
@@ -19,7 +18,6 @@ describe('QUALITY_PRESETS', () => {
       activeSamplesPerHop: 12,
       nucleusNearCap: 12,
       populationCapMul: 1,
-      mistHazeSheets: 2,
       memorySignal: {
         coreMinPx: 24,
         compactLinePx: 0.55,
@@ -40,10 +38,6 @@ describe('QUALITY_PRESETS', () => {
     expect(QUALITY_PRESETS.med).not.toHaveProperty('passiveSamplesPerEdge');
     expect(QUALITY_PRESETS.med).not.toHaveProperty('passiveAnimationFps');
     expect(QUALITY_PRESETS.med.nucleusNearCap).toBe(8);
-    // The tier that halves the particles drops the DEEPER of the mist's two
-    // ambient sheets — a large additive plane whose whole cost is fill — and
-    // keeps the one nearest the membrane.
-    expect(QUALITY_PRESETS.med.mistHazeSheets).toBe(1);
     expect(QUALITY_PRESETS.med.memorySignal).toEqual({
       coreMinPx: 24,
       compactLinePx: 0.62,
@@ -63,37 +57,12 @@ describe('QUALITY_PRESETS', () => {
     expect(QUALITY_PRESETS.low).not.toHaveProperty('passiveSamplesPerEdge');
     expect(QUALITY_PRESETS.low).not.toHaveProperty('passiveAnimationFps');
     expect(QUALITY_PRESETS.low.nucleusNearCap).toBe(4);
-    // …and the tier that is fighting for the frame drops both.
-    expect(QUALITY_PRESETS.low.mistHazeSheets).toBe(0);
     expect(QUALITY_PRESETS.low.memorySignal).toEqual({
       coreMinPx: 24,
       compactLinePx: 0.72,
       energyScale: 0.86,
       expandedLineScale: 1.15,
     });
-  });
-
-  it('sheds the mist\u2019s AMBIENCE monotonically and never its INTAKE', () => {
-    // \u2b50\u2b50 THE PATCH IS NOT ON THE CASCADE, AND MUST NOT BE PUT THERE. The
-    // sheets are context \u2014 two large planes at a few percent of the mesh's
-    // brightness, paid for over the whole screen \u2014 so a tier may take them, and
-    // `mistHazeSheets` is monotone non-increasing across high \u2192 med \u2192 low. The
-    // INTAKE under each mouth is the feature itself
-    // (\u300cpow cohort \u6c72\u53d6\u80fd\u91cf\u7684\u89c6\u89c9\u6548\u679c\u300d), one 28 wu disc per cohort, and a
-    // tier that dropped it would leave the mouths open onto nothing \u2014 not a
-    // coarser picture of the scene but a different claim about what a cohort
-    // does. So no field here names the patch, at any tier.
-    const sheets = ['high', 'med', 'low'].map(
-      (tier) => QUALITY_PRESETS[tier as QualityPreset].mistHazeSheets,
-    );
-    expect(sheets).toEqual([2, 1, 0]);
-    expect(sheets[0]).toBeGreaterThan(sheets[1]);
-    expect(sheets[1]).toBeGreaterThan(sheets[2]);
-    for (const preset of Object.values(QUALITY_PRESETS)) {
-      expect(preset).not.toHaveProperty('mistPatches');
-      expect(preset).not.toHaveProperty('cohortPatchMul');
-      expect(preset.mistHazeSheets).toBeLessThanOrEqual(2);
-    }
   });
 
   it('never sheds memory semantics when the renderer reduces ambience', () => {

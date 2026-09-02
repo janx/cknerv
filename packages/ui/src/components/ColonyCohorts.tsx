@@ -19,8 +19,17 @@
 // a mound whose top is exactly the level the window shows. It carries the
 // medium's own texture advected along the streamlines of a sink with a vortex,
 // brightens as it gathers, goes dark inside the rim and thins in its wake. The
-// arithmetic and the design argument are in `materials/colonyMist`; the ambient
-// haze that same substance makes everywhere else is `ColonyMist`, one layer out.
+// arithmetic and the design argument are in `materials/colonyMist`.
+//
+// ⭐⭐ AND THIS LAYER IS NOW THE MIST'S ONLY DRAW. A sibling `ColonyMist` used
+// to lay up to two ambient sheets under the whole colony so the substance was
+// present everywhere and the patch had something to be brighter than; on
+// 2026-09-02 a live leg measured a sheet's own brightest pixel anywhere on the
+// canvas at 2/255 — invisible, and the three quality tiers indistinguishable —
+// while one sheet cost 0.90 ms of the layer's 1.06 ms of frame GPU at the app
+// camera. So the sheets went, and the mist's omnipresence is now stated by the
+// CATCHMENT alone: 14 wu of substance around each mouth, shown only where a
+// cohort is taking it. ⛔ No floor comes back without a NEW measurement.
 //
 // ⛔⛔⛔ AND IT NEVER DRAWS ABOVE THE PLANE, AT ANY KNOB SETTING. The patch's
 // vertex stage can only put a vertex BELOW its instance's origin, which is a

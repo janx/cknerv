@@ -17,6 +17,14 @@
 // ⚠️ A MIRROR THAT DRIFTS PROVES NOTHING (R15 shipped exactly that), so every
 // mirror below is tied to the shipped GLSL by `the mirrors above are the shipped
 // shaders`, term for term.
+//
+// ⚠️ THERE IS ONE MATERIAL IN THE FILE, NOT TWO. Four cases here covered a
+// second one — `makeMistHazeMaterial`, up to two flat 460 wu sheets that put
+// the substance under the whole colony — and it was removed on 2026-09-02 after
+// a live leg on an AMD 890M measured its own brightest pixel anywhere on the
+// canvas at 2/255 (0.045 of a ghost sprite's core) while it cost 0.90 ms of the
+// layer's 1.06 ms of frame GPU at the app camera. The mist's omnipresence is
+// now stated by the patch's 14 wu catchment alone.
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -46,12 +54,6 @@ import {
   MIST_GATE_IN,
   MIST_GRAIN,
   MIST_GULP_R,
-  MIST_HAZE_BASE,
-  MIST_HAZE_EDGE_IN,
-  MIST_HAZE_EDGE_OUT,
-  MIST_HAZE_ELLIPSE,
-  MIST_HAZE_GRAIN,
-  MIST_HAZE_SHEETS,
   MIST_MOUND_R,
   MIST_NOISE_CELLS,
   MIST_NOISE_SEED,
@@ -69,7 +71,6 @@ import {
   MIST_WAKE_LEN,
   MIST_WAKE_W,
   makeCohortIntakePatchMaterial,
-  makeMistHazeMaterial,
   makeMistNoiseTexture,
   mistBacktrace,
   mistCatchment,
@@ -82,7 +83,6 @@ import {
 } from '../../src/materials/colonyMist';
 
 const PATCH = makeCohortIntakePatchMaterial();
-const HAZE = makeMistHazeMaterial();
 
 /** Whitespace-insensitive, so a statement wrapped over lines still matches. */
 const squash = (glsl: string): string => glsl.replace(/\s+/g, ' ');
@@ -94,8 +94,6 @@ const stripComments = (glsl: string): string =>
 
 const PATCH_VERTEX = squash(stripComments(PATCH.vertexShader));
 const PATCH_FRAGMENT = squash(stripComments(PATCH.fragmentShader));
-const HAZE_VERTEX = squash(stripComments(HAZE.vertexShader));
-const HAZE_FRAGMENT = squash(stripComments(HAZE.fragmentShader));
 
 const SOURCE = readFileSync(
   resolve(process.cwd(), 'src/materials/colonyMist.ts'),
@@ -387,92 +385,6 @@ describe('colony mist — the eye and the edge', () => {
 });
 
 /* -------------------------------------------------------------------------- *
- * The haze.
- * -------------------------------------------------------------------------- */
-
-describe('colony mist — the haze sheets', () => {
-  it('reaches its return with EXACTLY ONE texture fetch', () => {
-    // ⭐⭐⭐ THE FIELD IS SECONDARY, AND THIS IS THE DRAW THAT PROVES IT. The
-    // sheets cover the whole space under the colony; anything they do is paid
-    // for over the entire screen. One fetch, an elliptical fade, the grazing
-    // path, and out — no structure, no back-trace, no sinks, no time.
-    const fetches = [...HAZE_FRAGMENT.matchAll(/\btexture2D\s*\(|\btexture\s*\(/g)];
-    expect(fetches).toHaveLength(1);
-    expect(HAZE_FRAGMENT).toContain('float ground = texture2D(uNoise, q * uGrain).b;');
-    expect(HAZE_FRAGMENT)
-      .toContain('float v = uBase * (0.70 + 0.60 * ground) * edge * path * uAmp;');
-    // Nothing structural leaked in from the patch.
-    for (const banned of ['mistBacktrace', 'mistMedium', 'uSwirl', 'uK', 'uConc', 'vGulp']) {
-      expect(HAZE_FRAGMENT).not.toContain(banned);
-    }
-    // ⚠️ AND NO CLOCK. Motion in the far field is exactly what would pull focus
-    // from the mesh, and the preview's haze does not animate either.
-    expect(HAZE_FRAGMENT).not.toMatch(/\buTime\b/);
-    expect(HAZE_VERTEX).not.toMatch(/\buTime\b/);
-    expect(HAZE.uniforms.uTime).toBeUndefined();
-  });
-
-  it('has no edge anywhere, on the colony’s OWN ellipse', () => {
-    // ⚠️ A VISIBLE RIM TURNS THE SUBSTANCE INTO A PLATE, which is the register
-    // this whole round is refusing. The fade is measured on the colony's own
-    // stretched footprint, so it dissolves at the same proportion off every
-    // axis instead of showing a rim off the long one and cutting the short one
-    // short. Ported from the preview's `coast` term, not invented.
-    expect(HAZE_FRAGMENT).toContain('float rho = length(q / uEllipse);');
-    expect(HAZE_FRAGMENT).toContain('float edge = 1.0 - smoothstep(uEdgeIn, uEdgeOut, rho);');
-    expect(HAZE_FRAGMENT).toContain('if (edge <= 0.0) discard;');
-    // 115 x 78.2 wu — derived from the colony's own placement, never typed.
-    expect(MIST_HAZE_ELLIPSE[0]).toBeCloseTo(115, 6);
-    expect(MIST_HAZE_ELLIPSE[1]).toBeCloseTo(78.2, 6);
-    const ellipse = HAZE.uniforms.uEllipse.value as THREE.Vector2;
-    expect(ellipse.x).toBe(MIST_HAZE_ELLIPSE[0]);
-    expect(ellipse.y).toBe(MIST_HAZE_ELLIPSE[1]);
-    // The fade starts OUTSIDE the colony (rho 1) and ends well past it, so no
-    // cohort ever stands in it: `attestedPos` puts every producer at rho ≤ 1.
-    expect(MIST_HAZE_EDGE_IN).toBeGreaterThan(1);
-    expect(MIST_HAZE_EDGE_OUT).toBeGreaterThan(MIST_HAZE_EDGE_IN);
-  });
-
-  it('is a few percent of the scene, and the deeper sheet is fainter and coarser', () => {
-    // ⭐⭐ TWO SHEETS AT TWO DEPTHS AND TWO SCALES ARE WHAT MAKE THE SUBSTANCE
-    // READ AS DEEP. One sheet is a floor; two, seen through each other at any
-    // angle but straight down, are a volume with nothing volumetric in it.
-    expect(MIST_HAZE_SHEETS).toHaveLength(2);
-    expect(MIST_HAZE_SHEETS[0].depth).toBe(MIST_FLOOR_DEPTH + 4.5);
-    expect(MIST_HAZE_SHEETS[1].depth).toBe(MIST_FLOOR_DEPTH + 11);
-    expect(MIST_HAZE_SHEETS[1].base).toBeCloseTo(MIST_HAZE_BASE * 0.75, 12);
-    expect(MIST_HAZE_SHEETS[1].grain).toBeLessThan(MIST_HAZE_SHEETS[0].grain);
-    // ⚠️ BOTH SIT BELOW THE PATCH'S OWN FLOOR, so the intake is always the
-    // nearest thing to the membrane and never seen through the ambient.
-    for (const sheet of MIST_HAZE_SHEETS) {
-      expect(sheet.depth).toBeGreaterThan(MIST_FLOOR_DEPTH);
-    }
-    // The brightest a sheet can be: base × (0.70 + 0.60) × the grazing path.
-    const ceiling = MIST_HAZE_BASE * 1.3 * MIST_PATH_MAX * MIST_AMP;
-    expect(ceiling).toBeCloseTo(0.0624, 4);
-    expect(ceiling).toBeLessThan(0.07);
-  });
-
-  it('reads the tile at the preview’s own per-sheet scale, not the plan’s table', () => {
-    // ⚠️ THE PLAN'S §4 TABLE SAYS "grain 0.085 · 0.4" AND THAT IS SHORT ONE
-    // FACTOR. `lab/scene.js` gives each sheet `across: 0.085 * scale` with
-    // `scale` 0.6 and 0.45 BEFORE the ground's own 0.40, so the two sheets read
-    // the tile at 0.0204 and 0.0153 — not at 0.034. At 0.0204 the tile repeats
-    // every 49 wu, which is what makes the ground read as slow patchiness
-    // rather than as grain.
-    expect(MIST_HAZE_GRAIN).toBeCloseTo(0.085 * 0.6 * 0.4, 12);
-    expect(MIST_HAZE_GRAIN).toBeCloseTo(0.0204, 6);
-    expect(MIST_HAZE_SHEETS[1].grain).toBeCloseTo(0.085 * 0.45 * 0.4, 12);
-    expect(1 / MIST_HAZE_GRAIN).toBeCloseTo(49.0, 1);
-    // …and the patch's own grain is the UNSCALED number, one cell of which is
-    // 1.47 wu: comparable to the hole, which is what lets the gather resolve as
-    // structure at the lip instead of as a smooth glow.
-    expect(MIST_GRAIN).toBe(0.085);
-    expect(1 / (MIST_GRAIN * MIST_NOISE_CELLS[0])).toBeCloseTo(1.47, 2);
-  });
-});
-
-/* -------------------------------------------------------------------------- *
  * The tile.
  * -------------------------------------------------------------------------- */
 
@@ -575,13 +487,15 @@ describe('colony mist — the noise tile', () => {
     }
   });
 
-  it('is the SAME texture for both materials, mipmapped and repeating', () => {
+  it('is the ONE tile every patch reads, mipmapped and repeating', () => {
     // ⭐ MODULE-LAZY AND SHARED: two tiles would be two substances, 256 kB
     // each, with a filament under one cohort matching nothing under the next.
+    // ⚠️ It had a second reader — the ambient sheets — until 2026-09-02, and
+    // laziness still earns its keep: the patch is the only draw left, so a
+    // scene with no attested producer never builds the tile at all.
     const texture = makeMistNoiseTexture();
     expect(makeMistNoiseTexture()).toBe(texture);
     expect(PATCH.uniforms.uNoise.value).toBe(texture);
-    expect(HAZE.uniforms.uNoise.value).toBe(texture);
     // ⚠️ THE MIPS ARE THE WHOLE REASON THIS IS A TEXTURE AND NOT A LATTICE.
     // R19 measured unfiltered grain at this scale aliasing or prefiltering to
     // nothing past ~25 wu; the app camera stands 100+ wu from a cohort.
@@ -601,8 +515,8 @@ describe('colony mist — the noise tile', () => {
  * The materials themselves.
  * -------------------------------------------------------------------------- */
 
-describe('colony mist — the materials', () => {
-  it('bind every constant the proofs above rest on', () => {
+describe('colony mist — the material', () => {
+  it('binds every constant the proofs above rest on', () => {
     const bound: Record<string, number> = {
       uReach: MIST_REACH,
       uMoundR: MIST_MOUND_R,
@@ -639,13 +553,14 @@ describe('colony mist — the materials', () => {
     // ⚠️ NO SINK ARRAY AND NO COUNT — see the guards. One instance is one sink.
     expect(PATCH.uniforms.uSinks).toBeUndefined();
     expect(PATCH.uniforms.uSinkCount).toBeUndefined();
-    expect(HAZE.uniforms.uBase.value).toBe(MIST_HAZE_BASE);
-    expect(HAZE.uniforms.uGrain.value).toBe(MIST_HAZE_GRAIN);
-    expect(HAZE.uniforms.uEdgeIn.value).toBe(MIST_HAZE_EDGE_IN);
-    expect(HAZE.uniforms.uEdgeOut.value).toBe(MIST_HAZE_EDGE_OUT);
+    // ⚠️ AND NO GROUND TERM ANYWHERE IN THE LAYER. `uBase` was the ambient
+    // sheets' weight; the sheets were measured out on 2026-09-02 (2/255 at
+    // their brightest pixel anywhere, 0.90 ms of the layer's 1.06 ms at the app
+    // camera), so the mist is drawn where it is taken and nowhere else.
+    expect(PATCH.uniforms.uBase).toBeUndefined();
   });
 
-  it('wear the mouth’s own colour, because they are one substance', () => {
+  it('wears the mouth’s own colour, because they are one substance', () => {
     // ⭐⭐⭐ ONE SUBSTANCE, ONE REGISTER. The mound's top IS the surface the
     // hole shows, so a viewer looking into the mouth and a viewer looking at
     // the mist beside it must not see two colours of the same medium.
@@ -654,37 +569,32 @@ describe('colony mist — the materials', () => {
     // (0.10, 0.58, 1.0) tinting toward (0.102, 0.819, 1.0) as the medium
     // gathered — and that bright end is EXACTLY `PEER_NETWORK_PALETTE.scaffold`,
     // a token whose whole job is to name a role INSIDE the peer plane.
-    for (const material of [PATCH, HAZE]) {
-      const colour = material.uniforms.uColor.value as THREE.Color;
-      expect([colour.r, colour.g, colour.b]).toEqual([...COHORT_INTERIOR_COLD]);
-    }
+    const colour = PATCH.uniforms.uColor.value as THREE.Color;
+    expect([colour.r, colour.g, colour.b]).toEqual([...COHORT_INTERIOR_COLD]);
     // ⭐ Blue is EXACTLY 1.0, like every other colour this feature emits, so
     // the additive ceiling's binding channel is unchanged by this layer.
     expect(COHORT_INTERIOR_COLD[2]).toBe(1);
   });
 
-  it('are additive, unlit and depth-read-only, exactly like the mark above them', () => {
-    for (const material of [PATCH, HAZE]) {
-      expect(material.transparent).toBe(true);
-      expect(material.depthTest).toBe(true);
-      expect(material.depthWrite).toBe(false);
-      expect(material.blending).toBe(THREE.AdditiveBlending);
-      expect(material.toneMapped).toBe(false);
-      // Seen from below as often as from above: the camera goes under the
-      // plane, and a single-sided sheet disappears from there.
-      expect(material.side).toBe(THREE.DoubleSide);
-    }
+  it('is additive, unlit and depth-read-only, exactly like the mark above it', () => {
+    expect(PATCH.transparent).toBe(true);
+    expect(PATCH.depthTest).toBe(true);
+    expect(PATCH.depthWrite).toBe(false);
+    expect(PATCH.blending).toBe(THREE.AdditiveBlending);
+    expect(PATCH.toneMapped).toBe(false);
+    // Seen from below as often as from above: the camera goes under the plane,
+    // and a single-sided surface disappears from there.
+    expect(PATCH.side).toBe(THREE.DoubleSide);
     // Energy multiplies RGB and NEVER alpha — the house idiom that keeps
     // additive damping linear.
     expect(PATCH_FRAGMENT)
       .toContain('gl_FragColor = vec4(uColor * v * cohortEnergy, min(v, 1.0));');
-    expect(HAZE_FRAGMENT).toContain('gl_FragColor = vec4(uColor * v, min(v, 1.0));');
   });
 
-  it('carry the patch’s extent in a UNIFORM, so the reach stays a knob', () => {
+  it('carries the patch’s extent in a UNIFORM, so the reach stays a knob', () => {
     // ⚠️ BAKING `2 * MIST_REACH` INTO THE GEOMETRY WOULD TURN THE REACH KNOB
     // INTO A REBUILD — the same law `COHORT_FACE_HALF` rides `uHalf` for. The
-    // geometry `ColonyMist` must build is the UNIT plane, subdivided.
+    // geometry `ColonyCohorts` must build is the UNIT plane, subdivided.
     expect(PATCH_VERTEX).toContain('vec2 offset = position.xy * (uReach * 2.0);');
     expect(MIST_PATCH_SEGMENTS).toBe(24);
     // One mound radius spans 6 of the 24 subdivisions, which is what makes the
@@ -692,7 +602,7 @@ describe('colony mist — the materials', () => {
     expect((MIST_MOUND_R / (MIST_REACH * 2)) * MIST_PATCH_SEGMENTS).toBeCloseTo(6, 6);
   });
 
-  it('take the SAME two lanes the face takes, on the SAME clock', () => {
+  it('takes the SAME two lanes the face takes, on the SAME clock', () => {
     // ⭐ ONE GEOMETRY, ONE `wonAtRef`, ONE STAMP. `aGulp` is the sim second of
     // the block this cohort won; the mouth and the mist under it must swallow
     // the SAME block, so the lane is re-laid off the same map in the same
@@ -719,7 +629,7 @@ describe('colony mist — the materials', () => {
     }
   });
 
-  it('recede with an inspection in RGB only, off the SAME exemption the mark uses', () => {
+  it('recedes with an inspection in RGB only, off the SAME exemption the mark uses', () => {
     // ⭐ THE MIST MUST NOT FIGHT AN INSPECTION. `NetworkColony` winds passive
     // peer context down as the camera closes on a cell, and the patch is
     // passive context; it recedes with everything else, and it comes back at
@@ -731,14 +641,13 @@ describe('colony mist — the materials', () => {
     expect(PATCH_VERTEX).toContain('vOrigin = origin.xyz;');
     expect(PATCH_VERTEX)
       .toContain('vec4 origin = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);');
-    // ⚠️ NOT ON THE HAZE, and the reason is that the exemption measures the
-    // camera against ONE instance origin — "the camera came for this" — and a
-    // sheet 230 wu across is not a thing anybody comes for.
-    expect(HAZE_FRAGMENT).not.toContain('cohortEnergy');
-    expect(HAZE.uniforms.uContextEnergy).toBeUndefined();
+    // ⭐ AND THE EXEMPTION IS WHY THE LAYER CAN BE INSTANCED AT ALL: it
+    // measures the camera against ONE instance origin — "the camera came for
+    // this" — which the retired ambient sheets, 230 wu across and belonging to
+    // nobody, could never have supplied.
   });
 
-  it('drift on the colony’s own tangent, which is what gives the wake a side', () => {
+  it('drifts on the colony’s own tangent, which is what gives the wake a side', () => {
     // ⭐ THE COHORT MOVES THROUGH THE MIST AS THE PLATE TURNS, so the depleted
     // band trails BEHIND it. The direction is the tangential one at the sink,
     // computed once per instance in the vertex stage — a per-fragment version
@@ -814,9 +723,7 @@ describe('colony mist — the ceiling it shares with the mouth', () => {
     // directly into a knob setting.
     expect(MIST_AMP).toBe(1);
     expect(PATCH.uniforms.uAmp.value).toBe(MIST_AMP);
-    expect(HAZE.uniforms.uAmp.value).toBe(MIST_AMP);
-    // The last multiply on both programs, so nothing is applied after it.
+    // The last multiply on the program, so nothing is applied after it.
     expect(PATCH_FRAGMENT).toContain('* path * uAmp;');
-    expect(HAZE_FRAGMENT).toContain('* edge * path * uAmp;');
   });
 });

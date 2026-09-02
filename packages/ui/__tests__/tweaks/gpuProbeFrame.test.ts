@@ -44,12 +44,6 @@ const DRAW_LABELS = [
   PERFORMANCE_PROBE_LABELS.colonyCohortFace,
   PERFORMANCE_PROBE_LABELS.colonyCohortAura,
   PERFORMANCE_PROBE_LABELS.colonyMistPatch,
-  // ⚠️ One label, and in a real scene one to two DRAWS behind it — the haze is
-  // one program per sheet and `mistHazeSheets` says how many. Here it stands
-  // for one, like every other row: what this file measures is that a label's
-  // scope opens and closes around its own draw, not how many sheets a tier
-  // draws.
-  PERFORMANCE_PROBE_LABELS.colonyMistHaze,
   PERFORMANCE_PROBE_LABELS.colonyCourierPlume,
   PERFORMANCE_PROBE_LABELS.colonyCourierBloom,
   PERFORMANCE_PROBE_LABELS.deliveryBody,

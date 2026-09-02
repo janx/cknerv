@@ -958,8 +958,7 @@ describe('what a POW cohort looks like', () => {
       PERFORMANCE_PROBE_LABELS.colonyCohortFace,
       PERFORMANCE_PROBE_LABELS.colonyCohortAura,
       PERFORMANCE_PROBE_LABELS.colonyMistPatch,
-      PERFORMANCE_PROBE_LABELS.colonyMistHaze,
-    ]).size).toBe(4);
+    ]).size).toBe(3);
     expect(layer).toContain('PERFORMANCE_PROBE_LABELS.colonyCohortFace');
     expect(layer).toContain('PERFORMANCE_PROBE_LABELS.colonyCohortAura');
     expect(layer).toContain('PERFORMANCE_PROBE_LABELS.colonyMistPatch');
@@ -1221,8 +1220,9 @@ describe('what a POW cohort looks like', () => {
       'cohortApR', 'cohortPupil', 'cohortRimAmp', 'cohortIntakeAmp',
       'cohortStriae', 'cohortStriaAmp', 'cohortHaloR', 'cohortHaloBias',
       // …and the mist the mouth is drinking, on the same frame and the same
-      // clock. `cohortHazeAmp` is deliberately NOT here: the ambient sheets are
-      // `ColonyMist`'s draw, not this layer's.
+      // clock. ⭐ ALL OF IT: since 2026-09-02 this layer owns every draw the
+      // mist has, so there is no `cohortHazeAmp` on another layer to keep in
+      // step with these.
       'cohortInteriorAmp', 'cohortLevel', 'cohortMistAmp', 'cohortGather',
       'cohortIntake', 'cohortSwirl', 'cohortReach', 'cohortWake',
     ] as const;
@@ -1628,11 +1628,13 @@ describe('what a POW cohort looks like', () => {
       expect(layer).toContain(`patch.${uniform}.value = LIVE.peer.${knob};`);
       expect(peerSchema[knob]).toBeDefined();
     }
-    // ⚠️ The HAZE's amplitude is a different knob on a different layer: the
-    // sheets are ambience over the whole screen and the patch is the intake, so
-    // a tuner must be able to dim one without the other.
+    // ⚠️ AND THERE IS NO SECOND AMPLITUDE ANYWHERE. `cohortHazeAmp` dimmed the
+    // ambient sheets under the whole colony until 2026-09-02, when a live leg
+    // measured their brightest pixel anywhere on the canvas at 2/255 against
+    // 0.90 ms of the layer's 1.06 ms at the app camera and they were removed.
+    // One substance, one amplitude, one layer.
     expect(layer).not.toContain('cohortHazeAmp');
-    expect(source('ColonyMist.tsx')).toContain('LIVE.peer.cohortHazeAmp');
+    expect(peerSchema).not.toHaveProperty('cohortHazeAmp');
   });
 
   it('reads no standing at all in its plan, so a window that moved cannot move a mark', () => {

@@ -50,16 +50,14 @@ export const PERFORMANCE_PROBE_LABELS = {
   colonyEdges: 'colony.edges',
   colonyCohortFace: 'colony.cohort.face',
   colonyCohortAura: 'colony.cohort.aura',
-  // The substance under the plane, priced apart from the mark in it: the patch
-  // is one instanced draw whose cost is its two back-traces, the haze is the
-  // ambient sheets whose cost is fill over the whole screen. ⚠️ The haze label
-  // carries ONE PROGRAM DRAWN ONCE PER SHEET, so its sample count is
-  // `sheets × frames` rather than `frames` — the two sheets differ only in two
-  // uniforms and cover the same fade, so a mean over them is still a draw mean
-  // and never the mixture this contract forbids. How many sheets there are is
-  // the quality cascade's `mistHazeSheets`.
+  // The substance under the plane, priced apart from the mark in it: one
+  // instanced draw per cohort whose cost is its two back-traces. ⚠️ There was a
+  // `colony.mist.haze` beside it until 2026-09-02, for the ambient sheets under
+  // the whole colony; this label is what measured them out — 0.90 ms of the
+  // layer's 1.06 ms at the app camera for a draw whose own brightest pixel
+  // anywhere reached 2/255 — and they were removed. Do not add it back without
+  // a new reading that says a viewer can see a sheet.
   colonyMistPatch: 'colony.mist.patch',
-  colonyMistHaze: 'colony.mist.haze',
   colonyCourierPlume: 'colony.courier.plume',
   colonyCourierBloom: 'colony.courier.bloom',
   deliveryBody: 'delivery.body',
