@@ -1216,6 +1216,138 @@ impl PeerSightingLookup {
     }
 }
 
+/// Cap on [`ProducerLedger::rows`] — how many producers one ledger names.
+///
+/// Sixteen against a live mainnet answer of SEVEN (measured 2026-09-02 on
+/// ckbadger's 7-day distribution: 7 rows over 67,800 blocks). The cap is not a
+/// guess at how many miners there are; it is the bound on what an upstream
+/// answer may cost this process, because every row costs one further address
+/// lookup on the refresh that builds it. Twice the live number leaves room for
+/// a pool splitting its payout lock without letting a reshaped upstream route
+/// turn one refresh into hundreds of requests.
+pub const PRODUCER_LEDGER_ROW_CAP: usize = 16;
+
+/// One producer's row in the ledger: who it is, how much of the window it
+/// took, and where the reward landed.
+///
+/// ⭐ EVERY OPTIONAL HERE IS A SEPARATE LOOKUP THAT MAY HAVE FAILED. The
+/// window figures (`key`, `blocks`) come from one chart request that either
+/// succeeded for every row or produced no ledger at all. Everything below them
+/// comes from a per-address request made afterwards, one per row; a row whose
+/// lookup failed keeps its window figures and leaves the rest absent rather
+/// than dropping out of the ledger or reporting a zero balance for an address
+/// nobody could read. Absent means "not looked up, or looked up and refused",
+/// never "zero" — and a reader that prints `0 CKB` over the first has stated
+/// something the source did not.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProducerLedgerRow {
+    /// The producer identity, and deliberately the SAME string as
+    /// [`crate::BlockProducer::key`]: cknerv names a producer by the hash of
+    /// the cellbase witness lock script, and ckbadger keys its miner records
+    /// by that same hash. That exact join is the whole reason this record can
+    /// exist — nothing here is matched by name, address or heuristic.
+    pub key: String,
+    /// The payout address the source resolves this lock to, in the `ckb1…`
+    /// encoding it answers with. Absent when the source did not resolve one:
+    /// this record re-encodes nothing, because an address is a rendering of a
+    /// script under a network prefix and a mainnet dashboard minting one from
+    /// a hash would be inventing an identity rather than reporting it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    /// Blocks this producer took inside the ledger's window — the numerator of
+    /// its share, whose denominator is [`ProducerLedger::total_blocks`].
+    pub blocks: u64,
+    /// What the payout address holds, in shannons, as a DECIMAL STRING.
+    ///
+    /// ⚠️ A STRING BECAUSE IT DOES NOT FIT A JS NUMBER, and this is measured
+    /// rather than feared: the live top miner held 9,820,183,392,640,200
+    /// shannons on 2026-09-02, against a `Number.MAX_SAFE_INTEGER` of
+    /// 9,007,199,254,740,991. A `u64` on this side and a `number` on the twin
+    /// would silently round the last three digits off a balance the HUD then
+    /// prints. The browser divides it with `BigInt`. This repo has already
+    /// paid once for a 32-bit truncation; it does not need to pay for a
+    /// 53-bit one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub balance_shannons: Option<String>,
+    /// How many live cells the payout address holds. The link between the two
+    /// worlds the scene draws: those cells are in the canopy, this producer is
+    /// under the membrane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_cells: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tx_count: Option<u64>,
+    /// One sampled cellbase payout to this producer, in shannons, as a decimal
+    /// string for the same reason the balance is one.
+    ///
+    /// OPPORTUNISTIC, AND NOT A STREAM. Upstream's block LIST carries no miner
+    /// fields at all, and its block DETAIL names the miner immediately but
+    /// only carries the reward once the cellbase that pays it has matured
+    /// (~11 blocks later). So a refresh samples ONE block and fills this in for
+    /// at most one row; every other row keeps it absent, and an absent field
+    /// here says "this refresh did not sample this producer", never "this
+    /// producer was not paid".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_reward_shannons: Option<String>,
+    /// The block `last_reward_shannons` was read from, so the sample dates
+    /// itself. The two are absent together or present together.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_reward_block: Option<u64>,
+}
+
+/// What an indexer knows about who has been producing blocks, over a window
+/// far wider than the one the canonical stream can hold.
+///
+/// [`crate::Chain::producer_window`] is RECENCY — 240 attributed blocks, ~32
+/// minutes, cleared by every reorg and every rebuild, and empty for the first
+/// minute of a boot. This is SIZE: seven complete days, warm from the first
+/// frame, and unaffected by a reorg because the days it names are already
+/// closed. The two do not replace each other and never merge; both print, and
+/// each states its own window, because "62% of a week" and "60% of the last
+/// five blocks" are different sentences about different things.
+///
+/// ⭐ SHARE IS NOT A FIELD, AND THAT IS THE POINT. `blocks / total_blocks` is
+/// computed wherever it is printed, never carried — the same rule
+/// [`crate::BlockProducer::blocks`] follows, and for the same reason: a share
+/// that travels without its denominator is a number a consumer can restate
+/// against the wrong window without noticing. Upstream does ship a
+/// `percentage` string; this record deliberately does not declare it, so there
+/// is exactly one place a share can be computed and exactly one window it can
+/// be computed over.
+///
+/// Rows are ordered blocks-descending, then key-ascending, so the same answer
+/// stages as the same list refresh after refresh, and capped at
+/// [`PRODUCER_LEDGER_ROW_CAP`].
+///
+/// It carries no [`ChainAnchor`]: a seven-day aggregate over completed days is
+/// not a statement about the canonical tip, so anchoring it would let a reorg
+/// three blocks deep discard a week of history that the reorg did not touch.
+/// `indexed_tip` says how far the source had indexed when it answered, which
+/// dates the answer without pretending it is anchored to a block.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProducerLedger {
+    /// How many complete days the window spans. Stated rather than derived
+    /// from the dates, because it is upstream's own framing of the answer.
+    pub window_days: u32,
+    /// The window's first and last day, as upstream's `YYYY-MM-DD` strings in
+    /// its own calendar (UTC+8, and the last COMPLETE day — never today).
+    /// Carried verbatim rather than parsed into a clock: they are what the HUD
+    /// prints beside the share so a reader knows which week it is looking at.
+    pub from_date: String,
+    pub to_date: String,
+    /// Every attributed block in the window — the denominator of every share
+    /// in `rows`, and never `sum(rows.blocks)`, which is smaller whenever the
+    /// row cap has cut a tail off.
+    pub total_blocks: u64,
+    /// When this ledger was fetched. The freshness stamp; nothing ages the
+    /// ledger against it, because the window it names is stated on the record.
+    pub fetched_at_ms: u64,
+    /// How far the source had indexed when it answered. Freshness, not
+    /// content, and not an anchor — see the note on the struct.
+    pub indexed_tip: u64,
+    #[serde(default)]
+    pub rows: Vec<ProducerLedgerRow>,
+}
+
 /// One of the whole-chain aggregates the semantics projection holds a
 /// single copy of.
 ///
@@ -1364,6 +1496,30 @@ chain_aggregate!(
     ProtocolEraRecord,
     Some(floor_under_client_patience(PROTOCOL_ERA_CLIENT_PATIENCE_MS))
 );
+// The one aggregate the macro cannot write, because it carries neither of the
+// two stamps the macro adopts: a seven-day ledger over completed days has no
+// `as_of` (see the note on `ProducerLedger`) and its fetch clock is spelled
+// `fetched_at_ms`. The rule is the same one, spelled by hand — `indexed_tip`
+// joins the freshness half because two ledgers naming the same days with the
+// same rows say the same thing however far the source had indexed when it
+// answered.
+//
+// No floor: nothing in the browser ages this record against a wall clock. It
+// prints its own window (`from_date`/`to_date`) instead of a staleness verdict,
+// so silence is free — an unchanged ledger stays off the wire until the day
+// rolls over or a payout moves a balance.
+impl ChainAggregate for ProducerLedger {
+    const REFRESH_FLOOR_MS: Option<u64> = None;
+
+    fn updated_at_ms(&self) -> u64 {
+        self.fetched_at_ms
+    }
+
+    fn adopt_freshness(&mut self, published: &Self) {
+        self.fetched_at_ms = published.fetched_at_ms;
+        self.indexed_tip = published.indexed_tip;
+    }
+}
 
 /// Install a refreshed aggregate into the holder it replaces, and say
 /// whether the wire has to hear about it.
@@ -1410,6 +1566,16 @@ pub enum EnrichmentEvent {
     NetworkAtlasClear,
     NetworkRosterReplace(Box<NetworkRosterRecord>),
     NetworkRosterClear,
+    /// Named rather than positional, unlike its neighbours: `ledger` alone is
+    /// the whole event, and a source that emits it is stating one thing.
+    ProducerLedgerReplace {
+        ledger: ProducerLedger,
+    },
+    /// The route answered 404 — the source has no ledger to give, which is
+    /// absence and not a fault. Same shape as [`Self::NetworkRosterClear`],
+    /// and the reason the UI's fallback to the 240-block window is a test
+    /// rather than a hope.
+    ProducerLedgerClear,
     ScriptRegistryReplace(Box<ScriptRegistryRecord>),
     GalaxyCompositionReplace(GalaxyCompositionRecord),
     /// Additive supply for the curated composition, in answer to the
@@ -1443,6 +1609,11 @@ pub struct SemanticsSnapshot {
     pub network_roster: Option<NetworkRosterRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub script_registry: Option<ScriptRegistryRecord>,
+    /// Absent when no source declares the capability, when its route 404s, and
+    /// on every build that predates the field — all three of which a consumer
+    /// answers the same way, by falling back to the 240-block window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub producer_ledger: Option<ProducerLedger>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -1492,6 +1663,14 @@ pub enum SemanticsDelta {
         network_roster: Box<NetworkRosterRecord>,
     },
     NetworkRosterClear,
+    /// The ledger replaces WHOLE. It is never merged row by row: a row that
+    /// left the window is a row that must leave the reader's copy, and a
+    /// merge would keep a producer standing on a week it no longer holds a
+    /// block in.
+    ProducerLedgerReplace {
+        producer_ledger: ProducerLedger,
+    },
+    ProducerLedgerClear,
     ScriptRegistryReplace {
         script_registry: Box<ScriptRegistryRecord>,
     },
@@ -1522,6 +1701,7 @@ pub struct SemanticsProjection {
     network_atlas: Option<NetworkAtlasRecord>,
     network_roster: Option<NetworkRosterRecord>,
     script_registry: Option<ScriptRegistryRecord>,
+    producer_ledger: Option<ProducerLedger>,
     next_sequence: u64,
     cell_cap: usize,
     transaction_cap: usize,
@@ -1547,6 +1727,7 @@ impl SemanticsProjection {
             network_atlas: None,
             network_roster: None,
             script_registry: None,
+            producer_ledger: None,
             next_sequence: 0,
             cell_cap: 512,
             transaction_cap: 2048,
@@ -1611,6 +1792,7 @@ impl SemanticsProjection {
         self.network_atlas = None;
         self.network_roster = None;
         self.script_registry = None;
+        self.producer_ledger = None;
     }
 
     fn invalidate_source_anchor(&mut self, message: &str) -> Option<SemanticsDelta> {
@@ -1672,6 +1854,7 @@ impl Projection for SemanticsProjection {
             network_atlas: self.network_atlas.clone(),
             network_roster: self.network_roster.clone(),
             script_registry: self.script_registry.clone(),
+            producer_ledger: self.producer_ledger.clone(),
         }
     }
 
@@ -1757,6 +1940,14 @@ impl Projection for SemanticsProjection {
                 {
                     self.script_registry = None;
                 }
+                // `producer_ledger` is deliberately NOT dropped here, and it
+                // is the only aggregate that is not. Every record above is cut
+                // on its own `as_of`; the ledger has none, because it counts
+                // seven days that closed before this reorg's blocks were
+                // mined. Dropping it would throw a week of history away over a
+                // fork that did not touch any of it — and, on the ledger's
+                // 120 s cadence, would leave the POW cohorts back on the
+                // 240-block window for up to two minutes each time.
                 let mut deltas = vec![SemanticsDelta::Prune {
                     from_block: *from_block,
                 }];
@@ -1934,6 +2125,24 @@ impl EnrichmentProjection for SemanticsProjection {
             EnrichmentEvent::NetworkRosterClear => {
                 self.network_roster = None;
                 vec![SemanticsDelta::NetworkRosterClear]
+            }
+            EnrichmentEvent::ProducerLedgerReplace { ledger } => {
+                // The plain `ChainAggregate` rule, not the roster's stricter
+                // one: sixteen rows are cheap enough to compare by content,
+                // and the content is what moves — the chart turns over once a
+                // day, and a balance moves with every payout. No floor
+                // underneath it, so a week that says the same thing stays off
+                // the wire entirely (see the impl for why nothing ages it).
+                if !accept_refresh(&mut self.producer_ledger, ledger) {
+                    return Vec::new();
+                }
+                vec![SemanticsDelta::ProducerLedgerReplace {
+                    producer_ledger: ledger.clone(),
+                }]
+            }
+            EnrichmentEvent::ProducerLedgerClear => {
+                self.producer_ledger = None;
+                vec![SemanticsDelta::ProducerLedgerClear]
             }
             EnrichmentEvent::ScriptRegistryReplace(script_registry) => {
                 if !accept_refresh(&mut self.script_registry, script_registry.as_ref()) {
@@ -2260,9 +2469,11 @@ mod tests {
         }
     }
 
-    /// The same answer, asked again at `at_ms`. Every aggregate spells its
-    /// fetch clock `updated_at_ms`, which is the whole reason a re-fetch of
-    /// an unchanged fact is not automatically an unchanged record.
+    /// The same answer, asked again at `at_ms`. Every aggregate this is used
+    /// on spells its fetch clock `updated_at_ms`, which is the whole reason a
+    /// re-fetch of an unchanged fact is not automatically an unchanged record.
+    /// ([`ProducerLedger`] spells it `fetched_at_ms` and is re-stamped by
+    /// hand below, because it carries no anchor for the macro to adopt.)
     macro_rules! restamped {
         ($record:expr, $at_ms:expr) => {{
             let mut record = $record;
@@ -2589,6 +2800,242 @@ mod tests {
             projection.snapshot().network_roster,
             Some(network_roster(11, 7))
         );
+    }
+
+    /// The live top miner's row, measured on 2026-09-02: 41,824 of 67,800
+    /// blocks over the seven complete days ckbadger reports, and a balance
+    /// that does not fit a JS number.
+    fn producer_ledger(tip: u64, at_ms: u64, blocks: u64) -> ProducerLedger {
+        ProducerLedger {
+            window_days: 7,
+            from_date: "2026-08-26".into(),
+            to_date: "2026-09-01".into(),
+            total_blocks: 67_800,
+            fetched_at_ms: at_ms,
+            indexed_tip: tip,
+            rows: vec![ProducerLedgerRow {
+                key: "0xfc20a8c81a461efaf91585c631db784749d066f709d30243095efda7a7fdcfd9".into(),
+                address: Some("ckb1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsq0tpsqq08mkay9ewrfrdwlcghv62qw704s93hhsj".into()),
+                blocks,
+                balance_shannons: Some("9820183392640200".into()),
+                live_cells: Some(155_450),
+                tx_count: Some(4_094_449),
+                last_reward_shannons: Some("71011833086".into()),
+                last_reward_block: Some(20_336_589),
+            }],
+        }
+    }
+
+    /// The wire's own spelling, and the absences that go with it. Every
+    /// optional on the row is a lookup that can fail on its own, so a row
+    /// missing one must emit NO KEY for it — `null` and absent read the same
+    /// in JS but not in a `serde` round-trip, and a build that predates the
+    /// field has to keep loading.
+    #[test]
+    fn a_producer_ledger_writes_snake_case_and_omits_what_it_does_not_know() {
+        let mut ledger = producer_ledger(20_336_601, 1_700_000_000_012, 41_824);
+        ledger.rows.push(ProducerLedgerRow {
+            key: "0x6aa42538dd2de2ba4d022c7fdc92d35e760331a9d0f9992a03d2550e82cb7bc2".into(),
+            address: None,
+            blocks: 2,
+            balance_shannons: None,
+            live_cells: None,
+            tx_count: None,
+            last_reward_shannons: None,
+            last_reward_block: None,
+        });
+
+        let json = serde_json::to_value(&ledger).expect("serialize");
+        assert_eq!(json["window_days"], 7);
+        assert_eq!(json["from_date"], "2026-08-26");
+        assert_eq!(json["to_date"], "2026-09-01");
+        assert_eq!(json["total_blocks"], 67_800);
+        assert_eq!(json["indexed_tip"], 20_336_601u64);
+        assert_eq!(json["fetched_at_ms"], 1_700_000_000_012u64);
+
+        // The balance is a STRING on the wire and stays one, because
+        // 9,820,183,392,640,200 is past `Number.MAX_SAFE_INTEGER` and a
+        // `number` twin would round the tail off a figure the HUD prints.
+        let full = &json["rows"][0];
+        assert_eq!(full["balance_shannons"], "9820183392640200");
+        assert!(full["balance_shannons"].is_string());
+        assert!(
+            full["balance_shannons"]
+                .as_str()
+                .expect("string")
+                .parse::<u64>()
+                .expect("decimal shannons")
+                > 9_007_199_254_740_991,
+            "the fixture balance has to be past 2^53-1 or it pins nothing"
+        );
+        assert_eq!(full["live_cells"], 155_450);
+        assert_eq!(full["tx_count"], 4_094_449);
+        assert_eq!(full["last_reward_shannons"], "71011833086");
+        assert_eq!(full["last_reward_block"], 20_336_589u64);
+        // No share on the wire, ever: a share states its window where it is
+        // printed, and upstream's own `percentage` string is deliberately not
+        // declared anywhere in this record.
+        assert!(full.get("share").is_none());
+        assert!(full.get("percentage").is_none());
+
+        let bare = &json["rows"][1];
+        assert_eq!(
+            bare["key"],
+            "0x6aa42538dd2de2ba4d022c7fdc92d35e760331a9d0f9992a03d2550e82cb7bc2"
+        );
+        assert_eq!(bare["blocks"], 2);
+        for absent in [
+            "address",
+            "balance_shannons",
+            "live_cells",
+            "tx_count",
+            "last_reward_shannons",
+            "last_reward_block",
+        ] {
+            assert!(
+                bare.get(absent).is_none(),
+                "{absent} is absent, not null: an address lookup that failed \
+                 must not read as a zero balance"
+            );
+        }
+
+        assert_eq!(
+            serde_json::from_value::<ProducerLedger>(json).expect("round-trip"),
+            ledger
+        );
+    }
+
+    /// A frame written before the row grew its optional fields still loads:
+    /// every one of them is `#[serde(default)]`, so an older server (or an
+    /// older persisted frame) deserialises to absence rather than failing.
+    #[test]
+    fn a_ledger_row_from_before_the_optionals_still_loads() {
+        let row: ProducerLedgerRow = serde_json::from_value(serde_json::json!({
+            "key": "0xfc20a8c8",
+            "blocks": 41_824,
+        }))
+        .expect("a row is a key and a count");
+
+        assert_eq!(row.blocks, 41_824);
+        assert_eq!(row.address, None);
+        assert_eq!(row.balance_shannons, None);
+        assert_eq!(row.last_reward_block, None);
+    }
+
+    /// The delta carries the `type` tag every other semantics delta carries,
+    /// under the record's own name.
+    #[test]
+    fn the_producer_ledger_deltas_are_tagged_like_their_neighbours() {
+        let replace = serde_json::to_value(SemanticsDelta::ProducerLedgerReplace {
+            producer_ledger: producer_ledger(100, 1_700_000_000_012, 41_824),
+        })
+        .expect("serialize");
+        assert_eq!(replace["type"], "producer_ledger_replace");
+        assert_eq!(replace["producer_ledger"]["total_blocks"], 67_800);
+
+        let clear = serde_json::to_value(SemanticsDelta::ProducerLedgerClear).expect("serialize");
+        assert_eq!(clear["type"], "producer_ledger_clear");
+        assert_eq!(clear.as_object().expect("object").len(), 1);
+    }
+
+    /// The ledger folds into the projection the way every other aggregate
+    /// does: the first answer is news, the same answer re-fetched is not, and
+    /// a moved balance is.
+    #[test]
+    fn a_ledger_that_says_what_the_last_one_said_is_not_news() {
+        let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
+        let first = producer_ledger(100, 1_700_000_000_012, 41_824);
+        let deltas = projection.apply_enrichment(&EnrichmentEvent::ProducerLedgerReplace {
+            ledger: first.clone(),
+        });
+        assert!(matches!(
+            deltas[0],
+            SemanticsDelta::ProducerLedgerReplace { .. }
+        ));
+        assert_eq!(projection.snapshot().producer_ledger, Some(first.clone()));
+
+        // A later fetch against a higher tip, same seven days, same rows.
+        // Nothing about the week moved, so nothing walks the replay ring —
+        // and the held copy keeps the stamp it was actually published at.
+        let deltas = projection.apply_enrichment(&EnrichmentEvent::ProducerLedgerReplace {
+            ledger: producer_ledger(400, 1_700_000_600_000, 41_824),
+        });
+        assert!(deltas.is_empty());
+        assert_eq!(projection.snapshot().producer_ledger, Some(first));
+
+        // A block moved between producers: content, and therefore news.
+        let moved = producer_ledger(400, 1_700_000_600_000, 41_825);
+        let deltas = projection.apply_enrichment(&EnrichmentEvent::ProducerLedgerReplace {
+            ledger: moved.clone(),
+        });
+        assert!(matches!(
+            deltas[0],
+            SemanticsDelta::ProducerLedgerReplace { .. }
+        ));
+        assert_eq!(projection.snapshot().producer_ledger, Some(moved));
+    }
+
+    /// ⭐ THE ONE AGGREGATE A REORG DOES NOT TAKE, and the reason it carries
+    /// no anchor. The seven days it counts closed before the reorged blocks
+    /// were mined; dropping it would put the POW cohorts back on the
+    /// 240-block window — which the same reorg has just emptied — for a whole
+    /// refresh period, over a fork that touched none of it.
+    #[test]
+    fn a_producer_ledger_outlives_the_reorg_that_takes_every_anchored_record() {
+        let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
+        let ledger = producer_ledger(10, 1_700_000_000_012, 41_824);
+        projection.apply_enrichment(&EnrichmentEvent::ProducerLedgerReplace {
+            ledger: ledger.clone(),
+        });
+        projection.apply_enrichment(&EnrichmentEvent::CensusReplace(census(10)));
+
+        projection.apply_mutation(&Mutation::ChainReorganized { from_block: 10 });
+
+        assert!(projection.snapshot().census.is_none());
+        assert_eq!(projection.snapshot().producer_ledger, Some(ledger));
+    }
+
+    /// 404 is absence, not a fault: the clear takes the ledger and leaves
+    /// every record beside it standing, so the UI falls back to the window
+    /// rather than losing a panel.
+    #[test]
+    fn the_ledger_clear_retires_the_ledger_and_nothing_else() {
+        let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
+        projection.apply_enrichment(&EnrichmentEvent::ProducerLedgerReplace {
+            ledger: producer_ledger(10, 1_700_000_000_012, 41_824),
+        });
+        projection.apply_enrichment(&EnrichmentEvent::AssetEcosystemReplace(ecosystem(10)));
+
+        let deltas = projection.apply_enrichment(&EnrichmentEvent::ProducerLedgerClear);
+
+        assert!(projection.snapshot().producer_ledger.is_none());
+        assert!(projection.snapshot().asset_ecosystem.is_some());
+        assert!(matches!(deltas[0], SemanticsDelta::ProducerLedgerClear));
+    }
+
+    /// A rebuild empties every record slot, this one included, and the next
+    /// refresh republishes — the same property the roster's own gate has, and
+    /// the reason the content gate lives in the projection rather than in the
+    /// source: only this layer knows whether its copy still exists.
+    #[test]
+    fn a_ledger_a_rebuild_dropped_is_published_again_unchanged() {
+        let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
+        let ledger = producer_ledger(10, 1_700_000_000_012, 41_824);
+        projection.apply_enrichment(&EnrichmentEvent::ProducerLedgerReplace {
+            ledger: ledger.clone(),
+        });
+        projection.apply_mutation(&Mutation::ChainRebuild { from_block: 0 });
+        assert!(projection.snapshot().producer_ledger.is_none());
+
+        let deltas = projection.apply_enrichment(&EnrichmentEvent::ProducerLedgerReplace {
+            ledger: ledger.clone(),
+        });
+
+        assert!(matches!(
+            deltas[0],
+            SemanticsDelta::ProducerLedgerReplace { .. }
+        ));
+        assert_eq!(projection.snapshot().producer_ledger, Some(ledger));
     }
 
     #[test]

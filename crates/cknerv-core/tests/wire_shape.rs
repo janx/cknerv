@@ -16,8 +16,9 @@ use cknerv_core::{
     AssetKind, Cell, CellDelta, CellGalaxySnapshot, CellLinkEndpointAnchor, Chain, ChainAnchor,
     DisplayMode, DisplayProvenance, LockKind, Mutation, NetworkRosterRecord, OutPoint,
     PeerAdvertisedEvidence, PeerProbeResult, PeerSightingAbsence, PeerSightingLookup,
-    PeerSightingRecord, ReplayPhase, RosterNode, RosterNodeState, ScriptCensus, ScriptCount,
-    ScriptId, ScriptNameRecord, ScriptRegistryRecord, SemanticsDelta, SemanticsSnapshot,
+    PeerSightingRecord, ProducerLedger, ProducerLedgerRow, ReplayPhase, RosterNode,
+    RosterNodeState, ScriptCensus, ScriptCount, ScriptId, ScriptNameRecord, ScriptRegistryRecord,
+    SemanticsDelta, SemanticsSnapshot,
 };
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -598,6 +599,8 @@ fn semantics_delta_variant(delta: &SemanticsDelta) -> &'static str {
         SemanticsDelta::NetworkAtlasClear => "network_atlas_clear",
         SemanticsDelta::NetworkRosterReplace { .. } => "network_roster_replace",
         SemanticsDelta::NetworkRosterClear => "network_roster_clear",
+        SemanticsDelta::ProducerLedgerReplace { .. } => "producer_ledger_replace",
+        SemanticsDelta::ProducerLedgerClear => "producer_ledger_clear",
         SemanticsDelta::ScriptRegistryReplace { .. } => "script_registry_replace",
         SemanticsDelta::Prune { .. } => "prune",
         SemanticsDelta::Clear => "clear",
@@ -642,6 +645,71 @@ fn enrichment_script_registry() -> ScriptRegistryRecord {
 }
 
 /// The bounded sample of crawler-known nodes the scene may stage — the other
+/// The POW cohort ledger, as the live service answered on 2026-09-02.
+///
+/// The window figures are real — 7 complete UTC+8 days, 2026-08-26 to
+/// 2026-09-01, 67,800 attributed blocks — and so are the two producers: the
+/// top miner's lock hash, its `ckb1…` payout address, its 41,824 blocks, its
+/// balance, its live cells and its transaction count, plus the reward one
+/// sampled block actually paid it. Nothing here is a plausible-looking
+/// invention, because the shapes a browser has to parse are the shapes this
+/// service emits.
+///
+/// The two rows are the two shapes, and the second is the point of the pair.
+/// The chart answers for every producer in one request; every optional below
+/// `blocks` comes from a SEPARATE per-address request that can fail on its
+/// own. So one row carries everything a successful lookup gives, and the other
+/// carries a key and a count and nothing else — a producer whose address the
+/// source would not resolve. A reader that cannot tell those apart will print
+/// `0 CKB` over a balance nobody read.
+///
+/// ⚠️ `balance_shannons` is 9,820,183,392,640,200 — past
+/// `Number.MAX_SAFE_INTEGER` (9,007,199,254,740,991) — and the TS twin asserts
+/// exactly that, because a fixture whose balance fit in a double would pin
+/// nothing about the decision to ship it as a string.
+///
+/// The clocks and the tip are this file's own scheme rather than mainnet's,
+/// the same way `dao_state.statistics_block` is 99 beside a real mainnet
+/// epoch: the fixture's chain stands at block 100, so the sampled reward is
+/// dated inside it.
+fn enrichment_producer_ledger() -> ProducerLedger {
+    ProducerLedger {
+        window_days: 7,
+        from_date: "2026-08-26".to_string(),
+        to_date: "2026-09-01".to_string(),
+        total_blocks: 67_800,
+        fetched_at_ms: 1_700_000_000_012,
+        indexed_tip: 100,
+        rows: vec![
+            ProducerLedgerRow {
+                key: "0xfc20a8c81a461efaf91585c631db784749d066f709d30243095efda7a7fdcfd9"
+                    .to_string(),
+                address: Some(
+                    "ckb1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsq0tpsqq08mkay9ewrfrdwlcghv62qw704s93hhsj"
+                        .to_string(),
+                ),
+                blocks: 41_824,
+                balance_shannons: Some("9820183392640200".to_string()),
+                live_cells: Some(155_450),
+                tx_count: Some(4_094_449),
+                last_reward_shannons: Some("71011833086".to_string()),
+                last_reward_block: Some(88),
+            },
+            ProducerLedgerRow {
+                key: "0x6aa42538dd2de2ba4d022c7fdc92d35e760331a9d0f9992a03d2550e82cb7bc2"
+                    .to_string(),
+                address: None,
+                blocks: 2,
+                balance_shannons: None,
+                live_cells: None,
+                tx_count: None,
+                last_reward_shannons: None,
+                last_reward_block: None,
+            },
+        ],
+    }
+}
+
 /// half of the crawler's answer, and the honesty line this file exists to
 /// hold. Every identity here is real: the ids are base58, the same vocabulary
 /// the local node's peer list and `/api/enrichment/peers/:node_id` speak, so a
@@ -852,6 +920,7 @@ fn enrichment_samples() -> EnrichmentSamples {
         .unwrap_or_else(|e| panic!("deserialize SemanticsSnapshot: {e}"));
     snapshot.script_registry = Some(enrichment_script_registry());
     snapshot.network_roster = Some(enrichment_network_roster(enrichment_roster_nodes(), true));
+    snapshot.producer_ledger = Some(enrichment_producer_ledger());
 
     let mut deltas: BTreeMap<&'static str, SemanticsDelta> = BTreeMap::new();
     deltas.insert(
@@ -968,6 +1037,20 @@ fn enrichment_samples() -> EnrichmentSamples {
     );
     deltas.insert("network_roster_clear", SemanticsDelta::NetworkRosterClear);
     deltas.insert(
+        "producer_ledger_replace",
+        SemanticsDelta::ProducerLedgerReplace {
+            producer_ledger: snapshot
+                .producer_ledger
+                .clone()
+                .expect("fixture producer ledger"),
+        },
+    );
+    // The source has no ledger to give — a 404 on the chart route, which is
+    // absence and not a fault. Fixtured beside the replace because the client
+    // answers it by falling back to the 240-block window rather than by
+    // emptying a panel.
+    deltas.insert("producer_ledger_clear", SemanticsDelta::ProducerLedgerClear);
+    deltas.insert(
         "script_registry_replace",
         SemanticsDelta::ScriptRegistryReplace {
             script_registry: Box::new(enrichment_script_registry()),
@@ -1037,6 +1120,49 @@ fn enrichment_samples_cover_every_peer_absence_reason() {
     );
 }
 
+/// ⚠️ The half of the ledger's contract that no type can state, pinned on
+/// both sides of the wire (`packages/types/__tests__/wire_shape.test.ts` reads
+/// the same bytes with `BigInt`).
+///
+/// The balance is a decimal STRING carrying a value a JS `number` cannot hold.
+/// If the fixture's figure ever drops under 2^53-1 the sample stops being
+/// evidence of anything — every assertion about it would keep passing with a
+/// `number` twin that silently rounds — so the magnitude is asserted here
+/// rather than assumed from the field's type.
+#[test]
+fn the_fixture_ledger_states_a_balance_no_double_could_hold() {
+    let samples = fixture("enrichment_samples.json");
+    let ledger = &samples["snapshot"]["producer_ledger"];
+    assert_eq!(ledger["total_blocks"], 67_800);
+    assert_eq!(ledger["window_days"], 7);
+
+    let balance = &ledger["rows"][0]["balance_shannons"];
+    assert!(
+        balance.is_string(),
+        "the balance rides the wire as a string"
+    );
+    assert!(
+        balance
+            .as_str()
+            .expect("string")
+            .parse::<u128>()
+            .expect("decimal shannons")
+            > 9_007_199_254_740_991,
+        "the sampled balance has to be past Number.MAX_SAFE_INTEGER, or the \
+         fixture proves nothing about why this field is not a number"
+    );
+
+    // The second row is the one with nothing but a key and a count: the
+    // producer whose address lookup the source did not answer. Absent keys,
+    // not nulls — the difference the browser reads as "unknown" rather than
+    // "zero".
+    let bare = &ledger["rows"][1];
+    for absent in ["address", "balance_shannons", "live_cells", "tx_count"] {
+        assert!(bare.get(absent).is_none(), "{absent} should be absent");
+    }
+    assert_eq!(bare["blocks"], 2);
+}
+
 #[test]
 fn enrichment_samples_cover_every_delta_variant() {
     let covered: std::collections::BTreeSet<&str> = enrichment_samples()
@@ -1059,6 +1185,8 @@ fn enrichment_samples_cover_every_delta_variant() {
             "network_atlas_replace",
             "network_roster_clear",
             "network_roster_replace",
+            "producer_ledger_clear",
+            "producer_ledger_replace",
             "protocol_era_replace",
             "prune",
             "script_registry_replace",

@@ -694,6 +694,109 @@ export type PeerSightingLookup =
       advertised?: PeerAdvertisedEvidence;
     };
 
+/** One producer's row in the ledger: who it is, how much of the window it
+ * took, and where the reward landed.
+ *
+ * ⭐ EVERY OPTIONAL HERE IS A SEPARATE LOOKUP THAT MAY HAVE FAILED. The window
+ * figures (`key`, `blocks`) come from one request that either answered for
+ * every row or produced no ledger at all; everything below them comes from a
+ * per-address request made afterwards, one per row. A row whose lookup failed
+ * keeps its window figures and leaves the rest ABSENT rather than dropping out
+ * of the ledger — so absent means "not looked up, or looked up and refused",
+ * never "zero", and a reader that prints `0 CKB` over the first has stated
+ * something the source did not. */
+export interface ProducerLedgerRow {
+  /** The producer identity, and deliberately the SAME string as
+   * `BlockProducer.key`: cknerv names a producer by the hash of its cellbase
+   * witness lock script, and the source keys its miner records by that same
+   * hash. That exact join is why this record can exist at all — nothing here
+   * is matched by name, address or heuristic. */
+  key: string;
+  /** The payout address the source resolved this lock to, in the `ckb1…`
+   * encoding it answers with. Absent when the source resolved none: an
+   * address is a rendering of a script under a network prefix, and a
+   * dashboard minting one from a hash would be inventing an identity rather
+   * than reporting it. */
+  address?: string;
+  /** Blocks this producer took inside the ledger's window — the numerator of
+   * its share, whose denominator is `ProducerLedger.total_blocks`. */
+  blocks: number;
+  /** What the payout address holds, in shannons, as a DECIMAL STRING.
+   *
+   * ⚠️ A STRING BECAUSE IT DOES NOT FIT A `number`, and that is measured
+   * rather than feared: the live top miner held 9,820,183,392,640,200
+   * shannons on 2026-09-02 against a `Number.MAX_SAFE_INTEGER` of
+   * 9,007,199,254,740,991. Read it with `BigInt`; `Number(balance)` silently
+   * rounds the tail off a figure the HUD then prints, and this repo has
+   * already paid once for a 32-bit truncation. */
+  balance_shannons?: string;
+  /** How many live cells the payout address holds — the link between the two
+   * worlds the scene draws: those cells are in the canopy, this producer is
+   * under the membrane. */
+  live_cells?: number;
+  tx_count?: number;
+  /** One sampled cellbase payout to this producer, in shannons, as a decimal
+   * string for the same reason the balance is one.
+   *
+   * OPPORTUNISTIC, AND NOT A STREAM: a refresh samples one block, so at most
+   * one row carries this. Absent says "this refresh did not sample this
+   * producer", never "this producer was not paid". */
+  last_reward_shannons?: string;
+  /** The block `last_reward_shannons` was read from, so the sample dates
+   * itself. The two are absent together or present together. */
+  last_reward_block?: number;
+}
+
+/** What the indexer knows about who has been producing blocks, over a window
+ * far wider than the one the canonical stream can hold.
+ *
+ * `Chain.producer_window` is RECENCY — 240 attributed blocks, ~32 minutes,
+ * cleared by every reorg and every rebuild, and empty for the first minute of
+ * a boot. This is SIZE: seven complete days, warm from the first frame, and
+ * untouched by a reorg because the days it names are already closed. The two
+ * do not replace each other and never merge; both print, and each states its
+ * own window, because "62% of a week" and "60% of the last five blocks" are
+ * different sentences about different things.
+ *
+ * ⭐ SHARE IS NOT A FIELD, AND THAT IS THE POINT. `blocks / total_blocks` is
+ * computed wherever it is printed, never carried — the same rule
+ * `BlockProducer.blocks` follows, and for the same reason: a share that
+ * travels without its denominator is a number a consumer can restate against
+ * the wrong window without noticing. The source does ship a percentage of its
+ * own; this record deliberately does not declare it, so there is exactly one
+ * place a share can be computed and exactly one window it can be computed
+ * over.
+ *
+ * Rows arrive ordered blocks-descending then key-ascending, so the same answer
+ * stages as the same list refresh after refresh.
+ *
+ * It carries no `ChainAnchor`, unlike every other aggregate here: a seven-day
+ * total over completed days is not a statement about the tip, so anchoring it
+ * would let a three-block reorg discard a week of history the reorg did not
+ * touch. `indexed_tip` dates the answer without claiming a block for it. */
+export interface ProducerLedger {
+  /** How many complete days the window spans. Stated rather than derived from
+   * the dates, because it is the source's own framing of the answer. */
+  window_days: number;
+  /** The window's first and last day, as `YYYY-MM-DD` in the source's own
+   * calendar (UTC+8, and the last COMPLETE day — never today). Carried
+   * verbatim rather than parsed into a clock: they are what the HUD prints
+   * beside the share so a reader knows which week it is looking at. */
+  from_date: string;
+  to_date: string;
+  /** Every attributed block in the window — the denominator of every share in
+   * `rows`, and never `sum(rows.blocks)`, which is smaller whenever the row
+   * cap has cut a tail off. */
+  total_blocks: number;
+  /** When this ledger was fetched. Nothing ages the ledger against it: the
+   * record states its own window instead of a staleness verdict. */
+  fetched_at_ms: number;
+  /** How far the source had indexed when it answered. Freshness, not content,
+   * and not an anchor — see the note on the interface. */
+  indexed_tip: number;
+  rows: ProducerLedgerRow[];
+}
+
 export interface SemanticsSnapshot {
   source: EnrichmentSourceStatus;
   cells: CellSemanticRecord[];
@@ -708,6 +811,17 @@ export interface SemanticsSnapshot {
   network_atlas?: NetworkAtlasRecord;
   network_roster?: NetworkRosterRecord;
   script_registry?: ScriptRegistryRecord;
+  /** Absent when no source declares the capability, when its route answers
+   * 404, and on every server that predates the field — all three of which a
+   * consumer answers the same way, by falling back to `Chain.producer_window`.
+   *
+   * ⚠️ The `producer_ledger_replace` / `producer_ledger_clear` deltas that
+   * refresh this slot are not in `SemanticsDelta` yet. They land with the
+   * reducer arm that folds them: `semanticsReducer.ts` ends its switch on a
+   * `never` binding, so a union arm with no arm beside it in the reducer does
+   * not compile, and the two are one change rather than two. Until then this
+   * slot is filled by the snapshot alone. */
+  producer_ledger?: ProducerLedger;
 }
 
 export type SemanticsDelta =

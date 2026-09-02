@@ -619,6 +619,30 @@
         }
       ],
       "unresolved": 8
+    },
+    "producer_ledger": {
+      "window_days": 7,
+      "from_date": "2026-08-26",
+      "to_date": "2026-09-01",
+      "total_blocks": 67800,
+      "fetched_at_ms": 1700000000012,
+      "indexed_tip": 100,
+      "rows": [
+        {
+          "key": "0xfc20a8c81a461efaf91585c631db784749d066f709d30243095efda7a7fdcfd9",
+          "address": "ckb1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsq0tpsqq08mkay9ewrfrdwlcghv62qw704s93hhsj",
+          "blocks": 41824,
+          "balance_shannons": "9820183392640200",
+          "live_cells": 155450,
+          "tx_count": 4094449,
+          "last_reward_shannons": "71011833086",
+          "last_reward_block": 88
+        },
+        {
+          "key": "0x6aa42538dd2de2ba4d022c7fdc92d35e760331a9d0f9992a03d2550e82cb7bc2",
+          "blocks": 2
+        }
+      ]
     }
   },
   "deltas": {
@@ -1095,6 +1119,36 @@
         "crawl_round": 7,
         "truncated": false,
         "entries": []
+      }
+    },
+    "producer_ledger_clear": {
+      "type": "producer_ledger_clear"
+    },
+    "producer_ledger_replace": {
+      "type": "producer_ledger_replace",
+      "producer_ledger": {
+        "window_days": 7,
+        "from_date": "2026-08-26",
+        "to_date": "2026-09-01",
+        "total_blocks": 67800,
+        "fetched_at_ms": 1700000000012,
+        "indexed_tip": 100,
+        "rows": [
+          {
+            "key": "0xfc20a8c81a461efaf91585c631db784749d066f709d30243095efda7a7fdcfd9",
+            "address": "ckb1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsq0tpsqq08mkay9ewrfrdwlcghv62qw704s93hhsj",
+            "blocks": 41824,
+            "balance_shannons": "9820183392640200",
+            "live_cells": 155450,
+            "tx_count": 4094449,
+            "last_reward_shannons": "71011833086",
+            "last_reward_block": 88
+          },
+          {
+            "key": "0x6aa42538dd2de2ba4d022c7fdc92d35e760331a9d0f9992a03d2550e82cb7bc2",
+            "blocks": 2
+          }
+        ]
       }
     },
     "protocol_era_replace": {

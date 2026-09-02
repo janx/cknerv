@@ -18,6 +18,7 @@ import {
   type ChainEntry,
   type CellGalaxySnapshot,
   type PeerSightingLookup,
+  type ProducerLedgerRow,
   type RosterNode,
   type SemanticsDelta,
   type SemanticsSnapshot,
@@ -569,6 +570,87 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
       expect(emptyRoster.network_roster.entries).toEqual([]);
       expect(emptyRoster.network_roster.crawl_round).toBe(7);
     }
+    // The POW cohort ledger: the other window on the same producers. The
+    // 240-block `Chain.producer_window` is RECENCY and this is SIZE — seven
+    // complete days, warm from the first frame, unaffected by the reorg that
+    // empties the window. Both print; neither replaces the other.
+    const ledger = sample.snapshot.producer_ledger;
+    expect(ledger?.window_days).toBe(7);
+    expect(ledger?.from_date).toBe('2026-08-26');
+    expect(ledger?.to_date).toBe('2026-09-01');
+    expect(ledger?.total_blocks).toBe(67_800);
+    // Rows arrive blocks-descending, so the same answer stages as the same
+    // list refresh after refresh, and the cap never cuts the head off.
+    expect(ledger?.rows.map((row) => row.blocks)).toEqual([41_824, 2]);
+    // ⚠️ THE ASSERTION THE WHOLE FIELD EXISTS FOR. `balance_shannons` is a
+    // decimal STRING carrying a value no double can hold: the live top miner
+    // held 9,820,183,392,640,200 shannons on 2026-09-02 against a
+    // `Number.MAX_SAFE_INTEGER` of 9,007,199,254,740,991. Compared with
+    // `BigInt` on both sides, because `Number(balance)` is the bug — it
+    // returns a number that looks right and is not, and the HUD prints it.
+    const top = ledger?.rows[0];
+    expect(typeof top?.balance_shannons).toBe('string');
+    expect(BigInt(top?.balance_shannons ?? '0')).toBeGreaterThan(
+      BigInt(Number.MAX_SAFE_INTEGER),
+    );
+    expect(top?.balance_shannons).toBe('9820183392640200');
+    // And the proof that reading it as a number is silently lossy, MEASURED
+    // rather than assumed. This particular figure happens to round-trip
+    // through `String(Number(...))` — it is even, and doubles above 2^53 land
+    // on every second integer — which is exactly what makes the field
+    // dangerous: the damage does not show up in the value, it shows up in the
+    // arithmetic. One shannon added to it disappears.
+    const asDouble = Number(top?.balance_shannons);
+    expect(asDouble + 1).toBe(asDouble);
+    expect(BigInt(top?.balance_shannons ?? '0') + 1n).not.toBe(
+      BigInt(top?.balance_shannons ?? '0'),
+    );
+    expect(top?.address?.startsWith('ckb1')).toBe(true);
+    expect(top?.live_cells).toBe(155_450);
+    expect(top?.tx_count).toBe(4_094_449);
+    expect(top?.last_reward_shannons).toBe('71011833086');
+    expect(top?.last_reward_block).toBe(88);
+    // ⭐ Share is never on the wire. `blocks / total_blocks` is computed where
+    // it is printed, so a share can never be restated against a window it was
+    // not measured over — and the source's own percentage string is not
+    // declared anywhere.
+    expect(top).not.toHaveProperty('share');
+    expect(top).not.toHaveProperty('percentage');
+    expect(ledger).not.toHaveProperty('as_of');
+    // ⭐ The row that is the point of the pair. The window figures come from
+    // one request; everything below them comes from a per-address request that
+    // can fail on its own. This producer's address the source would not
+    // resolve, so its optionals are ABSENT — not null, and not zero. A reader
+    // that spelled those the same way would print `0 CKB` over a balance
+    // nobody read.
+    const unresolved = ledger?.rows[1];
+    expect(unresolved?.key).toBe(
+      '0x6aa42538dd2de2ba4d022c7fdc92d35e760331a9d0f9992a03d2550e82cb7bc2',
+    );
+    expect(unresolved?.blocks).toBe(2);
+    for (const absent of [
+      'address',
+      'balance_shannons',
+      'live_cells',
+      'tx_count',
+      'last_reward_shannons',
+      'last_reward_block',
+    ] as const) {
+      expect(unresolved).not.toHaveProperty(absent);
+      expect(unresolved?.[absent]).toBeUndefined();
+    }
+    // ⭐ A pin no runtime assertion can stand in for, the roster's lesson
+    // applied here: every check above reads a fixture that HAS the balance, so
+    // all of them keep passing the day someone types the field as a `number`.
+    // This is a type-level equality — it stops compiling if the balance stops
+    // being a string, and `pnpm typecheck` is what reads it.
+    type BalanceStaysAString =
+      ProducerLedgerRow extends { balance_shannons?: string } ? true : false;
+    const balanceStaysAString: BalanceStaysAString = true;
+    expect(balanceStaysAString).toBe(true);
+    expect(sample.deltas.producer_ledger_replace.type).toBe('producer_ledger_replace');
+    expect(sample.deltas.producer_ledger_clear.type).toBe('producer_ledger_clear');
+
     // Script names are the other half of the cell census's identity join:
     // that side counts `(code_hash, hash_type)` and refuses to name it, this
     // side names it and counts nothing. `unresolved` says how many observed
@@ -616,6 +698,14 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
         'network_atlas_clear',
         'network_roster_replace',
         'network_roster_clear',
+        // On the wire and in the fixture, but deliberately not yet arms of the
+        // TS `SemanticsDelta` union: `semanticsReducer.ts` closes its switch
+        // on a `never` binding, so a union arm and the reducer arm that folds
+        // it are one change. Until that change lands these two reach the
+        // client's default arm and no-op, which is exactly what that arm is
+        // for — and the ledger still arrives, in the snapshot.
+        'producer_ledger_replace',
+        'producer_ledger_clear',
         'script_registry_replace',
         'prune',
         'clear',

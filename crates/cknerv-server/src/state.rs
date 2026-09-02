@@ -705,9 +705,18 @@ fn event_anchor_is_current(event: &EnrichmentEvent, recent_blocks: &[RecentBlock
         EnrichmentEvent::ScriptRegistryReplace(script_registry) => Some(&script_registry.as_of),
         EnrichmentEvent::GalaxyCompositionReplace(composition) => Some(&composition.as_of),
         EnrichmentEvent::GalaxyCompositionTopUp(top_up) => Some(&top_up.as_of),
+        // The producer ledger is the one REPLACE that belongs here rather
+        // than above. Every record with an anchor is checked against the
+        // retained canonical evidence so a reorg cannot leave a stale one
+        // standing; the ledger has no anchor to check, on purpose — it counts
+        // seven days that closed before any reorg this window could see, so
+        // the tip it was fetched against (`indexed_tip`) dates the answer
+        // without claiming a block for it.
         EnrichmentEvent::SourceStatus(_)
         | EnrichmentEvent::NetworkAtlasClear
         | EnrichmentEvent::NetworkRosterClear
+        | EnrichmentEvent::ProducerLedgerReplace { .. }
+        | EnrichmentEvent::ProducerLedgerClear
         | EnrichmentEvent::Clear => None,
     };
     anchor.is_none_or(|anchor| {
