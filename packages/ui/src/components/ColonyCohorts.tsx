@@ -82,7 +82,8 @@
 //     attested node, carrying its placement and a stable per-cohort seed so no
 //     two apertures breathe on the same beat;
 //   • the live SHARE, which moves on every attributed block and must never be
-//     allowed to move the geometry with it;
+//     allowed to move the geometry with it — and its MAXIMUM, because the
+//     patch's factor is a ratio and only this layer sees every instance;
 //   • the GULP lane, `aGulp` — the sim second of the block each cohort won,
 //     which is what makes the mouth swallow; stamped off the pulse below and
 //     held against the NODE ID in `wonAtRef`, so a re-plan carries a win with
@@ -107,13 +108,28 @@
 // `uTime` is a float32 uniform on the other side of the same subtraction, so
 // the lane is never coarser than the number it is compared against.
 //
-// ⚠️ THE SHARE LANE IS DORMANT, AND DELIBERATELY SO. Neither aperture program
-// declares `aShare`: share means RATE on this layer, and the aperture has no
-// rate a share could drive that survives the grain's own prefilter (see
-// `COHORT_FACE_DRIFT`). It is written but NOT bound to the geometry, because
-// binding an attribute no program declares would tell the next reader that
-// something consumes it. `aGulp` IS bound, because the face really does declare
-// it — which is the whole difference between the two.
+// ⭐⭐⭐ THE SHARE LANE DRIVES THE MIST'S SINK, AND ONLY THE MIST'S SINK. Since
+// 2026-09-02 the PATCH declares `aShare` and turns it into one per-instance
+// factor (`mistShareFactor`) that scales the sink strength `uK` and the pile
+// `uConc`, so a cohort holding 62 % of its window drinks at the full k and one
+// holding 2 % creeps in at `cohortShareFloor` × k. That is the third lane bound
+// onto `patchGeometry` and it is the SAME `InstancedBufferAttribute` OBJECT the
+// walk below writes — one wrapper, one GL buffer, exactly as `aGulp` is.
+//
+// ⚠️ AND THE VALUE IN IT IS THE WEEK WHEN THERE IS A WEEK: `ledger.share` if
+// the indexer named this producer over its seven days, else `share`, the
+// 240-block ring's. The two are shares of DIFFERENT windows and are never mixed
+// — each standing carries its own denominator — so what the lane holds is
+// "this cohort's fraction of whichever window it was measured against", which
+// is the quantity a rate wants. A ring that a reorg has just emptied therefore
+// stops making every cohort look equal.
+//
+// ⚠️ NEITHER APERTURE PROGRAM DECLARES `aShare`, and that stays true. Share
+// means RATE, the mark has no rate a share could drive that survives the
+// grain's own prefilter (see `COHORT_FACE_DRIFT` and `colonyCohort.ts`'s face
+// factory), and the mist does — it is a sink whose k is measured in wu²/s. So
+// the lane is bound to ONE of the three geometries and to nothing else, and the
+// aura does not read it any more than the face does.
 //
 // ⭐⭐⭐ IT TAKES NO SHOCKWAVE AND NO FLOOD, AND EXACTLY ONE STRING OF THE
 // PULSE. The two absences and the one presence are the same argument, and the
@@ -281,26 +297,49 @@ export interface ProducerSharesRef {
   readonly current: readonly ProducerStanding[] | null;
 }
 
-/** Fill the share lane: one entry per staged mark, looked up by payout key.
+/** Fill the share lane: one entry per staged mark, looked up by payout key —
+ *  and return the LARGEST share it wrote, which is the patch's `uShareMax`.
  *
  *  A cohort the view has dropped keeps its slot at zero rather than losing it:
  *  its node is still standing, and the next topology rebuild retires both.
  *  Pure, so the lane's contents can be pinned without a renderer.
  *
- *  ⚠️ NOTHING READS THE LANE TODAY — see the file header. It is kept written
- *  and kept tested so the deferred 汲取 work inherits a correct in-place lane
- *  rather than a rebuilt one, and the layer says out loud that it is dormant
- *  rather than letting a reader infer a consumer that does not exist. */
+ *  ⭐⭐ THE MIST'S PATCH READS THIS LANE (`aShare`), and what it spends it on
+ *  is a RATE: the factor `mistShareFactor` scales the sink's `k` and the pile
+ *  at the lip, so the busiest cohort in view drinks at the full strength and
+ *  every other in proportion. Neither aperture program declares it — see the
+ *  file header — so this is the layer's one share consumer.
+ *
+ *  ⭐⭐ THE WEEK WHEN THERE IS A WEEK. `ledger.share` is this producer's
+ *  fraction of the indexer's seven complete days; `share` is its fraction of
+ *  the 240-block ring. They are shares of DIFFERENT windows and are never
+ *  mixed, which is why this reads one or the other rather than combining them:
+ *  each standing carries the denominator its own numerator was counted against
+ *  (`blockProducers.derive`), and the ring is empty for the first minute of
+ *  every boot and after every reorg — exactly when a rate driven off it would
+ *  say every cohort is equal.
+ *
+ *  ⚠️ THE MAXIMUM COMES OUT OF THE SAME WALK, so the lane and the number the
+ *  shader divides by cannot disagree. It is 1 when nothing positive was
+ *  written — no marks, no window, or a window in which every staged cohort
+ *  holds nothing — which puts every factor at the floor, the honest reading of
+ *  "no cohort here is taking anything". */
 export function cohortShareLane(
   marks: readonly CohortMark[],
   producers: readonly ProducerStanding[] | null | undefined,
   share: Float32Array,
-): void {
+): number {
   const shareByKey = new Map<string, number>();
-  for (const producer of producers ?? []) shareByKey.set(producer.key, producer.share);
+  for (const producer of producers ?? []) {
+    shareByKey.set(producer.key, producer.ledger?.share ?? producer.share);
+  }
+  let max = 0;
   marks.forEach((mark, index) => {
-    share[index] = shareByKey.get(mark.producerKey) ?? 0;
+    const value = shareByKey.get(mark.producerKey) ?? 0;
+    share[index] = value;
+    if (value > max) max = value;
   });
+  return max > 0 ? max : 1;
 }
 
 /** Lay the GULP lane out under a plan: one entry per staged mark, each the sim
@@ -392,7 +431,9 @@ export default function ColonyCohorts({
    *  read once a frame, so the window can move once a block without a React
    *  render anywhere in the colony — see `ProducerSharesRef`.
    *
-   *  ⚠️ It reaches no shader today; see the file header on the dormant lane. */
+   *  ⭐ It reaches ONE shader: the mist's patch, whose sink strength and pile
+   *  scale with the cohort's share of its window (`aShare`). The two aperture
+   *  programs still refuse it — see the file header. */
   producersRef?: ProducerSharesRef | null;
   /** ⭐⭐ WHERE THIS BLOCK'S WAVE LEAVES FROM — `ColonyFlood.entryId`, and ONE
    *  STRING of it rather than the flood. It is `attested:<key>` exactly when
@@ -600,12 +641,12 @@ export default function ColonyCohorts({
     // Bound on the first pass and again only when a capacity change built new
     // lanes. The quad outlives both InstancedMeshes (a capacity change rebuilds
     // them through `args`), so it can still be holding the previous set.
-    // ⚠️ `aSeed` AND `aGulp` ARE BOUND, `aShare` IS NOT. Both programs declare
-    // the seed and the face declares the gulp; nothing declares the share, and
-    // an attribute no program declares would never be uploaded — so binding it
-    // costs nothing at runtime and buys a false claim in the source. The share
-    // lane is kept and written (see the file header) but is not attached to a
-    // geometry until a program asks for it.
+    // ⚠️ THE QUAD TAKES `aSeed` AND `aGulp` AND NOT `aShare`. Both aperture
+    // programs declare the seed, the face declares the gulp, and NEITHER
+    // declares the share — an attribute no program declares is never uploaded,
+    // so binding it here would cost nothing at runtime and buy a false claim in
+    // the source. The share goes onto the patch's geometry below, which is the
+    // one program that has a rate to spend it on.
     //
     // ⭐ ONE GEOMETRY, SO "THE SAME OBJECT ON BOTH APERTURE DRAWS" IS
     // STRUCTURAL. Both InstancedMeshes take this one `quad`, so a lane bound
@@ -630,6 +671,15 @@ export default function ColonyCohorts({
     if (patchGeometry.getAttribute('aGulp') !== lanes.gulp) {
       patchGeometry.setAttribute('aGulp', lanes.gulp);
     }
+    // ⭐⭐ …AND THE THIRD LANE, ON THIS GEOMETRY ALONE. The patch is the only
+    // program that declares `aShare`, because it is the only one with a RATE to
+    // spend a share on — the sink's `k` is wu²/s. Same rule as the two above:
+    // the WRAPPER is bound, never a fresh one around `lanes.share.array`, so
+    // the walk that rewrites the lane once an attributed block marks one buffer
+    // and the draw sees it.
+    if (patchGeometry.getAttribute('aShare') !== lanes.share) {
+      patchGeometry.setAttribute('aShare', lanes.share);
+    }
   }, [lanes, marks, patchGeometry, quad]);
 
   // The live share, written in place whenever the window moves — which is once
@@ -641,8 +691,18 @@ export default function ColonyCohorts({
   const writtenSharesRef = useRef<readonly ProducerStanding[] | null | undefined>(
     undefined,
   );
+  /** The largest share standing in this colony, and the patch's `uShareMax`.
+   *
+   *  ⭐ COMPUTED IN THE LANE'S OWN WALK, NOT ONCE A FRAME. The maximum can only
+   *  move when the lane's contents do — once per attributed block — so a
+   *  per-frame reduction over the marks would be the same number recomputed 60
+   *  times a second. Taking it from `cohortShareLane`'s return is also what
+   *  makes it impossible for the divisor and the lane to disagree: one walk,
+   *  one answer. 1 until the first walk, which is what the uniform ships at. */
+  const shareMaxRef = useRef(1);
   const writeShares = useCallback((producers: readonly ProducerStanding[] | null) => {
-    cohortShareLane(marks, producers, lanes.share.array as Float32Array);
+    shareMaxRef.current =
+      cohortShareLane(marks, producers, lanes.share.array as Float32Array);
     // Marked ONCE for the whole walk, never once per write.
     lanes.share.needsUpdate = true;
     writtenSharesRef.current = producers;
@@ -780,6 +840,14 @@ export default function ColonyCohorts({
     // would go dark inside a circle the mouth no longer has — two holes at one
     // cohort, drawn by two layers that both believed they were right.
     patch.uRimR.value = cohortRimRadius(apR);
+    // ⭐⭐ THE SHARE'S TWO ENDS, AND THE MAXIMUM IS THE ONE THIS LAYER OWNS.
+    // The factor is a RATIO — `mix(floor, 1, share / shareMax)` — so the
+    // divisor has to be the largest share among the instances actually drawn,
+    // which only the lane's own walk can know. It is read from the ref that
+    // walk fills rather than reduced again here: the maximum moves when the
+    // window does, once an attributed block, and not once a frame.
+    patch.uShareMax.value = shareMaxRef.current;
+    patch.uShareFloor.value = LIVE.peer.cohortShareFloor;
     patch.uAmp.value = LIVE.peer.cohortMistAmp;
     patch.uContrastNear.value = LIVE.peer.cohortGather;
     patch.uK.value = LIVE.peer.cohortIntake;

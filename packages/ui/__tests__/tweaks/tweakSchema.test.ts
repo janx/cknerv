@@ -15,7 +15,7 @@ const EXPECTED_DEFAULTS = {
   // 4 → 8 to halve the ring's radius, 2026-08-15 — speed, both reaches and
   // the width all moved with it).
   delivery: { heroSize: 1.16, peerSize: 0.46, ingestDur: 1.2, glyphBloom: 1.6, glyphCompress: 0.45, coreSize: 1.4, trailWidth: 0.55, trailLenBase: 1.0, trailLenGain: 1.6, trailOpacity: 0.6, inhaleAmount: 0.55, waveSpeed: 4.5, waveWidth: 0.55 / 8, waveOpacity: 2.0, waveFalloff: 0.5, waveReachHero: 6.5, waveReachPeer: 4.25, waveWake: 0.14, waveSegments: 0.55, peerPunchScale: 0.7, igniteKHero: 8, igniteKPeer: 3, igniteMax: 300, igniteRipple: 0.015 },
-  // The seventeen `cohort*` knobs are the POW channel — one aperture per
+  // The eighteen `cohort*` knobs are the POW channel — one aperture per
   // cohort, drawn as two faces of one hole, over the mist that hole is
   // drinking — whose defaults live on `colonyCohort` and `colonyMist`
   // under the same one-authority rule the shockwave knobs follow. `cohortApR`
@@ -39,12 +39,20 @@ const EXPECTED_DEFAULTS = {
   // the rim are one radius (1.6 wu) rather than two. Its knob still runs to
   // 1.5, which is how a tuner finds out whether the lip wants to sit inside or
   // outside the throat.
+  // ⭐ `cohortShareFloor` is the one default in this folder that is a STARTING
+  // VALUE rather than a measured one, and it says so at its constant
+  // (`MIST_SHARE_FLOOR`): it is what the SMALLEST cohort's sink is worth
+  // against the largest's, and mainnet's smallest held 0.0029 % of the week on
+  // 2026-09-02 against a top row of 61.7 %. At 0 that patch would have no
+  // visible motion at all; at 1 the share would be thrown away. The live leg
+  // settles it by looking at the smallest cohort, not by preferring a
+  // screenshot.
   // The eight raymarch knobs they replaced (reach 20, mouth 6, intake amp 1.8,
   // density 0.25, crests 3.2, crest hz 0.23, gather 0.8, core amp 0.62) went
   // with the marched vertical throat that owned every one of them, exactly as
   // the five `hole*` knobs before them (rim 1.45, gas 0.72, field 0.38, infall
   // 0.4, spin 0.035) went with the accreting void.
-  peer: { ambientAmp: 0.22, ambientSpeed: 0.05, ambientSigma: 0.17, surgeAmp: 1.1, surgeSigma: 0.13, surgeEase: 0.12, colorBoost: 3.75, alphaBoost: 2.75, sizeBoost: 0.5, trailBoost: 0.18, colorCeil: 1.4, alphaCeil: 1.1, flameWidth: 0.7, flameMinLen: 0.7, flameMaxLen: 2.5, flameBloom: 0.7, glintBloomOpacity: 0.55, glintPlumeOpacity: 0.3, cohortApR: 3.0, cohortPupil: 1, cohortRimAmp: 0.42, cohortIntakeAmp: 0.72, cohortStriae: 88, cohortStriaAmp: 0.38, cohortHaloR: 1.35, cohortHaloBias: 0.3, cohortMistAmp: 1, cohortInteriorAmp: 1.15, cohortGather: 1.8, cohortIntake: 12, cohortSwirl: 1.4, cohortReach: 14, cohortLevel: 0.7, cohortWake: 0.35 },
+  peer: { ambientAmp: 0.22, ambientSpeed: 0.05, ambientSigma: 0.17, surgeAmp: 1.1, surgeSigma: 0.13, surgeEase: 0.12, colorBoost: 3.75, alphaBoost: 2.75, sizeBoost: 0.5, trailBoost: 0.18, colorCeil: 1.4, alphaCeil: 1.1, flameWidth: 0.7, flameMinLen: 0.7, flameMaxLen: 2.5, flameBloom: 0.7, glintBloomOpacity: 0.55, glintPlumeOpacity: 0.3, cohortApR: 3.0, cohortPupil: 1, cohortRimAmp: 0.42, cohortIntakeAmp: 0.72, cohortStriae: 88, cohortStriaAmp: 0.38, cohortHaloR: 1.35, cohortHaloBias: 0.3, cohortMistAmp: 1, cohortInteriorAmp: 1.15, cohortGather: 1.8, cohortIntake: 12, cohortSwirl: 1.4, cohortReach: 14, cohortLevel: 0.7, cohortWake: 0.35, cohortShareFloor: 0.35 },
   cell: { fabricAlpha: 0.15, warmth: 0.12, centerDim: 0.3, activeColorR: 1.0, activeColorG: 1.0, activeColorB: 1.0, fabricWidth: 2.5, activeWidth: 4.6, reinforceAmount: 0.34, reinforceGain: 1.6, reinforceHalfLife: 3.0, fabricStaggerThreshold: 1500, fabricCohortSize: 750, fabricCohortInterval: 0.25 },
   nerve: { screenBudget: 8_000, coverageShare: 0.55, trunkShare: 0.72, twigShare: 0.18 },
 } as const;

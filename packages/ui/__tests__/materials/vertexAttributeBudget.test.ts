@@ -324,9 +324,10 @@ const ROWS: readonly BudgetRow[] = [
     sources: ['src/materials/colonyMist.ts'],
     material: makeCohortIntakePatchMaterial,
     // The mist under the mark: one instance per cohort, its sink at its own
-    // origin. It takes the mat4 and the SAME two lanes the face takes — the
-    // seed and the gulp — because the mouth and the mist under it are one
-    // surface and must swallow the same block.
+    // origin. It takes the mat4, the SAME two lanes the face takes — the seed
+    // and the gulp, because the mouth and the mist under it are one surface and
+    // must swallow the same block — and a THIRD the face refuses: the share,
+    // which is a rate this program has somewhere to spend.
     usage: { instanced: true },
   },
   {
@@ -502,9 +503,10 @@ describe('vertex attribute budget', () => {
     // take it, so this asymmetry is a consumer and not a habit. That is the
     // difference from the pair this replaced, which was asymmetric because the
     // marched intake declared `aShare` for a crest rate the centre did not
-    // have; NEITHER aperture program declares the share, and the layer still
-    // writes that lane without binding it. One float, on one draw, with a
-    // reader — and 7 slots of the 16 still free on the busier of the two.
+    // have; NEITHER aperture program declares the share — the mist's patch
+    // does, and the row above charges it there, because the sink's k is the
+    // only rate in the feature a share can drive. One float, on one draw, with
+    // a reader — and 7 slots of the 16 still free on the busier of the two.
     expect(face?.names).toEqual(['aSeed', 'aGulp']);
     expect(aura?.names).toEqual(['aSeed']);
     for (const row of [face, aura]) {
@@ -513,27 +515,37 @@ describe('vertex attribute budget', () => {
     }
   });
 
-  it('charges the mist the same two lanes as the mouth, and nothing else', () => {
+  it('charges the mist the mouth’s two lanes PLUS the share, and nothing else', () => {
     // ⭐⭐ THE PATCH AND THE FACE ARE ONE SURFACE SEEN TWO WAYS — through the
-    // hole and from outside it — so they take the SAME lanes: `aSeed` and
-    // `aGulp`, in that order, at the same widths, off the same buffers. A
-    // patch that read the gulp at a different width would swallow on a
-    // different block, and nothing but this row would say so.
+    // hole and from outside it — so they take the same first two lanes:
+    // `aSeed` and `aGulp`, in that order, at the same widths, off the same
+    // buffers. A patch that read the gulp at a different width would swallow on
+    // a different block, and nothing but this row would say so.
+    //
+    // ⭐⭐⭐ AND EXACTLY ONE FLOAT SEPARATES THEM, WITH A CONSUMER BEHIND IT.
+    // `aShare` is the cohort's fraction of its window, and the mist is the only
+    // program in the feature with a RATE to spend it on: the sink's k is
+    // wu²/s, so `mix(uShareFloor, 1, share / uShareMax)` scales a speed and the
+    // pile that speed leaves at the lip. The aperture's only candidate rate is
+    // the grain's drift, which prefilters to nothing past about 25 wu — so the
+    // two faces refuse the lane, and this row is where the asymmetry is priced.
+    // The layer's busiest program was 9 of 16 before it and is 10 now.
     const patch = measured.find(({ name }) => name === 'cohortIntakePatchMaterial');
     const face = measured.find(({ name }) => name === 'cohortFaceMaterial');
     expect(patch).toBeDefined();
-    expect([patch?.custom, patch?.injected, patch?.total]).toEqual([2, 7, 9]);
-    expect(patch?.names).toEqual(face?.names);
-    expect(patch?.names).toEqual(['aSeed', 'aGulp']);
-    expect(patch?.names).not.toContain('aShare');
+    expect([patch?.custom, patch?.injected, patch?.total]).toEqual([3, 7, 10]);
+    expect(patch?.names).toEqual(['aSeed', 'aGulp', 'aShare']);
+    // The face's lanes are the patch's first two, in the same order.
+    expect(patch?.names.slice(0, 2)).toEqual(face?.names);
+    expect((patch?.custom ?? 0) - (face?.custom ?? 0)).toBe(1);
     // ⚠️ AND IT IS THE ONLY MIST ROW. A `mistHazeMaterial` stood beside it —
     // uninstanced, no lanes, 3 injected slots — for the ambient sheets under
     // the whole colony; they were removed on 2026-09-02 after a live leg
     // measured them at 2/255 at their brightest pixel anywhere on the canvas
     // while costing 0.90 ms of the layer's 1.06 ms at the app camera.
     expect(measured.some(({ name }) => name === 'mistHazeMaterial')).toBe(false);
-    // Seven slots still free on the busiest program in the layer.
-    expect(MAX_VERTEX_ATTRIBUTES - (patch?.total ?? 0)).toBe(7);
+    // Six slots still free on the busiest program in the layer.
+    expect(MAX_VERTEX_ATTRIBUTES - (patch?.total ?? 0)).toBe(6);
   });
 
   it('keeps the colony edge program exactly where it was', () => {

@@ -37,10 +37,18 @@ import { describe, expect, it } from 'vitest';
 // finds them without being told their names.
 import * as colonyCohort from '../../src/materials/colonyCohort';
 import * as colonyMist from '../../src/materials/colonyMist';
+import {
+  makeCohortAuraMaterial,
+  makeCohortFaceMaterial,
+} from '../../src/materials/colonyCohort';
 import { makeCohortIntakePatchMaterial } from '../../src/materials/colonyMist';
 
 const SOURCE_PATH = resolve(process.cwd(), 'src/materials/colonyMist.ts');
 const SOURCE = readFileSync(SOURCE_PATH, 'utf8');
+const APERTURE_SOURCE = readFileSync(
+  resolve(process.cwd(), 'src/materials/colonyCohort.ts'),
+  'utf8',
+);
 
 /** Strip GLSL/TS comments. Both guards below run on comment-free text so a
  *  `pow` or `smoothstep` written in prose can never be mistaken for code. */
@@ -307,6 +315,46 @@ describe('colonyMist.ts — source-level shader guards', () => {
       expect(program.glsl).not.toMatch(/\bfor\s*\(/);
     }
     expect(stripComments(SOURCE)).not.toMatch(/\buSinks?Count\b|\buSinks\b/);
+  });
+
+  it('declares aShare HERE and in no other program in the feature', () => {
+    // ⭐⭐ THE SHARE IS A RATE, AND THIS IS THE ONE PROGRAM WITH A RATE TO SPEND
+    // IT ON: the sink's k is wu²/s, so mix(floor, 1, share / shareMax) scales a
+    // SPEED and the pile that speed leaves at the lip. The mark above has no
+    // such quantity — its only candidate is the grain's drift, which prefilters
+    // to nothing past about 25 wu — so `colonyCohort.ts` refuses the lane, and
+    // that refusal is checked here rather than remembered.
+    const vertex = compiled.find(({ name }) => name === 'mistPatch.vertexShader');
+    const fragment = compiled.find(({ name }) => name === 'mistPatch.fragmentShader');
+    expect(vertex?.glsl).toContain('attribute float aShare;');
+    // Declared AND read: an attribute nothing consumes is a lane the next
+    // reader would take as evidence of a consumer that does not exist.
+    expect(vertex?.glsl).toContain('aShare / max(uShareMax, 1e-6)');
+    // It leaves the vertex stage as ONE varying and is read in the fragment —
+    // the sink and the pile — never re-derived there.
+    expect(vertex?.glsl).toContain('varying float vShareF;');
+    expect(fragment?.glsl).toContain('varying float vShareF;');
+    expect(fragment?.glsl).not.toContain('aShare');
+
+    // ⚠️ AND NOWHERE ELSE IN THE FEATURE. The two aperture programs are built
+    // and searched, not trusted: the face and the aura must not carry the
+    // attribute, the uniforms or the varying.
+    for (const [name, material] of [
+      ['cohort-face', makeCohortFaceMaterial()],
+      ['cohort-aura', makeCohortAuraMaterial()],
+    ] as const) {
+      for (const stage of ['vertexShader', 'fragmentShader'] as const) {
+        const glsl = stripComments(material[stage]);
+        for (const banned of ['aShare', 'uShareMax', 'uShareFloor', 'vShareF']) {
+          expect(`${name}.${stage}: ${banned} ${glsl.includes(banned)}`)
+            .toBe(`${name}.${stage}: ${banned} false`);
+        }
+      }
+    }
+    // …and the aperture's own source declares no such attribute either, so a
+    // third factory added there cannot quietly pick it up. (Its PROSE says the
+    // face refuses the share, which is why the comments are stripped first.)
+    expect(stripComments(APERTURE_SOURCE)).not.toMatch(/attribute\s+float\s+aShare/);
   });
 
   it('reads the mouth’s radius and level from colonyCohort, never as literals', () => {

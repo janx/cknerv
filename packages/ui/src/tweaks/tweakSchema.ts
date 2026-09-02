@@ -18,7 +18,7 @@ import {
   SHOCKWAVE_COLOR_CEIL,
   SHOCKWAVE_ALPHA_CEIL,
 } from '../materials/shockwaveMaterial';
-// …and the sixteen `cohort*` knobs take theirs from the two aperture materials
+// …and the seventeen `cohort*` knobs take theirs from the two aperture materials
 // and the mist's one, on the same rule: each material seeds its own uniforms
 // from these constants and `ColonyCohorts` overwrites them from LIVE.peer.*
 // each frame, so there is ONE authority. Most of the aperture is deliberately
@@ -44,16 +44,18 @@ import {
   COHORT_FACE_STRIAE_FLOOR,
   COHORT_INTAKE_LEVEL,
 } from '../materials/colonyCohort';
-// …and the mist under the mark brings EIGHT more knobs, on the same rule: the
+// …and the mist under the mark brings NINE more knobs, on the same rule: the
 // intake patch in `colonyMist` seeds its own uniforms from these constants and
-// `ColonyCohorts` overwrites them from LIVE.peer.* each frame. Only six
-// constants are imported for the eight, because the other two — the window's
+// `ColonyCohorts` overwrites them from LIVE.peer.* each frame. Only seven
+// constants are imported for the nine, because the other two — the window's
 // amp and the level — belong to the aperture's own file above.
-// ⚠️ There were NINE until 2026-09-02: `cohortHazeAmp` dimmed the ambient
-// sheets under the whole colony plane, and the sheets were removed after a live
-// leg measured them at 2/255 at their brightest pixel anywhere on the canvas
-// while costing 0.90 ms of the layer's 1.06 ms at the app camera. The mist has
-// ONE amplitude now.
+// ⚠️ IT WAS NINE, THEN EIGHT, AND IS NINE AGAIN — with a different ninth both
+// times. `cohortHazeAmp` dimmed the ambient sheets under the whole colony plane
+// until 2026-09-02, when a live leg measured them at 2/255 at their brightest
+// pixel anywhere on the canvas while costing 0.90 ms of the layer's 1.06 ms at
+// the app camera, and the sheets went; the mist has ONE amplitude now. The
+// ninth today is `cohortShareFloor`, which weighs no light at all — it is how
+// hard the SMALLEST cohort drinks against the largest.
 // ⭐ `cohortLevel` is the one knob with TWO consumers — the window's medium
 // level in the face and the top of the mist's mound under it are ONE surface
 // (`COHORT_INTAKE_LEVEL`), and a tuner who could move one without the other
@@ -63,6 +65,7 @@ import {
   MIST_AMP,
   MIST_CONTRAST_NEAR,
   MIST_REACH,
+  MIST_SHARE_FLOOR,
   MIST_SINK_K,
   MIST_SWIRL,
   MIST_WAKE,
@@ -282,6 +285,14 @@ export const peerSchema = {
   cohortLevel: { value: COHORT_INTAKE_LEVEL, min: 0.2, max: 2, step: 0.02, label: 'cohort level' },
   // how much medium the mouth has already taken downstream of itself
   cohortWake: { value: MIST_WAKE, min: 0, max: 1, step: 0.05, label: 'cohort wake' },
+  // ⭐⭐ WHAT THE SMALLEST COHORT'S SINK IS WORTH, as a fraction of the
+  // largest's: the patch scales its `uK` and its pile by
+  // `mix(this, 1, share / shareMax)`, so this knob is the whole legibility
+  // question — 0 makes a 2 % cohort draw a patch with no visible motion, 1
+  // makes every cohort drink identically and throws the share away. It is the
+  // ONE knob in this folder whose default is a starting value rather than a
+  // measured one; the live leg settles it by looking at the smallest cohort.
+  cohortShareFloor: { value: MIST_SHARE_FLOOR, min: 0, max: 1, step: 0.05, label: 'cohort share floor' },
 } satisfies FolderSchema;
 
 export const cellSchema = {

@@ -1263,6 +1263,8 @@ describe('what a POW cohort looks like', () => {
       // step with these.
       'cohortInteriorAmp', 'cohortLevel', 'cohortMistAmp', 'cohortGather',
       'cohortIntake', 'cohortSwirl', 'cohortReach', 'cohortWake',
+      // …and what the smallest cohort's sink is worth against the largest's.
+      'cohortShareFloor',
     ] as const;
     for (const knob of knobs) {
       expect(peerSchema, knob).toHaveProperty(knob);
@@ -1523,33 +1525,51 @@ describe('what a POW cohort looks like', () => {
       .toContain('if (deliveries.length === 0) return 0;');
   });
 
-  it('keeps the share lane DORMANT rather than half-wired', () => {
-    // ⚠️ NEITHER PROGRAM DECLARES `aShare`. Share meant RATE on this layer, and
-    // the aperture has no rate a share could drive: the grain's drift is the
-    // only candidate and it prefilters to nothing past ~25 wu, so it would be a
-    // fact legible only in close-up. 「从下方汲取能量」 is a separate problem,
-    // deferred on purpose — a sub-plane shaft was measured invisible except
-    // from directly overhead — so the lane is kept ready for it rather than
-    // rebuilt later.
+  it('spends the share lane on the MIST alone, and on neither aperture', () => {
+    // ⚠️ NEITHER APERTURE PROGRAM DECLARES `aShare`, AND THAT DID NOT CHANGE.
+    // Share means RATE, and the mark has no rate a share could drive: the
+    // grain's drift is the only candidate and it prefilters to nothing past
+    // ~25 wu, so it would be a fact legible only in close-up.
     for (const stage of [faceVertex(), auraVertex(), faceFragment(), auraFragment()]) {
       expect(stage).not.toContain('aShare');
       expect(stage).not.toContain('vRateScale');
     }
-    // ⭐ AND KEPT HONESTLY. The lane is written in place, but it is NOT bound
-    // to the shared quad: an attribute no program declares is never uploaded,
-    // so binding it would cost nothing at runtime and buy a false claim in the
-    // source — the next reader would take the bind as evidence of a consumer.
-    // Only `aSeed`, which both programs really do declare, is attached.
+    // ⭐⭐⭐ THE MIST'S PATCH DOES, BECAUSE ITS SINK'S k IS A RATE — wu²/s, in
+    // `r0² = r² + k·τ`. One factor per instance scales that k and the pile it
+    // leaves at the lip, so a cohort holding 62 % of its window visibly drinks
+    // harder than one holding 2 %. `colonyMist.test.ts` owns the arithmetic;
+    // what is pinned here is that the lane reaches exactly one of the three
+    // draws.
+    const patch = makeCohortIntakePatchMaterial();
+    expect(patch.vertexShader).toContain('attribute float aShare;');
+    expect(patch.vertexShader).toContain('uniform float uShareFloor;');
+    expect(patch.vertexShader).toContain('uniform float uShareMax;');
+    expect(patch.fragmentShader).toContain('varying float vShareF;');
+
+    // ⭐⭐ ONE BIND, ON THE PATCH'S GEOMETRY, OF THE LANE OBJECT ITSELF. The
+    // quad the two apertures share is NOT given the attribute: an attribute no
+    // program declares is never uploaded, so binding it there would cost
+    // nothing at runtime and buy a false claim in the source. And the object
+    // bound is `lanes.share` — the ONE `InstancedBufferAttribute` the capacity
+    // memo built — never a fresh wrapper around `lanes.share.array`, which
+    // would be a second GL buffer with the first one orphaned. The three
+    // constructions asserted in the sibling case below are the whole supply.
     const layer = source('ColonyCohorts.tsx');
+    expect([...layer.matchAll(/setAttribute\('aShare'/g)]).toHaveLength(1);
+    expect(layer).toContain("patchGeometry.setAttribute('aShare', lanes.share);");
+    expect(layer).not.toContain("quad.setAttribute('aShare'");
+    expect(layer).not.toMatch(/setAttribute\('aShare',\s*new /);
     expect(layer).toContain("quad.setAttribute('aSeed', lanes.seed)");
-    expect(layer).not.toContain("setAttribute('aShare'");
     for (const stage of [faceVertex(), auraVertex()]) {
       expect(stage).toContain('attribute float aSeed;');
     }
-    // The lane itself is still there, still written in place off the window's
-    // ref, and still marked ONCE for the whole walk.
+    // The lane is still written in place off the window's ref and still marked
+    // ONCE for the whole walk — and the walk now hands back the maximum the
+    // shader divides by, so the two cannot be computed from different lists.
     expect(layer).toContain('cohortShareLane(marks, producers, lanes.share.array as Float32Array);');
     expect(layer).toContain('lanes.share.needsUpdate = true;');
+    expect(layer).toContain('patch.uShareMax.value = shareMaxRef.current;');
+    expect(layer).toContain('patch.uShareFloor.value = LIVE.peer.cohortShareFloor;');
   });
 
   it('lays the GULP lane as ONE wrapper across TWO geometries, at a far-negative sentinel', () => {
@@ -1662,6 +1682,7 @@ describe('what a POW cohort looks like', () => {
       ['cohortSwirl', 'uSwirl'],
       ['cohortReach', 'uReach'],
       ['cohortWake', 'uWake'],
+      ['cohortShareFloor', 'uShareFloor'],
     ] as const) {
       expect(layer).toContain(`patch.${uniform}.value = LIVE.peer.${knob};`);
       expect(peerSchema[knob]).toBeDefined();

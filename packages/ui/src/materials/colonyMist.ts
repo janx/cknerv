@@ -76,10 +76,29 @@ import { mulberry32 } from '../layout';
  * the physics: two mouths drinking from the same parcel of mist take more of it
  * than one does. There is no cross-talk term and none is wanted.
  *
+ * ⭐⭐⭐ AND THE COHORT'S SHARE DRIVES THIS LAYER, BECAUSE THE SINK'S `k` IS A
+ * RATE AND A SHARE IS A RATE. `aShare` is the fraction of its window the cohort
+ * took — the indexer's week when there is one, the 240-block ring when there is
+ * not — and the vertex stage turns it into ONE per-instance factor
+ * (`mistShareFactor`, `MIST_SHARE_FLOOR`) that scales the sink strength `uK`
+ * and the pile `uConc`. A 62 % cohort therefore drinks at the full `k` and
+ * visibly faster than a 2 % one, whose medium creeps in at the floor — which is
+ * the SAME quantity said twice, since `d(r²)/dt = -k` is the speed the
+ * streamlines carry and the pile is what arriving at that speed leaves at the
+ * lip. Nothing else on the patch reads it: not the colour, not the amplitude,
+ * not the gulp (one block is one block, whoever won it).
+ *
+ * ⚠️ AND THE SHARE STAYS OFF THE MARK ABOVE, which is not an oversight but the
+ * same argument in the other direction. `colonyCohort.ts:1064` says it: the
+ * aperture has no rate a share could drive except the grain's own drift, and
+ * that prefilters to nothing past about 25 wu — a fact legible only in
+ * close-up. The patch has a rate in its arithmetic, so the share lands here and
+ * only here, and neither aperture program declares `aShare`.
+ *
  * ⚠️⚠️ THE GEOMETRY CONTRACT, WHICH `ColonyCohorts` MUST FOLLOW EXACTLY (this
  * file cannot enforce it, so it states it). ⭐ There is only one consumer left:
  * the patch is that layer's FIRST DRAW, beside the mark it feeds, off the same
- * plan and the same two lanes.
+ * plan and the same three lanes.
  *
  * - The patch's geometry is a UNIT `PlaneGeometry(1, 1, MIST_PATCH_SEGMENTS,
  *   MIST_PATCH_SEGMENTS)` copied into an `InstancedBufferGeometry`. The extent
@@ -101,6 +120,14 @@ import { mulberry32 } from '../layout';
  *   `COHORT_NEVER_WON`). ⭐ `aGulp` must be re-laid off the SAME `wonAtRef` map
  *   in the SAME effect `cohortWinLane` already runs in — a second map would let
  *   the mouth and the mist under it swallow different blocks.
+ * - …plus a THIRD the face refuses: `aShare`, the cohort's share of its window
+ *   in [0, 1], written by `cohortShareLane`. ⚠️ It must be the SAME
+ *   `InstancedBufferAttribute` OBJECT that layer already holds — three keys its
+ *   uploads on the attribute, so a second wrapper over the same array is a
+ *   second GL buffer and the first one is orphaned. ⚠️ And `uShareMax` must be
+ *   the largest share among the instances actually drawn (1 when there are
+ *   none): the factor is a RATIO, so a stale maximum makes every cohort drink
+ *   at the wrong rate rather than making one of them wrong.
  * - The draw is mounted INSIDE the colony's rotation group. That is what makes
  *   every coordinate below a colony-frame constant: the sink never moves in
  *   this frame, so the spiral needs no per-frame rotation uniform and the
@@ -475,6 +502,28 @@ export const MIST_SINK_K = 12;
 export const MIST_SWIRL = 1.4;
 
 /**
+ * What the SMALLEST cohort's sink is worth, as a fraction of the largest one's.
+ *
+ * ⭐⭐ THE SHARE IS A RATE ON THIS LAYER — see the file header — so it scales
+ * `uK` (wu²/s) and the pile that arriving at that speed leaves at the lip. The
+ * factor is `mix(floor, 1, share / shareMax)`, so the busiest cohort in view
+ * drinks at the full `k` and every other one drinks in proportion.
+ *
+ * ⚠️ A STARTING VALUE, AND THE FLOOR IS WHY IT IS NOT ZERO. Mainnet's smallest
+ * measured cohort held 0.0029 % of the week on 2026-09-02 and its second
+ * smallest 1.7 %; at a floor of 0 both would draw a patch with no visible
+ * motion at all, which says "this cohort is not taking anything" when what is
+ * true is "this cohort is taking little". At 0.35 the 2.3 % row comes out at
+ * 0.374 against the top row's 1 — the busiest cohort drinks 2.7× as hard, and
+ * the smallest still moves. ⚠️ ASSUMED, NOT MEASURED: the ratio is arithmetic,
+ * but whether 0.374 of `k` READS as an intake on a screen is not, and nothing
+ * has yet put the two side by side on a real GPU. ⭐ THE LIVE LEG OWNS IT (`cohortShareFloor`),
+ * and the measurement it has to make is legibility at the smallest share, not a
+ * preference between two screenshots.
+ */
+export const MIST_SHARE_FLOOR = 0.35;
+
+/**
  * Where the mist goes dark, as a fraction of `COHORT_RIM_R`.
  *
  * ⭐⭐ THE EYE IS AN ABSENCE, LIKE THE PUPIL ABOVE IT. Inside 0.45 of the rim
@@ -641,6 +690,31 @@ export function mistSurfaceDrop(
 }
 
 /**
+ * How hard this cohort drinks, relative to the busiest one in view.
+ *
+ * ⭐ THE MIRROR OF THE ONE LINE THE VERTEX STAGE COMPUTES, and the only place
+ * the factor is written in a language a test can evaluate:
+ * `mix(floor, 1, clamp(share / max(shareMax, 1e-6), 0, 1))`. It is 1 at
+ * `shareMax`, `floor` at zero, monotone between them, and CLAMPED above — a
+ * share larger than the maximum handed in cannot make a cohort drink faster
+ * than `k`, which is what keeps a stale `uShareMax` a wrong RATIO rather than
+ * an unbounded sink.
+ *
+ * ⚠️ The `1e-6` is not a taste either: `shareMax` is 1 when the lane holds no
+ * live entry, but a caller that hands over a zero maximum gets `floor` for
+ * everybody rather than a division by zero, which is the honest reading of "no
+ * cohort took anything".
+ */
+export function mistShareFactor(
+  share: number,
+  shareMax: number = 1,
+  floor: number = MIST_SHARE_FLOOR,
+): number {
+  const t = Math.min(Math.max(share / Math.max(shareMax, 1e-6), 0), 1);
+  return floor + (1 - floor) * t;
+}
+
+/**
  * The catchment weight: compact support, zero with zero slope at `reach`.
  * The same `(1 - x)²` the mound uses, on the other radius.
  */
@@ -725,6 +799,11 @@ export function mistBacktrace(
  *
  * `gulp` is the peak of `COHORT_GULP_GLSL`'s envelope (about 0.663), so passing
  * `true` gives what a swallow can reach.
+ *
+ * ⭐ THE SHARE FACTOR DOES NOT ENTER, AND THAT IS THE POINT OF ITS SHAPE:
+ * `mistShareFactor` is exactly 1 for the busiest cohort in view and below 1 for
+ * every other, so the supremum is what the busiest one reaches and the number
+ * here did not move when the share arrived. It only ever turns cohorts DOWN.
  */
 export function mistPatchSupremum(throughGulp = false): number {
   // The binding radius is where the gate finishes opening: everything inside it
@@ -783,7 +862,9 @@ export const MIST_PATCH_NEVER_ABOVE_GLSL: string = /* glsl */ `float drop = mix(
  * on the same beat; `aGulp` is the sim second of the block this cohort won, the
  * SAME lane the face reads, on the SAME clock (`simClock.elapsedSec`), because
  * the envelope is `uTime - aGulp` and two clocks would make that difference
- * meaningless.
+ * meaningless. `aShare` is the third and the only one the mark above refuses:
+ * the cohort's share of its window, which this layer has a RATE to spend it on
+ * and the aperture has not (`colonyCohort.ts:1064`).
  */
 export function makeCohortIntakePatchMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
@@ -808,6 +889,12 @@ export function makeCohortIntakePatchMaterial(): THREE.ShaderMaterial {
       uRimR: { value: COHORT_RIM_R },
       uK: { value: MIST_SINK_K },
       uSwirl: { value: MIST_SWIRL },
+      // The share's two ends. ⚠️ `uShareMax` defaults to 1 rather than to 0 so
+      // an unwritten uniform reads shares as themselves instead of dividing by
+      // nothing, and the layer degrades to "every cohort at its own fraction of
+      // a full window" rather than to a black patch.
+      uShareFloor: { value: MIST_SHARE_FLOOR },
+      uShareMax: { value: 1 },
       uPeriod: { value: MIST_PERIOD },
       uDrift: { value: MIST_DRIFT },
       uDriftSign: { value: MIST_DRIFT_SIGN },
@@ -831,12 +918,15 @@ export function makeCohortIntakePatchMaterial(): THREE.ShaderMaterial {
     vertexShader: /* glsl */ `
       attribute float aSeed;
       attribute float aGulp;
+      attribute float aShare;
 
       uniform float uReach;
       uniform float uMoundR;
       uniform float uFloorDepth;
       uniform float uLevel;
       uniform float uDriftSign;
+      uniform float uShareFloor;
+      uniform float uShareMax;
 
       varying vec2 vP;
       varying vec3 vWorld;
@@ -844,10 +934,19 @@ export function makeCohortIntakePatchMaterial(): THREE.ShaderMaterial {
       varying vec2 vDrift;
       varying float vSeed;
       varying float vGulp;
+      varying float vShareF;
 
       void main() {
         vSeed = aSeed;
         vGulp = aGulp;
+        // ⭐⭐ HOW HARD THIS COHORT DRINKS, COMPUTED ONCE PER INSTANCE. The
+        // share is a RATE and the sink's k is a rate, so one factor carries it
+        // into both places the rate shows: the speed the streamlines run at
+        // and the pile arriving at that speed leaves at the lip. Mirrored
+        // exactly by mistShareFactor, which is where the arithmetic is argued.
+        // The clamp is what makes a stale uShareMax a wrong ratio rather than
+        // an unbounded sink.
+        vShareF = mix(uShareFloor, 1.0, clamp(aShare / max(uShareMax, 1e-6), 0.0, 1.0));
         // The instance's own world point, for the proximity exemption. The SAME
         // quantity both aperture faces carry, read the same way.
         vec4 origin = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
@@ -924,6 +1023,7 @@ export function makeCohortIntakePatchMaterial(): THREE.ShaderMaterial {
       varying vec2 vDrift;
       varying float vSeed;
       varying float vGulp;
+      varying float vShareF;
 
       // ---- the substance ---------------------------------------------------
       //
@@ -955,6 +1055,10 @@ export function makeCohortIntakePatchMaterial(): THREE.ShaderMaterial {
       //
       // ⚠️ The pull blends back to the identity at the catchment's edge, so the
       // patch has no seam where it stops.
+      //
+      // ⭐⭐ AND THE STRENGTH IS THIS COHORT'S OWN. uK * vShareF is where the
+      // share becomes a speed: the biggest producer in view pulls at the full
+      // k and the smallest at the floor's fraction of it, on the same curve.
       vec2 mistBacktrace(vec2 q, float tau) {
         vec2 d = q - vDrift * (uDrift * tau);
         float r2 = dot(d, d);
@@ -962,7 +1066,7 @@ export function makeCohortIntakePatchMaterial(): THREE.ShaderMaterial {
         if (w <= 0.0) return d;
         w *= w;
         float r = max(sqrt(r2), 0.002);
-        float r0 = sqrt(r2 + uK * tau);
+        float r0 = sqrt(r2 + uK * vShareF * tau);
         float rr = mix(r, r0, w);
         float ang = uSwirl * log(rr / r);
         float cs = cos(ang);
@@ -1015,8 +1119,13 @@ export function makeCohortIntakePatchMaterial(): THREE.ShaderMaterial {
 
         // ⭐ THE LIP IS THE ARRIVING MEDIUM AT ITS DENSEST, not a drawn ring:
         // the cube is the area compression a 2-D sink applies to a parcel.
+        // ⭐⭐ …AND IT IS THE SAME SHARE, because the pile is what arriving at
+        // that speed leaves behind. Scaling only the sink would give a slow
+        // cohort a lip as bright as a fast one's, which is the compression of a
+        // flow it does not have. The GULP below is deliberately NOT scaled: one
+        // block is one block, whichever cohort won it.
         float c = clamp(uRimR / r, 0.0, 1.0);
-        float pile = uConc * c * c * c;
+        float pile = uConc * vShareF * c * c * c;
 
         // ---- the block this cohort won, if it has ever won one. The mouth and
         // the mist under it swallow on ONE curve and by the SAME amount: they

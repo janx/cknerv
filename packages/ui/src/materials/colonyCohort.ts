@@ -1063,7 +1063,10 @@ export const COHORT_AURA_HALF = cohortAuraHalfExtent(
  * — because the envelope is `uTime - aGulp` and two clocks would make that
  * difference meaningless. There is still NO `aShare`
  * lane: share means rate on this layer, and neither aperture program has a rate
- * share could drive that survives the grain's own prefilter.
+ * share could drive that survives the grain's own prefilter. ⭐ THE MIST'S
+ * PATCH UNDER THIS HOLE DOES TAKE IT, since 2026-09-02, and that is the same
+ * argument rather than a reversal of it: its sink's strength IS a rate (wu²/s
+ * in `r0² = r² + k·τ`), so a share scales something there and nothing here.
  */
 export function makeCohortFaceMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({

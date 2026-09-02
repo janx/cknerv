@@ -44,9 +44,18 @@ function mark(key: string, seed: number): CohortMark {
   return { producerKey: key, nodeId: `attested:${key}`, pos: [0, 0, 0], seed };
 }
 
-/** Only the two fields the lane reads; the rest of a standing is the card's. */
-function standing(key: string, share: number): ProducerStanding {
-  return { key, share } as ProducerStanding;
+/** Only the fields the lane reads; the rest of a standing is the card's.
+ *
+ *  ⭐ `week` IS THE LEDGER'S SHARE, and it is a share of a DIFFERENT window:
+ *  the indexer's seven complete days against the ring's 240 blocks. Each rides
+ *  on the standing beside the denominator it was counted with, so the lane
+ *  reads ONE of them and never combines the two. */
+function standing(key: string, share: number, week?: number): ProducerStanding {
+  return {
+    key,
+    share,
+    ledger: week === undefined ? null : { share: week },
+  } as ProducerStanding;
 }
 
 describe('cohortShareLane', () => {
@@ -71,6 +80,59 @@ describe('cohortShareLane', () => {
     // No window at all is the same code path as an empty one.
     cohortShareLane(marks, null, share);
     expect(Array.from(share)).toEqual([0, 0]);
+  });
+
+  it('takes the WEEK when the ledger names the producer, and the ring when it does not', () => {
+    // ⭐⭐ TWO WINDOWS, NEVER MIXED. `ledger.share` is this producer's fraction
+    // of the indexer's seven complete days; `share` is its fraction of the last
+    // 240 attributed blocks. They have different denominators, so the lane
+    // reads one or the other — and it prefers the week, because the ring is
+    // EMPTY for the first minute of every boot and after every reorg, exactly
+    // when a rate driven off it would report every cohort as equal.
+    const marks = [mark('0xa', 0.2), mark('0xb', 0.7)];
+    const share = new Float32Array(marks.length);
+    cohortShareLane(
+      marks,
+      [standing('0xa', 0.5, 0.617), standing('0xb', 0.5)],
+      share,
+    );
+    // a has a week and it wins over its ring reading; b has none and keeps the
+    // ring's. Both stood at 0.5 in the window, so the lane could not have taken
+    // the ring for a and still shown these two numbers.
+    expect(Array.from(share)).toEqual([Math.fround(0.617), Math.fround(0.5)]);
+    // ⚠️ A ledger-only producer is a REAL standing with `blocks 0` against the
+    // ring, so its window share is a plain 0 — and the week is what the patch
+    // must drink on, or a cohort the ring has lost stops taking anything.
+    cohortShareLane(marks, [standing('0xa', 0, 0.023), standing('0xb', 0.4)], share);
+    expect(Array.from(share)).toEqual([Math.fround(0.023), Math.fround(0.4)]);
+  });
+
+  it('returns the largest share it wrote, which is the patch’s divisor', () => {
+    // ⭐ ONE WALK, ONE ANSWER. `uShareMax` is the divisor of a RATIO, so the
+    // lane and the number the shader divides by must be computed together or a
+    // frame can carry one without the other.
+    const marks = [mark('0xa', 0.2), mark('0xb', 0.7), mark('0xc', 0.4)];
+    const share = new Float32Array(marks.length);
+    expect(cohortShareLane(
+      marks,
+      [standing('0xa', 0.1), standing('0xb', 0.62), standing('0xc', 0.28)],
+      share,
+    )).toBeCloseTo(0.62, 12);
+    // ⭐ It is the maximum over the STAGED marks, not over the window: a
+    // producer the colony stands no node for cannot set the divisor for the
+    // ones it does.
+    expect(cohortShareLane(
+      [mark('0xa', 0.2)],
+      [standing('0xa', 0.1), standing('0xz', 0.9)],
+      share,
+    )).toBeCloseTo(0.1, 12);
+    // ⚠️ AND 1 WHEN NOTHING POSITIVE WAS WRITTEN — no window, no marks, or a
+    // window in which every staged cohort holds nothing. Every factor is then
+    // the floor, which is the honest reading of "nobody here is taking
+    // anything", and never a division by zero.
+    expect(cohortShareLane(marks, null, share)).toBe(1);
+    expect(cohortShareLane(marks, [standing('0xa', 0)], share)).toBe(1);
+    expect(cohortShareLane([], [standing('0xa', 0.5)], share)).toBe(1);
   });
 });
 

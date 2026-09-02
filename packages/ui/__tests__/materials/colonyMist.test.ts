@@ -65,6 +65,7 @@ import {
   MIST_REACH,
   MIST_RIDGE,
   MIST_RIDGE_POW,
+  MIST_SHARE_FLOOR,
   MIST_SINK_K,
   MIST_SWIRL,
   MIST_WAKE,
@@ -77,6 +78,7 @@ import {
   mistMoundLift,
   mistNoiseTile,
   mistPatchSupremum,
+  mistShareFactor,
   mistSinkRadius,
   mistSpiralTurn,
   mistSurfaceDrop,
@@ -176,7 +178,10 @@ describe('colony mist — the spiral back-trace', () => {
     // ⚠️ R15 SHIPPED A TRANSLITERATION THAT SILENTLY DRIFTED FROM ITS SHADER,
     // and every proof above is worthless if this one fails. Both formulas are
     // pinned as TEXT in the fragment source.
-    expect(PATCH_FRAGMENT).toContain('float r0 = sqrt(r2 + uK * tau);');
+    // ⭐ `k` IN THE MIRROR IS `uK * vShareF` IN THE SHADER, and that is the
+    // whole of the share's effect on the flow: the cohort's own strength, from
+    // the vertex stage's one factor. The mirror takes the product as its `k`.
+    expect(PATCH_FRAGMENT).toContain('float r0 = sqrt(r2 + uK * vShareF * tau);');
     expect(PATCH_FRAGMENT).toContain('float rr = mix(r, r0, w);');
     expect(PATCH_FRAGMENT).toContain('float ang = uSwirl * log(rr / r);');
     // …and the weight the mix is taken on is the catchment, squared, the same
@@ -385,6 +390,119 @@ describe('colony mist — the eye and the edge', () => {
 });
 
 /* -------------------------------------------------------------------------- *
+ * The share: how hard THIS cohort drinks.
+ * -------------------------------------------------------------------------- */
+
+describe('colony mist — the share drives the sink', () => {
+  const MAX = 0.616873; // mainnet's top cohort, 2026-09-02
+
+  it('is the floor at nothing, exactly 1 at the maximum, and monotone between', () => {
+    // ⭐⭐ THE SHARE IS A RATE AND THE SINK'S k IS A RATE, which is the whole
+    // reason this factor exists on this layer and on no other. The two ends are
+    // identities rather than approximations: `mix(f, 1, 0)` is `f` and
+    // `mix(f, 1, 1)` is 1, so the busiest cohort in view drinks at exactly the
+    // shipped `k` and the supremum below is unmoved.
+    expect(mistShareFactor(0, MAX, MIST_SHARE_FLOOR)).toBe(MIST_SHARE_FLOOR);
+    expect(mistShareFactor(MAX, MAX, MIST_SHARE_FLOOR)).toBe(1);
+    let previous = -Infinity;
+    for (let k = 0; k <= 200; k += 1) {
+      const value = mistShareFactor((k / 200) * MAX, MAX, MIST_SHARE_FLOOR);
+      expect(value).toBeGreaterThan(previous);
+      expect(value).toBeGreaterThanOrEqual(MIST_SHARE_FLOOR);
+      expect(value).toBeLessThanOrEqual(1);
+      previous = value;
+    }
+    // ⭐ AND THE SMALLEST COHORT MAINNET ACTUALLY HAS STILL DRINKS. 0.0029 % of
+    // the week against the top row's 61.7 % — a ratio of 4.7e-5 — so without
+    // the floor its patch would be motionless. At 0.35 it pulls at a third of
+    // the busiest one's strength, which is the number the live leg judges.
+    expect(mistShareFactor(0.000029, MAX, MIST_SHARE_FLOOR))
+      .toBeCloseTo(MIST_SHARE_FLOOR, 4);
+    expect(mistShareFactor(0.0227, MAX, MIST_SHARE_FLOOR)).toBeCloseTo(0.374, 3);
+    expect(MIST_SHARE_FLOOR).toBe(0.35);
+  });
+
+  it('CLAMPS above the maximum, so a stale divisor is a wrong ratio and never a runaway', () => {
+    // ⚠️ `uShareMax` is written from the lane's own walk, so it moves with the
+    // lane — but a frame between a window change and the next walk would
+    // otherwise hand the shader a share ABOVE its divisor. The clamp makes that
+    // frame merely wrong in proportion instead of pulling harder than `k`.
+    expect(mistShareFactor(MAX * 2, MAX, MIST_SHARE_FLOOR)).toBe(1);
+    expect(mistShareFactor(1, 0.02, MIST_SHARE_FLOOR)).toBe(1);
+    // …and a maximum of zero — no cohort took anything — is the floor for
+    // everybody rather than a division by nothing.
+    expect(Number.isFinite(mistShareFactor(0, 0, MIST_SHARE_FLOOR))).toBe(true);
+    expect(mistShareFactor(0, 0, MIST_SHARE_FLOOR)).toBe(MIST_SHARE_FLOOR);
+    // A negative share cannot arrive (`producerLedgerIsCoherent` and the window
+    // both forbid it) and is still bounded below.
+    expect(mistShareFactor(-1, MAX, MIST_SHARE_FLOOR)).toBe(MIST_SHARE_FLOOR);
+  });
+
+  it('the mirror is the shipped GLSL, expression for expression', () => {
+    // ⚠️ A MIRROR THAT DRIFTS PROVES NOTHING — R15 shipped exactly that. The
+    // factor is computed ONCE PER INSTANCE in the vertex stage and carried as a
+    // varying, so the pin is the vertex line and the reading is the fragment's
+    // two multiplies.
+    expect(PATCH_VERTEX).toContain(
+      'vShareF = mix(uShareFloor, 1.0, clamp(aShare / max(uShareMax, 1e-6), 0.0, 1.0));',
+    );
+    expect(PATCH_VERTEX).toContain('varying float vShareF;');
+    expect(PATCH_FRAGMENT).toContain('varying float vShareF;');
+    // …and the TS is that expression, term for term, in a language a test can
+    // evaluate. Both are read out of the source so a rename on either side
+    // fails here rather than in a browser.
+    expect(SOURCE).toContain(
+      'const t = Math.min(Math.max(share / Math.max(shareMax, 1e-6), 0), 1);',
+    );
+    expect(SOURCE).toContain('return floor + (1 - floor) * t;');
+    // `mix(a, b, t)` IS `a + (b - a) * t`, which for b = 1 is the line above.
+    const glslMix = (a: number, b: number, t: number): number => a + (b - a) * t;
+    for (let k = 0; k <= 100; k += 1) {
+      const share = (k / 100) * MAX * 1.5; // past the maximum, to catch the clamp
+      const t = Math.min(Math.max(share / Math.max(MAX, 1e-6), 0), 1);
+      expect(mistShareFactor(share, MAX, MIST_SHARE_FLOOR))
+        .toBeCloseTo(glslMix(MIST_SHARE_FLOOR, 1, t), 12);
+    }
+  });
+
+  it('scales the SINK and the PILE and nothing else, the gulp least of all', () => {
+    // ⭐⭐ ONE FACTOR, TWO READERS, AND THEY ARE THE SAME QUANTITY SAID TWICE:
+    // `d(r²)/dt = -k` is the speed the streamlines run at, and the pile is what
+    // arriving at that speed leaves at the lip. Scaling only the sink would
+    // give a slow cohort a lip as bright as a fast one's.
+    expect(PATCH_FRAGMENT).toContain('float r0 = sqrt(r2 + uK * vShareF * tau);');
+    expect(PATCH_FRAGMENT).toContain('float pile = uConc * vShareF * c * c * c;');
+    // ⭐ AND THE BLOCK FLARE IS DELIBERATELY NOT SCALED: one block is one block,
+    // whichever cohort won it, so the gulp adds to the pile AFTER the share has
+    // weighed it.
+    const pile = PATCH_FRAGMENT.indexOf('float pile = uConc * vShareF');
+    const gulp = PATCH_FRAGMENT.indexOf('pile += ');
+    expect(gulp).toBeGreaterThan(pile);
+    expect(PATCH_FRAGMENT).not.toMatch(/pile \+= [^;]*vShareF/);
+    // Exactly two readings of the factor in the fragment, so a third would be a
+    // deliberate edit rather than a drift.
+    expect([...PATCH_FRAGMENT.matchAll(/vShareF/g)]).toHaveLength(3); // decl + 2
+    // ⚠️ It weighs no colour and no amplitude. `uAmp` is still the layer's ONLY
+    // scale on its brightness; the share changes how the mist MOVES.
+    expect(PATCH_FRAGMENT).toContain('* path * uAmp;');
+    expect(PATCH_FRAGMENT).not.toMatch(/uColor[^;]*vShareF|vShareF[^;]*uAmp/);
+  });
+
+  it('cannot raise the layer’s ceiling, because it is 1 at the busiest cohort', () => {
+    // ⭐ THE SUPREMUM DID NOT MOVE WHEN THE SHARE ARRIVED, and that is a
+    // property of the factor's shape rather than a coincidence: it is exactly 1
+    // at `shareMax` and below 1 everywhere else, so it only ever turns cohorts
+    // DOWN. The additive collision with the mark above is unchanged.
+    expect(mistShareFactor(MAX, MAX, MIST_SHARE_FLOOR)).toBe(1);
+    expect(mistPatchSupremum()).toBeCloseTo(1.95, 2);
+    expect(mistPatchSupremum(true)).toBeCloseTo(3.05, 2);
+    // …and at the floor the same two terms are what come down: `uK` off the
+    // speed and `uConc` off the pile, which is a THIRD of the pile at 0.35.
+    expect(MIST_CONC * MIST_SHARE_FLOOR).toBeCloseTo(0.56, 6);
+  });
+});
+
+/* -------------------------------------------------------------------------- *
  * The tile.
  * -------------------------------------------------------------------------- */
 
@@ -537,6 +655,11 @@ describe('colony mist — the material', () => {
       uFineLo: MIST_FINE_LO,
       uFineHi: MIST_FINE_HI,
       uConc: MIST_CONC,
+      uShareFloor: MIST_SHARE_FLOOR,
+      // ⚠️ 1 AND NOT 0: an unwritten divisor must read shares as themselves,
+      // not divide by nothing. `ColonyCohorts` overwrites it every frame from
+      // the maximum its own lane walk found.
+      uShareMax: 1,
       uGulpR: MIST_GULP_R,
       uWake: MIST_WAKE,
       uWakeW: MIST_WAKE_W,
@@ -602,7 +725,7 @@ describe('colony mist — the material', () => {
     expect((MIST_MOUND_R / (MIST_REACH * 2)) * MIST_PATCH_SEGMENTS).toBeCloseTo(6, 6);
   });
 
-  it('takes the SAME two lanes the face takes, on the SAME clock', () => {
+  it('takes the face’s two lanes on the SAME clock, and one the face refuses', () => {
     // ⭐ ONE GEOMETRY, ONE `wonAtRef`, ONE STAMP. `aGulp` is the sim second of
     // the block this cohort won; the mouth and the mist under it must swallow
     // the SAME block, so the lane is re-laid off the same map in the same
@@ -610,7 +733,12 @@ describe('colony mist — the material', () => {
     expect(PATCH_VERTEX).toContain('attribute float aSeed;');
     expect(PATCH_VERTEX).toContain('attribute float aGulp;');
     expect(PATCH_VERTEX).toContain('vGulp = aGulp;');
-    expect(PATCH_VERTEX).not.toContain('aShare');
+    // ⭐⭐ …AND THE THIRD LANE IS THIS LAYER'S ALONE. `aShare` is the cohort's
+    // fraction of its window, and the mist is the only draw with a RATE to
+    // spend it on — the sink's k is wu²/s. Neither aperture program declares
+    // it (`colonyCohort.ts`'s face factory says why, and
+    // `vertexAttributeBudget.test.ts` charges the difference).
+    expect(PATCH_VERTEX).toContain('attribute float aShare;');
     // ⚠️ `uTime` is `simClock.elapsedSec` on both draws, because the envelope
     // is `uTime - vGulp` and a `performance.now()` stamp is a difference of
     // hundreds of thousands that reads as zero.
