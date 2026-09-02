@@ -14,8 +14,12 @@
 // simply a point on the same curve where the curve is zero. This file is where
 // that claim is measured rather than asserted.
 //
-// Nothing stamps the lane yet — see `ColonyCohorts`' header. What is pinned
-// here is the property the block path will be dropped into.
+// `ColonyCohorts` stamps the lane, for the ONE mark whose `nodeId` equals the
+// flood's `entryId`, in SIM SECONDS off the same `simClock` it writes `uTime`
+// from — that wiring is pinned in `ColonySightedNodes.test.tsx` and the lane
+// walks in `colonyCohortShares.test.ts`. What is pinned HERE is the curve those
+// numbers are dropped into, and the silence at the sentinel that a cohort which
+// has never won relies on.
 import { describe, expect, it } from 'vitest';
 import {
   COHORT_GULP_FALL,

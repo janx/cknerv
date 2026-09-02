@@ -3,9 +3,10 @@
 // A cohort is where the colony plane is OPEN, and this layer draws that opening
 // twice: a disc lying IN the plane, and a camera-facing halo carrying the same
 // hole. Nothing volumetric, nothing hanging under the slab, and no second
-// cadence — one hole, two rays through it. The win itself is an instant the
-// colony's own outward surge already draws, from this very node, so nothing
-// here fires and nothing here reads the pulse.
+// cadence — one hole, two rays through it. And on the block a cohort wins, its
+// mouth SWALLOWS: the one thing this layer takes from the block path is the
+// flood's entry id, and the whole gate is a string compare — see the invariant
+// paragraph at the end of this header, which is the argument that moved here.
 //
 // ⭐⭐⭐ AND THE HOLE HAS A WINDOW IN IT. The peer mesh is the boundary between
 // two universes — above it the cell canopy, below it the one a cohort drinks
@@ -52,14 +53,28 @@
 //   • the live SHARE, which moves on every attributed block and must never be
 //     allowed to move the geometry with it;
 //   • the GULP lane, `aGulp` — the sim second of the block each cohort won,
-//     which is what makes the mouth swallow.
+//     which is what makes the mouth swallow; stamped off the pulse below and
+//     held against the NODE ID in `wonAtRef`, so a re-plan carries a win with
+//     the cohort instead of handing it to whoever takes the slot.
 //
-// ⚠️ THE GULP LANE IS ALLOCATED AND NOBODY WRITES IT YET. It is filled with
-// `COHORT_NEVER_WON`, a far-negative sentinel, and stays there: the block path
-// that stamps it lands in the next commit. That is why the paragraph below
-// still says this layer takes no pulse — it does not, today, and the lane reads
-// as "has never won" at every cohort until it does. ⚠️ The sentinel is not a
-// nicety: zero would read as "won at t = 0" and flare the whole colony on load.
+// ⚠️⚠️ THE GULP LANE IS SIM SECONDS, ON THE CLOCK THIS FILE ALREADY WRITES.
+// The envelope is `uTime - aGulp`; `uTime` is written from `simClock.elapsedSec`
+// in the sim frame below; and the stamp reads `elapsedSec` off THE SAME
+// `simClock` — one scope call in this component, two readers, so the two
+// sides of that subtraction cannot come from different clocks. A
+// `performance.now()` stamp would not merely be offset by the session's start:
+// the difference is hundreds of thousands, `exp(-age / 0.45)` of that is zero,
+// and the mouth would simply never move. Until a block names it, a slot holds
+// `COHORT_NEVER_WON` — a far-negative sentinel, and not a nicety: zero reads as
+// "won at t = 0" and flares the whole colony on load, which R16 shipped.
+//
+// ⭐ FLOAT32 IS THE LANE'S TYPE AND IT IS ENOUGH — measured, not assumed. The
+// spacing of float32 over the sim seconds a session reaches is 61 µs at 1e3 s,
+// 0.98 ms at 1e4 s (2.8 hours) and 7.8 ms at 1e5 s (27.8 hours) — still under a
+// SEVENTH of the gulp's 0.06 s attack; it only widens to 1 s at 2^23 s, which is
+// 97 days of unbroken session against an envelope that is over in three. And
+// `uTime` is a float32 uniform on the other side of the same subtraction, so
+// the lane is never coarser than the number it is compared against.
 //
 // ⚠️ THE SHARE LANE IS DORMANT, AND DELIBERATELY SO. Neither aperture program
 // declares `aShare`: share means RATE on this layer, and the aperture has no
@@ -69,12 +84,44 @@
 // something consumes it. `aGulp` IS bound, because the face really does declare
 // it — which is the whole difference between the two.
 //
-// ⚠️ IT TAKES NO PULSE, NO FLOOD AND NO SHOCKWAVE, and all three absences are
-// deliberate. The front crosses the WHOLE colony on every block, so anything
-// here that answered it would flare for every cohort on a block one of them
-// won; and the win itself is already drawn, by the wave that starts at this
-// very node. A layer with no per-block input is structurally incapable of
-// discharging for the wrong cohort.
+// ⭐⭐⭐ IT TAKES NO SHOCKWAVE AND NO FLOOD, AND EXACTLY ONE STRING OF THE
+// PULSE. The two absences and the one presence are the same argument, and the
+// argument MOVED rather than being overruled.
+//
+// The absences stand, for the reason they always had: the front crosses the
+// WHOLE colony on every block, so a shockwave sampled here — one number every
+// cohort reads — would flare all six of them on a block exactly one of them
+// won. That is the failure this layer exists not to have, and no wave-shaped
+// input can avoid it.
+//
+// What is gone is the claim that ABSTINENCE was the only cure for it. This
+// header used to argue that a layer with no per-block input is structurally
+// incapable of discharging for the wrong cohort, which is true and is a SMALLER
+// guarantee than the one available: `ColonyFlood.entryId` is `attested:<key>`
+// exactly when the chain named a producer this colony stands a node for, and
+// `CohortMark.nodeId` is that same string — ONE function builds both,
+// `attestedNodeId` in `networkTopology.derive`, reached by the flood through
+// `attestedOrigin` and by the mark through `stageAttested`. So the gate is one
+// string equality against the identity the wave itself leaves from
+// (`cohortWinStamp`), and a mark remains incapable of answering for anybody but
+// itself — the same guarantee, at the same strength, while now being able to
+// answer at all.
+//
+// ⚠️ THE DELIVERY PULSE REF WAS THE OTHER CANDIDATE, AND IT WAS REFUSED ON TWO
+// MEASURED FACTS RATHER THAN ON TASTE. `NetworkColony` already stamps
+// `{ at: simClock.elapsedSec, entryId, color }` into a ref for
+// `BlockDeliveryLayer` — the sim seconds and the entry id this lane needs, at
+// no new prop. But (1) it also carries `color`, that block's carrier hue — the
+// tint the courier and the edge surge take — into a layer whose palette is
+// `PEER_NETWORK_PALETTE.scaffold` and which is pinned not to know that hue's
+// deriving function by name at all; and (2) it is DESTRUCTIVELY
+// consumed — `BlockDeliveryLayer` nulls it once its carriers are done, saying
+// in its own comment that it is "the ref's only reader", and
+// `deliveryScheduleHorizon` returns 0 for an empty delivery list, so on a
+// topology with no local node and no arrivals that retire lands in the same
+// frame as the stamp. A second reader of a ref whose retire policy belongs to
+// another layer is a gulp that stops working with no diff to point at. Three
+// props and this layer's own copy of the colony's gate instead.
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
@@ -210,6 +257,66 @@ export function cohortShareLane(
   });
 }
 
+/** Lay the GULP lane out under a plan: one entry per staged mark, each the sim
+ *  second that cohort last won a block, looked up by the graph id the flood's
+ *  own origin is quoted in.
+ *
+ *  ⭐⭐ A WIN FOLLOWS THE COHORT AND NEVER THE SLOT, which is the law
+ *  `cohortShareLane` above has always kept and the reason its first test is
+ *  「by key and never by position」. The lane is indexed by POSITION and the
+ *  staged set reshuffles whenever a producer enters or leaves the rolling
+ *  window, so a walk that left the lane where it was would hand whoever takes
+ *  slot 0 the moment its previous occupant won — a mark gulping for somebody
+ *  else's block, arriving through a re-plan rather than through a bad key. A
+ *  cohort the plan dropped is not in `marks` and therefore cannot be written
+ *  anywhere; one that survived keeps its own moment wherever it now stands.
+ *
+ *  Pure, so the lane's contents can be pinned without a renderer — which they
+ *  have to be, because r3f effects do not run under jsdom. */
+export function cohortWinLane(
+  marks: readonly CohortMark[],
+  wonAt: ReadonlyMap<string, number> | null | undefined,
+  gulp: Float32Array,
+): void {
+  marks.forEach((mark, index) => {
+    gulp[index] = wonAt?.get(mark.nodeId) ?? COHORT_NEVER_WON;
+  });
+}
+
+/**
+ * Stamp `at` into the GULP lane of the ONE mark standing on `entryId`, and
+ * return which index moved — or `-1`, having moved nothing at all.
+ *
+ * ⭐⭐⭐ ONE STRING COMPARE, AND IT IS THE WHOLE GATE. `ColonyFlood.entryId` is
+ * `attested:<key>` exactly when the chain named a producer this colony stands a
+ * node for, and `CohortMark.nodeId` is that same string from the same
+ * `attestedNodeId` — so this is not a lookup that happens to agree with the
+ * flood's origin, it IS the flood's origin. A mark cannot be stamped for a
+ * block it did not make, because there is no path here from a block to a mark
+ * except the identity the chain itself attested.
+ *
+ * ⭐ AND THE WAYS IT FIRES NOTHING ARE THE HONEST ANSWER, not a defensive
+ * branch. `entryId` is the ANONYMOUS GHOST PICK whenever the cellbase named
+ * nobody, whenever the producer left the rolling window between the pulse and
+ * this render, and after every mid-session resync — three ordinary events, all
+ * argued on `pickOrigin` — and a ghost id belongs to no cohort, so no mouth
+ * moves. A colony with no cohorts at all hands over `null` for the same reason.
+ * Nothing swallowing when the chain named nobody is the scene telling the truth
+ * about what it was told.
+ */
+export function cohortWinStamp(
+  marks: readonly CohortMark[],
+  entryId: string | null | undefined,
+  at: number,
+  gulp: Float32Array,
+): number {
+  if (typeof entryId !== 'string' || entryId.length === 0) return -1;
+  const index = marks.findIndex((mark) => mark.nodeId === entryId);
+  if (index < 0) return -1;
+  gulp[index] = at;
+  return index;
+}
+
 /**
  * Every cohort's aperture, in two instanced draws.
  *
@@ -222,6 +329,9 @@ export function cohortShareLane(
 export default function ColonyCohorts({
   topology,
   producersRef,
+  entryId = null,
+  blockPulseAtMs = 0,
+  backfillActive = false,
   contextEnergyRef,
 }: {
   topology: NetworkTopology;
@@ -235,6 +345,26 @@ export default function ColonyCohorts({
    *
    *  ⚠️ It reaches no shader today; see the file header on the dormant lane. */
   producersRef?: ProducerSharesRef | null;
+  /** ⭐⭐ WHERE THIS BLOCK'S WAVE LEAVES FROM — `ColonyFlood.entryId`, and ONE
+   *  STRING of it rather than the flood. It is `attested:<key>` exactly when
+   *  the chain named a producer this colony stands a node for, which is the
+   *  same string `attestedNodeId` gives `CohortMark.nodeId`, so the whole gate
+   *  is a compare against it (`cohortWinStamp`). Passing `cf` itself would hand
+   *  this layer an arrival time for every node in the colony — a per-cohort
+   *  answer built out of a colony-wide fact, which is the shape of the failure
+   *  the header is about. Optional: a lab, a devnet nobody mines and a caller
+   *  that never learned about the flood are one code path, and it is the one
+   *  where no mouth ever moves. */
+  entryId?: string | null;
+  /** When the last block landed, in WALL-CLOCK ms. Read for its EDGE only. The
+   *  moment written into the lane comes from `simClock.elapsedSec` instead,
+   *  because the shader's `uTime` is sim seconds and a difference of two
+   *  clocks is not an age — see the header. */
+  blockPulseAtMs?: number;
+  /** Whether the client is replaying a restore gap. ⚠️ Consume-then-bail: the
+   *  pulse's edge is taken even while this is true, so a backlog cannot
+   *  discharge as six gulps in a row the moment it clears. */
+  backfillActive?: boolean;
   contextEnergyRef?: { readonly current: number };
 }) {
   const simClock = useSimClock();
@@ -312,6 +442,29 @@ export default function ColonyCohorts({
     ),
   }), [capacity]);
 
+  /** When each staged cohort last won a block, in sim seconds, by graph id.
+   *
+   *  ⚠️ THE ONE PIECE OF STATE THE LANE CANNOT BE, and it is here for exactly
+   *  the reason `cohortShareLane` looks its value up by key: a slot index is
+   *  not an identity. The lane is indexed by position and the staged set
+   *  reshuffles, so the moment a cohort won has to be held against the COHORT
+   *  and re-laid whenever the plan moves. Held in a ref and never in state: the
+   *  block that writes it must not re-render this subtree, which is the whole
+   *  argument on `ProducerSharesRef`.
+   *
+   *  ⭐ A COHORT THE PLAN DROPPED KEEPS ITS ENTRY, which is a deliberate
+   *  departure from R16's version of this map. R16 pruned to the staged set on
+   *  every re-plan; the cost of that is a peer poll which briefly loses a
+   *  producer from the rolling window CUTTING A SWALLOW SHORT — the mark
+   *  returns two polls later reading the sentinel, for a block the chain never
+   *  un-mined. The benefit it bought was a bound on the map, and the bound is
+   *  already there without it: the keys are the distinct payout identities one
+   *  session ever saw a block from, which is the same "handful" `COHORT_MARK_CAP`
+   *  is a safety valve over — a number about how PoW rewards concentrate, not
+   *  about how long the tab is left open. Nothing here is read for a cohort
+   *  that is not staged, so a stale entry costs a string and a float. */
+  const wonAtRef = useRef<Map<string, number>>(new Map());
+
   // Placement and identity: written only when the staged cohort set moves.
   useEffect(() => {
     const faceMesh = faceMeshRef.current;
@@ -334,9 +487,19 @@ export default function ColonyCohorts({
       auraMesh.setMatrixAt(index, SCRATCH_MATRIX);
       seed[index] = mark.seed;
     });
+    // …and the GULP lane is RE-LAID under the new plan, in the same walk. A win
+    // belongs to a NODE ID and never to a slot: a cohort the plan dropped is
+    // gone from `marks` and is written nowhere, one that survived carries its
+    // own moment to wherever it now stands, and the slot it used to hold reads
+    // `COHORT_NEVER_WON` rather than whatever the cohort before it left there.
+    // ⚠️ The re-lay is unconditional because the lane may be BRAND NEW: a
+    // capacity change rebuilds it at the sentinel, and the live wins have to be
+    // put back into it before the next frame draws.
+    cohortWinLane(marks, wonAtRef.current, lanes.gulp.array as Float32Array);
     faceMesh.instanceMatrix.needsUpdate = true;
     auraMesh.instanceMatrix.needsUpdate = true;
     lanes.seed.needsUpdate = true;
+    lanes.gulp.needsUpdate = true;
     // Bound on the first pass and again only when a capacity change built new
     // lanes. The quad outlives both InstancedMeshes (a capacity change rebuilds
     // them through `args`), so it can still be holding the previous set.
@@ -384,6 +547,57 @@ export default function ColonyCohorts({
     if (live === writtenSharesRef.current) return;
     writeShares(live);
   });
+
+  // THE WIN, stamped on a `blockPulseAtMs` INCREASE into the one mark standing
+  // on the node this block's wave leaves from — and into nothing else, ever.
+  //
+  // ⚠️ AN EFFECT AND NOT THE SIM FRAME, which is what every other block-reading
+  // layer in this colony does: `ColonyEdges`, `ColonyNodes`,
+  // `ColonyCourierLayer` and `NetworkColony`'s own delivery stamp all key on
+  // `[blockPulseAtMs]`. A pulse is an EVENT with an edge, and a frame poll would
+  // have to re-derive that edge from a number it is also free to miss. It also
+  // means the stamp survives a pause: `useSimFrame` skips entirely while time is
+  // paused, so a block arriving during one would be LOST rather than deferred —
+  // and the sim clock is frozen too, so the moment recorded here is the moment
+  // `uTime` resumes from, exactly as the colony's other surges do it.
+  //
+  // ⚠️ CONSUME-THEN-BAIL, word for word from `ColonyCourierLayer`. A restore gap
+  // replays a backlog of pulses; taking the edge without stamping is what stops
+  // that backlog discharging as six gulps in a row the moment `backfill` clears,
+  // and a bail that forgot to consume would fire LATE instead — a gulp with no
+  // block, which is worse than a gulp missed.
+  //
+  // ⚠️ AND IT WRITES A BUFFER, NEVER A STATE. All three props already reach this
+  // layer's parent on every block, so nothing here is a new React render; if any
+  // of it became state, the memoized colony subtree would re-render once a block
+  // and the argument on `ProducerSharesRef` would have been undone by the very
+  // layer it was written for.
+  const lastPulseRef = useRef(blockPulseAtMs);
+  useEffect(() => {
+    if (blockPulseAtMs <= lastPulseRef.current) return;
+    lastPulseRef.current = blockPulseAtMs; // consume even while backfilling…
+    if (backfillActive) return; //           …but stamp nothing
+    // ⭐ THE SIM CLOCK, NEVER THE PULSE'S OWN WALL-CLOCK MS. `uTime` is sim
+    // seconds and is written from this same `simClock` in the frame below, so
+    // an age is only a subtraction when both sides come from here.
+    const at = simClock.elapsedSec;
+    // ⭐⭐⭐ ONE STRING COMPARE. Nothing is stamped when the chain named nobody
+    // this colony stands a node for — `entryId` is then the anonymous ghost
+    // pick, which belongs to no cohort — and nothing is stamped for a producer
+    // whose mark is not staged. Both are ordinary events (see `pickOrigin`),
+    // and no mouth moving is the honest answer to each.
+    const index = cohortWinStamp(marks, entryId, at, lanes.gulp.array as Float32Array);
+    if (index < 0) return;
+    // Keyed off the MARK's own id rather than off `entryId`, so the map and the
+    // lane cannot disagree about which cohort was stamped.
+    wonAtRef.current.set(marks[index].nodeId, at);
+    lanes.gulp.needsUpdate = true;
+    // entryId + backfillActive are read from the latest closure when
+    // blockPulseAtMs advances (App recomputes cf + backfill + bumps
+    // blockPulseAtMs from the same cells-cache render), so [blockPulseAtMs]
+    // suffices — the gate every other layer in this colony keeps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blockPulseAtMs]);
 
   useEffect(() => () => {
     quad.dispose();

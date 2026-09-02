@@ -102,8 +102,18 @@ import { PEER_NETWORK_PALETTE, type SceneColor } from '../visualPalette';
  *
  * It remains continuous idle behaviour, and neither program reads a cohort's
  * share. The one per-block input is `aGulp` — the sim second of the block this
- * cohort won — and it is a LANE rather than a pulse: the layer above holds it
- * at `COHORT_NEVER_WON` and nothing writes it yet.
+ * cohort won — and it is a LANE rather than a uniform, because two blocks
+ * seconds apart can name two different cohorts and one broadcast number would
+ * cut the first mouth's swallow off mid-flight to hand the second one its own.
+ *
+ * ⭐⭐⭐ WHAT STAMPS IT IS ONE STRING EQUALITY, and that is the whole guard
+ * against a mark gulping for somebody else's block: `ColonyCohorts` writes the
+ * lane for the ONE mark whose `CohortMark.nodeId` equals `ColonyFlood.entryId`,
+ * and both of those strings are `attested:<key>` from the SAME function,
+ * `attestedNodeId` in `networkTopology.derive`. Every other slot stays at
+ * `COHORT_NEVER_WON`. The shockwave and the flood object stay OUT, for the
+ * reason they always had — a front that crosses the whole colony is one number
+ * every cohort reads, and it would flare all six on a block one of them won.
  */
 
 /**
@@ -963,9 +973,10 @@ export const COHORT_AURA_HALF = cohortAuraHalfExtent(
  *
  * `aSeed` is the same per-instance lane the other faces read. `aGulp` is the
  * new one: the SIM SECOND of the block this cohort won, or `COHORT_NEVER_WON`
- * for a cohort that has never won one. ⚠️ It is on the same clock `uTime` is —
- * `simClock.elapsedSec` — because the envelope is `uTime - aGulp` and two
- * clocks would make that difference meaningless. There is still NO `aShare`
+ * for a cohort that has never won one, stamped by `ColonyCohorts` against the
+ * flood's entry id. ⚠️ It is on the same clock `uTime` is — `simClock.elapsedSec`
+ * — because the envelope is `uTime - aGulp` and two clocks would make that
+ * difference meaningless. There is still NO `aShare`
  * lane: share means rate on this layer, and neither aperture program has a rate
  * share could drive that survives the grain's own prefilter.
  */

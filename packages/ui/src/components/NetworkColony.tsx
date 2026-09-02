@@ -270,6 +270,9 @@ function NetworkColony({
         <ColonyCohorts
           topology={topology}
           producersRef={producersRef}
+          entryId={cf.entryId}
+          blockPulseAtMs={blockPulseAtMs}
+          backfillActive={backfillActive}
           contextEnergyRef={nodeContextEnergyRef}
         />
         <ColonyNodes

@@ -1225,8 +1225,9 @@ describe('what a POW cohort looks like', () => {
     const courier = source('ColonyCourierLayer.tsx');
     // A courier is a billboarded bloom plus a comet plume, fired ONCE per
     // block, travelling OUTWARD down the propagation tree and tinted that
-    // block's carrier hue. This has no head to stretch, no plume texture, no
-    // pulse to fire from and no carrier hue.
+    // block's carrier hue. This has no head to stretch, no plume texture and no
+    // carrier hue — it fires on the same pulse and answers it in place, with the
+    // one colour the mark has ever had.
     expect(layer).not.toMatch(/makeCourier|Sprite|easeOutCubic/);
     expect(courier).toContain('makeCourierPlumeTexture');
     expect(material).toContain('PEER_NETWORK_PALETTE.scaffold');
@@ -1235,10 +1236,13 @@ describe('what a POW cohort looks like', () => {
     expect(courier).toContain('consensusBlockColor(blockPulseAtMs)');
   });
 
-  it('never samples the block shockwave, which would flare every cohort at once', () => {
-    // ⚠️ The front crosses the WHOLE colony on every block. A wave-receptive
+  it('takes no shockwave and no flood OBJECT, either of which would flare every cohort at once', () => {
+    // ⚠️ THE FRONT CROSSES THE WHOLE COLONY ON EVERY BLOCK, so a wave-receptive
     // mining mark would flare for every cohort as it passed — the scene showing
-    // six of them discharging on a block exactly one of them won.
+    // six of them discharging on a block exactly one of them won. This half of
+    // the invariant did NOT move when the layer learned which block is its own:
+    // what it gained was one STRING, pinned in the test below, and what it still
+    // refuses is every input whose shape is "a fact about the whole colony".
     const layer = source('ColonyCohorts.tsx');
     // The compiled GLSL, not the comment above it that says so.
     expect(faceFragment()).not.toMatch(/[Ss]hockwave/i);
@@ -1246,25 +1250,145 @@ describe('what a POW cohort looks like', () => {
     // …and nothing in either file can import one.
     expect(markSource()).not.toMatch(/^import .*shockwave/im);
     expect(layer).not.toMatch(/shockwaveMaterial|shockwaveUniforms/);
-  });
-
-  it('takes no pulse and no flood at all, so it cannot fire for the wrong cohort', () => {
-    // ⭐ The win is ALREADY DRAWN: on the block a cohort makes, the colony's
-    // own outward surge erupts from that very node, off `cf.entryId`. A layer
-    // with no per-block input is structurally incapable of discharging for
-    // anybody, right or wrong — which is a stronger guarantee than a lookup
-    // that happens to agree with the flood's.
-    const layer = source('ColonyCohorts.tsx');
-    expect(layer).not.toContain('blockPulseAtMs');
-    expect(layer).not.toContain('backfillActive');
-    expect(layer).not.toContain('cf.entryId');
-    expect(layer).not.toContain('ColonyFlood');
-    // The mount passes none of the three either.
+    // ⚠️ NOR THE FLOOD ITSELF. `cf` carries an arrival time for EVERY node in
+    // the colony, and a per-cohort answer built out of a colony-wide fact is the
+    // exact failure this layer exists not to have. The file may NAME
+    // `ColonyFlood` in its prose — the argument for the gate is an argument
+    // about where one of its strings comes from — and it may not import the
+    // type, because taking the object is how the colony-wide fact would get in.
+    expect(layer).not.toContain("from '../derives/networkFlood.derive'");
     const network = source('NetworkColony.tsx');
     const open = network.indexOf('<ColonyCohorts');
-    const close = network.indexOf('/>', open);
     expect(open).toBeGreaterThan(-1);
-    expect(network.slice(open, close)).not.toMatch(/cf=|blockPulseAtMs=|backfillActive=/);
+    expect(network.slice(open, network.indexOf('/>', open)))
+      .not.toMatch(/\bcf=|arrivals=|posById=|pulseRef=/);
+  });
+
+  it('keys its ONE block input to the flood’s own origin, and stamps it on the shader’s clock', () => {
+    // ⭐⭐⭐ THIS TEST USED TO SAY 「takes no pulse and no flood at all」, and the
+    // argument under it was sound and TOO SMALL. It held that a layer with no
+    // per-block input is structurally incapable of discharging for the wrong
+    // cohort — true, and a weaker guarantee than the one available, because it
+    // also made the layer incapable of answering at all. The POW cohort is the
+    // junction between two worlds: it draws energy in continuously AND wins a
+    // block, and a mouth that cannot be told which block is its own cannot
+    // swallow.
+    //
+    // What replaces abstinence is KEYING, at the same strength: `entryId` is
+    // `attested:<key>` exactly when the chain named a producer this colony
+    // stands a node for, and `CohortMark.nodeId` is that same string from the
+    // same `attestedNodeId`, so the gate is one string equality against the id
+    // the wave itself leaves from. The BEHAVIOUR is pinned in
+    // `colonyCohortShares.test.ts`; what is pinned HERE is the shape of the
+    // input and the wiring that drives it, which is what makes the behaviour
+    // reachable at all.
+    const layer = source('ColonyCohorts.tsx');
+    const network = source('NetworkColony.tsx');
+
+    // ⚠️ ONE STRING AND TWO SCALARS, AND THE MOUNT HANDS OVER NOTHING ELSE.
+    const open = network.indexOf('<ColonyCohorts');
+    expect(open).toBeGreaterThan(-1);
+    const mount = network.slice(open, network.indexOf('/>', open));
+    expect(mount).toContain('entryId={cf.entryId}');
+    expect(mount).toContain('blockPulseAtMs={blockPulseAtMs}');
+    expect(mount).toContain('backfillActive={backfillActive}');
+    // …and the layer's own type says so: a string, never a flood.
+    expect(layer).toContain('entryId?: string | null;');
+    // …and the compare is against the MARK's own id, so nothing but an attested
+    // identity can reach a mark.
+    expect(layer).toContain('marks.findIndex((mark) => mark.nodeId === entryId)');
+    expect(attestedNodeId('0xdeadbeef')).toBe('attested:0xdeadbeef');
+    expect(cohortMarks(topology)[0].nodeId)
+      .toBe(attestedNodeId(cohortMarks(topology)[0].producerKey));
+
+    // ⚠️ CONSUME-THEN-BAIL, IN THAT ORDER. A restore gap replays a backlog of
+    // pulses; taking the edge without stamping is what stops the backlog
+    // discharging as six gulps in a row the moment `backfill` clears, and a bail
+    // that forgot to consume would fire LATE instead — a gulp with no block,
+    // which is worse than a gulp missed. The ORDER is the whole gate, so it is
+    // the order that is asserted.
+    const gate = layer.slice(
+      layer.indexOf('if (blockPulseAtMs <= lastPulseRef.current) return;'),
+    );
+    const consume = gate.indexOf('lastPulseRef.current = blockPulseAtMs;');
+    const bail = gate.indexOf('if (backfillActive) return;');
+    const stamp = gate.indexOf('cohortWinStamp(');
+    expect(consume).toBeGreaterThan(-1);
+    expect(bail).toBeGreaterThan(consume);
+    expect(stamp).toBeGreaterThan(bail);
+    // …and it is the courier's gate word for word, because there is exactly one
+    // right answer to a replayed backlog and every layer in this colony that
+    // reads the pulse has to give it. A copy that drifted is a layer that
+    // strobes on a reconnect.
+    const courier = source('ColonyCourierLayer.tsx');
+    for (const line of [
+      'if (blockPulseAtMs <= lastPulseRef.current) return;',
+      'lastPulseRef.current = blockPulseAtMs;',
+      'if (backfillActive) return;',
+    ]) {
+      expect([line, courier.includes(line)]).toEqual([line, true]);
+    }
+    // ⚠️ ON THE EDGE, which is what makes the deps list correct rather than
+    // merely quiet: a re-render carrying the same pulse stamps nothing.
+    expect(layer).toContain('}, [blockPulseAtMs]);');
+
+    // ⭐⭐⭐ ONE CLOCK, AND IT IS DECIDABLE IN ONE FILE. The envelope is
+    // `uTime - vGulp`; `uTime` is written from `simClock.elapsedSec` in the sim
+    // frame and the stamp reads `elapsedSec` off THE SAME `useSimClock()`
+    // object, two hundred lines apart in ONE component. A `performance.now()`
+    // stamp would not merely shift the flare — the difference would be hundreds
+    // of thousands, and `exp(-age / 0.45)` of that is zero, so the mouth would
+    // never move and no test on the shader alone would notice.
+    // ⚠️ COMMENTS STRIPPED FIRST, because these are claims about what the
+    // program DOES: the header argues at length about the wall clock it refuses
+    // and names the very call it is counting, and prose the compiler drops must
+    // not be able to pass — or fail — an assertion about code.
+    const code = layer.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    expect([...code.matchAll(/useSimClock\(\)/g)]).toHaveLength(1);
+    expect(code).toContain('const simClock = useSimClock();');
+    expect(code).toContain('const at = simClock.elapsedSec;');
+    expect(code).toContain('const elapsed = simClock.elapsedSec;');
+    expect(code).toContain('face.uTime.value = elapsed;');
+    expect(code).not.toMatch(/performance\.now|Date\.now/);
+    // …and the pulse's own wall-clock ms never reaches the stamp itself.
+    const stamped = code.slice(code.indexOf('const index = cohortWinStamp('));
+    expect(stamped.slice(0, stamped.indexOf('\n'))).not.toContain('blockPulseAtMs');
+
+    // ⭐⭐ THE WIN IS HELD AGAINST THE NODE ID AND RE-LAID UNDER EVERY PLAN. A
+    // lane is indexed by POSITION and the staged set reshuffles, so a walk that
+    // left it alone would hand whoever takes a slot the moment its previous
+    // occupant won — discharging for the wrong cohort through the back door of
+    // a re-plan rather than through a bad key.
+    expect(layer).toContain('const wonAtRef = useRef<Map<string, number>>(new Map());');
+    expect(layer)
+      .toContain('cohortWinLane(marks, wonAtRef.current, lanes.gulp.array as Float32Array);');
+    // Keyed off the MARK's id and not off `entryId`, so the map and the lane
+    // cannot disagree about which cohort was stamped.
+    expect(layer).toContain('wonAtRef.current.set(marks[index].nodeId, at);');
+
+    // ⚠️ AND IT WRITES A BUFFER, NEVER A STATE. All three props already reach
+    // this layer's parent on every block, so nothing here is a new React render
+    // — and had any of it become state, the memoized colony subtree would
+    // re-render once a block and the argument on `ProducerSharesRef` would have
+    // been undone by the very layer it was written for.
+    expect(layer).not.toMatch(/useState|useReducer/);
+
+    // ⚠️⚠️ AND THE DELIVERY PULSE REF WAS THE OTHER CANDIDATE, REFUSED ON TWO
+    // MEASURED FACTS. `NetworkColony` already stamps `{ at, entryId, color }`
+    // for `BlockDeliveryLayer` — the sim seconds and the entry id this lane
+    // needs, at no new prop. But it carries that block's CARRIER HUE into a
+    // layer pinned not to know `consensusBlockColor` exists, and it is
+    // DESTRUCTIVELY consumed: the delivery layer nulls it, calls itself the
+    // ref's only reader, and `deliveryScheduleHorizon` returns 0 for an empty
+    // delivery list — so on a topology with no local node and no arrivals that
+    // retire lands in the same frame as the stamp. A second reader of a ref
+    // whose retire policy belongs to another layer is a gulp that stops with no
+    // diff to point at.
+    expect(layer).not.toContain('pulseRef');
+    expect(layer).not.toContain('consensusBlockColor');
+    expect(source('BlockDeliveryLayer.tsx')).toContain('pulseRef.current = null;');
+    expect(readFileSync(resolve(process.cwd(), 'src/derives/peers.derive.ts'), 'utf8'))
+      .toContain('if (deliveries.length === 0) return 0;');
   });
 
   it('keeps the share lane DORMANT rather than half-wired', () => {
@@ -1334,11 +1458,11 @@ describe('what a POW cohort looks like', () => {
     // which is exactly why the mount test above only asserts that it does not
     // throw. The invariant is therefore pinned where it is decidable.
 
-    // ⚠️ NOTHING STAMPS IT YET, and the layer still takes no block input at
-    // all. The test above (`takes no pulse and no flood`) is the one that has
-    // to change when the block path lands, together with this line.
-    expect(layer).not.toContain('lanes.gulp.needsUpdate');
-    expect(layer).not.toContain('wonAtRef');
+    // ⭐ AND THE BLOCK PATH WRITES IT FROM EXACTLY TWO PLACES: the re-lay under
+    // a plan and the stamp on a pulse. Each marks the lane ONCE for its whole
+    // walk and never once per slot, which is the discipline the share lane has
+    // always kept — so what is asserted is the COUNT, not the flag's presence.
+    expect([...layer.matchAll(/lanes\.gulp\.needsUpdate = true;/g)]).toHaveLength(2);
   });
 
   it('reads no standing at all in its plan, so a window that moved cannot move a mark', () => {
