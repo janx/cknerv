@@ -66,8 +66,8 @@ import type { SceneColor } from '../visualPalette';
  * disc's streamlines do), and the model matrix is applied ONCE — to the seat —
  * only so the fold can measure a world distance to the camera.
  *
- * ⚠️ THREE PLACES WHERE THIS PROGRAM AND THE DISC ARE NOT THE SAME NUMBER, each
- * deliberate and each one the live leg can settle with a knob:
+ * ⚠️ TWO PLACES WHERE THIS PROGRAM AND THE DISC ARE NOT THE SAME NUMBER, each
+ * deliberate and each one settleable with a knob:
  *
  * - `COHORT_MOTE_K` is 16 where the disc's back-trace runs at `MIST_SINK_K`
  *   (12). A mote is a marker the eye TRACKS over a whole fall and the disc's
@@ -86,10 +86,15 @@ import type { SceneColor } from '../visualPalette';
  * cohort the camera has flown to keeps its disc AND the specks falling into it.
  * G2 shipped without it and said what it would cost: past 150 wu the lens dims
  * with the mesh and the motes would not, which is one mark receding in two
- * pieces. The seat is already in scope up there and the fragment input is one
- * more varying, so it is five lines and no new geometry. ⚠️ RGB only, as
- * everywhere: the alpha is the shape, and dimming it would change what a mote
- * IS rather than how bright it is.
+ * pieces. ⚠️ RGB only, as everywhere: the alpha is the shape, and dimming it
+ * would change what a mote IS rather than how bright it is.
+ *
+ * ⭐ MEASURED LIVE 2026-09-03, on seven mainnet cohorts at 2560x1440 through
+ * ANGLE/Vulkan: `colony.cohort.motes` costs **0.10-0.14 ms** at every camera
+ * from the app overview to a hole filling the screen — a tenth of the lens
+ * beside it — and the specks contribute NOTHING inside the shadow, the
+ * motes-only frame being pixel-identical to a frame with neither draw.
+ * `COHORT_MOTE_SHADOW_R` lands the vanish exactly on the silhouette.
  */
 
 /* -------------------------------------------------------------------------- *
@@ -102,9 +107,10 @@ import type { SceneColor } from '../visualPalette';
  * ⭐ IT IS A DENSITY ALONG A LIFE, NOT A COUNT ON SCREEN. Every mote is at a
  * different point of its own fall, so 96 of them spread over a life of tens of
  * seconds put a handful in the bright inner region at any instant and leave the
- * rest as faint grain further out — which is what an intake looks like. Six
- * cohorts is 576 points: a rounding error beside the peer cloud, and the reason
- * the count can be generous.
+ * rest as faint grain further out — which is what an intake looks like. Seven
+ * cohorts is 672 points, and the geometry the layer allocates for the whole
+ * `COHORT_MARK_CAP` is 6,144: a rounding error beside the peer cloud, and the
+ * reason the count can be generous.
  */
 export const COHORT_MOTES_PER_COHORT = 96;
 
@@ -113,10 +119,10 @@ export const COHORT_MOTES_PER_COHORT = 96;
  *
  * ⚠️ THEY ARE HERE SO THE MIRROR AND THE SHADER CANNOT DRIFT. `moteHash` is
  * `fract(sin(x) · 43758.5453)` — the standard one — and what keeps 96 motes of
- * one cohort, and six cohorts of one colony, from marching in step is only that
- * they enter it at different points. Each salt is a (multiplier, offset) pair
- * on one input: the seed for the birth radius and the starting phase, and the
- * seed AND the cycle index for the angle a mote is reborn at.
+ * one cohort, and every cohort of one colony, from marching in step, is only
+ * that they enter it at different points. Each salt is a (multiplier, offset)
+ * pair on one input: the seed for the birth radius and the starting phase, and
+ * the seed AND the cycle index for the angle a mote is reborn at.
  */
 export const COHORT_MOTE_HASH = {
   r0Seed: 7.1,
@@ -307,13 +313,18 @@ export const COHORT_MOTE_FADE_IN = 0.35;
 /**
  * How much the block this cohort won multiplies a mote by, at the gulp's peak.
  *
- * ⭐ THE LARGEST OF THE THREE BURSTS IN THE FEATURE, and that is a statement
- * about what is being multiplied. The mouth's interior lifts by
- * `COHORT_GULP_INTERIOR` (2.2) and its lip by `COHORT_GULP_LIP` (1.6), and both
- * are surfaces already carrying most of the mark's light. A mote is a single
- * additive point sitting at 0.22 of full for most of its life; at 2.2 the
- * swallow does not read on the specks at all. The envelope itself is the
+ * ⭐ THE LARGEST BURST IN THE FEATURE, and that is a statement about what is
+ * being multiplied. The disc's own pile lifts by `COHORT_GULP_INTERIOR` (2.2) —
+ * a surface already carrying most of the mark's light — where a mote is a single
+ * additive point sitting at 0.22 of full for most of its life, so at 2.2 the
+ * swallow would not read on the specks at all. The envelope itself is the
  * feature's ONE curve — `COHORT_GULP_GLSL`, imported, never re-typed.
+ *
+ * ⭐ MEASURED LIVE 2026-09-03. Three mainnet blocks caught 340 / 342 / 447 ms
+ * after their stamp, camped on the top cohort at 40 px/wu with the colony's
+ * rotation frozen so the envelope is the ONLY thing that moves between a burst
+ * frame and its rest frame: the crop's mean brightness rose **x1.29** each time,
+ * with 78-80 % of its pixels brighter by more than 16/255.
  */
 export const COHORT_MOTE_GULP_BURST = 2.5;
 
@@ -953,10 +964,9 @@ export interface CohortMoteSeat {
  * A `THREE.Points` geometry with room for `capacity` cohorts.
  *
  * ⚠️⚠️ `aGulp` HERE IS A PER-MOTE COPY OF THE COHORT'S LANE, NOT THE SHARED
- * `InstancedBufferAttribute`. Every other program in this feature is drawn by an
- * InstancedMesh and reads ONE lane value per instance, so the layer can hand the
- * very same `InstancedBufferAttribute` object to the face, the patch and the
- * lens and know they gulp on the same block. A Points geometry is not instanced:
+ * `InstancedBufferAttribute`. The lens beside it is drawn by an InstancedMesh
+ * and reads ONE lane value per instance, so the layer hands it the
+ * `InstancedBufferAttribute` object itself. A Points geometry is not instanced:
  * there is one vertex per MOTE, so the lane has to be widened to 96 copies per
  * cohort and `stampCohortMotes` is what writes them. Handing this geometry a
  * shared instance lane would read one cohort's stamp for the first 1/96th of the

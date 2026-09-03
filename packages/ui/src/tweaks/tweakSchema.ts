@@ -186,7 +186,9 @@ export const peerSchema = {
   // that default and the knob the moment it is moved. So a tuner can price the
   // trace against the picture on one page without changing the tier under the
   // rest of the scene — and a panel nobody has touched still shows what the
-  // tier decided.
+  // tier decided. ⚠️ Measured 2026-09-03, the three tiers are within
+  // SINGLE-DIGIT PERCENT of each other in cost at every camera, so this slider
+  // moves the photon ring's precision and almost nothing else.
   //
   // ⚠️ NO KNOB HERE CAN CLIP THE MARK, and it is arithmetic rather than a range
   // chosen carefully: the disc's alpha is clamped to 0.85 in the fragment and
@@ -212,7 +214,9 @@ export const peerSchema = {
   // the band the whole mark folds over (the far end, 6, is not a knob — it is
   // where a cohort becomes a peer-sized smudge and that is the layer's rule)
   cohortUnfold: { value: COHORT_UNFOLD_HI, min: 10, max: 60, step: 1, label: 'cohort unfold' },
-  // RK4 steps per ray. ⚠️ Overrides the quality tier the moment it is moved
+  // RK4 steps per ray: the photon ring's precision. ⚠️ Overrides the quality
+  // tier the moment it moves, and the tiers cost within single-digit percent of
+  // each other everywhere (measured 2026-09-03) — this is not a speed slider
   cohortSteps: { value: COHORT_LENS_STEPS, min: 24, max: 160, step: 1, label: 'cohort steps' },
   // sink strength k, in wu²/s: how fast the medium falls in (`r0² = r² + k·τ`)
   cohortIntake: { value: MIST_SINK_K, min: 0, max: 40, step: 0.5, label: 'cohort sink k' },

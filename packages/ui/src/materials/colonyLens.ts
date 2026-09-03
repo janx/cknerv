@@ -159,7 +159,16 @@ export const COHORT_DISC_IN = cohortDiscInner(COHORT_HORIZON);
 
 /** The disc's outer edge at the near end of the fold, in world units: the
  *  intake's range, where the streak field carries it and the fibres have
- *  faded. A starting value from the approved preview. */
+ *  faded. A starting value from the approved preview, unchanged by the live leg
+ *  of 2026-09-03.
+ *
+ *  ⚠️ IT IS ALSO THE RAY MARCH'S ESCAPE RADIUS, and that coupling shipped broken
+ *  once. A ray "has left" when it is heading away and further out than it
+ *  started — which is only true while the disc is inside `1.2·r0`, so at any
+ *  camera closer to a mark than `28 / 1.2` = 23.3 wu the old test cut rays bent
+ *  over the top before they reached the disc's far side, in hard quantised black
+ *  wedges. Retuning this constant moves that camera; the escape test reads
+ *  `max(r0, discOut)` for exactly that reason. */
 export const COHORT_DISC_OUT = 28;
 
 /**
@@ -227,6 +236,17 @@ export function cohortShadowRadius(horizon: number): number {
  * this file. ⚠️ Judge any change to it against that number and never against
  * `COLONY_MIN_SPACING`, which bounds only the inferred scatter.
  *
+ * ⭐ MEASURED LIVE 2026-09-03, on seven mainnet cohorts approached at 26 wu from
+ * TWO azimuths each, with real CDP mouse events. **14 / 14 hole clicks opened
+ * their own `POW COHORT //` card on the first try**, every one of the fourteen
+ * hovers named that cohort's own `attested:0x…` id, and **7 / 7 nearest
+ * clickable neighbours opened their own card** and never the cohort's. The
+ * minimum XZ clearance over the whole colony was **exactly 3.500** — the
+ * keep-out, still binding on two cohorts and on the seventh the ledger added —
+ * so this radius leaves **1.50 wu of daylight** at the tightest. T6's live
+ * minimum of 1.274 wu, and its one cohort that needed a second azimuth, are
+ * both gone.
+ *
  * ⭐ AND IT MUST NEVER GO SMALL AGAIN. This radius once made the producer the
  * SMALLEST target in the colony at 0.375 wu, under the faintest roster rung's
  * 0.425, and a full-canvas hover sweep of the running app found forty peers and
@@ -282,7 +302,15 @@ export const COHORT_UNFOLD_LO = 6;
 
 /** …and above this many, it is fully unfolded: the film's hole. Between them
  *  the closeness runs 0 → 1 on a smoothstep, and EVERY quantity that folds
- *  reads that one number, so nothing can unfold on its own schedule. */
+ *  reads that one number, so nothing can unfold on its own schedule.
+ *
+ *  ⭐ AND THERE IS NO POP, MEASURED 2026-09-03. A paused dolly on one isolated
+ *  cohort from 6 to 62 px/wu in steps of 2 — 29 frames, each cropped to the same
+ *  24 wu of world and resampled to 512², so the magnification is removed and
+ *  only the FORM is compared — gives a mean-absolute per-step difference with a
+ *  median of 23.2 and a maximum of 26.6: **1.15× the median**, and it falls at
+ *  20 px/wu, inside this band, where the form is legitimately changing fastest.
+ *  A discontinuity would have shown as a spike of several times the median. */
 export const COHORT_UNFOLD_HI = 30;
 
 /* -------------------------------------------------------------------------- *
@@ -295,6 +323,14 @@ export const COHORT_UNFOLD_HI = 30;
  * ⭐ THE PRECISION IS WHAT THE QUALITY CASCADE MOVES, NEVER THE PRESENCE. A
  * cohort at 40 steps is the same cohort with a coarser photon ring; a cohort
  * that is not drawn is a producer the scene is lying about.
+ *
+ * ⚠️ AND IT IS NOT A PERFORMANCE LEVER. Measured live 2026-09-03, 96 -> 40 steps
+ * moves the lens draw by −4 % to −17 % — inside the ±17 % cross-run noise — at
+ * every camera from the app overview to a hole filling the screen, because the
+ * march has four early exits and the cap binds only for the thin annulus of rays
+ * that linger near the photon sphere. What the three tiers should hold is
+ * therefore an OPEN QUESTION; what would actually buy a tier something on this
+ * layer is `COHORT_LENS_QUAD_R`, `COHORT_DISC_OUT` or a resolution scale.
  */
 export const COHORT_LENS_STEPS = 96;
 
@@ -340,6 +376,13 @@ export const COHORT_LENS_STEP_CAP = 160;
  * and for the arc the lensing lifts above the plane. There is no cheaper way to
  * be sure the disc is not cut off by its own quad: the quad is the domain of
  * the trace, and a ray that is not launched draws nothing.
+ *
+ * ⭐⭐ THIS, AND NOT `uSteps`, IS THE LAYER'S REAL COST LEVER — measured live
+ * 2026-09-03. The draw goes 0.455 ms at the app camera to 1.890 at 40 px/wu and
+ * 2.386 at 90, and 4.584 when a second mark stands 9.6 wu away and its quad
+ * overlaps: the cost tracks the pixels covered, and the step count moves it by
+ * single-digit percent. A tier that has to buy something here should shrink this
+ * or `COHORT_DISC_OUT`.
  */
 export const COHORT_LENS_QUAD_R = 32;
 
@@ -383,8 +426,17 @@ export const COHORT_LENS_GLOW_R = 4;
  * all (its alpha is the closeness), so what is left is this: a one-unit glow
  * with a brighter half-unit core — deliberately the shape of a sighted peer's
  * sprite, because at that distance a cohort IS a peer that happens to mine.
- * ⚠️ The live leg has to measure the halo's brightest pixel against a measured
- * peer's core and it must come out at or below it.
+ *
+ * ⭐⭐ MEASURED LIVE 2026-09-03, AND THE THIRD RULE HOLDS BY MEASUREMENT. At the
+ * app camera the layer's own brightest pixel anywhere on the canvas (ON minus
+ * the four amplitudes at zero, the only honest subtraction when every cohort's
+ * disc has peers standing in it) is **77/255**: **0.40** of a ghost sprite's
+ * core (median 193) and **0.34** of a measured peer's (median 224). It carries
+ * ≥ 1 on 0.40 % of the canvas and removes at most 11/255 anywhere. For scale the
+ * retired mist patch peaked at 236/255 and the retired haze at 2/255 — the
+ * lensed far form sits between them and much nearer the haze. ⚠️ At 40 px/wu the
+ * same measurement inverts completely (76 % of the canvas, up to 255/255), which
+ * is the fold doing what it claims.
  */
 export const COHORT_LENS_FAR_GLOW = 0.3;
 export const COHORT_LENS_FAR_GLOW_R = 1;
@@ -404,7 +456,7 @@ export const COHORT_LENS_FAR_DISC_AMP = 0.9;
 export const COHORT_LENS_FAR_DISC_POW = 2.2;
 
 /* -------------------------------------------------------------------------- *
- * The substance, where this draw's numbers differ from the patch's.
+ * The substance, where this draw's numbers differ from the retired patch's.
  * -------------------------------------------------------------------------- */
 
 /**
@@ -824,12 +876,12 @@ export function lensRedshift(rho: number, rs: number): number {
 /**
  * One cohort's mark: an instanced camera-facing quad that traces light.
  *
- * The vertex convention is the aura's, exactly: `instanceMatrix` carries a
- * TRANSLATION and nothing else, the quad's half-extent rides `uQuadR`, and the
- * three lanes are the ones the layer already plans — `aSeed` (decorrelation),
- * `aGulp` (the sim second of the block this cohort won) and `aShare` (its
- * fraction of its window, which is the sink's strength here exactly as it is
- * under the patch).
+ * The vertex convention is the retired aura's, exactly: `instanceMatrix`
+ * carries a TRANSLATION and nothing else, the quad's half-extent rides
+ * `uQuadR`, and the three lanes are the ones the layer already plans — `aSeed`
+ * (decorrelation), `aGulp` (the sim second of the block this cohort won) and
+ * `aShare` (its fraction of its window, which is the sink's strength here
+ * exactly as it was under the retired patch).
  *
  * ⚠️ A SCALED INSTANCE MATRIX WOULD MOVE THE QUAD WITHOUT MOVING THE MASS, and
  * the mark would be a window onto a hole that is somewhere else.
@@ -884,7 +936,7 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
       uDriftSign: { value: MIST_DRIFT_SIGN },
       uPeriod: { value: MIST_PERIOD },
       uShareFloor: { value: MIST_SHARE_FLOOR },
-      // ⚠️ 1 rather than 0, for the reason the patch's does: an unwritten
+      // ⚠️ 1 rather than 0, for the reason the retired patch's did: an unwritten
       // maximum reads shares as themselves instead of dividing by nothing.
       uShareMax: { value: 1 },
       // ---- the disc's texture
@@ -1050,10 +1102,9 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
       // ---- what the disc looks like where a ray crossed it ------------------
       //
       // ⭐⭐ IT IS THE INTAKE AND NOT A TEXTURE OF A DISC. The medium, the
-      // spiral back-trace and the sink's strength are the patch's own, compiled
-      // from the same strings, so a viewer looking at a cohort's disc and a
-      // viewer looking at the mist under another one are looking at one
-      // substance being taken at two rates.
+      // spiral back-trace and the sink's strength are the substance's own, out
+      // of the mist library, so two cohorts' discs are one substance taken at
+      // two rates and not two textures that happen to look alike.
       vec4 lensDisc(
         vec3 hit, vec3 view, float closeness, float edge, float outR, float rs
       ) {
@@ -1065,14 +1116,14 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
         // How far in the material has come, as a fraction: 1 at the inner edge.
         float cc = clamp(edge / rho, 0.0, 1.0);
 
-        // The same clock, the same two phases and the same seed the patch uses,
-        // so six cohorts never breathe together and this one breathes with its
-        // own mist.
+        // The same clock, the same two phases and the same seed the retired
+        // patch used, so no two cohorts breathe together and this one breathes
+        // with its own mist.
         float ph = uTime / uPeriod + vSeed;
         float t0 = fract(ph) * uPeriod;
         float t1 = fract(ph + 0.5) * uPeriod;
         float phaseMix = 1.0 - abs(2.0 * fract(ph) - 1.0);
-        // ⭐ The seat is what decorrelates the six discs: the back-trace runs in
+        // ⭐ The seat is what decorrelates the discs: the back-trace runs in
         // the sink's own frame and the tile is read at the cohort's colony-frame
         // seat, which is a CONSTANT. Sampling at a world point would swim.
         float gA = mistMedium(mistBacktrace(local, t0) + vSeat, 1.0);
@@ -1085,7 +1136,7 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
         // ---- the block this cohort won, on the SAME curve the mouth swallows
         ${COHORT_GULP_GLSL}
         // The pile: the area compression a 2-D sink applies to a parcel, at
-        // this cohort's own rate — the same argument the patch's lip makes.
+        // this cohort's own rate — the argument the retired patch's lip made.
         float pile = uConc * vShareF * cc * cc * cc
           + ${COHORT_GULP_INTERIOR.toFixed(1)} * gulp
             * clamp(edge * uGulpR / rho, 0.0, 1.0);

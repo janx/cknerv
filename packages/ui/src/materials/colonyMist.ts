@@ -206,9 +206,10 @@ export function makeMistNoiseTexture(): THREE.DataTexture {
  *
  * At 0.085 the tile repeats every 11.8 wu and its coarsest channel's cell — 8
  * across the tile — is 1.47 wu, which is the size of one filament's
- * cross-section. That is deliberately COMPARABLE TO THE HOLE (1.6 wu): the
- * medium has to resolve as structure at the lip or the gather reads as a smooth
- * glow, which is a lamp and not an intake.
+ * cross-section. That is deliberately COMPARABLE TO THE HOLE — 1.6 wu at the
+ * retired aperture's mouth, 2.0 wu at the lensed shadow it became: the medium
+ * has to resolve as structure at the edge of the hole or the gather reads as a
+ * smooth glow, which is a lamp and not an intake.
  */
 export const MIST_GRAIN = 0.085;
 
@@ -306,6 +307,16 @@ export const MIST_DRIFT_SIGN = -1;
  * -k` and the radius a parcel had `tau` ago is exactly `sqrt(r² + k*tau)`. The
  * medium is therefore advected by the flow rather than warped toward it, which
  * is why the filaments bend into the mouth instead of pointing at it.
+ *
+ * ⭐⭐ IT READS AS A SINK ON THE LENSED DISC, MEASURED 2026-09-03. Block matching
+ * a live 40 px/wu frame (16×16 blocks, ±48 px search, radius and azimuth from a
+ * real ray/plane unprojection and never from screen pixels) gives an inward
+ * ratio over the 5–12 wu annulus of **1.79 : 1** on the top cohort at the full
+ * factor, median radial **−0.381 wu/s** against the model's −0.706 at r = 8.5.
+ * ⚠️ READ THIS SINK AT 5–12 wu: inside 5 wu the true displacement at `k` = 12 is
+ * past what 16×16 block matching can follow, and that annulus has never resolved
+ * in any leg. `MIST_SHARE_FLOOR` below carries the measurement that this `k` is
+ * really what the share is scaling.
  */
 export const MIST_SINK_K = 12;
 
@@ -372,13 +383,18 @@ export const MIST_LANE_HI = 0.68;
  * motion at all, which says "this cohort is not taking anything" when what is
  * true is "this cohort is taking little". At 0.35 the 2.3 % row comes out at
  * 0.374 against the top row's 1 — the busiest cohort drinks 2.7× as hard, and
- * the smallest still moves. ⚠️ ASSUMED, NOT MEASURED: the ratio is arithmetic,
- * but whether 0.374 of `k` READS as an intake on a screen is not, and nothing
- * has yet put the two side by side on a real GPU. ⚠️ IT IS NO LONGER A KNOB:
- * `cohortShareFloor` went with the intake patch on 2026-09-03, so settling it
- * now means editing this constant. ⭐ THE LIVE LEG STILL OWNS IT, and the
- * measurement it has to make is legibility at the smallest share, not a
- * preference between two screenshots.
+ * the smallest still moves. ⚠️ IT IS NO LONGER A KNOB: `cohortShareFloor` went
+ * with the intake patch on 2026-09-03, so settling it now means editing this
+ * constant.
+ *
+ * ⭐⭐ AND THE FLOOR DOES CARRY AN INTAKE, MEASURED 2026-09-03. The smallest
+ * mainnet cohort in view (1.65 % of the week, factor 0.367) block-matched at
+ * **1.40 : 1 inward** over 5–12 wu with a median radial of −0.245 wu/s — a sink,
+ * not a still picture. The same cohort with the floor written to 1 ran
+ * **3.25× faster** (−0.797 wu/s) against a predicted 2.72×, which is what says
+ * the factor is really driving `k` rather than a coincidence of two crops.
+ * ⚠️ Still open by EYE: 1.40 : 1 is a sink to a block matcher, and whether it
+ * reads as one to a viewer at the app camera is a judgement nobody has recorded.
  */
 export const MIST_SHARE_FLOOR = 0.35;
 

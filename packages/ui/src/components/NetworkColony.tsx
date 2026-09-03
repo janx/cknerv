@@ -9,10 +9,12 @@
 //     ONE glow primitive on a confidence gradient (rendered OVER the edges). A
 //     new block sends a radial brightness shockwave across these existing nodes;
 //     the local "you" is the galaxy's anchor, not drawn here.
-//   • ColonyCohorts — one ray-traced quad per POW cohort plus the specks falling
-//     into it: light bent around a mass lying in this plane. ⚠️ It is drawn LAST
-//     inside the rotating group because its shadow is the colony's only
-//     normally-blended occluder and it occludes by DRAW ORDER, not by depth.
+//   • ColonyCohorts — one ray-traced quad per POW cohort plus the 96 specks
+//     falling into each: light bent around a mass lying in this plane, whose
+//     shadow is the hole in it. ⚠️ It is drawn LAST inside the rotating group
+//     because that shadow is the colony's only normally-blended occluder and it
+//     occludes by DRAW ORDER, not by depth (renderOrder 1 for the quad, 2 for
+//     the specks; measured on 2026-09-03 at exactly 0/255 inside the hole).
 //   • ColonyCourierLayer — a faint glint accent riding the edge surge: a small,
 //     dimmed glow-mote flung node→node along the shortest-path tree, timed by the
 //     flood arrivals. The edge surge traces the actual route while the node
@@ -294,7 +296,13 @@ function NetworkColony({
             the same reason, because three sorts equal render orders by DEPTH and
             each of those layers is a single draw with one z for the whole
             colony. It stays BEFORE the courier and the delivery, which fly above
-            the plane and must not be darkened by a hole they pass over. */}
+            the plane and must not be darkened by a hole they pass over.
+            ⭐ MEASURED LIVE 2026-09-03, with a ghost, a sighted peer and ten
+            link interior points standing behind one hole at 40 px/wu: the inner
+            half of the shadow reads EXACTLY 0/255 on all 5,025 of its pixels,
+            where the same pixels reach 142 with this layer hidden. At the app
+            camera the same shadow does not occlude at all — the alpha is the
+            closeness — and the mount order is what makes both true. */}
         <ColonyCohorts
           topology={topology}
           producersRef={producersRef}

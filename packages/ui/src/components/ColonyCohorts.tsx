@@ -141,8 +141,8 @@
 //
 // The absences stand, for the reason they always had: the front crosses the
 // WHOLE colony on every block, so a shockwave sampled here — one number every
-// cohort reads — would flare all six of them on a block exactly one of them
-// won. That is the failure this layer exists not to have, and no wave-shaped
+// cohort reads — would flare every mark in the colony on a block exactly one of
+// them won. That is the failure this layer exists not to have, and no wave-shaped
 // input can avoid it.
 //
 // What is gone is the claim that ABSTINENCE was the only cure for it.
@@ -163,6 +163,18 @@
 // never appeared in this window). Four distinct cohorts won; the mark count
 // never changed, so the re-lay was not exercised by a re-plan here and remains
 // pinned by test rather than by measurement.
+//
+// ⭐ RE-MEASURED ON THE TWO-DRAW LAYER, 2026-09-03: 310 s of live mainnet, seven
+// marks throughout, 28 pulses / 28 stamps / 28 matching node ids / 0 mismatches,
+// and — the claim that is new here — the changed cohort's NINETY-SIX mote copies
+// carried the lens slot's value on all 28 of them. Five distinct cohorts won.
+// ⚠️⚠️ TWO TRAPS COST HALF THAT LEG, and both produce the symptom "the gulp
+// stopped working". A watcher that CACHES `geometry.getAttribute('aGulp').array`
+// goes blind at the next re-plan, because `lanes` is memoized on the mark count
+// and the cached `Float32Array` becomes an orphan — re-read the attribute every
+// frame. And `Time.paused` freezes `simClock.elapsedSec`, so two blocks stamp
+// the same number and a differ watching the LANE sees nothing change: count the
+// gulp only over a running page.
 //
 // ⚠️ THE DELIVERY PULSE REF WAS THE OTHER CANDIDATE, AND IT WAS REFUSED ON TWO
 // MEASURED FACTS RATHER THAN ON TASTE. `NetworkColony` already stamps
@@ -235,10 +247,10 @@ export interface CohortMark {
   /** Where it stands, in colony-frame coordinates. */
   readonly pos: Vec3;
   /** Per-cohort de-sync in [0,1), a stable hash of the payout key. Without it
-   *  every aperture in the colony would breathe on the same beat and six of
-   *  them would read as one animation stamped six times. It is a fraction of a
-   *  TURN, and both faces consume it: the face's grain takes it as an azimuthal
-   *  offset, both breathes take it in radians. */
+   *  every mark in the colony would move on the same beat and the whole set
+   *  would read as one animation stamped once per producer. Both draws consume
+   *  it: the lens offsets the medium's two-phase clock by it (`vSeed`), and the
+   *  motes spread their births, phases and rebirth angles out of it. */
   readonly seed: number;
 }
 
@@ -451,8 +463,18 @@ export function cohortPxScale(
  * `COHORT_LENS_STEPS` — the SAME number the `high` tier carries — so an
  * untouched panel is transparent: whatever the cascade decided is what draws.
  * The moment the slider moves, this layer takes the tuner's number, because a
- * step count that silently snapped back to the tier would make the one
- * measurement G5 has to take impossible to take.
+ * step count that silently snapped back to the tier would have made the live
+ * step sweep impossible to run.
+ *
+ * ⭐ AND THE SWEEP CAME BACK SAYING THE TIER BUYS ALMOST NOTHING. Measured
+ * 2026-09-03 on live mainnet at 2560x1440 through ANGLE/Vulkan, with the four
+ * step counts interleaved in 1.8 s windows: 96 -> 40 steps moves the lens draw
+ * by −4 % to −17 %, everywhere from the app camera to a hole filling the screen,
+ * which is inside the ±17 % cross-run noise the app-camera control establishes.
+ * The reason is in the program: the march has four early exits, so the cap binds
+ * only for the thin annulus of rays that linger near the photon sphere. ⚠️ THIS
+ * IS A PRECISION KNOB WITH A SINGLE-DIGIT-PERCENT PRICE, NOT A PERFORMANCE
+ * LEVER — the layer's real lever is the pixels the quad covers.
  *
  * ⚠️ The consequence, stated rather than discovered: a tuner who drags the
  * slider back to exactly 96 on a `med` page gets 64. That is the price of

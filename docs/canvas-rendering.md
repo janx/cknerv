@@ -845,21 +845,21 @@ The topology contains:
   latency and moving it would print a measurement nobody took. The scatter
   itself is untouched and still seed-only, so peer churn still moves nobody —
   what moves a node is a producer KEY appearing over it, which is the intended
-  behaviour: the hole opens and the peer steps aside. 3.5 is the mark's outer
-  radius `COHORT_AP_R` (3.0, which is also `COHORT_LINK_STOP_R`) plus the half
-  unit a displaced peer's own link needs to still be drawn as a line;
+  behaviour: the hole opens and the peer steps aside. 3.5 is
+  `COHORT_LINK_STOP_R` (3.0, where a cohort's own links end) plus the half unit
+  a displaced peer's own link needs to still be drawn as a line;
 - attested cohorts, one per block producer in the UNION OF TWO WINDOWS —
   the 240 attributed blocks the local node holds, which is recency, and the
   indexer's seven complete days, which is size — carrying the chain's payout
   key and NO identity at all: the type they hold has no field an ID could land
   in. The union is what keeps a hole open: a cohort used to exist only while it
-  held a block in the ring, so its aperture closed on a reorg, on a rebuild and
+  held a block in the ring, so its mark vanished on a reorg, on a rebuild and
   through the first minute of a boot, while the week is warm on the first frame.
   A key is a key in either window, so the two sets simply add; the ring is
   capped upstream and the week at 16 rows, and `COHORT_MARK_CAP` (64) still
   bounds what is drawn. They lie EXACTLY on `COLONY_Y`, with no scatter in Y
-  whatever, because a cohort is an opening cut into the plane and an opening off
-  its plane is a disc floating beside one;
+  whatever, because a cohort is a mass lying IN the membrane whose shadow is the
+  hole, and a mass off that plane is a disc floating beside one;
 - a seed-only inferred scaffold of roughly `240 +/- 30` nodes in an elliptical
   disc, scattered through `COLONY_Y_THICKNESS` — 6 world units, +/- 3 either
   side, the depth at which the colony reads as a MEMBRANE with marks cut into
@@ -872,185 +872,312 @@ from measured peers into the scaffold remain classified as inferred because
 the node did not observe those Internet links.
 
 The colony plane is the boundary between two universes: above it the cell
-canopy, CKB's own spacetime; below it the one a miner draws on. Three rules
-follow from that reading and settle every argument in the rest of this section.
-The energy under the plane is a DIFFUSE SUBSTANCE that permeates space — a mist
-with no shape of its own: not a sea, not a coast, not curtains. It is
-SECONDARY, and must never take focus from the peer mesh or the Cell galaxy. And
-THE INTAKE IS THE POINT: the field exists to be seen being drunk, at the default
-camera, at every cohort, including the ones standing under the mesh's body.
+canopy, CKB's own spacetime; below it the one a miner draws on. Four rules follow
+and settle every argument in the rest of this section. The plane IS a MEMBRANE,
+and a POW cohort is a mass lying in it whose shadow is the hole. The energy under
+the plane is a DIFFUSE SUBSTANCE that permeates space — a mist with no shape of
+its own: not a sea, not a coast, not curtains — and it is SECONDARY, never taking
+focus from the peer mesh or the Cell galaxy. THE INTAKE IS THE POINT: the
+substance exists to be seen being drunk, at the default camera, at every cohort,
+including the ones standing under the mesh's body. And A COHORT NEVER EMITS
+UPWARD, which the block-path paragraph below states in full.
 
-A cohort is therefore drawn as an APERTURE rather than as a stop on the peer
-brightness ladder: a cohort is where the colony plane is OPEN. `ColonyCohorts`
-draws that opening THREE times, off one plan, one walk, one instance count and
-one pair of instanced lanes — nothing volumetric and nothing hanging under the
-slab:
+A cohort's mark is COMPUTED and no longer composed. Until 2026-09-03 this layer
+drew one three times — a disc in the plane with a bright lip and 88 radial
+striae, a camera-facing aura carrying the same hole, and a patch of mist under
+the plane that the hole was drinking. Seven rounds of that hand-built form
+reached a ceiling, for a reason that is structural rather than a matter of
+tuning: the image of a black hole is a CONSEQUENCE of light bending around a
+mass, and a stack of independently mapped parts cannot converge on shapes it does
+not contain. So the layer computes the image instead, in TWO draws off one plan,
+one walk, one instance count and one pair of lanes:
 
-- a FACE, a disc lying in the colony plane with a bright lip, 88 radial striae,
-  and a WINDOW inside its hole: the throat's wall lit from below and, wherever
-  the view ray reaches deeper than `COHORT_INTAKE_LEVEL`, the surface of the
-  medium rising toward the lip;
-- an AURA, a small camera-facing quad whose halo carries the same hole, cut by
-  crossing the view ray with the colony plane; and
-- an intake PATCH, one instance per cohort with its sink at its own origin,
-  lying `MIST_FLOOR_DEPTH` (2.5 wu) under the membrane and lifted into a mound
-  whose top is that same `COHORT_INTAKE_LEVEL`. It carries the medium's own
-  texture advected along the streamlines of a SINK WITH A VORTEX — log spirals
-  winding into the mouth, `r0 = sqrt(r^2 + k*tau)` and
-  `theta0 = theta + s*ln(r0/r)` — brightening as it gathers, dark inside the
-  rim, thinner in the wake downstream, and flaring on the block that cohort
-  won.
+- the LENS, one camera-facing quad per cohort (`materials/colonyLens.ts`), 32 wu
+  of half-extent so the near disc cannot be cut off by its own domain. For every
+  pixel the light ray is traced BACKWARD around a Schwarzschild mass — the Binet
+  equation `u'' = -u + 3Mu^2`, in RK4 over the orbital angle at 0.055 rad a step
+  — and reported where it ends: in the horizon (black, and it hides what is
+  behind it), on the colony plane (the intake's own substance, sampled where the
+  bent ray crosses, with a fainter second image where it crosses twice), or in
+  the void. The shadow, the photon ring, the far side of the disc folded over the
+  top, the front crossing, the beaming and the redshift are not drawn: they
+  FOLLOW from that one trace, at every camera angle. EVERY ray is bent — a guard
+  test refuses a straight-ray shortcut, because at a handoff radius of ten
+  horizons the deflection is still 0.2 rad and the seam showed as a hard dome cut
+  across the disc — and that is affordable because the step is stretched by
+  `clamp(impact / 2.5 rs, 1, 6)`: a ray passing at 30 horizons leaves in nine
+  steps, and the step count binds only for the thin annulus that lingers near the
+  photon sphere, which is what a photon ring IS. The disc's texture, its spiral
+  back-trace and its colour ramp are the mist library's own GLSL, so the
+  substance in the picture and the substance a mote falls through are one thing.
+  The SHADOW's alpha is the closeness, which is what makes the hole an occluder
+  up close and nothing at all at the default camera, and a glow the program
+  paints itself stands in for the bloom this scene has no post-process for;
+- the MOTES, 96 points per cohort (`materials/colonyMotes.ts`), each living
+  exactly ONE fall: born out in the void, carried in along the same sink's
+  streamline the disc's texture is advected on, gone at the shadow's edge, reborn
+  elsewhere. A two-dimensional sink of strength `k` obeys `d(r^2)/dt = -k`, so
+  the trajectory is closed-form and every mote is a pure function of its seed and
+  the clock — no simulation, no buffer of positions, no readback. They exist
+  because a field alone cannot state a RATE: a texture at rest and a texture
+  flowing at two world units a second look identical in a still.
 
-A COHORT DRINKS AT ITS OWN RATE, and the patch is the only draw that reads the
-rate. Each mark carries its share of whatever window it was measured over — the
-indexer's week when there is one, the 240-block ring when there is not, never a
-blend of the two — on a per-instance lane the patch turns into one factor,
-`mix(cohortShareFloor, 1, share / shareMax)`, that scales both the sink's `k`
-and the pile it leaves at the lip. Those are the same quantity said twice, since
-`d(r^2)/dt = -k` is the speed the streamlines carry and the pile is what
-arriving at that speed leaves. So the largest cohort takes the medium at the
-full `k` and a small one creeps in at the floor, which is a knob
-(`cohortShareFloor`, 0.35) because how slow a small cohort may drink and still
-read as drinking is a judgement by eye. The factor is 1 at the largest share and
-below 1 everywhere else, so it only ever turns cohorts down and no ceiling
-moves. Neither aperture program declares the lane: a share means a RATE, and the
-mark has no rate to spend one on. NOTHING ELSE on the patch reads it either —
-not the colour, not the amplitude, and not the gulp, because one block is one
-block whoever won it.
+THE WHOLE IMAGE FOLDS WITH THE CAMERA, on one number. `uPxScale` is written once
+a frame — `0.5 * drawingBufferHeight * projectionMatrix[1][1]`, so it is
+DPR-aware for free — and each program divides it by its own distance to a cohort
+to get PIXELS PER WORLD UNIT at that mark. Closeness is that quantity
+smoothstepped over 6 -> 30 px/wu, and it drives everything:
 
-The implied hashrate the cohort card prints beside that share is a HUD FACT AND
-NOT A SCENE ONE: `networkHashRateHs` divides the chain's own difficulty by the
-mean of the block intervals this session observed, and nothing in the colony
-reads the result. The scene takes shares; the readouts take rates.
+| Folded quantity | Far, at or below 6 px/wu | Near, at or above 30 px/wu |
+|---|---:|---:|
+| Horizon `rs` | 0.08 wu | 0.77 wu |
+| Shadow, `3*sqrt(3)/2` horizons | 0.21 wu | 2.00 wu |
+| Disc inner edge, the ISCO at 3 horizons | 0.24 wu | 2.31 wu |
+| Disc outer edge | 6 wu | 28 wu |
+| Shadow opacity | 0 | 1 |
+| Beaming | 0 | 0.45 |
+| Motes | born within 6 wu, x0.2 | born at 8-27 wu, full |
 
-There is NO FLOOR, NO SHEET AND NO GROUND TERM anywhere under the plane, and
-that is a measurement rather than an omission. A sibling `ColonyMist` layer drew
-up to two large, flat, structureless haze sheets under the whole colony until
-2026-09-02, so the substance would be present everywhere and the intake would
-have something to be brighter than. The live leg priced them: one sheet cost
-0.90 ms of the layer's 1.06 ms of frame GPU at the app camera while its own
-additive contribution peaked at 2/255 anywhere on the canvas — 0.045 of a ghost
-sprite's core, with the three quality tiers indistinguishable by eye — so they
-were removed. The mist's omnipresence is now stated by the CATCHMENT alone: the
-patch reaches 14 wu around each mouth and shows the substance only where a
-cohort is taking it. A floor comes back only on a new measurement that says a
-viewer can see one.
+Far away the mark is therefore a soft six-unit halo of intake with a brighter
+half-unit core — deliberately the shape of a sighted peer's sprite, because at
+that range a cohort IS a peer that happens to mine — carrying at most a pixel of
+dark and no beaming. Near, it is the hole with a 28 wu vortex around it. The two
+are different LAWS and not one law dimmed: the near disc is bright at its inner
+edge and dark in the gap inside it, which at six pixels reads as a ring, and a
+ring is a shape the peer mesh does not have. The fold must be measured on the
+DRAWING BUFFER's height and never the CSS height, because a tier that lowers the
+DPR changes how many pixels a world unit covers, and a mark folded on CSS pixels
+would unfold into the near form exactly when the machine had said it could not
+afford one.
 
-The face draws a circle, so every ellipse a viewer sees is projection, and
-because every cohort foreshortens identically that agreement is what makes the
-colony plane itself legible. The mound's top and the window's surface are ONE
-surface: `COHORT_INTAKE_LEVEL` has two readers and one knob, so a viewer
-looking into the mouth and a viewer looking at the mist beside it cannot see the
-medium at two depths.
+A COHORT DRINKS AT ITS OWN RATE, and both draws read it. Each mark carries its
+share of whatever window it was measured over — the indexer's week when the
+ledger names that producer, else the 240-block ring, never a blend of the two,
+because each standing carries its own denominator. `mistShareFactor` turns it
+into ONE per-instance factor, `mix(0.35, 1, share / shareMax)`, that scales the
+sink's `k` and the pile the arriving medium leaves at the lip; the motes take the
+SAME factor, evaluated on the CPU into their `aStrength`, so the specks fall at
+exactly the speed the streamlines behind them run at. Those are one quantity said
+twice, since `d(r^2)/dt = -k` is the speed the streamlines carry and the pile is
+what arriving at that speed leaves behind. The factor is 1 at the largest share
+and below 1 everywhere else, so it only ever turns cohorts down. NOTHING ELSE
+reads the share — not the colour, not the amplitude, not the gulp, because one
+block is one block whoever won it. The implied hashrate the cohort card prints
+beside that share is a HUD FACT AND NOT A SCENE ONE: `networkHashRateHs` divides
+the chain's own difficulty by the mean of the block intervals this session
+observed, and nothing in the colony reads the result.
 
-Nothing dark is painted — the mark's own structure declines to fill its middle
-(`smoothstep` up out of exactly zero on the face, the ray/plane crossing on the
-aura), which is this scene's additive idiom for a hole; what light there is
-inside the pupil is the window's, in a colour no other draw in the peer plane
-wears. So the layer that would otherwise break it is the link mesh, and a
-cohort's own links stop at the mark's OUTER EDGE (`COHORT_LINK_STOP_R` =
-`COHORT_AP_R` = 3.0 wu), for two independent reasons: a link run into the disc
-would be added to the one pixel the form spends itself keeping empty, and a
-colony link is radial structure coplanar with a radial grain, which at low count
-reads as a star.
-
-A cohort NEVER EMITS UPWARD, at any time. A mined block goes sideways to peers
-only, because peers must verify it before it legitimately enters the cell
-galaxy; the later leg is `BlockDeliveryLayer`'s carrier, which launches from
-MEASURED WORKERS on flood arrivals and never from a cohort. The two worlds meet
-at the aperture in the plane.
-
-And NO COLUMN, PLUME, FUNNEL OR PILLAR is ever drawn under the mouth, at any
-brightness profile. Every one of them was built and rejected by eye: a shaft
-gated through the hole is invisible except from directly overhead, and an
-ungated one is a searchlight in miniature — up close, a saucer with a tractor
-beam. Only SURFACES BEING DRAWN read as intake, which is what the window is and
-what the patch is. The patch's vertex stage cannot place a vertex above its own
-instance origin, so "nothing above the membrane" is a property of the form
-rather than of the props handed to it.
+There is NO FLOOR, NO SHEET AND NO GROUND TERM anywhere under the plane, and that
+is a measurement rather than an omission. A sibling `ColonyMist` layer drew up to
+two flat, structureless haze sheets under the whole colony until 2026-09-02, when
+a live leg priced one at 0.90 ms of the layer's 1.06 ms of frame GPU at the app
+camera against a contribution peaking at 2/255 anywhere on the canvas — 0.045 of
+a ghost sprite's core — and they were removed. The omnipresence is now stated by
+the CATCHMENT alone: the back-trace reaches 30 wu around each mouth, and the
+substance is shown only inside the image that cohort's own mass makes of it. A
+floor comes back only on a new measurement that says a viewer can see one. For
+the same reason `colonyMist.ts` draws nothing at all now — it is a GLSL LIBRARY
+(the medium, the back-trace, the filaments, the colour ramp, the share factor)
+plus one 256-square noise tile, and the lens compiles it. Two draws of one
+substance, one computed and one painted beside it, would disagree the first time
+either was tuned.
 
 The layer takes exactly ONE input from the block path, and it is a string. On a
 block pulse increase, the mark whose `CohortMark.nodeId` equals
-`ColonyFlood.entryId` — both `attested:<key>`, both built by
-`attestedNodeId` — has the block's SIMULATION SECOND stamped into the shared
-`aGulp` lane, and its mouth and its patch swallow together on one envelope.
-Every other slot holds a far-negative sentinel, so a slot that has never won
-never flares. Wins are held against the node id in a map and re-laid into the
-lane under every re-plan, because a re-plan reshuffles slots and a win held by
-index would hand another cohort the moment somebody else won. While backfill is
-active the pulse is consumed and nothing is stamped. The shockwave and the flood
-object stay out for the reason they always had: a front that crosses the whole
-colony is one number every cohort reads, and it would flare all six of them on a
-block one of them won.
+`ColonyFlood.entryId` — both `attested:<key>`, both built by `attestedNodeId` —
+has the block's SIMULATION SECOND stamped into its gulp lane, and its disc piles
+and its specks flare together on one envelope. Every other slot holds a
+far-negative sentinel, so a slot that has never won never flares, and a zero
+would read as "won at t = 0" and flare the whole colony on load. Wins are held
+against the node id and re-laid under every re-plan, because a re-plan reshuffles
+slots and a win held by index would hand another cohort the moment somebody else
+won. While backfill is active the pulse is consumed and nothing is stamped. The
+shockwave and the flood object stay out for the reason they always had: a front
+that crosses the whole colony is one number every cohort reads, and it would
+flare all seven of them on a block one of them won.
 
-Draw order inside the colony is composition order rather than a depth
-requirement — all three of these draws are additive and depth-read-only. The
-intake patch is `renderOrder` 0, the face 1 and the aura 2: the surface being
-taken, the disc that opens onto it, and the glow around that. All three mount
-inside the colony's rotation group, which is what makes every coordinate in the
-mist a colony-frame constant: a sink that never moves in that frame needs no
-per-frame rotation uniform, and the medium cannot shimmer as the plate turns.
+THE TWO DRAWS DO NOT SHARE ONE LANE OBJECT. The lens is an `InstancedMesh` and
+reads one value per instance, so its seed, gulp and share lanes are
+`InstancedBufferAttribute`s; the motes are a `THREE.Points` draw with one vertex
+per MOTE, so the same gulp has to be 96 copies wide per cohort. Handing that
+geometry the instanced wrapper would read one cohort's stamp for the first
+ninety-sixth of the colony's motes and garbage after it. Same VALUES, two widths,
+written by the same two walks — the plan's and the pulse's. The motes' geometry
+is allocated once at `COHORT_MARK_CAP` (6,144 points) and never rebuilt, since a
+rebuild would drop every live stamp; a retired cohort is a strength of zero
+written over its slots, and an unwritten slot draws nothing by arithmetic.
 
-Per-draw GPU cost is priced separately through `colony.mist.patch` beside the
-existing `colony.cohort.face` and `colony.cohort.aura` (§19.5). Quality owns
-NOTHING here: no cascade field reaches this layer, because what is left of the
-mist is the intake itself and not ambience a tier may trim.
+RENDER ORDER IS PART OF THE DESIGN HERE, and this is the only layer in the colony
+where it is. The lens is NORMALLY blended with premultiplied alpha, because a
+shadow is a place where light is REMOVED and an additive draw can only fail to
+add. So the mark occludes BY DRAW ORDER AND NOT BY DEPTH: it darkens everything
+drawn before it and nothing drawn after. Three consequences, each pinned by test.
+`ColonyCohorts` mounts AFTER `ColonyEdges` and `ColonyNodes` inside the rotation
+group, and before the courier and delivery layers, which fly above the plane and
+must not be darkened by a hole they pass over. The lens carries `renderOrder` 1
+against those layers' 0, and the motes 2. And those orders are NOT redundant with
+the mount order: three sorts transparent objects by (groupOrder, renderOrder, z),
+so at an equal renderOrder the mount order decides nothing and DEPTH does — and
+the edges and the ghost cloud are each ONE draw with one z for the whole colony,
+so a tie would let the cloud draw after the shadow whenever its bounding centre
+happened to sit nearer than a cohort. 2 over 1 keeps the specks off the wrong
+side of a disc alpha that reaches 0.85. The courier (1, 2) and the delivery (1-4)
+tie or exceed, which is right: where they tie, three's depth sort decides, so a
+carrier passing behind a hole is darkened and one in front is not. Both draws sit
+inside the colony's rotation group, which is what lets every coordinate in the
+mist be a colony-frame constant: a sink that never moves in that frame needs no
+per-frame rotation uniform, and the medium cannot stream past its own mouth as
+the plate turns.
 
-**Measured on 2026-09-02**, on an AMD Radeon 890M through ANGLE/Vulkan at
-2560x1440, on live mainnet with six attested cohorts, load average 2.0-2.7,
-min-of-N `TIME_ELAPSED` readings through the probes above. ⚠️ Every row was
-taken with the haze sheets still in the layer, which is what the row marked
-REMOVED settled:
+A COHORT NEVER EMITS UPWARD, at any time. A mined block goes sideways to peers
+only, because peers must verify it before it legitimately enters the cell galaxy;
+the later leg is `BlockDeliveryLayer`'s carrier, which launches from MEASURED
+WORKERS on flood arrivals and never from a cohort. The arc over the top of the
+shadow is disc light bent by the mass, not something emitted, and a mote's offset
+from its seat has y = 0 exactly. NO COLUMN, PLUME, FUNNEL OR PILLAR is ever drawn
+under the mouth, at any brightness profile: each was built and rejected by eye,
+because a shaft gated through the hole is invisible except from directly overhead
+and an ungated one is a searchlight in miniature. Only SURFACES BEING DRAWN read
+as intake, and the lensed disc — its far side folded over the top of the shadow,
+moving — is such a surface.
+
+FOUR RADII, IN ONE ORDER, PINNED IN ONE TEST. `COHORT_HIT_RADIUS` 2.0 wu is the
+pick target, and it is the SHADOW at the near end of the fold: derived as
+`3*sqrt(3)/2` horizons rather than typed (2.0005 at the shipped mass), so a
+retune of the mass moves the target with the picture. It is the same sphere at
+every distance, deliberately — the drawn form folds, but the hit sphere lives in
+the TOPOLOGY, which does not know where the camera is, and a pick radius that
+folded would be a target that moved under the cursor as the user dollied; the far
+halo is explicitly NOT a hit target. `COHORT_DISC_IN` 2.31 wu is the ISCO.
+`COHORT_LINK_STOP_R` 3.0 wu is where `ColonyEdges` ends every link incident on a
+cohort — outside the ISCO, so no link ends on the bright ring the trace computes
+there, and inside the keep-out, so a displaced peer still has half a world unit
+of its own link left to draw. A link run further in would be a straight bright
+segment laid across the one region of the scene that is saying "light does not go
+straight here". `COHORT_KEEP_OUT_R` 3.5 wu is the placement rule above.
+`HIT 2.0 < DISC_IN 2.31 < LINK_STOP 3.0 < KEEP_OUT 3.5` is asserted in one line
+of `__tests__/materials/cohortKeepOut.test.ts`, because a pure data derive may
+not import a `ShaderMaterial` to read one float.
+
+EVERY NOISE FETCH IN A RAY-MARCHED PROGRAM IS `textureLod` WITH AN EXPLICIT
+LEVEL. A `texture2D` inside a ray march picks its mip level from screen-space
+derivatives, and those explode between neighbouring rays that end in different
+places: the medium came back as dashed radial stripes. The mist library's
+snippets call a `mistNoise(vec2, int)` wrapper the compiling program declares for
+itself, so the lens's is a `textureLod` and the guard that no `texture2D` reaches
+this program is STRUCTURAL rather than a claim that a regex ran. That also makes
+the lens GLSL ES 3.00 only, which the shader validator is told rather than left
+to discover.
+
+Per-draw GPU cost is priced through `colony.cohort.lens` and
+`colony.cohort.motes` (§19.5); `colony.cohort.face`, `colony.cohort.aura` and
+`colony.mist.patch` retired with the draws they timed. Quality owns exactly one
+field here, `cohortLensSteps` (§13) — the RK4 step count, 96 / 64 / 40 — and it
+is a PRECISION field and never a presence one: no tier drops the mark, the motes
+or the shadow's occlusion, because a cohort at 40 steps is the same cohort with a
+coarser photon ring while a cohort that is not drawn is a producer the scene is
+lying about. What those three values should be is an OPEN QUESTION rather than a
+settled one. The table below measures the tiers single-digit percent apart at
+every camera, for a reason that is in the program and not in the measurement: the
+loop carries four early exits (escaped, captured, the disc crossing driving the
+transmittance under 0.04, and the plane test), so the cap binds only for the
+pixels that linger near the photon sphere. If a tier must buy something here it
+has to be the pixels the quad covers — `COHORT_LENS_QUAD_R` 32 wu,
+`COHORT_DISC_OUT` 28 wu — or a resolution scale, and no tier touches either.
+
+Thirteen live knobs in the `peer` folder, each a fact about the mass or about the
+substance around it and never a PART of a picture, since a knob that moved a part
+would be the composed aperture creeping back in through the panel:
+`cohortHorizon` (the Schwarzschild radius at the near end of the fold, and the
+one to reach for first — every other radius is a multiple of it), `cohortDiscOut`
+(how far the intake reaches), `cohortDiscAmp` (the near disc's own brightness),
+`cohortBeam` (how much brighter the approaching side is), `cohortFarAmp` (the far
+form's whole weight), `cohortGlow` (the bloom stand-in), `cohortWarmth` (0 the
+mesh's cyan disc, 1 the film's orange one, moving the disc and the specks in it
+together), `cohortUnfold` (the near end of the fold band; the far end, 6, is the
+layer's rule and not a knob), `cohortSteps` (RK4 steps per ray, which overrides
+the quality tier the moment it moves), `cohortIntake` (the sink's `k`),
+`cohortSwirl` (how far a streamline winds before it arrives), `cohortOrbit` (the
+specks' swing near the mouth) and `cohortMotes` (how bright the specks are).
+Fifteen knobs retired with the composed form, and no knob here can clip the mark:
+the disc's alpha is clamped in the fragment and the shadow's is the closeness, so
+every amplitude scales a quantity that is bounded after it.
+
+**Measured on 2026-09-03**, on an AMD Radeon 890M through ANGLE/Vulkan at
+2560x1440 DPR 1, on live mainnet with seven attested cohorts, quality forced to
+`high`, min-of-N `TIME_ELAPSED` readings through the probes above. The colony's
+rotation was frozen and the page paused so a sweep compares one picture, and the
+step counts were INTERLEAVED in 1.8-second windows rather than given one long
+window each: this machine's background load drifts threefold on a ten-second
+scale, and three earlier attempts at the cost table came back non-monotone
+because of it. Load average 3.0-6.0.
 
 | Quantity | Measured |
 |---|---|
-| Whole layer (four draws), app camera, Med — 1 haze sheet | +1.06 ms of frame GPU, 0.90 ms of it the haze sheet |
-| Whole layer, app camera, High — 2 haze sheets | +1.44 ms |
-| Whole layer, a mouth filling 40 px/wu | +2.22 ms |
-| Whole layer, a mouth at 13 wu | +2.74 ms |
-| ~~The haze's own brightest contribution anywhere on the canvas~~ REMOVED 2026-09-02 | 2/255, and 11/255 on the pixel it sits on — 0.045 of a ghost sprite's core. That reading is why the sheets were dropped: 85 % of the layer's app-camera cost for a picture nobody could see |
-| The sink's inflow, 5-12 wu annulus, block-matched on the mound plane | 2.23:1 inward by count; median radial -0.656 wu/s against the model's -0.75 at r = 8 |
-| The gulp, over six minutes of mainnet | 29 pulses, 29 stamps, 29 matching node ids, 0 mismatches |
-| Saturated pixels attributed to the layer (mark on minus mark off) | +513 app / +848 overhead / +1,105 low elevation / +7,298 at the mouth, on 3,686,400 px |
+| `colony.cohort.lens`, app camera (4.6-22.6 px/wu over seven marks) | 0.455 ms |
+| ...at 14 / 20 / 40 / 90 px/wu on one mark | 0.838 / 0.998 / 1.890 / 2.386 ms |
+| ...at 90 px/wu with a second mark 9.6 wu away | 4.584 ms |
+| `colony.cohort.motes`, every camera | 0.10-0.14 ms |
+| Whole layer, frame bracket (layer on minus hidden) | +0.30 ms at the app camera to +4.85 ms at a crowded 90 px/wu hole |
+| 96 -> 40 steps, at every camera | -4 % to -17 %, inside the +/-17 % cross-run noise the app-camera control establishes: single-digit percent |
+| The far form's own brightest pixel at the app camera | 77/255 — 0.40 of a ghost sprite's core, 0.34 of a measured peer's, over 0.40 % of the canvas |
+| The unfold: 29 frames from 6 to 62 px/wu, each resampled to the same 24 wu of world | largest per-frame change 1.15x the median, at 20 px/wu: no pop |
+| Occlusion inside half the shadow at 40 px/wu | exactly 0/255 on all 5,025 pixels, where the layer hidden shows a ghost, a peer and ten link crossings |
+| The intake reads: 5-12 wu radial flow, block-matched at 40 px/wu | 1.79:1 inward on the top cohort; the same cohort with its share factor moved from the floor to 1 ran 3.25x faster |
+| The gulp, over 310 s of mainnet | 28 pulses, 28 stamps, 28 matching node ids, 0 mismatches, all 96 mote copies agreeing every time |
+| Clickability, 7 cohorts x 2 azimuths | 14/14 holes opened their own card and 7/7 nearest clickable neighbours theirs; minimum XZ clearance exactly 3.500 wu |
+| Saturated pixels attributed to the layer (on minus amplitudes at zero) | -26 at the app camera; +658,491 at a 40 px/wu hole, on 3,686,400 px |
+| `Time.paused` A/A control, 0.3 s apart | 1 pixel |
+| Console, program info logs, NaN sweep of both programs | clean |
 
-The whole-layer figures are the frame bracket's on-minus-off delta, which is the
-honest number: the per-draw scopes sum higher because adjacent timer queries
-serialise on this driver (§19.5's negative-remainder note), so read the split as
-an upper bound. The measured cost was 1.8-3x the preview's estimate, and the
-attribution said where it went: the haze sheet was the app-camera cost, the
-patch is the close-up cost (0.14 -> 0.63 -> 1.53 ms as the mouth fills the
-screen).
+Three of those rows settle a rule. At the app camera the whole layer costs +0.30
+to +0.55 ms across two runs and all three step counts, inside the budget the form
+was approved against, so 96 is affordable as the default tier and the cascade is
+currently choosing between three nearly identical pictures at three nearly
+identical prices. The far form REMOVES 26 saturated pixels at the app camera
+rather than adding any — against the retired mist patch's +513 — so the lensed
+mark is the first version of this layer that is not a source of clipping at the
+default camera at all, and at a third of a measured peer's core it is secondary
+by measurement and not by assertion. And the shadow is a hole exactly: its inner
+half reads 0/255 on every one of 5,025 pixels where the layer hidden shows a
+ghost, a peer and ten link crossings, the motes-only frame is pixel-identical to
+neither-drawn, and at the app camera that same shadow does not occlude at all —
+the closeness doing what it claims.
 
-The layer's cost after the removal was measured on the next live leg, on the
-same machine and by the same bracket. At the app camera the three remaining
-draws are **at or under the bracket's own noise floor**: three independent
-on/off pairs give +0.11 / +0.06 / +0.01 ms at `med` and -0.07 / +0.16 / -0.06 ms
-at `high`, so the sign is not even stable, against +1.06 and +1.44 ms with the
-sheet. At a 40 px/wu mouth the layer costs +0.26 to +0.96 ms, against +2.22 with
-the sheet, and the patch is still where it goes (0.54-0.60 ms of scope against
-0.11-0.12 for the face). The prediction from the amplitudes-at-zero frame, +0.11
-ms, was right.
+One defect was found in that session and fixed before the table was taken, and it
+is the shape a bug on this layer takes. The ray march's escape test read
+`phi > 0.6 && r > r0 * 1.2`, with `r0` the camera's distance to the mass — and
+"heading away and already further out than it started" only means "the ray has
+left" while the disc is inside `1.2 * r0`. Past the point where the camera came
+closer to a mark than `discOut / 1.2` (23.3 wu at the shipped 28 wu disc, about
+66 px/wu) a ray bent over the top was terminated before it reached the far side
+of the disc, and because the cut landed wherever the adaptive step happened to
+sample it was a hard quantised boundary and not a fade: a row of straight-sided
+black wedges bitten out of the outer disc at close cameras. The escape radius is
+`max(r0, discOut) * 1.2` now. It was attributed BEFORE the shader was touched, by
+walking `uDiscOut` down at one paused camera where `1.2 * r0` was 18.21 wu —
+wedges at 28 and 22, none at 18, 15 or 12 — which is the method any close-camera
+artefact here should get, because the two halves of a shader A/B are different
+page sessions with a different `uTime` and a pixel diff across them says nothing.
 
-**The clearance finding from the same session, and what closed it.** Thinning
-the slab tightened a cohort's clearance: the nearest non-cohort node measured
-1.274 wu from a cohort — inside `COHORT_HIT_RADIUS` (1.5 wu) and inside the
-drawn hole (1.6 wu) — where R19 measured 2.99 wu at the old thickness. Every
-cohort still opened its own card and every clickable neighbour still opened its
-own, but at the two closest peers' projected centres the HOVER readout named the
-cohort while the CLICK resolved to the peer, and one cohort failed its own hole
-from one azimuth because a peer 4.6 wu away stood in front of the mark along
+**The clearance finding of 2026-09-02, and what closed it.** Thinning the slab
+tightened a cohort's clearance: the nearest non-cohort node measured 1.274 wu
+from a cohort — inside the pick radius of the day (1.5 wu) and inside the drawn
+hole — where R19 measured 2.99 wu at the old thickness. Every mark still opened
+its own card, but at the two closest peers' projected centres the HOVER readout
+named the cohort while the CLICK resolved to the peer, and one cohort failed its
+own hole from one azimuth because a peer 4.6 wu away stood in front of it along
 that ray. The fix is PLACEMENT rather than pick radius, and it is the
 `COHORT_KEEP_OUT_R` disc described above: nobody may stand in the hole, so the
-ambiguity has nowhere to occur. Re-measured live on the same six cohorts
-afterwards: the six nearest non-cohort distances went 2.355 / **1.274** / 4.602 /
-8.247 / 5.337 / 7.794 -> 3.598 / **3.527** / 4.602 / 8.247 / 5.337 / 7.794 wu (two
-neighbours stepped aside, four were already clear), the minimum XZ distance over
-all 258 staged nodes is exactly 3.500, all twelve hole clicks (six cohorts at two
-azimuths 90 degrees apart, including the one that failed) open their own
-`POW COHORT //` card, all six nearest clickable neighbours open their own, and no
-hover anywhere names a cohort at a peer's centre. Judge any hit-radius change
-against the keep-out and against 1.274 wu, never against `COLONY_MIN_SPACING`,
-which bounds only the inferred scatter and not the sighted placements.
+ambiguity has nowhere to occur. Two neighbours stepped aside, four were already
+clear, and the minimum XZ distance over all 258 staged nodes became exactly
+3.500. Re-measured on 2026-09-03 with the lensed mark, seven cohorts and the pick
+radius grown to the shadow's 2.0 wu, that minimum is still exactly 3.500 wu — the
+keep-out is what binds, on two cohorts and on the seventh the ledger added — so
+the pick radius leaves 1.50 wu of daylight at the tightest and still sits inside
+the ISCO. Judge any hit-radius change against the keep-out and against 1.274 wu,
+never against `COLONY_MIN_SPACING`, which bounds only the inferred scatter and
+not the sighted placements.
 
 ### 10.2 Block flood and delivery
 
@@ -1158,6 +1285,7 @@ not own staged Cell membership or the resting nervous system.
 | Discharge arms | 3 | 2 | 1 | Transient write decoration |
 | Active samples per hop | 12 | 10 | 8 | Moving wavefront tessellation |
 | Expanded nearby Cell identities | 12 | 8 | 4 | Non-focused near-detail concurrency |
+| POW cohort ray-march steps (`cohortLensSteps`) | 96 | 64 | 40 | Lensed-mark precision, never its presence |
 
 Semantic memory keeps a minimum 24 CSS-pixel core at every preset. Lower
 presets compensate for reduced sampling with controlled line-width and energy
@@ -1170,8 +1298,13 @@ The following remain identical across High, Med, and Low:
 - four passive samples per edge;
 - passive curve geometry, width baseline, hierarchy, and animation cadence;
 - route planning and deterministic timing for every admitted pulse;
-- every POW cohort's intake patch — no cascade field reaches it, because what
-  is left of the mist is the feature itself and not ambience (§10.1); and
+- the PRESENCE of every POW cohort's mark, the specks falling into it, and the
+  occlusion its shadow performs. `cohortLensSteps` is the one field that reaches
+  that layer and it buys precision only: a cohort at 40 steps is the same cohort
+  with a coarser photon ring, while a cohort that is not drawn is a producer the
+  scene is lying about (§10.1). Measured 2026-09-03, the three values are within
+  single-digit percent of each other in cost at every camera, so what they should
+  hold is still open; and
 - selection, inspection evidence, and canonical counters.
 
 The particle multiplier can lower simultaneous active-pulse admission under
@@ -1339,15 +1472,15 @@ current staged structure.
   stripped `instanceStart/End` and colour lanes instead of two capacity-sized
   buffers nothing reads (2 × 2.3 MB of RAM and as much VRAM at the
   8,000-edge class).
-- Fragments that are provably dark discard before the expensive body: a
-  cohort's face discards its square quad's corners outside the mark's own
-  radius — roughly 21.5 % of the quad — and its aura discards outside the halo
-  radius, both before any profile is evaluated; then both faces discard again
-  once the accumulated shape falls under 0.0018. Its intake patch discards the
-  same corner share of its own square, outside `MIST_REACH`, before either
-  spiral back-trace runs. The face's grain is also prefiltered against its own
-  screen footprint, so a mark that is small on screen stops paying for structure
-  it could not resolve.
+- Fragments that are provably dark discard before the expensive body, and a
+  ray-marched program leaves early instead. A cohort's lens cannot discard on
+  geometry — its quad IS the domain of the trace, and a ray that is not launched
+  draws nothing — so the saving is in the march: four early exits (the ray
+  escaped, the ray was captured, the disc crossing drove the transmittance under
+  0.04, and the plane test) end most rays long before the step cap, a ray passing
+  at 30 horizons in nine steps, and the fragment discards outright once the
+  accumulated colour and alpha are both empty. The motes discard outside the
+  point's own disc and under a brightness floor.
 - Passive topology and color/mask updates have separate dirty paths.
 - Screen-space capsule nerves use two triangles per sampled segment.
 - Shader time advances lifecycle without per-frame full-buffer rewrites.
@@ -1587,8 +1720,7 @@ Use the same snapshot and capture settings for these minimum scenarios:
   `nerve.passive-fabric.trunk`, `nerve.active-route`, `nerve.memory-route`,
   `nerve.bridge`. Colony: `colony.cloud.haze`, `colony.cloud.advertised`,
   `colony.cloud.remembered`, `colony.cloud.reached`, `colony.measured-halos`,
-  `colony.edges`, `colony.cohort.face`, `colony.cohort.aura`,
-  `colony.mist.patch`,
+  `colony.edges`, `colony.cohort.lens`, `colony.cohort.motes`,
   `colony.courier.plume`, `colony.courier.bloom`. Delivery: `delivery.body`,
   `delivery.core`, `delivery.trail`, `delivery.wave`. Backdrop: `stars`. A draw
   that would submit nothing — zero instances, an empty draw range, a hidden
@@ -1730,8 +1862,11 @@ Before merging a Canvas change, answer:
 | Peer topology and block flood | `packages/ui/src/derives/networkTopology.derive.ts`, `packages/ui/src/derives/networkFlood.derive.ts` |
 | Peer render layers and Cell delivery | `packages/ui/src/components/NetworkColony.tsx`, `packages/ui/src/components/BlockDeliveryLayer.tsx` |
 | Who made the blocks, over both windows, and the rate the card implies from it | `packages/ui/src/derives/blockProducers.derive.ts`, `packages/ui/src/derives/networkHashRate.derive.ts`, `packages/ui/src/components/hud/producerReadout.ts`, `packages/ui/src/components/hud/MinerNodeCard.tsx` |
-| POW cohort apertures, their intake patch, and the link stop at their outer edge | `packages/ui/src/components/ColonyCohorts.tsx`, `packages/ui/src/materials/colonyCohort.ts`, `packages/ui/src/components/ColonyEdges.tsx` |
-| The mist the cohorts drink: the intake patch and its noise tile | `packages/ui/src/materials/colonyMist.ts` |
+| POW cohort marks: the plan, the lanes, the two draws, and the link stop outside the disc | `packages/ui/src/components/ColonyCohorts.tsx`, `packages/ui/src/components/ColonyEdges.tsx` |
+| The lensed mark: the ray march, the fold, the mass and every radius read off it | `packages/ui/src/materials/colonyLens.ts` |
+| The specks falling into it, and their geometry helpers | `packages/ui/src/materials/colonyMotes.ts` |
+| The substance they are made of: the GLSL library and its noise tile | `packages/ui/src/materials/colonyMist.ts` |
+| What every cohort program agrees about: the gulp envelope and the proximity exemption | `packages/ui/src/materials/colonyCohort.ts` |
 | Carrier glyph and contact front | `packages/ui/src/geometry/protocolCarrier.ts`, `packages/ui/src/materials/contactWaveMaterial.ts` |
 | Canonical rewrite echo | `packages/ui/src/components/CanonicalRewriteEcho.tsx` |
 | Simulation clock | `packages/ui/src/tweaks/simClock.ts`, `packages/ui/src/tweaks/SimClockTicker.tsx`, `packages/ui/src/tweaks/useSimFrame.ts` |

@@ -373,7 +373,8 @@ export function stageAttested(
  * cohorts' nearest non-cohort neighbours stood at 1.274 / 2.355 / 4.602 / 5.337
  * / 7.794 / 8.247 wu, and the nearest of them was a SIGHTED — clickable — peer
  * 1.274 wu away: inside the drawn mark (the aperture's 1.6 wu hole at the time,
- * the shadow's 2.0 wu now) and inside the cohort's own pick sphere. Both marks resolved to their own cards, but at
+ * the shadow's 2.0 wu now) and inside the cohort's own pick sphere. Both marks
+ * resolved to their own cards, but at
  * that peer's projected centre the HOVER readout named the cohort while the
  * CLICK opened the peer, and one cohort's own centre opened its neighbour's card
  * from one of two camera azimuths. So the fix is placement, not pick radius:
@@ -383,6 +384,13 @@ export function stageAttested(
  * to leave — 1.0 wu of clearance to the brightest sighted peer's own sphere,
  * now 0.5. Still clear, and measured in `cohortKeepOut.test.ts` rather than
  * assumed; a further growth of either radius has to move this one too.
+ * ⭐ AND RE-MEASURED LIVE THE SAME DAY, on the lensed marks: seven cohorts,
+ * each approached at 26 wu from TWO azimuths with real CDP mouse events.
+ * 14 / 14 hole clicks opened their own `POW COHORT //` card, 7 / 7 nearest
+ * clickable neighbours opened their own, every hover named the id under it, and
+ * the minimum XZ clearance over the colony was again EXACTLY 3.500 wu — this
+ * radius, binding on two cohorts and on the seventh the producer ledger added.
+ * So the grown pick sphere leaves 1.50 wu of daylight at the tightest.
  *
  * ⭐ 3.5 = `COHORT_LINK_STOP_R` 3.0 + 0.5, AND BOTH HALVES ARE LOAD-BEARING.
  * 3.0 is where `ColonyEdges` ends every link incident on a cohort, which is

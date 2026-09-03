@@ -126,14 +126,29 @@ export interface QualityCascade {
    * is not drawn is a producer the scene is lying about. ⛔ So no tier here
    * drops the mark, the motes beside it, or the shadow's occlusion.
    *
-   * ⚠️ THESE THREE ARE STARTING VALUES AND ARE NOT YET MEASURED. 96 is the
-   * approved preview's own count (`COHORT_LENS_STEPS`); 64 and 40 are steps
-   * down the lab never priced, because the number nobody has is what the trace
-   * costs at a close camera on the reference GPU. The live leg owns it: the
-   * frame that decides them is one hole filling the screen at 90 px/wu, and the
-   * frame that decides whether the default tier stays at 96 is the app camera.
-   * ⚠️ A ray that lingers near the photon sphere exhausts whatever count it is
-   * given, so a lower tier makes the ring coarser rather than the trace wrong.
+   * ⚠️⚠️ MEASURED 2026-09-03, AND THESE THREE VALUES ARE NOW AN OPEN QUESTION
+   * RATHER THAN A SETTLED ONE. 96 is the approved preview's own count
+   * (`COHORT_LENS_STEPS`); 64 and 40 were steps down nobody had priced. Live on
+   * an AMD Radeon 890M through ANGLE/Vulkan at 2560x1440, with the four
+   * conditions interleaved in 1.8 s windows against a drifting background load,
+   * **96 -> 40 steps moves the lens draw by −4 % to −17 %** — app camera −4.2 %,
+   * 14 px/wu −17.2 %, 20 px/wu −4.2 %, 40 px/wu −4.1 %, 90 px/wu −5.8 %, and
+   * −7.8 % at a 90 px/wu hole with a second mark 9.6 wu away. Every one of those
+   * is inside the ±17 % cross-run noise the app-camera control establishes, so
+   * the honest statement is SINGLE-DIGIT PERCENT, EVERYWHERE.
+   *
+   * ⭐ The reason is in the program and is not a measurement artefact: the march
+   * carries four early exits (escaped, captured, the disc crossing driving the
+   * transmittance under 0.04, and the plane test), and a ray passing at 30
+   * horizons leaves in nine steps — so the cap binds only for the thin annulus
+   * that lingers near the photon sphere, which is a few hundred pixels of a
+   * frame. ⚠️ A lower tier therefore makes the photon ring coarser rather than
+   * the trace wrong, and it buys almost nothing. What the layer's cost actually
+   * tracks is the pixels the quad covers (0.455 ms at the app camera against
+   * 2.386 at 90 px/wu and 4.584 crowded), so a tier that must buy something here
+   * has to move `COHORT_LENS_QUAD_R`, `COHORT_DISC_OUT` or a resolution scale —
+   * none of which any tier touches today. Whether these three values should stay
+   * as they are is the user's call, not a number this file can settle.
    */
   cohortLensSteps: number;
 }
