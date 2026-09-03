@@ -60,6 +60,46 @@ describe('ChainCapacityReadout', () => {
     expect(unusable.container.firstChild).toBeNull();
   });
 
+  it('names the unit once per byte row, in one column, in the CJK face', () => {
+    // ⭐ THE TWO ROWS ARE ONE UNIT READ FROM BOTH ENDS — capacity is the bytes
+    // the chain has sold, knowledge is the bytes standing in them — so 字节元
+    // belongs to the PAIR rather than to either row, and it has to look like
+    // it does. Hung off the ends of a 13-character label and a 9-character one
+    // the two runs land ~26px apart and there is no column to read.
+    const { container } = render(
+      <ChainCapacityReadout source={source} record={record} census={census()} />,
+    );
+    // Named rather than positional: `data-indexed-context` marks all three
+    // indexed blocks in this readout, and only this one is the byte pair.
+    const rows = Array.from(container.querySelectorAll<HTMLElement>('[data-chain-byte-rows] > div'));
+    expect(rows).toHaveLength(2);
+
+    const units = rows.map((row) => Array.from(row.children)
+      .find((child) => child.textContent === '字节元') as HTMLElement | undefined);
+    expect(units.every(Boolean), 'both byte rows name the unit').toBe(true);
+
+    // The column. Both labels take one measure, so both companions start at
+    // one x — asserted on the LABEL box, because jsdom has no font and lays
+    // every text run out at zero width.
+    const labelWidths = rows.map((row) => (row.firstElementChild as HTMLElement).style.width);
+    expect(new Set(labelWidths).size, 'the two labels share one measure').toBe(1);
+    // 90 is measured: `LIVE CAPACITY` draws 81.8px live, and 90 clears it by
+    // the 8.2px `PanelHeader` puts between a name and its CJK companion.
+    expect(labelWidths[0]).toBe('90px');
+
+    // And it is set in the face that has Chinese in it, at the 9px floor the
+    // HUD renders Han at — `micro` is the Latin floor and a mincho glyph
+    // carries several times the strokes in the same em.
+    for (const unit of units) {
+      expect(unit!.style.fontFamily).toContain('Huiwen-mincho');
+      expect(unit!.style.fontSize).toBe('9px');
+    }
+
+    // Said once per row and nowhere else: the figures keep the `CKB` suffix
+    // they already carry, so the unit is never printed twice in one reading.
+    expect((container.textContent ?? '').match(/字节元/g)).toHaveLength(2);
+  });
+
   it('shows the whole-chain overview under one stated anchor', () => {
     const { container } = render(
       <ChainCapacityReadout source={source} record={record} census={census()} />,
@@ -68,9 +108,9 @@ describe('ChainCapacityReadout', () => {
 
     expect(text).toContain('CHAIN CAPACITY');
     expect(text).toContain('AS OF #100');
-    // Live capacity reads in the HUD-wide K/M/G CKB family; the exact CKB
+    // Live capacity reads in the HUD-wide K/M/G·CKB family; the exact CKB
     // figure — and the CKByte equivalence — stay on the value's tooltip.
-    expect(text).toContain('57.76 G CKB');
+    expect(text).toContain('57.76 G·CKB');
     expect(text).not.toContain('57,763,209,638.48 CKB');
     expect(container.querySelector(
       '[title="57,763,209,638.48 CKB · 1 CKB = 1 CKByte of state"]',

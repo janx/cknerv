@@ -416,9 +416,13 @@ retained capacity, the rendered→retained→observed population funnel, the
 stage-versus-chain composition disclosure, the asset/lock taxonomy, and the
 medium legend. It is hidden by default and docks beside `CKB·01` when
 summoned from the panel menu, as does the `RENDER STATS` (`GL·08`) panel.
-Every CKB quantity on the HUD reads in one `K/M/G CKB` family (`12.5 K CKB`,
-`57.86 G CKB` — byte prefixes, since 1 CKB buys exactly 1 CKByte of state),
-with exact figures on value tooltips. In CKB-only mode the chain readout is
+Every CKB quantity on the HUD reads in one `K/M/G·CKB` family (`12.5 K·CKB`,
+`57.86 G·CKB` — byte prefixes, since 1 CKB buys exactly 1 CKByte of state),
+with exact figures on value tooltips. The magnitude binds to the unit with the
+house separator rather than a space, so a figure and the unit it is counted in
+read as two tokens instead of three. `CKB·01` names that unit in Chinese —
+字节元 — once beside each of its two byte rows, `LIVE CAPACITY` and
+`KNOWLEDGE`, which are the chain's state budget sold and standing. In CKB-only mode the chain readout is
 simply absent; the stage panel never wears the chain's header.
 Indexed totals are never extrapolated from the retained Cell reservoir.
 Only whole-chain context dims when the source is stale or its own refresh

@@ -6,17 +6,27 @@ import { HUD_COLORS } from './hudTheme';
 const SHANNONS_PER_CKB = 100_000_000n;
 
 const CKB_TIERS: ReadonlyArray<{ threshold: bigint; suffix: string }> = [
-  { threshold: 1_000_000_000n * SHANNONS_PER_CKB, suffix: 'G CKB' },
-  { threshold: 1_000_000n * SHANNONS_PER_CKB, suffix: 'M CKB' },
-  { threshold: 1_000n * SHANNONS_PER_CKB, suffix: 'K CKB' },
+  { threshold: 1_000_000_000n * SHANNONS_PER_CKB, suffix: 'G·CKB' },
+  { threshold: 1_000_000n * SHANNONS_PER_CKB, suffix: 'M·CKB' },
+  { threshold: 1_000n * SHANNONS_PER_CKB, suffix: 'K·CKB' },
 ];
 
 /** Every CKB quantity on the HUD reads in one family — `61 CKB`,
- *  `12.5 K CKB`, `57.86 G CKB` — so a Cell, a DAO total, and the whole
+ *  `12.5 K·CKB`, `57.86 G·CKB` — so a Cell, a DAO total, and the whole
  *  chain's live capacity are the same unit at different magnitudes. Byte
  *  prefixes, not finance ones: 1 CKB is 1 CKByte of purchasable state, so
  *  these double as state sizes. Amounts under 1,000 CKB keep their exact
- *  figure to the hundredth. */
+ *  figure to the hundredth.
+ *
+ *  ⭐ THE MAGNITUDE BINDS TO THE UNIT WITH `·`, NOT WITH A SPACE. `12.5 K CKB`
+ *  put the same amount of air between the number and its prefix as between the
+ *  prefix and the unit, so a row read as three tokens where there are two: a
+ *  figure, and the unit it is counted in. The house separator closes the unit
+ *  up — the same mark, and the same job, as `CKB·01`'s.
+ *
+ *  ⚠️ It can therefore ABUT the phrase separator, as in
+ *  `+1.42 M·CKB · +0.017% / 24H`. That reads correctly and is the point: the
+ *  tight mark is inside a token, the spaced one is between them. */
 export function formatCkb(shannons: number | bigint, signed = false): string {
   const amount = typeof shannons === 'bigint'
     ? shannons

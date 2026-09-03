@@ -9,13 +9,13 @@ import {
 import { HUD_COLORS } from '../../../src/components/hud/hudTheme';
 
 describe('cellFormat — moved formatters', () => {
-  it('formatCkb reads every magnitude in one K/M/G CKB family', () => {
+  it('formatCkb reads every magnitude in one K/M/G·CKB family', () => {
     expect(formatCkb(12300000000)).toBe('123 CKB');
-    expect(formatCkb(1_250_000_000_000)).toBe('12.5 K CKB');
-    expect(formatCkb(4_210_000n * 100_000_000n)).toBe('4.21 M CKB');
-    expect(formatCkb(57_863_233_530n * 100_000_000n)).toBe('57.86 G CKB');
-    expect(formatCkb(-1_250_000_000_000)).toBe('−12.5 K CKB');
-    expect(formatCkb(1_250_000_000_000, true)).toBe('+12.5 K CKB');
+    expect(formatCkb(1_250_000_000_000)).toBe('12.5 K·CKB');
+    expect(formatCkb(4_210_000n * 100_000_000n)).toBe('4.21 M·CKB');
+    expect(formatCkb(57_863_233_530n * 100_000_000n)).toBe('57.86 G·CKB');
+    expect(formatCkb(-1_250_000_000_000)).toBe('−12.5 K·CKB');
+    expect(formatCkb(1_250_000_000_000, true)).toBe('+12.5 K·CKB');
   });
   it('midTruncate keeps head+tail with ellipsis', () => {
     expect(midTruncate('0xabcdef0123456789', 6, 8)).toBe('0xabcd…23456789');

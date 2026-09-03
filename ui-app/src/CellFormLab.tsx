@@ -12,6 +12,7 @@ import {
   CellGalaxyProvider,
   CellNucleusPortrait,
   ConsensusWriteSeal,
+  formatCkb,
   NeuralNetwork,
   QUALITY_PRESETS,
   RenderStatsPanel,
@@ -154,7 +155,7 @@ export default function CellFormLab({ snapshot }: { snapshot: CellGalaxySnapshot
               #{selected.id} · {(selected.asset_kind ?? 'other').toUpperCase()} · {(selected.lock_kind ?? 'other').toUpperCase()}
             </div>
             <div>
-              {(selected.capacity / 1e8).toLocaleString(undefined, { maximumFractionDigits: 2 })} CKB · {selected.content_hash.slice(0, 16)}…
+              {formatCkb(selected.capacity)} · {selected.content_hash.slice(0, 16)}…
             </div>
           </div>
         </header>
@@ -355,7 +356,7 @@ export default function CellFormLab({ snapshot }: { snapshot: CellGalaxySnapshot
                 {semanticFocus ? <div>FOCUS {semanticFocus.toUpperCase()}</div> : null}
                 <div>SCHEMA {SCHEMA_LABEL[selectedKind]}</div>
                 <div>LOCK {selected.lock_kind ?? 'other'}</div>
-                <div>CAP {(selected.capacity / 1e8).toLocaleString(undefined, { maximumFractionDigits: 2 })} CKB</div>
+                <div>CAP {formatCkb(selected.capacity)}</div>
                 <div>HASH {selected.content_hash.slice(0, 12)}…</div>
               </div>
             </div>

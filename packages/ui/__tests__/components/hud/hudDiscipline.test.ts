@@ -3782,9 +3782,9 @@ const CJK_FACE = 'HuiwenMincho-subset.woff2';
 const CJK_RUN = /[\u4E00-\u9FFF]+/g;
 
 /** The one prop whose primitive puts the face on for the writer — the `cjk` of
- *  `PanelHeader` / `SpatialPlateHeader`. A file that spells its Chinese as this
- *  prop has named the face by naming the primitive; anything else has to say
- *  `HUD_FONTS.cjk` itself. */
+ *  `PanelHeader` / `SpatialPlateHeader` / `StatRow`. A file that spells its
+ *  Chinese as this prop has named the face by naming the primitive; anything
+ *  else has to say `HUD_FONTS.cjk` itself. */
 const CJK_PROP = /cjk="([^"]*)"/g;
 
 function cjkRuns(text: string): string[] {

@@ -153,7 +153,7 @@ describe('formatHashRate', () => {
   });
 
   it('drops a trailing zero, which is the house grammar and not a rounding', () => {
-    // Same shape `formatCkb` writes a capacity in — `61 CKB`, `12.5 K CKB` —
+    // Same shape `formatCkb` writes a capacity in — `61 CKB`, `12.5 K·CKB` —
     // so a balance and a rate on one card read as one register.
     expect(formatHashRate(52e15)).toBe('52 PH/s');
     expect(formatHashRate(52.1e15)).toBe('52.1 PH/s');

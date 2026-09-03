@@ -196,11 +196,11 @@ describe('producerHarvestText', () => {
     expect(Number(shannons) + 1).toBe(Number(shannons));
     expect(BigInt(shannons) + 1n).not.toBe(BigInt(shannons));
 
-    expect(producerHarvestText(standing())).toBe('98.3 M CKB');
+    expect(producerHarvestText(standing())).toBe('98.3 M·CKB');
     // The second-largest cohort's address the same afternoon.
     expect(producerHarvestText(standing({
       ledger: week({ balanceShannons: '11133671694110362' }),
-    }))).toBe('111.34 M CKB');
+    }))).toBe('111.34 M·CKB');
   });
 
   it('spends the house CKB grammar unchanged, trailing zero and all', () => {

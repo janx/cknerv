@@ -212,14 +212,29 @@ export function PanelHeader({ en, cjk, idx, accent, compact = false }: {
   );
 }
 
-export function StatRow({ label, children, valueColor, title }: {
+export function StatRow({ label, children, valueColor, title, cjk, labelWidth }: {
   label: string; children: ReactNode; valueColor?: string;
   /** Hover-only provenance for rows whose source differs from the panel's own. */
   title?: string;
+  /** The Chinese name of the UNIT this row counts in, standing beside the
+   *  label as a companion — the same grammar `PanelHeader` uses for a panel's
+   *  subject. A row takes one only where the unit is worth naming; a row that
+   *  merely prints a number in it has the suffix on the figure already. */
+  cjk?: string;
+  /** Fixed label measure, in px. A GROUP of rows that share it line their `cjk`
+   *  companions up in one column instead of hanging them off ragged label ends
+   *  — which is the whole reason a row would set this, so it is only ever set
+   *  on every row of the group at once. Measured against the longest label in
+   *  the group; there is no way to derive it here, because a row cannot see
+   *  its siblings. */
+  labelWidth?: number;
 }) {
   return (
     <div title={title} style={{ display: 'flex', alignItems: 'baseline', height: 17, whiteSpace: 'nowrap' }}>
-      <span style={{ fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: HUD_TYPE.tech, letterSpacing: 1.6, color: HUD_COLORS.dim, textTransform: 'uppercase' }}>{label}</span>
+      <span style={{ fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: HUD_TYPE.tech, letterSpacing: 1.6, color: HUD_COLORS.dim, textTransform: 'uppercase', width: labelWidth, flexShrink: labelWidth === undefined ? undefined : 0 }}>{label}</span>
+      {cjk ? (
+        <span style={{ fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, color: HUD_COLORS.dim, opacity: 0.7 }}>{cjk}</span>
+      ) : null}
       <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.value, color: valueColor ?? HUD_COLORS.ink }}>{children}</span>
     </div>
   );

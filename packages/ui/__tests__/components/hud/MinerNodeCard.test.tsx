@@ -156,7 +156,7 @@ describe('MinerNodeCard with a week', () => {
     // …and the rest of the plate is untouched by it. One absent input takes
     // one row.
     expect(value(container, 'week')).toBe('41,824 / 67,800 BLK · 62%');
-    expect(value(container, 'harvest')).toBe('98.3 M CKB');
+    expect(value(container, 'harvest')).toBe('98.3 M·CKB');
   });
 
   it('prints the payout address shortened, and keeps the whole of it in the title', () => {
@@ -176,7 +176,7 @@ describe('MinerNodeCard with a week', () => {
 
   it('formats a balance no double can hold, and says what it is a balance of', () => {
     const { container } = renderCard();
-    expect(value(container, 'harvest')).toBe('98.3 M CKB');
+    expect(value(container, 'harvest')).toBe('98.3 M·CKB');
     expect(container.querySelector('[data-miner-probe-harvest-caption]')?.textContent)
       .toBe('155,450 LIVE CELLS · 4,094,449 TXS');
     // The title is the disclaimer the row cannot fit: a balance is a fact

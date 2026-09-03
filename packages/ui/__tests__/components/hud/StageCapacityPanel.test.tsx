@@ -331,7 +331,7 @@ describe('the block', () => {
     expect(text).toContain('样本');
     expect(text).toContain('STAGE·07');
     // Capacity is a CKB amount, so it reads in the HUD-wide K/M/G family.
-    expect(text).toContain('1.21 G CKB');
+    expect(text).toContain('1.21 G·CKB');
     expect(text).not.toContain('CHAIN CAPACITY');
     expect(text).not.toContain('Live capacity');
     expect(text).not.toContain('Chain live');

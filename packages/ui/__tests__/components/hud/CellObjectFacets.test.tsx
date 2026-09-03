@@ -364,7 +364,7 @@ describe('CellDetailPanel — object kin and composition', () => {
       .toBe(CLUSTER_ID);
 
     expect(value(container, 'population').textContent)
-      .toBe('1,024 LIVE · 210 HOLDERS · 1.09 M CKB');
+      .toBe('1,024 LIVE · 210 HOLDERS · 1.09 M·CKB');
 
     expect(row(container, 'object')?.textContent)
       .toBe('OBJECTimage/png · 6,878 B');
@@ -500,7 +500,7 @@ describe('CellDetailPanel — object kin and composition', () => {
       ], 'Nervape Gen2'),
     ]));
 
-    expect(value(container, 'population').textContent).toBe('1.09 M CKB');
+    expect(value(container, 'population').textContent).toBe('1.09 M·CKB');
     // `semanticFacetValue` would have appended the unit here; the row reads the
     // attribute itself precisely so it cannot.
     expect(container.textContent).not.toContain('shannons');

@@ -175,7 +175,7 @@ export function producerHashRateText(
 }
 
 /**
- * What the payout address is holding: `98.3 M CKB`.
+ * What the payout address is holding: `98.3 M·CKB`.
  *
  * ⚠️⚠️ THROUGH `BigInt`, ALWAYS. The live top cohort's address held
  * 9,829,812,162,369,360 shannons on 2026-09-02 — above
@@ -188,7 +188,7 @@ export function producerHashRateText(
  * `formatCkb` is the house's one CKB grammar and this spends it unchanged, so
  * a cohort's balance and a Cell's capacity are the same unit at two
  * magnitudes. That grammar drops a trailing zero — the live figure prints
- * `98.3 M CKB`, not `98.30` — which is the price of there being one grammar.
+ * `98.3 M·CKB`, not `98.30` — which is the price of there being one grammar.
  *
  * The catch is `formatExactCkb`'s: this is the last surface before a reader,
  * and a record that reached it through some path `producerLedgerIsCoherent`
