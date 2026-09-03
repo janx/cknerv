@@ -35,17 +35,19 @@ function formatBytes(bytes: number): string {
   return `${bytes} B`;
 }
 
-/** The measure both 字节元 rows set their label to, so the two companions
- *  stand in one column.
+/** The measure both 字节元 rows reserve for their figure, so the two companions
+ *  standing in front of those figures land on one x.
  *
- *  MEASURED, not guessed: `LIVE CAPACITY` renders 81.8px and `KNOWLEDGE` 68.4px
- *  at `HUD_TYPE.tech` with the stat-row's 1.6 tracking, live in the browser —
- *  the label is uppercase Chakra Petch and there is no advance table here to
- *  derive it from, and jsdom would answer zero for both. 90 clears the longer
- *  of them by 8.2px, which is `PanelHeader`'s own gap between a name and its
- *  CJK companion, so the pair is spaced like every other companion in the HUD.
- *  The value is right-aligned from ~293px, so the column costs it nothing. */
-const CKB_ROW_LABEL_W = 90;
+ *  MEASURED, not guessed: `57.95 G·CKB` renders 75.9px and `152.8 MB` 55.2px in
+ *  the mono voice at `HUD_TYPE.value`, live in the browser — jsdom has no font
+ *  and answers zero for both. 84 covers the widest either row can print:
+ *  capacity tops out around `99.99 G·CKB` on a chain whose whole supply is tens
+ *  of billions of CKB, and knowledge at `999.9 MB`; both are 12 characters or
+ *  fewer at the ~6.9px the mono voice advances per character.
+ *
+ *  It is a floor rather than a cap (see `StatRow`), so the day a figure does
+ *  outgrow it that row's companion steps left and the number still reads. */
+const CKB_ROW_VALUE_W = 84;
 
 function shareLabel(bps: number): string {
   const percent = bps / 100;
@@ -114,17 +116,19 @@ export default function ChainCapacityReadout({ source, record, census = null, ce
             * lined up so the pair reads as a column rather than as two labels
             * that happen to end in Chinese.
             *
-            * ⚠️ Which is what `CKB_ROW_LABEL_W` is for. The labels are 13 and
-            * 9 characters, so hanging the companions off the ends of them puts
-            * the two glyph runs ~26px apart and the column is gone. Both rows
-            * take the same measure; if a third joins them it takes it too, and
-            * if a label outgrows it the measure moves rather than the row. */}
-          <StatRow label="Live capacity" cjk="字节元" labelWidth={CKB_ROW_LABEL_W}>
+            * ⚠️ Which is what `CKB_ROW_VALUE_W` is for. The companion stands
+            * in FRONT OF THE FIGURE, because that is what it is the unit of —
+            * beside the label it read as a second label and sat a third of the
+            * row away from the number. The figures are right-aligned and of
+            * different lengths, so the column is pinned by reserving one
+            * measure for the value on both rows; if a third row joins them it
+            * reserves it too. */}
+          <StatRow label="Live capacity" cjk="字节元" valueWidth={CKB_ROW_VALUE_W}>
             <span title={`${formatExactCkb(usableRecord.total_live_capacity_shannons)} · 1 CKB = 1 CKByte of state`}>
               {formatCkbAmount(usableRecord.total_live_capacity_shannons)}
             </span>
           </StatRow>
-          <StatRow label="Knowledge" cjk="字节元" labelWidth={CKB_ROW_LABEL_W}>
+          <StatRow label="Knowledge" cjk="字节元" valueWidth={CKB_ROW_VALUE_W}>
             <span title="Bytes standing in the capacity above · 1 CKB = 1 CKByte of state">
               {formatBytes(usableRecord.total_knowledge_bytes)}
             </span>

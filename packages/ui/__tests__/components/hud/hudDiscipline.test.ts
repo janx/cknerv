@@ -3053,7 +3053,7 @@ describe('one type scale', () => {
 // for membership passes a HUD where one ROLE is set four different ways, and
 // that was the state of the cell card: the dim word that names a reading ran
 // 1.4 → 0.9 → nothing at all → 0.6 down one column, with `COMPOSITION` and
-// `BYTE BUDGET` — the same object one zone apart — at 1.4 and 0.9. Two roles
+// `CKBYTE` — the same object one zone apart — at 1.4 and 0.9. Two roles
 // are checked below. One is recognised by CONSTRUCT and needs no list; the
 // other cannot be, and says so rather than implying a promise it does not keep.
 
@@ -3389,7 +3389,7 @@ describe('a condition is a condition wherever it is raised', () => {
 //
 // The dim `micro` word that names a reading in the floating-card dialect:
 // `PlateReadoutRow`'s label, the dossier's `COMPOSITION`, the sync ladder's
-// `LOCAL` and `PEER`, `BYTE BUDGET`, `FREE`, the evidence register's `OWNER`
+// `LOCAL` and `PEER`, `CKBYTE`, `FREE`, the evidence register's `OWNER`
 // and `AMOUNT`, the content window's `VALUE`. One role, and it shipped on four
 // settings — 1.4, 0.9, 0.6 and no tracking at all — inside one card.
 //
@@ -3433,7 +3433,7 @@ const READOUT_LABEL_SITES: ReadonlyArray<{
     within: ['function CompositionBlock(', 'compositionIssuesChip(issues)'],
     renders: 'COMPOSITION',
   },
-  { surface: 'the byte budget header', file: 'CellByteBudget.tsx', renders: 'BYTE BUDGET' },
+  { surface: 'the byte budget header', file: 'CellByteBudget.tsx', renders: 'CKBYTE' },
   { surface: 'the unspent reading', file: 'CellByteBudget.tsx', renders: 'FREE' },
   {
     surface: 'the evidence register',

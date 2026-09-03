@@ -427,7 +427,7 @@ export const HUD_TYPE = {
 // but "is this a rung?" passes a HUD where one ROLE is set four different ways
 // — and that was the state of the cell card. Read it top to bottom and the dim
 // word that names a reading ran 1.4 → 0.9 → nothing at all → 0.6; `COMPOSITION`
-// and `BYTE BUDGET` are the same object one zone apart and were set at 1.4 and
+// and `CKBYTE` are the same object one zone apart and were set at 1.4 and
 // 0.9. Three full-width condition boxes in the peer family sat on three rungs
 // — `LINK LOST` at 2, the sync ladder's state word at 1.6, `WE LAG` at 1.4 —
 // so the most severe of the three was the one set tightest.
@@ -446,7 +446,7 @@ export const HUD_TYPE = {
 //   readout label   1.4. The dim `micro` word that names a reading in the
 //               floating-card dialect: `PlateReadoutRow`'s label, the cell
 //               dossier's `COMPOSITION`, the sync ladder's `LOCAL` and `PEER`,
-//               `BYTE BUDGET`, `FREE`, the evidence register's `OWNER` and
+//               `CKBYTE`, `FREE`, the evidence register's `OWNER` and
 //               `AMOUNT`, the content window's `VALUE`. It is the panel
 //               dialect's stat-row label (`tech`, 1.6) stepped down one rung in
 //               size and one in tracking together — the same dense-register

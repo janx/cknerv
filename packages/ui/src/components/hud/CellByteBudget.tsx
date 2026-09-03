@@ -60,22 +60,28 @@ export default function CellByteBudget({
       }}
     >
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+        {/* ⭐ THE HEADING IS THE UNIT, NOT A DESCRIPTION OF THE ZONE.
+          * `BYTE BUDGET` named the arrangement — a budget, with a spent side
+          * and a free one — and left the thing being budgeted unsaid, which
+          * put the one surface in the HUD that exists to teach the CKByte in
+          * the position of never naming it. `CKBYTE` names it, the bar and the
+          * strip under it show what a budget of them looks like, and the
+          * figures keep the `CKB` suffix they always carried. */}
         <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 1.4, whiteSpace: 'nowrap' }}>
-          BYTE BUDGET
+          CKBYTE
         </span>
-        {/* ⭐ THE UNIT'S OWN NAME, AND THIS IS THE ONE HEADING IN THE HUD
-          * ENTITLED TO IT. `字节元` is the CKByte — a byte of state, bought and
-          * held like a coin — and this zone is the only surface whose whole
-          * subject IS that equivalence: capacity purchased in CKB, spent in
-          * bytes, at one byte per CKB. Every OTHER reading in the overlay
+        {/* ⭐ AND THE SAME NAME IN CHINESE, WHICH IS NOW A PAIR RATHER THAN A
+          * GLOSS. `字节元` is the CKByte — a byte of state, bought and held
+          * like a coin — so the two words beside each other are one unit named
+          * twice, in the grammar this HUD has for Chinese: a COMPANION TO A
+          * NAME, the `cjk` of a `PanelHeader`, 细胞 on this card's masthead.
+          * Never a suffix on a figure. Every OTHER reading in the overlay
           * merely COUNTS in the unit (a Cell's CAPACITY fact, STAGE·07's
-          * Capacity, CKB·01's Live capacity, DAO·05's deposit hero), and a
-          * unit tagged onto each of those is the same word printed five times
-          * where the `CKB` suffix already stands.
-          *
-          * So it is a COMPANION TO A NAME, which is the only grammar this HUD
-          * has for Chinese — the `cjk` of a `PanelHeader`, 细胞 on this card's
-          * masthead — and never a suffix on a figure.
+          * Capacity, DAO·05's deposit hero), and a unit tagged onto each of
+          * those is the same word printed where the `CKB` suffix already
+          * stands. CKB·01's two byte rows are the exception that proves it:
+          * they name the unit once each because the pair of them IS the
+          * chain's state budget, and they do it in front of the figure.
           *
           * ⚠️ `label` (9) is the floor for rendered Chinese here, and the
           * reason is the face rather than the rung: `micro` is the Latin

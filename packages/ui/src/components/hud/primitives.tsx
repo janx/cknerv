@@ -212,30 +212,37 @@ export function PanelHeader({ en, cjk, idx, accent, compact = false }: {
   );
 }
 
-export function StatRow({ label, children, valueColor, title, cjk, labelWidth }: {
+export function StatRow({ label, children, valueColor, title, cjk, valueWidth }: {
   label: string; children: ReactNode; valueColor?: string;
   /** Hover-only provenance for rows whose source differs from the panel's own. */
   title?: string;
-  /** The Chinese name of the UNIT this row counts in, standing beside the
-   *  label as a companion — the same grammar `PanelHeader` uses for a panel's
-   *  subject. A row takes one only where the unit is worth naming; a row that
-   *  merely prints a number in it has the suffix on the figure already. */
+  /** The Chinese name of the UNIT this row counts in — standing IN FRONT OF THE
+   *  FIGURE, which is the thing it is the unit of. Beside the label it read as
+   *  a second label and sat a third of the row away from the number it
+   *  qualifies; here the eye picks up the unit and the amount in one move. A
+   *  row takes one only where the unit is worth naming; a row that merely
+   *  prints a number in it has the suffix on the figure already. */
   cjk?: string;
-  /** Fixed label measure, in px. A GROUP of rows that share it line their `cjk`
-   *  companions up in one column instead of hanging them off ragged label ends
-   *  — which is the whole reason a row would set this, so it is only ever set
-   *  on every row of the group at once. Measured against the longest label in
-   *  the group; there is no way to derive it here, because a row cannot see
-   *  its siblings. */
-  labelWidth?: number;
+  /** Fixed value measure, in px, so a GROUP of rows lines its `cjk` companions
+   *  up in one column. The figures are right-aligned and of different lengths,
+   *  so pinning the column means pinning what stands to its right — reserve the
+   *  same measure for the value on every row of the group and the companions
+   *  land on one x.
+   *
+   *  ⚠️ A `minWidth`, deliberately, not a `width`: a figure that outgrows the
+   *  measure pushes its own companion left rather than being clipped, so the
+   *  worst case is one row out of column instead of an unreadable number. */
+  valueWidth?: number;
 }) {
   return (
     <div title={title} style={{ display: 'flex', alignItems: 'baseline', height: 17, whiteSpace: 'nowrap' }}>
-      <span style={{ fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: HUD_TYPE.tech, letterSpacing: 1.6, color: HUD_COLORS.dim, textTransform: 'uppercase', width: labelWidth, flexShrink: labelWidth === undefined ? undefined : 0 }}>{label}</span>
+      <span style={{ fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: HUD_TYPE.tech, letterSpacing: 1.6, color: HUD_COLORS.dim, textTransform: 'uppercase' }}>{label}</span>
+      {/* The companion takes the row's slack when it is present, so it and the
+        * figure travel together as one right-hand group. */}
       {cjk ? (
-        <span style={{ fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, color: HUD_COLORS.dim, opacity: 0.7 }}>{cjk}</span>
+        <span style={{ marginLeft: 'auto', marginRight: 8, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, color: HUD_COLORS.dim, opacity: 0.7 }}>{cjk}</span>
       ) : null}
-      <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.value, color: valueColor ?? HUD_COLORS.ink }}>{children}</span>
+      <span style={{ marginLeft: cjk ? undefined : 'auto', minWidth: valueWidth, textAlign: valueWidth === undefined ? undefined : 'right', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.value, color: valueColor ?? HUD_COLORS.ink }}>{children}</span>
     </div>
   );
 }

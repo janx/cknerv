@@ -1137,7 +1137,7 @@ describe('CellDetailPanel', () => {
     // a sentence under it is taller than the three bare rails beside it.
     expect(slot('lock').style.minHeight).toBe('78px');
     expect(slot('type').style.minHeight).toBe('66px');
-    // The BYTE BUDGET's reservation is EXACTLY the ghost stack that fills it;
+    // The CKBYTE zone's reservation is EXACTLY the ghost stack that fills it;
     // a slot that reserves one number and renders another settles by the
     // difference the moment the record lands.
     expect(slot('capacity').style.minHeight).toBe('66px');

@@ -166,7 +166,7 @@ const LOCK_ENRICHMENT_ROWS = 3;
 const LOCK_ENRICHMENT_CAPTIONS = 1;
 /** The typical asset block: two of amount/identity/object plus script hash. */
 const ASSET_ENRICHMENT_ROWS = 3;
-/** The BYTE BUDGET is one instrument (header, bar, legend, ratio strip), not
+/** The CKBYTE budget is one instrument (header, bar, legend, ratio strip), not
  *  a row stack — but three ghost rows is what stands in for it, and a slot
  *  must reserve EXACTLY the ghost that fills it or it settles by the
  *  difference the moment the record arrives. One number, one function. */
