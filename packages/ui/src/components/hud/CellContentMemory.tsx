@@ -110,6 +110,34 @@ function navButtonStyle(enabled: boolean): CSSProperties {
   };
 }
 
+/**
+ * The door out of the preview, wearing the steppers' own grammar.
+ *
+ * `navButtonStyle` is sized for ONE glyph — the `‹ ›` the steppers set — and
+ * this control says words, so the width and the padding are the only things
+ * that change. Everything else is inherited on purpose: it hands over at the
+ * same moment the steppers do, it goes inert the same way, and a reader who
+ * has learned that a cyan outline on this window is a control they may press
+ * has learned this one too.
+ *
+ * The open state is `cyanInk` rather than a second outline: the reader below
+ * is already on screen, so the button is reporting a state it can see, not
+ * offering a second way in.
+ */
+function readerButtonStyle(enabled: boolean, open: boolean): CSSProperties {
+  return {
+    ...navButtonStyle(enabled),
+    width: 'auto',
+    padding: '0 5px',
+    fontSize: HUD_TYPE.micro,
+    letterSpacing: 1.4,
+    whiteSpace: 'nowrap',
+    color: open
+      ? HUD_COLORS.cyanInk
+      : enabled ? HUD_COLORS.cyanWire : HUD_COLORS.dim,
+  };
+}
+
 function cycleIndex(
   current: number,
   length: number,
@@ -298,6 +326,8 @@ export default function CellContentMemory({
   message,
   reveal = 1,
   pending = false,
+  readerOpen = false,
+  onOpenReader,
 }: {
   dataHex: string;
   source?: EnrichmentSourceStatus;
@@ -309,6 +339,17 @@ export default function CellContentMemory({
   /** The card's one verdict on whether a record is still on its way. While it
    *  is, the analysis zone holds the height that record will need. */
   pending?: boolean;
+  /** DATA READER (SCAN·03) is open on this Cell. The window does not own that
+   *  state — the card does, keyed by Cell — and only reports it. */
+  readerOpen?: boolean;
+  /** Open the reader, optionally at a byte. `null` is "no particular target",
+   *  which is the top of the payload.
+   *
+   *  OPTIONAL, and that is the whole compatibility story: a window rendered
+   *  without it — the tuning lab, a test of the bare window — grows no door
+   *  and behaves exactly as it did, because a door onto a reader nobody
+   *  mounted opens onto nothing. */
+  onOpenReader?: (atByte: number | null) => void;
 }) {
   const enhanced = Boolean(source && phase);
   const content = record?.content;
@@ -327,7 +368,6 @@ export default function CellContentMemory({
   const [segmentIndex, setSegmentIndex] = useState(0);
   const [guessIndex, setGuessIndex] = useState(0);
   const [roleIndex, setRoleIndex] = useState(0);
-  const [bytePage, setBytePage] = useState(0);
   const contentKey = `${record?.out_point.tx_hash ?? 'direct'}:${record?.out_point.index ?? 0}:${content?.deterministic?.kind ?? 'raw'}:${content?.data_hex ?? dataHex}`;
   const selectedSegmentIndex = segments.length === 0
     ? null
@@ -335,7 +375,6 @@ export default function CellContentMemory({
   const selectedSegment = selectedSegmentIndex === null
     ? null
     : segments[selectedSegmentIndex];
-  const selectedSegmentStart = selectedSegment?.start_byte ?? null;
   const selectedGuessIndex = guesses.length === 0
     ? null
     : Math.min(guessIndex, guesses.length - 1);
@@ -350,28 +389,76 @@ export default function CellContentMemory({
     setSegmentIndex(0);
     setGuessIndex(0);
     setRoleIndex(0);
-    setBytePage(0);
   }, [contentKey]);
-  useEffect(() => {
-    if (selectedSegmentStart !== null
-      && selectedSegmentStart < model.observedBytes
-    ) {
-      setBytePage(Math.floor(selectedSegmentStart / previewLimit));
-    }
-  }, [model.observedBytes, previewLimit, selectedSegmentStart]);
   const assetAmount = record?.asset?.amount == null
     ? null
     : `${formatSemanticAssetAmount(
       record.asset.amount,
       record.asset.decimals,
     )}${record.asset.symbol ? ` ${record.asset.symbol}` : ''}`;
-  const bytePageCount = Math.max(1, Math.ceil(model.observedBytes / previewLimit));
-  const selectedBytePage = Math.min(bytePage, bytePageCount - 1);
-  const previewStart = selectedBytePage * previewLimit;
-  const previewEnd = Math.min(model.observedBytes, previewStart + previewLimit);
-  const previewBytes = model.bytes.slice(previewStart, previewEnd);
+  // ⭐ THE WINDOW IS A PREVIEW WITH A DOOR, NOT A PAGER.
+  //
+  // It used to page: `‹ W 3/128 ›`, thirty-two bytes at a time, and a reader
+  // who wanted byte 2,000 pressed `›` sixty-two times to reach a window with
+  // no offsets in it that would not tell them they had arrived. Worse, the
+  // pager could only ever walk the bytes the BROWSER WAS HOLDING — a 1 KiB
+  // prefix of a 37 KB spore is thirty-two of its 1,166 windows — so the
+  // control that looked like a way through the payload stopped, without
+  // saying so, at the end of our own window onto it.
+  //
+  // So the first thirty-two bytes stand as a fixed glance, and DATA READER
+  // (SCAN·03) is where the payload is actually read. One window, always the
+  // same one, and a door beside it.
+  const previewBytes = model.bytes.slice(0, previewLimit);
+  // The `…` is the preview admitting that it is one. It stands whenever the
+  // payload outruns what is drawn below — by the chain's count, by what we are
+  // holding, or by a hex string that was already cut when it got here.
+  const previewIsPartial = model.truncated
+    || model.totalBytes === null
+    || model.totalBytes > previewBytes.length
+    || model.observedBytes > previewBytes.length;
+  // The ASCII line reads the preview, so its caveat is about the preview: a
+  // segment starting past byte 32 is not on this line, whether or not we hold
+  // it. Where those bytes ARE is the reader, and the stepper below opens it.
   const selectedRangeOutsidePreview = selectedSegment !== null
-    && selectedSegment.start_byte >= model.observedBytes;
+    && selectedSegment.start_byte >= previewBytes.length;
+  // What the door says, and it says the size of what is behind it — the one
+  // number a reader needs to decide whether to open it at all.
+  //
+  //   READER OPEN       it is open, below this card, on this Cell
+  //   OPEN READER       the whole payload is already on screen; the reader is
+  //                     still worth opening, because the inspector is there
+  //                     (E3) and thirty-two bytes with no offsets are not a
+  //                     reading of a sixteen-byte amount
+  //   READ ALL          the size is not known here — a `data_hex` cut before
+  //                     it arrived, with no record to state the true length.
+  //                     The window says `n B+ OBSERVED` one span over, and a
+  //                     count taken from OUR window and printed as the
+  //                     payload's would be that window lying about the chain
+  //   READ ALL · n B    the ordinary case, in the chain's own count
+  const readerLabel = readerOpen
+    ? 'READER OPEN'
+    : model.totalBytes === null
+      ? 'READ ALL'
+      : model.totalBytes <= previewLimit
+        ? 'OPEN READER'
+        : `READ ALL · ${model.totalBytes.toLocaleString()} B`;
+  // Stepping is still stepping — the selected segment is the one whose bytes
+  // glow in the grid — but a segment that begins past the preview has no bytes
+  // in this window to glow at all. That step HANDS OVER rather than pointing
+  // at nothing: the reader opens, or re-targets, at the segment's first byte.
+  const stepSegment = (direction: -1 | 1) => {
+    const next = cycleIndex(
+      selectedSegmentIndex ?? 0,
+      segments.length,
+      direction,
+    );
+    setSegmentIndex(next);
+    const segment = segments[next];
+    if (segment && segment.start_byte >= previewLimit) {
+      onOpenReader?.(segment.start_byte);
+    }
+  };
   const tone = analysisTone(source);
   const state = analysisState({ phase, record, source });
   const contentStatus = enhanced
@@ -468,28 +555,27 @@ export default function CellContentMemory({
             <span style={{ minWidth: 0, color: model.origin === 'indexed' ? tone : HUD_COLORS.cyanWire, fontSize: HUD_TYPE.micro, letterSpacing: 0.6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {contentStatus}
             </span>
-            {bytePageCount > 1 ? (
-              <span data-cell-content-byte-window={`${previewStart}:${previewEnd}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro }}>
-                <button
-                  type="button"
-                  aria-label="previous raw byte window"
-                  disabled={!summaryRevealed || selectedBytePage === 0}
-                  onClick={() => setBytePage((current) => Math.max(0, current - 1))}
-                  style={navButtonStyle(summaryRevealed && selectedBytePage > 0)}
-                >
-                  ‹
-                </button>
-                W {selectedBytePage + 1}/{bytePageCount}
-                <button
-                  type="button"
-                  aria-label="next raw byte window"
-                  disabled={!summaryRevealed || selectedBytePage >= bytePageCount - 1}
-                  onClick={() => setBytePage((current) => Math.min(bytePageCount - 1, current + 1))}
-                  style={navButtonStyle(summaryRevealed && selectedBytePage < bytePageCount - 1)}
-                >
-                  ›
-                </button>
-              </span>
+            {/* Where the pager stood, and doing the job the pager pretended
+                to: every byte this Cell holds, at an offset, with its ASCII
+                on the same row. A closed reader is asked for with no target —
+                the top of the payload — and an open one is asked to go back
+                to byte 0, which is the only move left that this button and
+                not the reader's own CLOSE should make.
+
+                Inert until the summary is read, exactly as the pager was:
+                the walk hands a control over once the line it belongs to has
+                arrived, and every other control on this window obeys it. */}
+            {onOpenReader ? (
+              <button
+                type="button"
+                data-cell-content-read-all
+                aria-label="open the data reader"
+                disabled={!summaryRevealed}
+                onClick={() => onOpenReader(readerOpen ? 0 : null)}
+                style={readerButtonStyle(summaryRevealed, readerOpen)}
+              >
+                {readerLabel}
+              </button>
             ) : null}
             {/* How much of the content we are holding, in the ink a reading
                 is written in. It ran the two ends of the severity ramp —
@@ -533,8 +619,7 @@ export default function CellContentMemory({
                 {...revealStageAttributes(bytesRevealed)}
                 style={{ display: 'grid', ...revealStageStyle(bytesRevealed), gridTemplateColumns: `repeat(${HEX_ROW_BYTES}, minmax(0, 1fr))`, justifyItems: 'center', gap: '2px 3px', minWidth: 0, marginTop: 3, padding: '3px 4px', border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.12)}`, background: rgba(HUD_COLORS.stageGround, 0.38) }}
               >
-                {previewBytes.map((byte, localIndex) => {
-                  const index = previewStart + localIndex;
+                {previewBytes.map((byte, index) => {
                   const byteSegmentIndex = contentSegmentAtByte(
                     segments,
                     index,
@@ -558,13 +643,13 @@ export default function CellContentMemory({
                     </span>
                   );
                 })}
-                {previewStart > 0 || previewEnd < model.observedBytes || model.truncated ? (
+                {previewIsPartial ? (
                   <span style={{ gridColumn: '1 / -1', justifySelf: 'end', color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro }}>…</span>
                 ) : null}
               </div>
               <div data-cell-content-ascii="true" data-cell-content-reveal-item="ascii" data-cell-content-reveal-item-state={asciiRevealed ? 'resolved' : 'scanning'} title={model.ascii} {...revealStageAttributes(asciiRevealed)} style={{ display: 'block', ...revealStageStyle(asciiRevealed), minWidth: 0, marginTop: 2, color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, letterSpacing: 0.6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                ASCII [{previewStart}..{previewEnd}) · {model.ascii.slice(previewStart, previewEnd)}
-                {selectedRangeOutsidePreview ? ' · DECODE RANGE OUTSIDE RETAINED BYTES' : ''}
+                ASCII [0..{previewBytes.length}) · {model.ascii.slice(0, previewBytes.length)}
+                {selectedRangeOutsidePreview ? ' · DECODE RANGE OUTSIDE THE PREVIEW' : ''}
               </div>
             </>
           )}
@@ -605,9 +690,7 @@ export default function CellContentMemory({
                     slot={segmentSlots[selectedSegmentIndex]}
                     count={segments.length}
                     interactive={decodeRevealed}
-                    onStep={(direction) => setSegmentIndex((current) => (
-                      cycleIndex(current, segments.length, direction)
-                    ))}
+                    onStep={stepSegment}
                   />
                 ) : null}
               </div>

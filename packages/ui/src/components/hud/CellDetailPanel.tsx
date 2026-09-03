@@ -56,6 +56,7 @@ import { useReducedMotion } from './useReducedMotion';
 import CellNucleusPortrait from './CellNucleusPortrait';
 import { ConsensusMemoryTracePlate } from './ConsensusIdentityPlate';
 import CellContentMemory from './CellContentMemory';
+import CellDataReader, { READER_ROW_HEIGHT_PX } from './CellDataReader';
 import CellCausalLensReadout, {
   type CellCausalNavigationReadout,
 } from './CellCausalLensReadout';
@@ -74,7 +75,12 @@ import {
   deriveCellConsensusIdentity,
   type CellWriteEvidence,
 } from '../../derives/cellConsensusIdentity.derive';
+import { deriveCellContentMemory } from '../../derives/cellContentMemory.derive';
 import { validateCellSemanticRecordForMorphology } from '../../derives/cellSemanticMorphology.derive';
+import {
+  useCellOutputData,
+  useReaderViewportRows,
+} from '../../hooks/useCellOutputData';
 import {
   deriveCellCausalLens,
   type CellCausalLens,
@@ -947,6 +953,10 @@ type CellScanContentMemoryProps = {
   record?: CellSemanticRecord | null;
   message?: string | null;
   pending: boolean;
+  /** DATA READER is open on this Cell. Passed straight through: the window
+   *  reports the state, the card owns it. */
+  readerOpen: boolean;
+  onOpenReader: (atByte: number | null) => void;
 };
 
 /** Content memory decodes THROUGH the walk rather than at a step of it, so it
@@ -1189,6 +1199,52 @@ function CellDetailPanel({
     ? selectedFieldState.field
     : null;
 
+  // ——— DATA READER · SCAN·03 —————————————————————————————————————————————
+  //
+  // Open/closed lives HERE and nowhere else: the overlay, the app and the
+  // window below all stay ignorant of it, exactly as the selected inspection
+  // facet does one state above.
+  //
+  // And it is keyed by Cell for the same reason that one is. A reader is open
+  // ON A CELL — its rows, its segments, its bytes — so a card handed a new
+  // subject has no open reader by construction, with no effect to reset and
+  // therefore no frame in which the old Cell's dump is still standing under
+  // the new Cell's dossier. `atByte` rides along because the DATA window's
+  // segment stepper can ask for a byte, not merely for the reader.
+  const [readerRequest, setReaderRequest] = useState<{
+    cellId: number;
+    atByte: number | null;
+  } | null>(null);
+  const readerOpen = readerRequest?.cellId === cell.id;
+  const openReader = useCallback((atByte: number | null) => {
+    setReaderRequest({ cellId: cell.id, atByte });
+  }, [cell.id]);
+  const closeReader = useCallback(() => { setReaderRequest(null); }, []);
+  // The prefix the browser is already holding, as the reader wants it.
+  //
+  // MEMOISED, and the memo is load-bearing rather than tidy: `Uint8Array.from`
+  // returns a new array on every call, the hook takes `held` as an effect
+  // dependency, and an un-memoised conversion would therefore hand it a new
+  // identity on every render of this card — which the scan clock ticks 12.5
+  // times a second. The request would be aborted and re-issued on each of
+  // them, for as long as the reader stayed open.
+  const readerHeldPrefix = useMemo(
+    () => Uint8Array.from(
+      deriveCellContentMemory(cell.data_hex, presentedSemanticRecord?.content)
+        .bytes,
+    ),
+    [cell.data_hex, presentedSemanticRecord?.content],
+  );
+  const outputData = useCellOutputData({
+    outPoint: cell.out_point,
+    enabled: readerOpen,
+    held: readerHeldPrefix,
+    // `data_bytes` is the chain's own count, and `data_hex` is a window onto
+    // it: every row the reader draws is derived from THIS number.
+    totalBytes: cell.data_bytes,
+  });
+  const readerRows = useReaderViewportRows(READER_ROW_HEIGHT_PX);
+
   const identity = useMemo(
     () => deriveCellConsensusIdentity(cell, recentLinks),
     [cell, recentLinks],
@@ -1366,7 +1422,13 @@ function CellDetailPanel({
   const cardRows = portraitFirst
     ? '"scan analysis"'
     : '"analysis scan"';
-  const cardAreas = showTracePlate ? `${cardRows} "trace trace"` : cardRows;
+  // Growth is strictly downward, and in the order the rows were asked for: the
+  // reader sits directly under the two columns because the DATA cluster it
+  // opened from is in them, and an armed MEMORY TRACE goes under it. Neither
+  // row exists while it is closed — an always-there empty grid row trails an
+  // 8px phantom gap under the plate — and neither can change the columns'
+  // geometry, which is the analysis plate's own law.
+  const cardAreas = `${cardRows}${readerOpen ? ' "reader reader"' : ''}${showTracePlate ? ' "trace trace"' : ''}`;
 
   // ——— Register cluster evidence ————————————————————————————————————
   const facet = presentedSemanticRecord
@@ -2039,6 +2101,8 @@ function CellDetailPanel({
               record={presentedSemanticRecord}
               message={presentedSemanticMessage}
               pending={enrichmentPending}
+              readerOpen={readerOpen}
+              onOpenReader={openReader}
             />
           </div>
         </div>
@@ -2218,6 +2282,56 @@ function CellDetailPanel({
         <span style={portraitBracket('tl')} /><span style={portraitBracket('tr')} />
         <span style={portraitBracket('bl')} /><span style={portraitBracket('br')} />
       </section>
+
+      {/* The DATA cluster's door, opened. It takes the MEMORY TRACE's shape
+        * exactly — a full-width row appended below both columns, never a
+        * column split — because that is the card's one way of growing, and
+        * the plate above it must not move while somebody reads a byte in it.
+        *
+        * `satelliteBase` is what makes this a plate rather than a fragment:
+        * it carries `position: relative`, which is the anchor the reader's own
+        * unpositioned `CloseButton` needs to land at the top-right corner
+        * every other card's CLOSE lands at. `overflow: hidden` keeps the cut
+        * corner honest; the dump does its own scrolling inside. */}
+      {readerOpen && readerRequest ? (
+          <section
+            aria-label="Cell data reader"
+            data-cell-detail-module="reader"
+            data-cell-inspection-satellite="reader"
+            data-cell-detail-size="content"
+            style={{
+              ...satelliteBase,
+              gridArea: 'reader',
+              width: 'auto',
+              overflow: 'hidden',
+              padding: '8px 10px 10px 12px',
+              ...spatialPlate(CYAN),
+            }}
+          >
+            <CellDataReader
+              cell={cell}
+              // The record's own segments, and only a validated record's: the
+              // reader colours bytes by them and lists them as its table of
+              // contents, so a record this card has already refused to present
+              // may not label a single byte in it either.
+              segments={presentedSemanticRecord?.content?.deterministic
+                ?.segments ?? []}
+              decode={presentedSemanticRecord?.content?.deterministic
+                ? {
+                  kind: presentedSemanticRecord.content.deterministic.kind,
+                  summary: presentedSemanticRecord.content.deterministic
+                    .summary,
+                }
+                : null}
+              {...outputData}
+              totalBytes={cell.data_bytes}
+              openAtByte={readerRequest.atByte}
+              visibleRows={readerRows}
+              reduced={reduced}
+              onClose={closeReader}
+            />
+          </section>
+      ) : null}
 
       {/* Growth is strictly vertical: an arming trace appends a full-width
         * row below both columns instead of splitting one, and the analysis

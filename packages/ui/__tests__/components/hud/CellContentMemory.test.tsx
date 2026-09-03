@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render } from '@testing-library/react';
-import { afterEach, describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import type { CellSemanticRecord, EnrichmentSourceStatus } from '@cknerv/types';
 import CellContentMemory, {
   CELL_CONTENT_ANALYSIS_RESERVED_PX,
@@ -146,6 +146,9 @@ describe('CellContentMemory reveal staging', () => {
           phase="ready"
           record={record()}
           reveal={reveal}
+          // The reader's door rendered too: it joins the summary line rather
+          // than the walk, so the stage count is the same seven it always was.
+          onOpenReader={() => {}}
         />,
       );
       const section = container.querySelector(
@@ -300,5 +303,190 @@ describe('CellContentMemory reveal staging', () => {
     expect(container.textContent).toContain('DIRECT NODE · RAW');
     // No index, no analysis block at all — absence is structural, not staged.
     expect(container.querySelector('[data-cell-content-analysis]')).toBeNull();
+  });
+});
+
+// ——— The door onto DATA READER ————————————————————————————————————————————
+//
+// The window used to page: `‹ W 1/2 ›`, thirty-two bytes at a time, through
+// the bytes the browser happened to be holding. It shows a fixed preview now,
+// and the payload is read in the reader the card opens under it. What is
+// pinned here is the HAND-OVER — when the door is offered, what it says, and
+// the one gesture that opens it without anybody pressing it.
+
+describe('CellContentMemory reader affordance', () => {
+  /** 64 bytes, so the second segment begins well past the 32-byte preview. */
+  const FAR_DATA_HEX = `0x7b2261223a317d${'00'.repeat(57)}`;
+
+  function farRecord(): CellSemanticRecord {
+    const base = record();
+    return {
+      ...base,
+      content: {
+        ...base.content!,
+        data_hex: FAR_DATA_HEX,
+        total_bytes: 64,
+        deterministic: {
+          kind: 'json_document',
+          summary: 'UTF-8 JSON object decoded from Cell data',
+          segments: [
+            {
+              start_byte: 0,
+              end_byte: 1,
+              label: 'object_start',
+              value: '{',
+              meaning: 'JSON object opening delimiter',
+            },
+            {
+              start_byte: 40,
+              end_byte: 64,
+              label: 'extension_payload',
+              value: '0x00…',
+              meaning: 'xUDT extension data',
+            },
+          ],
+        },
+      },
+    } as CellSemanticRecord;
+  }
+
+  const door = (container: HTMLElement) => container.querySelector(
+    '[data-cell-content-read-all]',
+  ) as HTMLButtonElement;
+
+  it('hands the door over when the summary is read, and not before', () => {
+    const onOpenReader = vi.fn();
+    const { container, rerender } = render(
+      <CellContentMemory
+        dataHex={DATA_HEX}
+        source={source}
+        phase="ready"
+        record={record()}
+        reveal={0}
+        onOpenReader={onOpenReader}
+      />,
+    );
+
+    // The paged window is gone entirely — not hidden, not one page long.
+    expect(container.textContent).not.toContain('W 1/');
+    expect(container.querySelector('[data-cell-content-byte-window]')).toBeNull();
+    expect(container.querySelector('[aria-label="next raw byte window"]'))
+      .toBeNull();
+
+    // Readable, and inert: the same hand-over every other control on this
+    // window waits for.
+    expect(door(container).textContent).toBe('READ ALL · 40 B');
+    expect(door(container).disabled).toBe(true);
+    fireEvent.click(door(container));
+    expect(onOpenReader).not.toHaveBeenCalled();
+
+    rerender(
+      <CellContentMemory
+        dataHex={DATA_HEX}
+        source={source}
+        phase="ready"
+        record={record()}
+        reveal={1}
+        onOpenReader={onOpenReader}
+      />,
+    );
+    expect(door(container).disabled).toBe(false);
+    fireEvent.click(door(container));
+    // No target: the reader opens at the top of the payload.
+    expect(onOpenReader).toHaveBeenCalledWith(null);
+  });
+
+  it('offers the reader for a payload the preview already shows whole', () => {
+    // Sixteen bytes are entirely on screen, and the reader is still worth
+    // opening — the inspector is what reads them as a number.
+    const { container } = render(
+      <CellContentMemory dataHex={`0x${'ab'.repeat(16)}`} reveal={1} onOpenReader={() => {}} />,
+    );
+    expect(door(container).textContent).toBe('OPEN READER');
+  });
+
+  it('reports an open reader instead of offering a second way in', () => {
+    const onOpenReader = vi.fn();
+    const { container } = render(
+      <CellContentMemory
+        dataHex={DATA_HEX}
+        source={source}
+        phase="ready"
+        record={record()}
+        reveal={1}
+        readerOpen
+        onOpenReader={onOpenReader}
+      />,
+    );
+    expect(door(container).textContent).toBe('READER OPEN');
+    // Still a control: the one move left to it is the top of the payload.
+    // Closing belongs to the reader's own CLOSE and to Escape.
+    fireEvent.click(door(container));
+    expect(onOpenReader).toHaveBeenCalledWith(0);
+  });
+
+  it('grows no door at all where nothing can open', () => {
+    // The tuning lab and a bare-window test render this component with no
+    // reader behind it. A door onto nothing is worse than no door.
+    const { container } = render(
+      <CellContentMemory dataHex={DATA_HEX} reveal={1} />,
+    );
+    expect(container.querySelector('[data-cell-content-read-all]')).toBeNull();
+  });
+
+  it('steps a segment past the preview into the reader', () => {
+    const onOpenReader = vi.fn();
+    const { container } = render(
+      <CellContentMemory
+        dataHex={DATA_HEX}
+        source={source}
+        phase="ready"
+        record={farRecord()}
+        reveal={1}
+        onOpenReader={onOpenReader}
+      />,
+    );
+    const next = container.querySelector(
+      '[aria-label="next decoded segment"]',
+    ) as HTMLButtonElement;
+
+    // The first segment is inside the preview: stepping to it points at bytes
+    // that are on screen, and asks for nothing.
+    expect(container.textContent).toContain('OBJECT START');
+    expect(onOpenReader).not.toHaveBeenCalled();
+
+    fireEvent.click(next);
+    // The second begins at byte 40, which this window will never show. The
+    // step hands over rather than pointing at nothing.
+    expect(container.textContent).toContain('EXTENSION PAYLOAD');
+    expect(onOpenReader).toHaveBeenCalledWith(40);
+    // …and the ASCII line says so, about the preview rather than about what
+    // the browser is holding: all 64 bytes are here, and 40 is still not on
+    // this line.
+    expect(container.querySelector('[data-cell-content-ascii]')?.textContent)
+      .toContain('DECODE RANGE OUTSIDE THE PREVIEW');
+  });
+
+  it('shows one fixed preview of the first 32 bytes, however long the Cell is', () => {
+    const { container } = render(
+      <CellContentMemory
+        dataHex={DATA_HEX}
+        source={source}
+        phase="ready"
+        record={farRecord()}
+        reveal={1}
+        onOpenReader={() => {}}
+      />,
+    );
+    expect(container.querySelectorAll('[data-cell-content-byte]'))
+      .toHaveLength(32);
+    expect(container.querySelector('[data-cell-content-byte="0"]')?.textContent)
+      .toBe('7B');
+    expect(container.querySelector('[data-cell-content-ascii]')?.textContent)
+      .toContain('ASCII [0..32)');
+    expect(door(container).textContent).toBe('READ ALL · 64 B');
+    // 64 bytes behind a 32-byte preview: the `…` says the window is one.
+    expect(container.querySelector('[data-cell-content-bytes="true"]')
+      ?.textContent).toContain('…');
   });
 });

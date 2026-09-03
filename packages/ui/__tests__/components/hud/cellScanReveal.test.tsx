@@ -94,12 +94,16 @@ describe('the scan reveal runs on a clock the leaves hold', () => {
     // cellScanClock.ts, which owns one interval per open panel.
     expect(PANEL_SOURCE).not.toMatch(/\bsetInterval\s*\(/);
     expect(PANEL_SOURCE).not.toMatch(/\bsetTimeout\s*\(/);
-    // …and no state at the top of the card is allowed to hold the walk. The
-    // only `useState` the body keeps is the selected facet, which a click
-    // moves — not a clock.
+    // …and no state at the top of the card is allowed to hold the walk. Both
+    // `useState`s the body keeps are moved by a CLICK and never by a tick —
+    // the selected facet, and whether DATA READER is open and on which Cell.
+    // The count is pinned rather than the absence of a clock, because a third
+    // state added without a named gesture behind it is how a walking value
+    // gets back into a body that renders once per selection.
     const stateDeclarations = PANEL_SOURCE.match(/useState[<(]/g) ?? [];
-    expect(stateDeclarations).toHaveLength(1);
+    expect(stateDeclarations).toHaveLength(2);
     expect(PANEL_SOURCE).toContain('const [selectedFieldState, setSelectedFieldState] = useState<');
+    expect(PANEL_SOURCE).toContain('const [readerRequest, setReaderRequest] = useState<');
   });
 
   it('renders the card body once while the walk lights the whole dossier', () => {

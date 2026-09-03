@@ -11,10 +11,17 @@ That list is exactly the glyphs rendered in `HUD_FONTS.cjk` today — the `cjk`
 props of `PanelHeader` (including `StageCapacityPanel`'s 样本 and `CellsPanel`'s
 元胞汤), `WarningBar`'s 警告, `StatusStrip`'s 状态, the inspector cards' title
 companions (`PeerLinkCard`'s 对端, `NodeSelfCard`'s 节点, `CellDetailPanel`'s
-细胞), `CellByteBudget`'s 字节元 — the CKByte's own name, over the one zone whose
-subject is that unit — and the three consensus-memory endpoint markers drawn
-over the stage by `nerve/ConsensusMemoryMarkers`: 共识记录, 交易输入, 谱系见证.
+细胞), the CKByte's own name 字节元 over the two surfaces whose subject is that
+unit — `CellByteBudget`'s `CKBYTE 字节元`, the zone that counts CKBytes, and
+`CellDataReader`'s `DATA READER 字节元`, the reader that shows their bytes — and
+the three consensus-memory endpoint markers drawn over the stage by
+`nerve/ConsensusMemoryMarkers`: 共识记录, 交易输入, 谱系见证.
 (`SightedNodeCard` documents in-file why it deliberately wears none.)
+
+The reader is the one addition that cost this list nothing: it wears the same
+three glyphs the budget already brought, so the set below, its count of 32 and
+the subset SHA are all unchanged by it. Say a NEW glyph and the whole recipe at
+the bottom of this section has to run again.
 
 Ten of those twelve marker glyphs were outside the 22-glyph subset this list
 used to describe, and the markers asked for `JetBrains Mono Local` besides —

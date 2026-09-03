@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import { clearCellDataMemo } from '@cknerv/cache';
 import { DATA_HEX_TRUNCATION_MARKER } from '@cknerv/types';
 import type {
   Cell,
@@ -141,6 +142,10 @@ describe('CellDetailPanel', () => {
   beforeEach(() => {
     portraitRender.mockClear();
     portraitSemanticRecord.mockClear();
+    // An outpoint's bytes never change, so the reader's session memo never
+    // invalidates — which would let one test's fetched payload answer the
+    // next test's reader synchronously, out of the phase it opened in.
+    clearCellDataMemo();
     vi.useFakeTimers();
     vi.setSystemTime(new Date(3 * 3600_000 + 12 * 60_000));
   });
@@ -593,20 +598,29 @@ describe('CellDetailPanel', () => {
     expect(container.querySelector('[data-cell-semantics-phase="error"]')).not.toBeNull();
   });
 
-  it('keeps every retained direct byte inspectable through bounded windows', () => {
+  it('opens the reader on every retained byte', () => {
+    // The window used to page — `‹ W 1/2 ›`, thirty-two bytes at a time — and
+    // the pager could only ever walk the bytes the browser happened to hold.
+    // Now the window is a fixed preview with a door, and the door opens a row
+    // under the card that gives every byte the Cell has an offset and a line.
+    const fetched = vi.fn();
+    vi.stubGlobal('fetch', fetched);
     const performanceNow = vi.spyOn(performance, 'now').mockReturnValue(0);
     const longData = Array.from(
       { length: 40 },
       (_, index) => index.toString(16).padStart(2, '0'),
     ).join('');
-    const { container } = render(
-      <CellDetailPanel
-        cell={{ ...base, data_hex: `0x${longData}`, data_bytes: longData.length / 2 }}
-        onClose={() => {}}
-      />,
+    const cell = {
+      ...base,
+      data_hex: `0x${longData}`,
+      data_bytes: longData.length / 2,
+    };
+    const { container, rerender } = render(
+      <CellDetailPanel cell={cell} onClose={() => {}} />,
     );
 
-    // Two 16-byte hex rows to a window, in the fixed-width data column.
+    // Two 16-byte hex rows, and only ever those two, in the fixed-width data
+    // column: the preview does not move and cannot be stepped.
     const byteGrid = container.querySelector(
       '[data-cell-content-bytes="true"]',
     ) as HTMLElement;
@@ -614,23 +628,59 @@ describe('CellDetailPanel', () => {
     expect(container.querySelectorAll('[data-cell-content-byte]')).toHaveLength(32);
     expect(container.querySelector('[data-cell-content-byte="0"]')?.textContent)
       .toBe('00');
-    expect(container.textContent).toContain('W 1/2');
-    // While the summary is still ghosted the window stepper is inert — the
-    // reveal hands a control over only once it has been read.
-    const nextWindow = () => container.querySelector(
-      '[aria-label="next raw byte window"]',
+    expect(container.textContent).not.toContain('W 1/2');
+    expect(container.querySelector('[aria-label="next raw byte window"]'))
+      .toBeNull();
+
+    // The door says the size of what is behind it, and — like every control on
+    // this window — waits for the walk to reach the line it stands on.
+    const door = () => container.querySelector(
+      '[data-cell-content-read-all]',
     ) as HTMLButtonElement;
-    expect(nextWindow().disabled).toBe(true);
-    fireEvent.click(nextWindow());
-    expect(container.textContent).toContain('W 1/2');
+    expect(door().textContent).toBe('READ ALL · 40 B');
+    expect(door().disabled).toBe(true);
+    fireEvent.click(door());
+    expect(container.querySelector('[data-cell-inspection-satellite="reader"]'))
+      .toBeNull();
 
     settleScan(performanceNow);
-    expect(nextWindow().disabled).toBe(false);
-    fireEvent.click(nextWindow());
-    expect(container.querySelectorAll('[data-cell-content-byte]')).toHaveLength(8);
-    expect(container.querySelector('[data-cell-content-byte="32"]')?.textContent)
-      .toBe('20');
-    expect(container.textContent).toContain('W 2/2');
+    expect(door().disabled).toBe(false);
+    fireEvent.click(door());
+
+    const reader = container.querySelector(
+      '[data-cell-inspection-satellite="reader"]',
+    ) as HTMLElement;
+    expect(reader).not.toBeNull();
+    const dump = reader.querySelector('[data-cell-data-reader]') as HTMLElement;
+    // 40 bytes is three 16-byte rows, counted from the CHAIN's `data_bytes`.
+    expect(dump.dataset.cellDataReaderRows).toBe('3');
+    // …and all forty are already in the browser, so the node is never asked.
+    expect(dump.dataset.cellDataReaderPhase).toBe('held');
+    expect(fetched).not.toHaveBeenCalled();
+
+    // A full-width row under both columns — the MEMORY TRACE's own shape —
+    // and the columns above it are the two they always were.
+    const card = container.querySelector(
+      '[data-cell-detail-scan-field="true"]',
+    ) as HTMLElement;
+    expect(card.style.gridTemplateAreas).toContain('"reader reader"');
+    expect(card.style.gridTemplateAreas).toContain('"analysis scan"');
+
+    // Re-rendering the same subject is not a second opening.
+    rerender(<CellDetailPanel cell={cell} onClose={() => {}} />);
+    expect(container.querySelectorAll('[data-cell-inspection-satellite="reader"]'))
+      .toHaveLength(1);
+    expect(fetched).not.toHaveBeenCalled();
+
+    // A reader is open ON A CELL. Another Cell arrives with none — by
+    // construction, not by an effect that runs a frame after the swap.
+    rerender(
+      <CellDetailPanel cell={{ ...cell, id: 4243 }} onClose={() => {}} />,
+    );
+    expect(container.querySelector('[data-cell-inspection-satellite="reader"]'))
+      .toBeNull();
+    expect(container.querySelector('[data-cell-detail-scan-field="true"]')
+      ?.getAttribute('style')).not.toContain('reader reader');
     performanceNow.mockRestore();
   });
 
@@ -1000,10 +1050,18 @@ describe('CellDetailPanel', () => {
     fireEvent.click(container.querySelector('[aria-label="next decoded segment"]')!);
     expect(contentMemory?.textContent).toContain('EXTENSION PAYLOAD');
     expect(contentMemory?.textContent).toContain('[28..40)');
-    // The 32-byte window (two 16-byte rows) already holds the segment start.
-    expect(contentMemory?.textContent).toContain('W 1/2');
+    // The 32-byte preview already holds byte 28, so stepping onto that segment
+    // points at bytes that are on screen and hands nothing over: no reader row
+    // appears, and the segment's own note stays off.
     expect(contentMemory?.querySelector('[data-cell-content-byte="28"]')?.textContent)
       .toBe('00');
+    expect(container.querySelector('[data-cell-inspection-satellite="reader"]'))
+      .toBeNull();
+    expect(contentMemory?.textContent)
+      .not.toContain('DECODE RANGE OUTSIDE THE PREVIEW');
+    // The door beside the summary reads the record's own total.
+    expect(contentMemory?.querySelector('[data-cell-content-read-all]')?.textContent)
+      .toBe('READ ALL · 40 B');
 
     // Provenance footer: the enrichment PROOF anchor chip relocated here;
     // CREATED stays collapsed while it just restates COMMIT.
@@ -1358,6 +1416,85 @@ describe('CellDetailPanel', () => {
     // The window still says exactly what it could see, and that it is a
     // window: the honesty moved here, where the clipping actually happened.
     expect(text).toContain('1,024 B+ OBSERVED');
+  });
+
+  it('fills the clipped Cell\'s ghost rows from the node, in place', async () => {
+    // The 93 staged Cells the held prefix does not cover. The reader opens on
+    // what the browser has, draws the rest as ghosts rather than as zeroes
+    // nobody sent, and fills them WITHOUT the plate changing height: the row
+    // count is `ceil(data_bytes / 16)` from the first frame, because it comes
+    // from the chain's count and never from what arrived.
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    const performanceNow = vi.spyOn(performance, 'now').mockReturnValue(0);
+    const payload = new Uint8Array(6947);
+    for (let index = 0; index < payload.length; index += 1) {
+      payload[index] = index % 251;
+    }
+    const fetched = vi.fn(async (_url: string, _init?: RequestInit) => new Response(
+      // ⚠️ TS 5.9: `BodyInit`'s `BufferSource` wants `ArrayBufferView<ArrayBuffer>`,
+      // and an un-annotated `Uint8Array` is `Uint8Array<ArrayBufferLike>` — so
+      // the bytes are re-wrapped rather than the generic form written out.
+      new Uint8Array(payload),
+      {
+        status: 200,
+        headers: {
+          'content-type': 'application/octet-stream',
+          'x-cell-data-bytes': String(payload.length),
+          'x-cell-data-hash': `0x${'5c'.repeat(32)}`,
+          'x-cell-status': 'live',
+        },
+      },
+    ));
+    vi.stubGlobal('fetch', fetched);
+
+    const { container } = render(
+      <CellDetailPanel
+        cell={{
+          ...base,
+          data_hex: `0x${'ab'.repeat(1024)}${DATA_HEX_TRUNCATION_MARKER}`,
+          data_bytes: 6947,
+        }}
+        onClose={() => {}}
+      />,
+    );
+    settleScan(performanceNow);
+    // The size is not known to the window — `data_hex` was cut and no record
+    // states the true length — so the door offers the reading without naming
+    // a count the window would be inventing.
+    const door = container.querySelector(
+      '[data-cell-content-read-all]',
+    ) as HTMLButtonElement;
+    expect(door.textContent).toBe('READ ALL');
+    fireEvent.click(door);
+
+    const reader = container.querySelector(
+      '[data-cell-data-reader]',
+    ) as HTMLElement;
+    expect(reader.dataset.cellDataReaderPhase).toBe('loading');
+    expect(reader.dataset.cellDataReaderRows).toBe('435');
+
+    // Past the 1,024 bytes we hold: ghosts, at the card's own ghost opacity,
+    // and never a drawn zero.
+    const dump = reader.querySelector(
+      '[data-cell-data-reader-dump]',
+    ) as HTMLElement;
+    dump.scrollTop = 64 * 13.5;
+    fireEvent.scroll(dump);
+    const ghosts = reader.querySelectorAll('[data-cell-data-reader-ghost]');
+    expect(ghosts.length).toBeGreaterThan(0);
+    expect((ghosts[0] as HTMLElement).style.opacity).toBe('0.18');
+    expect(fetched).toHaveBeenCalledTimes(1);
+    expect(String(fetched.mock.calls[0][0]))
+      .toContain(`/api/cells/${base.out_point.tx_hash}/2/data`);
+
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    // Filled in place: same plate, same row count, no ghosts left.
+    expect(reader.dataset.cellDataReaderPhase).toBe('ready');
+    expect(reader.dataset.cellDataReaderRows).toBe('435');
+    expect(reader.querySelectorAll('[data-cell-data-reader-ghost]'))
+      .toHaveLength(0);
+    performanceNow.mockRestore();
   });
 
   it('keeps enrichment on the probe timeline instead of lighting it early', () => {

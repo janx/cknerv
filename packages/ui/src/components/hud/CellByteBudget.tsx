@@ -82,8 +82,15 @@ export default function CellByteBudget({
           * `CKB` suffix already stands. CKB·01's byte rows carried it for a
           * while and gave it back: a rail row is read for its NUMBER, and a
           * word between the label and the figure is one more thing to read
-          * past on every glance. This is the one surface where naming the
-          * unit IS the subject, so this is where the name lives.
+          * past on every glance.
+          *
+          * TWO surfaces in the HUD have the unit itself as their subject, and
+          * so two wear the name (the user's ruling of 2026-09-04): this zone,
+          * which COUNTS CKBytes, and `DATA READER` (SCAN·03), which SHOWS THE
+          * BYTES those CKBytes bought — `DATA READER 字节元` on its plate
+          * header, the same companion-to-a-name grammar. Nothing else in the
+          * overlay qualifies, which is what keeps this a ruling rather than a
+          * habit: every other reading merely counts in the unit.
           *
           * ⚠️ `label` (9) is the floor for rendered Chinese here, and the
           * reason is the face rather than the rung: `micro` is the Latin
