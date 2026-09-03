@@ -259,6 +259,22 @@ describe('colonyLens.ts — source-level shader guards', () => {
     expect(fragment).not.toMatch(/if\s*\([^)]*\bimpact\b/);
   });
 
+  it('never lets a ray escape while the disc is still outside it', () => {
+    // ⚠️⚠️ G5 PHOTOGRAPHED WHAT THE OTHER SPELLING COSTS. The escape test says
+    // "the ray has left" — but a ray beyond `1.2 * r0` has NOT left while the
+    // disc reaches further than that, and the disc does exactly when the camera
+    // stands closer to a mark than `uDiscOut / 1.2` (23.3 wu at the shipped 28
+    // wu disc, i.e. every frame past ~66 px/wu). The cut lands wherever the
+    // adaptive step happens to sample, so it is not a soft fade: it is a row of
+    // hard black wedges bitten out of the disc's far rim, at exactly the camera
+    // the film look is for. The radius has to be the larger of the two.
+    const fragment = LENS_FRAGMENT?.glsl ?? '';
+    const escapes = fragment.match(/if\s*\(phi\s*>[^;]*break;/g) ?? [];
+    expect(escapes).toHaveLength(1);
+    expect(escapes[0]).toContain('max(r0, discOut)');
+    expect(fragment).not.toMatch(/r\s*>\s*r0\s*\*\s*1\.2/);
+  });
+
   it('no smoothstep anywhere has edge0 >= edge1', () => {
     // ⚠️ The fix is always `1.0 - smoothstep(b, a, x)`, never a swap of the
     // third argument.

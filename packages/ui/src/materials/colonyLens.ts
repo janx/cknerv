@@ -710,6 +710,12 @@ export function lensTrace(
       captured = true;
       break;
     }
+    // ⚠️ THE MIRROR'S ESCAPE RADIUS IS THE NO-DISC ONE, and that is deliberate:
+    // this function traces a bare ray to measure a bend, so `r0 * 1.2` is where
+    // it has left everything there is. The fragment carries `max(r0, discOut)`
+    // instead, because there a ray beyond `1.2 * r0` has NOT left while the disc
+    // still reaches past it — see the wedges G5 photographed. Do not "unify"
+    // these two by taking the mirror's spelling into the program.
     if (phi > 0.6 && r > r0 * 1.2) break;
   }
   return { bend: psi - psi0, closest, captured, steps: taken };
@@ -1216,9 +1222,19 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
           }
           prev = pnow;
           prevY = y;
-          // The ray has left: it is heading away and is already further out
-          // than it started.
-          if (phi > 0.6 && r > r0 * 1.2) break;
+          // The ray has left: it is heading away, and it is beyond BOTH where it
+          // started and the disc it could still fall through.
+          // (No backticks in here: this is inside a template literal.)
+          // WARNING: r0 alone is NOT the escape radius, and G5 photographed what
+          // that costs. Once the camera stands closer to a mark than
+          // discOut / 1.2 -- 23.3 wu at the shipped 28 wu disc, i.e. any frame
+          // past about 66 px/wu -- the outer disc lies OUTSIDE 1.2 * r0, so a
+          // ray bent over the top was cut before it reached the far side. The
+          // cut lands wherever the adaptive step happens to sample, so it is not
+          // a soft edge: it is a row of hard black wedges bitten out of the
+          // disc's far rim, and they appear at exactly the camera the film look
+          // is for.
+          if (phi > 0.6 && r > max(r0, discOut) * 1.2) break;
         }
 
         // ⭐⭐⭐ FAR AWAY THE SHADOW IS NOT PAINTED AT ALL. Its black and its
