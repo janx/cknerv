@@ -96,6 +96,7 @@ membership ordered against the births, deaths, and reorgs it is staged against.
 | `WS` | `/api/projections/semantics/stream?since=<rev>` | Independent semantics snapshot/delta stream |
 | `GET` | `/api/projections/cells/snapshot` | The staged canonical Cells **and** the display plane's `display` section, plus a statistics segment covering the whole retained set; present in every mode |
 | `WS` | `/api/projections/cells/stream?since=<rev>` | Canonical Cell deltas **and** `display` membership patches, in one revision order |
+| `GET` | `/api/cells/:tx_hash/:output_index/data` | One Cell's complete output data from the node; present in every mode; immutable-cached |
 | `GET` | `/api/enrichment/cells/:tx_hash/:output_index` | Resolve one selected Cell lazily; returns `404 enrichment_disabled` without a configured source |
 | `GET` | `/api/enrichment/transactions/:tx_hash` | Resolve the selected Cell's origin transaction lazily |
 | `GET` | `/api/enrichment/peers/:node_id` | Resolve one linked peer's crawler sighting lazily; `200` for both a sighting and an honest silence, `404 enrichment_disabled` without a configured source |

@@ -2,6 +2,9 @@
 //! chain snapshot endpoint, shut down. Catches Cargo manifest / routing
 //! / state-wiring breakage that pure unit tests can't.
 
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -14,7 +17,8 @@ use cknerv_core::{
     ReplayPhase, SemanticsProjection, TransactionSemanticRecord,
 };
 use cknerv_server::{
-    Adapter, CanonicalContext, EnrichmentSource, GalaxyCompositionHydrator, ServerBuilder,
+    Adapter, CanonicalContext, CellDataReader, CellOutputData, EnrichmentSource,
+    GalaxyCompositionHydrator, ServerBuilder,
 };
 use futures_util::StreamExt;
 use tokio::sync::{mpsc, watch};
@@ -1026,4 +1030,348 @@ async fn a_remembered_composition_stages_the_galaxy_with_no_source_configured() 
     handle.shutdown().await;
     server_task.abort();
     std::fs::remove_dir_all(workdir).unwrap();
+}
+
+/// A Cell data source that answers from a table rather than from a node.
+///
+/// Holds one deliberately unreadable outpoint too, because the route's whole
+/// job is telling "chain truth has no such output" apart from "chain truth
+/// could not be asked", and only a source that can do both proves it.
+struct FixtureCellDataReader {
+    outputs: HashMap<OutPoint, CellOutputData>,
+    unreadable: OutPoint,
+    /// How many times the source was actually consulted. The malformed-hash
+    /// arm is supposed to be decided before this ever moves.
+    reads: Arc<AtomicUsize>,
+}
+
+impl FixtureCellDataReader {
+    fn new(reads: Arc<AtomicUsize>) -> Self {
+        let mut outputs = HashMap::new();
+        outputs.insert(
+            live_out_point(),
+            CellOutputData {
+                bytes: LIVE_CELL_BYTES.to_vec(),
+                data_hash: format!("0x{}", "ab".repeat(32)),
+                live: true,
+            },
+        );
+        outputs.insert(
+            dead_out_point(),
+            CellOutputData {
+                bytes: DEAD_CELL_BYTES.to_vec(),
+                data_hash: format!("0x{}", "cd".repeat(32)),
+                live: false,
+            },
+        );
+        outputs.insert(
+            oversized_out_point(),
+            CellOutputData {
+                bytes: vec![0x7f; cknerv_server::CELL_DATA_MAX_BYTES + 1],
+                data_hash: format!("0x{}", "ef".repeat(32)),
+                live: true,
+            },
+        );
+        Self {
+            outputs,
+            unreadable: unreadable_out_point(),
+            reads,
+        }
+    }
+}
+
+#[async_trait]
+impl CellDataReader for FixtureCellDataReader {
+    async fn read_output_data(
+        &self,
+        out_point: &OutPoint,
+    ) -> anyhow::Result<Option<CellOutputData>> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
+        if *out_point == self.unreadable {
+            return Err(anyhow::anyhow!("connection refused"));
+        }
+        Ok(self.outputs.get(out_point).cloned())
+    }
+}
+
+const LIVE_CELL_BYTES: &[u8] = &[0x73, 0x70, 0x6f, 0x72, 0x65, 0x00, 0xff, 0x10];
+const DEAD_CELL_BYTES: &[u8] = &[0xe8, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+
+fn live_out_point() -> OutPoint {
+    OutPoint {
+        tx_hash: format!("0x{}", "1a".repeat(32)),
+        index: 0,
+    }
+}
+
+fn dead_out_point() -> OutPoint {
+    OutPoint {
+        tx_hash: format!("0x{}", "2b".repeat(32)),
+        index: 3,
+    }
+}
+
+fn oversized_out_point() -> OutPoint {
+    OutPoint {
+        tx_hash: format!("0x{}", "3c".repeat(32)),
+        index: 0,
+    }
+}
+
+fn unreadable_out_point() -> OutPoint {
+    OutPoint {
+        tx_hash: format!("0x{}", "4d".repeat(32)),
+        index: 1,
+    }
+}
+
+fn unknown_out_point() -> OutPoint {
+    OutPoint {
+        tx_hash: format!("0x{}", "5e".repeat(32)),
+        index: 9,
+    }
+}
+
+/// Boot a server whose only extra wiring is a Cell data source, and hand back
+/// its address plus the counter that says how often the source was asked.
+async fn serve_cell_data() -> (
+    std::net::SocketAddr,
+    Arc<AtomicUsize>,
+    cknerv_server::ServerHandle,
+    tokio::task::JoinHandle<()>,
+) {
+    let reads = Arc::new(AtomicUsize::new(0));
+    let (router, handle) = ServerBuilder::new()
+        .cell_data_reader(FixtureCellDataReader::new(reads.clone()))
+        .build()
+        .expect("build");
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    (addr, reads, handle, server_task)
+}
+
+fn cell_data_url(addr: std::net::SocketAddr, out_point: &OutPoint) -> String {
+    format!(
+        "http://{addr}/api/cells/{}/{}/data",
+        out_point.tx_hash, out_point.index
+    )
+}
+
+fn header<'a>(response: &'a reqwest::Response, name: &str) -> &'a str {
+    response
+        .headers()
+        .get(name)
+        .unwrap_or_else(|| panic!("response carries {name}: {:?}", response.headers()))
+        .to_str()
+        .expect("header is ASCII")
+}
+
+#[tokio::test]
+async fn a_live_cell_answers_with_its_whole_payload_and_every_header() {
+    let (addr, reads, handle, server_task) = serve_cell_data().await;
+    let out_point = live_out_point();
+
+    let response = reqwest::get(cell_data_url(addr, &out_point))
+        .await
+        .expect("GET succeeds");
+    assert_eq!(response.status(), 200);
+    assert_eq!(
+        header(&response, "content-type"),
+        "application/octet-stream"
+    );
+    assert_eq!(
+        header(&response, "content-length"),
+        LIVE_CELL_BYTES.len().to_string()
+    );
+    assert_eq!(
+        response.headers().get_all("content-length").iter().count(),
+        1,
+        "we state the length ourselves, so the transport must not state it a second time"
+    );
+    assert_eq!(
+        header(&response, "x-cell-data-bytes"),
+        LIVE_CELL_BYTES.len().to_string()
+    );
+    assert_eq!(
+        header(&response, "x-cell-data-hash"),
+        format!("0x{}", "ab".repeat(32))
+    );
+    assert_eq!(header(&response, "x-cell-status"), "live");
+    assert_eq!(
+        header(&response, "etag"),
+        format!("\"0x{}\"", "ab".repeat(32))
+    );
+    assert_eq!(
+        header(&response, "cache-control"),
+        "public, max-age=31536000, immutable",
+        "the bytes at an outpoint cannot change, which is what makes `immutable` honest"
+    );
+    let body = response.bytes().await.expect("body");
+    assert_eq!(body.as_ref(), LIVE_CELL_BYTES);
+
+    // Back to back through the same permits: a semaphore that leaked one
+    // would answer the first request and hang on the second forever.
+    let again = tokio::time::timeout(
+        Duration::from_secs(5),
+        reqwest::get(cell_data_url(addr, &out_point)),
+    )
+    .await
+    .expect("the second request is not waiting on a permit that never came back")
+    .expect("GET succeeds");
+    assert_eq!(again.status(), 200);
+    assert_eq!(reads.load(Ordering::SeqCst), 2);
+
+    handle.shutdown().await;
+    server_task.abort();
+}
+
+#[tokio::test]
+async fn a_spent_cell_still_answers_with_its_bytes() {
+    let (addr, _reads, handle, server_task) = serve_cell_data().await;
+
+    let response = reqwest::get(cell_data_url(addr, &dead_out_point()))
+        .await
+        .expect("GET succeeds");
+    assert_eq!(response.status(), 200);
+    assert_eq!(
+        header(&response, "x-cell-status"),
+        "dead",
+        "a spent output's data is as true as a live one's; the header says which question was asked"
+    );
+    assert_eq!(
+        header(&response, "x-cell-data-hash"),
+        format!("0x{}", "cd".repeat(32))
+    );
+    let body = response.bytes().await.expect("body");
+    assert_eq!(body.as_ref(), DEAD_CELL_BYTES);
+
+    handle.shutdown().await;
+    server_task.abort();
+}
+
+#[tokio::test]
+async fn a_matching_etag_answers_304_with_the_same_cache_headers() {
+    let (addr, _reads, handle, server_task) = serve_cell_data().await;
+    let etag = format!("\"0x{}\"", "ab".repeat(32));
+
+    let response = reqwest::Client::new()
+        .get(cell_data_url(addr, &live_out_point()))
+        .header("if-none-match", &etag)
+        .send()
+        .await
+        .expect("GET succeeds");
+    assert_eq!(response.status(), 304);
+    assert_eq!(header(&response, "etag"), etag);
+    assert_eq!(
+        header(&response, "cache-control"),
+        "public, max-age=31536000, immutable"
+    );
+    assert!(
+        response.bytes().await.expect("body").is_empty(),
+        "a 304 carries no payload"
+    );
+
+    handle.shutdown().await;
+    server_task.abort();
+}
+
+#[tokio::test]
+async fn an_unknown_outpoint_is_404_and_an_unreadable_node_is_502() {
+    let (addr, _reads, handle, server_task) = serve_cell_data().await;
+
+    let unknown = reqwest::get(cell_data_url(addr, &unknown_out_point()))
+        .await
+        .expect("GET succeeds");
+    assert_eq!(unknown.status(), 404);
+    let body: serde_json::Value = unknown.json().await.unwrap();
+    assert_eq!(body["error"], "cell_unknown");
+
+    let unreadable = reqwest::get(cell_data_url(addr, &unreadable_out_point()))
+        .await
+        .expect("GET succeeds");
+    assert_eq!(
+        unreadable.status(),
+        502,
+        "a node that could not be asked is a gateway failure, not a missing Cell"
+    );
+    let body: serde_json::Value = unreadable.json().await.unwrap();
+    assert_eq!(body["error"], "node_unreachable");
+    assert_eq!(body["message"], "connection refused");
+
+    handle.shutdown().await;
+    server_task.abort();
+}
+
+#[tokio::test]
+async fn a_malformed_tx_hash_never_reaches_the_source() {
+    let (addr, reads, handle, server_task) = serve_cell_data().await;
+
+    for tx_hash in [
+        "0xnothex",
+        "0x1a1a",
+        &"1a".repeat(32),
+        &format!("0x{}", "1a".repeat(33)),
+    ] {
+        let response = reqwest::get(format!("http://{addr}/api/cells/{tx_hash}/0/data"))
+            .await
+            .expect("GET succeeds");
+        assert_eq!(response.status(), 400, "tx_hash {tx_hash}");
+        let body: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(body["error"], "invalid_out_point", "tx_hash {tx_hash}");
+    }
+    assert_eq!(
+        reads.load(Ordering::SeqCst),
+        0,
+        "a hash of the wrong shape is a bug in the caller, not a question for the chain"
+    );
+
+    handle.shutdown().await;
+    server_task.abort();
+}
+
+#[tokio::test]
+async fn a_payload_over_the_valve_is_413() {
+    let (addr, _reads, handle, server_task) = serve_cell_data().await;
+
+    let response = reqwest::get(cell_data_url(addr, &oversized_out_point()))
+        .await
+        .expect("GET succeeds");
+    assert_eq!(response.status(), 413);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["error"], "cell_data_too_large");
+
+    handle.shutdown().await;
+    server_task.abort();
+}
+
+#[tokio::test]
+async fn a_server_without_a_cell_data_reader_is_an_isolated_404() {
+    let (router, handle) = ServerBuilder::new().build().expect("build");
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let response = reqwest::get(cell_data_url(addr, &live_out_point()))
+        .await
+        .expect("GET succeeds");
+    assert_eq!(response.status(), 404);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["error"], "cell_data_unavailable");
+
+    let canonical = reqwest::get(format!("http://{addr}/api/entities/chain/snapshot"))
+        .await
+        .expect("canonical route remains available");
+    assert_eq!(canonical.status(), 200);
+
+    handle.shutdown().await;
+    server_task.abort();
 }

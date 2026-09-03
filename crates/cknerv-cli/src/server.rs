@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
-use cknerv_adapter_ckb::{CkbDirectAdapter, CkbGalaxyCompositionHydrator};
+use cknerv_adapter_ckb::{CkbCellDataReader, CkbDirectAdapter, CkbGalaxyCompositionHydrator};
 use cknerv_adapter_ckbadger::CkbadgerEnrichmentSource;
 use cknerv_core::{
     CellGalaxy, CompositionDemandSink, ObservedScriptsSink, SemanticsProjection,
@@ -143,6 +143,11 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
         // Same stamp the SPA gets in its runtime config, so a bug report
         // and `/api/health` name the same commit.
         .build_version(BUILD_VERSION);
+    // Outside the ckbadger arm on purpose: a Cell's data is chain truth, so
+    // the reader that fetches it is the node and the route exists in every
+    // mode. The dashboard's hex reader is the one surface that needs a
+    // payload longer than the prefix a snapshot can afford to carry.
+    builder = builder.cell_data_reader(CkbCellDataReader::new(cfg.rpc_url.clone()));
     if let Some(source) = ckbadger_source {
         // The restore reads a file and asks the node about every outpoint
         // in it — ckbadger is not involved. It is wired here anyway

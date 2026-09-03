@@ -139,6 +139,53 @@ impl RpcClient {
         self.call("sync_state", Value::Array(vec![])).await
     }
 
+    /// `get_live_cell` for ONE outpoint, with `None` for anything the node
+    /// does not currently hold as live.
+    ///
+    /// Deliberately not [`Self::get_live_cells`] with a one-element slice:
+    /// the batch maps a per-item RPC error to `None`, which is exactly right
+    /// for composition (a candidate we cannot vouch for is simply not staged)
+    /// and exactly wrong for a point lookup, where "the node says no such
+    /// live cell" and "the node could not be asked" are two different answers
+    /// that a route has to give two different status codes to.
+    ///
+    /// `status` is `"unknown"` both for a spent output and for one that never
+    /// existed — only `get_transaction` tells those apart, so a `None` here
+    /// means "not live", never "not real".
+    pub async fn get_live_cell(
+        &self,
+        out_point: &OutPoint,
+        with_data: bool,
+    ) -> Result<Option<Value>> {
+        let params = serde_json::json!([{
+            "tx_hash": out_point.tx_hash,
+            "index": format!("0x{:x}", out_point.index),
+        }, with_data]);
+        let result = self.call("get_live_cell", params).await?;
+        if result.get("status").and_then(Value::as_str) != Some("live") {
+            return Ok(None);
+        }
+        Ok(Some(result))
+    }
+
+    /// One transaction as the node holds it, or `None` when the node has
+    /// never heard of that hash — which, for a lookup that already found no
+    /// live cell, is what proves the outpoint does not exist at all.
+    ///
+    /// The caller still has to read `tx_status.status`: a `pending` or
+    /// `proposed` transaction is an answer about the mempool, not about the
+    /// chain.
+    pub async fn get_transaction(&self, tx_hash: &str) -> Result<Option<Value>> {
+        let result = self
+            .call("get_transaction", serde_json::json!([tx_hash]))
+            .await?;
+        if result.is_null() {
+            Ok(None)
+        } else {
+            Ok(Some(result))
+        }
+    }
+
     /// Batch `get_live_cell` while preserving request order. Individual RPC
     /// errors and non-live outpoints become `None`; transport or malformed
     /// batch responses fail the refresh so callers can retain their last good

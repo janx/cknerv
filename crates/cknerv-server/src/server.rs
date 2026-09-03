@@ -35,10 +35,12 @@ use cknerv_core::{
 };
 
 use crate::adapter::Adapter;
+use crate::cell_data::CellDataReader;
 use crate::composition_store::CompositionStore;
 use crate::enrichment::{EnrichmentSource, GalaxyCompositionHydrator};
 use crate::health::TaskRole;
 use crate::projection_registry::Registry;
+use crate::routes::CellDataGate;
 use crate::state::ServerState;
 
 /// Capacity of the merged adapter → reducer mpsc. Matches simulator's
@@ -100,6 +102,7 @@ pub struct ServerBuilder {
     enrichment_projections: Vec<ProjectionInstaller>,
     enrichment_source: Option<Arc<dyn EnrichmentSource>>,
     galaxy_composition_hydrator: Option<Arc<dyn GalaxyCompositionHydrator>>,
+    cell_data_reader: Option<Arc<dyn CellDataReader>>,
     composition_demand: Option<Arc<CompositionDemandSink>>,
     observed_scripts: Option<Arc<ObservedScriptsSink>>,
     workdir: Option<PathBuf>,
@@ -115,6 +118,7 @@ impl ServerBuilder {
             enrichment_projections: Vec::new(),
             enrichment_source: None,
             galaxy_composition_hydrator: None,
+            cell_data_reader: None,
             composition_demand: None,
             observed_scripts: None,
             workdir: None,
@@ -175,6 +179,23 @@ impl ServerBuilder {
         H: GalaxyCompositionHydrator,
     {
         self.galaxy_composition_hydrator = Some(Arc::new(hydrator));
+        self
+    }
+
+    /// Hand the server something that can read one Cell's complete output
+    /// data, which arms `GET /api/cells/:tx_hash/:output_index/data`.
+    ///
+    /// Deliberately separate from every other seam here, and unconditional at
+    /// the call site: chain bytes are canonical, so this belongs to the node
+    /// and not to an index, and a dashboard reading a Cell in CKB-only mode
+    /// must be able to see the whole payload. Omitting the call leaves the
+    /// route answering `404 cell_data_unavailable`, which is what a host
+    /// without a node to ask should say.
+    pub fn cell_data_reader<R>(mut self, reader: R) -> Self
+    where
+        R: CellDataReader,
+    {
+        self.cell_data_reader = Some(Arc::new(reader));
         self
     }
 
@@ -430,7 +451,13 @@ impl ServerBuilder {
         //    server heartbeating state that can no longer advance.
         let supervisor_handle = crate::health::spawn_supervisor(watched, shutdown_rx.clone());
 
-        let router = crate::routes::build_router(state.clone(), shutdown_rx, enrichment_source);
+        // The gate is built here rather than in the router so the permits
+        // are created once per server life, not once per request path.
+        let cell_data = self
+            .cell_data_reader
+            .map(|reader| Arc::new(CellDataGate::new(reader)));
+        let router =
+            crate::routes::build_router(state.clone(), shutdown_rx, enrichment_source, cell_data);
         let handle = ServerHandle {
             state,
             workdir: self.workdir,

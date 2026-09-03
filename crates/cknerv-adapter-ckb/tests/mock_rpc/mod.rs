@@ -1,7 +1,7 @@
 //! Minimal axum JSON-RPC mock server for cknerv-adapter-ckb tests.
 //!
-//! Returns canned responses for the five RPC methods cknerv-adapter-ckb
-//! actually calls. The shapes here have to satisfy our own parsers (raw
+//! Returns canned responses for the RPC methods cknerv-adapter-ckb actually
+//! calls. The shapes here have to satisfy our own parsers (raw
 //! JSON `Value` access) and — for outputs — `ckb_jsonrpc_types::Script`
 //! deserialization, which is what `block_fetch` uses to compute content
 //! hashes.
@@ -36,6 +36,13 @@ pub struct CannedResponses {
     pub node_version: String,
     /// `local_node_info.connections` (decimal; serialized as hex).
     pub node_connections: u64,
+    /// Raw `get_live_cell` results keyed by the outpoint they answer for.
+    /// Anything absent answers `status: "unknown"`, which is what a node says
+    /// both for a spent output and for one that never existed.
+    pub live_cells: HashMap<(String, u32), Value>,
+    /// Raw `get_transaction` results keyed by transaction hash. Anything
+    /// absent answers `null` — the node has never heard of that hash.
+    pub transactions: HashMap<String, Value>,
 }
 
 impl Default for CannedResponses {
@@ -52,6 +59,8 @@ impl Default for CannedResponses {
             sync_state: json!({ "ibd": false, "best_known_block_number": "0x0" }),
             node_version: "0.117.0".to_string(),
             node_connections: 0,
+            live_cells: HashMap::new(),
+            transactions: HashMap::new(),
         }
     }
 }
@@ -216,6 +225,42 @@ async fn handle(
         }),
         "get_peers" => canned.peers.clone(),
         "sync_state" => canned.sync_state.clone(),
+        "get_live_cell" => {
+            let params = req
+                .get("params")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let out_point = params.first().cloned().unwrap_or(Value::Null);
+            let tx_hash = out_point
+                .get("tx_hash")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let index = out_point
+                .get("index")
+                .and_then(|v| v.as_str())
+                .and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok())
+                .unwrap_or(0);
+            canned
+                .live_cells
+                .get(&(tx_hash, index))
+                .cloned()
+                .unwrap_or_else(|| json!({ "status": "unknown", "cell": null }))
+        }
+        "get_transaction" => {
+            let params = req
+                .get("params")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let tx_hash = params.first().and_then(|v| v.as_str()).unwrap_or("");
+            canned
+                .transactions
+                .get(tx_hash)
+                .cloned()
+                .unwrap_or(Value::Null)
+        }
         _ => {
             return Json(json!({
                 "jsonrpc": "2.0",

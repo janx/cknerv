@@ -621,6 +621,7 @@ binary header.
 | `GET /api/projections/:name/snapshot.bin` | Bytes | Columnar snapshot when supported, otherwise 404 |
 | `GET /api/projections/:name/stream?since=N` | WebSocket | Projection stream |
 | `GET /api/projections/:name/stream?since=N&bin=1` | WebSocket | Resync snapshot may be binary |
+| `GET /api/cells/:tx_hash/:output_index/data` | Bytes | One Cell's complete output data from the node; present in every mode; immutable-cached |
 | `GET /api/enrichment/cells/:tx_hash/:output_index` | JSON | Lazy semantic detail for a selected Cell |
 | `GET /api/enrichment/transactions/:tx_hash` | JSON | Lazy origin-transaction semantics |
 | `GET /api/enrichment/peers/:node_id` | JSON | Lazy crawler sighting for one linked peer |

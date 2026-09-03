@@ -18,6 +18,7 @@
 pub mod adapter;
 mod backfill;
 pub mod block_fetch;
+mod cell_data;
 pub mod content_hash;
 mod galaxy_composition;
 mod network;
@@ -27,4 +28,5 @@ mod script_taxonomy;
 pub mod shape_seed;
 
 pub use adapter::CkbDirectAdapter;
+pub use cell_data::CkbCellDataReader;
 pub use galaxy_composition::CkbGalaxyCompositionHydrator;

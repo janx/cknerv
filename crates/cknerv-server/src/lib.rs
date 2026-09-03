@@ -29,8 +29,12 @@
 //!     context for that Cell's origin transaction.
 //!   * `GET /api/enrichment/peers/:node_id` — optional lazy crawler sighting
 //!     for one peer the local node is linked to.
+//!   * `GET /api/cells/:tx_hash/:output_index/data` — one Cell's complete
+//!     output data, read from chain truth rather than from an index, and
+//!     immutable by outpoint.
 
 pub mod adapter;
+pub mod cell_data;
 mod composition_store;
 pub mod enrichment;
 mod enrichment_supervisor;
@@ -43,6 +47,7 @@ pub mod state;
 pub mod ws;
 
 pub use adapter::Adapter;
+pub use cell_data::{CellDataReader, CellOutputData, CELL_DATA_IN_FLIGHT, CELL_DATA_MAX_BYTES};
 pub use enrichment::{CanonicalContext, EnrichmentSource, GalaxyCompositionHydrator};
 pub use persistence::{peek_restored_chain_cursor, peek_restored_tip, RestoredChainCursor};
 pub use server::{ServerBuilder, ServerHandle};
