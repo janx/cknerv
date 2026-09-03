@@ -926,29 +926,41 @@ THE WHOLE IMAGE FOLDS WITH THE CAMERA, on one number. `uPxScale` is written once
 a frame — `0.5 * drawingBufferHeight * projectionMatrix[1][1]`, so it is
 DPR-aware for free — and each program divides it by its own distance to a cohort
 to get PIXELS PER WORLD UNIT at that mark. Closeness is that quantity
-smoothstepped over 6 -> 30 px/wu, and it drives everything:
+smoothstepped over 20 -> 50 px/wu, and it drives everything:
 
-| Folded quantity | Far, at or below 6 px/wu | Near, at or above 30 px/wu |
+| Folded quantity | Far, at or below 20 px/wu | Near, at or above 50 px/wu |
 |---|---:|---:|
 | Horizon `rs` | 0.08 wu | 0.77 wu |
 | Shadow, `3*sqrt(3)/2` horizons | 0.21 wu | 2.00 wu |
 | Disc inner edge, the ISCO at 3 horizons | 0.24 wu | 2.31 wu |
-| Disc outer edge | 6 wu | 28 wu |
+| Disc outer edge | 3 wu | 28 wu |
 | Shadow opacity | 0 | 1 |
 | Beaming | 0 | 0.45 |
-| Motes | born within 6 wu, x0.2 | born at 8-27 wu, full |
+| Motes | born within 3 wu, x0.2 | born at 8-27 wu, full |
 
-Far away the mark is therefore a soft six-unit halo of intake with a brighter
-half-unit core — deliberately the shape of a sighted peer's sprite, because at
-that range a cohort IS a peer that happens to mine — carrying at most a pixel of
-dark and no beaming. Near, it is the hole with a 28 wu vortex around it. The two
-are different LAWS and not one law dimmed: the near disc is bright at its inner
-edge and dark in the gap inside it, which at six pixels reads as a ring, and a
-ring is a shape the peer mesh does not have. The fold must be measured on the
-DRAWING BUFFER's height and never the CSS height, because a tier that lowers the
-DPR changes how many pixels a world unit covers, and a mark folded on CSS pixels
-would unfold into the near form exactly when the machine had said it could not
-afford one.
+THE BAND AND THE FAR FORM WERE BOTH CUT ON 2026-09-03, on the user's judgement
+of the live frames: the far view was right, but at the MID range - 14 to 20
+px/wu - the cohort was far too big, and at that range the whole mark should be
+about the size of a SIGHTED PEER, whose sprites are 1.5 and 2.0 world units
+across. So the fold's far edge moved 6 -> 20 px/wu (14 px/wu used to be 0.26
+unfolded, which is a `mix(6, 28, 0.26)` = 11.7 wu disc, 23 units across against
+that 2.0), its near edge 30 -> 50 so the band keeps its width, the far disc
+6 -> 3 wu and the far halo's Gaussian radius 1.0 -> 0.7 wu.
+
+Far away the mark is therefore a soft three-unit skirt of intake over a 0.7 wu
+Gaussian with a brighter core at 0.35 of that radius - deliberately the shape of
+a sighted peer's sprite, because at that range a cohort IS a peer that happens to
+mine - carrying no dark at all and no beaming. The far law
+`0.9 * (1 - rho/out)^2.2` is above a tenth of its own peak inside `0.649 * out`,
+so a 3 wu radius reaches 1.95 wu and has a 1.62 wu half-maximum width: a
+footprint of about two units, the peer's own size. Near, it is the hole with a
+28 wu vortex around it. The two are different LAWS and not one law dimmed: the
+near disc is bright at its inner edge and dark in the gap inside it, which far
+out reads as a ring, and a ring is a shape the peer mesh does not have. The fold
+must be measured on the DRAWING BUFFER's height and never the CSS height,
+because a tier that lowers the DPR changes how many pixels a world unit covers,
+and a mark folded on CSS pixels would unfold into the near form exactly when the
+machine had said it could not afford one.
 
 A COHORT DRINKS AT ITS OWN RATE, and both draws read it. Each mark carries its
 share of whatever window it was measured over — the indexer's week when the
@@ -1094,10 +1106,10 @@ one to reach for first — every other radius is a multiple of it), `cohortDiscO
 `cohortBeam` (how much brighter the approaching side is), `cohortFarAmp` (the far
 form's whole weight), `cohortGlow` (the bloom stand-in), `cohortWarmth` (0 the
 mesh's cyan disc, 1 the film's orange one, moving the disc and the specks in it
-together), `cohortUnfold` (the near end of the fold band; the far end, 6, is the
-layer's rule and not a knob), `cohortSteps` (RK4 steps per ray, which overrides
-the quality tier the moment it moves), `cohortIntake` (the sink's `k`),
-`cohortSwirl` (how far a streamline winds before it arrives), `cohortOrbit` (the
+together), `cohortUnfold` (the near end of the fold band, 50, on a 10-80 range;
+the far end, 20, is the layer's rule and not a knob), `cohortSteps` (RK4 steps
+per ray, which overrides the quality tier the moment it moves), `cohortIntake`
+(the sink's `k`), `cohortSwirl` (how far a streamline winds before it arrives), `cohortOrbit` (the
 specks' swing near the mouth) and `cohortMotes` (how bright the specks are).
 Fifteen knobs retired with the composed form, and no knob here can clip the mark:
 the disc's alpha is clamped in the fragment and the shadow's is the closeness, so
@@ -1129,6 +1141,15 @@ because of it. Load average 3.0-6.0.
 | Saturated pixels attributed to the layer (on minus amplitudes at zero) | -26 at the app camera; +658,491 at a 40 px/wu hole, on 3,686,400 px |
 | `Time.paused` A/A control, 0.3 s apart | 1 pixel |
 | Console, program info logs, NaN sweep of both programs | clean |
+
+⚠️ EVERY ROW ABOVE WAS MEASURED AT THE 6 -> 30 px/wu BAND AND THE 6 wu FAR DISC
+that shipped that day. The band is 20 -> 50 and the far disc 3 wu since, so every
+row taken inside the old band - the app camera at 4.6-22.6 px/wu, the 14 and
+20 px/wu columns, the far form's own 77/255, and the whole 29-frame unfold strip
+- describes a form the app no longer draws there and is owed a re-measure. The
+costs and the brightnesses can only have come down (a smaller disc covers fewer
+pixels and terminates rays sooner); the unfold strip's claim - that a smoothstep
+on this quantity does not pop - is about the law and not about these two edges.
 
 Three of those rows settle a rule. At the app camera the whole layer costs +0.30
 to +0.55 ms across two runs and all three step counts, inside the budget the form

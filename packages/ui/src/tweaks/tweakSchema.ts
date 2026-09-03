@@ -211,9 +211,12 @@ export const peerSchema = {
   // the colour temperature: 0 is the mesh's cyan disc, 1 the film's orange one
   cohortWarmth: { value: COHORT_LENS_WARMTH, min: 0, max: 1, step: 0.02, label: 'cohort warmth' },
   // pixels per world unit at which the form is fully UNFOLDED: the near end of
-  // the band the whole mark folds over (the far end, 6, is not a knob — it is
-  // where a cohort becomes a peer-sized smudge and that is the layer's rule)
-  cohortUnfold: { value: COHORT_UNFOLD_HI, min: 10, max: 60, step: 1, label: 'cohort unfold' },
+  // the band the whole mark folds over (the far end, 20, is not a knob — it is
+  // where a cohort becomes a peer-sized smudge and that is the layer's rule).
+  // ⚠️ The max is 80 and not 60 because the default moved 30 → 50 on 2026-09-03,
+  // when the user judged the mid range too big: a slider whose default sits at
+  // five sixths of its travel cannot be tuned upward
+  cohortUnfold: { value: COHORT_UNFOLD_HI, min: 10, max: 80, step: 1, label: 'cohort unfold' },
   // RK4 steps per ray: the photon ring's precision. ⚠️ Overrides the quality
   // tier the moment it moves, and the tiers cost within single-digit percent of
   // each other everywhere (measured 2026-09-03) — this is not a speed slider

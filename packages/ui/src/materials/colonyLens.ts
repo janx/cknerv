@@ -63,8 +63,9 @@ import { PEER_NETWORK_PALETTE, type SceneColor } from '../visualPalette';
  *    `colonyMist.ts`'s library, and the ledger's share still sets the sink's
  *    strength. What the disc shows is the substance being taken.
  * 3. ⭐⭐ THE FIELD STAYS SECONDARY AT THE DEFAULT CAMERA. The whole image folds
- *    with distance: far, a soft six-unit intake halo with at most a pixel of
- *    dark; near, the film's hole with a twenty-eight-unit vortex. ONE closeness
+ *    with distance: far, a soft three-unit intake halo the size of a sighted
+ *    peer's sprite and no dark at all; near, the film's hole with a
+ *    twenty-eight-unit vortex. ONE closeness
  *    number drives the mass, the disc's extent, the texture, the shadow's
  *    opacity and the beaming.
  * 4. ⛔ NEVER UPWARD. Nothing here emits toward the canopy; the arc over the top
@@ -174,12 +175,27 @@ export const COHORT_DISC_OUT = 28;
 /**
  * …and at the far end, where the mark must not out-weigh a peer.
  *
- * ⚠️ IT FOLDS HARDER THAN THE MASS. The mass folds by 9.6× and the disc by
- * 4.7×, so the far form is proportionally WIDER than the near one — which is
- * the point: far away there is no shadow to see, and what is left has to be a
- * soft halo of intake rather than a scale model of a black hole.
+ * ⭐⭐⭐ THE YARDSTICK IS A SIGHTED PEER'S SPRITE, and the user said so on the
+ * live frames (2026-09-03): the FAR view is right, but at the MID range — 14 to
+ * 20 pixels per world unit — the cohort is FAR TOO BIG, and at that range the
+ * whole mark should be about the size of a sighted peer. Those sprites are 1.5
+ * and 2.0 world units ACROSS (`PEER_CLOUD_SIGHTED_DARK_TONE.size` and
+ * `PEER_CLOUD_SIGHTED_TONE.size`), which is the ruler this radius is now cut to.
+ *
+ * ⭐ THE ARITHMETIC THAT PICKED 3.0. The far law is a skirt, `(1 − ρ/out)^2.2`,
+ * so it is above a tenth of its peak inside `(1 − 0.1^(1/2.2))·out` = 0.649·out
+ * and above half of it inside 0.270·out. At `out` = 3 that is 1.95 wu of reach
+ * and a 1.62 wu half-maximum width — a footprint of about two units, the reached
+ * peer's own size. At 6 the same law reached 3.9 wu and there was no camera at
+ * which the mark was peer-sized.
+ *
+ * ⚠️ AND IT NOW FOLDS ALMOST EXACTLY AS HARD AS THE MASS: the disc shrinks by
+ * 28/3 = 9.33× against the mass's 9.63×, where it used to shrink by 4.67×. The
+ * far form is still proportionally the wider of the two — far away there is no
+ * shadow to see, so what is left has to be a halo of intake and not a scale
+ * model of a black hole — but only just, and that is the point of the change.
  */
-export const COHORT_DISC_OUT_FAR = 6;
+export const COHORT_DISC_OUT_FAR = 3.0;
 
 /* ------------------------------------------- what other layers read off the mass */
 
@@ -297,21 +313,38 @@ export const COHORT_LINK_STOP_R = 3.0;
  * zoom must fold identically. `uPxScale / |camera − origin|` is that number
  * exactly: the layer writes `uPxScale = 0.5 · drawingBufferHeight ·
  * projectionMatrix[1][1]` once a frame, which is DPR-aware for free.
+ *
+ * ⭐⭐⭐ AND IT IS 20 BECAUSE THE MID RANGE IS WHERE THE MARK WAS TOO BIG. Judged
+ * on the live frames 2026-09-03: the far view is right, but between 14 and 20
+ * px/wu the cohort dwarfed everything around it. On the old 6 → 30 band, 14
+ * px/wu was already 0.26 unfolded — a `mix(6, 28, 0.26)` = 11.7 wu disc, 23
+ * units across, against a sighted peer's 2.0. Starting the band at 20 holds the
+ * FAR form, a peer-sized halo, through the whole of that range: the closeness at
+ * 14 and at 20 px/wu is exactly 0.
  */
-export const COHORT_UNFOLD_LO = 6;
+export const COHORT_UNFOLD_LO = 20;
 
 /** …and above this many, it is fully unfolded: the film's hole. Between them
  *  the closeness runs 0 → 1 on a smoothstep, and EVERY quantity that folds
  *  reads that one number, so nothing can unfold on its own schedule.
  *
- *  ⭐ AND THERE IS NO POP, MEASURED 2026-09-03. A paused dolly on one isolated
+ *  ⭐⭐ 50 KEEPS THE BAND AS WIDE AS IT WAS WHILE ITS FAR EDGE MOVES
+ *  (2026-09-03). The unfold ran 6 → 30 until the user judged the mid range too
+ *  big; a band that still ended at 30 would have crammed the whole
+ *  transformation into ten pixels. At 20 → 50 the rim camera at 40 px/wu is 0.74
+ *  unfolded and the close camera at 90 is unchanged at 1.
+ *
+ *  ⭐ AND THERE WAS NO POP, MEASURED 2026-09-03 — ⚠️ AT THE OLD 6 → 30 BAND, so
+ *  the strip is owed a re-measure at this one. A paused dolly on one isolated
  *  cohort from 6 to 62 px/wu in steps of 2 — 29 frames, each cropped to the same
  *  24 wu of world and resampled to 512², so the magnification is removed and
- *  only the FORM is compared — gives a mean-absolute per-step difference with a
- *  median of 23.2 and a maximum of 26.6: **1.15× the median**, and it falls at
- *  20 px/wu, inside this band, where the form is legitimately changing fastest.
- *  A discontinuity would have shown as a spike of several times the median. */
-export const COHORT_UNFOLD_HI = 30;
+ *  only the FORM is compared — gave a mean-absolute per-step difference with a
+ *  median of 23.2 and a maximum of 26.6: **1.15× the median**, and it fell at
+ *  20 px/wu, inside the band as it then stood, where the form was legitimately
+ *  changing fastest. A discontinuity would have shown as a spike of several
+ *  times the median; what that establishes is that a smoothstep on this quantity
+ *  does not pop, not that THESE two edges do not. */
+export const COHORT_UNFOLD_HI = 50;
 
 /* -------------------------------------------------------------------------- *
  * The integrator.
@@ -396,7 +429,8 @@ export const COHORT_LENS_QUAD_R = 32;
  *
  * ⭐ IT IS THE FILM'S MOST RECOGNISABLE ASYMMETRY and the cheapest honest thing
  * in the program: one dot product of the disc's tangent with the view. It fades
- * out with the fold, because at six pixels an asymmetry is a dither pattern.
+ * out with the fold, because at the far end of the band an asymmetry is a
+ * dither pattern.
  */
 export const COHORT_LENS_BEAM = 0.45;
 
@@ -423,9 +457,10 @@ export const COHORT_LENS_GLOW_R = 4;
  * The far form's presence: the mesh's own register.
  *
  * ⭐⭐ FAR AWAY THE MARK IS A HALO AND NOT A HOLE. The shadow is not painted at
- * all (its alpha is the closeness), so what is left is this: a one-unit glow
- * with a brighter half-unit core — deliberately the shape of a sighted peer's
- * sprite, because at that distance a cohort IS a peer that happens to mine.
+ * all (its alpha is the closeness), so what is left is this: a 0.7 wu Gaussian
+ * with a brighter core at 0.35 of that radius — deliberately the shape of a
+ * sighted peer's sprite, whose own mark is 2.0 wu across, because at that
+ * distance a cohort IS a peer that happens to mine.
  *
  * ⭐⭐ MEASURED LIVE 2026-09-03, AND THE THIRD RULE HOLDS BY MEASUREMENT. At the
  * app camera the layer's own brightest pixel anywhere on the canvas (ON minus
@@ -436,10 +471,23 @@ export const COHORT_LENS_GLOW_R = 4;
  * retired mist patch peaked at 236/255 and the retired haze at 2/255 — the
  * lensed far form sits between them and much nearer the haze. ⚠️ At 40 px/wu the
  * same measurement inverts completely (76 % of the canvas, up to 255/255), which
- * is the fold doing what it claims.
+ * is the fold doing what it claims. ⚠️ THAT MEASUREMENT WAS TAKEN AT THE 6 wu
+ * FAR DISC AND THE 1.0 wu HALO; both were cut on 2026-09-03 and the numbers can
+ * only have come down, but they are owed a re-measure.
  */
 export const COHORT_LENS_FAR_GLOW = 0.3;
-export const COHORT_LENS_FAR_GLOW_R = 1;
+
+/**
+ * The far halo's Gaussian radius, in world units: `exp(-(impact/r)²)`, with the
+ * brighter core at `COHORT_LENS_FAR_GLOW_CORE_R` of it.
+ *
+ * ⭐ 0.7 PUTS THE VISIBLE CORE INSIDE THE SAME FOOTPRINT THE SKIRT WAS CUT TO
+ * (2026-09-03, the user's yardstick — see `COHORT_DISC_OUT_FAR`). `exp(-t²)`
+ * falls to a tenth of its peak at t = 1.52, so 0.7 wu of radius is 2.13 wu
+ * across: a sighted peer's 2.0 wu sprite. At 1.0 it was 3.04 wu across and the
+ * halo reached past the mark it belongs to.
+ */
+export const COHORT_LENS_FAR_GLOW_R = 0.7;
 export const COHORT_LENS_FAR_GLOW_CORE = 0.5;
 export const COHORT_LENS_FAR_GLOW_CORE_R = 0.35;
 
@@ -448,9 +496,10 @@ export const COHORT_LENS_FAR_GLOW_CORE_R = 0.35;
  * `amp · (1 − ρ/out)^pow`, with the spiral left as a faint modulation.
  *
  * ⭐⭐ IT IS A DIFFERENT LAW AND NOT A DIMMED NEAR ONE. The near disc is bright
- * at its inner edge and dark in the gap inside it; at six pixels that reads as
- * a ring, and a ring is a shape the mesh does not have. A skirt falling from
- * the centre is the shape a peer HAS, which is why the far form wears it.
+ * at its inner edge and dark in the gap inside it; at the far end of the band
+ * that reads as a ring, and a ring is a shape the mesh does not have. A skirt
+ * falling from the centre is the shape a peer HAS, which is why the far form
+ * wears it.
  */
 export const COHORT_LENS_FAR_DISC_AMP = 0.9;
 export const COHORT_LENS_FAR_DISC_POW = 2.2;
@@ -1175,7 +1224,7 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
 
         vec3 col = mistDiscColor(cc);
         // The outer disc is thinner, so the mesh shows through the vortex; the
-        // far form is thinner still, because at six pixels an opaque disc is a
+        // far form is thinner still, because that far out an opaque disc is a
         // blob and the mark must stay secondary.
         float a = clamp(
           v * uDiscAlpha * mix(0.4, 1.0, inner) * mix(0.3, 1.0, closeness),

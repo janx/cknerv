@@ -364,14 +364,14 @@ describe('cohort motes — how bright, and when not at all', () => {
  * -------------------------------------------------------------------------- */
 
 describe('cohort motes — the fold', () => {
-  it('is 0 at six pixels per world unit and 1 at thirty — the lens’s own band', () => {
+  it('is 0 at twenty pixels per world unit and 1 at fifty — the lens’s band', () => {
     expect(cohortMoteFold(COHORT_UNFOLD_LO).closeness).toBe(0);
     expect(cohortMoteFold(COHORT_UNFOLD_HI).closeness).toBe(1);
     expect(cohortMoteFold(0).closeness).toBe(0);
     expect(cohortMoteFold(1e6).closeness).toBe(1);
     // Monotone in between, and smooth at both edges.
     let previous = -1;
-    for (let px = 0; px <= 40; px += 0.25) {
+    for (let px = 0; px <= 60; px += 0.25) {
       const closeness = cohortMoteFold(px).closeness;
       expect(closeness).toBeGreaterThanOrEqual(previous);
       previous = closeness;

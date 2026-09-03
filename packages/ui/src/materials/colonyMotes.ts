@@ -226,8 +226,9 @@ export const COHORT_MOTE_REACH = COHORT_LENS_REACH;
  * …and at the far end, where it is the far form's whole extent.
  *
  * ⭐ THE SAME FACT AS `COHORT_DISC_OUT_FAR`, so it is that constant. Far away
- * the mark is a six-unit halo; a catchment wider than the halo would weight a
- * swing outside anything that is drawn.
+ * the mark is a three-unit halo — a sighted peer's size, cut there on
+ * 2026-09-03 — and a catchment wider than the halo would weight a swing outside
+ * anything that is drawn.
  */
 export const COHORT_MOTE_REACH_FAR = COHORT_DISC_OUT_FAR;
 

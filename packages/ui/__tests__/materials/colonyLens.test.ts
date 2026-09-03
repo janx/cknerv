@@ -30,6 +30,7 @@ import {
   COHORT_HORIZON_FAR,
   COHORT_LENS_BEAM,
   COHORT_LENS_FAR_DISC_AMP,
+  COHORT_LENS_FAR_DISC_POW,
   COHORT_LENS_QUAD_R,
   COHORT_LENS_STEP,
   COHORT_LENS_STEPS,
@@ -53,6 +54,10 @@ import {
   lensTrace,
   makeCohortLensMaterial,
 } from '../../src/materials/colonyLens';
+import {
+  PEER_CLOUD_SIGHTED_DARK_TONE,
+  PEER_CLOUD_SIGHTED_TONE,
+} from '../../src/materials/peerNodeMaterial';
 
 /** One horizon, so every impact parameter below reads as a multiple of it. */
 const RS = 1;
@@ -200,13 +205,13 @@ describe('cohort lens — the Binet integrator', () => {
  * -------------------------------------------------------------------------- */
 
 describe('cohort lens — the fold', () => {
-  it('is 0 at six pixels per world unit, 1 at thirty, and monotone between', () => {
+  it('is 0 at twenty pixels per world unit, 1 at fifty, and monotone between', () => {
     expect(lensCloseness(COHORT_UNFOLD_LO)).toBe(0);
     expect(lensCloseness(COHORT_UNFOLD_HI)).toBe(1);
     expect(lensCloseness(1)).toBe(0);
     expect(lensCloseness(1000)).toBe(1);
     let previous = -1;
-    for (let px = 0; px <= 40; px += 0.5) {
+    for (let px = 0; px <= 60; px += 0.5) {
       const closeness = lensCloseness(px);
       expect(closeness).toBeGreaterThanOrEqual(previous);
       previous = closeness;
@@ -238,23 +243,65 @@ describe('cohort lens — the fold', () => {
     // The plan's own table, in one line each.
     expect(COHORT_DISC_IN).toBeCloseTo(2.31, 10);
     expect(COHORT_HORIZON / COHORT_HORIZON_FAR).toBeCloseTo(9.625, 3);
-    expect(COHORT_DISC_OUT / COHORT_DISC_OUT_FAR).toBeCloseTo(4.667, 3);
-    // ⚠️ THE DISC FOLDS HARDER THAN THE MASS, deliberately: far away there is no
-    // shadow to see and what is left must read as a halo, not as a scale model.
+    expect(COHORT_DISC_OUT / COHORT_DISC_OUT_FAR).toBeCloseTo(9.333, 3);
+    // ⚠️ THE DISC STILL SHRINKS LESS THAN THE MASS, deliberately: far away there
+    // is no shadow to see and what is left must read as a halo, not as a scale
+    // model. It is a close thing now — 9.33× against 9.63×, where the far disc
+    // was 6 wu and the ratio 4.67× — because the far halo was cut to a sighted
+    // peer's size on 2026-09-03 and the mass had already been that small.
     expect(COHORT_DISC_OUT / COHORT_DISC_OUT_FAR)
       .toBeLessThan(COHORT_HORIZON / COHORT_HORIZON_FAR);
   });
 
-  it('puts the near shadow at two world units and the far one under a pixel', () => {
+  it('puts the near shadow at two world units and paints no dark below the band', () => {
     // The shadow's angular size is `3√3/2 · rs` in impact parameter, which is
-    // what `COHORT_HIT_RADIUS` will be re-based on in the switch-over.
+    // what `COHORT_HIT_RADIUS` is re-based on.
     const shadow = (rs: number): number => (3 * Math.sqrt(3) / 2) * rs;
     expect(shadow(COHORT_HORIZON)).toBeCloseTo(2.0, 1);
     expect(shadow(COHORT_HORIZON_FAR)).toBeCloseTo(0.208, 3);
-    // At the far end of the fold the mark is six pixels per world unit, so the
-    // whole shadow is 1.2 pixels across — the "at most a pixel of dark" the
-    // user's third rule asks for.
-    expect(2 * shadow(COHORT_HORIZON_FAR) * COHORT_UNFOLD_LO).toBeLessThan(2.6);
+    // ⭐⭐ "AT MOST A PIXEL OF DARK" IS ENFORCED BY THE ALPHA AND NOT BY THE
+    // ARITHMETIC OF SIZE. While the band's far end was 6 px/wu the far shadow
+    // was 1.2 pixels across and the size alone said it; at 20 px/wu the same
+    // shadow would be 8.3 pixels across. What keeps it invisible is that the
+    // shadow's alpha IS the closeness, so below the band no dark is painted.
+    expect(2 * shadow(COHORT_HORIZON_FAR) * COHORT_UNFOLD_LO).toBeCloseTo(8.3, 1);
+    const darkPx = (px: number): number => {
+      const fold = lensFold(px);
+      return fold.shadowAlpha * 2 * shadow(fold.horizon) * px;
+    };
+    expect(darkPx(COHORT_UNFOLD_LO)).toBe(0);
+    // …and over the app camera's own range — 4.6 to 22.6 px/wu across seven
+    // mainnet marks, measured 2026-09-03 — the dark the layer actually paints
+    // stays under one pixel, which is the user's third rule as a number.
+    for (let px = 4.6; px <= 22.6; px += 0.2) {
+      expect(darkPx(px)).toBeLessThan(1);
+    }
+  });
+
+  it('holds the far form through the whole mid range', () => {
+    // ⭐⭐⭐ 14 TO 20 px/wu IS THE RANGE THE USER JUDGED TOO BIG on the live
+    // frames (2026-09-03): the far view was right, the mid range far too big.
+    // The band now starts where that range ends, so at 14 and at 20 the
+    // closeness is exactly 0 and the mark is the far halo and nothing else.
+    for (const px of [14, 20]) {
+      expect(lensCloseness(px)).toBe(0);
+      const fold = lensFold(px);
+      expect(fold.closeness).toBe(0);
+      expect(fold.horizon).toBe(COHORT_HORIZON_FAR);
+      expect(fold.discOut).toBe(COHORT_DISC_OUT_FAR);
+      expect(fold.shadowAlpha).toBe(0);
+    }
+    // ⚠️ WHAT IT USED TO BE, so the size of the change is on the record: on the
+    // old 6 → 30 band, 14 px/wu was already 0.26 unfolded — a
+    // `mix(6, 28, 0.26)` = 11.7 wu disc, 23 units across, against the 2.0 wu
+    // sprite of the sighted peer standing next to it.
+    const wasCloseness = (px: number): number => {
+      const t = Math.min(1, Math.max(0, (px - 6) / (30 - 6)));
+      return t * t * (3 - 2 * t);
+    };
+    expect(wasCloseness(14)).toBeCloseTo(0.259, 3);
+    expect(6 + (28 - 6) * wasCloseness(14)).toBeCloseTo(11.7, 1);
+    expect(lensFold(14).discOut).toBe(3);
   });
 });
 
@@ -265,7 +312,8 @@ describe('cohort lens — the fold', () => {
 describe('cohort lens — the disc’s two laws', () => {
   it('the far law falls from the centre to exactly zero at the far radius', () => {
     // ⭐ IT IS A SKIRT AND NOT A RING, which is the shape the peer mesh already
-    // has: at six pixels a ring is an artefact and a skirt is a peer.
+    // has: at the far end of the fold a ring is an artefact and a skirt is a
+    // peer.
     const out = COHORT_DISC_OUT_FAR;
     expect(lensFarLaw(0, out)).toBeCloseTo(COHORT_LENS_FAR_DISC_AMP, 12);
     expect(lensFarLaw(out, out)).toBe(0);
@@ -276,6 +324,42 @@ describe('cohort lens — the disc’s two laws', () => {
       expect(value).toBeLessThan(previous);
       previous = value;
     }
+  });
+
+  it('leaves the far mark a sighted peer’s footprint', () => {
+    // ⭐⭐⭐ THE YARDSTICK IS A PEER'S SPRITE, said by the user on the live
+    // frames of 2026-09-03. It is READ from the peer material rather than
+    // restated, because a copied number here would drift the day that layer
+    // retunes; `size` there is a world DIAMETER.
+    const peer = PEER_CLOUD_SIGHTED_TONE.size;
+    expect(peer).toBe(2);
+    expect(PEER_CLOUD_SIGHTED_DARK_TONE.size).toBe(1.5);
+
+    const out = COHORT_DISC_OUT_FAR;
+    // Where the skirt falls to a given fraction of its own peak: solving
+    // `(1 − ρ/out)^pow = f` gives `ρ = out · (1 − f^(1/pow))`.
+    const at = (fraction: number): number =>
+      out * (1 - fraction ** (1 / COHORT_LENS_FAR_DISC_POW));
+    expect(lensFarLaw(at(0.1), out))
+      .toBeCloseTo(0.1 * COHORT_LENS_FAR_DISC_AMP, 10);
+    expect(lensFarLaw(at(0.5), out))
+      .toBeCloseTo(0.5 * COHORT_LENS_FAR_DISC_AMP, 10);
+
+    // ⭐ THE PIN: the mark's own light reaches 1.95 wu — under 2.1, a footprint
+    // of about two units, the size of the peer it stands among. At the 6 wu the
+    // far disc carried until 2026-09-03 the same law reached 3.89.
+    expect(at(0.1)).toBeCloseTo(1.947, 3);
+    expect(at(0.1)).toBeLessThan(2.1);
+    expect(6 * (1 - 0.1 ** (1 / COHORT_LENS_FAR_DISC_POW))).toBeCloseTo(3.893, 3);
+
+    // …and the HALF-MAXIMUM width — the size a soft skirt reads as, rather than
+    // the support it technically has — is inside the peer's own sprite.
+    // ⚠️ SAID BOTH WAYS ON PURPOSE: the tenth-of-peak WIDTH is twice the reach,
+    // 3.89 wu, so the skirt's mathematical support is still wider than a peer
+    // while its visible body is not. Only the live frames settle that.
+    expect(2 * at(0.5)).toBeCloseTo(1.622, 3);
+    expect(2 * at(0.5)).toBeLessThan(peer);
+    expect(2 * at(0.1)).toBeCloseTo(3.893, 3);
   });
 
   it('the near law fades out over the outer 60 % of the disc', () => {
@@ -310,7 +394,7 @@ describe('cohort lens — the disc’s two laws', () => {
     expect(lensBeaming(1, 1)).toBeCloseTo(1 + COHORT_LENS_BEAM, 12);
     expect(lensBeaming(-1, 1)).toBeCloseTo(1 - COHORT_LENS_BEAM, 12);
     expect(lensBeaming(0, 1)).toBe(1);
-    // ⚠️ And it folds away: at six pixels an asymmetry is a dither pattern.
+    // ⚠️ And it folds away: far out an asymmetry is a dither pattern.
     expect(lensBeaming(1, 0)).toBe(1);
     expect(lensBeaming(1, 0.5)).toBeCloseTo(1 + COHORT_LENS_BEAM / 2, 12);
   });

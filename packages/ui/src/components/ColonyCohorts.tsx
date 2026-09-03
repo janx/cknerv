@@ -69,9 +69,12 @@
 // ⭐⭐ THE FORM FOLDS WITH THE CAMERA, AND ONE NUMBER DOES IT. `uPxScale` is
 // written once a frame — `0.5 · drawingBufferHeight · projectionMatrix[1][1]`,
 // so it is DPR-aware for free — and each program divides it by its own distance
-// to the camera to get PIXELS PER WORLD UNIT at that cohort. Below 6 the mass,
-// the disc, the shadow's opacity, the motes' birth radius and their brightness
-// are all folded down to a peer-sized smudge; above 30 the film's hole is open.
+// to the camera to get PIXELS PER WORLD UNIT at that cohort. Below `uUnfoldLo`
+// the mass, the disc, the shadow's opacity, the motes' birth radius and their
+// brightness are all folded down to a peer-sized smudge; above `uUnfoldHi` the
+// film's hole is open. ⚠️ THE BAND IS 20 → 50 AND WAS 6 → 30 UNTIL 2026-09-03,
+// when the user judged the mid range far too big; the edges are named rather
+// than restated here so a retune never has to find this paragraph.
 // ⚠️ IT MUST BE THE DRAWING BUFFER'S HEIGHT AND NOT THE CSS HEIGHT: a quality
 // tier that moves the DPR changes how many pixels a world unit covers, and a
 // mark that folded on CSS pixels would unfold when the tier stepped down.
