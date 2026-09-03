@@ -567,6 +567,32 @@ export const HUD_TYPE = {
 //   a rail       `PLATE_ROW_RAIL_ALPHA`, already one number in one place.
 //   a track      The empty half of a meter is `trackGround`, a colour.
 
+/** The optical correction every CJK COMPANION wears, and the reason it needs
+ *  one.
+ *
+ *  A companion sits inline beside Latin on a shared baseline — `PanelHeader`'s
+ *  `cjk`, a `StatRow`'s unit, 细胞 on the cell masthead. `alignItems: baseline`
+ *  is the right alignment for text and it is not the whole story here: the
+ *  Latin the HUD sets beside these runs is UPPERCASE, so it stops at the
+ *  baseline with nothing below it, while a mincho glyph's ideographic box hangs
+ *  under the baseline the way a Latin descender does. Aligned correctly by the
+ *  metrics, the Chinese therefore reads as sitting a notch low.
+ *
+ *  MEASURED off rendered pixels rather than off font metrics, which say the two
+ *  are level: the ink of every companion in the overlay ended exactly 1px below
+ *  its Latin sibling's — 共识基, 元胞汤, 节点场, 道, 脉搏 at `section`, 字节元 at
+ *  `label`. One pixel at BOTH sizes, so this is a constant and not a ratio.
+ *
+ *  It moves paint, never layout: `position: relative` leaves the row's metrics
+ *  exactly where they were, so nothing reflows and no measure downstream of a
+ *  companion has to know about it.
+ *
+ *  ⚠️ NOT for `WarningBar`'s 警告. That is not a companion — it is the siren
+ *  itself at `heroSub`, and the bar's height is a stated judgement about how
+ *  its line box clears 4px of hazard banding. Shifting it is a decision about
+ *  that composition, not this correction. */
+export const CJK_BASELINE_LIFT = { position: 'relative', top: -1 } as const;
+
 /** A `#RRGGBB` palette color as an `rgba(r,g,b,a)` string — single source for
  *  canvas/border tints that need an alpha the hex form can't carry. */
 export function rgba(hex: string, alpha: number): string {

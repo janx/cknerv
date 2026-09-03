@@ -17,7 +17,7 @@ import {
   useMemo,
 } from 'react';
 import type { ChainEntry, ChainNode, Peer } from '@cknerv/types';
-import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import { CJK_BASELINE_LIFT, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import { formatEpochReadout } from './epochReadout';
 import {
   CloseButton,
@@ -190,7 +190,7 @@ export default function NodeSelfCard({
         >
           NODE // {node.label}
         </span>
-        <span style={{ color: accent, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: 0.72 }}>
+        <span style={{ ...CJK_BASELINE_LIFT, color: accent, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: 0.72 }}>
           节点
         </span>
         {/* One chip, one ink, and the WORD says which role. It used to switch

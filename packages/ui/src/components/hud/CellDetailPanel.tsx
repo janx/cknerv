@@ -35,7 +35,7 @@ import {
   ASSET_COLORS,
 } from './cellFormat';
 import type { CellById } from '../../types';
-import { CELL_CARD_ACCENT, HUD_COLORS, HUD_FONTS, rgba, HUD_TYPE } from './hudTheme';
+import { CELL_CARD_ACCENT, CJK_BASELINE_LIFT, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import {
   CloseButton,
   DragAxisMark,
@@ -1648,7 +1648,7 @@ function CellDetailPanel({
             {/* The house CJK companion, as PEER wears 对端 and NODE wears 节点.
               * 细胞 is in the hand-subset woff2 (fonts/README.md) — deliberate
               * presence, where SightedNodeCard documents a deliberate absence. */}
-            <span style={{ color: CELL_CARD_ACCENT, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: 0.72 }}>
+            <span style={{ ...CJK_BASELINE_LIFT, color: CELL_CARD_ACCENT, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: 0.72 }}>
               细胞
             </span>
             {/* A reading, not a chip: `color` and nothing else, which is the

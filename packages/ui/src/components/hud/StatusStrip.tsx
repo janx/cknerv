@@ -21,7 +21,7 @@ import {
   setCellDisplayMode,
   useCellDisplayRuntime,
 } from '../../tweaks/cellDisplay';
-import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import { CJK_BASELINE_LIFT, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import { DirectionMark, PanelGridMark, severityChip } from './primitives';
 
 export type BuildInfo = { version: string; href: string };
@@ -923,7 +923,7 @@ function StatusStrip({
       data-status-indicator
       style={{ display: 'flex', flexShrink: 0, alignItems: 'center', gap: dense ? 5 : 7, fontFamily: HUD_FONTS.tech, fontWeight: 600, fontSize: dense ? HUD_TYPE.tech : HUD_TYPE.label, letterSpacing: dense ? 0.9 : 1.6, color }}
     >
-      {!dense ? <span style={{ fontFamily: HUD_FONTS.cjk, color: HUD_COLORS.dim }}>状态</span> : null}
+      {!dense ? <span style={{ ...CJK_BASELINE_LIFT, fontFamily: HUD_FONTS.cjk, color: HUD_COLORS.dim }}>状态</span> : null}
       {/* The lamp is the constant across all six levels — it is what you find
         * in the corner of your eye. Only the word escalates. */}
       <span data-dot data-level={level} style={{ width: 6, height: 6, borderRadius: '50%', background: color, boxShadow: `0 0 8px ${color}` }} />

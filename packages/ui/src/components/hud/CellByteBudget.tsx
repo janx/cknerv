@@ -12,7 +12,7 @@ import {
   formatDataSize,
   formatExactCkb,
 } from './cellFormat';
-import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import { CJK_BASELINE_LIFT, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import { REVEAL_GHOST_OPACITY } from './primitives';
 
 export interface CellByteBudgetProps {
@@ -96,7 +96,7 @@ export default function CellByteBudget({
         <span
           data-byte-budget-unit="ckbyte"
           title="CKByte · one CKB of capacity buys one byte of state"
-          style={{ fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, color: HUD_COLORS.dim, opacity: 0.7, whiteSpace: 'nowrap' }}
+          style={{ ...CJK_BASELINE_LIFT, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, color: HUD_COLORS.dim, opacity: 0.7, whiteSpace: 'nowrap' }}
         >
           字节元
         </span>

@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from 'react';
-import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import { CJK_BASELINE_LIFT, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 
 // ——— The shape grammar ————————————————————————————————————————————————
 //
@@ -206,7 +206,7 @@ export function PanelHeader({ en, cjk, idx, accent, compact = false }: {
   return (
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: compact ? 6 : 11 }}>
       <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 600, fontSize: HUD_TYPE.panelTitle, letterSpacing: 3, color: HUD_COLORS.orange, textTransform: 'uppercase', textShadow: `0 0 9px ${rgba(HUD_COLORS.orange, 0.45)}` }}>{en}</span>
-      <span style={{ fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.section, color: HUD_COLORS.orangeDeep, opacity: 0.7 }}>{cjk}</span>
+      <span style={{ ...CJK_BASELINE_LIFT, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.section, color: HUD_COLORS.orangeDeep, opacity: 0.7 }}>{cjk}</span>
       <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.tech, color: accent ?? HUD_COLORS.moduleSlate, letterSpacing: 0.9, textShadow: accent ? `0 0 7px ${accent}66` : undefined }}>{idx}</span>
     </div>
   );
@@ -240,7 +240,7 @@ export function StatRow({ label, children, valueColor, title, cjk, valueWidth }:
       {/* The companion takes the row's slack when it is present, so it and the
         * figure travel together as one right-hand group. */}
       {cjk ? (
-        <span style={{ marginLeft: 'auto', marginRight: 8, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, color: HUD_COLORS.dim, opacity: 0.7 }}>{cjk}</span>
+        <span style={{ ...CJK_BASELINE_LIFT, marginLeft: 'auto', marginRight: 8, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, color: HUD_COLORS.dim, opacity: 0.7 }}>{cjk}</span>
       ) : null}
       <span style={{ marginLeft: cjk ? undefined : 'auto', minWidth: valueWidth, textAlign: valueWidth === undefined ? undefined : 'right', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.value, color: valueColor ?? HUD_COLORS.ink }}>{children}</span>
     </div>
@@ -661,7 +661,7 @@ export function SpatialPlateHeader({ en, cjk, accent, titleColor = HUD_COLORS.cy
         {en}
       </span>
       {cjk ? (
-        <span style={{ flex: '0 0 auto', whiteSpace: 'nowrap', color: accent, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: 0.72 }}>
+        <span style={{ ...CJK_BASELINE_LIFT, flex: '0 0 auto', whiteSpace: 'nowrap', color: accent, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: 0.72 }}>
           {cjk}
         </span>
       ) : null}

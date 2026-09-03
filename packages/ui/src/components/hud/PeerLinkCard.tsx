@@ -19,7 +19,7 @@ import {
 } from 'react';
 import type { Peer } from '@cknerv/types';
 import { useHudClockSelector } from './hudClock';
-import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import { CJK_BASELINE_LIFT, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import {
   CloseButton,
   moduleTag,
@@ -574,7 +574,7 @@ export default function PeerLinkCard({
         >
           PEER // {instrument.id8}
         </span>
-        <span style={{ color: accent, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: 0.72 }}>
+        <span style={{ ...CJK_BASELINE_LIFT, color: accent, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: 0.72 }}>
           对端
         </span>
         <span
