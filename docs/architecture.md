@@ -628,6 +628,13 @@ binary header.
 | `GET /runtime-config.js` | JavaScript | CLI-injected build, galaxy, and enrichment config |
 | Other extensionless paths | Embedded SPA | Dashboard client-side routes |
 
+The Cell data route is canonical rather than enrichment — its bytes come from
+the node, the live cell or the transaction that created a spent one, so it
+answers in every mode — and it returns 404 for an outpoint the chain does not
+know, 413 for a payload over 2 MiB, and 502 when the node cannot be asked;
+because an outpoint's bytes never change, the browser is told to cache them as
+immutable.
+
 For enrichment detail, disabled or unindexed data returns 404, an anchor that
 expired during loading returns 409, and an unavailable source returns 503.
 The peer route differs in one place on purpose: a configured source that has

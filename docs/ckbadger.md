@@ -357,10 +357,18 @@ and conservative printable ASCII, including exact observed size or explicit
 truncation; it does not invent local content guesses. With validated indexed
 content it upgrades in place to **INDEX ANALYSIS**, preferring indexed bytes,
 showing the full logical size and completeness, and making deterministic
-segments navigable while moving the paged raw-byte window to and highlighting
-their exact byte ranges. The same bounded window keeps every retained raw byte
-inspectable. Deterministic meanings and values, heuristic evidence, protocol
-roles, and resolved asset value remain independently labeled. If an indexed
+segments navigable by their exact byte ranges. The window itself shows the
+Cell's first 32 bytes and opens **DATA READER** (`SCAN·03`), a full-width row
+under the card: a virtualised hex dump, sixteen bytes to a row with an offset
+gutter and printable ASCII on the same row, a byte map of the whole payload,
+every decoded segment as a table of contents, and an inspector that reads the
+selection as little-endian integers and UTF-8. Stepping to a segment that
+begins past those first 32 bytes opens the reader at that byte. The reader
+shows the complete payload rather than a prefix, fetched from the node through
+`GET /api/cells/:tx_hash/:output_index/data` only when the bytes already held
+are shorter than the Cell, and it is there in every mode, index or none.
+Deterministic meanings and values, heuristic evidence, protocol roles, and
+resolved asset value remain independently labeled. If an indexed
 record has analysis but no raw payload, the direct-node prefix stays visible
 and is explicitly labeled as such.
 
