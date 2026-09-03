@@ -14,16 +14,24 @@
 // Both compile. Both run. One measures the cohort's distance from the WORLD
 // ORIGIN — a per-cohort constant — and never notices the camera at all. So the
 // expression measured here is compiled from `COHORT_CONTEXT_ENERGY_GLSL`
-// itself, byte for byte the string both fragment programs contain, and the
+// itself, byte for byte the string both cohort programs contain, and the
 // decisive test MOVES THE CAMERA and MOVES THE COHORT independently.
+//
+// ⭐ THE TWO PROGRAMS SPEND IT IN DIFFERENT STAGES, WHICH IS WHY THE STRING IS
+// SHARED RATHER THAN THE CODE. The lens computes it per FRAGMENT — it already
+// has `vOrigin` across the interpolator and its whole picture is per-pixel — and
+// the motes compute it per VERTEX, because a 1.5 px point has no extent to fade
+// across and the seat is already a local up there. Same text, same fact, two
+// stages: what would break the mark is the two disagreeing, not the two costing
+// different amounts.
 import { describe, expect, it } from 'vitest';
 import {
   COHORT_CONTEXT_ENERGY_GLSL,
   COHORT_CONTEXT_EXEMPT_FAR,
   COHORT_CONTEXT_EXEMPT_NEAR,
-  makeCohortAuraMaterial,
-  makeCohortFaceMaterial,
 } from '../../src/materials/colonyCohort';
+import { makeCohortLensMaterial } from '../../src/materials/colonyLens';
+import { makeCohortMotesMaterial } from '../../src/materials/colonyMotes';
 import {
   CELL_DETAIL_VIEW_FAR_DISTANCE,
   CELL_DETAIL_VIEW_NEAR_DISTANCE,
@@ -330,61 +338,96 @@ describe('cohort proximity exemption — against the scene-focus damping', () =>
  * -------------------------------------------------------------------------- */
 
 describe('cohort proximity exemption — one expression in both programs', () => {
-  const face = makeCohortFaceMaterial();
-  const aura = makeCohortAuraMaterial();
+  const lens = makeCohortLensMaterial();
+  const motes = makeCohortMotesMaterial();
 
-  it('pastes the same string, character for character, into both fragments', () => {
-    // ⭐ They are ONE HOLE. A halo that came up while the disc inside it stayed
-    // damped would be a worse artefact than the bug this fixes, and two copies
-    // of an expression is exactly how that happens. The shared constant is the
-    // structural answer; this is the assertion that says it is still being used
-    // as one.
-    for (const fragment of [face.fragmentShader, aura.fragmentShader]) {
-      expect(fragment).toContain(COHORT_CONTEXT_ENERGY_GLSL);
-      expect(fragment.split(COHORT_CONTEXT_ENERGY_GLSL)).toHaveLength(2);
+  it('pastes the same string, character for character, into both programs', () => {
+    // ⭐ They are ONE MARK. Specks that stayed bright while the disc they fall
+    // through receded would be a worse artefact than the bug this fixes, and two
+    // copies of an expression is exactly how that happens. The shared constant is
+    // the structural answer; this is the assertion that says it is still being
+    // used as one.
+    //
+    // ⚠️ THE STAGES DIFFER AND THE TEXT DOES NOT: the lens carries it in its
+    // FRAGMENT and the motes in their VERTEX, so what is searched is the whole
+    // program rather than a stage chosen in advance.
+    for (const [name, glsl] of [
+      ['lens.fragmentShader', lens.fragmentShader],
+      ['motes.vertexShader', motes.vertexShader],
+    ] as const) {
+      expect(`${name}: ${glsl.includes(COHORT_CONTEXT_ENERGY_GLSL)}`)
+        .toBe(`${name}: true`);
+      expect(glsl.split(COHORT_CONTEXT_ENERGY_GLSL)).toHaveLength(2);
     }
+    // …and never twice in one material, which would be two exemptions racing.
+    expect(lens.vertexShader).not.toContain('cohortEnergy');
+    expect(motes.fragmentShader).not.toContain('cohortEnergy');
   });
 
-  it('multiplies the energy into RGB and NEVER into alpha', () => {
-    // ⚠️ THE HOUSE IDIOM, AND IT IS LOAD-BEARING. Additive blending uses
-    // source alpha as its factor, so energy in alpha would damp the mark by
-    // the square and stop the recession being linear. Both faces keep it in
-    // the colour term and pass the raw shape through as alpha. ⭐ Both tint
-    // through `mix(uColor, uHot, …)` rather than writing `uColor` straight,
-    // which is what lets one hole be cyan at its skirt and cold white at its
-    // rim without a second draw.
-    for (const fragment of [face.fragmentShader, aura.fragmentShader]) {
-      expect(fragment)
-        .toContain('gl_FragColor = vec4(tint * shape * cohortEnergy, shape);');
-    }
+  it('multiplies the energy into RGB and NEVER into alpha, in both', () => {
+    // ⚠️ THE HOUSE IDIOM, AND IT IS LOAD-BEARING TWICE OVER. The motes are
+    // additive and additive blending uses SOURCE ALPHA as its factor, so energy
+    // in alpha would damp them by the square and stop the recession being
+    // linear. The lens is NORMALLY blended, where alpha is what OCCLUDES: energy
+    // in its alpha would mean a cohort the HUD is not currently interested in
+    // stops hiding what is behind it, and the hole is a fact about the colony
+    // rather than about the HUD's attention.
+    expect(lens.fragmentShader).toContain(
+      'acc.rgb * uAmp * cohortEnergy, clamp(acc.a, 0.0, 1.0)',
+    );
+    expect(motes.fragmentShader)
+      .toContain('gl_FragColor = vec4(uColor * s * vEnergy, min(s, 1.0));');
 
-    // And nothing bypasses the exemption: `uContextEnergy` occurs exactly
-    // twice in each fragment — its uniform declaration, and the one read
+    // Nothing bypasses the exemption: `uContextEnergy` occurs exactly twice in
+    // the program that reads it — its uniform declaration, and the one read
     // inside the shared expression.
-    for (const fragment of [face.fragmentShader, aura.fragmentShader]) {
-      expect([...fragment.matchAll(/\buContextEnergy\b/g)]).toHaveLength(2);
-      expect(fragment).toContain('uniform float uContextEnergy;');
-      expect([...fragment.matchAll(/\bcohortEnergy\b/g)]).toHaveLength(2);
+    for (const [name, glsl] of [
+      ['lens.fragmentShader', lens.fragmentShader],
+      ['motes.vertexShader', motes.vertexShader],
+    ] as const) {
+      expect(`${name}: ${[...glsl.matchAll(/\buContextEnergy\b/g)].length}`)
+        .toBe(`${name}: 2`);
+      expect(glsl).toContain('uniform float uContextEnergy;');
+      expect([...glsl.matchAll(/\bcohortEnergy\b/g)]).toHaveLength(2);
     }
 
-    // Both still take the damping from the layer at full by default, so an
-    // instance drawn before the first frame loop is not silently dimmed.
-    expect(face.uniforms.uContextEnergy.value).toBe(1);
-    expect(aura.uniforms.uContextEnergy.value).toBe(1);
+    // ⭐ THE MOTES CARRY IT ACROSS AS ONE FLOAT, computed once per speck rather
+    // than once per pixel — and it is the ONLY thing `vEnergy` ever holds, so
+    // there is no path where a mote is damped by something else.
+    expect(motes.vertexShader).toContain('varying float vEnergy;');
+    expect(motes.fragmentShader).toContain('varying float vEnergy;');
+    expect(motes.vertexShader).toContain('vEnergy = cohortEnergy;');
+    expect([...motes.vertexShader.matchAll(/\bvEnergy\b/g)]).toHaveLength(2);
+
+    // Both take the damping from the layer at full by default, so an instance
+    // drawn before the first frame loop is not silently dimmed.
+    expect(lens.uniforms.uContextEnergy.value).toBe(1);
+    expect(motes.uniforms.uContextEnergy.value).toBe(1);
   });
 
-  it('carries the instance origin to the fragment on both faces', () => {
-    for (const material of [face, aura]) {
-      // ⭐ The same quantity on both, derived the same way — the instance's
-      // own world point, taken before either quad is built around it. A quad
-      // corner would differ between the two faces by the difference in their
-      // extents (3 world units against 4.293), which is exactly the drift the
-      // shared expression exists to prevent.
-      expect(material.vertexShader).toContain('varying vec3 vOrigin;');
-      expect(material.fragmentShader).toContain('varying vec3 vOrigin;');
-      expect(material.vertexShader)
-        .toContain('modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)');
-      expect(material.vertexShader).toMatch(/vOrigin = \w+\.xyz;/);
-    }
+  it('measures from the MARK’s own world point in both, never from the pixel', () => {
+    // ⭐⭐ ONE DISTANCE PER MARK. The lens's quad is 64 world units across and a
+    // mote falls up to 27 wu from its seat, so a per-pixel or per-speck distance
+    // would bring one end of a mark up ahead of the other — the disc fading
+    // apart from the specks inside it, which is the exact drift the shared
+    // expression exists to prevent.
+    //
+    // ⚠️ The two arrive at `vOrigin` differently and BOTH are the instance's own
+    // world point: the lens carries it as a varying from
+    // `modelMatrix * instanceMatrix * vec4(0,0,0,1)`, and the motes bind the name
+    // to the local seat they already built out of `modelMatrix * aOrigin`. A
+    // Points geometry has no instance matrix to read.
+    expect(lens.vertexShader).toContain('varying vec3 vOrigin;');
+    expect(lens.fragmentShader).toContain('varying vec3 vOrigin;');
+    expect(lens.vertexShader)
+      .toContain('modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)');
+    expect(lens.vertexShader).toMatch(/vOrigin = \w+\.xyz;/);
+    expect(motes.vertexShader)
+      .toContain('vec3 seat = (modelMatrix * vec4(aOrigin, 1.0)).xyz;');
+    expect(motes.vertexShader).toContain('vec3 vOrigin = seat;');
+    // …and the local is bound BEFORE the expression that reads it, or the
+    // program would not compile at all.
+    expect(motes.vertexShader.indexOf('vec3 vOrigin = seat;'))
+      .toBeLessThan(motes.vertexShader.indexOf(COHORT_CONTEXT_ENERGY_GLSL));
   });
 });

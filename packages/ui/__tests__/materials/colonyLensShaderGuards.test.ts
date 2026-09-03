@@ -1,7 +1,15 @@
-// The source-level guards `cohortShaderGuards.test.ts` and
-// `colonyMistShaderGuards.test.ts` run over the mark and the mist, run over the
+// The source-level guards this package runs over every shader, run over the
 // program that traces light — plus the three refusals that belong to a RAY
-// MARCH and to nothing else in this package.
+// MARCH and to nothing else here.
+//
+// ⚠️ IT IS THE ONLY PROGRAM THAT COMPILES THE MIST'S LIBRARY, since 2026-09-03.
+// The intake patch was the other one; it went with the composed aperture, and
+// with it went `colonyMistShaderGuards.test.ts` — a guard file whose whole
+// subject was a material that no longer exists. What that file uniquely carried
+// is now here: the LENT column of the snippet ledger (a snippet written in
+// `colonyMist.ts` and compiled only in this one) and the claim that every
+// snippet the library exports reaches a program, which `colonyMist.test.ts`
+// asserts from the other side.
 //
 // ⚠️ `smoothstep(a, b, x)` with `a >= b` is UNDEFINED in GLSL ES: on this
 // project's own AMD/Vulkan driver it once rendered NOTHING AT ALL, and in a
@@ -38,7 +46,6 @@ import * as colonyCohort from '../../src/materials/colonyCohort';
 import * as colonyLens from '../../src/materials/colonyLens';
 import * as colonyMist from '../../src/materials/colonyMist';
 import { makeCohortLensMaterial } from '../../src/materials/colonyLens';
-import { makeCohortIntakePatchMaterial } from '../../src/materials/colonyMist';
 
 const SOURCE = readFileSync(
   resolve(process.cwd(), 'src/materials/colonyLens.ts'),
@@ -183,7 +190,6 @@ interface BuiltProgram {
 }
 
 const LENS = compile('lens', makeCohortLensMaterial());
-const PATCH = compile('mistPatch', makeCohortIntakePatchMaterial());
 const LENS_FRAGMENT = LENS.find(({ name }) => name === 'lens.fragmentShader');
 
 /**
@@ -357,7 +363,6 @@ describe('colonyLens.ts — source-level shader guards', () => {
     // program that includes it, and both programs are checked, not just the new
     // one.
     const shared: [string, string][] = [
-      ['MIST_NOISE_GLSL', colonyMist.MIST_NOISE_GLSL],
       ['MIST_NOISE_LOD_GLSL', colonyMist.MIST_NOISE_LOD_GLSL],
       ['MIST_MEDIUM_GLSL', colonyMist.MIST_MEDIUM_GLSL],
       ['MIST_BACKTRACE_GLSL', colonyMist.MIST_BACKTRACE_GLSL],
@@ -369,7 +374,7 @@ describe('colonyLens.ts — source-level shader guards', () => {
       ['COHORT_CONTEXT_ENERGY_GLSL', colonyCohort.COHORT_CONTEXT_ENERGY_GLSL],
     ];
     let pairs = 0;
-    for (const program of [...LENS, ...PATCH]) {
+    for (const program of LENS) {
       for (const [key, snippet] of shared) {
         const body = stripComments(snippet).replace(/\s+/g, ' ');
         if (!program.glsl.includes(body)) continue;
@@ -383,25 +388,20 @@ describe('colonyLens.ts — source-level shader guards', () => {
           ).test(program.glsl)
             // A varying written by the vertex stage is declared there and read
             // in the fragment; either stage of the same material counts.
-            || (program.name.startsWith('lens')
-              ? LENS.some(({ glsl }) => new RegExp(
-                `\\b(?:uniform|varying|attribute)\\s+\\w+\\s+${name}\\s*;`,
-              ).test(glsl))
-              : PATCH.some(({ glsl }) => new RegExp(
-                `\\b(?:uniform|varying|attribute)\\s+\\w+\\s+${name}\\s*;`,
-              ).test(glsl)));
+            || LENS.some(({ glsl }) => new RegExp(
+              `\\b(?:uniform|varying|attribute)\\s+\\w+\\s+${name}\\s*;`,
+            ).test(glsl));
           expect(`${program.name} ${key}: ${name} declared ${declared}`)
             .toBe(`${program.name} ${key}: ${name} declared true`);
         }
       }
     }
-    // ⚠️ NOT VACUOUS: the loop above really did find the snippets in the
-    // programs, sixteen times over. The lens takes two lanes in its vertex
-    // stage and five library functions plus the gulp and the exemption in its
-    // fragment; the patch takes the same two lanes and three of the same
-    // library functions — with the OTHER fetch — plus the same two from the
-    // aperture. 2 + 7 + 2 + 5.
-    expect(pairs).toBe(16);
+    // ⚠️ NOT VACUOUS: the loop above really did find the snippets, nine times
+    // over — two lanes in the vertex stage, and five library functions plus the
+    // gulp and the exemption in the fragment. It was SIXTEEN while the intake
+    // patch existed (its own 2 + 5); the patch is retired, so this program is
+    // the whole of the ledger's compiled side.
+    expect(pairs).toBe(9);
   });
 
   it('covers every smoothstep and pow the file actually writes', () => {
@@ -466,34 +466,47 @@ describe('colonyLens.ts — source-level shader guards', () => {
     expect(stripComments(SOURCE)).not.toContain('vec2 mistBacktrace(');
   });
 
-  it('is the same medium the patch draws, character for character', () => {
-    // ⭐⭐⭐ ONE SUBSTANCE, AND THIS IS WHAT SAYS SO. The disc's texture and the
-    // patch's are not two implementations that agree; they are one text
-    // compiled twice. A tuning of either lands in both, which is the whole
-    // reason the medium was lifted out of the patch program.
-    const patchFragment = PATCH.find(({ name }) => name === 'mistPatch.fragmentShader');
-    for (const snippet of [colonyMist.MIST_MEDIUM_GLSL, colonyMist.MIST_BACKTRACE_GLSL]) {
+  it('is the LENT half of the ledger: the library’s own text, compiled here', () => {
+    // ⭐⭐⭐ ONE SUBSTANCE, AND THIS IS WHAT SAYS SO. The disc's texture is not
+    // an implementation that agrees with the mist's; it IS the mist's, pasted in
+    // by interpolation, so a tuning of the medium lands in the picture the mass
+    // computes. That mattered when there were two compilers and it matters more
+    // now that there is one: a library with a single consumer is one careless
+    // edit away from being inlined and forgotten.
+    //
+    // ⚠️ THIS IS THE CASE `colonyMistShaderGuards.test.ts` USED TO CARRY. A
+    // snippet WRITTEN in `colonyMist.ts` and compiled ONLY here is `n = 0` uses
+    // in its own file, so the coverage formula there credited it `-calls`; with
+    // the patch retired every snippet the library exports is lent, the file has
+    // no program of its own to sweep, and the whole ledger lives on this side.
+    // `colonyMist.test.ts` asserts the other direction — that nothing it exports
+    // is lent to NOBODY.
+    const lensVertex = LENS.find(({ name }) => name === 'lens.vertexShader');
+    for (const snippet of [
+      colonyMist.MIST_NOISE_LOD_GLSL,
+      colonyMist.MIST_MEDIUM_GLSL,
+      colonyMist.MIST_BACKTRACE_GLSL,
+      colonyMist.MIST_FIBRES_GLSL,
+      colonyMist.MIST_DISC_COLOR_GLSL,
+    ]) {
       const body = stripComments(snippet).replace(/\s+/g, ' ');
-      expect(patchFragment?.glsl).toContain(body);
       expect(LENS_FRAGMENT?.glsl).toContain(body);
     }
-    // The two lanes leave the vertex stage the same way in both, too.
-    const patchVertex = PATCH.find(({ name }) => name === 'mistPatch.vertexShader');
-    const lensVertex = LENS.find(({ name }) => name === 'lens.vertexShader');
     for (const snippet of [
       colonyMist.MIST_SHARE_FACTOR_GLSL, colonyMist.MIST_SEAT_DRIFT_GLSL,
     ]) {
       const body = stripComments(snippet).replace(/\s+/g, ' ');
-      expect(patchVertex?.glsl).toContain(body);
       expect(lensVertex?.glsl).toContain(body);
     }
-    // ⚠️ AND THE FETCH IS THE ONE THING THAT DIFFERS: the patch lets the driver
-    // choose, the lens states the level, and the medium above them is identical.
-    expect(patchFragment?.glsl)
-      .toContain(stripComments(colonyMist.MIST_NOISE_GLSL).replace(/\s+/g, ' '));
-    expect(LENS_FRAGMENT?.glsl)
-      .toContain(stripComments(colonyMist.MIST_NOISE_LOD_GLSL).replace(/\s+/g, ' '));
-    expect(patchFragment?.glsl).not.toContain('textureLod');
+    // ⚠️ AND THE FETCH IS THE ONE THING THE LIBRARY DOES NOT CONTAIN, which is
+    // why it could be lent at all: `mistNoise` is declared by the program, and
+    // this program's states its level. The other fetch — `MIST_NOISE_GLSL`, the
+    // patch's `texture2D` wrapper — was deleted with the patch, so there is no
+    // `texture2D` left anywhere in either file to be pasted in by accident.
+    expect(colonyMist).not.toHaveProperty('MIST_NOISE_GLSL');
+    expect(stripComments(
+      readFileSync(resolve(process.cwd(), 'src/materials/colonyMist.ts'), 'utf8'),
+    )).not.toContain('texture2D');
   });
 
   it('carries no backtick anywhere in its GLSL', () => {

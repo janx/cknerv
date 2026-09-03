@@ -18,6 +18,12 @@ describe('QUALITY_PRESETS', () => {
       activeSamplesPerHop: 12,
       nucleusNearCap: 12,
       populationCapMul: 1,
+      // ⭐ THE ONE FIELD A POW COHORT READS, and it moves the PRECISION of an
+      // image and never its presence: the lensed mark computes every pixel by
+      // tracing a ray around a mass, so this is the steps that ray may take. At
+      // 40 a cohort is the same cohort with a coarser photon ring; a tier that
+      // dropped the draw would be a tier that lied about a producer.
+      cohortLensSteps: 96,
       memorySignal: {
         coreMinPx: 24,
         compactLinePx: 0.55,
@@ -38,6 +44,13 @@ describe('QUALITY_PRESETS', () => {
     expect(QUALITY_PRESETS.med).not.toHaveProperty('passiveSamplesPerEdge');
     expect(QUALITY_PRESETS.med).not.toHaveProperty('passiveAnimationFps');
     expect(QUALITY_PRESETS.med.nucleusNearCap).toBe(8);
+    // ⚠️ A STARTING VALUE, NOT YET MEASURED: what the trace costs at a close
+    // camera on the reference GPU is the number nobody has, and the live leg
+    // owns it. What is pinned is the ORDER — precision falls with the tier — and
+    // that no tier reaches zero, because the mark is never gated.
+    expect(QUALITY_PRESETS.med.cohortLensSteps).toBe(64);
+    expect(QUALITY_PRESETS.med.cohortLensSteps)
+      .toBeLessThan(QUALITY_PRESETS.high.cohortLensSteps);
     expect(QUALITY_PRESETS.med.memorySignal).toEqual({
       coreMinPx: 24,
       compactLinePx: 0.62,
@@ -57,6 +70,13 @@ describe('QUALITY_PRESETS', () => {
     expect(QUALITY_PRESETS.low).not.toHaveProperty('passiveSamplesPerEdge');
     expect(QUALITY_PRESETS.low).not.toHaveProperty('passiveAnimationFps');
     expect(QUALITY_PRESETS.low.nucleusNearCap).toBe(4);
+    expect(QUALITY_PRESETS.low.cohortLensSteps).toBe(40);
+    expect(QUALITY_PRESETS.low.cohortLensSteps)
+      .toBeLessThan(QUALITY_PRESETS.med.cohortLensSteps);
+    // ⛔ AND IT IS STILL A TRACE. Below about two dozen steps a ray that lingers
+    // near the photon sphere stops resolving into a ring at all, so the floor is
+    // a precision and never an off switch.
+    expect(QUALITY_PRESETS.low.cohortLensSteps).toBeGreaterThan(24);
     expect(QUALITY_PRESETS.low.memorySignal).toEqual({
       coreMinPx: 24,
       compactLinePx: 0.72,

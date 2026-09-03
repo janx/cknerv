@@ -1,26 +1,28 @@
-// A cohort's links end at the aperture's outer edge, and the mark stays its
-// own.
+// A cohort's links end short of its mass, and the image stays its own.
 //
-// The pupil's darkness is a REFUSAL, not a shadow: every face of a cohort is
-// additive and depth-read-only, so nothing rejects a link drawn across the
-// disc — it is simply added to it. And under the aperture the link has a second
-// way to spoil the mark that the marched throat never gave it: the face carries
-// 88 radial striae whose one measured law is that radial structure at LOW COUNT
-// reads as a star, and a colony link is radial structure at count four, drawn
-// in the same plane. These pins hold the geometry that prevents both, the two
-// degenerate cases the pull could break on, and the one attribute the trim must
-// NOT disturb.
+// A POW cohort's mark is light TRACED around a mass lying in this very plane:
+// the shadow, the photon ring, the disc's inner edge at the ISCO and the far
+// side of the disc folded over the top. A colony link is a straight bright
+// segment in the same plane, so a link run to the node's centre draws a spoke
+// of a wheel through the one region of the scene that is saying light does not
+// go straight here — and the shadow cannot reject it, because the shadow
+// occludes by DRAW ORDER and a link ending AT the cohort ends inside the image
+// rather than behind it. These pins hold the geometry that prevents that, the
+// two degenerate cases the pull could break on, and the one attribute the trim
+// must NOT disturb.
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  COHORT_AP_R,
-  COHORT_AP_PUPIL_FRAC,
-  COHORT_AP_RIM_FRAC,
+  COHORT_DISC_IN,
   COHORT_HIT_RADIUS,
+  COHORT_HORIZON,
   COHORT_LINK_STOP_R,
-} from '../../src/materials/colonyCohort';
-import { COLONY_MIN_SPACING } from '../../src/derives/networkTopology.derive';
+} from '../../src/materials/colonyLens';
+import {
+  COHORT_KEEP_OUT_R,
+  COLONY_MIN_SPACING,
+} from '../../src/derives/networkTopology.derive';
 import { colonyEdgePositions } from '../../src/components/ColonyEdges';
 import type { NetworkEdge, NetworkNode, NetworkTopology, Vec3 } from '../../src/types';
 
@@ -71,64 +73,47 @@ function dot3(u: Vec3, v: Vec3): number {
 const F32_SLACK = 1e-4;
 
 describe('COHORT_LINK_STOP_R', () => {
-  it("is the mark's OUTER EDGE, derived and never picked", () => {
-    // ⭐ It is `COHORT_AP_R` itself — the same number the face's fragment
-    // discards on, so a link ending here ends exactly where the disc does and
-    // adds light to no pixel of it. A literal would let the colony say
-    // something different from what the shader draws.
-    expect(COHORT_LINK_STOP_R).toBe(COHORT_AP_R);
+  it('ends OUTSIDE the disc and INSIDE the keep-out, which is the whole of it', () => {
+    // ⭐⭐ THE TWO INEQUALITIES ARE THE JUSTIFICATION AND THERE IS NO THIRD ONE.
+    // Outside `COHORT_DISC_IN` — the innermost stable circular orbit, 3 horizons
+    // — so no link ends on top of the bright ring the ISCO's edge makes; inside
+    // `COHORT_KEEP_OUT_R`, so a peer displaced to the rim still has half a world
+    // unit of its own link left to draw rather than one trimmed to a point.
     expect(COHORT_LINK_STOP_R).toBe(3);
+    expect(COHORT_DISC_IN).toBeCloseTo(2.31, 12);
+    expect(COHORT_LINK_STOP_R).toBeGreaterThan(COHORT_DISC_IN);
+    expect(COHORT_LINK_STOP_R).toBeLessThan(COHORT_KEEP_OUT_R);
+    expect(COHORT_KEEP_OUT_R - COHORT_LINK_STOP_R).toBeCloseTo(0.5, 12);
   });
 
-  it('stops outside the WHOLE disc, not merely outside the hole', () => {
-    // ⭐ The old throat only had to keep its unlit middle clear, so its stop
-    // sat inside the mark and cleared the refusal by 1.67x. The aperture asks
-    // for more: the disc's grain is radial, and a link crossing it lands in the
-    // same plane as the striae and joins them as a spoke several times any
-    // stria's width. So the stop is the mark's OUTER EDGE and not a margin
-    // around the hole.
-    //
-    // ⚠️ THE MARGIN SHRANK WHEN THE HOLE WAS RE-BASED, AND THE JOB DID NOT.
-    // The hole is the preview's 1.6 wu now (it was 0.52), so the clearance went
-    // from 5.76x the hole to 1.875x — 1.4 wu of skirt outside the lip instead
-    // of 2.5. What the stop protects is that SKIRT, because the skirt is where
-    // the 88 striae live and a coplanar link joins them as a spoke; the skirt
-    // still runs from the lip to exactly here, so a link still ends where the
-    // fragment discards and adds light to no pixel of the mark.
-    const rim = COHORT_AP_R * COHORT_AP_RIM_FRAC;
-    const hole = rim * COHORT_AP_PUPIL_FRAC;
-    expect(rim).toBeCloseTo(1.6, 12);
-    expect(hole).toBeCloseTo(1.6, 12);
-    expect(COHORT_LINK_STOP_R).toBeGreaterThan(hole);
-    expect(COHORT_LINK_STOP_R / hole).toBeCloseTo(1.875, 4);
-    expect(COHORT_LINK_STOP_R - hole).toBeCloseTo(1.4, 12);
-    // ⭐ And the lip is the hole's edge rather than a ring inside the disc, so
-    // "past the pupil" and "past the rim" are now one statement.
-    expect(hole).toBe(rim);
-  });
-
-  it('is NOT the pick radius any more, and the split is why', () => {
-    // ⚠️⚠️ ONE NUMBER SERVED BOTH UNTIL THE MARK STOPPED HAVING SLACK IN IT.
-    // The centre this replaced was a bounding SQUARE around a profile that died
-    // well inside it, so half of it happened to answer both questions at once.
-    // The aperture's light really does reach `COHORT_AP_R` — so a line must
-    // stop out there — while `COLONY_MIN_SPACING` really does forbid a target
-    // that large, because a target reaching the midpoint to the nearest stop
-    // the colony will place beside it starts taking that stop's clicks.
-    //
-    // ⭐ THE TWO CONSUMERS ASK DIFFERENT QUESTIONS. A line asks where the LIGHT
-    // ends; a click asks how far a viewer may aim without taking a neighbour.
-    // Additive light may overlap a neighbour freely; a hit sphere may not,
-    // because a click has exactly one winner. Both still come off `COHORT_AP_R`
-    // and neither is a free literal, so a retune of the mark moves both.
-    expect(COHORT_LINK_STOP_R).not.toBe(COHORT_HIT_RADIUS);
-    expect(COHORT_HIT_RADIUS).toBe(COHORT_AP_R * 0.5);
-    expect(COHORT_LINK_STOP_R).toBe(COHORT_AP_R);
-    // The link stop reaches the midpoint between two stops at the colony's
-    // tightest spacing — which is exactly why the TARGET may not.
+  it('does NOT try to be where the light ends, because the light reaches 28 wu', () => {
+    // ⚠️ THIS IS THE CLAIM THAT CHANGED WITH THE FORM. Under the composed
+    // aperture the stop WAS the mark's outer edge — the same radius the face's
+    // fragment discarded on — so a link ended exactly where the disc did. The
+    // lensed disc reaches `COHORT_DISC_OUT`, 28 wu, and a stop out there would
+    // trim every link in the colony to nothing (`COLONY_MIN_SPACING` is 6). So
+    // the stop clears the COMPUTED part of the image — the shadow, the ring and
+    // the inner disc — and the outer disc is a faint streak field the mesh is
+    // MEANT to show through: a link crossing it is the vortex being seen
+    // through, which is what an outer disc is for.
+    expect(COHORT_LINK_STOP_R).toBeLessThan(COLONY_MIN_SPACING);
     expect(COHORT_LINK_STOP_R).toBe(COLONY_MIN_SPACING / 2);
-    expect(COHORT_HIT_RADIUS).toBeLessThan(COLONY_MIN_SPACING / 2);
-    expect(COHORT_HIT_RADIUS).toBe(COLONY_MIN_SPACING / 4);
+  });
+
+  it('is NOT the pick radius, and the split is why', () => {
+    // ⭐ THE TWO CONSUMERS ASK DIFFERENT QUESTIONS. A line asks where the IMAGE
+    // ends; a click asks what a viewer is unmistakably aiming at. The answer to
+    // the second is the SHADOW — 2.6 horizons, the black disc in the middle —
+    // and it is strictly inside the disc's inner edge, so the target is over
+    // the one part of the mark that is a deliberate feature rather than a
+    // texture.
+    expect(COHORT_HIT_RADIUS).not.toBe(COHORT_LINK_STOP_R);
+    expect(COHORT_HIT_RADIUS).toBeCloseTo(2.0005, 4);
+    expect(COHORT_HIT_RADIUS).toBeLessThan(COHORT_DISC_IN);
+    expect(COHORT_HIT_RADIUS).toBeLessThan(COHORT_LINK_STOP_R);
+    // Both are multiples of the same mass or bounded by the same keep-out, so
+    // neither is a free literal a retune could leave behind.
+    expect(COHORT_HIT_RADIUS / COHORT_HORIZON).toBeCloseTo((3 * Math.sqrt(3)) / 2, 12);
   });
 });
 

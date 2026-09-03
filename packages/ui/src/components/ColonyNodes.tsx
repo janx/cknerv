@@ -11,10 +11,10 @@
 //     in the colony plane with a small unlit pupil, inside a camera-facing halo
 //     carrying the same hole. It had a <points> stop of its own until that mark
 //     arrived, and an additive sprite is brightest at its own centre — exactly
-//     the pixel the pupil needs empty — so the stop was subsumed rather than
-//     left underneath. This file still stands its hit sphere, sized from the
-//     aperture's radius, because the pick target belongs with every other
-//     staged node's.
+//     the pixel a black hole's shadow needs empty — so the stop was subsumed
+//     rather than left underneath. This file still stands its hit sphere, sized
+//     from that shadow, because the pick target belongs with every other staged
+//     node's.
 //   • roster nodes      — THREE more <points> draws off the same factory, one
 //     per rung of the crawler's evidence gradient (it reached the node / it
 //     only remembers reaching it / the network names it and nobody has ever
@@ -76,7 +76,7 @@ import {
   PEER_CLOUD_SIGHTED_TONE,
   type PeerCloudTone,
 } from '../materials/peerNodeMaterial';
-import { COHORT_HIT_RADIUS } from '../materials/colonyCohort';
+import { COHORT_HIT_RADIUS } from '../materials/colonyLens';
 import { ATTESTED_ID_PREFIX } from '../derives/networkTopology.derive';
 import { producerOriginStats } from '../derives/producerOriginStats';
 import {
@@ -256,7 +256,7 @@ export const sameStagedPoint = (a: NetworkNode, b: NetworkNode): boolean => (
  *
  *  ⭐ `cohort` IS THE SECOND SUCH ANSWER, and naming it for the layer rather
  *  than for the kind is what keeps the table honest. An attested node's mark is
- *  the aperture `ColonyCohorts` draws; this file stands its hit sphere and
+ *  the lensed mass `ColonyCohorts` draws; this file stands its hit sphere and
  *  nothing else. Calling the bucket `attested` would have named a draw this
  *  file does not make, which is exactly the drift the table exists to stop. */
 export const COLONY_DRAWS = ['haze', 'cohort', 'sighted', 'measured', 'anchor'] as const;
@@ -324,17 +324,16 @@ export function partitionByKind(
  *  This radius once made the producer the smallest target in the colony — 0.375
  *  world units, under the faintest roster rung's 0.425 — and a full-canvas
  *  13-pixel hover sweep of the running app found forty peers and zero miners.
- *  The mark is an APERTURE now — a 6 wu disc lying in the colony plane — so the
- *  target is half its radius: 1.5 world units, half again over the brightest
- *  sighted stop's 1.0.
+ *  The mark is a LENSED MASS now, and the target is its SHADOW: 2.0 world
+ *  units, twice the brightest sighted stop's 1.0.
  *
- *  ⚠️ HALF AND NOT ALL, because `COLONY_MIN_SPACING` is 6: a target of the
- *  mark's full 3.0 would reach the MIDPOINT to the nearest stop the colony's
- *  own scatter will place beside it and start taking its clicks. A drawn halo
- *  may overlap a neighbour freely — additive light is not exclusive — but a hit
- *  sphere may not, because a click has exactly one winner. The whole derivation
- *  lives on `COHORT_HIT_RADIUS`; there is still exactly ONE number here: no
- *  annulus, no second radius, nothing to keep in step. */
+ *  ⚠️ AND IT IS THE SAME SPHERE AT EVERY CAMERA, while the drawn form folds
+ *  with distance — the topology does not know where the camera is, and a pick
+ *  radius that changed with it would move under the cursor as the user
+ *  dollied. What bounds it is `COHORT_KEEP_OUT_R` (3.5 wu), the closest a
+ *  clickable neighbour may stand, and not `COLONY_MIN_SPACING`. The whole
+ *  derivation lives on `COHORT_HIT_RADIUS` in `materials/colonyLens.ts`; there
+ *  is still exactly ONE number here: no annulus, no second radius. */
 export const ATTESTED_HIT_RADIUS = COHORT_HIT_RADIUS;
 
 /** One clickable staged node: where it stands, how big its mark is, and what
@@ -943,8 +942,8 @@ function MeasuredNode({
  * Composes the colony: the inferred ghost cloud + the sighted tier + one
  * measured glow-node per real peer, unified as a single glow primitive on a
  * confidence gradient, plus ONE hit mesh over both staged tiers. The local
- * "you" is drawn by the galaxy (its labeled CkbNodeAnchor) and a cohort's
- * aperture by `ColonyCohorts`, NOT here. This owner stamps one shared ring-buffer
+ * "you" is drawn by the galaxy (its labeled CkbNodeAnchor) and a cohort's own
+ * mark by `ColonyCohorts`, NOT here. This owner stamps one shared ring-buffer
  * slot per block so inferred and measured nodes cannot drift or cancel an older
  * in-flight wave.
  */

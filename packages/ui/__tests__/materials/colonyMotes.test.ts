@@ -28,9 +28,11 @@ import {
   COHORT_HORIZON,
   COHORT_HORIZON_FAR,
   COHORT_LENS_REACH,
+  COHORT_SHADOW_RATIO,
   COHORT_UNFOLD_HI,
   COHORT_UNFOLD_LO,
   cohortDiscStops,
+  cohortShadowRadius,
 } from '../../src/materials/colonyLens';
 import { MIST_SWIRL } from '../../src/materials/colonyMist';
 import {
@@ -56,7 +58,6 @@ import {
   COHORT_MOTE_SIZE,
   COHORT_MOTE_VANISH,
   COHORT_MOTE_WHITEN,
-  COHORT_SHADOW_RATIO,
   buildCohortMotesGeometry,
   cohortMoteAt,
   cohortMoteBirthRadius,
@@ -390,9 +391,11 @@ describe('cohort motes — the fold', () => {
     expect(far.fold).toBeCloseTo(COHORT_MOTE_REACH_FAR / COHORT_MOTE_REACH, 12);
     expect(near.shadowR).toBe(COHORT_MOTE_SHADOW_R);
     expect(far.shadowR).toBe(COHORT_MOTE_SHADOW_R_FAR);
-    // The shadow is the LENS's, derived from the same mass and never restated.
-    expect(COHORT_MOTE_SHADOW_R).toBe(COHORT_SHADOW_RATIO * COHORT_HORIZON);
-    expect(COHORT_MOTE_SHADOW_R_FAR).toBe(COHORT_SHADOW_RATIO * COHORT_HORIZON_FAR);
+    // The shadow is the LENS's, derived from the same mass and never restated —
+    // through the lens's own function, so the live `cohortHorizon` knob moves the
+    // radius a speck vanishes at and the radius the trace makes black together.
+    expect(COHORT_MOTE_SHADOW_R).toBe(cohortShadowRadius(COHORT_HORIZON));
+    expect(COHORT_MOTE_SHADOW_R_FAR).toBe(cohortShadowRadius(COHORT_HORIZON_FAR));
     expect(COHORT_MOTE_SHADOW_R).toBeCloseTo(2.0, 2);
     expect(COHORT_MOTE_SHADOW_R_FAR).toBeCloseTo(0.208, 3);
   });
@@ -774,7 +777,7 @@ describe('cohort motes — the material', () => {
     expect(colour.b).toBeCloseTo(b, 6);
     // The whole uniform list, so an addition is a deliberate edit.
     expect(Object.keys(material.uniforms).sort()).toEqual([
-      'uAmp', 'uColor', 'uK', 'uMoteSize', 'uOrbit', 'uPxScale', 'uR0Max',
+      'uAmp', 'uColor', 'uContextEnergy', 'uK', 'uMoteSize', 'uOrbit', 'uPxScale', 'uR0Max',
       'uR0Min', 'uReach', 'uReachFar', 'uShadowR', 'uShadowRFar', 'uSwirl',
       'uTime', 'uUnfoldHi', 'uUnfoldLo', 'uViewportHeight',
     ]);

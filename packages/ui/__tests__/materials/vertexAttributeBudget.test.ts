@@ -20,13 +20,6 @@ import {
 } from '../../src/materials/populationFieldMaterial';
 import { makeHaloMaterial } from '../../src/components/GlowNode';
 import { makeColonyEdgeMaterial } from '../../src/components/ColonyEdges';
-import {
-  makeCohortAuraMaterial,
-  makeCohortFaceMaterial,
-} from '../../src/materials/colonyCohort';
-import {
-  makeCohortIntakePatchMaterial,
-} from '../../src/materials/colonyMist';
 import { makeCohortLensMaterial } from '../../src/materials/colonyLens';
 import { makeCohortMotesMaterial } from '../../src/materials/colonyMotes';
 import {
@@ -303,36 +296,6 @@ const ROWS: readonly BudgetRow[] = [
     material: makeColonyEdgeMaterial,
   },
   {
-    name: 'cohortFaceMaterial',
-    sources: ['src/materials/colonyCohort.ts'],
-    material: makeCohortFaceMaterial,
-    // The disc lying in the colony plane: the mat4, one seed lane and the
-    // gulp lane the window's flare reads.
-    usage: { instanced: true },
-  },
-  {
-    name: 'cohortAuraMaterial',
-    sources: ['src/materials/colonyCohort.ts'],
-    material: makeCohortAuraMaterial,
-    // The halo around it takes the SAME instance positions and the SAME seed
-    // lane, consumed identically — they are two draws of one hole, not two
-    // marks. It does NOT take the gulp: the skirt is the mark's support at a
-    // low camera, and a support that flared on the win would be a second
-    // opinion about an instant two other layers already state.
-    usage: { instanced: true },
-  },
-  {
-    name: 'cohortIntakePatchMaterial',
-    sources: ['src/materials/colonyMist.ts'],
-    material: makeCohortIntakePatchMaterial,
-    // The mist under the mark: one instance per cohort, its sink at its own
-    // origin. It takes the mat4, the SAME two lanes the face takes — the seed
-    // and the gulp, because the mouth and the mist under it are one surface and
-    // must swallow the same block — and a THIRD the face refuses: the share,
-    // which is a rate this program has somewhere to spend.
-    usage: { instanced: true },
-  },
-  {
     name: 'cohortLensMaterial',
     sources: ['src/materials/colonyLens.ts'],
     material: makeCohortLensMaterial,
@@ -507,90 +470,30 @@ describe('vertex attribute budget', () => {
     expect(hybridAttributes.get('aStageAt')).toBe('vec2');
   });
 
-  it('charges the mining channel its own row, and leaves the edge program alone', () => {
-    // ⚠️ THE MINING CHANNEL IS ITS OWN PROGRAM. The row it replaced was a
-    // `lineSegments` over the cohorts' own links at 5 custom + 3 injected = 8;
-    // these two are InstancedMeshes, so each pays its lane plus the mat4 three
-    // injects for instancing. Stated as exact numbers so a second lane is a
-    // deliberate edit rather than a drift only the browser console would
-    // report.
-    const face = measured.find(({ name }) => name === 'cohortFaceMaterial');
-    const aura = measured.find(({ name }) => name === 'cohortAuraMaterial');
-    expect(face).toBeDefined();
-    expect(aura).toBeDefined();
-    expect([face?.custom, face?.injected, face?.total]).toEqual([2, 7, 9]);
-    expect([aura?.custom, aura?.injected, aura?.total]).toEqual([1, 7, 8]);
-    // ⚠️ THE TWO ROWS DIVERGED BY EXACTLY ONE FLOAT, AND THE ARGUMENT FOR IT IS
-    // WHAT THIS COMMENT IS. They remain two draws of ONE hole and take the same
-    // instance positions and the same seed lane. What the face has and the aura
-    // has not is `aGulp` — the sim second of the block this cohort won, which
-    // the WINDOW reads: the mouth brightens from the inside on the block it
-    // swallowed. The skirt is the mark's support at a low camera and does not
-    // take it, so this asymmetry is a consumer and not a habit. That is the
-    // difference from the pair this replaced, which was asymmetric because the
-    // marched intake declared `aShare` for a crest rate the centre did not
-    // have; NEITHER aperture program declares the share — the mist's patch
-    // does, and the row above charges it there, because the sink's k is the
-    // only rate in the feature a share can drive. One float, on one draw, with
-    // a reader — and 7 slots of the 16 still free on the busier of the two.
-    expect(face?.names).toEqual(['aSeed', 'aGulp']);
-    expect(aura?.names).toEqual(['aSeed']);
-    for (const row of [face, aura]) {
-      expect(row?.names).not.toContain('aShare');
-      expect(row?.total).toBeLessThanOrEqual(9);
-    }
-  });
-
-  it('charges the mist the mouth’s two lanes PLUS the share, and nothing else', () => {
-    // ⭐⭐ THE PATCH AND THE FACE ARE ONE SURFACE SEEN TWO WAYS — through the
-    // hole and from outside it — so they take the same first two lanes:
-    // `aSeed` and `aGulp`, in that order, at the same widths, off the same
-    // buffers. A patch that read the gulp at a different width would swallow on
-    // a different block, and nothing but this row would say so.
-    //
-    // ⭐⭐⭐ AND EXACTLY ONE FLOAT SEPARATES THEM, WITH A CONSUMER BEHIND IT.
-    // `aShare` is the cohort's fraction of its window, and the mist is the only
-    // program in the feature with a RATE to spend it on: the sink's k is
-    // wu²/s, so `mix(uShareFloor, 1, share / uShareMax)` scales a speed and the
-    // pile that speed leaves at the lip. The aperture's only candidate rate is
-    // the grain's drift, which prefilters to nothing past about 25 wu — so the
-    // two faces refuse the lane, and this row is where the asymmetry is priced.
-    // The layer's busiest program was 9 of 16 before it and is 10 now.
-    const patch = measured.find(({ name }) => name === 'cohortIntakePatchMaterial');
-    const face = measured.find(({ name }) => name === 'cohortFaceMaterial');
-    expect(patch).toBeDefined();
-    expect([patch?.custom, patch?.injected, patch?.total]).toEqual([3, 7, 10]);
-    expect(patch?.names).toEqual(['aSeed', 'aGulp', 'aShare']);
-    // The face's lanes are the patch's first two, in the same order.
-    expect(patch?.names.slice(0, 2)).toEqual(face?.names);
-    expect((patch?.custom ?? 0) - (face?.custom ?? 0)).toBe(1);
-    // ⚠️ AND IT IS THE ONLY MIST ROW. A `mistHazeMaterial` stood beside it —
-    // uninstanced, no lanes, 3 injected slots — for the ambient sheets under
-    // the whole colony; they were removed on 2026-09-02 after a live leg
-    // measured them at 2/255 at their brightest pixel anywhere on the canvas
-    // while costing 0.90 ms of the layer's 1.06 ms at the app camera.
-    expect(measured.some(({ name }) => name === 'mistHazeMaterial')).toBe(false);
-    // Six slots still free on the busiest program in the layer.
-    expect(MAX_VERTEX_ATTRIBUTES - (patch?.total ?? 0)).toBe(6);
-  });
-
   it('charges the lensed cohort the same three lanes, and not one more', () => {
     // ⭐⭐⭐ THE WHOLE IMAGE IS COMPUTED IN THE FRAGMENT, so the vertex stage is
     // the cheapest in the feature: a quad, an origin, three floats. Everything
     // the picture needs — the mass, the disc, the fold, the trace — arrives as
     // uniforms, which is what makes a 64-cohort cap cost this layer nothing.
     //
-    // ⚠️ AND THE LANES ARE THE PATCH'S, OBJECT FOR OBJECT. `ColonyCohorts` hands
-    // ONE `InstancedBufferAttribute` per lane to every geometry in the layer; a
-    // second wrapper over the same array is a second GL buffer and the first one
-    // is orphaned. Equal names at equal widths in equal order is what this row
-    // can check from here, and it is the half that catches a re-declaration.
+    // ⚠️ AND THE LANES ARE THE LAYER'S, OBJECT FOR OBJECT. `ColonyCohorts` hands
+    // ONE `InstancedBufferAttribute` per lane to this geometry; a second wrapper
+    // over the same array is a second GL buffer and the first one is orphaned.
+    // Equal names at equal widths in equal order is what this row can check from
+    // here, and it is the half that catches a re-declaration.
+    //
+    // ⚠️ THREE ROWS STOOD BESIDE IT UNTIL 2026-09-03 and all three are gone with
+    // the composed form: `cohortFaceMaterial` (2 + 7 = 9, the disc lying in the
+    // plane), `cohortAuraMaterial` (1 + 7 = 8, the halo around it) and
+    // `cohortIntakePatchMaterial` (3 + 7 = 10, the mist under it). This row
+    // inherits the patch's exact three lanes, in the same order, because it
+    // inherits the patch's job: the substance, at this cohort's own rate.
     const lens = measured.find(({ name }) => name === 'cohortLensMaterial');
-    const patch = measured.find(({ name }) => name === 'cohortIntakePatchMaterial');
     expect(lens).toBeDefined();
     expect([lens?.custom, lens?.injected, lens?.total]).toEqual([3, 7, 10]);
     expect(lens?.names).toEqual(['aSeed', 'aGulp', 'aShare']);
-    expect(lens?.names).toEqual(patch?.names);
+    expect(measured.some(({ name }) => /cohort(Face|Aura|IntakePatch)/.test(name)))
+      .toBe(false);
     // Six slots still free, on the busiest program the colony draws.
     expect(MAX_VERTEX_ATTRIBUTES - (lens?.total ?? 0)).toBe(6);
   });

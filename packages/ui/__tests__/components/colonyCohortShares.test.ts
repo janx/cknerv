@@ -16,6 +16,13 @@
 // wave itself leaves from, and a mark is structurally incapable of gulping for
 // a block it did not make. The lane it writes is `aGulp`, in SIM SECONDS.
 //
+// ⭐⭐ AND SINCE 2026-09-03 EVERY LANE IS WRITTEN TWICE, AT TWO WIDTHS. The mark
+// is two draws now — a ray-traced quad per cohort and a `THREE.Points` cloud of
+// specks falling into it — and a Points geometry is not instanced: it has one
+// vertex per MOTE, so the same fact has to be 96 copies wide over there. The
+// last describe below is where that widening is measured: same values, same two
+// walks, and a stamp that moves exactly one cohort's ninety-six slots.
+//
 // ⚠️ These are pure-function tests because they have to be: r3f effects do not
 // run under jsdom (the `Canvas` never commits, so `onCreated` never fires and
 // no geometry exists to read back), so the logic a block drives is extracted
@@ -34,6 +41,13 @@ import {
   COHORT_GULP_RISE,
   COHORT_NEVER_WON,
 } from '../../src/materials/colonyCohort';
+import {
+  COHORT_MOTES_PER_COHORT,
+  buildCohortMotesGeometry,
+  stampCohortMotes,
+  writeCohortMotes,
+} from '../../src/materials/colonyMotes';
+import { mistShareFactor } from '../../src/materials/colonyMist';
 import type { ProducerStanding } from '../../src/derives/blockProducers.derive';
 
 function source(file: string): string {
@@ -101,13 +115,13 @@ describe('cohortShareLane', () => {
     // the ring for a and still shown these two numbers.
     expect(Array.from(share)).toEqual([Math.fround(0.617), Math.fround(0.5)]);
     // ⚠️ A ledger-only producer is a REAL standing with `blocks 0` against the
-    // ring, so its window share is a plain 0 — and the week is what the patch
+    // ring, so its window share is a plain 0 — and the week is what the sink
     // must drink on, or a cohort the ring has lost stops taking anything.
     cohortShareLane(marks, [standing('0xa', 0, 0.023), standing('0xb', 0.4)], share);
     expect(Array.from(share)).toEqual([Math.fround(0.023), Math.fround(0.4)]);
   });
 
-  it('returns the largest share it wrote, which is the patch’s divisor', () => {
+  it('returns the largest share it wrote, which is the lens’s divisor', () => {
     // ⭐ ONE WALK, ONE ANSWER. `uShareMax` is the divisor of a RATIO, so the
     // lane and the number the shader divides by must be computed together or a
     // frame can carry one without the other.
@@ -307,7 +321,7 @@ describe('the share lane follows the window by reference', () => {
     expect(cohorts).toContain('if (live === writtenSharesRef.current) return;');
     // The walk itself is the pure function pinned above, and it marks the
     // lane once per walk.
-    expect(cohorts).toContain('cohortShareLane(marks, producers, lanes.share.array as Float32Array);');
+    expect(cohorts).toContain('shareMaxRef.current = cohortShareLane(marks, producers, share);');
     expect(cohorts).toContain('lanes.share.needsUpdate = true;');
     // A rebuilt lane or a moved cohort set re-walks regardless of the window.
     expect(cohorts).toContain('}, [producersRef, writeShares]);');
@@ -320,5 +334,133 @@ describe('the share lane follows the window by reference', () => {
     expect(colony).toContain('producersRef?: ProducerSharesRef | null;');
     expect(colony).toContain('producersRef={producersRef}');
     expect(colony).not.toContain('producers={producers}');
+  });
+});
+
+describe('the motes carry the same two lanes, ninety-six copies wide', () => {
+  const marks = [mark('0xa', 0.2), mark('0xb', 0.7), mark('0xc', 0.4)];
+  const cohorts = source('ColonyCohorts.tsx');
+
+  it('stamps EXACTLY the named cohort’s 96 slots and no neighbour’s', () => {
+    // ⚠️⚠️ THIS IS WHY THE INSTANCED LANE CANNOT SIMPLY BE HANDED OVER. Every
+    // other draw in the feature reads ONE value per instance, so the layer can
+    // bind one `InstancedBufferAttribute` to every geometry and know they gulp
+    // on the same block. A Points geometry is one vertex per MOTE: the same
+    // wrapper would be read by the first ninety-sixth of the colony's specks and
+    // by garbage after it. So the value is widened, and what has to be pinned is
+    // that the widening lands on the right ninety-six.
+    const geometry = buildCohortMotesGeometry(marks.length);
+    const gulp = geometry.getAttribute('aGulp');
+    expect(gulp.count).toBe(marks.length * COHORT_MOTES_PER_COHORT);
+    stampCohortMotes(geometry, 1, 12.5);
+    for (let slot = 0; slot < gulp.count; slot += 1) {
+      const cohort = Math.floor(slot / COHORT_MOTES_PER_COHORT);
+      expect(`slot ${slot}: ${gulp.getX(slot)}`)
+        .toBe(`slot ${slot}: ${cohort === 1 ? 12.5 : COHORT_NEVER_WON}`);
+    }
+    // …and a second cohort winning seconds later leaves the first one running,
+    // exactly as the instanced lane does: two mouths, two moments, no sequencing.
+    stampCohortMotes(geometry, 2, 14);
+    expect(gulp.getX(COHORT_MOTES_PER_COHORT)).toBe(12.5);
+    expect(gulp.getX(2 * COHORT_MOTES_PER_COHORT)).toBe(14);
+    expect(gulp.getX(0)).toBe(COHORT_NEVER_WON);
+  });
+
+  it('is RE-LAID under a new plan from the same map, so a moved cohort keeps its burst', () => {
+    // ⭐⭐ A WIN FOLLOWS THE COHORT AND NEVER THE SLOT — the same law
+    // `cohortWinLane` keeps for the instanced lane, and it has to be kept twice
+    // because the two lanes are two buffers. Here it is measured rather than
+    // argued: `0xb` moves from slot 1 to slot 0 and its 12.5 moves with it.
+    const wonAt = new Map([['attested:0xb', 12.5]]);
+    const before = buildCohortMotesGeometry(marks.length);
+    marks.forEach((m, index) => {
+      stampCohortMotes(before, index, wonAt.get(m.nodeId) ?? COHORT_NEVER_WON);
+    });
+    expect(before.getAttribute('aGulp').getX(COHORT_MOTES_PER_COHORT)).toBe(12.5);
+    // `0xa` leaves the window; `0xb` survives at a new slot.
+    const after = [mark('0xb', 0.7), mark('0xc', 0.4)];
+    const rebuilt = buildCohortMotesGeometry(marks.length);
+    after.forEach((m, index) => {
+      stampCohortMotes(rebuilt, index, wonAt.get(m.nodeId) ?? COHORT_NEVER_WON);
+    });
+    const gulp = rebuilt.getAttribute('aGulp');
+    expect(gulp.getX(0)).toBe(12.5);
+    expect(gulp.getX(COHORT_MOTES_PER_COHORT)).toBe(COHORT_NEVER_WON);
+
+    // …and the layer really does run that walk, off the SAME map the instanced
+    // lane is re-laid from — one `wonAtRef`, two widths, so the disc and the
+    // specks cannot swallow different blocks.
+    expect(cohorts).toContain(
+      'wonAtRef.current.get(mark.nodeId) ?? COHORT_NEVER_WON,',
+    );
+    expect(cohorts).toContain(
+      'cohortWinLane(marks, wonAtRef.current, lanes.gulp.array as Float32Array);',
+    );
+    // Two stamps in the file and no more: the re-lay under a plan and the write
+    // on a pulse, which are exactly the two places the instanced lane moves.
+    expect([...cohorts.matchAll(/stampCohortMotes\(/g)]).toHaveLength(2);
+    expect([...cohorts.matchAll(/lanes\.gulp\.needsUpdate = true;/g)])
+      .toHaveLength(2);
+  });
+
+  it('takes the share ALREADY WEIGHED, because it multiplies it straight into k', () => {
+    // ⚠️ THE ONE ASYMMETRY BETWEEN THE TWO DRAWS, and it is a division of
+    // labour rather than a difference of opinion. The lens's vertex stage runs
+    // `MIST_SHARE_FACTOR_GLSL` on `aShare` — a floor of 0.35, normalised by the
+    // busiest cohort in view — before the share becomes the sink's k; this
+    // program has no such line and multiplies `aStrength` straight into `uK`.
+    // So the layer runs the SAME function on the CPU, and the parity is that it
+    // is the same function and not a second arithmetic.
+    const share = new Float32Array([0.617, 0.023, 0]);
+    const geometry = buildCohortMotesGeometry(marks.length);
+    marks.forEach((m, index) => {
+      writeCohortMotes(
+        geometry,
+        index,
+        { x: m.pos[0], y: m.pos[1], z: m.pos[2] },
+        m.seed,
+        mistShareFactor(share[index], 0.617),
+      );
+    });
+    const strength = geometry.getAttribute('aStrength');
+    expect(strength.getX(0)).toBeCloseTo(1, 6);
+    expect(strength.getX(COHORT_MOTES_PER_COHORT)).toBeCloseTo(0.374, 3);
+    expect(strength.getX(2 * COHORT_MOTES_PER_COHORT)).toBeCloseTo(0.35, 6);
+    // ⭐ IT IS THE WHOLE COHORT OR NOTHING, on both lanes: a partial write would
+    // show as a wedge of one intake falling faster than the rest of it.
+    for (let slot = 0; slot < COHORT_MOTES_PER_COHORT; slot += 1) {
+      expect(strength.getX(slot)).toBe(strength.getX(0));
+    }
+
+    // …and the layer calls it from BOTH walks — the plan's and the window's —
+    // because a re-plan and an attributed block each move a cohort's rate.
+    expect([...cohorts.matchAll(/writeCohortMotes\(/g)]).toHaveLength(3);
+    expect([...cohorts.matchAll(
+      /mistShareFactor\(share\[index\] \?\? 0, shareMaxRef\.current\)/g,
+    )]).toHaveLength(2);
+    // ⚠️ AND THE THIRD CALL RETIRES A SLOT THE PLAN DROPPED. The geometry is
+    // sized for `COHORT_MARK_CAP` and never rebuilt — a rebuild would drop every
+    // live stamp — so a cohort that left the window has to be written OVER at a
+    // strength of zero, or 96 specks keep spiralling into a seat nobody stands
+    // at any more.
+    expect(cohorts).toContain(
+      'writeCohortMotes(motesGeometry, index, RETIRED_SEAT, 0, 0);',
+    );
+    expect(cohorts).toContain('motesWrittenRef.current = marks.length;');
+  });
+
+  it('never rebuilds the specks’ buffer, which is what makes a stamp survive a re-plan', () => {
+    // ⚠️ THE INSTANCED LANES ARE REBUILT ON A CAPACITY CHANGE and re-laid from
+    // `wonAtRef` immediately after; the motes' geometry CANNOT be, because its
+    // `aGulp` is a copy rather than a shared wrapper and a rebuild would drop the
+    // live stamps before the re-lay could put them back. Sizing it at the cap
+    // costs 6,144 vertices whose spare slots draw nothing at all.
+    expect(cohorts).toContain('buildCohortMotesGeometry(COHORT_MARK_CAP),');
+    expect(cohorts).toMatch(/motesGeometry = useMemo\(\s*\(\) => buildCohortMotesGeometry\(COHORT_MARK_CAP\),\s*\[\],\s*\)/);
+    // An unwritten slot is not a mote by ARITHMETIC and not by a draw range: its
+    // strength is zero and the program refuses anything below the live floor.
+    const spare = buildCohortMotesGeometry(2);
+    expect(spare.getAttribute('aStrength').getX(0)).toBe(0);
+    expect(spare.getAttribute('aGulp').getX(0)).toBe(COHORT_NEVER_WON);
   });
 });

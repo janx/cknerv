@@ -48,16 +48,23 @@ export const PERFORMANCE_PROBE_LABELS = {
   colonyCloudReached: 'colony.cloud.reached',
   colonyMeasuredHalos: 'colony.measured-halos',
   colonyEdges: 'colony.edges',
-  colonyCohortFace: 'colony.cohort.face',
-  colonyCohortAura: 'colony.cohort.aura',
-  // The substance under the plane, priced apart from the mark in it: one
-  // instanced draw per cohort whose cost is its two back-traces. ⚠️ There was a
-  // `colony.mist.haze` beside it until 2026-09-02, for the ambient sheets under
-  // the whole colony; this label is what measured them out — 0.90 ms of the
-  // layer's 1.06 ms at the app camera for a draw whose own brightest pixel
-  // anywhere reached 2/255 — and they were removed. Do not add it back without
-  // a new reading that says a viewer can see a sheet.
-  colonyMistPatch: 'colony.mist.patch',
+  // ⭐⭐ THE COHORT IS TWO DRAWS AND THEY FAIL DIFFERENTLY. The lens is one quad
+  // per cohort whose whole cost is FILL × STEPS — every pixel it covers traces
+  // a bent ray — so it grows with how much screen a hole takes and with the
+  // quality tier's step count, and nothing else. The motes are 96 points per
+  // cohort with a closed-form fall in the vertex stage and no texture at all,
+  // so they are all but free and their number is what would move them. A mean
+  // over the pair would hide either one growing.
+  //
+  // ⚠️ THREE LABELS RETIRED HERE ON 2026-09-03: `colony.cohort.face`,
+  // `colony.cohort.aura` and `colony.mist.patch`, when the composed aperture
+  // and the mist patch under it were replaced by the lensed form. A fourth,
+  // `colony.mist.haze`, went one day earlier — it is what measured the ambient
+  // sheets out (0.90 ms of the layer's 1.06 ms at the app camera for a draw
+  // whose own brightest pixel anywhere reached 2/255). Do not add any of them
+  // back without a new reading that says a viewer can see the draw.
+  colonyCohortLens: 'colony.cohort.lens',
+  colonyCohortMotes: 'colony.cohort.motes',
   colonyCourierPlume: 'colony.courier.plume',
   colonyCourierBloom: 'colony.courier.bloom',
   deliveryBody: 'delivery.body',

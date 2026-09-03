@@ -25,12 +25,14 @@ import {
   COHORT_GULP_FALL,
   COHORT_GULP_GLSL,
   COHORT_GULP_INTERIOR,
-  COHORT_GULP_LIP,
   COHORT_GULP_RISE,
   COHORT_NEVER_WON,
-  makeCohortAuraMaterial,
-  makeCohortFaceMaterial,
 } from '../../src/materials/colonyCohort';
+import { makeCohortLensMaterial } from '../../src/materials/colonyLens';
+import {
+  COHORT_MOTE_GULP_BURST,
+  makeCohortMotesMaterial,
+} from '../../src/materials/colonyMotes';
 
 /**
  * The envelope, exactly as `COHORT_GULP_GLSL` computes it.
@@ -89,15 +91,18 @@ describe('the cohort gulp — the sentinel', () => {
     }
     expect(gulp(1)).toBeLessThan(peak * 0.2);
     expect(gulp(3)).toBeLessThan(peak * 0.005);
-    // ⭐ Bounded strictly under 1, so the multipliers it drives are bounded
-    // too: the interior can be at most 2.46x itself and the lip 2.06x.
+    // ⭐ Bounded strictly under 1, so both multipliers it drives are bounded
+    // too: the disc's pile can be at most 2.46x itself and a speck 2.66x.
     expect(peak).toBeLessThan(1);
     expect(1 + COHORT_GULP_INTERIOR * peak).toBeCloseTo(2.4593, 3);
-    expect(1 + COHORT_GULP_LIP * peak).toBeCloseTo(2.0613, 3);
-    // The interior gulps HARDER than the lip, which is what makes the mouth
-    // read as swallowing rather than flashing: the brightening comes from
-    // inside the hole and the edge follows it.
-    expect(COHORT_GULP_INTERIOR).toBeGreaterThan(COHORT_GULP_LIP);
+    expect(1 + COHORT_MOTE_GULP_BURST * peak).toBeCloseTo(2.6583, 3);
+    // ⚠️ THE SPECKS BURST HARDER THAN THE FIELD THEY FALL THROUGH, which is the
+    // opposite ordering to the retired mouth's (its interior 2.2 gulped harder
+    // than its drawn lip's 1.6, so the light came from inside the hole). Here
+    // the reason is legibility rather than anatomy: the disc is a wide dim field
+    // where a 2.5x lift is a wash, and a mote is a 1.5 px point where it is the
+    // one thing the eye can follow to the block it belongs to.
+    expect(COHORT_MOTE_GULP_BURST).toBeGreaterThan(COHORT_GULP_INTERIOR);
   });
 
   it('the mirror is the shipped snippet, term for term', () => {
@@ -114,34 +119,44 @@ describe('the cohort gulp — the sentinel', () => {
     expect(COHORT_GULP_GLSL).toContain(COHORT_GULP_RISE.toFixed(2));
   });
 
-  it('reaches the FACE alone, on the same clock the face already reads', () => {
-    const face = makeCohortFaceMaterial();
-    const aura = makeCohortAuraMaterial();
+  it('reaches BOTH draws, on the same clock and in two different stages', () => {
+    const lens = makeCohortLensMaterial();
+    const motes = makeCohortMotesMaterial();
     // ⚠️⚠️ ONE CLOCK, OR THE DIFFERENCE IS MEANINGLESS. The envelope is
     // `uTime - vGulp`, and `uTime` is written from `simClock.elapsedSec` by
     // `ColonyCohorts`. So whatever stamps the lane has to stamp SIM SECONDS —
     // not `performance.now()`, not a wall clock, not milliseconds. A stamp on
     // any other clock does not merely shift the flare; it puts it at a
     // difference of hundreds of thousands, which is zero.
-    expect(face.vertexShader).toContain('attribute float aGulp;');
-    expect(face.vertexShader).toContain('vGulp = aGulp;');
-    expect(face.vertexShader).toContain('varying float vGulp;');
-    expect(face.fragmentShader).toContain('varying float vGulp;');
-    expect(face.fragmentShader).toContain('float gulpAge = uTime - vGulp;');
-    expect(face.fragmentShader).toContain('uniform float uTime;');
-    // ⭐ AND THE SKIRT DOES NOT TAKE IT. The aura is the mark's support at a
-    // low camera; a support that flared on the win would be a second opinion
-    // about an instant the mouth and `ColonyEdges` already state. It also keeps
-    // the aura's attribute-budget row exactly where it was.
-    for (const stage of [aura.vertexShader, aura.fragmentShader]) {
-      expect(stage).not.toContain('aGulp');
-      expect(stage).not.toContain('vGulp');
+    for (const [name, glsl] of [
+      ['lens.fragmentShader', lens.fragmentShader],
+      ['motes.vertexShader', motes.vertexShader],
+    ] as const) {
+      expect(`${name}: gulp`).toBe(`${name}: gulp`);
+      expect(glsl).toContain('float gulpAge = uTime - vGulp;');
+      expect(glsl).toContain('uniform float uTime;');
     }
-    // The two places the gulp reaches, and only those two: the window's
-    // interior and the lip that feeds it.
-    expect([...face.fragmentShader.matchAll(/\bgulp\b(?!Age)/g)].length)
-      .toBeGreaterThanOrEqual(3);
-    expect(face.fragmentShader).toContain('(1.0 + 2.2 * gulp)');
-    expect(face.fragmentShader).toContain('(1.0 + 1.6 * gulp)');
+
+    // ⭐ THE LENS SPENDS IT IN THE FRAGMENT, so the lane crosses the
+    // interpolator: the pile is a function of where on the disc a bent ray
+    // landed, and there is no per-instance answer to that.
+    expect(lens.vertexShader).toContain('attribute float aGulp;');
+    expect(lens.vertexShader).toContain('vGulp = aGulp;');
+    expect(lens.vertexShader).toContain('varying float vGulp;');
+    expect(lens.fragmentShader).toContain('varying float vGulp;');
+    expect(lens.fragmentShader).toContain(`${COHORT_GULP_INTERIOR.toFixed(1)} * gulp`);
+
+    // ⭐⭐ THE MOTES SPEND IT IN THE VERTEX, where `aGulp` is already in scope —
+    // so the shared snippet's `vGulp` is bound to a LOCAL rather than carried
+    // across an interpolator for nothing. The name is what the snippet asks for;
+    // the stage is the program's own business.
+    expect(motes.vertexShader).toContain('attribute float aGulp;');
+    expect(motes.vertexShader).toContain('float vGulp = aGulp;');
+    expect(motes.vertexShader).not.toContain('varying float vGulp;');
+    expect(motes.fragmentShader).not.toContain('vGulp');
+    expect(motes.vertexShader.indexOf('float vGulp = aGulp;'))
+      .toBeLessThan(motes.vertexShader.indexOf(COHORT_GULP_GLSL));
+    expect(motes.vertexShader)
+      .toContain(`${COHORT_MOTE_GULP_BURST.toFixed(1)} * gulp`);
   });
 });

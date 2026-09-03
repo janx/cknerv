@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import {
+  COHORT_CONTEXT_ENERGY_GLSL,
   COHORT_GULP_FALL,
   COHORT_GULP_GLSL,
   COHORT_GULP_RISE,
@@ -14,6 +15,7 @@ import {
   COHORT_UNFOLD_HI,
   COHORT_UNFOLD_LO,
   cohortDiscStops,
+  cohortShadowRadius,
 } from './colonyLens';
 import { MIST_SWIRL } from './colonyMist';
 import type { SceneColor } from '../visualPalette';
@@ -78,10 +80,16 @@ import type { SceneColor } from '../visualPalette';
  *   swing near the mouth and nothing at the rim: it is what makes a single
  *   tracked point read as an orbit decaying rather than as a bead on a wire.
  *   The plan already carries `cohortOrbit` as its knob.
- * - there is NO context-energy exemption here. The plan scopes that expression
- *   to the lens (it is a per-fragment function of the camera's distance to the
- *   mark, and this program's entire fragment input is one float), so the motes
- *   ride the layer's `uAmp` and nothing else.
+ * ⭐ AND THE PROXIMITY EXEMPTION IS HERE TOO, computed in the VERTEX stage. It
+ * is the same string the lens compiles (`COHORT_CONTEXT_ENERGY_GLSL`) against
+ * the same fact — the distance from the camera to the mark's world seat — so a
+ * cohort the camera has flown to keeps its disc AND the specks falling into it.
+ * G2 shipped without it and said what it would cost: past 150 wu the lens dims
+ * with the mesh and the motes would not, which is one mark receding in two
+ * pieces. The seat is already in scope up there and the fragment input is one
+ * more varying, so it is five lines and no new geometry. ⚠️ RGB only, as
+ * everywhere: the alpha is the shape, and dimming it would change what a mote
+ * IS rather than how bright it is.
  */
 
 /* -------------------------------------------------------------------------- *
@@ -246,28 +254,17 @@ export const COHORT_MOTE_R0_FLOOR = 1.6;
  * -------------------------------------------------------------------------- */
 
 /**
- * The apparent radius of the shadow, as a multiple of the horizon: `3√3/2`.
- *
- * ⭐⭐ A DISTANT OBSERVER DOES NOT SEE `rs`. The last ray that escapes has
- * impact parameter `3√3 M = 3√3/2 · rs`, so the black disc in the picture is
- * 2.598 horizons across in impact parameter and not one — which is why the
- * lens's trace produces a shadow 2.6 times larger than the mass suggests, and
- * why the motes have to vanish THERE rather than at `rs`. Written as the ratio
- * so both radii below follow the lens's mass.
- */
-export const COHORT_SHADOW_RATIO = (3 * Math.sqrt(3)) / 2;
-
-/**
  * Where a mote vanishes, near and far, in world units.
  *
  * ⭐⭐⭐ IT IS THE SAME FACT AS THE LENS'S SHADOW AND SO IT IS THE LENS'S OWN
- * NUMBER, derived from `COHORT_HORIZON` rather than typed again. The approved
+ * NUMBER, derived from `COHORT_SHADOW_RATIO` and `COHORT_HORIZON` — both of
+ * which live over there, with the mass — rather than typed again. The approved
  * preview carried 2.0 and 0.22 as literals; these are 2.0006 and 0.2078, which
  * is the same picture and one fewer place for the mass and the specks that
  * disappear into it to disagree.
  */
-export const COHORT_MOTE_SHADOW_R = COHORT_SHADOW_RATIO * COHORT_HORIZON;
-export const COHORT_MOTE_SHADOW_R_FAR = COHORT_SHADOW_RATIO * COHORT_HORIZON_FAR;
+export const COHORT_MOTE_SHADOW_R = cohortShadowRadius(COHORT_HORIZON);
+export const COHORT_MOTE_SHADOW_R_FAR = cohortShadowRadius(COHORT_HORIZON_FAR);
 
 /**
  * A mote is gone once it is inside this multiple of the shadow's radius.
@@ -730,7 +727,8 @@ function glslFloat(value: number): string {
  * The geometry is `buildCohortMotesGeometry`'s, and the four lanes are written
  * per COHORT by `writeCohortMotes` and stamped by `stampCohortMotes`. Every
  * per-frame value is a uniform: the layer writes `uTime` (the sim clock the
- * gulp lane is stamped on), `uPxScale` and `uViewportHeight`.
+ * gulp lane is stamped on), `uPxScale`, `uViewportHeight` and
+ * `uContextEnergy`.
  */
 export function makeCohortMotesMaterial(): THREE.ShaderMaterial {
   const color = cohortMoteColor(COHORT_LENS_WARMTH);
@@ -768,6 +766,9 @@ export function makeCohortMotesMaterial(): THREE.ShaderMaterial {
       uViewportHeight: { value: 1080 },
       uMoteSize: { value: COHORT_MOTE_SIZE },
       uAmp: { value: COHORT_MOTE_AMP },
+      // The passive-peer recession, and the exemption from it that a cohort
+      // the camera came for earns. Written every frame beside the lens's.
+      uContextEnergy: { value: 1 },
       uColor: { value: new THREE.Color().setRGB(...color) },
     },
     vertexShader: /* glsl */ `
@@ -792,8 +793,10 @@ export function makeCohortMotesMaterial(): THREE.ShaderMaterial {
       uniform float uViewportHeight;
       uniform float uMoteSize;
       uniform float uAmp;
+      uniform float uContextEnergy;
 
       varying float vBright;
+      varying float vEnergy;
 
       // The standard hash. What it is FOR is that 96 motes of one cohort enter
       // it at 96 different points; see COHORT_MOTE_HASH.
@@ -811,6 +814,16 @@ export function makeCohortMotesMaterial(): THREE.ShaderMaterial {
         // the seat, purely to measure how far away the camera is; the fall
         // itself is laid out in the colony's own plane below and turns with it.
         vec3 seat = (modelMatrix * vec4(aOrigin, 1.0)).xyz;
+        // ⭐ THE MARK'S OWN DISTANCE, ONCE, FOR THE WHOLE SPECK. The shared
+        // exemption names the world seat vOrigin because the lens reads it as a
+        // varying in its fragment; here it is already a local, so the name is
+        // bound to it rather than carried across the interpolator for nothing.
+        // One distance per mote and never one per pixel: a 1.5 px point has no
+        // extent to fade across, and every mote of a cohort must recede with
+        // the disc it is falling into.
+        vec3 vOrigin = seat;
+        ${COHORT_CONTEXT_ENERGY_GLSL}
+        vEnergy = cohortEnergy;
         float closeness = smoothstep(
           uUnfoldLo,
           uUnfoldHi,
@@ -895,6 +908,7 @@ export function makeCohortMotesMaterial(): THREE.ShaderMaterial {
       uniform vec3 uColor;
 
       varying float vBright;
+      varying float vEnergy;
 
       void main() {
         // A mote that is out of its life, inside the shadow or in an unfilled
@@ -914,7 +928,11 @@ export function makeCohortMotesMaterial(): THREE.ShaderMaterial {
         // blend uses SOURCE ALPHA as its factor: the mote's contribution is
         // therefore its shape SQUARED, which is what keeps a field of them from
         // clipping to a white sheet where they overlap.
-        gl_FragColor = vec4(uColor * s, min(s, 1.0));
+        // ⚠️ …AND THE ENERGY MULTIPLIES RGB ONLY, the house idiom: on an
+        // additive draw whose blend factor is the source alpha, damping the
+        // alpha too would square the recession and make a distant cohort's
+        // specks vanish rather than recede.
+        gl_FragColor = vec4(uColor * s * vEnergy, min(s, 1.0));
       }
     `,
   });

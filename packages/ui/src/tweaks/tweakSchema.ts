@@ -18,58 +18,37 @@ import {
   SHOCKWAVE_COLOR_CEIL,
   SHOCKWAVE_ALPHA_CEIL,
 } from '../materials/shockwaveMaterial';
-// …and the seventeen `cohort*` knobs take theirs from the two aperture materials
-// and the mist's one, on the same rule: each material seeds its own uniforms
+// …and the thirteen `cohort*` knobs take theirs from the lensed mark and the
+// motes falling into it, on the same rule: each material seeds its own uniforms
 // from these constants and `ColonyCohorts` overwrites them from LIVE.peer.*
-// each frame, so there is ONE authority. Most of the aperture is deliberately
-// NOT a knob. The two knees
-// (`COHORT_CLIP_KNEE` and `COHORT_AURA_KNEE`) are a PYTHAGOREAN PAIR that bound
-// the two additive draws' sum below 1.0 by arithmetic and cannot be moved
-// singly; the grain's sign (`COHORT_FACE_STRIA_LIFT`, purely subtractive, which
-// is what keeps the silhouette round), its prefilter (`COHORT_FACE_AA`) and the
-// halo's pupil (`COHORT_AURA_PUPIL_SCALE`, which is what makes the aura's hole
-// the SAME hole) are layer statements rather than tastes to settle against
-// pixels. What is here is the mark's SIZE, its HOLE, its BRIGHTNESS and its
-// GRAIN.
+// each frame, so there is ONE authority.
+// ⚠️ FIFTEEN KNOBS WERE RETIRED ON 2026-09-03 AND ONLY TWO SURVIVED THE FORM
+// CHANGE. `cohortApR`, `cohortPupil`, `cohortRimAmp`, `cohortIntakeAmp`,
+// `cohortStriae`, `cohortStriaAmp`, `cohortHaloR`, `cohortHaloBias`,
+// `cohortInteriorAmp` and `cohortLevel` belonged to the composed aperture — a
+// radius, a hole, a lip, a grain and a window, each a PART of a picture that is
+// now COMPUTED rather than assembled — and `cohortMistAmp`, `cohortGather`,
+// `cohortReach`, `cohortWake` and `cohortShareFloor` belonged to the mist patch
+// drawn beside it. `cohortIntake` (the sink's k) and `cohortSwirl` (the
+// vortex-to-sink ratio) survive because they are facts about the SUBSTANCE, and
+// the substance is the one thing the lensed disc kept.
+// ⭐ WHAT IS HERE NOW IS THE MASS AND WHAT THE LIGHT DOES AROUND IT: the horizon
+// (which every other radius is a multiple of), the disc's extent, its
+// brightness near and far, the beaming, the colour temperature, the glow, the
+// fold's near end, the specks, and the step count the ray march spends.
 import {
-  COHORT_AP_PUPIL_FRAC,
-  COHORT_AP_R,
-  COHORT_AURA_HALO_BIAS,
-  COHORT_AURA_HALO_R,
-  COHORT_FACE_INTAKE_AMP,
-  COHORT_FACE_INTERIOR_AMP,
-  COHORT_FACE_RIM_AMP,
-  COHORT_FACE_STRIA_AMP,
-  COHORT_FACE_STRIAE,
-  COHORT_FACE_STRIAE_FLOOR,
-  COHORT_INTAKE_LEVEL,
-} from '../materials/colonyCohort';
-// …and the mist under the mark brings NINE more knobs, on the same rule: the
-// intake patch in `colonyMist` seeds its own uniforms from these constants and
-// `ColonyCohorts` overwrites them from LIVE.peer.* each frame. Only seven
-// constants are imported for the nine, because the other two — the window's
-// amp and the level — belong to the aperture's own file above.
-// ⚠️ IT WAS NINE, THEN EIGHT, AND IS NINE AGAIN — with a different ninth both
-// times. `cohortHazeAmp` dimmed the ambient sheets under the whole colony plane
-// until 2026-09-02, when a live leg measured them at 2/255 at their brightest
-// pixel anywhere on the canvas while costing 0.90 ms of the layer's 1.06 ms at
-// the app camera, and the sheets went; the mist has ONE amplitude now. The
-// ninth today is `cohortShareFloor`, which weighs no light at all — it is how
-// hard the SMALLEST cohort drinks against the largest.
-// ⭐ `cohortLevel` is the one knob with TWO consumers — the window's medium
-// level in the face and the top of the mist's mound under it are ONE surface
-// (`COHORT_INTAKE_LEVEL`), and a tuner who could move one without the other
-// would be able to make a viewer looking INTO the mouth and a viewer looking at
-// the mist beside it disagree about where the substance is.
-import {
-  MIST_AMP,
-  MIST_CONTRAST_NEAR,
-  MIST_REACH,
-  MIST_SHARE_FLOOR,
-  MIST_SINK_K,
-  MIST_SWIRL,
-  MIST_WAKE,
-} from '../materials/colonyMist';
+  COHORT_DISC_OUT,
+  COHORT_HORIZON,
+  COHORT_LENS_BEAM,
+  COHORT_LENS_DISC_AMP,
+  COHORT_LENS_FAR_DISC_AMP,
+  COHORT_LENS_GLOW,
+  COHORT_LENS_STEPS,
+  COHORT_LENS_WARMTH,
+  COHORT_UNFOLD_HI,
+} from '../materials/colonyLens';
+import { COHORT_MOTE_AMP, COHORT_MOTE_ORBIT } from '../materials/colonyMotes';
+import { MIST_SINK_K, MIST_SWIRL } from '../materials/colonyMist';
 // The Cell-field contact front is a scaled-down version of the peer-plane
 // brightness wave: same shape, same timing, its reach divided by
 // CONTACT_WAVE_SCALE — so both planes still read as sections of one event
@@ -190,109 +169,61 @@ export const peerSchema = {
   flameBloom: { value: 0.7, min: 0.1, max: 2, step: 0.05, label: 'flame bloom' },
   glintBloomOpacity: { value: 0.55, min: 0, max: 1, step: 0.05, label: 'glint bloom op' },
   glintPlumeOpacity: { value: 0.3, min: 0, max: 1, step: 0.05, label: 'glint plume op' },
-  // The POW channel — one aperture per cohort, drawn as two faces of one hole,
-  // over the mist that hole is drinking. Eight knobs for the mark, nine for the
-  // substance under it.
+  // The POW channel — ONE LENSED MASS PER COHORT, plus the specks falling into
+  // it. Thirteen knobs, and every one of them is a fact about the mass or about
+  // the substance around it: there is no "rim amplitude" here and there must
+  // never be one again, because the mark is COMPUTED (light traced backward
+  // around a Schwarzschild mass) and a knob that moved a PART of the picture
+  // would be the composed aperture creeping back in through the panel.
   //
-  // ⭐ REACH FOR `cohortApR` FIRST. It is THE size parameter: every other length
-  // on this mark is a fraction of it, so it is the one knob that moves the
-  // whole form rather than a part of it. Measured band 2.4–3.8 and settled at
-  // 3.0 — below 2.4 the structure stops resolving at the app camera, above 4
-  // the mark starts to dominate the colony.
+  // ⭐ REACH FOR `cohortHorizon` FIRST. It is THE size parameter: the shadow is
+  // 2.6 horizons, the disc's inner edge is 3, and the whole image scales with
+  // it — which is what the geometry says, not a convention this file chose.
   //
-  // ⚠️⚠️ `cohortApR` AND `cohortHaloR` BOTH MOVE A QUAD, AND THE LAYER
-  // RE-DERIVES BOTH EXTENTS THROUGH `cohortFaceHalfExtent` AND
-  // `cohortAuraHalfExtent` EVERY FRAME. A knob that grew a mark while its quad
-  // stayed put would crop it against its own proxy on the first drag — the
-  // radius tests inside the fragments stay exact, but the pixels carrying the
-  // rim are never rasterised to run them, which reads as a straight edge across
-  // a circle that has none. That bug has already shipped on this layer once.
+  // ⭐⭐ AND `cohortSteps` IS THE ONE KNOB THAT OVERRIDES THE QUALITY TIER. The
+  // cascade's `cohortLensSteps` is 96 / 64 / 40; this knob's default IS the
+  // high tier's 96, and `ColonyCohorts` reads the tier while the knob sits at
+  // that default and the knob the moment it is moved. So a tuner can price the
+  // trace against the picture on one page without changing the tier under the
+  // rest of the scene — and a panel nobody has touched still shows what the
+  // tier decided.
   //
-  // `cohortPupil` is the hole, as a fraction of the rim, and BOTH faces read
-  // it — which is what makes the halo's hole the same hole rather than a second
-  // one tuned to agree. `cohortRimAmp` and `cohortIntakeAmp` are the face's two
-  // brightnesses, the burning ring and the skirt drawn inward around it.
-  // `cohortHaloBias` weights the halo DOWNWARD in world Y: the only cue for
-  // "the energy is under the plane" that costs no silhouette, and it vanishes
-  // on its own from overhead, where "below" is not a direction a viewer sees.
+  // ⚠️ NO KNOB HERE CAN CLIP THE MARK, and it is arithmetic rather than a range
+  // chosen carefully: the disc's alpha is clamped to 0.85 in the fragment and
+  // the shadow's is the closeness, so the amplitudes below scale a quantity
+  // that is bounded after them.
   //
-  // ⭐ NO KNOB HERE CAN CLIP THE MARK, and that is structural rather than a
-  // range chosen carefully. Both fragments apply their soft knee LAST, and
-  // `knee * (1 - exp(-s / knee))` is strictly below `knee` for every finite
-  // input — so every amplitude below multiplies into a quantity the knee then
-  // bounds anyway. The centre this replaced had no such property: its knob's
-  // MAXIMUM was the guard, which is a guard a later hand can move.
-  cohortApR: { value: COHORT_AP_R, min: 1.5, max: 6, step: 0.1, label: 'cohort radius' },
-  cohortPupil: { value: COHORT_AP_PUPIL_FRAC, min: 0.1, max: 1.5, step: 0.02, label: 'cohort pupil' },
-  cohortRimAmp: { value: COHORT_FACE_RIM_AMP, min: 0, max: 3, step: 0.05, label: 'cohort rim amp' },
-  cohortIntakeAmp: { value: COHORT_FACE_INTAKE_AMP, min: 0, max: 3, step: 0.02, label: 'cohort intake amp' },
-  // ⚠️⚠️ THE FLOOR HERE IS A MEASURED LAW AND NOT A TASTE. Over 48 variants and
-  // four sweeps, radial structure on a small bright mark reads as a STAR at 44
-  // striae or fewer — regardless of the modulation's sign, its contrast or its
-  // reach. COUNT IS THE ONLY ESCAPE, and past roughly 64 the striae stop being
-  // countable and become a texture. So the knob's MINIMUM is
-  // `COHORT_FACE_STRIAE_FLOOR` itself: no drag of this slider can turn the
-  // aperture back into a sunflower.
-  cohortStriae: { value: COHORT_FACE_STRIAE, min: COHORT_FACE_STRIAE_FLOOR, max: 200, step: 1, label: 'cohort striae' },
-  // ⚠️ AND THE CEILING IS THE SIGN. The modulation is `1 + amt * (bump - 1)`,
-  // which lies in `[1 - amt, 1]` — purely SUBTRACTIVE, which is what keeps the
-  // outer iso-brightness contour where the smooth halo put it. Past 1 the
-  // depth goes negative and the fragment starts discarding its own grain
-  // instead of carving it.
-  cohortStriaAmp: { value: COHORT_FACE_STRIA_AMP, min: 0, max: 1, step: 0.02, label: 'cohort grain' },
-  cohortHaloR: { value: COHORT_AURA_HALO_R, min: 1, max: 3, step: 0.05, label: 'cohort halo r' },
-  cohortHaloBias: { value: COHORT_AURA_HALO_BIAS, min: 0, max: 1, step: 0.02, label: 'cohort halo bias' },
-  // …and the OTHER SIDE of the hole: the mist the cohort drinks. The mark is
-  // what a viewer sees THROUGH; these weigh and shape what is being taken.
-  //
-  // ⭐ `cohortInteriorAmp` is the medium seen through the window, and it sits
-  // here rather than with the mist because the face draws it — the window and
-  // the patch are one surface seen two ways, so the two amplitudes are read
-  // side by side and turned against each other.
-  //
-  // ⭐⭐ `cohortLevel` MOVES BOTH READERS OF ONE CONSTANT. The window stops
-  // showing wall and starts showing surface at `COHORT_INTAKE_LEVEL` below the
-  // lip, and the mist's mound rises to exactly that height; the two are the
-  // same surface, so the knob writes `uLevel` on the face AND on the patch in
-  // the same frame. A second knob, or a knob that reached only one of them,
-  // would let a viewer looking into the mouth and a viewer looking at the mist
-  // beside it see the medium at two different depths.
-  //
-  // ⚠️ `cohortIntake` is the SINK STRENGTH `k` in wu²/s (`r0² = r² + k·τ`),
-  // which is a different quantity from `cohortIntakeAmp` above — that one is
-  // the brightness of the face's skirt. The labels say which is which.
-  //
-  // ⚠️ NO KNOB HERE CAN CLIP EITHER APERTURE, because none of them reaches the
-  // mark's programs: the mist is its own draw, additive over the same pixels,
-  // and its ceiling is `cohortMistAmp` measured live (see the ceiling paragraph
-  // in `colonyMist.ts` — the two faces above sum to 0.808 in blue, so the
-  // substance under them has 0.192 to spend).
-  // …and what each one moves, one line apiece.
-  // the intake patch's whole brightness, and the mist's ONLY amplitude: the
-  // substance is drawn under a mouth and nowhere else
-  cohortMistAmp: { value: MIST_AMP, min: 0, max: 3, step: 0.05, label: 'cohort patch amp' },
-  // how hard that medium burns seen THROUGH the hole — the face's window
-  cohortInteriorAmp: { value: COHORT_FACE_INTERIOR_AMP, min: 0, max: 3, step: 0.05, label: 'cohort window amp' },
-  // filament gain near the mouth: how sharply the gathering medium streaks
-  cohortGather: { value: MIST_CONTRAST_NEAR, min: 0, max: 3, step: 0.05, label: 'cohort gather' },
+  // the Schwarzschild radius at the near end of the fold, in world units: the
+  // shadow is 2.6 of these and the disc's inner edge 3
+  cohortHorizon: { value: COHORT_HORIZON, min: 0.3, max: 2, step: 0.01, label: 'cohort horizon' },
+  // the disc's outer edge near, in world units: how far the intake reaches
+  cohortDiscOut: { value: COHORT_DISC_OUT, min: 6, max: 40, step: 0.5, label: 'cohort disc out' },
+  // the near disc's own brightness, over the streak field the medium carries
+  cohortDiscAmp: { value: COHORT_LENS_DISC_AMP, min: 0, max: 3, step: 0.05, label: 'cohort disc amp' },
+  // how much brighter the approaching side of the disc is: relativistic beaming
+  cohortBeam: { value: COHORT_LENS_BEAM, min: -1, max: 1, step: 0.05, label: 'cohort beaming' },
+  // the far form's whole weight — a peer-sized intake halo, and nothing else
+  cohortFarAmp: { value: COHORT_LENS_FAR_DISC_AMP, min: 0, max: 2, step: 0.05, label: 'cohort far amp' },
+  // the bloom this scene has no post-process for, painted by the program itself
+  cohortGlow: { value: COHORT_LENS_GLOW, min: 0, max: 1.5, step: 0.05, label: 'cohort glow' },
+  // the colour temperature: 0 is the mesh's cyan disc, 1 the film's orange one
+  cohortWarmth: { value: COHORT_LENS_WARMTH, min: 0, max: 1, step: 0.02, label: 'cohort warmth' },
+  // pixels per world unit at which the form is fully UNFOLDED: the near end of
+  // the band the whole mark folds over (the far end, 6, is not a knob — it is
+  // where a cohort becomes a peer-sized smudge and that is the layer's rule)
+  cohortUnfold: { value: COHORT_UNFOLD_HI, min: 10, max: 60, step: 1, label: 'cohort unfold' },
+  // RK4 steps per ray. ⚠️ Overrides the quality tier the moment it is moved
+  cohortSteps: { value: COHORT_LENS_STEPS, min: 24, max: 160, step: 1, label: 'cohort steps' },
   // sink strength k, in wu²/s: how fast the medium falls in (`r0² = r² + k·τ`)
   cohortIntake: { value: MIST_SINK_K, min: 0, max: 40, step: 0.5, label: 'cohort sink k' },
   // vortex-to-sink ratio: how far a streamline winds before it arrives
   cohortSwirl: { value: MIST_SWIRL, min: 0, max: 3, step: 0.05, label: 'cohort swirl' },
-  // the patch's half-extent AND its catchment radius, in world units
-  cohortReach: { value: MIST_REACH, min: 4, max: 30, step: 0.5, label: 'cohort reach' },
-  // how far under the lip the medium stands: the window's level AND the mound's top
-  cohortLevel: { value: COHORT_INTAKE_LEVEL, min: 0.2, max: 2, step: 0.02, label: 'cohort level' },
-  // how much medium the mouth has already taken downstream of itself
-  cohortWake: { value: MIST_WAKE, min: 0, max: 1, step: 0.05, label: 'cohort wake' },
-  // ⭐⭐ WHAT THE SMALLEST COHORT'S SINK IS WORTH, as a fraction of the
-  // largest's: the patch scales its `uK` and its pile by
-  // `mix(this, 1, share / shareMax)`, so this knob is the whole legibility
-  // question — 0 makes a 2 % cohort draw a patch with no visible motion, 1
-  // makes every cohort drink identically and throws the share away. It is the
-  // ONE knob in this folder whose default is a starting value rather than a
-  // measured one; the live leg settles it by looking at the smallest cohort.
-  cohortShareFloor: { value: MIST_SHARE_FLOOR, min: 0, max: 1, step: 0.05, label: 'cohort share floor' },
+  // the specks' orbital swing near the mouth — the one term the disc's own
+  // back-trace has none of, and the reason a tracked mote reads as an orbit
+  // decaying rather than as a bead on a wire
+  cohortOrbit: { value: COHORT_MOTE_ORBIT, min: 0, max: 3, step: 0.05, label: 'cohort orbit' },
+  // how bright the specks are: the intake's SPEED, which a field alone cannot say
+  cohortMotes: { value: COHORT_MOTE_AMP, min: 0, max: 3, step: 0.05, label: 'cohort motes' },
 } satisfies FolderSchema;
 
 export const cellSchema = {

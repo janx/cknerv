@@ -1,90 +1,61 @@
-// What the mist under the colony plane IS, arithmetically — and the two laws
-// it shares with the mouth above it.
+// What the mist under the colony plane IS, arithmetically — and the fact that
+// this file no longer draws any of it.
 //
-// ⭐⭐⭐ THE STANDING LAW OF THE WHOLE FEATURE IS THAT NOTHING IS EVER DRAWN
-// ABOVE THE MEMBRANE, and the mist is the first layer that could break it: it
-// is the only draw that puts geometry under the plane, and a mound is a lift.
-// So the vertex stage's height is pinned twice here — as arithmetic over the
-// whole patch, and as the source text that produces it.
+// ⭐⭐⭐ THE SUBSTANCE IS A LIBRARY NOW. Until 2026-09-03 this file owned a DRAW
+// — `makeCohortIntakePatchMaterial`, one instanced patch of the medium per
+// cohort, lying under the plane and lifted into a mound whose top was the level
+// the mouth's window showed — and the tests that went with it: the mound's
+// profile, the law that no vertex is ever above the membrane, the dark eye at
+// the rim, the wake, the grazing path length, the layer's own additive
+// supremum. All of it went with the composed aperture, because the lensed
+// cohort (`colonyLens.ts`) samples this same medium where a bent light ray
+// crosses the colony plane — the intake drawn as a CONSEQUENCE of the mass
+// rather than as a surface mapped beside it.
 //
-// ⭐⭐ THE SECOND LAW IS THAT THE MOUND'S TOP AND THE WINDOW'S SURFACE ARE ONE
-// SURFACE. `COHORT_INTAKE_LEVEL` and `COHORT_RIM_R` are imported from
-// `colonyCohort.ts` rather than restated, and the tests below assert the IMPORT
-// as well as the value: a mist that went dark inside a radius the mouth no
-// longer has would be two holes at one cohort, drawn by two layers that both
-// believed they were right.
+// ⭐⭐ SO WHAT IS PINNED HERE IS THE SUBSTANCE AND THE ONE COMPILER OF IT: the
+// spiral back-trace that IS a 2-D point sink with a vortex, the share factor
+// that turns a cohort's fraction of its window into the sink's strength, the
+// 256² tile the medium is read out of, and — at the end — that every GLSL
+// snippet this file exports is compiled by a program somewhere, since a library
+// nobody includes is dead text no guard would catch.
 //
 // ⚠️ A MIRROR THAT DRIFTS PROVES NOTHING (R15 shipped exactly that), so every
-// mirror below is tied to the shipped GLSL by `the mirrors above are the shipped
-// shaders`, term for term.
-//
-// ⚠️ THERE IS ONE MATERIAL IN THE FILE, NOT TWO. Four cases here covered a
-// second one — `makeMistHazeMaterial`, up to two flat 460 wu sheets that put
-// the substance under the whole colony — and it was removed on 2026-09-02 after
-// a live leg on an AMD 890M measured its own brightest pixel anywhere on the
-// canvas at 2/255 (0.045 of a ghost sprite's core) while it cost 0.90 ms of the
-// layer's 1.06 ms of frame GPU at the app camera. The mist's omnipresence is
-// now stated by the patch's 14 wu catchment alone.
+// mirror below is tied to the shipped GLSL as TEXT — read out of the lens's own
+// compiled program, which is the only place the substance is now assembled.
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import {
-  COHORT_CONTEXT_ENERGY_GLSL,
-  COHORT_GULP_FALL,
-  COHORT_GULP_GLSL,
-  COHORT_GULP_INTERIOR,
-  COHORT_GULP_RISE,
-  COHORT_INTAKE_LEVEL,
-  COHORT_INTERIOR_COLD,
-  COHORT_NEVER_WON,
-  COHORT_RIM_R,
-} from '../../src/materials/colonyCohort';
+  COHORT_LENS_REACH,
+  makeCohortLensMaterial,
+} from '../../src/materials/colonyLens';
 import {
-  MIST_AMP,
-  MIST_CONC,
-  MIST_CONTRAST_FAR,
-  MIST_CONTRAST_NEAR,
-  MIST_DRIFT,
+  MIST_BACKTRACE_GLSL,
+  MIST_DISC_COLOR_GLSL,
   MIST_DRIFT_SIGN,
-  MIST_FINE_HI,
-  MIST_FINE_LO,
-  MIST_FIL,
-  MIST_FLOOR_DEPTH,
-  MIST_GATE_IN,
-  MIST_GRAIN,
-  MIST_GULP_R,
-  MIST_MOUND_R,
+  MIST_FIBRES_GLSL,
+  MIST_MEDIUM_GLSL,
   MIST_NOISE_CELLS,
+  MIST_NOISE_LOD_GLSL,
   MIST_NOISE_SEED,
   MIST_NOISE_SIZE,
-  MIST_PATCH_NEVER_ABOVE_GLSL,
-  MIST_PATCH_SEGMENTS,
-  MIST_PATH_MAX,
-  MIST_PERIOD,
-  MIST_REACH,
-  MIST_RIDGE,
-  MIST_RIDGE_POW,
+  MIST_SEAT_DRIFT_GLSL,
+  MIST_SHARE_FACTOR_GLSL,
   MIST_SHARE_FLOOR,
   MIST_SINK_K,
   MIST_SWIRL,
-  MIST_WAKE,
-  MIST_WAKE_LEN,
-  MIST_WAKE_W,
-  makeCohortIntakePatchMaterial,
   makeMistNoiseTexture,
   mistBacktrace,
   mistCatchment,
-  mistMoundLift,
   mistNoiseTile,
-  mistPatchSupremum,
   mistShareFactor,
   mistSinkRadius,
   mistSpiralTurn,
-  mistSurfaceDrop,
 } from '../../src/materials/colonyMist';
 
-const PATCH = makeCohortIntakePatchMaterial();
+/** The one program that compiles this library today. */
+const LENS = makeCohortLensMaterial();
 
 /** Whitespace-insensitive, so a statement wrapped over lines still matches. */
 const squash = (glsl: string): string => glsl.replace(/\s+/g, ' ');
@@ -94,8 +65,8 @@ const squash = (glsl: string): string => glsl.replace(/\s+/g, ' ');
 const stripComments = (glsl: string): string =>
   glsl.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
 
-const PATCH_VERTEX = squash(stripComments(PATCH.vertexShader));
-const PATCH_FRAGMENT = squash(stripComments(PATCH.fragmentShader));
+const LENS_VERTEX = squash(stripComments(LENS.vertexShader));
+const LENS_FRAGMENT = squash(stripComments(LENS.fragmentShader));
 
 const SOURCE = readFileSync(
   resolve(process.cwd(), 'src/materials/colonyMist.ts'),
@@ -124,8 +95,9 @@ describe('colony mist — the spiral back-trace', () => {
   });
 
   it('winds by exactly swirl·ln(r0/r), which is what makes it a log spiral', () => {
-    // ⭐ A PURE SINK IS A DRAIN AND READS AS RADIAL STREAKS — the exact failure
-    // `COHORT_FACE_STRIAE` documents at low count. A circulation `swirl` times
+    // ⭐ A PURE SINK IS A DRAIN AND READS AS RADIAL STREAKS — the failure the
+    // retired aperture's 88 striae were counted to escape. A circulation `swirl`
+    // times
     // the radial flow turns a parcel by this much per e-fold of radius, and a
     // constant turn per e-fold IS the definition of a logarithmic spiral.
     for (const r of [0.05, 1.6, 7, 13.9]) {
@@ -147,7 +119,9 @@ describe('colony mist — the spiral back-trace', () => {
     // `MIST_PERIOD` seconds — which is exactly the reset the cross-fade exists
     // to hide, reintroduced inside it.
     for (const [x, z] of [[0.3, 0], [1.6, 1.6], [-4, 9], [13.9, 0], [-2, -0.1]]) {
-      const [bx, bz] = mistBacktrace(x, z, MIST_SINK_K, MIST_SWIRL, 0);
+      const [bx, bz] = mistBacktrace(
+        x, z, MIST_SINK_K, MIST_SWIRL, 0, COHORT_LENS_REACH,
+      );
       expect(bx).toBeCloseTo(x, 12);
       expect(bz).toBeCloseTo(z, 12);
     }
@@ -156,21 +130,28 @@ describe('colony mist — the spiral back-trace', () => {
   });
 
   it('reduces to the pure sink form at the mouth and to nothing at the reach', () => {
-    // ⚠️ `rr = mix(r, r0, w)` with `w` the catchment weight, so the pull is
-    // FULL where the mouth is and EXACTLY the identity at `MIST_REACH` — which
-    // is what keeps the patch seamless where it stops. It is not a fudge: a
-    // back-trace that still moved parcels at the disc's edge would draw a
-    // visible discontinuity against the neighbouring patch and against nothing
-    // at all where there is no neighbour.
+    // ⚠️ `rr = mix(r, r0, w)` with `w` the catchment weight, so the pull is FULL
+    // where the mouth is and EXACTLY the identity at the REACH — which is what
+    // keeps the field seamless where it stops. It is not a fudge: a back-trace
+    // that still moved parcels at the disc's edge would draw a visible
+    // discontinuity against nothing at all.
+    //
+    // ⚠️ THE REACH IS THE COMPILER'S AND NO LONGER THIS FILE'S. It defaulted to
+    // `MIST_REACH` (14 wu, the retired patch's half-extent) while this file
+    // owned a draw; the only program that compiles the back-trace now binds
+    // `COHORT_LENS_REACH` (30 wu, sized for a 28 wu disc), so the parameter is
+    // required and the number comes from the draw that uses it.
     const tau = 3;
+    const reach = COHORT_LENS_REACH;
+    expect(LENS.uniforms.uReach.value).toBe(reach);
     // Close to the sink the weight is ~1, so the traced radius is the pure one.
-    const near = mistBacktrace(0.05, 0, MIST_SINK_K, MIST_SWIRL, tau);
+    const near = mistBacktrace(0.05, 0, MIST_SINK_K, MIST_SWIRL, tau, reach);
     expect(Math.hypot(...near))
       .toBeCloseTo(mistSinkRadius(0.05, MIST_SINK_K, tau), 3);
     // At the reach the weight is exactly zero, so the point does not move.
-    expect(mistCatchment(MIST_REACH, MIST_REACH)).toBe(0);
-    const edge = mistBacktrace(MIST_REACH, 0, MIST_SINK_K, MIST_SWIRL, tau);
-    expect(edge[0]).toBeCloseTo(MIST_REACH, 12);
+    expect(mistCatchment(reach, reach)).toBe(0);
+    const edge = mistBacktrace(reach, 0, MIST_SINK_K, MIST_SWIRL, tau, reach);
+    expect(edge[0]).toBeCloseTo(reach, 12);
     expect(edge[1]).toBeCloseTo(0, 12);
   });
 
@@ -181,211 +162,20 @@ describe('colony mist — the spiral back-trace', () => {
     // ⭐ `k` IN THE MIRROR IS `uK * vShareF` IN THE SHADER, and that is the
     // whole of the share's effect on the flow: the cohort's own strength, from
     // the vertex stage's one factor. The mirror takes the product as its `k`.
-    expect(PATCH_FRAGMENT).toContain('float r0 = sqrt(r2 + uK * vShareF * tau);');
-    expect(PATCH_FRAGMENT).toContain('float rr = mix(r, r0, w);');
-    expect(PATCH_FRAGMENT).toContain('float ang = uSwirl * log(rr / r);');
+    expect(LENS_FRAGMENT).toContain('float r0 = sqrt(r2 + uK * vShareF * tau);');
+    expect(LENS_FRAGMENT).toContain('float rr = mix(r, r0, w);');
+    expect(LENS_FRAGMENT).toContain('float ang = uSwirl * log(rr / r);');
     // …and the weight the mix is taken on is the catchment, squared, the same
     // expression `mistCatchment` computes.
-    expect(PATCH_FRAGMENT).toContain('float w = 1.0 - r2 / (uReach * uReach);');
-    expect(PATCH_FRAGMENT).toContain('w *= w;');
+    expect(LENS_FRAGMENT).toContain('float w = 1.0 - r2 / (uReach * uReach);');
+    expect(LENS_FRAGMENT).toContain('w *= w;');
     // The drift is SUBTRACTED: τ is an age, so a parcel now here was one drift
     // step BACK along the flow. (The preview added it; its ambient swirl was a
     // divergence-free wiggle where the sign is invisible. This one's is not.)
-    expect(PATCH_FRAGMENT).toContain('vec2 d = q - vDrift * (uDrift * tau);');
+    expect(LENS_FRAGMENT).toContain('vec2 d = q - vDrift * (uDrift * tau);');
     // And the rotation is the one the turn describes, applied to the offset.
-    expect(PATCH_FRAGMENT)
+    expect(LENS_FRAGMENT)
       .toContain('return vec2(cs * d.x - sn * d.y, sn * d.x + cs * d.y) / r * rr;');
-  });
-});
-
-/* -------------------------------------------------------------------------- *
- * The mound — and the law that nothing is drawn above the plane.
- * -------------------------------------------------------------------------- */
-
-describe('colony mist — the mound', () => {
-  it('is 1 at the sink and 0 with ZERO DERIVATIVE at its own radius', () => {
-    // ⭐ THE ZERO SLOPE IS THE WHOLE POINT OF THE SQUARE. `(1 - x)²` has
-    // derivative `-2(1 - x)`, which vanishes at `x = 1`, so the mound meets the
-    // flat floor tangentially: no crease anywhere on the silhouette, from any
-    // camera, at any subdivision.
-    expect(mistMoundLift(0, MIST_MOUND_R)).toBe(1);
-    expect(mistMoundLift(MIST_MOUND_R, MIST_MOUND_R)).toBe(0);
-    expect(mistMoundLift(MIST_MOUND_R * 1.5, MIST_MOUND_R)).toBe(0);
-    // The derivative, measured rather than argued: a one-sided difference just
-    // inside the edge falls off as the step, which is what a double root does.
-    for (const h of [1e-2, 1e-3, 1e-4]) {
-      const slope = (mistMoundLift(MIST_MOUND_R, MIST_MOUND_R)
-        - mistMoundLift(MIST_MOUND_R - h, MIST_MOUND_R)) / h;
-      expect(Math.abs(slope)).toBeLessThan(3 * h);
-    }
-    // Monotone in between: a mound, never a ring.
-    let previous = Infinity;
-    for (let k = 0; k <= 200; k += 1) {
-      const lift = mistMoundLift((k / 200) * MIST_MOUND_R, MIST_MOUND_R);
-      expect(lift).toBeLessThanOrEqual(previous + 1e-12);
-      previous = lift;
-    }
-  });
-
-  it('puts the mound’s top EXACTLY at the level the window already shows', () => {
-    // ⭐⭐⭐ ONE CONSTANT, TWO CONSUMERS, AND THEY MUST NEVER BECOME TWO
-    // NUMBERS. What the hole shows and what the mist beside it does are one
-    // surface. If they ever drift, a viewer looking INTO the mouth sees the
-    // medium at one height and a viewer looking at the mist beside it sees
-    // another, and the two draws stop being one substance.
-    expect(mistSurfaceDrop(0)).toBe(COHORT_INTAKE_LEVEL);
-    expect(mistSurfaceDrop(MIST_MOUND_R)).toBe(MIST_FLOOR_DEPTH);
-    expect(mistSurfaceDrop(MIST_REACH)).toBe(MIST_FLOOR_DEPTH);
-    // The uniform is the shared constant and not a literal, which is the whole
-    // mechanism: `cohortRise` has ONE place to write, and it moves the face's
-    // `uLevel` and this mound's top together.
-    expect(PATCH.uniforms.uLevel.value).toBe(COHORT_INTAKE_LEVEL);
-    expect(SOURCE).toContain("uLevel: { value: COHORT_INTAKE_LEVEL }");
-    expect(SOURCE).toContain("COHORT_INTAKE_LEVEL,");
-    expect(SOURCE).not.toMatch(/uLevel:\s*\{\s*value:\s*0\.7\s*\}/);
-  });
-
-  it('NEVER puts a vertex above the membrane, at any radius or knob', () => {
-    // ⛔⛔⛔ THE STANDING LAW OF THIS WHOLE FEATURE. The cohort never emits
-    // upward, and the mist is the only draw that could break that by accident:
-    // it is the one layer with geometry under the plane, and a mound is a lift.
-    //
-    // The height is `originY - mix(uFloorDepth, uLevel, lift)`. A mix of two
-    // POSITIVE depths lies between them, so the drop is positive at every
-    // vertex — no branch, no clamp, and nothing a knob can invert as long as
-    // both depths stay positive.
-    for (const level of [0.2, COHORT_INTAKE_LEVEL, 1.4]) {
-      for (const floor of [1.0, MIST_FLOOR_DEPTH, 6]) {
-        for (let k = 0; k <= 400; k += 1) {
-          const r = (k / 400) * MIST_REACH * Math.SQRT2; // out to the quad's corner
-          const drop = mistSurfaceDrop(r, floor, level, MIST_MOUND_R);
-          expect(drop).toBeGreaterThan(0);
-          expect(drop).toBeGreaterThanOrEqual(Math.min(level, floor) - 1e-12);
-          expect(drop).toBeLessThanOrEqual(Math.max(level, floor) + 1e-12);
-        }
-      }
-    }
-    // And the same claim as SOURCE, because the arithmetic above is a mirror.
-    // The vertex stage subtracts the drop and can do nothing else with it.
-    expect(squash(MIST_PATCH_NEVER_ABOVE_GLSL))
-      .toBe('float drop = mix(uFloorDepth, uLevel, lift); vec3 local = vec3(offset.x, -drop, offset.y);');
-    expect(PATCH_VERTEX).toContain(squash(MIST_PATCH_NEVER_ABOVE_GLSL));
-    // ⚠️ There is exactly one place the local point is built, and one sign.
-    expect([...PATCH_VERTEX.matchAll(/vec3 local =/g)]).toHaveLength(1);
-    expect(PATCH_VERTEX).not.toMatch(/vec3 local = vec3\([^)]*\+\s*drop/);
-    // Both depths ship positive, which is what the mix's bound rests on.
-    expect(PATCH.uniforms.uFloorDepth.value).toBeGreaterThan(0);
-    expect(PATCH.uniforms.uLevel.value).toBeGreaterThan(0);
-    expect(MIST_FLOOR_DEPTH).toBeGreaterThan(COHORT_INTAKE_LEVEL);
-  });
-
-  it('lifts on the mound’s radius and gathers on the catchment’s — two radii, two jobs', () => {
-    // ⚠️ THE MOUND IS HALF THE CATCHMENT, so the lift never reaches the quad's
-    // own edge where the subdivision is coarsest, and the medium is still being
-    // gathered well outside the visible rise.
-    expect(MIST_MOUND_R).toBe(MIST_REACH / 2);
-    expect(mistCatchment(0, MIST_REACH)).toBe(1);
-    expect(mistCatchment(MIST_REACH, MIST_REACH)).toBe(0);
-    expect(mistCatchment(MIST_REACH * 1.4, MIST_REACH)).toBe(0);
-    // Compact support with a zero slope at the edge, like the mound: the
-    // fragment that leaves at the disc's edge leaves nothing behind it.
-    for (const h of [1e-2, 1e-3, 1e-4]) {
-      const slope = (mistCatchment(MIST_REACH, MIST_REACH)
-        - mistCatchment(MIST_REACH - h, MIST_REACH)) / h;
-      expect(Math.abs(slope)).toBeLessThan(3 * h);
-    }
-    // The vertex stage reads the mound's radius and the fragment the reach.
-    expect(PATCH_VERTEX).toContain('float x = dot(offset, offset) / max(uMoundR * uMoundR, 1e-4);');
-    expect(PATCH_VERTEX).not.toMatch(/\buReach\s*\*\s*uReach\b/);
-    expect(PATCH_FRAGMENT).toContain('float reach2 = uReach * uReach;');
-  });
-});
-
-/* -------------------------------------------------------------------------- *
- * The eye, the reach, and the one radius the mouth already owns.
- * -------------------------------------------------------------------------- */
-
-describe('colony mist — the eye and the edge', () => {
-  it('goes EXACTLY dark at the sink and is EXACTLY open outside 0.98 of the rim', () => {
-    // ⭐⭐ THE EYE IS AN ABSENCE, LIKE THE PUPIL ABOVE IT — never a drawn dark
-    // disc, which is this scene's additive idiom for a hole. `smoothstep` is
-    // exactly 0 at or below its lower edge and exactly 1 at or above its upper
-    // one, so both ends are identities rather than approximations.
-    const gate = (r: number): number => {
-      const lo = COHORT_RIM_R * MIST_GATE_IN;
-      const hi = COHORT_RIM_R * 0.98;
-      const t = Math.min(1, Math.max(0, (r - lo) / (hi - lo)));
-      return t * t * (3 - 2 * t);
-    };
-    expect(gate(0)).toBe(0);
-    expect(gate(COHORT_RIM_R * MIST_GATE_IN)).toBe(0);
-    expect(gate(COHORT_RIM_R * 0.98)).toBe(1);
-    expect(gate(COHORT_RIM_R)).toBe(1);
-    expect(gate(COHORT_RIM_R * 4)).toBe(1);
-    // ⚠️ FULLY OPEN BEFORE THE LIP, WHERE THE PILE PEAKS. A gate still climbing
-    // at the rim would eat the gather it exists to frame.
-    expect(COHORT_RIM_R * 0.98).toBeLessThan(COHORT_RIM_R);
-    expect(PATCH_FRAGMENT)
-      .toContain('float gate = smoothstep(uRimR * uGateIn, uRimR * 0.98, r);');
-  });
-
-  it('reads the mouth’s OWN radius and level, rather than restating either', () => {
-    // ⭐⭐⭐ TWO HOLES AT ONE COHORT IS THE FAILURE THESE IMPORTS PREVENT. A mist
-    // that went dark inside 1.6 wu while the mouth's hole was 0.52 would be two
-    // different holes, drawn by two layers that both believed they were right —
-    // and that is not hypothetical: the branch shipped exactly that mismatch
-    // until 2026-09-02, because a DIAMETER had been read as a radius.
-    expect(PATCH.uniforms.uRimR.value).toBe(COHORT_RIM_R);
-    expect(PATCH.uniforms.uLevel.value).toBe(COHORT_INTAKE_LEVEL);
-    // The import, not the number: a literal here is the whole bug class.
-    expect(SOURCE).toMatch(/import\s*\{[\s\S]*?COHORT_RIM_R[\s\S]*?\}\s*from\s*'\.\/colonyCohort'/);
-    expect(SOURCE).toMatch(/import\s*\{[\s\S]*?COHORT_INTAKE_LEVEL[\s\S]*?\}\s*from\s*'\.\/colonyCohort'/);
-    expect(SOURCE).toContain('uRimR: { value: COHORT_RIM_R }');
-    // ⚠️ And no bare 1.6 or 0.7 anywhere a uniform is bound.
-    expect(SOURCE).not.toMatch(/uRimR:\s*\{\s*value:\s*1\.6\s*\}/);
-    // The gate, the eye, the pile and the wake are all fractions of that ONE
-    // radius, so the whole patch follows the mouth when the mouth moves.
-    for (const term of [
-      'uRimR * uGateIn', 'uRimR * 0.98', 'clamp(uRimR / r, 0.0, 1.0)',
-      'clamp(uRimR * uGulpR / r, 0.0, 1.0)', 'uRimR * 1.2', 'uRimR * 2.5',
-    ]) {
-      expect(PATCH_FRAGMENT).toContain(term);
-    }
-  });
-
-  it('discards outside the catchment, because the quad is square and the disc is not', () => {
-    // ⭐ 21.5 % OF THE QUAD IS CORNER. The patch is a disc of radius `uReach`
-    // inside a square of half-extent `uReach`, so a fifth of every fragment is
-    // outside the catchment entirely — and the weight there is zero anyway, so
-    // discarding is both cheaper and the only thing that keeps the patch from
-    // drawing a faint SQUARE under each cohort.
-    expect(PATCH_FRAGMENT).toContain('if (r2 > reach2) discard;');
-    const guard = PATCH_FRAGMENT.indexOf('if (r2 > reach2) discard;');
-    expect(guard).toBeGreaterThan(0);
-    // …and it is the FIRST statement of main, before any fetch or back-trace.
-    const body = PATCH_FRAGMENT.indexOf('void main() {');
-    expect(PATCH_FRAGMENT.slice(body, guard)).not.toMatch(/texture2D|mistBacktrace\s*\(/);
-    // 1 - pi/4 of a square is outside its inscribed disc.
-    expect(1 - Math.PI / 4).toBeCloseTo(0.2146, 4);
-  });
-
-  it('never draws structure it cannot see, and pays for it only where it shows', () => {
-    // ⭐⭐ BOTH BACK-TRACES AND ALL FOUR FETCHES SIT BEHIND ONE GUARD. Below
-    // `MIST_FINE_LO` on the catchment weight the fragment is a discard and a
-    // multiply, which is what makes a 28 wu patch per cohort affordable.
-    expect(PATCH_FRAGMENT).toContain('float fine = smoothstep(uFineLo, uFineHi, near);');
-    expect(PATCH_FRAGMENT).toContain('if (fine > 0.002) {');
-    const guard = PATCH_FRAGMENT.indexOf('if (fine > 0.002) {');
-    for (const call of ['mistBacktrace(d, t0)', 'mistBacktrace(d, t1)']) {
-      expect(PATCH_FRAGMENT.indexOf(call)).toBeGreaterThan(guard);
-    }
-    // The band, in world units: the structure fades in over 3.6 wu and is never
-    // seen switching on. (w = (1 - r²/R²)², so r = R·sqrt(1 - sqrt(w)).)
-    const radiusAt = (w: number): number => MIST_REACH * Math.sqrt(1 - Math.sqrt(w));
-    expect(radiusAt(MIST_FINE_LO)).toBeCloseTo(12.97, 2);
-    expect(radiusAt(MIST_FINE_HI)).toBeCloseTo(9.42, 2);
-    expect(radiusAt(MIST_FINE_LO) - radiusAt(MIST_FINE_HI)).toBeCloseTo(3.56, 2);
-    expect(MIST_FINE_LO).toBeLessThan(MIST_FINE_HI);
   });
 });
 
@@ -443,11 +233,11 @@ describe('colony mist — the share drives the sink', () => {
     // factor is computed ONCE PER INSTANCE in the vertex stage and carried as a
     // varying, so the pin is the vertex line and the reading is the fragment's
     // two multiplies.
-    expect(PATCH_VERTEX).toContain(
+    expect(LENS_VERTEX).toContain(
       'vShareF = mix(uShareFloor, 1.0, clamp(aShare / max(uShareMax, 1e-6), 0.0, 1.0));',
     );
-    expect(PATCH_VERTEX).toContain('varying float vShareF;');
-    expect(PATCH_FRAGMENT).toContain('varying float vShareF;');
+    expect(LENS_VERTEX).toContain('varying float vShareF;');
+    expect(LENS_FRAGMENT).toContain('varying float vShareF;');
     // …and the TS is that expression, term for term, in a language a test can
     // evaluate. Both are read out of the source so a rename on either side
     // fails here rather than in a browser.
@@ -468,37 +258,41 @@ describe('colony mist — the share drives the sink', () => {
   it('scales the SINK and the PILE and nothing else, the gulp least of all', () => {
     // ⭐⭐ ONE FACTOR, TWO READERS, AND THEY ARE THE SAME QUANTITY SAID TWICE:
     // `d(r²)/dt = -k` is the speed the streamlines run at, and the pile is what
-    // arriving at that speed leaves at the lip. Scaling only the sink would
-    // give a slow cohort a lip as bright as a fast one's.
-    expect(PATCH_FRAGMENT).toContain('float r0 = sqrt(r2 + uK * vShareF * tau);');
-    expect(PATCH_FRAGMENT).toContain('float pile = uConc * vShareF * c * c * c;');
+    // arriving at that speed leaves where the disc's inner edge is. Scaling only
+    // the sink would give a slow cohort an edge as bright as a fast one's.
+    expect(LENS_FRAGMENT).toContain('float r0 = sqrt(r2 + uK * vShareF * tau);');
+    expect(LENS_FRAGMENT).toContain('float pile = uConc * vShareF * cc * cc * cc');
     // ⭐ AND THE BLOCK FLARE IS DELIBERATELY NOT SCALED: one block is one block,
-    // whichever cohort won it, so the gulp adds to the pile AFTER the share has
-    // weighed it.
-    const pile = PATCH_FRAGMENT.indexOf('float pile = uConc * vShareF');
-    const gulp = PATCH_FRAGMENT.indexOf('pile += ');
-    expect(gulp).toBeGreaterThan(pile);
-    expect(PATCH_FRAGMENT).not.toMatch(/pile \+= [^;]*vShareF/);
+    // whichever cohort won it, so the gulp is ADDED to the pile after the share
+    // has weighed it.
+    expect(LENS_FRAGMENT).toMatch(/pile = uConc \* vShareF[^;]*\+ 2\.2 \* gulp/);
+    expect(LENS_FRAGMENT).not.toMatch(/gulp \* [^;]*vShareF/);
     // Exactly two readings of the factor in the fragment, so a third would be a
     // deliberate edit rather than a drift.
-    expect([...PATCH_FRAGMENT.matchAll(/vShareF/g)]).toHaveLength(3); // decl + 2
-    // ⚠️ It weighs no colour and no amplitude. `uAmp` is still the layer's ONLY
-    // scale on its brightness; the share changes how the mist MOVES.
-    expect(PATCH_FRAGMENT).toContain('* path * uAmp;');
-    expect(PATCH_FRAGMENT).not.toMatch(/uColor[^;]*vShareF|vShareF[^;]*uAmp/);
+    expect([...LENS_FRAGMENT.matchAll(/vShareF/g)]).toHaveLength(3); // decl + 2
+    // ⚠️ It weighs no colour and no amplitude. `uAmp` is still the program's
+    // ONLY scale on its brightness; the share changes how the substance MOVES.
+    expect(LENS_FRAGMENT).toContain('acc.rgb * uAmp * cohortEnergy');
+    expect(LENS_FRAGMENT).not.toMatch(/uCol\w+[^;]*vShareF|vShareF[^;]*uAmp/);
   });
 
-  it('cannot raise the layer’s ceiling, because it is 1 at the busiest cohort', () => {
-    // ⭐ THE SUPREMUM DID NOT MOVE WHEN THE SHARE ARRIVED, and that is a
-    // property of the factor's shape rather than a coincidence: it is exactly 1
-    // at `shareMax` and below 1 everywhere else, so it only ever turns cohorts
-    // DOWN. The additive collision with the mark above is unchanged.
-    expect(mistShareFactor(MAX, MAX, MIST_SHARE_FLOOR)).toBe(1);
-    expect(mistPatchSupremum()).toBeCloseTo(1.95, 2);
-    expect(mistPatchSupremum(true)).toBeCloseTo(3.05, 2);
-    // …and at the floor the same two terms are what come down: `uK` off the
-    // speed and `uConc` off the pile, which is a THIRD of the pile at 0.35.
-    expect(MIST_CONC * MIST_SHARE_FLOOR).toBeCloseTo(0.56, 6);
+  it('reaches the SPECKS too, at the same rate, through the layer above', () => {
+    // ⚠️⚠️ THE MOTES CANNOT READ `aShare`. Their geometry is a `THREE.Points`
+    // with one vertex per MOTE, so a per-instance lane would be read by the
+    // first ninety-sixth of the colony's specks and by nothing else — which is
+    // why `ColonyCohorts` runs THIS function on the CPU and writes its result
+    // into `aStrength`. The parity that matters is that it is the same
+    // function: a mote falling at a rate its own streamlines do not run at is a
+    // parcel of a substance it is not part of.
+    const layer = readFileSync(
+      resolve(process.cwd(), 'src/components/ColonyCohorts.tsx'),
+      'utf8',
+    );
+    expect([...layer.matchAll(/mistShareFactor\(share\[index\] \?\? 0, shareMaxRef\.current\)/g)])
+      .toHaveLength(2);
+    // …and the same floor on both sides, because the CPU call takes the default.
+    expect(mistShareFactor(0, 1)).toBe(MIST_SHARE_FLOOR);
+    expect(LENS.uniforms.uShareFloor.value).toBe(MIST_SHARE_FLOOR);
   });
 });
 
@@ -605,15 +399,16 @@ describe('colony mist — the noise tile', () => {
     }
   });
 
-  it('is the ONE tile every patch reads, mipmapped and repeating', () => {
+  it('is the ONE tile the substance is read out of, mipmapped and repeating', () => {
     // ⭐ MODULE-LAZY AND SHARED: two tiles would be two substances, 256 kB
-    // each, with a filament under one cohort matching nothing under the next.
-    // ⚠️ It had a second reader — the ambient sheets — until 2026-09-02, and
-    // laziness still earns its keep: the patch is the only draw left, so a
-    // scene with no attested producer never builds the tile at all.
+    // each, with a filament in one cohort's disc matching nothing in the next.
+    // ⚠️ It had a second reader — the ambient sheets — until 2026-09-02 and a
+    // third — the intake patch — until 2026-09-03, and laziness still earns its
+    // keep: the lensed mark is the only draw left, so a scene with no attested
+    // producer never builds the tile at all.
     const texture = makeMistNoiseTexture();
     expect(makeMistNoiseTexture()).toBe(texture);
-    expect(PATCH.uniforms.uNoise.value).toBe(texture);
+    expect(LENS.uniforms.uNoise.value).toBe(texture);
     // ⚠️ THE MIPS ARE THE WHOLE REASON THIS IS A TEXTURE AND NOT A LATTICE.
     // R19 measured unfiltered grain at this scale aliasing or prefiltering to
     // nothing past ~25 wu; the app camera stands 100+ wu from a cohort.
@@ -630,228 +425,82 @@ describe('colony mist — the noise tile', () => {
 });
 
 /* -------------------------------------------------------------------------- *
- * The materials themselves.
+ * A library, and the one program that compiles it.
  * -------------------------------------------------------------------------- */
 
-describe('colony mist — the material', () => {
-  it('binds every constant the proofs above rest on', () => {
-    const bound: Record<string, number> = {
-      uReach: MIST_REACH,
-      uMoundR: MIST_MOUND_R,
-      uFloorDepth: MIST_FLOOR_DEPTH,
-      uLevel: COHORT_INTAKE_LEVEL,
-      uRimR: COHORT_RIM_R,
-      uK: MIST_SINK_K,
-      uSwirl: MIST_SWIRL,
-      uPeriod: MIST_PERIOD,
-      uDrift: MIST_DRIFT,
-      uDriftSign: MIST_DRIFT_SIGN,
-      uGrain: MIST_GRAIN,
-      uRidge: MIST_RIDGE,
-      uRidgePow: MIST_RIDGE_POW,
-      uFil: MIST_FIL,
-      uContrastNear: MIST_CONTRAST_NEAR,
-      uContrastFar: MIST_CONTRAST_FAR,
-      uFineLo: MIST_FINE_LO,
-      uFineHi: MIST_FINE_HI,
-      uConc: MIST_CONC,
-      uShareFloor: MIST_SHARE_FLOOR,
-      // ⚠️ 1 AND NOT 0: an unwritten divisor must read shares as themselves,
-      // not divide by nothing. `ColonyCohorts` overwrites it every frame from
-      // the maximum its own lane walk found.
-      uShareMax: 1,
-      uGulpR: MIST_GULP_R,
-      uWake: MIST_WAKE,
-      uWakeW: MIST_WAKE_W,
-      uWakeLen: MIST_WAKE_LEN,
-      uGateIn: MIST_GATE_IN,
-      uPathMax: MIST_PATH_MAX,
-      uAmp: MIST_AMP,
-      uContextEnergy: 1,
-      uTime: 0,
-    };
-    for (const [name, value] of Object.entries(bound)) {
-      expect(`${name}: ${PATCH.uniforms[name]?.value}`).toBe(`${name}: ${value}`);
+describe('colony mist — a library with one compiler', () => {
+  it('ships no material of its own, and no `texture2D` anywhere', () => {
+    // ⭐⭐⭐ THE FILE STOPPED DRAWING ON 2026-09-03, and this is the assertion
+    // that says so rather than the header. A factory here would be a second
+    // picture of the substance beside the computed one — which is exactly the
+    // composed form the lensed mark replaced.
+    const code = stripComments(SOURCE);
+    expect(code).not.toMatch(/new THREE\.ShaderMaterial/);
+    expect(code).not.toMatch(/export function make\w*Material/);
+    // ⭐⭐ AND THE FETCH IS GONE WITH IT. `MIST_NOISE_GLSL` sampled the tile with
+    // `texture2D` and let the driver pick the mip from screen derivatives, which
+    // is right for a surface and WRONG inside a ray march: neighbouring rays end
+    // at unrelated places, the derivatives explode along one axis and the tile
+    // comes back in dashed radial stripes. With the patch retired there is one
+    // fetch left in the feature and it states its level — so the lens's "no
+    // texture2D" guard is now a fact about the whole library rather than a claim
+    // about one program.
+    expect(code).not.toContain('texture2D');
+    expect(MIST_NOISE_LOD_GLSL).toContain('textureLod(uNoise, p, uLod)');
+  });
+
+  it('lends every snippet it exports to a program that compiles it', () => {
+    // ⚠️ A LIBRARY NOBODY INCLUDES IS DEAD TEXT NO GUARD WOULD CATCH. The
+    // shader-guard files credit BORROWED snippets against the programs that
+    // paste them in, so a snippet exported here and compiled nowhere would
+    // simply vanish from both ledgers — short on neither side, and wrong. This
+    // is the other half of that pair: every string this module exports is in the
+    // one program that assembles the substance.
+    const snippets: [string, string][] = [
+      ['MIST_NOISE_LOD_GLSL', MIST_NOISE_LOD_GLSL],
+      ['MIST_MEDIUM_GLSL', MIST_MEDIUM_GLSL],
+      ['MIST_BACKTRACE_GLSL', MIST_BACKTRACE_GLSL],
+      ['MIST_FIBRES_GLSL', MIST_FIBRES_GLSL],
+      ['MIST_DISC_COLOR_GLSL', MIST_DISC_COLOR_GLSL],
+    ];
+    for (const [name, snippet] of snippets) {
+      const body = squash(stripComments(snippet));
+      expect(`${name}: ${LENS_FRAGMENT.includes(body)}`).toBe(`${name}: true`);
     }
-    // ⚠️ NO SINK ARRAY AND NO COUNT — see the guards. One instance is one sink.
-    expect(PATCH.uniforms.uSinks).toBeUndefined();
-    expect(PATCH.uniforms.uSinkCount).toBeUndefined();
-    // ⚠️ AND NO GROUND TERM ANYWHERE IN THE LAYER. `uBase` was the ambient
-    // sheets' weight; the sheets were measured out on 2026-09-02 (2/255 at
-    // their brightest pixel anywhere, 0.90 ms of the layer's 1.06 ms at the app
-    // camera), so the mist is drawn where it is taken and nowhere else.
-    expect(PATCH.uniforms.uBase).toBeUndefined();
-  });
-
-  it('wears the mouth’s own colour, because they are one substance', () => {
-    // ⭐⭐⭐ ONE SUBSTANCE, ONE REGISTER. The mound's top IS the surface the
-    // hole shows, so a viewer looking into the mouth and a viewer looking at
-    // the mist beside it must not see two colours of the same medium.
-    //
-    // ⚠️ THE PREVIEW USED TWO COLOURS AND NEITHER IS KEPT: a deeper blue
-    // (0.10, 0.58, 1.0) tinting toward (0.102, 0.819, 1.0) as the medium
-    // gathered — and that bright end is EXACTLY `PEER_NETWORK_PALETTE.scaffold`,
-    // a token whose whole job is to name a role INSIDE the peer plane.
-    const colour = PATCH.uniforms.uColor.value as THREE.Color;
-    expect([colour.r, colour.g, colour.b]).toEqual([...COHORT_INTERIOR_COLD]);
-    // ⭐ Blue is EXACTLY 1.0, like every other colour this feature emits, so
-    // the additive ceiling's binding channel is unchanged by this layer.
-    expect(COHORT_INTERIOR_COLD[2]).toBe(1);
-  });
-
-  it('is additive, unlit and depth-read-only, exactly like the mark above it', () => {
-    expect(PATCH.transparent).toBe(true);
-    expect(PATCH.depthTest).toBe(true);
-    expect(PATCH.depthWrite).toBe(false);
-    expect(PATCH.blending).toBe(THREE.AdditiveBlending);
-    expect(PATCH.toneMapped).toBe(false);
-    // Seen from below as often as from above: the camera goes under the plane,
-    // and a single-sided surface disappears from there.
-    expect(PATCH.side).toBe(THREE.DoubleSide);
-    // Energy multiplies RGB and NEVER alpha — the house idiom that keeps
-    // additive damping linear.
-    expect(PATCH_FRAGMENT)
-      .toContain('gl_FragColor = vec4(uColor * v * cohortEnergy, min(v, 1.0));');
-  });
-
-  it('carries the patch’s extent in a UNIFORM, so the reach stays a knob', () => {
-    // ⚠️ BAKING `2 * MIST_REACH` INTO THE GEOMETRY WOULD TURN THE REACH KNOB
-    // INTO A REBUILD — the same law `COHORT_FACE_HALF` rides `uHalf` for. The
-    // geometry `ColonyCohorts` must build is the UNIT plane, subdivided.
-    expect(PATCH_VERTEX).toContain('vec2 offset = position.xy * (uReach * 2.0);');
-    expect(MIST_PATCH_SEGMENTS).toBe(24);
-    // One mound radius spans 6 of the 24 subdivisions, which is what makes the
-    // lift a mound rather than a tent.
-    expect((MIST_MOUND_R / (MIST_REACH * 2)) * MIST_PATCH_SEGMENTS).toBeCloseTo(6, 6);
-  });
-
-  it('takes the face’s two lanes on the SAME clock, and one the face refuses', () => {
-    // ⭐ ONE GEOMETRY, ONE `wonAtRef`, ONE STAMP. `aGulp` is the sim second of
-    // the block this cohort won; the mouth and the mist under it must swallow
-    // the SAME block, so the lane is re-laid off the same map in the same
-    // effect `cohortWinLane` already runs in.
-    expect(PATCH_VERTEX).toContain('attribute float aSeed;');
-    expect(PATCH_VERTEX).toContain('attribute float aGulp;');
-    expect(PATCH_VERTEX).toContain('vGulp = aGulp;');
-    // ⭐⭐ …AND THE THIRD LANE IS THIS LAYER'S ALONE. `aShare` is the cohort's
-    // fraction of its window, and the mist is the only draw with a RATE to
-    // spend it on — the sink's k is wu²/s. Neither aperture program declares
-    // it (`colonyCohort.ts`'s face factory says why, and
-    // `vertexAttributeBudget.test.ts` charges the difference).
-    expect(PATCH_VERTEX).toContain('attribute float aShare;');
-    // ⚠️ `uTime` is `simClock.elapsedSec` on both draws, because the envelope
-    // is `uTime - vGulp` and a `performance.now()` stamp is a difference of
-    // hundreds of thousands that reads as zero.
-    expect(PATCH_FRAGMENT).toContain(squash(stripComments(COHORT_GULP_GLSL)));
-    // The shared snippet, not a copy: two hand-copied envelopes would drift
-    // apart the first time either was tuned.
-    expect(SOURCE).toContain('${COHORT_GULP_GLSL}');
-    expect(SOURCE).not.toContain('float gulpAge = uTime - vGulp;');
-    // And the sentinel is silent here exactly as it is on the face.
-    const gulp = (age: number): number =>
-      age > 0
-        ? Math.exp(-age / COHORT_GULP_FALL) * (1 - Math.exp(-age / COHORT_GULP_RISE))
-        : 0;
-    for (let k = 0; k <= 200; k += 1) {
-      expect(gulp((k / 200) * 1e5 - COHORT_NEVER_WON)).toBe(0);
+    // …and the two that belong to the VERTEX stage are there instead, which is
+    // where a per-instance fact has to be computed.
+    for (const [name, snippet] of [
+      ['MIST_SHARE_FACTOR_GLSL', MIST_SHARE_FACTOR_GLSL],
+      ['MIST_SEAT_DRIFT_GLSL', MIST_SEAT_DRIFT_GLSL],
+    ] as const) {
+      const body = squash(stripComments(snippet));
+      expect(`${name}: ${LENS_VERTEX.includes(body)}`).toBe(`${name}: true`);
     }
   });
 
-  it('recedes with an inspection in RGB only, off the SAME exemption the mark uses', () => {
-    // ⭐ THE MIST MUST NOT FIGHT AN INSPECTION. `NetworkColony` winds passive
-    // peer context down as the camera closes on a cell, and the patch is
-    // passive context; it recedes with everything else, and it comes back at
-    // the one range anybody looks at a cohort from — the same exemption, the
-    // same string, so the mark and the mist under it cannot drift apart.
-    expect(PATCH_FRAGMENT).toContain(squash(stripComments(COHORT_CONTEXT_ENERGY_GLSL)));
-    expect(PATCH_FRAGMENT).toContain('distance(cameraPosition, vOrigin)');
-    expect(SOURCE).toContain('${COHORT_CONTEXT_ENERGY_GLSL}');
-    expect(PATCH_VERTEX).toContain('vOrigin = origin.xyz;');
-    expect(PATCH_VERTEX)
-      .toContain('vec4 origin = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);');
-    // ⭐ AND THE EXEMPTION IS WHY THE LAYER CAN BE INSTANCED AT ALL: it
-    // measures the camera against ONE instance origin — "the camera came for
-    // this" — which the retired ambient sheets, 230 wu across and belonging to
-    // nobody, could never have supplied.
-  });
-
-  it('drifts on the colony’s own tangent, which is what gives the wake a side', () => {
-    // ⭐ THE COHORT MOVES THROUGH THE MIST AS THE PLATE TURNS, so the depleted
-    // band trails BEHIND it. The direction is the tangential one at the sink,
-    // computed once per instance in the vertex stage — a per-fragment version
-    // would be the same number computed 10^5 times.
-    expect(PATCH_VERTEX).toContain('vec2 tangent = vec2(-seat.z, seat.x);');
-    expect(PATCH_VERTEX).toContain('vDrift = tangentLen > 1e-4 ? (tangent / tangentLen) * uDriftSign : vec2(1.0, 0.0);');
+  it('drifts on the colony’s own tangent, which is what gives the flow a side', () => {
+    // ⭐ THE COHORT MOVES THROUGH THE MIST AS THE PLATE TURNS, so the substance
+    // streams past it. The direction is the tangential one at the sink, computed
+    // once per instance in the vertex stage — a per-fragment version would be
+    // the same number computed 10^5 times, and inside a ray march it would be
+    // computed once per STEP.
+    expect(LENS_VERTEX).toContain('vec2 tangent = vec2(-seat.z, seat.x);');
+    expect(LENS_VERTEX).toContain(
+      'vDrift = tangentLen > 1e-4 ? (tangent / tangentLen) * uDriftSign : vec2(1.0, 0.0);',
+    );
     // ⚠️ The seat is the instance's COLONY-FRAME position — `instanceMatrix`
-    // alone, without the model matrix — because `vP` lives in that frame too.
-    expect(PATCH_VERTEX)
+    // alone, without the model matrix — because the medium is sampled in that
+    // frame too. A world-frame seat would sweep several world units a second as
+    // the plate turns, and the substance would swim past its own mouth.
+    expect(LENS_VERTEX)
       .toContain('vec3 seat = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;');
     // A sign, and the derivation: the group turns by `rotation.y -= rate * dt`,
-    // so a cohort's world velocity is along (-z, x) and the mist streams past
-    // it the other way. Still a knob, because a sign is what a screenshot
-    // settles.
+    // so a cohort's world velocity is along (-z, x) and the mist streams past it
+    // the other way. Derived and still only derived — a sign is what a
+    // screenshot settles, and the live leg owns it.
     expect(Math.abs(MIST_DRIFT_SIGN)).toBe(1);
     expect(MIST_DRIFT_SIGN).toBe(-1);
-    // The wake lives DOWNSTREAM — positive `along` — and only ever removes.
-    expect(PATCH_FRAGMENT).toContain('float along = dot(d, vDrift);');
-    expect(PATCH_FRAGMENT).toContain('float across = dot(d, vec2(-vDrift.y, vDrift.x));');
-    expect(PATCH_FRAGMENT).toContain('(1.0 - uWake * wake)');
-    expect(MIST_WAKE).toBeGreaterThan(0);
-    expect(MIST_WAKE).toBeLessThan(1);
-    // Its extent, in world units: a Gaussian 2.2 wu across the drift, opening
-    // at 1.2 rim radii and gone by 17 wu.
-    expect(MIST_WAKE_W).toBe(2.2);
-    expect(MIST_WAKE_LEN).toBe(17);
-    expect(MIST_WAKE_LEN).toBeGreaterThan(COHORT_RIM_R * 2.5);
+    expect(LENS.uniforms.uDriftSign.value).toBe(MIST_DRIFT_SIGN);
   });
 });
 
-/* -------------------------------------------------------------------------- *
- * The ceiling the layer shares with the mark above it.
- * -------------------------------------------------------------------------- */
-
-describe('colony mist — the ceiling it shares with the mouth', () => {
-  it('states its own arithmetic supremum, and it is ABOVE the mark’s headroom', () => {
-    // ⚠️⚠️ THIS IS A HANDOVER TO T6 RATHER THAN A PASSING GRADE. The face and
-    // the aura sum to 0.807773 in blue over a 700-camera sweep — the number
-    // `cohortAperture.test.ts` re-measures beside this one — leaving 0.1922.
-    // ⭐ It was 0.925777 and 0.0742 when this file was written: the commit that
-    // MOUNTS the patch also brings the drawn lip to the preview's own faint
-    // `lipAmp` (`COHORT_FACE_RIM_AMP` 1.05 → 0.42), because the bright edge of
-    // the mouth is this medium piling up at it and not a ring. So the mist
-    // arrives into two and a half times the clearance the material was written
-    // against. Every colour this feature emits is exactly 1.0 in blue, so blue
-    // binds here too. The patch's brightest ring is where its gate finishes opening
-    // — 0.98 · COHORT_RIM_R — which is the SAME radius the face's lip peaks at,
-    // and the mound puts it 0.88 wu under the plane there, so from anything but
-    // a grazing camera the two project on top of each other.
-    //
-    // ⭐ THE COLLISION IS STRUCTURAL, NOT ACCIDENTAL, AND IT IS NOT SOMETHING
-    // TO INVENT A KNEE FOR HERE: the preview the user approved had exactly this
-    // brightness beside exactly this mouth. `uAmp` (knob `cohortMistAmp`) is
-    // the single scale, and T6 measures the saturated pixels the R19 way —
-    // mark-on minus mark-off, never a raw count.
-    const rest = mistPatchSupremum();
-    const swallowing = mistPatchSupremum(true);
-    expect(rest).toBeCloseTo(1.95, 2);
-    expect(swallowing).toBeCloseTo(3.05, 2);
-    expect(swallowing).toBeGreaterThan(rest);
-    const headroom = 1 - 0.807773;
-    expect(headroom).toBeCloseTo(0.1922, 4);
-    expect(rest).toBeGreaterThan(headroom);
-    // The two rings really are at the same radius, and the mound really does
-    // hold that radius under the plane rather than at it.
-    expect(COHORT_RIM_R * 0.98).toBeCloseTo(1.568, 6);
-    expect(mistSurfaceDrop(COHORT_RIM_R * 0.98)).toBeCloseTo(0.876, 3);
-  });
-
-  it('falls with uAmp, which is the ONLY scale on the layer', () => {
-    // ⭐ ONE HANDLE. Every other constant shapes the mist; this one weighs it,
-    // and the supremum above is linear in it, so a live measurement translates
-    // directly into a knob setting.
-    expect(MIST_AMP).toBe(1);
-    expect(PATCH.uniforms.uAmp.value).toBe(MIST_AMP);
-    // The last multiply on the program, so nothing is applied after it.
-    expect(PATCH_FRAGMENT).toContain('* path * uAmp;');
-  });
-});

@@ -114,17 +114,28 @@ export interface QualityCascade {
     energyScale: number;
     expandedLineScale: number;
   };
-  /* ⚠️ NOTHING OF THE POW COHORTS' MIST IS ON THIS CASCADE, AND THAT IS
-   * DELIBERATE. A `mistHazeSheets` field lived here (2 / 1 / 0) for the ambient
-   * sheets under the colony plane; the sheets were removed on 2026-09-02 after
-   * a live leg measured them at 2/255 at their brightest pixel anywhere on the
-   * canvas — the three tiers were indistinguishable by eye — while one of them
-   * cost 0.90 ms of the layer's 1.06 ms of frame GPU at the app camera. What is
-   * left of the mist is the INTAKE PATCH under each cohort's mouth, and that is
-   * the feature itself (「pow cohort 汲取能量的视觉效果」), not ambience: a tier
-   * that dropped it would leave the mouths open onto nothing, which is a
-   * different claim about what a cohort does rather than a coarser picture of
-   * the same scene. So no field here names it, at any tier. */
+  /**
+   * RK4 steps a POW cohort's lensed mark may spend on one ray.
+   *
+   * ⭐⭐⭐ THE PRECISION FOLDS AND THE PRESENCE NEVER DOES. A cohort's mark is
+   * an IMAGE COMPUTED PER PIXEL — the light ray is traced backward around a
+   * Schwarzschild mass and reported where it ends — so its whole cost is the
+   * pixels the quad covers times the steps a ray takes, and the steps are the
+   * only lever a tier has that does not change what the scene claims. At 40
+   * steps a cohort is the same cohort with a coarser photon ring; a cohort that
+   * is not drawn is a producer the scene is lying about. ⛔ So no tier here
+   * drops the mark, the motes beside it, or the shadow's occlusion.
+   *
+   * ⚠️ THESE THREE ARE STARTING VALUES AND ARE NOT YET MEASURED. 96 is the
+   * approved preview's own count (`COHORT_LENS_STEPS`); 64 and 40 are steps
+   * down the lab never priced, because the number nobody has is what the trace
+   * costs at a close camera on the reference GPU. The live leg owns it: the
+   * frame that decides them is one hole filling the screen at 90 px/wu, and the
+   * frame that decides whether the default tier stays at 96 is the app camera.
+   * ⚠️ A ray that lingers near the photon sphere exhausts whatever count it is
+   * given, so a lower tier makes the ring coarser rather than the trace wrong.
+   */
+  cohortLensSteps: number;
 }
 
 /** High preserves the production DPR and ambience ceiling. Every preset trims
@@ -135,6 +146,7 @@ export const QUALITY_PRESETS: Record<QualityPreset, QualityCascade> = {
     maxDpr: 2, starsCount: 2000, particleCapMul: 1,
     dischargeArms: 3, activeSamplesPerHop: 12,
     nucleusNearCap: 12, populationCapMul: 1,
+    cohortLensSteps: 96,
     memorySignal: {
       coreMinPx: 24, compactLinePx: 0.55, energyScale: 1,
       expandedLineScale: 1,
@@ -144,6 +156,7 @@ export const QUALITY_PRESETS: Record<QualityPreset, QualityCascade> = {
     maxDpr: 1.5, starsCount: 600, particleCapMul: 0.5,
     dischargeArms: 2, activeSamplesPerHop: 10,
     nucleusNearCap: 8, populationCapMul: 0.5,
+    cohortLensSteps: 64,
     memorySignal: {
       coreMinPx: 24, compactLinePx: 0.62, energyScale: 0.94,
       expandedLineScale: 1.06,
@@ -153,6 +166,7 @@ export const QUALITY_PRESETS: Record<QualityPreset, QualityCascade> = {
     maxDpr: 1, starsCount: 200, particleCapMul: 0.25,
     dischargeArms: 1, activeSamplesPerHop: 8,
     nucleusNearCap: 4, populationCapMul: 0.25,
+    cohortLensSteps: 40,
     memorySignal: {
       coreMinPx: 24, compactLinePx: 0.72, energyScale: 0.86,
       expandedLineScale: 1.15,

@@ -141,8 +141,21 @@ export const COHORT_HORIZON_FAR = 0.08;
  * nothing there to shine — that is why the film's disc has a gap inside it, and
  * why the gap is OUTSIDE the 2.6 rs shadow rather than flush with it. Written
  * as the multiple, never as 2.31, so it follows the mass.
+ *
+ * ⚠️ IT IS A FUNCTION AS WELL AS A CONSTANT, and the layer has to keep using the
+ * function: `cohortHorizon` is a live knob, and a knob that moved the mass while
+ * `uDiscIn` held 2.31 would open a gap of the wrong size — the shadow would grow
+ * out through its own accretion disc. One authority, re-derived per frame.
  */
-export const COHORT_DISC_IN = 3 * COHORT_HORIZON;
+export const COHORT_DISC_IN_HORIZONS = 3;
+
+/** The disc's inner edge for a given horizon: the ISCO, in world units. */
+export function cohortDiscInner(horizon: number): number {
+  return COHORT_DISC_IN_HORIZONS * horizon;
+}
+
+/** The same edge at the shipped mass: 2.31 world units. */
+export const COHORT_DISC_IN = cohortDiscInner(COHORT_HORIZON);
 
 /** The disc's outer edge at the near end of the fold, in world units: the
  *  intake's range, where the streak field carries it and the fibres have
@@ -158,6 +171,98 @@ export const COHORT_DISC_OUT = 28;
  * soft halo of intake rather than a scale model of a black hole.
  */
 export const COHORT_DISC_OUT_FAR = 6;
+
+/* ------------------------------------------- what other layers read off the mass */
+
+/**
+ * The apparent radius of the shadow, as a multiple of the horizon: `3√3/2`.
+ *
+ * ⭐⭐ A DISTANT OBSERVER DOES NOT SEE `rs`. The last ray that escapes has
+ * impact parameter `3√3 M = 3√3/2 · rs`, so the black disc in the picture is
+ * 2.598 horizons across in impact parameter and not one — which is why the
+ * trace below produces a shadow 2.6 times larger than the mass suggests, why
+ * the motes vanish THERE rather than at `rs`, and why the pick target is that
+ * radius too. Written as the ratio so everything derived from it follows the
+ * mass. It is not a number this file chose: `lensCaptured` resolves the same
+ * boundary out of the integration, to within one step.
+ */
+export const COHORT_SHADOW_RATIO = (3 * Math.sqrt(3)) / 2;
+
+/** The shadow's apparent radius for a given horizon, in world units.
+ *
+ *  ⚠️ A FUNCTION FOR THE REASON `cohortDiscInner` IS ONE: `cohortHorizon` is a
+ *  live knob, and the radius the motes vanish at has to follow the mass or the
+ *  specks disappear off the silhouette instead of into it. */
+export function cohortShadowRadius(horizon: number): number {
+  return COHORT_SHADOW_RATIO * horizon;
+}
+
+/**
+ * The cohort's pick radius, in world units. `ColonyNodes` re-exports it as
+ * `ATTESTED_HIT_RADIUS`, and it is the whole of what a viewer aims at.
+ *
+ * ⭐⭐⭐ IT IS THE SHADOW, AT THE NEAR END OF THE FOLD — 2.0 wu. The target is
+ * the one place on this mark a viewer can be in no doubt about: the black disc
+ * in the middle, which is the largest, most obviously deliberate feature the
+ * form has. Derived (`ratio · horizon`) rather than typed, so a retune of the
+ * mass moves the target with the picture; the preview's own literal was 2.0 and
+ * this is 2.0005.
+ *
+ * ⭐⭐ AND IT IS THE SAME SPHERE AT EVERY DISTANCE, WHICH IS DELIBERATE AND NOT
+ * AN OVERSIGHT. The drawn form folds with the camera — far away the shadow is
+ * 0.21 wu and the halo is six — but the hit sphere lives in the TOPOLOGY, which
+ * does not know where the camera is, and a pick radius that changed with it
+ * would be a target that moved under the cursor as the user dollied. So the far
+ * halo is explicitly NOT a hit target: it is a soft glow with no edge anybody
+ * could aim at, and aiming at the middle of it lands inside this sphere anyway.
+ *
+ * ⚠️⚠️ IT WENT UP FROM 1.5 wu, AND THE BOUND THAT SETTLES IT IS THE KEEP-OUT
+ * RATHER THAN THE COLONY'S SPACING. `COHORT_KEEP_OUT_R` in
+ * `derives/networkTopology.derive.ts` empties a 3.5 wu XZ disc around every
+ * attested position — a ghost or a staged peer inside it is pushed out to the
+ * rim, the measured belt and the local node exempt — so the closest a clickable
+ * neighbour may now stand is 3.5, and two pick spheres of 2.0 and a sighted
+ * peer's largest 1.0 still leave half a world unit of daylight.
+ * `cohortKeepOut.test.ts` pins the whole chain, since a derive may not import
+ * this file. ⚠️ Judge any change to it against that number and never against
+ * `COLONY_MIN_SPACING`, which bounds only the inferred scatter.
+ *
+ * ⭐ AND IT MUST NEVER GO SMALL AGAIN. This radius once made the producer the
+ * SMALLEST target in the colony at 0.375 wu, under the faintest roster rung's
+ * 0.425, and a full-canvas hover sweep of the running app found forty peers and
+ * zero miners. There is still exactly ONE number: no annulus, no second radius.
+ */
+export const COHORT_HIT_RADIUS = cohortShadowRadius(COHORT_HORIZON);
+
+/**
+ * How far short of a cohort's centre its own links stop, in world units.
+ *
+ * ⭐⭐⭐ A LINK RUNNING INTO THE MARK IS A LINE LAID ACROSS AN IMAGE OF BENT
+ * LIGHT. Everything inside this radius is the picture the trace computes — the
+ * shadow, the photon ring, the disc's inner edge and the fold of the far side
+ * over the top — and a colony link is a straight bright segment in the same
+ * plane, drawn additively with no depth to reject it. It would read as a spoke
+ * of a wheel through the one region of the scene that is saying "light does not
+ * go straight here". `ColonyEdges` therefore ends a cohort's links out here
+ * rather than at its node.
+ *
+ * ⭐ 3.0 wu, AND THE TWO INEQUALITIES ARE THE WHOLE JUSTIFICATION: it is
+ * OUTSIDE the disc's inner edge (`COHORT_DISC_IN`, 2.31 wu — so no link ends on
+ * top of the bright ring the ISCO makes) and INSIDE the keep-out (3.5 wu — so a
+ * peer displaced to the rim still has half a world unit of its own link left to
+ * draw, rather than one trimmed to a point). `cohortKeepOut.test.ts` pins
+ * `HIT < DISC_IN < LINK_STOP < KEEP_OUT` in one line.
+ *
+ * ⚠️ IT IS NOT `COHORT_HIT_RADIUS`, AND THE SPLIT IS DELIBERATE. The two
+ * consumers ask different questions — a line asks where the IMAGE ends, a click
+ * asks how far a viewer may aim without taking a neighbour's stop — and
+ * pretending they are one question means answering at least one of them wrong.
+ * The near disc reaches 28 wu, so neither of them is "where the light stops":
+ * beyond this radius the disc is a faint streak field the mesh is meant to show
+ * through, and a link crossing THAT is the vortex being seen through, which is
+ * what the outer disc is for.
+ */
+export const COHORT_LINK_STOP_R = 3.0;
 
 /* -------------------------------------------------------------------------- *
  * The fold: one number, measured in pixels per world unit.

@@ -9,6 +9,10 @@
 //     ONE glow primitive on a confidence gradient (rendered OVER the edges). A
 //     new block sends a radial brightness shockwave across these existing nodes;
 //     the local "you" is the galaxy's anchor, not drawn here.
+//   • ColonyCohorts — one ray-traced quad per POW cohort plus the specks falling
+//     into it: light bent around a mass lying in this plane. ⚠️ It is drawn LAST
+//     inside the rotating group because its shadow is the colony's only
+//     normally-blended occluder and it occludes by DRAW ORDER, not by depth.
 //   • ColonyCourierLayer — a faint glint accent riding the edge surge: a small,
 //     dimmed glow-mote flung node→node along the shortest-path tree, timed by the
 //     flood arrivals. The edge surge traces the actual route while the node
@@ -84,9 +88,10 @@ interface NetworkColonyProps {
   localVersion: string;
   /** The chain's recent mining cohorts, LIVE, by reference. Passed straight
    *  through to the cohort layer, which keeps a share lane written in place —
-   *  ⚠️ DORMANT under the aperture: neither of its programs declares `aShare`,
-   *  and the lane is held for the deferred 汲取 work rather than rebuilt later
-   *  (see that file's header). The topology is keyed on the producer key set
+   *  ⭐ the share IS the sink's strength there, so a cohort holding 62 % of its
+   *  window visibly draws the substance in faster than one holding 2 %, in the
+   *  disc and in the specks alike (see that file's header). The topology is
+   *  keyed on the producer key set
    *  alone (a per-block key would rebuild the colony's geometry once a block and
    *  truncate every in-flight wave), so the standings hanging off the staged
    *  nodes are stale between key-set changes and this is the live reading.
@@ -260,28 +265,14 @@ function NetworkColony({
             leg measured them at 2/255 at their own brightest pixel anywhere on
             the canvas while costing 0.90 ms of the layer's 1.06 ms at the app
             camera, so they were removed. The mist is now stated ONLY where it
-            is being taken — the intake patch under each cohort's mouth, drawn
-            by `ColonyCohorts` off that layer's own plan and lanes. */}
+            is being taken — inside the image each cohort's own mass makes of
+            it, drawn LAST in this group by `ColonyCohorts`. */}
         <ColonyEdges
           topology={topology}
           cf={cf}
           blockPulseAtMs={blockPulseAtMs}
           backfillActive={backfillActive}
           contextEnergyRef={linkContextEnergyRef}
-        />
-        {/* Drawn between the links and the marks: the widest structure in the
-            colony, and the only one whose middle is deliberately empty. The
-            links do not pass behind it — a cohort's own links STOP AT THE
-            APERTURE'S OUTER EDGE, in the layer above, because nothing here
-            occludes or depth-rejects anything and a line across the disc would
-            simply be added to it. */}
-        <ColonyCohorts
-          topology={topology}
-          producersRef={producersRef}
-          entryId={cf.entryId}
-          blockPulseAtMs={blockPulseAtMs}
-          backfillActive={backfillActive}
-          contextEnergyRef={nodeContextEnergyRef}
         />
         <ColonyNodes
           topology={topology}
@@ -291,6 +282,25 @@ function NetworkColony({
           selectedId={selectedId}
           onSelect={onSelect}
           localVersion={localVersion}
+          contextEnergyRef={nodeContextEnergyRef}
+        />
+        {/* ⚠️⚠️ LAST IN THE COLONY, AND THAT IS A REQUIREMENT RATHER THAN A
+            COMPOSITION PREFERENCE. A POW cohort's mark is an image of light bent
+            around a mass, and the black disc in the middle of it is the colony's
+            ONE normally-blended draw: a shadow is a place where light is
+            REMOVED, which an additive draw can only fail to add. So it OCCLUDES
+            BY DRAW ORDER — it darkens the edges and the nodes above, and nothing
+            that draws after it. It carries `renderOrder` 1 against their 0 for
+            the same reason, because three sorts equal render orders by DEPTH and
+            each of those layers is a single draw with one z for the whole
+            colony. It stays BEFORE the courier and the delivery, which fly above
+            the plane and must not be darkened by a hole they pass over. */}
+        <ColonyCohorts
+          topology={topology}
+          producersRef={producersRef}
+          entryId={cf.entryId}
+          blockPulseAtMs={blockPulseAtMs}
+          backfillActive={backfillActive}
           contextEnergyRef={nodeContextEnergyRef}
         />
         {overlay}

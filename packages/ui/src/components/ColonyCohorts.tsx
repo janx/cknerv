@@ -1,52 +1,59 @@
-// ColonyCohorts — what a POW cohort looks like: THE MARK IS THE APERTURE, AND
-// THE MIST UNDER IT IS WHAT THE APERTURE IS FOR.
+// ColonyCohorts — what a POW cohort looks like: A MASS IN THE MEMBRANE, AND THE
+// INTAKE IS THE IMAGE OF IT.
 //
-// A cohort is where the colony plane is OPEN, and this layer draws that opening
-// three times: a disc lying IN the plane, a camera-facing halo carrying the
-// same hole, and — under the plane — the PATCH of mist that hole is drinking.
-// Nothing volumetric, nothing hanging under the slab, and no second cadence:
-// one hole, two rays through it, and one surface being taken through it. And on
-// the block a cohort wins, its mouth SWALLOWS: the one thing this layer takes
-// from the block path is the flood's entry id, and the whole gate is a string
-// compare — see the invariant paragraph at the end of this header, which is the
-// argument that moved here.
+// ⭐⭐⭐ THE MARK IS COMPUTED AND NO LONGER COMPOSED. Until 2026-09-03 this layer
+// drew a cohort three times — a disc lying in the colony plane, a camera-facing
+// halo carrying the same hole, and a patch of mist under the plane the hole was
+// drinking. Seven rounds of that hand-built form reached a ceiling the user
+// named: it never looked like the film. The reason is structural. Gargantua's
+// image is a CONSEQUENCE of light bending around a mass, and a stack of
+// independently mapped parts cannot converge on shapes it does not contain. So
+// the layer is TWO DRAWS now:
 //
-// ⭐⭐⭐ THE PATCH IS THE INTAKE, AND IT IS THE POINT OF THE WHOLE FEATURE
-// (「重点是 pow cohort 汲取能量的视觉效果」). It is one instance per cohort, sharing
-// this layer's plan, its seed lane and its gulp lane — the same objects, so the
-// mouth and the mist under it cannot disagree about which cohort stands where
-// or which block it swallowed — lying 2.5 wu under the membrane and lifted into
-// a mound whose top is exactly the level the window shows. It carries the
-// medium's own texture advected along the streamlines of a sink with a vortex,
-// brightens as it gathers, goes dark inside the rim and thins in its wake. The
-// arithmetic and the design argument are in `materials/colonyMist`.
+//   • the LENS — one camera-facing quad per cohort (`materials/colonyLens`), in
+//     which every pixel's light ray is traced backward around a Schwarzschild
+//     mass and reported where it ends: in the horizon (black, and it hides what
+//     is behind), on the disc (the intake's own substance, sampled where the
+//     bent ray crosses the colony plane), or in the void. The shadow, the photon
+//     ring, the far side of the disc folded over the top, the beaming and the
+//     redshift all FOLLOW from that trace, at every camera angle;
+//   • the MOTES — 96 points per cohort (`materials/colonyMotes`), each living
+//     exactly one fall along the same sink's streamline, born out in the void
+//     and gone at the shadow's edge. A field alone cannot say how fast the
+//     substance is moving; these can, and that is the whole reason they exist.
 //
-// ⭐⭐ AND THIS LAYER IS NOW THE MIST'S ONLY DRAW. A sibling `ColonyMist` used
-// to lay up to two ambient sheets under the whole colony so the substance was
-// present everywhere and the patch had something to be brighter than; on
-// 2026-09-02 a live leg measured a sheet's own brightest pixel anywhere on the
-// canvas at 2/255 — invisible, and the three quality tiers indistinguishable —
-// while one sheet cost 0.90 ms of the layer's 1.06 ms of frame GPU at the app
-// camera. So the sheets went, and the mist's omnipresence is now stated by the
-// CATCHMENT alone: 14 wu of substance around each mouth, shown only where a
-// cohort is taking it. ⛔ No floor comes back without a NEW measurement.
+// ⭐⭐⭐ THE INTAKE IS STILL THE POINT OF THE WHOLE FEATURE (「重点是 pow cohort
+// 汲取能量的视觉效果」). What the disc shows IS the mist being taken: the medium,
+// the spiral back-trace and the sink's strength are `colonyMist.ts`'s own text,
+// compiled into the lens program, and the motes fall on the same arithmetic. One
+// substance, seen once as a field and once as parcels of it.
 //
-// ⛔⛔⛔ AND IT NEVER DRAWS ABOVE THE PLANE, AT ANY KNOB SETTING. The patch's
-// vertex stage can only put a vertex BELOW its instance's origin, which is a
-// property of the form (`MIST_PATCH_NEVER_ABOVE_GLSL`) and not of this file's
-// props. ⛔ There is no column, plume, funnel or pillar under the mouth at any
-// brightness profile — each was built and rejected by eye, and each read as a
-// searchlight, up close as a saucer with a tractor beam. ⭐ ONLY SURFACES BEING
-// DRAWN EVER READ AS INTAKE.
+// ⚠️⚠️⚠️ RENDER ORDER IS PART OF THE DESIGN, AND THIS IS THE ONLY LAYER IN THE
+// COLONY THAT IS. The lens is normally blended with premultiplied alpha —
+// `dst = src + dst·(1 − a)` — because a shadow is a place where light is
+// REMOVED and additive blending has no way to say that; it can only fail to
+// add. So the mark OCCLUDES BY DRAW ORDER AND NOT BY DEPTH: it darkens
+// everything drawn BEFORE it and nothing drawn after. Hence
+//   1. this layer is mounted AFTER `ColonyEdges` and `ColonyNodes` in
+//      `NetworkColony`, and before the courier and delivery layers;
+//   2. the lens carries `renderOrder` 1, strictly above the edges' and the
+//      nodes' 0, because three sorts equal render orders by DEPTH and both of
+//      those are single draws with one z for the whole colony — a tie would let
+//      the whole ghost cloud draw after the shadow and shine through it;
+//   3. the motes carry 2, strictly above the lens, because the disc's alpha
+//      reaches 0.85 and specks drawn under it would be attenuated exactly where
+//      they are brightest.
+// ⭐ The courier (1, 2) and the delivery (1–4) tie or exceed, which is right:
+// where they tie, three's depth sort decides, so a carrier passing BEHIND a
+// hole is darkened and one in front is not.
 //
-// ⭐⭐⭐ AND THE HOLE HAS A WINDOW IN IT. The peer mesh is the boundary between
-// two universes — above it the cell canopy, below it the one a cohort drinks
-// from — so looking into the aperture is looking at the other world: the
-// throat's wall lit FROM BELOW, and, deeper than `COHORT_INTAKE_LEVEL`, the
-// surface of the medium rising toward the lip. That is how 「从下方汲取能量」 is
-// said, and it is the only way twenty-five rounds found to say it that does not
-// lie: ⛔ NO PLUME, COLUMN, FUNNEL OR PILLAR under the mouth at any brightness
-// profile — only SURFACES BEING DRAWN ever read as intake.
+// ⛔⛔⛔ AND IT NEVER DRAWS ABOVE THE PLANE, AT ANY KNOB SETTING. The disc plane
+// IS the colony plane; a mote's offset from its seat has y = 0 exactly; and the
+// arc over the top of the shadow is disc light bent by the mass, not something
+// emitted upward. ⛔ There is no column, plume, funnel or pillar under a mouth
+// at any brightness profile — each was built and rejected by eye across
+// twenty-five rounds, and each read as a searchlight, up close as a saucer with
+// a tractor beam. ⭐ ONLY SURFACES BEING DRAWN EVER READ AS INTAKE.
 //
 // ⛔⛔⛔ THE COHORT NEVER EMITS UPWARD, AT ANY TIME. A mined block goes SIDEWAYS
 // TO PEERS ONLY, because peers must verify it before it legitimately enters the
@@ -54,40 +61,33 @@
 // MEASURED WORKERS on flood arrivals — never from the cohort: `planDeliveries`
 // emits a carrier only for ids in `cf.arrivals`, and the flood derive writes an
 // arrival only where `kind === 'measured'`, which an attested cohort is not.
-// THE TWO WORLDS MEET AT THE APERTURE IN THE PLANE. ⚠️ Three successive plans
-// said "the block leaves ABOVE and outward" from here; they were wrong, and the
-// rule is written positively so the next reader inherits it and not the
+// THE TWO WORLDS MEET AT THE MASS IN THE PLANE. ⚠️ Three successive plans said
+// "the block leaves ABOVE and outward" from here; they were wrong, and the rule
+// is written positively so the next reader inherits it and not the
 // misconception.
 //
-// The face draws a CIRCLE; every ellipse a viewer sees is projection, and
-// because every cohort foreshortens identically that agreement is what makes
-// the colony plane itself legible. The plane's normal is world Y, which is also
-// the colony's rotation axis, so the mark turns with the plate and needs no
-// frame of its own — and it has no axis anybody could read as pointing
-// somewhere.
-//
-// The pupil's darkness is a REFUSAL and never a painted disc: both draws are
-// additive and depth-read-only, and the middle is simply where bright structure
-// declines to fill. The corollary lives one layer over — `ColonyEdges` stops a
-// cohort's own links at the mark's outer edge, because with nothing to occlude
-// and nothing to depth-reject, a link run into the disc would be ADDED to the
-// grain it crosses and to the one pixel the form spends itself keeping empty.
-//
-// The whole design argument — why a hole rather than a volume, why the aura is
-// not decoration, and why the two knees are a Pythagorean pair — lives in
-// `materials/colonyCohort`. Read it before touching either face.
+// ⭐⭐ THE FORM FOLDS WITH THE CAMERA, AND ONE NUMBER DOES IT. `uPxScale` is
+// written once a frame — `0.5 · drawingBufferHeight · projectionMatrix[1][1]`,
+// so it is DPR-aware for free — and each program divides it by its own distance
+// to the camera to get PIXELS PER WORLD UNIT at that cohort. Below 6 the mass,
+// the disc, the shadow's opacity, the motes' birth radius and their brightness
+// are all folded down to a peer-sized smudge; above 30 the film's hole is open.
+// ⚠️ IT MUST BE THE DRAWING BUFFER'S HEIGHT AND NOT THE CSS HEIGHT: a quality
+// tier that moves the DPR changes how many pixels a world unit covers, and a
+// mark that folded on CSS pixels would unfold when the tier stepped down.
 //
 // This file owns the three things that cannot live in a material:
 //   • WHICH nodes wear one — `cohortMarks`, pure and exported, one mark per
 //     attested node, carrying its placement and a stable per-cohort seed so no
-//     two apertures breathe on the same beat;
+//     two discs breathe on the same beat;
 //   • the live SHARE, which moves on every attributed block and must never be
-//     allowed to move the geometry with it — and its MAXIMUM, because the
-//     patch's factor is a ratio and only this layer sees every instance;
+//     allowed to move the geometry with it — and its MAXIMUM, because the sink's
+//     factor is a ratio and only this layer sees every instance;
 //   • the GULP lane, `aGulp` — the sim second of the block each cohort won,
-//     which is what makes the mouth swallow; stamped off the pulse below and
-//     held against the NODE ID in `wonAtRef`, so a re-plan carries a win with
-//     the cohort instead of handing it to whoever takes the slot.
+//     which is what makes the disc pile and the specks flare; stamped off the
+//     pulse below and held against the NODE ID in `wonAtRef`, so a re-plan
+//     carries a win with the cohort instead of handing it to whoever takes the
+//     slot.
 //
 // ⚠️⚠️ THE GULP LANE IS SIM SECONDS, ON THE CLOCK THIS FILE ALREADY WRITES.
 // The envelope is `uTime - aGulp`; `uTime` is written from `simClock.elapsedSec`
@@ -108,13 +108,14 @@
 // `uTime` is a float32 uniform on the other side of the same subtraction, so
 // the lane is never coarser than the number it is compared against.
 //
-// ⭐⭐⭐ THE SHARE LANE DRIVES THE MIST'S SINK, AND ONLY THE MIST'S SINK. Since
-// 2026-09-02 the PATCH declares `aShare` and turns it into one per-instance
-// factor (`mistShareFactor`) that scales the sink strength `uK` and the pile
-// `uConc`, so a cohort holding 62 % of its window drinks at the full k and one
-// holding 2 % creeps in at `cohortShareFloor` × k. That is the third lane bound
-// onto `patchGeometry` and it is the SAME `InstancedBufferAttribute` OBJECT the
-// walk below writes — one wrapper, one GL buffer, exactly as `aGulp` is.
+// ⭐⭐⭐ THE SHARE LANE IS THE SINK'S STRENGTH, IN BOTH DRAWS. `aShare` is the
+// cohort's fraction of its window; the lens's vertex stage turns it into one
+// per-instance factor (`mistShareFactor`, floor 0.35, normalised by
+// `uShareMax`) that scales the sink's `k` and the pile at the lip, so a cohort
+// holding 62 % of its window drinks at the full rate and one holding 2 % creeps
+// in at the floor. The motes take the SAME factor — this layer runs
+// `mistShareFactor` on the CPU and writes the result into their `aStrength`, so
+// the specks fall at exactly the speed the streamlines behind them run at.
 //
 // ⚠️ AND THE VALUE IN IT IS THE WEEK WHEN THERE IS A WEEK: `ledger.share` if
 // the indexer named this producer over its seven days, else `share`, the
@@ -124,12 +125,15 @@
 // is the quantity a rate wants. A ring that a reorg has just emptied therefore
 // stops making every cohort look equal.
 //
-// ⚠️ NEITHER APERTURE PROGRAM DECLARES `aShare`, and that stays true. Share
-// means RATE, the mark has no rate a share could drive that survives the
-// grain's own prefilter (see `COHORT_FACE_DRIFT` and `colonyCohort.ts`'s face
-// factory), and the mist does — it is a sink whose k is measured in wu²/s. So
-// the lane is bound to ONE of the three geometries and to nothing else, and the
-// aura does not read it any more than the face does.
+// ⚠️⚠️ THE TWO DRAWS DO NOT SHARE ONE LANE OBJECT, AND THAT IS NOT AN OVERSIGHT.
+// The lens is an InstancedMesh and reads ONE value per instance, so its three
+// lanes are `InstancedBufferAttribute`s and the WRAPPER is what has to persist —
+// a second wrapper around the same array is a second GL buffer with the first
+// one orphaned. The motes are a `THREE.Points` draw with one vertex per MOTE, so
+// the same lane has to be 96 copies wide: handing that geometry the instanced
+// wrapper would read one cohort's stamp for the first ninety-sixth of the
+// colony's motes and garbage after it. Same VALUES, two widths, written by the
+// same two walks — the plan's and the pulse's — so nothing can fall out of step.
 //
 // ⭐⭐⭐ IT TAKES NO SHOCKWAVE AND NO FLOOD, AND EXACTLY ONE STRING OF THE
 // PULSE. The two absences and the one presence are the same argument, and the
@@ -141,18 +145,15 @@
 // won. That is the failure this layer exists not to have, and no wave-shaped
 // input can avoid it.
 //
-// What is gone is the claim that ABSTINENCE was the only cure for it. This
-// header used to argue that a layer with no per-block input is structurally
-// incapable of discharging for the wrong cohort, which is true and is a SMALLER
-// guarantee than the one available: `ColonyFlood.entryId` is `attested:<key>`
-// exactly when the chain named a producer this colony stands a node for, and
-// `CohortMark.nodeId` is that same string — ONE function builds both,
-// `attestedNodeId` in `networkTopology.derive`, reached by the flood through
-// `attestedOrigin` and by the mark through `stageAttested`. So the gate is one
-// string equality against the identity the wave itself leaves from
-// (`cohortWinStamp`), and a mark remains incapable of answering for anybody but
-// itself — the same guarantee, at the same strength, while now being able to
-// answer at all.
+// What is gone is the claim that ABSTINENCE was the only cure for it.
+// `ColonyFlood.entryId` is `attested:<key>` exactly when the chain named a
+// producer this colony stands a node for, and `CohortMark.nodeId` is that same
+// string — ONE function builds both, `attestedNodeId` in
+// `networkTopology.derive`, reached by the flood through `attestedOrigin` and by
+// the mark through `stageAttested`. So the gate is one string equality against
+// the identity the wave itself leaves from (`cohortWinStamp`), and a mark
+// remains incapable of answering for anybody but itself — the same guarantee, at
+// the same strength, while now being able to answer at all.
 //
 // ⭐ MEASURED ON LIVE MAINNET, 2026-09-02: over a 360-second window with
 // `backfillActive` false throughout, 29 block pulses arrived, all 29 named a
@@ -161,8 +162,7 @@
 // stamp, 0 stamps for a pulse that named no cohort (the anonymous ghost pick
 // never appeared in this window). Four distinct cohorts won; the mark count
 // never changed, so the re-lay was not exercised by a re-plan here and remains
-// pinned by test rather than by measurement. The flare was caught ~0.2 s after
-// the stamp at 1.82× the resting mean canvas value.
+// pinned by test rather than by measurement.
 //
 // ⚠️ THE DELIVERY PULSE REF WAS THE OTHER CANDIDATE, AND IT WAS REFUSED ON TWO
 // MEASURED FACTS RATHER THAN ON TASTE. `NetworkColony` already stamps
@@ -180,27 +180,34 @@
 // another layer is a gulp that stops working with no diff to point at. Three
 // props and this layer's own copy of the colony's gate instead.
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { LIVE } from '../tweaks/liveTweaks';
+import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
 import { fnv1a } from '../geometry/edgeBezier';
 import type { NetworkTopology, Vec3 } from '../types';
 import type { ProducerStanding } from '../derives/blockProducers.derive';
 import { ATTESTED_ID_PREFIX } from '../derives/networkTopology.derive';
+import { COHORT_NEVER_WON } from '../materials/colonyCohort';
 import {
-  COHORT_NEVER_WON,
-  cohortAuraHalfExtent,
-  cohortFaceHalfExtent,
-  cohortRimRadius,
-  makeCohortAuraMaterial,
-  makeCohortFaceMaterial,
-} from '../materials/colonyCohort';
+  COHORT_LENS_STEPS,
+  cohortDiscInner,
+  cohortDiscStops,
+  cohortShadowRadius,
+  makeCohortLensMaterial,
+} from '../materials/colonyLens';
 import {
-  MIST_PATCH_SEGMENTS,
-  makeCohortIntakePatchMaterial,
-} from '../materials/colonyMist';
+  COHORT_MOTES_PER_COHORT,
+  COHORT_MOTE_K,
+  buildCohortMotesGeometry,
+  cohortMoteColor,
+  makeCohortMotesMaterial,
+  stampCohortMotes,
+  writeCohortMotes,
+} from '../materials/colonyMotes';
+import { MIST_SINK_K, mistShareFactor } from '../materials/colonyMist';
 import { useStableList } from './ColonyNodes';
 import { PERFORMANCE_PROBE_LABELS } from '../tweaks/performanceProbeStore';
 import { createGpuProbeCallbacks } from '../tweaks/gpuTimerQuery';
@@ -300,17 +307,18 @@ export interface ProducerSharesRef {
 }
 
 /** Fill the share lane: one entry per staged mark, looked up by payout key —
- *  and return the LARGEST share it wrote, which is the patch's `uShareMax`.
+ *  and return the LARGEST share it wrote, which is the lens's `uShareMax`.
  *
  *  A cohort the view has dropped keeps its slot at zero rather than losing it:
  *  its node is still standing, and the next topology rebuild retires both.
  *  Pure, so the lane's contents can be pinned without a renderer.
  *
- *  ⭐⭐ THE MIST'S PATCH READS THIS LANE (`aShare`), and what it spends it on
- *  is a RATE: the factor `mistShareFactor` scales the sink's `k` and the pile
- *  at the lip, so the busiest cohort in view drinks at the full strength and
- *  every other in proportion. Neither aperture program declares it — see the
- *  file header — so this is the layer's one share consumer.
+ *  ⭐⭐ BOTH DRAWS READ IT, AND WHAT THEY SPEND IT ON IS A RATE: the factor
+ *  `mistShareFactor` scales the sink's `k` and the pile at the disc's inner
+ *  edge, so the busiest cohort in view drinks at the full strength and every
+ *  other in proportion. The lens runs the factor in its vertex stage off
+ *  `aShare`; the motes take the same factor already applied, in `aStrength`,
+ *  because their geometry is not instanced (see the file header).
  *
  *  ⭐⭐ THE WEEK WHEN THERE IS A WEEK. `ledger.share` is this producer's
  *  fraction of the indexer's seven complete days; `share` is its fraction of
@@ -404,17 +412,86 @@ export function cohortWinStamp(
   return index;
 }
 
+/* -------------------------------------------------------------------------- *
+ * The two per-frame numbers this layer computes rather than reads.
+ * -------------------------------------------------------------------------- */
+
 /**
- * Every cohort's aperture, and the mist it is drinking, in three instanced
- * draws off ONE plan.
+ * The fold's scale: multiply by nothing and divide by a cohort's distance to
+ * the camera, and the answer is PIXELS PER WORLD UNIT at that cohort.
  *
- * The patch is the mist under the plane (`renderOrder` 0, drawn first because
- * it is the thing the other two are an opening onto); the face is the disc
- * lying in the colony plane (`renderOrder` 1); the aura is the camera-facing
- * halo around it (`renderOrder` 2), drawn last so the mark composites as a disc
- * inside its own glow. All three are additive and take their world extent from
- * a uniform — `uHalf` on the two faces, `uReach` on the patch — and per-frame
- * CPU work stays a handful of uniform writes.
+ * ⭐⭐ PIXELS PER WORLD UNIT AND NOT DISTANCE, because the same distance is a
+ * different picture on a 1440p screen and a phone, and because a dolly and a
+ * zoom must fold identically. For a perspective camera the projected height of
+ * a world unit at depth `d` is `0.5 · viewportHeight · P[1][1] / d`, so this is
+ * that expression with the `/ d` left to the shader, which knows each
+ * instance's own depth.
+ *
+ * ⚠️⚠️ `height` IS THE DRAWING BUFFER'S, IN DEVICE PIXELS — `gl.domElement.height`
+ * and never `state.size.height`. A quality tier that lowers `maxDpr` halves the
+ * drawing buffer without moving one CSS pixel, and a mark folded on CSS pixels
+ * would UNFOLD when the tier stepped down: the cohort would grow into the
+ * film's hole exactly as the machine admitted it could not afford one.
+ *
+ * Pure and exported so the DPR claim can be pinned without a renderer.
+ */
+export function cohortPxScale(
+  drawingBufferHeight: number,
+  projection11: number,
+): number {
+  return 0.5 * drawingBufferHeight * projection11;
+}
+
+/**
+ * How many RK4 steps the lens may spend on a ray this frame: the quality tier,
+ * unless the knob has been moved off its own default.
+ *
+ * ⭐⭐ THE TIER OWNS THE PRECISION AND THE KNOB OVERRIDES IT, which is what a
+ * tuner needs and what a tier is for. `cohortSteps` ships at
+ * `COHORT_LENS_STEPS` — the SAME number the `high` tier carries — so an
+ * untouched panel is transparent: whatever the cascade decided is what draws.
+ * The moment the slider moves, this layer takes the tuner's number, because a
+ * step count that silently snapped back to the tier would make the one
+ * measurement G5 has to take impossible to take.
+ *
+ * ⚠️ The consequence, stated rather than discovered: a tuner who drags the
+ * slider back to exactly 96 on a `med` page gets 64. That is the price of
+ * having no second piece of state for "has been touched", and it is the right
+ * side of the trade — the alternative is a knob that cannot express the tier's
+ * own value.
+ */
+export function cohortStepCount(tierSteps: number, knobSteps: number): number {
+  return knobSteps === COHORT_LENS_STEPS ? tierSteps : knobSteps;
+}
+
+/**
+ * ⭐ THE MOTES FALL A THIRD FASTER THAN THE DISC'S TEXTURE, AND THE KNOB MOVES
+ * BOTH TOGETHER. `COHORT_MOTE_K` is 16 where the substance's own back-trace
+ * runs at `MIST_SINK_K` 12: a mote is a marker the eye TRACKS over a whole fall
+ * and the disc is a field it reads at a glance, so the approved preview pushed
+ * the tracked thing harder. Both are rates in wu²/s on one law, so the knob
+ * writes the disc's `k` and this ratio times it into the specks' — which keeps
+ * the panel's default identical to what the two materials ship with, and keeps
+ * a tuner from being able to make the specks disagree with the streamlines they
+ * are supposed to be parcels of.
+ */
+const COHORT_MOTE_K_GAIN = COHORT_MOTE_K / MIST_SINK_K;
+
+/** The colony's own centre, which is where a retired mote slot's seat goes.
+ *  It never draws: `writeCohortMotes` zeroes its strength in the same call, and
+ *  the program refuses a mote below `COHORT_MOTE_LIVE_STRENGTH`. */
+const RETIRED_SEAT = { x: 0, y: 0, z: 0 } as const;
+
+/**
+ * Every cohort's mass, and the substance falling into it, in TWO draws off ONE
+ * plan.
+ *
+ * The lens is one instanced camera-facing quad per cohort (`renderOrder` 1,
+ * normally blended, so it darkens everything the colony drew before it); the
+ * motes are one `THREE.Points` draw for the whole colony (`renderOrder` 2,
+ * additive, above the disc whose alpha would otherwise attenuate them). Both
+ * take their world extent from uniforms, so per-frame CPU work is a handful of
+ * uniform writes.
  */
 export default function ColonyCohorts({
   topology,
@@ -433,9 +510,9 @@ export default function ColonyCohorts({
    *  read once a frame, so the window can move once a block without a React
    *  render anywhere in the colony — see `ProducerSharesRef`.
    *
-   *  ⭐ It reaches ONE shader: the mist's patch, whose sink strength and pile
-   *  scale with the cohort's share of its window (`aShare`). The two aperture
-   *  programs still refuse it — see the file header. */
+   *  ⭐ It reaches BOTH programs, as the sink's strength: the lens through the
+   *  `aShare` lane, the motes through `aStrength` with `mistShareFactor`
+   *  already applied. */
   producersRef?: ProducerSharesRef | null;
   /** ⭐⭐ WHERE THIS BLOCK'S WAVE LEAVES FROM — `ColonyFlood.entryId`, and ONE
    *  STRING of it rather than the flood. It is `attested:<key>` exactly when
@@ -460,11 +537,18 @@ export default function ColonyCohorts({
   contextEnergyRef?: { readonly current: number };
 }) {
   const simClock = useSimClock();
+  const gl = useThree((state) => state.gl);
+  const camera = useThree((state) => state.camera);
+  const { effective: quality } = useQualityRuntime();
+  // ⭐ THE PRECISION IS ALL A TIER MAY TOUCH HERE. Nothing below is gated on it:
+  // the mark is drawn at every preset, the motes are drawn at every preset, and
+  // the shadow occludes at every preset. A cohort at 40 steps is the same cohort
+  // with a coarser photon ring; a cohort that is not drawn is a producer the
+  // scene is lying about.
+  const tierSteps = QUALITY_PRESETS[quality].cohortLensSteps;
   const plan = useMemo(() => cohortMarks(topology), [topology]);
   const marks = useStableList(plan, sameCohortMark);
-  const faceMeshRef = useRef<THREE.InstancedMesh>(null);
-  const auraMeshRef = useRef<THREE.InstancedMesh>(null);
-  const patchMeshRef = useRef<THREE.InstancedMesh>(null);
+  const lensMeshRef = useRef<THREE.InstancedMesh>(null);
   const cappedLogged = useRef(false);
   useEffect(() => {
     if (marks.length < COHORT_MARK_CAP || cappedLogged.current) return;
@@ -474,32 +558,22 @@ export default function ColonyCohorts({
     );
   }, [marks]);
 
-  // ⚠️⚠️ ONE `PlaneGeometry(1, 1)`, SHARED BY BOTH DRAWS, AND NOT A DETAIL.
-  // Neither vertex program reads `position` as world units: the face lays the
-  // unit plane into the instance's own XZ and the aura rebuilds its quad from
-  // the camera axes, and NEITHER path is touched by `mesh.scale` or by a scaled
-  // instance matrix — so the world extent has to ride each material's own
-  // `uHalf` UNIFORM instead. The two materials this layer used to draw did the
-  // opposite, baking their extent into `PlaneGeometry(half * 2, half * 2)`, so
-  // a quad carried over from that habit renders a mark several times too big.
-  // Sharing ONE unit plane between two draws of different sizes — 3 world units
-  // and 4.293 — is what makes the rule structural instead of remembered: there
-  // is no geometry here that could carry an extent, right or wrong.
-  const quad = useMemo(() => new THREE.PlaneGeometry(1, 1), []);
-  // ⭐⭐ THE MIST'S PATCH IS THE ONE DRAW THAT CANNOT SHARE THAT QUAD, and the
-  // reason is the MOUND: the patch rises toward the mouth in its VERTEX stage,
-  // and a mound on two triangles is a tent. So it carries its own subdivided
-  // unit plane — still a UNIT plane, with the extent riding `uReach` exactly as
-  // the two faces' ride `uHalf`, so the live `cohortReach` knob stays a slider
-  // instead of a rebuild.
+  // ⚠️⚠️ A UNIT QUAD, AND THE EXTENT RIDES `uQuadR`. The vertex program never
+  // reads `position` as world units — it rebuilds the quad from the camera's own
+  // axes — and that path is touched by neither `mesh.scale` nor a scaled
+  // instance matrix, so a geometry that carried an extent would be a number
+  // nothing reads. ⭐ AND A SCALED INSTANCE WOULD MOVE THE QUAD WITHOUT MOVING
+  // THE MASS: the trace runs in world space from the instance's origin, so the
+  // mark would become a window onto a hole standing somewhere else.
   //
-  // ⚠️ AND IT IS AN `InstancedBufferGeometry` HOLDING THE PLANE'S OWN BUFFERS,
-  // per the geometry contract in `colonyMist.ts`'s header. The source plane is
-  // never rendered and owns no GL state — the attributes ARE the resource, and
-  // they live on here — so it is dropped rather than disposed, and disposing
-  // THIS geometry on unmount frees exactly one copy of them.
-  const patchGeometry = useMemo(() => {
-    const plane = new THREE.PlaneGeometry(1, 1, MIST_PATCH_SEGMENTS, MIST_PATCH_SEGMENTS);
+  // ⚠️ It is an `InstancedBufferGeometry` holding a unit plane's own buffers
+  // because the three lanes bound onto it are per-INSTANCE: the type is what
+  // says so, and `instanceCount` is written beside `mesh.count` below so the
+  // `renderers/common` path — which reads the geometry's count in preference to
+  // the mesh's — cannot find a different answer. The source plane is never
+  // rendered and owns no GL state, so it is dropped rather than disposed.
+  const lensGeometry = useMemo(() => {
+    const plane = new THREE.PlaneGeometry(1, 1);
     const geometry = new THREE.InstancedBufferGeometry();
     geometry.setIndex(plane.getIndex());
     for (const [name, attribute] of Object.entries(plane.attributes)) {
@@ -507,27 +581,33 @@ export default function ColonyCohorts({
     }
     return geometry;
   }, []);
+  // ⭐⭐ THE MOTES ARE ALLOCATED FOR THE CAP AND NEVER REBUILT. A `Points`
+  // geometry has one vertex per MOTE, so its lanes cannot be the instanced ones
+  // and its `aGulp` is a 96-wide COPY — which means a rebuild would drop every
+  // live stamp on the floor. Sizing it at `COHORT_MARK_CAP` costs 6,144 vertices
+  // whose spare slots draw nothing at all (`aStrength` starts at zero and the
+  // program refuses a mote below `COHORT_MOTE_LIVE_STRENGTH`), and buys a buffer
+  // that outlives every re-plan.
+  const motesGeometry = useMemo(
+    () => buildCohortMotesGeometry(COHORT_MARK_CAP),
+    [],
+  );
   // Memoized on [] (stable for the component's life) so a plan rebuild never
   // forces a shader recompile; disposed on unmount only, for the same reason.
-  const faceMaterial = useMemo(() => makeCohortFaceMaterial(), []);
-  const auraMaterial = useMemo(() => makeCohortAuraMaterial(), []);
-  const patchMaterial = useMemo(() => makeCohortIntakePatchMaterial(), []);
-  // True per-draw GPU timings for the three instanced passes when the opt-in
-  // render probe owns a timer-query context; a boolean gate otherwise, and no
-  // query while no cohort stands (the layer unmounts then anyway). ⭐ Three
-  // labels because the three draws fail differently: the face is a small disc
-  // whose cost is its grain, the aura is a bigger quad whose cost is fill, the
-  // patch is a 28 wu disc whose cost is two back-traces and four fetches per
-  // fragment — and a mean over any two of them would hide one growing.
+  const lensMaterial = useMemo(() => makeCohortLensMaterial(), []);
+  const motesMaterial = useMemo(() => makeCohortMotesMaterial(), []);
+  // True per-draw GPU timings when the opt-in render probe owns a timer-query
+  // context; a boolean gate otherwise, and no query while no cohort stands (the
+  // layer unmounts then anyway). ⭐ TWO LABELS BECAUSE THE TWO DRAWS FAIL
+  // DIFFERENTLY: the lens's whole cost is fill × steps — every pixel it covers
+  // traces a bent ray — and the motes' is 96 points per cohort with no texture
+  // at all. A mean over the pair would hide either one growing.
   const cohortGpuProbes = useMemo(() => ({
-    face: createNonEmptyDrawGpuProbeCallbacks(
-      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.colonyCohortFace),
+    lens: createNonEmptyDrawGpuProbeCallbacks(
+      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.colonyCohortLens),
     ),
-    aura: createNonEmptyDrawGpuProbeCallbacks(
-      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.colonyCohortAura),
-    ),
-    patch: createNonEmptyDrawGpuProbeCallbacks(
-      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.colonyMistPatch),
+    motes: createNonEmptyDrawGpuProbeCallbacks(
+      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.colonyCohortMotes),
     ),
   }), []);
   const capacity = Math.max(1, marks.length);
@@ -535,23 +615,21 @@ export default function ColonyCohorts({
   // The three per-cohort lanes, allocated once for a capacity and rewritten in
   // place. ⚠️ Wrapping data in a NEW InstancedBufferAttribute is what orphans
   // its GL buffer, and the share walk runs on every attributed block — so the
-  // WRAPPER is what has to persist, not just the array. That is also why the
-  // gulp lane is ONE wrapper rather than one per draw: the wrapper is the
-  // identity three uploads by, and a second wrapper around the same array would
-  // hand the GPU a second copy of it.
+  // WRAPPER is what has to persist, not just the array. Three wrappers, one per
+  // lane, and never one per draw: the wrapper is the identity three uploads by.
   //
   // ⚠️⚠️ `gulp` STARTS AT A FAR-NEGATIVE SENTINEL AND NEVER AT ZERO. The lane
-  // holds the SIM SECOND of the block each cohort won, and the mouth's envelope
-  // is a function of `uTime - aGulp`. A zero-filled lane therefore says "every
-  // cohort won at t = 0", and since `uTime` also starts at zero the whole
-  // colony gulps for the first half second of every session, for a block none
-  // of them mined. R16 shipped exactly that. `COHORT_NEVER_WON` is far enough
-  // below any reachable `uTime` that the envelope is identically zero.
+  // holds the SIM SECOND of the block each cohort won, and the envelope is a
+  // function of `uTime - aGulp`. A zero-filled lane therefore says "every cohort
+  // won at t = 0", and since `uTime` also starts at zero the whole colony gulps
+  // for the first half second of every session, for a block none of them mined.
+  // R16 shipped exactly that. `COHORT_NEVER_WON` is far enough below any
+  // reachable `uTime` that the envelope is identically zero.
   //
   // ⚠️ A CAPACITY CHANGE RESETS IT TO THE SENTINEL, which is correct rather
   // than lossy: the slots behind the marks are not the ones that were written,
   // and a win belongs to a NODE ID and not to a slot. Re-laying live wins into
-  // a rebuilt lane is the block path's job (T3), off a map keyed on the id.
+  // a rebuilt lane is the effect below, off `wonAtRef`.
   const lanes = useMemo(() => ({
     share: new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1),
     seed: new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1),
@@ -583,49 +661,76 @@ export default function ColonyCohorts({
    *  about how long the tab is left open. Nothing here is read for a cohort
    *  that is not staged, so a stale entry costs a string and a float. */
   const wonAtRef = useRef<Map<string, number>>(new Map());
+  /** The largest share standing in this colony, and the lens's `uShareMax`.
+   *
+   *  ⭐ COMPUTED IN THE LANE'S OWN WALK, NOT ONCE A FRAME. The maximum can only
+   *  move when the lane's contents do — once per attributed block — so a
+   *  per-frame reduction over the marks would be the same number recomputed 60
+   *  times a second. Taking it from `cohortShareLane`'s return is also what
+   *  makes it impossible for the divisor and the lane to disagree: one walk,
+   *  one answer. 1 until the first walk, which is what the uniform ships at. */
+  const shareMaxRef = useRef(1);
+  /** How many of the motes' cohort slots were last written, so a plan that
+   *  SHRANK can retire exactly the tail it dropped. The geometry is allocated
+   *  for the cap and never rebuilt, so a slot nobody clears keeps spiralling
+   *  specks into a seat no cohort stands at any more. */
+  const motesWrittenRef = useRef(0);
 
   // Placement and identity: written only when the staged cohort set moves.
   useEffect(() => {
-    const faceMesh = faceMeshRef.current;
-    const auraMesh = auraMeshRef.current;
-    const patchMesh = patchMeshRef.current;
-    if (!faceMesh || !auraMesh || !patchMesh) return;
-    // ⭐ ONE COUNT, WRITTEN THREE TIMES FROM ONE LIST. A cohort cannot wear a
-    // mouth without the mist under it, or the mist without the mouth, whichever
-    // way the plan moves — the hole and what it is drinking are one object.
-    faceMesh.count = marks.length;
-    auraMesh.count = marks.length;
-    patchMesh.count = marks.length;
-    // ⚠️ …AND THE PATCH'S GEOMETRY CARRIES THE SAME NUMBER, written here so the
-    // two can never disagree. An `InstancedBufferGeometry` ships with
+    const lensMesh = lensMeshRef.current;
+    if (!lensMesh) return;
+    // ⭐ ONE COUNT FROM ONE LIST. A cohort cannot wear a mass without the
+    // substance falling into it, whichever way the plan moves.
+    lensMesh.count = marks.length;
+    // ⚠️ …AND THE GEOMETRY CARRIES THE SAME NUMBER, written here so the two can
+    // never disagree. An `InstancedBufferGeometry` ships with
     // `instanceCount = Infinity`; this renderer never reads it (r169's
     // `renderBufferDirect` takes the `isInstancedMesh` branch first and uses
     // `object.count`), but leaving an Infinity on a live object is a trap for
     // the next reader — and for the `renderers/common` path, which reads the
     // geometry's count in preference to the mesh's.
-    patchGeometry.instanceCount = marks.length;
+    lensGeometry.instanceCount = marks.length;
     const seed = lanes.seed.array as Float32Array;
+    const share = lanes.share.array as Float32Array;
     marks.forEach((mark, index) => {
-      // TRANSLATION ONLY — the face's quad is laid into local XZ and the
-      // aura's is rebuilt from the view matrix, and both take their extent
-      // from a uniform, so a scale here is ignored outright.
-      // ⭐⭐ AND A SCALE HERE WOULD SPLIT THE ONE HOLE IN TWO. The face reads
-      // its radius in the instance's own plane while the aura reads the same
-      // radius off a ray/plane crossing in world space; a scaled instance
-      // would move the first and not the second, and the two faces would stop
-      // agreeing about where the pupil is.
-      // ⭐⭐ THE PATCH TAKES THE SAME TRANSLATION, UNMODIFIED. It lies under
-      // the plane, but the DEPTH belongs to its vertex stage (the statement
-      // `MIST_PATCH_NEVER_ABOVE_GLSL` names): lowering the instance here
-      // instead would put the mound's top somewhere other than the level the
-      // window shows, and the sink's origin somewhere other than the mouth it
-      // belongs to.
+      // TRANSLATION ONLY — the quad is rebuilt from the camera's axes and takes
+      // its extent from `uQuadR`, so a scale here is ignored by the geometry and
+      // would move the quad without moving the mass the trace runs around.
       SCRATCH_MATRIX.makeTranslation(mark.pos[0], mark.pos[1], mark.pos[2]);
-      faceMesh.setMatrixAt(index, SCRATCH_MATRIX);
-      auraMesh.setMatrixAt(index, SCRATCH_MATRIX);
-      patchMesh.setMatrixAt(index, SCRATCH_MATRIX);
+      lensMesh.setMatrixAt(index, SCRATCH_MATRIX);
       seed[index] = mark.seed;
+      // ⭐⭐ THE MOTES TAKE THE SAME SEAT, IN THE SAME FRAME, FROM THE SAME PLAN.
+      // `mark.pos` is a COLONY-frame point and `aOrigin` is a colony-frame seat,
+      // so a mote's whole track turns with the colony exactly as the disc's
+      // streamlines do — the layer applies no rotation of its own anywhere.
+      // ⚠️ The strength is `mistShareFactor` ALREADY APPLIED, because this
+      // program multiplies it straight into `uK` while the lens runs the same
+      // factor in its vertex stage off `aShare`. Same rate, two places, one
+      // function.
+      writeCohortMotes(
+        motesGeometry,
+        index,
+        { x: mark.pos[0], y: mark.pos[1], z: mark.pos[2] },
+        mark.seed,
+        mistShareFactor(share[index] ?? 0, shareMaxRef.current),
+      );
+      // …and its gulp copy is re-laid from the SAME map, so a cohort that moved
+      // slots keeps its burst in both draws rather than in one of them.
+      stampCohortMotes(
+        motesGeometry,
+        index,
+        wonAtRef.current.get(mark.nodeId) ?? COHORT_NEVER_WON,
+      );
     });
+    // ⚠️ AND THE TAIL A SHRINKING PLAN LEFT BEHIND IS RETIRED, by strength and
+    // not by count: the motes' geometry is sized for the cap and its draw range
+    // is the whole buffer, so a cohort that left the window would otherwise keep
+    // 96 specks spiralling into the seat it used to stand at.
+    for (let index = marks.length; index < motesWrittenRef.current; index += 1) {
+      writeCohortMotes(motesGeometry, index, RETIRED_SEAT, 0, 0);
+    }
+    motesWrittenRef.current = marks.length;
     // …and the GULP lane is RE-LAID under the new plan, in the same walk. A win
     // belongs to a NODE ID and never to a slot: a cohort the plan dropped is
     // gone from `marks` and is written nowhere, one that survived carries its
@@ -635,54 +740,27 @@ export default function ColonyCohorts({
     // capacity change rebuilds it at the sentinel, and the live wins have to be
     // put back into it before the next frame draws.
     cohortWinLane(marks, wonAtRef.current, lanes.gulp.array as Float32Array);
-    faceMesh.instanceMatrix.needsUpdate = true;
-    auraMesh.instanceMatrix.needsUpdate = true;
-    patchMesh.instanceMatrix.needsUpdate = true;
+    lensMesh.instanceMatrix.needsUpdate = true;
     lanes.seed.needsUpdate = true;
     lanes.gulp.needsUpdate = true;
     // Bound on the first pass and again only when a capacity change built new
-    // lanes. The quad outlives both InstancedMeshes (a capacity change rebuilds
-    // them through `args`), so it can still be holding the previous set.
-    // ⚠️ THE QUAD TAKES `aSeed` AND `aGulp` AND NOT `aShare`. Both aperture
-    // programs declare the seed, the face declares the gulp, and NEITHER
-    // declares the share — an attribute no program declares is never uploaded,
-    // so binding it here would cost nothing at runtime and buy a false claim in
-    // the source. The share goes onto the patch's geometry below, which is the
-    // one program that has a rate to spend it on.
+    // lanes. The geometry outlives the InstancedMesh (a capacity change rebuilds
+    // it through `args`), so it can still be holding the previous set.
     //
-    // ⭐ ONE GEOMETRY, SO "THE SAME OBJECT ON BOTH APERTURE DRAWS" IS
-    // STRUCTURAL. Both InstancedMeshes take this one `quad`, so a lane bound
-    // here is by construction the same attribute — and the same GL buffer — on
-    // both. The aura simply does not declare `aGulp`, which costs it nothing:
-    // three binds only what a program asks for.
-    if (quad.getAttribute('aSeed') !== lanes.seed) quad.setAttribute('aSeed', lanes.seed);
-    if (quad.getAttribute('aGulp') !== lanes.gulp) quad.setAttribute('aGulp', lanes.gulp);
-    // ⭐⭐⭐ …AND THE PATCH BINDS THE SAME TWO OBJECTS ONTO ITS OWN GEOMETRY,
-    // WHICH IS THE WHOLE MECHANISM. One `InstancedBufferAttribute` bound to two
-    // geometries is ONE GL buffer — three keys its upload on the ATTRIBUTE, not
-    // on the geometry — so the re-lay above and the stamp below reach the mist
-    // and the mouth in the same write, and `needsUpdate` set once serves both
-    // draws. ⚠️ Wrapping `lanes.gulp.array` in a second attribute for the patch
-    // would hand the GPU a second copy of the lane and orphan the first one's
-    // buffer on the next capacity change, and the two copies would fall out of
-    // step the first time only one of them was marked — a mouth swallowing one
-    // block while the mist under it swallowed another.
-    if (patchGeometry.getAttribute('aSeed') !== lanes.seed) {
-      patchGeometry.setAttribute('aSeed', lanes.seed);
+    // ⭐ ONE GEOMETRY, SO "THE SAME OBJECT" IS STRUCTURAL. All three lanes are
+    // bound to the one quad the lens draws, and the object bound is the wrapper
+    // the capacity memo built — never a fresh one around `lanes.<x>.array`,
+    // which would be a second GL buffer with the first one orphaned.
+    if (lensGeometry.getAttribute('aSeed') !== lanes.seed) {
+      lensGeometry.setAttribute('aSeed', lanes.seed);
     }
-    if (patchGeometry.getAttribute('aGulp') !== lanes.gulp) {
-      patchGeometry.setAttribute('aGulp', lanes.gulp);
+    if (lensGeometry.getAttribute('aGulp') !== lanes.gulp) {
+      lensGeometry.setAttribute('aGulp', lanes.gulp);
     }
-    // ⭐⭐ …AND THE THIRD LANE, ON THIS GEOMETRY ALONE. The patch is the only
-    // program that declares `aShare`, because it is the only one with a RATE to
-    // spend a share on — the sink's `k` is wu²/s. Same rule as the two above:
-    // the WRAPPER is bound, never a fresh one around `lanes.share.array`, so
-    // the walk that rewrites the lane once an attributed block marks one buffer
-    // and the draw sees it.
-    if (patchGeometry.getAttribute('aShare') !== lanes.share) {
-      patchGeometry.setAttribute('aShare', lanes.share);
+    if (lensGeometry.getAttribute('aShare') !== lanes.share) {
+      lensGeometry.setAttribute('aShare', lanes.share);
     }
-  }, [lanes, marks, patchGeometry, quad]);
+  }, [lanes, lensGeometry, marks, motesGeometry]);
 
   // The live share, written in place whenever the window moves — which is once
   // per attributed block — and never touching the geometry. The window last
@@ -693,22 +771,28 @@ export default function ColonyCohorts({
   const writtenSharesRef = useRef<readonly ProducerStanding[] | null | undefined>(
     undefined,
   );
-  /** The largest share standing in this colony, and the patch's `uShareMax`.
-   *
-   *  ⭐ COMPUTED IN THE LANE'S OWN WALK, NOT ONCE A FRAME. The maximum can only
-   *  move when the lane's contents do — once per attributed block — so a
-   *  per-frame reduction over the marks would be the same number recomputed 60
-   *  times a second. Taking it from `cohortShareLane`'s return is also what
-   *  makes it impossible for the divisor and the lane to disagree: one walk,
-   *  one answer. 1 until the first walk, which is what the uniform ships at. */
-  const shareMaxRef = useRef(1);
   const writeShares = useCallback((producers: readonly ProducerStanding[] | null) => {
-    shareMaxRef.current =
-      cohortShareLane(marks, producers, lanes.share.array as Float32Array);
+    const share = lanes.share.array as Float32Array;
+    shareMaxRef.current = cohortShareLane(marks, producers, share);
     // Marked ONCE for the whole walk, never once per write.
     lanes.share.needsUpdate = true;
+    // ⭐⭐ AND THE SPECKS ARE RE-LAID ON THE SAME WALK, because their strength is
+    // this same share with `mistShareFactor` already applied — the motes cannot
+    // read the instanced lane (their geometry is one vertex per mote, so the
+    // value has to be 96 copies wide), so what keeps the two in step is that the
+    // one walk writes both. A cohort whose share moved falls faster in the same
+    // frame its streamlines speed up.
+    marks.forEach((mark, index) => {
+      writeCohortMotes(
+        motesGeometry,
+        index,
+        { x: mark.pos[0], y: mark.pos[1], z: mark.pos[2] },
+        mark.seed,
+        mistShareFactor(share[index] ?? 0, shareMaxRef.current),
+      );
+    });
     writtenSharesRef.current = producers;
-  }, [lanes, marks]);
+  }, [lanes, marks, motesGeometry]);
   // A new lane or a moved cohort set needs the walk regardless of whether the
   // window moved: the slots behind the marks are not the ones written before.
   useEffect(() => {
@@ -767,6 +851,11 @@ export default function ColonyCohorts({
     // lane cannot disagree about which cohort was stamped.
     wonAtRef.current.set(marks[index].nodeId, at);
     lanes.gulp.needsUpdate = true;
+    // …and the SAME moment goes into that cohort's 96 mote slots, beside the
+    // lane write, because a Points geometry cannot share the instanced wrapper.
+    // Same value, widened; one call, so there is no path where the disc piles
+    // and the specks do not.
+    stampCohortMotes(motesGeometry, index, at);
     // entryId + backfillActive are read from the latest closure when
     // blockPulseAtMs advances (App recomputes cf + backfill + bumps
     // blockPulseAtMs from the same cells-cache render), so [blockPulseAtMs]
@@ -775,87 +864,96 @@ export default function ColonyCohorts({
   }, [blockPulseAtMs]);
 
   useEffect(() => () => {
-    quad.dispose();
-    patchGeometry.dispose();
-    faceMaterial.dispose();
-    auraMaterial.dispose();
-    patchMaterial.dispose();
-  }, [auraMaterial, faceMaterial, patchGeometry, patchMaterial, quad]);
+    lensGeometry.dispose();
+    motesGeometry.dispose();
+    lensMaterial.dispose();
+    motesMaterial.dispose();
+  }, [lensGeometry, lensMaterial, motesGeometry, motesMaterial]);
+
+  /** The warmth the colour uniforms were last built at. ⭐ THE WARM LERP IS
+   *  CPU-SIDE AND PER-DRAW, so it is recomputed only when the knob moves —
+   *  three `THREE.Color`s and a mote colour rebuilt 60 times a second for a
+   *  number that changes when a hand drags a slider would be the one piece of
+   *  per-frame allocation in this layer. */
+  const warmthRef = useRef(Number.NaN);
 
   useSimFrame(() => {
     const contextEnergy = contextEnergyRef?.current ?? 1;
     const elapsed = simClock.elapsedSec;
-    const apR = LIVE.peer.cohortApR;
-    const haloR = LIVE.peer.cohortHaloR;
-    // ⭐⭐⭐ ONE LEVEL, TWO CONSUMERS, READ ONCE AND WRITTEN TWICE. This is the
-    // depth at which the window stops showing the throat's wall and starts
-    // showing the medium's surface, and it is ALSO the top of the mound the
-    // patch below is lifted into. They are ONE SURFACE — a viewer looking into
-    // the mouth and a viewer looking at the mist beside it are looking at the
-    // same substance — so a knob that reached one of them would be a knob that
-    // makes the layer lie. `COHORT_INTAKE_LEVEL` says the same thing at the
-    // constant's own site.
-    const level = LIVE.peer.cohortLevel;
-    const face = faceMaterial.uniforms;
-    face.uTime.value = elapsed;
-    face.uContextEnergy.value = contextEnergy;
-    face.uApR.value = apR;
-    // ⚠️ THE QUAD HAS TO FOLLOW THE MARK. `uHalf` is not an independent
-    // number: the disc is exactly `apR` across its own half-diagonal, so a
-    // knob that grows the mark while the quad stays where it was crops the rim
-    // against its own proxy. The radius test inside the fragment would still
-    // be exact — the pixels carrying the rim would simply never be rasterised
-    // to run it, which reads as a straight edge across a circle that has none.
-    // Re-derived through the same function the constant is defined with, so
-    // there is one authority. That bug has shipped on this layer once already.
-    face.uHalf.value = cohortFaceHalfExtent(apR);
-    face.uPupilFrac.value = LIVE.peer.cohortPupil;
-    face.uRimAmp.value = LIVE.peer.cohortRimAmp;
-    face.uInAmp.value = LIVE.peer.cohortIntakeAmp;
-    face.uInteriorAmp.value = LIVE.peer.cohortInteriorAmp;
-    face.uLevel.value = level;
-    face.uStriae.value = LIVE.peer.cohortStriae;
-    face.uStriaAmp.value = LIVE.peer.cohortStriaAmp;
-    const aura = auraMaterial.uniforms;
-    aura.uTime.value = elapsed;
-    aura.uContextEnergy.value = contextEnergy;
-    aura.uApR.value = apR;
-    aura.uHaloR.value = haloR;
-    // ⚠️ Same rule, two inputs: the halo reaches `apR * haloR`, so BOTH knobs
-    // move this quad and the margin is a derived perspective correction rather
-    // than a guess. See `cohortAuraHalfExtent`.
-    aura.uHalf.value = cohortAuraHalfExtent(apR, haloR);
-    aura.uPupilFrac.value = LIVE.peer.cohortPupil;
-    aura.uHaloBias.value = LIVE.peer.cohortHaloBias;
-    // The mist being taken, on the same clock and the same energy as the mouth
-    // taking it: `uTime - aGulp` is only an age when both sides come from this
-    // one `simClock`, and the proximity exemption has to let a cohort the
-    // camera flew to keep BOTH its light and its substance.
-    const patch = patchMaterial.uniforms;
-    patch.uTime.value = elapsed;
-    patch.uContextEnergy.value = contextEnergy;
-    patch.uLevel.value = level;
-    // ⚠️ THE GATE, THE EYE, THE PILE AND THE WAKE ARE ALL FRACTIONS OF THE
-    // MOUTH'S OWN HOLE, so the patch's rim radius is re-derived from the LIVE
-    // `cohortApR` through the same function the mark's own radii come from. A
-    // patch that held `COHORT_RIM_R` while the face read `uApR * uRimFrac`
-    // would go dark inside a circle the mouth no longer has — two holes at one
-    // cohort, drawn by two layers that both believed they were right.
-    patch.uRimR.value = cohortRimRadius(apR);
-    // ⭐⭐ THE SHARE'S TWO ENDS, AND THE MAXIMUM IS THE ONE THIS LAYER OWNS.
-    // The factor is a RATIO — `mix(floor, 1, share / shareMax)` — so the
-    // divisor has to be the largest share among the instances actually drawn,
-    // which only the lane's own walk can know. It is read from the ref that
-    // walk fills rather than reduced again here: the maximum moves when the
-    // window does, once an attributed block, and not once a frame.
-    patch.uShareMax.value = shareMaxRef.current;
-    patch.uShareFloor.value = LIVE.peer.cohortShareFloor;
-    patch.uAmp.value = LIVE.peer.cohortMistAmp;
-    patch.uContrastNear.value = LIVE.peer.cohortGather;
-    patch.uK.value = LIVE.peer.cohortIntake;
-    patch.uSwirl.value = LIVE.peer.cohortSwirl;
-    patch.uReach.value = LIVE.peer.cohortReach;
-    patch.uWake.value = LIVE.peer.cohortWake;
+    // ⭐⭐⭐ ONE NUMBER FOLDS BOTH DRAWS, and it is written from the DRAWING
+    // BUFFER rather than from the CSS size — see `cohortPxScale`. Each program
+    // divides it by its own distance to the camera, so the mass, the disc, the
+    // shadow's opacity, the specks' birth radius and their brightness all fold
+    // on one closeness and nothing can unfold on its own schedule.
+    const pxScale = cohortPxScale(
+      gl.domElement.height,
+      camera.projectionMatrix.elements[5],
+    );
+    // ⭐⭐ THE MASS IS THE SIZE PARAMETER, AND EVERY RADIUS IS A MULTIPLE OF IT.
+    // Read once and written three times: the horizon itself, the disc's inner
+    // edge (3 horizons — the ISCO) and the radius a mote disappears at (2.6
+    // horizons — the shadow's apparent edge). A knob that moved one without the
+    // others would open the shadow out through its own accretion disc, or leave
+    // the specks winking out on the silhouette instead of behind it.
+    const horizon = LIVE.peer.cohortHorizon;
+    // The near end of the fold's band, shared so the disc and the specks unfold
+    // together. (The far end is not a knob: it is where a cohort becomes a
+    // peer-sized smudge, which is the layer's own rule and not a taste.)
+    const unfoldHi = LIVE.peer.cohortUnfold;
+    // The substance's own two numbers, and they reach both draws — see
+    // `COHORT_MOTE_K_GAIN` for why the specks take a multiple of the first.
+    const sinkK = LIVE.peer.cohortIntake;
+    const swirl = LIVE.peer.cohortSwirl;
+    const lens = lensMaterial.uniforms;
+    lens.uTime.value = elapsed;
+    lens.uContextEnergy.value = contextEnergy;
+    lens.uPxScale.value = pxScale;
+    lens.uUnfoldHi.value = unfoldHi;
+    lens.uHorizon.value = horizon;
+    lens.uDiscIn.value = cohortDiscInner(horizon);
+    lens.uDiscOut.value = LIVE.peer.cohortDiscOut;
+    lens.uDiscAmp.value = LIVE.peer.cohortDiscAmp;
+    lens.uBeam.value = LIVE.peer.cohortBeam;
+    lens.uFarDiscAmp.value = LIVE.peer.cohortFarAmp;
+    lens.uGlow.value = LIVE.peer.cohortGlow;
+    lens.uK.value = sinkK;
+    lens.uSwirl.value = swirl;
+    // ⭐⭐ THE MAXIMUM IS THE ONE THIS LAYER OWNS. The factor is a RATIO —
+    // `mix(floor, 1, share / shareMax)` — so the divisor has to be the largest
+    // share among the instances actually drawn, which only the lane's own walk
+    // can know. It is read from the ref that walk fills rather than reduced
+    // again here: the maximum moves once an attributed block, not once a frame.
+    lens.uShareMax.value = shareMaxRef.current;
+    // The tier decides, unless the knob has been moved off it — see
+    // `cohortStepCount`.
+    lens.uSteps.value = cohortStepCount(tierSteps, LIVE.peer.cohortSteps);
+    const motes = motesMaterial.uniforms;
+    motes.uTime.value = elapsed;
+    motes.uContextEnergy.value = contextEnergy;
+    motes.uPxScale.value = pxScale;
+    // A world diameter projected the way every other point in this scene is, so
+    // it needs the live drawing buffer: a window resize or a quality-tier DPR
+    // change moves it under the material.
+    motes.uViewportHeight.value = gl.domElement.height;
+    motes.uUnfoldHi.value = unfoldHi;
+    motes.uShadowR.value = cohortShadowRadius(horizon);
+    motes.uK.value = sinkK * COHORT_MOTE_K_GAIN;
+    motes.uSwirl.value = swirl;
+    motes.uOrbit.value = LIVE.peer.cohortOrbit;
+    motes.uAmp.value = LIVE.peer.cohortMotes;
+    const warmth = LIVE.peer.cohortWarmth;
+    if (warmth !== warmthRef.current) {
+      warmthRef.current = warmth;
+      // ⭐ ONE RAMP, TWO DRAWS. The specks wear the disc's own mid stop pushed
+      // toward its core, so a viewer dragging the temperature moves the vortex
+      // and the parcels falling through it together — they are one substance at
+      // one temperature, and two colour ramps would be two.
+      const stops = cohortDiscStops(warmth);
+      lens.uColCore.value.setRGB(...stops.core);
+      lens.uColMid.value.setRGB(...stops.mid);
+      lens.uColOuter.value.setRGB(...stops.outer);
+      motes.uColor.value.setRGB(...cohortMoteColor(warmth));
+    }
   });
 
   // ⭐ NO COHORTS ⇒ NO DRAW, NOT AN EMPTY ONE. Every hook above still runs, so
@@ -867,48 +965,40 @@ export default function ColonyCohorts({
   if (marks.length === 0) return null;
 
   // ⚠️ Never a pick target. The cohort's target is the staged node's own hit
-  // sphere, sized from the mark's radius in `ColonyNodes` — half of it, because
-  // `COLONY_MIN_SPACING` forbids a target that reaches a neighbour's half of
-  // the gap. A live raycast on the aura's quad — 8.6 world units across, and
+  // sphere, sized from the SHADOW in `ColonyNodes` (`COHORT_HIT_RADIUS`, 2.0
+  // wu). A live raycast on the lens's quad — 64 world units across, and
   // overlapping its neighbours' — would put a wall of invisible target in front
   // of the colony.
   //
-  // ⭐ THE PATCH IS DRAWN FIRST, THEN THE FACE, THEN THE AURA OVER BOTH. All
-  // three are additive, so the order moves no pixel; it is the composition
-  // order they read in — the substance under the plane, the disc that opens
-  // onto it, and the glow around that — and saying it costs nothing.
+  // ⚠️⚠️ THE RENDER ORDERS ARE THE DESIGN AND NOT A COMPOSITION PREFERENCE. The
+  // lens is the colony's ONLY normally-blended draw, because a shadow is a place
+  // where light is REMOVED and an additive draw can only fail to add — so it
+  // occludes by DRAW ORDER, darkening what came before it and nothing after. 1
+  // puts it strictly above the edges and the nodes (both 0), which is what makes
+  // the occlusion deterministic: three sorts EQUAL render orders by depth, and
+  // each of those layers is one draw with one z for the whole colony, so a tie
+  // would let the ghost cloud shine through the shadow whenever its centre sat
+  // nearer than a cohort. 2 puts the specks above the disc, whose alpha reaches
+  // 0.85 exactly where they are brightest.
   return (
     <group>
-      {/* ⛔ THE MIST BEING TAKEN, AND IT NEVER DRAWS ABOVE THE PLANE. One
-          instance per cohort, its sink at its own origin, lying
-          `MIST_FLOOR_DEPTH` under the membrane and rising into a mound whose
-          top is exactly what the window in the mouth shows. It is a SURFACE
-          seen from outside and moving, which is the only thing twenty-five
-          rounds found that reads as intake: a column, plume, funnel or pillar
-          under the mouth reads as a searchlight at every brightness profile
-          that was tried. The vertex stage cannot produce a vertex above its
-          own origin (`MIST_PATCH_NEVER_ABOVE_GLSL`), so that is a property of
-          the form and not of these props. */}
       <instancedMesh
-        ref={patchMeshRef}
-        args={[patchGeometry, patchMaterial, capacity]}
-        {...cohortGpuProbes.patch}
-        frustumCulled={false}
-        renderOrder={0}
-        raycast={() => null}
-      />
-      <instancedMesh
-        ref={faceMeshRef}
-        args={[quad, faceMaterial, capacity]}
-        {...cohortGpuProbes.face}
+        ref={lensMeshRef}
+        args={[lensGeometry, lensMaterial, capacity]}
+        {...cohortGpuProbes.lens}
         frustumCulled={false}
         renderOrder={1}
         raycast={() => null}
       />
-      <instancedMesh
-        ref={auraMeshRef}
-        args={[quad, auraMaterial, capacity]}
-        {...cohortGpuProbes.aura}
+      {/* ⚠️ `frustumCulled` IS FALSE FOR A REASON THE BOUND CANNOT KNOW: three
+          computes it from `position`, which holds the SEATS, and the vertex
+          program then moves every speck up to 27 world units away from its own.
+          A culled draw would take a cohort's whole intake off screen while the
+          cohort itself was still in it. */}
+      <points
+        geometry={motesGeometry}
+        material={motesMaterial}
+        {...cohortGpuProbes.motes}
         frustumCulled={false}
         renderOrder={2}
         raycast={() => null}

@@ -235,11 +235,12 @@ describe('colonyMotes.ts — source-level shader guards', () => {
           .toBe(`${program.name}: smoothstep(${edge0}, ${edge1}) is ordered`);
       }
     }
-    // ⭐ EMPTY, AND THAT IS A PROPERTY OF THE PROGRAM: both edges of both calls
+    // ⭐ EMPTY, AND THAT IS A PROPERTY OF THE PROGRAM: both edges of every call
     // are a uniform or a literal, never a local.
     expect(unprovable).toEqual([]);
-    // The fold's band and the fade-in.
-    expect(checked).toBe(2);
+    // The fold's band, the fade-in, and the proximity exemption's own band —
+    // which is borrowed text and is swept exactly like the program's own.
+    expect(checked).toBe(3);
   });
 
   it('no pow can be handed a negative base, and the vertex writes none at all', () => {
@@ -290,6 +291,36 @@ describe('colonyMotes.ts — source-level shader guards', () => {
       }
       if (program.name === 'motes.fragmentShader') expect(defined).toEqual(['main']);
     }
+  });
+
+  it('recedes with an inspection in RGB only, off the SAME exemption the disc uses', () => {
+    // ⭐⭐⭐ ONE MARK RECEDES AS ONE. `NetworkColony` winds passive peer context
+    // down as the camera closes on a cell, and these specks are passive context
+    // like everything else — but a cohort the camera has FLOWN TO is the object
+    // it came for, so the exemption brings both the disc and the specks in it
+    // back together. G2 shipped this program without the expression and recorded
+    // what it would cost: past 150 wu the lens dims with the mesh and the motes
+    // would not, which is one mark receding in two pieces.
+    const vertex = MOTES_VERTEX?.glsl ?? '';
+    const body = stripComments(colonyCohort.COHORT_CONTEXT_ENERGY_GLSL)
+      .replace(/\s+/g, ' ');
+    expect(vertex).toContain(body);
+    // ⚠️ IN THE VERTEX STAGE, AND THE NAME IS A LOCAL — the same case the gulp
+    // makes below. The snippet names its input `vOrigin` because the lens reads
+    // it as a varying in its fragment; here the world seat is already a local, so
+    // the name is bound to it. A 1.5 px point has no extent to fade across, so
+    // there is nothing a per-fragment version would buy.
+    expect(vertex).toContain('vec3 vOrigin = seat;');
+    expect(vertex.indexOf('vec3 vOrigin = seat;')).toBeLessThan(vertex.indexOf(body));
+    expect(vertex).toContain('uniform float uContextEnergy;');
+    // ⚠️ AND IT LEAVES THE STAGE AS ONE FLOAT, multiplied into RGB and NEVER
+    // into alpha: this draw is additive and three's additive blend uses SOURCE
+    // ALPHA as its factor, so energy in alpha would square the recession.
+    expect(vertex).toContain('vEnergy = cohortEnergy;');
+    expect(MOTES_FRAGMENT?.glsl)
+      .toContain('gl_FragColor = vec4(uColor * s * vEnergy, min(s, 1.0));');
+    expect([...(MOTES_FRAGMENT?.glsl ?? '').matchAll(/\bvEnergy\b/g)])
+      .toHaveLength(2);
   });
 
   it('declares everything the borrowed envelope reaches for', () => {

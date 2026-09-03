@@ -13,9 +13,9 @@
 //     the block's edge-flow — the couriers are now only a faint glint accent on top.
 //
 // ALL edges live in a single additive <lineSegments> (~600, one draw). Per-vertex:
-//   position (the DRAWN endpoint — a cohort's own links stop at the outer edge
-//   of its aperture rather than at its node, so nothing is added to the mark or
-//   to the pupil it keeps unlit; see `colonyEdgePositions`), aBright (base
+//   position (the DRAWN endpoint — a cohort's own links stop outside the image
+//   its mass computes rather than at its node, so no line is laid across the
+//   shadow or the ring around it; see `colonyEdgePositions`), aBright (base
 //   confidence), aEdgeParam (0 at a,
 //   1 at b — position along the DRAWN link), aPhase (ambient de-sync).
 //   Per-block-DYNAMIC: aSurgeT0/T1
@@ -37,7 +37,7 @@ import { PEER_NETWORK_PALETTE } from '../visualPalette';
 import { PERFORMANCE_PROBE_LABELS } from '../tweaks/performanceProbeStore';
 import { createGpuProbeCallbacks } from '../tweaks/gpuTimerQuery';
 import { createNonEmptyDrawGpuProbeCallbacks } from '../tweaks/nonEmptyGpuProbeCallbacks';
-import { COHORT_LINK_STOP_R } from '../materials/colonyCohort';
+import { COHORT_LINK_STOP_R } from '../materials/colonyLens';
 
 // Gossamer line color for the whole mesh — the faint blue that matches ColonyNodes'
 // inferred ghost cloud so edges + cloud read as one structure. Confidence lives in
@@ -59,24 +59,23 @@ function edgePhase(a: string, b: string): number {
  * then endpoint `b`. Pure — a function of the topology and nothing else — so
  * the geometry can be weighed without a renderer.
  *
- * ⭐⭐⭐ WHY THIS IS NOT SIMPLY THE TWO NODE POSITIONS. A POW cohort is an
- * APERTURE — a disc lying in this very plane, with a pupil that is unlit
- * because bright structure refuses to fill it, not because anything dark is
- * drawn there (`materials/colonyCohort.ts` carries the whole argument). Every
- * face of the mark is additive and depth-read-only, so there is no shadow to
- * hide anything and no depth to reject it: a link run to the node's centre is
- * simply ADDED to it, and the one pixel the form spends itself keeping empty is
- * the one the mesh fills in.
+ * ⭐⭐⭐ WHY THIS IS NOT SIMPLY THE TWO NODE POSITIONS. A POW cohort is an IMAGE
+ * OF BENT LIGHT — a mass in this very plane, whose shadow, photon ring and
+ * folded disc are computed per pixel by `materials/colonyLens.ts`, which
+ * carries the whole argument. A colony link is a straight bright segment in the
+ * same plane; run into the middle of that image it reads as a spoke of a wheel
+ * through the one region of the scene that is saying light does not go straight
+ * here.
  *
- * ⭐⭐ AND UNDER THE APERTURE THERE IS A SECOND REASON THE THROAT NEVER GAVE.
- * The face carries 88 radial striae, and the one measured law of that grain is
- * that radial structure at LOW COUNT reads as a STAR — count is the only escape
- * from it. A colony link is radial structure at count four, drawn in the same
- * plane the disc lies in, so a link crossing the mark joins its grain as a
- * spoke several times the width of any stria. So a cohort's links stop at the
- * mark's OUTER EDGE — `COHORT_LINK_STOP_R`, which is `COHORT_AP_R` and the same
- * radius the face's own fragment discards on — pulled along their own edge
- * toward the other node, on BOTH ends when a link joins two cohorts.
+ * ⭐⭐ AND THE SHADOW CANNOT DEFEND ITSELF FROM ONE, EITHER. The lens is the
+ * colony's only normally-blended draw and it occludes by DRAW ORDER: what is
+ * drawn before it is darkened and what is drawn after is not. `ColonyEdges`
+ * runs FIRST in the colony (`NetworkColony`), which is what lets the shadow
+ * hide a link that passes behind a hole — but a link ending AT the cohort ends
+ * inside the image itself, where there is nothing behind to hide. So a cohort's
+ * links stop at `COHORT_LINK_STOP_R`, 3.0 wu — outside the disc's inner edge at
+ * 2.31 and inside the 3.5 wu keep-out — pulled along their own edge toward the
+ * other node, on BOTH ends when a link joins two cohorts.
  *
  * ⚠️ THE PULL IS CLAMPED AND CAN NEVER INVERT AN EDGE. Two stops on a link
  * barely longer than one would cross, and a crossed line is drawn backwards

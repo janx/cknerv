@@ -366,26 +366,32 @@ export function stageAttested(
  * units, measured in XZ.
  *
  * ⭐⭐⭐ A COHORT IS A HOLE IN THE MEMBRANE, AND NOBODY MAY STAND IN THE HOLE.
- * The mark is drawn as an opening the mist is being drawn through, and the one
- * thing a viewer aims at is that opening. A peer standing inside it is a second
- * target inside the first: two marks over one pixel, and a click that has to
- * pick. Measured live on 2026-09-02 (T6), the six cohorts' nearest non-cohort
- * neighbours stood at 1.274 / 2.355 / 4.602 / 5.337 / 7.794 / 8.247 wu, and the
- * nearest of them was a SIGHTED — clickable — peer 1.274 wu away: inside the
- * drawn hole (`COHORT_RIM_R` 1.6) and inside the cohort's own pick sphere
- * (`COHORT_HIT_RADIUS` 1.5). Both marks resolved to their own cards, but at
+ * The mark is a mass lying in the plane, drawn as the image light makes around
+ * it, and the one thing a viewer aims at is the shadow in the middle. A peer
+ * standing inside it is a second target inside the first: two marks over one
+ * pixel, and a click that has to pick. Measured live on 2026-09-02 (T6), the six
+ * cohorts' nearest non-cohort neighbours stood at 1.274 / 2.355 / 4.602 / 5.337
+ * / 7.794 / 8.247 wu, and the nearest of them was a SIGHTED — clickable — peer
+ * 1.274 wu away: inside the drawn mark (the aperture's 1.6 wu hole at the time,
+ * the shadow's 2.0 wu now) and inside the cohort's own pick sphere. Both marks resolved to their own cards, but at
  * that peer's projected centre the HOVER readout named the cohort while the
- * CLICK opened the peer, and one cohort's own hole opened its neighbour's card
+ * CLICK opened the peer, and one cohort's own centre opened its neighbour's card
  * from one of two camera azimuths. So the fix is placement, not pick radius:
  * the colony keeps the disc empty and the ambiguity has nowhere to occur.
+ * ⚠️ THE PICK RADIUS HAS SINCE GROWN TO 2.0 wu (2026-09-03, the lensed form:
+ * the target is the SHADOW), which spends half of the daylight this radius used
+ * to leave — 1.0 wu of clearance to the brightest sighted peer's own sphere,
+ * now 0.5. Still clear, and measured in `cohortKeepOut.test.ts` rather than
+ * assumed; a further growth of either radius has to move this one too.
  *
- * ⭐ 3.5 = `COHORT_AP_R` 3.0 + 0.5, AND BOTH HALVES ARE LOAD-BEARING. 3.0 is
- * how far the mark's light reaches (the face's fragment discards past `uApR`)
- * and it is also `COHORT_LINK_STOP_R`, where `ColonyEdges` ends every link
- * incident on a cohort. A node displaced to exactly 3.0 would therefore have
- * its own link trimmed to nothing — `colonyEdgePositions` guards `len > 0` so
- * it writes no NaN, but the drawn segment would be a point, and a peer beside a
- * cohort would look unlinked. 0.5 wu is the margin that keeps the stub a line.
+ * ⭐ 3.5 = `COHORT_LINK_STOP_R` 3.0 + 0.5, AND BOTH HALVES ARE LOAD-BEARING.
+ * 3.0 is where `ColonyEdges` ends every link incident on a cohort, which is
+ * itself outside the disc's inner edge (the ISCO, 2.31 wu) so no link ends on
+ * the bright ring the mark computes there. A node displaced to exactly 3.0
+ * would therefore have its own link trimmed to nothing —
+ * `colonyEdgePositions` guards `len > 0` so it writes no NaN, but the drawn
+ * segment would be a point, and a peer beside a cohort would look unlinked.
+ * 0.5 wu is the margin that keeps the stub a line.
  * ⭐ MEASURED LIVE THE SAME DAY, ON THE SAME SIX COHORTS. The nearest
  * non-cohort distances went 2.355 / 1.274 / 4.602 / 8.247 / 5.337 / 7.794 wu →
  * 3.598 / 3.527 / 4.602 / 8.247 / 5.337 / 7.794: two neighbours stepped aside
@@ -401,13 +407,13 @@ export function stageAttested(
  *
  * ⚠️ THE NUMBER IS RESTATED HERE RATHER THAN IMPORTED, and the layering is the
  * reason. This file is a pure data shaper — no React, no three.js — and
- * `materials/colonyCohort.ts` constructs `ShaderMaterial`s; importing it would
+ * `materials/colonyLens.ts` constructs a `ShaderMaterial`; importing it would
  * drag three into every topology test to read one float. Placement belongs to
  * the topology and the mark's radii belong to the material, so the two are
  * pinned against each other from a third place instead:
  * `__tests__/materials/cohortKeepOut.test.ts` imports BOTH files and asserts
- * `COHORT_AP_R + 0.5 <= COHORT_KEEP_OUT_R` and
- * `COHORT_HIT_RADIUS < COHORT_KEEP_OUT_R`, so they cannot drift apart silently.
+ * the whole chain — `HIT 2.0 < DISC_IN 2.31 < LINK_STOP 3.0 < KEEP_OUT 3.5` —
+ * so no two of them can drift apart silently.
  *
  * ⚠️ IT DOES NOT APPLY TO THE LOCAL OR MEASURED NODES. A measured peer's
  * radius IS a measurement — `latencyToRadius01` of its round trip — so moving
