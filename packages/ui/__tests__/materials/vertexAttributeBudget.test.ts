@@ -28,6 +28,7 @@ import {
   makeCohortIntakePatchMaterial,
 } from '../../src/materials/colonyMist';
 import { makeCohortLensMaterial } from '../../src/materials/colonyLens';
+import { makeCohortMotesMaterial } from '../../src/materials/colonyMotes';
 import {
   makeCanonicalRewriteEchoMaterial,
 } from '../../src/components/CanonicalRewriteEcho';
@@ -344,6 +345,18 @@ const ROWS: readonly BudgetRow[] = [
     usage: { instanced: true },
   },
   {
+    name: 'cohortMotesMaterial',
+    sources: ['src/materials/colonyMotes.ts'],
+    material: makeCohortMotesMaterial,
+    // ⚠️ THE ONE DRAW IN THE FEATURE THAT IS NOT INSTANCED, and the whole shape
+    // of this row follows from it. A `THREE.Points` geometry has one vertex per
+    // MOTE, so there is no `instanceMatrix` and no per-instance lane: the
+    // cohort's seat, its seed and its share are widened to 96 copies each, and
+    // the gulp lane is a COPY of the instanced one rather than the same buffer
+    // object every other cohort draw shares.
+    usage: {},
+  },
+  {
     name: 'canonicalRewriteEchoMaterial',
     sources: ['src/components/CanonicalRewriteEcho.tsx'],
     material: makeCanonicalRewriteEchoMaterial,
@@ -580,6 +593,31 @@ describe('vertex attribute budget', () => {
     expect(lens?.names).toEqual(patch?.names);
     // Six slots still free, on the busiest program the colony draws.
     expect(MAX_VERTEX_ATTRIBUTES - (lens?.total ?? 0)).toBe(6);
+  });
+
+  it('charges the motes four widened lanes, and no instance matrix', () => {
+    // ⭐⭐ THE ONE COHORT DRAW THAT IS NOT INSTANCED. Every other program in this
+    // feature is one instance per cohort and reads its lanes at that width; the
+    // motes are one VERTEX per mote, so the seat that rides `instanceMatrix`
+    // elsewhere is an attribute here and each lane is 96 copies wide.
+    //
+    // ⚠️ AND THAT IS WHY THE GULP LANE CANNOT BE SHARED. `ColonyCohorts` hands
+    // ONE `InstancedBufferAttribute` per lane to the quad; handing the same
+    // object to this geometry would read one cohort's stamp for the first
+    // ninety-sixth of the colony's motes and garbage after it. The copy is
+    // written by `stampCohortMotes`, and `colonyMotes.test.ts` pins the width.
+    const motes = measured.find(({ name }) => name === 'cohortMotesMaterial');
+    const lens = measured.find(({ name }) => name === 'cohortLensMaterial');
+    expect(motes).toBeDefined();
+    expect([motes?.custom, motes?.injected, motes?.total]).toEqual([4, 3, 7]);
+    expect(motes?.names).toEqual(['aOrigin', 'aSeed', 'aStrength', 'aGulp']);
+    // The seat is an attribute here and a matrix there; the seed and the gulp
+    // are the same two facts under different names of width.
+    expect(motes?.names).not.toContain('aShare');
+    expect(motes?.defines.has('USE_INSTANCING')).toBe(false);
+    expect(lens?.defines.has('USE_INSTANCING')).toBe(true);
+    // The cheapest vertex program in the colony, with nine slots still free.
+    expect(MAX_VERTEX_ATTRIBUTES - (motes?.total ?? 0)).toBe(9);
   });
 
   it('keeps the colony edge program exactly where it was', () => {
