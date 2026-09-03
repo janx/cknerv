@@ -31,10 +31,12 @@ import {
   COHORT_LENS_BEAM,
   COHORT_HOLE_GATE_HI,
   COHORT_HOLE_GATE_LO,
-  COHORT_LENS_FAR_ARM_AMP,
   COHORT_LENS_FAR_DISC_AMP,
   COHORT_LENS_FAR_DISC_POW,
-  COHORT_LENS_FAR_HEART_Q,
+  COHORT_LENS_FAR_GLOW,
+  COHORT_LENS_FAR_GLOW_CORE,
+  COHORT_LENS_FAR_GLOW_R,
+  COHORT_LENS_FAR_KNEE,
   COHORT_LENS_FAR_STREAK,
   COHORT_LENS_QUAD_R,
   COHORT_LENS_STEP,
@@ -52,9 +54,10 @@ import {
   lensDeflection,
   lensDiscInnerEdge,
   lensFarLaw,
-  lensFarArmLaw,
   lensFarArms,
   lensFarBody,
+  lensFarCatchment,
+  lensFarNucleus,
   lensFold,
   lensHoleGate,
   lensNearOuterFade,
@@ -252,12 +255,13 @@ describe('cohort lens — the fold', () => {
     // The plan's own table, in one line each.
     expect(COHORT_DISC_IN).toBeCloseTo(2.31, 10);
     expect(COHORT_HORIZON / COHORT_HORIZON_FAR).toBeCloseTo(9.625, 3);
-    expect(COHORT_DISC_OUT / COHORT_DISC_OUT_FAR).toBeCloseTo(5.6, 3);
+    expect(COHORT_DISC_OUT / COHORT_DISC_OUT_FAR).toBeCloseTo(2, 3);
     // ⚠️ THE DISC SHRINKS LESS THAN THE MASS, deliberately: far away there is
     // no shadow to see at all and what is left must read as INTAKE, never as a
-    // scale model of a black hole. 5.6× against 9.63× since 2026-09-03, when
+    // scale model of a black hole. 2× against 9.63× since 2026-09-03, when
     // the far form became the intake itself and its arms needed room (the 3 wu
-    // skirt before it was 9.33×, and the 6 wu one before that 4.67×).
+    // skirt before it was 9.33×, the 6 wu one before that 4.67×, and the 5 wu
+    // two-skirt form in between 5.6×).
     expect(COHORT_DISC_OUT / COHORT_DISC_OUT_FAR)
       .toBeLessThan(COHORT_HORIZON / COHORT_HORIZON_FAR);
   });
@@ -311,7 +315,7 @@ describe('cohort lens — the fold', () => {
     expect(wasCloseness(14)).toBeCloseTo(0.259, 3);
     expect(6 + (28 - 6) * wasCloseness(14)).toBeCloseTo(11.7, 1);
     expect(lensFold(14).discOut).toBe(COHORT_DISC_OUT_FAR);
-    expect(COHORT_DISC_OUT_FAR).toBe(5);
+    expect(COHORT_DISC_OUT_FAR).toBe(14);
   });
 
   it('paints the dark last: nothing through the first third of the band', () => {
@@ -350,105 +354,83 @@ describe('cohort lens — the fold', () => {
 
 describe('cohort lens — the disc’s two laws', () => {
   it('the far law falls from the centre to exactly zero at the far radius', () => {
-    // ⭐ IT IS A SKIRT AND NOT A RING, which is the shape the peer mesh already
-    // has: at the far end of the fold a ring is an artefact and a skirt is a
-    // peer.
+    // ⭐ ONE CURVE, a sink's own density: hyperbolic in the radius under the
+    // mist's catchment weight, brightest at the middle, exactly nothing at the
+    // edge — no ring, no pupil, no platform and no rim.
     const out = COHORT_DISC_OUT_FAR;
     expect(lensFarLaw(0, out)).toBeCloseTo(COHORT_LENS_FAR_DISC_AMP, 12);
     expect(lensFarLaw(out, out)).toBe(0);
     expect(lensFarLaw(out * 1.5, out)).toBe(0);
+    expect(lensFarCatchment(0, out)).toBe(1);
+    expect(lensFarCatchment(out, out)).toBe(0);
     let previous = Infinity;
-    for (let rho = 0; rho <= out; rho += out / 60) {
+    for (let rho = 0; rho <= out; rho += out / 200) {
       const value = lensFarLaw(rho, out);
       expect(value).toBeLessThan(previous);
       previous = value;
     }
   });
 
-  it('leaves the far mark a sighted peer’s footprint, with the arms outside it', () => {
-    // ⭐⭐⭐ THE YARDSTICK IS A PEER'S SPRITE, said by the user on the live
-    // frames of 2026-09-03. It is READ from the peer material rather than
-    // restated, because a copied number here would drift the day that layer
-    // retunes; `size` there is a world DIAMETER.
-    const peer = PEER_CLOUD_SIGHTED_TONE.size;
-    expect(peer).toBe(2);
-    expect(PEER_CLOUD_SIGHTED_DARK_TONE.size).toBe(1.5);
-
+  it('concentrates the light at the mouth and leaves the periphery faint', () => {
+    // ⭐⭐⭐ THE USER'S SECOND JUDGEMENT (2026-09-03) AS NUMBERS: the vortex must
+    // reach further, and its periphery must be fainter and die faster. Both are
+    // one curve: `(h/(ρ+h))^p` under the catchment weight is at half its peak
+    // by 1 wu, a third at 2 wu, a sixth at 4 and a twentieth at 8 — a sink's
+    // own 1/r density — and the reach is fourteen.
     const out = COHORT_DISC_OUT_FAR;
-    // Where the skirt falls to a given fraction of its own peak: solving
-    // `(1 − ρ/out)^pow = f` gives `ρ = out · (1 − f^(1/pow))`.
-    const at = (fraction: number): number =>
-      out * (1 - fraction ** (1 / COHORT_LENS_FAR_DISC_POW));
-    expect(lensFarLaw(at(0.1), out))
-      .toBeCloseTo(0.1 * COHORT_LENS_FAR_DISC_AMP, 10);
-    expect(lensFarLaw(at(0.5), out))
-      .toBeCloseTo(0.5 * COHORT_LENS_FAR_DISC_AMP, 10);
-
-    // ⭐ THE PIN IS THE HALF-MAXIMUM WIDTH — the size a soft form READS as —
-    // and it is the peer's own sprite to within 5 %: 2.06 wu against 2.0.
-    expect(2 * at(0.5)).toBeCloseTo(2.063, 3);
-    expect(Math.abs(2 * at(0.5) - peer) / peer).toBeLessThan(0.05);
-    // …while the tenth-of-peak reach is 2.68 wu: the atmosphere the arms ride
-    // out on, past the body, at a few percent of its peak.
-    expect(at(0.1)).toBeCloseTo(2.679, 3);
-    expect(at(0.1)).toBeGreaterThan(peer);
-    expect(at(0.1)).toBeLessThan(0.6 * out);
-    // ⚠️ WHAT IT WAS, so the size of the change is on the record: the 3 wu
-    // skirt at ^2.2 (cut on 2026-09-03 for the mid range) had a half-maximum
-    // width of 1.62 wu and reached 1.95 — inside the peer, with nothing outside
-    // it for an intake to be seen in.
-    expect(2 * 3 * (1 - 0.5 ** (1 / 2.2))).toBeCloseTo(1.622, 3);
-    expect(3 * (1 - 0.1 ** (1 / 2.2))).toBeCloseTo(1.947, 3);
+    const peak = lensFarLaw(0, out);
+    const at = (rho: number): number => lensFarLaw(rho, out) / peak;
+    expect(COHORT_LENS_FAR_KNEE).toBe(1);
+    expect(COHORT_LENS_FAR_DISC_POW).toBe(1);
+    // The half-maximum radius of the bare law, `h · (2^(1/p) − 1)`.
+    const half = COHORT_LENS_FAR_KNEE * (2 ** (1 / COHORT_LENS_FAR_DISC_POW) - 1);
+    expect(half).toBe(1);
+    expect(at(half)).toBeGreaterThan(0.49);
+    expect(at(2)).toBeCloseTo(0.32, 2);
+    expect(at(4)).toBeCloseTo(0.169, 2);
+    expect(at(4)).toBeLessThan(0.2);
+    expect(at(8)).toBeLessThan(0.06);
+    expect(at(8)).toBeGreaterThan(0.04);
+    // ⚠️ WHAT THE TWO-SKIRT FORM DID, so the size of the change is on the
+    // record: its arms' skirt `(1 − ρ/5)^0.8` was still 0.66 of its peak at 2
+    // wu and 0.28 at 4 — a disc with an edge, which the user called too bright
+    // at the periphery and not fused with the cohort.
+    expect((1 - 2 / 5) ** 0.8).toBeCloseTo(0.6645, 3);
+    expect((1 - 4 / 5) ** 0.8).toBeCloseTo(0.276, 3);
   });
 
-  it('the far body has arms everywhere but in the heart, on a skirt of their own', () => {
+  it('the arms run all the way in, and the nucleus keeps the pupil off', () => {
     const out = COHORT_DISC_OUT_FAR;
-    // ⭐ THE CENTRE DOES NOT DEPEND ON THE MEDIUM: a dark lane through the
-    // middle would print a pupil on the brightest point of the mark.
-    expect(lensFarBody(0, out, 0)).toBeCloseTo(lensFarBody(0, out, 1), 12);
-    expect(lensFarBody(0, out, 0))
-      .toBeCloseTo(COHORT_LENS_FAR_DISC_AMP + COHORT_LENS_FAR_ARM_AMP, 12);
-    // Inside the heart the arms' modulation is blended toward neutral; at its
-    // edge it is full: the difference a bright lane makes is the arms' skirt
-    // times the contrast, exactly.
-    const heartR = COHORT_LENS_FAR_HEART_Q * out;
-    expect(heartR).toBe(1.75);
-    const swing = (rho: number): number => lensFarBody(rho, out, 1) - lensFarBody(rho, out, 0);
-    expect(swing(heartR)).toBeCloseTo(
-      lensFarArmLaw(heartR, out) * (lensFarArms(1) - lensFarArms(0)), 12,
-    );
-    expect(swing(heartR * 0.5)).toBeLessThan(swing(heartR));
-    expect(swing(0)).toBe(0);
-    // ⭐ THE ARMS' CONTRAST: a filament is twice their skirt and a lane is
-    // NOTHING, which is what a six-pixel-per-unit camera resolves as arms; the
-    // calmed `0.7 + 0.3·g` the traced far form used to carry was 1.43:1.
-    // ⚠️ And 1 is the ceiling: past it a lane would go negative and remove light.
+    // ⭐ THE ARMS' CONTRAST: a filament is twice the law and a lane is NOTHING,
+    // everywhere — no blend to neutral near the heart, which is what made the
+    // intake and the cohort read as two objects. ⚠️ 1 is the ceiling: past it
+    // a lane would go negative and remove light.
     expect(COHORT_LENS_FAR_STREAK).toBe(1);
-    expect(lensFarArms(1)).toBeCloseTo(1 + COHORT_LENS_FAR_STREAK, 12);
-    expect(lensFarArms(0)).toBeCloseTo(1 - COHORT_LENS_FAR_STREAK, 12);
-    expect(lensFarArms(0)).toBeGreaterThanOrEqual(0);
+    expect(lensFarArms(1)).toBeCloseTo(2, 12);
+    expect(lensFarArms(0)).toBeCloseTo(0, 12);
     expect(lensFarArms(0.5)).toBe(1);
-    expect(1.0 / 0.7).toBeCloseTo(1.4286, 3);
-    // ⭐⭐ THE ARMS OUT-REACH THE HEART, WHICH IS THE POINT OF THE SECOND
-    // SKIRT: at half the far radius the heart is an eighth of its peak and the
-    // arms' skirt is still over half of theirs, so what a viewer sees out
-    // there is the medium and not the body.
-    expect(lensFarLaw(0.5 * out, out) / COHORT_LENS_FAR_DISC_AMP).toBeCloseTo(0.125, 6);
-    expect(lensFarArmLaw(0.5 * out, out) / COHORT_LENS_FAR_ARM_AMP).toBeCloseTo(0.574, 3);
-    expect(lensFarArmLaw(0.5 * out, out) * lensFarArms(1)).toBeGreaterThan(0.5);
-    expect(lensFarArmLaw(0.5 * out, out) * lensFarArms(1))
-      .toBeGreaterThan(2 * lensFarLaw(0.5 * out, out));
-    // ⚠️ AND THE AVERAGE PROFILE NEVER RISES: at the neutral medium the body
-    // falls monotonically to nothing at the far radius, so there is no ring at
-    // the heart's edge for the eye to find. (At a fixed BRIGHT lane the arms
-    // may locally out-shine the fading heart — that is an arm, not a ring.)
-    let previous = Infinity;
-    for (let rho = 0; rho <= out; rho += out / 200) {
-      const value = lensFarBody(rho, out, 0.5);
-      expect(value).toBeLessThanOrEqual(previous + 1e-12);
-      previous = value;
+    expect(lensFarBody(0.7, out, 1) / lensFarBody(0.7, out, 0.5)).toBeCloseTo(2, 12);
+    expect(lensFarBody(0, out, 0)).toBe(0);
+    // ⭐⭐ THE NUCLEUS IS THE BRIGHTEST THING IN THE FAR FORM, and it does not
+    // read the medium. With the DARKEST lane at the centre, the centre is still
+    // brighter than the BRIGHTEST lane anywhere past half a world unit, so no
+    // lane can print a pupil; and the medium's lanes are 2.5 wu wide, so a lane
+    // cannot be dark at the centre and bright half a unit away.
+    expect(lensFarNucleus(0)).toBeCloseTo(
+      COHORT_LENS_FAR_GLOW * (1 + COHORT_LENS_FAR_GLOW_CORE), 12,
+    );
+    const darkestCentre = lensFarNucleus(0) + lensFarBody(0, out, 0);
+    for (let rho = 0.5; rho <= out; rho += 0.05) {
+      const brightest = lensFarNucleus(rho) + lensFarBody(rho, out, 1);
+      expect(brightest).toBeLessThan(darkestCentre);
     }
-    for (const g of [0, 0.5, 1]) expect(lensFarBody(out, out, g)).toBe(0);
+    // …and the nucleus is a sighted peer's own shape: a 0.7 wu Gaussian with a
+    // brighter core at 0.35 of it, falling to a tenth by 1.06 wu.
+    expect(COHORT_LENS_FAR_GLOW_R).toBe(0.7);
+    expect(lensFarNucleus(1.06) / lensFarNucleus(0)).toBeLessThan(0.1);
+    // The fifth of the law at 2 wu, doubled by a filament, is still under the
+    // nucleus's own peak: the arms enter the heart, they never out-shine it.
+    expect(lensFarBody(2, out, 1)).toBeLessThan(lensFarNucleus(0));
   });
 
   it('the near law fades out over the outer 60 % of the disc', () => {

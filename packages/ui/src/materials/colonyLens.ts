@@ -64,9 +64,9 @@ import { PEER_NETWORK_PALETTE, type SceneColor } from '../visualPalette';
  *    strength. What the disc shows is the substance being taken.
  * 3. ⭐⭐ THE FIELD STAYS SECONDARY AT THE DEFAULT CAMERA. The whole image folds
  *    with distance: near, the film's hole with a twenty-eight-unit vortex;
- *    far, THE INTAKE ITSELF — the substance winding into a bright heart over a
- *    five-unit catchment, with no hole and no ring, because out there a hole
- *    is a small eye (see `lensFarSample`). ONE closeness number drives the
+ *    far, THE INTAKE ITSELF — the mesh's own light winding into a peer-like
+ *    nucleus over a ten-unit catchment, with no hole and no ring, because out
+ *    there a hole is a small eye (see `lensFarSample`). ONE closeness number drives the
  *    mass, the disc's extent, the texture and the beaming; the shadow's dark
  *    alone waits for the last part of the band (`lensHoleGate`).
  * 4. ⛔ NEVER UPWARD. Nothing here emits toward the canopy; the arc over the top
@@ -179,27 +179,34 @@ export const COHORT_DISC_OUT = 28;
  * ⭐⭐⭐ FAR AWAY THE MARK IS THE INTAKE AND NOT A HALO (2026-09-03). The user
  * judged the live frames of the 3 wu skirt: at the app camera a cohort still
  * read as "a small eye", and what was missing was "the atmosphere of energy
- * being drawn in". So the far form is now the substance itself — the mist's own
+ * being drawn in". So the far form is the substance itself — the mist's own
  * medium, advected along the sink's spiral streamlines and read coarse enough
- * for a six-pixel-per-unit camera to see the arms — winding into a bright
- * heart. That needs ROOM: arms that end at 3 wu are a texture on a dot.
+ * for a six-pixel-per-unit camera to see the arms — winding into a nucleus.
  *
- * ⭐⭐ THE BODY STAYS PEER-SIZED WHILE THE ARMS REACH OUT, and the law is what
- * reconciles the two. The skirt is `(1 − ρ/out)^3` now (was ^2.2 at 3 wu): at
- * `out` = 5 it is above HALF its peak inside 1.03 wu — a 2.06 wu half-maximum
- * width, which IS a sighted peer's 2.0 wu sprite — and above a tenth inside
- * 2.68 wu. Between those two radii the arms carry it: the streak field's own
- * contrast (`COHORT_LENS_FAR_STREAK`) is what a viewer sees at 2–4 wu, at a
- * few percent of the peak, and that is the atmosphere. The user's yardstick for
- * the mark itself — `PEER_CLOUD_SIGHTED_TONE.size`, 2.0 wu across, pinned in
- * the test — is met at the half-maximum, where a soft form's size is read; the
- * 3 wu skirt met it at 1.62 wu and had nothing outside.
+ * ⭐⭐⭐ FOURTEEN, AND THE LAW IS WHAT MAKES FOURTEEN AFFORDABLE. The user's second
+ * judgement (2026-09-03, on the 5 wu form): the vortex did not reach far
+ * enough, AND its periphery was too bright and fell too slowly — a disc with
+ * an edge, not an atmosphere. Those are one complaint about one curve. The
+ * far law is now hyperbolic, `(h/(ρ+h))^p` with `COHORT_LENS_FAR_KNEE` h and
+ * `COHORT_LENS_FAR_DISC_POW` p, under the mist's own catchment weight
+ * `(1 − (ρ/out)²)²`: at h = 1 and p = 1 it is at half its peak by 1 wu, a third
+ * at 2, a sixth at 4 and a twentieth at 8 — so the light is concentrated at
+ * the mouth the way a sink's density is, and what reaches out to the edge is a
+ * faint coherent streak field the eye can follow for its SHAPE without it ever
+ * competing with the mesh for its LIGHT. Four variants were shot ON-minus-hidden
+ * at the app camera on 2026-09-03 (p 1.5 / 2.0 over 10 wu, p 1.0 / 1.2 over
+ * 14): the steep pair kept the whirlpool inside 4 wu, the 1/r tail over 14 wu
+ * is the one that reads as a vortex the size the user asked for at a periphery
+ * of 10–17/255. Measured on the 5 wu form
+ * (ON-minus-hidden, 6.3 px/wu): the layer's own light was still 23/255 at 2.2
+ * wu and 12/255 at 2.9, over a 3–4.5 wu lit radius; a sighted peer's own light
+ * is gone by 1 wu. That is the size mismatch the user called jarring.
  *
- * ⚠️ THE MASS STILL FOLDS HARDER THAN THE DISC — 9.63× against 28/5 = 5.6× —
+ * ⚠️ THE MASS STILL FOLDS HARDER THAN THE DISC — 9.63× against 28/14 = 2× —
  * and it must: far away there is no shadow to see at all, so what is left has
  * to be a picture of intake and never a scale model of a black hole.
  */
-export const COHORT_DISC_OUT_FAR = 5.0;
+export const COHORT_DISC_OUT_FAR = 14;
 
 /* ------------------------------------------- what other layers read off the mass */
 
@@ -482,13 +489,17 @@ export const COHORT_LENS_GLOW_R = 4;
 /**
  * The far form's presence: the mesh's own register.
  *
- * ⭐⭐ THE HEART'S BLOOM, OVER THE FAR FORM. Far away nothing is traced and no
- * dark is painted (`lensFarSample`); the body peaks at the centre on its own,
- * and this is the round, camera-facing bloom laid over that centre: a 0.7 wu
- * Gaussian with a brighter core at 0.35 of that radius — the shape of a sighted
- * peer's sprite, whose own mark is 2.0 wu across — so that at a grazing
- * elevation, where the in-plane body foreshortens to a sliver, the mark still
- * has the nucleus every other mark in the mesh has.
+ * ⭐⭐⭐ THE NUCLEUS, AND IT IS THE BRIGHTEST THING IN THE FAR FORM. Far away
+ * nothing is traced and no dark is painted (`lensFarSample`); this round,
+ * camera-facing bloom — a 0.7 wu Gaussian with a brighter core at 0.35 of that
+ * radius, the shape of a sighted peer's sprite — is the OBJECT a viewer sees,
+ * and the in-plane arms are its atmosphere. The user's judgement of the 5 wu
+ * form (2026-09-03) is why the weight moved from the plane to the nucleus:
+ * a flat, foreshortened, clipped-white ellipse in a mesh of round soft points
+ * was "not in harmony with the peer mesh", and the reason was its SHAPE and
+ * its SIZE, not its colour alone. A cohort is a peer that mines: its nucleus
+ * is round like a peer's, at most a little brighter, and everything that is
+ * not round about it is faint.
  *
  * ⭐⭐ MEASURED LIVE 2026-09-03, AND THE THIRD RULE HOLDS BY MEASUREMENT. At the
  * app camera the layer's own brightest pixel anywhere on the canvas (ON minus
@@ -503,7 +514,7 @@ export const COHORT_LENS_GLOW_R = 4;
  * FAR DISC AND THE 1.0 wu HALO; both were cut on 2026-09-03 and the numbers can
  * only have come down, but they are owed a re-measure.
  */
-export const COHORT_LENS_FAR_GLOW = 0.15;
+export const COHORT_LENS_FAR_GLOW = 0.5;
 
 /**
  * The far halo's Gaussian radius, in world units: `exp(-(impact/r)²)`, with the
@@ -520,30 +531,43 @@ export const COHORT_LENS_FAR_GLOW_CORE = 0.5;
 export const COHORT_LENS_FAR_GLOW_CORE_R = 0.35;
 
 /**
- * The far form's own law: a skirt falling from the centre to the far radius,
- * `amp · (1 − ρ/out)^pow`, which the arms then modulate.
+ * The far form's own law: hyperbolic in the radius, `amp · (h/(ρ+h))^pow`,
+ * under the catchment weight, which the arms then modulate.
  *
  * ⭐⭐ IT IS A DIFFERENT LAW AND NOT A DIMMED NEAR ONE. The near disc is bright
  * at its inner edge and dark in the gap inside it; at the far end of the band
- * that reads as a ring, and a ring around a darker centre is a small eye. A
- * skirt falling from the centre has no ring and no pupil: its brightest point
- * is its middle, at every camera.
+ * that reads as a ring, and a ring around a darker centre is a small eye. This
+ * law's brightest point is its middle, at every camera.
  *
- * ⭐ THE EXPONENT WENT 2.2 → 3 WHEN THE RADIUS WENT 3 → 5 (2026-09-03), so the
- * half-maximum width — the size a soft form reads as — stayed a peer's: 2.06
- * wu against the sprite's 2.0. See `COHORT_DISC_OUT_FAR` for the arithmetic.
+ * ⭐⭐⭐ HYPERBOLIC AND NOT A SKIRT (2026-09-03, the user's second judgement).
+ * A skirt `(1 − ρ/out)^n` has to choose between a peer-sized body (steep) and
+ * a reach (shallow), and the round before tried to have both with TWO skirts
+ * — which made a core on a platform with an edge at 5 wu, the periphery too
+ * bright and falling too slowly, and the intake and the cohort reading as two
+ * objects. `(h/(ρ+h))^p` is what a sink's density looks like: a spike at the
+ * mouth and a long faint tail, ONE curve from the nucleus to the edge, so the
+ * arms are bright exactly where they enter the heart and fade without a step.
+ * At h = 1 and p = 1: 1 at the centre, 0.5 at 1 wu, 0.32 at 2, 0.17 at 4,
+ * 0.05 at 8, and the catchment weight takes it to exactly 0 at `out`.
+ * `cohortFarFall` is the exponent: turn it up and the periphery dies faster
+ * (1.5 and 2 were shot on 2026-09-03 and kept the whirlpool inside 4 wu, which
+ * the user had just called too small a range).
  */
-export const COHORT_LENS_FAR_DISC_AMP = 0.5;
-export const COHORT_LENS_FAR_DISC_POW = 3;
+export const COHORT_LENS_FAR_DISC_AMP = 0.3;
+export const COHORT_LENS_FAR_DISC_POW = 1;
+
+/** The knee of the far law, in world units: the radius at which it has fallen
+ *  to `0.5^pow` of its peak. A peer's own core is about this size. */
+export const COHORT_LENS_FAR_KNEE = 1.0;
 
 /**
- * The arms' contrast, far away: the medium modulates the skirt by
+ * The arms' contrast, far away: the medium modulates the law by
  * `mix(1 − s, 1 + s, g)`, where `g` is the advected medium in [0, 1].
  *
  * ⭐⭐⭐ THIS IS WHAT MAKES THE FAR FORM AN INTAKE RATHER THAN A LAMP. The
  * mist's medium is CARRIED along the sink's spiral streamlines by the same
  * back-trace the near disc uses, so its blobs are sheared into arcs that wind
- * into the heart; at 1 a filament is twice the arms' skirt and a lane between
+ * into the heart; at 1 a filament is twice the law and a lane between
  * filaments is nothing, which a six-pixel-per-unit camera resolves as arms
  * (judged on ON-minus-hidden crops, 2026-09-03: at 0.8 the arms were speckles
  * inside a smudge, at 1 to 1.2 a wound spiral). The traced far form used to
@@ -551,43 +575,17 @@ export const COHORT_LENS_FAR_DISC_POW = 3;
  * eye in it. ⚠️ 1 IS THE CEILING: above it a lane goes NEGATIVE and the arms
  * start removing light. 0 is the old halo exactly, and it is one knob-turn
  * away (`cohortFarStreak`) for the day the arms are judged too loud.
+ *
+ * ⭐ THE ARMS RUN ALL THE WAY IN. The round before blended them to neutral
+ * inside 1.75 wu so no dark lane could print a pupil on the heart, and the
+ * user read the result as an intake that was not fused with its cohort. The
+ * pupil is now kept off by the NUCLEUS instead (`COHORT_LENS_FAR_GLOW`): it is
+ * round, it does not read the medium, and at the centre it out-weighs the
+ * brightest lane anywhere past half a world unit — `colonyLens.test.ts` pins
+ * that inequality — while the medium's lanes are 2.5 wu wide, so a lane cannot
+ * be dark at the centre and bright half a unit away.
  */
 export const COHORT_LENS_FAR_STREAK = 1;
-
-/**
- * The arms' own skirt: a second, SHALLOWER law, `armAmp · (1 − ρ/out)^armPow`,
- * that carries the medium's contrast out past the body.
- *
- * ⭐⭐ TWO SKIRTS, BECAUSE ONE CANNOT BE BOTH PEER-SIZED AND AN ATMOSPHERE. The
- * heart's `^3` is what keeps the body's half-maximum at a sighted peer's 2 wu;
- * at that steepness the medium's arms had died by 2 wu and the app camera saw
- * a bright smudge with speckles in it (measured 2026-09-03, ON minus hidden).
- * The arms therefore ride a `^0.8` skirt of their own, at 0.6 against the
- * heart's 0.5: at 2.5 wu it is still 0.57 of its peak, so a filament there is
- * `0.6 · 0.57 · 2` = 0.69 — a blue arm a viewer can follow — and the heart is
- * 0.5 · 0.125 = 0.06, gone. Three variants were shot at the app camera on
- * 2026-09-03 (0.35/^1.2, 0.45/^1.0, 0.6/^0.8) and only the last read as a
- * whirlpool rather than as a halo. ⚠️ THE SUM STAYS MONOTONE IN THE AVERAGE: the
- * arms' modulation is blended to neutral inside the heart rather than switched
- * off there, so no term RISES at the heart's edge — a rise there is a ring, and
- * a ring around a bright centre is the eye by another road. The amplitude is
- * the `cohortFarArms` knob: it is the dial for how much atmosphere a cohort
- * wears at the default camera, and 0 leaves the heart alone.
- */
-export const COHORT_LENS_FAR_ARM_AMP = 0.6;
-export const COHORT_LENS_FAR_ARM_POW = 0.8;
-
-/**
- * Inside this fraction of the far radius the arms blend out and the skirt is
- * smooth: the heart.
- *
- * ⭐ THE CENTRE MUST NOT DEPEND ON THE MEDIUM. A dark lane of the streak field
- * passing through the middle would print a dark speck on the brightest point
- * of the mark — the pupil coming back by another road. 0.35 of 5 wu is 1.75 wu:
- * `ANCHOR_BODY_RADIUS`, the local peer's own body, which is the size the user
- * gave for the mark itself.
- */
-export const COHORT_LENS_FAR_HEART_Q = 0.35;
 
 /**
  * The fraction of the medium's grain the far form reads it at.
@@ -616,13 +614,20 @@ export const COHORT_LENS_FAR_GRAIN = 0.6;
 export const COHORT_LENS_FAR_SWIRL = 2.4;
 
 /**
- * The exponent that turns the far radius fraction into the colour ramp's
- * gathered fraction: `hot = (1 − ρ/out)^pow`, white at the centre, the mesh's
- * cyan through the body, the cool outer stop on the arms. ⭐ 3 keeps the white
- * to the innermost half unit: at 1.5 the whole heart clipped to a flat white
- * disc, and a flat white disc is a lamp.
+ * How far the far form's colour sits from the mesh's own cyan toward the
+ * disc's mid stop: 0 is `scaffold` exactly, 1 is the disc's cyan.
+ *
+ * ⭐⭐⭐ THE FAR FORM WEARS THE MESH'S HUE, AND THIS IS WHY. The round before
+ * coloured the far arms with the near disc's ramp, whose outer stop is a deep
+ * blue meant to be seen against black; over the rose canopy it composited to
+ * VIOLET, a hue that belongs to neither the mesh (cyan) nor the canopy (rose),
+ * and the user called the result jarring. Measured on that form, the
+ * periphery's own light was (0.6, 6, 15) in RGB — blue at two and a half
+ * times its green — where the scaffold is (26, 209, 255), green at four fifths
+ * of blue. At the far camera the cohort is a peer that mines, and it takes the
+ * mesh's light; the ramp to white happens only inside the nucleus.
  */
-export const COHORT_LENS_FAR_HOT = 3;
+export const COHORT_LENS_FAR_TINT = 0.35;
 
 /* -------------------------------------------------------------------------- *
  * The substance, where this draw's numbers differ from the retired patch's.
@@ -1022,37 +1027,45 @@ export function lensFold(pxPerWu: number): LensFold {
   };
 }
 
-/** The far form's skirt, without the arms: `amp · (1 − ρ/out)^pow`. */
+/** The mist's own catchment weight on the far radius fraction: `(1 − q²)²`. */
+export function lensFarCatchment(rho: number, out: number): number {
+  const q = Math.min(1, Math.max(0, rho / out));
+  const b = 1 - q * q;
+  return b * b;
+}
+
+/** The far form's law, without the arms: `amp · (h/(ρ+h))^pow · catchment`. */
 export function lensFarLaw(rho: number, out: number): number {
   return (
     COHORT_LENS_FAR_DISC_AMP
-    * Math.max(1 - rho / out, 0) ** COHORT_LENS_FAR_DISC_POW
+    * (COHORT_LENS_FAR_KNEE / (Math.max(rho, 0) + COHORT_LENS_FAR_KNEE)) ** COHORT_LENS_FAR_DISC_POW
+    * lensFarCatchment(rho, out)
   );
 }
 
-/** The arms' factor on the skirt for a medium value `g` in [0, 1]. */
+/** The arms' factor on the law for a medium value `g` in [0, 1]. */
 export function lensFarArms(g: number): number {
   return mix(1 - COHORT_LENS_FAR_STREAK, 1 + COHORT_LENS_FAR_STREAK, g);
 }
 
-/** The arms' skirt, without the arms: `armAmp · (1 − ρ/out)^armPow`. */
-export function lensFarArmLaw(rho: number, out: number): number {
-  return (
-    COHORT_LENS_FAR_ARM_AMP
-    * Math.max(1 - rho / out, 0) ** COHORT_LENS_FAR_ARM_POW
-  );
+/**
+ * The far form's in-plane body: the law, modulated by the medium everywhere.
+ * The mirror of `lensFarSample`'s brightness before the block's own gulp and
+ * the colour.
+ */
+export function lensFarBody(rho: number, out: number, g: number): number {
+  return lensFarLaw(rho, out) * lensFarArms(g);
 }
 
 /**
- * The far form's body: the heart's skirt plus the arms' skirt, the latter
- * modulated by the medium everywhere but in the heart, where the modulation is
- * blended to neutral. The mirror of `lensFarSample`'s brightness before the
- * block's own gulp and the colour.
+ * The nucleus: the round, camera-facing bloom over the far form, as a function
+ * of the impact parameter. `glow · (exp(−t²) + core · exp(−(t/coreR)²))`.
  */
-export function lensFarBody(rho: number, out: number, g: number): number {
-  const armWeight = smoothstep(0, COHORT_LENS_FAR_HEART_Q, rho / out);
-  return lensFarLaw(rho, out)
-    + lensFarArmLaw(rho, out) * mix(1, lensFarArms(g), armWeight);
+export function lensFarNucleus(impact: number): number {
+  const t = impact / COHORT_LENS_FAR_GLOW_R;
+  const tc = t / COHORT_LENS_FAR_GLOW_CORE_R;
+  return COHORT_LENS_FAR_GLOW
+    * (Math.exp(-t * t) + COHORT_LENS_FAR_GLOW_CORE * Math.exp(-tc * tc));
 }
 
 /** The near disc's outer fade: 1 inside 0.4 of the outer radius, 0 at it. */
@@ -1180,11 +1193,10 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
       uFarDiscAmp: { value: COHORT_LENS_FAR_DISC_AMP },
       uFarDiscPow: { value: COHORT_LENS_FAR_DISC_POW },
       uFarStreak: { value: COHORT_LENS_FAR_STREAK },
-      uFarArmAmp: { value: COHORT_LENS_FAR_ARM_AMP },
-      uFarArmPow: { value: COHORT_LENS_FAR_ARM_POW },
+      uFarKnee: { value: COHORT_LENS_FAR_KNEE },
       uFarGrain: { value: COHORT_LENS_FAR_GRAIN },
       uFarSwirl: { value: COHORT_LENS_FAR_SWIRL },
-      uFarHot: { value: COHORT_LENS_FAR_HOT },
+      uFarTint: { value: COHORT_LENS_FAR_TINT },
       uColCore: { value: new THREE.Color().setRGB(...stops.core) },
       uColMid: { value: new THREE.Color().setRGB(...stops.mid) },
       uColOuter: { value: new THREE.Color().setRGB(...stops.outer) },
@@ -1291,11 +1303,10 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
       uniform float uFarDiscAmp;
       uniform float uFarDiscPow;
       uniform float uFarStreak;
-      uniform float uFarArmAmp;
-      uniform float uFarArmPow;
+      uniform float uFarKnee;
       uniform float uFarGrain;
       uniform float uFarSwirl;
-      uniform float uFarHot;
+      uniform float uFarTint;
       uniform vec3 uColCore;
       uniform vec3 uColMid;
       uniform vec3 uColOuter;
@@ -1385,8 +1396,12 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
         // At the far end of the band the bent ray finds the same skirt the
         // straight one reads below it (lensFarSample), so the cross-fade between
         // the two has no seam to cross.
+        float fq = clamp(rho / outR, 0.0, 1.0);
+        float fCatch = 1.0 - fq * fq;
+        fCatch *= fCatch;
         float farLaw = uFarDiscAmp
-          * pow(max(1.0 - rho / outR, 0.0), uFarDiscPow) * (0.7 + 0.3 * g);
+          * pow(clamp(uFarKnee / (rho + uFarKnee), 0.0, 1.0), uFarDiscPow)
+          * fCatch * (0.7 + 0.3 * g);
         // AND THE TRACED IMAGE ARRIVES WITH THE CLOSENESS. Below the band the
         // far form is drawn alone; through it the traced disc fades in over
         // that form, so the ring the trace makes around a small mass never
@@ -1466,23 +1481,26 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
         float t1 = fract(ph + 0.5) * uPeriod;
         float phaseMix = 1.0 - abs(2.0 * fract(ph) - 1.0);
         float g = mix(lensFarMedium(local, t1), lensFarMedium(local, t0), phaseMix);
+        // ONE curve from the nucleus to the edge: a sink's own density, a spike
+        // at the mouth and a long faint tail, under the mist's catchment weight
+        // so it is exactly nothing at the far radius. The arms modulate it
+        // everywhere -- the nucleus, not a blend, is what keeps a dark lane
+        // from printing a pupil on the centre.
         float q = rho / outR;
-        // Two skirts: the heart's, steep, which is the body a viewer sizes;
-        // and the arms', shallow, which carries the medium's own contrast out
-        // past it. The modulation is blended to NEUTRAL inside the heart, not
-        // switched off, so no term rises at the heart's edge -- a rise there is
-        // a ring, and a ring around a bright centre is the eye by another road.
-        float skirt = pow(max(1.0 - q, 0.0), uFarDiscPow);
-        float armSkirt = pow(max(1.0 - q, 0.0), uFarArmPow);
+        float catchW = 1.0 - q * q;
+        catchW *= catchW;
+        float shape = pow(clamp(uFarKnee / (rho + uFarKnee), 0.0, 1.0), uFarDiscPow);
         float arms = mix(1.0 - uFarStreak, 1.0 + uFarStreak, g);
-        arms = mix(1.0, arms, smoothstep(0.0, ${COHORT_LENS_FAR_HEART_Q.toFixed(2)}, q));
         // The block this cohort won, on the SAME curve the near disc swallows.
         ${COHORT_GULP_GLSL}
-        float v = (uFarDiscAmp * skirt + uFarArmAmp * armSkirt * arms)
+        float v = uFarDiscAmp * shape * catchW * arms
           * (1.0 + ${COHORT_GULP_INTERIOR.toFixed(1)} * gulp);
-        // White at the heart, the mesh's cyan through the body, the cool outer
-        // stop on the arms: the temperature of the substance as it gathers.
-        vec3 col = mistDiscColor(pow(max(1.0 - q, 0.0), uFarHot));
+        // The mesh's own cyan, because out here a cohort is a peer that mines
+        // and takes the mesh's light; white only where the law is near its
+        // peak, inside the nucleus. Never the near disc's blue outer stop: over
+        // the rose canopy it composited to violet.
+        vec3 farCol = mix(uRimColor, uColMid, uFarTint);
+        vec3 col = mix(farCol, uColCore, shape);
         // Thin, so the mesh shows through the atmosphere: that far out an opaque
         // disc is a blob and the mark must stay secondary.
         return vec4(col * v, clamp(v * uDiscAlpha * 0.3, 0.0, 0.5));
@@ -1524,15 +1542,16 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
         vec4 far = vec4(0.0);
         if (farW > 0.0) {
           far = lensFarSample(o, d, c, uDiscOutFar);
-          // The heart's bloom: round and camera-facing, the sprite's own
-          // register, so a body foreshortened to a sliver still has a nucleus.
+          // The nucleus: round and camera-facing, the sprite's own register
+          // and the brightest thing in the far form -- the object a viewer
+          // sees, with the in-plane arms as its atmosphere.
           // Written as t*t rather than pow(t, 2.0) so no reader has to prove
           // the base non-negative.
           float tf = impact / max(uFarGlowR, 1e-4);
           float tc = tf / ${COHORT_LENS_FAR_GLOW_CORE_R.toFixed(2)};
           float heart = uFarGlow
             * (exp(-tf * tf) + ${COHORT_LENS_FAR_GLOW_CORE.toFixed(1)} * exp(-tc * tc));
-          far.rgb += mix(uRimColor, uColCore, 0.5) * heart;
+          far.rgb += mix(uRimColor, uColCore, 0.6) * heart;
           far *= farW;
         }
         // NO MARCHING AT THE FAR END. Every cohort at the app camera sits at

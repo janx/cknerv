@@ -1207,7 +1207,7 @@ describe('what a POW cohort looks like', () => {
     expect(peerSchema.cohortSwirl.value).toBe(1.4);
     const knobs = [
       'cohortHorizon', 'cohortDiscOut', 'cohortDiscAmp', 'cohortBeam',
-      'cohortFarAmp', 'cohortFarArms', 'cohortFarStreak', 'cohortFarSwirl',
+      'cohortFarAmp', 'cohortFarFall', 'cohortFarStreak', 'cohortFarSwirl',
       'cohortGlow', 'cohortWarmth', 'cohortUnfold',
       'cohortSteps', 'cohortIntake', 'cohortSwirl', 'cohortOrbit',
       'cohortMotes',

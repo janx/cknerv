@@ -933,12 +933,12 @@ smoothstepped over 20 -> 50 px/wu, and it drives everything:
 | Horizon `rs` | 0.08 wu | 0.77 wu |
 | Shadow, `3*sqrt(3)/2` horizons | 0.21 wu | 2.00 wu |
 | Disc inner edge, the ISCO at 3 horizons | 0.24 wu | 2.31 wu |
-| Disc outer edge | 5 wu (the far form's catchment) | 28 wu |
+| Disc outer edge | 14 wu (the far form's catchment) | 28 wu |
 | Shadow opacity | 0, and 0 until closeness 0.35; 1 from 0.85 (`lensHoleGate`) | 1 |
 | Beaming | 0 | 0.45 |
 | Traced image's weight | 0 (no ray is integrated) | 1 |
 | Far form's weight | 1 | 0 |
-| Motes | born within 5 wu, x0.2 | born at 8-27 wu, full |
+| Motes | born within 14 wu, x0.2 | born at 8-27 wu, full |
 
 THE BAND AND THE FAR FORM WERE BOTH CUT ON 2026-09-03, on the user's judgement
 of the live frames: the far view was right, but at the MID range - 14 to 20
@@ -957,21 +957,33 @@ mass captures every ray aimed within 2.6 horizons of the centre, so the centre i
 the one place the disc is never sampled, and the ring of disc around it is
 brighter than it. So below the band NO RAY IS INTEGRATED. The fragment sends the
 unbent ray straight to the colony plane (`lensFarSample`) and reads the intake
-there: a skirt `0.9 * (1 - rho/out)^3` that peaks AT THE CENTRE, modulated by the
-mist's own medium advected along the sink's spiral streamlines - read at 0.45 of
-its grain and wound a further 0.8 turns per e-fold so the arms are legible at six
-pixels a unit - with the arms blended out inside 0.35 of the radius (1.75 wu, the
-local peer's body) so the heart is smooth and no lane can print a pupil on it.
-White at the heart through the mesh's cyan to the cool outer stop on the arms,
-the block's gulp on top, a round camera-facing bloom over the centre, and the
-whole thing thin enough that the mesh shows through. The skirt's half-maximum
-width is 2.06 wu, a sighted peer's 2.0 wu sprite - the size a soft form reads as
-- while its tenth-of-peak reach is 2.68 wu and the arms ride out to 5 at a few
-percent of the peak: the body is peer-sized and the atmosphere is not. Through
-the band the traced image fades in OVER that far form at the closeness, and the
-hole's dark alone waits: a captured ray paints `smoothstep(0.35, 0.85,
-closeness)`, so a cohort at 30 px/wu is a lit whirlpool with a ring forming in
-it, at 35 the hole is translucent, at 40 it is the film's hole. Near, it is the
+there: ONE hyperbolic law `0.3 * (1 / (rho + 1))^1` - a sink's own 1/r density,
+half its peak by 1 wu, a third at 2, a sixth at 4, a twentieth at 8 - under the
+mist's catchment weight `(1 - (rho/14)^2)^2` so it is exactly nothing at 14 wu,
+modulated everywhere by the mist's own medium advected along the sink's spiral
+streamlines, read at 0.6 of its grain and wound a further 2.4 turns per e-fold so
+the arms are legible at six pixels a unit. Over it a round, camera-facing NUCLEUS
+- a 0.7 wu Gaussian with a brighter core, a sighted peer's own shape and the
+brightest thing in the far form - which is what keeps a dark lane from printing a
+pupil on the centre and is the OBJECT a viewer sees; the in-plane arms are its
+atmosphere. The far form wears the MESH'S HUE, `scaffold` toward the disc's cyan,
+white only inside the nucleus, and the block's gulp rides on top.
+
+THE SECOND JUDGEMENT THAT SHAPED IT (2026-09-03, on the round before this one, a
+5 wu form of two skirts coloured with the near disc's ramp): "not in harmony with
+the peer mesh, jarring", and "the intake not fused with the cohort; the vortex not
+reaching far enough; the periphery too bright and falling too slowly". Measured
+on that form, ON minus hidden: its central light was three to four times a
+sighted peer's own, its lit radius five to seven times a peer's, its periphery
+BLUE at two and a half times its green where the scaffold is cyan - over the rose
+canopy that composited to violet - and its shape a flat foreshortened ellipse in
+a mesh of round points. The hyperbolic law, the mesh's hue and the nucleus are
+the three answers, and the knob for the periphery is `cohortFarFall`, the
+exponent: up, and the tail dies faster. Through the band the traced image fades
+in OVER that far form at the closeness, and the hole's dark alone waits: a
+captured ray paints `smoothstep(0.35, 0.85, closeness)`, so a cohort at 30 px/wu
+is a lit whirlpool with a lens forming in it, at 35 the hole is translucent, at
+40 it is the film's hole. Near, it is the
 hole with a 28 wu vortex around it. The fold must be measured on the DRAWING
 BUFFER's height and never the CSS height, because a tier that lowers the DPR
 changes how many pixels a world unit covers, and a mark folded on CSS pixels
@@ -1120,8 +1132,8 @@ would be the composed aperture creeping back in through the panel:
 one to reach for first — every other radius is a multiple of it), `cohortDiscOut`
 (how far the intake reaches), `cohortDiscAmp` (the near disc's own brightness),
 `cohortBeam` (how much brighter the approaching side is), `cohortFarAmp` (the far
-heart's weight), `cohortFarArms` (the far arms' weight: the atmosphere of intake
-around the heart), `cohortFarStreak` (the far arms' contrast about their skirt;
+form's in-plane weight), `cohortFarFall` (how fast the far form dies with radius:
+the exponent of its hyperbolic law), `cohortFarStreak` (the far arms' contrast;
 0 is a plain halo with no intake in it, 1 the ceiling), `cohortFarSwirl` (the
 far arms' extra winding, in turns per e-fold on top of `cohortSwirl`),
 `cohortGlow` (the bloom stand-in), `cohortWarmth` (0 the
@@ -1164,7 +1176,7 @@ because of it. Load average 3.0-6.0.
 
 ⚠️ EVERY ROW ABOVE WAS MEASURED AT THE 6 -> 30 px/wu BAND AND THE 6 wu FAR DISC
 that shipped that day. The band is 20 -> 50 since, and the far form is the
-untraced intake over a 5 wu catchment (see above), so every row taken inside
+untraced intake over a 14 wu catchment (see above), so every row taken inside
 the old band - the app camera at 4.6-22.6 px/wu, the 14 and
 20 px/wu columns, the far form's own 77/255, and the whole 29-frame unfold strip
 - describes a form the app no longer draws there and is owed a re-measure. The

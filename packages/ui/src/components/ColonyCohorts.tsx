@@ -940,9 +940,10 @@ export default function ColonyCohorts({
     lens.uDiscAmp.value = LIVE.peer.cohortDiscAmp;
     lens.uBeam.value = LIVE.peer.cohortBeam;
     lens.uFarDiscAmp.value = LIVE.peer.cohortFarAmp;
-    // The far form's own three: the arms' weight, their contrast and their
-    // extra winding — facts about the substance as the app camera sees it.
-    lens.uFarArmAmp.value = LIVE.peer.cohortFarArms;
+    // The far form's own three: how fast it dies with radius, the arms'
+    // contrast and their extra winding — facts about the substance as the app
+    // camera sees it.
+    lens.uFarDiscPow.value = LIVE.peer.cohortFarFall;
     lens.uFarStreak.value = LIVE.peer.cohortFarStreak;
     lens.uFarSwirl.value = LIVE.peer.cohortFarSwirl;
     lens.uGlow.value = LIVE.peer.cohortGlow;

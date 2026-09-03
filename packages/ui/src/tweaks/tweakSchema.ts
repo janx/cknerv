@@ -41,8 +41,8 @@ import {
   COHORT_HORIZON,
   COHORT_LENS_BEAM,
   COHORT_LENS_DISC_AMP,
-  COHORT_LENS_FAR_ARM_AMP,
   COHORT_LENS_FAR_DISC_AMP,
+  COHORT_LENS_FAR_DISC_POW,
   COHORT_LENS_FAR_STREAK,
   COHORT_LENS_FAR_SWIRL,
   COHORT_LENS_GLOW,
@@ -207,11 +207,11 @@ export const peerSchema = {
   cohortDiscAmp: { value: COHORT_LENS_DISC_AMP, min: 0, max: 3, step: 0.05, label: 'cohort disc amp' },
   // how much brighter the approaching side of the disc is: relativistic beaming
   cohortBeam: { value: COHORT_LENS_BEAM, min: -1, max: 1, step: 0.05, label: 'cohort beaming' },
-  // the far HEART's weight: the steep skirt that is the body a viewer sizes
+  // the far form's in-plane weight: the intake's arms, at the mouth
   cohortFarAmp: { value: COHORT_LENS_FAR_DISC_AMP, min: 0, max: 2, step: 0.05, label: 'cohort far amp' },
-  // the far ARMS' weight: the shallow skirt the medium's streaks ride out on —
-  // the atmosphere of intake around the heart; 0 leaves the heart alone
-  cohortFarArms: { value: COHORT_LENS_FAR_ARM_AMP, min: 0, max: 1.5, step: 0.05, label: 'cohort far arms' },
+  // how fast the far form dies with radius: the exponent of `(h/(ρ+h))^p` —
+  // up and the periphery goes, the nucleus stays
+  cohortFarFall: { value: COHORT_LENS_FAR_DISC_POW, min: 0.5, max: 4, step: 0.05, label: 'cohort far fall' },
   // the far arms' contrast about their skirt — the medium's own streaks, wound
   // into the heart by the sink; 0 is a plain halo with no intake in it, and 1
   // is the ceiling (past it a lane would remove light)

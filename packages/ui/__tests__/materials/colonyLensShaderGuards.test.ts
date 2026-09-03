@@ -302,19 +302,17 @@ describe('colonyLens.ts — source-level shader guards', () => {
     // a local are written as fractions of it; see `evaluate` above.
     expect(unprovable).toEqual([]);
     // The fold, the inner band, the outer fade, the inner edge, the fibre lane,
-    // the two colour stops, the context exemption — and the far form's two: the
-    // HOLE GATE, which is the fold's second, later schedule and the only
-    // quantity that has one, and the heart's blend on the arms.
-    expect(checked).toBe(10);
+    // the two colour stops, the context exemption — and the HOLE GATE, which is
+    // the fold's second, later schedule and the only quantity that has one.
+    expect(checked).toBe(9);
   });
 
   it('no pow anywhere can be handed a negative base', () => {
-    // ⚠️ Seven calls: the medium's ridge, the fibres' ridge, the near disc's
-    // radial falloff, the far skirt TWICE — once where the bent ray finds it and
-    // once where the straight one does — the far arms' own skirt, and the far
-    // colour ramp's fraction. Six carry an explicit clamp at zero; the near
-    // disc's base is a local that IS one, and this reader resolves it rather
-    // than trusting it.
+    // ⚠️ Five calls: the medium's ridge, the fibres' ridge, the near disc's
+    // radial falloff, and the far law TWICE — once where the bent ray finds it
+    // and once where the straight one does. Four carry an explicit clamp at
+    // zero; the near disc's base is a local that IS one, and this reader
+    // resolves it rather than trusting it.
     const guarded = (base: string): boolean =>
       /^max\s*\(.*,\s*0\.0\s*\)$/.test(base) || /^clamp\s*\(.*,\s*0\.0\s*,/.test(base);
     const unproven: string[] = [];
@@ -337,7 +335,7 @@ describe('colonyLens.ts — source-level shader guards', () => {
       }
     }
     expect(unproven).toEqual([]);
-    expect(checked).toBe(7);
+    expect(checked).toBe(5);
     // ⚠️ AND THE ONE THE LAB DID NOT GUARD IS THE FIBRES'. Its `n` carries a
     // `+ (g - 0.5) * 0.18` that can push it outside [0, 1], and `1 - abs(2n -
     // 1)` is then negative. The `max` in `MIST_FIBRES_GLSL` is this port's
