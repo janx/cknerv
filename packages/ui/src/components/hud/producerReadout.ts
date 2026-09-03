@@ -462,9 +462,17 @@ export function producerBuildShareText(
   return `${fan.matched} OF ${versionedRosterSize}`;
 }
 
-/** What that denominator counts, in words, printed wherever the fraction is.
- *  It is one caption rather than a longer value string because the value column
- *  of a readout row is a measure, and this is what the measure is OF. */
+/** What that denominator counts, in words, carried wherever the fraction is.
+ *  It is one sentence rather than a longer value string because the value
+ *  column of a readout row is a measure, and this is what the measure is OF.
+ *
+ *  ⭐ IT IS HOVER COPY NOW RATHER THAN A LINE ON THE CARD. The cohort card
+ *  printed it under the fraction and printed nine more sentences like it under
+ *  its other rows, which is a paragraph between a reader and the next number;
+ *  it is the row's `title` instead, unchanged word for word. Naming the
+ *  population is still not optional — a fraction whose bottom half is unnamed
+ *  gets the wrong bottom half supplied by whoever reads it — it is one reach
+ *  away rather than a line everybody pays for. */
 export const PRODUCER_BUILD_DENOMINATOR_CAPTION = 'PEERS THE CRAWLER HOLDS A BUILD FOR';
 
 /** What a drawn fan is claiming, said out loud.
@@ -483,14 +491,16 @@ export const PRODUCER_BUILD_DENOMINATOR_CAPTION = 'PEERS THE CRAWLER HOLDS A BUI
  *  ordinary outcome rather than a failure. */
 export const PRODUCER_FAN_DRAWN_CAPTION = 'THE COHORT MAY INCLUDE ANY OF THEM, OR NONE';
 
-/** Why the word on every one of these surfaces is COHORT.
+/** Why the word on every one of these surfaces is COHORT. The cohort card
+ *  carries it in the KEY row's hover, which is also where the row's probe hook
+ *  now holds it for a live read.
  *
  *  ⭐⭐ IT IS THE ONE FACT THAT MAKES THE VOCABULARY NECESSARY, so it is
- *  printed rather than assumed. Everything this feature measures is keyed on a
- *  payout lock hash, and a payout lock hash names where the reward GOES — one
- *  address can pay a whole fleet, and two addresses can belong to one operator.
- *  A card that said MINER would be claiming a machine off evidence that only
- *  ever named a destination.
+ *  written down rather than assumed. Everything this feature measures is keyed
+ *  on a payout lock hash, and a payout lock hash names where the reward GOES —
+ *  one address can pay a whole fleet, and two addresses can belong to one
+ *  operator. A card that said MINER would be claiming a machine off evidence
+ *  that only ever named a destination.
  *
  *  It is also the honest form of the double-count the footer discloses: if one
  *  of a cohort's machines is a peer already on stage, the colony draws that

@@ -24,6 +24,20 @@
 // claiming. Nothing here is a reading off a machine, which is the honest
 // amount for a subject nobody has ever addressed.
 //
+// ⭐⭐ AND EVERY GLOSS IS A HOVER RATHER THAN A LINE. Every one of those rows
+// used to print a sentence under its value saying what the value meant — ten
+// sentences under nine rows, which is a paragraph a reader has to walk past to
+// reach the next number, and it made the card read as prose with figures in it
+// rather than as an instrument. The sentences are all still here and not one of
+// them was softened: they are the rows' `title`s, so the column is facts and the
+// gloss arrives when somebody asks for it. What is still printed UNDER a value
+// is the harvest's second reading, which is data and not a gloss on data.
+//
+// ⚠️ AND A ROW THAT ALREADY SAID IT SAYS IT ONCE. Three titles — WEEK,
+// HASHRATE, LAST PAID — were already carrying in prose what their caption said
+// in caps, so nothing was appended to those. The rule is that the sentence is
+// REACHABLE, never that it is written twice.
+//
 // ⭐ THE MASTHEAD IS THE ONE CLAIM A CARD CANNOT MAKE QUIETLY. Per the P2-b
 // ruling a wrong masthead is itself a shipped lie, and this subject can wear
 // neither of the words already on stage: PEER means we hold a link and we do
@@ -192,6 +206,7 @@ function MinerReadout({
   value,
   title,
   badge,
+  rowAttributes,
   children,
 }: {
   row: MinerNodeRow;
@@ -199,6 +214,16 @@ function MinerReadout({
   value: ReactNode;
   title?: string;
   badge?: ReactNode;
+  /** What this row hangs off its own box rather than off its value: the two
+   *  probe hooks that used to live on a caption, and — for the one row with no
+   *  value column at all — the `title` the gloss now arrives in.
+   *
+   *  ⚠️ THE HOVER GOES ON THE VALUE WHEREVER THERE IS ONE. `title` above is
+   *  `PlateReadoutRow`'s, which puts it on the value span, and that is the
+   *  target a reader aims at. A row-level title is for MESSAGE, whose value is
+   *  null and whose span is therefore a zero-width piece of nothing at the
+   *  right-hand edge. */
+  rowAttributes?: Record<string, string>;
   children?: ReactNode;
 }) {
   return (
@@ -208,7 +233,7 @@ function MinerReadout({
       value={value}
       title={title}
       badge={badge}
-      rowAttributes={{ 'data-miner-probe-fact': row }}
+      rowAttributes={{ 'data-miner-probe-fact': row, ...rowAttributes }}
       valueAttributes={{ 'data-miner-probe-value': row }}
     >
       {children}
@@ -216,8 +241,13 @@ function MinerReadout({
   );
 }
 
-/** A sentence under a value, in the micro tier — the caption grammar the other
- *  three dialects already use. */
+/** A line under a value, in the micro tier — the caption grammar the other
+ *  three dialects already use.
+ *
+ *  ⭐ ON THIS CARD IT CARRIES DATA AND NEVER AN EXPLANATION ANY MORE. The ten
+ *  sentences that used to sit under nine values are the rows' `title`s now; the
+ *  one thing left under a value is the harvest's live cells and transactions,
+ *  which is a second READING of the address rather than a gloss on the first. */
 function ReadoutCaption({ children }: { children: ReactNode }) {
   return <PlateReadoutCaption>{children}</PlateReadoutCaption>;
 }
@@ -304,6 +334,15 @@ export default function MinerNodeCard({
   const week = producer.ledger;
   const lastPaid = producerLastPaidText(producer);
   const harvestCaption = producerHarvestCaption(producer);
+  // Seven reasons, seven sentences. Which one is true is the most informative
+  // thing about the join whenever the fan is withheld, and blurring them into
+  // "no candidates" would throw away six different facts about the world — so
+  // the verdict follows the fraction into the row's hover rather than being
+  // dropped with the caption that used to print it.
+  const narrowing = producer.fan.drawn ? 'drawn' : producer.fan.reason;
+  const narrowingText = producer.fan.drawn
+    ? PRODUCER_FAN_DRAWN_CAPTION
+    : PRODUCER_FAN_WITHHELD_TEXT[producer.fan.reason];
 
   const verticalLayout = layoutSide === 'above' || layoutSide === 'below';
 
@@ -415,36 +454,33 @@ export default function MinerNodeCard({
             row="blocks"
             label="BLOCKS"
             value={producerShareText(producer)}
-          >
-            <ReadoutCaption>
-              OF THE RECENT BLOCKS THAT NAMED WHO THEY PAID
-            </ReadoutCaption>
-          </MinerReadout>
+            title="OF THE RECENT BLOCKS THAT NAMED WHO THEY PAID"
+          />
           {/* The whole of the identity. No encoded address and no operator
               name: both are crawler enrichment, neither is wired, and an
               address computed here would be this card inventing the one thing
               it is for refusing to invent.
 
-              ⭐⭐ AND THE SECOND CAPTION IS WHY THIS DIALECT IS CALLED A
-              COHORT AT ALL. The row above prints the only identity the chain
-              attests, and this one says what that identity is worth: a
-              destination, which may pay any number of machines. It sits HERE
-              rather than in the footer because it is a fact about the KEY —
-              the footer's business is what the SCENE is not claiming, and this
-              is a limit on the evidence itself. */}
+              ⭐⭐ AND THE LAST SENTENCE OF ITS HOVER IS WHY THIS DIALECT IS
+              CALLED A COHORT AT ALL. The value prints the only identity the
+              chain attests, and the title says what that identity is worth: a
+              destination, which may pay any number of machines. It hangs off
+              the KEY rather than off the footer because it is a fact about the
+              KEY — the footer's business is what the SCENE is not claiming,
+              and this is a limit on the evidence itself.
+
+              ⚠️ AND THE PROBE HOOK RIDES THE ROW, CARRYING THE SENTENCE IN ITS
+              VALUE. It used to be an empty attribute on the caption's span,
+              read by its text; the caption is gone and the row's own text is
+              the whole row, so the sentence moved into the attribute where a
+              live probe can still read exactly it. */}
           <MinerReadout
             row="key"
             label="KEY"
             value={midTruncate(producer.key, 14, 13)}
-            title={producer.key}
-          >
-            <ReadoutCaption>
-              PAYOUT LOCK HASH · THE ONLY IDENTITY THE CHAIN ATTESTS
-            </ReadoutCaption>
-            <ReadoutCaption>
-              <span data-miner-probe-cohort-reason>{COHORT_PAYOUT_CAPTION}</span>
-            </ReadoutCaption>
-          </MinerReadout>
+            title={`${producer.key}\nPAYOUT LOCK HASH · THE ONLY IDENTITY THE CHAIN ATTESTS\n${COHORT_PAYOUT_CAPTION}`}
+            rowAttributes={{ 'data-miner-probe-cohort-reason': COHORT_PAYOUT_CAPTION }}
+          />
         </div>
       </section>
 
@@ -467,14 +503,23 @@ export default function MinerNodeCard({
         />
         <div style={{ display: 'grid', rowGap: 3 }}>
           {/* Absent rather than dashed when the cohort said nothing: there was
-              no declaration to print, which the withheld reason below states
-              in words. A row that is not there is the honest form of a fact
-              that is not there. */}
+              no declaration to print, which the withheld reason on the row
+              below carries in words. A row that is not there is the honest
+              form of a fact that is not there.
+
+              ⚠️ ITS GLOSS IS THE ONE THAT SITS ON THE ROW. Every other row on
+              the card hangs its hover off the value, which is what a reader
+              aims at; this row's value is null — the string the cohort wrote is
+              a block of its own underneath — so the title goes on the whole
+              row and the label, the chip and the message all answer to it. */}
           {declared ? (
             <MinerReadout
               row="message"
               label="MESSAGE"
               value={null}
+              rowAttributes={{
+                title: 'WRITTEN BY THE COHORT INTO ITS OWN BLOCKS · NOT MEASURED, AND TRIVIALLY SPOOFED',
+              }}
               badge={
                 <span
                   data-miner-probe-declared
@@ -504,21 +549,23 @@ export default function MinerNodeCard({
               >
                 {producer.message}
               </div>
-              <ReadoutCaption>
-                WRITTEN BY THE COHORT INTO ITS OWN BLOCKS · NOT MEASURED, AND
-                TRIVIALLY SPOOFED
-              </ReadoutCaption>
             </MinerReadout>
           ) : null}
           {/* The join, and its verdict. The fraction is `matched` over the
               peers we hold a build for — the same denominator the gates
-              divided by — and the caption under it names that population,
-              because a fraction whose bottom half is unnamed is a fraction a
-              reader will supply the wrong bottom half for. */}
+              divided by — and its title names that population, because a
+              fraction whose bottom half is unnamed is a fraction a reader will
+              supply the wrong bottom half for. The verdict is the second line
+              of the same hover; the badge beside the value is what says, on the
+              face of the card, that there is a verdict to read. */}
           <MinerReadout
             row="build"
             label="ON THIS BUILD"
             value={buildShare ?? PRODUCER_NO_VALUE}
+            title={buildShare === null
+              ? narrowingText
+              : `${PRODUCER_BUILD_DENOMINATOR_CAPTION}\n${narrowingText}`}
+            rowAttributes={{ 'data-miner-probe-narrowing': narrowing }}
             badge={producer.fan.drawn ? undefined : (
               <span
                 data-miner-probe-narrowed="none"
@@ -527,22 +574,7 @@ export default function MinerNodeCard({
                 NOT NARROWED
               </span>
             )}
-          >
-            {buildShare !== null ? (
-              <ReadoutCaption>{PRODUCER_BUILD_DENOMINATOR_CAPTION}</ReadoutCaption>
-            ) : null}
-            {/* Seven reasons, seven sentences. Which one is showing is the
-                most informative thing on the plate whenever the fan is
-                withheld, and blurring them into "no candidates" would throw
-                away six different facts about the world. */}
-            <PlateReadoutCaption>
-              <span data-miner-probe-narrowing={producer.fan.drawn ? 'drawn' : producer.fan.reason}>
-                {producer.fan.drawn
-                  ? PRODUCER_FAN_DRAWN_CAPTION
-                  : PRODUCER_FAN_WITHHELD_TEXT[producer.fan.reason]}
-              </span>
-            </PlateReadoutCaption>
-          </MinerReadout>
+          />
         </div>
       </section>
 
@@ -591,13 +623,7 @@ export default function MinerNodeCard({
               title={week === null
                 ? `The indexer counted ${ledgerWindow.days} complete days, ${ledgerWindow.fromDate} to ${ledgerWindow.toDate}, and this cohort is in none of its rows — it is newer than that week, or smaller than the smallest row the record carries.`
                 : `Blocks the indexer attributed to this cohort over the ${ledgerWindow.days} complete days from ${ledgerWindow.fromDate} to ${ledgerWindow.toDate}, out of ${ledgerWindow.totalBlocks.toLocaleString('en-US')} it attributed in all.`}
-            >
-              <ReadoutCaption>
-                {week === null
-                  ? 'COUNTED BY AN INDEXER · THIS COHORT IS IN NO ROW OF IT'
-                  : 'COUNTED BY AN INDEXER OVER COMPLETE DAYS, NOT BY THIS NODE'}
-              </ReadoutCaption>
-            </MinerReadout>
+            />
             {/* A scale rather than a reading, and the `≈` is the first
                 character of it for that reason — see `producerHashRateText`,
                 where refusing to print a zero is part of the same argument. */}
@@ -606,32 +632,30 @@ export default function MinerNodeCard({
               label="HASHRATE"
               value={producerHashRateText(producer, networkHashRateHs)}
               title="This cohort's share of the blocks multiplied by the network's own rate — the chain's difficulty over the mean interval between the blocks this node has seen. Nothing here measured a machine: a cohort that ran twice as hard for half the week lands in the same place."
-            >
-              <ReadoutCaption>
-                THE SHARE ABOVE × DIFFICULTY OVER BLOCK CADENCE · AN ESTIMATE
-              </ReadoutCaption>
-            </MinerReadout>
+            />
             {/* The address, and it is the KEY in another notation rather than
-                a second identity — which is why the caption names who did the
-                rendering. This card still computes nothing from the hash it
-                prints. */}
+                a second identity — which is why the hover names who did the
+                rendering before it hands over the whole string. This card still
+                computes nothing from the hash it prints. */}
             <MinerReadout
               row="payout"
               label="PAYOUT"
               value={week?.address == null
                 ? PRODUCER_NO_VALUE
                 : midTruncate(week.address, 14, 13)}
-              title={week?.address ?? undefined}
-            >
-              <ReadoutCaption>
-                WHAT THE INDEXER RESOLVED THE KEY ABOVE TO
-              </ReadoutCaption>
-            </MinerReadout>
+              title={week?.address == null
+                ? 'WHAT THE INDEXER RESOLVED THE KEY ABOVE TO'
+                : `${week.address}\nWHAT THE INDEXER RESOLVED THE KEY ABOVE TO`}
+            />
             {/* What is sitting at that address — through `BigInt` the whole
                 way, because the live figure is eight places past what a double
-                can hold exactly. The caption is what the balance is a balance
-                OF: live cells, each of them somewhere in the canopy this scene
-                draws above the membrane. */}
+                can hold exactly.
+
+                ⭐ AND ITS CAPTION IS THE ONE THAT STAYS ON THE CARD, because
+                it is not an explanation of the value above it: live cells and
+                transactions are a second READING of the same address, and
+                moving data into a tooltip would be hiding a fact rather than
+                putting away a gloss. */}
             <MinerReadout
               row="harvest"
               label="HARVEST"
@@ -654,11 +678,7 @@ export default function MinerNodeCard({
                 label="LAST PAID"
                 value={lastPaid}
                 title="One cellbase payout, sampled at a single height a few blocks behind the tip and matched to this cohort's payout address. It says this cohort was paid there; it is not a total and not a rate."
-              >
-                <ReadoutCaption>
-                  ONE SAMPLED CELLBASE · NOT A TOTAL AND NOT A RATE
-                </ReadoutCaption>
-              </MinerReadout>
+              />
             ) : null}
           </div>
         </section>

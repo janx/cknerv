@@ -112,6 +112,13 @@ function titleOf(container: HTMLElement, row: string): string | null {
   return container.querySelector(`[data-miner-probe-value="${row}"]`)?.getAttribute('title') ?? null;
 }
 
+/** The row box. It is where the two probe hooks that used to ride a caption's
+ *  span hang now, and where the MESSAGE row — the one with no value column —
+ *  keeps its own hover. */
+function rowOf(container: HTMLElement, row: string): Element | null {
+  return container.querySelector(`[data-miner-probe-fact="${row}"]`);
+}
+
 describe('MinerNodeCard with a week', () => {
   it('states the week, the fraction and the share in one value', () => {
     const { container } = renderCard();
@@ -155,12 +162,16 @@ describe('MinerNodeCard with a week', () => {
   it('prints the payout address shortened, and keeps the whole of it in the title', () => {
     const { container } = renderCard();
     expect(value(container, 'payout')).toBe('ckb1qzda0cr08m…2qw704s93hhsj');
-    expect(titleOf(container, 'payout')).toBe(PAYOUT_ADDRESS);
-    // ⚠️ The KEY row still carries the hash, unshortened in ITS title. The
-    // address is that lock in another notation, resolved by somebody else —
-    // this card computes none of it from the key.
-    expect(titleOf(container, 'key')).toBe(PRODUCER_KEY);
-    expect(container.textContent).toContain('WHAT THE INDEXER RESOLVED THE KEY ABOVE TO');
+    // ⭐ THE HOVER LEADS WITH THE VALUE'S OWN STRING, which is what a title on
+    // a truncated value has always been for, and the sentence naming who did
+    // the resolving follows it instead of printing under the row.
+    expect(titleOf(container, 'payout')?.startsWith(PAYOUT_ADDRESS)).toBe(true);
+    expect(titleOf(container, 'payout')).toContain('WHAT THE INDEXER RESOLVED THE KEY ABOVE TO');
+    expect(container.textContent).not.toContain('WHAT THE INDEXER RESOLVED THE KEY ABOVE TO');
+    // ⚠️ The KEY row still carries the hash, unshortened and first in ITS
+    // title. The address is that lock in another notation, resolved by somebody
+    // else — this card computes none of it from the key.
+    expect(titleOf(container, 'key')?.startsWith(PRODUCER_KEY)).toBe(true);
   });
 
   it('formats a balance no double can hold, and says what it is a balance of', () => {
@@ -226,6 +237,81 @@ describe('MinerNodeCard with a week', () => {
     for (const element of withPercent) {
       expect(element.textContent).toContain('BLK');
     }
+  });
+
+  it('prints no gloss under any of its values, and keeps every one a hover away', () => {
+    // ⭐⭐ THE CARD USED TO EXPLAIN ITSELF TEN TIMES over nine rows, and a
+    // reader walking down a column of figures had a line of prose between every
+    // two of them. Not one sentence was cut: they are the rows' `title`s, and
+    // this test is the pair of assertions that says so — absent from what the
+    // card PRINTS, present in what it answers when asked.
+    const { container } = renderCard({
+      producer: standing({
+        ledger: ledger({ lastRewardShannons: '55981023159', lastRewardBlock: 20_337_476 }),
+      }),
+    });
+    const text = container.textContent ?? '';
+    for (const gloss of [
+      'OF THE RECENT BLOCKS THAT NAMED WHO THEY PAID',
+      'PAYOUT LOCK HASH · THE ONLY IDENTITY THE CHAIN ATTESTS',
+      'ONE HASH MAY PAY MANY MACHINES · WHICH IS WHY THIS IS A COHORT',
+      'WRITTEN BY THE COHORT INTO ITS OWN BLOCKS · NOT MEASURED, AND TRIVIALLY SPOOFED',
+      'PEERS THE CRAWLER HOLDS A BUILD FOR',
+      'THIS IS THE BUILD ALMOST EVERY PEER WE SEE RUNS',
+      'COUNTED BY AN INDEXER OVER COMPLETE DAYS, NOT BY THIS NODE',
+      'THE SHARE ABOVE × DIFFICULTY OVER BLOCK CADENCE · AN ESTIMATE',
+      'WHAT THE INDEXER RESOLVED THE KEY ABOVE TO',
+      'ONE SAMPLED CELLBASE · NOT A TOTAL AND NOT A RATE',
+    ]) {
+      expect(text, gloss).not.toContain(gloss);
+    }
+
+    // Six of them hang off the value, which is what a reader aims at.
+    for (const [row, gloss] of [
+      ['blocks', 'OF THE RECENT BLOCKS THAT NAMED WHO THEY PAID'],
+      ['key', 'PAYOUT LOCK HASH · THE ONLY IDENTITY THE CHAIN ATTESTS'],
+      ['key', 'ONE HASH MAY PAY MANY MACHINES · WHICH IS WHY THIS IS A COHORT'],
+      ['build', 'PEERS THE CRAWLER HOLDS A BUILD FOR'],
+      ['build', 'THIS IS THE BUILD ALMOST EVERY PEER WE SEE RUNS'],
+      ['payout', 'WHAT THE INDEXER RESOLVED THE KEY ABOVE TO'],
+    ] as ReadonlyArray<[string, string]>) {
+      expect(titleOf(container, row), `${row}: ${gloss}`).toContain(gloss);
+    }
+
+    // The seventh sits on the ROW, because MESSAGE has no value column: the
+    // string the cohort wrote is a block of its own underneath, and the span at
+    // the right-hand edge is a zero-width piece of nothing.
+    expect(rowOf(container, 'message')?.getAttribute('title'))
+      .toBe('WRITTEN BY THE COHORT INTO ITS OWN BLOCKS · NOT MEASURED, AND TRIVIALLY SPOOFED');
+
+    // ⚠️ AND THREE ROWS ALREADY SAID IT, so nothing was appended to those. A
+    // title that carries the sentence twice is the thing this change was
+    // against, one surface over — the rule is that the gloss is REACHABLE, not
+    // that it is written wherever it would fit.
+    expect(titleOf(container, 'week')).toContain('the indexer attributed');
+    expect(titleOf(container, 'hashrate')).toContain('difficulty over the mean interval');
+    expect(titleOf(container, 'paid')).toContain('it is not a total and not a rate');
+    for (const [row, gloss] of [
+      ['week', 'COUNTED BY AN INDEXER'],
+      ['hashrate', 'THE SHARE ABOVE'],
+      ['paid', 'ONE SAMPLED CELLBASE'],
+    ] as ReadonlyArray<[string, string]>) {
+      expect(titleOf(container, row), `${row} says it twice`).not.toContain(gloss);
+    }
+  });
+
+  it('keeps the probe hooks that used to ride a caption', () => {
+    // Both captions carrying a hook are gone, and both hooks are on their rows
+    // with the same reading — the live leg reads this card off a real screen,
+    // so a hook that vanished with its caption is a fact nobody can check.
+    const { container } = renderCard();
+    expect(rowOf(container, 'key')?.getAttribute('data-miner-probe-cohort-reason'))
+      .toBe('ONE HASH MAY PAY MANY MACHINES · WHICH IS WHY THIS IS A COHORT');
+    expect(rowOf(container, 'build')?.getAttribute('data-miner-probe-narrowing')).toBe('modal');
+    // The harvest's second reading is the one line still printed under a value,
+    // and it is DATA rather than a gloss: live cells and transactions are a
+    // second reading of the address, not an explanation of the first.
+    expect(container.querySelectorAll('[data-miner-probe-harvest-caption]')).toHaveLength(1);
   });
 
   it('says none of the words it is not allowed to say', () => {

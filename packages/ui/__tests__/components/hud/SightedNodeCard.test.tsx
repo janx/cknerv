@@ -128,6 +128,19 @@ function minerValue(container: HTMLElement, at: string): string {
   return container.querySelector(`[data-miner-probe-value="${at}"]`)?.textContent ?? '';
 }
 
+/** The hover, which is where every sentence the cohort card used to print under
+ *  a value now lives. A row states its fact; what the fact MEANS is one reach
+ *  away instead of a line of prose between a reader and the next number. */
+function minerTitle(container: HTMLElement, at: string): string {
+  return container.querySelector(`[data-miner-probe-value="${at}"]`)?.getAttribute('title') ?? '';
+}
+
+/** The row box — where the two probe hooks that used to ride a caption's span
+ *  hang now, and where the one row with no value column keeps its own title. */
+function minerRow(container: HTMLElement, at: string): Element | null {
+  return container.querySelector(`[data-miner-probe-fact="${at}"]`);
+}
+
 describe('SightedNodeCard header', () => {
   it('names the node by its first eight characters and dates the sighting', () => {
     const { container } = renderCard();
@@ -536,6 +549,11 @@ describe('MinerNodeCard', () => {
   it('states the blocks, the window and the share on one line', () => {
     const { container } = renderMiner();
     expect(minerValue(container, 'blocks')).toBe('96 / 200 BLK · 48%');
+    // …and says what that window is a window OF on hover rather than under the
+    // value. The sentence is the same one, word for word; what changed is that
+    // a reader who already knows it is not made to read it again.
+    expect(minerTitle(container, 'blocks')).toBe('OF THE RECENT BLOCKS THAT NAMED WHO THEY PAID');
+    expect(container.textContent).not.toContain('OF THE RECENT BLOCKS');
   });
 
   it('never prints a share without the window it was measured over', () => {
@@ -571,6 +589,14 @@ describe('MinerNodeCard', () => {
     const { container } = renderMiner();
     expect(container.querySelector('[data-miner-probe-declared]')?.textContent)
       .toBe('SELF-DECLARED');
+    // ⭐ THE CHIP STAYS AND THE SENTENCE UNDER IT DOES NOT. What a declaration
+    // is worth — nothing measured it, and anybody can write it — is the row's
+    // hover now, and this is the ONE row that carries its title on itself: its
+    // value column is empty, so there is nothing at the right-hand edge for a
+    // reader to aim at.
+    expect(minerRow(container, 'message')?.getAttribute('title'))
+      .toBe('WRITTEN BY THE COHORT INTO ITS OWN BLOCKS · NOT MEASURED, AND TRIVIALLY SPOOFED');
+    expect(container.textContent).not.toContain('TRIVIALLY SPOOFED');
     const message = container.querySelector<HTMLElement>('[data-miner-probe-message]');
     // Byte for byte, interior spacing included. Both sides of the join below
     // are self-declared, so a node advertising a version string containing a
@@ -593,15 +619,27 @@ describe('MinerNodeCard', () => {
   it('prints the payout key and invents no address for it', () => {
     const { container } = renderMiner();
     const key = container.querySelector('[data-miner-probe-value="key"]');
-    expect(key?.getAttribute('title')).toBe(PRODUCER_KEY);
-    expect(container.textContent).toContain('PAYOUT LOCK HASH');
-    // ⭐⭐ …and the one fact that makes the whole vocabulary necessary, printed
-    // on the row it is a fact ABOUT rather than assumed by a reader. A payout
+    // ⭐ THE HOVER LEADS WITH THE WHOLE HASH — the truncation is what the title
+    // has always been there to undo — and the two sentences that used to print
+    // under the row follow it. Neither is on the card any more.
+    expect(key?.getAttribute('title')?.startsWith(PRODUCER_KEY)).toBe(true);
+    expect(key?.getAttribute('title'))
+      .toContain('PAYOUT LOCK HASH · THE ONLY IDENTITY THE CHAIN ATTESTS');
+    expect(container.textContent).not.toContain('PAYOUT LOCK HASH');
+    // ⭐⭐ …and the one fact that makes the whole vocabulary necessary, kept on
+    // the row it is a fact ABOUT rather than assumed by a reader. A payout
     // lock hash is a destination: one of them may pay a rig in a garage or a
     // pool's entire fleet, and nothing in this feature can tell those apart —
     // which is why the card is masted COHORT and not MINER.
-    expect(container.querySelector('[data-miner-probe-cohort-reason]')?.textContent)
+    //
+    // ⚠️ ITS PROBE HOOK MOVED FROM THE CAPTION'S SPAN ONTO THE ROW, and it
+    // carries the sentence in its VALUE rather than as text: the row's own text
+    // is the whole row, so a live probe reading the hook by `textContent` would
+    // have started reading the KEY as well.
+    expect(minerRow(container, 'key')?.getAttribute('data-miner-probe-cohort-reason'))
       .toBe('ONE HASH MAY PAY MANY MACHINES · WHICH IS WHY THIS IS A COHORT');
+    expect(key?.getAttribute('title'))
+      .toContain('ONE HASH MAY PAY MANY MACHINES · WHICH IS WHY THIS IS A COHORT');
     // The encoded CKB address and the operator name are crawler enrichment and
     // nothing in this feature fetches them. A card that computed one would be
     // inventing the single thing it exists to refuse to invent.
@@ -618,7 +656,8 @@ describe('MinerNodeCard', () => {
     // different things — and a reader working out the percentage would get a
     // number that contradicts the verdict on the same line.
     expect(minerValue(container, 'build')).toBe(`4 OF ${VERSIONED_ROSTER_SIZE}`);
-    expect(container.textContent).toContain('PEERS THE CRAWLER HOLDS A BUILD FOR');
+    expect(minerTitle(container, 'build')).toContain('PEERS THE CRAWLER HOLDS A BUILD FOR');
+    expect(container.textContent).not.toContain('PEERS THE CRAWLER HOLDS A BUILD FOR');
     expect(container.querySelector('[data-miner-probe-narrowing]')?.getAttribute('data-miner-probe-narrowing'))
       .toBe('drawn');
     expect(container.querySelector('[data-miner-probe-narrowed]')).toBeNull();
@@ -658,9 +697,15 @@ describe('MinerNodeCard', () => {
         { message: reason === 'no_declaration' ? '' : DECLARED, fan: withheldFan(reason, matched) },
         versioned,
       );
+      // ⭐ Seven sentences, one hover each. The hook rode the caption's span
+      // and rides the ROW now, with the same value on it; the sentence it used
+      // to be the text of is the row's title, and none of the seven is blurred
+      // into another by the move.
       const narrowing = container.querySelector('[data-miner-probe-narrowing]');
+      expect(narrowing).toBe(minerRow(container, 'build'));
       expect(narrowing?.getAttribute('data-miner-probe-narrowing')).toBe(reason);
-      expect(narrowing?.textContent).toBe(sentence);
+      expect(minerTitle(container, 'build')).toContain(sentence);
+      expect(container.textContent).not.toContain(sentence);
       expect(container.querySelector('[data-miner-probe-narrowed]')?.textContent)
         .toBe('NOT NARROWED');
       // …and the three that have no honest denominator print no fraction. A
@@ -669,7 +714,7 @@ describe('MinerNodeCard', () => {
       expect(minerValue(container, 'build')).toBe(
         hasFraction ? `${matched} OF ${versioned}` : '—',
       );
-      const denominatorNamed = (container.textContent ?? '')
+      const denominatorNamed = minerTitle(container, 'build')
         .includes('PEERS THE CRAWLER HOLDS A BUILD FOR');
       expect(denominatorNamed).toBe(hasFraction);
     },
