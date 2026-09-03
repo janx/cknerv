@@ -381,15 +381,26 @@ describe('cohort proximity exemption — one expression in both programs', () =>
     // Nothing bypasses the exemption: `uContextEnergy` occurs exactly twice in
     // the program that reads it — its uniform declaration, and the one read
     // inside the shared expression.
-    for (const [name, glsl] of [
-      ['lens.fragmentShader', lens.fragmentShader],
-      ['motes.vertexShader', motes.vertexShader],
+    // ⭐ The lens READS it twice — once at the far exit, where nothing is
+    // traced, and once at the near one — but COMPUTES it once, above both: a
+    // fragment that left by the far door with an undamped mark would be the
+    // exact drift the shared expression exists to prevent.
+    for (const [name, glsl, reads] of [
+      ['lens.fragmentShader', lens.fragmentShader, 2],
+      ['motes.vertexShader', motes.vertexShader, 1],
     ] as const) {
       expect(`${name}: ${[...glsl.matchAll(/\buContextEnergy\b/g)].length}`)
         .toBe(`${name}: 2`);
       expect(glsl).toContain('uniform float uContextEnergy;');
-      expect([...glsl.matchAll(/\bcohortEnergy\b/g)]).toHaveLength(2);
+      expect([...glsl.matchAll(/\bcohortEnergy\b/g)]).toHaveLength(1 + reads);
     }
+    expect(lens.fragmentShader).toContain(
+      'far.rgb * uAmp * cohortEnergy, clamp(far.a, 0.0, 1.0)',
+    );
+    // …and the one computation stands BEFORE the far exit, so both doors spend
+    // the same number.
+    expect(lens.fragmentShader.indexOf(COHORT_CONTEXT_ENERGY_GLSL))
+      .toBeLessThan(lens.fragmentShader.indexOf('if (closeness <= 0.0) {'));
 
     // ⭐ THE MOTES CARRY IT ACROSS AS ONE FLOAT, computed once per speck rather
     // than once per pixel — and it is the ONLY thing `vEnergy` ever holds, so

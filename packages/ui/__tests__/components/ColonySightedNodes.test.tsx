@@ -1084,9 +1084,12 @@ describe('what a POW cohort looks like', () => {
       expect(material.toneMapped).toBe(false);
     }
     // The horizon is a REFUSAL and never a painted disc: `captured` sets the
-    // alpha and no colour is written for it at all.
+    // alpha and no colour is written for it at all — and the alpha it sets is
+    // the hole gate of the closeness, so the dark arrives over the last part
+    // of the band and never as a pupil in a small far mark.
     expect(lensFragment()).toContain('if (r < rs) { captured = true; break; }');
-    expect(lensFragment()).toContain('if (captured) { acc.a = closeness; }');
+    expect(lensFragment()).toMatch(/if \(captured\) \{\s*acc\.a = smoothstep\(/);
+    expect(lensFragment()).not.toContain('acc.a = closeness;');
     // ⚠️⚠️ AND BECAUSE IT OCCLUDES BY DRAW ORDER, THE MOUNT IS PART OF THE
     // DESIGN. It darkens what drew BEFORE it and nothing after, so it goes after
     // the edges and the nodes and before the courier and the delivery, which fly
@@ -1204,7 +1207,8 @@ describe('what a POW cohort looks like', () => {
     expect(peerSchema.cohortSwirl.value).toBe(1.4);
     const knobs = [
       'cohortHorizon', 'cohortDiscOut', 'cohortDiscAmp', 'cohortBeam',
-      'cohortFarAmp', 'cohortGlow', 'cohortWarmth', 'cohortUnfold',
+      'cohortFarAmp', 'cohortFarArms', 'cohortFarStreak', 'cohortFarSwirl',
+      'cohortGlow', 'cohortWarmth', 'cohortUnfold',
       'cohortSteps', 'cohortIntake', 'cohortSwirl', 'cohortOrbit',
       'cohortMotes',
     ] as const;
@@ -1212,7 +1216,7 @@ describe('what a POW cohort looks like', () => {
       expect(peerSchema, knob).toHaveProperty(knob);
       expect(layer, knob).toContain(`LIVE.peer.${knob}`);
     }
-    // …and the folder holds those thirteen and nothing else `cohort`-shaped.
+    // …and the folder holds those sixteen and nothing else `cohort`-shaped.
     expect(Object.keys(peerSchema).filter((key) => key.startsWith('cohort')).sort())
       .toEqual([...knobs].sort());
 

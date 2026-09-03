@@ -45,7 +45,11 @@ import { describe, expect, it } from 'vitest';
 import * as colonyCohort from '../../src/materials/colonyCohort';
 import * as colonyLens from '../../src/materials/colonyLens';
 import * as colonyMist from '../../src/materials/colonyMist';
-import { makeCohortLensMaterial } from '../../src/materials/colonyLens';
+import {
+  COHORT_HOLE_GATE_HI,
+  COHORT_HOLE_GATE_LO,
+  makeCohortLensMaterial,
+} from '../../src/materials/colonyLens';
 
 const SOURCE = readFileSync(
   resolve(process.cwd(), 'src/materials/colonyLens.ts'),
@@ -297,16 +301,20 @@ describe('colonyLens.ts — source-level shader guards', () => {
     // ⭐ EMPTY, AND THAT IS A PROPERTY OF THE PROGRAM. Both edges taken against
     // a local are written as fractions of it; see `evaluate` above.
     expect(unprovable).toEqual([]);
-    // The fold's two, the inner band, the outer fade, the inner edge, the fibre
-    // lane, the two colour stops and the context exemption.
-    expect(checked).toBe(8);
+    // The fold, the inner band, the outer fade, the inner edge, the fibre lane,
+    // the two colour stops, the context exemption — and the far form's two: the
+    // HOLE GATE, which is the fold's second, later schedule and the only
+    // quantity that has one, and the heart's blend on the arms.
+    expect(checked).toBe(10);
   });
 
   it('no pow anywhere can be handed a negative base', () => {
-    // ⚠️ Four calls: the medium's ridge, the fibres' ridge, the near disc's
-    // radial falloff and the far disc's skirt. Three carry an explicit clamp at
-    // zero; the fourth's base is a local that IS one, and this reader resolves
-    // it rather than trusting it.
+    // ⚠️ Seven calls: the medium's ridge, the fibres' ridge, the near disc's
+    // radial falloff, the far skirt TWICE — once where the bent ray finds it and
+    // once where the straight one does — the far arms' own skirt, and the far
+    // colour ramp's fraction. Six carry an explicit clamp at zero; the near
+    // disc's base is a local that IS one, and this reader resolves it rather
+    // than trusting it.
     const guarded = (base: string): boolean =>
       /^max\s*\(.*,\s*0\.0\s*\)$/.test(base) || /^clamp\s*\(.*,\s*0\.0\s*,/.test(base);
     const unproven: string[] = [];
@@ -329,7 +337,7 @@ describe('colonyLens.ts — source-level shader guards', () => {
       }
     }
     expect(unproven).toEqual([]);
-    expect(checked).toBe(4);
+    expect(checked).toBe(7);
     // ⚠️ AND THE ONE THE LAB DID NOT GUARD IS THE FIBRES'. Its `n` carries a
     // `+ (g - 0.5) * 0.18` that can push it outside [0, 1], and `1 - abs(2n -
     // 1)` is then negative. The `max` in `MIST_FIBRES_GLSL` is this port's
@@ -365,7 +373,7 @@ describe('colonyLens.ts — source-level shader guards', () => {
       if (program.name === 'lens.fragmentShader') {
         expect(defined).toEqual([
           'mistNoise', 'mistMedium', 'mistBacktrace', 'mistFibres',
-          'mistDiscColor', 'lensDisc', 'main',
+          'mistDiscColor', 'lensDisc', 'lensFarMedium', 'lensFarSample', 'main',
         ]);
       }
     }
@@ -523,6 +531,49 @@ describe('colonyLens.ts — source-level shader guards', () => {
     expect(stripComments(
       readFileSync(resolve(process.cwd(), 'src/materials/colonyMist.ts'), 'utf8'),
     )).not.toContain('texture2D');
+  });
+
+  it('does no marching at the far end, and paints the dark last', () => {
+    // ⭐⭐⭐ THE FAR FORM IS NOT A TRACED IMAGE, and both halves of that are TEXT
+    // in the program rather than arithmetic anyone can infer from outside it.
+    // A traced image at a small mass is a bright ring around a darker centre —
+    // a small eye, which the user refused twice — so below the band the
+    // fragment reads the intake off the plane along the UNBENT ray and leaves
+    // before the loop; and through the band the captured ray's alpha is the
+    // hole gate of the closeness, not the closeness, so the dark arrives last.
+    const fragment = LENS_FRAGMENT?.glsl ?? '';
+    const farReturn = fragment.indexOf('if (closeness <= 0.0) {');
+    const loop = fragment.indexOf('for (int i = 0;');
+    expect(farReturn).toBeGreaterThan(0);
+    expect(loop).toBeGreaterThan(farReturn);
+    expect(fragment.slice(farReturn, loop)).toContain('return;');
+    // The far sample is read along `d`, the unbent ray from the camera, and
+    // never along anything the loop produced.
+    expect(fragment).toContain('far = lensFarSample(o, d, c, uDiscOutFar);');
+    expect(fragment.indexOf('far = lensFarSample(')).toBeLessThan(farReturn);
+    // The straight ray meets the plane by ONE division, no integration.
+    expect(fragment).toContain('float t = (c.y - o.y) / d.y;');
+    // …and the captured alpha is the gate's two literals, in order.
+    expect(fragment).toMatch(new RegExp(
+      'acc\\.a = smoothstep\\(\\s*'
+      + `${COHORT_HOLE_GATE_LO.toFixed(2)}, ${COHORT_HOLE_GATE_HI.toFixed(2)}, closeness`
+      + '\\s*\\);',
+    ));
+    expect(fragment).not.toContain('acc.a = closeness;');
+    // The far form lies UNDER the traced one, weighted by what the trace has
+    // not painted, so it is never added on top of the dark.
+    expect(fragment).toContain('acc.rgb += far.rgb * (1.0 - over);');
+    expect(fragment).toContain('acc.a += far.a * (1.0 - over);');
+    // ⭐ The far medium is the library's back-trace and medium, re-read coarse
+    // and wound tighter — never a second medium.
+    const farMedium = fragment.slice(
+      fragment.indexOf('float lensFarMedium('), fragment.indexOf('vec4 lensFarSample('),
+    );
+    expect(farMedium).toContain('mistBacktrace(local, tau)');
+    expect(farMedium).toContain('mistMedium(wound * uFarGrain + vSeat, 0.5)');
+    expect(farMedium).toContain('uFarSwirl * log(rr / r)');
+    // The log's argument is at least one by construction: rr is floored at r.
+    expect(farMedium).toContain('float rr = max(length(p), r);');
   });
 
   it('carries no backtick anywhere in its GLSL', () => {

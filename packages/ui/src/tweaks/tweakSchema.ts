@@ -18,7 +18,7 @@ import {
   SHOCKWAVE_COLOR_CEIL,
   SHOCKWAVE_ALPHA_CEIL,
 } from '../materials/shockwaveMaterial';
-// …and the thirteen `cohort*` knobs take theirs from the lensed mark and the
+// …and the sixteen `cohort*` knobs take theirs from the lensed mark and the
 // motes falling into it, on the same rule: each material seeds its own uniforms
 // from these constants and `ColonyCohorts` overwrites them from LIVE.peer.*
 // each frame, so there is ONE authority.
@@ -41,7 +41,10 @@ import {
   COHORT_HORIZON,
   COHORT_LENS_BEAM,
   COHORT_LENS_DISC_AMP,
+  COHORT_LENS_FAR_ARM_AMP,
   COHORT_LENS_FAR_DISC_AMP,
+  COHORT_LENS_FAR_STREAK,
+  COHORT_LENS_FAR_SWIRL,
   COHORT_LENS_GLOW,
   COHORT_LENS_STEPS,
   COHORT_LENS_WARMTH,
@@ -170,7 +173,7 @@ export const peerSchema = {
   glintBloomOpacity: { value: 0.55, min: 0, max: 1, step: 0.05, label: 'glint bloom op' },
   glintPlumeOpacity: { value: 0.3, min: 0, max: 1, step: 0.05, label: 'glint plume op' },
   // The POW channel — ONE LENSED MASS PER COHORT, plus the specks falling into
-  // it. Thirteen knobs, and every one of them is a fact about the mass or about
+  // it. Sixteen knobs, and every one of them is a fact about the mass or about
   // the substance around it: there is no "rim amplitude" here and there must
   // never be one again, because the mark is COMPUTED (light traced backward
   // around a Schwarzschild mass) and a knob that moved a PART of the picture
@@ -204,8 +207,18 @@ export const peerSchema = {
   cohortDiscAmp: { value: COHORT_LENS_DISC_AMP, min: 0, max: 3, step: 0.05, label: 'cohort disc amp' },
   // how much brighter the approaching side of the disc is: relativistic beaming
   cohortBeam: { value: COHORT_LENS_BEAM, min: -1, max: 1, step: 0.05, label: 'cohort beaming' },
-  // the far form's whole weight — a peer-sized intake halo, and nothing else
+  // the far HEART's weight: the steep skirt that is the body a viewer sizes
   cohortFarAmp: { value: COHORT_LENS_FAR_DISC_AMP, min: 0, max: 2, step: 0.05, label: 'cohort far amp' },
+  // the far ARMS' weight: the shallow skirt the medium's streaks ride out on —
+  // the atmosphere of intake around the heart; 0 leaves the heart alone
+  cohortFarArms: { value: COHORT_LENS_FAR_ARM_AMP, min: 0, max: 1.5, step: 0.05, label: 'cohort far arms' },
+  // the far arms' contrast about their skirt — the medium's own streaks, wound
+  // into the heart by the sink; 0 is a plain halo with no intake in it, and 1
+  // is the ceiling (past it a lane would remove light)
+  cohortFarStreak: { value: COHORT_LENS_FAR_STREAK, min: 0, max: 1, step: 0.05, label: 'cohort far streak' },
+  // extra winding of the far arms, in turns per e-fold of radius on top of the
+  // swirl, so a whirlpool is legible at six pixels a unit
+  cohortFarSwirl: { value: COHORT_LENS_FAR_SWIRL, min: 0, max: 3, step: 0.05, label: 'cohort far swirl' },
   // the bloom this scene has no post-process for, painted by the program itself
   cohortGlow: { value: COHORT_LENS_GLOW, min: 0, max: 1.5, step: 0.05, label: 'cohort glow' },
   // the colour temperature: 0 is the mesh's cyan disc, 1 the film's orange one

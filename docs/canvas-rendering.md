@@ -933,10 +933,12 @@ smoothstepped over 20 -> 50 px/wu, and it drives everything:
 | Horizon `rs` | 0.08 wu | 0.77 wu |
 | Shadow, `3*sqrt(3)/2` horizons | 0.21 wu | 2.00 wu |
 | Disc inner edge, the ISCO at 3 horizons | 0.24 wu | 2.31 wu |
-| Disc outer edge | 3 wu | 28 wu |
-| Shadow opacity | 0 | 1 |
+| Disc outer edge | 5 wu (the far form's catchment) | 28 wu |
+| Shadow opacity | 0, and 0 until closeness 0.35; 1 from 0.85 (`lensHoleGate`) | 1 |
 | Beaming | 0 | 0.45 |
-| Motes | born within 3 wu, x0.2 | born at 8-27 wu, full |
+| Traced image's weight | 0 (no ray is integrated) | 1 |
+| Far form's weight | 1 | 0 |
+| Motes | born within 5 wu, x0.2 | born at 8-27 wu, full |
 
 THE BAND AND THE FAR FORM WERE BOTH CUT ON 2026-09-03, on the user's judgement
 of the live frames: the far view was right, but at the MID range - 14 to 20
@@ -947,20 +949,34 @@ unfolded, which is a `mix(6, 28, 0.26)` = 11.7 wu disc, 23 units across against
 that 2.0), its near edge 30 -> 50 so the band keeps its width, the far disc
 6 -> 3 wu and the far halo's Gaussian radius 1.0 -> 0.7 wu.
 
-Far away the mark is therefore a soft three-unit skirt of intake over a 0.7 wu
-Gaussian with a brighter core at 0.35 of that radius - deliberately the shape of
-a sighted peer's sprite, because at that range a cohort IS a peer that happens to
-mine - carrying no dark at all and no beaming. The far law
-`0.9 * (1 - rho/out)^2.2` is above a tenth of its own peak inside `0.649 * out`,
-so a 3 wu radius reaches 1.95 wu and has a 1.62 wu half-maximum width: a
-footprint of about two units, the peer's own size. Near, it is the hole with a
-28 wu vortex around it. The two are different LAWS and not one law dimmed: the
-near disc is bright at its inner edge and dark in the gap inside it, which far
-out reads as a ring, and a ring is a shape the peer mesh does not have. The fold
-must be measured on the DRAWING BUFFER's height and never the CSS height,
-because a tier that lowers the DPR changes how many pixels a world unit covers,
-and a mark folded on CSS pixels would unfold into the near form exactly when the
-machine had said it could not afford one.
+FAR AWAY THE MARK IS THE INTAKE, NOT A TRACED IMAGE (2026-09-03, the round after
+the cut above). The user judged the 3 wu skirt on the live frames: at the app
+camera a cohort still read as "a small eye", and what was missing was "the
+atmosphere of energy being drawn in". The eye was structural: even a 0.08 wu
+mass captures every ray aimed within 2.6 horizons of the centre, so the centre is
+the one place the disc is never sampled, and the ring of disc around it is
+brighter than it. So below the band NO RAY IS INTEGRATED. The fragment sends the
+unbent ray straight to the colony plane (`lensFarSample`) and reads the intake
+there: a skirt `0.9 * (1 - rho/out)^3` that peaks AT THE CENTRE, modulated by the
+mist's own medium advected along the sink's spiral streamlines - read at 0.45 of
+its grain and wound a further 0.8 turns per e-fold so the arms are legible at six
+pixels a unit - with the arms blended out inside 0.35 of the radius (1.75 wu, the
+local peer's body) so the heart is smooth and no lane can print a pupil on it.
+White at the heart through the mesh's cyan to the cool outer stop on the arms,
+the block's gulp on top, a round camera-facing bloom over the centre, and the
+whole thing thin enough that the mesh shows through. The skirt's half-maximum
+width is 2.06 wu, a sighted peer's 2.0 wu sprite - the size a soft form reads as
+- while its tenth-of-peak reach is 2.68 wu and the arms ride out to 5 at a few
+percent of the peak: the body is peer-sized and the atmosphere is not. Through
+the band the traced image fades in OVER that far form at the closeness, and the
+hole's dark alone waits: a captured ray paints `smoothstep(0.35, 0.85,
+closeness)`, so a cohort at 30 px/wu is a lit whirlpool with a ring forming in
+it, at 35 the hole is translucent, at 40 it is the film's hole. Near, it is the
+hole with a 28 wu vortex around it. The fold must be measured on the DRAWING
+BUFFER's height and never the CSS height, because a tier that lowers the DPR
+changes how many pixels a world unit covers, and a mark folded on CSS pixels
+would unfold into the near form exactly when the machine had said it could not
+afford one.
 
 A COHORT DRINKS AT ITS OWN RATE, and both draws read it. Each mark carries its
 share of whatever window it was measured over — the indexer's week when the
@@ -1097,14 +1113,18 @@ pixels that linger near the photon sphere. If a tier must buy something here it
 has to be the pixels the quad covers — `COHORT_LENS_QUAD_R` 32 wu,
 `COHORT_DISC_OUT` 28 wu — or a resolution scale, and no tier touches either.
 
-Thirteen live knobs in the `peer` folder, each a fact about the mass or about the
+Sixteen live knobs in the `peer` folder, each a fact about the mass or about the
 substance around it and never a PART of a picture, since a knob that moved a part
 would be the composed aperture creeping back in through the panel:
 `cohortHorizon` (the Schwarzschild radius at the near end of the fold, and the
 one to reach for first — every other radius is a multiple of it), `cohortDiscOut`
 (how far the intake reaches), `cohortDiscAmp` (the near disc's own brightness),
 `cohortBeam` (how much brighter the approaching side is), `cohortFarAmp` (the far
-form's whole weight), `cohortGlow` (the bloom stand-in), `cohortWarmth` (0 the
+heart's weight), `cohortFarArms` (the far arms' weight: the atmosphere of intake
+around the heart), `cohortFarStreak` (the far arms' contrast about their skirt;
+0 is a plain halo with no intake in it, 1 the ceiling), `cohortFarSwirl` (the
+far arms' extra winding, in turns per e-fold on top of `cohortSwirl`),
+`cohortGlow` (the bloom stand-in), `cohortWarmth` (0 the
 mesh's cyan disc, 1 the film's orange one, moving the disc and the specks in it
 together), `cohortUnfold` (the near end of the fold band, 50, on a 10-80 range;
 the far end, 20, is the layer's rule and not a knob), `cohortSteps` (RK4 steps
@@ -1143,8 +1163,9 @@ because of it. Load average 3.0-6.0.
 | Console, program info logs, NaN sweep of both programs | clean |
 
 ⚠️ EVERY ROW ABOVE WAS MEASURED AT THE 6 -> 30 px/wu BAND AND THE 6 wu FAR DISC
-that shipped that day. The band is 20 -> 50 and the far disc 3 wu since, so every
-row taken inside the old band - the app camera at 4.6-22.6 px/wu, the 14 and
+that shipped that day. The band is 20 -> 50 since, and the far form is the
+untraced intake over a 5 wu catchment (see above), so every row taken inside
+the old band - the app camera at 4.6-22.6 px/wu, the 14 and
 20 px/wu columns, the far form's own 77/255, and the whole 29-frame unfold strip
 - describes a form the app no longer draws there and is owed a re-measure. The
 costs and the brightnesses can only have come down (a smaller disc covers fewer
