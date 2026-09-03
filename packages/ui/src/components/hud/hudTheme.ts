@@ -155,7 +155,7 @@ export const HUD_COLORS = {
   // line drops to `dim`.
   legendInk: '#9FB0BD',
   dim: '#7C8794',
-  // The module registry's own grey, for the CKB·01 / MESH·02 count-off tags.
+  // The module registry's own grey, for the CKB·01 / PEER·02 count-off tags.
   // Below `dim` on purpose: a tag is an address, not a reading. A panel that
   // owns an identity accent overrides it with that accent instead.
   moduleSlate: '#5A6470',
@@ -249,7 +249,7 @@ export const QUALITATIVE_BUCKET_COLORS: readonly string[] = [
  *
  *  `QUALITATIVE_BUCKET_COLORS` hands out a slot by a hash of a label, because a
  *  country and a client version have no order to draw. One bar in the HUD does:
- *  MESH·02's reach bar splits the peers a crawl round considered into
+ *  PEER·02's reach bar splits the peers a crawl round considered into
  *  `no answer → answered from another chain → answered from this one`, which is
  *  how far the crawler got with each, coarsened to whole peers. Handed three
  *  unrelated hues, that progression is scrambled into a colour wheel and a
@@ -577,7 +577,7 @@ export function rgba(hex: string, alpha: number): string {
 
 // Self-hosted, subset webfonts — no third-party CDN at runtime. Latin faces are
 // Google's latin-range woff2. Huiwen-mincho (public domain) carries the 32 HUD
-// glyphs 共识基神经元脉搏节点场对端状态警告道样本细胞记录交易输入谱系见证 — exactly what
+// glyphs 共识基元胞汤脉搏节点场字对端状态警告道样本细记录交易输入谱系见证 — exactly what
 // the panels, the inspector-card companions and the consensus-memory endpoint
 // markers render, so any new Chinese needs a re-subset (see fonts/README.md) or
 // it silently falls back to a system serif. The last ten arrived with the

@@ -247,11 +247,11 @@ describe('HudOverlay', () => {
     expect(wrapper(container, 'peers').style.opacity).toBe(BOOT_GHOST);
     expect(root.dataset.hudBoot).toBe('counting');
 
-    tick(BOOT_BEAT_MS); // MESH·02
+    tick(BOOT_BEAT_MS); // PEER·02
     expect(wrapper(container, 'peers').style.opacity).toBe('1');
     expect(wrapper(container, 'cells').style.opacity).toBe(BOOT_GHOST);
 
-    tick(BOOT_BEAT_MS); // MESH·03
+    tick(BOOT_BEAT_MS); // CELL·03
     expect(wrapper(container, 'cells').style.opacity).toBe('1');
     expect(wrapper(container, 'pulse').style.opacity).toBe(BOOT_GHOST);
     expect(root.dataset.hudBoot).toBe('counting');
@@ -380,7 +380,7 @@ describe('HudOverlay', () => {
 
     // The roster was taken when the session opened; DAO·05 was not on it, so
     // it takes no slot and renumbers nobody — it simply appears, lit, while
-    // MESH·02 is still waiting its turn.
+    // PEER·02 is still waiting its turn.
     expect(wrapper(container, 'dao').style.opacity).toBe('1');
     expect(wrapper(container, 'peers').style.opacity).toBe(BOOT_GHOST);
     // …and the ritual still ends on its original four beats.
@@ -453,7 +453,7 @@ describe('HudOverlay', () => {
         colonyCount={277}
       />,
     );
-    // MESH·02 is visible from the start and reports the network only.
+    // PEER·02 is visible from the start and reports the network only.
     expect(container.querySelector('[data-hud-panel="peers"]')?.textContent)
       .not.toContain('inferred');
 
@@ -488,7 +488,7 @@ describe('HudOverlay', () => {
       .toContain('97.5% of #16,204,887');
   });
 
-  it('reads the crawler atlas as more rows of MESH·02, not a panel within it', () => {
+  it('reads the crawler atlas as more rows of PEER·02, not a panel within it', () => {
     const { container } = render(
       <HudOverlay
         chain={chain}

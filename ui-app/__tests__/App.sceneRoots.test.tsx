@@ -292,7 +292,7 @@ describe('colony topology signature', () => {
       expect(APP_SOURCE.slice(at, APP_SOURCE.indexOf(';', at)))
         .toContain('producerView?.candidacyByPeer.get');
     }
-    // And MESH·02's row is handed the view whole rather than a tally, so the
+    // And PEER·02's row is handed the view whole rather than a tally, so the
     // share it prints arrives attached to the window it was measured over.
     expect(APP_SOURCE).toContain('producerView={producerView}');
   });

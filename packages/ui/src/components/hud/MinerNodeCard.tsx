@@ -54,7 +54,7 @@
 // ⚠️ `POW COHORT //` IS THE FULL PRODUCT NAME AND IT FITS THE MEASURE. This
 // card is 340px and its header plate leaves a 306px measure. The compact POW
 // token keeps the payout-key head and `CHAIN ATTESTED` chip on the same line,
-// while matching MESH·02's `POW COHORTS` vocabulary exactly.
+// while matching PEER·02's `POW COHORTS` vocabulary exactly.
 //
 // ⭐ THE CHIP CARRIES THE EVIDENCE CLASS, WHICH IS THE MASTHEAD'S OTHER HALF.
 // `COHORT` says what the node does; `CHAIN ATTESTED` says how we know it is

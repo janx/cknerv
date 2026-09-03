@@ -957,7 +957,7 @@ multiplies the share by its own estimate off the chain's difficulty and its own
 observed block intervals, so the plate mixes an indexed share with a local
 measurement and states both windows rather than importing a third. The plate is
 absent when no week reached the view at all and dashes its rows when a week
-names other cohorts, and `MESH·02` states the week in its row while keeping the
+names other cohorts, and `PEER·02` states the week in its row while keeping the
 240-block window in that row's title. No pool name appears on any of them,
 because there is none to print.
 

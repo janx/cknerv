@@ -92,7 +92,7 @@ export const DEFAULT_JUKEBOX_PLAYBACK_MODE: JukeboxPlaybackMode = 'single';
 // Match the CELL MESH panel's 302px content width plus 15px inline padding.
 export const JUKEBOX_PANEL_WIDTH_PX = 332;
 export const JUKEBOX_CHIP_HEIGHT_PX = 28;
-/** The console module code, in the CKB·01 / MESH·03 grammar of the HUD panels —
+/** The console module code, in the CKB·01 / CELL·03 grammar of the HUD panels —
  *  it is what makes the closed Jukebox read as part of the instrument rather
  *  than as a stray widget dropped on the scene. */
 export const JUKEBOX_MODULE_CODE = 'SND·06';

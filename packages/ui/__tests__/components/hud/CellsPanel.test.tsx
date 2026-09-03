@@ -22,7 +22,7 @@ describe('CellsPanel', () => {
     const { container } = render(<CellsPanel stats={stats} churn={churn} reducedMotion />);
     const t = container.textContent ?? '';
     expect(t).toContain('CELL MESH');
-    expect(t).toContain('神经元');
+    expect(t).toContain('元胞汤');
     expect(t).toContain('+0.5');      // net /blk
     expect(t).toContain('19,204');    // observed live
     // `stats.live` counts the backend's observation window, not the chain.

@@ -344,7 +344,7 @@ export interface BlockProducerView {
   /** The same standings in reading order: descending by the tally of
    *  WHICHEVER WINDOW THIS VIEW IS A READING OF — the ledger's blocks when a
    *  coherent ledger exists, the 240-block window's when it does not — then
-   *  key ascending. This is what MESH·02's `TOP` and a share list are.
+   *  key ascending. This is what PEER·02's `TOP` and a share list are.
    *  ⚠️ Nothing the geometry follows may be ordered by it. */
   readonly ranked: readonly ProducerStanding[];
   /** Roster rows carrying a usable version — the modal gate's denominator,
@@ -645,7 +645,7 @@ function byKey(left: string, right: string): number {
  * through the door the ORDER left open.
  *
  * `ranked` is blocks descending, then key ascending — the reading order of a
- * share list, which is genuinely what a reader wants and what MESH·02's `TOP`
+ * share list, which is genuinely what a reader wants and what PEER·02's `TOP`
  * means. It is a presentation view and nothing geometric may follow it.
  *
  * ⭐ The key comparison was always the load-bearing half; only its job changed.

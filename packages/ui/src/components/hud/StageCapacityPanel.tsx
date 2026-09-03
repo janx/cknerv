@@ -244,7 +244,7 @@ function MixBar({ mix }: { mix: CompositionMix }) {
  *
  * Cells are not the only population on stage: the node colony the scene
  * stands up is counted here too, because that count is a rendering fact.
- * MESH·02 is thereby left free to speak measured network truth alone.
+ * PEER·02 is thereby left free to speak measured network truth alone.
  */
 export default function StageCapacityPanel({ stats, stageScripts, scriptRegistry, model, colonyCount, style }: {
   stats: CellsStats;
@@ -283,7 +283,7 @@ export default function StageCapacityPanel({ stats, stageScripts, scriptRegistry
 
   return (
     <HudPanel style={{ width: 302, ...style }}>
-      {/* Untinted, with DAO·05 and the rest: only MESH·02 and MESH·03 spend an
+      {/* Untinted, with DAO·05 and the rest: only PEER·02 and CELL·03 spend an
           accent on their module tag, because only they are naming which of the
           two meshes you are looking at. */}
       <PanelHeader en="STAGE SAMPLE" cjk="样本" idx="STAGE·07" />

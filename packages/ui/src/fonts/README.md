@@ -4,16 +4,17 @@
 (`Huiwen-mincho`) for the Chinese text used by the HUD:
 
 ```text
-共识基神经元脉搏节点场对端状态警告道样本细胞记录交易输入谱系见证
+共识基元胞汤脉搏节点场字对端状态警告道样本细记录交易输入谱系见证
 ```
 
 That list is exactly the glyphs rendered in `HUD_FONTS.cjk` today — the `cjk`
 props of `PanelHeader` (including `StageCapacityPanel`'s 样本 and `CellsPanel`'s
-神经元), `WarningBar`'s 警告, `StatusStrip`'s 状态, the inspector cards' title
+元胞汤), `WarningBar`'s 警告, `StatusStrip`'s 状态, the inspector cards' title
 companions (`PeerLinkCard`'s 对端, `NodeSelfCard`'s 节点, `CellDetailPanel`'s
-细胞), and — the newest arrivals — the three consensus-memory endpoint markers
-drawn over the stage by `nerve/ConsensusMemoryMarkers`: 共识记录, 交易输入,
-谱系见证. (`SightedNodeCard` documents in-file why it deliberately wears none.)
+细胞), `CellByteBudget`'s 字节元 — the CKByte's own name, over the one zone whose
+subject is that unit — and the three consensus-memory endpoint markers drawn
+over the stage by `nerve/ConsensusMemoryMarkers`: 共识记录, 交易输入, 谱系见证.
+(`SightedNodeCard` documents in-file why it deliberately wears none.)
 
 Ten of those twelve marker glyphs were outside the 22-glyph subset this list
 used to describe, and the markers asked for `JetBrains Mono Local` besides —
@@ -28,6 +29,14 @@ the whole truth rather than a delta, and `hudDiscipline.test.ts` now reads
 every Chinese literal in the package rather than only the ones written as a
 JSX prop.
 
+It is a SET, and the count is the whole point: it stayed at 32 across the
+CELL·03 pass only because that pass gave two glyphs back. 字 and 汤 arrived
+with 字节元 and `CellsPanel`'s 元胞汤; 神 and 经 left with the 神经元 that label
+replaced, and they are GONE rather than merely unused — the panel counted cell
+bodies while its companion named a neuron, which is the dendrite fabric between
+them. A glyph no surface renders any more comes out, so this list can be read
+as the truth about the HUD rather than as a high-water mark.
+
 The source font comes from the Chinese Webfont Project package
 [`@chinese-fonts/hwmct`](https://github.com/KonghaYao/chinese-free-web-font-storage/tree/branch/packages/hwmct).
 Its embedded copyright record is `Public Domain`. The npm tarball ships only
@@ -41,14 +50,14 @@ Regenerate with FontTools 4.63 or later:
 
 ```bash
 pyftsubset /path/to/汇文明朝体.ttf \
-  --text='共识基神经元脉搏节点场对端状态警告道样本细胞记录交易输入谱系见证' \
+  --text='共识基元胞汤脉搏节点场字对端状态警告道样本细记录交易输入谱系见证' \
   --no-ignore-missing-unicodes \
   --flavor=woff2 \
   --output-file=HuiwenMincho-subset.woff2
 ```
 
 The expected SHA-256 for the checked-in subset is
-`9135dd0b2152092e1730905d620d599ce9a8f5b3875811341dae9a15b6e9f15f`.
+`e27ad36f1d4cd1d9949f7da2f481c67af7c8e6d77b736b2070c73b81f63f991a`.
 
 ## `JetBrains Mono Local` / `Orbitron Local`
 

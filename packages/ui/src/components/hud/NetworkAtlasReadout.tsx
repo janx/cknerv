@@ -179,7 +179,7 @@ function BucketStrip({ label, buckets, total, provenance }: {
   );
 }
 
-// MESH·02 has one subject, seen from two distances: the rows above are measured
+// PEER·02 has one subject, seen from two distances: the rows above are measured
 // over our own links, these are indexed by the crawler's last round. Same
 // network, so they join the panel flow as ordinary rows — a titled sub-frame
 // would only split one subject into two instruments. The provenance every

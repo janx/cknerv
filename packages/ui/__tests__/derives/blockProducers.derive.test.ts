@@ -166,7 +166,7 @@ describe('blockProducers staging set', () => {
 
     // …and the swap still CROSSES, on the half that is allowed to move. A fix
     // that froze both orders would have hidden the overtake rather than routed
-    // it, and MESH·02's `TOP` would name the wrong miner.
+    // it, and PEER·02's `TOP` would name the wrong miner.
     expect(before.ranked[0].key).toBe('0xaa');
     expect(after.ranked[0].key).toBe('0xbb');
   });

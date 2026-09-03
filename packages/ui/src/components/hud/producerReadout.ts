@@ -59,13 +59,13 @@ import { formatHashRate } from '../../derives/networkHashRate.derive';
 import { formatBlockRef, formatCkb } from './cellFormat';
 
 /** The unit every window count is printed in. One spelling, because the card
- *  and MESH·02 print the same number in two different sentences and a reader
+ *  and PEER·02 print the same number in two different sentences and a reader
  *  has to be able to see that it is the same number. Not exported: nothing
  *  outside this module may assemble a window count of its own. */
 const WINDOW_UNIT = 'BLK';
 
 /** The unit the OTHER window is counted in, under the same rule and for the
- *  same reason: MESH·02 and the card both name the indexer's week, and a
+ *  same reason: PEER·02 and the card both name the indexer's week, and a
  *  reader has to be able to see that `7 D` on the panel and the dates in the
  *  card's title are one window. Not exported either — a surface that wanted to
  *  say "seven days" of its own would be inventing a second window nothing
@@ -113,7 +113,7 @@ export function producerShareText(standing: ProducerStanding): string {
  *
  * ⭐ THE UNIT IS STILL `BLK`, AND THE DAYS ARE NOT IN IT. What the indexer
  * counted is blocks; seven days is the SHAPE of the window it counted them
- * over, which the card prints in this row's title and MESH·02 prints beside
+ * over, which the card prints in this row's title and PEER·02 prints beside
  * its own count. A value that said `41,824 / 67,800 D` would be stating a
  * number of days that does not exist, and one that said `62% OF 7 D` would be
  * a share of a duration.
@@ -252,7 +252,7 @@ export function producerLastPaidText(standing: ProducerStanding): string | null 
 }
 
 /**
- * MESH·02's one row: `6 · TOP 47% · 240 BLK`.
+ * PEER·02's one row: `6 · TOP 47% · 240 BLK`.
  *
  * The count of distinct payout identities, the largest share in the window, and
  * the window. The share is read off the leading STANDING rather than off the
@@ -334,7 +334,7 @@ export function producerFleetText(view: BlockProducerView): string {
   return fleetWeekText(view) ?? fleetWindowText(view);
 }
 
-/** The sentence under MESH·02's cohort row, on hover.
+/** The sentence under PEER·02's cohort row, on hover.
  *
  *  ⭐ THE WINDOW THAT IS NOT IN THE ROW GOES HERE, WHOLE. One row can hold one
  *  window, and when the week is present it takes the row — so the 240 blocks

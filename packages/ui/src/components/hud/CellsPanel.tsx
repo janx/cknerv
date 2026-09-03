@@ -39,12 +39,23 @@ function CellsPanel({ stats, churn, reducedMotion = false, style }: {
   const netColor = churn.netPerBlock >= 0 ? HUD_COLORS.nominal : HUD_COLORS.ember;
   return (
     <HudPanel style={{ width: 302, ...style }}>
-      {/* MESH·02 is the peer plane and MESH·03 is this one; they are a pair,
+      {/* PEER·02 is the peer plane and CELL·03 is this one; they are a pair,
           and a pair has to be two colours. The cyan that used to sit here was
           eight degrees off `peerWire`, so the two panels read as one — and it
           pointed at a cyan organism the stage does not have. The Cells out
-          there are rose. */}
-      <PanelHeader en="CELL MESH" cjk="神经元" idx="MESH·03" accent={CELL_PANEL_ACCENT} />
+          there are rose.
+
+          The accent survives the codes being renamed off a shared `MESH·0x`
+          family, and it is not made redundant by them: the tag says which
+          plane you are reading, the colour says which mesh ON STAGE it is a
+          reading of. Only these two panels spend one, because only these two
+          have a body out there to be tied to.
+
+          元胞汤 — a soup of cells, not a nerve. 神经元 named a neuron, which
+          is the dendrite fabric BETWEEN the bodies and not the bodies this
+          panel counts; the fabric has its own vocabulary in `nerve/`. Both of
+          its unique glyphs left the hand-subset face with it (fonts/README.md). */}
+      <PanelHeader en="CELL MESH" cjk="元胞汤" idx="CELL·03" accent={CELL_PANEL_ACCENT} />
       <div style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.tech, color: HUD_COLORS.dim, letterSpacing: 1.2, marginBottom: 2 }}>METABOLISM · per block</div>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, marginBottom: 9 }}>
         {/* Tabular figures on every display-family number that ticks: Saira's

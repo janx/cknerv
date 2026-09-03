@@ -148,7 +148,7 @@ function isHudPanelId(id: string): id is HudPanelId {
 
 // ——— Boot count-off —————————————————————————————————————————
 // A module registry is a list of numbers until you watch it come up. Once per
-// session the panels light in module order — CKB·01 → MESH·02 → MESH·03 →
+// session the panels light in module order — CKB·01 → PEER·02 → CELL·03 →
 // ECG·04 → DAO·05 → STAGE·07 → GL·08 — so the codes stop being decoration and
 // become the order the instrument boots in. It is the same reveal the
 // inspection cards perform: every panel is mounted at final geometry on the
@@ -349,6 +349,16 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
   // app-side Jukebox chip, which has no HUD visibility entry. Memoized on the
   // visibility record: the strip that renders it is memoized, and a fresh
   // array per render would hand it a new prop every time.
+  //
+  // ⭐ THE PREFIX NAMES THE SUBJECT, NOT THE FAMILY. ·02 and ·03 shared a
+  // `MESH·0x` prefix for as long as their being a PAIR was the interesting
+  // thing about them, and it cost both of them the one job a code has: two
+  // adjacent panels on the same rail, addressed by strings that differ in a
+  // single digit, in a menu where the label is the only thing telling them
+  // apart. `PEER·02` and `CELL·03` say which plane each one reads before the
+  // label does. Nothing about the pair is lost — they are still the HUD's two
+  // meshes, still the only two panels that tint their tag, and the tint is
+  // what carries the pairing now, in the two colours the meshes wear on stage.
   const panelControls = useMemo<HudPanelControl[]>(() => [
     {
       id: 'chain',
@@ -358,13 +368,13 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
     },
     {
       id: 'peers',
-      code: 'MESH·02',
+      code: 'PEER·02',
       label: 'PEER MESH',
       visible: panelVisibility.peers,
     },
     {
       id: 'cells',
-      code: 'MESH·03',
+      code: 'CELL·03',
       label: 'CELL MESH',
       visible: panelVisibility.cells,
     },
@@ -455,7 +465,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
     () => summarizeNetwork(peers, chain, localNode),
     // Keyed on the three chain fields the summary reads, not on the entity:
     // `chain` is shallow-cloned by every batch that touches it (a mempool tick
-    // above all), and MESH·02 is memoized behind this.
+    // above all), and PEER·02 is memoized behind this.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [peers, chain.tip, chain.best_known_block, chain.ibd, localNode],
   );

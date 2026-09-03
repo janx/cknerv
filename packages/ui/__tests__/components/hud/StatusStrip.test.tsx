@@ -26,8 +26,8 @@ import StatusStrip from '../../../src/components/hud/StatusStrip';
 const panelControls = [
   { id: 'chain', code: 'CKB·01', label: 'COMMON KNOWLEDGE BASE', visible: true },
   { id: 'pulse', code: 'ECG·04', label: 'PULSE', visible: true },
-  { id: 'cells', code: 'MESH·03', label: 'CELL MESH', visible: true },
-  { id: 'peers', code: 'MESH·02', label: 'PEER MESH', visible: true },
+  { id: 'cells', code: 'CELL·03', label: 'CELL MESH', visible: true },
+  { id: 'peers', code: 'PEER·02', label: 'PEER MESH', visible: true },
 ];
 
 beforeEach(() => {

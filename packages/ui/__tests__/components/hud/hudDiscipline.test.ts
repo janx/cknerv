@@ -871,8 +871,8 @@ describe('hud discipline', () => {
   });
 
   it('the two mesh identities are a pair, not a shade', () => {
-    // A2, pinned: `cyanWire` and `peerWire` sit ~15 apart, which is why MESH·02
-    // and MESH·03 stopped reading as two panels about two different things.
+    // A2, pinned: `cyanWire` and `peerWire` sit ~15 apart, which is why PEER·02
+    // and CELL·03 stopped reading as two panels about two different things.
     // Whatever the cell identity is retuned to, it has to clear the peer plane.
     expect(rgbDistance(HUD_COLORS.cellRose, HUD_COLORS.peerWire))
       .toBeGreaterThan(SEPARATION_FLOOR);
@@ -1487,7 +1487,7 @@ describe('a limit on what we saw is not a fault', () => {
 // CSS — `StatRow`, `MetricLabel`, `SUBHEAD` and the scope tags all declare
 // `textTransform: 'uppercase'` and let the caller author whatever it likes.
 //
-// MESH·02 did not. Five authored words — `out`, `in`, and the three consensus
+// PEER·02 did not. Five authored words — `out`, `in`, and the three consensus
 // tallies `at-tip` / `behind` / `ahead` — shipped lowercase in a panel whose
 // own `StatRow` labels are uppercased one line above them, and `NodeSelfCard`
 // states the identical link-direction reading as `OUT n / IN n`.
@@ -1511,7 +1511,7 @@ describe('one case', () => {
   it('the two surfaces that count links state it the same way', () => {
     const panel = SOURCES.find((source) => source.name === 'NetworkPanel.tsx');
     const card = SOURCES.find((source) => source.name === 'NodeSelfCard.tsx');
-    expect(panel, 'MESH·02 moved — this oracle reads files off disk').toBeDefined();
+    expect(panel, 'PEER·02 moved — this oracle reads files off disk').toBeDefined();
     expect(card, 'the self probe moved — this oracle reads files off disk').toBeDefined();
 
     // The card's phrasing is the reference because it was already right.
@@ -1522,7 +1522,7 @@ describe('one case', () => {
     expect(text).toContain('>OUT</span>');
     expect(text).toContain('>IN</span>');
     for (const lowercase of ['>out<', '>in<', ' at-tip', ' behind<', ' ahead<']) {
-      expect(text, `MESH·02 says ${lowercase} in lower case`).not.toContain(lowercase);
+      expect(text, `PEER·02 says ${lowercase} in lower case`).not.toContain(lowercase);
     }
   });
 
@@ -2090,7 +2090,7 @@ describe('the colour reserve', () => {
   });
 
   it('the other ordinal ramp ranks too, and spends no new colour doing it', () => {
-    // MESH·02's reach bar splits the peers a crawl round considered along
+    // PEER·02's reach bar splits the peers a crawl round considered along
     // `no answer → answered from another chain → answered from this one`. That
     // is ordered, so it may not read `QUALITATIVE_BUCKET_COLORS`, whose whole
     // job is that a slot means NOTHING: a hash would scramble the progression
@@ -2165,7 +2165,7 @@ describe('the colour reserve', () => {
   it('the two ordinals and the qualitative slots share no member', () => {
     // Three ramps in one HUD and two of them rank, so what keeps a reader from
     // reading the wrong one is that no value appears in two. It matters most on
-    // MESH·02, where the ordinal bar and two qualitative strips are stacked in
+    // PEER·02, where the ordinal bar and two qualitative strips are stacked in
     // one column and count DIFFERENT POPULATIONS — the ordinal counts every
     // peer the network named, the two below it count only the peers the
     // crawler verified. A shared swatch would invite a reader to carry one
@@ -3758,8 +3758,13 @@ describe('one alpha for a rule', () => {
 
 /** Exactly the glyphs in `src/fonts/HuiwenMincho-subset.woff2`. Adding Chinese
  *  to the HUD means re-subsetting the face IN THE SAME COMMIT and updating both
- *  this string and the README's. */
-const CJK_SUBSET = '共识基神经元脉搏节点场对端状态警告道样本细胞记录交易输入谱系见证';
+ *  this string and the README's.
+ *
+ *  ⚠️ AND `FACE_COVERAGE` FURTHER DOWN THIS FILE, which spells the same
+ *  inventory a fourth time as codepoints. It is checked by SHA rather than
+ *  against this string, so a re-subset that updates the ring below and leaves
+ *  that row alone goes red there instead of here, naming the file. */
+const CJK_SUBSET = '共识基元胞汤脉搏节点场字对端状态警告道样本细记录交易输入谱系见证';
 
 /** The other two copies of that inventory. Three lists have to move together —
  *  the string above, the README's, and the bytes the README's `pyftsubset`
@@ -3843,7 +3848,7 @@ describe('the hand-cut face', () => {
     // which is the same failure as the one it exists to catch.
     const literals = cjkLiterals();
     expect(literals.length).toBeGreaterThanOrEqual(11);
-    expect(literals.filter((literal) => literal.text === '神经元').length)
+    expect(literals.filter((literal) => literal.text === '元胞汤').length)
       .toBeGreaterThanOrEqual(1);
 
     // And the form that hid the defect this section was widened for: three
@@ -4007,8 +4012,8 @@ const FACE_COVERAGE: ReadonlyArray<{ family: string; file: string; nonAscii: str
     family: 'Huiwen-mincho',
     file: CJK_FACE,
     nonAscii:
-      '4EA4 5143 5165 5171 544A 573A 57FA 5BF9 5F55 6001 640F 6613'
-      + ' 672C 6837 70B9 72B6 795E 7AEF 7CFB 7EC6 7ECF 80DE 8109 8282'
+      '4EA4 5143 5165 5171 544A 573A 57FA 5B57 5BF9 5F55 6001 640F'
+      + ' 6613 672C 6837 6C64 70B9 72B6 7AEF 7CFB 7EC6 80DE 8109 8282'
       + ' 89C1 8B66 8BB0 8BC1 8BC6 8C31 8F93 9053',
   },
 ];

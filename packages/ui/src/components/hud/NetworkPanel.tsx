@@ -16,7 +16,7 @@ const fmt = (n: number) => n.toLocaleString('en-US');
 // arrivals never trips it while a real backlog always does.
 const AT_TIP_SYNC_RATIO = 0.999;
 
-// MESH·02 reports the network, never the scene: every number here is either
+// PEER·02 reports the network, never the scene: every number here is either
 // measured by the local node or indexed by the crawler. The colony count the
 // stage draws (measured peers + inferred ghosts + us) is a rendering fact and
 // lives with the other stage readouts, in STAGE·07.
@@ -39,7 +39,7 @@ function NetworkPanel({ summary, consensus, syncRatio, enrichmentSource, network
   const seg = (n: number) => `${(n / total) * 100}%`;
   return (
     <HudPanel style={{ width: 302, paddingTop: 14, ...style }}>
-      <PanelHeader en="PEER MESH" cjk="节点场" idx="MESH·02" accent={HUD_COLORS.peerWire} />
+      <PanelHeader en="PEER MESH" cjk="节点场" idx="PEER·02" accent={HUD_COLORS.peerWire} />
       {/* The link-direction pair reads as `OUT n / IN n`, which is how
         * `NodeSelfCard` states the identical reading and how every other
         * legend in the HUD states any reading. This panel was the only surface

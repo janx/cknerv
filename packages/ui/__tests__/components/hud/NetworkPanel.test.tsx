@@ -704,7 +704,7 @@ describe('NetworkPanel producers', () => {
   });
 
   it('spends one row on it, and does not spend the height the panel got back', () => {
-    // ⚠️ MESH·02 was cut by 53% when five StatRows became a percentage bar, and
+    // ⚠️ PEER·02 was cut by 53% when five StatRows became a percentage bar, and
     // that saving is not this feature's to spend. One row, and no second bar:
     // the ranking a producer bar would draw is already drawn out on the stage,
     // as the radius of every producer's ring.

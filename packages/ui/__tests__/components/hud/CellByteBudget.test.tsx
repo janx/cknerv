@@ -30,6 +30,31 @@ function segment(container: HTMLElement, key: string): HTMLElement | null {
 }
 
 describe('CellByteBudget', () => {
+  it('names the unit in the face that carries Chinese, once, beside the heading', () => {
+    // The CKByte's own name. It belongs to the HEADING, not to the figures:
+    // this zone is the only surface in the HUD whose subject is the unit
+    // itself, and every other CKB reading already carries the `CKB` suffix.
+    //
+    // Both halves are asserted because either alone is silent — a glyph
+    // outside the hand-cut subset falls back to a system serif, and a span
+    // that names a Latin face gets no Chinese at all however good the subset
+    // is. `hudDiscipline.test.ts` closes the inventory ring; this pins the
+    // element to the face and the tier.
+    const { container } = render(
+      <CellByteBudget capacityShannons={400 * CKB} knowledge={knowledge()} />,
+    );
+    const unit = container.querySelector<HTMLElement>('[data-byte-budget-unit="ckbyte"]');
+    expect(unit).not.toBeNull();
+    expect(unit!.textContent).toBe('字节元');
+    expect(unit!.style.fontFamily).toContain('Huiwen-mincho');
+    // 9px is the floor for rendered Han here — `micro` is the LATIN floor, and
+    // a mincho glyph packs several times the stroke count into the same em.
+    expect(unit!.style.fontSize).toBe('9px');
+    // Said once. A unit repeated onto every figure that counts in it is the
+    // `CKB` suffix printed twice.
+    expect(container.querySelectorAll('[data-byte-budget-unit]')).toHaveLength(1);
+  });
+
   it('sizes composition segments by share of occupied bytes, not capacity', () => {
     const { container } = render(
       <CellByteBudget capacityShannons={400 * CKB} knowledge={knowledge()} />,

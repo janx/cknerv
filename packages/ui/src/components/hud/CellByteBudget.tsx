@@ -12,7 +12,7 @@ import {
   formatDataSize,
   formatExactCkb,
 } from './cellFormat';
-import { HUD_COLORS, HUD_TYPE, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import { REVEAL_GHOST_OPACITY } from './primitives';
 
 export interface CellByteBudgetProps {
@@ -62,6 +62,37 @@ export default function CellByteBudget({
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
         <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 1.4, whiteSpace: 'nowrap' }}>
           BYTE BUDGET
+        </span>
+        {/* ⭐ THE UNIT'S OWN NAME, AND THIS IS THE ONE HEADING IN THE HUD
+          * ENTITLED TO IT. `字节元` is the CKByte — a byte of state, bought and
+          * held like a coin — and this zone is the only surface whose whole
+          * subject IS that equivalence: capacity purchased in CKB, spent in
+          * bytes, at one byte per CKB. Every OTHER reading in the overlay
+          * merely COUNTS in the unit (a Cell's CAPACITY fact, STAGE·07's
+          * Capacity, CKB·01's Live capacity, DAO·05's deposit hero), and a
+          * unit tagged onto each of those is the same word printed five times
+          * where the `CKB` suffix already stands.
+          *
+          * So it is a COMPANION TO A NAME, which is the only grammar this HUD
+          * has for Chinese — the `cjk` of a `PanelHeader`, 细胞 on this card's
+          * masthead — and never a suffix on a figure.
+          *
+          * ⚠️ `label` (9) is the floor for rendered Chinese here, and the
+          * reason is the face rather than the rung: `micro` is the Latin
+          * legibility floor because Chakra and Share Tech stop resolving their
+          * counters, and a mincho glyph carries several times their stroke
+          * count in the same em. Nothing in the HUD renders Han below 9 —
+          * `StatusStrip`'s 状态 sits at exactly this rung. That puts the
+          * companion one rung ABOVE the `micro` word it stands beside, which
+          * is the arrangement `WarningBar` already ships: 警告 at `heroSub`
+          * over a `panelTitle` chip. A zone heading is allowed to be quieter
+          * than the name of the thing it is a heading for. */}
+        <span
+          data-byte-budget-unit="ckbyte"
+          title="CKByte · one CKB of capacity buys one byte of state"
+          style={{ fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, color: HUD_COLORS.dim, opacity: 0.7, whiteSpace: 'nowrap' }}
+        >
+          字节元
         </span>
         <span style={{ marginLeft: 'auto', whiteSpace: 'nowrap' }}>
           <span
