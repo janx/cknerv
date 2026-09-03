@@ -118,6 +118,15 @@ export {
 } from './semanticsReducer';
 
 export {
+  clearCellDataMemo,
+  fetchCellOutputData,
+  recallCellOutputData,
+  rememberCellOutputData,
+  CELL_DATA_MEMO_BYTES,
+  type CellOutputData,
+} from './cellDataClient';
+
+export {
   cachedPeerSighting,
   clearPeerSightingMemo,
   fetchCellSemantics,
