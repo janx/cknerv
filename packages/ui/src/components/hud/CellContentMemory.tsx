@@ -10,6 +10,7 @@ import {
   contentSegmentAtByte,
   deriveCellContentMemory,
 } from '../../derives/cellContentMemory.derive';
+import { segmentColorSlots } from '../../derives/cellDataReader.derive';
 import { HUD_COLORS, HUD_FONTS, QUALITATIVE_BUCKET_COLORS, rgba, HUD_TYPE } from './hudTheme';
 import { revealStageAttributes, revealStageStyle } from './primitives';
 import { formatSemanticAssetAmount } from './cellFormat';
@@ -126,19 +127,26 @@ function clampUnit(value: number): number {
 function SegmentReadout({
   segment,
   index,
+  slot,
   count,
   interactive,
   onStep,
 }: {
   segment: SemanticContentSegment;
   index: number;
+  /** The slot the shared rule gave this segment. Handed in rather than worked
+   *  out here: `index % 6` made the colour a fact about the segment's PLACE in
+   *  the record's list, so a decode that gained a field repainted every
+   *  segment after it, and the portrait — which hashed the label instead —
+   *  disagreed with this window about every Cell they both drew. */
+  slot: number;
   count: number;
   /** A stage the probe has not reached yet is readable-but-inert: its steppers
    *  take no click and no tab stop until its moment arrives. */
   interactive: boolean;
   onStep: (direction: -1 | 1) => void;
 }) {
-  const color = QUALITATIVE_BUCKET_COLORS[index % QUALITATIVE_BUCKET_COLORS.length];
+  const color = QUALITATIVE_BUCKET_COLORS[slot % QUALITATIVE_BUCKET_COLORS.length];
   const stepEnabled = interactive && count > 1;
   return (
     <div
@@ -309,6 +317,10 @@ export default function CellContentMemory({
     [content, dataHex],
   );
   const segments = content?.deterministic?.segments ?? [];
+  // The one rule every surface that colours these bytes asks — this window,
+  // the portrait's byte rail, and the hex reader the window opens into. Read
+  // once per record rather than per byte: the grid below asks it 32 times.
+  const segmentSlots = useMemo(() => segmentColorSlots(segments), [segments]);
   const guesses = content?.heuristics ?? [];
   const roles = record?.facets ?? [];
   const previewLimit = HEX_WINDOW_BYTES;
@@ -532,7 +544,9 @@ export default function CellContentMemory({
                     && byteSegmentIndex === selectedSegmentIndex;
                   const color = byteSegmentIndex === null
                     ? HUD_COLORS.ink
-                    : QUALITATIVE_BUCKET_COLORS[byteSegmentIndex % QUALITATIVE_BUCKET_COLORS.length];
+                    : QUALITATIVE_BUCKET_COLORS[
+                      segmentSlots[byteSegmentIndex] % QUALITATIVE_BUCKET_COLORS.length
+                    ];
                   return (
                     <span
                       key={index}
@@ -588,6 +602,7 @@ export default function CellContentMemory({
                   <SegmentReadout
                     segment={selectedSegment}
                     index={selectedSegmentIndex}
+                    slot={segmentSlots[selectedSegmentIndex]}
                     count={segments.length}
                     interactive={decodeRevealed}
                     onStep={(direction) => setSegmentIndex((current) => (

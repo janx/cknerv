@@ -6,7 +6,9 @@ import type {
   SemanticScript,
   ShapeSeed,
 } from '@cknerv/types';
+import { QUALITATIVE_BUCKET_COLORS } from '../../src/components/hud/hudTheme';
 import { deriveConsensusBraidTopology } from '../../src/derives/consensusBraid.derive';
+import { segmentColorSlots } from '../../src/derives/cellDataReader.derive';
 import {
   cellSemanticCollectionIdentity,
   deriveCellSemanticMorphologyOverlay,
@@ -143,6 +145,57 @@ describe('ckbadger portrait morphology overlay', () => {
       'capacity', 'lock', 'type', 'data',
     ]);
     expect(overlay?.roleGlyphs[0]?.role).toBe('dao');
+  });
+
+  it('colours its byte segments by the rule every other surface asks', () => {
+    // The ring had a rule of its own — a private FNV-1a into four of the
+    // qualitative ramp's six slots — while the DATA window beside it coloured
+    // the very same segments by their position in the record's list. So one
+    // Cell's `left` word was one colour on the portrait and another in the
+    // window, and nothing in either file said which was right.
+    //
+    // Asserted against the rule rather than against numbers: `colorIndex` is
+    // now whatever `segmentColorSlots` says, which is the whole claim. What
+    // the rule itself computes is pinned in `cellDataReader.derive.test.ts`,
+    // against an independent implementation of FNV-1a.
+    const segments = RECORD.content!.deterministic!.segments;
+    const slots = segmentColorSlots(segments);
+    const overlay = deriveCellSemanticMorphologyOverlay(CELL, RECORD);
+
+    // The overlay sorts into byte order; the slots come back at the record's
+    // own indices, which is exactly the ordering independence the shared rule
+    // promises.
+    expect(overlay?.dataSegments.map((segment) => [segment.label, segment.colorIndex]))
+      .toEqual([
+        ['left', slots[segments.findIndex((entry) => entry.label === 'left')]],
+        ['right', slots[segments.findIndex((entry) => entry.label === 'right')]],
+      ]);
+
+    // …and the ring can now reach the ramp's fifth and sixth slots, which the
+    // `% 4` it replaced could not: two of the six colours were unreachable on
+    // this surface and reachable in the window, which is one more way the two
+    // could not have agreed.
+    const highSlot: CellSemanticRecord = {
+      ...RECORD,
+      content: {
+        ...RECORD.content!,
+        deterministic: {
+          kind: 'molecule',
+          summary: 'one header word',
+          segments: [{
+            label: 'total_size',
+            start_byte: 0,
+            end_byte: 16,
+            meaning: 'Molecule table total size (u32 LE)',
+            value: '16',
+          }],
+        },
+      },
+    };
+    const high = deriveCellSemanticMorphologyOverlay(CELL, highSlot);
+    expect(high?.dataSegments[0]?.colorIndex).toBeGreaterThan(3);
+    expect(high?.dataSegments[0]?.colorIndex)
+      .toBeLessThan(QUALITATIVE_BUCKET_COLORS.length);
   });
 
   it('never promotes heuristic guesses into overlay geometry', () => {

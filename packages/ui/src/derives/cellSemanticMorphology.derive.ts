@@ -7,6 +7,7 @@ import type {
   ShapeSeed,
 } from '@cknerv/types';
 import { cellSemanticVisualState } from './cellSemantics.derive';
+import { segmentColorSlots } from './cellDataReader.derive';
 
 export type CellSemanticMorphologyStatus =
   | 'absent'
@@ -189,15 +190,6 @@ export function validateCellSemanticRecordForMorphology({
   return { status: 'valid', record, message: null };
 }
 
-function labelHash(label: string): number {
-  let hash = 0x811c_9dc5;
-  for (let index = 0; index < label.length; index += 1) {
-    hash ^= label.charCodeAt(index);
-    hash = Math.imul(hash, 0x0100_0193);
-  }
-  return hash >>> 0;
-}
-
 function scriptLabel(
   role: 'lock' | 'type',
   script: SemanticScript | undefined,
@@ -219,8 +211,19 @@ export function deriveCellSemanticMorphologyOverlay(
     scriptLabel('type', record.type_script),
   ].filter((label): label is CellSemanticScriptLabel => label !== null);
   const totalBytes = cell.data_bytes;
-  const dataSegments = (record.content?.deterministic?.segments ?? [])
-    .map((segment) => ({
+  const contentSegments = record.content?.deterministic?.segments ?? [];
+  // One rule, asked once, and the same one the DATA window and the hex reader
+  // ask. This used to be a private `labelHash(...) % 4` — its own copy of the
+  // hash, and four of the six qualitative slots because the ring was drawn
+  // before the ramp grew its fifth and sixth — while the DOM window beside it
+  // coloured the very same segments by `index % 6`. Two surfaces, two answers,
+  // one Cell: `content_type` was one colour on the portrait and another in the
+  // window, and a reader crossing between them had no way to know the two were
+  // about the same bytes. The rule lives in `cellDataReader.derive.ts` now,
+  // where all three surfaces reach it.
+  const colorSlots = segmentColorSlots(contentSegments);
+  const dataSegments = contentSegments
+    .map((segment, index) => ({
       label: segment.label,
       meaning: segment.meaning,
       value: segment.value,
@@ -228,7 +231,7 @@ export function deriveCellSemanticMorphologyOverlay(
       endByte: segment.end_byte,
       start: totalBytes > 0 ? segment.start_byte / totalBytes : 0,
       end: totalBytes > 0 ? segment.end_byte / totalBytes : 0,
-      colorIndex: labelHash(`${segment.label}/${segment.meaning}`) % 4,
+      colorIndex: colorSlots[index],
     }))
     .sort((left, right) => (
       left.startByte - right.startByte
