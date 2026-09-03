@@ -212,37 +212,19 @@ export function PanelHeader({ en, cjk, idx, accent, compact = false }: {
   );
 }
 
-export function StatRow({ label, children, valueColor, title, cjk, valueWidth }: {
+/** A label and the figure it names. A rail row carries no CJK companion: it is
+ *  read for its NUMBER, and a word standing between the label and the figure is
+ *  one more thing to read past on every glance. The unit's Chinese name lives
+ *  on the dossier's `CKBYTE` zone, where naming the unit IS the subject. */
+export function StatRow({ label, children, valueColor, title }: {
   label: string; children: ReactNode; valueColor?: string;
   /** Hover-only provenance for rows whose source differs from the panel's own. */
   title?: string;
-  /** The Chinese name of the UNIT this row counts in — standing IN FRONT OF THE
-   *  FIGURE, which is the thing it is the unit of. Beside the label it read as
-   *  a second label and sat a third of the row away from the number it
-   *  qualifies; here the eye picks up the unit and the amount in one move. A
-   *  row takes one only where the unit is worth naming; a row that merely
-   *  prints a number in it has the suffix on the figure already. */
-  cjk?: string;
-  /** Fixed value measure, in px, so a GROUP of rows lines its `cjk` companions
-   *  up in one column. The figures are right-aligned and of different lengths,
-   *  so pinning the column means pinning what stands to its right — reserve the
-   *  same measure for the value on every row of the group and the companions
-   *  land on one x.
-   *
-   *  ⚠️ A `minWidth`, deliberately, not a `width`: a figure that outgrows the
-   *  measure pushes its own companion left rather than being clipped, so the
-   *  worst case is one row out of column instead of an unreadable number. */
-  valueWidth?: number;
 }) {
   return (
     <div title={title} style={{ display: 'flex', alignItems: 'baseline', height: 17, whiteSpace: 'nowrap' }}>
       <span style={{ fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: HUD_TYPE.tech, letterSpacing: 1.6, color: HUD_COLORS.dim, textTransform: 'uppercase' }}>{label}</span>
-      {/* The companion takes the row's slack when it is present, so it and the
-        * figure travel together as one right-hand group. */}
-      {cjk ? (
-        <span style={{ ...CJK_BASELINE_LIFT, marginLeft: 'auto', marginRight: 8, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, color: HUD_COLORS.dim, opacity: 0.7 }}>{cjk}</span>
-      ) : null}
-      <span style={{ marginLeft: cjk ? undefined : 'auto', minWidth: valueWidth, textAlign: valueWidth === undefined ? undefined : 'right', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.value, color: valueColor ?? HUD_COLORS.ink }}>{children}</span>
+      <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.value, color: valueColor ?? HUD_COLORS.ink }}>{children}</span>
     </div>
   );
 }

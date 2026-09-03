@@ -420,11 +420,12 @@ Every CKB quantity on the HUD reads in one `K/M/G·CKB` family (`12.5 K·CKB`,
 `57.86 G·CKB` — byte prefixes, since 1 CKB buys exactly 1 CKByte of state),
 with exact figures on value tooltips. The magnitude binds to the unit with
 the house separator rather than a space, so a figure and the unit it is
-counted in read as two tokens instead of three. `CKB·01` names that unit in
-Chinese — 字节元 — once beside each of its two byte rows, `LIVE CAPACITY` and
-`KNOWLEDGE`, which are the chain's state budget sold and the bytes standing
-in it. In CKB-only mode the chain readout is simply absent; the stage panel
-never wears the chain's header.
+counted in read as two tokens instead of three. The unit's Chinese name —
+字节元 — is spoken once in the whole HUD, on the cell dossier's `CKBYTE` zone,
+which is the one surface whose subject IS the unit; every rail row counting in
+it is read for its number and carries the `CKB` suffix alone. In CKB-only mode
+the chain readout is simply absent; the stage panel never wears the chain's
+header.
 Indexed totals are never extrapolated from the retained Cell reservoir.
 Only whole-chain context dims when the source is stale or its own refresh
 is more than 90 seconds old; direct-node stage data remains at full

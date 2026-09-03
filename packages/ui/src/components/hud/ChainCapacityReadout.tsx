@@ -35,20 +35,6 @@ function formatBytes(bytes: number): string {
   return `${bytes} B`;
 }
 
-/** The measure both 字节元 rows reserve for their figure, so the two companions
- *  standing in front of those figures land on one x.
- *
- *  MEASURED, not guessed: `57.95 G·CKB` renders 75.9px and `152.8 MB` 55.2px in
- *  the mono voice at `HUD_TYPE.value`, live in the browser — jsdom has no font
- *  and answers zero for both. 84 covers the widest either row can print:
- *  capacity tops out around `99.99 G·CKB` on a chain whose whole supply is tens
- *  of billions of CKB, and knowledge at `999.9 MB`; both are 12 characters or
- *  fewer at the ~6.9px the mono voice advances per character.
- *
- *  It is a floor rather than a cap (see `StatRow`), so the day a figure does
- *  outgrow it that row's companion steps left and the number still reads. */
-const CKB_ROW_VALUE_W = 84;
-
 function shareLabel(bps: number): string {
   const percent = bps / 100;
   return Number.isInteger(percent) ? `${percent}%` : `${percent.toFixed(2).replace(/0$/, '')}%`;
@@ -106,29 +92,20 @@ export default function ChainCapacityReadout({ source, record, census = null, ce
         stale={stale}
       />
       {usableRecord ? (
-        <div data-indexed-context data-chain-byte-rows style={{ opacity: stale ? 0.68 : 1 }}>
-          {/* ⭐ TWO ROWS, ONE UNIT, AND THAT IS WHY THE COMPANION IS SHARED.
-            * These are the chain's state budget read from both ends: capacity
-            * is the bytes the chain has SOLD, knowledge is the bytes actually
-            * STANDING in them. At one byte per CKB they are the same quantity
-            * in two notations, so 字节元 is not a decoration on each row — it
-            * is the one thing both rows are counted in, said once per row and
-            * lined up so the pair reads as a column rather than as two labels
-            * that happen to end in Chinese.
-            *
-            * ⚠️ Which is what `CKB_ROW_VALUE_W` is for. The companion stands
-            * in FRONT OF THE FIGURE, because that is what it is the unit of —
-            * beside the label it read as a second label and sat a third of the
-            * row away from the number. The figures are right-aligned and of
-            * different lengths, so the column is pinned by reserving one
-            * measure for the value on both rows; if a third row joins them it
-            * reserves it too. */}
-          <StatRow label="Live capacity" cjk="字节元" valueWidth={CKB_ROW_VALUE_W}>
+        <div data-indexed-context style={{ opacity: stale ? 0.68 : 1 }}>
+          {/* Both rows count in CKBytes — capacity is the bytes the chain has
+            * SOLD and knowledge the bytes standing in them — and both say so
+            * on hover rather than in the row. The unit carried its Chinese
+            * name here for a while and it is the dossier's `CKBYTE` zone that
+            * keeps that job: a rail row is read for its NUMBER, and a word
+            * between the label and the figure is one more thing to read past
+            * on every glance. */}
+          <StatRow label="Live capacity">
             <span title={`${formatExactCkb(usableRecord.total_live_capacity_shannons)} · 1 CKB = 1 CKByte of state`}>
               {formatCkbAmount(usableRecord.total_live_capacity_shannons)}
             </span>
           </StatRow>
-          <StatRow label="Knowledge" cjk="字节元" valueWidth={CKB_ROW_VALUE_W}>
+          <StatRow label="Knowledge">
             <span title="Bytes standing in the capacity above · 1 CKB = 1 CKByte of state">
               {formatBytes(usableRecord.total_knowledge_bytes)}
             </span>

@@ -571,7 +571,8 @@ export const HUD_TYPE = {
  *  one.
  *
  *  A companion sits inline beside Latin on a shared baseline — `PanelHeader`'s
- *  `cjk`, a `StatRow`'s unit, 细胞 on the cell masthead. `alignItems: baseline`
+ *  `cjk`, 细胞 on the cell masthead, `CellByteBudget`'s 字节元.
+ *  `alignItems: baseline`
  *  is the right alignment for text and it is not the whole story here: the
  *  Latin the HUD sets beside these runs is UPPERCASE, so it stops at the
  *  baseline with nothing below it, while a mincho glyph's ideographic box hangs

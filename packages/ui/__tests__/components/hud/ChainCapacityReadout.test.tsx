@@ -60,62 +60,6 @@ describe('ChainCapacityReadout', () => {
     expect(unusable.container.firstChild).toBeNull();
   });
 
-  it('names the unit once per byte row, in one column, in the CJK face', () => {
-    // ⭐ THE TWO ROWS ARE ONE UNIT READ FROM BOTH ENDS — capacity is the bytes
-    // the chain has sold, knowledge is the bytes standing in them — so 字节元
-    // belongs to the PAIR rather than to either row, and it has to look like
-    // it does. It stands in FRONT OF THE FIGURE, which is what it is the unit
-    // of; beside the label it read as a second label, a third of the row away
-    // from the number it qualifies.
-    const { container } = render(
-      <ChainCapacityReadout source={source} record={record} census={census()} />,
-    );
-    // Named rather than positional: `data-indexed-context` marks all three
-    // indexed blocks in this readout, and only this one is the byte pair.
-    const rows = Array.from(container.querySelectorAll<HTMLElement>('[data-chain-byte-rows] > div'));
-    expect(rows).toHaveLength(2);
-
-    const units = rows.map((row) => Array.from(row.children)
-      .find((child) => child.textContent === '字节元') as HTMLElement | undefined);
-    expect(units.every(Boolean), 'both byte rows name the unit').toBe(true);
-
-    // The column. The figures are right-aligned and of different lengths, so
-    // what pins the companions is the measure RESERVED FOR THE VALUE — both
-    // rows reserve the same one, so both companions land on one x. Asserted on
-    // the value box, because jsdom has no font and lays every text run out at
-    // zero width; the browser is where the x itself was checked.
-    const valueWidths = rows.map((row) => (row.lastElementChild as HTMLElement).style.minWidth);
-    expect(new Set(valueWidths).size, 'the two figures reserve one measure').toBe(1);
-    // 84 is measured: `57.95 G·CKB` draws 75.9px live and neither row can
-    // print past 12 characters of the mono voice.
-    expect(valueWidths[0]).toBe('84px');
-    // A floor, never a cap — a figure that outgrows it steps its own companion
-    // left rather than being clipped.
-    for (const row of rows) {
-      expect((row.lastElementChild as HTMLElement).style.width).toBe('');
-    }
-
-    // And the companion comes BEFORE the figure in the row, not after the label.
-    for (const row of rows) {
-      const kids = Array.from(row.children);
-      expect(kids).toHaveLength(3);
-      expect(kids[1].textContent).toBe('字节元');
-      expect(kids[2]).toBe(row.lastElementChild);
-    }
-
-    // And it is set in the face that has Chinese in it, at the 9px floor the
-    // HUD renders Han at — `micro` is the Latin floor and a mincho glyph
-    // carries several times the strokes in the same em.
-    for (const unit of units) {
-      expect(unit!.style.fontFamily).toContain('Huiwen-mincho');
-      expect(unit!.style.fontSize).toBe('9px');
-    }
-
-    // Said once per row and nowhere else: the figures keep the `CKB` suffix
-    // they already carry, so the unit is never printed twice in one reading.
-    expect((container.textContent ?? '').match(/字节元/g)).toHaveLength(2);
-  });
-
   it('shows the whole-chain overview under one stated anchor', () => {
     const { container } = render(
       <ChainCapacityReadout source={source} record={record} census={census()} />,

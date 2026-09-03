@@ -77,11 +77,13 @@ export default function CellByteBudget({
           * NAME, the `cjk` of a `PanelHeader`, 细胞 on this card's masthead.
           * Never a suffix on a figure. Every OTHER reading in the overlay
           * merely COUNTS in the unit (a Cell's CAPACITY fact, STAGE·07's
-          * Capacity, DAO·05's deposit hero), and a unit tagged onto each of
-          * those is the same word printed where the `CKB` suffix already
-          * stands. CKB·01's two byte rows are the exception that proves it:
-          * they name the unit once each because the pair of them IS the
-          * chain's state budget, and they do it in front of the figure.
+          * Capacity, CKB·01's Live capacity, DAO·05's deposit hero), and a
+          * unit tagged onto each of those is the same word printed where the
+          * `CKB` suffix already stands. CKB·01's byte rows carried it for a
+          * while and gave it back: a rail row is read for its NUMBER, and a
+          * word between the label and the figure is one more thing to read
+          * past on every glance. This is the one surface where naming the
+          * unit IS the subject, so this is where the name lives.
           *
           * ⚠️ `label` (9) is the floor for rendered Chinese here, and the
           * reason is the face rather than the rung: `micro` is the Latin
