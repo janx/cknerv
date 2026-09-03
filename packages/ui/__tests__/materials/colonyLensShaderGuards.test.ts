@@ -1,0 +1,508 @@
+// The source-level guards `cohortShaderGuards.test.ts` and
+// `colonyMistShaderGuards.test.ts` run over the mark and the mist, run over the
+// program that traces light — plus the three refusals that belong to a RAY
+// MARCH and to nothing else in this package.
+//
+// ⚠️ `smoothstep(a, b, x)` with `a >= b` is UNDEFINED in GLSL ES: on this
+// project's own AMD/Vulkan driver it once rendered NOTHING AT ALL, and in a
+// later lab it produced a driver-dependent funnel mouth. ⚠️ `pow(x, y)` with a
+// negative base is undefined too, and undefined QUIETLY.
+//
+// The three that are this program's own:
+//
+// ⛔⛔ NO `texture2D`, ANYWHERE, EVER. A sampler inside a march picks its mip
+// level from screen-space derivatives, and neighbouring rays end at unrelated
+// places: the derivatives explode along one axis and the tile is read from a
+// coarse level in stripes. The lab lost a round to it and came back with dashed
+// radial noise. Every fetch is `textureLod` with an explicit level — and this
+// program is built so that there is no `texture2D` to remove, rather than so
+// that a regex removed it.
+//
+// ⛔ NO STRAIGHT-RAY SHORTCUT. At a handoff radius of ten horizons the
+// deflection is still 0.2 rad, and the disc's far edge showed a hard dome cut
+// exactly at the seam where the shortcut took over. There is no branch on the
+// impact parameter in this program and this file says so.
+//
+// ⚠️ DECLARATION ORDER. GLSL has no forward declarations by default: a function
+// must appear after every helper it calls. The lab's first fibre build rendered
+// NOTHING because of it, and the harness swallowed the compile error. Six
+// functions go into this program from three files, so the order is checked
+// rather than remembered.
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { describe, expect, it } from 'vitest';
+// ⭐ The namespaces are what make the coverage claim general: every exported
+// STRING in the three material files is a shared GLSL snippet, and the sums
+// below find them without being told their names.
+import * as colonyCohort from '../../src/materials/colonyCohort';
+import * as colonyLens from '../../src/materials/colonyLens';
+import * as colonyMist from '../../src/materials/colonyMist';
+import { makeCohortLensMaterial } from '../../src/materials/colonyLens';
+import { makeCohortIntakePatchMaterial } from '../../src/materials/colonyMist';
+
+const SOURCE = readFileSync(
+  resolve(process.cwd(), 'src/materials/colonyLens.ts'),
+  'utf8',
+);
+
+/** Strip GLSL/TS comments. Every guard below runs on comment-free text so a
+ *  `pow`, a `smoothstep` or the word `texture2D` written in PROSE — and this
+ *  program's prose says all three — can never be mistaken for code. */
+function stripComments(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/\/\/[^\n]*/g, ' ');
+}
+
+/** The arguments of the call whose `(` is at `open`, split at top level. */
+function callArguments(source: string, open: number): string[] {
+  let depth = 0;
+  let start = open + 1;
+  const args: string[] = [];
+  for (let i = open; i < source.length; i += 1) {
+    const character = source[i];
+    if (character === '(') depth += 1;
+    else if (character === ')') {
+      depth -= 1;
+      if (depth === 0) {
+        args.push(source.slice(start, i));
+        return args;
+      }
+    } else if (character === ',' && depth === 1) {
+      args.push(source.slice(start, i));
+      start = i + 1;
+    }
+  }
+  throw new Error('unbalanced parentheses');
+}
+
+/** Every call of `name` in `program`, as its argument list. */
+function callsOf(program: string, name: string): string[][] {
+  const pattern = new RegExp(`\\b${name}\\s*\\(`, 'g');
+  return [...program.matchAll(pattern)].map((match) =>
+    callArguments(program, (match.index ?? 0) + match[0].length - 1));
+}
+
+/**
+ * A number, where the expression is one — enough for the edges this program
+ * writes, which are all uniforms and literals.
+ *
+ * ⭐ AND THAT IS A PROPERTY OF THE PROGRAM RATHER THAN OF THIS READER. Two
+ * `smoothstep`s in the fragment are taken on a radius measured against a LOCAL
+ * (the disc's inner edge, the disc's outer edge), and both are written as a
+ * FRACTION — `smoothstep(1.0, 1.06, rho / edge)` rather than `smoothstep(edge,
+ * edge * 1.06, rho)` — which is the same arithmetic with both edges in plain
+ * sight. A future edit that puts the local back in the edge slot lands in
+ * `unprovable` below, where it has to be argued.
+ */
+function evaluate(
+  expression: string,
+  uniforms: ReadonlyMap<string, number>,
+): number | undefined {
+  const tokens = expression.match(/[0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?|[A-Za-z_]\w*|[-+*/()]/g);
+  if (tokens === null) return undefined;
+  let at = 0;
+  const peek = (): string | undefined => tokens[at];
+  const parseExpr = (): number | undefined => {
+    let left = parseTerm();
+    while (left !== undefined && (peek() === '+' || peek() === '-')) {
+      const operator = tokens[at++];
+      const right = parseTerm();
+      if (right === undefined) return undefined;
+      left = operator === '+' ? left + right : left - right;
+    }
+    return left;
+  };
+  const parseTerm = (): number | undefined => {
+    let left = parseUnary();
+    while (left !== undefined && (peek() === '*' || peek() === '/')) {
+      const operator = tokens[at++];
+      const right = parseUnary();
+      if (right === undefined || (operator === '/' && right === 0)) return undefined;
+      left = operator === '*' ? left * right : left / right;
+    }
+    return left;
+  };
+  const parseUnary = (): number | undefined => {
+    if (peek() === '-' || peek() === '+') {
+      const operator = tokens[at++];
+      const operand = parseUnary();
+      return operand === undefined ? undefined : operator === '-' ? -operand : operand;
+    }
+    const token = peek();
+    if (token === undefined) return undefined;
+    if (token === '(') {
+      at += 1;
+      const inner = parseExpr();
+      if (inner === undefined || tokens[at++] !== ')') return undefined;
+      return inner;
+    }
+    if (/^[0-9.]/.test(token)) {
+      at += 1;
+      return Number.parseFloat(token);
+    }
+    if (/^[A-Za-z_]/.test(token)) {
+      at += 1;
+      // A call is not a constant this reader can settle.
+      if (peek() === '(') return undefined;
+      return uniforms.get(token);
+    }
+    return undefined;
+  };
+  const value = parseExpr();
+  return at === tokens.length ? value : undefined;
+}
+
+interface Program {
+  readonly name: string;
+  /** Comment-free, whitespace-squashed: what the guards read. */
+  readonly glsl: string;
+  /** Comment-free, line structure intact: what the order check reads. */
+  readonly text: string;
+  readonly uniforms: Map<string, number>;
+}
+
+function compile(name: string, material: BuiltProgram): Program[] {
+  const uniforms = new Map<string, number>();
+  for (const [key, uniform] of Object.entries(material.uniforms)) {
+    if (typeof uniform.value === 'number') uniforms.set(key, uniform.value);
+  }
+  return (['vertexShader', 'fragmentShader'] as const).map((stage) => ({
+    name: `${name}.${stage}`,
+    glsl: stripComments(material[stage]).replace(/\s+/g, ' '),
+    text: stripComments(material[stage]),
+    uniforms,
+  }));
+}
+
+/** The shape of a built material this file reads — three's own, structurally. */
+interface BuiltProgram {
+  readonly uniforms: Record<string, { value: unknown }>;
+  readonly vertexShader: string;
+  readonly fragmentShader: string;
+}
+
+const LENS = compile('lens', makeCohortLensMaterial());
+const PATCH = compile('mistPatch', makeCohortIntakePatchMaterial());
+const LENS_FRAGMENT = LENS.find(({ name }) => name === 'lens.fragmentShader');
+
+/**
+ * The GLSL this FILE writes, as opposed to the GLSL it compiles: the text
+ * inside every `/* glsl *\/` template literal.
+ *
+ * ⚠️ IT IS NOT THE WHOLE FILE, AND THAT DIFFERS FROM THE MIST'S GUARD ON
+ * PURPOSE. This material ships a TypeScript MIRROR of the fragment's arithmetic
+ * — the integrator, the fold, the two disc laws — and the mirror legitimately
+ * defines and calls a function named `smoothstep`. Counting the whole file
+ * would charge the coverage ledger three TS calls that are not GLSL at all.
+ * Slicing at the template literals is exact, and it is safe precisely because
+ * the backtick guard below holds: there is no backtick inside the GLSL, so the
+ * first one after the marker is the literal's end.
+ */
+function glslLiterals(source: string): string[] {
+  const marker = '/* glsl */ `';
+  const literals: string[] = [];
+  let at = source.indexOf(marker);
+  while (at >= 0) {
+    const start = at + marker.length;
+    const end = source.indexOf('`', start);
+    expect(end).toBeGreaterThan(start);
+    literals.push(source.slice(start, end));
+    at = source.indexOf(marker, end + 1);
+  }
+  return literals;
+}
+
+describe('colonyLens.ts — source-level shader guards', () => {
+  it('has no texture2D anywhere, and every textureLod states its level', () => {
+    // ⛔ THE RAY-MARCH LOD TRAP, REFUSED STRUCTURALLY. `mistNoise` is declared
+    // by each program that includes the medium, so the lens's fetch is a
+    // `textureLod` and there is no `texture2D` in the program to strip.
+    for (const program of LENS) {
+      expect(`${program.name}: ${program.glsl.includes('texture2D')}`)
+        .toBe(`${program.name}: false`);
+      // …and no other implicit-derivative fetch either.
+      expect(program.glsl).not.toMatch(/\btexture\s*\(/);
+      expect(program.glsl).not.toMatch(/\btexture2DProj\b|\btextureCube\b/);
+      for (const args of callsOf(program.glsl, 'textureLod')) {
+        // sampler, coordinate, LEVEL. A two-argument call does not compile, but
+        // a level that is a varying or a derivative would — and would be the
+        // same bug with more steps.
+        expect(`${program.name}: textureLod arity ${args.length}`)
+          .toBe(`${program.name}: textureLod arity 3`);
+        expect(args[2].trim()).toBe('uLod');
+      }
+    }
+    // The fetch really is there: three of them, the medium's two and the fibre
+    // lane's — all through the one wrapper.
+    expect(callsOf(LENS_FRAGMENT?.glsl ?? '', 'textureLod')).toHaveLength(1);
+    expect(callsOf(LENS_FRAGMENT?.glsl ?? '', 'mistNoise').length)
+      .toBeGreaterThanOrEqual(5);
+  });
+
+  it('bends every ray: no branch on the impact parameter', () => {
+    // ⛔ THE SHORTCUT THE LAB SHIPPED AND THE PLAN RETIRED. `if (impact >
+    // bendR)` traded a hard dome cut at the disc's far edge for steps that the
+    // adaptive stretch makes unnecessary anyway: a ray passing at thirty
+    // horizons leaves in nine steps.
+    const fragment = LENS_FRAGMENT?.glsl ?? '';
+    expect(fragment).toContain('float impact = r0 * b;');
+    expect(fragment).not.toMatch(/uBendR|bendR/);
+    // The impact parameter is read exactly twice — by the adaptive step and by
+    // the glow's radius — and never as a condition.
+    expect(fragment).not.toMatch(/if\s*\([^)]*\bimpact\b/);
+  });
+
+  it('no smoothstep anywhere has edge0 >= edge1', () => {
+    // ⚠️ The fix is always `1.0 - smoothstep(b, a, x)`, never a swap of the
+    // third argument.
+    const unprovable: string[] = [];
+    let checked = 0;
+    for (const program of LENS) {
+      for (const args of callsOf(program.glsl, 'smoothstep')) {
+        const edge0 = evaluate(args[0], program.uniforms);
+        const edge1 = evaluate(args[1], program.uniforms);
+        if (edge0 === undefined || edge1 === undefined) {
+          unprovable.push(`${program.name}: smoothstep(${args[0]},${args[1]}, …)`);
+          continue;
+        }
+        checked += 1;
+        const verdict = edge0 < edge1 ? 'ordered' : 'UNDEFINED IN GLSL ES';
+        expect(`${program.name}: smoothstep(${edge0}, ${edge1}) is ${verdict}`)
+          .toBe(`${program.name}: smoothstep(${edge0}, ${edge1}) is ordered`);
+      }
+    }
+    // ⭐ EMPTY, AND THAT IS A PROPERTY OF THE PROGRAM. Both edges taken against
+    // a local are written as fractions of it; see `evaluate` above.
+    expect(unprovable).toEqual([]);
+    // The fold's two, the inner band, the outer fade, the inner edge, the fibre
+    // lane, the two colour stops and the context exemption.
+    expect(checked).toBe(8);
+  });
+
+  it('no pow anywhere can be handed a negative base', () => {
+    // ⚠️ Four calls: the medium's ridge, the fibres' ridge, the near disc's
+    // radial falloff and the far disc's skirt. Three carry an explicit clamp at
+    // zero; the fourth's base is a local that IS one, and this reader resolves
+    // it rather than trusting it.
+    const guarded = (base: string): boolean =>
+      /^max\s*\(.*,\s*0\.0\s*\)$/.test(base) || /^clamp\s*\(.*,\s*0\.0\s*,/.test(base);
+    const unproven: string[] = [];
+    let checked = 0;
+    for (const program of LENS) {
+      for (const args of callsOf(program.glsl, 'pow')) {
+        checked += 1;
+        const base = args[0].trim();
+        // A bare name is resolved to its one definition in the same program: a
+        // local whose initialiser is itself clamped at zero is as proven as an
+        // inline clamp, and is far more readable at the call site.
+        const local = /^\w+$/.test(base)
+          ? new RegExp(`\\bfloat\\s+${base}\\s*=\\s*([^;]+);`).exec(program.glsl)
+          : null;
+        const resolved = local === null ? base : local[1].trim();
+        if (!guarded(base) && !guarded(resolved)
+          && evaluate(resolved, program.uniforms) === undefined) {
+          unproven.push(`${program.name}: pow(${base} = ${resolved}, …)`);
+        }
+      }
+    }
+    expect(unproven).toEqual([]);
+    expect(checked).toBe(4);
+    // ⚠️ AND THE ONE THE LAB DID NOT GUARD IS THE FIBRES'. Its `n` carries a
+    // `+ (g - 0.5) * 0.18` that can push it outside [0, 1], and `1 - abs(2n -
+    // 1)` is then negative. The `max` in `MIST_FIBRES_GLSL` is this port's
+    // change to the lab's text, and it is the reason this guard exists.
+    expect(colonyMist.MIST_FIBRES_GLSL)
+      .toContain('pow(max(1.0 - abs(2.0 * n - 1.0), 0.0), uFibreSharp)');
+  });
+
+  it('declares every function before the first call of it', () => {
+    // ⚠️ GLSL HAS NO FORWARD DECLARATIONS HERE, and the failure is silent: the
+    // program does not link, the draw is dropped, and the layer disappears from
+    // a scene that still looks plausible. SIX functions reach this program from
+    // THREE files — five from the mist's library, one of its own — so the order
+    // is a property of the concatenation and not of any single file.
+    for (const program of LENS) {
+      const defined = [...program.text.matchAll(
+        /^\s*(?:float|int|vec2|vec3|vec4|mat3|mat4|void)\s+(\w+)\s*\(/gm,
+      )].map((match) => match[1]);
+      for (const name of defined) {
+        if (name === 'main') continue;
+        const definition = new RegExp(
+          `\\b(?:float|int|vec2|vec3|vec4|mat3|mat4|void)\\s+${name}\\s*\\(`,
+        ).exec(program.text);
+        const firstUse = new RegExp(`\\b${name}\\s*\\(`).exec(program.text);
+        // The first time the NAME appears followed by a paren must be its own
+        // definition — which is what "declared before every call" means when
+        // there are no forward declarations to look for.
+        const declaredAt = (definition?.index ?? -1)
+          + (definition?.[0].indexOf(name) ?? 0);
+        expect(`${program.name}: ${name} first appears at ${firstUse?.index}`)
+          .toBe(`${program.name}: ${name} first appears at ${declaredAt}`);
+      }
+      if (program.name === 'lens.fragmentShader') {
+        expect(defined).toEqual([
+          'mistNoise', 'mistMedium', 'mistBacktrace', 'mistFibres',
+          'mistDiscColor', 'lensDisc', 'main',
+        ]);
+      }
+    }
+  });
+
+  it('declares everything the borrowed snippets reach for', () => {
+    // ⭐⭐ THE SNIPPETS ARE FUNCTION TEXT AND NOTHING ELSE — no uniform block, no
+    // varying block — because two of them pasted into one program would
+    // otherwise collide on a shared declaration. What makes that safe is this:
+    // every `uXxx`, `vXxx` and `aXxx` a snippet mentions is declared by EVERY
+    // program that includes it, and both programs are checked, not just the new
+    // one.
+    const shared: [string, string][] = [
+      ['MIST_NOISE_GLSL', colonyMist.MIST_NOISE_GLSL],
+      ['MIST_NOISE_LOD_GLSL', colonyMist.MIST_NOISE_LOD_GLSL],
+      ['MIST_MEDIUM_GLSL', colonyMist.MIST_MEDIUM_GLSL],
+      ['MIST_BACKTRACE_GLSL', colonyMist.MIST_BACKTRACE_GLSL],
+      ['MIST_FIBRES_GLSL', colonyMist.MIST_FIBRES_GLSL],
+      ['MIST_DISC_COLOR_GLSL', colonyMist.MIST_DISC_COLOR_GLSL],
+      ['MIST_SHARE_FACTOR_GLSL', colonyMist.MIST_SHARE_FACTOR_GLSL],
+      ['MIST_SEAT_DRIFT_GLSL', colonyMist.MIST_SEAT_DRIFT_GLSL],
+      ['COHORT_GULP_GLSL', colonyCohort.COHORT_GULP_GLSL],
+      ['COHORT_CONTEXT_ENERGY_GLSL', colonyCohort.COHORT_CONTEXT_ENERGY_GLSL],
+    ];
+    let pairs = 0;
+    for (const program of [...LENS, ...PATCH]) {
+      for (const [key, snippet] of shared) {
+        const body = stripComments(snippet).replace(/\s+/g, ' ');
+        if (!program.glsl.includes(body)) continue;
+        pairs += 1;
+        const names = new Set(
+          [...body.matchAll(/\b([uva][A-Z]\w*)\b/g)].map((match) => match[1]),
+        );
+        for (const name of names) {
+          const declared = new RegExp(
+            `\\b(?:uniform|varying|attribute)\\s+\\w+\\s+${name}\\s*;`,
+          ).test(program.glsl)
+            // A varying written by the vertex stage is declared there and read
+            // in the fragment; either stage of the same material counts.
+            || (program.name.startsWith('lens')
+              ? LENS.some(({ glsl }) => new RegExp(
+                `\\b(?:uniform|varying|attribute)\\s+\\w+\\s+${name}\\s*;`,
+              ).test(glsl))
+              : PATCH.some(({ glsl }) => new RegExp(
+                `\\b(?:uniform|varying|attribute)\\s+\\w+\\s+${name}\\s*;`,
+              ).test(glsl)));
+          expect(`${program.name} ${key}: ${name} declared ${declared}`)
+            .toBe(`${program.name} ${key}: ${name} declared true`);
+        }
+      }
+    }
+    // ⚠️ NOT VACUOUS: the loop above really did find the snippets in the
+    // programs, sixteen times over. The lens takes two lanes in its vertex
+    // stage and five library functions plus the gulp and the exemption in its
+    // fragment; the patch takes the same two lanes and three of the same
+    // library functions — with the OTHER fetch — plus the same two from the
+    // aperture. 2 + 7 + 2 + 5.
+    expect(pairs).toBe(16);
+  });
+
+  it('covers every smoothstep and pow the file actually writes', () => {
+    // The two guards run over the compiled PROGRAM, so they can resolve
+    // uniforms. This is what says the program is the whole of the file's GLSL:
+    // a string added to the material and not compiled, or compiled twice, shows
+    // up here as a count that no longer matches.
+    //
+    // ⚠️ THE LEDGER HAS THREE COLUMNS AND THIS FILE OWNS THE MIDDLE ONE. Written
+    // here and compiled here: counted once in the literals, so short by
+    // `uses - 1`. BORROWED — written in `colonyMist.ts` or `colonyCohort.ts` and
+    // compiled here: not in this file's literals at all, so short by the full
+    // `uses`. LENT — written here and compiled elsewhere: none today, and
+    // `colonyMistShaderGuards.test.ts` carries the mirror image of that case.
+    const literals = glslLiterals(SOURCE).map(stripComments);
+    // Exactly two: the vertex stage and the fragment stage.
+    expect(literals).toHaveLength(2);
+    // ⚠️ The cast is what keeps the OWN column general. This file exports no
+    // GLSL string today — every snippet it compiles is borrowed — so TypeScript
+    // narrows the namespace's value type to one that excludes `string` and the
+    // predicate below stops compiling. The day this file lends a snippet out,
+    // the ledger already accounts for it.
+    const strings = (module: Record<string, unknown>): [string, string][] =>
+      (Object.entries(module) as [string, unknown][])
+        .filter((entry): entry is [string, string] => typeof entry[1] === 'string');
+    const own = strings(colonyLens);
+    const borrowed = [...strings(colonyMist), ...strings(colonyCohort)];
+    for (const name of ['smoothstep', 'pow']) {
+      const pattern = new RegExp(`\\b${name}\\s*\\(`, 'g');
+      const credit = (
+        source: readonly [string, string][],
+        written: boolean,
+      ): number =>
+        source.reduce((total, [key, glsl]) => {
+          const uses = literals
+            .reduce((n, text) => n + [...text.matchAll(
+              new RegExp(`\\$\\{${key}\\}`, 'g'),
+            )].length, 0);
+          const calls = [...stripComments(glsl).matchAll(pattern)].length;
+          return total + calls * (written ? uses - 1 : uses);
+        }, 0);
+      const inFile = literals
+        .reduce((total, text) => total + [...text.matchAll(pattern)].length, 0)
+        + credit(own, true)
+        + credit(borrowed, false);
+      const inProgram = LENS
+        .reduce((total, program) => total + callsOf(program.glsl, name).length, 0);
+      expect(`${name}: ${inProgram} of ${inFile}`).toBe(`${name}: ${inFile} of ${inFile}`);
+      expect(inFile).toBeGreaterThan(0);
+    }
+    // ⭐ AND THE BORROWED CREDIT IS NOT VACUOUS: the snippets really are pasted
+    // in, by interpolation and never by hand.
+    for (const key of [
+      'MIST_NOISE_LOD_GLSL', 'MIST_MEDIUM_GLSL', 'MIST_BACKTRACE_GLSL',
+      'MIST_FIBRES_GLSL', 'MIST_DISC_COLOR_GLSL', 'MIST_SHARE_FACTOR_GLSL',
+      'MIST_SEAT_DRIFT_GLSL', 'COHORT_GULP_GLSL', 'COHORT_CONTEXT_ENERGY_GLSL',
+    ]) {
+      expect(`${key}: ${SOURCE.includes('${' + key + '}')}`).toBe(`${key}: true`);
+    }
+    // …and the medium is not re-typed here under any name.
+    expect(stripComments(SOURCE)).not.toContain('float mistMedium(');
+    expect(stripComments(SOURCE)).not.toContain('vec2 mistBacktrace(');
+  });
+
+  it('is the same medium the patch draws, character for character', () => {
+    // ⭐⭐⭐ ONE SUBSTANCE, AND THIS IS WHAT SAYS SO. The disc's texture and the
+    // patch's are not two implementations that agree; they are one text
+    // compiled twice. A tuning of either lands in both, which is the whole
+    // reason the medium was lifted out of the patch program.
+    const patchFragment = PATCH.find(({ name }) => name === 'mistPatch.fragmentShader');
+    for (const snippet of [colonyMist.MIST_MEDIUM_GLSL, colonyMist.MIST_BACKTRACE_GLSL]) {
+      const body = stripComments(snippet).replace(/\s+/g, ' ');
+      expect(patchFragment?.glsl).toContain(body);
+      expect(LENS_FRAGMENT?.glsl).toContain(body);
+    }
+    // The two lanes leave the vertex stage the same way in both, too.
+    const patchVertex = PATCH.find(({ name }) => name === 'mistPatch.vertexShader');
+    const lensVertex = LENS.find(({ name }) => name === 'lens.vertexShader');
+    for (const snippet of [
+      colonyMist.MIST_SHARE_FACTOR_GLSL, colonyMist.MIST_SEAT_DRIFT_GLSL,
+    ]) {
+      const body = stripComments(snippet).replace(/\s+/g, ' ');
+      expect(patchVertex?.glsl).toContain(body);
+      expect(lensVertex?.glsl).toContain(body);
+    }
+    // ⚠️ AND THE FETCH IS THE ONE THING THAT DIFFERS: the patch lets the driver
+    // choose, the lens states the level, and the medium above them is identical.
+    expect(patchFragment?.glsl)
+      .toContain(stripComments(colonyMist.MIST_NOISE_GLSL).replace(/\s+/g, ' '));
+    expect(LENS_FRAGMENT?.glsl)
+      .toContain(stripComments(colonyMist.MIST_NOISE_LOD_GLSL).replace(/\s+/g, ' '));
+    expect(patchFragment?.glsl).not.toContain('textureLod');
+  });
+
+  it('carries no backtick anywhere in its GLSL', () => {
+    // ⚠️ A BACKTICK INSIDE A GLSL COMMENT CLOSES THE TEMPLATE LITERAL — a TS
+    // parse error, or an esbuild one, never a shader error, and the message
+    // points nowhere near the comment that caused it. It cost this leg a build.
+    const material = makeCohortLensMaterial();
+    for (const stage of ['vertexShader', 'fragmentShader'] as const) {
+      expect(material[stage].includes('`')).toBe(false);
+    }
+  });
+});

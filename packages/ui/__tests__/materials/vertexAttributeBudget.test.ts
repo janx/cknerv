@@ -27,6 +27,7 @@ import {
 import {
   makeCohortIntakePatchMaterial,
 } from '../../src/materials/colonyMist';
+import { makeCohortLensMaterial } from '../../src/materials/colonyLens';
 import {
   makeCanonicalRewriteEchoMaterial,
 } from '../../src/components/CanonicalRewriteEcho';
@@ -331,6 +332,18 @@ const ROWS: readonly BudgetRow[] = [
     usage: { instanced: true },
   },
   {
+    name: 'cohortLensMaterial',
+    sources: ['src/materials/colonyLens.ts'],
+    material: makeCohortLensMaterial,
+    // The lensed mark: ONE camera-facing quad per cohort, and the whole image
+    // computed inside it. It takes the mat4 and the layer's three lanes — the
+    // same three the patch takes, off the same buffers, because it is the same
+    // plan: the seed decorrelates the medium's two-phase clock, the gulp is the
+    // block this cohort won, and the share is the SINK'S STRENGTH here exactly
+    // as it is under the patch.
+    usage: { instanced: true },
+  },
+  {
     name: 'canonicalRewriteEchoMaterial',
     sources: ['src/components/CanonicalRewriteEcho.tsx'],
     material: makeCanonicalRewriteEchoMaterial,
@@ -546,6 +559,27 @@ describe('vertex attribute budget', () => {
     expect(measured.some(({ name }) => name === 'mistHazeMaterial')).toBe(false);
     // Six slots still free on the busiest program in the layer.
     expect(MAX_VERTEX_ATTRIBUTES - (patch?.total ?? 0)).toBe(6);
+  });
+
+  it('charges the lensed cohort the same three lanes, and not one more', () => {
+    // ⭐⭐⭐ THE WHOLE IMAGE IS COMPUTED IN THE FRAGMENT, so the vertex stage is
+    // the cheapest in the feature: a quad, an origin, three floats. Everything
+    // the picture needs — the mass, the disc, the fold, the trace — arrives as
+    // uniforms, which is what makes a 64-cohort cap cost this layer nothing.
+    //
+    // ⚠️ AND THE LANES ARE THE PATCH'S, OBJECT FOR OBJECT. `ColonyCohorts` hands
+    // ONE `InstancedBufferAttribute` per lane to every geometry in the layer; a
+    // second wrapper over the same array is a second GL buffer and the first one
+    // is orphaned. Equal names at equal widths in equal order is what this row
+    // can check from here, and it is the half that catches a re-declaration.
+    const lens = measured.find(({ name }) => name === 'cohortLensMaterial');
+    const patch = measured.find(({ name }) => name === 'cohortIntakePatchMaterial');
+    expect(lens).toBeDefined();
+    expect([lens?.custom, lens?.injected, lens?.total]).toEqual([3, 7, 10]);
+    expect(lens?.names).toEqual(['aSeed', 'aGulp', 'aShare']);
+    expect(lens?.names).toEqual(patch?.names);
+    // Six slots still free, on the busiest program the colony draws.
+    expect(MAX_VERTEX_ATTRIBUTES - (lens?.total ?? 0)).toBe(6);
   });
 
   it('keeps the colony edge program exactly where it was', () => {

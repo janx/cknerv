@@ -247,12 +247,24 @@ describe('colonyMist.ts — source-level shader guards', () => {
     // string added to a material nobody built, or to a third factory, shows up
     // here as a count that no longer matches.
     //
-    // ⚠️ TWO KINDS OF SHARED SNIPPET, AND THEY ARE CREDITED DIFFERENTLY. A
+    // ⚠️ THREE KINDS OF SHARED SNIPPET, AND THEY ARE CREDITED DIFFERENTLY. A
     // snippet written HERE and used n times is in the raw file count once, so
     // it is short by `n - 1`. A snippet written in `colonyCohort.ts` and used
     // here is in this file's raw count ZERO times, so it is short by the full
     // `n`. Getting that wrong in either direction turns an EQUALITY into a
     // number that happens to match, which is exactly the check being skipped.
+    //
+    // ⭐ AND THE THIRD KIND IS A SNIPPET LENT OUT: written here and compiled by
+    // a program in ANOTHER file — `MIST_FIBRES_GLSL` and `MIST_DISC_COLOR_GLSL`
+    // are the medium's own texture and its colour ramp, and the only draw close
+    // enough to resolve either is the lensed cohort's. Its calls are in this
+    // file's raw count once and in this file's programs zero times, so `n - 1`
+    // is NEGATIVE and the same formula credits it: the equality below stays an
+    // equality without a special case. ⚠️ That is why the `Math.max(…, 0)` that
+    // stood here is gone — it silently forgave a lent snippet — and it is why
+    // `colonyLensShaderGuards.test.ts` asserts the borrowed side of the same
+    // ledger: a snippet exported here and compiled NOWHERE would vanish from
+    // both counts, and only the pair of files together says it did not.
     const file = stripComments(SOURCE);
     const own = Object.entries(colonyMist)
       .filter((entry): entry is [string, string] => typeof entry[1] === 'string');
@@ -264,7 +276,7 @@ describe('colonyMist.ts — source-level shader guards', () => {
         source.reduce((total, [key, glsl]) => {
           const uses = [...SOURCE.matchAll(new RegExp(`\\$\\{${key}\\}`, 'g'))].length;
           const calls = [...stripComments(glsl).matchAll(pattern)].length;
-          return total + calls * Math.max(written ? uses - 1 : uses, 0);
+          return total + calls * (written ? uses - 1 : uses);
         }, 0);
       const inFile = [...file.matchAll(pattern)].length
         + surplus(own, true)
@@ -280,6 +292,17 @@ describe('colonyMist.ts — source-level shader guards', () => {
     expect(SOURCE).toContain('${COHORT_GULP_GLSL}');
     expect(stripComments(colonyCohort.COHORT_CONTEXT_ENERGY_GLSL))
       .toMatch(/\bsmoothstep\s*\(/);
+    // …and the LENT credit is not vacuous either: both snippets carry the calls
+    // the deficit above assumes, and the program that compiles them is pinned
+    // by its own guard file, one directory over.
+    expect(stripComments(colonyMist.MIST_FIBRES_GLSL))
+      .toMatch(/\bsmoothstep\s*\(/);
+    expect(stripComments(colonyMist.MIST_FIBRES_GLSL)).toMatch(/\bpow\s*\(/);
+    expect([...stripComments(colonyMist.MIST_DISC_COLOR_GLSL)
+      .matchAll(/\bsmoothstep\s*\(/g)]).toHaveLength(2);
+    for (const key of ['MIST_FIBRES_GLSL', 'MIST_DISC_COLOR_GLSL']) {
+      expect(`${key}: ${SOURCE.includes('${' + key + '}')}`).toBe(`${key}: false`);
+    }
   });
 
   it('carries no backtick anywhere in its GLSL', () => {

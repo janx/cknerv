@@ -24,8 +24,11 @@ import { mulberry32 } from '../layout';
  *
  * ⭐⭐⭐ AND THE INTAKE IS THE POINT. What the user asked for is 「pow cohort
  * 汲取能量的视觉效果」, so the mist is drawn where it is BEING TAKEN and NOWHERE
- * ELSE. This file holds exactly that draw and the tile it reads:
- * `makeCohortIntakePatchMaterial` — one instance per cohort, its sink at its
+ * ELSE. This file holds that draw, the tile it reads, and — since 2026-09-03 —
+ * THE SUBSTANCE ITSELF AS A GLSL LIBRARY (`MIST_*_GLSL`), because the lensed
+ * cohort in `colonyLens.ts` samples the same medium where a bent light ray
+ * crosses the colony plane and two hand-copied mediums would be two substances.
+ * The draw is `makeCohortIntakePatchMaterial` — one instance per cohort, its sink at its
  * own origin. A patch of the substance lying `MIST_FLOOR_DEPTH` under the
  * plane, lifted into a gentle mound whose top is exactly `COHORT_INTAKE_LEVEL`
  * — the level the window in the mouth already shows — carrying the medium's own
@@ -501,6 +504,39 @@ export const MIST_SINK_K = 12;
  */
 export const MIST_SWIRL = 1.4;
 
+/* ---- the filaments, which only a close camera can resolve ---------------- *
+ *
+ * ⭐ THESE SIX ARE THE MEDIUM'S TEXTURE AT ARM'S LENGTH, and no program in this
+ * file binds them: the patch is a 14 wu surface seen from 100 wu away, where a
+ * filament finer than the streaks prefilters to grey. `MIST_FIBRES_GLSL` is the
+ * shape and these are its starting values, from the approved preview; the
+ * lensed cohort binds them, because it is the draw that gets close enough for a
+ * fibre to be a fibre. They live here, with the substance, so that the day a
+ * second program wants the same threads there is one place to change.
+ */
+
+/** Angular repeats of the fibre field around the mouth, per full turn. */
+export const MIST_FIBRE_T = 1;
+
+/** Radial repeats per e-fold of radius: the threads' pitch as they wind in. */
+export const MIST_FIBRE_R = 7;
+
+/** How thread-like a thread is: the exponent on the ridge. Higher is finer. */
+export const MIST_FIBRE_SHARP = 2.2;
+
+/** How fast the whole fibre field turns, in radians per second of sim time.
+ *  ⭐ It is a slow drift and NOT the disc's orbital speed: the material's own
+ *  motion is the back-trace's, and this only keeps the threads from being a
+ *  frozen stamp. */
+export const MIST_FIBRE_ROT = 0.25;
+
+/** Where a bundle of threads starts, on the coarse lane mask. */
+export const MIST_LANE_LO = 0.22;
+
+/** …and where it is fully open. Threads come in bundles with gaps between
+ *  them, which is what keeps a fibred disc from reading as corduroy. */
+export const MIST_LANE_HI = 0.68;
+
 /**
  * What the SMALLEST cohort's sink is worth, as a fraction of the largest one's.
  *
@@ -827,6 +863,199 @@ export function mistPatchSupremum(throughGulp = false): number {
 }
 
 /* -------------------------------------------------------------------------- *
+ * The medium, as a GLSL library.
+ * -------------------------------------------------------------------------- */
+
+/**
+ * ⭐⭐⭐ THE SUBSTANCE IS WRITTEN ONCE AND COMPILED INTO EVERY PROGRAM THAT
+ * DRAWS IT. Until 2026-09-03 the medium and its back-trace were inline in the
+ * patch below and nowhere else, because there was nowhere else. The lensed
+ * cohort (`colonyLens.ts`) samples the SAME substance where a bent light ray
+ * crosses the colony plane, and a hand-copied second medium would be two
+ * substances the first time either was tuned — which is exactly the failure
+ * `COHORT_GULP_GLSL` was made a shared string to prevent one round earlier.
+ *
+ * ⭐⭐ THE SNIPPETS ARE FUNCTION TEXT AND NOTHING ELSE: no uniform block, no
+ * varying block. Each program declares what it binds, in its own one place, and
+ * `colonyLensShaderGuards.test.ts` proves that every `uNoise`/`u…`/`v…` name a
+ * snippet reaches for is declared by every program that includes it. A snippet
+ * that carried its own `uniform float uReach;` would collide with the patch's
+ * own declaration the moment two of them were pasted into one program.
+ *
+ * ⭐ AND THE FETCH IS THE ONE THING THAT DIFFERS BETWEEN THEM, so it is the one
+ * thing the snippets do not contain. `mistNoise(vec2 p, int ch)` is declared by
+ * each program before the library goes in: the patch's samples the tile with
+ * `texture2D` and lets the driver pick the mip from screen derivatives, which
+ * is right for a surface; the lens MUST NOT, because neighbouring rays in a
+ * march end at unrelated places, the derivatives explode along one axis and the
+ * tile comes back in coarse stripes (§4 of the Gargantua plan). ⚠️ Two
+ * alternatives were weighed: rewriting `texture2D` to `textureLod` by string
+ * replacement at build time (what the lab does — the assembled patch text stays
+ * literally unchanged, but the lens's "no `texture2D` anywhere" guard then only
+ * proves a regex ran), and this one. This one is chosen because the guard
+ * becomes STRUCTURAL: there is no `texture2D` in the lens program to remove.
+ */
+export const MIST_NOISE_GLSL: string = /* glsl */ `float mistNoise(vec2 p, int ch) {
+        vec4 t = texture2D(uNoise, p);
+        return ch == 0 ? t.r : ch == 1 ? t.g : ch == 2 ? t.b : t.a;
+      }`;
+
+/**
+ * The same fetch for a ray-march: the mip level is stated, never derived.
+ *
+ * ⚠️ THIS IS THE ONE TRAP THAT COST THE LAB A ROUND. Inside a march the two
+ * neighbouring fragments' samples come from unrelated points, so
+ * `texture2D`'s implicit `dFdx`/`dFdy` are meaningless and the hardware reads a
+ * far coarser level along one axis than the other — the noise came back as
+ * dashed radial stripes rather than as a medium. `uLod` is the level, and the
+ * lens's guard refuses any `texture2D` in its program at all.
+ */
+export const MIST_NOISE_LOD_GLSL: string = /* glsl */ `float mistNoise(vec2 p, int ch) {
+  vec4 t = textureLod(uNoise, p, uLod);
+  return ch == 0 ? t.r : ch == 1 ? t.g : ch == 2 ? t.b : t.a;
+}`;
+
+/**
+ * The substance itself. Needs `uGrain`, `uRidge`, `uRidgePow` and `mistNoise`.
+ *
+ * Isotropic ridged noise in the colony's own XZ, two octaves, the second only
+ * where the field is being taken (`fine`; the lens passes 1.0, because a ray
+ * that reached the disc is looking at the part of the medium that is being
+ * taken by definition). It has NO DIRECTION OF ITS OWN — that is the point, and
+ * it is what makes the mist a substance rather than a sea or a set of curtains.
+ * The sink and the drift give it one.
+ *
+ * ⚠️ The max() is not decoration: a negative base is UNDEFINED for GLSL's power
+ * function, and the ridge's base cannot be proven non-negative from the source
+ * because it comes out of a texture.
+ */
+export const MIST_MEDIUM_GLSL: string = /* glsl */ `float mistMedium(vec2 q, float fine) {
+        vec2 p = q * uGrain;
+        float n = mistNoise(p, 0) * 0.63
+          + mistNoise(p * 2.07 + vec2(0.31, 0.17), 1) * 0.34 * fine;
+        float ridged = 1.0 - abs(2.0 * n - 1.0);
+        return mix(n, pow(max(ridged, 0.0), uRidgePow), uRidge);
+      }`;
+
+/**
+ * Where a parcel of it was, tau seconds ago. Needs `uReach`, `uK`, `uSwirl`,
+ * `uDrift`, the varyings `vDrift` and `vShareF`, and works in the SINK'S OWN
+ * frame — the offset from the mouth, in the colony's plane.
+ *
+ * ⭐ THE EXACT BACK-TRACE OF A 2-D POINT SINK WITH A VORTEX, and not a warp
+ * toward the mouth. A sink of strength k has d(r*r)/dt = -k, so a parcel now at
+ * r was at sqrt(r*r + k*tau); a circulation swirl times the radial flow turns
+ * it by swirl * ln(r0 / r) on the way in, which is the definition of a
+ * logarithmic spiral. The medium is CARRIED along those streamlines, which is
+ * why the filaments bend into the mouth instead of pointing at it.
+ *
+ * ⚠️ The pull blends back to the identity at the catchment's edge, so the patch
+ * has no seam where it stops.
+ *
+ * ⭐⭐ AND THE STRENGTH IS THIS COHORT'S OWN. uK * vShareF is where the share
+ * becomes a speed: the biggest producer in view pulls at the full k and the
+ * smallest at the floor's fraction of it, on the same curve.
+ */
+export const MIST_BACKTRACE_GLSL: string = /* glsl */ `vec2 mistBacktrace(vec2 q, float tau) {
+        vec2 d = q - vDrift * (uDrift * tau);
+        float r2 = dot(d, d);
+        float w = 1.0 - r2 / (uReach * uReach);
+        if (w <= 0.0) return d;
+        w *= w;
+        float r = max(sqrt(r2), 0.002);
+        float r0 = sqrt(r2 + uK * vShareF * tau);
+        float rr = mix(r, r0, w);
+        float ang = uSwirl * log(rr / r);
+        float cs = cos(ang);
+        float sn = sin(ang);
+        return vec2(cs * d.x - sn * d.y, sn * d.x + cs * d.y) / r * rr;
+      }`;
+
+/**
+ * The medium's filaments, combed into rings around a mouth: an angular-radial
+ * noise in `(theta, ln r)`, ridged so it reads as threads rather than as
+ * blobs, gated by a coarser lane mask so the threads come in bundles.
+ *
+ * ⭐ IT IS THE INNER DISC'S TEXTURE AND NOTHING ELSE DRAWS IT TODAY. The patch
+ * never had it: at 14 wu seen from the app camera the streaks ARE the texture,
+ * and a filament finer than them would prefilter to grey. The lensed cohort
+ * looks at the same substance from two world units away, where the streaks are
+ * a smear and the fibres are what the film's disc is made of — so the snippet
+ * lives here, with the substance, and the program that needs it binds it.
+ *
+ * `rr` is the radius in units of the disc's inner edge, `th` the angle in the
+ * colony's frame, `g` the medium's own value there (so a fibre lands where the
+ * substance is, not on a lattice of its own) and `t` the clock.
+ *
+ * ⚠️ THE `max` UNDER THE POWER IS LOAD-BEARING and is this port's one change to
+ * the lab's text: `n` carries `+ (g - 0.5) * 0.18`, which can push it outside
+ * [0, 1], and `1 - abs(2n - 1)` is then NEGATIVE — undefined, quietly, under
+ * `pow`. Needs `uFibreRot`, `uFibreT`, `uFibreR`, `uFibreSharp`, `uLaneLo`,
+ * `uLaneHi` and `mistNoise`.
+ */
+export const MIST_FIBRES_GLSL: string = /* glsl */ `float mistFibres(float rr, float th, float g, float t) {
+  float a = (th - t * uFibreRot) / 6.2831853 * uFibreT;
+  float lr = log(max(rr, 1.0));
+  vec2 p = vec2(a, lr * uFibreR * 0.16 + 0.37);
+  float n = mistNoise(p, 0) * 0.68 + mistNoise(p * vec2(1.0, 2.3) + vec2(0.3, 0.1), 1) * 0.32;
+  n += (g - 0.5) * 0.18;
+  float fib = pow(max(1.0 - abs(2.0 * n - 1.0), 0.0), uFibreSharp);
+  float dens = smoothstep(uLaneLo, uLaneHi, mistNoise(vec2(a * 0.5 + 0.2, lr * 0.5 + 0.6), 2));
+  return mix(0.12, 1.0, fib * dens);
+}`;
+
+/**
+ * The three colour stops of the substance seen HOT, as one ramp in the gathered
+ * fraction `c`: outer, mid, core. Needs `uColOuter`, `uColMid`, `uColCore`.
+ *
+ * ⭐ THE STOPS THEMSELVES ARE NOT HERE. This is the ramp's SHAPE — where the
+ * mid stop takes over from the outer one and where the core burns through — and
+ * it belongs with the substance. Which three colours it interpolates is the
+ * lensed disc's own statement, argued in `colonyLens.ts`, because that is the
+ * only program that has a temperature to colour.
+ */
+export const MIST_DISC_COLOR_GLSL: string = /* glsl */ `vec3 mistDiscColor(float c) {
+  return mix(mix(uColOuter, uColMid, smoothstep(0.0, 0.45, c)), uColCore, smoothstep(0.55, 1.0, c));
+}`;
+
+/**
+ * How hard this cohort drinks, as ONE per-instance factor, computed in the
+ * vertex stage and left in `vShareF`. Needs `aShare`, `uShareFloor`,
+ * `uShareMax`.
+ *
+ * ⭐⭐ The share is a RATE and the sink's k is a rate, so one factor carries it
+ * into both places the rate shows: the speed the streamlines run at and the
+ * pile arriving at that speed leaves at the lip. Mirrored exactly by
+ * `mistShareFactor`, which is where the arithmetic is argued. The clamp is what
+ * makes a stale `uShareMax` a wrong ratio rather than an unbounded sink.
+ */
+export const MIST_SHARE_FACTOR_GLSL: string = /* glsl */ `vShareF = mix(uShareFloor, 1.0, clamp(aShare / max(uShareMax, 1e-6), 0.0, 1.0));`;
+
+/**
+ * The instance's seat in the colony's own frame, and the drift past it. Leaves
+ * `seat` and `vDrift` in scope; needs `instanceMatrix` and `uDriftSign`.
+ *
+ * ⭐ THE DRIFT IS THE COLONY'S OWN TANGENT AT THIS SINK, in the frame the mark
+ * is drawn in. The instance's translation is its colony-frame position, so the
+ * tangential direction there is (-z, x); the sign says which way the mist
+ * streams past a cohort that is itself being carried around. It decides which
+ * side of the mouth the wake trails on — and, in the lens, which side of the
+ * disc the streaks arrive from.
+ *
+ * ⚠️ `seat` IS A COLONY-FRAME CONSTANT AND THAT IS WHY IT IS LEFT IN SCOPE. The
+ * colony rotates about world Y; a cohort's WORLD position therefore sweeps
+ * through several world units a second. Any program that samples the medium at
+ * a world point would swim; the lens offsets its sample by this seat instead,
+ * which is fixed for the life of the mark.
+ */
+export const MIST_SEAT_DRIFT_GLSL: string = /* glsl */ `vec3 seat = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+        vec2 tangent = vec2(-seat.z, seat.x);
+        float tangentLen = length(tangent);
+        vDrift = tangentLen > 1e-4
+          ? (tangent / tangentLen) * uDriftSign
+          : vec2(1.0, 0.0);`;
+
+/* -------------------------------------------------------------------------- *
  * The patch.
  * -------------------------------------------------------------------------- */
 
@@ -946,7 +1175,7 @@ export function makeCohortIntakePatchMaterial(): THREE.ShaderMaterial {
         // exactly by mistShareFactor, which is where the arithmetic is argued.
         // The clamp is what makes a stale uShareMax a wrong ratio rather than
         // an unbounded sink.
-        vShareF = mix(uShareFloor, 1.0, clamp(aShare / max(uShareMax, 1e-6), 0.0, 1.0));
+        ${MIST_SHARE_FACTOR_GLSL}
         // The instance's own world point, for the proximity exemption. The SAME
         // quantity both aperture faces carry, read the same way.
         vec4 origin = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
@@ -978,12 +1207,7 @@ export function makeCohortIntakePatchMaterial(): THREE.ShaderMaterial {
         // position, so the tangential direction there is (-z, x); the sign says
         // which way the mist streams past a cohort that is itself being carried
         // around. It decides which side of the mouth the wake trails on.
-        vec3 seat = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
-        vec2 tangent = vec2(-seat.z, seat.x);
-        float tangentLen = length(tangent);
-        vDrift = tangentLen > 1e-4
-          ? (tangent / tangentLen) * uDriftSign
-          : vec2(1.0, 0.0);
+        ${MIST_SEAT_DRIFT_GLSL}
         gl_Position = projectionMatrix * viewMatrix * world;
       }
     `,
@@ -1025,54 +1249,19 @@ export function makeCohortIntakePatchMaterial(): THREE.ShaderMaterial {
       varying float vGulp;
       varying float vShareF;
 
-      // ---- the substance ---------------------------------------------------
+      // ---- the substance, and how this program reads the tile ---------------
       //
-      // Isotropic ridged noise in the colony's own XZ, two octaves, the second
-      // only where the field is being taken. It has NO DIRECTION OF ITS OWN —
-      // that is the point, and it is what makes the mist a substance rather
-      // than a sea or a set of curtains. The sink and the drift give it one.
-      //
-      // ⚠️ The max() is not decoration: a negative base is UNDEFINED for GLSL's
-      // power function, and the ridge's base cannot be proven non-negative from
-      // the source because it comes out of a texture.
-      float mistMedium(vec2 q, float fine) {
-        vec2 p = q * uGrain;
-        float n = texture2D(uNoise, p).r * 0.63
-          + texture2D(uNoise, p * 2.07 + vec2(0.31, 0.17)).g * 0.34 * fine;
-        float ridged = 1.0 - abs(2.0 * n - 1.0);
-        return mix(n, pow(max(ridged, 0.0), uRidgePow), uRidge);
-      }
+      // ⭐ THE FETCH IS THIS PROGRAM'S OWN AND THE MEDIUM IS SHARED. A surface
+      // wants the driver's own mip choice, so the patch samples with texture2D;
+      // the lensed cohort marches rays and must state the level instead.
+      // Everything below the fetch is one text, compiled into both.
+      // (⚠️ no backtick in here: it would close the template literal.)
+      ${MIST_NOISE_GLSL}
+
+      ${MIST_MEDIUM_GLSL}
 
       // ---- where a parcel of it was, tau seconds ago ------------------------
-      //
-      // ⭐ THE EXACT BACK-TRACE OF A 2-D POINT SINK WITH A VORTEX, and not a
-      // warp toward the mouth. A sink of strength k has d(r*r)/dt = -k, so a
-      // parcel now at r was at sqrt(r*r + k*tau); a circulation swirl times the
-      // radial flow turns it by swirl * ln(r0 / r) on the way in, which is the
-      // definition of a logarithmic spiral. The medium is CARRIED along those
-      // streamlines, which is why the filaments bend into the mouth instead of
-      // pointing at it.
-      //
-      // ⚠️ The pull blends back to the identity at the catchment's edge, so the
-      // patch has no seam where it stops.
-      //
-      // ⭐⭐ AND THE STRENGTH IS THIS COHORT'S OWN. uK * vShareF is where the
-      // share becomes a speed: the biggest producer in view pulls at the full
-      // k and the smallest at the floor's fraction of it, on the same curve.
-      vec2 mistBacktrace(vec2 q, float tau) {
-        vec2 d = q - vDrift * (uDrift * tau);
-        float r2 = dot(d, d);
-        float w = 1.0 - r2 / (uReach * uReach);
-        if (w <= 0.0) return d;
-        w *= w;
-        float r = max(sqrt(r2), 0.002);
-        float r0 = sqrt(r2 + uK * vShareF * tau);
-        float rr = mix(r, r0, w);
-        float ang = uSwirl * log(rr / r);
-        float cs = cos(ang);
-        float sn = sin(ang);
-        return vec2(cs * d.x - sn * d.y, sn * d.x + cs * d.y) / r * rr;
-      }
+      ${MIST_BACKTRACE_GLSL}
 
       void main() {
         vec2 d = vP;
