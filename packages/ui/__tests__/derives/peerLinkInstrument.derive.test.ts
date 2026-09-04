@@ -201,14 +201,18 @@ describe('selectedPeerLinkAccent', () => {
     expect(factColor(peer(), 'version')).toBeUndefined();
   });
 
-  it('leaves the PING facet to the card, having nothing of its own to say', () => {
-    // The identical oversight in the identical shape: chrome `cyanWire` for a
-    // facet with no colour, which is the instrument's own frame standing in
-    // for a reading. ADDR and UPTIME are the other two colourless facets and
-    // both always fell through; these two are why that read as an accident
-    // rather than as a rule.
-    expect(selectedPeerLinkAccent(base, 'ping')).toBe(PEER_NETWORK_HEX.outbound);
-    expect(factColor(peer(), 'ping')).toBeUndefined();
+  it('has no PING facet to tint, the register having given the reading up', () => {
+    // PING carried the identical oversight in the identical shape — chrome
+    // `cyanWire` for a facet with no colour of its own — and it is no longer a
+    // facet at all (C-6): the compass IS the latency, the strip's header
+    // brackets it, and the dossier compares it with the crawler's dial.
+    expect([...PEER_LINK_FACETS]).not.toContain('ping');
+    const instrument = derivePeerLinkInstrument(peer(), TIP, LOCAL_VERSION);
+    expect(instrument.facts.map((fact) => fact.facet)).not.toContain('ping');
+    // …and the reading itself is still on the instrument, for the compass and
+    // the strip to draw.
+    expect(instrument.latencyMs).toBe(84);
+    expect(instrument.ring01).toBeGreaterThan(0);
   });
 
   it('never tints a tether a colour the card is not already showing', () => {
@@ -261,11 +265,11 @@ describe('selectedPeerLinkAccent', () => {
 });
 
 describe('peerLinkInstrument derive — LINE FACTS rows', () => {
-  it('emits the six facts in reveal order', () => {
+  it('emits the five facts in reveal order', () => {
     const instrument = derivePeerLinkInstrument(peer(), TIP, LOCAL_VERSION);
     expect(instrument.facts.map((fact) => fact.facet)).toEqual([...PEER_LINK_FACETS]);
     expect(instrument.facts.map((fact) => fact.label)).toEqual([
-      'ADDR', 'DIRECTION', 'VERSION', 'PING', 'SYNC', 'UPTIME',
+      'ADDR', 'DIRECTION', 'VERSION', 'SYNC', 'UPTIME',
     ]);
   });
 
@@ -274,7 +278,6 @@ describe('peerLinkInstrument derive — LINE FACTS rows', () => {
     expect(factValue(p, 'addr')).toBe('10.0.0.1:8115');
     expect(factValue(p, 'direction')).toBe('OUTBOUND');
     expect(factValue(p, 'version')).toBe(LOCAL_VERSION);
-    expect(factValue(p, 'ping')).toBe('84 MS');
     expect(factValue(p, 'sync')).toBe('7 BEHIND');
     expect(factValue(p, 'uptime')).toBe('1h 2m');
   });
@@ -289,7 +292,6 @@ describe('peerLinkInstrument derive — LINE FACTS rows', () => {
     });
     expect(factValue(blank, 'addr')).toBe('—');
     expect(factValue(blank, 'version')).toBe('—');
-    expect(factValue(blank, 'ping')).toBe('—');
     expect(factValue(blank, 'sync')).toBe('UNCHARTED');
     // Direction and uptime are always reported by the RPC.
     expect(factValue(blank, 'direction')).toBe('OUTBOUND');

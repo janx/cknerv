@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
 import { CJK_BASELINE_LIFT, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 
 // ——— The shape grammar ————————————————————————————————————————————————
@@ -536,6 +536,14 @@ export interface PlateReadoutRowProps {
   style?: CSSProperties;
   /** Caption(s) under the value. */
   children?: ReactNode;
+  /** A row that DOES something when pressed — the peer card's line facts tint
+   *  the tether from here. Given, the row is a `<button>` and its rail takes
+   *  the hot rung under a pointer or a keyboard focus; withheld, it is the
+   *  readout it has always been. The affordance is the rail, so a readout and
+   *  a control are the same sentence and only one of them lights. */
+  onActivate?: () => void;
+  /** Pressed state, for a row that is a control. Ignored otherwise. */
+  selected?: boolean;
 }
 
 export function PlateReadoutRow({
@@ -551,19 +559,21 @@ export function PlateReadoutRow({
   valueAttributes,
   style,
   children,
+  onActivate,
+  selected = false,
 }: PlateReadoutRowProps) {
-  return (
-    <div
-      {...rowAttributes}
-      style={{
-        minWidth: 0,
-        padding: '3px 0 4px 9px',
-        borderLeft: `1px solid ${rgba(accent, railAlpha)}`,
-        ...style,
-      }}
-    >
+  // A LEAF's state, for `CellDetailPanel`'s reason: one row re-renders on a
+  // pointer move, never the plate around it. Rows that are not controls never
+  // set it, so they never re-render either.
+  const [hot, setHot] = useState(false);
+  const lit = onActivate !== undefined && (selected || hot);
+  const body = (
+    <>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
-        <span style={{ flex: '0 0 auto', fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, letterSpacing: 1.4, color: HUD_COLORS.dim }}>
+        <span
+          data-hud-fact-label={onActivate === undefined ? undefined : 'true'}
+          style={{ flex: '0 0 auto', fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, letterSpacing: 1.4, color: lit ? HUD_COLORS.ink : HUD_COLORS.dim }}
+        >
           {label}
         </span>
         {badge}
@@ -584,7 +594,52 @@ export function PlateReadoutRow({
         </span>
       </div>
       {children}
-    </div>
+    </>
+  );
+  const frame: CSSProperties = {
+    minWidth: 0,
+    padding: '3px 0 4px 9px',
+    borderLeft: `1px solid ${rgba(accent, lit ? PLATE_ROW_RAIL_HOT_ALPHA : railAlpha)}`,
+    ...style,
+  };
+  if (onActivate === undefined) {
+    return <div {...rowAttributes} style={frame}>{body}</div>;
+  }
+  return (
+    <button
+      type="button"
+      {...rowAttributes}
+      data-hud-fact-rail={hot ? 'hot' : 'true'}
+      aria-pressed={selected}
+      onPointerEnter={() => setHot(true)}
+      onPointerLeave={() => setHot(false)}
+      onFocus={() => setHot(true)}
+      onBlur={() => setHot(false)}
+      onClick={onActivate}
+      style={{
+        ...frame,
+        display: 'block',
+        width: '100%',
+        margin: 0,
+        borderTop: 0,
+        borderRight: 0,
+        borderBottom: 0,
+        background: lit
+          ? `linear-gradient(90deg,${rgba(
+            accent,
+            selected ? PLATE_ROW_SELECTED_WASH_ALPHA : PLATE_ROW_HOT_WASH_ALPHA,
+          )},transparent 88%)`
+          : 'transparent',
+        boxShadow: selected ? `-3px 0 10px ${rgba(accent, 0.22)}` : undefined,
+        color: 'inherit',
+        font: 'inherit',
+        textAlign: 'left',
+        cursor: 'pointer',
+        transition: 'background 160ms ease, box-shadow 160ms ease',
+      }}
+    >
+      {body}
+    </button>
   );
 }
 

@@ -30,7 +30,7 @@ import type { PeerMiningCandidacy } from '../../derives/blockProducers.derive';
 import { MiningCandidacyStamp } from './MinerNodeCard';
 import { formatAge, midTruncate } from './cellFormat';
 import { HudAge, useHudClockSelector } from './hudClock';
-import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import { CJK_BASELINE_LIFT, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import {
   CloseButton,
   moduleTag,
@@ -225,10 +225,15 @@ export default function SightedNodeCard({
         ...style,
       }}
     >
-      {/* No CJK companion here. 对端 is the link probe's word for the far end
-          of a connection, and this card's whole point is that there is no
-          connection — borrowing it would be the one lie on the card. The other
-          two dialects keep theirs; no new glyph is asked of the subset. */}
+      {/* 节点, and not 对端 (report C, C-11). 对端 is the link probe's word for
+          the far end of a CONNECTION, and this card's whole point is that
+          there is no connection — borrowing it would be the one lie on the
+          card. 节点 says only "a node somebody has met", which is exactly what
+          the roster's evidence supports, and it is the test `MinerNodeCard`
+          already writes down for the word. Three of four network dialects carry a
+          companion now and only the cohort — which is not a node — stays bare,
+          which is the honest line. The glyphs are already in the hand-cut
+          subset: no new one is asked of it. */}
       <section
         data-sighted-probe-module="header"
         style={{
@@ -254,14 +259,26 @@ export default function SightedNodeCard({
         >
           {word.masthead} // {id8}
         </span>
-        {/* Steel, not caution. Having no link to a node the crawler named is
-            this card's normal condition, not a fault of anything — the alarm
-            colours belong to links that broke. */}
+        <span style={{ ...CJK_BASELINE_LIFT, color: accent, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: 0.72 }}>
+          节点
+        </span>
+        {/* THE EVIDENCE CLASS, the one question this slot answers on all four
+            network dialects (report C, C-5): LINKED · SELF · NAMED · CHAIN
+            ATTESTED. NAMED is what both of this card's dialects rest on —
+            somebody outside told us this node exists — and WHICH somebody is
+            the masthead's word, SIGHTED or ADVERTISED. It used to say NOT
+            LINKED, which is the absence of the peer card's evidence rather
+            than this card's own.
+
+            Steel, not caution, and that ruling stands: having no link to a
+            node the crawler named is this card's normal condition, not a fault
+            of anything — the alarm colours belong to links that broke. */}
         <span
+          data-sighted-probe-evidence="named"
           data-sighted-probe-link="none"
           style={plateStateChip(HUD_COLORS.dim)}
         >
-          NOT LINKED
+          NAMED
         </span>
         {/* One right-hand group in flow, as the CELL and PEER mastheads carry
           * theirs. An age is the longest thing this line can say — a node the

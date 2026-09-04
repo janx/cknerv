@@ -157,13 +157,27 @@ describe('SightedNodeCard header', () => {
     expect(title?.getAttribute('title')).toBe('QmSightedAlpha0123456789');
   });
 
-  it('states the absence of a link in steel, never in the alarm colour', () => {
+  it('claims NAMED as its evidence, in steel and never in the alarm colour', () => {
     const { container } = renderCard();
-    const badge = container.querySelector<HTMLElement>('[data-sighted-probe-link="none"]');
-    expect(badge?.textContent).toBe('NOT LINKED');
+    const badge = container.querySelector<HTMLElement>('[data-sighted-probe-evidence="named"]');
+    // The evidence class, the one question this slot answers on all four
+    // network dialects (C-5). It used to say NOT LINKED — the absence of the
+    // peer card's evidence rather than this card's own.
+    expect(badge?.textContent).toBe('NAMED');
     // Having no link to a crawler-named node is this card's normal condition.
     expect(badge?.style.color).toBe(rgbOf(HUD_COLORS.dim));
     expect(badge?.style.color).not.toBe(rgbOf(HUD_COLORS.caution));
+  });
+
+  it('wears 节点, the companion for a node somebody has met', () => {
+    // C-11: 对端 would lie — it names the far end of a link and there is no
+    // link — but 节点 says only that somebody named this node, which is the
+    // evidence the roster carries. Three of the four network dialects have a
+    // companion now; the cohort, which is not a node, stays bare.
+    const { container } = renderCard();
+    expect(container.querySelector('[data-sighted-probe-module="header"]')?.textContent)
+      .toContain('节点');
+    expect(container.textContent).not.toContain('对端');
   });
 
   // ⚠️ THE MASTHEAD IS THE CARD'S ONE CLAIM THAT CAN GO FALSE. Every other

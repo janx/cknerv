@@ -44,22 +44,28 @@ function renderCard(props: Partial<Parameters<typeof PeerLinkCard>[0]> = {}) {
 }
 
 describe('PeerLinkCard header', () => {
-  it('names the peer by its first eight id characters with a direction badge', () => {
+  it('names the peer by its first eight id characters and states its evidence', () => {
     const { container } = renderCard();
     const text = container.textContent ?? '';
     expect(text).toContain('PEER // QmPeerAl');
     expect(text).toContain('对端');
-    expect(container.querySelector('[data-peer-probe-direction="out"]')?.textContent)
-      .toBe('OUT');
+    // The masthead chip is the EVIDENCE CLASS on all four network dialects
+    // (C-5), not this card's own question: we hold a link to this node.
+    expect(container.querySelector('[data-peer-probe-evidence="linked"]')?.textContent)
+      .toBe('LINKED');
     expect(text).toContain('LINKED · 1h 2m');
   });
 
-  it('flips the badge for a peer that dialed us', () => {
+  it('leaves the direction to the arrow and the fact row', () => {
     const { container } = renderCard({ peer: peer({ direction: 'inbound' }) });
-    expect(container.querySelector('[data-peer-probe-direction="in"]')?.textContent)
-      .toBe('IN');
+    // Nowhere in the masthead: the chip says what evidence this card stands
+    // on, and the direction is drawn by the compass and printed in full one
+    // plate down.
+    expect(container.querySelector('[data-peer-probe-direction]')).toBeNull();
     expect(container.querySelector('[data-peer-probe-compass-arrow]')
       ?.getAttribute('data-peer-probe-compass-arrow')).toBe('inbound');
+    expect(container.querySelector('[data-peer-probe-fact-value="direction"]')?.textContent)
+      .toBe('INBOUND');
   });
 
   it('advances the linked age on its own 1 Hz tick', () => {
@@ -138,10 +144,17 @@ describe('PeerLinkCard signal compass', () => {
     const marks = Array.from(container.querySelectorAll('[data-peer-probe-self]'));
     expect(marks).toHaveLength(2);
     for (const mark of marks) {
+      // Both marks are HOLES now (C-8), so the anchor colour is on the rim of
+      // each: an SVG `stroke` on the compass centre, a border on the ladder's
+      // diamond. The ladder's used to be a filled bead, which said "us" in a
+      // second form on the same card.
+      expect(mark.getAttribute('data-peer-probe-self-form')).toBe('hole');
       const painted = mark.getAttribute('stroke')
-        ?? mark.getAttribute('fill')
+        ?? ((mark as HTMLElement).style.borderColor || null)
         ?? (mark as HTMLElement).style.background;
       expect(channels(painted)).toEqual(channels(NODE_SELF_ACCENT));
+      const body = mark.getAttribute('fill') ?? (mark as HTMLElement).style.background;
+      expect(channels(body)).toEqual(channels(HUD_COLORS.ground));
     }
   });
 
@@ -226,17 +239,20 @@ describe('PeerLinkCard sync ladder', () => {
 });
 
 describe('PeerLinkCard line facts', () => {
-  it('renders all six facts', () => {
+  it('renders the five facts, and PING is not one of them', () => {
     const { container } = renderCard();
-    for (const facet of ['addr', 'direction', 'version', 'ping', 'sync', 'uptime']) {
+    for (const facet of ['addr', 'direction', 'version', 'sync', 'uptime']) {
       expect(container.querySelector(`[data-peer-probe-fact="${facet}"]`)).not.toBeNull();
     }
     const text = container.textContent ?? '';
-    for (const label of ['ADDR', 'DIRECTION', 'VERSION', 'PING', 'SYNC', 'UPTIME']) {
+    for (const label of ['ADDR', 'DIRECTION', 'VERSION', 'SYNC', 'UPTIME']) {
       expect(text).toContain(label);
     }
     expect(text).toContain('10.0.0.1:8115');
-    expect(text).toContain('84 MS');
+    // The register does not print the latency (C-6): the compass draws it, the
+    // strip's header brackets it, and the dossier compares it with the
+    // crawler's. A fact row is for a reading with nowhere else to be said.
+    expect(container.querySelector('[data-peer-probe-fact="ping"]')).toBeNull();
   });
 
   it('reports the selected facet and toggles it back off', () => {
@@ -249,10 +265,10 @@ describe('PeerLinkCard line facts', () => {
     expect(container.querySelector('[data-peer-probe-fact="sync"]')
       ?.getAttribute('data-peer-probe-fact-state')).toBe('focused');
 
-    fireEvent.click(container.querySelector('[data-peer-probe-fact="ping"]')!);
-    expect(onFacetChange).toHaveBeenLastCalledWith('ping');
+    fireEvent.click(container.querySelector('[data-peer-probe-fact="uptime"]')!);
+    expect(onFacetChange).toHaveBeenLastCalledWith('uptime');
 
-    fireEvent.click(container.querySelector('[data-peer-probe-fact="ping"]')!);
+    fireEvent.click(container.querySelector('[data-peer-probe-fact="uptime"]')!);
     expect(onFacetChange).toHaveBeenLastCalledWith(null);
   });
 
@@ -260,14 +276,17 @@ describe('PeerLinkCard line facts', () => {
     const onFacetChange = vi.fn();
     const { container } = renderCard({ onFacetChange });
     const facts = Array.from(container.querySelectorAll('[data-peer-probe-fact]'));
-    expect(facts).toHaveLength(6);
+    expect(facts).toHaveLength(5);
     for (const fact of facts) {
       const facet = fact.getAttribute('data-peer-probe-fact') ?? '';
       expect(fact.getAttribute('data-peer-probe-fact-state'), facet).toBe('resolved');
       expect(fact.hasAttribute('disabled'), facet).toBe(false);
+      // Still a control, and still one the house row grammar draws (C-7): a
+      // button with a rail, a label left and its value pushed right.
+      expect(fact.tagName, facet).toBe('BUTTON');
       // The value carries its own title from the start — a hover on a
       // truncated address never has to wait for a walk to reach it.
-      const value = fact.lastElementChild as HTMLElement;
+      const value = fact.querySelector(`[data-peer-probe-fact-value="${facet}"]`) as HTMLElement;
       expect(value.getAttribute('title'), facet).toBe(value.textContent);
       expect(value.textContent, facet).not.toBe('');
     }
@@ -362,6 +381,60 @@ function sighting(overrides: Partial<PeerSightingRecord> = {}): PeerSightingStat
     },
   };
 }
+
+// ——— The card says the round trip once ————————————————————————————————————
+//
+// C2's oracle, in the peer dialect and driven by the RECORD rather than by a
+// regex over the rendering: the latency this fixture states is counted in the
+// card's own text, and the count is the finding. It stood at four surfaces of
+// one 340px column — the compass, the strip's header, the PING fact row and
+// the dossier's cross-source caption — and two of those DRAW the reading as
+// well as name it (report C, C-6).
+describe('PeerLinkCard says the round trip once', () => {
+  /** Every occurrence of a number as a whole figure, the way a reader would
+   *  count it: `84` inside `1,084` is not this fact. */
+  const times = (text: string, figure: number): number => (
+    text.match(new RegExp(`(?<![\\d,.])${figure}(?![\\d,.])`, 'g')) ?? []
+  ).length;
+
+  it('prints our own round trip no more than the instruments that draw it', () => {
+    const { container } = renderCard({ sighting: sighting() });
+    const text = container.textContent ?? '';
+
+    // Two: the strip's header brackets the samples it has, and the dossier
+    // sets our reading against the crawler's — a comparison, not a repeat.
+    // The compass draws the same figure as a radius and prints no number, and
+    // the register does not print it at all.
+    expect(times(text, 84)).toBeLessThanOrEqual(3);
+    expect(container.querySelector('[data-peer-probe-fact="ping"]')).toBeNull();
+    expect(text).toContain('OUR PING 84 MS');
+  });
+
+  it('counts a second sample without printing a third number', () => {
+    // A moving reading is the case the strip exists for: floor and peak differ
+    // and the header states the pair, which is one fact about a SERIES rather
+    // than two readings of one link. The latest sample is also what the
+    // dossier compares against the crawler's dial, so it is the one figure
+    // that appears twice — the peak of our own history, and our side of a
+    // cross-source line.
+    const { container, rerender } = renderCard({ sighting: sighting() });
+    rerender(
+      <PeerLinkCard
+        peer={peer({ latency_ms: 120 })}
+        tip={TIP}
+        localVersion={LOCAL_VERSION}
+        layoutSide="left"
+        sighting={sighting()}
+        onClose={() => {}}
+      />,
+    );
+    const text = container.textContent ?? '';
+    expect(times(text, 120)).toBe(2);
+    expect(times(text, 84)).toBe(1);
+    expect(text).toContain('84–120 MS · 2/24');
+    expect(text).toContain('OUR PING 120 MS');
+  });
+});
 
 describe('PeerLinkCard dossier', () => {
   it('carries no dossier plate when the source cannot offer one', () => {

@@ -30,16 +30,27 @@ export type PeerLinkFacet =
   | 'addr'
   | 'direction'
   | 'version'
-  | 'ping'
   | 'sync'
   | 'uptime';
 
-/** Reveal order of the LINE FACTS grid — identity first, telemetry last. */
+/** Order of the LINE FACTS register — identity first, telemetry last.
+ *
+ *  PING is NOT one of them, and it is the only reading this card takes that
+ *  the register does not print (report C, C-6). The latency was on four
+ *  surfaces of one 340 px column: the compass, whose entire radius IS the
+ *  round trip; the PING STRIP, whose header prints the floor, the peak and the
+ *  sample count; this row, printing the latest number a third time; and the
+ *  dossier's cross-source line, which is the one place the figure is not a
+ *  repeat — `THEIR DIAL n MS · OUR PING n MS` sets our reading against the
+ *  crawler's, which is a comparison and not a restatement.
+ *
+ *  So the instruments keep it and the register gives it up. A fact row is the
+ *  right home for a reading that has nowhere else to be said; PING had three
+ *  other homes, two of which draw it as well as name it. */
 export const PEER_LINK_FACETS: readonly PeerLinkFacet[] = [
   'addr',
   'direction',
   'version',
-  'ping',
   'sync',
   'uptime',
 ];
@@ -161,11 +172,6 @@ export function derivePeerLinkInstrument(
       value: peer.version || PEER_LINK_UNKNOWN,
       color: versionMismatch ? PEER_NETWORK_HEX.version : undefined,
     },
-    {
-      facet: 'ping',
-      label: 'PING',
-      value: latencyMs == null ? PEER_LINK_UNKNOWN : `${latencyMs} MS`,
-    },
     { facet: 'sync', label: 'SYNC', value: sync.label, color: sync.color },
     { facet: 'uptime', label: 'UPTIME', value: formatLinkUptime(peer.connected_ms) },
   ];
@@ -208,16 +214,15 @@ export interface PeerLinkAccentInput {
  * which is what the row falls back to on screen. A third colour is a line
  * pointing at a fact painted in something the fact is not wearing.
  *
- * Two branches used to give one. VERSION answered `nominal` whenever the two
+ * VERSION used to give a third. It answered `nominal` whenever the two
  * versions AGREED — a green that appears nowhere else on the card and means
  * "state OK" everywhere else in the HUD, over a row whose own colour is
- * `undefined` and which therefore prints in the peer plane's wire. PING
- * answered chrome `cyanWire` always, which is the instrument's frame rather
- * than any reading on it. Both were the same shape of oversight: a facet with
- * nothing of its own to say, answered with an invention instead of a
- * fallthrough. ADDR and UPTIME are the other two colourless facets and both
- * fell through correctly, which is what made these two read as omissions
- * rather than as a rule.
+ * `undefined` and which therefore prints in the peer plane's wire: a facet
+ * with nothing of its own to say, answered with an invention instead of a
+ * fallthrough. ADDR and UPTIME are the other colourless facets and both fell
+ * through correctly, which is what made that one read as an omission rather
+ * than as a rule. (PING was the second such branch and is no longer a facet
+ * at all — see `PEER_LINK_FACETS`.)
  */
 export function selectedPeerLinkAccent(
   input: PeerLinkAccentInput,

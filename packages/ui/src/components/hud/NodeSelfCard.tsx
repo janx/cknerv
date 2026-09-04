@@ -18,7 +18,6 @@ import {
 } from 'react';
 import type { ChainEntry, ChainNode, Peer } from '@cknerv/types';
 import { CJK_BASELINE_LIFT, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
-import { formatEpochReadout } from './epochReadout';
 import {
   CloseButton,
   moduleTag,
@@ -31,7 +30,7 @@ import {
 } from './primitives';
 import PeerSightingPlate, { type PeerSightingState } from './PeerSightingPlate';
 import { fleetConsensus } from '../../derives/fleetTelemetry';
-import { summarizeNetwork } from '../../derives/peers.derive';
+import { localRoundTrip } from '../../derives/peers.derive';
 import { CHAIN_ANCHOR_HEX } from '../../visualPalette';
 import type { SceneInspectorPlacementSide } from '../sceneInspection';
 
@@ -43,9 +42,17 @@ const CARD_WIDTH_PX = 340;
  *  `CkbNodeAnchor` is drawn with. Card and icosahedron cannot drift. */
 export const NODE_SELF_ACCENT = CHAIN_ANCHOR_HEX.edge;
 
-/** The vitals this card prints — the node's own body first, then the colony
- *  it is standing in. */
-export type NodeSelfRow = 'tip' | 'epoch' | 'version' | 'peers' | 'consensus';
+/** The vitals this card prints — the node's own body first, then where it
+ *  stands in the colony around it.
+ *
+ *  TIP and EPOCH are not here any more (report C, C-6). Both were `chain.tip`
+ *  and `chain.epoch` printed a second time, off the same entry CKB·01 draws
+ *  them from four hundred pixels to the left, with the epoch's progress bar
+ *  duplicated under them — and neither is a fact about this NODE that the
+ *  chain panel is not already making about the chain. What is left is what
+ *  only the self can answer: the version every peer mismatch is judged
+ *  against, our own round trips, and how many of the colony we are ahead of. */
+export type NodeSelfRow = 'version' | 'roundtrip' | 'lead';
 
 export type NodeSelfLayoutSide = SceneInspectorPlacementSide;
 
@@ -113,20 +120,16 @@ export default function NodeSelfCard({
   style,
 }: NodeSelfCardProps) {
   const accent = NODE_SELF_ACCENT;
-  const epoch = useMemo(() => formatEpochReadout(chain.epoch), [chain.epoch]);
-  const epochRatio = chain.epoch.length > 0
-    ? Math.max(0, Math.min(1, chain.epoch.index / chain.epoch.length))
-    : 0;
-  // Both reused from the panels that already print them, so the floating card
-  // and the rail's PEER MESH summary can never disagree about the colony.
-  const summary = useMemo(
-    () => summarizeNetwork(peers, chain, node),
-    [peers, chain, node],
-  );
+  // The colony's heads, read through the same derive PEER·02 reads, so the
+  // card and the rail can never disagree about the numbers. What differs is
+  // the SUBJECT: the panel takes a census of the colony (n at tip, n behind,
+  // n ahead); this card says where WE stand in it, which is the only reading a
+  // dossier of the local node owes anybody.
   const consensus = useMemo(
     () => fleetConsensus(peers, chain.tip),
     [peers, chain.tip],
   );
+  const roundTrip = useMemo(() => localRoundTrip(peers), [peers]);
 
   // The self probe counts no duration of its own — a node holds no link to
   // itself — so nothing here runs a clock. The dossier's ages are leaves on
@@ -134,10 +137,9 @@ export default function NodeSelfCard({
 
   // Peers past our head are the one reading on this card that indicts us: it
   // is the local node that lags. The link probe gives AHEAD the same danger
-  // tint on its sync ladder; the two cards agree on which rung is loud.
+  // tint on its sync ladder and PEER·02 gives it the same one on the rail;
+  // all three surfaces agree on which rung is loud (the user's D-18 ruling).
   const lagging = consensus.ahead > 0;
-  const consensusTotal = Math.max(1, consensus.total);
-  const segment = (n: number) => `${(n / consensusTotal) * 100}%`;
 
   const verticalLayout = layoutSide === 'above' || layoutSide === 'below';
 
@@ -193,25 +195,25 @@ export default function NodeSelfCard({
         <span style={{ ...CJK_BASELINE_LIFT, color: accent, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: 0.72 }}>
           节点
         </span>
-        {/* One chip, one ink, and the WORD says which role. It used to switch
-          * families between its two states: `lockedGold` for MINER against the
-          * chain anchor's own cyan for OBSERVER, so the chip changed what KIND
-          * of thing it was according to what the node does.
+        {/* THE EVIDENCE CLASS, the one question this slot answers on all four
+          * network dialects (report C, C-5): LINKED · SELF · NAMED · CHAIN
+          * ATTESTED. SELF is the whole reason this card is a different dialect
+          * at all — it is the only node in the app we hold no link to and know
+          * everything about, because it is the instrument.
           *
-          * `lockedGold` is not a role colour. Its readers are the locked
-          * evidence row, the locked route hop, the identity proof that has
-          * been read, and `CONTENT_BANDS.value` — value HELD UNDER LOCK. A
-          * node that mines is neither held nor value, and the house has no
-          * palette for a node's role because it does not need one: this is
-          * the same ruling `scriptStateChip` took one file over, where ACTIVE
-          * stopped being `nominal` because a chip that sounds the ordinary
-          * case makes the ordinary case look like a verdict. Both roles are
-          * ordinary. The card's own accent, and the word carries it. */}
+          * The ROLE moved one group right, beside the chain it mines or
+          * watches. It is a fact about this node and it is still printed; it
+          * simply is not the evidence this card stands on, and a chip that
+          * said MINER here while the sighted card's said NOT LINKED taught a
+          * reader nothing about either. One ink for both roles stays the
+          * ruling it was: `lockedGold` is value held under lock and never a
+          * role, and a chip that sounds the ordinary case makes the ordinary
+          * case look like a verdict. */}
         <span
-          data-node-probe-role={node.is_miner ? 'miner' : 'observer'}
+          data-node-probe-evidence="self"
           style={plateStateChip(accent)}
         >
-          {node.is_miner ? 'MINER' : 'OBSERVER'}
+          SELF
         </span>
         {/* One right-hand group in flow, as the CELL and PEER mastheads carry
           * theirs: an absolutely-placed stamp beside a `marginLeft: auto` span
@@ -227,6 +229,16 @@ export default function NodeSelfCard({
             }}
           >
             {chain.chain_name.toUpperCase()}
+          </span>
+          <span
+            data-node-probe-role={node.is_miner ? 'miner' : 'observer'}
+            style={{
+              color: HUD_COLORS.dim,
+              fontSize: HUD_TYPE.label,
+              letterSpacing: 0.9,
+            }}
+          >
+            · {node.is_miner ? 'MINER' : 'OBSERVER'}
           </span>
           {moduleTag('SELF·01')}
         </span>
@@ -252,47 +264,31 @@ export default function NodeSelfCard({
         />
         <div style={{ display: 'grid', rowGap: 3 }}>
           <SelfReadout
-            row="tip"
-            label="TIP"
-            // Live: the chain entry re-renders on every block, so this height
-            // is the node's own pulse rather than a snapshot taken on open.
-            value={`#${blocks(chain.tip)}`}
-            valueColor={HUD_COLORS.cyanInk}
-          />
-          <SelfReadout
-            row="epoch"
-            label="EPOCH"
-            value={epoch.number}
-          >
-            <div
-              data-node-probe-epoch-bar
-              aria-hidden="true"
-              style={{
-                display: 'flex',
-                height: 5,
-                marginTop: 4,
-                border: `1px solid ${rgba(accent, 0.22)}`,
-                background: HUD_COLORS.trackGround,
-              }}
-            >
-              <span
-                style={{
-                  width: `${epochRatio * 100}%`,
-                  background: accent,
-                  boxShadow: `0 0 7px ${rgba(accent, 0.55)}`,
-                  transition: 'width 420ms ease',
-                }}
-              />
-            </div>
-            <ReadoutCaption>BLOCK {epoch.progress} OF THIS EPOCH</ReadoutCaption>
-          </SelfReadout>
-          <SelfReadout
             row="version"
             label="VERSION"
             value={node.version || '—'}
           >
             <ReadoutCaption>
               THE REFERENCE — PEER MISMATCHES ARE JUDGED AGAINST IT
+            </ReadoutCaption>
+          </SelfReadout>
+          {/* Our own reflex time, and the vital TIP and EPOCH were standing
+              in the way of. A peer card knows one link; this is the spread
+              over every peer we have timed, which nothing else in the app can
+              say — and it is a reading of THIS node's connectivity rather than
+              a description of the colony. */}
+          <SelfReadout
+            row="roundtrip"
+            label="ROUND TRIP"
+            value={roundTrip.bestMs === null || roundTrip.worstMs === null
+              ? '—'
+              : `${blocks(roundTrip.bestMs)}–${blocks(roundTrip.worstMs)} MS`}
+            valueColor={HUD_COLORS.peerWire}
+          >
+            <ReadoutCaption>
+              {roundTrip.measured === 0
+                ? `NO PEER TIMED YET · ${blocks(roundTrip.total)} CONNECTED`
+                : `BEST AND WORST OF ${blocks(roundTrip.measured)} TIMED · ${blocks(roundTrip.total)} CONNECTED`}
             </ReadoutCaption>
           </SelfReadout>
         </div>
@@ -312,65 +308,37 @@ export default function NodeSelfCard({
           accent={HUD_COLORS.peerWire}
           status={moduleTag('SELF·03')}
         />
+        {/* This plate used to be PEER·02 with a card's border around it: the
+            peer count with its OUT/IN split, the head-consensus bar, and the
+            three tallies under it, all reading off the same two derives the
+            rail reads — the card's own comment defended the reuse as "so the
+            two can never disagree", which is an argument about VALUES and not
+            about printing them twice (report C, C-6).
+        
+            What is left is the same data with the local node as its subject.
+            The panel takes a census of the colony; this says where we stand in
+            it — how many of them we are ahead of, and, when anybody is ahead
+            of US, how far. That last line is the one thing here no rail can
+            say, and it is why the plate exists. */}
         <div style={{ display: 'grid', rowGap: 3 }}>
           <SelfReadout
-            row="peers"
-            label="PEERS"
-            value={blocks(summary.peerCount)}
+            row="lead"
+            label="WE LEAD"
+            value={`${blocks(consensus.behind)} OF ${blocks(consensus.total)} PEERS`}
             valueColor={HUD_COLORS.peerWire}
           >
-            <div
-              data-node-probe-peer-split
-              style={{
-                display: 'flex',
-                gap: 11,
-                marginTop: 2,
-                fontSize: HUD_TYPE.micro,
-                letterSpacing: 0.9,
-                color: HUD_COLORS.dim,
-              }}
-            >
-              <span>OUT {summary.outbound}</span>
-              <span>IN {summary.inbound}</span>
-            </div>
-          </SelfReadout>
-          <SelfReadout
-            row="consensus"
-            label="COLONY HEAD"
-            value={`${blocks(consensus.atTip)} / ${blocks(consensus.total)} AT TIP`}
-            valueColor={lagging ? HUD_COLORS.danger : HUD_COLORS.nominal}
-          >
-            <div
-              data-node-probe-consensus-bar
-              aria-hidden="true"
-              style={{
-                display: 'flex',
-                height: 5,
-                marginTop: 4,
-                border: `1px solid ${rgba(HUD_COLORS.peerWire, 0.22)}`,
-                background: HUD_COLORS.trackGround,
-              }}
-            >
-              <span style={{ width: segment(consensus.atTip), background: HUD_COLORS.nominal }} />
-              <span style={{ width: segment(consensus.behind), background: HUD_COLORS.dim }} />
-              <span style={{ width: segment(consensus.ahead), background: HUD_COLORS.danger }} />
-            </div>
-            <div
-              data-node-probe-consensus-counts
-              style={{
-                display: 'flex',
-                gap: 11,
-                marginTop: 3,
-                fontSize: HUD_TYPE.micro,
-                letterSpacing: 0.9,
-              }}
-            >
-              <span style={{ color: HUD_COLORS.nominal }}>{consensus.atTip} AT TIP</span>
-              <span style={{ color: HUD_COLORS.dim }}>{consensus.behind} BEHIND</span>
-              <span style={{ color: lagging ? HUD_COLORS.danger : HUD_COLORS.dim }}>
-                {consensus.ahead} AHEAD
-              </span>
-            </div>
+            {/* Why the count is what it is, said about US and never as the
+                colony's census: a colony entirely at our head reads `0 OF 12`,
+                which on its own looks like a node in trouble. An unreported
+                head is the other reason the count can be low, and it is the
+                one a reader can do something about. */}
+            <ReadoutCaption>
+              {consensus.unknown > 0
+                ? `${blocks(consensus.unknown)} HAVE NOT SAID WHERE THEIR HEAD IS`
+                : lagging
+                  ? 'THE REST STAND AT OUR HEAD'
+                  : 'NOBODY IS PAST OUR HEAD'}
+            </ReadoutCaption>
             {lagging ? (
               <div
                 data-node-probe-lag
@@ -388,7 +356,7 @@ export default function NodeSelfCard({
                   textAlign: 'center',
                 }}
               >
-                WE LAG · {blocks(consensus.maxAhead)} BLOCKS BEHIND THE FURTHEST PEER
+                {blocks(consensus.ahead)} AHEAD · WE LAG {blocks(consensus.maxAhead)} BLOCKS
               </div>
             ) : null}
           </SelfReadout>

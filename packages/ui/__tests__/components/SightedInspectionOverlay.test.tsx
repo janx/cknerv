@@ -139,7 +139,7 @@ describe('SightedInspectionOverlay', () => {
     const { view } = mount({ node: rosterNode({ rtt_ms: 41 }) });
     const text = view.container.textContent ?? '';
     expect(text).toContain('SIGHTED // QmSighte');
-    expect(text).toContain('NOT LINKED');
+    expect(text).toContain('NAMED');
     expect(text).toContain('NO LIVE LINK · POSITION IS SCENE PLACEMENT');
     expect(view.container.querySelector('[data-sighted-probe-value="dial"]')?.textContent)
       .toBe('41 MS');

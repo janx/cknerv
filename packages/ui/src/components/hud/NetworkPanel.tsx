@@ -66,7 +66,13 @@ function NetworkPanel({ summary, consensus, syncRatio, enrichmentSource, network
       <div style={{ display: 'flex', height: 7, border: `1px solid ${rgba(HUD_COLORS.orange, 0.2)}`, background: HUD_COLORS.trackGround, margin: '4px 0' }}>
         <span style={{ width: seg(consensus.atTip), background: HUD_COLORS.nominal, boxShadow: `0 0 7px ${rgba(HUD_COLORS.nominal, 0.55)}` }} />
         <span style={{ width: seg(consensus.behind), background: HUD_COLORS.dim }} />
-        <span style={{ width: seg(consensus.ahead), background: HUD_COLORS.caution }} />
+        {/* AHEAD is DANGER here, as it is on both cards (the user's D-18
+          * ruling). A peer past our head is the one reading in this panel
+          * that indicts the local node — it says WE are behind — and it wore
+          * caution while the same fact wore danger one click away, on the
+          * NODE card's lag box and the PEER card's sync ladder. One fact, one
+          * severity, whichever surface a reader meets it on. */}
+        <span style={{ width: seg(consensus.ahead), background: HUD_COLORS.danger }} />
       </div>
       {dense ? null : (
       <div style={{ display: 'flex', gap: 11, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, letterSpacing: 0.35, marginBottom: 8 }}>
@@ -75,7 +81,7 @@ function NetworkPanel({ summary, consensus, syncRatio, enrichmentSource, network
           {consensus.atTip} AT-TIP
         </span>
         <span style={{ color: HUD_COLORS.dim }}>{consensus.behind} BEHIND</span>
-        <span style={{ color: HUD_COLORS.caution }}>{consensus.ahead} AHEAD</span>
+        <span style={{ color: HUD_COLORS.danger }}>{consensus.ahead} AHEAD</span>
         {/* The height the three tallies are counted against — a reading, and
           * the only unqualified figure in the row. It was painted
           * `moduleSlate`, the module registry's grey, which the palette puts

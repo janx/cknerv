@@ -23,10 +23,7 @@ import { CJK_BASELINE_LIFT, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudT
 import {
   CloseButton,
   moduleTag,
-  PLATE_ROW_HOT_WASH_ALPHA,
-  PLATE_ROW_RAIL_ALPHA,
-  PLATE_ROW_RAIL_HOT_ALPHA,
-  PLATE_ROW_SELECTED_WASH_ALPHA,
+  PlateReadoutRow,
   plateStateChip,
   SpatialPlateHeader,
   spatialPlate,
@@ -99,9 +96,22 @@ type PeerScanFactProps = PeerLinkFactRow & {
   onActivate: () => void;
 };
 
-/** One line fact. A link reading is already true when the card opens, so the
- *  row is resolved and selectable from the first frame — the only state it
- *  carries is whether the scene connector is currently tinted by it. */
+/** One line fact, in the house's readout grammar (report C, C-7).
+ *
+ *  It used to be its own layout — a micro label stacked OVER a `label` value,
+ *  two facts to a row — and the divergence was argued on MEASURE: at 340 px,
+ *  two columns of address cannot carry cell-card type. That argument fell with
+ *  its premise. One fact per line has the whole 340 px column, so the value
+ *  sits at the probe tier every other row of every other network card is set
+ *  in, right-aligned against a label on the left, on the same hairline rail.
+ *  The same address that had to be shortened to share a line now prints whole.
+ *
+ *  What made it a different SHAPE was that it is a control — a fact tints the
+ *  scene tether — and a readout row had no way to say so. It has one now: the
+ *  rail's hot rung (C4) lives in `PlateReadoutRow`, so this is the house
+ *  sentence with the house affordance rather than a second grammar carrying
+ *  one. A sighted node promoted to a peer no longer re-lays its ADDR and
+ *  VERSION as it crosses dialects. */
 const PeerScanFact = memo(function PeerScanFact({
   facet,
   label,
@@ -110,80 +120,27 @@ const PeerScanFact = memo(function PeerScanFact({
   selected,
   onActivate,
 }: PeerScanFactProps) {
-  // A fact with no colour of its own — ADDR, PING, UPTIME — is still a
-  // reading off this link, so it falls back to the peer plane's own wire
-  // rather than to a neutral cyan fifteen units away from it. That "neutral"
-  // was indistinguishable from the family it sat inside, which made it drift
-  // wearing a rule's clothes. Facts that DO carry a colour (direction,
-  // version mismatch, sync state) keep speaking for themselves.
+  // A fact with no colour of its own — ADDR, UPTIME — is still a reading off
+  // this link, so it falls back to the peer plane's own wire rather than to a
+  // neutral cyan fifteen units away from it. That "neutral" was
+  // indistinguishable from the family it sat inside, which made it drift
+  // wearing a rule's clothes. Facts that DO carry a colour (direction, version
+  // mismatch, sync state) keep speaking for themselves.
   const accent = color ?? HUD_COLORS.peerWire;
-  // The same second rung the cell card's facts wear: under the pointer (or a
-  // keyboard focus) the rail takes the fact's own accent, the label ink comes
-  // up and the selected wash appears at half weight. One dialect, one
-  // affordance — the alphas are `primitives`' and are stated once.
-  const [hot, setHot] = useState(false);
   return (
-    <button
-      type="button"
-      data-peer-probe-fact={facet}
-      data-peer-probe-fact-state={selected ? 'focused' : 'resolved'}
-      data-hud-fact-rail={hot ? 'hot' : 'true'}
-      aria-pressed={selected}
-      onPointerEnter={() => setHot(true)}
-      onPointerLeave={() => setHot(false)}
-      onFocus={() => setHot(true)}
-      onBlur={() => setHot(false)}
-      onClick={onActivate}
-      style={{
-        position: 'relative',
-        minWidth: 0,
-        minHeight: 38,
-        margin: 0,
-        padding: '5px 6px 4px 9px',
-        border: 0,
-        borderLeft: `1px solid ${selected || hot
-          ? rgba(accent, PLATE_ROW_RAIL_HOT_ALPHA)
-          : rgba(accent, PLATE_ROW_RAIL_ALPHA)}`,
-        background: selected || hot
-          ? `linear-gradient(90deg,${rgba(
-            accent,
-            selected ? PLATE_ROW_SELECTED_WASH_ALPHA : PLATE_ROW_HOT_WASH_ALPHA,
-          )},transparent 88%)`
-          : 'transparent',
-        boxShadow: selected ? `-3px 0 10px ${rgba(accent, 0.22)}` : undefined,
-        color: accent,
-        font: 'inherit',
-        textAlign: 'left',
-        cursor: 'pointer',
-        transition: 'background 160ms ease, box-shadow 160ms ease',
+    <PlateReadoutRow
+      accent={accent}
+      label={label}
+      value={value}
+      valueColor={selected ? accent : color ?? HUD_COLORS.ink}
+      rowAttributes={{
+        'data-peer-probe-fact': facet,
+        'data-peer-probe-fact-state': selected ? 'focused' : 'resolved',
       }}
-    >
-      {/* THE DENSE REGISTER. This fact sits one rung below the same sentence in
-          `CellDetailPanel`'s `CellScanFact` (micro/label here, label/value
-          there) and that gap is declared, not drift — see the tracking ledger
-          in `hudTheme.ts`. The peer card is 340px wide and lays its facts out
-          two to a row, so cell-card type would ellipsis away the tail of every
-          address and latency it exists to show. Flattening the two into one
-          register makes THIS card worse. */}
-      <span data-hud-fact-label style={{ display: 'block', fontSize: HUD_TYPE.micro, letterSpacing: 1.2, color: hot ? HUD_COLORS.ink : HUD_COLORS.dim }}>
-        {label}
-      </span>
-      <span
-        title={value}
-        style={{
-          display: 'block',
-          marginTop: 2,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-          fontSize: HUD_TYPE.label,
-          lineHeight: 1.25,
-          color: selected ? accent : color ?? HUD_COLORS.ink,
-        }}
-      >
-        {value}
-      </span>
-    </button>
+      valueAttributes={{ 'data-peer-probe-fact-value': facet }}
+      selected={selected}
+      onActivate={onActivate}
+    />
   );
 }, (previous, next) => (
   previous.facet === next.facet
@@ -372,6 +329,26 @@ function ColonyCompass({
         letterSpacing={0.9}
       >
         {PEER_LATENCY_CAP_MS}MS RIM
+      </text>
+      {/* What the two axes of this instrument MEAN (report C, C-12). The ring
+          was labelled and the angle was not, so a reader had every reason to
+          take a blip at four o'clock for a direction — and it is a hash of the
+          node id, which is also how the scene places the mark. The other two
+          dialects disclaim their placement in a footer (`POSITION IS SCENE
+          PLACEMENT`); this card's angle is equally invented and said nothing.
+          Under the rim rather than in a footer because it is a legend for the
+          instrument above it, not a caveat about the card. */}
+      <text
+        data-peer-probe-compass-legend
+        x={COMPASS_CENTER}
+        y={COMPASS_VIEW_PX - 1.5}
+        textAnchor="middle"
+        fill={HUD_COLORS.dim}
+        fontFamily={HUD_FONTS.mono}
+        fontSize={HUD_TYPE.micro}
+        letterSpacing={0.9}
+      >
+        RING · PING · BEARING · ID HASH
       </text>
     </svg>
   );
@@ -604,11 +581,23 @@ export default function PeerLinkCard({
         <span style={{ ...CJK_BASELINE_LIFT, color: accent, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: 0.72 }}>
           对端
         </span>
+        {/* THE EVIDENCE CLASS, which is what this slot answers on all four
+          * network dialects (report C, C-5): LINKED · SELF · NAMED · CHAIN
+          * ATTESTED. It used to print IN/OUT, so the same bordered word was a
+          * link DIRECTION here, a node's ROLE on the self card, a link STATE
+          * on the sighted card and an evidence class on the cohort's — four
+          * questions in one slot, and a reader learns the slot from whichever
+          * card they open first.
+          *
+          * Nothing is lost: the direction is drawn by the compass arrow, which
+          * points at us for an inbound link, and printed in full by the
+          * DIRECTION row of LINE FACTS. It was the one fact on this card
+          * already stated three times. */}
         <span
-          data-peer-probe-direction={instrument.directionBadge.toLowerCase()}
+          data-peer-probe-evidence="linked"
           style={plateStateChip(accent)}
         >
-          {instrument.directionBadge}
+          LINKED
         </span>
         {/* Status and module stamp travel as ONE right-hand group, in flow —
           * the CELL masthead's grammar (`CellDetailPanel.tsx`), and for the
@@ -707,11 +696,18 @@ export default function PeerLinkCard({
             </span>
           </div>
           {/* The LOCAL rung of the ladder is us again — same entity, same
-              anchor colour as the compass centre and the NODE card. */}
+              anchor colour as the compass centre and the NODE card, and now
+              the same FORM (report C, C-8). It was a filled diamond in the
+              anchor's cyan sitting twenty lines under a compass that draws us
+              as a HOLE, so the card answered "which of these is us" two
+              different ways: a hole above, a bead below, in one hex that every
+              outbound peer also wears. Ground fill, accent stroke — us is the
+              mark you can see through, everywhere on the card. */}
           <span
             aria-hidden="true"
             data-peer-probe-self
-            style={{ position: 'absolute', left: -3.5, top: 4, width: 6, height: 6, background: NODE_SELF_ACCENT, transform: 'rotate(45deg)' }}
+            data-peer-probe-self-form="hole"
+            style={{ position: 'absolute', left: -3.5, top: 4, width: 6, height: 6, boxSizing: 'border-box', background: HUD_COLORS.ground, border: `1px solid ${NODE_SELF_ACCENT}`, transform: 'rotate(45deg)' }}
           />
           <span
             aria-hidden="true"
@@ -765,7 +761,10 @@ export default function PeerLinkCard({
           accent={HUD_COLORS.peerWire}
           status={moduleTag('LINK·04')}
         />
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '3px 9px' }}>
+        {/* One fact per line, the way every other plate of every other network
+            card lays a reading out. Two to a row was what forced this card's
+            own type rung; the column is the whole measure now. */}
+        <div style={{ display: 'grid', rowGap: 3 }}>
           {PEER_LINK_FACETS.map((facet) => {
             const fact = factByFacet.get(facet);
             if (!fact) return null;

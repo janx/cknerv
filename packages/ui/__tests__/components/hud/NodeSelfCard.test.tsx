@@ -73,13 +73,17 @@ function renderCard(props: Partial<Parameters<typeof NodeSelfCard>[0]> = {}) {
 }
 
 describe('NodeSelfCard header', () => {
-  it('names the node and stamps it OBSERVER on the chain it follows', () => {
+  it('names the node, claims SELF, and puts the role beside the chain', () => {
     const { container } = renderCard();
     const text = container.textContent ?? '';
     expect(text).toContain('NODE // CKB');
     expect(text).toContain('节点');
+    // The chip is the EVIDENCE CLASS on all four network dialects (C-5). The
+    // role is still printed — one group right, beside the chain it watches.
+    expect(container.querySelector('[data-node-probe-evidence="self"]')?.textContent)
+      .toBe('SELF');
     expect(container.querySelector('[data-node-probe-role="observer"]')?.textContent)
-      .toBe('OBSERVER');
+      .toBe('· OBSERVER');
     expect(container.querySelector('[data-node-probe-chain]')?.textContent)
       .toBe('CKB_DEV');
   });
@@ -87,8 +91,11 @@ describe('NodeSelfCard header', () => {
   it('stamps a mining node MINER instead', () => {
     const { container } = renderCard({ node: { ...node, is_miner: true } });
     expect(container.querySelector('[data-node-probe-role="miner"]')?.textContent)
-      .toBe('MINER');
+      .toBe('· MINER');
     expect(container.querySelector('[data-node-probe-role="observer"]')).toBeNull();
+    // …and the evidence class does not move with the role.
+    expect(container.querySelector('[data-node-probe-evidence="self"]')?.textContent)
+      .toBe('SELF');
   });
 
   it('wears the chain anchor\'s own cyan, the icosahedron included', () => {
@@ -100,32 +107,32 @@ describe('NodeSelfCard header', () => {
 });
 
 describe('NodeSelfCard vitals', () => {
-  it('prints the live head, the epoch and its progress', () => {
+  it('prints neither the tip nor the epoch — CKB·01 states both', () => {
+    // C-6: the head and the epoch on this card were `chain.tip` and
+    // `chain.epoch` off the same entry the chain panel draws them from, with
+    // the epoch's progress bar duplicated under them. A dossier of the local
+    // node owes a reader what only this node can say.
     const { container } = renderCard();
-    expect(container.querySelector('[data-node-probe-value="tip"]')?.textContent)
-      .toBe('#16,204,887');
-    expect(container.querySelector('[data-node-probe-value="epoch"]')?.textContent)
-      .toBe('#11,042');
-    expect(container.textContent).toContain('BLOCK 842 / 1,800 OF THIS EPOCH');
-    const fill = container
-      .querySelector('[data-node-probe-epoch-bar]')
-      ?.firstElementChild as HTMLElement;
-    expect(fill.style.width).toBe(`${(842 / 1800) * 100}%`);
+    expect(container.querySelector('[data-node-probe-value="tip"]')).toBeNull();
+    expect(container.querySelector('[data-node-probe-value="epoch"]')).toBeNull();
+    expect(container.querySelector('[data-node-probe-epoch-bar]')).toBeNull();
+    expect(container.textContent).not.toContain('OF THIS EPOCH');
+    expect(container.textContent).not.toContain('#16,204,887');
   });
 
-  it('follows the head as blocks land', () => {
-    const { container, rerender } = renderCard();
-    rerender(
-      <NodeSelfCard
-        node={node}
-        chain={{ ...chain, tip: TIP + 1 }}
-        peers={PEERS}
-        layoutSide="left"
-        onClose={() => {}}
-      />,
-    );
-    expect(container.querySelector('[data-node-probe-value="tip"]')?.textContent)
-      .toBe('#16,204,888');
+  it('brackets our own round trips across the peers we have timed', () => {
+    const { container } = renderCard();
+    expect(container.querySelector('[data-node-probe-value="roundtrip"]')?.textContent)
+      .toBe('84–84 MS');
+    expect(container.textContent).toContain('BEST AND WORST OF 5 TIMED · 5 CONNECTED');
+  });
+
+  it('says so when no peer has been timed yet', () => {
+    const untimed = PEERS.map((p) => ({ ...p, latency_ms: null }));
+    const { container } = renderCard({ peers: untimed });
+    expect(container.querySelector('[data-node-probe-value="roundtrip"]')?.textContent)
+      .toBe('—');
+    expect(container.textContent).toContain('NO PEER TIMED YET · 5 CONNECTED');
   });
 
   it('names the version as the reference every peer is judged against', () => {
@@ -138,46 +145,42 @@ describe('NodeSelfCard vitals', () => {
 });
 
 describe('NodeSelfCard stance', () => {
-  it('counts the colony and splits it by who dialed whom', () => {
+  it('states where WE stand instead of taking the colony\'s census', () => {
+    // C-6: this plate used to be PEER·02 with a card's border around it — the
+    // peer count with its OUT/IN split, the head-consensus bar and its three
+    // tallies, all off the derives the rail reads. The subject is the local
+    // node now: how many of them we are ahead of.
     const { container } = renderCard();
-    expect(container.querySelector('[data-node-probe-value="peers"]')?.textContent)
-      .toBe('5');
-    const split = container.querySelector('[data-node-probe-peer-split]')?.textContent;
-    expect(split).toContain('OUT 2');
-    expect(split).toContain('IN 3');
-  });
-
-  it('reads the consensus posture back from the same fleet derive', () => {
-    const { container } = renderCard();
-    expect(container.querySelector('[data-node-probe-value="consensus"]')?.textContent)
-      .toBe('2 / 5 AT TIP');
-    const counts = container
-      .querySelector('[data-node-probe-consensus-counts]')?.textContent;
-    expect(counts).toContain('2 AT TIP');
-    expect(counts).toContain('1 BEHIND');
-    expect(counts).toContain('1 AHEAD');
+    expect(container.querySelector('[data-node-probe-value="lead"]')?.textContent)
+      .toBe('1 OF 5 PEERS');
+    expect(container.querySelector('[data-node-probe-value="peers"]')).toBeNull();
+    expect(container.querySelector('[data-node-probe-peer-split]')).toBeNull();
+    expect(container.querySelector('[data-node-probe-consensus-bar]')).toBeNull();
+    expect(container.querySelector('[data-node-probe-consensus-counts]')).toBeNull();
+    expect(container.textContent).toContain('1 HAVE NOT SAID WHERE THEIR HEAD IS');
   });
 
   it('raises the lag alert with the furthest peer, because AHEAD means we lag', () => {
     const { container } = renderCard();
     expect(container.querySelector('[data-node-probe-lag]')?.textContent)
-      .toBe('WE LAG · 6 BLOCKS BEHIND THE FURTHEST PEER');
+      .toBe('1 AHEAD · WE LAG 6 BLOCKS');
   });
 
   it('stays quiet when nothing in the colony is past our head', () => {
-    const atTipOnly = PEERS.filter((p) => (p.best_known ?? 0) <= TIP);
+    // …and says why a low count is low, so `0 OF n` never reads as trouble.
+    const atTipOnly = PEERS.filter((p) => p.best_known != null && p.best_known <= TIP);
     const { container } = renderCard({ peers: atTipOnly });
     expect(container.querySelector('[data-node-probe-lag]')).toBeNull();
-    expect(container.querySelector('[data-node-probe-consensus-counts]')?.textContent)
-      .toContain('0 AHEAD');
+    expect(container.textContent).not.toContain('AHEAD');
+    expect(container.textContent).toContain('NOBODY IS PAST OUR HEAD');
   });
 
   it('survives a node with no peers at all', () => {
     const { container } = renderCard({ peers: [] });
-    expect(container.querySelector('[data-node-probe-value="peers"]')?.textContent)
-      .toBe('0');
-    expect(container.querySelector('[data-node-probe-value="consensus"]')?.textContent)
-      .toBe('0 / 0 AT TIP');
+    expect(container.querySelector('[data-node-probe-value="lead"]')?.textContent)
+      .toBe('0 OF 0 PEERS');
+    expect(container.querySelector('[data-node-probe-value="roundtrip"]')?.textContent)
+      .toBe('—');
     expect(container.querySelector('[data-node-probe-lag]')).toBeNull();
   });
 });
@@ -185,7 +188,7 @@ describe('NodeSelfCard stance', () => {
 describe('NodeSelfCard first frame', () => {
   it('prints every vital on the first frame, with no clock to wait on', () => {
     const { container } = renderCard();
-    for (const row of ['tip', 'epoch', 'version', 'peers', 'consensus']) {
+    for (const row of ['version', 'roundtrip', 'lead']) {
       const value = container.querySelector(`[data-node-probe-value="${row}"]`);
       expect(value, row).not.toBeNull();
       expect(value?.textContent, row).not.toBe('');

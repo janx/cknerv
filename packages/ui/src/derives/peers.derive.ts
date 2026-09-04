@@ -1050,6 +1050,45 @@ function median(xs: number[]): number {
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
 
+/**
+ * The spread of OUR OWN round trips across the colony, and how much of the
+ * colony we have timed.
+ *
+ * The one latency reading no other surface can give (report C, C-6). A peer
+ * card knows one link and prints it four ways; PEER·02 reports the fleet's
+ * heads and deliberately keeps no per-peer telemetry. Best-and-worst over
+ * every measured peer is the local node's own reflex time, and it is only
+ * sayable from the middle of the colony — which is where the self probe
+ * stands.
+ *
+ * `measured` is carried beside the pair because the pair without it is a claim
+ * about the colony rather than about the peers we have actually timed: a node
+ * that has heard back from two of its twelve peers may not print a floor and a
+ * ceiling as if they bracketed the set.
+ */
+export interface LocalRoundTrip {
+  bestMs: number | null;
+  worstMs: number | null;
+  /** Peers with a latency reading. */
+  measured: number;
+  /** Peers in the list, timed or not. */
+  total: number;
+}
+
+export function localRoundTrip(peers: readonly Peer[]): LocalRoundTrip {
+  let bestMs: number | null = null;
+  let worstMs: number | null = null;
+  let measured = 0;
+  for (const peer of peers) {
+    const ms = peer.latency_ms;
+    if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) continue;
+    measured += 1;
+    if (bestMs === null || ms < bestMs) bestMs = ms;
+    if (worstMs === null || ms > worstMs) worstMs = ms;
+  }
+  return { bestMs, worstMs, measured, total: peers.length };
+}
+
 export interface NetworkSummary {
   peerCount: number;
   outbound: number;

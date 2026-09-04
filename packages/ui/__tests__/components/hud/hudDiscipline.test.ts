@@ -1520,8 +1520,14 @@ describe('a limit on what we saw is not a fault', () => {
 //
 // PEER·02 did not. Five authored words — `out`, `in`, and the three consensus
 // tallies `at-tip` / `behind` / `ahead` — shipped lowercase in a panel whose
-// own `StatRow` labels are uppercased one line above them, and `NodeSelfCard`
-// states the identical link-direction reading as `OUT n / IN n`.
+// own `StatRow` labels are uppercased one line above them.
+//
+// ⚠️ The second surface is GONE. `NodeSelfCard` used to state the identical
+// `OUT n / IN n` reading and was the reference this rule was written against;
+// it gave that reading up with the rest of the census it was copying off this
+// panel (report C, C-6). The rule was never about having two witnesses — it is
+// that this panel authored five lowercase words under its own uppercase
+// labels — so it is stated on the panel that has them.
 //
 // THIS IS NOT DERIVED AND THE REASON IS WORTH SAYING, because the obvious
 // general rule looks derivable and is not: half the overlay's uppercase is
@@ -1539,15 +1545,15 @@ describe('a limit on what we saw is not a fault', () => {
 // four correct surfaces to catch it.
 
 describe('one case', () => {
-  it('the two surfaces that count links state it the same way', () => {
+  it('the panel that counts links states it in the HUD\'s one case', () => {
     const panel = SOURCES.find((source) => source.name === 'NetworkPanel.tsx');
     const card = SOURCES.find((source) => source.name === 'NodeSelfCard.tsx');
     expect(panel, 'PEER·02 moved — this oracle reads files off disk').toBeDefined();
     expect(card, 'the self probe moved — this oracle reads files off disk').toBeDefined();
 
-    // The card's phrasing is the reference because it was already right.
-    const reading = /<span>OUT \{summary\.outbound\}<\/span>/;
-    expect(code(card?.text ?? '')).toMatch(reading);
+    // The self probe states no link direction at all now, and may not take one
+    // back without arguing it: the reading is the panel's.
+    expect(code(card?.text ?? '')).not.toContain('summary.outbound');
 
     const text = code(panel?.text ?? '');
     expect(text).toContain('>OUT</span>');
@@ -4523,7 +4529,12 @@ describe('one cursor for a pressable', () => {
       .map((source) => source.name)
       .sort();
 
-    expect(wearing).toEqual(['CellDetailPanel.tsx', 'PeerLinkCard.tsx']);
+    // ⚠️ `PeerLinkCard` is not on this list any more and that is the point of
+    // C-7: its facts are the HOUSE row now (`PlateReadoutRow`), so the rung
+    // reaches them through the primitive instead of being typed a second time
+    // beside it. The two dialects are the card that has its own fact button
+    // and the primitive every other readout row in the HUD is drawn with.
+    expect(wearing).toEqual(['CellDetailPanel.tsx', 'primitives.tsx']);
     for (const name of wearing) {
       const text = code(SOURCES.find((candidate) => candidate.name === name)?.text ?? '');
       expect(text, `${name} has no label for the treatment to lift`)
@@ -4540,8 +4551,77 @@ describe('one cursor for a pressable', () => {
         expect(text, `${name} does not read ${rung}`).toContain(rung);
       }
     }
+    // The peer card takes the whole treatment by USING the row, and may not
+    // re-state an alpha the row owns.
+    const peer = code(SOURCES.find((source) => source.name === 'PeerLinkCard.tsx')?.text ?? '');
+    expect(peer, 'the peer facts left the house row').toContain('<PlateReadoutRow');
+    expect(peer, 'the peer facts stopped being controls').toContain('onActivate={onActivate}');
+    for (const rung of [
+      'PLATE_ROW_RAIL_ALPHA',
+      'PLATE_ROW_RAIL_HOT_ALPHA',
+      'PLATE_ROW_SELECTED_WASH_ALPHA',
+      'PLATE_ROW_HOT_WASH_ALPHA',
+    ]) {
+      expect(peer, `PeerLinkCard restates ${rung}, which the house row owns`)
+        .not.toContain(rung);
+    }
     // …and the half-weight wash is derived from the selected one, not typed.
     expect(PLATE_ROW_HOT_WASH_ALPHA).toBe(PLATE_ROW_SELECTED_WASH_ALPHA / 2);
     expect(PLATE_ROW_RAIL_HOT_ALPHA).toBeGreaterThan(PLATE_ROW_RAIL_ALPHA);
+  });
+});
+
+// ——— One severity per fact ————————————————————————————————————————————————
+//
+// "A peer is ahead of us" is printed on three surfaces — the PEER·02 rail, the
+// PEER card's sync ladder and the NODE card's lag line — and it is the one
+// reading in this app that indicts the local node: a peer past our head means
+// WE are behind. It wore `danger` on the two cards and `caution` on the rail,
+// so the same fact changed how much it mattered depending on which surface a
+// reader met it on (report C, C-4). The user's D-18 ruling: danger on all
+// three, the cards' argument being the one that was already written down.
+//
+// The rule is stated as a sweep rather than as three pins: any line of these
+// three files that renders the word AHEAD may name `danger` and may not name
+// `caution`. A fourth surface printing the same fact in the third colour is
+// caught the day it is written.
+describe('one severity per fact', () => {
+  const AHEAD_SURFACES = [
+    'components/hud/NetworkPanel.tsx',
+    'components/hud/NodeSelfCard.tsx',
+    'derives/peerLinkInstrument.derive.ts',
+  ] as const;
+
+  it('a peer past our head is danger on every surface that says so', () => {
+    const offenders: string[] = [];
+    let sites = 0;
+    for (const name of AHEAD_SURFACES) {
+      const source = PACKAGE_SOURCES.find((entry) => entry.name === name);
+      expect(source, `${name} moved — this oracle reads files off disk`).toBeDefined();
+      for (const line of code(source?.text ?? '').split('\n')) {
+        if (!/AHEAD/.test(line)) continue;
+        sites += 1;
+        if (/HUD_COLORS\.caution/.test(line)) {
+          offenders.push(`${name}: ${line.trim()}`);
+        }
+      }
+    }
+
+    // The three sites the ruling is about, so a rule that stopped finding them
+    // fails instead of passing over an empty set.
+    expect(sites).toBeGreaterThanOrEqual(3);
+    expect(offenders).toEqual([]);
+  });
+
+  it('and each of the three surfaces names danger where it says it', () => {
+    const says = (file: string, fragment: string) => {
+      const source = PACKAGE_SOURCES.find((entry) => entry.name === file);
+      expect(code(source?.text ?? ''), `${file} lost its AHEAD severity`)
+        .toContain(fragment);
+    };
+    says('components/hud/NetworkPanel.tsx', 'seg(consensus.ahead), background: HUD_COLORS.danger');
+    says('components/hud/NetworkPanel.tsx', 'style={{ color: HUD_COLORS.danger }}>{consensus.ahead} AHEAD');
+    says('components/hud/NodeSelfCard.tsx', 'AHEAD · WE LAG');
+    says('derives/peerLinkInstrument.derive.ts', 'AHEAD`, color: HUD_COLORS.danger');
   });
 });

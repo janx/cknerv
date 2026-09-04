@@ -10,6 +10,7 @@ import {
   syncProximity,
   peerColorKind,
   peerChurnDiff,
+  localRoundTrip,
   summarizeNetwork,
   peerCrystalSize,
   peerCrystalBrightness,
@@ -150,6 +151,34 @@ describe('peers.derive', () => {
     expect(s.medianPingMs).toBe(30);
     expect(s.version).toBe('0.116.1');
     expect(s.syncLabel).toBe('AT TIP');
+  });
+
+  it('localRoundTrip brackets our own dials and counts what it timed', () => {
+    // The self probe's one latency reading (report C, C-6): a peer card knows
+    // one link, and this is the spread over every peer WE have timed.
+    const spread = localRoundTrip([
+      peer({ node_id: 'A', latency_ms: 84 }),
+      peer({ node_id: 'B', latency_ms: 12 }),
+      peer({ node_id: 'C', latency_ms: 214 }),
+      peer({ node_id: 'D', latency_ms: null }),
+    ]);
+    expect(spread).toEqual({ bestMs: 12, worstMs: 214, measured: 3, total: 4 });
+  });
+
+  it('localRoundTrip says nothing rather than bracketing an empty set', () => {
+    // A pair with nothing measured behind it would be a claim about a colony
+    // this node has not timed, so both ends are null and the counts carry the
+    // difference between "no peers" and "no answers yet".
+    expect(localRoundTrip([])).toEqual({
+      bestMs: null, worstMs: null, measured: 0, total: 0,
+    });
+    expect(localRoundTrip([peer({ node_id: 'A', latency_ms: null })])).toEqual({
+      bestMs: null, worstMs: null, measured: 0, total: 1,
+    });
+    // A single timed peer is a floor and a ceiling of one, which is honest:
+    // the caption beside it says how many were timed.
+    expect(localRoundTrip([peer({ node_id: 'A', latency_ms: 40 })]))
+      .toEqual({ bestMs: 40, worstMs: 40, measured: 1, total: 1 });
   });
 
   it('summarizeNetwork labels syncing + ibd', () => {
