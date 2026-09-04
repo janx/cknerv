@@ -73,6 +73,7 @@ import {
   type CellGalaxyCache,
 } from '@cknerv/cache';
 import type { Cell, CellGalaxySnapshot } from '@cknerv/types';
+import { HUD_COLORS } from '../../src/components/hud/hudTheme';
 
 const CELL_GALAXY_SOURCE = resolve(
   process.cwd(),
@@ -516,6 +517,32 @@ describe('CKB node anchor emphasis', () => {
     expect(ckbNodeAnchorHaloTarget(false, true)).toBeGreaterThan(
       selected.haloIntensity,
     );
+  });
+
+  it('is findable at rest: cyan label and a ring, with the halo untouched', () => {
+    const resting = ckbNodeAnchorPresentation(false);
+    const selected = ckbNodeAnchorPresentation(true);
+
+    // C-9: the one entity the NODE card is about, the origin of every measured
+    // spoke, was a 12px wireframe under a grey word. The label wears the
+    // anchor's own cyan at rest now and the mark carries a ring — and the halo
+    // is exactly what it was, because the fix is legibility and not a second
+    // light in a frame this round is taking light OUT of.
+    expect(resting.labelColor).toBe(HUD_COLORS.cyanInk);
+    expect(resting.labelColor).toBe(selected.labelColor);
+    expect(resting.labelOpacity).toBeCloseTo(0.6, 6);
+    expect(resting.haloIntensity).toBe(0.52);
+    // Still a ladder: selection promotes both the word and the ring.
+    expect(resting.labelOpacity).toBeLessThan(selected.labelOpacity);
+    expect(resting.ringOpacity).toBeGreaterThan(0);
+    expect(resting.ringOpacity).toBeLessThan(selected.ringOpacity);
+    // The ring is drawn, camera-facing, outside the body and one pixel thick
+    // at the fitted camera (~5.4 px/wu).
+    const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
+    expect(source).toContain('const ANCHOR_REST_RING_RADIUS = ANCHOR_BODY_RADIUS * 1.9;');
+    expect(source).toContain('const ANCHOR_REST_RING_WIDTH = 0.19;');
+    expect(source).toMatch(/<ringGeometry[\s\S]*ANCHOR_REST_RING_RADIUS \+ ANCHOR_REST_RING_WIDTH/);
+    expect(source).toMatch(/opacity=\{presentation\.ringOpacity\}/);
   });
 
   it('owns its pixel through the peers\' arbitration, not a second one', () => {

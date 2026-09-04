@@ -19,6 +19,12 @@ import {
   STAGE_EXIT_SCALE_TO,
 } from '../../src/materials/cellEnvelope.glsl';
 import { CELL_GALAXY_PALETTE } from '../../src/visualPalette';
+import { CONSENSUS_BRAID_PALETTE } from '../../src/derives/consensusBraid.derive';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
 
 describe('makeCellHybridMaterial', () => {
   it('uses bounded accumulation for resting Cells and exposes its uniforms', () => {
@@ -139,9 +145,42 @@ describe('makeCellHybridMaterial', () => {
     expect(m.vertexShader).toContain('vFocus = aFocus');
     expect(m.fragmentShader).toContain('focusRing');
     expect(m.fragmentShader).toContain('focusArc');
-    expect(m.fragmentShader).toContain('focusGold');
-    expect(m.fragmentShader).toContain('focusCyan');
     expect(m.fragmentShader).toContain('if (vFocus > 0.0001)');
+  });
+
+  it('answers a gesture in ONE colour, the galaxy\'s own gold', () => {
+    const m = makeCellHybridMaterial();
+
+    // The ring was `mix(focusGold, focusCyan, hash11(vSeed + 3.1))` — the same
+    // gesture in gold on one cell and in the PEER PLANE'S cyan on the next,
+    // decided by the id of whatever the reader happened to pick. One tint, and
+    // it is the braid palette's gold, read by name rather than typed here.
+    const gold = `vec3 focusTint = vec3(${CONSENSUS_BRAID_PALETTE.gold.join(', ')});`;
+    expect(m.fragmentShader).toContain(gold);
+    expect(m.fragmentShader).not.toContain('focusCyan');
+    expect(m.fragmentShader).not.toMatch(/focusTint\s*=\s*mix\(/);
+    // …and the tint is warm: r above b, the galaxy's side of the palette.
+    expect(CONSENSUS_BRAID_PALETTE.gold[0])
+      .toBeGreaterThan(CONSENSUS_BRAID_PALETTE.gold[2]);
+  });
+
+  it('gives the galaxy\'s braid the WARM pale, not the transport plane\'s', () => {
+    // D-11: the selected cell read as a 60px block of the same white the
+    // peers, carriers and packet heads use. The agreement constellation is the
+    // brightest thing in the braid (0.9), so it decides the pile's colour.
+    const source = readFileSync(
+      resolve(HERE, '../../src/derives/galaxyNucleus.derive.ts'),
+      'utf8',
+    );
+
+    expect(source).toContain('CONSENSUS_BRAID_PALETTE.warmPale');
+    expect(source).not.toMatch(/agreement\.pointB,\s*CONSENSUS_BRAID_PALETTE\.pale/);
+    const [r, , b] = CONSENSUS_BRAID_PALETTE.warmPale;
+    expect(r).toBeGreaterThan(b);
+    // The cold pale it replaces is still the cold one — the card's braid, the
+    // memory trace and the flow mixes all read it and are not this fix.
+    expect(CONSENSUS_BRAID_PALETTE.pale[2])
+      .toBeGreaterThan(CONSENSUS_BRAID_PALETTE.pale[0]);
   });
 
   it('reads recalled evidence through address rails and a resolved record latch', () => {

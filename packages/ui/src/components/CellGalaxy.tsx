@@ -525,6 +525,22 @@ const ANCHOR_HIT_RADIUS = 2.5;
 /** A real block may briefly promote the anchor above both resting and selected
  *  states. The lower peak avoids a cyan strobe competing with the peer wave. */
 const ANCHOR_FLASH_PEAK_INTENSITY = 1.85;
+/** The ring that says a thing stands here.
+ *
+ *  A circle, not more light: the anchor's problem at the overview is not that
+ *  it is dim — the halo is the same 0.52 it has always been — but that a
+ *  rotating icosahedron of thin lines has no silhouette at 12 px. A ring has
+ *  one at any size, and it is the only closed circle in the galaxy's own
+ *  vocabulary that is not a Cell's content-address halo, so it reads as an
+ *  instrument's mark rather than as another organism.
+ *
+ *  Sized just outside the body so it never sits ON the wireframe, and one
+ *  pixel thick at the camera the composition is fitted for (0.19 wu at
+ *  ~5.4 px/wu). Closer in it thickens with everything else; that is what a
+ *  world-space mark does, and the alternative — a screen-space width — is a
+ *  second size language for one ring. */
+const ANCHOR_REST_RING_RADIUS = ANCHOR_BODY_RADIUS * 1.9;
+const ANCHOR_REST_RING_WIDTH = 0.19;
 
 export interface CkbNodeAnchorPresentation {
   haloIntensity: number;
@@ -532,21 +548,32 @@ export interface CkbNodeAnchorPresentation {
   fillOpacity: number;
   labelOpacity: number;
   labelColor: string;
+  /** The rest ring's alpha — see `ANCHOR_REST_RING_RADIUS`. */
+  ringOpacity: number;
   labelShadow: string;
 }
 
 /** The label under the chain anchor is DOM — a drei `Html` pinned to the
  *  scene, not a material — so its two tiers come from the HUD's text ladder
- *  rather than from a pair of hexes typed beside the opacities. Both were
- *  inside the separation floor of the rung they were reaching for: the resting
- *  grey 28.0 from `legendInk` and the selected cyan 15.5 from `cyanInk`, which
- *  is this file's own definition of one colour wearing two names. */
+ *  rather than from a pair of hexes typed beside the opacities.
+ *
+ *  ⭐ AT REST IT IS CYAN NOW, NOT GREY. The 2026-09-04 census read the local
+ *  node as the least visible thing in the frame: a 12 px wireframe under the
+ *  densest tissue in the scene with a grey `LOCAL` beneath it that "is barely
+ *  a word" at 5×, while every measured spoke in the colony starts here and
+ *  the NODE card is about this one entity. Quiet at rest is right; illegible
+ *  at rest is not. So the resting label wears the anchor's OWN cyan at .6 —
+ *  between the old grey .46 and the selected .92, so selection still promotes
+ *  it — and the mark gains a ring (`ANCHOR_REST_RING_*`) that says "a thing
+ *  stands here" at the distance the wireframe reads as a smudge. The halo is
+ *  left exactly where it was: the fix is legibility, not another light. */
 const ANCHOR_REST_PRESENTATION: CkbNodeAnchorPresentation = {
   haloIntensity: 0.52,
   edgeOpacity: 0.46,
   fillOpacity: 0.07,
-  labelOpacity: 0.46,
-  labelColor: HUD_COLORS.legendInk,
+  labelOpacity: 0.6,
+  labelColor: HUD_COLORS.cyanInk,
+  ringOpacity: 0.55,
   labelShadow: `0 0 6px ${rgba(CHAIN_ANCHOR_HEX.halo, 0.24)}`,
 };
 
@@ -556,6 +583,7 @@ const ANCHOR_SELECTED_PRESENTATION: CkbNodeAnchorPresentation = {
   fillOpacity: 0.14,
   labelOpacity: 0.92,
   labelColor: HUD_COLORS.cyanInk,
+  ringOpacity: 0.9,
   labelShadow:
     `0 0 5px ${rgba(CHAIN_ANCHOR_HEX.edge, 0.62)}, 0 0 11px ${rgba(CHAIN_ANCHOR_HEX.halo, 0.32)}`,
 };
@@ -788,6 +816,28 @@ function CkbNodeAnchor({
           {ckbNodeLabel(id)}
         </div>
       </Html>
+      {/* The rest ring: camera-facing, so the mark is a circle from every
+          orbit and not an ellipse that flattens to a line overhead. */}
+      <Billboard follow lockX={false} lockY={false} lockZ={false}>
+        <mesh>
+          <ringGeometry
+            args={[
+              ANCHOR_REST_RING_RADIUS,
+              ANCHOR_REST_RING_RADIUS + ANCHOR_REST_RING_WIDTH,
+              64,
+            ]}
+          />
+          <meshBasicMaterial
+            color={palette.edge}
+            transparent
+            opacity={presentation.ringOpacity}
+            side={THREE.DoubleSide}
+            depthWrite={false}
+            blending={THREE.AdditiveBlending}
+            toneMapped={false}
+          />
+        </mesh>
+      </Billboard>
       {selected ? (
         <CkbSelectionReticle size={ANCHOR_BODY_RADIUS * 3.2} />
       ) : null}

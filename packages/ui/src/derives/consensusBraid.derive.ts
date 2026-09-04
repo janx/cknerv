@@ -28,6 +28,12 @@ export const CONSENSUS_BRAID_PALETTE = {
   cyan: [0.1, 0.82, 1],
   violet: [0.4, 0.2, 1],
   pale: [0.72, 0.96, 1],
+  /** The warm half of the pale pair. The galaxy's own braid reads against
+   *  rose tissue, and `pale` is a CYAN white — the peer plane's white, the
+   *  carriers' white, the packet heads' white — so a selected cell wearing it
+   *  said "network" on a surface that is the organism. This one is the same
+   *  value at the same distance from white, turned to the warm side. */
+  warmPale: [1, 0.9, 0.72],
   retire: [0.94, 0.12, 0.46],
 } as const;
 

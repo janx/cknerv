@@ -170,9 +170,16 @@ export function deriveGalaxyConsensusBraid(cell: Cell): GalaxyConsensusBraid {
     }
   }
 
-  // Production uses the exact same agreement constellation as the portrait.
+  // Production uses the exact same agreement constellation as the portrait —
+  // and, since the light review, the WARM pale for it. These are the brightest
+  // strokes in the braid (0.9), so in the additive pile they decide what
+  // colour a selected cell reads as at the overview: the cold pale took it to
+  // the same white the peers, the carriers and the packet heads use, and the
+  // one mark that is unmistakably the galaxy's own was wearing the transport
+  // plane's colour. The portrait keeps `pale`: on the card the braid is a
+  // specimen under cyan instruments, not a body in rose tissue.
   for (const agreement of topology.agreements) {
-    addSegment(agreement.pointA, agreement.pointB, CONSENSUS_BRAID_PALETTE.pale, 0.9);
+    addSegment(agreement.pointA, agreement.pointB, CONSENSUS_BRAID_PALETTE.warmPale, 0.9);
     knots.push({
       x: agreement.midpoint[0],
       y: agreement.midpoint[1],

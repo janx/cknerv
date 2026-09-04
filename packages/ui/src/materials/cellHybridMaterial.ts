@@ -296,9 +296,14 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
           float focusArc = 0.35 + 0.65
             * smoothstep(-0.35, 0.72, sin(focusAngle * 2.0 + vSeed * 0.21));
           float focusSignal = focusRing * focusArc * vFocus * (1.0 - vDeathRamp);
-          vec3 focusGold = vec3(0.86, 0.61, 0.25);
-          vec3 focusCyan = vec3(0.10, 0.82, 1.00);
-          vec3 focusTint = mix(focusGold, focusCyan, hash11(vSeed + 3.1));
+          // ONE tint, and it is the galaxy's own gold. The ring used to be
+          // gold or cyan by hash11(vSeed) — a coin flip on the cell's id, so
+          // the same gesture answered in two different colours depending on
+          // which cell the reader had picked, and one of the two was the peer
+          // plane's cyan on a surface that is not the peer plane. Interaction
+          // feedback is the instrument speaking, and an instrument says the
+          // same thing the same way every time.
+          vec3 focusTint = vec3(${CONSENSUS_BRAID_PALETTE.gold.join(', ')});
           col += focusTint * focusSignal * 1.35;
           a += focusSignal * 0.62;
         }
