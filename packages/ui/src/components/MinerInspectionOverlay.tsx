@@ -24,6 +24,7 @@ import {
   useSceneInspectionLayoutSide,
   type SceneInspectionHandles,
 } from './sceneInspection';
+import { useHudOcclusionRects } from './hudOcclusion';
 
 /** The shortest of the four dialects — a header, two chain facts, the declared
  *  build with its join, and one honesty line — so it places by its own small
@@ -77,7 +78,14 @@ export function MinerInspectionAnchor({
   position: Vec3;
   handles: MinerInspectionHandles;
 }) {
-  return <SceneInspectionAnchor position={position} handles={handles} />;
+  const obstacles = useHudOcclusionRects();
+  return (
+    <SceneInspectionAnchor
+      position={position}
+      handles={handles}
+      obstacles={obstacles}
+    />
+  );
 }
 
 export interface MinerInspectionOverlayProps {
@@ -154,6 +162,7 @@ export default function MinerInspectionOverlay({
   return (
     <div
       data-miner-probe-layer
+      data-scene-inspection-layer="true"
       style={INSPECTION_LAYER_STYLE}
     >
       <div

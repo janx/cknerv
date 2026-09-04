@@ -10,6 +10,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { CELL_CLICK_MAX_POINTER_DELTA_PX } from '../derives/cellInteraction.derive';
 import { HUD_COLORS, rgba } from './hud/hudTheme';
+import type { HudOcclusionRect } from './hudOcclusion';
 
 /**
  * Chassis shared by every scene-tethered inspector. A floating card is two
@@ -56,6 +57,92 @@ const INSPECTOR_FRAME_QUANTUM_PX = 0.5;
  * signature can be built without a `toFixed` allocation per axis per frame. */
 function inspectorFrameBucket(value: number): number {
   return Math.round(value / INSPECTOR_FRAME_QUANTUM_PX);
+}
+
+/**
+ * A box the card may not land on, in the same viewport coordinates the anchor
+ * projects into. The HUD's panels are the whole population of these today; the
+ * solver asks nothing of them but their edges, so it is the reader's job to
+ * decide what counts as in the way (see `useHudOcclusionRects`).
+ */
+export type SceneInspectorObstacle = HudOcclusionRect;
+
+/** Shared empty reading, so a solve with no obstacles allocates nothing and
+ *  every call site that has none passes the same array. */
+const NO_OBSTACLES: readonly SceneInspectorObstacle[] = [];
+
+/** Does a card box and an obstacle share any area? Touching edges do not: a
+ *  card whose right edge is exactly the rail's left edge is beside it, not on
+ *  it, and that is the position the clamp below aims for. */
+function overlapsObstacle(
+  left: number,
+  right: number,
+  top: number,
+  bottom: number,
+  obstacle: SceneInspectorObstacle,
+): boolean {
+  return left < obstacle.right
+    && right > obstacle.left
+    && top < obstacle.bottom
+    && bottom > obstacle.top;
+}
+
+/**
+ * Smallest x at or right of `from` where a `width`-wide card spanning
+ * `[top, bottom]` clears every obstacle — the obstacle's own right edge, when
+ * one is in the way.
+ *
+ * Monotone by construction: a round only ever moves x to an obstacle's right
+ * edge that is further right than x already is, and there are at most as many
+ * distinct right edges as obstacles, so the fixpoint settles in at most that
+ * many rounds. Index loops and scalars only: this runs inside the frame loop,
+ * where nothing may allocate.
+ */
+function settleCardRight(
+  from: number,
+  width: number,
+  top: number,
+  bottom: number,
+  obstacles: readonly SceneInspectorObstacle[],
+): number {
+  let x = from;
+  for (let round = 0; round <= obstacles.length; round += 1) {
+    let moved = false;
+    for (let index = 0; index < obstacles.length; index += 1) {
+      const obstacle = obstacles[index];
+      if (obstacle.right > x && overlapsObstacle(x, x + width, top, bottom, obstacle)) {
+        x = obstacle.right;
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+  return x;
+}
+
+/** The mirror of {@link settleCardRight}: largest x at or left of `from` where
+ *  the card clears every obstacle, landing on an obstacle's left edge. */
+function settleCardLeft(
+  from: number,
+  width: number,
+  top: number,
+  bottom: number,
+  obstacles: readonly SceneInspectorObstacle[],
+): number {
+  let x = from;
+  for (let round = 0; round <= obstacles.length; round += 1) {
+    let moved = false;
+    for (let index = 0; index < obstacles.length; index += 1) {
+      const obstacle = obstacles[index];
+      const landing = obstacle.left - width;
+      if (landing < x && overlapsObstacle(x, x + width, top, bottom, obstacle)) {
+        x = landing;
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+  return x;
 }
 
 export type SceneInspectorPlacementSide = 'left' | 'right' | 'above' | 'below';
@@ -370,6 +457,7 @@ export function sceneInspectorPlacement({
   preferredY,
   preferredX,
   heldSide,
+  obstacles = NO_OBSTACLES,
 }: {
   anchorX: number;
   anchorY: number;
@@ -393,11 +481,16 @@ export function sceneInspectorPlacement({
    * an option and the roomier side has not pulled ahead by the hysteresis
    * margin; a held side from the other family never applies. */
   heldSide?: SceneInspectorPlacementSide | null;
+  /**
+   * Boxes the card may not land on, in viewport coordinates — the HUD's own
+   * panels. They are not a second viewport edge: an obstacle only counts on
+   * the rows the card actually occupies, so the DAO panel low on the left rail
+   * is in the way of a card hanging low and irrelevant to one placed high.
+   * Empty is the honest default — a caller with no reading of the HUD gets
+   * exactly the geometry this solver had before it could see one.
+   */
+  obstacles?: readonly SceneInspectorObstacle[];
 }): SceneInspectorPlacement {
-  const roomRight = viewportWidth - edge - anchorX;
-  const roomLeft = anchorX - edge;
-  const canRight = roomRight >= panelWidth + gap;
-  const canLeft = roomLeft >= panelWidth + gap;
   const minY = safeTop - anchorY;
   const maxY = viewportHeight - edge - panelHeight - anchorY;
   const besideY = typeof preferredY === 'number'
@@ -407,14 +500,45 @@ export function sceneInspectorPlacement({
     ? Math.max(minY, Math.min(maxY, besideY))
     : minY;
 
+  // The beside family in obstacle terms. Each side's card is pushed off every
+  // panel it would land on, then judged by the SLACK it has left over against
+  // the viewport edge it grows toward. With no obstacles a settled card sits
+  // exactly where `gap` puts it and the slack is `room − panelWidth − gap` on
+  // both sides, so `slack ≥ 0` is the old `room ≥ panelWidth + gap` and the
+  // difference of the two slacks is the old `roomRight − roomLeft` to the
+  // pixel: an unobstructed screen chooses, ties and hysteretically holds
+  // exactly as it always did. What is new is that a rail eats the room it
+  // covers, and the card that still fits lands ON the rail's edge rather than
+  // `gap` from an anchor the rail sits between.
+  const besideTop = anchorY + y;
+  const besideBottom = besideTop + panelHeight;
+  const rightX = settleCardRight(
+    anchorX + gap,
+    panelWidth,
+    besideTop,
+    besideBottom,
+    obstacles,
+  );
+  const leftX = settleCardLeft(
+    anchorX - gap - panelWidth,
+    panelWidth,
+    besideTop,
+    besideBottom,
+    obstacles,
+  );
+  const slackRight = viewportWidth - edge - (rightX + panelWidth);
+  const slackLeft = leftX - edge;
+  const canRight = slackRight >= 0;
+  const canLeft = slackLeft >= 0;
+
   if (canRight || canLeft) {
-    const roomier = canRight && (!canLeft || roomRight >= roomLeft)
+    const roomier = canRight && (!canLeft || slackRight >= slackLeft)
       ? 'right'
       : 'left';
     const side = settleInspectorSide(
       roomier,
       roomier === 'right' ? 'left' : 'right',
-      Math.abs(roomRight - roomLeft),
+      Math.abs(slackRight - slackLeft),
       // A side the card no longer fits on is not a side it may be held on.
       roomier === 'right' ? canLeft : canRight,
       heldSide,
@@ -422,7 +546,7 @@ export function sceneInspectorPlacement({
     );
     return {
       side,
-      x: side === 'right' ? gap : -panelWidth - gap,
+      x: (side === 'right' ? rightX : leftX) - anchorX,
       y,
     };
   }
@@ -447,15 +571,45 @@ export function sceneInspectorPlacement({
   const stackedX = typeof preferredX === 'number'
     ? preferredX
     : -panelWidth / 2;
-  const x = Math.max(minX, Math.min(maxX, stackedX));
+  const preferredStackedX = Math.max(minX, Math.min(maxX, stackedX));
   const stackedY = side === 'below' ? gap : -panelHeight - gap;
-  return {
-    side,
-    x,
-    y: minY <= maxY
-      ? Math.max(minY, Math.min(maxY, stackedY))
-      : minY,
-  };
+  const placedY = minY <= maxY
+    ? Math.max(minY, Math.min(maxY, stackedY))
+    : minY;
+  // x is this family's free axis, so an obstacle is answered by sliding along
+  // it rather than by changing sides. Both directions are tried from the
+  // preference and the shorter honest move wins; a direction that runs out of
+  // viewport is not a move at all. When neither direction clears — a card as
+  // wide as the hole between two rails — the preference stands and the card
+  // knowingly overlaps, which is the case A3's dim exists for. Without
+  // obstacles both settles are no-ops and this is the clamp it always was.
+  const stackedTop = anchorY + placedY;
+  const stackedBottom = stackedTop + panelHeight;
+  const pushedRight = settleCardRight(
+    anchorX + preferredStackedX,
+    panelWidth,
+    stackedTop,
+    stackedBottom,
+    obstacles,
+  );
+  const pushedLeft = settleCardLeft(
+    anchorX + preferredStackedX,
+    panelWidth,
+    stackedTop,
+    stackedBottom,
+    obstacles,
+  );
+  const rightFits = pushedRight + panelWidth <= viewportWidth - edge;
+  const leftFits = pushedLeft >= edge;
+  const rightMove = pushedRight - anchorX - preferredStackedX;
+  const leftMove = anchorX + preferredStackedX - pushedLeft;
+  let x = preferredStackedX;
+  if (rightFits && (!leftFits || rightMove <= leftMove)) {
+    x = pushedRight - anchorX;
+  } else if (leftFits) {
+    x = pushedLeft - anchorX;
+  }
+  return { side, x, y: placedY };
 }
 
 /**
@@ -476,6 +630,7 @@ export function resolveStickyInspectorPlacement(
   anchorY: number,
   viewportWidth: number,
   viewportHeight: number,
+  obstacles: readonly SceneInspectorObstacle[] = NO_OBSTACLES,
 ): SceneInspectorPlacement {
   const lock = handles.placementLock;
   const placement = sceneInspectorPlacement({
@@ -488,6 +643,7 @@ export function resolveStickyInspectorPlacement(
     preferredY: lock.y ?? undefined,
     preferredX: lock.x ?? undefined,
     heldSide: lock.side,
+    obstacles,
   });
   const family: SceneInspectorPlacementFamily =
     placement.side === 'left' || placement.side === 'right'
@@ -700,11 +856,19 @@ export function commitInspectionFrame(
 export function SceneInspectionAnchor({
   position,
   handles,
+  obstacles,
   onCardFrame,
   onCardHidden,
 }: {
   position: [number, number, number];
   handles: SceneInspectionHandles;
+  /**
+   * The HUD boxes this card must compose around, from
+   * `useHudOcclusionRects()`. Read in the frame loop, so the reading has to be
+   * one array kept current in place — a fresh array per measurement would be
+   * a new prop, a re-render of the dialect, and nothing gained.
+   */
+  obstacles?: readonly SceneInspectorObstacle[];
   /**
    * Dialect hook for screen-space channels of its own, handed the projected
    * anchor point and the chosen placement while the entity is on screen. It
@@ -754,6 +918,7 @@ export function SceneInspectionAnchor({
       anchorY,
       size.width,
       size.height,
+      obstacles,
     );
     setInspectionLayoutSide(handles, placement.side);
     // Ahead of the write gate on purpose: the dialect's own screen-space

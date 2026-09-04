@@ -53,6 +53,7 @@ import {
 } from '../../derives/streamHealth.derive';
 import StreamHealthBanner from './StreamHealthBanner';
 import { subscribeHudClock, useHudClockMs, useHudClockSelector } from './hudClock';
+import { invalidateHudOcclusionRects } from '../hudOcclusion';
 
 // We're "syncing" (catching up, benign) if the node is in IBD, our tip trails the
 // network best-known by more than a couple of blocks, or most peers are ahead of us.
@@ -537,6 +538,29 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
   // persist the across-render baselines after each commit
   useEffect(() => { prevReorgs.current = chain.reorgs; }, [chain.reorgs]);
   useEffect(() => { prevCond.current = condition; }, [condition]);
+
+  // Tell the inspector's occlusion reader that the HUD's own boxes moved.
+  // Resize and visibility it can see for itself; a React commit it cannot —
+  // nothing in the DOM announces one, and the alternative is polling the HUD
+  // with `getBoundingClientRect` forever for the handful of moments a panel
+  // actually moves. The dependency list is exactly what changes the set of
+  // panels or where they start: which modules are on stage, whether the rails
+  // are narrow or the top bar compact, how far down the content begins (a
+  // banner claiming the top slot moves every panel under it), and the
+  // count-off, which brings the panels in one at a time. The reader is
+  // rAF-coalesced and does nothing at all while no card is open, so a burst of
+  // these costs one measurement or none.
+  useEffect(() => {
+    invalidateHudOcclusionRects();
+  }, [
+    panelVisibility,
+    daoPanelAvailable,
+    narrowRail,
+    compactTopBar,
+    contentTop,
+    railScrolls,
+    bootLit,
+  ]);
 
   return (
     <div

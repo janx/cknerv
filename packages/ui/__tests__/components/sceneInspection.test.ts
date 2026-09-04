@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   commitInspectionCardSize,
@@ -528,5 +531,225 @@ describe('commitInspectionFrame', () => {
     ]).toEqual(pinned);
     expect(leader.style.translate).toBe('0px 204px');
     expect(dot.style.translate).toBe('0px 200px');
+  });
+});
+
+/**
+ * The HUD as the solver now sees it. A rail is a box in viewport coordinates
+ * and nothing more; what makes these the interesting boxes is that they are
+ * the shape the real HUD has — two fixed columns down the sides with a hole
+ * between them, and the card measured against a hole rather than a viewport.
+ *
+ * On the 1,400-wide stage below the band a 400×300 card occupies is
+ * [250, 550] (anchor y 400, centred, clamped by nothing), so a rail that runs
+ * the full height crosses it and one that starts at 700 does not.
+ */
+const OBSTRUCTED = {
+  anchorX: 700,
+  anchorY: 400,
+  panelWidth: 400,
+  panelHeight: 300,
+  viewportWidth: 1400,
+  viewportHeight: 900,
+};
+/** Full-height left column, the shape CKB·01's cluster has. */
+const LEFT_RAIL = { left: 0, top: 0, right: 300, bottom: 900 };
+/** Full-height right column, the shape CELL·03 + PEER·02 have. */
+const RIGHT_RAIL = { left: 1100, top: 0, right: 1400, bottom: 900 };
+/** Same column, but only the bottom third of it — DAO·05 sitting low on a tall
+ *  rail, level with nothing the card occupies. */
+const LOW_LEFT_PANEL = { left: 0, top: 700, right: 300, bottom: 900 };
+/** A panel standing clear of the left edge, so a card pushed off it still has
+ *  somewhere to land — the geometry that makes a lead measurable rather than
+ *  binary. */
+const NEAR_LEFT_PANEL = { left: 900, top: 0, right: 1000, bottom: 900 };
+
+describe('sceneInspectorPlacement obstacles', () => {
+  it('places exactly as before when it is given none', () => {
+    // The equivalence the whole change rests on: with an empty reading the
+    // settled position is `gap` from the anchor and the slack is
+    // `room − panelWidth − gap`, so every fit test, every roomier comparison
+    // and every hysteresis lead is the arithmetic this solver already had.
+    expect(sceneInspectorPlacement({ ...OBSTRUCTED, obstacles: [] }))
+      .toEqual(sceneInspectorPlacement(OBSTRUCTED));
+    expect(sceneInspectorPlacement({ ...BESIDE, obstacles: [] }))
+      .toEqual(sceneInspectorPlacement(BESIDE));
+    expect(sceneInspectorPlacement({ ...STACKED, obstacles: [] }))
+      .toEqual(sceneInspectorPlacement(STACKED));
+  });
+
+  it('sends the card away from a panel on the right', () => {
+    // Unobstructed this is a tie the solver breaks rightward. The rail takes
+    // the whole right side away — a 400-wide card pushed past x 1100 ends at
+    // 1800, well outside a 1,400px stage — so left is not merely roomier, it
+    // is the only side there is.
+    expect(sceneInspectorPlacement(OBSTRUCTED).side).toBe('right');
+    expect(sceneInspectorPlacement({ ...OBSTRUCTED, obstacles: [RIGHT_RAIL] }))
+      .toEqual({ side: 'left', x: -442, y: -150 });
+  });
+
+  it('sends the card away from a panel on the left', () => {
+    expect(sceneInspectorPlacement({ ...OBSTRUCTED, obstacles: [LEFT_RAIL] }))
+      .toEqual({ side: 'right', x: 42, y: -150 });
+  });
+
+  it('clamps the card to a panel edge the anchor is standing behind', () => {
+    // The case B-3 measured at 1920: the entity projects UNDER the left rail,
+    // so the card placed `gap` to its right still starts inside the rail. The
+    // beside room past the rail allows the card, so it lands ON the rail's
+    // edge — x 100 rather than 42 — instead of printing over its value column.
+    expect(sceneInspectorPlacement({
+      ...OBSTRUCTED,
+      anchorX: 200,
+      obstacles: [LEFT_RAIL],
+    })).toEqual({ side: 'right', x: 100, y: -150 });
+    // And the room it keeps is the room past the rail: unobstructed the card
+    // would sit 58px further left.
+    expect(sceneInspectorPlacement({ ...OBSTRUCTED, anchorX: 200 }).x).toBe(42);
+  });
+
+  it('reads a panel only on the rows the card occupies', () => {
+    // The same column, low instead of full height. The card's band is
+    // [250, 550] and the panel starts at 700, so it is not in the way of
+    // anything and the card places as if the HUD were not there.
+    expect(sceneInspectorPlacement({
+      ...OBSTRUCTED,
+      anchorX: 200,
+      obstacles: [LOW_LEFT_PANEL],
+    })).toEqual({ side: 'right', x: 42, y: -150 });
+    // A panel taller than the card's band still blocks it: containment is
+    // overlap, and the full-height rail is the case that matters most.
+    expect(sceneInspectorPlacement({
+      ...OBSTRUCTED,
+      anchorX: 200,
+      obstacles: [LEFT_RAIL],
+    }).x).toBe(100);
+  });
+
+  it('falls to the stacked family when both sides are panelled', () => {
+    // A card as wide as this one cannot clear either rail from an anchor in
+    // the middle of the hole, which is precisely the 1920 geometry: card +
+    // gap 898 against a 1,190px hole with the anchor centred in it.
+    expect(sceneInspectorPlacement({
+      ...OBSTRUCTED,
+      panelWidth: 700,
+      anchorX: 400,
+      obstacles: [LEFT_RAIL, RIGHT_RAIL],
+    }).side).toBe('below');
+  });
+
+  it('slides the stacked card along the hole instead of over a rail', () => {
+    // Stacked x is the free axis, so a panel is answered by sliding: the
+    // 700-wide card prefers to centre at 50..750, which lies on the left
+    // rail, and settles on the rail's edge at 300..1000 — inside the hole,
+    // touching neither column.
+    const placement = sceneInspectorPlacement({
+      ...OBSTRUCTED,
+      panelWidth: 700,
+      anchorX: 400,
+      obstacles: [LEFT_RAIL, RIGHT_RAIL],
+    });
+    expect(placement).toEqual({ side: 'below', x: -100, y: 42 });
+    expect(400 + placement.x).toBe(LEFT_RAIL.right);
+    expect(400 + placement.x + 700).toBeLessThanOrEqual(RIGHT_RAIL.left);
+    // The rails are what drove the card below its anchor at all: on a bare
+    // 1,400px stage a 700-wide card still fits beside it.
+    expect(sceneInspectorPlacement({
+      ...OBSTRUCTED,
+      panelWidth: 700,
+      anchorX: 400,
+    }).side).toBe('right');
+  });
+
+  it('keeps a held side while a panel leaves the two equally roomy', () => {
+    // A 2,142px stage, anchor at 1200, a panel at 900–1000. The left card
+    // cannot sit at 758 any more and settles on the panel's edge at 500 — but
+    // that is exactly as far from the left edge (486) as the right card is
+    // from the right one, so the lead is zero against the 100px margin a
+    // 400-wide card buys and a card already living on the left stays there.
+    // The obstacle is biting; it just is not an argument for moving.
+    expect(sceneInspectorPlacement({
+      ...OBSTRUCTED,
+      viewportWidth: 2142,
+      anchorX: 1200,
+      heldSide: 'left',
+      obstacles: [NEAR_LEFT_PANEL],
+    })).toEqual({ side: 'left', x: -700, y: -150 });
+  });
+
+  it('gives way once a panel makes the lead clear the margin', () => {
+    // The same anchor and panel on a 2,400px stage: the right side now has
+    // 744px of slack to the left side's 486, a 258px lead the margin does not
+    // cover, so the held side retires.
+    expect(sceneInspectorPlacement({
+      ...OBSTRUCTED,
+      viewportWidth: 2400,
+      anchorX: 1200,
+      heldSide: 'left',
+      obstacles: [NEAR_LEFT_PANEL],
+    })).toEqual({ side: 'right', x: 42, y: -150 });
+    // Without the panel the same stage is a dead tie and the card holds: the
+    // panel is the whole of the lead.
+    expect(sceneInspectorPlacement({
+      ...OBSTRUCTED,
+      viewportWidth: 2400,
+      anchorX: 1200,
+      heldSide: 'left',
+    }).side).toBe('left');
+  });
+
+  it('abandons a held side a panel has taken outright', () => {
+    expect(sceneInspectorPlacement({
+      ...OBSTRUCTED,
+      heldSide: 'right',
+      obstacles: [RIGHT_RAIL],
+    }).side).toBe('left');
+  });
+
+  it('carries the reading through the sticky solve', () => {
+    const handles = makeHandles();
+    // The 500×300 dialect default against the same right rail: 42 unobstructed,
+    // the other side once the rail is in the reading.
+    expect(resolveStickyInspectorPlacement(handles, 700, 400, 1400, 900).side)
+      .toBe('right');
+    resetInspectionPlacementLock(handles);
+    expect(resolveStickyInspectorPlacement(
+      handles, 700, 400, 1400, 900, [RIGHT_RAIL],
+    ).side).toBe('left');
+  });
+});
+
+/**
+ * Every dialect that tethers a card to the scene, by the file it lives in.
+ * The chassis takes the reading as an optional prop — a solver told nothing
+ * about the HUD has to place as it always did, which is what keeps the
+ * equivalence above honest — so nothing but this list makes the five cards
+ * actually ask for it. A sixth dialect that forgets is a card back on top of
+ * CKB·01 with every test in this file still green.
+ */
+const INSPECTION_DIALECTS = [
+  'CellInspectionOverlay',
+  'PeerInspectionOverlay',
+  'NodeInspectionOverlay',
+  'MinerInspectionOverlay',
+  'SightedInspectionOverlay',
+] as const;
+
+const COMPONENTS_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../src/components');
+
+describe('inspection dialects read the HUD', () => {
+  it.each(INSPECTION_DIALECTS)('%s hands the anchor the occlusion rects', (dialect) => {
+    const source = readFileSync(join(COMPONENTS_DIR, `${dialect}.tsx`), 'utf8');
+
+    expect(source).toContain('useHudOcclusionRects');
+    expect(source).toMatch(/<SceneInspectionAnchor[^>]*\n\s*obstacles=\{obstacles\}/);
+  });
+
+  it.each(INSPECTION_DIALECTS)('%s marks its layer so the card is not its own obstacle', (dialect) => {
+    // The trace ledger inside the cell card carries `data-hud-occlusion`; the
+    // marker on the layer is what keeps a card from fleeing its own contents.
+    const source = readFileSync(join(COMPONENTS_DIR, `${dialect}.tsx`), 'utf8');
+
+    expect(source).toContain('data-scene-inspection-layer="true"');
   });
 });

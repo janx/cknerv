@@ -25,6 +25,7 @@ import {
   useSceneInspectionLayoutSide,
   type SceneInspectionHandles,
 } from './sceneInspection';
+import { useHudOcclusionRects } from './hudOcclusion';
 
 /** The shortest of the three dialects — a header, three roster facts, the
  *  dossier and one honesty line — so it places by its own small box until the
@@ -68,7 +69,14 @@ export function SightedInspectionAnchor({
   position: Vec3;
   handles: SightedInspectionHandles;
 }) {
-  return <SceneInspectionAnchor position={position} handles={handles} />;
+  const obstacles = useHudOcclusionRects();
+  return (
+    <SceneInspectionAnchor
+      position={position}
+      handles={handles}
+      obstacles={obstacles}
+    />
+  );
 }
 
 export interface SightedInspectionOverlayProps {
@@ -145,6 +153,7 @@ export default function SightedInspectionOverlay({
   return (
     <div
       data-sighted-probe-layer
+      data-scene-inspection-layer="true"
       style={INSPECTION_LAYER_STYLE}
     >
       <div

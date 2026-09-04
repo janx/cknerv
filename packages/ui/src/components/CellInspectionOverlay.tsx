@@ -32,6 +32,7 @@ import {
   type SceneInspectionHandles,
   type SceneInspectorPlacement,
 } from './sceneInspection';
+import { useHudOcclusionRects } from './hudOcclusion';
 
 const DEFAULT_PANEL_WIDTH_PX = 728;
 // Estimated dossier card at open (the analysis column, masthead included,
@@ -139,11 +140,13 @@ export function CellInspectionAnchor({
 }) {
   // The braid inset must not draw into a hidden or unmounted card.
   useEffect(() => () => clearCellPortraitCardOrigin(), []);
+  const obstacles = useHudOcclusionRects();
 
   return (
     <SceneInspectionAnchor
       position={cell.pos_seed}
       handles={handles}
+      obstacles={obstacles}
       onCardFrame={publishCellPortraitOrigin}
       onCardHidden={clearCellPortraitCardOrigin}
     />
@@ -157,10 +160,20 @@ export type CellInspectionOverlayProps = CellDetailPanelProps & {
 /**
  * Cell-centred detail constellation — the DOM half. The selected scene Cell
  * remains visually intact; one screen-space connector makes it the explicit
- * source of the decoded windows, flips around viewport edges, and avoids both
- * fixed rails. Rendered as a sibling of the Canvas: pointer events inside the
- * card can never reach the R3F root, so no stopPropagation shims are needed
- * and onPointerMissed only ever sees genuine scene clicks.
+ * source of the decoded windows and flips around viewport edges.
+ *
+ * It also keeps clear of the HUD's panels, which for a long time this comment
+ * claimed and the solver had no way to do: the placement rule knew the
+ * viewport edges and the safe top and nothing else, so at 1920 the card landed
+ * 209 px into CKB·01 and hid its whole value column. The rails are obstacles
+ * to the solver now (`useHudOcclusionRects` → `sceneInspectorPlacement`), and
+ * the claim is only as true as the room allows: a card wider than the gap
+ * between two panels still has to land somewhere, and where it lands on one it
+ * dims it rather than printing through it.
+ *
+ * Rendered as a sibling of the Canvas: pointer events inside the card can
+ * never reach the R3F root, so no stopPropagation shims are needed and
+ * onPointerMissed only ever sees genuine scene clicks.
  */
 function CellInspectionOverlay(props: CellInspectionOverlayProps) {
   const {
@@ -233,6 +246,7 @@ function CellInspectionOverlay(props: CellInspectionOverlayProps) {
   return (
     <div
       data-cell-inspection-layer
+      data-scene-inspection-layer="true"
       style={INSPECTION_LAYER_STYLE}
     >
       <div

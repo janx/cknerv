@@ -21,6 +21,7 @@ import {
   useSceneInspectionLayoutSide,
   type SceneInspectionHandles,
 } from './sceneInspection';
+import { useHudOcclusionRects } from './hudOcclusion';
 
 /** The self probe is a shorter stack than the link probe — three plates and
  *  no compass — so it places by its own box until the card is measured. */
@@ -62,7 +63,14 @@ export function NodeInspectionAnchor({
   position: Vec3;
   handles: NodeInspectionHandles;
 }) {
-  return <SceneInspectionAnchor position={position} handles={handles} />;
+  const obstacles = useHudOcclusionRects();
+  return (
+    <SceneInspectionAnchor
+      position={position}
+      handles={handles}
+      obstacles={obstacles}
+    />
+  );
 }
 
 export interface NodeInspectionOverlayProps {
@@ -134,6 +142,7 @@ export default function NodeInspectionOverlay({
   return (
     <div
       data-node-probe-layer
+      data-scene-inspection-layer="true"
       style={INSPECTION_LAYER_STYLE}
     >
       <div

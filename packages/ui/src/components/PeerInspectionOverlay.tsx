@@ -29,6 +29,7 @@ import {
   useSceneInspectionLayoutSide,
   type SceneInspectionHandles,
 } from './sceneInspection';
+import { useHudOcclusionRects } from './hudOcclusion';
 
 /** The probe is a readout beside its node, not a specimen scan: it places by
  *  the card's own 340px column and a typical plate stack until measured. */
@@ -69,7 +70,14 @@ export function PeerInspectionAnchor({
   position: Vec3;
   handles: PeerInspectionHandles;
 }) {
-  return <SceneInspectionAnchor position={position} handles={handles} />;
+  const obstacles = useHudOcclusionRects();
+  return (
+    <SceneInspectionAnchor
+      position={position}
+      handles={handles}
+      obstacles={obstacles}
+    />
+  );
 }
 
 export interface PeerInspectionOverlayProps {
@@ -158,6 +166,7 @@ export default function PeerInspectionOverlay({
   return (
     <div
       data-peer-probe-layer
+      data-scene-inspection-layer="true"
       style={INSPECTION_LAYER_STYLE}
     >
       <div
