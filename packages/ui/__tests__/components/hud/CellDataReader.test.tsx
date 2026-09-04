@@ -17,8 +17,10 @@ import CellDataReader, {
   type CellDataReaderFocus,
 } from '../../../src/components/hud/CellDataReader';
 import {
+  READER_MAX_VISIBLE_ROWS,
   READER_OVERSCAN_ROWS,
   READER_VISIBLE_ROWS,
+  readerRowsUnderScan,
 } from '../../../src/derives/cellDataReader.derive';
 import { REVEAL_GHOST_OPACITY } from '../../../src/components/hud/primitives';
 
@@ -541,6 +543,90 @@ describe('CellDataReader', () => {
     fireEvent.click(copy);
     await vi.waitFor(() => expect(copy.textContent).toBe('BLOCKED'));
     expect(container.querySelector('[data-cell-data-reader-toast]')).toBeNull();
+  });
+
+  // The user's D-7 ruling of 2026-09-05: the framed box ends at the last row it
+  // has bytes for, and the plate's remainder under it is plain plate ground.
+  // Before it, a sixteen-byte Cell drew one row inside a twenty-seven-row
+  // frame — measured live, 7 of the box's 367 pixel rows carried ink.
+  describe('the box ends at the last row', () => {
+    const mapOf = (container: HTMLElement) => container
+      .querySelector('[data-cell-data-reader-map]');
+
+    it('gives a sixteen-byte Cell six rows and no map', () => {
+      // One row of payload, the floor's six rows of box, and a scale drawing
+      // of one segment over one row is a solid bar saying nothing.
+      const { container } = reader({
+        bytes: bytesOf(16),
+        totalBytes: 16,
+        segments: [segment('amount', 0, 16, '1000')],
+        visibleRows: 27,
+      });
+
+      expect(dumpOf(container).style.height).toBe(`${6 * READER_ROW_HEIGHT_PX}px`);
+      expect(mapOf(container)).toBeNull();
+      // …and no track reserved for the map it does not draw.
+      expect((dumpOf(container).parentElement as HTMLElement).style.gridTemplateColumns)
+        .toBe('minmax(0,1fr)');
+    });
+
+    it('gives a 300-byte Cell nineteen rows and draws its map', () => {
+      const { container } = reader({
+        bytes: bytesOf(300),
+        totalBytes: 300,
+        segments: [segment('head', 0, 32, 'h'), segment('body', 32, 300, 'b')],
+        visibleRows: 27,
+      });
+
+      expect(dumpOf(container).style.height).toBe(`${19 * READER_ROW_HEIGHT_PX}px`);
+      expect(mapOf(container)).not.toBeNull();
+      expect((mapOf(container) as HTMLElement).style.height)
+        .toBe(`${19 * READER_ROW_HEIGHT_PX}px`);
+    });
+
+    it('keeps the plate\'s room as the box\'s ceiling, and the 64-row valve behind it', () => {
+      // A 37 KB spore against a plate with room for 27 rows takes 27, and the
+      // ceiling in `readerRowsUnderScan` is what stops a taller plate ever
+      // asking for two thousand.
+      const { container } = reader({ visibleRows: 27 });
+
+      expect(dumpOf(container).style.height).toBe(`${27 * READER_ROW_HEIGHT_PX}px`);
+      expect(root(container).getAttribute('data-cell-data-reader-rows')).toBe('2333');
+      expect(readerRowsUnderScan(4000, 288, 62, READER_ROW_HEIGHT_PX))
+        .toBe(READER_MAX_VISIBLE_ROWS);
+    });
+
+    it('draws the map for a payload the narrow box cannot hold', () => {
+      // The map is the scrollbar as well as the drawing (R2-4). Under the
+      // narrow card the box is six rows, so a ten-row Cell genuinely scrolls
+      // — and a dump that scrolls with its native bar hidden and no map beside
+      // it would have no way to say it has more.
+      const { container } = reader({
+        bytes: bytesOf(160),
+        totalBytes: 160,
+        segments: [segment('body', 0, 160, 'b')],
+        visibleRows: 6,
+      });
+
+      expect(dumpOf(container).style.height).toBe(`${6 * READER_ROW_HEIGHT_PX}px`);
+      expect(mapOf(container)).not.toBeNull();
+    });
+
+    it('puts the foot line under the last row, not under the plate', () => {
+      // The foot is the reader's one line and it follows the frame: 4 px under
+      // the box's bottom border, wherever the box ends.
+      const { container } = reader({
+        bytes: bytesOf(16),
+        totalBytes: 16,
+        segments: [segment('amount', 0, 16, '1000')],
+        visibleRows: 27,
+      });
+      const box = dumpOf(container).parentElement as HTMLElement;
+      const foot = footOf(container);
+
+      expect(foot.previousElementSibling).toBe(box);
+      expect(foot.style.marginTop).toBe('4px');
+    });
   });
 
   it('declares the width the card spends on it', () => {

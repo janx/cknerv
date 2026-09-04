@@ -16,10 +16,12 @@ import {
   formatReaderInteger,
   formatReaderOffset,
   inspectSelection,
+  readerBoxRows,
   readerByte,
   readerByteMapBands,
   readerKeyStep,
   readerRowWindow,
+  readerShowsMap,
   segmentColorSlots,
 } from '../../derives/cellDataReader.derive';
 import type { CellOutputDataPhase } from '../../hooks/useCellOutputData';
@@ -74,13 +76,13 @@ import {
 // Three constraints shape every line of it, and all three come from the card
 // rather than from the reader:
 //
-//   MOUNT AT FINAL GEOMETRY. The dump's height is `visibleRows × rowHeight`
-//   for a Cell of eight bytes and for one of 37,314, and rows past the held
-//   prefix stand as ghosts until the node answers and then fill IN PLACE.
-//   Nothing under a reader may move while it is being read.
+//   MOUNT AT FINAL GEOMETRY. The dump's height is decided by the payload and
+//   the room, once, before anything is drawn — `readerBoxRows` — and rows past
+//   the held prefix stand as ghosts until the node answers and then fill IN
+//   PLACE. Nothing under a reader may move while it is being read.
 //
-//   THE NUMBERS ARE HANDED IN. `visibleRows` and the row height are props and
-//   constants, never measurements: jsdom lays nothing out, and a virtualiser
+//   THE NUMBERS ARE HANDED IN. The room the plate leaves and the row height
+//   are props and constants, never measurements: jsdom lays nothing out, and a virtualiser
 //   that asked `getBoundingClientRect` which row it was on could not be driven
 //   by a test at all. The only layout fact this file reads back is
 //   `scrollTop`, which is a scroll position rather than a measurement.
@@ -323,6 +325,9 @@ export interface CellDataReaderProps {
   message: string | null;
   dataHash: string | null;
   live: boolean | null;
+  /** Rows of ROOM the analysis plate leaves under the CELL SCAN square — a
+   *  ceiling, not the box's height. The box takes the payload's own height
+   *  inside it (`readerBoxRows`). */
   visibleRows: number;
   /** A segment row of the DATA cluster was clicked. Null means nothing is
    *  being pointed at, which is also the state a byte click returns it to. */
@@ -360,14 +365,22 @@ export default function CellDataReader({
   const [copied, setCopied] = useState<'COPIED' | 'BLOCKED' | null>(null);
 
   const rowHeight = READER_ROW_HEIGHT_PX;
-  const viewHeight = visibleRows * rowHeight;
+  // The box ends at the last row, and `visibleRows` is the ROOM the analysis
+  // plate leaves rather than the height the frame takes (the user's D-7 ruling
+  // of 2026-09-05). Everything below reads the box: the viewport's height, the
+  // window of rows mounted in it, the map's height, the page a key step moves.
+  // The plate's remainder under the frame is plain plate ground — the zone
+  // still stretches to the plate's bottom, the frame no longer does.
+  const boxRows = readerBoxRows(totalBytes, visibleRows);
+  const viewHeight = boxRows * rowHeight;
   const { firstRow, lastRow, rowCount } = readerRowWindow(
     scrollTop,
     rowHeight,
     totalBytes,
-    visibleRows,
+    boxRows,
     READER_OVERSCAN_ROWS,
   );
+  const showsMap = readerShowsMap(totalBytes, boxRows);
 
   const slots = useMemo(() => segmentColorSlots(segments), [segments]);
   const segmentIndex = useMemo(
@@ -471,7 +484,7 @@ export default function CellDataReader({
   // ——— Keys ————————————————————————————————————————————————————————————
 
   const onDumpKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    const step = readerKeyStep(event.key, visibleRows);
+    const step = readerKeyStep(event.key, boxRows);
     if (step === null) return;
     event.preventDefault();
     const from = selection?.caret ?? 0;
@@ -915,9 +928,15 @@ export default function CellDataReader({
         )}
       />
 
+      {/* The dump and its bar. Two tracks when the map is drawn, one when it
+          is not — a hidden map that still held its 8 px track and its seam
+          would leave a fourteen-pixel gutter of nothing between the frame's
+          edge and the zone's, which is the same complaint one rank smaller. */}
       <div style={{
         display: 'grid',
-        gridTemplateColumns: `minmax(0,1fr) ${READER_MAP_WIDTH_PX}px`,
+        gridTemplateColumns: showsMap
+          ? `minmax(0,1fr) ${READER_MAP_WIDTH_PX}px`
+          : 'minmax(0,1fr)',
         columnGap: 6,
         alignItems: 'start',
         minWidth: 0,
@@ -973,23 +992,25 @@ export default function CellDataReader({
           </div>
         </div>
 
-        <canvas
-          ref={mapRef}
-          data-cell-data-reader-map="true"
-          aria-hidden="true"
-          onPointerDown={onMapPointerDown}
-          onPointerMove={onMapPointerMove}
-          onPointerUp={endMapDrag}
-          onPointerCancel={endMapDrag}
-          style={{
-            display: 'block',
-            width: READER_MAP_WIDTH_PX,
-            height: viewHeight,
-            background: HUD_COLORS.trackGround,
-            cursor: 'pointer',
-            touchAction: 'none',
-          }}
-        />
+        {showsMap && (
+          <canvas
+            ref={mapRef}
+            data-cell-data-reader-map="true"
+            aria-hidden="true"
+            onPointerDown={onMapPointerDown}
+            onPointerMove={onMapPointerMove}
+            onPointerUp={endMapDrag}
+            onPointerCancel={endMapDrag}
+            style={{
+              display: 'block',
+              width: READER_MAP_WIDTH_PX,
+              height: viewHeight,
+              background: HUD_COLORS.trackGround,
+              cursor: 'pointer',
+              touchAction: 'none',
+            }}
+          />
+        )}
       </div>
 
       {/* One line, and the whole of what the rail, the READS AS block and the

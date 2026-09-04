@@ -4,6 +4,7 @@ import { QUALITATIVE_BUCKET_COLORS } from '../../src/components/hud/hudTheme';
 import { contentSegmentAtByte } from '../../src/derives/cellContentMemory.derive';
 import {
   READER_BYTES_PER_ROW,
+  READER_MAP_MIN_ROWS,
   READER_MAX_VISIBLE_ROWS,
   READER_MIN_VISIBLE_ROWS,
   READER_OVERSCAN_ROWS,
@@ -12,11 +13,13 @@ import {
   formatReaderInteger,
   formatReaderOffset,
   inspectSelection,
+  readerBoxRows,
   readerByte,
   readerByteMapBands,
   readerKeyStep,
   readerRowWindow,
   readerRowsUnderScan,
+  readerShowsMap,
   segmentColorSlots,
   segmentLabelHash,
 } from '../../src/derives/cellDataReader.derive';
@@ -621,6 +624,30 @@ describe('readerRowsUnderScan', () => {
     expect(READER_MIN_VISIBLE_ROWS).toBe(6);
     expect(rowsUnderScan(4000)).toBe(READER_MAX_VISIBLE_ROWS);
     expect(READER_MAX_VISIBLE_ROWS * READER_BYTES_PER_ROW).toBe(1024);
+  });
+
+  // The user's D-7 ruling of 2026-09-05: what the plate leaves is the ROOM,
+  // and the framed box takes the payload's own height inside it.
+  it('sizes the box to the payload, floored at six and capped at the room', () => {
+    expect(readerBoxRows(16, 27)).toBe(READER_MIN_VISIBLE_ROWS);
+    expect(readerBoxRows(0, 27)).toBe(READER_MIN_VISIBLE_ROWS);
+    expect(readerBoxRows(96, 27)).toBe(READER_MIN_VISIBLE_ROWS);
+    expect(readerBoxRows(97, 27)).toBe(7);
+    expect(readerBoxRows(300, 27)).toBe(19);
+    expect(readerBoxRows(37_314, 27)).toBe(27);
+    // …and a room under the floor is not a box under the floor: the floor is
+    // the reader's, the room is the plate's, and the plate's own floor is the
+    // same six.
+    expect(readerBoxRows(37_314, 2)).toBe(READER_MIN_VISIBLE_ROWS);
+  });
+
+  it('draws the map for a payload worth drawing or a box too short to hold it', () => {
+    expect(readerShowsMap(16, 6)).toBe(false);
+    expect(readerShowsMap(256, 27)).toBe(false);
+    expect(readerShowsMap(257, 27)).toBe(true);
+    expect(READER_MAP_MIN_ROWS * READER_BYTES_PER_ROW).toBe(256);
+    // The scrollbar half of the rule: ten rows in a six-row box scrolls.
+    expect(readerShowsMap(160, 6)).toBe(true);
   });
 });
 

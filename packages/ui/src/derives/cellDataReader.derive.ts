@@ -478,13 +478,13 @@ export function formatReaderInteger(value: bigint | number): string {
 }
 
 /**
- * Rows the reader shows standing UNDER the CELL SCAN square, against a
+ * Rows the reader has ROOM for standing UNDER the CELL SCAN square, against a
  * MEASURED analysis plate.
  *
  * The user's ruling of 2026-09-05: CKBYTES is a zone of the card rather than a
- * satellite, it stands under the 280 px specimen square, and its bottom is the
- * analysis plate's bottom. So the dump gets what the plate's height leaves
- * after two subtractions and nothing else:
+ * satellite, it stands under the 280 px specimen square, and the ZONE's bottom
+ * is the analysis plate's bottom. So the room the dump may take is what the
+ * plate's height leaves after two subtractions and nothing else:
  *
  *   `aboveReaderPx` — the square and the seam over it. Handed in by the panel
  *   (`PORTRAIT_COLUMN_PX + CARD_SEAM_PX` = 288) rather than restated here,
@@ -497,6 +497,14 @@ export function formatReaderInteger(value: bigint | number): string {
  *
  * The remainder that does not divide into a whole row is absorbed by the
  * section's bottom padding rather than by half a row of bytes.
+ *
+ * ⚠️ This is a CEILING on the dump's box, not the box's height. The user's D-7
+ * ruling of 2026-09-05: the framed box ends at the last row it has bytes for
+ * (`readerBoxRows`), and the plate's remainder under it is plain plate ground.
+ * A payload of sixteen bytes standing in three hundred and sixty-five pixels
+ * of framed void was the largest single surface on the card, and it said
+ * nothing. "As tall as the plate" was always a claim about the ZONE — which
+ * still stretches to it — and never about the frame drawn inside it.
  *
  * `plateHeightPx` of 0 means nobody has measured yet — the frame before the
  * ResizeObserver's first callback, and every jsdom test, which lays nothing
@@ -520,4 +528,65 @@ export function readerRowsUnderScan(
     READER_MIN_VISIBLE_ROWS,
     Math.min(READER_MAX_VISIBLE_ROWS, rows),
   );
+}
+
+/**
+ * Rows the dump's FRAMED BOX stands — where the border, the background and the
+ * scroll viewport end.
+ *
+ * The user's D-7 ruling of 2026-09-05. `readerRowsUnderScan` says how much room
+ * the analysis plate leaves; this says how much of it the box takes, and the
+ * answer is the payload's own height, floored at `READER_MIN_VISIBLE_ROWS` and
+ * capped at the room. A sixteen-byte Cell — a thousand of them are staged —
+ * drew one row of bytes inside a twenty-seven-row frame; measured live, seven
+ * of the box's 367 pixel rows carried ink.
+ *
+ * The floor is the same six the narrow card gives the reader: a box that
+ * collapsed onto its one row would read as a caption rather than as a dump,
+ * and the reader's own foot line needs the dump to look like a place bytes are
+ * pointed at. The cap is the room, so a 37 KB payload still scrolls inside the
+ * plate rather than pushing the card's bottom down.
+ */
+export function readerBoxRows(totalBytes: number, roomRows: number): number {
+  const bytes = Number.isFinite(totalBytes)
+    ? Math.max(0, Math.trunc(totalBytes))
+    : 0;
+  const rows = Math.ceil(bytes / READER_BYTES_PER_ROW);
+  const room = Number.isFinite(roomRows)
+    ? Math.max(READER_MIN_VISIBLE_ROWS, Math.trunc(roomRows))
+    : READER_MIN_VISIBLE_ROWS;
+  return Math.min(room, Math.max(READER_MIN_VISIBLE_ROWS, rows));
+}
+
+/**
+ * Rows of payload under which the byte map is not drawn at all.
+ *
+ * The map is two things at once (the user's R2-4 ruling): a scale drawing of
+ * the payload's segments AND the dump's scrollbar. Sixteen rows — 256 bytes —
+ * is where it stops being able to do the first job: every band in it is one or
+ * two pixels tall, adjacent bands cannot be told apart, and what a reader sees
+ * is one solid lavender bar the height of the box. Live, on a sixteen-byte
+ * Cell, that bar was 100 % of the map with the viewport band 100 % over it: a
+ * picture with no information in it whatsoever.
+ */
+export const READER_MAP_MIN_ROWS = 16;
+
+/**
+ * Whether the byte map is drawn.
+ *
+ * Two jobs, so two reasons to be there, and the union is the honest rule: a
+ * payload big enough for the drawing to say something, OR a box too short to
+ * hold the payload, which is the scrollbar's job and does not care how many
+ * rows there are. The second clause only fires under the narrow card, where
+ * the box is six rows and a ten-row Cell genuinely scrolls — and a dump that
+ * scrolls with its native bar hidden and no map beside it would be a surface
+ * with no way to say it has more.
+ */
+export function readerShowsMap(totalBytes: number, boxRows: number): boolean {
+  const bytes = Number.isFinite(totalBytes)
+    ? Math.max(0, Math.trunc(totalBytes))
+    : 0;
+  const rows = Math.ceil(bytes / READER_BYTES_PER_ROW);
+  const box = Number.isFinite(boxRows) ? Math.max(0, Math.trunc(boxRows)) : 0;
+  return rows > READER_MAP_MIN_ROWS || rows > box;
 }
