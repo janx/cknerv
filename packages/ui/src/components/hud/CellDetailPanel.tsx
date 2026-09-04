@@ -239,6 +239,34 @@ function cellCardWidth(holeWidth: number, readerBeside: boolean): number {
   ));
 }
 
+/**
+ * Whether the stage is narrower than the card's own floor — the one case the
+ * placement solver has no answer for.
+ *
+ * The ladder above ends at 640 because the register stops being a register
+ * under it, so below a 640 hole the card is wider than the clear stage and
+ * lands ON the HUD, whatever the solver does with it. That is the state this
+ * predicate names, and it is the user's ruling of 2026-09-05: where the card
+ * cannot clear the panels, the panels give way for as long as it is open.
+ *
+ * A3 already dims what shows through the CELL SCAN square, because a chain tip
+ * printed across a specimen is a false reading of the specimen. This is the
+ * same argument one step out, and the reason it needs its own rung is that the
+ * rest of the card is OPAQUE: a panel under it is not misread, it is CUT — a
+ * summary sheared down the middle by a card's edge, its rows half-legible and
+ * its rule ending in mid air. A panel at a quarter of its light reads as a
+ * panel that has stood aside; a panel with a card's edge through it reads as a
+ * panel that has broken. So the whole card's box is what the panels answer to
+ * here, and the square's box is what they answer to everywhere else.
+ *
+ * Exported for `CellInspectionOverlay`, which owns the mark: the ladder is the
+ * card's, the DOM write is the overlay's, and neither restates the other's
+ * number.
+ */
+export function cellCardStandsOnHud(holeWidth: number): boolean {
+  return Number.isFinite(holeWidth) && holeWidth < CARD_COMPACT_MIN_WIDTH_PX;
+}
+
 /** What a docked card may not have of the viewport's height: the HUD's safe
  *  top and the bottom edge, the two numbers `sceneInspectorPlacement` clamps
  *  a card between (`INSPECTOR_SAFE_TOP_PX` 104 + `INSPECTOR_EDGE_PX` 14). The

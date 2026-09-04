@@ -8,6 +8,7 @@ import {
 } from 'react';
 import type { Cell } from '@cknerv/types';
 import CellDetailPanel, {
+  cellCardStandsOnHud,
   cellScanFactAccent,
   type CellInspectionFacet,
   type CellDetailPanelProps,
@@ -36,6 +37,7 @@ import {
 import {
   dimHudPanelsUnder,
   HUD_DIM_SAMPLE_MS,
+  useHudHoleWidth,
   useHudOcclusionRects,
 } from './hudOcclusion';
 
@@ -218,23 +220,41 @@ function CellInspectionOverlay(props: CellInspectionOverlayProps) {
   // The fallback behind A1's placement rule, and only a fallback: the solver
   // keeps the whole card — the transparent CELL SCAN square with it — off the
   // HUD's panels wherever the stage has the room. A 1,000px stage has no hole
-  // between the rails at all, so where the square DOES land on a panel the
-  // panel gives way rather than printing a chain tip across the specimen.
+  // between the rails at all, so where the card lands on a panel the panel
+  // gives way rather than being read through or cut in half.
   //
-  // Sampled rather than solved: the square's box is a DOM read, the card
-  // travels with the galaxy's own slow turn, and a decision about which panel
-  // is in the way may trail a frame by a quarter second. It may not force a
-  // layout inside one.
+  // WHICH BOX gives the orders is the stage's answer, not the card's mood
+  // (`cellCardStandsOnHud`, and the user's ruling of 2026-09-05):
+  //
+  //   the stage can hold the card  → the SQUARE's box. The card is opaque
+  //     everywhere else, and an opaque card standing clear of the rails covers
+  //     nothing; only its one transparent window can print a panel on the
+  //     specimen, and only that panel owes the specimen its light (A3).
+  //   the stage cannot             → the WHOLE CARD's box. Under a 640 hole
+  //     the card is wider than the stage by construction, so it lands on the
+  //     rails whatever the solver does. Every panel it stands on is then a
+  //     panel with a card's edge through it — half a summary, its rows sheared
+  //     and its rule ending in mid air — and a panel at a quarter of its light
+  //     reads as one that stood aside, which a broken one never does.
+  //
+  // Sampled rather than solved: the box is a DOM read, the card travels with
+  // the galaxy's own slow turn, and a decision about which panel is in the way
+  // may trail a frame by a quarter second. It may not force a layout inside
+  // one.
+  const holeWidth = useHudHoleWidth();
+  const standsOnHud = cellCardStandsOnHud(holeWidth);
   useEffect(() => {
     const card = cardRef.current;
     if (!card) return undefined;
     const sample = () => {
-      const square = card.querySelector<HTMLElement>('[data-cell-scan-window="true"]');
-      if (!square) {
+      const element = standsOnHud
+        ? card
+        : card.querySelector<HTMLElement>('[data-cell-scan-window="true"]');
+      if (!element) {
         dimHudPanelsUnder(null);
         return;
       }
-      const box = square.getBoundingClientRect();
+      const box = element.getBoundingClientRect();
       dimHudPanelsUnder(
         box.width > 0 && box.height > 0
           ? { left: box.left, top: box.top, right: box.right, bottom: box.bottom }
@@ -248,7 +268,7 @@ function CellInspectionOverlay(props: CellInspectionOverlayProps) {
       clearInterval(id);
       dimHudPanelsUnder(null);
     };
-  }, [cell.id]);
+  }, [cell.id, standsOnHud]);
 
   // The portrait owns a second pointer boundary. Reset the parent interaction
   // lock at the overlay boundary as well as inside the portrait, so a close

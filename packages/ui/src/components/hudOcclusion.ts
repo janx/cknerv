@@ -256,39 +256,46 @@ export function useHudOcclusionRects(): readonly HudOcclusionRect[] {
   return rects;
 }
 
-/** How often the dim below re-reads where the transparent window is. The
- *  square travels with the card and the card travels with the galaxy's own
- *  slow turn, so a panel gives way a quarter-second after the window reaches
- *  it — the cadence `ConsensusMemoryMarkers` already reads these same rects at,
+/** How often the dim below re-reads where the card is. The card travels with
+ *  the galaxy's own slow turn, so a panel gives way a quarter-second after the
+ *  card reaches it — the cadence `ConsensusMemoryMarkers` already reads these same rects at,
  *  and the same reasoning: a decision about which panel is in the way may
  *  trail the frame; it may not force a layout inside it. */
 export const HUD_DIM_SAMPLE_MS = 250;
 
-/** Panels currently standing under a transparent card window. Held so the mark
- *  can be lifted from exactly what it was put on — a panel that has since been
- *  toggled off is gone from the DOM and needs no un-marking, and a panel the
- *  window has left must not keep a mark somebody else's query would find. */
+/** Panels currently standing under a card. Held so the mark can be lifted from
+ *  exactly what it was put on — a panel that has since been toggled off is
+ *  gone from the DOM and needs no un-marking, and a panel the card has left
+ *  must not keep a mark somebody else's query would find. */
 const dimmed = new Set<HTMLElement>();
 
 /**
- * Give way under a transparent window.
+ * Give way under a card.
  *
- * The CELL SCAN square is a hole in the card: the braid is painted in the
- * SCENE, beneath the whole DOM HUD, so any panel between the canvas and the
- * card prints through it and reads as text tattooed across the specimen. The
- * placement solver keeps the card — square included — off the panels wherever
- * the stage has room for that. Where it has not (a 1,000 px stage has no hole
- * at all between the rails) something has to give, and it is the panel: a
+ * The placement solver keeps the card off the panels wherever the stage has
+ * room for that, so this is the fallback for the two cases it cannot answer,
+ * and the CALLER decides which box it is holding (`CellInspectionOverlay`):
+ *
+ *   the CELL SCAN square, which is a hole in the card — the braid is painted
+ *   in the SCENE, beneath the whole DOM HUD, so any panel between the canvas
+ *   and the card prints through it and reads as text tattooed across the
+ *   specimen;
+ *
+ *   the whole card, when the stage is narrower than the card's own floor and
+ *   the card lands on the rails whatever the solver does with it.
+ *
+ * Either way it is the panel that gives way, and for the same reason: a
  * summary at a quarter of its light is still legible as a panel, while a
- * specimen with a chain tip written across it is not a specimen.
+ * specimen with a chain tip written across it is not a specimen and a summary
+ * with a card's edge through it is not a summary.
  *
  * `null` lifts every mark, which is what a closing card owes the HUD.
  */
-export function dimHudPanelsUnder(window_: HudOcclusionRect | null): number {
+export function dimHudPanelsUnder(standing: HudOcclusionRect | null): number {
   if (typeof document === 'undefined') return 0;
   const stale = dimmed;
   const next = new Set<HTMLElement>();
-  if (window_) {
+  if (standing) {
     const elements = document.querySelectorAll<HTMLElement>(
       '[data-hud-occlusion="true"]',
     );
@@ -296,10 +303,10 @@ export function dimHudPanelsUnder(window_: HudOcclusionRect | null): number {
       const element = elements[index];
       if (element.closest('[data-scene-inspection-layer]')) continue;
       const box = element.getBoundingClientRect();
-      const overlaps = window_.left < box.right
-        && window_.right > box.left
-        && window_.top < box.bottom
-        && window_.bottom > box.top;
+      const overlaps = standing.left < box.right
+        && standing.right > box.left
+        && standing.top < box.bottom
+        && standing.bottom > box.top;
       if (!overlaps) continue;
       next.add(element);
       if (element.dataset.hudDim !== 'true') element.dataset.hudDim = 'true';
