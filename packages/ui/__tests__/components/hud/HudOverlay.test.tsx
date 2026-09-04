@@ -4,11 +4,12 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import {
   completeBootPhase,
   failBootPhase,
+  getBootSequence,
   reportBootSnapshotProgress,
   resetBootSequenceForTest,
   type BootPhaseId,
 } from '../../../src/boot/bootSequence';
-import { HUD_COLORS, rgba } from '../../../src/components/hud/hudTheme';
+import { HUD_COLORS, HUD_MOTION, rgba } from '../../../src/components/hud/hudTheme';
 import { REVEAL_GHOST_OPACITY } from '../../../src/components/hud/primitives';
 import type { StreamHealthChannels } from '../../../src/derives/streamHealth.derive';
 import type {
@@ -78,8 +79,9 @@ const finishBootRecord = () => {
 beforeEach(() => { resetBootSequenceForTest(); finishBootRecord(); });
 
 // ——— Boot count-off helpers —————————————————————————————————
-/** One module's beat of the boot count-off. */
-const BOOT_BEAT_MS = 130;
+/** One module's beat of the boot count-off — a rung of the motion ladder
+ *  since E1, not a number of the ritual's own. */
+const BOOT_BEAT_MS = HUD_MOTION.flip;
 /** Comfortably past the longest possible ritual, for tests that want the HUD
  *  as the user finds it a second in rather than mid-count. */
 const BOOT_SETTLED_MS = 1_200;
@@ -340,6 +342,77 @@ describe('HudOverlay', () => {
     tick(BOOT_BEAT_MS);
     expect(daoRoot.dataset.hudBoot).toBe('done');
     expect(wrapper(withDao, 'dao').style.opacity).toBe('1');
+  });
+
+  it('holds the count-off until the galaxy lights, and never past the record', () => {
+    // ⭐ ONE CLOCK. The ritual used to start when the HUD mounted — the
+    // snapshot decoded, no GL context yet — and finish three to four seconds
+    // before the stage it instruments appeared (report E, E-3). It waits for
+    // FIRST LIGHT now, so the rails fill in while the galaxy is lighting and
+    // the last beat lands inside the band's linger.
+    vi.useFakeTimers();
+    resetBootSequenceForTest();
+    for (const id of ['instrument', 'snapshot', 'decode', 'gl'] as const) {
+      completeBootPhase(id);
+    }
+    const { container } = render(
+      <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
+    );
+    const root = container.firstElementChild as HTMLElement;
+
+    // The stage is still black. Every module is mounted, placed, and dark —
+    // and stays dark however long the clock runs, because nothing has told it
+    // there is anything to instrument.
+    expect(root.dataset.hudBoot).toBe('waiting');
+    tick(BOOT_SETTLED_MS);
+    expect(root.dataset.hudBoot).toBe('waiting');
+    for (const id of ['chain', 'peers', 'cells', 'pulse']) {
+      expect(wrapper(container, id).style.opacity).toBe(BOOT_GHOST);
+    }
+
+    act(() => { completeBootPhase('first_light'); });
+    expect(root.dataset.hudBoot).toBe('counting');
+    tick(BOOT_BEAT_MS);
+    expect(wrapper(container, 'chain').style.opacity).toBe('1');
+    expect(wrapper(container, 'peers').style.opacity).toBe(BOOT_GHOST);
+    tick(BOOT_SETTLED_MS);
+    expect(root.dataset.hudBoot).toBe('done');
+    for (const id of ['chain', 'peers', 'cells', 'pulse']) {
+      expect(wrapper(container, id).style.opacity).toBe('1');
+    }
+  });
+
+  it('counts off anyway when the galaxy is never coming', () => {
+    // ⚠️ The wait has two exits and both are needed. A FAULT is one: the
+    // record keeps `active` true for the session when a phase fails ("a boot
+    // that reported a fault never completes"), so a gate that only watched
+    // `active` would leave every panel ghosted for as long as the tab is open.
+    vi.useFakeTimers();
+    resetBootSequenceForTest();
+    for (const id of ['instrument', 'snapshot', 'decode'] as const) completeBootPhase(id);
+    const { container } = render(
+      <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
+    );
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.dataset.hudBoot).toBe('waiting');
+
+    act(() => { failBootPhase('gl', 'no context'); });
+    expect(getBootSequence().active).toBe(true);
+    expect(root.dataset.hudBoot).toBe('counting');
+    tick(BOOT_SETTLED_MS);
+    expect(wrapper(container, 'chain').style.opacity).toBe('1');
+  });
+
+  it('counts off at once for a HUD that joined after the page was up', () => {
+    // The other exit: a record that is done. Nothing is going to report a
+    // first light to a HUD that mounted a minute later.
+    vi.useFakeTimers();
+    const { container } = render(
+      <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
+    );
+    const root = container.firstElementChild as HTMLElement;
+    expect(getBootSequence().active).toBe(false);
+    expect(root.dataset.hudBoot).toBe('counting');
   });
 
   it('lets a module that missed the boot roster arrive already lit', () => {

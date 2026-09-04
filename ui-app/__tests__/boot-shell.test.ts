@@ -18,7 +18,25 @@ import {
   BOOT_SHELL_PHASE_ID,
 } from '../src/boot-shell';
 
+import { BOOT_FACES, bootFaceTags } from '../vite-boot-faces';
+
 const INDEX_HTML = readFileSync(resolve(process.cwd(), 'index.html'), 'utf8');
+/** The two files index.html restates a value from. It cannot import, so the
+ *  pact is a test that reads both sides off disk — the same bargain the stage
+ *  ground already makes in `App.sceneRoots.test.tsx`. */
+const HUD_THEME = readFileSync(
+  resolve(process.cwd(), '../packages/ui/src/components/hud/hudTheme.ts'), 'utf8',
+);
+const STATUS_STRIP = readFileSync(
+  resolve(process.cwd(), '../packages/ui/src/components/hud/StatusStrip.tsx'), 'utf8',
+);
+const HUD_OVERLAY = readFileSync(
+  resolve(process.cwd(), '../packages/ui/src/components/hud/HudOverlay.tsx'), 'utf8',
+);
+/** A font stack normalised for comparison: `index.html` writes them without
+ *  spaces after the commas, `hudTheme.ts` writes them with, and the DOM hands
+ *  back whichever quote it prefers. */
+const stack = (value: string) => value.replace(/\s+/g, '').replace(/"/g, "'");
 
 function sequence(
   phases: BootSequenceSnapshot['phases'],
@@ -49,6 +67,94 @@ describe('boot shell / index.html pact', () => {
     expect(shipped.getElementById('cknerv-boot-shell')?.textContent).toContain(
       'STAGE POWER-ON',
     );
+  });
+});
+
+describe('the shell is the band, one second early', () => {
+  // The page's first second set ONE WORD in three typefaces (report E, E-2):
+  // this markup in the OS monospace, the first HUD commit in `system-ui`
+  // because `injectHudTheme` runs in an effect, and the third frame in Saira
+  // once seven hashed woff2 had been fetched — with nothing preloading them,
+  // so the fetch could not even start during the one to five seconds the
+  // snapshot takes. The shell says the band's faces now, and the build puts
+  // them in the head.
+  const shipped = new DOMParser().parseFromString(INDEX_HTML, 'text/html');
+
+  it('sets the band\'s words in the band\'s faces', () => {
+    const shell = shipped.getElementById('cknerv-boot-shell') as HTMLElement;
+    const title = shell.querySelector('span[style*="font-weight:700"]') as HTMLElement;
+    const diamond = shell.querySelector('span[aria-hidden="true"]') as HTMLElement;
+
+    const mono = /mono: "([^"]+)"/.exec(HUD_THEME)?.[1] ?? '';
+    const display = /display: "([^"]+)"/.exec(HUD_THEME)?.[1] ?? '';
+    expect(mono, 'HUD_FONTS.mono moved').toContain('Share Tech Mono');
+    expect(display, 'HUD_FONTS.display moved').toContain('Saira');
+
+    // The trail and the phase lines inherit the band's own stack; the title
+    // and the ◇ name theirs.
+    expect(stack(shell.style.fontFamily)).toBe(stack(mono));
+    expect(stack(title.style.fontFamily)).toBe(stack(display));
+    expect(stack(diamond.style.fontFamily)).toContain(stack("'JetBrains Mono Local'"));
+  });
+
+  it('stands where the strip will, at every width the strip has', () => {
+    // 36 / 64 / 59 and the two breakpoints all live in packages/ui. The shell
+    // hard-coded 36, so every viewport at or under 1,280 px watched the band
+    // drop 28 px at the handover.
+    const heights = /STATUS_STRIP_HEIGHTS = \{([\s\S]*?)\}/.exec(STATUS_STRIP)?.[1] ?? '';
+    const rung = (name: string) => Number(new RegExp(`${name}: (\\d+)`).exec(heights)?.[1]);
+    expect([rung('wide'), rung('compact'), rung('mobile')]).toEqual([36, 64, 59]);
+
+    const shell = shipped.getElementById('cknerv-boot-shell') as HTMLElement;
+    expect(shell.style.top).toBe(`${rung('wide')}px`);
+    const script = /<script>([\s\S]*?)<\/script>/.exec(INDEX_HTML)?.[1] ?? '';
+    expect(script, 'the shell no longer sizes itself').toContain('cknerv-boot-shell');
+    expect(script).toContain(`'${rung('compact')}px'`);
+    expect(script).toContain(`'${rung('mobile')}px'`);
+
+    // …and at the widths the HUD itself changes at.
+    expect(HUD_OVERLAY).toContain("useMediaQuery('(max-width: 1280px)')");
+    expect(HUD_OVERLAY).toContain("useMediaQuery('(max-width: 560px)')");
+    expect(script).toContain("matchMedia('(max-width: 1280px)')");
+    expect(script).toContain("matchMedia('(max-width: 560px)')");
+  });
+
+  it('puts the boot faces in the head, preloaded, and nothing else', () => {
+    // Three faces and three preloads. A preload for a face the first paint
+    // does not use is a request competing with the snapshot for the same
+    // connection, which is the opposite of the fix.
+    const tags = bootFaceTags(BOOT_FACES.map((face) => `/assets/${face.file}`));
+    const preloads = tags.filter((tag) => tag.tag === 'link');
+    expect(preloads).toHaveLength(BOOT_FACES.length);
+    for (const preload of preloads) {
+      expect(preload.attrs).toMatchObject({ rel: 'preload', as: 'font', type: 'font/woff2' });
+      expect(preload.attrs).toHaveProperty('crossorigin');
+      // Appended, so `<meta charset>` keeps the first 1,024 bytes.
+      expect(preload.injectTo).toBe('head');
+    }
+
+    const style = tags.find((tag) => tag.tag === 'style');
+    const css = String(style?.children ?? '');
+    for (const face of BOOT_FACES) {
+      expect(css).toContain(`font-family:'${face.family}'`);
+      expect(css).toContain(`url("/assets/${face.file}")`);
+      // The theme registers the same family at the same weight. Two faces for
+      // one family under two weight descriptors is a face the browser has to
+      // choose between.
+      expect(HUD_THEME, `${face.family} is not the theme's face any more`)
+        .toContain(`@font-face{font-family:'${face.family}';font-weight:${face.weight};`);
+    }
+    // …and the shell's own display value, which is the whole argument: a face
+    // arriving after a one-second line has been read is a flicker, not a fix.
+    expect(css.match(/font-display:optional/g)).toHaveLength(BOOT_FACES.length);
+    expect(HUD_THEME, 'the HUD stopped swapping').toContain('font-display:swap');
+  });
+
+  it('names only faces the theme actually ships', () => {
+    for (const face of BOOT_FACES) {
+      expect(HUD_THEME, `${face.file} is no longer imported by the theme`)
+        .toContain(face.file.replace('.woff2', ''));
+    }
   });
 });
 

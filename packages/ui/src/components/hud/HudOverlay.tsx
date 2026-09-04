@@ -47,7 +47,7 @@ import StageCapacityPanel from './StageCapacityPanel';
 import RenderStatsPanel from './RenderStatsPanel';
 import { useCellChurn } from './useCellChurn';
 import WarningBar, { WARNING_BAR_HEIGHT, warningBarStanding } from './WarningBar';
-import { useReducedMotion } from './useReducedMotion';
+import { REDUCED_MOTION_QUERY, useReducedMotion } from './useReducedMotion';
 import { useMediaQuery } from './useMediaQuery';
 import {
   deriveStreamHealthPhase,
@@ -267,15 +267,21 @@ const BOOT_SLOT_MS = HUD_MOTION.flip;
  *  just a banner that will not leave. */
 const BOOT_READOUT_LINGER_MS = HUD_MOTION.linger;
 
-/** Does this session want the ritual at all? Read once, synchronously, because
- *  `useReducedMotion` is mount-safe by design and cannot answer before the
- *  first paint — and someone who asked motion to stop must not be shown even
- *  one ghosted frame. No `matchMedia` at all (jsdom, an ancient browser) is
- *  not a request for stillness, so the ritual runs. */
+/** Does this session want the ritual at all? Read once, synchronously, from
+ *  the same query `useReducedMotion` seeds itself with — that hook answers on
+ *  the first committed frame now (E2), so this could read the hook; it does
+ *  not, because the ritual is a decision the session makes ONCE and a hook
+ *  that flips mid-session would restart a count-off that is already over.
+ *  `bootRitual` below is what tracks the live setting.
+ *
+ *  ⚠️ Not `mediaQueryMatches` inverted: no `matchMedia` at all (jsdom, an
+ *  ancient browser) is not a request for stillness, and the helper answers
+ *  `false` for "cannot ask" — which would read here as "wants motion stopped".
+ *  Spelled out rather than negated. */
 function prefersFullMotion(): boolean {
   if (typeof window === 'undefined') return false;
   if (typeof window.matchMedia !== 'function') return true;
-  return !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  return !window.matchMedia(REDUCED_MOTION_QUERY).matches;
 }
 
 function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPopulation, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, scriptRegistry, backfill, streamHealth, build, topBarActions, colonyCount, producerView }: {
@@ -434,7 +440,34 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
   const [bootRoster] = useState<readonly HudPanelId[]>(() => BOOT_MODULE_ORDER
     .filter((id) => (id === 'dao' ? daoPanelVisible : panelVisibility[id])));
   const [bootLit, setBootLit] = useState(0);
-  const bootCounting = bootRitual && bootLit < bootRoster.length;
+  // ——— One clock, and it is the galaxy's ————————————————————————————————
+  //
+  // The count-off used to start the moment the HUD mounted — when the SNAPSHOT
+  // had decoded, before the GL context existed — so the instrument finished
+  // "coming up" three to four seconds before the thing it instruments appeared
+  // (report E, E-3: the canvas at +1.0 s, the band gone at +5.2 s, the ritual
+  // over by +0.9 s). Two count-offs ran at once in two vocabularies: module
+  // codes on the rails, phase names in the band, neither reading the other.
+  //
+  // So the rails wait for FIRST LIGHT. The record already publishes exactly
+  // that, and it is the honest cue: a panel saying CKB·01 IS UP while the
+  // stage behind it is still black is the instrument lying about its own
+  // state. The last beat now lands inside the band's linger, which is what
+  // makes the two rituals read as one.
+  //
+  // ⚠️ AND IT NEVER WAITS FOREVER, which took two conditions rather than one.
+  // A HUD that joined after the page was up sees a record that is no longer
+  // active — but a FAILED boot keeps `active` true for the session on purpose
+  // ("a boot that reported a fault never completes"), so a record-only gate
+  // would leave every panel ghosted for as long as the tab is open. Any fault
+  // ends the wait too: the galaxy is not coming, and a HUD that refuses to
+  // light is a worse answer than one that lights early.
+  const galaxyLit = boot.phases.some(
+    (phase) => phase.id === 'first_light' && phase.state === 'done',
+  );
+  const bootFaulted = boot.phases.some((phase) => phase.state === 'failed');
+  const bootWaiting = bootRitual && boot.active && !galaxyLit && !bootFaulted;
+  const bootCounting = bootRitual && !bootWaiting && bootLit < bootRoster.length;
   // One timeout alive at a time, re-armed by its own result: the ritual costs
   // exactly one re-render per module and stops re-arming when the roster runs
   // out, leaving this body with no steady-state heartbeat at all — the 1 Hz
@@ -459,7 +492,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
   ): CSSProperties | undefined => {
     if (!bootRitual) return base;
     const slot = bootRoster.indexOf(id);
-    const lit = !bootCounting || slot < 0 || slot < bootLit;
+    const lit = !(bootCounting || bootWaiting) || slot < 0 || slot < bootLit;
     const { opacity, transition } = revealStageStyle(lit);
     return { ...base, opacity, transition, pointerEvents: lit ? base?.pointerEvents : 'none' };
   };
@@ -693,7 +726,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
     <div
       style={ROOT_STYLE}
       data-stream-phase={streamPhase ?? undefined}
-      data-hud-boot={bootCounting ? 'counting' : 'done'}
+      data-hud-boot={bootWaiting ? 'waiting' : bootCounting ? 'counting' : 'done'}
     >
       {!reduced && <div style={SCAN_STYLE} />}
       {/* Chrome and safety surfaces are exempt from the ritual: a status

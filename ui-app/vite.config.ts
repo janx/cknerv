@@ -1,9 +1,13 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { bootFaces } from './vite-boot-faces';
 
 export default defineConfig({
   base: '/',
-  plugins: [react()],
+  // `bootFaces` puts the shell's two faces and the ◇ glyph's in the document
+  // head, with a preload each, so the boot band is one typeface from the first
+  // paint instead of three inside the first second (report E, E-2).
+  plugins: [react(), bootFaces()],
   // Force singletons — keeps leva + R3F from going double-mounted when
   // consumed via workspace symlinks (same reasoning as simulator/ui).
   resolve: {

@@ -29,15 +29,44 @@
            Geometry and voice mirror StreamHealthBanner (edge-bound 30px band);
            the colours are HUD_COLORS.cyanWire / dim / danger from
            packages/ui/src/components/hud/hudTheme.ts, spelled out because
-           index.html cannot import. No animation — text state only. -->
+           index.html cannot import. No animation — text state only.
+
+           THE FACES ARE THE BAND'S, and that is E2's fix. This markup drew
+           STAGE POWER-ON in the OS monospace while the React band that
+           replaces it sets the same words in Saira 700 over Share Tech Mono,
+           with the ◇ in the JetBrains subset — so one word was set in three
+           typefaces inside the first second (report E, E-2). The stacks below
+           are HUD_FONTS.mono / .display and the diamond's, and `vite-boot-
+           faces.ts` puts their `@font-face` and a preload in the head so the
+           bytes are in flight with the document rather than after a
+           `useEffect`. -->
       <div id="cknerv-boot-shell" data-boot-shell role="status" aria-live="polite"
-           style="position:absolute;top:36px;left:0;right:0;height:30px;display:flex;align-items:center;justify-content:center;gap:10px;box-sizing:border-box;font-family:ui-monospace,monospace;font-size:10.5px;color:#20F0FF;background:linear-gradient(90deg,transparent,rgba(32,240,255,.13) 28%,rgba(0,0,0,.78) 50%,rgba(32,240,255,.13) 72%,transparent);border-bottom:1px solid rgba(32,240,255,.45)">
-        <span aria-hidden="true">◇</span>
-        <span style="font-weight:700;letter-spacing:2px">STAGE POWER-ON</span>
+           style="position:absolute;top:36px;left:0;right:0;height:30px;display:flex;align-items:center;justify-content:center;gap:10px;box-sizing:border-box;font-family:'Share Tech Mono','JetBrains Mono Local',ui-monospace,monospace;font-size:10.5px;color:#20F0FF;background:linear-gradient(90deg,transparent,rgba(32,240,255,.13) 28%,rgba(0,0,0,.78) 50%,rgba(32,240,255,.13) 72%,transparent);border-bottom:1px solid rgba(32,240,255,.45)">
+        <span aria-hidden="true" style="font-family:'JetBrains Mono Local',ui-monospace,monospace">◇</span>
+        <span style="font-family:'Saira','JetBrains Mono Local',system-ui,sans-serif;font-weight:700;letter-spacing:2px">STAGE POWER-ON</span>
         <span id="cknerv-boot-shell-phase" style="font-size:9px;letter-spacing:1.2px">INSTRUMENT</span>
         <span id="cknerv-boot-shell-detail" style="font-size:9px;letter-spacing:1.2px;color:#7C8794"></span>
       </div>
     </div>
+    <!-- The shell stands where the strip will, and the strip has two heights.
+         `STATUS_STRIP_HEIGHTS` in packages/ui/src/components/hud/StatusStrip.tsx
+         is the authority: 36 wide, 64 compact, 59 on a phone — and `HudOverlay`
+         goes compact at 1280 and mobile at 560. The shell hard-coded 36, so
+         every viewport at or under 1280 watched the band DROP 28px at the
+         handover, in the same frames the band exists to hold still (report E,
+         E-2). Classic and inline, right under the element: it has to run
+         before the first paint and there is no module to wait for.
+         `ui-app/__tests__/boot-shell.test.ts` holds these three literals
+         against the token. -->
+    <script>
+      (function () {
+        var shell = document.getElementById('cknerv-boot-shell');
+        if (!shell || typeof window.matchMedia !== 'function') return;
+        shell.style.top = window.matchMedia('(max-width: 560px)').matches ? '59px'
+          : window.matchMedia('(max-width: 1280px)').matches ? '64px'
+          : '36px';
+      })();
+    </script>
     <script src="/runtime-config.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
