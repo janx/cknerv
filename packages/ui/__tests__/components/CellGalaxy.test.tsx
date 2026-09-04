@@ -559,15 +559,14 @@ describe('CKB node anchor emphasis', () => {
       'const hitUserData = useMemo(() => ({ [NETWORK_PEER_PICK_FLAG]: true }), []);',
     );
     expect(galaxySource).toContain('userData={hitUserData}');
-    // Hover affordance: the anchor offers the same hand a measured peer does.
-    expect(galaxySource).toContain('gl.domElement.dataset.peerNodeHover = id;');
+    // Hover affordance: the anchor offers the same hand a measured peer does,
+    // and it names its tier while it does — the word carries both or neither.
     expect(galaxySource).toContain(
-      'if (gl.domElement.dataset.peerNodeHover === id) {',
+      "markPeerNodeHover(gl.domElement, id, 'local');",
     );
+    expect(galaxySource).toContain('clearPeerNodeHover(gl.domElement, id);');
     // ... and the remount guard, so no stale hand outlives the anchor.
-    expect(galaxySource).toContain(
-      'if (canvas.dataset.peerNodeHover !== id) return;',
-    );
+    expect(galaxySource).toContain('if (!clearPeerNodeHover(canvas, id)) return;');
     // Selection itself is untouched: the click still names the anchor.
     expect(galaxySource).toContain('onSelect(id);');
   });

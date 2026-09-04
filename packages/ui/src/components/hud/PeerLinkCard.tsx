@@ -188,7 +188,15 @@ function LinkUptimeReadout({ baseMs, sinceMs }: { baseMs: number; sinceMs: numbe
  *  ring at its true bearing. The scene lays measured peers out on the XZ plane
  *  (`measuredPeerPos`: x = cos·r, z = sin·r) under a top-down camera, so SVG's
  *  y-down axis already IS the scene's +Z — the bearing needs no remapping for
- *  the instrument to agree with the colony. */
+ *  the instrument to agree with the colony.
+ *
+ *  ⚠️ The BEARING is what agrees; the CENTRE is not the same point. The scene's
+ *  belt is concentric with the organism (`measuredPeerPos` is about the
+ *  colony's axis) and our own node stands ~30 wu off that axis, inside the
+ *  ring. This instrument is a diagram of ONE LINK, not a map of the colony, so
+ *  the middle of it is us and the reading it offers the scene is the angle: a
+ *  blip at four o'clock here is the mark at four o'clock out there, measured
+ *  from the middle of the galaxy. */
 function ColonyCompass({
   ring01,
   bearingRad,

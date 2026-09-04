@@ -31,13 +31,24 @@ export const PEER_LATENCY_CAP_MS = 400;
  * which is inside the 2 % margin the gate asks for and inside the width of the
  * halo it is meant to keep off the tissue.
  *
- * ⚠️ The belt is centred on the LOCAL ANCHOR, which is itself ~30 wu off the
- * galaxy's axis (`LOCAL_ANCHOR_OFFSET`) — the peers ring US, because the
- * radius is OUR latency to them. So the near arc of the belt still crosses the
- * tissue's footprint: at the inner radius 60 % of the ring stands clear of the
- * canopy and at the outer radius 100 % does, against 38 % / 53 % before. Where
- * the hub itself should stand is a question this task deliberately does not
- * answer (the plan: "B1 moves the peers, not the hub").
+ * ⭐ AND IT IS CONCENTRIC WITH THE ORGANISM, not with us. The belt was first
+ * moved out around the LOCAL ANCHOR, on the reading that the radius is OUR
+ * latency so the peers should ring US — and the live census answered that: the
+ * anchor stands ~30 wu off the galaxy's axis (`LOCAL_ANCHOR_OFFSET`), so a
+ * belt centred on it is 30 wu eccentric to the tissue it is meant to clear.
+ * A third of the ring still crossed the canopy on the near side and a quarter
+ * of it fell off the bottom-right of the viewport on the far side. One centre
+ * cannot be both.
+ *
+ * So the CENTRE is the galaxy's axis and the RADIUS is still the latency. The
+ * two were never one reading: a peer's distance from the middle of the picture
+ * is what says "this one answers in 40 ms and that one in 400", and it says it
+ * more clearly against a body than against a mark 30 wu off to one side. The
+ * link from the local node to each peer is still drawn, still straight, and it
+ * is now the thing that says which of them are OURS — the belt says how far,
+ * the spokes say whose. Where the hub itself should stand is still a question
+ * this round does not answer (the plan: "B1 moves the peers, not the hub");
+ * moving the peers off it is what makes that question askable.
  *
  * Nothing semantic moves with them: the compass ring on the PEER card is a 0–1
  * of `PEER_LATENCY_CAP_MS`, not of these, and `planDeliveries` already clamps
@@ -137,10 +148,12 @@ export interface DeliveryLandingField {
  *  rim would release its whole ring over empty space and the worker's commit
  *  would never be seen touching tissue. Since the belt moved outside the
  *  canopy (`PEER_INNER_RADIUS`), a measured peer's landing is clamped onto the
- *  rim ALWAYS rather than merely often — the peers commit at the edge of the
- *  organism and the local node, which still stands inside the footprint,
- *  commits within it. That is the shape of the event now: the neighbours'
- *  copies arrive at the rim, ours lands in the tissue. */
+ *  rim ALWAYS rather than merely often — and since the belt is concentric with
+ *  the tissue, evenly around it rather than bunched on the far side. The peers
+ *  commit at the edge of the organism; the local node, which still stands
+ *  inside the footprint, commits within it. That is the shape of the event
+ *  now: the neighbours' copies arrive all around the rim, ours lands in the
+ *  tissue. */
 export const DELIVERY_LANDING_MAX_NORM = 1.0;
 
 /** three.js `group.rotation.y = θ` carries a LOCAL xz into WORLD as

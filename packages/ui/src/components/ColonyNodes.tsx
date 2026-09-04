@@ -88,6 +88,13 @@ import {
 } from '../tweaks/performanceProbeStore';
 import { createGpuProbeCallbacks } from '../tweaks/gpuTimerQuery';
 import { createNonEmptyDrawGpuProbeCallbacks } from '../tweaks/nonEmptyGpuProbeCallbacks';
+import {
+  clearPeerNodeHover,
+  markPeerNodeHover,
+  peerNodeHoverId,
+  peerNodeHovered,
+  type PeerNodeTier,
+} from './peerHoverWord';
 
 // Measured core: bright, saturated, larger than the ghost haze.
 const MEASURED_SIZE = 1.4;
@@ -348,6 +355,10 @@ export interface StagedPickTarget {
   /** What `onSelect` is handed. The tiers speak different dialects and the hit
    *  mesh must not have to know which. */
   readonly selectionId: string;
+  /** Which rung of the colony this is, published beside the hover word so the
+   *  tier is readable without opening the card the click would open. Two tiers
+   *  share this mesh and their ids look alike. */
+  readonly tier: PeerNodeTier;
   readonly pos: Vec3;
   /** The target's world radius, which is this node's own mark and nothing
    *  else. One number, resolved from the tone the cloud is drawn with — so a
@@ -385,6 +396,7 @@ export function stagedPickTargets(
     out.push({
       id: node.id,
       selectionId: `${SIGHTED_SELECTION_PREFIX}${node.id}`,
+      tier: 'sighted',
       pos: node.pos,
       bodyRadius: sightedHitRadius(node),
     });
@@ -398,6 +410,7 @@ export function stagedPickTargets(
     out.push({
       id: node.id,
       selectionId: `${MINER_SELECTION_PREFIX}${key}`,
+      tier: 'cohort',
       pos: node.pos,
       bodyRadius: ATTESTED_HIT_RADIUS,
     });
@@ -654,7 +667,7 @@ function PickableStagedNodes({
     canvas.style.cursor = cellCanvasCursor(
       canvas.dataset.cellPickerHover !== undefined,
       canvas.dataset.cellCausalNavigationHover !== undefined,
-      canvas.dataset.peerNodeHover !== undefined,
+      peerNodeHovered(canvas),
     );
   };
 
@@ -668,9 +681,9 @@ function PickableStagedNodes({
     // A roster round can retire a node while the pointer is still on it, and no
     // pointer-out ever fires for a node that stopped existing. So can a
     // producer leaving the rolling window.
-    const hovered = canvas.dataset.peerNodeHover;
+    const hovered = peerNodeHoverId(canvas);
     if (hovered === undefined || ownedRef.current.has(hovered) || !previous.has(hovered)) return;
-    delete canvas.dataset.peerNodeHover;
+    clearPeerNodeHover(canvas, hovered);
     syncCursor();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gl, targets]);
@@ -678,9 +691,9 @@ function PickableStagedNodes({
   // canvas's life, so this cleanup runs on unmount only).
   useEffect(() => () => {
     const canvas = gl.domElement;
-    const hovered = canvas.dataset.peerNodeHover;
+    const hovered = peerNodeHoverId(canvas);
     if (hovered === undefined || !ownedRef.current.has(hovered)) return;
-    delete canvas.dataset.peerNodeHover;
+    clearPeerNodeHover(canvas, hovered);
     canvas.style.cursor = cellCanvasCursor(
       canvas.dataset.cellPickerHover !== undefined,
       canvas.dataset.cellCausalNavigationHover !== undefined,
@@ -706,9 +719,9 @@ function PickableStagedNodes({
           onSelect(target.selectionId);
         }}
         onPointerOver={(e) => {
-          const id = targetAt(e.instanceId)?.id;
-          if (id === undefined) return;
-          gl.domElement.dataset.peerNodeHover = id;
+          const target = targetAt(e.instanceId);
+          if (target === undefined) return;
+          markPeerNodeHover(gl.domElement, target.id, target.tier);
           syncCursor();
         }}
         onPointerOut={(e) => {
@@ -716,9 +729,7 @@ function PickableStagedNodes({
           // by the time a word belongs to somebody else it is somebody else's
           // hand — retracting it here would strand the cursor on a live target.
           const id = targetAt(e.instanceId)?.id;
-          if (id !== undefined && gl.domElement.dataset.peerNodeHover === id) {
-            delete gl.domElement.dataset.peerNodeHover;
-          }
+          if (id !== undefined) clearPeerNodeHover(gl.domElement, id);
           syncCursor();
         }}
       />
@@ -973,7 +984,7 @@ function MeasuredNode({
     canvas.style.cursor = cellCanvasCursor(
       canvas.dataset.cellPickerHover !== undefined,
       canvas.dataset.cellCausalNavigationHover !== undefined,
-      canvas.dataset.peerNodeHover !== undefined,
+      peerNodeHovered(canvas),
     );
   };
 
@@ -981,8 +992,7 @@ function MeasuredNode({
   // canvas advertising a hand for a node that no longer exists.
   useEffect(() => () => {
     const canvas = gl.domElement;
-    if (canvas.dataset.peerNodeHover !== peerId) return;
-    delete canvas.dataset.peerNodeHover;
+    if (!clearPeerNodeHover(canvas, peerId)) return;
     canvas.style.cursor = cellCanvasCursor(
       canvas.dataset.cellPickerHover !== undefined,
       canvas.dataset.cellCausalNavigationHover !== undefined,
@@ -1005,13 +1015,11 @@ function MeasuredNode({
           onSelect(`peer:${peerId}`);
         }}
         onPointerOver={() => {
-          gl.domElement.dataset.peerNodeHover = peerId;
+          markPeerNodeHover(gl.domElement, peerId, 'measured');
           syncCursor();
         }}
         onPointerOut={() => {
-          if (gl.domElement.dataset.peerNodeHover === peerId) {
-            delete gl.domElement.dataset.peerNodeHover;
-          }
+          clearPeerNodeHover(gl.domElement, peerId);
           syncCursor();
         }}
       />

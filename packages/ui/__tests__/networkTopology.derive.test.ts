@@ -70,20 +70,34 @@ describe('networkTopology placement', () => {
     expect(localAnchor(0xc0ffee)).not.toEqual(localAnchor(0xbeef)); // seed-sensitive
   });
 
-  it('stands the whole belt outside the tissue rim, in its own frame', () => {
+  it('stands the whole belt outside the tissue rim, about the galaxy\u2019s axis', () => {
     // D-1: the measured peers were the only colony marks drawn INSIDE the
     // canopy, and additive cyan over rose is white — so the top of the
     // honesty ladder was the one rung that did not wear the family hue. The
     // belt clears the tissue's own footprint now, at every angle and at the
     // FASTEST ping, which is the inner radius and therefore the hard case.
     // The colony's ellipse is what decides it, and z is the tight axis.
+    //
+    // ⭐ AND IT IS THE WORLD FRAME IT CLEARS IT IN. The first cut hung the
+    // belt off the local anchor, which stands ~30 wu off the axis, so this
+    // same sweep passed while a third of the ring lay over the canopy in the
+    // only frame anyone looks at. There is no anchor to pass now, and this
+    // reading is the tissue's own.
     const fastest = peer({ node_id: 'A', latency_ms: 0 });
     let worst = Infinity;
     for (let i = 0; i < 360; i += 1) {
       // sweep the angle by walking the id, since the angle is id-hashed
       const p = { ...fastest, node_id: `peer-${i}` };
-      const pos = measuredPeerPos([0, COLONY_Y, 0], p);
+      const pos = measuredPeerPos(p);
       worst = Math.min(worst, Math.hypot(pos[0] / FIELD_HALF_X, pos[2] / FIELD_HALF_Z));
+      // The belt's own centre, stated as the closed form it is: an ellipse
+      // about (0,0) with no offset term. A centre 30 wu off the axis — which
+      // is what hanging the belt off the local anchor gives — fails here at
+      // every one of these angles.
+      const a = peerAngle(p.node_id);
+      const r = PEER_INNER_RADIUS;
+      expect(pos[0]).toBeCloseTo(Math.cos(a) * r * COLONY_ELLIPSE_X, 9);
+      expect(pos[2]).toBeCloseTo(Math.sin(a) * r * COLONY_ELLIPSE_Z, 9);
     }
 
     expect(worst).toBeGreaterThan(1.02);
@@ -94,12 +108,11 @@ describe('networkTopology placement', () => {
     expect(PEER_OUTER_RADIUS).toBeGreaterThan(PEER_INNER_RADIUS);
   });
 
-  it('measuredPeerPos places a peer at latency-radius around the anchor', () => {
-    const anchor = localAnchor(0xc0ffee);
+  it('measuredPeerPos places a peer at latency-radius about the colony axis', () => {
     const p = peer({ node_id: 'A', latency_ms: 400 }); // >= cap → outer ring
-    const pos = measuredPeerPos(anchor, p);
+    const pos = measuredPeerPos(p);
     // de-squash BOTH ellipse axes to recover the base (circular) radius r.
-    const dxz = Math.hypot((pos[0] - anchor[0]) / COLONY_ELLIPSE_X, (pos[2] - anchor[2]) / COLONY_ELLIPSE_Z);
+    const dxz = Math.hypot(pos[0] / COLONY_ELLIPSE_X, pos[2] / COLONY_ELLIPSE_Z);
     const t = latencyToRadius01(400);
     const expectedR = PEER_INNER_RADIUS + t * (PEER_OUTER_RADIUS - PEER_INNER_RADIUS);
     expect(dxz).toBeCloseTo(expectedR, 4);
@@ -208,21 +221,30 @@ describe('inferredTopology with an explicit localPos (pinned to the galaxy ancho
     expect(local.pos).not.toEqual(localAnchor(seed)); // genuinely overrides the fallback
   });
 
-  it('scatters measured peers around localPos (distance = latency radius), NOT around localAnchor(seed)', () => {
+  it('scatters measured peers about the colony axis, wherever the local node stands', () => {
+    // ⭐ THE BELT'S CENTRE IS NOT OURS. It was, and the eccentricity that
+    // bought — the anchor is ~30 wu off the axis by design — put a third of
+    // the ring back over the canopy the belt had just been moved out of. The
+    // radius is still our latency to each peer; the centre is the organism.
     const t = inferredTopology(peers, seed, 'ckb:local', localPos);
     const b = t.nodes.find((n) => n.id === 'B')!;
-    // de-squash BOTH ellipse axes to recover the base (circular) radius around localPos
-    const rAroundLocalPos = Math.hypot(
-      (b.pos[0] - localPos[0]) / COLONY_ELLIPSE_X,
-      (b.pos[2] - localPos[2]) / COLONY_ELLIPSE_Z,
+    // de-squash BOTH ellipse axes to recover the base (circular) radius
+    const rAroundAxis = Math.hypot(
+      b.pos[0] / COLONY_ELLIPSE_X,
+      b.pos[2] / COLONY_ELLIPSE_Z,
     );
     const tRad = latencyToRadius01(400);
     const expectedR = PEER_INNER_RADIUS + tRad * (PEER_OUTER_RADIUS - PEER_INNER_RADIUS);
-    expect(rAroundLocalPos).toBeCloseTo(expectedR, 4); // placed around localPos
-    // exact: the peer is measuredPeerPos(localPos, …), and it moved OFF the
-    // seed-only anchor — proving localPos, not localAnchor(seed), is the anchor.
-    expect(b.pos).toEqual(measuredPeerPos(localPos, peers[1]));
-    expect(b.pos).not.toEqual(measuredPeerPos(localAnchor(seed), peers[1]));
+    expect(rAroundAxis).toBeCloseTo(expectedR, 4);
+    expect(b.pos).toEqual(measuredPeerPos(peers[1]));
+    // …and moving the local node moves the local node, not the belt. `localPos`
+    // is a long way off both the axis and the seeded anchor, and the peer does
+    // not budge; the LINK to it is what carries where we stand.
+    const seeded = inferredTopology(peers, seed, 'ckb:local');
+    expect(seeded.nodes.find((n) => n.id === 'B')!.pos).toEqual(b.pos);
+    expect(t.nodes.find((n) => n.kind === 'local')!.pos)
+      .not.toEqual(seeded.nodes.find((n) => n.kind === 'local')!.pos);
+    expect(t.edges.some((e) => e.kind === 'measured' && e.a === 'ckb:local' && e.b === 'B')).toBe(true);
   });
 
   it('⭐ leaves the inferred scaffold byte-identical to the seed-only build (localPos never touches it)', () => {
@@ -875,6 +897,35 @@ function nearestDisc(p: Vec3, discs: readonly Vec3[]): number {
   return best;
 }
 
+/**
+ * Six producers, the first of which stands ON the given point.
+ *
+ * A cohort's mark is a pure hash of its payout key, so the way to put one on a
+ * fixed point is to look for a key that lands there. At a 3.5 wu keep-out over
+ * a 92 wu elliptical disc that is about one key in seven hundred, so a few
+ * thousand tries always finds one and the search is deterministic.
+ *
+ * The peer used to be the free end of this fixture (the belt hung off a
+ * `localPos` the test could choose); it is not free any more — the belt is
+ * about the axis and a peer's mark is its latency and its id. So the COHORT
+ * moved to the peer.
+ */
+function cohortOnTheBelt(at: Vec3): ProducerStanding[] {
+  for (let i = 0; i < 40_000; i += 1) {
+    const key = producerKey(`belt${i}`);
+    if (nearestDisc(at, [attestedPos(key)]) < COHORT_KEEP_OUT_R - 0.25) {
+      return [standing({ key }), ...sixProducersFor('onbelt').slice(0, 5)];
+    }
+  }
+  throw new Error('no producer key lands on the belt');
+}
+
+/** Six ordinary producers under one tag. (`sixProducers` inside the T5 block
+ *  is the same shape; this is the file-level twin the fixture above needs.) */
+function sixProducersFor(tag: string): ProducerStanding[] {
+  return Array.from({ length: 6 }, (_, i) => standing({ key: producerKey(`${tag}m${i}`) }));
+}
+
 /** Whether a point already stands clear of every cohort's keep-out disc. */
 function clearOfEvery(p: Vec3, discs: readonly Vec3[]): boolean {
   return nearestDisc(p, discs) >= COHORT_KEEP_OUT_R - 1e-9;
@@ -1371,20 +1422,23 @@ describe('the cohorts’ keep-out (⭐ nobody stands in the hole)', () => {
   });
 
   // ⚠️ THE MEASURED BELT IS NOT PLACEMENT, IT IS A MEASUREMENT. A peer's radius
-  // is `latencyToRadius01` of its round trip, so pushing one off a cohort would
-  // print a latency nobody observed; the local node is the anchor that belt is
-  // scattered around. Both cases are FORCED here rather than hoped for:
-  // `localPos` is free, so it is chosen to stand a peer exactly on a mark.
+  // is `latencyToRadius01` of its round trip and its angle is its id, so
+  // pushing one off a cohort would print a latency or a bearing nobody
+  // observed. Both cases are FORCED here rather than hoped for: the peer's
+  // position is fixed now (the belt is about the axis), so the COHORT is the
+  // free end — `cohortOnTheBelt` searches payout keys for a mark that stands
+  // on top of the peer, and the assertion is that the peer does not give way
+  // to it.
   it('⚠️ a measured peer and the local node stay put, even standing on a cohort', () => {
-    const producers = sixProducers('mm');
     const p = peer({ node_id: 'QmMeasured', latency_ms: 90, direction: 'outbound' });
+    const pos = measuredPeerPos(p);
+    const producers = cohortOnTheBelt(pos);
     const centre = attestedPos(producers[0].key);
-    const offset = measuredPeerPos([0, COLONY_Y, 0], p);
-    const localPos: Vec3 = [centre[0] - offset[0], COLONY_Y, centre[2] - offset[2]];
+    expect(nearestDisc(pos, [centre])).toBeLessThan(COHORT_KEEP_OUT_R);  // it IS on the mark
+    const localPos: Vec3 = [12, COLONY_Y, -9];
     const t = inferredTopology([p], 0xc0ffee, 'ckb:local', localPos, rows, undefined, producers);
     const measured = t.nodes.find((n) => n.kind === 'measured')!;
-    expect(nearestDisc(measured.pos, [centre])).toBeCloseTo(0, 9);   // standing ON the mark
-    expect(measured.pos).toEqual(measuredPeerPos(localPos, p));      // and not moved off it
+    expect(measured.pos).toEqual(pos);                                // not moved off it
 
     const onAMark = attestedPos(producers[1].key);
     const u = inferredTopology([], 0xc0ffee, 'ckb:local', onAMark, rows, undefined, producers);

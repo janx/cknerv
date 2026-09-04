@@ -58,15 +58,31 @@ export function localAnchor(seed: number): Vec3 {
   ];
 }
 
-/** Measured peer position: latency→radius, id-hash→angle, around the anchor. */
-export function measuredPeerPos(anchor: Vec3, p: Peer): Vec3 {
+/**
+ * Measured peer position: latency→radius, id-hash→angle, about the COLONY'S
+ * OWN AXIS.
+ *
+ * ⚠️ It used to take the local anchor and scatter the belt around that, and
+ * the anchor is deliberately ~30 wu off the axis (`LOCAL_ANCHOR_OFFSET`) so
+ * that it does not read as a hub. A belt hung off it inherited that offset:
+ * the ring was eccentric to the organism it is meant to ring, crossing the
+ * canopy on the near side and leaving the frame on the far one. There is no
+ * anchor parameter now, because there is no anchor to pass — a second centre
+ * is the whole defect, and a parameter that must always be the origin is an
+ * invitation to hand it something else.
+ *
+ * What the anchor still owns is the SPOKES: `inferredTopology` draws one
+ * measured edge from the local node to each of these, and that is where "these
+ * twelve are ours" is said. See `PEER_INNER_RADIUS` for the argument.
+ */
+export function measuredPeerPos(p: Peer): Vec3 {
   const t = latencyToRadius01(p.latency_ms);
   const r = PEER_INNER_RADIUS + t * (PEER_OUTER_RADIUS - PEER_INNER_RADIUS);
   const a = peerAngle(p.node_id);
   return [
-    anchor[0] + Math.cos(a) * r * COLONY_ELLIPSE_X,
+    Math.cos(a) * r * COLONY_ELLIPSE_X,
     COLONY_Y,
-    anchor[2] + Math.sin(a) * r * COLONY_ELLIPSE_Z,
+    Math.sin(a) * r * COLONY_ELLIPSE_Z,
   ];
 }
 
@@ -788,11 +804,13 @@ export function inferredTopology(
   colonyStats.observeTopologyBuild();
   // 1) local anchor. When a `localPos` is supplied (App pins it onto the galaxy's
   //    labeled CkbNodeAnchor so there's a single "you"), it IS the local node's
-  //    position AND the anchor the measured peers scatter around. Otherwise fall
-  //    back to the seed-only localAnchor(seed) — preserving every existing caller.
-  //    NB: this only moves the local + measured core; the ghost scatter behind
-  //    the cloud stays seed-ONLY (and cached), so the ⭐ churn-stability
-  //    invariant holds regardless of peers OR localPos.
+  //    position. Otherwise fall back to the seed-only localAnchor(seed) —
+  //    preserving every existing caller. It is NOT the centre of the measured
+  //    belt: that is the colony's axis (`measuredPeerPos`), so where the local
+  //    node stands moves the local node and the spokes leaving it, and nothing
+  //    else. NB: the ghost scatter behind the cloud stays seed-ONLY (and
+  //    cached), so the ⭐ churn-stability invariant holds regardless of peers
+  //    OR localPos.
   const anchor = localPos ?? localAnchor(seed);
   const nodes: NetworkNode[] = [{ id: localId, kind: 'local', pos: anchor }];
   const localIdx = 0;
@@ -801,7 +819,7 @@ export function inferredTopology(
   const measuredIdx: number[] = [];
   for (const p of peers) {
     measuredIdx.push(nodes.length);
-    nodes.push({ id: p.node_id, kind: 'measured', pos: measuredPeerPos(anchor, p), peer: p });
+    nodes.push({ id: p.node_id, kind: 'measured', pos: measuredPeerPos(p), peer: p });
   }
 
   // 3) the linkless cloud (cached): shared immutable node/edge objects appended

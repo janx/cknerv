@@ -28,6 +28,7 @@ import { useCanvasClientRect } from '../hooks/useCanvasClientRect';
 import { CONTENT_BANDS } from './hud/cellFormat';
 import { HUD_COLORS, rgba } from './hud/hudTheme';
 import { useReducedMotion } from './hud/useReducedMotion';
+import { peerNodeHovered } from './peerHoverWord';
 
 const ARC_SEGMENTS = 18;
 const ENDPOINT_PICK_RADIUS_PX = 10;
@@ -42,7 +43,7 @@ function syncCanvasPointerCursor(canvas: HTMLCanvasElement): void {
   canvas.style.cursor = cellCanvasCursor(
     canvas.dataset.cellPickerHover !== undefined,
     canvas.dataset.cellCausalNavigationHover !== undefined,
-    canvas.dataset.peerNodeHover !== undefined,
+    peerNodeHovered(canvas),
   );
 }
 

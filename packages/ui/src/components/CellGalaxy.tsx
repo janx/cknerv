@@ -149,6 +149,11 @@ import { HUD_COLORS, rgba } from './hud/hudTheme';
 // and THREE's CSS-string parse is measurable at that rate.
 const CHAIN_ANCHOR_HALO_COLOR = new THREE.Color(CHAIN_ANCHOR_HEX.halo);
 import CellNucleus from './CellNucleus';
+import {
+  clearPeerNodeHover,
+  markPeerNodeHover,
+  peerNodeHovered,
+} from './peerHoverWord';
 
 // ---------------------------------------------------------------------------
 // Portable block trigger shape retained for overlay consumers. CellGalaxy uses
@@ -628,8 +633,9 @@ function CkbNodeAnchor({
   // of minting a second one. NETWORK_PEER_PICK_FLAG reads as "a network-layer
   // node owns this pixel", and the labeled anchor IS the local network node
   // (inferredTopology pins the colony's local node onto this very position) —
-  // so one flag, one `peerNodeHover` dataset word, and the shared cursor
-  // contract stays three-writer rather than four.
+  // so one flag, one hover word (`peerHoverWord.ts`, which also carries the
+  // tier this mark answers with: `local`), and the shared cursor contract
+  // stays three-writer rather than four.
   const hitUserData = useMemo(() => ({ [NETWORK_PEER_PICK_FLAG]: true }), []);
 
   const syncCursor = () => {
@@ -637,7 +643,7 @@ function CkbNodeAnchor({
     canvas.style.cursor = cellCanvasCursor(
       canvas.dataset.cellPickerHover !== undefined,
       canvas.dataset.cellCausalNavigationHover !== undefined,
-      canvas.dataset.peerNodeHover !== undefined,
+      peerNodeHovered(canvas),
     );
   };
 
@@ -646,8 +652,7 @@ function CkbNodeAnchor({
   // advertising a hand for a node that no longer exists.
   useEffect(() => () => {
     const canvas = gl.domElement;
-    if (canvas.dataset.peerNodeHover !== id) return;
-    delete canvas.dataset.peerNodeHover;
+    if (!clearPeerNodeHover(canvas, id)) return;
     canvas.style.cursor = cellCanvasCursor(
       canvas.dataset.cellPickerHover !== undefined,
       canvas.dataset.cellCausalNavigationHover !== undefined,
@@ -774,13 +779,11 @@ function CkbNodeAnchor({
           onSelect(id);
         }}
         onPointerOver={() => {
-          gl.domElement.dataset.peerNodeHover = id;
+          markPeerNodeHover(gl.domElement, id, 'local');
           syncCursor();
         }}
         onPointerOut={() => {
-          if (gl.domElement.dataset.peerNodeHover === id) {
-            delete gl.domElement.dataset.peerNodeHover;
-          }
+          clearPeerNodeHover(gl.domElement, id);
           syncCursor();
         }}
       >
@@ -1563,7 +1566,7 @@ function CellPicker({
     gl.domElement.style.cursor = cellCanvasCursor(
       false,
       gl.domElement.dataset.cellCausalNavigationHover !== undefined,
-      gl.domElement.dataset.peerNodeHover !== undefined,
+      peerNodeHovered(gl.domElement),
     );
   }, [gl]);
 
@@ -1582,7 +1585,7 @@ function CellPicker({
     gl.domElement.style.cursor = cellCanvasCursor(
       id !== null,
       causalNavigationOwnsCursor,
-      gl.domElement.dataset.peerNodeHover !== undefined,
+      peerNodeHovered(gl.domElement),
     );
   };
 

@@ -424,11 +424,13 @@ describe('ColonyNodes sighted tier', () => {
     const nodes = source('ColonyNodes.tsx');
     // Every hover write and retraction is resolved from e.instanceId, and a
     // word that is no longer ours is left alone — r3f cancels the stale
-    // instance before entering the next one, so it belongs to a live target.
+    // instance before entering the next one, so it belongs to a live target
+    // (`clearPeerNodeHover` retracts only a word that matches the id it is
+    // given).
     expect(nodes).toContain('const id = targetAt(e.instanceId)?.id');
-    expect(nodes).toContain('gl.domElement.dataset.peerNodeHover = id');
+    expect(nodes).toContain('markPeerNodeHover(gl.domElement, target.id, target.tier)');
     expect(nodes).toContain(
-      'if (id !== undefined && gl.domElement.dataset.peerNodeHover === id)',
+      'if (id !== undefined) clearPeerNodeHover(gl.domElement, id);',
     );
     // churn + unmount guards: a retired or unmounted node never strands a hand.
     expect(nodes).toContain('ownedRef.current.has(hovered)');
