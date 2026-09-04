@@ -1120,6 +1120,15 @@ export function cohortMassApproach(
  * follow-up `MIST_SWIRL`'s own comment names: six same-handed spirals may read
  * as stamped.
  *
+ * ⭐ SPENT IN FOUR PLACES AND NOWHERE ELSE. In the lens: `vHand` mirrors the
+ * whole local frame in y — `local.y` in BOTH laws, the traced one and the
+ * straight one — and with it `vDrift.y`, so the wake maps back onto itself and
+ * stays where the colony's rotation puts it; and it turns the beaming's
+ * product over, because the material's orbital direction IS the spiral's. In
+ * the motes: `theta0 - hand * turn`. ⚠️ THE MIST LIBRARY'S TEXT IS UNTOUCHED —
+ * the mirror lives in the ARGUMENTS the two programs hand it, so one substance
+ * is still read one way.
+ *
  * ⚠️ NEVER ZERO. It is packed as the SIGN of the mass lane, so a zero would be
  * a mass with no magnitude — see `cohortMassLaneValue`.
  */
@@ -1320,9 +1329,9 @@ export function lensDiscInnerEdge(rho: number, edge: number): number {
  *
  * ⭐ AND THE HAND FLIPS THE BRIGHT SIDE WITH THE SPIRAL, because the material's
  * orbital direction IS the spiral's and "the approaching side" is a fact about
- * that direction: `lensBeaming(c, k, −1) === lensBeaming(−c, k, 1)`. ⚠️ The
- * PROGRAM does not read a hand yet — `colonyLens.ts` ships `vMass` alone and
- * reserves the lane's sign — so this argument is the mirror waiting for it.
+ * that direction: `lensBeaming(c, k, −1) === lensBeaming(−c, k, 1)`. The
+ * program's own line is this product exactly — `uBeam * closeness * vHand *
+ * dot(tangent, -view)` — and this function is its mirror.
  */
 export function lensBeaming(
   cosToTangent: number,
@@ -1360,9 +1369,12 @@ export function lensRedshift(rho: number, rs: number): number {
  * else is already written in units of `rs` or of an edge. A cohort whose lane
  * reads 1 is the form this file has always drawn, exactly.
  *
- * ⚠️ THE MAGNITUDE IS THE MASS AND THE SIGN IS RESERVED FOR THE HANDEDNESS.
- * The vertex stage reads `max(abs(aMass), 0.05)` and nothing else looks at
- * the sign yet; `cohortMassLaneValue` on the CPU packs both.
+ * ⚠️ THE MAGNITUDE IS THE MASS AND THE SIGN IS THE HAND. The vertex stage
+ * reads `max(abs(aMass), 0.05)` for the one and `aMass < 0.0` for the other;
+ * `vHand` then mirrors the whole local frame in y — both laws' `local`, the
+ * drift, the beaming — so each cohort winds its own way out of its own key
+ * while every one of them is still one size and one substance.
+ * `cohortMassLaneValue` on the CPU packs both.
  *
  * ⚠️ A SCALED INSTANCE MATRIX WOULD MOVE THE QUAD WITHOUT MOVING THE MASS, and
  * the mark would be a window onto a hole that is somewhere else.
@@ -1477,20 +1489,30 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
       varying float vGulp;
       varying float vShareF;
       varying float vMass;
+      varying float vHand;
 
       void main() {
         vSeed = aSeed;
         vGulp = aGulp;
         // The cohort's own size, and every length in the fragment is a multiple
         // of it. Floored because an unwritten lane reads as zero in WebGL, and
-        // absolute because the sign is reserved for the handedness.
+        // absolute because the sign is the hand, read on the next line.
         vMass = max(abs(aMass), ${COHORT_MASS_GLSL_FLOOR.toFixed(2)});
+        // Which way this cohort's spiral winds, out of its own key: one bit,
+        // carried in the sign, costing no attribute slot on either draw.
+        vHand = aMass < 0.0 ? -1.0 : 1.0;
         ${MIST_SHARE_FACTOR_GLSL}
         // The instance's own world point: the centre of the mass, the origin of
         // every ray's polar frame, and what the context exemption measures.
         vec4 origin = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
         vOrigin = origin.xyz;
         ${MIST_SEAT_DRIFT_GLSL}
+        // ⭐⭐ ONE REFLECTION OF THE WHOLE LOCAL FRAME, DRIFT INCLUDED. The
+        // fragment reads the substance in a y-mirrored frame, and the drift
+        // maps back onto itself under the same reflection: the spiral's
+        // chirality turns over while the wake stays on the side the colony's
+        // own rotation puts it.
+        vDrift = vec2(vDrift.x, vDrift.y * vHand);
         vSeat = seat.xz;
         // ⭐⭐ THE COLONY'S OWN AXES, so the fragment can sample the substance in
         // the frame the substance lives in. The colony turns about world Y and
@@ -1581,6 +1603,7 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
       varying float vGulp;
       varying float vShareF;
       varying float vMass;
+      varying float vHand;
 
       // ---- the substance, read the one way a ray march may read it ---------
       //
@@ -1609,8 +1632,10 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
       ) {
         vec2 dxz = hit.xz - vOrigin.xz;
         float rho = max(length(dxz), 1e-4);
-        // ⭐ IN THE COLONY'S FRAME, NOT THE WORLD'S — see the vertex stage.
-        vec2 local = vec2(dot(dxz, vFrameX), dot(dxz, vFrameZ));
+        // ⭐ IN THE COLONY'S FRAME, NOT THE WORLD'S — see the vertex stage —
+        // and mirrored in y by the hand, which is the whole of what turns this
+        // cohort's spiral over.
+        vec2 local = vec2(dot(dxz, vFrameX), dot(dxz, vFrameZ) * vHand);
         float th = atan(local.y, local.x);
         // How far in the material has come, as a fraction: 1 at the inner edge.
         float cc = clamp(edge / rho, 0.0, 1.0);
@@ -1674,9 +1699,10 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
         // Beaming toward the camera on the approaching side. The tangent is a
         // WORLD direction: this is a fact about the camera, not about the
         // substance, and it is the one thing here the colony's frame is wrong
-        // for.
+        // for. The HAND still belongs in it: the material's orbital direction
+        // is the spiral's, so which side approaches turns over with the wind.
         vec3 tangent = vec3(-dxz.y, 0.0, dxz.x) / rho;
-        v *= 1.0 + uBeam * closeness * dot(tangent, -view);
+        v *= 1.0 + uBeam * closeness * vHand * dot(tangent, -view);
         // …and the redshift's dimming, which is what puts the dark ring inside
         // the bright one.
         v *= sqrt(max(1.0 - rs / rho, 0.0));
@@ -1736,7 +1762,9 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
         if (rho >= outR) return vec4(0.0);
         // In the colony's frame and at the seat, as the traced disc samples it:
         // the colony turns, and a world sample would swim past its own mouth.
-        vec2 local = vec2(dot(dxz, vFrameX), dot(dxz, vFrameZ));
+        // Mirrored by the same hand, so the far arms wind the way the near
+        // disc's do and the fold has no chirality to cross.
+        vec2 local = vec2(dot(dxz, vFrameX), dot(dxz, vFrameZ) * vHand);
         float ph = uTime / uPeriod + vSeed;
         float t0 = fract(ph) * uPeriod;
         float t1 = fract(ph + 0.5) * uPeriod;

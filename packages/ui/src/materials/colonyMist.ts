@@ -330,9 +330,13 @@ export const MIST_SINK_K = 12;
  * shape a viewer reads as SWALLOWING. 1.4 turns per e-fold of radius, from the
  * approved preview.
  *
- * ⭐ It is the same for every cohort on purpose. Six same-handed spirals may
- * read as stamped; deriving the handedness from the producer key is a
- * deliberate follow-up (§6 of the plan), not an omission.
+ * ⭐ The RATE is the same for every cohort on purpose; the HAND no longer is.
+ * Six same-handed spirals may read as stamped, and the deliberate follow-up
+ * that says so is done: `cohortHandedness(seed)` in `colonyLens.ts` reads the
+ * producer key's own seed, rides the SIGN of the mass lane, and is spent by
+ * the two programs mirroring the frame they hand this law — the lens in
+ * `local.y` and `vDrift.y`, the motes in `theta0 - hand * turn`. This text is
+ * untouched by it: one substance, read one way, wound both ways round.
  */
 export const MIST_SWIRL = 1.4;
 

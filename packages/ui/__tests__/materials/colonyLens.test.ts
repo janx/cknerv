@@ -495,6 +495,17 @@ describe('cohort lens — the mass is the week', () => {
         expect(Math.abs(lane)).toBeGreaterThanOrEqual(COHORT_MASS_GLSL_FLOOR);
       }
     }
+    // Both ends of the range the feature actually ships, said outright: the
+    // ceiling and the floor round-trip at either hand, so a left-handed giant
+    // is a giant and a left-handed tail is a tail.
+    for (const mass of [1, COHORT_MASS_FLOOR]) {
+      expect(cohortMassUnpack(cohortMassLaneValue(mass, -1)).hand).toBe(-1);
+      expect(cohortMassUnpack(cohortMassLaneValue(mass, -1)).mass)
+        .toBeCloseTo(mass, 12);
+      expect(cohortMassUnpack(cohortMassLaneValue(mass, 1)).hand).toBe(1);
+      expect(cohortMassUnpack(cohortMassLaneValue(mass, 1)).mass)
+        .toBeCloseTo(mass, 12);
+    }
     expect(cohortMassLaneValue(0, 1)).toBe(COHORT_MASS_GLSL_FLOOR);
     expect(cohortMassLaneValue(0, -1)).toBe(-COHORT_MASS_GLSL_FLOOR);
     // ⚠️ A HAND OF ZERO IS NOT A SIGN, so it reads as +1 — the mirror of the
@@ -582,8 +593,9 @@ describe('cohort lens — the mass is the week', () => {
   it('turns the beaming over with the hand, and is the old factor at +1', () => {
     // ⭐ THE MIRROR IS ONE REFLECTION: flipping the hand is flipping which side
     // of the disc is approaching, because the material's orbital direction IS
-    // the spiral's. ⚠️ The PROGRAM does not read a hand yet — the lane's sign
-    // is reserved — so this is the mirror waiting for it.
+    // the spiral's. The program's own line is this product exactly —
+    // `uBeam * closeness * vHand * dot(tangent, -view)` — and the guard file
+    // pins that there is no other reading of the sign anywhere in it.
     for (const cosine of [-1, -0.5, 0, 0.37, 1]) {
       for (const closeness of [0, 0.4, 1]) {
         expect(lensBeaming(cosine, closeness, -1))
@@ -800,12 +812,16 @@ describe('cohort lens — the material', () => {
     expect(material.fragmentShader).toContain('vShareF');
     // ⚠️ THE LANE IS FLOORED IN THE PROGRAM, because a lane the geometry does
     // not carry reads as ZERO in WebGL and a mass of zero is a mark with no
-    // extent at all. The magnitude is the mass; the sign is reserved.
+    // extent at all. The magnitude is the mass; the SIGN is the hand, and the
+    // two are unpacked on the two lines below in the order the CPU packs them.
     expect(material.vertexShader).toContain(
       `vMass = max(abs(aMass), ${COHORT_MASS_GLSL_FLOOR.toFixed(2)});`,
     );
-    expect(material.vertexShader).toContain('varying float vMass;');
-    expect(material.fragmentShader).toContain('varying float vMass;');
+    expect(material.vertexShader).toContain('vHand = aMass < 0.0 ? -1.0 : 1.0;');
+    for (const stage of [material.vertexShader, material.fragmentShader]) {
+      expect(stage).toContain('varying float vMass;');
+      expect(stage).toContain('varying float vHand;');
+    }
     // …and the instance matrix carries a TRANSLATION and nothing else, which is
     // why the quad's extent is a uniform — times the mass, so the domain of the
     // trace shrinks with the picture it computes and a small cohort costs the

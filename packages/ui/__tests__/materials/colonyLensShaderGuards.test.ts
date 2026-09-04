@@ -635,12 +635,56 @@ describe('colonyLens.ts — source-level shader guards', () => {
       expect(`${program.name}: ${/varying float vMass\s*;/.test(program.glsl)}`)
         .toBe(`${program.name}: true`);
     }
-    // ⛔ AND THE SIGN IS RESERVED. M4 reads the lane's sign as the handedness;
-    // until then no stage names a hand at all, so the mirror cannot be half
-    // applied.
+  });
+
+  it('mirrors the whole local frame with the hand, drift included', () => {
+    // ⭐⭐⭐ ONE REFLECTION, OR NONE. The hand is the lane's SIGN, and what it
+    // buys is that two cohorts the week makes the same size are still two
+    // pictures. It only reads as a spiral wound the other way if the WHOLE
+    // local frame turns over together: mirror `local.y` and leave the drift
+    // alone and the wake swings to the wrong side of a mouth the colony's own
+    // rotation decides; mirror one law's frame and not the other's and the
+    // fold has a chirality to cross halfway through the band. So the mirror is
+    // pinned SITE BY SITE, and the count below is what says there are no
+    // others.
+    const fragment = LENS_FRAGMENT?.glsl ?? '';
+    const vertex = LENS.find(({ name }) => name === 'lens.vertexShader')?.glsl ?? '';
+    // The sign, read exactly as `cohortMassUnpack` reads it: `< 0.0` is FALSE
+    // for a negative zero in GLSL as it is in TypeScript, so a hand of zero is
+    // +1 on both sides.
+    expect(vertex).toContain('vHand = aMass < 0.0 ? -1.0 : 1.0;');
+    // The drift is reflected with the frame, in the stage that assigns it —
+    // after the library's own snippet, which is what leaves it assigned.
+    expect([...vertex.matchAll(/vDrift\.y \* vHand/g)]).toHaveLength(1);
+    expect(vertex.indexOf('vDrift = vec2(vDrift.x, vDrift.y * vHand);'))
+      .toBeGreaterThan(vertex.indexOf('vDrift = tangentLen > 1e-4'));
+    // BOTH laws sample the substance in the mirrored frame: the traced disc
+    // and the straight far ray, or the two disagree through the cross-fade.
+    expect([...fragment.matchAll(/vFrameZ\) \* vHand/g)]).toHaveLength(2);
+    // ⚠️ AND NOT ONE UNMIRRORED FRAME SURVIVES.
+    expect(fragment).not.toContain('dot(dxz, vFrameZ))');
+    // The beaming turns over WITH the spiral: the material's orbital direction
+    // is the spiral's, so which side of the disc approaches is a fact about
+    // the hand and not about the camera alone.
+    expect([...fragment.matchAll(/closeness \* vHand \* dot\(tangent, -view\)/g)])
+      .toHaveLength(1);
+    // ⭐ Three sites and no fourth. The count includes the DECLARATION — a
+    // varying's own line matches too, the trap the `uFarKnee` guard above
+    // carries — so the fragment names the hand exactly four times.
+    expect([...fragment.matchAll(/vHand/g)]).toHaveLength(4);
+    // The vertex stage names it three: the declaration, the sign, the drift.
+    expect([...vertex.matchAll(/vHand/g)]).toHaveLength(3);
+    // …and it is declared in both stages, or the fragment does not link.
     for (const program of LENS) {
-      expect(program.glsl).not.toContain('vHand');
+      expect(`${program.name}: ${/varying float vHand\s*;/.test(program.glsl)}`)
+        .toBe(`${program.name}: true`);
     }
+    // ⛔ THE LIBRARY'S TEXT IS NOT MIRRORED. The mist is one substance read one
+    // way; the hand lives in the ARGUMENTS the lens hands it, which is why a
+    // left-handed cohort is the same medium and not a second one.
+    expect(stripComments(
+      readFileSync(resolve(process.cwd(), 'src/materials/colonyMist.ts'), 'utf8'),
+    )).not.toContain('vHand');
   });
 
   it('carries no backtick anywhere in its GLSL', () => {
