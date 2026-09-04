@@ -67,7 +67,7 @@ describe('peers.derive', () => {
     // ping jitter. Its size is the band's own reading resolution: one step is
     // (PEER_OUTER_RADIUS − PEER_INNER_RADIUS) / PEER_LATENCY_STEPS world units.
     const perStep = (PEER_OUTER_RADIUS - PEER_INNER_RADIUS) / PEER_LATENCY_STEPS;
-    expect(perStep).toBeCloseTo(1.375, 6);
+    expect(perStep).toBeCloseTo(1.25, 6);
     expect(PEER_LATENCY_CAP_MS / PEER_LATENCY_STEPS).toBe(25);
     // jitter inside one step is one step…
     expect(latencyPlacementStep(140)).toBe(latencyPlacementStep(147));

@@ -11,9 +11,40 @@ import {
 
 /** Latency at/above this (ms) maps to the outer rim. */
 export const PEER_LATENCY_CAP_MS = 400;
-/** Annulus radius bounds (pre-ellipse), matching the chain-node scatter band. */
-export const PEER_INNER_RADIUS = 34;
-export const PEER_OUTER_RADIUS = 56;
+/**
+ * Annulus radius bounds (pre-ellipse): the belt the measured peers stand in.
+ *
+ * ⭐ THE BELT RINGS THE ORGANISM; IT DOES NOT HIDE UNDER IT. At 34–56 the belt
+ * sat inside the tissue's own footprint (`helix.ts` FIELD_HALF_X 60 /
+ * FIELD_HALF_Z 54) and the twelve links we actually hold were drawn INSIDE the
+ * galaxy's silhouette — where additive cyan over rose composites to white, so
+ * the ladder's top rung was the one rung that did not wear the family hue. The
+ * 2026-09-04 census read it as plainly as it can be read: the ten brightest
+ * regions in the idle frame were ten peer halos, five of them standing on
+ * tissue, and `PEERS 12` named twelve marks a viewer could not find.
+ *
+ * So the belt moved OUT. The colony's own ellipse (`COLONY_ELLIPSE_X` 1.25,
+ * `COLONY_ELLIPSE_Z` 0.85) is what decides the clearance, and z is the tight
+ * axis: 66 × 0.85 = 56.1 against a 54 rim is 3.9 % of daylight, while
+ * 66 × 1.25 = 82.5 against a 60 rim is 37 %. Hence 66 and not the 64 the plan
+ * named — 64 × 0.85 = 54.4 clears the rim by four tenths of a world unit,
+ * which is inside the 2 % margin the gate asks for and inside the width of the
+ * halo it is meant to keep off the tissue.
+ *
+ * ⚠️ The belt is centred on the LOCAL ANCHOR, which is itself ~30 wu off the
+ * galaxy's axis (`LOCAL_ANCHOR_OFFSET`) — the peers ring US, because the
+ * radius is OUR latency to them. So the near arc of the belt still crosses the
+ * tissue's footprint: at the inner radius 60 % of the ring stands clear of the
+ * canopy and at the outer radius 100 % does, against 38 % / 53 % before. Where
+ * the hub itself should stand is a question this task deliberately does not
+ * answer (the plan: "B1 moves the peers, not the hub").
+ *
+ * Nothing semantic moves with them: the compass ring on the PEER card is a 0–1
+ * of `PEER_LATENCY_CAP_MS`, not of these, and `planDeliveries` already clamps
+ * a landing from past the rim back onto the tissue.
+ */
+export const PEER_INNER_RADIUS = 66;
+export const PEER_OUTER_RADIUS = 86;
 /** Lag (blocks) at which a peer's sync proximity bottoms out. */
 export const PEER_SYNC_LAG_FLOOR = 2000;
 
@@ -25,8 +56,8 @@ export function latencyToRadius01(latencyMs: number | null | undefined): number 
 }
 
 /** How many radial steps the annulus resolves a ping into. The band is
- *  PEER_OUTER_RADIUS − PEER_INNER_RADIUS = 22 world units wide for the WHOLE
- *  0-PEER_LATENCY_CAP_MS range, so a step is 1.4 of them: the finest reading a
+ *  PEER_OUTER_RADIUS − PEER_INNER_RADIUS = 20 world units wide for the WHOLE
+ *  0-PEER_LATENCY_CAP_MS range, so a step is 1.25 of them: the finest reading a
  *  viewer can take off a ring of glow blobs that is itself counter-rotating. */
 export const PEER_LATENCY_STEPS = 16;
 
@@ -104,9 +135,12 @@ export interface DeliveryLandingField {
  *  nominal tissue rim: the released front is a small local ripple (the
  *  peer-plane wave divided by CONTACT_WAVE_SCALE), so a landing out past the
  *  rim would release its whole ring over empty space and the worker's commit
- *  would never be seen touching tissue. Workers ring the galaxy WIDER than the tissue on x
- *  (chain ellipse 1.25 vs tissue 60), so far-rim landings are common, not a
- *  degenerate case. */
+ *  would never be seen touching tissue. Since the belt moved outside the
+ *  canopy (`PEER_INNER_RADIUS`), a measured peer's landing is clamped onto the
+ *  rim ALWAYS rather than merely often — the peers commit at the edge of the
+ *  organism and the local node, which still stands inside the footprint,
+ *  commits within it. That is the shape of the event now: the neighbours'
+ *  copies arrive at the rim, ours lands in the tissue. */
 export const DELIVERY_LANDING_MAX_NORM = 1.0;
 
 /** three.js `group.rotation.y = θ` carries a LOCAL xz into WORLD as

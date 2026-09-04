@@ -15,6 +15,7 @@ import { emptyChainCache } from '@cknerv/cache';
 import type {
   BlockProducer, ChainEntry, NetworkRosterRecord, Peer, RosterNode, RosterNodeState,
 } from '@cknerv/types';
+import { FIELD_HALF_X, FIELD_HALF_Z } from '../src/helix';
 import type { NetworkNode, Vec3 } from '../src/types';
 
 function peer(p: Partial<Peer>): Peer {
@@ -67,6 +68,30 @@ describe('networkTopology placement', () => {
     const rXZ = Math.hypot(a[0] / COLONY_ELLIPSE_X, a[2]);  // de-squash X to get base radius
     expect(rXZ).toBeGreaterThan(LOCAL_ANCHOR_OFFSET * 0.5); // genuinely offset, not centered
     expect(localAnchor(0xc0ffee)).not.toEqual(localAnchor(0xbeef)); // seed-sensitive
+  });
+
+  it('stands the whole belt outside the tissue rim, in its own frame', () => {
+    // D-1: the measured peers were the only colony marks drawn INSIDE the
+    // canopy, and additive cyan over rose is white — so the top of the
+    // honesty ladder was the one rung that did not wear the family hue. The
+    // belt clears the tissue's own footprint now, at every angle and at the
+    // FASTEST ping, which is the inner radius and therefore the hard case.
+    // The colony's ellipse is what decides it, and z is the tight axis.
+    const fastest = peer({ node_id: 'A', latency_ms: 0 });
+    let worst = Infinity;
+    for (let i = 0; i < 360; i += 1) {
+      // sweep the angle by walking the id, since the angle is id-hashed
+      const p = { ...fastest, node_id: `peer-${i}` };
+      const pos = measuredPeerPos([0, COLONY_Y, 0], p);
+      worst = Math.min(worst, Math.hypot(pos[0] / FIELD_HALF_X, pos[2] / FIELD_HALF_Z));
+    }
+
+    expect(worst).toBeGreaterThan(1.02);
+    // …and the arithmetic that decides it, stated so a change to either
+    // ellipse fails here rather than in a screenshot.
+    expect(PEER_INNER_RADIUS * COLONY_ELLIPSE_Z).toBeGreaterThan(FIELD_HALF_Z * 1.02);
+    expect(PEER_INNER_RADIUS * COLONY_ELLIPSE_X).toBeGreaterThan(FIELD_HALF_X * 1.02);
+    expect(PEER_OUTER_RADIUS).toBeGreaterThan(PEER_INNER_RADIUS);
   });
 
   it('measuredPeerPos places a peer at latency-radius around the anchor', () => {
