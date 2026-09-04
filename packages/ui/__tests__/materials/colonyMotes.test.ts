@@ -28,10 +28,14 @@ import {
   COHORT_HORIZON,
   COHORT_HORIZON_FAR,
   COHORT_LENS_REACH,
+  COHORT_MASS_FLOOR,
+  COHORT_MASS_GLSL_FLOOR,
   COHORT_SHADOW_RATIO,
   COHORT_UNFOLD_HI,
   COHORT_UNFOLD_LO,
   cohortDiscStops,
+  cohortMassLaneValue,
+  cohortMassUnpack,
   cohortShadowRadius,
 } from '../../src/materials/colonyLens';
 import { MIST_SWIRL } from '../../src/materials/colonyMist';
@@ -74,6 +78,7 @@ import {
   makeCohortMotesMaterial,
   stampCohortMotes,
   writeCohortMotes,
+  writeCohortMotesMass,
 } from '../../src/materials/colonyMotes';
 
 /** A camera close enough to unfold the form completely. */
@@ -83,6 +88,10 @@ const FAR_PX = COHORT_UNFOLD_LO / 2;
 
 /** A cohort taking its whole window: the sink at full strength. */
 const FULL = 1;
+
+/** The three masses the live week actually produces: the floor pair, the
+ *  middling three, and the giant at the ceiling. */
+const MASSES = [COHORT_MASS_FLOOR, 0.6, 1] as const;
 
 /** GLSL's `smoothstep`, where a test has to divide one out. */
 const smoothstep = (edge0: number, edge1: number, value: number): number => {
@@ -145,6 +154,69 @@ describe('cohort motes — the trajectory', () => {
     );
   });
 
+  it('winds the other way for a cohort whose lane is negative, and no other way', () => {
+    // ⭐⭐ THE HAND IS ONE REFLECTION AND NOTHING ELSE. It is identity rather
+    // than data — the sign of the mass lane, off the producer key's own seed —
+    // so it may separate two cohorts the week makes the same size and may not
+    // change how much substance either is taking: the same radius at the same
+    // instant, the same light, the same speck, wound the other way round.
+    for (const time of [0.4, 6.5, 31]) {
+      const seed = cohortMoteSeed(0.42, 7);
+      const input = { seed, strength: FULL, time, pxPerWu: NEAR_PX } as const;
+      const right = cohortMoteAt(input);
+      const left = cohortMoteAt({ ...input, hand: -1 });
+      expect(left.r).toBe(right.r);
+      expect(left.r0).toBe(right.r0);
+      expect(left.life).toBe(right.life);
+      expect(left.near).toBe(right.near);
+      expect(left.brightness).toBe(right.brightness);
+      expect(left.diameter).toBe(right.diameter);
+      expect(left.theta0).toBe(right.theta0);
+      // The turn is negated and the birth angle is not: `theta0 - hand · turn`.
+      expect(left.theta - left.theta0).toBeCloseTo(-(right.theta - right.theta0), 12);
+      // …and it is not a reflection of nothing: this mote really has wound.
+      expect(Math.abs(right.theta - right.theta0)).toBeGreaterThan(0.05);
+    }
+    // ⭐ +1 IS THE DEFAULT, EXACTLY — the whole colony's hand until a lane says
+    // otherwise, which is why the picture is unchanged before one does.
+    const base = { seed: 12.5, strength: FULL, time: 9, pxPerWu: NEAR_PX } as const;
+    expect(cohortMoteAt({ ...base, hand: 1 })).toEqual(cohortMoteAt(base));
+    // And the hand a lane value carries is the sign the mirror unpacks.
+    expect(cohortMassUnpack(cohortMassLaneValue(0.6, -1)).hand).toBe(-1);
+    expect(cohortMassUnpack(cohortMassLaneValue(0.6, 1)).hand).toBe(1);
+  });
+
+  it('is one fall at one scale for a cohort of less mass, and a shorter one', () => {
+    // ⭐⭐⭐ A SMALLER COHORT IS THE SAME PICTURE AT A SMALLER SIZE, which is the
+    // whole claim of the channel: every LENGTH scales by the mass and nothing
+    // else about the fall is touched. The birth radius, the shadow and the
+    // catchment fold together, so the trajectory is the full-size one scaled —
+    // read at the camera scale the mass says (`px · m`), because the fold is
+    // pixels per shadow.
+    //
+    // ⚠️ AND THE FALL IS FASTER, WHICH IS ARITHMETIC AND NOT A CHOICE. The sink
+    // strength `k` is the cohort's SHARE and stays in wu² per second, so a life
+    // of `(r0² - shadow²)/k` over lengths scaled by `m` is scaled by `m²`: at
+    // the floor a speck crosses its smaller catchment in a fifth of the time.
+    // The substance is the same substance; there is simply less of it to cross.
+    const seed = cohortMoteSeed(0.42, 13);
+    for (const mass of MASSES) {
+      const small = cohortMoteAt({ seed, strength: FULL, time: 3, pxPerWu: 40, mass });
+      const full = cohortMoteAt({ seed, strength: FULL, time: 3, pxPerWu: 40 * mass });
+      expect(small.closeness).toBe(full.closeness);
+      expect(small.reach).toBeCloseTo(full.reach * mass, 12);
+      expect(small.shadowR).toBeCloseTo(full.shadowR * mass, 12);
+      expect(small.r0).toBeCloseTo(full.r0 * mass, 12);
+      expect(small.life).toBeCloseTo(full.life * mass * mass, 12);
+      // The whole trajectory, at the instant the shorter life puts it at.
+      const at = cohortMoteAt({
+        seed, strength: FULL, time: 3 * mass * mass, pxPerWu: 40, mass,
+      });
+      expect(at.r).toBeCloseTo(full.r * mass, 10);
+      expect(at.near).toBeCloseTo(full.near, 10);
+    }
+  });
+
   it('lives exactly as long as it takes to reach the shadow’s edge', () => {
     // ⭐⭐⭐ THE LIFE IS NOT A TUNED DURATION, IT IS WHERE THE FALL ENDS. At
     // `age = life` the radius is the shadow's radius to the last bit, at every
@@ -168,16 +240,24 @@ describe('cohort motes — the trajectory', () => {
       .toBeCloseTo(far.shadowR, 9);
   });
 
-  it('is never born inside the shadow, whatever the fold does to both', () => {
+  it('is never born inside the shadow, whatever the fold and the mass do to both', () => {
     // ⚠️ THE OTHER HALF OF "THE LIFE IS FINITE": a mote born AT the shadow lives
     // zero seconds, and one born inside it a negative number of them.
-    for (let px = 0; px <= 90; px += 0.5) {
-      const fold = cohortMoteFold(px);
-      for (const seed of [0.11, 5.7, 91.3, 210.4]) {
-        const r0 = cohortMoteBirthRadius(seed, fold.fold, fold.shadowR);
-        expect(r0).toBeGreaterThanOrEqual(fold.shadowR * COHORT_MOTE_R0_FLOOR);
-        expect(cohortMoteLife(r0, fold.shadowR, cohortMoteSinkK(FULL)))
-          .toBeGreaterThan(0);
+    //
+    // ⭐ AND THE MASS CANNOT BREAK IT, BY CONSTRUCTION: it multiplies the
+    // catchment and the shadow by the SAME factor, so the birth floor
+    // (`shadowR · 1.6`) and the drawn radius fold together. A mass that scaled
+    // one and not the other is exactly the bug this sweep would catch.
+    for (const mass of MASSES) {
+      for (let px = 0; px <= 90; px += 0.5) {
+        const fold = cohortMoteFold(px, mass);
+        for (const seed of [0.11, 5.7, 91.3, 210.4]) {
+          const r0 = cohortMoteBirthRadius(seed, fold.fold, fold.shadowR);
+          expect(r0).toBeGreaterThanOrEqual(fold.shadowR * COHORT_MOTE_R0_FLOOR);
+          expect(r0).toBeGreaterThan(fold.shadowR * COHORT_MOTE_VANISH);
+          expect(cohortMoteLife(r0, fold.shadowR, cohortMoteSinkK(FULL)))
+            .toBeGreaterThan(0);
+        }
       }
     }
   });
@@ -428,6 +508,60 @@ describe('cohort motes — the fold', () => {
     }
   });
 
+  it('scales every length by the cohort’s mass, and reads the camera per SHADOW', () => {
+    // ⭐⭐⭐ THE ONE CHANNEL A COHORT HAS TO SPEAK WITH. Every other form
+    // parameter of this draw is a uniform the whole colony shares, so the mass
+    // is the whole of what makes two intakes different pictures — and what it
+    // multiplies FIRST is the camera's own scale. Pixels per SHADOW and not per
+    // world unit: a cohort of half the mass reaches the same point of the band
+    // at twice the pixels per world unit, so every cohort's specks unfold at
+    // the same size on screen and a small one is never "a small eye".
+    for (const mass of MASSES) {
+      for (const px of [0, 7, 20, 26, 33, 50, 120]) {
+        const own = cohortMoteFold(px, mass);
+        // The SAME point of the band, reached at the scale the mass names.
+        const same = cohortMoteFold(px * mass);
+        expect(own.closeness).toBe(same.closeness);
+        expect(own.reach).toBeCloseTo(same.reach * mass, 12);
+        expect(own.shadowR).toBeCloseTo(same.shadowR * mass, 12);
+        expect(own.fold).toBeCloseTo(same.fold * mass, 12);
+        // …and the birth radius is never named: it rides `fold` and `shadowR`,
+        // so it folds with the mark for free.
+        for (const seed of [0.11, 91.3]) {
+          expect(cohortMoteBirthRadius(seed, own.fold, own.shadowR)).toBeCloseTo(
+            cohortMoteBirthRadius(seed, same.fold, same.shadowR) * mass,
+            12,
+          );
+        }
+      }
+    }
+    // ⭐⭐ A MASS OF 1 IS THE FOLD THIS FILE HAS ALWAYS COMPUTED, value for
+    // value — which is what says the running picture is unchanged until a week
+    // says otherwise.
+    for (const px of [0, 13, 26, 44, 90]) {
+      expect(cohortMoteFold(px, 1)).toEqual(cohortMoteFold(px));
+    }
+    // The lane is one number carrying two facts, and the MAGNITUDE is what
+    // folds — the mirror of the vertex stage's own `max(abs(aMass), …)`.
+    expect(cohortMassUnpack(cohortMassLaneValue(0.6, -1)))
+      .toEqual({ mass: 0.6, hand: -1 });
+    expect(cohortMoteFold(26, cohortMassUnpack(-0.6).mass))
+      .toEqual(cohortMoteFold(26, 0.6));
+    // ⚠️⚠️ AND A LANE NOBODY WROTE IS NOT A MASS OF ZERO. WebGL reads a missing
+    // attribute as zero, and zero here is a shadow of zero, a life of zero and
+    // a division by it; the mirror takes the program's own floor instead, so
+    // both sides of the pane answer the same non-zero number.
+    expect(cohortMassUnpack(0).mass).toBe(COHORT_MASS_GLSL_FLOOR);
+    expect(COHORT_MASS_GLSL_FLOOR).toBeGreaterThan(0);
+    const floored = cohortMoteFold(NEAR_PX, COHORT_MASS_GLSL_FLOOR);
+    expect(floored.shadowR).toBeGreaterThan(0);
+    expect(cohortMoteLife(
+      cohortMoteBirthRadius(0.11, floored.fold, floored.shadowR),
+      floored.shadowR,
+      cohortMoteSinkK(FULL),
+    )).toBeGreaterThan(0);
+  });
+
   it('dims the whole draw to a fifth at the far end, which is the third rule', () => {
     // ⭐⭐ A FIELD OF MOVING POINTS IS THE MOST ATTENTION-GRABBING THING A SCENE
     // CAN CONTAIN, and at the app camera a cohort must not out-weigh the peers
@@ -636,13 +770,15 @@ describe('cohort motes — the geometry the layer drives', () => {
     for (const capacity of [0, 1, 6, 64]) {
       const geometry = buildCohortMotesGeometry(capacity);
       const count = capacity * COHORT_MOTES_PER_COHORT;
-      for (const name of ['position', 'aOrigin', 'aSeed', 'aStrength', 'aGulp']) {
+      for (const name of [
+        'position', 'aOrigin', 'aSeed', 'aStrength', 'aGulp', 'aMass',
+      ]) {
         expect(`${name}: ${geometry.getAttribute(name).count}`)
           .toBe(`${name}: ${count}`);
       }
       expect(geometry.getAttribute('position').itemSize).toBe(3);
       expect(geometry.getAttribute('aOrigin').itemSize).toBe(3);
-      for (const name of ['aSeed', 'aStrength', 'aGulp']) {
+      for (const name of ['aSeed', 'aStrength', 'aGulp', 'aMass']) {
         expect(geometry.getAttribute(name).itemSize).toBe(1);
       }
     }
@@ -650,25 +786,37 @@ describe('cohort motes — the geometry the layer drives', () => {
     expect(() => buildCohortMotesGeometry(1.5)).toThrow(/whole count/);
   });
 
-  it('starts every slot silent: no share, and a gulp lane at the sentinel', () => {
+  it('starts every slot silent, at the sentinel, and at full size', () => {
     // ⚠️⚠️ A ZERO-FILLED GULP LANE FLARES THE WHOLE COLONY ON LOAD, because
     // `uTime` is also zero at that instant.
+    //
+    // ⚠️⚠️ …AND A ZERO-FILLED MASS LANE IS THE MIRROR IMAGE OF THAT: not a
+    // quiet cohort but a mark with NO EXTENT, whose life is zero and whose
+    // `shifted / life` is a NaN the brightness test does not catch. One is the
+    // mass of a cohort nothing has been said about, which is the form this draw
+    // had before the lane existed — so an unwritten slot is TODAY'S picture and
+    // never a twentieth of it.
     const geometry = buildCohortMotesGeometry(4);
     const gulp = geometry.getAttribute('aGulp');
     const strength = geometry.getAttribute('aStrength');
+    const mass = geometry.getAttribute('aMass');
     for (let mote = 0; mote < gulp.count; mote += 1) {
       expect(gulp.getX(mote)).toBe(COHORT_NEVER_WON);
       expect(strength.getX(mote)).toBe(0);
+      expect(mass.getX(mote)).toBe(1);
     }
   });
 
   it('writes exactly one cohort’s 96 slots and leaves its neighbours alone', () => {
     const geometry = buildCohortMotesGeometry(3);
-    writeCohortMotes(geometry, 1, { x: 12, y: 22, z: -7 }, 0.31, 0.64);
+    // ⚠️ THE LAST ARGUMENT IS THE SIGNED LANE VALUE, so this one is a cohort of
+    // 0.45 mass winding the other way — the two facts in one float.
+    writeCohortMotes(geometry, 1, { x: 12, y: 22, z: -7 }, 0.31, 0.64, -0.45);
     const origin = geometry.getAttribute('aOrigin');
     const position = geometry.getAttribute('position');
     const seeds = geometry.getAttribute('aSeed');
     const strength = geometry.getAttribute('aStrength');
+    const mass = geometry.getAttribute('aMass');
     for (let mote = 0; mote < origin.count; mote += 1) {
       const own = mote >= COHORT_MOTES_PER_COHORT
         && mote < COHORT_MOTES_PER_COHORT * 2;
@@ -680,6 +828,12 @@ describe('cohort motes — the geometry the layer drives', () => {
       expect(position.getX(mote)).toBe(origin.getX(mote));
       expect(position.getZ(mote)).toBe(origin.getZ(mote));
       expect(strength.getX(mote)).toBeCloseTo(own ? 0.64 : 0, 6);
+      // ⭐ WRITTEN VERBATIM, SIGN AND ALL — this writer packs nothing and
+      // clamps nothing; `cohortMassLaneValue` is where a mass becomes a lane.
+      // A neighbour keeps the 1 the geometry was built with. ⚠️ `Math.fround`
+      // because the lane is a Float32Array and 0.45 is not one of its numbers.
+      expect(`${mote}: ${mass.getX(mote)}`)
+        .toBe(`${mote}: ${own ? Math.fround(-0.45) : 1}`);
       if (own) {
         expect(seeds.getX(mote))
           .toBeCloseTo(cohortMoteSeed(0.31, mote - COHORT_MOTES_PER_COHORT), 4);
@@ -691,12 +845,48 @@ describe('cohort motes — the geometry the layer drives', () => {
     // that keeps a cohort in place does not teleport its specks.
     const before = Array.from({ length: COHORT_MOTES_PER_COHORT }, (_, index) =>
       seeds.getX(COHORT_MOTES_PER_COHORT + index));
-    writeCohortMotes(geometry, 1, { x: 12, y: 22, z: -7 }, 0.31, 0.64);
+    writeCohortMotes(geometry, 1, { x: 12, y: 22, z: -7 }, 0.31, 0.64, -0.45);
     for (let index = 0; index < COHORT_MOTES_PER_COHORT; index += 1) {
       expect(seeds.getX(COHORT_MOTES_PER_COHORT + index)).toBe(before[index]);
     }
-    expect(() => writeCohortMotes(geometry, 3, { x: 0, y: 0, z: 0 }, 0, 1))
+    expect(() => writeCohortMotes(geometry, 3, { x: 0, y: 0, z: 0 }, 0, 1, 1))
       .toThrow(/outside a capacity of 3/);
+  });
+
+  it('eases one cohort’s mass lane alone, and flags that one upload', () => {
+    // ⭐⭐ THE SLEW WRITES SIXTY TIMES A SECOND AND MUST COST ONE LANE. A mass
+    // eases toward a new week over a second and a half; re-laying the seat, the
+    // strength and 96 HASHED seeds on every frame of that ease — and flagging
+    // five uploads where one lane moved — is what this writer exists to avoid.
+    const geometry = buildCohortMotesGeometry(3);
+    const mass = geometry.getAttribute('aMass') as THREE.BufferAttribute;
+    const seeds = geometry.getAttribute('aSeed') as THREE.BufferAttribute;
+    const strength = geometry.getAttribute('aStrength') as THREE.BufferAttribute;
+    writeCohortMotes(geometry, 1, { x: 4, y: 0, z: 9 }, 0.77, 0.5, 1);
+    // ⚠️ `needsUpdate` IS WRITE-ONLY on a BufferAttribute, so the version is
+    // what says an upload was flagged.
+    const seedVersion = seeds.version;
+    const strengthVersion = strength.version;
+    const before = mass.version;
+    writeCohortMotesMass(geometry, 1, -0.6);
+    expect(mass.version).toBe(before + 1);
+    // …and NOTHING else moved: not the seeds, not the strength, not the seats.
+    expect(seeds.version).toBe(seedVersion);
+    expect(strength.version).toBe(strengthVersion);
+    let eased = 0;
+    for (let mote = 0; mote < mass.count; mote += 1) {
+      const own = mote >= COHORT_MOTES_PER_COHORT
+        && mote < COHORT_MOTES_PER_COHORT * 2;
+      expect(`${mote}: ${mass.getX(mote)}`)
+        .toBe(`${mote}: ${own ? Math.fround(-0.6) : 1}`);
+      if (own) eased += 1;
+    }
+    expect(eased).toBe(COHORT_MOTES_PER_COHORT);
+    expect(strength.getX(COHORT_MOTES_PER_COHORT)).toBe(0.5);
+    expect(() => writeCohortMotesMass(geometry, 3, 1))
+      .toThrow(/outside a capacity of 3/);
+    expect(() => writeCohortMotesMass(buildCohortMotesGeometry(0), 0, 1))
+      .toThrow(/outside a capacity of 0/);
   });
 
   it('stamps exactly one cohort’s 96 slots, and flags the upload', () => {
@@ -741,12 +931,16 @@ describe('cohort motes — the material', () => {
     expect(material.toneMapped).toBe(false);
   });
 
-  it('takes four lanes and no others', () => {
+  it('takes five lanes and no others', () => {
+    // ⭐ THE FIFTH IS THE MASS, 96 COPIES WIDE LIKE THE REST. A Points geometry
+    // is not instanced, so every per-cohort fact has to be widened; the mass
+    // carries the hand in its SIGN rather than asking for a sixth.
     const attributes = [...material.vertexShader.matchAll(
       /^\s*attribute\s+(\w+)\s+(\w+)\s*;/gm,
     )].map((match) => `${match[1]} ${match[2]}`);
     expect(attributes).toEqual([
       'vec3 aOrigin', 'float aSeed', 'float aStrength', 'float aGulp',
+      'float aMass',
     ]);
   });
 

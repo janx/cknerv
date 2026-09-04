@@ -12,6 +12,7 @@ import {
   COHORT_HORIZON_FAR,
   COHORT_LENS_REACH,
   COHORT_LENS_WARMTH,
+  COHORT_MASS_GLSL_FLOOR,
   COHORT_UNFOLD_HI,
   COHORT_UNFOLD_LO,
   cohortDiscStops,
@@ -515,15 +516,31 @@ export interface CohortMoteFold {
  * the same two edges. The catchment, the birth radius and the shadow all read
  * it, so the specks cannot unfold on a schedule of their own while the picture
  * they fall through is still folded.
+ *
+ * ⭐⭐ AND THE COHORT'S OWN MASS MULTIPLIES ALL OF IT, THE CAMERA'S SCALE
+ * INCLUDED. `mass` is `cohortMassFactor` of this cohort's share of the week —
+ * 1 by default and 1 for every cohort until a ledger says otherwise, so at
+ * `m = 1` this is the fold it has always been, value for value. The camera is
+ * read as pixels per SHADOW rather than per world unit (`pxPerWu * mass`),
+ * which is what makes every cohort's specks unfold at the same ON-SCREEN size
+ * whatever its week was.
+ *
+ * ⭐ `fold` NEEDS NO MASS OF ITS OWN, and that is why the birth radius follows
+ * for free: it is the catchment as a fraction of its full value, and the
+ * catchment already carries the mass.
  */
-export function cohortMoteFold(pxPerWu: number): CohortMoteFold {
-  const closeness = smoothstep(COHORT_UNFOLD_LO, COHORT_UNFOLD_HI, pxPerWu);
-  const reach = mix(COHORT_MOTE_REACH_FAR, COHORT_MOTE_REACH, closeness);
+export function cohortMoteFold(
+  pxPerWu: number,
+  mass: number = 1,
+): CohortMoteFold {
+  const closeness = smoothstep(COHORT_UNFOLD_LO, COHORT_UNFOLD_HI, pxPerWu * mass);
+  const reach = mix(COHORT_MOTE_REACH_FAR, COHORT_MOTE_REACH, closeness) * mass;
   return {
     closeness,
     reach,
     fold: reach / COHORT_MOTE_REACH,
-    shadowR: mix(COHORT_MOTE_SHADOW_R_FAR, COHORT_MOTE_SHADOW_R, closeness),
+    shadowR:
+      mix(COHORT_MOTE_SHADOW_R_FAR, COHORT_MOTE_SHADOW_R, closeness) * mass,
   };
 }
 
@@ -607,6 +624,14 @@ export interface CohortMoteInput {
   readonly pxPerWu: number;
   /** The sim second of the block this cohort won. Defaults to never. */
   readonly gulpAt?: number;
+  /** The cohort's own size factor — `cohortMassFactor` of its share of the
+   *  week, and the MAGNITUDE of its mass lane. Defaults to 1, which is the form
+   *  every cohort wore before the lane existed. */
+  readonly mass?: number;
+  /** Which way this cohort's spiral winds: +1 or −1, the SIGN of the same lane.
+   *  Defaults to +1. ⭐ It is one reflection and nothing else — the same radius
+   *  at the same instant, the same brightness, wound the other way round. */
+  readonly hand?: number;
 }
 
 /** Where a mote is, how bright it is, and how big. */
@@ -645,8 +670,10 @@ export interface CohortMoteState extends CohortMoteFold {
 export function cohortMoteAt(input: CohortMoteInput): CohortMoteState {
   const { seed, strength, time, pxPerWu } = input;
   const gulpAt = input.gulpAt ?? COHORT_NEVER_WON;
+  const mass = input.mass ?? 1;
+  const hand = input.hand ?? 1;
 
-  const fold = cohortMoteFold(pxPerWu);
+  const fold = cohortMoteFold(pxPerWu, mass);
   const k = cohortMoteSinkK(strength);
   const r0 = cohortMoteBirthRadius(seed, fold.fold, fold.shadowR);
   const life = cohortMoteLife(r0, fold.shadowR, k);
@@ -665,7 +692,7 @@ export function cohortMoteAt(input: CohortMoteInput): CohortMoteState {
   ) * Math.PI * 2;
 
   const r = cohortMoteRadius(r0, k, age);
-  const theta = theta0 - cohortMoteTurn(r, r0, age, fold.reach);
+  const theta = theta0 - hand * cohortMoteTurn(r, r0, age, fold.reach);
   const near = 1 - r / r0;
   const burst = 1 + COHORT_MOTE_GULP_BURST * cohortMoteGulp(time - gulpAt);
 
@@ -736,10 +763,12 @@ function glslFloat(value: number): string {
 /**
  * The motes of every cohort in the colony, as one `THREE.Points` draw.
  *
- * The geometry is `buildCohortMotesGeometry`'s, and the four lanes are written
- * per COHORT by `writeCohortMotes` and stamped by `stampCohortMotes`. Every
- * per-frame value is a uniform: the layer writes `uTime` (the sim clock the
- * gulp lane is stamped on), `uPxScale`, `uViewportHeight` and
+ * The geometry is `buildCohortMotesGeometry`'s, and the five lanes are written
+ * per COHORT: the seat, the seed and the strength by `writeCohortMotes`, the
+ * block won by `stampCohortMotes`, and the mass — which is the only lane that
+ * moves on its own, easing toward a new week — by `writeCohortMotesMass`.
+ * Every per-frame value is a uniform: the layer writes `uTime` (the sim clock
+ * the gulp lane is stamped on), `uPxScale`, `uViewportHeight` and
  * `uContextEnergy`.
  */
 export function makeCohortMotesMaterial(): THREE.ShaderMaterial {
@@ -788,6 +817,7 @@ export function makeCohortMotesMaterial(): THREE.ShaderMaterial {
       attribute float aSeed;
       attribute float aStrength;
       attribute float aGulp;
+      attribute float aMass;
 
       uniform float uTime;
       uniform float uK;
@@ -815,6 +845,14 @@ export function makeCohortMotesMaterial(): THREE.ShaderMaterial {
       float moteHash(float n) { return fract(sin(n) * 43758.5453); }
 
       void main() {
+        // ⭐ THE COHORT'S OWN SIZE, and every length below is a multiple of it.
+        // The magnitude is the mass and the sign is the hand. Floored because a
+        // lane the layer has not written reads as ZERO in WebGL, and a mass of
+        // zero is a mark with no extent at all: a life of zero, a division by
+        // it, and a NaN the brightness test below does not catch.
+        float mass = max(abs(aMass), ${glslFloat(COHORT_MASS_GLSL_FLOOR)});
+        float hand = aMass < 0.0 ? -1.0 : 1.0;
+
         // ⚠️ THE STRENGTH IS A RATE AND THE FLOOR KEEPS THE LIFE FINITE. A slot
         // the marks plan never filled arrives here with a strength of zero; the
         // arithmetic below has to stay well-defined for it, and the light is
@@ -836,17 +874,21 @@ export function makeCohortMotesMaterial(): THREE.ShaderMaterial {
         vec3 vOrigin = seat;
         ${COHORT_CONTEXT_ENERGY_GLSL}
         vEnergy = cohortEnergy;
+        // ⭐ PIXELS PER SHADOW AND NOT PER WORLD UNIT: the mass scales the
+        // camera before the band reads it, so every cohort's specks unfold at
+        // the same on-screen size whatever its week was.
         float closeness = smoothstep(
           uUnfoldLo,
           uUnfoldHi,
-          uPxScale / max(length(cameraPosition - seat), ${glslFloat(COHORT_MOTE_CAM_FLOOR)})
+          uPxScale * mass / max(length(cameraPosition - seat), ${glslFloat(COHORT_MOTE_CAM_FLOOR)})
         );
         // ⭐⭐⭐ ONE NUMBER FOLDS ALL OF IT, and it is the lens's number. The
         // catchment, the birth radius that rides it and the shadow the mote
-        // disappears into all move together.
-        float reach = mix(uReachFar, uReach, closeness);
+        // disappears into all move together -- and the mass multiplies the two
+        // lengths, so the fold and the birth radius follow without naming it.
+        float reach = mix(uReachFar, uReach, closeness) * mass;
         float fold = reach / uReach;
-        float shadowR = mix(uShadowRFar, uShadowR, closeness);
+        float shadowR = mix(uShadowRFar, uShadowR, closeness) * mass;
 
         // Born somewhere in the void, and never inside the shadow: a mote born
         // at the shadow would live exactly zero seconds.
@@ -876,7 +918,9 @@ export function makeCohortMotesMaterial(): THREE.ShaderMaterial {
         // the call site, and this is the same arithmetic with nothing to prove.
         float rq = max(r, ${glslFloat(COHORT_MOTE_ORBIT_R_FLOOR)});
         float turn = uSwirl * log(r0 / r) + uOrbit * age / (rq * sqrt(rq)) * w;
-        float theta = theta0 - turn;
+        // The hand mirrors the whole spiral about the seat, and moves nothing
+        // else: same radius, same instant, same light, wound the other way.
+        float theta = theta0 - hand * turn;
         // ⛔ THE OFFSET'S Y IS EXACTLY ZERO. A mote lives in the membrane; there
         // is no term in this program that could lift one out of it.
         vec3 local = aOrigin + vec3(cos(theta) * r, 0.0, sin(theta) * r);
@@ -905,6 +949,9 @@ export function makeCohortMotesMaterial(): THREE.ShaderMaterial {
         // A WORLD diameter, projected the way every other point in this scene
         // is. The floor is in device pixels: a sub-pixel point does not dim, it
         // flickers, and the fold is what takes the far form's light away.
+        // ⛔ AND IT DOES NOT READ THE MASS. A parcel of substance is the same
+        // parcel whoever swallows it; a small cohort is the same specks over a
+        // smaller catchment, not a miniature of the picture.
         float diameter = uMoteSize * (${glslFloat(COHORT_MOTE_SIZE_FLOOR)} + ${glslFloat(COHORT_MOTE_SIZE_GROW)} * near);
         gl_PointSize = max(
           ${glslFloat(COHORT_MOTE_PIXEL_FLOOR)},
@@ -1022,6 +1069,21 @@ export function buildCohortMotesGeometry(capacity: number): THREE.BufferGeometry
       1,
     ),
   );
+  // ⚠️⚠️ …AND THE MASS LANE STARTS AT ONE, WHICH IS THE SENTINEL'S MIRROR
+  // IMAGE. An unfilled lane of zeros is not a quiet cohort here but a mark with
+  // NO EXTENT AT ALL: the lane's magnitude multiplies every length in this
+  // program, so at zero the birth radius and the shadow are both zero, the life
+  // `(r0² - shadow²)/k` is zero, and `shifted / life` is the NaN that the
+  // brightness test does NOT catch — a comparison against a NaN is false, so
+  // the speck is drawn rather than dropped. One is the mass of a cohort nothing
+  // has been said about, which is the form this draw had before the lane
+  // existed. The vertex stage floors `abs(aMass)` at `COHORT_MASS_GLSL_FLOOR`
+  // on top of this, and the layer fills the quad's own lane with 1: three
+  // guards, and no two of them the same guard.
+  geometry.setAttribute(
+    'aMass',
+    new THREE.BufferAttribute(new Float32Array(count).fill(1), 1),
+  );
   return geometry;
 }
 
@@ -1057,6 +1119,13 @@ function cohortSlice(
  * view) before it becomes the sink's k, and this program multiplies it straight
  * into `uK`. Hand it `mistShareFactor(share, shareMax)` for a mote that falls at
  * the same rate its own disc's streamlines do.
+ *
+ * ⚠️ `massLane` IS THE SIGNED LANE VALUE AND NEVER A RAW MASS —
+ * `cohortMassLaneValue(mass, hand)`, whose magnitude is the cohort's size and
+ * whose sign is which way it winds. It is written to all 96 slots like the
+ * strength, because a mass is a fact about the cohort and a partial write would
+ * be a wedge of one intake at another cohort's scale. Pass 1 where there is
+ * nothing to say: that is the form this draw had before the lane existed.
  */
 export function writeCohortMotes(
   geometry: THREE.BufferGeometry,
@@ -1064,22 +1133,53 @@ export function writeCohortMotes(
   seat: CohortMoteSeat,
   seed: number,
   strength: number,
+  massLane: number,
 ): void {
   const { from, to } = cohortSlice(geometry, index);
   const position = geometry.getAttribute('position');
   const origin = geometry.getAttribute('aOrigin');
   const seeds = geometry.getAttribute('aSeed');
   const strengths = geometry.getAttribute('aStrength');
+  const masses = geometry.getAttribute('aMass');
   for (let mote = from; mote < to; mote += 1) {
     position.setXYZ(mote, seat.x, seat.y, seat.z);
     origin.setXYZ(mote, seat.x, seat.y, seat.z);
     seeds.setX(mote, cohortMoteSeed(seed, mote - from));
     strengths.setX(mote, strength);
+    masses.setX(mote, massLane);
   }
   position.needsUpdate = true;
   origin.needsUpdate = true;
   seeds.needsUpdate = true;
   strengths.needsUpdate = true;
+  masses.needsUpdate = true;
+}
+
+/**
+ * Ease one cohort's 96 copies of the mass lane, and touch nothing else.
+ *
+ * ⭐⭐ THE SLEW'S OWN WRITER, WHICH IS THE WHOLE REASON IT EXISTS. A mass eases
+ * toward its target over a second and a half — a write on every frame of that
+ * ease — and `writeCohortMotes` would re-lay the seat, the strength and 96
+ * HASHED seeds along with it, sixty times a second, for one float that moved.
+ * It would also flag five uploads where one lane changed.
+ *
+ * ⚠️ THE NAME IS DELIBERATELY NOT A PREFIX OF THE OTHER ONE.
+ * `colonyCohortShares.test.ts` counts `writeCohortMotes(` in the layer's source
+ * — the plan's walk, the window's walk and the retired tail, exactly three —
+ * and that count is how the layer's write paths stay countable at all.
+ */
+export function writeCohortMotesMass(
+  geometry: THREE.BufferGeometry,
+  index: number,
+  massLane: number,
+): void {
+  const { from, to } = cohortSlice(geometry, index);
+  const masses = geometry.getAttribute('aMass');
+  for (let mote = from; mote < to; mote += 1) masses.setX(mote, massLane);
+  // The whole lane goes up, exactly as the stamp's does — and only on the
+  // frames a mass actually moved, which the caller is what gates.
+  masses.needsUpdate = true;
 }
 
 /**

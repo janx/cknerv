@@ -216,6 +216,56 @@ describe('colonyMotes.ts — source-level shader guards', () => {
     expect(vertex).not.toMatch(/\blocal\.y\b|\bworld\.y\b|\bseat\.y\s*[+-]/);
   });
 
+  it('lets no length escape the mass, and takes the hand from the lane’s sign', () => {
+    // ⭐⭐⭐ ONE LANE, EVERY LENGTH, AND THIS IS WHAT SAYS SO. Every other form
+    // parameter of this draw is a uniform the whole colony shares, so the mass
+    // is the only thing that can make two intakes different pictures — and it
+    // only works if NOTHING is left behind. A catchment still reading its
+    // uniform raw would be a small cohort's specks born out in a full-sized
+    // void; an unfolded shadow would be a hole its own specks fall past.
+    const vertex = MOTES_VERTEX?.glsl ?? '';
+    // The lane, floored, and the hand from the sign of the same float.
+    expect(vertex).toContain(
+      `float mass = max(abs(aMass), ${colonyLens.COHORT_MASS_GLSL_FLOOR});`,
+    );
+    expect(vertex).toContain('float hand = aMass < 0.0 ? -1.0 : 1.0;');
+    expect(vertex).toContain('attribute float aMass;');
+    // ⚠️⚠️ THE FLOOR IS WHAT STANDS UNDER AN UNWRITTEN LANE, which WebGL reads
+    // as zero — and zero here is a life of zero and a division by it. It is the
+    // third of three guards, the other two being the geometry's fill and the
+    // layer's own array.
+    expect(colonyLens.COHORT_MASS_GLSL_FLOOR).toBeGreaterThan(0);
+    expect(vertex).not.toContain('max(abs(aMass), 0.0)');
+    // The camera's own scale first: pixels per SHADOW, not per world unit.
+    expect(vertex).toContain('uPxScale * mass /');
+    expect(vertex).not.toMatch(/uPxScale \/ /);
+    // Both lengths the fold moves — and NEITHER of them raw. The birth radius
+    // and `fold` are not named at all: they are fractions of these two.
+    expect(vertex).toContain('float reach = mix(uReachFar, uReach, closeness) * mass;');
+    expect(vertex).toContain('float shadowR = mix(uShadowRFar, uShadowR, closeness) * mass;');
+    expect(vertex).not.toContain('mix(uReachFar, uReach, closeness);');
+    expect(vertex).not.toContain('mix(uShadowRFar, uShadowR, closeness);');
+    expect(vertex).toContain('float fold = reach / uReach;');
+    // ⭐ Three appearances of the catchment uniform and two of the shadow's,
+    // and every one of them is accounted for: the DECLARATION counts.
+    expect([...vertex.matchAll(/\buReach\b/g)]).toHaveLength(3);
+    expect([...vertex.matchAll(/\buShadowR\b/g)]).toHaveLength(2);
+    expect([...vertex.matchAll(/\buPxScale\b/g)]).toHaveLength(2);
+    // The hand mirrors the spiral and nothing else.
+    expect(vertex).toContain('float theta = theta0 - hand * turn;');
+    expect(vertex).not.toContain('theta0 - turn;');
+    expect([...vertex.matchAll(/\bhand\b/g)]).toHaveLength(2);
+    // ⛔ AND THE SPECK ITSELF DOES NOT FOLD. A parcel of substance is the same
+    // parcel whoever swallows it: a small cohort is the same specks over a
+    // smaller catchment, never a miniature of the whole picture.
+    expect(vertex).toMatch(/float diameter = uMoteSize \* \(/);
+    expect(vertex).not.toMatch(/uMoteSize \* mass|mass \* uMoteSize/);
+    // ⚠️ AND THE MASS NEVER CROSSES THE INTERPOLATOR: the fragment's whole
+    // input is the brightness and the recession, as it was.
+    expect(MOTES_FRAGMENT?.glsl).not.toContain('aMass');
+    expect(MOTES_FRAGMENT?.glsl).not.toContain('mass');
+  });
+
   it('no smoothstep anywhere has edge0 >= edge1', () => {
     // ⚠️ The fix is always `1.0 - smoothstep(b, a, x)`, never a swap of the third
     // argument.
@@ -416,6 +466,7 @@ describe('colonyMotes.ts — source-level shader guards', () => {
       ['the size ramp', colonyMotes.COHORT_MOTE_SIZE_GROW],
       ['the pixel floor', colonyMotes.COHORT_MOTE_PIXEL_FLOOR],
       ['the swing floor', colonyMotes.COHORT_MOTE_ORBIT_R_FLOOR],
+      ['the mass floor', colonyLens.COHORT_MASS_GLSL_FLOOR],
     ] as const) {
       expect(`${name}: ${vertex.includes(String(value))}`).toBe(`${name}: true`);
     }

@@ -753,12 +753,17 @@ export default function ColonyCohorts({
       // program multiplies it straight into `uK` while the lens runs the same
       // factor in its vertex stage off `aShare`. Same rate, two places, one
       // function.
+      // ⚠️ …and the last argument is the specks' copy of the MASS lane, which
+      // is 1 everywhere until the week is wired to it: a cohort nothing has
+      // been said about is full size, which is the picture this layer has
+      // always drawn. Never 0 — that is a mark with no extent at all.
       writeCohortMotes(
         motesGeometry,
         index,
         { x: mark.pos[0], y: mark.pos[1], z: mark.pos[2] },
         mark.seed,
         mistShareFactor(share[index] ?? 0, shareMaxRef.current),
+        1,
       );
       // …and its gulp copy is re-laid from the SAME map, so a cohort that moved
       // slots keeps its burst in both draws rather than in one of them.
@@ -772,8 +777,11 @@ export default function ColonyCohorts({
     // not by count: the motes' geometry is sized for the cap and its draw range
     // is the whole buffer, so a cohort that left the window would otherwise keep
     // 96 specks spiralling into the seat it used to stand at.
+    // ⚠️ A retired slot still carries a mass of 1 rather than 0: it is written
+    // silent by its STRENGTH, and a zero in the mass lane is the one value the
+    // program cannot read as an absence.
     for (let index = marks.length; index < motesWrittenRef.current; index += 1) {
-      writeCohortMotes(motesGeometry, index, RETIRED_SEAT, 0, 0);
+      writeCohortMotes(motesGeometry, index, RETIRED_SEAT, 0, 0, 1);
     }
     motesWrittenRef.current = marks.length;
     // …and the GULP lane is RE-LAID under the new plan, in the same walk. A win
@@ -837,6 +845,7 @@ export default function ColonyCohorts({
         { x: mark.pos[0], y: mark.pos[1], z: mark.pos[2] },
         mark.seed,
         mistShareFactor(share[index] ?? 0, shareMaxRef.current),
+        1,
       );
     });
     writtenSharesRef.current = producers;

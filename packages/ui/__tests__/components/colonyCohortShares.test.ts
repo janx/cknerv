@@ -420,6 +420,7 @@ describe('the motes carry the same two lanes, ninety-six copies wide', () => {
         { x: m.pos[0], y: m.pos[1], z: m.pos[2] },
         m.seed,
         mistShareFactor(share[index], 0.617),
+        1,
       );
     });
     const strength = geometry.getAttribute('aStrength');
@@ -443,8 +444,11 @@ describe('the motes carry the same two lanes, ninety-six copies wide', () => {
     // live stamp — so a cohort that left the window has to be written OVER at a
     // strength of zero, or 96 specks keep spiralling into a seat nobody stands
     // at any more.
+    // ⚠️ …AT A MASS OF 1 AND NEVER 0. A slot is retired by its STRENGTH; the
+    // mass lane multiplies every length in the program, so a zero there is the
+    // one value that is not an absence but a mark with no extent at all.
     expect(cohorts).toContain(
-      'writeCohortMotes(motesGeometry, index, RETIRED_SEAT, 0, 0);',
+      'writeCohortMotes(motesGeometry, index, RETIRED_SEAT, 0, 0, 1);',
     );
     expect(cohorts).toContain('motesWrittenRef.current = marks.length;');
   });

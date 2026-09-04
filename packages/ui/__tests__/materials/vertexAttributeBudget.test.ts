@@ -314,9 +314,9 @@ const ROWS: readonly BudgetRow[] = [
     // ⚠️ THE ONE DRAW IN THE FEATURE THAT IS NOT INSTANCED, and the whole shape
     // of this row follows from it. A `THREE.Points` geometry has one vertex per
     // MOTE, so there is no `instanceMatrix` and no per-instance lane: the
-    // cohort's seat, its seed and its share are widened to 96 copies each, and
-    // the gulp lane is a COPY of the instanced one rather than the same buffer
-    // object every other cohort draw shares.
+    // cohort's seat, its seed, its share and — since 2026-09-04 — its MASS are
+    // widened to 96 copies each, and the gulp lane is a COPY of the instanced
+    // one rather than the same buffer object every other cohort draw shares.
     usage: {},
   },
   {
@@ -504,7 +504,7 @@ describe('vertex attribute budget', () => {
     expect(MAX_VERTEX_ATTRIBUTES - (lens?.total ?? 0)).toBe(5);
   });
 
-  it('charges the motes four widened lanes, and no instance matrix', () => {
+  it('charges the motes five widened lanes, and no instance matrix', () => {
     // ⭐⭐ THE ONE COHORT DRAW THAT IS NOT INSTANCED. Every other program in this
     // feature is one instance per cohort and reads its lanes at that width; the
     // motes are one VERTEX per mote, so the seat that rides `instanceMatrix`
@@ -515,18 +515,25 @@ describe('vertex attribute budget', () => {
     // object to this geometry would read one cohort's stamp for the first
     // ninety-sixth of the colony's motes and garbage after it. The copy is
     // written by `stampCohortMotes`, and `colonyMotes.test.ts` pins the width.
+    //
+    // ⭐ AND THE FIFTH LANE IS THE MASS, 96 COPIES WIDE LIKE THE REST. It is a
+    // whole float per VERTEX for a number that changes once a week — which the
+    // width is the price of, and which is why the handedness rides its SIGN
+    // instead of asking for a sixth. `writeCohortMotesMass` is what keeps the
+    // per-frame slew from re-laying the other four beside it.
     const motes = measured.find(({ name }) => name === 'cohortMotesMaterial');
     const lens = measured.find(({ name }) => name === 'cohortLensMaterial');
     expect(motes).toBeDefined();
-    expect([motes?.custom, motes?.injected, motes?.total]).toEqual([4, 3, 7]);
-    expect(motes?.names).toEqual(['aOrigin', 'aSeed', 'aStrength', 'aGulp']);
+    expect([motes?.custom, motes?.injected, motes?.total]).toEqual([5, 3, 8]);
+    expect(motes?.names)
+      .toEqual(['aOrigin', 'aSeed', 'aStrength', 'aGulp', 'aMass']);
     // The seat is an attribute here and a matrix there; the seed and the gulp
     // are the same two facts under different names of width.
     expect(motes?.names).not.toContain('aShare');
     expect(motes?.defines.has('USE_INSTANCING')).toBe(false);
     expect(lens?.defines.has('USE_INSTANCING')).toBe(true);
-    // The cheapest vertex program in the colony, with nine slots still free.
-    expect(MAX_VERTEX_ATTRIBUTES - (motes?.total ?? 0)).toBe(9);
+    // The cheapest vertex program in the colony, with eight slots still free.
+    expect(MAX_VERTEX_ATTRIBUTES - (motes?.total ?? 0)).toBe(8);
   });
 
   it('keeps the colony edge program exactly where it was', () => {
