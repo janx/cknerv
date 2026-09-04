@@ -4,7 +4,7 @@
 // API compatibility, but now controls the small photonic bloom around a crisp
 // crystal marker instead of drawing either biological blobs or literal UI pads.
 import * as THREE from 'three';
-import { CELL_GALAXY_PALETTE } from '../visualPalette';
+import { CELL_GALAXY_PALETTE, SCENE_ACCENT_PALETTE } from '../visualPalette';
 
 /** @param feather Gaussian falloff radius in point-UV space (0.26 = tight core, ~0.46 = soft glow). */
 export function makeNucleusPointMaterial(feather: number): THREE.ShaderMaterial {
@@ -48,7 +48,9 @@ export function makeNucleusPointMaterial(feather: number): THREE.ShaderMaterial 
         vec3 tissue = vec3(${CELL_GALAXY_PALETTE.tissueRose.join(', ')});
         vec3 violet = vec3(${CELL_GALAXY_PALETTE.memoryViolet.join(', ')});
         vec3 tint = mix(tissue, violet, 0.16 + clamp(uWarmth, 0.0, 1.0) * 0.18);
-        vec3 resolvedGold = vec3(1.0, 0.78, 0.34);
+        // The scene's one gold, at its pale stop: a resolved record and the
+        // braid's agreement are the same claim in two registers.
+        vec3 resolvedGold = vec3(${SCENE_ACCENT_PALETTE.paleGold.join(', ')});
         tint = mix(tint, resolvedGold, clamp(vResolve, 0.0, 1.0) * 0.86);
         vec3 col = tint * (signal * 0.9 + bloom)
           + vec3(${CELL_GALAXY_PALETTE.warmWhite.join(', ')}) * core * 0.28;

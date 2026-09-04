@@ -20,6 +20,7 @@ import { useSimClock } from '../tweaks/SimClockScope';
 import * as THREE from 'three';
 
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
+import { SCENE_ACCENT_PALETTE } from '../visualPalette';
 import {
   CONSENSUS_WRITE_SEAL_LIFETIME_S,
   compactConsensusWriteSealSlots,
@@ -143,7 +144,7 @@ export function makeDendriticBurstMaterial(): THREE.ShaderMaterial {
         float intensity = min(1.35, glyph) * vAlpha;
         if (intensity < 0.008) discard;
 
-        vec3 pale = vec3(0.72, 0.96, 1.0);
+        vec3 pale = vec3(${SCENE_ACCENT_PALETTE.pale.join(', ')});
         // Agreement nodes and the early knot resolve locally; once the
         // write contracts into persistent memory, the full seal becomes
         // pale consensus light rather than retaining the moving gold hue.

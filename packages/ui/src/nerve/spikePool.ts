@@ -23,6 +23,7 @@
 import * as THREE from 'three';
 
 import type { Vec3 } from '../types';
+import { SCENE_ACCENT_PALETTE } from '../visualPalette';
 
 function streamAttribute(
   array: Float32Array,
@@ -189,7 +190,7 @@ export class SpikePool {
           // Resolve toward the same pale consensus light as A's agreement
           // knots, while preserving the transaction colour around the contour.
           float whiteAmount = core * mix(vWhiteBias, 0.42, vGlyphMode);
-          vec3 baseCol = mix(vColor, vec3(0.86, 0.96, 1.0), whiteAmount);
+          vec3 baseCol = mix(vColor, vec3(${SCENE_ACCENT_PALETTE.pale.join(', ')}), whiteAmount);
 
           float intensity = (core + contour * 0.42 + halo) * vAlpha;
           if (intensity < 0.005) discard;

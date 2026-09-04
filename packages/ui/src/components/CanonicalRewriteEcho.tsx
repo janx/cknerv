@@ -9,6 +9,7 @@ import {
 } from '../derives/canonicalRewrite.derive';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { useSimFrame } from '../tweaks/useSimFrame';
+import { SCENE_ACCENT_PALETTE } from '../visualPalette';
 
 const VERTEX_SHADER = /* glsl */ `
 attribute float aSeed;
@@ -68,7 +69,9 @@ void main() {
   float vanish = 1.0 - smoothstep(0.58, 1.0, vLife);
   float ignition = smoothstep(0.0, 0.08, vLife);
   vec3 hot = vec3(1.0, 0.25, 0.07);
-  vec3 cold = vec3(0.38, 0.12, 0.78);
+  // The scene's one violet: a canonical rewrite is the memory channel's own
+  // event, and it wore a fourth violet of its own until 2026-09-05.
+  vec3 cold = vec3(${SCENE_ACCENT_PALETTE.violet.join(', ')});
   vec3 color = mix(hot, cold, smoothstep(0.18, 0.9, vLife));
   float alpha = structure * vanish * ignition;
   if (alpha < 0.012) discard;

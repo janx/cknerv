@@ -19,7 +19,7 @@ import {
   CONSENSUS_MEMORY_HANDOFF_END,
   CONSENSUS_MEMORY_HANDOFF_START,
 } from '../derives/consensusMemoryLod.derive';
-import { CELL_GALAXY_PALETTE } from '../visualPalette';
+import { CELL_GALAXY_PALETTE, SCENE_ACCENT_PALETTE } from '../visualPalette';
 
 /**
  * Single-peak Gaussian cloud baseline for each Cell.
@@ -423,10 +423,14 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
           float departureRail = exp(-pow((abs(uv.x) - departureX) / 0.02, 2.0))
             * (1.0 - smoothstep(0.1, 0.29, abs(uv.y)))
             * recallAmount * recallSource;
-          vec3 recallCyan = vec3(0.22, 0.9, 1.0);
-          vec3 recallPale = vec3(0.78, 0.97, 1.0);
-          vec3 recallViolet = vec3(0.54, 0.38, 1.0);
-          vec3 recallGold = vec3(1.0, 0.78, 0.34);
+          // The recall channel's four colours are the scene's own accents,
+          // read by name. They used to be four bare vec3s a shade off the
+          // braid's, the nucleus's and the echo's — the same four meanings in
+          // eight values (D-6).
+          vec3 recallCyan = vec3(${SCENE_ACCENT_PALETTE.cyan.join(', ')});
+          vec3 recallPale = vec3(${SCENE_ACCENT_PALETTE.pale.join(', ')});
+          vec3 recallViolet = vec3(${SCENE_ACCENT_PALETTE.violet.join(', ')});
+          vec3 recallGold = vec3(${SCENE_ACCENT_PALETTE.paleGold.join(', ')});
           col += recallCyan * targetRead * 1.35;
           col += mix(recallPale, recallGold, 0.48) * recordLatch * 1.62;
           col += recallGold * recordKnot * 1.18;

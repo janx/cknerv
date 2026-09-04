@@ -1,6 +1,44 @@
 export type SceneColor = readonly [number, number, number];
 
 /**
+ * The scene's EVENT accents: the colours that mean something happened, as
+ * opposed to the colours a body is made of.
+ *
+ * ⭐ THE TISSUE SIDE OF THE PALETTE ALWAYS PASSED; THE ACCENT SIDE DID NOT.
+ * The 2026-09-04 census counted, outside this file, four violets for "memory"
+ * (0.66/0.32/0.82 · 0.4/0.2/1 · 0.54/0.38/1 · 0.38/0.12/0.78), three golds for
+ * "agreement", five pale whites and two cyans — most of them typed into a
+ * shader as a bare `vec3` and none of them named. A palette is a small set of
+ * hues each meaning one thing; the rose family met that bar and this one did
+ * not.
+ *
+ * The values are chosen from the family, never invented, and by two rules:
+ *
+ *  • the WEIGHT of use — the braid's gold and cyan are read by name in four
+ *    files already, so they are the ones that stay;
+ *  • and B2's ruling about warmth. The organism is rose. `memoryViolet` is the
+ *    warm-side violet of the four, and it is the one already named for the
+ *    meaning, so it is the violet — the braid's blue-violet went the way the
+ *    braid's cold pale went, for the same reason: on rose tissue a cold accent
+ *    says "network", and the peer plane is elsewhere. The peer plane keeps its
+ *    OWN violet (`PEER_NETWORK_HEX.version`) and is not touched by this.
+ *
+ * ⚠️ `gold` is one accent at TWO STOPS, not two accents. `consensusFlow`
+ * ramps one into the other; the pair is `tissueRose`/`veinRose`, not a second
+ * hue. The pale pair is different — `pale` is COLD and `warmPale` is its warm
+ * twin, and which one a surface wears is B2's decision about what that surface
+ * is (a specimen under instruments, or a body in tissue).
+ */
+export const SCENE_ACCENT_PALETTE = {
+  violet: [0.66, 0.32, 0.82],
+  gold: [0.86, 0.61, 0.25],
+  paleGold: [1, 0.84, 0.5],
+  pale: [0.72, 0.96, 1],
+  warmPale: [1, 0.9, 0.72],
+  cyan: [0.1, 0.82, 1],
+} as const satisfies Record<string, SceneColor>;
+
+/**
  * Warm, living colour family for the Cell field. These values restore the
  * rose/crimson/amber language that made the galaxy read as a brain rather than
  * another network diagram.
@@ -12,7 +50,9 @@ export const CELL_GALAXY_PALETTE = {
   synapseAmber: [1.0, 0.55, 0.15],
   ember: [1.0, 0.52, 0.28],
   warmWhite: [1.0, 0.93, 0.85],
-  memoryViolet: [0.66, 0.32, 0.82],
+  /** The scene's one violet, read from the accent set rather than restated —
+   *  the tissue's memory and an event's memory are the same meaning. */
+  memoryViolet: SCENE_ACCENT_PALETTE.violet,
 } as const satisfies Record<string, SceneColor>;
 
 /**

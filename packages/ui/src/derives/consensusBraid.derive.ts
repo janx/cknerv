@@ -6,7 +6,7 @@ import {
   type CellMorphologyTopologyOptions,
   type MorphologyPoint3,
 } from './cellMorphology.derive';
-import { CELL_GALAXY_PALETTE } from '../visualPalette';
+import { CELL_GALAXY_PALETTE, SCENE_ACCENT_PALETTE } from '../visualPalette';
 
 export const CONSENSUS_BRAID_TAU = Math.PI * 2;
 
@@ -21,19 +21,38 @@ export const CONSENSUS_BRAID_FIELDS = [
 
 export type ConsensusBraidField = (typeof CONSENSUS_BRAID_FIELDS)[number];
 
+/**
+ * The braid's own names for the scene's accents.
+ *
+ * ⭐ IT NAMES THEM; IT DOES NOT OWN THEM. Six of these are
+ * `SCENE_ACCENT_PALETTE` read by name, because a hue that means "agreement"
+ * here and "a record resolved" in `cellNucleusMaterial` is ONE hue with one
+ * meaning, and it was three slightly different golds until 2026-09-05. What
+ * this map adds is the braid's vocabulary — `gold` is agreement, `violet` is
+ * memory, `pale` is consensus light — so the derive reads in its own terms
+ * while the value is stated once.
+ *
+ * ⚠️ `violet` moved: it was (0.4, 0.2, 1), a blue-violet, and the accent set's
+ * one violet is the warm-side `memoryViolet`. Same argument as B2's warm pale —
+ * the braid is drawn ON the organism, and the organism is rose.
+ *
+ * Two are the braid's alone. `deepCyan` is the dark end of the block ramp, not
+ * an accent; `retire` is death's own signal and belongs to the wither
+ * (`cellHybridMaterial`), which is a body colour rather than an event's.
+ */
 export const CONSENSUS_BRAID_PALETTE = {
   deepCyan: [0.035, 0.28, 0.62],
-  gold: [0.86, 0.61, 0.25],
-  paleGold: [1, 0.84, 0.5],
-  cyan: [0.1, 0.82, 1],
-  violet: [0.4, 0.2, 1],
-  pale: [0.72, 0.96, 1],
+  gold: SCENE_ACCENT_PALETTE.gold,
+  paleGold: SCENE_ACCENT_PALETTE.paleGold,
+  cyan: SCENE_ACCENT_PALETTE.cyan,
+  violet: SCENE_ACCENT_PALETTE.violet,
+  pale: SCENE_ACCENT_PALETTE.pale,
   /** The warm half of the pale pair. The galaxy's own braid reads against
    *  rose tissue, and `pale` is a CYAN white — the peer plane's white, the
    *  carriers' white, the packet heads' white — so a selected cell wearing it
    *  said "network" on a surface that is the organism. This one is the same
    *  value at the same distance from white, turned to the warm side. */
-  warmPale: [1, 0.9, 0.72],
+  warmPale: SCENE_ACCENT_PALETTE.warmPale,
   retire: [0.94, 0.12, 0.46],
 } as const;
 

@@ -2847,7 +2847,11 @@ describe('one directory, two dialects', () => {
       .map((site) => `${site.file}: ${site.hex}`);
 
     expect(named('material')).toContain('components/CellSemanticOrbit.tsx: #020712');
-    expect(named('material')).toContain('components/CellGalaxy.tsx: #e0f2fe');
+    // (`CellGalaxy`'s own scene hex used to stand here. B5 promoted it into
+    // `SCENE_ACCENT_PALETTE` — it was a fifth pale white — and the file now
+    // carries no colour literal at all, which is the outcome this rule wants
+    // rather than an example it can keep.)
+    expect(named('material')).toContain('components/CellBirthAnchorMarker.tsx: #050914');
     expect(named('material')).toContain('components/CellBirthAnchorMarker.tsx: #050914');
 
     // The ink half of the sorting is NOT asked of these files, and that is the

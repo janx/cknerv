@@ -17,7 +17,9 @@ describe('consensus packet glyph', () => {
     expect(pool.material.fragmentShader).toContain('phaseRingA');
     expect(pool.material.fragmentShader).toContain('phaseRingB');
     expect(pool.material.vertexShader).toContain('aGlyphMode');
-    expect(pool.material.fragmentShader).toContain('vec3(0.86, 0.96, 1.0)');
+    // The scene's one cold pale, read from the accent palette (B5); it was a
+    // fourth pale white typed here.
+    expect(pool.material.fragmentShader).toContain('vec3(0.72, 0.96, 1)');
 
     const slot = {
       position: [0, 0, 0] as [number, number, number],

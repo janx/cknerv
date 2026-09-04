@@ -143,7 +143,7 @@ import {
 import { markPopulatedBufferUpdate } from '../geometry/populatedBufferAttribute';
 import CellPopulationField from './CellPopulationField';
 
-import { CHAIN_ANCHOR_HEX } from '../visualPalette';
+import { CHAIN_ANCHOR_HEX, SCENE_ACCENT_PALETTE } from '../visualPalette';
 import { HUD_COLORS, rgba } from './hud/hudTheme';
 // Pre-parsed rest halo: the anchor frame loop re-asserts uColor every frame,
 // and THREE's CSS-string parse is measurable at that rate.
@@ -854,6 +854,8 @@ function CkbNodeAnchor({
  * plane. Mirrors the look of GlowNode's SelectionReticle so the two
  * node kinds feel consistent when picked.
  */
+const RETICLE_COLOR = new THREE.Color().setRGB(...SCENE_ACCENT_PALETTE.pale);
+
 export function CkbSelectionReticle({ size }: { size: number }) {
   const ref = useRef<THREE.Group>(null);
   useSimFrame((_, dt) => {
@@ -879,7 +881,11 @@ export function CkbSelectionReticle({ size }: { size: number }) {
           rotation={[0, 0, Math.atan2(b[1] - a[1], b[0] - a[0])]}
         >
           <planeGeometry args={[Math.hypot(b[0] - a[0], b[1] - a[1]), 0.18]} />
-          <meshBasicMaterial color="#e0f2fe" transparent opacity={0.9} toneMapped={false} />
+          {/* The scene's one cold pale. A fifth pale white was typed here
+              alone, in hex, a shade off the braid's; a reticle is an
+              instrument mark and instruments are cold, so it wears `pale`
+              rather than the braid's warm twin. */}
+          <meshBasicMaterial color={RETICLE_COLOR} transparent opacity={0.9} toneMapped={false} />
         </mesh>
       ))}
     </group>
