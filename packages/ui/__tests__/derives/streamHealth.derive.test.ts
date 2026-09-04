@@ -94,6 +94,6 @@ describe('deriveStreamHealthSummary', () => {
 describe('stream health formatting', () => {
   it('formats channel attribution and bounded ages', () => {
     expect(formatStreamChannels(['chain', 'cells'])).toBe('CHAIN + CELLS');
-    expect(formatStreamAge(67_800)).toBe('1m 7s');
+    expect(formatStreamAge(67_800)).toBe('1M 7S');
   });
 });

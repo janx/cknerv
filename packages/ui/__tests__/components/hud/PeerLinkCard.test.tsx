@@ -53,7 +53,7 @@ describe('PeerLinkCard header', () => {
     // (C-5), not this card's own question: we hold a link to this node.
     expect(container.querySelector('[data-peer-probe-evidence="linked"]')?.textContent)
       .toBe('LINKED');
-    expect(text).toContain('LINKED · 1h 2m');
+    expect(text).toContain('LINKED · 1H 2M');
   });
 
   it('leaves the direction to the arrow and the fact row', () => {
@@ -72,10 +72,10 @@ describe('PeerLinkCard header', () => {
     vi.useFakeTimers();
     const { container } = renderCard();
     expect(container.querySelector('[data-peer-probe-uptime]')?.textContent)
-      .toContain('1h 2m');
+      .toContain('1H 2M');
     act(() => { vi.advanceTimersByTime(60_000); });
     expect(container.querySelector('[data-peer-probe-uptime]')?.textContent)
-      .toContain('1h 3m');
+      .toContain('1H 3M');
   });
 });
 
@@ -494,9 +494,9 @@ describe('PeerLinkCard dossier', () => {
     vi.useFakeTimers();
     const { container } = renderCard({ sighting: sighting() });
     const stamp = () => container.querySelector('[data-sighting-stamp]')?.textContent;
-    expect(stamp()).toBe('SIGHTED 1m 0s AGO');
+    expect(stamp()).toBe('SIGHTED 1M 0S AGO');
     act(() => { vi.advanceTimersByTime(60_000); });
-    expect(stamp()).toBe('SIGHTED 2m 0s AGO');
+    expect(stamp()).toBe('SIGHTED 2M 0S AGO');
   });
 
   it('keeps the dossier through the link\'s ending', () => {

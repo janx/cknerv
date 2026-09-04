@@ -178,14 +178,14 @@ describe('HudOverlay and the shared clock', () => {
     const text = () => container.textContent ?? '';
     // Boot settled 1.3s after mount: the three readouts print that.
     expect(text()).toContain('UP 00:00:01');
-    expect(text()).toContain('1s AGO');
-    expect(text()).toContain('LAST FRAME 18s');
+    expect(text()).toContain('1S AGO');
+    expect(text()).toContain('LAST FRAME 18S');
 
     act(() => { vi.advanceTimersByTime(5_000); });
 
     expect(text()).toContain('UP 00:00:06');
-    expect(text()).toContain('6s AGO');
-    expect(text()).toContain('LAST FRAME 23s');
+    expect(text()).toContain('6S AGO');
+    expect(text()).toContain('LAST FRAME 23S');
     // …and no panel, nor the root, rendered for it.
     expect(snapshot()).toEqual(before);
   });

@@ -124,9 +124,10 @@ describe('ChainCapacityReadout', () => {
       <ChainCapacityReadout source={source} record={record} census={census()} />,
     );
     const row = container.querySelector('[data-population-row="Chain live"]');
-    // One anchor stated once: a second identical tag on the row would read
-    // as a second measurement.
-    expect(row?.querySelector('[data-population-scope]')).toBeNull();
+    // One anchor stated once: a second identical anchor on the row would read
+    // as a second measurement. The SCOPE stays — three counts on this screen
+    // carry the word "live" and each one names the scope it is true in.
+    expect(row?.querySelector('[data-population-scope]')?.textContent).toBe('CHAIN');
   });
 
   it('gives the census its own anchor when it trails the record', () => {
@@ -138,7 +139,8 @@ describe('ChainCapacityReadout', () => {
       />,
     );
     const row = container.querySelector('[data-population-row="Chain live"]');
-    expect(row?.querySelector('[data-population-scope]')?.textContent).toBe('AS OF #98');
+    expect(row?.querySelector('[data-population-scope]')?.textContent)
+      .toBe('CHAIN · AS OF #98');
   });
 
   it('keeps a stale census, labeled and dimmed', () => {

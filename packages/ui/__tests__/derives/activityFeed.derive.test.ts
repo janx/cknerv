@@ -9,6 +9,7 @@ import {
   activityCategoryColor,
   activityFeedVisualState,
   deriveActivityFeedVisual,
+  foldActivityLines,
 } from '../../src/derives/activityFeed.derive';
 import { CONTENT_BANDS } from '../../src/components/hud/cellFormat';
 
@@ -129,5 +130,48 @@ describe('activity feed visual derivation', () => {
       record,
       record.updated_at_ms + ACTIVITY_FEED_STALE_AFTER_MS + 1,
     )).toBe('stale');
+  });
+});
+
+describe('foldActivityLines', () => {
+  const row = (over: Partial<ActivityFeedRecord['activities'][number]>, at: number) => ({
+    tx_hash: `0x${String(at).padStart(2, '0').repeat(32)}`,
+    block: 20_355_937,
+    timestamp_ms: 1,
+    category: 'script',
+    label: '.bit Time Index State',
+    participant_count: 1,
+    ...over,
+  });
+
+  it('folds a run of rows that print the same thing into one line', () => {
+    // The live shape: four activities, one visible feed, one sentence said
+    // four times (report A, A-13). The hashes differ and the row never shows
+    // one, so a reader sees the same line four times over.
+    const lines = foldActivityLines([row({}, 11), row({}, 22), row({}, 33), row({}, 44)]);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].repeat).toBe(4);
+    expect(lines[0].item.tx_hash).toBe(`0x${'11'.repeat(32)}`);
+  });
+
+  it('folds on what the row prints and nothing else', () => {
+    expect(foldActivityLines([row({}, 11), row({ participant_count: 3 }, 22)])).toHaveLength(2);
+    expect(foldActivityLines([row({}, 11), row({ label: 'other' }, 22)])).toHaveLength(2);
+    expect(foldActivityLines([row({}, 11), row({ category: 'dao' }, 22)])).toHaveLength(2);
+    expect(foldActivityLines([row({}, 11), row({ block: 20_355_936 }, 22)])).toHaveLength(2);
+  });
+
+  it('folds only a consecutive run — the feed is an order, not a histogram', () => {
+    const lines = foldActivityLines([
+      row({}, 11),
+      row({ category: 'dao', label: 'Deposit' }, 22),
+      row({}, 33),
+    ]);
+    expect(lines.map((line) => line.repeat)).toEqual([1, 1, 1]);
+  });
+
+  it('leaves an ordinary feed alone', () => {
+    expect(foldActivityLines(record.activities).map((line) => line.repeat))
+      .toEqual([1, 1, 1]);
   });
 });

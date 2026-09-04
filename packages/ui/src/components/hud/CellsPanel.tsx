@@ -3,6 +3,7 @@ import type { CellsStats } from '../../derives/cellsStats.derive';
 import type { ChurnRates } from '../../derives/cellChurn';
 import { CELL_PANEL_ACCENT, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import { DirectionMark, HudPanel, PanelHeader, StatRow } from './primitives';
+import { POPULATION_SCOPE } from './cellPopulation.presentation';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
 const fmtSigned = (n: number) => `${n >= 0 ? '+' : ''}${n.toFixed(1)}`;
@@ -70,14 +71,14 @@ function CellsPanel({ stats, churn, reducedMotion = false, dense = false, style 
           panel counts; the fabric has its own vocabulary in `nerve/`. Both of
           its unique glyphs left the hand-subset face with it (fonts/README.md). */}
       <PanelHeader en="CELL MESH" cjk="元胞汤" idx="CELL·03" accent={CELL_PANEL_ACCENT} />
-      <div style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.tech, color: HUD_COLORS.dim, letterSpacing: 1.2, marginBottom: 2 }}>METABOLISM · per block</div>
+      <div style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.tech, color: HUD_COLORS.dim, letterSpacing: 1.2, marginBottom: 2 }}>METABOLISM · PER BLOCK</div>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, marginBottom: dense ? 4 : 9 }}>
         {/* Tabular figures on every display-family number that ticks: Saira's
             proportional digits make a `1` narrower than a `0`, so a rate
             crossing +9.9 → +10.0 shunts the whole hero sideways and the panel
             twitches once a block. Mono is tabular by nature and needs none. */}
         <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: HUD_TYPE.hero, fontVariantNumeric: 'tabular-nums', color: netColor, lineHeight: 1, textShadow: `0 0 12px ${netColor}66`, animation: reducedMotion ? undefined : 'cknerv-hud-breathe 3.2s ease-in-out infinite' }}>{fmtSigned(churn.netPerBlock)}</span>
-        <span style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, color: HUD_COLORS.dim, marginBottom: 4 }}>net /blk</span>
+        <span style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, color: HUD_COLORS.dim, marginBottom: 4 }}>NET/BLK</span>
       </div>
       {/* Born green, died ember — a metabolism, not a fault report. DIED wore
           `danger`, the same red the HUD raises for a reorg, so every ordinary
@@ -115,7 +116,7 @@ function CellsPanel({ stats, churn, reducedMotion = false, dense = false, style 
           height to the numeral and takes it out of the gap below. This pair
           measured 11 px of baseline pitch against the panel's 17 (A-4). */}
       <div style={{ marginTop: dense ? 0 : 11 }}>
-        <StatRow label="Observed live" lifted="emphasis"><span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: HUD_TYPE.emphasis, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>{fmt(stats.live)}</span></StatRow>
+        <StatRow label={`${POPULATION_SCOPE.observed} LIVE`} lifted="emphasis"><span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: HUD_TYPE.emphasis, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>{fmt(stats.live)}</span></StatRow>
         {dense ? null : (
           <>
             <StatRow label="Total observed">{fmt(stats.born)}</StatRow>

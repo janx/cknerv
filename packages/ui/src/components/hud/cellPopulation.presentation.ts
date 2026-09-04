@@ -14,6 +14,34 @@ import {
   DISPLAY_TIP_WINDOW,
 } from '../../tweaks/cellDisplay';
 
+/**
+ * The three scopes a live-Cell count can be true in, named ONCE.
+ *
+ * ⚠️ There were three counts on screen with the word "live" in them and three
+ * different vocabularies qualifying them: `LIVE CELLS … · AS OF #` on CKB·01
+ * (the validated chain census), `OBSERVED LIVE` on CELL·03 (the backend's
+ * observation window), `STAGE CELLS` in the strip (what this dashboard drew),
+ * and STAGE·07 calling the SAME window as CELL·03 `REPLAY WINDOW` (report A,
+ * A-13). Four words for three scopes, and two of them for one scope.
+ *
+ * The three labels stay — each one reads correctly where it stands — but the
+ * SCOPE WORD inside them comes from here, so a reader who learns `OBSERVED` on
+ * one panel meets the same word on the other, and no surface can invent a
+ * fourth name for a scope that already has one.
+ *
+ * The stage funnel's other scopes (`ADDRESSABLE`, `MEMBERS`, `RECEIVED ROWS`,
+ * `LOCAL WINDOW`) are distinctions INSIDE the stage rather than one of these
+ * three, and they keep their own words.
+ */
+export const POPULATION_SCOPE = {
+  /** The chain itself, under a validated census anchor. */
+  chain: 'CHAIN',
+  /** Births minus deaths in the backend's observation window. */
+  observed: 'OBSERVED',
+  /** What this dashboard is drawing right now. */
+  stage: 'STAGE',
+} as const;
+
 const NUMBER = new Intl.NumberFormat('en-US');
 
 export function formatPopulationCount(value: number): string {
@@ -82,8 +110,9 @@ export function populationRows(
     value: formatPopulationCount(model.observedLive),
     count: model.observedLive,
     // Births minus deaths in the backend's observation window. It is not a
-    // live-chain total and has never been one.
-    scope: 'REPLAY WINDOW',
+    // live-chain total and has never been one — and it is the SAME window
+    // CELL·03's `OBSERVED LIVE` counts, so it wears the same word.
+    scope: POPULATION_SCOPE.observed,
   });
 
   return rows;
@@ -114,7 +143,11 @@ export function chainLiveRow(
   if (!census) {
     return { value: 'UNAVAILABLE', tag: 'NO VALIDATED CENSUS', dim: true };
   }
-  const anchored = `AS OF #${formatPopulationCount(census.as_of.block)}`;
+  // The scope first, then the provenance: `CHAIN · AS OF #n`. The anchor is
+  // dropped when the section header already states it (the panel says it once),
+  // but the SCOPE is never dropped — an unqualified count is the mistake this
+  // module exists to stop making.
+  const anchored = `${POPULATION_SCOPE.chain} · AS OF #${formatPopulationCount(census.as_of.block)}`;
   if (censusStale) {
     // Kept and labeled rather than dropped: the count was exact where it
     // says it was.
@@ -126,7 +159,7 @@ export function chainLiveRow(
   }
   return {
     value: formatPopulationCount(census.live_cells),
-    tag: headerAnchorBlock === census.as_of.block ? null : anchored,
+    tag: headerAnchorBlock === census.as_of.block ? POPULATION_SCOPE.chain : anchored,
     dim: false,
   };
 }

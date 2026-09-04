@@ -279,7 +279,7 @@ describe('peerLinkInstrument derive — LINE FACTS rows', () => {
     expect(factValue(p, 'direction')).toBe('OUTBOUND');
     expect(factValue(p, 'version')).toBe(LOCAL_VERSION);
     expect(factValue(p, 'sync')).toBe('7 BEHIND');
-    expect(factValue(p, 'uptime')).toBe('1h 2m');
+    expect(factValue(p, 'uptime')).toBe('1H 2M');
   });
 
   it('prints an em dash for every value the node did not report', () => {
@@ -295,7 +295,7 @@ describe('peerLinkInstrument derive — LINE FACTS rows', () => {
     expect(factValue(blank, 'sync')).toBe('UNCHARTED');
     // Direction and uptime are always reported by the RPC.
     expect(factValue(blank, 'direction')).toBe('OUTBOUND');
-    expect(factValue(blank, 'uptime')).toBe('0s');
+    expect(factValue(blank, 'uptime')).toBe('0S');
   });
 
   it('colors the rows that carry their own semantics', () => {
@@ -326,18 +326,18 @@ describe('peerLinkInstrument derive — LINE FACTS rows', () => {
 
 describe('formatLinkUptime', () => {
   it('steps s → m → h without inventing precision', () => {
-    expect(formatLinkUptime(0)).toBe('0s');
-    expect(formatLinkUptime(9_400)).toBe('9s');
-    expect(formatLinkUptime(59_999)).toBe('59s');
-    expect(formatLinkUptime(60_000)).toBe('1m');
-    expect(formatLinkUptime(3_599_000)).toBe('59m');
-    expect(formatLinkUptime(3_600_000)).toBe('1h 0m');
-    expect(formatLinkUptime(3_725_000)).toBe('1h 2m');
-    expect(formatLinkUptime(11_520_000)).toBe('3h 12m');
+    expect(formatLinkUptime(0)).toBe('0S');
+    expect(formatLinkUptime(9_400)).toBe('9S');
+    expect(formatLinkUptime(59_999)).toBe('59S');
+    expect(formatLinkUptime(60_000)).toBe('1M');
+    expect(formatLinkUptime(3_599_000)).toBe('59M');
+    expect(formatLinkUptime(3_600_000)).toBe('1H 0M');
+    expect(formatLinkUptime(3_725_000)).toBe('1H 2M');
+    expect(formatLinkUptime(11_520_000)).toBe('3H 12M');
   });
 
   it('never prints a negative or non-finite age', () => {
-    expect(formatLinkUptime(-1)).toBe('0s');
-    expect(formatLinkUptime(Number.NaN)).toBe('0s');
+    expect(formatLinkUptime(-1)).toBe('0S');
+    expect(formatLinkUptime(Number.NaN)).toBe('0S');
   });
 });

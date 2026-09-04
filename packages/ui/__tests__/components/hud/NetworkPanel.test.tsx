@@ -697,7 +697,7 @@ describe('NetworkPanel producers', () => {
     );
     const row = container.querySelector('[data-network-producers]');
     expect(row?.textContent).toContain('POW COHORTS');
-    expect(row?.textContent).toContain('7 · TOP 62% · 7 D');
+    expect(row?.textContent).toContain('7 · TOP 62% · 7D');
     // …and `TOP` is the WEEK's share, off the standing `ranked` put first —
     // which the derive already sequenced by the week's blocks, so the
     // percentage and the window beside it are one reading by construction.
@@ -707,7 +707,7 @@ describe('NetworkPanel producers', () => {
   it('states its window whichever window it is reading', () => {
     // §9.6 on the other branch: every element whose own text reaches a
     // percentage also reaches the unit of the window that percentage is of.
-    // Break `TOP 62%` and `7 D` into two spans and the leaf carrying the
+    // Break `TOP 62%` and `7D` into two spans and the leaf carrying the
     // percentage alone fails here, exactly as it does for `240 BLK`.
     const { container } = render(
       <NetworkPanel {...props} producers={weekView([41_824, 8_909], [3, 2])} />,
@@ -716,7 +716,7 @@ describe('NetworkPanel producers', () => {
     const withPercent = Array.from(row.querySelectorAll<HTMLElement>('*'))
       .filter((element) => (element.textContent ?? '').includes('%'));
     expect(withPercent.length).toBeGreaterThan(0);
-    for (const element of withPercent) expect(element.textContent).toMatch(/\d+ D\b/);
+    for (const element of withPercent) expect(element.textContent).toMatch(/\d+D\b/);
   });
 
   it('keeps the window it gave up, whole, in the title', () => {

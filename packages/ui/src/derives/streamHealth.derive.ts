@@ -91,8 +91,10 @@ export function deriveStreamHealthSummary(
 export function formatStreamAge(ageMs: number | null): string {
   if (ageMs === null) return 'AWAITING FRAME';
   const seconds = Math.max(0, Math.floor(ageMs / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  // Uppercase, with `formatAge` and `formatLinkUptime`: the HUD prints one
+  // time unit in one case (report A, A-13).
+  if (seconds < 60) return `${seconds}S`;
+  return `${Math.floor(seconds / 60)}M ${seconds % 60}S`;
 }
 
 export function formatStreamChannels(

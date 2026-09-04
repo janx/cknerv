@@ -28,7 +28,9 @@ describe('CellsPanel', () => {
     // `stats.live` counts the backend's observation window, not the chain.
     // Beside a medium standing for millions of unresolved Cells, an
     // unqualified "Live cells" is not imprecise — it is contradictory.
-    expect(t).toContain('Observed live');
+    // The scope word comes from `POPULATION_SCOPE`, so the rendered label is
+    // uppercase where the old authored one was mixed case.
+    expect(t).toContain('OBSERVED LIVE');
     expect(t).not.toContain('Live cells');
     expect(t).toContain('28,431');    // total observed
     expect(t).toContain('9,227');     // dead

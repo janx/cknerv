@@ -254,6 +254,15 @@ describe('HudOverlay', () => {
     tick(BOOT_BEAT_MS); // PEER·02
     expect(wrapper(container, 'peers').style.opacity).toBe('1');
     expect(wrapper(container, 'cells').style.opacity).toBe(BOOT_GHOST);
+    // ⭐ AND THE ORDER IS THE RAIL'S. The ritual claims the panels light in
+    // module order; that was only true of the numbers, because CELL·03 stood
+    // ABOVE PEER·02 and the eye read 01 → 03 → 02 (report A, A-7). The mesh
+    // rail is swapped, so the two agree: this beat lights the panel that is
+    // physically FIRST on that rail.
+    const meshRail = Array.from(
+      (container.querySelector('.cknerv-mesh-rail') as HTMLElement).children,
+    ) as HTMLElement[];
+    expect(meshRail.map((zone) => zone.dataset.hudPanel)).toEqual(['peers', 'cells']);
 
     tick(BOOT_BEAT_MS); // CELL·03
     expect(wrapper(container, 'cells').style.opacity).toBe('1');
@@ -743,15 +752,15 @@ describe('HudOverlay', () => {
       />,
     );
     const rail = container.querySelector('.cknerv-mesh-rail')!;
-    const cellZone = rail.firstElementChild as HTMLElement;
+    const zones = Array.from(rail.children) as HTMLElement[];
 
     // No zone wrapper survives the detail cards: the summary IS the rail child.
-    expect(cellZone.dataset.hudPanel).toBe('cells');
-    expect(cellZone.textContent).toContain('CELL MESH');
-    expect(rail.children).toHaveLength(2);
+    // And the rail reads 02 then 03, top-down — see the count-off test below.
+    expect(zones.map((zone) => zone.dataset.hudPanel)).toEqual(['peers', 'cells']);
+    expect(zones[1].textContent).toContain('CELL MESH');
   });
 
-  it('does not raise CAUTION when blocks merely run slower than the 8s target', () => {
+  it('does not raise CAUTION when blocks merely run slower than the 8S target', () => {
     // R2: a uniformly slower-but-steady cadence is the chain's own rhythm, not an alarm.
     const steadySlow: ChainEntry = { ...chain, recent_block_intervals_ms: Array.from({ length: 60 }, () => 12000), last_block_ts_ms: Date.now() };
     const { container } = render(<HudOverlay chain={steadySlow} peers={peers} localNode={localNode} cellsStats={cellsStats} />);
@@ -1464,7 +1473,7 @@ describe('HudOverlay rail collapse', () => {
     const peers_ = container.querySelector('[data-hud-panel="peers"]') as HTMLElement;
 
     expect(cells.textContent).toContain('CELL MESH');
-    expect(cells.textContent).toContain('Observed live');
+    expect(cells.textContent).toContain('OBSERVED LIVE');
     expect(cells.textContent).not.toContain('BORN');
     expect(cells.textContent).not.toContain('Total observed');
     expect(peers_.textContent).toContain('PEER MESH');

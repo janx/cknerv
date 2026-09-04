@@ -66,7 +66,7 @@ const WINDOW_UNIT = 'BLK';
 
 /** The unit the OTHER window is counted in, under the same rule and for the
  *  same reason: PEER·02 and the card both name the indexer's week, and a
- *  reader has to be able to see that `7 D` on the panel and the dates in the
+ *  reader has to be able to see that `7D` on the panel and the dates in the
  *  card's title are one window. Not exported either — a surface that wanted to
  *  say "seven days" of its own would be inventing a second window nothing
  *  measured. */
@@ -115,7 +115,7 @@ export function producerShareText(standing: ProducerStanding): string {
  * counted is blocks; seven days is the SHAPE of the window it counted them
  * over, which the card prints in this row's title and PEER·02 prints beside
  * its own count. A value that said `41,824 / 67,800 D` would be stating a
- * number of days that does not exist, and one that said `62% OF 7 D` would be
+ * number of days that does not exist, and one that said `62% OF 7D` would be
  * a share of a duration.
  *
  * ⚠️ THE DENOMINATOR COMES FROM THE WINDOW ARGUMENT AND NEVER FROM THE
@@ -302,7 +302,7 @@ function fleetWindowText(view: BlockProducerView): string {
 }
 
 /**
- * The same row read off the indexer's week instead: `7 · TOP 62% · 7 D`.
+ * The same row read off the indexer's week instead: `7 · TOP 62% · 7D`.
  *
  * ⭐⭐ THIS IS THE ROW THAT STOPS COLLAPSING, which is the whole reason the
  * week exists. The 240-block window is emptied by every reorg and by every
@@ -327,7 +327,7 @@ function fleetWeekText(view: BlockProducerView): string | null {
   const top = view.ranked[0];
   if (top?.ledger == null) return null;
   return `${view.ranked.length} · TOP ${percentOfWindow(top.ledger.share)}`
-    + ` · ${window.days} ${WEEK_UNIT}`;
+    + ` · ${window.days}${WEEK_UNIT}`;
 }
 
 export function producerFleetText(view: BlockProducerView): string {

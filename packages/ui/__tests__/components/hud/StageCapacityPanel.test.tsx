@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import StageCapacityPanel from '../../../src/components/hud/StageCapacityPanel';
 import {
+  POPULATION_SCOPE,
   chainLiveRow,
   formatPopulationRatio,
   populationCompositionMixes,
@@ -70,11 +71,15 @@ describe('every count carries the scope it is true in', () => {
     }
   });
 
-  it('calls the observation window a replay window, not a chain total', () => {
+  it('calls the observation window what CELL·03 calls it, not a chain total', () => {
+    // ⚠️ The same window CELL·03's `OBSERVED LIVE` counts, so the two surfaces
+    // wear one word out of `POPULATION_SCOPE`. It said `REPLAY WINDOW` here
+    // and `OBSERVED` there — one scope, two vocabularies (report A, A-13).
     const rows = populationRows(scenario('retained-scope').model);
     const observed = rows.find((row) => row.label === 'Observed');
 
-    expect(observed?.scope).toBe('REPLAY WINDOW');
+    expect(observed?.scope).toBe(POPULATION_SCOPE.observed);
+    expect(POPULATION_SCOPE.observed).toBe('OBSERVED');
   });
 
   it('refuses to call a fallback scan a complete retained window', () => {
@@ -107,11 +112,15 @@ describe('chainLiveRow', () => {
     });
   });
 
-  it('leans on the block anchor only when it is exactly its own', () => {
+  it('drops the anchor the header already states, and never the scope', () => {
+    // The panel says the anchor once; the SCOPE it never drops, because an
+    // unqualified live-Cell count beside two other live-Cell counts is the
+    // mistake this module exists to stop making.
     const census = scenario('chain-scope-mainnet').model.chainCensus!;
-    expect(chainLiveRow(census, false, census.as_of.block).tag).toBeNull();
+    expect(chainLiveRow(census, false, census.as_of.block).tag)
+      .toBe(POPULATION_SCOPE.chain);
     expect(chainLiveRow(census, false, census.as_of.block + 2).tag)
-      .toBe(`AS OF #${census.as_of.block.toLocaleString('en-US')}`);
+      .toBe(`${POPULATION_SCOPE.chain} · AS OF #${census.as_of.block.toLocaleString('en-US')}`);
   });
 
   it('keeps a stale census, labeled and dimmed', () => {

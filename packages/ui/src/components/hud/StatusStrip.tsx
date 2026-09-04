@@ -23,6 +23,7 @@ import {
 } from '../../tweaks/cellDisplay';
 import { CJK_BASELINE_LIFT, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import { DirectionMark, PanelGridMark, severityChip } from './primitives';
+import { POPULATION_SCOPE } from './cellPopulation.presentation';
 
 export type BuildInfo = { version: string; href: string };
 export type HudPanelControl = {
@@ -338,7 +339,14 @@ function EnrichmentChip({ source, compact = false }: {
   compact?: boolean;
 }) {
   const color = ENRICHMENT_COLOR[source.status];
-  const lag = source.lag_blocks == null ? '' : ` ${source.lag_blocks}↓`;
+  // ⚠️ `LAG n`, NOT `n↓`. `CKBADGER READY 0↓` reads as "zero, down" — an arrow
+  // is a DIRECTION mark in this HUD (`DirectionMark`, the flow rows, the
+  // deltas) and it was standing in for a noun (report A, A-13). The word costs
+  // three characters and the tooltip stops being the only place the reading is
+  // named. Zero is printed rather than hidden: a source at the tip saying so is
+  // the reading, and a chip that only speaks when it is behind would make the
+  // absence of a number the good news.
+  const lag = source.lag_blocks == null ? '' : ` · LAG ${source.lag_blocks}`;
   return (
     <span
       data-enrichment-chip
@@ -457,7 +465,7 @@ function CellDisplayControl({
           lineHeight: 1,
         }}
       >
-        STAGE CELLS
+        {`${POPULATION_SCOPE.stage} CELLS`}
       </span>
       <output
         data-cell-display-shown
@@ -739,8 +747,14 @@ function RenderQualityControl({ compact = false }: { compact?: boolean }) {
       >
         {QUALITY_MODES.map((mode, index) => {
           const active = quality.mode === mode;
+          // ⚠️ PARENTHESES, NOT A MIDDOT. `AUTO·M` sat immediately left of the
+          // three tier buttons — `H M L` — so the strip read `AUTO·M H M L`
+          // and the suffix looked like the M button had escaped its rail
+          // (report A, A-13). It is not a tier here, it is what AUTO CHOSE, so
+          // it is written the way a chosen value is written; and `·` is the
+          // HUD's own separator between two peers, which these are not.
           const autoSuffix = mode === 'auto' && active
-            ? `·${quality.effective.slice(0, 1).toUpperCase()}`
+            ? `(${quality.effective.slice(0, 1).toUpperCase()})`
             : '';
           return (
             <button

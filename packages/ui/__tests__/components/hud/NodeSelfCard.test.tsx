@@ -323,9 +323,9 @@ describe('NodeSelfCard dossier', () => {
     vi.useFakeTimers();
     const { container } = renderCard({ sighting: sighting() });
     const stamp = () => container.querySelector('[data-sighting-stamp]')?.textContent;
-    expect(stamp()).toBe('SIGHTED 1m 0s AGO');
+    expect(stamp()).toBe('SIGHTED 1M 0S AGO');
     act(() => { vi.advanceTimersByTime(60_000); });
-    expect(stamp()).toBe('SIGHTED 2m 0s AGO');
+    expect(stamp()).toBe('SIGHTED 2M 0S AGO');
   });
 
   it('states the crawler\'s silence about us as an answer', () => {

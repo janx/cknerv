@@ -6,6 +6,7 @@ import {
   activityCategoryColor,
   activityFeedVisualState,
   deriveActivityFeedVisual,
+  foldActivityLines,
 } from '../../derives/activityFeed.derive';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import { ReadoutHeader } from './primitives';
@@ -104,14 +105,19 @@ export default function ActivityFeedReadout({ source, record, compact = false, f
               </span>
             ))}
           </div>
+          {/* Four LINES, not four rows — a run of rows that print the same
+              thing is one line with the count of the run on it. */}
           {!compact ? <div style={{ marginTop: 6 }}>
-            {visual.items.slice(0, 4).map((item) => {
+            {foldActivityLines(visual.items).slice(0, 4).map(({ item, repeat }) => {
               const category = item.category.trim().toLowerCase();
               const color = activityCategoryColor(category);
               return (
                 <div
                   key={item.tx_hash}
-                  title={`${item.tx_hash} · ${item.participant_count} participants`}
+                  data-activity-row={repeat > 1 ? 'folded' : 'single'}
+                  title={repeat > 1
+                    ? `${repeat} identical activities from #${item.block.toLocaleString('en-US')}, first ${item.tx_hash} · ${item.participant_count} participants each`
+                    : `${item.tx_hash} · ${item.participant_count} participants`}
                   style={{
                     display: 'grid',
                     gridTemplateColumns: '58px 52px minmax(0, 1fr) auto',
@@ -126,6 +132,9 @@ export default function ActivityFeedReadout({ source, record, compact = false, f
                   <span style={{ color }}>{CATEGORY_LABELS[category] ?? category.toUpperCase()}</span>
                   <span style={{ color: HUD_COLORS.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {item.label ?? shortHash(item.tx_hash)}
+                    {repeat > 1 ? (
+                      <span data-activity-repeat={repeat} style={{ color: HUD_COLORS.dim }}>{` ×${repeat}`}</span>
+                    ) : null}
                   </span>
                   <span style={{ color: HUD_COLORS.dim }}>{item.participant_count}P</span>
                 </div>

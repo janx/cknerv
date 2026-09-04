@@ -49,10 +49,10 @@ describe('cellFormat — new helpers', () => {
     expect(formatWallClock(8.64e15 + 1)).toBe('UNKNOWN');
   });
   it('formatAge humanizes an elapsed span', () => {
-    expect(formatAge(0, 3 * 3600_000 + 12 * 60_000)).toBe('3h 12m');
-    expect(formatAge(0, 45 * 1000)).toBe('45s');
-    expect(formatAge(0, 2 * 86400_000 + 5 * 3600_000)).toBe('2d 5h');
-    expect(formatAge(100, 50)).toBe('0s'); // clamps negatives
+    expect(formatAge(0, 3 * 3600_000 + 12 * 60_000)).toBe('3H 12M');
+    expect(formatAge(0, 45 * 1000)).toBe('45S');
+    expect(formatAge(0, 2 * 86400_000 + 5 * 3600_000)).toBe('2D 5H');
+    expect(formatAge(100, 50)).toBe('0S'); // clamps negatives
   });
   it('formatDataSize states an exact byte count, grouped and locale-pinned', () => {
     expect(formatDataSize(0)).toBe('0 B');

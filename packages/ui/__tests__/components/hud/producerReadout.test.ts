@@ -281,7 +281,7 @@ describe('producerFleetText', () => {
       standing({ ledger: week({ blocks: 8_909 }) }),
       standing({ ledger: week({ blocks: 2 }) }),
     ];
-    expect(producerFleetText(view({ ranked }))).toBe('3 · TOP 62% · 7 D');
+    expect(producerFleetText(view({ ranked }))).toBe('3 · TOP 62% · 7D');
   });
 
   it('reads the window when there is no week, byte for byte as it always did', () => {
@@ -340,7 +340,7 @@ describe('producerFleetText', () => {
     // the unit for that window is in the same string.
     const withWeek = producerFleetText(view());
     expect(withWeek).toContain('%');
-    expect(withWeek).toMatch(/\d+ D$/);
+    expect(withWeek).toMatch(/\d+D$/);
     const withoutWeek = producerFleetText(view({ ledgerWindow: null }));
     expect(withoutWeek).toContain('%');
     expect(withoutWeek).toContain('BLK');
@@ -436,7 +436,7 @@ describe('the rule this module exists to hold', () => {
     ];
     for (const output of outputs) {
       if (!output.includes('%')) continue;
-      expect(output, output).toMatch(/\bBLK\b|\d+ D\b/);
+      expect(output, output).toMatch(/\bBLK\b|\d+D\b/);
     }
     // The pin again: some of them do carry one.
     expect(outputs.filter((output) => output.includes('%')).length).toBeGreaterThan(3);

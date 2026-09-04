@@ -1331,7 +1331,10 @@ describe('one hero, one register', () => {
         const carried = rungs.filter(
           (rung) => new RegExp(`fontSize: HUD_TYPE\\.${rung}\\b`).test(block),
         );
-        const where = `${source.name}: ${/label="([^"]*)"/.exec(open)?.[1] ?? '?'}`;
+        // A label may be authored (`label="Tip"`) or read from a table
+        // (``label={`${POPULATION_SCOPE.observed} LIVE`}``); both are names.
+        const label = /label=(\{`[^`]*`\}|\{[^}]*\}|"[^"]*")/.exec(open)?.[1] ?? '?';
+        const where = `${source.name}: ${label.replace(/^\{|\}$/g, '').replace(/^"|"$/g, '')}`;
         if (carried.length > 1) {
           offenders.push(`${where} carries two lifted rungs at once`);
         } else if (declared !== carried[0]) {
@@ -1349,7 +1352,7 @@ describe('one hero, one register', () => {
     // rows passes trivially on a rail that has none.
     expect(lifted.sort()).toEqual([
       'BlockchainReadout.tsx: Tip',
-      'CellsPanel.tsx: Observed live',
+      'CellsPanel.tsx: `${POPULATION_SCOPE.observed} LIVE`',
       'NetworkPanel.tsx: Peers',
     ]);
   });
@@ -1608,20 +1611,32 @@ describe('a limit on what we saw is not a fault', () => {
 // that this panel authored five lowercase words under its own uppercase
 // labels — so it is stated on the panel that has them.
 //
-// THIS IS NOT DERIVED AND THE REASON IS WORTH SAYING, because the obvious
-// general rule looks derivable and is not: half the overlay's uppercase is
-// declared on a COMPONENT — `<MetricLabel>Total deposited</MetricLabel>` is
-// correct and a text sweep sees a lowercase word with no transform in sight —
-// so a rule of the form "no lowercase text node" would have to resolve every
-// JSX tag in the directory to its own style object before it could tell a
-// defect from a component doing its job. And under that there is a second
-// question it would be wrong about: `net /blk` and `· per block` are UNITS,
-// and lowercase units are typography rather than drift.
+// THE WORD SIDE OF THIS IS NOT DERIVED AND THE REASON IS WORTH SAYING, because
+// the obvious general rule looks derivable and is not: half the overlay's
+// uppercase is declared on a COMPONENT — `<MetricLabel>Total deposited</
+// MetricLabel>` is correct and a text sweep sees a lowercase word with no
+// transform in sight — so a rule of the form "no lowercase text node" would
+// have to resolve every JSX tag in the directory to its own style object
+// before it could tell a defect from a component doing its job. So the words
+// are pinned per surface, the way the three surfaces naming a spent Cell are.
 //
-// So this pins the two surfaces that state one reading, the way the three
-// surfaces naming a spent Cell are pinned above. A third panel speaking
-// lowercase is not caught, and saying so is better than a rule that would fail
-// four correct surfaces to catch it.
+// ⚠️ THE SECOND HALF OF THAT PARAGRAPH IS RETRACTED. It used to end "and under
+// that there is a second question it would be wrong about: `net /blk` and
+// `· per block` are UNITS, and lowercase units are typography rather than
+// drift." They were the only authored lowercase words left on the rails, they
+// stood directly under CELL·03's own uppercase labels, and the same panel's
+// `+16 groups` was neither a unit nor typography (report A, A-13). The user's
+// ruling is one case, units included; they are up, and this pins them.
+//
+// AND THE UNIT SIDE **IS** DERIVED, because a unit is written next to a value
+// and that is a shape a source can be read for. Every time a span reaches a
+// reader — `8.0S`, `8/MIN`, `7D`, `1M 58S`, `62H 34M` — it comes out of a
+// formatter that interpolates the figure and then types the unit, so the rule
+// is: no interpolation in this package is followed by a lowercase time unit.
+// Three formatters printed five spellings between them (`formatAge`,
+// `formatStreamAge`, `formatLinkUptime`), the rails hid two of them under a
+// container's `textTransform` and the cards did not, and that is how one
+// reading came to be printed in two voices.
 
 describe('one case', () => {
   it('the panel that counts links states it in the HUD\'s one case', () => {
@@ -1648,6 +1663,43 @@ describe('one case', () => {
     for (const tally of ['AT-TIP', 'BEHIND', 'AHEAD']) {
       expect(text, `the ${tally} tally lost its case`).toContain(tally);
     }
+  });
+
+  it('the rails author no lowercase word of their own, units included', () => {
+    // The three the ruling names, each with its negative beside it so a
+    // half-revert cannot pass.
+    const says = (file: string, up: string, down: string) => {
+      const source = SOURCES.find((entry) => entry.name === file);
+      expect(source, `${file} moved — this oracle reads files off disk`).toBeDefined();
+      const text = code(source?.text ?? '');
+      expect(text, `${file} lost ${up}`).toContain(up);
+      expect(text, `${file} still says ${down}`).not.toContain(down);
+    };
+    says('CellsPanel.tsx', '>METABOLISM · PER BLOCK<', 'per block');
+    says('CellsPanel.tsx', '>NET/BLK<', 'net /blk');
+    says('NetworkAtlasReadout.tsx', 'GROUPS', ' groups');
+  });
+
+  it('no figure in this package is followed by a lowercase time unit', () => {
+    // A unit is typed right after the figure it belongs to, which makes the
+    // rule readable off the source: an interpolation, then the unit. `ms` in a
+    // CSS duration is not one of these — it is not a word in this set — and a
+    // literal `160ms` inside a transition string carries no interpolation.
+    const offenders: string[] = [];
+    let units = 0;
+    for (const source of PACKAGE_SOURCES) {
+      const text = code(source.text);
+      for (const hit of text.matchAll(/\}(S|M|H|D|MIN|s|m|h|d|min)\b/g)) {
+        units += 1;
+        if (hit[1] === hit[1].toLowerCase()) {
+          const at = text.slice(Math.max(0, hit.index - 40), hit.index + 8).replace(/\n/g, ' ');
+          offenders.push(`${source.name}: …${at}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+    // …and it read real ones: three formatters and a cadence panel print them.
+    expect(units).toBeGreaterThanOrEqual(8);
   });
 });
 

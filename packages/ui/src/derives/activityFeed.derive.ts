@@ -121,6 +121,53 @@ export function deriveActivityFeedVisual(
   return { items: record.activities, buckets };
 }
 
+/** One printed line of the feed: a row, and how many identical rows it stands
+ *  for. */
+export interface ActivityFeedLine {
+  /** The first of the run — its hash keys the line and titles the hover. */
+  item: ActivityFeedRecord['activities'][number];
+  /** How many rows this line folds. 1 is an ordinary row. */
+  repeat: number;
+}
+
+/**
+ * The feed folds a run of identical rows into one line.
+ *
+ * ⚠️ The section's own meta says `LATEST 8` and it printed FOUR rows, and on a
+ * live chain those four were regularly the same four: `#20,355,937 SCRIPT .bit
+ * Time Index State 1P`, four times (report A, A-13). One transaction batch
+ * touching one script four times is ONE thing that happened, and spending the
+ * whole visible feed saying it four times means the other four activities the
+ * meta counted are never seen at all.
+ *
+ * Identical means everything the row PRINTS — the block, the category, the
+ * label and the participant count. The transaction hashes differ, and that is
+ * precisely the difference the row does not show; it is on the hover, where the
+ * folded line names the first of the run and how many followed it.
+ *
+ * Only a CONSECUTIVE run folds. The feed is in block order and a reader reads
+ * it as an order; collapsing two runs that were not adjacent would be a
+ * histogram, which is what the fingerprint bar above it already is.
+ */
+export function foldActivityLines(
+  items: ActivityFeedRecord['activities'],
+): ActivityFeedLine[] {
+  const lines: ActivityFeedLine[] = [];
+  const same = (
+    a: ActivityFeedRecord['activities'][number],
+    b: ActivityFeedRecord['activities'][number],
+  ) => a.block === b.block
+    && a.category.trim().toLowerCase() === b.category.trim().toLowerCase()
+    && (a.label ?? null) === (b.label ?? null)
+    && a.participant_count === b.participant_count;
+  for (const item of items) {
+    const last = lines[lines.length - 1];
+    if (last && same(last.item, item)) last.repeat += 1;
+    else lines.push({ item, repeat: 1 });
+  }
+  return lines;
+}
+
 export function activityCategoryColor(category: string): string {
   return ACTIVITY_CATEGORY_COLORS[category.trim().toLowerCase()]
     ?? ACTIVITY_UNLISTED_COLOR;

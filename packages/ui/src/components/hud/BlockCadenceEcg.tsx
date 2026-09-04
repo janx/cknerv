@@ -68,9 +68,14 @@ function windowLabel(targetMs: number): string {
   return `−${seconds}S`;
 }
 
+/** A span in seconds, in the rails' one voice for a time unit: the figure and
+ *  an UPPERCASE unit, no space. The HUD shouts — every label, every legend,
+ *  every condition word — and this panel was printing `8.0s`, `8/min` beside
+ *  `24H`, `PEAK/H` and `TGT` (report A, A-13). A unit in a different case is a
+ *  reader's eye stopping to work out whether it is a different unit. */
 function fmtS(ms: number | null | undefined): string {
   if (ms == null || !Number.isFinite(ms)) return '—';
-  return `${(ms / 1000).toFixed(1)}s`;
+  return `${(ms / 1000).toFixed(1)}S`;
 }
 
 function BlockCadenceEcg({
@@ -228,7 +233,7 @@ function BlockCadenceEcg({
           <StatusLamp color={color} />
           {condition}
         </span>
-        <span>TGT {fmtS(targetMs)}</span><span>AVG {fmtS(avgMs)}</span><span>RATE {rate != null ? `${rate}/min` : '—'}</span>
+        <span>TGT {fmtS(targetMs)}</span><span>AVG {fmtS(avgMs)}</span><span>RATE {rate != null ? `${rate}/MIN` : '—'}</span>
       </div>
     </HudPanel>
   );

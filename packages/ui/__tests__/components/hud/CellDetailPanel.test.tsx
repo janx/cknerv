@@ -231,7 +231,7 @@ describe('CellDetailPanel', () => {
     const { container } = render(
       <CellDetailPanel cell={{ ...base, born_at_ms: 12 * 60_000 }} onClose={() => {}} />,
     );
-    expect(container.textContent).toContain('AGE 3h 0m');
+    expect(container.textContent).toContain('AGE 3H 0M');
     expect(container.textContent).not.toContain('SINCE #');
     // Age is the header's business; the register states the date itself, in
     // UTC, so two viewers in two time zones read the same instant. The block

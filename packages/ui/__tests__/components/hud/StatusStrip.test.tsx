@@ -277,8 +277,11 @@ describe('StatusStrip', () => {
 
     const chip = container.querySelector('[data-enrichment-chip]') as HTMLElement;
     expect(chip.dataset.enrichmentStatus).toBe('stale');
-    expect(chip.getAttribute('aria-label')).toBe('ckbadger stale 18↓');
-    expect(chip.textContent).toContain('CKBADGERSTALE 18↓');
+    // `18↓` read as "eighteen, down": an arrow is a DIRECTION mark in this HUD
+    // and it was standing in for a noun (report A, A-13).
+    expect(chip.getAttribute('aria-label')).toBe('ckbadger stale · LAG 18');
+    expect(chip.textContent).toContain('CKBADGERSTALE · LAG 18');
+    expect(chip.textContent).not.toContain('↓');
     expect(container.textContent).toContain('NOMINAL');
   });
 
@@ -297,6 +300,20 @@ describe('StatusStrip', () => {
       name: 'JUKEBOX',
     })).not.toBeNull();
     expect(container.textContent).toContain('NOMINAL');
+  });
+
+  it('names the tier AUTO chose without lending it to the button beside it', () => {
+    // The rail reads `AUTO(H) H M L`. It used to read `AUTO·H  H  M  L`, and
+    // the suffix looked like the H button had escaped its own rail — `·` is
+    // this HUD's separator between two peers, and the effective tier is not a
+    // peer of the tier buttons, it is what AUTO chose (report A, A-13).
+    setQualityMode('auto');
+    setAdaptiveQuality('high');
+    const { container } = render(<StatusStrip level="nominal" uptimeMs={0} />);
+    const auto = container.querySelector('[data-quality-option="auto"]') as HTMLElement;
+
+    expect(auto.textContent).toBe('AUTO(H)');
+    expect(auto.textContent).not.toContain('·');
   });
 
   it('offers a tiered AUTO Cell cap with an immediate manual slider override', () => {

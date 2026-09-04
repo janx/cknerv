@@ -64,7 +64,7 @@ describe('DaoStatePanel', () => {
     expect(text).toContain('Live DAO cells');
     expect(text).toContain('22,659');
     // …and the age is a fact about the two blocks, so it stands with them.
-    expect(text).toContain('STAT #99 · ANCHOR #100 · 38s AGO');
+    expect(text).toContain('STAT #99 · ANCHOR #100 · 38S AGO');
     expect(text).not.toContain('DAO locked');
     expect(text).not.toContain('Active deposits');
     expect(container.querySelector('[data-dao-state="ready"]')).not.toBeNull();
@@ -86,7 +86,7 @@ describe('DaoStatePanel', () => {
 
     // Staleness speaks — in the rail's own `· STALE` token, on the line that
     // carries the anchor it has gone stale against.
-    expect(container.textContent).toContain('STAT #99 · ANCHOR #100 · 4m 0s AGO · STALE');
+    expect(container.textContent).toContain('STAT #99 · ANCHOR #100 · 4M 0S AGO · STALE');
     expect(container.querySelector('[data-dao-state="stale"]')).not.toBeNull();
     expect(container.querySelector('[data-dao-stale]')?.textContent).toBe(' · STALE');
     expect((container.querySelector('[data-dao-content]') as HTMLElement).style.opacity)

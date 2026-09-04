@@ -220,6 +220,20 @@ function isHudPanelId(id: string): id is HudPanelId {
 // inspection cards perform: every panel is mounted at final geometry on the
 // first frame and only the ink arrives, because a reveal that moves layout is
 // a reveal that shoves whatever you had started reading.
+//
+// ⚠️ AND THE ORDER IS THE RAIL'S, NOT A LIST'S. That claim was false on
+// screen: the eye read 01 → 03 → 02 → 05 → 04, because CELL·03 stood ABOVE
+// PEER·02 on the mesh rail, and a count-off that zig-zags teaches nothing
+// (report A, A-7). The right rail is swapped — PEER·02 over CELL·03 — so the
+// mesh half now counts down the way it is read.
+//
+// ⚠️ THE BOTTOM STACK IS NOT, and the difference is the user's D-17 ruling.
+// DAO·05 above ECG·04 is a position somebody chose; renumbering the two to
+// tidy the count-off would move identities that live in memory notes, tests
+// and the PANELS menu for the sake of one ritual. **The codes are identities,
+// not positions.** What this order is, then, is the module registry read in
+// its own order — which the rail now agrees with for the pair where agreeing
+// cost one line of JSX.
 const BOOT_MODULE_ORDER: readonly HudPanelId[] = [
   'chain', 'peers', 'cells', 'pulse', 'dao', 'stage', 'render',
 ];
@@ -844,6 +858,22 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
           beside a summary here any more. */}
       {panelVisibility.cells || panelVisibility.peers ? (
         <div ref={railRef} className="cknerv-mesh-rail" style={railStyle}>
+          {/* ⭐ PEER·02 STANDS OVER CELL·03, which is a swap and not a
+              preference. The eye reads this rail top-down, so the codes on it
+              ran 03 then 02 — and the count-off below claims the panels light
+              "in module order", which made the ritual zig-zag: top-left,
+              right-BOTTOM, right-TOP (report A, A-7). One flex column, one
+              line, and the numbers now go down the rail the way they are
+              read. The bottom stack keeps its own codes: DAO·05 sitting above
+              ECG·04 is a user ruling about where the DAO belongs, and a code
+              is an identity that lives in memory notes, tests and the panel
+              menu — moving one to make a position tidy is the tail wagging the
+              dog (the user's D-17). */}
+          {panelVisibility.peers ? (
+            <div data-hud-panel="peers" style={bootPanelStyle('peers')}>
+              <NetworkPanel summary={summary} consensus={consensus} syncRatio={syncRatio} enrichmentSource={enrichmentSource} networkAtlas={networkAtlas} producers={producerView} dense={railsCollapsed} style={PANEL_FLOW} />
+            </div>
+          ) : null}
           {panelVisibility.cells ? (
             <div data-hud-panel="cells" style={bootPanelStyle('cells')}>
               <CellsPanel
@@ -853,11 +883,6 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
                 dense={railsCollapsed}
                 style={PANEL_FLOW}
               />
-            </div>
-          ) : null}
-          {panelVisibility.peers ? (
-            <div data-hud-panel="peers" style={bootPanelStyle('peers')}>
-              <NetworkPanel summary={summary} consensus={consensus} syncRatio={syncRatio} enrichmentSource={enrichmentSource} networkAtlas={networkAtlas} producers={producerView} dense={railsCollapsed} style={PANEL_FLOW} />
             </div>
           ) : null}
         </div>

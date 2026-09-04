@@ -98,10 +98,17 @@ export function formatAge(bornAtMs: number, nowMs: number): string {
   const h = Math.floor((s % 86400) / 3600);
   const m = Math.floor((s % 3600) / 60);
   const sec = s % 60;
-  if (d > 0) return `${d}d ${h}h`;
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m ${sec}s`;
-  return `${sec}s`;
+  // ⚠️ UPPERCASE, like every other unit the HUD prints. This span used to come
+  // out `2d 5h` / `1m 58s` and land beside `24H`, `PEAK/H`, `TGT` and `LAST
+  // SEEN` — an instrument shouting in one place and murmuring in the other,
+  // and a reader stopping to work out whether a lowercase `m` is the same
+  // minute as an uppercase one (report A, A-13). The rails hid it under a
+  // container's `textTransform` and the cards did not, which is how one
+  // formatter came to print in two voices. One voice, at the source.
+  if (d > 0) return `${d}D ${h}H`;
+  if (h > 0) return `${h}H ${m}M`;
+  if (m > 0) return `${m}M ${sec}S`;
+  return `${sec}S`;
 }
 
 /** The HUD's one byte-size family — `102 B`, `6,947 B` — grouped with the

@@ -102,6 +102,40 @@ describe('rail collapse · folded sections', () => {
     expect(section.querySelectorAll('[data-activity-category]').length).toBeGreaterThan(0);
     expect(section.textContent).toContain('Deposit');
   });
+
+  it('prints a run of identical rows as one line with the count of the run', () => {
+    // The live shape: `LATEST 8` over four rows that were the same four. Four
+    // identical lines spend the whole visible feed saying one thing, and the
+    // four activities the meta counted are never seen (report A, A-13).
+    const repeated = {
+      ...activity,
+      activities: [
+        ...Array.from({ length: 4 }, (_unused, index) => ({
+          tx_hash: `0x${String(index + 1).repeat(2).repeat(32)}`,
+          block: 100,
+          timestamp_ms: 2,
+          category: 'script',
+          label: '.bit Time Index State',
+          participant_count: 1,
+        })),
+        activity.activities[1],
+      ],
+    };
+    const { container } = render(
+      <ActivityFeedReadout source={source} record={repeated} />,
+    );
+    const rows = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-activity-row]'),
+    );
+
+    // Two lines where there were five rows, and the fold names its own count.
+    expect(rows).toHaveLength(2);
+    expect(rows[0].dataset.activityRow).toBe('folded');
+    expect(rows[0].querySelector('[data-activity-repeat="4"]')?.textContent).toBe(' ×4');
+    expect(rows[0].getAttribute('title')).toContain('4 identical activities');
+    expect(rows[1].dataset.activityRow).toBe('single');
+    expect(rows[1].querySelector('[data-activity-repeat]')).toBeNull();
+  });
 });
 
 describe('rail collapse · the panel header at a narrow measure', () => {

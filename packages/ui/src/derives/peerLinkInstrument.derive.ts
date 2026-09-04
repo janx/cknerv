@@ -97,13 +97,15 @@ export interface PeerLinkInstrument {
 
 /** `3h 12m` / `47m` / `9s` — the link's own age, not a wall clock. */
 export function formatLinkUptime(ms: number): string {
-  if (!Number.isFinite(ms) || ms <= 0) return '0s';
+  // Uppercase, with `formatAge` and `formatStreamAge`: one time unit, one case
+  // (report A, A-13).
+  if (!Number.isFinite(ms) || ms <= 0) return '0S';
   const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
+  if (s < 60) return `${s}S`;
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
+  if (m < 60) return `${m}M`;
   const h = Math.floor(m / 60);
-  return `${h}h ${m % 60}m`;
+  return `${h}H ${m % 60}M`;
 }
 
 function blocks(n: number): string {

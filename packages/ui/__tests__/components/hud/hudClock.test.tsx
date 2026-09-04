@@ -74,18 +74,18 @@ describe('hudClock', () => {
       return <HudAge atMs={now - 90_000} nowMs={now} />;
     }
     const { container } = render(<Age />);
-    expect(container.textContent).toBe('1m 30s');
+    expect(container.textContent).toBe('1M 30S');
     act(() => { vi.advanceTimersByTime(HUD_CLOCK_TICK_MS * 5); });
-    expect(container.textContent).toBe('1m 30s');
+    expect(container.textContent).toBe('1M 30S');
     expect(renders).toBe(1);
   });
 
   it('ages a span on the shared clock when no host clock is given', () => {
     const now = parkedFakeClock();
     const { container } = render(<HudAge atMs={now - 55_000} />);
-    expect(container.textContent).toBe('55s');
+    expect(container.textContent).toBe('55S');
     act(() => { vi.advanceTimersByTime(HUD_CLOCK_TICK_MS * 5); });
-    expect(container.textContent).toBe('1m 0s');
+    expect(container.textContent).toBe('1M 0S');
   });
 
   it('refreshes a reader that arrives between ticks rather than serving a stale second', () => {

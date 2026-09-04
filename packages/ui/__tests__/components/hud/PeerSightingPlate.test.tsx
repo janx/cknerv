@@ -151,7 +151,7 @@ describe('PeerSightingPlate absence', () => {
     // peer has no sighting to be stamped by, so this is the only one it has.
     const exposure = row(container, 'exposure');
     expect(exposure).toContain('NO HANDSHAKE BEFORE THE DEADLINE');
-    expect(exposure).toContain('LAST NAMED 2m 0s AGO');
+    expect(exposure).toContain('LAST NAMED 2M 0S AGO');
     expect(exposure).toContain('2 ROUNDS EXHAUSTED');
     // The rung and the reason answer one question between them, so they are
     // on ONE element. They were two apart for a commit, which cost nothing
@@ -179,7 +179,7 @@ describe('PeerSightingPlate absence', () => {
       nowMs: unnamed.latest_positive_observed_ms + 120_000,
     });
     const exposure = row(container, 'exposure');
-    expect(exposure).toContain('LAST OBSERVED 2m 0s AGO');
+    expect(exposure).toContain('LAST OBSERVED 2M 0S AGO');
     expect(exposure).not.toContain('LAST NAMED');
     // And the sample that HAS been named still says so, off its own clock —
     // which is a different moment in the fixture on purpose, so a mapper that
@@ -192,7 +192,7 @@ describe('PeerSightingPlate absence', () => {
       advertised: ADVERTISED,
       nowMs: ADVERTISED_AT_MS + 120_000,
     });
-    expect(row(named.container, 'exposure')).toContain('LAST NAMED 2m 0s AGO');
+    expect(row(named.container, 'exposure')).toContain('LAST NAMED 2M 0S AGO');
   });
 
   it('says where the furthest dial went, and out of how many', () => {
@@ -402,7 +402,7 @@ describe('PeerSightingPlate sighting', () => {
   it('stamps the observation age from the card\'s clock', () => {
     const { container } = renderPlate();
     expect(container.querySelector('[data-sighting-stamp]')?.textContent)
-      .toBe('SIGHTED 1m 0s AGO');
+      .toBe('SIGHTED 1M 0S AGO');
     expect(container.textContent).toContain('LINK·05');
   });
 
@@ -438,7 +438,7 @@ describe('PeerSightingPlate sighting', () => {
     });
     const exposure = row(container, 'exposure');
     expect(exposure).toContain('UNREACHABLE FROM OUTSIDE');
-    expect(exposure).toContain('LAST DIAL 2h 1m AGO');
+    expect(exposure).toContain('LAST DIAL 2H 1M AGO');
   });
 
   it('says so when no dial ever landed', () => {
@@ -452,7 +452,7 @@ describe('PeerSightingPlate sighting', () => {
     const { container } = renderPlate({ linkAgeMs: 3_725_000 });
     const age = row(container, 'network-age');
     expect(age).toContain('ON NET 1 YR 7 MO');
-    expect(age).toContain('WE HAVE HELD THIS LINK 1h 2m');
+    expect(age).toContain('WE HAVE HELD THIS LINK 1H 2M');
   });
 
   it('leaves the pairing out where there is no link to pair with', () => {

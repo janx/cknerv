@@ -147,7 +147,7 @@ describe('SightedNodeCard header', () => {
     const text = container.textContent ?? '';
     expect(text).toContain('SIGHTED // QmSighte');
     expect(container.querySelector('[data-sighted-probe-last-seen]')?.textContent)
-      .toBe('LAST SEEN 5m 0s');
+      .toBe('LAST SEEN 5M 0S');
     expect(text).toContain('SGHT·01');
   });
 
@@ -286,7 +286,7 @@ describe('SightedNodeCard record', () => {
     // certainly not the crawler SEEING, which never happened.
     const { container } = renderCard({ node: hearsayNode() });
     expect(row(container, 'tried')).not.toBeNull();
-    expect(value(container, 'tried')).toBe('7m 0s');
+    expect(value(container, 'tried')).toBe('7M 0S');
     expect(container.textContent).toContain('LAST TRIED');
     expect(container.textContent).toContain('THE LAST COMPLETED ROUND THAT DIALED IT');
     // …and it is not the masthead's sighting clock wearing another label.
@@ -546,7 +546,7 @@ describe('MinerNodeCard', () => {
     expect(container.querySelector('[data-miner-probe-evidence="chain"]')?.textContent)
       .toBe('CHAIN ATTESTED');
     expect(container.querySelector('[data-miner-probe-last-block]')?.textContent)
-      .toBe('LAST BLOCK 5m 0s');
+      .toBe('LAST BLOCK 5M 0S');
     expect(text).toContain('MINE·01');
   });
 
