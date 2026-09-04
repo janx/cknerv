@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import {
   COHORT_CONTEXT_ENERGY_GLSL,
   COHORT_GULP_GLSL,
+  COHORT_GULP_NUCLEUS,
   COHORT_GULP_INTERIOR,
 } from './colonyCohort';
 import {
@@ -610,8 +611,20 @@ export const COHORT_LENS_GLOW_R = 4;
  * is the fold doing what it claims. ⚠️ THAT MEASUREMENT WAS TAKEN AT THE 6 wu
  * FAR DISC AND THE 1.0 wu HALO; both were cut on 2026-09-03 and the numbers can
  * only have come down, but they are owed a re-measure.
+ *
+ * ⭐ 0.75, RAISED FROM 0.5 WITH THE ARMS (D-13, 2026-09-05), and it is not a
+ * second decision. D-13 names one dial — `cohortFarAmp` 0.3 → 0.45 — but the
+ * far form's legibility is a RATIO: R40's ruling is that the nucleus, not a
+ * blend, is what keeps a dark lane from printing a pupil, and
+ * `colonyLens.test.ts` holds it as an inequality between the brightest arm
+ * anywhere past half a world unit and the darkest centre. Raising the arms
+ * alone breaks that inequality outright (0.90 against 0.75) — a bright filament
+ * at half a unit out-shines the heart and the form reads as a ring again. So
+ * the stop is spent on the WHOLE form: both terms × 1.5, every ratio in the
+ * picture unchanged, and the guard passes for the reason it exists rather than
+ * because it was moved.
  */
-export const COHORT_LENS_FAR_GLOW = 0.5;
+export const COHORT_LENS_FAR_GLOW = 0.75;
 
 /**
  * The far halo's Gaussian radius, in world units: `exp(-(impact/r)²)`, with the
@@ -655,8 +668,17 @@ export const COHORT_LENS_FAR_GLOW_CORE_R = 0.35;
  * `cohortFarFall` is the exponent: turn it up and the periphery dies faster
  * (1.5 and 2 were shot on 2026-09-03 and kept the whirlpool inside 4 wu, which
  * the user had just called too small a range).
+ *
+ * ⭐ 0.45, RAISED FROM 0.3 (D-13, 2026-09-05). Lane C's own question — "is a
+ * peer that mines the right overview reading for the seven entities that make
+ * every block?" — was answered by measurement rather than taste: the far form's
+ * brightest pixel at the app camera is 77/255, 0.34 of a measured peer's, and
+ * R40's own note already said "possibly TOO quiet". One stop of light on the
+ * atmosphere; the nucleus gets its own answer on a block
+ * (`COHORT_GULP_NUCLEUS`). Still a dial, and still secondary to the mesh and
+ * the canopy, which is the ruling this may not overturn.
  */
-export const COHORT_LENS_FAR_DISC_AMP = 0.3;
+export const COHORT_LENS_FAR_DISC_AMP = 0.45;
 export const COHORT_LENS_FAR_DISC_POW = 1;
 
 /** The knee of the far law, in world units: the radius at which it has fallen
@@ -1318,12 +1340,23 @@ export function lensFarBody(rho: number, out: number, g: number): number {
 
 /**
  * The nucleus: the round, camera-facing bloom over the far form, as a function
- * of the impact parameter. `glow · (exp(−t²) + core · exp(−(t/coreR)²))`.
+ * of the impact parameter. `glow · (1 + nucleusGulp · gulp) · (exp(−t²) + core
+ * · exp(−(t/coreR)²))`.
+ *
+ * `gulp` is the block this cohort won, on the feature's one envelope
+ * (`cohortMoteGulp`); 0 — a cohort that has not just mined — is the resting
+ * form and the default, so every existing reading of this function is the
+ * reading it always was.
  */
-export function lensFarNucleus(impact: number, mass: number = 1): number {
+export function lensFarNucleus(
+  impact: number,
+  mass: number = 1,
+  gulp: number = 0,
+): number {
   const t = impact / Math.max(COHORT_LENS_FAR_GLOW_R * mass, 1e-4);
   const tc = t / COHORT_LENS_FAR_GLOW_CORE_R;
   return COHORT_LENS_FAR_GLOW
+    * (1 + COHORT_GULP_NUCLEUS * gulp)
     * (Math.exp(-t * t) + COHORT_LENS_FAR_GLOW_CORE * Math.exp(-tc * tc));
 }
 
@@ -1863,7 +1896,14 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
           // the base non-negative.
           float tf = impact / max(uFarGlowR * vMass, 1e-4);
           float tc = tf / ${COHORT_LENS_FAR_GLOW_CORE_R.toFixed(2)};
+          // …and it FLARES on the block this cohort won. The receivers have
+          // always answered a block loudly; the producer had nothing louder
+          // than 77/255 to answer with, so the event had no subject. Same
+          // envelope as the disc's pile — one block, one curve — on the one
+          // term that is the object rather than its atmosphere.
+          ${COHORT_GULP_GLSL}
           float heart = uFarGlow
+            * (1.0 + ${COHORT_GULP_NUCLEUS.toFixed(1)} * gulp)
             * (exp(-tf * tf) + ${COHORT_LENS_FAR_GLOW_CORE.toFixed(1)} * exp(-tc * tc));
           far.rgb += mix(uRimColor, uColCore, 0.6) * heart;
           far *= farW;

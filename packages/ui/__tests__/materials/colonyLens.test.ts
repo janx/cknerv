@@ -14,6 +14,8 @@
 // ships `lensRk4Step` and `lensTrace` as TypeScript, the fragment integrates
 // the same recurrence statement for statement, and `colonyLensShaderGuards.test.ts`
 // pins the GLSL text so the two cannot drift.
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 
@@ -79,6 +81,18 @@ import {
   PEER_CLOUD_SIGHTED_DARK_TONE,
   PEER_CLOUD_SIGHTED_TONE,
 } from '../../src/materials/peerNodeMaterial';
+import {
+  COHORT_GULP_FALL,
+  COHORT_GULP_NUCLEUS,
+  COHORT_GULP_RISE,
+  COHORT_NEVER_WON,
+} from '../../src/materials/colonyCohort';
+import { cohortMoteGulp } from '../../src/materials/colonyMotes';
+
+/** Where the shared envelope peaks, in closed form: `e^{-a/FALL}(1 − e^{-a/RISE})`
+ *  is stationary at `a = −RISE · ln(RISE / (RISE + FALL))`. 0.128 s. */
+const COHORT_GULP_PEAK_S = -COHORT_GULP_RISE
+  * Math.log(COHORT_GULP_RISE / (COHORT_GULP_RISE + COHORT_GULP_FALL));
 
 /** One horizon, so every impact parameter below reads as a multiple of it. */
 const RS = 1;
@@ -696,6 +710,69 @@ describe('cohort lens — the disc’s two laws', () => {
     // The fifth of the law at 2 wu, doubled by a filament, is still under the
     // nucleus's own peak: the arms enter the heart, they never out-shine it.
     expect(lensFarBody(2, out, 1)).toBeLessThan(lensFarNucleus(0));
+  });
+
+  it('spends D-13’s stop on the WHOLE far form, so the heart keeps its lead', () => {
+    // ⚠️ THE INEQUALITY ABOVE IS WHY THE NUCLEUS ROSE WITH THE ARMS. D-13 names
+    // one dial (`cohortFarAmp` 0.3 → 0.45, the far form is too quiet at the app
+    // camera by measurement — 77/255 against a measured peer's 224). Raising
+    // the arms alone puts a bright filament at 0.5 wu above the darkest centre
+    // — 0.90 against 0.75 — which is a ring with a pupil, the exact form R40
+    // ruled out. Both terms took the same 1.5, so every ratio in the picture is
+    // the one the eye accepted.
+    expect(COHORT_LENS_FAR_DISC_AMP).toBeCloseTo(0.3 * 1.5, 12);
+    expect(COHORT_LENS_FAR_GLOW).toBeCloseTo(0.5 * 1.5, 12);
+    // The old arms against the old heart, and the new against the new: the same
+    // number. That is what "a stop on the whole form" means.
+    const out = COHORT_DISC_OUT_FAR;
+    expect(lensFarBody(2, out, 1) / lensFarNucleus(0))
+      .toBeCloseTo((0.3 / COHORT_LENS_FAR_DISC_AMP * lensFarBody(2, out, 1))
+        / (0.5 / COHORT_LENS_FAR_GLOW * lensFarNucleus(0)), 12);
+  });
+
+  it('gives the producer a voice on its own block, and only on its own block', () => {
+    // C-3: on a block the receivers flare 1.9× from an already-clipped core and
+    // the mark the block CAME FROM answers with 77/255. The sentence "a block
+    // came from THERE" had no subject at the one camera most viewers use.
+    //
+    // The flare is the feature's one envelope, on the one term that is the
+    // object rather than its atmosphere.
+    expect(lensFarNucleus(0, 1, 0)).toBe(lensFarNucleus(0));
+    const peak = cohortMoteGulp(COHORT_GULP_PEAK_S);
+    expect(peak).toBeCloseTo(0.6633, 3);
+    // 77 × 2.99 is 230, which is just past the halos it has to be heard over.
+    const lift = lensFarNucleus(0, 1, peak) / lensFarNucleus(0);
+    expect(lift).toBeCloseTo(1 + COHORT_GULP_NUCLEUS * peak, 12);
+    expect(lift).toBeGreaterThan(224 / 77);
+    // …and it is over in about half a second: a block, not a state.
+    expect(lensFarNucleus(0, 1, cohortMoteGulp(0.6)) / lensFarNucleus(0))
+      .toBeLessThan(1 + COHORT_GULP_NUCLEUS * peak * 0.45);
+    // A cohort that never won is at rest at every time the session can reach.
+    expect(cohortMoteGulp(0 - COHORT_NEVER_WON)).toBe(0);
+    expect(lensFarNucleus(0, 1, cohortMoteGulp(-1))).toBe(lensFarNucleus(0));
+    // ⭐ AND THE PUPIL STAYS OFF WHILE IT FLARES. The lift is on the heart
+    // alone, so the inequality the resting form holds only widens.
+    const out = COHORT_DISC_OUT_FAR;
+    const darkestCentre = lensFarNucleus(0, 1, peak) + lensFarBody(0, out, 0);
+    for (let rho = 0.5; rho <= out; rho += 0.05) {
+      expect(lensFarNucleus(rho, 1, peak) + lensFarBody(rho, out, 1))
+        .toBeLessThan(darkestCentre);
+    }
+  });
+
+  it('draws the flare from the shared envelope rather than a second one', () => {
+    // The failure `COHORT_GULP_GLSL` was made a shared string to prevent: two
+    // hand-copied envelopes drift apart the first time either is tuned.
+    const source = readFileSync(
+      resolve(process.cwd(), 'src/materials/colonyLens.ts'),
+      'utf8',
+    );
+    const flare = source.slice(source.indexOf('float tf = impact'));
+    expect(flare.slice(0, flare.indexOf('far.rgb +=')))
+      .toContain('${COHORT_GULP_GLSL}');
+    expect(source).toContain(
+      '* (1.0 + ${COHORT_GULP_NUCLEUS.toFixed(1)} * gulp)',
+    );
   });
 
   it('the near law fades out over the outer 60 % of the disc', () => {

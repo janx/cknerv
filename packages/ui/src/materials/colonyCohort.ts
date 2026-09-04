@@ -177,6 +177,32 @@ export const COHORT_GULP_RISE = 0.06;
 export const COHORT_GULP_INTERIOR = 2.2;
 
 /**
+ * …and how much it lifts the NUCLEUS — the round camera-facing heart of the far
+ * form, the thing a viewer at the app camera actually sees of a cohort.
+ *
+ * ⭐ THE BLOCK HAS A SUBJECT NOW. Report C-3 measured the shape of the event and
+ * it was upside down: the receivers flare 1.9× from an already-clipped core
+ * (twelve measured halos, median peak 224/255) while the producer — the one
+ * mark the whole thing came FROM — answered with a far form whose own brightest
+ * pixel is 77/255. A newcomer saw the galaxy twinkle and had no way to read
+ * "a block came from THERE"; the sentence had no subject.
+ *
+ * 3.0 is the arithmetic of that measurement and nothing more clever: the
+ * envelope peaks at 0.663 (at 0.128 s, `COHORT_GULP_RISE` / `_FALL`), so the
+ * nucleus reaches 1 + 3.0 × 0.663 ≈ 2.99 of its resting light, and 77 × 2.99 is
+ * 230 — just past the halos it has to be heard over. The flare is over in about
+ * half a second, which is the same envelope the disc's own pile rides: one
+ * block, one curve, one event.
+ *
+ * ⚠️ It lifts the HEART only, not the arms. The far form's disc term already
+ * carries `COHORT_GULP_INTERIOR` (the material crossing the lip), and lifting
+ * both by three would make the whole whirlpool flash — a cohort shouting rather
+ * than a cohort being seen. The arms stay the atmosphere; the nucleus is the
+ * object.
+ */
+export const COHORT_GULP_NUCLEUS = 3;
+
+/**
  * The gulp envelope, as ONE string, leaving `gulp` in scope.
  *
  * ⭐ A SHARED SNIPPET BECAUSE EVERY DRAW OF A COHORT WANTS THE SAME CURVE. The
