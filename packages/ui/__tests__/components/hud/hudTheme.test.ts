@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { HUD_COLORS, HUD_FONTS, injectHudTheme, HUD_THEME_STYLE_ID, rgba } from '../../../src/components/hud/hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_MOTION, injectHudTheme, HUD_THEME_STYLE_ID, rgba } from '../../../src/components/hud/hudTheme';
 
 describe('hudTheme', () => {
   beforeEach(() => { document.getElementById(HUD_THEME_STYLE_ID)?.remove(); });
@@ -27,7 +27,7 @@ describe('hudTheme', () => {
     const css = document.getElementById(HUD_THEME_STYLE_ID)?.textContent ?? '';
 
     expect(css).toContain('[data-hud-occlusion="true"][data-hud-dim="true"]{opacity:.25}');
-    expect(css).toContain('[data-hud-occlusion="true"]{transition:opacity 220ms ease}');
+    expect(css).toContain(`[data-hud-occlusion="true"]{transition:opacity ${HUD_MOTION.reveal}ms ${HUD_MOTION.fadeEase}}`);
     // …and the ease is motion, so it answers to the OS setting like the rest.
     expect(css).toContain('@media (prefers-reduced-motion:reduce){[data-hud-occlusion="true"]{transition:none}}');
   });

@@ -1,5 +1,5 @@
 import { useState, type CSSProperties, type ReactNode } from 'react';
-import { CJK_BASELINE_LIFT, COMPANION_OPACITY, DIAMOND_ROTATION, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import { CJK_BASELINE_LIFT, COMPANION_OPACITY, DIAMOND_ROTATION, HUD_COLORS, HUD_FONTS, HUD_MOTION, HUD_TYPE, rgba } from './hudTheme';
 
 // ——— The shape grammar ————————————————————————————————————————————————
 //
@@ -697,7 +697,7 @@ export function PlateReadoutRow({
         font: 'inherit',
         textAlign: 'left',
         cursor: 'pointer',
-        transition: 'background 160ms ease, box-shadow 160ms ease',
+        transition: `background ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}, box-shadow ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}`,
       }}
     >
       {body}
@@ -746,7 +746,7 @@ export const REVEAL_GHOST_OPACITY = 0.18;
 export function revealStageStyle(revealed: boolean): CSSProperties {
   return {
     opacity: revealed ? 1 : REVEAL_GHOST_OPACITY,
-    transition: 'opacity 260ms ease',
+    transition: `opacity ${HUD_MOTION.reveal}ms ${HUD_MOTION.fadeEase}`,
     pointerEvents: revealed ? 'auto' : 'none',
   };
 }

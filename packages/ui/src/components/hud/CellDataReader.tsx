@@ -29,6 +29,7 @@ import type { CellOutputDataPhase } from '../../hooks/useCellOutputData';
 import {
   HUD_COLORS,
   HUD_FONTS,
+  HUD_MOTION,
   HUD_TYPE,
   QUALITATIVE_BUCKET_COLORS,
   rgba,
@@ -185,7 +186,7 @@ export const READER_WIDTH_PX = 408;
 
 /** How long COPY says what it did. Long enough to read one word, short enough
  *  that it is plainly an acknowledgement and not a state. */
-const READER_COPY_MS = 2000;
+const READER_COPY_MS = HUD_MOTION.hold;
 
 /** Characters of the data hash the status line shows. Ten is what makes two
  *  different Cells look different at a glance; a truncated hash is a landmark

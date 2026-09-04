@@ -943,9 +943,13 @@ describe('sceneInspectorPlacement docked family', () => {
 // frame over 120 ms, slid its body over 280 and popped its dot over 360, while
 // the four network dialects had the pop alone. None of them had an exit at all.
 describe('the chassis enters and leaves once', () => {
-  it('fades in on the enter rung and on nothing else', () => {
+  it('fades in on the reveal rung and on nothing else', () => {
+    // The REVEAL rung, and E1's argument for it is that a card does not
+    // travel: it appears where the solver put it, at the size it will keep,
+    // and the only thing that changes is whether you can see it. The `enter`
+    // rung is 360 and belongs to things with a distance in them.
     expect(INSPECTION_CARD_STYLE.transition)
-      .toBe(`opacity ${HUD_MOTION.enter}ms ${HUD_MOTION.enterEase}`);
+      .toBe(`opacity ${HUD_MOTION.reveal}ms ${HUD_MOTION.enterEase}`);
     // Opacity is the whole entrance. `transform` belongs to the frame writer,
     // which sets it every frame the entity is on screen, so a chassis that
     // animated position would be two authors on one property.
@@ -954,7 +958,7 @@ describe('the chassis enters and leaves once', () => {
     expect(INSPECTION_CARD_STYLE.animation).toBeUndefined();
   });
 
-  it('fades a leaving card out on the exit rung, and flags the frame writer', () => {
+  it('fades a leaving card out on the flip rung, and flags the frame writer', () => {
     const handles = createSceneInspectionHandles({
       defaultSize: { width: 340, height: 300 },
       accent: '#ffffff',
@@ -977,9 +981,9 @@ describe('the chassis enters and leaves once', () => {
     expect(handles.leaving).toBe(true);
     expect(card.style.opacity).toBe('0');
     expect(card.style.transition)
-      .toBe(`opacity ${HUD_MOTION.exit}ms ${HUD_MOTION.exitEase}`);
-    // Under half the enter: leaving needs less of a reader than arriving.
-    expect(HUD_MOTION.exit).toBeLessThan(HUD_MOTION.enter / 2);
+      .toBe(`opacity ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}`);
+    // Under half the arrival: leaving needs less of a reader than arriving.
+    expect(HUD_MOTION.flip).toBeLessThan(HUD_MOTION.reveal / 2);
   });
 
   it('leaves instantly under reduced motion', () => {

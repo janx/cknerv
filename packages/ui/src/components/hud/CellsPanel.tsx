@@ -1,7 +1,7 @@
 import { memo, type CSSProperties } from 'react';
 import type { CellsStats } from '../../derives/cellsStats.derive';
 import type { ChurnRates } from '../../derives/cellChurn';
-import { CELL_PANEL_ACCENT, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import { CELL_PANEL_ACCENT, HUD_COLORS, HUD_FONTS, HUD_MOTION, HUD_TYPE, rgba } from './hudTheme';
 import { DirectionMark, HudPanel, PanelHeader, StatRow } from './primitives';
 import { POPULATION_SCOPE } from './cellPopulation.presentation';
 
@@ -77,7 +77,7 @@ function CellsPanel({ stats, churn, reducedMotion = false, dense = false, style 
             proportional digits make a `1` narrower than a `0`, so a rate
             crossing +9.9 → +10.0 shunts the whole hero sideways and the panel
             twitches once a block. Mono is tabular by nature and needs none. */}
-        <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: HUD_TYPE.hero, fontVariantNumeric: 'tabular-nums', color: netColor, lineHeight: 1, textShadow: `0 0 12px ${netColor}66`, animation: reducedMotion ? undefined : 'cknerv-hud-breathe 3.2s ease-in-out infinite' }}>{fmtSigned(churn.netPerBlock)}</span>
+        <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: HUD_TYPE.hero, fontVariantNumeric: 'tabular-nums', color: netColor, lineHeight: 1, textShadow: `0 0 12px ${netColor}66`, animation: reducedMotion ? undefined : `cknerv-hud-breathe ${HUD_MOTION.hold}ms ${HUD_MOTION.loopEase} infinite` }}>{fmtSigned(churn.netPerBlock)}</span>
         <span style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, color: HUD_COLORS.dim, marginBottom: 4 }}>NET/BLK</span>
       </div>
       {/* Born green, died ember — a metabolism, not a fault report. DIED wore

@@ -522,38 +522,106 @@ export const HUD_TYPE = {
 
 // ——— Time —————————————————————————————————————————————————————————————————
 //
-// TWO RUNGS SO FAR, and they are the ones a card is composed of. The overlay
-// carries twenty-seven distinct durations under four seconds and seven
-// easings; the ladder that sorts them is Phase E's (E1) and it folds around
-// these two rather than replacing them.
+// The fourth ladder, and the last dimension of this system that had none.
+// Colour has a palette with a separation floor, type has eleven rungs,
+// tracking has eight and alpha has three — and time had TWENTY-SEVEN distinct
+// durations under four seconds and SEVEN easings, every one of them a literal
+// typed at the site that needed it (report E, E-1). Two things follow from
+// that, and the second is the reason this table exists at all:
 //
-// They exist here, now, because five card dialects share one chassis and did
-// not share one entrance (report E, E-5). A cell card faded its frame over
-// 120 ms, slid its body over 280 ms and popped its tether dot over 360 ms —
-// three simultaneous enters on two elements — while the four network dialects
-// declared no body animation at all and arrived with the pop alone. And none
-// of the five had an EXIT: a card, its leader and its dot left in one frame,
-// which is the only transition in the app that is a cut.
+//   a reader cannot learn a language with twenty-seven words for six ideas.
+//   140 and 160 and 180 are not three speeds; they are one speed, spelled
+//   three times, and the difference between them is below the threshold at
+//   which anybody can tell two transitions apart.
 //
-//   ENTER 260  One fade, on the chassis, for all five dialects. Long enough to
-//              read as an arrival at the far side of a 1,920 px stage, short
-//              enough that a card opened by a click feels answered by it. The
-//              260 is between the two enters it replaces (280 body, 120 frame)
-//              and is spent on ONE property, so nothing can arrive early.
-//   EXIT  120  Under half the enter, because going is not an event — it is the
-//              end of one, and a slow exit reads as hesitation. It is not a new
-//              number either: it is the 120 the chassis already faded IN at,
-//              kept for the direction that needs the less of a reader's
-//              attention.
+//   and nothing could be RESERVED. `steps(2)` is meant to say ALARM and
+//   `linear` is meant to say INSTRUMENT — a machine's own time, moving at a
+//   rate that has nothing to do with a reader's attention. Neither can mean
+//   anything while any file may reach for either.
 //
-// The bezier is the one the card enters with today, kept: a fast start into a
-// long settle is what makes a fade read as a thing arriving rather than as a
-// light being turned up. `ease` is for the exit — leaving needs no character.
+// SIX RUNGS, and they are about WHAT MOVES rather than about how long:
+//
+//   flip    120   A state change with no travel: a colour, a background, a
+//                 caret sliding to the row it belongs to, a lamp. And a card
+//                 LEAVING, which is the same event — going is not an arrival
+//                 played backwards, it is the end of one, and a slow exit
+//                 reads as hesitation.
+//   reveal  260   Something becoming visible IN PLACE. The reveal ghost every
+//                 staged card wears, a fact's value arriving under the probe,
+//                 the card chassis itself, a panel giving way under one.
+//   enter   360   Something ARRIVING — with a shape, from somewhere else. A
+//                 bar growing to its measure, a hop locking on the route, a
+//                 level kicking on a block. Longer than a reveal because
+//                 there is a distance in it to read.
+//   linger  700   A beat HELD so it can be read: the boot band's last frame,
+//                 the alarm's flash period.
+//   grow  1,200   A change with a shape to watch: the scene's births and its
+//                 nerve growth (`cellPositions`, `fabricEdgeRender`), and the
+//                 fast breathe — the one an unmoving reading wears to say it
+//                 is stopped rather than gone.
+//   hold  2,400   A state kept alive after its cause is over: the peer card's
+//                 LINK LOST retention, the reader's COPY toast, an attract
+//                 loop, the specimen sweep, the calm breathe.
+//
+// FIVE EASINGS, each with a job, and three of them RESERVED:
+//
+//   enterEase   The one bezier. A fast start into a long settle, which is what
+//               makes a thing read as arriving rather than as a light being
+//               turned up. There were two of these 0.02 apart, which is one
+//               bezier typed twice.
+//   fadeEase    `ease`, for every fade and every exit. Leaving needs no
+//               character.
+//   loopEase    `ease-in-out`, and ONLY for the breathe — a loop that eases
+//               one way and not the other is a loop with a seam in it.
+//   instrumentEase  `linear`, RESERVED for instruments: the scan beam, the
+//               specimen sweep, the ECG. A machine's own time is not eased,
+//               and a reader who has learned that reads "this is being
+//               measured" from the motion alone.
+//   alarmEase   `steps(2)`, RESERVED for the alarm. One idea, one wearer: a
+//               hard two-state flash is what a siren looks like, and nothing
+//               that is not a siren may borrow it.
+//
+// WHAT IS NOT ON THIS LADDER, named rather than left to be discovered — an
+// INSTRUMENT'S OWN CLOCK. These are not motion; they are the rate at which a
+// machine samples or advances, and rounding one to a rung would change what
+// the instrument measures rather than how it looks:
+//
+// Named per FILE, because a number is exempt where its instrument lives and
+// nowhere else, and `hudDiscipline.test.ts` reads both halves of each line —
+// so an exemption cannot outlive the number it was granted for:
+//
+//   `probeScan.ts` 300  the CELL SCAN's landmark dwell, spelled `PROBE_STEP_S`
+//                       = 0.30 s. The walk is six of them and every staged
+//                       gate in the dossier is a threshold on the count.
+//   `cellScanClock.ts` 80  its sampling period. The beam's own transition
+//                       READS this constant, so the beam interpolates between
+//                       two samples rather than racing them.
+//   `BlockCadenceEcg.tsx` 100 · 1000  the trace's 10 fps redraw and the PULSE
+//                       stopwatch's tick, which drops to 1 Hz when motion is
+//                       reduced — a slower instrument, not a stopped one.
+//   `hudClock.tsx` 1000  the page's one wall clock.
+//   `HudOverlay.tsx` 1000  the composition sampler's period. Its settle and
+//                       quiet windows (15 s, 60 s) are over this ladder's
+//                       four-second horizon and are policy, not motion.
+//   `orbit-gesture-state.ts` 180  input, not motion: it decides whether a
+//                       pointer-up counts as a click after a drag. Nobody sees
+//                       it, and shortening it to a rung would be retuning a
+//                       gesture in order to tidy a table.
+//
+// `hudDiscipline.test.ts` parses every `transition:` and `animation:` string
+// in the overlay and every visual timer constant, and holds them to this.
 export const HUD_MOTION = {
-  enter: 260,
-  exit: 120,
+  flip: 120,
+  reveal: 260,
+  enter: 360,
+  linger: 700,
+  grow: 1_200,
+  hold: 2_400,
   enterEase: 'cubic-bezier(.2,.82,.2,1)',
-  exitEase: 'ease',
+  fadeEase: 'ease',
+  loopEase: 'ease-in-out',
+  instrumentEase: 'linear',
+  alarmEase: 'steps(2)',
 } as const;
 
 // ——— Alpha ————————————————————————————————————————————————————————————————
@@ -811,6 +879,13 @@ export function injectHudTheme(doc: Document = document): void {
   const vars = Object.entries(HUD_COLORS).map(([k, v]) => `--hud-${k}:${v};`).join('');
   style.textContent =
     FONT_FACES.join('') + `\n:root{${vars}}` +
+    // THE FOUR KEYFRAMES, and the ONE breathe. The application ran two —
+    // this one and a `cknerv-jukebox-breathe` (.72 → 1 over 3.4 s) injected by
+    // SND·06's own stylesheet, one idea drawn twice at two depths four hundred
+    // milliseconds apart (report E, E-1). The chip wears this one now, and
+    // every duration these are played at is a rung of `HUD_MOTION` at the
+    // element that plays them: a keyframe says WHAT moves, the rung says how
+    // long, and neither is spelled twice.
     `\n@keyframes cknerv-hud-flash{50%{opacity:.45}}`
     + `\n@keyframes cknerv-hud-breathe{0%,100%{opacity:.82}50%{opacity:1}}`
     + `\n@keyframes cknerv-cell-specimen-sweep{0%{transform:translate3d(0,0,0);opacity:0}12%{opacity:.82}88%{opacity:.72}100%{transform:translate3d(0,100%,0);opacity:0}}`
@@ -875,7 +950,7 @@ export function injectHudTheme(doc: Document = document): void {
     // It is a class rule and not an inline style because the attribute is
     // written from OUTSIDE React — the card's own frame decides it, and a
     // React render of the HUD would take an inline opacity straight back off.
-    + `\n[data-hud-occlusion="true"]{transition:opacity 220ms ease}`
+    + `\n[data-hud-occlusion="true"]{transition:opacity ${HUD_MOTION.reveal}ms ${HUD_MOTION.fadeEase}}`
     + `\n[data-hud-occlusion="true"][data-hud-dim="true"]{opacity:.25}`
     + `\n@media (prefers-reduced-motion:reduce){[data-hud-occlusion="true"]{transition:none}}`
     + `\n@media (max-width:560px){.cknerv-build-label{display:none}}`

@@ -36,7 +36,7 @@ import {
   ASSET_COLORS,
 } from './cellFormat';
 import type { CellById } from '../../types';
-import { CELL_CARD_ACCENT, CJK_BASELINE_LIFT, COMPANION_OPACITY, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba, STALE_OPACITY } from './hudTheme';
+import { CELL_CARD_ACCENT, CJK_BASELINE_LIFT, COMPANION_OPACITY, HUD_COLORS, HUD_FONTS, HUD_MOTION, HUD_TYPE, rgba, STALE_OPACITY } from './hudTheme';
 import {
   CloseButton,
   DragAxisMark,
@@ -81,6 +81,7 @@ import {
   useCellScanMemoryProgress,
   useCellScanSelector,
   useCellScanStepLit,
+  SCAN_TICK_MS,
 } from './cellScanClock';
 import {
   deriveCellConsensusIdentity,
@@ -445,7 +446,7 @@ function clampUnit(value: number): number {
 /** What one staged step of the walk does to a row: ink, and only ink. The row
  *  is already standing at its final size — this turns it up. */
 function revealInk(revealed: boolean): CSSProperties {
-  return { opacity: revealed ? 1 : 0, transition: 'opacity 260ms ease' };
+  return { opacity: revealed ? 1 : 0, transition: `opacity ${HUD_MOTION.reveal}ms ${HUD_MOTION.fadeEase}` };
 }
 
 function portraitBracket(corner: 'tl' | 'tr' | 'bl' | 'br'): CSSProperties {
@@ -979,7 +980,7 @@ const CellScanFact = memo(function CellScanFact({
         // is least likely to know is a control at all.
         cursor: interactive ? 'pointer' : 'default',
         opacity: revealed ? 1 : REVEAL_GHOST_OPACITY,
-        transition: 'opacity 260ms ease, background 160ms ease, box-shadow 160ms ease',
+        transition: `opacity ${HUD_MOTION.reveal}ms ${HUD_MOTION.fadeEase}, background ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}, box-shadow ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}`,
         pointerEvents: interactive ? 'auto' : 'none',
       }}
     >
@@ -1008,7 +1009,7 @@ const CellScanFact = memo(function CellScanFact({
         // The value itself stays dark until the probe reaches this facet —
         // a ghosted-but-readable value made the reveal read as sluggish UI
         // instead of discovery.
-        style={{ display: 'block', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: HUD_TYPE.value, lineHeight: 1.2, color: selected ? accent : color ?? HUD_COLORS.ink, opacity: revealed ? 1 : 0, transition: 'opacity 260ms ease' }}
+        style={{ display: 'block', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: HUD_TYPE.value, lineHeight: 1.2, color: selected ? accent : color ?? HUD_COLORS.ink, opacity: revealed ? 1 : 0, transition: `opacity ${HUD_MOTION.reveal}ms ${HUD_MOTION.fadeEase}` }}
       >
         {value}
       </span>
@@ -1119,7 +1120,7 @@ function CellScanSweep({ plateRef, reduced }: {
       ref={beamRef}
       aria-hidden="true"
       data-cellular-scan-beam
-      style={{ position: 'absolute', zIndex: 2, left: 0, top: 0, bottom: 0, width: '100%', transform: 'translate3d(0%,0,0)', opacity: 0.7, transition: reduced ? undefined : 'transform 80ms linear, opacity 220ms ease', pointerEvents: 'none', willChange: reduced ? undefined : 'transform, opacity' }}
+      style={{ position: 'absolute', zIndex: 2, left: 0, top: 0, bottom: 0, width: '100%', transform: 'translate3d(0%,0,0)', opacity: 0.7, transition: reduced ? undefined : `transform ${SCAN_TICK_MS}ms ${HUD_MOTION.instrumentEase}, opacity ${HUD_MOTION.reveal}ms ${HUD_MOTION.fadeEase}`, pointerEvents: 'none', willChange: reduced ? undefined : 'transform, opacity' }}
     >
       {/* The beam is the plate's own instrument light sweeping the specimen,
           so it is drawn in the plate's colour rather than a fixed cyan. */}
@@ -2111,7 +2112,7 @@ function CellDetailPanel({
         // the beam and the tether are drawn in.
         filter: `drop-shadow(0 8px 16px ${rgba(HUD_COLORS.ground, 0.56)}) drop-shadow(0 0 14px ${rgba(CELL_CARD_ACCENT, 0.06)})`,
         // No enter of its own. The card arrives once, on the chassis
-        // (`INSPECTION_CARD_STYLE`, `HUD_MOTION.enter`) — this body used to
+        // (`INSPECTION_CARD_STYLE`, `HUD_MOTION.reveal`) — this body used to
         // slide 12 px in over 280 ms while the frame around it faded over 120
         // and the tether dot popped over 360, three enters on two elements and
         // no two of them the same length (report E, E-5). The four network
@@ -2781,7 +2782,7 @@ function CellDetailPanel({
           key={cell.id}
           aria-hidden="true"
           data-cell-specimen-scan-light
-          style={{ position: 'absolute', zIndex: 2, left: 5, right: 5, top: '9%', height: '82%', opacity: 0.8, animation: reduced ? undefined : 'cknerv-cell-specimen-sweep 2.8s linear infinite', pointerEvents: 'none', willChange: reduced ? undefined : 'transform, opacity' }}
+          style={{ position: 'absolute', zIndex: 2, left: 5, right: 5, top: '9%', height: '82%', opacity: 0.8, animation: reduced ? undefined : `cknerv-cell-specimen-sweep ${HUD_MOTION.hold}ms ${HUD_MOTION.instrumentEase} infinite`, pointerEvents: 'none', willChange: reduced ? undefined : 'transform, opacity' }}
         >
           <span style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 1, background: `linear-gradient(90deg,transparent,${rgba(CELL_CARD_ACCENT, 0.85)},${rgba(HUD_COLORS.orange, 0.46)},transparent)`, boxShadow: `0 0 9px ${rgba(CELL_CARD_ACCENT, 0.7)}` }} />
         </span>

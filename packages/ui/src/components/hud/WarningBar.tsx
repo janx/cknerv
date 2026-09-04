@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 import type { AlertLevel } from '../../derives/alertLevel';
-import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_MOTION, HUD_TYPE, rgba } from './hudTheme';
 import { severityChip } from './primitives';
 
 const SHOWN: AlertLevel[] = ['warning', 'danger', 'crit'];
@@ -79,7 +79,7 @@ export default function WarningBar({ level, trigger, reducedMotion = false, top 
   if (!warningBarStanding(level)) return null;
   const color = level === 'warning' ? HUD_COLORS.warning : HUD_COLORS.danger;
   return (
-    <div style={{ position: 'absolute', top, left: 0, right: 0, height: WARNING_BAR_HEIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, background: rgba(level === 'crit' ? HUD_COLORS.crit : HUD_COLORS.ground, level === 'crit' ? 0.35 : 0.5), borderTop: `1px solid ${color}`, borderBottom: `1px solid ${color}`, animation: reducedMotion ? undefined : 'cknerv-hud-flash 0.6s steps(2) infinite' }}>
+    <div style={{ position: 'absolute', top, left: 0, right: 0, height: WARNING_BAR_HEIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, background: rgba(level === 'crit' ? HUD_COLORS.crit : HUD_COLORS.ground, level === 'crit' ? 0.35 : 0.5), borderTop: `1px solid ${color}`, borderBottom: `1px solid ${color}`, animation: reducedMotion ? undefined : `cknerv-hud-flash ${HUD_MOTION.linger}ms ${HUD_MOTION.alarmEase} infinite` }}>
       {level === 'crit' ? (
         <>
           <span aria-hidden data-hazard-band="top" style={hazardBand(color, 'top')} />

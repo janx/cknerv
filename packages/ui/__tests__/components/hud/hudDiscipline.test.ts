@@ -4407,6 +4407,254 @@ describe('one alpha for a rule', () => {
   });
 });
 
+// ——— Time is a ladder, and three easings are reserved ————————————————————
+//
+// The fourth dimension of this design system, and the last one to get a table.
+// Colour had a palette, type eleven rungs, tracking eight, alpha three — and
+// time had TWENTY-SEVEN distinct durations under four seconds and SEVEN
+// easings, every one of them a literal typed where it was needed (report E,
+// E-1). 140 and 160 and 180 are not three speeds; they are one speed spelled
+// three times, below the threshold at which anybody can tell two transitions
+// apart, and the cost of that is not untidiness — it is that nothing could be
+// RESERVED. `steps(2)` means ALARM and `linear` means INSTRUMENT only while
+// no other surface may reach for them.
+//
+// So this chapter is two sweeps and a toll. The sweeps: no `transition:` or
+// `animation:` in the application types a duration or an easing, and no HUD
+// timer types a delay — every one of them names a rung of `HUD_MOTION`. The
+// toll: the rungs written in the theme's own prose are the rungs the object
+// exports, and the instruments the prose EXEMPTS are read out of the files
+// they live in, so an exemption cannot outlive the number it was granted for.
+//
+// The ladder's horizon is FOUR SECONDS, which is report E's own frame. Above
+// it a number is a policy window rather than a motion — a staleness threshold,
+// the composition's settle and quiet, a track position in the Jukebox — and a
+// ladder that reached for those would be wrong about most of them.
+
+/** Every file whose time this ladder governs: the HUD directory, the card
+ *  chassis and the peer epilogue beside it, and the three app files that own
+ *  a duration of their own. Deliberately NOT the scene — `cellPositions`,
+ *  `fabricEdgeRender` and the trace clocks are a lifecycle a camera watches,
+ *  not a HUD reading a person reads, and they already cluster (1.2 / 1.5 /
+ *  1.8 s) around a rung this table took FROM them. */
+const MOTION_JURISDICTION: readonly string[] = [
+  'components/sceneInspection.tsx',
+  'hooks/usePeerInspectionRetention.ts',
+];
+const MOTION_APP_FILES: readonly string[] = [
+  'Jukebox.tsx',
+  'inspection-exit.ts',
+  'orbit-gesture-state.ts',
+];
+
+function motionSources(): HudSource[] {
+  return [
+    ...SOURCES.map((source) => ({ ...source, name: `hud/${source.name}` })),
+    ...PACKAGE_SOURCES.filter((source) => MOTION_JURISDICTION.includes(source.name)),
+    ...APP_SOURCES.filter((source) => MOTION_APP_FILES.includes(source.name)),
+  ];
+}
+
+/** The theme's own Time chapter, read as prose. The rungs and the instrument
+ *  exemptions are both written there for a person; this is the toll that keeps
+ *  the prose and the code one statement. */
+function motionComment(): string {
+  const theme = SOURCES.find((source) => source.name === 'hudTheme.ts');
+  expect(theme, 'hudTheme.ts moved — this oracle reads files off disk').toBeDefined();
+  const text = theme?.text ?? '';
+  const start = text.indexOf('// ——— Time ———');
+  const end = text.indexOf('export const HUD_MOTION', start);
+  expect(start, 'no Time section to read').toBeGreaterThan(-1);
+  expect(end, 'no end to the Time section').toBeGreaterThan(start);
+  return text.slice(start, end);
+}
+
+/** Every `transition:` / `animation:` value in a source, however it is
+ *  written: a React style prop, a CSS rule inside a template string, a
+ *  ternary with the reduced-motion arm on the other side. The value ends at
+ *  the property's own terminator — a comma outside braces, a backtick, a
+ *  closing brace — which is what keeps `transition: a, b` one value and two
+ *  adjacent properties two. */
+function motionValues(text: string): string[] {
+  const found: string[] = [];
+  for (const match of text.matchAll(/(?<![\w$-])(?:transition|animation):\s*/g)) {
+    const from = (match.index ?? 0) + match[0].length;
+    let depth = 0;
+    let end = text.length;
+    for (let index = from; index < text.length; index += 1) {
+      const ch = text[index];
+      if (ch === '{' || ch === '(') depth += 1;
+      else if (ch === '}' || ch === ')') {
+        if (depth === 0) { end = index; break; }
+        depth -= 1;
+      } else if (ch === '\n' && depth === 0 && /[,;`']\s*$/.test(text.slice(from, index))) {
+        end = index;
+        break;
+      }
+    }
+    found.push(text.slice(from, end));
+  }
+  return found;
+}
+
+describe('one ladder for time', () => {
+  it('the table in hudTheme and the rungs here are one ladder', () => {
+    // The toll the tracking and alpha tables already carry. A rung table
+    // written in two places is the failure this whole file is about.
+    const declared = new Map<string, number>();
+    for (const rung of motionComment().matchAll(/^\/\/   (\w+)\s+([\d,]+)   [A-Z]/gm)) {
+      declared.set(rung[1], Number(rung[2].replace(/,/g, '')));
+    }
+    const table = Object.fromEntries(
+      Object.entries(HUD_MOTION).filter(([, value]) => typeof value === 'number'),
+    );
+    expect(Object.fromEntries(declared)).toEqual(table);
+    expect(declared.size).toBe(6);
+
+    // The rungs are ordered and none of them collides: six names for six
+    // speeds, which is the whole point of stopping at six.
+    const values = [...declared.values()];
+    expect(new Set(values).size).toBe(values.length);
+    expect([...values].sort((a, b) => a - b)).toEqual(values);
+
+    // And the five easings each have a name and a job. `ease-out` and the
+    // second bezier — 0.02 from the first — are gone.
+    expect(Object.entries(HUD_MOTION).filter(([key]) => key.endsWith('Ease')))
+      .toEqual([
+        ['enterEase', 'cubic-bezier(.2,.82,.2,1)'],
+        ['fadeEase', 'ease'],
+        ['loopEase', 'ease-in-out'],
+        ['instrumentEase', 'linear'],
+        ['alarmEase', 'steps(2)'],
+      ]);
+  });
+
+  it('nothing that moves types a duration or an easing', () => {
+    // The sweep. Every value is read whole, so a two-property transition is
+    // caught in both halves and a ternary is caught in the arm that animates.
+    const offenders: string[] = [];
+    for (const source of motionSources()) {
+      for (const value of motionValues(code(source.text))) {
+        for (const literal of value.matchAll(/(?<![\w$.])(\d+(?:\.\d+)?)\s*m?s(?![\w-])/g)) {
+          offenders.push(`${source.name}: ${literal[0]} — a duration is a rung of HUD_MOTION`);
+        }
+        for (const easing of value.matchAll(
+          /(?<![\w$-])(ease-in-out|ease-out|ease-in|ease|linear|steps\([^)]*\)|cubic-bezier\([^)]*\))(?![\w-])/g,
+        )) {
+          offenders.push(`${source.name}: ${easing[1]} — an easing is a name in HUD_MOTION`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+
+    // …and the sweep reads the surfaces it claims to: the five card dialects
+    // and the theme's own stylesheet all move.
+    const moving = motionSources()
+      .filter((source) => motionValues(code(source.text)).length > 0)
+      .map((source) => source.name);
+    expect(moving.length).toBeGreaterThan(8);
+    expect(moving).toContain('hud/hudTheme.ts');
+    expect(moving).toContain('components/sceneInspection.tsx');
+    expect(moving).toContain('Jukebox.tsx');
+  });
+
+  it('the two reserved easings have the wearers they were reserved for', () => {
+    // A reservation nobody checks is a preference. `steps(2)` is a hard
+    // two-state flash — what a siren looks like — and `linear` is a machine's
+    // own time, which is the reading an instrument gets for free ONLY while
+    // nothing decorative borrows it.
+    const wearers = (key: 'alarmEase' | 'instrumentEase') => motionSources()
+      .filter((source) => code(source.text).includes(`HUD_MOTION.${key}`))
+      .map((source) => source.name)
+      .sort();
+    expect(wearers('alarmEase')).toEqual(['hud/WarningBar.tsx']);
+    expect(wearers('instrumentEase')).toEqual(['hud/CellDetailPanel.tsx']);
+
+    // The instrument's two: the scan beam, which interpolates between two
+    // samples of the scan clock, and the specimen sweep it outlives.
+    const dossier = code(SOURCES.find((source) => source.name === 'CellDetailPanel.tsx')?.text ?? '');
+    expect(dossier).toContain('transform ${SCAN_TICK_MS}ms ${HUD_MOTION.instrumentEase}');
+    expect(dossier).toContain('cknerv-cell-specimen-sweep ${HUD_MOTION.hold}ms ${HUD_MOTION.instrumentEase}');
+  });
+
+  it('there is one breathe in the whole application', () => {
+    // Two keyframes said one thing: the overlay's `cknerv-hud-breathe`
+    // (.82 → 1) and the Jukebox chip's `cknerv-jukebox-breathe` (.72 → 1),
+    // four hundred milliseconds and one tenth of an alpha apart, in two
+    // stylesheets (report E, E-1). The chip wears the HUD's now.
+    const breathes: string[] = [];
+    for (const source of motionSources()) {
+      for (const frames of code(source.text).matchAll(/@keyframes ([\w-]*breathe[\w-]*)/g)) {
+        breathes.push(`${source.name}: ${frames[1]}`);
+      }
+    }
+    expect(breathes).toEqual(['hud/hudTheme.ts: cknerv-hud-breathe']);
+
+    const chip = code(APP_SOURCES.find((source) => source.name === 'Jukebox.tsx')?.text ?? '');
+    expect(chip, 'the chip stopped breathing').toContain('animation:cknerv-hud-breathe');
+  });
+
+  it('a HUD timer names a rung, or is an instrument the table declares', () => {
+    // The other half of the sweep, and the one the CSS parser cannot see: a
+    // `setTimeout` that drives a visual is a duration a reader experiences
+    // however it is spelled. `BOOT_SLOT_MS` was 130 — ten off the flip rung,
+    // and a number nothing else in the HUD wore.
+    //
+    // The exemptions are read out of the theme's prose, per FILE, so a number
+    // is exempt where its instrument lives and nowhere else.
+    const instruments = new Map<string, number[]>();
+    for (const entry of motionComment().matchAll(/^\/\/   `([\w.-]+\.tsx?)`\s+([\d ·]+?)\s{2}/gm)) {
+      instruments.set(entry[1], entry[2].split('·').map((value) => Number(value.trim())));
+    }
+    expect(instruments.size).toBe(6);
+
+    const rungs = new Set<number>(
+      Object.values(HUD_MOTION).filter((value) => typeof value === 'number') as number[],
+    );
+    const offenders: string[] = [];
+    let swept = 0;
+    for (const source of motionSources()) {
+      const file = source.name.split('/').pop() ?? source.name;
+      const allowed = instruments.get(file) ?? [];
+      const text = code(source.text);
+      const sites: Array<[string, number]> = [];
+      for (const decl of text.matchAll(/const\s+([A-Z][A-Z0-9_]*_(?:MS|S|SECONDS))\s*=\s*([\d_.]+)\s*[;*]/g)) {
+        const raw = Number(decl[2].replace(/_/g, ''));
+        sites.push([decl[1], decl[1].endsWith('_MS') ? raw : raw * 1_000]);
+      }
+      for (const timer of text.matchAll(/set(?:Timeout|Interval)\([\s\S]{0,240}?,\s*([^),]+)\)/g)) {
+        for (const number of timer[1].match(/\d[\d_]*/g) ?? []) {
+          sites.push(['a timer', Number(number.replace(/_/g, ''))]);
+        }
+      }
+      for (const [what, ms] of sites) {
+        if (ms >= 4_000) continue;   // a policy window, not a motion
+        swept += 1;
+        if (rungs.has(ms) || allowed.includes(ms)) continue;
+        offenders.push(`${source.name}: ${what} at ${ms}ms is neither a rung nor a declared instrument`);
+      }
+    }
+    expect(offenders).toEqual([]);
+    expect(swept).toBeGreaterThan(6);
+
+    // …and every instrument the prose exempts is REAL, at the value it was
+    // exempted for. An exemption that outlives its number is how a table
+    // starts lying.
+    for (const [file, values] of instruments) {
+      const source = motionSources().find((entry) => (entry.name.split('/').pop() ?? '') === file);
+      expect(source, `${file} is exempt from the motion ladder and does not exist`).toBeDefined();
+      const text = code(source?.text ?? '');
+      for (const ms of values) {
+        const spelled = [String(ms), String(ms).replace(/(\d)(\d{3})$/, '$1_$2'), (ms / 1_000).toFixed(2)];
+        expect(
+          spelled.some((form) => text.includes(form)),
+          `${file} no longer types ${ms}ms — the exemption outlived its number`,
+        ).toBe(true);
+      }
+    }
+  });
+});
+
 // ——— Two names, one colour, and the floor under an alarm ————————————————
 //
 // The palette has a separation floor and it was enforced on NAMED PAIRS: the
@@ -5777,16 +6025,18 @@ describe('one entrance for five dialects', () => {
     expect(css.match(/@keyframes [\w-]*-enter/g)).toBeNull();
   });
 
-  it('and the chassis states the two rungs once, from the motion table', () => {
+  it('and the chassis states its two rungs once, from the motion table', () => {
     const chassis = PACKAGE_SOURCES.find(
       (entry) => entry.name === 'components/sceneInspection.tsx',
     );
     const text = code(chassis?.text ?? '');
-    expect(text).toContain('opacity ${HUD_MOTION.enter}ms ${HUD_MOTION.enterEase}');
-    expect(text).toContain('opacity ${HUD_MOTION.exit}ms ${HUD_MOTION.exitEase}');
-    // Two rungs, not a third typed beside them.
-    expect(HUD_MOTION.enter).toBe(260);
-    expect(HUD_MOTION.exit).toBe(120);
+    expect(text).toContain('opacity ${HUD_MOTION.reveal}ms ${HUD_MOTION.enterEase}');
+    expect(text).toContain('opacity ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}');
+    // Two rungs of the ladder, not two numbers of the chassis's own. E1
+    // settled which two: a card appears IN PLACE, so its entrance is the
+    // reveal, and its exit is the flip every other state change wears.
+    expect(HUD_MOTION.reveal).toBe(260);
+    expect(HUD_MOTION.flip).toBe(120);
   });
 });
 

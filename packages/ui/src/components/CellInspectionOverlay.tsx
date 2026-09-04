@@ -164,7 +164,7 @@ export function CellInspectionAnchor({
 export type CellInspectionOverlayProps = CellDetailPanelProps & {
   handles: CellInspectionHandles;
   /** The selection has been cleared and the chassis owes the card its exit;
-   *  the dialect holds the subject for `HUD_MOTION.exit` so there is something
+   *  the dialect holds the subject for `HUD_MOTION.flip` so there is something
    *  to fade. See `useSceneInspectionExit`. */
   leaving?: boolean;
 };

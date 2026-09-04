@@ -7,6 +7,7 @@
 // from the union of note and bars, the viewport clip, and the keyframes.
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
+import { HUD_MOTION } from '@cknerv/ui';
 import Jukebox from '../src/Jukebox';
 
 const OPEN_LABEL = 'Open Jukebox and play default SoundCloud track';
@@ -81,10 +82,23 @@ describe('Jukebox glyph', () => {
     expect(css).toContain('@keyframes cknerv-jukebox-eq-b{0%,100%{transform:scaleY(1)}46%{transform:scaleY(.34)}}');
     expect(css).toContain('@keyframes cknerv-jukebox-eq-c{0%,100%{transform:scaleY(.6)}32%{transform:scaleY(.95)}}');
     expect(css).toContain('@keyframes cknerv-jukebox-tick{0%{transform:scaleY(1)}16%{transform:scaleY(1.55)}100%{transform:scaleY(1)}}');
-    expect(css).toContain('.cknerv-jukebox-bar-a{animation:cknerv-jukebox-eq-a 2.4s ease-in-out infinite}');
-    expect(css).toContain('.cknerv-jukebox-bar-b{animation:cknerv-jukebox-eq-b 3.1s ease-in-out infinite}');
-    expect(css).toContain('.cknerv-jukebox-bar-c{animation:cknerv-jukebox-eq-c 2.7s ease-in-out infinite}');
-    expect(css).toContain('.cknerv-jukebox-bars{animation:cknerv-jukebox-tick .52s ease-out 1}');
+    // One period for the three bars, three shapes — the keyframes above are
+    // what makes an EQ read as an EQ, and the periods were buying with numbers
+    // what the shapes give for free (E1).
+    for (const bar of ['a', 'b', 'c']) {
+      expect(css).toContain(
+        `.cknerv-jukebox-bar-${bar}{animation:cknerv-jukebox-eq-${bar} ${HUD_MOTION.hold}ms ${HUD_MOTION.loopEase} infinite}`,
+      );
+    }
+    expect(css).toContain(
+      `.cknerv-jukebox-bars{animation:cknerv-jukebox-tick ${HUD_MOTION.enter}ms ${HUD_MOTION.enterEase} 1}`,
+    );
+    // ONE breathe in the app, and it is the HUD's: this chip had a second
+    // keyframe of its own saying the same thing 400 ms apart.
+    expect(css).toContain(
+      `.cknerv-jukebox-glyph{animation:cknerv-hud-breathe ${HUD_MOTION.hold}ms ${HUD_MOTION.loopEase} infinite}`,
+    );
+    expect(css).not.toContain('@keyframes cknerv-jukebox-breathe');
     expect(css).toContain(
       '[data-jukebox-attract="settled"] .cknerv-jukebox-glyph,'
       + '[data-jukebox-attract="settled"] .cknerv-jukebox-bar,'

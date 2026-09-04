@@ -19,7 +19,7 @@ import {
 } from 'react';
 import type { Peer } from '@cknerv/types';
 import { useHudClockSelector } from './hudClock';
-import { CJK_BASELINE_LIFT, COMPANION_OPACITY, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba, STALE_OPACITY } from './hudTheme';
+import { CJK_BASELINE_LIFT, COMPANION_OPACITY, HUD_COLORS, HUD_FONTS, HUD_MOTION, HUD_TYPE, rgba, STALE_OPACITY } from './hudTheme';
 import {
   CloseButton,
   DiamondMark,
@@ -215,7 +215,7 @@ function ColonyCompass({
       height={COMPASS_VIEW_PX}
       role="img"
       aria-label={measured ? 'Peer position on the latency compass' : 'Peer latency unmeasured'}
-      style={{ display: 'block', margin: '0 auto', opacity: dimmed ? STALE_OPACITY : 1, transition: 'opacity 240ms ease' }}
+      style={{ display: 'block', margin: '0 auto', opacity: dimmed ? STALE_OPACITY : 1, transition: `opacity ${HUD_MOTION.reveal}ms ${HUD_MOTION.fadeEase}` }}
     >
       {COMPASS_RINGS.map((ring) => (
         <circle
@@ -403,7 +403,7 @@ function PingStrip({
         width="100%"
         height={PING_VIEW_H}
         aria-hidden="true"
-        style={{ display: 'block', opacity: flatlined ? 0.32 : 1, transition: 'opacity 240ms ease' }}
+        style={{ display: 'block', opacity: flatlined ? 0.32 : 1, transition: `opacity ${HUD_MOTION.reveal}ms ${HUD_MOTION.fadeEase}` }}
       >
         <line x1={0} y1={PING_VIEW_H - 0.5} x2={PING_VIEW_W} y2={PING_VIEW_H - 0.5} stroke={rgba(HUD_COLORS.peerWire, 0.22)} strokeWidth={1} />
         {flatlined ? (
@@ -766,7 +766,7 @@ export default function PeerLinkCard({
             boxShadow: instrument.sync.state === 'ahead'
               ? `0 0 12px ${rgba(instrument.sync.color, 0.45)}`
               : undefined,
-            transition: 'background 240ms ease, box-shadow 240ms ease, color 240ms ease',
+            transition: `background ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}, box-shadow ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}, color ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}`,
           }}
         >
           {instrument.sync.label}

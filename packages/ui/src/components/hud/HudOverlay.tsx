@@ -23,7 +23,7 @@ import type { CellsStats } from '../../derives/cellsStats.derive';
 import type { CellPopulationFieldModel } from '../../derives/cellPopulationField.derive';
 import type { BlockProducerView } from '../../derives/blockProducers.derive';
 import { useBootSequence } from '../../boot/bootSequence';
-import { HUD_COLORS, HUD_FONTS, injectHudTheme, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_MOTION, injectHudTheme, rgba } from './hudTheme';
 import { revealStageStyle } from './primitives';
 import StatusStrip, {
   STATUS_STRIP_HEIGHTS,
@@ -249,10 +249,13 @@ function isHudPanelId(id: string): id is HudPanelId {
 const BOOT_MODULE_ORDER: readonly HudPanelId[] = [
   'chain', 'peers', 'cells', 'pulse', 'dao', 'stage', 'render',
 ];
-/** One module per beat. Seven beats plus the 260ms the last one takes to
- *  finish arriving lands the whole ritual just inside 1.2s; a default boot
- *  (STAGE·07 / GL·08 off) counts to four and is done in well under a second. */
-const BOOT_SLOT_MS = 130;
+/** One module per beat, and the beat is `HUD_MOTION.flip` — a module coming
+ *  up is a state change with no travel, which is the rung's whole definition.
+ *  Seven beats plus the reveal the last one takes to finish arriving lands the
+ *  ritual just inside 1.1s; a default boot (STAGE·07 / GL·08 off) counts to
+ *  four and is done in well under a second. It was 130, ten off the rung and
+ *  a number nothing else in the HUD wore (E1). */
+const BOOT_SLOT_MS = HUD_MOTION.flip;
 
 // ——— Boot readout linger ————————————————————————————————————
 /** How long the finished boot sequence keeps the top slot after its last line
@@ -262,7 +265,7 @@ const BOOT_SLOT_MS = 130;
  *  galaxy has been on screen behind the band since `first_light`. Skipped
  *  entirely under reduced motion, where a banner that outstays its state is
  *  just a banner that will not leave. */
-const BOOT_READOUT_LINGER_MS = 700;
+const BOOT_READOUT_LINGER_MS = HUD_MOTION.linger;
 
 /** Does this session want the ritual at all? Read once, synchronously, because
  *  `useReducedMotion` is mount-safe by design and cannot answer before the

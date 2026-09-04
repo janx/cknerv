@@ -1075,7 +1075,15 @@ export const INSPECTION_LAYER_STYLE: CSSProperties = {
 
 /** The card starts invisible: it has no honest screen position until the
  * anchor has projected the entity once — and the fade from that zero is the
- * chassis's ONE enter, for all five dialects (`HUD_MOTION.enter`).
+ * chassis's ONE entrance, for all five dialects.
+ *
+ * It is the REVEAL rung, not the enter one, and that is E1's ruling rather
+ * than a leftover: a card does not travel. It appears where the solver put
+ * it, at the size it will keep, and the only thing that changes is whether
+ * you can see it — which is the same event as a fact arriving under the probe
+ * or a panel giving way under the card, and they are one number now.
+ * `HUD_MOTION.enter` is 360 and belongs to things with a distance in them: a
+ * bar growing to its measure, a hop locking on the route.
  *
  * It is a fade and nothing else. The cell card used to slide its body 12 px in
  * over 280 ms while this frame faded over 120 and the tether dot popped over
@@ -1090,7 +1098,7 @@ export const INSPECTION_CARD_STYLE: CSSProperties = {
   pointerEvents: 'none',
   userSelect: 'text',
   willChange: 'transform',
-  transition: `opacity ${HUD_MOTION.enter}ms ${HUD_MOTION.enterEase}`,
+  transition: `opacity ${HUD_MOTION.reveal}ms ${HUD_MOTION.enterEase}`,
 };
 
 /**
@@ -1098,7 +1106,7 @@ export const INSPECTION_CARD_STYLE: CSSProperties = {
  *
  * A card, its leader and its dot were unmounted in a single frame: the only
  * transition in the app that is a CUT (report E, E-5). The dialect holds its
- * subject for `HUD_MOTION.exit` after the close and hands the card `leaving`;
+ * subject for `HUD_MOTION.flip` after the close and hands the card `leaving`;
  * this writes the fade and tells the frame writer to keep its hands off a card
  * on its way out — a card that was repositioned mid-exit would slide as it
  * faded, which is a second gesture nobody asked for.
@@ -1119,7 +1127,7 @@ export function useSceneInspectionExit(
     if (!element || !leaving) return;
     element.style.transition = reduced
       ? 'none'
-      : `opacity ${HUD_MOTION.exit}ms ${HUD_MOTION.exitEase}`;
+      : `opacity ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}`;
     element.style.opacity = '0';
   }, [handles, card, leaving, reduced]);
 }

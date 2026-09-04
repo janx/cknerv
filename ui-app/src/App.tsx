@@ -674,10 +674,10 @@ export default function App({
     ConsensusMemoryTargetResponse | null
   >(null);
   // A closing card is held for the length of the chassis's exit
-  // (`HUD_MOTION.exit`), which is the only way it can have one: an unmounted
+  // (`HUD_MOTION.flip`), which is the only way it can have one: an unmounted
   // card cannot fade. What is held is the SELECTION — see `inspection-exit.ts`
   // for why it cannot be a copy of the Cell.
-  const cellExit = useInspectionExit(HUD_MOTION.exit);
+  const cellExit = useInspectionExit(HUD_MOTION.flip);
   const cellLeaving = cellExit.leaving;
   const clearCellSelection = useCallback(() => {
     // Closing is also an interaction-boundary reset. The nested Cell Scan can
@@ -1839,7 +1839,7 @@ export default function App({
   // × and the peer card's retention expiry). A click that selects something
   // ELSE is not an exit — the card is re-dressed for the new subject, or the
   // next dialect's card takes the stage, and neither wants a fade first.
-  const netExit = useInspectionExit(HUD_MOTION.exit);
+  const netExit = useInspectionExit(HUD_MOTION.flip);
   const netLeaving = netExit.leaving;
   const clearNetSelection = useCallback(() => {
     netExit.close(() => setSelectedNetId(null));

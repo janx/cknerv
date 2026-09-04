@@ -1,9 +1,16 @@
+import { HUD_MOTION } from '../components/hud/hudTheme';
 import type { ConsensusMemoryRouteHopFocus } from './consensusMemoryTrace';
 
-/** One shared lock-response beat for the HUD ledger and the spatial glyph. */
-export const CONSENSUS_ROUTE_HOP_PULSE_SECONDS = 0.48;
-export const CONSENSUS_ROUTE_HOP_PULSE_MS =
-  CONSENSUS_ROUTE_HOP_PULSE_SECONDS * 1_000;
+/** One shared lock-response beat for the HUD ledger and the spatial glyph.
+ *
+ *  It is `HUD_MOTION.enter` and not a beat of its own: a hop locking is a
+ *  thing ARRIVING — the mark travels from unlocked to locked and there is a
+ *  distance in it to read — which is exactly what that rung is for. It was
+ *  480 ms, a number nothing else in the HUD wore, on a custom bezier 0.02
+ *  from the card's; both fold into the ladder (E1). */
+export const CONSENSUS_ROUTE_HOP_PULSE_MS = HUD_MOTION.enter;
+export const CONSENSUS_ROUTE_HOP_PULSE_SECONDS =
+  CONSENSUS_ROUTE_HOP_PULSE_MS / 1_000;
 export const CONSENSUS_ROUTE_HOP_PULSE_MAX_FRAME_SECONDS = 0.1;
 /** Publish before default-priority marker/material frame consumers. */
 export const CONSENSUS_ROUTE_HOP_PULSE_FRAME_PRIORITY = -1;

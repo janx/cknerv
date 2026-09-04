@@ -21,7 +21,7 @@ import {
   setCellDisplayMode,
   useCellDisplayRuntime,
 } from '../../tweaks/cellDisplay';
-import { CJK_BASELINE_LIFT, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import { CJK_BASELINE_LIFT, HUD_COLORS, HUD_FONTS, HUD_MOTION, HUD_TYPE, rgba } from './hudTheme';
 import { DiamondMark, DirectionMark, PanelGridMark, PLATE_CUT_CLIP, severityChip } from './primitives';
 import { POPULATION_SCOPE } from './cellPopulation.presentation';
 
@@ -126,11 +126,11 @@ function BuildChip({ build, compact = false }: { build: BuildInfo; compact?: boo
         boxShadow: hot ? `inset 0 -1px 8px ${rgba(HUD_COLORS.orange, 0.1)}` : 'none',
         fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.6, lineHeight: 1,
         textDecoration: 'none', pointerEvents: 'auto',
-        transition: 'border-color .18s, background .18s, box-shadow .18s',
+        transition: `border-color ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}, background ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}, box-shadow ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}`,
       }}
     >
       <span className="cknerv-build-label" style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.9 }}>BUILD</span>
-      <span style={{ color: hot ? HUD_COLORS.orange : HUD_COLORS.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textShadow: hot ? `0 0 6px ${rgba(HUD_COLORS.orange, 0.5)}` : 'none', transition: 'color .18s, text-shadow .18s' }}>{head}</span>
+      <span style={{ color: hot ? HUD_COLORS.orange : HUD_COLORS.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textShadow: hot ? `0 0 6px ${rgba(HUD_COLORS.orange, 0.5)}` : 'none', transition: `color ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}, text-shadow ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}` }}>{head}</span>
     </a>
   );
 }
@@ -526,7 +526,7 @@ function CellDisplayControl({
           letterSpacing: 0.6,
           textShadow: `0 0 7px ${rgba(accent, 0.45)}`,
           cursor: 'pointer',
-          transition: 'color .14s, text-shadow .14s',
+          transition: `color ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}, text-shadow ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}`,
         }}
       >
         <DiamondMark color={accent} size={4} fill="wash" />
@@ -786,7 +786,7 @@ function RenderQualityControl({ compact = false }: { compact?: boolean }) {
                   ? `0 0 7px ${rgba(accent, 0.5)}`
                   : 'none',
                 cursor: 'pointer',
-                transition: 'color .14s, text-shadow .14s',
+                transition: `color ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}, text-shadow ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}`,
               }}
             >
               {index > 0 ? (

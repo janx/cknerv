@@ -4,7 +4,7 @@ import {
   formatStreamAge,
   formatStreamChannels,
 } from '../../derives/streamHealth.derive';
-import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_MOTION, HUD_TYPE, rgba } from './hudTheme';
 import TopBand from './TopBand';
 
 const PRESENTATION: Record<
@@ -50,7 +50,7 @@ export default function StreamHealthBanner({
         top={top}
         animation={reducedMotion || summary.phase !== 'stale'
           ? undefined
-          : 'cknerv-hud-breathe 1.4s ease-in-out infinite'}
+          : `cknerv-hud-breathe ${HUD_MOTION.grow}ms ${HUD_MOTION.loopEase} infinite`}
         attrs={{
           'data-stream-health-banner': 'true',
           'data-stream-phase': summary.phase,

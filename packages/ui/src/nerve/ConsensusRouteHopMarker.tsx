@@ -14,7 +14,7 @@ import {
 import { Html } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { HUD_COLORS, rgba } from '../components/hud/hudTheme';
+import { HUD_COLORS, HUD_MOTION, rgba } from '../components/hud/hudTheme';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { useReducedMotion } from '../components/hud/useReducedMotion';
 import {
@@ -1601,7 +1601,7 @@ export default function ConsensusRouteHopMarker({
     '--route-hop-pulse-color': color,
     animation: reducedMotion || !pulseKey
       ? undefined
-      : `cknerv-route-hop-lock-pulse ${CONSENSUS_ROUTE_HOP_PULSE_MS}ms cubic-bezier(.18,.72,.2,1) both`,
+      : `cknerv-route-hop-lock-pulse ${CONSENSUS_ROUTE_HOP_PULSE_MS}ms ${HUD_MOTION.enterEase} both`,
   } as CSSProperties & { '--route-hop-pulse-color': string };
 
   return (

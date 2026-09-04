@@ -61,7 +61,7 @@ import {
   midTruncate,
 } from '../../../src/components/hud/cellFormat';
 import { INSPECTOR_EDGE_PX } from '../../../src/components/sceneInspection';
-import { HUD_COLORS, HUD_TYPE } from '../../../src/components/hud/hudTheme';
+import { HUD_COLORS, HUD_MOTION, HUD_TYPE } from '../../../src/components/hud/hudTheme';
 
 afterEach(() => {
   cleanup();
@@ -356,7 +356,7 @@ describe('CellDetailPanel', () => {
     expect(specimenScan.style.willChange).toContain('transform');
     // Ambient loop, not a one-shot tied to the probe walk.
     expect(specimenScan.style.animation).toContain(
-      'cknerv-cell-specimen-sweep 2.8s linear infinite',
+      `cknerv-cell-specimen-sweep ${HUD_MOTION.hold}ms ${HUD_MOTION.instrumentEase} infinite`,
     );
     const cellularBeam = container.querySelector(
       '[data-cellular-scan-beam]',
@@ -1922,7 +1922,7 @@ describe('CellDetailPanel', () => {
     ) as HTMLElement;
     // Classification ends the probe walk; the ambient sweep keeps looping.
     expect(settledSpecimenScan.style.animation).toContain(
-      'cknerv-cell-specimen-sweep 2.8s linear infinite',
+      `cknerv-cell-specimen-sweep ${HUD_MOTION.hold}ms ${HUD_MOTION.instrumentEase} infinite`,
     );
     expect(settledSpecimenScan.style.willChange).toContain('transform');
     expect(settledSpecimenScan.style.opacity).toBe('0.8');
@@ -3186,11 +3186,11 @@ describe('CellDetailPanel', () => {
     expect(transitInspector.getAttribute('data-memory-evidence-route-pulse-key'))
       .toBe(transitPulseKey);
     expect(lockedTransit.style.animation)
-      .toContain('cknerv-route-hop-lock-pulse 480ms');
+      .toContain(`cknerv-route-hop-lock-pulse ${HUD_MOTION.enter}ms`);
     expect(transitInspector.querySelector<HTMLElement>(
       '[data-memory-evidence-route-pulse-surface="true"]',
     )?.style.animation)
-      .toContain('cknerv-route-hop-lock-pulse 480ms');
+      .toContain(`cknerv-route-hop-lock-pulse ${HUD_MOTION.enter}ms`);
     expect(container.querySelector<HTMLButtonElement>('[data-memory-evidence="2"]')
       ?.disabled).toBe(true);
     expect(container.textContent).toContain('LOCK H01 · CELL #99');

@@ -27,7 +27,7 @@ import {
   consensusMemoryRouteHopPulseKey,
 } from '../../nerve/consensusRouteHopPulse';
 import { formatBlockRef, formatOutpoint } from './cellFormat';
-import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_MOTION, HUD_TYPE, rgba } from './hudTheme';
 import { DiamondMark, PLATE_EDGE_ALPHA, PLATE_ROW_RAIL_ALPHA } from './primitives';
 
 const CYAN = HUD_COLORS.cyanWire;
@@ -47,7 +47,7 @@ function routeHopPulseStyle(
   if (reducedMotion) return {};
   return {
     '--route-hop-pulse-color': color,
-    animation: `cknerv-route-hop-lock-pulse ${CONSENSUS_ROUTE_HOP_PULSE_MS}ms cubic-bezier(.18,.72,.2,1) both`,
+    animation: `cknerv-route-hop-lock-pulse ${CONSENSUS_ROUTE_HOP_PULSE_MS}ms ${HUD_MOTION.enterEase} both`,
   } as RouteHopPulseStyle;
 }
 
@@ -503,7 +503,7 @@ function EvidenceRouteLedger({
                 position: 'absolute',
                 left: `${lockedProgress * 100}%`,
                 top: '50%',
-                transition: reducedMotion ? undefined : 'left 180ms ease-out',
+                transition: reducedMotion ? undefined : `left ${HUD_MOTION.flip}ms ${HUD_MOTION.enterEase}`,
               }}
             />
           </span>
@@ -697,7 +697,7 @@ function EvidenceRouteLedger({
                     : 'default',
                   transition: reducedMotion
                     ? undefined
-                    : 'color 120ms ease, background 120ms ease, box-shadow 120ms ease',
+                    : `color ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}, background ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}, box-shadow ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}`,
                   ...(locked
                     ? routeHopPulseStyle(LOCKED_GOLD, reducedMotion)
                     : {}),
@@ -747,12 +747,12 @@ function EvidenceRouteLedger({
         <span
           aria-hidden="true"
           className="cknerv-memory-route-scroll-edge cknerv-memory-route-scroll-edge-before"
-          style={{ transition: reducedMotion ? undefined : 'opacity 140ms ease' }}
+          style={{ transition: reducedMotion ? undefined : `opacity ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}` }}
         />
         <span
           aria-hidden="true"
           className="cknerv-memory-route-scroll-edge cknerv-memory-route-scroll-edge-after"
-          style={{ transition: reducedMotion ? undefined : 'opacity 140ms ease' }}
+          style={{ transition: reducedMotion ? undefined : `opacity ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}` }}
         />
         <span
           aria-hidden="true"
@@ -978,7 +978,7 @@ function EvidenceLedger({
                 : retained
                   ? 0.62
                   : 1,
-              transition: reducedMotion ? undefined : 'opacity 140ms ease',
+              transition: reducedMotion ? undefined : `opacity ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}`,
             }}
           >
             <button
@@ -1043,7 +1043,7 @@ function EvidenceLedger({
                 whiteSpace: 'nowrap',
                 textAlign: 'left',
                 cursor: onFocusChange && !lockedElsewhere ? 'pointer' : 'default',
-                transition: reducedMotion ? undefined : 'background 140ms ease, box-shadow 140ms ease',
+                transition: reducedMotion ? undefined : `background ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}, box-shadow ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}`,
               }}
             >
               <span style={{ fontSize: HUD_TYPE.micro, color: sourceColor }}>
@@ -1198,7 +1198,7 @@ export function ConsensusMemoryTracePlate({
                   size={active ? 5 : 3}
                   fill={on ? 'solid' : 'none'}
                   glow={active}
-                  style={{ transition: reducedMotion ? undefined : 'all 180ms ease' }}
+                  style={{ transition: reducedMotion ? undefined : `all ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}` }}
                 />
                 {index < MEMORY_READ_STAGES.length - 1 ? (
                   <span style={{ flex: 1, height: 1, marginLeft: 4, background: item.color, opacity: on ? 0.45 : 0.16 }} />

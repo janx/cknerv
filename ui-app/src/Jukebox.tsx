@@ -5,6 +5,7 @@ import {
   useState,
   type CSSProperties,
 } from 'react';
+import { HUD_MOTION } from '@cknerv/ui';
 
 export const SOUNDCLOUD_WIDGET_API_SRC =
   'https://w.soundcloud.com/player/api.js';
@@ -125,7 +126,6 @@ function injectJukeboxStyles(doc: Document = document): void {
     '@keyframes cknerv-jukebox-eq-b{0%,100%{transform:scaleY(1)}46%{transform:scaleY(.34)}}',
     '@keyframes cknerv-jukebox-eq-c{0%,100%{transform:scaleY(.6)}32%{transform:scaleY(.95)}}',
     '@keyframes cknerv-jukebox-tick{0%{transform:scaleY(1)}16%{transform:scaleY(1.55)}100%{transform:scaleY(1)}}',
-    '@keyframes cknerv-jukebox-breathe{0%,100%{opacity:.72}50%{opacity:1}}',
     // The origins are set inline per element now (each bar's rect bottom
     // centre, the group's union bottom centre — see `JukeboxGlyph`); these
     // rules stay as the declared intent and the fallback for either.
@@ -137,11 +137,23 @@ function injectJukeboxStyles(doc: Document = document): void {
     '[data-jukebox-attract="settled"] .cknerv-jukebox-glyph,'
       + '[data-jukebox-attract="settled"] .cknerv-jukebox-bar,'
       + '[data-jukebox-attract="settled"] .cknerv-jukebox-bars{animation:none}',
-    '.cknerv-jukebox-glyph{animation:cknerv-jukebox-breathe 3.4s ease-in-out infinite}',
-    '.cknerv-jukebox-bars{animation:cknerv-jukebox-tick .52s ease-out 1}',
-    '.cknerv-jukebox-bar-a{animation:cknerv-jukebox-eq-a 2.4s ease-in-out infinite}',
-    '.cknerv-jukebox-bar-b{animation:cknerv-jukebox-eq-b 3.1s ease-in-out infinite}',
-    '.cknerv-jukebox-bar-c{animation:cknerv-jukebox-eq-c 2.7s ease-in-out infinite}',
+    // ⭐ THE BREATHE IS THE HUD'S, not a second one. This chip had a
+    // `cknerv-jukebox-breathe` of its own — .72 → 1 over 3.4s against the
+    // overlay's .82 → 1 over 3.2 — which is one idea drawn twice, at two
+    // depths, four hundred milliseconds apart (report E, E-1). The HUD theme
+    // registers the keyframe; SND·06 wears it like every other module.
+    `.cknerv-jukebox-glyph{animation:cknerv-hud-breathe ${HUD_MOTION.hold}ms ${HUD_MOTION.loopEase} infinite}`,
+    // A block landing kicks the meter: something ARRIVING, on the enter rung
+    // and the one bezier.
+    `.cknerv-jukebox-bars{animation:cknerv-jukebox-tick ${HUD_MOTION.enter}ms ${HUD_MOTION.enterEase} 1}`,
+    // Three bars, ONE period, three shapes. They ran at 2.4 / 3.1 / 2.7s to
+    // keep from moving as one bar — but what makes an EQ read as an EQ is the
+    // bars disagreeing about WHERE they are, which is what the three keyframes
+    // above already say (a peaks at 50%, b troughs at 46%, c peaks at 32%).
+    // Three periods were buying with numbers what the shapes give for free.
+    `.cknerv-jukebox-bar-a{animation:cknerv-jukebox-eq-a ${HUD_MOTION.hold}ms ${HUD_MOTION.loopEase} infinite}`,
+    `.cknerv-jukebox-bar-b{animation:cknerv-jukebox-eq-b ${HUD_MOTION.hold}ms ${HUD_MOTION.loopEase} infinite}`,
+    `.cknerv-jukebox-bar-c{animation:cknerv-jukebox-eq-c ${HUD_MOTION.hold}ms ${HUD_MOTION.loopEase} infinite}`,
     '@media (prefers-reduced-motion:reduce){'
       + '.cknerv-jukebox-glyph,.cknerv-jukebox-bar,.cknerv-jukebox-bars{animation:none}}',
     // Narrow viewports keep the mark and drop the words, matching the HUD's

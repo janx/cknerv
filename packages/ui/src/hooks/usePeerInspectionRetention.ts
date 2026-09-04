@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { Peer } from '@cknerv/types';
+import { HUD_MOTION } from '../components/hud/hudTheme';
 import type { Vec3 } from '../types';
 
 /**
@@ -18,8 +19,12 @@ import type { Vec3 } from '../types';
 
 /** How long a lost link is held on screen before the selection is retired.
  *  Long enough to read the banner, short enough to stay an epilogue. Reduced
- *  motion changes the banner's presentation, never this duration. */
-export const PEER_LINK_LOST_HOLD_MS = 2400;
+ *  motion changes the banner's presentation, never this duration.
+ *
+ *  It is `HUD_MOTION.hold`, and it is the rung the rung was NAMED for: a
+ *  state kept alive after its cause is over. The number is unchanged — the
+ *  ladder was built around what this hook had already decided (E1). */
+export const PEER_LINK_LOST_HOLD_MS = HUD_MOTION.hold;
 
 export interface PeerInspectionRetentionInput {
   /** Selection identity (`peer:<node_id>`), or null when no peer is selected.

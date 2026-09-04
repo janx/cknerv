@@ -12,7 +12,7 @@ import {
   formatDataSize,
   formatExactCkb,
 } from './cellFormat';
-import { CJK_BASELINE_LIFT, COMPANION_OPACITY, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba, STALE_OPACITY } from './hudTheme';
+import { CJK_BASELINE_LIFT, COMPANION_OPACITY, HUD_COLORS, HUD_FONTS, HUD_MOTION, HUD_TYPE, rgba, STALE_OPACITY } from './hudTheme';
 import { REVEAL_GHOST_OPACITY } from './primitives';
 
 export interface CellByteBudgetProps {
@@ -55,7 +55,7 @@ export default function CellByteBudget({
       style={{
         minWidth: 0,
         opacity: revealed ? 1 : REVEAL_GHOST_OPACITY,
-        transition: 'opacity 260ms ease',
+        transition: `opacity ${HUD_MOTION.reveal}ms ${HUD_MOTION.fadeEase}`,
         ...style,
       }}
     >
