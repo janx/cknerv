@@ -145,19 +145,56 @@ describe('NodeSelfCard vitals', () => {
 });
 
 describe('NodeSelfCard stance', () => {
+  /** The stance plate's own words — the caption is a sentence with no hook of
+   *  its own, so what it says is read off the plate that holds it. */
+  function stanceText(container: HTMLElement): string {
+    return container.querySelector('[data-node-probe-module="stance"]')?.textContent ?? '';
+  }
+
   it('states where WE stand instead of taking the colony\'s census', () => {
     // C-6: this plate used to be PEER·02 with a card's border around it — the
     // peer count with its OUT/IN split, the head-consensus bar and its three
     // tallies, all off the derives the rail reads. The subject is the local
-    // node now: how many of them we are ahead of.
+    // node now: how much of the colony stands with us.
     const { container } = renderCard();
-    expect(container.querySelector('[data-node-probe-value="lead"]')?.textContent)
-      .toBe('1 OF 5 PEERS');
+    expect(container.querySelector('[data-node-probe-value="head"]')?.textContent)
+      .toBe('2 OF 5 PEERS');
     expect(container.querySelector('[data-node-probe-value="peers"]')).toBeNull();
     expect(container.querySelector('[data-node-probe-peer-split]')).toBeNull();
     expect(container.querySelector('[data-node-probe-consensus-bar]')).toBeNull();
     expect(container.querySelector('[data-node-probe-consensus-counts]')).toBeNull();
-    expect(container.textContent).toContain('1 HAVE NOT SAID WHERE THEIR HEAD IS');
+    expect(stanceText(container)).toContain('AT OUR HEAD');
+  });
+
+  it('counts the colony standing with us, never the part we outran', () => {
+    // Ruling 11. `WE LEAD 0 OF 12` was a node in perfect agreement with every
+    // peer it had, and no reader can be expected to hear a zero as the good
+    // number — so the census is printed from the other end and the reassurance
+    // sentence that used to apologise for it is gone.
+    const { container } = renderCard();
+    expect(stanceText(container)).not.toContain('WE LEAD');
+    expect(stanceText(container)).not.toContain('NOBODY IS PAST OUR HEAD');
+  });
+
+  it('names the delta only when there is one — k > 0 prints BEHIND US k', () => {
+    const { container } = renderCard();
+    expect(stanceText(container)).toContain('BEHIND US 1');
+    expect(stanceText(container)).toContain('1 HAVE NOT SAID WHERE THEIR HEAD IS');
+  });
+
+  it('says the head count once when k = 0, with nothing under it', () => {
+    // A colony wholly at our head is the whole reading: no peers behind, none
+    // unreported, none past us. The row carries it alone and the caption is
+    // not there at all — the "says it once" shape for this plate.
+    const wholeColony = PEERS.filter((p) => p.best_known === TIP);
+    const { container } = renderCard({ peers: wholeColony });
+    expect(container.querySelector('[data-node-probe-value="head"]')?.textContent)
+      .toBe('2 OF 2 PEERS');
+    expect(container.querySelector('[data-node-probe-lag]')).toBeNull();
+    expect(stanceText(container)).not.toContain('BEHIND US');
+    expect(stanceText(container)).not.toContain('HAVE NOT SAID');
+    expect(container.querySelector('[data-node-probe-fact="head"]')?.textContent)
+      .toBe('AT OUR HEAD2 OF 2 PEERS');
   });
 
   it('raises the lag alert with the furthest peer, because AHEAD means we lag', () => {
@@ -167,28 +204,30 @@ describe('NodeSelfCard stance', () => {
   });
 
   it('stays quiet when nothing in the colony is past our head', () => {
-    // …and says why a low count is low, so `0 OF n` never reads as trouble.
     const atTipOnly = PEERS.filter((p) => p.best_known != null && p.best_known <= TIP);
     const { container } = renderCard({ peers: atTipOnly });
+    expect(container.querySelector('[data-node-probe-value="head"]')?.textContent)
+      .toBe('2 OF 3 PEERS');
     expect(container.querySelector('[data-node-probe-lag]')).toBeNull();
     expect(container.textContent).not.toContain('AHEAD');
-    expect(container.textContent).toContain('NOBODY IS PAST OUR HEAD');
+    expect(stanceText(container)).toContain('BEHIND US 1');
   });
 
   it('survives a node with no peers at all', () => {
     const { container } = renderCard({ peers: [] });
-    expect(container.querySelector('[data-node-probe-value="lead"]')?.textContent)
+    expect(container.querySelector('[data-node-probe-value="head"]')?.textContent)
       .toBe('0 OF 0 PEERS');
     expect(container.querySelector('[data-node-probe-value="roundtrip"]')?.textContent)
       .toBe('—');
     expect(container.querySelector('[data-node-probe-lag]')).toBeNull();
+    expect(stanceText(container)).not.toContain('BEHIND US');
   });
 });
 
 describe('NodeSelfCard first frame', () => {
   it('prints every vital on the first frame, with no clock to wait on', () => {
     const { container } = renderCard();
-    for (const row of ['version', 'roundtrip', 'lead']) {
+    for (const row of ['version', 'roundtrip', 'head']) {
       const value = container.querySelector(`[data-node-probe-value="${row}"]`);
       expect(value, row).not.toBeNull();
       expect(value?.textContent, row).not.toBe('');

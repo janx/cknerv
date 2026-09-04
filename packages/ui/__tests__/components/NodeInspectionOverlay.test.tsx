@@ -157,11 +157,11 @@ describe('NodeInspectionOverlay', () => {
     const text = view.container.textContent ?? '';
     expect(text).toContain('NODE // CKB');
     // The vitals the card keeps are the ones only the self can state (C-6):
-    // the reference version, our own round trips, and where we stand in the
-    // colony. The chain's head is CKB·01's to print.
+    // the reference version, our own round trips, and how much of the colony
+    // stands at our head. The chain's head is CKB·01's to print.
     expect(text).toContain('0.201.0');
-    expect(view.container.querySelector('[data-node-probe-value="lead"]')?.textContent)
-      .toBe('0 OF 1 PEERS');
+    expect(view.container.querySelector('[data-node-probe-value="head"]')?.textContent)
+      .toBe('1 OF 1 PEERS');
   });
 });
 

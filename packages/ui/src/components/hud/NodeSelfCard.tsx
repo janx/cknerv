@@ -3,9 +3,10 @@
 //
 // The peer card reads a link: two ends, a bearing, a round trip. This one has
 // no counterpart to measure, so there is no direction, no ping, no churn. Its
-// subject is the organism's own vitals — the head it stands on, the epoch it
-// stands in, the version every peer mismatch is judged against — and then how
-// the colony around it is sitting relative to that head.
+// subject is the organism's own vitals — the version every peer mismatch is
+// judged against, the round trips it has measured — and then how much of the
+// colony around it stands at the head it stands on. The head and the epoch
+// themselves are CKB·01's to print, not this card's (report C, C-6).
 //
 // DOM/SVG only, rendered as a Canvas sibling: nothing here may touch three.js.
 // The accent is the chain anchor's own cyan and never moves, and every vital
@@ -51,8 +52,13 @@ export const NODE_SELF_ACCENT = CHAIN_ANCHOR_HEX.edge;
  *  duplicated under them — and neither is a fact about this NODE that the
  *  chain panel is not already making about the chain. What is left is what
  *  only the self can answer: the version every peer mismatch is judged
- *  against, our own round trips, and how many of the colony we are ahead of. */
-export type NodeSelfRow = 'version' | 'roundtrip' | 'lead';
+ *  against, our own round trips, and how much of the colony stands with us.
+ *
+ *  `head` is the row that says the last of those. It was `lead` while it
+ *  counted the peers we had outrun; the count inverted (ruling 11) and the
+ *  name follows it, because the fact the row carries is where our head stands
+ *  among theirs and not which way the difference happens to fall. */
+export type NodeSelfRow = 'version' | 'roundtrip' | 'head';
 
 export type NodeSelfLayoutSide = SceneInspectorPlacementSide;
 
@@ -140,6 +146,20 @@ export default function NodeSelfCard({
   // tint on its sync ladder and PEER·02 gives it the same one on the rail;
   // all three surfaces agree on which rung is loud (the user's D-18 ruling).
   const lagging = consensus.ahead > 0;
+
+  // The delta the head count leaves: peers we have outrun, and peers that have
+  // never said where their head is. Printed only when there is one — a caption
+  // that is always there is furniture, and the count already carries the whole
+  // reading when nothing is missing from it. Peers PAST our head are the third
+  // part of the delta and they get the box below instead of a line here: an
+  // indictment of the local node is not a footnote to a peer count.
+  const stanceDelta: string[] = [];
+  if (consensus.behind > 0) {
+    stanceDelta.push(`BEHIND US ${blocks(consensus.behind)}`);
+  }
+  if (consensus.unknown > 0) {
+    stanceDelta.push(`${blocks(consensus.unknown)} HAVE NOT SAID WHERE THEIR HEAD IS`);
+  }
 
   const verticalLayout = layoutSide === 'above' || layoutSide === 'below';
 
@@ -314,31 +334,31 @@ export default function NodeSelfCard({
             rail reads — the card's own comment defended the reuse as "so the
             two can never disagree", which is an argument about VALUES and not
             about printing them twice (report C, C-6).
-        
+
             What is left is the same data with the local node as its subject.
-            The panel takes a census of the colony; this says where we stand in
-            it — how many of them we are ahead of, and, when anybody is ahead
-            of US, how far. That last line is the one thing here no rail can
+            The panel takes a census of the colony; this says how much of that
+            colony stands WITH us, and, when anybody is ahead of US, how far
+            behind we are. That last line is the one thing here no rail can
             say, and it is why the plate exists. */}
         <div style={{ display: 'grid', rowGap: 3 }}>
           <SelfReadout
-            row="lead"
-            label="WE LEAD"
-            value={`${blocks(consensus.behind)} OF ${blocks(consensus.total)} PEERS`}
+            row="head"
+            label="AT OUR HEAD"
+            value={`${blocks(consensus.atTip)} OF ${blocks(consensus.total)} PEERS`}
             valueColor={HUD_COLORS.peerWire}
           >
-            {/* Why the count is what it is, said about US and never as the
-                colony's census: a colony entirely at our head reads `0 OF 12`,
-                which on its own looks like a node in trouble. An unreported
-                head is the other reason the count can be low, and it is the
-                one a reader can do something about. */}
-            <ReadoutCaption>
-              {consensus.unknown > 0
-                ? `${blocks(consensus.unknown)} HAVE NOT SAID WHERE THEIR HEAD IS`
-                : lagging
-                  ? 'THE REST STAND AT OUR HEAD'
-                  : 'NOBODY IS PAST OUR HEAD'}
-            </ReadoutCaption>
+            {/* The count is the colony standing WITH us, not the part of it we
+                have outrun (ruling 11). Both readings come out of one census;
+                only one of them reads right at its best value. `WE LEAD 0 OF
+                12` was what a node in perfect agreement with every peer it has
+                printed, and it needed a sentence under it — `NOBODY IS PAST
+                OUR HEAD` — to explain that the zero was the good number. A
+                reading that has to be talked out of its own alarm is the wrong
+                way round. Counted this way the healthy colony says `12 OF 12`
+                and the caption is free for what the count does NOT cover. */}
+            {stanceDelta.length > 0 ? (
+              <ReadoutCaption>{stanceDelta.join(' · ')}</ReadoutCaption>
+            ) : null}
             {lagging ? (
               <div
                 data-node-probe-lag
