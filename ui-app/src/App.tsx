@@ -29,6 +29,7 @@ import {
   reportBootSeeding,
   CELLS_Y,
   CELL_SELECTION_PREFIX,
+  useHudOcclusionRects,
   cellDetailViewFocus,
   chainNodeWorldPosition,
   canRecallConsensusMemory,
@@ -186,6 +187,11 @@ import {
   resolveGalaxyConfig,
 } from './runtime-config';
 import { restoreCellGalaxyFocus } from './cell-galaxy-focus';
+import {
+  CAMERA_HOLE_MARGIN_PX,
+  fitCameraToHole,
+  hudHoleFromRects,
+} from './camera-hole-fit';
 
 interface AppProps {
   /** Initial Chain entity from `/api/entities/chain/snapshot`. */
@@ -205,6 +211,20 @@ interface AppProps {
 }
 
 const DEFAULT_CAMERA_TARGET: [number, number, number] = [0, CELLS_Y, 0];
+/** The scene's vertical field. Stated once: the Canvas is created with it and
+ *  `CameraHoleFitter` solves the frame against it, and a fit computed for a
+ *  fov the camera does not have is a fit for a different picture. */
+const CAMERA_FOV = 50;
+/** The pose the Canvas is created with — replaced by the fitted one as soon as
+ *  the HUD has laid its rails out, which is never on the frame the Canvas is
+ *  created in. It is the 1920 fit's own answer, so the common case does not
+ *  visibly re-frame on boot. */
+const DEFAULT_CAMERA_POSITION: [number, number, number] = [132, 121, 130];
+/** How often the fitter re-reads the hole while it still owns the camera. The
+ *  HUD's rails move on a resize, a panel toggle and the end of the boot
+ *  count-off, none of which is a per-frame event; this is slow enough to cost
+ *  nothing and quick enough that a drag-resize settles as the hand stops. */
+const CAMERA_HOLE_SAMPLE_MS = 320;
 const STREAM_STALE_AFTER_MS = 15_000;
 
 /**
@@ -264,6 +284,83 @@ function CellDetailViewTracker({
       camera.position.y - targetY,
       camera.position.z - targetZ,
     ));
+  });
+  return null;
+}
+
+/**
+ * The camera's initial pose, fitted to the hole the HUD leaves.
+ *
+ * The default `[110,108,110]` was a constant at every viewport while the frame
+ * it composes into is not: measured at `25c7d5a`, the 1.6× halo was cut 177 px
+ * on the left and 139 px on the right at 1920, and below 1600 the RIM itself
+ * ran under the rails. The arithmetic is in `fitCameraToHole`; this is the
+ * hand that applies it.
+ *
+ * ⚠️ It stops the moment the reader touches the camera. An orbit gesture or a
+ * memory-route flight takes ownership for the session, because a resize that
+ * re-framed somebody's view out from under them is the instrument overruling
+ * the hand on it. Until then a resize, a panel toggle or the HUD simply
+ * finishing its boot re-frames, which is what makes this work at all: the
+ * rails are not laid out on the frame the Canvas is created in.
+ */
+function CameraHoleFitter({
+  controlsRef,
+  gestureRef,
+  automationActiveRef,
+}: {
+  controlsRef: { readonly current: ElementRef<typeof OrbitControls> | null };
+  gestureRef: { readonly current: OrbitGestureState };
+  automationActiveRef: { readonly current: boolean };
+}) {
+  const rects = useHudOcclusionRects();
+  const owned = useRef(false);
+  const appliedRef = useRef({ left: -1, right: -1, width: -1, height: -1 });
+  const nextSampleRef = useRef(0);
+  useFrame(({ camera, size, clock }) => {
+    if (owned.current) return;
+    // Anything that moves the camera on purpose takes it: a pointer on the
+    // controls, or the route camera flying a memory trace.
+    if (automationActiveRef.current || gestureRef.current.active) {
+      owned.current = true;
+      return;
+    }
+    const nowMs = clock.elapsedTime * 1000;
+    if (nowMs < nextSampleRef.current) return;
+    nextSampleRef.current = nowMs + CAMERA_HOLE_SAMPLE_MS;
+    const hole = hudHoleFromRects(rects, size.width, size.height);
+    const applied = appliedRef.current;
+    if (
+      Math.abs(hole.left - applied.left) < 1
+      && Math.abs(hole.right - applied.right) < 1
+      && applied.width === size.width
+      && applied.height === size.height
+    ) return;
+    // A hole narrower than the margins is not a hole; the boot's first frames
+    // report one while the rails are still laying out.
+    if (hole.right - hole.left < CAMERA_HOLE_MARGIN_PX * 2) return;
+    const fit = fitCameraToHole({
+      hole,
+      viewportWidth: size.width,
+      viewportHeight: size.height,
+      fov: CAMERA_FOV,
+    });
+    applied.left = hole.left;
+    applied.right = hole.right;
+    applied.width = size.width;
+    applied.height = size.height;
+    camera.position.set(
+      fit.position[0],
+      fit.position[1] + CELLS_Y,
+      fit.position[2],
+    );
+    const controls = controlsRef.current;
+    if (controls) {
+      controls.target.set(fit.targetX, CELLS_Y, 0);
+      controls.update();
+    } else {
+      camera.lookAt(fit.targetX, CELLS_Y, 0);
+    }
   });
   return null;
 }
@@ -2042,7 +2139,7 @@ export default function App({
       <CellGalaxyProvider value={cellsCache}>
         <Canvas
           ref={cellGalaxyCanvasRef}
-          camera={{ position: [110, 108, 110], fov: 50, near: 1, far: 3000 }}
+          camera={{ position: DEFAULT_CAMERA_POSITION, fov: CAMERA_FOV, near: 1, far: 3000 }}
           // ⚠️ This does NOT make the drawing buffer opaque. three hardcodes
           // `alpha: true` in the context attributes it creates
           // (WebGLRenderer.js), so the surface the compositor blends always
@@ -2212,11 +2309,22 @@ export default function App({
             maxDistance={400}
             // Dolly toward the Cell canopy, the scene's primary inspection
             // surface. The peer plane remains visible below in the overview.
-            // Matches CAMERA_PRESETS.default.
+            //
+            // This is the pose the controls START from, not the one they keep:
+            // `CameraHoleFitter` below moves the target along x so the
+            // composition is centred on the HOLE the rails leave rather than on
+            // a viewport the hole is off-centre in. (It used to say it matched
+            // `CAMERA_PRESETS.default`; there is no such table and there has
+            // not been one for a long time.)
             target={DEFAULT_CAMERA_TARGET}
             onStart={beginOrbitInteraction}
             onChange={changeOrbitInteraction}
             onEnd={endOrbitInteraction}
+          />
+          <CameraHoleFitter
+            controlsRef={orbitControlsRef}
+            gestureRef={orbitGestureRef}
+            automationActiveRef={cameraAutomationActiveRef}
           />
           {/* Last in the Canvas on purpose: its frame verdict has to follow
               the route camera's step and the controls' update above. */}

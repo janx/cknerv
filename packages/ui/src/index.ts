@@ -20,6 +20,16 @@
 // ── Layout (Y planes + chain-node positioning) ──────────────────────
 export * from './layout';
 
+// ── The HUD's own occluding boxes ───────────────────────────────────
+// The app reads these for one thing only: fitting the camera to the hole the
+// rails leave. Additive, and deliberately the SAME reader the inspector
+// solver uses rather than a fifth `querySelectorAll('[data-hud-occlusion]')`
+// on its own cadence.
+export {
+  useHudOcclusionRects,
+  type HudOcclusionRect,
+} from './components/hudOcclusion';
+
 // ── Tweaks (sim-clock, useSimFrame, leva presets) ───────────────────
 export * from './tweaks/simClock';
 export * from './tweaks/SimClockScope';
