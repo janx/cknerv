@@ -13,7 +13,7 @@ const PRESENTATION: Record<
 > = {
   connecting: { title: 'CONNECTING DATA PLANE', color: HUD_COLORS.cyanWire },
   retrying: { title: 'STREAM INTERRUPTED', color: HUD_COLORS.warning },
-  resyncing: { title: 'RECONCILING SNAPSHOT', color: HUD_COLORS.rebuild },
+  resyncing: { title: 'RECONCILING SNAPSHOT', color: HUD_COLORS.memory },
   stale: { title: 'DATA FROZEN', color: HUD_COLORS.danger },
 };
 
@@ -56,7 +56,18 @@ export default function StreamHealthBanner({
           'data-stream-phase': summary.phase,
         }}
       >
-        <span style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 1.2, color: rgba(visual.color, 0.82) }}>
+        {/* THE LETTERS ARE AT FULL AND THE SOFTENING IS THE GLOW.
+          * This line was `rgba(visual.color, 0.82)`, which is a legibility
+          * budget spent on tone: DATA FROZEN — the gravest thing this band
+          * says — measured 3.9 : 1 over the band's centre and 2.2 over its
+          * 28 % stop on a lit scene (report F, F-10). The two states that
+          * clear 5 : 1 were the calm ones.
+          *
+          * An alarm may not be the quietest ink on screen, and the reason the
+          * alpha was there — a bare `danger` at 9 px shouts — is a job for
+          * atmosphere. So the ink is the reading and the halo is the tone,
+          * which is the same division the whole palette runs on. */}
+        <span style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 1.2, color: visual.color, textShadow: `0 0 7px ${rgba(visual.color, 0.42)}` }}>
           {channel}{retry}{age}
         </span>
       </TopBand>

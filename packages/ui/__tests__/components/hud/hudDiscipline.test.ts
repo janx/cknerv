@@ -1773,7 +1773,7 @@ describe('one register below', () => {
     expect(chapter, 'the composing chapter moved — this oracle reads files off disk')
       .toBeDefined();
     const text = code(chapter?.text ?? '');
-    for (const token of ['nominal', 'caution', 'warning', 'danger', 'crit', 'rebuild']) {
+    for (const token of ['nominal', 'caution', 'warning', 'danger', 'crit', 'memory']) {
       expect(text, `the composing chapter reached for ${token}`)
         .not.toContain(`HUD_COLORS.${token}`);
     }
@@ -4225,6 +4225,225 @@ describe('one alpha for a rule', () => {
     expect(opacitiesIn('opacity: revealed ? 1 : 0.18,')).toEqual([1, 0.18]);
     expect(opacitiesIn('opacity:.18}')).toEqual([0.18]);
     expect(opacitiesIn('backgroundOpacity: 0.18,')).toEqual([]);
+  });
+});
+
+// ——— Two names, one colour, and the floor under an alarm ————————————————
+//
+// The palette has a separation floor and it was enforced on NAMED PAIRS: the
+// pairs somebody had already suspected. Two pairs nobody had suspected sat
+// under it for the life of the file (report F, F-4) — `memory`/`rebuild` at
+// 4.5 and `lockedGold`/`goldInk` at 8.6, both of them a tenth of the floor,
+// both with a comment beside one of them claiming the two were distinct.
+//
+// So the sweep is PAIRWISE, over everything the palette holds, and what it
+// admits are three declared FAMILIES rather than a list of pairs. The
+// difference matters: a family says what the closeness is FOR, and a member
+// added to one has to fit that argument rather than be added to a list.
+//
+// The ink ramp is the family that needs the most saying. Its rungs are one
+// grey at five heights and several neighbouring pairs are inside the floor by
+// construction — `ink`/`heroInk` are 39.8 apart and always were. Distance is
+// the wrong question for them; ORDER is the right one, and the rank oracle
+// below is what the floor is replaced with. A rung that drifted out of order
+// would break it whatever its distance said.
+//
+// The floor under an alarm is the same argument at the other end. `rgba(ink,
+// α)` in a `color:` spends legibility on tone, and the two places it was spent
+// hardest were the two gravest banners in the HUD: DATA FROZEN at 2.2 : 1 over
+// a lit scene, the REORG bar's readings at 3.1 (report F, F-10). Softening
+// belongs in the glow.
+
+/** WCAG relative luminance, and the contrast ratio built on it. Neither was
+ *  here before, because everything this file measured until now was "can a
+ *  reader tell these two apart" — a distance. A floor is a different question:
+ *  can a reader READ this one, on the thing it is printed on. */
+function relativeLuminance(hex: string | readonly number[]): number {
+  const rgb = typeof hex === 'string'
+    ? [0, 2, 4].map((i) => parseInt(hex.replace('#', '').slice(i, i + 2), 16))
+    : [...hex];
+  const linear = rgb.map((channel) => {
+    const v = channel / 255;
+    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+}
+
+function contrastRatio(a: string | readonly number[], b: string | readonly number[]): number {
+  const [high, low] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x);
+  return (high + 0.05) / (low + 0.05);
+}
+
+/** `over` composited under `alpha` of `ink`. Kept in float — the panel is
+ *  0.55 of the stage and rounding it to whole channels moves the answer in the
+ *  third decimal, which is exactly where `moduleSlate` sits. */
+function over(ink: string, alpha: number, surface: readonly number[]): number[] {
+  const rgb = [0, 2, 4].map((i) => parseInt(ink.replace('#', '').slice(i, i + 2), 16));
+  return rgb.map((channel, index) => channel * alpha + surface[index] * (1 - alpha));
+}
+
+/** The two surfaces a reading is printed on. `panel` is `rgba(ground, 0.45)`
+ *  over the stage, which is what `HUD_COLORS.panel` composites to. */
+const STAGE_SURFACE = [0x02, 0x03, 0x0a];
+const PANEL_SURFACE = STAGE_SURFACE.map((channel) => channel * 0.55);
+
+/** The legibility floor. WCAG AA for body text, and this HUD's smallest rungs
+ *  are 7.5–9 px, so it is the floor with the least room to argue. */
+const CONTRAST_FLOOR = 4.5;
+
+describe('two names are never one colour', () => {
+  /** Three families whose members sit inside the floor ON PURPOSE, each with
+   *  the reason it does. Any pair drawn from one set is admitted; a pair
+   *  spanning two sets is not. */
+  const FAMILIES: ReadonlyArray<{ why: string; members: readonly string[] }> = [
+    {
+      why: 'the near-blacks: a knockout, a stage and a channel, and no reader'
+        + ' ever sees two of them beside each other',
+      members: ['ground', 'stageGround', 'trackGround'],
+    },
+    {
+      why: 'the ink ramp: one grey at five heights, held by the rank oracle'
+        + ' below rather than by distance',
+      members: ['moduleSlate', 'dim', 'legendInk', 'ink', 'heroInk'],
+    },
+    {
+      why: 'the two wires: one cyan naming two planes, declared when the peer'
+        + ' plane took its own scaffold hue',
+      members: ['cyanWire', 'peerWire'],
+    },
+  ];
+
+  const hexTokens = Object.entries(HUD_COLORS)
+    .filter((entry): entry is [string, string] => /^#[0-9a-fA-F]{6}$/.test(String(entry[1])));
+
+  it('every pair of names in the palette is two colours', () => {
+    const sameFamily = (a: string, b: string) =>
+      FAMILIES.some((family) => family.members.includes(a) && family.members.includes(b));
+
+    const offenders: string[] = [];
+    for (let i = 0; i < hexTokens.length; i += 1) {
+      for (let j = i + 1; j < hexTokens.length; j += 1) {
+        const [a, aHex] = hexTokens[i];
+        const [b, bHex] = hexTokens[j];
+        if (sameFamily(a, b)) continue;
+        const gap = rgbDistance(aHex, bHex);
+        if (gap > SEPARATION_FLOOR) continue;
+        offenders.push(`${a} and ${b} are ${gap.toFixed(1)} apart — one colour with two names`);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+
+    // …and the sweep really is pairwise over a palette with something in it,
+    // so an empty offender list is a reading rather than an empty loop.
+    expect(hexTokens.length).toBeGreaterThan(18);
+
+    // Every declared family is a family — a set of one is a pair admitted by
+    // being written down, which is the thing this rule replaced.
+    for (const family of FAMILIES) {
+      expect(family.members.length).toBeGreaterThan(1);
+      for (const member of family.members) {
+        expect(HUD_COLORS, `${member} is declared close to something and is not a token`)
+          .toHaveProperty(member);
+      }
+    }
+  });
+
+  it('the two merged names are gone, and their readers moved', () => {
+    // `rebuild` and `lockedGold`. Named here because a pairwise sweep cannot
+    // notice a name that no longer exists, and the merge is the finding.
+    for (const retired of ['rebuild', 'lockedGold']) {
+      expect(HUD_COLORS, `${retired} is back`).not.toHaveProperty(retired);
+    }
+    const readers = PACKAGE_SOURCES
+      .filter((source) => /HUD_COLORS\.(rebuild|lockedGold)\b/.test(code(source.text)))
+      .map((source) => source.name);
+    expect(readers).toEqual([]);
+
+    // …and the surviving names are read, so the merge did not delete a job.
+    for (const [token, count] of [['memory', 2], ['goldInk', 2]] as const) {
+      const wearing = PACKAGE_SOURCES
+        .filter((source) => code(source.text).includes(`HUD_COLORS.${token}`));
+      expect(wearing.length, `${token} lost its readers`).toBeGreaterThanOrEqual(count);
+    }
+  });
+
+  it('the ink ramp is ordered, and its bottom rung clears the floor', () => {
+    // The rank the module tag's comment states — "below `dim` on purpose: a
+    // tag is an address, not a reading" — measured rather than asserted in
+    // prose, because it is what stands in for the separation floor inside the
+    // one family whose members are meant to be close.
+    const ramp = ['moduleSlate', 'dim', 'legendInk', 'ink', 'heroInk'] as const;
+    for (let i = 1; i < ramp.length; i += 1) {
+      expect(
+        relativeLuminance(HUD_COLORS[ramp[i]]),
+        `${ramp[i]} is not above ${ramp[i - 1]} — the ramp is out of order`,
+      ).toBeGreaterThan(relativeLuminance(HUD_COLORS[ramp[i - 1]]));
+    }
+
+    // …and the bottom of it is still readable. `moduleSlate` was 3.4 : 1 at
+    // `micro` and `tech`, the two smallest rungs in the HUD (report F, F-9);
+    // the user's D-15 raised it to the floor exactly.
+    expect(contrastRatio(HUD_COLORS.moduleSlate, PANEL_SURFACE))
+      .toBeGreaterThanOrEqual(CONTRAST_FLOOR);
+  });
+
+  it('a reading is never printed at an alpha that puts it under the floor', () => {
+    // ANY alpha, not only one this file can price. The ink is often a
+    // variable — `visual.color` is whichever severity the banner is in — and a
+    // sweep that could only read `rgba(HUD_COLORS.x, α)` would have missed
+    // both of the sites the finding is about. What is banned is spending
+    // legibility on tone at all: the letters are the reading.
+    const offenders: string[] = [];
+    for (const source of domDialect()) {
+      const text = code(source.text);
+      for (const site of text.matchAll(/(?<![\w$])color:\s*rgba\(([^()]*(?:\([^()]*\))?[^()]*),\s*([\d.]+)\s*\)/g)) {
+        if (Number(site[2]) >= 1) continue;
+        const ink = HUD_COLORS[site[1].replace('HUD_COLORS.', '') as keyof typeof HUD_COLORS];
+        const priced = typeof ink === 'string' && ink.startsWith('#')
+          ? ` — ${contrastRatio(over(ink, Number(site[2]), PANEL_SURFACE), PANEL_SURFACE).toFixed(1)} : 1 on the panel`
+          : '';
+        offenders.push(`${source.name}: a reading at ${site[2]}${priced} — soften the glow, not the ink`);
+      }
+    }
+    expect(offenders).toEqual([]);
+
+    // The half a green sweep cannot show: the measurement works, and it agrees
+    // with report F's numbers for the two states that used to fail it.
+    expect(contrastRatio(over(HUD_COLORS.danger, 0.82, PANEL_SURFACE), PANEL_SURFACE))
+      .toBeLessThan(CONTRAST_FLOOR);
+    expect(contrastRatio(over(HUD_COLORS.memory, 0.7, PANEL_SURFACE), PANEL_SURFACE))
+      .toBeLessThan(CONTRAST_FLOOR);
+    expect(contrastRatio(HUD_COLORS.danger, PANEL_SURFACE))
+      .toBeGreaterThan(CONTRAST_FLOOR);
+
+    // …and the two banners that were spending it print at full now, with the
+    // softening where softening belongs.
+    for (const name of ['StreamHealthBanner.tsx', 'BackfillBar.tsx']) {
+      const banner = code(SOURCES.find((source) => source.name === name)?.text ?? '');
+      expect(banner, `${name} moved — this oracle reads files off disk`).not.toEqual('');
+      expect(banner, `${name} still prints a reading at an alpha`)
+        .not.toMatch(/color: rgba\(visual\.color/);
+      expect(banner, `${name} dropped the glow that carries the softening`)
+        .toContain('textShadow: `0 0 7px ${rgba(visual.color, 0.42)}`');
+    }
+  });
+
+  it('a percentage in this HUD closes up', () => {
+    // The user's ruling, 2026-09-05. `< 0.001 %` was the one spaced percentage
+    // in the overlay; every other one — `2.00%`, `+1.4%`, `TOP 100%` — sets
+    // solid, and the inequality is part of the number rather than a sentence
+    // about it.
+    const offenders: string[] = [];
+    for (const source of domDialect()) {
+      for (const spaced of code(source.text).matchAll(/[\d.]\s+%/g)) {
+        offenders.push(`${source.name}: ${spaced[0].trim()} — a percentage sets solid`);
+      }
+    }
+    expect(offenders).toEqual([]);
+
+    const dao = code(SOURCES.find((source) => source.name === 'DaoStateReadout.tsx')?.text ?? '');
+    expect(dao).toContain("'<0.001%'");
   });
 });
 

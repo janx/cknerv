@@ -289,7 +289,7 @@ export const CONTENT_BANDS = {
    *  segments in the CELLS asset bar, where two neighbouring steps have to be
    *  told apart with no label between them. */
   tokenExtended: '#95EAD3',
-  value: HUD_COLORS.lockedGold,
+  value: HUD_COLORS.goldInk,
   /** A digital object: a Spore cluster, an M-NFT, a COTA item, a CKBFS file.
    *  Magenta is the one strong hue the house had not spent, and these are
    *  the one nature that rhymes with nothing else on the other axis — a

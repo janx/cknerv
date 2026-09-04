@@ -41,7 +41,7 @@ export function replayPresentation(phase: ReplayPhase): ReplayPresentation {
         tag: 'REBUILD',
         title: 'REBUILDING CONSENSUS MEMORY',
         subtitle: 'STATE RESET',
-        color: HUD_COLORS.rebuild,
+        color: HUD_COLORS.memory,
         waiting: 'WAITING FOR REBUILD WINDOW',
       };
   }

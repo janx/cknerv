@@ -997,7 +997,7 @@ const CellScanFact = memo(function CellScanFact({
             title={proof.read
               ? 'IDENTITY PROOF · READ'
               : 'IDENTITY PROOF · select to read — all three arm MEMORY TRACE'}
-            style={{ marginLeft: 5, color: proof.read ? HUD_COLORS.lockedGold : HUD_COLORS.dim, opacity: proof.read ? 1 : STALE_OPACITY }}
+            style={{ marginLeft: 5, color: proof.read ? HUD_COLORS.goldInk : HUD_COLORS.dim, opacity: proof.read ? 1 : STALE_OPACITY }}
           >
             {proof.read ? '◆' : '◇'}
           </span>

@@ -61,7 +61,7 @@ export default function BackfillBar({ backfill, style }: {
       </div>
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 5 }}>
         {visual.subtitle && (
-          <span style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, letterSpacing: 0.9, color: rgba(visual.color, 0.78) }}>{visual.subtitle}</span>
+          <span style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, letterSpacing: 0.9, color: visual.color, textShadow: `0 0 7px ${rgba(visual.color, 0.42)}` }}>{visual.subtitle}</span>
         )}
         {/* The counted form wants NO tracking — a run of mono digits either
             side of a slash reads as one measurement, and spacing it out turns
@@ -69,8 +69,14 @@ export default function BackfillBar({ backfill, style }: {
         <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: waiting ? 0.6 : 0, color: waiting ? visual.color : HUD_COLORS.dim }}>
           {waiting ? visual.waiting : `${fmt(done)} / ${fmt(total)} blocks`}
         </span>
+        {/* Full alpha here and on the subtitle above, for the reason
+            `StreamHealthBanner` states at length: the REORG bar's two smallest
+            readings were the two least legible things in the HUD (3.7 and 3.1
+            at 8 px, report F, F-10), and they are the ones printed while
+            consensus is being repaired. The softening they were spending
+            contrast on is a glow now. */}
         {!waiting && (
-          <span style={{ marginLeft: 8, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, color: rgba(visual.color, 0.7) }}>
+          <span style={{ marginLeft: 8, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, color: visual.color, textShadow: `0 0 7px ${rgba(visual.color, 0.42)}` }}>
             {`${Math.round(Math.min(1, Math.max(0, ratio)) * 100)}%`}
           </span>
         )}

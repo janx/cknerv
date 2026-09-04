@@ -166,7 +166,7 @@ describe('DaoStatePanel', () => {
       />,
     );
     const change = container.querySelector('[data-dao-deposit-change]')?.textContent ?? '';
-    expect(change).toContain('< 0.001 %');
+    expect(change).toContain('<0.001%');
     expect(change).not.toContain('+<');
   });
 

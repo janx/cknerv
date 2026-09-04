@@ -32,7 +32,7 @@ import { PLATE_EDGE_ALPHA, PLATE_ROW_RAIL_ALPHA } from './primitives';
 
 const CYAN = HUD_COLORS.cyanWire;
 const VIOLET = HUD_COLORS.memory;
-const LOCKED_GOLD = HUD_COLORS.lockedGold;
+const LOCKED_GOLD = HUD_COLORS.goldInk;
 const ROUTE_LENS_MIN_CELLS = 9;
 const ROUTE_SCROLL_EDGE_EPSILON_PX = 1;
 const ROUTE_SCROLL_ANCHOR_INSET_PX = 4;

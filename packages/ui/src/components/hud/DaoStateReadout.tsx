@@ -55,7 +55,12 @@ function formatChangePercent(current: bigint, change: bigint): string | null {
     // a number in any notation. What the reading actually says is that the
     // magnitude is under the resolution, so it is written as the inequality it
     // is; the CKB figure beside it still carries the direction.
-    return change === 0n ? '0%' : '< 0.001 %';
+    //
+    // SET SOLID (the user's ruling, 2026-09-05). It shipped as `< 0.001 %`,
+    // which made it the one spaced percentage in the HUD — `2.00%`, `+1.4%`
+    // and `TOP 100%` all close up — and the space was doing the work the
+    // dropped sign already did. The inequality is part of the number.
+    return change === 0n ? '0%' : '<0.001%';
   }
   const whole = milliPercent / 1_000n;
   const fraction = (milliPercent % 1_000n)

@@ -381,7 +381,7 @@ function BirthAnchorRead({
         <ringGeometry args={[0.038, 0.055, 4]} />
         <meshBasicMaterial
           ref={terminalMaterialRef}
-          color={HUD_COLORS.lockedGold}
+          color={HUD_COLORS.goldInk}
           transparent
           opacity={0}
           blending={THREE.NormalBlending}

@@ -114,9 +114,19 @@ export const HUD_COLORS = {
   // reserved for pathology — reorg, stall, decode error, crit — so ember has
   // to read as "consumed" from across the room and never as a small alarm.
   ember: '#D25234',
-  rebuild: '#AE86FF',
-  // Consensus-memory family (the inspection surface's violet) — deliberately
-  // distinct from `rebuild`, which is the scene's replay/rebuild semantic.
+  // The violet, and there is ONE of it. It used to be two: `memory` for the
+  // inspection surface and `rebuild` for the scene's replay semantic, with a
+  // comment here saying they were "deliberately distinct". They were 4.5
+  // apart in RGB (report F, F-4) — a tenth of the separation this palette
+  // requires of any two names, and under every threshold at which a person
+  // can tell two colours apart at all.
+  //
+  // A distinction nobody can see is not a distinction, it is a second name;
+  // and the two were on screen together — the RECONCILING replay plate beside
+  // a MEMORY TRACE footer — where a reader would have had to take the claim on
+  // faith. What the two names were really saying is that consensus memory and
+  // rebuilding it are the same subject seen twice, which is an argument for
+  // one token, not two values of one.
   memory: '#AA88FF',
   memoryInk: '#C9BAFF',
   // A consensus-memory endpoint marker with NO evidence source bound to it —
@@ -130,7 +140,12 @@ export const HUD_COLORS = {
   memoryUnbound: '#8FF7FF',
   // Bright text tiers of the wire families; chrome stays cyanWire / orange.
   cyanInk: '#C9F8FF',
-  lockedGold: '#FFD7A1',
+  // …and the gold, likewise one. `lockedGold` and `goldInk` were 8.6 apart —
+  // a difference you can measure and cannot see — and the split was by
+  // SURFACE rather than by meaning: the route lock spoke one, the readouts
+  // the other, and both meant "this is held". One name, and the lock's
+  // emphasis comes from its glow and its outline, where emphasis in this HUD
+  // has always come from.
   goldInk: '#FFD29A',
   ink: '#E8E8E8',
   // One tier above `ink`, and the only thing allowed up there: the single hero
@@ -158,7 +173,15 @@ export const HUD_COLORS = {
   // The module registry's own grey, for the CKB·01 / PEER·02 count-off tags.
   // Below `dim` on purpose: a tag is an address, not a reading. A panel that
   // owns an identity accent overrides it with that accent instead.
-  moduleSlate: '#5A6470',
+  //
+  // RAISED from #5A6470 on 2026-09-05 (the user's D-15). It was 3.4:1 on the
+  // panel and 2.9 on a rose-lit plate, at `micro` and `tech` — under 4.5 at
+  // the two smallest rungs in the HUD, which is where a contrast floor is
+  // least negotiable. "An address, not a reading" is an argument for ranking
+  // it below `dim`, and the rank oracle in `hudDiscipline.test.ts` still pins
+  // that; it was never an argument for putting it under the floor. #6B7684
+  // clears 4.5 on the panel and stays a clear step under `dim`.
+  moduleSlate: '#6B7684',
   nominal: '#27FF5A',
   caution: '#F6E201',
   // Amber, and deliberately decoupled from chrome. `warning` used to be the
@@ -754,7 +777,7 @@ export function injectHudTheme(doc: Document = document): void {
     `\n@keyframes cknerv-hud-flash{50%{opacity:.45}}`
     + `\n@keyframes cknerv-hud-breathe{0%,100%{opacity:.82}50%{opacity:1}}`
     + `\n@keyframes cknerv-cell-specimen-sweep{0%{transform:translate3d(0,0,0);opacity:0}12%{opacity:.82}88%{opacity:.72}100%{transform:translate3d(0,100%,0);opacity:0}}`
-    + `\n@keyframes cknerv-route-hop-lock-pulse{0%{filter:brightness(1) drop-shadow(0 0 0 transparent)}18%{filter:brightness(1.58) drop-shadow(0 0 7px var(--route-hop-pulse-color,${rgba(HUD_COLORS.lockedGold, 0.76)}))}52%{filter:brightness(1.16) drop-shadow(0 0 3px var(--route-hop-pulse-color,${rgba(HUD_COLORS.lockedGold, 0.42)}))}100%{filter:brightness(1) drop-shadow(0 0 0 transparent)}}`
+    + `\n@keyframes cknerv-route-hop-lock-pulse{0%{filter:brightness(1) drop-shadow(0 0 0 transparent)}18%{filter:brightness(1.58) drop-shadow(0 0 7px var(--route-hop-pulse-color,${rgba(HUD_COLORS.goldInk, 0.76)}))}52%{filter:brightness(1.16) drop-shadow(0 0 3px var(--route-hop-pulse-color,${rgba(HUD_COLORS.goldInk, 0.42)}))}100%{filter:brightness(1) drop-shadow(0 0 0 transparent)}}`
     + `\n.cknerv-hud-control-button:hover{filter:brightness(1.35)}`
     + `\n.cknerv-hud-control-button:focus-visible{outline:1px solid ${rgba(HUD_COLORS.cyanWire, 0.55)};outline-offset:1px}`
     + `\n.cknerv-cell-display-track:focus-within{filter:brightness(1.35)}`
@@ -794,7 +817,7 @@ export function injectHudTheme(doc: Document = document): void {
     + `\n.cknerv-memory-route-scroll-edge-after{bottom:0;background:linear-gradient(0deg,${rgba(HUD_COLORS.stageGround, 0.98)},${rgba(HUD_COLORS.stageGround, 0)});box-shadow:inset 0 -1px 0 ${rgba(HUD_COLORS.cyanWire, 0.14)}}`
     + `\n.cknerv-memory-route-scroll-position{position:absolute;top:3px;right:4px;bottom:3px;z-index:3;width:4px;border-right:1px solid ${rgba(HUD_COLORS.cyanWire, 0.18)};pointer-events:none;opacity:0}`
     + `\n.cknerv-memory-route-scroll-position-marker{position:absolute;left:100%;top:var(--route-ledger-scroll-progress,0%);width:4px;height:4px;border:1px solid ${rgba(HUD_COLORS.cyanInk, 0.88)};background:${HUD_COLORS.ground};box-shadow:0 0 6px ${rgba(HUD_COLORS.cyanWire, 0.72)};transform:translate(-50%,-50%) rotate(45deg)}`
-    + `\n.cknerv-memory-route-ledger-lens .cknerv-memory-route-scroll-position-marker{border-color:${rgba(HUD_COLORS.lockedGold, 0.9)};box-shadow:0 0 7px ${rgba(HUD_COLORS.lockedGold, 0.66)}}`
+    + `\n.cknerv-memory-route-ledger-lens .cknerv-memory-route-scroll-position-marker{border-color:${rgba(HUD_COLORS.goldInk, 0.9)};box-shadow:0 0 7px ${rgba(HUD_COLORS.goldInk, 0.66)}}`
     + `\n.cknerv-memory-route-ledger-scroll::-webkit-scrollbar{width:3px}`
     + `\n.cknerv-memory-route-ledger-scroll::-webkit-scrollbar-thumb{background:${rgba(HUD_COLORS.cyanWire, 0.28)}}`
     + `\n.cknerv-memory-route-ledger-scroll::-webkit-scrollbar-track{background:transparent}`
