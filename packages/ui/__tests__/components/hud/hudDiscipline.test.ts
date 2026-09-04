@@ -4399,6 +4399,25 @@ const CELL_CARD_SURFACES: ReadonlyArray<{
     wears: ['drawPortraitPlateGradient(ctx, 256, 256, CELL_CARD_ACCENT)'],
     never: ['HUD_COLORS.cyanWire', 'peerWire'],
   },
+  // The user's D-8 ruling of 2026-09-05. These two plates were framed in their
+  // CONTENT's colour — the reader in the braid's cyan, the trace in the memory
+  // violet — and a card with four frame colours reads as three windows that
+  // happen to touch (the 08-21 complaint, 割裂). Their titles keep the content
+  // ink, which is the half of `hudTheme.ts`'s rule that was always right.
+  {
+    surface: "the CKBYTES reader's plate",
+    file: 'components/hud/CellDetailPanel.tsx',
+    within: ['function CellScanReaderPlate', '/** ORIGIN:'],
+    wears: ['...spatialPlate(CELL_CARD_ACCENT),'],
+    never: ['CYAN', 'cyanWire', 'peerWire', 'HUD_COLORS.memory'],
+  },
+  {
+    surface: "the MEMORY TRACE plate",
+    file: 'components/hud/CellDetailPanel.tsx',
+    within: ['data-cell-inspection-satellite="trace"', '<SpatialPlateHeader'],
+    wears: ['...spatialPlate(CELL_CARD_ACCENT),'],
+    never: ['CYAN', 'cyanWire', 'HUD_COLORS.memory', 'VIOLET'],
+  },
 ];
 
 /** The surface's own text, or the whole file when the surface IS the file. */
@@ -4428,6 +4447,27 @@ describe('the cell card wears one colour', () => {
 
     expect(never.filter((token) => text.includes(token)))
       .toEqual([]);
+  });
+
+  it('every plate of the cell card is framed in the card\'s own colour', () => {
+    // The table above pins the surfaces that exist; this pins the SHAPE, so a
+    // fourth plate cannot arrive in a fifth colour. `spatialPlate` is the only
+    // way a plate of this card gets an edge, and the card has three of them:
+    // the analysis plate, the reader, and the trace that appears when a write
+    // is armed. The viewfinder square is not on this list and is not a plate —
+    // it is a hole with corner marks, and chrome orange is what an instrument's
+    // own frame is written in.
+    const panel = PACKAGE_SOURCES.find(
+      (entry) => entry.name === 'components/hud/CellDetailPanel.tsx',
+    );
+    const framed = [...code(panel?.text ?? '').matchAll(/spatialPlate\(([^)]*)\)/g)]
+      .map((match) => match[1]);
+
+    expect(framed).toEqual([
+      'CELL_CARD_ACCENT',
+      'CELL_CARD_ACCENT',
+      'CELL_CARD_ACCENT',
+    ]);
   });
 
   it('the register and the tether read one table, in one file', () => {

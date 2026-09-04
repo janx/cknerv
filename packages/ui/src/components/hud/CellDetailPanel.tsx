@@ -1221,7 +1221,19 @@ function CellScanReaderPlate({ beside, children }: {
         minHeight: 0,
         overflow: 'hidden',
         padding: '8px 10px 10px 12px',
-        ...spatialPlate(CYAN),
+        // The card's own rose, not the reader's cyan (the user's D-8 ruling of
+        // 2026-09-05). The R2 plan wrote `spatialPlate(CYAN)` and never said
+        // why; what it produced was a card with four frame colours — rose
+        // plate, orange viewfinder, cyan reader, violet trace — reading as
+        // three windows that happen to touch, which is the 08-21 complaint
+        // (割裂) the L-notch was cut to answer.
+        //
+        // `hudTheme.ts` had the rule all along: the FRAME carries identity, the
+        // CONTENT keeps its own vocabulary. A frame is what says WHOSE surface
+        // this is, and every plate on this card belongs to one Cell. So the
+        // border goes rose and the cyan stays where it means something — the
+        // title, its 字节元 companion, and the bytes themselves.
+        ...spatialPlate(CELL_CARD_ACCENT),
         ...revealStageStyle(revealed),
       }}
     >
@@ -2825,7 +2837,10 @@ function CellDetailPanel({
               width: 'auto',
               overflow: 'visible',
               padding: '8px 10px 10px 12px',
-              ...spatialPlate(HUD_COLORS.memory),
+              // Rose, for the reader plate's reason (D-8): the frame says
+              // which creature this plate is about, and the violet stays on
+              // the title and the ledger, where it names consensus memory.
+              ...spatialPlate(CELL_CARD_ACCENT),
             }}
           >
             <SpatialPlateHeader
