@@ -9,16 +9,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearCellDataMemo, rememberCellOutputData } from '@cknerv/cache';
 
 import {
-  READER_VIEWPORT_ALLOWANCE_PX,
-  readerViewportRows,
   useCellOutputData,
-  useReaderViewportRows,
+  useReaderPlacement,
+  useReaderRows,
   type CellOutputDataInput,
 } from '../../src/hooks/useCellOutputData';
 import {
+  READER_BESIDE_CARD_PX,
+  READER_CARD_MARGIN_PX,
   READER_MIN_VISIBLE_ROWS,
   READER_VISIBLE_ROWS,
+  readerBesideRows,
 } from '../../src/derives/cellDataReader.derive';
+import {
+  READER_CHROME_PX,
+  READER_ROW_HEIGHT_PX,
+} from '../../src/components/hud/CellDataReader';
 
 const TX_HASH = `0x${'ab'.repeat(32)}`;
 const OTHER_TX = `0x${'cd'.repeat(32)}`;
@@ -242,46 +248,74 @@ describe('useCellOutputData', () => {
   });
 });
 
-describe('readerViewportRows', () => {
-  it('fills a tall window and stops at the declared count', () => {
-    expect(readerViewportRows(13.5, 4000)).toBe(READER_VISIBLE_ROWS);
-  });
+/** The window, set the way a browser sets it: a property nobody can assign
+ *  in jsdom without redefining it, and an event nobody fires without saying so. */
+function resizeWindow(width: number, height: number) {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+  Object.defineProperty(window, 'innerHeight', { configurable: true, value: height });
+  window.dispatchEvent(new Event('resize'));
+}
 
-  it('narrows on a short window rather than pushing the card off screen', () => {
-    // 768 is jsdom's own viewport, and the number a component test that wants
-    // 24 rows has to pass explicitly.
-    expect(readerViewportRows(13.5, 768)).toBe(18);
-    expect(readerViewportRows(13.5, READER_VIEWPORT_ALLOWANCE_PX + 13.5 * 12))
-      .toBe(12);
-  });
+afterEach(() => { resizeWindow(1024, 768); });
 
-  it('never goes below the floor, however short the window', () => {
-    expect(readerViewportRows(13.5, READER_VIEWPORT_ALLOWANCE_PX))
-      .toBe(READER_MIN_VISIBLE_ROWS);
-    expect(readerViewportRows(13.5, 120)).toBe(READER_MIN_VISIBLE_ROWS);
+describe('useReaderPlacement', () => {
+  it('stands the reader beside the plate exactly when the card still fits', () => {
+    // jsdom's own window is 1024 wide, which is far under the 1,396 the card
+    // measures with a reader column — so the fallback row is what a test that
+    // says nothing about the window gets, and every panel test written before
+    // the column keeps passing unchanged.
+    const { result } = renderHook(() => useReaderPlacement());
+    expect(result.current).toBe('below');
+
+    // One pixel under the card's own `maxWidth: calc(100vw - 28px)` clamp…
+    act(() => { resizeWindow(READER_BESIDE_CARD_PX + READER_CARD_MARGIN_PX - 1, 1100); });
+    expect(result.current).toBe('below');
+
+    // …and exactly on it.
+    act(() => { resizeWindow(READER_BESIDE_CARD_PX + READER_CARD_MARGIN_PX, 1100); });
+    expect(result.current).toBe('beside');
+
+    // The app's own viewport, where M5 measured the row falling past the fold.
+    act(() => { resizeWindow(1600, 1100); });
+    expect(result.current).toBe('beside');
+
+    // And back: a window narrowed under the card returns the row.
+    act(() => { resizeWindow(900, 1100); });
+    expect(result.current).toBe('below');
   });
 });
 
-describe('useReaderViewportRows', () => {
-  it('reads the window at mount and again when it is resized', () => {
-    const { result } = renderHook(() => useReaderViewportRows(13.5));
+describe('useReaderRows', () => {
+  it('measures the beside column against the plate and the row against the window', () => {
+    // Unmeasured — jsdom lays nothing out, and the plate is honestly 0 — so
+    // both placements answer with the number the reader has always opened at.
+    const beside = renderHook(() => useReaderRows('beside', 0));
+    expect(beside.result.current).toBe(READER_VISIBLE_ROWS);
+    const below = renderHook(() => useReaderRows('below', 0));
+    expect(below.result.current).toBe(18);
+
+    // A real spore dossier's plate, the one M5 measured at ~910 px. Beside it
+    // the reader fills the plate; under it there is nothing left of an 1,100 px
+    // window and the floor is what the fallback settles at.
+    const tall = renderHook(() => useReaderRows('beside', 910));
+    expect(tall.result.current).toBe(
+      readerBesideRows(910, READER_CHROME_PX, READER_ROW_HEIGHT_PX),
+    );
+    expect(tall.result.current).toBeGreaterThan(READER_VISIBLE_ROWS);
+
+    act(() => { resizeWindow(1600, 1100); });
+    const cramped = renderHook(() => useReaderRows('below', 910));
+    expect(cramped.result.current).toBe(READER_MIN_VISIBLE_ROWS);
+  });
+
+  it('re-reads the window when it is resized, and only then', () => {
+    const { result } = renderHook(() => useReaderRows('below', 0));
     expect(result.current).toBe(18);
 
-    act(() => {
-      Object.defineProperty(window, 'innerHeight', { value: 4000, configurable: true });
-      window.dispatchEvent(new Event('resize'));
-    });
+    act(() => { resizeWindow(1024, 4000); });
     expect(result.current).toBe(READER_VISIBLE_ROWS);
 
-    act(() => {
-      Object.defineProperty(window, 'innerHeight', { value: 600, configurable: true });
-      window.dispatchEvent(new Event('resize'));
-    });
+    act(() => { resizeWindow(1024, 600); });
     expect(result.current).toBe(READER_MIN_VISIBLE_ROWS);
-
-    act(() => {
-      Object.defineProperty(window, 'innerHeight', { value: 768, configurable: true });
-      window.dispatchEvent(new Event('resize'));
-    });
   });
 });

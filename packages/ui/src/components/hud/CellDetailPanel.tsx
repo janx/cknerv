@@ -79,8 +79,10 @@ import { deriveCellContentMemory } from '../../derives/cellContentMemory.derive'
 import { validateCellSemanticRecordForMorphology } from '../../derives/cellSemanticMorphology.derive';
 import {
   useCellOutputData,
-  useReaderViewportRows,
+  useReaderPlacement,
+  useReaderRows,
 } from '../../hooks/useCellOutputData';
+import { READER_COLUMN_PX } from '../../derives/cellDataReader.derive';
 import {
   deriveCellCausalLens,
   type CellCausalLens,
@@ -127,9 +129,13 @@ const PORTRAIT_BRACKET_PX = 12;
  * row — a label, a badge and a mid-truncated hash — and every column past
  * that was empty gutter between a left label and a right-aligned value. */
 const PORTRAIT_COLUMN_PX = 280;
-const CARD_SEAM_PX = 8;
+/** Exported so `cellDataReader.derive.ts` can be pinned against them: the
+ * derive restates 728 + 8 rather than importing this module (a pure derive may
+ * not drag a 2,400-line panel behind it), and `CellDetailPanel.test.tsx`
+ * asserts the two statements agree. */
+export const CARD_SEAM_PX = 8;
 const ANALYSIS_COLUMN_PX = 440;
-const CARD_WIDTH_PX = ANALYSIS_COLUMN_PX + CARD_SEAM_PX + PORTRAIT_COLUMN_PX;
+export const CARD_WIDTH_PX = ANALYSIS_COLUMN_PX + CARD_SEAM_PX + PORTRAIT_COLUMN_PX;
 
 /** Panel-local display order — the vertical order the six facts occupy in the
  * merged CKBYTES ANALYSIS layout, used ONLY for probe-reveal indexing so the
@@ -1243,7 +1249,48 @@ function CellDetailPanel({
     // it: every row the reader draws is derived from THIS number.
     totalBytes: cell.data_bytes,
   });
-  const readerRows = useReaderViewportRows(READER_ROW_HEIGHT_PX);
+  // Where the reader stands, and how tall it is.
+  //
+  // The user's ruling of 2026-09-05: the reader stands BESIDE the analysis
+  // plate and is as tall as it, and the full-width row under the card survives
+  // only as the fallback for a window too narrow for the column. M5 measured
+  // what the row cost — a 910 px plate and a 24-row reader made a 1,348 px
+  // card in an 1,100 px window, so the row began at the fold and nothing on
+  // the page scrolls — and the column is the answer: the card grows sideways
+  // instead of downward, and the dump is bounded by the plate rather than by
+  // whatever the window has left under it.
+  //
+  // The plate is MEASURED for that, which is a third `useState` in this body.
+  // It is admitted for the same reason `readerRequest` is: it is moved by the
+  // browser reporting a layout, never by the scan clock's tick, so the body
+  // still renders once per selection plus once per genuine change of the
+  // plate's height. `useCanvasClientRect` is the precedent — a
+  // ResizeObserver plus a window `resize`, cached outside the frame loop — and
+  // the rounding guard is what keeps a sub-pixel reflow from re-rendering the
+  // card. In jsdom, where nothing is laid out and the observer stub never
+  // fires, this stays 0 and both row counts fall back to their declared
+  // numbers.
+  const [plateHeightPx, setPlateHeightPx] = useState(0);
+  useEffect(() => {
+    const plate = analysisPlateRef.current;
+    if (!plate) return undefined;
+    const measure = () => {
+      const height = Math.round(plate.getBoundingClientRect().height);
+      setPlateHeightPx((previous) => (previous === height ? previous : height));
+    };
+    measure();
+    const observer = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(measure);
+    observer?.observe(plate);
+    window.addEventListener('resize', measure);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [cell.id]);
+  const readerPlacementSide = useReaderPlacement();
+  const readerRows = useReaderRows(readerPlacementSide, plateHeightPx);
 
   const identity = useMemo(
     () => deriveCellConsensusIdentity(cell, recentLinks),
@@ -1418,17 +1465,30 @@ function CellDetailPanel({
   const portraitFirst = verticalLayout || layoutSide === 'right';
   // Two columns, one row: the card has no separate identity plate above them
   // any more — the analysis plate is the dossier, so the Cell it is about is
-  // its masthead rather than a second window stacked over it.
-  const cardRows = portraitFirst
-    ? '"scan analysis"'
-    : '"analysis scan"';
+  // its masthead rather than a second window stacked over it. Three columns
+  // while the reader stands beside the plate, on a window wide enough for one.
+  //
+  // Beside, the card is three columns rather than two and the reader takes the
+  // side AWAY from the specimen — the scan square stays on the edge nearest
+  // the Cell it is about, which is the rule that already mirrors these
+  // columns, and the reader hangs off the far edge where nothing points at
+  // anything. Below, the card is exactly what it was: two columns and a
+  // full-width row.
+  const readerBeside = readerOpen && readerPlacementSide === 'beside';
+  const cardRows = readerBeside
+    ? (portraitFirst ? '"scan analysis reader"' : '"reader analysis scan"')
+    : (portraitFirst ? '"scan analysis"' : '"analysis scan"');
   // Growth is strictly downward, and in the order the rows were asked for: the
-  // reader sits directly under the two columns because the DATA cluster it
-  // opened from is in them, and an armed MEMORY TRACE goes under it. Neither
-  // row exists while it is closed — an always-there empty grid row trails an
-  // 8px phantom gap under the plate — and neither can change the columns'
-  // geometry, which is the analysis plate's own law.
-  const cardAreas = `${cardRows}${readerOpen ? ' "reader reader"' : ''}${showTracePlate ? ' "trace trace"' : ''}`;
+  // FALLBACK reader sits directly under the two columns because the DATA
+  // cluster it opened from is in them, and an armed MEMORY TRACE goes under
+  // it. Neither row exists while it is closed — an always-there empty grid row
+  // trails an 8px phantom gap under the plate — and neither can change the
+  // columns' geometry, which is the analysis plate's own law. The trace row
+  // spans whatever the card is wide, which is three columns while the reader
+  // stands beside the plate and two while it does not.
+  const cardAreas = `${cardRows}${
+    readerOpen && !readerBeside ? ' "reader reader"' : ''
+  }${showTracePlate ? (readerBeside ? ' "trace trace trace"' : ' "trace trace"') : ''}`;
 
   // ——— Register cluster evidence ————————————————————————————————————
   const facet = presentedSemanticRecord
@@ -1625,9 +1685,19 @@ function CellDetailPanel({
       style={{
         position: 'relative',
         display: 'grid',
-        gridTemplateColumns: portraitFirst
-          ? `${PORTRAIT_COLUMN_PX}px minmax(0, 1fr)`
-          : `minmax(0, 1fr) ${PORTRAIT_COLUMN_PX}px`,
+        // The analysis plate keeps its measure in both placements: it is the
+        // `1fr` between two fixed columns, and 1,396 − 660 − 280 − two seams
+        // is the 440 it has always been. The reader's column is a third fixed
+        // track rather than a share of the card, because a dump is a fixed
+        // measure — 74 monospace characters — and a column that flexed would
+        // either clip a row or leave a gutter.
+        gridTemplateColumns: readerBeside
+          ? (portraitFirst
+            ? `${PORTRAIT_COLUMN_PX}px minmax(0, 1fr) ${READER_COLUMN_PX}px`
+            : `${READER_COLUMN_PX}px minmax(0, 1fr) ${PORTRAIT_COLUMN_PX}px`)
+          : (portraitFirst
+            ? `${PORTRAIT_COLUMN_PX}px minmax(0, 1fr)`
+            : `minmax(0, 1fr) ${PORTRAIT_COLUMN_PX}px`),
         // The trace row exists only while the armed MEMORY TRACE window is
         // appended — an always-there empty row would trail an 8px phantom gap
         // under the analysis plate.
@@ -1635,7 +1705,12 @@ function CellDetailPanel({
         columnGap: CARD_SEAM_PX,
         rowGap: 8,
         alignItems: 'start',
-        width: CARD_WIDTH_PX,
+        width: readerBeside
+          ? CARD_WIDTH_PX + CARD_SEAM_PX + READER_COLUMN_PX
+          : CARD_WIDTH_PX,
+        // …and the clamp the placement decision is made against: the reader
+        // only stands beside the plate on a window that can hold the wider
+        // card without this `maxWidth` squeezing it.
         maxWidth: 'calc(100vw - 28px)',
         boxSizing: 'border-box',
         pointerEvents: 'none',
@@ -2283,10 +2358,27 @@ function CellDetailPanel({
         <span style={portraitBracket('bl')} /><span style={portraitBracket('br')} />
       </section>
 
-      {/* The DATA cluster's door, opened. It takes the MEMORY TRACE's shape
-        * exactly — a full-width row appended below both columns, never a
-        * column split — because that is the card's one way of growing, and
-        * the plate above it must not move while somebody reads a byte in it.
+      {/* The DATA cluster's door, opened — beside the analysis plate, as tall
+        * as it (the user's ruling of 2026-09-05).
+        *
+        * The card grows SIDEWAYS for this and not downward, which is the whole
+        * change: a full-width row under a real dossier's plate began at the
+        * fold of the app's own 1600×1100 window and nothing on the page
+        * scrolls, so most of the reader could not be reached at all. Beside
+        * it, the reader is bounded by the plate, the card's silhouette is the
+        * plate's, and the plate itself does not move — its column is still the
+        * 440 it has always been.
+        *
+        * `alignSelf: 'stretch'` is what makes "as tall as the plate" true
+        * rather than approximately true: the dump's height is a whole number
+        * of 13.5 px rows and the plate's is not, so the section takes the
+        * row's full height and its bottom padding absorbs the few pixels that
+        * do not divide. `minHeight: 0` lets it: a grid item's default
+        * `min-height: auto` would refuse to be shorter than its content and
+        * the stretch would turn into a push.
+        *
+        * The row under the card survives as the narrow-window fallback, where
+        * it takes the MEMORY TRACE's shape exactly.
         *
         * `satelliteBase` is what makes this a plate rather than a fragment:
         * it carries `position: relative`, which is the anchor the reader's own
@@ -2299,10 +2391,13 @@ function CellDetailPanel({
             data-cell-detail-module="reader"
             data-cell-inspection-satellite="reader"
             data-cell-detail-size="content"
+            data-cell-data-reader-placement={readerBeside ? 'beside' : 'below'}
             style={{
               ...satelliteBase,
               gridArea: 'reader',
               width: 'auto',
+              minHeight: 0,
+              alignSelf: readerBeside ? 'stretch' : undefined,
               overflow: 'hidden',
               padding: '8px 10px 10px 12px',
               ...spatialPlate(CYAN),

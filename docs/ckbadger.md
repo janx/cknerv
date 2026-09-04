@@ -358,10 +358,12 @@ truncation; it does not invent local content guesses. With validated indexed
 content it upgrades in place to **INDEX ANALYSIS**, preferring indexed bytes,
 showing the full logical size and completeness, and making deterministic
 segments navigable by their exact byte ranges. The window itself shows the
-Cell's first 32 bytes and opens **DATA READER** (`SCAN·03`), a full-width row
-under the card: a virtualised hex dump, sixteen bytes to a row with an offset
-gutter and printable ASCII on the same row, a byte map of the whole payload,
-every decoded segment as a table of contents, and an inspector that reads the
+Cell's first 32 bytes and opens **DATA READER** (`SCAN·03`), a column beside
+the analysis plate and as tall as it, on the side away from the specimen, with
+a full-width row under the card only on windows too narrow for the column: a
+virtualised hex dump, sixteen bytes to a row with an offset gutter and
+printable ASCII on the same row, a byte map of the whole payload, every
+decoded segment as a table of contents, and an inspector that reads the
 selection as little-endian integers and UTF-8. Stepping to a segment that
 begins past those first 32 bytes opens the reader at that byte. The reader
 shows the complete payload rather than a prefix, fetched from the node through

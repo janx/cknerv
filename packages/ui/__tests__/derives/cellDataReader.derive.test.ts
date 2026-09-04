@@ -3,8 +3,13 @@ import type { SemanticContentSegment } from '@cknerv/types';
 import { QUALITATIVE_BUCKET_COLORS } from '../../src/components/hud/hudTheme';
 import { contentSegmentAtByte } from '../../src/derives/cellContentMemory.derive';
 import {
+  READER_BESIDE_CARD_PX,
+  READER_BESIDE_MAX_ROWS,
   READER_BYTES_PER_ROW,
+  READER_CARD_MARGIN_PX,
+  READER_MIN_VISIBLE_ROWS,
   READER_OVERSCAN_ROWS,
+  READER_VIEWPORT_ALLOWANCE_PX,
   READER_VISIBLE_ROWS,
   buildSegmentIndex,
   formatReaderInteger,
@@ -12,11 +17,18 @@ import {
   inspectSelection,
   readerByte,
   readerByteMapBands,
+  readerBelowRows,
+  readerBesideRows,
   readerKeyStep,
+  readerPlacement,
   readerRowWindow,
   segmentColorSlots,
   segmentLabelHash,
 } from '../../src/derives/cellDataReader.derive';
+import {
+  READER_CHROME_PX,
+  READER_ROW_HEIGHT_PX,
+} from '../../src/components/hud/CellDataReader';
 
 function segment(
   label: string,
@@ -536,5 +548,101 @@ describe('the integers the strip prints', () => {
     expect(formatReaderInteger(1e21)).not.toContain('e');
     expect(formatReaderInteger(maxU128).replaceAll(',', ''))
       .toBe(maxU128.toString());
+  });
+});
+
+// ——— Where the reader stands, and how tall it is ————————————————————————
+//
+// M5 (2026-09-04) measured the reader as a full-width row under the card and
+// found the card 1,348 px tall in the app's own 1600×1100 window: the analysis
+// plate of a full spore dossier is ~910 px on its own, so the row began at the
+// fold, most of it sat below it, and nothing on the page scrolls. The user
+// ruled on 2026-09-05 that the reader stands BESIDE the plate and is as tall
+// as it, and that the row survives only for windows too narrow for the column.
+// These are the two numbers that ruling turns into.
+
+/** The plate M5 measured, and the one every beside number here is taken
+ *  against. */
+const SPORE_PLATE_PX = 910;
+
+describe('readerPlacement', () => {
+  it('gives the reader its own column exactly when the wider card fits', () => {
+    // The card is `min(1396, 100vw - 28)` wide, so the column fits when the
+    // window has 1,396 px left after its own margin — one pixel under that and
+    // the card would be squeezed by its `maxWidth` and the 660 column would
+    // start eating the analysis plate.
+    expect(READER_BESIDE_CARD_PX).toBe(1396);
+    expect(readerPlacement(1024)).toBe('below');
+    expect(readerPlacement(1423)).toBe('below');
+    expect(readerPlacement(1424)).toBe('beside');
+    expect(readerPlacement(1920)).toBe('beside');
+    expect(READER_BESIDE_CARD_PX + READER_CARD_MARGIN_PX).toBe(1424);
+  });
+
+  it('asks about whatever card it is handed, and answers nothing on a nonsense window', () => {
+    expect(readerPlacement(1024, 800)).toBe('beside');
+    expect(readerPlacement(Number.NaN)).toBe('below');
+  });
+});
+
+describe('readerBesideRows', () => {
+  it('fills the measured plate and nothing more', () => {
+    // The whole ruling in one line: the dump is what the plate leaves after
+    // the reader's own chrome, so the reader can never be taller than the
+    // plate it stands beside and can never push the card past the fold.
+    const rows = readerBesideRows(
+      SPORE_PLATE_PX,
+      READER_CHROME_PX,
+      READER_ROW_HEIGHT_PX,
+    );
+    expect(rows).toBe(
+      Math.floor((SPORE_PLATE_PX - READER_CHROME_PX) / READER_ROW_HEIGHT_PX),
+    );
+    expect(READER_CHROME_PX + rows * READER_ROW_HEIGHT_PX)
+      .toBeLessThanOrEqual(SPORE_PLATE_PX);
+    // …and it is a real gain over the row: more than twice the 24 rows the old
+    // formula returned and could not show.
+    expect(rows).toBeGreaterThan(2 * READER_VISIBLE_ROWS);
+  });
+
+  it('answers an unmeasured plate with the declared count, not with the floor', () => {
+    // Zero is "nobody has laid this out yet" — the frame before the
+    // ResizeObserver's first callback, and every jsdom test — and not a plate
+    // of no height.
+    expect(readerBesideRows(0, READER_CHROME_PX, READER_ROW_HEIGHT_PX))
+      .toBe(READER_VISIBLE_ROWS);
+    expect(readerBesideRows(Number.NaN, READER_CHROME_PX, READER_ROW_HEIGHT_PX))
+      .toBe(READER_VISIBLE_ROWS);
+  });
+
+  it('keeps the floor under a short plate and the valve over a tall one', () => {
+    expect(readerBesideRows(200, READER_CHROME_PX, READER_ROW_HEIGHT_PX))
+      .toBe(READER_MIN_VISIBLE_ROWS);
+    expect(readerBesideRows(4000, READER_CHROME_PX, READER_ROW_HEIGHT_PX))
+      .toBe(READER_BESIDE_MAX_ROWS);
+    expect(READER_BESIDE_MAX_ROWS * READER_BYTES_PER_ROW).toBe(1024);
+  });
+});
+
+describe('readerBelowRows', () => {
+  it('is the M5 finding as arithmetic', () => {
+    // 1,100 px of window, 910 of plate, the reader's chrome and the room the
+    // card never had: nothing is left, and the fallback settles at its floor
+    // instead of mounting 24 rows below the fold.
+    expect(readerBelowRows(1100, SPORE_PLATE_PX, READER_CHROME_PX, READER_ROW_HEIGHT_PX))
+      .toBe(READER_MIN_VISIBLE_ROWS);
+    // A window tall enough for a row under that plate gets one.
+    expect(readerBelowRows(1800, SPORE_PLATE_PX, READER_CHROME_PX, READER_ROW_HEIGHT_PX))
+      .toBe(READER_VISIBLE_ROWS);
+  });
+
+  it('falls back to the old allowance while the plate is unmeasured', () => {
+    expect(readerBelowRows(768, 0, READER_CHROME_PX, READER_ROW_HEIGHT_PX))
+      .toBe(Math.floor((768 - READER_VIEWPORT_ALLOWANCE_PX) / READER_ROW_HEIGHT_PX));
+    expect(readerBelowRows(768, 0, READER_CHROME_PX, READER_ROW_HEIGHT_PX)).toBe(18);
+    expect(readerBelowRows(4000, 0, READER_CHROME_PX, READER_ROW_HEIGHT_PX))
+      .toBe(READER_VISIBLE_ROWS);
+    expect(readerBelowRows(120, 0, READER_CHROME_PX, READER_ROW_HEIGHT_PX))
+      .toBe(READER_MIN_VISIBLE_ROWS);
   });
 });

@@ -44,6 +44,96 @@ export const READER_MIN_VISIBLE_ROWS = 8;
  *  sides at the app's default row height. */
 export const READER_OVERSCAN_ROWS = 8;
 
+/** The reader's own column, in pixels, when it stands BESIDE the analysis
+ *  plate — the user's ruling of 2026-09-05, and the placement the reader now
+ *  opens in whenever the window is wide enough for it.
+ *
+ *  Measured from what the column has to hold rather than chosen:
+ *
+ *      dump          74 ch at `label` (0.54 em advance) + 8 px scrollbar   368
+ *      seam                                                                 12
+ *      byte map                                                             14
+ *      seam                                                                 10
+ *      segment list  a label, `[a..b) · n B` and a value, ellipsised     ≥ 230
+ *      the section's own left + right padding                               22
+ *                                                                        —————
+ *                                                                          656
+ *
+ *  660 is that, rounded to the nearest ten. Wider buys the segment list a few
+ *  characters of value; narrower starts eating the list, which is the reader's
+ *  table of contents and the half a reader without one cannot navigate. */
+export const READER_COLUMN_PX = 660;
+
+/** The most rows the beside column will show, however tall the plate is.
+ *
+ *  Sixty-four rows is 1,024 bytes — a kilobyte of payload standing at once,
+ *  which is more dump than any plate this card builds is tall enough to ask
+ *  for today. It is a valve rather than a budget: the plate's height is the
+ *  real governor, and this is here so that a future dossier twice as tall does
+ *  not silently mount a two-thousand-row dump. */
+export const READER_BESIDE_MAX_ROWS = 64;
+
+/** The margin the card keeps from the viewport's edges: `CellDetailPanel`'s
+ *  own `maxWidth: calc(100vw - 28px)`. Restated here because the placement
+ *  question is "does the wider card still fit the window", which is exactly
+ *  that clamp asked before the card is built rather than after. */
+export const READER_CARD_MARGIN_PX = 28;
+
+/** The card's two columns, restated.
+ *
+ *  Source: `CellDetailPanel.tsx` — `CARD_WIDTH_PX` (ANALYSIS 440 + seam 8 +
+ *  PORTRAIT 280 = 728) and `CARD_SEAM_PX` (8), both exported there, and
+ *  `CellDetailPanel.test.tsx` pins the sum below against them so the two
+ *  statements cannot drift apart.
+ *
+ *  RESTATED rather than imported on purpose: this module is a pure derive that
+ *  the overlay's morphology and the DATA window both ask, and importing the
+ *  2,400-line React panel into it would make a module cycle out of a pair of
+ *  integers — and drag the whole card into every surface that only wanted a
+ *  colour slot. */
+const READER_CARD_WIDTH_PX = 728;
+const READER_CARD_SEAM_PX = 8;
+
+/** What the card measures with the reader standing beside the plate:
+ *  728 + 8 + 660 = 1,396. */
+export const READER_BESIDE_CARD_PX = READER_CARD_WIDTH_PX
+  + READER_CARD_SEAM_PX
+  + READER_COLUMN_PX;
+
+/** The room a row under the card cannot have, in pixels.
+ *
+ *  Three terms, none of them the reader's: the 14 px the placement solver
+ *  keeps between the card and the viewport's edge, the 8 px seam between the
+ *  analysis plate and the row below it, and the drop the card takes before its
+ *  first pixel — the solver places the card against its Cell, so that drop is
+ *  a different number on every selection. Sixty is the generous reading of the
+ *  three. It is an ALLOWANCE and not a measurement, for exactly the reason the
+ *  520 below it was one: the card's y belongs to the placement solver, and a
+ *  reader that asked for it would be measuring a number that moves. */
+export const READER_BELOW_ALLOWANCE_PX = 60;
+
+/** The allowance the reader was sized by before the plate was measured, kept
+ *  for the one case that still has no measurement.
+ *
+ *  M5 (2026-09-04) measured what this number assumed and found it wrong by
+ *  half: with the reader open as a row under the card, the card stood 1,348 px
+ *  tall in a 1,100 px window, because the analysis plate of a full spore
+ *  dossier is ~910 px on its own and 520 was the allowance for a card half
+ *  that. The row started at the fold, most of it sat below it, and nothing on
+ *  the page scrolls — so the dump, the byte map, the segment list, the
+ *  inspector strip and the commands were all unreachable.
+ *
+ *  That is why the column beside the plate is the primary placement now and
+ *  the row is only the fallback for a window too narrow for it, and why both
+ *  row counts are computed from the plate's MEASURED height. This constant
+ *  survives for the frame before the first measurement lands and for jsdom,
+ *  where nothing is laid out at all and the plate is honestly 0. */
+export const READER_VIEWPORT_ALLOWANCE_PX = 520;
+
+/** Where the reader stands relative to the analysis plate. Two placements and
+ *  no third: beside it (the ruling), or under the card (the narrow fallback). */
+export type ReaderPlacement = 'beside' | 'below';
+
 /** The offset gutter's own width: six upper-case hex digits, no `0x`.
  *
  *  Six because a CKB Cell's data never reaches 16 MiB — the consensus limit on
@@ -458,4 +548,99 @@ export function formatReaderInteger(value: bigint | number): string {
   if (typeof value === 'bigint') return value.toLocaleString('en-US');
   const exact = Number.isFinite(value) ? Math.trunc(value) : 0;
   return BigInt(exact).toLocaleString('en-US');
+}
+
+/**
+ * Where the reader stands: a column beside the analysis plate, or a row under
+ * the card.
+ *
+ * The user's ruling of 2026-09-05, after M5 measured the row: the reader
+ * stands BESIDE the analysis plate and is as tall as it, and the full-width
+ * row under the card remains only as the fallback for windows too narrow for
+ * the column. Beside is where a reader can actually read — the plate does not
+ * grow downward past the fold, the dump gets the plate's whole height instead
+ * of whatever is left under it, and the two halves of the same Cell (what it
+ * IS, and what its bytes SAY) sit side by side rather than one below the other.
+ *
+ * The question is answered on width alone, and on the same clamp the card
+ * already applies to itself: the card is `min(cardWidth, 100vw - 28px)` wide,
+ * so the column fits exactly when `innerWidth - 28 >= cardWidth`. Below that
+ * the wider card would be squeezed by its own `maxWidth` and the 660 column
+ * would eat the analysis plate — so the reader goes back under the card, where
+ * a narrow window has room for it.
+ */
+export function readerPlacement(
+  innerWidth: number,
+  cardWidth: number = READER_BESIDE_CARD_PX,
+): ReaderPlacement {
+  const width = Number.isFinite(innerWidth) ? innerWidth : 0;
+  return width - READER_CARD_MARGIN_PX >= cardWidth ? 'beside' : 'below';
+}
+
+/**
+ * Rows the beside column shows against a MEASURED analysis plate.
+ *
+ * The reader is as tall as the plate, which is the whole point of standing
+ * beside it: the card's silhouette is the plate's, the row it sits in needs no
+ * extra height, and nothing the reader does can push the card past the fold.
+ * So the dump gets whatever the plate's height leaves after the reader's own
+ * chrome — its header, its inspector strip, its commands, its padding — and
+ * the remainder that does not divide into a row is absorbed by the section's
+ * bottom padding rather than by half a row of bytes.
+ *
+ * `plateHeightPx` of 0 means nobody has measured yet — the frame before the
+ * ResizeObserver's first callback, and every jsdom test, which lays nothing
+ * out. That is not a plate of zero height, so it is not answered with the
+ * floor: it is answered with the declared count, the same number the reader
+ * has always opened at, and the measurement replaces it one frame later.
+ */
+export function readerBesideRows(
+  plateHeightPx: number,
+  chromePx: number,
+  rowHeight: number,
+): number {
+  const height = Number.isFinite(rowHeight) && rowHeight > 0 ? rowHeight : 1;
+  const plate = Number.isFinite(plateHeightPx) ? plateHeightPx : 0;
+  if (plate <= 0) return READER_VISIBLE_ROWS;
+  const rows = Math.floor((plate - chromePx) / height);
+  return Math.max(
+    READER_MIN_VISIBLE_ROWS,
+    Math.min(READER_BESIDE_MAX_ROWS, rows),
+  );
+}
+
+/**
+ * Rows the fallback row under the card shows.
+ *
+ * This is the placement M5 found wanting, and the arithmetic is the finding
+ * turned into a formula: what is left of the window under the card is
+ * `innerHeight` minus the plate the row hangs below, minus the reader's own
+ * chrome, minus the room the card never had (`READER_BELOW_ALLOWANCE_PX`).
+ * On M5's own numbers — a 1,100 px window under a 910 px plate — that is
+ * nothing at all, and the answer is the eight-row floor rather than the
+ * twenty-four rows the old formula returned and could not show.
+ *
+ * The floor is a floor and not a zero because a reader that mounted no rows
+ * would be a worse window than the 32-byte preview it opens from; a window
+ * this short is a window the user should be reading the column in, and the
+ * eight rows say plainly that the row is the narrow fallback.
+ *
+ * With no measurement (`plateHeightPx` 0) the OLD 520-allowance formula stands
+ * in: it is the only thing left to ask when the plate has not been laid out,
+ * and it is bounded by the declared count exactly as it was before.
+ */
+export function readerBelowRows(
+  innerHeight: number,
+  plateHeightPx: number,
+  chromePx: number,
+  rowHeight: number,
+): number {
+  const height = Number.isFinite(rowHeight) && rowHeight > 0 ? rowHeight : 1;
+  const viewport = Number.isFinite(innerHeight) ? innerHeight : 0;
+  const plate = Number.isFinite(plateHeightPx) ? plateHeightPx : 0;
+  const available = plate > 0
+    ? viewport - plate - chromePx - READER_BELOW_ALLOWANCE_PX
+    : viewport - READER_VIEWPORT_ALLOWANCE_PX;
+  const rows = Math.floor(available / height);
+  return Math.max(READER_MIN_VISIBLE_ROWS, Math.min(READER_VISIBLE_ROWS, rows));
 }

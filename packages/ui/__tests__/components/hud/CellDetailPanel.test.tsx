@@ -45,12 +45,27 @@ vi.mock('../../../src/components/hud/CellNucleusPortrait', async () => {
 });
 
 import CellDetailPanel, {
+  CARD_SEAM_PX,
+  CARD_WIDTH_PX,
   cellScanFactAccent,
   type CellInspectionFacet,
 } from '../../../src/components/hud/CellDetailPanel';
+import {
+  READER_BESIDE_CARD_PX,
+  READER_COLUMN_PX,
+} from '../../../src/derives/cellDataReader.derive';
 import { HUD_COLORS, HUD_TYPE } from '../../../src/components/hud/hudTheme';
 
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  // jsdom's own window, restored: the reader's placement is read off
+  // `innerWidth`, so a test that widened the window to earn the beside column
+  // would otherwise hand the next one a card it never asked for.
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 });
+  Object.defineProperty(window, 'innerHeight', { configurable: true, value: 768 });
+});
 
 const base: Cell = {
   id: 4242, born_at_ms: 0, death_at_ms: null, birth_block: 16204800,
@@ -682,6 +697,118 @@ describe('CellDetailPanel', () => {
     expect(container.querySelector('[data-cell-detail-scan-field="true"]')
       ?.getAttribute('style')).not.toContain('reader reader');
     performanceNow.mockRestore();
+  });
+
+  it('stands the reader beside the plate on a window wide enough for it', () => {
+    // The user's ruling of 2026-09-05, after M5 measured the row: with the
+    // reader open under the card the card stood 1,348 px tall in the app's own
+    // 1600×1100 window — the analysis plate of a full spore dossier is ~910 px
+    // on its own — so the row began at the fold and nothing on the page
+    // scrolls. Beside the plate the card grows sideways instead, and the
+    // reader is bounded by the plate it stands next to.
+    const performanceNow = vi.spyOn(performance, 'now').mockReturnValue(0);
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1600 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 1100 });
+
+    const props = { cell: base, onClose: () => {} };
+    const { container, rerender } = render(<CellDetailPanel {...props} />);
+    settleScan(performanceNow);
+    fireEvent.click(container.querySelector(
+      '[data-cell-content-read-all]',
+    ) as HTMLButtonElement);
+
+    const card = () => container.querySelector(
+      '[data-cell-detail-scan-field="true"]',
+    ) as HTMLElement;
+    const readerSection = () => container.querySelector(
+      '[data-cell-inspection-satellite="reader"]',
+    ) as HTMLElement;
+
+    // Three columns, and the reader takes the side AWAY from the specimen: the
+    // scan square keeps the edge nearest the Cell it is about, which is the
+    // rule that already mirrors these columns.
+    expect(card().getAttribute('data-cell-detail-layout')).toBe('left');
+    expect(card().style.gridTemplateAreas).toBe('"reader analysis scan"');
+    expect(card().style.gridTemplateColumns)
+      .toBe(`${READER_COLUMN_PX}px minmax(0, 1fr) 280px`);
+    expect(card().style.gridTemplateColumns.startsWith('660px')).toBe(true);
+    // 728 + 8 + 660 — and the analysis plate still measures the 440 it always
+    // did, because the columns around it are both fixed tracks.
+    expect(card().style.width).toBe(`${READER_BESIDE_CARD_PX}px`);
+    expect(card().style.width).toBe('1396px');
+    expect(readerSection().dataset.cellDataReaderPlacement).toBe('beside');
+    // As tall as the plate, exactly: the dump's height is a whole number of
+    // 13.5 px rows and the plate's is not, so the section stretches to the
+    // row and its bottom padding absorbs the remainder.
+    expect(readerSection().style.alignSelf).toBe('stretch');
+    expect(readerSection().style.minHeight).toBe('0');
+
+    // Mirroring the card mirrors the reader with it — still the far side.
+    rerender(<CellDetailPanel {...props} layoutSide="right" />);
+    expect(card().style.gridTemplateAreas).toBe('"scan analysis reader"');
+    expect(card().style.gridTemplateColumns)
+      .toBe(`280px minmax(0, 1fr) ${READER_COLUMN_PX}px`);
+
+    // And a window too narrow for the column gets the row it always had.
+    act(() => {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 });
+      window.dispatchEvent(new Event('resize'));
+    });
+    expect(card().style.gridTemplateAreas).toContain('"reader reader"');
+    expect(card().style.width).toBe('728px');
+    expect(readerSection().dataset.cellDataReaderPlacement).toBe('below');
+    expect(readerSection().style.alignSelf).toBe('');
+    performanceNow.mockRestore();
+  });
+
+  it('spans the armed memory trace across the card the reader widened', () => {
+    const performanceNow = vi.spyOn(performance, 'now').mockReturnValue(0);
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1600 });
+    const origin: CellLink = {
+      seq: 18,
+      tx_hash: base.out_point.tx_hash,
+      block: base.birth_block,
+      from_ids: [1, 2],
+      to_ids: [base.id],
+      endpoint_anchors: [],
+      parents: [],
+      tag: base.tag,
+      at_ms: 12_000,
+    };
+    const { container } = render(
+      <CellDetailPanel
+        cell={base}
+        recentLinks={[origin]}
+        traceSource="input"
+        tracedWriteSeq={origin.seq}
+        traceReadout={traceReadout()}
+        onClose={() => {}}
+      />,
+    );
+    settleScan(performanceNow);
+    fireEvent.click(container.querySelector(
+      '[data-cell-content-read-all]',
+    ) as HTMLButtonElement);
+
+    // The trace row is still the card's full width — which is three columns
+    // now, not two. A row that still said `"trace trace"` would leave the
+    // reader's column standing over an implicit fourth track.
+    expect((container.firstElementChild as HTMLElement).style.gridTemplateAreas)
+      .toBe('"reader analysis scan" "trace trace trace"');
+    expect(container.querySelector('[data-cell-detail-module="trace"]'))
+      .not.toBeNull();
+    performanceNow.mockRestore();
+  });
+
+  it('states the card measure the reader\'s own arithmetic was written against', () => {
+    // `cellDataReader.derive.ts` restates 728 + 8 rather than importing this
+    // module — a pure derive may not drag a 2,400-line React panel behind it —
+    // so the two statements are pinned against each other here, where both are
+    // in scope.
+    expect(CARD_WIDTH_PX + CARD_SEAM_PX + READER_COLUMN_PX)
+      .toBe(READER_BESIDE_CARD_PX);
+    expect(CARD_WIDTH_PX).toBe(728);
+    expect(CARD_SEAM_PX).toBe(8);
   });
 
   it('keeps scan and memory in one merged analysis window', () => {

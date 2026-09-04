@@ -83,6 +83,41 @@ import {
  *  whole row from it before this component exists. */
 export const READER_ROW_HEIGHT_PX = HUD_TYPE.label * 1.5;
 
+/**
+ * Everything in this reader that is not a row of bytes, in pixels.
+ *
+ * The reader stands beside the analysis plate and is as tall as it (the user's
+ * ruling of 2026-09-05), so the dump gets the plate's height MINUS this, and
+ * the caller divides the remainder into rows. Reservation math only — the
+ * browser lays the real thing out — and deliberately the generous reading of
+ * every term, because a chrome one pixel short is a reader one row taller than
+ * the plate it was supposed to match, and a row that pushes the card down is
+ * the exact defect this number exists to stop.
+ *
+ * Line by line, top to bottom, at the type each part prints:
+ *
+ *     the section's padding, top and bottom            8 + 10
+ *     plate header line box (`section`, 10.5 bold)         14
+ *     the header's margin-bottom                            7
+ *     the loading bar and its margin               2 + 5 = 7
+ *     the dump's border, top and bottom                 1 + 1
+ *     inspector margin, padding and its rule        7 + 5 + 1
+ *     the inspector's own two line boxes (`label`)     2 × 14
+ *     the commands row's margin-top                         7
+ *     a command control (input: text + padding + border)   19
+ *                                                       —————
+ *                                                         117
+ *
+ * Two terms are worth naming. The LOADING BAR is counted even though it only
+ * exists while the node is being asked: a dump that lost a row the moment the
+ * bar appeared would move the bytes somebody was reading, which is the one
+ * thing this card forbids, so the slot is reserved in every phase. And the
+ * INSPECTOR is reserved for TWO lines because it wraps: a selection reads as
+ * `OFF · LEN · SEG · u8 · u16 · u32 · u64 · u128 · UTF-8`, and at this column
+ * width that is more than one line of `label`.
+ */
+export const READER_CHROME_PX = 117;
+
 /** A row's width in characters, and the reason the dump is a fixed measure:
  *
  *      6 offset + 2 gap + 48 hex (16×2 with its group gaps) + 2 gap + 16 ASCII
