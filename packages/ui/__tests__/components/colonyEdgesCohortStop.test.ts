@@ -23,7 +23,17 @@ import {
   COHORT_KEEP_OUT_R,
   COLONY_MIN_SPACING,
 } from '../../src/derives/networkTopology.derive';
-import { colonyEdgePositions } from '../../src/components/ColonyEdges';
+import {
+  AMBIENT_SIGMA_WU,
+  colonyEdgeBrightness,
+  colonyEdgePositions,
+  INFERRED_LENGTH_FLOOR,
+  INFERRED_LENGTH_REFERENCE_WU,
+  INFERRED_LINE_BASE,
+  MEASURED_LINE_BRIGHT,
+  SURGE_SIGMA_WU,
+} from '../../src/components/ColonyEdges';
+import { peerSchema } from '../../src/tweaks/tweakSchema';
 import type { NetworkEdge, NetworkNode, NetworkTopology, Vec3 } from '../../src/types';
 
 const LAYER = readFileSync(
@@ -268,5 +278,87 @@ describe('the trim does not disturb the current running along a link', () => {
     for (const attribute of ['aEdgeParam', 'param[', 'aPhase', 'aSurge', 'aBright']) {
       expect(trim).not.toContain(attribute);
     }
+  });
+});
+
+/**
+ * C-2: the colony's periphery read as a low-poly wireframe and a block fired a
+ * fan of white lasers off the bottom of the frame. Both are the same mistake in
+ * two places — a quantity that belongs to a link's LENGTH stated as if every
+ * link were the same length. The scaffold's lengths span 2.5 to 198 wu.
+ */
+describe('a link’s light falls off with its length', () => {
+  it('keeps a link at the mesh’s own spacing whole and takes a chord to the floor', () => {
+    // The reference IS the spacing: at it the law is a no-op, so the mesh the
+    // eye reads as structure is exactly as bright as it was.
+    expect(colonyEdgeBrightness('inferred', INFERRED_LENGTH_REFERENCE_WU))
+      .toBeCloseTo(INFERRED_LINE_BASE, 9);
+    expect(colonyEdgeBrightness('inferred', 4)).toBeCloseTo(INFERRED_LINE_BASE, 9);
+    // Twice the spacing, half the light; the p99 chord sits on the floor.
+    expect(colonyEdgeBrightness('inferred', 16)).toBeCloseTo(INFERRED_LINE_BASE * 0.5, 9);
+    expect(colonyEdgeBrightness('inferred', 154))
+      .toBeCloseTo(INFERRED_LINE_BASE * INFERRED_LENGTH_FLOOR, 9);
+    expect(colonyEdgeBrightness('inferred', 198))
+      .toBeCloseTo(INFERRED_LINE_BASE * INFERRED_LENGTH_FLOOR, 9);
+    // …and it never goes out: a claim that cannot be seen is not made.
+    expect(colonyEdgeBrightness('inferred', 1e6)).toBeGreaterThan(0);
+  });
+
+  it('never lets an invented link outshine an observed one, at any length', () => {
+    // The measured floor. Our own links are 46–66 wu now that the belt rings
+    // the organism — squarely in the tail the law is written against — so the
+    // law would have made the one tier we can vouch for the faintest in the
+    // mesh. A measured link's brightness says OBSERVED, not SHORT.
+    for (const len of [1, 8, 24, 46, 66, 120, 198]) {
+      expect(colonyEdgeBrightness('measured', len)).toBe(MEASURED_LINE_BRIGHT);
+      expect(colonyEdgeBrightness('measured', len))
+        .toBeGreaterThan(colonyEdgeBrightness('inferred', len));
+    }
+    expect(MEASURED_LINE_BRIGHT).toBeGreaterThan(INFERRED_LINE_BASE);
+  });
+
+  it('weighs the DRAWN segment, which at a cohort is not the node distance', () => {
+    // A cohort-incident link is trimmed at COHORT_LINK_STOP_R, and the light
+    // it carries has to be a property of the segment that is actually there.
+    expect(LAYER).toContain('const dx = pos[6 * i + 3] - pos[6 * i];');
+    expect(LAYER).toContain('const v = colonyEdgeBrightness(e.kind, drawn);');
+    expect(LAYER).toContain("g.setAttribute('aLen', new THREE.BufferAttribute(len, 1));");
+  });
+});
+
+describe('the two bands are widths, not fractions of a link', () => {
+  it('divides both sigmas by the link’s own length, in the shader', () => {
+    expect(LAYER).toContain('return min(0.5, widthWu / max(lenWu, 0.5));');
+    expect(LAYER).toContain('wrapBump(vParam, ac, paramSigma(uAmbientSigma, vLen))');
+    expect(LAYER).toContain('bump(vParam, center, paramSigma(uSurgeSigma, vLen))');
+    // The length has to reach the fragment for either to be possible.
+    expect(LAYER).toContain('attribute float aLen;');
+    expect(LAYER).toContain('vLen = aLen;');
+  });
+
+  it('states the knobs in world units, at today’s band on a median link', () => {
+    // 11.3 wu is the scaffold's median edge, so the picture most of the eye is
+    // looking at does not move: only the tail does.
+    const MEDIAN_INFERRED_WU = 11.3;
+    expect(AMBIENT_SIGMA_WU / MEDIAN_INFERRED_WU).toBeCloseTo(0.17, 1);
+    expect(SURGE_SIGMA_WU / MEDIAN_INFERRED_WU).toBeCloseTo(0.13, 1);
+    expect(peerSchema.ambientSigma.value).toBe(AMBIENT_SIGMA_WU);
+    expect(peerSchema.surgeSigma.value).toBe(SURGE_SIGMA_WU);
+    // A knob whose range is still the old fractions would look like it worked
+    // and would state a band a fifth of a world unit wide.
+    expect(peerSchema.surgeSigma.max).toBeGreaterThanOrEqual(8);
+    expect(peerSchema.ambientSigma.max).toBeGreaterThanOrEqual(8);
+  });
+
+  it('leaves the 198 wu chord’s surge a band, not a stripe down the whole link', () => {
+    // The number C-2 measured: σ 0.13 of a 150 wu chord is a 20 wu band, ~130
+    // px at this camera, and the exhibit was a 322 px streak. In world units
+    // the same chord carries 1.5 wu — about 8 px — wherever it goes.
+    const paramSigma = (widthWu: number, lenWu: number) => Math.min(0.5, widthWu / Math.max(lenWu, 0.5));
+    expect(paramSigma(SURGE_SIGMA_WU, 198) * 198).toBeCloseTo(SURGE_SIGMA_WU, 9);
+    expect(paramSigma(SURGE_SIGMA_WU, 8) * 8).toBeCloseTo(SURGE_SIGMA_WU, 9);
+    // …and a link shorter than the band lights along its whole self rather
+    // than reading past the ends of its own parameter.
+    expect(paramSigma(SURGE_SIGMA_WU, 1)).toBe(0.5);
   });
 });

@@ -199,9 +199,14 @@ export const deliverySchema = {
 export const peerSchema = {
   ambientAmp: { value: 0.22, min: 0, max: 1, step: 0.01, label: 'ambient amp' },
   ambientSpeed: { value: 0.05, min: 0, max: 0.5, step: 0.005, label: 'ambient speed' },
-  ambientSigma: { value: 0.17, min: 0.02, max: 0.5, step: 0.01, label: 'ambient sigma' },
+  // ⚠️ Both sigmas are WORLD UNITS now, not fractions of a link. They were
+  // fractions, which made one number mean a 1 wu band on a k-NN link and a
+  // 20 wu one on a chord; `ColonyEdges` divides by the link's own length. The
+  // defaults are the old fractions read on the median inferred link (11.3 wu),
+  // so the mesh reads as it did and only the tail moves.
+  ambientSigma: { value: 2, min: 0.2, max: 12, step: 0.1, label: 'ambient sigma wu' },
   surgeAmp: { value: 1.1, min: 0, max: 4, step: 0.05, label: 'surge amp' },
-  surgeSigma: { value: 0.13, min: 0.02, max: 0.5, step: 0.01, label: 'surge sigma' },
+  surgeSigma: { value: 1.5, min: 0.2, max: 12, step: 0.1, label: 'surge sigma wu' },
   surgeEase: { value: 0.12, min: 0, max: 0.5, step: 0.01, label: 'surge ease s' },
   colorBoost: { value: SHOCKWAVE_COLOR_BOOST, min: 0, max: 15, step: 0.1, label: 'shock color boost' },
   alphaBoost: { value: SHOCKWAVE_ALPHA_BOOST, min: 0, max: 12, step: 0.1, label: 'shock alpha boost' },

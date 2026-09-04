@@ -544,18 +544,32 @@ describe('vertex attribute budget', () => {
     expect(MAX_VERTEX_ATTRIBUTES - (motes?.total ?? 0)).toBe(8);
   });
 
-  it('keeps the colony edge program exactly where it was', () => {
+  it('charges the colony edge program its seventh lane, for the link’s length', () => {
     // ⚠️ THE MINING CHANNEL IS ITS OWN PROGRAM, AND THE BUDGET IS HALF THE
     // REASON. The obvious shape was a mining term folded into
     // `colonyEdgeMaterial` — one draw instead of two — and it would have put
     // more lanes on the busiest vertex program in this scene AND made every
     // producer-set change rewrite a lane across every edge in the colony, most
-    // of them zero. Stated as an exact number so a seventh lane here is a
-    // deliberate edit rather than a drift the browser console alone would
-    // report.
+    // of them zero. Stated as an exact number so a lane here is a deliberate
+    // edit rather than a drift the browser console alone would report.
+    //
+    // ⭐ THE SEVENTH IS `aLen`, AND IT IS DELIBERATE. Both bands this material
+    // draws are stated in world units and evaluated on a 0→1 parameter, so the
+    // fragment needs the link's own length to convert between them (C-2: one
+    // sigma meant a 1 wu band on a k-NN link and a 20 wu one on a chord). It
+    // is edge-shared data on a per-vertex program, so there is nowhere else
+    // for it to ride.
+    //
+    // ⚠️ AND IT IS THE LAST ONE THAT COMES FREE. At 10 of 16 this program has
+    // six slots left, which is not tight — but the next lane should not be
+    // asked for either: `aSurgeT0`, `aSurgeT1` and `aSurgeP0` are three floats
+    // written together, per block, on the same edges, and they pack into one
+    // `vec3` that gives two slots back. Pack before asking.
     const edges = measured.find(({ name }) => name === 'colonyEdgeMaterial');
     expect(edges).toBeDefined();
-    expect([edges?.custom, edges?.injected, edges?.total]).toEqual([6, 3, 9]);
+    expect(edges?.names).toContain('aLen');
+    expect([edges?.custom, edges?.injected, edges?.total]).toEqual([7, 3, 10]);
+    expect(MAX_VERTEX_ATTRIBUTES - (edges?.total ?? 0)).toBe(6);
   });
 
   it('charges the measured belt its one breath lane, and nothing more', () => {

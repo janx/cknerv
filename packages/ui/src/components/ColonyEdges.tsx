@@ -45,8 +45,75 @@ import { COHORT_LINK_STOP_R } from '../materials/colonyLens';
 // Base line brightness. Inferred edges are the faint "possible network" scaffold;
 // measured edges glow brighter (the honesty gradient). Raised from the original
 // barely-there values so the mesh reads as persistent structure. Tune live.
-const INFERRED_LINE_BASE = 0.42;
-const MEASURED_LINE_BRIGHT = 0.72;
+export const INFERRED_LINE_BASE = 0.42;
+export const MEASURED_LINE_BRIGHT = 0.72;
+
+/**
+ * ⭐ A LINK'S LIGHT FALLS OFF WITH ITS LENGTH — the inferred ones, at least.
+ *
+ * The colony's invented scaffold is a k-nearest-neighbour graph (`COLONY_KNN`
+ * 4) plus a long-range chord with probability `COLONY_LONGRANGE_PROB` 0.35, so
+ * over a 92 wu disc the length distribution is not a bump, it is a tail:
+ * median 11.3 wu, p90 47, p99 154, longest 198. Every one of them carried the
+ * same 0.42, so the ~10 % of edges that are chords carried ~10 % of the count
+ * and most of the LIGHT — a chord is twenty times the pixels of a k-NN link.
+ * The colony's periphery read as a low-poly Delaunay wireframe rather than a
+ * membrane, which is report C-2's finding and the p2p memory's open note from
+ * July.
+ *
+ * `8 / len` is the k-NN spacing over the length: a link at the mesh's own
+ * spacing keeps all of its light, one twice that keeps half, and the floor
+ * stops a 198 wu chord from disappearing entirely — the scaffold is a claim
+ * about structure and a claim that cannot be seen is not made.
+ *
+ * ⚠️ MEASURED LINKS ARE EXEMPT, and it is not a fudge. Since the belt was
+ * moved out to ring the organism our own twelve links are 46–66 wu long, i.e.
+ * squarely in the tail this law is written against — the law would take them to
+ * the floor and the one tier we can actually vouch for would be the faintest
+ * thing in the mesh. A measured link's brightness says OBSERVED, not SHORT.
+ * `MEASURED_LINE_BRIGHT` is flat and stands above the law's own ceiling
+ * (`INFERRED_LINE_BASE` × 1), so however long our link to a peer becomes it is
+ * still brighter than the brightest invented one.
+ */
+export const INFERRED_LENGTH_REFERENCE_WU = 8;
+export const INFERRED_LENGTH_FLOOR = 0.35;
+
+/** One edge's base brightness: its tier's constant, weighted by length for the
+ *  invented tier only. Pure, and exported so the law can be read off the
+ *  arithmetic instead of off a screenshot. */
+export function colonyEdgeBrightness(kind: string, lengthWu: number): number {
+  if (kind === 'measured') return MEASURED_LINE_BRIGHT;
+  const fall = lengthWu > 0
+    ? Math.min(1, Math.max(INFERRED_LENGTH_FLOOR, INFERRED_LENGTH_REFERENCE_WU / lengthWu))
+    : 1;
+  return INFERRED_LINE_BASE * fall;
+}
+
+/**
+ * ⭐ THE TWO BANDS ARE WIDTHS, NOT FRACTIONS.
+ *
+ * `wrapBump` and `bump` are evaluated on `aEdgeParam`, which runs 0→1 over
+ * whatever the link's length happens to be, so a sigma stated there is a
+ * FRACTION OF THE LINK: the same 0.13 was a 1 wu band on an 8 wu k-NN link and
+ * a 20 wu band on a 150 wu chord — and it crossed it in the same window, so it
+ * also travelled twenty times as fast. On a block the loudest thing on screen
+ * was a fan of white lasers running off the bottom of the frame (C-2's exhibit,
+ * a 322 px streak).
+ *
+ * So both sigmas are stated in WORLD UNITS and divided by the link's own drawn
+ * length in the shader. Every link then carries the same physical band at the
+ * same physical speed, which is what "data flowing between peers" would look
+ * like if it were a thing with a size. The numbers below are today's fractions
+ * read on the MEDIAN inferred link (0.17 and 0.13 × 11.3 wu), so the mesh most
+ * of the eye is looking at is unchanged and only the tail moves.
+ *
+ * The alternative C-2 offered — do not arm the surge on links over 40 wu — is
+ * not taken: a chord is a claim that the two ends are one hop apart, and a
+ * propagation that skips exactly the links that cross the colony would be a
+ * lie told to make a picture calmer.
+ */
+export const AMBIENT_SIGMA_WU = 2;
+export const SURGE_SIGMA_WU = 1.5;
 
 /** Per-edge ambient phase in [0,1): a stable hash of the endpoints so each link's
  *  drift starts at a different point (the mesh flows, but isn't a synced pulse). */
@@ -163,9 +230,10 @@ export function makeColonyEdgeMaterial(): THREE.ShaderMaterial {
       // Zero-drift defaults (seeded once; refreshed per-frame from LIVE.peer.* below).
       uAmbientAmp: { value: 0.22 },
       uAmbientSpeed: { value: 0.05 },
-      uAmbientSigma: { value: 0.17 },
+      // World units; the fragment divides by the link's own length.
+      uAmbientSigma: { value: AMBIENT_SIGMA_WU },
       uSurgeAmp: { value: 1.1 },
-      uSurgeSigma: { value: 0.13 },
+      uSurgeSigma: { value: SURGE_SIGMA_WU },
       uSurgeEase: { value: 0.12 },
       uContextEnergy: { value: 1 },
     },
@@ -173,12 +241,14 @@ export function makeColonyEdgeMaterial(): THREE.ShaderMaterial {
       attribute float aBright;
       attribute float aEdgeParam;
       attribute float aPhase;
+      attribute float aLen;
       attribute float aSurgeT0;
       attribute float aSurgeT1;
       attribute float aSurgeP0;
       varying float vB;
       varying float vParam;
       varying float vPhase;
+      varying float vLen;
       varying float vS0;
       varying float vS1;
       varying float vSP0;
@@ -186,6 +256,7 @@ export function makeColonyEdgeMaterial(): THREE.ShaderMaterial {
         vB = aBright;
         vParam = aEdgeParam;
         vPhase = aPhase;
+        vLen = aLen;
         vS0 = aSurgeT0;
         vS1 = aSurgeT1;
         vSP0 = aSurgeP0;
@@ -207,9 +278,18 @@ export function makeColonyEdgeMaterial(): THREE.ShaderMaterial {
       varying float vB;
       varying float vParam;
       varying float vPhase;
+      varying float vLen;
       varying float vS0;
       varying float vS1;
       varying float vSP0;
+
+      // A band stated in WORLD UNITS, carried into this link's own 0→1
+      // parameter. Half the parameter is the widest a wrapped band can be, so
+      // a physical width larger than the link lights the whole of it rather
+      // than running off the end of the numbers.
+      float paramSigma(float widthWu, float lenWu) {
+        return min(0.5, widthWu / max(lenWu, 0.5));
+      }
 
       // Looping band: wrap-around distance so a link's drift never seams at 0/1.
       float wrapBump(float p, float center, float sigma) {
@@ -229,7 +309,9 @@ export function makeColonyEdgeMaterial(): THREE.ShaderMaterial {
         // Ambient current — a soft band drifting along the link, scaled by base
         // (honesty) with a floor so even inferred links visibly flow.
         float ac = fract(uTime * uAmbientSpeed + vPhase);
-        float ambient = uAmbientAmp * wrapBump(vParam, ac, uAmbientSigma) * (0.45 + 0.55 * vB);
+        float ambient = uAmbientAmp
+          * wrapBump(vParam, ac, paramSigma(uAmbientSigma, vLen))
+          * (0.45 + 0.55 * vB);
 
         // Block surge — bright band flowing parent→child over [vS0, vS1]. Only
         // tree edges carry a real window (sentinel vS1 <= vS0 disables it).
@@ -240,7 +322,7 @@ export function makeColonyEdgeMaterial(): THREE.ShaderMaterial {
           float center = vSP0 + frac * (1.0 - 2.0 * vSP0);
           float env = smoothstep(vS0 - uSurgeEase, vS0, uTime)
                     * (1.0 - smoothstep(vS1, vS1 + uSurgeEase * 2.0, uTime));
-          surge = uSurgeAmp * bump(vParam, center, uSurgeSigma) * env;
+          surge = uSurgeAmp * bump(vParam, center, paramSigma(uSurgeSigma, vLen)) * env;
         }
 
         // AdditiveBlending applies source alpha to RGB once more. Keep the
@@ -296,12 +378,22 @@ export default function ColonyEdges({
     const bright = new Float32Array(edges.length * 2); // base confidence brightness
     const param = new Float32Array(edges.length * 2);  // 0 at a, 1 at b
     const phase = new Float32Array(edges.length * 2);  // ambient drift phase (edge-shared)
+    const len = new Float32Array(edges.length * 2);    // the DRAWN segment's world length
     // Surge stamps — sentinel −1e9 = "no surge on this edge this block".
     const surgeT0 = new Float32Array(edges.length * 2).fill(-1e9);
     const surgeT1 = new Float32Array(edges.length * 2).fill(-1e9);
     const surgeP0 = new Float32Array(edges.length * 2);
     edges.forEach((e, i) => {
-      const v = e.kind === 'measured' ? MEASURED_LINE_BRIGHT : INFERRED_LINE_BASE;
+      // The DRAWN length, off the very buffer the GPU rasterises: an edge into
+      // a cohort is trimmed at `COHORT_LINK_STOP_R`, and the band that crosses
+      // it has to be a width on the segment that is actually there.
+      const dx = pos[6 * i + 3] - pos[6 * i];
+      const dy = pos[6 * i + 4] - pos[6 * i + 1];
+      const dz = pos[6 * i + 5] - pos[6 * i + 2];
+      const drawn = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      len[2 * i] = drawn;
+      len[2 * i + 1] = drawn;
+      const v = colonyEdgeBrightness(e.kind, drawn);
       bright[2 * i] = v;
       bright[2 * i + 1] = v;
       // ⭐ 0 AND 1 OVER THE DRAWN SEGMENT, whether or not it was trimmed. The
@@ -318,6 +410,7 @@ export default function ColonyEdges({
     g.setAttribute('aBright', new THREE.BufferAttribute(bright, 1));
     g.setAttribute('aEdgeParam', new THREE.BufferAttribute(param, 1));
     g.setAttribute('aPhase', new THREE.BufferAttribute(phase, 1));
+    g.setAttribute('aLen', new THREE.BufferAttribute(len, 1));
     g.setAttribute('aSurgeT0', new THREE.BufferAttribute(surgeT0, 1));
     g.setAttribute('aSurgeT1', new THREE.BufferAttribute(surgeT1, 1));
     g.setAttribute('aSurgeP0', new THREE.BufferAttribute(surgeP0, 1));
