@@ -41,7 +41,8 @@ function BlockchainReadout({ chain, cellPopulation, enrichmentSource, assetEcosy
   activityFeed?: ActivityFeedRecord | null;
   transactionHorizon?: TransactionHorizonRecord | null;
   compactActivity?: boolean;
-  /** The rail has collapsed (≤1280): the three sections under the chain rows
+  /** The rail has collapsed (`RAILS_COLLAPSE_MAX_WIDTH_PX`): the three
+   *  sections under the chain rows
    *  fold to their headers and their counts, so the panel stops scrolling
    *  behind a 5 px bar and its bottom bracket stays on screen. The five chain
    *  rows above them do not fold — tip, epoch, mempool and reorgs are what

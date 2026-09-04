@@ -24,10 +24,13 @@ function FlowRow({ label, direction, color, width, value }: { label: string; dir
 
 /** The rail's measure, and the collapsed one.
  *
- * At 1,280 the two rails and the card leave a 550 px hole for a stage that is
- * the product, and the HUD is 57 % of the page. Collapsed, a mesh panel is its
- * header, its hero and one row — the reading you would keep if you could keep
- * one — at a measure the three-word rows still fit. */
+ * At 1,280 two full rails leave a 550 px hole for a stage that is the product,
+ * and the HUD is 57 % of the page; at 1,440 they leave 710 for a card that is
+ * 728. Collapsed, a mesh panel is its header, its hero and one row — the
+ * reading you would keep if you could keep one — at a measure the three-word
+ * rows still fit. `HudOverlay.RAILS_COLLAPSE_MAX_WIDTH_PX` owns the width at
+ * which that happens; it is derived from this measure, so the two move
+ * together. */
 const PANEL_WIDTH_PX = 302;
 const DENSE_PANEL_WIDTH_PX = 210;
 

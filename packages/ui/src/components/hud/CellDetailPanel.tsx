@@ -183,11 +183,13 @@ const CARD_WIDE_WIDTH_PX = CARD_WIDTH_PX + CARD_SEAM_PX + READER_NOTCH_PX;
  *   hole ≥ 770  the 728 card, reader under it — still placed beside the cell
  *   below       the same 728 card, which the solver now stacks or docks
  *
- * A 1,920 stage leaves 1,190 and takes the first rung; a 1,440 leaves 710 and
- * a 1,280 (rails collapsed) leaves 714, so both take the floor — and the only
- * thing the wide card was buying there was a taller dump. So the dump gives up
- * its height instead: six rows under the two columns, the card at the measure
- * it has when a Cell holds nothing, and a composition the stage can hold.
+ * A 1,920 stage leaves 1,190 and takes the first rung. A 1,440 and a 1,280
+ * both collapse their rails (`HudOverlay.RAILS_COLLAPSE_MAX_WIDTH_PX`) and are
+ * left with 874 and 714, so both take the middle rung and the floor — and the
+ * only thing the wide card was buying there was a taller dump. So the dump
+ * gives up its height instead: six rows under the two columns, the card at the
+ * measure it has when a Cell holds nothing, and a composition the stage can
+ * hold.
  *
  * This is the `readerPlacement(innerWidth) >= 1396 ? 'beside' : 'below'` rule
  * the R2 rewrite removed and never replaced, restated in the terms that

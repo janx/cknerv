@@ -38,10 +38,11 @@ function NetworkPanel({ summary, consensus, syncRatio, enrichmentSource, network
    *  window whose numerators do not add up to it — and a refusal prints
    *  nothing rather than a partial truth. */
   producers?: BlockProducerView | null;
-  /** The rail has collapsed (≤1280): header, the peer count, and the head
-   *  consensus bar the count is a count OF. Everything below it — the tallies,
-   *  the catch-up gauge, the cohorts and the atlas — is reachable on a stage
-   *  wide enough to hold the scene as well, and a rail that keeps them at 1,280
+  /** The rail has collapsed (`RAILS_COLLAPSE_MAX_WIDTH_PX`): header, the peer
+   *  count, and the head consensus bar the count is a count OF. Everything
+   *  below it — the tallies, the catch-up gauge, the cohorts and the atlas — is
+   *  reachable on a stage wide enough to hold the scene as well, and a rail
+   *  that keeps them on a page too narrow for a card to stand beside its cell
    *  is a rail that has decided the HUD is the page. */
   dense?: boolean;
   style?: CSSProperties;

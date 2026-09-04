@@ -57,7 +57,8 @@ export default function ChainCapacityReadout({ source, record, census = null, ce
   record?: AssetEcosystemRecord | null;
   census?: ChainCensus | null;
   censusStale?: boolean;
-  /** The rail has collapsed (≤1280): the section is its own header and the
+  /** The rail has collapsed (`RAILS_COLLAPSE_MAX_WIDTH_PX`): the section is
+   *  its own header and the
    *  count in it, nothing more. Distinct from `compact`, which is the SHORT
    *  viewport's answer and keeps whatever the section can still afford —
    *  a narrow stage and a short one are two different shortages, and a panel

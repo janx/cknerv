@@ -71,18 +71,21 @@ const ROOT_STYLE: CSSProperties = { position: 'fixed', inset: 0, zIndex: 15, poi
 // resolves to the plain source-over already written here, and asking for one
 // costs the compositor an isolated full-viewport blending group per frame.
 const SCAN_STYLE: CSSProperties = { position: 'absolute', inset: 0, pointerEvents: 'none', background: `repeating-linear-gradient(0deg,${rgba(HUD_COLORS.heroInk, 0.035)} 0 1px,transparent 1px 3px)`, opacity: 0.5 };
+/** How far each rail stands off the page edge. One number: the two rails are
+ *  one frame, and the collapse rule below measures the stage BETWEEN them. */
+const RAIL_INSET_PX = 14;
 // Right-edge MESH RAIL: the CELL zone stacked over the PEER zone, right-anchored.
 // Each zone is a flex row [detail | mesh] (network detail fans LEFT of its mesh); the
 // rail is a flex column so the zones stack and details top-align to their mesh
 // with no height math. Panels flow via PANEL_FLOW (position:relative) instead of
 // self-positioning. Container shrink-wraps and pins its right edge, so the meshes
 // never shift when a detail appears — the row just grows leftward.
-const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 14, display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
+const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: RAIL_INSET_PX, display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
 const LEFT_PANEL_GAP_PX = 12;
 // Left HUD layout: the upper information cluster may scroll, while PULSE uses an
 // auto margin as a true bottom-left anchor. The two regions share one bounded
 // flex column, so an unusually tall CKB/DAO readout can never overlap ECG·04.
-const LEFT_HUD_STYLE: CSSProperties = { position: 'absolute', left: 14, bottom: 14, display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-start', minHeight: 0 };
+const LEFT_HUD_STYLE: CSSProperties = { position: 'absolute', left: RAIL_INSET_PX, bottom: 14, display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-start', minHeight: 0 };
 // The cluster stretches to reserve the vertical space above PULSE. It must
 // stay click-through: otherwise its transparent tail intercepts CellGalaxy
 // pointer events far below the actual CKB / DAO panels. The concrete scroll
@@ -114,6 +117,58 @@ const CHAIN_PANEL_DENSE_STYLE: CSSProperties = { ...PANEL_FLOW, width: `min(${CH
 // visible or CKB·01 is temporarily hidden from the panel menu.
 const PULSE_PANEL_STYLE: CSSProperties = { ...PANEL_FLOW, width: `min(${CHAIN_PANEL_WIDTH_PX}px, calc(100vw - 58px))` };
 const PULSE_PANEL_DENSE_STYLE: CSSProperties = { ...PANEL_FLOW, width: `min(${CHAIN_PANEL_DENSE_WIDTH_PX}px, calc(100vw - 58px))` };
+
+/** What a `HudPanel` adds around its declared measure: `13px 15px` of padding
+ *  on a box that is not `border-box`, so 30 px of width. Restated here rather
+ *  than imported as a style — the primitive states it as a CSS shorthand, and
+ *  the arithmetic below needs a number. A test renders a `HudPanel` and fails
+ *  if the two ever disagree. */
+const HUD_PANEL_FRAME_PX = 30;
+/** The mesh rail's own measure, restated from `CellsPanel` / `NetworkPanel`
+ *  (which state it twice between them). Same bargain as the frame above: the
+ *  toll is a test that renders both panels and reads the width they actually
+ *  set. */
+const MESH_PANEL_WIDTH_PX = 302;
+
+/** The page the two rails take when neither has collapsed: an inset, a chain
+ *  panel and its frame on the left; a mesh panel and its frame and an inset on
+ *  the right. 730 px, at every viewport — which is the whole trouble. */
+const RAILS_FULL_WIDTH_PX = RAIL_INSET_PX * 2
+  + (CHAIN_PANEL_WIDTH_PX + HUD_PANEL_FRAME_PX)
+  + (MESH_PANEL_WIDTH_PX + HUD_PANEL_FRAME_PX);
+
+/** The stage a card needs to stand BESIDE the thing it points at: the narrow
+ *  card's own measure, the tether the placement solver leaves between a card
+ *  and its entity, and a margin so the card lands on stage rather than flush
+ *  against a rail. `CellDetailPanel.CARD_WIDTH_PX` and
+ *  `sceneInspection.INSPECTOR_GAP_PX` are the two authorities; both are
+ *  restated here and both are tolled by a test that imports them.
+ *
+ * ⚠️ Restated, not imported, and the reason is A1's: `INSPECTOR_GAP_PX` lives
+ * in `sceneInspection.tsx`, which pulls in `@react-three/fiber`. The DOM-only
+ * HUD root does not acquire an R3F import to say how wide a card is. */
+const RAILS_COLLAPSE_CARD_PX = 728;
+const RAILS_COLLAPSE_TETHER_PX = 42;
+const RAILS_COLLAPSE_MARGIN_PX = 24;
+const RAILS_COLLAPSE_HOLE_PX = RAILS_COLLAPSE_CARD_PX
+  + RAILS_COLLAPSE_TETHER_PX
+  + RAILS_COLLAPSE_MARGIN_PX;
+
+/** The widest page whose rails collapse: the one where the stage between two
+ *  FULL rails is a pixel short of holding a card beside its cell. `max-width`
+ *  is inclusive, hence the −1; a page one pixel wider keeps its rails and
+ *  still has room. */
+const RAILS_COLLAPSE_MAX_WIDTH_PX = RAILS_FULL_WIDTH_PX + RAILS_COLLAPSE_HOLE_PX - 1;
+const RAILS_COLLAPSE_QUERY = `(max-width: ${RAILS_COLLAPSE_MAX_WIDTH_PX}px)`;
+
+export {
+  HUD_PANEL_FRAME_PX,
+  MESH_PANEL_WIDTH_PX,
+  RAILS_FULL_WIDTH_PX,
+  RAILS_COLLAPSE_HOLE_PX,
+  RAILS_COLLAPSE_MARGIN_PX,
+  RAILS_COLLAPSE_MAX_WIDTH_PX,
+};
 
 /** The stream banner with its own clock: its `LAST FRAME` age is the one
  *  reading in the top slot that changes every second, so the summary is
@@ -294,16 +349,31 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
   // The control-dense top bar needs to reflow before the panel rail itself does;
   // this also leaves headroom for transient stream/source chips.
   const compactTopBarWidth = useMediaQuery('(max-width: 1280px)');
-  // …and at the same width the rails themselves collapse. Measured at
-  // `25c7d5a`: 1,280 leaves a 550 px hole (43 % of the page) between two rails
-  // that keep their full 1920 measure, and CKB·01 scrolls behind a 5 px bar
-  // with its bottom bracket off screen. The scene is the product; a HUD that
-  // takes 57 % of a laptop has decided otherwise. So the mesh panels drop to a
-  // header, a hero and one row, and CKB·01's three lower sections fold to
-  // their headers and their counts. Its own query rather than a share of the
-  // top bar's: what the strip does with its controls and what a rail does with
-  // a stage are two decisions, and they will not always break at one number.
-  const railsCollapsed = useMediaQuery('(max-width: 1280px)');
+  // …and at a width of its own the rails themselves collapse: the mesh panels
+  // drop to a header, a hero and one row, and CKB·01's three lower sections
+  // fold to their headers and their counts. Its own query rather than a share
+  // of the top bar's: what the strip does with its controls and what a rail
+  // does with a stage are two decisions, and they will not always break at one
+  // number.
+  //
+  // The number is DERIVED and not chosen (`RAILS_COLLAPSE_MAX_WIDTH_PX`,
+  // 1,523 px today). The first cut of this rule was a flat `1280px`, picked
+  // because 1,280 was the laptop stage the round put in scope; but what a rail
+  // owes the stage is not a screen size, it is a clearance. A card stands
+  // BESIDE the cell it points at, and it can only do that if the stage between
+  // the rails can hold card + tether + margin. So the rails collapse exactly
+  // when they would otherwise take that away — at `25c7d5a` a 1,440 px page
+  // left 710 px of stage for a 728 px card, and the card had nowhere to be but
+  // on top of a rail.
+  //
+  // ⚠️ It is a step, and an honest reading owns it: two rail measures and one
+  // threshold mean the stage GROWS by 164 px as the page narrows past 1,524,
+  // and the card's own ladder answers that by going wide again. Any collapse
+  // rule with two fixed measures has that step somewhere; this one puts it
+  // where the alternative is a composition that does not exist — below the
+  // threshold a card cannot stand beside its cell at all — rather than where
+  // the only loss is some clear stage.
+  const railsCollapsed = useMediaQuery(RAILS_COLLAPSE_QUERY);
   // Phones get a third priority row so display/quality controls never depend
   // on an initially hidden horizontal-scroll position.
   const mobileTopBar = useMediaQuery('(max-width: 560px)');

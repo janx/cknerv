@@ -48,7 +48,11 @@ vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
   SCAN_PERIOD_S: 4.2,
 }));
 
-import HudOverlay from '../../../src/components/hud/HudOverlay';
+import HudOverlay, {
+  RAILS_COLLAPSE_HOLE_PX,
+  RAILS_COLLAPSE_MAX_WIDTH_PX,
+  RAILS_FULL_WIDTH_PX,
+} from '../../../src/components/hud/HudOverlay';
 import type { CellsStats } from '../../../src/derives/cellsStats.derive';
 
 afterEach(() => {
@@ -1323,8 +1327,13 @@ describe('HudOverlay — everything below the top slot clears the whole stack', 
  * The collapse rule. jsdom lays nothing out, so the oracle is the arithmetic
  * the layout is made of rather than a rendered box: every left panel's measure
  * plus the 14 px inset, every right panel's measure plus its own, and the hole
- * that leaves. Both stages the round put in scope are read; the rendered
- * version of the same reading is the live rects dump in `runs/A5/`.
+ * that leaves. The rendered version of the same reading is the live rects dump
+ * in `runs/A5b/`.
+ *
+ * The threshold itself is not a screen size: the rails collapse exactly where
+ * two full rails would stop leaving room for a card to stand beside its cell
+ * (`RAILS_COLLAPSE_MAX_WIDTH_PX`, 1,523 px). So 1,440 is a COLLAPSED stage here
+ * and 1,600 is the one that keeps its full measure.
  */
 describe('HudOverlay rail collapse', () => {
   /** Outer box of a HudPanel: its declared measure plus `13px 15px` of padding
@@ -1391,11 +1400,49 @@ describe('HudOverlay rail collapse', () => {
   });
 
   it('keeps the full measure above the threshold', () => {
-    const { container } = stage(1440);
+    const { container } = stage(1600);
 
     expect(panelBox(container, 'chain')).toBe(370);
     expect(panelBox(container, 'cells')).toBe(332);
     expect(panelBox(container, 'peers')).toBe(332);
+  });
+
+  it('leaves exactly the rails the collapse rule is stated from', () => {
+    // The rule's own arithmetic against the rails as rendered: two insets, a
+    // chain panel and a mesh panel, each in its frame. `RAILS_FULL_WIDTH_PX`
+    // restates the mesh measure and the frame; this is the toll on both.
+    const { container } = stage(1600);
+
+    expect(1600 - holeAt(container, 1600)).toBe(RAILS_FULL_WIDTH_PX);
+  });
+
+  it('leaves a 1440px page room for a card beside its cell', () => {
+    // The stage this task exists for. Two full rails leave 710 px there, and
+    // the narrowest card this dialect has is 728 — so before the collapse
+    // reached 1,440 every family (beside, stacked, docked) landed the card on
+    // a rail. Collapsed, the same page leaves 874.
+    const { container } = stage(1440);
+
+    expect(panelBox(container, 'chain')).toBe(298);
+    expect(panelBox(container, 'cells')).toBe(240);
+    expect(holeAt(container, 1440)).toBeGreaterThanOrEqual(RAILS_COLLAPSE_HOLE_PX);
+  });
+
+  it('collapses exactly where a full-railed page runs out of that room', () => {
+    // Both sides of the threshold, and the threshold is the point: one pixel
+    // above it the rails stay full and the stage still holds card + tether +
+    // margin; at it the stage would have been a pixel short, so the rails give
+    // way instead.
+    const above = stage(RAILS_COLLAPSE_MAX_WIDTH_PX + 1);
+    expect(panelBox(above.container, 'chain')).toBe(370);
+    expect(holeAt(above.container, RAILS_COLLAPSE_MAX_WIDTH_PX + 1))
+      .toBeGreaterThanOrEqual(RAILS_COLLAPSE_HOLE_PX);
+    cleanup();
+
+    const at = stage(RAILS_COLLAPSE_MAX_WIDTH_PX);
+    expect(panelBox(at.container, 'chain')).toBe(298);
+    expect(RAILS_COLLAPSE_MAX_WIDTH_PX - RAILS_FULL_WIDTH_PX)
+      .toBeLessThan(RAILS_COLLAPSE_HOLE_PX);
   });
 
   it('keeps CKB\u00b701\u2019s own five rows through the collapse', () => {
@@ -1427,7 +1474,7 @@ describe('HudOverlay rail collapse', () => {
   });
 
   it('keeps every row above the threshold', () => {
-    const { container } = stage(1440);
+    const { container } = stage(1600);
     const cells = container.querySelector('[data-hud-panel="cells"]') as HTMLElement;
     const chainPanel = container.querySelector('[data-hud-panel="chain"]') as HTMLElement;
 

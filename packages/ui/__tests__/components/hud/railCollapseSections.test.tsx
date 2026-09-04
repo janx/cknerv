@@ -7,7 +7,18 @@ import type {
 } from '@cknerv/types';
 import ActivityFeedReadout from '../../../src/components/hud/ActivityFeedReadout';
 import TransactionHorizonReadout from '../../../src/components/hud/TransactionHorizonReadout';
-import { PanelHeader } from '../../../src/components/hud/primitives';
+import { HudPanel, PanelHeader } from '../../../src/components/hud/primitives';
+import { CHAIN_PANEL_WIDTH_PX } from '../../../src/components/hud/BlockchainReadout';
+import {
+  HUD_PANEL_FRAME_PX,
+  MESH_PANEL_WIDTH_PX,
+  RAILS_COLLAPSE_HOLE_PX,
+  RAILS_COLLAPSE_MARGIN_PX,
+  RAILS_COLLAPSE_MAX_WIDTH_PX,
+  RAILS_FULL_WIDTH_PX,
+} from '../../../src/components/hud/HudOverlay';
+import { CARD_WIDTH_PX } from '../../../src/components/hud/CellDetailPanel';
+import { INSPECTOR_GAP_PX } from '../../../src/components/sceneInspection';
 
 afterEach(cleanup);
 
@@ -108,5 +119,48 @@ describe('rail collapse · the panel header at a narrow measure', () => {
     expect(cjk.style.whiteSpace).toBe('nowrap');
     expect(cjk.style.flex).toBe('0 0 auto');
     expect(tag.style.whiteSpace).toBe('nowrap');
+  });
+});
+
+/**
+ * The collapse threshold is arithmetic, and every number in it belongs to
+ * somebody else. `HudOverlay` restates four of them — a panel's frame, the mesh
+ * rail's measure, the card's measure and the tether under it — because the two
+ * modules that own the last pair drag a 2,400-line panel and `@react-three/
+ * fiber` behind them, and the DOM-only HUD root takes neither. A restatement
+ * without a toll is a second definition, so here are the tolls: this file
+ * imports both card authorities and reads the primitive's own frame, and
+ * `HudOverlay.test.tsx` renders the rails and fails if the measure they set is
+ * not the one the threshold is stated from.
+ */
+describe('rail collapse · the threshold is derived, and every term is tolled', () => {
+  it('states a panel frame the primitive actually draws', () => {
+    const { container } = render(<HudPanel>{null}</HudPanel>);
+    const panel = container.querySelector('[data-hud-occlusion="true"]') as HTMLElement;
+
+    expect(panel.style.padding).toBe('13px 15px');
+    const padX = Number.parseFloat(panel.style.padding.split(' ')[1]);
+    expect(padX * 2).toBe(HUD_PANEL_FRAME_PX);
+  });
+
+  it('needs exactly a card, its tether and a margin of stage', () => {
+    // The requirement the rule exists to protect, read from the two modules
+    // that own it rather than from the HUD's own restatement.
+    expect(RAILS_COLLAPSE_HOLE_PX).toBe(
+      CARD_WIDTH_PX + INSPECTOR_GAP_PX + RAILS_COLLAPSE_MARGIN_PX,
+    );
+  });
+
+  it('collapses at the width where two full rails stop leaving it', () => {
+    expect(RAILS_FULL_WIDTH_PX).toBe(
+      14 * 2 + (CHAIN_PANEL_WIDTH_PX + HUD_PANEL_FRAME_PX)
+      + (MESH_PANEL_WIDTH_PX + HUD_PANEL_FRAME_PX),
+    );
+    // One pixel of stage short is the whole rule: the widest page that
+    // collapses is the widest one whose full-railed stage cannot hold the card.
+    expect(RAILS_COLLAPSE_MAX_WIDTH_PX - RAILS_FULL_WIDTH_PX)
+      .toBe(RAILS_COLLAPSE_HOLE_PX - 1);
+    // …and the 1,440 stage this task exists for is inside it.
+    expect(RAILS_COLLAPSE_MAX_WIDTH_PX).toBeGreaterThanOrEqual(1440);
   });
 });
