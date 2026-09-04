@@ -445,7 +445,7 @@ function CellDisplayControl({
           lineHeight: 1,
         }}
       >
-        CELLS
+        STAGE CELLS
       </span>
       <output
         data-cell-display-shown

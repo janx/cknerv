@@ -657,7 +657,7 @@ describe('HudOverlay', () => {
     expect(container.querySelector('[data-stream-stale-frame]')).not.toBeNull();
     expect(container.querySelector('[data-stream-chip]')).toBeNull();
     expect(container.textContent).toContain('DATA FROZEN');
-    expect(container.textContent).toContain('CELLS');
+    expect(container.textContent).toContain('STAGE CELLS');
     expect(container.textContent).toContain('NOMINAL');
     const meshRail = container.querySelector('.cknerv-mesh-rail') as HTMLElement;
     expect(meshRail.style.top).toBe('78px');
