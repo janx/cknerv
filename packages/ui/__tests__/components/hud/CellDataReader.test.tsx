@@ -1,4 +1,4 @@
-// CKBYTES · SCAN·03, driven at a fixed viewport.
+// CKBYTES · SCAN·02, driven at a fixed viewport.
 //
 // Every number this file asserts is one the reader was HANDED — `visibleRows`,
 // the row height, `totalBytes`, a `scrollTop`, a `clientY` — because jsdom lays
@@ -626,6 +626,46 @@ describe('CellDataReader', () => {
 
       expect(dumpOf(container).style.height).toBe(`${6 * READER_ROW_HEIGHT_PX}px`);
       expect(mapOf(container)).not.toBeNull();
+    });
+
+    it('draws a single whole-payload band as a dot, not as a fill', () => {
+      // C7: one segment over the whole payload gives the drawing nothing to
+      // say, and a solid lavender bar says it at full volume. The strip is
+      // still the scrollbar, so the band becomes a mark and the viewport rides
+      // over it. Recorded off a real 2D context — the suite's global stub
+      // swallows `fillRect` — and read as geometry rather than as colour.
+      const fills: { x: number; y: number; w: number; h: number }[] = [];
+      const original = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = (() => ({
+        fillStyle: '',
+        globalAlpha: 1,
+        clearRect: () => {},
+        fillRect: (x: number, y: number, w: number, h: number) => {
+          fills.push({ x, y, w, h });
+        },
+      })) as unknown as typeof original;
+      try {
+        const { container } = reader({
+          bytes: bytesOf(512),
+          totalBytes: 512,
+          segments: [segment('body', 0, 512, 'b')],
+          visibleRows: 27,
+        });
+        const map = mapOf(container) as HTMLCanvasElement;
+        expect(map).not.toBeNull();
+        const height = map.height;
+        const width = map.width;
+        // The ground is the one fill that covers the whole strip; nothing
+        // painted after it may.
+        const fullHeight = fills.filter((fill) => fill.h >= height && fill.w >= width);
+        expect(fullHeight).toHaveLength(1);
+        // …and the band is a small square, centred on the track.
+        const dot = fills.find((fill) => fill.w > 0 && fill.w < width && fill.h === fill.w);
+        expect(dot).toBeDefined();
+        expect(dot?.x).toBe(Math.round((width - (dot?.w ?? 0)) / 2));
+      } finally {
+        HTMLCanvasElement.prototype.getContext = original;
+      }
     });
 
     it('puts the foot line under the last row, not under the plate', () => {

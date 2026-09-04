@@ -21,6 +21,7 @@ import {
   readerByteMapBands,
   readerKeyStep,
   readerRowWindow,
+  readerMapIsFlat,
   readerShowsMap,
   segmentColorSlots,
 } from '../../derives/cellDataReader.derive';
@@ -38,8 +39,17 @@ import {
   moduleTag,
 } from './primitives';
 
-// CKBYTES · SCAN·03 — the Cell's own bytes, under the CELL SCAN square, for
+// CKBYTES · SCAN·02 — the Cell's own bytes, under the CELL SCAN square, for
 // every Cell that holds any.
+//
+// ⚠️ SCAN·02 AND NOT SCAN·03, which it was until 2026-09-05. The count-off is
+// read down a card, and MEMORY TRACE — the plate that held 02 — only appears
+// when a recall arms it, so the card a reader usually meets counted 01, 03.
+// The reader is on the card from the first frame for every Cell that holds a
+// byte; the trace is the surface that comes and goes, so it takes the number
+// that can be missing. Codes are identities rather than positions (D-17), and
+// this is the one case where the identity had to move for the count-off to be
+// readable at all.
 //
 // It was a satellite: a 660 px column that opened from a door in the DATA
 // cluster and carried, besides the dump, a segment list, a READS AS line, an
@@ -202,6 +212,11 @@ const MAP_BAND_ASIDE_ALPHA = 0.35;
 const MAP_UNHELD_ALPHA = 0.82;
 const MAP_VIEWPORT_ALPHA = 0.16;
 const MAP_VIEWPORT_EDGE_ALPHA = 0.5;
+
+/** The mark a band draws when it is the whole strip (`readerMapIsFlat`). Four
+ *  of the strip's eight pixels wide, so it reads as a mark ON the track rather
+ *  than as a short band of it. */
+const MAP_FLAT_DOT_PX = 4;
 
 /** The selection's wash, in the window's own alpha. */
 const SELECTION_WASH_ALPHA = 0.16;
@@ -655,10 +670,34 @@ export default function CellDataReader({
       const bottom = Math.max(top + 1, Math.round(band.y1 * ratio));
       context.fillRect(0, top, width, bottom - top);
     };
+    // ONE BAND OVER THE WHOLE STRIP IS A MARK, NOT A FILL. A payload whose
+    // only decoded segment covers all of it has nothing for the drawing to
+    // say, and a solid lavender bar says it at full volume. The scrollbar half
+    // of the strip still has work — that is why the map is drawn at all here —
+    // so the band becomes a dot at the middle of the run it names, and the
+    // viewport band below still rides over it.
+    const dot = (band: { y0: number; y1: number; slot: number }) => {
+      context.fillStyle = QUALITATIVE_BUCKET_COLORS[
+        band.slot % QUALITATIVE_BUCKET_COLORS.length
+      ];
+      const size = Math.max(2, Math.round(MAP_FLAT_DOT_PX * ratio));
+      const middle = Math.round(((band.y0 + band.y1) / 2) * ratio);
+      context.fillRect(
+        Math.round((width - size) / 2),
+        Math.max(0, middle - Math.round(size / 2)),
+        size,
+        size,
+      );
+    };
     const ordered = [...bands].sort((a, b) => (b.y1 - b.y0) - (a.y1 - a.y0));
     const aside = activeSegment === null ? MAP_BAND_ALPHA : MAP_BAND_ASIDE_ALPHA;
-    for (const band of ordered) paint(band, aside);
-    for (const band of activeBands) paint(band, MAP_BAND_ALPHA);
+    if (readerMapIsFlat(bands, viewHeight)) {
+      context.globalAlpha = MAP_BAND_ALPHA;
+      dot(bands[0]);
+    } else {
+      for (const band of ordered) paint(band, aside);
+      for (const band of activeBands) paint(band, MAP_BAND_ALPHA);
+    }
     context.globalAlpha = 1;
 
     // What has not arrived is dark, in the same order the dump says it: the
@@ -923,7 +962,7 @@ export default function CellDataReader({
             >
               {copied ?? 'COPY'}
             </button>
-            {moduleTag('SCAN·03')}
+            {moduleTag('SCAN·02')}
           </span>
         )}
       />

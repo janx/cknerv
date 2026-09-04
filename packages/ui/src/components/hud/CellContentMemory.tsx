@@ -17,7 +17,7 @@ import type { CellSemanticsPhase } from './CellSemanticsReadout';
 // READ ALL door, and the analysis under all of that was the part a reader came
 // for. The user's direction of 2026-09-05 — 「cell detail 中原有的 cell data
 // hex reading 可以去掉，避免 UX 冗余」 — took the bytes out, because CKBYTES
-// (SCAN·03) now stands under the CELL SCAN square for every Cell that holds
+// (SCAN·02) now stands under the CELL SCAN square for every Cell that holds
 // any, sixteen a row with offsets and ASCII and the whole payload behind them.
 // Thirty-two bytes with no offsets, drawn a second time three centimetres
 // above a window that draws all of them, were the redundancy.

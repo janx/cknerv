@@ -1474,7 +1474,7 @@ function CellDetailPanel({
     ? selectedFieldState.field
     : null;
 
-  // ——— CKBYTES · SCAN·03 —————————————————————————————————————————————————
+  // ——— CKBYTES · SCAN·02 —————————————————————————————————————————————————
   //
   // The reader is a ZONE of this card now, not a satellite that opens: the
   // user's direction of 2026-09-05 was 「hex reader 应该总是展示」, so there is
@@ -2853,7 +2853,7 @@ function CellDetailPanel({
                   <span style={{ color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.6 }}>
                     LIVE EVIDENCE
                   </span>
-                  {moduleTag('SCAN·02')}
+                  {moduleTag('SCAN·03')}
                 </span>
               )}
             />

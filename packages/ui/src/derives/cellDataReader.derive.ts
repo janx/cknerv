@@ -1,4 +1,4 @@
-// The arithmetic behind CKBYTES (SCAN·03), written before the reader that
+// The arithmetic behind CKBYTES (SCAN·02), written before the reader that
 // spends it. Everything here is a pure function of numbers the caller already
 // holds — bytes, a scroll offset, a row height, a segment list — because the
 // surface that will read it lives in jsdom for its tests and has no layout:
@@ -438,6 +438,34 @@ export function readerByteMapBands(
     bands.push({ y0, y1, slot: slots[index] ?? 0 });
   }
   return bands;
+}
+
+/**
+ * Whether the map's drawing has anything to say — one band over the whole
+ * strip has not.
+ *
+ * The map is two things (the user's R2-4 ruling): a scale drawing of the
+ * payload's segments and the dump's scrollbar. A payload whose only decoded
+ * segment covers all of it draws the first as a solid lavender bar, which is
+ * the same picture as "no information" and reads as a fill rather than as a
+ * drawing. The scrollbar half still has work to do — that is why the strip is
+ * there at all when a long payload scrolls — so the answer is not to hide it
+ * but to draw the band as a MARK: one dot, at the middle of the run it names,
+ * in the segment's own colour. A reader sees a strip with a mark on it and a
+ * viewport band over it, which is exactly what the strip is.
+ *
+ * Stated over the BANDS rather than over the segment list because that is what
+ * the canvas paints: two segments that both round to the whole strip are the
+ * same defect as one, and a band on a payload nobody has decoded is not.
+ */
+export function readerMapIsFlat(
+  bands: readonly ReaderByteMapBand[],
+  heightPx: number,
+): boolean {
+  const height = Number.isFinite(heightPx) ? Math.trunc(heightPx) : 0;
+  if (height <= 0 || bands.length !== 1) return false;
+  const [band] = bands;
+  return band.y0 <= 0 && band.y1 >= height;
 }
 
 /**

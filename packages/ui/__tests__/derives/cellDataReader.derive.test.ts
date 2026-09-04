@@ -18,6 +18,7 @@ import {
   readerByte,
   readerByteMapBands,
   readerKeyStep,
+  readerMapIsFlat,
   readerRowWindow,
   readerRowsUnderScan,
   readerShowsMap,
@@ -648,6 +649,25 @@ describe('readerRowsUnderScan', () => {
     // room may not shrink the box below what the plate itself would have
     // offered, and the plate's own floor is six.
     expect(readerBoxRows(37_314, 2)).toBe(READER_MIN_VISIBLE_ROWS);
+  });
+
+  it('calls a single band over the whole strip flat, and nothing else', () => {
+    // C7: the map's drawing has nothing to say when one segment covers the
+    // payload — a solid lavender bar is the same picture as no information.
+    // Stated over the BANDS, because that is what the canvas paints.
+    expect(readerMapIsFlat([{ y0: 0, y1: 200, slot: 3 }], 200)).toBe(true);
+    // Rounding up past the strip is still the whole strip.
+    expect(readerMapIsFlat([{ y0: 0, y1: 201, slot: 3 }], 200)).toBe(true);
+    // A band that leaves any of the strip uncovered is a drawing.
+    expect(readerMapIsFlat([{ y0: 0, y1: 199, slot: 3 }], 200)).toBe(false);
+    expect(readerMapIsFlat([{ y0: 1, y1: 200, slot: 3 }], 200)).toBe(false);
+    // Two bands are a drawing whatever they cover, and no band is no drawing.
+    expect(readerMapIsFlat(
+      [{ y0: 0, y1: 100, slot: 1 }, { y0: 100, y1: 200, slot: 2 }],
+      200,
+    )).toBe(false);
+    expect(readerMapIsFlat([], 200)).toBe(false);
+    expect(readerMapIsFlat([{ y0: 0, y1: 200, slot: 3 }], 0)).toBe(false);
   });
 
   it('draws the map for a payload worth drawing or a box too short to hold it', () => {

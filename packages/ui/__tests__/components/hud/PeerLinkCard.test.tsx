@@ -115,6 +115,40 @@ describe('PeerLinkCard signal compass', () => {
     expect(strip()?.textContent).toContain('84–120 MS');
   });
 
+  it('draws the first sample as a tick, not as a strip-wide block', () => {
+    // C7: a series of one has no shape and no scale — its value IS the peak,
+    // so a bar drawn against it fills the strip in both directions. Every card
+    // opened in the first four seconds of a link showed that block.
+    const { container } = renderCard();
+    const strip = container.querySelector('[data-peer-probe-ping]');
+    expect(strip?.getAttribute('data-peer-probe-ping-state')).toBe('single');
+    const tick = container.querySelector('[data-peer-probe-ping-tick]');
+    expect(tick).not.toBeNull();
+    expect(Number(tick?.getAttribute('width'))).toBeLessThan(4);
+    expect(Number(tick?.getAttribute('height'))).toBeLessThan(12);
+    expect(container.querySelectorAll('[data-peer-probe-ping] rect')).toHaveLength(1);
+    // …and the header states the reading once, not as a range with no width.
+    expect(strip?.textContent).toContain('84 MS · 1/24');
+    expect(strip?.textContent).not.toContain('84–84');
+  });
+
+  it('becomes a series at the second sample', () => {
+    const { container, rerender } = renderCard();
+    rerender(
+      <PeerLinkCard
+        peer={peer({ latency_ms: 120 })}
+        tip={TIP}
+        localVersion={LOCAL_VERSION}
+        layoutSide="left"
+        onClose={() => {}}
+      />,
+    );
+    expect(container.querySelector('[data-peer-probe-ping]')
+      ?.getAttribute('data-peer-probe-ping-state')).toBe('live');
+    expect(container.querySelector('[data-peer-probe-ping-tick]')).toBeNull();
+    expect(container.querySelectorAll('[data-peer-probe-ping] rect')).toHaveLength(2);
+  });
+
   it('starts an empty strip for an unmeasured link', () => {
     const { container } = renderCard({ peer: peer({ latency_ms: null }) });
     expect(container.querySelector('[data-peer-probe-ping-state="empty"]')).not.toBeNull();

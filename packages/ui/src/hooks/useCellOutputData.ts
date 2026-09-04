@@ -1,4 +1,4 @@
-// The reader's supply line: which bytes CKBYTES (SCAN·03) is drawing, and
+// The reader's supply line: which bytes CKBYTES (SCAN·02) is drawing, and
 // where they came from.
 //
 // The load-bearing sentence is the one about not asking. Ten thousand of the

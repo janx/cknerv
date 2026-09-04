@@ -59,6 +59,15 @@ const COMPASS_ARROW_T = 0.58;
 const PING_HISTORY_CAP = 24;
 const PING_VIEW_W = 120;
 const PING_VIEW_H = 26;
+/** The first sample's own form. A series of one has no shape and no scale —
+ *  its single value IS the peak, so a bar drawn against it fills the strip
+ *  edge to edge and top to bottom, and a solid block is what a reader sees on
+ *  every card they open in the first four seconds of a link. A tick says the
+ *  same true thing (one sample has landed, at the head of the series) and
+ *  claims nothing about a magnitude the instrument cannot yet draw; the
+ *  header, one line up, prints the number itself. */
+const PING_TICK_W = 2;
+const PING_TICK_H = 9;
 
 export type PeerLinkLayoutSide = SceneInspectorPlacementSide;
 
@@ -370,12 +379,20 @@ function PingStrip({
   const floor = count > 0 ? Math.min(...samples) : 0;
   const slot = PING_VIEW_W / Math.max(1, count);
   const scale = Math.max(peak, 1);
+  // One sample is its own state, and the header says so too: `51–51 MS` is a
+  // range with no width, which reads as a measurement that came back twice.
+  const single = count === 1;
+  const state = flatlined ? 'flatlined' : count === 0 ? 'empty' : single ? 'single' : 'live';
   return (
-    <div data-peer-probe-ping data-peer-probe-ping-state={flatlined ? 'flatlined' : count > 0 ? 'live' : 'empty'}>
+    <div data-peer-probe-ping data-peer-probe-ping-state={state}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 2, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.9, color: HUD_COLORS.dim }}>
         <span style={{ color: HUD_COLORS.cyanInk, fontFamily: HUD_FONTS.tech, letterSpacing: 1.2 }}>PING STRIP</span>
         <span style={{ marginLeft: 'auto', whiteSpace: 'nowrap' }}>
-          {count > 0 ? `${floor}–${peak} MS · ${count}/${PING_HISTORY_CAP}` : `AWAITING SAMPLES · 0/${PING_HISTORY_CAP}`}
+          {count === 0
+            ? `AWAITING SAMPLES · 0/${PING_HISTORY_CAP}`
+            : single
+              ? `${peak} MS · 1/${PING_HISTORY_CAP}`
+              : `${floor}–${peak} MS · ${count}/${PING_HISTORY_CAP}`}
         </span>
       </div>
       <svg
@@ -399,7 +416,16 @@ function PingStrip({
             strokeDasharray="5 3"
           />
         ) : null}
-        {samples.map((value, index) => {
+        {single ? (
+          <rect
+            data-peer-probe-ping-tick
+            x={0.6}
+            y={PING_VIEW_H - PING_TICK_H}
+            width={PING_TICK_W}
+            height={PING_TICK_H}
+            fill={rgba(accent, 0.72)}
+          />
+        ) : samples.map((value, index) => {
           const height = 2 + (Math.min(value, scale) / scale) * (PING_VIEW_H - 4);
           return (
             <rect

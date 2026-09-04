@@ -299,14 +299,14 @@ describe('CellDetailPanel', () => {
     expect(t).not.toContain('CKBYTES ANALYSIS');
     expect(t).not.toContain('CELL IDENTITY');
     expect(t).not.toContain('CONSENSUS MEMORY');
-    // Plate count-off: the dossier is SCAN·01; SCAN·02 belongs to the MEMORY
-    // TRACE window and only joins once a recall arms it.
+    // Plate count-off, and it is CONTIGUOUS on the card a reader usually meets
+    // (C7): the dossier is SCAN·01 and CKBYTES is SCAN·02, which stands for
+    // every Cell that holds a byte — this one holds eleven, so it is there
+    // from the first frame with nobody having asked for it. SCAN·03 is the
+    // MEMORY TRACE window, the surface that comes and goes.
     expect(t).toContain('SCAN·01');
-    expect(t).not.toContain('SCAN·02');
-    // …and SCAN·03 is CKBYTES, which stands for every Cell that holds a byte.
-    // This one holds eleven, so it is on the card from the first frame with
-    // nobody having asked for it.
-    expect(t).toContain('SCAN·03');
+    expect(t).toContain('SCAN·02');
+    expect(t).not.toContain('SCAN·03');
     expect(t).toContain('CKBYTES');
     expect(t).toContain('字节元');
     expect(t).not.toContain('CELL CONTENT');
@@ -2539,11 +2539,12 @@ describe('CellDetailPanel', () => {
     expect(trace?.getAttribute('data-trace-state')).toBe('active');
     expect(trace?.getAttribute('data-trace-stage')).toBe('reading');
     expect(container.querySelector('[data-cell-detail-module="trace"]')).not.toBeNull();
-    expect(container.textContent).toContain('SCAN·02');
-    // SCAN·03 is CKBYTES, and it stands for every Cell that holds a byte now —
+    // The armed trace is SCAN·03, the number that can be missing (C7).
+    expect(container.textContent).toContain('SCAN·03');
+    // SCAN·02 is CKBYTES, and it stands for every Cell that holds a byte now —
     // this one holds eleven, so it is on the card whether or not a trace is
     // armed. The count-off is a fact about the plates, not about the recall.
-    expect(container.textContent).toContain('SCAN·03');
+    expect(container.textContent).toContain('SCAN·02');
     expect(container.querySelector('[data-cell-detail-module="context"]')).toBeNull();
     expect(container.querySelector('[data-memory-read-state="reading"]')).not.toBeNull();
     expect(container.querySelectorAll('[data-memory-evidence]')).toHaveLength(2);
@@ -2587,7 +2588,9 @@ describe('CellDetailPanel', () => {
     ) as HTMLElement;
     const restingAnalysisStyle = analysis().style.cssText;
     expect(container.querySelector('[data-cell-detail-module="trace"]')).toBeNull();
-    expect(container.textContent).not.toContain('SCAN·02');
+    // Nothing on the card is numbered 03 while the trace is away, so the
+    // count-off a reader sees runs 01, 02 with no hole in it.
+    expect(container.textContent).not.toContain('SCAN·03');
 
     rerender(
       <CellDetailPanel
@@ -2601,7 +2604,7 @@ describe('CellDetailPanel', () => {
       '[data-cell-detail-module="trace"]',
     ) as HTMLElement;
     expect(trace).not.toBeNull();
-    expect(container.textContent).toContain('SCAN·02');
+    expect(container.textContent).toContain('SCAN·03');
     // Arming appends a full-width row below the analysis plate — the column
     // never splits and the analysis plate's geometry does not move.
     expect((container.firstElementChild as HTMLElement).style.gridTemplateAreas)
