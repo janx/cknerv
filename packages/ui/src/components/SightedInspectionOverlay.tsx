@@ -22,6 +22,7 @@ import {
   SceneInspectionAnchor,
   SceneInspectionConnector,
   useSceneInspectionDismiss,
+  useSceneInspectionExit,
   useSceneInspectionLayoutSide,
   type SceneInspectionHandles,
 } from './sceneInspection';
@@ -32,11 +33,6 @@ import { useHudOcclusionRects } from './hudOcclusion';
  *  card has been measured. */
 const DEFAULT_CARD_WIDTH_PX = 340;
 const DEFAULT_CARD_HEIGHT_PX = 380;
-
-/** Entering the connector dot is chassis behaviour rather than a cell one —
- *  the keyframe lives in the shared HUD theme, injected once app-wide. */
-const CONNECTOR_DOT_ENTER =
-  'cknerv-cell-detail-anchor-enter 360ms cubic-bezier(.2,.82,.2,1) both';
 
 export type SightedInspectionHandles = SceneInspectionHandles;
 
@@ -91,6 +87,9 @@ export interface SightedInspectionOverlayProps {
    *  declared — a chain fact joined against the crawler's roster, resolved by
    *  the host off the LIVE producer view. */
   candidacy?: PeerMiningCandidacy | null;
+  /** The dialect is closing and the chassis owes the card its exit — see
+   *  `useSceneInspectionExit`. */
+  leaving?: boolean;
   onClose: () => void;
 }
 
@@ -110,6 +109,7 @@ export default function SightedInspectionOverlay({
   node,
   sighting,
   candidacy,
+  leaving = false,
   onClose,
 }: SightedInspectionOverlayProps) {
   const reduced = useReducedMotion();
@@ -120,6 +120,7 @@ export default function SightedInspectionOverlay({
   handles.accent = SIGHTED_NODE_ACCENT;
   const layoutSide = useSceneInspectionLayoutSide(handles);
   useSceneInspectionDismiss(cardRef, onClose);
+  useSceneInspectionExit(handles, cardRef, leaving, reduced);
 
   // The sticky offset belongs to one selection: sighting a different roster
   // node clears the lock, so its card centres itself afresh beside it.
@@ -169,7 +170,6 @@ export default function SightedInspectionOverlay({
           handles={handles}
           leaderAttributes={{ 'data-sighted-probe-leader': true }}
           dotAttributes={{ 'data-sighted-probe-anchor': true }}
-          dotEnterAnimation={reduced ? undefined : CONNECTOR_DOT_ENTER}
         />
         <SightedNodeCard
           node={node}

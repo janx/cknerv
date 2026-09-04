@@ -18,6 +18,7 @@ import {
   SceneInspectionAnchor,
   SceneInspectionConnector,
   useSceneInspectionDismiss,
+  useSceneInspectionExit,
   useSceneInspectionLayoutSide,
   type SceneInspectionHandles,
 } from './sceneInspection';
@@ -27,11 +28,6 @@ import { useHudOcclusionRects } from './hudOcclusion';
  *  no compass — so it places by its own box until the card is measured. */
 const DEFAULT_CARD_WIDTH_PX = 340;
 const DEFAULT_CARD_HEIGHT_PX = 420;
-
-/** Entering the connector dot is chassis behaviour rather than a cell one —
- *  the keyframe lives in the shared HUD theme, injected once app-wide. */
-const CONNECTOR_DOT_ENTER =
-  'cknerv-cell-detail-anchor-enter 360ms cubic-bezier(.2,.82,.2,1) both';
 
 export type NodeInspectionHandles = SceneInspectionHandles;
 
@@ -83,6 +79,9 @@ export interface NodeInspectionOverlayProps {
   /** How the network's own crawler last saw this node, when the source can
    *  offer it — the one account of the local node from outside. */
   sighting?: PeerSightingState;
+  /** The dialect is closing and the chassis owes the card its exit — see
+   *  `useSceneInspectionExit`. */
+  leaving?: boolean;
   onClose: () => void;
 }
 
@@ -99,6 +98,7 @@ export default function NodeInspectionOverlay({
   chain,
   peers,
   sighting,
+  leaving = false,
   onClose,
 }: NodeInspectionOverlayProps) {
   const reduced = useReducedMotion();
@@ -109,6 +109,7 @@ export default function NodeInspectionOverlay({
   handles.accent = NODE_SELF_ACCENT;
   const layoutSide = useSceneInspectionLayoutSide(handles);
   useSceneInspectionDismiss(cardRef, onClose);
+  useSceneInspectionExit(handles, cardRef, leaving, reduced);
 
   // There is only ever one self node, but each opening of its card is its
   // own selection: clear the sticky offset so it centres itself afresh.
@@ -158,7 +159,6 @@ export default function NodeInspectionOverlay({
           handles={handles}
           leaderAttributes={{ 'data-node-probe-leader': true }}
           dotAttributes={{ 'data-node-probe-anchor': true }}
-          dotEnterAnimation={reduced ? undefined : CONNECTOR_DOT_ENTER}
         />
         <NodeSelfCard
           node={node}

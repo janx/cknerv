@@ -2109,9 +2109,13 @@ function CellDetailPanel({
         // from the dialect's identity instead — the same colour the frame,
         // the beam and the tether are drawn in.
         filter: `drop-shadow(0 8px 16px ${rgba(HUD_COLORS.ground, 0.56)}) drop-shadow(0 0 14px ${rgba(CELL_CARD_ACCENT, 0.06)})`,
-        animation: reduced
-          ? undefined
-          : 'cknerv-cell-consensus-enter 280ms cubic-bezier(.2,.82,.2,1) both',
+        // No enter of its own. The card arrives once, on the chassis
+        // (`INSPECTION_CARD_STYLE`, `HUD_MOTION.enter`) — this body used to
+        // slide 12 px in over 280 ms while the frame around it faded over 120
+        // and the tether dot popped over 360, three enters on two elements and
+        // no two of them the same length (report E, E-5). The four network
+        // dialects share this chassis and declared no body animation at all,
+        // so the cell card was also the only one of the five that moved.
         ...style,
       }}
     >

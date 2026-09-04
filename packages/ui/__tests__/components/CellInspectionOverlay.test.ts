@@ -216,9 +216,11 @@ describe('cellInspectorPlacement', () => {
   it('tethers details without rebuilding a scanning apparatus around the Cell', () => {
     expect(INSPECTION_OVERLAY_SOURCE).toContain('data-cell-detail-connector');
     expect(INSPECTION_OVERLAY_SOURCE).toContain('data-cell-detail-anchor');
-    expect(INSPECTION_OVERLAY_SOURCE).toContain(
-      'cknerv-cell-detail-anchor-enter',
-    );
+    // …and the dot enters with the card rather than on a keyframe of its own
+    // (C8): its 360 ms overshoot pop was the third simultaneous enter on a
+    // surface that has one.
+    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('anchor-enter');
+    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('dotEnterAnimation');
     expect(INSPECTION_OVERLAY_SOURCE).not.toContain('scanPlaneRef');
     expect(INSPECTION_OVERLAY_SOURCE).not.toContain('<torusGeometry');
     expect(INSPECTION_OVERLAY_SOURCE).not.toContain('<cylinderGeometry');

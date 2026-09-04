@@ -62,6 +62,7 @@ import {
   ConsensusRouteCamera,
   ConsensusWriteSeal,
   HUD_COLORS,
+  HUD_MOTION,
   HudOverlay,
   deriveCellPopulationField,
   resolveCellDisplayLimit,
@@ -193,6 +194,7 @@ import {
   CAMERA_HOLE_MARGIN_PX,
   fitCameraToHole,
 } from './camera-hole-fit';
+import { useInspectionExit } from './inspection-exit';
 
 interface AppProps {
   /** Initial Chain entity from `/api/entities/chain/snapshot`. */
@@ -671,20 +673,37 @@ export default function App({
   const memoryTraceTargetResponseRef = useRef<
     ConsensusMemoryTargetResponse | null
   >(null);
+  // A closing card is held for the length of the chassis's exit
+  // (`HUD_MOTION.exit`), which is the only way it can have one: an unmounted
+  // card cannot fade. What is held is the SELECTION — see `inspection-exit.ts`
+  // for why it cannot be a copy of the Cell.
+  const cellExit = useInspectionExit(HUD_MOTION.exit);
+  const cellLeaving = cellExit.leaving;
   const clearCellSelection = useCallback(() => {
     // Closing is also an interaction-boundary reset. The nested Cell Scan can
     // disappear while it owns pointer capture, before its delayed R3F teardown
     // reports onEnd; never let that keep the main OrbitControls disabled, and
-    // hand DOM focus back to the Galaxy for the user's next interaction.
+    // hand DOM focus back to the Galaxy for the user's next interaction. This
+    // half is immediate: it is about the pointer, not about the card.
     setCellScanInteractionActive(false);
-    memoryRouteHopAnchorRef.current = null;
-    setCellIdentityProof(null);
-    dispatchCellIdentityJourney({ type: 'clear' });
-    dispatchCellCausalNavigation({ type: 'clear' });
-    setSelectedCellId(null);
-    dispatchMemoryRecall({ type: 'cancel' });
-    restoreCellGalaxyFocus(cellGalaxyCanvasRef.current);
-  }, []);
+    cellExit.close(() => {
+      memoryRouteHopAnchorRef.current = null;
+      setCellIdentityProof(null);
+      dispatchCellIdentityJourney({ type: 'clear' });
+      dispatchCellCausalNavigation({ type: 'clear' });
+      setSelectedCellId(null);
+      dispatchMemoryRecall({ type: 'cancel' });
+      restoreCellGalaxyFocus(cellGalaxyCanvasRef.current);
+    });
+  }, [cellExit]);
+  // A selection that MOVES cancels the exit it interrupted — a cell → cell
+  // switch, or a peer clicked while a card was leaving. The hold clears its own
+  // timer before it writes, so this never fires on the hold's own landing.
+  useEffect(() => {
+    cellExit.cancel();
+    // The selection is the event; the hold's identity is stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCellId]);
   const inspectCell = useCallback((nextCellId: number) => {
     if (!Number.isSafeInteger(nextCellId) || nextCellId < 0) return;
     const selectionId = `${CELL_SELECTION_PREFIX}${nextCellId}`;
@@ -1815,7 +1834,20 @@ export default function App({
     else completeBootSeeding();
   }, [bootSeeding]);
 
-  const clearNetSelection = useCallback(() => setSelectedNetId(null), []);
+  // The network dialects share the chassis, so they share its exit: the same
+  // hold, on the one gesture that ends a selection rather than moving it (the
+  // × and the peer card's retention expiry). A click that selects something
+  // ELSE is not an exit — the card is re-dressed for the new subject, or the
+  // next dialect's card takes the stage, and neither wants a fade first.
+  const netExit = useInspectionExit(HUD_MOTION.exit);
+  const netLeaving = netExit.leaving;
+  const clearNetSelection = useCallback(() => {
+    netExit.close(() => setSelectedNetId(null));
+  }, [netExit]);
+  useEffect(() => {
+    netExit.cancel();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedNetId]);
   // A dropped link is the peer's own ending: the probe holds its last snapshot
   // and anchor long enough to say so, then retires the selection itself.
   const peerInspection = usePeerInspectionRetention({
@@ -2350,8 +2382,16 @@ export default function App({
           frame by the CellInspectionAnchor inside the Galaxy overlay. */}
       {selectedCell ? (
         <CellInspectionOverlay
-          key={selectedCell.id}
+          /* NO `key`. A cell → cell switch re-dresses this card in place
+             instead of unmounting it: the dossier is built to take a new
+             subject (its scan clock re-primes on `cell.id`, its selected facet
+             is keyed by it), and the remount was what made a switch blink the
+             old card out, replay every enter and let the solver drop the card
+             on the other side of the anchor between two adjacent selections
+             (report E, E-5). The placement lock's hysteresis keeps the held
+             side whenever the new anchor still fits it. */
           handles={cellInspectionHandles}
+          leaving={cellLeaving}
           cell={selectedCell}
           routeCellById={cellsCache.cells}
           recentLinks={cellsCache.recentLinks}
@@ -2406,6 +2446,7 @@ export default function App({
           linkLost={peerInspection.linkLost}
           sighting={inspectedNetSighting}
           candidacy={inspectedPeerCandidacy}
+          leaving={netLeaving}
           onClose={clearNetSelection}
         />
       ) : null}
@@ -2421,6 +2462,7 @@ export default function App({
           node={selectedSighted}
           sighting={inspectedNetSighting}
           candidacy={selectedSightedCandidacy}
+          leaving={netLeaving}
           onClose={clearNetSelection}
         />
       ) : null}
@@ -2436,6 +2478,7 @@ export default function App({
           key={selectedMiner.producer.key}
           handles={minerInspectionHandles}
           subject={selectedMiner}
+          leaving={netLeaving}
           onClose={clearNetSelection}
         />
       ) : null}
@@ -2451,6 +2494,7 @@ export default function App({
           chain={chain}
           peers={peers}
           sighting={inspectedNetSighting}
+          leaving={netLeaving}
           onClose={clearNetSelection}
         />
       ) : null}

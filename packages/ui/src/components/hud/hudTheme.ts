@@ -489,6 +489,42 @@ export const HUD_TYPE = {
 //               name each other in a comment so neither gets "fixed" into the
 //               other.
 
+// ——— Time —————————————————————————————————————————————————————————————————
+//
+// TWO RUNGS SO FAR, and they are the ones a card is composed of. The overlay
+// carries twenty-seven distinct durations under four seconds and seven
+// easings; the ladder that sorts them is Phase E's (E1) and it folds around
+// these two rather than replacing them.
+//
+// They exist here, now, because five card dialects share one chassis and did
+// not share one entrance (report E, E-5). A cell card faded its frame over
+// 120 ms, slid its body over 280 ms and popped its tether dot over 360 ms —
+// three simultaneous enters on two elements — while the four network dialects
+// declared no body animation at all and arrived with the pop alone. And none
+// of the five had an EXIT: a card, its leader and its dot left in one frame,
+// which is the only transition in the app that is a cut.
+//
+//   ENTER 260  One fade, on the chassis, for all five dialects. Long enough to
+//              read as an arrival at the far side of a 1,920 px stage, short
+//              enough that a card opened by a click feels answered by it. The
+//              260 is between the two enters it replaces (280 body, 120 frame)
+//              and is spent on ONE property, so nothing can arrive early.
+//   EXIT  120  Under half the enter, because going is not an event — it is the
+//              end of one, and a slow exit reads as hesitation. It is not a new
+//              number either: it is the 120 the chassis already faded IN at,
+//              kept for the direction that needs the less of a reader's
+//              attention.
+//
+// The bezier is the one the card enters with today, kept: a fast start into a
+// long settle is what makes a fade read as a thing arriving rather than as a
+// light being turned up. `ease` is for the exit — leaving needs no character.
+export const HUD_MOTION = {
+  enter: 260,
+  exit: 120,
+  enterEase: 'cubic-bezier(.2,.82,.2,1)',
+  exitEase: 'ease',
+} as const;
+
 // ——— Alpha ————————————————————————————————————————————————————————————————
 //
 // The one dimension of this system nobody had declared, and the evidence that
@@ -645,8 +681,6 @@ export function injectHudTheme(doc: Document = document): void {
     FONT_FACES.join('') + `\n:root{${vars}}` +
     `\n@keyframes cknerv-hud-flash{50%{opacity:.45}}`
     + `\n@keyframes cknerv-hud-breathe{0%,100%{opacity:.82}50%{opacity:1}}`
-    + `\n@keyframes cknerv-cell-consensus-enter{0%{opacity:0;transform:translate3d(12px,-2px,0) scale(.985)}55%{opacity:1}100%{opacity:1;transform:translate3d(0,0,0) scale(1)}}`
-    + `\n@keyframes cknerv-cell-detail-anchor-enter{0%{opacity:0;transform:scale(.35)}65%{opacity:1;transform:scale(1.18)}100%{opacity:1;transform:scale(1)}}`
     + `\n@keyframes cknerv-cell-specimen-sweep{0%{transform:translate3d(0,0,0);opacity:0}12%{opacity:.82}88%{opacity:.72}100%{transform:translate3d(0,100%,0);opacity:0}}`
     + `\n@keyframes cknerv-route-hop-lock-pulse{0%{filter:brightness(1) drop-shadow(0 0 0 transparent)}18%{filter:brightness(1.58) drop-shadow(0 0 7px var(--route-hop-pulse-color,${rgba(HUD_COLORS.lockedGold, 0.76)}))}52%{filter:brightness(1.16) drop-shadow(0 0 3px var(--route-hop-pulse-color,${rgba(HUD_COLORS.lockedGold, 0.42)}))}100%{filter:brightness(1) drop-shadow(0 0 0 transparent)}}`
     + `\n.cknerv-hud-control-button:hover{filter:brightness(1.35)}`

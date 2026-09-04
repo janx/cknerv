@@ -319,7 +319,8 @@ describe('CellDetailPanel', () => {
     expect(t).not.toContain('WRITE OBSERVED');
     expect(t).not.toContain('MEMORY TRACE');   // no observed origin write
     const root = container.firstElementChild as HTMLElement;
-    expect(root.style.animation).toContain('cknerv-cell-consensus-enter');
+    // No enter of its own (C8): the card arrives once, on the chassis.
+    expect(root.style.animation).toBe('');
     expect(container.querySelector('[data-cell-detail-scan-field="true"]')).not.toBeNull();
     // The specimen square is an independent column on the anchor side, top
     // aligned — the scene shows through beneath it and nothing overlays it.

@@ -29,6 +29,7 @@ import {
   SceneInspectionAnchor,
   SceneInspectionConnector,
   useSceneInspectionDismiss,
+  useSceneInspectionExit,
   useSceneInspectionLayoutFamily,
   useSceneInspectionLayoutSide,
   type SceneInspectionHandles,
@@ -162,6 +163,10 @@ export function CellInspectionAnchor({
 
 export type CellInspectionOverlayProps = CellDetailPanelProps & {
   handles: CellInspectionHandles;
+  /** The selection has been cleared and the chassis owes the card its exit;
+   *  the dialect holds the subject for `HUD_MOTION.exit` so there is something
+   *  to fade. See `useSceneInspectionExit`. */
+  leaving?: boolean;
 };
 
 /**
@@ -185,6 +190,7 @@ export type CellInspectionOverlayProps = CellDetailPanelProps & {
 function CellInspectionOverlay(props: CellInspectionOverlayProps) {
   const {
     handles,
+    leaving = false,
     ...panelProps
   } = props;
   const {
@@ -209,6 +215,7 @@ function CellInspectionOverlay(props: CellInspectionOverlayProps) {
     onInspectionFieldChange?.(field);
   }, [onInspectionFieldChange]);
   useSceneInspectionDismiss(cardRef, onClose);
+  useSceneInspectionExit(handles, cardRef, leaving, reduced);
 
   // The sticky offset belongs to one selection: a different Cell may open
   // anywhere on screen, so the lock clears whenever the inspected id changes
@@ -328,9 +335,6 @@ function CellInspectionOverlay(props: CellInspectionOverlayProps) {
             'data-cell-detail-connector': true,
           }}
           dotAttributes={{ 'data-cell-detail-anchor': true }}
-          dotEnterAnimation={reduced
-            ? undefined
-            : 'cknerv-cell-detail-anchor-enter 360ms cubic-bezier(.2,.82,.2,1) both'}
         />
         <CellDetailPanel
           {...panelProps}

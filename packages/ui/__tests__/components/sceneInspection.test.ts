@@ -2,7 +2,11 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { act, renderHook } from '@testing-library/react';
+import { createRef } from 'react';
 import {
+  INSPECTION_CARD_STYLE,
+  useSceneInspectionExit,
   commitInspectionCardSize,
   commitInspectionFrame,
   createSceneInspectionHandles,
@@ -14,6 +18,7 @@ import {
   sceneInspectorPlacement,
   type SceneInspectionHandles,
 } from '../../src/components/sceneInspection';
+import { HUD_MOTION } from '../../src/components/hud/hudTheme';
 
 /** Every case below runs on the solver defaults: gap 42, edge 14, safe top
  *  104. With a 1200×800 viewport, an anchor at (300, 400) and a 500×300
@@ -929,4 +934,78 @@ describe('sceneInspectorPlacement docked family', () => {
       }
     },
   );
+});
+
+// ——— One enter, one exit, five dialects ————————————————————————————————
+//
+// The chassis is where the five cards agree about anything, and until C8 the
+// one thing they did not agree about was arriving: the cell dialect faded its
+// frame over 120 ms, slid its body over 280 and popped its dot over 360, while
+// the four network dialects had the pop alone. None of them had an exit at all.
+describe('the chassis enters and leaves once', () => {
+  it('fades in on the enter rung and on nothing else', () => {
+    expect(INSPECTION_CARD_STYLE.transition)
+      .toBe(`opacity ${HUD_MOTION.enter}ms ${HUD_MOTION.enterEase}`);
+    // Opacity is the whole entrance. `transform` belongs to the frame writer,
+    // which sets it every frame the entity is on screen, so a chassis that
+    // animated position would be two authors on one property.
+    expect(String(INSPECTION_CARD_STYLE.transition)).not.toContain('transform');
+    expect(INSPECTION_CARD_STYLE.opacity).toBe(0);
+    expect(INSPECTION_CARD_STYLE.animation).toBeUndefined();
+  });
+
+  it('fades a leaving card out on the exit rung, and flags the frame writer', () => {
+    const handles = createSceneInspectionHandles({
+      defaultSize: { width: 340, height: 300 },
+      accent: '#ffffff',
+      placementDataKey: 'testPlacement',
+      connectorDataKey: 'testConnector',
+    });
+    const card = document.createElement('div');
+    card.style.opacity = '1';
+    const ref = createRef<HTMLDivElement>() as { current: HTMLDivElement | null };
+    ref.current = card;
+
+    const view = renderHook(
+      ({ leaving }: { leaving: boolean }) => useSceneInspectionExit(handles, ref, leaving),
+      { initialProps: { leaving: false } },
+    );
+    expect(handles.leaving).toBe(false);
+    expect(card.style.opacity).toBe('1');
+
+    act(() => { view.rerender({ leaving: true }); });
+    expect(handles.leaving).toBe(true);
+    expect(card.style.opacity).toBe('0');
+    expect(card.style.transition)
+      .toBe(`opacity ${HUD_MOTION.exit}ms ${HUD_MOTION.exitEase}`);
+    // Under half the enter: leaving needs less of a reader than arriving.
+    expect(HUD_MOTION.exit).toBeLessThan(HUD_MOTION.enter / 2);
+  });
+
+  it('leaves instantly under reduced motion', () => {
+    const handles = createSceneInspectionHandles({
+      defaultSize: { width: 340, height: 300 },
+      accent: '#ffffff',
+      placementDataKey: 'testPlacement',
+      connectorDataKey: 'testConnector',
+    });
+    const card = document.createElement('div');
+    const ref = { current: card as HTMLDivElement | null };
+
+    renderHook(() => useSceneInspectionExit(handles, ref, true, true));
+
+    expect(card.style.transition).toBe('none');
+    expect(card.style.opacity).toBe('0');
+  });
+
+  it('does not reposition or re-show a card on its way out', () => {
+    // The frame writer's own guard, read off the source: a card repositioned
+    // mid-exit would slide as it faded, which is a second gesture nobody asked
+    // for — and one that re-showed it would cancel the fade outright.
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '../../src/components/sceneInspection.tsx'),
+      'utf8',
+    );
+    expect(source).toContain('if (handles.leaving) return;');
+  });
 });

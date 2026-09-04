@@ -64,6 +64,7 @@ import {
   CELL_PANEL_ACCENT,
   HUD_COLORS,
   HUD_FONTS,
+  HUD_MOTION,
   HUD_THEME_STYLE_ID,
   HUD_TYPE,
   injectHudTheme,
@@ -4568,6 +4569,70 @@ describe('one cursor for a pressable', () => {
     // …and the half-weight wash is derived from the selected one, not typed.
     expect(PLATE_ROW_HOT_WASH_ALPHA).toBe(PLATE_ROW_SELECTED_WASH_ALPHA / 2);
     expect(PLATE_ROW_RAIL_HOT_ALPHA).toBeGreaterThan(PLATE_ROW_RAIL_ALPHA);
+  });
+});
+
+// ——— One entrance for five dialects ——————————————————————————————————————
+//
+// The inspection chassis is what the five card dialects share, and the one
+// thing they did not share was arriving (report E, E-5): the cell card faded
+// its frame over 120 ms, slid its body over 280 and popped its tether dot over
+// 360 — three simultaneous enters on two elements — while the four network
+// dialects declared no body animation at all and arrived with the pop alone.
+// None of the five could leave: card, leader and dot were unmounted in one
+// frame, the only transition in this app that is a cut.
+//
+// So the entrance belongs to the chassis, once, and this is the fence around
+// it: no dialect may grow a second one. Stated over the keyframe REGISTRY as
+// well as over the dialects, because a keyframe nobody can name is a keyframe
+// nobody can revive.
+describe('one entrance for five dialects', () => {
+  const DIALECTS = [
+    'components/CellInspectionOverlay.tsx',
+    'components/PeerInspectionOverlay.tsx',
+    'components/NodeInspectionOverlay.tsx',
+    'components/MinerInspectionOverlay.tsx',
+    'components/SightedInspectionOverlay.tsx',
+    'components/hud/CellDetailPanel.tsx',
+    'components/hud/PeerLinkCard.tsx',
+    'components/hud/NodeSelfCard.tsx',
+    'components/hud/MinerNodeCard.tsx',
+    'components/hud/SightedNodeCard.tsx',
+  ] as const;
+
+  it('no card dialect declares an enter of its own', () => {
+    const offenders: string[] = [];
+    for (const name of DIALECTS) {
+      const source = PACKAGE_SOURCES.find((entry) => entry.name === name);
+      expect(source, `${name} moved — this oracle reads files off disk`).toBeDefined();
+      for (const line of code(source?.text ?? '').split('\n')) {
+        if (/[\w-]+-enter\b/.test(line)) offenders.push(`${name}: ${line.trim()}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('and the theme registers no card-enter keyframe to reach for', () => {
+    // The sweep the dialect rule cannot make: a keyframe that exists is one a
+    // dialect can name tomorrow. Every `*-enter` keyframe in the injected
+    // stylesheet went with the two this replaced.
+    const document_ = document.implementation.createHTMLDocument('t');
+    injectHudTheme(document_);
+    const css = document_.getElementById(HUD_THEME_STYLE_ID)?.textContent ?? '';
+    expect(css.length).toBeGreaterThan(0);
+    expect(css.match(/@keyframes [\w-]*-enter/g)).toBeNull();
+  });
+
+  it('and the chassis states the two rungs once, from the motion table', () => {
+    const chassis = PACKAGE_SOURCES.find(
+      (entry) => entry.name === 'components/sceneInspection.tsx',
+    );
+    const text = code(chassis?.text ?? '');
+    expect(text).toContain('opacity ${HUD_MOTION.enter}ms ${HUD_MOTION.enterEase}');
+    expect(text).toContain('opacity ${HUD_MOTION.exit}ms ${HUD_MOTION.exitEase}');
+    // Two rungs, not a third typed beside them.
+    expect(HUD_MOTION.enter).toBe(260);
+    expect(HUD_MOTION.exit).toBe(120);
   });
 });
 

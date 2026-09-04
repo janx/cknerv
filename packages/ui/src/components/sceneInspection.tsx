@@ -9,7 +9,7 @@ import {
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { CELL_CLICK_MAX_POINTER_DELTA_PX } from '../derives/cellInteraction.derive';
-import { HUD_COLORS, rgba } from './hud/hudTheme';
+import { HUD_COLORS, HUD_MOTION, rgba } from './hud/hudTheme';
 import type { HudOcclusionRect } from './hudOcclusion';
 
 /**
@@ -253,6 +253,10 @@ export interface SceneInspectionHandles {
    * the frame loop. See SceneInspectorPlacementLock. */
   placementLock: SceneInspectorPlacementLock;
   visible: boolean;
+  /** The dialect is unmounting this card and the exit owns its opacity. The
+   *  frame writer stops at this flag rather than re-showing a card mid-fade —
+   *  see `useSceneInspectionExit`. */
+  leaving: boolean;
   layoutSide: SceneInspectorPlacementSide;
   /** Which composition the solver last put the card in. The card renders in
    *  React and the family is decided in the frame loop, so this shares the
@@ -292,6 +296,7 @@ export function createSceneInspectionHandles({
     restyleKey: '',
     placementLock: { family: null, y: null, x: null, side: null },
     visible: false,
+    leaving: false,
     layoutSide: 'left',
     layoutFamily: 'beside',
     layoutListeners: new Set(),
@@ -338,6 +343,7 @@ export function detachInspectionCard(
   handles.frameKey = '';
   handles.restyleKey = '';
   handles.visible = false;
+  handles.leaving = false;
   resetInspectionPlacementLock(handles);
 }
 
@@ -1007,6 +1013,9 @@ export function SceneInspectionAnchor({
     projected.current
       .setFromMatrixPosition(anchor.matrixWorld)
       .project(camera);
+    // A card on its way out is not repositioned and not re-shown: its opacity
+    // belongs to the exit for as long as the exit lasts.
+    if (handles.leaving) return;
     const visible = projected.current.z >= -1
       && projected.current.z <= 1
       && Math.abs(projected.current.x) <= 1.08
@@ -1060,15 +1069,55 @@ export const INSPECTION_LAYER_STYLE: CSSProperties = {
 };
 
 /** The card starts invisible: it has no honest screen position until the
- * anchor has projected the entity once. */
+ * anchor has projected the entity once — and the fade from that zero is the
+ * chassis's ONE enter, for all five dialects (`HUD_MOTION.enter`).
+ *
+ * It is a fade and nothing else. The cell card used to slide its body 12 px in
+ * over 280 ms while this frame faded over 120 and the tether dot popped over
+ * 360 — three enters on two elements, none of them the same length — and the
+ * four network dialects had only the pop. A card is one object; it arrives
+ * once. The transform is spoken for by the frame writer, which sets it every
+ * frame the entity is on screen, so a chassis that also animated position
+ * would be two authors on one property. */
 export const INSPECTION_CARD_STYLE: CSSProperties = {
   position: 'absolute',
   opacity: 0,
   pointerEvents: 'none',
   userSelect: 'text',
   willChange: 'transform',
-  transition: 'opacity 120ms ease',
+  transition: `opacity ${HUD_MOTION.enter}ms ${HUD_MOTION.enterEase}`,
 };
+
+/**
+ * …and the one exit, which no dialect had at all.
+ *
+ * A card, its leader and its dot were unmounted in a single frame: the only
+ * transition in the app that is a CUT (report E, E-5). The dialect holds its
+ * subject for `HUD_MOTION.exit` after the close and hands the card `leaving`;
+ * this writes the fade and tells the frame writer to keep its hands off a card
+ * on its way out — a card that was repositioned mid-exit would slide as it
+ * faded, which is a second gesture nobody asked for.
+ *
+ * Written imperatively for the reason A3's dim is: the frame writer owns
+ * `opacity` on this element, so React's own idea of the style is already stale
+ * and re-rendering it would not move anything.
+ */
+export function useSceneInspectionExit(
+  handles: SceneInspectionHandles,
+  card: RefObject<HTMLDivElement | null>,
+  leaving: boolean,
+  reduced = false,
+): void {
+  useEffect(() => {
+    handles.leaving = leaving;
+    const element = card.current;
+    if (!element || !leaving) return;
+    element.style.transition = reduced
+      ? 'none'
+      : `opacity ${HUD_MOTION.exit}ms ${HUD_MOTION.exitEase}`;
+    element.style.opacity = '0';
+  }, [handles, card, leaving, reduced]);
+}
 
 /** The tether's appearance for the one frame before the anchor has projected
  *  the entity and `restyleLeader` has taken the element over. It is still the
@@ -1084,38 +1133,35 @@ function inspectionLeaderStyle(accent: string): CSSProperties {
   };
 }
 
-function inspectionLeaderDotStyle(enterAnimation?: string): CSSProperties {
-  return {
-    position: 'absolute',
-    zIndex: 2,
-    width: 9,
-    height: 9,
-    boxSizing: 'border-box',
-    borderRadius: '50%',
-    border: `1px solid ${HUD_COLORS.orange}`,
-    background: rgba(HUD_COLORS.stageGround, 0.78),
-    boxShadow: `0 0 9px ${HUD_COLORS.orange}`,
-    pointerEvents: 'none',
-    animation: enterAnimation,
-  };
-}
+/** The dot has no entrance of its own any more: it is part of the card and it
+ *  arrives with the card (`INSPECTION_CARD_STYLE`). Its 360 ms overshoot pop
+ *  was the third simultaneous enter on a surface that has one. */
+const INSPECTION_LEADER_DOT_STYLE: CSSProperties = {
+  position: 'absolute',
+  zIndex: 2,
+  width: 9,
+  height: 9,
+  boxSizing: 'border-box',
+  borderRadius: '50%',
+  border: `1px solid ${HUD_COLORS.orange}`,
+  background: rgba(HUD_COLORS.stageGround, 0.78),
+  boxShadow: `0 0 9px ${HUD_COLORS.orange}`,
+  pointerEvents: 'none',
+};
 
 /**
  * The one screen-space tie between card and entity: a line to the card edge
  * and a dot on the entity side of it. Both are pure targets for the anchor's
- * frame writer, so the dialect only supplies their DOM identity and the
- * keyframe the dot enters with.
+ * frame writer, so the dialect only supplies their DOM identity.
  */
 export function SceneInspectionConnector({
   handles,
   leaderAttributes,
   dotAttributes,
-  dotEnterAnimation,
 }: {
   handles: SceneInspectionHandles;
   leaderAttributes?: Record<string, string | boolean>;
   dotAttributes?: Record<string, string | boolean>;
-  dotEnterAnimation?: string;
 }) {
   return (
     <>
@@ -1140,7 +1186,7 @@ export function SceneInspectionConnector({
         }}
         aria-hidden="true"
         {...dotAttributes}
-        style={inspectionLeaderDotStyle(dotEnterAnimation)}
+        style={INSPECTION_LEADER_DOT_STYLE}
       />
     </>
   );

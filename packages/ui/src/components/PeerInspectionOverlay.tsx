@@ -26,6 +26,7 @@ import {
   SceneInspectionAnchor,
   SceneInspectionConnector,
   useSceneInspectionDismiss,
+  useSceneInspectionExit,
   useSceneInspectionLayoutSide,
   type SceneInspectionHandles,
 } from './sceneInspection';
@@ -35,11 +36,6 @@ import { useHudOcclusionRects } from './hudOcclusion';
  *  the card's own 340px column and a typical plate stack until measured. */
 const DEFAULT_CARD_WIDTH_PX = 340;
 const DEFAULT_CARD_HEIGHT_PX = 460;
-
-/** Entering the connector dot is chassis behaviour rather than a cell one —
- *  the keyframe lives in the shared HUD theme, injected once app-wide. */
-const CONNECTOR_DOT_ENTER =
-  'cknerv-cell-detail-anchor-enter 360ms cubic-bezier(.2,.82,.2,1) both';
 
 export type PeerInspectionHandles = SceneInspectionHandles;
 
@@ -97,6 +93,9 @@ export interface PeerInspectionOverlayProps {
    *  declared — a chain fact joined against the crawler's roster, resolved by
    *  the host off the LIVE producer view. */
   candidacy?: PeerMiningCandidacy | null;
+  /** The dialect is closing and the chassis owes the card its exit — see
+   *  `useSceneInspectionExit`. */
+  leaving?: boolean;
   onClose: () => void;
 }
 
@@ -115,6 +114,7 @@ export default function PeerInspectionOverlay({
   linkLost,
   sighting,
   candidacy,
+  leaving = false,
   onClose,
 }: PeerInspectionOverlayProps) {
   const reduced = useReducedMotion();
@@ -133,6 +133,7 @@ export default function PeerInspectionOverlay({
     setFocusFacet(facet);
   }, []);
   useSceneInspectionDismiss(cardRef, onClose);
+  useSceneInspectionExit(handles, cardRef, leaving, reduced);
 
   // The sticky offset belongs to one selection: probing a different peer
   // clears the lock, so its card centres itself afresh beside its own node.
@@ -182,7 +183,6 @@ export default function PeerInspectionOverlay({
           handles={handles}
           leaderAttributes={{ 'data-peer-probe-leader': true }}
           dotAttributes={{ 'data-peer-probe-anchor': true }}
-          dotEnterAnimation={reduced ? undefined : CONNECTOR_DOT_ENTER}
         />
         <PeerLinkCard
           peer={peer}

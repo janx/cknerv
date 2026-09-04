@@ -48,7 +48,11 @@ describe('hudTheme', () => {
     expect(css).toContain("font-family:'JetBrains Mono Local';font-weight:400");
     expect(css).toContain("font-family:'Orbitron Local';font-weight:400 500");
     expect(css).toContain('--hud-orange:#FF9830');
-    expect(css).toContain('@keyframes cknerv-cell-detail-anchor-enter');
+    // The two card ENTER keyframes are gone (C8): one fade on the chassis
+    // replaced a body slide, a frame fade and a dot pop, so neither the card
+    // nor its tether declares a keyframe any more.
+    expect(css).not.toContain('cknerv-cell-detail-anchor-enter');
+    expect(css).not.toContain('cknerv-cell-consensus-enter');
     expect(css).toContain('@keyframes cknerv-cell-specimen-sweep');
     expect(css).toContain('transform:translate3d(0,100%,0)');
     expect(css).not.toContain('100%{top:91%');

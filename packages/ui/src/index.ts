@@ -162,7 +162,11 @@ export {
 // The palette, for the one surface the HUD does not own: the app mounts the
 // Canvas and paints the ground the whole instrument sits on, so `stageGround`
 // has to be readable from out there or it goes back to being a literal.
-export { HUD_COLORS } from './components/hud/hudTheme';
+//
+// …and the motion rungs, for the same shape of reason: the card's exit is a
+// fade the CHASSIS draws and a hold the APP owns, so the app has to know how
+// long the fade is. One number, read from the table rather than typed twice.
+export { HUD_COLORS, HUD_MOTION } from './components/hud/hudTheme';
 export { default as HudOverlay } from './components/hud/HudOverlay';
 export { default as CellDetailPanel } from './components/hud/CellDetailPanel';
 export { default as CellNucleusPortrait } from './components/hud/CellNucleusPortrait';

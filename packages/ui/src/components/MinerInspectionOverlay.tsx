@@ -21,6 +21,7 @@ import {
   SceneInspectionAnchor,
   SceneInspectionConnector,
   useSceneInspectionDismiss,
+  useSceneInspectionExit,
   useSceneInspectionLayoutSide,
   type SceneInspectionHandles,
 } from './sceneInspection';
@@ -40,11 +41,6 @@ import { useHudOcclusionRects } from './hudOcclusion';
  *  the tallest would move the other three's first frame the other way. */
 const DEFAULT_CARD_WIDTH_PX = 340;
 const DEFAULT_CARD_HEIGHT_PX = 300;
-
-/** Entering the connector dot is chassis behaviour rather than a cell one —
- *  the keyframe lives in the shared HUD theme, injected once app-wide. */
-const CONNECTOR_DOT_ENTER =
-  'cknerv-cell-detail-anchor-enter 360ms cubic-bezier(.2,.82,.2,1) both';
 
 export type MinerInspectionHandles = SceneInspectionHandles;
 
@@ -95,6 +91,9 @@ export interface MinerInspectionOverlayProps {
    *  against — never from the standing hanging off the staged node, which is
    *  the one captured at the last producer key-set change. */
   subject: MinerNodeSubject;
+  /** The dialect is closing and the chassis owes the card its exit — see
+   *  `useSceneInspectionExit`. */
+  leaving?: boolean;
   onClose: () => void;
 }
 
@@ -118,6 +117,7 @@ export interface MinerInspectionOverlayProps {
 export default function MinerInspectionOverlay({
   handles,
   subject,
+  leaving = false,
   onClose,
 }: MinerInspectionOverlayProps) {
   const reduced = useReducedMotion();
@@ -129,6 +129,7 @@ export default function MinerInspectionOverlay({
   handles.accent = MINER_NODE_ACCENT;
   const layoutSide = useSceneInspectionLayoutSide(handles);
   useSceneInspectionDismiss(cardRef, onClose);
+  useSceneInspectionExit(handles, cardRef, leaving, reduced);
 
   // The sticky offset belongs to one selection: opening a different producer
   // clears the lock, so its card centres itself afresh beside it.
@@ -178,7 +179,6 @@ export default function MinerInspectionOverlay({
           handles={handles}
           leaderAttributes={{ 'data-miner-probe-leader': true }}
           dotAttributes={{ 'data-miner-probe-anchor': true }}
-          dotEnterAnimation={reduced ? undefined : CONNECTOR_DOT_ENTER}
         />
         <MinerNodeCard
           subject={subject}
