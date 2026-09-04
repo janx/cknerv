@@ -1214,12 +1214,20 @@ describe('what a POW cohort looks like', () => {
       'cohortGlow', 'cohortWarmth', 'cohortUnfold',
       'cohortSteps', 'cohortIntake', 'cohortSwirl', 'cohortOrbit',
       'cohortMotes',
+      // ⭐ AND SINCE 2026-09-04 THE THREE THAT ARE ABOUT THE COHORT RATHER THAN
+      // ABOUT THE FORM: the anchor and the floor of the per-cohort MASS — its
+      // share of the indexer's week, the one thing that makes two marks
+      // different pictures — and the switch on its handedness. They are read on
+      // the layer's own ease frame and never written to a uniform, because the
+      // mass rides a LANE: a uniform is one number for every instance, which is
+      // exactly the sameness this channel exists to break.
+      'cohortMassAnchor', 'cohortMassFloor', 'cohortHand',
     ] as const;
     for (const knob of knobs) {
       expect(peerSchema, knob).toHaveProperty(knob);
       expect(layer, knob).toContain(`LIVE.peer.${knob}`);
     }
-    // …and the folder holds those sixteen and nothing else `cohort`-shaped.
+    // …and the folder holds those nineteen and nothing else `cohort`-shaped.
     expect(Object.keys(peerSchema).filter((key) => key.startsWith('cohort')).sort())
       .toEqual([...knobs].sort());
 

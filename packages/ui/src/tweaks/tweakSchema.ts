@@ -18,7 +18,7 @@ import {
   SHOCKWAVE_COLOR_CEIL,
   SHOCKWAVE_ALPHA_CEIL,
 } from '../materials/shockwaveMaterial';
-// …and the sixteen `cohort*` knobs take theirs from the lensed mark and the
+// …and the nineteen `cohort*` knobs take theirs from the lensed mark and the
 // motes falling into it, on the same rule: each material seeds its own uniforms
 // from these constants and `ColonyCohorts` overwrites them from LIVE.peer.*
 // each frame, so there is ONE authority.
@@ -36,6 +36,10 @@ import {
 // (which every other radius is a multiple of), the disc's extent, its
 // brightness near and far, the beaming, the colour temperature, the glow, the
 // fold's near end, the specks, and the step count the ray march spends.
+// ⭐⭐ AND SINCE 2026-09-04, THREE THAT ARE ABOUT THE COHORT AND NOT THE FORM:
+// the anchor and the floor of the PER-COHORT mass (its share of the indexer's
+// week, which is the one thing that makes two marks different pictures) and the
+// switch on its handedness.
 import {
   COHORT_DISC_OUT,
   COHORT_HORIZON,
@@ -48,6 +52,8 @@ import {
   COHORT_LENS_GLOW,
   COHORT_LENS_STEPS,
   COHORT_LENS_WARMTH,
+  COHORT_MASS_ANCHOR_SHARE,
+  COHORT_MASS_FLOOR,
   COHORT_UNFOLD_HI,
 } from '../materials/colonyLens';
 import { COHORT_MOTE_AMP, COHORT_MOTE_ORBIT } from '../materials/colonyMotes';
@@ -173,7 +179,7 @@ export const peerSchema = {
   glintBloomOpacity: { value: 0.55, min: 0, max: 1, step: 0.05, label: 'glint bloom op' },
   glintPlumeOpacity: { value: 0.3, min: 0, max: 1, step: 0.05, label: 'glint plume op' },
   // The POW channel — ONE LENSED MASS PER COHORT, plus the specks falling into
-  // it. Sixteen knobs, and every one of them is a fact about the mass or about
+  // it. Nineteen knobs, and every one of them is a fact about the mass or about
   // the substance around it: there is no "rim amplitude" here and there must
   // never be one again, because the mark is COMPUTED (light traced backward
   // around a Schwarzschild mass) and a knob that moved a PART of the picture
@@ -244,6 +250,29 @@ export const peerSchema = {
   cohortOrbit: { value: COHORT_MOTE_ORBIT, min: 0, max: 3, step: 0.05, label: 'cohort orbit' },
   // how bright the specks are: the intake's SPEED, which a field alone cannot say
   cohortMotes: { value: COHORT_MOTE_AMP, min: 0, max: 3, step: 0.05, label: 'cohort motes' },
+  // ⭐⭐⭐ THE LAST THREE ARE THE ONLY PER-COHORT ONES IN THE FOLDER. Every knob
+  // above is a GLOBAL uniform — one horizon, one disc, one palette for the
+  // whole colony — so before these, seven cohorts were seven copies of one
+  // picture. What varies is SIZE, and what it reads is the cohort's share of
+  // the indexer's SEVEN-DAY window: `clamp(cbrt(week / anchor), floor, 1)`,
+  // multiplying every length in both cohort programs.
+  //
+  // the week share at which a cohort is FULL SIZE — today's top, and the
+  // largest a single pool plausibly holds. At and above it the mass is 1, so
+  // the accepted form is a CEILING and every other cohort folds down from it:
+  // the colony gets quieter, never louder
+  cohortMassAnchor: { value: COHORT_MASS_ANCHOR_SHARE, min: 0.05, max: 1, step: 0.01, label: 'cohort mass anchor' },
+  // the smallest a cohort may be drawn, as a fraction of the full form: 0.45
+  // puts the 2 % cohort's nucleus wider than a ghost peer and narrower than a
+  // dark sighted one — a LESSER peer, never a vanished one.
+  // ⭐⭐ AND 1 IS THE OFF SWITCH: every mass then clamps to 1 and the colony
+  // draws exactly what it drew before the lane was written, which is what makes
+  // the A/B for this whole channel a single knob
+  cohortMassFloor: { value: COHORT_MASS_FLOOR, min: 0.2, max: 1, step: 0.01, label: 'cohort mass floor' },
+  // whether each cohort winds its own way, from its key: 0 is one hand for the
+  // whole colony, 1 is the seed's. Identity and not data — it is what separates
+  // the middling cohorts the week makes the same size
+  cohortHand: { value: 1, min: 0, max: 1, step: 1, label: 'cohort hand' },
 } satisfies FolderSchema;
 
 export const cellSchema = {

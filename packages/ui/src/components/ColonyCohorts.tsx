@@ -79,7 +79,7 @@
 // tier that moves the DPR changes how many pixels a world unit covers, and a
 // mark that folded on CSS pixels would unfold when the tier stepped down.
 //
-// This file owns the three things that cannot live in a material:
+// This file owns the four things that cannot live in a material:
 //   • WHICH nodes wear one — `cohortMarks`, pure and exported, one mark per
 //     attested node, carrying its placement and a stable per-cohort seed so no
 //     two discs breathe on the same beat;
@@ -90,7 +90,11 @@
 //     which is what makes the disc pile and the specks flare; stamped off the
 //     pulse below and held against the NODE ID in `wonAtRef`, so a re-plan
 //     carries a win with the cohort instead of handing it to whoever takes the
-//     slot.
+//     slot;
+//   • the MASS lane, `aMass` — the cohort's share of the indexer's WEEK, eased
+//     toward its target over a second and a half and held against the NODE ID
+//     in `massNowRef` for exactly the reason the gulp is, so a re-plan carries
+//     a cohort's size with it instead of resizing whoever takes its slot.
 //
 // ⚠️⚠️ THE GULP LANE IS SIM SECONDS, ON THE CLOCK THIS FILE ALREADY WRITES.
 // The envelope is `uTime - aGulp`; `uTime` is written from `simClock.elapsedSec`
@@ -128,12 +132,47 @@
 // is the quantity a rate wants. A ring that a reorg has just emptied therefore
 // stops making every cohort look equal.
 //
-// ⭐ THE MASS LANE, `aMass`, IS THE FOURTH — AND IT IS ALLOCATED BEFORE IT IS
-// WRITTEN. It carries the cohort's own size factor, which multiplies every
-// length in both of its programs; until the week is wired to it every slot
-// holds 1, which is the form this layer has always drawn. It is allocated NOW
-// rather than with its writer because a lane a geometry does not have reads as
-// ZERO in WebGL, and zero is a mark with no extent at all.
+// ⭐⭐⭐ THE MASS LANE, `aMass`, IS THE FOURTH — AND THE MASS IS THE WEEK. It
+// carries one factor per cohort, `clamp(cbrt(week / anchor), floor, 1)` off
+// `ProducerStanding.ledger.share`, and that factor multiplies EVERY length in
+// both of this layer's programs. It is the ONLY per-cohort form parameter there
+// is: the horizon, the disc's stops, the colours and the fold's band are all
+// GLOBAL uniforms, so until this lane was written seven cohorts were seven
+// copies of one picture — which is the question that asked for it (「不同 pow
+// cohort 形态是否可以根据数据不同做一些变化，方便区分？」).
+//
+// Four rules hold it there, and each is a ruling already on record:
+//   1. THE CEILING IS TODAY'S FORM. `m = 1` at and above the anchor share, so
+//      the cohort holding 62 % of the week keeps the form the user judged on
+//      2026-09-03 exactly and everyone else folds DOWN. The colony gets
+//      quieter, never louder — the mark stays secondary to the mesh and the
+//      canopy BY CONSTRUCTION rather than by a taste that can drift.
+//   2. THE WEEK ONLY, ABSOLUTE, AND NEVER THE RING. `aShare` drives a RATE and
+//      takes whichever window measured a producer, normalised by the busiest
+//      cohort in view. A SIZE is read at a glance, compared across days and
+//      against the peers standing beside it: it must not pulse once a block
+//      (the 240-block ring moves on every block, empties on every reorg, and is
+//      empty for the first minute of every boot) and must not depend on who
+//      else happens to be staged. No week ⇒ every mass is 1 ⇒ the picture this
+//      layer drew before the lane existed, byte for byte.
+//   3. THE FOLD IS PIXELS PER SHADOW, NOT PER WORLD UNIT. Both programs take
+//      their closeness from `uPxScale · m / distance`, so every cohort's hole
+//      opens at the same ON-SCREEN size — the only arrangement in which a small
+//      cohort at the mid range is not "a small eye", a form the user refused
+//      twice.
+//   4. NOTHING THE TOPOLOGY READS MOVES. The hit sphere, the link stop and the
+//      keep-out radius are constants sized for the MAXIMUM; the placement is
+//      still a pure hash of the key. The lane is written in place and no
+//      geometry is rebuilt on a tally.
+//
+// ⚠️ AND IT IS ALLOCATED AT 1 BEFORE ANYTHING WRITES IT, because a lane a
+// geometry does not carry reads as ZERO in WebGL and zero is a mark with no
+// extent at all — three independent guards, see the lanes memo below.
+//
+// ⚠️ THE SIGN IS THE HAND. The magnitude is the size and the sign says which
+// way the cohort winds (`cohortHandLane`, off the same seed the phase comes
+// from): one lane for two facts, because the motes' copy of it is 96 vertices
+// wide and a bit does not deserve a second float of that.
 //
 // ⚠️⚠️ THE TWO DRAWS DO NOT SHARE ONE LANE OBJECT, AND THAT IS NOT AN OVERSIGHT.
 // The lens is an InstancedMesh and reads ONE value per instance, so its four
@@ -215,8 +254,13 @@ import { ATTESTED_ID_PREFIX } from '../derives/networkTopology.derive';
 import { COHORT_NEVER_WON } from '../materials/colonyCohort';
 import {
   COHORT_LENS_STEPS,
+  COHORT_MASS_SLEW_S,
   cohortDiscInner,
   cohortDiscStops,
+  cohortHandedness,
+  cohortMassApproach,
+  cohortMassFactor,
+  cohortMassLaneValue,
   cohortShadowRadius,
   makeCohortLensMaterial,
 } from '../materials/colonyLens';
@@ -228,6 +272,7 @@ import {
   makeCohortMotesMaterial,
   stampCohortMotes,
   writeCohortMotes,
+  writeCohortMotesMass,
 } from '../materials/colonyMotes';
 import { MIST_SINK_K, mistShareFactor } from '../materials/colonyMist';
 import { useStableList } from './ColonyNodes';
@@ -372,6 +417,114 @@ export function cohortShareLane(
     if (value > max) max = value;
   });
   return max > 0 ? max : 1;
+}
+
+/** Fill the MASS lane's TARGETS: one size factor per staged mark, looked up by
+ *  payout key against the indexer's SEVEN-DAY window — and return whether
+ *  there was a week to read at all.
+ *
+ *  ⭐⭐⭐ THE WEEK AND NEVER THE RING, WHICH IS THE OPPOSITE CHOICE FROM THE
+ *  LANE ABOVE, and the two are right for opposite reasons. `aShare` drives a
+ *  RATE: a rate is read over seconds of watching, against the busiest cohort in
+ *  view, so it takes whichever window measured a producer. A SIZE is read at a
+ *  glance and compared across days and against the peers standing beside it, so
+ *  it must not pulse once a block — the 240-block ring moves on every block,
+ *  empties on every reorg and is empty for the first minute of every boot — and
+ *  must not depend on who else happens to be staged. `ledger.share` is the only
+ *  reading with those properties, so this reads it ALONE and never falls back
+ *  to the ring.
+ *
+ *  ⭐⭐ NO LEDGER ⇒ EVERY MASS IS 1 ⇒ TODAY'S PICTURE, BYTE FOR BYTE. A
+ *  ckbadger outage (`producer_ledger_clear`), a devnet, a boot before the first
+ *  fetch: the honest answer to "how big is this cohort" is then the form this
+ *  layer drew before it could ask. The return says WHICH of the two happened,
+ *  so a caller can tell "the week says everyone is full size" from "there is no
+ *  week" without re-walking the standings.
+ *
+ *  ⚠️ A KEY THE WEEK DOES NOT NAME TAKES THE FLOOR, and that is a reading
+ *  rather than a missing value: a producer inside the 240 blocks and outside
+ *  the seven days is brand new, or too small to have made the adapter's 16-row
+ *  cap, or a cohort the week has dropped that is still standing. Every one of
+ *  those is "small this week", which is what the floor says.
+ *
+ *  By KEY and never by position, for the reason `cohortShareLane` is: the
+ *  staged set reshuffles and a slot index is not an identity. Pure, so the
+ *  targets can be pinned without a renderer.
+ */
+export function cohortMassLane(
+  marks: readonly CohortMark[],
+  producers: readonly ProducerStanding[] | null | undefined,
+  anchor: number,
+  floor: number,
+  target: Float32Array,
+): boolean {
+  const weekByKey = new Map<string, number>();
+  for (const producer of producers ?? []) {
+    // ⚠️ `ledger` IS NULL FOR EVERY PRODUCER WHEN THERE IS NO WEEK — and
+    // undefined on a standing built before the field existed. Both are "the
+    // week does not name this one" and neither is a share of zero.
+    const week = producer?.ledger?.share;
+    if (typeof week !== 'number') continue;
+    weekByKey.set(producer.key, week);
+  }
+  if (weekByKey.size === 0) {
+    for (let index = 0; index < marks.length; index += 1) target[index] = 1;
+    return false;
+  }
+  marks.forEach((mark, index) => {
+    const week = weekByKey.get(mark.producerKey);
+    target[index] = week === undefined
+      ? floor
+      : cohortMassFactor(week, anchor, floor);
+  });
+  return true;
+}
+
+/** Which way ONE cohort winds: its own hand off its seed, or +1 for the whole
+ *  colony while the panel's switch is off.
+ *
+ *  ⭐ THE HAND IS IDENTITY AND NOT DATA. The seed is `fnv1a(payout key)`, so it
+ *  is stable across churn and claims nothing about the chain — and it is what
+ *  separates the middling cohorts the week makes the same size. ⚠️ The knob is
+ *  a SWITCH and is read at the half-way mark, because a panel value is a float
+ *  and a hand is a bit: there is no such thing as a cohort winding 0.4 of the
+ *  way round.
+ */
+export function cohortHandLane(seed: number, handKnob: number): number {
+  return handKnob >= 0.5 ? cohortHandedness(seed) : 1;
+}
+
+/** Lay the MASS lane out under a plan: one SIGNED value per staged mark, each
+ *  the size that cohort is currently at, looked up by the graph id its ease is
+ *  held against.
+ *
+ *  ⭐⭐ A SIZE FOLLOWS THE COHORT AND NEVER THE SLOT — the same law
+ *  `cohortWinLane` keeps for the gulp, and it has to be kept twice because the
+ *  staged set reshuffles whenever a producer enters or leaves the window. A
+ *  walk that left the lane where it was would hand whoever takes slot 0 its
+ *  previous occupant's size and then ease it away over a second and a half:
+ *  half the colony visibly resizing because one cohort left.
+ *
+ *  ⚠️ A COHORT NOBODY HAS EASED YET STARTS AT ITS TARGET, which is what the
+ *  `??` is for: a mark appearing at 2 % of the week must be small the frame it
+ *  appears rather than shrink into it from whatever the slot held. Growth is
+ *  for a mass that CHANGED, never for a cohort that arrived.
+ *
+ *  Pure, so a re-plan's arithmetic can be pinned without a renderer.
+ */
+export function cohortMassRelay(
+  marks: readonly CohortMark[],
+  massNow: ReadonlyMap<string, number> | null | undefined,
+  target: Float32Array,
+  handKnob: number,
+  lane: Float32Array,
+): void {
+  marks.forEach((mark, index) => {
+    lane[index] = cohortMassLaneValue(
+      massNow?.get(mark.nodeId) ?? target[index],
+      cohortHandLane(mark.seed, handKnob),
+    );
+  });
 }
 
 /** Lay the GULP lane out under a plan: one entry per staged mark, each the sim
@@ -682,6 +835,13 @@ export default function ColonyCohorts({
       new Float32Array(capacity).fill(1),
       1,
     ),
+    // ⭐ WHERE THE MASS IS GOING, BESIDE WHERE IT IS. The targets are indexed
+    // by the same slot as the lane and have to be rebuilt on exactly the same
+    // event, so they are built by the same memo — a ref would need its own
+    // resize and could be read at the previous capacity's length for the width
+    // of a commit. It is a plain array and never an attribute: nothing uploads
+    // it, the lane above is what the GPU ever sees.
+    massTarget: new Float32Array(capacity).fill(1),
   }), [capacity]);
 
   /** When each staged cohort last won a block, in sim seconds, by graph id.
@@ -715,6 +875,35 @@ export default function ColonyCohorts({
    *  makes it impossible for the divisor and the lane to disagree: one walk,
    *  one answer. 1 until the first walk, which is what the uniform ships at. */
   const shareMaxRef = useRef(1);
+  /** Each staged cohort's CURRENT size, by graph id — the value the lane holds
+   *  while it eases toward `lanes.massTarget`.
+   *
+   *  ⚠️ THE `wonAtRef` PATTERN, FOR THE `wonAtRef` REASON: a slot index is not
+   *  an identity. The lane is indexed by position and the staged set reshuffles
+   *  whenever a producer enters or leaves the window, so a size held by slot
+   *  would be handed to whoever took the slot — and then eased away over a
+   *  second and a half, which is half the colony resizing because one cohort
+   *  left. Held in a ref and never in state: this moves on every frame of an
+   *  ease and must not re-render the colony.
+   *
+   *  ⭐ A COHORT WITH NO ENTRY STARTS AT ITS TARGET rather than at 1, which is
+   *  what makes an arriving mark appear at its own size instead of growing into
+   *  it. The entry is written by the ease below, so "never eased" and "not in
+   *  the map" are one state and cannot disagree. */
+  const massNowRef = useRef<Map<string, number>>(new Map());
+  /** The panel values the targets in `lanes.massTarget` were computed under.
+   *
+   *  ⚠️ A KNOB THAT MOVED THE ANCHOR OR THE FLOOR MOVES EVERY TARGET AT ONCE,
+   *  and the targets are otherwise only recomputed once an attributed block —
+   *  so a tuner dragging the floor would see nothing until the next block
+   *  landed. Compared per frame rather than pushed, because the panel writes
+   *  `LIVE` in place and has no channel to push through. NaN so the first frame
+   *  always recomputes, whatever the panel shipped. */
+  const massKnobsRef = useRef({
+    anchor: Number.NaN,
+    floor: Number.NaN,
+    hand: Number.NaN,
+  });
   /** How many of the motes' cohort slots were last written, so a plan that
    *  SHRANK can retire exactly the tail it dropped. The geometry is allocated
    *  for the cap and never rebuilt, so a slot nobody clears keeps spiralling
@@ -738,6 +927,20 @@ export default function ColonyCohorts({
     lensGeometry.instanceCount = marks.length;
     const seed = lanes.seed.array as Float32Array;
     const share = lanes.share.array as Float32Array;
+    const mass = lanes.mass.array as Float32Array;
+    // ⭐⭐ THE MASS LANE IS RE-LAID FIRST, BECAUSE THE SPECKS READ IT OUT OF IT.
+    // A size belongs to a NODE ID and never to a slot (`cohortMassRelay`), so
+    // this is the same re-lay `cohortWinLane` does for the gulp below — run
+    // before the walk rather than after it only because the motes' 96 copies of
+    // the value are written inside that walk, and one number must reach both
+    // draws or a cohort's disc and its specks are two different sizes.
+    cohortMassRelay(
+      marks,
+      massNowRef.current,
+      lanes.massTarget,
+      LIVE.peer.cohortHand,
+      mass,
+    );
     marks.forEach((mark, index) => {
       // TRANSLATION ONLY — the quad is rebuilt from the camera's axes and takes
       // its extent from `uQuadR`, so a scale here is ignored by the geometry and
@@ -753,17 +956,18 @@ export default function ColonyCohorts({
       // program multiplies it straight into `uK` while the lens runs the same
       // factor in its vertex stage off `aShare`. Same rate, two places, one
       // function.
-      // ⚠️ …and the last argument is the specks' copy of the MASS lane, which
-      // is 1 everywhere until the week is wired to it: a cohort nothing has
-      // been said about is full size, which is the picture this layer has
-      // always drawn. Never 0 — that is a mark with no extent at all.
+      // ⚠️ …and the last argument is the specks' copy of the MASS lane, read
+      // straight out of the lane the re-lay above just wrote so the two draws
+      // cannot be given two different sizes. Never 0 — a strength of zero is
+      // how a slot is silenced, and a mass of zero is a mark with no extent at
+      // all.
       writeCohortMotes(
         motesGeometry,
         index,
         { x: mark.pos[0], y: mark.pos[1], z: mark.pos[2] },
         mark.seed,
         mistShareFactor(share[index] ?? 0, shareMaxRef.current),
-        1,
+        mass[index],
       );
       // …and its gulp copy is re-laid from the SAME map, so a cohort that moved
       // slots keeps its burst in both draws rather than in one of them.
@@ -796,6 +1000,7 @@ export default function ColonyCohorts({
     lensMesh.instanceMatrix.needsUpdate = true;
     lanes.seed.needsUpdate = true;
     lanes.gulp.needsUpdate = true;
+    lanes.mass.needsUpdate = true;
     // Bound on the first pass and again only when a capacity change built new
     // lanes. The geometry outlives the InstancedMesh (a capacity change rebuilds
     // it through `args`), so it can still be holding the previous set.
@@ -832,6 +1037,19 @@ export default function ColonyCohorts({
     shareMaxRef.current = cohortShareLane(marks, producers, share);
     // Marked ONCE for the whole walk, never once per write.
     lanes.share.needsUpdate = true;
+    // ⭐⭐ AND THE WEEK'S TARGETS COME OFF THE SAME STANDINGS, IN THE SAME WALK.
+    // The two lanes read DIFFERENT fields of one object — the rate takes
+    // whichever window measured a producer, the size takes the seven days alone
+    // — so reading them apart would let a frame carry a share from one poll
+    // against a week from another. Only the TARGET moves here: the lane itself
+    // eases toward it on the frame below, because a ledger arriving or clearing
+    // would otherwise pop every mark in the colony at once.
+    const knobs = massKnobsRef.current;
+    knobs.anchor = LIVE.peer.cohortMassAnchor;
+    knobs.floor = LIVE.peer.cohortMassFloor;
+    knobs.hand = LIVE.peer.cohortHand;
+    cohortMassLane(marks, producers, knobs.anchor, knobs.floor, lanes.massTarget);
+    const mass = lanes.mass.array as Float32Array;
     // ⭐⭐ AND THE SPECKS ARE RE-LAID ON THE SAME WALK, because their strength is
     // this same share with `mistShareFactor` already applied — the motes cannot
     // read the instanced lane (their geometry is one vertex per mote, so the
@@ -845,7 +1063,7 @@ export default function ColonyCohorts({
         { x: mark.pos[0], y: mark.pos[1], z: mark.pos[2] },
         mark.seed,
         mistShareFactor(share[index] ?? 0, shareMaxRef.current),
-        1,
+        mass[index],
       );
     });
     writtenSharesRef.current = producers;
@@ -862,6 +1080,80 @@ export default function ColonyCohorts({
     const live = producersRef?.current ?? null;
     if (live === writtenSharesRef.current) return;
     writeShares(live);
+  });
+
+  // THE EASE: every cohort's size walking toward the week's answer, on the RAW
+  // frame beside the poll above — and a SECOND callback rather than a second
+  // half of that one, because that one's whole shape is a single early return
+  // on an identity test and a size that moved has nothing to do with a window
+  // that did not.
+  //
+  // ⭐⭐ THE EASE EXISTS FOR TWO EVENTS AND NOT FOR A DRIFT. A week share
+  // moving by a tenth of a percent per 120-second refresh is invisible with or
+  // without it. What it is for is the ledger ARRIVING after the cohorts are
+  // already standing (a boot whose window fills before the first fetch returns)
+  // and the ledger CLEARING (a ckbadger outage, where every mass returns to 1):
+  // both are every mark in the colony changing size in one frame, which is the
+  // pop the dolly strip has been measured never to make.
+  //
+  // ⚠️ WALL `dt`, AND IT RUNS UNDER A PAUSE. `useSimFrame` skips entirely while
+  // time is paused and the sim clock freezes with it; a ledger that cleared
+  // during a pause would then hold the old sizes until the clock ran again. The
+  // step is clamped because a backgrounded tab hands over whole seconds on its
+  // first frame back, and it is clamped with comparisons rather than
+  // `Math.min`, so a NaN takes 0 instead of propagating into the lane.
+  useFrame((_, dt) => {
+    const anchor = LIVE.peer.cohortMassAnchor;
+    const floor = LIVE.peer.cohortMassFloor;
+    const handKnob = LIVE.peer.cohortHand;
+    const knobs = massKnobsRef.current;
+    if (anchor !== knobs.anchor || floor !== knobs.floor || handKnob !== knobs.hand) {
+      knobs.anchor = anchor;
+      knobs.floor = floor;
+      knobs.hand = handKnob;
+      // ⚠️ THE KNOB GOES THROUGH THE TARGETS AND NEVER STRAIGHT INTO THE LANE,
+      // which is what makes `cohortMassFloor` 1 — the OFF switch, and the live
+      // leg's whole A/B — a second-and-a-half ease rather than a colony-wide
+      // pop. Recomputed from the standings the lane was LAST WRITTEN under, so
+      // a knob and a block cannot disagree about which week is being read. (The
+      // hand moves no target; it rides the same compare because it is packed
+      // into the same lane, and seven floats is not worth a second gate.)
+      cohortMassLane(marks, writtenSharesRef.current, anchor, floor, lanes.massTarget);
+    }
+    const step = dt > 0.1 ? 0.1 : dt > 0 ? dt : 0;
+    const target = lanes.massTarget;
+    const mass = lanes.mass.array as Float32Array;
+    const now = massNowRef.current;
+    let moved = false;
+    // A plain loop and no closure: this runs on every frame of the tab's life,
+    // and `forEach` would allocate one per frame for a walk over seven marks.
+    for (let index = 0; index < marks.length; index += 1) {
+      const mark = marks[index];
+      const current = now.get(mark.nodeId);
+      const eased = cohortMassApproach(
+        current ?? target[index],
+        target[index],
+        step,
+        COHORT_MASS_SLEW_S,
+      );
+      // Exact at the target and exact at `dt = 0`, so a converged colony stops
+      // touching the map as well as the lane.
+      if (eased !== current) now.set(mark.nodeId, eased);
+      const value = cohortMassLaneValue(eased, cohortHandLane(mark.seed, handKnob));
+      // ⚠️⚠️ THE GATE IS THE WHOLE DIFFERENCE BETWEEN AN EASE AND AN UPLOAD A
+      // FRAME FOR THE LIFE OF THE TAB. Nothing moved ⇒ nothing is written and
+      // neither buffer is flagged: 6,144 mote floats plus the lane, sixty times
+      // a second, for a number that changes twice a session. The comparison is
+      // against the LANE rather than against a written-yet flag, so a slot the
+      // ease has never touched — a rebuilt lane, a new capacity — is written by
+      // the same line that writes a slot that moved.
+      if (Math.abs(mass[index] - value) <= 1e-4) continue;
+      mass[index] = value;
+      writeCohortMotesMass(motesGeometry, index, value);
+      moved = true;
+    }
+    // Flagged ONCE for the whole walk, and only when something moved.
+    if (moved) lanes.mass.needsUpdate = true;
   });
 
   // THE WIN, stamped on a `blockPulseAtMs` INCREASE into the one mark standing

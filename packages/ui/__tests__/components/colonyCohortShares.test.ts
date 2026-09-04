@@ -32,6 +32,9 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  cohortHandLane,
+  cohortMassLane,
+  cohortMassRelay,
   cohortShareLane,
   cohortWinLane,
   cohortWinStamp,
@@ -41,6 +44,11 @@ import {
   COHORT_GULP_RISE,
   COHORT_NEVER_WON,
 } from '../../src/materials/colonyCohort';
+import {
+  COHORT_MASS_ANCHOR_SHARE,
+  COHORT_MASS_FLOOR,
+  cohortHandedness,
+} from '../../src/materials/colonyLens';
 import {
   COHORT_MOTES_PER_COHORT,
   buildCohortMotesGeometry,
@@ -147,6 +155,201 @@ describe('cohortShareLane', () => {
     expect(cohortShareLane(marks, null, share)).toBe(1);
     expect(cohortShareLane(marks, [standing('0xa', 0)], share)).toBe(1);
     expect(cohortShareLane([], [standing('0xa', 0.5)], share)).toBe(1);
+  });
+});
+
+describe('cohortMassLane — a cohort’s size is its share of the WEEK', () => {
+  const ANCHOR = COHORT_MASS_ANCHOR_SHARE;
+  const FLOOR = COHORT_MASS_FLOOR;
+
+  /** The targets as `ColonyCohorts` allocates them: every slot at 1, because a
+   *  cohort nothing has been said about is the form this layer always drew. */
+  function massTargets(entries: number): Float32Array {
+    return new Float32Array(entries).fill(1);
+  }
+
+  it('writes each staged cohort its own factor, by key and never by position', () => {
+    // ⭐⭐ THE SAME LAW `cohortShareLane` KEEPS, and it has to be kept again
+    // here: the staged set reshuffles whenever a producer enters or leaves the
+    // window, so a positional write would hand cohort b cohort a's SIZE — and a
+    // size is the one lane the eye compares between neighbours.
+    const marks = [mark('0xb', 0.2), mark('0xa', 0.7), mark('0xc', 0.4)];
+    const target = massTargets(marks.length);
+    expect(cohortMassLane(marks, [
+      standing('0xa', 0.1, 0.6247),
+      standing('0xc', 0.1, 0.0219),
+      standing('0xb', 0.1, 0.1283),
+    ], ANCHOR, FLOOR, target)).toBe(true);
+    expect(target[0]).toBeCloseTo(0.598, 3);
+    expect(target[1]).toBeCloseTo(1, 6);
+    expect(target[2]).toBeCloseTo(FLOOR, 6);
+  });
+
+  it('reads the WEEK and ignores the ring, whichever way the two disagree', () => {
+    // ⭐⭐⭐ THE OPPOSITE CHOICE FROM THE SHARE LANE, AND FOR THE OPPOSITE
+    // REASON. `aShare` drives a RATE — read over seconds of watching, against
+    // the busiest cohort in view — so it takes whichever window measured a
+    // producer. A SIZE is read at a glance and compared across days: it must
+    // not pulse once a block, and the 240-block ring moves on every block,
+    // empties on every reorg and is empty for the first minute of every boot.
+    const marks = [mark('0xa', 0.2)];
+    const target = massTargets(1);
+    // 60 % of the ring and 2 % of the week: the week decides, and it says small.
+    cohortMassLane(marks, [standing('0xa', 0.6, 0.02)], ANCHOR, FLOOR, target);
+    expect(target[0]).toBeCloseTo(FLOOR, 6);
+    // …and the mirror: 1 % of the ring and 63 % of the week is the giant.
+    cohortMassLane(marks, [standing('0xa', 0.01, 0.63)], ANCHOR, FLOOR, target);
+    expect(target[0]).toBeCloseTo(1, 6);
+  });
+
+  it('says NO WEEK and sizes every cohort at 1 when nothing carries a ledger', () => {
+    // ⭐⭐ NO LEDGER ⇒ TODAY'S PICTURE, BYTE FOR BYTE. A ckbadger outage, a
+    // devnet, a boot before the first fetch: the honest answer to "how big is
+    // this cohort" is then the form this layer drew before it could ask. The
+    // RETURN is what says which of the two happened, so a caller can tell "the
+    // week says everyone is full size" from "there is no week".
+    const marks = [mark('0xa', 0.2), mark('0xb', 0.7)];
+    const target = new Float32Array([0.45, 0.6]);
+    expect(cohortMassLane(
+      marks,
+      [standing('0xa', 0.9), standing('0xb', 0.1)],
+      ANCHOR, FLOOR, target,
+    )).toBe(false);
+    expect(Array.from(target)).toEqual([1, 1]);
+    // No window at all is the same code path as a window with no week in it.
+    target.set([0.45, 0.6]);
+    expect(cohortMassLane(marks, null, ANCHOR, FLOOR, target)).toBe(false);
+    expect(Array.from(target)).toEqual([1, 1]);
+    expect(cohortMassLane(marks, undefined, ANCHOR, FLOOR, target)).toBe(false);
+    // …and ONE ledger row anywhere is a week: the rest of the colony is then
+    // measured against it rather than exempted from it.
+    expect(cohortMassLane(
+      marks,
+      [standing('0xa', 0.9, 0.6247), standing('0xb', 0.1)],
+      ANCHOR, FLOOR, target,
+    )).toBe(true);
+    expect(target[0]).toBeCloseTo(1, 6);
+    expect(target[1]).toBeCloseTo(FLOOR, 6);
+  });
+
+  it('floors a cohort the week does not name, which is what a newcomer IS', () => {
+    // ⚠️ A READING AND NOT A MISSING VALUE. A producer inside the 240 blocks
+    // and outside the seven days is brand new, or too small to have made the
+    // adapter's 16-row cap, or a cohort the week has dropped that is still
+    // standing — every one of those is "small this week", which is what the
+    // floor says. The alternative, a mass of 1, would draw the colony's newest
+    // and smallest mark at the giant's size.
+    const marks = [mark('0xa', 0.2), mark('0xnew', 0.7)];
+    const target = massTargets(marks.length);
+    cohortMassLane(marks, [standing('0xa', 0.5, 0.6247)], ANCHOR, FLOOR, target);
+    expect(target[0]).toBeCloseTo(1, 6);
+    expect(target[1]).toBeCloseTo(FLOOR, 6);
+    // A standing the RING knows and the week does not is the same thing: the
+    // ring's 0.5 is not a size and is never read as one.
+    cohortMassLane(
+      marks,
+      [standing('0xa', 0.5, 0.6247), standing('0xnew', 0.5)],
+      ANCHOR, FLOOR, target,
+    );
+    expect(target[1]).toBeCloseTo(FLOOR, 6);
+  });
+
+  it('gives the live week its measured sizes: one giant, three middling, a tail', () => {
+    // ⭐⭐ THE SHAPE THE CHANNEL EXISTS FOR, measured off ckbadger
+    // `charts/miner-address-distribution?range=7d` (2026-08-27 → 2026-09-02,
+    // 68,814 blocks, 7 rows). The cube root separates the giant from the rest
+    // by 1.75× and keeps the whole range near the 3× step the peer-tier work
+    // found legible: linear would spread these over 30× and put the tail under
+    // a pixel, a logarithm would collapse the top into 1.0 / 0.84 / 0.82.
+    const week = [0.6247, 0.1283, 0.1101, 0.0984, 0.0219, 0.0165, 0];
+    const marks = week.map((_, index) => mark(`0x${index}`, index / week.length));
+    const target = massTargets(marks.length);
+    cohortMassLane(
+      marks,
+      week.map((share, index) => standing(`0x${index}`, 0, share)),
+      ANCHOR, FLOOR, target,
+    );
+    const sizes = Array.from(target).map((value) => Math.round(value * 1000) / 1000);
+    expect(sizes).toEqual([1, 0.598, 0.568, 0.547, FLOOR, FLOOR, FLOOR]);
+    // …and it is MONOTONE, which is the only property the eye is asked to read.
+    for (let index = 1; index < sizes.length; index += 1) {
+      expect(sizes[index]).toBeLessThanOrEqual(sizes[index - 1]);
+    }
+  });
+
+  it('takes the anchor and the floor from the panel — and floor 1 is the OFF switch', () => {
+    const marks = [mark('0xa', 0.2), mark('0xb', 0.7), mark('0xnew', 0.4)];
+    const target = massTargets(marks.length);
+    const window = [standing('0xa', 0, 0.6247), standing('0xb', 0, 0.1283)];
+    // A lower anchor lifts everybody: 12.8 % of the week is full size against a
+    // 12 % anchor, and the 62 % cohort clips at 1 rather than growing past it.
+    cohortMassLane(marks, window, 0.12, FLOOR, target);
+    expect(target[0]).toBeCloseTo(1, 6);
+    expect(target[1]).toBeCloseTo(1, 6);
+    // A higher floor lifts the tail without touching the top.
+    cohortMassLane(marks, window, ANCHOR, 0.8, target);
+    expect(target[0]).toBeCloseTo(1, 6);
+    expect(target[1]).toBeCloseTo(0.8, 6);
+    expect(target[2]).toBeCloseTo(0.8, 6);
+    // ⭐⭐⭐ AND A FLOOR OF 1 IS THE WHOLE CHANNEL TURNED OFF — every mass
+    // clamps to 1 whatever the week says, which is the picture this layer drew
+    // before the lane was written and the OTHER half of the live leg's A/B.
+    // ⚠️ It has to hold for the cohorts the week names AND for the ones it does
+    // not, or the OFF page would still be drawing one small mark.
+    cohortMassLane(marks, window, ANCHOR, 1, target);
+    expect(Array.from(target)).toEqual([1, 1, 1]);
+  });
+});
+
+describe('cohortMassRelay — a size follows the cohort, never the slot', () => {
+  it('carries every cohort’s current size across a re-plan, by node id', () => {
+    // ⭐⭐⭐ THE SAME BACK DOOR `cohortWinLane` CLOSES, with a worse symptom.
+    // The lane is indexed by POSITION and the staged set reshuffles, so a walk
+    // that left it alone would hand whoever takes slot 0 the previous
+    // occupant's size — and then ease it away over a second and a half, which
+    // reads as half the colony resizing because one cohort left the window.
+    const before = [mark('0xa', 0.2), mark('0xb', 0.7)];
+    const massNow = new Map([['attested:0xa', 1], ['attested:0xb', 0.52]]);
+    const lane = new Float32Array(2).fill(1);
+    cohortMassRelay(before, massNow, new Float32Array([1, 0.6]), 0, lane);
+    expect(Array.from(lane)).toEqual([1, Math.fround(0.52)]);
+    // `0xa` leaves the window and `0xc` arrives; `0xb` survives AT A NEW SLOT,
+    // and its 0.52 moves with it rather than staying at index 1.
+    const after = [mark('0xb', 0.7), mark('0xc', 0.4)];
+    cohortMassRelay(after, massNow, new Float32Array([0.6, 0.45]), 0, lane);
+    // ⚠️ …and `0xc`, which nothing has ever eased, starts AT ITS TARGET. A mark
+    // appearing at 2 % of the week must be small the frame it appears; growth
+    // is for a mass that CHANGED, never for a cohort that arrived.
+    expect(Array.from(lane)).toEqual([Math.fround(0.52), Math.fround(0.45)]);
+    // A colony with nothing eased yet is every mark at its own target.
+    cohortMassRelay(after, null, new Float32Array([0.6, 0.45]), 0, lane);
+    expect(Array.from(lane)).toEqual([Math.fround(0.6), Math.fround(0.45)]);
+  });
+
+  it('packs the hand into the SIGN, and the switch turns it off for everybody', () => {
+    // ⭐ ONE LANE FOR TWO FACTS. The magnitude is the size and the sign is which
+    // way the cohort winds — identity off the payout key's own seed, which is
+    // what separates the middling cohorts the week makes the same size. A
+    // second lane would be a whole float per VERTEX on the motes' 96-wide copy
+    // for one bit that never changes over a cohort's life.
+    const marks = [mark('0xa', 0.2), mark('0xb', 0.7)];
+    expect(cohortHandedness(0.2)).toBe(1);
+    expect(cohortHandedness(0.7)).toBe(-1);
+    const lane = new Float32Array(2);
+    cohortMassRelay(marks, null, new Float32Array([0.6, 0.6]), 1, lane);
+    expect(Array.from(lane)).toEqual([Math.fround(0.6), Math.fround(-0.6)]);
+    // ⚠️ …and with the knob down every cohort is +1 with its MAGNITUDE
+    // untouched: the switch may only change which way a mark winds, never how
+    // big it is.
+    cohortMassRelay(marks, null, new Float32Array([0.6, 0.6]), 0, lane);
+    expect(Array.from(lane)).toEqual([Math.fround(0.6), Math.fround(0.6)]);
+    // The switch is read at the half-way mark, because a panel value is a float
+    // and a hand is a bit.
+    expect(cohortHandLane(0.7, 0)).toBe(1);
+    expect(cohortHandLane(0.7, 0.49)).toBe(1);
+    expect(cohortHandLane(0.7, 0.5)).toBe(-1);
+    expect(cohortHandLane(0.7, 1)).toBe(-1);
+    expect(cohortHandLane(0.2, 1)).toBe(1);
   });
 });
 
@@ -334,6 +537,113 @@ describe('the share lane follows the window by reference', () => {
     expect(colony).toContain('producersRef?: ProducerSharesRef | null;');
     expect(colony).toContain('producersRef={producersRef}');
     expect(colony).not.toContain('producers={producers}');
+  });
+});
+
+describe('the mass lane is the week, eased into place', () => {
+  const cohorts = source('ColonyCohorts.tsx');
+  /** Everything from the ease's own frame callback to the end of the file —
+   *  the walk whose upload discipline is the point of these pins. Nothing
+   *  after it touches the mass lane, so a slice is enough to scope a count. */
+  const slew = cohorts.slice(cohorts.indexOf('useFrame((_, dt) => {'));
+
+  it('recomputes the targets on the SAME walk the share lane is written on', () => {
+    // ⭐⭐ TWO FIELDS OF ONE OBJECT, READ TOGETHER. The rate takes whichever
+    // window measured a producer and the size takes the seven days alone, so
+    // reading them on two walks would let a frame carry a share from one poll
+    // against a week from another — one walk, one set of standings, both lanes.
+    const writer = cohorts.slice(
+      cohorts.indexOf('const writeShares = useCallback('),
+      cohorts.indexOf('}, [lanes, marks, motesGeometry]);'),
+    );
+    expect(writer).toContain(
+      'cohortMassLane(marks, producers, knobs.anchor, knobs.floor, lanes.massTarget);',
+    );
+    expect(writer).toContain('knobs.anchor = LIVE.peer.cohortMassAnchor;');
+    expect(writer).toContain('knobs.floor = LIVE.peer.cohortMassFloor;');
+    // …and the two live `writeCohortMotes` calls hand the specks the lane's own
+    // value rather than a 1, so the disc and the parcels falling into it cannot
+    // be two different sizes. The third call is the retired tail, pinned below
+    // at its literal.
+    expect([...cohorts.matchAll(/writeCohortMotes\(/g)]).toHaveLength(3);
+    expect([...cohorts.matchAll(/shareMaxRef\.current\),\s*mass\[index\],/g)])
+      .toHaveLength(2);
+  });
+
+  it('eases on its OWN raw frame, and uploads only what actually moved', () => {
+    // ⚠️ A SECOND CALLBACK BESIDE THE POLL, NEVER INSIDE IT. The share poll's
+    // whole shape is an identity test and a one-line early return; a size that
+    // moved has nothing to do with a window that did not, and folding the two
+    // together would make the ease wait for a block.
+    expect(cohorts).toContain('useFrame(() => {');
+    expect(cohorts).toContain('if (live === writtenSharesRef.current) return;');
+    expect(cohorts).toContain('useFrame((_, dt) => {');
+    // ⚠️ THE RAW FRAME AND WALL `dt`: `useSimFrame` skips entirely under a
+    // pause, and a ledger that cleared during one must not hold the old sizes
+    // until the clock runs again. Clamped, because a backgrounded tab hands
+    // over whole seconds on its first frame back.
+    expect(slew).toContain('const step = dt > 0.1 ? 0.1 : dt > 0 ? dt : 0;');
+    expect(slew).toContain('cohortMassApproach(');
+    expect(slew).toContain('COHORT_MASS_SLEW_S,');
+    // ⚠️⚠️ THE GATE IS THE DIFFERENCE BETWEEN AN EASE AND AN UPLOAD A FRAME FOR
+    // THE LIFE OF THE TAB — 6,144 mote floats plus the lane, sixty times a
+    // second, for a number that changes twice a session. Nothing moved ⇒
+    // neither buffer is written and neither is flagged.
+    expect(slew).toContain('if (Math.abs(mass[index] - value) <= 1e-4) continue;');
+    expect(slew).toContain('writeCohortMotesMass(motesGeometry, index, value);');
+    expect(slew).toContain('if (moved) lanes.mass.needsUpdate = true;');
+    expect([...slew.matchAll(/lanes\.mass\.needsUpdate = true;/g)]).toHaveLength(1);
+    // …and no closure in the walk: `forEach` here would allocate one per frame.
+    expect(slew).toContain('for (let index = 0; index < marks.length; index += 1) {');
+  });
+
+  it('holds the CURRENT size against the node id, so a re-plan carries it', () => {
+    // ⭐⭐ THE `wonAtRef` PATTERN, FOR THE `wonAtRef` REASON: a slot index is
+    // not an identity, and a size held by slot would be handed to whoever took
+    // the slot and then eased away — half the colony resizing because one
+    // cohort left the window.
+    expect(cohorts).toContain('const massNowRef = useRef<Map<string, number>>(new Map());');
+    expect(slew).toContain('const current = now.get(mark.nodeId);');
+    expect(slew).toContain('if (eased !== current) now.set(mark.nodeId, eased);');
+    // The re-lay under a plan is the pure function measured above, run off the
+    // same map — and BEFORE the walk that writes the motes, because the specks'
+    // 96 copies are read out of the lane it fills.
+    expect(cohorts).toContain('cohortMassRelay(\n      marks,\n      massNowRef.current,');
+    expect(cohorts.indexOf('cohortMassRelay('))
+      .toBeLessThan(cohorts.indexOf('mistShareFactor(share[index] ?? 0, shareMaxRef.current),'));
+    expect(cohorts).toContain('lanes.mass.needsUpdate = true;');
+  });
+
+  it('writes the lens lane through the PACK and through nothing else', () => {
+    // ⚠️⚠️ A RAW MASS IN THE LANE WOULD LOSE THE HAND AND COULD HOLD A ZERO,
+    // which is the one value neither program can read as an absence: the motes
+    // divide by the birth radius, and a NaN there fails the `vBright <= 0.001`
+    // gate and draws garbage. `cohortMassLaneValue` is the only writer — twice,
+    // the re-lay and the ease — and it clamps the magnitude rather than
+    // throwing, because a throw inside `useFrame` takes the whole loop down.
+    expect([...cohorts.matchAll(/cohortMassLaneValue\(/g)]).toHaveLength(2);
+    expect(cohorts).toContain('lane[index] = cohortMassLaneValue(');
+    expect(slew).toContain('const value = cohortMassLaneValue(eased, cohortHandLane(mark.seed, handKnob));');
+    expect(slew).toContain('mass[index] = value;');
+  });
+
+  it('reads its three knobs from the panel, and the floor is the OFF switch', () => {
+    for (const knob of ['cohortMassAnchor', 'cohortMassFloor', 'cohortHand'] as const) {
+      expect(cohorts, knob).toContain(`LIVE.peer.${knob}`);
+    }
+    // ⚠️ A KNOB THAT MOVED THE ANCHOR OR THE FLOOR MOVES EVERY TARGET AT ONCE,
+    // and the targets are otherwise recomputed only once an attributed block —
+    // so the panel is compared per frame, and it goes through the TARGETS
+    // rather than through the lane, which is what makes the OFF switch a
+    // second-and-a-half ease instead of a colony-wide pop.
+    expect(slew).toContain('const knobs = massKnobsRef.current;');
+    expect(slew).toContain(
+      'if (anchor !== knobs.anchor || floor !== knobs.floor || handKnob !== knobs.hand) {',
+    );
+    expect(slew).toContain(
+      'cohortMassLane(marks, writtenSharesRef.current, anchor, floor, lanes.massTarget);',
+    );
+    expect(slew).not.toMatch(/mass\[index\] = (?!value;)/);
   });
 });
 
