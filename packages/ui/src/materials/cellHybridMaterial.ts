@@ -19,7 +19,7 @@ import {
   CONSENSUS_MEMORY_HANDOFF_END,
   CONSENSUS_MEMORY_HANDOFF_START,
 } from '../derives/consensusMemoryLod.derive';
-import { CELL_GALAXY_PALETTE, SCENE_ACCENT_PALETTE } from '../visualPalette';
+import { CELL_GALAXY_PALETTE, SCENE_ACCENT_PALETTE, type SceneColor } from '../visualPalette';
 
 /**
  * Single-peak Gaussian cloud baseline for each Cell.
@@ -52,11 +52,86 @@ export const BIRTH_BLOOM = 0.55;
  *  identity colour on a corpse is a lie the body no longer supports. */
 export const WITHER_COOL_END = 0.62;
 export const WITHER_EMBER_TINT = 0.6;
+/**
+ * How much of the retirement signal a corpse ever wears. ⟨D-9 = ember⟩
+ *
+ * ⚠️ THE COOLING USED TO BE WRITTEN OVER BY THE MAGENTA IT WAS WRITTEN BEFORE.
+ * The retire mix ran `smoothstep(0, 0.48, ramp)` and was unconditional, so at
+ * 30 % of the ramp the pixel was already two-thirds magenta and from 48 % it
+ * was magenta outright — the documented ember cooling reached the screen for
+ * about a third of a second and then stopped existing. Two intents were pinned
+ * by two tests and only one of them was ever true.
+ *
+ * D-9 picks ember, and the shape follows: the retire is the LAST WORD, not the
+ * sentence. It opens where the cooling closes (`WITHER_COOL_END`) and reaches
+ * this cap at the very end, so a corpse cools through the galaxy's own ember
+ * for two-thirds of its life and only turns toward the signal as it goes. The
+ * cap is what keeps the end from being pure magenta: the fabric's own 220 ms
+ * retire flash still speaks that colour outright (`fabricEdgeRender`), and one
+ * surface saying it plainly is the reason this one may say it quietly.
+ *
+ * Measured on the tissue's own rose, hue in degrees: ramp 0.3 → 6°, 0.5 → 17°,
+ * 0.62 → 20° (the ember's own), 0.85 → 356°, 1.0 → 347°. Before: 341° at 0.3
+ * and 335° — the retire, exactly — from 0.48 on.
+ */
+export const WITHER_RETIRE_MAX = 0.55;
 /** Guttering: two incommensurate rates so the flutter never reads as a
  *  metronome, and a depth shallow enough that the corpse never blinks out
  *  before `deathEase` takes its size. */
 export const WITHER_GUTTER_RATE = 11.0;
 export const WITHER_GUTTER_DEPTH = 0.55;
+
+/**
+ * The corpse's colour at a point on the death ramp, in TypeScript.
+ *
+ * The fragment's own arithmetic, from the same constants, so "a withering cell
+ * is ember and not magenta" is a claim a test can take rather than one a
+ * screenshot has to catch — a wither is 1.8 s long, a few pixels wide, and
+ * follows a block by about two seconds, which is why the defect lived through
+ * two rounds of live captures with both intents test-pinned.
+ *
+ * `body` is the resting colour the fragment carries into the branch. Every
+ * other term there (focus, birth, recall) resolves to identity on a cell that
+ * is simply dying, so this is the whole of it. `cellHybridMaterial.test.ts`
+ * reads the shipped GLSL beside this rather than trusting the resemblance.
+ */
+export function witherCorpseColor(body: SceneColor, ramp: number): SceneColor {
+  const smoothstep = (a: number, b: number, x: number): number => {
+    const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+    return t * t * (3 - 2 * t);
+  };
+  const mix = (a: SceneColor, b: SceneColor, t: number): SceneColor => [
+    a[0] + (b[0] - a[0]) * t,
+    a[1] + (b[1] - a[1]) * t,
+    a[2] + (b[2] - a[2]) * t,
+  ];
+  // Rec.601 luma, the shader's own `ash`.
+  const luma = body[0] * 0.299 + body[1] * 0.587 + body[2] * 0.114;
+  const cooled = mix(
+    [luma, luma, luma],
+    CELL_GALAXY_PALETTE.ember,
+    WITHER_EMBER_TINT,
+  );
+  const cool = mix(body, cooled, smoothstep(0, WITHER_COOL_END, ramp));
+  return mix(
+    cool,
+    CONSENSUS_BRAID_PALETTE.retire,
+    WITHER_RETIRE_MAX * smoothstep(WITHER_COOL_END, 1, ramp),
+  );
+}
+
+/** A colour's hue in degrees, for reading a corpse against the ember. */
+export function sceneColorHue(color: SceneColor): number {
+  const [r, g, b] = color;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  if (max === min) return 0;
+  const d = max - min;
+  const h = max === r
+    ? ((g - b) / d) % 6
+    : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return ((h * 60) % 360 + 360) % 360;
+}
 
 export function makeCellHybridMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
@@ -441,14 +516,18 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
             + departureRail * 0.28;
         }
 
-        // A real on-chain Cell consumption is not agreement: transition the
-        // fading body toward the retirement signal before it disappears. GC
-        // never reaches this shader path, so quiet renderer eviction stays mute.
-        // Withering is a COOLING before it is a collapse: chroma drains toward
-        // the galaxy's own ember, the body gutters on a per-cell phase, and
-        // only then does deathEase take the size. A living cell resolves
-        // every term here to identity, so the branch costs the resting field
-        // nothing and skips it for the whole field.
+        // A real on-chain Cell consumption is not agreement: the fading body
+        // cools, gutters, and goes. GC never reaches this shader path, so quiet
+        // renderer eviction stays mute. Withering is a COOLING before it is a
+        // collapse: chroma drains toward the galaxy's own ember, the body
+        // gutters on a per-cell phase, and only then does deathEase take the
+        // size. A living cell resolves every term here to identity, so the
+        // branch costs the resting field nothing and skips it for the whole
+        // field.
+        //
+        // ⭐ THE CORPSE IS ONE COLOUR, AND IT IS EMBER (D-9). The retirement
+        // signal is the last word of the sentence rather than the whole of it;
+        // WITHER_RETIRE_MAX carries the argument.
         if (vDeathRamp > 0.0) {
           vec3 emberColor = vec3(${CELL_GALAXY_PALETTE.ember.join(', ')});
           vec3 ash = vec3(dot(col, vec3(0.299, 0.587, 0.114))); // Rec.601 luma
@@ -467,8 +546,12 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
             * sin(uTime * ${(WITHER_GUTTER_RATE * 1.7).toFixed(2)} + gutterPhase * 2.1);
           a *= 1.0 - ${WITHER_GUTTER_DEPTH.toFixed(2)} * vDeathRamp * gutter;
 
+          // …and only then the retirement signal, gated behind the cooling it
+          // used to erase: it opens where the cooling closes and never takes
+          // the whole pixel. See WITHER_RETIRE_MAX.
           vec3 retireColor = vec3(${CONSENSUS_BRAID_PALETTE.retire.join(', ')});
-          float retireMix = smoothstep(0.0, 0.48, vDeathRamp);
+          float retireMix = ${WITHER_RETIRE_MAX.toFixed(2)}
+            * smoothstep(${WITHER_COOL_END.toFixed(2)}, 1.0, vDeathRamp);
           col = mix(col, retireColor, retireMix);
         }
         // Stage resolution is a property of the view, so it dims the WHOLE

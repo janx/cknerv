@@ -7,6 +7,9 @@ import {
   WITHER_EMBER_TINT,
   WITHER_GUTTER_DEPTH,
   WITHER_GUTTER_RATE,
+  WITHER_RETIRE_MAX,
+  sceneColorHue,
+  witherCorpseColor,
 } from '../../src/materials/cellHybridMaterial';
 import {
   BIRTH_DURATION_MS,
@@ -230,15 +233,94 @@ describe('makeCellHybridMaterial', () => {
     expect(m.fragmentShader).toContain('uMemorySignalEnergy');
   });
 
-  it('uses the purple-red retirement signal only as real death advances', () => {
+  it('keeps the retirement signal to the last word of the wither ⟨D-9⟩', () => {
+    // ⚠️ THIS TEST AND THE ONE BELOW USED TO SAY TWO DIFFERENT THINGS, and only
+    // one of them was true. The retire mix ran `smoothstep(0.0, 0.48, ramp)`
+    // unconditionally, so the documented ember cooling was two-thirds
+    // overwritten at 30 % of the ramp and gone entirely from 48 % — a corpse
+    // was magenta, and the test that said so passed while the test that said
+    // ember passed too. D-9 picks ember; the retire opens where the cooling
+    // closes and never takes the whole pixel.
     const m = makeCellHybridMaterial();
 
     expect(m.fragmentShader).toContain('retireColor');
-    expect(m.fragmentShader).toContain('retireMix');
-    expect(m.fragmentShader).toContain('smoothstep(0.0, 0.48, vDeathRamp)');
+    expect(m.fragmentShader).toContain(
+      `float retireMix = ${WITHER_RETIRE_MAX.toFixed(2)}`,
+    );
+    expect(m.fragmentShader).toContain(
+      `smoothstep(${WITHER_COOL_END.toFixed(2)}, 1.0, vDeathRamp)`,
+    );
+    expect(m.fragmentShader).not.toContain('smoothstep(0.0, 0.48, vDeathRamp)');
+    expect(WITHER_RETIRE_MAX).toBeLessThan(1);
     expect(m.fragmentShader.indexOf('retireMix')).toBeGreaterThan(
       m.fragmentShader.indexOf('focusSignal'),
     );
+  });
+
+  it('withers ember, not magenta, everywhere a viewer can see it', () => {
+    // The reading a screenshot cannot take: a wither is 1.8 s long, a few
+    // pixels wide, and follows a block by about two seconds, which is how a
+    // corpse stayed magenta through two rounds of live captures. The twin is
+    // the fragment's own arithmetic (pinned against the shipped GLSL below).
+    const ember = sceneColorHue(CELL_GALAXY_PALETTE.ember);
+    const retire = sceneColorHue(CONSENSUS_BRAID_PALETTE.retire);
+    const away = (a: number, b: number): number => {
+      const d = Math.abs(a - b) % 360;
+      return d > 180 ? 360 - d : d;
+    };
+
+    // Whatever body the cell had, the middle of the wither is the galaxy's own
+    // ember (within 12° of it; measured worst 10.9°) and a long way from the
+    // signal (at least 30°; measured worst 34.0°). Before, the same reading was
+    // 341° at ramp 0.3 and the retire's own 335° from 0.48 on.
+    for (const body of [
+      CELL_GALAXY_PALETTE.tissueRose,
+      CELL_GALAXY_PALETTE.veinRose,
+      CELL_GALAXY_PALETTE.warmWhite,
+    ]) {
+      for (const ramp of [0.4, 0.5, 0.62, 0.7]) {
+        const hue = sceneColorHue(witherCorpseColor(body, ramp));
+        expect(`${ramp}: ${away(hue, ember) <= 12}`).toBe(`${ramp}: true`);
+        expect(`${ramp}: ${away(hue, retire) >= 30}`).toBe(`${ramp}: true`);
+      }
+      // …and the signal is still there at the end, where the fabric's own
+      // retire flash is speaking it too.
+      expect(away(sceneColorHue(witherCorpseColor(body, 1)), retire))
+        .toBeLessThan(away(sceneColorHue(witherCorpseColor(body, 0.62)), retire));
+      // It never becomes the signal, though: an ember still shows through.
+      expect(away(sceneColorHue(witherCorpseColor(body, 1)), retire))
+        .toBeGreaterThan(5);
+    }
+
+    // The old form, for the record: magenta from 48 % of the ramp on.
+    const oldRetireMix = (ramp: number) => {
+      const t = Math.min(1, Math.max(0, ramp / 0.48));
+      return t * t * (3 - 2 * t);
+    };
+    expect(oldRetireMix(0.48)).toBe(1);
+    expect(oldRetireMix(0.3)).toBeGreaterThan(0.6);
+  });
+
+  it('ships the twin the corpse colour is read from', () => {
+    // A restatement without a toll is a second definition.
+    const m = makeCellHybridMaterial();
+
+    expect(m.fragmentShader).toContain(
+      `vec3 emberColor = vec3(${CELL_GALAXY_PALETTE.ember.join(', ')});`,
+    );
+    expect(m.fragmentShader).toContain('vec3 ash = vec3(dot(col, vec3(0.299, 0.587, 0.114)));');
+    expect(m.fragmentShader).toContain(
+      `mix(ash, emberColor, ${WITHER_EMBER_TINT.toFixed(2)}),`,
+    );
+    expect(m.fragmentShader).toContain(
+      `float cooling = smoothstep(0.0, ${WITHER_COOL_END.toFixed(2)}, vDeathRamp);`,
+    );
+    expect(m.fragmentShader).toContain(
+      `vec3 retireColor = vec3(${CONSENSUS_BRAID_PALETTE.retire.join(', ')});`,
+    );
+    // A living cell is untouched by any of it.
+    expect(witherCorpseColor(CELL_GALAXY_PALETTE.tissueRose, 0))
+      .toEqual([...CELL_GALAXY_PALETTE.tissueRose]);
   });
 
   it('blooms a newborn warm and spends the bloom over its growth', () => {
@@ -287,11 +369,15 @@ describe('makeCellHybridMaterial', () => {
       `a *= 1.0 - ${WITHER_GUTTER_DEPTH.toFixed(2)} * vDeathRamp * gutter;`,
     );
     expect(WITHER_GUTTER_DEPTH).toBeLessThan(1);
-    // Cooling and guttering both precede the retirement signal.
+    // Cooling and guttering both precede the retirement signal — and the
+    // signal is now GATED behind the cooling as well as written after it,
+    // which is the half that was missing (D-9).
     expect(m.fragmentShader.indexOf('float cooling ='))
       .toBeLessThan(m.fragmentShader.indexOf('float retireMix ='));
     expect(m.fragmentShader.indexOf('float gutterPhase ='))
       .toBeLessThan(m.fragmentShader.indexOf('float retireMix ='));
+    expect(witherCorpseColor(CELL_GALAXY_PALETTE.tissueRose, WITHER_COOL_END))
+      .toEqual(witherCorpseColor(CELL_GALAXY_PALETTE.tissueRose, WITHER_COOL_END - 1e-9));
   });
 
   it('keeps the broad network shockwave out of the anchored Cell core', () => {
