@@ -890,7 +890,7 @@ reached a ceiling, for a reason that is structural rather than a matter of
 tuning: the image of a black hole is a CONSEQUENCE of light bending around a
 mass, and a stack of independently mapped parts cannot converge on shapes it does
 not contain. So the layer computes the image instead, in TWO draws off one plan,
-one walk, one instance count and one pair of lanes:
+one walk, one instance count and one set of lanes:
 
 - the LENS, one camera-facing quad per cohort (`materials/colonyLens.ts`), 32 wu
   of half-extent so the near disc cannot be cut off by its own domain. For every
@@ -939,6 +939,12 @@ smoothstepped over 20 -> 50 px/wu, and it drives everything:
 | Traced image's weight | 0 (no ray is integrated) | 1 |
 | Far form's weight | 1 | 0 |
 | Motes | born within 14 wu, x0.2 | born at 8-27 wu, full |
+
+Every length in that table is the FULL-SIZE cohort's, and each is multiplied by
+the mass factor `m` of the cohort it belongs to (below); the closeness that
+indexes the two columns is measured on `pxPerWu * m` rather than on `pxPerWu`,
+so a cohort at the 0.45 floor holds the far column up to 44 px/wu and reaches
+the near one at 111.
 
 THE BAND AND THE FAR FORM WERE BOTH CUT ON 2026-09-03, on the user's judgement
 of the live frames: the far view was right, but at the MID range - 14 to 20
@@ -1007,6 +1013,78 @@ beside that share is a HUD FACT AND NOT A SCENE ONE: `networkHashRateHs` divides
 the chain's own difficulty by the mean of the block intervals this session
 observed, and nothing in the colony reads the result.
 
+THE MASS IS THE WEEK, and it is the only thing one mark says that another does
+not (2026-09-04). Every form parameter above is a GLOBAL uniform — one horizon,
+one disc, one palette, one band — so until this lane existed seven cohorts were
+seven copies of one picture, and the share moved only a RATE, which needs
+seconds of watching against a reference and cannot be read in a still. Each mark
+now carries a fourth lane, `aMass`, holding one factor `m = clamp(cbrt(weekShare
+/ 0.6), 0.45, 1)` read off `ProducerStanding.ledger.share`, and that factor
+multiplies EVERY length in both programs: the horizon and so the shadow and the
+ISCO, the disc's outer edge near and far, the far form's catchment and its
+nucleus, the motes' birth and death radii, and the quad the whole image is drawn
+on. Four rules hold it there, each one a ruling already on record. THE CEILING
+IS TODAY'S FORM — `m` is 1 at and above the anchor share, so the cohort holding
+62 % of the week keeps the far form judged on 2026-09-03 exactly and every other
+folds DOWN, and the colony gets quieter and never louder, which is how the mark
+stays secondary to the mesh and the canopy by construction rather than by a
+taste that can drift. THE WEEK ONLY, ABSOLUTE, AND NEVER THE 240-BLOCK RING — a
+size is read at a glance and compared across days and against the peers standing
+beside it, so it must not pulse once a block (the ring moves on every block,
+empties on every reorg and is empty for the first minute of a boot) and must not
+depend on who else happens to be staged; no ledger means every mass is 1 and the
+picture is the one this layer drew before the lane existed, byte for byte, while
+a key inside the ring and outside the seven days takes the floor, which is a
+reading ("small this week") and not a missing value. THE FOLD IS MEASURED IN
+PIXELS PER SHADOW AND NOT PER WORLD UNIT — both programs take their closeness
+from `uPxScale * m / distance`, so every cohort's hole opens at the SAME
+on-screen size, the only arrangement in which a small cohort at the mid range is
+not "a small eye", a form the user refused twice. And NOTHING THE TOPOLOGY READS
+MOVES — the hit sphere 2.0, the link stop 3.0 and the keep-out 3.5 are sized for
+the maximum and stay constant, the placement is still a pure hash of the key,
+the lane is written in place and no geometry is rebuilt on a tally. A 1.5-second
+ease covers the two events that move every mass at once — the ledger ARRIVING
+after the cohorts are already standing, and an indexer outage CLEARING it — since
+a week share drifting by under a tenth of a percent between two 120-second
+refreshes is invisible with or without one; a cohort seen for the first time
+starts AT its target, because growth is for a size that changed and not for a
+mark that arrived. The lane's SIGN carries a second fact in the same float:
+`cohortHandedness` is +1 where the cohort's own seed — `fnv1a(payout key)` over
+2^32, the seed the phase already comes from — is below 0.5 and -1 above, and
+both programs spend it by mirroring the local frame they hand the mist library,
+so that cohort's spiral winds the other way round. That is IDENTITY and not
+data, and it is what separates the middling cohorts the week makes the same
+size.
+
+FOUR CHANNELS ARE DELIBERATELY NOT ENCODED, each refused on a ruling rather than
+on taste. HUE: the far form wears the mesh's own cyan (the violet of the round
+before it came from ONE off-palette periphery), two cohorts' discs are one
+substance taken at two rates and not two textures, and the only per-cohort
+string that could colour a mark is the SELF-DECLARED build, which is a claim and
+would be drawn as a fact. BRIGHTNESS: additive marks clip — the peer tiers
+measured rest brightness going as the square of the dim and every tier clipping
+to the same white-cyan — and the centre pixel of every mark is saturated in the
+composite anyway, so that axis belongs to the EXISTENCE tiers (ghost, sighted,
+measured) and not to mining. POSITION: hash-placed for churn stability, and a
+centroid placement was already rejected in the block-producers round. HOLDINGS:
+read live on 2026-09-03 through ckbadger's `addresses/{lock_hash}`, the 12.8 %
+cohort held MORE CKB than the 62 % one, because pools sweep their payouts — so a
+size by balance would contradict a size by share, and the harvest stays on the
+card.
+
+**First look, measured 2026-09-04** at the app camera on the layer's own light
+(the frame minus the same frame with the layer hidden), the floor knob at 0.45
+against the same page at 1: the 62 % cohort is IDENTICAL either way in every
+0.5 wu bin — the ceiling holding, measured rather than asserted — and the lit
+radius, the mean radius of the 8/255 ring, is 3.25 wu for it, 1.5-1.75 wu for
+the three middling cohorts at `m` 0.54-0.59 and 1.0-1.25 wu for the three at the
+floor: monotone in `m`. Every centre pixel reads the same 244/255 whatever the
+mass, which is the composite clipping and the reason a far mark is judged on the
+difference and never on the composite's peak. The full live leg — the sizes at
+the mid range, the dolly on the smallest cohort, the paired cost A/B, the
+clicks, the fallback in both directions and the handedness strip — is recorded
+in this file when it lands.
+
 There is NO FLOOR, NO SHEET AND NO GROUND TERM anywhere under the plane, and that
 is a measurement rather than an omission. A sibling `ColonyMist` layer drew up to
 two flat, structureless haze sheets under the whole colony until 2026-09-02, when
@@ -1037,7 +1115,7 @@ that crosses the whole colony is one number every cohort reads, and it would
 flare all seven of them on a block one of them won.
 
 THE TWO DRAWS DO NOT SHARE ONE LANE OBJECT. The lens is an `InstancedMesh` and
-reads one value per instance, so its seed, gulp and share lanes are
+reads one value per instance, so its seed, gulp, share and mass lanes are
 `InstancedBufferAttribute`s; the motes are a `THREE.Points` draw with one vertex
 per MOTE, so the same gulp has to be 96 copies wide per cohort. Handing that
 geometry the instanced wrapper would read one cohort's stamp for the first
@@ -1125,7 +1203,7 @@ pixels that linger near the photon sphere. If a tier must buy something here it
 has to be the pixels the quad covers — `COHORT_LENS_QUAD_R` 32 wu,
 `COHORT_DISC_OUT` 28 wu — or a resolution scale, and no tier touches either.
 
-Sixteen live knobs in the `peer` folder, each a fact about the mass or about the
+Nineteen live knobs in the `peer` folder, each a fact about the mass or about the
 substance around it and never a PART of a picture, since a knob that moved a part
 would be the composed aperture creeping back in through the panel:
 `cohortHorizon` (the Schwarzschild radius at the near end of the fold, and the
@@ -1143,9 +1221,16 @@ the far end, 20, is the layer's rule and not a knob), `cohortSteps` (RK4 steps
 per ray, which overrides the quality tier the moment it moves), `cohortIntake`
 (the sink's `k`), `cohortSwirl` (how far a streamline winds before it arrives), `cohortOrbit` (the
 specks' swing near the mouth) and `cohortMotes` (how bright the specks are).
-Fifteen knobs retired with the composed form, and no knob here can clip the mark:
-the disc's alpha is clamped in the fragment and the shadow's is the closeness, so
-every amplitude scales a quantity that is bounded after it.
+The last three are the only per-cohort ones in the folder: `cohortMassAnchor`
+(0.6, the share of the week at which a cohort is full size), `cohortMassFloor`
+(0.45, the smallest a cohort may be drawn as a fraction of that — and 1 is the
+OFF switch, since every mass is clamped into that range and the colony then
+draws exactly what it drew before the lane was written) and `cohortHand` (1,
+whether each cohort winds its own way off its key or the whole colony winds
+one). Fifteen knobs retired with the composed form, and no knob here can clip
+the mark:
+the disc's alpha is clamped in the fragment and the shadow's is the closeness,
+so every amplitude scales a quantity that is bounded after it.
 
 **Measured on 2026-09-03**, on an AMD Radeon 890M through ANGLE/Vulkan at
 2560x1440 DPR 1, on live mainnet with seven attested cohorts, quality forced to
@@ -1917,7 +2002,7 @@ Before merging a Canvas change, answer:
 | Peer render layers and Cell delivery | `packages/ui/src/components/NetworkColony.tsx`, `packages/ui/src/components/BlockDeliveryLayer.tsx` |
 | Who made the blocks, over both windows, and the rate the card implies from it | `packages/ui/src/derives/blockProducers.derive.ts`, `packages/ui/src/derives/networkHashRate.derive.ts`, `packages/ui/src/components/hud/producerReadout.ts`, `packages/ui/src/components/hud/MinerNodeCard.tsx` |
 | POW cohort marks: the plan, the lanes, the two draws, and the link stop outside the disc | `packages/ui/src/components/ColonyCohorts.tsx`, `packages/ui/src/components/ColonyEdges.tsx` |
-| The lensed mark: the ray march, the fold, the mass and every radius read off it | `packages/ui/src/materials/colonyLens.ts` |
+| The lensed mark: the ray march, the fold, the mass, the per-cohort mass lane that scales it, and every radius read off it | `packages/ui/src/materials/colonyLens.ts` |
 | The specks falling into it, and their geometry helpers | `packages/ui/src/materials/colonyMotes.ts` |
 | The substance they are made of: the GLSL library and its noise tile | `packages/ui/src/materials/colonyMist.ts` |
 | What every cohort program agrees about: the gulp envelope and the proximity exemption | `packages/ui/src/materials/colonyCohort.ts` |

@@ -117,6 +117,15 @@ import { PEER_NETWORK_PALETTE, type SceneColor } from '../visualPalette';
  * rs` across in impact parameter — at this value, 2.0 wu, which is why the hit
  * radius the card uses is re-based on it rather than on the quad.
  *
+ * ⭐⭐⭐ AND SINCE 2026-09-04 THE MULTIPLE IS PER COHORT. Every length below is
+ * this radius times the instance's own mass factor `vMass` — the magnitude of
+ * the `aMass` lane, `clamp(cbrt(week / COHORT_MASS_ANCHOR_SHARE),
+ * COHORT_MASS_FLOOR, 1)` — so EVERY WORLD-UNIT SIZE QUOTED IN THIS FILE IS THE
+ * `m = 1` COHORT'S, and a cohort at the floor wears 0.45 of each of them. The
+ * fold's own closeness is taken on `uPxScale * vMass`, so what the band is
+ * really measured in is pixels per SHADOW and every hole opens at the same
+ * on-screen size whatever the mass behind it.
+ *
  * A STARTING VALUE from the approved preview, chosen against the peer mesh it
  * sits in: a sighted peer's sprite is 1–2 wu, so a 2.0 wu eye is a mark of the
  * mesh's own size at the camera where the eye is open at all.
@@ -288,6 +297,11 @@ export const COHORT_DISC_OUT = 28;
  * ⚠️ THE MASS STILL FOLDS HARDER THAN THE DISC — 9.63× against 28/14 = 2× —
  * and it must: far away there is no shadow to see at all, so what is left has
  * to be a picture of intake and never a scale model of a black hole.
+ *
+ * ⚠️ FOURTEEN IS THE `m = 1` COHORT'S CATCHMENT. The far law is sampled out to
+ * `COHORT_DISC_OUT_FAR * vMass`, so a cohort at `COHORT_MASS_FLOOR` reaches
+ * 6.3 wu — still past its own `COHORT_LINK_STOP_R` 3.0, which is the
+ * inequality `cohortKeepOut.test.ts` pins.
  */
 export const COHORT_DISC_OUT_FAR = 14;
 
@@ -608,6 +622,12 @@ export const COHORT_LENS_FAR_GLOW = 0.5;
  * falls to a tenth of its peak at t = 1.52, so 0.7 wu of radius is 2.13 wu
  * across: a sighted peer's 2.0 wu sprite. At 1.0 it was 3.04 wu across and the
  * halo reached past the mark it belongs to.
+ *
+ * ⚠️ 2.13 wu IS THE `m = 1` COHORT'S NUCLEUS. The radius is scaled by the
+ * instance's mass (`COHORT_LENS_FAR_GLOW_R * vMass`), so a cohort at
+ * `COHORT_MASS_FLOOR` is 0.96 wu across — which is the inequality the floor
+ * was chosen against: wider than a ghost peer, narrower than a dark sighted
+ * one, a LESSER peer and never a vanished one.
  */
 export const COHORT_LENS_FAR_GLOW_R = 0.7;
 export const COHORT_LENS_FAR_GLOW_CORE = 0.5;

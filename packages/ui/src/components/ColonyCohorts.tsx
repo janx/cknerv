@@ -174,6 +174,15 @@
 // from): one lane for two facts, because the motes' copy of it is 96 vertices
 // wide and a bit does not deserve a second float of that.
 //
+// ⭐ THREE KNOBS OWN IT, AND THEY ARE THE ONLY PER-COHORT ONES IN THE PANEL:
+// `cohortMassAnchor` (0.6, the week share at which a cohort is full size),
+// `cohortMassFloor` (0.45, the smallest it may be drawn — and 1 is the OFF
+// switch, since every mass is clamped into that range and the colony then draws
+// exactly what it drew before this lane was written) and `cohortHand` (1,
+// whether a cohort winds its own way or the whole colony winds one). All three
+// go through the TARGETS and never through the lane, so moving one is a
+// second-and-a-half ease and not a colony-wide pop.
+//
 // ⚠️⚠️ THE TWO DRAWS DO NOT SHARE ONE LANE OBJECT, AND THAT IS NOT AN OVERSIGHT.
 // The lens is an InstancedMesh and reads ONE value per instance, so its four
 // lanes are `InstancedBufferAttribute`s and the WRAPPER is what has to persist —

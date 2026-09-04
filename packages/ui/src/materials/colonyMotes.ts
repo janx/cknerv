@@ -55,7 +55,13 @@ import type { SceneColor } from '../visualPalette';
  * 3. ⭐⭐ SECONDARY AT THE DEFAULT CAMERA. The same closeness the lens folds on
  *    folds these: far away the birth radius pulls in to the far form's own
  *    extent and the whole draw dims to a fifth, so a cohort in the overview is a
- *    peer-sized smudge with a hint of grain and not a firework.
+ *    peer-sized smudge with a hint of grain and not a firework. ⭐ And since
+ *    2026-09-04 the fold is per cohort as well as per camera: the `aMass` lane
+ *    carries that cohort's share of the indexer's week as a factor on the
+ *    closeness (`uPxScale * mass`), on the reach and on the shadow, so the
+ *    specks fall into a shadow the size of their OWN cohort — and the speck
+ *    itself does not shrink with it, because a parcel of the substance is the
+ *    same parcel whoever swallows it.
  * 4. ⛔ NEVER UPWARD. See 1. The colony's canopy is over this plane and nothing
  *    here reaches for it.
  *
