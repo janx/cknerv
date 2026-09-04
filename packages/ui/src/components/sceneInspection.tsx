@@ -148,15 +148,33 @@ function settleCardLeft(
 export type SceneInspectorPlacementSide = 'left' | 'right' | 'above' | 'below';
 
 export interface SceneInspectorPlacement {
+  /** Which composition the card is in. Not derivable from `side` any more —
+   *  the docked family names the same two sides the beside family does. */
+  family: SceneInspectorPlacementFamily;
   side: SceneInspectorPlacementSide;
   x: number;
   y: number;
 }
 
-/** The solver's two vocabularies: 'beside' places left/right of the anchor
- * (x is width-derived, y is the free axis), 'stacked' places above/below
- * (y is side-derived, x is the free axis). */
-export type SceneInspectorPlacementFamily = 'beside' | 'stacked';
+/**
+ * The solver's three vocabularies.
+ *
+ * 'beside' places left/right of the anchor (x is width-derived, y is the free
+ * axis); 'stacked' places above/below (y is side-derived, x is the free axis);
+ * 'docked' has no free axis at all — the card is taller than the band between
+ * the safe top and the bottom edge, so it hangs from the safe top and aligns
+ * to a viewport edge, and what makes it readable is that the card scrolls
+ * inside itself rather than that the solver found it a home.
+ *
+ * The third one exists because the second one was lying. A card taller than
+ * the band used to be pinned to `safeTop` and left there — the clamp's own
+ * `minY > maxY` branch — which is the same y this family returns, so nothing
+ * MOVES. What was missing is that nobody was told: the card ran off the bottom
+ * of the screen with its provenance footer below the fold and no way to reach
+ * it, at 1280 and at 1000, on the commonest cell there is. A family is how the
+ * card finds out.
+ */
+export type SceneInspectorPlacementFamily = 'beside' | 'stacked' | 'docked';
 
 /**
  * Sticky per-selection placement offsets. A card keeps the offset it opened
@@ -224,6 +242,10 @@ export interface SceneInspectionHandles {
   placementLock: SceneInspectorPlacementLock;
   visible: boolean;
   layoutSide: SceneInspectorPlacementSide;
+  /** Which composition the solver last put the card in. The card renders in
+   *  React and the family is decided in the frame loop, so this shares the
+   *  side's channel: one store, one notify, whichever of the two flips. */
+  layoutFamily: SceneInspectorPlacementFamily;
   layoutListeners: Set<() => void>;
   /** dataset keys the frame writer stamps the placement side into. Each
    * dialect owns its DOM vocabulary, so the chassis is told the words. */
@@ -259,6 +281,7 @@ export function createSceneInspectionHandles({
     placementLock: { family: null, y: null, x: null, side: null },
     visible: false,
     layoutSide: 'left',
+    layoutFamily: 'beside',
     layoutListeners: new Set(),
     placementDataKey,
     connectorDataKey,
@@ -306,26 +329,49 @@ export function detachInspectionCard(
   resetInspectionPlacementLock(handles);
 }
 
-function setInspectionLayoutSide(
+function setInspectionLayout(
   handles: SceneInspectionHandles,
-  side: SceneInspectorPlacementSide,
+  placement: SceneInspectorPlacement,
 ): void {
-  if (handles.layoutSide === side) return;
-  handles.layoutSide = side;
+  if (
+    handles.layoutSide === placement.side
+    && handles.layoutFamily === placement.family
+  ) return;
+  handles.layoutSide = placement.side;
+  handles.layoutFamily = placement.family;
   handles.layoutListeners.forEach((listener) => listener());
 }
+
+function useInspectionLayoutStore<T>(
+  handles: SceneInspectionHandles,
+  select: (handles: SceneInspectionHandles) => T,
+): T {
+  const subscribe = useCallback((listener: () => void) => {
+    handles.layoutListeners.add(listener);
+    return () => handles.layoutListeners.delete(listener);
+  }, [handles]);
+  const read = useCallback(() => select(handles), [handles, select]);
+  return useSyncExternalStore(subscribe, read, read);
+}
+
+const readLayoutSide = (handles: SceneInspectionHandles) => handles.layoutSide;
+const readLayoutFamily = (handles: SceneInspectionHandles) => handles.layoutFamily;
 
 /** The frame loop chooses the side, the card renders in React: the mutable
  * channel is the store both halves share, and it notifies only on a flip. */
 export function useSceneInspectionLayoutSide(
   handles: SceneInspectionHandles,
 ): SceneInspectorPlacementSide {
-  const subscribe = useCallback((listener: () => void) => {
-    handles.layoutListeners.add(listener);
-    return () => handles.layoutListeners.delete(listener);
-  }, [handles]);
-  const read = useCallback(() => handles.layoutSide, [handles]);
-  return useSyncExternalStore(subscribe, read, read);
+  return useInspectionLayoutStore(handles, readLayoutSide);
+}
+
+/** …and which composition it is in, which the side alone cannot say: 'docked'
+ *  and 'beside' both answer 'left' or 'right'. A docked card is taller than
+ *  the room it has, so it is the one that has to scroll inside itself. */
+export function useSceneInspectionLayoutFamily(
+  handles: SceneInspectionHandles,
+): SceneInspectorPlacementFamily {
+  return useInspectionLayoutStore(handles, readLayoutFamily);
 }
 
 /**
@@ -493,12 +539,51 @@ export function sceneInspectorPlacement({
 }): SceneInspectorPlacement {
   const minY = safeTop - anchorY;
   const maxY = viewportHeight - edge - panelHeight - anchorY;
+
+  // The card is at least as tall as the band it would be clamped into —
+  // `minY >= maxY`, a statement about the card and the viewport and not about
+  // the anchor at all. Neither of the other two families has an honest answer
+  // here: both would clamp to `minY` and hang the card's bottom off the
+  // screen. So it docks — under the strip, against the viewport edge FURTHER
+  // from the entity, so what the card covers is the half of the stage the
+  // entity is not in — and the card is told, so its own plate can scroll.
+  //
+  // ⚠️ The comparison is `>=`, not `>`, and the equality is the whole reason:
+  // a docked card caps its own height AT the band, so the next frame measures
+  // a card exactly the band's height. Under `>` that card would leave the
+  // family, drop its cap, grow past the band, dock again — a card that
+  // flickers between two compositions forever. Equality is the fixpoint.
+  if (minY >= maxY) {
+    const roomRight = viewportWidth - edge - anchorX;
+    const roomLeft = anchorX - edge;
+    const away = roomLeft >= roomRight ? 'left' : 'right';
+    const side = settleInspectorSide(
+      away,
+      away === 'left' ? 'right' : 'left',
+      Math.abs(roomRight - roomLeft),
+      // Both edges always exist; only the margin retires a held one. A side
+      // held from the beside family carries in, and should: it is the same
+      // question — which side of the entity the reader is already looking at.
+      true,
+      heldSide,
+      panelWidth * INSPECTOR_SIDE_HYSTERESIS,
+    );
+    return {
+      family: 'docked',
+      side,
+      x: side === 'left'
+        ? edge - anchorX
+        : viewportWidth - edge - panelWidth - anchorX,
+      y: minY,
+    };
+  }
   const besideY = typeof preferredY === 'number'
     ? preferredY
     : -panelHeight / 2;
-  const y = minY <= maxY
-    ? Math.max(minY, Math.min(maxY, besideY))
-    : minY;
+  // The band is well-formed past the docked branch — that branch IS the
+  // inverted case — so this is a plain clamp and no longer a clamp with a
+  // silent fallback inside it.
+  const y = Math.max(minY, Math.min(maxY, besideY));
 
   // The beside family in obstacle terms. Each side's card is pushed off every
   // panel it would land on, then judged by the SLACK it has left over against
@@ -545,6 +630,7 @@ export function sceneInspectorPlacement({
       panelWidth * INSPECTOR_SIDE_HYSTERESIS,
     );
     return {
+      family: 'beside',
       side,
       x: (side === 'right' ? rightX : leftX) - anchorX,
       y,
@@ -573,9 +659,7 @@ export function sceneInspectorPlacement({
     : -panelWidth / 2;
   const preferredStackedX = Math.max(minX, Math.min(maxX, stackedX));
   const stackedY = side === 'below' ? gap : -panelHeight - gap;
-  const placedY = minY <= maxY
-    ? Math.max(minY, Math.min(maxY, stackedY))
-    : minY;
+  const placedY = Math.max(minY, Math.min(maxY, stackedY));
   // x is this family's free axis, so an obstacle is answered by sliding along
   // it rather than by changing sides. Both directions are tried from the
   // preference and the shorter honest move wins; a direction that runs out of
@@ -609,7 +693,7 @@ export function sceneInspectorPlacement({
   } else if (leftFits) {
     x = pushedLeft - anchorX;
   }
-  return { side, x, y: placedY };
+  return { family: 'stacked', side, x, y: placedY };
 }
 
 /**
@@ -645,10 +729,7 @@ export function resolveStickyInspectorPlacement(
     heldSide: lock.side,
     obstacles,
   });
-  const family: SceneInspectorPlacementFamily =
-    placement.side === 'left' || placement.side === 'right'
-      ? 'beside'
-      : 'stacked';
+  const { family } = placement;
   if (lock.family !== family) {
     lock.family = family;
     lock.y = family === 'beside' ? placement.y : null;
@@ -920,7 +1001,7 @@ export function SceneInspectionAnchor({
       size.height,
       obstacles,
     );
-    setInspectionLayoutSide(handles, placement.side);
+    setInspectionLayout(handles, placement);
     // Ahead of the write gate on purpose: the dialect's own screen-space
     // channels are mutation-only and must see every frame the entity is on
     // screen for, gate or no gate.

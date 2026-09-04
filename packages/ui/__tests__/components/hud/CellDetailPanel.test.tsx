@@ -2468,7 +2468,15 @@ describe('CellDetailPanel', () => {
   });
 
   it('appends the armed memory trace below the analysis plate without reshuffling it', () => {
-    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    // Query-aware on purpose: the blanket `matches: true` this file uses to
+    // force reduced motion also answers the card's own width query, which
+    // would put this test in the narrow composition it is not about. Reduced
+    // motion yes, narrow viewport no — the wide, reader-beside card.
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: !query.includes('max-width'),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
     const origin: CellLink = {
       seq: 18,
       tx_hash: base.out_point.tx_hash,
@@ -2518,6 +2526,102 @@ describe('CellDetailPanel', () => {
     // analysis / specimen / CKBYTES / trace — the reader has been there since
     // the card opened, so arming adds exactly one plate.
     expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(4);
+  });
+
+  it('lays the reader under the two columns and returns to 728 when the stage is narrow', () => {
+    // 856 of card plus a 42px tether needs 898px of clear stage on one side of
+    // the entity; a 1,440 screen leaves a 710px hole between the rails. So
+    // below 1,400 the dump stops standing beside the plate, lies under the
+    // card at its six-row floor, and the card goes back to the measure it has
+    // when a Cell holds nothing.
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('max-width'),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    const { container } = render(
+      <CellDetailPanel cell={base} onClose={() => {}} />,
+    );
+    const card = container.firstElementChild as HTMLElement;
+
+    expect(card.style.gridTemplateAreas).toBe('"analysis scan" "reader reader"');
+    expect(card.style.width).toBe('728px');
+    expect(card.style.gridTemplateRows).toBe('');
+    const reader = container.querySelector(
+      '[data-cell-inspection-satellite="reader"]',
+    ) as HTMLElement;
+    expect(reader.dataset.cellDataReaderPlacement).toBe('under');
+    expect(reader.style.alignSelf).toBe('start');
+  });
+
+  it('keeps the reader beside the plate at a wide stage', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: !query.includes('max-width'),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    const { container } = render(
+      <CellDetailPanel cell={base} onClose={() => {}} />,
+    );
+    const card = container.firstElementChild as HTMLElement;
+
+    expect(card.style.gridTemplateAreas)
+      .toBe('"analysis scan ." "analysis reader reader"');
+    expect(card.style.width).toBe('856px');
+    const reader = container.querySelector(
+      '[data-cell-inspection-satellite="reader"]',
+    ) as HTMLElement;
+    expect(reader.dataset.cellDataReaderPlacement).toBe('beside');
+    expect(reader.style.alignSelf).toBe('stretch');
+  });
+
+  it('caps a docked card at the solver band and scrolls its dossier', () => {
+    // The docked family: the card is taller than the band the viewport leaves
+    // it, so it is capped AT the band (104 safe top + 14 edge) and the
+    // analysis plate — the one elastic row — scrolls inside it, which is what
+    // keeps the PROOF anchor at the bottom of the dossier reachable.
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('max-width'),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    const { container } = render(
+      <CellDetailPanel cell={base} docked onClose={() => {}} />,
+    );
+    const card = container.firstElementChild as HTMLElement;
+    const analysis = container.querySelector(
+      '[data-cell-inspection-satellite="analysis"]',
+    ) as HTMLElement;
+
+    expect(card.style.maxHeight).toBe('calc(100vh - 118px)');
+    expect(card.style.overflow).toBe('hidden');
+    expect(card.style.gridTemplateRows).toBe('minmax(0, 1fr) auto');
+    expect(analysis.style.overflowY).toBe('auto');
+    expect(analysis.style.alignSelf).toBe('stretch');
+    expect(analysis.style.minHeight).toBe('0');
+    // ⚠️ And no `overflow` shorthand behind it. A shorthand written after the
+    // longhand resets it in a real CSSOM — jsdom does not model that, so this
+    // is the only place a unit test can hold the rule at all.
+    expect(analysis.style.overflow).toBe('');
+  });
+
+  it('leaves an undocked card uncapped and its dossier unscrolled', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('max-width'),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    const { container } = render(
+      <CellDetailPanel cell={base} onClose={() => {}} />,
+    );
+    const card = container.firstElementChild as HTMLElement;
+    const analysis = container.querySelector(
+      '[data-cell-inspection-satellite="analysis"]',
+    ) as HTMLElement;
+
+    expect(card.style.maxHeight).toBe('');
+    expect(analysis.style.overflowY).toBe('');
+    expect(analysis.style.overflow).toBe('hidden');
   });
 
   // The witness-carried case: the ledger lists the carriers, so the inputs the

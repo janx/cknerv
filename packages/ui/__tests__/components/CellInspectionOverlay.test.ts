@@ -93,7 +93,7 @@ describe('cellInspectorPlacement', () => {
       panelHeight: 300,
       viewportWidth: 1200,
       viewportHeight: 800,
-    })).toEqual({ side: 'right', x: 42, y: -150 });
+    })).toEqual({ family: 'beside', side: 'right', x: 42, y: -150 });
   });
 
   it('flips to the left before the inspector crosses the viewport edge', () => {
@@ -104,7 +104,7 @@ describe('cellInspectorPlacement', () => {
       panelHeight: 300,
       viewportWidth: 1200,
       viewportHeight: 800,
-    })).toEqual({ side: 'left', x: -542, y: -150 });
+    })).toEqual({ family: 'beside', side: 'left', x: -542, y: -150 });
   });
 
   it('respects the top HUD safe area while remaining Cell-tethered', () => {
@@ -115,7 +115,7 @@ describe('cellInspectorPlacement', () => {
       panelHeight: 300,
       viewportWidth: 1200,
       viewportHeight: 800,
-    })).toEqual({ side: 'right', x: 42, y: -16 });
+    })).toEqual({ family: 'beside', side: 'right', x: 42, y: -16 });
   });
 
   it('uses an above/below tether on a narrow screen', () => {
@@ -136,8 +136,8 @@ describe('cellInspectorPlacement', () => {
       viewportHeight: 800,
     });
 
-    expect(below).toEqual({ side: 'below', x: -181, y: 42 });
-    expect(above).toEqual({ side: 'above', x: -181, y: -342 });
+    expect(below).toEqual({ family: 'stacked', side: 'below', x: -181, y: 42 });
+    expect(above).toEqual({ family: 'stacked', side: 'above', x: -181, y: -342 });
   });
 
   it('changes the detail connector accent with the focused Cell facet', () => {

@@ -28,6 +28,7 @@ import {
   SceneInspectionAnchor,
   SceneInspectionConnector,
   useSceneInspectionDismiss,
+  useSceneInspectionLayoutFamily,
   useSceneInspectionLayoutSide,
   type SceneInspectionHandles,
   type SceneInspectorPlacement,
@@ -194,6 +195,9 @@ function CellInspectionOverlay(props: CellInspectionOverlayProps) {
   // next frame without any React coupling between the two trees.
   handles.accent = selectedCellScanAccent(panelProps, focusField);
   const layoutSide = useSceneInspectionLayoutSide(handles);
+  // A card the solver could not fit in the band is told so: its dossier plate
+  // scrolls inside a capped card instead of running off the screen.
+  const docked = useSceneInspectionLayoutFamily(handles) === 'docked';
   const handleInspectionFieldChange = useCallback((field: CellInspectionFacet | null) => {
     setFocusField(field);
     onInspectionFieldChange?.(field);
@@ -272,6 +276,7 @@ function CellInspectionOverlay(props: CellInspectionOverlayProps) {
         <CellDetailPanel
           {...panelProps}
           layoutSide={layoutSide}
+          docked={docked}
           onInspectionFieldChange={handleInspectionFieldChange}
         />
       </div>

@@ -54,6 +54,7 @@ import {
   StatusLamp,
 } from './primitives';
 import { useReducedMotion } from './useReducedMotion';
+import { useMediaQuery } from './useMediaQuery';
 import CellNucleusPortrait from './CellNucleusPortrait';
 import { ConsensusMemoryTracePlate } from './ConsensusIdentityPlate';
 import CellContentMemory from './CellContentMemory';
@@ -83,7 +84,7 @@ import {
 import { deriveCellContentMemory } from '../../derives/cellContentMemory.derive';
 import { validateCellSemanticRecordForMorphology } from '../../derives/cellSemanticMorphology.derive';
 import { useCellOutputData } from '../../hooks/useCellOutputData';
-import { readerRowsUnderScan } from '../../derives/cellDataReader.derive';
+import { READER_MIN_VISIBLE_ROWS, readerRowsUnderScan } from '../../derives/cellDataReader.derive';
 import {
   deriveCellCausalLens,
   type CellCausalLens,
@@ -157,6 +158,32 @@ export const CARD_WIDTH_PX = ANALYSIS_COLUMN_PX + CARD_SEAM_PX + PORTRAIT_COLUMN
  * in it and the card's dismiss boundary does not reach it — a click up there is
  * a click on the scene, which is what it is. */
 const READER_NOTCH_PX = READER_WIDTH_PX - PORTRAIT_COLUMN_PX - CARD_SEAM_PX;
+
+/** Below this the reader stops standing beside the plate and lies under the
+ *  card instead, and the card goes back to its 728 measure.
+ *
+ * 856 px of card plus the 42 px tether needs 898 px of clear stage on one side
+ * of the entity. A 1,440 screen leaves a 710 px hole between the rails and a
+ * 1,280 leaves 540, so from 1,400 down the wide card cannot be placed beside
+ * ANY cell without landing on a panel — and the only thing it was buying at
+ * that width was a taller dump. So the dump gives up its height instead: it
+ * becomes a six-row row under the two columns, the card returns to the measure
+ * it has when a Cell holds nothing, and the composition is one the stage can
+ * still hold.
+ *
+ * This is the `readerPlacement(innerWidth) >= 1396 ? 'beside' : 'below'` rule
+ * the R2 rewrite removed and never replaced; the threshold is restated here in
+ * the terms that actually decide it — card, tether and hole — rather than as a
+ * measured character count. */
+const CARD_NARROW_VIEWPORT_PX = 1400;
+
+/** What a docked card may not have of the viewport's height: the HUD's safe
+ *  top and the bottom edge, the two numbers `sceneInspectorPlacement` clamps
+ *  a card between (`INSPECTOR_SAFE_TOP_PX` 104 + `INSPECTOR_EDGE_PX` 14). The
+ *  card's cap has to be the solver's band exactly — a card capped shorter
+ *  would leave the docked family on the next frame and a card capped taller
+ *  would still hang off the screen. */
+const CARD_DOCK_RESERVE_PX = 118;
 
 /** Panel-local display order — the vertical order the six facts occupy in the
  * merged CKBYTES ANALYSIS layout, used ONLY for probe-reveal indexing so the
@@ -380,6 +407,11 @@ export interface CellDetailPanelProps {
   onInspectionFieldChange?: (field: CellInspectionFacet | null) => void;
   /** Spatial fan direction selected by the scene-anchor placement solver. */
   layoutSide?: CellDetailLayoutSide;
+  /** The card is taller than the band the viewport leaves it, so the solver
+   *  docked it under the strip. Its own dossier is then what has to give: the
+   *  analysis plate scrolls inside the card instead of hanging the provenance
+   *  footer off the bottom of the screen. */
+  docked?: boolean;
   /** Review labs render the portrait as a self-contained Canvas instead of
    * through the app's main-context inset pass. */
   portraitStandalone?: boolean;
@@ -1015,7 +1047,12 @@ function CellScanContentMemory(props: CellScanContentMemoryProps) {
  * therefore the same element object across a tick, so a tick re-paints this
  * section's ink and React bails out of the dump beneath it on identity.
  */
-function CellScanReaderPlate({ children }: { children: ReactNode }) {
+function CellScanReaderPlate({ beside, children }: {
+  /** The reader is a column beside the plate (wide) rather than a row under
+   *  the card (narrow) — see CARD_NARROW_VIEWPORT_PX. */
+  beside: boolean;
+  children: ReactNode;
+}) {
   const revealed = useCellScanSelector(
     (frame) => frame.memoryProgress >= CONTENT_DECODED_AT,
   );
@@ -1025,6 +1062,7 @@ function CellScanReaderPlate({ children }: { children: ReactNode }) {
       data-cell-detail-module="reader"
       data-cell-inspection-satellite="reader"
       data-cell-detail-size="content"
+      data-cell-data-reader-placement={beside ? 'beside' : 'under'}
       data-cell-data-reader-reveal-state={revealed ? 'resolved' : 'scanning'}
       {...revealStageAttributes(revealed)}
       style={{
@@ -1036,7 +1074,10 @@ function CellScanReaderPlate({ children }: { children: ReactNode }) {
         // that do not divide. `minHeight: 0` is what lets it: a grid item's
         // default `min-height: auto` refuses to be shorter than its content,
         // and the stretch would turn into a push.
-        alignSelf: 'stretch',
+        //
+        // Lying under the card there is no plate to be as tall as: the row is
+        // its own six rows and the card's height is what it costs.
+        alignSelf: beside ? 'stretch' : 'start',
         minHeight: 0,
         overflow: 'hidden',
         padding: '8px 10px 10px 12px',
@@ -1192,6 +1233,7 @@ function CellDetailPanel({
   semanticTransactionMessage,
   onInspectionFieldChange,
   layoutSide = 'left',
+  docked = false,
   portraitStandalone = false,
   onClose,
   style,
@@ -1399,12 +1441,22 @@ function CellDetailPanel({
   // the derive: the square and the seam over the reader are the card's own
   // geometry, and a pure derive that spelled them out would be a second place
   // they are written down.
-  const readerRows = readerRowsUnderScan(
-    plateHeightPx,
-    PORTRAIT_COLUMN_PX + CARD_SEAM_PX,
-    READER_CHROME_PX,
-    READER_ROW_HEIGHT_PX,
+  // Under 1,400 px the reader is a row under the card rather than a column
+  // beside the plate, so it has no plate remainder to fill and takes the
+  // floor: six rows, 96 bytes, enough for a molecule header and the start of
+  // what follows it. See CARD_NARROW_VIEWPORT_PX.
+  const narrowViewport = useMediaQuery(
+    `(max-width: ${CARD_NARROW_VIEWPORT_PX - 1}px)`,
   );
+  const readerBeside = hasBytes && !narrowViewport;
+  const readerRows = readerBeside
+    ? readerRowsUnderScan(
+      plateHeightPx,
+      PORTRAIT_COLUMN_PX + CARD_SEAM_PX,
+      READER_CHROME_PX,
+      READER_ROW_HEIGHT_PX,
+    )
+    : READER_MIN_VISIBLE_ROWS;
   // The record's own segments, and only a validated record's: the reader
   // colours bytes by them and names the one under the pointer, so a record
   // this card has already refused to present may not label a byte in it.
@@ -1614,7 +1666,10 @@ function CellDetailPanel({
   // nearest the Cell it is about, the notch stays on the far side of it, and
   // the plate moves to the other end. That is the rule that already mirrors
   // these columns, applied to three tracks instead of two.
-  const cardColumns = hasBytes
+  //
+  // …and narrow, the third grid: the two columns of the bare card with the
+  // reader lying under both of them, at the card's own 728 measure.
+  const cardColumns = readerBeside
     ? (portraitFirst
       ? `${READER_NOTCH_PX}px ${PORTRAIT_COLUMN_PX}px minmax(0, 1fr)`
       : `minmax(0, 1fr) ${PORTRAIT_COLUMN_PX}px ${READER_NOTCH_PX}px`)
@@ -1625,19 +1680,26 @@ function CellDetailPanel({
   // the reader takes it. Declared only when there IS a reader — a two-column
   // card has one implicit row and stating it would fix the plate's height to
   // the square's.
-  const cardRows = hasBytes
+  // A docked card is capped at the band's height (below), so ONE of its rows
+  // has to be the one that gives — and it is always the first, the row the
+  // analysis plate lives in. Undocked and narrow the rows stay implicit: they
+  // are what their content is, and the card grows downward as it always has.
+  const cardRows = readerBeside
     ? `${PORTRAIT_COLUMN_PX}px minmax(0, 1fr)${showTracePlate ? ' auto' : ''}`
-    : undefined;
+    : docked
+      ? `minmax(0, 1fr)${hasBytes ? ' auto' : ''}${showTracePlate ? ' auto' : ''}`
+      : undefined;
   // Growth is strictly downward: an armed MEMORY TRACE appends a full-width
   // row under everything, and it spans whatever the card is wide — three
   // tracks with a reader, two without. The row exists only while the trace is
   // armed; an always-there empty grid row trails an 8px phantom gap.
-  const cardAreas = hasBytes
+  const cardAreas = readerBeside
     ? `${portraitFirst
       ? '". scan analysis" "reader reader analysis"'
       : '"analysis scan ." "analysis reader reader"'}${
       showTracePlate ? ' "trace trace trace"' : ''}`
     : `${portraitFirst ? '"scan analysis"' : '"analysis scan"'}${
+      hasBytes ? ' "reader reader"' : ''}${
       showTracePlate ? ' "trace trace"' : ''}`;
 
   // ——— Register cluster evidence ————————————————————————————————————
@@ -1851,12 +1913,26 @@ function CellDetailPanel({
         columnGap: CARD_SEAM_PX,
         rowGap: 8,
         alignItems: 'start',
-        width: hasBytes
+        width: readerBeside
           ? CARD_WIDTH_PX + CARD_SEAM_PX + READER_NOTCH_PX
           : CARD_WIDTH_PX,
         // The card never outgrows the window it is drawn in, whichever of the
-        // two measures it takes.
+        // two measures it takes. Below CARD_NARROW_VIEWPORT_PX the measure
+        // itself steps down, so this is the last resort it was meant to be
+        // rather than the only narrow rule the card has.
         maxWidth: 'calc(100vw - 28px)',
+        // …and the same rule on the other axis, but only when the solver says
+        // the card is docked. The band is the viewport less the HUD's safe top
+        // and the bottom edge — the two numbers the placement solver clamps
+        // into — and capping the card AT it is what makes the docked family a
+        // fixpoint rather than a flicker. Without it the dossier simply ran off
+        // the bottom of a 800px screen with its PROOF anchor below the fold.
+        ...(docked
+          ? {
+            maxHeight: `calc(100vh - ${CARD_DOCK_RESERVE_PX}px)`,
+            overflow: 'hidden',
+          }
+          : null),
         boxSizing: 'border-box',
         pointerEvents: 'none',
         color: HUD_COLORS.ink,
@@ -1892,7 +1968,27 @@ function CellDetailPanel({
         style={{
           ...satelliteBase,
           gridArea: 'analysis',
-          overflow: 'hidden',
+          // Docked, the plate is the card's one elastic part: it fills the row
+          // the cap left it and scrolls inside itself, so the provenance
+          // footer at the bottom of the dossier is always reachable. `minHeight
+          // 0` is what lets a grid item be shorter than its content at all.
+          //
+          // ⚠️ The two cases are ONE spread, and they have to be: the shorthand
+          // and the longhand cannot both appear in this object. A CSSOM
+          // assignment applies in insertion order, so an `overflow` written
+          // after an `overflowY` — even an `overflow` React skips as undefined,
+          // which it writes as `''` — resets both longhands and the plate goes
+          // back to `visible`. jsdom does not model that, so the unit test read
+          // `auto` off a browser that was showing `visible`; the live capture
+          // is what caught it.
+          ...(docked
+            ? {
+              alignSelf: 'stretch' as const,
+              minHeight: 0,
+              overflowX: 'hidden' as const,
+              overflowY: 'auto' as const,
+            }
+            : { overflow: 'hidden' as const }),
           // One rectangle, one column: plate header, register clusters, bytes
           // zone, provenance footer — the house plate's own 12px cut corner is
           // the only shape it wears.
@@ -2528,7 +2624,7 @@ function CellDetailPanel({
         * zone has no such unmount. Without the key, a selection made on one
         * Cell would point at a byte of the next. */}
       {hasBytes ? (
-        <CellScanReaderPlate>
+        <CellScanReaderPlate beside={readerBeside}>
           <CellDataReader
             key={cell.id}
             segments={readerSegments}

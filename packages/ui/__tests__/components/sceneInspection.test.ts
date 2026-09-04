@@ -52,7 +52,7 @@ function makeHandles(): SceneInspectionHandles {
 describe('sceneInspectorPlacement preferred offsets', () => {
   it('uses an in-band preferredY verbatim instead of re-centring', () => {
     expect(sceneInspectorPlacement({ ...BESIDE, preferredY: -40 }))
-      .toEqual({ side: 'right', x: 42, y: -40 });
+      .toEqual({ family: 'beside', side: 'right', x: 42, y: -40 });
   });
 
   it('carries preferredY across a left flip unchanged', () => {
@@ -60,7 +60,7 @@ describe('sceneInspectorPlacement preferred offsets', () => {
       ...BESIDE,
       anchorX: 1000,
       preferredY: -40,
-    })).toEqual({ side: 'left', x: -542, y: -40 });
+    })).toEqual({ family: 'beside', side: 'left', x: -542, y: -40 });
   });
 
   it('still clamps preferredY into the viewport band', () => {
@@ -83,7 +83,7 @@ describe('sceneInspectorPlacement preferred offsets', () => {
 
   it('uses an in-band preferredX verbatim in the stacked family', () => {
     expect(sceneInspectorPlacement({ ...STACKED, preferredX: -130 }))
-      .toEqual({ side: 'below', x: -130, y: 42 });
+      .toEqual({ family: 'stacked', side: 'below', x: -130, y: 42 });
   });
 
   it('still clamps preferredX into the stacked band', () => {
@@ -97,7 +97,7 @@ describe('sceneInspectorPlacement preferred offsets', () => {
     // Below the anchor the card hangs from the gap and grows downward
     // already; a sticky vertical offset has nothing to add there.
     expect(sceneInspectorPlacement({ ...STACKED, preferredY: -100 }))
-      .toEqual({ side: 'below', x: -150, y: 42 });
+      .toEqual({ family: 'stacked', side: 'below', x: -150, y: 42 });
   });
 });
 
@@ -123,7 +123,7 @@ describe('sceneInspectorPlacement side hysteresis', () => {
       ...BESIDE,
       anchorX: MIDLINE_X,
       heldSide: 'left',
-    })).toEqual({ side: 'left', x: -542, y: -150 });
+    })).toEqual({ family: 'beside', side: 'left', x: -542, y: -150 });
   });
 
   it('keeps a held side through last-bit projection noise', () => {
@@ -201,7 +201,7 @@ describe('sticky placement lock', () => {
     const handles = makeHandles();
 
     const opened = resolveStickyInspectorPlacement(handles, 300, 400, 1200, 800);
-    expect(opened).toEqual({ side: 'right', x: 42, y: -150 });
+    expect(opened).toEqual({ family: 'beside', side: 'right', x: 42, y: -150 });
     expect(handles.placementLock)
       .toEqual({ family: 'beside', y: -150, x: null, side: 'right' });
 
@@ -213,7 +213,7 @@ describe('sticky placement lock', () => {
     // ...so the re-place keeps the top edge where it opened (−150) instead
     // of re-centring to −210: all growth extends downward.
     const grown = resolveStickyInspectorPlacement(handles, 300, 400, 1200, 800);
-    expect(grown).toEqual({ side: 'right', x: 42, y: -150 });
+    expect(grown).toEqual({ family: 'beside', side: 'right', x: 42, y: -150 });
   });
 
   it('keeps the y lock across a left/right flip', () => {
@@ -222,7 +222,7 @@ describe('sticky placement lock', () => {
 
     const flipped = resolveStickyInspectorPlacement(handles, 1000, 400, 1200, 800);
 
-    expect(flipped).toEqual({ side: 'left', x: -542, y: -150 });
+    expect(flipped).toEqual({ family: 'beside', side: 'left', x: -542, y: -150 });
     expect(handles.placementLock)
       .toEqual({ family: 'beside', y: -150, x: null, side: 'left' });
   });
@@ -240,7 +240,7 @@ describe('sticky placement lock', () => {
 
     // And widening again recaptures a freshly centred beside offset.
     const beside = resolveStickyInspectorPlacement(handles, 300, 400, 1200, 800);
-    expect(beside).toEqual({ side: 'right', x: 42, y: -150 });
+    expect(beside).toEqual({ family: 'beside', side: 'right', x: 42, y: -150 });
     expect(handles.placementLock)
       .toEqual({ family: 'beside', y: -150, x: null, side: 'right' });
   });
@@ -254,7 +254,7 @@ describe('sticky placement lock', () => {
     });
 
     const opened = resolveStickyInspectorPlacement(handles, 195, 400, 390, 800);
-    expect(opened).toEqual({ side: 'below', x: -150, y: 42 });
+    expect(opened).toEqual({ family: 'stacked', side: 'below', x: -150, y: 42 });
     expect(handles.placementLock)
       .toEqual({ family: 'stacked', y: null, x: -150, side: 'below' });
 
@@ -263,7 +263,7 @@ describe('sticky placement lock', () => {
 
     // The taller card is squeezed up by the bottom edge, but its horizontal
     // offset — the stacked family's sticky axis — stays exactly captured.
-    expect(grown).toEqual({ side: 'below', x: -150, y: -114 });
+    expect(grown).toEqual({ family: 'stacked', side: 'below', x: -150, y: -114 });
   });
 
   it('holds a midline card still while the projection jitters in the last bit', () => {
@@ -280,7 +280,7 @@ describe('sticky placement lock', () => {
       const frame = resolveStickyInspectorPlacement(
         handles, MIDLINE_X + noise, 400, 1200, 800,
       );
-      expect(frame).toEqual({ side: 'right', x: 42, y: -150 });
+      expect(frame).toEqual({ family: 'beside', side: 'right', x: 42, y: -150 });
     }
     expect(handles.placementLock.side).toBe('right');
   });
@@ -312,7 +312,7 @@ describe('sticky placement lock', () => {
 
     // With no lock, the taller card centres to −210 and captures that.
     const fresh = resolveStickyInspectorPlacement(handles, 300, 400, 1200, 800);
-    expect(fresh).toEqual({ side: 'right', x: 42, y: -210 });
+    expect(fresh).toEqual({ family: 'beside', side: 'right', x: 42, y: -210 });
     expect(handles.placementLock.y).toBe(-210);
   });
 
@@ -378,7 +378,7 @@ function makeWiredHandles(): SceneInspectionHandles {
 }
 
 describe('commitInspectionFrame', () => {
-  const RIGHT = { side: 'right', x: 42, y: -150 } as const;
+  const RIGHT = { family: 'beside', side: 'right', x: 42, y: -150 } as const;
 
   it('writes the whole connector on the first frame', () => {
     const handles = makeWiredHandles();
@@ -419,7 +419,7 @@ describe('commitInspectionFrame', () => {
     leader.style.width = '0px';
     dot.style.borderColor = 'transparent';
 
-    commitInspectionFrame(handles, { side: 'right', x: 42, y: -158 }, 349, 242);
+    commitInspectionFrame(handles, { family: 'beside', side: 'right', x: 42, y: -158 }, 349, 242);
 
     expect(leader.style.background).toBe('none');
     expect(leader.style.boxShadow).toBe('none');
@@ -449,7 +449,7 @@ describe('commitInspectionFrame', () => {
     const handles = makeWiredHandles();
     commitInspectionFrame(handles, RIGHT, 342, 250);
 
-    commitInspectionFrame(handles, { side: 'left', x: -542, y: -150 }, 200, 250);
+    commitInspectionFrame(handles, { family: 'beside', side: 'left', x: -542, y: -150 }, 200, 250);
 
     const leader = handles.leader as HTMLSpanElement;
     // The right-hand edge offsets are cleared, not left behind to fight the
@@ -493,14 +493,14 @@ describe('commitInspectionFrame', () => {
     const handles = makeWiredHandles();
     commitInspectionCardSize(handles, 300, 300);
 
-    commitInspectionFrame(handles, { side: 'below', x: -150, y: 42 }, 45, 442);
+    commitInspectionFrame(handles, { family: 'stacked', side: 'below', x: -150, y: 42 }, 45, 442);
     expect(handles.leader?.style.top).toBe('-42px');
     expect(handles.leader?.style.left).toBe('0px');
     expect(handles.leader?.style.translate).toBe('150px 0px');
     expect(handles.leaderDot?.style.translate).toBe('146px 0px');
 
     (handles.leader as HTMLSpanElement).style.background = 'none';
-    commitInspectionFrame(handles, { side: 'below', x: -130, y: 42 }, 65, 442);
+    commitInspectionFrame(handles, { family: 'stacked', side: 'below', x: -130, y: 42 }, 65, 442);
     expect(handles.leader?.style.translate).toBe('130px 0px');
     expect(handles.leader?.style.left).toBe('0px');
     expect(handles.leader?.style.background).toBe('none');
@@ -521,7 +521,7 @@ describe('commitInspectionFrame', () => {
 
     for (let step = 1; step <= 6; step += 1) {
       commitInspectionFrame(
-        handles, { side: 'right', x: 42, y: -150 - step * 9 }, 342 + step * 9, 250,
+        handles, { family: 'beside', side: 'right', x: 42, y: -150 - step * 9 }, 342 + step * 9, 250,
       );
     }
 
@@ -585,12 +585,12 @@ describe('sceneInspectorPlacement obstacles', () => {
     // is the only side there is.
     expect(sceneInspectorPlacement(OBSTRUCTED).side).toBe('right');
     expect(sceneInspectorPlacement({ ...OBSTRUCTED, obstacles: [RIGHT_RAIL] }))
-      .toEqual({ side: 'left', x: -442, y: -150 });
+      .toEqual({ family: 'beside', side: 'left', x: -442, y: -150 });
   });
 
   it('sends the card away from a panel on the left', () => {
     expect(sceneInspectorPlacement({ ...OBSTRUCTED, obstacles: [LEFT_RAIL] }))
-      .toEqual({ side: 'right', x: 42, y: -150 });
+      .toEqual({ family: 'beside', side: 'right', x: 42, y: -150 });
   });
 
   it('clamps the card to a panel edge the anchor is standing behind', () => {
@@ -602,7 +602,7 @@ describe('sceneInspectorPlacement obstacles', () => {
       ...OBSTRUCTED,
       anchorX: 200,
       obstacles: [LEFT_RAIL],
-    })).toEqual({ side: 'right', x: 100, y: -150 });
+    })).toEqual({ family: 'beside', side: 'right', x: 100, y: -150 });
     // And the room it keeps is the room past the rail: unobstructed the card
     // would sit 58px further left.
     expect(sceneInspectorPlacement({ ...OBSTRUCTED, anchorX: 200 }).x).toBe(42);
@@ -616,7 +616,7 @@ describe('sceneInspectorPlacement obstacles', () => {
       ...OBSTRUCTED,
       anchorX: 200,
       obstacles: [LOW_LEFT_PANEL],
-    })).toEqual({ side: 'right', x: 42, y: -150 });
+    })).toEqual({ family: 'beside', side: 'right', x: 42, y: -150 });
     // A panel taller than the card's band still blocks it: containment is
     // overlap, and the full-height rail is the case that matters most.
     expect(sceneInspectorPlacement({
@@ -649,7 +649,7 @@ describe('sceneInspectorPlacement obstacles', () => {
       anchorX: 400,
       obstacles: [LEFT_RAIL, RIGHT_RAIL],
     });
-    expect(placement).toEqual({ side: 'below', x: -100, y: 42 });
+    expect(placement).toEqual({ family: 'stacked', side: 'below', x: -100, y: 42 });
     expect(400 + placement.x).toBe(LEFT_RAIL.right);
     expect(400 + placement.x + 700).toBeLessThanOrEqual(RIGHT_RAIL.left);
     // The rails are what drove the card below its anchor at all: on a bare
@@ -674,7 +674,7 @@ describe('sceneInspectorPlacement obstacles', () => {
       anchorX: 1200,
       heldSide: 'left',
       obstacles: [NEAR_LEFT_PANEL],
-    })).toEqual({ side: 'left', x: -700, y: -150 });
+    })).toEqual({ family: 'beside', side: 'left', x: -700, y: -150 });
   });
 
   it('gives way once a panel makes the lead clear the margin', () => {
@@ -687,7 +687,7 @@ describe('sceneInspectorPlacement obstacles', () => {
       anchorX: 1200,
       heldSide: 'left',
       obstacles: [NEAR_LEFT_PANEL],
-    })).toEqual({ side: 'right', x: 42, y: -150 });
+    })).toEqual({ family: 'beside', side: 'right', x: 42, y: -150 });
     // Without the panel the same stage is a dead tie and the card holds: the
     // panel is the whole of the lead.
     expect(sceneInspectorPlacement({
@@ -752,4 +752,120 @@ describe('inspection dialects read the HUD', () => {
 
     expect(source).toContain('data-scene-inspection-layer="true"');
   });
+});
+
+/** The two laptop stages the round put in scope, with the HUD's real columns
+ *  on them, and the narrow card's real measure (728 wide — the reader lies
+ *  under the two columns below 1,400 px) capped at the solver's own band. */
+const LAPTOP_STAGES = [
+  { viewportWidth: 1280, viewportHeight: 800, rails: [
+    { left: 0, top: 76, right: 394, bottom: 800 },
+    { left: 934, top: 76, right: 1280, bottom: 800 },
+  ] },
+  { viewportWidth: 1000, viewportHeight: 720, rails: [
+    { left: 0, top: 76, right: 394, bottom: 720 },
+    { left: 654, top: 76, right: 1000, bottom: 720 },
+  ] },
+] as const;
+
+describe('sceneInspectorPlacement docked family', () => {
+  const TALL = {
+    anchorX: 640,
+    anchorY: 400,
+    panelWidth: 728,
+    panelHeight: 900,
+    viewportWidth: 1280,
+    viewportHeight: 800,
+  };
+
+  it('docks a card taller than the band under the strip', () => {
+    // The band is 800 − 14 − 104 = 682 and the card is 900, so neither the
+    // beside nor the stacked family has anywhere to put it: both used to clamp
+    // to `minY` and hang 218px of dossier off the bottom of the screen.
+    const placement = sceneInspectorPlacement(TALL);
+
+    expect(placement.family).toBe('docked');
+    expect(TALL.anchorY + placement.y).toBe(104);
+  });
+
+  it('docks against the edge the entity is not at', () => {
+    // Anchor right of centre → the card takes the left edge, and the reverse.
+    const left = sceneInspectorPlacement({ ...TALL, anchorX: 900 });
+    expect(left.side).toBe('left');
+    expect(900 + left.x).toBe(14);
+
+    const right = sceneInspectorPlacement({ ...TALL, anchorX: 300 });
+    expect(right.side).toBe('right');
+    expect(300 + right.x + 728).toBe(1280 - 14);
+  });
+
+  it('holds the docked family at exactly the band', () => {
+    // ⚠️ The fixpoint. A docked card caps its own height AT the band, so the
+    // next frame measures exactly 682. Under a strict `>` it would leave the
+    // family, drop its cap, grow past the band and dock again — forever.
+    expect(sceneInspectorPlacement({ ...TALL, panelHeight: 682 }).family)
+      .toBe('docked');
+    // One pixel of room and it is an ordinary card again.
+    expect(sceneInspectorPlacement({ ...TALL, panelHeight: 681 }).family)
+      .not.toBe('docked');
+  });
+
+  it('keeps a docked side against a lead under the margin', () => {
+    // Anchor 20px right of centre: a 40px lead against the 182px margin a
+    // 728-wide card buys, so a card already docked right stays docked right.
+    expect(sceneInspectorPlacement({ ...TALL, anchorX: 660, heldSide: 'right' }).side)
+      .toBe('right');
+    // Far enough over and it moves.
+    expect(sceneInspectorPlacement({ ...TALL, anchorX: 900, heldSide: 'right' }).side)
+      .toBe('left');
+  });
+
+  it.each(LAPTOP_STAGES)(
+    'keeps the whole card on a $viewportWidth×$viewportHeight stage',
+    ({ viewportWidth, viewportHeight, rails }) => {
+      // The narrow card (728, because the reader lies under the columns below
+      // 1,400) at the height a full dossier actually builds — the measured
+      // 726px plate plus the six-row dump under it — on the compact HUD's real
+      // columns, anchored across the whole stage. Two things are asserted at
+      // every anchor: the solver says DOCKED, which is the only signal the
+      // card has to cap itself with, and the card at that cap keeps every edge
+      // on screen. B-1 measured this card running from y 104 to y 830 on an
+      // 800px screen, with its PROOF line and caption below the fold.
+      const panelWidth = 728;
+      const naturalHeight = 877;
+      const band = viewportHeight - 118;
+      expect(naturalHeight).toBeGreaterThan(band);
+      for (let anchorX = 20; anchorX < viewportWidth; anchorX += 20) {
+        for (let anchorY = 120; anchorY < viewportHeight; anchorY += 40) {
+          const solved = sceneInspectorPlacement({
+            anchorX,
+            anchorY,
+            panelWidth,
+            panelHeight: naturalHeight,
+            viewportWidth,
+            viewportHeight,
+            obstacles: rails,
+          });
+          expect(solved.family).toBe('docked');
+          // …and the frame after, measuring the capped card.
+          const placement = sceneInspectorPlacement({
+            anchorX,
+            anchorY,
+            panelWidth,
+            panelHeight: band,
+            viewportWidth,
+            viewportHeight,
+            obstacles: rails,
+          });
+          expect(placement.family).toBe('docked');
+          const left = anchorX + placement.x;
+          const top = anchorY + placement.y;
+          expect(left).toBeGreaterThanOrEqual(14);
+          expect(top).toBeGreaterThanOrEqual(104);
+          expect(left + panelWidth).toBeLessThanOrEqual(viewportWidth - 14);
+          expect(top + band).toBeLessThanOrEqual(viewportHeight - 14);
+        }
+      }
+    },
+  );
 });
