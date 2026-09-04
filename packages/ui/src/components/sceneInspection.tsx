@@ -27,7 +27,13 @@ import type { HudOcclusionRect } from './hudOcclusion';
  *  is doing this solver's arithmetic (`w + gap` of hole for a card of measure
  *  `w`), and a card carrying its own 42 would be a second tether. */
 export const INSPECTOR_GAP_PX = 42;
-const INSPECTOR_EDGE_PX = 14;
+/** Clear px the solver keeps between a card and the viewport's own edge, on
+ *  every side and in every family. Exported for the same reason the gap is: a
+ *  card that takes a COMPACT measure when the stage is short for it is
+ *  subtracting this solver's two edges from the room it has
+ *  (`CellDetailPanel`'s `CARD_EDGE_RESERVE_PX`), and a card that typed its own
+ *  14 would be a second edge. */
+export const INSPECTOR_EDGE_PX = 14;
 const INSPECTOR_SAFE_TOP_PX = 104;
 
 /**

@@ -146,7 +146,13 @@ const RAILS_FULL_WIDTH_PX = RAIL_INSET_PX * 2
  *
  * ⚠️ Restated, not imported, and the reason is A1's: `INSPECTOR_GAP_PX` lives
  * in `sceneInspection.tsx`, which pulls in `@react-three/fiber`. The DOM-only
- * HUD root does not acquire an R3F import to say how wide a card is. */
+ * HUD root does not acquire an R3F import to say how wide a card is.
+ *
+ * ⚠️ And it is the card's FULL narrow measure, not the compact floor the card
+ * falls to under it (`CellDetailPanel.CARD_COMPACT_MIN_WIDTH_PX`, 640). The
+ * compact card is what a stage the rails have ALREADY left answers with; a
+ * rail that stayed up because 640 would have fitted would be a rail buying its
+ * own room out of the register's line length. The rails give way first. */
 const RAILS_COLLAPSE_CARD_PX = 728;
 const RAILS_COLLAPSE_TETHER_PX = 42;
 const RAILS_COLLAPSE_MARGIN_PX = 24;

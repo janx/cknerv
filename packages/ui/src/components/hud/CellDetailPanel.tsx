@@ -55,7 +55,7 @@ import {
 } from './primitives';
 import { useReducedMotion } from './useReducedMotion';
 import { useHudHoleWidth } from '../hudOcclusion';
-import { INSPECTOR_GAP_PX } from '../sceneInspection';
+import { INSPECTOR_EDGE_PX, INSPECTOR_GAP_PX } from '../sceneInspection';
 import CellNucleusPortrait from './CellNucleusPortrait';
 import { ConsensusMemoryTracePlate } from './ConsensusIdentityPlate';
 import CellContentMemory from './CellContentMemory';
@@ -166,7 +166,7 @@ const CARD_WIDE_WIDTH_PX = CARD_WIDTH_PX + CARD_SEAM_PX + READER_NOTCH_PX;
 
 /** The clear stage the wide card needs before it may have its reader beside
  *  the plate. Under it the reader lies under the card instead and the card
- *  goes back to its 728 measure.
+ *  goes back to its 728 measure — and, under a second rung, below even that.
  *
  * The rule is keyed to the HOLE the HUD leaves — `hudHoleFromRects`, the same
  * reading the solver places into and the camera fits to — and not to
@@ -177,24 +177,64 @@ const CARD_WIDE_WIDTH_PX = CARD_WIDTH_PX + CARD_SEAM_PX + READER_NOTCH_PX;
  *
  * The arithmetic is the placement's own. A card is tethered `INSPECTOR_GAP_PX`
  * from its entity, so a card of measure `w` beside an entity in the hole needs
- * `w + 42` of hole. That gives a ladder with two rungs and one floor:
+ * `w + 42` of hole. That gives a ladder with three rungs:
  *
  *   hole ≥ 898  the wide card, reader beside the plate
  *   hole ≥ 770  the 728 card, reader under it — still placed beside the cell
- *   below       the same 728 card, which the solver now stacks or docks
+ *   below       a COMPACT card, `clamp(hole − 28, 640, 728)`, reader under it
  *
- * A 1,920 stage leaves 1,190 and takes the first rung. A 1,440 and a 1,280
- * both collapse their rails (`HudOverlay.RAILS_COLLAPSE_MAX_WIDTH_PX`) and are
- * left with 874 and 714, so both take the middle rung and the floor — and the
- * only thing the wide card was buying there was a taller dump. So the dump
- * gives up its height instead: six rows under the two columns, the card at the
- * measure it has when a Cell holds nothing, and a composition the stage can
- * hold.
+ * A 1,920 stage leaves 1,190 and takes the first rung. A 1,440 collapses its
+ * rails (`HudOverlay.RAILS_COLLAPSE_MAX_WIDTH_PX`) and is left with 874, so it
+ * takes the middle one — and the only thing the wide card was buying there was
+ * a taller dump. So the dump gives up its height instead: six rows under the
+ * two columns, the card at the measure it has when a Cell holds nothing, and a
+ * composition the stage can hold.
  *
  * This is the `readerPlacement(innerWidth) >= 1396 ? 'beside' : 'below'` rule
  * the R2 rewrite removed and never replaced, restated in the terms that
  * actually decide it: card, tether and hole. */
 const CARD_BESIDE_HOLE_PX = CARD_WIDE_WIDTH_PX + INSPECTOR_GAP_PX;
+
+/** The hole the 728 card needs to stand beside its cell — the middle rung. */
+const CARD_NARROW_HOLE_PX = CARD_WIDTH_PX + INSPECTOR_GAP_PX;
+
+/** What the compact measure gives back to the stage: the solver's own edge, on
+ *  both sides. A card takes its measure from the hole, and the hole is a stage
+ *  the card has to land INSIDE — with the clearance every family keeps against
+ *  the viewport edge. Derived from `INSPECTOR_EDGE_PX` rather than typed,
+ *  which is also what the `maxWidth` below is made of: one 28. */
+const CARD_EDGE_RESERVE_PX = INSPECTOR_EDGE_PX * 2;
+
+/** The compact card's floor — what the analysis column may not go under.
+ *
+ * The card's third rung is the one the 1,280 stage lands on: 714 px of hole
+ * against a 728 card, short by fourteen, and A2b put that arithmetic to the
+ * user as an open question. The ruling: below the middle rung the card takes
+ * a COMPACT measure and gives the difference back to the stage — but only the
+ * ANALYSIS column shrinks. The 280 scan square is a specimen at a fixed scale
+ * and the 8 px seam is the card's own joint; a square that flexed would be a
+ * second reading of the braid at a second size.
+ *
+ * So the floor is the analysis plate's own: the longest row it draws — a
+ * label, a badge and a mid-truncated hash — measures 336 px, and 640 − 280 −
+ * 8 leaves it 352. A pixel under this and the register starts wrapping rows
+ * that were composed as one line; the card would rather cover a rail (and be
+ * dimmed under its scan square, A3) than print a broken register. */
+const CARD_COMPACT_MIN_WIDTH_PX = 640;
+
+/**
+ * The card's measure, from the hole the HUD leaves and whether the reader is
+ * standing beside the plate. Pure, and stated once: the width, the grid and
+ * the reader's own placement are three readings of this one ladder.
+ */
+function cellCardWidth(holeWidth: number, readerBeside: boolean): number {
+  if (readerBeside) return CARD_WIDE_WIDTH_PX;
+  if (holeWidth >= CARD_NARROW_HOLE_PX) return CARD_WIDTH_PX;
+  return Math.round(Math.min(
+    CARD_WIDTH_PX,
+    Math.max(CARD_COMPACT_MIN_WIDTH_PX, holeWidth - CARD_EDGE_RESERVE_PX),
+  ));
+}
 
 /** What a docked card may not have of the viewport's height: the HUD's safe
  *  top and the bottom edge, the two numbers `sceneInspectorPlacement` clamps
@@ -1467,6 +1507,7 @@ function CellDetailPanel({
   // decided by the stage the HUD leaves, not by the window's own width.
   const holeWidth = useHudHoleWidth();
   const readerBeside = hasBytes && holeWidth >= CARD_BESIDE_HOLE_PX;
+  const cardWidth = cellCardWidth(holeWidth, readerBeside);
   const readerRows = readerBeside
     ? readerRowsUnderScan(
       plateHeightPx,
@@ -1670,7 +1711,10 @@ function CellDetailPanel({
   // this Cell holds any bytes.
   //
   // Without them it is what it has always been — two columns, one row, the
-  // analysis plate beside the specimen square, 728 px.
+  // analysis plate beside the specimen square, at whatever measure the ladder
+  // gave the card (`cellCardWidth`): the square and the seam are fixed and the
+  // plate is the `1fr`, so a compact card is a narrower register and the same
+  // specimen.
   //
   // With them the square gets a companion under it. CKBYTES is 408 px wide and
   // the square is 280, so the reader spans the square's column AND a third,
@@ -1686,7 +1730,8 @@ function CellDetailPanel({
   // these columns, applied to three tracks instead of two.
   //
   // …and narrow, the third grid: the two columns of the bare card with the
-  // reader lying under both of them, at the card's own 728 measure.
+  // reader lying under both of them, at the card's own narrow measure — 728,
+  // or the compact width the hole leaves it under CARD_NARROW_HOLE_PX.
   const cardColumns = readerBeside
     ? (portraitFirst
       ? `${READER_NOTCH_PX}px ${PORTRAIT_COLUMN_PX}px minmax(0, 1fr)`
@@ -1931,12 +1976,14 @@ function CellDetailPanel({
         columnGap: CARD_SEAM_PX,
         rowGap: 8,
         alignItems: 'start',
-        width: readerBeside ? CARD_WIDE_WIDTH_PX : CARD_WIDTH_PX,
+        width: cardWidth,
         // The card never outgrows the window it is drawn in, whichever of the
-        // two measures it takes. In a hole under CARD_BESIDE_HOLE_PX the
-        // measure itself steps down, so this is the last resort it was meant
-        // to be rather than the only narrow rule the card has.
-        maxWidth: 'calc(100vw - 28px)',
+        // three measures it takes. Under CARD_BESIDE_HOLE_PX the measure steps
+        // down and under CARD_NARROW_HOLE_PX it follows the hole itself, so
+        // this is the last resort it was meant to be rather than the only
+        // narrow rule the card has. It answers one case the ladder cannot: a
+        // window narrower than the card's own floor.
+        maxWidth: `calc(100vw - ${CARD_EDGE_RESERVE_PX}px)`,
         // …and the same rule on the other axis, but only when the solver says
         // the card is docked. The band is the viewport less the HUD's safe top
         // and the bottom edge — the two numbers the placement solver clamps

@@ -52,6 +52,7 @@ import CellDetailPanel, {
 } from '../../../src/components/hud/CellDetailPanel';
 import { READER_WIDTH_PX } from '../../../src/components/hud/CellDataReader';
 import { measureHudOcclusionRectsForTest } from '../../../src/components/hudOcclusion';
+import { INSPECTOR_EDGE_PX } from '../../../src/components/sceneInspection';
 import { HUD_COLORS, HUD_TYPE } from '../../../src/components/hud/hudTheme';
 
 afterEach(() => {
@@ -2586,15 +2587,20 @@ describe('CellDetailPanel', () => {
 
   // The ladder the card's measure is picked from, in HOLE px — the clear stage
   // the HUD leaves, not the window's own width. 856 of card plus a 42px tether
-  // needs 898; 728 plus the same tether needs 770, below which the solver
-  // stops placing beside the cell at all and stacks or docks the same card.
+  // needs 898; 728 plus the same tether needs 770, below which the card gives
+  // the difference back to the stage and takes a compact measure — the
+  // analysis column shrinking, the 280 square and the 8px seam standing — down
+  // to a 640 floor its longest register row (336px) still fits in.
   const READER_UNDER = '"analysis scan" "reader reader"';
   const READER_BESIDE = '"analysis scan ." "analysis reader reader"';
   it.each([
     { hole: 900, areas: READER_BESIDE, width: `${READER_CARD_PX}px`, placement: 'beside', self: 'stretch', why: 'the wide card fits beside the cell' },
     { hole: 780, areas: READER_UNDER, width: `${CARD_WIDTH_PX}px`, placement: 'under', self: 'start', why: 'only the 728 card fits beside the cell' },
-    { hole: 710, areas: READER_UNDER, width: `${CARD_WIDTH_PX}px`, placement: 'under', self: 'start', why: '1440: the solver has to stack or dock it' },
-    { hole: 540, areas: READER_UNDER, width: `${CARD_WIDTH_PX}px`, placement: 'under', self: 'start', why: '1280 uncollapsed: the same 728 card' },
+    { hole: 770, areas: READER_UNDER, width: `${CARD_WIDTH_PX}px`, placement: 'under', self: 'start', why: 'the middle rung exactly: 728 of card and its 42px tether' },
+    { hole: 714, areas: READER_UNDER, width: '686px', placement: 'under', self: 'start', why: '1280 with the rails collapsed: 14px short, so the card gives 14 back' },
+    { hole: 710, areas: READER_UNDER, width: '682px', placement: 'under', self: 'start', why: '1440 uncollapsed: the card follows the hole down' },
+    { hole: 668, areas: READER_UNDER, width: '640px', placement: 'under', self: 'start', why: 'the floor, reached exactly' },
+    { hole: 600, areas: READER_UNDER, width: '640px', placement: 'under', self: 'start', why: 'past the floor the card stops shrinking and the stage is short' },
   ])('composes for a $hole px hole — $why', ({ hole, areas, width, placement, self }) => {
     stageWithHole(hole);
     const { container } = render(
@@ -2642,8 +2648,41 @@ describe('CellDetailPanel', () => {
     stageWithHole(710);
     act(() => { measureHudOcclusionRectsForTest(); });
 
-    expect(card.style.width).toBe(`${CARD_WIDTH_PX}px`);
+    expect(card.style.width).toBe('682px');
     expect(card.style.gridTemplateAreas).toBe(READER_UNDER);
+  });
+
+  it('shrinks only the analysis column when the stage is short for the card', () => {
+    // What the compact measure spends and what it may not. The scan square is
+    // a specimen at a fixed scale and the seam is the card's own joint, so the
+    // 288 px they hold between them is the same at 640 as it is at 856; every
+    // pixel the card gives back to the stage comes out of the `1fr` the
+    // register is drawn in.
+    stageWithHole(668);
+    const { container } = render(
+      <CellDetailPanel cell={base} onClose={() => {}} />,
+    );
+    const card = container.firstElementChild as HTMLElement;
+
+    expect(card.style.width).toBe('640px');
+    expect(card.style.gridTemplateColumns).toBe('minmax(0, 1fr) 280px');
+    expect(card.style.columnGap).toBe(`${CARD_SEAM_PX}px`);
+    // …and the floor is the register's, not a round number: the longest row
+    // the analysis plate draws is 336 px and 640 − 280 − 8 leaves it 352.
+    expect(640 - 280 - CARD_SEAM_PX).toBeGreaterThanOrEqual(336);
+  });
+
+  it('keeps one statement of the edge it reserves', () => {
+    // The compact measure subtracts the solver's own edge on both sides, and
+    // the last-resort clamp on the card's width is made of the same number.
+    // Two 28s could disagree; one cannot.
+    stageWithHole(668);
+    const { container } = render(
+      <CellDetailPanel cell={base} onClose={() => {}} />,
+    );
+
+    expect((container.firstElementChild as HTMLElement).style.maxWidth)
+      .toBe(`calc(100vw - ${INSPECTOR_EDGE_PX * 2}px)`);
   });
 
   it('caps a docked card at the solver band and scrolls its dossier', () => {
