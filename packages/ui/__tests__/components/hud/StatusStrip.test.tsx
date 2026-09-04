@@ -22,12 +22,31 @@ vi.mock('leva', () => ({
 }));
 
 import StatusStrip from '../../../src/components/hud/StatusStrip';
+import { HUD_COLORS } from '../../../src/components/hud/hudTheme';
 
+/** jsdom hands inline colours back as `rgb()`. */
+function rgbOf(hex: string): string {
+  const h = hex.replace('#', '');
+  const channel = (at: number) => parseInt(h.slice(at, at + 2), 16);
+  return `rgb(${channel(0)}, ${channel(2)}, ${channel(4)})`;
+}
+
+/** Four panels sitting exactly where they ship — the out-of-the-box state, and
+ *  the one the control has to read as "nothing has been changed". */
 const panelControls = [
-  { id: 'chain', code: 'CKB·01', label: 'COMMON KNOWLEDGE BASE', visible: true },
-  { id: 'pulse', code: 'ECG·04', label: 'PULSE', visible: true },
-  { id: 'cells', code: 'CELL·03', label: 'CELL MESH', visible: true },
-  { id: 'peers', code: 'PEER·02', label: 'PEER MESH', visible: true },
+  { id: 'chain', code: 'CKB·01', label: 'COMMON KNOWLEDGE BASE', visible: true, defaultVisible: true },
+  { id: 'pulse', code: 'ECG·04', label: 'PULSE', visible: true, defaultVisible: true },
+  { id: 'cells', code: 'CELL·03', label: 'CELL MESH', visible: true, defaultVisible: true },
+  { id: 'peers', code: 'PEER·02', label: 'PEER MESH', visible: true, defaultVisible: true },
+];
+
+/** …and the roster the HUD actually ships: two dev instruments OFF by default,
+ *  so the honest reading of a fresh load is 5 of 7 and NOT diverged. */
+const shippedPanelControls = [
+  ...panelControls,
+  { id: 'dao', code: 'DAO·05', label: 'NERVOS DAO', visible: true, defaultVisible: true },
+  { id: 'stage', code: 'STAGE·07', label: 'STAGE SAMPLE', visible: false, defaultVisible: false },
+  { id: 'render', code: 'GL·08', label: 'RENDER STATS', visible: false, defaultVisible: false },
 ];
 
 beforeEach(() => {
@@ -135,6 +154,51 @@ describe('StatusStrip', () => {
     expect(chainToggle.getAttribute('aria-checked')).toBe('true');
     fireEvent.click(chainToggle);
     expect(onPanelVisibilityChange).toHaveBeenCalledWith('chain', false);
+  });
+
+  it('reads the shipped roster as the default, not as a divergence', () => {
+    // `5/7` IS the out-of-the-box state — two dev instruments ship hidden — and
+    // the control painted it chrome orange, "you diverged", on every fresh
+    // load, beside a BUILD chip whose rail is also orange (report A, A-2).
+    const { container, rerender } = render(
+      <StatusStrip
+        level="nominal"
+        uptimeMs={0}
+        panelControls={shippedPanelControls}
+        onPanelVisibilityChange={() => {}}
+      />,
+    );
+    const toggle = () => container.querySelector('[data-panel-visibility-toggle]') as HTMLElement;
+    expect(toggle().textContent).toContain('5/7');
+    expect(toggle().style.color).toBe(rgbOf(HUD_COLORS.cyanWire));
+
+    // Hiding a panel that ships shown IS a divergence…
+    rerender(
+      <StatusStrip
+        level="nominal"
+        uptimeMs={0}
+        panelControls={shippedPanelControls.map((panel) => (
+          panel.id === 'cells' ? { ...panel, visible: false } : panel
+        ))}
+        onPanelVisibilityChange={() => {}}
+      />,
+    );
+    expect(toggle().style.color).toBe(rgbOf(HUD_COLORS.orange));
+
+    // …and so is showing one that ships hidden, which a count of visible
+    // panels reads as MORE default rather than less.
+    rerender(
+      <StatusStrip
+        level="nominal"
+        uptimeMs={0}
+        panelControls={shippedPanelControls.map((panel) => (
+          panel.id === 'render' ? { ...panel, visible: true } : panel
+        ))}
+        onPanelVisibilityChange={() => {}}
+      />,
+    );
+    expect(toggle().textContent).toContain('6/7');
+    expect(toggle().style.color).toBe(rgbOf(HUD_COLORS.orange));
   });
 
   it('uses a prioritized two-row layout when horizontal space is constrained', () => {

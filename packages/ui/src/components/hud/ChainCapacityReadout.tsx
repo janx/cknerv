@@ -178,17 +178,37 @@ export default function ChainCapacityReadout({ source, record, census = null, ce
                 data-asset-capacity-category={bucket.category}
                 style={{
                   width: `${bucket.shareBps / 100}%`,
+                  // ⚠️ A BAR MAY NOT OMIT WHAT ITS LEGEND NAMES. The legend
+                  // prints `TOKENS 0.08% · OBJECTS 0.03%` and the bar drew
+                  // them 0.27 px and 0.10 px wide — invisible — so a reader
+                  // checking the legend against the bar found two of its four
+                  // names missing (report A, A-9). One pixel is the floor, the
+                  // same floor STAGE·07's mix bar has kept all along.
+                  minWidth: 1,
                   background: bucket.color,
                   boxShadow: `0 0 5px ${rgba(bucket.color, 0.28)}`,
                 }}
               />
             ) : null)}
           </div>
-          <div style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, color: HUD_COLORS.legendInk, marginTop: 3, lineHeight: 1.45 }}>
+          {/* Qualitative: four unrelated hues, so the hue IS the mapping and
+              the legend's NAME carries it. The share stays in the caption
+              tier — a caption beside a key. */}
+          <div
+            data-capacity-legend="qualitative"
+            style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, color: HUD_COLORS.legendInk, marginTop: 3, lineHeight: 1.45 }}
+          >
             {buckets
               .filter((bucket) => bucket.shareBps > 0)
-              .map((bucket) => `${CATEGORY_LABELS[bucket.category.toLowerCase()] ?? bucket.category.toUpperCase()} ${shareLabel(bucket.shareBps)}`)
-              .join(' · ')}
+              .map((bucket, index) => (
+                <span key={bucket.category}>
+                  {index > 0 ? ' · ' : null}
+                  <span data-capacity-legend-name style={{ color: bucket.color }}>
+                    {CATEGORY_LABELS[bucket.category.toLowerCase()] ?? bucket.category.toUpperCase()}
+                  </span>
+                  {` ${shareLabel(bucket.shareBps)}`}
+                </span>
+              ))}
           </div>
         </div>
       ) : null}

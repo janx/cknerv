@@ -88,12 +88,24 @@ function TaxonomyBar({ title, scope, buckets }: {
         {nonZero.map((bucket) => (
           <span
             key={bucket.key}
-            style={{ width: `${(bucket.count / total) * 100}%`, background: bucket.color }}
+            data-taxonomy-segment={bucket.key}
+            style={{ width: `${(bucket.count / total) * 100}%`, minWidth: 1, background: bucket.color }}
           />
         ))}
       </div>
-      <div style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.tech, color: HUD_COLORS.legendInk, marginTop: 3, lineHeight: 1.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {named.map((bucket) => `${bucket.label} ${share(bucket.count, total)}`).join(' · ')}
+      {/* Qualitative: one hue per script family, so the name carries the hue.
+          The tail count stays `dim` — it names no segment. */}
+      <div
+        data-taxonomy-legend="qualitative"
+        style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.tech, color: HUD_COLORS.legendInk, marginTop: 3, lineHeight: 1.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+      >
+        {named.map((bucket, index) => (
+          <span key={bucket.key}>
+            {index > 0 ? ' · ' : null}
+            <span data-taxonomy-legend-name style={{ color: bucket.color }}>{bucket.label}</span>
+            {` ${share(bucket.count, total)}`}
+          </span>
+        ))}
         {tailFamilies > 0 ? (
           <span style={{ color: HUD_COLORS.dim }}>{` · +${tailFamilies} <1%`}</span>
         ) : null}

@@ -30,6 +30,10 @@ export type HudPanelControl = {
   code: string;
   label: string;
   visible: boolean;
+  /** Where this panel sits out of the box. The control paints "you diverged"
+   *  from the roster it is handed rather than from a count, so the HUD's own
+   *  default table is the one authority on what the default IS. */
+  defaultVisible: boolean;
 };
 
 export const STATUS_STRIP_HEIGHTS = {
@@ -132,13 +136,21 @@ function PanelVisibilityControl({ panels, onChange, compact = false, menuOffset 
   const visibleCount = panels.filter((panel) => panel.visible).length;
   // A UI preference is not a health reading, so this control speaks the
   // active-config language AUTO/MAN already uses: cyan = sitting at the
-  // default, orange = you have diverged from it. Partial and none read the
-  // same because both mean "something is hidden" — the menu below says what.
-  // Caution yellow used to sit in the middle and made a personal choice look
-  // like the chain was in trouble.
-  const color = visibleCount === panels.length
-    ? HUD_COLORS.cyanWire
-    : HUD_COLORS.orange;
+  // default, orange = you have diverged from it. Caution yellow used to sit in
+  // the middle and made a personal choice look like the chain was in trouble.
+  //
+  // ⚠️ AND "DEFAULT" IS NOT "ALL". The test used to be `visibleCount ===
+  // panels.length`, which is a different sentence — and a false one, because
+  // two of the seven modules are dev instruments that ship OFF. Out of the box
+  // the HUD reads 5/7, so the first control after the wordmark said YOU
+  // DIVERGED on every fresh load, in chrome orange, beside a BUILD chip whose
+  // rail is also orange: the whole left cluster announced a change nobody had
+  // made (report A, A-2). Divergence is now measured against where each panel
+  // SITS by default, so hiding a panel that ships hidden is not a change and
+  // showing one that ships shown is not either.
+  const color = panels.some((panel) => panel.visible !== panel.defaultVisible)
+    ? HUD_COLORS.orange
+    : HUD_COLORS.cyanWire;
 
   useEffect(() => {
     if (!open) return;

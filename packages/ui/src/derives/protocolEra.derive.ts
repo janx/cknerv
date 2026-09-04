@@ -68,9 +68,16 @@ export function protocolEraVisualState(
     : 'ready';
 }
 
+/** ⚠️ `NAME YEAR`, and the separator is the whole point. This label was
+ *  `MEEPO·24`, which is the HUD's ONE address grammar — `CKB·01`, `PEER·02`,
+ *  `ECG·04`, `SCAN·02` — worn by a fact about the chain, two rows under
+ *  `CKB·01` itself. Nothing on screen says the 24 is a year, and a reader the
+ *  codes have trained will parse it as module 24 (report A, A-6). The era is a
+ *  NAME and a YEAR, so it is written the way a name and a year are written;
+ *  the year is printed in full because a two-digit year beside four-digit
+ *  block heights is the ambiguity all over again. */
 function editionLabel(era: ProtocolEra): string {
-  const year = String(era.edition_year).slice(-2).padStart(2, '0');
-  return `${era.name.toLocaleUpperCase('en-US')}·${year}`;
+  return `${era.name.toLocaleUpperCase('en-US')} ${era.edition_year}`;
 }
 
 function activationLabel(era: ProtocolEra): string {

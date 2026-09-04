@@ -77,16 +77,32 @@ export default function ActivityFeedReadout({ source, record, compact = false, f
                 data-activity-category={bucket.category}
                 style={{
                   width: `${(bucket.count / total) * 100}%`,
+                  // A category the legend names is a category the bar shows:
+                  // one pixel is the floor, and a count of zero still draws
+                  // nothing, because a sliver for a zero would be a lie.
+                  minWidth: bucket.count > 0 ? 1 : 0,
                   background: bucket.color,
                   boxShadow: `0 0 5px ${rgba(bucket.color, 0.28)}`,
                 }}
               />
             ))}
           </div>
-          <div style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, color: HUD_COLORS.legendInk, marginTop: compact ? 2 : 3, lineHeight: 1.45 }}>
-            {visual.buckets
-              .map((bucket) => `${CATEGORY_LABELS[bucket.category] ?? bucket.category.toUpperCase()} ${bucket.count}`)
-              .join(' · ')}
+          {/* Qualitative: the categories carry unrelated hues, so the hue is
+              the mapping and the legend's NAME is where a reader picks it up.
+              The count stays in the caption tier. */}
+          <div
+            data-activity-legend="qualitative"
+            style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, color: HUD_COLORS.legendInk, marginTop: compact ? 2 : 3, lineHeight: 1.45 }}
+          >
+            {visual.buckets.map((bucket, index) => (
+              <span key={bucket.category}>
+                {index > 0 ? ' · ' : null}
+                <span data-activity-legend-name style={{ color: bucket.color }}>
+                  {CATEGORY_LABELS[bucket.category] ?? bucket.category.toUpperCase()}
+                </span>
+                {` ${bucket.count}`}
+              </span>
+            ))}
           </div>
           {!compact ? <div style={{ marginTop: 6 }}>
             {visual.items.slice(0, 4).map((item) => {

@@ -33,6 +33,12 @@ function formatSignedInteger(value: number): string {
   return '0';
 }
 
+/** A block height, grouped — the footer prints one or two of them and the
+ *  hover repeats both, so the grouping is stated once. */
+function blockRef(block: number): string {
+  return block.toLocaleString('en-US');
+}
+
 function formatChangePercent(current: bigint, change: bigint): string | null {
   const previous = current - change;
   if (previous <= 0n) return null;
@@ -43,7 +49,12 @@ function formatChangePercent(current: bigint, change: bigint): string | null {
   const milliPercent = (absolute * 100_000n + previous / 2n) / previous;
   const sign = change > 0n ? '+' : change < 0n ? '−' : '';
   if (milliPercent === 0n) {
-    return change === 0n ? '0%' : `${sign}<0.001%`;
+    // ⚠️ NO SIGN IN FRONT OF AN OPERATOR. A change too small to resolve used to
+    // print `+<0.001%` — a plus and a less-than jammed together, which is not
+    // a number in any notation. What the reading actually says is that the
+    // magnitude is under the resolution, so it is written as the inequality it
+    // is; the CKB figure beside it still carries the direction.
+    return change === 0n ? '0%' : '< 0.001 %';
   }
   const whole = milliPercent / 1_000n;
   const fraction = (milliPercent % 1_000n)
@@ -143,6 +154,7 @@ export default function DaoStateReadout({ source, record, nowMs }: {
       visual.totalDepositedShannons,
       visual.depositChange24hShannons,
     );
+  const anchorsAgree = record.statistics_block === record.as_of.block;
   // These labels follow ckbadger's lifecycle semantics: total deposited and
   // active depositors exclude phase-one withdrawals, while active_deposits is
   // the count of still-live status-0 plus status-1 DAO Cells.
@@ -152,35 +164,20 @@ export default function DaoStateReadout({ source, record, nowMs }: {
       aria-label="Nervos DAO state"
       data-dao-state={visualState}
     >
-      <div
-        data-dao-freshness={visualState}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 5,
-          marginBottom: 9,
-          color: stale ? HUD_COLORS.caution : HUD_COLORS.nominal,
-          fontFamily: HUD_FONTS.tech,
-          fontSize: HUD_TYPE.micro,
-          letterSpacing: 1.2,
-          lineHeight: 1,
-          textTransform: 'uppercase',
-        }}
-      >
-        <span
-          aria-hidden="true"
-          style={{
-            width: 5,
-            height: 5,
-            flex: '0 0 auto',
-            borderRadius: '50%',
-            background: stale ? HUD_COLORS.caution : HUD_COLORS.nominal,
-            boxShadow: `0 0 6px ${stale ? HUD_COLORS.caution : HUD_COLORS.nominal}`,
-          }}
-        />
-        <span>{stale ? 'STALE' : 'LIVE'} · UPDATED <HudAge atMs={record.updated_at_ms} nowMs={nowMs} /> AGO</span>
-      </div>
+      {/* ⚠️ THE GREEN LAMP IS GONE, AND SO IS THE WORD IT LIT. DAO·05 opened
+          on `● LIVE · UPDATED 1M 33S AGO` — a lit `nominal` lamp above the
+          hero, on every frame, on a column that already carries a green ECG
+          lamp, a green trace, a green BORN bar and a green hero. A fourth
+          "LIVE" there says the record is HEALTHY when all it means is RECENT,
+          and the other four records on this rail say nothing at all until
+          something is wrong (report A, A-8; the atlas's own rule, "staleness
+          speaks only when it is true").
 
+          So this panel takes the `ReadoutHeader` grammar the rest of the rail
+          keeps: the anchor is stated, `· STALE` speaks only when it is true,
+          and the age — a fact, not a verdict — moves down to the footer beside
+          the two blocks it is the age OF. Nothing here is printed on a good
+          day, which is what a good day looks like everywhere else. */}
       <div data-dao-content style={{ opacity: stale ? 0.72 : 1 }}>
         <div
           data-dao-hero
@@ -388,9 +385,20 @@ export default function DaoStateReadout({ source, record, nowMs }: {
         </div>
       </div>
 
+      {/* The record's own two blocks, its age, and — only when it is true —
+          that it has gone stale.
+
+          ⚠️ ONE BLOCK WHEN THERE IS ONE BLOCK. `STAT #20,359,745 · ANCHOR
+          #20,359,745` is the ordinary case, and printing a twelve-character
+          figure twice to say the two agree makes the reader compare them
+          digit by digit to find out that they do. Where they differ both are
+          printed, because then the difference IS the reading — the statistics
+          were taken at one height and validated for compatibility at another.
+          Where they agree the names share the number. */}
       <div
         data-dao-proof
-        title={`Statistics block ${record.statistics_block.toLocaleString('en-US')}; validated compatibility anchor ${record.as_of.block.toLocaleString('en-US')}`}
+        data-dao-anchor-shape={anchorsAgree ? 'one' : 'two'}
+        title={`Statistics block ${blockRef(record.statistics_block)}; validated compatibility anchor ${blockRef(record.as_of.block)}`}
         style={{
           marginTop: 9,
           color: stale ? HUD_COLORS.caution : HUD_COLORS.dim,
@@ -402,7 +410,11 @@ export default function DaoStateReadout({ source, record, nowMs }: {
           whiteSpace: 'nowrap',
         }}
       >
-        STAT #{record.statistics_block.toLocaleString('en-US')} · ANCHOR #{record.as_of.block.toLocaleString('en-US')}
+        {anchorsAgree
+          ? <>STAT · ANCHOR #{blockRef(record.statistics_block)}</>
+          : <>STAT #{blockRef(record.statistics_block)} · ANCHOR #{blockRef(record.as_of.block)}</>}
+        {' · '}<HudAge atMs={record.updated_at_ms} nowMs={nowMs} /> AGO
+        {stale ? <span data-dao-stale> · STALE</span> : null}
       </div>
     </section>
   );

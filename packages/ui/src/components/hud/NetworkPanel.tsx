@@ -49,6 +49,11 @@ function NetworkPanel({ summary, consensus, syncRatio, enrichmentSource, network
 }) {
   const total = Math.max(1, consensus.total);
   const seg = (n: number) => `${(n / total) * 100}%`;
+  // A tally the legend under the bar names is a tally the bar shows: one peer
+  // out of four hundred is 0.25 % and rounds to nothing. The floor is only for
+  // a tally that HAS somebody in it — a one-pixel red sliver over `0 AHEAD`
+  // would be an alarm about an empty set.
+  const segFloor = (n: number) => (n > 0 ? 1 : 0);
   return (
     <HudPanel style={{ width: dense ? DENSE_PANEL_WIDTH_PX : PANEL_WIDTH_PX, paddingTop: 14, ...style }}>
       <PanelHeader en="PEER MESH" cjk="节点场" idx="PEER·02" accent={HUD_COLORS.peerWire} />
@@ -76,15 +81,15 @@ function NetworkPanel({ summary, consensus, syncRatio, enrichmentSource, network
         <StatRow label="Head consensus">{consensus.atTip} / {consensus.total}</StatRow>
       )}
       <div style={{ display: 'flex', height: 7, border: `1px solid ${rgba(HUD_COLORS.orange, 0.2)}`, background: HUD_COLORS.trackGround, margin: '4px 0' }}>
-        <span style={{ width: seg(consensus.atTip), background: HUD_COLORS.nominal, boxShadow: `0 0 7px ${rgba(HUD_COLORS.nominal, 0.55)}` }} />
-        <span style={{ width: seg(consensus.behind), background: HUD_COLORS.dim }} />
+        <span style={{ width: seg(consensus.atTip), minWidth: segFloor(consensus.atTip), background: HUD_COLORS.nominal, boxShadow: `0 0 7px ${rgba(HUD_COLORS.nominal, 0.55)}` }} />
+        <span style={{ width: seg(consensus.behind), minWidth: segFloor(consensus.behind), background: HUD_COLORS.dim }} />
         {/* AHEAD is DANGER here, as it is on both cards (the user's D-18
           * ruling). A peer past our head is the one reading in this panel
           * that indicts the local node — it says WE are behind — and it wore
           * caution while the same fact wore danger one click away, on the
           * NODE card's lag box and the PEER card's sync ladder. One fact, one
           * severity, whichever surface a reader meets it on. */}
-        <span style={{ width: seg(consensus.ahead), background: HUD_COLORS.danger }} />
+        <span style={{ width: seg(consensus.ahead), minWidth: segFloor(consensus.ahead), background: HUD_COLORS.danger }} />
       </div>
       {dense ? null : (
       <div style={{ display: 'flex', gap: 11, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, letterSpacing: 0.35, marginBottom: 8 }}>

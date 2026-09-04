@@ -456,42 +456,49 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
       code: 'CKB·01',
       label: 'COMMON KNOWLEDGE BASE',
       visible: panelVisibility.chain,
+      defaultVisible: DEFAULT_PANEL_VISIBILITY.chain,
     },
     {
       id: 'peers',
       code: 'PEER·02',
       label: 'PEER MESH',
       visible: panelVisibility.peers,
+      defaultVisible: DEFAULT_PANEL_VISIBILITY.peers,
     },
     {
       id: 'cells',
       code: 'CELL·03',
       label: 'CELL MESH',
       visible: panelVisibility.cells,
+      defaultVisible: DEFAULT_PANEL_VISIBILITY.cells,
     },
     {
       id: 'pulse',
       code: 'ECG·04',
       label: 'PULSE',
       visible: panelVisibility.pulse,
+      defaultVisible: DEFAULT_PANEL_VISIBILITY.pulse,
     },
     ...(daoPanelAvailable ? [{
       id: 'dao',
       code: 'DAO·05',
       label: 'NERVOS DAO',
       visible: panelVisibility.dao,
+      defaultVisible: DEFAULT_PANEL_VISIBILITY.dao,
     }] : []),
     {
       id: 'stage',
       code: 'STAGE·07',
       label: 'STAGE SAMPLE',
       visible: panelVisibility.stage,
+      defaultVisible: DEFAULT_PANEL_VISIBILITY.stage,
     },
     {
       id: 'render',
       code: 'GL·08',
       label: 'RENDER STATS',
       visible: panelVisibility.render,
+      defaultVisible: DEFAULT_PANEL_VISIBILITY.render,
     },
   ], [panelVisibility, daoPanelAvailable]);
   const setPanelVisible = useCallback((id: string, visible: boolean) => {
@@ -757,6 +764,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
                     transactionHorizon={transactionHorizon}
                     compactActivity={shortViewport}
                     folded={railsCollapsed}
+                    reorgLive={reorgDepth > 0}
                     style={railsCollapsed ? CHAIN_PANEL_DENSE_STYLE : CHAIN_PANEL_STYLE}
                   />
                 </div>

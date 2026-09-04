@@ -94,6 +94,31 @@ describe('ChainCapacityReadout', () => {
     expect(text).not.toContain('Rendered');
   });
 
+  it('shows every category its legend names, and names it in its own hue', () => {
+    // The bar drew `TOKENS 0.08%` at 0.27 px and `OBJECTS 0.03%` at 0.10 px —
+    // two of four names simply not on the bar — under a legend printed in one
+    // grey, on a bar whose hues are the only mapping it has (report A, A-9).
+    const { container } = render(
+      <ChainCapacityReadout source={source} record={record} census={census()} />,
+    );
+    const segments = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-asset-capacity-category]'),
+    );
+    expect(segments.length).toBeGreaterThan(1);
+    for (const segment of segments) expect(segment.style.minWidth).toBe('1px');
+
+    const legend = container.querySelector<HTMLElement>('[data-capacity-legend="qualitative"]');
+    const names = Array.from(
+      legend?.querySelectorAll<HTMLElement>('[data-capacity-legend-name]') ?? [],
+    );
+    expect(names.length).toBe(segments.length);
+    for (const [index, name] of names.entries()) {
+      expect(name.style.color, name.textContent ?? '').toBe(segments[index].style.background);
+    }
+    // The share stays in the caption tier: a caption beside a key.
+    expect(legend?.textContent).toContain('%');
+  });
+
   it('anchors the census to the header when the anchors agree', () => {
     const { container } = render(
       <ChainCapacityReadout source={source} record={record} census={census()} />,

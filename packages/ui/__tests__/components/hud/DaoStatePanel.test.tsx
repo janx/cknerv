@@ -42,7 +42,13 @@ describe('DaoStatePanel', () => {
     expect(text).toContain('NERVOS DAO');
     expect(text).toContain('道');
     expect(text).toContain('DAO·05');
-    expect(text).toContain('LIVE · UPDATED 38s AGO');
+    // ⚠️ NO LAMP AND NO WORD ON A GOOD DAY. The record's freshness used to open
+    // the panel as a lit `nominal` line saying LIVE; a record being recent is
+    // not a health verdict, and four other records on this rail say nothing
+    // until something is wrong (report A, A-8).
+    expect(text).not.toContain('LIVE');
+    expect(container.querySelector('[data-dao-freshness]')).toBeNull();
+    expect(container.querySelector('[data-dao-stale]')).toBeNull();
     expect(text).toContain('Total deposited');
     expect(text).toContain('8.38 G·CKB');
     expect(text).toContain('+1.42 M·CKB · +0.017% / 24H');
@@ -57,7 +63,8 @@ describe('DaoStatePanel', () => {
     expect(text).toContain('16,740+5 / 24H');
     expect(text).toContain('Live DAO cells');
     expect(text).toContain('22,659');
-    expect(text).toContain('STAT #99 · ANCHOR #100');
+    // …and the age is a fact about the two blocks, so it stands with them.
+    expect(text).toContain('STAT #99 · ANCHOR #100 · 38s AGO');
     expect(text).not.toContain('DAO locked');
     expect(text).not.toContain('Active deposits');
     expect(container.querySelector('[data-dao-state="ready"]')).not.toBeNull();
@@ -77,9 +84,11 @@ describe('DaoStatePanel', () => {
       />,
     );
 
-    expect(container.textContent).toContain('STALE · UPDATED 4m 0s AGO');
+    // Staleness speaks — in the rail's own `· STALE` token, on the line that
+    // carries the anchor it has gone stale against.
+    expect(container.textContent).toContain('STAT #99 · ANCHOR #100 · 4m 0s AGO · STALE');
     expect(container.querySelector('[data-dao-state="stale"]')).not.toBeNull();
-    expect(container.querySelector('[data-dao-freshness="stale"]')).not.toBeNull();
+    expect(container.querySelector('[data-dao-stale]')?.textContent).toBe(' · STALE');
     expect((container.querySelector('[data-dao-content]') as HTMLElement).style.opacity)
       .toBe('0.72');
   });
@@ -118,6 +127,46 @@ describe('DaoStatePanel', () => {
       .toBe('−1 CKB · −0.99% / 24H');
     expect(container.querySelector('[data-dao-depositor-change]')?.textContent)
       .toBe('−1 / 24H');
+  });
+
+  it('names the two blocks once when they are the same block', () => {
+    // `STAT #20,359,745 · ANCHOR #20,359,745` makes a reader compare twelve
+    // digits to find out they agree. Where they differ, both print, because
+    // then the difference is the reading.
+    const { container, rerender } = render(
+      <DaoStatePanel
+        source={{ ...source, validated_anchor: { block: 99, hash: '0xblock99' } }}
+        record={{ ...record, as_of: { block: 99, hash: '0xblock99' } }}
+        nowMs={NOW_MS}
+      />,
+    );
+    const proof = () => container.querySelector('[data-dao-proof]') as HTMLElement;
+    expect(proof().dataset.daoAnchorShape).toBe('one');
+    expect(proof().textContent).toContain('STAT · ANCHOR #99');
+    expect(proof().textContent).not.toContain('#99 · ANCHOR #99');
+
+    rerender(<DaoStatePanel source={source} record={record} nowMs={NOW_MS} />);
+    expect(proof().dataset.daoAnchorShape).toBe('two');
+    expect(proof().textContent).toContain('STAT #99 · ANCHOR #100');
+  });
+
+  it('writes a change under the resolution as an inequality, not a signed one', () => {
+    // `+<0.001%` is a plus and a less-than jammed together and is not a number
+    // in any notation; the CKB figure beside it carries the direction.
+    const { container } = render(
+      <DaoStatePanel
+        source={source}
+        record={{
+          ...record,
+          total_deposited_shannons: '1000000000000000',
+          deposit_change_24h_shannons: '1000000',
+        }}
+        nowMs={NOW_MS}
+      />,
+    );
+    const change = container.querySelector('[data-dao-deposit-change]')?.textContent ?? '';
+    expect(change).toContain('< 0.001 %');
+    expect(change).not.toContain('+<');
   });
 
   it('does not render without validated DAO capability', () => {

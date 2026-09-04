@@ -30,7 +30,7 @@ const fmt = (n: number) => n.toLocaleString('en-US');
 export const CHAIN_PANEL_WIDTH_PX = 340;
 export const CHAIN_PANEL_DENSE_WIDTH_PX = 268;
 
-function BlockchainReadout({ chain, cellPopulation, enrichmentSource, assetEcosystem, protocolEra, activityFeed, transactionHorizon, compactActivity = false, folded = false, style }: {
+function BlockchainReadout({ chain, cellPopulation, enrichmentSource, assetEcosystem, protocolEra, activityFeed, transactionHorizon, compactActivity = false, folded = false, reorgLive = false, style }: {
   chain: ChainEntry;
   /** Population model, or null for a consumer that derives none. Absent means
    *  the panel is absent — it never guesses a scope. */
@@ -48,6 +48,10 @@ function BlockchainReadout({ chain, cellPopulation, enrichmentSource, assetEcosy
    *  rows above them do not fold — tip, epoch, mempool and reorgs are what
    *  CKB·01 IS. */
   folded?: boolean;
+  /** A reorg is happening NOW — the same delta the alarm band is raised from
+   *  (`HudOverlay`'s `reorgDepth`). The count below is a lifetime tally and
+   *  wears the severity only while this is true. */
+  reorgLive?: boolean;
   style?: CSSProperties;
 }) {
   const epoch = formatEpochReadout(chain.epoch);
@@ -84,7 +88,23 @@ function BlockchainReadout({ chain, cellPopulation, enrichmentSource, assetEcosy
         </span>
       </StatRow>
       <StatRow label="Mempool">{chain.mempool.pending} · {chain.mempool.proposed}</StatRow>
-      <StatRow label="Reorgs" valueColor={chain.reorgs > 0 ? HUD_COLORS.danger : undefined}>{chain.reorgs}</StatRow>
+      {/* ⚠️ A LIFETIME TALLY IS NOT AN ALARM. This count was painted `danger`
+          whenever it was above zero — and it is cumulative, so on a chain with
+          an ordinary uncle rate it is above zero within minutes and stays red
+          for the life of the session, beside `● NOMINAL` in the strip and
+          `● FINE` on PULSE. 109 of them in one session's history, every one a
+          sub-second amber blink somewhere else, all of them still red here
+          (report A, A-5). Red that never leaves teaches a reader that red on
+          this panel is furniture — the exact failure the palette spends four
+          paragraphs avoiding for DIED, which was moved off red on the same
+          argument.
+
+          So the ink is the count's, and the severity is the EVENT's: `danger`
+          only while a reorg is actually happening, which is the same delta the
+          alarm band is raised from and not a threshold on the tally. E5 gives
+          that event a dwell so the colour lasts as long as a reader needs to
+          catch it; until then it is exactly as long as the band. */}
+      <StatRow label="Reorgs" valueColor={reorgLive ? HUD_COLORS.danger : undefined}>{chain.reorgs}</StatRow>
       {/* Chain truth only. The dashboard's local slice is a different scope
           and lives on the mesh rail as the STAGE CAPACITY panel. */}
       <ChainCapacityReadout

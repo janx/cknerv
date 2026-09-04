@@ -4714,6 +4714,151 @@ describe('one entrance for five dialects', () => {
   });
 });
 
+// ——— Freshness speaks only when it is wrong ——————————————————————————————
+//
+// Five records on this HUD carry an anchor and an age, and four of them say
+// nothing at all until they go stale — the atlas states the rule in its own
+// file ("staleness speaks only when it is true") and `ReadoutHeader` is the
+// form: an anchor in the header line, a `· STALE` token when it is earned, and
+// silence otherwise.
+//
+// DAO·05 was the fifth, and it opened with `● LIVE · UPDATED 1M 33S AGO` — a
+// lit `nominal` lamp above the hero, on every frame, on a column that already
+// carries a green ECG lamp, a green trace, a green BORN bar and a green hero.
+// A fourth LIVE there says the record is HEALTHY when it only means RECENT
+// (report A, A-8).
+//
+// So: a freshness ternary may make a stale record LOUDER — a colour, a token,
+// a dimmed body — and may not give the fresh case a word of its own. A word
+// for the good case is a lamp that is always on.
+describe('freshness speaks only when it is wrong', () => {
+  it('no surface prints a word for a record that is merely fresh', () => {
+    const offenders: string[] = [];
+    let ternaries = 0;
+    for (const source of domDialect()) {
+      const text = code(source.text);
+      for (const hit of text.matchAll(/\bstale \?\s*('[^']*'|`[^`]*`)\s*:\s*('[^']*'|`[^`]*`)/g)) {
+        ternaries += 1;
+        const fresh = hit[2].slice(1, -1).trim();
+        if (fresh.length > 0) {
+          offenders.push(`${source.name}: prints ${hit[2]} for a fresh record`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+    // …and the matcher does find freshness ternaries — the era badge's
+    // `', stale' : ''` is one — so an empty offender list means the ones it
+    // finds say nothing on a good day, not that it read nothing at all.
+    expect(ternaries).toBeGreaterThan(0);
+  });
+
+  it('and the record that lost its lamp still says when it is stale', () => {
+    // The other half of the same rule: silence on a good day is only a rule if
+    // the bad day still speaks. DAO·05's `· STALE` is the rail's own token.
+    const dao = PACKAGE_SOURCES.find(
+      (entry) => entry.name === 'components/hud/DaoStateReadout.tsx',
+    );
+    const text = code(dao?.text ?? '');
+    expect(text).toContain('data-dao-stale');
+    expect(text).toContain('· STALE');
+    expect(text).not.toContain("'LIVE'");
+    // …and no lamp of its own: the hand-drawn 5px disc went with the word.
+    expect(text).not.toContain("borderRadius: '50%'");
+  });
+});
+
+// ——— A bar and the legend that names it ——————————————————————————————————
+//
+// Every segmented bar in this HUD has a legend under it, and the legend is a
+// promise: what it names is in the bar, and what it prints adds up to the
+// caption. Two things broke that promise.
+//
+// A segment drawn from a share can round to nothing. CHAIN CAPACITY named
+// `TOKENS 0.08% · OBJECTS 0.03%` and drew them 0.27 px and 0.10 px wide, so
+// two of its four names were simply not there (report A, A-9). Every
+// proportional segment now has a floor — and the floor is for a segment that
+// has something in it, because a sliver standing for a zero is a worse lie
+// than a missing one.
+//
+// And a legend whose words are all one grey cannot be read back against a bar
+// whose colours are the only mapping it has. PEER·02's COUNTRIES draws twenty
+// slivers from a six-slot ramp handed out by hash; nothing tells a reader
+// which sliver is HK. So: a QUALITATIVE legend tints the NAME in its
+// segment's own hue and leaves the count in `legendInk`; an ORDINAL legend —
+// one hue stepping in brightness, where the ORDER is the mapping — stays grey
+// and says so. Every legend line in the overlay declares which it is.
+describe('a bar and the legend that names it', () => {
+  it('every proportional segment keeps a floor, and a zero keeps none', () => {
+    const offenders: string[] = [];
+    const drawers = new Set<string>();
+    for (const source of domDialect()) {
+      const text = code(source.text);
+      for (const hit of text.matchAll(/width: (?:`\$\{[^`]*\}%`|seg\()/g)) {
+        const object = enclosingObject(text, hit.index);
+        if (object === null) continue;
+        // A GAUGE's fill is the reading itself and takes no floor: at zero it
+        // is zero, and that is what it is for. A SEGMENT is one of several
+        // parts of a whole laid side by side, so it lives in a FLEX row — the
+        // gauges all fill a track from the left instead, absolutely or as a
+        // block, and none of them opens a flex context to do it.
+        if (!/background:/.test(object)) continue;
+        // …and a segment is a flex ITEM: it is placed by the row, never by
+        // itself. A fill that positions itself inside a track is the other
+        // form, whatever the row above it happens to be doing.
+        if (/position: '(absolute|fixed)'/.test(object)) continue;
+        const before = text.slice(Math.max(0, hit.index - 900), hit.index);
+        if (!/display: 'flex'/.test(before)) continue;
+        drawers.add(source.name);
+        if (!/minWidth:/.test(object)) {
+          offenders.push(`${source.name}: a proportional segment with no floor`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+    expect([...drawers].sort()).toEqual([
+      'ActivityFeedReadout.tsx',
+      'CellByteBudget.tsx',
+      'ChainCapacityReadout.tsx',
+      'NetworkAtlasReadout.tsx',
+      'NetworkPanel.tsx',
+      'StageCapacityPanel.tsx',
+    ]);
+  });
+
+  it('a qualitative legend is tinted, and an ordinal one declares that it is not', () => {
+    const offenders: string[] = [];
+    const declared: string[] = [];
+    for (const source of domDialect()) {
+      const text = code(source.text);
+      const greys = [...text.matchAll(/color: HUD_COLORS\.legendInk/g)].length;
+      const marks = [...text.matchAll(
+        /data-[\w-]*legend=(\{[^}]*(?:qualitative|ordinal)[^}]*\}|"(?:qualitative|ordinal)")/g,
+      )];
+      if (greys !== marks.length) {
+        offenders.push(`${source.name}: ${greys} legend lines, ${marks.length} declared`);
+      }
+      for (const mark of marks) {
+        const qualitative = /qualitative/.test(mark[1]);
+        declared.push(`${source.name} ${qualitative ? 'qualitative' : 'ordinal'}`);
+        if (!qualitative) continue;
+        // …and a tint is a colour taken from the datum the segment is painted
+        // from, never a second table beside it.
+        const after = text.slice(mark.index, mark.index + 900);
+        if (!/color: [^,}\n]*\.color/.test(after)) {
+          offenders.push(`${source.name}: a qualitative legend paints no name from its segment`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+    expect(declared.sort()).toEqual([
+      'ActivityFeedReadout.tsx qualitative',
+      'ChainCapacityReadout.tsx qualitative',
+      'NetworkAtlasReadout.tsx qualitative',
+      'StageCapacityPanel.tsx qualitative',
+    ]);
+  });
+});
+
 // ——— One severity per fact ————————————————————————————————————————————————
 //
 // "A peer is ahead of us" is printed on three surfaces — the PEER·02 rail, the
@@ -4762,7 +4907,7 @@ describe('one severity per fact', () => {
       expect(code(source?.text ?? ''), `${file} lost its AHEAD severity`)
         .toContain(fragment);
     };
-    says('components/hud/NetworkPanel.tsx', 'seg(consensus.ahead), background: HUD_COLORS.danger');
+    says('components/hud/NetworkPanel.tsx', 'segFloor(consensus.ahead), background: HUD_COLORS.danger');
     says('components/hud/NetworkPanel.tsx', 'style={{ color: HUD_COLORS.danger }}>{consensus.ahead} AHEAD');
     says('components/hud/NodeSelfCard.tsx', 'AHEAD · WE LAG');
     says('derives/peerLinkInstrument.derive.ts', 'AHEAD`, color: HUD_COLORS.danger');

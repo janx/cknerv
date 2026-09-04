@@ -296,15 +296,68 @@ describe('NetworkPanel', () => {
     // And the strips below speak the other language, with no member in common:
     // every segment there is an opaque slot of the qualitative ramp, and none
     // of them is this hue.
+    // …read off the bar's own segments and not off every span in the strip:
+    // the legend under it now carries a tinted name per entry, which is a
+    // colour in the same hue as its segment and would be counted twice.
     const qualitative = Array.from(
-      container.querySelectorAll<HTMLElement>('[data-network-atlas-rows] > div'),
-    ).slice(-2).flatMap((strip) => Array.from(strip.querySelectorAll<HTMLElement>('span')));
+      container.querySelectorAll<HTMLElement>('[data-atlas-bucket]'),
+    );
     expect(qualitative.length).toBe(4);
     for (const segment of qualitative) {
       const slot = paint(segment.style.background);
       expect(slot.alpha).toBe(1);
       expect(slot.rgb).not.toBe(steps[0].rgb);
     }
+  });
+
+  it('tints a qualitative legend and leaves the ordinal one grey', () => {
+    // COUNTRIES draws twenty slivers from a six-slot ramp handed out by hash,
+    // so the hue is the only mapping there is and a grey word under it names
+    // nothing a reader can find (report A, A-9). The reach bar is ordinal —
+    // one hue stepping in brightness — so its order is the mapping and its
+    // words stay captions.
+    const { container } = render(
+      <NetworkPanel
+        {...props}
+        enrichmentSource={enrichmentSource}
+        networkAtlas={networkAtlas}
+      />,
+    );
+    const legends = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-atlas-legend]'),
+    );
+    expect(legends.map((line) => line.dataset.atlasLegend))
+      .toEqual(['ordinal', 'qualitative', 'qualitative']);
+
+    const [reach, countries] = legends;
+    for (const name of Array.from(reach.querySelectorAll<HTMLElement>('[data-atlas-legend-name]'))) {
+      expect(name.style.color).toBe('');
+    }
+    const tinted = Array.from(
+      countries.querySelectorAll<HTMLElement>('[data-atlas-legend-name]'),
+    );
+    // Two countries and no overflow tally in this fixture; every name that
+    // stands for a segment carries that segment's own hue.
+    expect(tinted.map((name) => name.textContent)).toEqual(['SG', 'US']);
+    for (const name of tinted) expect(name.style.color).not.toBe('');
+    expect(new Set(tinted.map((name) => name.style.color)).size).toBe(2);
+    // …and the counts stay in the caption tier beside them.
+    expect(countries.textContent).toBe('SG 28 · US 14');
+  });
+
+  it('keeps a sliver of every tally its legend names, and none of a zero', () => {
+    const { container } = render(
+      <NetworkPanel
+        {...props}
+        consensus={{ ...props.consensus, atTip: 46, behind: 1, ahead: 0, unknown: 0, total: 47 }}
+      />,
+    );
+    const bar = container.querySelectorAll<HTMLElement>('div')[0];
+    const segments = Array.from(container.querySelectorAll<HTMLElement>('span'))
+      .filter((span) => span.style.width.endsWith('%') && span.style.background !== '');
+    expect(bar).not.toBeNull();
+    expect(segments).toHaveLength(3);
+    expect(segments.map((span) => span.style.minWidth)).toEqual(['1px', '1px', '0']);
   });
 
   it('folds the atlas into the panel flow instead of framing a sub-section', () => {

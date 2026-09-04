@@ -9,6 +9,14 @@ import type {
   TransactionHorizonRecord,
 } from '@cknerv/types';
 import BlockchainReadout from '../../../src/components/hud/BlockchainReadout';
+import { HUD_COLORS } from '../../../src/components/hud/hudTheme';
+
+/** jsdom hands inline colours back as `rgb()`. */
+function rgbOf(hex: string): string {
+  const h = hex.replace('#', '');
+  const channel = (at: number) => parseInt(h.slice(at, at + 2), 16);
+  return `rgb(${channel(0)}, ${channel(2)}, ${channel(4)})`;
+}
 
 afterEach(cleanup);
 
@@ -111,6 +119,31 @@ describe('BlockchainReadout · the tip is the hero', () => {
   });
 });
 
+describe('BlockchainReadout · a lifetime tally is not an alarm', () => {
+  const reorged = { ...chain, reorgs: 109 };
+  const reorgRow = (container: HTMLElement) =>
+    Array.from(container.querySelectorAll<HTMLElement>('div'))
+      .find((row) => (row.textContent ?? '').startsWith('Reorgs'));
+
+  it('prints a session-long count in plain ink while nothing is reorging', () => {
+    // 109 reorgs is an ordinary uncle rate, not 109 problems: the count was
+    // red for the life of every session, beside `● NOMINAL` in the strip
+    // (report A, A-5).
+    const { container } = render(<BlockchainReadout chain={reorged} />);
+    const value = reorgRow(container)?.lastElementChild as HTMLElement;
+    expect(value.textContent).toBe('109');
+    expect(value.style.color).toBe(rgbOf(HUD_COLORS.ink));
+    expect(value.style.color).not.toBe(rgbOf(HUD_COLORS.danger));
+  });
+
+  it('wears the severity while one is actually happening', () => {
+    const { container } = render(<BlockchainReadout chain={reorged} reorgLive />);
+    const value = reorgRow(container)?.lastElementChild as HTMLElement;
+    expect(value.textContent).toBe('109');
+    expect(value.style.color).toBe(rgbOf(HUD_COLORS.danger));
+  });
+});
+
 describe('BlockchainReadout', () => {
   it('renders the tip and key chain stats', () => {
     const { container } = render(
@@ -149,9 +182,9 @@ describe('BlockchainReadout', () => {
     );
     const badge = container.querySelector<HTMLElement>('[data-protocol-era-state="ready"]');
 
-    expect(container.textContent).toContain('#11,042· MIRANA·21');
+    expect(container.textContent).toContain('#11,042· MIRANA 2021');
     expect(container.textContent).not.toContain('IDX');
-    expect(badge?.dataset.protocolEraLabel).toBe('MIRANA·21');
+    expect(badge?.dataset.protocolEraLabel).toBe('MIRANA 2021');
     expect(badge?.title).toContain('epoch 5,414, block #70');
     expect(container.textContent).not.toContain('PROTOCOL ERA');
   });

@@ -65,7 +65,10 @@ describe('protocol-era visual derivation', () => {
   it('reduces a proven indexed edition to one compact label', () => {
     const visual = deriveProtocolEraVisual(record, chain);
 
-    expect(visual?.label).toBe('MEEPO·24');
+    // ⚠️ `NAME YEAR`, never `NAME·NN`: the middot form is the HUD's module
+    // address grammar and this is a fact about the chain (report A, A-6).
+    expect(visual?.label).toBe('MEEPO 2024');
+    expect(visual?.label).not.toMatch(/·/);
     expect(visual?.current?.activation_epoch).toBe(12_293);
     expect(visual?.title).toContain('epoch 12,293, block #99');
     expect(visual?.title).toContain('validated through epoch 12,300');
@@ -87,7 +90,7 @@ describe('protocol-era visual derivation', () => {
     expect(deriveProtocolEraVisual(preEdition, {
       ...chain,
       epoch: { ...chain.epoch, number: 5_000 },
-    })?.label).toBe('PRE-MIRANA·21');
+    })?.label).toBe('PRE-MIRANA 2021');
   });
 
   it('rejects network, canonical-tip, and activation inconsistencies', () => {

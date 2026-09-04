@@ -28,22 +28,26 @@ const fmt = (value: number) => value.toLocaleString('en-US');
 const LEGEND_CHAR_BUDGET = 54;
 const LEGEND_MAX_ENTRIES = 4;
 
-function legend(buckets: NetworkAtlasBucket[]): string {
-  const visible: string[] = [];
+/** One legend entry: the name in the segment's own hue, the count in the
+ *  caption tier. A hueless entry (the overflow tally) carries `color: null`. */
+type LegendEntry = { label: string; count: string; color: string | null };
+
+function legend(buckets: Array<NetworkAtlasBucket & { color: string }>): LegendEntry[] {
+  const visible: LegendEntry[] = [];
   let spent = 0;
   for (const bucket of buckets) {
     if (visible.length >= LEGEND_MAX_ENTRIES) break;
     const entry = `${bucket.label} ${bucket.count}`;
     const cost = entry.length + (visible.length > 0 ? 3 : 0);
     // The leader is never budgeted away: a strip whose whole legend is
-    // `+11 groups` names nothing at all.
+    // `+11 GROUPS` names nothing at all.
     if (visible.length > 0 && spent + cost > LEGEND_CHAR_BUDGET) break;
-    visible.push(entry);
+    visible.push({ label: bucket.label, count: String(bucket.count), color: bucket.color });
     spent += cost;
   }
   const rest = buckets.length - visible.length;
-  if (rest > 0) visible.push(`+${rest} groups`);
-  return visible.join(' · ');
+  if (rest > 0) visible.push({ label: `+${rest} GROUPS`, count: '', color: null });
+  return visible;
 }
 
 /** What each outcome is called under a six-pixel bar, and what it means on the
@@ -72,6 +76,41 @@ const REACH_MEANING: Record<NetworkAtlasReachOutcome, string> = {
   foreign: 'dialed, and it identified itself on a different network',
   reachable: 'dialed, and it identified itself on this network',
 };
+
+/**
+ * A legend line under a segmented bar.
+ *
+ * ⚠️ ONE RULE, AND IT TURNS ON WHAT THE BAR'S COLOURS MEAN. On an ORDINAL bar
+ * — one hue stepping in brightness, the segments in a fixed progression — the
+ * order is the mapping and the words are captions, so they stay in
+ * `legendInk`. On a QUALITATIVE bar the hues are the ONLY mapping there is:
+ * COUNTRIES draws twenty slivers from a six-slot ramp handed out by hash, and
+ * a reader looking at grey words under it cannot tell which sliver is HK
+ * (report A, A-9). So a qualitative legend tints the NAME in its segment's own
+ * hue — the count stays in the caption tier, because the count is a caption
+ * and the name is the key.
+ */
+function LegendLine({ entries, tinted }: { entries: LegendEntry[]; tinted: boolean }) {
+  return (
+    <div
+      data-atlas-legend={tinted ? 'qualitative' : 'ordinal'}
+      style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, color: HUD_COLORS.legendInk, marginTop: 3, lineHeight: 1.45 }}
+    >
+      {entries.map((entry, index) => (
+        <span key={entry.label}>
+          {index > 0 ? ' · ' : null}
+          <span
+            data-atlas-legend-name
+            style={{ color: tinted && entry.color ? entry.color : undefined }}
+          >
+            {entry.label}
+          </span>
+          {entry.count ? ` ${entry.count}` : null}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 /** The round's peers, laid along how far the crawler got with each.
  *
@@ -109,8 +148,8 @@ function ReachStrip({ segments, total, remembered, provenance }: {
   // denominator to draw it against; the panel's own measured rows are still
   // the whole story above.
   if (total === 0) return null;
-  const named = (segment: NetworkAtlasReachSegment) =>
-    `${REACH_LABEL[segment.outcome]} ${fmt(segment.peers)}`;
+  const named = (segment: NetworkAtlasReachSegment): LegendEntry =>
+    ({ label: REACH_LABEL[segment.outcome], count: fmt(segment.peers), color: segment.color });
   const meanings = segments
     .map((segment) => `${REACH_LABEL[segment.outcome]}: ${REACH_MEANING[segment.outcome]}`)
     .join(' · ');
@@ -136,13 +175,17 @@ function ReachStrip({ segments, total, remembered, provenance }: {
             // unrelated hues; here the neighbours are one hue two steps apart,
             // and a 5px bleed would smear exactly the edge the ranking is read
             // from.
-            style={{ width: `${(segment.peers / total) * 100}%`, background: segment.color }}
+            // ⚠️ The floor is for a segment that HAS peers. This bar's own
+            // argument is that a cohort resolving to zero stays on screen in
+            // the LEGEND — so a zero here draws nothing, and a non-zero one
+            // never disappears under a rounding.
+            style={{ width: `${(segment.peers / total) * 100}%`, minWidth: segment.peers > 0 ? 1 : 0, background: segment.color }}
           />
         ))}
       </div>
-      <div style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, color: HUD_COLORS.legendInk, marginTop: 3, lineHeight: 1.45 }}>
-        {segments.map(named).join(' · ')}
-      </div>
+      {/* Ordinal: three steps of one hue in a fixed progression, so the ORDER
+          is the mapping and the words stay captions. */}
+      <LegendLine entries={segments.map(named)} tinted={false} />
     </div>
   );
 }
@@ -164,17 +207,21 @@ function BucketStrip({ label, buckets, total, provenance }: {
         {buckets.map((bucket) => (
           <span
             key={bucket.label}
+            data-atlas-bucket={bucket.label}
             style={{
               width: `${(bucket.count / total) * 100}%`,
+              // A bar that omits what its legend names breaks the promise this
+              // panel makes twice over — that the legend adds up to the caption
+              // and that a reader can check it. One pixel is the floor, and a
+              // zero still draws nothing.
+              minWidth: bucket.count > 0 ? 1 : 0,
               background: bucket.color,
               boxShadow: `0 0 5px ${rgba(bucket.color, 0.25)}`,
             }}
           />
         ))}
       </div>
-      <div style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, color: HUD_COLORS.legendInk, marginTop: 3, lineHeight: 1.45 }}>
-        {legend(buckets)}
-      </div>
+      <LegendLine entries={legend(buckets)} tinted />
     </div>
   );
 }
