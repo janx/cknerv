@@ -6,61 +6,72 @@ import type {
   SemanticContentSegment,
   SemanticFacet,
 } from '@cknerv/types';
-import {
-  contentSegmentAtByte,
-  deriveCellContentMemory,
-} from '../../derives/cellContentMemory.derive';
+import { deriveCellContentMemory } from '../../derives/cellContentMemory.derive';
 import { segmentColorSlots } from '../../derives/cellDataReader.derive';
 import { HUD_COLORS, HUD_FONTS, QUALITATIVE_BUCKET_COLORS, rgba, HUD_TYPE } from './hudTheme';
 import { revealStageAttributes, revealStageStyle } from './primitives';
 import { formatSemanticAssetAmount } from './cellFormat';
 import type { CellSemanticsPhase } from './CellSemanticsReadout';
 
-/** Hex-dump grammar: 16 bytes to a row, two rows to a window. The DATA
- *  cluster is one fixed column wide now, so the window never changes size
- *  with the record that arrives in it. */
-const HEX_ROW_BYTES = 16;
-const HEX_WINDOW_BYTES = HEX_ROW_BYTES * 2;
+// The DATA cluster's window, which no longer prints a byte.
+//
+// It used to open with a status line, a 16×2 hex grid, an ASCII line and a
+// READ ALL door, and the analysis under all of that was the part a reader came
+// for. The user's direction of 2026-09-05 — 「cell detail 中原有的 cell data
+// hex reading 可以去掉，避免 UX 冗余」 — took the bytes out, because CKBYTES
+// (SCAN·03) now stands under the CELL SCAN square for every Cell that holds
+// any, sixteen a row with offsets and ASCII and the whole payload behind them.
+// Thirty-two bytes with no offsets, drawn a second time three centimetres
+// above a window that draws all of them, were the redundancy.
+//
+// So this window is the READING and nothing else: what the decode found, every
+// segment it found, what the guesses say, what role the Cell plays. It states
+// the size of nothing — the DATA fact directly above it already does — and a
+// Cell nobody indexed gets no window at all, because with the bytes gone there
+// would be nothing in it but the absence of a record.
+//
+// A segment row is the one control left, and it points DOWN: pressing it sends
+// the reader under the square to that segment's first byte and glows its bytes.
+// That is the whole link between the two surfaces, and it is why the reader
+// could give up its own segment rail.
 
 /**
  * Height the analysis zone holds while the index still owes this window an
- * answer. Everything above it — the status line, the hex window, the ASCII
- * line — is mounted at final size from the first frame; the analysis rows are
- * the one part whose COUNT depends on a record that has not landed, and
- * growing them under the reader shoves the provenance footer and the MEMORY
- * TRACE affordance down mid-read.
+ * answer.
+ *
+ * Everything in the window is the reading now, and every line of the reading
+ * waits on a record that has not landed — so the reservation is the whole zone
+ * rather than the tail of it. Rows that arrive into no reservation shove the
+ * provenance footer and the MEMORY TRACE affordance down mid-read, and this is
+ * the LAST cluster before that footer.
  *
  * Reservation math only — the browser lays the real rows out. The zone's
  * tallest shape, line by line, at the type it prints:
  *
- *     VALUE                          12
- *     DECODE · kind · summary     2 + 12
- *     · segment rule              3 + 3 + 1
- *     · segment steppers             15   (the 15px buttons set the row)
- *     · segment value · meaning   2 + 12
- *     HEURISTIC                   3 + 3 + 1 + 15
- *     ROLE                        3 + 15
+ *     VALUE                                        12
+ *     DECODE · kind · summary                   2 + 12
+ *     · seven segment rows       7 × (3 + 3 + 1 + 12) = 133
+ *     HEURISTIC                             3 + 3 + 1 + 15
+ *     ROLE                                       3 + 15
+ *                                                 ————
+ *                                                  199
  *
- * The terms are the generous reading of each line box on purpose: a floor
- * that is a pixel short is a floor that still shoves the footer. A record
- * that brings fewer rows than this settles the cluster down ONCE — the same
- * bargain every other pending slot on this card makes.
+ * SEVEN segment rows is the spore layout, which is the tallest deterministic
+ * decode the index emits today — and the rows are where this number grew. The
+ * zone used to hold ONE segment behind a stepper, so its reservation was a
+ * single line and a pair of 15 px buttons; the stepper is gone (the user's R2-1
+ * ruling) because a list a reader has to walk one item at a time is not a list,
+ * and the reservation now holds what the list actually needs.
+ *
+ * The terms are the generous reading of each line box on purpose: a floor that
+ * is a pixel short is a floor that still shoves the footer. A record that brings
+ * fewer rows than this settles the cluster down ONCE — the same bargain every
+ * other pending slot on this card makes.
  */
-export const CELL_CONTENT_ANALYSIS_RESERVED_PX = 102;
+export const CELL_CONTENT_ANALYSIS_RESERVED_PX = 199;
 
 function readableKind(value: string): string {
   return value.replaceAll('_', ' ').toUpperCase();
-}
-
-function byteCount(
-  observedBytes: number,
-  totalBytes: number | null,
-  complete: boolean,
-): string {
-  if (totalBytes === 0) return 'EMPTY';
-  if (totalBytes === null) return `${observedBytes.toLocaleString()} B+ OBSERVED`;
-  if (complete) return `${totalBytes.toLocaleString()} B · COMPLETE`;
-  return `${observedBytes.toLocaleString()} / ${totalBytes.toLocaleString()} B`;
 }
 
 function analysisTone(source?: EnrichmentSourceStatus): string {
@@ -71,26 +82,6 @@ function analysisTone(source?: EnrichmentSourceStatus): string {
     return HUD_COLORS.danger;
   }
   return HUD_COLORS.cyanWire;
-}
-
-function analysisState({
-  phase,
-  record,
-  source,
-}: {
-  phase?: CellSemanticsPhase;
-  record?: CellSemanticRecord | null;
-  source?: EnrichmentSourceStatus;
-}): string {
-  if (source?.status === 'stale' && record) return 'STALE PROOF';
-  if (phase === 'loading') return 'RESOLVING';
-  if (phase === 'waiting') return 'WAITING';
-  if (phase === 'error') return 'ERROR';
-  if (phase === 'unavailable') return 'NO RECORD';
-  if (record?.content?.deterministic) return 'DETERMINISTIC';
-  if ((record?.content?.heuristics.length ?? 0) > 0) return 'HEURISTIC';
-  if (record) return 'RAW ONLY';
-  return 'DIRECT';
 }
 
 function navButtonStyle(enabled: boolean): CSSProperties {
@@ -111,30 +102,44 @@ function navButtonStyle(enabled: boolean): CSSProperties {
 }
 
 /**
- * The door out of the preview, wearing the steppers' own grammar.
+ * A segment row: the steppers' hand-over grammar stretched from one glyph to a
+ * whole line.
  *
- * `navButtonStyle` is sized for ONE glyph — the `‹ ›` the steppers set — and
- * this control says words, so the width and the padding are the only things
- * that change. Everything else is inherited on purpose: it hands over at the
- * same moment the steppers do, it goes inert the same way, and a reader who
- * has learned that a cyan outline on this window is a control they may press
- * has learned this one too.
+ * The three properties that carry the hand-over — the pointer, the ink and the
+ * tab stop — are exactly `navButtonStyle`'s, said again here rather than spread
+ * from it, because everything else about that style is sized for a single `‹`
+ * and a row would override all of it. What a reader has learned holds: a
+ * control on this window is readable before its stage arrives and inert until
+ * it does.
  *
- * The open state is `cyanInk` rather than a second outline: the reader below
- * is already on screen, so the button is reporting a state it can see, not
- * offering a second way in.
+ * PRESSED is a wash and a brighter dot, never a louder rule: the rule between
+ * two rows is structure and stays at the house rung whichever row is pressed.
+ * The row is not selecting anything here — it is POINTING at bytes on another
+ * surface — so `aria-pressed` is the whole of the semantics.
  */
-function readerButtonStyle(enabled: boolean, open: boolean): CSSProperties {
+function segmentRowStyle(
+  interactive: boolean,
+  pressed: boolean,
+  color: string,
+): CSSProperties {
   return {
-    ...navButtonStyle(enabled),
-    width: 'auto',
-    padding: '0 5px',
-    fontSize: HUD_TYPE.micro,
-    letterSpacing: 1.4,
-    whiteSpace: 'nowrap',
-    color: open
-      ? HUD_COLORS.cyanInk
-      : enabled ? HUD_COLORS.cyanWire : HUD_COLORS.dim,
+    display: 'grid',
+    gridTemplateColumns: '5px auto auto minmax(0, 1fr)',
+    alignItems: 'baseline',
+    gap: 5,
+    width: '100%',
+    minWidth: 0,
+    margin: '3px 0 0',
+    padding: '3px 3px 0',
+    border: 0,
+    borderTop: `1px solid ${rgba(color, 0.16)}`,
+    background: pressed ? rgba(color, 0.08) : 'transparent',
+    font: `${HUD_TYPE.label}px ${HUD_FONTS.mono}`,
+    lineHeight: 1.35,
+    textAlign: 'left',
+    cursor: interactive ? 'pointer' : 'default',
+    pointerEvents: interactive ? 'auto' : 'none',
+    opacity: interactive ? 1 : 0.4,
   };
 }
 
@@ -152,74 +157,76 @@ function clampUnit(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
 
-function SegmentReadout({
-  segment,
-  index,
-  slot,
-  count,
+/**
+ * Every segment the decode found, in record order, one row each.
+ *
+ * It was a stepper — `‹ S 01/07 ›`, one segment on screen — and a reader who
+ * wanted the fifth pressed `›` four times to reach it, having had no way to
+ * learn there were seven. The user's R2-1 ruling replaced it with the list it
+ * was hiding, which is what makes this cluster a table of contents for the
+ * bytes under the square, and what let CKBYTES drop its own segment rail.
+ */
+function SegmentRows({
+  segments,
+  slots,
+  focusedSegment,
   interactive,
-  onStep,
+  onFocus,
 }: {
-  segment: SemanticContentSegment;
-  index: number;
-  /** The slot the shared rule gave this segment. Handed in rather than worked
-   *  out here: `index % 6` made the colour a fact about the segment's PLACE in
-   *  the record's list, so a decode that gained a field repainted every
-   *  segment after it, and the portrait — which hashed the label instead —
-   *  disagreed with this window about every Cell they both drew. */
-  slot: number;
-  count: number;
-  /** A stage the probe has not reached yet is readable-but-inert: its steppers
-   *  take no click and no tab stop until its moment arrives. */
+  segments: readonly SemanticContentSegment[];
+  /** The slots the shared rule gave these segments. Handed in rather than
+   *  worked out here: `index % 6` made the colour a fact about the segment's
+   *  PLACE in the record's list, so a decode that gained a field repainted
+   *  every segment after it, and the portrait — which hashed the label instead
+   *  — disagreed with this window about every Cell they both drew. */
+  slots: readonly number[];
+  /** Which row the reader is standing on, as the CARD reports it. The window
+   *  does not own this: a byte click in the reader unpresses the row, and a
+   *  window that remembered its own press would disagree with the bytes. */
+  focusedSegment: number | null;
+  /** A stage the probe has not reached yet is readable-but-inert: its rows take
+   *  no click and no tab stop until its moment arrives. */
   interactive: boolean;
-  onStep: (direction: -1 | 1) => void;
+  onFocus?: (index: number) => void;
 }) {
-  const color = QUALITATIVE_BUCKET_COLORS[slot % QUALITATIVE_BUCKET_COLORS.length];
-  const stepEnabled = interactive && count > 1;
   return (
-    <div
-      data-cell-content-segment={index}
-      data-cell-content-segment-range={`${segment.start_byte}:${segment.end_byte}`}
-      style={{ marginTop: 3, paddingTop: 3, borderTop: `1px solid ${rgba(color, 0.16)}` }}
-    >
-      <div style={{ display: 'grid', gridTemplateColumns: '18px auto minmax(0,1fr) auto 18px', alignItems: 'center', gap: 4, minWidth: 0 }}>
-        <button
-          type="button"
-          aria-label="previous decoded segment"
-          disabled={!stepEnabled}
-          onClick={() => onStep(-1)}
-          style={navButtonStyle(stepEnabled)}
-        >
-          ‹
-        </button>
-        <span style={{ color, fontSize: HUD_TYPE.micro, letterSpacing: 0.35, whiteSpace: 'nowrap' }}>
-          S{String(index + 1).padStart(2, '0')}/{String(count).padStart(2, '0')}
-        </span>
-        <span title={segment.label} style={{ minWidth: 0, color: HUD_COLORS.cyanInk, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {readableKind(segment.label)}
-        </span>
-        <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, whiteSpace: 'nowrap' }}>
-          [{segment.start_byte}..{segment.end_byte})
-        </span>
-        <button
-          type="button"
-          aria-label="next decoded segment"
-          disabled={!stepEnabled}
-          onClick={() => onStep(1)}
-          style={navButtonStyle(stepEnabled)}
-        >
-          ›
-        </button>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,.9fr) minmax(0,1.1fr)', gap: 6, marginTop: 2, minWidth: 0 }}>
-        <span title={segment.value} style={{ minWidth: 0, color, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {segment.value}
-        </span>
-        <span title={segment.meaning} style={{ minWidth: 0, color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {segment.meaning}
-        </span>
-      </div>
-    </div>
+    <>
+      {segments.map((segment, index) => {
+        const color = QUALITATIVE_BUCKET_COLORS[
+          (slots[index] ?? 0) % QUALITATIVE_BUCKET_COLORS.length
+        ];
+        const pressed = focusedSegment === index;
+        return (
+          <button
+            key={index}
+            type="button"
+            data-cell-content-segment={index}
+            data-cell-content-segment-range={`${segment.start_byte}:${segment.end_byte}`}
+            aria-pressed={pressed}
+            disabled={!interactive}
+            onClick={() => onFocus?.(index)}
+            style={segmentRowStyle(interactive, pressed, color)}
+          >
+            <span
+              aria-hidden="true"
+              style={{ width: 5, height: 5, background: color, boxShadow: pressed ? `0 0 5px ${color}` : undefined }}
+            />
+            <span title={segment.label} style={{ color: HUD_COLORS.cyanInk, fontSize: HUD_TYPE.label, whiteSpace: 'nowrap' }}>
+              {readableKind(segment.label)}
+            </span>
+            {/* Where the bytes are AND how many, because the reader below is
+                addressed in offsets and a range with no width is half an
+                address. */}
+            <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, whiteSpace: 'nowrap' }}>
+              [{segment.start_byte}..{segment.end_byte}) · {segment.end_byte - segment.start_byte} B
+            </span>
+            <span title={segment.meaning} style={{ minWidth: 0, color, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {segment.value}
+            </span>
+          </button>
+        );
+      })}
+    </>
   );
 }
 
@@ -326,8 +333,8 @@ export default function CellContentMemory({
   message,
   reveal = 1,
   pending = false,
-  readerOpen = false,
-  onOpenReader,
+  focusedSegment = null,
+  onSegmentFocus,
 }: {
   dataHex: string;
   source?: EnrichmentSourceStatus;
@@ -339,17 +346,17 @@ export default function CellContentMemory({
   /** The card's one verdict on whether a record is still on its way. While it
    *  is, the analysis zone holds the height that record will need. */
   pending?: boolean;
-  /** DATA READER (SCAN·03) is open on this Cell. The window does not own that
-   *  state — the card does, keyed by Cell — and only reports it. */
-  readerOpen?: boolean;
-  /** Open the reader, optionally at a byte. `null` is "no particular target",
-   *  which is the top of the payload.
+  /** Which segment CKBYTES is standing on, if it is standing on one of this
+   *  Cell's. The window does not own it — the card does, keyed by Cell — and
+   *  only reports it. */
+  focusedSegment?: number | null;
+  /** Send the reader to a segment's first byte.
    *
    *  OPTIONAL, and that is the whole compatibility story: a window rendered
-   *  without it — the tuning lab, a test of the bare window — grows no door
-   *  and behaves exactly as it did, because a door onto a reader nobody
-   *  mounted opens onto nothing. */
-  onOpenReader?: (atByte: number | null) => void;
+   *  without it — the tuning lab, a test of the bare window — still lists every
+   *  segment and reads exactly as it does here, because a row that moves a
+   *  reader nobody mounted has nowhere to send one. */
+  onSegmentFocus?: (index: number) => void;
 }) {
   const enhanced = Boolean(source && phase);
   const content = record?.content;
@@ -359,22 +366,14 @@ export default function CellContentMemory({
   );
   const segments = content?.deterministic?.segments ?? [];
   // The one rule every surface that colours these bytes asks — this window,
-  // the portrait's byte rail, and the hex reader the window opens into. Read
-  // once per record rather than per byte: the grid below asks it 32 times.
+  // the portrait's byte rail, and the reader under the square. Read once per
+  // record rather than per row.
   const segmentSlots = useMemo(() => segmentColorSlots(segments), [segments]);
   const guesses = content?.heuristics ?? [];
   const roles = record?.facets ?? [];
-  const previewLimit = HEX_WINDOW_BYTES;
-  const [segmentIndex, setSegmentIndex] = useState(0);
   const [guessIndex, setGuessIndex] = useState(0);
   const [roleIndex, setRoleIndex] = useState(0);
   const contentKey = `${record?.out_point.tx_hash ?? 'direct'}:${record?.out_point.index ?? 0}:${content?.deterministic?.kind ?? 'raw'}:${content?.data_hex ?? dataHex}`;
-  const selectedSegmentIndex = segments.length === 0
-    ? null
-    : Math.min(segmentIndex, segments.length - 1);
-  const selectedSegment = selectedSegmentIndex === null
-    ? null
-    : segments[selectedSegmentIndex];
   const selectedGuessIndex = guesses.length === 0
     ? null
     : Math.min(guessIndex, guesses.length - 1);
@@ -386,7 +385,6 @@ export default function CellContentMemory({
     : Math.min(roleIndex, roles.length - 1);
   const selectedRole = selectedRoleIndex === null ? null : roles[selectedRoleIndex];
   useEffect(() => {
-    setSegmentIndex(0);
     setGuessIndex(0);
     setRoleIndex(0);
   }, [contentKey]);
@@ -396,74 +394,7 @@ export default function CellContentMemory({
       record.asset.amount,
       record.asset.decimals,
     )}${record.asset.symbol ? ` ${record.asset.symbol}` : ''}`;
-  // ⭐ THE WINDOW IS A PREVIEW WITH A DOOR, NOT A PAGER.
-  //
-  // It used to page: `‹ W 3/128 ›`, thirty-two bytes at a time, and a reader
-  // who wanted byte 2,000 pressed `›` sixty-two times to reach a window with
-  // no offsets in it that would not tell them they had arrived. Worse, the
-  // pager could only ever walk the bytes the BROWSER WAS HOLDING — a 1 KiB
-  // prefix of a 37 KB spore is thirty-two of its 1,166 windows — so the
-  // control that looked like a way through the payload stopped, without
-  // saying so, at the end of our own window onto it.
-  //
-  // So the first thirty-two bytes stand as a fixed glance, and DATA READER
-  // (SCAN·03) is where the payload is actually read. One window, always the
-  // same one, and a door beside it.
-  const previewBytes = model.bytes.slice(0, previewLimit);
-  // The `…` is the preview admitting that it is one. It stands whenever the
-  // payload outruns what is drawn below — by the chain's count, by what we are
-  // holding, or by a hex string that was already cut when it got here.
-  const previewIsPartial = model.truncated
-    || model.totalBytes === null
-    || model.totalBytes > previewBytes.length
-    || model.observedBytes > previewBytes.length;
-  // The ASCII line reads the preview, so its caveat is about the preview: a
-  // segment starting past byte 32 is not on this line, whether or not we hold
-  // it. Where those bytes ARE is the reader, and the stepper below opens it.
-  const selectedRangeOutsidePreview = selectedSegment !== null
-    && selectedSegment.start_byte >= previewBytes.length;
-  // What the door says, and it says the size of what is behind it — the one
-  // number a reader needs to decide whether to open it at all.
-  //
-  //   READER OPEN       it is open, below this card, on this Cell
-  //   OPEN READER       the whole payload is already on screen; the reader is
-  //                     still worth opening, because the inspector is there
-  //                     (E3) and thirty-two bytes with no offsets are not a
-  //                     reading of a sixteen-byte amount
-  //   READ ALL          the size is not known here — a `data_hex` cut before
-  //                     it arrived, with no record to state the true length.
-  //                     The window says `n B+ OBSERVED` one span over, and a
-  //                     count taken from OUR window and printed as the
-  //                     payload's would be that window lying about the chain
-  //   READ ALL · n B    the ordinary case, in the chain's own count
-  const readerLabel = readerOpen
-    ? 'READER OPEN'
-    : model.totalBytes === null
-      ? 'READ ALL'
-      : model.totalBytes <= previewLimit
-        ? 'OPEN READER'
-        : `READ ALL · ${model.totalBytes.toLocaleString()} B`;
-  // Stepping is still stepping — the selected segment is the one whose bytes
-  // glow in the grid — but a segment that begins past the preview has no bytes
-  // in this window to glow at all. That step HANDS OVER rather than pointing
-  // at nothing: the reader opens, or re-targets, at the segment's first byte.
-  const stepSegment = (direction: -1 | 1) => {
-    const next = cycleIndex(
-      selectedSegmentIndex ?? 0,
-      segments.length,
-      direction,
-    );
-    setSegmentIndex(next);
-    const segment = segments[next];
-    if (segment && segment.start_byte >= previewLimit) {
-      onOpenReader?.(segment.start_byte);
-    }
-  };
   const tone = analysisTone(source);
-  const state = analysisState({ phase, record, source });
-  const contentStatus = enhanced
-    ? `INDEX ANALYSIS · ${state}${model.origin === 'direct' ? ' · DIRECT BYTES' : ''}`
-    : 'DIRECT NODE · RAW';
   const statusMessage = phase === 'loading'
     ? 'RESOLVING INDEXED CONTENT ANALYSIS…'
     : phase === 'waiting'
@@ -475,14 +406,17 @@ export default function CellContentMemory({
           : record && !content
             ? 'INDEX HAS NO CONTENT PAYLOAD FOR THIS CELL'
             : null;
+  // The reading, in the order it is read: what the Cell is worth, what the
+  // decode called it, where each of its fields is, what the guesses think, what
+  // role it plays. `segments` is its own stage and sits directly after
+  // `decode`, so the rows light after the line that names the decode they came
+  // out of — and before the heuristics, which are guesses about the same bytes.
   const revealStages = [
-    'summary',
-    'bytes',
-    ...(previewBytes.length > 0 ? ['ascii'] : []),
-    ...(enhanced && record?.asset ? ['asset'] : []),
-    ...(enhanced ? ['decode'] : []),
-    ...(enhanced && selectedGuess ? ['heuristic'] : []),
-    ...(enhanced && selectedRole ? ['role'] : []),
+    ...(record?.asset ? ['asset'] : []),
+    'decode',
+    ...(segments.length > 0 ? ['segments'] : []),
+    ...(selectedGuess ? ['heuristic'] : []),
+    ...(selectedRole ? ['role'] : []),
   ];
   const revealProgress = clampUnit(reveal);
   // Match the landmark scan: the first item resolves shortly after travel,
@@ -497,34 +431,39 @@ export default function CellContentMemory({
     const index = revealStages.indexOf(stage);
     return index >= 0 && index < revealedStageCount;
   };
-  const summaryRevealed = stageRevealed('summary');
-  const bytesRevealed = stageRevealed('bytes');
-  const asciiRevealed = stageRevealed('ascii');
   const assetRevealed = stageRevealed('asset');
   const decodeRevealed = stageRevealed('decode');
+  const segmentsRevealed = stageRevealed('segments');
   const heuristicRevealed = stageRevealed('heuristic');
   const roleRevealed = stageRevealed('role');
   const analysisRevealed = assetRevealed
     || decodeRevealed
+    || segmentsRevealed
     || heuristicRevealed
     || roleRevealed;
   // A record is on its way: hold the rows it will fill, so its arrival
   // replaces a reservation instead of pushing the footer beneath it down.
-  const analysisPending = enhanced && pending && !record;
+  const analysisPending = pending && !record;
 
-  // A validly-empty output earns NO line. It used to earn one — down from the
-  // stack of negatives (the empty box, byte count, decode fallbacks) that all restate
-  // the same absence — but the DATA fact directly above this window already
-  // reads `Empty`, so even the one line was the third statement of nothing in
-  // four lines. Absence is stated once, by the fact whose subject it is.
-  // Most Cells in view are plain transfers, so this is the common case.
+  // ⭐ NO INDEX, NO WINDOW. The window used to open a `DIRECT NODE · RAW` hex
+  // view for the ~98% of Cells nobody has indexed; that view was CKBYTES'
+  // ancestor, and CKBYTES draws all of those bytes under the square now, with
+  // offsets, ASCII and a scrollbar that is the payload's own map. What is left
+  // here for an unindexed Cell is a heading over nothing.
+  if (!enhanced) return null;
+
+  // A validly-empty output earns NO line either. It used to earn one — down
+  // from the stack of negatives (the empty box, byte count, decode fallbacks)
+  // that all restate the same absence — but the DATA fact directly above this
+  // window already reads `Empty`. Absence is stated once, by the fact whose
+  // subject it is. Most Cells in view are plain transfers, so this is the
+  // common case.
   if (model.valid && model.complete && model.observedBytes === 0) return null;
 
   return (
     <section
       aria-label="Consensus memory content"
       data-cell-content-memory="true"
-      data-cell-content-memory-mode={enhanced ? 'indexed' : 'direct'}
       data-cell-content-byte-origin={model.origin}
       data-cell-content-complete={model.complete ? 'true' : 'false'}
       data-cell-content-reveal-state={revealedStageCount === revealStages.length
@@ -544,191 +483,76 @@ export default function CellContentMemory({
         fontFamily: HUD_FONTS.mono,
       }}
     >
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr)', gap: 3, minWidth: 0 }}>
-        <div data-cell-content-raw="true" style={{ display: 'block', minWidth: 0 }}>
-          <div
-            data-cell-content-reveal-item="summary"
-            data-cell-content-reveal-item-state={summaryRevealed ? 'resolved' : 'scanning'}
-            {...revealStageAttributes(summaryRevealed)}
-            style={{ display: 'flex', alignItems: 'baseline', gap: 5, ...revealStageStyle(summaryRevealed) }}
-          >
-            <span style={{ minWidth: 0, color: model.origin === 'indexed' ? tone : HUD_COLORS.cyanWire, fontSize: HUD_TYPE.micro, letterSpacing: 0.6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {contentStatus}
-            </span>
-            {/* Where the pager stood, and doing the job the pager pretended
-                to: every byte this Cell holds, at an offset, with its ASCII
-                on the same row. A closed reader is asked for with no target —
-                the top of the payload — and an open one is asked to go back
-                to byte 0, which is the only move left that this button and
-                not the reader's own CLOSE should make.
-
-                Inert until the summary is read, exactly as the pager was:
-                the walk hands a control over once the line it belongs to has
-                arrived, and every other control on this window obeys it. */}
-            {onOpenReader ? (
-              <button
-                type="button"
-                data-cell-content-read-all
-                aria-label="open the data reader"
-                disabled={!summaryRevealed}
-                onClick={() => onOpenReader(readerOpen ? 0 : null)}
-                style={readerButtonStyle(summaryRevealed, readerOpen)}
-              >
-                {readerLabel}
-              </button>
-            ) : null}
-            {/* How much of the content we are holding, in the ink a reading
-                is written in. It ran the two ends of the severity ramp —
-                `nominal` for a complete read, `caution` for a partial one —
-                across a fact that is neither a pass mark nor a fault: a
-                complete decode is the ordinary case, and a partial one is a
-                statement about the SCOPE OF OUR KNOWLEDGE rather than a
-                condition of the Cell. The card's other surface for this fact
-                already had it right: `CellByteBudget` says a truncated data
-                window with an opacity drop, a dashed rule and a `dim`
-                OBSERVED, and raises nothing.
-
-                Losing the colour loses nothing, because the colour was never
-                the disclosure — `byteCount` spells all three states out in
-                words, and `n / m B` is a partial read said as a number. */}
-            <span style={{ marginLeft: 'auto', color: HUD_COLORS.ink, fontSize: HUD_TYPE.micro, whiteSpace: 'nowrap' }}>
-              {byteCount(model.observedBytes, model.totalBytes, model.complete)}
+      {/* The rule over the reading is structure, not evidence: it is drawn
+        * from the first frame, and only the rows below it stage. */}
+      <div data-cell-content-analysis="true" data-cell-content-analysis-state={analysisRevealed ? 'resolved' : 'scanning'} data-cell-content-analysis-reserved={analysisPending ? 'true' : undefined} style={{ display: 'block', minWidth: 0, paddingTop: 2, borderTop: `1px solid ${rgba(tone, 0.16)}`, minHeight: analysisPending ? CELL_CONTENT_ANALYSIS_RESERVED_PX : undefined }}>
+        {/* The asset line is a VALUE reading, so it wears the house's
+          * value-emphasis gold rather than the caution yellow it used to —
+          * the same gold the register's AMOUNT row two columns over uses. */}
+        {record?.asset ? (
+          <div data-cell-content-asset="true" data-cell-content-reveal-item="asset" data-cell-content-reveal-item-state={assetRevealed ? 'resolved' : 'scanning'} title={record.asset.type_script_hash} {...revealStageAttributes(assetRevealed)} style={{ display: 'flex', alignItems: 'baseline', gap: 5, minWidth: 0, color: HUD_COLORS.goldInk, fontSize: HUD_TYPE.label, ...revealStageStyle(assetRevealed) }}>
+            <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 1.4 }}>VALUE</span>
+            <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {[record.asset.symbol, record.asset.name, record.asset.standard].filter(Boolean).join(' · ') || record.asset.type_script_hash}
+              {assetAmount ? ` · ${assetAmount}` : ''}
             </span>
           </div>
-          {!model.valid ? (
-            <div data-cell-content-invalid="true" data-cell-content-reveal-item="bytes" data-cell-content-reveal-item-state={bytesRevealed ? 'resolved' : 'scanning'} {...revealStageAttributes(bytesRevealed)} style={{ display: 'block', marginTop: 4, color: HUD_COLORS.danger, fontSize: HUD_TYPE.label, ...revealStageStyle(bytesRevealed) }}>
-              INVALID CONTENT HEX
+        ) : null}
+        {content?.deterministic ? (
+          <div data-cell-content-deterministic="true" data-cell-content-reveal-item="decode" data-cell-content-reveal-item-state={decodeRevealed ? 'resolved' : 'scanning'} {...revealStageAttributes(decodeRevealed)} style={{ display: 'block', minWidth: 0, marginTop: record?.asset ? 2 : 0, ...revealStageStyle(decodeRevealed) }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 5, minWidth: 0 }}>
+              <span style={{ color: HUD_COLORS.nominal, fontSize: HUD_TYPE.micro, letterSpacing: 0.6, whiteSpace: 'nowrap' }}>
+                DECODE · {readableKind(content.deterministic.kind)}
+              </span>
+              <span title={content.deterministic.summary} style={{ minWidth: 0, marginLeft: 'auto', color: HUD_COLORS.ink, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {content.deterministic.summary}
+              </span>
             </div>
-          ) : previewBytes.length === 0 ? (
-            <div data-cell-content-empty="true" data-cell-content-reveal-item="bytes" data-cell-content-reveal-item-state={bytesRevealed ? 'resolved' : 'scanning'} {...revealStageAttributes(bytesRevealed)} style={{ display: 'block', marginTop: 4, padding: '3px 5px', border: `1px solid ${rgba(HUD_COLORS.dim, 0.14)}`, color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.6, ...revealStageStyle(bytesRevealed) }}>
-              {/* The ornament that used to open this line was `∅`, and no face
-                  the HUD ships or could ship carries it — not the Latin
-                  subsets, not the upstream faces, not JetBrains Mono. It said
-                  nothing the three words after it do not, and the sibling
-                  empty state two branches up (INVALID CONTENT HEX) never had
-                  one, so the two now read as the pair they are. */}
-              NO OUTPUT DATA
-            </div>
-          ) : (
-            <>
-              <div
-                data-cell-content-bytes="true"
-                data-cell-content-reveal-item="bytes"
-                data-cell-content-reveal-item-state={bytesRevealed ? 'resolved' : 'scanning'}
-                title={content?.data_hex ?? dataHex}
-                {...revealStageAttributes(bytesRevealed)}
-                style={{ display: 'grid', ...revealStageStyle(bytesRevealed), gridTemplateColumns: `repeat(${HEX_ROW_BYTES}, minmax(0, 1fr))`, justifyItems: 'center', gap: '2px 3px', minWidth: 0, marginTop: 3, padding: '3px 4px', border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.12)}`, background: rgba(HUD_COLORS.stageGround, 0.38) }}
-              >
-                {previewBytes.map((byte, index) => {
-                  const byteSegmentIndex = contentSegmentAtByte(
-                    segments,
-                    index,
-                    selectedSegmentIndex,
-                  );
-                  const active = byteSegmentIndex !== null
-                    && byteSegmentIndex === selectedSegmentIndex;
-                  const color = byteSegmentIndex === null
-                    ? HUD_COLORS.ink
-                    : QUALITATIVE_BUCKET_COLORS[
-                      segmentSlots[byteSegmentIndex] % QUALITATIVE_BUCKET_COLORS.length
-                    ];
-                  return (
-                    <span
-                      key={index}
-                      data-cell-content-byte={index}
-                      data-cell-content-byte-segment={byteSegmentIndex ?? undefined}
-                      style={{ color, fontSize: HUD_TYPE.label, lineHeight: 1.35, textShadow: active ? `0 0 5px ${color}` : undefined, opacity: selectedSegmentIndex === null || active || byteSegmentIndex === null ? 1 : 0.34 }}
-                    >
-                      {byte.toString(16).padStart(2, '0').toUpperCase()}
-                    </span>
-                  );
-                })}
-                {previewIsPartial ? (
-                  <span style={{ gridColumn: '1 / -1', justifySelf: 'end', color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro }}>…</span>
-                ) : null}
-              </div>
-              <div data-cell-content-ascii="true" data-cell-content-reveal-item="ascii" data-cell-content-reveal-item-state={asciiRevealed ? 'resolved' : 'scanning'} title={model.ascii} {...revealStageAttributes(asciiRevealed)} style={{ display: 'block', ...revealStageStyle(asciiRevealed), minWidth: 0, marginTop: 2, color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, letterSpacing: 0.6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                ASCII [0..{previewBytes.length}) · {model.ascii.slice(0, previewBytes.length)}
-                {selectedRangeOutsidePreview ? ' · DECODE RANGE OUTSIDE THE PREVIEW' : ''}
-              </div>
-            </>
-          )}
-        </div>
-
-        {/* The rule under the raw bytes is structure, not evidence: it is
-          * drawn from the first frame, and only the rows below it stage. */}
-        {enhanced ? (
-          <div data-cell-content-analysis="true" data-cell-content-analysis-state={analysisRevealed ? 'resolved' : 'scanning'} data-cell-content-analysis-reserved={analysisPending ? 'true' : undefined} style={{ display: 'block', minWidth: 0, paddingTop: 2, borderTop: `1px solid ${rgba(tone, 0.16)}`, minHeight: analysisPending ? CELL_CONTENT_ANALYSIS_RESERVED_PX : undefined }}>
-            {/* The asset line is a VALUE reading, so it wears the house's
-              * value-emphasis gold rather than the caution yellow it used to —
-              * the same gold the register's AMOUNT row two columns over uses.
-              * The complete/incomplete chip below stays semantic: that one
-              * really is a state. */}
-            {record?.asset ? (
-              <div data-cell-content-asset="true" data-cell-content-reveal-item="asset" data-cell-content-reveal-item-state={assetRevealed ? 'resolved' : 'scanning'} title={record.asset.type_script_hash} {...revealStageAttributes(assetRevealed)} style={{ display: 'flex', alignItems: 'baseline', gap: 5, minWidth: 0, color: HUD_COLORS.goldInk, fontSize: HUD_TYPE.label, ...revealStageStyle(assetRevealed) }}>
-                <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 1.4 }}>VALUE</span>
-                <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {[record.asset.symbol, record.asset.name, record.asset.standard].filter(Boolean).join(' · ') || record.asset.type_script_hash}
-                  {assetAmount ? ` · ${assetAmount}` : ''}
-                </span>
-              </div>
-            ) : null}
-            {content?.deterministic ? (
-              <div data-cell-content-deterministic="true" data-cell-content-reveal-item="decode" data-cell-content-reveal-item-state={decodeRevealed ? 'resolved' : 'scanning'} {...revealStageAttributes(decodeRevealed)} style={{ display: 'block', minWidth: 0, marginTop: record?.asset ? 2 : 0, ...revealStageStyle(decodeRevealed) }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 5, minWidth: 0 }}>
-                  <span style={{ color: HUD_COLORS.nominal, fontSize: HUD_TYPE.micro, letterSpacing: 0.6, whiteSpace: 'nowrap' }}>
-                    DECODE · {readableKind(content.deterministic.kind)}
-                  </span>
-                  <span title={content.deterministic.summary} style={{ minWidth: 0, marginLeft: 'auto', color: HUD_COLORS.ink, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {content.deterministic.summary}
-                  </span>
-                </div>
-                {selectedSegment && selectedSegmentIndex !== null ? (
-                  <SegmentReadout
-                    segment={selectedSegment}
-                    index={selectedSegmentIndex}
-                    slot={segmentSlots[selectedSegmentIndex]}
-                    count={segments.length}
-                    interactive={decodeRevealed}
-                    onStep={stepSegment}
-                  />
-                ) : null}
-              </div>
-            ) : statusMessage ? (
-              <div data-cell-content-reveal-item="decode" data-cell-content-reveal-item-state={decodeRevealed ? 'resolved' : 'scanning'} title={statusMessage} {...revealStageAttributes(decodeRevealed)} style={{ display: 'block', marginTop: 2, color: phase === 'error' ? HUD_COLORS.danger : HUD_COLORS.dim, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', ...revealStageStyle(decodeRevealed) }}>
-                {statusMessage}
-              </div>
-            ) : (
-              <div data-cell-content-reveal-item="decode" data-cell-content-reveal-item-state={decodeRevealed ? 'resolved' : 'scanning'} {...revealStageAttributes(decodeRevealed)} style={{ display: 'block', marginTop: 2, color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, ...revealStageStyle(decodeRevealed) }}>
-                NO DETERMINISTIC DECODE
-              </div>
-            )}
-            {selectedGuess && selectedGuessIndex !== null ? (
-              <div data-cell-content-reveal-item="heuristic" data-cell-content-reveal-item-state={heuristicRevealed ? 'resolved' : 'scanning'} {...revealStageAttributes(heuristicRevealed)} style={{ display: 'block', ...revealStageStyle(heuristicRevealed) }}>
-                <GuessReadout
-                  guess={selectedGuess}
-                  index={selectedGuessIndex}
-                  count={guesses.length}
-                  interactive={heuristicRevealed}
-                  onStep={(direction) => setGuessIndex((current) => (
-                    cycleIndex(current, guesses.length, direction)
-                  ))}
-                />
-              </div>
-            ) : null}
-            {selectedRole && selectedRoleIndex !== null ? (
-              <div data-cell-content-reveal-item="role" data-cell-content-reveal-item-state={roleRevealed ? 'resolved' : 'scanning'} {...revealStageAttributes(roleRevealed)} style={{ display: 'block', ...revealStageStyle(roleRevealed) }}>
-                <FacetReadout
-                  facet={selectedRole}
-                  index={selectedRoleIndex}
-                  count={roles.length}
-                  interactive={roleRevealed}
-                  onStep={(direction) => setRoleIndex((current) => (
-                    cycleIndex(current, roles.length, direction)
-                  ))}
-                />
-              </div>
-            ) : null}
+          </div>
+        ) : statusMessage ? (
+          <div data-cell-content-reveal-item="decode" data-cell-content-reveal-item-state={decodeRevealed ? 'resolved' : 'scanning'} title={statusMessage} {...revealStageAttributes(decodeRevealed)} style={{ display: 'block', marginTop: 2, color: phase === 'error' ? HUD_COLORS.danger : HUD_COLORS.dim, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', ...revealStageStyle(decodeRevealed) }}>
+            {statusMessage}
+          </div>
+        ) : (
+          <div data-cell-content-reveal-item="decode" data-cell-content-reveal-item-state={decodeRevealed ? 'resolved' : 'scanning'} {...revealStageAttributes(decodeRevealed)} style={{ display: 'block', marginTop: 2, color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, ...revealStageStyle(decodeRevealed) }}>
+            NO DETERMINISTIC DECODE
+          </div>
+        )}
+        {segments.length > 0 ? (
+          <div data-cell-content-reveal-item="segments" data-cell-content-reveal-item-state={segmentsRevealed ? 'resolved' : 'scanning'} {...revealStageAttributes(segmentsRevealed)} style={{ display: 'block', minWidth: 0, ...revealStageStyle(segmentsRevealed) }}>
+            <SegmentRows
+              segments={segments}
+              slots={segmentSlots}
+              focusedSegment={focusedSegment}
+              interactive={segmentsRevealed}
+              onFocus={onSegmentFocus}
+            />
+          </div>
+        ) : null}
+        {selectedGuess && selectedGuessIndex !== null ? (
+          <div data-cell-content-reveal-item="heuristic" data-cell-content-reveal-item-state={heuristicRevealed ? 'resolved' : 'scanning'} {...revealStageAttributes(heuristicRevealed)} style={{ display: 'block', ...revealStageStyle(heuristicRevealed) }}>
+            <GuessReadout
+              guess={selectedGuess}
+              index={selectedGuessIndex}
+              count={guesses.length}
+              interactive={heuristicRevealed}
+              onStep={(direction) => setGuessIndex((current) => (
+                cycleIndex(current, guesses.length, direction)
+              ))}
+            />
+          </div>
+        ) : null}
+        {selectedRole && selectedRoleIndex !== null ? (
+          <div data-cell-content-reveal-item="role" data-cell-content-reveal-item-state={roleRevealed ? 'resolved' : 'scanning'} {...revealStageAttributes(roleRevealed)} style={{ display: 'block', ...revealStageStyle(roleRevealed) }}>
+            <FacetReadout
+              facet={selectedRole}
+              index={selectedRoleIndex}
+              count={roles.length}
+              interactive={roleRevealed}
+              onStep={(direction) => setRoleIndex((current) => (
+                cycleIndex(current, roles.length, direction)
+              ))}
+            />
           </div>
         ) : null}
       </div>

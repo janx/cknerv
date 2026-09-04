@@ -96,12 +96,13 @@ describe('the scan reveal runs on a clock the leaves hold', () => {
     expect(PANEL_SOURCE).not.toMatch(/\bsetTimeout\s*\(/);
     // …and no state at the top of the card is allowed to hold the walk. Two of
     // the three `useState`s the body keeps are moved by a CLICK and never by a
-    // tick — the selected facet, and whether DATA READER is open and on which
-    // Cell. The third is moved by the BROWSER reporting a layout: the analysis
-    // plate's measured height, which the reader beside it is sized from (the
-    // user's ruling of 2026-09-05). It is a measurement and not the walk — a
-    // ResizeObserver plus a window `resize`, guarded so an unchanged height
-    // re-renders nothing — and `useCanvasClientRect` is its precedent.
+    // tick — the selected facet, and which decoded segment CKBYTES is standing
+    // on, and on which Cell. The third is moved by the BROWSER reporting a
+    // layout: the analysis plate's measured height, which the reader under the
+    // scan square is sized from (the user's ruling of 2026-09-05). It is a
+    // measurement and not the walk — a ResizeObserver plus a window `resize`,
+    // guarded so an unchanged height re-renders nothing — and
+    // `useCanvasClientRect` is its precedent.
     // The count is pinned rather than the absence of a clock, because a fourth
     // state added without a named gesture or a named measurement behind it is
     // how a walking value gets back into a body that renders once per
@@ -109,7 +110,7 @@ describe('the scan reveal runs on a clock the leaves hold', () => {
     const stateDeclarations = PANEL_SOURCE.match(/useState[<(]/g) ?? [];
     expect(stateDeclarations).toHaveLength(3);
     expect(PANEL_SOURCE).toContain('const [selectedFieldState, setSelectedFieldState] = useState<');
-    expect(PANEL_SOURCE).toContain('const [readerRequest, setReaderRequest] = useState<');
+    expect(PANEL_SOURCE).toContain('const [segmentFocus, setSegmentFocus] = useState<');
     expect(PANEL_SOURCE).toContain('const [plateHeightPx, setPlateHeightPx] = useState(0);');
   });
 

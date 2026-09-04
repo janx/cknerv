@@ -33,21 +33,6 @@ import {
   type CellOutputData,
 } from '@cknerv/cache';
 
-import {
-  readerBelowRows,
-  readerBesideRows,
-  readerPlacement,
-  type ReaderPlacement,
-} from '../derives/cellDataReader.derive';
-// The reader's own two numbers, from the reader itself. The only edge back
-// from that module to this one is `import type { CellOutputDataPhase }`, which
-// is erased before anything runs — so there is no cycle here, only a component
-// stating its own geometry and a hook spending it.
-import {
-  READER_CHROME_PX,
-  READER_ROW_HEIGHT_PX,
-} from '../components/hud/CellDataReader';
-
 /**
  * Where the reader's bytes stand.
  *
@@ -113,10 +98,6 @@ interface CellOutputAnswer {
   key: string;
   data: CellOutputData | null;
   message: string | null;
-}
-
-function outPointIdentity(outPoint: OutPoint): string {
-  return `${outPoint.tx_hash}:${outPoint.index}`;
 }
 
 /**
@@ -233,63 +214,4 @@ export function useCellOutputData({
       message: null,
     };
   }, [complete, held, memoised, settled]);
-}
-
-/**
- * Where the reader stands on THIS window: beside the analysis plate, or under
- * the card.
- *
- * Read at mount and on `resize`, and nowhere else. The placement is a fact
- * about the window rather than about the card, so it changes only when the
- * window does — and a reader that re-placed itself on any other event would be
- * a reader that moved out from under the byte somebody was reading.
- */
-export function useReaderPlacement(): ReaderPlacement {
-  const [placement, setPlacement] = useState<ReaderPlacement>(
-    () => readerPlacement(window.innerWidth),
-  );
-  useEffect(() => {
-    const measure = () => setPlacement(readerPlacement(window.innerWidth));
-    measure();
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  }, []);
-  return placement;
-}
-
-/**
- * How many rows of dump this placement has room for.
- *
- * Beside the plate the answer comes from the PLATE — the reader is as tall as
- * it, so the plate's measured height less the reader's chrome is the dump's
- * budget, and the window never enters into it. Under the card the answer comes
- * from what is left of the window below the plate, which on a real dossier at
- * a real viewport is very little; that is the M5 finding, and the eight-row
- * floor is what the fallback settles at.
- *
- * The window is read at mount and on `resize`, and nowhere else, for the same
- * reason the placement is: the reader's height is fixed for a given viewport
- * because a dump that reflowed while somebody was reading a row would break
- * the one rule every zone of this card keeps. `plateHeightPx` is handed in by
- * the panel, which is the only thing holding a ref to the plate.
- */
-export function useReaderRows(
-  placement: ReaderPlacement,
-  plateHeightPx: number,
-): number {
-  const [innerHeight, setInnerHeight] = useState(() => window.innerHeight);
-  useEffect(() => {
-    const measure = () => setInnerHeight(window.innerHeight);
-    measure();
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  }, []);
-  return placement === 'beside'
-    ? readerBesideRows(plateHeightPx, READER_CHROME_PX, READER_ROW_HEIGHT_PX)
-    : readerBelowRows(
-      innerHeight,
-      plateHeightPx,
-      READER_CHROME_PX,
-      READER_ROW_HEIGHT_PX,
-    );
 }

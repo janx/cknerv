@@ -15,6 +15,7 @@ import type {
   CellSemanticRecord,
   EnrichmentSourceStatus,
   ScriptId,
+  SemanticContentSegment,
   SemanticFacet,
   SemanticScript,
   TransactionSemanticRecord,
@@ -56,7 +57,11 @@ import { useReducedMotion } from './useReducedMotion';
 import CellNucleusPortrait from './CellNucleusPortrait';
 import { ConsensusMemoryTracePlate } from './ConsensusIdentityPlate';
 import CellContentMemory from './CellContentMemory';
-import CellDataReader, { READER_ROW_HEIGHT_PX } from './CellDataReader';
+import CellDataReader, {
+  READER_CHROME_PX,
+  READER_ROW_HEIGHT_PX,
+  READER_WIDTH_PX,
+} from './CellDataReader';
 import CellCausalLensReadout, {
   type CellCausalNavigationReadout,
 } from './CellCausalLensReadout';
@@ -77,12 +82,8 @@ import {
 } from '../../derives/cellConsensusIdentity.derive';
 import { deriveCellContentMemory } from '../../derives/cellContentMemory.derive';
 import { validateCellSemanticRecordForMorphology } from '../../derives/cellSemanticMorphology.derive';
-import {
-  useCellOutputData,
-  useReaderPlacement,
-  useReaderRows,
-} from '../../hooks/useCellOutputData';
-import { READER_COLUMN_PX } from '../../derives/cellDataReader.derive';
+import { useCellOutputData } from '../../hooks/useCellOutputData';
+import { readerRowsUnderScan } from '../../derives/cellDataReader.derive';
 import {
   deriveCellCausalLens,
   type CellCausalLens,
@@ -122,6 +123,10 @@ import {
 } from './CellSemanticsReadout';
 
 const EMPTY_RECENT_LINKS: readonly CellLink[] = [];
+/** One empty list, for a record that decoded nothing. A fresh `[]` on every
+ *  render would hand CKBYTES a new identity twelve times a second and re-run
+ *  every memo it colours its bytes with. */
+const EMPTY_CONTENT_SEGMENTS: readonly SemanticContentSegment[] = [];
 const PORTRAIT_BRACKET_PX = 12;
 /** The CELL SCAN square is an independent column beside the analysis plate:
  * 440 of analysis + an 8px seam + the 280 square, one constant geometry for
@@ -136,6 +141,22 @@ const PORTRAIT_COLUMN_PX = 280;
 export const CARD_SEAM_PX = 8;
 const ANALYSIS_COLUMN_PX = 440;
 export const CARD_WIDTH_PX = ANALYSIS_COLUMN_PX + CARD_SEAM_PX + PORTRAIT_COLUMN_PX;
+
+/** How far CKBYTES reaches PAST the CELL SCAN square it stands under, toward
+ *  the Cell the card points at — the user's R2-6 ruling of 2026-09-05.
+ *
+ * The reader is a fixed measure (a sixteen-byte row is 73 monospace characters
+ * plus its scrollbar-map, which `READER_WIDTH_PX` derives to 408) and the
+ * square is 280, so the overhang is what is left after the square and the seam
+ * beside it. It is SUBTRACTED rather than declared, because three constants
+ * that each state a piece of the same geometry can disagree and two that state
+ * it once cannot: the notch, the reader's width and the card's width are one
+ * arithmetic here, and moving `READER_WIDTH_PX` moves all three together.
+ *
+ * The notch is a `.` cell of the grid rather than an element, so nothing paints
+ * in it and the card's dismiss boundary does not reach it — a click up there is
+ * a click on the scene, which is what it is. */
+const READER_NOTCH_PX = READER_WIDTH_PX - PORTRAIT_COLUMN_PX - CARD_SEAM_PX;
 
 /** Panel-local display order — the vertical order the six facts occupy in the
  * merged CKBYTES ANALYSIS layout, used ONLY for probe-reveal indexing so the
@@ -959,10 +980,11 @@ type CellScanContentMemoryProps = {
   record?: CellSemanticRecord | null;
   message?: string | null;
   pending: boolean;
-  /** DATA READER is open on this Cell. Passed straight through: the window
-   *  reports the state, the card owns it. */
-  readerOpen: boolean;
-  onOpenReader: (atByte: number | null) => void;
+  /** Which decoded segment the reader is standing on, and how to move it.
+   *  Passed straight through: the rows are the window's, the LINK between a
+   *  row and the bytes under the square is the card's. */
+  focusedSegment: number | null;
+  onSegmentFocus: (index: number) => void;
 };
 
 /** Content memory decodes THROUGH the walk rather than at a step of it, so it
@@ -974,6 +996,56 @@ function CellScanContentMemory(props: CellScanContentMemoryProps) {
       {...props}
       reveal={clampUnit(progress / CONTENT_DECODED_AT)}
     />
+  );
+}
+
+/**
+ * CKBYTES' plate, and the one thing about it that waits: its ink.
+ *
+ * The section is mounted for every Cell that holds bytes, from the first frame,
+ * at the height the analysis plate beside it leaves — so the reveal has nothing
+ * to grow. It lights at `CONTENT_DECODED_AT`, the same instant the DATA cluster
+ * finishes decoding, because the segment rows up there NAME these bytes: a dump
+ * lit before the line that says what its bytes mean would be read as noise.
+ *
+ * The subscription lives in this leaf rather than in the card body for the
+ * reason every other leaf's does — the body renders once per selection, and a
+ * clock read from inside it would drag the whole dossier through the walk's
+ * 12.5 ticks a second. The reader arrives as `children`, built by that body and
+ * therefore the same element object across a tick, so a tick re-paints this
+ * section's ink and React bails out of the dump beneath it on identity.
+ */
+function CellScanReaderPlate({ children }: { children: ReactNode }) {
+  const revealed = useCellScanSelector(
+    (frame) => frame.memoryProgress >= CONTENT_DECODED_AT,
+  );
+  return (
+    <section
+      aria-label="CKBytes reader"
+      data-cell-detail-module="reader"
+      data-cell-inspection-satellite="reader"
+      data-cell-detail-size="content"
+      data-cell-data-reader-reveal-state={revealed ? 'resolved' : 'scanning'}
+      {...revealStageAttributes(revealed)}
+      style={{
+        ...satelliteBase,
+        gridArea: 'reader',
+        // "As tall as the plate", exactly. The dump's height is a whole number
+        // of 13.5 px rows and the plate's is not, so the section takes the
+        // grid row's full height and its bottom padding absorbs the pixels
+        // that do not divide. `minHeight: 0` is what lets it: a grid item's
+        // default `min-height: auto` refuses to be shorter than its content,
+        // and the stretch would turn into a push.
+        alignSelf: 'stretch',
+        minHeight: 0,
+        overflow: 'hidden',
+        padding: '8px 10px 10px 12px',
+        ...spatialPlate(CYAN),
+        ...revealStageStyle(revealed),
+      }}
+    >
+      {children}
+    </section>
   );
 }
 
@@ -1205,27 +1277,50 @@ function CellDetailPanel({
     ? selectedFieldState.field
     : null;
 
-  // ——— DATA READER · SCAN·03 —————————————————————————————————————————————
+  // ——— CKBYTES · SCAN·03 —————————————————————————————————————————————————
   //
-  // Open/closed lives HERE and nowhere else: the overlay, the app and the
-  // window below all stay ignorant of it, exactly as the selected inspection
-  // facet does one state above.
+  // The reader is a ZONE of this card now, not a satellite that opens: the
+  // user's direction of 2026-09-05 was 「hex reader 应该总是展示」, so there is
+  // no open/closed state left to keep. What IS kept is where the reader is
+  // POINTING — the decoded segment a row of the DATA cluster sent it to — and
+  // that is a click, exactly like the selected inspection facet one state
+  // above, and never the walk.
   //
-  // And it is keyed by Cell for the same reason that one is. A reader is open
-  // ON A CELL — its rows, its segments, its bytes — so a card handed a new
-  // subject has no open reader by construction, with no effect to reset and
-  // therefore no frame in which the old Cell's dump is still standing under
-  // the new Cell's dossier. `atByte` rides along because the DATA window's
-  // segment stepper can ask for a byte, not merely for the reader.
-  const [readerRequest, setReaderRequest] = useState<{
+  // Three fields, and each earns its place:
+  //
+  //   `cellId`, for the reason the facet selection carries one. A card handed
+  //   a new subject is pointing at nothing by construction, with no effect to
+  //   reset and therefore no frame in which the old Cell's segment is pressed
+  //   over the new Cell's bytes.
+  //
+  //   `index`, into the presented record's own segment list — the same list
+  //   the DATA cluster draws its rows from and the reader colours its bytes
+  //   by, so the two cannot mean different segments by the same number.
+  //
+  //   `nonce`, because this is a GESTURE and not a value. Clicking the same
+  //   row twice has to scroll back to it twice; an effect keyed on the range
+  //   would fire once and never again (§4's trap).
+  const [segmentFocus, setSegmentFocus] = useState<{
     cellId: number;
-    atByte: number | null;
+    index: number;
+    nonce: number;
   } | null>(null);
-  const readerOpen = readerRequest?.cellId === cell.id;
-  const openReader = useCallback((atByte: number | null) => {
-    setReaderRequest({ cellId: cell.id, atByte });
+  const focusedSegment = segmentFocus?.cellId === cell.id
+    ? segmentFocus.index
+    : null;
+  const focusSegment = useCallback((index: number) => {
+    setSegmentFocus((current) => ({
+      cellId: cell.id,
+      index,
+      nonce: (current?.nonce ?? 0) + 1,
+    }));
   }, [cell.id]);
-  const closeReader = useCallback(() => { setReaderRequest(null); }, []);
+  // The reader's own gesture outranks the row's: a byte click or a key move
+  // down there means the reader is no longer standing where the DATA cluster
+  // put it, and the row unpresses.
+  const releaseSegmentFocus = useCallback((segment: number | null) => {
+    if (segment === null) setSegmentFocus(null);
+  }, []);
   // The prefix the browser is already holding, as the reader wants it.
   //
   // MEMOISED, and the memo is load-bearing rather than tidy: `Uint8Array.from`
@@ -1233,7 +1328,8 @@ function CellDetailPanel({
   // dependency, and an un-memoised conversion would therefore hand it a new
   // identity on every render of this card — which the scan clock ticks 12.5
   // times a second. The request would be aborted and re-issued on each of
-  // them, for as long as the reader stayed open.
+  // them, for as long as the card was open — which is now every card with a
+  // byte in it.
   const readerHeldPrefix = useMemo(
     () => Uint8Array.from(
       deriveCellContentMemory(cell.data_hex, presentedSemanticRecord?.content)
@@ -1241,35 +1337,45 @@ function CellDetailPanel({
     ),
     [cell.data_hex, presentedSemanticRecord?.content],
   );
+  // Whether this card has a reader at all, and it is the CHAIN's count that
+  // decides — never `data_hex !== '0x'` (§4's first trap). A clipped prefix is
+  // still bytes, and an invalid prefix over a positive `data_bytes` is a
+  // reader whose held run is empty and whose fetch fills it. A Cell that holds
+  // nothing gets NO plate (R2-2): the DATA fact above already reads `Empty`,
+  // and a 408 px window saying so a second time is the card restating an
+  // absence in a frame.
+  const hasBytes = cell.data_bytes > 0;
   const outputData = useCellOutputData({
     outPoint: cell.out_point,
-    enabled: readerOpen,
+    // The reader is always mounted, so this gate is no longer "is it open" but
+    // "does the Cell hold anything to read". The hook's own comparison
+    // (`held.length < totalBytes`) is what still keeps ten thousand of the
+    // staged Cells off the network entirely.
+    enabled: hasBytes,
     held: readerHeldPrefix,
     // `data_bytes` is the chain's own count, and `data_hex` is a window onto
     // it: every row the reader draws is derived from THIS number.
     totalBytes: cell.data_bytes,
   });
-  // Where the reader stands, and how tall it is.
+  // How tall the reader is, which is the one thing about this zone that has to
+  // be MEASURED.
   //
-  // The user's ruling of 2026-09-05: the reader stands BESIDE the analysis
-  // plate and is as tall as it, and the full-width row under the card survives
-  // only as the fallback for a window too narrow for the column. M5 measured
-  // what the row cost — a 910 px plate and a 24-row reader made a 1,348 px
-  // card in an 1,100 px window, so the row began at the fold and nothing on
-  // the page scrolls — and the column is the answer: the card grows sideways
-  // instead of downward, and the dump is bounded by the plate rather than by
-  // whatever the window has left under it.
+  // The user's ruling of 2026-09-05: CKBYTES stands under the 280 px CELL SCAN
+  // square and its bottom is the analysis plate's bottom. The plate's height is
+  // the record it received — a full spore dossier's is ~910 px and a bare
+  // CKB-only card's is a third of that — so the rows are the plate's remainder
+  // after the square, the seam over the reader, and the reader's own chrome,
+  // and never a constant.
   //
-  // The plate is MEASURED for that, which is a third `useState` in this body.
-  // It is admitted for the same reason `readerRequest` is: it is moved by the
-  // browser reporting a layout, never by the scan clock's tick, so the body
-  // still renders once per selection plus once per genuine change of the
-  // plate's height. `useCanvasClientRect` is the precedent — a
-  // ResizeObserver plus a window `resize`, cached outside the frame loop — and
-  // the rounding guard is what keeps a sub-pixel reflow from re-rendering the
-  // card. In jsdom, where nothing is laid out and the observer stub never
-  // fires, this stays 0 and both row counts fall back to their declared
-  // numbers.
+  // That measurement is a second `useState` in this body. It is admitted for
+  // the same reason `segmentFocus` is: it is moved by the browser reporting a
+  // layout, never by the scan clock's tick, so the body still renders once per
+  // selection plus once per genuine change of the plate's height.
+  // `useCanvasClientRect` is the precedent — a ResizeObserver plus a window
+  // `resize`, cached outside the frame loop — and the rounding guard is what
+  // keeps a sub-pixel reflow from re-rendering the card. In jsdom, where
+  // nothing is laid out and the observer stub never fires, this stays 0 and
+  // the row count falls back to its declared number.
   const [plateHeightPx, setPlateHeightPx] = useState(0);
   useEffect(() => {
     const plate = analysisPlateRef.current;
@@ -1289,8 +1395,35 @@ function CellDetailPanel({
       window.removeEventListener('resize', measure);
     };
   }, [cell.id]);
-  const readerPlacementSide = useReaderPlacement();
-  const readerRows = useReaderRows(readerPlacementSide, plateHeightPx);
+  // `PORTRAIT_COLUMN_PX + CARD_SEAM_PX` is handed IN rather than restated in
+  // the derive: the square and the seam over the reader are the card's own
+  // geometry, and a pure derive that spelled them out would be a second place
+  // they are written down.
+  const readerRows = readerRowsUnderScan(
+    plateHeightPx,
+    PORTRAIT_COLUMN_PX + CARD_SEAM_PX,
+    READER_CHROME_PX,
+    READER_ROW_HEIGHT_PX,
+  );
+  // The record's own segments, and only a validated record's: the reader
+  // colours bytes by them and names the one under the pointer, so a record
+  // this card has already refused to present may not label a byte in it.
+  const readerSegments = presentedSemanticRecord?.content?.deterministic
+    ?.segments ?? EMPTY_CONTENT_SEGMENTS;
+  // Where a click on a segment row sends the reader. Read from the SAME list
+  // the rows are drawn from, so a stale index — a record that arrived while a
+  // row was pressed — points at nothing rather than at the wrong bytes.
+  const focusedSegmentRange = focusedSegment === null
+    ? null
+    : readerSegments[focusedSegment] ?? null;
+  const readerFocus = focusedSegmentRange === null || segmentFocus === null
+    ? null
+    : {
+      start: focusedSegmentRange.start_byte,
+      end: focusedSegmentRange.end_byte,
+      segment: focusedSegment,
+      nonce: segmentFocus.nonce,
+    };
 
   const identity = useMemo(
     () => deriveCellConsensusIdentity(cell, recentLinks),
@@ -1463,32 +1596,49 @@ function CellDetailPanel({
   // transparent scan square (the braid lives there): they are siblings now,
   // not one plate notched around the other.
   const portraitFirst = verticalLayout || layoutSide === 'right';
-  // Two columns, one row: the card has no separate identity plate above them
-  // any more — the analysis plate is the dossier, so the Cell it is about is
-  // its masthead rather than a second window stacked over it. Three columns
-  // while the reader stands beside the plate, on a window wide enough for one.
+  // The card, in one grid, and which of two grids depends on ONE fact: whether
+  // this Cell holds any bytes.
   //
-  // Beside, the card is three columns rather than two and the reader takes the
-  // side AWAY from the specimen — the scan square stays on the edge nearest
-  // the Cell it is about, which is the rule that already mirrors these
-  // columns, and the reader hangs off the far edge where nothing points at
-  // anything. Below, the card is exactly what it was: two columns and a
-  // full-width row.
-  const readerBeside = readerOpen && readerPlacementSide === 'beside';
-  const cardRows = readerBeside
-    ? (portraitFirst ? '"scan analysis reader"' : '"reader analysis scan"')
-    : (portraitFirst ? '"scan analysis"' : '"analysis scan"');
-  // Growth is strictly downward, and in the order the rows were asked for: the
-  // FALLBACK reader sits directly under the two columns because the DATA
-  // cluster it opened from is in them, and an armed MEMORY TRACE goes under
-  // it. Neither row exists while it is closed — an always-there empty grid row
-  // trails an 8px phantom gap under the plate — and neither can change the
-  // columns' geometry, which is the analysis plate's own law. The trace row
-  // spans whatever the card is wide, which is three columns while the reader
-  // stands beside the plate and two while it does not.
-  const cardAreas = `${cardRows}${
-    readerOpen && !readerBeside ? ' "reader reader"' : ''
-  }${showTracePlate ? (readerBeside ? ' "trace trace trace"' : ' "trace trace"') : ''}`;
+  // Without them it is what it has always been — two columns, one row, the
+  // analysis plate beside the specimen square, 728 px.
+  //
+  // With them the square gets a companion under it. CKBYTES is 408 px wide and
+  // the square is 280, so the reader spans the square's column AND a third,
+  // narrower track — the notch — that reaches 120 px past it toward the Cell.
+  // The analysis plate spans both rows, which is what makes the reader's
+  // bottom the plate's bottom; the notch's own cell in row 1 is a `.`, so
+  // nothing paints up there and the card's silhouette is the L the reader
+  // makes with the square.
+  //
+  // Mirrored, the whole thing reflects: the specimen square keeps the edge
+  // nearest the Cell it is about, the notch stays on the far side of it, and
+  // the plate moves to the other end. That is the rule that already mirrors
+  // these columns, applied to three tracks instead of two.
+  const cardColumns = hasBytes
+    ? (portraitFirst
+      ? `${READER_NOTCH_PX}px ${PORTRAIT_COLUMN_PX}px minmax(0, 1fr)`
+      : `minmax(0, 1fr) ${PORTRAIT_COLUMN_PX}px ${READER_NOTCH_PX}px`)
+    : (portraitFirst
+      ? `${PORTRAIT_COLUMN_PX}px minmax(0, 1fr)`
+      : `minmax(0, 1fr) ${PORTRAIT_COLUMN_PX}px`);
+  // Row 1 is the square, exactly; row 2 is everything the plate has left, and
+  // the reader takes it. Declared only when there IS a reader — a two-column
+  // card has one implicit row and stating it would fix the plate's height to
+  // the square's.
+  const cardRows = hasBytes
+    ? `${PORTRAIT_COLUMN_PX}px minmax(0, 1fr)${showTracePlate ? ' auto' : ''}`
+    : undefined;
+  // Growth is strictly downward: an armed MEMORY TRACE appends a full-width
+  // row under everything, and it spans whatever the card is wide — three
+  // tracks with a reader, two without. The row exists only while the trace is
+  // armed; an always-there empty grid row trails an 8px phantom gap.
+  const cardAreas = hasBytes
+    ? `${portraitFirst
+      ? '". scan analysis" "reader reader analysis"'
+      : '"analysis scan ." "analysis reader reader"'}${
+      showTracePlate ? ' "trace trace trace"' : ''}`
+    : `${portraitFirst ? '"scan analysis"' : '"analysis scan"'}${
+      showTracePlate ? ' "trace trace"' : ''}`;
 
   // ——— Register cluster evidence ————————————————————————————————————
   const facet = presentedSemanticRecord
@@ -1685,32 +1835,27 @@ function CellDetailPanel({
       style={{
         position: 'relative',
         display: 'grid',
-        // The analysis plate keeps its measure in both placements: it is the
-        // `1fr` between two fixed columns, and 1,396 − 660 − 280 − two seams
-        // is the 440 it has always been. The reader's column is a third fixed
-        // track rather than a share of the card, because a dump is a fixed
-        // measure — 74 monospace characters — and a column that flexed would
-        // either clip a row or leave a gutter.
-        gridTemplateColumns: readerBeside
-          ? (portraitFirst
-            ? `${PORTRAIT_COLUMN_PX}px minmax(0, 1fr) ${READER_COLUMN_PX}px`
-            : `${READER_COLUMN_PX}px minmax(0, 1fr) ${PORTRAIT_COLUMN_PX}px`)
-          : (portraitFirst
-            ? `${PORTRAIT_COLUMN_PX}px minmax(0, 1fr)`
-            : `minmax(0, 1fr) ${PORTRAIT_COLUMN_PX}px`),
-        // The trace row exists only while the armed MEMORY TRACE window is
+        // The analysis plate keeps its measure with a reader and without one:
+        // it is the `1fr` between fixed tracks, and 856 − 120 − 280 − two
+        // seams is the 440 it has always been. The square and the notch are
+        // fixed rather than shares of the card, because a dump is a fixed
+        // measure — seventy-three monospace characters — and a track that
+        // flexed would either clip a row or leave a gutter.
+        gridTemplateColumns: cardColumns,
+        // Two rows only when the reader is there to take the second one, and
+        // the trace row exists only while the armed MEMORY TRACE window is
         // appended — an always-there empty row would trail an 8px phantom gap
         // under the analysis plate.
+        gridTemplateRows: cardRows,
         gridTemplateAreas: cardAreas,
         columnGap: CARD_SEAM_PX,
         rowGap: 8,
         alignItems: 'start',
-        width: readerBeside
-          ? CARD_WIDTH_PX + CARD_SEAM_PX + READER_COLUMN_PX
+        width: hasBytes
+          ? CARD_WIDTH_PX + CARD_SEAM_PX + READER_NOTCH_PX
           : CARD_WIDTH_PX,
-        // …and the clamp the placement decision is made against: the reader
-        // only stands beside the plate on a window that can hold the wider
-        // card without this `maxWidth` squeezing it.
+        // The card never outgrows the window it is drawn in, whichever of the
+        // two measures it takes.
         maxWidth: 'calc(100vw - 28px)',
         boxSizing: 'border-box',
         pointerEvents: 'none',
@@ -2176,8 +2321,8 @@ function CellDetailPanel({
               record={presentedSemanticRecord}
               message={presentedSemanticMessage}
               pending={enrichmentPending}
-              readerOpen={readerOpen}
-              onOpenReader={openReader}
+              focusedSegment={focusedSegment}
+              onSegmentFocus={focusSegment}
             />
           </div>
         </div>
@@ -2358,74 +2503,42 @@ function CellDetailPanel({
         <span style={portraitBracket('bl')} /><span style={portraitBracket('br')} />
       </section>
 
-      {/* The DATA cluster's door, opened — beside the analysis plate, as tall
-        * as it (the user's ruling of 2026-09-05).
+      {/* CKBYTES, under the CELL SCAN square, for every Cell that holds a byte
+        * (the user's directions of 2026-09-05: 「hex reader 应该总是展示，可以把
+        * 窗口放在 cell scan 下方合适位置」).
         *
-        * The card grows SIDEWAYS for this and not downward, which is the whole
-        * change: a full-width row under a real dossier's plate began at the
-        * fold of the app's own 1600×1100 window and nothing on the page
-        * scrolls, so most of the reader could not be reached at all. Beside
-        * it, the reader is bounded by the plate, the card's silhouette is the
-        * plate's, and the plate itself does not move — its column is still the
-        * 440 it has always been.
+        * It was a satellite that opened from a door in the DATA cluster and
+        * stood in a 660 px column beside the plate. Two things were wrong with
+        * that and the user named both: the surface was too large for what it
+        * did, and a reader that has to be opened is a reader nobody opens. So
+        * the door is gone, the column is gone, and the zone stands where the
+        * bytes it draws belong — directly under the square that portrays the
+        * Cell they came from, wider than the square by the 120 px notch it
+        * reaches toward the Cell itself.
         *
-        * `alignSelf: 'stretch'` is what makes "as tall as the plate" true
-        * rather than approximately true: the dump's height is a whole number
-        * of 13.5 px rows and the plate's is not, so the section takes the
-        * row's full height and its bottom padding absorbs the few pixels that
-        * do not divide. `minHeight: 0` lets it: a grid item's default
-        * `min-height: auto` would refuse to be shorter than its content and
-        * the stretch would turn into a push.
+        * The plate is `CellScanReaderPlate` because its ink waits on the walk
+        * and its geometry does not: the section is mounted at final size from
+        * the first frame, and the leaf up there subscribes to the clock so
+        * this body does not.
         *
-        * The row under the card survives as the narrow-window fallback, where
-        * it takes the MEMORY TRACE's shape exactly.
-        *
-        * `satelliteBase` is what makes this a plate rather than a fragment:
-        * it carries `position: relative`, which is the anchor the reader's own
-        * unpositioned `CloseButton` needs to land at the top-right corner
-        * every other card's CLOSE lands at. `overflow: hidden` keeps the cut
-        * corner honest; the dump does its own scrolling inside. */}
-      {readerOpen && readerRequest ? (
-          <section
-            aria-label="Cell data reader"
-            data-cell-detail-module="reader"
-            data-cell-inspection-satellite="reader"
-            data-cell-detail-size="content"
-            data-cell-data-reader-placement={readerBeside ? 'beside' : 'below'}
-            style={{
-              ...satelliteBase,
-              gridArea: 'reader',
-              width: 'auto',
-              minHeight: 0,
-              alignSelf: readerBeside ? 'stretch' : undefined,
-              overflow: 'hidden',
-              padding: '8px 10px 10px 12px',
-              ...spatialPlate(CYAN),
-            }}
-          >
-            <CellDataReader
-              // ⚠️ One reader per Cell, said where React can act on it. The
-              // reader used to take the whole `Cell` and clear its selection
-              // and its scroll in an effect on `cell.id`; it no longer takes
-              // the Cell at all, so the identity has to arrive as a key —
-              // which also resets the scroll, the caret and the COPY label,
-              // and cannot forget a piece of state the effect never named.
-              key={cell.id}
-              // The record's own segments, and only a validated record's: the
-              // reader colours bytes by them and names the one under the
-              // pointer, so a record this card has already refused to present
-              // may not label a single byte in it either.
-              segments={presentedSemanticRecord?.content?.deterministic
-                ?.segments ?? []}
-              {...outputData}
-              totalBytes={cell.data_bytes}
-              visibleRows={readerRows}
-              // The DATA cluster does not point at a segment yet: its rows and
-              // the state that links them to the reader arrive in R2-b, and
-              // until they do nothing sends the reader anywhere.
-              focus={null}
-            />
-          </section>
+        * `key={cell.id}` is NOT decoration. ⚠️ The reader carries a selection,
+        * a scroll position and a copy acknowledgement, all of them about the
+        * bytes they were made over; it used to be unmounted on a Cell change
+        * by `readerOpen === (request.cellId === cell.id)`, and an always-on
+        * zone has no such unmount. Without the key, a selection made on one
+        * Cell would point at a byte of the next. */}
+      {hasBytes ? (
+        <CellScanReaderPlate>
+          <CellDataReader
+            key={cell.id}
+            segments={readerSegments}
+            {...outputData}
+            totalBytes={cell.data_bytes}
+            visibleRows={readerRows}
+            focus={readerFocus}
+            onFocusChange={releaseSegmentFocus}
+          />
+        </CellScanReaderPlate>
       ) : null}
 
       {/* Growth is strictly vertical: an arming trace appends a full-width

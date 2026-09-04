@@ -1,8 +1,13 @@
 // The reader's supply line, driven against the route M2 wrote and the client
 // M3 shipped. The assertion this whole file exists for is the FIRST one: for
 // 10,263 of the 10,356 staged Cells the prefix the browser already holds IS
-// the payload, and opening the reader on one of them must not put a request on
-// the wire. Everything below it is about the 93 that are not.
+// the payload, and a card opening on one of them must not put a request on the
+// wire. Everything below it is about the 93 that are not.
+//
+// That gate matters more since 2026-09-05 than it did when it was written:
+// CKBYTES is mounted for every Cell that holds a byte, so `enabled` no longer
+// means "somebody opened the reader" but "this Cell has something to read", and
+// the comparison below is the only thing between a card opening and a fetch.
 
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -10,21 +15,8 @@ import { clearCellDataMemo, rememberCellOutputData } from '@cknerv/cache';
 
 import {
   useCellOutputData,
-  useReaderPlacement,
-  useReaderRows,
   type CellOutputDataInput,
 } from '../../src/hooks/useCellOutputData';
-import {
-  READER_BESIDE_CARD_PX,
-  READER_CARD_MARGIN_PX,
-  READER_MIN_VISIBLE_ROWS,
-  READER_VISIBLE_ROWS,
-  readerBesideRows,
-} from '../../src/derives/cellDataReader.derive';
-import {
-  READER_CHROME_PX,
-  READER_ROW_HEIGHT_PX,
-} from '../../src/components/hud/CellDataReader';
 
 const TX_HASH = `0x${'ab'.repeat(32)}`;
 const OTHER_TX = `0x${'cd'.repeat(32)}`;
@@ -167,7 +159,7 @@ describe('useCellOutputData', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('asks for nothing while the reader is closed', () => {
+  it('asks for nothing about a Cell that holds no bytes', () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
 
@@ -177,7 +169,7 @@ describe('useCellOutputData', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('aborts the request in flight when the reader moves to another Cell', async () => {
+  it('aborts the request in flight when the card moves to another Cell', async () => {
     const signals: AbortSignal[] = [];
     const fetchMock = vi.fn((_url: string, init: { signal: AbortSignal }) => {
       signals.push(init.signal);
@@ -197,7 +189,7 @@ describe('useCellOutputData', () => {
       .toBe(`/api/cells/${OTHER_TX}/0/data`);
   });
 
-  it('aborts when the reader closes, and asks again when it reopens', async () => {
+  it('aborts when the gate closes, and asks again when it opens', async () => {
     const signals: AbortSignal[] = [];
     const fetchMock = vi.fn((_url: string, init: { signal: AbortSignal }) => {
       signals.push(init.signal);
@@ -245,77 +237,5 @@ describe('useCellOutputData', () => {
 
     expect(view.result.current.phase).toBe('error');
     expect(view.result.current.message).toBe('NO BYTES FOR THIS OUTPOINT AT THE NODE');
-  });
-});
-
-/** The window, set the way a browser sets it: a property nobody can assign
- *  in jsdom without redefining it, and an event nobody fires without saying so. */
-function resizeWindow(width: number, height: number) {
-  Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
-  Object.defineProperty(window, 'innerHeight', { configurable: true, value: height });
-  window.dispatchEvent(new Event('resize'));
-}
-
-afterEach(() => { resizeWindow(1024, 768); });
-
-describe('useReaderPlacement', () => {
-  it('stands the reader beside the plate exactly when the card still fits', () => {
-    // jsdom's own window is 1024 wide, which is far under the 1,396 the card
-    // measures with a reader column — so the fallback row is what a test that
-    // says nothing about the window gets, and every panel test written before
-    // the column keeps passing unchanged.
-    const { result } = renderHook(() => useReaderPlacement());
-    expect(result.current).toBe('below');
-
-    // One pixel under the card's own `maxWidth: calc(100vw - 28px)` clamp…
-    act(() => { resizeWindow(READER_BESIDE_CARD_PX + READER_CARD_MARGIN_PX - 1, 1100); });
-    expect(result.current).toBe('below');
-
-    // …and exactly on it.
-    act(() => { resizeWindow(READER_BESIDE_CARD_PX + READER_CARD_MARGIN_PX, 1100); });
-    expect(result.current).toBe('beside');
-
-    // The app's own viewport, where M5 measured the row falling past the fold.
-    act(() => { resizeWindow(1600, 1100); });
-    expect(result.current).toBe('beside');
-
-    // And back: a window narrowed under the card returns the row.
-    act(() => { resizeWindow(900, 1100); });
-    expect(result.current).toBe('below');
-  });
-});
-
-describe('useReaderRows', () => {
-  it('measures the beside column against the plate and the row against the window', () => {
-    // Unmeasured — jsdom lays nothing out, and the plate is honestly 0 — so
-    // both placements answer with the number the reader has always opened at.
-    const beside = renderHook(() => useReaderRows('beside', 0));
-    expect(beside.result.current).toBe(READER_VISIBLE_ROWS);
-    const below = renderHook(() => useReaderRows('below', 0));
-    expect(below.result.current).toBe(18);
-
-    // A real spore dossier's plate, the one M5 measured at ~910 px. Beside it
-    // the reader fills the plate; under it there is nothing left of an 1,100 px
-    // window and the floor is what the fallback settles at.
-    const tall = renderHook(() => useReaderRows('beside', 910));
-    expect(tall.result.current).toBe(
-      readerBesideRows(910, READER_CHROME_PX, READER_ROW_HEIGHT_PX),
-    );
-    expect(tall.result.current).toBeGreaterThan(READER_VISIBLE_ROWS);
-
-    act(() => { resizeWindow(1600, 1100); });
-    const cramped = renderHook(() => useReaderRows('below', 910));
-    expect(cramped.result.current).toBe(READER_MIN_VISIBLE_ROWS);
-  });
-
-  it('re-reads the window when it is resized, and only then', () => {
-    const { result } = renderHook(() => useReaderRows('below', 0));
-    expect(result.current).toBe(18);
-
-    act(() => { resizeWindow(1024, 4000); });
-    expect(result.current).toBe(READER_VISIBLE_ROWS);
-
-    act(() => { resizeWindow(1024, 600); });
-    expect(result.current).toBe(READER_MIN_VISIBLE_ROWS);
   });
 });

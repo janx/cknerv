@@ -50,22 +50,24 @@ import CellDetailPanel, {
   cellScanFactAccent,
   type CellInspectionFacet,
 } from '../../../src/components/hud/CellDetailPanel';
-import {
-  READER_BESIDE_CARD_PX,
-  READER_COLUMN_PX,
-} from '../../../src/derives/cellDataReader.derive';
+import { READER_WIDTH_PX } from '../../../src/components/hud/CellDataReader';
 import { HUD_COLORS, HUD_TYPE } from '../../../src/components/hud/hudTheme';
 
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
   vi.unstubAllGlobals();
-  // jsdom's own window, restored: the reader's placement is read off
-  // `innerWidth`, so a test that widened the window to earn the beside column
-  // would otherwise hand the next one a card it never asked for.
+  // jsdom's own window, restored: a test that resizes it to check the card's
+  // clamp would otherwise hand the next one a viewport it never asked for.
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 });
   Object.defineProperty(window, 'innerHeight', { configurable: true, value: 768 });
 });
+
+/** The notch CKBYTES reaches past the CELL SCAN square, and the card it makes.
+ *  Derived from the reader's own width exactly as the panel derives it, so a
+ *  change to the dump's measure moves this file's expectations with it. */
+const READER_NOTCH_PX = READER_WIDTH_PX - 280 - CARD_SEAM_PX;
+const READER_CARD_PX = CARD_WIDTH_PX + CARD_SEAM_PX + READER_NOTCH_PX;
 
 const base: Cell = {
   id: 4242, born_at_ms: 0, death_at_ms: null, birth_block: 16204800,
@@ -247,10 +249,19 @@ describe('CellDetailPanel', () => {
     // TRACE window and only joins once a recall arms it.
     expect(t).toContain('SCAN·01');
     expect(t).not.toContain('SCAN·02');
-    expect(t).not.toContain('SCAN·03');
+    // …and SCAN·03 is CKBYTES, which stands for every Cell that holds a byte.
+    // This one holds eleven, so it is on the card from the first frame with
+    // nobody having asked for it.
+    expect(t).toContain('SCAN·03');
+    expect(t).toContain('CKBYTES');
+    expect(t).toContain('字节元');
     expect(t).not.toContain('CELL CONTENT');
-    expect(t).toContain('DIRECT NODE · RAW');
-    expect(t).toContain('DEADBEEFCAFE1234567890');
+    // Nothing this card says about bytes is said twice: the DATA cluster's own
+    // window renders nothing at all for a Cell no index answered for, so
+    // `DIRECT NODE · RAW` and its 32-byte grid are gone, and the payload is in
+    // the reader — at an offset, with its ASCII beside it.
+    expect(t).not.toContain('DIRECT NODE');
+    expect(t).toContain('00000DEADBEEFCAFE1234567890');
     expect(t).not.toContain('WRITE OBSERVED');
     expect(t).not.toContain('MEMORY TRACE');   // no observed origin write
     const root = container.firstElementChild as HTMLElement;
@@ -267,9 +278,17 @@ describe('CellDetailPanel', () => {
     // 728 = 440 analysis column + 8 seam + 280 scan column — one geometry for
     // every fan side and for bare and enriched Cells alike. No header row:
     // the dossier plate carries the masthead itself.
-    expect(root.style.width).toBe('728px');
-    expect(root.style.gridTemplateColumns).toBe('minmax(0, 1fr) 280px');
-    expect(root.style.gridTemplateAreas).toBe('"analysis scan"');
+    // 856 = 440 analysis + 8 seam + the 280 scan column + 8 + the 120 notch
+    // CKBYTES reaches past it. One geometry for every fan side and for bare
+    // and enriched Cells alike; a Cell with no bytes gets the 728 two-column
+    // card instead, which is the only other shape this card has. No header
+    // row: the dossier plate carries the masthead itself.
+    expect(root.style.width).toBe(`${READER_CARD_PX}px`);
+    expect(root.style.gridTemplateColumns)
+      .toBe(`minmax(0, 1fr) 280px ${READER_NOTCH_PX}px`);
+    expect(root.style.gridTemplateAreas)
+      .toBe('"analysis scan ." "analysis reader reader"');
+    expect(root.style.gridTemplateRows).toBe('280px minmax(0, 1fr)');
     expect(root.style.columnGap).toBe('8px');
     expect(root.style.rowGap).toBe('8px');
     expect(container.querySelector('[data-testid="cell-nucleus-portrait"]')).not.toBeNull();
@@ -292,9 +311,9 @@ describe('CellDetailPanel', () => {
     expect(cellularBeam.style.transition).toContain('transform 80ms linear');
     expect(cellularBeam.style.transition).not.toContain('left 80ms linear');
     expect(container.querySelector('[aria-label="Interactive Cell scan"]')).not.toBeNull();
-    // analysis / specimen — the trace satellite appends later. The identity
-    // satellite is gone: it lives inside the analysis plate now.
-    expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(2);
+    // analysis / specimen / CKBYTES — the trace satellite appends later. The
+    // identity satellite is gone: it lives inside the analysis plate now.
+    expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(3);
     expect(container.querySelector('[data-cell-inspection-satellite="identity"]'))
       .toBeNull();
     // The masthead leads the card: title, then close, then the scan square.
@@ -364,20 +383,26 @@ describe('CellDetailPanel', () => {
       .style.minHeight).toBe('');
     // Bare mode: no byte budget without a validated knowledge breakdown.
     expect(container.querySelector('[data-cell-byte-budget]')).toBeNull();
-    // The bytes zone still carries the direct content memory.
+    // The bytes zone still carries the DATA fact — but no window under it: an
+    // unindexed Cell has nothing to read, and its bytes are read in CKBYTES.
     const bytesZone = container.querySelector('[data-cell-analysis-bytes="true"]') as HTMLElement;
     expect(bytesZone).not.toBeNull();
     expect(analysis.contains(bytesZone)).toBe(true);
-    const memoryContent = container.querySelector(
-      '[data-cell-content-memory-mode="direct"]',
+    expect(container.querySelector('[data-cell-content-memory]')).toBeNull();
+    expect(container.querySelectorAll('[data-cell-content-byte]')).toHaveLength(0);
+
+    // CKBYTES: its own plate, under the square, spanning the square's column
+    // and the notch beside it, and it never grows the card downward.
+    const reader = container.querySelector(
+      '[data-cell-inspection-satellite="reader"]',
     ) as HTMLElement;
-    expect(memoryContent).not.toBeNull();
-    expect(bytesZone.contains(memoryContent)).toBe(true);
-    expect(memoryContent.getAttribute('aria-label')).toBe('Consensus memory content');
-    expect(memoryContent.style.borderLeft).toBe('');
-    expect(memoryContent.style.background).toBe('');
-    expect(container.querySelector('[data-cell-content-byte-origin="direct"]')).not.toBeNull();
-    expect(container.querySelectorAll('[data-cell-content-byte]')).toHaveLength(11);
+    expect(reader.getAttribute('aria-label')).toBe('CKBytes reader');
+    expect(reader.style.gridArea).toBe('reader');
+    expect(reader.style.alignSelf).toBe('stretch');
+    expect(reader.style.minHeight).toBe('0');
+    expect(analysis.contains(reader)).toBe(false);
+    expect(reader.querySelector('[data-cell-data-reader]')
+      ?.getAttribute('data-cell-data-reader-rows')).toBe('1');
     expect(root.style.height).toBe('');
     expect(analysis.style.height).toBe('');
     // Hand the real clock back: the tests below this one drive their own.
@@ -613,11 +638,11 @@ describe('CellDetailPanel', () => {
     expect(container.querySelector('[data-cell-semantics-phase="error"]')).not.toBeNull();
   });
 
-  it('opens the reader on every retained byte', () => {
-    // The window used to page — `‹ W 1/2 ›`, thirty-two bytes at a time — and
-    // the pager could only ever walk the bytes the browser happened to hold.
-    // Now the window is a fixed preview with a door, and the door opens a row
-    // under the card that gives every byte the Cell has an offset and a line.
+  it('stands CKBYTES under the scan square for every Cell that holds a byte', () => {
+    // The user's direction of 2026-09-05: 「hex reader 应该总是展示，可以把窗口
+    // 放在 cell scan 下方合适位置」. There is no door and no click — the reader
+    // is a zone of the card, mounted from the first frame, and the only Cells
+    // without one are the Cells with nothing to read.
     const fetched = vi.fn();
     vi.stubGlobal('fetch', fetched);
     const performanceNow = vi.spyOn(performance, 'now').mockReturnValue(0);
@@ -634,38 +659,12 @@ describe('CellDetailPanel', () => {
       <CellDetailPanel cell={cell} onClose={() => {}} />,
     );
 
-    // Two 16-byte hex rows, and only ever those two, in the fixed-width data
-    // column: the preview does not move and cannot be stepped.
-    const byteGrid = container.querySelector(
-      '[data-cell-content-bytes="true"]',
-    ) as HTMLElement;
-    expect(byteGrid.style.gridTemplateColumns).toBe('repeat(16, minmax(0, 1fr))');
-    expect(container.querySelectorAll('[data-cell-content-byte]')).toHaveLength(32);
-    expect(container.querySelector('[data-cell-content-byte="0"]')?.textContent)
-      .toBe('00');
-    expect(container.textContent).not.toContain('W 1/2');
-    expect(container.querySelector('[aria-label="next raw byte window"]'))
-      .toBeNull();
-
-    // The door says the size of what is behind it, and — like every control on
-    // this window — waits for the walk to reach the line it stands on.
-    const door = () => container.querySelector(
-      '[data-cell-content-read-all]',
-    ) as HTMLButtonElement;
-    expect(door().textContent).toBe('READ ALL · 40 B');
-    expect(door().disabled).toBe(true);
-    fireEvent.click(door());
-    expect(container.querySelector('[data-cell-inspection-satellite="reader"]'))
-      .toBeNull();
-
-    settleScan(performanceNow);
-    expect(door().disabled).toBe(false);
-    fireEvent.click(door());
-
     const reader = container.querySelector(
       '[data-cell-inspection-satellite="reader"]',
     ) as HTMLElement;
     expect(reader).not.toBeNull();
+    expect(reader.getAttribute('aria-label')).toBe('CKBytes reader');
+    expect(reader.getAttribute('data-cell-detail-module')).toBe('reader');
     const dump = reader.querySelector('[data-cell-data-reader]') as HTMLElement;
     // 40 bytes is three 16-byte rows, counted from the CHAIN's `data_bytes`.
     expect(dump.dataset.cellDataReaderRows).toBe('3');
@@ -673,97 +672,100 @@ describe('CellDetailPanel', () => {
     expect(dump.dataset.cellDataReaderPhase).toBe('held');
     expect(fetched).not.toHaveBeenCalled();
 
-    // A full-width row under both columns — the MEMORY TRACE's own shape —
-    // and the columns above it are the two they always were.
-    const card = container.querySelector(
-      '[data-cell-detail-scan-field="true"]',
-    ) as HTMLElement;
-    expect(card.style.gridTemplateAreas).toContain('"reader reader"');
-    expect(card.style.gridTemplateAreas).toContain('"analysis scan"');
+    // The door and the preview it opened from are both gone: the DATA cluster
+    // prints no byte at all now.
+    expect(container.querySelector('[data-cell-content-read-all]')).toBeNull();
+    expect(container.querySelector('[data-cell-content-bytes]')).toBeNull();
+    expect(container.querySelectorAll('[data-cell-content-byte]')).toHaveLength(0);
+    expect(container.querySelector('[data-cell-content-ascii]')).toBeNull();
+    expect(container.querySelector('[data-cell-content-raw]')).toBeNull();
+    expect(container.textContent).not.toContain('W 1/2');
 
-    // Re-rendering the same subject is not a second opening.
+    // As tall as the plate, exactly: the dump's height is a whole number of
+    // 13.5 px rows and the plate's is not, so the section stretches to the row
+    // and its bottom padding absorbs the remainder.
+    expect(reader.style.alignSelf).toBe('stretch');
+    expect(reader.style.minHeight).toBe('0');
+    expect(reader.style.overflow).toBe('hidden');
+
+    // Re-rendering the same subject is not a second reader, and a new subject
+    // is not a second one either — the `key` is the Cell.
     rerender(<CellDetailPanel cell={cell} onClose={() => {}} />);
     expect(container.querySelectorAll('[data-cell-inspection-satellite="reader"]'))
       .toHaveLength(1);
-    expect(fetched).not.toHaveBeenCalled();
-
-    // A reader is open ON A CELL. Another Cell arrives with none — by
-    // construction, not by an effect that runs a frame after the swap.
     rerender(
       <CellDetailPanel cell={{ ...cell, id: 4243 }} onClose={() => {}} />,
     );
-    expect(container.querySelector('[data-cell-inspection-satellite="reader"]'))
-      .toBeNull();
-    expect(container.querySelector('[data-cell-detail-scan-field="true"]')
-      ?.getAttribute('style')).not.toContain('reader reader');
+    expect(container.querySelectorAll('[data-cell-inspection-satellite="reader"]'))
+      .toHaveLength(1);
+    expect(fetched).not.toHaveBeenCalled();
     performanceNow.mockRestore();
   });
 
-  it('stands the reader beside the plate on a window wide enough for it', () => {
-    // The user's ruling of 2026-09-05, after M5 measured the row: with the
-    // reader open under the card the card stood 1,348 px tall in the app's own
-    // 1600×1100 window — the analysis plate of a full spore dossier is ~910 px
-    // on its own — so the row began at the fold and nothing on the page
-    // scrolls. Beside the plate the card grows sideways instead, and the
-    // reader is bounded by the plate it stands next to.
+  it('gives the card a notch for the reader, and mirrors it with the columns', () => {
+    // R2-6: the reader is 408 px and the square it stands under is 280, so it
+    // reaches 120 px past the square toward the Cell. That overhang is a track
+    // of the grid with no element in it — the `.` — so nothing paints there and
+    // a click up in the notch is a click on the scene.
     const performanceNow = vi.spyOn(performance, 'now').mockReturnValue(0);
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1600 });
-    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 1100 });
-
     const props = { cell: base, onClose: () => {} };
     const { container, rerender } = render(<CellDetailPanel {...props} />);
-    settleScan(performanceNow);
-    fireEvent.click(container.querySelector(
-      '[data-cell-content-read-all]',
-    ) as HTMLButtonElement);
 
     const card = () => container.querySelector(
       '[data-cell-detail-scan-field="true"]',
     ) as HTMLElement;
-    const readerSection = () => container.querySelector(
-      '[data-cell-inspection-satellite="reader"]',
-    ) as HTMLElement;
 
-    // Three columns, and the reader takes the side AWAY from the specimen: the
-    // scan square keeps the edge nearest the Cell it is about, which is the
-    // rule that already mirrors these columns.
     expect(card().getAttribute('data-cell-detail-layout')).toBe('left');
-    expect(card().style.gridTemplateAreas).toBe('"reader analysis scan"');
+    expect(card().style.gridTemplateAreas)
+      .toBe('"analysis scan ." "analysis reader reader"');
     expect(card().style.gridTemplateColumns)
-      .toBe(`${READER_COLUMN_PX}px minmax(0, 1fr) 280px`);
-    expect(card().style.gridTemplateColumns.startsWith('660px')).toBe(true);
-    // 728 + 8 + 660 — and the analysis plate still measures the 440 it always
-    // did, because the columns around it are both fixed tracks.
-    expect(card().style.width).toBe(`${READER_BESIDE_CARD_PX}px`);
-    expect(card().style.width).toBe('1396px');
-    expect(readerSection().dataset.cellDataReaderPlacement).toBe('beside');
-    // As tall as the plate, exactly: the dump's height is a whole number of
-    // 13.5 px rows and the plate's is not, so the section stretches to the
-    // row and its bottom padding absorbs the remainder.
-    expect(readerSection().style.alignSelf).toBe('stretch');
-    expect(readerSection().style.minHeight).toBe('0');
+      .toBe(`minmax(0, 1fr) 280px ${READER_NOTCH_PX}px`);
+    expect(card().style.gridTemplateColumns.endsWith('120px')).toBe(true);
+    // Row 1 is the square exactly; row 2 is what the analysis plate leaves.
+    expect(card().style.gridTemplateRows).toBe('280px minmax(0, 1fr)');
+    // 728 + 8 + 120 — and the analysis plate still measures the 440 it always
+    // did, because the tracks around it are both fixed.
+    expect(card().style.width).toBe(`${READER_CARD_PX}px`);
+    expect(card().style.width).toBe('856px');
+    expect(READER_WIDTH_PX).toBe(408);
 
-    // Mirroring the card mirrors the reader with it — still the far side.
+    // Mirroring the card mirrors the whole L: the specimen square keeps the
+    // edge nearest the Cell it is about, and the notch stays on the far side
+    // of it.
     rerender(<CellDetailPanel {...props} layoutSide="right" />);
-    expect(card().style.gridTemplateAreas).toBe('"scan analysis reader"');
+    expect(card().style.gridTemplateAreas)
+      .toBe('". scan analysis" "reader reader analysis"');
     expect(card().style.gridTemplateColumns)
-      .toBe(`280px minmax(0, 1fr) ${READER_COLUMN_PX}px`);
-
-    // And a window too narrow for the column gets the row it always had.
-    act(() => {
-      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 });
-      window.dispatchEvent(new Event('resize'));
-    });
-    expect(card().style.gridTemplateAreas).toContain('"reader reader"');
-    expect(card().style.width).toBe('728px');
-    expect(readerSection().dataset.cellDataReaderPlacement).toBe('below');
-    expect(readerSection().style.alignSelf).toBe('');
+      .toBe(`${READER_NOTCH_PX}px 280px minmax(0, 1fr)`);
+    expect(card().style.gridTemplateRows).toBe('280px minmax(0, 1fr)');
+    expect(card().style.width).toBe('856px');
     performanceNow.mockRestore();
+  });
+
+  it('gives an empty Cell no reader, and the two-column card it always had', () => {
+    // R2-2. The DATA fact directly above the window already reads `Empty`, and
+    // a 408 px plate saying so a second time is the card restating an absence
+    // in a frame. `data_bytes` is what decides — never `data_hex !== '0x'`.
+    const { container } = render(
+      <CellDetailPanel
+        cell={{ ...base, data_hex: '0x', data_bytes: 0 }}
+        onClose={() => {}}
+      />,
+    );
+    const card = container.querySelector(
+      '[data-cell-detail-scan-field="true"]',
+    ) as HTMLElement;
+    expect(container.querySelector('[data-cell-inspection-satellite="reader"]'))
+      .toBeNull();
+    expect(card.style.gridTemplateAreas).toBe('"analysis scan"');
+    expect(card.style.gridTemplateColumns).toBe('minmax(0, 1fr) 280px');
+    expect(card.style.gridTemplateRows).toBe('');
+    expect(card.style.width).toBe(`${CARD_WIDTH_PX}px`);
+    expect(card.style.width).toBe('728px');
   });
 
   it('spans the armed memory trace across the card the reader widened', () => {
     const performanceNow = vi.spyOn(performance, 'now').mockReturnValue(0);
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1600 });
     const origin: CellLink = {
       seq: 18,
       tx_hash: base.out_point.tx_hash,
@@ -786,29 +788,117 @@ describe('CellDetailPanel', () => {
       />,
     );
     settleScan(performanceNow);
-    fireEvent.click(container.querySelector(
-      '[data-cell-content-read-all]',
-    ) as HTMLButtonElement);
 
-    // The trace row is still the card's full width — which is three columns
+    // The trace row is still the card's full width — which is three tracks
     // now, not two. A row that still said `"trace trace"` would leave the
-    // reader's column standing over an implicit fourth track.
+    // notch standing over an implicit fourth track.
     expect((container.firstElementChild as HTMLElement).style.gridTemplateAreas)
-      .toBe('"reader analysis scan" "trace trace trace"');
+      .toBe('"analysis scan ." "analysis reader reader" "trace trace trace"');
+    // …and the trace row sizes itself, where the reader's row takes the
+    // plate's remainder.
+    expect((container.firstElementChild as HTMLElement).style.gridTemplateRows)
+      .toBe('280px minmax(0, 1fr) auto');
     expect(container.querySelector('[data-cell-detail-module="trace"]'))
       .not.toBeNull();
     performanceNow.mockRestore();
   });
 
-  it('states the card measure the reader\'s own arithmetic was written against', () => {
-    // `cellDataReader.derive.ts` restates 728 + 8 rather than importing this
-    // module — a pure derive may not drag a 2,400-line React panel behind it —
-    // so the two statements are pinned against each other here, where both are
-    // in scope.
-    expect(CARD_WIDTH_PX + CARD_SEAM_PX + READER_COLUMN_PX)
-      .toBe(READER_BESIDE_CARD_PX);
+  it('states the card measures the reader\'s own arithmetic was written against', () => {
+    // Three numbers that are one arithmetic: the reader's width, the notch it
+    // reaches past the square, and the card that holds both. The panel derives
+    // the last two from the first, and this is where a change to any of them
+    // has to be restated on purpose.
     expect(CARD_WIDTH_PX).toBe(728);
     expect(CARD_SEAM_PX).toBe(8);
+    expect(READER_WIDTH_PX).toBe(408);
+    expect(READER_NOTCH_PX).toBe(120);
+    expect(READER_CARD_PX).toBe(856);
+    expect(280 + CARD_SEAM_PX + READER_NOTCH_PX).toBe(READER_WIDTH_PX);
+  });
+
+  it('sends the reader to the segment a DATA row was pressed on, and back', () => {
+    // The whole link between the two surfaces: the cluster lists the segments,
+    // a press points the reader at one, and a byte click down there takes the
+    // point away.
+    const performanceNow = vi.spyOn(performance, 'now').mockReturnValue(0);
+    // A kilobyte, which is 64 rows against the 24 the unmeasured plate mounts:
+    // enough that a segment deep in the payload is genuinely off screen and the
+    // hand-off has to scroll to reach it.
+    const data = `0x7b2261223a317d${'00'.repeat(1017)}`;
+    const { container } = render(
+      <CellDetailPanel
+        cell={{ ...base, data_hex: data, data_bytes: 1024 }}
+        onClose={() => {}}
+        semanticSource={{
+          source: 'ckbadger',
+          status: 'ready',
+          capabilities: ['cell_detail'],
+          lag_blocks: 0,
+        }}
+        semanticPhase="ready"
+        semanticRecord={{
+          out_point: base.out_point,
+          source: 'ckbadger',
+          as_of: { block: base.birth_block, hash: '0xanchor' },
+          observed_at_block: base.birth_block,
+          updated_at_ms: 1,
+          content: {
+            data_hex: data,
+            total_bytes: 1024,
+            data_complete: true,
+            deterministic: {
+              kind: 'json_document',
+              summary: 'UTF-8 JSON object decoded from Cell data',
+              segments: [
+                {
+                  start_byte: 0,
+                  end_byte: 1,
+                  label: 'object_start',
+                  value: '{',
+                  meaning: 'JSON object opening delimiter',
+                },
+                {
+                  start_byte: 320,
+                  end_byte: 336,
+                  label: 'extension_payload',
+                  value: '0x00…',
+                  meaning: 'xUDT extension data',
+                },
+              ],
+            },
+            heuristics: [],
+          },
+          facets: [],
+        } as unknown as CellSemanticRecord}
+      />,
+    );
+    settleScan(performanceNow);
+
+    const reader = () => container.querySelector(
+      '[data-cell-data-reader]',
+    ) as HTMLElement;
+    const row = (index: number) => container.querySelector(
+      `[data-cell-content-segment="${index}"]`,
+    ) as HTMLButtonElement;
+    expect(reader().dataset.cellDataReaderSelection).toBeUndefined();
+
+    expect(reader().dataset.cellDataReaderFirstRow).toBe('0');
+    fireEvent.click(row(1));
+    // The reader takes the range and scrolls the segment's first row to the
+    // top: byte 320 is row 20, and the virtualiser mounts from eight rows of
+    // overscan above it.
+    expect(reader().dataset.cellDataReaderSelection).toBe('320:336');
+    expect(reader().dataset.cellDataReaderFirstRow).toBe('12');
+    expect(row(1).getAttribute('aria-pressed')).toBe('true');
+
+    // A byte click in the dump is the reader's own gesture and outranks the
+    // row's: whatever was pressed up there is no longer what is pointed at.
+    fireEvent.click(container.querySelector(
+      '[data-cell-data-reader-byte="321"]',
+    ) as HTMLElement);
+    expect(row(1).getAttribute('aria-pressed')).toBe('false');
+    expect(reader().dataset.cellDataReaderSelection).toBe('321:322');
+    performanceNow.mockRestore();
   });
 
   it('keeps scan and memory in one merged analysis window', () => {
@@ -848,12 +938,14 @@ describe('CellDetailPanel', () => {
     ) as HTMLElement;
 
     expect(root.style.height).toBe('');
-    // An above/below fan mirrors the same two columns — the specimen square
-    // leads, nearest the inspected Cell.
+    // An above/below fan mirrors the whole L — the specimen square leads,
+    // nearest the inspected Cell, and CKBYTES' notch leads it.
     expect(root.getAttribute('data-cell-detail-layout')).toBe('vertical');
-    expect(root.style.width).toBe('728px');
-    expect(root.style.gridTemplateColumns).toBe('280px minmax(0, 1fr)');
-    expect(root.style.gridTemplateAreas).toBe('"scan analysis"');
+    expect(root.style.width).toBe(`${READER_CARD_PX}px`);
+    expect(root.style.gridTemplateColumns)
+      .toBe(`${READER_NOTCH_PX}px 280px minmax(0, 1fr)`);
+    expect(root.style.gridTemplateAreas)
+      .toBe('". scan analysis" "reader reader analysis"');
     expect(portrait.style.gridArea).toBe('scan');
     expect(portrait.style.width).toBe('280px');
     expect(portrait.style.justifySelf).toBe('');
@@ -865,9 +957,11 @@ describe('CellDetailPanel', () => {
     expect(analysis.style.height).toBe('');
     expect(container.querySelector('[data-cell-semantics-phase="loading"]'))
       .not.toBeNull();
-    expect(container.querySelector('[data-cell-content-memory-mode="indexed"]'))
-      .not.toBeNull();
-    expect(container.textContent).toContain('INDEX ANALYSIS · RESOLVING');
+    expect(container.querySelector('[data-cell-content-memory]')).not.toBeNull();
+    // The window states no size and no source of its own: the DATA fact above
+    // it says how many bytes there are, and CKBYTES under the square says
+    // where they came from. What is left here is the reading.
+    expect(container.textContent).not.toContain('INDEX ANALYSIS');
     expect(container.textContent).toContain('RESOLVING INDEXED CONTENT ANALYSIS');
     expect(container.textContent).toContain('RESOLVING SELECTED CELL…');
     expect(container.querySelector('[data-cell-detail-module="context"]'))
@@ -1044,11 +1138,12 @@ describe('CellDetailPanel', () => {
       '[data-cell-inspection-satellite="analysis"]',
     ) as HTMLElement;
     const root = container.firstElementChild as HTMLElement;
-    expect(root.style.width).toBe('728px');
-    expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(2);
-    // Enrichment adds evidence, never geometry: the same 728 card, the same
-    // two columns, the same rectangular plate.
-    expect(root.style.gridTemplateColumns).toBe('minmax(0, 1fr) 280px');
+    expect(root.style.width).toBe(`${READER_CARD_PX}px`);
+    expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(3);
+    // Enrichment adds evidence, never geometry: the same card the eleven bytes
+    // already earned, the same tracks, the same rectangular plate.
+    expect(root.style.gridTemplateColumns)
+      .toBe(`minmax(0, 1fr) 280px ${READER_NOTCH_PX}px`);
     expect(analysis.style.gridTemplateColumns).toBe('minmax(0, 1fr)');
     expect(analysis.style.clipPath).toBe('polygon(0 0,calc(100% - 12px) 0,100% 12px,100% 100%,0 100%)');
 
@@ -1146,49 +1241,45 @@ describe('CellDetailPanel', () => {
     expect(analysis.textContent).not.toContain('KNOWLEDGE');
     expect(container.querySelectorAll('[data-byte-budget-composition="true"]')).toHaveLength(1);
 
-    // Content memory unchanged inside the DATA cluster.
+    // The DATA cluster is the READING now, and the whole of it: no status
+    // line, no byte grid, no ASCII, no door.
     const contentMemory = container.querySelector('[data-cell-content-memory="true"]');
-    expect(contentMemory?.getAttribute('data-cell-content-memory-mode')).toBe('indexed');
     expect(contentMemory?.getAttribute('data-cell-content-byte-origin')).toBe('indexed');
     expect(contentMemory?.getAttribute('data-cell-content-complete')).toBe('true');
-    expect(contentMemory?.textContent).toContain('INDEX ANALYSIS · DETERMINISTIC');
     expect(contentMemory?.textContent).toContain('123.45 NTT');
     expect(contentMemory?.textContent).toContain('DECODE · JSON DOCUMENT');
-    // Raw bytes and decoded analysis stack; arriving analysis never splits
-    // the content window into two columns.
-    expect((contentMemory?.querySelector('[data-cell-content-raw="true"]')
-      ?.parentElement as HTMLElement).style.gridTemplateColumns)
-      .toBe('minmax(0,1fr)');
     expect(contentMemory?.textContent).toContain('UTF-8 JSON object decoded from Cell data');
-    expect(contentMemory?.textContent).toContain('OBJECT START');
-    expect(contentMemory?.textContent).toContain('[0..1)');
-    expect(contentMemory?.textContent).toContain('JSON object opening delimiter');
     expect(contentMemory?.textContent).toContain('H1/1 · HIGH');
     expect(contentMemory?.textContent).toContain('application/json');
     expect(contentMemory?.textContent).toContain('ROLE 1/3');
     expect(contentMemory?.textContent).toContain('DAO · DEPOSIT');
-    expect(contentMemory?.querySelector('[data-cell-content-byte="0"]')?.textContent)
-      .toBe('7B');
-    // Segment stepping is a control, and controls belong to revealed rows.
+    expect(contentMemory?.textContent).not.toContain('INDEX ANALYSIS');
+    expect(contentMemory?.querySelector('[data-cell-content-raw]')).toBeNull();
+    expect(contentMemory?.querySelectorAll('[data-cell-content-byte]')).toHaveLength(0);
+    expect(contentMemory?.querySelector('[data-cell-content-ascii]')).toBeNull();
+    expect(contentMemory?.querySelector('[data-cell-content-read-all]')).toBeNull();
+
+    // Every segment the decode found is a row, from the first frame, in record
+    // order — no stepper, and nothing hidden behind one.
+    const segmentRows = contentMemory?.querySelectorAll('[data-cell-content-segment]');
+    expect(segmentRows).toHaveLength(3);
+    expect(segmentRows?.[0].textContent).toBe('OBJECT START[0..1) · 1 B{');
+    expect(segmentRows?.[1].textContent).toBe('DOCUMENT BODY[1..7) · 6 B"a":1}');
+    expect(segmentRows?.[2].getAttribute('data-cell-content-segment-range'))
+      .toBe('28:40');
+    expect(segmentRows?.[2].textContent).toContain('EXTENSION PAYLOAD');
+
+    // A row is a control, and controls belong to revealed rows. Pressing one
+    // points CKBYTES at the segment; nothing on this window moves.
     settleScan(performanceNow);
-    fireEvent.click(container.querySelector('[aria-label="next decoded segment"]')!);
-    expect(contentMemory?.textContent).toContain('DOCUMENT BODY');
-    expect(contentMemory?.textContent).toContain('[1..7)');
-    fireEvent.click(container.querySelector('[aria-label="next decoded segment"]')!);
-    expect(contentMemory?.textContent).toContain('EXTENSION PAYLOAD');
-    expect(contentMemory?.textContent).toContain('[28..40)');
-    // The 32-byte preview already holds byte 28, so stepping onto that segment
-    // points at bytes that are on screen and hands nothing over: no reader row
-    // appears, and the segment's own note stays off.
-    expect(contentMemory?.querySelector('[data-cell-content-byte="28"]')?.textContent)
-      .toBe('00');
-    expect(container.querySelector('[data-cell-inspection-satellite="reader"]'))
-      .toBeNull();
-    expect(contentMemory?.textContent)
-      .not.toContain('DECODE RANGE OUTSIDE THE PREVIEW');
-    // The door beside the summary reads the record's own total.
-    expect(contentMemory?.querySelector('[data-cell-content-read-all]')?.textContent)
-      .toBe('READ ALL · 40 B');
+    fireEvent.click(segmentRows![2]);
+    expect(segmentRows?.[2].getAttribute('aria-pressed')).toBe('true');
+    expect(segmentRows?.[0].getAttribute('aria-pressed')).toBe('false');
+    // …clamped to the CHAIN's own count. The record says its content runs to
+    // byte 40 and `Cell.data_bytes` says eleven, and the reader draws the
+    // Cell — so the range it takes is the part of the segment that exists.
+    expect(container.querySelector('[data-cell-data-reader]')
+      ?.getAttribute('data-cell-data-reader-selection')).toBe('10:11');
 
     // Provenance footer: the enrichment PROOF anchor chip relocated here;
     // CREATED stays collapsed while it just restates COMMIT.
@@ -1540,9 +1631,14 @@ describe('CellDetailPanel', () => {
     const text = container.textContent ?? '';
     expect(text).not.toContain('1024 B+');
     expect(text).not.toContain(' observed');
-    // The window still says exactly what it could see, and that it is a
-    // window: the honesty moved here, where the clipping actually happened.
-    expect(text).toContain('1,024 B+ OBSERVED');
+    expect(text).not.toContain('OBSERVED');
+    // What we could see, and that it is a window onto more: the honesty moved
+    // to CKBYTES' foot line, which is the surface that actually holds the
+    // prefix — and it states the CHAIN's count beside it rather than the
+    // window's, because the reader is asking the node for the rest.
+    expect(text).toContain('READING 6,947 B · 1,024 B HELD');
+    expect(container.querySelector('[data-cell-data-reader-foot]')
+      ?.getAttribute('data-cell-data-reader-foot-mode')).toBe('status');
   });
 
   it('fills the clipped Cell\'s ghost rows from the node, in place', async () => {
@@ -1585,15 +1681,8 @@ describe('CellDetailPanel', () => {
       />,
     );
     settleScan(performanceNow);
-    // The size is not known to the window — `data_hex` was cut and no record
-    // states the true length — so the door offers the reading without naming
-    // a count the window would be inventing.
-    const door = container.querySelector(
-      '[data-cell-content-read-all]',
-    ) as HTMLButtonElement;
-    expect(door.textContent).toBe('READ ALL');
-    fireEvent.click(door);
-
+    // No click anywhere: the reader is mounted with the card, and the request
+    // goes out at mount because the held prefix is shorter than the Cell.
     const reader = container.querySelector(
       '[data-cell-data-reader]',
     ) as HTMLElement;
@@ -1700,36 +1789,39 @@ describe('CellDetailPanel', () => {
     ) as HTMLElement;
     expect(analysis.getAttribute('data-cellular-scan-progress')).toBe('0');
     expect(analysis.getAttribute('data-cellular-scan-state')).toBe('scanning');
-    const content = container.querySelector('[data-cell-content-memory]') as HTMLElement;
-    expect(content.dataset.cellContentRevealCount).toBe('0');
-    // The window is there at full size from the first frame — the walk lights
-    // it, it never mounts it. Nothing below can be pushed down by a reveal.
-    expect(content.style.display).toBe('block');
-    const ascii = () => container.querySelector(
-      '[data-cell-content-reveal-item="ascii"]',
+    // CKBYTES is the zone this Cell stages, and it is a zone of the card: no
+    // index answered for it, so the DATA cluster's window renders nothing, and
+    // the bytes are read under the square.
+    const reader = container.querySelector(
+      '[data-cell-inspection-satellite="reader"]',
     ) as HTMLElement;
+    expect(container.querySelector('[data-cell-content-memory]')).toBeNull();
+    // The reader is there at final size from the first frame — the walk lights
+    // it, it never mounts it. Nothing on the card can be pushed by a reveal.
+    expect(reader.dataset.cellDataReaderRevealState).toBe('scanning');
+    expect(reader.style.alignSelf).toBe('stretch');
     const causal = () => container.querySelector(
       '[data-consensus-memory-reveal="causal"]',
     ) as HTMLElement;
-    expect(ascii().style.display).toBe('block');
-    expect(ascii().style.opacity).toBe('0.18');
-    expect(ascii().style.pointerEvents).toBe('none');
+    expect(reader.style.opacity).toBe('0.18');
+    expect(reader.style.pointerEvents).toBe('none');
+    expect(reader.getAttribute('aria-hidden')).toBe('true');
+    // …and its rows are already drawn behind the ghost: 11 bytes is one row,
+    // counted from the chain's own `data_bytes`.
+    expect(reader.querySelector('[data-cell-data-reader]')
+      ?.getAttribute('data-cell-data-reader-rows')).toBe('1');
     performanceNow.mockReturnValue(PROBE_STEP_S * 2.5 * 1000);
     act(() => {
       vi.advanceTimersByTime(80);
     });
     expect(container.textContent).toContain('CELL // #4242');
     expect(Number(analysis.getAttribute('data-cellular-scan-progress'))).toBeGreaterThan(0);
-    expect(Number(content.dataset.cellContentRevealCount)).toBeGreaterThan(0);
-    expect(Number(content.dataset.cellContentRevealCount)).toBeLessThan(
-      Number(content.dataset.cellContentRevealTotal),
-    );
-    expect((container.querySelector('[data-cell-content-reveal-item="bytes"]') as HTMLElement)
-      .style.opacity).toBe('1');
-    // Still ghosted: dark, inert, and holding its place.
-    expect(ascii().style.opacity).toBe('0.18');
-    expect(ascii().style.pointerEvents).toBe('none');
-    expect(ascii().getAttribute('aria-hidden')).toBe('true');
+    // Still ghosted at 2.5 steps: the reader lights with the DATA step, which
+    // is the last thing the memory walk does before the lattice locks — the
+    // rows above it name these bytes, so they may not arrive after them.
+    expect(reader.dataset.cellDataReaderRevealState).toBe('scanning');
+    expect(reader.style.opacity).toBe('0.18');
+    expect(reader.style.pointerEvents).toBe('none');
     // Mid-scan the causal lens is still resolving — and still laid out.
     expect(causal().style.display).toBe('block');
     expect(causal().style.opacity).toBe('0.18');
@@ -1740,7 +1832,7 @@ describe('CellDetailPanel', () => {
       vi.advanceTimersByTime(80);
     });
     expect(analysis.getAttribute('data-cellular-scan-state')).toBe('locked');
-    expect(content.dataset.cellContentRevealState).toBe('resolved');
+    expect(reader.dataset.cellDataReaderRevealState).toBe('resolved');
     const settledSpecimenScan = container.querySelector(
       '[data-cell-specimen-scan-light]',
     ) as HTMLElement;
@@ -1754,7 +1846,9 @@ describe('CellDetailPanel', () => {
     expect(causal().style.opacity).toBe('1');
     expect(causal().style.pointerEvents).toBe('auto');
     expect(causal().getAttribute('aria-hidden')).toBeNull();
-    expect(ascii().style.opacity).toBe('1');
+    expect(reader.style.opacity).toBe('1');
+    expect(reader.style.pointerEvents).toBe('auto');
+    expect(reader.getAttribute('aria-hidden')).toBeNull();
     performanceNow.mockRestore();
   });
 
@@ -1789,10 +1883,11 @@ describe('CellDetailPanel', () => {
       .join('\n');
   }
 
-  /** Every element the reveal stages, ghosted or lit. */
+  /** Every element the reveal stages, ghosted or lit — CKBYTES included, which
+   *  is a zone of the card now and stages like every other one. */
   function stagedRows(container: HTMLElement): HTMLElement[] {
     return Array.from(container.querySelectorAll(
-      '[data-cell-content-reveal-item],[data-consensus-memory-reveal],[data-cell-detail-field]',
+      '[data-cell-content-reveal-item],[data-consensus-memory-reveal],[data-cell-detail-field],[data-cell-data-reader-reveal-state]',
     )) as HTMLElement[];
   }
 
@@ -1836,30 +1931,35 @@ describe('CellDetailPanel', () => {
     const analysis = container.querySelector(
       '[data-cell-inspection-satellite="analysis"]',
     ) as HTMLElement;
-    const content = container.querySelector(
-      '[data-cell-content-memory]',
+    // No index answered for this Cell, so the DATA cluster's window renders
+    // nothing at all — its bytes are drawn by CKBYTES under the square, and a
+    // heading over nothing is not a window. What stages here is the reader.
+    expect(container.querySelector('[data-cell-content-memory]')).toBeNull();
+    const reader = container.querySelector(
+      '[data-cell-inspection-satellite="reader"]',
     ) as HTMLElement;
 
     // Everything the walk will light is standing there, dark and untouchable,
     // before the walk starts.
     expect(analysis.getAttribute('data-cellular-scan-state')).toBe('scanning');
-    expect(content.dataset.cellContentRevealCount).toBe('0');
+    expect(reader.dataset.cellDataReaderRevealState).toBe('scanning');
     const ghosted = stagedRows(container);
-    expect(ghosted.length).toBeGreaterThan(8);
+    expect(ghosted.length).toBeGreaterThan(5);
     for (const row of ghosted) {
       expect(row.style.display).not.toBe('none');
       expect(row.style.opacity).toBe('0.18');
       expect(row.style.pointerEvents).toBe('none');
     }
-    // The trace row is a grid row of the card, and it exists from the start.
+    // The card's grid is the L the reader makes with the square, from the
+    // first frame; the trace row appends to it and nothing else moves.
     expect(root.style.gridTemplateAreas)
-      .toBe('"analysis scan"');
+      .toBe('"analysis scan ." "analysis reader reader"');
 
     const frames = sweepReveal(root, performanceNow);
 
     // The reveal genuinely happened…
     expect(analysis.getAttribute('data-cellular-scan-state')).toBe('locked');
-    expect(content.dataset.cellContentRevealState).toBe('resolved');
+    expect(reader.dataset.cellDataReaderRevealState).toBe('resolved');
     for (const row of stagedRows(container)) {
       expect(row.style.opacity).toBe('1');
       expect(row.style.pointerEvents).not.toBe('none');
@@ -1992,9 +2092,11 @@ describe('CellDetailPanel', () => {
     expect(t).toContain('11 B');
     expect((container.firstElementChild as HTMLElement).style.animation).toBe('');
     // No walk, so no ghosts: reduced motion hands the whole card over at
-    // once, lit and live, with nothing waiting its turn.
+    // once, lit and live, with nothing waiting its turn. Six facts, the causal
+    // block and CKBYTES — the DATA cluster's window renders nothing for a Cell
+    // no index answered for.
     const rows = stagedRows(container);
-    expect(rows.length).toBeGreaterThan(8);
+    expect(rows.length).toBeGreaterThan(6);
     for (const row of rows) {
       expect(row.style.display).not.toBe('none');
       expect(row.style.opacity).toBe('1');
@@ -2352,7 +2454,10 @@ describe('CellDetailPanel', () => {
     expect(trace?.getAttribute('data-trace-stage')).toBe('reading');
     expect(container.querySelector('[data-cell-detail-module="trace"]')).not.toBeNull();
     expect(container.textContent).toContain('SCAN·02');
-    expect(container.textContent).not.toContain('SCAN·03');
+    // SCAN·03 is CKBYTES, and it stands for every Cell that holds a byte now —
+    // this one holds eleven, so it is on the card whether or not a trace is
+    // armed. The count-off is a fact about the plates, not about the recall.
+    expect(container.textContent).toContain('SCAN·03');
     expect(container.querySelector('[data-cell-detail-module="context"]')).toBeNull();
     expect(container.querySelector('[data-memory-read-state="reading"]')).not.toBeNull();
     expect(container.querySelectorAll('[data-memory-evidence]')).toHaveLength(2);
@@ -2406,11 +2511,13 @@ describe('CellDetailPanel', () => {
     // Arming appends a full-width row below the analysis plate — the column
     // never splits and the analysis plate's geometry does not move.
     expect((container.firstElementChild as HTMLElement).style.gridTemplateAreas)
-      .toBe('"analysis scan" "trace trace"');
+      .toBe('"analysis scan ." "analysis reader reader" "trace trace trace"');
     expect(trace.style.gridArea).toBe('trace');
     expect(analysis().style.cssText).toBe(restingAnalysisStyle);
     expect(trace).toBe(trace.parentElement?.lastElementChild);
-    expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(3);
+    // analysis / specimen / CKBYTES / trace — the reader has been there since
+    // the card opened, so arming adds exactly one plate.
+    expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(4);
   });
 
   // The witness-carried case: the ledger lists the carriers, so the inputs the

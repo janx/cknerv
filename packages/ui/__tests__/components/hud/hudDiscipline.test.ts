@@ -1104,9 +1104,11 @@ const CLIP_PATH_PROP = /clipPath:\s*([A-Za-z_$][\w$]*|['"`])/g;
  *  the whole classifier: an all-round `1px solid` rule, some padding, and no
  *  `background`. A meter track and a plate both have a ground; a rail-hung tag
  *  draws one edge; what is left is the outlined box that holds a word. */
-function boxedOutlines(): Array<{ name: string; block: boolean }> {
+function boxedOutlines(
+  sources: HudSource[] = domDialect(),
+): Array<{ name: string; block: boolean }> {
   const found: Array<{ name: string; block: boolean }> = [];
-  for (const source of domDialect()) {
+  for (const source of sources) {
     const text = code(source.text);
     const border = /border: `1px solid /g;
     let match = border.exec(text);
@@ -1175,17 +1177,27 @@ describe('one shape grammar', () => {
     //
     // Blocks are not chips and the classifier says so in the property that
     // actually distinguishes them: a chip is inline and sits beside the thing
-    // it qualifies, so the one outlined BLOCK in the overlay — the content
-    // window's `NO OUTPUT DATA` placeholder, which spans its column — declares
-    // `display: 'block'` and is sorted out rather than listed out.
+    // it qualifies, so an outlined BLOCK — a placeholder that spans its
+    // column — declares `display: 'block'` and is sorted out rather than
+    // listed out.
     const chips = boxedOutlines();
 
     // The pin, before the assertion: the sweep has to be shown reaching both
-    // the primitive it is protecting and the block it is supposed to exclude,
-    // or "no offenders" would be indistinguishable from "no population".
+    // the primitive it is protecting and a block it is supposed to exclude, or
+    // "no offenders" would be indistinguishable from "no population".
     expect(chips.filter((chip) => chip.name === SHAPE_SOURCE)).toHaveLength(1);
-    expect(chips.some((chip) => chip.name === 'CellContentMemory.tsx' && chip.block))
-      .toBe(true);
+    // The block half is shown against a SAMPLE rather than against a file,
+    // because the overlay has no outlined block in it any more: the last one
+    // was the content window's `NO OUTPUT DATA` placeholder, and that window
+    // stopped printing bytes on 2026-09-05 (CKBYTES reads them under the CELL
+    // SCAN square now). A classifier whose exclusion has no subject is a
+    // classifier nothing proves reaches one — so the subject is written here,
+    // where it cannot quietly disappear again.
+    const sample = boxedOutlines([{
+      name: 'sample.tsx',
+      text: "style={{ display: 'block', padding: '3px 5px', border: `1px solid ${rgba(HUD_COLORS.dim, 0.14)}` }}",
+    }]);
+    expect(sample).toEqual([{ name: 'sample.tsx', block: true }]);
 
     const offenders = chips
       .filter((chip) => chip.name !== SHAPE_SOURCE && !chip.block)
@@ -1468,14 +1480,24 @@ describe('a limit on what we saw is not a fault', () => {
     expect(budgetText).toContain('borderTop: partial ? `1px dashed');
     expect(budgetText).toContain('OBSERVED');
 
-    const memory = SOURCES.find((source) => source.name === 'CellContentMemory.tsx');
-    expect(memory, 'the content window moved — this oracle reads files off disk')
+    // The reading side moved on 2026-09-05: the DATA cluster prints no bytes
+    // and states no size, so the surface that says "we are holding a kilobyte
+    // of a seven-kilobyte Cell" is CKBYTES' foot line. Same ruling, same
+    // carriers — words and the ink a reading is written in, never a severity.
+    const reader = SOURCES.find((source) => source.name === 'CellDataReader.tsx');
+    expect(reader, 'the reader moved — this oracle reads files off disk')
       .toBeDefined();
-    const memoryText = code(memory?.text ?? '');
-    expect(memoryText).toContain(
-      'color: HUD_COLORS.ink, fontSize: HUD_TYPE.micro, whiteSpace: \'nowrap\' }}>\n              {byteCount(',
-    );
-    expect(memoryText).not.toContain('model.complete ? HUD_COLORS.nominal');
+    const readerText = code(reader?.text ?? '');
+    for (const severity of ['caution', 'warning', 'danger', 'crit']) {
+      expect(readerText, `the reader raises ${severity}`)
+        .not.toContain(`HUD_COLORS.${severity}`);
+    }
+    expect(readerText).toContain("say('READING ');");
+    expect(readerText).toContain('HELD');
+    // `nominal` survives in exactly one place, and it is not a partial read:
+    // `COMPLETE` is the one word on that line that IS a state.
+    expect(readerText.match(/HUD_COLORS\.nominal/g)).toHaveLength(1);
+    expect(readerText).toContain("say('COMPLETE', HUD_COLORS.nominal);");
   });
 });
 

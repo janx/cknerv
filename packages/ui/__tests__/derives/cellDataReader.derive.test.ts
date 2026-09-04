@@ -3,14 +3,10 @@ import type { SemanticContentSegment } from '@cknerv/types';
 import { QUALITATIVE_BUCKET_COLORS } from '../../src/components/hud/hudTheme';
 import { contentSegmentAtByte } from '../../src/derives/cellContentMemory.derive';
 import {
-  READER_BESIDE_CARD_PX,
-  READER_BESIDE_MAX_ROWS,
   READER_BYTES_PER_ROW,
-  READER_CARD_MARGIN_PX,
   READER_MAX_VISIBLE_ROWS,
   READER_MIN_VISIBLE_ROWS,
   READER_OVERSCAN_ROWS,
-  READER_VIEWPORT_ALLOWANCE_PX,
   READER_VISIBLE_ROWS,
   buildSegmentIndex,
   formatReaderInteger,
@@ -18,10 +14,7 @@ import {
   inspectSelection,
   readerByte,
   readerByteMapBands,
-  readerBelowRows,
-  readerBesideRows,
   readerKeyStep,
-  readerPlacement,
   readerRowWindow,
   readerRowsUnderScan,
   segmentColorSlots,
@@ -640,62 +633,3 @@ function rowsUnderScan(plateHeightPx: number): number {
     READER_ROW_HEIGHT_PX,
   );
 }
-
-describe('readerPlacement', () => {
-  it('gives the reader its own column exactly when the wider card fits', () => {
-    // The card is `min(1396, 100vw - 28)` wide, so the column fits when the
-    // window has 1,396 px left after its own margin — one pixel under that and
-    // the card would be squeezed by its `maxWidth` and the 660 column would
-    // start eating the analysis plate.
-    expect(READER_BESIDE_CARD_PX).toBe(1396);
-    expect(readerPlacement(1024)).toBe('below');
-    expect(readerPlacement(1423)).toBe('below');
-    expect(readerPlacement(1424)).toBe('beside');
-    expect(readerPlacement(1920)).toBe('beside');
-    expect(READER_BESIDE_CARD_PX + READER_CARD_MARGIN_PX).toBe(1424);
-  });
-
-  it('asks about whatever card it is handed, and answers nothing on a nonsense window', () => {
-    expect(readerPlacement(1024, 800)).toBe('beside');
-    expect(readerPlacement(Number.NaN)).toBe('below');
-  });
-});
-
-describe('readerBesideRows (M4c, on its way out)', () => {
-  it('is the same arithmetic with nothing above the reader', () => {
-    // "Beside" meant the reader started at the plate's top edge instead of
-    // under a 288 px square, which is `readerRowsUnderScan` with `above` = 0.
-    // Stated as a delegation rather than as a second copy, so the floor, the
-    // ceiling and the unmeasured-plate answer cannot disagree between the
-    // placement that is leaving and the one arriving. R2-b takes the panel off
-    // this and the function goes with the call.
-    for (const plate of [0, Number.NaN, 200, SPORE_PLATE_PX, 4000]) {
-      expect(readerBesideRows(plate, READER_CHROME_PX, READER_ROW_HEIGHT_PX))
-        .toBe(readerRowsUnderScan(plate, 0, READER_CHROME_PX, READER_ROW_HEIGHT_PX));
-    }
-    expect(READER_BESIDE_MAX_ROWS).toBe(READER_MAX_VISIBLE_ROWS);
-  });
-});
-
-describe('readerBelowRows', () => {
-  it('is the M5 finding as arithmetic', () => {
-    // 1,100 px of window, 910 of plate, the reader's chrome and the room the
-    // card never had: nothing is left, and the fallback settles at its floor
-    // instead of mounting 24 rows below the fold.
-    expect(readerBelowRows(1100, SPORE_PLATE_PX, READER_CHROME_PX, READER_ROW_HEIGHT_PX))
-      .toBe(READER_MIN_VISIBLE_ROWS);
-    // A window tall enough for a row under that plate gets one.
-    expect(readerBelowRows(1800, SPORE_PLATE_PX, READER_CHROME_PX, READER_ROW_HEIGHT_PX))
-      .toBe(READER_VISIBLE_ROWS);
-  });
-
-  it('falls back to the old allowance while the plate is unmeasured', () => {
-    expect(readerBelowRows(768, 0, READER_CHROME_PX, READER_ROW_HEIGHT_PX))
-      .toBe(Math.floor((768 - READER_VIEWPORT_ALLOWANCE_PX) / READER_ROW_HEIGHT_PX));
-    expect(readerBelowRows(768, 0, READER_CHROME_PX, READER_ROW_HEIGHT_PX)).toBe(18);
-    expect(readerBelowRows(4000, 0, READER_CHROME_PX, READER_ROW_HEIGHT_PX))
-      .toBe(READER_VISIBLE_ROWS);
-    expect(readerBelowRows(120, 0, READER_CHROME_PX, READER_ROW_HEIGHT_PX))
-      .toBe(READER_MIN_VISIBLE_ROWS);
-  });
-});
