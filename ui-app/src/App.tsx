@@ -64,6 +64,7 @@ import {
   HUD_COLORS,
   HUD_MOTION,
   HudOverlay,
+  useReducedMotion,
   deriveCellPopulationField,
   resolveCellDisplayLimit,
   useCellDisplayRuntime,
@@ -557,6 +558,12 @@ export default function App({
     typeof window !== 'undefined'
     && hasQuerySwitch(window.location.search, 'render-stats')
   ), []);
+  // The visitor's motion policy (D-11, `MOTION_POLICY` in `hudTheme.ts`). Two
+  // things in this file are props rather than frame loops and need the hook
+  // itself: drei's star drift and the orbit damping tail. Everything else on
+  // the stage reads the same answer out of `LIVE.time.reduced`, which this
+  // hook publishes.
+  const reducedMotion = useReducedMotion();
   // The drei starfield takes no render-callback props, so its GPU scope is
   // installed on the Points object it forwards: one timer query around the
   // draw while the opt-in render probe is on, a boolean gate otherwise. The
@@ -2261,6 +2268,11 @@ export default function App({
               inert otherwise. Mount once. */}
           <RenderStatsSampler forceEnabled={forceRenderStats} />
 
+          {/* The starfield's drift is AMBIENT — it has no cause and runs
+              because the scene is on screen — so it stops for a visitor who
+              asked for stillness (D-11). The stars stay: they are the depth
+              cue behind the whole composition, and removing them would be a
+              different picture rather than a stiller one. */}
           <Stars
             ref={starsRef}
             radius={400}
@@ -2269,7 +2281,7 @@ export default function App({
             factor={2}
             saturation={0}
             fade
-            speed={0.3}
+            speed={reducedMotion ? 0 : 0.3}
           />
 
           {/* CellGalaxy owns exact ledger-apply feedback only. The broad
@@ -2344,7 +2356,13 @@ export default function App({
           <OrbitControls
             ref={orbitControlsRef}
             enabled={!cellScanInteractionActive}
-            enableDamping
+            // The damping TAIL is motion the hand did not ask for: the camera
+            // keeps gliding for a second or two after the pointer lets go
+            // (~100–130 frames at 0.08). Under reduced motion the camera stops
+            // where the hand stopped — the drag itself is still a drag,
+            // because a gesture is the visitor's own motion and this policy is
+            // about the ones that are not (D-11).
+            enableDamping={!reducedMotion}
             dampingFactor={0.08}
             minDistance={4}
             maxDistance={400}

@@ -82,6 +82,15 @@ const ROOT_STYLE: CSSProperties = { position: 'fixed', inset: 0, zIndex: 15, poi
 // No blend mode, therefore — an `overlay` against a zero-alpha backdrop
 // resolves to the plain source-over already written here, and asking for one
 // costs the compositor an isolated full-viewport blending group per frame.
+//
+// ⭐ AND THEY STAY UNDER REDUCED MOTION (D-11, and `MOTION_POLICY` in
+// `hudTheme.ts`). This layer used to be removed for a visitor who asked for
+// stillness, which was the policy exactly inverted: it is a static gradient —
+// it does not move, it has never moved, and there is nothing in it to stop —
+// while twelve thousand cells kept spinning under it (report E, E-6).
+// Reduced motion is about MOTION. Texture is what the instrument is made of,
+// and taking it away turned the request into a different, quieter HUD nobody
+// asked for.
 const SCAN_STYLE: CSSProperties = { position: 'absolute', inset: 0, pointerEvents: 'none', background: `repeating-linear-gradient(0deg,${rgba(HUD_COLORS.heroInk, 0.035)} 0 1px,transparent 1px 3px)`, opacity: 0.5 };
 /** How far each rail stands off the page edge. One number: the two rails are
  *  one frame, and the collapse rule below measures the stage BETWEEN them. */
@@ -728,7 +737,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
       data-stream-phase={streamPhase ?? undefined}
       data-hud-boot={bootWaiting ? 'waiting' : bootCounting ? 'counting' : 'done'}
     >
-      {!reduced && <div style={SCAN_STYLE} />}
+      <div style={SCAN_STYLE} />
       {/* Chrome and safety surfaces are exempt from the ritual: a status
           strip, an alert, a frozen-stream banner and a backfill readout are
           how you find out something is wrong, and nothing that reports a

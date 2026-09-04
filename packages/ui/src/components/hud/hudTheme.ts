@@ -794,6 +794,53 @@ export const HUD_MOTION = {
 export const STALE_OPACITY = 0.68;
 export const COMPANION_OPACITY = 0.88;
 
+// ——— Reduced motion, which is a policy and was a courtesy ————————————————
+//
+// `prefers-reduced-motion` was honoured by whatever file happened to think of
+// it: thirteen HUD surfaces, the Jukebox chip, the boot count-off and the nine
+// guided scene files all stopped, and the STAGE did not — galaxy rotation,
+// births and withers, nerve growth and decay, block waves, couriers, cohort
+// mist and the star drift all ran, with `reducedMotion` scoring zero hits in
+// six of the scene's largest files (report E, E-6). Meanwhile the overlay
+// removed its STATIC SCAN LINES, which is the request inverted: a gradient
+// that has never moved was taken away while twelve thousand cells kept
+// spinning under it.
+//
+// Nothing in the UI claimed reduced motion, so this was not dishonest. It was
+// unstated, and a rule nobody wrote down is a rule each file decides again.
+// The user's D-11 settles it: the stage honours it too. Written here, beside
+// the alpha ladder, because this is where the HUD keeps the rules that are
+// about a reader rather than about a component.
+//
+//   DOM      No infinite loop. The breathe, the alarm flash, the specimen
+//            sweep, the attract EQ: every `infinite` animation is skipped.
+//            FADES ARE ALLOWED — a card that appears without a transition is
+//            a cut, which is harder to follow, not easier. TEXTURE STAYS:
+//            the scan lines, the grain, the graticule. None of it moves.
+//   STAGE    Rotation 0 — both planes, through `motionScale()` in
+//            `tweaks/liveTweaks.ts`. Ambient loops off: the star drift, the
+//            mist, anything running because the scene is on screen. An EVENT
+//            plays at its END STATE rather than at zero speed — a wave frozen
+//            halfway is a defect and a wave that never arrives is a lie — so
+//            a block reads as a one-frame flash and a lifecycle as its
+//            finished form. The camera stops where the hand stopped: a drag
+//            is the visitor's OWN motion and stays; the damping tail after it
+//            is not.
+//   NEVER    Colour, contrast, layout, density or content. A visitor who
+//            asked for stillness asked for stillness, not for a different,
+//            quieter instrument.
+//
+// The flag reaches the stage through `LIVE.time.reduced`, published by
+// `useReducedMotion`: a `useFrame` callback is not a component and cannot hold
+// a hook, and threading a boolean down the scene graph to reach a
+// `rotation.y +=` would be the noise the boot record already refused to carry.
+export const MOTION_POLICY = {
+  /** A DOM surface may fade; it may not loop. */
+  dom: { fades: true, infiniteLoops: false, texture: true },
+  /** The stage stops turning and stops drifting; an event shows its end. */
+  stage: { rotation: false, ambientLoops: false, eventsAtEndState: true, dampingTail: false },
+} as const;
+
 /** The optical correction every CJK COMPANION wears, and the reason it needs
  *  one.
  *

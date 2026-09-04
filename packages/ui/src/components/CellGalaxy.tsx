@@ -19,7 +19,7 @@ import {
   type SlotUploadPolicy,
 } from '../nerve/fabricSlots';
 import { galaxyFrame } from '../tweaks/galaxyFrame';
-import { LIVE } from '../tweaks/liveTweaks';
+import { LIVE, ambientElapsedSec, motionScale } from '../tweaks/liveTweaks';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
 import {
   resolveCellDisplayLimit,
@@ -716,7 +716,9 @@ function CkbNodeAnchor({
     const target = ckbNodeAnchorHaloTarget(selected, flashActive);
     intensityRef.current += (target - intensityRef.current) * Math.min(1, dt * 12);
 
-    const t = simClock.elapsedSec;
+    // The anchor halo's own envelope is ambience — it breathes because the
+    // scene is on screen — so it reads the ambient clock (D-11).
+    const t = ambientElapsedSec();
     haloMat.uniforms.uTime.value = t;
     // makeHaloMaterial already carries one subtle breathing envelope. Avoid
     // multiplying a second one here: the anchor should not pulse at rest.
@@ -2450,6 +2452,10 @@ function CellGalaxy({
       pointPixelRatio,
     );
     hybridMaterial.uniforms.uTime.value = now;
+    // The canopy's breath and the memory read's scan ride the AMBIENT clock —
+    // held at a fixed phase under reduced motion while the ramps above keep
+    // the real one and finish (D-11).
+    hybridMaterial.uniforms.uAmbientTime.value = ambientElapsedSec();
     hybridMaterial.uniforms.uViewportHeight.value = pointViewportHeight;
     hybridMaterial.uniforms.uPixelRatio.value = pointPixelRatio;
     hybridMaterial.uniforms.uMemoryMinPointPx.value = memorySignal.coreMinPx;
@@ -2532,8 +2538,14 @@ function CellGalaxy({
       cellGalaxyRotationScaleTarget(selectedCellIdRef.current),
       dt,
     );
+    // ⭐ `motionScale()` is the visitor's motion policy (D-11): the canopy's
+    // turn is AMBIENT — it has no cause, it runs because the scene is on
+    // screen — and it is the largest moving thing in the frame, so a stage
+    // that ignored reduced motion would be ignoring it loudly. Read per frame
+    // rather than through a prop: this callback is not a component.
     group.rotation.y += LIVE.galaxy.rotationRate
       * galaxyRotationScaleRef.current
+      * motionScale()
       * dt;
     groupRotationYRef.current = group.rotation.y;
     // Mirror to the shared frame so sibling layers (BlockDeliveryLayer) can

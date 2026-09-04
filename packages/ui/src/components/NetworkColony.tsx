@@ -55,7 +55,7 @@ import type { Group } from 'three';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { useCellGalaxyOptional } from '../hooks/cellGalaxyContext';
-import { LIVE } from '../tweaks/liveTweaks';
+import { LIVE, motionScale } from '../tweaks/liveTweaks';
 import { colonyFrame } from '../tweaks/colonyFrame';
 import type { NetworkTopology, Vec3 } from '../types';
 import type { ColonyFlood } from '../derives/networkFlood.derive';
@@ -180,8 +180,11 @@ function NetworkColony({
       networkColonyRotationScaleTarget(selectedId),
       dt,
     );
+    // The counter-rotation reads the same policy as the canopy it counters
+    // (D-11). Halving one of the two would be a shear nobody asked for.
     rotationGroup.rotation.y -= LIVE.galaxy.rotationRate
       * rotationScaleRef.current
+      * motionScale()
       * dt;
   });
   useFrame((_, deltaSeconds) => {

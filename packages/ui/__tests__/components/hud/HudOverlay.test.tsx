@@ -10,6 +10,7 @@ import {
   type BootPhaseId,
 } from '../../../src/boot/bootSequence';
 import { HUD_COLORS, HUD_MOTION, rgba } from '../../../src/components/hud/hudTheme';
+import { LIVE, publishReducedMotion } from '../../../src/tweaks/liveTweaks';
 import { REVEAL_GHOST_OPACITY } from '../../../src/components/hud/primitives';
 import type { StreamHealthChannels } from '../../../src/derives/streamHealth.derive';
 import type {
@@ -76,7 +77,7 @@ const BOOT_RECORD_PHASES: readonly Exclude<BootPhaseId, 'seeding'>[] = [
 const finishBootRecord = () => {
   for (const id of BOOT_RECORD_PHASES) completeBootPhase(id);
 };
-beforeEach(() => { resetBootSequenceForTest(); finishBootRecord(); });
+beforeEach(() => { resetBootSequenceForTest(); finishBootRecord(); publishReducedMotion(false); });
 
 // ——— Boot count-off helpers —————————————————————————————————
 /** One module's beat of the boot count-off — a rung of the motion ladder
@@ -342,6 +343,30 @@ describe('HudOverlay', () => {
     tick(BOOT_BEAT_MS);
     expect(daoRoot.dataset.hudBoot).toBe('done');
     expect(wrapper(withDao, 'dao').style.opacity).toBe('1');
+  });
+
+  it('keeps its texture under reduced motion, and publishes the policy', () => {
+    // ⭐ THE REQUEST, INVERTED. The overlay used to REMOVE the scan-line layer
+    // for a visitor who asked for stillness — a static gradient, which has
+    // never moved and has nothing in it to stop — while twelve thousand cells
+    // kept spinning under it (report E, E-6). The user's D-11 settles it: the
+    // stage honours the request and the texture stays.
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('prefers-reduced-motion'),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    const { container } = render(
+      <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
+    );
+    const scan = Array.from(container.querySelectorAll<HTMLElement>('div'))
+      .filter((el) => el.style.background.includes('repeating-linear-gradient'));
+    expect(scan, 'the scan lines went with the motion').toHaveLength(1);
+    expect(scan[0].style.animation).toBe('');
+
+    // …and the stage heard about it, which is the half no DOM assertion can
+    // show: the loops out there are not components.
+    expect(LIVE.time.reduced).toBe(true);
   });
 
   it('holds the count-off until the galaxy lights, and never past the record', () => {

@@ -193,6 +193,10 @@ export type {
   PeerSightingState,
 } from './components/hud/PeerSightingPlate';
 export { usePeerInspectionRetention } from './hooks/usePeerInspectionRetention';
+// The app's own two motion decisions read it — drei's star drift and the
+// orbit damping tail are props, not frame loops, so they need the hook and
+// not `LIVE.time.reduced` (D-11, `MOTION_POLICY` in `hudTheme.ts`).
+export { useReducedMotion } from './components/hud/useReducedMotion';
 export {
   default as NodeInspectionOverlay,
   NodeInspectionAnchor,

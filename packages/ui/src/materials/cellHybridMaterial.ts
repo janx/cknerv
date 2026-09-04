@@ -137,6 +137,11 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
       uTime:            { value: 0 },
+      // The AMBIENT clock. Same seconds as `uTime` normally; held at a fixed
+      // phase for a visitor who asked for stillness, so the canopy's breath
+      // and the memory read's scan stop while every birth, wither and stage
+      // fade above keeps the real clock and finishes (D-11, `MOTION_POLICY`).
+      uAmbientTime:     { value: 0 },
       uBirthDurS:       { value: BIRTH_DURATION_MS / 1000 },
       uDeathDurS:       { value: DEATH_DURATION_MS / 1000 },
       // Stage windows read their constant directly: the dot and the flare
@@ -184,6 +189,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       attribute float aRecallState; // source travel / target witness resolution
 
       uniform float uTime;
+      uniform float uAmbientTime;
       uniform float uBirthDurS;
       uniform float uDeathDurS;
       uniform float uEnterDurS;
@@ -240,7 +246,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         // These values depend on the Cell and frame, never on gl_PointCoord.
         // Evaluate them once per Cell instead of once per covered fragment.
         float breathRate = 0.7 + 0.6 * hash11(vSeed + 7.7);
-        float breath = 1.0 + 0.08 * sin(uTime * breathRate + vSeed);
+        float breath = 1.0 + 0.08 * sin(uAmbientTime * breathRate + vSeed);
         float sigma = 0.10 * breath;
         vec3 ember = mix(
           aColor,
@@ -294,6 +300,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       precision highp float;
 
       uniform float uTime;
+      uniform float uAmbientTime;
       uniform float uMemoryLinePx;
       uniform float uMemorySignalEnergy;
 
@@ -414,7 +421,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
             * recallResolved
             * recallTarget
             * compactVisibility;
-          float readPhase = fract(uTime * 0.38 + hash11(vSeed + 9.7) * 0.15);
+          float readPhase = fract(uAmbientTime * 0.38 + hash11(vSeed + 9.7) * 0.15);
           float scanY = mix(-0.28, 0.28, readPhase);
           float scanAperture = exp(-pow((uv.y - scanY) / 0.018, 2.0));
           float scanWindow = 1.0 - smoothstep(0.18, 0.32, abs(uv.x));

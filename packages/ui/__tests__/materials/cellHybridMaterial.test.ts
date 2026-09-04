@@ -107,7 +107,13 @@ describe('makeCellHybridMaterial', () => {
     const m = makeCellHybridMaterial();
 
     expect(m.vertexShader).toContain('float breathRate');
-    expect(m.vertexShader).toContain('sin(uTime * breathRate + vSeed)');
+    // The AMBIENT clock, not the real one. The breath has no cause — it runs
+    // because the canopy is on screen — so it is held at a fixed phase for a
+    // visitor who asked for stillness, while the birth and death ramps a few
+    // lines up keep `uTime` and finish (D-11, `MOTION_POLICY`).
+    expect(m.vertexShader).toContain('sin(uAmbientTime * breathRate + vSeed)');
+    expect(m.vertexShader).toContain('float birthRamp = clamp((uTime - aRecordAt.x)');
+    expect(m.uniforms.uAmbientTime.value).toBe(0);
     expect(m.vertexShader).toContain('vBodyColor =');
     expect(m.vertexShader).toContain('vCloudParams = vec3(');
     expect(m.fragmentShader).toContain('float radiusSquared = dot(uv, uv)');

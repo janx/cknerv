@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { publishReducedMotion } from '../../tweaks/liveTweaks';
 import { mediaQueryMatches } from './useMediaQuery';
 
 /** The query, once. `HudOverlay` reads it synchronously too, for the one
@@ -19,14 +20,29 @@ export const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
  *  all of them.
  *
  *  No `matchMedia` at all (jsdom, an ancient browser) is not a request for
- *  stillness, so the answer there is `false` — motion runs. */
+ *  stillness, so the answer there is `false` — motion runs.
+ *
+ *  It also PUBLISHES the answer into `LIVE.time.reduced`, which is how the
+ *  stage hears about it: a `useFrame` callback is not a component and cannot
+ *  hold a hook, and the policy in `hudTheme.ts` is about the stage as much as
+ *  about the overlay (the user's D-11). */
 export function useReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(() => mediaQueryMatches(REDUCED_MOTION_QUERY));
+  const [reduced, setReduced] = useState(() => {
+    const answer = mediaQueryMatches(REDUCED_MOTION_QUERY);
+    // ⭐ AND IT PUBLISHES, from the initialiser, because the frame loops that
+    // read `LIVE.time.reduced` start on the same frame this hook first
+    // commits — a `useEffect` here would publish one frame late, which is the
+    // very defect the initialiser above exists to fix, one layer down. The
+    // write is idempotent and the value is the same for every caller, so a
+    // page with five readers publishes the same answer five times.
+    publishReducedMotion(answer);
+    return answer;
+  });
   useEffect(() => {
     if (typeof window.matchMedia !== 'function') return;
     const mq = window.matchMedia(REDUCED_MOTION_QUERY);
-    setReduced(mq.matches);
-    const on = () => setReduced(mq.matches);
+    const on = () => { publishReducedMotion(mq.matches); setReduced(mq.matches); };
+    on();
     mq.addEventListener?.('change', on);
     return () => mq.removeEventListener?.('change', on);
   }, []);
