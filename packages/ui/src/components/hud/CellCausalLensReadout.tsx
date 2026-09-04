@@ -6,7 +6,7 @@ import type {
 import type { CellCausalLens } from '../../derives/cellCausalLens.derive';
 import { formatBlockRef, formatFeeShannons, formatTxHash } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
-import { PlateReadoutCaption, PlateReadoutRow } from './primitives';
+import { PLATE_EDGE_ALPHA, PlateReadoutCaption, PlateReadoutRow } from './primitives';
 
 const EXACT = HUD_COLORS.cyanInk;
 const PARTIAL = HUD_COLORS.goldInk;
@@ -284,8 +284,8 @@ export default function CellCausalLensReadout({
           position: 'relative',
           marginTop: 5,
           padding: '5px 6px 5px',
-          borderLeft: `1px solid ${meta.color}8f`,
-          borderTop: `1px solid ${meta.color}22`,
+          borderLeft: `1px solid ${rgba(meta.color, PLATE_EDGE_ALPHA.rail)}`,
+          borderTop: `1px solid ${rgba(meta.color, PLATE_EDGE_ALPHA.top)}`,
           background: `linear-gradient(90deg,${meta.color}0d,transparent 88%)`,
           opacity,
         }}
@@ -366,7 +366,7 @@ export default function CellCausalLensReadout({
             data-causal-navigation-total={navigation.total}
             data-causal-navigation-back={navigation.backCellId ?? ''}
             data-causal-navigation-forward={navigation.forwardCellId ?? ''}
-            style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto minmax(0,1fr)', alignItems: 'center', gap: 5, marginTop: 4, paddingTop: 4, borderTop: `1px solid ${meta.color}18` }}
+            style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto minmax(0,1fr)', alignItems: 'center', gap: 5, marginTop: 4, paddingTop: 4, borderTop: `1px solid ${rgba(meta.color, 0.16)}` }}
           >
             {navigationButton(navigation.backCellId, 'back', navigation.onBack)}
             <span style={{ color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, whiteSpace: 'nowrap' }}>
@@ -400,8 +400,8 @@ export default function CellCausalLensReadout({
         position: 'relative',
         marginTop: compact ? 4 : 6,
         padding: compact ? '4px 5px 4px' : '6px 7px 5px',
-        border: `1px solid ${meta.color}26`,
-        borderLeftColor: `${meta.color}8f`,
+        border: `1px solid ${rgba(meta.color, PLATE_EDGE_ALPHA.top)}`,
+        borderLeftColor: rgba(meta.color, PLATE_EDGE_ALPHA.rail),
         background: `linear-gradient(90deg, ${meta.color}0f, ${rgba(HUD_COLORS.stageGround, 0.22)} 58%, transparent)`,
         boxShadow: `inset 0 0 14px ${meta.color}08`,
         opacity,
@@ -469,7 +469,7 @@ export default function CellCausalLensReadout({
             gap: 8,
             marginTop: compact ? 4 : 6,
             paddingTop: compact ? 4 : 5,
-            borderTop: `1px solid ${meta.color}20`,
+            borderTop: `1px solid ${rgba(meta.color, 0.16)}`,
             fontFamily: HUD_FONTS.mono,
           }}
         >
@@ -525,7 +525,7 @@ export default function CellCausalLensReadout({
             gap: 6,
             marginTop: compact ? 2 : 4,
             paddingTop: compact ? 2 : 3,
-            borderTop: `1px solid ${meta.color}18`,
+            borderTop: `1px solid ${rgba(meta.color, 0.16)}`,
             color: meta.color,
             fontFamily: HUD_FONTS.mono,
             fontSize: HUD_TYPE.micro,
@@ -560,7 +560,7 @@ export default function CellCausalLensReadout({
             gap: 5,
             marginTop: compact ? 3 : 4,
             paddingTop: compact ? 3 : 4,
-            borderTop: `1px solid ${meta.color}18`,
+            borderTop: `1px solid ${rgba(meta.color, 0.16)}`,
           }}
         >
           {navigationButton(

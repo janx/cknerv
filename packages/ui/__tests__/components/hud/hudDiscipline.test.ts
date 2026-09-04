@@ -62,6 +62,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CELL_CARD_ACCENT,
   CELL_PANEL_ACCENT,
+  COMPANION_OPACITY,
   HUD_COLORS,
   HUD_FONTS,
   HUD_MOTION,
@@ -71,13 +72,16 @@ import {
   ORDINAL_REACH_RAMP,
   QUALITATIVE_BUCKET_COLORS,
   rgba,
+  STALE_OPACITY,
 } from '../../../src/components/hud/hudTheme';
 import {
   PLATE_CUT_CLIP,
   PLATE_CUT_PX,
+  PLATE_EDGE_ALPHA,
   PLATE_ROW_HOT_WASH_ALPHA,
   PLATE_ROW_RAIL_ALPHA,
   PLATE_ROW_RAIL_HOT_ALPHA,
+  PLATE_ROW_RAIL_LIT_ALPHA,
   PLATE_ROW_SELECTED_WASH_ALPHA,
   REVEAL_GHOST_OPACITY,
   STAT_ROW_HEIGHT_PX,
@@ -1567,7 +1571,7 @@ describe('a limit on what we saw is not a fault', () => {
     }
     // …and the carriers that do the work instead, which is what makes the
     // absence a ruling rather than an omission.
-    expect(budgetText).toContain('opacity: partial ? 0.6 : 1');
+    expect(budgetText).toContain('opacity: partial ? STALE_OPACITY : 1');
     expect(budgetText).toContain('borderTop: partial ? `1px dashed');
     expect(budgetText).toContain('OBSERVED');
 
@@ -2426,7 +2430,7 @@ describe('the colour reserve', () => {
       .toBeDefined();
     const text = code(panel?.text ?? '');
     expect(text).toContain('const color = compositionTierColor(tier);');
-    expect(text).toContain('borderLeft: `2px solid ${rgba(color, 0.55)}`');
+    expect(text).toContain('borderLeft: `2px solid ${rgba(color, PLATE_ROW_RAIL_LIT_ALPHA)}`');
     expect(text).toContain('background: rgba(color, 0.07)');
 
     // …and that the function it asks is answering out of the ramp. Asked of
@@ -2875,7 +2879,7 @@ describe('chrome is the frame, not the reading', () => {
     // carried by the opacity below it and by the title and aria-label.
     expect(text).not.toContain('HUD_COLORS.orange');
     expect(text).not.toContain('HUD_COLORS.caution');
-    expect(text).toContain('opacity: stale ? 0.68 : 1');
+    expect(text).toContain('opacity: stale ? STALE_OPACITY : 1');
   });
 });
 
@@ -3734,6 +3738,23 @@ const ALPHA_RUNGS = { rule: 0.16, zoneBreak: 0.32, strip: 0.07 } as const;
  *  surface, so it stops being an argument the moment a second one helps itself. */
 const STRIP_RULE_SOURCE = 'StatusStrip.tsx';
 
+/** The RAIL rungs — a rule stood upright, and the same three questions asked
+ *  of it. Held here, tolled against `hudTheme.ts`, and every value read from
+ *  the constant that ships it rather than typed a second time. */
+const RAIL_RUNGS = {
+  row: PLATE_ROW_RAIL_ALPHA,
+  plateEdge: PLATE_EDGE_ALPHA.rail,
+  lit: PLATE_ROW_RAIL_LIT_ALPHA,
+  hot: PLATE_ROW_RAIL_HOT_ALPHA,
+} as const;
+
+/** …and the strip's, which is declared exactly the way its RULE rung is: the
+ *  argument is cyan on the instrument's own chrome, it is measured against one
+ *  surface, and it does not travel. Typed here rather than imported from
+ *  `StatusStrip.tsx` on purpose — an oracle that reads a file's own number and
+ *  then checks that file against it asserts nothing. */
+const STRIP_RAIL_RUNG = 0.14;
+
 /** The alpha table's own text in `hudTheme.ts`. Read RAW: it is a comment. */
 function alphaComment(): string {
   const theme = SOURCES.find((source) => source.name === 'hudTheme.ts');
@@ -3746,24 +3767,140 @@ function alphaComment(): string {
   return text.slice(start, end);
 }
 
-/** A horizontal 1px line, however its property was spelled — the DAO band
- *  writes its top rule behind a ternary, and a sweep anchored on the backtick
- *  would have read past it. */
-const RULE_BORDER = /border(?:Top|Bottom):[^\n]*?`1px solid \$\{rgba\(([^,()]+),\s*([\d.]+)\)\}`/g;
+/** THE RUNG A BORDER MAY NAME, and why the sweep resolves names at all.
+ *
+ *  The rails and the plate edges are stated as constants in `primitives.tsx`,
+ *  not as literals at their call sites, so a sweep that only read numbers would
+ *  fail the very sites that do the right thing. It resolves the name to its
+ *  value instead — which also means a rung cannot be renumbered behind this
+ *  file's back: change `PLATE_ROW_RAIL_ALPHA` and every reader moves with it.
+ *
+ *  `railAlpha` is `PlateReadoutRow`'s prop, defaulted to the row rung; a caller
+ *  passing something else is a call-site question the row's own tests ask. */
+const NAMED_ALPHAS: Readonly<Record<string, number>> = {
+  PLATE_ROW_RAIL_ALPHA,
+  PLATE_ROW_RAIL_HOT_ALPHA,
+  PLATE_ROW_RAIL_LIT_ALPHA,
+  railAlpha: PLATE_ROW_RAIL_ALPHA,
+  'PLATE_EDGE_ALPHA.rail': PLATE_EDGE_ALPHA.rail,
+  'PLATE_EDGE_ALPHA.top': PLATE_EDGE_ALPHA.top,
+  'PLATE_EDGE_ALPHA.bottom': PLATE_EDGE_ALPHA.bottom,
+  STRIP_RAIL_ALPHA: STRIP_RAIL_RUNG,
+};
+
+/** A `1px solid …` / `2px solid …` border template, whatever is inside it. The
+ *  sweep used to be anchored on `${rgba(ink, α)}` and that was the hole report
+ *  F measured: nineteen borders in `ConsensusIdentityPlate` and
+ *  `CellCausalLensReadout` were written `${ink}HH` — the same pixel, in a
+ *  notation this file could not read, at seven alphas the ladder has never
+ *  heard of. Three notations reach the same border and all three are read here:
+ *  `${rgba(ink, α)}`, `${ink}HH`, and a bare `${ink}` at full strength. */
+const BORDER_TEMPLATE = /`(\d)px (?:solid|dashed) ([^`]*)`/g;
+
+/** The property a border template belongs to. Walking back to the nearest
+ *  `border*:` is not enough — an `outline:` two lines below a `borderBottom:`
+ *  would be read as more of the border — so it walks back to the nearest
+ *  property of ANY kind and then asks whether that one is a border. A property
+ *  is an identifier at the head of a line or just after a `{` or a `,`, which
+ *  is what keeps a ternary's `: active` from looking like one. */
+function borderPropertyAt(text: string, at: number): string | null {
+  const before = text.slice(Math.max(0, at - 400), at);
+  const properties = [...before.matchAll(/(?:^|[{,])[ \t]*([A-Za-z][A-Za-z0-9]*)\s*:/gm)];
+  const last = properties[properties.length - 1];
+  return last ? last[1] : null;
+}
+
+/** Every alpha a border template asks for. A ternary asks for more than one —
+ *  a hop chip's underline is its own colour when locked and a rail at rest
+ *  otherwise — and every branch is a border somebody sees. An alpha that is
+ *  neither a number nor a named rung comes back as its own text, so the
+ *  offender message says what was written rather than `NaN`. */
+function borderAlphas(value: string): Array<number | string> {
+  const found: Array<number | string> = [];
+  let rest = value;
+
+  const resolve = (expression: string) => {
+    // A ternary's CONDITION is not an alpha — `lit ? HOT : railAlpha` asks for
+    // two — so each `?` and everything left of it inside its branch is dropped
+    // before the branches are read.
+    let branches = expression;
+    while (branches.includes('?')) {
+      const next = branches.replace(/[^?:]*\?/, '');
+      if (next === branches) break;
+      branches = next;
+    }
+    for (const raw of branches.split(':')) {
+      const term = raw.trim();
+      if (term === '') continue;
+      if (/^\d*\.?\d+$/.test(term)) { found.push(Number(term)); continue; }
+      if (term in NAMED_ALPHAS) { found.push(NAMED_ALPHAS[term]); continue; }
+      found.push(term);
+    }
+  };
+
+  for (const match of rest.matchAll(/rgba\(\s*[^,()]+,\s*([^()]+?)\)/g)) resolve(match[1]);
+  rest = rest.replace(/rgba\(\s*[^,()]+,\s*[^()]+?\)/g, '');
+
+  for (const match of rest.matchAll(/\$\{[^{}]*\}([0-9a-fA-F]{2})(?![0-9a-fA-F])/g)) {
+    found.push(Number((parseInt(match[1], 16) / 255).toFixed(3)));
+  }
+  rest = rest.replace(/\$\{[^{}]*\}[0-9a-fA-F]{2}(?![0-9a-fA-F])/g, '');
+
+  // Whatever colour is left is drawn at its own strength — a corner bracket, a
+  // locked hop, a bar at full alarm. That is a rung too, and the loudest one.
+  for (const _ of rest.matchAll(/\$\{[^{}]+\}/g)) found.push(1);
+
+  return found;
+}
+
+/** Every border of one orientation a source draws, with the ink it is drawn in
+ *  and every alpha it can take. */
+function bordersIn(
+  text: string,
+  properties: readonly string[],
+): Array<{ property: string; ink: string; alphas: Array<number | string>; at: number }> {
+  const borders: Array<{ property: string; ink: string; alphas: Array<number | string>; at: number }> = [];
+  BORDER_TEMPLATE.lastIndex = 0;
+  let match = BORDER_TEMPLATE.exec(text);
+  while (match !== null) {
+    const property = borderPropertyAt(text, match.index);
+    if (property !== null && properties.includes(property)) {
+      borders.push({
+        property,
+        ink: (match[2].match(/\$\{(?:rgba\(\s*)?([^,{}()]+)/)?.[1] ?? match[2]).trim(),
+        alphas: borderAlphas(match[2]),
+        at: match.index,
+      });
+    }
+    match = BORDER_TEMPLATE.exec(text);
+  }
+  return borders;
+}
 
 /** Every rule a source draws, with the ink it is drawn in. */
-function rulesIn(text: string): Array<{ ink: string; alpha: number }> {
-  const rules: Array<{ ink: string; alpha: number }> = [];
-  RULE_BORDER.lastIndex = 0;
-  let match = RULE_BORDER.exec(text);
-  while (match !== null) {
-    const object = enclosingObject(text, match.index) ?? '';
+function rulesIn(text: string): Array<{ ink: string; alpha: number | string }> {
+  const rules: Array<{ ink: string; alpha: number | string }> = [];
+  for (const border of bordersIn(text, ['borderTop', 'borderBottom'])) {
+    const object = enclosingObject(text, border.at) ?? '';
     const surface = /(?:^|[\s{,])background:/.test(object);
     const edge = /border(?:Left|Right):/.test(object);
-    if (!surface && !edge) rules.push({ ink: match[1].trim(), alpha: Number(match[2]) });
-    match = RULE_BORDER.exec(text);
+    if (surface || edge) continue;
+    for (const alpha of border.alphas) rules.push({ ink: border.ink, alpha });
   }
   return rules;
+}
+
+/** Every vertical rail, which is the same question turned on its side. No
+ *  surface/edge exclusion here and there must not be one: a rail on a plate
+ *  with a ground is still a rail — `PlateReadoutRow`'s pressable row and
+ *  `spatialPlate` both have one — and excluding grounds would empty the sweep
+ *  of the two constructs it exists for. */
+function railsIn(text: string): Array<{ ink: string; alpha: number | string }> {
+  const rails: Array<{ ink: string; alpha: number | string }> = [];
+  for (const border of bordersIn(text, ['borderLeft'])) {
+    for (const alpha of border.alphas) rails.push({ ink: border.ink, alpha });
+  }
+  return rails;
 }
 
 /** Every opacity written as a number, in the notation React takes it. */
@@ -3799,6 +3936,38 @@ describe('one alpha for a rule', () => {
     expect(comment).toContain('`REVEAL_GHOST_OPACITY` in `primitives.tsx`');
   });
 
+  it('the rail table is one ladder with the constants that ship it', () => {
+    // The same toll, for the dimension the ladder used to wave through with
+    // "a rail: already one number in one place" — which was true of one rail
+    // and false of the thirteen others (report F, F-7).
+    const comment = alphaComment();
+    const declared: number[] = [];
+    const rung = /^\/\/   RAIL (0\.\d+|1)\s{2,}[A-Z]/gm;
+    let line = rung.exec(comment);
+    while (line !== null) {
+      declared.push(Number(line[1]));
+      line = rung.exec(comment);
+    }
+    expect(declared.sort((a, b) => a - b))
+      .toEqual([...Object.values(RAIL_RUNGS), STRIP_RAIL_RUNG].sort((a, b) => a - b));
+
+    // The rungs are ordered, and the order is the argument: a row hangs on
+    // less than the plate that holds it, a block on more, a pointer on all.
+    expect(RAIL_RUNGS.row).toBeLessThan(RAIL_RUNGS.plateEdge);
+    expect(RAIL_RUNGS.plateEdge).toBeLessThan(RAIL_RUNGS.lit);
+    expect(RAIL_RUNGS.lit).toBeLessThan(RAIL_RUNGS.hot);
+    expect(STRIP_RAIL_RUNG).toBeLessThan(RAIL_RUNGS.row);
+  });
+
+  it('dimming is two weights, and the theme says which two', () => {
+    const comment = alphaComment();
+    expect(comment).toContain(`STALE      ${STALE_OPACITY}`);
+    expect(comment).toContain(`COMPANION  ${COMPANION_OPACITY}`);
+    // Two, and not one: a name's second name and a reading you cannot trust
+    // are different instructions to a reader.
+    expect(STALE_OPACITY).not.toBe(COMPANION_OPACITY);
+  });
+
   it('a zone break is louder than a rule, which is the whole distinction', () => {
     expect(ALPHA_RUNGS.zoneBreak).toBeGreaterThan(ALPHA_RUNGS.rule);
     expect(ALPHA_RUNGS.rule).toBeGreaterThan(ALPHA_RUNGS.strip);
@@ -3813,9 +3982,11 @@ describe('one alpha for a rule', () => {
     expect(rules.length).toBeGreaterThan(10);
 
     // `primitives.tsx` draws exactly one pair of horizontal borders and they
-    // are `spatialPlate`'s lit edge — three sides, three alphas, on purpose.
+    // are `spatialPlate`'s lit edge — three sides, three alphas, on purpose,
+    // and now named rather than typed so the hand-drawn plates can read them.
     const primitives = SOURCES.find((source) => source.name === 'primitives.tsx');
-    expect(code(primitives?.text ?? '')).toContain('borderTop: `1px solid ${rgba(accent, 0.15)}`');
+    expect(code(primitives?.text ?? ''))
+      .toContain('borderTop: `1px solid ${rgba(accent, PLATE_EDGE_ALPHA.top)}`');
     expect(rulesIn(code(primitives?.text ?? ''))).toEqual([]);
 
     // …and a band's bottom edge is the band, not a rule between blocks. It is
@@ -3881,6 +4052,170 @@ describe('one alpha for a rule', () => {
       .sort();
     expect(readers).toContain('primitives.tsx');
     expect(readers.length).toBeGreaterThan(2);
+  });
+
+  it('finds a rule however its alpha was spelled', () => {
+    // The pin under the widened sweep, and it is the whole finding: three
+    // notations, one border. Written as literals here so this reads as a
+    // specification rather than as a paraphrase of the regex above it.
+    expect(rulesIn('  borderTop: `1px solid ${rgba(accent, 0.16)}`,'))
+      .toEqual([{ ink: 'accent', alpha: 0.16 }]);
+    expect(rulesIn('  borderTop: `1px solid ${CYAN}22`,'))
+      .toEqual([{ ink: 'CYAN', alpha: 0.133 }]);
+    expect(rulesIn('  borderBottom: `1px solid ${color}`,'))
+      .toEqual([{ ink: 'color', alpha: 1 }]);
+    // …a named rung resolves to its number, and a ternary is every branch.
+    expect(railsIn('  borderLeft: `1px solid ${rgba(a, PLATE_EDGE_ALPHA.rail)}`,'))
+      .toEqual([{ ink: 'a', alpha: PLATE_EDGE_ALPHA.rail }]);
+    expect(railsIn('  borderLeft: `1px solid ${lit ? c : rgba(c, PLATE_ROW_RAIL_ALPHA)}`,').map((r) => r.alpha))
+      .toEqual([PLATE_ROW_RAIL_ALPHA, 1]);
+    // …and an alpha nobody named comes back as itself, not as NaN.
+    expect(rulesIn('  borderTop: `1px solid ${rgba(accent, someWidth)}`,'))
+      .toEqual([{ ink: 'accent', alpha: 'someWidth' }]);
+    // The property is read from the nearest property of ANY kind, so an
+    // outline under a border is an outline.
+    expect(rulesIn('  borderBottom: `1px solid ${a}`,\n  outline: `1px solid ${b}88`,'))
+      .toEqual([{ ink: 'a', alpha: 1 }]);
+  });
+
+  it('every rail in the overlay is a declared rung', () => {
+    // The dimension the ladder claimed was already settled. Fourteen rails at
+    // twelve alphas, from 0.14 to 0.561, and the claim in `hudTheme.ts` was
+    // "already one number in one place" (report F, F-7).
+    const offenders: string[] = [];
+    for (const source of domDialect()) {
+      const rungs: number[] = source.name === STRIP_RULE_SOURCE
+        ? [STRIP_RAIL_RUNG, ...Object.values(RAIL_RUNGS)]
+        : [...Object.values(RAIL_RUNGS)];
+      for (const rail of railsIn(code(source.text))) {
+        if (typeof rail.alpha === 'number' && rungs.includes(rail.alpha)) continue;
+        offenders.push(`${source.name}: a rail at ${rail.alpha} is not a rung of the rail table`);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('the rails are worn, and by the files that own the construct', () => {
+    // A membership rule over an empty set passes, so the set is named. These
+    // five are the rail's constructs: the row primitive, the two card
+    // dialects that draw facts, and the two hand-built plates that were the
+    // whole of report F-1.
+    const wearers = domDialect()
+      .filter((source) => railsIn(code(source.text)).length > 0)
+      .map((source) => source.name)
+      .sort();
+    for (const name of [
+      'CellCausalLensReadout.tsx',
+      'CellDetailPanel.tsx',
+      'ConsensusIdentityPlate.tsx',
+      'PeerLinkCard.tsx',
+      'primitives.tsx',
+    ]) {
+      expect(wearers, `${name} draws no rail — did the construct move?`).toContain(name);
+    }
+
+    // …and the strip's rung belongs to the strip, exactly as its rule rung
+    // does. A panel borrowing 0.14 would draw a rail nobody can see.
+    const strays: string[] = [];
+    for (const source of domDialect()) {
+      if (source.name === STRIP_RULE_SOURCE) continue;
+      for (const rail of railsIn(code(source.text))) {
+        if (rail.alpha !== STRIP_RAIL_RUNG) continue;
+        strays.push(`${source.name}: ${rail.alpha} is ${STRIP_RULE_SOURCE}'s rail rung`);
+      }
+    }
+    expect(strays).toEqual([]);
+
+    // …and the strip states it once, as a named number with the argument on
+    // it, rather than twice as a literal.
+    const strip = SOURCES.find((source) => source.name === STRIP_RULE_SOURCE);
+    expect(code(strip?.text ?? '')).toContain(`const STRIP_RAIL_ALPHA = ${STRIP_RAIL_RUNG};`);
+  });
+
+  it('the plate edge is one edge, and the hand-drawn plates read it', () => {
+    // `spatialPlate` was exempted from the alpha ladder on the grounds that a
+    // single-sourced edge cannot drift. It cannot; the exemption was read as
+    // covering every edge, and two files built plates of the same shape by
+    // hand at seven alphas of their own between 0.102 and 0.478 (report F).
+    const readers = domDialect()
+      .filter((source) => code(source.text).includes('PLATE_EDGE_ALPHA'))
+      .map((source) => source.name)
+      .sort();
+    expect(readers).toEqual([
+      'CellCausalLensReadout.tsx',
+      'ConsensusIdentityPlate.tsx',
+      'primitives.tsx',
+    ]);
+
+    // And the light comes from the left on every one of them — two of the
+    // seven had the top edge brighter than the rail, which is the plate lit
+    // from the wrong side.
+    expect(PLATE_EDGE_ALPHA.rail).toBeGreaterThan(PLATE_EDGE_ALPHA.top);
+    expect(PLATE_EDGE_ALPHA.top).toBeGreaterThan(PLATE_EDGE_ALPHA.bottom);
+  });
+
+  it('a hairline is never written as a hex suffix', () => {
+    // The notation itself, banned outright on the properties the two ladders
+    // govern. `${ink}HH` is unreadable at a glance — nobody knows 0x8f is
+    // 0.561 — and it is what let one file draw ten alphas on one dimension.
+    const offenders: string[] = [];
+    for (const source of domDialect()) {
+      const text = code(source.text);
+      const suffix = /border(?:Top|Bottom|Left|Right)(?:Color)?:[^\n]*\$\{[^{}]*\}[0-9a-fA-F]{2}(?![0-9a-fA-F])/g;
+      for (const match of text.matchAll(suffix)) {
+        offenders.push(`${source.name}: ${match[0].trim().slice(0, 72)}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('dimming is one weight per role, and the roles are two', () => {
+    // Eight numbers said two things (report F, F-8). The sweep is by ROLE and
+    // derived: a ternary keyed on staleness must dim to `STALE_OPACITY`, and
+    // a CJK companion must dim to `COMPANION_OPACITY`.
+    const stale: string[] = [];
+    let staleSites = 0;
+    for (const source of domDialect()) {
+      const text = code(source.text);
+      const dim = /opacity:\s*([A-Za-z][\w.]*)\s*\?\s*([^:]+):\s*([^,;}\n]+)/g;
+      for (const match of text.matchAll(dim)) {
+        if (!/stale|dimmed|partial/i.test(match[1])) continue;
+        staleSites += 1;
+        const dimmed = /stale|dimmed|partial/i.test(match[1]) ? match[2] : match[3];
+        if (dimmed.trim() === 'STALE_OPACITY') continue;
+        stale.push(`${source.name}: dims to ${dimmed.trim()} rather than STALE_OPACITY`);
+      }
+    }
+    expect(stale).toEqual([]);
+    // …and the matcher finds staleness ternaries at all, so an empty offender
+    // list is a reading rather than a silence.
+    expect(staleSites).toBeGreaterThan(6);
+
+    const companions: string[] = [];
+    let companionSites = 0;
+    for (const source of domDialect()) {
+      const text = code(source.text);
+      for (const match of text.matchAll(/\{[^{}]*HUD_FONTS\.cjk[^{}]*\}/g)) {
+        const opacity = /opacity:\s*([^,;}\n]+)/.exec(match[0]);
+        if (opacity === null) continue;
+        companionSites += 1;
+        if (opacity[1].trim() === 'COMPANION_OPACITY') continue;
+        companions.push(`${source.name}: a companion at ${opacity[1].trim()}`);
+      }
+    }
+    expect(companions).toEqual([]);
+    expect(companionSites).toBeGreaterThan(4);
+
+    // The scope tag is the same role in Latin — a qualifier beside a count —
+    // and it wore 0.8 in the two files that draw one.
+    for (const name of ['ChainCapacityReadout.tsx', 'StageCapacityPanel.tsx']) {
+      const source = SOURCES.find((item) => item.name === name);
+      expect(code(source?.text ?? ''), `${name} lost its scope tag`)
+        .toContain("textTransform: 'uppercase'");
+      expect(code(source?.text ?? ''), `${name}: a scope tag is a companion`)
+        .toContain('opacity: COMPANION_OPACITY');
+    }
   });
 
   it('reads an opacity however it was written', () => {
@@ -4683,12 +5018,19 @@ describe('one cursor for a pressable', () => {
       }
     }
     // The peer card takes the whole treatment by USING the row, and may not
-    // re-state an alpha the row owns.
+    // re-state an alpha the TREATMENT owns.
+    //
+    // ⚠️ `PLATE_ROW_RAIL_ALPHA` came off this list on 2026-09-05. It was on it
+    // when the row was the only thing in the overlay that drew a rail; D5a
+    // made it the ladder's row rung and four files read it now — the peer
+    // card's SYNC LADDER among them, which is a structural rail and not a
+    // fact. What may not be restated is the HOVER treatment: a card that
+    // re-derived the hot rail or either wash would be answering a pointer in
+    // its own dialect, which is the thing this chapter exists to stop.
     const peer = code(SOURCES.find((source) => source.name === 'PeerLinkCard.tsx')?.text ?? '');
     expect(peer, 'the peer facts left the house row').toContain('<PlateReadoutRow');
     expect(peer, 'the peer facts stopped being controls').toContain('onActivate={onActivate}');
     for (const rung of [
-      'PLATE_ROW_RAIL_ALPHA',
       'PLATE_ROW_RAIL_HOT_ALPHA',
       'PLATE_ROW_SELECTED_WASH_ALPHA',
       'PLATE_ROW_HOT_WASH_ALPHA',

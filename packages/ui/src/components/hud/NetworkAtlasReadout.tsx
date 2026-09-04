@@ -11,7 +11,7 @@ import {
   deriveNetworkAtlasVisual,
   networkAtlasVisualState,
 } from '../../derives/networkAtlas.derive';
-import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba, STALE_OPACITY } from './hudTheme';
 
 const fmt = (value: number) => value.toLocaleString('en-US');
 
@@ -271,7 +271,7 @@ export default function NetworkAtlasReadout({ source, record }: {
       data-network-atlas-state={visualState}
       style={{ marginTop: 6 }}
     >
-      <div data-network-atlas-rows style={{ opacity: stale ? 0.68 : 1 }}>
+      <div data-network-atlas-rows style={{ opacity: stale ? STALE_OPACITY : 1 }}>
         {/* The reach bar, and the reason it sits HERE rather than under the
             census below. It belongs to the round, on the round's clock and the
             round's evidence; the two strips below are folded out of a

@@ -7,7 +7,7 @@ import {
   deriveProtocolEraVisual,
   protocolEraVisualState,
 } from '../../derives/protocolEra.derive';
-import { HUD_COLORS, HUD_TYPE } from './hudTheme';
+import { HUD_COLORS, HUD_TYPE, STALE_OPACITY } from './hudTheme';
 
 export default function ProtocolEraBadge({ chain, source, record }: {
   chain: ChainEntry;
@@ -44,7 +44,7 @@ export default function ProtocolEraBadge({ chain, source, record }: {
         color: HUD_COLORS.ink,
         fontSize: HUD_TYPE.label,
         letterSpacing: 0.35,
-        opacity: stale ? 0.68 : 1,
+        opacity: stale ? STALE_OPACITY : 1,
       }}
     >
       <span aria-hidden="true" style={{ color: HUD_COLORS.dim }}>· </span>

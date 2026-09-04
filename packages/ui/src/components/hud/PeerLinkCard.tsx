@@ -19,10 +19,11 @@ import {
 } from 'react';
 import type { Peer } from '@cknerv/types';
 import { useHudClockSelector } from './hudClock';
-import { CJK_BASELINE_LIFT, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import { CJK_BASELINE_LIFT, COMPANION_OPACITY, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba, STALE_OPACITY } from './hudTheme';
 import {
   CloseButton,
   moduleTag,
+  PLATE_ROW_RAIL_ALPHA,
   PlateReadoutRow,
   plateStateChip,
   SpatialPlateHeader,
@@ -213,7 +214,7 @@ function ColonyCompass({
       height={COMPASS_VIEW_PX}
       role="img"
       aria-label={measured ? 'Peer position on the latency compass' : 'Peer latency unmeasured'}
-      style={{ display: 'block', margin: '0 auto', opacity: dimmed ? 0.55 : 1, transition: 'opacity 240ms ease' }}
+      style={{ display: 'block', margin: '0 auto', opacity: dimmed ? STALE_OPACITY : 1, transition: 'opacity 240ms ease' }}
     >
       {COMPASS_RINGS.map((ring) => (
         <circle
@@ -604,7 +605,7 @@ export default function PeerLinkCard({
         >
           PEER // {instrument.id8}
         </span>
-        <span style={{ ...CJK_BASELINE_LIFT, color: accent, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: 0.72 }}>
+        <span style={{ ...CJK_BASELINE_LIFT, color: accent, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: COMPANION_OPACITY }}>
           对端
         </span>
         {/* THE EVIDENCE CLASS, which is what this slot answers on all four
@@ -702,7 +703,7 @@ export default function PeerLinkCard({
           style={{
             position: 'relative',
             paddingLeft: 11,
-            borderLeft: `1px solid ${rgba(instrument.sync.color, 0.28)}`,
+            borderLeft: `1px solid ${rgba(instrument.sync.color, PLATE_ROW_RAIL_ALPHA)}`,
           }}
         >
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>

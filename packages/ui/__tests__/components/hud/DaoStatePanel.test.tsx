@@ -5,6 +5,7 @@ import type {
   EnrichmentSourceStatus,
 } from '@cknerv/types';
 import DaoStatePanel from '../../../src/components/hud/DaoStatePanel';
+import { STALE_OPACITY } from '../../../src/components/hud/hudTheme';
 
 afterEach(cleanup);
 
@@ -90,7 +91,7 @@ describe('DaoStatePanel', () => {
     expect(container.querySelector('[data-dao-state="stale"]')).not.toBeNull();
     expect(container.querySelector('[data-dao-stale]')?.textContent).toBe(' · STALE');
     expect((container.querySelector('[data-dao-content]') as HTMLElement).style.opacity)
-      .toBe('0.72');
+      .toBe(String(STALE_OPACITY));
   });
 
   it('keeps optional movement honest and formats a negative relative change', () => {

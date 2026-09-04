@@ -30,7 +30,7 @@ import type { PeerMiningCandidacy } from '../../derives/blockProducers.derive';
 import { MiningCandidacyStamp } from './MinerNodeCard';
 import { formatAge, midTruncate } from './cellFormat';
 import { HudAge, useHudClockSelector } from './hudClock';
-import { CJK_BASELINE_LIFT, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import { CJK_BASELINE_LIFT, COMPANION_OPACITY, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import {
   CloseButton,
   moduleTag,
@@ -259,7 +259,7 @@ export default function SightedNodeCard({
         >
           {word.masthead} // {id8}
         </span>
-        <span style={{ ...CJK_BASELINE_LIFT, color: accent, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: 0.72 }}>
+        <span style={{ ...CJK_BASELINE_LIFT, color: accent, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: COMPANION_OPACITY }}>
           节点
         </span>
         {/* THE EVIDENCE CLASS, the one question this slot answers on all four

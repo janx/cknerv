@@ -28,6 +28,7 @@ import {
 } from '../../nerve/consensusRouteHopPulse';
 import { formatBlockRef, formatOutpoint } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import { PLATE_EDGE_ALPHA, PLATE_ROW_RAIL_ALPHA } from './primitives';
 
 const CYAN = HUD_COLORS.cyanWire;
 const VIOLET = HUD_COLORS.memory;
@@ -209,8 +210,8 @@ function RouteHopInspector({
         position: 'relative',
         marginTop: 5,
         padding: '5px 6px 4px',
-        borderTop: `1px solid ${roleCopy.color}52`,
-        borderLeft: `1px solid ${roleCopy.color}78`,
+        borderTop: `1px solid ${rgba(roleCopy.color, PLATE_EDGE_ALPHA.top)}`,
+        borderLeft: `1px solid ${rgba(roleCopy.color, PLATE_EDGE_ALPHA.rail)}`,
         background: `linear-gradient(105deg, ${roleCopy.color}12, ${rgba(HUD_COLORS.stageGround, 0.72)} 58%, ${sourceColor}08)`,
         boxShadow: `inset 5px 0 12px ${roleCopy.color}08`,
         fontFamily: HUD_FONTS.mono,
@@ -223,8 +224,8 @@ function RouteHopInspector({
         style={{
           position: 'absolute',
           inset: -1,
-          borderTop: `1px solid ${roleCopy.color}52`,
-          borderLeft: `1px solid ${roleCopy.color}78`,
+          borderTop: `1px solid ${rgba(roleCopy.color, PLATE_EDGE_ALPHA.top)}`,
+          borderLeft: `1px solid ${rgba(roleCopy.color, PLATE_EDGE_ALPHA.rail)}`,
           background: `linear-gradient(105deg, ${roleCopy.color}12, transparent 62%)`,
           boxShadow: `inset 5px 0 12px ${roleCopy.color}0b`,
           pointerEvents: 'none',
@@ -277,7 +278,7 @@ function RouteHopInspector({
           gap: 5,
           marginTop: 4,
           paddingTop: 3,
-          borderTop: `1px solid ${roleCopy.color}22`,
+          borderTop: `1px solid ${rgba(roleCopy.color, 0.16)}`,
           fontSize: HUD_TYPE.micro,
           letterSpacing: 0.35,
         }}
@@ -393,9 +394,9 @@ function EvidenceRouteLedger({
         flexDirection: 'column',
         boxSizing: 'border-box',
         padding: '6px 7px 7px',
-        borderTop: `1px solid ${sourceColor}7a`,
-        borderBottom: `1px solid ${CYAN}30`,
-        borderLeft: `1px solid ${sourceColor}4f`,
+        borderTop: `1px solid ${rgba(sourceColor, PLATE_EDGE_ALPHA.top)}`,
+        borderBottom: `1px solid ${rgba(CYAN, PLATE_EDGE_ALPHA.bottom)}`,
+        borderLeft: `1px solid ${rgba(sourceColor, PLATE_EDGE_ALPHA.rail)}`,
         background: `linear-gradient(110deg, ${rgba(HUD_COLORS.stageGround, 0.97)}, ${rgba(HUD_COLORS.stageGround, 0.94)})`,
         boxShadow: `-8px 0 24px ${rgba(HUD_COLORS.ground, 0.3)}, inset 8px 0 18px ${sourceColor}0b`,
         color: HUD_COLORS.dim,
@@ -411,7 +412,7 @@ function EvidenceRouteLedger({
           right: -30,
           top: 9,
           width: 30,
-          borderTop: `1px solid ${sourceColor}66`,
+          borderTop: `1px solid ${rgba(sourceColor, 0.32)}`,
         }}
       />
       <span
@@ -421,7 +422,7 @@ function EvidenceRouteLedger({
           position: 'absolute',
           right: -30,
           top: 9,
-          borderRight: `1px solid ${sourceColor}42`,
+          borderRight: `1px solid ${rgba(sourceColor, 0.32)}`,
         }}
       />
       <span style={{ display: 'flex', flex: '0 0 auto', alignItems: 'baseline', gap: 7, marginBottom: 5 }}>
@@ -497,8 +498,8 @@ function EvidenceRouteLedger({
               display: 'block',
               height: 5,
               marginTop: 3,
-              borderTop: `1px solid ${CYAN}2b`,
-              borderBottom: `1px solid ${CYAN}1a`,
+              borderTop: `1px solid ${rgba(CYAN, PLATE_EDGE_ALPHA.top)}`,
+              borderBottom: `1px solid ${rgba(CYAN, PLATE_EDGE_ALPHA.bottom)}`,
               background: `linear-gradient(90deg, ${sourceColor}38 0 ${lockedProgress * 100}%, ${CYAN}10 ${lockedProgress * 100}% 100%)`,
             }}
           >
@@ -681,7 +682,7 @@ function EvidenceRouteLedger({
                   margin: 0,
                   padding: '1px 2px',
                   border: 0,
-                  borderBottom: `1px solid ${locked || active ? sourceColor : `${nodeColor}66`}`,
+                  borderBottom: `1px solid ${locked || active ? sourceColor : rgba(nodeColor, PLATE_ROW_RAIL_ALPHA)}`,
                   outline: locked
                     ? `1px solid ${LOCKED_GOLD}`
                     : active
@@ -741,7 +742,7 @@ function EvidenceRouteLedger({
               gap: 6,
               marginTop: 5,
               paddingTop: 4,
-              borderTop: `1px solid ${LOCKED_GOLD}28`,
+              borderTop: `1px solid ${rgba(LOCKED_GOLD, 0.16)}`,
               fontFamily: HUD_FONTS.mono,
               fontSize: HUD_TYPE.micro,
               letterSpacing: 0.35,
@@ -842,7 +843,7 @@ function EvidenceLedger({
   return (
     <div
       data-memory-evidence-ledger="true"
-      style={{ marginTop: 5, paddingTop: 4, borderTop: `1px solid ${CYAN}18` }}
+      style={{ marginTop: 5, paddingTop: 4, borderTop: `1px solid ${rgba(CYAN, 0.16)}` }}
     >
       <div style={{ display: 'flex', alignItems: 'baseline', marginBottom: 2 }}>
         <span style={{ fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, letterSpacing: 0.9, color: HUD_COLORS.dim }}>
@@ -1032,7 +1033,7 @@ function EvidenceLedger({
                 border: 0,
                 borderLeft: previewed
                   ? `2px solid ${sourceColor}`
-                  : `1px solid ${active ? sourceColor : `${sourceColor}88`}`,
+                  : `1px solid ${active ? sourceColor : rgba(sourceColor, PLATE_ROW_RAIL_ALPHA)}`,
                 borderRadius: 0,
                 outline: previewed
                   ? `1px solid ${sourceColor}70`
@@ -1082,7 +1083,7 @@ function EvidenceLedger({
                     minWidth: 0,
                     margin: '2px 4px 2px 0',
                     paddingTop: 3,
-                    borderTop: `1px solid ${sourceColor}2e`,
+                    borderTop: `1px solid ${rgba(sourceColor, 0.16)}`,
                     fontSize: HUD_TYPE.micro,
                     letterSpacing: 0.35,
                     color: HUD_COLORS.dim,
@@ -1182,8 +1183,8 @@ export function ConsensusMemoryTracePlate({
       style={{
         marginTop: 5,
         padding: '6px 0 5px',
-        borderTop: `1px solid ${CYAN}22`,
-        borderBottom: `1px solid ${LOCKED_GOLD}16`,
+        borderTop: `1px solid ${rgba(CYAN, 0.16)}`,
+        borderBottom: `1px solid ${rgba(LOCKED_GOLD, 0.16)}`,
       }}
     >
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>

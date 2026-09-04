@@ -8,7 +8,7 @@ import {
   deriveAssetEcosystemBuckets,
 } from '../../derives/assetEcosystem.derive';
 import { formatCkb, formatExactCkb } from './cellFormat';
-import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba, COMPANION_OPACITY, STALE_OPACITY } from './hudTheme';
 import { ReadoutHeader, StatRow } from './primitives';
 import { chainLiveRow } from './cellPopulation.presentation';
 
@@ -127,7 +127,7 @@ export default function ChainCapacityReadout({ source, record, census = null, ce
         stale={stale}
       />
       {usableRecord ? (
-        <div data-indexed-context style={{ opacity: stale ? 0.68 : 1 }}>
+        <div data-indexed-context style={{ opacity: stale ? STALE_OPACITY : 1 }}>
           {/* Both rows count in CKBytes — capacity is the bytes the chain has
             * SOLD and knowledge the bytes standing in them — and both say so
             * on hover rather than in the row. The unit carried its Chinese
@@ -157,7 +157,7 @@ export default function ChainCapacityReadout({ source, record, census = null, ce
         {liveCells.tag ? (
           <span
             data-population-scope
-            style={{ fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, letterSpacing: 1.2, color: HUD_COLORS.dim, textTransform: 'uppercase', opacity: 0.8 }}
+            style={{ fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, letterSpacing: 1.2, color: HUD_COLORS.dim, textTransform: 'uppercase', opacity: COMPANION_OPACITY }}
           >
             {liveCells.tag}
           </span>
@@ -167,7 +167,7 @@ export default function ChainCapacityReadout({ source, record, census = null, ce
         </span>
       </div>
       {usableRecord && buckets && buckets.length > 0 ? (
-        <div data-indexed-context style={{ marginTop: 6, opacity: stale ? 0.68 : 1 }}>
+        <div data-indexed-context style={{ marginTop: 6, opacity: stale ? STALE_OPACITY : 1 }}>
           <div
             title={buckets.map((bucket) => `${bucket.category} ${shareLabel(bucket.shareBps)}`).join(' · ')}
             style={{ display: 'flex', height: 6, background: HUD_COLORS.trackGround, border: `1px solid ${rgba(accent, 0.14)}` }}
@@ -213,7 +213,7 @@ export default function ChainCapacityReadout({ source, record, census = null, ce
         </div>
       ) : null}
       {usableRecord && usableRecord.top_assets.length > 0 ? (
-        <div data-indexed-context style={{ marginTop: 6, opacity: stale ? 0.68 : 1 }}>
+        <div data-indexed-context style={{ marginTop: 6, opacity: stale ? STALE_OPACITY : 1 }}>
           <div style={{ fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, letterSpacing: 1.2, color: HUD_COLORS.dim, marginBottom: 2 }}>
             TOP ASSETS
           </div>

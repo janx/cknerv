@@ -8,7 +8,7 @@ import {
   deriveActivityFeedVisual,
   foldActivityLines,
 } from '../../derives/activityFeed.derive';
-import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba, STALE_OPACITY } from './hudTheme';
 import { ReadoutHeader } from './primitives';
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -56,7 +56,7 @@ export default function ActivityFeedReadout({ source, record, compact = false, f
         marginTop: compact || folded ? 6 : 10,
         paddingTop: compact || folded ? 5 : 8,
         borderTop: `1px solid ${rgba(accent, 0.16)}`,
-        opacity: stale ? 0.68 : 1,
+        opacity: stale ? STALE_OPACITY : 1,
       }}
     >
       <ReadoutHeader

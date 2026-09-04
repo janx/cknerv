@@ -36,7 +36,7 @@ import {
   ASSET_COLORS,
 } from './cellFormat';
 import type { CellById } from '../../types';
-import { CELL_CARD_ACCENT, CJK_BASELINE_LIFT, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import { CELL_CARD_ACCENT, CJK_BASELINE_LIFT, COMPANION_OPACITY, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba, STALE_OPACITY } from './hudTheme';
 import {
   CloseButton,
   DragAxisMark,
@@ -47,6 +47,7 @@ import {
   PLATE_ROW_HOT_WASH_ALPHA,
   PLATE_ROW_RAIL_ALPHA,
   PLATE_ROW_RAIL_HOT_ALPHA,
+  PLATE_ROW_RAIL_LIT_ALPHA,
   PLATE_ROW_SELECTED_WASH_ALPHA,
   REVEAL_GHOST_OPACITY,
   revealStageAttributes,
@@ -829,7 +830,7 @@ function CompositionBlock({ tier, mix, issues, title, revealAt }: {
         // The rail every evidence row hangs on, twice as thick and in the
         // tier's own colour: this is a card among rows, and the edge is what
         // says so before the type does.
-        borderLeft: `2px solid ${rgba(color, 0.55)}`,
+        borderLeft: `2px solid ${rgba(color, PLATE_ROW_RAIL_LIT_ALPHA)}`,
         // A wash, never a fill. The plate under this block is near-opaque by
         // construction and everything inside it tints DOWN onto that ground —
         // a tint heavy enough to read as a surface of its own would lift the
@@ -996,7 +997,7 @@ const CellScanFact = memo(function CellScanFact({
             title={proof.read
               ? 'IDENTITY PROOF · READ'
               : 'IDENTITY PROOF · select to read — all three arm MEMORY TRACE'}
-            style={{ marginLeft: 5, color: proof.read ? HUD_COLORS.lockedGold : HUD_COLORS.dim, opacity: proof.read ? 1 : 0.75 }}
+            style={{ marginLeft: 5, color: proof.read ? HUD_COLORS.lockedGold : HUD_COLORS.dim, opacity: proof.read ? 1 : STALE_OPACITY }}
           >
             {proof.read ? '◆' : '◇'}
           </span>
@@ -1324,7 +1325,7 @@ function CellScanTraceBlock({
           title={observed.txHash}
           onClick={() => onTraceWrite(observed.seq)}
           disabled={!recallEnabled}
-          style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'baseline', gap: '2px 8px', width: '100%', margin: 0, padding: '3px 2px', border: 0, background: traceSelected ? `${VIOLET}12` : 'transparent', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.35, color: traceSelected ? HUD_COLORS.memoryInk : ORANGE, textShadow: `0 0 6px ${traceSelected ? VIOLET : ORANGE}55`, whiteSpace: 'nowrap', cursor: recallEnabled ? 'pointer' : 'default', textAlign: 'left', opacity: recallEnabled ? 1 : 0.62 }}
+          style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'baseline', gap: '2px 8px', width: '100%', margin: 0, padding: '3px 2px', border: 0, background: traceSelected ? `${VIOLET}12` : 'transparent', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.35, color: traceSelected ? HUD_COLORS.memoryInk : ORANGE, textShadow: `0 0 6px ${traceSelected ? VIOLET : ORANGE}55`, whiteSpace: 'nowrap', cursor: recallEnabled ? 'pointer' : 'default', textAlign: 'left', opacity: recallEnabled ? 1 : STALE_OPACITY }}
         >
           <span>MEMORY TRACE</span>
           {/* The shape of the write and how far the recall has got — and NOT
@@ -2194,7 +2195,7 @@ function CellDetailPanel({
             {/* The house CJK companion, as PEER wears 对端 and NODE wears 节点.
               * 细胞 is in the hand-subset woff2 (fonts/README.md) — deliberate
               * presence, where SightedNodeCard documents a deliberate absence. */}
-            <span style={{ ...CJK_BASELINE_LIFT, color: CELL_CARD_ACCENT, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: 0.72 }}>
+            <span style={{ ...CJK_BASELINE_LIFT, color: CELL_CARD_ACCENT, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: COMPANION_OPACITY }}>
               细胞
             </span>
             {/* THE LAMP AND THE AGE, AND NOT THE WORD (the user's D-6 ruling

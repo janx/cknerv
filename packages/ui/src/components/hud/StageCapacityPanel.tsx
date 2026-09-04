@@ -9,7 +9,7 @@ import {
   type ScriptFamilyBucket,
 } from '../../derives/scriptFamilies.derive';
 import { ASSET_COLORS, CLASS_MIX_COLORS, LOCK_COLORS, formatCkb } from './cellFormat';
-import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba, COMPANION_OPACITY } from './hudTheme';
 import { HudPanel, PanelHeader, StatRow } from './primitives';
 import {
   POPULATION_SCOPE,
@@ -39,7 +39,7 @@ const SCOPE_TAG: CSSProperties = {
   letterSpacing: 1.2,
   color: HUD_COLORS.dim,
   textTransform: 'uppercase',
-  opacity: 0.8,
+  opacity: COMPANION_OPACITY,
 };
 
 const SUBHEAD: CSSProperties = {

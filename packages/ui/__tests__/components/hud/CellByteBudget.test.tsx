@@ -5,6 +5,7 @@ import CellByteBudget from '../../../src/components/hud/CellByteBudget';
 import {
   formatUtilizationPercent,
 } from '../../../src/derives/cellByteBudget.derive';
+import { STALE_OPACITY } from '../../../src/components/hud/hudTheme';
 
 afterEach(cleanup);
 
@@ -185,7 +186,7 @@ describe('CellByteBudget', () => {
     );
     const data = segment(container, 'data')!;
     expect(data.getAttribute('data-byte-budget-segment-observed')).toBe('partial');
-    expect(data.style.opacity).toBe('0.6');
+    expect(data.style.opacity).toBe(String(STALE_OPACITY));
     expect(
       container.querySelector('[data-byte-budget-legend-observed]'),
     ).not.toBeNull();

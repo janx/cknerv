@@ -1,5 +1,5 @@
 import { useState, type CSSProperties, type ReactNode } from 'react';
-import { CJK_BASELINE_LIFT, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import { CJK_BASELINE_LIFT, COMPANION_OPACITY, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 
 // ——— The shape grammar ————————————————————————————————————————————————
 //
@@ -212,7 +212,7 @@ export function PanelHeader({ en, cjk, idx, accent, compact = false }: {
           which broke 共识基 across two lines mid-word. A CJK companion is a
           name, and a name does not break. The English title beside it may
           wrap; it is words. */}
-      <span style={{ ...CJK_BASELINE_LIFT, flex: '0 0 auto', whiteSpace: 'nowrap', fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.section, color: HUD_COLORS.orangeDeep, opacity: 0.7 }}>{cjk}</span>
+      <span style={{ ...CJK_BASELINE_LIFT, flex: '0 0 auto', whiteSpace: 'nowrap', fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.section, color: HUD_COLORS.orangeDeep, opacity: COMPANION_OPACITY }}>{cjk}</span>
       <span style={{ marginLeft: 'auto', flex: '0 0 auto', whiteSpace: 'nowrap', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.tech, color: accent ?? HUD_COLORS.moduleSlate, letterSpacing: 0.9, textShadow: accent ? `0 0 7px ${accent}66` : undefined }}>{idx}</span>
     </div>
   );
@@ -481,11 +481,30 @@ export function spatialPlateBackground(accent: string): string {
   return `linear-gradient(100deg,${rgba(HUD_COLORS.stageGround, 0.985)},${rgba(HUD_COLORS.stageGround, 0.965)} 72%,${spatialPlateTail(accent)})`;
 }
 
+/**
+ * A PLATE'S OWN EDGE, and it is three numbers because the edge is lit.
+ *
+ * The plate is a surface catching light from the left: a bright rail, a top
+ * that reads as the lit face turning away, an underside barely there. The
+ * three were literals inside `spatialPlate` and the alpha ladder exempted them
+ * on the grounds that a single-sourced edge cannot drift — true of this
+ * function, and untrue of the overlay, because `ConsensusIdentityPlate` and
+ * `CellCausalLensReadout` build plates of the same shape BY HAND and invented
+ * seven more alphas between 0.102 and 0.478 doing it (report F, F-1).
+ *
+ * So the numbers are named and the hand-drawn plates read them. Nothing about
+ * `spatialPlate` changes; what changes is that a second plate dialect can no
+ * longer disagree with the first about which way the light comes from — two of
+ * those seven had the top edge brighter than the left rail, which is the
+ * lighting reversed.
+ */
+export const PLATE_EDGE_ALPHA = { rail: 0.46, top: 0.15, bottom: 0.09 } as const;
+
 export function spatialPlate(accent: string): CSSProperties {
   return {
-    borderLeft: `1px solid ${rgba(accent, 0.46)}`,
-    borderTop: `1px solid ${rgba(accent, 0.15)}`,
-    borderBottom: `1px solid ${rgba(accent, 0.09)}`,
+    borderLeft: `1px solid ${rgba(accent, PLATE_EDGE_ALPHA.rail)}`,
+    borderTop: `1px solid ${rgba(accent, PLATE_EDGE_ALPHA.top)}`,
+    borderBottom: `1px solid ${rgba(accent, PLATE_EDGE_ALPHA.bottom)}`,
     background: spatialPlateBackground(accent),
     clipPath: PLATE_CUT_CLIP,
   };
@@ -549,6 +568,23 @@ export function plateStateChip(color: string): CSSProperties {
 
 /** Rail alpha the probe dialects draw; the dossier goes one step fainter. */
 export const PLATE_ROW_RAIL_ALPHA = 0.34;
+
+/**
+ * …and the one rail in the overlay that is deliberately louder than the plate
+ * around it.
+ *
+ * The dossier's composition blocks hang on a 2px rail in the tier's own
+ * colour, and the block's own comment says why: "this is a card among rows,
+ * and the edge is what says so before the type does". A block that announced
+ * itself at the row rung would be a row with a thick line, which is a
+ * different sentence.
+ *
+ * It is a rung and not a literal because it was 0.55 in one file and nothing
+ * anywhere said whether that was the row rail rounded up, the plate edge
+ * rounded down, or a number. It is none of those: it is the one weight a rail
+ * takes when the thing hanging on it is a BLOCK rather than a row.
+ */
+export const PLATE_ROW_RAIL_LIT_ALPHA = 0.55;
 
 /**
  * …and what a rail on a PRESSABLE row does when the pointer reaches it.
@@ -785,7 +821,7 @@ export function SpatialPlateHeader({ en, cjk, accent, titleColor = HUD_COLORS.cy
         {en}
       </span>
       {cjk ? (
-        <span style={{ ...CJK_BASELINE_LIFT, flex: '0 0 auto', whiteSpace: 'nowrap', color: accent, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: 0.72 }}>
+        <span style={{ ...CJK_BASELINE_LIFT, flex: '0 0 auto', whiteSpace: 'nowrap', color: accent, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: COMPANION_OPACITY }}>
           {cjk}
         </span>
       ) : null}

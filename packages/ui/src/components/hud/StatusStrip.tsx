@@ -44,13 +44,22 @@ export const STATUS_STRIP_HEIGHTS = {
   mobileContext: 88,
 } as const;
 
+/** The strip's rail, and it has a rung of its own for exactly the reason its
+ *  RULE does (`hudTheme.ts`, the alpha ladder): these hairlines are cyan on
+ *  the instrument's own chrome, and a panel's are its accent. Measured against
+ *  the near-black both are painted on, cyan at 0.14 lands where an accent
+ *  lands at the overlay's 0.34 row rail — so snapping the strip to the panel
+ *  rung would not tidy the strip, it would draw a cyan bar between every
+ *  module. */
+const STRIP_RAIL_ALPHA = 0.14;
+
 const NAV_MODULE_STYLE: CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
   flexShrink: 0,
   height: 24,
   boxSizing: 'border-box',
-  borderLeft: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.14)}`,
+  borderLeft: `1px solid ${rgba(HUD_COLORS.cyanWire, STRIP_RAIL_ALPHA)}`,
   background: `linear-gradient(90deg,${rgba(HUD_COLORS.cyanWire, 0.035)},transparent 78%)`,
 };
 
@@ -203,7 +212,7 @@ function PanelVisibilityControl({ panels, onChange, compact = false, menuOffset 
           padding: compact ? '0 5px' : '0 7px',
           borderTop: 0,
           borderRight: 0,
-          borderLeft: `1px solid ${rgba(color, 0.3)}`,
+          borderLeft: `1px solid ${rgba(color, STRIP_RAIL_ALPHA)}`,
           borderBottom: `1px solid ${rgba(color, 0.12)}`,
           background: `linear-gradient(90deg,${rgba(color, 0.055)},transparent)`,
           color,

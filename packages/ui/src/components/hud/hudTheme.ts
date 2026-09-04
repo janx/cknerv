@@ -595,13 +595,85 @@ export const HUD_MOTION = {
 //               it tints — not of a role, and the dossier's composition block
 //               argues its own 0.07 on exactly those terms.
 //   a glow       `boxShadow` / `textShadow`. Atmosphere, sized to its source.
-//   an EDGE      A surface's own border is not a rule between two things, it is
-//               the outline of one. `spatialPlate` wears three deliberately
-//               different alphas — 0.46 on the left rail, 0.15 on top, 0.09
-//               underneath — because it is a LIT edge, and it is single-sourced
-//               in `primitives.tsx` so it cannot drift anyway.
-//   a rail       `PLATE_ROW_RAIL_ALPHA`, already one number in one place.
 //   a track      The empty half of a meter is `trackGround`, a colour.
+//
+// ——— And the RAILS, which are the same idea turned on its side —————————————
+//
+// Two things this ladder said about itself were not true, and the scan
+// (report F, F-1 and F-7) measured both:
+//
+//   "a rail: `PLATE_ROW_RAIL_ALPHA`, already one number in one place" — the
+//   overlay drew FOURTEEN vertical rails at twelve alphas, from 0.14 to 0.561.
+//   One number was in one place; thirteen rails were somewhere else.
+//
+//   "an EDGE … `spatialPlate` … is single-sourced in `primitives.tsx` so it
+//   cannot drift anyway" — true of `spatialPlate`, and the exemption was read
+//   as covering every edge. `ConsensusIdentityPlate` and `CellCausalLensReadout`
+//   draw their own plates by hand, in a hex-suffix notation this file's rule
+//   sweep could not even parse, at seven more alphas between 0.102 and 0.478.
+//
+// A rail is a rule stood upright: it separates a row from the measure it hangs
+// in, and it is read the same way — alpha times the brightness of its ink. So
+// it gets the same treatment, and the rungs are about WHAT HANGS ON IT. They
+// live in `primitives.tsx` beside the row grammar that wears them, and this
+// table is the record of what each one means:
+//
+//   RAIL 0.34   A ROW's rail — `PLATE_ROW_RAIL_ALPHA`. Every fact of every
+//               card dialect, the DAO's second hero, the peer's sync ladder,
+//               the memory ledger's evidence rows. The overlay's default.
+//   RAIL 0.46   A PLATE's own left edge — `PLATE_EDGE_ALPHA.rail`, with 0.15
+//               on top and 0.09 underneath. Lit from the left, and now read by
+//               the two hand-drawn plates as well as by `spatialPlate`.
+//   RAIL 0.55   A LIT rail — `PLATE_ROW_RAIL_LIT_ALPHA`, drawn 2px, worn by
+//               the dossier's composition blocks. Louder than the plate that
+//               holds it on purpose: the block's own comment says "this is a
+//               card among rows, and the edge is what says so before the type
+//               does", and a rail that only matched its neighbours could not
+//               say it.
+//   RAIL 1      Under the pointer — `PLATE_ROW_RAIL_HOT_ALPHA`, and a corner
+//               bracket, which is a mark rather than a rail and is drawn at
+//               its own colour for the same reason.
+//   RAIL 0.14   The STATUS STRIP's, for exactly the reason its rule rung is
+//               0.07: the strip's hairlines are cyan on the instrument's own
+//               chrome, and cyan at 0.14 lands where a panel's accent lands at
+//               0.34. Its two rails were 0.14 and 0.3; the control that wore
+//               the louder one says its state in its COLOUR — cyan at the
+//               default, orange when you have diverged from it — so a second
+//               rail weight was saying it twice, and only for the half of the
+//               time the chip is cyan.
+//
+// ——— And DIMMING, which is not an alpha at all ——————————————————————————————
+//
+// `opacity` on a whole object — the third notation the same idea was written
+// in, and the one with no ladder of any kind: the overlay dimmed things at
+// 0.55, 0.6, 0.62, 0.68, 0.7, 0.72, 0.75 and 0.8, and the eight numbers were
+// saying two things.
+//
+// They are two because the READER does two different things with them. A
+// dimmed READING is one you are being told not to trust yet — you look at it
+// and then look for why. A dimmed COMPANION is one you are being told you may
+// skip — a name's second name, which you read once and never again. Nothing in
+// between needs a weight of its own, and eight weights for two sentences means
+// no sentence had a weight.
+//
+//   STALE      0.68 — a reading whose source has gone quiet, a bar whose data
+//              is partial, a compass with nothing measured on it, a proof not
+//              yet read, a row that cannot be armed. Eight of the nine
+//              staleness sites already wore it; DAO's 0.72 was the ninth.
+//   COMPANION  0.72 — the CJK name beside its Latin (细胞, 对端, 节点, 字节元,
+//              and every `SpatialPlateHeader`) and the scope tag beside its
+//              count (`CHAIN`, `OBSERVED`, `STAGE`). Same role, same shape: a
+//              qualifier set one rung down beside a name, dimmed so it never
+//              competes with the thing it qualifies. It was 0.7 in two places
+//              and 0.72 in five; the tags were 0.8.
+//
+// NOT this ladder: a control you cannot press. `CellCausalLensReadout`'s
+// disabled toggle at 0.34 and `CellContentMemory`'s at 0.4 are not saying "do
+// not trust this", they are saying "this does not work", and the reader is
+// meant to stop at them rather than look past them. A far dimmer statement, on
+// purpose, and folding it in here would make a dead control look merely stale.
+export const STALE_OPACITY = 0.68;
+export const COMPANION_OPACITY = 0.72;
 
 /** The optical correction every CJK COMPANION wears, and the reason it needs
  *  one.

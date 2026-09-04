@@ -6,7 +6,7 @@ import {
   deriveTransactionHorizonVisual,
   transactionHorizonVisualState,
 } from '../../derives/transactionHorizon.derive';
-import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba, STALE_OPACITY } from './hudTheme';
 import { ReadoutHeader } from './primitives';
 
 function compactCount(value: number): string {
@@ -45,7 +45,7 @@ export default function TransactionHorizonReadout({ source, record, compact = fa
           marginTop: 6,
           paddingTop: 5,
           borderTop: `1px solid ${rgba(accent, 0.16)}`,
-          opacity: stale ? 0.68 : 0.9,
+          opacity: stale ? STALE_OPACITY : 0.9,
         }}
       >
         <ReadoutHeader
@@ -68,7 +68,7 @@ export default function TransactionHorizonReadout({ source, record, compact = fa
         marginTop: 8,
         paddingTop: 7,
         borderTop: `1px solid ${rgba(accent, 0.16)}`,
-        opacity: stale ? 0.68 : 1,
+        opacity: stale ? STALE_OPACITY : 1,
       }}
     >
       <ReadoutHeader

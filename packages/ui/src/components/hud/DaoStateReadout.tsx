@@ -9,7 +9,8 @@ import {
 } from '../../derives/daoState.derive';
 import { formatCkb } from './cellFormat';
 import { HudAge, useHudClockSelector } from './hudClock';
-import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba, STALE_OPACITY } from './hudTheme';
+import { PLATE_ROW_RAIL_ALPHA } from './primitives';
 
 const SHANNONS_PER_CKB = 100_000_000n;
 
@@ -178,7 +179,7 @@ export default function DaoStateReadout({ source, record, nowMs }: {
           and the age — a fact, not a verdict — moves down to the footer beside
           the two blocks it is the age OF. Nothing here is printed on a good
           day, which is what a good day looks like everywhere else. */}
-      <div data-dao-content style={{ opacity: stale ? 0.72 : 1 }}>
+      <div data-dao-content style={{ opacity: stale ? STALE_OPACITY : 1 }}>
         <div
           data-dao-hero
           style={{
@@ -256,7 +257,7 @@ export default function DaoStateReadout({ source, record, nowMs }: {
           <div style={{
             minWidth: 0,
             paddingLeft: 10,
-            borderLeft: `1px solid ${rgba(accent, 0.18)}`,
+            borderLeft: `1px solid ${rgba(accent, PLATE_ROW_RAIL_ALPHA)}`,
           }}>
             <MetricLabel>Est. APC</MetricLabel>
             {/* The panel's second hero, ranked under the first and reading in
