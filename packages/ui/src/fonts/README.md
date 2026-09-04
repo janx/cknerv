@@ -13,7 +13,7 @@ props of `PanelHeader` (including `StageCapacityPanel`'s 样本 and `CellsPanel`
 companions (`PeerLinkCard`'s 对端, `NodeSelfCard`'s 节点, `CellDetailPanel`'s
 细胞), the CKByte's own name 字节元 over the two surfaces whose subject is that
 unit — `CellByteBudget`'s `CKBYTE 字节元`, the zone that counts CKBytes, and
-`CellDataReader`'s `DATA READER 字节元`, the reader that shows their bytes — and
+`CellDataReader`'s `CKBYTES 字节元`, the reader that shows their bytes — and
 the three consensus-memory endpoint markers drawn over the stage by
 `nerve/ConsensusMemoryMarkers`: 共识记录, 交易输入, 谱系见证.
 (`SightedNodeCard` documents in-file why it deliberately wears none.)

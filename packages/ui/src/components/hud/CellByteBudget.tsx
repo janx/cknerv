@@ -86,8 +86,8 @@ export default function CellByteBudget({
           *
           * TWO surfaces in the HUD have the unit itself as their subject, and
           * so two wear the name (the user's ruling of 2026-09-04): this zone,
-          * which COUNTS CKBytes, and `DATA READER` (SCAN·03), which SHOWS THE
-          * BYTES those CKBytes bought — `DATA READER 字节元` on its plate
+          * which COUNTS CKBytes, and `CKBYTES` (SCAN·03), which SHOWS THE
+          * BYTES those CKBytes bought — `CKBYTES 字节元` on its plate
           * header, the same companion-to-a-name grammar. Nothing else in the
           * overlay qualifies, which is what keeps this a ruling rather than a
           * habit: every other reading merely counts in the unit.

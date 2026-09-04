@@ -351,30 +351,32 @@ Cell remains the single visual focus. The selected-Cell satellites are
 deliberately no-scroll summaries. The Cell Scan and portrait own the exact
 WHERE / WHAT / WHEN identity proofs; **CONSENSUS MEMORY** does not repeat their
 outpoint, content-hash, and birth-anchor rows. It presents the remembered Cell
-content directly, without a nested **CELL CONTENT** frame. Without
-an optional source it renders the direct CKB node's real data prefix as bytes
-and conservative printable ASCII, including exact observed size or explicit
-truncation; it does not invent local content guesses. With validated indexed
-content it upgrades in place to **INDEX ANALYSIS**, preferring indexed bytes,
-showing the full logical size and completeness, and making deterministic
-segments navigable by their exact byte ranges. The window itself shows the
-Cell's first 32 bytes and opens **DATA READER** (`SCAN·03`), a column beside
-the analysis plate and as tall as it, on the side away from the specimen, with
-a full-width row under the card only on windows too narrow for the column: a
-virtualised hex dump, sixteen bytes to a row with an offset gutter and
-printable ASCII on the same row, a byte map of the whole payload, every
-decoded segment as a table of contents, and an inspector that reads the
-selection as little-endian integers and UTF-8. Stepping to a segment that
-begins past those first 32 bytes opens the reader at that byte. The reader
-shows the complete payload rather than a prefix, fetched from the node through
-`GET /api/cells/:tx_hash/:output_index/data` only when the bytes already held
-are shorter than the Cell, and it is there in every mode, index or none.
-Deterministic meanings and values, heuristic evidence, protocol roles, and
-resolved asset value remain independently labeled. If an indexed
-record has analysis but no raw payload, the direct-node prefix stays visible
-and is explicitly labeled as such.
+content directly, without a nested **CELL CONTENT** frame. It reads the content
+rather than printing it. With validated indexed content it upgrades in place to
+**INDEX ANALYSIS**: the resolved asset value, the deterministic decode and its
+kind, every deterministic segment as its own row carrying that segment's label,
+its exact byte range and its value, the heuristic evidence, and the protocol
+role — each independently labeled, and not one raw byte among them. Without an
+optional source there is no window at all: the Cell Scan's DATA fact states the
+size, and the bytes are shown one plate down.
 
-The same memory satellite retains a one-glance causal provenance line;
+**CKBYTES** (`SCAN·03`) is that plate. It stands under the CELL SCAN square for
+every Cell that holds bytes — from the first frame, lit at the decode step of
+the scan like every other zone — as tall as the analysis plate beside it and
+128 px wider than the square, so its far edge notches into the Cell's side of
+the card: a virtualised hex dump, sixteen bytes to a row with an offset gutter
+and printable ASCII on the same row, a scrollbar that IS the byte map of the
+whole payload, and one foot line that names the segment under the pointer and
+reads a selection as a single little-endian integer and as text. It shows the
+complete payload rather than a prefix, fetched from the node through
+`GET /api/cells/:tx_hash/:output_index/data` when the bytes already held are
+shorter than the Cell, and it is there in every mode, index or none. A click on
+a segment row up in the analysis plate moves the reader to that segment's bytes
+and lights them; a click on a byte gives the reading back to the pointer. Hex
+only: a payload the chain stores as bytes is read as bytes, never guessed into
+text or an image.
+
+**CONSENSUS MEMORY** retains a one-glance causal provenance line;
 activating recall temporarily opens **MEMORY TRACE** as a separate evidence
 satellite. The scan's **INDEX LAYER**
 keeps owner, creation and proof anchors, resolved asset identity, lock/type
