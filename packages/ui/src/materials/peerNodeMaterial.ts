@@ -12,6 +12,7 @@ import {
   COMPRESS_GAIN,
   COMPRESS_RELEASE_S,
 } from '../derives/peers.derive';
+import { CELL_HOVER_FOCUS } from '../derives/cellInteraction.derive';
 
 /**
  * Shared fragment response for the P2P brightness shockwave. Passive context
@@ -446,6 +447,49 @@ export const MEASURED_PEER_BRIGHTNESS = 1.6;
 export const MEASURED_EVENT_SCALE = 0.6;
 
 /**
+ * How far apart a hovered peer's published position and an instance's own may
+ * be and still be the same peer, in world units.
+ *
+ * The uniform carries a POSITION rather than an index, because the belt's
+ * lanes are re-cut on every roster round and an index does not survive one —
+ * the same hazard `stampPeerLaunches` exists for. The position is copied from
+ * the very array the instance matrices are written from, so the two are bit
+ * identical and this is a guard against nothing but future arithmetic; the
+ * belt's own peers stand tens of world units apart.
+ */
+export const MEASURED_HOVER_MATCH_WU = 0.25;
+
+/**
+ * What a hovered measured peer's halo adds to its own light.
+ *
+ * The class of scene target a viewer most often fails to hit — twelve measured
+ * peers among ~260 unclickable inferred ghosts — was the one class with no
+ * hover feedback at all: `onPointerOver` published a word for the cursor
+ * arbitration and nothing else. A Cell answers a pointer with its focus
+ * envelope; this is that envelope, on the belt, at the same strength the Cell
+ * reaches on hover (`CELL_HOVER_FOCUS`), so the two organisms answer a pointer
+ * in one language.
+ */
+export const MEASURED_HOVER_FOCUS = CELL_HOVER_FOCUS;
+
+/**
+ * …and how much wider the hovered mark stands.
+ *
+ * Brightness ALONE does not answer here, and the first live capture is what
+ * says so: over the mark itself the halo's core already sits at mean L 174 of
+ * 255 under additive blending, so a 1.46× intensity raised the mean 12–16 %
+ * and could not reach the 20 % the gate asks for — the light it added had
+ * nowhere to go. What a viewer reads on a plane of ~285 similar marks is
+ * WHICH ONE, and size answers that where a clipped core cannot.
+ *
+ * It is the Cell's envelope in this too: a hovered Cell's focus drives
+ * `focusedBraidScale` as well as its light. Eighteen percent is a mark that
+ * has plainly answered and has not moved — the hit sphere is untouched, so
+ * nothing the pointer is already on can escape from under it.
+ */
+export const MEASURED_HOVER_EXTENT = 0.18;
+
+/**
  * Every measured peer halo in ONE instanced draw. Replaces one drei Billboard
  * plus one single-quad mesh (and two frame subscribers) per peer: the
  * billboard is rebuilt from the view matrix's camera axes — exactly the
@@ -468,6 +512,10 @@ export function makeMeasuredPeerHalosMaterial(
     uniforms: {
       uTime: { value: 0 },
       uContextEnergy: { value: 1 },
+      // xyz: the hovered peer's world position. w: whether one is hovered at
+      // all. One uniform for a belt of twelve, written from the frame loop
+      // off the canvas's own hover word — no re-render, no attribute upload.
+      uHover: { value: new THREE.Vector4(0, 0, 0, 0) },
       ...makeCompressionUniforms(),
       ...sharedShockwave(uniforms),
     },
@@ -491,9 +539,11 @@ export function makeMeasuredPeerHalosMaterial(
       varying float vPeerRate;
       varying float vPeerSelected;
       varying float vHeld;
+      varying float vHover;
 
       uniform float uTime;
       uniform float uCompressDepth;
+      uniform vec4 uHover;
       ${SHOCKWAVE_UNIFORMS_GLSL}
 
       ${SHOCKWAVE_SIGNAL_GLSL}
@@ -511,6 +561,21 @@ export function makeMeasuredPeerHalosMaterial(
         vec4 wave = shockwaveSignalAt(origin.xz);
         vShockwave = wave.a;
         vShockwaveCarrier = wave.rgb;
+        // Is the pointer on THIS peer? The uniform names one position; every
+        // other instance reads 0 and is untouched.
+        //
+        // WARNING: IN THE INSTANCE'S OWN FRAME, not the world's. The colony
+        // rotates under its own group (the counter-rotation), so the world
+        // origin -- which has been through modelMatrix -- moves every frame
+        // while the position the layer publishes is the peer's own node.pos.
+        // Comparing those two matched for about one frame after boot and
+        // never again, which is exactly what the first live capture measured:
+        // hover and rest inside the belt's own rotation noise.
+        vec4 local = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+        vHover = uHover.w * (1.0 - step(
+          ${MEASURED_HOVER_MATCH_WU.toFixed(2)},
+          distance(local.xyz, uHover.xyz)
+        ));
         float expand = 1.0 + min(1.0, vShockwave) * uShockwaveSizeBoost;
         // The held breath: the extent draws in over the charge window before
         // this peer's hop leaves and lets go after. It rides ON the wave's
@@ -518,7 +583,9 @@ export function makeMeasuredPeerHalosMaterial(
         // the peer as its hop goes.
         float held = peerCompressionGl(uTime - aPeerLaunchAt);
         vHeld = held;
-        float extent = expand * (1.0 - uCompressDepth * held);
+        float extent = expand
+          * (1.0 - uCompressDepth * held)
+          * (1.0 + ${MEASURED_HOVER_EXTENT.toFixed(2)} * vHover);
         // The follow-Billboard applied the camera's world quaternion; the
         // view matrix's row axes are that same frame, so the silhouette is
         // identical with zero per-frame CPU.
@@ -544,6 +611,7 @@ export function makeMeasuredPeerHalosMaterial(
       varying float vPeerRate;
       varying float vPeerSelected;
       varying float vHeld;
+      varying float vHover;
 
       uniform float uTime;
       uniform float uContextEnergy;
@@ -564,7 +632,10 @@ export function makeMeasuredPeerHalosMaterial(
         float breathe = 0.78 + 0.22 * sin(uTime * 1.2 + vPeerPhase);
         // The held breath concentrates the halo's light as its extent draws
         // in — the gain is short of conservation, so it never pops white.
-        float intensity = envelope * breathe * (1.0 + uCompressGain * vHeld);
+        // …and the hovered peer answers, at the envelope a Cell answers with.
+        float intensity = envelope * breathe
+          * (1.0 + uCompressGain * vHeld)
+          * (1.0 + ${MEASURED_HOVER_FOCUS.toFixed(2)} * vHover);
         float contextEnergy = mix(uContextEnergy, 1.0, vPeerSelected);
         // Only the event term is trimmed (MEASURED_EVENT_SCALE); rest stays.
         vec4 signal = peerShockwaveResponse(

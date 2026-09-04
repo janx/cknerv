@@ -5,6 +5,7 @@ import {
   clearPeerNodeHover,
   markPeerNodeHover,
   peerNodeHoverId,
+  peerNodeHoverTier,
   peerNodeHovered,
 } from '../../src/components/peerHoverWord';
 import { stagedPickTargets } from '../../src/components/ColonyNodes';
@@ -47,6 +48,19 @@ describe('the scene’s hover word carries a tier', () => {
     expect(peerNodeHovered(canvas)).toBe(false);
     // Nothing to retract twice.
     expect(clearPeerNodeHover(canvas, 'QmPeer')).toBe(false);
+  });
+
+  it('reads the tier back, for the layer that has to light one peer', () => {
+    // The belt's halos are ONE instanced draw and its hit targets are drawn
+    // elsewhere, so the layer that lights a hovered peer asks two questions of
+    // this word — which mark, and which rung — and both are answered here.
+    expect(peerNodeHoverTier(canvas)).toBeUndefined();
+    markPeerNodeHover(canvas, 'QmPeer', 'measured');
+    expect(peerNodeHoverTier(canvas)).toBe('measured');
+    markPeerNodeHover(canvas, 'QmSighted', 'sighted');
+    expect(peerNodeHoverTier(canvas)).toBe('sighted');
+    clearPeerNodeHover(canvas);
+    expect(peerNodeHoverTier(canvas)).toBeUndefined();
   });
 
   it('answers a raster with the tier a mark belongs to', () => {
@@ -98,5 +112,15 @@ describe('one owner for the hover word', () => {
       .map((file) => file.slice(SRC.length + 1));
 
     expect(offenders).toEqual([]);
+  });
+
+  it('is what the measured belt reads to light a hovered peer', () => {
+    // The positive half: the belt's own frame loop asks this module which
+    // mark and which rung, and writes ONE uniform off the answer. A layer
+    // that stopped asking would leave the peers back where E-12 found them —
+    // the class of target hardest to hit and the only one with no answer.
+    const halos = readFileSync(resolve(SRC, 'components/ColonyNodes.tsx'), 'utf8');
+    expect(halos).toContain("peerNodeHoverTier(canvas) === 'measured'");
+    expect(halos).toContain('material.uniforms.uHover.value');
   });
 });

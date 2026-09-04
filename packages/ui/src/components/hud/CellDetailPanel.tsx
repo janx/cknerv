@@ -44,7 +44,10 @@ import {
   PlateReadoutCaption,
   PlateReadoutRow,
   plateStateChip,
+  PLATE_ROW_HOT_WASH_ALPHA,
   PLATE_ROW_RAIL_ALPHA,
+  PLATE_ROW_RAIL_HOT_ALPHA,
+  PLATE_ROW_SELECTED_WASH_ALPHA,
   REVEAL_GHOST_OPACITY,
   revealStageAttributes,
   revealStageStyle,
@@ -320,6 +323,20 @@ const ORANGE = HUD_COLORS.orange;
  *  causal ring — that retention IS the row. */
 const TRACE_CAPTION = 'THE CREATING WRITE THIS SESSION STILL HOLDS IN MEMORY';
 const TRACE_CAPTION_RECALL = `${TRACE_CAPTION} · SELECT TO REPLAY ITS INPUTS`;
+/**
+ * …and what the caption says while the affordance is still DISABLED.
+ *
+ * The control arms only after the three identity proofs are read, and the
+ * whole instruction for reading them lived in a `title` on a disabled element
+ * — a tooltip most browsers will not even show for one — while the caption
+ * under it invited a click it would refuse. A caption on a disabled control
+ * has exactly one job: name the unmet condition.
+ *
+ * WHERE · WHAT · WHEN are the register's own labels for the three facts
+ * (D-6 renamed STATE to WHERE for this reason), and `VERIFY ◇◇◇ 0/3` beside
+ * it is the count, so the sentence and the mark say the same thing.
+ */
+const TRACE_CAPTION_UNARMED = 'READ WHERE · WHAT · WHEN ABOVE TO ARM';
 /** PROOF is the index's anchor block: the height everything the index added
  *  above was true at — said on the row, on hover, and not printed under it.
  *
@@ -880,13 +897,28 @@ const CellScanFact = memo(function CellScanFact({
   // one of their two booleans.
   const revealed = useCellScanStepLit(revealAt);
   const interactive = useCellScanClassified();
+  // Pointed at, or focused from the keyboard: one state, because they are one
+  // question — is the reader ABOUT to press this? React state and inline
+  // styles rather than a `:hover` rule, and the reason is mechanical: every
+  // property the treatment touches is written inline from this fact's own
+  // accent, and an inline style beats a stylesheet rule. (Measured live: the
+  // first cut of this WAS a theme rule, and the hovered rail and the resting
+  // one came back byte-identical.)
+  const [hot, setHot] = useState(false);
+  const lit = interactive && hot;
   return (
     <button
       type="button"
       data-cell-detail-field={field}
       data-cell-detail-field-state={selected ? 'focused' : revealed ? 'resolved' : 'scanning'}
+      // A fact is a button, and the rail is what says so.
+      data-hud-fact-rail={lit ? 'hot' : 'true'}
       aria-pressed={selected}
       disabled={!interactive}
+      onPointerEnter={() => setHot(true)}
+      onPointerLeave={() => setHot(false)}
+      onFocus={() => setHot(true)}
+      onBlur={() => setHot(false)}
       onClick={() => onActivate(field)}
       style={{
         position: 'relative',
@@ -899,15 +931,24 @@ const CellScanFact = memo(function CellScanFact({
         margin: 0,
         padding: '4px 7px 4px 10px',
         border: 0,
-        borderLeft: `1px solid ${selected ? accent : rgba(accent, 0.34)}`,
-        background: selected
-          ? `linear-gradient(90deg,${rgba(accent, 0.17)},transparent 88%)`
+        borderLeft: `1px solid ${selected || lit
+          ? rgba(accent, PLATE_ROW_RAIL_HOT_ALPHA)
+          : rgba(accent, PLATE_ROW_RAIL_ALPHA)}`,
+        background: selected || lit
+          ? `linear-gradient(90deg,${rgba(
+            accent,
+            selected ? PLATE_ROW_SELECTED_WASH_ALPHA : PLATE_ROW_HOT_WASH_ALPHA,
+          )},transparent 88%)`
           : 'transparent',
         boxShadow: selected ? `-3px 0 10px ${rgba(accent, 0.22)}` : undefined,
         color: accent,
         font: 'inherit',
         textAlign: 'left',
-        cursor: interactive ? 'crosshair' : 'default',
+        // ONE cursor for a pressable. `crosshair` said AIM on the facts and the
+        // route hops while fourteen other controls said PRESS with `pointer` —
+        // two grammars for one act, and the aiming one on the surface a reader
+        // is least likely to know is a control at all.
+        cursor: interactive ? 'pointer' : 'default',
         opacity: revealed ? 1 : REVEAL_GHOST_OPACITY,
         transition: 'opacity 260ms ease, background 160ms ease, box-shadow 160ms ease',
         pointerEvents: interactive ? 'auto' : 'none',
@@ -919,7 +960,7 @@ const CellScanFact = memo(function CellScanFact({
           is 440px in a single column, so it can afford the larger pair — the
           peer card, at 340px and two facts to a row, cannot. Neither size is
           the "right" one to standardise on. */}
-      <span style={{ display: 'block', fontSize: HUD_TYPE.label, letterSpacing: 1.2, color: HUD_COLORS.dim }}>
+      <span data-hud-fact-label style={{ display: 'block', fontSize: HUD_TYPE.label, letterSpacing: 1.2, color: lit ? HUD_COLORS.ink : HUD_COLORS.dim }}>
         {label}
         {proof ? (
           <span
@@ -1240,9 +1281,7 @@ function CellScanTraceBlock({
           data-trace-selected={traceSelected ? 'true' : 'false'}
           data-trace-state={traceSelected ? 'active' : 'ready'}
           data-trace-stage={traceSelected ? traceStage ?? 'planning' : 'ready'}
-          title={!identityProofComplete
-            ? 'ARM MEMORY TRACE · read the three identity proofs by selecting WHERE, DATA (WHAT) and COMMIT (WHEN) in the register above'
-            : observed.txHash}
+          title={observed.txHash}
           onClick={() => onTraceWrite(observed.seq)}
           disabled={!recallEnabled}
           style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'baseline', gap: '2px 8px', width: '100%', margin: 0, padding: '3px 2px', border: 0, background: traceSelected ? `${VIOLET}12` : 'transparent', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.35, color: traceSelected ? HUD_COLORS.memoryInk : ORANGE, textShadow: `0 0 6px ${traceSelected ? VIOLET : ORANGE}55`, whiteSpace: 'nowrap', cursor: recallEnabled ? 'pointer' : 'default', textAlign: 'left', opacity: recallEnabled ? 1 : 0.62 }}
@@ -1257,7 +1296,7 @@ function CellScanTraceBlock({
             {observed.inputCount}→{observed.outputCount} · {traceStateReadout}
           </span>
           <PlateReadoutCaption style={{ gridColumn: '1 / -1', whiteSpace: 'normal' }}>
-            {TRACE_CAPTION_RECALL}
+            {recallEnabled ? TRACE_CAPTION_RECALL : TRACE_CAPTION_UNARMED}
           </PlateReadoutCaption>
         </button>
       ) : (

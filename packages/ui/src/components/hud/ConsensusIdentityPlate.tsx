@@ -701,8 +701,10 @@ function EvidenceRouteLedger({
                   font: 'inherit',
                   lineHeight: 'inherit',
                   color: locked ? LOCKED_GOLD : active ? HUD_COLORS.ink : nodeColor,
+                  // A hop chip is pressable, so it says PRESS. `crosshair`
+                  // was the card dialect's second cursor grammar for one act.
                   cursor: onHopFocusChange || onHopLockChange
-                    ? 'crosshair'
+                    ? 'pointer'
                     : 'default',
                   transition: reducedMotion
                     ? undefined

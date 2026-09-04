@@ -64,7 +64,9 @@ import {
   CELL_PANEL_ACCENT,
   HUD_COLORS,
   HUD_FONTS,
+  HUD_THEME_STYLE_ID,
   HUD_TYPE,
+  injectHudTheme,
   ORDINAL_REACH_RAMP,
   QUALITATIVE_BUCKET_COLORS,
   rgba,
@@ -72,6 +74,10 @@ import {
 import {
   PLATE_CUT_CLIP,
   PLATE_CUT_PX,
+  PLATE_ROW_HOT_WASH_ALPHA,
+  PLATE_ROW_RAIL_ALPHA,
+  PLATE_ROW_RAIL_HOT_ALPHA,
+  PLATE_ROW_SELECTED_WASH_ALPHA,
   REVEAL_GHOST_OPACITY,
 } from '../../../src/components/hud/primitives';
 import { TOP_BAND_HEIGHT } from '../../../src/components/hud/TopBand';
@@ -4443,5 +4449,59 @@ describe('the cell card wears one colour', () => {
       'components/CellInspectionOverlay.tsx',
       'components/hud/CellDetailPanel.tsx',
     ]);
+  });
+});
+
+// ——— One cursor for a pressable ——————————————————————————————————————————
+//
+// Two grammars said "click me" across the HUD: `pointer` on fourteen controls
+// and `crosshair` on the register facts and the route hops. `pointer` says
+// PRESS; `crosshair` says AIM — and it was worn by the surfaces a reader is
+// LEAST likely to know are controls at all (report E, E-12). `ew-resize` and
+// `text` stay: those name a different act honestly.
+describe('one cursor for a pressable', () => {
+  it('no HUD surface aims where it means to press', () => {
+    // ⚠️ The LITERAL, not `cursor: 'crosshair'`. Every one of the three sites
+    // wrote it through a ternary (`interactive ? 'crosshair' : 'default'`), so
+    // a rule keyed on the property name would have passed all three — which is
+    // exactly what it did on the first falsification.
+    const offenders = SOURCES
+      .filter((source) => /'crosshair'/.test(code(source.text)))
+      .map((source) => source.name);
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('and the affordance is a rail, in both fact dialects, at one rung', () => {
+    // Two cards state the same sentence — a rail, a label, a value, pressable
+    // — and the second rung of that rail is one idea, so both read it from
+    // `primitives` rather than typing an alpha of their own. A dialect that
+    // lit its rail without the wash would say something different from the
+    // card beside it.
+    const wearing = SOURCES
+      .filter((source) => /data-hud-fact-rail=/.test(source.text))
+      .map((source) => source.name)
+      .sort();
+
+    expect(wearing).toEqual(['CellDetailPanel.tsx', 'PeerLinkCard.tsx']);
+    for (const name of wearing) {
+      const text = code(SOURCES.find((candidate) => candidate.name === name)?.text ?? '');
+      expect(text, `${name} has no label for the treatment to lift`)
+        .toContain('data-hud-fact-label');
+      expect(text, `${name} does not answer a pointer`)
+        .toContain('onPointerEnter');
+      expect(text, `${name} does not answer a keyboard`).toContain('onFocus');
+      for (const rung of [
+        'PLATE_ROW_RAIL_ALPHA',
+        'PLATE_ROW_RAIL_HOT_ALPHA',
+        'PLATE_ROW_SELECTED_WASH_ALPHA',
+        'PLATE_ROW_HOT_WASH_ALPHA',
+      ]) {
+        expect(text, `${name} does not read ${rung}`).toContain(rung);
+      }
+    }
+    // …and the half-weight wash is derived from the selected one, not typed.
+    expect(PLATE_ROW_HOT_WASH_ALPHA).toBe(PLATE_ROW_SELECTED_WASH_ALPHA / 2);
+    expect(PLATE_ROW_RAIL_HOT_ALPHA).toBeGreaterThan(PLATE_ROW_RAIL_ALPHA);
   });
 });

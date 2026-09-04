@@ -92,6 +92,7 @@ import {
   clearPeerNodeHover,
   markPeerNodeHover,
   peerNodeHoverId,
+  peerNodeHoverTier,
   peerNodeHovered,
   type PeerNodeTier,
 } from './peerHoverWord';
@@ -811,6 +812,7 @@ function MeasuredPeerHalos({
   backfillActive: boolean;
 }) {
   const simClock = useSimClock();
+  const gl = useThree((state) => state.gl);
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const material = useMemo(
     () => makeMeasuredPeerHalosMaterial(shockwaveUniforms),
@@ -918,12 +920,38 @@ function MeasuredPeerHalos({
     material.dispose();
   }, [geometry, material]);
 
+  // Which peer the pointer is on, cached so a stationary pointer costs one
+  // string compare a frame. The word itself is written by the hit targets
+  // (`MeasuredNode` below) through `peerHoverWord`, which owns both dataset
+  // properties; this reads it, because the belt's LIGHT is drawn here and its
+  // hit targets are drawn there.
+  const hoverIdRef = useRef<string | undefined>(undefined);
+
   // The single frame subscriber the whole measured belt now costs.
   useSimFrame(() => {
     material.uniforms.uTime.value = simClock.elapsedSec;
     material.uniforms.uContextEnergy.value = contextEnergyRef?.current ?? 1;
     material.uniforms.uCompressDepth.value = LIVE.delivery.compressDepth;
     material.uniforms.uCompressGain.value = LIVE.delivery.compressGain;
+    const canvas = gl.domElement;
+    const id = peerNodeHoverTier(canvas) === 'measured'
+      ? peerNodeHoverId(canvas)
+      : undefined;
+    if (id === hoverIdRef.current) return;
+    hoverIdRef.current = id;
+    const hover = material.uniforms.uHover.value as THREE.Vector4;
+    // ⭐ POSITION, NOT INDEX: a roster round re-cuts `measured` and an index
+    // does not survive one, so a lane written at hover time could hand a
+    // departing peer's light to whoever inherited its slot — the hazard
+    // `stampPeerLaunches` is keyed by id for.
+    const node = id === undefined
+      ? undefined
+      : measured.find((candidate) => candidate.peer?.node_id === id);
+    if (node === undefined) {
+      hover.w = 0;
+      return;
+    }
+    hover.set(node.pos[0], node.pos[1], node.pos[2], 1);
   });
 
   return (

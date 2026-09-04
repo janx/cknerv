@@ -52,6 +52,7 @@ import CellDetailPanel, {
 } from '../../../src/components/hud/CellDetailPanel';
 import { READER_WIDTH_PX } from '../../../src/components/hud/CellDataReader';
 import { measureHudOcclusionRectsForTest } from '../../../src/components/hudOcclusion';
+import { PLATE_ROW_RAIL_ALPHA } from '../../../src/components/hud/primitives';
 import {
   formatBlockRef,
   formatOutpoint,
@@ -3821,5 +3822,108 @@ describe('the cell card says each thing once', () => {
     expect(text).not.toContain('ACTIVE');
     // …and the guess that sat beside a settled decode restating its number.
     expect(text).not.toContain('MEDIUM');
+  });
+});
+
+// ——— The interactive layer is visible ————————————————————————————————————
+//
+// Six of these facts are the card's whole interaction surface: they tint the
+// tether, re-weight the braid, open the knowledge ring and read the three
+// identity proofs. They looked like readouts — a rail at .34, a dim label, a
+// value, and `crosshair` as the only thing that answered a pointer at all
+// (report E, E-12).
+describe('the register says it is pressable', () => {
+  it('wears the rail rule and one cursor', () => {
+    const { container } = render(<CellDetailPanel cell={base} onClose={() => {}} />);
+    const facts = Array.from(
+      container.querySelectorAll('[data-cell-detail-field]'),
+    ) as HTMLButtonElement[];
+
+    expect(facts).toHaveLength(6);
+    for (const fact of facts) {
+      expect(fact.dataset.hudFactRail).toBe('true');
+      // …and its rail is the shared rung, not a second 0.34 typed here.
+      expect(fact.style.borderLeft)
+        .toContain(String(PLATE_ROW_RAIL_ALPHA));
+      expect(fact.querySelector('[data-hud-fact-label]')).not.toBeNull();
+    }
+    // Interactive only once the walk classifies; before that it is not a
+    // control and says so.
+    expect(facts[0].style.cursor).toBe('default');
+    expect(facts[0].disabled).toBe(true);
+  });
+
+  it('lights the rail under a pointer and under a keyboard', () => {
+    // The whole of E-12's complaint, in one assertion: before this, hovering a
+    // fact changed exactly nothing on the screen.
+    // Reduced motion hands the card over already classified, which is the
+    // deterministic way to reach a fact that is a control.
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    const { container } = render(<CellDetailPanel cell={base} onClose={() => {}} />);
+    const lock = container
+      .querySelector('[data-cell-detail-field="lock"]') as HTMLButtonElement;
+    const label = lock.querySelector('[data-hud-fact-label]') as HTMLElement;
+    expect(lock.disabled).toBe(false);
+
+    // jsdom normalises a hex to `rgb(...)`, so the inks are compared through
+    // the same normalisation rather than against the token's spelling.
+    const asRendered = (hex: string): string => {
+      const probe = document.createElement('span');
+      probe.style.color = hex;
+      return probe.style.color;
+    };
+    const rest = { rail: lock.style.borderLeft, wash: lock.style.background, ink: label.style.color };
+    expect(rest.wash).toBe('transparent');
+    expect(rest.ink).toBe(asRendered(HUD_COLORS.dim));
+
+    fireEvent.pointerEnter(lock);
+    expect(lock.dataset.hudFactRail).toBe('hot');
+    expect(lock.style.borderLeft).not.toBe(rest.rail);
+    expect(lock.style.background).not.toBe('transparent');
+    expect(label.style.color).toBe(asRendered(HUD_COLORS.ink));
+
+    fireEvent.pointerLeave(lock);
+    expect(lock.style.borderLeft).toBe(rest.rail);
+    expect(lock.style.background).toBe(rest.wash);
+    expect(label.style.color).toBe(rest.ink);
+
+    // …and a keyboard reaches the same state, because it is the same question.
+    fireEvent.focus(lock);
+    expect(lock.dataset.hudFactRail).toBe('hot');
+    fireEvent.blur(lock);
+    expect(lock.dataset.hudFactRail).toBe('true');
+  });
+
+  it('states the unmet condition on the disabled MEMORY TRACE', () => {
+    // The arming ritual used to be explained by a `title` on a DISABLED
+    // element — which most browsers will not show — while the caption under it
+    // invited a click the control would refuse. A caption on a disabled
+    // control has one job: name what is missing.
+    const origin: CellLink = {
+      seq: 21,
+      tx_hash: base.out_point.tx_hash,
+      block: base.birth_block,
+      from_ids: [11],
+      to_ids: [base.id],
+      endpoint_anchors: [],
+      parents: [],
+      tag: base.tag,
+      at_ms: 12_000,
+    };
+    const { container } = render(
+      <CellDetailPanel
+        cell={base}
+        recentLinks={[origin]}
+        onTraceWrite={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    const trace = container.querySelector('[data-trace-available="true"]') as HTMLButtonElement;
+
+    expect(trace.disabled).toBe(true);
+    expect(trace.textContent).toContain('READ WHERE · WHAT · WHEN ABOVE TO ARM');
+    expect(trace.textContent).not.toContain('SELECT TO REPLAY ITS INPUTS');
+    // …and the instruction is no longer hidden in a tooltip nobody can reach.
+    expect(trace.getAttribute('title')).toBe(origin.tx_hash);
   });
 });

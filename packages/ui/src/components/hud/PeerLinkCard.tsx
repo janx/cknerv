@@ -23,6 +23,10 @@ import { CJK_BASELINE_LIFT, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudT
 import {
   CloseButton,
   moduleTag,
+  PLATE_ROW_HOT_WASH_ALPHA,
+  PLATE_ROW_RAIL_ALPHA,
+  PLATE_ROW_RAIL_HOT_ALPHA,
+  PLATE_ROW_SELECTED_WASH_ALPHA,
   plateStateChip,
   SpatialPlateHeader,
   spatialPlate,
@@ -113,12 +117,22 @@ const PeerScanFact = memo(function PeerScanFact({
   // wearing a rule's clothes. Facts that DO carry a colour (direction,
   // version mismatch, sync state) keep speaking for themselves.
   const accent = color ?? HUD_COLORS.peerWire;
+  // The same second rung the cell card's facts wear: under the pointer (or a
+  // keyboard focus) the rail takes the fact's own accent, the label ink comes
+  // up and the selected wash appears at half weight. One dialect, one
+  // affordance — the alphas are `primitives`' and are stated once.
+  const [hot, setHot] = useState(false);
   return (
     <button
       type="button"
       data-peer-probe-fact={facet}
       data-peer-probe-fact-state={selected ? 'focused' : 'resolved'}
+      data-hud-fact-rail={hot ? 'hot' : 'true'}
       aria-pressed={selected}
+      onPointerEnter={() => setHot(true)}
+      onPointerLeave={() => setHot(false)}
+      onFocus={() => setHot(true)}
+      onBlur={() => setHot(false)}
       onClick={onActivate}
       style={{
         position: 'relative',
@@ -127,15 +141,20 @@ const PeerScanFact = memo(function PeerScanFact({
         margin: 0,
         padding: '5px 6px 4px 9px',
         border: 0,
-        borderLeft: `1px solid ${selected ? accent : rgba(accent, 0.34)}`,
-        background: selected
-          ? `linear-gradient(90deg,${rgba(accent, 0.17)},transparent 88%)`
+        borderLeft: `1px solid ${selected || hot
+          ? rgba(accent, PLATE_ROW_RAIL_HOT_ALPHA)
+          : rgba(accent, PLATE_ROW_RAIL_ALPHA)}`,
+        background: selected || hot
+          ? `linear-gradient(90deg,${rgba(
+            accent,
+            selected ? PLATE_ROW_SELECTED_WASH_ALPHA : PLATE_ROW_HOT_WASH_ALPHA,
+          )},transparent 88%)`
           : 'transparent',
         boxShadow: selected ? `-3px 0 10px ${rgba(accent, 0.22)}` : undefined,
         color: accent,
         font: 'inherit',
         textAlign: 'left',
-        cursor: 'crosshair',
+        cursor: 'pointer',
         transition: 'background 160ms ease, box-shadow 160ms ease',
       }}
     >
@@ -146,7 +165,7 @@ const PeerScanFact = memo(function PeerScanFact({
           two to a row, so cell-card type would ellipsis away the tail of every
           address and latency it exists to show. Flattening the two into one
           register makes THIS card worse. */}
-      <span style={{ display: 'block', fontSize: HUD_TYPE.micro, letterSpacing: 1.2, color: HUD_COLORS.dim }}>
+      <span data-hud-fact-label style={{ display: 'block', fontSize: HUD_TYPE.micro, letterSpacing: 1.2, color: hot ? HUD_COLORS.ink : HUD_COLORS.dim }}>
         {label}
       </span>
       <span

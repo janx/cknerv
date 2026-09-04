@@ -65,3 +65,17 @@ export function peerNodeHovered(canvas: HTMLElement): boolean {
 export function peerNodeHoverId(canvas: HTMLElement): string | undefined {
   return canvas.dataset.peerNodeHover;
 }
+
+/**
+ * …and which rung it belongs to.
+ *
+ * The measured belt's halos are ONE instanced draw, so the layer that lights a
+ * hovered peer has to answer "is the word on the canvas a measured peer's?"
+ * before it can look one up — and a measured peer's id and a sighted node's id
+ * are both `Qm…`. The tier is what separates them, and it is read here because
+ * the fence gives this module both dataset properties: a reader outside it
+ * would be a second module that knows how the pair is spelled.
+ */
+export function peerNodeHoverTier(canvas: HTMLElement): PeerNodeTier | undefined {
+  return canvas.dataset.peerNodeTier as PeerNodeTier | undefined;
+}

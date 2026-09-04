@@ -6,6 +6,9 @@ import {
   makePeerCloudMaterial,
   makePeerHaloMaterial,
   MEASURED_EVENT_SCALE,
+  MEASURED_HOVER_EXTENT,
+  MEASURED_HOVER_FOCUS,
+  MEASURED_HOVER_MATCH_WU,
   PEER_COMPRESSION_GLSL,
   peerCloudHitRadius,
   PEER_CLOUD_GHOST_TONE,
@@ -19,6 +22,7 @@ import {
 } from '../../src/materials/shockwaveMaterial';
 import { makeHaloMaterial } from '../../src/components/GlowNode';
 import { BEAM_CHARGE_DUR_S } from '../../src/ui/topologyConstants';
+import { CELL_HOVER_FOCUS } from '../../src/derives/cellInteraction.derive';
 import {
   COMPRESS_DEPTH,
   COMPRESS_GAIN,
@@ -244,12 +248,14 @@ describe('the held breath', () => {
     expect(measured.vertexShader).toContain(
       'float expand = 1.0 + min(1.0, vShockwave) * uShockwaveSizeBoost;',
     );
-    expect(measured.vertexShader).toContain('float extent = expand * (1.0 - uCompressDepth * held);');
+    expect(measured.vertexShader).toContain('* (1.0 - uCompressDepth * held)');
     expect(measured.vertexShader).toContain('* extent;');
     expect(measured.vertexShader).not.toContain('* expand;');
-    // …and the light concentrates in the fragment by the same envelope.
+    // …and the light concentrates in the fragment by the same envelope. The
+    // hover term rides the same product (see the hover test below), so the
+    // compression clause is read on its own line.
     expect(measured.fragmentShader).toContain(
-      'float intensity = envelope * breathe * (1.0 + uCompressGain * vHeld);',
+      '* (1.0 + uCompressGain * vHeld)',
     );
     expect(measured.uniforms.uCompressDepth.value).toBe(COMPRESS_DEPTH);
     expect(measured.uniforms.uCompressGain.value).toBe(COMPRESS_GAIN);
@@ -312,5 +318,58 @@ describe('the measured event trim', () => {
     expect(responseCallArgs(ghost.fragmentShader)[4]).toBe('uEvent');
     expect(responseCallArgs(sighted.fragmentShader)[4]).toBe('uEvent');
     expect(responseCallArgs(single.fragmentShader)[4]).toBe('intensity');
+  });
+});
+
+// The class of scene target a viewer most often fails to hit — twelve measured
+// peers among ~260 unclickable inferred ghosts — was the one class with no
+// hover feedback at all: `onPointerOver` published a word for the cursor
+// arbitration and nothing else (report E, E-12). A Cell answers a pointer with
+// its focus envelope; the belt answers with the same one.
+describe('a hovered peer answers', () => {
+  it('carries the Cell\'s own hover envelope on one uniform', () => {
+    const measured = makeMeasuredPeerHalosMaterial();
+
+    // A position and a flag, not an index: the belt's lanes are re-cut on
+    // every roster round and an index does not survive one.
+    expect(measured.uniforms.uHover.value).toBeInstanceOf(THREE.Vector4);
+    expect(measured.uniforms.uHover.value.w).toBe(0);
+    expect(measured.vertexShader).toContain('uniform vec4 uHover;');
+    // ⚠️ In the INSTANCE's frame: the colony rotates under its own group, so
+    // a world-space compare drifts out of range within a frame of boot.
+    expect(measured.vertexShader).toContain('vec4 local = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);');
+    expect(measured.vertexShader).toContain('distance(local.xyz, uHover.xyz)');
+    expect(measured.vertexShader).not.toContain('distance(origin.xyz, uHover.xyz)');
+    expect(measured.vertexShader)
+      .toContain(MEASURED_HOVER_MATCH_WU.toFixed(2));
+    // …and it reaches the light at the Cell's own hover strength.
+    expect(MEASURED_HOVER_FOCUS).toBe(CELL_HOVER_FOCUS);
+    expect(measured.fragmentShader).toContain('varying float vHover;');
+    expect(measured.fragmentShader).toContain(
+      `* (1.0 + ${MEASURED_HOVER_FOCUS.toFixed(2)} * vHover)`,
+    );
+    // …and the mark grows with it, because the core clips: measured live, a
+    // 1.46× intensity moved the mean over the mark 12–16 % and no further.
+    expect(measured.vertexShader).toContain(
+      `* (1.0 + ${MEASURED_HOVER_EXTENT.toFixed(2)} * vHover)`,
+    );
+  });
+
+  it('lights one peer and leaves the belt alone', () => {
+    // The arithmetic the shader runs, in TypeScript: a hover names ONE
+    // position, and every other instance reads zero.
+    const hover = { x: 12, y: 22, z: -8, w: 1 };
+    const lit = (x: number, y: number, z: number) => hover.w * (
+      Math.hypot(x - hover.x, y - hover.y, z - hover.z) < MEASURED_HOVER_MATCH_WU
+        ? 1
+        : 0
+    );
+
+    expect(lit(12, 22, -8)).toBe(1);
+    expect(lit(12.1, 22, -8)).toBe(1);
+    expect(lit(13, 22, -8)).toBe(0);
+    expect(lit(12, 22, 40)).toBe(0);
+    hover.w = 0;
+    expect(lit(12, 22, -8)).toBe(0);
   });
 });

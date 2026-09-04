@@ -492,6 +492,29 @@ export function plateStateChip(color: string): CSSProperties {
 /** Rail alpha the probe dialects draw; the dossier goes one step fainter. */
 export const PLATE_ROW_RAIL_ALPHA = 0.34;
 
+/**
+ * …and what a rail on a PRESSABLE row does when the pointer reaches it.
+ *
+ * A register fact is a button — it tints the tether, re-weights the braid,
+ * opens the knowledge ring and reads an identity proof — and it looked like a
+ * readout: a rail at the rung above, a dim label, a value, and a cursor. The
+ * selected state had a wash and a shadow; hover had nothing (report E, E-12).
+ *
+ * So the rail is the affordance, and this is its second rung: under the
+ * pointer or a keyboard focus it takes the fact's OWN accent at full strength,
+ * the label ink comes up, and the selected wash appears at half its weight — a
+ * preview of what pressing does, in the language pressing speaks.
+ *
+ * ⚠️ Three numbers, one idea, so they are stated together: a card that lit its
+ * rail without the wash would say something different from the card next to
+ * it. `HOT` is 1 rather than a fourth alpha because a rail at its own accent
+ * IS the full-strength statement the selected state makes.
+ */
+export const PLATE_ROW_RAIL_HOT_ALPHA = 1;
+/** The selected row's wash, and half of it for a row merely pointed at. */
+export const PLATE_ROW_SELECTED_WASH_ALPHA = 0.17;
+export const PLATE_ROW_HOT_WASH_ALPHA = PLATE_ROW_SELECTED_WASH_ALPHA / 2;
+
 export interface PlateReadoutRowProps {
   /** Plate accent — the rail's colour. */
   accent: string;
