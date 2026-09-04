@@ -4,7 +4,7 @@ import type {
   TransactionSemanticRecord,
 } from '@cknerv/types';
 import type { CellCausalLens } from '../../derives/cellCausalLens.derive';
-import { formatBlockRef, formatFeeShannons, midTruncate } from './cellFormat';
+import { formatBlockRef, formatFeeShannons, formatTxHash } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import { PlateReadoutCaption, PlateReadoutRow } from './primitives';
 
@@ -33,10 +33,11 @@ const clampUnit = (value: number): number => (
   Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 1
 );
 
-function shortHash(value: string): string {
-  if (value.length <= 18) return value;
-  return `${value.slice(0, 10)}…${value.slice(-6)}`;
-}
+/** ⭐ The card spells a transaction hash ONE way — `formatTxHash`, the
+ *  truncation the masthead's outpoint is made of. This file used to carry its
+ *  own (10 head, 6 tail), so the dossier printed `0x2f4e…70391cb4` at the top
+ *  and `0x2f4e53fb…391cb4` six rows down, about the same transaction. */
+const shortHash = formatTxHash;
 
 /** One vocabulary for what we hold, spelled in plain words and shared by both
  *  densities — the summary line and the full plate can no longer describe the
@@ -197,8 +198,8 @@ export default function CellCausalLensReadout({
           'consumed',
           'CONSUMED BY',
           typeof spender.block === 'number'
-            ? `${midTruncate(spender.tx_hash, 12, 9)} · ${formatBlockRef(spender.block)}`
-            : midTruncate(spender.tx_hash, 12, 9),
+            ? `${formatTxHash(spender.tx_hash)} · ${formatBlockRef(spender.block)}`
+            : formatTxHash(spender.tx_hash),
           {
             title: spender.tx_hash,
             // The third surface in the HUD that names this event, and the last
@@ -314,8 +315,12 @@ export default function CellCausalLensReadout({
             </div>
             {caption}
             <div style={{ display: 'flex', alignItems: 'baseline', minWidth: 0, marginTop: 3, fontFamily: HUD_FONTS.mono }}>
+              {/* The hash, and only the hash. The block this transaction
+                  landed in is the COMMIT fact one rank up, in the register —
+                  printing it again here made the dossier state one block
+                  number three times in the space of six rows. */}
               <span title={lens.txHash} style={{ minWidth: 0, color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                TX {shortHash(lens.txHash)} · {formatBlockRef(lens.block)}
+                TX {shortHash(lens.txHash)}
               </span>
             </div>
           </>
@@ -337,8 +342,12 @@ export default function CellCausalLensReadout({
             </div>
             {caption}
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', alignItems: 'baseline', gap: 7, marginTop: 3, fontFamily: HUD_FONTS.mono }}>
+              {/* The hash, and only the hash. The block this transaction
+                  landed in is the COMMIT fact one rank up, in the register —
+                  printing it again here made the dossier state one block
+                  number three times in the space of six rows. */}
               <span title={lens.txHash} style={{ minWidth: 0, color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                TX {shortHash(lens.txHash)} · {formatBlockRef(lens.block)}
+                TX {shortHash(lens.txHash)}
               </span>
               <span
                 data-causal-summary-note="true"
@@ -448,7 +457,6 @@ export default function CellCausalLensReadout({
         }}
       >
         TX {shortHash(lens.txHash)}
-        <span style={{ color: HUD_COLORS.dim }}> · BLOCK {formatBlockRef(lens.block)}</span>
       </div>
 
       {lens.status === 'unavailable' ? (

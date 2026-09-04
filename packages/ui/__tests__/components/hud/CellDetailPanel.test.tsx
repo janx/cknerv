@@ -52,6 +52,13 @@ import CellDetailPanel, {
 } from '../../../src/components/hud/CellDetailPanel';
 import { READER_WIDTH_PX } from '../../../src/components/hud/CellDataReader';
 import { measureHudOcclusionRectsForTest } from '../../../src/components/hudOcclusion';
+import {
+  formatBlockRef,
+  formatOutpoint,
+  formatSemanticAssetAmount,
+  formatTxHash,
+  midTruncate,
+} from '../../../src/components/hud/cellFormat';
 import { INSPECTOR_EDGE_PX } from '../../../src/components/sceneInspection';
 import { HUD_COLORS, HUD_TYPE } from '../../../src/components/hud/hudTheme';
 
@@ -254,23 +261,28 @@ describe('CellDetailPanel', () => {
     // The old content-hash head beside an output index only looked like one.
     expect(t).toContain('0xabab…abababab#2');
     expect(t).not.toContain('11111111:2');
-    expect(container.querySelector('[data-cell-detail-scan-field] span[title]')
+    expect(container.querySelector('[data-cell-scan-identity] span[title*="0x"]')
       ?.getAttribute('title')).toBe(base.out_point.tx_hash);
     expect(t).toContain('OMNI Lock');       // LOCK
     expect(t).toContain('xUDT');           // ASSET
     expect(t).toContain('123 CKB');     // CAPACITY
-    expect(t).toContain('LIVE');           // STATE
+    expect(t).toContain('WHERE');          // the outpoint proof this fact reads
+    expect(t).toContain('LIVE');           // …and the state word it answers with
     // born_at_ms 0 is the composition-backfill sentinel — with no real birth
     // timestamp the masthead states the live flag and stops. The birth block
     // it used to fall back to is the COMMIT fact below, and one plate must
     // not print the same anchor twice.
     expect(t).not.toContain('SINCE #');
-    // The masthead's liveness reading, which used to be asked as the string
-    // `● LIVE`. The bullet was in no face `src/fonts` ships; it is a lit
-    // `StatusLamp` now, and `LIVE` alone is not an oracle here — the STATE
-    // register three rows down prints the same word. So the mark answers.
+    // The masthead's liveness reading is a LAMP AND NOTHING ELSE (the user's
+    // D-6 ruling): the register's WHERE fact spells the word, and a masthead
+    // that spelled it too printed the same green LIVE twice in one column.
+    // The lamp answers, and its title glosses it for a reader who hovers.
     expect(container.querySelector('[data-cell-scan-identity] [data-status-lamp]')
       ?.getAttribute('data-status-lamp')).toBe('lit');
+    expect((container.querySelector('[data-cell-scan-identity] [data-status-lamp]')
+      ?.parentElement as HTMLElement).getAttribute('title')).toBe('LIVE');
+    expect((container.querySelector('[data-cell-scan-identity] [data-status-lamp]')
+      ?.parentElement as HTMLElement).textContent).toBe('');
     expect(t).toContain('#16,204,800');    // COMMIT / block anchor (grouped)
     expect(t).toContain('11 B');           // DATA — 22 hex chars = 11 bytes
     expect(t).not.toContain('ƒ');          // portrait frequencies stay visual-only
@@ -1199,15 +1211,21 @@ describe('CellDetailPanel', () => {
       .map((row) => row.getAttribute('data-cell-evidence-row')))
       .toEqual(['lock-code', 'owner', 'lock-script', 'lock-args']);
     expect(lockEvidence.querySelector('[data-cell-evidence-row="lock-code"]')
-      ?.textContent).toBe('CODEACTIVE0x7c7c7c7c7c…c7c7c7c7c · TYPE');
-    // The lifecycle state is a chip ON the row it qualifies, never a stamp
-    // floating off at the far right of the plate.
-    expect(lockEvidence.querySelector('[data-cell-script-state="active"]')).not.toBeNull();
+      ?.textContent).toBe('CODE0x7c7c7c7c7c…c7c7c7c7c · TYPE');
+    // ⭐ NO `ACTIVE` CHIP. A chip marks the exception; a chip on both CODE rows
+    // of nearly every card marks nothing. The ordinary condition is stated by
+    // not being stated — and when it IS the exception, the chip is ON the row
+    // it qualifies and never a stamp floating at the far right of the plate.
+    expect(lockEvidence.querySelector('[data-cell-script-state]')).toBeNull();
     const owner = lockEvidence.querySelector('[data-cell-evidence-row="owner"]') as HTMLElement;
     expect(owner.textContent).toContain('ckt1qyqindexe');
-    expect(owner.textContent).toContain('ADDRESS ENCODED FROM THE LOCK SCRIPT');
+    // The provenance sentence is on the row, not printed under it (D-19): it
+    // explains the row rather than reading anything off this Cell, and every
+    // OWNER row on every card carried the same sixteen words.
+    expect(owner.textContent).not.toContain('ADDRESS ENCODED FROM THE LOCK SCRIPT');
     expect(owner.querySelector('[data-cell-evidence-value="owner"]')
-      ?.getAttribute('title')).toBe('ckt1qyqindexedaddress0000000000');
+      ?.getAttribute('title'))
+      .toBe('ckt1qyqindexedaddress0000000000\nADDRESS ENCODED FROM THE LOCK SCRIPT');
     expect(lockEvidence.querySelector('[data-cell-evidence-row="lock-script"]')
       ?.textContent).toBe('SCRIPT0xlock');
     expect(lockEvidence.querySelector('[data-cell-evidence-row="lock-args"]')
@@ -1247,8 +1265,13 @@ describe('CellDetailPanel', () => {
     // the keys it shipped with.
     expect(typeEvidence.querySelector('[data-cell-evidence-row="dao-position"]')
       ?.textContent).toBe('POSITIONDEPOSIT');
+    // ⚠️ DEPOSITED states the CLOCK ALONE here, because this deposit's block
+    // IS the Cell's birth block — a deposit creates the Cell it deposits into,
+    // so COMMIT one rank up, ORIGIN TX and this row were three prints of one
+    // number. The clock is the half COMMIT does not carry. WITHDRAW REQ is a
+    // different block and keeps both.
     expect(typeEvidence.querySelector('[data-cell-evidence-row="dao-deposited"]')
-      ?.textContent).toBe('DEPOSITED#16,204,800 · 2025-08-15 06:07 UTC');
+      ?.textContent).toBe('DEPOSITED2025-08-15 06:07 UTC');
     expect(typeEvidence.querySelector('[data-cell-evidence-row="dao-withdraw-request"]')
       ?.textContent).toBe('WITHDRAW REQ#16,210,000 · 2025-08-16 06:07 UTC');
     expect(typeEvidence.querySelector('[data-cell-evidence-row="dao-apc"]')
@@ -1287,13 +1310,23 @@ describe('CellDetailPanel', () => {
     const contentMemory = container.querySelector('[data-cell-content-memory="true"]');
     expect(contentMemory?.getAttribute('data-cell-content-byte-origin')).toBe('indexed');
     expect(contentMemory?.getAttribute('data-cell-content-complete')).toBe('true');
-    expect(contentMemory?.textContent).toContain('123.45 NTT');
+    // …and the whole of it is the BYTES. What the Cell is worth, what its
+    // role is, and the indexer's sentence about its own pipeline all belong to
+    // rows one rank up that already print them (the round-3 declutter):
+    expect(contentMemory?.textContent).not.toContain('123.45 NTT');
+    expect(contentMemory?.textContent).not.toContain('VALUE');
+    expect(contentMemory?.textContent).not.toContain('ROLE');
+    expect(contentMemory?.textContent).not.toContain('DAO · DEPOSIT');
+    expect(contentMemory?.textContent)
+      .not.toContain('UTF-8 JSON object decoded from Cell data');
+    expect(contentMemory?.querySelector('[data-cell-content-deterministic]')
+      ?.getAttribute('title'))
+      .toBe('UTF-8 JSON object decoded from Cell data');
     expect(contentMemory?.textContent).toContain('DECODE · JSON DOCUMENT');
-    expect(contentMemory?.textContent).toContain('UTF-8 JSON object decoded from Cell data');
-    expect(contentMemory?.textContent).toContain('H1/1 · HIGH');
-    expect(contentMemory?.textContent).toContain('application/json');
-    expect(contentMemory?.textContent).toContain('ROLE 1/3');
-    expect(contentMemory?.textContent).toContain('DAO · DEPOSIT');
+    // …and a guess is what a card offers when it has nothing better: this Cell
+    // has a deterministic decode, so no heuristic is staged beside it.
+    expect(contentMemory?.querySelector('[data-cell-content-heuristic]')).toBeNull();
+    expect(contentMemory?.textContent).not.toContain('application/json');
     expect(contentMemory?.textContent).not.toContain('INDEX ANALYSIS');
     expect(contentMemory?.querySelector('[data-cell-content-raw]')).toBeNull();
     expect(contentMemory?.querySelectorAll('[data-cell-content-byte]')).toHaveLength(0);
@@ -1347,9 +1380,14 @@ describe('CellDetailPanel', () => {
     expect(analysis.querySelector('[data-causal-origin-value="cycles"]')?.textContent)
       .toBe('12,345');
     // The enrichment anchor no longer expects the reader to know what an
-    // anchor block is.
+    // anchor block is — and it no longer PRINTS the explanation either (the
+    // user's D-19 ruling): the sentence is on the row, on hover, because it
+    // names a convention rather than reading anything off this Cell.
     expect(proofChip.textContent)
-      .toContain('ENRICHMENT ANCHOR · EVERY INDEXED FACT ABOVE IS AS OF THIS BLOCK');
+      .not.toContain('ENRICHMENT ANCHOR · EVERY INDEXED FACT ABOVE IS AS OF THIS BLOCK');
+    expect(proofChip.querySelector('[data-cell-context-fact="proof"]')
+      ?.getAttribute('title'))
+      .toBe('ENRICHMENT ANCHOR · EVERY INDEXED FACT ABOVE IS AS OF THIS BLOCK');
 
     expect(container.textContent).not.toContain('SINCE #');
     expect(Array.from(container.querySelectorAll('span')).filter(
@@ -1450,9 +1488,9 @@ describe('CellDetailPanel', () => {
     ) as HTMLElement;
 
     // A record is on its way: the rows it will fill already hold their height.
-    // LOCK reserves an extra caption line — OWNER carries one, and a row with
-    // a sentence under it is taller than the three bare rails beside it.
-    expect(slot('lock').style.minHeight).toBe('78px');
+    // LOCK holds three bare rails like the rest — OWNER's caption line went to
+    // the row's `title` (D-19), and the reservation went with it.
+    expect(slot('lock').style.minHeight).toBe('66px');
     expect(slot('type').style.minHeight).toBe('66px');
     // The CKBYTE zone's reservation is EXACTLY the ghost stack that fills it;
     // a slot that reserves one number and renders another settles by the
@@ -1571,16 +1609,19 @@ describe('CellDetailPanel', () => {
     );
 
     // jsdom lays nothing out, so the pin is the SHAPE rather than the pixels:
-    // this arrival is every analysis row the index can send at once — VALUE,
-    // DECODE, a segment, a heuristic and a role — which is exactly the stack
+    // this arrival is every analysis row the index can send at once — DECODE
+    // and the segment rows, which is exactly the stack
     // CELL_CONTENT_ANALYSIS_RESERVED_PX is summed from. Nothing taller can
-    // land, so the reservation settles down or not at all, never up.
+    // land, so the reservation settles down or not at all, never up. (The
+    // record below carries a heuristic and a facet too, and neither reaches
+    // this window any more: a guess is staged only where there is no decode,
+    // and a role is the register's own row one rank up.)
     expect(zone().dataset.cellContentAnalysisReserved).toBeUndefined();
     expect(zone().style.minHeight).toBe('');
-    expect(zone().querySelector('[data-cell-content-asset]')).not.toBeNull();
     expect(zone().querySelector('[data-cell-content-segment="0"]')).not.toBeNull();
-    expect(zone().querySelector('[data-cell-content-heuristic="0"]')).not.toBeNull();
-    expect(zone().querySelector('[data-cell-content-role="0"]')).not.toBeNull();
+    expect(zone().querySelector('[data-cell-content-heuristic="0"]')).toBeNull();
+    expect(zone().querySelector('[data-cell-content-role="0"]')).toBeNull();
+    expect(zone().querySelector('[data-cell-content-asset]')).toBeNull();
   });
 
   it('collapses the reservation once when the record resolves absent', () => {
@@ -1598,7 +1639,7 @@ describe('CellDetailPanel', () => {
       />,
     );
     expect((container.querySelector('[data-cell-evidence-slot="lock"]') as HTMLElement)
-      .style.minHeight).toBe('78px');
+      .style.minHeight).toBe('66px');
 
     rerender(
       <CellDetailPanel
@@ -2374,7 +2415,7 @@ describe('CellDetailPanel', () => {
     expect(footer.querySelector('[data-causal-origin-value="cycles"]')?.textContent)
       .toBe('1,263,540');
     expect(footer.querySelector('[data-causal-origin-value="consumed"]')?.textContent)
-      .toBe('0x9e9e9e9e9e…e9e9e9e9e · #16,204,999');
+      .toBe('0x9e9e…9e9e9e9e · #16,204,999');
     expect(footer.textContent)
       .toContain('THE CREATING WRITE THIS SESSION STILL HOLDS IN MEMORY');
     const causal = container.querySelector(
@@ -2436,7 +2477,10 @@ describe('CellDetailPanel', () => {
     );
     const t = container.textContent ?? '';
     expect(t).toContain('MEMORY TRACE');
-    expect(t).toContain('#16,204,800 · 2→1');
+    // The shape of the write, and not the block it landed in: that block is
+    // the COMMIT fact in the register above.
+    expect(t).toContain('2→1');
+    expect(t).not.toContain('#16,204,800 · 2→1');
     expect(container.querySelector('[data-write-observed="true"]')).not.toBeNull();
   });
 
@@ -3521,5 +3565,261 @@ describe('CellDetailPanel', () => {
     const { getByRole } = render(<CellDetailPanel cell={base} onClose={onClose} />);
     getByRole('button', { name: 'close' }).click();
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ——— "Says it once" ————————————————————————————————————————————————————————
+//
+// The declutter rounds cleaned the REGISTER and the clusters under it grew the
+// same facts back. Live, at `25c7d5a`, one xUDT card printed `1000 RGB++`
+// twice, its identity line twice, the raw u128 three times, `16 B` four times
+// and its birth block twice; a DAO deposit printed that block five times.
+//
+// So this is an oracle over the CARD'S OWN TEXT, driven by the record it is
+// rendered from rather than by a regex over the rendering: take each fact the
+// fixture states, ask how many times the card prints it, and hold every one at
+// most once. A fact stated twice is not a style question a guard test could
+// derive from a token — it is the same sentence in two places, and only the
+// data behind the card knows which sentences those are.
+//
+// THE FOUR CLASSES are the ruling's own (D-6, D-19 and report B-5/B-6): an
+// ASSET AMOUNT, a HASH, a BLOCK REFERENCE and the STATE WORD. Deliberately not
+// a byte count: `16 B` on the DATA fact, the CKBYTE legend, a segment row and
+// the reader's foot line are four MEASURES of four different subjects (the
+// output data, the capacity it occupies, one field's width, the payload the
+// reader holds), and collapsing them would be a rule that fires on four
+// correct rows. That is an argued exclusion of a class, not a list of sites.
+//
+// ⚠️ THE OUTPOINT AND THE CREATING TRANSACTION are counted as TWO facts, and
+// they are the same 32 bytes on every card by construction. The masthead
+// states an ADDRESS — where this Cell lives, hash AND index — and ORIGIN TX
+// states a TRANSACTION. Round 3 made them share one truncation grammar
+// (`formatTxHash`) precisely so a reader can SEE that they agree; before it
+// they were `0x2f4e…70391cb4` and `0x2f4e53fb…391cb4`, which reads as two
+// hashes. Two spellings of one hash was the defect; one spelling of two facts
+// is the fix.
+describe('the cell card says each thing once', () => {
+  /** Non-overlapping occurrences of `needle` in `haystack`. */
+  function occurrences(haystack: string, needle: string): number {
+    if (needle === '') return 0;
+    let count = 0;
+    let at = haystack.indexOf(needle);
+    while (at >= 0) {
+      count += 1;
+      at = haystack.indexOf(needle, at + needle.length);
+    }
+    return count;
+  }
+
+  /** …and the same, for a hash that must not be counted where an outpoint's
+   *  `#index` follows it. */
+  function bareOccurrences(haystack: string, needle: string): number {
+    let count = 0;
+    let at = haystack.indexOf(needle);
+    while (at >= 0) {
+      if (haystack[at + needle.length] !== '#') count += 1;
+      at = haystack.indexOf(needle, at + needle.length);
+    }
+    return count;
+  }
+
+  const XUDT_CELL: Cell = {
+    ...base,
+    id: 5988616705329919,
+    birth_block: 12682018,
+    data_hex: '0x00e87648170000000000000000000000',
+    data_bytes: 16,
+    lock_kind: 'other',
+    asset_kind: 'xudt',
+    capacity: 14400000000,
+  };
+
+  /** The live xUDT card of report B: RGB++ over JoyID, a 16-byte payload the
+   *  index decodes as one u128 amount. */
+  const XUDT_RECORD: CellSemanticRecord = {
+    out_point: XUDT_CELL.out_point,
+    source: 'ckbadger',
+    as_of: { block: 20358682, hash: '0xanchor' },
+    observed_at_block: XUDT_CELL.birth_block,
+    updated_at_ms: 1,
+    address: 'ckb1qrgqep8saj8agswr30pls73hra28ry8jlnlc3ejzh3dl2ju7xxpjxq',
+    asset: {
+      type_script_hash: `0x${'b5'.repeat(32)}`,
+      symbol: 'RGB++',
+      name: 'RGB++ Protocol',
+      standard: 'xudt',
+      amount: '100000000000',
+      decimals: 8,
+    },
+    lock_script: {
+      script_hash: `0x${'af'.repeat(32)}`,
+      code_hash: `0x${'d0'.repeat(32)}`,
+      hash_type: 'type',
+      args: '0x00012b34a82d1817ae90ddbcd89e0bdb73d181fb9519',
+      name: 'JoyID',
+      family: 'lock',
+      deprecated: false,
+    },
+    type_script: {
+      script_hash: `0x${'b5'.repeat(32)}`,
+      code_hash: `0x${'50'.repeat(32)}`,
+      hash_type: 'data1',
+      args: `0x${'08'.repeat(32)}`,
+      name: 'xUDT',
+      family: 'udt',
+      deprecated: false,
+    },
+    common_knowledge: {
+      total_bytes: 144,
+      capacity_field_bytes: 8,
+      lock_script_bytes: 55,
+      type_script_bytes: 65,
+      data_bytes: 16,
+    },
+    content: {
+      total_bytes: 16,
+      data_hex: XUDT_CELL.data_hex,
+      data_complete: true,
+      deterministic: {
+        kind: 'udt_amount',
+        summary: 'XUDT cell data starts with amount=100000000000 (u128 LE)',
+        segments: [{
+          label: 'amount',
+          start_byte: 0,
+          end_byte: 16,
+          meaning: 'XUDT amount in little-endian u128',
+          value: '100000000000',
+        }],
+      },
+      heuristics: [{
+        kind: 'numeric_pattern',
+        confidence: 'medium',
+        reason: 'Payload length is exactly 16 bytes (common u128 LE encoding)',
+        value: '100000000000',
+      }],
+    },
+    facets: [],
+  };
+
+  /** A DAO deposit: the case that printed its block five times. */
+  const DAO_RECORD: CellSemanticRecord = {
+    out_point: base.out_point,
+    source: 'ckbadger',
+    as_of: { block: 20358682, hash: '0xanchor' },
+    observed_at_block: base.birth_block,
+    updated_at_ms: 1,
+    address: 'ckt1qyqdaodepositor00000000000000',
+    cell_type: 'dao',
+    lock_script: {
+      script_hash: `0x${'11'.repeat(32)}`,
+      code_hash: `0x${'22'.repeat(32)}`,
+      hash_type: 'type',
+      args: '0xdead',
+      name: 'Secp256k1 Blake160',
+      family: 'lock',
+      deprecated: false,
+    },
+    type_script: {
+      script_hash: `0x${'33'.repeat(32)}`,
+      code_hash: `0x${'44'.repeat(32)}`,
+      hash_type: 'type',
+      args: '0x',
+      name: 'Nervos DAO',
+      family: 'dao',
+      deprecated: false,
+    },
+    facets: [{
+      namespace: 'ckb',
+      kind: 'dao',
+      state: 'deposit',
+      attributes: [
+        { key: 'deposit_block', value: String(base.birth_block), unit: 'block' },
+        { key: 'deposit_at_ms', value: '1755238020000', unit: 'ms' },
+        { key: 'estimated_apc', value: '2.01%' },
+      ],
+    }],
+  };
+
+  const SOURCE_READY: EnrichmentSourceStatus = {
+    source: 'ckbadger',
+    status: 'ready',
+    capabilities: ['cell_detail'],
+    lag_blocks: 0,
+  };
+
+  /** Every fact the card is about to be handed, and how it will be spelled. */
+  function factsOf(cell: Cell, record: CellSemanticRecord) {
+    const amount = record.asset
+      ? `${formatSemanticAssetAmount(record.asset.amount ?? '0', record.asset.decimals)}${record.asset.symbol ? ` ${record.asset.symbol}` : ''}`
+      : null;
+    return [
+      { what: 'the block the Cell was committed in', text: formatBlockRef(cell.birth_block), bare: false },
+      { what: "the Cell's outpoint", text: formatOutpoint(cell.out_point.tx_hash, cell.out_point.index), bare: false },
+      { what: 'the creating transaction', text: formatTxHash(cell.out_point.tx_hash), bare: true },
+      { what: 'the state word', text: cell.death_at_ms === null ? 'LIVE' : 'SPENT', bare: false },
+      ...(record.asset?.amount ? [{ what: 'the raw asset amount', text: record.asset.amount, bare: false }] : []),
+      ...(amount ? [{ what: 'the decoded asset amount', text: amount, bare: false }] : []),
+      ...(record.asset?.name ? [{ what: "the asset's name", text: record.asset.name, bare: false }] : []),
+      ...(record.address ? [{ what: "the owner's address", text: midTruncate(record.address, 14, 12), bare: false }] : []),
+    ];
+  }
+
+  function cardText(cell: Cell, record: CellSemanticRecord): string {
+    const { container } = render(
+      <CellDetailPanel
+        cell={cell}
+        recentLinks={[{
+          seq: 7,
+          tx_hash: cell.out_point.tx_hash,
+          block: cell.birth_block,
+          from_ids: [],
+          to_ids: [cell.id],
+          endpoint_anchors: [],
+          parents: [],
+          tag: cell.tag,
+          at_ms: 12_000,
+        }]}
+        semanticSource={SOURCE_READY}
+        semanticPhase="ready"
+        semanticRecord={record}
+        onClose={() => {}}
+      />,
+    );
+    return container.textContent ?? '';
+  }
+
+  it.each([
+    { dialect: 'xUDT', cell: () => XUDT_CELL, record: () => XUDT_RECORD },
+    { dialect: 'DAO', cell: () => base, record: () => DAO_RECORD },
+  ])('prints every $dialect fact at most once', ({ cell, record }) => {
+    const subject = cell();
+    const text = cardText(subject, record());
+    const twice = factsOf(subject, record())
+      .map((fact) => ({
+        ...fact,
+        seen: fact.bare
+          ? bareOccurrences(text, fact.text)
+          : occurrences(text, fact.text),
+      }))
+      .filter((fact) => fact.seen > 1)
+      .map((fact) => `${fact.what} (\`${fact.text}\`) is printed ${fact.seen}×`);
+
+    expect(twice).toEqual([]);
+  });
+
+  it('keeps the indexer\'s own sentences off the card', () => {
+    // The three explainers the user's D-19 ruling moved to `title`. ORIGIN TX's
+    // caption is the one that stays, because it names a relationship a reader
+    // cannot deduce from the row; these three name conventions.
+    const text = cardText(XUDT_CELL, XUDT_RECORD);
+
+    expect(text).not.toContain('XUDT cell data starts with');
+    expect(text).not.toContain('ADDRESS ENCODED FROM THE LOCK SCRIPT');
+    expect(text).not.toContain('EVERY INDEXED FACT ABOVE IS AS OF THIS BLOCK');
+    expect(text).toContain('THE TRANSACTION THAT CREATED THIS CELL');
+    // …and the chip that said nothing on nearly every card.
+    expect(text).not.toContain('ACTIVE');
+    // …and the guess that sat beside a settled decode restating its number.
+    expect(text).not.toContain('MEDIUM');
   });
 });

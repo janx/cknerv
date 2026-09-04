@@ -273,7 +273,7 @@ describe('CellCausalLensReadout', () => {
     const consumed = root.querySelector('[data-causal-origin-row="consumed"]')!;
     const value = consumed.querySelector('[data-causal-origin-value="consumed"]')!;
 
-    expect(value.textContent).toBe('0x9e9e9e9e9e…e9e9e9e9e · #141');
+    expect(value.textContent).toBe('0x9e9e…9e9e9e9e · #141');
     expect(value.getAttribute('title')).toBe(spender.tx_hash);
     expect(consumed.textContent).toContain('THE TRANSACTION THAT SPENT THIS CELL');
   });
@@ -290,7 +290,7 @@ describe('CellCausalLensReadout', () => {
     );
 
     expect(container.querySelector('[data-causal-origin-value="consumed"]')
-      ?.textContent).toBe('0x9e9e9e9e9e…e9e9e9e9e');
+      ?.textContent).toBe('0x9e9e…9e9e9e9e');
   });
 
   it('says nothing about a spender for a dead cell the source never named one for', () => {

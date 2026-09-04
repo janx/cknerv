@@ -51,8 +51,25 @@ export function midTruncate(s: string, head: number, tail: number): string {
   return `${s.slice(0, head)}…${s.slice(s.length - tail)}`;
 }
 
+/** A transaction hash, in the ONE truncation this card spells one in.
+ *
+ * The masthead's outpoint and ORIGIN TX's line name the same transaction on
+ * the same dossier, and they used to shorten it two different ways —
+ * `0x2f4e…70391cb4` up top against `0x2f4e53fb…391cb4` six rows down. Two
+ * truncations of one hash read as two hashes, which is the whole complaint:
+ * a reader comparing them cannot see that they agree.
+ *
+ * Six head and eight tail: the `0x` and two bytes at the front, four at the
+ * back — enough of the tail that two hashes sharing a prefix still differ.
+ * A SCRIPT hash is a different subject and keeps its own (12, 9): it is an
+ * identity a reader matches against a registry, not a transaction they look
+ * up beside this one. */
+export function formatTxHash(txHash: string): string {
+  return midTruncate(txHash, 6, 8);
+}
+
 export function formatOutpoint(txHash: string, index: number): string {
-  return `${midTruncate(txHash, 6, 8)}#${index}`;
+  return `${formatTxHash(txHash)}#${index}`;
 }
 
 /** Chain block reference in the HUD's grouped house style (`#20,100,194`).

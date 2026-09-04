@@ -4,13 +4,11 @@ import type {
   EnrichmentSourceStatus,
   SemanticContentGuess,
   SemanticContentSegment,
-  SemanticFacet,
 } from '@cknerv/types';
 import { deriveCellContentMemory } from '../../derives/cellContentMemory.derive';
 import { segmentColorSlots } from '../../derives/cellDataReader.derive';
 import { HUD_COLORS, HUD_FONTS, QUALITATIVE_BUCKET_COLORS, rgba, HUD_TYPE } from './hudTheme';
 import { revealStageAttributes, revealStageStyle } from './primitives';
-import { formatSemanticAssetAmount } from './cellFormat';
 import type { CellSemanticsPhase } from './CellSemanticsReadout';
 
 // The DATA cluster's window, which no longer prints a byte.
@@ -25,10 +23,13 @@ import type { CellSemanticsPhase } from './CellSemanticsReadout';
 // above a window that draws all of them, were the redundancy.
 //
 // So this window is the READING and nothing else: what the decode found, every
-// segment it found, what the guesses say, what role the Cell plays. It states
-// the size of nothing — the DATA fact directly above it already does — and a
-// Cell nobody indexed gets no window at all, because with the bytes gone there
-// would be nothing in it but the absence of a record.
+// segment it found, and — where there is no decode — what the guesses say. It
+// states the size of nothing (the DATA fact directly above it already does),
+// it states what the Cell is WORTH nowhere (the register's AMOUNT and IDENTITY
+// rows do, two columns left and one rank up), it names no ROLE (the register
+// spells every facet out one fact to a line), and a Cell nobody indexed gets no
+// window at all, because with the bytes gone there would be nothing in it but
+// the absence of a record.
 //
 // A segment row is the one control left, and it points DOWN: pressing it sends
 // the reader under the square to that segment's first byte and glows its bytes.
@@ -48,13 +49,10 @@ import type { CellSemanticsPhase } from './CellSemanticsReadout';
  * Reservation math only — the browser lays the real rows out. The zone's
  * tallest shape, line by line, at the type it prints:
  *
- *     VALUE                                        12
- *     DECODE · kind · summary                   2 + 12
+ *     DECODE · kind                                12
  *     · seven segment rows       7 × (3 + 3 + 1 + 12) = 133
- *     HEURISTIC                             3 + 3 + 1 + 15
- *     ROLE                                       3 + 15
  *                                                 ————
- *                                                  199
+ *                                                  145
  *
  * SEVEN segment rows is the spore layout, which is the tallest deterministic
  * decode the index emits today — and the rows are where this number grew. The
@@ -63,12 +61,19 @@ import type { CellSemanticsPhase } from './CellSemanticsReadout';
  * ruling) because a list a reader has to walk one item at a time is not a list,
  * and the reservation now holds what the list actually needs.
  *
+ * It was 199, and the three lines that went are the round-3 declutter: VALUE
+ * (12) restated the register's AMOUNT and IDENTITY rows, ROLE (18) restated
+ * facts the register spells out one to a line, and the heuristic (22) can no
+ * longer land beside segments at all — a guess is staged only where there is
+ * no decode, so a card has the segments OR the guess and never both. The
+ * guess-only stack is 12 + 22 = 34 and stands well inside this.
+ *
  * The terms are the generous reading of each line box on purpose: a floor that
  * is a pixel short is a floor that still shoves the footer. A record that brings
  * fewer rows than this settles the cluster down ONCE — the same bargain every
  * other pending slot on this card makes.
  */
-export const CELL_CONTENT_ANALYSIS_RESERVED_PX = 199;
+export const CELL_CONTENT_ANALYSIS_RESERVED_PX = 145;
 
 function readableKind(value: string): string {
   return value.replaceAll('_', ' ').toUpperCase();
@@ -243,87 +248,50 @@ function GuessReadout({
   interactive: boolean;
   onStep: (direction: -1 | 1) => void;
 }) {
-  const stepEnabled = interactive && count > 1;
+  // ⚠️ The steppers exist only when there is somewhere to step. A `‹ ›` pair
+  // rendered disabled on a one-item list is two controls that can never do
+  // anything, and nearly every enriched Cell carries exactly one guess — so
+  // the common card grew two dead buttons to say `H1/1`. A list of one states
+  // itself and needs no navigation, and the grid loses their tracks with them.
+  const stepped = count > 1;
+  const stepEnabled = interactive && stepped;
   return (
     <div
       data-cell-content-heuristic={index}
-      style={{ display: 'grid', gridTemplateColumns: '18px auto minmax(0,1fr) 18px', alignItems: 'baseline', gap: 4, minWidth: 0, marginTop: 3, paddingTop: 3, borderTop: `1px solid ${rgba(HUD_COLORS.caution, 0.16)}` }}
+      style={{ display: 'grid', gridTemplateColumns: stepped ? '18px auto minmax(0,1fr) 18px' : 'auto minmax(0,1fr)', alignItems: 'baseline', gap: 4, minWidth: 0, marginTop: 3, paddingTop: 3, borderTop: `1px solid ${rgba(HUD_COLORS.caution, 0.16)}` }}
     >
-      <button
-        type="button"
-        aria-label="previous heuristic"
-        disabled={!stepEnabled}
-        onClick={() => onStep(-1)}
-        style={navButtonStyle(stepEnabled)}
-      >
-        ‹
-      </button>
+      {stepped ? (
+        <button
+          type="button"
+          aria-label="previous heuristic"
+          disabled={!stepEnabled}
+          onClick={() => onStep(-1)}
+          style={navButtonStyle(stepEnabled)}
+        >
+          ‹
+        </button>
+      ) : null}
       <span style={{ color: HUD_COLORS.caution, fontSize: HUD_TYPE.micro, whiteSpace: 'nowrap' }}>
-        H{index + 1}/{count} · {guess.confidence.toUpperCase()}
+        {stepped ? `H${index + 1}/${count}` : 'GUESS'} · {guess.confidence.toUpperCase()}
       </span>
       <span title={`${guess.reason}${guess.mime_type ? ` · ${guess.mime_type}` : ''}${guess.value ? ` · ${guess.value}` : ''}`} style={{ minWidth: 0, color: HUD_COLORS.ink, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {readableKind(guess.kind)} · {guess.mime_type ?? guess.value ?? guess.reason}
       </span>
-      <button
-        type="button"
-        aria-label="next heuristic"
-        disabled={!stepEnabled}
-        onClick={() => onStep(1)}
-        style={navButtonStyle(stepEnabled)}
-      >
-        ›
-      </button>
+      {stepped ? (
+        <button
+          type="button"
+          aria-label="next heuristic"
+          disabled={!stepEnabled}
+          onClick={() => onStep(1)}
+          style={navButtonStyle(stepEnabled)}
+        >
+          ›
+        </button>
+      ) : null}
     </div>
   );
 }
 
-function FacetReadout({
-  facet,
-  index,
-  count,
-  interactive,
-  onStep,
-}: {
-  facet: SemanticFacet;
-  index: number;
-  count: number;
-  interactive: boolean;
-  onStep: (direction: -1 | 1) => void;
-}) {
-  const first = facet.attributes[0];
-  const stepEnabled = interactive && count > 1;
-  return (
-    <div
-      data-cell-content-role={index}
-      style={{ display: 'grid', gridTemplateColumns: '18px auto minmax(0,1fr) 18px', alignItems: 'baseline', gap: 4, minWidth: 0, marginTop: 3 }}
-    >
-      <button
-        type="button"
-        aria-label="previous Cell role"
-        disabled={!stepEnabled}
-        onClick={() => onStep(-1)}
-        style={navButtonStyle(stepEnabled)}
-      >
-        ‹
-      </button>
-      <span style={{ color: HUD_COLORS.memoryInk, fontSize: HUD_TYPE.micro, whiteSpace: 'nowrap' }}>
-        ROLE {index + 1}/{count}
-      </span>
-      <span title={`${facet.kind}${facet.state ? ` · ${facet.state}` : ''}${first ? ` · ${first.key}: ${first.value}` : ''}`} style={{ minWidth: 0, color: HUD_COLORS.ink, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {readableKind(facet.kind)}{facet.state ? ` · ${facet.state.toUpperCase()}` : ''}{first ? ` · ${readableKind(first.key)} ${first.value}${first.unit ? ` ${first.unit}` : ''}` : ''}
-      </span>
-      <button
-        type="button"
-        aria-label="next Cell role"
-        disabled={!stepEnabled}
-        onClick={() => onStep(1)}
-        style={navButtonStyle(stepEnabled)}
-      >
-        ›
-      </button>
-    </div>
-  );
-}
 
 export default function CellContentMemory({
   dataHex,
@@ -369,10 +337,14 @@ export default function CellContentMemory({
   // the portrait's byte rail, and the reader under the square. Read once per
   // record rather than per row.
   const segmentSlots = useMemo(() => segmentColorSlots(segments), [segments]);
-  const guesses = content?.heuristics ?? [];
-  const roles = record?.facets ?? [];
+  // Heuristics are GUESSES about the same bytes a decode reads, so they are
+  // staged only where there is no decode. Beside a deterministic reading they
+  // said the same number a third time — `H1/1 · MEDIUM NUMERIC PATTERN ·
+  // 100000000000` under a decode that had already named it — with two dead
+  // stepper controls beside them. A guess is what a card offers when it has
+  // nothing better; it is not a second opinion on a settled fact.
+  const guesses = content?.deterministic ? [] : content?.heuristics ?? [];
   const [guessIndex, setGuessIndex] = useState(0);
-  const [roleIndex, setRoleIndex] = useState(0);
   const contentKey = `${record?.out_point.tx_hash ?? 'direct'}:${record?.out_point.index ?? 0}:${content?.deterministic?.kind ?? 'raw'}:${content?.data_hex ?? dataHex}`;
   const selectedGuessIndex = guesses.length === 0
     ? null
@@ -380,20 +352,9 @@ export default function CellContentMemory({
   const selectedGuess = selectedGuessIndex === null
     ? null
     : guesses[selectedGuessIndex];
-  const selectedRoleIndex = roles.length === 0
-    ? null
-    : Math.min(roleIndex, roles.length - 1);
-  const selectedRole = selectedRoleIndex === null ? null : roles[selectedRoleIndex];
   useEffect(() => {
     setGuessIndex(0);
-    setRoleIndex(0);
   }, [contentKey]);
-  const assetAmount = record?.asset?.amount == null
-    ? null
-    : `${formatSemanticAssetAmount(
-      record.asset.amount,
-      record.asset.decimals,
-    )}${record.asset.symbol ? ` ${record.asset.symbol}` : ''}`;
   const tone = analysisTone(source);
   const statusMessage = phase === 'loading'
     ? 'RESOLVING INDEXED CONTENT ANALYSIS…'
@@ -406,17 +367,15 @@ export default function CellContentMemory({
           : record && !content
             ? 'INDEX HAS NO CONTENT PAYLOAD FOR THIS CELL'
             : null;
-  // The reading, in the order it is read: what the Cell is worth, what the
-  // decode called it, where each of its fields is, what the guesses think, what
-  // role it plays. `segments` is its own stage and sits directly after
+  // The reading, in the order it is read: what the decode called these bytes,
+  // where each of its fields is, and — only where there is no decode — what
+  // the guesses think. `segments` is its own stage and sits directly after
   // `decode`, so the rows light after the line that names the decode they came
-  // out of — and before the heuristics, which are guesses about the same bytes.
+  // out of.
   const revealStages = [
-    ...(record?.asset ? ['asset'] : []),
     'decode',
     ...(segments.length > 0 ? ['segments'] : []),
     ...(selectedGuess ? ['heuristic'] : []),
-    ...(selectedRole ? ['role'] : []),
   ];
   const revealProgress = clampUnit(reveal);
   // Match the landmark scan: the first item resolves shortly after travel,
@@ -431,16 +390,12 @@ export default function CellContentMemory({
     const index = revealStages.indexOf(stage);
     return index >= 0 && index < revealedStageCount;
   };
-  const assetRevealed = stageRevealed('asset');
   const decodeRevealed = stageRevealed('decode');
   const segmentsRevealed = stageRevealed('segments');
   const heuristicRevealed = stageRevealed('heuristic');
-  const roleRevealed = stageRevealed('role');
-  const analysisRevealed = assetRevealed
-    || decodeRevealed
+  const analysisRevealed = decodeRevealed
     || segmentsRevealed
-    || heuristicRevealed
-    || roleRevealed;
+    || heuristicRevealed;
   // A record is on its way: hold the rows it will fill, so its arrival
   // replaces a reservation instead of pushing the footer beneath it down.
   const analysisPending = pending && !record;
@@ -486,26 +441,25 @@ export default function CellContentMemory({
       {/* The rule over the reading is structure, not evidence: it is drawn
         * from the first frame, and only the rows below it stage. */}
       <div data-cell-content-analysis="true" data-cell-content-analysis-state={analysisRevealed ? 'resolved' : 'scanning'} data-cell-content-analysis-reserved={analysisPending ? 'true' : undefined} style={{ display: 'block', minWidth: 0, paddingTop: 2, borderTop: `1px solid ${rgba(tone, 0.16)}`, minHeight: analysisPending ? CELL_CONTENT_ANALYSIS_RESERVED_PX : undefined }}>
-        {/* The asset line is a VALUE reading, so it wears the house's
-          * value-emphasis gold rather than the caution yellow it used to —
-          * the same gold the register's AMOUNT row two columns over uses. */}
-        {record?.asset ? (
-          <div data-cell-content-asset="true" data-cell-content-reveal-item="asset" data-cell-content-reveal-item-state={assetRevealed ? 'resolved' : 'scanning'} title={record.asset.type_script_hash} {...revealStageAttributes(assetRevealed)} style={{ display: 'flex', alignItems: 'baseline', gap: 5, minWidth: 0, color: HUD_COLORS.goldInk, fontSize: HUD_TYPE.label, ...revealStageStyle(assetRevealed) }}>
-            <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 1.4 }}>VALUE</span>
-            <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {[record.asset.symbol, record.asset.name, record.asset.standard].filter(Boolean).join(' · ') || record.asset.type_script_hash}
-              {assetAmount ? ` · ${assetAmount}` : ''}
-            </span>
-          </div>
-        ) : null}
+        {/* ⭐ NO VALUE LINE. It read `VALUE · RGB++ · RGB++ Protocol · xudt ·
+          * 1000 RGB++` — the register's AMOUNT and IDENTITY rows, verbatim,
+          * two columns to the left and one rank up. The register owns what a
+          * Cell is worth; this window owns what its BYTES say. */}
         {content?.deterministic ? (
-          <div data-cell-content-deterministic="true" data-cell-content-reveal-item="decode" data-cell-content-reveal-item-state={decodeRevealed ? 'resolved' : 'scanning'} {...revealStageAttributes(decodeRevealed)} style={{ display: 'block', minWidth: 0, marginTop: record?.asset ? 2 : 0, ...revealStageStyle(decodeRevealed) }}>
+          // The decode names the KIND and stops. Its `summary` is the
+          // indexer's own sentence about the pipeline — `XUDT cell data starts
+          // with amount=100000000000 (u128 LE)` — and it sat in the reading's
+          // seat printing, for the third time on one card, a number the
+          // segment row below prints once. The sentence is still here, on
+          // hover, where an explanation belongs (the user's D-19 ruling).
+          //
+          // …and the label is `dim`, not `nominal`. A decode kind is not the
+          // HUD reporting that this Cell is well; the card removed the same
+          // green from its byte count for the same reason.
+          <div data-cell-content-deterministic="true" data-cell-content-reveal-item="decode" data-cell-content-reveal-item-state={decodeRevealed ? 'resolved' : 'scanning'} title={content.deterministic.summary} {...revealStageAttributes(decodeRevealed)} style={{ display: 'block', minWidth: 0, ...revealStageStyle(decodeRevealed) }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 5, minWidth: 0 }}>
-              <span style={{ color: HUD_COLORS.nominal, fontSize: HUD_TYPE.micro, letterSpacing: 0.6, whiteSpace: 'nowrap' }}>
+              <span data-cell-content-decode-kind="true" style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.6, whiteSpace: 'nowrap' }}>
                 DECODE · {readableKind(content.deterministic.kind)}
-              </span>
-              <span title={content.deterministic.summary} style={{ minWidth: 0, marginLeft: 'auto', color: HUD_COLORS.ink, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {content.deterministic.summary}
               </span>
             </div>
           </div>
@@ -538,19 +492,6 @@ export default function CellContentMemory({
               interactive={heuristicRevealed}
               onStep={(direction) => setGuessIndex((current) => (
                 cycleIndex(current, guesses.length, direction)
-              ))}
-            />
-          </div>
-        ) : null}
-        {selectedRole && selectedRoleIndex !== null ? (
-          <div data-cell-content-reveal-item="role" data-cell-content-reveal-item-state={roleRevealed ? 'resolved' : 'scanning'} {...revealStageAttributes(roleRevealed)} style={{ display: 'block', ...revealStageStyle(roleRevealed) }}>
-            <FacetReadout
-              facet={selectedRole}
-              index={selectedRoleIndex}
-              count={roles.length}
-              interactive={roleRevealed}
-              onStep={(direction) => setRoleIndex((current) => (
-                cycleIndex(current, roles.length, direction)
               ))}
             />
           </div>

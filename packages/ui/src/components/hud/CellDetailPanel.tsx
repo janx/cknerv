@@ -279,10 +279,11 @@ const EVIDENCE_ROW_GAP_PX = 3;
  *  one, so its reservation has to carry one too — otherwise the slot grows a
  *  caption's worth of height the moment the record lands in it. */
 const EVIDENCE_CAPTION_PX = 12;
-/** OWNER · SCRIPT · ARGS — what the index adds to a lock, every time — and
- *  the one caption among them (OWNER explains where the address came from). */
+/** OWNER · SCRIPT · ARGS — what the index adds to a lock, every time. No
+ *  captions among them any more: OWNER's provenance sentence moved to the
+ *  row's `title` (the user's D-19 ruling), so the slot reserves rows only. */
 const LOCK_ENRICHMENT_ROWS = 3;
-const LOCK_ENRICHMENT_CAPTIONS = 1;
+const LOCK_ENRICHMENT_CAPTIONS = 0;
 /** The typical asset block: two of amount/identity/object plus script hash. */
 const ASSET_ENRICHMENT_ROWS = 3;
 /** The CKBYTE budget is one instrument (header, bar, legend, ratio strip), not
@@ -320,8 +321,16 @@ const ORANGE = HUD_COLORS.orange;
 const TRACE_CAPTION = 'THE CREATING WRITE THIS SESSION STILL HOLDS IN MEMORY';
 const TRACE_CAPTION_RECALL = `${TRACE_CAPTION} · SELECT TO REPLAY ITS INPUTS`;
 /** PROOF is the index's anchor block: the height everything the index added
- *  above was true at. */
-const PROOF_CAPTION = 'ENRICHMENT ANCHOR · EVERY INDEXED FACT ABOVE IS AS OF THIS BLOCK';
+ *  above was true at — said on the row, on hover, and not printed under it.
+ *
+ *  The user's D-19 ruling of 2026-09-05 kept ORIGIN TX's caption and moved the
+ *  other three explainers to `title`. This is one of the three: it is the same
+ *  sentence on every card that has an index record at all, it explains the row
+ *  rather than reading anything off this Cell, and it was the widest line in
+ *  the provenance footer. ORIGIN TX's caption stays a caption because it names
+ *  a relationship a reader cannot deduce from the row (that THIS transaction
+ *  is the one that created THIS Cell); this one names a convention. */
+const PROOF_TITLE = 'ENRICHMENT ANCHOR · EVERY INDEXED FACT ABOVE IS AS OF THIS BLOCK';
 
 /** A register row's READING: the words, and the ink they are printed in. The
  *  ink is optional because two facts are printed in body ink on purpose — see
@@ -505,52 +514,55 @@ function scriptArgsReadout(args: string): string {
  *  CODE row's label — the state belongs to the script it qualifies, not to a
  *  stamp floating at the far edge of the plate. */
 function scriptStateChip(script: SemanticScript | null | undefined): ReactNode {
-  if (!script || script.deprecated == null) return undefined;
-  const deprecated = script.deprecated === true;
-  // Steel, then caution. The pair used to be `nominal` over `danger`, which is
+  if (!script || script.deprecated !== true) return undefined;
+  // ⭐ ONLY the exception is printed. `ACTIVE` used to ride both CODE rows of
+  // nearly every card in the set — two chips saying that nothing is wrong,
+  // twice per Cell, on the ordinary case. A chip is a mark that something is
+  // WORTH NOTICING; a chip that is always there marks nothing and reads as
+  // decoration on the row it qualifies. The absence of a chip is the ordinary
+  // condition, stated by not being stated. (The colour half of this argument
+  // was settled in round 2 and stands: the pair was `nominal` over `danger`,
   // the whole severity ramp spent on a word an upstream registry attaches to a
-  // CODE HASH: green said this Cell was well and red said it was broken, when
-  // what the index said was that the ecosystem has, or has not, moved on from
-  // the script it happens to be locked by. Neither is a condition of this
-  // Cell, this node or this instrument, and a Cell locked by a superseded
-  // script is not a reorg.
+  // CODE HASH — and a Cell locked by a superseded script is not a reorg.)
   //
-  // ACTIVE loses `nominal` for the reason CKB·01's three section headers did:
-  // a current script is not the HUD reporting that it is well, and a chip that
-  // says so beside one that does not makes the ordinary case look like a pass
-  // mark. It says the word in steel, the way `SightedNodeCard` says NOT LINKED
-  // — the normal condition, stated and not sounded.
-  //
-  // DEPRECATED keeps the middle rung rather than going steel with it, and that
-  // is the one judgement here rather than a deduction: it is the same shape as
-  // the DOSSIER's IDENTIFY row two files over, where an upstream identity that
-  // agrees is `dim` and one that disagrees is `caution`. A superseded script is
-  // worth noticing and is not worth an alarm, which is exactly what the middle
-  // of the ramp is for.
-  const color = deprecated ? HUD_COLORS.caution : HUD_COLORS.dim;
+  // DEPRECATED keeps the middle rung of the ramp, which is the one judgement
+  // here rather than a deduction: it is the same shape as the DOSSIER's
+  // IDENTIFY row two files over, where an upstream identity that agrees is
+  // `dim` and one that disagrees is `caution`. A superseded script is worth
+  // noticing and is not worth an alarm, which is exactly what the middle of
+  // the ramp is for.
   return (
     <span
-      data-cell-script-state={deprecated ? 'deprecated' : 'active'}
-      style={{ flex: '0 0 auto', ...plateStateChip(color) }}
+      data-cell-script-state="deprecated"
+      style={{ flex: '0 0 auto', ...plateStateChip(HUD_COLORS.caution) }}
     >
-      {deprecated ? 'DEPRECATED' : 'ACTIVE'}
+      DEPRECATED
     </span>
   );
 }
 
 /** A DAO moment: the block it happened in, and — once the source states the
- *  timestamp — the wall clock a human remembers it by. */
+ *  timestamp — the wall clock a human remembers it by.
+ *
+ * ⚠️ …unless that block is the Cell's own birth block, which for a DEPOSITED
+ *  row it almost always is: a deposit CREATES the Cell, so the register's
+ *  COMMIT fact, ORIGIN TX and this row were three prints of one number on one
+ *  card. Then the row states the clock alone — which is the half COMMIT does
+ *  not carry, and the reason a reader is looking at this row at all — and says
+ *  nothing when there is no clock either, because a lone repeated block
+ *  number is the redundancy itself. */
 function daoMomentReadout(
   facet: SemanticFacet,
   blockKey: string,
   atMsKey: string,
+  birthBlock?: number,
 ): string | null {
   const block = semanticFacetNumber(facet, blockKey);
   if (block === null) return null;
   const atMs = semanticFacetNumber(facet, atMsKey);
-  return atMs !== null && atMs > 0
-    ? `${formatBlockRef(block)} · ${formatWallClock(atMs)}`
-    : formatBlockRef(block);
+  const clock = atMs !== null && atMs > 0 ? formatWallClock(atMs) : null;
+  if (block === birthBlock) return clock;
+  return clock === null ? formatBlockRef(block) : `${formatBlockRef(block)} · ${clock}`;
 }
 
 /** Facet kinds the register spells out one fact to a line. Everything else
@@ -1229,15 +1241,20 @@ function CellScanTraceBlock({
           data-trace-state={traceSelected ? 'active' : 'ready'}
           data-trace-stage={traceSelected ? traceStage ?? 'planning' : 'ready'}
           title={!identityProofComplete
-            ? 'ARM MEMORY TRACE · read the three identity proofs by selecting STATE (WHERE), DATA (WHAT) and COMMIT (WHEN) in the register above'
+            ? 'ARM MEMORY TRACE · read the three identity proofs by selecting WHERE, DATA (WHAT) and COMMIT (WHEN) in the register above'
             : observed.txHash}
           onClick={() => onTraceWrite(observed.seq)}
           disabled={!recallEnabled}
           style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'baseline', gap: '2px 8px', width: '100%', margin: 0, padding: '3px 2px', border: 0, background: traceSelected ? `${VIOLET}12` : 'transparent', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.35, color: traceSelected ? HUD_COLORS.memoryInk : ORANGE, textShadow: `0 0 6px ${traceSelected ? VIOLET : ORANGE}55`, whiteSpace: 'nowrap', cursor: recallEnabled ? 'pointer' : 'default', textAlign: 'left', opacity: recallEnabled ? 1 : 0.62 }}
         >
           <span>MEMORY TRACE</span>
+          {/* The shape of the write and how far the recall has got — and NOT
+              the block it landed in. That block is the COMMIT fact in the
+              register above and ORIGIN TX's own subject; a dossier that
+              printed it here as well said one number three times in six
+              rows. */}
           <span style={{ marginLeft: 'auto', color: HUD_COLORS.goldInk }}>
-            {formatBlockRef(observed.block)} · {observed.inputCount}→{observed.outputCount} · {traceStateReadout}
+            {observed.inputCount}→{observed.outputCount} · {traceStateReadout}
           </span>
           <PlateReadoutCaption style={{ gridColumn: '1 / -1', whiteSpace: 'normal' }}>
             {TRACE_CAPTION_RECALL}
@@ -1251,7 +1268,7 @@ function CellScanTraceBlock({
         >
           <span>MEMORY TRACE</span>
           <span style={{ marginLeft: 'auto', color: HUD_COLORS.goldInk }}>
-            {formatBlockRef(observed.block)} · {observed.inputCount}→{observed.outputCount}
+            {observed.inputCount}→{observed.outputCount}
           </span>
           <PlateReadoutCaption style={{ flexBasis: '100%', whiteSpace: 'normal' }}>
             {TRACE_CAPTION}
@@ -1337,7 +1354,7 @@ function CellDetailPanel({
   // one plate that fallback was the same number printed twice, so the flag
   // now stands alone for those Cells.
   const lifetime = cell.born_at_ms > 0
-    ? ` · AGE ${formatAge(cell.born_at_ms, Date.now())}`
+    ? `AGE ${formatAge(cell.born_at_ms, Date.now())}`
     : '';
   const order = CONSENSUS_BRAID_FIELDS;
   // The walk's start, not its state: the clock owns the walking, and the card
@@ -1637,9 +1654,14 @@ function CellDetailPanel({
       value: formatCellData(cell.data_bytes),
       color: factAccent('data'),
     },
-    // The masthead carries the lamp; twinning it here printed the same green
-    // LIVE twice in one column. The register states the word,
-    // in the colour that already says which word it is.
+    // WHERE, not STATE — the user's D-6 ruling of 2026-09-05, and the fact
+    // finally wears the name of what it does. Pressing it runs the OUTPOINT
+    // locator read (`activateField` maps this fact to the `address` proof, and
+    // MEMORY TRACE arms on WHERE · WHAT · WHEN), so a fact labelled STATE was
+    // the only one on the card whose label named its VALUE instead of its
+    // subject. Its value is still the state word, and the masthead's lamp no
+    // longer says it: two prints of `LIVE` in one column were the last
+    // duplication the declutter rounds left open.
     //
     // The one reading on this card that does NOT take its fact's frame colour
     // by way of `factAccent`, because the two answers are on two layers. SPENT
@@ -1648,7 +1670,7 @@ function CellDetailPanel({
     // name this event finally name it once. It used to be `caution`, which
     // said an ordinary block of spent outputs was a degraded state.
     state: {
-      label: 'STATE',
+      label: 'WHERE',
       value: live ? 'LIVE' : 'SPENT',
       color: live ? HUD_COLORS.nominal : HUD_COLORS.ember,
     },
@@ -2092,14 +2114,24 @@ function CellDetailPanel({
             <span style={{ ...CJK_BASELINE_LIFT, color: CELL_CARD_ACCENT, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: 0.72 }}>
               细胞
             </span>
-            {/* A reading, not a chip: `color` and nothing else, which is the
-              * only layer `ember` is allowed on. `◇ SPENT` used to be
-              * `caution`, so the masthead of every consumed Cell opened in the
-              * HUD's degradation yellow — a small alarm raised over the most
-              * ordinary thing a chain does. */}
-            <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap', color: live ? HUD_COLORS.nominal : HUD_COLORS.ember, fontSize: HUD_TYPE.section, letterSpacing: 0.9 }}>
+            {/* THE LAMP AND THE AGE, AND NOT THE WORD (the user's D-6 ruling
+              * of 2026-09-05). The masthead read `● LIVE · AGE 3 D` while the
+              * register four rows below read `WHERE · LIVE` in the same green:
+              * one card, one column, the same word twice. The lamp is the
+              * status — lit or cooled, in the tone — and the register spells
+              * it, because the register is where this card states facts.
+              *
+              * A reading, not a chip: `color` and nothing else, which is the
+              * only layer `ember` is allowed on. The lamp itself used to be
+              * `caution` when cooled, so the masthead of every consumed Cell
+              * opened in the HUD's degradation yellow — a small alarm raised
+              * over the most ordinary thing a chain does.
+              *
+              * ⚠️ The lamp needs a title now: unlabelled, it is a coloured dot
+              * and the word that glossed it is gone from this line. */}
+            <span title={live ? 'LIVE' : 'SPENT'} style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap', color: live ? HUD_COLORS.nominal : HUD_COLORS.ember, fontSize: HUD_TYPE.section, letterSpacing: 0.9 }}>
               <StatusLamp color={live ? HUD_COLORS.nominal : HUD_COLORS.ember} lit={live} size={5.5} />
-              {live ? 'LIVE' : 'SPENT'}{lifetime}
+              {lifetime}
             </span>
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: '2px 8px', minWidth: 0 }}>
@@ -2149,8 +2181,13 @@ function CellDetailPanel({
                       accent={lockAccent}
                       label="OWNER"
                       value={midTruncate(presentedSemanticRecord.address, 14, 12)}
-                      title={presentedSemanticRecord.address}
-                      caption="ADDRESS ENCODED FROM THE LOCK SCRIPT"
+                      // The address AND where it comes from, on hover. The
+                      // sentence was a printed caption under the row (the
+                      // user's D-19 ruling moved it): it explains the row's
+                      // provenance once, to a reader who wonders, and it is
+                      // not a fact about this Cell — every OWNER row on every
+                      // card carried the same sixteen words.
+                      title={`${presentedSemanticRecord.address}\nADDRESS ENCODED FROM THE LOCK SCRIPT`}
                       revealAt={semanticsRevealAt(1)}
                     />
                   ) : null}
@@ -2342,7 +2379,12 @@ function CellDetailPanel({
                     ['dao-withdraw-request', 'WITHDRAW REQ', 'withdraw_request_block', 'withdraw_request_at_ms'],
                     ['dao-withdrawn', 'WITHDRAWN', 'withdraw_block', 'withdraw_at_ms'],
                   ].map(([row, label, blockKey, atMsKey]) => {
-                    const value = daoMomentReadout(daoFacet, blockKey, atMsKey);
+                    const value = daoMomentReadout(
+                      daoFacet,
+                      blockKey,
+                      atMsKey,
+                      cell.birth_block,
+                    );
                     return value ? (
                       <ClusterRow
                         key={row}
@@ -2545,6 +2587,7 @@ function CellDetailPanel({
                 <EvidenceFact
                   label="PROOF"
                   value={formatBlockRef(presentedSemanticRecord.as_of.block)}
+                  title={PROOF_TITLE}
                   color={HUD_COLORS.cyanWire}
                 />
               ) : null}
@@ -2568,11 +2611,6 @@ function CellDetailPanel({
                     </span>
                   ) : null}
                 </span>
-              ) : null}
-              {presentedSemanticRecord ? (
-                <PlateReadoutCaption style={{ flexBasis: '100%' }}>
-                  {PROOF_CAPTION}
-                </PlateReadoutCaption>
               ) : null}
               {statusLine ? (
                 <div title={statusLine} style={{ flexBasis: '100%', minWidth: 0, color: (presentedSemanticPhase ?? semanticPhase) === 'error' ? HUD_COLORS.danger : HUD_COLORS.dim, fontSize: HUD_TYPE.label, lineHeight: 1.45 }}>

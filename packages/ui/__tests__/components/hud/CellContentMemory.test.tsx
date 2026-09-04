@@ -108,7 +108,7 @@ describe('CellContentMemory reveal staging', () => {
     expect(section.dataset.cellContentRevealCount).toBe('0');
     expect(section.style.display).toBe('block');
     const dark = stageRows(container);
-    expect(dark.length).toBeGreaterThan(4);
+    expect(dark.length).toBeGreaterThanOrEqual(2);
     for (const row of dark) {
       expect(row.style.display).not.toBe('none');
       expect(row.style.opacity).toBe('0.18');
@@ -160,10 +160,11 @@ describe('CellContentMemory reveal staging', () => {
       };
     });
 
-    // The walk really does advance, over the five stages this record brings —
-    // VALUE, DECODE, the segment rows, one heuristic, one role — at
-    // `floor(progress × 5 + 0.45)`.
-    expect(frames.map((frame) => frame.count)).toEqual([0, 1, 2, 4, 5]);
+    // The walk really does advance, over the two stages this record brings —
+    // DECODE and the segment rows — at `floor(progress × 2 + 0.45)`. It was
+    // five: VALUE and ROLE went to the register that already spelled them, and
+    // the heuristic cannot stage beside a decode any more.
+    expect(frames.map((frame) => frame.count)).toEqual([0, 0, 1, 1, 2]);
     expect(frames[4].lit).toBeGreaterThan(frames[0].lit);
     // …and never once by laying anything out differently.
     for (const frame of frames) {
@@ -315,7 +316,7 @@ describe('CellContentMemory reveal staging', () => {
     ) as HTMLElement;
 
     // Pending, the zone shows one status line and holds the rest of the room
-    // VALUE / DECODE / seven segment rows / heuristic / role will need.
+    // DECODE and seven segment rows will need.
     expect(zone().dataset.cellContentAnalysisReserved).toBe('true');
     expect(zone().style.minHeight)
       .toBe(`${CELL_CONTENT_ANALYSIS_RESERVED_PX}px`);
@@ -335,7 +336,6 @@ describe('CellContentMemory reveal staging', () => {
     );
     expect(zone().dataset.cellContentAnalysisReserved).toBeUndefined();
     expect(zone().style.minHeight).toBe('');
-    expect(container.querySelector('[data-cell-content-asset]')).not.toBeNull();
     expect(container.querySelector('[data-cell-content-segment="0"]'))
       .not.toBeNull();
   });

@@ -70,6 +70,7 @@ export function EvidenceFact({
   displayValue,
   color,
   valueSize = HUD_TYPE.label,
+  title,
   style,
 }: {
   label: string;
@@ -77,11 +78,17 @@ export function EvidenceFact({
   displayValue?: string;
   color?: string;
   valueSize?: number;
+  /** What the row means, for a reader who wonders — on the row, not printed
+   *  under it. `value` is the default, which is what a truncated reading
+   *  needs; a row whose sentence is a CONVENTION rather than a reading says
+   *  both (the user's D-19 ruling). */
+  title?: string;
   style?: CSSProperties;
 }) {
   return (
     <div
       data-cell-context-fact={label.toLowerCase()}
+      title={title}
       style={{
         display: 'grid',
         gridTemplateColumns: 'auto minmax(0,1fr)',

@@ -148,12 +148,12 @@ describe('cellInspectorPlacement', () => {
     expect(lock).not.toBe(resting);
     expect(data).not.toBe(lock);
 
-    // STATE used to be a third pin here, on the CELL's value rather than on
+    // WHERE (the state fact) used to be a third pin here, on the CELL's value rather than on
     // the facet: a live cell tethered `nominal` and a spent one `caution`, and
     // the assertion was that the line moved between them. It does not any
     // more, and that is the ruling rather than a regression — see the two
     // tests below. The line says WHICH FACT is open; the card says which state
-    // the Cell is in, twice, in the one vocabulary the house cut for it.
+    // the Cell is in, once, in the one vocabulary the house cut for it.
     expect(selectedCellScanAccent({ cell: { ...selected, death_at_ms: 1 } }, 'state'))
       .toBe(selectedCellScanAccent({ cell: selected }, 'state'));
     expect(selectedCellScanAccent({ cell: selected }, 'state'))
@@ -200,13 +200,14 @@ describe('cellInspectorPlacement', () => {
 
   it('a spent Cell is named in the metabolic tone where a reading is allowed', () => {
     // The other half, and the reason the test above is not simply a ban: the
-    // event still has to be NAMED, and the register's STATE word is one of the
-    // three surfaces that names it. It is `DECODE.state.color` rather than
+    // event still has to be NAMED, and the register's WHERE word is one of the
+    // three surfaces that names it — the only one on the card, since the
+    // masthead's lamp gave the word up in round 3 and kept the light. It is `DECODE.state.color` rather than
     // `factAccent('state')` for the layer reason above, so it is read here as
     // source text — the one thing an oracle can ask of a value that is spelled
     // beside its frame.
     expect(DETAIL_PANEL_SOURCE).toContain([
-      "      label: 'STATE',",
+      "      label: 'WHERE',",
       "      value: live ? 'LIVE' : 'SPENT',",
       '      color: live ? HUD_COLORS.nominal : HUD_COLORS.ember,',
     ].join('\n'));

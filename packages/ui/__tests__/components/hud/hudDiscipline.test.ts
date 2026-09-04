@@ -1011,7 +1011,9 @@ describe('hud discipline', () => {
     // `scriptStateChip` ran the whole ramp across a word an upstream registry
     // attaches to a CODE HASH: `nominal` for ACTIVE, `danger` for DEPRECATED.
     // Neither end is a condition of the Cell, and a Cell locked by a
-    // superseded script is not a reorg.
+    // superseded script is not a reorg. Round 3 took the ordinary end away
+    // entirely — a chip on both CODE rows of nearly every card marks nothing —
+    // so the chip is the exception or it is absent, and `dim` left with it.
     //
     // Scoped to the function rather than to the file, because the dossier
     // legitimately raises a real alarm elsewhere: a decode the index could not
@@ -1026,7 +1028,8 @@ describe('hud discipline', () => {
     expect(chip).not.toContain('HUD_COLORS.danger');
     expect(chip).not.toContain('HUD_COLORS.nominal');
     expect(chip).toContain('HUD_COLORS.caution');
-    expect(chip).toContain('HUD_COLORS.dim');
+    // …and the ordinary word is not printed at all.
+    expect(chip).not.toContain('ACTIVE');
   });
 
   it('a stranger behind NAT is not an instrument reporting on itself', () => {
@@ -3467,7 +3470,7 @@ const READOUT_LABEL_SITES: ReadonlyArray<{
     within: ['export function EvidenceFact(', 'function facetTitle('],
     renders: '{label}',
   },
-  { surface: 'the content window asset line', file: 'CellContentMemory.tsx', renders: 'VALUE' },
+
   {
     surface: "the sync ladder's own rung",
     file: 'PeerLinkCard.tsx',
@@ -3533,9 +3536,11 @@ describe('the card dialect names a reading one way', () => {
     expect(Number(rung?.[1])).toBe(READOUT_LABEL_RUNG);
 
     // …and the surfaces it governs are a list, held at a length, so that adding
-    // a ninth is a deliberate edit rather than something that happens to a rule
-    // nobody reread.
-    expect(READOUT_LABEL_SITES).toHaveLength(8);
+    // an eighth is a deliberate edit rather than something that happens to a
+    // rule nobody reread. It was eight; the content window's VALUE line went in
+    // round 3 (the register two columns over already printed it), and a site
+    // that no longer exists may not stay on the list.
+    expect(READOUT_LABEL_SITES).toHaveLength(7);
   });
 });
 
