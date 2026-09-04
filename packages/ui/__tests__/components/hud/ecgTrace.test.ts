@@ -1,5 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { reconstructArrivals, beatProfile, drawStripChart, windowMax, alignedFracs } from '../../../src/components/hud/ecgTrace';
+import {
+  ECG_NOW_EDGE_ALPHA,
+  ECG_NOW_EDGE_PX,
+  ECG_PAPER_HEIGHT_PX,
+  alignedFracs,
+  beatProfile,
+  drawStripChart,
+  ecgCanvasSize,
+  reconstructArrivals,
+  windowMax,
+} from '../../../src/components/hud/ecgTrace';
 
 describe('reconstructArrivals', () => {
   it('returns [] when there is no last arrival', () => {
@@ -55,21 +65,64 @@ describe('alignedFracs', () => {
   });
 });
 
+describe('ecgCanvasSize', () => {
+  it('takes the paper from the element and the bitmap from the display', () => {
+    // The box the rail leaves this canvas at 1920, on an ordinary display.
+    expect(ecgCanvasSize(242, 1)).toEqual({
+      cssWidth: 242, cssHeight: 46, bitmapWidth: 242, bitmapHeight: 46, scale: 1,
+    });
+    // …and the same paper on a 2× one: twice the bitmap, the SAME CSS box, so
+    // every number in `drawStripChart` stays a CSS pixel.
+    expect(ecgCanvasSize(242, 2)).toEqual({
+      cssWidth: 242, cssHeight: 46, bitmapWidth: 484, bitmapHeight: 92, scale: 2,
+    });
+  });
+
+  it('never asks for a zero bitmap, and never for an unbounded one', () => {
+    // A canvas that has not been laid out yet reports 0.
+    expect(ecgCanvasSize(0, 2).bitmapWidth).toBeGreaterThan(0);
+    expect(ecgCanvasSize(242, 0).scale).toBe(1);
+    expect(ecgCanvasSize(242, Number.NaN).scale).toBe(1);
+    // A ratio of 8 would be a 1,936 px bitmap redrawn ten times a second.
+    expect(ecgCanvasSize(242, 8).scale).toBe(4);
+  });
+
+  it('rounds the paper to whole pixels — a hairline is a pixel or it is a blur', () => {
+    const paper = ecgCanvasSize(241.6, 1.5);
+    expect(paper.cssWidth).toBe(242);
+    expect(paper.bitmapWidth).toBe(363);
+  });
+});
+
 describe('drawStripChart (mock 2D context)', () => {
   function fakeCtx() {
-    const calls = { stroke: 0, fillRect: 0, ys: [] as number[] };
+    const calls = {
+      stroke: 0,
+      fillRect: 0,
+      ys: [] as number[],
+      fills: [] as { x: number; y: number; w: number; h: number }[],
+    };
     const ctx = {
       calls,
       clearRect() {}, beginPath() {},
       moveTo(_x: number, y: number) { calls.ys.push(y); },
       lineTo(_x: number, y: number) { calls.ys.push(y); },
-      stroke() { calls.stroke++; }, fillRect() { calls.fillRect++; },
+      stroke() { calls.stroke++; },
+      fillRect(x: number, y: number, w: number, h: number) {
+        calls.fillRect++;
+        calls.fills.push({ x, y, w, h });
+      },
       setLineDash() {}, createLinearGradient() { return { addColorStop() {} }; },
       lineWidth: 0, strokeStyle: '', fillStyle: '', lineJoin: '', shadowBlur: 0, shadowColor: '',
     };
     return ctx as unknown as CanvasRenderingContext2D & { calls: typeof calls };
   }
-  const base = { width: 300, height: 58, color: '#27FF5A' };
+  // ⚠️ THE PAPER, NOT THE OLD BITMAP. This fixture used to say 300 × 58 — a
+  // width the canvas declared but was never shown at, and a height it never
+  // had (the element was 46). The instrument is drawn in CSS pixels now, and
+  // 242 × 46 is the box the rail leaves it at 1920 (report A, A-1).
+  const PAPER_WIDTH = 242;
+  const base = { width: PAPER_WIDTH, height: ECG_PAPER_HEIGHT_PX, color: '#27FF5A' };
 
   it('terminates and skips the tick loop when targetMs <= 0 (no infinite loop)', () => {
     const ctx = fakeCtx() as ReturnType<typeof fakeCtx>;
@@ -93,6 +146,38 @@ describe('drawStripChart (mock 2D context)', () => {
     // gap (12s) exceeds target (8s) -> one expected-beat tick falls inside the window
     drawStripChart(ctx, { ...base, arrivals: [now - 12000], nowMs: now, targetMs: 8000, gapMs: 12000 });
     expect(ctx.calls.stroke).toBeGreaterThan(10); // grid is 10 strokes; tick + trace add more
+  });
+
+  it('rules the paper across the whole window, not only ahead of the last beat', () => {
+    // The reader's question is what a pixel of x is worth. Ticks drawn only
+    // AHEAD of the last arrival answer it during a stall and never otherwise
+    // (report A, A-10) — so a chain keeping perfect time drew none at all.
+    const now = 1_000_000;
+    const onTime = fakeCtx() as ReturnType<typeof fakeCtx>;
+    // Four beats exactly on target, the newest one 1s old: nothing is overdue.
+    drawStripChart(onTime, {
+      ...base,
+      arrivals: reconstructArrivals([8000, 8000, 8000], now - 1000),
+      nowMs: now,
+      targetMs: 8000,
+      gapMs: 1000,
+    });
+    // 9 grid strokes + 1 baseline + 1 trace = 11 with no ticks at all; the
+    // window holds eight target intervals, so a ruled one strokes more.
+    expect(onTime.calls.stroke).toBeGreaterThan(15);
+  });
+
+  it('draws the now edge as a cursor: one pixel, and quieter than the ruling', () => {
+    // At 0.85 over 1.5 px the paper's own edge was the loudest thing on the
+    // canvas, out-shining the R peaks in area.
+    expect(ECG_NOW_EDGE_PX).toBe(1);
+    expect(ECG_NOW_EDGE_ALPHA).toBe(0.45);
+
+    const ctx = fakeCtx() as ReturnType<typeof fakeCtx>;
+    drawStripChart(ctx, { ...base, arrivals: [999_000], nowMs: 1_000_000, targetMs: 8000, gapMs: 1000 });
+    expect(ctx.calls.fills.at(-1)).toEqual({
+      x: base.width - 1, y: 0, w: 1, h: base.height,
+    });
   });
 
   it('plots only finite, on-canvas y-coords through the divergent size/tx scaling path', () => {

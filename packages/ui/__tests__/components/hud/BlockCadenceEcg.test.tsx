@@ -30,6 +30,32 @@ describe('BlockCadenceEcg', () => {
     expect(t).toContain('AVG');
     expect(t).toContain('RATE');
   });
+  it('says what a pixel of x is worth, at both ends of the paper', () => {
+    // The window is `ECG_SPAN_BEATS` × target — 64 s at an 8 s target — and
+    // nothing on the canvas said so, which is why a 3.7 s gap and a 23 s gap
+    // read alike (report A, A-10).
+    const { container } = render(<BlockCadenceEcg {...base} condition="FINE" />);
+    const scale = container.querySelector('[data-ecg-scale]') as HTMLElement;
+    expect(scale.textContent).toBe('−64SNOW');
+
+    cleanup();
+    // …and it is read off the window rather than typed: a chain on a 4 s
+    // target says a different number with nobody editing the label.
+    const faster = render(<BlockCadenceEcg {...base} targetMs={4000} condition="FINE" />);
+    expect(faster.container.querySelector('[data-ecg-scale]')?.textContent).toBe('−32SNOW');
+  });
+
+  it('declares no bitmap of its own — the paper is measured from the element', () => {
+    // A declared `width={300}` stretched to fill 242 is a 0.807× squash on
+    // every hairline the file's alias-safety argument depends on (A-1).
+    const { container } = render(<BlockCadenceEcg {...base} condition="FINE" />);
+    const canvas = container.querySelector('canvas') as HTMLCanvasElement;
+    expect(canvas.getAttribute('width')).toBeNull();
+    expect(canvas.getAttribute('height')).toBeNull();
+    expect(canvas.style.height).toBe('46px');
+    expect(canvas.style.width).toBe('100%');
+  });
+
   it('reflects a flatline condition', () => {
     const { container } = render(<BlockCadenceEcg {...base} condition="FLATLINE" gapMs={80000} />);
     expect(container.textContent).toContain('FLATLINE');
@@ -102,8 +128,10 @@ function asStyleColor(hex: string): string {
 // ——— Redraw cadence —————————————————————————————————————————————————
 //
 // The paper's speed is the whole budget here: one window (8 beats ≈ 64s)
-// crosses ~300px, so the ink travels ~4.7px/s while every redraw sums a
-// gaussian beat profile per column and strokes the result through a glow.
+// crosses the ~242 CSS px the rail leaves the canvas, so the ink travels
+// ~3.8px/s while every redraw sums a gaussian beat profile per column and
+// strokes the result through a glow. (The 300 that used to stand here was the
+// declared BITMAP width, and the canvas was never shown at it — A-1.)
 // `ECG_DRAW_FPS` is what keeps the two in proportion — a draw per animation
 // frame bought sub-pixel motion at three times the cost.
 

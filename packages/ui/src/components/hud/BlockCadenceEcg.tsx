@@ -1,7 +1,13 @@
 import { memo, useEffect, useMemo, useRef } from 'react';
 import type { CSSProperties } from 'react';
 import type { EcgCondition } from '../../derives/ecgCondition';
-import { reconstructArrivals, drawStripChart } from './ecgTrace';
+import {
+  ECG_PAPER_HEIGHT_PX,
+  ECG_SPAN_BEATS,
+  drawStripChart,
+  ecgCanvasSize,
+  reconstructArrivals,
+} from './ecgTrace';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 import { HudPanel, PanelHeader, StatusLamp } from './primitives';
 
@@ -39,12 +45,28 @@ const COND_COLOR_TRACE: Record<EcgCondition, string> = {
   ...COND_COLOR,
   FINE: HUD_COLORS.termGreen,
 };
-/** One window is `ECG_SPAN_BEATS` × target ≈ 64s across ~300px, so the paper
- *  travels ~4.7px/s: at 10 Hz a redraw advances the trace under half a pixel.
- *  The ceiling is set by that velocity and nothing else — every draw sums a
- *  gaussian beat profile per column and strokes the result with a glow, and
- *  paying for it faster than the paper moves buys no motion. */
+/** One window is `ECG_SPAN_BEATS` × target ≈ 64s across the ~242 CSS px the
+ *  rail leaves this canvas, so the paper travels ~3.8px/s: at 10 Hz a redraw
+ *  advances the trace by about a third of a pixel. The ceiling is set by that
+ *  velocity and nothing else — every draw sums a gaussian beat profile per
+ *  column and strokes the result with a glow, and paying for it faster than
+ *  the paper moves buys no motion.
+ *
+ *  ⚠️ The width in that arithmetic used to be 300, which was the BITMAP's
+ *  width and never the paper's: the canvas was declared 300 wide and stretched
+ *  to fill 242, so the file's own numbers were off by the squash (report A,
+ *  A-1). The bitmap is measured from the element now, so 242 is both. */
 const ECG_DRAW_FPS = 10;
+
+/** The scale, in words, because the paper cannot say it in ink. `x` is TIME
+ *  and one window is eight target intervals — about a minute — so a reader
+ *  with no marks at the ends has no way to tell a 3.7 s gap from a 23 s one
+ *  (report A, A-10). Two micro labels under the paper, and the left one is
+ *  computed from the same span the trace is drawn from rather than typed. */
+function windowLabel(targetMs: number): string {
+  const seconds = Math.round((ECG_SPAN_BEATS * Math.max(1000, targetMs)) / 1000);
+  return `−${seconds}S`;
+}
 
 function fmtS(ms: number | null | undefined): string {
   if (ms == null || !Number.isFinite(ms)) return '—';
@@ -90,16 +112,37 @@ function BlockCadenceEcg({
     const ctx = cv.getContext('2d');
     // jsdom-safe: its 2D stub is non-null but lacks the path methods drawStripChart needs.
     if (!ctx || typeof ctx.fillRect !== 'function' || typeof ctx.clearRect !== 'function' || typeof ctx.setLineDash !== 'function') return;
-    const W = cv.width, H = cv.height;
+    // The paper is as wide as the box the rail leaves it, at the display's own
+    // ratio — see `ecgCanvasSize`. Re-taken on every resize, because a rail
+    // that collapses is a canvas that changed width without a remount.
+    let paper = ecgCanvasSize(cv.clientWidth, window.devicePixelRatio ?? 1);
+    const resize = () => {
+      paper = ecgCanvasSize(cv.clientWidth, window.devicePixelRatio ?? 1);
+      if (cv.width !== paper.bitmapWidth) cv.width = paper.bitmapWidth;
+      if (cv.height !== paper.bitmapHeight) cv.height = paper.bitmapHeight;
+      // Setting either dimension resets the context, so the transform is
+      // re-applied here and nowhere else: from this point every coordinate
+      // `drawStripChart` uses is a CSS pixel.
+      if (typeof ctx.setTransform === 'function') {
+        ctx.setTransform(paper.scale, 0, 0, paper.scale, 0, 0);
+      }
+    };
+    resize();
     const draw = (nowMs: number) => {
       const s = live.current;
       // clamp >=0: last_block_ts_ms (fresh receive time) can sit just ahead of a
       // throttled clock, which would otherwise paint a negative gap.
       const gap = Math.max(0, s.lastBlockTsMs != null ? nowMs - s.lastBlockTsMs : s.gapMs);
-      drawStripChart(ctx, { width: W, height: H, arrivals: s.arrivals, nowMs, targetMs: s.targetMs, gapMs: gap, color: s.traceColor, sizes: s.sizes, txCounts: s.txCounts });
+      drawStripChart(ctx, { width: paper.cssWidth, height: paper.cssHeight, arrivals: s.arrivals, nowMs, targetMs: s.targetMs, gapMs: gap, color: s.traceColor, sizes: s.sizes, txCounts: s.txCounts });
     };
     draw(Date.now());
-    if (reducedMotion || typeof requestAnimationFrame !== 'function') return; // static trace; test-safe
+    const observer = typeof ResizeObserver === 'function'
+      ? new ResizeObserver(() => { resize(); draw(Date.now()); })
+      : null;
+    observer?.observe(cv);
+    if (reducedMotion || typeof requestAnimationFrame !== 'function') {
+      return () => observer?.disconnect(); // static trace; test-safe
+    }
     const drawIntervalMs = 1000 / ECG_DRAW_FPS;
     let previousDrawAt = Number.NEGATIVE_INFINITY;
     let raf = requestAnimationFrame(function loop(frameAt) {
@@ -109,7 +152,7 @@ function BlockCadenceEcg({
       }
       raf = requestAnimationFrame(loop);
     });
-    return () => cancelAnimationFrame(raf);
+    return () => { cancelAnimationFrame(raf); observer?.disconnect(); };
   }, [reducedMotion]);
 
   // "Since last" hero updates at 0.1s resolution: a small timer recomputes the
@@ -134,8 +177,15 @@ function BlockCadenceEcg({
 
   // Compact by design: ECG·04 shares the left rail's fixed floor with
   // DAO·05, and every pixel it gives up is scroll-free room for CKB·01.
+  //
+  // ⚠️ NO MEASURE OF ITS OWN. This panel asked for 430 and the rail overrode it
+  // to CKB·01's width on every render, so the only thing the number did was
+  // make the canvas's own arithmetic wrong (report A, A-1). The rail states the
+  // measure — ECG·04 is CKB·01's lower companion and their outer edges are
+  // aligned — and a consumer that hands no style gets a panel as wide as its
+  // content, which is what every other measureless panel does.
   return (
-    <HudPanel style={{ width: 430, zIndex: 12, padding: '10px 15px 9px', ...style }}>
+    <HudPanel style={{ zIndex: 12, padding: '10px 15px 9px', ...style }}>
       <PanelHeader en="PULSE" cjk="脉搏" idx="ECG·04" compact />
       <div style={{ display: 'flex', gap: 12 }}>
         <div style={{ flex: '0 0 86px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
@@ -144,7 +194,28 @@ function BlockCadenceEcg({
           <span ref={heroRef} style={{ fontFamily: HUD_FONTS.mono, fontWeight: 700, fontSize: HUD_TYPE.hero, lineHeight: 1, color, textShadow: `0 0 11px ${color}` }}>{fmtS(Math.max(0, lastBlockTsMs != null ? Date.now() - lastBlockTsMs : gapMs))}</span>
           <span style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, letterSpacing: 2, color: HUD_COLORS.dim, marginTop: 3 }}>SINCE LAST</span>
         </div>
-        <canvas ref={cvs} width={300} height={46} style={{ display: 'block', flex: 1, minWidth: 0, width: '100%', height: 46, background: HUD_COLORS.trackGround, border: `1px solid ${rgba(HUD_COLORS.orange, 0.2)}` }} />
+        {/* No `width`/`height` attributes: the bitmap is measured off this
+            element and re-taken on resize (`ecgCanvasSize`). A declared bitmap
+            plus `width: 100%` is exactly how the paper came to be squashed. */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <canvas
+            ref={cvs}
+            data-ecg-paper
+            style={{ display: 'block', width: '100%', height: ECG_PAPER_HEIGHT_PX, background: HUD_COLORS.trackGround, border: `1px solid ${rgba(HUD_COLORS.orange, 0.2)}` }}
+          />
+          {/* What a pixel of x is worth, at the two ends it is worth it
+              between. `NOW` is at the right because that is where the paper's
+              edge is; the span on the left is read off the same window the
+              trace is drawn from, so a chain with a different target says a
+              different number without anybody editing this line. */}
+          <div
+            data-ecg-scale
+            style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.9, color: HUD_COLORS.dim }}
+          >
+            <span>{windowLabel(targetMs)}</span>
+            <span>NOW</span>
+          </div>
+        </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, marginTop: 6, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.tech, color: HUD_COLORS.dim, letterSpacing: 0.9 }}>
         {/* The lamp is a lamp: `nominal` green for a cadence inside tolerance,

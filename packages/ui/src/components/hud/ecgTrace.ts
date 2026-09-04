@@ -6,6 +6,68 @@ import { HUD_COLORS, rgba } from './hudTheme';
 
 export const ECG_SPAN_BEATS = 8; // expected beats visible across the canvas width
 
+/** The paper's height in CSS pixels — one number, read by the element that
+ *  reserves the room and by the bitmap that is sized to fill it. */
+export const ECG_PAPER_HEIGHT_PX = 46;
+
+/**
+ * The bitmap this instrument needs to be drawn ONE PIXEL TO ONE PIXEL.
+ *
+ * ⚠️ It was not. The canvas declared `width={300} height={46}` and then
+ * stretched to `width: 100%` of a box the rail leaves 242 px wide — a 0.807×
+ * horizontal squash on every beat, every hairline and every dash (report A,
+ * A-1). That is not a cosmetic loss: this file's whole drawing argument is
+ * that a time-domain PQRST aliases at this window, so it sums FIXED-PIXEL
+ * glyphs in pixel space instead of sampling per column, and the R spike's
+ * sigma is floored at ~1 px to stay alias-safe. Squashed to 0.807 that floor
+ * is 0.85 px and the argument is void; on a 2× display the same 300-wide
+ * bitmap was a soft upscale instead.
+ *
+ * So the bitmap is measured from the element and multiplied by the device's
+ * own ratio, and the drawing is done in CSS units through `ctx.scale(dpr)`.
+ * Every number in this file is then a CSS pixel again, which is what its
+ * comments have always claimed they were.
+ */
+export function ecgCanvasSize(
+  clientWidthPx: number,
+  devicePixelRatio: number,
+  heightPx: number = ECG_PAPER_HEIGHT_PX,
+): { cssWidth: number; cssHeight: number; bitmapWidth: number; bitmapHeight: number; scale: number } {
+  // A width of zero is a canvas that has not been laid out yet (or is display:
+  // none): draw at one pixel rather than at zero, which some engines treat as
+  // an invalid bitmap.
+  const cssWidth = Math.max(1, Math.round(clientWidthPx));
+  const cssHeight = Math.max(1, Math.round(heightPx));
+  const scale = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0
+    ? Math.min(4, devicePixelRatio)
+    : 1;
+  return {
+    cssWidth,
+    cssHeight,
+    bitmapWidth: Math.round(cssWidth * scale),
+    bitmapHeight: Math.round(cssHeight * scale),
+    scale,
+  };
+}
+
+/** The graticule — the tube's own ruling, and the reason it is a rung of its
+ *  own rather than a number typed at each stroke.
+ *
+ *  ⚠️ IT WAS INVISIBLE. The vertical grid was `nominal` at 0.06 and measured
+ *  ΔG < 1.5/255 against its neighbours at 2× — a ruling nobody could see, on
+ *  an instrument whose x axis is TIME and which therefore says nothing about
+ *  what a pixel is worth without it. The baseline at 0.10 hid under the flat
+ *  trace drawn on top of it (report A, A-10).
+ *
+ *  And the loudest mark on the canvas was the paper's own right edge, at 0.85
+ *  over 1.5 px, full height — the ruling out-shouting the signal. The edge is
+ *  a CURSOR: it says where NOW is, and it is now the quietest of the three. */
+export const ECG_GRID_ALPHA = 0.15;
+export const ECG_BASELINE_ALPHA = 0.24;
+export const ECG_TARGET_TICK_ALPHA = 0.22;
+export const ECG_NOW_EDGE_ALPHA = 0.45;
+export const ECG_NOW_EDGE_PX = 1;
+
 /** Absolute block arrival timestamps (ms, wall-clock), ascending, reconstructed
  *  from the rolling interval buffer + the last arrival. */
 export function reconstructArrivals(intervalsMs: number[], lastBlockTsMs: number | null | undefined): number[] {
@@ -79,19 +141,31 @@ export function drawStripChart(ctx: CanvasRenderingContext2D, o: StripOpts): voi
 
   // grid
   ctx.lineWidth = 1;
-  ctx.strokeStyle = rgba(HUD_COLORS.nominal, 0.06);
+  ctx.strokeStyle = rgba(HUD_COLORS.nominal, ECG_GRID_ALPHA);
   for (let k = 0; k <= 8; k++) { const px = (w * k) / 8; ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, h); ctx.stroke(); }
-  ctx.strokeStyle = rgba(HUD_COLORS.nominal, 0.1);
+  ctx.strokeStyle = rgba(HUD_COLORS.nominal, ECG_BASELINE_ALPHA);
   ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(w, mid); ctx.stroke();
 
-  // target-cadence dashed ticks: expected next beats forward from the last arrival.
-  // Guard targetMs<=0 (else the loop can't advance), and seed at the first on-screen
-  // tick so a long stall doesn't iterate thousands of off-screen positions per frame.
+  // Target-cadence ticks — where a beat WOULD fall if the chain kept its target
+  // exactly, phase-locked to the last arrival, ACROSS THE WHOLE WINDOW.
+  //
+  // ⚠️ They used to be drawn only AHEAD of that arrival, which made them a
+  // stall indicator rather than a scale: on a chain keeping time there was
+  // nothing on the paper at all, and once one appeared it read as "something
+  // at the right" rather than "this is what eight seconds looks like" (report
+  // A, A-10). The reader's question is what a pixel of x is worth — a 3.7 s gap
+  // and a 23 s gap look alike without it — and a ruling that answers it only
+  // during a fault is not a ruling.
+  //
+  // Guard targetMs<=0 (else the loop can't advance), and seed at the first
+  // on-screen tick so a long stall doesn't iterate thousands of off-screen
+  // positions per frame — the seed may now be NEGATIVE, which is the ticks
+  // walking back from the last beat into the history behind it.
   const last = arrivals.length ? arrivals[arrivals.length - 1] : nowMs;
   if (targetMs > 0) {
-    const firstTickM = Math.max(1, Math.ceil((nowMs - win - last) / targetMs));
+    const firstTickM = Math.ceil((nowMs - win - last) / targetMs);
     ctx.setLineDash([2, 4]);
-    ctx.strokeStyle = rgba(HUD_COLORS.nominal, 0.22);
+    ctx.strokeStyle = rgba(HUD_COLORS.nominal, ECG_TARGET_TICK_ALPHA);
     for (let t = last + firstTickM * targetMs; t <= nowMs + targetMs; t += targetMs) {
       const px = w * (1 - (nowMs - t) / win);
       if (px > 2 && px < w) { ctx.beginPath(); ctx.moveTo(px, 4); ctx.lineTo(px, h - 4); ctx.stroke(); }
@@ -150,7 +224,9 @@ export function drawStripChart(ctx: CanvasRenderingContext2D, o: StripOpts): voi
     ctx.fillRect(w - zw, 0, zw, h);
   }
 
-  // "now" edge
-  ctx.fillStyle = rgba(HUD_COLORS.nominal, 0.85);
-  ctx.fillRect(w - 1.5, 0, 1.5, h);
+  // "now" edge — a cursor, not a mark. At 0.85 over 1.5 px it out-shone the R
+  // peaks in area and was the loudest thing on the canvas; the paper's own edge
+  // is not the reading (report A, A-10, and the 08-24 note that said the same).
+  ctx.fillStyle = rgba(HUD_COLORS.nominal, ECG_NOW_EDGE_ALPHA);
+  ctx.fillRect(w - ECG_NOW_EDGE_PX, 0, ECG_NOW_EDGE_PX, h);
 }
