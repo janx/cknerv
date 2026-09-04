@@ -15,6 +15,12 @@
  * horizontal axis, so the composition is centred on the HOLE rather than on
  * the viewport the hole is off-centre in.
  *
+ * ONE form is fitted, at every width: the 1.6× halo. The fit is therefore
+ * MONOTONE in the hole — a narrower hole is never a closer camera — and where
+ * the hole is too narrow for the halo it saturates at the controls' own far
+ * limit rather than changing its mind about what it is fitting. See
+ * `MAX_DISTANCE`.
+ *
  * ⚠️ Initial pose and reset only. A reader who has orbited owns the camera
  * from that moment; a resize that re-framed their view out from under them
  * would be the instrument overruling the hand on it.
@@ -37,22 +43,35 @@ const VIEW_RAY = (() => {
 export const CAMERA_HOLE_MARGIN_PX = 24;
 
 /**
- * Below this the halo stops being what the frame is fitted to and the rim
- * takes over.
+ * There is no second form to fall back to, and that is the decision.
  *
- * The halo is 1.6× the rim, so fitting it into a narrow hole pushes the camera
- * back until the organism itself is a smudge — at 900 px of viewport the fit
- * would put the rim at a sixth of the stage. The corona is the part of the
- * form that can afford to be cropped: it is a diffuse field with no edge the
- * eye reads as an edge, and the rim is the silhouette. So under a 1,100 px
- * hole the frame keeps the rim whole and lets the halo run under the panels.
+ * The first cut of this module fitted the halo above a 1,100 px hole and the
+ * RIM below it, on the argument that the corona is the part of the form that
+ * can afford to be cropped. The argument is sound and the mechanism is not: a
+ * fallback LOWERS a requirement, and a requirement lowered at a threshold is a
+ * step. Arithmetically, at a 1,190 px hole the halo fit stood at 215; at 1,100
+ * it would stand at 233; at 1,099 the rim took over at about 120 — so dragging
+ * a window from 1920 to 1600 made the galaxy GROW by 1.4× and then shrink
+ * again on the way back. A resize is a frame changing size, not a picture
+ * changing subject, and the eye reads a jump in the subject's size as an
+ * event.
+ *
+ * So one form is fitted at every width. Under about a 610 px hole on a 1,080
+ * px stage the halo no longer fits at any distance a reader could orbit back
+ * from, and the fit saturates at `MAX_DISTANCE`: the corona then runs under
+ * the panels exactly as the fallback intended, but it arrives there by the
+ * camera stopping, not by the requirement changing — continuously, and only
+ * ever in one direction. What the fallback was protecting is protected
+ * anyway: at the saturated pose the RIM still stands clear inside a 360 px
+ * hole (it wants 319 of the 400), and the one stage where it does not — a
+ * 160 px hole at 900 — is a stage the fallback also answered with 400.
  */
-export const CAMERA_HOLE_RIM_FALLBACK_PX = 1100;
 
 /** The camera may not come closer than the controls allow, nor go further:
- *  `OrbitControls` min/max distance in `App.tsx`. A hole too narrow for even
- *  the rim is answered with the furthest pose there is, not with an
- *  unreachable one. */
+ *  `OrbitControls` min/max distance in `App.tsx`. The far limit is also where
+ *  the fit saturates — a hole too narrow for the halo is answered with the
+ *  furthest pose there IS, never with an unreachable one, and never by fitting
+ *  something smaller instead. */
 const MIN_DISTANCE = 4;
 const MAX_DISTANCE = 400;
 
@@ -79,8 +98,9 @@ export interface CameraHoleFit {
   distance: number;
   /** Where the controls' target sits on the world x axis. */
   targetX: number;
-  /** Which of the two the frame was fitted to. */
-  fitted: 'halo' | 'rim';
+  /** Whether the hole decided the distance, or the far limit did. Reporting,
+   *  not a branch: the caller applies the same pose either way. */
+  saturated: boolean;
   /** The camera position that distance and target imply, ready for a pose. */
   position: [number, number, number];
 }
@@ -100,11 +120,15 @@ const FIELD_HALF_X = 60;
 const FIELD_HALF_Z = 54;
 const HALO_EDGE = 1.6;
 
+/** The form the frame is fitted to, at every width. */
 export const CAMERA_HALO_EXTENT: CameraExtent = {
   halfX: FIELD_HALF_X * HALO_EDGE,
   halfZ: FIELD_HALF_Z * HALO_EDGE,
 };
 
+/** The silhouette the halo is 1.6× of. The fit never picks it — that was the
+ *  fallback, and the fallback was a step — but it is the number the halo is
+ *  stated FROM, so it is stated once and the cross-file toll reads it. */
 export const CAMERA_RIM_EXTENT: CameraExtent = {
   halfX: FIELD_HALF_X,
   halfZ: FIELD_HALF_Z,
@@ -268,16 +292,13 @@ export function fitCameraToHole({
   viewportWidth: number;
   viewportHeight: number;
   fov: number;
-  /** Overridden only by a caller that wants a specific form fitted; the rule
-   *  itself picks halo or rim from the hole's own width. */
+  /** Overridden only by a caller that wants a specific form fitted. The rule
+   *  itself has one form and no branch — see the note above `MAX_DISTANCE`. */
   extent?: CameraExtent;
   margin?: number;
 }): CameraHoleFit {
   const holeWidth = Math.max(0, hole.right - hole.left);
-  const fitted: 'halo' | 'rim' = holeWidth >= CAMERA_HOLE_RIM_FALLBACK_PX
-    ? 'halo'
-    : 'rim';
-  const form = extent ?? (fitted === 'halo' ? CAMERA_HALO_EXTENT : CAMERA_RIM_EXTENT);
+  const form = extent ?? CAMERA_HALO_EXTENT;
   const inner = Math.min(margin, Math.max(0, holeWidth / 2 - 1));
   const insideLeft = hole.left + inner;
   const insideRight = hole.right - inner;
@@ -299,7 +320,7 @@ export function fitCameraToHole({
   return {
     distance,
     targetX,
-    fitted,
+    saturated: distance >= MAX_DISTANCE,
     position: [
       targetX + VIEW_RAY.x * distance,
       VIEW_RAY.y * distance,

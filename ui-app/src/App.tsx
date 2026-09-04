@@ -297,6 +297,11 @@ function CellDetailViewTracker({
  * ran under the rails. The arithmetic is in `fitCameraToHole`; this is the
  * hand that applies it.
  *
+ * A drag-resize samples this every 320 ms and applies whatever the fit says,
+ * so the fit owes the hand on the window edge one thing above all: no step.
+ * It fits ONE form at every width for that reason — see the note above
+ * `MAX_DISTANCE` in that module.
+ *
  * ⚠️ It stops the moment the reader touches the camera. An orbit gesture or a
  * memory-route flight takes ownership for the session, because a resize that
  * re-framed somebody's view out from under them is the instrument overruling

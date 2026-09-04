@@ -5,7 +5,6 @@ import { describe, expect, it } from 'vitest';
 import {
   CAMERA_HALO_EXTENT,
   CAMERA_HOLE_MARGIN_PX,
-  CAMERA_HOLE_RIM_FALLBACK_PX,
   CAMERA_RIM_EXTENT,
   fitCameraToHole,
   hudHoleFromRects,
@@ -79,20 +78,20 @@ describe('fitCameraToHole', () => {
       const holeWidth = hole.right - hole.left;
       const available = holeWidth - CAMERA_HOLE_MARGIN_PX * 2;
 
-      // Which form the frame is fitted to is the hole's own width.
-      expect(fit.fitted).toBe(
-        holeWidth >= CAMERA_HOLE_RIM_FALLBACK_PX ? 'halo' : 'rim',
-      );
-      const form = fit.fitted === 'halo' ? CAMERA_HALO_EXTENT : CAMERA_RIM_EXTENT;
-      // …and at that distance the form is inside the hole by the independent
-      // reading above. `900×700` is the one stage the controls' 400 ceiling
-      // decides instead of the hole: its 160 px hole cannot hold a rim at any
-      // distance a reader could orbit back from.
-      if (fit.distance < 400) {
-        expect(orthographicHalfWidth(form, fit.distance, height, 50) * 2)
+      // One form at every width — the halo, never the rim. There is no
+      // fallback, because a fallback lowers a requirement and a requirement
+      // lowered at a threshold is a step in the galaxy's size.
+      if (!fit.saturated) {
+        // At that distance the halo is inside the hole by the independent
+        // reading above.
+        expect(orthographicHalfWidth(CAMERA_HALO_EXTENT, fit.distance, height, 50) * 2)
           .toBeLessThanOrEqual(available + 0.5);
       } else {
+        // The two laptop stages the controls' 400 ceiling decides instead of
+        // the hole. The RIM is still whole at 1100 — it wants 319 of the 400 —
+        // which is what the dropped fallback existed to protect.
         expect(fit.distance).toBe(400);
+        expect(holeWidth).toBeLessThan(700);
       }
       // The pose keeps the default's own direction: only its length is fitted.
       expect(fit.position[0] - fit.targetX).toBeCloseTo(fit.position[2], 6);
@@ -100,41 +99,76 @@ describe('fitCameraToHole', () => {
     },
   );
 
-  it('pins the table it solves', () => {
-    // Regression pins, so a change to the projection announces itself.
+  it('pins the table it solves, and it climbs', () => {
+    // Regression pins, so a change to the projection announces itself. The
+    // table is also the rule: read down the distances and they only ever go
+    // up. The first cut fell back to the rim under a 1,100 px hole and this
+    // column read 215 · 153 · 184 · 218 · 319 · 400 — a 1.4× jump in the
+    // galaxy's size between 1920 and 1600, from a resize.
     const table = STAGES.map(({ width, height, hole }) => {
       const fit = fitCameraToHole({
         hole, viewportWidth: width, viewportHeight: height, fov: 50,
       });
-      return `${width}:${fit.fitted}:${fit.distance.toFixed(1)}:${fit.targetX.toFixed(1)}`;
+      return `${width}:${fit.saturated ? 'far' : 'hole'}:${fit.distance.toFixed(1)}:${fit.targetX.toFixed(1)}`;
     });
 
     expect(table).toEqual([
-      '1920:halo:215.4:-4.9',
-      '1600:rim:152.6:-4.2',
-      '1440:rim:183.9:-5.0',
-      '1280:rim:218.2:-8.4',
-      '1100:rim:318.7:-13.0',
-      '900:rim:400.0:-17.6',
+      '1920:hole:215.4:-4.9',
+      '1600:hole:244.1:-6.7',
+      '1440:hole:294.3:-8.0',
+      '1280:hole:349.1:-13.5',
+      '1100:far:400.0:-16.2',
+      '900:far:400.0:-17.6',
     ]);
   });
 
-  it('never comes closer as the hole narrows, within one form', () => {
-    // The switch between the two forms is a step by construction (a fallback
-    // lowers a requirement), but inside a form the camera only ever retreats.
-    let previous = 0;
-    for (let holeWidth = 1400; holeWidth >= 1100; holeWidth -= 50) {
-      const left = (1920 - holeWidth) / 2;
+  it('never comes closer as the hole narrows, at any width', () => {
+    // The one property the fit owes a reader who drags a window edge: the
+    // subject does not change size in the other direction, ever, and it never
+    // jumps. Swept in 10 px steps across the whole range the HUD can produce,
+    // so a threshold hidden anywhere in it fails here. Below ~610 px of hole
+    // the halo does not fit at any reachable distance and the fit saturates at
+    // the controls' far limit — the corona goes under the panels because the
+    // camera stopped, not because the fit changed its mind about the subject.
+    let previous: number | null = null;
+    let sawSaturation = false;
+    for (let holeWidth = 1600; holeWidth >= 100; holeWidth -= 10) {
+      const left = 979 - holeWidth / 2;
       const fit = fitCameraToHole({
         hole: { left, right: left + holeWidth },
         viewportWidth: 1920,
         viewportHeight: 1080,
         fov: 50,
       });
-      expect(fit.fitted).toBe('halo');
-      expect(fit.distance).toBeGreaterThanOrEqual(previous);
+      if (previous !== null) {
+        expect(fit.distance).toBeGreaterThanOrEqual(previous);
+        // …and no step either: 10 px of hole moves the camera by at most 1.7 %
+        // of where it stood, everywhere in the range.
+        expect(fit.distance - previous).toBeLessThanOrEqual(previous * 0.05);
+      }
+      expect(fit.saturated).toBe(fit.distance >= 400);
+      sawSaturation ||= fit.saturated;
       previous = fit.distance;
     }
+    expect(sawSaturation).toBe(true);
+    expect(previous).toBe(400);
+  });
+
+  it('keeps the rim whole where the halo no longer fits', () => {
+    // What the dropped rim fallback existed to protect, protected by the
+    // ceiling instead: at 1100×760 the fit saturates because the HALO wants
+    // more than 400, but the silhouette itself wants only 319, so it stands
+    // clear inside the hole at the pose the reader actually gets.
+    const stage = { viewportWidth: 1100, viewportHeight: 760, fov: 50 } as const;
+    const hole = { left: 394, right: 754 };
+    const halo = fitCameraToHole({ hole, ...stage });
+    const rim = fitCameraToHole({ hole, ...stage, extent: CAMERA_RIM_EXTENT });
+
+    expect(halo.saturated).toBe(true);
+    expect(rim.saturated).toBe(false);
+    expect(rim.distance).toBeLessThan(halo.distance);
+    expect(orthographicHalfWidth(CAMERA_RIM_EXTENT, halo.distance, 760, 50) * 2)
+      .toBeLessThanOrEqual(hole.right - hole.left - CAMERA_HOLE_MARGIN_PX * 2);
   });
 
   it('aims the galaxy\'s axis at the hole, not at the viewport', () => {
