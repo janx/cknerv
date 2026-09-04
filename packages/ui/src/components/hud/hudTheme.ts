@@ -698,6 +698,20 @@ export function injectHudTheme(doc: Document = document): void {
     + `\n.cknerv-memory-route-connector-tail{display:none}`
     + `\n@media (min-width:1101px) and (max-width:1373px),(min-width:1374px) and (max-height:860px){.cknerv-memory-route-ledger{top:-106px}.cknerv-memory-route-connector-tail{display:block;height:106px}}`
     + `\n@media (max-width:1100px){.cknerv-top-bar-action-label{display:none}}`
+    // A HUD panel a transparent card window is standing on. The CELL SCAN
+    // square is a hole — the braid is painted in the SCENE, under the whole DOM
+    // HUD, so a rail panel between the canvas and the card prints straight
+    // through the specimen (`#20,356,026`, `57.96 G·CKB` and `152.9 MB` were
+    // legible across a braid at 1000×720). The placement solver keeps the
+    // square off the panels wherever there is room; where there is not, the
+    // panel gives way instead of printing on the specimen.
+    //
+    // It is a class rule and not an inline style because the attribute is
+    // written from OUTSIDE React — the card's own frame decides it, and a
+    // React render of the HUD would take an inline opacity straight back off.
+    + `\n[data-hud-occlusion="true"]{transition:opacity 220ms ease}`
+    + `\n[data-hud-occlusion="true"][data-hud-dim="true"]{opacity:.25}`
+    + `\n@media (prefers-reduced-motion:reduce){[data-hud-occlusion="true"]{transition:none}}`
     + `\n@media (max-width:560px){.cknerv-build-label{display:none}}`
     + `\n@media (max-width:380px){.cknerv-cell-display-label,.cknerv-quality-label,.cknerv-panel-toggle-label{display:none}}`
     + `\n@media (max-width:1100px){.cknerv-memory-route-ledger{position:static;width:auto;max-height:100px;margin:4px 4px 2px 0;overflow:hidden}.cknerv-memory-route-ledger-scroll{overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:${rgba(HUD_COLORS.cyanWire, 0.28)} transparent;padding-right:8px}.cknerv-memory-route-ledger-viewport[data-memory-evidence-route-scrollable="true"] .cknerv-memory-route-scroll-position{opacity:1}.cknerv-memory-route-ledger-viewport[data-memory-evidence-route-scroll-before="true"] .cknerv-memory-route-scroll-edge-before{opacity:1}.cknerv-memory-route-ledger-viewport[data-memory-evidence-route-scroll-after="true"] .cknerv-memory-route-scroll-edge-after{opacity:1}.cknerv-memory-route-connector,.cknerv-memory-route-connector-tail{display:none}}`;

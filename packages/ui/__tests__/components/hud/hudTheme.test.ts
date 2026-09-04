@@ -19,6 +19,19 @@ describe('hudTheme', () => {
     expect(rgba(HUD_COLORS.danger, 0)).toBe('rgba(255,48,48,0)');
   });
 
+  it('gives a panel under a transparent card window a class rule to dim by', () => {
+    // The mark is written from OUTSIDE React — the card's frame decides which
+    // panel is standing under its CELL SCAN hole — so the opacity cannot be an
+    // inline style: the next HUD render would take it straight back off.
+    injectHudTheme(document);
+    const css = document.getElementById(HUD_THEME_STYLE_ID)?.textContent ?? '';
+
+    expect(css).toContain('[data-hud-occlusion="true"][data-hud-dim="true"]{opacity:.25}');
+    expect(css).toContain('[data-hud-occlusion="true"]{transition:opacity 220ms ease}');
+    // …and the ease is motion, so it answers to the OS setting like the rest.
+    expect(css).toContain('@media (prefers-reduced-motion:reduce){[data-hud-occlusion="true"]{transition:none}}');
+  });
+
   it('injects a single idempotent <style> with font imports + css vars', () => {
     injectHudTheme(document);
     injectHudTheme(document);

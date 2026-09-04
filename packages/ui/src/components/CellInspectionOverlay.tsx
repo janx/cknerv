@@ -33,7 +33,11 @@ import {
   type SceneInspectionHandles,
   type SceneInspectorPlacement,
 } from './sceneInspection';
-import { useHudOcclusionRects } from './hudOcclusion';
+import {
+  dimHudPanelsUnder,
+  HUD_DIM_SAMPLE_MS,
+  useHudOcclusionRects,
+} from './hudOcclusion';
 
 const DEFAULT_PANEL_WIDTH_PX = 728;
 // Estimated dossier card at open (the analysis column, masthead included,
@@ -210,6 +214,41 @@ function CellInspectionOverlay(props: CellInspectionOverlayProps) {
   useEffect(() => {
     resetInspectionPlacementLock(handles);
   }, [cell.id, handles]);
+
+  // The fallback behind A1's placement rule, and only a fallback: the solver
+  // keeps the whole card — the transparent CELL SCAN square with it — off the
+  // HUD's panels wherever the stage has the room. A 1,000px stage has no hole
+  // between the rails at all, so where the square DOES land on a panel the
+  // panel gives way rather than printing a chain tip across the specimen.
+  //
+  // Sampled rather than solved: the square's box is a DOM read, the card
+  // travels with the galaxy's own slow turn, and a decision about which panel
+  // is in the way may trail a frame by a quarter second. It may not force a
+  // layout inside one.
+  useEffect(() => {
+    const card = cardRef.current;
+    if (!card) return undefined;
+    const sample = () => {
+      const square = card.querySelector<HTMLElement>('[data-cell-scan-window="true"]');
+      if (!square) {
+        dimHudPanelsUnder(null);
+        return;
+      }
+      const box = square.getBoundingClientRect();
+      dimHudPanelsUnder(
+        box.width > 0 && box.height > 0
+          ? { left: box.left, top: box.top, right: box.right, bottom: box.bottom }
+          : null,
+      );
+    };
+    sample();
+    const id = setInterval(sample, HUD_DIM_SAMPLE_MS);
+    // A closed card owes the HUD its light back.
+    return () => {
+      clearInterval(id);
+      dimHudPanelsUnder(null);
+    };
+  }, [cell.id]);
 
   // The portrait owns a second pointer boundary. Reset the parent interaction
   // lock at the overlay boundary as well as inside the portrait, so a close

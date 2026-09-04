@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { measureHudOcclusionRectsForTest } from '../../src/components/hudOcclusion';
+import {
+  dimHudPanelsUnder,
+  measureHudOcclusionRectsForTest,
+} from '../../src/components/hudOcclusion';
 
 /** jsdom lays nothing out, so every element is told what box it has. */
 function panel(
@@ -33,6 +36,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  dimHudPanelsUnder(null);
   document.body.replaceChildren();
 });
 
@@ -93,5 +97,62 @@ describe('useHudOcclusionRects measurement', () => {
 
     expect(second).toBe(first);
     expect(second).toEqual([{ left: 20, top: 60, right: 300, bottom: 400 }]);
+  });
+});
+
+describe('dimHudPanelsUnder', () => {
+  it('marks only the panels the transparent window stands on', () => {
+    const rail = panel({ left: 14, top: 48, right: 384, bottom: 519 });
+    const clear = panel({ left: 1574, top: 48, right: 1906, bottom: 519 });
+
+    // The CELL SCAN square at 250–545 × 95–390, the box the 1000×720 capture
+    // read a chain tip and a byte budget across.
+    expect(dimHudPanelsUnder({ left: 250, top: 95, right: 545, bottom: 390 }))
+      .toBe(1);
+    expect(rail.dataset.hudDim).toBe('true');
+    expect(clear.dataset.hudDim).toBeUndefined();
+  });
+
+  it('gives the light back when the window moves off', () => {
+    const rail = panel({ left: 14, top: 48, right: 384, bottom: 519 });
+    dimHudPanelsUnder({ left: 250, top: 95, right: 545, bottom: 390 });
+    expect(rail.dataset.hudDim).toBe('true');
+
+    expect(dimHudPanelsUnder({ left: 700, top: 95, right: 995, bottom: 390 }))
+      .toBe(0);
+    expect(rail.dataset.hudDim).toBeUndefined();
+  });
+
+  it('gives the light back when the card closes', () => {
+    const rail = panel({ left: 14, top: 48, right: 384, bottom: 519 });
+    dimHudPanelsUnder({ left: 250, top: 95, right: 545, bottom: 390 });
+
+    expect(dimHudPanelsUnder(null)).toBe(0);
+    expect(rail.dataset.hudDim).toBeUndefined();
+  });
+
+  it('never dims a panel that is part of a card', () => {
+    // The trace ledger travels with the card, so the square can never be
+    // "standing on" it in the sense that matters — and dimming a plate of the
+    // card the reader is looking at would be the card fighting itself.
+    const layer = document.createElement('div');
+    layer.setAttribute('data-scene-inspection-layer', 'true');
+    document.body.appendChild(layer);
+    const trace = panel({ left: 300, top: 100, right: 500, bottom: 300 }, layer);
+
+    expect(dimHudPanelsUnder({ left: 250, top: 95, right: 545, bottom: 390 }))
+      .toBe(0);
+    expect(trace.dataset.hudDim).toBeUndefined();
+  });
+
+  it('counts a touching edge as clear', () => {
+    // Same rule the placement solver settles a card to: a square whose left
+    // edge IS the rail's right edge is beside it, not on it — which is exactly
+    // where A1 puts the card when the room allows.
+    const rail = panel({ left: 14, top: 48, right: 384, bottom: 519 });
+
+    expect(dimHudPanelsUnder({ left: 384, top: 95, right: 679, bottom: 390 }))
+      .toBe(0);
+    expect(rail.dataset.hudDim).toBeUndefined();
   });
 });

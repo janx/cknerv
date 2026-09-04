@@ -2528,6 +2528,22 @@ describe('CellDetailPanel', () => {
     expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(4);
   });
 
+  it('names the CELL SCAN square as the card\'s one transparent window', () => {
+    // The braid is painted in the SCENE, under the whole DOM HUD, so this
+    // square is a hole and whatever the HUD has behind it prints on the
+    // specimen. The overlay finds the box by this attribute; the transparency
+    // is what makes finding it necessary.
+    const { container } = render(
+      <CellDetailPanel cell={base} onClose={() => {}} />,
+    );
+    const square = container.querySelector(
+      '[data-cell-inspection-satellite="specimen"]',
+    ) as HTMLElement;
+
+    expect(square.dataset.cellScanWindow).toBe('true');
+    expect(square.style.background).toBe('transparent');
+  });
+
   it('lays the reader under the two columns and returns to 728 when the stage is narrow', () => {
     // 856 of card plus a 42px tether needs 898px of clear stage on one side of
     // the entity; a 1,440 screen leaves a 710px hole between the rails. So

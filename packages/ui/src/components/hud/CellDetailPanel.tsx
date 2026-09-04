@@ -2525,6 +2525,11 @@ function CellDetailPanel({
         aria-label="Interactive Cell scan"
         data-cell-detail-module="specimen"
         data-cell-inspection-satellite="specimen"
+        // The one transparent window on this card, and the reason the overlay
+        // has to find it from outside: `background: 'transparent'` below is a
+        // hole through the whole DOM HUD, so whatever the HUD has under it
+        // prints on the specimen. `dimHudPanelsUnder` reads this box.
+        data-cell-scan-window="true"
         data-cell-portrait-frame
         style={{
           ...satelliteBase,
