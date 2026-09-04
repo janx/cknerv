@@ -1,18 +1,20 @@
-// DATA READER · SCAN·03, driven at a fixed viewport.
+// CKBYTES · SCAN·03, driven at a fixed viewport.
 //
 // Every number this file asserts is one the reader was HANDED — `visibleRows`,
-// the row height, `totalBytes`, a `scrollTop` — because jsdom lays nothing out
-// and a reader that measured itself could not be driven here at all. That is
-// the same property that makes the assertions worth something: they are about
-// arithmetic the browser will run identically, not about a layout this
-// environment approximates.
+// the row height, `totalBytes`, a `scrollTop`, a `clientY` — because jsdom lays
+// nothing out and a reader that measured itself could not be driven here at
+// all. That is the same property that makes the assertions worth something:
+// they are about arithmetic the browser will run identically, not about a
+// layout this environment approximates.
 
 import { cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Cell, SemanticContentSegment } from '@cknerv/types';
+import type { SemanticContentSegment } from '@cknerv/types';
 
 import CellDataReader, {
   READER_ROW_HEIGHT_PX,
+  READER_WIDTH_PX,
+  type CellDataReaderFocus,
 } from '../../../src/components/hud/CellDataReader';
 import {
   READER_OVERSCAN_ROWS,
@@ -24,26 +26,6 @@ afterEach(() => { cleanup(); });
 
 /** The largest payload on the staged plane: a 37,314-byte dob/0 spore. */
 const SPORE_BYTES = 37_314;
-
-function cell(overrides: Partial<Cell> = {}): Cell {
-  return {
-    id: 4_102_993,
-    born_at_ms: 1,
-    death_at_ms: null,
-    birth_block: 16_204_800,
-    tag: null,
-    pos_seed: [0.1, 0.2, 0.3],
-    out_point: { tx_hash: `0x${'ab'.repeat(32)}`, index: 0 },
-    capacity: 1_000_00000000,
-    data_hex: '0x00',
-    data_bytes: SPORE_BYTES,
-    content_hash: `0x${'cd'.repeat(32)}`,
-    lock_shape_seed: [1, 2],
-    type_shape_seed: [3, 4],
-    data_shape_seed: [5, 6],
-    ...overrides,
-  };
-}
 
 function segment(
   label: string,
@@ -76,9 +58,7 @@ function textBytes(text: string): Uint8Array {
 }
 
 interface ReaderOverrides {
-  cell?: Cell;
   segments?: readonly SemanticContentSegment[];
-  decode?: { kind: string; summary: string } | null;
   bytes?: Uint8Array;
   heldBytes?: number;
   totalBytes?: number;
@@ -86,22 +66,17 @@ interface ReaderOverrides {
   message?: string | null;
   dataHash?: string | null;
   live?: boolean | null;
-  openAtByte?: number | null;
   visibleRows?: number;
-  reduced?: boolean;
-  onClose?: () => void;
+  focus?: CellDataReaderFocus | null;
+  onFocusChange?: (segment: number | null) => void;
 }
 
 function reader(overrides: ReaderOverrides = {}) {
   const bytes = overrides.bytes ?? bytesOf(SPORE_BYTES);
-  const onClose = overrides.onClose ?? vi.fn();
+  const onFocusChange = overrides.onFocusChange ?? vi.fn();
   const view = render(
     <CellDataReader
-      cell={overrides.cell ?? cell()}
       segments={overrides.segments ?? SPORE_SEGMENTS}
-      decode={overrides.decode === undefined
-        ? { kind: 'spore_cell', summary: 'Spore Cell carrying image/png content' }
-        : overrides.decode}
       bytes={bytes}
       heldBytes={overrides.heldBytes ?? bytes.length}
       totalBytes={overrides.totalBytes ?? bytes.length}
@@ -109,13 +84,12 @@ function reader(overrides: ReaderOverrides = {}) {
       message={overrides.message ?? null}
       dataHash={overrides.dataHash ?? null}
       live={overrides.live ?? null}
-      openAtByte={overrides.openAtByte ?? null}
       visibleRows={overrides.visibleRows ?? READER_VISIBLE_ROWS}
-      reduced={overrides.reduced ?? false}
-      onClose={onClose}
+      focus={overrides.focus ?? null}
+      onFocusChange={onFocusChange}
     />,
   );
-  return { ...view, onClose };
+  return { ...view, onFocusChange };
 }
 
 function root(container: HTMLElement): HTMLElement {
@@ -128,6 +102,19 @@ function dumpOf(container: HTMLElement): HTMLElement {
   return container.querySelector('[data-cell-data-reader-dump]') as HTMLElement;
 }
 
+function footOf(container: HTMLElement): HTMLElement {
+  return container.querySelector('[data-cell-data-reader-foot]') as HTMLElement;
+}
+
+/** The foot line as the sentence a reader sees, with its mode. */
+function footReads(container: HTMLElement): { mode: string | null; text: string } {
+  const foot = footOf(container);
+  return {
+    mode: foot.getAttribute('data-cell-data-reader-foot-mode'),
+    text: foot.textContent ?? '',
+  };
+}
+
 function rowsOf(container: HTMLElement): number[] {
   return Array.from(container.querySelectorAll('[data-cell-data-reader-row]'))
     .map((row) => Number(row.getAttribute('data-cell-data-reader-row')));
@@ -137,18 +124,6 @@ function byteCell(container: HTMLElement, index: number): HTMLElement {
   const element = container.querySelector(`[data-cell-data-reader-byte="${index}"]`);
   expect(element, `byte ${index} is not mounted`).not.toBeNull();
   return element as HTMLElement;
-}
-
-/** The inspector strip as a key → value table. */
-function inspectorReadings(container: HTMLElement): Record<string, string> {
-  const strip = container.querySelector('[data-cell-data-reader-inspect]');
-  const table: Record<string, string> = {};
-  for (const field of Array.from(strip?.children ?? [])) {
-    const parts = Array.from(field.children);
-    if (parts.length !== 2) continue;
-    table[parts[0].textContent ?? ''] = parts[1].textContent ?? '';
-  }
-  return table;
 }
 
 /** Scroll the way a wheel does: the element moves, then it says so. */
@@ -172,12 +147,15 @@ describe('CellDataReader', () => {
       .toHaveLength(40 * 16);
   });
 
-  it('gutters every row at its own offset, six digits wide', () => {
+  it('gutters every row at its own offset, five digits wide', () => {
+    // Five reaches 0xFFFFF, and no CKB payload does. Six was a guess made
+    // before anybody asked how big the number could be, and under a 408 px
+    // zone the column it cost is a column the row needs.
     const { container } = reader();
     const row = container.querySelector('[data-cell-data-reader-row="10"]');
-    expect(row?.firstElementChild?.textContent).toBe('0000A0');
+    expect(row?.firstElementChild?.textContent).toBe('000A0');
     expect(container.querySelector('[data-cell-data-reader-row="0"]')
-      ?.firstElementChild?.textContent).toBe('000000');
+      ?.firstElementChild?.textContent).toBe('00000');
   });
 
   it('re-windows the rows when the dump is scrolled', () => {
@@ -191,31 +169,6 @@ describe('CellDataReader', () => {
     expect(rows).toHaveLength(READER_VISIBLE_ROWS + 2 * READER_OVERSCAN_ROWS);
     expect(root(container).getAttribute('data-cell-data-reader-first-row'))
       .toBe(String(100 - READER_OVERSCAN_ROWS));
-  });
-
-  it('takes a segment click as the selection, the scroll and the reading', () => {
-    const { container } = reader();
-    const dump = dumpOf(container);
-    scrollTo(dump, 100 * READER_ROW_HEIGHT_PX);
-
-    const contentType = container
-      .querySelector('[data-cell-data-reader-segment="4"]') as HTMLElement;
-    fireEvent.click(contentType);
-
-    expect(contentType.getAttribute('aria-pressed')).toBe('true');
-    expect(container.querySelector('[data-cell-data-reader-segment="5"]')
-      ?.getAttribute('aria-pressed')).toBe('false');
-    // `content_type` starts at byte 16, which is row 1, and the row goes to
-    // the top of the dump — overscan puts row 0 back on screen.
-    expect(root(container).getAttribute('data-cell-data-reader-first-row')).toBe('0');
-    expect(root(container).getAttribute('data-cell-data-reader-selection')).toBe('16:26');
-
-    // Its own bytes are lit; every OTHER segment's fall away; the reading
-    // names the segment rather than the byte.
-    expect(byteCell(container, 16).style.opacity).toBe('1');
-    expect(byteCell(container, 16).style.textShadow).not.toBe('');
-    expect(byteCell(container, 0).style.opacity).toBe('0.34');
-    expect(inspectorReadings(container).SEG).toBe('CONTENT TYPE');
   });
 
   it('moves the caret by a row on ArrowDown and extends it on Shift', () => {
@@ -233,55 +186,7 @@ describe('CellDataReader', () => {
     // Extended FROM the anchor the caret was dropped at, not from where it
     // happens to be now.
     expect(root(container).getAttribute('data-cell-data-reader-selection')).toBe('48:51');
-    expect(inspectorReadings(container).LEN).toBe('3 B');
-  });
-
-  it('reads sixteen little-endian bytes as the amount a UDT writes', () => {
-    // `e8 03 00 00 …` is 1,000 — a u128 LE amount, which is what an sUDT Cell
-    // holds and what nobody can read out of a hex grid by eye.
-    const amount = new Uint8Array(16);
-    amount[0] = 0xe8;
-    amount[1] = 0x03;
-    const { container } = reader({
-      bytes: amount,
-      totalBytes: 16,
-      segments: [segment('amount', 0, 16, '1000')],
-      decode: { kind: 'sudt_cell', summary: 'Simple UDT amount' },
-      cell: cell({ data_bytes: 16 }),
-    });
-
-    fireEvent.click(byteCell(container, 0));
-
-    const readings = inspectorReadings(container);
-    expect(readings['u128 LE']).toBe('1,000');
-    expect(readings['u64 LE']).toBe('1,000');
-    expect(readings.u8).toBe('232');
-    expect(readings.OFF).toBe('0x000000');
-  });
-
-  it('reads a selected run as the text it is', () => {
-    const text = '{"dna":"a1b2"}';
-    const bytes = textBytes(text);
-    const { container } = reader({
-      bytes,
-      totalBytes: bytes.length,
-      segments: [segment('content', 0, bytes.length, text)],
-      decode: { kind: 'dob_document', summary: 'dob/0 JSON document' },
-      cell: cell({ data_bytes: bytes.length }),
-    });
-
-    fireEvent.click(byteCell(container, 0));
-    fireEvent.click(byteCell(container, 5), { shiftKey: true });
-
-    expect(root(container).getAttribute('data-cell-data-reader-selection')).toBe('0:6');
-    expect(inspectorReadings(container)['UTF-8']).toBe(text.slice(0, 6));
-  });
-
-  it('says nothing is selected until something is', () => {
-    const { container } = reader();
-    const strip = container.querySelector('[data-cell-data-reader-inspect]');
-    expect(strip?.textContent).toContain('SELECT A BYTE, A RANGE OR A SEGMENT');
-    expect(root(container).hasAttribute('data-cell-data-reader-selection')).toBe(false);
+    expect(footReads(container).text).toContain('+3 B');
   });
 
   it('stands the rows past the held prefix as ghosts, and fills them in place', () => {
@@ -292,8 +197,6 @@ describe('CellDataReader', () => {
       totalBytes: 96,
       phase: 'loading',
       segments: [],
-      decode: null,
-      cell: cell({ data_bytes: 96 }),
     });
 
     const before = rowsOf(container);
@@ -301,13 +204,10 @@ describe('CellDataReader', () => {
       .toHaveLength((96 - 32) * 2);
     expect(byteCell(container, 40).textContent).toBe('··');
     expect(byteCell(container, 40).style.opacity).toBe(String(REVEAL_GHOST_OPACITY));
-    expect(container.querySelector('[data-cell-data-reader-bar]')).not.toBeNull();
 
     rerender(
       <CellDataReader
-        cell={cell({ data_bytes: 96 })}
         segments={[]}
-        decode={null}
         bytes={whole}
         heldBytes={96}
         totalBytes={96}
@@ -315,10 +215,8 @@ describe('CellDataReader', () => {
         message={null}
         dataHash={`0x${'ef'.repeat(32)}`}
         live
-        openAtByte={null}
         visibleRows={READER_VISIBLE_ROWS}
-        reduced={false}
-        onClose={vi.fn()}
+        focus={null}
       />,
     );
 
@@ -329,109 +227,226 @@ describe('CellDataReader', () => {
     expect(byteCell(container, 40).textContent).toBe(
       whole[40].toString(16).toUpperCase().padStart(2, '0'),
     );
-    expect(container.querySelector('[data-cell-data-reader-bar]')).toBeNull();
     expect(root(container).getAttribute('data-cell-data-reader-phase')).toBe('ready');
     expect(root(container).getAttribute('data-cell-data-reader-hash'))
       .toBe(`0x${'ef'.repeat(32)}`);
   });
 
-  it('jumps to a hex offset, and refuses one that is not', () => {
+  it('spells nothing with an arrow, because no face the HUD ships carries one', () => {
+    // `↑` is carried by no face the HUD ships or could ship — the JetBrains
+    // Mono subset has `← → ↓ ↗` and nothing above them.
     const { container } = reader();
-    const input = container
-      .querySelector('[data-cell-data-reader-goto]') as HTMLInputElement;
-
-    fireEvent.change(input, { target: { value: '0x91C0' } });
-    fireEvent.keyDown(input, { key: 'Enter' });
-
-    // 0x91C0 is 37,312 — the first byte of the last row of the payload.
-    expect(root(container).getAttribute('data-cell-data-reader-selection'))
-      .toBe('37312:37313');
-    expect(rowsOf(container)).toContain(2332);
-
-    fireEvent.change(input, { target: { value: 'zz' } });
-    fireEvent.keyDown(input, { key: 'Enter' });
-    expect(container.querySelector('[data-cell-data-reader-toast]')?.textContent)
-      .toBe('HEX OFFSET, E.G. 0x1F0');
-
-    fireEvent.change(input, { target: { value: '0xFFFFFF' } });
-    fireEvent.keyDown(input, { key: 'Enter' });
-    expect(container.querySelector('[data-cell-data-reader-toast]')?.textContent)
-      .toBe('BEYOND 37,314 B');
-  });
-
-  it('opens where the stepper sent it', () => {
-    const { container } = reader({ openAtByte: 37_282 });
-    expect(root(container).getAttribute('data-cell-data-reader-selection'))
-      .toBe('37282:37283');
-    expect(rowsOf(container)).toContain(2330);
-  });
-
-  it('names the byte under the pointer without redrawing the dump', () => {
-    const { container } = reader();
-    const dump = dumpOf(container);
-
-    fireEvent.mouseOver(byteCell(container, 20));
-
-    expect(dump.title).toBe('0x000014 · byte 20 · CONTENT TYPE');
-  });
-
-  it('spells the keys out, because no face the HUD ships carries an arrow up', () => {
-    const { container } = reader();
-    const keys = container.querySelector('[data-cell-data-reader-keys]');
-    expect(keys?.textContent).toBe('ARROWS MOVE · SHIFT EXTENDS · PGUP PGDN · HOME END');
-    expect(keys?.textContent).not.toContain('↑');
     expect(container.textContent).not.toContain('↑');
   });
 
-  it('has no HEX or TEXT view to switch between', () => {
-    // The user's E4 ruling: the reader is hex, full stop. A toggle is a
-    // control, so this asks for controls rather than for the words — `TEXT`
-    // legitimately appears in the inspector's own hint sentence.
+  it('has no HEX or TEXT view to switch between, and nothing to close', () => {
+    // The user's E4 ruling: the reader is hex, full stop. And there is no
+    // CLOSE — a zone of a card has nothing of its own to dismiss; Escape
+    // closes the card.
     const { container } = reader();
     const controls = Array.from(container.querySelectorAll('button'))
       .map((button) => button.textContent?.trim());
-    expect(controls).not.toContain('HEX');
-    expect(controls).not.toContain('TEXT');
-    expect(controls).toContain('COPY HEX');
+    expect(controls).toEqual(['COPY']);
+    expect(container.querySelector('[aria-label="close"]')).toBeNull();
   });
 
-  it('says a Cell with no decode has none, and maps every byte in ink', () => {
+  it('kept nothing the user asked it to put back', () => {
+    // The rail, the inspector strip, GO TO, COPY SEL, the toast, the keys
+    // legend and the loading bar are gone, and R2-b's panel tests select on
+    // what is left — so their absence is pinned here rather than discovered
+    // there.
+    const { container } = reader({ phase: 'loading', heldBytes: 16 });
+    for (const gone of [
+      'segment', 'inspect', 'goto', 'keys', 'toast', 'bar', 'commands',
+      'state', 'reads', 'unmapped', 'no-segments',
+    ]) {
+      expect(
+        container.querySelector(`[data-cell-data-reader-${gone}]`),
+        `data-cell-data-reader-${gone} is still mounted`,
+      ).toBeNull();
+    }
+    // …and what is left, all of it, on one Cell.
+    for (const kept of ['dump', 'map', 'foot', 'copy']) {
+      expect(
+        container.querySelector(`[data-cell-data-reader-${kept}]`),
+        `data-cell-data-reader-${kept} is missing`,
+      ).not.toBeNull();
+    }
+  });
+
+  it('takes a focus as the first row, the selection and the glow', () => {
     const { container } = reader({
-      bytes: bytesOf(48),
-      totalBytes: 48,
-      segments: [],
-      decode: null,
-      cell: cell({ data_bytes: 48 }),
+      focus: { start: 16, end: 26, segment: 4, nonce: 1 },
     });
 
-    expect(container.querySelector('[data-cell-data-reader-no-segments]')?.textContent)
-      .toBe('NO DECODED SEGMENTS');
-    expect(container.querySelector('[data-cell-data-reader-segment="0"]')).toBeNull();
-    expect(container.querySelector('[data-cell-data-reader-reads]')).toBeNull();
+    // `content_type` starts at byte 16, which is row 1, and the row goes to
+    // the top of the dump — overscan puts row 0 back on screen.
+    expect(root(container).getAttribute('data-cell-data-reader-first-row')).toBe('0');
+    expect(root(container).getAttribute('data-cell-data-reader-selection')).toBe('16:26');
+
+    // Its own bytes are lit; every OTHER segment's fall away; bytes no segment
+    // claims are not being contrasted with anything and stay in ink.
+    expect(byteCell(container, 16).style.opacity).toBe('1');
+    expect(byteCell(container, 16).style.textShadow).not.toBe('');
+    expect(byteCell(container, 0).style.opacity).toBe('0.34');
   });
 
-  it('counts the bytes no segment claims', () => {
+  it('re-applies a focus on its nonce, so the same row can be clicked twice', () => {
+    // §4's trap: a reader who scrolled away and clicked the same row again is
+    // asking to be taken back, and an effect keyed on the range would not fire.
+    const props = {
+      segments: SPORE_SEGMENTS,
+      bytes: bytesOf(SPORE_BYTES),
+      heldBytes: SPORE_BYTES,
+      totalBytes: SPORE_BYTES,
+      phase: 'held' as const,
+      message: null,
+      dataHash: null,
+      live: null,
+      visibleRows: READER_VISIBLE_ROWS,
+    };
+    const focus = { start: 16, end: 26, segment: 4 };
+    const { container, rerender } = render(
+      <CellDataReader {...props} focus={{ ...focus, nonce: 1 }} />,
+    );
+
+    scrollTo(dumpOf(container), 900 * READER_ROW_HEIGHT_PX);
+    expect(root(container).getAttribute('data-cell-data-reader-first-row'))
+      .not.toBe('0');
+
+    rerender(<CellDataReader {...props} focus={{ ...focus, nonce: 2 }} />);
+    expect(root(container).getAttribute('data-cell-data-reader-first-row')).toBe('0');
+  });
+
+  it('hands the focus back when a byte is clicked', () => {
+    const { container, onFocusChange } = reader({
+      focus: { start: 16, end: 26, segment: 4, nonce: 1 },
+    });
+    expect(byteCell(container, 0).style.opacity).toBe('0.34');
+
+    fireEvent.click(byteCell(container, 0));
+
+    expect(onFocusChange).toHaveBeenCalledWith(null);
+    expect(root(container).getAttribute('data-cell-data-reader-selection')).toBe('0:1');
+    // Nothing is a segment any more, so nothing is dimmed against it.
+    expect(byteCell(container, 20).style.opacity).toBe('1');
+  });
+
+  it('hands the focus back when a key moves the caret', () => {
+    const { container, onFocusChange } = reader({
+      focus: { start: 16, end: 26, segment: 4, nonce: 1 },
+    });
+    fireEvent.keyDown(dumpOf(container), { key: 'ArrowDown' });
+    expect(onFocusChange).toHaveBeenCalledWith(null);
+  });
+
+  it('names the byte under the pointer in the foot line, without redrawing the dump', () => {
+    const { container } = reader();
+    const rowBefore = container.querySelector('[data-cell-data-reader-row="0"]');
+
+    fireEvent.mouseOver(byteCell(container, 20));
+
+    expect(footReads(container)).toEqual({
+      mode: 'hover',
+      text: '0x00014 · byte 20 · CONTENT TYPE',
+    });
+    // The same node, not a re-rendered one: a hover through state would spend
+    // a frame on forty rows for every byte the pointer crossed.
+    expect(container.querySelector('[data-cell-data-reader-row="0"]'))
+      .toBe(rowBefore);
+
+    // A neighbouring segment is named as itself, not as the one before it.
+    fireEvent.mouseOver(byteCell(container, 100));
+    expect(footReads(container).text).toBe('0x00064 · byte 100 · CONTENT');
+
+    // …and the pointer leaving hands the line back to the status.
+    fireEvent.mouseLeave(dumpOf(container));
+    expect(footReads(container).mode).toBe('status');
+  });
+
+  it('names an unmapped byte as unmapped', () => {
     const { container } = reader({
       bytes: bytesOf(64),
       totalBytes: 64,
       segments: [segment('header', 0, 16, 'h')],
-      cell: cell({ data_bytes: 64 }),
     });
-    expect(container.querySelector('[data-cell-data-reader-unmapped]')?.textContent)
-      .toBe('UNMAPPED · 48 B in ink');
+    fireEvent.mouseOver(byteCell(container, 32));
+    expect(footReads(container)).toEqual({
+      mode: 'hover',
+      text: '0x00020 · byte 32 · unmapped',
+    });
+  });
+
+  it('reads a selection as one little-endian integer of its own width', () => {
+    // `e8 03 00 00 …` is 1,000 — a u128 LE amount, which is what an sUDT Cell
+    // holds and what nobody can read out of a hex grid by eye.
+    const amount = new Uint8Array(16);
+    amount[0] = 0xe8;
+    amount[1] = 0x03;
+    const { container } = reader({
+      bytes: amount,
+      totalBytes: 16,
+      segments: [segment('amount', 0, 16, '1000')],
+    });
+
+    fireEvent.click(byteCell(container, 0));
+    fireEvent.click(byteCell(container, 15), { shiftKey: true });
+
+    expect(root(container).getAttribute('data-cell-data-reader-selection')).toBe('0:16');
+    expect(footReads(container).mode).toBe('selection');
+    expect(footReads(container).text).toContain('0x00000 +16 B · LE 1,000');
+  });
+
+  it('reads a selected run as the text it is, and keeps the rest in the title', () => {
+    const text = '{"name":"Lightning Explorer Badge","dna":"a1b2"}';
+    const bytes = textBytes(text);
+    const { container } = reader({
+      bytes,
+      totalBytes: bytes.length,
+      segments: [segment('content', 0, bytes.length, text)],
+    });
+
+    fireEvent.click(byteCell(container, 0));
+    fireEvent.click(byteCell(container, bytes.length - 1), { shiftKey: true });
+
+    // Twenty-four characters on the line, all of it in the title: the line is
+    // ONE line under a 408 px zone and shares it with three other clauses.
+    expect(footReads(container).text)
+      .toContain(`"${text.slice(0, 24)}…"`);
+    expect(footOf(container).title).toBe(text);
+    // Past sixteen bytes there is no integer to print: a spore's content is
+    // not a number however hard the arithmetic tries.
+    expect(footReads(container).text).not.toContain('LE');
   });
 
   it('states what it is holding, and where it came from', () => {
-    const { container } = reader({
+    const held = reader({ bytes: bytesOf(96), totalBytes: 96 });
+    expect(footReads(held.container))
+      .toEqual({ mode: 'status', text: '96 B · COMPLETE · HELD' });
+    cleanup();
+
+    const node = reader({
       bytes: bytesOf(96),
       totalBytes: 96,
       phase: 'ready',
       dataHash: `0x${'ef'.repeat(32)}`,
       live: false,
-      cell: cell({ data_bytes: 96 }),
     });
-    const state = container.querySelector('[data-cell-data-reader-state]');
-    expect(state?.textContent).toContain('96 B · COMPLETE · NODE · 0xefefefef');
+    expect(footReads(node.container).text)
+      .toBe('96 B · COMPLETE · NODE · 0xefefefef…');
+    expect(footOf(node.container).title)
+      .toContain('READ FROM THE TRANSACTION THAT CREATED IT');
+  });
+
+  it('says what it is still waiting for while the node is being asked', () => {
+    const { container } = reader({
+      bytes: bytesOf(1024),
+      heldBytes: 1024,
+      totalBytes: SPORE_BYTES,
+      phase: 'loading',
+    });
+    expect(footReads(container))
+      .toEqual({ mode: 'status', text: 'READING 37,314 B · 1,024 B HELD' });
   });
 
   it('reports a node that could not be asked as a limit, not as an alarm', () => {
@@ -442,20 +457,98 @@ describe('CellDataReader', () => {
       phase: 'error',
       message: 'connection refused',
     });
-    const state = container
-      .querySelector('[data-cell-data-reader-state]') as HTMLElement;
-    expect(state.textContent).toContain('connection refused');
+    const foot = footOf(container);
+    expect(footReads(container))
+      .toEqual({ mode: 'status', text: '1,024 / 37,314 B · connection refused' });
     // `dim`, the ink a limit on what we saw is written in — never `danger`.
-    expect(state.style.color).toBe('rgb(124, 135, 148)');
+    expect(foot.style.color).toBe('rgb(124, 135, 148)');
     // The rows the browser does hold stay readable under the line.
     expect(byteCell(container, 0).hasAttribute('data-cell-data-reader-ghost'))
       .toBe(false);
   });
 
-  it('closes on its own control', () => {
-    const { container, onClose } = reader();
-    const close = container.querySelector('[aria-label="close"]') as HTMLElement;
-    fireEvent.click(close);
-    expect(onClose).toHaveBeenCalledTimes(1);
+  it('scrolls the dump from a pointer on the scrollbar-map', () => {
+    // The map IS the scrollbar (R2-4). The fraction is taken over the height
+    // this component ASKED for, which is the only form of it jsdom can drive —
+    // every rect it reports is zero.
+    //
+    // ⭐ jsdom implements no `PointerEvent` constructor, so
+    // `fireEvent.pointerDown` falls back to a bare `Event` that carries no
+    // coordinate at all. A `MouseEvent` NAMED `pointerdown` reaches React's
+    // `onPointerDown` (React listens by event type) and does carry `clientY`,
+    // which is what a browser would deliver.
+    const on = (map: HTMLElement, type: string, clientY: number) => {
+      fireEvent(map, new MouseEvent(type, { clientY, bubbles: true }));
+    };
+    const { container } = reader();
+    const dump = dumpOf(container);
+    const map = container.querySelector('[data-cell-data-reader-map]') as HTMLElement;
+    const viewHeight = READER_VISIBLE_ROWS * READER_ROW_HEIGHT_PX;
+    const rowCount = Math.ceil(SPORE_BYTES / 16);
+
+    on(map, 'pointerdown', viewHeight / 2);
+
+    const halfway = 0.5 * rowCount * READER_ROW_HEIGHT_PX - viewHeight / 2;
+    expect(dump.scrollTop).toBe(halfway);
+    expect(root(container).getAttribute('data-cell-data-reader-first-row'))
+      .toBe(String(Math.max(
+        0,
+        Math.floor(halfway / READER_ROW_HEIGHT_PX) - READER_OVERSCAN_ROWS,
+      )));
+
+    // …and the drag continues while the button is down, which is what makes an
+    // 8 px strip usable at all.
+    on(map, 'pointermove', 0);
+    expect(dump.scrollTop).toBe(0);
+
+    // A move after the pointer is up is not a drag.
+    on(map, 'pointerup', 0);
+    on(map, 'pointermove', viewHeight);
+    expect(dump.scrollTop).toBe(0);
+  });
+
+  it('copies what is selected, and says it did', async () => {
+    // Typed parameter list, so `mock.calls[0][0]` is not an empty tuple.
+    const writeText = vi.fn(async (_text: string) => {});
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText }, configurable: true,
+    });
+    const { container } = reader({ bytes: bytesOf(48), totalBytes: 48 });
+    const copy = container
+      .querySelector('[data-cell-data-reader-copy]') as HTMLButtonElement;
+
+    // Nothing selected: the whole payload.
+    fireEvent.click(copy);
+    await vi.waitFor(() => expect(copy.textContent).toBe('COPIED'));
+    expect(writeText.mock.calls[0][0]).toHaveLength(2 + 48 * 2);
+
+    fireEvent.click(byteCell(container, 0));
+    fireEvent.click(byteCell(container, 3), { shiftKey: true });
+    fireEvent.click(copy);
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
+    expect(writeText.mock.calls[1][0]).toBe('0x03 0a 11 18'.replaceAll(' ', ''));
+  });
+
+  it('says so on its own face when the clipboard refuses, and grows no toast', async () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn(async (_text: string) => { throw new Error('blocked'); }) },
+      configurable: true,
+    });
+    const { container } = reader({ bytes: bytesOf(48), totalBytes: 48 });
+    const copy = container
+      .querySelector('[data-cell-data-reader-copy]') as HTMLButtonElement;
+
+    fireEvent.click(copy);
+    await vi.waitFor(() => expect(copy.textContent).toBe('BLOCKED'));
+    expect(container.querySelector('[data-cell-data-reader-toast]')).toBeNull();
+  });
+
+  it('declares the width the card spends on it', () => {
+    // 408 = the 73-character row plus its 8 px gutter, a 6 px seam, the 8 px
+    // scrollbar-map, the section's padding and its border. The panel derives
+    // the notch and the card's width from this one statement (R2-b), so it is
+    // pinned where it is written.
+    expect(READER_WIDTH_PX).toBe(408);
+    expect(READER_WIDTH_PX - 280 - 8).toBe(120);
   });
 });

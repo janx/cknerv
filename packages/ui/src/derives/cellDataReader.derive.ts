@@ -1,4 +1,4 @@
-// The arithmetic behind DATA READER (SCAN·03), written before the reader that
+// The arithmetic behind CKBYTES (SCAN·03), written before the reader that
 // spends it. Everything here is a pure function of numbers the caller already
 // holds — bytes, a scroll offset, a row height, a segment list — because the
 // surface that will read it lives in jsdom for its tests and has no layout:
@@ -25,17 +25,36 @@ import { QUALITATIVE_BUCKET_COLORS } from '../components/hud/hudTheme';
  *  offset IS the column the byte sits in. */
 export const READER_BYTES_PER_ROW = 16;
 
-/** Rows the dump shows at the app's default viewport. The panel narrows this
- *  on a short window (`READER_MIN_VISIBLE_ROWS` is the floor); the reader is
- *  handed the number rather than measuring it, so the same arithmetic runs in
- *  a browser and in a test. */
+/** Rows the dump shows when nothing has been measured yet — the frame before
+ *  the analysis plate's ResizeObserver has answered, and every jsdom test,
+ *  which lays nothing out. `readerRowsUnderScan` replaces it with the plate's
+ *  own remainder one frame later; the reader is HANDED the number rather than
+ *  measuring it, so the same arithmetic runs in a browser and in a test. */
 export const READER_VISIBLE_ROWS = 24;
 
-/** …and the floor. Eight rows is 128 bytes — still a dump rather than a
- *  peephole, and enough that the byte map beside it has something to point at.
- *  Below this the reader would be a worse window than the 32-byte preview it
- *  opens from, which is the one thing it may not be. */
-export const READER_MIN_VISIBLE_ROWS = 8;
+/** …and the floor, six rows (the user's R2-5 ruling of 2026-09-05).
+ *
+ *  Six rows is 96 bytes. It was eight — 128 — for as long as the reader was a
+ *  satellite that opened over the card and could take whatever height it
+ *  wanted; under the CELL SCAN square it takes what the analysis plate LEAVES,
+ *  and a bare CKB-only card's plate leaves about 120 px. A floor of eight over
+ *  that plate would make the reader taller than the space it was given, which
+ *  is the one thing this whole placement exists to prevent, so the floor drops
+ *  to where a short plate can still honour it.
+ *
+ *  It is still a floor rather than a zero: six rows is enough to see a molecule
+ *  header and the start of what follows it, which is the least a thing calling
+ *  itself a reader may show. */
+export const READER_MIN_VISIBLE_ROWS = 6;
+
+/** …and the ceiling, sixty-four rows.
+ *
+ *  Sixty-four rows is 1,024 bytes — a kilobyte of payload standing at once,
+ *  which is more dump than any plate this card builds is tall enough to ask
+ *  for today. It is a valve rather than a budget: the plate's height is the
+ *  real governor, and this is here so that a future dossier twice as tall does
+ *  not silently mount a two-thousand-row dump. */
+export const READER_MAX_VISIBLE_ROWS = 64;
 
 /** Rows mounted above and below the viewport. A wheel gesture moves several
  *  rows per frame and React cannot mount a row inside the same frame the
@@ -44,9 +63,20 @@ export const READER_MIN_VISIBLE_ROWS = 8;
  *  sides at the app's default row height. */
 export const READER_OVERSCAN_ROWS = 8;
 
+// ——— M4c's placement family, on its way out ——————————————————————————————
+//
+// Everything from here to `READER_VIEWPORT_ALLOWANCE_PX`, plus `readerPlacement`
+// and `readerBesideRows` / `readerBelowRows` below, belongs to the placement
+// the user replaced on 2026-09-05: the reader as a satellite that opened in a
+// 660 px column beside the plate, or as a row under the card on a narrow
+// window. Its ONLY caller is `CellDetailPanel`, which R2-b rewrites, so it dies
+// there with the call rather than here without one — a derive stripped of what
+// its caller still imports is a typecheck failure, not a cleanup. Nothing new
+// may reach for any of it.
+
 /** The reader's own column, in pixels, when it stands BESIDE the analysis
- *  plate — the user's ruling of 2026-09-05, and the placement the reader now
- *  opens in whenever the window is wide enough for it.
+ *  plate — M4c's placement, superseded 2026-09-05 (R2-6: the reader stands
+ *  UNDER the CELL SCAN square, 408 px wide, and the card is 856).
  *
  *  Measured from what the column has to hold rather than chosen:
  *
@@ -64,14 +94,10 @@ export const READER_OVERSCAN_ROWS = 8;
  *  table of contents and the half a reader without one cannot navigate. */
 export const READER_COLUMN_PX = 660;
 
-/** The most rows the beside column will show, however tall the plate is.
- *
- *  Sixty-four rows is 1,024 bytes — a kilobyte of payload standing at once,
- *  which is more dump than any plate this card builds is tall enough to ask
- *  for today. It is a valve rather than a budget: the plate's height is the
- *  real governor, and this is here so that a future dossier twice as tall does
- *  not silently mount a two-thousand-row dump. */
-export const READER_BESIDE_MAX_ROWS = 64;
+/** M4c's name for the ceiling above, kept only while `readerBesideRows` has a
+ *  caller. One number, two names, for exactly one commit: R2-b takes the panel
+ *  off the beside placement and this alias goes with it. */
+export const READER_BESIDE_MAX_ROWS = READER_MAX_VISIBLE_ROWS;
 
 /** The margin the card keeps from the viewport's edges: `CellDetailPanel`'s
  *  own `maxWidth: calc(100vw - 28px)`. Restated here because the placement
@@ -134,22 +160,27 @@ export const READER_VIEWPORT_ALLOWANCE_PX = 520;
  *  no third: beside it (the ruling), or under the card (the narrow fallback). */
 export type ReaderPlacement = 'beside' | 'below';
 
-/** The offset gutter's own width: six upper-case hex digits, no `0x`.
+/** The offset gutter's own width: FIVE upper-case hex digits, no `0x`.
  *
- *  Six because a CKB Cell's data never reaches 16 MiB — the consensus limit on
- *  a whole block is far under it, and the largest payload the staged set holds
- *  is 37,314 B — so the gutter can be a FIXED width and every row's offset
- *  lines up under the one above it. A gutter that grows a digit at 0x100000
- *  would shift the entire dump one column right, mid-scroll, which is the one
- *  thing a hex dump may never do.
+ *  Five reaches 0xFFFFF — 1,048,575 — and a CKB Cell's data cannot get there:
+ *  the consensus limit on a whole block is far under a mebibyte, and the
+ *  largest payload the staged set holds is 37,314 B, which is 0x91C1. Six was
+ *  a guess made before anyone had asked how big the number could be, and it
+ *  cost the dump a column it had no use for — under the CELL SCAN square the
+ *  row is 408 px wide and every character in it is spent.
+ *
+ *  What the fixed width buys is the same either way: every row's offset lines
+ *  up under the one above it. A gutter that grew a digit mid-payload would
+ *  shift the entire dump one column right, mid-scroll, which is the one thing
+ *  a hex dump may never do.
  *
  *  The `0x` is the caller's: the gutter prints bare digits (the column is
- *  obviously hex once it has a heading), the inspector strip prints
+ *  obviously hex once it has a heading), the foot line prints
  *  `0x${formatReaderOffset(n)}` because a value quoted inside a sentence has
  *  to say what base it is in. */
 export function formatReaderOffset(byte: number): string {
   const exact = Number.isFinite(byte) ? Math.max(0, Math.trunc(byte)) : 0;
-  return exact.toString(16).toUpperCase().padStart(6, '0');
+  return exact.toString(16).toUpperCase().padStart(5, '0');
 }
 
 /** FNV-1a over the label, 32-bit. Moved here from
@@ -350,15 +381,11 @@ export interface ReaderInspection {
   length: number;
   /** Segment owning the byte at `offset`, or null where none does. */
   segment: number | null;
-  u8?: number;
-  u16?: number;
-  u32?: number;
-  u64?: bigint;
-  u128?: bigint;
-  /** A selection whose width is not one of the fixed ones, read whole. Present
-   *  only for `2 < length ≤ 16` with `length` not in `{4, 8, 16}` — a 9-byte
-   *  range is `u72 LE`, and the caller names it from `length * 8`. */
-  range?: bigint;
+  /** The WHOLE selection, read as ONE little-endian integer of its own width.
+   *  Null when nothing is selected, and null past sixteen bytes: u128 is the
+   *  widest number CKB writes, and a 37,000-byte "integer" is not a reading
+   *  anybody asked for. */
+  integer: bigint | null;
   utf8: string;
 }
 
@@ -372,29 +399,37 @@ function readLE(bytes: Uint8Array, from: number, size: number): bigint | null {
   return value;
 }
 
-/** The longest run the inspector decodes as text. A selection can be the whole
- *  37 KB payload, and a strip that tries to print it would spend the frame
- *  decoding a string nothing can show. */
+/** The longest run the foot line decodes as text. A selection can be the whole
+ *  37 KB payload, and a line that tries to decode it would spend the frame on
+ *  a string nothing can show. (The line PRINTS far fewer than this; the rest
+ *  goes in its `title`.) */
 const READER_UTF8_LIMIT = 256;
 
-/** Everything the inspector strip says about one selection.
+/** The widest selection that reads as one integer: sixteen bytes, u128, which
+ *  is the widest number CKB writes anywhere — the UDT amount. Past it a
+ *  selection is a run of bytes rather than a value, and printing a 296-digit
+ *  "integer" for a spore's `content` would be arithmetic nobody asked for. */
+const READER_INTEGER_MAX_BYTES = 16;
+
+/** Everything the foot line says about one selection: what it is, and what it
+ *  says as a number and as text.
  *
- *  Two readings, and they answer different questions on purpose:
+ *  ONE integer, of the selection's OWN width (the user's R2-3 ruling of
+ *  2026-09-05). This used to be a fan-out — `u8`, `u16 LE`, `u32 LE`,
+ *  `u64 LE`, `u128 LE`, all read at the caret whatever was selected, plus a
+ *  sixth reading for a width none of them covered. That is what a general data
+ *  inspector does, and it was five numbers of which at most one was the
+ *  answer: a reader who selects sixteen bytes of an xUDT amount is ASKING for
+ *  the u128 and has no use for the u8 at the same offset, and a reader who
+ *  selects eight bytes of a DAO field is asking for the u64. The selection
+ *  states the width; the reading follows it, and the strip that printed five
+ *  numbers over two lines is one clause of one line now.
  *
- *  The FIXED widths are read at `offset`, whatever the selection's length —
- *  `u8/u16/u32/u64/u128 LE`, each present when that many bytes exist after the
- *  caret. That is what a data inspector is: a reader who puts the caret on
- *  byte 0 of an xUDT Cell wants to know what the u128 there says, and having
- *  to select exactly sixteen bytes first would make the strip a calculator
- *  rather than a reading. Little-endian and only little-endian, because CKB is
- *  — the UDT amount, the DAO field, every Molecule offset — and offering both
- *  ends would invite reading the wrong one.
+ *  Little-endian and only little-endian, because CKB is — the UDT amount, the
+ *  DAO field, every Molecule offset — and offering both ends would invite
+ *  reading the wrong one.
  *
- *  The RANGE reading answers the other question: what does the width I
- *  actually selected say. Present only when the selection is not already a
- *  fixed width, so the strip never prints the same number under two names.
- *
- *  `utf8` is non-fatal — a decoder that threw would leave the strip blank over
+ *  `utf8` is non-fatal — a decoder that threw would leave the line blank over
  *  exactly the bytes a reader most wants a guess about — and every control
  *  character, `DEL`, and the replacement character the decoder emits for a bad
  *  sequence collapse to the interpunct, so a segment full of zero padding
@@ -414,30 +449,19 @@ export function inspectSelection(
   // either one of them, and the reader extends in both.
   const low = Math.min(clamp(start), clamp(end));
   const high = Math.max(clamp(start), clamp(end));
+  const width = high - low;
   const owner = low < segmentIndex.length ? segmentIndex[low] : -1;
   const inspection: ReaderInspection = {
     offset: low,
-    length: high - low,
+    length: width,
     segment: owner === -1 ? null : owner,
+    // Zero bytes are not the number zero. A selection of nothing reads as
+    // nothing rather than as `LE 0`, which is a value some Cell really holds.
+    integer: width > 0 && width <= READER_INTEGER_MAX_BYTES
+      ? readLE(bytes, low, width)
+      : null,
     utf8: '',
   };
-
-  const u8 = readLE(bytes, low, 1);
-  if (u8 !== null) inspection.u8 = Number(u8);
-  const u16 = readLE(bytes, low, 2);
-  if (u16 !== null) inspection.u16 = Number(u16);
-  const u32 = readLE(bytes, low, 4);
-  if (u32 !== null) inspection.u32 = Number(u32);
-  const u64 = readLE(bytes, low, 8);
-  if (u64 !== null) inspection.u64 = u64;
-  const u128 = readLE(bytes, low, 16);
-  if (u128 !== null) inspection.u128 = u128;
-
-  const width = high - low;
-  if (width > 2 && width <= 16 && width !== 4 && width !== 8 && width !== 16) {
-    const range = readLE(bytes, low, width);
-    if (range !== null) inspection.range = range;
-  }
 
   if (width > 0) {
     const text = new TextDecoder('utf-8', { fatal: false })
@@ -578,15 +602,25 @@ export function readerPlacement(
 }
 
 /**
- * Rows the beside column shows against a MEASURED analysis plate.
+ * Rows the reader shows standing UNDER the CELL SCAN square, against a
+ * MEASURED analysis plate.
  *
- * The reader is as tall as the plate, which is the whole point of standing
- * beside it: the card's silhouette is the plate's, the row it sits in needs no
- * extra height, and nothing the reader does can push the card past the fold.
- * So the dump gets whatever the plate's height leaves after the reader's own
- * chrome — its header, its inspector strip, its commands, its padding — and
- * the remainder that does not divide into a row is absorbed by the section's
- * bottom padding rather than by half a row of bytes.
+ * The user's ruling of 2026-09-05: CKBYTES is a zone of the card rather than a
+ * satellite, it stands under the 280 px specimen square, and its bottom is the
+ * analysis plate's bottom. So the dump gets what the plate's height leaves
+ * after two subtractions and nothing else:
+ *
+ *   `aboveReaderPx` — the square and the seam over it. Handed in by the panel
+ *   (`PORTRAIT_COLUMN_PX + CARD_SEAM_PX` = 288) rather than restated here,
+ *   because a derive that spelled a card constant out would be a second place
+ *   the card's geometry is written down, and the two would drift.
+ *
+ *   `chromePx` — everything in the reader that is not a row of bytes: its
+ *   header, its foot line, its padding, its border. `CellDataReader` exports
+ *   that number with the table it was computed from.
+ *
+ * The remainder that does not divide into a whole row is absorbed by the
+ * section's bottom padding rather than by half a row of bytes.
  *
  * `plateHeightPx` of 0 means nobody has measured yet — the frame before the
  * ResizeObserver's first callback, and every jsdom test, which lays nothing
@@ -594,19 +628,41 @@ export function readerPlacement(
  * floor: it is answered with the declared count, the same number the reader
  * has always opened at, and the measurement replaces it one frame later.
  */
-export function readerBesideRows(
+export function readerRowsUnderScan(
   plateHeightPx: number,
+  aboveReaderPx: number,
   chromePx: number,
   rowHeight: number,
 ): number {
   const height = Number.isFinite(rowHeight) && rowHeight > 0 ? rowHeight : 1;
   const plate = Number.isFinite(plateHeightPx) ? plateHeightPx : 0;
   if (plate <= 0) return READER_VISIBLE_ROWS;
-  const rows = Math.floor((plate - chromePx) / height);
+  const above = Number.isFinite(aboveReaderPx) ? aboveReaderPx : 0;
+  const chrome = Number.isFinite(chromePx) ? chromePx : 0;
+  const rows = Math.floor((plate - above - chrome) / height);
   return Math.max(
     READER_MIN_VISIBLE_ROWS,
-    Math.min(READER_BESIDE_MAX_ROWS, rows),
+    Math.min(READER_MAX_VISIBLE_ROWS, rows),
   );
+}
+
+/**
+ * M4c's rows for the reader standing BESIDE the plate, kept while the panel
+ * still places it there.
+ *
+ * It is the same arithmetic as `readerRowsUnderScan` with nothing above the
+ * reader, which is what "beside" meant: the reader started at the plate's top
+ * edge instead of under a 288 px square. Stated as a delegation rather than as
+ * a second copy so the floor, the ceiling and the unmeasured-plate answer
+ * cannot disagree between the placement that is leaving and the one arriving.
+ * R2-b takes the panel off this and the function goes with the call.
+ */
+export function readerBesideRows(
+  plateHeightPx: number,
+  chromePx: number,
+  rowHeight: number,
+): number {
+  return readerRowsUnderScan(plateHeightPx, 0, chromePx, rowHeight);
 }
 
 /**

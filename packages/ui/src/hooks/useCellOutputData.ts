@@ -1,14 +1,21 @@
-// The reader's supply line: which bytes DATA READER (SCAN·03) is drawing, and
+// The reader's supply line: which bytes CKBYTES (SCAN·03) is drawing, and
 // where they came from.
 //
 // The load-bearing sentence is the one about not asking. Ten thousand of the
 // 10,356 staged Cells are already complete in the browser — a DAO marker is
 // eight bytes, an sUDT amount sixteen, and the canonical `data_hex` carries a
-// kilobyte before it truncates — so for all but 93 of them the reader opens on
+// kilobyte before it truncates — so for all but 93 of them the reader mounts on
 // bytes that are already in hand and NOTHING leaves the browser. A hook that
 // fetched first and compared afterwards would put ten thousand pointless round
-// trips behind one click, and every one of them would answer with bytes the
-// caller was holding when it asked.
+// trips behind every Cell somebody looked at, and every one of them would
+// answer with bytes the caller was holding when it asked.
+//
+// That "every Cell somebody looked at" is the change of 2026-09-05. The reader
+// used to open on a click and `enabled` meant "the reader is open"; it is a
+// zone of the card now, mounted for every Cell that holds bytes, so `enabled`
+// means exactly that — the Cell holds bytes — and the gate below is the only
+// thing standing between a card opening and a request. It is the same gate it
+// always was, asked at a moment when it matters far more.
 //
 // So the gate is a comparison the caller can already make: `held.length <
 // totalBytes`. `totalBytes` is `Cell.data_bytes`, the chain's own statement of
@@ -59,8 +66,9 @@ export interface CellOutputDataInput {
    *  an outpoint's data is written once and afterwards only spent, which is
    *  what lets the route promise `immutable` and the memo never invalidate. */
   outPoint: OutPoint;
-  /** The reader is open. A closed reader asks for nothing, and an open one
-   *  that closes aborts what it asked for. */
+  /** The Cell holds bytes. A Cell with an empty payload gets no reader at all
+   *  (R2-2), so it asks for nothing; a card that closes aborts what it asked
+   *  for. */
   enabled: boolean;
   /** The prefix already in the browser — `deriveCellContentMemory`'s bytes,
    *  which is the indexed 4 KiB where there is a record and the canonical
@@ -112,7 +120,7 @@ function outPointIdentity(outPoint: OutPoint): string {
 }
 
 /**
- * The bytes DATA READER draws, and the phase it draws them in.
+ * The bytes CKBYTES draws, and the phase it draws them in.
  *
  * The state machine has exactly one branch that costs anything:
  *
@@ -212,9 +220,10 @@ export function useCellOutputData({
         message: settled.message,
       };
     }
-    // Including the closed reader, which rests in the shape it will open in:
-    // a payload we hold part of and have not asked about. Saying anything
-    // else would mean the phase changed on the way to the first frame.
+    // Including a reader nobody has enabled, which rests in the shape it
+    // would mount in: a payload we hold part of and have not asked about.
+    // Saying anything else would mean the phase changed on the way to the
+    // first frame.
     return {
       phase: 'loading',
       bytes: held,

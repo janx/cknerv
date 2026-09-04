@@ -664,6 +664,15 @@ export function injectHudTheme(doc: Document = document): void {
     + `\n.cknerv-chain-panel-scroll::-webkit-scrollbar-track{background:transparent}`
     + `\n.cknerv-status-controls::-webkit-scrollbar{display:none}`
     + `\n.cknerv-status-context::-webkit-scrollbar{display:none}`
+    // CKBYTES hides its native scrollbar because the 8 px byte map beside the
+    // dump IS the scrollbar (the user's R2-4 ruling): the map is a scale
+    // drawing of the payload with the viewport as its thumb, and a real bar
+    // next to it would be a second, redundant one. Two dialects, because
+    // `scrollbar-width` is the standard property and `::-webkit-scrollbar` is
+    // the pseudo-element Chromium still answers — and neither can be reached
+    // from an inline style, which is why this is a class at all.
+    + `\n.cknerv-cell-bytes-dump{scrollbar-width:none}`
+    + `\n.cknerv-cell-bytes-dump::-webkit-scrollbar{display:none}`
     // The portrait's drei `Html` labels are moved every frame the braid turns
     // by a `transform` on the wrapper drei owns — and it rewrites that
     // wrapper's whole inline style per move, which is why the hint is a class

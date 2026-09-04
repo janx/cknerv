@@ -6,10 +6,9 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
-  type MouseEvent as ReactMouseEvent,
-  type ReactNode,
+  type PointerEvent as ReactPointerEvent,
 } from 'react';
-import type { Cell, SemanticContentSegment } from '@cknerv/types';
+import type { SemanticContentSegment } from '@cknerv/types';
 import {
   READER_BYTES_PER_ROW,
   READER_OVERSCAN_ROWS,
@@ -32,31 +31,50 @@ import {
   rgba,
 } from './hudTheme';
 import {
-  CloseButton,
   REVEAL_GHOST_OPACITY,
   SpatialPlateHeader,
   moduleTag,
 } from './primitives';
 
-// DATA READER · SCAN·03 — the surface the DATA cluster's RAW row opens into.
+// CKBYTES · SCAN·03 — the Cell's own bytes, under the CELL SCAN square, for
+// every Cell that holds any.
 //
-// The window above it is a PREVIEW: 32 bytes, no offsets, the ASCII printed on
-// a line of its own so a byte and its character never sit in one row, and one
-// decoded segment at a time behind a stepper. That is the right shape for a
-// glance and the wrong one for reading, and for the 93 staged Cells whose
-// payload outruns the held prefix it is not even a glance — the bytes are not
-// in the browser at all.
+// It was a satellite: a 660 px column that opened from a door in the DATA
+// cluster and carried, besides the dump, a segment list, a READS AS line, an
+// UNMAPPED count, an inspector strip that read a selection five ways, GO TO,
+// two COPY commands, a toast, a keys legend, a loading bar and a CLOSE. The
+// user's direction of 2026-09-05 was 「hex reader 需要精简，聚焦最核心功能，
+// 缩小 UX 面积」 and 「hex reader 应该总是展示」: keep the core, shrink the
+// surface, and stop making anyone open it.
 //
-// So this is a hex dump in the form every hex tool has had since `od`: sixteen
-// bytes to a row, a fixed six-digit offset gutter, the same sixteen bytes as
-// characters on the SAME line, every decoded segment listed at once as a table
-// of contents, a scale map of the whole payload beside it, and a strip that
-// reads whatever is selected as the little-endian integers CKB actually writes.
+// So the reader is a ZONE now, and it holds exactly four things:
+//
+//   THE DUMP. Sixteen bytes a row, a five-digit offset gutter, the same
+//   sixteen bytes as characters on the SAME line, coloured by the segment that
+//   owns them, keyboard-navigable, with rows past the held prefix standing as
+//   ghosts until the node answers.
+//
+//   THE SCROLLBAR, WHICH IS THE BYTE MAP (the user's R2-4 ruling). The native
+//   bar is hidden and an 8 px canvas takes its place: a scale drawing of the
+//   payload with every decoded segment as a band, the viewport as an ink band
+//   over them, click and drag to move. Two things that were a strip and a
+//   gutter are one strip that does both jobs.
+//
+//   ONE FOOT LINE. Three readings in priority — the byte under the pointer,
+//   the selection, or the payload's own status — where a table of contents, a
+//   READS AS block and a five-column inspector used to be. The DATA cluster
+//   above lists the segments and names the decode (R2-b); this line is what
+//   only the reader can say, which is what is under the pointer right now.
+//
+//   ONE COPY. The selection if there is one, else the whole payload, as `0x…`.
+//
+// Everything else went back where it was read. There is no CLOSE — Escape
+// closes the card, and a zone of a card has nothing of its own to dismiss.
 //
 // Three constraints shape every line of it, and all three come from the card
-// this row hangs under rather than from the reader:
+// rather than from the reader:
 //
-//   MOUNT AT FINAL GEOMETRY. The plate's height is `visibleRows × rowHeight`
+//   MOUNT AT FINAL GEOMETRY. The dump's height is `visibleRows × rowHeight`
 //   for a Cell of eight bytes and for one of 37,314, and rows past the held
 //   prefix stand as ghosts until the node answers and then fill IN PLACE.
 //   Nothing under a reader may move while it is being read.
@@ -68,90 +86,114 @@ import {
 //   `scrollTop`, which is a scroll position rather than a measurement.
 //
 //   ONE COLOUR RULE. A segment's slot comes from `segmentColorSlots`, the same
-//   function the DATA window and the portrait's byte rail ask, so a reader
+//   function the DATA cluster and the portrait's byte rail ask, so a reader
 //   moving their eye between the three surfaces is reading one claim about the
 //   same bytes rather than three.
 //
 // HEX ONLY (the user's E4 ruling, 2026-09-04): there is no TEXT view and no
-// image view. The inspector's UTF-8 field is where a reader asks what a range
+// image view. The foot line's text clause is where a reader asks what a range
 // says as text, over a range they chose — which is a question about a
 // selection, not a second rendering of the payload.
 
 /** The dump's row height. `label` is the dossier's evidence register (the
  *  user's E2 ruling) and 1.5 is the line height a dump needs for its ASCII
  *  column to sit level with its hex. Exported because the panel sizes the
- *  whole row from it before this component exists. */
+ *  whole zone from it before this component exists. */
 export const READER_ROW_HEIGHT_PX = HUD_TYPE.label * 1.5;
 
 /**
  * Everything in this reader that is not a row of bytes, in pixels.
  *
- * The reader stands beside the analysis plate and is as tall as it (the user's
- * ruling of 2026-09-05), so the dump gets the plate's height MINUS this, and
- * the caller divides the remainder into rows. Reservation math only — the
- * browser lays the real thing out — and deliberately the generous reading of
- * every term, because a chrome one pixel short is a reader one row taller than
- * the plate it was supposed to match, and a row that pushes the card down is
- * the exact defect this number exists to stop.
+ * The reader stands under the CELL SCAN square and its bottom is the analysis
+ * plate's bottom, so the dump gets `plate − 288 − this`, and
+ * `readerRowsUnderScan` divides the remainder into rows. Reservation math only
+ * — the browser lays the real thing out — and deliberately the generous
+ * reading of every term, because a chrome one pixel short is a reader one row
+ * taller than the space it was given, and a zone that pushes the card's bottom
+ * down is the exact defect this number exists to stop.
  *
  * Line by line, top to bottom, at the type each part prints:
  *
- *     the section's padding, top and bottom            8 + 10
- *     plate header line box (`section`, 10.5 bold)         14
- *     the header's margin-bottom                            7
- *     the loading bar and its margin               2 + 5 = 7
- *     the dump's border, top and bottom                 1 + 1
- *     inspector margin, padding and its rule        7 + 5 + 1
- *     the inspector's own two line boxes (`label`)     2 × 14
- *     the commands row's margin-top                         7
- *     a command control (input: text + padding + border)   19
- *                                                       —————
- *                                                         117
+ *     the section's padding, top and bottom             8 + 10 = 18
+ *     the header row (its tallest item is the COPY
+ *       button: micro 7.5 + 3 + 3 padding + 1 + 1 border)      16
+ *     the header's margin-bottom                                6
+ *     the dump's border, top and bottom                 1 + 1 =  2
+ *     the foot line's margin-top                                4
+ *     the foot line's own box (one `micro` line, fixed)         16
+ *                                                            —————
+ *                                                               62
  *
- * Two terms are worth naming. The LOADING BAR is counted even though it only
- * exists while the node is being asked: a dump that lost a row the moment the
- * bar appeared would move the bytes somebody was reading, which is the one
- * thing this card forbids, so the slot is reserved in every phase. And the
- * INSPECTOR is reserved for TWO lines because it wraps: a selection reads as
- * `OFF · LEN · SEG · u8 · u16 · u32 · u64 · u128 · UTF-8`, and at this column
- * width that is more than one line of `label`.
+ * It was 117 for the satellite, and every one of the terms that is gone is a
+ * thing the user asked to remove: the loading bar (7), the inspector's rule,
+ * padding and TWO wrapped lines of `label` (41), and the commands row with its
+ * GO TO input (26). What is left is a header, a border, and one line.
  */
-export const READER_CHROME_PX = 117;
+export const READER_CHROME_PX = 62;
 
 /** A row's width in characters, and the reason the dump is a fixed measure:
  *
- *      6 offset + 2 gap + 48 hex (16×2 with its group gaps) + 2 gap + 16 ASCII
+ *      5 offset + 2 gap + 48 hex (16×2 with its group gaps) + 2 gap + 16 ASCII
  *
- *  Share Tech Mono's advance is 0.54 em, so 74 ch is 360 px at `label` — and
- *  the card's inner width is 704, which is what leaves the rail its ~330. */
-const READER_ROW_CH = 74;
+ *  Share Tech Mono's advance is 0.54 em, so 73 ch is 355 px at `label` (9 px).
+ *  The gutter lost a digit with `formatReaderOffset` (five digits reach
+ *  1 MiB, which no CKB payload does), and the dump's declared measure follows
+ *  it — the row is the width of what it prints, not of what it used to. */
+const READER_ROW_CH = 73;
 
-/** The byte map's width. Narrow enough to be a gutter rather than a column,
- *  wide enough that a one-pixel band is still a band. */
-const READER_MAP_WIDTH_PX = 14;
+/** The byte map's width, which is also the scrollbar's (R2-4: they are one
+ *  thing). Eight pixels is what a scrollbar is — narrow enough to read as the
+ *  bar it replaces rather than as a second column, wide enough that a
+ *  one-pixel band is still visible and a pointer can hit it. */
+const READER_MAP_WIDTH_PX = 8;
 
-/** How long a command's answer stands. Long enough to read six words, short
- *  enough that it is plainly an acknowledgement and not a state. */
-const READER_TOAST_MS = 2400;
+/**
+ * The reader's width, in pixels.
+ *
+ *     the dump          73 ch × 0.54 em × 9 px                355
+ *     its own padding-right, where the native bar used to be    8
+ *     the seam to the map                                       6
+ *     the scrollbar-map                                         8
+ *     the section's padding, left and right          12 + 10 = 22
+ *     the section's border, left and right             1 + 1 =  2
+ *                                                            —————
+ *                                                             401 → 408
+ *
+ * Rounded up to 408 so the row never wants the pixel the browser's own
+ * rounding of `ch` takes — a dump one pixel narrow wraps its ASCII column onto
+ * a second line, which is the one thing a hex row may not do.
+ *
+ * The number the CARD spends is 408 − 280 − 8 = 120: the reader is wider than
+ * the CELL SCAN square it stands under, and that overhang is the notch it
+ * reaches toward the Cell (the user's R2-6 ruling). Exported so the panel can
+ * derive the notch and the card's width from ONE statement of it rather than
+ * from three constants that can disagree.
+ */
+export const READER_WIDTH_PX = 408;
+
+/** How long COPY says what it did. Long enough to read one word, short enough
+ *  that it is plainly an acknowledgement and not a state. */
+const READER_COPY_MS = 2000;
 
 /** Characters of the data hash the status line shows. Ten is what makes two
- *  different Cells look different at a glance; the whole hash is in the title,
- *  because a truncated hash is a landmark and not a value. */
+ *  different Cells look different at a glance; a truncated hash is a landmark
+ *  and not a value, so there is no `title` offering the rest as one. */
 const READER_HASH_HEAD = 10;
 
-/** The inspector's text field, in characters. A selection can be the whole
- *  payload, and the strip is one line. */
-const READER_UTF8_COLUMNS = 40;
+/** Characters of a selection's text the foot line prints. The line is ONE line
+ *  under a 408 px zone and shares it with the offset, the length and the
+ *  integer; the whole decoded run is in the line's `title`. */
+const READER_UTF8_COLUMNS = 24;
 
-/** What a segment's bytes fall to while ANOTHER segment is selected. The DATA
- *  window's own number, so the two surfaces dim alike. Bytes no segment claims
- *  never dim: they are not being contrasted with anything. */
+/** What a segment's bytes fall to while ANOTHER segment is focused. The DATA
+ *  cluster's own number, so the two surfaces dim alike. Bytes no segment
+ *  claims never dim: they are not being contrasted with anything. */
 const SEGMENT_ASIDE_OPACITY = 0.34;
 
-/** The map's ground, its bands, and the wash over what has not arrived. Canvas
- *  alpha rather than a rule's, which is a different question from the border
- *  rungs the overlay declares — a band is a surface being painted, not a line
- *  between two blocks. */
+/** The map's ground, its bands, the wash over what has not arrived, and the
+ *  viewport band. Canvas alpha rather than a rule's, which is a different
+ *  question from the border rungs the overlay declares — a band is a surface
+ *  being painted, not a line between two blocks. */
 const MAP_TRACK_ALPHA = 0.22;
 const MAP_BAND_ALPHA = 0.9;
 const MAP_BAND_ASIDE_ALPHA = 0.35;
@@ -159,8 +201,17 @@ const MAP_UNHELD_ALPHA = 0.82;
 const MAP_VIEWPORT_ALPHA = 0.16;
 const MAP_VIEWPORT_EDGE_ALPHA = 0.5;
 
-/** The selection's wash and the caret's outline, in the window's own alphas. */
+/** The selection's wash, in the window's own alpha. */
 const SELECTION_WASH_ALPHA = 0.16;
+
+/** The class the injected theme stylesheet hides the native scrollbar with.
+ *
+ *  A class rather than an inline style because `scrollbar-width` has a
+ *  pseudo-element twin — `::-webkit-scrollbar` — that no inline style can
+ *  reach, and the bar has to be gone in both dialects or the map would sit
+ *  beside a second, redundant bar. The rules live in `hudTheme.ts` beside the
+ *  three other scrollbar rules the HUD already writes. */
+const READER_DUMP_CLASS = 'cknerv-cell-bytes-dump';
 
 /** A decoded segment's label, said the way the card says every wire enum. */
 function readableKind(value: string): string {
@@ -184,7 +235,7 @@ function hexRun(bytes: Uint8Array, from: number, to: number): string {
  * and a half-applied selection — a caret that moved without its anchor, a
  * range that outlived the segment it came from — is a reading nobody asked
  * for. `[start, end)` is half-open like every byte range on this card, and a
- * bare caret is the one-byte range at it: the inspector reads a caret as a
+ * bare caret is the one-byte range at it: the foot line reads a caret as a
  * byte, so there is no third state where something is selected and nothing is.
  */
 interface ReaderSelection {
@@ -193,9 +244,10 @@ interface ReaderSelection {
   anchor: number;
   start: number;
   end: number;
-  /** Set only when the selection came from the table of contents. A segment
-   *  selection dims its neighbours; a hand-made range does not, because the
-   *  reader who dragged it is not asking about the decode. */
+  /** Set only when the selection arrived through `focus` — a click on a row of
+   *  the DATA cluster. A segment selection dims its neighbours; a hand-made
+   *  range does not, because the reader who dragged it is not asking about the
+   *  decode. */
   segment: number | null;
 }
 
@@ -203,7 +255,7 @@ function caretAt(byte: number): ReaderSelection {
   return { caret: byte, anchor: byte, start: byte, end: byte + 1, segment: null };
 }
 
-/** The DATA window's control grammar, in the word-width the commands need.
+/** The DATA cluster's control grammar, in the word-width COPY needs.
  *
  *  Copied rather than imported: `navButtonStyle` is private to
  *  `CellContentMemory.tsx` and lifting it into `primitives.tsx` would mean
@@ -225,45 +277,41 @@ function commandButtonStyle(): CSSProperties {
   };
 }
 
-/** One entry in the table of contents. Selected wears the plate's accent on
- *  its leading edge — the same lit-edge idiom the plates themselves wear. */
-function segmentButtonStyle(selected: boolean): CSSProperties {
-  return {
-    display: 'grid',
-    gridTemplateColumns: '8px minmax(0,1fr) auto',
-    columnGap: 6,
-    alignItems: 'baseline',
-    textAlign: 'left',
-    minWidth: 0,
-    margin: 0,
-    padding: '2px 4px',
-    border: 0,
-    borderLeft: `1px solid ${selected ? HUD_COLORS.cyanWire : 'transparent'}`,
-    background: selected ? rgba(HUD_COLORS.cyanWire, 0.06) : 'transparent',
-    color: HUD_COLORS.ink,
-    fontFamily: HUD_FONTS.mono,
-    fontSize: HUD_TYPE.label,
-    letterSpacing: 0.35,
-    cursor: 'pointer',
-  };
+/**
+ * Where the DATA cluster sent the reader.
+ *
+ * `nonce` is what makes it a GESTURE rather than a value. Clicking the same
+ * segment row twice has to scroll back to it twice — a reader who wandered off
+ * and clicked the row again is asking to be taken back — and an effect keyed
+ * on the range would fire once and never again. So the panel bumps the nonce
+ * on every click and this component applies the focus when the nonce changes.
+ */
+export interface CellDataReaderFocus {
+  start: number;
+  end: number;
+  /** Which segment, so its bytes can glow and the others fall away. Null for a
+   *  range that names no segment. */
+  segment: number | null;
+  nonce: number;
 }
 
-/** The strip's key, in the tech voice the whole card names a reading in. */
-const inspectKeyStyle: CSSProperties = {
-  marginRight: 5,
-  fontFamily: HUD_FONTS.tech,
-  fontSize: HUD_TYPE.micro,
-  letterSpacing: 1.4,
-  color: HUD_COLORS.dim,
-};
-
+/**
+ * ⚠️ ONE READER PER CELL. The caller MUST key this component by the Cell's id.
+ *
+ * A selection, a scroll position and a copy acknowledgement all belong to the
+ * bytes they were made over, and carrying any of them onto a different Cell's
+ * payload would be the reader pointing at a byte nobody selected. The reader
+ * used to take the whole `Cell` and reset itself in an effect on `cell.id`;
+ * it does not need the Cell for anything else, and a `key` says the same thing
+ * where React can act on it — it resets the scroll, the caret, the applied
+ * focus nonce and the COPY label in one stroke, which the effect had to do by
+ * hand and could only do for the state it remembered to name.
+ */
 export interface CellDataReaderProps {
-  /** Whose bytes these are. Read for identity only: a new subject clears the
-   *  selection and returns the dump to its top, so nothing carries over from
-   *  the Cell before it. */
-  cell: Cell;
+  /** The record's decoded segments, in record order. They colour the bytes and
+   *  name the one under the pointer; the LIST of them is the DATA cluster's,
+   *  which is where a click on one comes from. */
   segments: readonly SemanticContentSegment[];
-  decode: { kind: string; summary: string } | null;
   /** What the browser is holding. Shorter than `totalBytes` until the node
    *  answers, and the rows past it are drawn as ghosts. */
   bytes: Uint8Array;
@@ -275,18 +323,17 @@ export interface CellDataReaderProps {
   message: string | null;
   dataHash: string | null;
   live: boolean | null;
-  /** Where to open. The DATA window's stepper hands a segment's first byte
-   *  over when it steps past the preview. */
-  openAtByte: number | null;
   visibleRows: number;
-  reduced: boolean;
-  onClose: () => void;
+  /** A segment row of the DATA cluster was clicked. Null means nothing is
+   *  being pointed at, which is also the state a byte click returns it to. */
+  focus: CellDataReaderFocus | null;
+  /** Called with `null` when the reader's own selection stops being the focus
+   *  — a byte click or a key move — so the DATA cluster's row unpresses. */
+  onFocusChange?: (segment: number | null) => void;
 }
 
 export default function CellDataReader({
-  cell,
   segments,
-  decode,
   bytes,
   heldBytes,
   totalBytes,
@@ -294,18 +341,23 @@ export default function CellDataReader({
   message,
   dataHash,
   live,
-  openAtByte,
   visibleRows,
-  reduced,
-  onClose,
+  focus,
+  onFocusChange,
 }: CellDataReaderProps) {
   const dumpRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<HTMLCanvasElement | null>(null);
+  const footRef = useRef<HTMLDivElement | null>(null);
+  /** The byte under the pointer. A REF and not state: forty rows re-rendering
+   *  per byte the pointer crosses would spend a frame each, and the only thing
+   *  a hover changes is one line of text. */
+  const hoverRef = useRef<number | null>(null);
+  const draggingMap = useRef(false);
+  const appliedFocus = useRef<number | null>(null);
+  const copyTimer = useRef<number | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [selection, setSelection] = useState<ReaderSelection | null>(null);
-  const [gotoText, setGotoText] = useState('');
-  const [toast, setToast] = useState<{ text: string; bad: boolean } | null>(null);
-  const toastTimer = useRef<number | null>(null);
+  const [copied, setCopied] = useState<'COPIED' | 'BLOCKED' | null>(null);
 
   const rowHeight = READER_ROW_HEIGHT_PX;
   const viewHeight = visibleRows * rowHeight;
@@ -322,13 +374,6 @@ export default function CellDataReader({
     () => buildSegmentIndex(segments, totalBytes),
     [segments, totalBytes],
   );
-  const unmappedBytes = useMemo(() => {
-    let count = 0;
-    for (let index = 0; index < segmentIndex.length; index += 1) {
-      if (segmentIndex[index] === -1) count += 1;
-    }
-    return count;
-  }, [segmentIndex]);
   const segmentColor = useCallback(
     (index: number): string => QUALITATIVE_BUCKET_COLORS[
       (slots[index] ?? 0) % QUALITATIVE_BUCKET_COLORS.length
@@ -339,7 +384,7 @@ export default function CellDataReader({
   // ——— Scrolling ————————————————————————————————————————————————————————
   // The dump's scroll position is React state as well as a DOM property. It
   // has to be both: a wheel moves the element and the handler catches up, but
-  // GO TO, a segment click and a caret step move it from here — and setting
+  // a focus, a map drag and a caret step move it from here — and setting
   // `scrollTop` fires no event, so nothing would re-window the rows.
 
   const scrollDumpTo = useCallback((top: number) => {
@@ -366,38 +411,6 @@ export default function CellDataReader({
     }
   }, [rowHeight, scrollDumpTo, scrollTop, viewHeight]);
 
-  // A new Cell is a new subject: the selection and the scroll belong to the
-  // bytes that are leaving, not to the ones arriving.
-  useEffect(() => {
-    setSelection(null);
-    const dump = dumpRef.current;
-    if (dump) dump.scrollTop = 0;
-    setScrollTop(0);
-  }, [cell.id]);
-
-  // The stepper's hand-off. `openAtByte` is a segment's first byte, so the row
-  // goes to the TOP rather than merely into view: the reader was sent here to
-  // read forward from it.
-  useEffect(() => {
-    if (openAtByte === null) return;
-    const byte = Math.max(
-      0,
-      Math.min(Math.max(0, totalBytes - 1), Math.trunc(openAtByte)),
-    );
-    setSelection(caretAt(byte));
-    scrollRowToTop(Math.floor(byte / READER_BYTES_PER_ROW));
-  }, [cell.id, openAtByte, scrollRowToTop, totalBytes]);
-
-  useEffect(() => () => {
-    if (toastTimer.current !== null) window.clearTimeout(toastTimer.current);
-  }, []);
-
-  const say = useCallback((text: string, bad: boolean) => {
-    if (toastTimer.current !== null) window.clearTimeout(toastTimer.current);
-    setToast({ text, bad });
-    toastTimer.current = window.setTimeout(() => setToast(null), READER_TOAST_MS);
-  }, []);
-
   // ——— Selection ————————————————————————————————————————————————————————
 
   const moveCaret = useCallback((byte: number, extend: boolean) => {
@@ -413,17 +426,36 @@ export default function CellDataReader({
         segment: null,
       };
     });
+    hoverRef.current = null;
     keepByteInView(clamped);
-  }, [keepByteInView, totalBytes]);
+    // The reader's own gesture outranks the DATA cluster's: whatever row was
+    // pressed up there is no longer what is being pointed at down here.
+    onFocusChange?.(null);
+  }, [keepByteInView, onFocusChange, totalBytes]);
 
-  const selectSegment = useCallback((index: number) => {
-    const segment = segments[index];
-    if (!segment) return;
-    const start = Math.max(0, Math.min(totalBytes, segment.start_byte));
-    const end = Math.max(start, Math.min(totalBytes, segment.end_byte));
-    setSelection({ caret: start, anchor: start, start, end, segment: index });
+  // The DATA cluster's hand-off, applied on the NONCE rather than on the range
+  // (§4's trap): re-clicking the same row after the reader scrolled away has
+  // to take it back there, and an effect keyed on `start`/`end` would not fire.
+  const focusNonce = focus?.nonce ?? null;
+  useEffect(() => {
+    if (focus === null || focusNonce === null) return;
+    if (appliedFocus.current === focusNonce) return;
+    appliedFocus.current = focusNonce;
+    const last = Math.max(0, totalBytes - 1);
+    const start = Math.max(0, Math.min(last, Math.trunc(focus.start)));
+    const end = Math.max(start + 1, Math.min(totalBytes, Math.trunc(focus.end)));
+    hoverRef.current = null;
+    setSelection({ caret: start, anchor: start, start, end, segment: focus.segment });
     scrollRowToTop(Math.floor(start / READER_BYTES_PER_ROW));
-  }, [scrollRowToTop, segments, totalBytes]);
+    // `focus` itself is deliberately not a dependency: the nonce IS its
+    // identity, and re-running on a new object with the same nonce would
+    // re-scroll a reader who had moved on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusNonce]);
+
+  useEffect(() => () => {
+    if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+  }, []);
 
   const byteFromEvent = (target: EventTarget | null): number | null => {
     if (!(target instanceof Element)) return null;
@@ -448,10 +480,120 @@ export default function CellDataReader({
     moveCaret(from + step, event.shiftKey);
   };
 
-  // ——— The byte map ————————————————————————————————————————————————————
-  // Painted rather than laid out: 2,333 rows of payload compressed into 324
-  // pixels is a scale drawing, and a scale drawing made of DOM nodes would be
-  // hundreds of elements saying one thing.
+  // ——— The foot line ————————————————————————————————————————————————————
+  //
+  // Painted through a ref rather than rendered, for the reason the hover is a
+  // ref: this one line changes on every byte the pointer crosses, and a line
+  // that re-rendered the component would re-render forty rows of dump with it.
+  // React never wrote these children, so it never diffs them away; an effect
+  // repaints after every render that COULD have changed what they say.
+  //
+  // Built with `createElement`/`textContent` rather than with markup, because
+  // a segment's label is ckbadger's string and an `innerHTML` that interpolated
+  // it would be a wire value reaching the DOM as markup.
+
+  const inspection = useMemo(
+    () => (selection === null
+      ? null
+      : inspectSelection(bytes, selection.start, selection.end, segmentIndex)),
+    [bytes, segmentIndex, selection],
+  );
+
+  const paintFoot = useCallback(() => {
+    const foot = footRef.current;
+    if (!foot) return;
+    const parts: HTMLElement[] = [];
+    const say = (text: string, color?: string): void => {
+      const span = document.createElement('span');
+      span.textContent = text;
+      if (color !== undefined) span.style.color = color;
+      parts.push(span);
+    };
+
+    const hovered = hoverRef.current;
+    let mode: 'status' | 'hover' | 'selection' = 'status';
+    let title = '';
+
+    if (hovered !== null) {
+      // The byte under the pointer, which is the one thing only this surface
+      // can say and the reason the segment list could go.
+      mode = 'hover';
+      const owner = segmentIndex[hovered] ?? -1;
+      say(`0x${formatReaderOffset(hovered)}`, HUD_COLORS.ink);
+      say(` · byte ${formatReaderInteger(hovered)} · `);
+      if (owner === -1) say('unmapped');
+      else say(readableKind(segments[owner]?.label ?? ''), segmentColor(owner));
+    } else if (selection !== null && inspection !== null) {
+      mode = 'selection';
+      say(`0x${formatReaderOffset(selection.start)}`, HUD_COLORS.ink);
+      say(` +${formatReaderInteger(inspection.length)} B`);
+      if (inspection.integer !== null) {
+        say(' · LE ');
+        say(formatReaderInteger(inspection.integer), HUD_COLORS.goldInk);
+      }
+      if (inspection.utf8.length > 0) {
+        const clipped = inspection.utf8.length > READER_UTF8_COLUMNS
+          ? `${inspection.utf8.slice(0, READER_UTF8_COLUMNS)}…`
+          : inspection.utf8;
+        say(` · "${clipped}"`);
+        title = inspection.utf8;
+      }
+    } else if (phase === 'error') {
+      // Not `danger`. A node that could not be asked is a fact about the scope
+      // of our knowledge, not a condition of the Cell — the same ruling the
+      // DATA cluster's own byte count already carries. The whole line is
+      // `dim`, so the message needs no colour of its own.
+      say(`${formatReaderInteger(heldBytes)}`, HUD_COLORS.ink);
+      say(` / ${formatReaderInteger(totalBytes)} B · `);
+      say(message ?? 'NO BYTES FROM THE NODE');
+    } else if (phase === 'loading') {
+      say('READING ');
+      say(`${formatReaderInteger(totalBytes)} B`, HUD_COLORS.ink);
+      say(' · ');
+      say(`${formatReaderInteger(heldBytes)} B`, HUD_COLORS.ink);
+      say(' HELD');
+    } else {
+      say(`${formatReaderInteger(totalBytes)} B`, HUD_COLORS.ink);
+      say(' · ');
+      // The one word here that is a state rather than a reading: the payload
+      // on screen IS the payload.
+      say('COMPLETE', HUD_COLORS.nominal);
+      if (phase === 'ready' && dataHash) {
+        say(` · NODE · ${dataHash.slice(0, READER_HASH_HEAD)}…`);
+        title = live === null
+          ? dataHash
+          : `${dataHash} · ${live
+            ? 'READ FROM THE LIVE CELL'
+            : 'READ FROM THE TRANSACTION THAT CREATED IT'}`;
+      } else {
+        say(' · HELD');
+      }
+    }
+
+    foot.replaceChildren(...parts);
+    foot.setAttribute('data-cell-data-reader-foot-mode', mode);
+    if (title.length > 0) foot.title = title;
+    else foot.removeAttribute('title');
+  }, [
+    dataHash,
+    heldBytes,
+    inspection,
+    live,
+    message,
+    phase,
+    segmentColor,
+    segmentIndex,
+    segments,
+    selection,
+    totalBytes,
+  ]);
+
+  useEffect(() => { paintFoot(); }, [paintFoot]);
+
+  // ——— The scrollbar-map ————————————————————————————————————————————————
+  // Painted rather than laid out: 2,333 rows of payload compressed into a few
+  // hundred pixels is a scale drawing, and a scale drawing made of DOM nodes
+  // would be hundreds of elements saying one thing.
 
   const bands = useMemo(
     () => readerByteMapBands(segments, slots, totalBytes, viewHeight),
@@ -475,8 +617,8 @@ export default function CellDataReader({
     if (!canvas) return;
     const context = canvas.getContext('2d');
     // jsdom hands back a partial 2D context and a real browser can refuse one
-    // outright; either way the map is decoration over a list that says the
-    // same thing in words, so a missing context is a no-op rather than a throw.
+    // outright; either way the strip still scrolls the dump, so a missing
+    // context is a no-op rather than a throw.
     if (!context) return;
     const ratio = window.devicePixelRatio || 1;
     const width = Math.max(1, Math.round(READER_MAP_WIDTH_PX * ratio));
@@ -515,7 +657,8 @@ export default function CellDataReader({
       context.fillRect(0, edge, width, height - edge);
     }
 
-    // The viewport last, over everything, because it is where the reader is.
+    // The viewport last, over everything, because it is where the reader is —
+    // and because this strip is also the scrollbar, it is the thumb.
     const span = Math.max(1, rowCount * rowHeight);
     const top = Math.round((scrollTop / span) * height);
     const bottom = Math.min(
@@ -524,9 +667,9 @@ export default function CellDataReader({
     );
     context.fillStyle = rgba(HUD_COLORS.ink, MAP_VIEWPORT_ALPHA);
     context.fillRect(0, top, width, bottom - top);
-    // Its edges are drawn as fills rather than as a stroke: one primitive
-    // fewer to depend on, and a hairline that lands on the pixel it is asked
-    // for instead of half on either side of it.
+    // Its edges are drawn as fills rather than as a stroke: the repo's jsdom
+    // 2D stub carries no `strokeRect` at all, and a fill also lands the
+    // hairline on the pixel it is asked for instead of half on either side.
     const hair = Math.max(1, Math.round(ratio));
     context.fillStyle = rgba(HUD_COLORS.ink, MAP_VIEWPORT_EDGE_ALPHA);
     context.fillRect(0, top, width, hair);
@@ -543,141 +686,68 @@ export default function CellDataReader({
     viewHeight,
   ]);
 
-  const onMapClick = (event: ReactMouseEvent<HTMLCanvasElement>) => {
-    // `offsetY` over the height this component ASKED for, never the height a
-    // layout pass reports: the same rule the virtualiser lives by.
-    const fraction = Math.max(0, Math.min(1, event.nativeEvent.offsetY / viewHeight));
-    scrollDumpTo(fraction * rowCount * rowHeight - viewHeight / 2);
+  /** Where on the payload the pointer is, over the height this component ASKED
+   *  for rather than the height a layout pass reports — the same rule the
+   *  virtualiser lives by, and the only form of it jsdom can drive. */
+  const scrollFromPointer = useCallback(
+    (event: ReactPointerEvent<HTMLCanvasElement>) => {
+      const top = event.currentTarget.getBoundingClientRect().top;
+      const fraction = Math.max(
+        0,
+        Math.min(1, (event.clientY - top) / Math.max(1, viewHeight)),
+      );
+      scrollDumpTo(fraction * rowCount * rowHeight - viewHeight / 2);
+    },
+    [rowCount, rowHeight, scrollDumpTo, viewHeight],
+  );
+
+  const onMapPointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    draggingMap.current = true;
+    // Capture, so a drag that leaves the 8 px strip keeps scrolling instead of
+    // stopping the moment the pointer wanders — which on a strip this narrow
+    // is immediately. Guarded: jsdom and an older browser may not have it, and
+    // the drag still works without it while the pointer stays on the strip.
+    try { event.currentTarget.setPointerCapture?.(event.pointerId); } catch { /* no capture */ }
+    scrollFromPointer(event);
   };
 
-  // ——— Commands ————————————————————————————————————————————————————————
+  const onMapPointerMove = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (!draggingMap.current) return;
+    scrollFromPointer(event);
+  };
 
-  const copy = async (text: string, said: string) => {
+  const endMapDrag = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    draggingMap.current = false;
+    try { event.currentTarget.releasePointerCapture?.(event.pointerId); } catch { /* none held */ }
+  };
+
+  // ——— COPY ————————————————————————————————————————————————————————————
+
+  const onCopy = async () => {
+    const [from, to] = selection === null
+      ? [0, bytes.length]
+      : [selection.start, Math.min(selection.end, bytes.length)];
+    let said: 'COPIED' | 'BLOCKED' = 'COPIED';
     try {
-      await navigator.clipboard.writeText(text);
-      say(said, false);
+      await navigator.clipboard.writeText(hexRun(bytes, from, to));
     } catch {
       // Headless browsers, insecure origins and a permission the reader never
-      // granted all land here. A command that cannot be carried out says so;
-      // it never throws under a card.
-      say('CLIPBOARD BLOCKED HERE', true);
+      // granted all land here. A command that cannot be carried out says so on
+      // its own face; it never throws under a card, and it never grows a toast.
+      said = 'BLOCKED';
     }
+    if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+    setCopied(said);
+    copyTimer.current = window.setTimeout(() => setCopied(null), READER_COPY_MS);
   };
-
-  const onGotoKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (event.key !== 'Enter') return;
-    event.preventDefault();
-    const raw = gotoText.trim().replace(/^0x/i, '');
-    if (!/^[0-9a-f]+$/i.test(raw)) { say('HEX OFFSET, E.G. 0x1F0', true); return; }
-    const offset = Number.parseInt(raw, 16);
-    if (!Number.isInteger(offset) || offset >= totalBytes) {
-      say(`BEYOND ${formatReaderInteger(totalBytes)} B`, true);
-      return;
-    }
-    setSelection(caretAt(offset));
-    scrollRowToTop(Math.floor(offset / READER_BYTES_PER_ROW));
-  };
-
-  // ——— The status line ——————————————————————————————————————————————————
-
-  const numberInk: CSSProperties = { color: HUD_COLORS.ink };
-  const hashTitle = [
-    dataHash,
-    live === null ? null : live
-      ? 'READ FROM THE LIVE CELL'
-      : 'READ FROM THE TRANSACTION THAT CREATED IT',
-  ].filter((part): part is string => part !== null).join(' · ');
-
-  let stateLine: ReactNode;
-  if (phase === 'error') {
-    // Not `danger`. A node that could not be asked is a fact about the scope
-    // of our knowledge, not a condition of the Cell — the same ruling the
-    // window's own byte count already carries.
-    stateLine = <span>{message ?? 'NO BYTES FROM THE NODE'}</span>;
-  } else if (phase === 'loading') {
-    stateLine = (
-      <span>
-        READING <span style={numberInk}>{formatReaderInteger(totalBytes)} B</span>
-        {' FROM NODE · '}
-        <span style={numberInk}>{formatReaderInteger(heldBytes)} B</span> HELD
-      </span>
-    );
-  } else {
-    stateLine = (
-      <span title={hashTitle.length > 0 ? hashTitle : undefined}>
-        <span style={numberInk}>{formatReaderInteger(totalBytes)} B</span>
-        {' · '}
-        {/* The one word here that is a state rather than a reading: the
-            payload on screen IS the payload. */}
-        <span style={{ color: HUD_COLORS.nominal }}>COMPLETE</span>
-        {phase === 'ready' && dataHash
-          ? <>{' · NODE · '}{dataHash.slice(0, READER_HASH_HEAD)}…</>
-          : ' · HELD'}
-      </span>
-    );
-  }
-
-  // ——— The inspector strip —————————————————————————————————————————————
-
-  const inspection = selection === null
-    ? null
-    : inspectSelection(bytes, selection.start, selection.end, segmentIndex);
-  const readings: { key: string; value: string; color: string; title?: string }[] = [];
-  if (inspection !== null && selection !== null) {
-    readings.push({
-      key: 'OFF',
-      value: `0x${formatReaderOffset(selection.start)}`,
-      color: HUD_COLORS.goldInk,
-    });
-    readings.push({
-      key: 'LEN',
-      value: `${formatReaderInteger(selection.end - selection.start)} B`,
-      color: HUD_COLORS.goldInk,
-    });
-    if (inspection.segment !== null) {
-      readings.push({
-        key: 'SEG',
-        value: readableKind(segments[inspection.segment]?.label ?? ''),
-        color: segmentColor(inspection.segment),
-      });
-    }
-    const fixed: [string, number | bigint | undefined][] = [
-      ['u8', inspection.u8],
-      ['u16 LE', inspection.u16],
-      ['u32 LE', inspection.u32],
-      ['u64 LE', inspection.u64],
-      ['u128 LE', inspection.u128],
-    ];
-    for (const [name, value] of fixed) {
-      if (value === undefined) continue;
-      readings.push({
-        key: name,
-        value: formatReaderInteger(value),
-        color: HUD_COLORS.goldInk,
-      });
-    }
-    if (inspection.range !== undefined) {
-      readings.push({
-        key: `u${inspection.length * 8} LE`,
-        value: formatReaderInteger(inspection.range),
-        color: HUD_COLORS.goldInk,
-      });
-    }
-    readings.push({
-      key: 'UTF-8',
-      value: inspection.utf8,
-      color: HUD_COLORS.ink,
-      title: inspection.utf8,
-    });
-  }
 
   // ——— The dump ————————————————————————————————————————————————————————
 
-  const rows: ReactNode[] = [];
+  const rows = [];
   for (let row = firstRow; row < lastRow; row += 1) {
     const start = row * READER_BYTES_PER_ROW;
-    const hex: ReactNode[] = [];
-    const ascii: ReactNode[] = [];
+    const hex = [];
+    const ascii = [];
     for (let column = 0; column < READER_BYTES_PER_ROW; column += 1) {
       const index = start + column;
       // The last row of a payload that is not a multiple of sixteen: the
@@ -787,7 +857,7 @@ export default function CellDataReader({
           whiteSpace: 'pre',
         }}
       >
-        <span style={{ width: '6ch', color: HUD_COLORS.dim }}>
+        <span style={{ width: '5ch', color: HUD_COLORS.dim }}>
           {formatReaderOffset(start)}
         </span>
         <span style={{ display: 'flex', marginLeft: '2ch' }}>{hex}</span>
@@ -795,10 +865,6 @@ export default function CellDataReader({
       </div>,
     );
   }
-
-  const heldFraction = totalBytes > 0
-    ? Math.max(0, Math.min(1, heldBytes / totalBytes))
-    : 1;
 
   return (
     <div
@@ -810,68 +876,56 @@ export default function CellDataReader({
       data-cell-data-reader-selection={selection === null
         ? undefined
         : `${selection.start}:${selection.end}`}
-      style={{ minWidth: 0, color: HUD_COLORS.ink, fontFamily: HUD_FONTS.mono }}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        minWidth: 0,
+        minHeight: 0,
+        color: HUD_COLORS.ink,
+        fontFamily: HUD_FONTS.mono,
+      }}
     >
       <SpatialPlateHeader
-        en="DATA READER"
+        en="CKBYTES"
         cjk="字节元"
         accent={HUD_COLORS.cyanWire}
         titleColor={HUD_COLORS.cyanInk}
+        marginBottom={6}
         status={(
-          <span
-            data-cell-data-reader-state="true"
-            style={{
-              display: 'inline-flex',
-              alignItems: 'baseline',
-              gap: 6,
-              minWidth: 0,
-              whiteSpace: 'nowrap',
-              fontFamily: HUD_FONTS.mono,
-              fontSize: HUD_TYPE.micro,
-              letterSpacing: 0.6,
-              color: HUD_COLORS.dim,
-            }}
+          <span style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            minWidth: 0,
+            whiteSpace: 'nowrap',
+          }}
           >
-            {stateLine}
+            {/* The only command left. What it copies follows what is selected,
+                so it needs no second button to say which. */}
+            <button
+              type="button"
+              data-cell-data-reader-copy="true"
+              onClick={() => void onCopy()}
+              style={commandButtonStyle()}
+            >
+              {copied ?? 'COPY'}
+            </button>
             {moduleTag('SCAN·03')}
-            {/* Anchored to the plate the panel wraps around this content, the
-                way every other card's close is anchored to its own plate. */}
-            <CloseButton onClose={onClose} title="Close the reader" />
           </span>
         )}
       />
 
-      {phase === 'loading' ? (
-        <div
-          data-cell-data-reader-bar="true"
-          style={{ height: 2, marginBottom: 5, background: HUD_COLORS.trackGround }}
-        >
-          {/* How much of the payload is in hand — a measured fraction rather
-              than an indeterminate sweep, because a bar that fills on a timer
-              says something about the node nobody measured. It moves once,
-              when the answer lands, and not at all under reduced motion. */}
-          <span
-            style={{
-              display: 'block',
-              height: '100%',
-              width: `${heldFraction * 100}%`,
-              background: HUD_COLORS.cyanWire,
-              transition: reduced ? undefined : 'width 260ms ease',
-            }}
-          />
-        </div>
-      ) : null}
-
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'auto minmax(0,1fr)',
-        columnGap: 12,
+        gridTemplateColumns: `minmax(0,1fr) ${READER_MAP_WIDTH_PX}px`,
+        columnGap: 6,
         alignItems: 'start',
         minWidth: 0,
       }}
       >
         <div
           ref={dumpRef}
+          className={READER_DUMP_CLASS}
           data-cell-data-reader-dump="true"
           aria-label="Cell output data, sixteen bytes to a row"
           tabIndex={0}
@@ -886,18 +940,13 @@ export default function CellDataReader({
           onMouseOver={(event) => {
             const index = byteFromEvent(event.target);
             if (index === null) return;
-            // Written straight to the node rather than through state: a hover
-            // that re-rendered forty rows of the dump would spend a frame per
-            // byte the pointer crossed, and React never touches a `title` it
-            // was not given.
-            const owner = segmentIndex[index] ?? -1;
-            const named = owner === -1
-              ? ''
-              : ` · ${readableKind(segments[owner]?.label ?? '')}`;
-            const dump = dumpRef.current;
-            if (dump) {
-              dump.title = `0x${formatReaderOffset(index)} · byte ${formatReaderInteger(index)}${named}`;
-            }
+            hoverRef.current = index;
+            paintFoot();
+          }}
+          onMouseLeave={() => {
+            if (hoverRef.current === null) return;
+            hoverRef.current = null;
+            paintFoot();
           }}
           style={{
             position: 'relative',
@@ -906,8 +955,8 @@ export default function CellDataReader({
             paddingRight: 8,
             overflowY: 'auto',
             overflowX: 'hidden',
-            // A wheel that runs out of dump stops there. The trace plate's
-            // ledger sits under this row and would otherwise take the rest.
+            // A wheel that runs out of dump stops there rather than taking the
+            // scene's camera with it.
             overscrollBehavior: 'contain',
             border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.12)}`,
             background: rgba(HUD_COLORS.stageGround, 0.38),
@@ -917,299 +966,51 @@ export default function CellDataReader({
             lineHeight: 1.5,
           }}
         >
-          {/* The spacer carries the whole payload's height, so the scrollbar
-              tells the truth about a 37 KB Cell while forty rows exist. */}
+          {/* The spacer carries the whole payload's height, so the map beside
+              it tells the truth about a 37 KB Cell while forty rows exist. */}
           <div style={{ position: 'relative', height: rowCount * rowHeight }}>
             {rows}
           </div>
         </div>
 
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: `${READER_MAP_WIDTH_PX}px minmax(0,1fr)`,
-          columnGap: 10,
-          alignItems: 'start',
-          minWidth: 0,
-        }}
-        >
-          <canvas
-            ref={mapRef}
-            data-cell-data-reader-map="true"
-            aria-hidden="true"
-            onClick={onMapClick}
-            style={{
-              display: 'block',
-              width: READER_MAP_WIDTH_PX,
-              height: viewHeight,
-              background: HUD_COLORS.trackGround,
-              cursor: 'pointer',
-            }}
-          />
-
-          <div style={{ minWidth: 0 }}>
-            {segments.length > 0 ? (
-              <div style={{ display: 'grid', gap: 2, minWidth: 0 }}>
-                <div style={{
-                  marginBottom: 2,
-                  fontFamily: HUD_FONTS.tech,
-                  fontSize: HUD_TYPE.micro,
-                  letterSpacing: 1.4,
-                  color: HUD_COLORS.dim,
-                }}
-                >
-                  SEGMENTS · {formatReaderInteger(segments.length)}
-                </div>
-                {segments.map((segment, index) => (
-                  <button
-                    key={`${segment.label}:${segment.start_byte}:${index}`}
-                    type="button"
-                    data-cell-data-reader-segment={index}
-                    aria-pressed={activeSegment === index}
-                    title={segment.meaning}
-                    onClick={() => selectSegment(index)}
-                    style={segmentButtonStyle(activeSegment === index)}
-                  >
-                    <span
-                      aria-hidden="true"
-                      style={{
-                        width: 6,
-                        height: 6,
-                        marginTop: 1,
-                        background: segmentColor(index),
-                      }}
-                    />
-                    <span style={{
-                      minWidth: 0,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                      color: activeSegment === index
-                        ? HUD_COLORS.ink
-                        : HUD_COLORS.cyanInk,
-                    }}
-                    >
-                      {readableKind(segment.label)}
-                    </span>
-                    <span style={{
-                      whiteSpace: 'nowrap',
-                      fontSize: HUD_TYPE.micro,
-                      color: HUD_COLORS.dim,
-                    }}
-                    >
-                      [{segment.start_byte}..{segment.end_byte}) ·{' '}
-                      {formatReaderInteger(segment.end_byte - segment.start_byte)} B
-                    </span>
-                    <span
-                      title={segment.value}
-                      style={{
-                        gridColumn: '2 / 4',
-                        minWidth: 0,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                        fontSize: HUD_TYPE.micro,
-                        color: HUD_COLORS.dim,
-                      }}
-                    >
-                      {segment.value}
-                    </span>
-                  </button>
-                ))}
-                {unmappedBytes > 0 ? (
-                  <div
-                    data-cell-data-reader-unmapped={unmappedBytes}
-                    style={{
-                      marginTop: 4,
-                      fontSize: HUD_TYPE.micro,
-                      letterSpacing: 0.6,
-                      color: HUD_COLORS.dim,
-                    }}
-                  >
-                    UNMAPPED · {formatReaderInteger(unmappedBytes)} B in ink
-                  </div>
-                ) : null}
-              </div>
-            ) : (
-              <div
-                data-cell-data-reader-no-segments="true"
-                style={{
-                  fontSize: HUD_TYPE.micro,
-                  letterSpacing: 0.6,
-                  color: HUD_COLORS.dim,
-                }}
-              >
-                NO DECODED SEGMENTS
-              </div>
-            )}
-
-            {decode ? (
-              <div
-                data-cell-data-reader-reads="true"
-                style={{
-                  marginTop: 6,
-                  paddingTop: 5,
-                  borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.16)}`,
-                  fontSize: HUD_TYPE.micro,
-                  letterSpacing: 0.6,
-                  lineHeight: 1.45,
-                  color: HUD_COLORS.dim,
-                  minWidth: 0,
-                }}
-              >
-                READS AS{' '}
-                <span style={{ color: HUD_COLORS.nominal }}>
-                  {readableKind(decode.kind)}
-                </span>
-                <span style={{
-                  display: 'block',
-                  marginTop: 2,
-                  fontSize: HUD_TYPE.label,
-                  letterSpacing: 0,
-                  color: HUD_COLORS.ink,
-                  overflowWrap: 'anywhere',
-                }}
-                >
-                  {decode.summary}
-                </span>
-              </div>
-            ) : null}
-          </div>
-        </div>
-      </div>
-
-      <div
-        data-cell-data-reader-inspect="true"
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          alignItems: 'baseline',
-          gap: '3px 14px',
-          marginTop: 7,
-          paddingTop: 5,
-          borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.16)}`,
-          fontSize: HUD_TYPE.label,
-          minWidth: 0,
-        }}
-      >
-        {readings.length === 0 ? (
-          <span style={{
-            fontSize: HUD_TYPE.micro,
-            letterSpacing: 0.6,
-            color: HUD_COLORS.dim,
+        <canvas
+          ref={mapRef}
+          data-cell-data-reader-map="true"
+          aria-hidden="true"
+          onPointerDown={onMapPointerDown}
+          onPointerMove={onMapPointerMove}
+          onPointerUp={endMapDrag}
+          onPointerCancel={endMapDrag}
+          style={{
+            display: 'block',
+            width: READER_MAP_WIDTH_PX,
+            height: viewHeight,
+            background: HUD_COLORS.trackGround,
+            cursor: 'pointer',
+            touchAction: 'none',
           }}
-          >
-            SELECT A BYTE, A RANGE OR A SEGMENT · THE STRIP READS THE SELECTION
-            AS INTEGERS AND TEXT
-          </span>
-        ) : readings.map((reading) => (
-          <span key={reading.key} style={{ minWidth: 0, whiteSpace: 'nowrap' }}>
-            <span style={inspectKeyStyle}>{reading.key}</span>
-            <span
-              title={reading.title}
-              style={{
-                display: 'inline-block',
-                maxWidth: reading.key === 'UTF-8'
-                  ? `${READER_UTF8_COLUMNS}ch`
-                  : undefined,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                verticalAlign: 'bottom',
-                fontVariantNumeric: 'tabular-nums',
-                color: reading.color,
-              }}
-            >
-              {reading.value}
-            </span>
-          </span>
-        ))}
+        />
       </div>
 
+      {/* One line, and the whole of what the rail, the READS AS block and the
+          inspector strip used to say between them. Its children are written by
+          `paintFoot` and never by React — see the comment over it. */}
       <div
-        data-cell-data-reader-commands="true"
+        ref={footRef}
+        data-cell-data-reader-foot="true"
         style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          alignItems: 'center',
-          gap: '6px 10px',
-          marginTop: 7,
+          height: 16,
+          marginTop: 4,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          fontFamily: HUD_FONTS.mono,
           fontSize: HUD_TYPE.micro,
           letterSpacing: 0.6,
+          lineHeight: '16px',
           color: HUD_COLORS.dim,
         }}
-      >
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-          <span style={{
-            fontFamily: HUD_FONTS.tech,
-            fontSize: HUD_TYPE.micro,
-            letterSpacing: 1.4,
-          }}
-          >
-            GO TO
-          </span>
-          <input
-            data-cell-data-reader-goto="true"
-            aria-label="go to byte offset (hex)"
-            value={gotoText}
-            onChange={(event) => setGotoText(event.target.value)}
-            onKeyDown={onGotoKeyDown}
-            style={{
-              width: '8ch',
-              margin: 0,
-              padding: '2px 4px',
-              border: `1px solid ${rgba(HUD_COLORS.dim, 0.3)}`,
-              background: HUD_COLORS.trackGround,
-              color: HUD_COLORS.ink,
-              fontFamily: HUD_FONTS.mono,
-              fontSize: HUD_TYPE.label,
-              letterSpacing: 0.35,
-            }}
-          />
-        </span>
-        <button
-          type="button"
-          data-cell-data-reader-copy="hex"
-          onClick={() => void copy(
-            hexRun(bytes, 0, bytes.length),
-            `COPIED ${formatReaderInteger(bytes.length)} B`,
-          )}
-          style={commandButtonStyle()}
-        >
-          COPY HEX
-        </button>
-        <button
-          type="button"
-          data-cell-data-reader-copy="selection"
-          onClick={() => {
-            if (selection === null) { say('NOTHING SELECTED', true); return; }
-            void copy(
-              hexRun(bytes, selection.start, selection.end),
-              `COPIED ${formatReaderInteger(selection.end - selection.start)} B`,
-            );
-          }}
-          style={commandButtonStyle()}
-        >
-          COPY SEL
-        </button>
-        {toast ? (
-          <span
-            data-cell-data-reader-toast="true"
-            style={{ color: toast.bad ? HUD_COLORS.caution : HUD_COLORS.nominal }}
-          >
-            {toast.text}
-          </span>
-        ) : null}
-        {/* In words. `↑` is carried by no face the HUD ships or could ship —
-            the JetBrains Mono subset has `← → ↓ ↗` and nothing above them —
-            so an arrow legend would be four glyphs resolving out of whatever
-            the reader's machine happened to have. */}
-        <span
-          data-cell-data-reader-keys="true"
-          style={{ marginLeft: 'auto', whiteSpace: 'nowrap' }}
-        >
-          ARROWS MOVE · SHIFT EXTENDS · PGUP PGDN · HOME END
-        </span>
-      </div>
+      />
     </div>
   );
 }

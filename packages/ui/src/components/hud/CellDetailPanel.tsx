@@ -2404,26 +2404,26 @@ function CellDetailPanel({
             }}
           >
             <CellDataReader
-              cell={cell}
+              // ⚠️ One reader per Cell, said where React can act on it. The
+              // reader used to take the whole `Cell` and clear its selection
+              // and its scroll in an effect on `cell.id`; it no longer takes
+              // the Cell at all, so the identity has to arrive as a key —
+              // which also resets the scroll, the caret and the COPY label,
+              // and cannot forget a piece of state the effect never named.
+              key={cell.id}
               // The record's own segments, and only a validated record's: the
-              // reader colours bytes by them and lists them as its table of
-              // contents, so a record this card has already refused to present
+              // reader colours bytes by them and names the one under the
+              // pointer, so a record this card has already refused to present
               // may not label a single byte in it either.
               segments={presentedSemanticRecord?.content?.deterministic
                 ?.segments ?? []}
-              decode={presentedSemanticRecord?.content?.deterministic
-                ? {
-                  kind: presentedSemanticRecord.content.deterministic.kind,
-                  summary: presentedSemanticRecord.content.deterministic
-                    .summary,
-                }
-                : null}
               {...outputData}
               totalBytes={cell.data_bytes}
-              openAtByte={readerRequest.atByte}
               visibleRows={readerRows}
-              reduced={reduced}
-              onClose={closeReader}
+              // The DATA cluster does not point at a segment yet: its rows and
+              // the state that links them to the reader arrive in R2-b, and
+              // until they do nothing sends the reader anywhere.
+              focus={null}
             />
           </section>
       ) : null}

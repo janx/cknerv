@@ -7,6 +7,7 @@ import {
   READER_BESIDE_MAX_ROWS,
   READER_BYTES_PER_ROW,
   READER_CARD_MARGIN_PX,
+  READER_MAX_VISIBLE_ROWS,
   READER_MIN_VISIBLE_ROWS,
   READER_OVERSCAN_ROWS,
   READER_VIEWPORT_ALLOWANCE_PX,
@@ -22,6 +23,7 @@ import {
   readerKeyStep,
   readerPlacement,
   readerRowWindow,
+  readerRowsUnderScan,
   segmentColorSlots,
   segmentLabelHash,
 } from '../../src/derives/cellDataReader.derive';
@@ -144,17 +146,19 @@ function leBytes(value: bigint, width: number): number[] {
 }
 
 describe('the offset gutter', () => {
-  it('is six upper-case hex digits wide at every offset a Cell can reach', () => {
-    expect(formatReaderOffset(0)).toBe('000000');
-    expect(formatReaderOffset(READER_BYTES_PER_ROW * 10)).toBe('0000A0');
-    expect(formatReaderOffset(0x91c0)).toBe('0091C0');
-    expect(formatReaderOffset(SPORE_37K_BYTES - 1)).toBe('0091C1');
+  it('is five upper-case hex digits wide at every offset a Cell can reach', () => {
+    expect(formatReaderOffset(0)).toBe('00000');
+    expect(formatReaderOffset(READER_BYTES_PER_ROW * 10)).toBe('000A0');
+    expect(formatReaderOffset(0x91c0)).toBe('091C0');
+    expect(formatReaderOffset(SPORE_37K_BYTES - 1)).toBe('091C1');
 
-    // The width is the point: every row's offset has to sit in the same
-    // columns as the row above it, or the dump shifts sideways mid-scroll.
-    const widths = new Set([0, 1, 4095, 0x91c0, 0xffffff]
+    // Five digits reach 0xFFFFF — a mebibyte — and CKB's block limit keeps
+    // every payload far under it, so the gutter never has to grow. The width
+    // is the point: every row's offset has to sit in the same columns as the
+    // row above it, or the dump shifts sideways mid-scroll.
+    const widths = new Set([0, 1, 4095, 0x91c0, 0xfffff]
       .map((offset) => formatReaderOffset(offset).length));
-    expect([...widths]).toEqual([6]);
+    expect([...widths]).toEqual([5]);
   });
 });
 
@@ -340,66 +344,63 @@ describe('one byte, in the two columns a dump prints it in', () => {
   });
 });
 
-describe('the inspector strip', () => {
+describe('the selection, read as one number and as text', () => {
   it('reads a UDT amount as the little-endian u128 the standard writes', () => {
     const amount = bytes(...leBytes(1000n, 16));
     const reading = inspectSelection(amount, 0, 16, buildSegmentIndex(XUDT_89, 16));
 
     expect(amount[0]).toBe(0xe8);
     expect(amount[1]).toBe(0x03);
-    expect(reading.u128).toBe(1000n);
-    expect(formatReaderInteger(reading.u128 ?? 0n)).toBe('1,000');
+    expect(reading.integer).toBe(1000n);
+    expect(formatReaderInteger(reading.integer ?? 0n)).toBe('1,000');
     expect(reading.offset).toBe(0);
     expect(reading.length).toBe(16);
     expect(reading.segment).toBe(0);
-
-    // A 16-byte selection IS a fixed width, so the strip does not print the
-    // same number twice under two names.
-    expect(reading.range).toBeUndefined();
   });
 
   it('reads a DAO cell as the u64 its eight bytes are', () => {
     const dao = bytes(...leBytes(12_345_678n, 8));
     const reading = inspectSelection(dao, 0, 8, buildSegmentIndex(DAO_8, 8));
 
-    expect(reading.u64).toBe(12_345_678n);
-    expect(reading.u32).toBe(12_345_678);
-    expect(reading.u8).toBe(0x4e);
-    // Eight bytes is all there is: a u128 would read past the Cell.
-    expect(reading.u128).toBeUndefined();
-    expect(reading.range).toBeUndefined();
+    // Eight bytes selected is a u64 asked for, and the ONE number it gets is
+    // that one. The u8, u16 and u32 that used to be printed beside it read the
+    // same offset at widths nobody chose (R2-3).
+    expect(reading.integer).toBe(12_345_678n);
+    expect(reading.length).toBe(8);
     expect(reading.segment).toBe(0);
   });
 
-  it('reads the fixed widths at the caret whatever the selection is', () => {
-    // What a data inspector is. A reader who puts the caret on byte 0 of an
-    // xUDT Cell wants the u128 there; making them select exactly sixteen bytes
-    // first would turn the strip into a calculator.
+  it('follows the width the reader selected, not a fixed ladder', () => {
+    // The whole of R2-3 in three lines: the same bytes, three selections,
+    // three different numbers — each one the width that was asked for.
     const amount = bytes(...leBytes(2_544_240_236_569n, 16));
-    const caret = inspectSelection(amount, 0, 1, buildSegmentIndex(XUDT_89, 16));
+    const index = buildSegmentIndex(XUDT_89, 16);
 
-    expect(caret.length).toBe(1);
-    expect(caret.u8).toBe(0x19);
-    expect(caret.u128).toBe(2_544_240_236_569n);
-    expect(formatReaderInteger(caret.u128 ?? 0n)).toBe('2,544,240,236,569');
+    expect(inspectSelection(amount, 0, 1, index).integer).toBe(0x19n);
+    expect(inspectSelection(amount, 0, 4, index).integer).toBe(0x6089_1819n);
+    expect(inspectSelection(amount, 0, 16, index).integer)
+      .toBe(2_544_240_236_569n);
+    expect(formatReaderInteger(inspectSelection(amount, 0, 16, index).integer ?? 0n))
+      .toBe('2,544,240,236,569');
   });
 
-  it('reads a width the fixed sizes do not cover as the range it is', () => {
+  it('reads a width no fixed size covers, because there are no fixed sizes', () => {
     const nine = bytes(1, 2, 3, 4, 5, 6, 7, 8, 9);
     const reading = inspectSelection(nine, 0, 9, new Int16Array(9).fill(-1));
 
     expect(reading.length).toBe(9);
-    expect(reading.range).toBe(166_599_134_359_138_271_745n);
+    expect(reading.integer).toBe(166_599_134_359_138_271_745n);
     expect(reading.segment).toBeNull();
-    // Nine bytes hold a u8/u16/u32/u64 at the caret, but not a u128.
-    expect(reading.u64).toBe(578_437_695_752_307_201n);
-    expect(reading.u128).toBeUndefined();
+  });
 
-    // …and a width that IS fixed gets no second reading.
-    expect(inspectSelection(nine, 0, 4, new Int16Array(9).fill(-1)).range)
-      .toBeUndefined();
-    expect(inspectSelection(nine, 0, 8, new Int16Array(9).fill(-1)).range)
-      .toBeUndefined();
+  it('stops reading a selection as a number past sixteen bytes', () => {
+    // u128 is the widest number CKB writes anywhere, and a spore's `content`
+    // is not an integer however hard the arithmetic tries.
+    const long = bytes(...new Array<number>(17).fill(0xff));
+    expect(inspectSelection(long, 0, 16, new Int16Array(17).fill(-1)).integer)
+      .toBe((1n << 128n) - 1n);
+    expect(inspectSelection(long, 0, 17, new Int16Array(17).fill(-1)).integer)
+      .toBeNull();
   });
 
   it('shows text as text, and everything that is not text as one mark', () => {
@@ -426,16 +427,18 @@ describe('the inspector strip', () => {
 
   it('says nothing it cannot read off the bytes it was handed', () => {
     const two = bytes(0x01, 0x02);
-    const reading = inspectSelection(two, 0, 2, new Int16Array(2).fill(-1));
+    // A selection wider than the payload is clamped to the payload, so what
+    // comes back is the two bytes there are rather than a read past the end.
+    expect(inspectSelection(two, 0, 8, new Int16Array(2).fill(-1)).length).toBe(2);
+    expect(inspectSelection(two, 0, 8, new Int16Array(2).fill(-1)).integer)
+      .toBe(0x0201n);
 
-    expect(reading.u8).toBe(1);
-    expect(reading.u16).toBe(0x0201);
-    expect(reading.u32).toBeUndefined();
-    expect(reading.u64).toBeUndefined();
-    expect(reading.u128).toBeUndefined();
-
+    // Zero bytes are not the number zero: `LE 0` is a value some Cell really
+    // holds, and a caret with nothing under it has not read one.
     const empty = inspectSelection(new Uint8Array(0), 0, 0, new Int16Array(0));
-    expect(empty).toEqual({ offset: 0, length: 0, segment: null, utf8: '' });
+    expect(empty).toEqual({
+      offset: 0, length: 0, segment: null, integer: null, utf8: '',
+    });
   });
 });
 
@@ -551,19 +554,92 @@ describe('the integers the strip prints', () => {
   });
 });
 
-// ——— Where the reader stands, and how tall it is ————————————————————————
+// ——— How tall the reader is ——————————————————————————————————————————————
 //
 // M5 (2026-09-04) measured the reader as a full-width row under the card and
 // found the card 1,348 px tall in the app's own 1600×1100 window: the analysis
 // plate of a full spore dossier is ~910 px on its own, so the row began at the
-// fold, most of it sat below it, and nothing on the page scrolls. The user
-// ruled on 2026-09-05 that the reader stands BESIDE the plate and is as tall
-// as it, and that the row survives only for windows too narrow for the column.
-// These are the two numbers that ruling turns into.
+// fold, most of it sat below it, and nothing on the page scrolls. M4c stood it
+// beside the plate instead. The user's ruling of 2026-09-05 moves it again and
+// for good: it stands UNDER the 280 px CELL SCAN square, always, and its bottom
+// is the plate's bottom — so the dump is what the plate leaves after the square
+// and the reader's own chrome.
 
-/** The plate M5 measured, and the one every beside number here is taken
- *  against. */
+/** The plate M5 measured, and the one every number here is taken against. */
 const SPORE_PLATE_PX = 910;
+
+/** The square and the seam over the reader, which the PANEL hands in
+ *  (`PORTRAIT_COLUMN_PX + CARD_SEAM_PX`). Restated here rather than imported
+ *  because importing the 2,400-line card into a derive's test to borrow two
+ *  integers is what the derive itself refuses to do. */
+const ABOVE_READER_PX = 288;
+
+describe('readerRowsUnderScan', () => {
+  it('gives the dump what the plate leaves under the square', () => {
+    // The ruling as arithmetic. Everything above the reader belongs to the
+    // specimen square; everything the reader is not a row of bytes is its
+    // chrome; the rest is dump, and the reader can never be taller than the
+    // plate beside it.
+    const rows = readerRowsUnderScan(
+      SPORE_PLATE_PX,
+      ABOVE_READER_PX,
+      READER_CHROME_PX,
+      READER_ROW_HEIGHT_PX,
+    );
+    expect(rows).toBe(Math.floor(
+      (SPORE_PLATE_PX - ABOVE_READER_PX - READER_CHROME_PX) / READER_ROW_HEIGHT_PX,
+    ));
+    expect(ABOVE_READER_PX + READER_CHROME_PX + rows * READER_ROW_HEIGHT_PX)
+      .toBeLessThanOrEqual(SPORE_PLATE_PX);
+  });
+
+  it('reads the three dossiers the plan measured', () => {
+    // A spore's plate with its segment rows, an identity dossier, and a bare
+    // CKB-only card. R2-c measures all three live; these are the arithmetic
+    // those measurements will be checked against.
+    const rowsAt = (plate: number) => readerRowsUnderScan(
+      plate,
+      ABOVE_READER_PX,
+      READER_CHROME_PX,
+      READER_ROW_HEIGHT_PX,
+    );
+    expect(rowsAt(905)).toBe(41);
+    expect(rowsAt(800)).toBe(33);
+    expect(rowsAt(470)).toBe(8);
+    // Every row is sixteen bytes, which is the number a reader actually cares
+    // about: a spore dossier stands 656 B of payload at once.
+    expect(rowsAt(905) * READER_BYTES_PER_ROW).toBe(656);
+  });
+
+  it('answers an unmeasured plate with the declared count, not with the floor', () => {
+    // Zero is "nobody has laid this out yet" — the frame before the
+    // ResizeObserver's first callback, and every jsdom test — and not a plate
+    // of no height.
+    expect(rowsUnderScan(0)).toBe(READER_VISIBLE_ROWS);
+    expect(rowsUnderScan(Number.NaN)).toBe(READER_VISIBLE_ROWS);
+  });
+
+  it('keeps the floor under a short plate and the valve over a tall one', () => {
+    // Six rows is the user's R2-5 ruling: a bare card's plate leaves about
+    // 120 px, and a floor of eight over it would make the reader taller than
+    // the space it was given — the one thing this placement exists to prevent.
+    expect(rowsUnderScan(ABOVE_READER_PX + READER_CHROME_PX + 40))
+      .toBe(READER_MIN_VISIBLE_ROWS);
+    expect(READER_MIN_VISIBLE_ROWS).toBe(6);
+    expect(rowsUnderScan(4000)).toBe(READER_MAX_VISIBLE_ROWS);
+    expect(READER_MAX_VISIBLE_ROWS * READER_BYTES_PER_ROW).toBe(1024);
+  });
+});
+
+/** The reader's own rows against a plate, with the card's numbers fixed. */
+function rowsUnderScan(plateHeightPx: number): number {
+  return readerRowsUnderScan(
+    plateHeightPx,
+    ABOVE_READER_PX,
+    READER_CHROME_PX,
+    READER_ROW_HEIGHT_PX,
+  );
+}
 
 describe('readerPlacement', () => {
   it('gives the reader its own column exactly when the wider card fits', () => {
@@ -585,42 +661,19 @@ describe('readerPlacement', () => {
   });
 });
 
-describe('readerBesideRows', () => {
-  it('fills the measured plate and nothing more', () => {
-    // The whole ruling in one line: the dump is what the plate leaves after
-    // the reader's own chrome, so the reader can never be taller than the
-    // plate it stands beside and can never push the card past the fold.
-    const rows = readerBesideRows(
-      SPORE_PLATE_PX,
-      READER_CHROME_PX,
-      READER_ROW_HEIGHT_PX,
-    );
-    expect(rows).toBe(
-      Math.floor((SPORE_PLATE_PX - READER_CHROME_PX) / READER_ROW_HEIGHT_PX),
-    );
-    expect(READER_CHROME_PX + rows * READER_ROW_HEIGHT_PX)
-      .toBeLessThanOrEqual(SPORE_PLATE_PX);
-    // …and it is a real gain over the row: more than twice the 24 rows the old
-    // formula returned and could not show.
-    expect(rows).toBeGreaterThan(2 * READER_VISIBLE_ROWS);
-  });
-
-  it('answers an unmeasured plate with the declared count, not with the floor', () => {
-    // Zero is "nobody has laid this out yet" — the frame before the
-    // ResizeObserver's first callback, and every jsdom test — and not a plate
-    // of no height.
-    expect(readerBesideRows(0, READER_CHROME_PX, READER_ROW_HEIGHT_PX))
-      .toBe(READER_VISIBLE_ROWS);
-    expect(readerBesideRows(Number.NaN, READER_CHROME_PX, READER_ROW_HEIGHT_PX))
-      .toBe(READER_VISIBLE_ROWS);
-  });
-
-  it('keeps the floor under a short plate and the valve over a tall one', () => {
-    expect(readerBesideRows(200, READER_CHROME_PX, READER_ROW_HEIGHT_PX))
-      .toBe(READER_MIN_VISIBLE_ROWS);
-    expect(readerBesideRows(4000, READER_CHROME_PX, READER_ROW_HEIGHT_PX))
-      .toBe(READER_BESIDE_MAX_ROWS);
-    expect(READER_BESIDE_MAX_ROWS * READER_BYTES_PER_ROW).toBe(1024);
+describe('readerBesideRows (M4c, on its way out)', () => {
+  it('is the same arithmetic with nothing above the reader', () => {
+    // "Beside" meant the reader started at the plate's top edge instead of
+    // under a 288 px square, which is `readerRowsUnderScan` with `above` = 0.
+    // Stated as a delegation rather than as a second copy, so the floor, the
+    // ceiling and the unmeasured-plate answer cannot disagree between the
+    // placement that is leaving and the one arriving. R2-b takes the panel off
+    // this and the function goes with the call.
+    for (const plate of [0, Number.NaN, 200, SPORE_PLATE_PX, 4000]) {
+      expect(readerBesideRows(plate, READER_CHROME_PX, READER_ROW_HEIGHT_PX))
+        .toBe(readerRowsUnderScan(plate, 0, READER_CHROME_PX, READER_ROW_HEIGHT_PX));
+    }
+    expect(READER_BESIDE_MAX_ROWS).toBe(READER_MAX_VISIBLE_ROWS);
   });
 });
 
