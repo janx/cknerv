@@ -29,13 +29,21 @@
 import { describe, expect, it } from 'vitest';
 import {
   COHORT_DISC_IN,
+  COHORT_DISC_OUT_FAR,
   COHORT_HIT_RADIUS,
   COHORT_HORIZON,
+  COHORT_LENS_FAR_GLOW_R,
   COHORT_LINK_STOP_R,
+  COHORT_MASS_FLOOR,
   COHORT_SHADOW_RATIO,
   cohortShadowRadius,
 } from '../../src/materials/colonyLens';
-import { peerCloudHitRadius, PEER_CLOUD_SIGHTED_TONE } from '../../src/materials/peerNodeMaterial';
+import {
+  peerCloudHitRadius,
+  PEER_CLOUD_GHOST_TONE,
+  PEER_CLOUD_SIGHTED_DARK_TONE,
+  PEER_CLOUD_SIGHTED_TONE,
+} from '../../src/materials/peerNodeMaterial';
 import { COHORT_KEEP_OUT_R } from '../../src/derives/networkTopology.derive';
 
 describe('the four radii of a POW cohort, in the order the geometry puts them', () => {
@@ -99,5 +107,51 @@ describe('the four radii of a POW cohort, in the order the geometry puts them', 
     // rather than assumed anywhere.
     expect(COHORT_KEEP_OUT_R - COHORT_HIT_RADIUS - brightestSighted)
       .toBeCloseTo(0.4995, 4);
+  });
+
+  // ⭐⭐⭐ AND SINCE 2026-09-04 THE MASS IS PER COHORT, so every radius above is
+  // multiplied by a factor in [`COHORT_MASS_FLOOR`, 1] — every radius except
+  // the three the TOPOLOGY reads, which stay sized for the maximum. That split
+  // is what these two inequalities are about: the floor was chosen so the
+  // smallest mark the data can produce is still a mark, and the target it
+  // stands behind is still bigger than it.
+  it('⭐ keeps the smallest cohort a lesser peer and never a vanished one', () => {
+    // A floor cohort's arms still reach past the radius its own links stop at,
+    // so the mesh's lines end INSIDE its atmosphere rather than two units short
+    // of a mark with nothing around it.
+    expect(COHORT_DISC_OUT_FAR * COHORT_MASS_FLOOR).toBeCloseTo(6.3, 10);
+    expect(COHORT_DISC_OUT_FAR * COHORT_MASS_FLOOR)
+      .toBeGreaterThan(COHORT_LINK_STOP_R);
+
+    // ⭐⭐ THE NUCLEUS AGAINST THE PEER MESH'S OWN YARDSTICKS, which are world
+    // DIAMETERS. `exp(-t²)` falls to a tenth of its peak at t = 1.52, so the
+    // visible footprint is `2 · 1.52 · r · m` — 0.96 wu at the floor. It
+    // out-foots a ghost (0.65) and sits under a dark sighted peer (1.5): a
+    // lesser peer, which is what a cohort with 2 % of the week is.
+    const nucleus = (mass: number): number =>
+      2 * 1.52 * COHORT_LENS_FAR_GLOW_R * mass;
+    expect(nucleus(COHORT_MASS_FLOOR)).toBeCloseTo(0.958, 3);
+    expect(nucleus(COHORT_MASS_FLOOR)).toBeGreaterThan(PEER_CLOUD_GHOST_TONE.size);
+    expect(nucleus(COHORT_MASS_FLOOR))
+      .toBeLessThan(PEER_CLOUD_SIGHTED_DARK_TONE.size ?? 1.5);
+    // …and at full mass it is a sighted peer's own sprite, which is the size
+    // the far form was cut to on 2026-09-03.
+    expect(nucleus(1)).toBeCloseTo(2.13, 2);
+    expect(PEER_CLOUD_GHOST_TONE.size).toBe(0.65);
+
+    // ⚠️ THE TARGET IS NEVER SMALLER THAN THE IMAGE. `COHORT_HIT_RADIUS` does
+    // not fold — the topology does not know where the camera is, and a target
+    // that shrank with the week would move under the cursor as the ledger
+    // refreshed — so the hit sphere CONTAINS the smallest shadow the near form
+    // can draw (0.90 wu inside a 2.0 wu target) with room to spare.
+    const smallestShadow = cohortShadowRadius(COHORT_HORIZON) * COHORT_MASS_FLOOR;
+    expect(smallestShadow).toBeCloseTo(0.9, 2);
+    expect(smallestShadow).toBeLessThan(COHORT_HIT_RADIUS);
+    expect(COHORT_HIT_RADIUS).toBe(cohortShadowRadius(COHORT_HORIZON));
+    // …and the whole chain above is unchanged by the mass, because none of it
+    // reads one.
+    expect(COHORT_LINK_STOP_R).toBe(3);
+    expect(COHORT_MASS_FLOOR).toBeGreaterThan(0);
+    expect(COHORT_MASS_FLOOR).toBeLessThan(1);
   });
 });

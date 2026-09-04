@@ -128,8 +128,15 @@
 // is the quantity a rate wants. A ring that a reorg has just emptied therefore
 // stops making every cohort look equal.
 //
+// ⭐ THE MASS LANE, `aMass`, IS THE FOURTH — AND IT IS ALLOCATED BEFORE IT IS
+// WRITTEN. It carries the cohort's own size factor, which multiplies every
+// length in both of its programs; until the week is wired to it every slot
+// holds 1, which is the form this layer has always drawn. It is allocated NOW
+// rather than with its writer because a lane a geometry does not have reads as
+// ZERO in WebGL, and zero is a mark with no extent at all.
+//
 // ⚠️⚠️ THE TWO DRAWS DO NOT SHARE ONE LANE OBJECT, AND THAT IS NOT AN OVERSIGHT.
-// The lens is an InstancedMesh and reads ONE value per instance, so its three
+// The lens is an InstancedMesh and reads ONE value per instance, so its four
 // lanes are `InstancedBufferAttribute`s and the WRAPPER is what has to persist —
 // a second wrapper around the same array is a second GL buffer with the first
 // one orphaned. The motes are a `THREE.Points` draw with one vertex per MOTE, so
@@ -592,7 +599,7 @@ export default function ColonyCohorts({
   // mark would become a window onto a hole standing somewhere else.
   //
   // ⚠️ It is an `InstancedBufferGeometry` holding a unit plane's own buffers
-  // because the three lanes bound onto it are per-INSTANCE: the type is what
+  // because the four lanes bound onto it are per-INSTANCE: the type is what
   // says so, and `instanceCount` is written beside `mesh.count` below so the
   // `renderers/common` path — which reads the geometry's count in preference to
   // the mesh's — cannot find a different answer. The source plane is never
@@ -637,11 +644,11 @@ export default function ColonyCohorts({
   }), []);
   const capacity = Math.max(1, marks.length);
 
-  // The three per-cohort lanes, allocated once for a capacity and rewritten in
+  // The four per-cohort lanes, allocated once for a capacity and rewritten in
   // place. ⚠️ Wrapping data in a NEW InstancedBufferAttribute is what orphans
   // its GL buffer, and the share walk runs on every attributed block — so the
-  // WRAPPER is what has to persist, not just the array. Three wrappers, one per
-  // lane, and never one per draw: the wrapper is the identity three uploads by.
+  // WRAPPER is what has to persist, not just the array. Four wrappers, one per
+  // lane, and never one per draw: the wrapper is the identity four uploads by.
   //
   // ⚠️⚠️ `gulp` STARTS AT A FAR-NEGATIVE SENTINEL AND NEVER AT ZERO. The lane
   // holds the SIM SECOND of the block each cohort won, and the envelope is a
@@ -655,11 +662,24 @@ export default function ColonyCohorts({
   // than lossy: the slots behind the marks are not the ones that were written,
   // and a win belongs to a NODE ID and not to a slot. Re-laying live wins into
   // a rebuilt lane is the effect below, off `wonAtRef`.
+  //
+  // ⚠️⚠️ …AND `mass` STARTS AT ONE AND NEVER AT ZERO, for the mirror-image
+  // reason. The lane's magnitude multiplies EVERY length in both cohort
+  // programs, so a zero-filled lane is a colony of marks with no extent — and
+  // an attribute a geometry has never been given reads as zero in WebGL too.
+  // One is the mass of a cohort nothing has been said about, which is the
+  // picture this layer drew before the lane existed; the program floors
+  // `abs(aMass)` at `COHORT_MASS_GLSL_FLOOR` on top of that, so the two guards
+  // are independent.
   const lanes = useMemo(() => ({
     share: new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1),
     seed: new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1),
     gulp: new THREE.InstancedBufferAttribute(
       new Float32Array(capacity).fill(COHORT_NEVER_WON),
+      1,
+    ),
+    mass: new THREE.InstancedBufferAttribute(
+      new Float32Array(capacity).fill(1),
       1,
     ),
   }), [capacity]);
@@ -772,7 +792,7 @@ export default function ColonyCohorts({
     // lanes. The geometry outlives the InstancedMesh (a capacity change rebuilds
     // it through `args`), so it can still be holding the previous set.
     //
-    // ⭐ ONE GEOMETRY, SO "THE SAME OBJECT" IS STRUCTURAL. All three lanes are
+    // ⭐ ONE GEOMETRY, SO "THE SAME OBJECT" IS STRUCTURAL. All four lanes are
     // bound to the one quad the lens draws, and the object bound is the wrapper
     // the capacity memo built — never a fresh one around `lanes.<x>.array`,
     // which would be a second GL buffer with the first one orphaned.
@@ -784,6 +804,9 @@ export default function ColonyCohorts({
     }
     if (lensGeometry.getAttribute('aShare') !== lanes.share) {
       lensGeometry.setAttribute('aShare', lanes.share);
+    }
+    if (lensGeometry.getAttribute('aMass') !== lanes.mass) {
+      lensGeometry.setAttribute('aMass', lanes.mass);
     }
   }, [lanes, lensGeometry, marks, motesGeometry]);
 

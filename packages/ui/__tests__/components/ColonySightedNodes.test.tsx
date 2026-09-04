@@ -1030,7 +1030,10 @@ describe('what a POW cohort looks like', () => {
     const lens = makeCohortLensMaterial();
     expect(lens.uniforms.uQuadR.value).toBe(COHORT_LENS_QUAD_R);
     expect(COHORT_LENS_QUAD_R).toBe(32);
-    expect(lensVertex()).toContain('* uQuadR * 2.0');
+    // ⭐ …AND TIMES THE COHORT'S OWN MASS, since 2026-09-04: the quad is the
+    // DOMAIN of the trace, so it shrinks with the picture computed inside it
+    // and a small cohort costs the square of its size in fill.
+    expect(lensVertex()).toContain('* uQuadR * vMass * 2.0');
     // ⛔ AND NOTHING IS EVER DRAWN OFF THE COLONY PLANE. The disc plane IS the
     // membrane — the trace's plane crossing is `y * prevY < 0.0` about the
     // instance's own origin — and a mote's offset from its seat has y = 0
@@ -1530,12 +1533,19 @@ describe('what a POW cohort looks like', () => {
     expect(COHORT_NEVER_WON).toBe(-1e6);
     expect(layer).toContain('new Float32Array(capacity).fill(COHORT_NEVER_WON),');
 
-    // ⭐⭐ ONE WRAPPER PER LANE, AND THE WRAPPER IS THE IDENTITY THREE UPLOADS
+    // ⭐⭐ ONE WRAPPER PER LANE, AND THE WRAPPER IS THE IDENTITY THE UPLOADS GO
     // BY. A second `InstancedBufferAttribute` around the same array is a second
     // GL buffer, and the first one is then orphaned — which is why the lanes are
     // built exactly once, inside the capacity memo, and bound rather than
-    // rebuilt. Exactly THREE constructions in the file, one per lane.
-    expect([...layer.matchAll(/new THREE\.InstancedBufferAttribute\(/g)]).toHaveLength(3);
+    // rebuilt. Exactly FOUR constructions in the file, one per lane: the share,
+    // the seed, the gulp and — since 2026-09-04 — the MASS, which is allocated
+    // at 1 before anything writes it, because a lane the geometry does not
+    // carry reads as ZERO in WebGL and zero is a mark with no extent at all.
+    expect([...layer.matchAll(/new THREE\.InstancedBufferAttribute\(/g)]).toHaveLength(4);
+    expect(layer).toContain('new Float32Array(capacity).fill(1),');
+    expect([...layer.matchAll(/setAttribute\('aMass'/g)]).toHaveLength(1);
+    expect(layer).toContain("lensGeometry.setAttribute('aMass', lanes.mass);");
+    expect(lensVertex()).toContain('attribute float aMass;');
     expect([...layer.matchAll(/setAttribute\('aGulp'/g)]).toHaveLength(1);
     expect([...layer.matchAll(/setAttribute\('aSeed'/g)]).toHaveLength(1);
     expect(layer).not.toMatch(/setAttribute\('aGulp',\s*new /);

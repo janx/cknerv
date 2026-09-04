@@ -300,11 +300,11 @@ const ROWS: readonly BudgetRow[] = [
     sources: ['src/materials/colonyLens.ts'],
     material: makeCohortLensMaterial,
     // The lensed mark: ONE camera-facing quad per cohort, and the whole image
-    // computed inside it. It takes the mat4 and the layer's three lanes — the
-    // same three the patch takes, off the same buffers, because it is the same
-    // plan: the seed decorrelates the medium's two-phase clock, the gulp is the
+    // computed inside it. It takes the mat4 and the layer's four lanes — three
+    // the patch also took, off the same buffers, because it is the same plan
+    // (the seed decorrelates the medium's two-phase clock, the gulp is the
     // block this cohort won, and the share is the SINK'S STRENGTH here exactly
-    // as it is under the patch.
+    // as it is under the patch) — plus the MASS, which is this program's own.
     usage: { instanced: true },
   },
   {
@@ -470,7 +470,7 @@ describe('vertex attribute budget', () => {
     expect(hybridAttributes.get('aStageAt')).toBe('vec2');
   });
 
-  it('charges the lensed cohort the same three lanes, and not one more', () => {
+  it('charges the lensed cohort four lanes, and not one more', () => {
     // ⭐⭐⭐ THE WHOLE IMAGE IS COMPUTED IN THE FRAGMENT, so the vertex stage is
     // the cheapest in the feature: a quad, an origin, three floats. Everything
     // the picture needs — the mass, the disc, the fold, the trace — arrives as
@@ -486,16 +486,22 @@ describe('vertex attribute budget', () => {
     // the composed form: `cohortFaceMaterial` (2 + 7 = 9, the disc lying in the
     // plane), `cohortAuraMaterial` (1 + 7 = 8, the halo around it) and
     // `cohortIntakePatchMaterial` (3 + 7 = 10, the mist under it). This row
-    // inherits the patch's exact three lanes, in the same order, because it
+    // inherited the patch's exact three lanes, in the same order, because it
     // inherits the patch's job: the substance, at this cohort's own rate.
+    //
+    // ⭐ AND ONE MORE LANE SINCE 2026-09-04: THE MASS. It is the fourth and the
+    // last — every other form parameter of this mark is a global uniform, so
+    // `aMass` is the whole of what makes two cohorts different pictures, and it
+    // carries the hand in its SIGN rather than asking for a fifth slot.
     const lens = measured.find(({ name }) => name === 'cohortLensMaterial');
     expect(lens).toBeDefined();
-    expect([lens?.custom, lens?.injected, lens?.total]).toEqual([3, 7, 10]);
-    expect(lens?.names).toEqual(['aSeed', 'aGulp', 'aShare']);
+    expect([lens?.custom, lens?.injected, lens?.total]).toEqual([4, 7, 11]);
+    expect(lens?.names).toEqual(['aSeed', 'aGulp', 'aShare', 'aMass']);
     expect(measured.some(({ name }) => /cohort(Face|Aura|IntakePatch)/.test(name)))
       .toBe(false);
-    // Six slots still free, on the busiest program the colony draws.
-    expect(MAX_VERTEX_ATTRIBUTES - (lens?.total ?? 0)).toBe(6);
+    // Five slots still free, on the busiest program the colony draws — one
+    // fewer than before, and the one it went to is the mass.
+    expect(MAX_VERTEX_ATTRIBUTES - (lens?.total ?? 0)).toBe(5);
   });
 
   it('charges the motes four widened lanes, and no instance matrix', () => {

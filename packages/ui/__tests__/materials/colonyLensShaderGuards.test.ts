@@ -48,6 +48,7 @@ import * as colonyMist from '../../src/materials/colonyMist';
 import {
   COHORT_HOLE_GATE_HI,
   COHORT_HOLE_GATE_LO,
+  COHORT_MASS_GLSL_FLOOR,
   makeCohortLensMaterial,
 } from '../../src/materials/colonyLens';
 
@@ -547,7 +548,7 @@ describe('colonyLens.ts — source-level shader guards', () => {
     expect(fragment.slice(farReturn, loop)).toContain('return;');
     // The far sample is read along `d`, the unbent ray from the camera, and
     // never along anything the loop produced.
-    expect(fragment).toContain('far = lensFarSample(o, d, c, uDiscOutFar);');
+    expect(fragment).toContain('far = lensFarSample(o, d, c, uDiscOutFar * vMass);');
     expect(fragment.indexOf('far = lensFarSample(')).toBeLessThan(farReturn);
     // The straight ray meets the plane by ONE division, no integration.
     expect(fragment).toContain('float t = (c.y - o.y) / d.y;');
@@ -572,6 +573,74 @@ describe('colonyLens.ts — source-level shader guards', () => {
     expect(farMedium).toContain('uFarSwirl * log(rr / r)');
     // The log's argument is at least one by construction: rr is floored at r.
     expect(farMedium).toContain('float rr = max(length(p), r);');
+  });
+
+  it('lets no length escape the mass: every radius reads the lane', () => {
+    // ⭐⭐⭐ ONE VARYING, EVERY LENGTH, AND THIS IS WHAT SAYS SO. The whole form
+    // of a cohort is global uniforms, so the mass lane is the only thing that
+    // can make two of these marks different pictures — and it only works if
+    // NOTHING is left behind. A single world-unit radius still reading its
+    // uniform raw would be a small cohort with a full-sized halo, or a
+    // full-sized catchment around a small heart: the composed form creeping
+    // back in, one constant at a time.
+    //
+    // ⚠️ EVERYTHING ELSE IS ALREADY IN UNITS OF `rs` OR OF AN EDGE — `uGlowR *
+    // rs`, `edge * uGulpR`, `rho / edge`, `rho / outR`, the step's `impact /
+    // (2.5 * rs)`, the escape test on `discOut` — so it folds for free. The
+    // SUBSTANCE's own grain does not fold and must not: `mistMedium` and
+    // `mistBacktrace` are read at the cohort's colony-frame seat in world
+    // units, because a parcel of the medium is the same parcel whoever
+    // swallows it.
+    const fragment = LENS_FRAGMENT?.glsl ?? '';
+    const vertex = LENS.find(({ name }) => name === 'lens.vertexShader')?.glsl ?? '';
+    // The camera's own scale, first: pixels per SHADOW rather than per world
+    // unit, which is what makes every cohort's hole open at the same size.
+    expect(fragment).toContain('uPxScale * vMass / r0');
+    expect(fragment).not.toMatch(/uPxScale\s*\/\s*r0/);
+    // The mass, and with it the inner edge, which is written as a fraction.
+    expect(fragment).toContain('uHorizon, closeness) * vMass');
+    expect(fragment).toContain('float fold = rs / uHorizon;');
+    expect(fragment).toContain('float discIn = uDiscIn * fold;');
+    // Both disc radii, the far catchment, the far law's knee and the nucleus.
+    expect(fragment).toContain('uDiscOut, closeness) * vMass');
+    expect(fragment).toContain('uDiscOutFar * vMass');
+    expect(fragment).toContain('uFarGlowR * vMass');
+    expect(fragment).toContain('uFarKnee * vMass');
+    // ⚠️ AND NOT ONE OF THEM SURVIVES ANYWHERE RAW. The knee is read through a
+    // local in BOTH laws — the bent ray's and the straight one's — so the two
+    // cannot fold apart, and `uFarKnee` appears only in those two products.
+    // Three appearances and no more: the declaration and the two products.
+    expect([...fragment.matchAll(/uFarKnee/g)]).toHaveLength(3);
+    expect(fragment).not.toContain('uFarKnee / ');
+    expect([...fragment.matchAll(/float knee = uFarKnee \* vMass;/g)])
+      .toHaveLength(2);
+    expect(fragment).not.toContain('uDiscOutFar)');
+    expect(fragment).not.toContain('uFarGlowR,');
+    // The vertex stage floors the lane and scales the quad, so the DOMAIN of
+    // the trace shrinks with the picture it computes.
+    expect(vertex).toContain('max(abs(aMass),');
+    expect(vertex).toContain(
+      `vMass = max(abs(aMass), ${COHORT_MASS_GLSL_FLOOR.toFixed(2)});`,
+    );
+    expect(vertex).toContain('uQuadR * vMass * 2.0');
+    expect(vertex).not.toMatch(/uQuadR \* 2\.0/);
+    // ⚠️⚠️ THE FLOOR IS A LITERAL THE PROGRAM CANNOT READ AS ZERO, and it is
+    // the third of three guards: the layer's array is filled with 1, the motes'
+    // geometry allocates its copy at 1, and this is what stands under both.
+    expect(COHORT_MASS_GLSL_FLOOR).toBeGreaterThan(0);
+    expect(vertex).not.toContain('max(abs(aMass), 0.0)');
+    // …and the varying is declared in both stages, or the fragment does not
+    // link at all.
+    for (const program of LENS) {
+      expect(`${program.name}: ${/varying float vMass\s*;/.test(program.glsl)}`)
+        .toBe(`${program.name}: true`);
+    }
+    // ⛔ AND THE SIGN IS RESERVED. M4 reads the lane's sign as the handedness;
+    // until then no stage names a hand at all, so the mirror cannot be half
+    // applied.
+    for (const program of LENS) {
+      expect(program.glsl).not.toContain('vHand');
+    }
   });
 
   it('carries no backtick anywhere in its GLSL', () => {

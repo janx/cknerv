@@ -44,9 +44,18 @@ import {
   COHORT_LENS_STEP_CAP,
   COHORT_LENS_STEP_STRETCH_MAX,
   COHORT_LENS_STEP_STRETCH_R,
+  COHORT_MASS_ANCHOR_SHARE,
+  COHORT_MASS_FLOOR,
+  COHORT_MASS_GLSL_FLOOR,
+  COHORT_MASS_SLEW_S,
   COHORT_UNFOLD_HI,
   COHORT_UNFOLD_LO,
   cohortDiscStops,
+  cohortHandedness,
+  cohortMassApproach,
+  cohortMassFactor,
+  cohortMassLaneValue,
+  cohortMassUnpack,
   lensAdaptiveStep,
   lensBeaming,
   lensCaptured,
@@ -349,6 +358,250 @@ describe('cohort lens — the fold', () => {
 });
 
 /* -------------------------------------------------------------------------- *
+ * The mass.
+ * -------------------------------------------------------------------------- */
+
+describe('cohort lens — the mass is the week', () => {
+  /** The live seven, measured 2026-09-02 over 68,814 blocks. */
+  const WEEK = [0.6247, 0.1283, 0.1101, 0.0984, 0.0219, 0.0165, 0] as const;
+
+  it('is 1 at the anchor, the floor at nothing, and a cube root between', () => {
+    // ⭐⭐ THE CEILING IS TODAY'S ACCEPTED FORM. At and above the anchor a
+    // cohort is the mark the user judged on 2026-09-03; nothing can grow past
+    // it, so a channel that moves size can only ever make the colony quieter.
+    expect(cohortMassFactor(COHORT_MASS_ANCHOR_SHARE)).toBe(1);
+    expect(cohortMassFactor(1)).toBe(1);
+    expect(cohortMassFactor(0.9)).toBe(1);
+    // …and the floor is a lesser peer, never a vanished one.
+    expect(cohortMassFactor(0)).toBe(COHORT_MASS_FLOOR);
+    expect(cohortMassFactor(-1)).toBe(COHORT_MASS_FLOOR);
+    // Monotone over the whole range, so a cohort that mined more is never
+    // smaller than one that mined less.
+    let previous = -1;
+    for (let share = 0; share <= 1; share += 0.005) {
+      const mass = cohortMassFactor(share);
+      expect(mass).toBeGreaterThanOrEqual(previous);
+      previous = mass;
+    }
+    // The cube root, exactly, wherever the clamp is not binding.
+    expect(cohortMassFactor(COHORT_MASS_ANCHOR_SHARE / 8)).toBeCloseTo(0.5, 12);
+    expect(cohortMassFactor(COHORT_MASS_ANCHOR_SHARE * 0.512)).toBeCloseTo(0.8, 12);
+
+    // ⭐ THE LIVE TABLE, pinned so a retune of either knob has to come past the
+    // shape the user was shown: one giant, three middling, two at the floor.
+    expect(cohortMassFactor(WEEK[0])).toBe(1);
+    expect(cohortMassFactor(WEEK[1])).toBeCloseTo(0.598, 3);
+    expect(cohortMassFactor(WEEK[2])).toBeCloseTo(0.568, 3);
+    expect(cohortMassFactor(WEEK[3])).toBeCloseTo(0.547, 3);
+    expect(cohortMassFactor(WEEK[4])).toBe(COHORT_MASS_FLOOR);
+    expect(cohortMassFactor(WEEK[5])).toBe(COHORT_MASS_FLOOR);
+    expect(cohortMassFactor(WEEK[6])).toBe(COHORT_MASS_FLOOR);
+    // ⚠️ AND THE ALTERNATIVES ARE WHY IT IS A CUBE ROOT. Linear spreads the
+    // seven over thirty times, which puts the tail under a pixel; a logarithm
+    // collapses the top three into the giant.
+    expect(WEEK[0] / WEEK[5]).toBeGreaterThan(30);
+    expect(cohortMassFactor(WEEK[0]) / cohortMassFactor(WEEK[1]))
+      .toBeCloseTo(1.67, 2);
+
+    // The floor is the OFF SWITCH at 1: every mass is full size whatever the
+    // week says, which is the one knob the live leg's A/B turns.
+    for (const share of WEEK) {
+      expect(cohortMassFactor(share, COHORT_MASS_ANCHOR_SHARE, 1)).toBe(1);
+    }
+    // …and a moved anchor moves every mass at once, which is why the slew is
+    // on the path a knob takes.
+    expect(cohortMassFactor(WEEK[1], 0.12)).toBe(1);
+    expect(cohortMassFactor(WEEK[0], 0.12)).toBe(1);
+  });
+
+  it('eases toward its target and is exactly still at the target', () => {
+    // ⭐ THE SLEW IS FOR TWO EVENTS AND NOT FOR THE DATA: a ledger ARRIVING
+    // after the cohorts are standing, and a ledger CLEARED by an outage. Both
+    // move every mass at once, and a simultaneous pop of every mark is the one
+    // thing the dolly strip has been measured never to do.
+    expect(COHORT_MASS_SLEW_S).toBe(1.5);
+    // Idempotent at the target: a settled cohort uploads nothing, ever.
+    expect(cohortMassApproach(0.6, 0.6, 1 / 60)).toBe(0.6);
+    expect(cohortMassApproach(1, 1, 10)).toBe(1);
+    // ⚠️ EXACT AT dt = 0, and that matters on a PAUSED page: the raw frame
+    // still runs, and a slot that drifted by an ulp a frame would be an upload
+    // a frame for the life of the tab.
+    expect(cohortMassApproach(0.45, 1, 0)).toBe(0.45);
+    expect(cohortMassApproach(0.45, 1, -1)).toBe(0.45);
+    // Monotone toward the target from either side, and never past it.
+    let value = COHORT_MASS_FLOOR;
+    let previous = -1;
+    for (let step = 0; step < 600; step += 1) {
+      value = cohortMassApproach(value, 1, 1 / 60);
+      expect(value).toBeGreaterThan(previous);
+      expect(value).toBeLessThanOrEqual(1);
+      previous = value;
+    }
+    let down = 1;
+    for (let step = 0; step < 600; step += 1) {
+      down = cohortMassApproach(down, COHORT_MASS_FLOOR, 1 / 60);
+      expect(down).toBeGreaterThanOrEqual(COHORT_MASS_FLOOR);
+    }
+    // ⭐ FRAME-RATE INDEPENDENT: two steps of dt land where one step of 2·dt
+    // does, so a page that drops to 30 fps eases at the speed it did at 60.
+    const twice = cohortMassApproach(
+      cohortMassApproach(COHORT_MASS_FLOOR, 1, 1 / 60), 1, 1 / 60,
+    );
+    expect(twice).toBeCloseTo(cohortMassApproach(COHORT_MASS_FLOOR, 1, 2 / 60), 12);
+    // 95 % of the way in 4.5 s — three time constants — which is the number the
+    // constant's own comment claims.
+    const after = (seconds: number): number =>
+      cohortMassApproach(COHORT_MASS_FLOOR, 1, seconds);
+    expect(1 - after(3 * COHORT_MASS_SLEW_S)).toBeCloseTo(0.0274, 3);
+    expect((1 - after(3 * COHORT_MASS_SLEW_S)) / (1 - COHORT_MASS_FLOOR))
+      .toBeCloseTo(0.0498, 3);
+    // ⚠️ AND THE WIDEST GAP THE FEATURE CAN MAKE — floor to ceiling — is inside
+    // a thousandth by SEVEN time constants and not by five: `exp(-5)` is 0.67 %
+    // of 0.55, which is 3.7e-3. The plan's "1e-3 after 5τ" was the right claim
+    // about the fraction and the wrong one about the absolute.
+    expect(1 - after(5 * COHORT_MASS_SLEW_S)).toBeCloseTo(3.7e-3, 4);
+    expect(1 - after(7 * COHORT_MASS_SLEW_S)).toBeLessThan(1e-3);
+  });
+
+  it('packs the mass and the hand into one lane, and never packs a zero', () => {
+    // ⭐ ONE LANE FOR TWO FACTS: the magnitude is the mass, the sign is the
+    // hand. It costs no attribute slot on the busiest vertex program in the
+    // colony, and the motes' copy is 96 vertices wide, so the saving is real.
+    expect(cohortHandedness(0)).toBe(1);
+    expect(cohortHandedness(0.4999)).toBe(1);
+    expect(cohortHandedness(0.5)).toBe(-1);
+    expect(cohortHandedness(0.9999)).toBe(-1);
+
+    // Round-trips at every mass the feature can produce, both ways round.
+    for (const share of WEEK) {
+      const mass = cohortMassFactor(share);
+      for (const hand of [1, -1]) {
+        const lane = cohortMassLaneValue(mass, hand);
+        expect(cohortMassUnpack(lane).mass).toBeCloseTo(mass, 12);
+        expect(cohortMassUnpack(lane).hand).toBe(hand);
+      }
+    }
+
+    // ⚠️⚠️ AND NOTHING CAN MAKE IT EMIT A ZERO. Zero is what an UNWRITTEN lane
+    // already reads as in WebGL, it has no sign to be a hand, and in the motes
+    // it is a division that ends in a NaN the brightness gate cannot reject.
+    // So the pack CLAMPS — it never throws, because it runs inside `useFrame`
+    // where a throw takes the whole r3f loop down with it.
+    for (const mass of [0, -0, -1, 1e-9, COHORT_MASS_GLSL_FLOOR / 2, Number.NaN]) {
+      for (const hand of [1, -1, 0]) {
+        const lane = cohortMassLaneValue(mass, hand);
+        expect(lane).not.toBe(0);
+        expect(Number.isNaN(lane)).toBe(false);
+        expect(Math.abs(lane)).toBeGreaterThanOrEqual(COHORT_MASS_GLSL_FLOOR);
+      }
+    }
+    expect(cohortMassLaneValue(0, 1)).toBe(COHORT_MASS_GLSL_FLOOR);
+    expect(cohortMassLaneValue(0, -1)).toBe(-COHORT_MASS_GLSL_FLOOR);
+    // ⚠️ A HAND OF ZERO IS NOT A SIGN, so it reads as +1 — the mirror of the
+    // program's own `aMass < 0.0`, which is FALSE for a negative zero exactly
+    // as `value < 0` is here.
+    expect(cohortMassLaneValue(0.6, 0)).toBe(0.6);
+    expect(cohortMassUnpack(-0).hand).toBe(1);
+    expect(cohortMassUnpack(0).mass).toBe(COHORT_MASS_GLSL_FLOOR);
+    // The floor the CPU packs is the floor the program applies, stated once.
+    expect(COHORT_MASS_GLSL_FLOOR).toBeLessThan(COHORT_MASS_FLOOR);
+  });
+
+  it('multiplies every radius of the fold, and leaves m = 1 exactly as it was', () => {
+    // ⭐⭐⭐ ONE FACTOR, EVERY LENGTH. A form in which the disc folded with the
+    // mass but the nucleus did not would be a cohort assembled from parts
+    // again, which is the ceiling this whole program was built to get past.
+    for (const mass of [COHORT_MASS_FLOOR, 0.598, 0.8, 1]) {
+      for (const px of [6, 14, 20, 30, 40, 90]) {
+        const fold = lensFold(px, mass);
+        const unit = lensFold(px * mass);
+        // ⭐⭐ PIXELS PER SHADOW: the closeness reads px · m, so every cohort's
+        // hole opens at the same ON-SCREEN size whatever its week was.
+        expect(fold.closeness).toBe(lensCloseness(px, mass));
+        expect(fold.closeness).toBe(unit.closeness);
+        expect(fold.horizon).toBeCloseTo(unit.horizon * mass, 12);
+        expect(fold.discIn).toBeCloseTo(unit.discIn * mass, 12);
+        expect(fold.discOut).toBeCloseTo(unit.discOut * mass, 12);
+        expect(fold.shadowAlpha).toBe(unit.shadowAlpha);
+        expect(fold.farOut).toBeCloseTo(COHORT_DISC_OUT_FAR * mass, 12);
+        expect(fold.farKnee).toBeCloseTo(COHORT_LENS_FAR_KNEE * mass, 12);
+        expect(fold.nucleusR).toBeCloseTo(COHORT_LENS_FAR_GLOW_R * mass, 12);
+        // …and the inner edge is still the ISCO, at three horizons, at every
+        // mass — because it is written as a fraction of the horizon.
+        expect(fold.discIn / fold.horizon).toBeCloseTo(3, 12);
+      }
+    }
+    // ⭐ THE DEFAULT IS THE OLD FUNCTION, FIELD FOR FIELD. Until a ledger says
+    // otherwise every mass is 1, and the picture is today's byte for byte.
+    for (const px of [6, 14, 20, 30, 40, 50, 90]) {
+      expect(lensFold(px)).toEqual(lensFold(px, 1));
+      expect(lensCloseness(px)).toBe(lensCloseness(px, 1));
+    }
+    expect(lensFold(COHORT_UNFOLD_LO).horizon).toBe(COHORT_HORIZON_FAR);
+    expect(lensFold(COHORT_UNFOLD_HI).horizon).toBe(COHORT_HORIZON);
+    expect(lensFold(COHORT_UNFOLD_HI).discOut).toBe(COHORT_DISC_OUT);
+    expect(lensFold(COHORT_UNFOLD_LO).discOut).toBe(COHORT_DISC_OUT_FAR);
+
+    // The band, in pixels per world unit, at the two ends of the live table:
+    // the giant unfolds over 20 → 50 and a floor cohort over 44 → 111, so at
+    // the rim camera only the giant has an eye at all.
+    expect(COHORT_UNFOLD_LO / COHORT_MASS_FLOOR).toBeCloseTo(44.4, 1);
+    expect(COHORT_UNFOLD_HI / COHORT_MASS_FLOOR).toBeCloseTo(111.1, 1);
+    expect(lensFold(40, COHORT_MASS_FLOOR).closeness).toBe(0);
+    expect(lensFold(40, 1).closeness).toBeGreaterThan(0.7);
+  });
+
+  it('folds the far law’s knee and the nucleus with the mass too', () => {
+    // ⭐ THE SAME CURVE AT A SMALLER SCALE, and not the same spike inside a
+    // smaller skirt: at half the mass the far law at half the radius is the
+    // law at the radius it had, because BOTH the knee and the catchment moved.
+    for (const mass of [COHORT_MASS_FLOOR, 0.6, 1]) {
+      for (const rho of [0, 0.5, 1, 2, 4, 8]) {
+        expect(lensFarLaw(rho * mass, COHORT_DISC_OUT_FAR * mass, mass))
+          .toBeCloseTo(lensFarLaw(rho, COHORT_DISC_OUT_FAR), 12);
+        expect(lensFarNucleus(rho * mass, mass))
+          .toBeCloseTo(lensFarNucleus(rho), 12);
+      }
+      // …and it is still exactly nothing at its own outer radius.
+      expect(lensFarLaw(COHORT_DISC_OUT_FAR * mass, COHORT_DISC_OUT_FAR * mass, mass))
+        .toBe(0);
+    }
+    // The defaults are the old functions, value for value.
+    for (const rho of [0, 0.5, 1, 2, 4, 8, 13.9]) {
+      expect(lensFarLaw(rho, COHORT_DISC_OUT_FAR, 1))
+        .toBe(lensFarLaw(rho, COHORT_DISC_OUT_FAR));
+      expect(lensFarNucleus(rho, 1)).toBe(lensFarNucleus(rho));
+    }
+    // ⚠️ AND A MASS OF ZERO DOES NOT DIVIDE BY ONE. The mirror floors the
+    // nucleus's radius exactly as the program's `max(uFarGlowR * vMass, 1e-4)`
+    // does, so no camera and no lane can produce a NaN here.
+    expect(Number.isFinite(lensFarNucleus(0, 0))).toBe(true);
+    expect(Number.isFinite(lensFarNucleus(1, 0))).toBe(true);
+  });
+
+  it('turns the beaming over with the hand, and is the old factor at +1', () => {
+    // ⭐ THE MIRROR IS ONE REFLECTION: flipping the hand is flipping which side
+    // of the disc is approaching, because the material's orbital direction IS
+    // the spiral's. ⚠️ The PROGRAM does not read a hand yet — the lane's sign
+    // is reserved — so this is the mirror waiting for it.
+    for (const cosine of [-1, -0.5, 0, 0.37, 1]) {
+      for (const closeness of [0, 0.4, 1]) {
+        expect(lensBeaming(cosine, closeness, -1))
+          .toBeCloseTo(lensBeaming(-cosine, closeness, 1), 12);
+        expect(lensBeaming(cosine, closeness, 1))
+          .toBe(lensBeaming(cosine, closeness));
+      }
+    }
+    // Antisymmetric about the tangent at either hand, so the disc's total light
+    // is unchanged and only its distribution moves.
+    for (const hand of [1, -1]) {
+      expect(lensBeaming(0.6, 1, hand) + lensBeaming(-0.6, 1, hand))
+        .toBeCloseTo(2, 12);
+    }
+  });
+});
+
+/* -------------------------------------------------------------------------- *
  * The disc.
  * -------------------------------------------------------------------------- */
 
@@ -531,22 +784,33 @@ describe('cohort lens — the material', () => {
     expect(material.side).toBe(THREE.DoubleSide);
   });
 
-  it('takes the layer’s three lanes and no others', () => {
+  it('takes the layer’s four lanes and no others', () => {
     const attributes = [...material.vertexShader.matchAll(/attribute\s+\w+\s+(\w+)\s*;/g)]
       .map((match) => match[1]);
-    expect(attributes).toEqual(['aSeed', 'aGulp', 'aShare']);
+    expect(attributes).toEqual(['aSeed', 'aGulp', 'aShare', 'aMass']);
     // ⭐ EVERY LANE HAS A READER. `aSeed` decorrelates the two-phase clock so
     // six discs never breathe together, `aGulp` is the block this cohort won,
-    // and `aShare` is the sink's own strength — the same three the patch takes,
-    // for the same three reasons.
+    // `aShare` is the sink's own strength — the three the patch took, for the
+    // same three reasons — and `aMass` is the fourth: the cohort's own size,
+    // which is the only lane that makes two of these marks different pictures.
     expect(material.vertexShader).toContain('vSeed = aSeed;');
     expect(material.vertexShader).toContain('vGulp = aGulp;');
     expect(material.vertexShader).toContain('aShare / max(uShareMax, 1e-6)');
     expect(material.fragmentShader).toContain('uTime / uPeriod + vSeed');
     expect(material.fragmentShader).toContain('vShareF');
+    // ⚠️ THE LANE IS FLOORED IN THE PROGRAM, because a lane the geometry does
+    // not carry reads as ZERO in WebGL and a mass of zero is a mark with no
+    // extent at all. The magnitude is the mass; the sign is reserved.
+    expect(material.vertexShader).toContain(
+      `vMass = max(abs(aMass), ${COHORT_MASS_GLSL_FLOOR.toFixed(2)});`,
+    );
+    expect(material.vertexShader).toContain('varying float vMass;');
+    expect(material.fragmentShader).toContain('varying float vMass;');
     // …and the instance matrix carries a TRANSLATION and nothing else, which is
-    // why the quad's extent is a uniform.
-    expect(material.vertexShader).toContain('uQuadR * 2.0');
+    // why the quad's extent is a uniform — times the mass, so the domain of the
+    // trace shrinks with the picture it computes and a small cohort costs the
+    // square of its size in fill.
+    expect(material.vertexShader).toContain('uQuadR * vMass * 2.0');
     expect(material.uniforms.uQuadR.value).toBe(COHORT_LENS_QUAD_R);
   });
 

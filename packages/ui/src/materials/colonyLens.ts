@@ -137,6 +137,89 @@ export const COHORT_HORIZON = 0.77;
 export const COHORT_HORIZON_FAR = 0.08;
 
 /**
+ * The share of the indexer's seven-day window at which a cohort is FULL SIZE.
+ *
+ * ⭐⭐⭐ THE MASS IS THE ONE THING A COHORT SAYS ABOUT ITSELF, AND THE CEILING IS
+ * TODAY'S ACCEPTED FORM. Every form parameter above is a global uniform, so
+ * seven cohorts were seven copies of one picture; from 2026-09-04 each carries
+ * a factor `m` in [`COHORT_MASS_FLOOR`, 1] that multiplies EVERY length in
+ * both of its programs, and `m` is the cube root of its share of the week
+ * against this anchor. At and above it a cohort is exactly the form the user
+ * judged on 2026-09-03; everyone else folds DOWN, so the colony can get
+ * quieter and never louder — which is how the third rule (the field stays
+ * secondary to the mesh and the canopy) survives a channel that moves size at
+ * all.
+ *
+ * ⚠️ IT IS THE WEEK AND NEVER THE RING. A size the eye compares across days
+ * must not pulse once a block: the 240-block ring moves on every block, empties
+ * on every reorg and is empty for the first minute of a boot. No ledger ⇒ every
+ * mass is 1 ⇒ today's picture, byte for byte.
+ *
+ * ⭐ 0.6 IS ALSO ABOUT THE LARGEST SHARE ONE POOL PLAUSIBLY HOLDS (the live top
+ * was 62.5 % on 2026-09-02 and 63.5 % a day later). A week with no cohort near
+ * it leaves every mark under size and the colony quieter than today; that is
+ * honest, and `cohortMassAnchor` is live for the day it is judged too quiet.
+ */
+export const COHORT_MASS_ANCHOR_SHARE = 0.6;
+
+/**
+ * …and the smallest a cohort may be, as a fraction of that full mass.
+ *
+ * ⭐⭐ A LESSER PEER, NEVER A VANISHED ONE, and the floor is chosen against the
+ * peer mesh's own world diameters (ghost 0.65, sighted dark 1.5, sighted
+ * reached 2.0). `exp(-t²)` falls to a tenth at t = 1.52, so the nucleus is
+ * `2 · 1.52 · COHORT_LENS_FAR_GLOW_R · m` across — 0.96 wu here, which still
+ * out-foots a ghost and sits under a dark sighted peer. The other inequality
+ * the floor has to keep is `COHORT_DISC_OUT_FAR · floor` = 6.3 wu >
+ * `COHORT_LINK_STOP_R` 3.0, so even the smallest cohort's arms still cover the
+ * end of its own links; `cohortKeepOut.test.ts` pins both.
+ *
+ * ⭐ AND A FLOOR OF 1 IS THE OFF SWITCH. Every mass is clamped into [floor, 1],
+ * so `cohortMassFloor = 1` makes every cohort full size whatever the week says
+ * — one knob, which is what the live leg's A/B turns.
+ *
+ * ⚠️ NOTHING THE TOPOLOGY READS FOLDS WITH IT. `COHORT_HIT_RADIUS`,
+ * `COHORT_LINK_STOP_R` and the keep-out are sized for the MAXIMUM and stay
+ * constant, so a viewer aims at the same target whatever a cohort's week was.
+ */
+export const COHORT_MASS_FLOOR = 0.45;
+
+/**
+ * The floor the PROGRAM puts under the lane: the smallest mass a varying can
+ * carry, whatever arrives in the attribute.
+ *
+ * ⚠️⚠️ A LANE THAT IS NOT WRITTEN READS AS ZERO IN WebGL, and a mass of zero is
+ * a mark with no extent at all — every radius in both programs is a multiple of
+ * it, and the motes divide by one of them (`life = (r0² − shadow²)/k` with
+ * `r0 = 0` is a NaN, and `vBright <= 0.001` is FALSE for a NaN). So the guard
+ * is THREEFOLD and this is the last of the three: the layer's array is filled
+ * with 1, the motes' geometry allocates its copy at 1, and the vertex stage
+ * floors `abs(aMass)` here. Nothing legitimate can reach it — the floor is
+ * 0.45 and the off value is 1 — which is exactly what makes it a guard and not
+ * a tuning.
+ *
+ * ⚠️ IT IS ALSO WHY THE PACK CLAMPS RATHER THAN THROWS. The SIGN of the lane is
+ * the handedness and the magnitude is the mass, so a magnitude of exactly zero
+ * would be a mass with no hand; and `cohortMassLaneValue` runs inside
+ * `useFrame`, where a throw takes the whole r3f loop down.
+ */
+export const COHORT_MASS_GLSL_FLOOR = 0.05;
+
+/**
+ * How long a mass takes to reach a new target: the time constant, in seconds.
+ *
+ * ⭐ IT EXISTS FOR TWO EVENTS AND NOT FOR THE DATA. A week share drifts by well
+ * under a tenth of a percent between two 120-second refreshes, which is
+ * invisible with or without a slew. What is not invisible is the ledger
+ * ARRIVING after the cohorts are already standing (a boot where the window
+ * fills before the first fetch) or being CLEARED by an indexer outage — both of
+ * which move every mass at once, and a simultaneous pop of every mark in the
+ * colony is the one thing the dolly strip has been measured never to do. 95 %
+ * of the way in 4.5 s.
+ */
+export const COHORT_MASS_SLEW_S = 1.5;
+
+/**
  * The disc's inner edge: the innermost stable circular orbit, at 3 horizons.
  *
  * ⭐ IT IS NOT A TASTE. Below 3 rs no circular orbit is stable, so there is
@@ -972,9 +1055,127 @@ export function lensCaptured(
   return lensTrace(impact, rs, { steps }).captured;
 }
 
-/** The fold, from pixels per world unit at the cohort. */
-export function lensCloseness(pxPerWu: number): number {
-  return smoothstep(COHORT_UNFOLD_LO, COHORT_UNFOLD_HI, pxPerWu);
+/* -------------------------------------------------------------------------- *
+ * The mass a cohort carries: the week, packed into one lane.
+ * -------------------------------------------------------------------------- */
+
+/**
+ * A cohort's mass factor from its share of the indexer's seven-day window:
+ * `clamp(cbrt(share / anchor), floor, 1)`.
+ *
+ * ⭐⭐ THE CUBE ROOT IS WHAT MAKES SEVEN COHORTS LEGIBLE AS SEVEN. The live week
+ * (2026-09-02) is one giant, three middling, two small and a trace — 62.5 /
+ * 12.8 / 11.0 / 9.8 / 2.2 / 1.7 / ~0 %. Linear would spread them over 30×,
+ * which puts the tail under a pixel; a logarithm collapses the top (1.0 / 0.84
+ * / 0.82 / 0.81 / 0.66 / 0.63) and says nothing at all. The cube root separates
+ * the giant from the rest by 1.75× and keeps the whole range near the 3× step
+ * the peer-tier work found legible, floor included.
+ *
+ * ⭐ IT IS ALSO THE HONEST EXPONENT FOR A SIZE. A mass in three dimensions
+ * scales as the cube of a length, so a cohort three times the miner is one
+ * length-unit-and-a-half wide rather than three; the eye compares extents, and
+ * this is the transform that makes an extent readable as an amount.
+ */
+export function cohortMassFactor(
+  weekShare: number,
+  anchor: number = COHORT_MASS_ANCHOR_SHARE,
+  floor: number = COHORT_MASS_FLOOR,
+): number {
+  // ⚠️ The divisor is a live knob, so it is floored rather than trusted: an
+  // anchor of zero would make every share an infinity and every mass a 1.
+  return clamp(Math.cbrt(weekShare / Math.max(anchor, 1e-6)), floor, 1);
+}
+
+/**
+ * One frame of the mass's approach to its target: `target + (current − target)
+ * · exp(−dt / tau)`.
+ *
+ * ⭐ FRAME-RATE INDEPENDENT BY CONSTRUCTION, which a `mix(current, target, k)`
+ * with a fixed `k` is not: two frames of `dt` and one of `2·dt` land on the
+ * same number here, so a page that drops to 30 fps eases at the same speed it
+ * did at 60. `COHORT_MASS_SLEW_S` says what the slew is for.
+ *
+ * ⚠️ EXACT AT `dt = 0`, AND THAT IS AN EARLY RETURN RATHER THAN A COINCIDENCE.
+ * `target + (current − target)` is not bit-identical to `current` in floating
+ * point, and this runs on every raw frame of a PAUSED page: a slot that drifts
+ * by an ulp per frame is an upload per frame for the life of the tab.
+ */
+export function cohortMassApproach(
+  current: number,
+  target: number,
+  dt: number,
+  tau: number = COHORT_MASS_SLEW_S,
+): number {
+  if (dt <= 0) return current;
+  return target + (current - target) * Math.exp(-dt / Math.max(tau, 1e-6));
+}
+
+/**
+ * Which way a cohort's spiral winds, from its own seed: +1 or −1.
+ *
+ * ⭐ IDENTITY, NOT DATA, and that is the whole of what it may be. The seed is
+ * `fnv1a(producer key) / 2^32`, so the hand is a fact about WHO this cohort is
+ * — stable across churn, carrying no claim about the chain — and it is what
+ * separates the middling cohorts that the week makes the same size. It is the
+ * follow-up `MIST_SWIRL`'s own comment names: six same-handed spirals may read
+ * as stamped.
+ *
+ * ⚠️ NEVER ZERO. It is packed as the SIGN of the mass lane, so a zero would be
+ * a mass with no magnitude — see `cohortMassLaneValue`.
+ */
+export function cohortHandedness(seed: number): number {
+  return seed < 0.5 ? 1 : -1;
+}
+
+/**
+ * The mass and the hand as ONE float: the magnitude is the mass, the sign is
+ * the hand.
+ *
+ * ⭐ ONE LANE FOR TWO FACTS, AND IT COSTS NO ATTRIBUTE SLOT. The lens's vertex
+ * program is the busiest in the colony; a second lane for a bit would be a
+ * whole float of bandwidth on both draws (the motes' copy is 96 vertices wide)
+ * for one bit that never changes over a cohort's life.
+ *
+ * ⚠️ IT CLAMPS AND IT NEVER THROWS. This runs inside `useFrame`, where a throw
+ * takes the whole r3f loop down with it, and no input may make it emit a zero:
+ * zero is the value an UNWRITTEN lane already has, it has no sign to be a hand,
+ * and in the motes it is a division. The magnitude is floored at
+ * `COHORT_MASS_GLSL_FLOOR` with a comparison rather than a `Math.max` so a NaN
+ * takes the floor instead of propagating, and the hand is read as "negative or
+ * not" — the mirror of the program's own `aMass < 0.0`, which is FALSE for a
+ * negative zero in GLSL exactly as it is here.
+ */
+export function cohortMassLaneValue(mass: number, hand: number = 1): number {
+  const magnitude = mass > COHORT_MASS_GLSL_FLOOR ? mass : COHORT_MASS_GLSL_FLOOR;
+  return hand < 0 ? -magnitude : magnitude;
+}
+
+/** The two facts back out of one lane value: the mirror of the vertex stage's
+ *  own two lines, and the only place the unpacking is written in TypeScript. */
+export function cohortMassUnpack(value: number): {
+  readonly mass: number;
+  readonly hand: number;
+} {
+  const magnitude = Math.abs(value);
+  return {
+    mass: magnitude > COHORT_MASS_GLSL_FLOOR ? magnitude : COHORT_MASS_GLSL_FLOOR,
+    hand: value < 0 ? -1 : 1,
+  };
+}
+
+/**
+ * The fold, from pixels per world unit at the cohort and the cohort's own mass.
+ *
+ * ⭐⭐⭐ PIXELS PER SHADOW, NOT PIXELS PER WORLD UNIT. The mass multiplies the
+ * camera's scale before the smoothstep reads it, so every cohort's hole opens
+ * at the SAME ON-SCREEN SIZE whatever its week was — which is the only way a
+ * 0.45 cohort at the mid range is not "a small eye", the form the user refused
+ * twice. The cost is that at one camera the giant may be unfolding while the
+ * tail is still wearing the far form; that is a coherent picture and it is the
+ * point.
+ */
+export function lensCloseness(pxPerWu: number, mass: number = 1): number {
+  return smoothstep(COHORT_UNFOLD_LO, COHORT_UNFOLD_HI, pxPerWu * mass);
 }
 
 /**
@@ -1002,6 +1203,18 @@ export interface LensFold {
    * which is 0 over the whole first third of the band.
    */
   readonly shadowAlpha: number;
+  /** The far form's own outer radius, in world units: the catchment the intake
+   *  is read over below the band. */
+  readonly farOut: number;
+  /** The knee of the far law, in world units: where it has fallen to half its
+   *  peak. ⭐ IT FOLDS WITH THE MASS AND NOT WITH THE CAMERA — a small cohort's
+   *  spike is narrower in world units in exactly the proportion its catchment
+   *  is, so the SHAPE of the atmosphere is one picture at every mass and only
+   *  its size differs. */
+  readonly farKnee: number;
+  /** The nucleus's Gaussian radius, in world units. `exp(-t²)` reaches a tenth
+   *  at t = 1.52, so the visible footprint is `2 · 1.52 ·` this. */
+  readonly nucleusR: number;
 }
 
 /**
@@ -1014,16 +1227,29 @@ export interface LensFold {
  * shadow's opacity reads `lensHoleGate` of the closeness rather than the
  * closeness itself, so it arrives over the LAST part of the band. What folds is
  * the form; what waits is the black.
+ *
+ * ⭐⭐ AND THE MASS MULTIPLIES ALL OF IT, THE CAMERA'S OWN SCALE INCLUDED. `mass`
+ * is the cohort's share of the week (`cohortMassFactor`), 1 by default and 1
+ * for every cohort until a ledger says otherwise — so this function at `m = 1`
+ * is the fold it has always been, value for value. The alpha is the one
+ * quantity it does not touch directly: the dark's schedule is the closeness's,
+ * and the closeness already reads the mass.
  */
-export function lensFold(pxPerWu: number): LensFold {
-  const closeness = lensCloseness(pxPerWu);
-  const horizon = mix(COHORT_HORIZON_FAR, COHORT_HORIZON, closeness);
+export function lensFold(pxPerWu: number, mass: number = 1): LensFold {
+  const closeness = lensCloseness(pxPerWu, mass);
+  const horizon = mix(COHORT_HORIZON_FAR, COHORT_HORIZON, closeness) * mass;
   return {
     closeness,
     horizon,
+    // ⭐ THE INNER EDGE COMES FOR FREE. It is written as a fraction of the
+    // horizon and the horizon already carries the mass, so it is three horizons
+    // at every camera AND at every mass without naming either.
     discIn: COHORT_DISC_IN * (horizon / COHORT_HORIZON),
-    discOut: mix(COHORT_DISC_OUT_FAR, COHORT_DISC_OUT, closeness),
+    discOut: mix(COHORT_DISC_OUT_FAR, COHORT_DISC_OUT, closeness) * mass,
     shadowAlpha: lensHoleGate(closeness),
+    farOut: COHORT_DISC_OUT_FAR * mass,
+    farKnee: COHORT_LENS_FAR_KNEE * mass,
+    nucleusR: COHORT_LENS_FAR_GLOW_R * mass,
   };
 }
 
@@ -1034,11 +1260,15 @@ export function lensFarCatchment(rho: number, out: number): number {
   return b * b;
 }
 
-/** The far form's law, without the arms: `amp · (h/(ρ+h))^pow · catchment`. */
-export function lensFarLaw(rho: number, out: number): number {
+/** The far form's law, without the arms: `amp · (h/(ρ+h))^pow · catchment`.
+ *  ⭐ The knee folds with the mass and the catchment is handed in already
+ *  folded, so a small cohort is the same curve at a smaller scale rather than
+ *  the same spike inside a smaller skirt. */
+export function lensFarLaw(rho: number, out: number, mass: number = 1): number {
+  const knee = COHORT_LENS_FAR_KNEE * mass;
   return (
     COHORT_LENS_FAR_DISC_AMP
-    * (COHORT_LENS_FAR_KNEE / (Math.max(rho, 0) + COHORT_LENS_FAR_KNEE)) ** COHORT_LENS_FAR_DISC_POW
+    * (knee / (Math.max(rho, 0) + knee)) ** COHORT_LENS_FAR_DISC_POW
     * lensFarCatchment(rho, out)
   );
 }
@@ -1061,8 +1291,8 @@ export function lensFarBody(rho: number, out: number, g: number): number {
  * The nucleus: the round, camera-facing bloom over the far form, as a function
  * of the impact parameter. `glow · (exp(−t²) + core · exp(−(t/coreR)²))`.
  */
-export function lensFarNucleus(impact: number): number {
-  const t = impact / COHORT_LENS_FAR_GLOW_R;
+export function lensFarNucleus(impact: number, mass: number = 1): number {
+  const t = impact / Math.max(COHORT_LENS_FAR_GLOW_R * mass, 1e-4);
   const tc = t / COHORT_LENS_FAR_GLOW_CORE_R;
   return COHORT_LENS_FAR_GLOW
     * (Math.exp(-t * t) + COHORT_LENS_FAR_GLOW_CORE * Math.exp(-tc * tc));
@@ -1087,9 +1317,19 @@ export function lensDiscInnerEdge(rho: number, edge: number): number {
  * BACK toward the camera: +1 where the material comes straight at the viewer.
  * ⭐ Antisymmetric by construction, so the disc's total light is unchanged and
  * only its distribution moves.
+ *
+ * ⭐ AND THE HAND FLIPS THE BRIGHT SIDE WITH THE SPIRAL, because the material's
+ * orbital direction IS the spiral's and "the approaching side" is a fact about
+ * that direction: `lensBeaming(c, k, −1) === lensBeaming(−c, k, 1)`. ⚠️ The
+ * PROGRAM does not read a hand yet — `colonyLens.ts` ships `vMass` alone and
+ * reserves the lane's sign — so this argument is the mirror waiting for it.
  */
-export function lensBeaming(cosToTangent: number, closeness: number): number {
-  return 1 + COHORT_LENS_BEAM * closeness * cosToTangent;
+export function lensBeaming(
+  cosToTangent: number,
+  closeness: number,
+  hand: number = 1,
+): number {
+  return 1 + COHORT_LENS_BEAM * closeness * hand * cosToTangent;
 }
 
 /** The gravitational redshift's dimming, `sqrt(1 − rs/ρ)`: 0 at the horizon,
@@ -1107,10 +1347,22 @@ export function lensRedshift(rho: number, rs: number): number {
  *
  * The vertex convention is the retired aura's, exactly: `instanceMatrix`
  * carries a TRANSLATION and nothing else, the quad's half-extent rides
- * `uQuadR`, and the three lanes are the ones the layer already plans — `aSeed`
- * (decorrelation), `aGulp` (the sim second of the block this cohort won) and
+ * `uQuadR`, and the four lanes are the ones the layer already plans — `aSeed`
+ * (decorrelation), `aGulp` (the sim second of the block this cohort won),
  * `aShare` (its fraction of its window, which is the sink's strength here
- * exactly as it was under the retired patch).
+ * exactly as it was under the retired patch) and `aMass`.
+ *
+ * ⭐⭐⭐ `aMass` IS THE ONLY THING THAT MAKES TWO COHORTS DIFFERENT PICTURES.
+ * Every form parameter here is a global uniform, so the lane is what turns
+ * seven copies into seven sizes: `vMass` multiplies EVERY length the fragment
+ * names — the camera's own scale before the fold reads it, the mass, both disc
+ * edges, the far catchment, the far law's knee and the nucleus — and everything
+ * else is already written in units of `rs` or of an edge. A cohort whose lane
+ * reads 1 is the form this file has always drawn, exactly.
+ *
+ * ⚠️ THE MAGNITUDE IS THE MASS AND THE SIGN IS RESERVED FOR THE HANDEDNESS.
+ * The vertex stage reads `max(abs(aMass), 0.05)` and nothing else looks at
+ * the sign yet; `cohortMassLaneValue` on the CPU packs both.
  *
  * ⚠️ A SCALED INSTANCE MATRIX WOULD MOVE THE QUAD WITHOUT MOVING THE MASS, and
  * the mark would be a window onto a hole that is somewhere else.
@@ -1208,6 +1460,7 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
       attribute float aSeed;
       attribute float aGulp;
       attribute float aShare;
+      attribute float aMass;
 
       uniform float uQuadR;
       uniform float uDriftSign;
@@ -1223,10 +1476,15 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
       varying float vSeed;
       varying float vGulp;
       varying float vShareF;
+      varying float vMass;
 
       void main() {
         vSeed = aSeed;
         vGulp = aGulp;
+        // The cohort's own size, and every length in the fragment is a multiple
+        // of it. Floored because an unwritten lane reads as zero in WebGL, and
+        // absolute because the sign is reserved for the handedness.
+        vMass = max(abs(aMass), ${COHORT_MASS_GLSL_FLOOR.toFixed(2)});
         ${MIST_SHARE_FACTOR_GLSL}
         // The instance's own world point: the centre of the mass, the origin of
         // every ray's polar frame, and what the context exemption measures.
@@ -1250,7 +1508,8 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
           viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]
         );
         vWorld = origin.xyz
-          + (cameraRight * position.x + cameraUp * position.y) * uQuadR * 2.0;
+          + (cameraRight * position.x + cameraUp * position.y)
+            * uQuadR * vMass * 2.0;
         gl_Position = projectionMatrix * viewMatrix * vec4(vWorld, 1.0);
       }
     `,
@@ -1321,6 +1580,7 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
       varying float vSeed;
       varying float vGulp;
       varying float vShareF;
+      varying float vMass;
 
       // ---- the substance, read the one way a ray march may read it ---------
       //
@@ -1399,8 +1659,9 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
         float fq = clamp(rho / outR, 0.0, 1.0);
         float fCatch = 1.0 - fq * fq;
         fCatch *= fCatch;
+        float knee = uFarKnee * vMass;
         float farLaw = uFarDiscAmp
-          * pow(clamp(uFarKnee / (rho + uFarKnee), 0.0, 1.0), uFarDiscPow)
+          * pow(clamp(knee / (rho + knee), 0.0, 1.0), uFarDiscPow)
           * fCatch * (0.7 + 0.3 * g);
         // AND THE TRACED IMAGE ARRIVES WITH THE CLOSENESS. Below the band the
         // far form is drawn alone; through it the traced disc fades in over
@@ -1489,7 +1750,8 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
         float q = rho / outR;
         float catchW = 1.0 - q * q;
         catchW *= catchW;
-        float shape = pow(clamp(uFarKnee / (rho + uFarKnee), 0.0, 1.0), uFarDiscPow);
+        float knee = uFarKnee * vMass;
+        float shape = pow(clamp(knee / (rho + knee), 0.0, 1.0), uFarDiscPow);
         float arms = mix(1.0 - uFarStreak, 1.0 + uFarStreak, g);
         // The block this cohort won, on the SAME curve the near disc swallows.
         ${COHORT_GULP_GLSL}
@@ -1517,11 +1779,15 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
         // mass folds and with it every radius, and the picture is the intake
         // itself -- the substance winding into a bright heart, no hole, no
         // ring; near, the film's hole.
-        float closeness = smoothstep(uUnfoldLo, uUnfoldHi, uPxScale / r0);
-        float rs = mix(uHorizonFar, uHorizon, closeness);
+        // AND IT IS PIXELS PER SHADOW, NOT PER WORLD UNIT: the cohort's own
+        // mass scales the camera before the fold reads it, so every cohort's
+        // hole opens at the same on-screen size whatever its week was. fold and
+        // discIn carry the mass for free, being fractions of rs.
+        float closeness = smoothstep(uUnfoldLo, uUnfoldHi, uPxScale * vMass / r0);
+        float rs = mix(uHorizonFar, uHorizon, closeness) * vMass;
         float fold = rs / uHorizon;
         float discIn = uDiscIn * fold;
-        float discOut = mix(uDiscOutFar, uDiscOut, closeness);
+        float discOut = mix(uDiscOutFar, uDiscOut, closeness) * vMass;
         float M = 0.5 * rs;
 
         // The ray's own polar frame: e1 toward the camera, e2 the direction it
@@ -1541,13 +1807,13 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
         float farW = 1.0 - closeness;
         vec4 far = vec4(0.0);
         if (farW > 0.0) {
-          far = lensFarSample(o, d, c, uDiscOutFar);
+          far = lensFarSample(o, d, c, uDiscOutFar * vMass);
           // The nucleus: round and camera-facing, the sprite's own register
           // and the brightest thing in the far form -- the object a viewer
           // sees, with the in-plane arms as its atmosphere.
           // Written as t*t rather than pow(t, 2.0) so no reader has to prove
           // the base non-negative.
-          float tf = impact / max(uFarGlowR, 1e-4);
+          float tf = impact / max(uFarGlowR * vMass, 1e-4);
           float tc = tf / ${COHORT_LENS_FAR_GLOW_CORE_R.toFixed(2)};
           float heart = uFarGlow
             * (exp(-tf * tf) + ${COHORT_LENS_FAR_GLOW_CORE.toFixed(1)} * exp(-tc * tc));
