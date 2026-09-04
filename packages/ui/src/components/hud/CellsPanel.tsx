@@ -22,10 +22,21 @@ function FlowRow({ label, direction, color, width, value }: { label: string; dir
   );
 }
 
-function CellsPanel({ stats, churn, reducedMotion = false, style }: {
+/** The rail's measure, and the collapsed one.
+ *
+ * At 1,280 the two rails and the card leave a 550 px hole for a stage that is
+ * the product, and the HUD is 57 % of the page. Collapsed, a mesh panel is its
+ * header, its hero and one row — the reading you would keep if you could keep
+ * one — at a measure the three-word rows still fit. */
+const PANEL_WIDTH_PX = 302;
+const DENSE_PANEL_WIDTH_PX = 210;
+
+function CellsPanel({ stats, churn, reducedMotion = false, dense = false, style }: {
   stats: CellsStats;
   churn: ChurnRates;
   reducedMotion?: boolean;
+  /** The rail has collapsed: header, hero, one row. */
+  dense?: boolean;
   style?: CSSProperties;
 }) {
   const maxRate = Math.max(churn.bornPerBlock, churn.spentPerBlock, 0.001);
@@ -38,7 +49,7 @@ function CellsPanel({ stats, churn, reducedMotion = false, style }: {
   // rows wear; the hero only says which side won this block.
   const netColor = churn.netPerBlock >= 0 ? HUD_COLORS.nominal : HUD_COLORS.ember;
   return (
-    <HudPanel style={{ width: 302, ...style }}>
+    <HudPanel style={{ width: dense ? DENSE_PANEL_WIDTH_PX : PANEL_WIDTH_PX, ...style }}>
       {/* PEER·02 is the peer plane and CELL·03 is this one; they are a pair,
           and a pair has to be two colours. The cyan that used to sit here was
           eight degrees off `peerWire`, so the two panels read as one — and it
@@ -57,7 +68,7 @@ function CellsPanel({ stats, churn, reducedMotion = false, style }: {
           its unique glyphs left the hand-subset face with it (fonts/README.md). */}
       <PanelHeader en="CELL MESH" cjk="元胞汤" idx="CELL·03" accent={CELL_PANEL_ACCENT} />
       <div style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.tech, color: HUD_COLORS.dim, letterSpacing: 1.2, marginBottom: 2 }}>METABOLISM · per block</div>
-      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, marginBottom: 9 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, marginBottom: dense ? 4 : 9 }}>
         {/* Tabular figures on every display-family number that ticks: Saira's
             proportional digits make a `1` narrower than a `0`, so a rate
             crossing +9.9 → +10.0 shunts the whole hero sideways and the panel
@@ -70,9 +81,13 @@ function CellsPanel({ stats, churn, reducedMotion = false, style }: {
           block of spent outputs read as a small emergency. Cells being
           consumed is what a living chain looks like; the alarming number
           would be this row at zero. */}
-      <FlowRow label="BORN" direction="up" color={HUD_COLORS.nominal} width={bornW} value={churn.bornPerBlock} />
-      <div style={{ height: 5 }} />
-      <FlowRow label="DIED" direction="down" color={HUD_COLORS.ember} width={spentW} value={churn.spentPerBlock} />
+      {dense ? null : (
+        <>
+          <FlowRow label="BORN" direction="up" color={HUD_COLORS.nominal} width={bornW} value={churn.bornPerBlock} />
+          <div style={{ height: 5 }} />
+          <FlowRow label="DIED" direction="down" color={HUD_COLORS.ember} width={spentW} value={churn.spentPerBlock} />
+        </>
+      )}
       {/* `stats.live` is births minus deaths in the BACKEND'S OBSERVATION
           WINDOW — never a live-chain total. That was merely imprecise while
           nothing else on screen implied a chain-wide number; with a medium
@@ -91,10 +106,14 @@ function CellsPanel({ stats, churn, reducedMotion = false, style }: {
           PULSE has: a hero at the `hero` rung, coloured by what it is saying,
           and no second claim on the tier above `ink`. `heroInk` is worn where
           it is worn alone — CKB·01's tip, DAO·05's deposit total. */}
-      <div style={{ marginTop: 11 }}>
+      <div style={{ marginTop: dense ? 0 : 11 }}>
         <StatRow label="Observed live"><span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: HUD_TYPE.emphasis, fontVariantNumeric: 'tabular-nums' }}>{fmt(stats.live)}</span></StatRow>
-        <StatRow label="Total observed">{fmt(stats.born)}</StatRow>
-        <StatRow label="Dead" valueColor={HUD_COLORS.ember}>{fmt(stats.dead)}</StatRow>
+        {dense ? null : (
+          <>
+            <StatRow label="Total observed">{fmt(stats.born)}</StatRow>
+            <StatRow label="Dead" valueColor={HUD_COLORS.ember}>{fmt(stats.dead)}</StatRow>
+          </>
+        )}
       </div>
     </HudPanel>
   );

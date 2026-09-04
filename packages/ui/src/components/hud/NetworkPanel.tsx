@@ -24,7 +24,12 @@ const AT_TIP_SYNC_RATIO = 0.999;
 // It reports the fleet, never one peer. Per-peer client version and RTT are on
 // the floating PEER card and the reference version is on the NODE card, so a
 // rail aggregate of the same two numbers was only duplicate telemetry.
-function NetworkPanel({ summary, consensus, syncRatio, enrichmentSource, networkAtlas, producers, style }: {
+/** Kept in step with `CellsPanel`: the two mesh panels are a pair and a pair
+ *  that collapsed to two different measures would read as two instruments. */
+const PANEL_WIDTH_PX = 302;
+const DENSE_PANEL_WIDTH_PX = 210;
+
+function NetworkPanel({ summary, consensus, syncRatio, enrichmentSource, networkAtlas, producers, dense = false, style }: {
   summary: NetworkSummary; consensus: FleetConsensus; syncRatio: number;
   enrichmentSource?: EnrichmentSourceStatus;
   networkAtlas?: NetworkAtlasRecord | null;
@@ -33,12 +38,18 @@ function NetworkPanel({ summary, consensus, syncRatio, enrichmentSource, network
    *  window whose numerators do not add up to it — and a refusal prints
    *  nothing rather than a partial truth. */
   producers?: BlockProducerView | null;
+  /** The rail has collapsed (≤1280): header, the peer count, and the head
+   *  consensus bar the count is a count OF. Everything below it — the tallies,
+   *  the catch-up gauge, the cohorts and the atlas — is reachable on a stage
+   *  wide enough to hold the scene as well, and a rail that keeps them at 1,280
+   *  is a rail that has decided the HUD is the page. */
+  dense?: boolean;
   style?: CSSProperties;
 }) {
   const total = Math.max(1, consensus.total);
   const seg = (n: number) => `${(n / total) * 100}%`;
   return (
-    <HudPanel style={{ width: 302, paddingTop: 14, ...style }}>
+    <HudPanel style={{ width: dense ? DENSE_PANEL_WIDTH_PX : PANEL_WIDTH_PX, paddingTop: 14, ...style }}>
       <PanelHeader en="PEER MESH" cjk="节点场" idx="PEER·02" accent={HUD_COLORS.peerWire} />
       {/* The link-direction pair reads as `OUT n / IN n`, which is how
         * `NodeSelfCard` states the identical reading and how every other
@@ -48,12 +59,15 @@ function NetworkPanel({ summary, consensus, syncRatio, enrichmentSource, network
         * and the three consensus tallies below) that read as a different
         * instrument's captions in the middle of this one's. */}
       <StatRow label="Peers"><span style={{ color: HUD_COLORS.peerWire }}>{summary.peerCount}</span> &nbsp; <span style={{ color: HUD_COLORS.dim }}>OUT</span> {summary.outbound} / <span style={{ color: HUD_COLORS.dim }}>IN</span> {summary.inbound}</StatRow>
-      <StatRow label="Head consensus">{consensus.atTip} / {consensus.total}</StatRow>
+      {dense ? null : (
+        <StatRow label="Head consensus">{consensus.atTip} / {consensus.total}</StatRow>
+      )}
       <div style={{ display: 'flex', height: 7, border: `1px solid ${rgba(HUD_COLORS.orange, 0.2)}`, background: HUD_COLORS.trackGround, margin: '4px 0' }}>
         <span style={{ width: seg(consensus.atTip), background: HUD_COLORS.nominal, boxShadow: `0 0 7px ${rgba(HUD_COLORS.nominal, 0.55)}` }} />
         <span style={{ width: seg(consensus.behind), background: HUD_COLORS.dim }} />
         <span style={{ width: seg(consensus.ahead), background: HUD_COLORS.caution }} />
       </div>
+      {dense ? null : (
       <div style={{ display: 'flex', gap: 11, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, letterSpacing: 0.35, marginBottom: 8 }}>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: HUD_COLORS.nominal }}>
           <DirectionMark direction="up" color={HUD_COLORS.nominal} size={4.5} />
@@ -69,7 +83,8 @@ function NetworkPanel({ summary, consensus, syncRatio, enrichmentSource, network
           * tally, so plain ink is what is left and what this is. */}
         <span style={{ marginLeft: 'auto', color: HUD_COLORS.ink }}>#{fmt(summary.bestKnown)}</span>
       </div>
-      {syncRatio < AT_TIP_SYNC_RATIO ? (
+      )}
+      {!dense && syncRatio < AT_TIP_SYNC_RATIO ? (
         <div data-network-sync="catching-up">
           <StatRow label="Syncing" valueColor={HUD_COLORS.caution}>{(syncRatio * 100).toFixed(1)}% of #{fmt(summary.bestKnown)}</StatRow>
           <div style={{ height: 4, background: HUD_COLORS.trackGround, border: `1px solid ${rgba(HUD_COLORS.caution, 0.22)}`, margin: '2px 0 4px' }}>
@@ -138,7 +153,7 @@ function NetworkPanel({ summary, consensus, syncRatio, enrichmentSource, network
         * out of `producerReadout` — the title too, because it carries a
         * percentage and a percentage assembled in a component is the one thing
         * that module exists to make unreachable. */}
-      {producers ? (
+      {!dense && producers ? (
         <div data-network-producers>
           <StatRow
             label="POW COHORTS"
@@ -148,7 +163,9 @@ function NetworkPanel({ summary, consensus, syncRatio, enrichmentSource, network
           </StatRow>
         </div>
       ) : null}
-      <NetworkAtlasReadout source={enrichmentSource} record={networkAtlas} />
+      {dense ? null : (
+        <NetworkAtlasReadout source={enrichmentSource} record={networkAtlas} />
+      )}
     </HudPanel>
   );
 }

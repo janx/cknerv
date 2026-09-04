@@ -52,11 +52,17 @@ function shareLabel(bps: number): string {
  * the section renders when at least one exists, and renders nothing sooner
  * than a number it cannot prove.
  */
-export default function ChainCapacityReadout({ source, record, census = null, censusStale = false }: {
+export default function ChainCapacityReadout({ source, record, census = null, censusStale = false, folded = false }: {
   source?: EnrichmentSourceStatus;
   record?: AssetEcosystemRecord | null;
   census?: ChainCensus | null;
   censusStale?: boolean;
+  /** The rail has collapsed (≤1280): the section is its own header and the
+   *  count in it, nothing more. Distinct from `compact`, which is the SHORT
+   *  viewport's answer and keeps whatever the section can still afford —
+   *  a narrow stage and a short one are two different shortages, and a panel
+   *  that answered both with the same form would be guessing at one of them. */
+  folded?: boolean;
 }) {
   const visualState = source && record ? assetEcosystemVisualState(source, record) : null;
   const buckets = visualState ? deriveAssetEcosystemBuckets(record!) : null;
@@ -73,6 +79,34 @@ export default function ChainCapacityReadout({ source, record, census = null, ce
   const accent = stale ? HUD_COLORS.caution : HUD_COLORS.cyanWire;
   const headerAnchor = usableRecord?.as_of ?? census!.as_of;
   const liveCells = chainLiveRow(census, censusStale, headerAnchor.block);
+
+  if (folded) {
+    // Header and the one count the section is read for. `LIVE n` rather than
+    // the capacity/knowledge pair: a collapsed rail keeps the reading a reader
+    // came to the panel for, and the census is the only figure here that is
+    // not derivable from another section's.
+    return (
+      <section
+        aria-label="Chain capacity"
+        data-chain-capacity
+        data-chain-capacity-folded="true"
+        data-asset-ecosystem-state={visualState ?? undefined}
+        style={{
+          marginTop: 6,
+          paddingTop: 5,
+          borderTop: `1px solid ${rgba(accent, 0.16)}`,
+        }}
+      >
+        <ReadoutHeader
+          title="CHAIN CAPACITY"
+          meta={`${liveCells.value} LIVE · AS OF #${headerAnchor.block.toLocaleString('en-US')}`}
+          accent={accent}
+          stale={stale}
+          compact
+        />
+      </section>
+    );
+  }
 
   return (
     <section

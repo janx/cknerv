@@ -174,3 +174,35 @@ describe('ChainCapacityReadout', () => {
     )?.style.opacity).toBe('1');
   });
 });
+
+describe('ChainCapacityReadout folded', () => {
+  it('keeps the header and the census count, and nothing else', () => {
+    // The rail has collapsed: what survives is the reading a reader came to
+    // the section for. Capacity and knowledge are both derivable from the
+    // asset record the section header already anchors; the validated census
+    // is not derivable from anything else on the panel.
+    const { container } = render(
+      <ChainCapacityReadout source={source} record={record} census={census()} folded />,
+    );
+    const section = container.querySelector('[data-chain-capacity]') as HTMLElement;
+
+    expect(section.dataset.chainCapacityFolded).toBe('true');
+    expect(section.textContent).toContain('CHAIN CAPACITY');
+    expect(section.textContent).toContain('1,471,373 LIVE');
+    expect(section.textContent).toContain('AS OF #100');
+    expect(section.textContent).not.toContain('Live capacity');
+    expect(section.textContent).not.toContain('Knowledge');
+    expect(section.textContent).not.toContain('DAO');
+  });
+
+  it('is the full section without it', () => {
+    const { container } = render(
+      <ChainCapacityReadout source={source} record={record} census={census()} />,
+    );
+    const section = container.querySelector('[data-chain-capacity]') as HTMLElement;
+
+    expect(section.dataset.chainCapacityFolded).toBeUndefined();
+    expect(section.textContent).toContain('Live capacity');
+    expect(section.textContent).toContain('Knowledge');
+  });
+});

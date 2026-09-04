@@ -30,7 +30,10 @@ import StatusStrip, {
   type BuildInfo,
   type HudPanelControl,
 } from './StatusStrip';
-import BlockchainReadout from './BlockchainReadout';
+import BlockchainReadout, {
+  CHAIN_PANEL_DENSE_WIDTH_PX,
+  CHAIN_PANEL_WIDTH_PX,
+} from './BlockchainReadout';
 import BlockCadenceEcg from './BlockCadenceEcg';
 import DaoStatePanel from './DaoStatePanel';
 import { canRenderDaoStateReadout } from './DaoStateReadout';
@@ -76,7 +79,6 @@ const SCAN_STYLE: CSSProperties = { position: 'absolute', inset: 0, pointerEvent
 // never shift when a detail appears — the row just grows leftward.
 const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 14, display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
 const LEFT_PANEL_GAP_PX = 12;
-const CHAIN_PANEL_WIDTH_PX = 340;
 // Left HUD layout: the upper information cluster may scroll, while PULSE uses an
 // auto margin as a true bottom-left anchor. The two regions share one bounded
 // flex column, so an unusually tall CKB/DAO readout can never overlap ECG·04.
@@ -106,10 +108,12 @@ const PULSE_ANCHOR_STYLE: CSSProperties = { position: 'relative', flex: '0 0 aut
 // memoized panel handed a fresh `{ ...PANEL_FLOW, width }` per render is not
 // memoized at all.
 const CHAIN_PANEL_STYLE: CSSProperties = { ...PANEL_FLOW, width: `min(${CHAIN_PANEL_WIDTH_PX}px, calc(100vw - 58px))` };
+const CHAIN_PANEL_DENSE_STYLE: CSSProperties = { ...PANEL_FLOW, width: `min(${CHAIN_PANEL_DENSE_WIDTH_PX}px, calc(100vw - 58px))` };
 // ECG·04 is the lower companion to CKB·01, not a footer for the whole
 // CKB + DAO cluster. Keep their outer edges aligned even when DAO·05 is
 // visible or CKB·01 is temporarily hidden from the panel menu.
 const PULSE_PANEL_STYLE: CSSProperties = { ...PANEL_FLOW, width: `min(${CHAIN_PANEL_WIDTH_PX}px, calc(100vw - 58px))` };
+const PULSE_PANEL_DENSE_STYLE: CSSProperties = { ...PANEL_FLOW, width: `min(${CHAIN_PANEL_DENSE_WIDTH_PX}px, calc(100vw - 58px))` };
 
 /** The stream banner with its own clock: its `LAST FRAME` age is the one
  *  reading in the top slot that changes every second, so the summary is
@@ -290,6 +294,16 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
   // The control-dense top bar needs to reflow before the panel rail itself does;
   // this also leaves headroom for transient stream/source chips.
   const compactTopBarWidth = useMediaQuery('(max-width: 1280px)');
+  // …and at the same width the rails themselves collapse. Measured at
+  // `25c7d5a`: 1,280 leaves a 550 px hole (43 % of the page) between two rails
+  // that keep their full 1920 measure, and CKB·01 scrolls behind a 5 px bar
+  // with its bottom bracket off screen. The scene is the product; a HUD that
+  // takes 57 % of a laptop has decided otherwise. So the mesh panels drop to a
+  // header, a hero and one row, and CKB·01's three lower sections fold to
+  // their headers and their counts. Its own query rather than a share of the
+  // top bar's: what the strip does with its controls and what a rail does with
+  // a stage are two decisions, and they will not always break at one number.
+  const railsCollapsed = useMediaQuery('(max-width: 1280px)');
   // Phones get a third priority row so display/quality controls never depend
   // on an initially hidden horizontal-scroll position.
   const mobileTopBar = useMediaQuery('(max-width: 560px)');
@@ -557,6 +571,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
     daoPanelAvailable,
     narrowRail,
     compactTopBar,
+    railsCollapsed,
     contentTop,
     railScrolls,
     bootLit,
@@ -665,7 +680,8 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
                     activityFeed={activityFeed}
                     transactionHorizon={transactionHorizon}
                     compactActivity={shortViewport}
-                    style={CHAIN_PANEL_STYLE}
+                    folded={railsCollapsed}
+                    style={railsCollapsed ? CHAIN_PANEL_DENSE_STYLE : CHAIN_PANEL_STYLE}
                   />
                 </div>
               ) : null}
@@ -712,7 +728,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
                   <DaoStatePanel
                     source={enrichmentSource}
                     record={daoState}
-                    style={PULSE_PANEL_STYLE}
+                    style={railsCollapsed ? PULSE_PANEL_DENSE_STYLE : PULSE_PANEL_STYLE}
                   />
                 </div>
               ) : null}
@@ -731,7 +747,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
                     avgMs={avgMs}
                     condition={condition}
                     reducedMotion={reduced}
-                    style={PULSE_PANEL_STYLE}
+                    style={railsCollapsed ? PULSE_PANEL_DENSE_STYLE : PULSE_PANEL_STYLE}
                   />
                 </div>
               ) : null}
@@ -750,13 +766,14 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
                 stats={cellsStats}
                 churn={churn}
                 reducedMotion={reduced}
+                dense={railsCollapsed}
                 style={PANEL_FLOW}
               />
             </div>
           ) : null}
           {panelVisibility.peers ? (
             <div data-hud-panel="peers" style={bootPanelStyle('peers')}>
-              <NetworkPanel summary={summary} consensus={consensus} syncRatio={syncRatio} enrichmentSource={enrichmentSource} networkAtlas={networkAtlas} producers={producerView} style={PANEL_FLOW} />
+              <NetworkPanel summary={summary} consensus={consensus} syncRatio={syncRatio} enrichmentSource={enrichmentSource} networkAtlas={networkAtlas} producers={producerView} dense={railsCollapsed} style={PANEL_FLOW} />
             </div>
           ) : null}
         </div>

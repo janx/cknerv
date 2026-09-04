@@ -18,7 +18,19 @@ import { formatEpochReadout } from './epochReadout';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
 
-function BlockchainReadout({ chain, cellPopulation, enrichmentSource, assetEcosystem, protocolEra, activityFeed, transactionHorizon, compactActivity = false, style }: {
+/** CKB·01's measure, and the one it takes once the rail has collapsed.
+ *
+ * `HudOverlay` sizes the panel's wrapper from these too — a panel and the
+ * scroll pane around it disagreeing about how wide the panel is was how the
+ * pane came to hide the panel's bottom bracket behind a 5 px bar — so they are
+ * stated once, here, beside the sections that fold. A header and its count is
+ * a shorter line than `LIVE CAPACITY 57.96 G·CKB`, which is what lets the
+ * folded panel be narrower at all; and the rail's WIDTH is the whole point of
+ * a collapse, because the stage the rail is stealing from is the product. */
+export const CHAIN_PANEL_WIDTH_PX = 340;
+export const CHAIN_PANEL_DENSE_WIDTH_PX = 268;
+
+function BlockchainReadout({ chain, cellPopulation, enrichmentSource, assetEcosystem, protocolEra, activityFeed, transactionHorizon, compactActivity = false, folded = false, style }: {
   chain: ChainEntry;
   /** Population model, or null for a consumer that derives none. Absent means
    *  the panel is absent — it never guesses a scope. */
@@ -29,11 +41,17 @@ function BlockchainReadout({ chain, cellPopulation, enrichmentSource, assetEcosy
   activityFeed?: ActivityFeedRecord | null;
   transactionHorizon?: TransactionHorizonRecord | null;
   compactActivity?: boolean;
+  /** The rail has collapsed (≤1280): the three sections under the chain rows
+   *  fold to their headers and their counts, so the panel stops scrolling
+   *  behind a 5 px bar and its bottom bracket stays on screen. The five chain
+   *  rows above them do not fold — tip, epoch, mempool and reorgs are what
+   *  CKB·01 IS. */
+  folded?: boolean;
   style?: CSSProperties;
 }) {
   const epoch = formatEpochReadout(chain.epoch);
   return (
-    <HudPanel style={{ width: 340, ...style }}>
+    <HudPanel style={{ width: folded ? CHAIN_PANEL_DENSE_WIDTH_PX : CHAIN_PANEL_WIDTH_PX, ...style }}>
       <PanelHeader en="COMMON KNOWLEDGE BASE" cjk="共识基" idx="CKB·01" />
       {/* The tip is a display-family number that changes every few seconds, so
           it asks for tabular figures — otherwise the `#` and everything after
@@ -58,13 +76,20 @@ function BlockchainReadout({ chain, cellPopulation, enrichmentSource, assetEcosy
         record={assetEcosystem}
         census={cellPopulation?.chainCensus ?? null}
         censusStale={cellPopulation?.censusStale ?? false}
+        folded={folded}
       />
       <TransactionHorizonReadout
         source={enrichmentSource}
         record={transactionHorizon}
         compact={compactActivity}
+        folded={folded}
       />
-      <ActivityFeedReadout source={enrichmentSource} record={activityFeed} compact={compactActivity} />
+      <ActivityFeedReadout
+        source={enrichmentSource}
+        record={activityFeed}
+        compact={compactActivity}
+        folded={folded}
+      />
     </HudPanel>
   );
 }

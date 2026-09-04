@@ -24,11 +24,17 @@ function shortHash(hash: string): string {
   return `${hash.slice(0, 8)}…${hash.slice(-4)}`;
 }
 
-export default function ActivityFeedReadout({ source, record, compact = false }: {
+export default function ActivityFeedReadout({ source, record, compact = false, folded = false }: {
   source?: EnrichmentSourceStatus;
   record?: ActivityFeedRecord | null;
   /** Keep the bounded category fingerprint but omit rows on short viewports. */
   compact?: boolean;
+  /** The rail has collapsed (≤1280): the section is its own header and the
+   *  count in it, nothing more. Distinct from `compact`, which is the SHORT
+   *  viewport's answer and keeps whatever the section can still afford —
+   *  a narrow stage and a short one are two different shortages, and a panel
+   *  that answered both with the same form would be guessing at one of them. */
+  folded?: boolean;
 }) {
   if (!source || !record) return null;
   const visualState = activityFeedVisualState(source, record);
@@ -43,9 +49,10 @@ export default function ActivityFeedReadout({ source, record, compact = false }:
       aria-label="Recent activity"
       data-activity-feed-state={visualState}
       data-activity-feed-compact={compact ? 'true' : undefined}
+      data-activity-feed-folded={folded ? 'true' : undefined}
       style={{
-        marginTop: compact ? 6 : 10,
-        paddingTop: compact ? 5 : 8,
+        marginTop: compact || folded ? 6 : 10,
+        paddingTop: compact || folded ? 5 : 8,
         borderTop: `1px solid ${rgba(accent, 0.16)}`,
         opacity: stale ? 0.68 : 1,
       }}
@@ -55,9 +62,9 @@ export default function ActivityFeedReadout({ source, record, compact = false }:
         meta={`LATEST ${total} · AS OF #${record.as_of.block.toLocaleString('en-US')}`}
         accent={accent}
         stale={stale}
-        compact={compact}
+        compact={compact || folded}
       />
-      {total > 0 ? (
+      {folded ? null : total > 0 ? (
         <>
           <div
             title={visual.buckets.map((bucket) => `${bucket.category} ${bucket.count}`).join(' · ')}

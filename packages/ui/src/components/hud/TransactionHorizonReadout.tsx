@@ -15,11 +15,17 @@ function compactCount(value: number): string {
   return `${(value / 1_000_000).toFixed(value < 10_000_000 ? 1 : 0)}M`;
 }
 
-export default function TransactionHorizonReadout({ source, record, compact = false }: {
+export default function TransactionHorizonReadout({ source, record, compact = false, folded = false }: {
   source?: EnrichmentSourceStatus;
   record?: TransactionHorizonRecord | null;
   /** Header-only summary that preserves section order on short viewports. */
   compact?: boolean;
+  /** The rail has collapsed (≤1280): the section is its own header and the
+   *  count in it, nothing more. Distinct from `compact`, which is the SHORT
+   *  viewport's answer and keeps whatever the section can still afford —
+   *  a narrow stage and a short one are two different shortages, and a panel
+   *  that answered both with the same form would be guessing at one of them. */
+  folded?: boolean;
 }) {
   if (!source || !record) return null;
   const visualState = transactionHorizonVisualState(source, record);
@@ -28,7 +34,7 @@ export default function TransactionHorizonReadout({ source, record, compact = fa
   const stale = visualState === 'stale';
   const accent = stale ? HUD_COLORS.caution : HUD_COLORS.cyanWire;
 
-  if (compact) {
+  if (compact || folded) {
     return (
       <section
         aria-label="Transaction horizon"

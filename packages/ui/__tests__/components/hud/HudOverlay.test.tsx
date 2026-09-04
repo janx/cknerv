@@ -1318,3 +1318,121 @@ describe('HudOverlay — everything below the top slot clears the whole stack', 
     expect(composingBand(container)).toBeNull();
   });
 });
+
+/**
+ * The collapse rule. jsdom lays nothing out, so the oracle is the arithmetic
+ * the layout is made of rather than a rendered box: every left panel's measure
+ * plus the 14 px inset, every right panel's measure plus its own, and the hole
+ * that leaves. Both stages the round put in scope are read; the rendered
+ * version of the same reading is the live rects dump in `runs/A5/`.
+ */
+describe('HudOverlay rail collapse', () => {
+  /** Outer box of a HudPanel: its declared measure plus `13px 15px` of padding
+   *  on a box that is not `border-box`. */
+  const outer = (el: HTMLElement): number => Number.parseFloat(
+    (el.style.width || '0').replace(/^min\(/, '').split('px')[0],
+  ) + 30;
+
+  const panelBox = (container: HTMLElement, id: string): number => {
+    const wrap = container.querySelector(`[data-hud-panel="${id}"]`) as HTMLElement;
+    const panel = wrap.querySelector('[data-hud-occlusion="true"]') as HTMLElement;
+    return outer(panel);
+  };
+
+  const stage = (width: number) => {
+    vi.stubGlobal('matchMedia', (query: string) => {
+      const max = /max-width:\s*(\d+)px/.exec(query);
+      return {
+        matches: max ? width <= Number(max[1]) : false,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      };
+    });
+    return render(
+      <HudOverlay
+        chain={chain}
+        peers={peers}
+        localNode={localNode}
+        cellsStats={cellsStats}
+        enrichmentSource={enrichmentSource}
+        daoState={daoState}
+      />,
+    );
+  };
+
+  const holeAt = (container: HTMLElement, width: number): number => {
+    // The two rails, measured from their own insets: 14 px on each side.
+    const left = 14 + Math.max(
+      panelBox(container, 'chain'),
+      panelBox(container, 'pulse'),
+      panelBox(container, 'dao'),
+    );
+    const right = 14 + Math.max(
+      panelBox(container, 'cells'),
+      panelBox(container, 'peers'),
+    );
+    return width - left - right;
+  };
+
+  it('leaves the stage more than half of a 1280px page', () => {
+    // The gate the plan sets, at the width it sets it: at `25c7d5a` the hole
+    // was 550 px of 1,280 — 43 % — with the card on top of it.
+    const { container } = stage(1280);
+
+    expect(holeAt(container, 1280) / 1280).toBeGreaterThanOrEqual(0.5);
+  });
+
+  it('still leaves a stage at 1100', () => {
+    // No share is promised down here — the rails have a floor and 1,100 is
+    // below where half is reachable — but the stage must not close.
+    const { container } = stage(1100);
+
+    expect(holeAt(container, 1100)).toBeGreaterThan(500);
+  });
+
+  it('keeps the full measure above the threshold', () => {
+    const { container } = stage(1440);
+
+    expect(panelBox(container, 'chain')).toBe(370);
+    expect(panelBox(container, 'cells')).toBe(332);
+    expect(panelBox(container, 'peers')).toBe(332);
+  });
+
+  it('keeps CKB\u00b701\u2019s own five rows through the collapse', () => {
+    // The panel narrows and its three lower sections fold (see
+    // `ChainCapacityReadout.test.tsx`), but tip, epoch, progress, mempool and
+    // reorgs are what CKB\u00b701 IS and none of them goes.
+    const { container } = stage(1280);
+    const chainPanel = container.querySelector('[data-hud-panel="chain"]') as HTMLElement;
+
+    for (const row of ['Tip', 'Epoch', 'Epoch progress', 'Mempool', 'Reorgs']) {
+      expect(chainPanel.textContent).toContain(row);
+    }
+    expect(panelBox(container, 'chain')).toBe(298);
+  });
+
+  it('leaves the mesh panels a header, a hero and one row', () => {
+    const { container } = stage(1280);
+    const cells = container.querySelector('[data-hud-panel="cells"]') as HTMLElement;
+    const peers_ = container.querySelector('[data-hud-panel="peers"]') as HTMLElement;
+
+    expect(cells.textContent).toContain('CELL MESH');
+    expect(cells.textContent).toContain('Observed live');
+    expect(cells.textContent).not.toContain('BORN');
+    expect(cells.textContent).not.toContain('Total observed');
+    expect(peers_.textContent).toContain('PEER MESH');
+    expect(peers_.textContent).toContain('Peers');
+    expect(peers_.textContent).not.toContain('AT-TIP');
+    expect(peers_.textContent).not.toContain('Head consensus');
+  });
+
+  it('keeps every row above the threshold', () => {
+    const { container } = stage(1440);
+    const cells = container.querySelector('[data-hud-panel="cells"]') as HTMLElement;
+    const chainPanel = container.querySelector('[data-hud-panel="chain"]') as HTMLElement;
+
+    expect(cells.textContent).toContain('BORN');
+    expect(cells.textContent).toContain('Total observed');
+    expect(panelBox(container, 'chain')).toBe(370);
+  });
+});
