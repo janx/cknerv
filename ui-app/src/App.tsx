@@ -29,6 +29,7 @@ import {
   reportBootSeeding,
   CELLS_Y,
   CELL_SELECTION_PREFIX,
+  hudHoleFromRects,
   useHudOcclusionRects,
   cellDetailViewFocus,
   chainNodeWorldPosition,
@@ -190,7 +191,6 @@ import { restoreCellGalaxyFocus } from './cell-galaxy-focus';
 import {
   CAMERA_HOLE_MARGIN_PX,
   fitCameraToHole,
-  hudHoleFromRects,
 } from './camera-hole-fit';
 
 interface AppProps {

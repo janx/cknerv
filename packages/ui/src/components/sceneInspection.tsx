@@ -22,7 +22,11 @@ import type { HudOcclusionRect } from './hudOcclusion';
  * once, so a second inspected entity costs a card and not a chassis.
  */
 
-const INSPECTOR_GAP_PX = 42;
+/** Clear px between an entity and the card that reads it — the tether's own
+ *  length. Exported because a card that decides its MEASURE by the room it has
+ *  is doing this solver's arithmetic (`w + gap` of hole for a card of measure
+ *  `w`), and a card carrying its own 42 would be a second tether. */
+export const INSPECTOR_GAP_PX = 42;
 const INSPECTOR_EDGE_PX = 14;
 const INSPECTOR_SAFE_TOP_PX = 104;
 
@@ -162,9 +166,11 @@ export interface SceneInspectorPlacement {
  * 'beside' places left/right of the anchor (x is width-derived, y is the free
  * axis); 'stacked' places above/below (y is side-derived, x is the free axis);
  * 'docked' has no free axis at all — the card is taller than the band between
- * the safe top and the bottom edge, so it hangs from the safe top and aligns
- * to a viewport edge, and what makes it readable is that the card scrolls
- * inside itself rather than that the solver found it a home.
+ * the safe top and the bottom edge, so it hangs from the safe top and takes
+ * the viewport edge away from the entity (settled off the panels standing
+ * there, where the stage is wide enough for that), and what makes it readable
+ * is that the card scrolls inside itself rather than that the solver found it
+ * a home.
  *
  * The third one exists because the second one was lying. A card taller than
  * the band used to be pinned to `safeTop` and left there — the clamp's own
@@ -568,12 +574,31 @@ export function sceneInspectorPlacement({
       heldSide,
       panelWidth * INSPECTOR_SIDE_HYSTERESIS,
     );
+    // …and it stands against that edge only as far as the HUD lets it. A
+    // docked card is the answer to a stage too SHORT for the card, which says
+    // nothing about how wide the stage is: at 1920 a tall card docked to the
+    // right edge covered the whole of CELL·03 and PEER·02 with 331 px of clear
+    // stage sitting beside it. So the edge is where the card starts and the
+    // panels push it inward, exactly as they do in the beside family — unless
+    // pushing it inward would take it off the other end of the screen, which
+    // is what happens when the card is wider than the hole itself (728 of card
+    // against a 710 px hole at 1440). There the card keeps the edge and covers
+    // a rail: the stage has no answer, and a card half off the screen is a
+    // worse one than a covered panel.
+    const dockedTop = anchorY + minY;
+    const dockedBottom = dockedTop + panelHeight;
+    const dockedEdgeX = side === 'left'
+      ? edge
+      : viewportWidth - edge - panelWidth;
+    const settledX = side === 'left'
+      ? settleCardRight(dockedEdgeX, panelWidth, dockedTop, dockedBottom, obstacles)
+      : settleCardLeft(dockedEdgeX, panelWidth, dockedTop, dockedBottom, obstacles);
+    const onScreen = settledX >= edge
+      && settledX + panelWidth <= viewportWidth - edge;
     return {
       family: 'docked',
       side,
-      x: side === 'left'
-        ? edge - anchorX
-        : viewportWidth - edge - panelWidth - anchorX,
+      x: (onScreen ? settledX : dockedEdgeX) - anchorX,
       y: minY,
     };
   }

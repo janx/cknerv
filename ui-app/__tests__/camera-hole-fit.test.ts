@@ -7,7 +7,6 @@ import {
   CAMERA_HOLE_MARGIN_PX,
   CAMERA_RIM_EXTENT,
   fitCameraToHole,
-  hudHoleFromRects,
 } from '../src/camera-hole-fit';
 
 const UI_SRC = join(
@@ -234,37 +233,5 @@ describe('fitCameraToHole', () => {
     expect(short.distance).toBeGreaterThan(tall.distance / 2.2);
     // Same 1,190 px hole, same height, a stage 1,232 px wider: the same pose.
     expect(wide.distance).toBeCloseTo(tall.distance, 0);
-  });
-});
-
-describe('hudHoleFromRects', () => {
-  const RAILS = [
-    { left: 14, top: 48, right: 384, bottom: 519 },
-    { left: 1574, top: 48, right: 1906, bottom: 519 },
-  ];
-
-  it('reads the hole between the rails', () => {
-    expect(hudHoleFromRects(RAILS, 1920, 1080)).toEqual({ left: 384, right: 1574 });
-  });
-
-  it('ignores a panel that is not level with the stage', () => {
-    // The status strip runs the whole width across the top; it is not a wall
-    // the composition has to fit between, and taking it as one would report a
-    // hole of zero at every viewport.
-    const strip = { left: 0, top: 0, right: 1920, bottom: 48 };
-
-    expect(hudHoleFromRects([...RAILS, strip], 1920, 1080))
-      .toEqual({ left: 384, right: 1574 });
-  });
-
-  it('takes the innermost edge on each side', () => {
-    const dao = { left: 14, top: 560, right: 300, bottom: 900 };
-    const chain = { left: 14, top: 48, right: 384, bottom: 519 };
-
-    expect(hudHoleFromRects([dao, chain], 1920, 1080).left).toBe(384);
-  });
-
-  it('answers the full viewport when the HUD has laid nothing out', () => {
-    expect(hudHoleFromRects([], 1920, 1080)).toEqual({ left: 0, right: 1920 });
   });
 });

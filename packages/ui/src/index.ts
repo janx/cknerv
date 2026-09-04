@@ -20,13 +20,16 @@
 // ── Layout (Y planes + chain-node positioning) ──────────────────────
 export * from './layout';
 
-// ── The HUD's own occluding boxes ───────────────────────────────────
+// ── The HUD's own occluding boxes, and the hole they leave ──────────
 // The app reads these for one thing only: fitting the camera to the hole the
-// rails leave. Additive, and deliberately the SAME reader the inspector
-// solver uses rather than a fifth `querySelectorAll('[data-hud-occlusion]')`
-// on its own cadence.
+// rails leave. Additive, and deliberately the SAME reader — and now the same
+// HOLE — the inspector's solver and the cell card compose into, rather than a
+// fifth `querySelectorAll('[data-hud-occlusion]')` on its own cadence and a
+// second opinion about where the stage ends.
 export {
+  hudHoleFromRects,
   useHudOcclusionRects,
+  type HudHole,
   type HudOcclusionRect,
 } from './components/hudOcclusion';
 

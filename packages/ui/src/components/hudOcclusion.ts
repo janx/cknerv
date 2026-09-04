@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
 
 /**
  * What the HUD covers, in viewport coordinates, for the surfaces that have to
@@ -22,6 +22,13 @@ export interface HudOcclusionRect {
   top: number;
   right: number;
   bottom: number;
+}
+
+/** The clear stage between whatever the HUD stands on the left and whatever it
+ *  stands on the right, in viewport px. */
+export interface HudHole {
+  left: number;
+  right: number;
 }
 
 /**
@@ -49,6 +56,7 @@ let framePending: number | null = null;
 function measureNow(): void {
   if (typeof document === 'undefined') {
     rects.length = 0;
+    publishHoleWidth();
     return;
   }
   const elements = document.querySelectorAll<HTMLElement>(
@@ -80,6 +88,101 @@ function measureNow(): void {
     kept += 1;
   }
   rects.length = kept;
+  publishHoleWidth();
+}
+
+/**
+ * The hole the HUD leaves the stage, from the panel boxes it publishes.
+ *
+ * ONE definition, for every surface that has to compose into it: the camera
+ * fits its distance and its aim to this (`ui-app/src/camera-hole-fit.ts`), and
+ * the cell card picks its own measure by it (`CellDetailPanel`'s
+ * `CARD_BESIDE_HOLE_PX`). Two definitions of "the hole" would be two frames,
+ * and the card and the galaxy would each be composing into a different one.
+ *
+ * A panel counts only if it crosses the stage's own middle band — the rows the
+ * galaxy is actually drawn in, and the rows a tethered card sits in. The
+ * status strip spans the whole width at the top and is not a wall the
+ * composition has to fit between; the rails are.
+ */
+export function hudHoleFromRects(
+  rects_: readonly HudOcclusionRect[],
+  viewportWidth: number,
+  viewportHeight: number,
+): HudHole {
+  const bandTop = viewportHeight * 0.3;
+  const bandBottom = viewportHeight * 0.7;
+  let left = 0;
+  let right = viewportWidth;
+  for (let index = 0; index < rects_.length; index += 1) {
+    const rect = rects_[index];
+    if (rect.top >= bandBottom || rect.bottom <= bandTop) continue;
+    const middle = (rect.left + rect.right) / 2;
+    if (middle < viewportWidth / 2) {
+      if (rect.right > left) left = rect.right;
+    } else if (rect.left < right) {
+      right = rect.left;
+    }
+  }
+  return { left, right: Math.max(left, right) };
+}
+
+/**
+ * The hole's width, published as a store rather than returned from a
+ * measurement.
+ *
+ * The rects array above is deliberately mutated in place and never notifies:
+ * its consumer is a frame loop, which reads it every frame anyway. A card's
+ * COMPOSITION is the opposite kind of consumer — it is a render, it happens
+ * when React says so, and it has to change when a rail collapses or a window
+ * is dragged. So the width alone is a `useSyncExternalStore` value: it changes
+ * rarely, it is one number, and a card can be re-rendered by it without the
+ * frame loop paying anything.
+ */
+let publishedHoleWidth = 0;
+const holeListeners = new Set<() => void>();
+
+function publishHoleWidth(): void {
+  const width = typeof window === 'undefined' ? 0 : window.innerWidth;
+  const height = typeof window === 'undefined' ? 0 : window.innerHeight;
+  const hole = hudHoleFromRects(rects, width, height);
+  const next = Math.max(0, hole.right - hole.left);
+  if (next === publishedHoleWidth) return;
+  publishedHoleWidth = next;
+  holeListeners.forEach((listener) => listener());
+}
+
+/**
+ * ⚠️ Measures during a render when nothing else is watching.
+ *
+ * A card's first paint has to be in the composition it is going to stay in: a
+ * card that opens 856 wide and snaps to 728 a frame later is the jump this
+ * whole round exists to remove. The rects are measured in an effect, which
+ * runs after that first paint, so the first read takes the measurement itself.
+ * It is a `getBoundingClientRect` over the HUD's half-dozen panels, once per
+ * card, and it is the same reading the effect would have taken — while a card
+ * is open `retainCount` is at least its own, and this branch is dead.
+ */
+function readHoleWidth(): number {
+  if (retainCount === 0) measureNow();
+  return publishedHoleWidth;
+}
+
+function subscribeHoleWidth(listener: () => void): () => void {
+  holeListeners.add(listener);
+  return () => { holeListeners.delete(listener); };
+}
+
+/**
+ * How much clear stage the HUD leaves, for a surface that changes shape with
+ * it. Re-renders its caller when — and only when — the number changes.
+ */
+export function useHudHoleWidth(): number {
+  // Retaining is what keeps the measurement alive; the store carries the
+  // answer. The order matters only in that both are hooks: React runs the
+  // retain first, and the store's own subscribe re-reads after it.
+  useEffect(() => retain(), []);
+  return useSyncExternalStore(subscribeHoleWidth, readHoleWidth, readHoleWidth);
 }
 
 /**

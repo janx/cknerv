@@ -51,6 +51,7 @@ import CellDetailPanel, {
   type CellInspectionFacet,
 } from '../../../src/components/hud/CellDetailPanel';
 import { READER_WIDTH_PX } from '../../../src/components/hud/CellDataReader';
+import { measureHudOcclusionRectsForTest } from '../../../src/components/hudOcclusion';
 import { HUD_COLORS, HUD_TYPE } from '../../../src/components/hud/hudTheme';
 
 afterEach(() => {
@@ -61,7 +62,46 @@ afterEach(() => {
   // clamp would otherwise hand the next one a viewport it never asked for.
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 });
   Object.defineProperty(window, 'innerHeight', { configurable: true, value: 768 });
+  // …and its HUD with it: the card's measure is decided by the hole the rails
+  // leave, so a rail left behind by one test is a stage the next never set.
+  document.querySelectorAll('[data-hud-occlusion]').forEach((el) => el.remove());
 });
+
+/**
+ * Put a HUD on the stage: two rails leaving `holeWidth` px of clear stage
+ * between them, and a window for them to stand in.
+ *
+ * jsdom lays nothing out, so each rail is told what box it has. The card reads
+ * the HOLE — `hudHoleFromRects`, the same reading the placement solver and the
+ * camera compose into — and not `window.innerWidth`, so a test about the
+ * card's measure installs a HUD rather than a window size.
+ */
+function stageWithHole(
+  holeWidth: number,
+  viewportWidth = 1920,
+  viewportHeight = 1080,
+): void {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: viewportWidth });
+  Object.defineProperty(window, 'innerHeight', { configurable: true, value: viewportHeight });
+  document.querySelectorAll('[data-hud-occlusion]').forEach((el) => el.remove());
+  const railWidth = (viewportWidth - holeWidth) / 2;
+  const rail = (left: number, right: number) => {
+    const box = { left, top: 48, right, bottom: viewportHeight * 0.6 };
+    const element = document.createElement('div');
+    element.setAttribute('data-hud-occlusion', 'true');
+    element.getBoundingClientRect = () => ({
+      ...box,
+      width: box.right - box.left,
+      height: box.bottom - box.top,
+      x: box.left,
+      y: box.top,
+      toJSON: () => box,
+    }) as DOMRect;
+    document.body.appendChild(element);
+  };
+  rail(0, railWidth);
+  rail(viewportWidth - railWidth, viewportWidth);
+}
 
 /** The notch CKBYTES reaches past the CELL SCAN square, and the card it makes.
  *  Derived from the reader's own width exactly as the panel derives it, so a
@@ -2544,63 +2584,76 @@ describe('CellDetailPanel', () => {
     expect(square.style.background).toBe('transparent');
   });
 
-  it('lays the reader under the two columns and returns to 728 when the stage is narrow', () => {
-    // 856 of card plus a 42px tether needs 898px of clear stage on one side of
-    // the entity; a 1,440 screen leaves a 710px hole between the rails. So
-    // below 1,400 the dump stops standing beside the plate, lies under the
-    // card at its six-row floor, and the card goes back to the measure it has
-    // when a Cell holds nothing.
-    vi.stubGlobal('matchMedia', (query: string) => ({
-      matches: query.includes('max-width'),
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    }));
+  // The ladder the card's measure is picked from, in HOLE px — the clear stage
+  // the HUD leaves, not the window's own width. 856 of card plus a 42px tether
+  // needs 898; 728 plus the same tether needs 770, below which the solver
+  // stops placing beside the cell at all and stacks or docks the same card.
+  const READER_UNDER = '"analysis scan" "reader reader"';
+  const READER_BESIDE = '"analysis scan ." "analysis reader reader"';
+  it.each([
+    { hole: 900, areas: READER_BESIDE, width: `${READER_CARD_PX}px`, placement: 'beside', self: 'stretch', why: 'the wide card fits beside the cell' },
+    { hole: 780, areas: READER_UNDER, width: `${CARD_WIDTH_PX}px`, placement: 'under', self: 'start', why: 'only the 728 card fits beside the cell' },
+    { hole: 710, areas: READER_UNDER, width: `${CARD_WIDTH_PX}px`, placement: 'under', self: 'start', why: '1440: the solver has to stack or dock it' },
+    { hole: 540, areas: READER_UNDER, width: `${CARD_WIDTH_PX}px`, placement: 'under', self: 'start', why: '1280 uncollapsed: the same 728 card' },
+  ])('composes for a $hole px hole — $why', ({ hole, areas, width, placement, self }) => {
+    stageWithHole(hole);
     const { container } = render(
       <CellDetailPanel cell={base} onClose={() => {}} />,
     );
     const card = container.firstElementChild as HTMLElement;
-
-    expect(card.style.gridTemplateAreas).toBe('"analysis scan" "reader reader"');
-    expect(card.style.width).toBe('728px');
-    expect(card.style.gridTemplateRows).toBe('');
     const reader = container.querySelector(
       '[data-cell-inspection-satellite="reader"]',
     ) as HTMLElement;
-    expect(reader.dataset.cellDataReaderPlacement).toBe('under');
-    expect(reader.style.alignSelf).toBe('start');
+
+    expect(card.style.gridTemplateAreas).toBe(areas);
+    expect(card.style.width).toBe(width);
+    expect(reader.dataset.cellDataReaderPlacement).toBe(placement);
+    expect(reader.style.alignSelf).toBe(self);
   });
 
-  it('keeps the reader beside the plate at a wide stage', () => {
-    vi.stubGlobal('matchMedia', (query: string) => ({
-      matches: !query.includes('max-width'),
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    }));
+  it('reads the hole and not the window it is in', () => {
+    // The two directions `innerWidth` got wrong. A 1,600 window with both
+    // rails hidden is a 1,216 hole and the wide card belongs in it; a 1,440
+    // window is a 710 hole and it does not — and the first cut of this rule
+    // called the 1,600 one narrow and, once A5 collapsed the rails, would have
+    // called a 1,440 one wide.
+    stageWithHole(1216, 1600, 900);
+    const { container } = render(
+      <CellDetailPanel cell={base} onClose={() => {}} />,
+    );
+
+    expect((container.firstElementChild as HTMLElement).style.width)
+      .toBe(`${READER_CARD_PX}px`);
+  });
+
+  it('recomposes under an open card when the HUD moves', () => {
+    // A rail collapsing, a panel toggled, a window dragged: the hole changes
+    // while the card is open, and the card is the surface that has to answer.
+    // The measurement is published as a store for exactly this, so the change
+    // is a re-render and not a card that keeps a measure the stage no longer
+    // has.
+    stageWithHole(900);
     const { container } = render(
       <CellDetailPanel cell={base} onClose={() => {}} />,
     );
     const card = container.firstElementChild as HTMLElement;
+    expect(card.style.width).toBe(`${READER_CARD_PX}px`);
 
-    expect(card.style.gridTemplateAreas)
-      .toBe('"analysis scan ." "analysis reader reader"');
-    expect(card.style.width).toBe('856px');
-    const reader = container.querySelector(
-      '[data-cell-inspection-satellite="reader"]',
-    ) as HTMLElement;
-    expect(reader.dataset.cellDataReaderPlacement).toBe('beside');
-    expect(reader.style.alignSelf).toBe('stretch');
+    stageWithHole(710);
+    act(() => { measureHudOcclusionRectsForTest(); });
+
+    expect(card.style.width).toBe(`${CARD_WIDTH_PX}px`);
+    expect(card.style.gridTemplateAreas).toBe(READER_UNDER);
   });
 
   it('caps a docked card at the solver band and scrolls its dossier', () => {
     // The docked family: the card is taller than the band the viewport leaves
     // it, so it is capped AT the band (104 safe top + 14 edge) and the
     // analysis plate — the one elastic row — scrolls inside it, which is what
-    // keeps the PROOF anchor at the bottom of the dossier reachable.
-    vi.stubGlobal('matchMedia', (query: string) => ({
-      matches: query.includes('max-width'),
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    }));
+    // keeps the PROOF anchor at the bottom of the dossier reachable. A docked
+    // card is a card the stage is short for, and a stage that short is a hole
+    // the narrow composition belongs in.
+    stageWithHole(710);
     const { container } = render(
       <CellDetailPanel cell={base} docked onClose={() => {}} />,
     );
@@ -2622,11 +2675,7 @@ describe('CellDetailPanel', () => {
   });
 
   it('leaves an undocked card uncapped and its dossier unscrolled', () => {
-    vi.stubGlobal('matchMedia', (query: string) => ({
-      matches: query.includes('max-width'),
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    }));
+    stageWithHole(710);
     const { container } = render(
       <CellDetailPanel cell={base} onClose={() => {}} />,
     );

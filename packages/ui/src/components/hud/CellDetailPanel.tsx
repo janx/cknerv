@@ -54,7 +54,8 @@ import {
   StatusLamp,
 } from './primitives';
 import { useReducedMotion } from './useReducedMotion';
-import { useMediaQuery } from './useMediaQuery';
+import { useHudHoleWidth } from '../hudOcclusion';
+import { INSPECTOR_GAP_PX } from '../sceneInspection';
 import CellNucleusPortrait from './CellNucleusPortrait';
 import { ConsensusMemoryTracePlate } from './ConsensusIdentityPlate';
 import CellContentMemory from './CellContentMemory';
@@ -159,23 +160,39 @@ export const CARD_WIDTH_PX = ANALYSIS_COLUMN_PX + CARD_SEAM_PX + PORTRAIT_COLUMN
  * a click on the scene, which is what it is. */
 const READER_NOTCH_PX = READER_WIDTH_PX - PORTRAIT_COLUMN_PX - CARD_SEAM_PX;
 
-/** Below this the reader stops standing beside the plate and lies under the
- *  card instead, and the card goes back to its 728 measure.
+/** The wide card: the analysis plate, the scan square, and the reader standing
+ *  beside them past the notch. */
+const CARD_WIDE_WIDTH_PX = CARD_WIDTH_PX + CARD_SEAM_PX + READER_NOTCH_PX;
+
+/** The clear stage the wide card needs before it may have its reader beside
+ *  the plate. Under it the reader lies under the card instead and the card
+ *  goes back to its 728 measure.
  *
- * 856 px of card plus the 42 px tether needs 898 px of clear stage on one side
- * of the entity. A 1,440 screen leaves a 710 px hole between the rails and a
- * 1,280 leaves 540, so from 1,400 down the wide card cannot be placed beside
- * ANY cell without landing on a panel — and the only thing it was buying at
- * that width was a taller dump. So the dump gives up its height instead: it
- * becomes a six-row row under the two columns, the card returns to the measure
- * it has when a Cell holds nothing, and the composition is one the stage can
- * still hold.
+ * The rule is keyed to the HOLE the HUD leaves — `hudHoleFromRects`, the same
+ * reading the solver places into and the camera fits to — and not to
+ * `innerWidth`, which was the first cut of this and was wrong in both
+ * directions: it made a 1,600 px window with both rails out (a 1,216 px hole)
+ * narrow, and it called a 1,400 px window with the rails collapsed wide when
+ * the hole was 830.
+ *
+ * The arithmetic is the placement's own. A card is tethered `INSPECTOR_GAP_PX`
+ * from its entity, so a card of measure `w` beside an entity in the hole needs
+ * `w + 42` of hole. That gives a ladder with two rungs and one floor:
+ *
+ *   hole ≥ 898  the wide card, reader beside the plate
+ *   hole ≥ 770  the 728 card, reader under it — still placed beside the cell
+ *   below       the same 728 card, which the solver now stacks or docks
+ *
+ * A 1,920 stage leaves 1,190 and takes the first rung; a 1,440 leaves 710 and
+ * a 1,280 (rails collapsed) leaves 714, so both take the floor — and the only
+ * thing the wide card was buying there was a taller dump. So the dump gives up
+ * its height instead: six rows under the two columns, the card at the measure
+ * it has when a Cell holds nothing, and a composition the stage can hold.
  *
  * This is the `readerPlacement(innerWidth) >= 1396 ? 'beside' : 'below'` rule
- * the R2 rewrite removed and never replaced; the threshold is restated here in
- * the terms that actually decide it — card, tether and hole — rather than as a
- * measured character count. */
-const CARD_NARROW_VIEWPORT_PX = 1400;
+ * the R2 rewrite removed and never replaced, restated in the terms that
+ * actually decide it: card, tether and hole. */
+const CARD_BESIDE_HOLE_PX = CARD_WIDE_WIDTH_PX + INSPECTOR_GAP_PX;
 
 /** What a docked card may not have of the viewport's height: the HUD's safe
  *  top and the bottom edge, the two numbers `sceneInspectorPlacement` clamps
@@ -1049,7 +1066,7 @@ function CellScanContentMemory(props: CellScanContentMemoryProps) {
  */
 function CellScanReaderPlate({ beside, children }: {
   /** The reader is a column beside the plate (wide) rather than a row under
-   *  the card (narrow) — see CARD_NARROW_VIEWPORT_PX. */
+   *  the card (narrow) — see CARD_BESIDE_HOLE_PX. */
   beside: boolean;
   children: ReactNode;
 }) {
@@ -1441,14 +1458,13 @@ function CellDetailPanel({
   // the derive: the square and the seam over the reader are the card's own
   // geometry, and a pure derive that spelled them out would be a second place
   // they are written down.
-  // Under 1,400 px the reader is a row under the card rather than a column
-  // beside the plate, so it has no plate remainder to fill and takes the
-  // floor: six rows, 96 bytes, enough for a molecule header and the start of
-  // what follows it. See CARD_NARROW_VIEWPORT_PX.
-  const narrowViewport = useMediaQuery(
-    `(max-width: ${CARD_NARROW_VIEWPORT_PX - 1}px)`,
-  );
-  const readerBeside = hasBytes && !narrowViewport;
+  // In a hole too small for the wide card the reader is a row under the card
+  // rather than a column beside the plate, so it has no plate remainder to
+  // fill and takes the floor: six rows, 96 bytes, enough for a molecule header
+  // and the start of what follows it. See CARD_BESIDE_HOLE_PX — the measure is
+  // decided by the stage the HUD leaves, not by the window's own width.
+  const holeWidth = useHudHoleWidth();
+  const readerBeside = hasBytes && holeWidth >= CARD_BESIDE_HOLE_PX;
   const readerRows = readerBeside
     ? readerRowsUnderScan(
       plateHeightPx,
@@ -1913,13 +1929,11 @@ function CellDetailPanel({
         columnGap: CARD_SEAM_PX,
         rowGap: 8,
         alignItems: 'start',
-        width: readerBeside
-          ? CARD_WIDTH_PX + CARD_SEAM_PX + READER_NOTCH_PX
-          : CARD_WIDTH_PX,
+        width: readerBeside ? CARD_WIDE_WIDTH_PX : CARD_WIDTH_PX,
         // The card never outgrows the window it is drawn in, whichever of the
-        // two measures it takes. Below CARD_NARROW_VIEWPORT_PX the measure
-        // itself steps down, so this is the last resort it was meant to be
-        // rather than the only narrow rule the card has.
+        // two measures it takes. In a hole under CARD_BESIDE_HOLE_PX the
+        // measure itself steps down, so this is the last resort it was meant
+        // to be rather than the only narrow rule the card has.
         maxWidth: 'calc(100vw - 28px)',
         // …and the same rule on the other axis, but only when the solver says
         // the card is docked. The band is the viewport less the HUD's safe top

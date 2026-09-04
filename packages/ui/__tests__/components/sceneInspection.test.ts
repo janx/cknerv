@@ -626,6 +626,67 @@ describe('sceneInspectorPlacement obstacles', () => {
     }).x).toBe(100);
   });
 
+  /** A card taller than the band — the docked family's own trigger — on the
+   *  same 1,400px stage. */
+  const DOCKED = { ...OBSTRUCTED, panelHeight: 800 };
+
+  it('settles a docked card off the rail it has the room to clear', () => {
+    // A docked card answers a stage too SHORT for the card, which says nothing
+    // about how WIDE the stage is. Docking it to the viewport edge regardless
+    // put an 856px card over the whole of CELL·03 and PEER·02 at 1920, with
+    // 331px of clear stage beside it — measured live. So the edge is where the
+    // card starts and the panels push it inward, the same settle the beside
+    // family runs.
+    expect(sceneInspectorPlacement({ ...DOCKED, obstacles: [] }))
+      .toEqual({ family: 'docked', side: 'left', x: -686, y: -296 });
+    const settled = sceneInspectorPlacement({
+      ...DOCKED,
+      obstacles: [LEFT_RAIL],
+    });
+
+    expect(settled).toEqual({ family: 'docked', side: 'left', x: -400, y: -296 });
+    expect(700 + settled.x).toBe(LEFT_RAIL.right);
+  });
+
+  it('keeps the edge when a docked card is wider than the hole', () => {
+    // 728 of card against a 710px hole at 1440: settling inward would push the
+    // card off the far end of the screen, and a card half off the screen is a
+    // worse answer than a covered panel. It keeps the edge and covers a rail.
+    const placement = sceneInspectorPlacement({
+      ...DOCKED,
+      panelWidth: 900,
+      obstacles: [LEFT_RAIL, RIGHT_RAIL],
+    });
+
+    expect(placement).toEqual({ family: 'docked', side: 'left', x: -686, y: -296 });
+    expect(700 + placement.x).toBe(14);
+  });
+
+  it('is the same arithmetic the cell card picks its measure by', () => {
+    // `CARD_BESIDE_HOLE_PX` reads the hole and asks for `card + 42`. This is
+    // where that number comes from: at the friendliest anchor there is — an
+    // entity ON the hole's edge, with the whole hole to one side of it — a
+    // card of measure `w` is placed beside exactly while `hole >= w + gap`.
+    // So a 728 card has a beside placement somewhere in a 770px hole and none
+    // anywhere in a 769px one, which is the floor the card's ladder names.
+    const rails = (hole: number) => [
+      { left: 0, top: 0, right: (1400 - hole) / 2, bottom: 900 },
+      { left: (1400 + hole) / 2, top: 0, right: 1400, bottom: 900 },
+    ];
+    const family = (hole: number, panelWidth: number) => sceneInspectorPlacement({
+      ...OBSTRUCTED,
+      panelWidth,
+      anchorX: (1400 - hole) / 2,
+      obstacles: rails(hole),
+    }).family;
+
+    expect(family(770, 728)).toBe('beside');
+    expect(family(769, 728)).toBe('stacked');
+    // …and the wide card's own rung, 856 + 42.
+    expect(family(898, 856)).toBe('beside');
+    expect(family(897, 856)).toBe('stacked');
+  });
+
   it('falls to the stacked family when both sides are panelled', () => {
     // A card as wide as this one cannot clear either rail from an anchor in
     // the middle of the hole, which is precisely the 1920 geometry: card +

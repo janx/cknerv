@@ -26,6 +26,8 @@
  * would be the instrument overruling the hand on it.
  */
 
+import type { HudHole } from '@cknerv/ui';
+
 /**
  * The default pose's own direction, kept exactly: `[110,108,110]` looking at
  * `[0, CELLS_Y, 0]` is `(110, 70, 110)` normalised. Only the LENGTH of this
@@ -81,12 +83,11 @@ const MAX_DISTANCE = 400;
  *  tenth of a pixel at every distance this solves for. */
 const ELLIPSE_SAMPLES = 256;
 
-export interface CameraHole {
-  /** Right edge of whatever stands on the left of the stage, in viewport px. */
-  left: number;
-  /** Left edge of whatever stands on the right. */
-  right: number;
-}
+/** The hole is read ONCE, by `hudHoleFromRects` in `@cknerv/ui` — the same
+ *  reading the inspector's cards compose into. This module used to carry its
+ *  own copy of that rule; two definitions of the hole would be two frames, and
+ *  the card and the galaxy would each be composing into a different one. */
+export type CameraHole = HudHole;
 
 export interface CameraExtent {
   halfX: number;
@@ -327,33 +328,4 @@ export function fitCameraToHole({
       VIEW_RAY.z * distance,
     ],
   };
-}
-
-/**
- * The hole the HUD leaves, from the panel boxes it publishes.
- *
- * A panel counts only if it crosses the stage's own middle band — the rows the
- * galaxy is actually drawn in. The status strip spans the whole width at the
- * top and is not a wall the composition has to fit between; the rails are.
- */
-export function hudHoleFromRects(
-  rects: readonly { left: number; top: number; right: number; bottom: number }[],
-  viewportWidth: number,
-  viewportHeight: number,
-): CameraHole {
-  const bandTop = viewportHeight * 0.3;
-  const bandBottom = viewportHeight * 0.7;
-  let left = 0;
-  let right = viewportWidth;
-  for (let index = 0; index < rects.length; index += 1) {
-    const rect = rects[index];
-    if (rect.top >= bandBottom || rect.bottom <= bandTop) continue;
-    const middle = (rect.left + rect.right) / 2;
-    if (middle < viewportWidth / 2) {
-      if (rect.right > left) left = rect.right;
-    } else if (rect.left < right) {
-      right = rect.left;
-    }
-  }
-  return { left, right: Math.max(left, right) };
 }

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   dimHudPanelsUnder,
+  hudHoleFromRects,
   measureHudOcclusionRectsForTest,
 } from '../../src/components/hudOcclusion';
 
@@ -154,5 +155,55 @@ describe('dimHudPanelsUnder', () => {
     expect(dimHudPanelsUnder({ left: 384, top: 95, right: 679, bottom: 390 }))
       .toBe(0);
     expect(rail.dataset.hudDim).toBeUndefined();
+  });
+});
+
+describe('hudHoleFromRects', () => {
+  // ONE definition of the hole, for every surface that composes into it: the
+  // camera's distance and aim (`ui-app/src/camera-hole-fit.ts`) and the cell
+  // card's own measure (`CARD_BESIDE_HOLE_PX`) are both read from this.
+  const RAILS = [
+    { left: 14, top: 48, right: 384, bottom: 519 },
+    { left: 1574, top: 48, right: 1906, bottom: 519 },
+  ];
+
+  it('reads the hole between the rails', () => {
+    expect(hudHoleFromRects(RAILS, 1920, 1080)).toEqual({ left: 384, right: 1574 });
+  });
+
+  it('ignores a panel that is not level with the stage', () => {
+    // The status strip runs the whole width across the top; it is not a wall
+    // the composition has to fit between, and taking it as one would report a
+    // hole of zero at every viewport.
+    const strip = { left: 0, top: 0, right: 1920, bottom: 48 };
+
+    expect(hudHoleFromRects([...RAILS, strip], 1920, 1080))
+      .toEqual({ left: 384, right: 1574 });
+  });
+
+  it('takes the innermost edge on each side', () => {
+    const dao = { left: 14, top: 560, right: 300, bottom: 900 };
+    const chain = { left: 14, top: 48, right: 384, bottom: 519 };
+
+    expect(hudHoleFromRects([dao, chain], 1920, 1080).left).toBe(384);
+  });
+
+  it('answers the full viewport when the HUD has laid nothing out', () => {
+    expect(hudHoleFromRects([], 1920, 1080)).toEqual({ left: 0, right: 1920 });
+  });
+
+  it('reads what the reader measured, in the same units', () => {
+    // The two halves of the same rule: the rects are measured here and the
+    // hole is derived here, so a clip or an exclusion the reader applies is
+    // already in the hole. A rail inside an inspection layer is not a wall.
+    panel({ left: 14, top: 48, right: 384, bottom: 519 });
+    panel({ left: 1574, top: 48, right: 1906, bottom: 519 });
+    const layer = document.createElement('div');
+    layer.setAttribute('data-scene-inspection-layer', 'true');
+    document.body.appendChild(layer);
+    panel({ left: 900, top: 300, right: 1200, bottom: 700 }, layer);
+
+    expect(hudHoleFromRects(measureHudOcclusionRectsForTest(), 1920, 1080))
+      .toEqual({ left: 384, right: 1574 });
   });
 });
