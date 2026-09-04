@@ -4432,6 +4432,25 @@ describe('one alpha for a rule', () => {
 // hardest were the two gravest banners in the HUD: DATA FROZEN at 2.2 : 1 over
 // a lit scene, the REORG bar's readings at 3.1 (report F, F-10). Softening
 // belongs in the glow.
+//
+// AND THE THIRD NOTATION, which is where the same spending hid from the sweep
+// that banned it: `opacity` on the element. `rgba(ink, α)` and `opacity: α`
+// composite to the same pixels, and the first was banned in a `color:` while
+// the second went on dimming every CJK companion in the HUD to 3.35 : 1 at
+// 9px — `dim` under `COMPANION_OPACITY`, which had been chosen as a look and
+// never priced (report F, F-9). The measurement below reads BOTH notations,
+// and the companion's weight is now derived from the floor rather than picked.
+//
+// Its jurisdiction is the COMPANION and stops there, on purpose. The other
+// dimming roles are saying something a floor would contradict — a REVEAL
+// GHOST is a fact not yet reached, a disabled control is one that does not
+// work, and neither is asking to be read — while a companion is a qualifier
+// you may skip, which is not the same as one you cannot read. Two readings
+// found by the same sweep and NOT covered here are recorded as follow-ups
+// rather than swept in silence: a stale unread proof drawn in `dim` at
+// `STALE_OPACITY` (3.08 : 1) and the memory ledger's SPENT INPUTS value at a
+// bare `opacity: 0.86` in `dim` (4.40 : 1). Both are decisions about what
+// staleness means, which is a different ruling from this one.
 
 /** WCAG relative luminance, and the contrast ratio built on it. Neither was
  *  here before, because everything this file measured until now was "can a
@@ -4562,9 +4581,16 @@ describe('two names are never one colour', () => {
 
     // …and the bottom of it is still readable. `moduleSlate` was 3.4 : 1 at
     // `micro` and `tech`, the two smallest rungs in the HUD (report F, F-9);
-    // the user's D-15 raised it to the floor exactly.
-    expect(contrastRatio(HUD_COLORS.moduleSlate, PANEL_SURFACE))
-      .toBeGreaterThanOrEqual(CONTRAST_FLOOR);
+    // the user's D-15 raised it to the floor exactly — and "exactly" was the
+    // problem. D-15's own #6B7684 cleared by 0.0002, which means the answer
+    // depended on whether the panel was composited in float or rounded to the
+    // whole channels a browser actually paints. So the floor is asserted BOTH
+    // WAYS: a token that only passes one of them has not cleared anything, it
+    // has landed on the line.
+    for (const surface of [PANEL_SURFACE, PANEL_SURFACE.map(Math.round)]) {
+      expect(contrastRatio(HUD_COLORS.moduleSlate, surface))
+        .toBeGreaterThanOrEqual(CONTRAST_FLOOR);
+    }
   });
 
   it('a reading is never printed at an alpha that puts it under the floor', () => {
@@ -4623,6 +4649,103 @@ describe('two names are never one colour', () => {
 
     const dao = code(SOURCES.find((source) => source.name === 'DaoStateReadout.tsx')?.text ?? '');
     expect(dao).toContain("'<0.001%'");
+  });
+
+  it('a companion is dimmed, not hidden', () => {
+    // The floor in the third notation. `opacity` on the element composites to
+    // exactly what `rgba(ink, α)` in a `color:` composites to, and the ban on
+    // the second had left the first untouched — which is where every CJK
+    // companion in the HUD was sitting at 3.35 : 1 (report F, F-9).
+
+    // The dimmest ink a companion is drawn in, found rather than assumed. A
+    // companion names either a palette ink or the surface's own ACCENT: the
+    // first is priced here, the second is priced by the pin below, because an
+    // accent arrives as a prop and this is a source oracle.
+    const priced: Array<{ site: string; ink: string; hex: string }> = [];
+    const unpriceable: string[] = [];
+    for (const source of domDialect()) {
+      const text = code(source.text);
+      for (const site of text.matchAll(/(?<![\w$-])opacity:\s*COMPANION_OPACITY/g)) {
+        const object = enclosingObject(text, site.index ?? 0) ?? '';
+        const ink = /(?<![\w$-])color:\s*([^,;}\n]+)/.exec(object)?.[1]?.trim() ?? '';
+        const token = /HUD_COLORS\.(\w+)/.exec(ink)?.[1];
+        const hex = token === undefined ? undefined : HUD_COLORS[token as keyof typeof HUD_COLORS];
+        if (typeof hex === 'string' && hex.startsWith('#')) {
+          priced.push({ site: source.name, ink: token as string, hex });
+          continue;
+        }
+        // CELL_CARD_ACCENT is the cell dossier's, and it is a constant in the
+        // theme rather than a prop, so it prices like a token.
+        if (ink.includes('CELL_CARD_ACCENT')) {
+          priced.push({ site: source.name, ink: 'CELL_CARD_ACCENT', hex: CELL_CARD_ACCENT });
+          continue;
+        }
+        if (/\baccent\b/.test(ink)) continue;
+        unpriceable.push(`${source.name}: a companion in \`${ink}\` — an ink this floor cannot read`);
+      }
+    }
+    expect(unpriceable).toEqual([]);
+
+    // The sweep found companions at all, and found the ink the weight is set
+    // for. An empty list would make every assertion below a silence.
+    expect(priced.length).toBeGreaterThan(3);
+    expect(priced.map((entry) => entry.ink)).toContain('dim');
+
+    for (const entry of priced) {
+      const ratio = contrastRatio(over(entry.hex, COMPANION_OPACITY, PANEL_SURFACE), PANEL_SURFACE);
+      expect(
+        ratio,
+        `${entry.site}: a companion in ${entry.ink} reads ${ratio.toFixed(2)} : 1 on the panel`,
+      ).toBeGreaterThanOrEqual(CONTRAST_FLOOR);
+    }
+
+    // …and the weight is DERIVED from that floor rather than chosen: the least
+    // hundredth that clears it for the dimmest companion ink. A number picked
+    // for the look is what 0.72 was, and it read 3.35 : 1.
+    const dimmest = priced.reduce((low, entry) =>
+      relativeLuminance(entry.hex) < relativeLuminance(low.hex) ? entry : low);
+    expect(dimmest.ink).toBe('dim');
+    const cleared = (weight: number) =>
+      contrastRatio(over(dimmest.hex, weight, PANEL_SURFACE), PANEL_SURFACE) >= CONTRAST_FLOOR;
+    expect(cleared(COMPANION_OPACITY), `a companion in ${dimmest.ink} is under the floor`).toBe(true);
+    expect(
+      cleared(Math.round((COMPANION_OPACITY - 0.01) * 100) / 100),
+      'COMPANION_OPACITY is dimmer than the floor needs — it is derived, not chosen',
+    ).toBe(false);
+
+    // The accents, which the sweep above steps over because they arrive as a
+    // prop. Four constants and one derived table reach a card masthead's
+    // companion; every one of them is above `dim`, which is why the weight the
+    // floor sets for `dim` covers them all.
+    const accents: ReadonlyArray<readonly [string, string]> = [
+      ['CELL_CARD_ACCENT', CELL_CARD_ACCENT],
+      ['CELL_PANEL_ACCENT', CELL_PANEL_ACCENT],
+      ['NODE_SELF_ACCENT', CHAIN_ANCHOR_HEX.edge],
+      ['SIGHTED_NODE_ACCENT', PEER_NETWORK_HEX.scaffold],
+      ['PEER_LINK_ACCENT_HEX.outbound', PEER_NETWORK_HEX.outbound],
+      ['PEER_LINK_ACCENT_HEX.inbound', PEER_NETWORK_HEX.inbound],
+      ['PEER_LINK_ACCENT_HEX.version', PEER_NETWORK_HEX.version],
+      ['peerWire', HUD_COLORS.peerWire],
+      ['caution', HUD_COLORS.caution],
+    ];
+    for (const [name, hex] of accents) {
+      expect(
+        relativeLuminance(hex),
+        `${name} is below \`dim\`, and a companion wearing it would be under the floor`,
+      ).toBeGreaterThan(relativeLuminance(HUD_COLORS.dim));
+    }
+
+    // …and those really are the accents a masthead companion is handed: each
+    // card binds one before it draws the CJK beside its title.
+    for (const [name, binding] of [
+      ['NodeSelfCard.tsx', 'const accent = NODE_SELF_ACCENT;'],
+      ['SightedNodeCard.tsx', 'const accent = SIGHTED_NODE_ACCENT;'],
+      ['PeerLinkCard.tsx', 'const accent = linkLost ? HUD_COLORS.caution : instrument.accent;'],
+    ] as const) {
+      const card = code(SOURCES.find((source) => source.name === name)?.text ?? '');
+      expect(card, `${name}: the masthead's accent moved — this oracle reads files off disk`)
+        .toContain(binding);
+    }
   });
 });
 

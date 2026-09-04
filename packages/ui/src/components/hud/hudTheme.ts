@@ -179,9 +179,17 @@ export const HUD_COLORS = {
   // the two smallest rungs in the HUD, which is where a contrast floor is
   // least negotiable. "An address, not a reading" is an argument for ranking
   // it below `dim`, and the rank oracle in `hudDiscipline.test.ts` still pins
-  // that; it was never an argument for putting it under the floor. #6B7684
-  // clears 4.5 on the panel and stays a clear step under `dim`.
-  moduleSlate: '#6B7684',
+  // that; it was never an argument for putting it under the floor.
+  //
+  // And then a second notch, on the user's ruling the same day: D-15's own
+  // #6B7684 cleared the floor by 0.0002 — 4.5002 : 1 composited in float, and
+  // 4.493 if the panel is rounded to whole channels first, so which side of
+  // the line it fell on was a property of the arithmetic rather than of the
+  // colour. A token whose compliance depends on how you round is not a
+  // decision, it is a coincidence. #6C7785 is 4.56 on the panel with the
+  // margin to be measured either way, and the step under `dim` is still a
+  // clear one (27.1 of separation, one rung of the ink ramp).
+  moduleSlate: '#6C7785',
   nominal: '#27FF5A',
   caution: '#F6E201',
   // Amber, and deliberately decoupled from chrome. `warning` used to be the
@@ -683,12 +691,32 @@ export const HUD_MOTION = {
 //              is partial, a compass with nothing measured on it, a proof not
 //              yet read, a row that cannot be armed. Eight of the nine
 //              staleness sites already wore it; DAO's 0.72 was the ninth.
-//   COMPANION  0.72 — the CJK name beside its Latin (细胞, 对端, 节点, 字节元,
+//   COMPANION  0.88 — the CJK name beside its Latin (细胞, 对端, 节点, 字节元,
 //              and every `SpatialPlateHeader`) and the scope tag beside its
 //              count (`CHAIN`, `OBSERVED`, `STAGE`). Same role, same shape: a
 //              qualifier set one rung down beside a name, dimmed so it never
 //              competes with the thing it qualifies. It was 0.7 in two places
 //              and 0.72 in five; the tags were 0.8.
+//
+// AND THE COMPANION'S WEIGHT IS NOT A TASTE, IT IS THE FLOOR (the user's
+// ruling, 2026-09-05). At 0.72 a companion in `dim` composited to 3.35 : 1 on
+// the panel and 3.11 on a rose-lit one, at `label` — 9px, the smallest size
+// this HUD sets Chinese at, and a mincho stroke is thinner than the Latin
+// beside it at the same size. "You may skip this" and "you cannot read this"
+// are different sentences, and the first is what a companion means: the
+// reader's EYE is meant to pass over it, not the reader's ability to. So the
+// number is derived rather than chosen — the least dimming that still puts
+// the dimmest ink a companion wears (`dim`; every other companion is drawn in
+// a card or plate ACCENT, all of them brighter) over 4.5 : 1 on the panel,
+// which is 0.872, rounded up to 0.88 → 4.57. `hudDiscipline.test.ts` computes
+// that floor rather than pinning the number, so a companion put in a new ink
+// tomorrow moves the constant instead of quietly falling under it.
+//
+// What that costs: the gap between a name and its companion is now carried
+// mostly by SIZE and by the face — `label` mincho beside `section` tech — with
+// the dimming as the third and smallest of the three signals rather than the
+// loudest. Which is the right order: a companion that has to be dimmed into
+// illegibility to stop competing was set too large to begin with.
 //
 // NOT this ladder: a control you cannot press. `CellCausalLensReadout`'s
 // disabled toggle at 0.34 and `CellContentMemory`'s at 0.4 are not saying "do
@@ -696,7 +724,7 @@ export const HUD_MOTION = {
 // meant to stop at them rather than look past them. A far dimmer statement, on
 // purpose, and folding it in here would make a dead control look merely stale.
 export const STALE_OPACITY = 0.68;
-export const COMPANION_OPACITY = 0.72;
+export const COMPANION_OPACITY = 0.88;
 
 /** The optical correction every CJK COMPANION wears, and the reason it needs
  *  one.
