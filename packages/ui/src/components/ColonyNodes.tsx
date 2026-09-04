@@ -28,7 +28,9 @@
 //     carry stays inferred fiction.
 //   • measured nodes    — one bright, saturated, larger glow-halo per real peer:
 //     a billboarded plane carrying that same core+halo shader,
-//     gently breathing, with an invisible solid sphere hit-target so it stays
+//     gently breathing — and, over the charge window before its delivery hop
+//     leaves, drawing in: the held breath lives in this material, not in a
+//     glyph — with an invisible solid sphere hit-target so it stays
 //     clickable (a camera-facing plane raycasts poorly). The honest "measured
 //     core."
 // The local "you" is NOT drawn here: the colony's local node is pinned onto the
@@ -54,6 +56,7 @@ import { CkbSelectionReticle } from './CellGalaxy';
 import { colonyFrame } from '../tweaks/colonyFrame';
 import {
   PEER_COLORS,
+  PEER_LAUNCH_SENTINEL,
   peerColorKind,
   rotYLocalToWorldXZ,
 } from '../derives/peers.derive';
@@ -728,6 +731,41 @@ function PickableStagedNodes({
   );
 }
 
+/** One block's launch schedule for the measured belt: the sim instant the
+ *  pulse was stamped, and each measured peer's arrival past it
+ *  (`ColonyFlood.arrivals`). */
+export interface PeerLaunchSchedule {
+  atSec: number;
+  arrivals: Readonly<Record<string, number>>;
+}
+
+/**
+ * Stamp every measured halo's launch instant — `atSec + arrivals[id]`, the
+ * same instant `BlockDeliveryLayer` lets that peer's hop go — or the sentinel
+ * for a peer the flood never reached (and for every peer while no block has
+ * pulsed). ⭐ KEYED BY ID, NEVER BY SLOT: the measured list is re-cut on every
+ * roster round and a peer's index does not survive it, so a lane written once
+ * at the pulse and left alone would hand a departing peer's held breath to
+ * whoever inherited its slot. The identity walk re-derives the lane from the
+ * last schedule for exactly that reason. Pure.
+ */
+export function stampPeerLaunches(
+  lane: Float32Array,
+  measured: readonly NetworkNode[],
+  schedule: PeerLaunchSchedule | null,
+): void {
+  if (schedule === null) {
+    lane.fill(PEER_LAUNCH_SENTINEL, 0, measured.length);
+    return;
+  }
+  measured.forEach((node, index) => {
+    const arrival = schedule.arrivals[node.id];
+    lane[index] = arrival === undefined
+      ? PEER_LAUNCH_SENTINEL
+      : schedule.atSec + arrival;
+  });
+}
+
 /**
  * EVERY measured peer's glow-halo in one instanced draw. Replaces the
  * per-peer drei Billboard + single-quad mesh (two frame subscribers and a
@@ -736,6 +774,11 @@ function PickableStagedNodes({
  * instanced rate/phase against one shared clock. Per-peer identity (tint,
  * phase, rate, selection) rides instanced attributes rewritten only when
  * the measured set or the selection changes.
+ *
+ * It also holds the breath. A fifth lane carries each peer's launch instant,
+ * stamped on the same pulse edge the shockwave is, and the shader draws the
+ * halo in over the charge window before that instant and lets go after — the
+ * compression half of the handoff, in the peer's own material.
  */
 function MeasuredPeerHalos({
   measured,
@@ -743,12 +786,18 @@ function MeasuredPeerHalos({
   selectedId,
   contextEnergyRef,
   shockwaveUniforms,
+  cf,
+  blockPulseAtMs,
+  backfillActive,
 }: {
   measured: NetworkNode[];
   localVersion: string;
   selectedId: string | null;
   contextEnergyRef?: { readonly current: number };
   shockwaveUniforms: ShockwaveUniforms;
+  cf: ColonyFlood;
+  blockPulseAtMs: number;
+  backfillActive: boolean;
 }) {
   const simClock = useSimClock();
   const meshRef = useRef<THREE.InstancedMesh>(null);
@@ -767,7 +816,7 @@ function MeasuredPeerHalos({
     createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.colonyMeasuredHalos),
   ), []);
 
-  // The four per-peer lanes, allocated once for a capacity and rewritten in
+  // The five per-peer lanes, allocated once for a capacity and rewritten in
   // place. ⚠️ Wrapping data in a NEW InstancedBufferAttribute is what orphans
   // its GL buffer, and both walks below run on every roster round and every
   // selection — so the WRAPPER is what has to persist, not just the array.
@@ -776,7 +825,16 @@ function MeasuredPeerHalos({
     phase: new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1),
     rate: new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1),
     selected: new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1),
+    // The held breath: each peer's launch instant, sentinel until a block
+    // schedules one.
+    launchAt: new THREE.InstancedBufferAttribute(
+      new Float32Array(capacity).fill(PEER_LAUNCH_SENTINEL), 1,
+    ),
   }), [capacity]);
+
+  // The last block's launch schedule, so a roster round re-derives every
+  // peer's held breath from its own id instead of inheriting a slot's.
+  const launchRef = useRef<PeerLaunchSchedule | null>(null);
 
   // Static per-peer identity: rewritten only when the measured set (or a
   // version tint input) changes — the topology memo is churn-stable.
@@ -797,10 +855,12 @@ function MeasuredPeerHalos({
       phase[index] = phaseFor(node.id);
       rate[index] = 0.7 + 0.6 * rateFor(node.id);
     });
+    stampPeerLaunches(lanes.launchAt.array as Float32Array, measured, launchRef.current);
     mesh.instanceMatrix.needsUpdate = true;
     lanes.color.needsUpdate = true;
     lanes.phase.needsUpdate = true;
     lanes.rate.needsUpdate = true;
+    lanes.launchAt.needsUpdate = true;
     // Bound on the first pass and again only when a capacity change built new
     // lanes. The geometry outlives the InstancedMesh (a capacity change
     // rebuilds the mesh through `args`), so it can still be holding the
@@ -810,6 +870,7 @@ function MeasuredPeerHalos({
       mesh.geometry.setAttribute('aPeerPhase', lanes.phase);
       mesh.geometry.setAttribute('aPeerRate', lanes.rate);
       mesh.geometry.setAttribute('aPeerSelected', lanes.selected);
+      mesh.geometry.setAttribute('aPeerLaunchAt', lanes.launchAt);
     }
   }, [lanes, localVersion, measured]);
 
@@ -822,6 +883,25 @@ function MeasuredPeerHalos({
     lanes.selected.needsUpdate = true;
   }, [lanes, measured, selectedId]);
 
+  // The held breath is scheduled here, on the same pulse edge the shockwave
+  // slot is stamped on: every measured halo learns the instant its hop will
+  // leave — `now + cf.arrivals[id]`, the delivery layer's own launch — and
+  // draws in over the charge window before it.
+  const lastPulseRef = useRef(blockPulseAtMs);
+  useEffect(() => {
+    if (blockPulseAtMs <= lastPulseRef.current) return;
+    lastPulseRef.current = blockPulseAtMs;
+    // Consume while backfilling, as every pulse owner does: a replayed
+    // backlog must not hold the whole belt's breath at once.
+    if (backfillActive) return;
+    launchRef.current = { atSec: simClock.elapsedSec, arrivals: cf.arrivals };
+    stampPeerLaunches(lanes.launchAt.array as Float32Array, measured, launchRef.current);
+    lanes.launchAt.needsUpdate = true;
+    // cf/measured/backfillActive are recomputed in the same render that
+    // advances blockPulseAtMs; the pulse is the sole event edge.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blockPulseAtMs]);
+
   useEffect(() => () => {
     geometry.dispose();
     material.dispose();
@@ -831,6 +911,8 @@ function MeasuredPeerHalos({
   useSimFrame(() => {
     material.uniforms.uTime.value = simClock.elapsedSec;
     material.uniforms.uContextEnergy.value = contextEnergyRef?.current ?? 1;
+    material.uniforms.uCompressDepth.value = LIVE.delivery.compressDepth;
+    material.uniforms.uCompressGain.value = LIVE.delivery.compressGain;
   });
 
   return (
@@ -1087,6 +1169,9 @@ export default function ColonyNodes({
         selectedId={selectedId}
         contextEnergyRef={contextEnergyRef}
         shockwaveUniforms={shockwaveUniforms}
+        cf={cf}
+        blockPulseAtMs={blockPulseAtMs}
+        backfillActive={backfillActive}
       />
       {measured.map((n) => (
         <MeasuredNode

@@ -18,7 +18,7 @@ if (typeof window !== 'undefined' && !window.ResizeObserver) {
 }
 
 // Canvas 2D context stub — any module that calls `canvas.getContext('2d')`
-// in tests (e.g. deliveryTextures.ts radial-gradient sprites) needs
+// in tests (e.g. courierFlameTexture.ts radial-gradient sprites) needs
 // a 2D context. jsdom 25 returns null by default.
 // Other contextIds fall through to the original (jsdom returns null for
 // WebGL etc., which Three.js / r3f tolerate via the existing test paths).

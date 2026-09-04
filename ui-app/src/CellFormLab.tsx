@@ -19,6 +19,7 @@ import {
   RenderStatsSampler,
   SimClockTicker,
   TweakSync,
+  createLandingFlashQueue,
   useQualityRuntime,
   type CellCoreDirection,
   type ConsensusBraidField,
@@ -98,6 +99,9 @@ export default function CellFormLab({ snapshot }: { snapshot: CellGalaxySnapshot
   const cellFlashRef = useRef<Map<number, number>>(new Map());
   const flashDirtyRef = useRef(false);
   const flashDirtyIdsRef = useRef<Set<number>>(new Set());
+  // No colony in this lab, so nothing ever lands; the galaxy still mounts its
+  // landing layer, which draws nothing on an empty queue.
+  const landingFlashRef = useRef(createLandingFlashQueue());
   const burstArrivalRef = useRef<Map<number, { firedAt: number; color: [number, number, number] }>>(new Map());
   const handleSelect = useCallback((id: string | null) => {
     if (!id?.startsWith('cell:')) return;
@@ -298,6 +302,7 @@ export default function CellFormLab({ snapshot }: { snapshot: CellGalaxySnapshot
               cellFlashRef={cellFlashRef}
               flashDirtyRef={flashDirtyRef}
               flashDirtyIdsRef={flashDirtyIdsRef}
+              landingFlashRef={landingFlashRef}
               overlay={(
                 <>
                   <NeuralNetwork

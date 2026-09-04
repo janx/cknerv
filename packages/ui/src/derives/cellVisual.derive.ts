@@ -218,3 +218,23 @@ export function deriveCellVisual(cell: Cell): CellVisualDescriptor {
     accent: accentFor(asset, cell.tag, cell.collection_seed),
   };
 }
+
+// Cell point sizes in world units. A stable per-id range prevents the far field
+// from becoming an evenly punched dot screen; tags remain larger landmarks.
+const GENERIC_CELL_POINT_SIZE = 1.35;
+const TAGGED_CELL_POINT_SIZE = 2.75;
+
+/** A Cell's presentation size (world units) — the ONE number every layer
+ *  that draws a sprite AT a Cell reads: the body writes it into `aSize`, the
+ *  write flare shares that buffer, and a landing flash resolves it from the
+ *  cache for its own geometry. Pure in the id and the tag, so it may be
+ *  recomputed anywhere and always agrees with the body. */
+export function cellPointSize(cell: Pick<Cell, 'id' | 'tag'>): number {
+  let hash = Math.imul(cell.id >>> 0, 0x9e3779b1) >>> 0;
+  hash = Math.imul(hash ^ (hash >>> 16), 0x85ebca6b) >>> 0;
+  const u = ((hash >>> 8) & 0xffff) / 0xffff;
+  const morphology = 0.58 + 0.72 * u * u
+    + (cell.tag === null && u > 0.975 ? 0.48 : 0);
+  return (cell.tag === null ? GENERIC_CELL_POINT_SIZE : TAGGED_CELL_POINT_SIZE)
+    * morphology;
+}

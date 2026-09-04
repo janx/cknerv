@@ -91,12 +91,19 @@ describe('fabric lifecycle shader patch', () => {
       .toThrow(/capsule/);
   });
 
-  it('per-frame sync writes exactly the three scalars', () => {
+  it('per-frame sync writes the lifecycle scalars and the block-impact flush knobs', () => {
     const material = makeFabricStackMaterial();
     syncFabricLifecycleUniforms(material, 123.5);
     expect(material.uniforms.fabricSimTimeSec.value).toBe(123.5);
     expect(material.uniforms.fabricEnergyLive.value).toBeGreaterThan(0);
     expect(material.uniforms.fabricCenterDimLive.value).toBeGreaterThanOrEqual(0);
+    // The flush twin's scalars ride the same sync (the slot lanes do not —
+    // see fabricTissueFlush.test.ts).
+    expect(material.uniforms.fabricFlushWindow.value).toBeGreaterThan(0);
+    expect(material.uniforms.fabricFlushSpeed.value).toBeGreaterThan(0);
+    expect(material.uniforms.fabricFlushFalloff.value).toBeGreaterThanOrEqual(0);
+    expect(material.uniforms.fabricFlushAmp.value).toBeGreaterThan(0);
+    expect(material.uniforms.fabricFlushMix.value).toBeGreaterThan(0);
   });
 
   it('keeps the alive sentinel far above any real sim-second', () => {

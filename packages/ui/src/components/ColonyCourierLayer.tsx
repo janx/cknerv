@@ -36,6 +36,13 @@ import {
 import { easeOutCubic } from '../derives/peers.derive';
 import { makeCourierPlumeTexture, makeCourierBloomTexture } from '../materials/courierFlameTexture';
 import {
+  courierEdgeEase,
+  courierHopSpeed,
+  courierPlumeLength,
+  writeCourierMote,
+  writeCourierPlume,
+} from './courierGlyph';
+import {
   consensusBlockColor,
   type ConsensusFlowColor,
 } from '../derives/consensusFlow.derive';
@@ -53,13 +60,12 @@ const COURIER_POOL = 64;
  *  least this long so it actually reads as a throw. */
 const MIN_THROW_S = 0.25;
 
-/** Glint tuning. The courier is now a FAINT accent riding the edge surge (which is
- *  the primary block signal), so the mote + its short streak are small and dim —
- *  no longer a bright thrown comet. The trace is a velocity-aligned quad whose
- *  length tracks the courier's analytic speed; the bloom is a compact packet sample. */
-const FLAME_SPEED_STRETCH = 0.02;  // length added per (world-unit/s) of courier speed
-/** Ease the mote + flame in/out over this fraction of each hop so nothing pops. */
-const COURIER_END_EASE = 0.08;
+// Glint tuning. The courier is a FAINT accent riding the edge surge (which is
+// the primary block signal), so the mote + its short streak are small and dim —
+// no longer a bright thrown comet. The trace is a velocity-aligned quad whose
+// length tracks the courier's analytic speed; the bloom is a compact packet
+// sample. The form itself (mote billboard, plume basis, end ease, speed
+// stretch) is courierGlyph.ts — shared with the block's last hop.
 export interface ColonyCourierLayerProps {
   /** The block flood (shortest-path tree + arrivals). */
   cf: ColonyFlood;
@@ -73,18 +79,9 @@ export interface ColonyCourierLayerProps {
 
 // Scratch objects reused every frame (no per-frame allocation in the hot loop).
 const _dir = new THREE.Vector3();
-const _view = new THREE.Vector3();
-const _x = new THREE.Vector3();
-const _z = new THREE.Vector3();
-const _up = new THREE.Vector3(0, 1, 0);
-const _worldX = new THREE.Vector3(1, 0, 0);
-const _basis = new THREE.Matrix4();
 const _camPos = new THREE.Vector3();
 const _camQuat = new THREE.Quaternion();
 const _position = new THREE.Vector3();
-const _quaternion = new THREE.Quaternion();
-const _scale = new THREE.Vector3();
-const _matrix = new THREE.Matrix4();
 
 /**
  * The new-block broadcast wave. One layer owns every courier: a glow-mote head
@@ -284,42 +281,30 @@ export default function ColonyCourierLayer({
       _position.set(wx, hy, wz);
 
       // Ease presence in/out at the hop ends so nothing pops (shrinks to nothing).
-      const edge = Math.max(
-        0,
-        Math.min(t / COURIER_END_EASE, (1 - t) / COURIER_END_EASE, 1),
-      );
+      const edge = courierEdgeEase(t);
 
-      // Glow-mote head: every plane receives the camera's world quaternion, so
-      // the instance batch preserves Sprite-style billboarding in one draw.
-      _scale.setScalar(LIVE.peer.flameBloom * edge);
-      _matrix.compose(_position, _camQuat, _scale);
-      bloomBatch.setMatrixAt(slot, _matrix);
+      // Glow-mote head: a camera-quaternion billboard (courierGlyph).
+      writeCourierMote(bloomBatch, slot, _position, _camQuat, LIVE.peer.flameBloom, edge);
 
       // Comet-tail plume: length tracks the courier's analytic easeOut speed
-      // (fast off the launch → long plume; decelerating in → short).
+      // (fast off the launch → long plume; decelerating in → short). The axis
+      // is the hop direction carried through the same rotation as the point;
+      // the helper builds the around-axis billboard from the rotated point,
+      // so the view vector reads the same sample the transform does.
       const legDist = Math.hypot(dx, dy, dz) || 1;
-      const speed = (legDist * 3 * (1 - t) * (1 - t)) / dur;
-      const length = Math.min(LIVE.peer.flameMaxLen, LIVE.peer.flameMinLen + speed * FLAME_SPEED_STRETCH);
-      // Orient +Y along the flight direction, billboarded around that axis so
-      // the quad faces the camera. The batch transform is identity, so this
-      // instance quaternion is also its world orientation. The axis is the
-      // hop direction carried through the same rotation as the point.
-      _dir.set(dx * rotC + dz * rotS, dy, -dx * rotS + dz * rotC).normalize();
-      _view.set(_camPos.x - wx, _camPos.y - hy, _camPos.z - wz).normalize();
-      _x.crossVectors(_dir, _view);
-      if (_x.lengthSq() < 1e-6) {
-        // Camera dead-on the flight axis → dir×view collapses. Fall back to a
-        // world axis guaranteed non-parallel to _dir. The colony is a 3D cloud
-        // (nodes at CHAIN_Y ± y), so a near-vertical hop needs world-X, not up.
-        _x.crossVectors(_dir, Math.abs(_dir.y) < 0.9 ? _up : _worldX);
-      }
-      _x.normalize();
-      _z.crossVectors(_x, _dir).normalize();
-      _basis.makeBasis(_x, _dir, _z);
-      _quaternion.setFromRotationMatrix(_basis);
-      _scale.set(LIVE.peer.flameWidth, length * edge, 1);
-      _matrix.compose(_position, _quaternion, _scale);
-      plumeBatch.setMatrixAt(slot, _matrix);
+      const speed = courierHopSpeed(legDist, dur, t);
+      const length = courierPlumeLength(LIVE.peer.flameMinLen, LIVE.peer.flameMaxLen, speed);
+      _dir.set(dx * rotC + dz * rotS, dy, -dx * rotS + dz * rotC);
+      writeCourierPlume(
+        plumeBatch,
+        slot,
+        _position,
+        _dir,
+        _camPos,
+        LIVE.peer.flameWidth,
+        length,
+        edge,
+      );
       slot += 1;
     }
 

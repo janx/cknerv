@@ -65,6 +65,17 @@ import { MIST_SINK_K, MIST_SWIRL } from '../materials/colonyMist';
 // authorities are imported rather than re-typed, so the relationship survives
 // a retune of either side.
 import { SHOCKWAVE_SPEED, CONTACT_WAVE_SCALE } from '../ui/topologyConstants';
+// The held breath's two numbers live on the tested envelope in peers.derive
+// (the halo shaders inject the rest of it from the same module) — imported
+// on the one-authority rule, so a retune there moves the knob's default too.
+import { COMPRESS_DEPTH, COMPRESS_GAIN } from '../derives/peers.derive';
+// The landing flash's two form knobs live on its material, which seeds its
+// own uniforms from them and is overwritten from LIVE each frame — the same
+// one-authority rule as the shockwave and accretion knobs.
+import {
+  LANDING_FLASH_DURATION_S,
+  LANDING_FLASH_SIZE_SCALE,
+} from '../materials/landingFlashMaterial';
 // ② reinforcement defaults live in fabricReinforce.ts — import so there's ONE
 // authority (the module owns the numbers; these knobs just expose them live).
 import {
@@ -108,41 +119,49 @@ export const galaxySchema = {
   rotationRate: { value: 0.00125, min: 0, max: 0.02, step: 0.00025, label: 'rotation rate' },
 } satisfies FolderSchema;
 
-// Carrier glyph → contact front. The wave block is where this event lives now:
-// every worker releases its own front, and they only compose into one field
+// Block impact: the last hop → the contact front. The hop is a courier (the
+// same mote + plume form as the peer mesh's glints, at a higher weight because
+// this hop is the block's climax); the wave block is where the tissue answers.
+// Every worker releases its own front, and they only compose into one field
 // because they share `waveSpeed` — the peer plane's `SHOCKWAVE_SPEED` divided
 // by CONTACT_WAVE_SCALE — and one shape. Retune reach/opacity freely; change
 // speed WITHOUT moving reach by the same factor and fronts extinguish early
 // or never complete, and the two planes stop reading as one event at two
 // sizes.
 export const deliverySchema = {
-  heroSize: { value: 1.16, min: 0.2, max: 2, step: 0.02, label: 'hero size' },
-  peerSize: { value: 0.46, min: 0.1, max: 1.5, step: 0.02, label: 'peer size' },
   ingestDur: { value: 1.2, min: 0.1, max: 1.5, step: 0.05, label: 'contact dur' },
-  glyphBloom: { value: 1.6, min: 0.5, max: 5, step: 0.1, label: 'glyph core' },
-  glyphCompress: { value: 0.45, min: 0, max: 0.9, step: 0.05, label: 'glyph compress' },
-  // The sear at the landing is on the CARRIER's scale — it consumes the glyph
-  // — so it is not divided by CONTACT_WAVE_SCALE. It was trimmed 2.2 → 1.4
-  // when the ring halved (2026-08-15) so the flash no longer outweighs the
-  // front it releases: it still opens wider than the travelling core it
-  // replaces, by ×1.09 of its width instead of the old ×1.72.
-  coreSize: { value: 1.4, min: 0.5, max: 8, step: 0.1, label: 'contact core' },
-  trailWidth: { value: 0.55, min: 0.1, max: 3, step: 0.05, label: 'streak width' },
-  trailLenBase: { value: 1.0, min: 0, max: 4, step: 0.1, label: 'streak len base' },
-  trailLenGain: { value: 1.6, min: 0, max: 6, step: 0.1, label: 'streak len gain' },
-  trailOpacity: { value: 0.6, min: 0, max: 1, step: 0.05, label: 'streak opacity' },
-  inhaleAmount: { value: 0.55, min: 0, max: 1.5, step: 0.05, label: 'drawn breath' },
+  // The held breath: over the charge window before its hop leaves, a
+  // delivering halo (every measured peer's, and the anchor's) draws in to
+  // `1 − compressDepth` of its extent and burns `1 + compressGain` brighter —
+  // concentration, not dimming, and short of light conservation so it never
+  // pops white. Read into both halo materials every frame.
+  compressDepth: { value: COMPRESS_DEPTH, min: 0, max: 0.9, step: 0.05, label: 'breath depth' },
+  compressGain: { value: COMPRESS_GAIN, min: 0, max: 3, step: 0.05, label: 'breath gain' },
+  // The hop's mote is the block itself, sized per tier in world units; the
+  // plume is the courier plume (courierGlyph) with its own width and its
+  // length range, stretched by the hop's analytic speed like every glint.
+  moteHero: { value: 2.2, min: 0.2, max: 4, step: 0.05, label: 'hop mote hero' },
+  motePeer: { value: 1.3, min: 0.1, max: 3, step: 0.05, label: 'hop mote peer' },
+  plumeWidth: { value: 1.0, min: 0.1, max: 2, step: 0.05, label: 'hop plume width' },
+  plumeMinLen: { value: 0.9, min: 0.1, max: 3, step: 0.05, label: 'hop plume min len' },
+  plumeMaxLen: { value: 4.0, min: 0.5, max: 8, step: 0.1, label: 'hop plume max len' },
+  // The glint's form (0.55 / 0.3) at a higher weight: this hop is the climax.
+  hopBloomOpacity: { value: 1.0, min: 0, max: 1, step: 0.05, label: 'hop bloom op' },
+  hopPlumeOpacity: { value: 0.75, min: 0, max: 1, step: 0.05, label: 'hop plume op' },
   waveSpeed: {
     value: SHOCKWAVE_SPEED / CONTACT_WAVE_SCALE,
     min: 1, max: 40, step: 0.5, label: 'front speed',
   },
-  // The pre-shrink 0.55 on the front's scale: the crest is part of the ring's
-  // form, so it scales with it — holding it fixed would make the smaller ring
+  // 3.2 on the front's scale = 0.40 wu: the crest is part of the ring's form,
+  // so it scales with it — holding it fixed would make the smaller ring
   // proportionally chunkier instead of simply smaller. Derived, not
   // hand-rounded, so a CONTACT_WAVE_SCALE retune rescales the width with
-  // everything else.
-  waveWidth: { value: 0.55 / CONTACT_WAVE_SCALE, min: 0.02, max: 1.5, step: 0.01, label: 'front width' },
-  waveOpacity: { value: 2.0, min: 0, max: 3, step: 0.05, label: 'front opacity' },
+  // everything else. 0.55 → 3.2 (2026-08-28): at the overview camera (≈7 px
+  // per world unit) the old crest was ≈0.5 px — a hairline — and this one is
+  // ≥2.5 px, a soft crest the tissue's exhale can actually be read from.
+  waveWidth: { value: 3.2 / CONTACT_WAVE_SCALE, min: 0.02, max: 1.5, step: 0.01, label: 'front width' },
+  // A wider crest is more area: 2.0 → 0.9 with the width (same day).
+  waveOpacity: { value: 0.9, min: 0, max: 3, step: 0.05, label: 'front opacity' },
   waveFalloff: { value: 0.5, min: 0, max: 2.5, step: 0.05, label: 'front 1/r falloff' },
   // Reach past what the window can complete — start + speed×ingestDur, 5.7 at
   // these defaults — clamps at render time (peers.derive
@@ -150,13 +169,31 @@ export const deliverySchema = {
   // inside the ingest window instead of being cut off by the time envelope.
   waveReachHero: { value: 52 / CONTACT_WAVE_SCALE, min: 0.5, max: 30, step: 0.5, label: 'front reach hero' },
   waveReachPeer: { value: 34 / CONTACT_WAVE_SCALE, min: 0.5, max: 30, step: 0.5, label: 'front reach peer' },
-  waveWake: { value: 0.14, min: 0, max: 1, step: 0.02, label: 'front wake' },
-  waveSegments: { value: 0.55, min: 0, max: 1, step: 0.05, label: 'front gaps' },
+  // The wake is the body of a soft front (0.14 → 0.45, 2026-08-28); the three
+  // gaps stay as the agreement motif, softened (0.55 → 0.3).
+  waveWake: { value: 0.45, min: 0, max: 1, step: 0.02, label: 'front wake' },
+  waveSegments: { value: 0.3, min: 0, max: 1, step: 0.05, label: 'front gaps' },
+  // A peer's exhale against the hero's: scales its plume length, its front's
+  // intensity and its flush's amplitude (the mote is already sized per tier).
   peerPunchScale: { value: 0.7, min: 0, max: 1.5, step: 0.05, label: 'peer punch' },
-  igniteKHero: { value: 8, min: 0, max: 30, step: 1, label: 'ignite k hero' },
-  igniteKPeer: { value: 3, min: 0, max: 15, step: 1, label: 'ignite k peer' },
-  igniteMax: { value: 300, min: 0, max: 1000, step: 10, label: 'ignite max' },
-  igniteRipple: { value: 0.015, min: 0, max: 0.1, step: 0.005, label: 'ignite ripple s' },
+  // The fibre flush — the same front, sampled along the nerve fibres it
+  // crosses (nerve/fabricLifecycleShader `fabricFlushGl`). `flushAmp` scales
+  // how far the flush reclaims the fabric's core-dim floor (1 = a full
+  // reclaim at the crest, the way a death flash reclaims it); `flushMix` how
+  // far a flushed fibre's hue leans toward the front's own (carrier → rose).
+  flushAmp: { value: 1.0, min: 0, max: 3, step: 0.05, label: 'flush amp' },
+  flushMix: { value: 0.6, min: 0, max: 1, step: 0.05, label: 'flush mix' },
+  // The landing flashes — plain blooms on the Cells a released front passes,
+  // at the instant its crest passes them (landingFlashSchedule → the galaxy's
+  // LandingFlashLayer). Three budgets: per hero front and per peer front
+  // (nearest Cells first), then per pulse across every front. Then the
+  // flash's own window and its sprite as a multiple of the Cell's
+  // presentation size, both seeded from the material.
+  landingHero: { value: 128, min: 0, max: 512, step: 8, label: 'landing budget hero' },
+  landingPeer: { value: 24, min: 0, max: 128, step: 1, label: 'landing budget peer' },
+  landingMax: { value: 300, min: 0, max: 1000, step: 10, label: 'landing budget pulse' },
+  landingDur: { value: LANDING_FLASH_DURATION_S, min: 0.1, max: 2, step: 0.05, label: 'landing dur s' },
+  landingSize: { value: LANDING_FLASH_SIZE_SCALE, min: 0.5, max: 6, step: 0.1, label: 'landing size' },
 } satisfies FolderSchema;
 
 export const peerSchema = {
@@ -328,7 +365,7 @@ export const nerveSchema = {
 
 export const FOLDER_LABELS = {
   galaxy: 'Galaxy',
-  delivery: 'Consensus carrier',
+  delivery: 'Block impact',
   peer: 'Peer mesh',
   cell: 'Cell structure',
   nerve: 'Nerve fabric',

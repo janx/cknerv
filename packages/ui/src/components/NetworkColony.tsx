@@ -19,10 +19,14 @@
 //     dimmed glow-mote flung node→node along the shortest-path tree, timed by the
 //     flood arrivals. The edge surge traces the actual route while the node
 //     shockwave supplies the broad network response.
-//   • BlockDeliveryLayer — one galaxy-facing carrier glyph per measured worker
-//     (timed by cf.arrivals) plus the local source. Each glyph tightens, rises
-//     contracting, and at contact is released as a front of that same
-//     interrupted rim + real Cell illumination.
+//   • BlockDeliveryLayer — the block's last hop, one per measured worker (timed
+//     by cf.arrivals) plus the local source: a courier mote + plume (the same
+//     vocabulary as ColonyCourierLayer, via courierGlyph.ts) thrown up into the
+//     Cell field in the block's carrier hue and absorbed at contact, where the
+//     tissue answers on one radius function through three media — the soft
+//     annulus front, the fibre flush, and plain landing flashes on the Cells
+//     the crest passes. The held breath before the hop is the worker's own
+//     halo drawing in (ColonyNodes' measured material), not anything drawn here.
 //
 // Block wiring (ported from the retired hub-and-spoke layer): on each new block
 // pulse we stamp `pulseRef` with { at: simClock.elapsedSec, entryId: cf.entryId };
@@ -71,7 +75,7 @@ import {
   cellDetailPeerContextEnergy,
   cellDetailPeerLinkContextEnergy,
 } from '../derives/sceneView.derive';
-import type { CellFlashDirtyIdsRef } from './cellFlash';
+import type { LandingFlashQueue } from './landingFlashQueue';
 
 interface NetworkColonyProps {
   topology: NetworkTopology;
@@ -80,12 +84,11 @@ interface NetworkColonyProps {
   blockPulseAtMs: number;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
-  /** Galaxy's cell.id → scene-seconds flash map (owned by App/CellGalaxy). Each
-   *  delivered carrier ignites the cells it lands on by writing here — the galaxy
-   *  visibly RECEIVES the delivery through its existing flare path. */
-  cellFlashRef: React.MutableRefObject<Map<number, number>>;
-  flashDirtyRef: React.MutableRefObject<boolean>;
-  flashDirtyIdsRef?: CellFlashDirtyIdsRef;
+  /** The galaxy's landing queue (owned by the app, drained by CellGalaxy's
+   *  LandingFlashLayer). Each released front schedules a plain flash on the
+   *  Cells its crest will pass by pushing here — the galaxy visibly RECEIVES
+   *  the delivery on its own landing geometry, never through the write seal. */
+  landingFlashRef: { readonly current: LandingFlashQueue };
   /** Local node version — drives measured version-mismatch coloring (violet). */
   localVersion: string;
   /** The chain's recent mining cohorts, LIVE, by reference. Passed straight
@@ -128,9 +131,7 @@ function NetworkColony({
   blockPulseAtMs,
   selectedId,
   onSelect,
-  cellFlashRef,
-  flashDirtyRef,
-  flashDirtyIdsRef,
+  landingFlashRef,
   localVersion,
   producersRef,
   cellDetailViewFocusRef,
@@ -331,9 +332,7 @@ function NetworkColony({
         localOrigins={localOrigins}
         localReceiveDelayS={cf.localReceiveDelayS}
         pulseRef={pulseRef}
-        cellFlashRef={cellFlashRef}
-        flashDirtyRef={flashDirtyRef}
-        flashDirtyIdsRef={flashDirtyIdsRef}
+        landingFlashRef={landingFlashRef}
       />
     </group>
   );

@@ -105,9 +105,13 @@ describe('NetworkColony counter-rotation frame contract', () => {
     const courier = source('ColonyCourierLayer.tsx');
 
     expect(courier).toContain('colonyFrame.rotationY');
-    // Rotated sample point feeds both the transform and the view vector.
+    // The rotated sample point feeds both the transform and the view vector:
+    // the same `_position` goes to the mote and to the plume, and the helper
+    // builds the around-axis billboard from the very point it places.
     expect(courier).toContain('_position.set(wx, hy, wz)');
-    expect(courier).toContain('_camPos.x - wx');
+    expect(courier).toContain('writeCourierMote(bloomBatch, slot, _position, _camQuat');
+    expect(courier).toMatch(/writeCourierPlume\(\s*plumeBatch,\s*slot,\s*_position,\s*_dir,\s*_camPos/);
+    expect(source('courierGlyph.ts')).toContain('_view.subVectors(camPos, position)');
     // The plume's axis turns with the edge it rides.
     expect(courier).toContain(
       '_dir.set(dx * rotC + dz * rotS, dy, -dx * rotS + dz * rotC)',
@@ -119,10 +123,20 @@ describe('NetworkColony counter-rotation frame contract', () => {
 
     // Plan-time pin for the world landing…
     expect(delivery).toContain('colonyFrame.rotationY,');
-    // …and the per-frame launch glue (gather + lob read the rotated launch).
+    // …and the per-frame launch glue: the hop leaves from the launch carried
+    // through THIS frame's colony rotation and interpolates to the world
+    // landing, so a mixed-frame hop stays glued to its turning node.
     expect(delivery).toContain('const colonyRotC = Math.cos(colonyFrame.rotationY)');
-    expect(delivery).toContain('_position.set(fromX, fromY, fromZ)');
+    expect(delivery).toContain(
+      'const fromX = delivery.from[0] * colonyRotC + delivery.from[2] * colonyRotS',
+    );
+    expect(delivery).toContain(
+      'const fromZ = -delivery.from[0] * colonyRotS + delivery.from[2] * colonyRotC',
+    );
     expect(delivery).toContain('fromX + (delivery.to[0] - fromX) * progress');
+    // The landing itself is never re-rotated at render time.
+    expect(delivery).toContain('_position.set(delivery.to[0], delivery.to[1], delivery.to[2])');
+    expect(delivery).not.toMatch(/delivery\.to\[[02]\] \* colonyRot/);
   });
 
   it('stamps the node shockwave origin in world coordinates', () => {

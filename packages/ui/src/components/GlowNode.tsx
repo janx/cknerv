@@ -4,6 +4,11 @@
 // phase/rate hashes that keep their breathing out of lockstep.
 
 import * as THREE from 'three';
+import {
+  makeCompressionUniforms,
+  PEER_COMPRESSION_GLSL,
+} from '../materials/peerNodeMaterial';
+import { PEER_LAUNCH_SENTINEL } from '../derives/peers.derive';
 
 export interface Palette {
   /** Wireframe + halo tint. */
@@ -14,6 +19,15 @@ export interface Palette {
   fill: string;
 }
 
+/**
+ * The anchor's halo. It also holds the breath: over the charge window before
+ * the anchor's own delivery hop leaves (`uLaunchAt`, the block's local
+ * receive instant) the quad draws in and its light concentrates, and both
+ * let go over the release after — the same envelope every measured peer's
+ * halo runs (`PEER_COMPRESSION_GLSL`), so the hero differs from a peer in
+ * scale and reach and never in shape. A caller that schedules no launch
+ * leaves the sentinel in place and the envelope is exactly 0.
+ */
 export function makeHaloMaterial(palette: Palette): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
@@ -21,6 +35,8 @@ export function makeHaloMaterial(palette: Palette): THREE.ShaderMaterial {
       uPhase: { value: 0 },
       uIntensity: { value: 1 },
       uColor: { value: new THREE.Color(palette.halo) },
+      uLaunchAt: { value: PEER_LAUNCH_SENTINEL },
+      ...makeCompressionUniforms(),
     },
     transparent: true,
     depthWrite: false,
@@ -28,16 +44,27 @@ export function makeHaloMaterial(palette: Palette): THREE.ShaderMaterial {
     toneMapped: false,
     vertexShader: /* glsl */ `
       varying vec2 vUv;
+      varying float vHeld;
+      uniform float uTime;
+      uniform float uLaunchAt;
+      uniform float uCompressDepth;
+      ${PEER_COMPRESSION_GLSL}
       void main() {
         vUv = uv;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        // The held breath: the extent draws in toward the launch, lets go after.
+        float held = peerCompressionGl(uTime - uLaunchAt);
+        vHeld = held;
+        vec3 drawn = position * (1.0 - uCompressDepth * held);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(drawn, 1.0);
       }
     `,
     fragmentShader: /* glsl */ `
       varying vec2 vUv;
+      varying float vHeld;
       uniform float uTime;
       uniform float uPhase;
       uniform float uIntensity;
+      uniform float uCompressGain;
       uniform vec3 uColor;
       void main() {
         vec2 uv = vUv - 0.5;
@@ -47,7 +74,8 @@ export function makeHaloMaterial(palette: Palette): THREE.ShaderMaterial {
         float core = pow(1.0 - r, 4.0);
         float halo = pow(1.0 - r, 1.6) * 0.42;
         float breathe = 0.78 + 0.22 * sin(uTime * 1.2 + uPhase);
-        float a = (core + halo) * uIntensity * breathe;
+        // …concentrated by the held breath, short of conservation.
+        float a = (core + halo) * uIntensity * breathe * (1.0 + uCompressGain * vHeld);
         gl_FragColor = vec4(uColor * a, a);
       }
     `,

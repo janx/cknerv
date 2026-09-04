@@ -8,13 +8,28 @@ const EXPECTED_DEFAULTS = {
   // counter-rotating (2026-08-24): the two planes shear at twice the knob,
   // so the shipped tempo came down with it.
   galaxy: { rotationRate: 0.00125 },
-  // waveWidth is 0.55/CONTACT_WAVE_SCALE — the one delivery default that is
+  // waveWidth is 3.2/CONTACT_WAVE_SCALE — the one delivery default that is
   // derived rather than a hand literal, deliberately: the crest must rescale
   // with the ring (baseline shifted 0.14 → 0.1375 when the hand-rounding was
   // replaced by the derivation, 2026-08-14; → 0.06875 when the scale went
   // 4 → 8 to halve the ring's radius, 2026-08-15 — speed, both reaches and
-  // the width all moved with it).
-  delivery: { heroSize: 1.16, peerSize: 0.46, ingestDur: 1.2, glyphBloom: 1.6, glyphCompress: 0.45, coreSize: 1.4, trailWidth: 0.55, trailLenBase: 1.0, trailLenGain: 1.6, trailOpacity: 0.6, inhaleAmount: 0.55, waveSpeed: 4.5, waveWidth: 0.55 / 8, waveOpacity: 2.0, waveFalloff: 0.5, waveReachHero: 6.5, waveReachPeer: 4.25, waveWake: 0.14, waveSegments: 0.55, peerPunchScale: 0.7, igniteKHero: 8, igniteKPeer: 3, igniteMax: 300, igniteRipple: 0.015 },
+  // the width all moved with it; → 0.4 when the crest went soft, 2026-08-28).
+  // The hop knobs (mote / plume / hop opacities) are the courier form at the
+  // block's own weight (2026-08-28: the glyph, streak, sear and inhale knobs
+  // left with the glyph dialect). The two breath knobs are the halo
+  // compression that replaced the glyph's gather: extent to 0.55, light
+  // ×1.8 (COMPRESS_DEPTH / COMPRESS_GAIN on peers.derive, same day).
+  // The front went soft the same day, to be legible at the overview camera:
+  // crest 0.55 → 3.2 on the front's scale (0.069 → 0.40 wu, a hairline to
+  // ≥2.5 px), wake 0.14 → 0.45, gaps 0.55 → 0.3, opacity 2.0 → 0.9 for the
+  // extra area; and the fibre flush arrived with its two knobs (amp 1.0 = a
+  // full core-floor reclaim at the crest, mix 0.6 toward the front's hue).
+  // The landing flashes replaced the k-nearest ignition the same day (the
+  // `ignite*` knobs left with it): three budgets — per hero front 128, per
+  // peer front 24, per pulse 300 (the old `igniteMax`) — and the flash's own
+  // window 0.45 s and sprite 2.2× the Cell's presentation size
+  // (LANDING_FLASH_* on landingFlashMaterial, one authority).
+  delivery: { ingestDur: 1.2, compressDepth: 0.45, compressGain: 0.8, moteHero: 2.2, motePeer: 1.3, plumeWidth: 1.0, plumeMinLen: 0.9, plumeMaxLen: 4.0, hopBloomOpacity: 1.0, hopPlumeOpacity: 0.75, waveSpeed: 4.5, waveWidth: 3.2 / 8, waveOpacity: 0.9, waveFalloff: 0.5, waveReachHero: 6.5, waveReachPeer: 4.25, waveWake: 0.45, waveSegments: 0.3, peerPunchScale: 0.7, flushAmp: 1.0, flushMix: 0.6, landingHero: 128, landingPeer: 24, landingMax: 300, landingDur: 0.45, landingSize: 2.2 },
   // The nineteen `cohort*` knobs are the POW channel — ONE LENSED MASS PER
   // COHORT plus the specks falling into it — whose defaults live on
   // `colonyLens`, `colonyMotes` and `colonyMist` under the same one-authority
@@ -97,7 +112,7 @@ describe('tweakSchema', () => {
 
   it('exposes protocol-oriented folder labels', () => {
     expect(FOLDER_LABELS).toEqual({
-      galaxy: 'Galaxy', delivery: 'Consensus carrier', peer: 'Peer mesh', cell: 'Cell structure', nerve: 'Nerve fabric',
+      galaxy: 'Galaxy', delivery: 'Block impact', peer: 'Peer mesh', cell: 'Cell structure', nerve: 'Nerve fabric',
     });
   });
 });

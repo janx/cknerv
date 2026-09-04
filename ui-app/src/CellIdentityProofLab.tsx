@@ -17,6 +17,7 @@ import {
   QUALITY_PRESETS,
   SimClockScope,
   SimClockTicker,
+  createLandingFlashQueue,
   createSimClock,
   useQualityRuntime,
   type CellIdentityProofEvent,
@@ -157,6 +158,9 @@ function ProofPanel({
   const cellFlashRef = useRef<Map<number, number>>(new Map());
   const flashDirtyRef = useRef(false);
   const flashDirtyIdsRef = useRef<Set<number>>(new Set());
+  // No colony in this lab, so nothing ever lands; the galaxy still mounts its
+  // landing layer, which draws nothing on an empty queue.
+  const landingFlashRef = useRef(createLandingFlashQueue());
 
   return (
     <article
@@ -249,6 +253,7 @@ function ProofPanel({
                 cellFlashRef={cellFlashRef}
                 flashDirtyRef={flashDirtyRef}
                 flashDirtyIdsRef={flashDirtyIdsRef}
+                landingFlashRef={landingFlashRef}
               />
             </SimClockScope>
           </Canvas>

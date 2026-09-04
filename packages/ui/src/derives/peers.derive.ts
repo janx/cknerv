@@ -3,7 +3,7 @@
 
 import type { ChainEntry, ChainNode, Peer, PeerDirection } from '@cknerv/types';
 import type { Vec3 } from '../types';
-import { CONTACT_WAVE_SCALE } from '../ui/topologyConstants';
+import { BEAM_CHARGE_DUR_S, CONTACT_WAVE_SCALE } from '../ui/topologyConstants';
 import {
   PEER_NETWORK_PALETTE,
   type SceneColor,
@@ -70,20 +70,15 @@ export function easeOutCubic(t: number): number {
   return 1 - Math.pow(1 - t, 3);
 }
 
-/** Accelerate-in carrier easing: some launch velocity (0.15) plus acceleration,
- *  so the signal is fastest at the Cell-field boundary, unlike easeOutCubic.
- *  f(0)=0, f(1)=1; slope grows from 0.15 to 1.85 (accelerating). */
-export function easeInLob(t: number): number {
-  return 0.15 * t + 0.85 * t * t;
-}
-
 export interface Delivery {
-  /** Stable per-node key for the pooled protocol-carrier child. */
+  /** Stable per-delivery key (`local:i` / `peer:<node id>`). The renderer
+   *  keys its once-per-pulse contact stamp (flush + landing schedule) on it
+   *  and hashes the front's roll from it (`peerAngle`). */
   key: string;
   /** Launch position in the COLONY's rotating frame (the coordinates the
    *  topology stores). The renderer carries it through the live colony
    *  rotation each frame (`rotYLocalToWorldXZ` at `colonyFrame.rotationY`),
-   *  which is what keeps the gather glyph glued to its turning node. The
+   *  which is what keeps the hop leaving from its turning node. The
    *  production hero origin sits ON the rotation axis, so its colony and
    *  world positions coincide. */
   from: Vec3;
@@ -259,30 +254,19 @@ export function deliveryScheduleHorizon(
 }
 
 export interface ContactRelease {
-  /** Seed-glyph scale: 1 at contact → 0 once the ring has been released. */
-  glyphScale: number;
-  /** Seed-glyph opacity, on the same short window as `glyphScale`. */
-  glyphOpacity: number;
-  /** Compact core at the landing: searing onset, resolved before the end. */
-  coreOpacity: number;
-  /** Contracting pre-release ring: 1 at its widest → 0 at the landing. */
-  inhaleRadius: number;
-  /** Strength of that ring; nonzero only inside the pre-release window. */
-  inhaleOpacity: number;
   /** Expanding front intensity across the whole window. */
   frontOpacity: number;
-  /** 0 = white-hot contact, 1 = resolved into the Cell field's own tissue. */
+  /** 0 = the block's carrier hue at contact, 1 = resolved into the Cell
+   *  field's own tissue. */
   colorT: number;
 }
 
-/** Fraction of the contact phase the seed glyph takes to release. */
-const RELEASE_WINDOW = 0.35;
-/** Fraction the pre-release ring contracts over — short, so the drawn breath
- *  lands just before the front leaves rather than reading as its own event. */
-const INHALE_WINDOW = 0.14;
-/** Fraction the front takes to reach full strength. Non-zero so the front
- *  grows out of the contact core instead of appearing beside it. */
-const FRONT_ONSET = 0.05;
+/** Fraction of the contact window the front takes to reach full strength.
+ *  Non-zero so the front grows out of the absorbed mote instead of switching
+ *  on beside it. Exported for the fabric's GLSL twin (`fabricFlushGl`,
+ *  nerve/fabricLifecycleShader.ts), which runs this same envelope along the
+ *  fibres so the flush and the front never disagree about when they exist. */
+export const CONTACT_FRONT_ONSET = 0.05;
 
 function clampUnit(value: number): number {
   return Math.max(0, Math.min(1, value));
@@ -297,31 +281,80 @@ export function smoothUnit(value: number): number {
   return u * u * (3 - 2 * u);
 }
 
+// ————— The held breath —————
+//
+// The first half of the handoff. A peer about to deliver does not grow a
+// glyph: the light that is already there — its own halo — draws in over the
+// charge window and lets go the instant its hop leaves. This is that
+// envelope, in sim seconds relative to the launch. The halo shaders run a
+// GLSL twin (`PEER_COMPRESSION_GLSL`, materials/peerNodeMaterial.ts) that is
+// template-injected from these same constants and kept structurally
+// identical to `peerCompression` line for line; this mirror is what the twin
+// is held to.
+
+/** How far a halo contracts at full breath: its extent goes to
+ *  `1 − COMPRESS_DEPTH` of rest. */
+export const COMPRESS_DEPTH = 0.45;
+/** How much brighter the contracted halo burns at full breath.
+ *  Concentration, not dimming — and deliberately short of light conservation
+ *  (an extent of 0.55 would conserve at ×3.3), so a peer never pops white. */
+export const COMPRESS_GAIN = 0.8;
+/** The release after launch (s): a halo lets go faster than it drew in. */
+export const COMPRESS_RELEASE_S = 0.25;
+/** "No launch scheduled." Sim seconds: anything alive sits ~1e9 s past it, so
+ *  the envelope resolves to exactly 0 with no branch — the same sentinel
+ *  idiom the Cell lifecycle stamps use. */
+export const PEER_LAUNCH_SENTINEL = -1e9;
+
+export interface PeerCompression {
+  /** 0 at rest, exactly 1 at the launch instant. */
+  envelope: number;
+  /** Multiplier on the halo's extent: 1 at rest, `1 − COMPRESS_DEPTH` at launch. */
+  scale: number;
+  /** Multiplier on the halo's intensity: 1 at rest, `1 + COMPRESS_GAIN` at launch. */
+  gain: number;
+}
+
+/** The held breath, `dtS` seconds after (negative: before) a halo's launch.
+ *  Draws in over `[−chargeS, 0)` and lets go over `[0, releaseS)`; exactly 0
+ *  everywhere else, including at the sentinel. One clamped easing shapes both
+ *  halves (`smoothUnit`), so the envelope is continuous through the launch:
+ *  the draw-in arrives at 1 as the release leaves from 1. Pure. */
+export function peerCompression(
+  dtS: number,
+  chargeS: number = BEAM_CHARGE_DUR_S,
+  releaseS: number = COMPRESS_RELEASE_S,
+): PeerCompression {
+  // Structurally the GLSL twin: a clamped smoothstep on each side of the
+  // launch, selected by the sign of dt.
+  const charge = smoothUnit((dtS + chargeS) / chargeS);
+  const release = 1 - smoothUnit(dtS / releaseS);
+  const envelope = dtS < 0 ? charge : release;
+  return {
+    envelope,
+    scale: 1 - COMPRESS_DEPTH * envelope,
+    gain: 1 + COMPRESS_GAIN * envelope,
+  };
+}
+
 /** Per-frame Cell-contact envelope for one delivered block (t∈[0,1]).
  *
  *  The whole handoff is one idea — compression then release — and this is its
- *  second half: the carrier's seed ring collapses, a small ring is drawn INWARD
- *  to the landing, a compact core sears, and the front leaves. Front RADIUS is
- *  deliberately absent: the renderer drives it from a shared wave speed in real
- *  seconds so every worker's front belongs to one wave field, and this envelope
- *  supplies only strengths.
+ *  second half: the mote is absorbed at the landing and the front leaves.
+ *  Front RADIUS is deliberately absent: the renderer drives it from a shared
+ *  wave speed in real seconds so every worker's front belongs to one wave
+ *  field, and this envelope supplies only the strength and the colour arc.
  *
- *  THE INVARIANT: every opacity and the glyph scale reach EXACTLY 0 at t=1, so
- *  the phase→done hard-hide has nothing left to blink off. Pure. */
+ *  THE INVARIANT: the front's opacity reaches EXACTLY 0 and its colour
+ *  exactly 1 at t=1, so the phase→done hard-hide has nothing left to blink
+ *  off. Pure. */
 export function contactRelease(t: number): ContactRelease {
   const u = clampUnit(t);
-  const released = clampUnit(1 - u / RELEASE_WINDOW);
-  const drawn = clampUnit(u / INHALE_WINDOW);
   return {
-    glyphScale: Math.pow(released, 0.7),
-    glyphOpacity: Math.pow(released, 1.2),
-    coreOpacity: Math.exp(-9 * u) * (1 - u),
-    inhaleRadius: 1 - easeInLob(drawn),
-    inhaleOpacity: Math.sin(Math.PI * drawn) * (1 - u),
     // Linear life on purpose: the renderer's 1/r falloff already dims a front
     // as it spreads, and curving the time decay on top of it killed the front
     // long before it had crossed anything.
-    frontOpacity: (1 - u) * smoothUnit(u / FRONT_ONSET),
+    frontOpacity: (1 - u) * smoothUnit(u / CONTACT_FRONT_ONSET),
     colorT: easeOutCubic(u),
   };
 }
@@ -332,6 +365,13 @@ export function contactRelease(t: number): ContactRelease {
 // from the renderer's frame callback so it can be numerically tested: jsdom
 // cannot run an R3F frame loop, and source-string assertions cannot catch a
 // front that silently extinguishes early or never completes.
+//
+// ONE radius function, more than one medium. The annulus front reads it here
+// (TypeScript, per frame); the fibre flush reads a GLSL twin (`fabricFlushGl`
+// in nerve/fabricLifecycleShader.ts) that is template-injected from these
+// same constants and kept structurally identical to `contactFrontState` +
+// `contactRelease`, so a fibre brightens exactly where the crest is drawn.
+// Retune a number here and both media move together.
 
 /** Front radius at the instant of release. Also anchors the 1/r falloff away
  *  from its singularity. Both are on the front's divided scale. */
@@ -347,10 +387,13 @@ export const CONTACT_FRONT_FALLOFF_REFERENCE = 24 / CONTACT_WAVE_SCALE;
 export const CONTACT_FRONT_WIDTH_GROW_RATE = 0.45;
 /** Fraction of a front's reach where its extinction begins. */
 export const CONTACT_FRONT_REACH_KNEE = 0.72;
-/** Ceiling on the crest half-width as a fraction of the crest radius. Without
- *  it a young front — radius still a world unit or two — is mostly crest, and
- *  the release reads as a soft doughnut instead of a thin ring leaving. */
-export const CONTACT_FRONT_WIDTH_RADIUS_CAP = 0.22;
+/** Ceiling on the crest half-width as a fraction of the crest radius. It
+ *  keeps a newborn front — radius still a fraction of a world unit — from
+ *  being ALL crest: the release must still read as a ring leaving a point.
+ *  0.22 → 0.5 (2026-08-28), with the crest itself widened to 0.40 wu: the
+ *  front is a soft bloom now, legible at the overview camera, and a soft
+ *  bloom may be half its radius when young. */
+export const CONTACT_FRONT_WIDTH_RADIUS_CAP = 0.5;
 
 /** The live knobs the front algebra runs on (renderer refreshes per frame). */
 export interface ContactFrontLive {
@@ -709,6 +752,78 @@ export function cellIdsWithinRadiusFromIndex(
   return hits.map((hit) => ({ id: hit.id, dist: Math.sqrt(hit.d2) }));
 }
 
+// ————— Landing flashes —————
+//
+// The third medium of the same wave. The annulus draws the crest, the fabric
+// flushes as the crest crosses a fibre, and a Cell flashes at the instant the
+// crest passes it — one radius function, read here backwards: not "where is
+// the crest at time t" but "when does the crest reach a Cell at distance d".
+
+export interface LandingFlash {
+  id: number;
+  /** Sim seconds at which the crest passes this Cell. */
+  at: number;
+  /** The front's own strength where it passes this Cell — the spatial half
+   *  of `contactFrontState` (1/r falloff × reach extinction) — so a flash at
+   *  the rim is as quiet as the crest that caused it and one inside the knee
+   *  is as loud. In [0, 1]. */
+  amp: number;
+}
+
+/**
+ * Schedule the flashes one released front owes the Cells it will cross.
+ * `landingLocalXZ` is the landing in the galaxy's LOCAL frame — the frame
+ * `pos_seed` lives in; the caller projects it with the same map the flush
+ * stamp uses, so all three media share one origin. Only Cells within the
+ * reach the front can actually complete (`min(reach, ceiling)`) are
+ * scheduled — never one the crest would pass after extinction — nearest
+ * first, at most `budget` of them, each at
+ * `contact + max(0, dist − CONTACT_FRONT_START_RADIUS) / speed`: a Cell
+ * inside the release radius flashes AT contact, every other one exactly when
+ * the crest gets there. Pure.
+ */
+export function landingFlashSchedule(
+  landingLocalXZ: readonly [number, number],
+  contactSceneS: number,
+  reach: number,
+  budget: number,
+  live: ContactFrontLive,
+  index: CellNearestIndex,
+): LandingFlash[] {
+  const limit = Number.isFinite(budget)
+    ? Math.max(0, Math.floor(budget))
+    : budget === Number.POSITIVE_INFINITY
+      ? index.count
+      : 0;
+  if (limit === 0 || !(live.speed > 0)) return [];
+  const radius = Math.min(
+    reach,
+    contactFrontReachCeiling(live.speed, live.windowS),
+  );
+  const hits = cellIdsWithinRadiusFromIndex(
+    landingLocalXZ[0],
+    landingLocalXZ[1],
+    radius,
+    index,
+  );
+  // Nearest first. The sort is stable, so equidistant Cells keep the index's
+  // input order — exactly as the radius walk returned them.
+  hits.sort((a, b) => a.dist - b.dist);
+  const count = Math.min(limit, hits.length);
+  const out: LandingFlash[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const { id, dist } = hits[i];
+    const ageS = Math.max(0, dist - CONTACT_FRONT_START_RADIUS) / live.speed;
+    const front = contactFrontState(ageS, reach, live);
+    out.push({
+      id,
+      at: contactSceneS + ageS,
+      amp: front.falloff * front.reachFade,
+    });
+  }
+  return out;
+}
+
 let sharedNearestIndexToken: unknown = Symbol('unset');
 let sharedNearestIndexValue: CellNearestIndex | null = null;
 /** Journal chain: cellsToken the shared index was last synced to. */
@@ -761,8 +876,9 @@ export interface NearestIndexJournal {
 }
 
 /**
- * One nearest index shared across consumers (delivery ignition + galaxy
- * local ignition today), keyed on `cellsToken` and maintained INCREMENTALLY
+ * One nearest index shared across consumers (today the delivery layer's
+ * landing schedule, `landingFlashSchedule`, for every front of a pulse),
+ * keyed on `cellsToken` and maintained INCREMENTALLY
  * from the reducer journal: births append (O(1) bucket insert), removals
  * tombstone (walkers skip; a reborn id un-tombstones — `pos_seed` is a pure
  * function of the id, so the retained entry is exact), and any journal gap,
@@ -825,13 +941,15 @@ export function sharedCellNearestIndex(
   return sharedNearestIndexValue;
 }
 
-/** The `k` Cell ids nearest (in the xz plane) to a carrier `landing`,
+/** The `k` Cell ids nearest (in the xz plane) to a world `landing`,
  *  nearest first. Cells live in the galaxy group's rotating LOCAL frame
  *  (`pos_seed`), so the world landing is projected back through the group's
- *  `rotationY` before comparing. Used to illuminate the Cells a carrier reaches so
- *  the galaxy visibly RECEIVES each delivery (sparse-rim-safe: "nearest k"
- *  always finds cells, unlike a fixed radius). Pure. O(n log min(k,n)) time
- *  and O(min(k,n)) memory — called per block, not per frame. */
+ *  `rotationY` before comparing. No longer on the delivery path: a landing
+ *  is a radius, not a k — the Cells a released front flashes are the ones
+ *  within its reach (`landingFlashSchedule`) — so nothing in the scene calls
+ *  this one-shot wrapper any more; it stays as the index's exact-k query,
+ *  exercised by its tests. Pure. O(n log min(k,n)) time and O(min(k,n))
+ *  memory. */
 export function nearestCellIds(
   landing: [number, number],
   rotationY: number,

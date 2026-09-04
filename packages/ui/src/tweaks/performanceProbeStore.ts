@@ -67,9 +67,13 @@ export const PERFORMANCE_PROBE_LABELS = {
   colonyCohortMotes: 'colony.cohort.motes',
   colonyCourierPlume: 'colony.courier.plume',
   colonyCourierBloom: 'colony.courier.bloom',
-  deliveryBody: 'delivery.body',
-  deliveryCore: 'delivery.core',
-  deliveryTrail: 'delivery.trail',
+  // ⚠️ ONE LABEL RETIRED AND TWO RENAMED HERE when the last hop became a
+  // courier (`4157fc1`, re-landed 2026-09-04): `delivery.body` was the glyph's
+  // line body and there is no glyph any more, and the two sprite draws are the
+  // courier's mote and its plume — the same two draws under the names the
+  // scene now uses for them.
+  deliveryMote: 'delivery.mote',
+  deliveryPlume: 'delivery.plume',
   deliveryWave: 'delivery.wave',
   stars: 'stars',
   neuralFabricEmit: 'cpu.neural-fabric.emit',

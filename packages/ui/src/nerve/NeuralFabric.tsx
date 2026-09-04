@@ -2227,12 +2227,14 @@ export default function NeuralFabric({
         const emitProbe = beginCpuProbe(
           PERFORMANCE_PROBE_LABELS.neuralFabricEmit,
         );
-        // The fabric animates entirely on the GPU: these three scalars are
-        // its complete per-frame cost, and they must advance even on frames
-        // the CPU otherwise skips.
+        // The fabric animates entirely on the GPU: these scalars (the sim
+        // clock, the two fabric knobs, the block-impact flush knobs) are its
+        // complete per-frame cost, and they must advance even on frames the
+        // CPU otherwise skips. The flush's slot lanes cost nothing here: they
+        // are the tissueFlush singleton's arrays, bound by reference.
         syncFabricLifecycleUniforms(fabric.material, now);
-        // The wide pass animates from the same three scalars; six uniform
-        // writes a frame is the whole CPU cost of the second draw.
+        // The wide pass animates from the same scalars; a few uniform writes
+        // a frame is the whole CPU cost of the second draw.
         syncFabricLifecycleUniforms(trunk.material, now);
         fabricStats.liveEdges = edgeStatesRef.current.size;
         // Foreground catch-up. A frozen clock stamps every kill taken while

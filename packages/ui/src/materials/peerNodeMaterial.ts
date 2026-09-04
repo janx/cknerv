@@ -6,6 +6,12 @@ import {
   type ShockwaveUniforms,
 } from './shockwaveMaterial';
 import { PEER_NETWORK_PALETTE } from '../visualPalette';
+import { BEAM_CHARGE_DUR_S } from '../ui/topologyConstants';
+import {
+  COMPRESS_DEPTH,
+  COMPRESS_GAIN,
+  COMPRESS_RELEASE_S,
+} from '../derives/peers.derive';
 
 /**
  * Shared fragment response for the P2P brightness shockwave. Passive context
@@ -56,6 +62,41 @@ const PEER_SHOCKWAVE_RESPONSE_GLSL = /* glsl */ `
     return vec4(color, passiveShape + eventAlpha);
   }
 `;
+
+/**
+ * The held breath, in GLSL. A halo about to deliver draws in over the charge
+ * window before its hop leaves and lets go over the release after; `dt` is
+ * sim seconds past the launch (negative before it), and the sentinel launch
+ * resolves to 0 with no branch. Vertex-stage: the caller scales its extent by
+ * `1 − uCompressDepth · held` and hands the envelope down as a varying for the
+ * `1 + uCompressGain · held` on intensity.
+ *
+ * Structurally identical, line for line, to `peerCompression` in
+ * derives/peers.derive.ts — the tested mirror — and injected from that
+ * module's constants, so the two cannot drift.
+ */
+export const PEER_COMPRESSION_GLSL = /* glsl */ `
+  float peerCompressionGl(float dt) {
+    float charge = smoothstep(
+      0.0, 1.0, (dt + ${BEAM_CHARGE_DUR_S.toFixed(2)}) / ${BEAM_CHARGE_DUR_S.toFixed(2)}
+    );
+    float release = 1.0 - smoothstep(0.0, 1.0, dt / ${COMPRESS_RELEASE_S.toFixed(2)});
+    return dt < 0.0 ? charge : release;
+  }
+`;
+
+/** The two uniforms the breath rides. Seeded from the derive's constants —
+ *  the one authority — and overwritten from `LIVE.delivery.compressDepth /
+ *  compressGain` each frame by the owner, exactly as the shockwave knobs are. */
+export function makeCompressionUniforms(): {
+  uCompressDepth: { value: number };
+  uCompressGain: { value: number };
+} {
+  return {
+    uCompressDepth: { value: COMPRESS_DEPTH },
+    uCompressGain: { value: COMPRESS_GAIN },
+  };
+}
 
 function sharedShockwave(
   uniforms?: ShockwaveUniforms,
@@ -393,6 +434,18 @@ export function makePeerHaloMaterial(
 export const MEASURED_PEER_BRIGHTNESS = 1.6;
 
 /**
+ * How loudly the measured belt answers a block wave. ⭐ ON THIS MATERIAL ONLY:
+ * the ghost and sighted clouds keep their 2026-08-24 tuning, and the shared
+ * `SHOCKWAVE_*` ceilings are pinned for them. Under the wave a measured halo
+ * flared to ≈3× its rest — the brightest thing on screen — in a block whose
+ * one real event, the block reaching the tissue, is meant to be the loudest
+ * beat; the trim holds the peak under ≈2× so the tissue's exhale wins. It
+ * multiplies `eventScale` alone: the resting light (`passiveEnergy`,
+ * `restScale`) and the vertex-stage size boost are untouched.
+ */
+export const MEASURED_EVENT_SCALE = 0.6;
+
+/**
  * Every measured peer halo in ONE instanced draw. Replaces one drei Billboard
  * plus one single-quad mesh (and two frame subscribers) per peer: the
  * billboard is rebuilt from the view matrix's camera axes — exactly the
@@ -400,6 +453,13 @@ export const MEASURED_PEER_BRIGHTNESS = 1.6;
  * per-node breathe (rate/phase) plus intensity envelope move from per-material
  * uniforms into instanced attributes evaluated against one shared uTime.
  * Selection keeps its context-energy exemption through aPeerSelected.
+ *
+ * The held breath rides a fifth lane, `aPeerLaunchAt`: the sim instant this
+ * peer's delivery hop leaves (stamped per block by the owner; sentinel at
+ * rest). Over the charge window before it the halo's extent draws in and its
+ * light concentrates, and both let go over the release after — the
+ * compression that used to be a 3 px glyph, in the light that is already
+ * there.
  */
 export function makeMeasuredPeerHalosMaterial(
   uniforms?: ShockwaveUniforms,
@@ -408,6 +468,7 @@ export function makeMeasuredPeerHalosMaterial(
     uniforms: {
       uTime: { value: 0 },
       uContextEnergy: { value: 1 },
+      ...makeCompressionUniforms(),
       ...sharedShockwave(uniforms),
     },
     transparent: true,
@@ -419,6 +480,8 @@ export function makeMeasuredPeerHalosMaterial(
       attribute float aPeerPhase;
       attribute float aPeerRate;
       attribute float aPeerSelected;
+      // The held breath: this peer's launch instant (sim s), sentinel at rest.
+      attribute float aPeerLaunchAt;
 
       varying vec2 vUv;
       varying float vShockwave;
@@ -427,11 +490,14 @@ export function makeMeasuredPeerHalosMaterial(
       varying float vPeerPhase;
       varying float vPeerRate;
       varying float vPeerSelected;
+      varying float vHeld;
 
       uniform float uTime;
+      uniform float uCompressDepth;
       ${SHOCKWAVE_UNIFORMS_GLSL}
 
       ${SHOCKWAVE_SIGNAL_GLSL}
+      ${PEER_COMPRESSION_GLSL}
 
       void main() {
         vUv = uv;
@@ -446,6 +512,13 @@ export function makeMeasuredPeerHalosMaterial(
         vShockwave = wave.a;
         vShockwaveCarrier = wave.rgb;
         float expand = 1.0 + min(1.0, vShockwave) * uShockwaveSizeBoost;
+        // The held breath: the extent draws in over the charge window before
+        // this peer's hop leaves and lets go after. It rides ON the wave's
+        // size boost rather than replacing it — a wave may still be crossing
+        // the peer as its hop goes.
+        float held = peerCompressionGl(uTime - aPeerLaunchAt);
+        vHeld = held;
+        float extent = expand * (1.0 - uCompressDepth * held);
         // The follow-Billboard applied the camera's world quaternion; the
         // view matrix's row axes are that same frame, so the silhouette is
         // identical with zero per-frame CPU.
@@ -456,7 +529,7 @@ export function makeMeasuredPeerHalosMaterial(
           viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]
         );
         vec3 world = origin.xyz
-          + (cameraRight * position.x + cameraUp * position.y) * expand;
+          + (cameraRight * position.x + cameraUp * position.y) * extent;
         gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
       }
     `,
@@ -470,9 +543,11 @@ export function makeMeasuredPeerHalosMaterial(
       varying float vPeerPhase;
       varying float vPeerRate;
       varying float vPeerSelected;
+      varying float vHeld;
 
       uniform float uTime;
       uniform float uContextEnergy;
+      uniform float uCompressGain;
       ${SHOCKWAVE_UNIFORMS_GLSL}
 
       ${PEER_SHOCKWAVE_RESPONSE_GLSL}
@@ -487,14 +562,17 @@ export function makeMeasuredPeerHalosMaterial(
         float envelope = ${MEASURED_PEER_BRIGHTNESS.toFixed(1)}
           * (0.85 + 0.15 * sin(uTime * vPeerRate + vPeerPhase));
         float breathe = 0.78 + 0.22 * sin(uTime * 1.2 + vPeerPhase);
-        float intensity = envelope * breathe;
+        // The held breath concentrates the halo's light as its extent draws
+        // in — the gain is short of conservation, so it never pops white.
+        float intensity = envelope * breathe * (1.0 + uCompressGain * vHeld);
         float contextEnergy = mix(uContextEnergy, 1.0, vPeerSelected);
+        // Only the event term is trimmed (MEASURED_EVENT_SCALE); rest stays.
         vec4 signal = peerShockwaveResponse(
           vPeerColor,
           core + halo,
           halo,
           intensity * contextEnergy,
-          intensity,
+          intensity * ${MEASURED_EVENT_SCALE.toFixed(2)},
           intensity
         );
         gl_FragColor = signal;

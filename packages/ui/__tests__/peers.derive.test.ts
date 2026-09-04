@@ -14,7 +14,6 @@ import {
   peerCrystalSize,
   peerCrystalBrightness,
   easeOutCubic,
-  easeInLob,
   planDeliveries,
   deliveryPhase,
   deliveryScheduleHorizon,
@@ -22,12 +21,19 @@ import {
   contactFrontState,
   contactFrontReachCeiling,
   smoothUnit,
+  peerCompression,
+  COMPRESS_DEPTH,
+  COMPRESS_GAIN,
+  COMPRESS_RELEASE_S,
+  PEER_LAUNCH_SENTINEL,
+  CONTACT_FRONT_ONSET,
   CONTACT_FRONT_START_RADIUS,
   CONTACT_FRONT_REACH_KNEE,
   CONTACT_FRONT_WIDTH_GROW_RATE,
   CONTACT_FRONT_WIDTH_RADIUS_CAP,
   buildCellNearestIndex,
   cellIdsWithinRadiusFromIndex,
+  landingFlashSchedule,
   sharedCellNearestIndex,
   nearestCellIds,
   nearestCellIdsFromIndex,
@@ -37,6 +43,7 @@ import {
 } from '../src/derives/peers.derive';
 import { consensusRouteHopWorldPosition } from '../src/derives/consensusRouteCamera.derive';
 import { deliverySchema } from '../src/tweaks/tweakSchema';
+import { BEAM_CHARGE_DUR_S } from '../src/ui/topologyConstants';
 import { emptyChainCache } from '@cknerv/cache';
 import type { Peer, ChainNode } from '@cknerv/types';
 
@@ -171,24 +178,6 @@ describe('peers.derive', () => {
     });
   });
 
-  describe('easeInLob', () => {
-    it('pins endpoints and is back-loaded (accelerating launch)', () => {
-      expect(easeInLob(0)).toBe(0);
-      expect(easeInLob(1)).toBeCloseTo(1, 6);
-      expect(easeInLob(0.5)).toBeCloseTo(0.2875, 6); // 0.15*0.5 + 0.85*0.25
-      expect(easeInLob(0.5)).toBeLessThan(0.5); // behind a linear ramp at the midpoint
-    });
-    it('is monotonic and accelerating (slope grows toward 1)', () => {
-      let prev = -Infinity;
-      for (let i = 0; i <= 20; i += 1) {
-        const v = easeInLob(i / 20);
-        expect(v).toBeGreaterThanOrEqual(prev);
-        prev = v;
-      }
-      expect(easeInLob(1) - easeInLob(0.9)).toBeGreaterThan(easeInLob(0.1) - easeInLob(0));
-    });
-  });
-
   describe('deliveryPhase', () => {
     const CFG = { chargeDur: 0.4, lobDur: 1.0, ingestDur: 0.3 };
 
@@ -257,66 +246,66 @@ describe('peers.derive', () => {
   describe('contactRelease', () => {
     const samples = Array.from({ length: 21 }, (_, i) => i / 20);
 
-    it('the seed glyph is released: scale & opacity start full and reach exactly 0', () => {
-      expect(contactRelease(0).glyphScale).toBeCloseTo(1, 6);
-      expect(contactRelease(0).glyphOpacity).toBeCloseTo(1, 6);
-      expect(contactRelease(1).glyphScale).toBe(0);
-      expect(contactRelease(1).glyphOpacity).toBe(0);
-      // Released early in the window — the front, not the glyph, carries the rest.
-      expect(contactRelease(0.4).glyphScale).toBe(0);
-    });
-
-    it('glyph scale & opacity are monotonically decreasing (no re-grow)', () => {
-      for (let i = 1; i < samples.length; i += 1) {
-        expect(contactRelease(samples[i]).glyphScale).toBeLessThanOrEqual(
-          contactRelease(samples[i - 1]).glyphScale + 1e-9,
-        );
-        expect(contactRelease(samples[i]).glyphOpacity).toBeLessThanOrEqual(
-          contactRelease(samples[i - 1]).glyphOpacity + 1e-9,
-        );
-      }
+    it('is only the front: a strength and a colour arc, nothing else left to release', () => {
+      // The mote is absorbed by the courier's own end ease before contact, so
+      // the envelope has no glyph, core or inhale fields left to reach zero.
+      expect(Object.keys(contactRelease(0.5)).sort()).toEqual(['colorT', 'frontOpacity']);
     });
 
     it('THE INVARIANT: nothing visible remains at t=1, so the phase→done hard-hide is imperceptible', () => {
       const end = contactRelease(1);
-      expect(end.glyphScale * end.glyphOpacity).toBe(0);
-      expect(end.coreOpacity).toBe(0);
-      expect(end.inhaleOpacity).toBe(0);
       expect(end.frontOpacity).toBe(0);
+      expect(end.colorT).toBeCloseTo(1, 6);
     });
 
-    it('the contact core sears and is gone well before the front is', () => {
-      expect(contactRelease(0).coreOpacity).toBeCloseTo(1, 6);
-      expect(contactRelease(0.3).coreOpacity).toBeLessThan(0.1);
-      expect(contactRelease(0.3).frontOpacity).toBeGreaterThan(0.5);
-      expect(contactRelease(1).coreOpacity).toBe(0);
-    });
-
-    it('the breath is drawn inward only in the pre-release window', () => {
-      expect(contactRelease(0).inhaleRadius).toBeCloseTo(1, 6);
-      expect(contactRelease(0).inhaleOpacity).toBeCloseTo(0, 6);
-      expect(contactRelease(0.07).inhaleOpacity).toBeGreaterThan(0.9);
-      // Fully contracted (and silent) once the window closes.
-      expect(contactRelease(0.14).inhaleRadius).toBeCloseTo(0, 6);
-      expect(contactRelease(0.5).inhaleOpacity).toBeCloseTo(0, 6);
-    });
-
-    it('the front grows out of the core rather than appearing beside it', () => {
+    it('the front grows out of the absorbed mote rather than switching on beside it', () => {
       expect(contactRelease(0).frontOpacity).toBe(0);
       expect(contactRelease(0.05).frontOpacity).toBeGreaterThan(0.9);
       expect(contactRelease(1).frontOpacity).toBe(0);
     });
 
+    it('decays linearly past the onset — the renderer\'s 1/r falloff owns the rest', () => {
+      for (const u of samples) {
+        if (u < 0.05) continue;
+        expect(contactRelease(u).frontOpacity).toBeCloseTo(1 - u, 12);
+      }
+      for (let i = 1; i < samples.length; i += 1) {
+        if (samples[i] <= 0.05) continue;
+        expect(contactRelease(samples[i]).frontOpacity).toBeLessThan(
+          contactRelease(samples[i - 1]).frontOpacity,
+        );
+      }
+    });
+
     it('colour resolves carrier hue → the Cell field\'s own tissue across contact', () => {
       expect(contactRelease(0).colorT).toBe(0);
       expect(contactRelease(1).colorT).toBeCloseTo(1, 6);
+      for (let i = 1; i < samples.length; i += 1) {
+        expect(contactRelease(samples[i]).colorT).toBeGreaterThan(
+          contactRelease(samples[i - 1]).colorT,
+        );
+      }
+    });
+
+    it('clamps t outside [0, 1]', () => {
+      expect(contactRelease(-1)).toEqual(contactRelease(0));
+      expect(contactRelease(2)).toEqual(contactRelease(1));
+    });
+
+    it('is at full strength exactly at the onset fraction — the number the fabric flush twin injects', () => {
+      expect(CONTACT_FRONT_ONSET).toBe(0.05);
+      expect(contactRelease(CONTACT_FRONT_ONSET).frontOpacity)
+        .toBeCloseTo(1 - CONTACT_FRONT_ONSET, 12);
+      expect(contactRelease(CONTACT_FRONT_ONSET / 2).frontOpacity)
+        .toBeLessThan(1 - CONTACT_FRONT_ONSET);
     });
   });
 
   describe('contactFrontState', () => {
     // Shipped defaults: speed 4.5 (= SHOCKWAVE_SPEED / CONTACT_WAVE_SCALE),
-    // window 1.2 s — the numbers the completion contract must hold at.
-    const live = { speed: 4.5, width: 0.07, falloffPower: 0.5, windowS: 1.2 };
+    // crest 0.4 (= 3.2 / CONTACT_WAVE_SCALE), window 1.2 s — the numbers the
+    // completion contract must hold at.
+    const live = { speed: 4.5, width: 0.4, falloffPower: 0.5, windowS: 1.2 };
 
     it('expands linearly from the start radius at the shared field speed', () => {
       expect(contactFrontState(0, 4.25, live).crestRadius)
@@ -380,17 +369,28 @@ describe('peers.derive', () => {
     });
 
     it('widens the crest as a RATE on the already-scale-divided width, under the radius cap', () => {
-      // Young front: the cap owns the width (a release that is mostly crest
-      // reads as a soft doughnut, not a thin ring leaving).
+      // Newborn front: the cap owns the width — a release that is ALL crest
+      // would read as a disc appearing, not a ring leaving a point. The soft
+      // front's cap is half the radius (0.22 → 0.5 with the crest widened to
+      // 0.40 wu, 2026-08-28): at release the radius is 0.3, so the cap binds
+      // at 0.15 against the 0.4 crest…
+      expect(CONTACT_FRONT_WIDTH_RADIUS_CAP).toBe(0.5);
+      expect(live.width).toBeGreaterThan(
+        CONTACT_FRONT_START_RADIUS * CONTACT_FRONT_WIDTH_RADIUS_CAP,
+      );
       expect(contactFrontState(0, 4.25, live).crestHalfWidth).toBeCloseTo(
         CONTACT_FRONT_START_RADIUS * CONTACT_FRONT_WIDTH_RADIUS_CAP,
         12,
       );
+      // …and lets go inside the first ~0.12 s (radius ≈ 0.85 wu), after
+      // which the crest is its own widening width again.
+      expect(contactFrontState(0.2, 4.25, live).crestHalfWidth)
+        .toBeCloseTo(0.4 * (1 + 0.45 * 0.2), 12);
       // Mature front: ×(1 + 0.45·t) — the same ×1.54-over-a-window widening
       // the peer-plane wave carries. A scale-divided "rate" flattened this
       // toward ×1, the rigid-decal failure the constant exists to prevent.
       expect(contactFrontState(1.2, 4.25, live).crestHalfWidth)
-        .toBeCloseTo(0.07 * (1 + 0.45 * 1.2), 12);
+        .toBeCloseTo(0.4 * (1 + 0.45 * 1.2), 12);
       expect(CONTACT_FRONT_WIDTH_GROW_RATE).toBe(0.45);
     });
 
@@ -413,6 +413,82 @@ describe('peers.derive', () => {
       expect(smoothUnit(0.5)).toBeCloseTo(0.5, 12);
       expect(smoothUnit(1)).toBe(1);
       expect(smoothUnit(7)).toBe(1);
+    });
+  });
+
+  describe('peerCompression (the held breath)', () => {
+    const charge = BEAM_CHARGE_DUR_S;
+    const release = COMPRESS_RELEASE_S;
+    const rest = { envelope: 0, scale: 1, gain: 1 };
+
+    it('is exactly 0 outside the window: before the draw-in, after the release, and at the sentinel', () => {
+      expect(peerCompression(-charge - 1e-9)).toEqual(rest);
+      expect(peerCompression(-5)).toEqual(rest);
+      expect(peerCompression(release)).toEqual(rest);
+      expect(peerCompression(9)).toEqual(rest);
+      // The lane's rest value. A halo with no launch scheduled sits ~1e9 s
+      // past it and must resolve to rest with no branch, at any sim time.
+      for (const now of [0, 17.3, 86_400]) {
+        expect(peerCompression(now - PEER_LAUNCH_SENTINEL)).toEqual(rest);
+      }
+      expect(PEER_LAUNCH_SENTINEL).toBe(-1e9);
+    });
+
+    it('draws in monotonically over the charge window and is exactly 1 as the hop leaves', () => {
+      expect(peerCompression(-charge).envelope).toBe(0);
+      let previous = 0;
+      for (let i = 1; i <= 40; i += 1) {
+        const envelope = peerCompression(-charge + (i / 40) * charge).envelope;
+        expect(envelope).toBeGreaterThan(previous);
+        previous = envelope;
+      }
+      expect(peerCompression(-1e-6).envelope).toBeCloseTo(1, 9);
+      expect(peerCompression(0).envelope).toBe(1);
+    });
+
+    it('is continuous through the launch: the draw-in arrives at 1 as the release leaves from 1', () => {
+      expect(peerCompression(-1e-9).envelope).toBeCloseTo(peerCompression(1e-9).envelope, 9);
+      expect(peerCompression(1e-9).envelope).toBeCloseTo(1, 9);
+    });
+
+    it('lets go over the release — faster than it drew in — and is back at rest by COMPRESS_RELEASE_S', () => {
+      expect(release).toBeLessThan(charge);
+      let previous = 1;
+      for (let i = 1; i <= 25; i += 1) {
+        const envelope = peerCompression((i / 25) * release).envelope;
+        expect(envelope).toBeLessThan(previous);
+        previous = envelope;
+      }
+      expect(peerCompression(release / 2).envelope).toBeCloseTo(0.5, 12);
+      expect(peerCompression(release).envelope).toBe(0);
+    });
+
+    it('contracts the extent to 0.55 and concentrates the light ×1.8 at full breath — short of conservation', () => {
+      expect(COMPRESS_DEPTH).toBe(0.45);
+      expect(COMPRESS_GAIN).toBe(0.8);
+      expect(COMPRESS_RELEASE_S).toBe(0.25);
+      const full = peerCompression(0);
+      expect(full.scale).toBeCloseTo(0.55, 12);
+      expect(full.gain).toBeCloseTo(1.8, 12);
+      // Conserving the light over a 0.55 extent would take ×3.3; the gain
+      // stays under it so a compressed halo never pops white.
+      expect(full.gain).toBeLessThan(1 / (full.scale * full.scale));
+      for (const dt of [-0.3, -0.1, 0.05, 0.2]) {
+        const breath = peerCompression(dt);
+        expect(breath.envelope).toBeGreaterThan(0);
+        expect(breath.scale).toBeCloseTo(1 - COMPRESS_DEPTH * breath.envelope, 12);
+        expect(breath.gain).toBeCloseTo(1 + COMPRESS_GAIN * breath.envelope, 12);
+      }
+    });
+
+    it('fills exactly the gather window the delivery layer no longer draws: BEAM_CHARGE_DUR_S', () => {
+      // The breath and the hop are one schedule: a halo draws in for the
+      // length of the charge window and lets go the instant its hop leaves.
+      expect(deliverySchema.compressDepth.value).toBe(COMPRESS_DEPTH);
+      expect(deliverySchema.compressGain.value).toBe(COMPRESS_GAIN);
+      expect(peerCompression(-0.2)).toEqual(peerCompression(-0.2, BEAM_CHARGE_DUR_S));
+      expect(peerCompression(-0.5, 1.0).envelope).toBeGreaterThan(0);
+      expect(peerCompression(-0.5).envelope).toBe(0);
     });
   });
 
@@ -726,6 +802,95 @@ describe('peers.derive', () => {
       expect(cellIdsWithinRadiusFromIndex(0, 0, 5, buildCellNearestIndex([]))).toEqual([]);
       const index = buildCellNearestIndex(scatter(10));
       expect(cellIdsWithinRadiusFromIndex(0, 0, 0, index)).toEqual([]);
+    });
+  });
+
+  describe('landingFlashSchedule (the third medium of one wave)', () => {
+    const live = {
+      speed: deliverySchema.waveSpeed.value,        // 4.5
+      width: deliverySchema.waveWidth.value,
+      falloffPower: deliverySchema.waveFalloff.value,
+      windowS: deliverySchema.ingestDur.value,      // 1.2 → ceiling 5.7
+    };
+    // A ring of Cells at known distances from the origin, listed FAR to near
+    // so the ordering is visibly the schedule's doing and not the input's.
+    const ring: Array<{ id: number; pos_seed: [number, number, number] }> = [
+      { id: 50, pos_seed: [5.0, 0, 0] },
+      { id: 40, pos_seed: [0, 0, 4.0] },
+      { id: 30, pos_seed: [-3.0, 0, 0] },
+      { id: 20, pos_seed: [0, 0, -2.0] },
+      { id: 10, pos_seed: [1.0, 0, 0] },
+      { id: 1, pos_seed: [0.1, 0, 0] },  // inside the release radius (0.3)
+      { id: 99, pos_seed: [7.0, 0, 0] }, // past every reach the window allows
+    ];
+    const index = buildCellNearestIndex(ring);
+
+    it('flashes nearest first, each at the instant the crest passes it — never before contact', () => {
+      const out = landingFlashSchedule([0, 0], 100, 4.25, 999, live, index);
+      expect(out.map((l) => l.id)).toEqual([1, 10, 20, 30, 40]);
+      // Inside the release radius: AT contact, not before it.
+      expect(out[0].at).toBe(100);
+      // Beyond it: contact + (dist − start radius) / the shared speed.
+      expect(out[1].at).toBeCloseTo(100 + (1 - CONTACT_FRONT_START_RADIUS) / live.speed, 12);
+      expect(out[4].at).toBeCloseTo(100 + (4 - CONTACT_FRONT_START_RADIUS) / live.speed, 12);
+      for (let i = 1; i < out.length; i += 1) {
+        expect(out[i].at).toBeGreaterThanOrEqual(out[i - 1].at);
+      }
+      for (const l of out) expect(l.at).toBeGreaterThanOrEqual(100);
+      // The instant IS the crest's arrival: at `at`, the front's radius
+      // equals the Cell's distance (for every Cell outside the start radius).
+      expect(contactFrontState(out[4].at - 100, 4.25, live).crestRadius).toBeCloseTo(4.0, 12);
+    });
+
+    it('never schedules a Cell the crest would reach after extinction', () => {
+      // Peer reach 4.25: 5.0 and 7.0 are out.
+      const peer = landingFlashSchedule([0, 0], 0, 4.25, 999, live, index).map((l) => l.id);
+      expect(peer).not.toContain(50);
+      expect(peer).not.toContain(99);
+      // Hero reach 6.5 is clamped to what the window completes (5.7): 5.0 is
+      // in, 7.0 is out — the cut is at the ceiling, not at the reach.
+      expect(contactFrontReachCeiling(live.speed, live.windowS)).toBeCloseTo(5.7, 9);
+      const hero = landingFlashSchedule([0, 0], 0, 6.5, 999, live, index).map((l) => l.id);
+      expect(hero).toContain(50);
+      expect(hero).not.toContain(99);
+      const wide = landingFlashSchedule([0, 0], 0, 30, 999, live, index).map((l) => l.id);
+      expect(wide).toEqual(hero);
+    });
+
+    it('spends its budget on the nearest, and never a Cell more', () => {
+      expect(landingFlashSchedule([0, 0], 0, 4.25, 2, live, index).map((l) => l.id))
+        .toEqual([1, 10]);
+      expect(landingFlashSchedule([0, 0], 0, 4.25, 2.9, live, index)).toHaveLength(2);
+      expect(landingFlashSchedule([0, 0], 0, 4.25, 0, live, index)).toEqual([]);
+      expect(landingFlashSchedule([0, 0], 0, 4.25, -3, live, index)).toEqual([]);
+      expect(landingFlashSchedule([0, 0], 0, 4.25, Number.NaN, live, index)).toEqual([]);
+      expect(landingFlashSchedule([0, 0], 0, 4.25, Number.POSITIVE_INFINITY, live, index))
+        .toHaveLength(5);
+    });
+
+    it('is as loud as the crest where it passes: the front\'s own spatial strength', () => {
+      const out = landingFlashSchedule([0, 0], 100, 4.25, 999, live, index);
+      for (const l of out) {
+        const front = contactFrontState(l.at - 100, 4.25, live);
+        expect(l.amp).toBeCloseTo(front.falloff * front.reachFade, 12);
+        expect(l.amp).toBeGreaterThan(0);
+        expect(l.amp).toBeLessThanOrEqual(1);
+      }
+      // Inside the knee a flash is full but for the 1/r dimming; at 4.0 of a
+      // 4.25 reach (past the 0.72 knee) it is fading out with the front.
+      const near = out.find((l) => l.id === 10)!;
+      const rim = out.find((l) => l.id === 40)!;
+      expect(near.amp).toBeGreaterThan(0.8);
+      expect(rim.amp).toBeLessThan(0.2);
+      expect(near.amp).toBeGreaterThan(rim.amp);
+    });
+
+    it('reads the landing in the galaxy\'s local frame, and an empty field as nothing', () => {
+      // The centre moves with the landing: from (5, 0) the nearest is id 50.
+      expect(landingFlashSchedule([5, 0], 0, 4.25, 1, live, index)[0].id).toBe(50);
+      expect(landingFlashSchedule([0, 0], 0, 4.25, 9, live, buildCellNearestIndex([]))).toEqual([]);
+      expect(landingFlashSchedule([0, 0], 0, 4.25, 9, { ...live, speed: 0 }, index)).toEqual([]);
+      expect(landingFlashSchedule([0, 0], 0, 0, 9, live, index)).toEqual([]);
     });
   });
 

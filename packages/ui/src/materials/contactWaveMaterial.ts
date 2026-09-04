@@ -1,8 +1,4 @@
 import * as THREE from 'three';
-import {
-  CONTACT_RING_GAP_EVERY,
-  CONTACT_RING_SIDES,
-} from '../geometry/protocolCarrier';
 import { FIELD_HALF_X, FIELD_HALF_Z } from '../helix';
 import {
   WAVE_CREST_WAKE_GLSL,
@@ -10,53 +6,74 @@ import {
 } from './shockwaveMaterial';
 
 /**
- * The contact front every worker releases into the Cell field.
+ * The contact front every worker releases into the Cell field — the annulus
+ * medium of the tissue's answer to a landed block. (The other two media, the
+ * fibre flush and the landing flashes, read the same radius function; this
+ * material draws the crest between the Cells.)
  *
- * A block lands on a disc, so the front lives IN that disc: a thin, hard-edged
- * crest racing outward across the tissue with a faint bleached wake behind it.
- * Its punch comes from edge sharpness against a dark field, never from area or
- * raw brightness — the same discipline that de-glared the peer-plane wave.
+ * A block lands on a disc, so the front lives IN that disc: a soft crest
+ * expanding flat across the tissue with a wake behind it, the block's carrier
+ * hue resolving into tissue rose over the window. It is a soft bloom, not a
+ * hairline: the crest half-width is 3.2 / CONTACT_WAVE_SCALE = 0.40 world
+ * units at release (legible at the overview camera, where the old 0.069 wu
+ * crest was sub-pixel), the wake is the body of the front, and its punch
+ * comes from the 1/r falloff and the reach extinction, never from raw
+ * brightness — the same discipline that de-glared the peer-plane wave. It
+ * paints nothing white: warm white is the landing flashes', and the write
+ * seal is reserved for writes.
  *
  * WHY A SHADER AND NOT A SPRITE: the crest is resolved analytically from the
- * fragment's radius, so it stays razor-thin at ANY world radius. The texture it
- * replaces was 128px, which smeared into a soft doughnut the moment a front
- * grew past a few world units — the exact failure that made the old ring read
- * as decoration rather than pressure.
+ * fragment's radius, so it keeps its shape at ANY world radius. The texture it
+ * replaces was 128px, which smeared into a shapeless doughnut the moment a
+ * front grew past a few world units — the exact failure that made the old
+ * ring read as decoration rather than pressure.
  *
  * WHY EVERY FRONT IS THE SAME SPEED (the renderer drives radius from
- * `SHOCKWAVE_SPEED / CONTACT_WAVE_SCALE`): ~81 workers commit the same block
- * at latency-staggered times. Identical speed and shape make their fronts ONE
- * interference field instead of 81 independent fireworks — and because speed
- * and reach carry the SAME division, a front's lifetime still matches
- * the peer-plane wave's structure, so the two planes read as two sections of
- * one event at two sizes.
+ * `SHOCKWAVE_SPEED / CONTACT_WAVE_SCALE`): every measured peer commits the
+ * same block at a latency-staggered time (about a dozen on mainnet today —
+ * the roster's count, not a constant), and the hero differs only in reach
+ * and a scalar punch. Identical speed and shape make their fronts one wave
+ * field rather than independent fireworks — and because speed and reach
+ * carry the SAME division, a front's lifetime still matches the peer-plane
+ * wave's structure, so the two planes read as two sections of one event at
+ * two sizes.
  *
- * Overlap safety (this is what keeps 81 additive fronts off the white rail):
- *  • the crest is thin, so crossings are line crossings, not area sums;
+ * Overlap safety (what keeps additive fronts off the white rail):
  *  • the renderer folds a 1/r falloff into each instance colour, so a front is
  *    already dim by the time it can meet a neighbour;
- *  • `uSegmentDepth` carves the rim's three gaps into the crest, breaking the
- *    circle into the same interrupted polygon the carrier glyph uses;
+ *  • `uSegmentDepth` carves three gaps into the crest, breaking the circle
+ *    into an interrupted polygon — the agreement motif the write seal's
+ *    three-gap loops also carry;
  *  • the rim fade extinguishes a front where the tissue ends — workers ring
  *    the galaxy wider than the tissue, so their landings are pulled onto the
  *    rim (peers.derive `clampLandingToField`) and each front's outbound half
  *    dies across the halo band instead of glowing over empty space.
  */
 
+/** The front's interrupted polygon: a 12-gon with every fourth side left
+ *  open. Three gaps is the agreement motif the write seal's loops also carry;
+ *  the fragment stage below is the only reader, so the numbers live here. */
+export const CONTACT_RING_SIDES = 12;
+export const CONTACT_RING_GAPS = 3;
+/** Sides per gap period; every `GAP_EVERY`-th side is left open. */
+export const CONTACT_RING_GAP_EVERY = CONTACT_RING_SIDES / CONTACT_RING_GAPS;
+
 /** Fixed UV radius the crest always sits at. The renderer scales each instance
  *  so its world crest lands exactly here, which is what keeps the front sharp
  *  at every radius: the shader's job never changes, only the scale does. */
 export const CONTACT_WAVE_CREST_UV = 0.74;
 /** Annulus bounds in the same UV space. The band is deliberately narrow — a
- *  full quad per front would cost ~81 large overlapping fills per block. Inner
- *  0.30 still leaves ~0.44 UV of room behind the crest for the wake. */
+ *  full quad per front would cost one large overlapping fill per front per
+ *  block. Inner 0.30 still leaves ~0.44 UV of room behind the crest for the
+ *  wake. */
 const CONTACT_WAVE_INNER_UV = 0.30;
 const CONTACT_WAVE_OUTER_UV = 1.0;
 const CONTACT_WAVE_SEGMENTS = 96;
 
-/** Wake side markers written into the `aWave` instance attribute. */
+/** Wake side marker written into the `aWave` instance attribute: the wake
+ *  trails INWARD, on the side an expanding front came from. (The shader reads
+ *  the sign generically — a negative value would trail the wake outward.) */
 export const CONTACT_WAVE_WAKE_BEHIND = 1;
-export const CONTACT_WAVE_WAKE_AHEAD = -1;
 
 // The front's scale relationship to the peer-plane wave
 // (CONTACT_WAVE_SCALE) lives in ui/topologyConstants.ts beside
@@ -90,7 +107,7 @@ export function makeContactWaveGeometry(): THREE.BufferGeometry {
 
 /** Per-instance front shape: `(crestHalfWidthUV, wakeSide)`. Width has to be
  *  per-instance because each front carries its own world scale; the wake side
- *  flips for the contracting pre-release ring, whose wake trails outward. */
+ *  is a signed lane so the shader never assumes which way a front travels. */
 export function makeContactWaveAttribute(
   capacity: number,
 ): THREE.InstancedBufferAttribute {
@@ -111,8 +128,8 @@ export function makeContactWaveMaterial(): THREE.ShaderMaterial {
     // string: those numbers are module constants, and a uniform that nothing
     // drives is just a second place for them to rot.
     uniforms: {
-      uWake: { value: 0.14 },
-      uSegmentDepth: { value: 0.55 },
+      uWake: { value: 0.45 },
+      uSegmentDepth: { value: 0.3 },
       // The tissue ellipse turns with the galaxy while fronts hold world
       // positions; the renderer mirrors the group's live rotation in here.
       //
@@ -181,8 +198,8 @@ export function makeContactWaveMaterial(): THREE.ShaderMaterial {
         float halfWidth = max(vWave.x, 1e-4);
 
         // Crest pinned at the fixed UV radius; the wake trails on the side
-        // the front came from (positive vWave.y trails inward for the
-        // expanding front, negative outward for the contracting inhale ring).
+        // the front came from (positive vWave.y trails inward for an
+        // expanding front, negative would trail outward).
         float offset = (radius - ${CONTACT_WAVE_CREST_UV.toFixed(2)}) / halfWidth;
         float signedBehind = vWave.y * (${CONTACT_WAVE_CREST_UV.toFixed(2)} - radius);
 
@@ -194,8 +211,9 @@ export function makeContactWaveMaterial(): THREE.ShaderMaterial {
         if (abs(offset) > 2.6 && signedBehind <= 0.0) discard;
 
         // The crest+wake waveform is shared with the peer-plane shockwave
-        // (shockwaveMaterial.WAVE_CREST_WAKE_GLSL): one shape, two planes,
-        // and a retune of either can no longer silently fork the other.
+        // and the fibre flush (shockwaveMaterial.WAVE_CREST_WAKE_GLSL): one
+        // shape, three media, and a retune of one can no longer silently
+        // fork the others.
         float signal = waveCrestWake(
           offset,
           signedBehind,
@@ -210,11 +228,10 @@ export function makeContactWaveMaterial(): THREE.ShaderMaterial {
         signal *= smoothstep(${CONTACT_WAVE_INNER_UV.toFixed(2)}, ${(CONTACT_WAVE_INNER_UV + 0.07).toFixed(2)}, radius)
           * (1.0 - smoothstep(0.93, 1.0, radius));
 
-        // Three open sides, the same break the carrier rim carries — and at
-        // the same side indices (CONTACT_RING_SIDES / CONTACT_RING_GAP_EVERY),
-        // so the glyph and the front it becomes agree. Phase runs 0..gapEvery
-        // inside each period; the last unit of the period is the gap,
-        // softened so its edges never alias into hard spokes.
+        // Three open sides (CONTACT_RING_SIDES / CONTACT_RING_GAP_EVERY).
+        // Phase runs 0..gapEvery inside each period; the last unit of the
+        // period is the gap, softened so its edges never alias into hard
+        // spokes.
         float turn = fract(atan(vPlane.y, vPlane.x) / TAU + 1.0);
         float phase = mod(turn * ${CONTACT_RING_SIDES.toFixed(1)}, ${CONTACT_RING_GAP_EVERY.toFixed(1)});
         float intoGap = min(phase - ${(CONTACT_RING_GAP_EVERY - 1).toFixed(1)}, ${CONTACT_RING_GAP_EVERY.toFixed(1)} - phase);
@@ -244,9 +261,9 @@ export function makeContactWaveMaterial(): THREE.ShaderMaterial {
         // Additive blending with alpha 1: the instance colour already carries
         // this front's intensity, so RGB is the final premultiplied light —
         // encoded to the output colour space exactly like the built-in sprite
-        // materials in this same release event (core, streak, glyph lines).
-        // Without the encode the front tracked a second gamma curve and could
-        // never resolve continuously out of the searing core it grows from.
+        // materials in this same event (the hop's mote and plume). Without
+        // the encode the front tracked a second gamma curve and could never
+        // resolve continuously out of the mote it grows from.
         gl_FragColor = vec4(vCarrier * signal, 1.0);
         #include <colorspace_fragment>
       }
