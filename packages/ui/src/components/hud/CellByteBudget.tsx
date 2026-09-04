@@ -105,7 +105,7 @@ export default function CellByteBudget({
         <span
           data-byte-budget-unit="ckbyte"
           title="CKByte · one CKB of capacity buys one byte of state"
-          style={{ ...CJK_BASELINE_LIFT, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, color: HUD_COLORS.dim, opacity: COMPANION_OPACITY, whiteSpace: 'nowrap' }}
+          style={{ ...CJK_BASELINE_LIFT, fontFamily: HUD_FONTS.cjk, fontWeight: 400, fontSize: HUD_TYPE.label, color: HUD_COLORS.dim, opacity: COMPANION_OPACITY, whiteSpace: 'nowrap' }}
         >
           字节元
         </span>

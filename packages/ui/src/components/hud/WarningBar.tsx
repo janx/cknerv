@@ -86,10 +86,18 @@ export default function WarningBar({ level, trigger, reducedMotion = false, top 
           <span aria-hidden data-hazard-band="bottom" style={hazardBand(color, 'bottom')} />
         </>
       ) : null}
-      {/* No fontWeight here: the Huiwen subset ships one weight, so asking for
-        * 700 only gets a synthesized bold — the browser smears the mincho
-        * strokes sideways and the two glyphs lose their serifs. Weight comes
-        * from the glow instead.
+      {/* `fontWeight: 400` and never above it: the Huiwen subset ships one
+        * weight, so asking for 700 gets a synthesized bold — the browser
+        * smears the mincho strokes sideways and the two glyphs lose their
+        * serifs. Weight comes from the glow instead.
+        *
+        * ⚠️ It SAYS 400 rather than saying nothing, which is the 2026-09-05
+        * correction. Saying nothing was the same instruction only while no
+        * ancestor said otherwise, and the status strip's 状态 sat inside a
+        * container asking for 600 for the life of the file — synthesized
+        * bold at 9 px, on the one face in the HUD that cannot be bolded
+        * (report F, F-2). A companion cannot know what it will inherit, so
+        * every one of them declares.
         *
         * The CJK stays outline on purpose. It is the siren — it says only that
         * something happened — and the filled block beside it says what, in the
@@ -98,7 +106,7 @@ export default function WarningBar({ level, trigger, reducedMotion = false, top 
         * The 4 of tracking is a declared exception to the tracking table in
         * `hudTheme.ts`: two mincho glyphs sitting on the top rung need air
         * between them or they fuse into one dense mark. */}
-      <span style={{ fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.heroSub, color, letterSpacing: 4, textShadow: `0 0 12px ${color}` }}>警告</span>
+      <span style={{ fontFamily: HUD_FONTS.cjk, fontWeight: 400, fontSize: HUD_TYPE.heroSub, color, letterSpacing: 4, textShadow: `0 0 12px ${color}` }}>警告</span>
       <span data-warning-trigger style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: HUD_TYPE.panelTitle, textTransform: 'uppercase', ...severityChip(color) }}>{(trigger ?? level).toUpperCase()}</span>
     </div>
   );

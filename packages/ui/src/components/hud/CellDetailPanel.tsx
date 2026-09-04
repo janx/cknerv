@@ -2195,7 +2195,7 @@ function CellDetailPanel({
             {/* The house CJK companion, as PEER wears 对端 and NODE wears 节点.
               * 细胞 is in the hand-subset woff2 (fonts/README.md) — deliberate
               * presence, where SightedNodeCard documents a deliberate absence. */}
-            <span style={{ ...CJK_BASELINE_LIFT, color: CELL_CARD_ACCENT, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: COMPANION_OPACITY }}>
+            <span style={{ ...CJK_BASELINE_LIFT, color: CELL_CARD_ACCENT, fontFamily: HUD_FONTS.cjk, fontWeight: 400, fontSize: HUD_TYPE.label, opacity: COMPANION_OPACITY }}>
               细胞
             </span>
             {/* THE LAMP AND THE AGE, AND NOT THE WORD (the user's D-6 ruling

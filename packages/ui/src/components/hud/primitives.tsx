@@ -212,7 +212,7 @@ export function PanelHeader({ en, cjk, idx, accent, compact = false }: {
           which broke 共识基 across two lines mid-word. A CJK companion is a
           name, and a name does not break. The English title beside it may
           wrap; it is words. */}
-      <span style={{ ...CJK_BASELINE_LIFT, flex: '0 0 auto', whiteSpace: 'nowrap', fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.section, color: HUD_COLORS.orangeDeep, opacity: COMPANION_OPACITY }}>{cjk}</span>
+      <span style={{ ...CJK_BASELINE_LIFT, flex: '0 0 auto', whiteSpace: 'nowrap', fontFamily: HUD_FONTS.cjk, fontWeight: 400, fontSize: HUD_TYPE.section, color: HUD_COLORS.orangeDeep, opacity: COMPANION_OPACITY }}>{cjk}</span>
       <span style={{ marginLeft: 'auto', flex: '0 0 auto', whiteSpace: 'nowrap', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.tech, color: accent ?? HUD_COLORS.moduleSlate, letterSpacing: 0.9, textShadow: accent ? `0 0 7px ${accent}66` : undefined }}>{idx}</span>
     </div>
   );
@@ -821,7 +821,7 @@ export function SpatialPlateHeader({ en, cjk, accent, titleColor = HUD_COLORS.cy
         {en}
       </span>
       {cjk ? (
-        <span style={{ ...CJK_BASELINE_LIFT, flex: '0 0 auto', whiteSpace: 'nowrap', color: accent, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: COMPANION_OPACITY }}>
+        <span style={{ ...CJK_BASELINE_LIFT, flex: '0 0 auto', whiteSpace: 'nowrap', color: accent, fontFamily: HUD_FONTS.cjk, fontWeight: 400, fontSize: HUD_TYPE.label, opacity: COMPANION_OPACITY }}>
           {cjk}
         </span>
       ) : null}

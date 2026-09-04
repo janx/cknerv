@@ -26,7 +26,7 @@ import {
 } from '../geometry/cellCausalLens';
 import { useCanvasClientRect } from '../hooks/useCanvasClientRect';
 import { CONTENT_BANDS } from './hud/cellFormat';
-import { HUD_COLORS, rgba } from './hud/hudTheme';
+import { HUD_COLORS, HUD_FONTS, rgba } from './hud/hudTheme';
 import { useReducedMotion } from './hud/useReducedMotion';
 import { peerNodeHovered } from './peerHoverWord';
 
@@ -334,7 +334,7 @@ function CellCausalNavigationLabel({
             background: rgba(HUD_COLORS.stageGround, 0.92),
             boxShadow: `0 0 12px ${color}22`,
             color,
-            fontFamily: "'Share Tech Mono', ui-monospace, monospace",
+            fontFamily: HUD_FONTS.mono,
             fontSize: 7.5,
             letterSpacing: 0.62,
             whiteSpace: 'nowrap',

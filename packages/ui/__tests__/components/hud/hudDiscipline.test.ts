@@ -4714,6 +4714,167 @@ describe('every mark the HUD writes', () => {
 
     expect(strays).toEqual([]);
   });
+
+  // ——— The weight nobody ships, and the voice nobody named ————————————————
+  //
+  // Two ways a face gets away from the file that asked for it, and the scan
+  // (report F, F-2 and F-3) found both wearing the same disguise: a run of
+  // text that LOOKS like the HUD's, because the thing it fell back to was
+  // also a monospace, or also a bold.
+  //
+  //   A WEIGHT THE FACE HAS NOT GOT. Share Tech Mono ships 400 and nothing
+  //   else; Huiwen-mincho registers no weight at all. Ask either for 700 and
+  //   the browser SYNTHESIZES one — it smears the glyph sideways — and the
+  //   PULSE hero, the largest numeral in the overlay, was drawn that way.
+  //   Chakra ships 500 and 700 and the strip asked it for 600, which is not a
+  //   synthesis but is not the weight it says either.
+  //
+  //   A FACE NOBODY NAMED. `index.html` sets the body to `ui-monospace`, so a
+  //   HUD leaf that names no family and hangs under no element that names one
+  //   draws in the OS monospace, which carries no `◇`. Two did.
+  //
+  // The second is why `applicableStacks` above can say what it says. It
+  // assumes every DOM file answers to all three voices whether it named one or
+  // not — and that assumption is only true because the two ROOTS declare one.
+  // It was an assumption for the life of this file; it is a test now.
+
+  /** What each `@font-face` in the theme actually registers, read from the
+   *  theme's own text. A range (`100 900`) is every hundred it spans; a face
+   *  that states no weight registers 400, which is what the CSS cascade takes
+   *  `normal` to mean. */
+  function registeredWeights(): Map<string, Set<number>> {
+    const theme = SOURCES.find((source) => source.name === 'hudTheme.ts');
+    const text = theme?.text ?? '';
+    const faces = new Map<string, Set<number>>();
+    for (const face of text.matchAll(/@font-face\{font-family:'([^']+)'(;font-weight:([\d ]+))?/g)) {
+      // Two `@font-face` blocks may name one family — Chakra ships 500 and
+      // 700 as separate files — so the weights UNION rather than replace.
+      const weights = faces.get(face[1]) ?? new Set<number>();
+      const declared = (face[3] ?? '400').trim().split(/\s+/).map(Number);
+      if (declared.length === 2) {
+        for (let w = 100; w <= 900; w += 100) {
+          if (w >= declared[0] && w <= declared[1]) weights.add(w);
+        }
+      } else for (const w of declared) weights.add(w);
+      faces.set(face[1], weights);
+    }
+    return faces;
+  }
+
+  it('no object asks a face for a weight it does not ship', () => {
+    const faces = registeredWeights();
+    expect(faces.size, 'no @font-face table to read').toBeGreaterThan(4);
+    // The face each voice ASKS FOR first — the rest of the stack is the
+    // fallback chain, and a weight is matched against the family that answers.
+    const primary = Object.fromEntries(
+      Object.entries(HUD_FONTS).map(([key, value]) => [
+        key,
+        value.split(',')[0].trim().replace(/^['"]|['"]$/g, ''),
+      ]),
+    ) as Record<keyof typeof HUD_FONTS, string>;
+
+    const offenders: string[] = [];
+    for (const source of domDialect()) {
+      const text = code(source.text);
+      for (const site of text.matchAll(/fontWeight:\s*([^,;}\n]+)/g)) {
+        const asked = (site[1].match(/\d+/g) ?? []).map(Number);
+        if (asked.length === 0) continue;
+        // The whole style object, braces balanced — a one-line `style={{…}}`
+        // and a forty-line one are the same question, and a regex that stops
+        // at the first `}` reads a nested interpolation as the end of it.
+        const object = enclosingObject(text, site.index ?? 0) ?? '';
+        const voice = /fontFamily:\s*HUD_FONTS\.(\w+)/.exec(object);
+        if (voice === null) {
+          // 400 with no face is a RESET — the pattern the companions above
+          // are made of — and is always safe. Anything above it lands on
+          // whatever the element inherits, which is the 状态 defect one level
+          // up: a weight aimed at a face nobody in the object named.
+          if (asked.every((weight) => weight <= 400)) continue;
+          offenders.push(`${source.name}: fontWeight ${asked.join('/')} with no face beside it`);
+          continue;
+        }
+        const family = primary[voice[1] as keyof typeof HUD_FONTS];
+        const shipped = faces.get(family) ?? new Set<number>();
+        for (const weight of asked) {
+          if (shipped.has(weight)) continue;
+          offenders.push(
+            `${source.name}: ${family} ships ${[...shipped].join('/')} — ${weight} is drawn by the browser`,
+          );
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('a companion declares its weight rather than inheriting one', () => {
+    // Huiwen registers NO weight, so it is the one face in the HUD that can
+    // only be synthesized. Saying nothing was the same instruction as saying
+    // 400 only while no ancestor said otherwise — and one did, for the life of
+    // the file. So every companion states it, and the ban above then has
+    // something to read.
+    const offenders: string[] = [];
+    let companions = 0;
+    for (const source of domDialect()) {
+      for (const object of code(source.text).matchAll(/\{[^{}]*HUD_FONTS\.cjk[^{}]*\}/g)) {
+        companions += 1;
+        if (/fontWeight:\s*400\b/.test(object[0])) continue;
+        offenders.push(`${source.name}: a companion that does not state fontWeight: 400`);
+      }
+    }
+    expect(offenders).toEqual([]);
+    expect(companions, 'no companion found — did HUD_FONTS.cjk move?').toBeGreaterThan(6);
+  });
+
+  it('the two roots declare a voice, so no leaf falls back to the body', () => {
+    // What `applicableStacks` assumes, stated. The overlay and the card layer
+    // are the only two elements every HUD leaf hangs under, and neither named
+    // a face until 2026-09-05.
+    const overlay = SOURCES.find((source) => source.name === 'HudOverlay.tsx');
+    expect(code(overlay?.text ?? ''), 'the HUD root names no face')
+      .toMatch(/ROOT_STYLE[^\n]*fontFamily: HUD_FONTS\.mono/);
+
+    const inspection = readFileSync(
+      resolve(HUD_DIR, '../sceneInspection.tsx'),
+      'utf8',
+    );
+    expect(inspection, 'the card layer names no face')
+      .toMatch(/INSPECTION_LAYER_STYLE[\s\S]{0,900}?fontFamily: HUD_FONTS\.mono/);
+
+    // …and what it is protecting against, so the reason survives the fix: the
+    // body is the OS monospace, which carries none of the HUD's marks.
+    const shell = readFileSync(resolve(HUD_DIR, '../../../../../ui-app/index.html'), 'utf8');
+    expect(shell).toContain('ui-monospace');
+    expect(HUD_STACKS.mono.carries.has(0x25c7)).toBe(true);
+  });
+
+  it('an inline stack that names a HUD face keeps the symbol face behind it', () => {
+    // The three hand-typed voices report F found (F-16). They rendered only
+    // `·` and `…` — carried by the face they named — so nothing was broken
+    // yet; an arrow or a diamond added to any of them would have fallen back
+    // silently, which is the same bug one edit away.
+    const HUD_FACES = ['Saira', 'Chakra Petch', 'Share Tech Mono', 'Huiwen-mincho'];
+    const offenders: string[] = [];
+    for (const source of PACKAGE_SOURCES) {
+      INLINE_FONT_STACK.lastIndex = 0;
+      let match = INLINE_FONT_STACK.exec(code(source.text));
+      while (match !== null) {
+        const stack = fontStack('inline', match[2]);
+        const named = stack.families.filter((family) => HUD_FACES.includes(family));
+        const carried = stack.families.includes('JetBrains Mono Local');
+        if (named.length > 0 && !carried) {
+          offenders.push(`${source.name}: ${named.join('/')} without JetBrains Mono Local — say HUD_FONTS`);
+        }
+        match = INLINE_FONT_STACK.exec(code(source.text));
+      }
+    }
+    expect(offenders).toEqual([]);
+
+    // …and the sweep can see an offender, which is the half a green result
+    // cannot show on its own.
+    expect(fontStack('x', "'Share Tech Mono', ui-monospace").families)
+      .toEqual(['Share Tech Mono', 'ui-monospace']);
+  });
 });
 
 

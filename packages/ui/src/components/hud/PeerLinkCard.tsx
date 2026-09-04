@@ -605,7 +605,7 @@ export default function PeerLinkCard({
         >
           PEER // {instrument.id8}
         </span>
-        <span style={{ ...CJK_BASELINE_LIFT, color: accent, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: COMPANION_OPACITY }}>
+        <span style={{ ...CJK_BASELINE_LIFT, color: accent, fontFamily: HUD_FONTS.cjk, fontWeight: 400, fontSize: HUD_TYPE.label, opacity: COMPANION_OPACITY }}>
           对端
         </span>
         {/* THE EVIDENCE CLASS, which is what this slot answers on all four

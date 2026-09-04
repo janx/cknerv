@@ -23,7 +23,7 @@ import type { CellsStats } from '../../derives/cellsStats.derive';
 import type { CellPopulationFieldModel } from '../../derives/cellPopulationField.derive';
 import type { BlockProducerView } from '../../derives/blockProducers.derive';
 import { useBootSequence } from '../../boot/bootSequence';
-import { HUD_COLORS, injectHudTheme, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, injectHudTheme, rgba } from './hudTheme';
 import { revealStageStyle } from './primitives';
 import StatusStrip, {
   STATUS_STRIP_HEIGHTS,
@@ -63,7 +63,19 @@ import { invalidateHudOcclusionRects } from '../hudOcclusion';
 const SYNC_LAG_THRESHOLD = 2; // blocks behind best-known before we count as syncing
 const SYNC_AHEAD_RATIO = 0.5; // fraction of peers ahead of our tip = we're behind
 
-const ROOT_STYLE: CSSProperties = { position: 'fixed', inset: 0, zIndex: 15, pointerEvents: 'none', userSelect: 'none', overflow: 'hidden' };
+// `fontFamily` is on the ROOT for a reason that took a scan to find (report
+// F, F-3): a HUD element that names no face inherits the BODY's, and
+// `index.html` sets the body to `ui-monospace, monospace` — the OS monospace,
+// which carries no `◇`. Two of them were drawing in it, in the two components
+// that sit closest to the frame (`BackfillBar`'s tell glyph and `TopBand`'s),
+// and nothing said so: they looked like every other HUD element on screen
+// because the fallback happened to be a monospace too.
+//
+// One line here covers every inheritor, including the ones nobody has written
+// yet, and it is `mono` because that is what a HUD leaf that says nothing is
+// asking for — the readout voice. A leaf that wants a different one still says
+// so; this is the floor, not a decision taken away from it.
+const ROOT_STYLE: CSSProperties = { position: 'fixed', inset: 0, zIndex: 15, pointerEvents: 'none', userSelect: 'none', overflow: 'hidden', fontFamily: HUD_FONTS.mono };
 // The scan lines are the first thing the root paints and the only thing under
 // them is the root's own transparent ground: every band, rail and panel below
 // carries a z-index or arrives later in the tree, so all of them paint above.

@@ -9,7 +9,7 @@ import {
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { CELL_CLICK_MAX_POINTER_DELTA_PX } from '../derives/cellInteraction.derive';
-import { HUD_COLORS, HUD_MOTION, rgba } from './hud/hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_MOTION, rgba } from './hud/hudTheme';
 import type { HudOcclusionRect } from './hudOcclusion';
 
 /**
@@ -1066,6 +1066,11 @@ export const INSPECTION_LAYER_STYLE: CSSProperties = {
   overflow: 'hidden',
   pointerEvents: 'none',
   userSelect: 'none',
+  // The cards' own root, and it declares a voice for the same reason
+  // `HudOverlay`'s does: this layer is mounted OUTSIDE the overlay, so a card
+  // leaf that names no face would inherit the body's `ui-monospace` rather
+  // than the HUD's (report F, F-3). Five dialects hang under it.
+  fontFamily: HUD_FONTS.mono,
 };
 
 /** The card starts invisible: it has no honest screen position until the

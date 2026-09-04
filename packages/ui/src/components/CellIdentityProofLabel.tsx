@@ -6,7 +6,7 @@ import type {
 import {
   CELL_IDENTITY_PROOF_LABEL_VISUAL_TOKENS as TOKENS,
 } from './cellIdentityProofLabel.presentation';
-import { HUD_COLORS, rgba } from './hud/hudTheme';
+import { HUD_COLORS, HUD_FONTS, rgba } from './hud/hudTheme';
 
 /** One transient screen-space evidence tag attached to a scene proof marker. */
 const CellIdentityProofLabel = forwardRef<
@@ -56,7 +56,7 @@ const CellIdentityProofLabel = forwardRef<
       >
         <span
           style={{
-            fontFamily: '"Chakra Petch", system-ui, sans-serif',
+            fontFamily: HUD_FONTS.tech,
             fontSize: TOKENS.codeFontSizePx,
             lineHeight: 1,
             fontWeight: 700,
@@ -77,7 +77,7 @@ const CellIdentityProofLabel = forwardRef<
         </span>
         <span
           style={{
-            fontFamily: '"Share Tech Mono", ui-monospace, monospace',
+            fontFamily: HUD_FONTS.mono,
             fontSize: TOKENS.detailFontSizePx,
             lineHeight: 1,
             letterSpacing: TOKENS.detailLetterSpacingPx,

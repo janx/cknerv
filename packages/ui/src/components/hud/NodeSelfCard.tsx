@@ -212,7 +212,7 @@ export default function NodeSelfCard({
         >
           NODE // {node.label}
         </span>
-        <span style={{ ...CJK_BASELINE_LIFT, color: accent, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: COMPANION_OPACITY }}>
+        <span style={{ ...CJK_BASELINE_LIFT, color: accent, fontFamily: HUD_FONTS.cjk, fontWeight: 400, fontSize: HUD_TYPE.label, opacity: COMPANION_OPACITY }}>
           节点
         </span>
         {/* THE EVIDENCE CLASS, the one question this slot answers on all four

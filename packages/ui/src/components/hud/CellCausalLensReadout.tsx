@@ -424,6 +424,11 @@ export default function CellCausalLensReadout({
       }}>
         <span style={{
           color: HUD_COLORS.cyanInk,
+          // The face beside the weight: 700 is Chakra's heavy cut, and an ask
+          // for it that inherits its family is an ask nobody can check
+          // locally. Its sibling below already names `mono` for the same
+          // reason, over the same parent.
+          fontFamily: HUD_FONTS.tech,
           fontSize: HUD_TYPE.micro,
           fontWeight: 700,
           letterSpacing: 1.2,
