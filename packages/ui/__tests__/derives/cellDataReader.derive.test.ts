@@ -3,6 +3,7 @@ import type { SemanticContentSegment } from '@cknerv/types';
 import { QUALITATIVE_BUCKET_COLORS } from '../../src/components/hud/hudTheme';
 import { contentSegmentAtByte } from '../../src/derives/cellContentMemory.derive';
 import {
+  READER_BOX_MIN_ROWS,
   READER_BYTES_PER_ROW,
   READER_MAP_MIN_ROWS,
   READER_MAX_VISIBLE_ROWS,
@@ -627,22 +628,30 @@ describe('readerRowsUnderScan', () => {
   });
 
   // The user's D-7 ruling of 2026-09-05: what the plate leaves is the ROOM,
-  // and the framed box takes the payload's own height inside it.
-  it('sizes the box to the payload, floored at six and capped at the room', () => {
-    expect(readerBoxRows(16, 27)).toBe(READER_MIN_VISIBLE_ROWS);
-    expect(readerBoxRows(0, 27)).toBe(READER_MIN_VISIBLE_ROWS);
-    expect(readerBoxRows(96, 27)).toBe(READER_MIN_VISIBLE_ROWS);
+  // and the framed box takes the payload's own height inside it — with the
+  // box's own floor of two (the ruling of 2026-09-05), not the room's six.
+  it('sizes the box to the payload, floored at two and capped at the room', () => {
+    expect(readerBoxRows(16, 27)).toBe(READER_BOX_MIN_ROWS);
+    expect(readerBoxRows(1, 27)).toBe(READER_BOX_MIN_ROWS);
+    expect(readerBoxRows(0, 27)).toBe(READER_BOX_MIN_ROWS);
+    expect(READER_BOX_MIN_ROWS).toBe(2);
+    // Two rows of payload is two rows of box; the floor stops binding at the
+    // first row past it.
+    expect(readerBoxRows(32, 27)).toBe(2);
+    expect(readerBoxRows(33, 27)).toBe(3);
+    expect(readerBoxRows(40, 27)).toBe(3);
+    expect(readerBoxRows(96, 27)).toBe(6);
     expect(readerBoxRows(97, 27)).toBe(7);
     expect(readerBoxRows(300, 27)).toBe(19);
     expect(readerBoxRows(37_314, 27)).toBe(27);
-    // …and a room under the floor is not a box under the floor: the floor is
-    // the reader's, the room is the plate's, and the plate's own floor is the
-    // same six.
+    // …and a room under the ROOM's floor is not a box under it: a garbled
+    // room may not shrink the box below what the plate itself would have
+    // offered, and the plate's own floor is six.
     expect(readerBoxRows(37_314, 2)).toBe(READER_MIN_VISIBLE_ROWS);
   });
 
   it('draws the map for a payload worth drawing or a box too short to hold it', () => {
-    expect(readerShowsMap(16, 6)).toBe(false);
+    expect(readerShowsMap(16, readerBoxRows(16, 27))).toBe(false);
     expect(readerShowsMap(256, 27)).toBe(false);
     expect(readerShowsMap(257, 27)).toBe(true);
     expect(READER_MAP_MIN_ROWS * READER_BYTES_PER_ROW).toBe(256);

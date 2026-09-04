@@ -548,13 +548,15 @@ describe('CellDataReader', () => {
   // The user's D-7 ruling of 2026-09-05: the framed box ends at the last row it
   // has bytes for, and the plate's remainder under it is plain plate ground.
   // Before it, a sixteen-byte Cell drew one row inside a twenty-seven-row
-  // frame — measured live, 7 of the box's 367 pixel rows carried ink.
+  // frame — measured live, 7 of the box's 367 pixel rows carried ink. The
+  // floor under it is two rows (the ruling of 2026-09-05): at six, the same
+  // Cell still measured 13 ink pixel rows of 166.
   describe('the box ends at the last row', () => {
     const mapOf = (container: HTMLElement) => container
       .querySelector('[data-cell-data-reader-map]');
 
-    it('gives a sixteen-byte Cell six rows and no map', () => {
-      // One row of payload, the floor's six rows of box, and a scale drawing
+    it('gives a sixteen-byte Cell two rows and no map', () => {
+      // One row of payload, the floor's two rows of box, and a scale drawing
       // of one segment over one row is a solid bar saying nothing.
       const { container } = reader({
         bytes: bytesOf(16),
@@ -563,11 +565,25 @@ describe('CellDataReader', () => {
         visibleRows: 27,
       });
 
-      expect(dumpOf(container).style.height).toBe(`${6 * READER_ROW_HEIGHT_PX}px`);
+      expect(dumpOf(container).style.height).toBe(`${2 * READER_ROW_HEIGHT_PX}px`);
       expect(mapOf(container)).toBeNull();
       // …and no track reserved for the map it does not draw.
       expect((dumpOf(container).parentElement as HTMLElement).style.gridTemplateColumns)
         .toBe('minmax(0,1fr)');
+    });
+
+    it('gives a forty-byte Cell three rows — the floor stops binding', () => {
+      // Three rows of payload stand in three rows of box: past the floor the
+      // box is the payload's own height and nothing else.
+      const { container } = reader({
+        bytes: bytesOf(40),
+        totalBytes: 40,
+        segments: [segment('body', 0, 40, 'b')],
+        visibleRows: 27,
+      });
+
+      expect(dumpOf(container).style.height).toBe(`${3 * READER_ROW_HEIGHT_PX}px`);
+      expect(mapOf(container)).toBeNull();
     });
 
     it('gives a 300-byte Cell nineteen rows and draws its map', () => {

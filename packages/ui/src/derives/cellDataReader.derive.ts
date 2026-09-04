@@ -32,7 +32,12 @@ export const READER_BYTES_PER_ROW = 16;
  *  measuring it, so the same arithmetic runs in a browser and in a test. */
 export const READER_VISIBLE_ROWS = 24;
 
-/** …and the floor, six rows (the user's R2-5 ruling of 2026-09-05).
+/** …and the floor of the ROOM, six rows (the user's R2-5 ruling of 2026-09-05).
+ *
+ *  This is what the reader asks of the plate — and, under the narrow card,
+ *  what it is given outright. It is not the height of the framed box, which
+ *  ends at the last row it has bytes for and has its own floor
+ *  (`READER_BOX_MIN_ROWS`).
  *
  *  Six rows is 96 bytes. It was eight — 128 — for as long as the reader was a
  *  satellite that opened over the card and could take whatever height it
@@ -46,6 +51,15 @@ export const READER_VISIBLE_ROWS = 24;
  *  header and the start of what follows it, which is the least a thing calling
  *  itself a reader may show. */
 export const READER_MIN_VISIBLE_ROWS = 6;
+
+/** The floor of the framed BOX, two rows — thirty-two bytes.
+ *
+ *  A different question from the room's floor above, so a different number:
+ *  the room asks how much dump is worth mounting, the box asks how much void
+ *  may stand under the last row. A one-row payload in a six-row box measured
+ *  13 ink pixel rows of 166 live; in two rows it is the same ink over a
+ *  quarter of the height. See `readerBoxRows` for why it is not one. */
+export const READER_BOX_MIN_ROWS = 2;
 
 /** …and the ceiling, sixty-four rows.
  *
@@ -536,26 +550,39 @@ export function readerRowsUnderScan(
  *
  * The user's D-7 ruling of 2026-09-05. `readerRowsUnderScan` says how much room
  * the analysis plate leaves; this says how much of it the box takes, and the
- * answer is the payload's own height, floored at `READER_MIN_VISIBLE_ROWS` and
+ * answer is the payload's own height, floored at `READER_BOX_MIN_ROWS` and
  * capped at the room. A sixteen-byte Cell — a thousand of them are staged —
  * drew one row of bytes inside a twenty-seven-row frame; measured live, seven
  * of the box's 367 pixel rows carried ink.
  *
- * The floor is the same six the narrow card gives the reader: a box that
- * collapsed onto its one row would read as a caption rather than as a dump,
- * and the reader's own foot line needs the dump to look like a place bytes are
- * pointed at. The cap is the room, so a 37 KB payload still scrolls inside the
- * plate rather than pushing the card's bottom down.
+ * The floor is TWO rows and not the reader's six (the user's ruling of
+ * 2026-09-05, answering what a six-row floor still measured live: 13 ink pixel
+ * rows of 166, an eighth of the box). Six is what the READER asks of a plate —
+ * how much dump is worth mounting a virtualiser for — and it was borrowed here
+ * for a frame, where the question is different: how much void may stand under
+ * the last row before the frame stops being a box drawn around bytes and
+ * becomes a bordered emptiness with a caption in the corner. Two rows is the
+ * least height at which the border still reads as a frame around a TABLE
+ * rather than as a rule under a line of text, and it is the least void a
+ * one-row payload can be asked to sit in.
+ *
+ * The cap is the room, so a 37 KB payload still scrolls inside the plate
+ * rather than pushing the card's bottom down.
  */
 export function readerBoxRows(totalBytes: number, roomRows: number): number {
   const bytes = Number.isFinite(totalBytes)
     ? Math.max(0, Math.trunc(totalBytes))
     : 0;
   const rows = Math.ceil(bytes / READER_BYTES_PER_ROW);
+  // The ROOM's own floor is still the reader's six: a plate that reported less
+  // than that never had a say in the first place (`readerRowsUnderScan` floors
+  // there too), and a garbled room must not shrink the box below what the
+  // plate would have offered. Two different floors, because they are answers
+  // to two different questions.
   const room = Number.isFinite(roomRows)
     ? Math.max(READER_MIN_VISIBLE_ROWS, Math.trunc(roomRows))
     : READER_MIN_VISIBLE_ROWS;
-  return Math.min(room, Math.max(READER_MIN_VISIBLE_ROWS, rows));
+  return Math.min(room, Math.max(READER_BOX_MIN_ROWS, rows));
 }
 
 /**
