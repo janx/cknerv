@@ -1,17 +1,14 @@
 import {
-  type MutableRefObject,
   useEffect,
   useMemo,
 } from 'react';
-import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import type { ConsensusBraidField } from '../../derives/consensusBraid.derive';
 import { consensusBraidPathPoint } from '../../derives/consensusBraid.derive';
 import type { CellMorphologyTopology, MorphologyPoint3 } from '../../derives/cellMorphology.derive';
 import type { CellSemanticMorphologyOverlay } from '../../derives/cellSemanticMorphology.derive';
-import { CELL_PORTRAIT_LABEL_PORTAL } from './cellPortraitInsetChannel';
 import { SEGMENT_COLORS } from './cellFormat';
-import { HUD_COLORS, QUALITATIVE_BUCKET_COLORS, rgba } from './hudTheme';
+import { QUALITATIVE_BUCKET_COLORS } from './hudTheme';
 import { FACET_GLYPH_COLOR } from './cellFormat';
 import {
   cellSemanticKnowledgeArcWindow,
@@ -221,22 +218,6 @@ export default function CellSemanticMorphologyOverlay({
   const pointCount = built.pointGeometry.getAttribute('position').count;
   const opacity = focusField === 'data' || focusField === 'capacity' ? 0.96 : 0.58;
   const showKnowledgeRing = cellSemanticKnowledgeRingVisible(focusField);
-  const labels = [
-    ...overlay.scriptLabels.map((label) => ({
-      key: `script/${label.role}`,
-      role: label.role.toUpperCase(),
-      text: label.text,
-      parameter: label.parameter,
-      color: label.role === 'lock' ? SEGMENT_COLORS.lock : SEGMENT_COLORS.type,
-    })),
-    ...overlay.roleGlyphs.map((glyph) => ({
-      key: `role/${glyph.role}/${glyph.parameter}`,
-      role: glyph.role.replaceAll('_', ' ').toUpperCase(),
-      text: glyph.label,
-      parameter: glyph.parameter,
-      color: FACET_GLYPH_COLOR,
-    })),
-  ];
 
   return (
     <group name={`semantic-morphology/${overlay.fingerprint}`} renderOrder={9}>
@@ -283,46 +264,30 @@ export default function CellSemanticMorphologyOverlay({
           />
         </points>
       ) : null}
-      {labels.map((label) => {
-        const path = label.key === 'script/lock'
-          ? topology.strands[0]?.points ?? topology.carrier
-          : topology.carrier;
-        return (
-          <Html
-            key={label.key}
-            position={radialOffset(
-              consensusBraidPathPoint(path, label.parameter),
-              0.22,
-            )}
-            zIndexRange={[4, 4]}
-            occlude={false}
-            portal={CELL_PORTRAIT_LABEL_PORTAL as MutableRefObject<HTMLElement>}
-            // The wrapper drei positions every frame gets its own compositor
-            // layer through this class (`hudTheme` injects it), so the
-            // per-frame `transform` write never paints — see `hudTheme.ts`.
-            wrapperClass="cknerv-portrait-label"
-            style={{ pointerEvents: 'none' }}
-          >
-            <div
-              data-cell-semantic-morphology-label={label.key}
-              style={{
-                padding: '1px 3px',
-                borderLeft: `1px solid ${label.color}`,
-                background: rgba(HUD_COLORS.stageGround, 0.78),
-                boxShadow: `0 0 7px ${label.color}44`,
-                color: label.color,
-                fontFamily: '"JetBrains Mono Local", ui-monospace, monospace',
-                fontSize: 6,
-                lineHeight: 1.15,
-                letterSpacing: 0.35,
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {label.role} · {label.text}
-            </div>
-          </Html>
-        );
-      })}
+      {/* ⭐ NO LABELS. This overlay used to hang `LOCK · JoyID` and
+          `TYPE · xUDT` off the braid on drei `Html` divs, and there were three
+          things wrong with them at once:
+
+          ONE, they said what the register says. The LOCK and ASSET facts print
+          exactly those words twenty pixels to the left, in the ladder's own
+          type, on a rail a reader can press. A label on the specimen that
+          repeats the dossier is not an annotation, it is the dossier again.
+
+          TWO, they could not be read. The square is 280 px with
+          `overflow: hidden`, the labels are placed at radial offset 0.22 on a
+          rotating braid, and the live capture caught `TYPE` cut at the right
+          border and `LOCK · JoyID` cut to `L`. Clamping them inward does not
+          save them — it moves them ONTO the tangle they annotate.
+
+          THREE, they were 6 px DOM text. The HUD's floor is 7.5 (`micro`), and
+          the exemption `hudTheme` grants the in-scene dialect reasons from
+          ADDITIVE MATERIAL — a mark that is present rather than a word that is
+          read. These were ink on a `stageGround` wash: the HUD's own medium,
+          two rungs under its own floor.
+
+          What the braid still says, it says as a STRUCTURE — and a selected
+          fact lights the layer that belongs to it (`consensusBraidLayerOpacity`),
+          which is the annotation this surface can actually carry. */}
     </group>
   );
 }

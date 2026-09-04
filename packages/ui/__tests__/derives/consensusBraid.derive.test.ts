@@ -7,6 +7,7 @@ import {
   consensusBraidAgreementTarget,
   consensusBraidBirthPhase,
   consensusBraidContributorColor,
+  CONSENSUS_BRAID_RESTING_WEIGHT,
   consensusBraidLayerOpacity,
   consensusBraidPathPoint,
   consensusBraidPresenceScale,
@@ -111,7 +112,10 @@ describe('canonical consensus braid mapping', () => {
   });
 
   it('maps readable fields to distinct A layers', () => {
-    const normal = consensusBraidLayerOpacity(null, 3);
+    // STATE is the balance itself — the whole structure, at full weight — so
+    // it is the set every other field is a rebalancing OF, and the set the
+    // resting portrait is a quiet copy of.
+    const balanced = consensusBraidLayerOpacity('state', 3);
     const capacity = consensusBraidLayerOpacity('capacity', 3);
     const asset = consensusBraidLayerOpacity('asset', 3);
     const lock = consensusBraidLayerOpacity('lock', 3);
@@ -119,15 +123,44 @@ describe('canonical consensus braid mapping', () => {
     const born = consensusBraidLayerOpacity('born', 3);
 
     expect(capacity.ribbon).toBeGreaterThan(capacity.streamCore);
-    expect(normal.streamFlow).toBeGreaterThanOrEqual(0.24);
+    expect(balanced.streamFlow).toBeGreaterThanOrEqual(0.24);
     expect(asset.streamCore).toBeGreaterThan(asset.ribbon);
-    expect(asset.streamFlow).toBeGreaterThan(normal.streamFlow);
+    expect(asset.streamFlow).toBeGreaterThan(balanced.streamFlow);
     expect(lock.streamCore).toBeGreaterThan(lock.agreementCore);
     expect(lock.streamFlow).toBeGreaterThan(data.streamFlow);
     expect(data.stitchCore).toBeGreaterThan(data.ribbon);
     expect(data.knotCore).toBeGreaterThan(data.streamCore);
     expect(born.packet).toBeGreaterThan(born.streamCore);
-    expect(consensusBraidLayerOpacity('state', 3)).toEqual(normal);
+  });
+
+  it('waits its turn: nothing selected is the same balance, quieter', () => {
+    // The card's hierarchy was upside down at open — the braid carried 8.75 %
+    // of its box over L 160 against the analysis plate's 0.65 %, thirteen
+    // times the light, and it is a tangle nothing can be read out of. So the
+    // resting portrait is the balanced set at a fraction of its weight, and a
+    // selected fact brings the layer it owns back up. The RATIOS are the
+    // design and they are untouched.
+    const balanced = consensusBraidLayerOpacity('state', 3);
+    const resting = consensusBraidLayerOpacity(null, 3);
+    const keys = Object.keys(balanced) as (keyof typeof balanced)[];
+
+    expect(CONSENSUS_BRAID_RESTING_WEIGHT).toBeLessThan(1);
+    for (const key of keys) {
+      expect(resting[key], `${key} at rest`)
+        .toBeCloseTo(balanced[key] * CONSENSUS_BRAID_RESTING_WEIGHT, 10);
+      expect(resting[key], `${key} at rest`).toBeLessThan(balanced[key]);
+    }
+    // …and every fact selection lifts the layer that fact owns above rest.
+    expect(consensusBraidLayerOpacity('lock', 3).streamCore)
+      .toBeGreaterThan(resting.streamCore);
+    expect(consensusBraidLayerOpacity('data', 3).knotCore)
+      .toBeGreaterThan(resting.knotCore);
+    expect(consensusBraidLayerOpacity('capacity', 3).ribbon)
+      .toBeGreaterThan(resting.ribbon);
+    expect(consensusBraidLayerOpacity('asset', 3).streamCore)
+      .toBeGreaterThan(resting.streamCore);
+    expect(consensusBraidLayerOpacity('born', 3).packet)
+      .toBeGreaterThan(resting.packet);
   });
 
   it('turns birth block into a stable wrapped packet phase', () => {

@@ -111,6 +111,49 @@ export interface ConsensusBraidLayerOpacity {
   packet: number;
 }
 
+/**
+ * How much of the braid's balanced weight the portrait carries BEFORE a fact
+ * is selected.
+ *
+ * At open the CELL SCAN square was the brightest thing on the card by an order
+ * of magnitude: measured live at `25c7d5a`, 8.75 % of its pixels stood over
+ * L 160 against 0.65 % for the analysis plate beside it — thirteen times the
+ * light — and what the eye landed on first was a 280 px white tangle nothing
+ * in it could be read out of. The masthead and the six facts, which answer
+ * what the Cell is and whether it is alive, came third.
+ *
+ * So the braid WAITS ITS TURN. The full set is the design and it is unchanged;
+ * this is a weight over the whole of it, so the RATIOS — which layer leads,
+ * which recedes — read exactly as they did, one register quieter. Selecting a
+ * fact restores full weight on the layer that fact owns, which is what makes
+ * the selection legible as an act: the specimen answers.
+ *
+ * ⚠️ Uniform on purpose. Damping the bright layers alone would change which
+ * layer leads at rest, and the resting picture would then be a second design
+ * with no author.
+ */
+export const CONSENSUS_BRAID_RESTING_WEIGHT = 0.42;
+
+/** Every layer at a fraction of its balanced weight. */
+function atRestingWeight(
+  layers: ConsensusBraidLayerOpacity,
+  weight: number,
+): ConsensusBraidLayerOpacity {
+  return {
+    ribbon: layers.ribbon * weight,
+    streamGlow: layers.streamGlow * weight,
+    streamFlow: layers.streamFlow * weight,
+    streamCore: layers.streamCore * weight,
+    stitchGlow: layers.stitchGlow * weight,
+    stitchCore: layers.stitchCore * weight,
+    agreementGlow: layers.agreementGlow * weight,
+    agreementCore: layers.agreementCore * weight,
+    knotGlow: layers.knotGlow * weight,
+    knotCore: layers.knotCore * weight,
+    packet: layers.packet * weight,
+  };
+}
+
 /** Readable A grammar: one on-chain field emphasizes one visual layer. */
 export function consensusBraidLayerOpacity(
   focusField: ConsensusBraidField | null,
@@ -206,7 +249,11 @@ export function consensusBraidLayerOpacity(
   }
   // STATE reads the integrity of the whole structure, so it intentionally
   // preserves the complete balance; ConsensusMemory adds a restrained pulse.
-  return normal;
+  if (focusField === 'state') return normal;
+  // …and with NOTHING selected the same balance, at rest. See
+  // CONSENSUS_BRAID_RESTING_WEIGHT: the braid is the specimen, not the
+  // headline, until a fact asks it something.
+  return atRestingWeight(normal, CONSENSUS_BRAID_RESTING_WEIGHT);
 }
 
 /** Sample a canonical closed path without adding renderer-specific topology. */

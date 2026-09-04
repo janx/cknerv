@@ -2039,8 +2039,11 @@ describe('the colour reserve', () => {
     const text = code(ring?.text ?? '');
     expect(text).toContain("from './cellFormat'");
     expect(text).toContain('SEGMENT_COLORS[KNOWLEDGE_SEGMENT_KEY[segment.role]]');
-    expect(text).toContain('SEGMENT_COLORS.lock');
-    expect(text).toContain('SEGMENT_COLORS.type');
+    // `SEGMENT_COLORS.lock` / `.type` used to be pinned here too, for the two
+    // labels this overlay hung off the braid. Round 3 removed the labels (they
+    // said what the LOCK and ASSET facts say, in 6 px text a 280 px box clipped),
+    // and a pin on a surface that no longer draws is a pin on nothing.
+    expect(text).not.toContain('<Html');
 
     // …and the byte segments' own ramp, whose slots are handed out by a hash of
     // a label — nothing, which is exactly what the house's qualitative ramp is
