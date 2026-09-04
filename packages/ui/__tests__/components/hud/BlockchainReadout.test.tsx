@@ -89,6 +89,28 @@ const transactionHorizon: TransactionHorizonRecord = {
   daily_counts: [300, 321, 345],
 };
 
+describe('BlockchainReadout · the tip is the hero', () => {
+  it('prints the chain head at the hero rung, in a row tall enough for it', () => {
+    // CKB·01 wore the hero INK on a 14 px stat-row value: the ink claimed the
+    // rank and the size withheld it, and the chain's own head landed fourth on
+    // an idle screen (report A, A-3). Hero rung, lifted row.
+    const { container } = render(<BlockchainReadout chain={chain} />);
+    const row = container.querySelector('[data-hud-stat-lift="hero"]') as HTMLElement;
+    expect(row).not.toBeNull();
+    expect(row.textContent).toContain('#16,204,887');
+    const numeral = row.querySelector('span:last-child > span') as HTMLElement;
+    expect(numeral.style.fontSize).toBe('22px');
+    expect(numeral.style.lineHeight).toBe('1');
+  });
+
+  it('keeps the hero when the rail folds — the five chain rows never fold', () => {
+    const { container } = render(<BlockchainReadout chain={chain} folded />);
+    const row = container.querySelector('[data-hud-stat-lift="hero"]') as HTMLElement;
+    expect(row).not.toBeNull();
+    expect(row.textContent).toContain('#16,204,887');
+  });
+});
+
 describe('BlockchainReadout', () => {
   it('renders the tip and key chain stats', () => {
     const { container } = render(

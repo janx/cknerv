@@ -80,6 +80,8 @@ import {
   PLATE_ROW_RAIL_HOT_ALPHA,
   PLATE_ROW_SELECTED_WASH_ALPHA,
   REVEAL_GHOST_OPACITY,
+  STAT_ROW_HEIGHT_PX,
+  STAT_ROW_LIFTED_HEIGHT_PX,
 } from '../../../src/components/hud/primitives';
 import { TOP_BAND_HEIGHT } from '../../../src/components/hud/TopBand';
 import {
@@ -1248,8 +1250,16 @@ describe('one shape grammar', () => {
 // Two tokens, one claim, and CELL MESH was the only panel that spent both — the
 // 22px net-per-block rate in its metabolic pair, and the white on a stat row
 // three readings under it. DAO·05 spends both on ONE number, which is what the
-// two tokens agreeing looks like; PULSE spends the size alone and CKB·01 the
-// ink alone, which is what either of them alone looks like.
+// two tokens agreeing looks like; PULSE spends the size alone.
+//
+// ⚠️⚠️ AND THE RULE USED TO EXCUSE THE ONE SURFACE IT WAS WRITTEN FOR. The
+// sweep opened with "if this file has no hero rung, skip it", which reads as a
+// cheap exit and is in fact a hole the exact shape of the defect: a file
+// wearing `heroInk` on something that is NOT a hero has, by definition, no
+// hero rung to be found — so `BlockchainReadout.tsx` wore the hero ink on a 14
+// px stat-row value for the whole life of the rule and was never once read
+// (report A, A-3; report F's guard-gap table). The ink is the claim; a file
+// that makes the claim is examined whether or not it also has a hero.
 //
 // `plateStateChip` is the second. A chip is a state word beside an identity, so
 // it may be tinted by the surface it sits on or by a severity — and by nothing
@@ -1267,9 +1277,12 @@ describe('one shape grammar', () => {
 describe('one hero, one register', () => {
   it('a panel that spends both hero tiers spends them on one number', () => {
     const offenders: string[] = [];
+    const wearers: string[] = [];
     for (const source of domDialect()) {
       const text = code(source.text);
-      if (!/fontSize: HUD_TYPE\.hero\b/.test(text)) continue;
+      // NO early exit on "no hero rung here" — see the chapter above.
+      if (!/color: HUD_COLORS\.heroInk/.test(text)) continue;
+      wearers.push(source.name);
 
       const heroes: string[] = [];
       const size = /fontSize: HUD_TYPE\.hero\b/g;
@@ -1292,6 +1305,71 @@ describe('one hero, one register', () => {
     }
 
     expect(offenders).toEqual([]);
+
+    // …and the sweep read the files that make the claim rather than none. Both
+    // are named, because "the set is non-empty" would have been satisfied by
+    // DAO·05 alone for the whole time CKB·01 was the offender.
+    expect(wearers.sort()).toEqual(['BlockchainReadout.tsx', 'DaoStateReadout.tsx']);
+  });
+
+  it('a stat row carrying a lifted numeral is a lifted row', () => {
+    // The rhythm's toll. A `StatRow` is a fixed box with a baseline-aligned
+    // line inside it, so a numeral from a rung above the row's own value tier
+    // takes its extra height out of the gap BELOW the baseline and the next row
+    // arrives 5 px early — 12 px and 11 px measured against a 17 px rail
+    // (report A, A-4). The row grows with the numeral or the rhythm breaks, so
+    // the two are declared together on the same element.
+    const rungs = Object.keys(STAT_ROW_LIFTED_HEIGHT_PX);
+    const offenders: string[] = [];
+    const lifted: string[] = [];
+    for (const source of domDialect()) {
+      const text = code(source.text);
+      for (const row of text.matchAll(/<StatRow\b[\s\S]*?<\/StatRow>/g)) {
+        const block = row[0];
+        const open = /<StatRow\b[^>]*>/.exec(block)?.[0] ?? '';
+        const declared = /lifted="(\w+)"/.exec(open)?.[1];
+        const carried = rungs.filter(
+          (rung) => new RegExp(`fontSize: HUD_TYPE\\.${rung}\\b`).test(block),
+        );
+        const where = `${source.name}: ${/label="([^"]*)"/.exec(open)?.[1] ?? '?'}`;
+        if (carried.length > 1) {
+          offenders.push(`${where} carries two lifted rungs at once`);
+        } else if (declared !== carried[0]) {
+          offenders.push(
+            `${where} declares lifted=${declared ?? 'nothing'} and carries ${carried[0] ?? 'nothing'}`,
+          );
+        }
+        if (declared !== undefined) lifted.push(where);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+
+    // The three rows the ladder was applied to, named — a rule about lifted
+    // rows passes trivially on a rail that has none.
+    expect(lifted.sort()).toEqual([
+      'BlockchainReadout.tsx: Tip',
+      'CellsPanel.tsx: Observed live',
+      'NetworkPanel.tsx: Peers',
+    ]);
+  });
+
+  it('the rail has one rhythm and one height per lifted rung', () => {
+    // The numbers themselves, so a row cannot be quietly re-heighted into the
+    // collision the lift was meant to end. Each lifted height is the rhythm
+    // plus the ascent its rung adds over a plain mono value — the arithmetic is
+    // in `primitives.tsx`; what is pinned here is that the answers still are
+    // what the rows were measured at.
+    expect(STAT_ROW_HEIGHT_PX).toBe(17);
+    expect(STAT_ROW_LIFTED_HEIGHT_PX).toEqual({ emphasis: 19, hero: 25 });
+
+    // …and every lifted rung is above the row's own value tier, which is the
+    // only reason a row needs a second height at all.
+    for (const rung of Object.keys(STAT_ROW_LIFTED_HEIGHT_PX)) {
+      expect(HUD_TYPE[rung as keyof typeof HUD_TYPE]).toBeGreaterThan(HUD_TYPE.value);
+      expect(STAT_ROW_LIFTED_HEIGHT_PX[rung as keyof typeof STAT_ROW_LIFTED_HEIGHT_PX])
+        .toBeGreaterThan(STAT_ROW_HEIGHT_PX);
+    }
   });
 
   it('finds a panel spending both tiers on one number', () => {

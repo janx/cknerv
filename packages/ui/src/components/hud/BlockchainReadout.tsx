@@ -54,11 +54,26 @@ function BlockchainReadout({ chain, cellPopulation, enrichmentSource, assetEcosy
   return (
     <HudPanel style={{ width: folded ? CHAIN_PANEL_DENSE_WIDTH_PX : CHAIN_PANEL_WIDTH_PX, ...style }}>
       <PanelHeader en="COMMON KNOWLEDGE BASE" cjk="共识基" idx="CKB·01" />
-      {/* The tip is a display-family number that changes every few seconds, so
-          it asks for tabular figures — otherwise the `#` and everything after
-          it shifts a pixel or two at each block and the panel's top line never
-          quite settles. */}
-      <StatRow label="Tip"><span style={{ fontFamily: HUD_FONTS.display, fontWeight: 600, fontSize: HUD_TYPE.emphasis, fontVariantNumeric: 'tabular-nums', color: HUD_COLORS.heroInk }}>#{fmt(chain.tip)}</span></StatRow>
+      {/* ⭐ THE TIP IS THIS PANEL'S HERO, and it is the only one of the five
+          modules whose hero had to be argued for. CELL·03, PULSE and DAO·05
+          all spend `HUD_TYPE.hero` on the number they exist to show; CKB·01
+          spent `heroInk` — the ink that says hero — on a stat-row value at
+          `emphasis`, so the ink claimed the rank and the size withheld it, and
+          by size × brightness the chain's own head landed FOURTH on an idle
+          screen, under the DAO's total and the per-block net (report A, A-3).
+          A common knowledge base's one number is the height everybody agrees
+          on. It is at the hero rung now, and the ink it already wore means
+          what it says.
+
+          The row is `lifted` for it: a 22 px numeral on a 17 px row would sit
+          its baseline 1 px off the row's floor and the epoch under it would
+          read as a collision rather than the next line (A-4).
+
+          `lineHeight: 1` and tabular figures for the same two reasons the
+          other heroes have them — a hero's own box is its size, and a display
+          face's proportional digits would shunt the whole line sideways every
+          time a `1` replaced a `0`, once a block. */}
+      <StatRow label="Tip" lifted="hero"><span style={{ fontFamily: HUD_FONTS.display, fontWeight: 600, fontSize: HUD_TYPE.hero, lineHeight: 1, fontVariantNumeric: 'tabular-nums', color: HUD_COLORS.heroInk }}>#{fmt(chain.tip)}</span></StatRow>
       <StatRow label="Epoch">
         <span data-epoch-number>{epoch.number}</span>
         <ProtocolEraBadge chain={chain} source={enrichmentSource} record={protocolEra} />

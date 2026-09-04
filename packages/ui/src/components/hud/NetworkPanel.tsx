@@ -59,7 +59,19 @@ function NetworkPanel({ summary, consensus, syncRatio, enrichmentSource, network
         * own uppercase `StatRow` labels — five authored words (`out`, `in`,
         * and the three consensus tallies below) that read as a different
         * instrument's captions in the middle of this one's. */}
-      <StatRow label="Peers"><span style={{ color: HUD_COLORS.peerWire }}>{summary.peerCount}</span> &nbsp; <span style={{ color: HUD_COLORS.dim }}>OUT</span> {summary.outbound} / <span style={{ color: HUD_COLORS.dim }}>IN</span> {summary.inbound}</StatRow>
+      {/* ⭐ AND THE COUNT IS THIS PANEL'S LANDING POINT. PEER·02 was the one
+        * module with no lifted number at all — it opened on a stat row, so the
+        * loudest thing in it was the glowing consensus bar underneath, and the
+        * eye arriving at the right rail met a BAR before it met a figure
+        * (report A, A-3). The peer count is what the panel is a count of, so
+        * it takes the `emphasis` rung in a lifted row, the arrangement CELL·03
+        * uses one rail-slot down.
+        *
+        * ⚠️ `emphasis` and not `hero`: the four rungs of the split beside it —
+        * `OUT n / IN n` — belong to the same reading and would be dwarfed by a
+        * 22 px figure, and the bar below is still the panel's picture of the
+        * colony. This is a landing point, not a claim to outrank it. */}
+      <StatRow label="Peers" lifted="emphasis"><span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: HUD_TYPE.emphasis, lineHeight: 1, fontVariantNumeric: 'tabular-nums', color: HUD_COLORS.peerWire }}>{summary.peerCount}</span> &nbsp; <span style={{ color: HUD_COLORS.dim }}>OUT</span> {summary.outbound} / <span style={{ color: HUD_COLORS.dim }}>IN</span> {summary.inbound}</StatRow>
       {dense ? null : (
         <StatRow label="Head consensus">{consensus.atTip} / {consensus.total}</StatRow>
       )}

@@ -218,17 +218,75 @@ export function PanelHeader({ en, cjk, idx, accent, compact = false }: {
   );
 }
 
+/**
+ * The rail's rhythm. A stat row is a fixed box with its label and its figure on
+ * a shared baseline, so two rows running is 17 px of baseline-to-baseline and
+ * a column of them reads as ONE instrument rather than a stack of lines.
+ *
+ * ⚠️ That only holds while every row's tallest ascent is the same. `alignItems:
+ * 'baseline'` puts the shared baseline at the tallest ascent BELOW the row's
+ * top edge, so what is left underneath it — which is what the next row's
+ * baseline is measured across — is `height − ascent`. Give one row a bigger
+ * numeral and that row alone pays for it: TIP → EPOCH measured **12 px** on a
+ * 17 px rhythm because a 14 px numeral's ascent is 15.9 and only 1.1 px of the
+ * row was left under it (report A, A-4). The lift bought size and spent the one
+ * thing size needs.
+ */
+export const STAT_ROW_HEIGHT_PX = 17;
+
+/**
+ * …so a LIFTED row is as tall as the rhythm plus the ascent its numeral adds:
+ *
+ *     height = STAT_ROW_HEIGHT_PX + ascent(the numeral) − ascent(a plain value)
+ *
+ * The ascents are facts of the faces, and these are MEASURED in the page rather
+ * than computed from the metrics — a probe of zero size appended to a line sits
+ * on that line's baseline, and the browser rounds where the metrics do not:
+ *
+ *   | the row's figure               | ascent | height        | pitch below |
+ *   |--------------------------------|--------|---------------|-------------|
+ *   | plain — mono at `value` 11.5   | 10     | 17            | 17          |
+ *   | `emphasis` 14, `lineHeight: 1` | 12     | 17 + 12 − 10 → **19** | 17 |
+ *   | `hero` 22, `lineHeight: 1`     | 18     | 17 + 18 − 10 → **25** | 17 |
+ *
+ * A lifted figure is display-face at `lineHeight: 1` — the HUD's own hero
+ * pattern, on PULSE and on CELL·03 — which is what keeps the ascent to 18 for a
+ * 22 px numeral instead of the 25 its natural leading would take.
+ *
+ * Two rungs, one rule, and the rule is the reason the numbers are what they
+ * are; a row lifted to a rung this table does not name has no answer for how
+ * much air it owes the row below, which is why the prop names the rung rather
+ * than taking a height.
+ */
+export const STAT_ROW_LIFTED_HEIGHT_PX = { emphasis: 19, hero: 25 } as const;
+
+export type StatRowLift = keyof typeof STAT_ROW_LIFTED_HEIGHT_PX;
+
 /** A label and the figure it names. A rail row carries no CJK companion: it is
  *  read for its NUMBER, and a word standing between the label and the figure is
  *  one more thing to read past on every glance. The unit's Chinese name lives
  *  on the dossier's `CKBYTE` zone, where naming the unit IS the subject. */
-export function StatRow({ label, children, valueColor, title }: {
+export function StatRow({ label, children, valueColor, title, lifted }: {
   label: string; children: ReactNode; valueColor?: string;
   /** Hover-only provenance for rows whose source differs from the panel's own. */
   title?: string;
+  /** The rung this row's figure is lifted to. The row grows by the ascent that
+   *  rung adds, so the rows under it keep the rail's rhythm; the figure itself
+   *  is still the caller's to draw, because only the caller knows whether it is
+   *  tabular, coloured or breathing. */
+  lifted?: StatRowLift;
 }) {
   return (
-    <div title={title} style={{ display: 'flex', alignItems: 'baseline', height: 17, whiteSpace: 'nowrap' }}>
+    <div
+      title={title}
+      data-hud-stat-lift={lifted}
+      style={{
+        display: 'flex',
+        alignItems: 'baseline',
+        height: lifted === undefined ? STAT_ROW_HEIGHT_PX : STAT_ROW_LIFTED_HEIGHT_PX[lifted],
+        whiteSpace: 'nowrap',
+      }}
+    >
       <span style={{ fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: HUD_TYPE.tech, letterSpacing: 1.6, color: HUD_COLORS.dim, textTransform: 'uppercase' }}>{label}</span>
       <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.value, color: valueColor ?? HUD_COLORS.ink }}>{children}</span>
     </div>

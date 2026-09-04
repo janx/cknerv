@@ -109,8 +109,13 @@ function CellsPanel({ stats, churn, reducedMotion = false, dense = false, style 
           PULSE has: a hero at the `hero` rung, coloured by what it is saying,
           and no second claim on the tier above `ink`. `heroInk` is worn where
           it is worn alone — CKB·01's tip, DAO·05's deposit total. */}
+      {/* …and the row it sits in is `lifted`, which is the other half of the
+          same argument: a numeral a rung above the row's own value tier has a
+          taller ascent, and a row that does not grow with it hands the extra
+          height to the numeral and takes it out of the gap below. This pair
+          measured 11 px of baseline pitch against the panel's 17 (A-4). */}
       <div style={{ marginTop: dense ? 0 : 11 }}>
-        <StatRow label="Observed live"><span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: HUD_TYPE.emphasis, fontVariantNumeric: 'tabular-nums' }}>{fmt(stats.live)}</span></StatRow>
+        <StatRow label="Observed live" lifted="emphasis"><span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: HUD_TYPE.emphasis, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>{fmt(stats.live)}</span></StatRow>
         {dense ? null : (
           <>
             <StatRow label="Total observed">{fmt(stats.born)}</StatRow>

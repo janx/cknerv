@@ -1,6 +1,15 @@
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, it, expect } from 'vitest';
-import { Gauge, HudPanel, PanelHeader, ReadoutHeader, ScopeStage, StatRow } from '../../../src/components/hud/primitives';
+import {
+  Gauge,
+  HudPanel,
+  PanelHeader,
+  ReadoutHeader,
+  ScopeStage,
+  StatRow,
+  STAT_ROW_HEIGHT_PX,
+  STAT_ROW_LIFTED_HEIGHT_PX,
+} from '../../../src/components/hud/primitives';
 
 afterEach(cleanup);
 
@@ -21,6 +30,25 @@ describe('hud primitives', () => {
     const { container } = render(<StatRow label="Peers">47</StatRow>);
     expect(container.textContent).toContain('Peers');
     expect(container.textContent).toContain('47');
+  });
+  it('StatRow stands at the rail rhythm, and taller by the rung it lifts', () => {
+    // A plain row is the rhythm; a lifted one is the rhythm plus the ascent its
+    // numeral adds, so the row underneath keeps its 17 px of baseline. Rendered
+    // rather than read off the constant: what has to be true is that the prop
+    // reaches the box.
+    const plain = render(<StatRow label="Peers">47</StatRow>);
+    expect((plain.container.firstElementChild as HTMLElement).style.height)
+      .toBe(`${STAT_ROW_HEIGHT_PX}px`);
+    cleanup();
+    for (const [rung, height] of Object.entries(STAT_ROW_LIFTED_HEIGHT_PX)) {
+      const { container } = render(
+        <StatRow label="Tip" lifted={rung as keyof typeof STAT_ROW_LIFTED_HEIGHT_PX}>47</StatRow>,
+      );
+      const box = container.firstElementChild as HTMLElement;
+      expect(box.style.height, rung).toBe(`${height}px`);
+      expect(box.dataset.hudStatLift, rung).toBe(rung);
+      cleanup();
+    }
   });
   it('Gauge fills to the ratio percentage', () => {
     const { container } = render(<Gauge ratio={0.5} color="#27FF5A" />);

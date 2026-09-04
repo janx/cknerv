@@ -37,6 +37,16 @@ describe('CellsPanel', () => {
     expect(t).not.toContain('1.21 GB');
     expect(container.querySelector('[data-cell-capacity-mode]')).toBeNull();
   });
+  it('keeps the lifted row lifted after the rail collapses', () => {
+    // The dense form is header, hero and ONE row, and that row is the lifted
+    // one — a collapse that dropped the lift would put the panel's kept
+    // reading back on the 11 px pitch the lift exists to end.
+    const { container } = render(<CellsPanel stats={stats} churn={churn} reducedMotion dense />);
+    const row = container.querySelector('[data-hud-stat-lift]') as HTMLElement;
+    expect(row.dataset.hudStatLift).toBe('emphasis');
+    expect(row.textContent).toContain('19,204');
+  });
+
   it('keeps chain capacity and taxonomy out of the mesh panel', () => {
     const { container } = render(<CellsPanel stats={stats} churn={churn} reducedMotion />);
     const t = container.textContent ?? '';

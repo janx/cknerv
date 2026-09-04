@@ -60,6 +60,20 @@ describe('NetworkPanel', () => {
     expect(container.querySelectorAll('[data-network-detail-mode]')).toHaveLength(0);
   });
 
+  it('lands the eye on the count, and keeps it landing after the collapse', () => {
+    // PEER·02 opened on a plain stat row, so the loudest thing in it was the
+    // consensus bar underneath (report A, A-3). The count is the panel's
+    // landing point now, at `emphasis` in a lifted row — and the dense form
+    // keeps the count, so it keeps the lift.
+    for (const dense of [false, true]) {
+      const { container } = render(<NetworkPanel {...props} dense={dense} />);
+      const row = container.querySelector('[data-hud-stat-lift]') as HTMLElement;
+      expect(row?.dataset.hudStatLift, String(dense)).toBe('emphasis');
+      expect(row.textContent, String(dense)).toContain('47');
+      cleanup();
+    }
+  });
+
   it('never repeats the per-peer telemetry the cards already carry', () => {
     const expectNoLocalView = (container: HTMLElement) => {
       const t = container.textContent ?? '';
