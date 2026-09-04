@@ -1,11 +1,11 @@
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, it, expect } from 'vitest';
 import {
+  DiamondMark,
   Gauge,
   HudPanel,
   PanelHeader,
   ReadoutHeader,
-  ScopeStage,
   StatRow,
   STAT_ROW_HEIGHT_PX,
   STAT_ROW_LIFTED_HEIGHT_PX,
@@ -68,18 +68,28 @@ describe('hud primitives', () => {
     expect(container.querySelector('[data-readout-stale]')?.textContent).toBe('· STALE');
     expect(container.textContent).not.toContain('INDEXED');
   });
-  it('ScopeStage connects progressive scopes but terminates the final stage', () => {
+  it('DiamondMark draws one shape, four fills and a halo sized to itself', () => {
+    // The mark eleven sites were cutting by hand. What is pinned is the part a
+    // call site can no longer get wrong: the rotation, which never reaches a
+    // caller, and the fill, which was the same shape spelled four ways.
     const { container } = render(
       <>
-        <ScopeStage id="local" label="Local" meta="Direct" accent="#69e7ff">base</ScopeStage>
-        <ScopeStage id="global" label="Global" accent="#78f2b3" terminal>enhanced</ScopeStage>
+        <DiamondMark color="#20F0FF" size={4} />
+        <DiamondMark color="#20F0FF" fill="ground" centered="both" />
+        <DiamondMark color="#20F0FF" fill="wash" glow={false} />
+        <DiamondMark color="#20F0FF" fill="solid" attrs={{ 'data-probe': 'yes' }} />
       </>,
     );
-    const local = container.querySelector('[data-scope-stage="local"]');
-    const global = container.querySelector('[data-scope-stage="global"]');
-    expect(local?.textContent).toContain('LocalDirectbase');
-    expect(local?.querySelector('[data-scope-connector]')).not.toBeNull();
-    expect(global?.textContent).toContain('Globalenhanced');
-    expect(global?.querySelector('[data-scope-connector]')).toBeNull();
+    const marks = Array.from(container.querySelectorAll<HTMLElement>('[data-diamond-mark]'));
+    expect(marks.map((mark) => mark.dataset.diamondMark))
+      .toEqual(['none', 'ground', 'wash', 'solid']);
+    for (const mark of marks) expect(mark.style.transform).toContain('rotate(45deg)');
+    expect(marks[1].style.transform).toBe('translate(-50%, -50%) rotate(45deg)');
+    // …the halo grows with the mark rather than being chosen per site, and a
+    // mark asked for none has none.
+    expect(marks[0].style.boxShadow).toContain('0 0 6px');
+    expect(marks[2].style.boxShadow).toBe('');
+    // …and a site's own hooks survive the primitive.
+    expect(marks[3].getAttribute('data-probe')).toBe('yes');
   });
 });

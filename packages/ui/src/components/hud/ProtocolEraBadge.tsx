@@ -33,6 +33,11 @@ export default function ProtocolEraBadge({ chain, source, record }: {
         maxWidth: 125,
         overflow: 'hidden',
         textOverflow: 'ellipsis',
+        // `textOverflow` does nothing without this: a spaced label wraps
+        // inside the inline-block instead of ellipsizing, and only a label
+        // with no space in it — which every era name has so far been —
+        // happened to look right (report F, F-17).
+        whiteSpace: 'nowrap',
         verticalAlign: 'bottom',
         // A fact about the chain — which consensus rules are in force —
         // printed beside the epoch number it qualifies nothing about, so it

@@ -237,7 +237,7 @@ function MixBar({ mix }: { mix: CompositionMix }) {
             />
           ) : null)}
         </div>
-        <span style={{ ...SCOPE_TAG, flex: '0 0 110px', textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis' }}>{mix.scope}</span>
+        <span style={{ ...SCOPE_TAG, flex: '0 0 110px', textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{mix.scope}</span>
       </div>
     </div>
   );

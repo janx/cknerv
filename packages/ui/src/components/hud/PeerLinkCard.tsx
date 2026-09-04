@@ -22,6 +22,7 @@ import { useHudClockSelector } from './hudClock';
 import { CJK_BASELINE_LIFT, COMPANION_OPACITY, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba, STALE_OPACITY } from './hudTheme';
 import {
   CloseButton,
+  DiamondMark,
   moduleTag,
   PLATE_ROW_RAIL_ALPHA,
   PlateReadoutRow,
@@ -730,15 +731,20 @@ export default function PeerLinkCard({
               different ways: a hole above, a bead below, in one hex that every
               outbound peer also wears. Ground fill, accent stroke — us is the
               mark you can see through, everywhere on the card. */}
-          <span
-            aria-hidden="true"
-            data-peer-probe-self
-            data-peer-probe-self-form="hole"
-            style={{ position: 'absolute', left: -3.5, top: 4, width: 6, height: 6, boxSizing: 'border-box', background: HUD_COLORS.ground, border: `1px solid ${NODE_SELF_ACCENT}`, transform: 'rotate(45deg)' }}
+          <DiamondMark
+            color={NODE_SELF_ACCENT}
+            size={6}
+            fill="ground"
+            glow={false}
+            attrs={{ 'data-peer-probe-self': 'true', 'data-peer-probe-self-form': 'hole' }}
+            style={{ position: 'absolute', left: -3.5, top: 4 }}
           />
-          <span
-            aria-hidden="true"
-            style={{ position: 'absolute', left: -3.5, top: 21, width: 6, height: 6, background: instrument.sync.color, transform: 'rotate(45deg)' }}
+          <DiamondMark
+            color={instrument.sync.color}
+            size={6}
+            fill="solid"
+            glow={false}
+            style={{ position: 'absolute', left: -3.5, top: 21 }}
           />
         </div>
         <div

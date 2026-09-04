@@ -725,6 +725,15 @@ export const COMPANION_OPACITY = 0.72;
  *  that composition, not this correction. */
 export const CJK_BASELINE_LIFT = { position: 'relative', top: -1 } as const;
 
+/** The angle of the HUD's diamond, and the ONLY place it is written down.
+ *
+ *  `DiamondMark` in `primitives.tsx` draws every diamond in the overlay, and
+ *  one of them cannot be a component: the route ledger's scroll marker is
+ *  positioned from a CSS custom property the scrollbar writes, so it lives in
+ *  the stylesheet below. Two authors, one angle — which is what this constant
+ *  is for, and what lets `hudDiscipline.test.ts` ban the literal outright. */
+export const DIAMOND_ROTATION = 'rotate(45deg)';
+
 /** A `#RRGGBB` palette color as an `rgba(r,g,b,a)` string — single source for
  *  canvas/border tints that need an alpha the hex form can't carry. */
 export function rgba(hex: string, alpha: number): string {
@@ -816,7 +825,7 @@ export function injectHudTheme(doc: Document = document): void {
     + `\n.cknerv-memory-route-scroll-edge-before{top:0;background:linear-gradient(180deg,${rgba(HUD_COLORS.stageGround, 0.98)},${rgba(HUD_COLORS.stageGround, 0)});box-shadow:inset 0 1px 0 ${rgba(HUD_COLORS.cyanWire, 0.14)}}`
     + `\n.cknerv-memory-route-scroll-edge-after{bottom:0;background:linear-gradient(0deg,${rgba(HUD_COLORS.stageGround, 0.98)},${rgba(HUD_COLORS.stageGround, 0)});box-shadow:inset 0 -1px 0 ${rgba(HUD_COLORS.cyanWire, 0.14)}}`
     + `\n.cknerv-memory-route-scroll-position{position:absolute;top:3px;right:4px;bottom:3px;z-index:3;width:4px;border-right:1px solid ${rgba(HUD_COLORS.cyanWire, 0.18)};pointer-events:none;opacity:0}`
-    + `\n.cknerv-memory-route-scroll-position-marker{position:absolute;left:100%;top:var(--route-ledger-scroll-progress,0%);width:4px;height:4px;border:1px solid ${rgba(HUD_COLORS.cyanInk, 0.88)};background:${HUD_COLORS.ground};box-shadow:0 0 6px ${rgba(HUD_COLORS.cyanWire, 0.72)};transform:translate(-50%,-50%) rotate(45deg)}`
+    + `\n.cknerv-memory-route-scroll-position-marker{position:absolute;left:100%;top:var(--route-ledger-scroll-progress,0%);width:4px;height:4px;border:1px solid ${rgba(HUD_COLORS.cyanInk, 0.88)};background:${HUD_COLORS.ground};box-shadow:0 0 6px ${rgba(HUD_COLORS.cyanWire, 0.72)};transform:translate(-50%,-50%) ${DIAMOND_ROTATION}}`
     + `\n.cknerv-memory-route-ledger-lens .cknerv-memory-route-scroll-position-marker{border-color:${rgba(HUD_COLORS.goldInk, 0.9)};box-shadow:0 0 7px ${rgba(HUD_COLORS.goldInk, 0.66)}}`
     + `\n.cknerv-memory-route-ledger-scroll::-webkit-scrollbar{width:3px}`
     + `\n.cknerv-memory-route-ledger-scroll::-webkit-scrollbar-thumb{background:${rgba(HUD_COLORS.cyanWire, 0.28)}}`

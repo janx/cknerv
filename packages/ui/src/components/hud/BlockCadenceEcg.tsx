@@ -190,7 +190,7 @@ function BlockCadenceEcg({
   // aligned — and a consumer that hands no style gets a panel as wide as its
   // content, which is what every other measureless panel does.
   return (
-    <HudPanel style={{ zIndex: 12, padding: '10px 15px 9px', ...style }}>
+    <HudPanel style={{ padding: '10px 15px 9px', ...style }}>
       <PanelHeader en="PULSE" cjk="脉搏" idx="ECG·04" compact />
       <div style={{ display: 'flex', gap: 12 }}>
         <div style={{ flex: '0 0 86px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>

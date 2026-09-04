@@ -28,7 +28,7 @@ import {
 } from '../../nerve/consensusRouteHopPulse';
 import { formatBlockRef, formatOutpoint } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
-import { PLATE_EDGE_ALPHA, PLATE_ROW_RAIL_ALPHA } from './primitives';
+import { DiamondMark, PLATE_EDGE_ALPHA, PLATE_ROW_RAIL_ALPHA } from './primitives';
 
 const CYAN = HUD_COLORS.cyanWire;
 const VIOLET = HUD_COLORS.memory;
@@ -233,16 +233,7 @@ function RouteHopInspector({
         }}
       />
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
-        <span
-          aria-hidden="true"
-          style={{
-            width: 4,
-            height: 4,
-            border: `1px solid ${roleCopy.color}`,
-            boxShadow: `0 0 7px ${roleCopy.color}88`,
-            transform: 'rotate(45deg)',
-          }}
-        />
+        <DiamondMark color={roleCopy.color} size={4} />
         <span style={{ fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, fontWeight: 700, letterSpacing: 0.9, color: roleCopy.color }}>
           HOP SEMANTICS
         </span>
@@ -503,18 +494,15 @@ function EvidenceRouteLedger({
               background: `linear-gradient(90deg, ${sourceColor}38 0 ${lockedProgress * 100}%, ${CYAN}10 ${lockedProgress * 100}% 100%)`,
             }}
           >
-            <span
-              data-memory-evidence-route-progress-marker="true"
+            <DiamondMark
+              color={LOCKED_GOLD}
+              fill="ground"
+              centered="both"
+              attrs={{ 'data-memory-evidence-route-progress-marker': 'true' }}
               style={{
                 position: 'absolute',
                 left: `${lockedProgress * 100}%`,
                 top: '50%',
-                width: 5,
-                height: 5,
-                border: `1px solid ${LOCKED_GOLD}`,
-                background: HUD_COLORS.ground,
-                boxShadow: `0 0 8px ${LOCKED_GOLD}aa`,
-                transform: 'translate(-50%, -50%) rotate(45deg)',
                 transition: reducedMotion ? undefined : 'left 180ms ease-out',
               }}
             />
@@ -1061,7 +1049,7 @@ function EvidenceLedger({
               <span style={{ fontSize: HUD_TYPE.micro, color: sourceColor }}>
                 E{String(evidence.ordinal).padStart(2, '0')}
               </span>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', fontSize: HUD_TYPE.micro, letterSpacing: 0.35, color: HUD_COLORS.ink }}>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: HUD_TYPE.micro, letterSpacing: 0.35, color: HUD_COLORS.ink }}>
                 {consensusMemoryEvidenceFingerprint(evidence.contentHash)}
               </span>
               <span style={{ display: 'flex', alignItems: 'baseline', gap: 4, fontSize: HUD_TYPE.micro, letterSpacing: 0.35 }}>
@@ -1089,7 +1077,7 @@ function EvidenceLedger({
                     color: HUD_COLORS.dim,
                   }}
                 >
-                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', color: sourceColor }}>
+                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: sourceColor }}>
                     CELL #{evidence.sourceId} → #{routeTargetId}
                   </span>
                   <span>
@@ -1102,6 +1090,7 @@ function EvidenceLedger({
                       minWidth: 0,
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
                     }}
                   >
                     SOURCE {sourceOutpoint} · BLOCK #{evidence.sourceBirthBlock}
@@ -1204,16 +1193,13 @@ export function ConsensusMemoryTracePlate({
               style={{ minWidth: 0, color: item.color, opacity: active ? 1 : on ? 0.55 : 0.2 }}
             >
               <div style={{ display: 'flex', alignItems: 'center', height: 7 }}>
-                <span style={{
-                  flex: '0 0 auto',
-                  width: active ? 5 : 3,
-                  height: active ? 5 : 3,
-                  border: `1px solid ${item.color}`,
-                  background: on ? item.color : 'transparent',
-                  boxShadow: active ? `0 0 7px ${item.color}` : undefined,
-                  transform: 'rotate(45deg)',
-                  transition: reducedMotion ? undefined : 'all 180ms ease',
-                }} />
+                <DiamondMark
+                  color={item.color}
+                  size={active ? 5 : 3}
+                  fill={on ? 'solid' : 'none'}
+                  glow={active}
+                  style={{ transition: reducedMotion ? undefined : 'all 180ms ease' }}
+                />
                 {index < MEMORY_READ_STAGES.length - 1 ? (
                   <span style={{ flex: 1, height: 1, marginLeft: 4, background: item.color, opacity: on ? 0.45 : 0.16 }} />
                 ) : null}

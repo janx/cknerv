@@ -237,12 +237,20 @@ function loadSoundCloudWidgetApi(): Promise<SoundCloudWidgetFactory> {
   return request;
 }
 
-// 18px, not 14px: an object hugging the very edge reads as trim. The margin is
-// what lets an otherwise quiet corner present it as something placed there.
+// 14px, and it is the HUD's own rail inset (`RAIL_INSET_PX` in
+// `HudOverlay.tsx`), not a margin of this module's own choosing.
+//
+// It was 18, argued as "an object hugging the very edge reads as trim; the
+// margin is what lets a quiet corner present it as something placed there".
+// That argument is right about a widget and wrong about a MODULE: SND·06
+// wears a module code in the CKB·01 / CELL·03 grammar precisely so the closed
+// chip reads as part of the instrument, and a module standing four pixels
+// inside every other module's line reads as the one thing that is not bolted
+// to the frame (report A, A-11).
 const floatingStyle: CSSProperties = {
   position: 'fixed',
-  right: 'max(18px, env(safe-area-inset-right, 0px))',
-  bottom: 'max(18px, env(safe-area-inset-bottom, 0px))',
+  right: 'max(14px, env(safe-area-inset-right, 0px))',
+  bottom: 'max(14px, env(safe-area-inset-bottom, 0px))',
   zIndex: 22,
   display: 'inline-flex',
   alignItems: 'flex-end',
@@ -742,7 +750,12 @@ export default function Jukebox({ blockPulseAtMs }: JukeboxProps) {
             justifyContent: 'flex-start',
             height: JUKEBOX_CHIP_HEIGHT_PX,
             padding: '0 9px',
-            border: '1px solid rgba(32,240,255,.42)',
+            // NO BOX. The chip drew a full 1px cyan border AND the two orange
+            // brackets below — a box-plus-brackets form no panel in the HUD
+            // wears, and the shape grammar has no fifth form to put it in
+            // (report A, A-11). The brackets are the docked panel's tell and
+            // they say it alone, the way `HudPanel` does; the dark moat in the
+            // shadow below is what separates the chip from the scene.
             background:
               'linear-gradient(180deg,rgba(3,10,18,.96),rgba(0,0,0,.94))',
             // The third shadow is a dark moat: it fades the cyan mesh wires

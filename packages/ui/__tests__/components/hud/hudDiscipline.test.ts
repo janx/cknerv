@@ -1222,6 +1222,185 @@ describe('one shape grammar', () => {
     expect(offenders).toEqual([]);
   });
 
+  it('nothing in the HUD cuts its own diamond', () => {
+    // The fifth mark, and the one that was never drawn: eleven `rotate(45deg)`
+    // spans in five files (report F, F-12), at four sizes, six glow alphas and
+    // four spellings of the same fill. Same rule as the chip's, and it can be
+    // stricter than the chip's because a rotation has exactly one legitimate
+    // author: `DiamondMark`, whose transform never reaches a caller.
+    //
+    // The angle itself is `DIAMOND_ROTATION` in `hudTheme.ts`, because one
+    // diamond cannot be a component — the route ledger's scroll marker is
+    // positioned from a CSS custom property and lives in the stylesheet — and
+    // two authors of one angle is what this whole file is about.
+    const offenders: string[] = [];
+    for (const source of PACKAGE_SOURCES) {
+      if (source.name.endsWith('hudTheme.ts')) continue;
+      for (const _ of code(source.text).matchAll(/rotate\(45deg\)/g)) {
+        offenders.push(`${source.name}: a hand-cut diamond → say DiamondMark`);
+      }
+    }
+    expect(offenders).toEqual([]);
+
+    // The theme writes it once, as the constant, and the stylesheet reads it.
+    const theme = code(SOURCES.find((source) => source.name === 'hudTheme.ts')?.text ?? '');
+    expect(theme.match(/rotate\(45deg\)/g) ?? []).toHaveLength(1);
+    expect(theme).toContain("export const DIAMOND_ROTATION = 'rotate(45deg)';");
+    expect(theme).toContain('${DIAMOND_ROTATION}}`');
+
+    // …and the mark is worn, by the four surfaces that draw a point on a line.
+    const wearers = SOURCES
+      .filter((source) => source.name !== SHAPE_SOURCE && code(source.text).includes('<DiamondMark'))
+      .map((source) => source.name)
+      .sort();
+    expect(wearers).toEqual([
+      'ConsensusIdentityPlate.tsx',
+      'PeerLinkCard.tsx',
+      'StatusStrip.tsx',
+    ]);
+  });
+
+  it('a menu is a floating object, and wears the cut', () => {
+    // `primitives.tsx` states four forms and the PANELS dropdown wore the
+    // wrong one: two docked brackets on the most transient object in the HUD,
+    // and not even the house's brackets — 10 px at opacity 1 and offset −1
+    // against `HudPanel`'s 11 at 0.8 (report A, A-11).
+    const strip = code(SOURCES.find((source) => source.name === 'StatusStrip.tsx')?.text ?? '');
+    const menu = strip.slice(strip.indexOf('data-panel-visibility-menu'));
+    expect(menu.slice(0, 900), 'the panels menu lost the floating cut')
+      .toContain('clipPath: PLATE_CUT_CLIP');
+    expect(menu.slice(0, 900), 'the panels menu draws brackets of its own')
+      .not.toMatch(/borderLeft: `1px solid \$\{HUD_COLORS\.orange\}`/);
+  });
+
+  it('an ellipsis is never left without a nowrap', () => {
+    // `textOverflow` does nothing on its own: a string with a space in it
+    // wraps inside the box instead of ellipsizing, and only the strings that
+    // happen to have no break opportunity — hashes — looked right (report F,
+    // F-17). Three sites relied on an ANCESTOR's nowrap, which is a treatment
+    // one edit from breaking.
+    const offenders: string[] = [];
+    let sites = 0;
+    for (const source of domDialect()) {
+      const text = code(source.text);
+      for (const site of text.matchAll(/textOverflow:\s*'ellipsis'/g)) {
+        sites += 1;
+        const object = enclosingObject(text, site.index ?? 0) ?? '';
+        if (/whiteSpace:\s*'nowrap'/.test(object)) continue;
+        offenders.push(`${source.name}: an ellipsis with nothing stopping the wrap`);
+      }
+    }
+    expect(offenders).toEqual([]);
+    expect(sites, 'no ellipsis found — did the sweep stop reading?').toBeGreaterThan(15);
+  });
+
+  it('the dead primitive is gone, and the live one is still worn', () => {
+    // `ScopeStage` had zero production uses and one unit test keeping it
+    // alive, which is a component the suite is testing on behalf of nobody
+    // (report F, F-13). `Gauge` has one reader and stays.
+    const shape = code(SOURCES.find((source) => source.name === SHAPE_SOURCE)?.text ?? '');
+    expect(shape).not.toContain('export function ScopeStage');
+    expect(shape).toContain('export function Gauge');
+    const gaugeReaders = SOURCES
+      .filter((source) => source.name !== SHAPE_SOURCE && code(source.text).includes('<Gauge'));
+    expect(gaugeReaders.map((source) => source.name)).toEqual(['BackfillBar.tsx']);
+  });
+
+  /** The base a channel expression starts from, or `null` when it starts from
+   *  something with a name. A literal multiplied by something is a RATIO — the
+   *  0.055 the plate tail tints by — and is not a colour; a literal added to
+   *  one is a GROUND, and this palette says a ground is spelled once. */
+  function literalBase(argument: string): number | null {
+    for (const number of argument.matchAll(/(?<![\w.])(\d+(?:\.\d+)?)(?![\w.])/g)) {
+      const before = argument.slice(0, number.index).trimEnd();
+      const after = argument.slice((number.index ?? 0) + number[0].length).trimStart();
+      if (/[*/]$/.test(before) || /^[*/]/.test(after)) continue;
+      return Number(number[1]);
+    }
+    return null;
+  }
+
+  /** Every `rgba(` whose three channels start from literals, with those
+   *  literals. Both notations: a plain triple, and one ASSEMBLED inside a
+   *  template — which is the one the palette's own literal ban cannot see,
+   *  because there is never a triple in the source to find. */
+  function assembledColours(text: string): number[][] {
+    const found: number[][] = [];
+    for (const call of text.matchAll(/rgba\(/g)) {
+      const start = (call.index ?? 0) + 5;
+      let depth = 1;
+      let end = start;
+      while (end < text.length && depth > 0) {
+        if (text[end] === '(') depth += 1;
+        else if (text[end] === ')') depth -= 1;
+        if (depth > 0) end += 1;
+      }
+      const args: string[] = [];
+      let current = '';
+      let nested = 0;
+      for (const character of text.slice(start, end)) {
+        if (character === '(' || character === '{') nested += 1;
+        else if (character === ')' || character === '}') nested -= 1;
+        if (character === ',' && nested === 0) { args.push(current); current = ''; continue; }
+        current += character;
+      }
+      args.push(current);
+      if (args.length < 3) continue;
+      const bases = args.slice(0, 3).map(literalBase);
+      if (bases.some((base) => base === null)) continue;
+      found.push(bases as number[]);
+    }
+    return found;
+  }
+
+  it('a near-black is never assembled out of numbers', () => {
+    // `stageGround` is the dark every floating surface is drawn on and the
+    // palette says it is spelled once. Twelve spellings of it were found and
+    // retired; a THIRTEENTH survived that round because it was not a spelling
+    // at all — `spatialPlateTail` built one with arithmetic, `rgba(4 + r·.055,
+    // 8 + g·.055, 14 + b·.055, .95)`, 6.7 from the token and invisible to a
+    // sweep looking for triples (report F, F-15).
+    const NEAR_BLACK = 24;
+    const offenders: string[] = [];
+    for (const source of domDialect()) {
+      if (PALETTE_SOURCES.has(source.name)) continue;
+      for (const channels of assembledColours(code(source.text))) {
+        if (channels.some((channel) => channel >= NEAR_BLACK)) continue;
+        offenders.push(
+          `${source.name}: rgba(${channels.join(',')}…) is a near-black — say rgba(stageGround, α)`,
+        );
+      }
+    }
+    expect(offenders).toEqual([]);
+
+    // The pin, in both notations, because a green sweep over a shape it cannot
+    // parse says nothing. The first is the tail as it was; the second is the
+    // tail as it is, and the difference is where the ground comes from.
+    expect(assembledColours('rgba(${Math.round(4 + r * 0.055)},${Math.round(8 + g * 0.055)},${Math.round(14 + b * 0.055)},0.95)'))
+      .toEqual([[4, 8, 14]]);
+    expect(assembledColours('rgba(${Math.round(gr + r * 0.055)},${Math.round(gg + g * 0.055)},${Math.round(gb + b * 0.055)},0.95)'))
+      .toEqual([]);
+    expect(assembledColours('rgba(2,5,12,0.9)')).toEqual([[2, 5, 12]]);
+
+    // …and the tail reads the token rather than a number that resembles it.
+    const shape = code(SOURCES.find((source) => source.name === SHAPE_SOURCE)?.text ?? '');
+    expect(shape).toMatch(/spatialPlateTail[\s\S]{0,600}?channels\(HUD_COLORS\.stageGround\)/);
+  });
+
+  it('one docked panel does not outrank the others', () => {
+    // The ECG carried `zIndex: 12` on its `HudPanel` and no comment said why;
+    // every other rail panel is auto (report F, F-14). A docked panel that
+    // lifts itself above its neighbours is claiming a stacking order the rail
+    // does not have.
+    const offenders: string[] = [];
+    for (const source of domDialect()) {
+      for (const site of code(source.text).matchAll(/<HudPanel[^>]*zIndex:\s*(\d+)/g)) {
+        offenders.push(`${source.name}: a docked panel at zIndex ${site[1]}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
   it('the outline chip is worn outside the file that describes it', () => {
     const wearers = SOURCES.filter(
       (source) => source.name !== SHAPE_SOURCE

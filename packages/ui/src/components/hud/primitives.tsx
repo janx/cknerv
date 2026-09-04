@@ -1,5 +1,5 @@
 import { useState, type CSSProperties, type ReactNode } from 'react';
-import { CJK_BASELINE_LIFT, COMPANION_OPACITY, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import { CJK_BASELINE_LIFT, COMPANION_OPACITY, DIAMOND_ROTATION, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 
 // ——— The shape grammar ————————————————————————————————————————————————
 //
@@ -151,6 +151,69 @@ export function PanelGridMark({ size = 7 }: { size?: number }) {
   );
 }
 
+/** A DIAMOND. The fifth mark, and the one that was never drawn: eleven hand-cut
+ *  `rotate(45deg)` spans in five files (report F, F-12), at four sizes, six
+ *  glow alphas and four different ways of filling the same shape.
+ *
+ *  What it means, everywhere it appears: A POINT ON A LINE. The scrubber's
+ *  position on its track, the locked hop on its route, a stage on the read
+ *  ladder, the sync ladder's two ends. That is why it is a diamond and not a
+ *  lamp: a lamp is a condition, and a condition has no place on a scale.
+ *
+ *  Four fills, and the fill is what the point is doing:
+ *
+ *    none     a marker on nothing — the outline alone.
+ *    ground   a HOLE. The mark sits ON its track rather than over it, which is
+ *             the same knockout the strip's scrubber beads use and the reason
+ *             `HUD_COLORS.ground` exists.
+ *    wash     present but not reached — the outline with a tint inside it.
+ *    solid    reached.
+ *
+ *  ONE GLOW, sized to the mark rather than chosen per site. The eleven sites
+ *  spent 0.53, 0.55, 0.65, 0.67, 0.7, 0.72 and 1.0 on the same halo; none of
+ *  them is a decision, and a halo that grows with its mark is the rule the
+ *  numbers were groping for. */
+export function DiamondMark({ color, size = 5, fill = 'none', glow = true, centered, attrs, style }: {
+  color: string;
+  size?: number;
+  fill?: 'none' | 'ground' | 'wash' | 'solid';
+  glow?: boolean;
+  /** Which axes the mark is centred on its own position. The transform is the
+   *  primitive's, so a caller positions with `left`/`top` and never writes the
+   *  rotation itself — that is what let eleven of these drift. */
+  centered?: 'x' | 'both';
+  /** The site's own `data-*` hooks, the way `TopBand` takes its tenants'. A
+   *  mark that names a scrubber or a route position is queried by tests and by
+   *  the capture driver, and a primitive that swallowed those hooks would make
+   *  itself unusable at exactly the sites that most need one. */
+  attrs?: Record<string, string>;
+  style?: CSSProperties;
+}) {
+  const translate = centered === 'both'
+    ? 'translate(-50%, -50%) '
+    : centered === 'x' ? 'translateX(-50%) ' : '';
+  return (
+    <span
+      aria-hidden="true"
+      data-diamond-mark={fill}
+      {...attrs}
+      style={{
+        flex: '0 0 auto',
+        boxSizing: 'border-box',
+        width: size,
+        height: size,
+        border: `1px solid ${color}`,
+        background: fill === 'ground'
+          ? HUD_COLORS.ground
+          : fill === 'wash' ? rgba(color, 0.18) : fill === 'solid' ? color : 'transparent',
+        boxShadow: glow ? `0 0 ${size + 2}px ${rgba(color, 0.62)}` : undefined,
+        transform: `${translate}${DIAMOND_ROTATION}`,
+        ...style,
+      }}
+    />
+  );
+}
+
 /** "This drags sideways." The one mark that is a drawing rather than a form —
  *  a double-headed arrow has no CSS shorthand, and `↔` is carried by no face
  *  the HUD ships or could ship: the upstream Latin faces do not have it
@@ -213,7 +276,7 @@ export function PanelHeader({ en, cjk, idx, accent, compact = false }: {
           name, and a name does not break. The English title beside it may
           wrap; it is words. */}
       <span style={{ ...CJK_BASELINE_LIFT, flex: '0 0 auto', whiteSpace: 'nowrap', fontFamily: HUD_FONTS.cjk, fontWeight: 400, fontSize: HUD_TYPE.section, color: HUD_COLORS.orangeDeep, opacity: COMPANION_OPACITY }}>{cjk}</span>
-      <span style={{ marginLeft: 'auto', flex: '0 0 auto', whiteSpace: 'nowrap', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.tech, color: accent ?? HUD_COLORS.moduleSlate, letterSpacing: 0.9, textShadow: accent ? `0 0 7px ${accent}66` : undefined }}>{idx}</span>
+      <span style={{ marginLeft: 'auto', flex: '0 0 auto', whiteSpace: 'nowrap', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.tech, color: accent ?? HUD_COLORS.moduleSlate, letterSpacing: 0.9, textShadow: accent ? `0 0 7px ${rgba(accent, 0.4)}` : undefined }}>{idx}</span>
     </div>
   );
 }
@@ -326,108 +389,6 @@ export function ReadoutHeader({ title, meta, accent, stale = false, compact = fa
   );
 }
 
-/** One step in a base-to-enhanced information scope. The rail makes source
- * expansion read as one hierarchy instead of independent panels stacked
- * together. */
-export function ScopeStage({ id, label, meta, accent, terminal = false, flush = false, style, children }: {
-  id: string;
-  label: string;
-  meta?: ReactNode;
-  accent: string;
-  terminal?: boolean;
-  /** Keep headings and values on the parent panel's columns. The scope rail is
-   * drawn just outside the content instead of consuming an inset column. */
-  flush?: boolean;
-  style?: CSSProperties;
-  children: ReactNode;
-}) {
-  if (flush) {
-    return (
-      <div
-        data-scope-stage={id}
-        data-scope-layout="flush"
-        style={{ position: 'relative', paddingBottom: terminal ? 0 : 9, ...style }}
-      >
-        <span
-          aria-hidden="true"
-          style={{
-            position: 'absolute',
-            left: -8,
-            top: 4,
-            width: 5,
-            height: 5,
-            border: `1px solid ${accent}`,
-            background: rgba(accent, 0.18),
-            boxShadow: `0 0 6px ${rgba(accent, 0.55)}`,
-            transform: 'rotate(45deg)',
-          }}
-        />
-        {!terminal ? (
-          <span
-            data-scope-connector
-            aria-hidden="true"
-            style={{
-              position: 'absolute',
-              left: -5.5,
-              top: 12,
-              bottom: -1,
-              width: 1,
-              background: `linear-gradient(180deg,${rgba(accent, 0.55)},${rgba(accent, 0.1)})`,
-            }}
-          />
-        ) : null}
-        <div
-          data-scope-header
-          style={{
-            display: 'flex',
-            alignItems: 'baseline',
-            gap: 6,
-            minWidth: 0,
-            marginBottom: 4,
-            fontFamily: HUD_FONTS.tech,
-            fontSize: HUD_TYPE.micro,
-            letterSpacing: 1.2,
-            textTransform: 'uppercase',
-          }}
-        >
-          <span style={{ color: accent, whiteSpace: 'nowrap' }}>{label}</span>
-          {meta != null ? (
-            <span style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {meta}
-            </span>
-          ) : null}
-        </div>
-        <div data-scope-content style={{ minWidth: 0 }}>{children}</div>
-      </div>
-    );
-  }
-
-  return (
-    <div
-      data-scope-stage={id}
-      style={{ display: 'grid', gridTemplateColumns: '10px minmax(0,1fr)', columnGap: 7, ...style }}
-    >
-      <span aria-hidden="true" style={{ position: 'relative', minHeight: 18 }}>
-        <span style={{ position: 'absolute', left: 2, top: 5, width: 5, height: 5, border: `1px solid ${accent}`, background: rgba(accent, 0.18), boxShadow: `0 0 6px ${rgba(accent, 0.55)}`, transform: 'rotate(45deg)' }} />
-        {!terminal ? (
-          <span data-scope-connector style={{ position: 'absolute', left: 4.5, top: 12, bottom: -8, width: 1, background: `linear-gradient(180deg,${rgba(accent, 0.55)},${rgba(accent, 0.1)})` }} />
-        ) : null}
-      </span>
-      <div style={{ minWidth: 0, paddingBottom: terminal ? 0 : 9 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0, marginBottom: 4, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, letterSpacing: 1.2, textTransform: 'uppercase' }}>
-          <span style={{ color: accent, whiteSpace: 'nowrap' }}>{label}</span>
-          {meta != null ? (
-            <span style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {meta}
-            </span>
-          ) : null}
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
-
 /** The track is derived from the fill, so a REORG-red or rebuild-violet gauge
  *  stops sitting inside a green frame — the hardcoded surround was a second,
  *  contradictory reading of the same bar. */
@@ -468,13 +429,20 @@ export function CloseButton({ onClose, title }: { onClose: () => void; title?: s
 // lit text). A floating object that is NOT anchored in the scene wears the cut
 // without the gradient — see `BackfillBar.tsx`.
 
-/** Dark tail tinted faintly toward the accent — directional, never sheer. */
+/** Dark tail tinted faintly toward the accent — directional, never sheer.
+ *
+ *  ⚠️ The base is `stageGround`, READ, and that is the whole of the fix here:
+ *  it was the arithmetic literal (4, 8, 14), a thirteenth spelling of the
+ *  near-black this palette says is spelled once (report F, F-15) and 6.7 from
+ *  the token. A value assembled by arithmetic is still a value, and it is the
+ *  one shape the ink jurisdiction's sweep could not see — which is exactly why
+ *  it survived the round that deleted the other twelve. */
 export function spatialPlateTail(accent: string): string {
-  const h = accent.replace('#', '');
-  const r = parseInt(h.slice(0, 2), 16);
-  const g = parseInt(h.slice(2, 4), 16);
-  const b = parseInt(h.slice(4, 6), 16);
-  return `rgba(${Math.round(4 + r * 0.055)},${Math.round(8 + g * 0.055)},${Math.round(14 + b * 0.055)},0.95)`;
+  const channels = (hex: string) => [0, 2, 4]
+    .map((offset) => parseInt(hex.replace('#', '').slice(offset, offset + 2), 16));
+  const [r, g, b] = channels(accent);
+  const [gr, gg, gb] = channels(HUD_COLORS.stageGround);
+  return `rgba(${Math.round(gr + r * 0.055)},${Math.round(gg + g * 0.055)},${Math.round(gb + b * 0.055)},0.95)`;
 }
 
 export function spatialPlateBackground(accent: string): string {

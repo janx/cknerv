@@ -22,7 +22,7 @@ import {
   useCellDisplayRuntime,
 } from '../../tweaks/cellDisplay';
 import { CJK_BASELINE_LIFT, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
-import { DirectionMark, PanelGridMark, severityChip } from './primitives';
+import { DiamondMark, DirectionMark, PanelGridMark, PLATE_CUT_CLIP, severityChip } from './primitives';
 import { POPULATION_SCOPE } from './cellPopulation.presentation';
 
 export type BuildInfo = { version: string; href: string };
@@ -255,11 +255,18 @@ function PanelVisibilityControl({ panels, onChange, compact = false, menuOffset 
             border: `1px solid ${rgba(HUD_COLORS.orange, 0.34)}`,
             background: rgba(HUD_COLORS.stageGround, 0.96),
             boxShadow: `0 8px 28px ${rgba(HUD_COLORS.ground, 0.72)}, 0 0 18px ${rgba(HUD_COLORS.orange, 0.08)}`,
+            // THE FLOATING CUT, not two brackets. `primitives.tsx` states the
+            // shape grammar in four forms and this menu was wearing the wrong
+            // one: brackets say "bolted to the frame, present the whole
+            // session", and a dropdown is the most transient object in the
+            // HUD — it exists between two clicks. It was not even the docked
+            // form as the house draws it (10 px at opacity 1 and offset −1
+            // against `HudPanel`'s 11 at 0.8), which is what a hand-cut copy
+            // of a shape always becomes (report A, A-11).
+            clipPath: PLATE_CUT_CLIP,
             fontFamily: HUD_FONTS.mono,
           }}
         >
-          <span aria-hidden style={{ position: 'absolute', left: -1, top: -1, width: 10, height: 10, borderLeft: `1px solid ${HUD_COLORS.orange}`, borderTop: `1px solid ${HUD_COLORS.orange}` }} />
-          <span aria-hidden style={{ position: 'absolute', right: -1, bottom: -1, width: 10, height: 10, borderRight: `1px solid ${HUD_COLORS.orange}`, borderBottom: `1px solid ${HUD_COLORS.orange}` }} />
           <div
             style={{
               display: 'flex',
@@ -522,17 +529,7 @@ function CellDisplayControl({
           transition: 'color .14s, text-shadow .14s',
         }}
       >
-        <span
-          aria-hidden="true"
-          style={{
-            width: 4,
-            height: 4,
-            border: `1px solid ${accent}`,
-            background: rgba(accent, 0.2),
-            boxShadow: `0 0 6px ${rgba(accent, 0.65)}`,
-            transform: 'rotate(45deg)',
-          }}
-        />
+        <DiamondMark color={accent} size={4} fill="wash" />
         {modeLabel}
       </button>
       <span
@@ -621,20 +618,13 @@ function CellDisplayControl({
             }}
           />
         ) : null}
-        <span
-          aria-hidden="true"
-          data-cell-display-cap-marker
-          style={{
-            position: 'absolute',
-            left: `${progress}%`,
-            top: 6,
-            width: 6,
-            height: 6,
-            border: `1px solid ${accent}`,
-            background: HUD_COLORS.ground,
-            boxShadow: `0 0 7px ${rgba(accent, 0.72)}`,
-            transform: 'translateX(-50%) rotate(45deg)',
-          }}
+        <DiamondMark
+          color={accent}
+          attrs={{ 'data-cell-display-cap-marker': 'true' }}
+          size={6}
+          fill="ground"
+          centered="x"
+          style={{ position: 'absolute', left: `${progress}%`, top: 6 }}
         />
         <input
           className="cknerv-cell-display-slider"
@@ -814,19 +804,12 @@ function RenderQualityControl({ compact = false }: { compact?: boolean }) {
               ) : null}
               {mode === 'auto' ? 'AUTO' : mode[0].toUpperCase()}{autoSuffix}
               {active ? (
-                <span
-                  aria-hidden="true"
-                  style={{
-                    position: 'absolute',
-                    left: '50%',
-                    bottom: 0,
-                    width: 4,
-                    height: 4,
-                    border: `1px solid ${accent}`,
-                    background: HUD_COLORS.ground,
-                    boxShadow: `0 0 6px ${rgba(accent, 0.7)}`,
-                    transform: 'translateX(-50%) rotate(45deg)',
-                  }}
+                <DiamondMark
+                  color={accent}
+                  size={4}
+                  fill="ground"
+                  centered="x"
+                  style={{ position: 'absolute', left: '50%', bottom: 0 }}
                 />
               ) : null}
             </button>
