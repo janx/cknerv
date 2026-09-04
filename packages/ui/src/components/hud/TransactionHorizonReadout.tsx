@@ -45,7 +45,12 @@ export default function TransactionHorizonReadout({ source, record, compact = fa
           marginTop: 6,
           paddingTop: 5,
           borderTop: `1px solid ${rgba(accent, 0.16)}`,
-          opacity: stale ? STALE_OPACITY : 0.9,
+          // A FRESH reading is printed at full, here as everywhere else. The
+          // compact form used to sit at 0.9 for no stated reason, and 0.9
+          // beside a `STALE_OPACITY` that now clears the legibility floor is
+          // a distinction of two hundredths — i.e. no distinction at all. The
+          // `· STALE` token in the header is what tells the two apart.
+          opacity: stale ? STALE_OPACITY : 1,
         }}
       >
         <ReadoutHeader

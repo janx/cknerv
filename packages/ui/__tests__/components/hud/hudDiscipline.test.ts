@@ -4138,13 +4138,36 @@ describe('one alpha for a rule', () => {
     expect(STRIP_RAIL_RUNG).toBeLessThan(RAIL_RUNGS.row);
   });
 
-  it('dimming is two weights, and the theme says which two', () => {
+  it('dimming is two roles, and the theme says which two', () => {
     const comment = alphaComment();
     expect(comment).toContain(`STALE      ${STALE_OPACITY}`);
     expect(comment).toContain(`COMPANION  ${COMPANION_OPACITY}`);
-    // Two, and not one: a name's second name and a reading you cannot trust
-    // are different instructions to a reader.
-    expect(STALE_OPACITY).not.toBe(COMPANION_OPACITY);
+
+    // Two ROLES, and they used to be told apart by their numbers: 0.68 against
+    // 0.88, "a reading you cannot trust yet" against "a name's second name".
+    // Ruling 17 took that job off the weight, because weight cannot say either
+    // sentence — it can only say LESS LIGHT, and less light on a reading you
+    // are being told to go and check is the opposite instruction. Both weights
+    // are the legibility floor now (the oracle below derives each), so they
+    // coincide, and what carries the difference is the WORD: `· STALE` and its
+    // family beside a stale reading, a second NAME beside a first.
+    //
+    // So the toll is on the two names still existing and still meaning two
+    // things, not on their being two numbers. If a companion is ever set in an
+    // ink no stale reading wears, its floor moves and this equality goes away
+    // on its own — which is the difference between two derived numbers that
+    // agree and one number with two names.
+    expect(STALE_OPACITY).toBe(COMPANION_OPACITY);
+    for (const [name, sites] of [
+      ['STALE_OPACITY', /(?<![\w$-])opacity:[^,;}\n]*\bSTALE_OPACITY\b/],
+      ['COMPANION_OPACITY', /(?<![\w$-])opacity:[^,;}\n]*\bCOMPANION_OPACITY\b/],
+    ] as const) {
+      const worn = domDialect()
+        .filter((source) => sites.test(code(source.text)))
+        .map((source) => source.name);
+      expect(worn.length, `${name} has no wearers — a role with nothing in it`)
+        .toBeGreaterThan(3);
+    }
   });
 
   it('a zone break is louder than a rule, which is the whole distinction', () => {
@@ -4689,16 +4712,16 @@ describe('one ladder for time', () => {
 // never priced (report F, F-9). The measurement below reads BOTH notations,
 // and the companion's weight is now derived from the floor rather than picked.
 //
-// Its jurisdiction is the COMPANION and stops there, on purpose. The other
-// dimming roles are saying something a floor would contradict — a REVEAL
-// GHOST is a fact not yet reached, a disabled control is one that does not
-// work, and neither is asking to be read — while a companion is a qualifier
-// you may skip, which is not the same as one you cannot read. Two readings
-// found by the same sweep and NOT covered here are recorded as follow-ups
-// rather than swept in silence: a stale unread proof drawn in `dim` at
-// `STALE_OPACITY` (3.08 : 1) and the memory ledger's SPENT INPUTS value at a
-// bare `opacity: 0.86` in `dim` (4.40 : 1). Both are decisions about what
-// staleness means, which is a different ruling from this one.
+// Its jurisdiction is the COMPANION and the STALE reading, and stops there on
+// purpose. The other dimming roles are saying something a floor would
+// contradict — a REVEAL GHOST is a fact not yet reached, a disabled control is
+// one that does not work, and neither is asking to be read — while a companion
+// is a qualifier you may skip and a stale reading is one you are being told to
+// go and check, neither of which is the same as one you cannot read. The two
+// readings this sweep found and the companion ruling left open — a stale
+// unread proof in `dim` at `STALE_OPACITY` (3.08 : 1) and the memory ledger's
+// SPENT INPUTS value at a bare `opacity: 0.86` in `dim` (4.40 : 1) — are
+// ruling 17's, and they are held by the second floor below.
 
 /** WCAG relative luminance, and the contrast ratio built on it. Neither was
  *  here before, because everything this file measured until now was "can a
@@ -4994,6 +5017,140 @@ describe('two names are never one colour', () => {
       expect(card, `${name}: the masthead's accent moved — this oracle reads files off disk`)
         .toContain(binding);
     }
+  });
+
+  it('a stale reading is still a reading', () => {
+    // The user's ruling 17, and it is the companion's argument one role along.
+    // A companion is a qualifier you MAY skip; a stale reading is one you are
+    // being told to go and look at — "not trusted yet, find out why" — so of
+    // the two it is the one that can least afford to be dimmed out of reach.
+    // At 0.68 the unread identity proof read 3.08 : 1 (report F, F-9's other
+    // half), which is the instruction inverted.
+
+    // Every site the weight reaches, and the ink each one dims. A stale site
+    // is one of two shapes: a MARK or a value with its own `color:`, which
+    // prices here; or a WRAPPER over a whole readout, whose ink is whatever
+    // the subtree prints. For the wrapper the floor is set by the dimmest ink
+    // a READING is ever set in — `dim`, the ramp's bottom reading rung — and
+    // the assertion under this loop is what makes that claim honest.
+    const priced: Array<{ site: string; ink: string; hex: string }> = [];
+    const wrappers: string[] = [];
+    const unpriceable: string[] = [];
+    for (const source of domDialect()) {
+      const text = code(source.text);
+      for (const site of text.matchAll(/(?<![\w$-])opacity:[^,;}\n]*\bSTALE_OPACITY\b/g)) {
+        const object = enclosingObject(text, site.index ?? 0) ?? '';
+        const ink = /(?<![\w$-])color:\s*([^,;}\n]+)/.exec(object)?.[1]?.trim() ?? '';
+        if (ink === '') { wrappers.push(source.name); continue; }
+        // A ternary paints two inks and the DIMMER of the two is the one the
+        // floor has to hold, so both halves are read.
+        const tokens = [...ink.matchAll(/HUD_COLORS\.(\w+)/g)]
+          .map((match) => match[1])
+          .filter((token) => /^#[0-9a-fA-F]{6}$/.test(String(HUD_COLORS[token as keyof typeof HUD_COLORS])));
+        if (tokens.length === 0) {
+          // An accent, a segment colour or a card constant: brighter than
+          // `dim` by the pin the companion oracle already holds, and not
+          // resolvable from source. Named so the list is a reading.
+          if (/\baccent\b|SEGMENT_COLORS|\bcolor\b|ORANGE|CYAN|VIOLET|memoryInk/.test(ink)) continue;
+          unpriceable.push(`${source.name}: a stale reading in \`${ink}\` — an ink this floor cannot read`);
+          continue;
+        }
+        for (const token of tokens) {
+          priced.push({ site: source.name, ink: token, hex: HUD_COLORS[token as keyof typeof HUD_COLORS] as string });
+        }
+      }
+    }
+    expect(unpriceable).toEqual([]);
+
+    // The sweep found both shapes, so neither branch below is an empty loop.
+    expect(priced.length).toBeGreaterThan(0);
+    expect(wrappers.length).toBeGreaterThan(3);
+
+    for (const entry of priced) {
+      const ratio = contrastRatio(over(entry.hex, STALE_OPACITY, PANEL_SURFACE), PANEL_SURFACE);
+      expect(
+        ratio,
+        `${entry.site}: a stale reading in ${entry.ink} reads ${ratio.toFixed(2)} : 1 on the panel`,
+      ).toBeGreaterThanOrEqual(CONTRAST_FLOOR);
+    }
+
+    // The wrappers' claim, made honest: the one ink in the ramp that CANNOT
+    // survive any dimming at all is `moduleSlate` (4.57 : 1 at full weight, so
+    // its least clearing weight is 1), and it is never inside a dimmed
+    // readout — it is worn by the module code in a panel HEADER and by the
+    // scene's own marker caption, both outside every stale wrapper. So `dim`
+    // really is the dimmest ink a stale wrapper can be covering.
+    expect(
+      contrastRatio(over(HUD_COLORS.moduleSlate, STALE_OPACITY, PANEL_SURFACE), PANEL_SURFACE),
+    ).toBeLessThan(CONTRAST_FLOOR);
+    const tagWearers = PACKAGE_SOURCES
+      .filter((source) => code(source.text).includes('HUD_COLORS.moduleSlate'))
+      .map((source) => source.name)
+      .sort();
+    expect(tagWearers).toEqual([
+      'components/hud/primitives.tsx',
+      'nerve/ConsensusMemoryMarkers.tsx',
+    ]);
+    for (const wrapper of new Set(wrappers)) {
+      expect(wrapper, 'a stale wrapper in a file that also writes the module tag')
+        .not.toBe('primitives.tsx');
+    }
+    const ratio = contrastRatio(over(HUD_COLORS.dim, STALE_OPACITY, PANEL_SURFACE), PANEL_SURFACE);
+    expect(ratio, `a stale readout in \`dim\` reads ${ratio.toFixed(2)} : 1`)
+      .toBeGreaterThanOrEqual(CONTRAST_FLOOR);
+
+    // …and DERIVED, the same way the companion's is: the least hundredth that
+    // clears the floor for that ink. One hundredth down and it fails, so the
+    // constant cannot drift toward the old look without this going red.
+    const cleared = (weight: number) =>
+      contrastRatio(over(HUD_COLORS.dim, weight, PANEL_SURFACE), PANEL_SURFACE) >= CONTRAST_FLOOR;
+    expect(cleared(STALE_OPACITY)).toBe(true);
+    expect(
+      cleared(Math.round((STALE_OPACITY - 0.01) * 100) / 100),
+      'STALE_OPACITY is dimmer than the floor needs — it is derived, not chosen',
+    ).toBe(false);
+
+    // And the half the floor cannot do: with the weight off the job, the WORD
+    // has to carry it. Every file that dims for staleness also says so in
+    // language or in a mark — this is the sweep that makes the constant's
+    // rise safe rather than merely legible.
+    const SAYS_SO: Record<string, string> = {
+      'ActivityFeedReadout.tsx': 'stale={stale}',
+      'CellByteBudget.tsx': 'OBSERVED',
+      'CellDetailPanel.tsx': "proof.read ? '◆' : '◇'",
+      'ChainCapacityReadout.tsx': 'stale={stale}',
+      'ConsensusIdentityPlate.tsx': 'SPENT INPUTS',
+      'DaoStateReadout.tsx': '· STALE',
+      'NetworkAtlasReadout.tsx': 'ATLAS STALE',
+      'PeerLinkCard.tsx': "'Peer latency unmeasured'",
+      'ProtocolEraBadge.tsx': 'aria-label',
+      'TransactionHorizonReadout.tsx': 'stale={stale}',
+    };
+    const silent: string[] = [];
+    const dimming = domDialect()
+      .filter((source) => /(?<![\w$-])opacity:[^,;}\n]*\bSTALE_OPACITY\b/.test(code(source.text)));
+    for (const source of dimming) {
+      const says = SAYS_SO[source.name];
+      if (says === undefined) {
+        silent.push(`${source.name}: dims for staleness and this table does not say what it prints`);
+        continue;
+      }
+      if (source.text.includes(says)) continue;
+      silent.push(`${source.name}: dims for staleness and no longer prints \`${says}\``);
+    }
+    expect(silent).toEqual([]);
+    // The table and the sweep are one list. A file that stopped dimming for
+    // staleness — or that dims for it by a bare number instead of the
+    // constant, which is what `ConsensusIdentityPlate` did at 0.86 — drops out
+    // of the sweep, and this is what notices.
+    expect(dimming.map((source) => source.name).sort())
+      .toEqual(Object.keys(SAYS_SO).sort());
+
+    // The `· STALE` token itself, which four of those ten reach through one
+    // component rather than printing. If it left `ReadoutHeader` the four
+    // rows above would go on passing while nothing said the word.
+    expect(code(SOURCES.find((source) => source.name === 'primitives.tsx')?.text ?? ''))
+      .toContain('<span data-readout-stale>· STALE</span>');
   });
 });
 

@@ -998,6 +998,11 @@ const CellScanFact = memo(function CellScanFact({
             title={proof.read
               ? 'IDENTITY PROOF · READ'
               : 'IDENTITY PROOF · select to read — all three arm MEMORY TRACE'}
+            // Read against unread is said by the MARK — ◆ filled against ◇
+            // hollow, gold against `dim` — and the dimming is the third of the
+            // three signals rather than the whole of it. At the old 0.68 this
+            // glyph was the dimmest thing on the card at 3.08 : 1, which told
+            // a reader to skip the one fact the card wants them to go and get.
             style={{ marginLeft: 5, color: proof.read ? HUD_COLORS.goldInk : HUD_COLORS.dim, opacity: proof.read ? 1 : STALE_OPACITY }}
           >
             {proof.read ? '◆' : '◇'}

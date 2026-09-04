@@ -755,10 +755,10 @@ export const HUD_MOTION = {
 // between needs a weight of its own, and eight weights for two sentences means
 // no sentence had a weight.
 //
-//   STALE      0.68 — a reading whose source has gone quiet, a bar whose data
+//   STALE      0.88 — a reading whose source has gone quiet, a bar whose data
 //              is partial, a compass with nothing measured on it, a proof not
 //              yet read, a row that cannot be armed. Eight of the nine
-//              staleness sites already wore it; DAO's 0.72 was the ninth.
+//              staleness sites already wore 0.68; DAO's 0.72 was the ninth.
 //   COMPANION  0.88 — the CJK name beside its Latin (细胞, 对端, 节点, 字节元,
 //              and every `SpatialPlateHeader`) and the scope tag beside its
 //              count (`CHAIN`, `OBSERVED`, `STAGE`). Same role, same shape: a
@@ -766,8 +766,8 @@ export const HUD_MOTION = {
 //              competes with the thing it qualifies. It was 0.7 in two places
 //              and 0.72 in five; the tags were 0.8.
 //
-// AND THE COMPANION'S WEIGHT IS NOT A TASTE, IT IS THE FLOOR (the user's
-// ruling, 2026-09-05). At 0.72 a companion in `dim` composited to 3.35 : 1 on
+// AND NEITHER WEIGHT IS A TASTE. BOTH ARE THE FLOOR (the user's rulings, 14
+// and 17, 2026-09-05). At 0.72 a companion in `dim` composited to 3.35 : 1 on
 // the panel and 3.11 on a rose-lit one, at `label` — 9px, the smallest size
 // this HUD sets Chinese at, and a mincho stroke is thinner than the Latin
 // beside it at the same size. "You may skip this" and "you cannot read this"
@@ -780,18 +780,39 @@ export const HUD_MOTION = {
 // that floor rather than pinning the number, so a companion put in a new ink
 // tomorrow moves the constant instead of quietly falling under it.
 //
-// What that costs: the gap between a name and its companion is now carried
-// mostly by SIZE and by the face — `label` mincho beside `section` tech — with
-// the dimming as the third and smallest of the three signals rather than the
-// loudest. Which is the right order: a companion that has to be dimmed into
-// illegibility to stop competing was set too large to begin with.
+// A STALE READING IS STILL A READING, and that is the same sentence one role
+// along. 0.68 put the unread identity proof — `dim`, at `label` — at 3.08 : 1,
+// which is not "do not trust this yet", it is "do not read this"; and the two
+// are opposite instructions, because the whole point of flagging a reading as
+// stale is that you should go and LOOK at it. Same ink, same surface, same
+// floor, so the same 0.88. The two names stay two because the ROLES are two
+// and each is derived from its own dimmest ink — they coincide today, and a
+// companion set tomorrow in an ink no stale reading wears would move one of
+// them and not the other.
+//
+// What carries the difference once the weight cannot: the WORD. Every stale
+// site says so in language — `· STALE` on the four rail readouts and the DAO
+// footer, `ATLAS STALE` on the atlas, `OBSERVED` on a partial byte segment,
+// `SPENT INPUTS` on the memory ledger's unroutable ones, ◇ against ◆ on the
+// identity proof, an `aria-label` on the unmeasured compass — and the dimming
+// is the hint that sends the eye to the word, not the statement itself. That
+// inversion is the ruling: a reading dimmed to the edge of legibility says
+// "this does not matter", and the one thing a stale reading is NOT is
+// unimportant.
+//
+// What it costs, both times: the gap between a name and its companion, and
+// between a fresh reading and a stale one, is now carried mostly by SIZE, by
+// the face and by the word — `label` mincho beside `section` tech; `· STALE`
+// beside a number — with the dimming as the smallest of the signals rather
+// than the loudest. Which is the right order: anything that had to be dimmed
+// into illegibility to make its point was making it the wrong way.
 //
 // NOT this ladder: a control you cannot press. `CellCausalLensReadout`'s
 // disabled toggle at 0.34 and `CellContentMemory`'s at 0.4 are not saying "do
 // not trust this", they are saying "this does not work", and the reader is
 // meant to stop at them rather than look past them. A far dimmer statement, on
 // purpose, and folding it in here would make a dead control look merely stale.
-export const STALE_OPACITY = 0.68;
+export const STALE_OPACITY = 0.88;
 export const COMPANION_OPACITY = 0.88;
 
 // ——— Reduced motion, which is a policy and was a courtesy ————————————————

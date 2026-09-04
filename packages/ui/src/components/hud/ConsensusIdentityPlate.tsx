@@ -27,7 +27,7 @@ import {
   consensusMemoryRouteHopPulseKey,
 } from '../../nerve/consensusRouteHopPulse';
 import { formatBlockRef, formatOutpoint } from './cellFormat';
-import { HUD_COLORS, HUD_FONTS, HUD_MOTION, HUD_TYPE, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_MOTION, HUD_TYPE, rgba, STALE_OPACITY } from './hudTheme';
 import { DiamondMark, PLATE_EDGE_ALPHA, PLATE_ROW_RAIL_ALPHA } from './primitives';
 
 const CYAN = HUD_COLORS.cyanWire;
@@ -867,7 +867,13 @@ function EvidenceLedger({
               whiteSpace: 'nowrap',
               textAlign: 'right',
               color: HUD_COLORS.dim,
-              opacity: 0.86,
+              // These are the inputs the ledger cannot route to — spent, and
+              // their sources gone from the memory. That is the STALE role
+              // exactly, so it takes the ladder's weight rather than the 0.86
+              // it was dimmed at for no declared reason (which read 4.40 : 1,
+              // under the floor). The word SPENT beside it is what says the
+              // rest.
+              opacity: STALE_OPACITY,
             }}
           >
             {unroutedInputs

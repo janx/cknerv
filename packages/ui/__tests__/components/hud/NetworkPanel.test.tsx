@@ -7,7 +7,7 @@ import type {
   ProducerLedgerWindow,
   ProducerStanding,
 } from '../../../src/derives/blockProducers.derive';
-import { HUD_COLORS } from '../../../src/components/hud/hudTheme';
+import { HUD_COLORS, STALE_OPACITY } from '../../../src/components/hud/hudTheme';
 
 afterEach(cleanup);
 
@@ -476,7 +476,7 @@ describe('NetworkPanel', () => {
     expect(caution[0]?.textContent).toBe('ATLAS STALE · AS OF #100');
     // The rows dim; the exception itself stays at full strength.
     expect((container.querySelector('[data-network-atlas-rows]') as HTMLElement)
-      .style.opacity).toBe('0.68');
+      .style.opacity).toBe(String(STALE_OPACITY));
     expect((caution[0] as HTMLElement).style.opacity).toBe('');
   });
 

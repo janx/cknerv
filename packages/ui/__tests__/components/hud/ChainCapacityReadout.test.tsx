@@ -6,6 +6,7 @@ import type {
   EnrichmentSourceStatus,
 } from '@cknerv/types';
 import ChainCapacityReadout from '../../../src/components/hud/ChainCapacityReadout';
+import { STALE_OPACITY } from '../../../src/components/hud/hudTheme';
 
 afterEach(cleanup);
 
@@ -195,7 +196,7 @@ describe('ChainCapacityReadout', () => {
       container.querySelectorAll<HTMLElement>('[data-indexed-context]'),
     );
     expect(indexed.length).toBeGreaterThan(0);
-    for (const section of indexed) expect(section.style.opacity).toBe('0.68');
+    for (const section of indexed) expect(section.style.opacity).toBe(String(STALE_OPACITY));
     expect(container.querySelector<HTMLElement>(
       '[data-population-row="Chain live"]',
     )?.style.opacity).toBe('1');
