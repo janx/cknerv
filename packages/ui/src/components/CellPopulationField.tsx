@@ -610,7 +610,13 @@ export default function CellPopulationField({
       state.size.height,
       pixelRatio,
     );
-    material.uniforms.uEmission.value = populationEmissionForGain(gain);
+    // ⟨ruling 22⟩ The galaxy's radiance rides the amount curve, because this
+    // layer states its level in ONE place and all three of its passes read it.
+    // Default 1 = today's picture.
+    material.uniforms.uEmission.value = populationEmissionForGain(
+      gain,
+      LIVE.cell.galaxyRadiance,
+    );
     // ⟨D-10 · knob c⟩ The far half's spend, on the beads only: the strokes
     // are a fixed index buffer whose light is already governed by the tissue
     // taper, and the reading D-4 measured is an ACCUMULATION artefact of a
@@ -630,7 +636,10 @@ export default function CellPopulationField({
       LIVE.cell.haloThreadOverview,
       cellDetailViewFocusRef?.current ?? 0,
     );
-    const fibreEmission = populationFibreEmissionForGain(gain) * threadLevel;
+    const fibreEmission = populationFibreEmissionForGain(
+      gain,
+      LIVE.cell.galaxyRadiance,
+    ) * threadLevel;
     fibreMaterial.uniforms.uEmission.value = fibreEmission;
     // The SAME value, not a scaled one. The two classes are one partition of
     // one set of strokes, and the only thing that separates them is width.

@@ -376,6 +376,23 @@ export const cellSchema = {
   // body materials. 0 is no depth cue at all. Argued at
   // `BODY_DEPTH_ENERGY_GLSL`.
   bodyDepthEnergy: { value: 0, min: 0, max: 0.6, step: 0.02, label: 'depth energy (far)' },
+  // ——— ⟨ruling 22⟩ How much light the canvas's FIRST focus spends ————————
+  //
+  // The camera gives the galaxy the stage back; this is the other half of
+  // 光辉灿烂, and it is not a number a measurement can settle. A capture can
+  // say the tissue's mean luminance moved; only the eye can say whether the
+  // organism reads radiant. So it is a live knob and it is PARKED AT 1, which
+  // is byte-for-byte the picture that shipped — turn it in the panel, against
+  // the live scene, and whatever the eye lands on becomes the default in a
+  // commit of its own.
+  //
+  // ⚠️ It is the TISSUE's gain and nothing else's: the Cell bodies' resting
+  // cloud and the halo's beads and strands. Not events (a flare, a focus ring,
+  // a landing and a recall reclaim headroom ABOVE the resting field on
+  // purpose), and not the peer mesh or the colony — those are the canvas's
+  // second focus and answer to their own ladder. Argued at
+  // `galaxyRadianceGain`.
+  galaxyRadiance: { value: 1, min: 0.6, max: 1.6, step: 0.02, label: 'galaxy radiance' },
 } satisfies FolderSchema;
 
 // Unlike every other folder, these four knobs change GRAPH SELECTION, not

@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { galaxySchema, deliverySchema, peerSchema, cellSchema, nerveSchema, FOLDER_LABELS } from '../../src/tweaks/tweakSchema';
 import { applyTweaks, LIVE } from '../../src/tweaks/liveTweaks';
@@ -9,8 +9,14 @@ import {
 } from '../../src/nerve/fabricLuminance';
 import {
   BODY_DEPTH_HALF_SPREAD,
+  GALAXY_RADIANCE_IDENTITY,
   bodyDepthEnergyValue,
+  galaxyRadianceGain,
 } from '../../src/materials/cellHybridMaterial';
+import {
+  populationEmissionForGain,
+  populationFibreEmissionForGain,
+} from '../../src/materials/populationFieldMaterial';
 import {
   CELL_DETAIL_VIEW_NEAR_DISTANCE,
   cellDetailViewFocus,
@@ -109,7 +115,14 @@ const EXPECTED_DEFAULTS = {
   // them. ⚠️ The three ranges are deliberately bounded well short of nothing
   // (0.3 / 0.3 / 0.6): each is a treatment, and a knob that can erase its own
   // layer is a bug report waiting to be filed.
-  cell: { fabricAlpha: 0.15, warmth: 0.12, centerDim: 0.3, activeColorR: 1.0, activeColorG: 1.0, activeColorB: 1.0, fabricWidth: 2.5, activeWidth: 4.6, reinforceAmount: 0.34, reinforceGain: 1.6, reinforceHalfLife: 3.0, fabricStaggerThreshold: 1500, fabricCohortSize: 750, fabricCohortInterval: 0.25, fabricTwigOverview: 1, haloThreadOverview: 1, bodyDepthEnergy: 0 },
+  //
+  // ⭐⭐ `galaxyRadiance` 1 IS THE IDENTITY of ⟨ruling 22⟩'s knob, added
+  // 2026-09-05 beside them and for the same reason: the ruling says the cells
+  // galaxy is the canvas's first focus and must read radiant, and no capture
+  // can settle how much light that is. 1 multiplies the tissue's and the
+  // halo's emitted alpha by one, so the shipped picture is exactly the shipped
+  // picture until the eye moves it.
+  cell: { fabricAlpha: 0.15, warmth: 0.12, centerDim: 0.3, activeColorR: 1.0, activeColorG: 1.0, activeColorB: 1.0, fabricWidth: 2.5, activeWidth: 4.6, reinforceAmount: 0.34, reinforceGain: 1.6, reinforceHalfLife: 3.0, fabricStaggerThreshold: 1500, fabricCohortSize: 750, fabricCohortInterval: 0.25, fabricTwigOverview: 1, haloThreadOverview: 1, bodyDepthEnergy: 0, galaxyRadiance: 1 },
   nerve: { screenBudget: 8_000, coverageShare: 0.55, trunkShare: 0.72, twigShare: 0.18 },
 } as const;
 
@@ -285,7 +298,7 @@ describe('three knobs that default to the picture that shipped', () => {
     // matter as a Cell body, and separating them is the seam this design
     // exists to remove.
     expect(halo).toContain('haloThreadViewLevel(');
-    expect(halo).toContain('populationFibreEmissionForGain(gain) * threadLevel');
+    expect(halo).toMatch(/populationFibreEmissionForGain\([\s\S]{0,60}\) \* threadLevel/);
     expect(halo).toContain('uDepthEnergy.value = LIVE.cell.bodyDepthEnergy');
     expect(halo).not.toMatch(/uEmission\.value = populationEmissionForGain\(gain\) \*/);
 
@@ -301,5 +314,78 @@ describe('three knobs that default to the picture that shipped', () => {
     // No second copy of the law anywhere: a twin would be a place for the two
     // body layers to disagree about where the front of the galaxy is.
     expect(field).not.toContain('float bodyDepthEnergy(');
+  });
+
+  it('the galaxy\'s radiance is the identity at its default ⟨ruling 22⟩', () => {
+    // The knob ships parked, like the three above it: at 1 every multiplier in
+    // both body materials is exactly 1, so the shipped frame is byte-for-byte
+    // the shipped frame and the eye is what moves it.
+    expect(cellSchema.galaxyRadiance.value).toBe(GALAXY_RADIANCE_IDENTITY);
+    expect(galaxyRadianceGain(cellSchema.galaxyRadiance.value)).toBe(1);
+    for (const gain of [0.05, 0.17, 0.5, 1]) {
+      expect(populationEmissionForGain(gain, cellSchema.galaxyRadiance.value))
+        .toBe(populationEmissionForGain(gain));
+      expect(populationFibreEmissionForGain(gain, cellSchema.galaxyRadiance.value))
+        .toBe(populationFibreEmissionForGain(gain));
+    }
+    // A knob that changes nothing at any setting is a comment: both ends of
+    // the range move the layer, in the direction they say.
+    const { min, max } = cellSchema.galaxyRadiance;
+    expect(populationEmissionForGain(1, min)).toBeLessThan(populationEmissionForGain(1));
+    expect(populationEmissionForGain(1, max)).toBeGreaterThan(populationEmissionForGain(1));
+    expect(populationEmissionForGain(1, max))
+      .toBeCloseTo(populationEmissionForGain(1) * max, 10);
+    // A panel mid-edit is not an input validator: nonsense reads as the
+    // identity rather than as a black scene.
+    for (const nonsense of [Number.NaN, Number.POSITIVE_INFINITY, -1]) {
+      expect(galaxyRadianceGain(nonsense)).toBe(GALAXY_RADIANCE_IDENTITY);
+    }
+  });
+
+  it('…and it reaches the tissue and the halo, and nothing else', () => {
+    // ⚠️ The fence is the ruling's own boundary. The peer mesh is the canvas's
+    // SECOND focus with a tier ladder of its own, the colony has its own
+    // light, and an event reclaims headroom ABOVE the resting field on
+    // purpose — a gain that reached any of them would be this knob quietly
+    // becoming a scene-wide exposure control.
+    const root = resolve(process.cwd(), 'src');
+    const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true })
+      .flatMap((entry) => {
+        const at = join(dir, entry.name);
+        if (entry.isDirectory()) return walk(at);
+        return /\.tsx?$/.test(entry.name) ? [at] : [];
+      });
+    const wearers = walk(root)
+      .filter((file) => /galaxyRadiance|uRadiance|GALAXY_RADIANCE/
+        .test(readFileSync(file, 'utf8')))
+      .map((file) => relative(root, file).replace(/\\/g, '/'))
+      .sort();
+
+    expect(wearers).toEqual([
+      'components/CellGalaxy.tsx',
+      'components/CellPopulationField.tsx',
+      'materials/cellHybridMaterial.ts',
+      'materials/populationFieldMaterial.ts',
+      'tweaks/tweakSchema.ts',
+    ]);
+
+    const read = (rel: string) => readFileSync(resolve(root, rel), 'utf8');
+    // The law is stated ONCE and both materials read it — the same bargain the
+    // depth term strikes one chapter up.
+    expect(read('materials/cellHybridMaterial.ts'))
+      .toContain('export function galaxyRadianceGain');
+    expect(read('materials/populationFieldMaterial.ts'))
+      .toMatch(/galaxyRadianceGain,[\s\S]{0,80}from '\.\/cellHybridMaterial'/);
+    expect(read('materials/populationFieldMaterial.ts'))
+      .not.toContain('export function galaxyRadianceGain');
+    // The body's uniform is WIRED, not merely declared: a uniform nobody
+    // writes is a knob that does nothing, and this codebase has one already.
+    expect(read('components/CellGalaxy.tsx'))
+      .toContain('uRadiance.value = galaxyRadianceGain(LIVE.cell.galaxyRadiance)');
+    // …and it lands on the RESTING body, above the event terms.
+    const body = read('materials/cellHybridMaterial.ts');
+    expect(body).toContain('base.a *= uRadiance;');
+    expect(body.indexOf('base.a *= uRadiance;'))
+      .toBeLessThan(body.indexOf('float a   = base.a * (1.0 - vDeathRamp);'));
   });
 });

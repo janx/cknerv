@@ -110,7 +110,7 @@ import {
   dampCellGalaxyRotationScale,
   selectedCellNumericId,
 } from '../derives/cellInteraction.derive';
-import { makeCellHybridMaterial } from '../materials/cellHybridMaterial';
+import { galaxyRadianceGain, makeCellHybridMaterial } from '../materials/cellHybridMaterial';
 import { makeCellFlareMaterial } from '../materials/cellFlareMaterial';
 import { CELL_FLASH_DURATION_S } from '../materials/cellEnvelope.glsl';
 import {
@@ -2473,6 +2473,10 @@ function CellGalaxy({
     hybridMaterial.uniforms.uMemorySignalEnergy.value = memorySignal.energyScale;
     hybridMaterial.uniforms.uWarmth.value = LIVE.cell.warmth; // living rose body → ember bias
     hybridMaterial.uniforms.uCenterDim.value = LIVE.cell.centerDim; // shared centre-energy floor
+    // ⟨ruling 22⟩ The galaxy's own radiance, on the resting body alone — the
+    // halo reads the same law through its emission (`CellPopulationField`), so
+    // the tissue and its corona are one light. Default 1 = today's picture.
+    hybridMaterial.uniforms.uRadiance.value = galaxyRadianceGain(LIVE.cell.galaxyRadiance);
     flareMaterial.uniforms.uTime.value = now;
     flareMaterial.uniforms.uViewportHeight.value = pointViewportHeight;
     flareMaterial.uniforms.uDischargeArms.value = dischargeArms;

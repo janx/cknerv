@@ -3,7 +3,9 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 
 import {
   BODY_DEPTH_ENERGY_GLSL,
+  GALAXY_RADIANCE_IDENTITY,
   HYBRID_BASE_PX_PER_WU,
+  galaxyRadianceGain,
 } from './cellHybridMaterial';
 import {
   optimizeScreenSpaceCapsuleMaterial,
@@ -425,11 +427,23 @@ export const POPULATION_STROKE_COLOR: SceneColor =
  * curve exists to carry still intact.
  *
  * The ceiling is unmoved: `gain` is bounded by 1, so this is bounded by
- * {@link POPULATION_FIELD_EMISSION}.
+ * {@link POPULATION_FIELD_EMISSION} times the radiance.
+ *
+ * ⟨ruling 22⟩ `radiance` is the galaxy's own gain — one number for the tissue
+ * and its halo, read from `galaxyRadianceGain` so the two materials cannot
+ * drift apart. It reaches the layer HERE, on the emission, rather than through
+ * a fourth uniform: all three of this layer's passes take their level from
+ * these two functions, so one multiply is the whole layer. Its default is the
+ * identity and this line is then exactly what it was.
  */
-export function populationEmissionForGain(gain: number): number {
+export function populationEmissionForGain(
+  gain: number,
+  radiance: number = GALAXY_RADIANCE_IDENTITY,
+): number {
   if (!Number.isFinite(gain) || gain <= 0) return 0;
-  return Math.sqrt(Math.min(1, gain)) * POPULATION_FIELD_EMISSION;
+  return Math.sqrt(Math.min(1, gain))
+    * POPULATION_FIELD_EMISSION
+    * galaxyRadianceGain(radiance);
 }
 
 /** Sprite footprint in drawing-buffer pixels, before the minimum is applied.
@@ -914,9 +928,14 @@ export function populationStrokeTaper(weight: number): number {
 }
 
 /** The fibre's emitted alpha for one amount-curve `gain`. The same curve the
- *  points ride, so the two never drift apart as scope changes. */
-export function populationFibreEmissionForGain(gain: number): number {
-  return populationEmissionForGain(gain) * POPULATION_FIBRE_ALPHA;
+ *  points ride — and ⟨ruling 22⟩ the same radiance, for the same reason: the
+ *  beads and the strands they run between are one layer, and a gain on half of
+ *  it would be a second claim about how bright the halo is. */
+export function populationFibreEmissionForGain(
+  gain: number,
+  radiance: number = GALAXY_RADIANCE_IDENTITY,
+): number {
+  return populationEmissionForGain(gain, radiance) * POPULATION_FIBRE_ALPHA;
 }
 
 export interface PopulationPointUniforms {

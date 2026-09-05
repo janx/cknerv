@@ -134,6 +134,49 @@ export function sceneColorHue(color: SceneColor): number {
 }
 
 /**
+ * ⟨ruling 22⟩ THE GALAXY'S RADIANCE — one gain on the light the tissue and its
+ * halo emit, and on nothing else.
+ *
+ * The cells galaxy is the FIRST focus of this canvas and the user's word for
+ * what it should read as is 光辉灿烂 — radiant. The camera gives it the stage
+ * back (`ui-app/src/camera-hole-fit.ts`); how much light it spends on that
+ * stage is a separate decision and a matter for the eye, not for a
+ * measurement. So it is a knob, parked at 1, where 1 is byte-for-byte the
+ * picture that shipped — and the eye turns it from the Tweaks panel against
+ * the live scene rather than through a capture-edit-capture loop.
+ *
+ * ## What it is a gain ON, and what it must never touch
+ *
+ * The two body materials' RESTING alpha: a Cell's own cloud and the halo's
+ * beads and strokes. Not events — a focus ring, a write flare, a landing, a
+ * recall scan all reclaim headroom above the resting field on purpose, and a
+ * gain that carried them would move the very contrast this scene is built to
+ * hold. Not the peer plane, not the colony: the mesh is the canvas's SECOND
+ * focus and its light answers to its own tier ladder (see
+ * `peerNodeMaterial.ts`).
+ *
+ * ⚠️ Above 1 it is a CEILING and not a blow-out. Both materials write
+ * premultiplied alpha into a bounded screen accumulation, so a fragment
+ * already at full emission cannot go past it and only the pixels with headroom
+ * move. Turning the knob up brightens the tissue's mid-tones toward the peaks
+ * it already has; it cannot invent a new peak, and black stays black because
+ * a gain on zero is zero.
+ */
+export const GALAXY_RADIANCE_IDENTITY = 1;
+
+/**
+ * The gain in arithmetic, so the knob is decidable without a GPU and both
+ * materials read ONE law. A non-finite or negative setting is the identity:
+ * a tuning panel is not an input validator, and a scene that goes black
+ * because a text field was mid-edit is a worse answer than a scene that
+ * ignores it.
+ */
+export function galaxyRadianceGain(radiance: number): number {
+  if (!Number.isFinite(radiance) || radiance < 0) return GALAXY_RADIANCE_IDENTITY;
+  return radiance;
+}
+
+/**
  * ⟨D-10 · knob c⟩ HALF-SPREAD OF THE DISC IN VIEW DEPTH, as a fraction of the
  * camera's own distance to the galaxy's centre.
  *
@@ -243,6 +286,10 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       // ⟨D-10 · knob c⟩ 0 is today's picture: no depth term at all. See
       // `BODY_DEPTH_ENERGY_GLSL`; set live from LIVE.cell.bodyDepthEnergy.
       uDepthEnergy:     { value: 0 },
+      // ⟨ruling 22⟩ The galaxy's radiance, on the resting body alone. 1 is
+      // today's picture exactly. See `galaxyRadianceGain`; set live from
+      // LIVE.cell.galaxyRadiance by `CellGalaxy`.
+      uRadiance:        { value: GALAXY_RADIANCE_IDENTITY },
     },
     transparent: true,
     depthWrite: false,
@@ -401,6 +448,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       uniform float uAmbientTime;
       uniform float uMemoryLinePx;
       uniform float uMemorySignalEnergy;
+      uniform float uRadiance;
 
       varying float vBirthRamp;
       varying float vDeathRamp;
@@ -461,6 +509,13 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         // that perspective and density hand this layer for free. At the knob's
         // default this is exactly 1 (⟨D-10 · knob c⟩).
         base.a *= vDepthDim;
+        // ⟨ruling 22⟩ …and the radiance rides the same quantity, for the
+        // opposite kind of reason: it is not a correction, it is how much
+        // light the first focus of this canvas is given to spend. It sits HERE
+        // and not at the end of the shader precisely so the flare, the focus
+        // ring and the recall below can still reclaim headroom — an event is
+        // not part of the tissue's own radiance. 1 is today's picture.
+        base.a *= uRadiance;
 
         vec3  col = base.rgb;
         float a   = base.a * (1.0 - vDeathRamp);

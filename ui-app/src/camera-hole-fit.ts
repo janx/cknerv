@@ -15,11 +15,20 @@
  * horizontal axis, so the composition is centred on the HOLE rather than on
  * the viewport the hole is off-centre in.
  *
- * ONE form is fitted, at every width: the 1.6× halo. The fit is therefore
- * MONOTONE in the hole — a narrower hole is never a closer camera — and where
- * the hole is too narrow for the halo it saturates at the controls' own far
- * limit rather than changing its mind about what it is fitting. See
- * `MAX_DISTANCE`.
+ * ONE form is fitted, at every width — `CAMERA_STAGE_EXTENT`, which is NOT the
+ * corona. The fit is therefore MONOTONE in the hole — a narrower hole is never
+ * a closer camera — and where the hole is too narrow even for that form it
+ * saturates at the controls' own far limit rather than changing its mind about
+ * what it is fitting. See `MAX_DISTANCE`.
+ *
+ * ⟨ruling 22, 2026-09-05⟩ The form used to BE the corona, and that cost the
+ * galaxy the stage. Fitting the 1.6× halo whole put the camera at 215 wu where
+ * the pre-round pose stood at 171, and the subject lost 45 % of its width and
+ * the scene about a quarter of its light. The galaxy is the first focus of
+ * this canvas and has to read radiant; a frame that guarantees the corona is
+ * whole is a frame composed for the faintest thing in it. So the requirement
+ * moved to the pose and the form is what falls out of it — see
+ * `CAMERA_STAGE_SHARE`.
  *
  * ⚠️ Initial pose and reset only. A reader who has orbited owns the camera
  * from that moment; a resize that re-framed their view out from under them
@@ -58,15 +67,15 @@ export const CAMERA_HOLE_MARGIN_PX = 24;
  * changing subject, and the eye reads a jump in the subject's size as an
  * event.
  *
- * So one form is fitted at every width. Under about a 610 px hole on a 1,080
- * px stage the halo no longer fits at any distance a reader could orbit back
- * from, and the fit saturates at `MAX_DISTANCE`: the corona then runs under
- * the panels exactly as the fallback intended, but it arrives there by the
- * camera stopping, not by the requirement changing — continuously, and only
- * ever in one direction. What the fallback was protecting is protected
- * anyway: at the saturated pose the RIM still stands clear inside a 360 px
- * hole (it wants 319 of the 400), and the one stage where it does not — a
- * 160 px hole at 900 — is a stage the fallback also answered with 400.
+ * So one form is fitted at every width. Under about a 490 px hole on a 1,080
+ * px stage that form no longer fits at any distance a reader could orbit back
+ * from, and the fit saturates at `MAX_DISTANCE`: more of the halo then runs
+ * under the panels, but it arrives there by the camera stopping, not by the
+ * requirement changing — continuously, and only ever in one direction. What
+ * the dropped fallback was protecting is protected anyway: at the saturated
+ * pose the RIM still stands clear inside a 360 px hole (it wants 319 of the
+ * 400), and the one stage where it does not — a 160 px hole at 900 — is a
+ * stage the fallback also answered with 400.
  */
 
 /** The camera may not come closer than the controls allow, nor go further:
@@ -121,7 +130,10 @@ const FIELD_HALF_X = 60;
 const FIELD_HALF_Z = 54;
 const HALO_EDGE = 1.6;
 
-/** The form the frame is fitted to, at every width. */
+/** The unresolved population's outer edge — the corona, the whole symbolic
+ *  layer. The fit does NOT frame it: see `CAMERA_STAGE_SHARE`. It is still
+ *  stated here because it is the form the fitted one is a share OF, and
+ *  because the tests measure where it lands. */
 export const CAMERA_HALO_EXTENT: CameraExtent = {
   halfX: FIELD_HALF_X * HALO_EDGE,
   halfZ: FIELD_HALF_Z * HALO_EDGE,
@@ -133,6 +145,49 @@ export const CAMERA_HALO_EXTENT: CameraExtent = {
 export const CAMERA_RIM_EXTENT: CameraExtent = {
   halfX: FIELD_HALF_X,
   halfZ: FIELD_HALF_Z,
+};
+
+/**
+ * How much of the corona the frame is composed around ⟨ruling 22⟩.
+ *
+ * ## The requirement is the POSE, and this share is what it costs
+ *
+ * The pre-round camera stood at `[110,108,110]` looking at the galaxy's
+ * centre — 170.6 world units of ray — and that is the picture the eye asked
+ * for back: at a 1,190 px hole on a 1920×1080 stage the rim draws about
+ * 850 px and the tissue owns the frame. Fitting the corona whole answers the
+ * same stage with 215.4 wu, which is the same galaxy at 0.79 of its width and
+ * the scene's mean luminance down 23.9 → 17.9. Neither number is a defect on
+ * its own; together they say the frame was composed around the faintest layer
+ * in it.
+ *
+ * So the pose is the requirement and the form is solved from it: 0.79 of the
+ * corona — 75.8 × 68.3 wu, the rim plus about the inner quarter of the halo
+ * band — is the largest ellipse the pre-round pose fits inside a 1,190 px
+ * hole with the standard margin. Fitting THAT at 1920 returns 170.2 wu, which
+ * is the pose, to within half a world unit.
+ *
+ * ## Why the corona may be cropped and the rim may not
+ *
+ * The corona is the symbolic layer: it states what the stage could not
+ * resolve, as a gradient with no individual in it and no edge a reader can
+ * name. The rim is the SUBJECT's silhouette and the most legible thing about
+ * it at this distance. And the rails the corona runs under are effectively
+ * opaque — the review measured p99 luminance 0.12 under a panel — so what is
+ * lost is a fifth of a wash, not a form: at the fitted pose the corona spans
+ * 1,459 px against the hole's 1,190, which is 135 px under each rail and
+ * nothing off the viewport at all (a test measures both).
+ *
+ * ⚠️ It is a SHARE and not a second form: the fit still has one ellipse and no
+ * branch, so everything the monotonicity argument above rests on is untouched.
+ * A narrower hole scales this same form down, continuously, in one direction.
+ */
+export const CAMERA_STAGE_SHARE = 0.79;
+
+/** The form the frame is fitted to, at every width. */
+export const CAMERA_STAGE_EXTENT: CameraExtent = {
+  halfX: CAMERA_HALO_EXTENT.halfX * CAMERA_STAGE_SHARE,
+  halfZ: CAMERA_HALO_EXTENT.halfZ * CAMERA_STAGE_SHARE,
 };
 
 /**
@@ -299,7 +354,7 @@ export function fitCameraToHole({
   margin?: number;
 }): CameraHoleFit {
   const holeWidth = Math.max(0, hole.right - hole.left);
-  const form = extent ?? CAMERA_HALO_EXTENT;
+  const form = extent ?? CAMERA_STAGE_EXTENT;
   const inner = Math.min(margin, Math.max(0, holeWidth / 2 - 1));
   const insideLeft = hole.left + inner;
   const insideRight = hole.right - inner;

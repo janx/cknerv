@@ -224,8 +224,11 @@ const CAMERA_FOV = 50;
 /** The pose the Canvas is created with — replaced by the fitted one as soon as
  *  the HUD has laid its rails out, which is never on the frame the Canvas is
  *  created in. It is the 1920 fit's own answer, so the common case does not
- *  visibly re-frame on boot. */
-const DEFAULT_CAMERA_POSITION: [number, number, number] = [132, 121, 130];
+ *  visibly re-frame on boot. ⟨ruling 22⟩ That answer is `[106, 108, 110]`
+ *  again: the pre-round `[110,108,110]` carried four world units left, which
+ *  is the whole of what aiming at the HUD's hole rather than the viewport's
+ *  centre costs. */
+const DEFAULT_CAMERA_POSITION: [number, number, number] = [106, 108, 110];
 /** How often the fitter re-reads the hole while it still owns the camera. The
  *  HUD's rails move on a resize, a panel toggle and the end of the boot
  *  count-off, none of which is a per-frame event; this is slow enough to cost
@@ -298,10 +301,14 @@ function CellDetailViewTracker({
  * The camera's initial pose, fitted to the hole the HUD leaves.
  *
  * The default `[110,108,110]` was a constant at every viewport while the frame
- * it composes into is not: measured at `25c7d5a`, the 1.6× halo was cut 177 px
- * on the left and 139 px on the right at 1920, and below 1600 the RIM itself
+ * it composes into is not: measured at `25c7d5a`, below 1600 the RIM itself
  * ran under the rails. The arithmetic is in `fitCameraToHole`; this is the
  * hand that applies it.
+ *
+ * ⟨ruling 22⟩ What the fit frames is the stage form, not the corona, so at
+ * 1920 it returns the pre-round pose to within half a world unit and the
+ * galaxy fills the stage again. The narrow stages keep everything the fit was
+ * written for. See `CAMERA_STAGE_SHARE`.
  *
  * A drag-resize samples this every 320 ms and applies whatever the fit says,
  * so the fit owes the hand on the window edge one thing above all: no step.
