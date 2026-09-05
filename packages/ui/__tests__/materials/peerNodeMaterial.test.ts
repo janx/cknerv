@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import {
@@ -9,6 +11,7 @@ import {
   MEASURED_HOVER_EXTENT,
   MEASURED_HOVER_FOCUS,
   MEASURED_HOVER_MATCH_WU,
+  MEASURED_PEER_BRIGHTNESS,
   PEER_COMPRESSION_GLSL,
   peerCloudHitRadius,
   PEER_CLOUD_GHOST_TONE,
@@ -286,6 +289,104 @@ describe('the held breath', () => {
       expect(material.uniforms).not.toHaveProperty('uCompressDepth');
       expect(material.uniforms).not.toHaveProperty('uLaunchAt');
     }
+  });
+});
+
+/**
+ * One mark's own emitted light, integrated over its footprint.
+ *
+ * Additive blending applies alpha to colour a second time, so a pixel of a
+ * mark contributes `shape(u)² · dim²` and the whole mark contributes that
+ * integrated over the disc it draws — which is what a viewer reads as "how
+ * much of the frame this thing lights up". Unlike the PEAK it does not clip,
+ * which is the whole reason the ladder is measured on it once a stop rests
+ * under 1.0. `diameter` is in world units, so the two ends of the ladder are
+ * compared at the size they are actually drawn.
+ */
+function markLight(coreExp: number, dim: number, diameter: number): number {
+  const samples = 20_000;
+  let integral = 0;
+  for (let i = 0; i < samples; i += 1) {
+    const u = (i + 0.5) / samples;
+    const shape = (1 - u) ** coreExp + 0.42 * (1 - u) ** 1.6;
+    integral += shape * shape * 2 * u / samples;
+  }
+  return dim * dim * (diameter / 2) ** 2 * integral;
+}
+
+/** The peak of one mark at rest: `shape(0)² · dim²`, `shape(0) = 1 + 0.42`. */
+const restPeak = (dim: number): number => 1.42 * 1.42 * dim * dim;
+
+describe('the measured belt stands in the tissue without clipping', () => {
+  it('rests UNDER the additive clip — no white core ⟨rulings 23, 24⟩', () => {
+    // The peers are back inside the canopy (`PEER_INNER_RADIUS`), so what
+    // keeps them from interfering with the galaxy is their light. D-1 read the
+    // twelve measured halos as the ten brightest regions of the idle frame,
+    // white cores with pink skirts, five of them standing on tissue: at 1.6
+    // the resting centre landed at 5.16 — FIVE times the clip — and a cyan
+    // mark that clips is not a bright cyan mark, it is a white one.
+    expect(restPeak(MEASURED_PEER_BRIGHTNESS)).toBeLessThan(1);
+    // …and it is the LARGEST hundredth that does: 1 / 1.42 = 0.7042, so one
+    // step up fails. The constant cannot drift back toward the clip in silence.
+    expect(restPeak(MEASURED_PEER_BRIGHTNESS + 0.01)).toBeGreaterThan(1);
+    expect(restPeak(1.6)).toBeGreaterThan(5);
+    // The shipped GLSL carries the same number, and only there.
+    const measured = makeMeasuredPeerHalosMaterial();
+    expect(measured.fragmentShader)
+      .toContain(`float envelope = ${MEASURED_PEER_BRIGHTNESS.toFixed(1)}`);
+    // Nothing at rest can push it back over: both envelopes peak at exactly 1.
+    expect(measured.fragmentShader).toContain('(0.85 + 0.15 * sin(');
+    expect(measured.fragmentShader).toContain('0.78 + 0.22 * sin(');
+  });
+
+  it('stays the top rung on footprint and on total light', () => {
+    // ⚠️ The 2026-08-24 round's own finding, and the reason a capped peak does
+    // not demote this tier: the eye sorts on FOOTPRINT before brightness, and
+    // brightness clips. The measured billboard is 8.4 world units across
+    // against the reached stop's 2.0 sprite.
+    const colony = readFileSync(
+      resolve(process.cwd(), 'src/components/ColonyNodes.tsx'),
+      'utf8',
+    );
+    expect(colony).toContain('const MEASURED_SIZE = 1.4;');
+    expect(colony).toContain('new THREE.PlaneGeometry(MEASURED_SIZE * 6, MEASURED_SIZE * 6)');
+    const measuredDiameter = 1.4 * 6;
+    expect(measuredDiameter / PEER_CLOUD_SIGHTED_TONE.size).toBeGreaterThan(4);
+
+    // …and it emits several times the light of any cloud stop while resting
+    // under the clip: measured 0.62 against reached 0.14, dark 0.047, ghost
+    // 0.006 — a 4.4x step to the rung below it, wider than any step inside the
+    // cloud's own ladder.
+    const measured = markLight(4, MEASURED_PEER_BRIGHTNESS, measuredDiameter);
+    const reached = markLight(
+      PEER_CLOUD_SIGHTED_TONE.coreExp, PEER_CLOUD_SIGHTED_TONE.dim, PEER_CLOUD_SIGHTED_TONE.size,
+    );
+    const dark = markLight(
+      PEER_CLOUD_SIGHTED_DARK_TONE.coreExp, PEER_CLOUD_SIGHTED_DARK_TONE.dim,
+      PEER_CLOUD_SIGHTED_DARK_TONE.size,
+    );
+    const ghost = markLight(2, PEER_CLOUD_GHOST_TONE.dim ?? 0, PEER_CLOUD_GHOST_TONE.size ?? 0);
+    expect(measured / reached).toBeGreaterThan(3);
+    expect(reached).toBeGreaterThan(dark);
+    expect(dark).toBeGreaterThan(ghost);
+  });
+
+  it('…and the peak ladder is INVERTED against the sighted stops, on purpose', () => {
+    // ⚠️⚠️ The honest half, pinned so nobody has to rediscover it in a
+    // screenshot. The two sighted stops rest ABOVE the clip by design (that is
+    // what `coreExp` 3.5 exists to make survivable), so a sighted node's
+    // centre PIXEL is now brighter than a measured peer's — while the measured
+    // mark is four times wider and carries four times the light. Bringing the
+    // cloud stops under the clip too is a decision about the whole ladder and
+    // is not taken here.
+    expect(restPeak(MEASURED_PEER_BRIGHTNESS))
+      .toBeLessThan(restPeak(PEER_CLOUD_SIGHTED_TONE.dim));
+    expect(restPeak(MEASURED_PEER_BRIGHTNESS))
+      .toBeLessThan(restPeak(PEER_CLOUD_SIGHTED_DARK_TONE.dim));
+    // It is still above the haze, which is the one stop it must out-rank on
+    // every channel there is.
+    expect(restPeak(MEASURED_PEER_BRIGHTNESS))
+      .toBeGreaterThan(restPeak(PEER_CLOUD_GHOST_TONE.dim ?? 0));
   });
 });
 

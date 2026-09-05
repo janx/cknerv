@@ -12,50 +12,35 @@ import {
 /** Latency at/above this (ms) maps to the outer rim. */
 export const PEER_LATENCY_CAP_MS = 400;
 /**
- * Annulus radius bounds (pre-ellipse): the belt the measured peers stand in.
+ * Annulus radius bounds (pre-ellipse): the belt the measured peers stand in,
+ * INSIDE the organism they serve.
  *
- * ⭐ THE BELT RINGS THE ORGANISM; IT DOES NOT HIDE UNDER IT. At 34–56 the belt
- * sat inside the tissue's own footprint (`helix.ts` FIELD_HALF_X 60 /
- * FIELD_HALF_Z 54) and the twelve links we actually hold were drawn INSIDE the
- * galaxy's silhouette — where additive cyan over rose composites to white, so
- * the ladder's top rung was the one rung that did not wear the family hue. The
- * 2026-09-04 census read it as plainly as it can be read: the ten brightest
- * regions in the idle frame were ten peer halos, five of them standing on
- * tissue, and `PEERS 12` named twelve marks a viewer could not find.
+ * ⭐ ⟨ruling 24, 2026-09-05⟩ THE PEERS BELONG IN THE TISSUE, AND THEY ARE KEPT
+ * FROM INTERFERING BY LIGHT, NOT BY DISTANCE. The 2026-09-04 round read D-1's
+ * census — the ten brightest regions of the idle frame were peer halos, white
+ * cores with pink skirts, five of them standing inside the galaxy's silhouette
+ * — and moved the belt out to 66–86, first around the local anchor and then
+ * about the colony's axis. The finding was right and the remedy was the wrong
+ * one of the two C-1 offered. A measured peer is a node we hold a live link
+ * to; the twelve of them are the organism's own connections, and pushing them
+ * outside the body they connect says the opposite of what they are. The
+ * brightness was the defect, so the brightness is what came down — see
+ * `MEASURED_PEER_BRIGHTNESS` in `materials/peerNodeMaterial.ts`, which now
+ * rests UNDER the additive clip so a measured core never saturates to white
+ * over rose tissue.
  *
- * So the belt moved OUT. The colony's own ellipse (`COLONY_ELLIPSE_X` 1.25,
- * `COLONY_ELLIPSE_Z` 0.85) is what decides the clearance, and z is the tight
- * axis: 66 × 0.85 = 56.1 against a 54 rim is 3.9 % of daylight, while
- * 66 × 1.25 = 82.5 against a 60 rim is 37 %. Hence 66 and not the 64 the plan
- * named — 64 × 0.85 = 54.4 clears the rim by four tenths of a world unit,
- * which is inside the 2 % margin the gate asks for and inside the width of the
- * halo it is meant to keep off the tissue.
+ * So the belt is 34–56 again: inside `helix.ts`'s FIELD_HALF_X 60 /
+ * FIELD_HALF_Z 54, under the canopy, ringing the local anchor the way it did
+ * before the round (`measuredPeerPos`). The radius is OUR latency to that
+ * peer, so the centre is US: a ring about the axis would be a claim about the
+ * galaxy, and this one is a claim about our own links.
  *
- * ⭐ AND IT IS CONCENTRIC WITH THE ORGANISM, not with us. The belt was first
- * moved out around the LOCAL ANCHOR, on the reading that the radius is OUR
- * latency so the peers should ring US — and the live census answered that: the
- * anchor stands ~30 wu off the galaxy's axis (`LOCAL_ANCHOR_OFFSET`), so a
- * belt centred on it is 30 wu eccentric to the tissue it is meant to clear.
- * A third of the ring still crossed the canopy on the near side and a quarter
- * of it fell off the bottom-right of the viewport on the far side. One centre
- * cannot be both.
- *
- * So the CENTRE is the galaxy's axis and the RADIUS is still the latency. The
- * two were never one reading: a peer's distance from the middle of the picture
- * is what says "this one answers in 40 ms and that one in 400", and it says it
- * more clearly against a body than against a mark 30 wu off to one side. The
- * link from the local node to each peer is still drawn, still straight, and it
- * is now the thing that says which of them are OURS — the belt says how far,
- * the spokes say whose. Where the hub itself should stand is still a question
- * this round does not answer (the plan: "B1 moves the peers, not the hub");
- * moving the peers off it is what makes that question askable.
- *
- * Nothing semantic moves with them: the compass ring on the PEER card is a 0–1
- * of `PEER_LATENCY_CAP_MS`, not of these, and `planDeliveries` already clamps
- * a landing from past the rim back onto the tissue.
+ * Nothing semantic rides on the two numbers: the compass ring on the PEER card
+ * is a 0–1 of `PEER_LATENCY_CAP_MS`, not of these, and `planDeliveries` clamps
+ * an over-rim landing radially onto the tissue.
  */
-export const PEER_INNER_RADIUS = 66;
-export const PEER_OUTER_RADIUS = 86;
+export const PEER_INNER_RADIUS = 34;
+export const PEER_OUTER_RADIUS = 56;
 /** Lag (blocks) at which a peer's sync proximity bottoms out. */
 export const PEER_SYNC_LAG_FLOOR = 2000;
 
@@ -67,8 +52,8 @@ export function latencyToRadius01(latencyMs: number | null | undefined): number 
 }
 
 /** How many radial steps the annulus resolves a ping into. The band is
- *  PEER_OUTER_RADIUS − PEER_INNER_RADIUS = 20 world units wide for the WHOLE
- *  0-PEER_LATENCY_CAP_MS range, so a step is 1.25 of them: the finest reading a
+ *  PEER_OUTER_RADIUS − PEER_INNER_RADIUS = 22 world units wide for the WHOLE
+ *  0-PEER_LATENCY_CAP_MS range, so a step is 1.375 of them: the finest reading a
  *  viewer can take off a ring of glow blobs that is itself counter-rotating. */
 export const PEER_LATENCY_STEPS = 16;
 
@@ -146,14 +131,12 @@ export interface DeliveryLandingField {
  *  nominal tissue rim: the released front is a small local ripple (the
  *  peer-plane wave divided by CONTACT_WAVE_SCALE), so a landing out past the
  *  rim would release its whole ring over empty space and the worker's commit
- *  would never be seen touching tissue. Since the belt moved outside the
- *  canopy (`PEER_INNER_RADIUS`), a measured peer's landing is clamped onto the
- *  rim ALWAYS rather than merely often — and since the belt is concentric with
- *  the tissue, evenly around it rather than bunched on the far side. The peers
- *  commit at the edge of the organism; the local node, which still stands
- *  inside the footprint, commits within it. That is the shape of the event
- *  now: the neighbours' copies arrive all around the rim, ours lands in the
- *  tissue. */
+ *  would never be seen touching tissue. ⟨ruling 24⟩ With the belt back inside
+ *  the canopy (`PEER_INNER_RADIUS`) most measured landings need no clamping at
+ *  all — a peer's own xz already stands in the tissue — and the clamp is once
+ *  again what it was written to be: the answer for the far-rim cases. Workers
+ *  ring the galaxy WIDER than the tissue on x (chain ellipse 1.25 against a
+ *  tissue 60), so those are common rather than degenerate. */
 export const DELIVERY_LANDING_MAX_NORM = 1.0;
 
 /** three.js `group.rotation.y = θ` carries a LOCAL xz into WORLD as

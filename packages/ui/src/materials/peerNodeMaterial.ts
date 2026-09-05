@@ -430,9 +430,42 @@ export function makePeerHaloMaterial(
   });
 }
 
-/** Injected so the instanced port and the historical per-node CPU loop share
- * one definition of the measured core's brightness envelope. */
-export const MEASURED_PEER_BRIGHTNESS = 1.6;
+/**
+ * The measured core's resting brightness — injected so the instanced port and
+ * the historical per-node CPU loop share one definition of the envelope.
+ *
+ * ⭐ ⟨rulings 23 and 24, 2026-09-05⟩ IT RESTS UNDER THE ADDITIVE CLIP. The
+ * peers stand inside the tissue again (`PEER_INNER_RADIUS`), which is where
+ * they belong — they are the organism's own live links — and what keeps them
+ * from interfering with the galaxy is this number rather than the distance.
+ *
+ * The arithmetic is the peer plane's own, and it is the same one the 2026-08-24
+ * round wrote for the ghost haze. AdditiveBlending applies alpha to colour a
+ * second time, so a mark's resting centre lands at `shape² · dim²`; `shape` at
+ * r = 0 is `core + halo` = 1 + 0.42 = **1.42**. The largest `dim` that keeps
+ * that under 1.0 is therefore `1 / 1.42 = 0.7042`, and **0.70** is the largest
+ * hundredth under it: a resting peak of 0.988, no saturated plateau at all.
+ * At 1.6 the same peak stood at **5.16** — five times the clip — which is why
+ * D-1's census read every one of them as a white core with a pink skirt, and
+ * why C-1 could say the top rung of the honesty ladder was the one rung that
+ * did not wear the family hue. A cyan mark that clips is not a bright cyan
+ * mark, it is a white one.
+ *
+ * ⚠️ AND THE TOP RUNG IS NOW CARRIED BY FOOTPRINT AND TOTAL LIGHT, NOT BY THE
+ * PEAK PIXEL — which is the 2026-08-24 round's own finding restated: the eye
+ * sorts on footprint before brightness, and brightness clips. A measured
+ * halo's billboard is `MEASURED_SIZE × 6` = 8.4 world units against the
+ * reached stop's 2.0 (4.2×), so it emits several times the light of any cloud
+ * stop while no longer out-shouting the tissue it stands on.
+ *
+ * ⚠️⚠️ A CONSEQUENCE WORTH SEEING, recorded rather than hidden: the two
+ * sighted stops still rest ABOVE the clip by design (3.41 and 2.02), so a
+ * sighted node's centre PIXEL is now brighter than a measured peer's, even
+ * though the measured mark is four times wider and carries far more light.
+ * Bringing them under the clip too is a separate decision about the whole
+ * ladder and is not taken here. `peerNodeMaterial.test.ts` states both halves.
+ */
+export const MEASURED_PEER_BRIGHTNESS = 0.7;
 
 /**
  * How loudly the measured belt answers a block wave. ⭐ ON THIS MATERIAL ONLY:

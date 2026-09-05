@@ -308,21 +308,32 @@ describe('the lob has no beam left in it', () => {
     expect(at(1)).toBeLessThan(deliverySchema.plumeWidth.value);
   });
 
-  it('a MEASURED carrier travels, because the belt stands outside the canopy', () => {
-    // The other half of the same finding, and it is B1's doing: the measured
-    // belt used to sit at 34–56 INSIDE the tissue, so every peer's landing was
-    // its own xz and every peer's lob was vertical too — twelve bars a block,
-    // which is the count D-12 reports. At 66–86 the belt rings the organism,
-    // every landing is clamped inward, and every measured lob now has real
-    // travel across the scene.
+  it('a MEASURED carrier lobs like the hero, and the stub arithmetic covers it \u27e8ruling 24\u27e9', () => {
+    // This test used to read the other way, and the reversal is the point.
+    // B1 had moved the belt to 66-86 OUTSIDE the canopy, so every measured
+    // landing was clamped inward and every measured lob had travel across the
+    // scene; the chapter leaned on that for the twelve carriers it does not
+    // compute individually. Ruling 24 puts the belt back at 34-56 around the
+    // local anchor — the peers belong inside the organism they serve — so most
+    // of them land on their own xz again and lob straight up, exactly as the
+    // hero does.
+    //
+    // That is not the defect D-12 reported. What D-12 measured was the old
+    // `courierGlyph`'s BAR, and there is no glyph: the arithmetic one test up
+    // is what makes a vertical lob harmless, and it is a property of the RISE
+    // and the schema's own ceiling, not of where the carrier started. It
+    // therefore covers every carrier in the layer, hero and peer alike, and it
+    // is restated here so the claim is not left resting on a geometry that has
+    // just been reverted.
+    const anchor: [number, number, number] = [12, CHAIN_Y, -9];
     const peers = [30, 120, 210, 300].map((deg, i) => {
       const a = (deg * Math.PI) / 180;
-      // The belt's own two radii, on the colony's ellipse.
+      // The belt's own two radii, on the colony's ellipse, about the anchor.
       const r = i % 2 === 0 ? PEER_INNER_RADIUS : PEER_OUTER_RADIUS;
       return [
-        Math.cos(a) * r * COLONY_ELLIPSE_X,
+        anchor[0] + Math.cos(a) * r * COLONY_ELLIPSE_X,
         CHAIN_Y,
-        Math.sin(a) * r * COLONY_ELLIPSE_Z,
+        anchor[2] + Math.sin(a) * r * COLONY_ELLIPSE_Z,
       ] as [number, number, number];
     });
     const pos = new Map(peers.map((p, i) => [`p${i}`, p] as const));
@@ -332,14 +343,30 @@ describe('the lob has no beam left in it', () => {
       { halfX: FIELD_HALF_X, halfZ: FIELD_HALF_Z, rotationY: 0 },
     );
     expect(plan).toHaveLength(4);
+
+    const rise = CELLS_Y - CHAIN_Y;
+    let clamped = 0;
     for (const d of plan) {
       const travel = Math.hypot(d.to[0] - d.from[0], d.to[2] - d.from[2]);
-      // Every one of them is pulled onto the rim, so none is a pure rise.
-      expect(travel, `${d.key} did not travel`).toBeGreaterThan(2);
+      if (travel > 2) clamped += 1;
+      // Whatever the travel, the RISE is the same 16 world units and the trail
+      // is a stub on it: the schema's own ceiling is under the rise, so no
+      // knob setting can turn any of these into a bar crossing the planes.
+      expect(rise).toBe(CELLS_Y - CHAIN_Y);
+      expect(deliverySchema.plumeMaxLen.max).toBeLessThan(rise);
+      expect(courierPlumeLength(
+        deliverySchema.plumeMinLen.value,
+        deliverySchema.plumeMaxLen.value,
+        courierHopSpeed(rise, BEAM_GROW_DUR_S, 0),
+      ) * 8).toBeLessThanOrEqual(rise);
     }
-    // …and the belt's own inner radius clears the footprint on BOTH axes,
-    // which is why that holds for every angle and not only for these four.
-    expect(PEER_INNER_RADIUS * COLONY_ELLIPSE_X).toBeGreaterThan(FIELD_HALF_X);
-    expect(PEER_INNER_RADIUS * COLONY_ELLIPSE_Z).toBeGreaterThan(FIELD_HALF_Z);
+    // Some of them still travel and some do not, which is the honest shape of
+    // a belt that stands inside the tissue on the tight axis and past it on
+    // the wide one: 56 x 1.25 = 70 against a 60 rim, 56 x 0.85 = 47.6 under a
+    // 54 one.
+    expect(clamped).toBeGreaterThan(0);
+    expect(clamped).toBeLessThan(plan.length);
+    expect(PEER_OUTER_RADIUS * COLONY_ELLIPSE_X).toBeGreaterThan(FIELD_HALF_X);
+    expect(PEER_OUTER_RADIUS * COLONY_ELLIPSE_Z).toBeLessThan(FIELD_HALF_Z);
   });
 });

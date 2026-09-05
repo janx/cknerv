@@ -59,30 +59,32 @@ export function localAnchor(seed: number): Vec3 {
 }
 
 /**
- * Measured peer position: latency→radius, id-hash→angle, about the COLONY'S
- * OWN AXIS.
+ * Measured peer position: latency→radius, id-hash→angle, around the ANCHOR.
  *
- * ⚠️ It used to take the local anchor and scatter the belt around that, and
- * the anchor is deliberately ~30 wu off the axis (`LOCAL_ANCHOR_OFFSET`) so
- * that it does not read as a hub. A belt hung off it inherited that offset:
- * the ring was eccentric to the organism it is meant to ring, crossing the
- * canopy on the near side and leaving the frame on the far one. There is no
- * anchor parameter now, because there is no anchor to pass — a second centre
- * is the whole defect, and a parameter that must always be the origin is an
- * invitation to hand it something else.
+ * ⟨ruling 24⟩ The centre is the local node, because the radius is OUR latency
+ * to that peer: the belt is a reading of our own twelve links and not a
+ * statement about the galaxy, so it hangs off the mark that stands for us. The
+ * round briefly moved it to the colony's axis, which made the ring concentric
+ * with the organism and made the reading say something nobody had measured —
+ * a peer's distance from the middle of the picture. The anchor is ~30 wu off
+ * that axis by design (`LOCAL_ANCHOR_OFFSET`, so it does not read as a hub),
+ * which is exactly the eccentricity a belt about US is supposed to have.
  *
- * What the anchor still owns is the SPOKES: `inferredTopology` draws one
- * measured edge from the local node to each of these, and that is where "these
- * twelve are ours" is said. See `PEER_INNER_RADIUS` for the argument.
+ * The anchor also owns the SPOKES: `inferredTopology` draws one measured edge
+ * from the local node to each of these. Belt and spokes now share one centre,
+ * which is what makes a spoke read as a radius rather than as a chord.
+ *
+ * See `PEER_INNER_RADIUS` for why the belt stands inside the tissue and what
+ * keeps it from interfering there.
  */
-export function measuredPeerPos(p: Peer): Vec3 {
+export function measuredPeerPos(anchor: Vec3, p: Peer): Vec3 {
   const t = latencyToRadius01(p.latency_ms);
   const r = PEER_INNER_RADIUS + t * (PEER_OUTER_RADIUS - PEER_INNER_RADIUS);
   const a = peerAngle(p.node_id);
   return [
-    Math.cos(a) * r * COLONY_ELLIPSE_X,
+    anchor[0] + Math.cos(a) * r * COLONY_ELLIPSE_X,
     COLONY_Y,
-    Math.sin(a) * r * COLONY_ELLIPSE_Z,
+    anchor[2] + Math.sin(a) * r * COLONY_ELLIPSE_Z,
   ];
 }
 
@@ -804,13 +806,13 @@ export function inferredTopology(
   colonyStats.observeTopologyBuild();
   // 1) local anchor. When a `localPos` is supplied (App pins it onto the galaxy's
   //    labeled CkbNodeAnchor so there's a single "you"), it IS the local node's
-  //    position. Otherwise fall back to the seed-only localAnchor(seed) —
-  //    preserving every existing caller. It is NOT the centre of the measured
-  //    belt: that is the colony's axis (`measuredPeerPos`), so where the local
-  //    node stands moves the local node and the spokes leaving it, and nothing
-  //    else. NB: the ghost scatter behind the cloud stays seed-ONLY (and
-  //    cached), so the ⭐ churn-stability invariant holds regardless of peers
-  //    OR localPos.
+  //    position AND the anchor the measured peers scatter around ⟨ruling 24⟩:
+  //    the belt is a reading of OUR latency, so it hangs off the mark that
+  //    stands for us, and the spokes leaving that mark are its own radii.
+  //    Otherwise fall back to the seed-only localAnchor(seed) — preserving
+  //    every existing caller. NB: this only moves the local + measured core;
+  //    the ghost scatter behind the cloud stays seed-ONLY (and cached), so the
+  //    ⭐ churn-stability invariant holds regardless of peers OR localPos.
   const anchor = localPos ?? localAnchor(seed);
   const nodes: NetworkNode[] = [{ id: localId, kind: 'local', pos: anchor }];
   const localIdx = 0;
@@ -819,7 +821,7 @@ export function inferredTopology(
   const measuredIdx: number[] = [];
   for (const p of peers) {
     measuredIdx.push(nodes.length);
-    nodes.push({ id: p.node_id, kind: 'measured', pos: measuredPeerPos(p), peer: p });
+    nodes.push({ id: p.node_id, kind: 'measured', pos: measuredPeerPos(anchor, p), peer: p });
   }
 
   // 3) the linkless cloud (cached): shared immutable node/edge objects appended

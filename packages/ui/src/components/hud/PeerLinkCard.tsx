@@ -177,13 +177,10 @@ function LinkUptimeReadout({ baseMs, sinceMs }: { baseMs: number; sinceMs: numbe
  *  y-down axis already IS the scene's +Z — the bearing needs no remapping for
  *  the instrument to agree with the colony.
  *
- *  ⚠️ The BEARING is what agrees; the CENTRE is not the same point. The scene's
- *  belt is concentric with the organism (`measuredPeerPos` is about the
- *  colony's axis) and our own node stands ~30 wu off that axis, inside the
- *  ring. This instrument is a diagram of ONE LINK, not a map of the colony, so
- *  the middle of it is us and the reading it offers the scene is the angle: a
- *  blip at four o'clock here is the mark at four o'clock out there, measured
- *  from the middle of the galaxy. */
+ *  ⟨ruling 24⟩ The CENTRE agrees again as well: the belt hangs off the local
+ *  anchor, so this diagram's middle is the scene's middle for the one reading
+ *  it makes. A blip at four o'clock here is the mark at four o'clock out
+ *  there, measured from us in both places. */
 function ColonyCompass({
   ring01,
   bearingRad,
