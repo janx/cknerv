@@ -21,6 +21,7 @@ import {
   deriveNodeStreamHealth,
   failBootPhase,
   reportBootSnapshotProgress,
+  type NodeStreamHealth,
 } from '@cknerv/ui';
 
 const API_BASE = '';
@@ -179,13 +180,15 @@ export async function fetchCellsSnapshot(): Promise<
 // is the problem. One GET every `STREAM_RECONNECT_MS` costs the same as the
 // reconnect the sockets are already doing at that cadence, and no dependency.
 
-/** Wire shape of `GET /api/health`, narrowed to the three fields the node
+/** Wire shape of `GET /api/health`, narrowed to the four fields the node
  *  channel reads. The endpoint reports a dozen more; the page is probing
  *  vitals, not consuming a projection, so it names only what it asks. */
 interface HealthResponse {
   degraded?: boolean;
   adapters?: Array<{ name?: string; alive?: boolean }>;
   tip_age_ms?: number | null;
+  /** The server's own one-field roster of views it has stopped building. */
+  quarantined_projections?: string[];
 }
 
 /**
@@ -197,7 +200,7 @@ interface HealthResponse {
  * least would be shouting.
  */
 export function connectNodeHealth(
-  onHealth: (health: StreamHealth | null) => void,
+  onHealth: (health: NodeStreamHealth | null) => void,
   opts: { pollMs?: number; now?: () => number } = {},
 ): { disconnect: () => void } {
   const pollMs = Math.max(250, opts.pollMs ?? STREAM_RECONNECT_MS);
@@ -218,6 +221,11 @@ export function connectNodeHealth(
           alive: adapter.alive !== false,
         })),
         tipAgeMs: typeof body.tip_age_ms === 'number' ? body.tip_age_ms : null,
+        // A body that names no roster is not a body reporting a quarantine.
+        // The reading is `degraded` gating a NAMED list, so an older server
+        // that never learned the field is read as well rather than as mute.
+        quarantinedProjections: (body.quarantined_projections ?? [])
+          .filter((name): name is string => typeof name === 'string'),
       }, now()));
     } catch {
       if (!stopped) onHealth(null);

@@ -123,7 +123,9 @@ export * from './derives/sceneView.derive';
 export {
   deriveNodeStreamHealth,
   deriveStreamHealthSummary,
+  type NodeFault,
   type NodeHealthProbe,
+  type NodeStreamHealth,
   type StreamHealthChannels,
 } from './derives/streamHealth.derive';
 

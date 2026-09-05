@@ -1,5 +1,5 @@
 import type { StreamHealthPhase } from '@cknerv/cache';
-import type { StreamHealthSummary } from '../../derives/streamHealth.derive';
+import type { NodeFault, StreamHealthSummary } from '../../derives/streamHealth.derive';
 import {
   formatStreamAge,
   formatStreamChannels,
@@ -18,13 +18,13 @@ const PRESENTATION: Record<
 };
 
 /**
- * The one word that is not a phase's.
+ * The gravest of the two words that are not a phase's.
  *
  * `DATA FROZEN` is the CONSEQUENCE, and it is the right word when the browser
  * cannot say why: a socket went quiet, and the last frame is what is on
- * screen. When the `node` channel is among the affected ones the page knows
- * the CAUSE, and naming a cause you know is worth more than naming its effect
- * — an operator reading NODE UNREACHABLE goes and looks at their node, and one
+ * screen. When the `node` channel hands over a fault the page knows the CAUSE,
+ * and naming a cause you know is worth more than naming its effect — an
+ * operator reading NODE UNREACHABLE goes and looks at their node, and one
  * reading DATA FROZEN reloads the tab.
  *
  * It takes the SAME colour, the same band and the same breathing frame. That
@@ -34,12 +34,44 @@ const PRESENTATION: Record<
  */
 const NODE_PRESENTATION = { title: 'NODE UNREACHABLE', color: HUD_COLORS.danger };
 
+/**
+ * The second word the node channel owns, and the quieter of the two.
+ *
+ * A quarantined projection is not the node's fault — the node is answering,
+ * the adapter is alive, and one VIEW of the chain has stopped being built. But
+ * the reader's situation is the same as the frozen one (a panel is showing a
+ * number that will not change again) and the page knows exactly which view, so
+ * it says which: the errand is the server's log, not the node's.
+ *
+ * It is RANKED BELOW `NODE UNREACHABLE` and the ranking is not made here — the
+ * channel hands over one fault, already chosen (`NodeFault`), because which of
+ * two true readings matters more is a fact about the readings.
+ *
+ * The name is the server's own, and it is the ONE string in this band a server
+ * gets to author, so it is upper-cased on the way in: the HUD prints one case,
+ * and a projection registered as `cells` may not be the lowercase word in a
+ * danger band. Several are joined the way `formatStreamChannels` joins several
+ * channels — there is one grammar for "more than one of these" in this file.
+ */
+const QUARANTINE_TITLE = 'PROJECTION QUARANTINED';
+
+function nodePresentation(fault: NodeFault): { title: string; color: string } {
+  if (fault.kind === 'unreachable') return NODE_PRESENTATION;
+  return {
+    title: `${QUARANTINE_TITLE} · ${fault.projections.map((name) => name.toUpperCase()).join(' + ')}`,
+    color: HUD_COLORS.danger,
+  };
+}
+
 export function streamHealthPresentation(
   summary: StreamHealthSummary,
 ): { title: string; color: string } | null {
   if (summary.phase === 'live') return null;
-  return summary.phase === 'stale' && summary.affectedChannels.includes('node')
-    ? NODE_PRESENTATION
+  // The frozen register is the only one that hands its sentence over: below it
+  // the page is describing a transport it can watch, and the node channel has
+  // nothing to add to CONNECTING or RETRYING that the socket is not saying.
+  return summary.phase === 'stale' && summary.nodeFault !== null
+    ? nodePresentation(summary.nodeFault)
     : PRESENTATION[summary.phase];
 }
 

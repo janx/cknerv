@@ -15,6 +15,7 @@ function summary(over: Partial<StreamHealthSummary> = {}): StreamHealthSummary {
     affectedChannels: ['chain'],
     lastMessageAgeMs: 4_000,
     attempt: 0,
+    nodeFault: null,
     ...over,
   };
 }
@@ -65,7 +66,11 @@ describe('StreamHealthBanner', () => {
     // its outage is the one the page can name rather than merely observe.
     const { container } = render(
       <StreamHealthBanner
-        summary={summary({ phase: 'stale', affectedChannels: ['chain', 'node'] })}
+        summary={summary({
+          phase: 'stale',
+          affectedChannels: ['chain', 'node'],
+          nodeFault: { kind: 'unreachable' },
+        })}
         reducedMotion
       />,
     );
@@ -76,8 +81,39 @@ describe('StreamHealthBanner', () => {
     // Same colour, same band, same frame — only the sentence changed.
     expect(container.querySelector('[data-stream-stale-frame]')).not.toBeNull();
     expect(streamHealthPresentation(
-      summary({ phase: 'stale', affectedChannels: ['node'] }),
+      summary({ phase: 'stale', affectedChannels: ['node'], nodeFault: { kind: 'unreachable' } }),
     )?.color).toBe(HUD_COLORS.danger);
+  });
+
+  it('names the quarantined view, in the server\'s words and the HUD\'s case', () => {
+    const { container } = render(
+      <StreamHealthBanner
+        summary={summary({
+          phase: 'stale',
+          affectedChannels: ['node'],
+          nodeFault: { kind: 'quarantined', projections: ['cells'] },
+        })}
+        reducedMotion
+      />,
+    );
+    const band = container.querySelector('[data-stream-health-banner]');
+    expect(band?.textContent).toContain('PROJECTION QUARANTINED · CELLS');
+    expect(band?.textContent).not.toContain('DATA FROZEN');
+    expect(band?.textContent).not.toContain('NODE UNREACHABLE');
+    // The frozen register, whole: same hue, same band, same frame.
+    expect(streamHealthPresentation(summary({
+      phase: 'stale',
+      affectedChannels: ['node'],
+      nodeFault: { kind: 'quarantined', projections: ['cells'] },
+    }))?.color).toBe(HUD_COLORS.danger);
+    expect(container.querySelector('[data-stream-stale-frame]')).not.toBeNull();
+    // Two views quarantined at once is one sentence, joined the way the
+    // channel line joins two channels.
+    expect(streamHealthPresentation(summary({
+      phase: 'stale',
+      affectedChannels: ['node'],
+      nodeFault: { kind: 'quarantined', projections: ['cells', 'semantics'] },
+    }))?.title).toBe('PROJECTION QUARANTINED · CELLS + SEMANTICS');
   });
 
   it('keeps DATA FROZEN when the node is not the reason', () => {
@@ -89,8 +125,14 @@ describe('StreamHealthBanner', () => {
     // …and a node channel that is merely one of several RETRYING channels does
     // not borrow the frozen word either: the override is the frozen register's.
     expect(streamHealthPresentation(
-      summary({ phase: 'retrying', affectedChannels: ['node'] }),
+      summary({ phase: 'retrying', affectedChannels: ['node'], nodeFault: { kind: 'unreachable' } }),
     )?.title).toBe('STREAM INTERRUPTED');
+    // A node channel present and WELL while another socket froze is DATA
+    // FROZEN too: the cause the band names is a cause the channel handed over,
+    // not the mere fact that a node channel is subscribed.
+    expect(streamHealthPresentation(
+      summary({ phase: 'stale', affectedChannels: ['chain', 'node'] }),
+    )?.title).toBe('DATA FROZEN');
   });
 
   it('breathes only while frozen, and never against a reduced-motion visitor', () => {

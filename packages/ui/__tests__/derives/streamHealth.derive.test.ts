@@ -28,6 +28,7 @@ describe('deriveStreamHealthSummary', () => {
       affectedChannels: [],
       lastMessageAgeMs: 2_000,
       attempt: 0,
+      nodeFault: null,
     });
   });
 
@@ -106,6 +107,7 @@ describe('the node channel', () => {
     degraded: false,
     adapters: [{ name: 'cknerv-adapter-ckb', alive: true }],
     tipAgeMs: 4_000,
+    quarantinedProjections: [],
     ...over,
   }, 10_000);
 
@@ -115,6 +117,7 @@ describe('the node channel', () => {
       attempt: 0,
       lastMessageAtMs: 6_000,
       reason: null,
+      fault: null,
     });
   });
 
@@ -125,15 +128,46 @@ describe('the node channel', () => {
     });
     expect(health.phase).toBe('stale');
     expect(health.reason).toBe('closed');
+    expect(health.fault).toEqual({ kind: 'unreachable' });
     // No dwell and no attempt count: the supervisor it reads flips an adapter
     // dead once and never back, so one reading is already settled.
     expect(health.attempt).toBe(0);
   });
 
   it('does not blame the node for a fault that is not the node\'s', () => {
-    // `degraded` is true for a quarantined projection too, and a quarantined
-    // projection is a SERVER fault. The adapter list is the reading.
+    // `degraded` is true for a quarantined projection too, and the adapter
+    // list is what says whether the NODE is the reason. With nothing named in
+    // the roster there is no reading here at all.
     expect(probe({ degraded: true }).phase).toBe('live');
+    expect(probe({ degraded: true }).fault).toBeNull();
+  });
+
+  it('freezes with its own word when a view of the chain stopped being built', () => {
+    const health = probe({ degraded: true, quarantinedProjections: ['cells'] });
+    // Same register as the node's own outage — a panel is showing a number
+    // that will not change again — and a different cause.
+    expect(health.phase).toBe('stale');
+    expect(health.fault).toEqual({ kind: 'quarantined', projections: ['cells'] });
+    // `lagged`, not `closed`: nothing closed. A quarantined projection is a
+    // view that stopped keeping up with the mutations behind it.
+    expect(health.reason).toBe('lagged');
+  });
+
+  it('ranks a node that is gone above a view that stopped', () => {
+    // Both true. The graver one is the one worth an errand, and the ranking is
+    // the channel's rather than the banner's.
+    expect(probe({
+      degraded: true,
+      adapters: [{ name: 'cknerv-adapter-ckb', alive: false }],
+      quarantinedProjections: ['cells', 'semantics'],
+    }).fault).toEqual({ kind: 'unreachable' });
+  });
+
+  it('reads the roster only through the gate the server states', () => {
+    // A roster with nothing wrong beside it is not a quarantine: `degraded` is
+    // the server's own answer to "is one of these worth reading", and a body
+    // that contradicts itself is read the calm way.
+    expect(probe({ quarantinedProjections: ['cells'] }).phase).toBe('live');
   });
 
   it('reports a tip it has never seen as no stamp rather than as age zero', () => {
@@ -155,5 +189,16 @@ describe('the node channel', () => {
     // The age the band prints is the tip's own, which is the whole point of
     // carrying `tip_age_ms` as the stamp.
     expect(summary.lastMessageAgeMs).toBe(4_000);
+    // …and the CAUSE rides with it. Folding it into the phase would lose it,
+    // and the banner is handed nothing but this summary.
+    expect(summary.nodeFault).toEqual({ kind: 'unreachable' });
+  });
+
+  it('carries no cause at all when no node channel is subscribed', () => {
+    const summary = deriveStreamHealthSummary({
+      chain: health('stale', 5_000),
+      cells: health('live', 9_400),
+    }, 10_000);
+    expect(summary.nodeFault).toBeNull();
   });
 });

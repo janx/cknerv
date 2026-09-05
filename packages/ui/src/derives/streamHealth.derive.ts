@@ -24,12 +24,15 @@ export interface StreamHealthChannels {
    * the sockets above are already saying, and a second banner for it would be
    * two voices on one emergency. Absent is the same word `semantics` uses for
    * "there is nothing here to report on".
+   *
+   * It carries a `fault` beside its phase, because the hop has TWO ways of
+   * being unwell and the register cannot tell them apart — see `NodeFault`.
    */
-  node?: StreamHealth;
+  node?: NodeStreamHealth;
 }
 
 /** The fields of `/api/health` this channel reads. The endpoint reports a
- *  dozen more; naming only these three is the contract, and it is why nothing
+ *  dozen more; naming only these four is the contract, and it is why nothing
  *  in `packages/types` had to grow a wire type for a body the page treats as a
  *  vital-signs probe rather than as data. */
 export interface NodeHealthProbe {
@@ -41,6 +44,38 @@ export interface NodeHealthProbe {
   adapters: ReadonlyArray<{ name: string; alive: boolean }>;
   /** Age of the tip block by its OWN timestamp, `null` until one is seen. */
   tipAgeMs: number | null;
+  /** The quarantined subset of the server's projections, by name — its own
+   *  one-field answer to "is a view of the chain no longer being built".
+   *  Empty is the healthy reading, and the field is not optional: a body that
+   *  omitted it would be read as "nothing is quarantined", and the caller that
+   *  maps the wire is where a missing field gets its meaning. */
+  quarantinedProjections: readonly string[];
+}
+
+/**
+ * WHY the node's hop is frozen, when the page can say.
+ *
+ * The phase is the REGISTER — frozen, danger, the breathing frame — and both
+ * of these wear it. What they do not share is the sentence, and the sentence
+ * is the whole reason this type exists: an operator who reads NODE UNREACHABLE
+ * goes and looks at their node, and one who reads PROJECTION QUARANTINED goes
+ * and looks at the server's log. Two errands, two words.
+ *
+ * They are RANKED, and the ranking is decided here rather than in the banner,
+ * because it is a fact about the readings and not about the drawing: an
+ * adapter that died has taken the whole chain with it, and a quarantined
+ * projection has taken one view of it. When both are true the graver one is
+ * the one worth an errand.
+ */
+export type NodeFault =
+  | { kind: 'unreachable' }
+  | { kind: 'quarantined'; projections: readonly string[] };
+
+/** The node channel's health, which is a transport phase plus the one thing
+ *  no socket lifecycle has a field for: a cause the page actually knows. */
+export interface NodeStreamHealth extends StreamHealth {
+  /** `null` while the hop is nominal — a live channel has nothing to explain. */
+  fault: NodeFault | null;
 }
 
 /**
@@ -56,13 +91,29 @@ export interface NodeHealthProbe {
  * see, and the register the reader needs is the frozen one. The banner's word
  * over that register is the node's own (`NODE UNREACHABLE`) — same colour,
  * same frame, different sentence, because a cause outranks its consequence.
+ *
+ * ⚠️ `degraded` is NOT the reading, on either half. It is true for a dead
+ * adapter and true for a quarantined projection, and those are two different
+ * errands, so each is read off the field that states it and `degraded` is only
+ * the gate that says one of them is worth reading. A quarantined projection
+ * used to leave this channel LIVE for exactly that reason — it is not the
+ * node's fault — and the correction is not to blame the node for it but to
+ * give it its own word: the channel is the one surface on the page that speaks
+ * for the server's own condition, and a view of the chain that is no longer
+ * being built is a frozen reading whoever's fault it is.
  */
 export function deriveNodeStreamHealth(
   probe: NodeHealthProbe,
   nowMs: number,
-): StreamHealth {
+): NodeStreamHealth {
   const reachable = !probe.degraded
     || probe.adapters.every((adapter) => adapter.alive);
+  const quarantined = probe.degraded ? probe.quarantinedProjections : [];
+  const fault: NodeFault | null = !reachable
+    ? { kind: 'unreachable' }
+    : quarantined.length > 0
+      ? { kind: 'quarantined', projections: [...quarantined] }
+      : null;
   // The tip's own age, carried as the freshness stamp rather than as a second
   // alarm. A tip that stops advancing while every adapter lives is a CHAIN
   // fault, and the ECG already names it FLATLINE at its own threshold — two
@@ -73,10 +124,17 @@ export function deriveNodeStreamHealth(
     ? null
     : nowMs - Math.max(0, probe.tipAgeMs);
   return {
-    phase: reachable ? 'live' : 'stale',
+    phase: fault === null ? 'live' : 'stale',
     attempt: 0,
     lastMessageAtMs,
-    reason: reachable ? null : 'closed',
+    // A dead adapter is a socket the server lost — `closed`, the same word the
+    // browser's own trackers use for it. A quarantined projection closed
+    // nothing: it is a view that stopped keeping up with the mutations behind
+    // it, which is what `lagged` already means everywhere else in this type.
+    reason: fault === null
+      ? null
+      : fault.kind === 'unreachable' ? 'closed' : 'lagged',
+    fault,
   };
 }
 
@@ -85,6 +143,11 @@ export interface StreamHealthSummary {
   affectedChannels: Array<keyof StreamHealthChannels>;
   lastMessageAgeMs: number | null;
   attempt: number;
+  /** Carried through untouched from the node channel, because the summary is
+   *  the only thing the banner is handed and the banner is where a sentence is
+   *  chosen. Folding it into `phase` would lose it; folding it into
+   *  `affectedChannels` would make a cause into a channel name. */
+  nodeFault: NodeFault | null;
 }
 
 const PHASE_PRIORITY: Record<StreamHealthPhase, number> = {
@@ -153,6 +216,7 @@ export function deriveStreamHealthSummary(
     affectedChannels,
     lastMessageAgeMs,
     attempt: Math.max(...entries.map(([, health]) => health.attempt)),
+    nodeFault: channels.node?.fault ?? null,
   };
 }
 

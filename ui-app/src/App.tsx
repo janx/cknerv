@@ -109,6 +109,7 @@ import {
   type MinerNodeSubject,
   type CellIdentityProofEvent,
   type CellIdentityProofKind,
+  type NodeStreamHealth,
   type PeerSightingPhase,
   type PeerSightingState,
 } from '@cknerv/ui';
@@ -641,7 +642,7 @@ export default function App({
   // seeded `connecting` like the three sockets above, because nothing is
   // connecting: the first poll either learns something about the node or
   // learns that the server cannot be asked.
-  const [nodeStreamHealth, setNodeStreamHealth] = useState<StreamHealth | null>(
+  const [nodeStreamHealth, setNodeStreamHealth] = useState<NodeStreamHealth | null>(
     null,
   );
   // SND·06's switch. The registry that owns it is the HUD's; this is only

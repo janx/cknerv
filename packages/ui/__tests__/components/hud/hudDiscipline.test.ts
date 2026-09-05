@@ -113,6 +113,7 @@ import {
 } from '../../../src/derives/assetEcosystem.derive';
 import { SCRIPT_FAMILY_COLORS } from '../../../src/derives/scriptFamilies.derive';
 import { replayPresentation } from '../../../src/components/hud/replayPresentation';
+import { streamHealthPresentation } from '../../../src/components/hud/StreamHealthBanner';
 import {
   BOOT_SEQUENCE_TITLE,
   bootPhaseLine,
@@ -6436,7 +6437,7 @@ describe('one severity per fact', () => {
 
 // ——— Every degraded state is a colour, a form and a word ————————————————
 //
-// The HUD has eleven ways of saying something is wrong, and until this chapter
+// The HUD has thirteen ways of saying something is wrong, and until this chapter
 // nothing checked that a reader could tell them apart. Report E laid them out
 // side by side and found the failure was not "too many": it was two hues doing
 // four jobs — violet for MY CONNECTION RE-SYNCING and for THE SERVER REBUILDING
@@ -6480,15 +6481,33 @@ describe('every degraded state is a colour, a form and a word', () => {
         word,
       });
     }
-    // The node's word rides the frozen register rather than a phase of its own.
-    const node = /const NODE_PRESENTATION = \{ title: '([^']+)', color: HUD_COLORS\.(\w+) \}/.exec(text);
-    expect(node, 'the node channel lost its word').not.toBeNull();
-    rows.push({
-      state: 'stream:node',
-      color: HUD_COLORS[node?.[2] as keyof typeof HUD_COLORS] as string,
-      form: 'band+frame',
-      word: node?.[1] ?? '',
-    });
+    // The node's two words ride the frozen register rather than phases of
+    // their own, and they are not a table: one of them is BUILT, out of a
+    // constant and a name a server authored. So they are read by CALLING the
+    // one function that decides them — the same way the replay plate's four
+    // are — with a fault the channel could really hand over.
+    for (const fault of [
+      { kind: 'unreachable' } as const,
+      // Lower case on purpose: the case oracle two tests down is the one that
+      // holds the server's own string to the HUD's one case, and it can only
+      // do that if the fixture hands it a string that is not already upper.
+      { kind: 'quarantined', projections: ['cells'] } as const,
+    ]) {
+      const visual = streamHealthPresentation({
+        phase: 'stale',
+        affectedChannels: ['node'],
+        lastMessageAgeMs: 4_000,
+        attempt: 0,
+        nodeFault: fault,
+      });
+      expect(visual, `the node channel lost its ${fault.kind} word`).not.toBeNull();
+      rows.push({
+        state: `stream:node-${fault.kind}`,
+        color: visual?.color ?? '',
+        form: 'band+frame',
+        word: visual?.title ?? '',
+      });
+    }
     return rows;
   }
 
@@ -6546,13 +6565,13 @@ describe('every degraded state is a colour, a form and a word', () => {
   const rows = (): StateRow[] => [...bannerStates(), ...replayStates(), ...bootStates()];
 
   it('reads every state off the surface that draws it', () => {
-    // Eleven, and the sweep has to FIND them: a parser that quietly stopped
+    // Thirteen, and the sweep has to FIND them: a parser that quietly stopped
     // matching would make every assertion below vacuous.
     const found = rows();
-    expect(found.length).toBe(12);
+    expect(found.length).toBe(13);
     expect(found.map((row) => row.state)).toEqual([
       'stream:connecting', 'stream:retrying', 'stream:resyncing', 'stream:stale',
-      'stream:node',
+      'stream:node-unreachable', 'stream:node-quarantined',
       'replay:boot', 'replay:catchup', 'replay:reorg', 'replay:rebuild',
       'boot:running', 'boot:fault', 'stage:composing',
     ]);
@@ -6579,7 +6598,7 @@ describe('every degraded state is a colour, a form and a word', () => {
     // And the sentence alone, because form is the weakest of the three axes:
     // two states in one hue saying one sentence are told apart only by whether
     // the thing is bolted to the top edge or floating under it, which is a
-    // distinction a reader makes AFTER reading. Eleven states, eleven
+    // distinction a reader makes AFTER reading. Thirteen states, thirteen
     // sentences.
     const said = new Map<string, string>();
     const echoes: string[] = [];
