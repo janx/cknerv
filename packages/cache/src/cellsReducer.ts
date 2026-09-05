@@ -580,9 +580,18 @@ interface CellGalaxyDraft {
   cellsOwned: boolean;
   recentLinksOwned: boolean;
   pulseLinksOwned: boolean;
-  /** Display maps copy-on-write flag — one flag covers members + residents
-   * so both copies (and one displayToken turnover) happen together. */
-  displayOwned: boolean;
+  /** Display-plane copy-on-write flags, split so a members-only write (a
+   * canonical enter/exit) copies only the ~12K member Set and a resident
+   * payload write copies only the ~10K resident Map — never both unless the
+   * batch actually touched both. The first turnover of EITHER bumps
+   * `displayToken` exactly once. */
+  displayMembersOwned: boolean;
+  displayResidentsOwned: boolean;
+  /** A `link` delta appended this batch, so the two link lists must be trimmed
+   * to capacity once at finalize. A prune-only batch leaves this false and is
+   * never trimmed (it only shrinks the lists), matching the old per-append
+   * splice, which ran on appends alone. */
+  linksAppended: boolean;
   touchedCellIds: Set<number>;
   /** Ids whose display MEMBERSHIP this batch may have changed. */
   touchedDisplayIds: Set<number>;
@@ -601,7 +610,9 @@ function createDraft(prev: CellGalaxyCache): CellGalaxyDraft {
     cellsOwned: false,
     recentLinksOwned: false,
     pulseLinksOwned: false,
-    displayOwned: false,
+    displayMembersOwned: false,
+    displayResidentsOwned: false,
+    linksAppended: false,
     touchedCellIds: new Set(),
     touchedDisplayIds: new Set(),
     residentUpdatedIds: new Set(),
@@ -797,13 +808,22 @@ function writableCells(draft: CellGalaxyDraft): Map<number, Cell> {
   return draft.value.cells;
 }
 
-function writableDisplay(draft: CellGalaxyDraft): void {
-  if (!draft.displayOwned) {
-    draft.value.displayMembers = new Set(draft.value.displayMembers);
-    draft.value.displayResidents = new Map(draft.value.displayResidents);
-    draft.value.displayToken = {};
-    draft.displayOwned = true;
-  }
+// Copy the member Set on first write only. `displayToken` turns over on the
+// first copy of EITHER display structure this batch, so it is bumped here only
+// when the resident map has not already bumped it — exactly one turnover.
+function writableDisplayMembers(draft: CellGalaxyDraft): void {
+  if (draft.displayMembersOwned) return;
+  draft.value.displayMembers = new Set(draft.value.displayMembers);
+  if (!draft.displayResidentsOwned) draft.value.displayToken = {};
+  draft.displayMembersOwned = true;
+}
+
+// Copy the resident Map on first write only, with the same one-turnover rule.
+function writableDisplayResidents(draft: CellGalaxyDraft): void {
+  if (draft.displayResidentsOwned) return;
+  draft.value.displayResidents = new Map(draft.value.displayResidents);
+  if (!draft.displayMembersOwned) draft.value.displayToken = {};
+  draft.displayResidentsOwned = true;
 }
 
 function displayProvenanceEquals(
@@ -885,15 +905,24 @@ function writablePulseLinks(draft: CellGalaxyDraft): CellLink[] {
   return draft.value.pulseLinks;
 }
 
-function appendBounded<T>(items: T[], item: T, capacity: number): void {
-  if (capacity === 0) {
-    items.length = 0;
-    return;
-  }
-  items.push(item);
+// Trim a bounded link list to its capacity in ONE splice, at batch finalize —
+// not on every append. A batch of N links used to splice(0, 1) off the front N
+// times (each an O(capacity) shift of the whole array); it now pushes N times
+// and drops the head once. `capacity === 0` clears it.
+function trimBounded<T>(items: T[], capacity: number): void {
   if (items.length > capacity) {
     items.splice(0, items.length - capacity);
   }
+}
+
+// One trim of each link list per batch, only when a `link` delta appended.
+function trimBatchLinks(
+  draft: CellGalaxyDraft,
+  opts: CellsReducerOptions,
+): void {
+  if (!draft.linksAppended) return;
+  trimBounded(draft.value.recentLinks, recentLinksCapacity(opts));
+  trimBounded(draft.value.pulseLinks, linkRingCapacity(opts));
 }
 
 /** Apply one delta to `c` **in place**. Returns true iff something changed
@@ -937,7 +966,7 @@ function mutateCellDelta(
         changed = true;
       }
       if (staged !== undefined && staged.death_at_ms !== d.at_ms) {
-        writableDisplay(draft);
+        writableDisplayResidents(draft);
         c.displayResidents.set(d.id, { ...staged, death_at_ms: d.at_ms });
         draft.residentUpdatedIds.add(d.id);
         changed = true;
@@ -956,7 +985,7 @@ function mutateCellDelta(
         changed = true;
       }
       if (staged !== undefined && staged.tag !== d.tag) {
-        writableDisplay(draft);
+        writableDisplayResidents(draft);
         c.displayResidents.set(d.id, { ...staged, tag: d.tag });
         draft.residentUpdatedIds.add(d.id);
         changed = true;
@@ -1030,16 +1059,10 @@ function mutateCellDelta(
         tag: d.tag,
         at_ms: d.at_ms,
       };
-      appendBounded(
-        writableRecentLinks(draft),
-        link,
-        recentLinksCapacity(opts),
-      );
-      appendBounded(
-        writablePulseLinks(draft),
-        link,
-        linkRingCapacity(opts),
-      );
+      // Push only; the batch trims both lists once at finalize (trimBounded).
+      writableRecentLinks(draft).push(link);
+      writablePulseLinks(draft).push(link);
+      draft.linksAppended = true;
       c.linksSeq = nextSeq;
       return true;
     }
@@ -1063,7 +1086,7 @@ function mutateCellDelta(
         const canonical = c.cells.get(cell.id);
         if (canonical !== undefined && cellContentEquals(canonical, cell)) {
           if (isMember) continue;
-          writableDisplay(draft);
+          writableDisplayMembers(draft);
           c.displayMembers.add(cell.id);
           draft.touchedDisplayIds.add(cell.id);
           changed = true;
@@ -1073,7 +1096,7 @@ function mutateCellDelta(
         const identical =
           retained !== undefined && cellContentEquals(retained, cell);
         if (isMember && identical) continue;
-        writableDisplay(draft);
+        writableDisplayResidents(draft);
         c.displayResidents.set(
           cell.id,
           retained !== undefined && identical ? retained : cell,
@@ -1081,6 +1104,7 @@ function mutateCellDelta(
         if (isMember) {
           draft.residentUpdatedIds.add(cell.id);
         } else {
+          writableDisplayMembers(draft);
           c.displayMembers.add(cell.id);
           draft.touchedDisplayIds.add(cell.id);
         }
@@ -1093,16 +1117,25 @@ function mutateCellDelta(
       // the ones this cache was never sent.
       for (const id of d.enter_ids) {
         if (c.displayMembers.has(id)) continue;
-        writableDisplay(draft);
+        writableDisplayMembers(draft);
         c.displayMembers.add(id);
         draft.touchedDisplayIds.add(id);
         changed = true;
       }
       for (const id of d.exit_ids) {
-        if (!c.displayMembers.has(id) && !c.displayResidents.has(id)) continue;
-        writableDisplay(draft);
-        if (c.displayMembers.delete(id)) draft.touchedDisplayIds.add(id);
-        c.displayResidents.delete(id);
+        const wasMember = c.displayMembers.has(id);
+        const wasResident = c.displayResidents.has(id);
+        if (!wasMember && !wasResident) continue;
+        // Copy only the structure this exit actually removes from: a canonical
+        // member (not a resident) exiting copies the Set alone.
+        if (wasMember) {
+          writableDisplayMembers(draft);
+          if (c.displayMembers.delete(id)) draft.touchedDisplayIds.add(id);
+        }
+        if (wasResident) {
+          writableDisplayResidents(draft);
+          c.displayResidents.delete(id);
+        }
         changed = true;
       }
       if (
@@ -1136,6 +1169,7 @@ export function applyCellDelta(
 ): CellGalaxyCache {
   const draft = createDraft(prev);
   if (!mutateCellDelta(draft, d, opts)) return prev;
+  trimBatchLinks(draft, opts);
   draft.value.cellChanges = summarizeCellChanges(
     prev.cells,
     draft.value.cells,
@@ -1150,7 +1184,7 @@ export function applyCellDelta(
     draft.residentUpdatedIds,
     draft.value.cellChanges.updated,
     prev.displayToken,
-    draft.displayOwned,
+    draft.displayMembersOwned || draft.displayResidentsOwned,
   );
   draft.value.stats = nextCellsStats(
     // The draft's stats, not prev's: a `script_census` delta already
@@ -1189,6 +1223,7 @@ export function applyRevisionedCellDeltas(
   // `cellsCacheRevisionOnly` below before publishing such a cache to React.
   if (!changed && maxRev === prev.revision) return prev;
   draft.value.revision = maxRev;
+  trimBatchLinks(draft, opts);
   draft.value.cellChanges = summarizeCellChanges(
     prev.cells,
     draft.value.cells,
@@ -1203,7 +1238,7 @@ export function applyRevisionedCellDeltas(
     draft.residentUpdatedIds,
     draft.value.cellChanges.updated,
     prev.displayToken,
-    draft.displayOwned,
+    draft.displayMembersOwned || draft.displayResidentsOwned,
   );
   draft.value.stats = nextCellsStats(
     // Draft stats for the same reason as the single-delta path: keep the

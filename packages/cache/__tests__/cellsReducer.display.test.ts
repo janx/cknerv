@@ -503,3 +503,133 @@ describe('snapshot seeding', () => {
     expect([...resync.displayMembers]).toEqual([1, 2, 501]);
   });
 });
+
+// The 12K member Set and the ~10K resident Map are copied behind separate
+// owned flags, so a write that touches one does not defensively copy the other.
+describe('the display copy is split: members and residents copy independently', () => {
+  const RESIDENT = 9_007_199_254_000_001;
+
+  // A cache staged with canonical members (2, 3) AND a resident payload
+  // (RESIDENT), so each map's identity is a live signal for "was this copied
+  // this batch". Id 1 is a canonical cell but NOT yet a member, so a fresh
+  // members-only enter has something to add.
+  function staged(): CellGalaxyCache {
+    let cache = cacheWithCanonical([1, 2, 3]);
+    cache = applyCellDelta(
+      cache,
+      displayDelta({
+        enter_cells: [cell(2), cell(3), cell(RESIDENT)],
+        enter_ids: [RESIDENT],
+      }),
+    );
+    return cache;
+  }
+
+  it('a canonical-member enter copies the Set alone', () => {
+    const before = staged();
+    // cell(1) is canonical, identical, and not yet a member → a pure add.
+    const after = applyCellDelta(
+      before,
+      displayDelta({ enter_cells: [cell(1)] }),
+    );
+
+    expect(after.displayMembers).not.toBe(before.displayMembers); // Set copied
+    expect(after.displayResidents).toBe(before.displayResidents); // Map NOT copied
+    expect(after.displayMembers.has(1)).toBe(true);
+    expect(after.displayToken).not.toBe(before.displayToken); // still one turnover
+  });
+
+  it('a resident payload update copies the Map alone', () => {
+    const before = staged();
+    // Re-ship the already-staged resident with a changed payload: a resident
+    // write on a member, so members are untouched.
+    const after = applyCellDelta(
+      before,
+      displayDelta({ enter_cells: [cell(RESIDENT, { tag: 'dex' })] }),
+    );
+
+    expect(after.displayResidents).not.toBe(before.displayResidents); // Map copied
+    expect(after.displayMembers).toBe(before.displayMembers); // Set NOT copied
+    expect(after.displayResidents.get(RESIDENT)?.tag).toBe('dex');
+    expect(after.displayToken).not.toBe(before.displayToken);
+  });
+
+  it('a canonical-member exit copies the Set alone', () => {
+    const before = staged();
+    // Id 2 is a canonical member, never a resident → the Set alone changes.
+    const after = applyCellDelta(before, displayDelta({ exit_ids: [2] }));
+
+    expect(after.displayMembers).not.toBe(before.displayMembers); // Set copied
+    expect(after.displayResidents).toBe(before.displayResidents); // Map NOT copied
+    expect(after.displayMembers.has(2)).toBe(false);
+    expect(after.displayResidents.has(RESIDENT)).toBe(true);
+  });
+
+  it('a resident exit copies the Map (and the Set, which it also leaves)', () => {
+    const before = staged();
+    const after = applyCellDelta(before, displayDelta({ exit_ids: [RESIDENT] }));
+
+    expect(after.displayResidents).not.toBe(before.displayResidents);
+    expect(after.displayMembers).not.toBe(before.displayMembers);
+    expect(after.displayResidents.has(RESIDENT)).toBe(false);
+    expect(after.displayMembers.has(RESIDENT)).toBe(false);
+  });
+
+  it('leaves both prev maps untouched (purity)', () => {
+    const before = staged();
+    const membersBefore = [...before.displayMembers];
+    const residentsBefore = [...before.displayResidents.keys()];
+    applyCellDelta(before, displayDelta({ enter_cells: [cell(1)] }));
+    applyCellDelta(before, displayDelta({ exit_ids: [RESIDENT] }));
+    expect([...before.displayMembers]).toEqual(membersBefore);
+    expect([...before.displayResidents.keys()]).toEqual(residentsBefore);
+  });
+});
+
+// One trim of each bounded link list per batch, at finalize — not a front
+// splice on every append. The end state (most-recent window, ring order) is
+// identical to the per-append trim it replaces.
+function linkDelta(txHash: string, block: number): CellDelta {
+  return {
+    type: 'link',
+    tx_hash: txHash,
+    block,
+    from_ids: [],
+    to_ids: [block],
+    endpoint_anchors: [],
+    parents: [],
+    tag: null,
+    at_ms: block * 1000,
+  };
+}
+
+describe('bounded link lists trim once per batch, not per append', () => {
+  it('keeps exactly the capacity most-recent links after a batch of appends', () => {
+    const deltas = Array.from({ length: 10 }, (_, i) => ({
+      revision: i + 1,
+      delta: linkDelta(`0x${i + 1}`, i + 1),
+    }));
+    const after = applyRevisionedCellDeltas(emptyCellsCache(), deltas, {
+      recentLinksCapacity: 3,
+      linkRingCapacity: 3,
+    });
+
+    expect(after.recentLinks.length).toBe(3);
+    expect(after.pulseLinks.length).toBe(3);
+    // The window is the last three, in arrival order.
+    expect(after.recentLinks.map((l) => l.block)).toEqual([8, 9, 10]);
+    expect(after.pulseLinks.map((l) => l.block)).toEqual([8, 9, 10]);
+  });
+
+  it('trims a single-delta append too', () => {
+    let cache = emptyCellsCache();
+    for (let block = 1; block <= 5; block += 1) {
+      cache = applyCellDelta(cache, linkDelta(`0x${block}`, block), {
+        recentLinksCapacity: 2,
+        linkRingCapacity: 2,
+      });
+    }
+    expect(cache.recentLinks.map((l) => l.block)).toEqual([4, 5]);
+    expect(cache.pulseLinks.map((l) => l.block)).toEqual([4, 5]);
+  });
+});
