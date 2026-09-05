@@ -2,6 +2,20 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as THREE from 'three';
+import { CELLS_Y, CHAIN_Y } from '../../src/layout';
+import { FIELD_HALF_X, FIELD_HALF_Z } from '../../src/helix';
+import {
+  planDeliveries,
+  PEER_INNER_RADIUS,
+  PEER_OUTER_RADIUS,
+} from '../../src/derives/peers.derive';
+import {
+  COLONY_ELLIPSE_X,
+  COLONY_ELLIPSE_Z,
+  localAnchor,
+} from '../../src/derives/networkTopology.derive';
+import { deliverySchema } from '../../src/tweaks/tweakSchema';
+import { BEAM_GROW_DUR_S } from '../../src/ui/topologyConstants';
 import {
   COURIER_END_EASE,
   FLAME_SPEED_STRETCH,
@@ -192,5 +206,140 @@ describe('courierGlyph — the one courier vocabulary', () => {
       expect(courier).toContain('const s = easeOutCubic(t)');
       expect(delivery).toContain('const progress = easeOutCubic(phase.t)');
     });
+  });
+});
+
+// ——— ⟨F3 / D-12⟩ The lob has no beam left in it ————————————————————————
+//
+// The rejected form has a name in the record: 「外星激光捅进温暖的有机体」 — an
+// alien laser stabbing into the warm organism. `BlockBeam` was deleted for it,
+// and report D-12 found the last vestige still on master: during the lob each
+// carrier rose from the peer plane to the tissue trailing a hard white tapered
+// streak, 1.2–4 wu × 0.55 wu, an 8–27 px vertical bar ending in the tissue.
+//
+// B0 re-landed the last-hop rework, which replaces that glyph with the SAME
+// courier the propagation tree is drawn with: a mote and a plume, thrown with
+// easeOutCubic, in the block's carrier hue. This chapter is the verification —
+// and it does not verify the obvious thing, because the obvious thing is not
+// true. THE HERO'S LOB IS STILL VERTICAL: the local anchor stands under the
+// canopy, so its landing is its own xz and its flight is 16 world units of
+// pure rise. What makes that not a beam is arithmetic, and the arithmetic is
+// what is pinned below.
+describe('the lob has no beam left in it', () => {
+  const delivery = source('BlockDeliveryLayer.tsx');
+  const code = delivery.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  it('draws three carrier forms and no fourth, and none of them is a streak', () => {
+    // The three batches the layer's own header names: motes, plumes, fronts.
+    for (const batch of ['moteBatchRef', 'plumeBatchRef', 'waveBatchRef']) {
+      expect(code, `${batch} left the delivery layer`).toContain(batch);
+    }
+    // …and the vestige by name. The header claims "No glyph, no streak, no
+    // sear, nothing white"; a claim in a comment that the code contradicts is
+    // worse than no claim, so the claim is read as CODE.
+    for (const gone of ['streak', 'Streak', 'beam', 'Beam', 'sear', 'Sear', 'Glyph geometry']) {
+      expect(code, `the delivery layer says ${gone} again`).not.toContain(gone);
+    }
+    // BEAM_GROW_DUR_S is the phase table's own name for the lob window and it
+    // is the one survivor of the deleted beam — a DURATION, not a form.
+    expect(delivery).toContain('LOB_DUR_S = BEAM_GROW_DUR_S');
+  });
+
+  it('every carrier is aimed by its flight or by the camera; the one fixed axis is FLAT', () => {
+    // A beam is a form with an axis of its own. Here the mote faces the
+    // camera, the plume follows `to − from`, and the ONE constant orientation
+    // in the file lays the contact front flat IN the tissue plane.
+    // The plume's axis, read as ONE span: the vector is built from the
+    // delivery's own endpoints and handed straight to the writer. Asserting
+    // the two halves separately would pass on a file that set a constant axis
+    // and computed the endpoints somewhere else — the throw's own position
+    // interpolation uses the same subtraction three lines up.
+    expect(code, 'the plume no longer follows the flight').toMatch(
+      /_flightDirection\.set\(\s*delivery\.to\[0\] - fromX,\s*delivery\.to\[1\] - fromY,\s*delivery\.to\[2\] - fromZ,\s*\);[\s\S]{0,400}?writeCourierPlume\([\s\S]{0,200}?_flightDirection,/,
+    );
+    expect(code).toContain('_cameraQuaternion');
+    // Exactly one constant quaternion, and it maps the annulus's own normal
+    // onto the world's up axis — which is a DISC lying in the tissue, the
+    // opposite of a bar crossing it.
+    expect(code.match(/new THREE\.Quaternion\(\)\.setFromUnitVectors/g)).toHaveLength(1);
+    const flat = new THREE.Quaternion().setFromUnitVectors(
+      new THREE.Vector3(0, 0, 1),
+      new THREE.Vector3(0, 1, 0),
+    );
+    const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(flat);
+    expect(normal.y).toBeCloseTo(1, 12);
+    expect(Math.hypot(normal.x, normal.z)).toBeCloseTo(0, 12);
+  });
+
+  it('the hero rises with no travel — and its trail cannot span the gap', () => {
+    // The geometry, computed rather than asserted about. The local anchor
+    // stands ~30 wu off the galaxy's axis, well inside the 60 × 54 footprint,
+    // so its landing is its own xz: the hero's flight is pure rise.
+    const anchor = localAnchor(0xc0ffee);
+    const [hero] = planDeliveries(
+      [anchor], 0.4, new Map(), {}, CELLS_Y,
+      { halfX: FIELD_HALF_X, halfZ: FIELD_HALF_Z, rotationY: 0 },
+    );
+    const rise = hero.to[1] - hero.from[1];
+    const travel = Math.hypot(hero.to[0] - hero.from[0], hero.to[2] - hero.from[2]);
+    expect(rise).toBe(CELLS_Y - CHAIN_Y);
+    expect(travel).toBeCloseTo(0, 9);
+
+    // So the plume IS vertical for this one carrier, and the thing that keeps
+    // it from being the rejected bar is that it is a STUB on a long rise: the
+    // trail can never reach from one plane to the other, at any knob setting.
+    expect(deliverySchema.plumeMaxLen.value * 4).toBeLessThanOrEqual(rise);
+    expect(deliverySchema.plumeMaxLen.max).toBeLessThan(rise);
+    // And it never even reaches that ceiling. `courierPlumeLength` is the
+    // hop's analytic speed made visible, and a 16 wu rise over `LOB_DUR_S`
+    // peaks at 48 wu/s, which the stretch turns into **1.86 wu** — an EIGHTH
+    // of the rise, at the throw, falling to its 0.9 floor as the hop coasts to
+    // rest. At the membrane the trail is shorter than the plume is WIDE: a
+    // blob, which is the opposite of a bar.
+    const at = (t: number) => courierPlumeLength(
+      deliverySchema.plumeMinLen.value,
+      deliverySchema.plumeMaxLen.value,
+      courierHopSpeed(rise, BEAM_GROW_DUR_S, t),
+    );
+    expect(at(0)).toBeCloseTo(1.86, 6);
+    expect(at(0) * 8).toBeLessThanOrEqual(rise);
+    expect(at(0)).toBeLessThan(deliverySchema.plumeMaxLen.value);
+    expect(at(1)).toBe(deliverySchema.plumeMinLen.value);
+    expect(at(1)).toBeLessThan(deliverySchema.plumeWidth.value);
+  });
+
+  it('a MEASURED carrier travels, because the belt stands outside the canopy', () => {
+    // The other half of the same finding, and it is B1's doing: the measured
+    // belt used to sit at 34–56 INSIDE the tissue, so every peer's landing was
+    // its own xz and every peer's lob was vertical too — twelve bars a block,
+    // which is the count D-12 reports. At 66–86 the belt rings the organism,
+    // every landing is clamped inward, and every measured lob now has real
+    // travel across the scene.
+    const peers = [30, 120, 210, 300].map((deg, i) => {
+      const a = (deg * Math.PI) / 180;
+      // The belt's own two radii, on the colony's ellipse.
+      const r = i % 2 === 0 ? PEER_INNER_RADIUS : PEER_OUTER_RADIUS;
+      return [
+        Math.cos(a) * r * COLONY_ELLIPSE_X,
+        CHAIN_Y,
+        Math.sin(a) * r * COLONY_ELLIPSE_Z,
+      ] as [number, number, number];
+    });
+    const pos = new Map(peers.map((p, i) => [`p${i}`, p] as const));
+    const arrivals = Object.fromEntries(peers.map((_, i) => [`p${i}`, 0.2 * i]));
+    const plan = planDeliveries(
+      [], 0, pos, arrivals, CELLS_Y,
+      { halfX: FIELD_HALF_X, halfZ: FIELD_HALF_Z, rotationY: 0 },
+    );
+    expect(plan).toHaveLength(4);
+    for (const d of plan) {
+      const travel = Math.hypot(d.to[0] - d.from[0], d.to[2] - d.from[2]);
+      // Every one of them is pulled onto the rim, so none is a pure rise.
+      expect(travel, `${d.key} did not travel`).toBeGreaterThan(2);
+    }
+    // …and the belt's own inner radius clears the footprint on BOTH axes,
+    // which is why that holds for every angle and not only for these four.
+    expect(PEER_INNER_RADIUS * COLONY_ELLIPSE_X).toBeGreaterThan(FIELD_HALF_X);
+    expect(PEER_INNER_RADIUS * COLONY_ELLIPSE_Z).toBeGreaterThan(FIELD_HALF_Z);
   });
 });
