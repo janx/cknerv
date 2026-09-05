@@ -131,9 +131,11 @@ function graphFromEdges(
  * than the screen budget accept scattered partial coverage by design.
  *
  * Selection is deterministic and hierarchical:
- *  1. spanning-forest edges — all of them when they fit, otherwise a
- *     hash-scattered share (uniform airiness, never a wired-solid region);
- *  2. still-valid prior edges preserve local visual continuity;
+ *  1. still-valid prior edges — re-admitted first so an ordinary block frees
+ *     only the slots of edges that died, not the whole forest (continuity);
+ *  2. spanning-forest edges — all of them when they fit (cold build / small
+ *     field), otherwise a hash-scattered share fills the remainder (uniform
+ *     airiness, never a wired-solid region);
  *  3. hierarchy-ranked branches and hash-scattered cross-links fill the cap.
  */
 export function buildPassiveNeighborGraph(
@@ -216,10 +218,24 @@ export function buildPassiveNeighborGraph(
     kept.push(edge);
   };
 
+  // Continuity first: re-admit still-valid previously-drawn edges before
+  // coverage competes for slots, so an ordinary Cell birth/death frees only
+  // the dead edges' slots instead of reshuffling the whole coverage forest.
+  // The forest is the BFS skeleton, whose parent assignment is queue-order
+  // dependent, so it reshuffles a large fraction per block even when
+  // membership moves ~1%; taking coverage first therefore evicted-and-regrew
+  // ~an eighth of the drawn edges every block. A cold build (no
+  // preferredEdges) is a no-op here, so coverage below still fills everything
+  // exactly as before.
+  for (const previous of options.preferredEdges ?? []) {
+    const current = availableByKey.get(edgeKey(previous));
+    if (current) keep(current);
+  }
+
   // Small fields: the budget exceeds the spanning forest (4/3 ratio), so
-  // every connected Cell is visibly attached before continuity and
-  // decorative cross-links compete for the remainder — full coverage is
-  // still the visual contract there.
+  // every connected Cell still lands on a visible arbor — continuity above
+  // only re-took edges that are still present, so coverage here reaches the
+  // rest before decorative cross-links fill the remainder.
   //
   // Over-budget fields (forest > budget): full coverage is impossible, and
   // admitting the forest in graph order would wire one coherent region
@@ -239,10 +255,6 @@ export function buildPassiveNeighborGraph(
     for (let i = 0; i < coverageBudget && i < scattered.length; i += 1) {
       keep(scattered[i]);
     }
-  }
-  for (const previous of options.preferredEdges ?? []) {
-    const current = availableByKey.get(edgeKey(previous));
-    if (current) keep(current);
   }
 
   // The initial and incremental builds share the same hierarchy fill order.

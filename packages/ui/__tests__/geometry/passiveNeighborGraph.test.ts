@@ -172,4 +172,96 @@ describe('buildPassiveNeighborGraph', () => {
     expect(new Set(complete.edges.map((edge) => `${edge.from}:${edge.to}`)))
       .toEqual(new Set(full.edges.map((edge) => `${edge.from}:${edge.to}`)));
   });
+
+  // --- T2: continuity-first admission (still-valid prior edges before coverage) ---
+
+  const keysOf = (graph: { edges: { from: number; to: number }[] }) =>
+    graph.edges.map((edge) => `${edge.from}:${edge.to}`);
+
+  // A fixed, over-budget membership step: a batch of Cells dies and a batch is
+  // born, so the BFS spanning forest reshuffles (the churn root). Reused by the
+  // admission-order and continuity assertions below.
+  const previous = buildPassiveNeighborGraph(full, { edgeBudget: 120 });
+  const changedCells = new Map(cells);
+  for (let i = 0; i < 12; i += 1) changedCells.delete(i * 7 + 3);
+  for (let i = 0; i < 12; i += 1) changedCells.set(500 + i, cell(500 + i));
+  const changedFull = buildNeighborGraph(changedCells, { k: 7, maxEdgeLength: 30 });
+  const availableKeys = new Set(keysOf(changedFull));
+  const survivingKeys = keysOf(previous).filter((key) => availableKeys.has(key));
+
+  it('admits a still-valid preferred edge before coverage claims the last slot', () => {
+    // Budget == the number of still-valid previously-drawn edges: there is NO
+    // remainder for coverage. A coverage edge can therefore enter only by
+    // evicting a drawn edge. Continuity-first admits the survivors first, so
+    // coverage claims nothing and the result IS exactly the survivors.
+    // (Coverage-first takes ~0.55·budget of the reshuffled forest before the
+    // survivors and this equality breaks — the falsification.)
+    const spanningForest = (() => {
+      const parent = new Map<number, number>();
+      for (const id of changedFull.adjacency.keys()) parent.set(id, id);
+      const find = (id: number): number => {
+        let root = parent.get(id)!;
+        while (parent.get(root) !== root) root = parent.get(root)!;
+        return root;
+      };
+      let n = 0;
+      for (const edge of changedFull.edges) {
+        const a = find(edge.from);
+        const b = find(edge.to);
+        if (a === b) continue;
+        parent.set(b, a);
+        n += 1;
+      }
+      return n;
+    })();
+    const budget = survivingKeys.length;
+    expect(budget).toBeGreaterThan(0);
+    expect(budget).toBeLessThan(spanningForest); // genuinely over-budget
+
+    const next = buildPassiveNeighborGraph(changedFull, {
+      edgeBudget: budget,
+      preferredEdges: previous.edges,
+    });
+    expect(next.edges).toHaveLength(budget);
+    expect(new Set(keysOf(next))).toEqual(new Set(survivingKeys));
+  });
+
+  it('retains every surviving previously-drawn edge, refilling only the dead slots', () => {
+    const edgeBudget = 120;
+    const next = buildPassiveNeighborGraph(changedFull, {
+      edgeBudget,
+      preferredEdges: previous.edges,
+    });
+    const nextKeys = new Set(keysOf(next));
+    const retained = survivingKeys.filter((key) => nextKeys.has(key)).length;
+
+    expect(previous.edges).toHaveLength(edgeBudget);
+    expect(next.edges).toHaveLength(edgeBudget);
+    // Non-trivial: most of the budget is still-valid history, not fresh fill.
+    expect(survivingKeys.length).toBeGreaterThan(edgeBudget * 0.8);
+    expect(survivingKeys.length).toBeLessThanOrEqual(edgeBudget);
+    // Continuity-first keeps EVERY edge that is still in the graph; only the
+    // slots freed by dead edges are refilled by coverage. Coverage-first
+    // re-picks the reshuffled forest first and cannot retain all of them.
+    expect(retained).toBe(survivingKeys.length);
+    // The refill is exactly the freed remainder, nothing more.
+    expect(next.edges.length - retained).toBe(edgeBudget - survivingKeys.length);
+  });
+
+  it('cold build (no preferredEdges) is byte-for-byte the coverage-first result', () => {
+    // Pinned against the current function's output BEFORE the continuity-first
+    // reorder, for a fixed over-budget graph (40 Cells, forest 39 > budget 24).
+    // The reorder is a no-op when preferredEdges is absent, so this must not
+    // move; it guards the cold path (boot, unchained rebuild) from any drift.
+    const smallCells = new Map(
+      Array.from({ length: 40 }, (_, id) => [id, cell(id)] as const),
+    );
+    const smallFull = buildNeighborGraph(smallCells, { k: 7, maxEdgeLength: 30 });
+    const cold = buildPassiveNeighborGraph(smallFull, { edgeBudget: 24 });
+    expect(keysOf(cold)).toEqual([
+      '0:5', '0:10', '0:13', '0:15', '0:16', '0:21', '0:26', '0:31',
+      '2:28', '3:16', '3:19', '4:22', '4:30', '4:33', '6:19', '8:29',
+      '9:17', '11:19', '12:25', '15:30', '16:32', '18:39', '20:25', '26:39',
+    ]);
+  });
 });
