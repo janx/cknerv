@@ -226,6 +226,12 @@ interface CellGalaxyProps {
    *  at all, which is the correct state whenever the stage covers its scope
    *  or the caller has not derived a population. */
   populationGain?: number;
+  /** ⟨D-10 · knob b⟩ Passed straight through to `CellPopulationField`, which
+   *  caps the halo's THREAD level at the overview. The canopy itself has no
+   *  use for it: the same ref already reaches `NeuralFabric`, `NetworkColony`
+   *  and `CellBridgeNerves` as their own prop, and the halo is the one layer
+   *  inside this component that needs the camera's place on the curve. */
+  cellDetailViewFocusRef?: { readonly current: number };
   /** Seconds after the block pulse at which the LOCAL node applies the block —
    *  i.e. when it hears the block from the network (caller-supplied delay). The
    *  whole ledger reaction is delayed by this, so the canonical ripple never
@@ -1719,6 +1725,7 @@ function CellGalaxy({
   overlay,
   pickingSuspendedRef,
   populationGain = 0,
+  cellDetailViewFocusRef,
   localReceiveDelayS = 0,
 }: CellGalaxyProps) {
   const simClock = useSimClock();
@@ -2572,7 +2579,10 @@ function CellGalaxy({
             rather than descendants of it: it carries no ids, registers no
             pointer handlers, and neither its points nor its fibres ever answer
             a raycast. */}
-        <CellPopulationField gain={populationGain} />
+        <CellPopulationField
+          gain={populationGain}
+          cellDetailViewFocusRef={cellDetailViewFocusRef}
+        />
         <points
           geometry={cellGeometry}
           material={hybridMaterial}

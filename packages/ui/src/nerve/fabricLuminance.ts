@@ -123,3 +123,79 @@ export function passiveFabricEnergyScale(
   );
   return radial + (1 - radial) * semanticReclaim;
 }
+
+/**
+ * ⟨D-10 · knob a⟩ The mesh tier's share of its light at the OVERVIEW camera.
+ *
+ * ## The finding this exists to answer
+ *
+ * At the default pose the fabric reads as WOOL: report D measured the core's
+ * structure-tensor orientation coherence at **0.164** against an
+ * isotropic-noise floor of 0.111 — i.e. barely above noise — while the halo
+ * band outside the rim reads 0.212. The trunk tier is a 1.76 width step on
+ * strokes about 13 px long, laid over a carpet the mesh tier has already
+ * covered its own ellipse with once. A width step cannot be a hierarchy when
+ * the thing it is stepping over tiles the frame: hierarchy needs empty space
+ * to be read against, and `FABRIC_TRUNK_WIDTH_RATIO`'s own argument — a
+ * per-stroke discriminability sweep — is an argument about TWO strokes side by
+ * side, not about eight thousand.
+ *
+ * ## What this changes and what it deliberately does not
+ *
+ * It spends ENERGY, not width, and only on the mesh tier: the trunks keep
+ * every bit of their light at every camera, so the tier that carries the
+ * structure is never the thing that dims. That is the one direction the
+ * de-glare work leaves open — the ladder's other channels are spent (the core
+ * floor is `centerDim² = 0.09`, trunkness reclaims to 0.40) and WIDTH is
+ * already at its ceiling under the pulse.
+ *
+ * It is a knob because it is art direction, and **its default is 1 — today's
+ * picture exactly.** Nothing moves until the eye has seen the A/B.
+ *
+ * ⚠️ NOT a partition change. `fabricTrunkPassDraws` still rasterizes every
+ * edge in exactly one pass; this scales the mesh pass's material colour, which
+ * is the same channel `cellDetailFabricEnergyGain` already rides. Two
+ * multipliers on one uniform, not two passes on one edge.
+ */
+export function fabricTwigViewEnergy(
+  overviewWeight: number,
+  focus: number,
+): number {
+  const weight = clamp01(overviewWeight);
+  const detail = clamp01(focus);
+  // Full weight arrives with the DETAIL view — `cellDetailViewFocus` is 1
+  // inside `CELL_DETAIL_VIEW_NEAR_DISTANCE` and 0 past the far distance — so
+  // the twigs are at their quietest exactly where the report says they read as
+  // wool, and at full where a reader is looking at one neighbourhood.
+  return weight + (1 - weight) * detail;
+}
+
+/**
+ * ⟨D-10 · knob b⟩ The halo's THREAD level at the overview camera.
+ *
+ * Report D-8: the halo band is 8.6 % of the visible area and 10.8 % of the
+ * light, its projected mass spans 1,158 px against a rim of 850, and its
+ * orientation coherence (0.212) is HIGHER than the core's (0.164). The
+ * register ruling is that the halo is symbolic and matte and the core carries
+ * the structure; per stroke that is honoured, and in aggregate it is
+ * contradicted — the crimson strands of the corona are the most thread-like
+ * marks on screen.
+ *
+ * D-8's own fix line is "state the halo's amount in LEVEL, not in reach", so
+ * this rides the stroke classes' emission and nothing else: not the beads
+ * (they are the same matter as a Cell body at lower resolution, which is the
+ * seam this design exists to remove), not the placement, not the extent.
+ *
+ * Same shape as the twig knob and for the same reason: the cap is spent at the
+ * overview and released as the camera comes in, because at reading distance
+ * the halo is context and at the overview it is the figure. **Default 1 —
+ * today's picture.**
+ */
+export function haloThreadViewLevel(
+  overviewCap: number,
+  focus: number,
+): number {
+  const cap = clamp01(overviewCap);
+  const detail = clamp01(focus);
+  return cap + (1 - cap) * detail;
+}

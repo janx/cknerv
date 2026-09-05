@@ -349,6 +349,33 @@ export const cellSchema = {
   fabricStaggerThreshold: { value: FABRIC_STAGGER_THRESHOLD, min: 200, max: 10000, step: 100, label: 'stagger threshold' },
   fabricCohortSize: { value: FABRIC_COHORT_SIZE, min: 100, max: 4000, step: 50, label: 'cohort size' },
   fabricCohortInterval: { value: FABRIC_COHORT_INTERVAL_S, min: 0.05, max: 1, step: 0.05, label: 'cohort interval s' },
+  // ——— ⟨D-10⟩ Three art-direction knobs, each DEFAULTING TO TODAY ————————
+  //
+  // The 09-05 review's three unresolved readings about the wide camera — the
+  // fabric reads as wool, the corona out-structures the core, the far half is
+  // brighter than the near — are not defects with a right answer, they are
+  // questions for the eye. So each is a knob whose default is the picture that
+  // shipped: at these three values every pixel is byte-for-byte what it was,
+  // and the A/B captures are what decide whether any of them moves.
+  //
+  // ⚠️ NONE OF THE THREE IS A REACH. The fabric keeps every edge it draws, the
+  // halo keeps its placement and its extent, and the depth term is a scale on
+  // emitted alpha bounded above by 1 — never an alpha-over fog, which would
+  // lift the black this whole scene rests on.
+
+  // (a) The mesh tier's share of its light at the OVERVIEW; the trunks keep
+  // all of theirs at every camera. Full weight arrives inside
+  // `CELL_DETAIL_VIEW_NEAR_DISTANCE`. Argued at `fabricTwigViewEnergy`.
+  fabricTwigOverview: { value: 1, min: 0.3, max: 1, step: 0.02, label: 'twig light (overview)' },
+  // (b) The halo's THREAD level at the overview — the stroke classes only, so
+  // the corona's amount is stated in level and not in reach (D-8). The beads
+  // are untouched: they are the same matter as a Cell body and separating them
+  // is the seam this design removes. Argued at `haloThreadViewLevel`.
+  haloThreadOverview: { value: 1, min: 0.3, max: 1, step: 0.02, label: 'halo thread level (overview)' },
+  // (c) How much of the FAR half's light the depth term spends, in the two
+  // body materials. 0 is no depth cue at all. Argued at
+  // `BODY_DEPTH_ENERGY_GLSL`.
+  bodyDepthEnergy: { value: 0, min: 0, max: 0.6, step: 0.02, label: 'depth energy (far)' },
 } satisfies FolderSchema;
 
 // Unlike every other folder, these four knobs change GRAPH SELECTION, not

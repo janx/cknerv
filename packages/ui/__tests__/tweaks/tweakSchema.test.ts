@@ -1,5 +1,20 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { galaxySchema, deliverySchema, peerSchema, cellSchema, nerveSchema, FOLDER_LABELS } from '../../src/tweaks/tweakSchema';
+import { applyTweaks, LIVE } from '../../src/tweaks/liveTweaks';
+import {
+  fabricTwigViewEnergy,
+  haloThreadViewLevel,
+} from '../../src/nerve/fabricLuminance';
+import {
+  BODY_DEPTH_HALF_SPREAD,
+  bodyDepthEnergyValue,
+} from '../../src/materials/cellHybridMaterial';
+import {
+  CELL_DETAIL_VIEW_NEAR_DISTANCE,
+  cellDetailViewFocus,
+} from '../../src/derives/sceneView.derive';
 
 // Zero-drift guard: these are the EXACT literals the code shipped before the panel.
 // If a default changes, the untouched-panel baseline shifts — this test must fail.
@@ -81,7 +96,20 @@ const EXPECTED_DEFAULTS = {
   // A default that differed from the tier would make an untouched panel change
   // what the scene draws, which is the one thing this file exists to forbid.
   peer: { ambientAmp: 0.22, ambientSpeed: 0.05, ambientSigma: 2, surgeAmp: 1.1, surgeSigma: 1.5, surgeEase: 0.12, colorBoost: 3.75, alphaBoost: 2.75, sizeBoost: 0.5, trailBoost: 0.18, colorCeil: 1.4, alphaCeil: 1.1, flameWidth: 0.7, flameMinLen: 0.7, flameMaxLen: 2.5, flameBloom: 0.7, glintBloomOpacity: 0.55, glintPlumeOpacity: 0.3, cohortHorizon: 0.77, cohortDiscOut: 28, cohortDiscAmp: 1.5, cohortBeam: 0.45, cohortFarAmp: 0.45, cohortFarFall: 1, cohortFarStreak: 1, cohortFarSwirl: 2.4, cohortGlow: 0.35, cohortWarmth: 0, cohortUnfold: 50, cohortSteps: 96, cohortIntake: 12, cohortSwirl: 1.4, cohortOrbit: 1.2, cohortMotes: 1, cohortMassAnchor: 0.6, cohortMassFloor: 0.45, cohortHand: 1 },
-  cell: { fabricAlpha: 0.15, warmth: 0.12, centerDim: 0.3, activeColorR: 1.0, activeColorG: 1.0, activeColorB: 1.0, fabricWidth: 2.5, activeWidth: 4.6, reinforceAmount: 0.34, reinforceGain: 1.6, reinforceHalfLife: 3.0, fabricStaggerThreshold: 1500, fabricCohortSize: 750, fabricCohortInterval: 0.25 },
+  //
+  // ⭐⭐⭐ `fabricTwigOverview` 1, `haloThreadOverview` 1 AND `bodyDepthEnergy`
+  // 0 ARE THE OFF POSITIONS OF THE THREE ⟨D-10⟩ ART-DIRECTION KNOBS, added
+  // 2026-09-05. Each answers one of the 09-05 review's readings about the wide
+  // camera — the fabric reads as wool, the corona out-structures the core, the
+  // far half is brighter than the near — and none of them is a defect with a
+  // right answer, so none of them ships turned on. At these three values every
+  // pixel is what it was: 1 makes both view multipliers exactly 1 at every
+  // camera, and 0 makes the depth term exactly 1 at every depth. The A/B
+  // captures decide, and this row is what says the panel has not decided for
+  // them. ⚠️ The three ranges are deliberately bounded well short of nothing
+  // (0.3 / 0.3 / 0.6): each is a treatment, and a knob that can erase its own
+  // layer is a bug report waiting to be filed.
+  cell: { fabricAlpha: 0.15, warmth: 0.12, centerDim: 0.3, activeColorR: 1.0, activeColorG: 1.0, activeColorB: 1.0, fabricWidth: 2.5, activeWidth: 4.6, reinforceAmount: 0.34, reinforceGain: 1.6, reinforceHalfLife: 3.0, fabricStaggerThreshold: 1500, fabricCohortSize: 750, fabricCohortInterval: 0.25, fabricTwigOverview: 1, haloThreadOverview: 1, bodyDepthEnergy: 0 },
   nerve: { screenBudget: 8_000, coverageShare: 0.55, trunkShare: 0.72, twigShare: 0.18 },
 } as const;
 
@@ -114,5 +142,164 @@ describe('tweakSchema', () => {
     expect(FOLDER_LABELS).toEqual({
       galaxy: 'Galaxy', delivery: 'Block impact', peer: 'Peer mesh', cell: 'Cell structure', nerve: 'Nerve fabric',
     });
+  });
+});
+
+// ——— ⟨D-10⟩ The three art-direction knobs ——————————————————————————————
+//
+// Each answers one reading from the 09-05 review about the wide camera, each
+// is a knob because the reading is a question for the eye and not a defect,
+// and each DEFAULTS TO TODAY'S PICTURE. That last property is the one this
+// chapter is really about: a knob that shipped turned on would have decided
+// the question the A/B exists to ask.
+describe('three knobs that default to the picture that shipped', () => {
+  it('the twig law is the identity at its default, at every camera', () => {
+    const shipped = cellSchema.fabricTwigOverview.value;
+    expect(shipped).toBe(1);
+    for (const focus of [0, 0.25, 0.5, 0.75, 1]) {
+      expect(fabricTwigViewEnergy(shipped, focus)).toBe(1);
+    }
+  });
+
+  it('…and off the default it spends light at the OVERVIEW and returns it up close', () => {
+    // The whole shape of the treatment: quietest where report D measured the
+    // fabric reading as wool (coherence 0.164 against a 0.111 noise floor),
+    // full weight inside `CELL_DETAIL_VIEW_NEAR_DISTANCE` where a reader is
+    // looking at one neighbourhood rather than at the whole disc.
+    expect(fabricTwigViewEnergy(0.55, 0)).toBeCloseTo(0.55, 10);
+    expect(fabricTwigViewEnergy(0.55, 1)).toBe(1);
+    expect(fabricTwigViewEnergy(0.55, cellDetailViewFocus(CELL_DETAIL_VIEW_NEAR_DISTANCE)))
+      .toBe(1);
+    // Monotone in the camera, and never above 1: this is a SPEND, so no
+    // setting of it can make anything brighter than it is today.
+    let previous = -1;
+    for (let i = 0; i <= 20; i += 1) {
+      const value = fabricTwigViewEnergy(0.55, i / 20);
+      expect(value).toBeGreaterThanOrEqual(previous);
+      expect(value).toBeLessThanOrEqual(1);
+      previous = value;
+    }
+  });
+
+  it('the halo thread law is the same shape, and is also the identity by default', () => {
+    const shipped = cellSchema.haloThreadOverview.value;
+    expect(shipped).toBe(1);
+    for (const focus of [0, 0.5, 1]) {
+      expect(haloThreadViewLevel(shipped, focus)).toBe(1);
+    }
+    expect(haloThreadViewLevel(0.6, 0)).toBeCloseTo(0.6, 10);
+    expect(haloThreadViewLevel(0.6, 1)).toBe(1);
+  });
+
+  it('the depth term is exactly 1 at every depth while its knob is 0', () => {
+    const shipped = cellSchema.bodyDepthEnergy.value;
+    expect(shipped).toBe(0);
+    for (const ratio of [0.6, 0.7, 1, 1.3, 1.4]) {
+      expect(bodyDepthEnergyValue(ratio, shipped)).toBe(1);
+    }
+  });
+
+  it('…and off zero it spends the FAR half and never touches the near one', () => {
+    // Report D-4's own measurement is the calibration: near rim 119 view
+    // units, centre 171, far rim 223 — ±0.30 of the centre distance, which is
+    // `BODY_DEPTH_HALF_SPREAD`.
+    const near = 1 - BODY_DEPTH_HALF_SPREAD;
+    const far = 1 + BODY_DEPTH_HALF_SPREAD;
+    expect(bodyDepthEnergyValue(near, 0.4)).toBeCloseTo(1, 10);
+    expect(bodyDepthEnergyValue(1, 0.4)).toBeCloseTo(0.8, 10);
+    expect(bodyDepthEnergyValue(far, 0.4)).toBeCloseTo(0.6, 10);
+    // ⚠️ NEVER ABOVE 1, at any depth or any amount. That is what keeps this a
+    // spend on emitted alpha rather than an alpha-over wash: nothing is added,
+    // so the black between the bodies stays exactly black.
+    for (let i = 0; i <= 20; i += 1) {
+      const amount = (i / 20) * cellSchema.bodyDepthEnergy.max;
+      for (let d = 0; d <= 20; d += 1) {
+        const value = bodyDepthEnergyValue(0.5 + d / 10, amount);
+        expect(value).toBeLessThanOrEqual(1);
+        // …and never gone. The knob's ceiling is 0.6 for exactly this reason:
+        // at 1 the far rim would reach zero, and a treatment that can erase
+        // half of its own layer is not a treatment.
+        expect(value).toBeGreaterThanOrEqual(1 - cellSchema.bodyDepthEnergy.max);
+        expect(value).toBeGreaterThan(0);
+      }
+    }
+    // Monotone: near ≥ far, which is the whole claim.
+    let previous = 2;
+    for (let i = 0; i <= 20; i += 1) {
+      const value = bodyDepthEnergyValue(0.7 + (i / 20) * 0.6, 0.4);
+      expect(value).toBeLessThanOrEqual(previous);
+      previous = value;
+    }
+  });
+
+  it('all three are reachable through the tweak store, and nothing else is', () => {
+    // A knob nobody can turn is a comment. `applyTweaks` is the panel's one
+    // writer, and `LIVE.cell` is what the three consumers read each frame.
+    const before = {
+      twig: LIVE.cell.fabricTwigOverview,
+      halo: LIVE.cell.haloThreadOverview,
+      depth: LIVE.cell.bodyDepthEnergy,
+    };
+    try {
+      applyTweaks(LIVE, {
+        cell: {
+          fabricTwigOverview: 0.42,
+          haloThreadOverview: 0.58,
+          bodyDepthEnergy: 0.36,
+        },
+      });
+      expect(LIVE.cell.fabricTwigOverview).toBe(0.42);
+      expect(LIVE.cell.haloThreadOverview).toBe(0.58);
+      expect(LIVE.cell.bodyDepthEnergy).toBe(0.36);
+    } finally {
+      applyTweaks(LIVE, {
+        cell: {
+          fabricTwigOverview: before.twig,
+          haloThreadOverview: before.halo,
+          bodyDepthEnergy: before.depth,
+        },
+      });
+    }
+    expect(LIVE.cell.fabricTwigOverview).toBe(1);
+    expect(LIVE.cell.haloThreadOverview).toBe(1);
+    expect(LIVE.cell.bodyDepthEnergy).toBe(0);
+  });
+
+  it('each knob has exactly one consumer, and it is the one the plan names', () => {
+    // Cross-file tolls: this file cannot check itself, so each claim is read
+    // off the surface that would have to change for it to stop being true.
+    const read = (relative: string) => readFileSync(
+      resolve(process.cwd(), 'src', relative),
+      'utf8',
+    );
+    const fabric = read('nerve/NeuralFabric.tsx');
+    // The MESH tier takes the twig gain; the trunk keeps the plain one. That
+    // asymmetry is the treatment — the tier that carries the structure never
+    // dims — so both halves are pinned.
+    expect(fabric).toContain('fabricTwigViewEnergy(twig, focus)');
+    expect(fabric).toContain('fabric.material.color.setRGB(twigGain, twigGain, twigGain)');
+    expect(fabric).toContain('trunk.material.color.setRGB(energyGain, energyGain, energyGain)');
+
+    const halo = read('components/CellPopulationField.tsx');
+    // Both stroke classes, and the BEADS not at all: the beads are the same
+    // matter as a Cell body, and separating them is the seam this design
+    // exists to remove.
+    expect(halo).toContain('haloThreadViewLevel(');
+    expect(halo).toContain('populationFibreEmissionForGain(gain) * threadLevel');
+    expect(halo).toContain('uDepthEnergy.value = LIVE.cell.bodyDepthEnergy');
+    expect(halo).not.toMatch(/uEmission\.value = populationEmissionForGain\(gain\) \*/);
+
+    // …and the depth law is ONE law in one file, read by both body materials.
+    const bodies = read('materials/cellHybridMaterial.ts');
+    const field = read('materials/populationFieldMaterial.ts');
+    expect(bodies).toContain('export const BODY_DEPTH_ENERGY_GLSL');
+    expect(bodies).toContain('${BODY_DEPTH_ENERGY_GLSL}');
+    expect(bodies).toContain('base.a *= vDepthDim;');
+    expect(field).toMatch(/BODY_DEPTH_ENERGY_GLSL,[\s\S]{0,80}from '\.\/cellHybridMaterial'/);
+    expect(field).toContain('${BODY_DEPTH_ENERGY_GLSL}');
+    expect(field).toContain('vEnergy = min(1.0, shrink * shrink) * depthDim;');
+    // No second copy of the law anywhere: a twin would be a place for the two
+    // body layers to disagree about where the front of the galaxy is.
+    expect(field).not.toContain('float bodyDepthEnergy(');
   });
 });

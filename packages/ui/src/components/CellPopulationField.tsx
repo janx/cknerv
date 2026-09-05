@@ -26,6 +26,8 @@ import {
   useQualityRuntime,
 } from '../tweaks/qualityPresets';
 import { blendQualityMul, qualityCrossfade } from '../tweaks/adaptiveQuality';
+import { LIVE } from '../tweaks/liveTweaks';
+import { haloThreadViewLevel } from '../nerve/fabricLuminance';
 import { PERFORMANCE_PROBE_LABELS } from '../tweaks/performanceProbeStore';
 import { createGpuProbeCallbacks } from '../tweaks/gpuTimerQuery';
 import { createNonEmptyInstanceGpuProbeCallbacks } from '../tweaks/nonEmptyGpuProbeCallbacks';
@@ -212,6 +214,11 @@ export interface CellPopulationFieldProps {
    *  covers its scope and there is nothing unresolved to state — nothing is
    *  placed, and nothing is drawn. */
   gain: number;
+  /** ⟨D-10 · knob b⟩ The camera's own place on the overview↔detail curve, the
+   *  same ref `NeuralFabric`, `NetworkColony` and `CellBridgeNerves` already
+   *  take. Absent means overview, which is what an unwired caller should get:
+   *  the knob's default is 1, so an absent ref still draws today's picture. */
+  cellDetailViewFocusRef?: { readonly current: number };
 }
 
 /** The halo is an aggregate. It is not a Cell, it has no id, and it must never
@@ -271,6 +278,7 @@ export function neverRaycast(): false {
  */
 export default function CellPopulationField({
   gain,
+  cellDetailViewFocusRef,
 }: CellPopulationFieldProps) {
   const material = useMemo(() => makePopulationPointMaterial(), []);
   const fibreMaterial = useMemo(() => makePopulationFibreMaterial(), []);
@@ -603,9 +611,26 @@ export default function CellPopulationField({
       pixelRatio,
     );
     material.uniforms.uEmission.value = populationEmissionForGain(gain);
+    // ⟨D-10 · knob c⟩ The far half's spend, on the beads only: the strokes
+    // are a fixed index buffer whose light is already governed by the tissue
+    // taper, and the reading D-4 measured is an ACCUMULATION artefact of a
+    // population — more bodies per pixel where perspective compresses them.
+    // A second, camera-keyed taper on the stroke classes would be a second law
+    // on the one channel this file spent four rounds reducing to one.
+    material.uniforms.uDepthEnergy.value = LIVE.cell.bodyDepthEnergy;
     // The fibres ride the same amount curve, so scope changes never pull the
     // strokes and the grain on them apart.
-    const fibreEmission = populationFibreEmissionForGain(gain);
+    // ⟨D-10 · knob b⟩ …and BOTH stroke classes take the overview cap, for the
+    // same reason they take one emission: they are one partition of one set of
+    // strokes, and a cap on half of them would make the corona's own two
+    // widths two different claims. D-8's line is "state the halo's amount in
+    // LEVEL, not in reach", so this is the only thing it touches — the
+    // placement, the extent and the beads are untouched. Default 1.
+    const threadLevel = haloThreadViewLevel(
+      LIVE.cell.haloThreadOverview,
+      cellDetailViewFocusRef?.current ?? 0,
+    );
+    const fibreEmission = populationFibreEmissionForGain(gain) * threadLevel;
     fibreMaterial.uniforms.uEmission.value = fibreEmission;
     // The SAME value, not a scaled one. The two classes are one partition of
     // one set of strokes, and the only thing that separates them is width.

@@ -2320,6 +2320,7 @@ export default function App({
             universeSeed={universeSeed}
             cellCapacity={galaxyConfig.cellCap}
             populationGain={cellPopulation.gain}
+            cellDetailViewFocusRef={cellDetailViewFocusRef}
             localReceiveDelayS={cf.localReceiveDelayS}
             selectedId={selectedNetId}
             selectedCellId={selectedCellId}

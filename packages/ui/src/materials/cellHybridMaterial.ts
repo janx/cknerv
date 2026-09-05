@@ -133,6 +133,90 @@ export function sceneColorHue(color: SceneColor): number {
   return ((h * 60) % 360 + 360) % 360;
 }
 
+/**
+ * ⟨D-10 · knob c⟩ HALF-SPREAD OF THE DISC IN VIEW DEPTH, as a fraction of the
+ * camera's own distance to the galaxy's centre.
+ *
+ * Measured at the reviewed pose (report D, D-4): near rim 119 world units of
+ * view depth, centre 171, far rim 223 — so the rim sweeps ±0.30 of the centre
+ * distance. It is a fraction and not a distance precisely so it holds as the
+ * camera dollies: the disc's angular extent is what the term is normalising
+ * against, and that is very nearly constant under a dolly.
+ */
+export const BODY_DEPTH_HALF_SPREAD = 0.3;
+
+/**
+ * ⟨D-10 · knob c⟩ The depth-keyed energy term, shared by the two body
+ * materials so the Cells and the halo's beads answer to ONE law.
+ *
+ * ## The finding
+ *
+ * The far half of the galaxy is BRIGHTER than the near half. Measured on the
+ * rose mask of the idle frame, split at its own centroid row: far mean luma
+ * 0.224 (p90 0.413), near 0.189 (p90 0.365). Nothing in this scene is fogged,
+ * every material is `depthWrite:false`, and both blends sum light per pixel —
+ * so perspective compressing the far half into fewer pixels deposits more
+ * population per pixel there, while size attenuation makes near sprites larger
+ * but not brighter per unit area. A form has a front when the front is
+ * brighter, sharper or larger than the back; here the back is brighter and the
+ * front is only larger.
+ *
+ * ## Why it is a scale on emission and NOT a fog
+ *
+ * ⚠️⚠️ An alpha-over wash is the one thing this must never become. Every
+ * material in this layer emits and never covers, so a pixel with no
+ * unresolved population receives exactly zero and empty space stays true
+ * black; a tint at any opacity lifts that black across the envelope, which is
+ * the optical signature of atmosphere between the viewer and the subject. That
+ * choice is enough to destroy the scene and it has been made once already.
+ *
+ * So this returns a MULTIPLIER on emitted alpha, bounded above by 1: the near
+ * half is untouched at any setting and the far half is spent down. Nothing
+ * brightens, nothing is added, and black stays black.
+ *
+ * `amount` 0 returns exactly 1 everywhere — **today's picture, and the
+ * default.**
+ */
+export const BODY_DEPTH_ENERGY_GLSL = /* glsl */ `
+float bodyDepthEnergy(float viewZ, float centerZ, float amount) {
+  // How far behind (or in front of) the galaxy's own centre this body sits, in
+  // units of the camera's distance to that centre. The centre is the world
+  // origin, so its view depth is free — no uniform, and no way for a uniform
+  // to disagree with where the group actually is.
+  float ratio = viewZ / max(centerZ, 0.001);
+  float t = clamp(
+    (ratio - (1.0 - ${BODY_DEPTH_HALF_SPREAD.toFixed(2)}))
+      / ${(2 * BODY_DEPTH_HALF_SPREAD).toFixed(2)},
+    0.0,
+    1.0
+  );
+  // Linear in the depth, not smoothstepped: the reading being corrected is an
+  // accumulation gradient across the whole disc, and an S-curve would leave the
+  // two rims — where the near/far split is actually read — barely separated.
+  return 1.0 - clamp(amount, 0.0, 1.0) * t;
+}
+`;
+
+/**
+ * The same law in arithmetic, so the treatment is DECIDABLE without a GPU.
+ *
+ * `depthRatio` is a body's view depth over the camera's own distance to the
+ * galaxy's centre — 1 at the centre, `1 ∓ BODY_DEPTH_HALF_SPREAD` at the two
+ * rims. A source test pins the shipped GLSL to this twin, which is the
+ * precedent the cohort's own flare set: a term nobody can evaluate on the CPU
+ * is a term nobody can argue about.
+ */
+export function bodyDepthEnergyValue(
+  depthRatio: number,
+  amount: number,
+): number {
+  const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+  const t = clamp01(
+    (depthRatio - (1 - BODY_DEPTH_HALF_SPREAD)) / (2 * BODY_DEPTH_HALF_SPREAD),
+  );
+  return 1 - clamp01(amount) * t;
+}
+
 export function makeCellHybridMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
@@ -156,6 +240,9 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       uMemorySignalEnergy: { value: 1 },
       uWarmth:          { value: 0.12 }, // living rose body → ember bias; set live from LIVE.cell.warmth
       uCenterDim:       { value: 0.3 }, // shared centre-energy floor; passive fabric applies its stronger squared form
+      // ⟨D-10 · knob c⟩ 0 is today's picture: no depth term at all. See
+      // `BODY_DEPTH_ENERGY_GLSL`; set live from LIVE.cell.bodyDepthEnergy.
+      uDepthEnergy:     { value: 0 },
     },
     transparent: true,
     depthWrite: false,
@@ -199,6 +286,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       uniform float uMemoryMinPointPx;
       uniform float uWarmth;
       uniform float uCenterDim;
+      uniform float uDepthEnergy;
 
       varying float vBirthRamp;
       varying float vDeathRamp;
@@ -210,6 +298,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       varying float vRecall;
       varying float vRecallState;
       varying float vCenterDim;
+      varying float vDepthDim;
       varying float vPointCssPx;
       varying vec3  vBodyColor;
       varying vec3  vHotColor;
@@ -220,6 +309,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       ${BIRTH_DEATH_GLSL}
       ${STAGE_ENVELOPE_GLSL}
       ${HASH11_GLSL}
+      ${BODY_DEPTH_ENERGY_GLSL}
 
       void main() {
         vMemoryIdentity = aMemoryIdentity;
@@ -271,6 +361,14 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         // world XZ origin (group sits at x=z=0, rotates about y). 1.0 past r≈16.
         vCenterDim = mix(uCenterDim, 1.0, smoothstep(2.0, 16.0, length(worldPos.xz)));
         vec4 viewPos  = viewMatrix * worldPos;
+        // The galaxy's centre in the same space, which is the world origin and
+        // therefore the view matrix's own translation. Free, and it cannot
+        // disagree with where the group is.
+        vDepthDim = bodyDepthEnergy(
+          -viewPos.z,
+          -(viewMatrix * vec4(0.0, 0.0, 0.0, 1.0)).z,
+          uDepthEnergy
+        );
         gl_Position   = projectionMatrix * viewPos;
         float retainedCore = pow(
           clamp(max(aRecall, 0.0), 0.0, 1.0),
@@ -314,6 +412,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       varying float vRecall;
       varying float vRecallState;
       varying float vCenterDim;
+      varying float vDepthDim;
       varying float vPointCssPx;
       varying vec3  vBodyColor;
       varying vec3  vHotColor;
@@ -357,6 +456,11 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         // and recall signals below can still reclaim headroom because they
         // describe real events.
         base.a *= vCenterDim;
+        // …and the depth term rides beside it, on the same quantity and for
+        // the same kind of reason: both are corrections to an ACCUMULATION
+        // that perspective and density hand this layer for free. At the knob's
+        // default this is exactly 1 (⟨D-10 · knob c⟩).
+        base.a *= vDepthDim;
 
         vec3  col = base.rgb;
         float a   = base.a * (1.0 - vDeathRamp);

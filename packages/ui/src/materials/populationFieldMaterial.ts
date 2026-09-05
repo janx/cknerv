@@ -1,7 +1,10 @@
 import * as THREE from 'three';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 
-import { HYBRID_BASE_PX_PER_WU } from './cellHybridMaterial';
+import {
+  BODY_DEPTH_ENERGY_GLSL,
+  HYBRID_BASE_PX_PER_WU,
+} from './cellHybridMaterial';
 import {
   optimizeScreenSpaceCapsuleMaterial,
   replaceShaderChunk,
@@ -927,6 +930,10 @@ export interface PopulationPointUniforms {
   /** {@link populationEmissionForGain} of the amount curve. Zero means the
    *  stage covers its scope and there is nothing unresolved to state. */
   uEmission: { value: number };
+  /** ⟨D-10 · knob c⟩ How much of the far half's light the depth term spends.
+   *  0 is today's picture — see `BODY_DEPTH_ENERGY_GLSL`, which the Cell
+   *  bodies read from the same place so the two answer to one law. */
+  uDepthEnergy: { value: number };
   /** The body hue, at full saturation. One colour, never an identity palette,
    *  and never a function of the taper — density is what varies it on screen. */
   uColor: { value: THREE.Color };
@@ -942,6 +949,7 @@ export function makePopulationPointMaterial(): THREE.ShaderMaterial {
       uMinPointPx: { value: POPULATION_FIELD_MIN_POINT_PX },
       uMaxPointPx: { value: POPULATION_FIELD_MAX_POINT_PX },
       uEmission: { value: 0 },
+      uDepthEnergy: { value: 0 },
       uColor: { value: new THREE.Color(...POPULATION_FIELD_COLOR) },
     },
     transparent: true,
@@ -976,12 +984,26 @@ export function makePopulationPointMaterial(): THREE.ShaderMaterial {
       uniform float uSizeMax;
       uniform float uMinPointPx;
       uniform float uMaxPointPx;
+      uniform float uDepthEnergy;
 
       varying float vEnergy;
+
+      ${BODY_DEPTH_ENERGY_GLSL}
 
       void main() {
         vec4 viewPos = modelViewMatrix * vec4(position, 1.0);
         gl_Position = projectionMatrix * viewPos;
+        // ⟨D-10 · knob c⟩ The SAME law the Cell bodies read, from the same
+        // file: the halo's beads are the same matter at lower resolution, and
+        // a depth cue that stopped at the rim would draw the seam this design
+        // exists to remove. The centre is the world origin, so the view
+        // matrix's own translation is its depth — no uniform, and no way for
+        // one to disagree with where the group actually is.
+        float depthDim = bodyDepthEnergy(
+          -viewPos.z,
+          -(viewMatrix * vec4(0.0, 0.0, 0.0, 1.0)).z,
+          uDepthEnergy
+        );
 
         float weight = clamp(aWeight, 0.0, 1.0);
         float wanted = mix(uSizeMin, uSizeMax, weight)
@@ -997,7 +1019,7 @@ export function makePopulationPointMaterial(): THREE.ShaderMaterial {
         // dims the field instead of making it twinkle across the pixel grid.
         // A sprite the ceiling narrowed leaves this at one.
         float shrink = wanted / drawn;
-        vEnergy = min(1.0, shrink * shrink);
+        vEnergy = min(1.0, shrink * shrink) * depthDim;
         gl_PointSize = drawn;
       }
     `,

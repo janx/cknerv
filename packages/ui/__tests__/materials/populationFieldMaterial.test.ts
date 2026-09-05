@@ -872,3 +872,49 @@ describe('the backbone is the hairline at a different width', () => {
     expect(output).not.toContain('vUv');
   });
 });
+
+// ——— ⟨D-10 · knob c⟩ ————————————————————————————————————————————————————
+//
+// The halo's beads take the SAME depth law the Cell bodies take, out of the
+// same file. They are the same matter at lower resolution — that identity is
+// the seam this whole layer exists to remove — so a depth cue that stopped at
+// the rim would draw the seam back in.
+describe('the beads read the bodies own depth law', () => {
+  it('imports it rather than restating it, and ships it turned off', () => {
+    const points = makePopulationPointMaterial();
+    expect(points.uniforms.uDepthEnergy.value).toBe(0);
+    expect(points.vertexShader).toContain('float bodyDepthEnergy(');
+    // Byte-for-byte the bodies': the SAME string, so a change to the law
+    // cannot reach one layer and miss the other.
+    const bodies = makeCellHybridMaterial();
+    const lawOf = (source: string) => source.slice(
+      source.indexOf('float bodyDepthEnergy('),
+      source.indexOf('}', source.indexOf('return 1.0 - clamp(amount')) + 1,
+    );
+    expect(lawOf(points.vertexShader)).toBe(lawOf(bodies.vertexShader));
+    expect(lawOf(points.vertexShader).length).toBeGreaterThan(120);
+  });
+
+  it('spends the bead SIZE energy and never adds to it', () => {
+    // It multiplies `vEnergy`, which the fragment stage multiplies into the
+    // emitted alpha — a spend, bounded above by 1. Anything additive here
+    // would lift the black between the beads, which is the one thing this
+    // layer may not do.
+    const points = makePopulationPointMaterial();
+    expect(points.vertexShader).toContain('vEnergy = min(1.0, shrink * shrink) * depthDim;');
+    expect(points.vertexShader).not.toMatch(/depthDim\s*\+/);
+  });
+
+  it('leaves both stroke classes alone, which is stated rather than assumed', () => {
+    // The reading D-4 measured is an ACCUMULATION artefact of a POPULATION —
+    // more bodies per pixel where perspective compresses them — and the
+    // strokes are a fixed index buffer whose light is already governed by the
+    // tissue taper. A second, camera-keyed taper on them would be a second law
+    // on the one channel this file spent four rounds reducing to one.
+    const fibre = makePopulationFibreMaterial();
+    expect(fibre.uniforms.uDepthEnergy).toBeUndefined();
+    expect(fibre.vertexShader).not.toContain('bodyDepthEnergy');
+    const backbone = makePopulationBackboneMaterial();
+    expect(backbone.uniforms.uDepthEnergy).toBeUndefined();
+  });
+});

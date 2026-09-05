@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import {
   BIRTH_BLOOM,
+  BODY_DEPTH_HALF_SPREAD,
+  bodyDepthEnergyValue,
   makeCellHybridMaterial,
   WITHER_COOL_END,
   WITHER_EMBER_TINT,
@@ -384,6 +386,32 @@ describe('makeCellHybridMaterial', () => {
       .toBeLessThan(m.fragmentShader.indexOf('float retireMix ='));
     expect(witherCorpseColor(CELL_GALAXY_PALETTE.tissueRose, WITHER_COOL_END))
       .toEqual(witherCorpseColor(CELL_GALAXY_PALETTE.tissueRose, WITHER_COOL_END - 1e-9));
+  });
+
+  it('carries the depth term, and it is off at the default uniform', () => {
+    const m = makeCellHybridMaterial();
+
+    // ⟨D-10 · knob c⟩ 0 is today's picture, and the material ships at 0.
+    expect(m.uniforms.uDepthEnergy.value).toBe(0);
+    expect(m.vertexShader).toContain('float bodyDepthEnergy(');
+    expect(m.vertexShader).toContain('vDepthDim = bodyDepthEnergy(');
+    // The centre is the world ORIGIN, read out of the view matrix rather than
+    // handed in: a uniform for it would be a second opinion about where the
+    // group is, and the group is at the origin by construction.
+    expect(m.vertexShader).toContain('-(viewMatrix * vec4(0.0, 0.0, 0.0, 1.0)).z');
+    expect(m.vertexShader).not.toContain('uDepthCenter');
+    // It rides EMISSION, beside `vCenterDim`, and it is bounded above by 1 —
+    // a scale on emitted alpha, never an alpha-over wash. A fog would lift the
+    // black this scene rests on, which is the one thing this layer may not do.
+    expect(m.fragmentShader).toContain('base.a *= vDepthDim;');
+    expect(m.fragmentShader).not.toMatch(/vDepthDim\s*\+/);
+
+    // The shipped GLSL and the arithmetic twin are one law: the shader's two
+    // literals are the twin's own constant, so a half-edit cannot pass.
+    expect(m.vertexShader).toContain(`(1.0 - ${BODY_DEPTH_HALF_SPREAD.toFixed(2)})`);
+    expect(m.vertexShader).toContain(`/ ${(2 * BODY_DEPTH_HALF_SPREAD).toFixed(2)}`);
+    expect(bodyDepthEnergyValue(1 - BODY_DEPTH_HALF_SPREAD, 0.5)).toBe(1);
+    expect(bodyDepthEnergyValue(1 + BODY_DEPTH_HALF_SPREAD, 0.5)).toBe(0.5);
   });
 
   it('keeps the broad network shockwave out of the anchored Cell core', () => {

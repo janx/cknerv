@@ -101,6 +101,7 @@ import {
 } from './fabricReinforce';
 import {
   arborBrightness,
+  fabricTwigViewEnergy,
   passiveFabricEnergyScale,
   TWIG_MIN,
   fabricTaper as taper,
@@ -1271,18 +1272,35 @@ export default function NeuralFabric({
   // (focus, width) value gate: the raw-frame reassertion below runs every
   // frame, but its outputs are pure functions of these two numbers, which
   // settle whenever the camera is idle and the width knob is untouched.
-  const lastViewWeightRef = useRef({ focus: Number.NaN, width: Number.NaN });
+  const lastViewWeightRef = useRef({
+    focus: Number.NaN,
+    width: Number.NaN,
+    twig: Number.NaN,
+  });
   const applyPassiveViewWeight = useCallback(() => {
     const focus = cellDetailViewFocusRef?.current ?? 0;
     const width = LIVE.cell.fabricWidth;
+    // ⟨D-10 · knob a⟩ In the value gate with the other two, so a live drag on
+    // the knob reaches the material on the next frame rather than on the next
+    // camera move.
+    const twig = LIVE.cell.fabricTwigOverview;
     const last = lastViewWeightRef.current;
-    if (last.focus === focus && last.width === width) return;
+    if (last.focus === focus && last.width === width && last.twig === twig) return;
     last.focus = focus;
     last.width = width;
+    last.twig = twig;
     const energyGain = cellDetailFabricEnergyGain(focus);
     const widthScale = cellDetailFabricWidthScale(focus);
-    fabric.material.color.setRGB(energyGain, energyGain, energyGain);
-    warmRoutes.material.color.setRGB(energyGain, energyGain, energyGain);
+    // ⟨D-10 · knob a⟩ THE MESH TIER ALONE SPENDS LIGHT AT THE OVERVIEW.
+    // Report D measured the core's orientation coherence at 0.164 against a
+    // 0.111 noise floor — the trunk:twig step cannot be read when the twigs
+    // tile the ellipse — and WIDTH is already at its ceiling under the pulse,
+    // so energy is the free channel. The trunks keep `energyGain` untouched at
+    // every camera: the tier that carries the structure is never the one that
+    // dims. Default 1 → this is exactly `energyGain`.
+    const twigGain = energyGain * fabricTwigViewEnergy(twig, focus);
+    fabric.material.color.setRGB(twigGain, twigGain, twigGain);
+    warmRoutes.material.color.setRGB(twigGain, twigGain, twigGain);
     trunk.material.color.setRGB(energyGain, energyGain, energyGain);
     fabric.material.linewidth = width * widthScale;
     warmRoutes.material.linewidth = width * widthScale;

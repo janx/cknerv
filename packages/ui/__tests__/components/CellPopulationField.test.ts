@@ -535,8 +535,19 @@ describe('where CellGalaxy mounts it', () => {
     expect(between).not.toMatch(/on(Pointer|Click|DoubleClick|ContextMenu|Wheel)[A-Za-z]*=/);
   });
 
-  it('hands it an amount and nothing else', () => {
-    expect(GALAXY_SOURCE).toContain('<CellPopulationField gain={populationGain} />');
+  it('hands it an amount and the camera, and nothing else', () => {
+    // ⟨D-10 · knob b⟩ The second prop is the overview↔detail ref the halo's
+    // thread cap reads — the SAME ref `NeuralFabric`, `NetworkColony` and
+    // `CellBridgeNerves` already take, passed straight through. The rule this
+    // test exists for is unchanged and is the reason the list is exhaustive:
+    // the halo is an aggregate, so it may be handed an amount and a camera and
+    // never a Cell, an id, a selection or a handler.
+    const at = GALAXY_SOURCE.indexOf('<CellPopulationField');
+    expect(at).toBeGreaterThan(0);
+    const element = GALAXY_SOURCE.slice(at, GALAXY_SOURCE.indexOf('/>', at) + 2);
+    expect(element).toContain('gain={populationGain}');
+    expect(element).toContain('cellDetailViewFocusRef={cellDetailViewFocusRef}');
+    expect(element.match(/\w+=\{/g)).toHaveLength(2);
   });
 
   it('has no membership bloom left to feed', () => {

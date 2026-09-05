@@ -64,15 +64,20 @@ describe('HudOverlay wiring', () => {
     expect(APP_SOURCE).not.toContain('inspectionCellId');
   });
 
-  it('shares one camera-distance focus between Cell fabric and passive peers', () => {
+  it('shares one camera-distance focus between Cell fabric, peers and the halo', () => {
     expect(APP_SOURCE).toContain(
       'const DEFAULT_CAMERA_TARGET: [number, number, number] = [0, CELLS_Y, 0]',
     );
     expect(APP_SOURCE).toContain('function CellDetailViewTracker(');
     expect(APP_SOURCE).toContain('cellDetailViewFocus(Math.hypot(');
+    // THREE readers now, and the rule is the one it always was: ONE tracker,
+    // one ref, no second measurement of the same camera. `CellGalaxy` joined
+    // them on 2026-09-05 (⟨D-10 · knob b⟩) — it passes the ref straight through
+    // to the halo, whose thread level is capped at the overview.
     expect(APP_SOURCE.match(
       /cellDetailViewFocusRef=\{cellDetailViewFocusRef\}/g,
-    )).toHaveLength(2);
+    )).toHaveLength(3);
+    expect(APP_SOURCE.match(/cellDetailViewFocus\(/g)).toHaveLength(1);
   });
 
   it('shares one real causal-lens model between the Cell-tethered inspector and scene', () => {
