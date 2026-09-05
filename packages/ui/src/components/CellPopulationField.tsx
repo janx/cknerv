@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
@@ -20,7 +20,12 @@ import {
   reportBootPopulationExpected,
   reportBootPopulationReady,
 } from '../boot/nerveRestGate';
-import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
+import {
+  populationSpriteMulForCap,
+  QUALITY_PRESETS,
+  useQualityRuntime,
+} from '../tweaks/qualityPresets';
+import { blendQualityMul, qualityCrossfade } from '../tweaks/adaptiveQuality';
 import { PERFORMANCE_PROBE_LABELS } from '../tweaks/performanceProbeStore';
 import { createGpuProbeCallbacks } from '../tweaks/gpuTimerQuery';
 import { createNonEmptyInstanceGpuProbeCallbacks } from '../tweaks/nonEmptyGpuProbeCallbacks';
@@ -32,6 +37,9 @@ import {
   makePopulationBackboneMaterial,
   makePopulationFibreMaterial,
   makePopulationPointMaterial,
+  POPULATION_BACKBONE_WIDTH_PX,
+  POPULATION_FIELD_POINT_SIZE_MAX,
+  POPULATION_FIELD_POINT_SIZE_MIN,
   populationEmissionForGain,
   populationFibreEmissionForGain,
   populationStrokeSizeRatio,
@@ -432,13 +440,13 @@ export default function CellPopulationField({
   // thinner field, so a preset change costs three integer writes and no worker
   // pass. This is the only lever the cascade has on this layer, and before it
   // existed the cascade had none — see `populationCapMul` for the measurement.
-  useEffect(() => {
+  const applyTrim = useCallback((capMul: number) => {
     if (placed === null) return;
     const counts = placementRef.current;
     if (!counts) return;
     const points = Math.max(0, Math.min(
       counts.count,
-      Math.round(counts.count * populationCapMul),
+      Math.round(counts.count * capMul),
     ));
     const index = placed.fibres.getIndex();
     // BOTH halves of the partition trim on the same rule and against the same
@@ -468,7 +476,42 @@ export default function CellPopulationField({
     pointsGeometryRef.current = placed.points;
     fibresGeometryRef.current = placed.fibres;
     backboneLayerRef.current = placed.backbone;
-  }, [placed, populationCapMul]);
+  }, [placed]);
+
+  // ——— A tier arrives over `linger`, not between two frames ————————————
+  //
+  // The switch used to be a cut: three quarters of the halo gone inside one
+  // raf, which on a settled page reads as something breaking rather than as a
+  // control acting. The two knobs that carry this layer's picture are
+  // continuous, so the tier travels along them — `blendQualityMul` is
+  // geometric because both are multipliers — and the frame loop below applies
+  // whatever the ramp is holding.
+  //
+  // Refs and not state: this runs inside `useFrame`, and a tier arriving over
+  // 42 frames may not re-render the tree 42 times.
+  const capTarget = populationCapMul;
+  const capRamp = useRef({ from: capTarget, to: capTarget, startedAt: 0 });
+  const capApplied = useRef(-1);
+  useEffect(() => {
+    const ramp = capRamp.current;
+    if (ramp.to === capTarget) return;
+    // From WHERE IT IS, not from where the last target was: a tier that
+    // changes twice inside one fade continues from the picture on screen.
+    ramp.from = blendQualityMul(
+      ramp.from,
+      ramp.to,
+      qualityCrossfade(performance.now() - ramp.startedAt),
+    );
+    ramp.to = capTarget;
+    ramp.startedAt = performance.now();
+  }, [capTarget]);
+
+  // The first application is a cut and has to be: a page opening at `med` has
+  // no previous picture to travel from.
+  useEffect(() => {
+    if (placed === null) return;
+    capApplied.current = -1;
+  }, [placed]);
 
   useEffect(() => () => { material.dispose(); }, [material]);
   useEffect(() => () => { fibreMaterial.dispose(); }, [fibreMaterial]);
@@ -529,6 +572,30 @@ export default function CellPopulationField({
   // sprite footprint has to track a viewport or DPR change even while time is
   // paused.
   useFrame((state) => {
+    // The tier, wherever its crossfade has got to. Two multipliers ride it:
+    // the draw-range prefix (the cost) and the sprite radius (the level), and
+    // they are two views of one number — `populationSpriteMulForCap` states
+    // the relation once, in the file that owns the measurement it rests on.
+    const ramp = capRamp.current;
+    const capMul = blendQualityMul(
+      ramp.from,
+      ramp.to,
+      qualityCrossfade(performance.now() - ramp.startedAt),
+    );
+    if (Math.abs(capMul - capApplied.current) > 0.0005) {
+      capApplied.current = capMul;
+      applyTrim(capMul);
+      const spriteMul = populationSpriteMulForCap(capMul);
+      material.uniforms.uSizeMin.value = POPULATION_FIELD_POINT_SIZE_MIN * spriteMul;
+      material.uniforms.uSizeMax.value = POPULATION_FIELD_POINT_SIZE_MAX * spriteMul;
+      // The capsule pass takes the same widening, and it is the half that
+      // carries REACH. A bead is a sample of the density; a promoted strand is
+      // a FILAMENT, and a filament thinned to a quarter of its beads is the
+      // one thing in this layer that reads as the field not going that far
+      // any more. The hairline pass is deliberately not touched — it is one
+      // device pixel by construction, and a wider hairline is a capsule.
+      backboneMaterial.linewidth = POPULATION_BACKBONE_WIDTH_PX * spriteMul;
+    }
     const pixelRatio = resolvePointSpritePixelRatio(state.gl.getPixelRatio());
     material.uniforms.uPixelRatio.value = pixelRatio;
     material.uniforms.uViewportHeight.value = pointSpriteDeviceViewportHeight(

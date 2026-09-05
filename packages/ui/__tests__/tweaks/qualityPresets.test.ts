@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   QUALITY_PRESETS,
   getQualityRuntimeSnapshot,
+  populationSpriteMulForCap,
   setAdaptiveQuality,
   setAdaptiveQualityLocked,
   setQualityMode,
@@ -178,5 +179,57 @@ describe('the halo participates in the cascade', () => {
     for (const preset of ['high', 'med', 'low'] as const) {
       expect(QUALITY_PRESETS[preset].populationCapMul).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('the halo keeps its reach and spends its level', () => {
+  // D-9: `populationCapMul` is a UNIFORM DENSITY prefix, and density in this
+  // layer is the compressed statement of how much of the chain is unresolved —
+  // so a quarter-prefix does not draw the same picture more cheaply, it draws
+  // a smaller claim, and mainnet at `low` read as a stage that had retained
+  // its whole scope.
+  const cover = (capMul: number) =>
+    capMul * populationSpriteMulForCap(capMul) ** 2;
+
+  it('leaves the count as the cost lever, untouched', () => {
+    // Cost is linear in primitive count and near-flat in sprite area; the
+    // prefix is the whole saving and the compensation may not eat it.
+    expect(QUALITY_PRESETS.high.populationCapMul).toBe(1);
+    expect(QUALITY_PRESETS.med.populationCapMul).toBe(0.5);
+    expect(QUALITY_PRESETS.low.populationCapMul).toBe(0.25);
+  });
+
+  it('grows the sprite as the count falls, and by less than half', () => {
+    expect(populationSpriteMulForCap(1)).toBe(1);
+    // Radius x1.19 at med, x1.41 at low: area x1.41 and x2.
+    expect(populationSpriteMulForCap(0.5)).toBeCloseTo(1.189, 3);
+    expect(populationSpriteMulForCap(0.25)).toBeCloseTo(1.414, 3);
+    for (const mul of [0.25, 0.5]) {
+      const area = populationSpriteMulForCap(mul) ** 2;
+      expect(area, 'the area compensation ate the count saving')
+        .toBeLessThan(1 / mul);
+    }
+  });
+
+  it('spends the LEVEL and keeps the REACH', () => {
+    // Total drawn light — count x area — is what a reader sees as level.
+    expect(cover(1)).toBeCloseTo(1, 6);
+    expect(cover(0.5)).toBeCloseTo(Math.sqrt(0.5), 6);
+    expect(cover(0.25)).toBeCloseTo(0.5, 6);
+    // Monotone: each tier down is dimmer than the one above, which is what
+    // makes the control legible at all.
+    expect(cover(0.25)).toBeLessThan(cover(0.5));
+    expect(cover(0.5)).toBeLessThan(cover(1));
+    // …and NOT constant, which is the opposite failure: full compensation
+    // (`capMul ** -0.5`) would make the tiers indistinguishable.
+    expect(cover(0.25)).toBeLessThan(0.9);
+    // The reach: every sprite is bigger, so the thin outer fringe a quarter
+    // prefix leaves behind is drawn wider rather than fading out of the frame.
+    expect(populationSpriteMulForCap(0.25)).toBeGreaterThan(1);
+  });
+
+  it('never asks for a zero or negative radius', () => {
+    expect(Number.isFinite(populationSpriteMulForCap(0))).toBe(true);
+    expect(populationSpriteMulForCap(0)).toBeGreaterThan(0);
   });
 });

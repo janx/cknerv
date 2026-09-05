@@ -1,15 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import {
   ADAPTIVE_SAMPLE_WINDOW_MS,
+  ADAPTIVE_STALL_FRAME_MS,
   ADAPTIVE_SWITCH_COOLDOWN_MS,
   ADAPTIVE_WARMUP_MS,
   QUALITY_CALIBRATION_MAX_MS,
+  QUALITY_CROSSFADE_MS,
   QUALITY_LOCK_STABLE_MS,
   advanceAdaptiveQuality,
+  blendQualityMul,
   createAdaptiveQualityState,
+  qualityCrossfade,
   restartAdaptiveQualityState,
   type AdaptiveQualityState,
 } from '../../src/tweaks/adaptiveQuality';
+import { HUD_MOTION } from '../../src/components/hud/hudTheme';
 
 function sample(
   state: AdaptiveQualityState,
@@ -280,5 +285,71 @@ describe('a locked tier can still step down', () => {
     // would have spent the tier at window 13 instead of 20.
     expect(sample(restarted, 40, 13).quality).toBe('high');
     expect(sample(restarted, 40, 20).quality).toBe('med');
+  });
+});
+
+describe('a tier arrives over a rung', () => {
+  it('is the linger rung and says so from the table', () => {
+    // Report D suggested 600. The ladder exists so a taste does not become
+    // the twenty-seventh duration in the application; `linger` is the rung
+    // whose meaning already fits — a beat held to be read.
+    expect(QUALITY_CROSSFADE_MS).toBe(HUD_MOTION.linger);
+    expect(QUALITY_CROSSFADE_MS).toBe(700);
+  });
+
+  it('starts at the old picture and ends at the new one', () => {
+    expect(qualityCrossfade(0)).toBe(0);
+    expect(qualityCrossfade(-10)).toBe(0);
+    expect(qualityCrossfade(QUALITY_CROSSFADE_MS)).toBe(1);
+    expect(qualityCrossfade(QUALITY_CROSSFADE_MS * 3)).toBe(1);
+    // Eased at both ends: a ramp that starts and stops at full speed is two
+    // edges with a slope between them.
+    expect(qualityCrossfade(QUALITY_CROSSFADE_MS / 2)).toBeCloseTo(0.5, 6);
+    expect(qualityCrossfade(QUALITY_CROSSFADE_MS * 0.1)).toBeLessThan(0.1);
+    expect(qualityCrossfade(QUALITY_CROSSFADE_MS * 0.9)).toBeGreaterThan(0.9);
+  });
+
+  it('travels a multiplier geometrically, so the halfway point is the mean', () => {
+    // The midpoint between a quarter and one is a half, not five eighths: a
+    // linear blend spends most of a fade near the top and lands the visible
+    // part of the change in its last hundred milliseconds.
+    expect(blendQualityMul(1, 0.25, 0)).toBe(1);
+    expect(blendQualityMul(1, 0.25, 1)).toBeCloseTo(0.25, 6);
+    expect(blendQualityMul(1, 0.25, 0.5)).toBeCloseTo(0.5, 6);
+    expect(blendQualityMul(0.25, 1, 0.5)).toBeCloseTo(0.5, 6);
+    // Monotone in progress, in both directions.
+    let previous = 1;
+    for (let t = 0.1; t <= 1; t += 0.1) {
+      const value = blendQualityMul(1, 0.25, t);
+      expect(value).toBeLessThan(previous);
+      previous = value;
+    }
+    // Out-of-range progress is clamped rather than extrapolated.
+    expect(blendQualityMul(1, 0.25, 2)).toBeCloseTo(0.25, 6);
+    expect(blendQualityMul(1, 0.25, -1)).toBe(1);
+  });
+});
+
+describe('a stall is not a slow frame', () => {
+  it('sits an order of magnitude above every tier deadband', () => {
+    // The fix is to the INPUT, not the threshold: raising the deadband to
+    // cover stalls would also stop the controller noticing a machine that
+    // really is at 40 fps.
+    expect(ADAPTIVE_STALL_FRAME_MS).toBe(250);
+    expect(ADAPTIVE_STALL_FRAME_MS).toBeGreaterThan(30 * 5);
+  });
+
+  it('is what a mean cannot tell apart', () => {
+    // 60 fps with one 500 ms stop in a 1.5 s window reads as 24 ms — past
+    // `high`'s 22 ms deadband, and indistinguishable from a real 41 fps.
+    const frames = 60;
+    const stalledWindowMs = 1_000 + 500;
+    expect(stalledWindowMs / frames).toBeGreaterThan(22);
+    // …and the controller would have acted on it.
+    let state = createAdaptiveQualityState('high', 0);
+    for (let i = 0; i < 12; i += 1) {
+      state = advanceAdaptiveQuality(state, stalledWindowMs / frames, 750);
+    }
+    expect(state.quality, 'the mean alone steps a 60 fps page down').toBe('med');
   });
 });

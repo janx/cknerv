@@ -348,3 +348,59 @@ describe('AdaptiveQualityController motion windows', () => {
     });
   });
 });
+
+describe('a stall is not evidence', () => {
+  /** A window at 60 fps with one stop in the middle of it. */
+  function stalledWindow(stallMs: number): void {
+    const fast = Math.max(1, Math.round((WINDOW_MS - stallMs) / 16));
+    for (let index = 0; index < fast; index += 1) { now += 16; frame(); }
+    now += stallMs;
+    frame();
+  }
+
+  it('drops a window whose longest frame was not a frame', () => {
+    render(<AdaptiveQualityController />);
+    // Warm up on clean frames so the sampler is past `ADAPTIVE_WARMUP_MS`.
+    sampleWindows(16, 8);
+    expect(getQualityRuntimeSnapshot().effective).toBe('high');
+
+    // Sixty seconds of a 60 fps page with a half-second stop in every window
+    // — a screenshot, a shader compile, a worker delivery. The MEAN of each
+    // is ~24 ms, past `high`'s 22 ms deadband, and this is exactly the page
+    // that used to be stepped down (report D, D-9's headless step).
+    for (let index = 0; index < 80; index += 1) stalledWindow(520);
+    expect(
+      getQualityRuntimeSnapshot().effective,
+      'a 60 fps page was stepped down by its own stalls',
+    ).toBe('high');
+  });
+
+  it('still hears a machine that is genuinely slow', () => {
+    // The half a "nothing steps down" test cannot show. 30 ms frames, no
+    // stall anywhere near the ceiling, and the controller acts.
+    render(<AdaptiveQualityController />);
+    sampleWindows(16, 8);
+    sampleWindows(30, 40);
+    expect(getQualityRuntimeSnapshot().effective).not.toBe('high');
+  });
+
+  it('publishes what it was handed, so a live session can be read', () => {
+    render(<AdaptiveQualityController />);
+    delete (window as unknown as Record<string, unknown>).__cknervQualitySamples;
+    sampleWindows(16, 3);
+    const ring = (window as unknown as Record<string, unknown>)
+      .__cknervQualitySamples as Array<Record<string, unknown>>;
+    expect(ring.length).toBeGreaterThan(0);
+    expect(ring[ring.length - 1]).toMatchObject({ stalled: false, quality: 'high' });
+    expect(ring[ring.length - 1].maxFrameMs).toBeLessThan(60);
+    // …and the same ring carries the window that was thrown away, which is
+    // the reading a live session is opened for. Two frames past the stall, so
+    // the window actually closes.
+    stalledWindow(520);
+    now += 16; frame();
+    now += 16; frame();
+    const last = ring[ring.length - 1];
+    expect(last.stalled).toBe(true);
+    expect(last.maxFrameMs).toBeGreaterThanOrEqual(500);
+  });
+});

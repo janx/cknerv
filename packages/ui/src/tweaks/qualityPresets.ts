@@ -189,6 +189,43 @@ export const QUALITY_PRESETS: Record<QualityPreset, QualityCascade> = {
   },
 };
 
+/**
+ * THE HALO'S SPRITE, AND WHY A TIER MAY NOT TAKE THE AMOUNT.
+ *
+ * `populationCapMul` is the one lever this cascade has on the population layer
+ * and it has to stay a COUNT: cost here is linear in primitive count and
+ * near-flat in sprite area — 4.6x the area costs 12% — which is the measurement
+ * the whole prefix rests on. But density in this layer is not decoration. The
+ * field spec makes it the compressed statement of HOW MUCH of the chain is
+ * unresolved, so a uniform quarter-prefix does not draw the same picture more
+ * cheaply: it draws a smaller claim, and mainnet at `low` reads as a stage that
+ * has retained its whole scope (report D, D-9).
+ *
+ * So the sprite compensates, and the compensation is stated here rather than
+ * picked per tier: radius scales as `capMul ** -0.25`, i.e. each sprite's AREA
+ * as `1 / sqrt(capMul)`. The three quantities that follow from that are the
+ * whole argument —
+ *
+ *   COUNT   x capMul          the cost, untouched: 4x fewer primitives at low.
+ *   AREA    x 1/sqrt(capMul)  ~3% of the count's saving, by the file's own
+ *                             area measurement. Effectively free.
+ *   COVER   x sqrt(capMul)    count x area: the field's total drawn light.
+ *
+ * — because COVER is what a reader sees as LEVEL and the field's REACH is what
+ * they read as amount. At `low` the halo is half as bright over exactly the
+ * same extent, with a visibly coarser grain: a quality tier spending light and
+ * detail, which is what a quality tier is for. It is not four times thinner and
+ * shorter, which is a different chain.
+ *
+ * Exponent −0.25 rather than −0.5: full area compensation (`capMul ** -0.5`)
+ * would hold COVER constant and make the tiers indistinguishable, which is the
+ * opposite failure — a control that changes nothing. Half-compensation is the
+ * one that keeps the reach and spends the level.
+ */
+export function populationSpriteMulForCap(capMul: number): number {
+  return Math.max(0.001, capMul) ** -0.25;
+}
+
 /** Shared Leva input. `auto` owns only the effective rendering preset; selecting
  * high/med/low is an explicit manual override. */
 export const QUALITY_MODE_CONTROL = {

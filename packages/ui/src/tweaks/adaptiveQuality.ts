@@ -1,9 +1,40 @@
 import type { QualityPreset } from './qualityPresets';
+import { HUD_MOTION } from '../components/hud/hudTheme';
 
 export const ADAPTIVE_SAMPLE_WINDOW_MS = 750;
 export const ADAPTIVE_WARMUP_MS = 4_000;
 export const ADAPTIVE_SWITCH_COOLDOWN_MS = 6_000;
 export const ADAPTIVE_EMA_TIME_MS = 1_500;
+
+/**
+ * The longest a single frame may be before its window stops being evidence.
+ *
+ * NOT a tier threshold and deliberately an order of magnitude above one:
+ * `high` steps down at a 22 ms MEAN, and nothing this renderer does takes a
+ * quarter of a second. A frame that did was the machine doing something else —
+ * a shader compile, a worker delivery, a screenshot, the debugger — and a MEAN
+ * cannot tell that window apart from a genuinely slow one. At 60 fps with a
+ * single 500 ms stop in it a 1.5 s window reads 24 ms, past `high`'s deadband,
+ * and the controller used to act on it (pinned in
+ * `AdaptiveQualityController.test.tsx`, where the old code walks a 60 fps page
+ * to `low`).
+ *
+ * ⚠️ AND IT IS NOT THE EXPLANATION FOR THE HEADLESS STEP, which is what this
+ * was written to chase. Measured (E7, 117 sample windows over 90 s of headless
+ * Vulkan at 1920×1080 with the page forced visible): the longest single frame
+ * in the whole session was 156 ms, NO window was dropped by this rule, and the
+ * page stepped `high` → `med` anyway — because a third of its windows really
+ * did mean 25–49 ms. The median was 17.1 ms, which is the "60 fps" a spot
+ * check sees; the distribution is bimodal and the controller is reading it
+ * correctly. So the tier step is the controller working, not a sampler
+ * artefact, and this constant guards a case that measurement rules OUT for
+ * headless and cannot rule out for a machine that compiles a shader mid-session.
+ *
+ * Fixing the input rather than the threshold is still the rule: raising the
+ * deadband to cover stalls would also stop the controller noticing a machine
+ * that really is at 40 fps — which, measured, is what headless is.
+ */
+export const ADAPTIVE_STALL_FRAME_MS = 250;
 
 /** Calibration ends once the tier has held this long without a switch. What is
  * decided at the door is the CEILING: no sample after the lock may raise the
@@ -195,4 +226,41 @@ export function advanceAdaptiveQuality(
       || stableMs >= QUALITY_LOCK_STABLE_MS
       || calibrationMs >= QUALITY_CALIBRATION_MAX_MS,
   };
+}
+
+// ——— A tier change is a change, and a change has a shape ————————————————
+//
+// A tier switch replaced the picture between two frames: the halo lost three
+// quarters of its points, the stars two thirds, the DPR a third, all inside
+// one raf. On a settled page that reads as a glitch — something broke — rather
+// than as a control acting, which is the one thing an adaptive controller must
+// never look like, because a reader who thinks the page broke reloads it and
+// gets a fresh calibration.
+//
+// `HUD_MOTION.linger`, and report D's own suggestion was 600. The ladder's
+// whole job is to stop a taste from becoming the twenty-seventh duration in
+// the application, and 700 is the rung whose meaning already fits: A BEAT HELD
+// TO BE READ. Long enough that the picture changing is legible as one motion,
+// short enough to be over before a reader goes looking for its cause. The 100
+// ms between the two numbers is not a design difference; having a rung is.
+export const QUALITY_CROSSFADE_MS = HUD_MOTION.linger;
+
+/** Where a crossfade stands, `0` at the switch and `1` when it is over.
+ *  Smoothstep rather than linear for the reason every fade in the HUD eases:
+ *  the ends are where a change is noticed, and a ramp that starts and stops at
+ *  full speed is two edges with a slope between them. */
+export function qualityCrossfade(elapsedMs: number): number {
+  if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) return 0;
+  const t = Math.min(1, elapsedMs / QUALITY_CROSSFADE_MS);
+  return t * t * (3 - 2 * t);
+}
+
+/** One knob, mid-crossfade. Geometric rather than linear, because these are
+ *  MULTIPLIERS: the halfway point between a quarter and one is a half, not
+ *  five eighths, and a linear blend spends most of the fade near the top. */
+export function blendQualityMul(from: number, to: number, progress: number): number {
+  const t = Math.max(0, Math.min(1, progress));
+  const a = Math.max(0.0001, from);
+  const b = Math.max(0.0001, to);
+  return a * ((b / a) ** t);
 }

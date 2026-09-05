@@ -607,6 +607,13 @@ export const HUD_TYPE = {
 //                       pointer-up counts as a click after a drag. Nobody sees
 //                       it, and shortening it to a rung would be retuning a
 //                       gesture in order to tidy a table.
+//   `adaptiveQuality.ts` 750 · 1500 · 250  the frame sampler's window, the EMA
+//                       it feeds, and the length at which a frame stops being
+//                       a frame. MEASUREMENT, not motion — nothing moves at any
+//                       of the three, and each was chosen against how a machine
+//                       proves it cannot carry a tier. The crossfade that file
+//                       DOES own reads `linger` like everything else that
+//                       moves.
 //
 // `hudDiscipline.test.ts` parses every `transition:` and `animation:` string
 // in the overlay and every visual timer constant, and holds them to this.

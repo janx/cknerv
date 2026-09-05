@@ -315,8 +315,21 @@ describe('two static buffers and three draws', () => {
     expect(FIELD_CODE).toContain('placed.backbone.mesh');
     expect(FIELD_CODE).toContain('{...backboneGpuProbe}');
     expect(FIELD_CODE).not.toContain('populationGpuProbes.backboneCapsules');
-    expect(FIELD_CODE).not.toContain('performance.now');
     expect(FIELD_CODE.match(/\.\.\.populationGpuProbes\./g)).toHaveLength(2);
+
+    // …and no draw is timed by the CPU's clock. The ban used to be on the
+    // WORD, which was the same rule while the file read no clock at all; the
+    // quality crossfade reads one now (a fade is a wall-clock ramp and cannot
+    // be anything else), so what is banned is the word ON A LINE THAT TIMES A
+    // DRAW. Every read is named, and a fourth has to come and argue here.
+    const clockReads = FIELD_CODE.split('\n')
+      .filter((line) => line.includes('performance.now'));
+    expect(clockReads).toHaveLength(3);
+    for (const line of clockReads) {
+      expect(line, `a clock read outside the crossfade: ${line.trim()}`)
+        .toMatch(/qualityCrossfade\(|ramp\.startedAt = /);
+      expect(line).not.toMatch(/GpuProbe|probe|draw|render/i);
+    }
   });
 
   it('does no per-frame work proportional to anything', () => {
@@ -538,5 +551,44 @@ describe('where CellGalaxy mounts it', () => {
     ]) {
       expect(GALAXY_SOURCE).not.toContain(gone);
     }
+  });
+});
+
+describe('a tier arrives over a linger, not between two frames', () => {
+  it('reads the ramp in the frame loop and applies both halves of it', () => {
+    // The switch used to be a cut: three quarters of the halo gone inside one
+    // raf, which on a settled page reads as something breaking rather than as
+    // a control acting. Both knobs travel — the draw-range prefix (the cost)
+    // and the sprite radius (the level) — and they are two views of one
+    // number, so the file may not invent a second sprite rule beside the
+    // preset's.
+    expect(FIELD_CODE).toContain('blendQualityMul(');
+    expect(FIELD_CODE).toContain('qualityCrossfade(');
+    expect(FIELD_CODE).toContain('populationSpriteMulForCap(capMul)');
+    expect(FIELD_CODE).toContain('uSizeMin.value = POPULATION_FIELD_POINT_SIZE_MIN * spriteMul');
+    expect(FIELD_CODE).toContain('uSizeMax.value = POPULATION_FIELD_POINT_SIZE_MAX * spriteMul');
+    // The trim is a function now, because the ramp calls it every frame it
+    // moves and the preset effect no longer owns it alone.
+    expect(FIELD_CODE).toContain('const applyTrim = useCallback(');
+    expect(FIELD_CODE).toContain('applyTrim(capMul)');
+  });
+
+  it('does no work on a frame the ramp is not moving', () => {
+    // A settled page is 99.9% of frames and this layer's whole claim is that
+    // its per-frame cost is its three draws. The trim runs only when the
+    // blended multiplier has actually moved.
+    expect(FIELD_CODE).toContain('Math.abs(capMul - capApplied.current) > 0.0005');
+  });
+
+  it('holds the ramp in refs, not in state', () => {
+    // A tier arriving over 42 frames may not re-render the tree 42 times.
+    expect(FIELD_CODE).toContain('const capRamp = useRef(');
+    expect(FIELD_CODE).not.toMatch(/useState[^\n]*capRamp/);
+  });
+
+  it('continues from the picture on screen when a tier changes mid-fade', () => {
+    // Two switches inside one fade — a machine walking high → med → low —
+    // must not snap back to the tier before last.
+    expect(FIELD_CODE).toMatch(/ramp\.from = blendQualityMul\(\s*ramp\.from,\s*ramp\.to,/);
   });
 });

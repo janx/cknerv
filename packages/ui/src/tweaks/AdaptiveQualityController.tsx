@@ -11,12 +11,18 @@ import {
 } from './qualityPresets';
 import {
   ADAPTIVE_SAMPLE_WINDOW_MS,
+  ADAPTIVE_STALL_FRAME_MS,
   advanceAdaptiveQuality,
   createAdaptiveQualityState,
   restartAdaptiveQualityState,
 } from './adaptiveQuality';
 
 const MAX_VALID_WINDOW_MS = ADAPTIVE_SAMPLE_WINDOW_MS * 4;
+
+/** How many windows `window.__cknervQualitySamples` keeps. Twenty minutes of
+ *  them at the sampler's own cadence — enough to read a whole calibration and
+ *  the hour after it, small enough that nobody has to remember to turn it off. */
+const QUALITY_SAMPLE_RING = 1600;
 
 export interface AdaptiveQualityControllerProps {
   /** True while historical hydration/replay is in flight (cells backfill).
@@ -60,6 +66,9 @@ export default function AdaptiveQualityController({
   const adaptiveState = useRef(createAdaptiveQualityState());
   const frames = useRef(0);
   const lastAt = useRef(0);
+  /** The window's own longest frame, so one stall cannot hide inside a mean. */
+  const lastFrameAt = useRef(0);
+  const maxFrameMs = useRef(0);
   const hydrationSeen = useRef(false);
 
   // Changing the Leva mode is a deliberate user act, so auto -> manual -> auto
@@ -73,6 +82,7 @@ export default function AdaptiveQualityController({
     );
     frames.current = 0;
     lastAt.current = 0;
+    maxFrameMs.current = 0;
   }, [mode]);
 
   useFrame(() => {
@@ -81,15 +91,23 @@ export default function AdaptiveQualityController({
     // hidden tab's frames, a replay storm's frames and a drag's frames are
     // not renderer evidence at minute forty either, and a downshift bought
     // with them would be as wrong as a locked-in tier bought with them.
+    // ⚠️ AND THIS IS WHY A HEADLESS CAPTURE USUALLY MEASURES NOTHING HERE. A
+    // CDP-created target reports `document.hidden === true` unless the driver
+    // turns on focus emulation, so the sampler drops every window and the tier
+    // cannot move — a capture that wants to observe AUTO has to make the page
+    // visible first. The rule itself is right: a tab nobody is looking at is
+    // not evidence about a renderer.
     if (typeof document !== 'undefined' && document.hidden) {
       frames.current = 0;
       lastAt.current = 0;
+      maxFrameMs.current = 0;
       return;
     }
     if (hydrationActiveRef?.current) {
       hydrationSeen.current = true;
       frames.current = 0;
       lastAt.current = 0;
+      maxFrameMs.current = 0;
       return;
     }
     if (hydrationSeen.current) {
@@ -104,6 +122,7 @@ export default function AdaptiveQualityController({
       );
       frames.current = 0;
       lastAt.current = 0;
+      maxFrameMs.current = 0;
       return;
     }
     if (motionActiveRef?.current) {
@@ -129,16 +148,21 @@ export default function AdaptiveQualityController({
       // still takes its restart on the first frame after it.
       frames.current = 0;
       lastAt.current = 0;
+      maxFrameMs.current = 0;
       return;
     }
 
     const now = performance.now();
     if (lastAt.current === 0) {
       lastAt.current = now;
+      lastFrameAt.current = now;
       frames.current = 0;
+      maxFrameMs.current = 0;
       return;
     }
     frames.current += 1;
+    maxFrameMs.current = Math.max(maxFrameMs.current, now - lastFrameAt.current);
+    lastFrameAt.current = now;
     const elapsedMs = now - lastAt.current;
     if (elapsedMs < ADAPTIVE_SAMPLE_WINDOW_MS) return;
 
@@ -146,10 +170,61 @@ export default function AdaptiveQualityController({
     if (elapsedMs > MAX_VALID_WINDOW_MS) {
       frames.current = 0;
       lastAt.current = now;
+      maxFrameMs.current = 0;
       return;
     }
 
+    // ——— A STALL IS NOT A SLOW FRAME ————————————————————————————————
+    //
+    // The controller acts on a window MEAN, and a mean cannot tell a machine
+    // running at 40 fps from one running at 60 fps with a single half-second
+    // stop in it. Both read ~25 ms, both clear `high`'s 22 ms deadband, and
+    // only one of them is evidence. Measured in headless (E7): the AUTO
+    // controller stepped `high` → `med` on a page whose frames were 16.7 ms
+    // throughout, because a screenshot, a shader compile and a worker
+    // delivery each parked the raf loop for hundreds of milliseconds and the
+    // mean carried it.
+    //
+    // The window cap above (`MAX_VALID_WINDOW_MS`) only catches a stall long
+    // enough to stretch the whole window past 3 s; anything shorter is
+    // smeared across sixty frames and becomes indistinguishable from real
+    // slowness. So the window remembers its LONGEST frame and drops itself
+    // when that frame is plainly not a frame — the same exit a hidden tab, a
+    // replay storm and a motion window take, for the same reason: it is not
+    // renderer evidence.
+    //
+    // ⚠️ Read `ADAPTIVE_STALL_FRAME_MS` before believing this explains a tier
+    // step you are looking at. Measured in headless: it fired ZERO times in
+    // 117 windows, and the page stepped down anyway on windows that honestly
+    // meant 25–49 ms.
+    const stalled = maxFrameMs.current > ADAPTIVE_STALL_FRAME_MS;
     const averageFrameMs = elapsedMs / Math.max(1, frames.current);
+    // The dev counter, on the `__pulseStats()` precedent: what the controller
+    // was actually handed, so a live session can be read rather than guessed
+    // at. It never affects a number the HUD prints.
+    if (typeof window !== 'undefined') {
+      const ring = ((window as unknown as Record<string, unknown>)
+        .__cknervQualitySamples ??= []) as unknown[];
+      ring.push({
+        atMs: Math.round(now),
+        windowMs: Math.round(elapsedMs),
+        frames: frames.current,
+        meanFrameMs: Number(averageFrameMs.toFixed(2)),
+        maxFrameMs: Number(maxFrameMs.current.toFixed(1)),
+        stalled,
+        quality: adaptiveState.current.quality,
+        smoothedFrameMs: Number(adaptiveState.current.smoothedFrameMs.toFixed(2)),
+        slowEvidenceMs: Math.round(adaptiveState.current.slowEvidenceMs),
+        locked: adaptiveState.current.locked,
+      });
+      if (ring.length > QUALITY_SAMPLE_RING) ring.shift();
+    }
+    if (stalled) {
+      frames.current = 0;
+      lastAt.current = now;
+      maxFrameMs.current = 0;
+      return;
+    }
     const previous = adaptiveState.current;
     const next = advanceAdaptiveQuality(previous, averageFrameMs, elapsedMs);
     adaptiveState.current = next;
@@ -157,6 +232,7 @@ export default function AdaptiveQualityController({
     if (next.locked !== previous.locked) setAdaptiveQualityLocked(next.locked);
     frames.current = 0;
     lastAt.current = now;
+    maxFrameMs.current = 0;
   });
 
   return null;

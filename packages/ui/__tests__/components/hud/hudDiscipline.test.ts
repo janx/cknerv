@@ -4497,6 +4497,9 @@ const MOTION_JURISDICTION: readonly string[] = [
   // answers to the ladder like any transition.
   'derives/alertLevel.ts',
   'hooks/useHeldAlert.ts',
+  // The quality crossfade: a tier change is a change with a shape to watch,
+  // and its length is a rung like any transition's.
+  'tweaks/adaptiveQuality.ts',
 ];
 const MOTION_APP_FILES: readonly string[] = [
   'Jukebox.tsx',
@@ -4663,7 +4666,7 @@ describe('one ladder for time', () => {
     for (const entry of motionComment().matchAll(/^\/\/   `([\w.-]+\.tsx?)`\s+([\d ·]+?)\s{2}/gm)) {
       instruments.set(entry[1], entry[2].split('·').map((value) => Number(value.trim())));
     }
-    expect(instruments.size).toBe(6);
+    expect(instruments.size).toBe(7);
 
     const rungs = new Set<number>(
       Object.values(HUD_MOTION).filter((value) => typeof value === 'number') as number[],
