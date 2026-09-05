@@ -1,6 +1,44 @@
 export type SceneColor = readonly [number, number, number];
 
 /**
+ * ⭐⭐⭐ THE CANVAS HAS TWO FOCI, AND THIS IS THEIR ORDER ⟨rulings 22, 23,
+ * 2026-09-05⟩.
+ *
+ * 1. **The cells galaxy is the FIRST focus.** It is the subject the camera is
+ *    aimed at and the thing the whole composition is built around, and it has
+ *    to read radiant — 光辉灿烂, the user's own word for it. The frame is
+ *    fitted so it fills the stage (`ui-app/src/camera-hole-fit.ts`,
+ *    `CAMERA_STAGE_SHARE`) and how much light it spends there is a live knob
+ *    parked at today's picture (`cell.galaxyRadiance`).
+ * 2. **The peer mesh is the SECOND focus, and the layer that CORRESPONDS to
+ *    the galaxy.** Not decoration and not chrome: it is the other half of what
+ *    this canvas is about, drawn on its own plane 16 world units under the
+ *    canopy, and it answers to its own ladder of confidence
+ *    (`materials/peerNodeMaterial.ts`). Its structure — the links, including
+ *    the long chords that cross the colony — carries the same weight at every
+ *    length (`components/ColonyEdges.tsx`).
+ * 3. **The population halo and the events are BENEATH them both.** The halo
+ *    states what the stage could not resolve, as a wash with no individual in
+ *    it; an event is a thing that happened, loud for as long as it is
+ *    happening and then gone. Neither is a subject.
+ *
+ * ⚠️ AND THE SECOND FOCUS IS KEPT FROM COMPETING BY LIGHT, NOT BY DISTANCE.
+ * The 2026-09-04 round read the peer plane out-shining the galaxy — the ten
+ * brightest regions of an idle frame were twelve measured peer halos, white
+ * cores in pink skirts, five of them standing inside the tissue — and answered
+ * it by moving the belt outside the organism. That is the wrong lever twice
+ * over: it makes the second focus a border rather than a layer, and it says of
+ * the twelve nodes we hold live links to that they are not part of the body
+ * they connect. The peers stand IN the tissue (`derives/peers.derive.ts`,
+ * `PEER_INNER_RADIUS`) and their light rests under the additive clip
+ * (`MEASURED_PEER_BRIGHTNESS`), which is what a second focus costs.
+ *
+ * This paragraph is here because this is the one file both planes' palettes
+ * are stated in, and an ordering that lives only in a review is an ordering
+ * the next change does not have to answer to.
+ */
+
+/**
  * The scene's EVENT accents: the colours that mean something happened, as
  * opposed to the colours a body is made of.
  *

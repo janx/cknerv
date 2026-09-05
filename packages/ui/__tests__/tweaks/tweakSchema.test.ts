@@ -355,9 +355,19 @@ describe('three knobs that default to the picture that shipped', () => {
         if (entry.isDirectory()) return walk(at);
         return /\.tsx?$/.test(entry.name) ? [at] : [];
       });
+    // ⚠️ The fence reads CODE, not prose. `visualPalette.ts` argues the
+    // two-focus rule and names this knob in the argument; a rule that made
+    // naming a constant in a comment an offence would be a rule against the
+    // way this codebase documents itself. Block and line comments come out
+    // first — GLSL's included, since both materials carry their shaders in
+    // template literals — and what is left is what the gain can actually
+    // reach.
+    const code = (source: string) => source
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
     const wearers = walk(root)
       .filter((file) => /galaxyRadiance|uRadiance|GALAXY_RADIANCE/
-        .test(readFileSync(file, 'utf8')))
+        .test(code(readFileSync(file, 'utf8'))))
       .map((file) => relative(root, file).replace(/\\/g, '/'))
       .sort();
 
