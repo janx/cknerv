@@ -11,6 +11,7 @@
 // being imported) so that the presentation below can be tested directly.
 
 import {
+  failBootPhase,
   formatBootSnapshotDetail,
   getBootSequence,
   subscribeBootSequence,
@@ -116,4 +117,56 @@ export function installBootShellReadout(): () => void {
   unsubscribe = subscribeBootSequence(paint);
   paint();
   return stop;
+}
+
+/** The hook `index.html`'s classic script installs. Declared rather than
+ *  imported for the reason the shell's colours are spelled in that file: the
+ *  presentation is the shell's and the caller only supplies the words. */
+declare global {
+  interface Window {
+    __cknervBootFault?: (text: string) => boolean;
+  }
+}
+
+/**
+ * Charge a bootstrap failure to the line it died on.
+ *
+ * The record already carries every fault a phase's own writer reports
+ * (`failBootPhase` in `connect.ts`), but a bootstrap can die between phases —
+ * the chain snapshot, a lazy Lab import, React's first render — and those
+ * threw into a `catch` that painted its own error UI and told the record
+ * nothing. The first line that has not finished IS where the boot got to, in
+ * the record's own terms, so that is the line the fault lands on. A phase that
+ * already reached a terminal state declines the write, so a fault its own
+ * writer reported first stays as that writer described it.
+ *
+ * Returns the line charged, or `null` when the record has nothing left to
+ * fail — a render that threw after every phase completed, which the shell's
+ * fault line still reports.
+ */
+export function chargeBootFault(detail: string): BootPhaseId | null {
+  const line = getBootSequence().phases.find(
+    (phase) => phase.state === 'active' || phase.state === 'pending',
+  );
+  // `seeding` is the one phase with no failure of its own: it mirrors the
+  // server's replay and appears only once reported, so a page-side bootstrap
+  // fault is never its.
+  if (!line || line.id === 'seeding') return null;
+  failBootPhase(line.id, detail);
+  return line.id;
+}
+
+/**
+ * Show the whole fault message under the band, in the shell's own faces.
+ *
+ * The band has room for a phase and a short reason; a bootstrap message is a
+ * sentence, sometimes a stack's first line. It used to get a `<pre>` that
+ * REPLACED the band — the fault surface deleting the one surface that had just
+ * been told what went wrong. Returns whether the shell was still standing to
+ * take it; once React owns `#root` the HUD's own banner is holding the fault
+ * and a second copy would be two voices on one emergency.
+ */
+export function showBootShellFault(detail: string): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.__cknervBootFault?.(detail) === true;
 }

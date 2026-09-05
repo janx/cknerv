@@ -35,6 +35,7 @@ import {
 } from './semanticsReducer';
 import {
   createStreamHealthTracker,
+  STREAM_RECONNECT_MS,
   type StreamHealthOptions,
 } from './streamHealth';
 
@@ -47,6 +48,7 @@ function resolveWsUrl(url: string): string {
 }
 
 export interface ProjectionStreamOptions extends StreamHealthOptions {
+  /** Reconnect delay on close/error. Defaults to `STREAM_RECONNECT_MS`. */
   reconnectMs?: number;
   recentLinksCapacity?: number;
   linkRingCapacity?: number;
@@ -112,7 +114,7 @@ export function connectProjectionStream<Cache, Snapshot, Delta>(
   onChange: (next: Cache) => void,
   opts: ProjectionStreamOptions = {},
 ): ProjectionStreamHandle {
-  const reconnectMs = opts.reconnectMs ?? 2000;
+  const reconnectMs = opts.reconnectMs ?? STREAM_RECONNECT_MS;
   const instrumentApply = opts.instrumentApply;
   let stopped = false;
   let socket: WebSocket | null = null;

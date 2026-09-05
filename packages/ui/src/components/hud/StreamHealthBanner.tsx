@@ -17,6 +17,32 @@ const PRESENTATION: Record<
   stale: { title: 'DATA FROZEN', color: HUD_COLORS.danger },
 };
 
+/**
+ * The one word that is not a phase's.
+ *
+ * `DATA FROZEN` is the CONSEQUENCE, and it is the right word when the browser
+ * cannot say why: a socket went quiet, and the last frame is what is on
+ * screen. When the `node` channel is among the affected ones the page knows
+ * the CAUSE, and naming a cause you know is worth more than naming its effect
+ * — an operator reading NODE UNREACHABLE goes and looks at their node, and one
+ * reading DATA FROZEN reloads the tab.
+ *
+ * It takes the SAME colour, the same band and the same breathing frame. That
+ * is deliberate and it is the whole of what "distinguished by form and word,
+ * not by a borrowed hue" means: the register is the severity, and severity has
+ * not changed — only the sentence has.
+ */
+const NODE_PRESENTATION = { title: 'NODE UNREACHABLE', color: HUD_COLORS.danger };
+
+export function streamHealthPresentation(
+  summary: StreamHealthSummary,
+): { title: string; color: string } | null {
+  if (summary.phase === 'live') return null;
+  return summary.phase === 'stale' && summary.affectedChannels.includes('node')
+    ? NODE_PRESENTATION
+    : PRESENTATION[summary.phase];
+}
+
 export default function StreamHealthBanner({
   summary,
   reducedMotion = false,
@@ -26,8 +52,8 @@ export default function StreamHealthBanner({
   reducedMotion?: boolean;
   top?: number;
 }) {
-  if (summary.phase === 'live') return null;
-  const visual = PRESENTATION[summary.phase];
+  const visual = streamHealthPresentation(summary);
+  if (!visual) return null;
   const channel = formatStreamChannels(summary.affectedChannels);
   const retry = summary.phase === 'retrying' && summary.attempt > 0
     ? ` · RETRY ${summary.attempt}`

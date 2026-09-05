@@ -1,3 +1,13 @@
+/**
+ * How long a dropped socket waits before dialling again — the cadence the two
+ * WebSocket clients have always run at, stated once now that a third consumer
+ * has to match it. The node-health probe polls at exactly this rate, because
+ * "how often does this page ask whether it still has a data plane" is ONE
+ * question with one answer, and a probe on its own timer would be a second
+ * opinion about the same thing.
+ */
+export const STREAM_RECONNECT_MS = 2000;
+
 /** Transport lifecycle shared by the entity and projection WebSocket clients. */
 export type StreamHealthPhase =
   | 'connecting'

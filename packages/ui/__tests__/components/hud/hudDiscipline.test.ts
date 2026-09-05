@@ -112,6 +112,14 @@ import {
   ECOSYSTEM_UNLISTED_COLOR,
 } from '../../../src/derives/assetEcosystem.derive';
 import { SCRIPT_FAMILY_COLORS } from '../../../src/derives/scriptFamilies.derive';
+import { replayPresentation } from '../../../src/components/hud/replayPresentation';
+import {
+  BOOT_SEQUENCE_TITLE,
+  bootPhaseLine,
+  bootSequenceAccent,
+} from '../../../src/components/hud/bootSequencePresentation';
+import { STAGE_COMPOSING_TITLE } from '../../../src/components/hud/stageComposingPresentation';
+import type { BootSequenceSnapshot } from '../../../src/boot/bootSequence';
 import { NETWORK_ATLAS_REACH_ORDER } from '../../../src/derives/networkAtlas.derive';
 import { compositionTierColor } from '../../../src/components/hud/CellSemanticsReadout';
 import { fpsColor } from '../../../src/tweaks/renderStatsStore';
@@ -6394,5 +6402,212 @@ describe('one severity per fact', () => {
     says('components/hud/NetworkPanel.tsx', 'style={{ color: HUD_COLORS.danger }}>{consensus.ahead} AHEAD');
     says('components/hud/NodeSelfCard.tsx', 'AHEAD · WE LAG');
     says('derives/peerLinkInstrument.derive.ts', 'AHEAD`, color: HUD_COLORS.danger');
+  });
+});
+
+// ——— Every degraded state is a colour, a form and a word ————————————————
+//
+// The HUD has eleven ways of saying something is wrong, and until this chapter
+// nothing checked that a reader could tell them apart. Report E laid them out
+// side by side and found the failure was not "too many": it was two hues doing
+// four jobs — violet for MY CONNECTION RE-SYNCING and for THE SERVER REBUILDING
+// ITS MEMORY, cyan for CONNECTING and for CATCHING UP — while the states that
+// most needed telling apart were the ones nobody had drawn at all (E-7).
+//
+// The rule is that a state is a TRIPLE — colour, form, word — and no two
+// states may share all three. Not "no two share a colour": a palette with a
+// severity ramp in it is going to reuse the ramp, and it SHOULD. What a
+// reader needs is one axis of difference, and the two the HUD already has are
+// the strongest kind: FORM (an edge-bound band across the top is the frame
+// raising its voice; a floating plate is a thing that happened to the chain)
+// and WORD. So catch-up and rebuild are told apart by being a plate that says
+// RESTORING CKB CONTINUITY and a plate that says REBUILDING CONSENSUS MEMORY,
+// in colours they are welcome to share with the two bands above them.
+//
+// Every value below is READ from the surface that draws it — `replayPresentation`
+// is called, the banner's table is parsed out of its source, the boot band's
+// accent function is called — so this is a sweep and not a transcription. The
+// FORM is the one thing stated here, because a form is a rendering fact; each
+// claim carries a source toll beside it.
+
+describe('every degraded state is a colour, a form and a word', () => {
+  type StateRow = { state: string; color: string; form: string; word: string };
+
+  /** The banner's table, parsed rather than imported: `PRESENTATION` is
+   *  private to the file that draws it, and an oracle that made it public to
+   *  read it would have changed the thing it measures. */
+  function bannerStates(): StateRow[] {
+    const text = code(SOURCES.find((source) => source.name === 'StreamHealthBanner.tsx')?.text ?? '');
+    const rows: StateRow[] = [];
+    for (const entry of text.matchAll(
+      /(\w+): \{ title: '([^']+)', color: HUD_COLORS\.(\w+) \}/g,
+    )) {
+      const [, phase, word, token] = entry;
+      rows.push({
+        state: `stream:${phase}`,
+        color: HUD_COLORS[token as keyof typeof HUD_COLORS] as string,
+        // The frozen register is the one that also fills the viewport's edge.
+        form: phase === 'stale' ? 'band+frame' : 'band',
+        word,
+      });
+    }
+    // The node's word rides the frozen register rather than a phase of its own.
+    const node = /const NODE_PRESENTATION = \{ title: '([^']+)', color: HUD_COLORS\.(\w+) \}/.exec(text);
+    expect(node, 'the node channel lost its word').not.toBeNull();
+    rows.push({
+      state: 'stream:node',
+      color: HUD_COLORS[node?.[2] as keyof typeof HUD_COLORS] as string,
+      form: 'band+frame',
+      word: node?.[1] ?? '',
+    });
+    return rows;
+  }
+
+  function replayStates(): StateRow[] {
+    return (['boot', 'catchup', 'reorg', 'rebuild'] as const).map((phase) => {
+      const visual = replayPresentation(phase);
+      return {
+        state: `replay:${phase}`,
+        color: visual.color,
+        form: 'plate',
+        word: visual.title,
+      };
+    });
+  }
+
+  function bootStates(): StateRow[] {
+    // No `detail` on the failed line: the reason a boot died is a MESSAGE, not
+    // part of the state's word, and it is the one string in this whole matrix
+    // that a server gets to author.
+    const failed: BootSequenceSnapshot = {
+      active: true,
+      complete: false,
+      phases: [{ id: 'snapshot', state: 'failed' }],
+    };
+    const running: BootSequenceSnapshot = {
+      active: true,
+      complete: false,
+      phases: [{ id: 'snapshot', state: 'active' }],
+    };
+    return [
+      {
+        state: 'boot:running',
+        color: bootSequenceAccent(running),
+        form: 'band',
+        word: BOOT_SEQUENCE_TITLE,
+      },
+      {
+        // The band keeps its own title and turns red; the FAULT word is on the
+        // line under it, which is the phase trail's, so the state's word is the
+        // pair. `bootPhaseLine` is what prints it.
+        state: 'boot:fault',
+        color: bootSequenceAccent(failed),
+        form: 'band',
+        word: `${BOOT_SEQUENCE_TITLE} · ${bootPhaseLine(failed.phases[0]).text}`,
+      },
+      {
+        state: 'stage:composing',
+        color: HUD_COLORS.cyanWire,
+        form: 'band',
+        word: STAGE_COMPOSING_TITLE,
+      },
+    ];
+  }
+
+  const rows = (): StateRow[] => [...bannerStates(), ...replayStates(), ...bootStates()];
+
+  it('reads every state off the surface that draws it', () => {
+    // Eleven, and the sweep has to FIND them: a parser that quietly stopped
+    // matching would make every assertion below vacuous.
+    const found = rows();
+    expect(found.length).toBe(12);
+    expect(found.map((row) => row.state)).toEqual([
+      'stream:connecting', 'stream:retrying', 'stream:resyncing', 'stream:stale',
+      'stream:node',
+      'replay:boot', 'replay:catchup', 'replay:reorg', 'replay:rebuild',
+      'boot:running', 'boot:fault', 'stage:composing',
+    ]);
+    for (const row of found) {
+      expect(row.word, `${row.state} has no word`).not.toBe('');
+      expect(row.color, `${row.state} has no colour`).toMatch(/^#[0-9A-Fa-f]{6}$/);
+    }
+  });
+
+  it('never says two states the same way', () => {
+    const seen = new Map<string, string>();
+    const collisions: string[] = [];
+    for (const row of rows()) {
+      const key = `${row.color}|${row.form}|${row.word}`;
+      const first = seen.get(key);
+      if (first !== undefined) {
+        collisions.push(`${row.state} and ${first} are one colour, one form and one word`);
+        continue;
+      }
+      seen.set(key, row.state);
+    }
+    expect(collisions).toEqual([]);
+
+    // And the sentence alone, because form is the weakest of the three axes:
+    // two states in one hue saying one sentence are told apart only by whether
+    // the thing is bolted to the top edge or floating under it, which is a
+    // distinction a reader makes AFTER reading. Eleven states, eleven
+    // sentences.
+    const said = new Map<string, string>();
+    const echoes: string[] = [];
+    for (const row of rows()) {
+      const first = said.get(row.word);
+      if (first !== undefined) {
+        echoes.push(`${row.state} says what ${first} says: ${row.word}`);
+        continue;
+      }
+      said.set(row.word, row.state);
+    }
+    expect(echoes).toEqual([]);
+
+    // …and the pairs that DO share a hue share nothing else, which is the
+    // finding this rule is the answer to. Read off the table rather than
+    // asserted about named states, so a hue moved onto a third state is
+    // measured the same way.
+    const byColor = new Map<string, StateRow[]>();
+    for (const row of rows()) {
+      byColor.set(row.color, [...(byColor.get(row.color) ?? []), row]);
+    }
+    const sharing = [...byColor.values()].filter((group) => group.length > 1);
+    expect(sharing.length, 'no two states share a hue — this half of the rule is asleep')
+      .toBeGreaterThan(0);
+    for (const group of sharing) {
+      for (let i = 0; i < group.length; i += 1) {
+        for (let j = i + 1; j < group.length; j += 1) {
+          expect(
+            group[i].form !== group[j].form || group[i].word !== group[j].word,
+            `${group[i].state} and ${group[j].state} share a hue and say the same thing the same way`,
+          ).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('speaks in the HUD\'s one case', () => {
+    for (const row of rows()) {
+      expect(row.word, `${row.state} says ${row.word} in mixed case`)
+        .toBe(row.word.toUpperCase());
+    }
+  });
+
+  it('the two forms are what the two files actually draw', () => {
+    // The FORM column is the one thing this chapter states rather than reads,
+    // so each claim pays a toll against the file that renders it.
+    const banner = code(SOURCES.find((source) => source.name === 'StreamHealthBanner.tsx')?.text ?? '');
+    expect(banner, 'the health banner stopped renting the top band').toMatch(/<TopBand\b/);
+    expect(banner, 'the frozen frame is no longer the frozen state\'s alone')
+      .toContain("summary.phase === 'stale' ? (");
+    expect(banner).toContain('data-stream-stale-frame');
+
+    const plate = code(SOURCES.find((source) => source.name === 'BackfillBar.tsx')?.text ?? '');
+    expect(plate, 'the replay plate stopped being a floating plate')
+      .toContain('clipPath: PLATE_CUT_CLIP');
+    expect(plate, 'the replay plate grew a band').not.toMatch(/<TopBand\b/);
+    // …and it prints the title the matrix read out of `replayPresentation`.
+    expect(plate).toContain('{visual.title}');
   });
 });

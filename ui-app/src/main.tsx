@@ -1,7 +1,7 @@
 // SPA entry: fetch the two bootstrap snapshots in parallel, then mount
-// the React tree. A failure on either snapshot renders a plain pre with
-// the error so the user (and CI) can read the failure reason without
-// digging into devtools.
+// the React tree. A failure on either snapshot is charged to the boot record
+// and shown by the shell that is already on screen — see the catch at the
+// foot of this file.
 
 import React from 'react';
 import ReactDOM from 'react-dom/client';
@@ -13,7 +13,11 @@ import {
   setQualityMode,
 } from '@cknerv/ui';
 import App from './App';
-import { installBootShellReadout } from './boot-shell';
+import {
+  chargeBootFault,
+  installBootShellReadout,
+  showBootShellFault,
+} from './boot-shell';
 import { fetchCellsSnapshot, fetchChainSnapshot } from './connect';
 import { installPulseStatsHook } from './pulse-stats-hook';
 import { installCellFieldHook } from './cell-field-hook';
@@ -102,19 +106,25 @@ installCellFieldHook();
 
 // Drive the static boot readout in index.html from the boot record. Also
 // independent of the render: a boot that never reaches React still names the
-// phase it died in, right up until the error text below replaces it.
+// phase it died in, and now keeps saying it — nothing replaces the shell.
 installBootShellReadout();
 
+// THE SHELL AND THE BAND ARE THE WHOLE ERROR UI.
+//
+// This used to build a plain block element in `#f88` — a colour outside the
+// palette, in the browser's own monospace, at 20px of padding — and hand it to
+// `root.replaceChildren`, deleting the boot shell in the same tick the record
+// had just been told which phase died (report E, E-7). The one state a visitor
+// with a dead server ever sees was the one state nobody had drawn.
+//
+// So: charge the fault to the line the boot got to, which makes the band say
+// `SNAPSHOT FAULT — cells snapshot: 503` through the readout already installed
+// above, and hand the full message to the shell's own fault line, which is
+// drawn by `index.html`'s own script in the shell's own faces. Nothing is
+// replaced, and a boot that gets far enough for React to mount hands the same
+// record to the HUD's banner instead.
 bootstrap().catch((e: unknown) => {
-  // Safe DOM API rendering — `textContent` escapes the message so a
-  // hostile chain payload can't smuggle script tags into the error UI.
-  const root = document.getElementById('root');
-  if (!root) return;
-  const pre = document.createElement('pre');
-  pre.style.color = '#f88';
-  pre.style.padding = '20px';
-  pre.style.whiteSpace = 'pre-wrap';
   const message = e instanceof Error ? e.message : String(e);
-  pre.textContent = `cknerv bootstrap failed:\n${message}`;
-  root.replaceChildren(pre);
+  chargeBootFault(message);
+  showBootShellFault(message);
 });

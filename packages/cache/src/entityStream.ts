@@ -24,6 +24,7 @@ import {
 } from './chainReducer';
 import {
   createStreamHealthTracker,
+  STREAM_RECONNECT_MS,
   type StreamHealthOptions,
 } from './streamHealth';
 
@@ -166,7 +167,7 @@ export interface EntityStreamOptions extends StreamHealthOptions {
    *  would otherwise infer from `streamUrl`. Default: replace `/stream`
    *  with `/snapshot`. */
   snapshotUrl?: string;
-  /** Reconnect delay on close/error. Default 2000 ms. */
+  /** Reconnect delay on close/error. Defaults to `STREAM_RECONNECT_MS`. */
   reconnectMs?: number;
   /** Optional logger; defaults to console.warn for unexpected payloads. */
   onWarn?: (message: string) => void;
@@ -196,7 +197,7 @@ export function connectEntityStream(
   onChange: (next: ChainCache) => void,
   opts: EntityStreamOptions = {},
 ): EntityStreamHandle {
-  const reconnectMs = opts.reconnectMs ?? 2000;
+  const reconnectMs = opts.reconnectMs ?? STREAM_RECONNECT_MS;
   let stopped = false;
   let socket: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;

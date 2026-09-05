@@ -58,13 +58,52 @@
          before the first paint and there is no module to wait for.
          `ui-app/__tests__/boot-shell.test.ts` holds these three literals
          against the token. -->
+    <!-- …and it is the shell that shows a bootstrap fault, because a fault is
+         the one moment the page has nothing else to show. This used to replace
+         #root with a `<pre>` in `#f88` and the browser's own monospace — the
+         designed band was told the phase it died in and then deleted in the
+         same tick, so the one state a visitor with a dead server ever sees was
+         the one state nobody had drawn (report E, E-7). The band stands; the
+         line below it carries the whole message, wrapping, in the shell's own
+         faces and the palette's `danger`.
+
+         The hook lives HERE and not in `boot-shell.ts` for the reason the
+         markup above lives here: the shell's colours and stacks cannot be
+         imported, so they are spelled once, in one file. `main.tsx` calls it
+         and knows nothing about how the shell looks. -->
     <script>
       (function () {
         var shell = document.getElementById('cknerv-boot-shell');
-        if (!shell || typeof window.matchMedia !== 'function') return;
-        shell.style.top = window.matchMedia('(max-width: 560px)').matches ? '59px'
-          : window.matchMedia('(max-width: 1280px)').matches ? '64px'
-          : '36px';
+        if (!shell) return;
+        if (typeof window.matchMedia === 'function') {
+          shell.style.top = window.matchMedia('(max-width: 560px)').matches ? '59px'
+            : window.matchMedia('(max-width: 1280px)').matches ? '64px'
+            : '36px';
+        }
+        // Installed whatever the sizing above could work out: a page that
+        // cannot answer a media query still has a fault to show.
+        window.__cknervBootFault = function (text) {
+          // The band may already be gone — React took #root — in which case
+          // the HUD's own banner is holding the fault and this must not draw a
+          // second one.
+          if (!shell.isConnected) return false;
+          var line = document.getElementById('cknerv-boot-shell-fault');
+          if (!line) {
+            line = document.createElement('div');
+            line.id = 'cknerv-boot-shell-fault';
+            line.setAttribute('role', 'alert');
+            line.style.cssText = 'position:absolute;left:0;right:0;top:' +
+              (parseInt(shell.style.top, 10) + 30) + 'px;padding:9px 16px;box-sizing:border-box;' +
+              'text-align:center;font-size:9px;letter-spacing:1.2px;line-height:1.6;' +
+              'white-space:pre-wrap;overflow-wrap:anywhere;color:#FF3030;' +
+              "font-family:'Share Tech Mono','JetBrains Mono Local',ui-monospace,monospace";
+            shell.parentNode.insertBefore(line, shell.nextSibling);
+          }
+          // `textContent`, so a hostile payload in a fault message cannot
+          // smuggle markup into the one surface a broken page still renders.
+          line.textContent = text;
+          return true;
+        };
       })();
     </script>
     <script src="/runtime-config.js"></script>

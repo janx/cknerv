@@ -3,7 +3,12 @@
 // bundle on a single port, so an empty `API_BASE` resolves correctly
 // against `window.location.origin`.
 
-import { cellsSnapshotFromColumnar, decodeCellsColumnar } from '@cknerv/cache';
+import {
+  cellsSnapshotFromColumnar,
+  decodeCellsColumnar,
+  STREAM_RECONNECT_MS,
+  type StreamHealth,
+} from '@cknerv/cache';
 import type {
   CellGalaxySnapshot,
   ChainEntry,
@@ -13,6 +18,7 @@ import type {
 import {
   beginBootPhase,
   completeBootPhase,
+  deriveNodeStreamHealth,
   failBootPhase,
   reportBootSnapshotProgress,
 } from '@cknerv/ui';
@@ -155,4 +161,76 @@ export async function fetchCellsSnapshot(): Promise<
     );
     throw error;
   }
+}
+
+// ——— The hop the browser has no socket for ————————————————————————————————
+//
+// Every transport above is the browser's own, and all of them stay perfectly
+// live while the node behind the server is gone: cknerv keeps its sockets open
+// and heartbeats a tip that has stopped moving. So the most likely real fault
+// of a local-first tool had no vocabulary at all, and surfaced two and a half
+// minutes later as a chain STALL — a node outage reported as a chain fault,
+// late (report E, E-7).
+//
+// `/api/health` is the answer and it is already there. This is a POLL and not
+// a stream on purpose: the endpoint is designed to answer while the process is
+// unwell (no projection lock, no snapshot, poisoned locks read through), and a
+// socket is exactly the thing that stops telling you anything when the server
+// is the problem. One GET every `STREAM_RECONNECT_MS` costs the same as the
+// reconnect the sockets are already doing at that cadence, and no dependency.
+
+/** Wire shape of `GET /api/health`, narrowed to the three fields the node
+ *  channel reads. The endpoint reports a dozen more; the page is probing
+ *  vitals, not consuming a projection, so it names only what it asks. */
+interface HealthResponse {
+  degraded?: boolean;
+  adapters?: Array<{ name?: string; alive?: boolean }>;
+  tip_age_ms?: number | null;
+}
+
+/**
+ * Poll the server's own health and publish the node's hop as a channel.
+ *
+ * `onHealth(null)` means "I have nothing to say" — the request failed, so the
+ * server is unreachable, and the SOCKETS own that story. Publishing a fault
+ * here for it would put two banners on one emergency, and the one that knows
+ * least would be shouting.
+ */
+export function connectNodeHealth(
+  onHealth: (health: StreamHealth | null) => void,
+  opts: { pollMs?: number; now?: () => number } = {},
+): { disconnect: () => void } {
+  const pollMs = Math.max(250, opts.pollMs ?? STREAM_RECONNECT_MS);
+  const now = opts.now ?? Date.now;
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const poll = async (): Promise<void> => {
+    try {
+      const resp = await fetch(`${API_BASE}/api/health`);
+      if (!resp.ok) throw new Error(`health: ${resp.status}`);
+      const body = (await resp.json()) as HealthResponse;
+      if (stopped) return;
+      onHealth(deriveNodeStreamHealth({
+        degraded: body.degraded === true,
+        adapters: (body.adapters ?? []).map((adapter) => ({
+          name: adapter.name ?? '',
+          // An adapter the body did not describe is not evidence that it died.
+          alive: adapter.alive !== false,
+        })),
+        tipAgeMs: typeof body.tip_age_ms === 'number' ? body.tip_age_ms : null,
+      }, now()));
+    } catch {
+      if (!stopped) onHealth(null);
+    } finally {
+      if (!stopped) timer = setTimeout(() => { void poll(); }, pollMs);
+    }
+  };
+  void poll();
+  return {
+    disconnect: () => {
+      stopped = true;
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+    },
+  };
 }

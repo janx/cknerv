@@ -145,6 +145,7 @@ import type {
 import Tweaks from './Tweaks';
 import Jukebox from './Jukebox';
 import { ingestCellsCacheIntoField } from './cell-field-hook';
+import { connectNodeHealth } from './connect';
 import {
   INITIAL_CELL_IDENTITY_JOURNEY_STATE,
   cellIdentityJourneyReducer,
@@ -636,6 +637,13 @@ export default function App({
   const [semanticsStreamHealth, setSemanticsStreamHealth] = useState<StreamHealth>(
     initialStreamHealth,
   );
+  // The node's hop starts `null` — unknown, and unknown is silence. It is not
+  // seeded `connecting` like the three sockets above, because nothing is
+  // connecting: the first poll either learns something about the node or
+  // learns that the server cannot be asked.
+  const [nodeStreamHealth, setNodeStreamHealth] = useState<StreamHealth | null>(
+    null,
+  );
   const retainedCellRecordsRef = useRef(cellsCache.cells);
   retainedCellRecordsRef.current = cellsCache.cells;
   // Cell and network ids retain separate state shapes because their scene
@@ -851,10 +859,16 @@ export default function App({
         },
       )
       : null;
+    // The fourth channel, and the only one that is not a socket: cknerv → the
+    // CKB node. It polls at the sockets' own reconnect cadence and publishes
+    // `null` whenever the server itself will not answer, which is the sockets'
+    // story rather than the node's.
+    const node = connectNodeHealth(setNodeStreamHealth);
     return () => {
       entity.disconnect();
       cells.disconnect();
       semantics?.disconnect();
+      node.disconnect();
     };
     // Seeds are mount-time constants; subscribe exactly once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1789,17 +1803,21 @@ export default function App({
     return { version: buildVersion, href: buildCommitHref(buildVersion) };
   }, []);
   const hudStreamHealth = useMemo(
-    () => (enrichmentConfig.enabled
-      ? {
-        chain: chainStreamHealth,
-        cells: cellsStreamHealth,
-        semantics: semanticsStreamHealth,
-      }
-      : { chain: chainStreamHealth, cells: cellsStreamHealth }),
+    () => ({
+      chain: chainStreamHealth,
+      cells: cellsStreamHealth,
+      ...(enrichmentConfig.enabled ? { semantics: semanticsStreamHealth } : {}),
+      // Absent, not live, when the probe has nothing: an undefined channel is
+      // how `semantics` already says "there is nothing here to report on", and
+      // a probe that cannot reach the server is reporting on the server rather
+      // than on the node.
+      ...(nodeStreamHealth ? { node: nodeStreamHealth } : {}),
+    }),
     [
       chainStreamHealth,
       cellsStreamHealth,
       semanticsStreamHealth,
+      nodeStreamHealth,
       enrichmentConfig.enabled,
     ],
   );

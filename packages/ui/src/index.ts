@@ -116,11 +116,14 @@ export * from './derives/networkFlood.derive';
 // formula rather than copying the band constants out of the package.
 export { latencyPlacementStep } from './derives/peers.derive';
 export * from './derives/sceneView.derive';
-// Only the collapse itself: the formatters beside it are banner copy, and the
-// one caller outside this package asks a single question — is every stream
-// this page subscribed to live?
+// The collapse and the node channel's own reading: the formatters beside them
+// are banner copy, and the callers outside this package ask two questions —
+// is every stream this page subscribed to live, and is the hop this page has
+// no socket for still there?
 export {
+  deriveNodeStreamHealth,
   deriveStreamHealthSummary,
+  type NodeHealthProbe,
   type StreamHealthChannels,
 } from './derives/streamHealth.derive';
 

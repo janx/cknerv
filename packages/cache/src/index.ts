@@ -138,6 +138,7 @@ export {
 
 export {
   createStreamHealthTracker,
+  STREAM_RECONNECT_MS,
   type StreamHealth,
   type StreamHealthOptions,
   type StreamHealthPhase,

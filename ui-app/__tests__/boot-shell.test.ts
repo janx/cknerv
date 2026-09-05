@@ -13,7 +13,9 @@ import {
 import {
   activeBootShellPhase,
   bootShellReadout,
+  chargeBootFault,
   installBootShellReadout,
+  showBootShellFault,
   BOOT_SHELL_DETAIL_ID,
   BOOT_SHELL_PHASE_ID,
 } from '../src/boot-shell';
@@ -286,5 +288,116 @@ describe('installBootShellReadout', () => {
     expect(phaseNode().style.color).toBe('rgb(255, 48, 48)');
     expect(getBootSequence().complete).toBe(false);
     stop();
+  });
+});
+
+// ——— A bootstrap failure keeps the shell and the band ————————————————————
+//
+// The `<pre>` in `#f88` that used to replace `#root` was the whole error UI
+// (report E, E-7): a colour outside the palette, the browser's own monospace,
+// and it deleted the designed band in the same tick the record had told that
+// band which phase died. Two halves replace it — the record is charged, so the
+// band says `SNAPSHOT FAULT — …`, and the shell's own script draws the full
+// message under it.
+
+describe('a bootstrap failure keeps the shell standing', () => {
+  /** With its comments taken out: this file argues its decisions in prose, and
+   *  the prose names the `<pre>` in `#f88` it replaced. A source oracle that
+   *  read the argument as if it were the code would forbid the argument. */
+  const MAIN = readFileSync(resolve(process.cwd(), 'src/main.tsx'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+
+  beforeEach(() => {
+    resetBootSequenceForTest();
+    delete (window as { __cknervBootFault?: unknown }).__cknervBootFault;
+  });
+
+  it('draws no error UI of its own', () => {
+    // The three the ruling names, each as it was written. A revert that kept
+    // one of them is a revert.
+    for (const relic of ['<pre', "createElement('pre')", '#f88', 'replaceChildren']) {
+      expect(MAIN, `the entry point still builds its own error UI: ${relic}`)
+        .not.toContain(relic);
+    }
+    expect(MAIN).toContain('chargeBootFault(message)');
+    expect(MAIN).toContain('showBootShellFault(message)');
+  });
+
+  it('charges the fault to the line the boot got to', () => {
+    completeBootPhase('instrument');
+    beginBootPhase('snapshot');
+    expect(chargeBootFault('cells snapshot: 503')).toBe('snapshot');
+    const failed = getBootSequence().phases.find((phase) => phase.state === 'failed');
+    expect(failed?.id).toBe('snapshot');
+    expect(failed?.detail).toBe('cells snapshot: 503');
+    // …and the band the shell paints says so, which is the point of charging it.
+    expect(bootShellReadout(getBootSequence())).toEqual({
+      label: 'SNAPSHOT FAULT',
+      detail: 'cells snapshot: 503',
+      failed: true,
+    });
+  });
+
+  it('charges a fault between phases to the next line, not the last done one', () => {
+    // The chain snapshot and the lazy Lab import both throw with nothing
+    // active; blaming the phase that SUCCEEDED would be the record lying.
+    completeBootPhase('instrument');
+    expect(chargeBootFault('Failed to fetch')).toBe('snapshot');
+  });
+
+  it('never re-describes a fault its own writer already reported', () => {
+    completeBootPhase('instrument');
+    beginBootPhase('snapshot');
+    failBootPhase('snapshot', 'cells snapshot: 503');
+    chargeBootFault('Error: cells snapshot: 503');
+    const failed = getBootSequence().phases.find((phase) => phase.state === 'failed');
+    expect(failed?.detail).toBe('cells snapshot: 503');
+  });
+
+  it('hands the whole message to the shell, and says when the shell has gone', () => {
+    expect(showBootShellFault('anything'), 'a fault line with no shell to draw on')
+      .toBe(false);
+    const seen: string[] = [];
+    window.__cknervBootFault = (text: string) => { seen.push(text); return true; };
+    expect(showBootShellFault('cells snapshot: 503')).toBe(true);
+    expect(seen).toEqual(['cells snapshot: 503']);
+  });
+
+  it('is the shell\'s own script that draws the line, in the shell\'s faces', () => {
+    // The presentation lives in `index.html` for the same reason the markup
+    // does: the shell's colours and stacks cannot be imported.
+    const script = /<script>([\s\S]*?)<\/script>/.exec(INDEX_HTML)?.[1] ?? '';
+    expect(script, 'the shell no longer draws a fault').toContain('__cknervBootFault');
+    expect(script, 'the fault line is not in the palette\'s danger')
+      .toContain(`color:#${/danger: '#(\w{6})'/.exec(HUD_THEME)?.[1]}`);
+    expect(stack(script), 'the fault line is not in the band\'s face')
+      .toContain(stack("'Share Tech Mono'"));
+    // `textContent`, so a fault message cannot smuggle markup into the one
+    // surface a broken page still renders.
+    expect(script).toContain('line.textContent = text');
+    expect(script, 'the fault line would draw over a HUD that already mounted')
+      .toContain('shell.isConnected');
+  });
+
+  it('really draws it, on the document the shell ships', () => {
+    document.documentElement.innerHTML = new DOMParser()
+      .parseFromString(INDEX_HTML, 'text/html').documentElement.innerHTML;
+    const script = /<script>([\s\S]*?)<\/script>/.exec(INDEX_HTML)?.[1] ?? '';
+    // eslint-disable-next-line no-new-func
+    new Function(script)();
+
+    expect(showBootShellFault('cells snapshot: 503')).toBe(true);
+    const line = document.getElementById('cknerv-boot-shell-fault');
+    expect(line?.textContent).toBe('cells snapshot: 503');
+    expect(line?.getAttribute('role')).toBe('alert');
+    // The band it belongs to is still there — the whole ruling in one line.
+    expect(document.getElementById('cknerv-boot-shell')).not.toBeNull();
+    expect(document.getElementById(BOOT_SHELL_PHASE_ID)?.textContent).toBe('INSTRUMENT');
+
+    // A second fault replaces the text rather than stacking a second line.
+    showBootShellFault('and then this');
+    expect(document.querySelectorAll('#cknerv-boot-shell-fault')).toHaveLength(1);
+    expect(document.getElementById('cknerv-boot-shell-fault')?.textContent)
+      .toBe('and then this');
   });
 });
