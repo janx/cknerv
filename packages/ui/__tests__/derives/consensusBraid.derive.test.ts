@@ -7,7 +7,6 @@ import {
   consensusBraidAgreementTarget,
   consensusBraidBirthPhase,
   consensusBraidContributorColor,
-  CONSENSUS_BRAID_RESTING_WEIGHT,
   consensusBraidLayerOpacity,
   consensusBraidPathPoint,
   consensusBraidPresenceScale,
@@ -133,24 +132,16 @@ describe('canonical consensus braid mapping', () => {
     expect(born.packet).toBeGreaterThan(born.streamCore);
   });
 
-  it('waits its turn: nothing selected is the same balance, quieter', () => {
-    // The card's hierarchy was upside down at open — the braid carried 8.75 %
-    // of its box over L 160 against the analysis plate's 0.65 %, thirteen
-    // times the light, and it is a tangle nothing can be read out of. So the
-    // resting portrait is the balanced set at a fraction of its weight, and a
-    // selected fact brings the layer it owns back up. The RATIOS are the
-    // design and they are untouched.
+  it('leads at open: nothing selected is the full balance, and a fact lifts its own layer', () => {
+    // Ruling 2026-09-05: the CELL SCAN is the first visual focus of the cell
+    // detail panel. The braid rests at its full balanced weight — no damping
+    // constant, no quieter register — and a selected fact still lifts the
+    // layer it owns ABOVE that balance, which is what makes the selection
+    // legible as an act. Both halves are the design; this pins them so the
+    // specimen is never dimmed at open again.
     const balanced = consensusBraidLayerOpacity('state', 3);
     const resting = consensusBraidLayerOpacity(null, 3);
-    const keys = Object.keys(balanced) as (keyof typeof balanced)[];
-
-    expect(CONSENSUS_BRAID_RESTING_WEIGHT).toBeLessThan(1);
-    for (const key of keys) {
-      expect(resting[key], `${key} at rest`)
-        .toBeCloseTo(balanced[key] * CONSENSUS_BRAID_RESTING_WEIGHT, 10);
-      expect(resting[key], `${key} at rest`).toBeLessThan(balanced[key]);
-    }
-    // …and every fact selection lifts the layer that fact owns above rest.
+    expect(resting).toEqual(balanced);
     expect(consensusBraidLayerOpacity('lock', 3).streamCore)
       .toBeGreaterThan(resting.streamCore);
     expect(consensusBraidLayerOpacity('data', 3).knotCore)
@@ -159,8 +150,6 @@ describe('canonical consensus braid mapping', () => {
       .toBeGreaterThan(resting.ribbon);
     expect(consensusBraidLayerOpacity('asset', 3).streamCore)
       .toBeGreaterThan(resting.streamCore);
-    expect(consensusBraidLayerOpacity('born', 3).packet)
-      .toBeGreaterThan(resting.packet);
   });
 
   it('turns birth block into a stable wrapped packet phase', () => {

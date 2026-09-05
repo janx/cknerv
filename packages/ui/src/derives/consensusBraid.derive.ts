@@ -112,47 +112,21 @@ export interface ConsensusBraidLayerOpacity {
 }
 
 /**
- * How much of the braid's balanced weight the portrait carries BEFORE a fact
- * is selected.
+ * The braid is the FIRST visual focus of the cell detail panel, by ruling
+ * (2026-09-05): with nothing selected it carries its full balanced weight.
  *
- * At open the CELL SCAN square was the brightest thing on the card by an order
- * of magnitude: measured live at `25c7d5a`, 8.75 % of its pixels stood over
- * L 160 against 0.65 % for the analysis plate beside it — thirteen times the
- * light — and what the eye landed on first was a 280 px white tangle nothing
- * in it could be read out of. The masthead and the six facts, which answer
- * what the Cell is and whether it is alive, came third.
- *
- * So the braid WAITS ITS TURN. The full set is the design and it is unchanged;
- * this is a weight over the whole of it, so the RATIOS — which layer leads,
- * which recedes — read exactly as they did, one register quieter. Selecting a
- * fact restores full weight on the layer that fact owns, which is what makes
- * the selection legible as an act: the specimen answers.
- *
- * ⚠️ Uniform on purpose. Damping the bright layers alone would change which
- * layer leads at rest, and the resting picture would then be a second design
- * with no author.
+ * Round 3 of the visual review read the opposite off a capture — at `25c7d5a`
+ * the CELL SCAN square held 8.75 % of its pixels over L 160 against 0.65 % for
+ * the analysis plate, and the review called that a hierarchy upside down, so
+ * for one commit (`806f842`) the portrait rested at 0.42 of its weight until a
+ * fact asked it something. The user reversed it on sight: the specimen IS the
+ * headline of this card, and the radiance at open is the design, not a defect
+ * of it. A damping constant that has been ruled to 1 is not kept as a knob —
+ * a settled decision is documented, not left as a dead branch — so the resting
+ * portrait is the balanced set itself, and a selected fact lifts the layer it
+ * owns ABOVE that balance, which is still what makes the selection legible
+ * as an act. `consensusBraid.derive.test.ts` pins both halves.
  */
-export const CONSENSUS_BRAID_RESTING_WEIGHT = 0.42;
-
-/** Every layer at a fraction of its balanced weight. */
-function atRestingWeight(
-  layers: ConsensusBraidLayerOpacity,
-  weight: number,
-): ConsensusBraidLayerOpacity {
-  return {
-    ribbon: layers.ribbon * weight,
-    streamGlow: layers.streamGlow * weight,
-    streamFlow: layers.streamFlow * weight,
-    streamCore: layers.streamCore * weight,
-    stitchGlow: layers.stitchGlow * weight,
-    stitchCore: layers.stitchCore * weight,
-    agreementGlow: layers.agreementGlow * weight,
-    agreementCore: layers.agreementCore * weight,
-    knotGlow: layers.knotGlow * weight,
-    knotCore: layers.knotCore * weight,
-    packet: layers.packet * weight,
-  };
-}
 
 /** Readable A grammar: one on-chain field emphasizes one visual layer. */
 export function consensusBraidLayerOpacity(
@@ -250,10 +224,9 @@ export function consensusBraidLayerOpacity(
   // STATE reads the integrity of the whole structure, so it intentionally
   // preserves the complete balance; ConsensusMemory adds a restrained pulse.
   if (focusField === 'state') return normal;
-  // …and with NOTHING selected the same balance, at rest. See
-  // CONSENSUS_BRAID_RESTING_WEIGHT: the braid is the specimen, not the
-  // headline, until a fact asks it something.
-  return atRestingWeight(normal, CONSENSUS_BRAID_RESTING_WEIGHT);
+  // …and with NOTHING selected the same balance, at full weight: the braid is
+  // the headline of the card (see the ruling above the layer table).
+  return normal;
 }
 
 /** Sample a canonical closed path without adding renderer-specific topology. */
