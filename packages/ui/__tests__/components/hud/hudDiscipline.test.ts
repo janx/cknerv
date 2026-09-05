@@ -4471,6 +4471,11 @@ describe('one alpha for a rule', () => {
 const MOTION_JURISDICTION: readonly string[] = [
   'components/sceneInspection.tsx',
   'hooks/usePeerInspectionRetention.ts',
+  // The alarm's dwell and the timer that ends it. A dwell is a duration a
+  // reader experiences — the sole reason `HUD_MOTION.hold` exists — so it
+  // answers to the ladder like any transition.
+  'derives/alertLevel.ts',
+  'hooks/useHeldAlert.ts',
 ];
 const MOTION_APP_FILES: readonly string[] = [
   'Jukebox.tsx',

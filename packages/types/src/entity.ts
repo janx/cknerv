@@ -69,6 +69,26 @@ export interface ChainEntry {
   chain_name: string;
   /** Block re-orgs observed since boot (number-with-different-hash collisions). */
   reorgs: number;
+  /**
+   * How many blocks the LAST of those re-orgs orphaned — the count above says
+   * how often, and this says how badly.
+   *
+   * ⚠️ CLIENT-DERIVED, and the one field of this twin the wire does not carry.
+   * `chain_reorganized` already ships `from_block`, so the depth is a
+   * subtraction the reducer can do at the moment it applies the mutation; the
+   * server has no reason to compute it and no reason to store it. Which is
+   * also why it is optional: a SNAPSHOT arrives without one, and that is
+   * correct — a snapshot is a reading of the chain as it stands, not a witness
+   * to an event. A consumer that needs a number for an unwitnessed reorg reads
+   * the shallowest, which is what one is.
+   *
+   * The HUD spends it on the alarm ramp: one orphaned block is a caution with
+   * no bar, two raise the bar, three are danger, six critical (D-12). Before
+   * it existed the alarm read `reorgs - previous`, i.e. how many reorgs landed
+   * in one batch, so every real reorg was depth 1 and the upper two rungs of
+   * the ramp had never once been drawn (report E, E-8).
+   */
+  last_reorg_depth?: number;
   /** ms intervals between consecutive blocks (capped on the backend). Drives
    *  the "INTERVAL avg / last" HUD readout. */
   recent_block_intervals_ms: number[];

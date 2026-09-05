@@ -123,6 +123,9 @@ describe('applyChainMutation', () => {
 
     expect(c.tip).toBe(1);
     expect(c.reorgs).toBe(1);
+    // Two blocks orphaned (2 and 3), so the alarm's ramp gets a 2 rather than
+    // the 1 that "how many reorg events landed in this batch" always produced.
+    expect(c.last_reorg_depth).toBe(2);
     expect(c.recent_blocks).toEqual([{ number: 1, hash: '0x1' }]);
     expect(c.recent_tx_hashes).toEqual([
       { tx_hash: '0xtx1', block: 1 },
@@ -666,5 +669,82 @@ describe('ring identity preservation', () => {
     expect(prev.recent_blocks).toEqual(prevBlocks); // prev untouched
     expect(next.recent_block_intervals_ms).not.toBe(prev.recent_block_intervals_ms);
     expect(next.recent_block_intervals_ms).toEqual([1_000]);
+  });
+});
+
+describe('a re-org carries its depth', () => {
+  /** n blocks, 1..n, each an hour apart so nothing rings out. */
+  const chainOf = (n: number) => {
+    let c = emptyChainCache();
+    for (let number = 1; number <= n; number += 1) {
+      c = applyChainMutation(c, {
+        type: 'block_mined',
+        number,
+        hash: `0x${number}`,
+        tx_count: 1,
+        size: 100,
+        at: number * 1000,
+      });
+    }
+    return c;
+  };
+
+  it('counts the blocks orphaned, not the events applied', () => {
+    // The whole point: `reorgs` says how OFTEN, `last_reorg_depth` says how
+    // badly, and the second is what the alarm's ramp reads (D-12).
+    expect(applyChainMutation(chainOf(10), {
+      type: 'chain_reorganized', from_block: 10,
+    }).last_reorg_depth).toBe(1);
+    expect(applyChainMutation(chainOf(10), {
+      type: 'chain_reorganized', from_block: 8,
+    }).last_reorg_depth).toBe(3);
+    expect(applyChainMutation(chainOf(10), {
+      type: 'chain_reorganized', from_block: 1,
+    }).last_reorg_depth).toBe(10);
+  });
+
+  it('never reports a re-org that orphaned nothing', () => {
+    // A suffix we had not received yet. Nothing of ours is thrown away, but a
+    // re-org happened, and the HUD may not be told a depth of zero — zero is
+    // the word for "no re-org".
+    const c = applyChainMutation(chainOf(10), {
+      type: 'chain_reorganized', from_block: 14,
+    });
+    expect(c.reorgs).toBe(1);
+    expect(c.last_reorg_depth).toBe(1);
+  });
+
+  it('measures a rebuild the same way, because it counts the same way', () => {
+    const c = applyChainMutation(chainOf(10), { type: 'chain_rebuild', from_block: 4 });
+    expect(c.reorgs).toBe(1);
+    expect(c.last_reorg_depth).toBe(7);
+  });
+
+  it('reads one replaced block as one', () => {
+    // The other path into `reorgs`: a block arriving at a height we hold with
+    // a different hash.
+    const c = applyChainMutation(chainOf(3), {
+      type: 'block_mined',
+      number: 3,
+      hash: '0xdifferent',
+      tx_count: 1,
+      size: 100,
+      at: 3_500,
+    });
+    expect(c.reorgs).toBe(1);
+    expect(c.last_reorg_depth).toBe(1);
+  });
+
+  it('stays put while nothing re-orgs, and starts at nothing', () => {
+    expect(emptyChainCache().last_reorg_depth).toBe(0);
+    expect(chainOf(5).last_reorg_depth).toBe(0);
+  });
+
+  it('is the client\'s own subtraction, not a wire field', () => {
+    // The Rust twin does not send it and does not need to: `from_block` is on
+    // the wire and the tip is in hand. A SNAPSHOT therefore arrives without
+    // one, which is correct — a snapshot witnessed nothing.
+    const snap = fixture<ChainEntry>('snapshot_chain.json');
+    expect(snap.last_reorg_depth).toBeUndefined();
   });
 });

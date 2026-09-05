@@ -56,6 +56,7 @@ export function emptyChainCache(): ChainEntry {
     difficulty: '0x0',
     chain_name: '',
     reorgs: 0,
+    last_reorg_depth: 0,
     recent_block_intervals_ms: [],
     recent_block_tx_counts: [],
     recent_block_sizes: [],
@@ -239,6 +240,24 @@ function touchesChain(m: Mutation): boolean {
   }
 }
 
+/**
+ * How many blocks a re-org orphaned.
+ *
+ * The wire says WHERE the replacement suffix starts (`from_block`); the depth
+ * is how much of what we had is being thrown away, which is every block from
+ * there to the tip inclusive. So a single replaced block — by far the common
+ * case, and the only one the old `reorgs - previous` delta could ever report —
+ * is depth ONE, not zero: the ramp's rungs are counts of orphaned blocks, and
+ * a reorg that orphaned nothing is not a reorg.
+ *
+ * Floored at 1 for the same reason. A `from_block` past our own tip means the
+ * server saw a fork on a suffix we had not received yet; nothing of ours is
+ * orphaned, but a reorg still happened and the HUD may not be told "0".
+ */
+function reorgDepth(tip: number, fromBlock: number): number {
+  return Math.max(1, tip - fromBlock + 1);
+}
+
 /** In-place mutation; caller is responsible for cloning before calling and
  *  supplies the batch's copy-on-write ring ledger. */
 function applyToChain(
@@ -249,6 +268,7 @@ function applyToChain(
   switch (m.type) {
     case 'chain_reorganized': {
       const canonicalTip = m.from_block === 0 ? 0 : m.from_block - 1;
+      chain.last_reorg_depth = reorgDepth(chain.tip, m.from_block);
       chain.tip = Math.min(chain.tip, canonicalTip);
       chain.reorgs += 1;
       chain.recent_blocks = chain.recent_blocks.filter(
@@ -275,6 +295,11 @@ function applyToChain(
       return;
     }
     case 'chain_rebuild': {
+      // A rebuild counts in `reorgs`, so it measures its depth the same way.
+      // The two are one fact wearing two words: the server is discarding a
+      // suffix, and how long that suffix was is the reader's business whether
+      // the discard came from a fork or from a memory reset.
+      chain.last_reorg_depth = reorgDepth(chain.tip, m.from_block);
       chain.tip = m.from_block === 0 ? 0 : m.from_block - 1;
       chain.reorgs += 1;
       chain.recent_blocks = [];
@@ -329,7 +354,12 @@ function applyToChain(
         chain.tip = m.number;
       }
       chain.total_blocks += 1;
-      if (reorg) chain.reorgs += 1;
+      if (reorg) {
+        // One block arriving at a height we already hold with another hash:
+        // exactly one block orphaned, and the tip was that height.
+        chain.last_reorg_depth = 1;
+        chain.reorgs += 1;
+      }
       const prevTs = chain.last_block_ts_ms ?? null;
       if (prevTs !== null && m.at >= prevTs) {
         ownRing(chain, 'recent_block_intervals_ms', owned);

@@ -75,11 +75,44 @@ function hazardBand(color: string, edge: 'top' | 'bottom'): CSSProperties {
   };
 }
 
+/**
+ * TEMPO IS THE THIRD AXIS OF THE RAMP, and it was the missing one.
+ *
+ * The alarm escalated in HUE (amber → red) and in SHAPE (the hazard banding at
+ * `crit`), and ran the identical 600 ms `steps(2)` blink at all three levels —
+ * so the two loudest states on the instrument moved at exactly the speed of the
+ * quietest one (report E, E-8). A ramp whose top rung moves no faster than its
+ * bottom is a ramp in colour with a strobe bolted to it.
+ *
+ *   WARNING  still. A reorg two blocks deep is news, not an emergency, and the
+ *            band's presence is already the loudest thing on the page. Nothing
+ *            in the HUD blinks to say "read me" — the panels are lit, not
+ *            flashing — and an amber band that does is borrowing an urgency
+ *            the level does not have.
+ *   DANGER   the HUD's one breathe, at `grow`. The same slow swell the DATA
+ *            FROZEN band wears, because it means the same thing: a state that
+ *            is ongoing and wrong. 1,200 ms rather than report E's suggested
+ *            1,400 for the reason every other duration in this HUD is a rung —
+ *            an alarm is exactly the wrong place to introduce a 27th number.
+ *   CRIT     the reserved `alarmEase`, `steps(2)` at `linger`. A hard two-state
+ *            flash, no interpolation: the one motion in the application that is
+ *            not trying to look natural.
+ *
+ * `alarmEase` stays reserved to this file and this level; the breathe above is
+ * the theme's single keyframe, not a second one.
+ */
+function alarmAnimation(level: AlertLevel, reducedMotion: boolean): string | undefined {
+  if (reducedMotion || level === 'warning') return undefined;
+  return level === 'crit'
+    ? `cknerv-hud-flash ${HUD_MOTION.linger}ms ${HUD_MOTION.alarmEase} infinite`
+    : `cknerv-hud-breathe ${HUD_MOTION.grow}ms ${HUD_MOTION.loopEase} infinite`;
+}
+
 export default function WarningBar({ level, trigger, reducedMotion = false, top = 30 }: { level: AlertLevel; trigger: string | null; reducedMotion?: boolean; top?: number }) {
   if (!warningBarStanding(level)) return null;
   const color = level === 'warning' ? HUD_COLORS.warning : HUD_COLORS.danger;
   return (
-    <div style={{ position: 'absolute', top, left: 0, right: 0, height: WARNING_BAR_HEIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, background: rgba(level === 'crit' ? HUD_COLORS.crit : HUD_COLORS.ground, level === 'crit' ? 0.35 : 0.5), borderTop: `1px solid ${color}`, borderBottom: `1px solid ${color}`, animation: reducedMotion ? undefined : `cknerv-hud-flash ${HUD_MOTION.linger}ms ${HUD_MOTION.alarmEase} infinite` }}>
+    <div data-warning-bar={level} style={{ position: 'absolute', top, left: 0, right: 0, height: WARNING_BAR_HEIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, background: rgba(level === 'crit' ? HUD_COLORS.crit : HUD_COLORS.ground, level === 'crit' ? 0.35 : 0.5), borderTop: `1px solid ${color}`, borderBottom: `1px solid ${color}`, animation: alarmAnimation(level, reducedMotion) }}>
       {level === 'crit' ? (
         <>
           <span aria-hidden data-hazard-band="top" style={hazardBand(color, 'top')} />

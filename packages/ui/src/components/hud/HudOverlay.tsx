@@ -18,7 +18,8 @@ import type { ActiveReplayProgress } from '@cknerv/cache';
 import { summarizeNetwork } from '../../derives/peers.derive';
 import { fleetConsensus } from '../../derives/fleetTelemetry';
 import { ecgCondition, expectedBlockMs, windowMeanMs, ECG_WINDOW, type EcgCondition } from '../../derives/ecgCondition';
-import { alertLevel } from '../../derives/alertLevel';
+import { alertLevel, reorgAlertStanding } from '../../derives/alertLevel';
+import { useHeldAlert } from '../../hooks/useHeldAlert';
 import type { CellsStats } from '../../derives/cellsStats.derive';
 import type { CellPopulationFieldModel } from '../../derives/cellPopulationField.derive';
 import type { BlockProducerView } from '../../derives/blockProducers.derive';
@@ -623,9 +624,25 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
     return subscribeHudClock(measure);
   }, [narrowRail, panelVisibility.cells, panelVisibility.peers]);
 
-  // reorg delta across renders
+  // ——— A reorg is an event, and an event needs a depth and a dwell ————————
+  //
+  // Two things were wrong with `chain.reorgs - previous` and they were wrong in
+  // opposite directions (report E, E-8). It measured how many reorg EVENTS
+  // landed in one batch, which is 1 for every real reorg — so the ramp's upper
+  // rungs could not be reached and every one-block fork raised the full band.
+  // And the count was caught up in an effect after the commit, so the alarm it
+  // raised lived exactly one render: 109 sub-second amber blinks in one
+  // session's history, not one of them a designed alarm.
+  //
+  // The delta stays, because it is what says an event HAPPENED — a `reorgs`
+  // that went up is a witness, and nothing else in the entity is. What the
+  // depth comes from is the reducer's own subtraction against `from_block`.
+  // A snapshot that arrives with a higher count and no depth is not a witness
+  // to anything, so it reads as the shallowest reorg there is.
   const prevReorgs = useRef(chain.reorgs);
-  const reorgDepth = Math.max(0, chain.reorgs - prevReorgs.current);
+  const reorgDepth = chain.reorgs > prevReorgs.current
+    ? Math.max(1, chain.last_reorg_depth ?? 1)
+    : 0;
 
   // Both walk `peers` (with allocations/sorts); the 1 Hz uptime tick
   // re-renders this component with unchanged data, so key them on their
@@ -661,7 +678,10 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
     prev: prevCond.current,
   }));
   const avgMs = windowMeanMs(chain.recent_block_intervals_ms, ECG_WINDOW);
-  const alert = alertLevel({ ecg: condition, reorgDepth, syncing });
+  // …and the dwell, which is the other half: `useHeldAlert` keeps whatever this
+  // computes on screen for `HUD_MOTION.hold` before it is allowed to fall, and
+  // lets an escalation past immediately.
+  const alert = useHeldAlert(alertLevel({ ecg: condition, reorgDepth, syncing }));
   const syncRatio = chain.best_known_block > 0 ? Math.min(1, chain.tip / chain.best_known_block) : 1;
 
   // Two bands, one stack — and the geometry lives here, below the alert, because
@@ -835,7 +855,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
                     transactionHorizon={transactionHorizon}
                     compactActivity={shortViewport}
                     folded={railsCollapsed}
-                    reorgLive={reorgDepth > 0}
+                    reorgLive={reorgAlertStanding(alert)}
                     style={railsCollapsed ? CHAIN_PANEL_DENSE_STYLE : CHAIN_PANEL_STYLE}
                   />
                 </div>
