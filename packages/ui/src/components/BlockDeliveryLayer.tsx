@@ -224,6 +224,9 @@ function writeWaveInstance(
 
 function commitInstanceBatch(batch: THREE.InstancedMesh, count: number): void {
   batch.count = count;
+  // Never submit a zero-count draw: a hidden object is dropped in
+  // projectObject, so a delivery-less frame pays no program bind for it.
+  batch.visible = count > 0;
   if (count === 0) return;
   // Upload only the live prefix — slots past `count` are never sampled.
   const matrixAttr = batch.instanceMatrix;
@@ -357,6 +360,7 @@ export default function BlockDeliveryLayer({
     for (const batch of batches) {
       if (!batch) continue;
       batch.count = 0;
+      batch.visible = false; // no zero-count draw before the first delivery
       batch.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       // Allocate instanceColor before the first render so the material program
       // is compiled once with the independent phase-colour channel enabled.
@@ -405,6 +409,9 @@ export default function BlockDeliveryLayer({
       moteBatch.count = 0;
       plumeBatch.count = 0;
       waveBatch.count = 0;
+      moteBatch.visible = false;
+      plumeBatch.visible = false;
+      waveBatch.visible = false;
       return;
     }
 
@@ -417,6 +424,9 @@ export default function BlockDeliveryLayer({
       moteBatch.count = 0;
       plumeBatch.count = 0;
       waveBatch.count = 0;
+      moteBatch.visible = false;
+      plumeBatch.visible = false;
+      waveBatch.visible = false;
       flushedKeysRef.current.clear();
       return;
     }

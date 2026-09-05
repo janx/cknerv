@@ -737,6 +737,11 @@ export default function ConsensusMemory({
       built.streamTraceCoreMaterial,
       Math.min(0.92, scanEnergy * 0.88),
     );
+    // The two trace passes ease to ~0 opacity whenever no recall runs; hide
+    // them below a visible threshold so an idle card submits no zero-output
+    // LineSegments2 draw (program bind + uniform refresh) for either.
+    built.streamTraceGlow.visible = built.streamTraceGlowMaterial.opacity > 0.005;
+    built.streamTraceCore.visible = built.streamTraceCoreMaterial.opacity > 0.005;
     approach(built.streamCoreMaterial, target.streamCore * life);
     approach(built.stitchGlowMaterial, target.stitchGlow * life);
     approach(built.stitchCoreMaterial, target.stitchCore * life);

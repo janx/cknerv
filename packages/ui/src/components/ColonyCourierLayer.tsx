@@ -184,6 +184,10 @@ export default function ColonyCourierLayer({
     if (!plume || !bloom) return;
     plume.count = 0;
     bloom.count = 0;
+    // Never submit a zero-count instanced draw: a hidden object is dropped in
+    // projectObject, so an idle courier layer costs no program bind at all.
+    plume.visible = false;
+    bloom.visible = false;
     plume.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     bloom.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   }, []);
@@ -215,6 +219,8 @@ export default function ColonyCourierLayer({
     if (!pulse) {
       plumeBatch.count = 0;
       bloomBatch.count = 0;
+      plumeBatch.visible = false;
+      bloomBatch.visible = false;
       return;
     }
 
@@ -225,6 +231,8 @@ export default function ColonyCourierLayer({
       pulseRef.current = null;
       plumeBatch.count = 0;
       bloomBatch.count = 0;
+      plumeBatch.visible = false;
+      bloomBatch.visible = false;
       return;
     }
 
@@ -313,6 +321,10 @@ export default function ColonyCourierLayer({
     // and a populated one uploads only the live prefix, not the full pool.
     plumeBatch.count = slot;
     bloomBatch.count = slot;
+    // A hop-less frame (all slots skipped) hides the batches so no zero-count
+    // draw is submitted; the next populated frame re-shows them.
+    plumeBatch.visible = slot > 0;
+    bloomBatch.visible = slot > 0;
     if (slot > 0) {
       const plumeAttr = plumeBatch.instanceMatrix;
       plumeAttr.clearUpdateRanges();

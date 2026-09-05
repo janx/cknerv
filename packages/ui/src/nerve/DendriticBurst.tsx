@@ -219,6 +219,7 @@ export default function ConsensusWriteSeal({
     );
     if (slots.length === 0) {
       if (geometry.drawRange.count !== 0) geometry.setDrawRange(0, 0);
+      mesh.visible = false; // no live seal → no zero-count Points draw
       return;
     }
 
@@ -254,6 +255,7 @@ export default function ConsensusWriteSeal({
       written += 1;
     }
     geometry.setDrawRange(0, written);
+    mesh.visible = written > 0; // slots all expired this frame → hide the pool
     if (written > 0) {
       markSealAttributeRange(
         geometry.attributes.position as THREE.BufferAttribute,
@@ -295,6 +297,7 @@ export default function ConsensusWriteSeal({
       geometry={geometry}
       material={material}
       frustumCulled={false}
+      visible={false}
       renderOrder={2}
     />
   );

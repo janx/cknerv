@@ -202,6 +202,9 @@ export class SpikePool {
 
     this.mesh = new THREE.Points(this.geometry, this.material);
     this.mesh.frustumCulled = false;
+    // Hidden until a frame writes a sprite: an empty pool submits no
+    // zero-count Points draw (endFrame re-shows it when writtenCount > 0).
+    this.mesh.visible = false;
   }
 
   /** Reset the write cursor at the start of each frame. */
@@ -261,6 +264,7 @@ export class SpikePool {
     this.material.uniforms.uViewportHeight.value = viewportHeight;
     this.material.uniforms.uPixelRatio.value = pixelRatio;
     this.geometry.setDrawRange(0, this.writtenCount);
+    this.mesh.visible = this.writtenCount > 0; // never a zero-count draw
     if (this.writtenCount === 0) return;
     for (const attribute of this.dynamicAttributes) {
       markWrittenRange(attribute, this.writtenCount);
