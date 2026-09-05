@@ -221,11 +221,19 @@ interface CellGalaxyProps {
    * suspend the O(N) screen-space picker after a real drag begins while still
    * allowing the pointer-down and click raycasts that preserve R3F semantics. */
   pickingSuspendedRef?: React.RefObject<boolean>;
-  /** Compressed amount for the unresolved population, from
-   *  `deriveCellPopulationField`. Zero (the default) places and draws nothing
-   *  at all, which is the correct state whenever the stage covers its scope
-   *  or the caller has not derived a population. */
-  populationGain?: number;
+  /** Live compressed amount for the unresolved population, from
+   *  `deriveCellPopulationField`, owned by the caller and read in the frame
+   *  loop. It changes VALUE every block, so it travels by ref and not as a
+   *  prop: a per-block amount change must not defeat `memo(CellGalaxy)`. Absent
+   *  reads as 0, which places and draws nothing — the same state a caller that
+   *  has not derived a population, or whose stage covers its scope, gets. */
+  populationGainRef?: { readonly current: number };
+  /** Whether there is an unresolved population to place at all (`gain > 0`).
+   *  This is the population field's PLACEMENT gate, and it must stay reactive,
+   *  so it is a prop and not a ref — but it is stable across blocks (it flips
+   *  only when the amount crosses zero), so it does not defeat the memo the way
+   *  the raw amount did. */
+  populationActive?: boolean;
   /** ⟨D-10 · knob b⟩ Passed straight through to `CellPopulationField`, which
    *  caps the halo's THREAD level at the overview. The canopy itself has no
    *  use for it: the same ref already reaches `NeuralFabric`, `NetworkColony`
@@ -235,8 +243,11 @@ interface CellGalaxyProps {
   /** Seconds after the block pulse at which the LOCAL node applies the block —
    *  i.e. when it hears the block from the network (caller-supplied delay). The
    *  whole ledger reaction is delayed by this, so the canonical ripple never
-   *  fires at t=0 / never before the peers. 0 = no delay (degenerate). */
-  localReceiveDelayS?: number;
+   *  fires at t=0 / never before the peers. 0 = no delay (degenerate). Owned by
+   *  the caller and read in the frame loop: its value moves every block (the
+   *  live peer latency), so it travels by ref, never as a prop, to keep the
+   *  memo. Absent reads as 0. */
+  localReceiveDelaySRef?: { readonly current: number };
 }
 
 // A Cell's presentation size (`cellPointSize`) lives with the other pure Cell
@@ -1724,9 +1735,10 @@ function CellGalaxy({
   landingFlashRef,
   overlay,
   pickingSuspendedRef,
-  populationGain = 0,
+  populationGainRef,
+  populationActive = false,
   cellDetailViewFocusRef,
-  localReceiveDelayS = 0,
+  localReceiveDelaySRef,
 }: CellGalaxyProps) {
   const simClock = useSimClock();
   const groupRef = useRef<THREE.Group>(null);
@@ -2502,8 +2514,10 @@ function CellGalaxy({
         // peer. Delay the whole ledger reaction by localReceiveDelayS (the entry
         // peer's latency-derived arrival + relay hop) so the canopy lights up when
         // we receive the block — the courier reaches the hub — not at the raw
-        // pulse instant. Zero when we have no peer to receive from.
-        const receiveDelayS = localReceiveDelayS;
+        // pulse instant. Zero when we have no peer to receive from. Read live
+        // from the ref: the value moves every block, and this is the read that
+        // must see the current one while the memoized root holds its render.
+        const receiveDelayS = localReceiveDelaySRef?.current ?? 0;
         const blockTriggerSceneS = simClock.elapsedSec + receiveDelayS;
         const blockColor = consensusBlockColor(pulseAtMs);
 
@@ -2584,7 +2598,8 @@ function CellGalaxy({
             pointer handlers, and neither its points nor its fibres ever answer
             a raycast. */}
         <CellPopulationField
-          gain={populationGain}
+          gainRef={populationGainRef}
+          active={populationActive}
           cellDetailViewFocusRef={cellDetailViewFocusRef}
         />
         <points

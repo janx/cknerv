@@ -507,6 +507,11 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
     ...flood,
     localReceiveDelayS: REVIEW_LOCAL_DELAY_S,
   }), [flood]);
+  // CellGalaxy reads the receive delay from a ref in its frame loop (so a
+  // per-block change never re-renders it); the lab holds a constant delay but
+  // hands it through the same channel.
+  const localReceiveDelaySRef = useRef(reviewFlood.localReceiveDelayS);
+  localReceiveDelaySRef.current = reviewFlood.localReceiveDelayS;
   const livePulseDelayS = livePulseDepartureDelayS(
     reviewFlood.localReceiveDelayS,
   );
@@ -821,7 +826,7 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
               ckbNodeIds={[...REVIEW_NODE_IDS]}
               minerCkbNodeIds={['ckb:local']}
               universeSeed={EVENT_SEED}
-              localReceiveDelayS={reviewFlood.localReceiveDelayS}
+              localReceiveDelaySRef={localReceiveDelaySRef}
               selectedId={null}
               selectedCellId={null}
               onSelect={() => undefined}

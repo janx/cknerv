@@ -476,7 +476,7 @@ describe('CellGalaxy', () => {
     expect(glyphSource).not.toContain('<img');
   });
 
-  it('mounts with localReceiveDelayS (receive-delayed reaction) without throwing', () => {
+  it('mounts with a localReceiveDelayS ref (receive-delayed reaction) without throwing', () => {
     const cellFlashRef = { current: new Map<number, number>() };
     const flashDirtyRef = { current: false };
     expect(() =>
@@ -490,7 +490,7 @@ describe('CellGalaxy', () => {
               cellFlashRef={cellFlashRef}
               flashDirtyRef={flashDirtyRef}
               landingFlashRef={{ current: createLandingFlashQueue() }}
-              localReceiveDelayS={0.3}
+              localReceiveDelaySRef={{ current: 0.3 }}
             />
           </Canvas>
         </CellGalaxyProvider>,

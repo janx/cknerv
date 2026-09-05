@@ -210,10 +210,17 @@ function makeBackboneLayer(
 }
 
 export interface CellPopulationFieldProps {
-  /** Compressed amount from `deriveCellPopulationField`. Zero means the stage
-   *  covers its scope and there is nothing unresolved to state — nothing is
-   *  placed, and nothing is drawn. */
-  gain: number;
+  /** Live compressed amount from `deriveCellPopulationField`, owned by the
+   *  caller and read in the frame loop. It moves every block, so it arrives by
+   *  ref, never as a value prop, so a per-block change never re-renders
+   *  `CellGalaxy` (memo). Absent, or `.current` 0, states nothing: with
+   *  `active` false the layer places and draws nothing at all. */
+  gainRef?: { readonly current: number };
+  /** Whether there is an unresolved population to place at all (`gain > 0`).
+   *  The placement gate reads this and not the ref, because placement must be
+   *  reactive; it is stable across blocks (it flips only when the amount
+   *  crosses zero), which is why it can be a prop without defeating the memo. */
+  active: boolean;
   /** ⟨D-10 · knob b⟩ The camera's own place on the overview↔detail curve, the
    *  same ref `NeuralFabric`, `NetworkColony` and `CellBridgeNerves` already
    *  take. Absent means overview, which is what an unwired caller should get:
@@ -277,7 +284,8 @@ export function neverRaycast(): false {
  * It states an amount and a shape, and nothing else.
  */
 export default function CellPopulationField({
-  gain,
+  gainRef,
+  active,
   cellDetailViewFocusRef,
 }: CellPopulationFieldProps) {
   const material = useMemo(() => makePopulationPointMaterial(), []);
@@ -336,7 +344,12 @@ export default function CellPopulationField({
   // — and both layers silently gone). Steady state still places exactly
   // once: re-runs only happen on a dep change, and the published-adoption
   // branch answers those without a second pass.
-  const wanted = gain > 0;
+  // The placement gate. `active` is `gain > 0` decided by the caller — a prop
+  // and not the live ref, because placement must be REACTIVE (it spins the
+  // worker up on the first frame with something to state, and cancels a run in
+  // flight). It is stable across blocks (it flips only on the zero crossing),
+  // so it re-runs this effect on exactly the transitions `gain > 0` did before.
+  const wanted = active;
   useEffect(() => {
     if (!wanted) return undefined;
 
@@ -580,6 +593,10 @@ export default function CellPopulationField({
   // sprite footprint has to track a viewport or DPR change even while time is
   // paused.
   useFrame((state) => {
+    // The live amount, read here so a per-block change reaches the corona's
+    // emission without a React commit — the caller mirrors it into this ref
+    // every block while `memo(CellGalaxy)` holds the render.
+    const gain = gainRef?.current ?? 0;
     // The tier, wherever its crossfade has got to. Two multipliers ride it:
     // the draw-range prefix (the cost) and the sprite radius (the level), and
     // they are two views of one number — `populationSpriteMulForCap` states

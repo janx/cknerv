@@ -168,7 +168,11 @@ describe('the halo is not an object', () => {
   it('carries no enrichment source, only a derived number', () => {
     expect(FIELD_CODE).not.toContain('semantics');
     expect(FIELD_CODE).not.toContain('census');
-    expect(FIELD_SOURCE).toContain('gain: number');
+    // The live amount arrives by ref (read in the frame loop) so a per-block
+    // change never re-renders CellGalaxy — still a derived number, never an
+    // enrichment object.
+    expect(FIELD_SOURCE).toContain('gainRef?: { readonly current: number }');
+    expect(FIELD_SOURCE).toContain('const gain = gainRef?.current ?? 0;');
   });
 });
 
@@ -377,7 +381,9 @@ describe('degradation', () => {
     // cancelled run must be re-runnable (StrictMode's dev probe cancels the
     // first one every time), and steady state re-runs land on the
     // published-adoption branch instead of a second pass.
-    expect(FIELD_SOURCE).toContain('const wanted = gain > 0;');
+    // The gate reads the reactive `active` prop (the caller's `gain > 0`), not
+    // the live ref, because placement must re-run on the zero crossing.
+    expect(FIELD_SOURCE).toContain('const wanted = active;');
     expect(FIELD_SOURCE).toContain('if (!wanted) return undefined;');
     expect(FIELD_SOURCE).not.toContain('startedRef');
   });
@@ -535,19 +541,23 @@ describe('where CellGalaxy mounts it', () => {
     expect(between).not.toMatch(/on(Pointer|Click|DoubleClick|ContextMenu|Wheel)[A-Za-z]*=/);
   });
 
-  it('hands it an amount and the camera, and nothing else', () => {
-    // ⟨D-10 · knob b⟩ The second prop is the overview↔detail ref the halo's
+  it('hands it an amount, a placement gate and the camera, and nothing else', () => {
+    // ⟨D-10 · knob b⟩ The camera prop is the overview↔detail ref the halo's
     // thread cap reads — the SAME ref `NeuralFabric`, `NetworkColony` and
-    // `CellBridgeNerves` already take, passed straight through. The rule this
-    // test exists for is unchanged and is the reason the list is exhaustive:
-    // the halo is an aggregate, so it may be handed an amount and a camera and
-    // never a Cell, an id, a selection or a handler.
+    // `CellBridgeNerves` already take, passed straight through. The amount now
+    // travels as a REF (`gainRef`, read in the frame loop, so a per-block
+    // change never re-renders CellGalaxy) beside its reactive placement gate
+    // (`active` = gain > 0). The rule this test exists for is unchanged and is
+    // the reason the list is exhaustive: the halo is an aggregate, so it may be
+    // handed an amount, a gate and a camera and never a Cell, an id, a
+    // selection or a handler.
     const at = GALAXY_SOURCE.indexOf('<CellPopulationField');
     expect(at).toBeGreaterThan(0);
     const element = GALAXY_SOURCE.slice(at, GALAXY_SOURCE.indexOf('/>', at) + 2);
-    expect(element).toContain('gain={populationGain}');
+    expect(element).toContain('gainRef={populationGainRef}');
+    expect(element).toContain('active={populationActive}');
     expect(element).toContain('cellDetailViewFocusRef={cellDetailViewFocusRef}');
-    expect(element.match(/\w+=\{/g)).toHaveLength(2);
+    expect(element.match(/\w+=\{/g)).toHaveLength(3);
   });
 
   it('has no membership bloom left to feed', () => {

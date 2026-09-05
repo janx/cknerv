@@ -1174,6 +1174,22 @@ export default function App({
     selectedCellOverlayIds,
   ]);
 
+  // ⭐ Carry the two per-block scalars the canopy needs to CellGalaxy through
+  // refs, not props — exactly the `cellDetailViewFocusRef` precedent. Both
+  // `cellPopulation.gain` and `cf.localReceiveDelayS` change VALUE every pulse
+  // and birth, and passing them as props defeated `memo(CellGalaxy)`, forcing a
+  // re-render of ~40 fibers (incl. a drei Html portal) every block. App still
+  // re-renders per block, so mirroring here keeps `.current` live for the
+  // canopy's frame loop while the memoized child holds its render. The
+  // population field's PLACEMENT still needs a reactive gate, so the boolean
+  // `gain > 0` travels as a prop — it is stable across blocks (it flips only on
+  // the zero crossing), so it never defeats the memo the way the raw amount did.
+  const populationGainRef = useRef(cellPopulation.gain);
+  populationGainRef.current = cellPopulation.gain;
+  const populationActive = cellPopulation.gain > 0;
+  const localReceiveDelaySRef = useRef(cf.localReceiveDelayS);
+  localReceiveDelaySRef.current = cf.localReceiveDelayS;
+
   // Resolve the two selections. Cell = the galaxy axis; node/peer share the
   // network axis (selectedNetId holds a node id or a `peer:` id, never a cell).
   // Canonical-first over the display plane's resident payloads (staged
@@ -2326,9 +2342,10 @@ export default function App({
             ckbNodeIds={ckbNodeIds}
             universeSeed={universeSeed}
             cellCapacity={galaxyConfig.cellCap}
-            populationGain={cellPopulation.gain}
+            populationGainRef={populationGainRef}
+            populationActive={populationActive}
             cellDetailViewFocusRef={cellDetailViewFocusRef}
-            localReceiveDelayS={cf.localReceiveDelayS}
+            localReceiveDelaySRef={localReceiveDelaySRef}
             selectedId={selectedNetId}
             selectedCellId={selectedCellId}
             identityProof={cellIdentityProof}
