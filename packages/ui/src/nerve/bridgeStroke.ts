@@ -52,7 +52,8 @@ import {
 } from '../materials/populationFieldMaterial';
 import { FABRIC_SAMPLES_PER_EDGE } from './fabricCapacity';
 import {
-  fabricEdgeRenderState,
+  fabricEdgeRenderStateInto,
+  makeEdgeRenderScratch,
   type EdgeLifecycle,
   type EdgeRender,
 } from './fabricEdgeRender';
@@ -395,13 +396,23 @@ const BRIDGE_LIFECYCLE: EdgeLifecycle = {
  * `'death'` shortens. The retirement FLASH that comes with it is discarded by
  * {@link writeBridgeStroke}.
  */
-export function bridgeRenderState(
+export function bridgeRenderStateInto(
+  out: EdgeRender,
   st: BridgeStrokeState,
   nowSec: number,
 ): EdgeRender {
   BRIDGE_LIFECYCLE.bornAt = st.bornAt;
   BRIDGE_LIFECYCLE.dyingAt = st.dyingAt;
-  return fabricEdgeRenderState(BRIDGE_LIFECYCLE, nowSec);
+  return fabricEdgeRenderStateInto(out, BRIDGE_LIFECYCLE, nowSec);
+}
+
+// The allocating form, for event-rate callers. The per-frame bridge walk uses
+// `bridgeRenderStateInto` with one reused scratch so it allocates nothing.
+export function bridgeRenderState(
+  st: BridgeStrokeState,
+  nowSec: number,
+): EdgeRender {
+  return bridgeRenderStateInto(makeEdgeRenderScratch(), st, nowSec);
 }
 
 /**

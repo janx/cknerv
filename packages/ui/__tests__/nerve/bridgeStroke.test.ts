@@ -5,6 +5,7 @@ import { FABRIC_SAMPLES_PER_EDGE } from '../../src/nerve/fabricCapacity';
 import {
   DEATH_RETRACT_MS,
   GROWTH_MS,
+  makeEdgeRenderScratch,
 } from '../../src/nerve/fabricEdgeRender';
 import {
   BRIDGE_FAR_END_ENERGY,
@@ -12,6 +13,7 @@ import {
   BRIDGE_TIP_WIDTH_SCALE,
   BRIDGE_WIDTH_RATIO,
   bridgeRenderState,
+  bridgeRenderStateInto,
   bridgeSymbolicDim,
   bridgeWidthScale,
   makeBridgeStrokeState,
@@ -491,5 +493,37 @@ describe('writeBridgeStroke', () => {
     const state = makeBridgeStrokeState(bridge(), 500);
     // Staggered into the future: not yet born.
     expect(draw(state, 100).written).toBe(0);
+  });
+});
+
+describe('bridgeRenderStateInto — allocation-free per-frame render state', () => {
+  it('writes into the caller scratch and returns it', () => {
+    const state = makeBridgeStrokeState(bridge(), 0);
+    const scratch = makeEdgeRenderScratch();
+    const result = bridgeRenderStateInto(scratch, state, 60);
+    expect(result).toBe(scratch);
+  });
+
+  it('matches the allocating bridgeRenderState across the lifecycle', () => {
+    const scratch = makeEdgeRenderScratch();
+    for (const nowSec of [
+      0,
+      GROWTH_MS / 2000,
+      60,
+      60 + DEATH_RETRACT_MS / 2000,
+    ]) {
+      const growing = makeBridgeStrokeState(bridge(), 0);
+      expect(bridgeRenderStateInto(scratch, growing, nowSec))
+        .toEqual(bridgeRenderState(growing, nowSec));
+    }
+  });
+
+  it('one scratch, reused across a walk, holds only the latest stroke', () => {
+    const scratch = makeEdgeRenderScratch();
+    const first = makeBridgeStrokeState(bridge(), 0);
+    const second = makeBridgeStrokeState(bridge({ cellId: 9999 }), 30);
+    bridgeRenderStateInto(scratch, first, 60);
+    bridgeRenderStateInto(scratch, second, 60);
+    expect(scratch).toEqual(bridgeRenderState(second, 60));
   });
 });

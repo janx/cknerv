@@ -122,15 +122,6 @@ const mixColor = (
   from[2] + (to[2] - from[2]) * amount,
 ];
 
-const scaleColor = (
-  color: readonly [number, number, number],
-  amount: number,
-): ConsensusFlowColor => [
-  color[0] * amount,
-  color[1] * amount,
-  color[2] * amount,
-];
-
 const byteUnit = (seed: number, shift: number): number => (
   ((seed >>> shift) & 0xff) / 0xff
 );
@@ -139,14 +130,6 @@ const smoothstep = (edge0: number, edge1: number, value: number): number => {
   const t = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
   return t * t * (3 - 2 * t);
 };
-
-function veinContributor(amount: number): ConsensusFlowColor {
-  return mixColor(
-    CELL_GALAXY_PALETTE.veinCrimson,
-    CELL_GALAXY_PALETTE.veinRose,
-    0.08 + amount * 0.18,
-  );
-}
 
 /** Restrained cool contributor used only as a spectral shoulder on moving
  * protocol identities and historical memory, never as the resting Cell field. */
@@ -172,11 +155,43 @@ function goldContributor(amount: number): ConsensusFlowColor {
  * hierarchy and observed traffic, so the field reads as living tissue at rest
  * and a firing neural structure under load.
  */
-export function consensusRouteColors(seed: number): ConsensusRouteColors {
-  const first = veinContributor(byteUnit(seed, 8));
-  const second = veinContributor(byteUnit(seed, 16));
+// One resting vein colour — the crimson→rose mix at this hash amount, scaled by
+// the resting energy — written into `out` with no allocation. The order of
+// operations (mix, then scale by 0.92) is exactly the old
+// `scaleColor(mixColor(veinCrimson, veinRose, 0.08 + amount*0.18), 0.92)`, so
+// the numbers are bit-identical.
+function writeVeinRoute(amount: number, out: ConsensusFlowColor): void {
+  const t = 0.08 + amount * 0.18;
+  const from = CELL_GALAXY_PALETTE.veinCrimson;
+  const to = CELL_GALAXY_PALETTE.veinRose;
   const energy = 0.92;
-  return { from: scaleColor(first, energy), to: scaleColor(second, energy) };
+  out[0] = (from[0] + (to[0] - from[0]) * t) * energy;
+  out[1] = (from[1] + (to[1] - from[1]) * t) * energy;
+  out[2] = (from[2] + (to[2] - from[2]) * t) * energy;
+}
+
+/** A caller-owned scratch for {@link consensusRouteColorsInto}. */
+export function makeConsensusRouteColorsScratch(): ConsensusRouteColors {
+  return { from: [0, 0, 0], to: [0, 0, 0] };
+}
+
+/**
+ * Allocation-free {@link consensusRouteColors}: writes into `out` and returns
+ * it, so a per-edge grow/build loop reuses one scratch instead of allocating
+ * two colour arrays and an object per edge. Byte-identical to the allocating
+ * form.
+ */
+export function consensusRouteColorsInto(
+  seed: number,
+  out: ConsensusRouteColors,
+): ConsensusRouteColors {
+  writeVeinRoute(byteUnit(seed, 8), out.from);
+  writeVeinRoute(byteUnit(seed, 16), out.to);
+  return out;
+}
+
+export function consensusRouteColors(seed: number): ConsensusRouteColors {
+  return consensusRouteColorsInto(seed, { from: [0, 0, 0], to: [0, 0, 0] });
 }
 
 /** Stable resting Cell colour. Untagged Cells restore the luminous rose body

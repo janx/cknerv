@@ -216,6 +216,13 @@ export interface FabricTrunkCandidate {
  * per frame: the shader re-reads the resulting uniform, it does not re-run
  * this.
  */
+// One scratch buffer reused across builds so a completed selection does not
+// allocate a fresh `drawn`-length Float64Array each time. It only ever grows,
+// and only [0, count) is written and read per call (the sort runs on that
+// subarray), so a larger buffer left from an earlier build carries no stale
+// data into the answer — the output stays a pure function of the input.
+let trunkWeightsScratch = new Float64Array(0);
+
 export function fabricTrunkTier(
   edges: readonly FabricTrunkCandidate[],
   share: number = FABRIC_TRUNK_SHARE,
@@ -225,7 +232,10 @@ export function fabricTrunkTier(
   const target = Math.round(drawn * wanted);
   if (drawn === 0 || target <= 0) return DISABLED_TIER;
 
-  const weights = new Float64Array(drawn);
+  if (trunkWeightsScratch.length < drawn) {
+    trunkWeightsScratch = new Float64Array(drawn);
+  }
+  const weights = trunkWeightsScratch;
   let count = 0;
   for (const edge of edges) {
     const trunkness = fabricEdgeTrunkness(edge.w);

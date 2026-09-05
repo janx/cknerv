@@ -9,6 +9,8 @@ import {
   consensusPacketColor,
   consensusRouteGoldMix,
   consensusRouteColors,
+  consensusRouteColorsInto,
+  makeConsensusRouteColorsScratch,
   consensusWriteSealState,
 } from '../../src/derives/consensusFlow.derive';
 
@@ -152,5 +154,36 @@ describe('A consensus-flow visual contract', () => {
 
     expect(compactConsensusWriteSealSlots(slots, 10, cells, 2)).toBe(1);
     expect(slots.map(({ cellId }) => cellId)).toEqual([1]);
+  });
+});
+
+describe('consensusRouteColorsInto — allocation-free route colours', () => {
+  it('writes into the provided scratch and returns it', () => {
+    const scratch = makeConsensusRouteColorsScratch();
+    const result = consensusRouteColorsInto(0x1234_5600, scratch);
+    expect(result).toBe(scratch);
+    expect(result.from).toBe(scratch.from);
+    expect(result.to).toBe(scratch.to);
+  });
+
+  it('is bit-identical to the allocating consensusRouteColors', () => {
+    const scratch = makeConsensusRouteColorsScratch();
+    for (let i = 0; i < 64; i += 1) {
+      const seed = i * 0x1f_123;
+      const fresh = consensusRouteColors(seed);
+      const into = consensusRouteColorsInto(seed, scratch);
+      expect(into.from).toEqual(fresh.from);
+      expect(into.to).toEqual(fresh.to);
+    }
+  });
+
+  it('reused across a batch, holds only the latest seed', () => {
+    const scratch = makeConsensusRouteColorsScratch();
+    const target = consensusRouteColors(111);
+    consensusRouteColorsInto(111, scratch);
+    consensusRouteColorsInto(222, scratch); // overwrite
+    consensusRouteColorsInto(111, scratch); // rewrite the first seed
+    expect(scratch.from).toEqual(target.from);
+    expect(scratch.to).toEqual(target.to);
   });
 });

@@ -101,14 +101,18 @@ import {
 import {
   BRIDGE_NO_SLOT,
   BRIDGE_WIDTH_RATIO,
-  bridgeRenderState,
+  bridgeRenderStateInto,
   reconcileBridgeStrokes,
   writeBridgeStroke,
   type BridgeStrokeState,
 } from './bridgeStroke';
 import { reportBootBridgeSelected } from '../boot/nerveRestGate';
 import { FABRIC_SAMPLES_PER_EDGE } from './fabricCapacity';
-import { GROWTH_MS, type EdgeRender } from './fabricEdgeRender';
+import {
+  GROWTH_MS,
+  makeEdgeRenderScratch,
+  type EdgeRender,
+} from './fabricEdgeRender';
 import {
   FABRIC_SLOT_SEGMENTS,
   mergeFabricSlotRanges,
@@ -361,6 +365,10 @@ export default function CellBridgeNerves({
   /** Reused so a growth window allocates nothing per frame. */
   const dirtySlotsRef = useRef<number[]>([]);
   const sampleRef = useRef(new Float32Array(3));
+  // One reused EdgeRender for the per-frame bridge walk: each render is consumed
+  // synchronously (drawn, then its `animating`/`reap` flags read) before the
+  // next stroke overwrites it, so the walk allocates no EdgeRender at all.
+  const renderScratchRef = useRef(makeEdgeRenderScratch());
   const lastTweakRef = useRef({
     alpha: LIVE.cell.fabricAlpha,
     centerDim: LIVE.cell.centerDim,
@@ -497,6 +505,7 @@ export default function CellBridgeNerves({
     const now = simClock.elapsedSec;
     const strokes = strokesRef.current;
     const sample = sampleRef.current;
+    const renderScratch = renderScratchRef.current;
     const baseEnergy = LIVE.cell.fabricAlpha;
     const centerDim = LIVE.cell.centerDim;
     const free = freeSlotsRef.current;
@@ -538,7 +547,7 @@ export default function CellBridgeNerves({
       let slot = 0;
       for (const stroke of strokes.values()) {
         if (stroke.dyingAt !== null) continue;
-        const render = bridgeRenderState(stroke, now);
+        const render = bridgeRenderStateInto(renderScratch, stroke, now);
         slot = admitBridgeSlot(
           layer, stroke, render, slot, baseEnergy, centerDim, sample,
         );
@@ -546,7 +555,7 @@ export default function CellBridgeNerves({
       }
       for (const [key, stroke] of strokes) {
         if (stroke.dyingAt === null) continue;
-        const render = bridgeRenderState(stroke, now);
+        const render = bridgeRenderStateInto(renderScratch, stroke, now);
         if (render.reap) {
           strokes.delete(key);
           continue;
@@ -571,7 +580,7 @@ export default function CellBridgeNerves({
     const dirtySlots = dirtySlotsRef.current;
     dirtySlots.length = 0;
     for (const stroke of animating) {
-      const render = bridgeRenderState(stroke, now);
+      const render = bridgeRenderStateInto(renderScratch, stroke, now);
       if (render.reap) {
         // The afterimage's last frame. Its span goes degenerate before the
         // stroke lets go of it, or the final retract geometry stays lit until

@@ -492,3 +492,20 @@ describe('fabric trunk tier — the two passes', () => {
     expect(() => makeFabricTrunkPass(plain, 4.4)).toThrow(/lifecycle/);
   });
 });
+
+describe('fabric trunk tier — the weights buffer is reused across builds', () => {
+  it('is deterministic and stale-safe when a big build is followed by a small one', () => {
+    // The reused scratch is longer than the small build's `drawn`; only [0,
+    // count) is written and read, so the leftover tail from the big build must
+    // never leak into the answer.
+    const big = Array.from({ length: 4096 }, (_, i) => arborEdge(i, i + 1, 0.2 + (i % 50) * 0.015));
+    const bigTier = fabricTrunkTier(big);
+    fabricTrunkTier(big); // second big call: buffer already sized
+    const small = [arborEdge(1, 2, 0.9), arborEdge(2, 3, 0.4), arborEdge(3, 4, 0.6)];
+    const smallTier = fabricTrunkTier(small);
+    // Same answers as fresh buffers would give (order-independent, pure).
+    expect(fabricTrunkTier(big)).toEqual(bigTier);
+    expect(fabricTrunkTier(small)).toEqual(smallTier);
+    expect(fabricTrunkTier([...small].reverse())).toEqual(smallTier);
+  });
+});

@@ -134,8 +134,9 @@ import {
 import { createGpuProbeCallbacks } from '../tweaks/gpuTimerQuery';
 import {
   consensusChromaIntensity,
-  consensusRouteColors,
+  consensusRouteColorsInto,
   consensusRouteGoldMix,
+  makeConsensusRouteColorsScratch,
 } from '../derives/consensusFlow.derive';
 import { CONSENSUS_BRAID_PALETTE } from '../derives/consensusBraid.derive';
 import type { Vec3 } from '../types';
@@ -1447,6 +1448,9 @@ export default function NeuralFabric({
     // samples, plus ~400 per frame from active hop sampling).
     const ctrl = new Float32Array(3);
     const sample = new Float32Array(3);
+    // Reused across both edge-emit loops (full build + growEdges); its colours
+    // are copied straight into each EdgeState, so one scratch serves all edges.
+    const routeColorsScratch = makeConsensusRouteColorsScratch();
     const activeCurve: ResolvedActiveHopCurve = {
       fromX: 0, fromY: 0, fromZ: 0,
       ctrlX: 0, ctrlY: 0, ctrlZ: 0,
@@ -1809,7 +1813,7 @@ export default function NeuralFabric({
       if (!a || !c) return 'missing-cell';
       const slotted = allocateFabricSlot(key) !== undefined;
       const seed = fabricEdgeSeed(e.from, e.to);
-      const routeColors = consensusRouteColors(seed);
+      const routeColors = consensusRouteColorsInto(seed, routeColorsScratch);
       bezierControlInto(
         ctrl,
         a.pos_seed[0], a.pos_seed[1], a.pos_seed[2],
@@ -2141,7 +2145,7 @@ export default function NeuralFabric({
           statsAdded += 1;
           if (allocateFabricSlot(key) === undefined) growOverflowed = true;
           const seed = fabricEdgeSeed(e.from, e.to);
-          const routeColors = consensusRouteColors(seed);
+          const routeColors = consensusRouteColorsInto(seed, routeColorsScratch);
           bezierControlInto(
             ctrl,
             a.pos_seed[0], a.pos_seed[1], a.pos_seed[2],

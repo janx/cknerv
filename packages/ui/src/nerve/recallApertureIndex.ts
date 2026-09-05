@@ -68,10 +68,14 @@ function overlaps(
     && a.maxZ >= b.minZ && a.minZ <= b.maxZ;
 }
 
-function gridRange(
+// Write the grid range into `out` with no allocation, so `upsert` (which needs
+// an x and a z range every call) reuses two scratch objects instead of two
+// fresh ones per edge. Kept identical to the allocating `gridRange`.
+function gridRangeInto(
   minCoordinate: number,
   maxCoordinate: number,
   gridSize: number,
+  out: GridRange,
 ): GridRange {
   const min = Math.floor(minCoordinate / gridSize);
   const max = Math.floor(maxCoordinate / gridSize);
@@ -82,7 +86,24 @@ function gridRange(
     && span > 0
     && (span === 1 || min + 1 > min)
     && min + (span - 1) === max;
-  return { min, max, span, safeProgress };
+  out.min = min;
+  out.max = max;
+  out.span = span;
+  out.safeProgress = safeProgress;
+  return out;
+}
+
+function gridRange(
+  minCoordinate: number,
+  maxCoordinate: number,
+  gridSize: number,
+): GridRange {
+  return gridRangeInto(minCoordinate, maxCoordinate, gridSize, {
+    min: 0,
+    max: 0,
+    span: 0,
+    safeProgress: false,
+  });
 }
 
 function entryBucketCountIsBounded(x: GridRange, z: GridRange): boolean {
@@ -126,6 +147,12 @@ export class RecallApertureIndex {
   private readonly slotByKey = new Map<string, number>();
   private readonly seenEpochBySlot = new Map<number, number>();
   private queryEpoch = 0;
+  // Two scratch ranges reused by `upsert` (never nested), so a per-edge insert
+  // allocates no GridRange objects. `query` keeps the allocating `gridRange`.
+  private readonly upsertXRange: GridRange =
+    { min: 0, max: 0, span: 0, safeProgress: false };
+  private readonly upsertZRange: GridRange =
+    { min: 0, max: 0, span: 0, safeProgress: false };
 
   constructor(readonly gridSize = RECALL_APERTURE_INDEX_GRID_SIZE) {
     if (!Number.isFinite(gridSize) || gridSize <= 0) {
@@ -158,8 +185,12 @@ export class RecallApertureIndex {
     const bounds = quadraticCurveXZBounds(curve);
     if (!bounds) return false;
 
-    const xRange = gridRange(bounds.minX, bounds.maxX, this.gridSize);
-    const zRange = gridRange(bounds.minZ, bounds.maxZ, this.gridSize);
+    const xRange = gridRangeInto(
+      bounds.minX, bounds.maxX, this.gridSize, this.upsertXRange,
+    );
+    const zRange = gridRangeInto(
+      bounds.minZ, bounds.maxZ, this.gridSize, this.upsertZRange,
+    );
     const entry: IndexedRecallApertureEntry = {
       slot,
       key,
@@ -175,6 +206,13 @@ export class RecallApertureIndex {
       return true;
     }
 
+    // Pre-size the two bucket lanes to the exact covered-bucket count (bounded
+    // above by `entryBucketCountIsBounded`), so the fill below is index writes
+    // rather than a growing push.
+    const bucketCount = xRange.span * zRange.span;
+    const bucketXs = new Array<number>(bucketCount);
+    const bucketZs = new Array<number>(bucketCount);
+    let bucket = 0;
     // Offset iteration is bounded above and never relies on a large bucket
     // coordinate accepting `++`. `gridRange` proved every sum exact first.
     for (let xOffset = 0; xOffset < xRange.span; xOffset += 1) {
@@ -192,10 +230,13 @@ export class RecallApertureIndex {
           zBuckets.set(gridZ, slots);
         }
         slots.add(slot);
-        entry.bucketXs.push(gridX);
-        entry.bucketZs.push(gridZ);
+        bucketXs[bucket] = gridX;
+        bucketZs[bucket] = gridZ;
+        bucket += 1;
       }
     }
+    entry.bucketXs = bucketXs;
+    entry.bucketZs = bucketZs;
 
     this.entriesBySlot.set(slot, entry);
     this.slotByKey.set(key, slot);
