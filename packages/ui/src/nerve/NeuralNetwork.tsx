@@ -106,6 +106,7 @@ import {
   LIVE_PLAN_BUDGET_MS,
   createLivePulseQueue,
   enqueueLivePulseBatch,
+  livePlanBudgetMs,
   pruneLivePulseQueue,
   stepLivePulseQueue,
   type LivePulseStepContext,
@@ -1521,18 +1522,23 @@ function NeuralNetwork({
   // the pulse walk below, so a packet planned this frame is in the pool
   // before the walk that would move it; on the raw frame rather than the
   // sim frame, because planning is main-thread work, not animation — a
-  // paused clock only means no departure can press. Each slice spends at
-  // most `LIVE_PLAN_BUDGET_MS`, always makes progress, and finishes a batch
-  // outright once its departure is within the deadline margin, so no packet
-  // is ever admitted after it should have left. The queue is normally empty:
-  // one length check per frame.
-  useFrame(() => {
+  // paused clock only means no departure can press. Each slice spends a
+  // wall-relative budget (a fraction of the last frame interval, floored at
+  // `LIVE_PLAN_BUDGET_MS`), always makes progress, and DEFERS the remainder —
+  // a batch past its departure margin included — to the next frame rather than
+  // draining it in one long grain; no packet is dropped and no departure clock
+  // moves. The queue is normally empty: one length check per frame.
+  useFrame((_state, delta) => {
     const queue = livePlanQueueRef.current;
     if (queue.batches.length === 0) return;
     // Opt-in CPU span over the slice, taken only on frames that plan, so its
     // mean is a slice mean and not one over the empty frames between.
     const sliceProbe = beginCpuProbe(PERFORMANCE_PROBE_LABELS.livePlanSlice);
     livePlanStep.nowSec = simClock.elapsedSec;
+    // Budget from the LAST frame's raw interval: a slower or busier frame may
+    // plan more, so a 30 Hz machine spends its departure slack instead of
+    // reaching the deadline. `delta` is r3f's raw clock delta, in seconds.
+    livePlanStep.budgetMs = livePlanBudgetMs(delta * 1000);
     const report = stepLivePulseQueue(queue, livePlanStep);
     endCpuProbe(sliceProbe);
     // T1 gauges (measurement only): how often a slice was forced past its

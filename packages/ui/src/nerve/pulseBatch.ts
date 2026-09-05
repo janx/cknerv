@@ -183,13 +183,15 @@ export function openLinkBatch(
 /**
  * The planning of one opened batch as a resumable machine. Each `step` plans
  * one unit — the entry grid when the batch will need one, then a link at a
- * time, then the closing rescue pass — and returns the pulses it produced,
- * in the exact order the one-shot planner appended them; draining it IS
- * `planLinkBatch`. The unit is a link because a link is the smallest work
- * the stats observe (`observeLink` per link, in link order), and it bounds
- * one step at two route searches plus, at a block boundary, one rescue
- * pass. The grid gets a step of its own so the first slice of a batch is
- * not the grid AND a link: the memo stays lazy, the step merely fills it
+ * time, and a finished block's rescue pass as a step of its OWN — and returns
+ * the pulses it produced, in the exact order the one-shot planner appended
+ * them; draining it IS `planLinkBatch`. The unit is a link because a link is
+ * the smallest work the stats observe (`observeLink` per link, in link order),
+ * and splitting the block-boundary flush out bounds one step at either two
+ * route searches (a link) OR one rescue pass — never a rescue BFS sharing a
+ * step with a link, so a single slice grain stays small. The grid gets a step
+ * of its own too, so the first slice of a batch is not the grid AND a link:
+ * the memo stays lazy, the step merely fills it
  * early when an anchored link guarantees it will be read.
  */
 export interface LinkBatchPlanner {
@@ -295,16 +297,29 @@ export function createLinkBatchPlanner(
         entryIndex();
         return [];
       }
-      if (next >= links.length) {
-        closed = true;
+      const atEnd = next >= links.length;
+      // A finished block's rescue pass is a step of its OWN, so a rescue BFS
+      // never shares a step with a link's route searches. curBlock resets
+      // after the flush; the next step opens the following block (or, at the
+      // end, closes the batch). The pulse ORDER is unchanged: block N's rescue
+      // is still emitted after N's last link and before N+1's first, exactly
+      // where the shared-step flush placed it (and the final block already
+      // flushed in a step of its own).
+      if (curBlock !== -1 && (atEnd || links[next].block !== curBlock)) {
         const rescued = flushBlock();
+        curBlock = -1;
+        curLit = false;
+        curCandidates = [];
+        if (atEnd) closed = true;
         return rescued ? [rescued] : [];
+      }
+      if (atEnd) {
+        closed = true;
+        return [];
       }
       const link = links[next++];
       const out: Pulse[] = [];
       if (link.block !== curBlock) {
-        const rescued = flushBlock();
-        if (rescued) out.push(rescued);
         curBlock = link.block;
         curLit = false;
         curCandidates = [];

@@ -16,9 +16,11 @@ import {
 } from '../../src/nerve/pulseBatch';
 import {
   LIVE_PLAN_BUDGET_MS,
+  LIVE_PLAN_BUDGET_FRAME_FRACTION,
   LIVE_PLAN_DEADLINE_MARGIN_S,
   createLivePulseQueue,
   enqueueLivePulseBatch,
+  livePlanBudgetMs,
   pruneLivePulseQueue,
   stepLivePulseQueue,
   type LivePulseBatch,
@@ -27,6 +29,23 @@ import {
 import { pulseStats, resetPulseStats, snapshotPulseStats } from '../../src/nerve/pulseStats';
 
 beforeEach(() => resetPulseStats());
+
+describe('livePlanBudgetMs — the wall-relative slice budget', () => {
+  it('holds the floor on a fast frame and scales up on a slow one', () => {
+    // A 60 Hz frame's 12% is under the floor → the 2 ms floor holds.
+    expect(livePlanBudgetMs(1000 / 60)).toBe(LIVE_PLAN_BUDGET_MS);
+    expect(livePlanBudgetMs(0)).toBe(LIVE_PLAN_BUDGET_MS);
+    // A 30 Hz frame (~33 ms) buys ~4 ms — more than one 60 Hz grain, so the
+    // slack is spent before the deadline forces the hand.
+    expect(livePlanBudgetMs(1000 / 30)).toBeCloseTo(
+      (1000 / 30) * LIVE_PLAN_BUDGET_FRAME_FRACTION, 12,
+    );
+    expect(livePlanBudgetMs(1000 / 30)).toBeGreaterThan(LIVE_PLAN_BUDGET_MS);
+    // Non-finite / negative intervals fall back to the floor, never NaN.
+    expect(livePlanBudgetMs(Number.NaN)).toBe(LIVE_PLAN_BUDGET_MS);
+    expect(livePlanBudgetMs(-5)).toBe(LIVE_PLAN_BUDGET_MS);
+  });
+});
 
 const CH = '0x' + '00'.repeat(32);
 function mkCell(id: number, pos: [number, number, number]): Cell {
@@ -135,16 +154,19 @@ describe('stepLivePulseQueue — sliced over frames, the one-task plan', () => {
     const startSec = 12.75;
     enqueueLivePulseBatch(queue, toFire, cells, graph, OPTS, startSec, {});
     const frames: number[] = [];
+    let prevLinkSteps = 0;
     for (let frame = 0; frame < 100 && queue.batches.length > 0; frame++) {
       driver.ctx.nowSec = frame / 60; // far from the deadline
       const report = stepLivePulseQueue(queue, driver.ctx);
       frames.push(report.steps);
       expect(report.forcedByDeadline).toBe(false);
-      // At 0.5 ms per link and a 2 ms budget a slice takes four links: the
-      // fifth would be predicted to end at 2.5 ms. The grid step and the
-      // closing flush advance no clock, so a slice may carry one of those
-      // on top.
-      expect(report.steps).toBeLessThanOrEqual(5);
+      // The budget bounds the COST-BEARING grains: at 0.5 ms per link step and
+      // a 2 ms budget at most four land per frame (the fifth is predicted at
+      // 2.5 ms). The free grid step and lit-block flush steps (each its own
+      // step now) ride along without spending the budget.
+      const costly = driver.linkSteps - prevLinkSteps;
+      prevLinkSteps = driver.linkSteps;
+      expect(costly).toBeLessThanOrEqual(4);
       expect(report.pending).toBe(queue.batches.length > 0);
     }
     expect(frames.length).toBeGreaterThan(2);
@@ -178,33 +200,47 @@ describe('stepLivePulseQueue — sliced over frames, the one-task plan', () => {
     expect(frames).toBeGreaterThanOrEqual(toFire.length);
   });
 
-  it('finishes a batch outright once its departure is within the deadline margin', () => {
+  it('does not drain at the deadline: the remainder defers under budget, no pulse lost', () => {
     const { cells, graph, links } = fixture();
     const oneShot = planLinkBatch(links, 0, false, cells, graph, OPTS, pulseStats, 0);
     resetPulseStats();
-    const driver = makeDriver(5, 0); // every step blows the budget
+    const driver = makeDriver(5, 0); // every cost-bearing step blows the budget
     const queue = createLivePulseQueue();
     const { toFire } = openLinkBatch(links, 0, false, driver.stats);
     const startSec = 30;
     enqueueLivePulseBatch(queue, toFire, cells, graph, OPTS, startSec, {});
-    // Two frames just outside the margin: budgeted, so one link each — the
-    // first rides behind the free grid step, and a 5 ms link is over budget
-    // on its own.
+    // Outside the margin: budget-bound, one cost-bearing step per frame, and
+    // NOT flagged forced.
     driver.ctx.nowSec = startSec - LIVE_PLAN_DEADLINE_MARGIN_S - 0.001;
-    expect(stepLivePulseQueue(queue, driver.ctx)).toMatchObject({
-      steps: 2, admitted: 1, pending: true, forcedByDeadline: false,
-    });
-    expect(stepLivePulseQueue(queue, driver.ctx)).toMatchObject({
-      steps: 1, admitted: 1, pending: true, forcedByDeadline: false,
-    });
-    expect(driver.linkSteps).toBe(2);
-    // The next frame is inside the margin: the whole batch, budget or not.
-    driver.ctx.nowSec = startSec - LIVE_PLAN_DEADLINE_MARGIN_S;
-    const report = stepLivePulseQueue(queue, driver.ctx);
-    expect(report).toMatchObject({ pending: false, forcedByDeadline: true });
-    expect(report.steps).toBe(toFire.length - 1); // the remaining links + flush
-    expect(queue.batches).toEqual([]);
+    const before = stepLivePulseQueue(queue, driver.ctx);
+    expect(before).toMatchObject({ pending: true, forcedByDeadline: false });
+
+    // Now inside the margin (well past it, even): the batch is FLAGGED forced,
+    // but it still respects the budget — the remainder defers to later frames
+    // rather than draining in one long grain, and no pulse is lost.
+    driver.ctx.nowSec = startSec;
+    let frames = 1;
+    let anyForced = false;
+    let maxCostlyPerFrame = 0;
+    let prevLinkSteps = driver.linkSteps;
+    while (queue.batches.length > 0) {
+      const report = stepLivePulseQueue(queue, driver.ctx);
+      anyForced = anyForced || report.forcedByDeadline;
+      const costly = driver.linkSteps - prevLinkSteps;
+      prevLinkSteps = driver.linkSteps;
+      if (costly > maxCostlyPerFrame) maxCostlyPerFrame = costly;
+      // The whole batch never drains in one frame: a 5 ms step over a 0 ms
+      // budget always defers, deadline pressure or not.
+      if (queue.batches.length > 0) expect(report.pending).toBe(true);
+      frames += 1;
+    }
+    expect(anyForced).toBe(true); // deadline pressure was seen and counted
+    expect(maxCostlyPerFrame).toBeLessThanOrEqual(1); // budget held under the deadline
+    expect(frames).toBeGreaterThan(2); // spread over frames, not one drain
+    // No pulse dropped and every departure clock unchanged: the same plan the
+    // one-shot planner produced, just spread across more frames.
     expect(driver.admitted.map((a) => a.pulse)).toEqual(oneShot.planned);
+    expect(driver.admitted.every((a) => a.startSec === startSec)).toBe(true);
   });
 
   it('threads the block-guarantee watermark FIFO: a later batch is opened with the earlier one\'s result', () => {

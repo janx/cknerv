@@ -679,8 +679,10 @@ describe('createLinkBatchPlanner — stepping the machine is the one-shot plan',
       steps += 1;
       expect(before - planner.pending).toBeLessThanOrEqual(1);
     }
-    // The entry grid's own step, one per link, and the closing flush.
-    expect(steps).toBe(toFire.length + 2);
+    // The entry grid's own step, one per link, and one flush per block — each
+    // block's rescue pass is now a step of its own, never shared with a link.
+    const blocks = new Set(toFire.map((l) => l.block)).size;
+    expect(steps).toBe(toFire.length + 1 + blocks);
     expect(planner.pending).toBe(0);
     expect(planner.step()).toEqual([]); // idempotent once done
     expect(stepped).toEqual(oneShot.planned);

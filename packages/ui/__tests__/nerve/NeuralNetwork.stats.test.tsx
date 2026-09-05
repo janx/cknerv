@@ -99,7 +99,8 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
     expect(step).toBeGreaterThan(-1);
     expect(walk).toBeGreaterThan(step);
     // Raw frame, not the sim frame: a paused clock must not pause planning.
-    const stepFrame = NETWORK_SOURCE.lastIndexOf('useFrame(() => {', step);
+    // The slice reads the raw frame delta for its wall-relative budget.
+    const stepFrame = NETWORK_SOURCE.lastIndexOf('useFrame((_state, delta) => {', step);
     const stepSimFrame = NETWORK_SOURCE.lastIndexOf('useSimFrame(', step);
     expect(stepFrame).toBeGreaterThan(stepSimFrame);
     // The departure clock is stamped at arrival, in the opening effect —
