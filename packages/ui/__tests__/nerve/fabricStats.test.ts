@@ -87,6 +87,38 @@ describe('fabricStats', () => {
     expect(s.animatingLast).toBe(5200);
     expect(s.animatingMax).toBe(5200);
     expect(s.usedSlotsLast).toBe(8000);
+    // Only the setFabric build sets the churn gauge: (added 120 + dying 80)
+    // over its 8,000 drawn states. The later grow/kill diffs are live
+    // lifecycle, not a build, so they leave it exactly where the build left it.
+    expect(s.selectionChurn).toBeCloseTo(200 / 8000, 12);
+  });
+
+  it('selectionChurn tracks the last build only, ignoring grow/kill lifecycle', () => {
+    fabricStats.observeDiff({
+      atSec: 1, kind: 'setFabric', added: 500, revived: 0, dying: 500, stable: 7000, totalStates: 8000,
+    });
+    expect(snapshotFabricStats().selectionChurn).toBeCloseTo(0.125, 12);
+    // A live grow and a live kill move a lot of edges but are NOT a build:
+    // the gauge must not budge.
+    fabricStats.observeDiff({
+      atSec: 2, kind: 'growEdges', added: 900, revived: 0, dying: 0, stable: 0, totalStates: 8900,
+    });
+    fabricStats.observeDiff({
+      atSec: 3, kind: 'killEdges', added: 0, revived: 0, dying: 900, stable: 0, totalStates: 8900,
+    });
+    expect(snapshotFabricStats().selectionChurn).toBeCloseTo(0.125, 12);
+    // The next build replaces the reading with its own turnover.
+    fabricStats.observeDiff({
+      atSec: 4, kind: 'setFabric', added: 40, revived: 0, dying: 60, stable: 7900, totalStates: 8000,
+    });
+    expect(snapshotFabricStats().selectionChurn).toBeCloseTo(100 / 8000, 12);
+  });
+
+  it('weightedSelectionEdges is a snapshot gauge that reset zeroes', () => {
+    fabricStats.weightedSelectionEdges = 21;
+    expect(snapshotFabricStats().weightedSelectionEdges).toBe(21);
+    resetFabricStats();
+    expect(snapshotFabricStats().weightedSelectionEdges).toBe(0);
   });
 
   it('caps the recent-diff ring and resets cleanly', () => {
@@ -98,10 +130,19 @@ describe('fabricStats', () => {
     expect(snapshotFabricStats().recentDiffs).toHaveLength(32);
     expect(snapshotFabricStats().recentDiffs[0].atSec).toBe(8); // oldest dropped
 
+    // Arm the build gauges so the reset has something to clear.
+    fabricStats.observeDiff({
+      atSec: 99, kind: 'setFabric', added: 100, revived: 0, dying: 100, stable: 7800, totalStates: 8000,
+    });
+    fabricStats.weightedSelectionEdges = 21;
+    expect(snapshotFabricStats().selectionChurn).toBeGreaterThan(0);
+
     resetFabricStats();
     const s = snapshotFabricStats();
     expect(s.added).toBe(0);
     expect(s.recentDiffs).toHaveLength(0);
+    expect(s.selectionChurn).toBe(0);
+    expect(s.weightedSelectionEdges).toBe(0);
     expect(s.frames.fullWalk).toBe(0);
     expect(s.reapsInPlace).toBe(0);
     expect(s.animatingMax).toBe(0);

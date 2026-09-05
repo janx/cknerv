@@ -1538,6 +1538,10 @@ function NeuralNetwork({
     livePlanStep.nowSec = simClock.elapsedSec;
     const report = stepLivePulseQueue(queue, livePlanStep);
     endCpuProbe(sliceProbe);
+    // T1 gauges (measurement only): how often a slice was forced past its
+    // budget on the departure deadline, and the window's longest planner step.
+    if (report.forcedByDeadline) pulseStats.observeForcedByDeadline();
+    pulseStats.observeStepMs(report.maxStepMs);
     if (report.admitted > 0) {
       // Soft cap — drop oldest if we're way over, shedding rescue pulses
       // last (each is some block's only light).

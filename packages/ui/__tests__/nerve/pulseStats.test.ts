@@ -70,12 +70,36 @@ describe('pulseStats.firedRatePct', () => {
   });
 });
 
+describe('pulseStats live-plan driver gauges', () => {
+  it('counts deadline-forced slices and keeps the running max planner step', () => {
+    pulseStats.observeForcedByDeadline();
+    pulseStats.observeForcedByDeadline();
+    // Running max, not last-write: a larger step raises it, a smaller one
+    // leaves it, and it is never negative.
+    pulseStats.observeStepMs(3.2);
+    pulseStats.observeStepMs(1.1);
+    pulseStats.observeStepMs(7.8);
+    pulseStats.observeStepMs(0);
+    const s = snapshotPulseStats();
+    expect(s.forcedByDeadline).toBe(2);
+    expect(s.maxStepMs).toBeCloseTo(7.8, 12);
+  });
+
+  it('reads zero before any slice runs', () => {
+    const s = snapshotPulseStats();
+    expect(s.forcedByDeadline).toBe(0);
+    expect(s.maxStepMs).toBe(0);
+  });
+});
+
 describe('resetPulseStats', () => {
   it('zeros every counter and the rollup state', () => {
     pulseStats.bump('fired');
     pulseStats.bumpOrigin('origin-retained');
     pulseStats.observeLink(1, true);
     pulseStats.observeBlockTick();
+    pulseStats.observeForcedByDeadline();
+    pulseStats.observeStepMs(5);
     resetPulseStats();
     const s = snapshotPulseStats();
     expect(s.linkReasons.fired).toBe(0);
@@ -83,6 +107,8 @@ describe('resetPulseStats', () => {
     expect(s.blocksTotal).toBe(0);
     expect(s.blocksWithLinks).toBe(0);
     expect(s.blocksLit).toBe(0);
+    expect(s.forcedByDeadline).toBe(0);
+    expect(s.maxStepMs).toBe(0);
   });
 });
 

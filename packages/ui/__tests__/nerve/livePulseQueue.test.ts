@@ -263,9 +263,25 @@ describe('stepLivePulseQueue — sliced over frames, the one-task plan', () => {
     const driver = makeDriver(1, LIVE_PLAN_BUDGET_MS);
     const queue = createLivePulseQueue();
     expect(stepLivePulseQueue(queue, driver.ctx)).toEqual({
-      steps: 0, admitted: 0, pending: false, forcedByDeadline: false,
+      steps: 0, admitted: 0, pending: false, forcedByDeadline: false, maxStepMs: 0,
     });
     expect(driver.clockReads).toBe(0);
+  });
+
+  it('reports the frame\'s longest planner step as maxStepMs', () => {
+    const { cells, graph, links } = fixture();
+    const driver = makeDriver(0.5, LIVE_PLAN_BUDGET_MS);
+    const queue = createLivePulseQueue();
+    const { toFire } = openLinkBatch(links, 0, false, driver.stats);
+    // startSec far ahead so the slice is budget-bound, not deadline-forced.
+    enqueueLivePulseBatch(queue, toFire, cells, graph, OPTS, 100, {});
+    driver.ctx.nowSec = 0;
+    const report = stepLivePulseQueue(queue, driver.ctx);
+    // Several link steps at 0.5 ms each plus free grid/flush steps at 0 ms:
+    // the frame's worst grain is exactly one link step. This is the reading
+    // the driver folds into pulseStats.maxStepMs.
+    expect(report.steps).toBeGreaterThan(1);
+    expect(report.maxStepMs).toBeCloseTo(0.5, 12);
   });
 });
 

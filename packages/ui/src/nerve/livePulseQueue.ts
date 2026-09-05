@@ -100,6 +100,11 @@ export interface LivePulseStepReport {
   pending: boolean;
   /** A batch completed under the deadline rule rather than the budget. */
   forcedByDeadline: boolean;
+  /** Longest single planner step this frame, in ms (`ctx.nowMs()` around one
+   *  `planner.step()`). The frame's worst grain; the driver folds it into the
+   *  window's running max. Zero when the frame only took free grid/flush
+   *  steps or ran no step at all. */
+  maxStepMs: number;
 }
 
 export function enqueueLivePulseBatch(
@@ -140,6 +145,7 @@ export function stepLivePulseQueue(
     admitted: 0,
     pending: false,
     forcedByDeadline: false,
+    maxStepMs: 0,
   };
   const batches = queue.batches;
   if (batches.length === 0) return report;
@@ -168,6 +174,7 @@ export function stepLivePulseQueue(
       const stepStartMs = ctx.nowMs();
       const pulses = planner.step();
       lastStepMs = ctx.nowMs() - stepStartMs;
+      if (lastStepMs > report.maxStepMs) report.maxStepMs = lastStepMs;
       report.steps += 1;
       for (const pulse of pulses) {
         ctx.admit(pulse, batch);

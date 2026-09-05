@@ -107,6 +107,10 @@ describe('fabric trunk tier — selection', () => {
     expect(tier.edges).toBe(125);
     expect(tier.share).toBeCloseTo(0.125, 10);
     expect(tier.threshold).toBeGreaterThan(0);
+    // The weighted gauge is the arbor forest the threshold partitions — the
+    // 500 edges with a finite w>0, NOT the 1,000 drawn nor the 125 promoted.
+    // This is the fabric's `weightedSelectionEdges` at its source.
+    expect(tier.weighted).toBe(500);
     for (const edge of edges) {
       if (edge.w !== undefined) continue;
       expect(fabricEdgeTrunkness(edge.w)).toBe(FABRIC_TRUNK_NO_ARBOR);
@@ -137,13 +141,13 @@ describe('fabric trunk tier — selection', () => {
 
   it('disables itself rather than guessing on an empty or arbor-less selection', () => {
     expect(fabricTrunkTier([])).toEqual({
-      threshold: FABRIC_TRUNK_THRESHOLD_DISABLED, edges: 0, share: 0,
+      threshold: FABRIC_TRUNK_THRESHOLD_DISABLED, edges: 0, share: 0, weighted: 0,
     });
     expect(fabricTrunkTier([crossLink(1, 2), crossLink(2, 3)])).toEqual({
-      threshold: FABRIC_TRUNK_THRESHOLD_DISABLED, edges: 0, share: 0,
+      threshold: FABRIC_TRUNK_THRESHOLD_DISABLED, edges: 0, share: 0, weighted: 0,
     });
     expect(fabricTrunkTier([arborEdge(1, 2, 0.9)], 0)).toEqual({
-      threshold: FABRIC_TRUNK_THRESHOLD_DISABLED, edges: 0, share: 0,
+      threshold: FABRIC_TRUNK_THRESHOLD_DISABLED, edges: 0, share: 0, weighted: 0,
     });
     // The disabled sentinel sits above every attainable weight.
     expect(FABRIC_TRUNK_THRESHOLD_DISABLED).toBeGreaterThan(1);
@@ -220,6 +224,15 @@ describe('fabric trunk tier — the AUTO composition profile', () => {
     expect(tier.share).toBeGreaterThanOrEqual(0.10);
     expect(tier.share).toBeLessThanOrEqual(0.15);
     expect(tier.edges * FABRIC_SAMPLES_PER_EDGE).toBeLessThanOrEqual(5_000);
+
+    // The weighted forest the threshold partitions: the drawn edges with a
+    // positive arbor weight — the live `weightedSelectionEdges` gauge at its
+    // source. It sits above the promoted count and below the whole drawn set.
+    expect(tier.weighted).toBe(
+      drawn.filter((edge) => fabricEdgeTrunkness(edge.w) > 0).length,
+    );
+    expect(tier.weighted).toBeGreaterThan(tier.edges);
+    expect(tier.weighted).toBeLessThan(drawn.length);
 
     // Every promoted edge is a real forest edge carrying a subtree.
     for (const edge of drawn) {

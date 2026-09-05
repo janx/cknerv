@@ -86,6 +86,13 @@ export interface PulseStatsSnapshot {
   /** Live links evicted from the bounded pulse ring before the cursor
    *  consumed them (a seq gap) — silent guarantee loss if ever nonzero. */
   ringEvicted: number;
+  /** Live-plan driver gauges (the frame-sliced pulse queue). `forcedByDeadline`
+   *  counts frames that drained a batch past the per-frame budget because its
+   *  departure deadline had arrived (the tail T10 bounds); `maxStepMs` is the
+   *  longest single planner step wall-time observed in the window, in ms (the
+   *  slice's worst grain). Both zero on reset. */
+  forcedByDeadline: number;
+  maxStepMs: number;
   /** All blocks observed (one per `pulse` delta), incl. empty ones. */
   blocksTotal: number;
   /** Blocks that emitted ≥1 tx-link. */
@@ -137,10 +144,16 @@ interface PulseStatsState extends PulseStatsSink {
   recallOutcomes: Record<RecallOutcome, number>;
   rescues: Record<RescueCounter, number>;
   ringEvicted: number;
+  forcedByDeadline: number;
+  maxStepMs: number;
   blocksTotal: number;
   bumpRecall(outcome: RecallOutcome, n?: number): void;
   bumpRescue(kind: RescueCounter, n?: number): void;
   bumpRingEvicted(n?: number): void;
+  /** One frame drained a batch past the budget on its departure deadline. */
+  observeForcedByDeadline(): void;
+  /** Fold one frame's longest planner step into the window's running max. */
+  observeStepMs(ms: number): void;
   // Internal block-rollup state. `link.block` is monotonic non-decreasing, so
   // we close the current block when a strictly different block id arrives.
   _curBlock: number;
@@ -160,6 +173,8 @@ export const pulseStats: PulseStatsState = {
   recallOutcomes: zeroRecallOutcomes(),
   rescues: zeroRescues(),
   ringEvicted: 0,
+  forcedByDeadline: 0,
+  maxStepMs: 0,
   blocksTotal: 0,
   _curBlock: -1,
   _curBlockLit: false,
@@ -183,6 +198,12 @@ export const pulseStats: PulseStatsState = {
   },
   bumpRingEvicted(n = 1) {
     this.ringEvicted += n;
+  },
+  observeForcedByDeadline() {
+    this.forcedByDeadline += 1;
+  },
+  observeStepMs(ms) {
+    if (ms > this.maxStepMs) this.maxStepMs = ms;
   },
 
   observeLink(block, lit) {
@@ -226,6 +247,8 @@ export const pulseStats: PulseStatsState = {
       recallOutcomes: { ...this.recallOutcomes },
       rescues: { ...this.rescues },
       ringEvicted: this.ringEvicted,
+      forcedByDeadline: this.forcedByDeadline,
+      maxStepMs: this.maxStepMs,
       blocksTotal: this.blocksTotal,
       blocksWithLinks,
       blocksLit,
@@ -248,6 +271,8 @@ export const pulseStats: PulseStatsState = {
     this.recallOutcomes = zeroRecallOutcomes();
     this.rescues = zeroRescues();
     this.ringEvicted = 0;
+    this.forcedByDeadline = 0;
+    this.maxStepMs = 0;
     this.blocksTotal = 0;
     this._curBlock = -1;
     this._curBlockLit = false;

@@ -1784,6 +1784,7 @@ export default function NeuralFabric({
       const tier = fabricTrunkTier(graph.edges);
       fabricStats.trunkTierEdges = tier.edges;
       fabricStats.trunkTierThreshold = tier.threshold;
+      fabricStats.weightedSelectionEdges = tier.weighted;
       setFabricTrunkThreshold(fabric.material, tier.threshold);
       setFabricTrunkThreshold(trunk.material, tier.threshold);
     };

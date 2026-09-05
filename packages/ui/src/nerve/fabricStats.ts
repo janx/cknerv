@@ -75,6 +75,12 @@ export interface FabricStatsSnapshot {
   dying: number;
   /** Last N diffs, oldest first — the per-block churn shape. */
   recentDiffs: FabricDiffSample[];
+  /** The latest completed build's replacement fraction: `(added + dying) /
+   *  drawn` from its `setFabric` diff — how much of the drawn fabric one
+   *  build turned over. The churn root's headline gauge (mainnet ≈ 0.12);
+   *  a later task drives it toward its membership-churn floor. Set per
+   *  completed build; reset zeroes it. */
+  selectionChurn: number;
   /** emitFabric frames by taken path. */
   frames: {
     skip: number;
@@ -105,6 +111,11 @@ export interface FabricStatsSnapshot {
    * is the promoted SHARE — the number the tier is tuned by. */
   trunkTierEdges: number;
   trunkTierThreshold: number;
+  /** Selection edges carrying a finite arbor weight (`w > 0`) at the last
+   *  build — the arbor forest's reach into the drawn fabric (mainnet ≈ 21
+   *  against a ~1,014 target; a later task grows it). Set beside
+   *  `trunkTierEdges` from the same resolved tier. */
+  weightedSelectionEdges: number;
   /** Passive-fabric bytes handed to bufferSubData (Σ across every commit —
    *  incremental slot ranges and full-walk prefix uploads). */
   uploadedBytes: number;
@@ -141,6 +152,7 @@ interface FabricStatsState {
   revived: number;
   dying: number;
   recentDiffs: FabricDiffSample[];
+  selectionChurn: number;
   frames: FabricStatsSnapshot['frames'];
   fullWalkReasons: Record<FabricFullWalkReason, number>;
   incrementalSlotsWritten: number;
@@ -161,6 +173,7 @@ interface FabricStatsState {
    * is the promoted SHARE — the number the tier is tuned by. */
   trunkTierEdges: number;
   trunkTierThreshold: number;
+  weightedSelectionEdges: number;
   uploadedBytes: number;
   uploadedBytesLast: number;
   uploadedBytesMax: number;
@@ -189,6 +202,7 @@ export const fabricStats: FabricStatsState = {
   revived: 0,
   dying: 0,
   recentDiffs: [],
+  selectionChurn: 0,
   frames: { skip: 0, incremental: 0, fullWalk: 0 },
   fullWalkReasons: zeroFullWalkReasons(),
   incrementalSlotsWritten: 0,
@@ -202,6 +216,7 @@ export const fabricStats: FabricStatsState = {
   liveEdges: 0,
   trunkTierEdges: 0,
   trunkTierThreshold: 0,
+  weightedSelectionEdges: 0,
   uploadedBytes: 0,
   uploadedBytesLast: 0,
   uploadedBytesMax: 0,
@@ -211,6 +226,13 @@ export const fabricStats: FabricStatsState = {
     this.added += sample.added;
     this.revived += sample.revived;
     this.dying += sample.dying;
+    // A completed build (`setFabric`) is one turnover of the drawn selection:
+    // record how big a fraction of it that build replaced. The live grow/kill
+    // diffs are the per-frame lifecycle, not a build, so they leave it be.
+    if (sample.kind === 'setFabric') {
+      this.selectionChurn =
+        (sample.added + sample.dying) / Math.max(1, sample.totalStates);
+    }
     this.recentDiffs.push(sample);
     if (this.recentDiffs.length > RECENT_DIFF_CAP) this.recentDiffs.shift();
   },
@@ -251,6 +273,7 @@ export const fabricStats: FabricStatsState = {
       revived: this.revived,
       dying: this.dying,
       recentDiffs: this.recentDiffs.map((sample) => ({ ...sample })),
+      selectionChurn: this.selectionChurn,
       frames: { ...this.frames },
       fullWalkReasons: { ...this.fullWalkReasons },
       incrementalSlotsWritten: this.incrementalSlotsWritten,
@@ -263,6 +286,7 @@ export const fabricStats: FabricStatsState = {
       passiveSelectionEdges: this.passiveSelectionEdges,
       trunkTierEdges: this.trunkTierEdges,
       trunkTierThreshold: this.trunkTierThreshold,
+      weightedSelectionEdges: this.weightedSelectionEdges,
       liveEdges: this.liveEdges,
       uploadedBytes: this.uploadedBytes,
       uploadedBytesLast: this.uploadedBytesLast,
@@ -278,6 +302,7 @@ export const fabricStats: FabricStatsState = {
     this.revived = 0;
     this.dying = 0;
     this.recentDiffs = [];
+    this.selectionChurn = 0;
     this.frames = { skip: 0, incremental: 0, fullWalk: 0 };
     this.fullWalkReasons = zeroFullWalkReasons();
     this.incrementalSlotsWritten = 0;
@@ -286,6 +311,7 @@ export const fabricStats: FabricStatsState = {
     this.animatingLast = 0;
     this.animatingMax = 0;
     this.usedSlotsLast = 0;
+    this.weightedSelectionEdges = 0;
     this.uploadedBytes = 0;
     this.uploadedBytesLast = 0;
     this.uploadedBytesMax = 0;

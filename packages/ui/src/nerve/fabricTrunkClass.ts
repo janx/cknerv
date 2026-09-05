@@ -177,12 +177,19 @@ export interface FabricTrunkTier {
   edges: number;
   /** `edges` as a share of the drawn selection. */
   share: number;
+  /** Edges carrying a finite arbor weight (`w > 0`) — the forest the
+   *  threshold partitions; the rest of the drawn selection is arbor-less
+   *  cross-links that always fall to the mesh pass. A gauge, not an input:
+   *  live it exposes how much of the drawn fabric the arbor actually reached
+   *  (the "wool" measure — ~21 today against a ~1,014 target). */
+  weighted: number;
 }
 
 const DISABLED_TIER: FabricTrunkTier = {
   threshold: FABRIC_TRUNK_THRESHOLD_DISABLED,
   edges: 0,
   share: 0,
+  weighted: 0,
 };
 
 /** Only `w` is read, so this accepts anything edge-shaped — the passive
@@ -238,6 +245,7 @@ export function fabricTrunkTier(
       threshold: arbor[0],
       edges: count,
       share: count / drawn,
+      weighted: count,
     };
   }
 
@@ -256,7 +264,13 @@ export function fabricTrunkTier(
       threshold: arbor[high],
       edges: count - high,
       share: (count - high) / drawn,
+      weighted: count,
     };
   }
-  return { threshold: pivot, edges: lowCount, share: lowCount / drawn };
+  return {
+    threshold: pivot,
+    edges: lowCount,
+    share: lowCount / drawn,
+    weighted: count,
+  };
 }
