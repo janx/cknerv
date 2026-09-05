@@ -77,10 +77,12 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
 
   it('maintains that graph eagerly between worker builds', () => {
     expect(NETWORK_SOURCE).toContain('planDisplayMeshDiff(');
-    // The licence for replaying a diff in place, and the ceiling past which
-    // the rebuild already in flight is left to do the work.
+    // The licence for replaying a diff in place.
     expect(NETWORK_SOURCE).toContain('feed.fresh && feed.chained');
-    expect(NETWORK_SOURCE).toContain('shouldDeferBirthsToBulkRebuild(');
+    // Every generation's newborns are admitted eagerly, whatever the batch
+    // size: the bucketed birth grid removed the comparison ceiling that once
+    // deferred a large batch to the worker and left its newborns unroutable.
+    expect(NETWORK_SOURCE).not.toContain('shouldDeferBirthsToBulkRebuild');
   });
 
   // The one-task planner ran every route search of a block delta inside the

@@ -7,14 +7,12 @@ import {
 } from '../../src/geometry/neighborGraph';
 import { fabricEdgeKey } from '../../src/nerve/fabricOrder';
 import {
-  MAX_INCREMENTAL_BIRTH_COMPARISONS,
   staggerBornAt,
   deadEndFor,
   planDisplayMeshDiff,
   planMeshUpdate,
   planSelectionDeltaUpdate,
   selectionStrayEdgeKeys,
-  shouldDeferBirthsToBulkRebuild,
 } from '../../src/nerve/livingMeshDriver';
 
 function cell(id: number, x: number, z: number): Cell {
@@ -33,14 +31,22 @@ describe('livingMeshDriver helpers', () => {
     expect(deadEndFor('3|7', 3)).toBe('from');
     expect(deadEndFor('3|7', 7)).toBe('to');
   });
-  it('leaves large birth batches to the rebuild already in flight', () => {
-    expect(shouldDeferBirthsToBulkRebuild(1, 1_000_000)).toBe(false);
-    expect(shouldDeferBirthsToBulkRebuild(12, 20_000)).toBe(false);
-    expect(shouldDeferBirthsToBulkRebuild(13, 20_000)).toBe(true);
-    // A full 12K stage tolerates 20 admissions before the ceiling bites.
-    expect(shouldDeferBirthsToBulkRebuild(20, 12_000)).toBe(false);
-    expect(shouldDeferBirthsToBulkRebuild(21, 12_000)).toBe(true);
-    expect(MAX_INCREMENTAL_BIRTH_COMPARISONS).toBe(250_000);
+  it('admits every birth in a large batch, however big (no deferral cliff)', () => {
+    // A batch this size over a full stage once tripped the comparison ceiling
+    // and skipped eager admission entirely, leaving the newborns unroutable
+    // (endpoint-missing) until the worker landed. One bucketed grid admits the
+    // whole batch, so each newborn is in the graph and routable at once.
+    const cells = new Map<number, Cell>();
+    for (let id = 1; id <= 60; id += 1) {
+      cells.set(id, cell(id, (id % 6) * 3, Math.floor(id / 6) * 3));
+    }
+    const born = Array.from({ length: 30 }, (_, i) => i + 1);
+    const g = emptyNeighborGraph();
+    const u = planMeshUpdate(
+      { born, died: [], evicted: [] }, g, cells, 10, { k: 4 }, 60,
+    );
+    for (const id of born) expect(g.adjacency.get(id)!.size).toBeGreaterThan(0);
+    expect(u.addedEdges.length).toBeGreaterThan(0);
   });
 });
 

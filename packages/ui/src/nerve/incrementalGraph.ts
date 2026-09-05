@@ -85,102 +85,229 @@ function addEdge(
   return edge;
 }
 
+// --- Birth admission grid --------------------------------------------------
+//
+// A birth's k nearest are answered from a bucketed XZ grid over the staged map
+// instead of a full scan per birth. The grid is built ONCE per generation
+// (planMeshUpdate) and shared across every birth in the batch, turning a
+// batch's cost from O(births × N) — up to 250K comparisons at 20 births, with
+// a hard cliff above which admission was skipped entirely — into
+// O(N + 9 × occupancy × births).
+//
+// SAME RESULT AS THE FULL SCAN. The ring walk widens a bucket ring at a time
+// until the k-th neighbour found is provably nearer than anything unscanned:
+// rings 0..r cover every bucket within r×bucketSize of the query in xz, so a
+// point outside them is farther than that in xz and therefore in full 3D too
+// (the same EXACT stop `buildNeighborGraph` relies on). The bucket side is
+// thus a pure COST knob, and the selection it feeds is the identical
+// (dSq, scanOrder) top-k the full scan chose — ties and the lifeline included.
+// `scanOrder` is each live cell's index in `cells.values()` (the grid is
+// filled in that order); skipping `self` shifts every later candidate by one
+// but preserves their RELATIVE order, which is all a tie-break compares.
+
+const BIRTH_BUCKET_TARGET_OCCUPANCY = 4; // mirror neighborGraph.ts
+const BIRTH_BUCKET_COORD_LIMIT = 8000;
+
+function birthBucketKey(bx: number, bz: number): number {
+  return ((bx + 16384) << 16) | (bz + 16384);
+}
+
+/** A bucketed spatial index over the staged map's LIVE cells, in
+ *  `cells.values()` order (the array index is the scan-order tie-break key).
+ *  Built once per birth batch and shared by every `addCell` in it. */
+export interface BirthAdmissionGrid {
+  bucketSize: number;
+  maxRing: number;
+  ids: Float64Array;
+  xs: Float64Array;
+  ys: Float64Array;
+  zs: Float64Array;
+  buckets: Map<number, number[]>;
+}
+
+/** Build the birth-admission grid over `cells`. One pass measures the field
+ *  and packs the live scalars in iteration order; a second buckets them by xz.
+ *  Ids must be Float64: galaxy-composition Cells carry 2^52-range ids an
+ *  Int32Array would wrap into phantom nodes. */
+export function buildBirthAdmissionGrid(
+  cells: ReadonlyMap<number, Cell>,
+): BirthAdmissionGrid {
+  let liveCount = 0;
+  for (const c of cells.values()) if (c.death_at_ms == null) liveCount += 1;
+  const ids = new Float64Array(liveCount);
+  const xs = new Float64Array(liveCount);
+  const ys = new Float64Array(liveCount);
+  const zs = new Float64Array(liveCount);
+  const buckets = new Map<number, number[]>();
+  if (liveCount === 0) {
+    return { bucketSize: 1, maxRing: 0, ids, xs, ys, zs, buckets };
+  }
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  let i = 0;
+  for (const c of cells.values()) {
+    if (c.death_at_ms != null) continue;
+    const x = c.pos_seed[0];
+    const z = c.pos_seed[2];
+    ids[i] = c.id;
+    xs[i] = x;
+    ys[i] = c.pos_seed[1];
+    zs[i] = z;
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (z < minZ) minZ = z;
+    if (z > maxZ) maxZ = z;
+    i += 1;
+  }
+  // Bucket side derived from the field's own density so the scan cost tracks k
+  // rather than the population; the areal reading is honest for a filled field,
+  // the linear one rescues a near-collinear field whose area is ~0. It is a
+  // cost knob only — the ring stop makes the result side-independent.
+  const spanX = maxX - minX;
+  const spanZ = maxZ - minZ;
+  const extent = Math.max(spanX, spanZ);
+  const area = Math.max(spanX, 1e-6) * Math.max(spanZ, 1e-6);
+  const arealSide = Math.sqrt(
+    (BIRTH_BUCKET_TARGET_OCCUPANCY * area) / liveCount,
+  );
+  const linearSide = (BIRTH_BUCKET_TARGET_OCCUPANCY * extent) / liveCount;
+  const bucketSize = Math.max(
+    arealSide,
+    linearSide,
+    extent / BIRTH_BUCKET_COORD_LIMIT,
+    1e-6,
+  );
+  const maxRing = Math.ceil(extent / bucketSize) + 1;
+  for (let j = 0; j < liveCount; j += 1) {
+    const bx = Math.floor(xs[j] / bucketSize);
+    const bz = Math.floor(zs[j] / bucketSize);
+    const key = birthBucketKey(bx, bz);
+    let arr = buckets.get(key);
+    if (arr === undefined) { arr = []; buckets.set(key, arr); }
+    arr.push(j);
+  }
+  return { bucketSize, maxRing, ids, xs, ys, zs, buckets };
+}
+
 export function addCell(
   graph: MutableNeighborGraph,
   cellId: number,
   cells: ReadonlyMap<number, Cell>,
-  opts?: { k?: number; maxEdgeLength?: number },
+  opts?: { k?: number; maxEdgeLength?: number; grid?: BirthAdmissionGrid },
 ): { addedEdges: NeighborEdge[] } {
   const self = cells.get(cellId);
   if (!self || self.death_at_ms != null) return { addedEdges: [] };
   const k = opts?.k ?? DEFAULT_K;
   const maxLen = opts?.maxEdgeLength ?? MAX_EDGE_LENGTH;
   const maxLenSq = maxLen * maxLen;
+  // A shared grid is the batch path; a lone call (a test, or a stray caller)
+  // builds its own over `cells` — same selection, one generation of scan.
+  const grid = opts?.grid ?? buildBirthAdmissionGrid(cells);
+  const { bucketSize, maxRing, ids, xs, ys, zs, buckets } = grid;
 
-  // O(N × k) fixed-size selection for the k nearest LIVE others. The former
-  // collect-all + full sort path allocated and sorted thousands of candidates
-  // once per birth, which amplified high-output blocks into seconds of work.
-  // The selection keeps parallel scalars — id, squared distance, scan order —
-  // for its at-most-k entries and allocates nothing per candidate: the earlier
-  // per-candidate record cost one object for every live cell inside the edge
-  // cap (~2.3K a birth on the mainnet stage) to keep at most four of them.
-  const nearId: number[] = [];
-  const nearDSq: number[] = [];
-  const nearOrder: number[] = [];
-  let hasLifeline = false;
-  let lifelineId = 0;
-  let lifelineDSq = 0;
-  let order = 0;
   const selfX = self.pos_seed[0];
   const selfY = self.pos_seed[1];
   const selfZ = self.pos_seed[2];
-  // Values, not entries: the map is keyed by the cell's own id (every
-  // builder and reducer publishes it that way), and the destructured entry
-  // pair was one array per scanned cell — most of what a birth still
-  // allocated once the candidate records were gone. The distance is written
-  // out in place so no double crosses a call boundary per scanned cell.
-  for (const c of cells.values()) {
-    const id = c.id;
-    if (id === cellId || c.death_at_ms != null) continue;
-    const dx = selfX - c.pos_seed[0];
-    const dy = selfY - c.pos_seed[1];
-    const dz = selfZ - c.pos_seed[2];
+
+  // Bounded top-k held sorted ascending by (dSq, scanOrder), plus the global
+  // nearest (the lifeline) tracked ungated. k is small (3–7 in every caller),
+  // so an insertion into a k-slot array beats a heap and allocates nothing per
+  // candidate. `scanOrder` is the candidate's index in the grid's scalars.
+  const topId = new Float64Array(k);
+  const topDSq = new Float64Array(k);
+  const topOrder = new Int32Array(k);
+  let topN = 0;
+  let hasLifeline = false;
+  let lifelineId = 0;
+  let lifelineDSq = 0;
+  let lifelineOrder = 0;
+
+  const consider = (order: number): void => {
+    const dx = selfX - xs[order];
+    const dy = selfY - ys[order];
+    const dz = selfZ - zs[order];
     const dSq = dx * dx + dy * dy + dz * dz;
-    if (!hasLifeline || dSq < lifelineDSq) {
+    // Lifeline: the global min by (dSq, scanOrder), ties toward the earlier
+    // scan position — exactly the strict-less full scan's first-encountered.
+    if (
+      !hasLifeline
+      || dSq < lifelineDSq
+      || (dSq === lifelineDSq && order < lifelineOrder)
+    ) {
       hasLifeline = true;
-      lifelineId = id;
+      lifelineId = ids[order];
       lifelineDSq = dSq;
+      lifelineOrder = order;
     }
-    if (dSq <= maxLenSq && k > 0) {
-      if (nearId.length < k) {
-        nearId.push(id);
-        nearDSq.push(dSq);
-        nearOrder.push(order);
-      } else {
-        // The worst entry is the farthest, ties broken toward the later
-        // scan position — the same entry the record-based pass evicted.
-        let worst = 0;
-        for (let i = 1; i < nearId.length; i += 1) {
-          if (
-            nearDSq[i] > nearDSq[worst]
-            || (
-              nearDSq[i] === nearDSq[worst]
-              && nearOrder[i] > nearOrder[worst]
-            )
-          ) worst = i;
-        }
-        if (dSq < nearDSq[worst]) {
-          nearId[worst] = id;
-          nearDSq[worst] = dSq;
-          nearOrder[worst] = order;
-        }
+    if (k === 0 || dSq > maxLenSq) return; // top-k is cap-gated
+    if (
+      topN === k
+      && (
+        dSq > topDSq[k - 1]
+        || (dSq === topDSq[k - 1] && order >= topOrder[k - 1])
+      )
+    ) return;
+    let slot = topN < k ? topN : k - 1;
+    while (
+      slot > 0
+      && (
+        topDSq[slot - 1] > dSq
+        || (topDSq[slot - 1] === dSq && topOrder[slot - 1] > order)
+      )
+    ) {
+      topDSq[slot] = topDSq[slot - 1];
+      topId[slot] = topId[slot - 1];
+      topOrder[slot] = topOrder[slot - 1];
+      slot -= 1;
+    }
+    topDSq[slot] = dSq;
+    topId[slot] = ids[order];
+    topOrder[slot] = order;
+    if (topN < k) topN += 1;
+  };
+
+  const bx = Math.floor(selfX / bucketSize);
+  const bz = Math.floor(selfZ / bucketSize);
+  const scanBucket = (gx: number, gz: number): void => {
+    const arr = buckets.get(birthBucketKey(gx, gz));
+    if (arr === undefined) return;
+    for (let m = 0; m < arr.length; m += 1) {
+      const order = arr[m];
+      if (ids[order] === cellId) continue; // self is in the grid; never a candidate
+      consider(order);
+    }
+  };
+
+  for (let ring = 0; ring <= maxRing; ring += 1) {
+    if (ring === 0) {
+      scanBucket(bx, bz);
+    } else {
+      // Perimeter only — the interior was scanned by earlier rings.
+      for (let dx = -ring; dx <= ring; dx += 1) {
+        scanBucket(bx + dx, bz - ring);
+        scanBucket(bx + dx, bz + ring);
+      }
+      for (let dz = -ring + 1; dz <= ring - 1; dz += 1) {
+        scanBucket(bx - ring, bz + dz);
+        scanBucket(bx + ring, bz + dz);
       }
     }
-    order += 1;
-  }
-  // Nearest first, scan order breaking ties — a total order, so this
-  // insertion sort lands exactly where the comparator sort did.
-  for (let i = 1; i < nearId.length; i += 1) {
-    const id = nearId[i];
-    const dSq = nearDSq[i];
-    const at = nearOrder[i];
-    let j = i - 1;
-    while (
-      j >= 0
-      && (nearDSq[j] > dSq || (nearDSq[j] === dSq && nearOrder[j] > at))
-    ) {
-      nearId[j + 1] = nearId[j];
-      nearDSq[j + 1] = nearDSq[j];
-      nearOrder[j + 1] = nearOrder[j];
-      j -= 1;
-    }
-    nearId[j + 1] = id;
-    nearDSq[j + 1] = dSq;
-    nearOrder[j + 1] = at;
+    const covered = ring * bucketSize;
+    const coveredSq = covered * covered;
+    // The k-th within-cap neighbour is settled once it is inside the scanned
+    // region; past the cap no within-cap neighbour can remain unscanned.
+    const kSettled = k === 0
+      || (topN === k && topDSq[k - 1] <= coveredSq)
+      || covered >= maxLen;
+    if (!kSettled) continue;
+    // A within-cap neighbour exists → the lifeline is never read; stop.
+    if (k > 0 && topN > 0) break;
+    // Otherwise keep widening until the global-nearest lifeline is provably
+    // found (its bucket is scanned no later than covered² ≥ its distance).
+    if (hasLifeline && lifelineDSq <= coveredSq) break;
   }
 
   const addedEdges: NeighborEdge[] = [];
-  if (nearId.length === 0) {
+  if (topN === 0) {
     // rim outlier: one lifeline edge to the globally nearest, ignoring cap
     if (hasLifeline) {
       const e = addEdge(graph, cellId, lifelineId, Math.sqrt(lifelineDSq));
@@ -188,8 +315,8 @@ export function addCell(
     } else if (!graph.adjacency.has(cellId)) publish(graph, cellId, new Set());
     return { addedEdges };
   }
-  for (let i = 0; i < Math.min(k, nearId.length); i++) {
-    const e = addEdge(graph, cellId, nearId[i], Math.sqrt(nearDSq[i]));
+  for (let m = 0; m < topN; m += 1) {
+    const e = addEdge(graph, cellId, topId[m], Math.sqrt(topDSq[m]));
     if (e) addedEdges.push(e);
   }
   return { addedEdges };

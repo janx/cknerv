@@ -6,6 +6,7 @@ import {
 } from '../../src/geometry/neighborGraph';
 import {
   addCell,
+  buildBirthAdmissionGrid,
   removeCell,
   removeCells,
 } from '../../src/nerve/incrementalGraph';
@@ -186,6 +187,79 @@ describe('addCell — allocate-on-insert selection equals the record-based one',
     expect(g.eagerBase.get(2)).toBe(before2);
     expect([...before2]).toEqual([3]);
     expect([...g.adjacency.get(2)!]).toEqual([3, 1]);
+  });
+});
+
+describe('addCell — the bucketed grid answers each birth exactly as the full scan', () => {
+  // The grid replaced the per-birth full scan. Its result must be identical:
+  // the k nearest within the cap by (dSq, scanOrder), and the global-nearest
+  // lifeline when nothing is within the cap. referenceNearest above IS the
+  // pre-change full scan, so these assert grid == scan directly.
+  it('a shared grid over the staged map matches the full scan for every birth in a batch', () => {
+    for (let seed = 1; seed <= 30; seed += 1) {
+      const random = rng(seed * 101);
+      // A coarse lattice + small jitter: exact ties at and across bucket
+      // boundaries, plus generic spreads and rim outliers, in one field.
+      const size = 120 + Math.floor(random() * 200);
+      const cells = new Map<number, Cell>();
+      for (let id = 1; id <= size; id += 1) {
+        const x = Math.floor(random() * 12) * 4 + Math.floor(random() * 3);
+        const z = Math.floor(random() * 12) * 4 + Math.floor(random() * 3);
+        cells.set(id, cell(id, x, z));
+      }
+      const k = 1 + Math.floor(random() * 5);
+      const maxLen = [4, 7, 25, 200][Math.floor(random() * 4)];
+      // A batch of births answered from ONE shared grid — the production path.
+      const born: number[] = [];
+      for (let id = 1; id <= size; id += 1) if (random() < 0.25) born.push(id);
+      const grid = buildBirthAdmissionGrid(cells);
+
+      for (const id of born) {
+        const expected = referenceNearest(cells.get(id)!, cells, k, maxLen);
+        const g = emptyNeighborGraph();
+        const { addedEdges } = addCell(g, id, cells, {
+          k, maxEdgeLength: maxLen, grid,
+        });
+        const label = `seed ${seed} id ${id} (n=${size}, k=${k}, cap=${maxLen})`;
+        const got = addedEdges.map((e) => (e.to === id ? e.from : e.to));
+        if (expected.ids.length === 0) {
+          if (expected.lifeline) {
+            expect(got, label).toEqual([expected.lifeline.id]);
+            expect(addedEdges[0].d, label).toBe(Math.sqrt(expected.lifeline.dSq));
+          } else {
+            expect(addedEdges, label).toEqual([]);
+          }
+          continue;
+        }
+        expect(got, label).toEqual(expected.ids);
+        expect(addedEdges.map((e) => e.d), label)
+          .toEqual(expected.dSq.map((d) => Math.sqrt(d)));
+        // Adjacency insertion order carries the same (dSq, scanOrder) ranking.
+        expect([...g.adjacency.get(id)!], label).toEqual(expected.ids);
+      }
+    }
+  });
+
+  it('widens across empty rings to the true nearest, cluster and rim alike', () => {
+    // A tight cluster far from a rim outlier, so the query must not be fooled
+    // by a bucket boundary and the outlier must widen past empty rings.
+    const cells = new Map<number, Cell>([
+      [1, cell(1, 0, 0)], [2, cell(2, 1, 0)], [3, cell(3, 0, 1)],
+      [4, cell(4, 200, 0)], // beyond the cap from every cluster cell
+    ]);
+    const grid = buildBirthAdmissionGrid(cells);
+
+    const gA = emptyNeighborGraph();
+    addCell(gA, 1, cells, { k: 2, maxEdgeLength: 25, grid });
+    expect([...gA.adjacency.get(1)!].sort((a, b) => a - b)).toEqual([2, 3]);
+
+    // Everything is > 25 from cell 4, so it takes one lifeline edge to its
+    // globally nearest — cell 2 at distance 199, found only by widening.
+    const gB = emptyNeighborGraph();
+    const { addedEdges } = addCell(gB, 4, cells, { k: 4, maxEdgeLength: 25, grid });
+    expect(addedEdges.length).toBe(1);
+    expect([...gB.adjacency.get(4)!]).toEqual([2]);
+    expect(addedEdges[0].d).toBe(199);
   });
 });
 

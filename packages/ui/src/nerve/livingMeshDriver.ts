@@ -9,6 +9,7 @@ import type { Cell } from '@cknerv/types';
 import type { NeighborAdjacency, NeighborEdge } from '../geometry/neighborGraph';
 import {
   addCell,
+  buildBirthAdmissionGrid,
   removeCells,
   type MutableNeighborGraph,
 } from './incrementalGraph';
@@ -84,28 +85,6 @@ export function planDisplayMeshDiff(
     else evicted.push(id);
   }
   return { born, died, evicted };
-}
-
-/** Above this estimated birth-to-existing-Cell comparison count, one spatial
- * bulk rebuild is cheaper than scanning the complete map once per birth. */
-export const MAX_INCREMENTAL_BIRTH_COMPARISONS = 250_000;
-
-/** Whether a birth batch should be left to the worker rebuild instead of being
- * admitted one cell at a time. Each eager admission scans the staged map for
- * its k nearest, so a big batch costs births × cells comparisons on the main
- * thread — and the rebuild that supersedes it is already in flight. */
-export function shouldDeferBirthsToBulkRebuild(
-  birthCount: number,
-  cellCount: number,
-): boolean {
-  const births = Number.isFinite(birthCount)
-    ? Math.max(0, Math.floor(birthCount))
-    : 0;
-  const cells = Number.isFinite(cellCount)
-    ? Math.max(0, Math.floor(cellCount))
-    : 0;
-  return births > 1
-    && births * cells >= MAX_INCREMENTAL_BIRTH_COMPARISONS;
 }
 
 export function staggerBornAt(nowSec: number, index: number, _count: number, stepMs: number): number {
@@ -205,8 +184,14 @@ export function planMeshUpdate(
   const addedEdges: NeighborEdge[] = [];
   const bornAtByKey = new Map<string, number>();
   const dirByKey = new Map<string, 1 | -1>();
+  // One bucketed grid over the staged map answers every birth in this batch
+  // from its 3×3 neighbourhood, so a heavy-birth block costs O(N + births)
+  // instead of births × N — and no batch is ever too large to admit eagerly.
+  const birthOpts = diff.born.length > 0
+    ? { k: opts.k, maxEdgeLength: opts.maxEdgeLength, grid: buildBirthAdmissionGrid(cells) }
+    : opts;
   diff.born.forEach((id, i) => {
-    const { addedEdges: es } = addCell(graph, id, cells, opts);
+    const { addedEdges: es } = addCell(graph, id, cells, birthOpts);
     const bornAt = staggerBornAt(nowSec, i, diff.born.length, rippleStepMs);
     for (const e of es) {
       const key = fabricEdgeKey(e.from, e.to);

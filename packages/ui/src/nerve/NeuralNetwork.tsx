@@ -116,7 +116,6 @@ import {
   planMeshUpdate,
   planSelectionDeltaUpdate,
   selectionStrayEdgeKeys,
-  shouldDeferBirthsToBulkRebuild,
 } from './livingMeshDriver';
 import CellBridgeNerves from './CellBridgeNerves';
 import NeuralFabric, {
@@ -612,15 +611,13 @@ function NeuralNetwork({
     // map the build below packs, closing the window between the delta and
     // the worker completion. Graph-only: resting fibres still grow from the
     // authoritative passive selection, so an edge the selection never
-    // confirms is never rendered. Past the comparison ceiling the eager pass
-    // is pure duplicated work — the build superseding it is already issued.
+    // confirms is never rendered. A bucketed grid answers every birth from
+    // its 3×3 neighbourhood, so the whole batch is admitted eagerly however
+    // large — there is no longer a size past which newborns wait unroutable
+    // for the worker (and its endpoint-missing tail) to land.
     if (
       meshDiff
       && meshDiff.born.length > 0
-      && !shouldDeferBirthsToBulkRebuild(
-        meshDiff.born.length,
-        displayCells.size,
-      )
     ) {
       planMeshUpdate(
         { born: meshDiff.born, died: NO_CELL_IDS, evicted: NO_CELL_IDS },
