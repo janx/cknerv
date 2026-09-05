@@ -2384,6 +2384,7 @@ export default function App({
             topology={topology}
             cf={cf}
             blockPulseAtMs={cellsCache.lastPulseAtMs}
+            backfillActive={!!cellsCache.backfill}
             selectedId={selectedNetId}
             onSelect={handleSelect}
             landingFlashRef={landingFlashRef}

@@ -54,7 +54,6 @@ import { useFrame } from '@react-three/fiber';
 import type { Group } from 'three';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { useSimFrame } from '../tweaks/useSimFrame';
-import { useCellGalaxyOptional } from '../hooks/cellGalaxyContext';
 import { LIVE, motionScale } from '../tweaks/liveTweaks';
 import { colonyFrame } from '../tweaks/colonyFrame';
 import type { NetworkTopology, Vec3 } from '../types';
@@ -82,6 +81,16 @@ interface NetworkColonyProps {
   cf: ColonyFlood;
   /** Increments on each new block; stamps the delivery pulse. */
   blockPulseAtMs: number;
+  /** Calm catch-up gate (`!!cellsCache.backfill`), handed down from the app.
+   *  It was read here through `useCellGalaxyOptional()`, but that subscription
+   *  re-rendered the WHOLE colony subtree on every cells publish, not just on a
+   *  block — bypassing `memo(NetworkColony)` (A2-4). The app already recomputes
+   *  it in the same cells-cache render that advances `blockPulseAtMs`, and its
+   *  value is stable across blocks (it flips only on a backfill transition), so
+   *  as a scalar prop it holds the memo across a publish and re-renders the
+   *  colony exactly when the gate — the thing every pulse effect keys on when
+   *  `blockPulseAtMs` advances — actually changes. */
+  backfillActive?: boolean;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   /** The galaxy's landing queue (owned by the app, drained by CellGalaxy's
@@ -129,6 +138,7 @@ function NetworkColony({
   topology,
   cf,
   blockPulseAtMs,
+  backfillActive = false,
   selectedId,
   onSelect,
   landingFlashRef,
@@ -139,12 +149,12 @@ function NetworkColony({
   rotationEnabled = true,
 }: NetworkColonyProps) {
   const simClock = useSimClock();
-  // Calm catch-up signal (same flag beams/nerves already respect). Read via the
-  // NON-throwing hook so the exported NetworkColony still mounts standalone
-  // (galaxy-less scenes / tests) — matching its child BlockDeliveryLayer, which
-  // is deliberately optional-context; a throwing read here would defeat that.
-  const cellsCache = useCellGalaxyOptional();
-  const backfillActive = !!cellsCache?.backfill;
+  // Calm catch-up signal (same flag beams/nerves already respect) — now a
+  // scalar prop, not a `useCellGalaxyOptional()` read. Subscribing to the cells
+  // cache re-rendered the whole colony on every publish; the app hands the flag
+  // down instead, recomputed in the same render that advances `blockPulseAtMs`,
+  // so `memo(NetworkColony)` holds across a publish (A2-4). The exported
+  // NetworkColony still mounts standalone — it now takes no context at all.
   const nodeContextEnergyRef = useRef(1);
   const linkContextEnergyRef = useRef(1);
   // The colony's structural body (edges + nodes + inspection anchors) turns

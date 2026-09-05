@@ -869,6 +869,7 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
               topology={topology}
               cf={reviewFlood}
               blockPulseAtMs={cache.lastPulseAtMs}
+              backfillActive={!!cache.backfill}
               selectedId={null}
               onSelect={() => undefined}
               landingFlashRef={landingFlashRef}
