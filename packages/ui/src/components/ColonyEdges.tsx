@@ -49,44 +49,42 @@ export const INFERRED_LINE_BASE = 0.42;
 export const MEASURED_LINE_BRIGHT = 0.72;
 
 /**
- * ⭐ A LINK'S LIGHT FALLS OFF WITH ITS LENGTH — the inferred ones, at least.
+ * ⭐ ⟨ruling 25, 2026-09-05⟩ EVERY INFERRED LINK CARRIES THE SAME LIGHT,
+ * WHATEVER ITS LENGTH.
  *
- * The colony's invented scaffold is a k-nearest-neighbour graph (`COLONY_KNN`
- * 4) plus a long-range chord with probability `COLONY_LONGRANGE_PROB` 0.35, so
- * over a 92 wu disc the length distribution is not a bump, it is a tail:
- * median 11.3 wu, p90 47, p99 154, longest 198. Every one of them carried the
- * same 0.42, so the ~10 % of edges that are chords carried ~10 % of the count
- * and most of the LIGHT — a chord is twenty times the pixels of a k-NN link.
- * The colony's periphery read as a low-poly Delaunay wireframe rather than a
- * membrane, which is report C-2's finding and the p2p memory's open note from
- * July.
+ * The 2026-09-04 round weighted an inferred link by the k-NN spacing over its
+ * own length, floored at a third — on C-2's reading that the colony's
+ * periphery drew as a low-poly Delaunay wireframe: the ~10 % of edges that are
+ * long-range chords carry ~10 % of the count and most of the pixels, so
+ * damping them was meant to leave the k-NN mesh carrying the structure.
  *
- * `8 / len` is the k-NN spacing over the length: a link at the mesh's own
- * spacing keeps all of its light, one twice that keeps half, and the floor
- * stops a 198 wu chord from disappearing entirely — the scaffold is a claim
- * about structure and a claim that cannot be seen is not made.
+ * The eye's answer: the long chords went too dim to see. And that is the
+ * decisive objection, because a chord is not decoration — it is the mesh's own
+ * structure, the claim that these two ends are one hop apart, and the peer
+ * mesh is the canvas's SECOND focus (see `visualPalette.ts`). A layer that is
+ * a focus does not get to lose a tenth of its edges to a legibility rule; if
+ * the periphery reads as a wireframe, that is what a wireframe of long chords
+ * over a 92 wu disc looks like, and the honest levers for it are the graph's
+ * own (`COLONY_KNN`, `COLONY_LONGRANGE_PROB`) rather than a light that says
+ * "this link matters less" about a link that does not matter less.
  *
- * ⚠️ MEASURED LINKS ARE EXEMPT, and it is not a fudge. Since the belt was
- * moved out to ring the organism our own twelve links are 46–66 wu long, i.e.
- * squarely in the tail this law is written against — the law would take them to
- * the floor and the one tier we can actually vouch for would be the faintest
- * thing in the mesh. A measured link's brightness says OBSERVED, not SHORT.
- * `MEASURED_LINE_BRIGHT` is flat and stands above the law's own ceiling
- * (`INFERRED_LINE_BASE` × 1), so however long our link to a peer becomes it is
- * still brighter than the brightest invented one.
+ * ⚠️ What the round got RIGHT and this keeps is the other half: the two BAND
+ * WIDTHS are stated in world units (see below). The 322 px laser fan C-2
+ * exhibited was the SIGMA, not the base brightness — a fraction of a link's
+ * own parameter is a 20 wu band on a 150 wu chord and a 1 wu band on a k-NN
+ * link — and that fix stands, measured at 7 streaks → 0.
+ *
+ * So there is one number per tier and no law: `INFERRED_LINE_BASE` for the
+ * invented scaffold, `MEASURED_LINE_BRIGHT` for the twelve we hold. The
+ * measured tier's exemption is no longer an exemption, it is just the ladder.
+ *
+ * ⚠️ `lengthWu` is still taken and deliberately unread: the geometry builder
+ * measures the DRAWN segment either way (a cohort-incident link is trimmed at
+ * `COHORT_LINK_STOP_R`), and a signature that cannot take a length is a
+ * signature that invites the law back in one edit.
  */
-export const INFERRED_LENGTH_REFERENCE_WU = 8;
-export const INFERRED_LENGTH_FLOOR = 0.35;
-
-/** One edge's base brightness: its tier's constant, weighted by length for the
- *  invented tier only. Pure, and exported so the law can be read off the
- *  arithmetic instead of off a screenshot. */
-export function colonyEdgeBrightness(kind: string, lengthWu: number): number {
-  if (kind === 'measured') return MEASURED_LINE_BRIGHT;
-  const fall = lengthWu > 0
-    ? Math.min(1, Math.max(INFERRED_LENGTH_FLOOR, INFERRED_LENGTH_REFERENCE_WU / lengthWu))
-    : 1;
-  return INFERRED_LINE_BASE * fall;
+export function colonyEdgeBrightness(kind: string, _lengthWu: number): number {
+  return kind === 'measured' ? MEASURED_LINE_BRIGHT : INFERRED_LINE_BASE;
 }
 
 /**

@@ -27,8 +27,6 @@ import {
   AMBIENT_SIGMA_WU,
   colonyEdgeBrightness,
   colonyEdgePositions,
-  INFERRED_LENGTH_FLOOR,
-  INFERRED_LENGTH_REFERENCE_WU,
   INFERRED_LINE_BASE,
   MEASURED_LINE_BRIGHT,
   SURGE_SIGMA_WU,
@@ -282,47 +280,50 @@ describe('the trim does not disturb the current running along a link', () => {
 });
 
 /**
- * C-2: the colony's periphery read as a low-poly wireframe and a block fired a
- * fan of white lasers off the bottom of the frame. Both are the same mistake in
- * two places — a quantity that belongs to a link's LENGTH stated as if every
- * link were the same length. The scaffold's lengths span 2.5 to 198 wu.
+ * C-2 read two things in one finding: the colony's periphery drew as a low-poly
+ * wireframe, and a block fired a fan of white lasers off the bottom of the
+ * frame. Only ONE of them was a quantity stated in the wrong unit — the band
+ * sigmas — and ⟨ruling 25⟩ separates them: the sigmas stay in world units, and
+ * the brightness-by-length law that came with them is gone.
  */
-describe('a link’s light falls off with its length', () => {
-  it('keeps a link at the mesh’s own spacing whole and takes a chord to the floor', () => {
-    // The reference IS the spacing: at it the law is a no-op, so the mesh the
-    // eye reads as structure is exactly as bright as it was.
-    expect(colonyEdgeBrightness('inferred', INFERRED_LENGTH_REFERENCE_WU))
-      .toBeCloseTo(INFERRED_LINE_BASE, 9);
-    expect(colonyEdgeBrightness('inferred', 4)).toBeCloseTo(INFERRED_LINE_BASE, 9);
-    // Twice the spacing, half the light; the p99 chord sits on the floor.
-    expect(colonyEdgeBrightness('inferred', 16)).toBeCloseTo(INFERRED_LINE_BASE * 0.5, 9);
-    expect(colonyEdgeBrightness('inferred', 154))
-      .toBeCloseTo(INFERRED_LINE_BASE * INFERRED_LENGTH_FLOOR, 9);
-    expect(colonyEdgeBrightness('inferred', 198))
-      .toBeCloseTo(INFERRED_LINE_BASE * INFERRED_LENGTH_FLOOR, 9);
-    // …and it never goes out: a claim that cannot be seen is not made.
-    expect(colonyEdgeBrightness('inferred', 1e6)).toBeGreaterThan(0);
-  });
-
-  it('never lets an invented link outshine an observed one, at any length', () => {
-    // The measured floor. Our own links are 46–66 wu now that the belt rings
-    // the organism — squarely in the tail the law is written against — so the
-    // law would have made the one tier we can vouch for the faintest in the
-    // mesh. A measured link's brightness says OBSERVED, not SHORT.
-    for (const len of [1, 8, 24, 46, 66, 120, 198]) {
+describe('a link’s light is its tier’s, at every length ⟨ruling 25⟩', () => {
+  it('carries one number per tier, from the spacing to the longest chord', () => {
+    // The scaffold's own lengths (seed 0xc0ffee, 12 peers): min 2.5, median
+    // 11.3, p90 47, p99 154, max 198 wu. The round damped the tail by
+    // `clamp(8/len, .35, 1)` and the eye's answer was that the long chords went
+    // too dim to see — so the tail is flat again, and a chord is as legible as
+    // the k-NN links around it because it is the same claim about structure.
+    for (const len of [2.5, 8, 11.3, 16, 47, 154, 198]) {
+      expect(colonyEdgeBrightness('inferred', len)).toBe(INFERRED_LINE_BASE);
       expect(colonyEdgeBrightness('measured', len)).toBe(MEASURED_LINE_BRIGHT);
-      expect(colonyEdgeBrightness('measured', len))
-        .toBeGreaterThan(colonyEdgeBrightness('inferred', len));
     }
+    // The one thing a flat law must still be: an invented link never outshines
+    // an observed one.
     expect(MEASURED_LINE_BRIGHT).toBeGreaterThan(INFERRED_LINE_BASE);
+    // …and no length is special. The whole range in 1 wu steps, one value.
+    const seen = new Set<number>();
+    for (let len = 0; len <= 220; len += 1) seen.add(colonyEdgeBrightness('inferred', len));
+    expect([...seen]).toEqual([INFERRED_LINE_BASE]);
   });
 
-  it('weighs the DRAWN segment, which at a cohort is not the node distance', () => {
-    // A cohort-incident link is trimmed at COHORT_LINK_STOP_R, and the light
-    // it carries has to be a property of the segment that is actually there.
+  it('leaves no length term in the layer at all', () => {
+    // The rule and its sweep: a law removed from the function and left in the
+    // shipped source under another name is not removed. ⚠️ The prose above
+    // this deliberately spells the retired law in WORDS rather than in
+    // arithmetic, so this file's own comment cannot satisfy its own oracle —
+    // the self-reference trap, which this suite has been bitten by twice.
+    expect(LAYER).not.toContain('INFERRED_LENGTH_FLOOR');
+    expect(LAYER).not.toContain('INFERRED_LENGTH_REFERENCE_WU');
+    expect(LAYER).not.toMatch(/8(\.0)?\s*\/\s*len/i);
+    expect(LAYER).toContain('return kind === \'measured\' ? MEASURED_LINE_BRIGHT : INFERRED_LINE_BASE;');
+    // ⚠️ `aLen` STAYS: it is what the world-unit bands divide by, which is the
+    // half of the round's work the ruling keeps. So does the drawn-segment
+    // measurement, because a cohort-incident link is trimmed and its band has
+    // to be a property of the segment that is actually there.
     expect(LAYER).toContain('const dx = pos[6 * i + 3] - pos[6 * i];');
     expect(LAYER).toContain('const v = colonyEdgeBrightness(e.kind, drawn);');
     expect(LAYER).toContain("g.setAttribute('aLen', new THREE.BufferAttribute(len, 1));");
+    expect(LAYER).toContain('attribute float aLen;');
   });
 });
 
