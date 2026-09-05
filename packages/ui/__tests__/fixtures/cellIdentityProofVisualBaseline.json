@@ -4,10 +4,10 @@
     "gapPx": 4,
     "padding": "2px 5px 2px 6px",
     "glowRadiusPx": 12,
-    "codeFontSizePx": 7.4,
+    "codeFontSizePx": 8,
     "codeLetterSpacingPx": 1.05,
-    "separatorFontSizePx": 6.4,
-    "detailFontSizePx": 7.2,
+    "separatorFontSizePx": 7.5,
+    "detailFontSizePx": 7.5,
     "detailLetterSpacingPx": 0.45
   },
   "address": {

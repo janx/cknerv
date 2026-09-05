@@ -14,7 +14,7 @@ import {
 import { Html } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { HUD_COLORS, HUD_MOTION, rgba } from '../components/hud/hudTheme';
+import { HUD_COLORS, HUD_MOTION, HUD_TYPE, rgba } from '../components/hud/hudTheme';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { useReducedMotion } from '../components/hud/useReducedMotion';
 import {
@@ -1792,7 +1792,22 @@ export default function ConsensusRouteHopMarker({
                           boxShadow: `0 0 10px ${signatureShadow}`,
                           color: rgba(HUD_COLORS.cyanInk, 0.92),
                           fontFamily: '"JetBrains Mono Local", ui-monospace, monospace',
-                          fontSize: 6,
+                          // ⭐ THE CALLOUT'S TWO LINES ARE ONE RUNG NOW, and
+                          // the rung is the floor. They were 6 and 5.4 —
+                          // two sizes 0.6px apart, both under `micro`, under
+                          // an exemption that read a file's IMPORTS rather
+                          // than what its numbers were handed to. This is a
+                          // drei `Html` div: ink over the canvas, in the HUD's
+                          // own medium, so it takes the HUD's own floor.
+                          //
+                          // The hierarchy the 0.6px was carrying moves to the
+                          // ink, which is where it already was: the evidence
+                          // line under this one is `legendInk` at 0.72 against
+                          // this line's `cyanInk` at 0.92. That is the same
+                          // division D5c made on the alarm band — the reading
+                          // is the ink, the softening is the tone — and it is
+                          // the only one of the two that survives at 7.5px.
+                          fontSize: HUD_TYPE.micro,
                           lineHeight: 1.12,
                           letterSpacing: '0.08em',
                           whiteSpace: 'nowrap',
@@ -1809,7 +1824,7 @@ export default function ConsensusRouteHopMarker({
                           style={{
                             marginTop: 2,
                             color: rgba(HUD_COLORS.legendInk, 0.72),
-                            fontSize: 5.4,
+                            fontSize: HUD_TYPE.micro,
                             letterSpacing: '0.11em',
                           }}
                         >
@@ -1880,7 +1895,11 @@ export default function ConsensusRouteHopMarker({
             opacity: renderStrength,
             whiteSpace: 'nowrap',
             fontFamily: '"JetBrains Mono Local", ui-monospace, monospace',
-            fontSize: 6.4,
+            // The hop chip: `H04 · SHARED RECORD`, one line, at the floor.
+            // It hangs 39px under its marker on a `translate(-50%, …)`, so
+            // growing it widens the chip about its own centre and moves
+            // nothing else.
+            fontSize: HUD_TYPE.micro,
             letterSpacing: '0.12em',
             color,
             ...chipPulseStyle,

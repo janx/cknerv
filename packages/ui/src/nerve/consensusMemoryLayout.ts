@@ -1,4 +1,19 @@
-export const MEMORY_SOURCE_LABEL_GAP_PX = 38;
+/**
+ * The least two source chips may be apart before they are one heap.
+ *
+ * It is THE CHIP'S OWN HEIGHT, and that is the whole rule: the chips are
+ * centred on their anchors (`translate(…, -50%)`), so two anchors this far
+ * apart put two boxes exactly edge to edge. It was 38 while the chip measured
+ * 38.0 px tall, which read as a coincidence and was not one.
+ *
+ * F1 put the chip's type on the DOM ladder — the metadata line at `micro` and
+ * its Han companion at `label`, up from 7 — and re-measured the box in the
+ * live page with the app's own faces loaded: **38.0 → 42.0 px** tall (and
+ * 138.97 → 154.39 wide, which needs nothing here because the placer reads the
+ * measured width off the element). So the gap is 42, for the same reason it
+ * was 38.
+ */
+export const MEMORY_SOURCE_LABEL_GAP_PX = 42;
 export const MEMORY_SOURCE_LABEL_MAX_SHIFT_PX = 48;
 export const MEMORY_SOURCE_LABEL_RADIAL_SHIFT_PX = 28;
 export const MEMORY_LABEL_TOTAL_MAX_SHIFT_PX = 64;

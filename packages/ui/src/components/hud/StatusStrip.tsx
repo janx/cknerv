@@ -974,7 +974,13 @@ function StatusStrip({
       data-status-indicator
       style={{ display: 'flex', flexShrink: 0, alignItems: 'center', gap: dense ? 5 : 7, fontFamily: HUD_FONTS.tech, fontWeight: 700, fontSize: dense ? HUD_TYPE.tech : HUD_TYPE.label, letterSpacing: dense ? 0.9 : 1.6, color }}
     >
-      {!dense ? <span style={{ ...CJK_BASELINE_LIFT, fontFamily: HUD_FONTS.cjk, fontWeight: 400, color: HUD_COLORS.dim }}>状态</span> : null}
+      {/* It has ALWAYS rendered at `label`: the row above asks for `label`
+          whenever it is not dense, and 状态 is not drawn when it is. Stating
+          it changes no pixel and closes the gap the weight closed first — a
+          companion that says nothing is taking whatever an ancestor says, and
+          the dense branch of that very ternary says `tech`, which is under
+          the mincho floor. */}
+      {!dense ? <span style={{ ...CJK_BASELINE_LIFT, fontFamily: HUD_FONTS.cjk, fontWeight: 400, fontSize: HUD_TYPE.label, color: HUD_COLORS.dim }}>状态</span> : null}
       {/* The lamp is the constant across all six levels — it is what you find
         * in the corner of your eye. Only the word escalates. */}
       <span data-dot data-level={level} style={{ width: 6, height: 6, borderRadius: '50%', background: color, boxShadow: `0 0 8px ${color}` }} />

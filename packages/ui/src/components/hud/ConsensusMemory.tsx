@@ -54,7 +54,7 @@ import {
   makeConsensusMemoryKnotMaterial,
 } from '../../materials/consensusMemoryKnotMaterial';
 import { CELL_PORTRAIT_LABEL_PORTAL } from './cellPortraitInsetChannel';
-import { HUD_COLORS, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_TYPE, rgba } from './hudTheme';
 import CellSemanticMorphologyOverlay from './CellSemanticMorphologyOverlay';
 
 const TAU = CONSENSUS_BRAID_TAU;
@@ -1059,7 +1059,16 @@ export default function ConsensusMemory({
                   : `0 0 7px ${sourceColor}33`,
                 color: resolved ? HUD_COLORS.goldInk : HUD_COLORS.cyanInk,
                 fontFamily: '"JetBrains Mono Local", ui-monospace, monospace',
-                fontSize: 6.4,
+                // `01 ◇K01 ✓` at the DOM floor. It was 6.4 under the scene
+                // exemption, and this file is the one the exemption NAMED —
+                // but the knot labels are drei `Html` divs on a `stageGround`
+                // wash, not the additive points beside them, and the
+                // exemption is keyed on the construct now. Three glyph groups
+                // and a tick: at 7.5 the tag is about 6px wider inside a 280px
+                // square whose labels are placed at a signed offset from their
+                // knot, so the growth is spent away from the border C3 caught
+                // the morphology labels being cut on.
+                fontSize: HUD_TYPE.micro,
                 lineHeight: 1.1,
                 letterSpacing: 0.35,
                 opacity: 0,

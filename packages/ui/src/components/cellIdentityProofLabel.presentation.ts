@@ -5,6 +5,7 @@ import {
   cellIdentityProofLabelFrame,
   deriveCellIdentityProofLabelPlacement,
 } from '../derives/cellIdentityProofLabel.derive';
+import { HUD_TYPE } from './hud/hudTheme';
 import {
   frameDatasetBind,
   frameDatasetWrite,
@@ -16,15 +17,32 @@ import {
   type FrameDatasetLedger,
 } from '../nerve/frameDatasetLedger';
 
+/**
+ * ⭐ THE TAG'S THREE SIZES ARE TWO RUNGS OF THE DOM LADDER.
+ *
+ * They were 7.4 / 6.4 / 7.2 — three numbers, none of them on the scale, none
+ * of them more than a pixel apart, and one of them under the legibility floor.
+ * They lived under `hudTheme`'s exemption for "the in-scene label dialect",
+ * which was keyed on a file importing `three` and reasoned from ADDITIVE
+ * MATERIAL under a camera. This tag is a drei `Html` div: DOM, composited over
+ * the canvas, in the same medium as every panel. So it takes the ladder.
+ *
+ * `nav` over `micro` and not three flat: the code (WHERE / WHAT / WHEN, 700,
+ * letter-spaced) is the tag's NAME and the detail beside it is its evidence,
+ * which is the one distinction the three numbers were really making. The
+ * separator joins the detail rather than staying quietest of all, because
+ * there is nothing under `micro` to be quiet at — and it never needed a size
+ * for it: it is drawn in `dimColor` while both its neighbours are at full.
+ */
 export const CELL_IDENTITY_PROOF_LABEL_VISUAL_TOKENS = {
   zIndex: 4,
   gapPx: 4,
   padding: '2px 5px 2px 6px',
   glowRadiusPx: 12,
-  codeFontSizePx: 7.4,
+  codeFontSizePx: HUD_TYPE.nav,
   codeLetterSpacingPx: 1.05,
-  separatorFontSizePx: 6.4,
-  detailFontSizePx: 7.2,
+  separatorFontSizePx: HUD_TYPE.micro,
+  detailFontSizePx: HUD_TYPE.micro,
   detailLetterSpacingPx: 0.45,
 } as const;
 

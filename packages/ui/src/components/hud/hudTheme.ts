@@ -390,22 +390,40 @@ export const HUD_FONTS = {
  *  beside it (DAO's APC next to its deposit total, the alarm's 警告), and
  *  `emphasis` is a value lifted out of a stat row without leaving the row.
  *
- *  EXEMPT: the in-scene label dialect — the files that draw INSIDE the three.js
- *  canvas rather than in DOM overlay (`ConsensusMemory`,
- *  `CellSemanticMorphologyOverlay`, the portrait/artwork components). Those
- *  render at 6–6.4px under a camera, as ADDITIVE material with `toneMapped`
- *  off, laid on the near-black stage ground: light that accumulates, not ink
- *  composited onto a lit panel. A 6px mark there is a mark that is present
- *  rather than a word that is read, which is a different medium with a
- *  different legibility floor, and `hudDiscipline.test.ts` recognises them by
- *  their imports rather than by a hand-kept list.
+ *  ⭐ THE LADDER IS TOTAL, AND THE ONE EXEMPTION IS A CONSTRUCT.
  *
- *  This paragraph said "under a camera and a BLOOM PASS" for most of its life
- *  and there has never been a bloom pass in this application — no
- *  `EffectComposer`, no `postprocessing` dependency, no tone-mapped path. The
- *  exemption was right and the reason was invented, which is the worse of the
- *  two mistakes: this file is the design system's own record, and people have
- *  reasoned downstream from that sentence. The oracle checks the reason now. */
+ *  A size is exempt when it is handed to a MATERIAL: a troika `<Text
+ *  fontSize={0.12}>` is glyph GEOMETRY, its number is a distance in world
+ *  units, and checking it against a pixel ladder would be a category error.
+ *  Nothing in this package draws one today, so the exemption currently has no
+ *  occupant and every size written here is a DOM size on a rung.
+ *
+ *  This paragraph used to exempt "the in-scene label dialect" — the files that
+ *  IMPORT `three` — on the grounds that they draw additive material under a
+ *  camera, so a 6px mark there is a mark that is present rather than a word
+ *  that is read. Every clause of that is true of a mesh and false of the thing
+ *  it exempted: those labels are drei `Html`, which mounts a plain `<div>` in
+ *  a DOM layer over the canvas and positions it from a projected point. They
+ *  are INK — composited onto whatever is behind them, rasterised by the
+ *  browser like every panel — and they sat at 5.4–8px on a `stageGround` wash
+ *  with Han at 7 (report B, B-11; report F, F-11). A file's imports say where
+ *  its module lives, not what its numbers are given to.
+ *
+ *  Before that the same paragraph said "under a camera and a BLOOM PASS", and
+ *  there has never been a bloom pass in this application — no
+ *  `EffectComposer`, no `postprocessing` dependency, no tone-mapped path. Two
+ *  wrong reasons for one exemption, in one paragraph's life: this file is the
+ *  design system's own record and people reason downstream from it, so the
+ *  oracle checks the premise now — that nothing draws material text, and that
+ *  every scene label is `Html`.
+ *
+ *  ⚠️ HAN HAS A FLOOR OF ITS OWN, ONE RUNG UP: `label` (9). `micro` is where
+ *  Chakra and Share Tech stop resolving their counters; a mincho glyph carries
+ *  several times their stroke count in the same em. `CellByteBudget` argues it
+ *  at length and `StatusStrip`'s 状态 has always sat there. Every object that
+ *  names `HUD_FONTS.cjk` states its own size and its own 400 weight — Huiwen
+ *  registers no weight and inherits whatever an ancestor said, which is how a
+ *  companion ended up synthesised bold once already. */
 export const HUD_TYPE = {
   hero: 22,
   heroSub: 19,

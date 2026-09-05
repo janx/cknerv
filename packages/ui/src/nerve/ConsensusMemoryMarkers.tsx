@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, type RefObject } from 'react';
 import { Html } from '@react-three/drei';
 import type { Cell } from '@cknerv/types';
-import { HUD_COLORS, HUD_FONTS } from '../components/hud/hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE } from '../components/hud/hudTheme';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { useSimFrame } from '../tweaks/useSimFrame';
@@ -753,15 +753,50 @@ export default function ConsensusMemoryMarkers({
                   transform: source ? undefined : 'translate(18px, 42px)',
                 }}
               >
-                <div style={{ fontSize: 8, letterSpacing: '0.15em', color }}>
+                {/* ⭐ THIS CHIP IS DOM, AND IT ANSWERS TO THE DOM LADDER.
+                  * Every line of it was a size of its own — 8 / 7 / 7 / 6.8 —
+                  * under an exemption `hudTheme` granted to "the in-scene
+                  * label dialect" on the grounds that a scene mark is
+                  * ADDITIVE MATERIAL under a camera. It is not: drei `Html`
+                  * mounts a plain div in a DOM layer over the canvas, and
+                  * these are ink on a `stageGround` wash — the HUD's own
+                  * medium, at two rungs under the HUD's own floor. The
+                  * exemption is now keyed on the CONSTRUCT (a troika `<Text>`
+                  * is glyph geometry and its number is a world-unit distance),
+                  * which leaves nothing here exempt.
+                  *
+                  * The headline was already ON a rung — `nav` — and it keeps
+                  * its place one rung over the metadata under it, so the
+                  * chip's hierarchy is the hierarchy it had. */}
+                <div style={{ fontSize: HUD_TYPE.nav, letterSpacing: '0.15em', color }}>
                   {copy.headline}{sourceOrdinal}
                 </div>
                 <div
                   ref={(node) => { metadataRefs.current[index] = node; }}
                   data-memory-label-metadata="true"
-                  style={{ marginTop: 2, fontSize: 7, letterSpacing: '0.09em', color: HUD_COLORS.dim }}
+                  style={{ marginTop: 2, fontSize: HUD_TYPE.micro, letterSpacing: '0.09em', color: HUD_COLORS.dim }}
                 >
-                  <span style={{ fontFamily: HUD_FONTS.cjk }}>{copy.cjk}</span>
+                  {/* ⭐⭐ AND THE HAN IS A RUNG HIGHER STILL, at 9.
+                    * `micro` is the LATIN floor — where Chakra and Share Tech
+                    * stop resolving their counters. A mincho glyph carries
+                    * several times their stroke count in the same em, and
+                    * `CellByteBudget` states the consequence: nothing in the
+                    * HUD renders Han below `label`. These three companions
+                    * were at SEVEN, which is not a quieter version of the
+                    * word, it is the word with its strokes filled in.
+                    *
+                    * It sits a rung ABOVE the Latin beside it, which is the
+                    * arrangement `CellByteBudget` already ships (字节元 at
+                    * `label` next to CKBYTE at `micro`) and `WarningBar` ships
+                    * one octave up (警告 at `heroSub` over a `panelTitle`
+                    * chip): a companion is a NAME, and a name is allowed to be
+                    * the loudest thing on a line that qualifies it.
+                    *
+                    * `fontWeight: 400` for the reason every other companion
+                    * states it: Huiwen registers no weight at all, so silence
+                    * here means "whatever an ancestor said", and an ancestor
+                    * said 600 once already (D5b). */}
+                  <span style={{ fontFamily: HUD_FONTS.cjk, fontWeight: 400, fontSize: HUD_TYPE.label }}>{copy.cjk}</span>
                   {!source ? ` · ${String(focus.routedSourceCount).padStart(2, '0')} ${evidenceNoun}` : ''}
                   {source ? (
                     <span
@@ -776,7 +811,7 @@ export default function ConsensusMemoryMarkers({
                   <div
                     ref={(node) => { targetContentRefs.current[index] = node; }}
                     data-memory-label-target-content="true"
-                    style={{ marginTop: 2, fontSize: 7, letterSpacing: '0.11em', color: HUD_COLORS.moduleSlate }}
+                    style={{ marginTop: 2, fontSize: HUD_TYPE.micro, letterSpacing: '0.11em', color: HUD_COLORS.moduleSlate }}
                   >
                     CONTENT {shortContentHash(cell)}
                   </div>
@@ -784,7 +819,7 @@ export default function ConsensusMemoryMarkers({
                 {source && evidenceFocusState === 'active' && route && routeDurationMs !== null ? (
                   <div
                     data-memory-route-proof="true"
-                    style={{ marginTop: 2, fontSize: 6.8, letterSpacing: '0.09em', color }}
+                    style={{ marginTop: 2, fontSize: HUD_TYPE.micro, letterSpacing: '0.09em', color }}
                   >
                     CELL #{route.path[0]} · H{String(route.hopCount).padStart(2, '0')} · {routeDurationReadout(routeDurationMs)}
                   </div>

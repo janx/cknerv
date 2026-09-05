@@ -3248,31 +3248,61 @@ describe('one directory, two dialects', () => {
 // the whole DOM overlay, and this is the oracle that keeps it that way — every
 // size a DOM-dialect file renders has to be one of the declared rungs.
 //
-// The exemption is PROGRAMMATIC on purpose. A file that imports from `three` or
-// `@react-three/*` is drawing inside the canvas, under a camera, as additive
-// material with `toneMapped` off on the near-black stage ground — light that
-// accumulates rather than ink composited onto a lit panel, which is a different
-// medium with a different legibility floor, and where 6.4px is a marker rather
-// than a caption. Deciding that by imports rather than by a hand-kept filename
-// list means the rule maintains itself: a new in-scene overlay is exempt the
-// day it is written, and a scene file that stops importing three has stopped
-// being scene dialect and starts being checked.
+// ⭐⭐⭐ THE EXEMPTION WAS KEYED ON THE WRONG THING, AND IT WAS THE FILE.
 //
-// It said "under a camera and a BLOOM PASS", in three places across two files,
-// and there is no bloom pass in this application: no `EffectComposer`, no
-// `postprocessing` dependency, no tone-mapped path. The exemption is correct
-// and the stated reason was fiction — which is the more expensive kind of
-// error, because an exemption's reason is what the next person reasons from
-// when they decide whether their file qualifies. Somebody reading "bloom pass"
-// would conclude the scene is post-processed and that a colour handed to it
-// will be brightened on the way out; it will not be. So the reason is now the
-// medium the scene actually is, and the assertion under it checks the claim
-// rather than repeating it.
+// It read: a file that imports from `three` or `@react-three/*` is drawing
+// inside the canvas, as additive material with `toneMapped` off on the
+// near-black stage ground — light that accumulates rather than ink composited
+// onto a lit panel — so 6.4px there is a marker rather than a caption.
+//
+// Every clause of that is true of a MESH and false of the thing it exempted.
+// A file's imports say where its module lives, not what its numbers are handed
+// to, and the numbers in question were handed to drei `Html` — which mounts a
+// plain `<div>` in a DOM layer over the canvas and positions it from a
+// projected point. Those labels are ink. They composite onto whatever is
+// behind them, they resolve their counters in the browser's own rasteriser,
+// and they were sitting at 5.4–8px on a `stageGround` wash: the HUD's own
+// medium, as much as two rungs under the HUD's own floor, with 7px Han among
+// them against a stated 9px mincho floor (report B, B-11; report F, F-11).
+//
+// So the exemption is keyed on the CONSTRUCT the size is given to. A troika
+// `<Text fontSize={0.12}>` is glyph GEOMETRY — its number is a distance in
+// world units, it has no relationship to a pixel ladder, and checking it
+// against one would be a category error. That is the exemption, and today it
+// has NO OCCUPANT: this package draws no material text at all, so every type
+// size it writes is a DOM type size and the ladder is total. The pin below
+// says so, and it is what turns the exemption back on the day a mesh label is
+// written.
+//
+// The old reason said "under a camera and a BLOOM PASS", in three places
+// across two files, and there is no bloom pass in this application: no
+// `EffectComposer`, no `postprocessing` dependency, no tone-mapped path. That
+// half of the correction landed on 2026-09-04 and the assertion for it stays —
+// an exemption's reason is what the next person reasons from, and this one has
+// now been wrong twice in two different ways.
 
+/** Files that import `three` or `@react-three/*` — the jurisdiction the COLOUR,
+ *  motion and alpha chapters carve out, where a value may be a material's
+ *  rather than an element's. It is NOT the type ladder's exemption any more:
+ *  see the chapter above. */
 const SCENE_DIALECT = /from '(three|@react-three\/[a-z-]+)'/;
 
-/** The React style prop — the way most of the HUD writes a size down. */
-const FONT_SIZE_PROP = /fontSize:\s*(\d+(?:\.\d+)?)/g;
+/** The one construct whose `fontSize` is not a DOM type size: troika text,
+ *  drawn as geometry, measured in world units. */
+const MATERIAL_TYPE_SITE = /<Text[\s/>]/;
+
+/** One style object that puts the mincho face on, allowing a `${…}` inside it.
+ *  ⚠️ The `[^{}]*` version of this — which two older companion oracles still
+ *  use — cannot see `WarningBar`'s 警告, because its `textShadow` interpolates.
+ *  A regex that silently skips a wearer is the same defect as an allowlist. */
+const CJK_STYLE_OBJECT = /\{(?:[^{}]|\$\{[^{}]*\})*HUD_FONTS\.cjk(?:[^{}]|\$\{[^{}]*\})*\}/g;
+
+/** The React style prop — the way most of the HUD writes a size down, in the
+ *  three forms it gets written in: a bare number, a quoted length, and a named
+ *  token on a visual-tokens object (`codeFontSizePx: 7.4`). The last two both
+ *  hid sizes from this oracle for as long as it only read the first: a scene
+ *  label's `'8px'` and a proof tag's three `…FontSizePx` constants. */
+const FONT_SIZE_PROP = /\b\w*[Ff]ontSize(?:Px)?:\s*'?(\d+(?:\.\d+)?)(?:px)?'?/g;
 
 /** …and the CSS `font:` shorthand the top bar's controls use to carry a line
  *  height along with their size. Missing this form is how four 8.5px controls
@@ -3290,8 +3320,27 @@ const SHORTHAND_FIRST_LENGTH = /(\d+(?:\.\d+)?)px/;
 
 const DECLARED_SIZES: ReadonlySet<number> = new Set(Object.values(HUD_TYPE));
 
+/** The HUD directory minus the files that draw GL — the jurisdiction of every
+ *  chapter that asks about a COLOUR, a duration or an alpha, where a value in
+ *  a scene file may legitimately be a material's. The type ladder does not use
+ *  it: a type size is checked by what it is handed to, not by where it lives. */
 function domDialect(): HudSource[] {
   return SOURCES.filter((source) => !SCENE_DIALECT.test(source.text));
+}
+
+/** Everywhere in this package that writes a DOM type size — which, the
+ *  exemption being empty, is everywhere it writes one at all. `hudTheme.ts` is
+ *  out because it DECLARES the ladder; a rung is not a use of a rung. */
+function typeLadderSources(): HudSource[] {
+  // ⚠️ Read as CODE. The first version of this tested the raw text and
+  // excluded `ConsensusMemoryMarkers.tsx` from its own rule, because the
+  // comment in that file ARGUING the narrowing quotes `<Text>`. That is the
+  // self-reference trap this suite has been bitten by before, in the other
+  // direction: a source oracle that reads prose is reading the wrong document.
+  return PACKAGE_SOURCES.filter(
+    (source) => !source.name.endsWith(PALETTE_SOURCE)
+      && !MATERIAL_TYPE_SITE.test(code(source.text)),
+  );
 }
 
 function sizesIn(text: string): number[] {
@@ -3319,41 +3368,66 @@ function sizesIn(text: string): number[] {
 }
 
 describe('one type scale', () => {
-  it('sorts the HUD into dialects, and finds both of them', () => {
-    // The pin again: if the scene filter ever matched everything, the
-    // membership assertion below would be checking an empty list.
+  it('sorts the package into dialects, and finds both of them', () => {
+    // The pin again: if the scene filter ever matched everything, the colour
+    // chapters below would be checking an empty list.
     const dom = domDialect();
     const scene = SOURCES.filter((source) => SCENE_DIALECT.test(source.text));
     expect(dom.length).toBeGreaterThan(30);
     expect(scene.length).toBeGreaterThan(0);
     expect(scene.map((source) => source.name)).toContain('ConsensusMemory.tsx');
+
+    // …and the TYPE jurisdiction, which is the whole package, REACHES the
+    // three kinds of file the old import-keyed exemption hid: scene labels
+    // under `nerve/`, a marker under `components/`, and a visual-tokens object
+    // that is not a component at all.
+    const reach = typeLadderSources().map((source) => source.name);
+    expect(reach.length).toBeGreaterThan(200);
+    expect(reach).toEqual(expect.arrayContaining([
+      'nerve/ConsensusMemoryMarkers.tsx',
+      'nerve/ConsensusRouteHopMarker.tsx',
+      'components/CellIdentityProofLabel.tsx',
+      'components/cellIdentityProofLabel.presentation.ts',
+      'components/CellGalaxy.tsx',
+      'components/hud/ConsensusMemory.tsx',
+    ]));
   });
 
-  it('the reason the scene dialect is exempt is a fact, not a story', () => {
-    // A comment cannot be tested and a PREMISE can. The exemption above rests
-    // on the claim that the scene is a different medium; the version of that
-    // claim which shipped named a bloom pass, and this repository has never had
-    // one. Read as CODE, because two comments now say the word `bloom` in the
-    // course of saying it is not there.
+  it('the exemption is a construct, and it has no occupant', () => {
+    // A comment cannot be tested and a PREMISE can. The exemption is for a size
+    // handed to a MESH — troika's `<Text>`, whose number is a world-unit
+    // distance. Nothing in this package draws one, which is why the ladder is
+    // total; the day something does, this goes red and the exemption starts
+    // meaning something again instead of being asserted into existence.
+    const meshes = [...PACKAGE_SOURCES, ...APP_SOURCES]
+      .filter((source) => MATERIAL_TYPE_SITE.test(code(source.text)))
+      .map((source) => `${source.name} draws material text — the exemption now has an occupant, check its sizes are world units`);
+    expect(meshes).toEqual([]);
+
+    // Every scene label in this package is drei `Html`, and drei `Html` is a
+    // `<div>` in a DOM layer over the canvas. That is the finding the
+    // narrowing rests on, and it is read off the files rather than asserted.
+    for (const name of [
+      'nerve/ConsensusMemoryMarkers.tsx',
+      'nerve/ConsensusRouteHopMarker.tsx',
+      'components/CellIdentityProofLabel.tsx',
+      'components/hud/ConsensusMemory.tsx',
+    ]) {
+      const scene = PACKAGE_SOURCES.find((source) => source.name === name);
+      expect(scene, `${name} moved — this oracle reads files off disk`).toBeDefined();
+      expect(code(scene?.text ?? ''), `${name} no longer draws its labels as DOM`)
+        .toMatch(/import \{[^}]*\bHtml\b[^}]*\} from '@react-three\/drei'/);
+    }
+
+    // The other half of the reason, which was fiction until 2026-09-04 and is
+    // still worth checking: there is no post pass, so nothing handed to the
+    // scene is brightened on the way out. Read as CODE, because two comments
+    // now say the word `bloom` in the course of saying it is not there.
     const composed = [...PACKAGE_SOURCES, ...APP_SOURCES]
       .filter((source) => /EffectComposer|from '(?:@react-three\/)?postprocessing'/
         .test(code(source.text)))
       .map((source) => `${source.name} composes a post pass — the exemption's reason needs rewriting`);
     expect(composed).toEqual([]);
-
-    // …and what IS true of it, asked of the two files the exemption names. A
-    // scene label is additive light on the stage ground with tone mapping off,
-    // which is the whole of why 6.4px is legible there and would not be on a
-    // panel. If that stops being true the exemption has to be re-argued, and
-    // this is what says so.
-    for (const name of ['ConsensusMemory.tsx', 'CellSemanticMorphologyOverlay.tsx']) {
-      const scene = SOURCES.find((source) => source.name === name);
-      expect(scene, `${name} moved — this oracle reads files off disk`).toBeDefined();
-      const text = code(scene?.text ?? '');
-      expect(text, `${name} is no longer additive`).toContain('AdditiveBlending');
-      expect(text, `${name} is no longer untonemapped`).toMatch(/toneMapped[:=]\s*\{?false/);
-      expect(SCENE_DIALECT.test(scene?.text ?? '')).toBe(true);
-    }
   });
 
   it('the scale is a ladder — every rung distinct, micro at the floor', () => {
@@ -3363,27 +3437,74 @@ describe('one type scale', () => {
     expect(HUD_TYPE.micro).toBe(7.5);
   });
 
-  it('every DOM-dialect size is a declared rung', () => {
+  it('every DOM size in the package is a declared rung', () => {
     const offenders: string[] = [];
-    for (const source of domDialect()) {
-      for (const size of sizesIn(source.text)) {
+    let sizes = 0;
+    for (const source of typeLadderSources()) {
+      for (const size of sizesIn(code(source.text))) {
+        sizes += 1;
         if (DECLARED_SIZES.has(size)) continue;
         offenders.push(`${source.name}: ${size}px is not a rung of HUD_TYPE`);
       }
     }
 
     expect(offenders).toEqual([]);
+
+    // ⚠️ THE PIN CANNOT BE A COUNT HERE, and it is worth saying why: after the
+    // sweep almost every size in the package is written `HUD_TYPE.x`, which
+    // yields NO literal to check — that is the point of writing it that way,
+    // and a healthy package therefore reads close to zero literals. So the pin
+    // is on the MATCHER instead, against the three forms a size gets written
+    // in. Two of the three were invisible to this oracle until F1: a scene
+    // label's quoted `'8px'` and a proof tag's `…FontSizePx` constants.
+    expect(sizes).toBeGreaterThanOrEqual(1);
+    expect(sizesIn("fontSize: 6.4, font: `400 8.5px/20px x`, fontSize: '8px', codeFontSizePx: 7.4"))
+      .toEqual([6.4, 8, 7.4, 8.5]);
   });
 
-  it('nothing in the DOM overlay is written below the legibility floor', () => {
+  it('nothing anywhere in this package is written below the legibility floor', () => {
     // Stated separately from membership because it is a different promise. A
     // future rung could be added below 7.5 and pass the test above; this one
     // says that would itself be the mistake.
-    const belowFloor = domDialect().flatMap((source) => sizesIn(source.text)
+    const belowFloor = typeLadderSources().flatMap((source) => sizesIn(code(source.text))
       .filter((size) => size < HUD_TYPE.micro)
       .map((size) => `${source.name}: ${size}px`));
 
     expect(belowFloor).toEqual([]);
+  });
+
+  // ——— And the floor Han is held to, which is a rung higher ————————————
+  //
+  // `micro` is the LATIN floor: Chakra and Share Tech stop resolving their
+  // counters below 7.5. A mincho glyph carries several times their stroke
+  // count in the same em, so `CellByteBudget` states 9 (`label`) for it and
+  // `StatusStrip`'s 状态 has always sat there. That was a paragraph in one
+  // file and a habit in eight others, and the three scene companions two
+  // directories away were at SEVEN.
+  //
+  // The rule is the one D5b arrived at for the same face one axis over: a
+  // companion DECLARES. Saying nothing is not "inherit something reasonable",
+  // it is "take whatever an ancestor happens to say", and what an ancestor
+  // happens to say has changed under this face once already.
+  it('a companion states its own size, and it is at or above the mincho floor', () => {
+    const offenders: string[] = [];
+    let companions = 0;
+    for (const source of PACKAGE_SOURCES) {
+      for (const object of code(source.text).matchAll(CJK_STYLE_OBJECT)) {
+        companions += 1;
+        const size = /fontSize:\s*HUD_TYPE\.(\w+)/.exec(object[0]);
+        if (size === null) {
+          offenders.push(`${source.name}: a companion that does not state its own fontSize`);
+          continue;
+        }
+        const px = HUD_TYPE[size[1] as keyof typeof HUD_TYPE];
+        if (px >= HUD_TYPE.label) continue;
+        offenders.push(`${source.name}: Han at ${px}px — the mincho floor is ${HUD_TYPE.label}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+    expect(companions, 'no companion found — did HUD_FONTS.cjk move?')
+      .toBeGreaterThanOrEqual(10);
   });
 });
 

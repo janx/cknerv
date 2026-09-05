@@ -144,7 +144,7 @@ import { markPopulatedBufferUpdate } from '../geometry/populatedBufferAttribute'
 import CellPopulationField from './CellPopulationField';
 
 import { CHAIN_ANCHOR_HEX, SCENE_ACCENT_PALETTE } from '../visualPalette';
-import { HUD_COLORS, HUD_MOTION, rgba } from './hud/hudTheme';
+import { HUD_COLORS, HUD_MOTION, HUD_TYPE, rgba } from './hud/hudTheme';
 // Pre-parsed rest halo: the anchor frame loop re-asserts uColor every frame,
 // and THREE's CSS-string parse is measurable at that rate.
 const CHAIN_ANCHOR_HALO_COLOR = new THREE.Color(CHAIN_ANCHOR_HEX.halo);
@@ -806,7 +806,10 @@ function CkbNodeAnchor({
           style={{
             color: presentation.labelColor,
             opacity: presentation.labelOpacity,
-            fontSize: '8px',
+            // Already on a rung (`nav`); typed as a string, which is how it
+            // stayed invisible to the ladder's oracle for as long as that
+            // oracle read one of the three forms a size gets written in.
+            fontSize: HUD_TYPE.nav,
             fontWeight: selected ? 500 : 400,
             letterSpacing: '0.24em',
             fontFamily:
