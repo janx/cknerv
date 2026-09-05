@@ -217,6 +217,15 @@ export function buildNeighborGraph(
   // must contribute NO adjacency and NO edges: death retracts a cell's
   // fibres, and a later reconciliation rebuild must not resurrect them.
   const cellArr = [...cells.values()].filter((c) => c.death_at_ms == null);
+  // Build in id order, not Map-insertion order. The k-NN adjacency is already
+  // order-invariant (top-k ranks by (dSq, id)), but the render-priority BFS
+  // skeleton's root pick, the lifeline/component-stitch tie-breaks, and the
+  // output adjacency Map all otherwise inherit the caller's insertion order.
+  // Sorting the working list once makes the whole build a pure function of the
+  // cell SET, so a full-pack rebuild and a delta-patched worker session grow
+  // the SAME tree over the same cells — a topology supersession then applies as
+  // a small diff instead of flushing the whole fabric.
+  cellArr.sort((a, b) => a.id - b.id);
   const n = cellArr.length;
   if (n === 0) return emptyNeighborGraph();
   if (n === 1) {

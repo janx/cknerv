@@ -287,6 +287,56 @@ describe('buildNeighborGraph', () => {
     }
     expect(g.adjacency.size).toBe(cells.size);
   });
+
+  it('builds an id-order tree: skeleton, edge sequence and arbor weights are Map-order-invariant', () => {
+    // T3: the render-priority BFS skeleton's root pick and the lifeline/stitch
+    // tie-breaks had to become a pure function of the cell SET, not of Map
+    // insertion order. Otherwise a full-pack rebuild and a delta-patched worker
+    // session grow different trees over the same cells, and a topology
+    // supersession flushes the whole fabric instead of applying a small diff.
+    // The edge-SET test above already held (the SET is order-free regardless);
+    // this pins the stronger property the fabric upload actually depends on: the
+    // skeleton PARTITION, the ordered edge list, the chord distances and the
+    // arbor weights are identical across two Map orders.
+    // Falsify: drop the `cellArr.sort` -> the BFS roots differ -> these diverge.
+    const made = Array.from({ length: 48 }, (_, i) =>
+      mkCell(i + 1, Math.cos(i * 1.3) * 9, (i % 4) * 0.6, Math.sin(i * 1.3) * 9),
+    );
+    const rng = mulberry32(0xc0ffee);
+    const perm = [...made];
+    for (let i = perm.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [perm[i], perm[j]] = [perm[j], perm[i]];
+    }
+    const forward = new Map<number, Cell>();
+    for (const c of made) forward.set(c.id, c);
+    const shuffled = new Map<number, Cell>();
+    for (const c of perm) shuffled.set(c.id, c);
+    // The permutation must actually move the first cell, or the BFS root would
+    // coincide by luck and there would be nothing for the sort to fix.
+    expect([...shuffled.keys()][0]).not.toBe([...forward.keys()][0]);
+
+    const gf = buildNeighborGraph(forward, DEFAULT_K);
+    const gs = buildNeighborGraph(shuffled, DEFAULT_K);
+
+    // Adjacency: same node set, same neighbour set per node (content, not order).
+    expect(new Set(gf.adjacency.keys())).toEqual(new Set(gs.adjacency.keys()));
+    const sortNums = (set: ReadonlySet<number>) => [...set].sort((a, b) => a - b);
+    for (const id of gf.adjacency.keys()) {
+      expect(sortNums(gf.adjacency.get(id)!)).toEqual(sortNums(gs.adjacency.get(id)!));
+    }
+
+    // Skeleton PARTITION: the spanning prefix must be the same edge SET — this
+    // genuinely changes with the BFS root on a cyclic k-NN graph.
+    const skeletonKeys = (g: ReturnType<typeof buildNeighborGraph>) =>
+      new Set(g.edges.slice(0, forward.size - 1).map((e) => `${e.from}:${e.to}`));
+    expect(skeletonKeys(gf)).toEqual(skeletonKeys(gs));
+
+    // Full ordered edge list, including chord distance and arbor weight.
+    const seq = (g: ReturnType<typeof buildNeighborGraph>) =>
+      g.edges.map((e) => `${e.from}:${e.to}:${e.d}:${e.w ?? 'x'}`);
+    expect(seq(gf)).toEqual(seq(gs));
+  });
 });
 
 /** Deterministic PRNG so the dense-field fixtures below are reproducible. */

@@ -189,8 +189,18 @@ export function unpackTopologyCells(
   if (packed.length % PACKED_TOPOLOGY_CELL_STRIDE !== 0) {
     throw new Error('invalid packed topology Cell buffer');
   }
+  // Yield the Map in id order so a full-pack request's source Map is canonical.
+  // A delta session accumulates its own Map in arrival order; buildNeighborGraph
+  // now sorts its working list either way, so this is belt-and-suspenders that
+  // keeps the source Map itself id-ordered for any direct reader (adjacency
+  // serialization, debug dumps) and matches what a sorted delta session sees.
+  const stride = PACKED_TOPOLOGY_CELL_STRIDE;
+  const order = Array.from({ length: packed.length / stride }, (_, i) => i).sort(
+    (a, b) => packed[a * stride] - packed[b * stride],
+  );
   const cells = new Map<number, NeighborGraphCell>();
-  for (let offset = 0; offset < packed.length; offset += PACKED_TOPOLOGY_CELL_STRIDE) {
+  for (const i of order) {
+    const offset = i * stride;
     const id = packed[offset];
     cells.set(id, {
       id,
