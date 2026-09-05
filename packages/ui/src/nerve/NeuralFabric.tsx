@@ -144,7 +144,10 @@ import {
   consensusMemoryApertureAnimating,
   consensusMemoryApertureBounds,
   consensusMemoryApertureScale,
+  consensusMemoryApertureScaleFromSpatialTerms,
+  consensusMemoryApertureSpatialTermsInto,
   type ConsensusMemoryAperture,
+  type ConsensusMemoryApertureSpatialTerm,
 } from './consensusMemoryAperture';
 import {
   RecallApertureIndex,
@@ -1484,99 +1487,77 @@ export default function NeuralFabric({
     const apertureDirtySlots: number[] = [];
     const apertureDimmedNow: number[] = [];
     const apertureCandidates: RecallApertureIndexEntry[] = [];
-    const apertureCandidateSlots = new Set<number>();
     const apertureUnionBounds: RecallApertureQueryBounds = {
       minX: 0,
       maxX: 0,
       minZ: 0,
       maxZ: 0,
     };
-    /** Sample and write one indexed slot. Defined once per handle lifetime so
-     * the animation path does not allocate a closure per frame. */
-    const bakeApertureSlot = (
-      entry: RecallApertureIndexEntry,
-      reaches: boolean,
-      recallAperture: RecallApertureState,
-      now: number,
-      dimmedSlots: ReadonlySet<number>,
-    ): void => {
-      const { key, slot } = entry;
-      // Slot ownership changes only on event paths, which maintain the index
-      // synchronously. Keep this guard nevertheless: a stale candidate must
-      // never write a recycled edge's record.
-      if (slotByKeyRef.current.get(key) !== slot) return;
-      const st = edgeStatesRef.current.get(key);
-      if (!st) return;
-      const baseSegment = slot * FABRIC_SLOT_SEGMENTS;
-      const wasDimmed = dimmedSlots.has(slot);
-      let prevScale = reaches
-        ? recallApertureScaleAt(recallAperture, st.fromX, st.fromZ, 0, now)
-        : 1;
-      let dimmed = prevScale < 1;
-      for (let seg = 0; seg < FABRIC_SLOT_SEGMENTS; seg += 1) {
-        let endScale = 1;
-        if (reaches) {
-          bezierAtInto(
-            sample,
-            st.fromX, st.fromY, st.fromZ,
-            st.ctrlX, st.ctrlY, st.ctrlZ,
-            st.toX, st.toY, st.toZ,
-            (seg + 1) / FABRIC_SLOT_SEGMENTS,
-          );
-          endScale = recallApertureScaleAt(
-            recallAperture, sample[0], sample[2], 0, now,
-          );
-          if (endScale < 1) dimmed = true;
-        }
-        const offset = (baseSegment + seg) * FABRIC_LIFE_COLOR_STRIDE;
-        lifecycleArrays.color[
-          offset + FABRIC_LIFE_APERTURE_START_OFFSET
-        ] = prevScale;
-        lifecycleArrays.color[
-          offset + FABRIC_LIFE_APERTURE_END_OFFSET
-        ] = endScale;
-        prevScale = endScale;
-      }
-      if (dimmed) apertureDimmedNow.push(slot);
-      // A reached slot that came out flat, and was flat before, wrote the
-      // baseline over the baseline — no upload owed.
-      if (dimmed || wasDimmed) apertureDirtySlots.push(slot);
+    // ——— Recall aperture: the spatial half, baked once (T8) ———
+    // For a fixed aperture identity + slot layout, each near-route (slot,
+    // sample) pair's bucket membership, projected t and spatial falloff are
+    // invariant across the whole recall; only the temporal envelope moves under
+    // the trace clock. So bake the spatial half into `apertureBake` and, per
+    // frame, evaluate only the temporal half over the near-route slots — no
+    // per-frame index query, Bezier walk or spatial hash, and only those slots'
+    // lanes are written. `EMPTY_TERMS` stands in for a sample that reaches a
+    // field's box but no segment, so the frame path allocates nothing.
+    const EMPTY_TERMS: readonly ConsensusMemoryApertureSpatialTerm[] = [];
+    interface ApertureBakedSample {
+      active: readonly ConsensusMemoryApertureSpatialTerm[];
+      departing: readonly ConsensusMemoryApertureSpatialTerm[];
+    }
+    interface ApertureBakedSlot {
+      slot: number;
+      key: string;
+      baseSegment: number;
+      /** FABRIC_SLOT_SEGMENTS + 1 samples: the from-point, then each end. */
+      samples: ApertureBakedSample[];
+    }
+    const apertureBake = {
+      active: null as ConsensusMemoryAperture | null,
+      departing: null as ConsensusMemoryAperture | null,
+      revision: -1,
+      built: false,
+      slots: [] as ApertureBakedSlot[],
+      bySlot: new Map<number, ApertureBakedSlot>(),
     };
-    /** Re-bake the current aperture through the spatial index. A normal
-     * incremental frame restores slots dimmed by the previous bake; a full
-     * walk passes `restorePrevious=false` because its static-record rewrite
-     * has already reset every surviving lane to the 1.0 baseline and numeric
-     * slots may now belong to different edges. */
-    const bakeIndexedAperture = (
-      recallAperture: RecallApertureState,
-      now: number,
-      activeDimming: boolean,
-      departingDimming: boolean,
-      restorePrevious: boolean,
-    ): void => {
-      const dimmedSlots = apertureDimmedSlotsRef.current;
-      if (!restorePrevious) dimmedSlots.clear();
-      apertureDirtySlots.length = 0;
-      apertureDimmedNow.length = 0;
-      apertureCandidateSlots.clear();
+    /** Rebuild the spatial half for the current aperture identity + slot
+     * layout. Runs only on a focus switch or a slot churn (admit / kill /
+     * recycle / full walk all bump the index revision), never on a plain
+     * animation frame. Costs one index query plus the spatial terms of the
+     * near-route slots — the same order as one old per-frame bake, paid once
+     * for the whole recall instead of every frame. */
+    const buildApertureBake = (recallAperture: RecallApertureState): void => {
+      apertureBake.active = recallAperture.active;
+      apertureBake.departing = recallAperture.departing;
+      apertureBake.revision = apertureIndex.revision;
+      apertureBake.built = true;
+      apertureBake.slots.length = 0;
+      apertureBake.bySlot.clear();
 
-      // The dim is a bounded disc around one route inside a field ~4× wider,
-      // so query the live fields' union rather than scanning passive edges.
+      const activeField = recallAperture.active;
+      const departingField = recallAperture.departing;
+      const separateDeparting = departingField !== null
+        && departingField !== activeField;
+
+      // Every slot either field could EVER reach: the union of both fields'
+      // whole spatial reach (segment extent dilated by the outer radius),
+      // independent of the trace clock. A slot inside a field's box but never
+      // within the outer radius of a segment falls out below (no terms).
       let boxMinX = Infinity;
       let boxMaxX = -Infinity;
       let boxMinZ = Infinity;
       let boxMaxZ = -Infinity;
-      const activeBounds = activeDimming
-        ? consensusMemoryApertureBounds(recallAperture.active)
-        : null;
+      const activeBounds = consensusMemoryApertureBounds(activeField);
       if (activeBounds) {
         boxMinX = activeBounds.minX;
         boxMaxX = activeBounds.maxX;
         boxMinZ = activeBounds.minZ;
         boxMaxZ = activeBounds.maxZ;
       }
-      const departingBounds = departingDimming
-        ? consensusMemoryApertureBounds(recallAperture.departing)
+      const departingBounds = separateDeparting
+        ? consensusMemoryApertureBounds(departingField)
         : null;
       if (departingBounds) {
         if (departingBounds.minX < boxMinX) boxMinX = departingBounds.minX;
@@ -1595,19 +1576,188 @@ export default function NeuralFabric({
       }
 
       for (const entry of apertureCandidates) {
-        apertureCandidateSlots.add(entry.slot);
-        bakeApertureSlot(entry, true, recallAperture, now, dimmedSlots);
+        const { key, slot } = entry;
+        if (slotByKeyRef.current.get(key) !== slot) continue;
+        const st = edgeStatesRef.current.get(key);
+        if (!st) continue;
+        const samples: ApertureBakedSample[] = [];
+        let reachesAny = false;
+        for (let s = 0; s <= FABRIC_SLOT_SEGMENTS; s += 1) {
+          let sampleX: number;
+          let sampleZ: number;
+          if (s === 0) {
+            // Sample 0 is the from-point exactly, as the old bake seeded it.
+            sampleX = st.fromX;
+            sampleZ = st.fromZ;
+          } else {
+            bezierAtInto(
+              sample,
+              st.fromX, st.fromY, st.fromZ,
+              st.ctrlX, st.ctrlY, st.ctrlZ,
+              st.toX, st.toY, st.toZ,
+              s / FABRIC_SLOT_SEGMENTS,
+            );
+            sampleX = sample[0];
+            sampleZ = sample[2];
+          }
+          let active: readonly ConsensusMemoryApertureSpatialTerm[] = EMPTY_TERMS;
+          if (activeField) {
+            const built: ConsensusMemoryApertureSpatialTerm[] = [];
+            consensusMemoryApertureSpatialTermsInto(
+              activeField, sampleX, sampleZ, built,
+            );
+            if (built.length > 0) { active = built; reachesAny = true; }
+          }
+          let departing: readonly ConsensusMemoryApertureSpatialTerm[] = EMPTY_TERMS;
+          if (separateDeparting) {
+            const built: ConsensusMemoryApertureSpatialTerm[] = [];
+            consensusMemoryApertureSpatialTermsInto(
+              departingField, sampleX, sampleZ, built,
+            );
+            if (built.length > 0) { departing = built; reachesAny = true; }
+          }
+          samples.push({ active, departing });
+        }
+        if (!reachesAny) continue;
+        const baked: ApertureBakedSlot = {
+          slot,
+          key,
+          baseSegment: slot * FABRIC_SLOT_SEGMENTS,
+          samples,
+        };
+        apertureBake.slots.push(baked);
+        apertureBake.bySlot.set(slot, baked);
+      }
+    };
+    /** One precomputed sample's scale — the same dispatch as
+     * `recallApertureScaleAt`, but reading baked spatial terms so only the
+     * temporal envelope is evaluated. The flash is 0 here: the shader lifts. */
+    const scaleFromPrecomputedSample = (
+      baked: ApertureBakedSample,
+      recallAperture: RecallApertureState,
+      now: number,
+    ): number => {
+      if (recallAperture.active === recallAperture.departing) {
+        return consensusMemoryApertureScaleFromSpatialTerms(
+          baked.active,
+          Math.max(
+            recallAperture.activeStrength,
+            recallAperture.departingStrength,
+          ),
+          now,
+          0,
+        );
+      }
+      return Math.min(
+        consensusMemoryApertureScaleFromSpatialTerms(
+          baked.active, recallAperture.activeStrength, now, 0,
+        ),
+        consensusMemoryApertureScaleFromSpatialTerms(
+          baked.departing, recallAperture.departingStrength, now, 0,
+        ),
+      );
+    };
+    /** Write one near-route slot's aperture lanes from the temporal envelope
+     * over its baked spatial terms. Mirrors the old reach path exactly: sample
+     * 0 seeds prevScale, each segment pairs the previous end with its own, and
+     * the dirty / dimmed bookkeeping is unchanged. */
+    const bakeApertureSlotFromPrecomputed = (
+      baked: ApertureBakedSlot,
+      recallAperture: RecallApertureState,
+      now: number,
+      dimmedSlots: ReadonlySet<number>,
+    ): void => {
+      const { slot, key, baseSegment, samples } = baked;
+      // The precompute is dropped on any slot churn, so this is belt-and-braces
+      // — a recycled slot must never take a stale edge's lanes.
+      if (slotByKeyRef.current.get(key) !== slot) return;
+      const wasDimmed = dimmedSlots.has(slot);
+      let prevScale = scaleFromPrecomputedSample(samples[0], recallAperture, now);
+      let dimmed = prevScale < 1;
+      for (let seg = 0; seg < FABRIC_SLOT_SEGMENTS; seg += 1) {
+        const endScale = scaleFromPrecomputedSample(
+          samples[seg + 1], recallAperture, now,
+        );
+        if (endScale < 1) dimmed = true;
+        const offset = (baseSegment + seg) * FABRIC_LIFE_COLOR_STRIDE;
+        lifecycleArrays.color[
+          offset + FABRIC_LIFE_APERTURE_START_OFFSET
+        ] = prevScale;
+        lifecycleArrays.color[
+          offset + FABRIC_LIFE_APERTURE_END_OFFSET
+        ] = endScale;
+        prevScale = endScale;
+      }
+      if (dimmed) apertureDimmedNow.push(slot);
+      // A slot that came out flat, and was flat before, wrote the baseline over
+      // the baseline — no upload owed.
+      if (dimmed || wasDimmed) apertureDirtySlots.push(slot);
+    };
+    /** Restore one slot's aperture lanes to the 1.0 baseline and mark it dirty
+     * — the old bake's reach=false path, for a slot the previous bake dimmed
+     * but the current aperture no longer reaches. */
+    const restoreApertureSlotBaseline = (
+      entry: RecallApertureIndexEntry,
+    ): void => {
+      const { key, slot } = entry;
+      if (slotByKeyRef.current.get(key) !== slot) return;
+      if (!edgeStatesRef.current.get(key)) return;
+      const baseSegment = slot * FABRIC_SLOT_SEGMENTS;
+      for (let seg = 0; seg < FABRIC_SLOT_SEGMENTS; seg += 1) {
+        const offset = (baseSegment + seg) * FABRIC_LIFE_COLOR_STRIDE;
+        lifecycleArrays.color[offset + FABRIC_LIFE_APERTURE_START_OFFSET] = 1;
+        lifecycleArrays.color[offset + FABRIC_LIFE_APERTURE_END_OFFSET] = 1;
+      }
+      apertureDirtySlots.push(slot);
+    };
+    /** Re-bake the current aperture from its precomputed spatial half. The
+     * spatial half is rebuilt only when the aperture identity or the slot
+     * layout changed; a plain frame evaluates only the temporal envelope over
+     * the near-route slots. Signature unchanged: `restorePrevious=false` on a
+     * full walk (records already at baseline, slots renumbered); a normal frame
+     * restores the slots the previous bake dimmed. */
+    const bakeIndexedAperture = (
+      recallAperture: RecallApertureState,
+      now: number,
+      activeDimming: boolean,
+      departingDimming: boolean,
+      restorePrevious: boolean,
+    ): void => {
+      if (
+        !apertureBake.built
+        || apertureBake.active !== recallAperture.active
+        || apertureBake.departing !== recallAperture.departing
+        || apertureBake.revision !== apertureIndex.revision
+      ) {
+        buildApertureBake(recallAperture);
+      }
+      const dimmedSlots = apertureDimmedSlotsRef.current;
+      if (!restorePrevious) dimmedSlots.clear();
+      apertureDirtySlots.length = 0;
+      apertureDimmedNow.length = 0;
+
+      // Only a field whose temporal window contains `now` can dim anything; a
+      // closed window contributes exactly 1 everywhere, so the near-route write
+      // loop would only restate the baseline. Skip it then — the restore loop
+      // still lifts whatever the previous bake dimmed.
+      const anyDimming = activeDimming || departingDimming;
+      if (anyDimming) {
+        for (const baked of apertureBake.slots) {
+          bakeApertureSlotFromPrecomputed(
+            baked, recallAperture, now, dimmedSlots,
+          );
+        }
       }
       if (restorePrevious) {
-        // A release or moving union owes work only to slots the previous bake
-        // actually left below 1.0. A full walk needs no restore: every record
-        // was just rewritten to baseline before this indexed pass.
+        // A release or a moving / closing aperture owes work only to slots the
+        // previous bake left below 1.0. When the near-route loop ran it already
+        // rewrote every slot it covers (a dimmed→flat one restated its own
+        // baseline and marked itself), so only slots that dropped out of the
+        // near-route set need the explicit baseline here.
         for (const slot of dimmedSlots) {
-          if (apertureCandidateSlots.has(slot)) continue;
+          if (anyDimming && apertureBake.bySlot.has(slot)) continue;
           const entry = apertureIndex.get(slot);
-          if (entry) {
-            bakeApertureSlot(entry, false, recallAperture, now, dimmedSlots);
-          }
+          if (entry) restoreApertureSlotBaseline(entry);
         }
       }
       dimmedSlots.clear();

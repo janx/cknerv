@@ -441,11 +441,127 @@ export function consensusMemoryApertureBounds(
 }
 
 /**
+ * One segment's invariant contribution to a sample: the segment itself, the
+ * projection of the sample onto it, and the distance-only spatial strength.
+ * None of these move with the trace clock — only `segmentTemporalStrength`
+ * does — which is what lets a recall bake the spatial half once (T8) and
+ * re-evaluate only the temporal envelope every frame.
+ */
+export interface ConsensusMemoryApertureSpatialTerm {
+  segment: ConsensusMemoryApertureSegment;
+  projection: number;
+  spatialStrength: number;
+}
+
+/**
+ * The `nowSec`-independent half of {@link consensusMemoryApertureScale}: the
+ * bucket lookup, projection, distance prefilter and spatial falloff. Every
+ * segment whose distance to the sample is under `outerRadius` is appended to
+ * `out` (cleared first, so a caller may reuse one array for the whole recall).
+ * A sample outside every bucket, or off the field, yields no terms — its scale
+ * is provably exactly 1. Split out verbatim so the monolithic scale below and
+ * the precomputed bake path share one arithmetic definition.
+ */
+export function consensusMemoryApertureSpatialTermsInto(
+  field: ConsensusMemoryAperture | null | undefined,
+  x: number,
+  z: number,
+  out: ConsensusMemoryApertureSpatialTerm[],
+): ConsensusMemoryApertureSpatialTerm[] {
+  out.length = 0;
+  if (!field || !Number.isFinite(x) || !Number.isFinite(z)) return out;
+  const gridX = Math.floor(x / field.gridSize);
+  const gridZ = Math.floor(z / field.gridSize);
+  const candidates = field.buckets.get(gridX)?.get(gridZ);
+  if (!candidates || candidates.length === 0) return out;
+
+  const outerSquared = field.outerRadius * field.outerRadius;
+  for (const segmentIndex of candidates) {
+    const segment = field.segments[segmentIndex];
+    if (!segment) continue;
+    const projection = projectionOntoSegment(x, z, segment);
+    const pointX = segment.ax + (segment.bx - segment.ax) * projection;
+    const pointZ = segment.az + (segment.bz - segment.az) * projection;
+    const pointDx = x - pointX;
+    const pointDz = z - pointZ;
+    const distanceSquared = pointDx * pointDx + pointDz * pointDz;
+    if (distanceSquared >= outerSquared) continue;
+    const distance = Math.sqrt(distanceSquared);
+    const transition = field.outerRadius > field.innerRadius
+      ? clampUnit(
+        (distance - field.innerRadius)
+          / (field.outerRadius - field.innerRadius),
+      )
+      : Number(distance >= field.outerRadius);
+    const spatialStrength = 1 - smoothUnit(transition);
+    out.push({ segment, projection, spatialStrength });
+  }
+  return out;
+}
+
+/**
+ * The per-frame half: evaluate the temporal envelope over precomputed spatial
+ * terms and fold in focus strength and the lifecycle-flash reclaim. Bit-for-bit
+ * identical to the corresponding tail of the monolithic scale — the terms carry
+ * the same `spatialStrength` the monolith would compute, and the same
+ * `Math.max` accumulation makes the result order-independent. A term whose
+ * temporal strength is 0 at this `now` contributes nothing, exactly as the
+ * monolith's `continue` did.
+ */
+export function consensusMemoryApertureScaleFromSpatialTerms(
+  terms: readonly ConsensusMemoryApertureSpatialTerm[],
+  strength: number,
+  nowSec?: number,
+  lifecycleFlash = 0,
+): number {
+  if (
+    !Number.isFinite(strength)
+    || (nowSec !== undefined && !Number.isFinite(nowSec))
+    || strength <= 0
+  ) return 1;
+  const focus = clampUnit(strength);
+  let strongestEffect = 0;
+  for (let index = 0; index < terms.length; index += 1) {
+    const term = terms[index];
+    const temporalStrength = segmentTemporalStrength(
+      term.segment,
+      term.projection,
+      nowSec,
+    );
+    if (temporalStrength <= 0) continue;
+    strongestEffect = Math.max(
+      strongestEffect,
+      (1 - CONSENSUS_MEMORY_APERTURE_CORE_SCALE)
+        * term.spatialStrength
+        * temporalStrength,
+    );
+  }
+  if (strongestEffect <= 0) return 1;
+  let scale = 1 - focus * strongestEffect;
+  const reclaim = Number.isFinite(lifecycleFlash)
+    ? clampUnit(lifecycleFlash)
+    : 0;
+  scale += (1 - scale) * reclaim;
+  return scale;
+}
+
+/** Reused by the monolithic scale so a hot caller allocates no term array.
+ *  Safe as a singleton: the two calls {@link recallApertureScaleAt} makes are
+ *  sequential, never nested, and the temporal half never re-enters this path. */
+const monolithicSpatialTerms: ConsensusMemoryApertureSpatialTerm[] = [];
+
+/**
  * Passive-fabric scale at one world-space sample. Outside the route aperture
  * this is exactly 1. When `nowSec` is supplied, a point opens only after the
  * real evidence wavefront reaches it and later closes source→target on the
  * existing settle/resonance clock. A real lifecycle flash progressively
  * reclaims full energy so current chain truth always outranks history.
+ *
+ * Now a thin composition of its spatial and temporal halves — the split the
+ * recall bake exploits (T8). Every guard the two halves apply reproduces the
+ * original's early returns: strength/nowSec finiteness and `strength <= 0` from
+ * the temporal half, sample/field finiteness and the empty-bucket case from the
+ * spatial half (empty terms → strongestEffect 0 → 1).
  */
 export function consensusMemoryApertureScale(
   field: ConsensusMemoryAperture | null | undefined,
@@ -463,50 +579,11 @@ export function consensusMemoryApertureScale(
     || (nowSec !== undefined && !Number.isFinite(nowSec))
     || strength <= 0
   ) return 1;
-  const focus = clampUnit(strength);
-  const gridX = Math.floor(x / field.gridSize);
-  const gridZ = Math.floor(z / field.gridSize);
-  const candidates = field.buckets.get(gridX)?.get(gridZ);
-  if (!candidates || candidates.length === 0) return 1;
-
-  let strongestEffect = 0;
-  const outerSquared = field.outerRadius * field.outerRadius;
-  for (const segmentIndex of candidates) {
-    const segment = field.segments[segmentIndex];
-    if (!segment) continue;
-    const projection = projectionOntoSegment(x, z, segment);
-    const pointX = segment.ax + (segment.bx - segment.ax) * projection;
-    const pointZ = segment.az + (segment.bz - segment.az) * projection;
-    const pointDx = x - pointX;
-    const pointDz = z - pointZ;
-    const distanceSquared = pointDx * pointDx + pointDz * pointDz;
-    if (distanceSquared >= outerSquared) continue;
-    const temporalStrength = segmentTemporalStrength(
-      segment,
-      projection,
-      nowSec,
-    );
-    if (temporalStrength <= 0) continue;
-    const distance = Math.sqrt(distanceSquared);
-    const transition = field.outerRadius > field.innerRadius
-      ? clampUnit(
-        (distance - field.innerRadius)
-          / (field.outerRadius - field.innerRadius),
-      )
-      : Number(distance >= field.outerRadius);
-    const spatialStrength = 1 - smoothUnit(transition);
-    strongestEffect = Math.max(
-      strongestEffect,
-      (1 - CONSENSUS_MEMORY_APERTURE_CORE_SCALE)
-        * spatialStrength
-        * temporalStrength,
-    );
-  }
-  if (strongestEffect <= 0) return 1;
-  let scale = 1 - focus * strongestEffect;
-  const reclaim = Number.isFinite(lifecycleFlash)
-    ? clampUnit(lifecycleFlash)
-    : 0;
-  scale += (1 - scale) * reclaim;
-  return scale;
+  consensusMemoryApertureSpatialTermsInto(field, x, z, monolithicSpatialTerms);
+  return consensusMemoryApertureScaleFromSpatialTerms(
+    monolithicSpatialTerms,
+    strength,
+    nowSec,
+    lifecycleFlash,
+  );
 }

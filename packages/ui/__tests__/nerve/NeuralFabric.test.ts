@@ -203,16 +203,33 @@ describe('NeuralFabric living-mesh handles', () => {
     expect(SRC).not.toMatch(/globalRepaintRef\.current = true/);
   });
 
-  it('queries indexed aperture candidates instead of scanning every slot', () => {
+  it('bakes the aperture spatial half through the index, not a per-frame scan', () => {
+    // T8: the index query and the Bezier walk live in buildApertureBake, which
+    // runs only on a focus switch or a slot-layout change (identity/revision
+    // gate); a plain frame evaluates only the temporal envelope over the
+    // near-route slots and restores whatever the previous bake dimmed. The
+    // per-frame path must therefore hold no index query and no full-population
+    // scan.
     const apertureBody = SRC.slice(
-      SRC.indexOf('const bakeIndexedAperture ='),
+      SRC.indexOf('const buildApertureBake ='),
       SRC.indexOf('const completeApertureBake ='),
     );
     expect(apertureBody).toContain('apertureIndex.query');
+    expect(apertureBody).toContain(
+      'apertureBake.revision !== apertureIndex.revision',
+    );
     expect(apertureBody).toContain('for (const slot of dimmedSlots)');
     expect(apertureBody).not.toMatch(
       /for\s*\(const\s*\[key,\s*slot\]\s*of\s*slots\)/,
     );
+    // The animation frame must not re-query the index: the only query sits
+    // above the temporal-only bake loop, inside the rebuild.
+    const frameBake = SRC.slice(
+      SRC.indexOf('const bakeIndexedAperture ='),
+      SRC.indexOf('const completeApertureBake ='),
+    );
+    expect(frameBake).not.toContain('apertureIndex.query');
+    expect(frameBake).toContain('for (const baked of apertureBake.slots)');
   });
 
   it('re-bakes a live aperture after compaction and before full upload ownership', () => {

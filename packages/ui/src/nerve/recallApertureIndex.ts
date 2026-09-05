@@ -147,6 +147,10 @@ export class RecallApertureIndex {
   private readonly slotByKey = new Map<string, number>();
   private readonly seenEpochBySlot = new Map<number, number>();
   private queryEpoch = 0;
+  /** Bumps on every structural change (upsert / remove / clear). A consumer
+   *  caching work derived from the current slot layout — the recall aperture's
+   *  spatial bake (T8) — re-derives when this moves rather than per frame. */
+  private mutationRevision = 0;
   // Two scratch ranges reused by `upsert` (never nested), so a per-edge insert
   // allocates no GridRange objects. `query` keeps the allocating `gridRange`.
   private readonly upsertXRange: GridRange =
@@ -164,6 +168,11 @@ export class RecallApertureIndex {
     return this.entriesBySlot.size;
   }
 
+  /** Monotonic across the index's life; changes iff the slot layout changed. */
+  get revision(): number {
+    return this.mutationRevision;
+  }
+
   get(slot: number): RecallApertureIndexEntry | undefined {
     return this.entriesBySlot.get(slot);
   }
@@ -175,6 +184,7 @@ export class RecallApertureIndex {
     this.slotByKey.clear();
     this.seenEpochBySlot.clear();
     this.queryEpoch = 0;
+    this.mutationRevision += 1;
   }
 
   upsert(slot: number, key: string, curve: RecallApertureCurveXZ): boolean {
@@ -203,6 +213,7 @@ export class RecallApertureIndex {
       this.unbucketedSlots.add(slot);
       this.entriesBySlot.set(slot, entry);
       this.slotByKey.set(key, slot);
+      this.mutationRevision += 1;
       return true;
     }
 
@@ -240,6 +251,7 @@ export class RecallApertureIndex {
 
     this.entriesBySlot.set(slot, entry);
     this.slotByKey.set(key, slot);
+    this.mutationRevision += 1;
     return true;
   }
 
@@ -260,6 +272,7 @@ export class RecallApertureIndex {
     this.entriesBySlot.delete(slot);
     if (this.slotByKey.get(entry.key) === slot) this.slotByKey.delete(entry.key);
     this.seenEpochBySlot.delete(slot);
+    this.mutationRevision += 1;
     return entry;
   }
 
