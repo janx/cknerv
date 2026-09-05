@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- The tab's mark is the HUD's own: the ◇ the boot band, the memory route's
+       locked hop and every `DiamondMark` in the overlay draw, on the stage's
+       near-black. One glyph, two colours, no text — at 16px a wordmark is a
+       smudge, and this shape is already what the instrument means by "a point
+       on a line". `stageGround` #02030A and `cyanWire` #20F0FF from
+       packages/ui/src/components/hud/hudTheme.ts, spelled out because an SVG
+       served from the dist root cannot import; `boot-shell.test.ts` holds both
+       literals against the tokens. -->
+  <rect width="32" height="32" fill="#02030A"/>
+  <path d="M16 4 L28 16 L16 28 L4 16 Z" fill="none" stroke="#20F0FF" stroke-width="2.5"/>
+  <path d="M16 11 L21 16 L16 21 L11 16 Z" fill="#20F0FF"/>
+</svg>

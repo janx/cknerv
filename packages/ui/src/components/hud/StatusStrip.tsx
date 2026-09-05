@@ -167,14 +167,23 @@ function PanelVisibilityControl({ panels, onChange, compact = false, menuOffset 
     const closeOutside = (event: PointerEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     };
+    // ESCAPE CLOSES THE INNERMOST THING, and while this menu is open it IS the
+    // innermost thing — a dropdown lives between two clicks and is the most
+    // transient object in the HUD. So it claims the key in CAPTURE and marks
+    // the event handled; the inspection card's dismissal listens in bubble and
+    // stands down on `defaultPrevented` (`sceneInspection.tsx`). Both listen on
+    // `document`, so phase is the only thing that can rank them — registration
+    // order would rank them by which happened to open first.
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setOpen(false);
     };
     document.addEventListener('pointerdown', closeOutside);
-    document.addEventListener('keydown', closeOnEscape);
+    document.addEventListener('keydown', closeOnEscape, true);
     return () => {
       document.removeEventListener('pointerdown', closeOutside);
-      document.removeEventListener('keydown', closeOnEscape);
+      document.removeEventListener('keydown', closeOnEscape, true);
     };
   }, [open]);
 
@@ -334,6 +343,30 @@ function PanelVisibilityControl({ panels, onChange, compact = false, menuOffset 
               </button>
             );
           })}
+          {/* THE KEYS, WHERE THE PANELS ARE.
+              Three keys do something in this application and not one of them
+              was named anywhere on screen (report E, E-14): Escape closes,
+              a backtick opens the dev tweaks, and the arrows walk the memory
+              route's hops. A discoverable shortcut is one you can find without
+              being told, and this menu is where a reader already comes to ask
+              what the instrument can do. Set in `dim` under a rule, because it
+              is a legend rather than a control — nothing here is clickable. */}
+          <div
+            data-panel-menu-keys
+            style={{
+              display: 'flex',
+              gap: 9,
+              margin: '6px 3px 0',
+              paddingTop: 5,
+              borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.16)}`,
+              color: HUD_COLORS.dim,
+              fontSize: HUD_TYPE.micro,
+              letterSpacing: 0.6,
+            }}
+          >
+            <span>KEYS</span>
+            <span style={{ marginLeft: 'auto' }}>ESC CLOSE · ` TWEAKS · ← → HOPS</span>
+          </div>
         </div>
       ) : null}
     </div>

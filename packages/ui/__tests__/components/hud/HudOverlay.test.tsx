@@ -450,7 +450,7 @@ describe('HudOverlay', () => {
     expect(root.dataset.hudBoot).toBe('done');
 
     // A dev instrument summoned from the menu long after the count.
-    fireEvent.click(getByRole('button', { name: 'Configure HUD panels, 4 of 6 visible' }));
+    fireEvent.click(getByRole('button', { name: 'Configure HUD panels, 5 of 7 visible' }));
     fireEvent.click(getByRole('menuitemcheckbox', { name: 'STAGE SAMPLE panel' }));
     expect(wrapper(container, 'stage').style.opacity).toBe('1');
     expect(wrapper(container, 'stage').style.pointerEvents).toBe('auto');
@@ -499,12 +499,79 @@ describe('HudOverlay', () => {
     expect(root.dataset.hudBoot).toBe('done');
   });
 
+  it('lists every module it numbers, including the one it does not draw', () => {
+    // SND·06 is the app-side Jukebox chip. It wears a module code precisely so
+    // the closed chip reads as part of the instrument, and the registry's own
+    // menu could not show it — a number in a costume (report E, E-11; D-14).
+    const published: boolean[] = [];
+    const { getByRole } = render(
+      <HudOverlay
+        chain={chain}
+        peers={peers}
+        localNode={localNode}
+        cellsStats={cellsStats}
+        onSoundVisibleChange={(visible) => published.push(visible)}
+      />,
+    );
+    // It ships ON, so the first thing the app hears is `true` — and nothing
+    // reads as DIVERGED out of the box.
+    expect(published).toEqual([true]);
+
+    fireEvent.click(getByRole('button', { name: 'Configure HUD panels, 5 of 7 visible' }));
+    const chip = getByRole('menuitemcheckbox', { name: 'JUKEBOX panel' });
+    expect(chip.getAttribute('data-panel-control')).toBe('sound');
+    expect(chip.textContent).toContain('SND·06');
+    expect(chip.getAttribute('aria-checked')).toBe('true');
+
+    fireEvent.click(chip);
+    expect(published).toEqual([true, false]);
+    expect(getByRole('button', { name: 'Configure HUD panels, 4 of 7 visible' }))
+      .not.toBeNull();
+  });
+
+  it('names the three keys that do something, where the panels are', () => {
+    // Escape, the backtick and the arrows were discoverable nowhere on screen
+    // (report E, E-14). The menu is where a reader already comes to ask what
+    // the instrument can do.
+    const { container, getByRole } = render(
+      <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
+    );
+    expect(container.querySelector('[data-panel-menu-keys]')).toBeNull();
+    fireEvent.click(getByRole('button', { name: 'Configure HUD panels, 5 of 7 visible' }));
+    const keys = container.querySelector('[data-panel-menu-keys]');
+    expect(keys?.textContent).toContain('KEYS');
+    expect(keys?.textContent).toContain('ESC CLOSE');
+    expect(keys?.textContent).toContain('` TWEAKS');
+    expect(keys?.textContent).toContain('← → HOPS');
+    // A legend, not a control: nothing in it is pressable.
+    expect(keys?.querySelector('button')).toBeNull();
+  });
+
+  it('makes the tab a readout of the tip', () => {
+    // `cknerv`, lowercase, written once and never updated — so a dashboard in
+    // a background tab, which is most of what this is for, said nothing at all
+    // (report E, E-13).
+    const { rerender } = render(
+      <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
+    );
+    expect(document.title).toBe(`CKNERV · #${chain.tip.toLocaleString('en-US')}`);
+    rerender(
+      <HudOverlay
+        chain={{ ...chain, tip: 20_361_090 }}
+        peers={peers}
+        localNode={localNode}
+        cellsStats={cellsStats}
+      />,
+    );
+    expect(document.title).toBe('CKNERV · #20,361,090');
+  });
+
   it('controls each main panel independently from the top-bar menu', () => {
     const { container, getByRole } = render(
       <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
     );
     const menuToggle = getByRole('button', {
-      name: 'Configure HUD panels, 4 of 6 visible',
+      name: 'Configure HUD panels, 5 of 7 visible',
     });
 
     fireEvent.click(menuToggle);
@@ -523,7 +590,7 @@ describe('HudOverlay', () => {
     expect(container.querySelector('[data-hud-chain-cluster]')).toBeNull();
     expect((container.querySelector('[data-hud-left-rail]') as HTMLElement).style.bottom).toBe('14px');
     expect(getByRole('button', {
-      name: 'Configure HUD panels, 3 of 6 visible',
+      name: 'Configure HUD panels, 4 of 7 visible',
     })).not.toBeNull();
 
     fireEvent.click(getByRole('menuitemcheckbox', { name: 'CELL MESH panel' }));
@@ -569,7 +636,7 @@ describe('HudOverlay', () => {
       .not.toContain('inferred');
 
     fireEvent.click(getByRole('button', {
-      name: 'Configure HUD panels, 4 of 6 visible',
+      name: 'Configure HUD panels, 5 of 7 visible',
     }));
     fireEvent.click(getByRole('menuitemcheckbox', { name: 'STAGE SAMPLE panel' }));
     expect(container.querySelector('[data-hud-panel="stage"]')?.textContent)
@@ -659,7 +726,7 @@ describe('HudOverlay', () => {
       .toMatch(/340px.*58px/);
 
     fireEvent.click(getByRole('button', {
-      name: 'Configure HUD panels, 5 of 7 visible',
+      name: 'Configure HUD panels, 6 of 8 visible',
     }));
     fireEvent.click(getByRole('menuitemcheckbox', { name: 'NERVOS DAO panel' }));
     expect(container.querySelector('[data-hud-panel="dao"]')).toBeNull();

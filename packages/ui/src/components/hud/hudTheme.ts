@@ -959,7 +959,25 @@ export function injectHudTheme(doc: Document = document): void {
     + `\n@keyframes cknerv-cell-specimen-sweep{0%{transform:translate3d(0,0,0);opacity:0}12%{opacity:.82}88%{opacity:.72}100%{transform:translate3d(0,100%,0);opacity:0}}`
     + `\n@keyframes cknerv-route-hop-lock-pulse{0%{filter:brightness(1) drop-shadow(0 0 0 transparent)}18%{filter:brightness(1.58) drop-shadow(0 0 7px var(--route-hop-pulse-color,${rgba(HUD_COLORS.goldInk, 0.76)}))}52%{filter:brightness(1.16) drop-shadow(0 0 3px var(--route-hop-pulse-color,${rgba(HUD_COLORS.goldInk, 0.42)}))}100%{filter:brightness(1) drop-shadow(0 0 0 transparent)}}`
     + `\n.cknerv-hud-control-button:hover{filter:brightness(1.35)}`
-    + `\n.cknerv-hud-control-button:focus-visible{outline:1px solid ${rgba(HUD_COLORS.cyanWire, 0.55)};outline-offset:1px}`
+    // THE FOCUS RING IS THE HUD'S, ON EVERY BUTTON.
+    //
+    // The class rule below it covered the four strip controls and the Jukebox;
+    // the other dozen `<button>`s in the overlay — the two fact dialects,
+    // `CellContentMemory`'s five, the byte reader's, the causal lens's — fell
+    // back to the browser's default ring, which on Chromium is a white-and-blue
+    // double outline drawn on top of a design that owns neither colour (report
+    // E, E-13). A keyboard user's position on screen is a HUD state like any
+    // other, so it is drawn in the HUD's own ink.
+    //
+    // Element selector, not a class, because the point is that no button has
+    // to opt in. The class rule stays for the SAME ring at higher specificity
+    // on the controls that also brighten — one declaration, one appearance.
+    + `\nbutton:focus-visible,.cknerv-hud-control-button:focus-visible{outline:1px solid ${rgba(HUD_COLORS.cyanWire, 0.55)};outline-offset:1px}`
+    // A selected hex string is a reading being COPIED, which is the one thing
+    // the reader can do with the card that leaves the page. The browser's
+    // default highlight is the OS accent — the last unbranded surface in the
+    // instrument, on the surface that carries its longest strings.
+    + `\n::selection{background:${rgba(HUD_COLORS.cyanWire, 0.32)}}`
     + `\n.cknerv-cell-display-track:focus-within{filter:brightness(1.35)}`
     + `\n.cknerv-cell-display-track:focus-within::after{content:'';position:absolute;left:0;right:0;bottom:0;height:1px;background:${rgba(HUD_COLORS.cyanWire, 0.42)};box-shadow:0 0 5px ${rgba(HUD_COLORS.cyanWire, 0.3)}}`
     + `\n.cknerv-mesh-rail::-webkit-scrollbar{width:5px}`

@@ -401,3 +401,68 @@ describe('a bootstrap failure keeps the shell standing', () => {
       .toBe('and then this');
   });
 });
+
+// ——— The browser shell ————————————————————————————————————————————————
+//
+// Everything outside the canvas that the page still owns: the tab, the mark in
+// it, the colour the OS paints around it and the layout a phone is allowed to
+// choose. `index.html` had none of it (report E, E-13) — no viewport meta, so
+// the three-row mobile strip and every `≤560px` rule in the HUD were
+// unreachable code; a 404 favicon on every load; a lowercase `cknerv` title
+// nothing ever updated; and Tailwind slate-300 as the body ink, from the family
+// the 08-24 review purged out of the overlay.
+
+describe('the browser shell', () => {
+  const shipped = new DOMParser().parseFromString(INDEX_HTML, 'text/html');
+  const meta = (name: string) =>
+    shipped.querySelector(`meta[name="${name}"]`)?.getAttribute('content');
+  const token = (name: string) =>
+    new RegExp(`${name}: '(#[0-9A-Fa-f]{6})'`).exec(HUD_THEME)?.[1]?.toLowerCase();
+
+  it('lets a phone lay the page out at its own width', () => {
+    // Without this the page is laid out at ~980px and zoomed out, so
+    // `STATUS_STRIP_HEIGHTS.mobile`, the ≤560/≤380 label-shedding rules and
+    // the Jukebox's safe-area insets can never engage.
+    expect(meta('viewport')).toBe('width=device-width, initial-scale=1, viewport-fit=cover');
+    // `viewport-fit=cover` is what makes an inset non-zero, and something asks.
+    expect(readFileSync(resolve(process.cwd(), 'src/Jukebox.tsx'), 'utf8'))
+      .toContain('env(safe-area-inset-');
+  });
+
+  it('paints the chrome around the page in the page\'s own ground', () => {
+    expect(meta('theme-color')).toBe(token('stageGround'));
+  });
+
+  it('carries the HUD\'s mark and the HUD\'s name', () => {
+    const icon = shipped.querySelector('link[rel="icon"]');
+    expect(icon?.getAttribute('type')).toBe('image/svg+xml');
+    expect(icon?.getAttribute('href')).toBe('/favicon.svg');
+    expect(shipped.title).toBe('CKNERV');
+    // Uppercase, like every other word the instrument prints.
+    expect(shipped.title).toBe(shipped.title.toUpperCase());
+  });
+
+  it('ships the mark, drawn in the palette, with no text in it', () => {
+    // Vite copies `public/` to the dist root, `RustEmbed` picks it up from
+    // there and `cache_control_for` gives an unhashed root name `no-cache`.
+    // Nothing in Rust had to move; this is the pact that says so.
+    const svg = readFileSync(resolve(process.cwd(), 'public/favicon.svg'), 'utf8');
+    expect(svg.toLowerCase()).toContain(String(token('stageGround')));
+    expect(svg.toLowerCase()).toContain(String(token('cyanWire')));
+    // A wordmark at 16px is a smudge; the ◇ is what the HUD already means by
+    // "a point on a line".
+    expect(svg).not.toMatch(/<text\b/);
+  });
+
+  it('spells its two inks as tokens, and neither is Tailwind\'s', () => {
+    const body = /body \{([^}]*)\}/.exec(INDEX_HTML)?.[1] ?? '';
+    expect(body).toContain(`background: ${token('stageGround')}`);
+    expect(body).toContain(`color: ${token('dim')}`);
+    // With the comments taken out: the prose beside these two names the value
+    // it replaced, and an oracle that read the argument would forbid it.
+    const prose = INDEX_HTML
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(prose, 'slate-300 is back').not.toContain('#cbd5e1');
+  });
+});

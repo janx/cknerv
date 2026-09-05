@@ -466,10 +466,25 @@ export function useSceneInspectionDismiss(
       if (reach > SCENE_INSPECTION_DISMISS_MAX_TRAVEL_PX) return;
       onDismiss();
     };
+    // ESCAPE CLOSES THE INNERMOST THING, AND THE CARD IS THE OUTERMOST ONE.
+    //
+    // This listened in the CAPTURE phase and called `stopPropagation`, so while
+    // any card was open Escape never reached React's root listeners at all —
+    // and three surfaces INSIDE the card have their own Escape: the route
+    // ledger unlocks a hop and collapses expanded evidence, the PANELS menu
+    // closes, the Jukebox dialog closes. Every one of them was dead in the app,
+    // and a keyboard user who had tabbed into the ledger and pressed Escape to
+    // unlock a hop lost the whole card instead (report E, E-14).
+    //
+    // Bubble phase, and only when nothing nearer to the key has already
+    // answered it. `defaultPrevented` is the standing convention for exactly
+    // this — the inner handler calls `preventDefault`, and the outer one reads
+    // it — so the dismissal is the LAST resort rather than the first, which is
+    // what "close the innermost thing" means in a document with one key and
+    // four claimants.
     const dismissOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
       event.preventDefault();
-      event.stopPropagation();
       onDismiss();
     };
     document.addEventListener('pointerdown', press, true);
@@ -477,14 +492,14 @@ export function useSceneInspectionDismiss(
     document.addEventListener('pointerup', release, true);
     document.addEventListener('pointercancel', forget, true);
     window.addEventListener('blur', forget);
-    document.addEventListener('keydown', dismissOnEscape, true);
+    document.addEventListener('keydown', dismissOnEscape);
     return () => {
       document.removeEventListener('pointerdown', press, true);
       document.removeEventListener('pointermove', travel, true);
       document.removeEventListener('pointerup', release, true);
       document.removeEventListener('pointercancel', forget, true);
       window.removeEventListener('blur', forget);
-      document.removeEventListener('keydown', dismissOnEscape, true);
+      document.removeEventListener('keydown', dismissOnEscape);
     };
   }, [boundaryRef, onDismiss]);
 }

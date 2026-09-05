@@ -215,7 +215,14 @@ function LiveStreamHealthBanner({ channels, reducedMotion, top }: {
   return <StreamHealthBanner summary={summary} reducedMotion={reducedMotion} top={top} />;
 }
 
-const HUD_PANEL_IDS = ['chain', 'stage', 'render', 'dao', 'pulse', 'cells', 'peers'] as const;
+// ⚠️ `sound` IS IN THE REGISTRY AND IS NOT A HUD PANEL. SND·06 is the app-side
+// Jukebox chip, and it held a module number the registry's own menu could not
+// show — a code says "I am one of the modules", and a module the module list
+// does not list is a number wearing a costume (report E, E-11; the user's
+// D-14). The visibility lives here with the other seven because the REGISTRY is
+// one thing; what the flag reaches is a callback, since the chip is mounted by
+// the app.
+const HUD_PANEL_IDS = ['chain', 'stage', 'render', 'dao', 'pulse', 'cells', 'peers', 'sound'] as const;
 type HudPanelId = typeof HUD_PANEL_IDS[number];
 type HudPanelVisibility = Record<HudPanelId, boolean>;
 const DEFAULT_PANEL_VISIBILITY: HudPanelVisibility = {
@@ -228,6 +235,7 @@ const DEFAULT_PANEL_VISIBILITY: HudPanelVisibility = {
   pulse: true,
   cells: true,
   peers: true,
+  sound: true,
 };
 
 function isHudPanelId(id: string): id is HudPanelId {
@@ -256,6 +264,8 @@ function isHudPanelId(id: string): id is HudPanelId {
 // not positions.** What this order is, then, is the module registry read in
 // its own order — which the rail now agrees with for the pair where agreeing
 // cost one line of JSX.
+// ⚠️ `sound` is deliberately absent: the count-off lights the panels the HUD
+// itself brings up, and the chip is neither on a rail nor drawn by this file.
 const BOOT_MODULE_ORDER: readonly HudPanelId[] = [
   'chain', 'peers', 'cells', 'pulse', 'dao', 'stage', 'render',
 ];
@@ -294,7 +304,7 @@ function prefersFullMotion(): boolean {
   return !window.matchMedia(REDUCED_MOTION_QUERY).matches;
 }
 
-function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPopulation, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, scriptRegistry, backfill, streamHealth, build, topBarActions, colonyCount, producerView }: {
+function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPopulation, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, scriptRegistry, backfill, streamHealth, build, topBarActions, colonyCount, producerView, onSoundVisibleChange }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
   /** The staged set counted by script identity, for the panel named after it.
    *  A different scope from `cellsStats.scripts`, which the backend counts
@@ -327,6 +337,10 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
   /** Whole inferred-colony node count — a count of what the scene draws, so
    *  it reads in the stage instrument and not in the peer mesh summary. */
   colonyCount?: number;
+  /** SND·06's switch, because the module it names is mounted by the app.
+   *  The registry stays here — one list, one menu, one "diverged" reading —
+   *  and this is the one entry whose flag has to travel back out. */
+  onSoundVisibleChange?: (visible: boolean) => void;
   /** Who has been making the chain's blocks lately, with the window every
    *  share is measured over. Chain-derived and local-first — it needs no
    *  crawler — so it reads in the peer mesh beside the other network facts. */
@@ -508,8 +522,10 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
   };
 
   // Menu order is module-number order — the codes ARE the registry, so the
-  // list reads 01→08 regardless of which rail a panel docks on. ·06 is the
-  // app-side Jukebox chip, which has no HUD visibility entry. Memoized on the
+  // list reads 01→08 regardless of which rail a panel docks on, and ·06 is in
+  // it: the Jukebox chip is app-side but it wears a module code, and a
+  // registry that skips one of its own numbers is a registry with a hole in
+  // it. Memoized on the
   // visibility record: the strip that renders it is memoized, and a fresh
   // array per render would hand it a new prop every time.
   //
@@ -558,6 +574,13 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
       visible: panelVisibility.dao,
       defaultVisible: DEFAULT_PANEL_VISIBILITY.dao,
     }] : []),
+    {
+      id: 'sound',
+      code: 'SND·06',
+      label: 'JUKEBOX',
+      visible: panelVisibility.sound,
+      defaultVisible: DEFAULT_PANEL_VISIBILITY.sound,
+    },
     {
       id: 'stage',
       code: 'STAGE·07',
@@ -722,6 +745,28 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
   const railStyle: CSSProperties = narrowRail
     ? { ...MESH_RAIL_STYLE, top: contentTop, maxHeight: `calc(100vh - ${contentTop + 14}px)`, overflowX: 'hidden', overflowY: 'auto', pointerEvents: railScrolls ? 'auto' : 'none', scrollbarWidth: 'thin', scrollbarColor: `${rgba(HUD_COLORS.orange, 0.35)} transparent` }
     : { ...MESH_RAIL_STYLE, top: contentTop };
+
+  // SND·06's flag out to the app that mounts it. An effect and not a render
+  // call, because publishing during a render is a write to somebody else's
+  // state mid-render; the chip appearing one frame late is invisible and
+  // correct.
+  useEffect(() => {
+    onSoundVisibleChange?.(panelVisibility.sound);
+  }, [onSoundVisibleChange, panelVisibility.sound]);
+
+  // ——— THE TAB IS A READOUT TOO ————————————————————————————————————————————
+  //
+  // The document title was `cknerv`, lowercase, written once in `index.html`
+  // and never touched again (report E, E-13) — so a reader with this dashboard
+  // in a background tab, which is most of what a chain visualiser is FOR, had
+  // no reading at all. The tip is the one number that answers "is it still
+  // alive" without switching windows, and it is the same number CKB·01 opens
+  // with. Same case, same separator, same `#` the whole HUD spells a height
+  // with.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.title = `CKNERV · #${chain.tip.toLocaleString('en-US')}`;
+  }, [chain.tip]);
 
   // persist the across-render baselines after each commit
   useEffect(() => { prevReorgs.current = chain.reorgs; }, [chain.reorgs]);

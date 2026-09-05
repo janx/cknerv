@@ -5,7 +5,7 @@ import {
   useState,
   type CSSProperties,
 } from 'react';
-import { HUD_MOTION } from '@cknerv/ui';
+import { HUD_COLORS, HUD_MOTION, rgba } from '@cknerv/ui';
 
 export const SOUNDCLOUD_WIDGET_API_SRC =
   'https://w.soundcloud.com/player/api.js';
@@ -104,10 +104,16 @@ export const JUKEBOX_PLAYER_HEIGHT_PX = Math.ceil(
 );
 
 const PANEL_ID = 'cknerv-jukebox-player';
-const CYAN = 'var(--hud-cyanWire, #20F0FF)';
-const ORANGE = 'var(--hud-orange, #FF9830)';
-const INK = 'var(--hud-ink, #E8E8E8)';
-const DIM = 'var(--hud-dim, #7C8794)';
+// The four inks, as CSS custom properties with the PALETTE as the fallback
+// rather than a hand-typed copy of it. The `var()` form is deliberate and
+// stays: a page may re-tint the chip without this module knowing, which is
+// what a custom property is for. What is gone is the second spelling of each
+// hex — four literals that had to be kept in step with `hudTheme.ts` by
+// somebody remembering to.
+const CYAN = `var(--hud-cyanWire, ${HUD_COLORS.cyanWire})`;
+const ORANGE = `var(--hud-orange, ${HUD_COLORS.orange})`;
+const INK = `var(--hud-ink, ${HUD_COLORS.ink})`;
+const DIM = `var(--hud-dim, ${HUD_COLORS.dim})`;
 const MONO = "'Share Tech Mono', ui-monospace, monospace";
 
 const JUKEBOX_STYLE_ID = 'cknerv-jukebox-style';
@@ -280,11 +286,11 @@ const panelStyle: CSSProperties = {
   overflowY: 'auto',
   boxSizing: 'border-box',
   padding: 6,
-  border: '1px solid rgba(32,240,255,.24)',
+  border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.24)}`,
   background:
-    'linear-gradient(180deg,rgba(3,10,18,.97),rgba(0,0,0,.94))',
+    `linear-gradient(180deg,${rgba(HUD_COLORS.stageGround, 0.97)},${rgba(HUD_COLORS.ground, 0.94)})`,
   boxShadow:
-    '0 14px 36px rgba(0,0,0,.68), inset 0 0 24px rgba(32,240,255,.04)',
+    `0 14px 36px ${rgba(HUD_COLORS.ground, 0.68)}, inset 0 0 24px ${rgba(HUD_COLORS.cyanWire, 0.04)}`,
   backdropFilter: 'blur(8px)',
   pointerEvents: 'auto',
 };
@@ -373,7 +379,7 @@ function JukeboxGlyph({ pulseKey }: { pulseKey: number }) {
         width: GLYPH_W,
         height: GLYPH_H,
         overflow: 'hidden',
-        filter: 'drop-shadow(0 0 4px rgba(32,240,255,.55))',
+        filter: `drop-shadow(0 0 4px ${rgba(HUD_COLORS.cyanWire, 0.55)})`,
       }}
     >
       <svg
@@ -543,14 +549,18 @@ export default function Jukebox({ blockPulseAtMs }: JukeboxProps) {
 
   useEffect(() => {
     if (!open) return;
+    // CAPTURE, because this window is modal while it is open: it takes focus,
+    // traps it, and restores it on close. Escape belongs to whatever is
+    // innermost, and nothing is further in than a modal — the inspection card's
+    // own dismissal listens in bubble and stands down on `defaultPrevented`.
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       event.preventDefault();
       event.stopPropagation();
       close();
     };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
   }, [close, open]);
 
   useEffect(() => {
@@ -769,13 +779,13 @@ export default function Jukebox({ blockPulseAtMs }: JukeboxProps) {
             // they say it alone, the way `HudPanel` does; the dark moat in the
             // shadow below is what separates the chip from the scene.
             background:
-              'linear-gradient(180deg,rgba(3,10,18,.96),rgba(0,0,0,.94))',
+              `linear-gradient(180deg,${rgba(HUD_COLORS.stageGround, 0.96)},${rgba(HUD_COLORS.ground, 0.94)})`,
             // The third shadow is a dark moat: it fades the cyan mesh wires
             // immediately around the chip, which is the only way a cyan-on-black
             // control separates from a cyan-on-black scene.
-            boxShadow: '0 10px 30px rgba(0,0,0,.7), '
-              + 'inset 0 0 16px rgba(32,240,255,.05), '
-              + '0 0 20px 9px rgba(2,6,12,.6)',
+            boxShadow: `0 10px 30px ${rgba(HUD_COLORS.ground, 0.7)}, `
+              + `inset 0 0 16px ${rgba(HUD_COLORS.cyanWire, 0.05)}, `
+              + `0 0 20px 9px ${rgba(HUD_COLORS.stageGround, 0.6)}`,
             color: CYAN,
             font: `400 8.5px/1 ${MONO}`,
             letterSpacing: 1.05,
@@ -791,7 +801,7 @@ export default function Jukebox({ blockPulseAtMs }: JukeboxProps) {
               top: -4,
               left: 11,
               padding: '0 4px',
-              background: '#03080d',
+              background: HUD_COLORS.stageGround,
               color: DIM,
               // The HUD's 7.5px legibility floor; below it the code is mush.
               fontSize: 7.5,
@@ -839,7 +849,7 @@ export default function Jukebox({ blockPulseAtMs }: JukeboxProps) {
             }}
           >
             <span style={{ color: ORANGE, letterSpacing: 1.4 }}>JUKEBOX</span>
-            <span style={{ margin: '0 7px', color: 'rgba(124,135,148,.45)' }}>
+            <span style={{ margin: '0 7px', color: rgba(HUD_COLORS.dim, 0.45) }}>
               //
             </span>
             <span
@@ -878,8 +888,8 @@ export default function Jukebox({ blockPulseAtMs }: JukeboxProps) {
                 height: 18,
                 marginLeft: 7,
                 padding: 0,
-                border: '1px solid rgba(32,240,255,.16)',
-                background: 'rgba(0,0,0,.3)',
+                border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.16)}`,
+                background: rgba(HUD_COLORS.ground, 0.3),
                 color: DIM,
                 font: `400 14px/16px ${MONO}`,
                 cursor: 'pointer',
@@ -918,13 +928,13 @@ export default function Jukebox({ blockPulseAtMs }: JukeboxProps) {
                     minHeight: 23,
                     padding: '3px 7px',
                     border: selected
-                      ? '1px solid rgba(255,152,48,.5)'
-                      : '1px solid rgba(124,135,148,.2)',
+                      ? `1px solid ${rgba(HUD_COLORS.orange, 0.5)}`
+                      : `1px solid ${rgba(HUD_COLORS.dim, 0.2)}`,
                     background: selected
-                      ? 'linear-gradient(90deg,rgba(255,152,48,.1),rgba(255,152,48,.025))'
-                      : 'rgba(0,0,0,.28)',
+                      ? `linear-gradient(90deg,${rgba(HUD_COLORS.orange, 0.1)},${rgba(HUD_COLORS.orange, 0.025)})`
+                      : rgba(HUD_COLORS.ground, 0.28),
                     boxShadow: selected
-                      ? 'inset 0 0 15px rgba(255,152,48,.04)'
+                      ? `inset 0 0 15px ${rgba(HUD_COLORS.orange, 0.04)}`
                       : 'none',
                     color: selected ? ORANGE : DIM,
                     font: `400 8.5px/15px ${MONO}`,
@@ -971,13 +981,13 @@ export default function Jukebox({ blockPulseAtMs }: JukeboxProps) {
                     minHeight: 29,
                     padding: '4px 7px',
                     border: selected
-                      ? '1px solid rgba(32,240,255,.52)'
-                      : '1px solid rgba(124,135,148,.2)',
+                      ? `1px solid ${rgba(HUD_COLORS.cyanWire, 0.52)}`
+                      : `1px solid ${rgba(HUD_COLORS.dim, 0.2)}`,
                     background: selected
-                      ? 'linear-gradient(90deg,rgba(32,240,255,.1),rgba(32,240,255,.025))'
-                      : 'rgba(0,0,0,.28)',
+                      ? `linear-gradient(90deg,${rgba(HUD_COLORS.cyanWire, 0.1)},${rgba(HUD_COLORS.cyanWire, 0.025)})`
+                      : rgba(HUD_COLORS.ground, 0.28),
                     boxShadow: selected
-                      ? 'inset 0 0 15px rgba(32,240,255,.04)'
+                      ? `inset 0 0 15px ${rgba(HUD_COLORS.cyanWire, 0.04)}`
                       : 'none',
                     color: selected ? CYAN : DIM,
                     font: `400 8.5px/15px ${MONO}`,
@@ -1012,11 +1022,11 @@ export default function Jukebox({ blockPulseAtMs }: JukeboxProps) {
               width: '100%',
               height: JUKEBOX_PLAYER_HEIGHT_PX,
               overflow: 'hidden',
-              border: '1px solid rgba(32,240,255,.12)',
+              border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.12)}`,
               boxSizing: 'border-box',
-              background: '#03080d',
+              background: HUD_COLORS.stageGround,
               boxShadow:
-                'inset 0 0 20px rgba(32,240,255,.035), 0 0 0 1px rgba(0,0,0,.7)',
+                `inset 0 0 20px ${rgba(HUD_COLORS.cyanWire, 0.035)}, 0 0 0 1px ${rgba(HUD_COLORS.ground, 0.7)}`,
             }}
           >
             <iframe
@@ -1039,7 +1049,7 @@ export default function Jukebox({ blockPulseAtMs }: JukeboxProps) {
                 width: `${100 / SOUNDCLOUD_PLAYER_SCALE}%`,
                 height: SOUNDCLOUD_NATIVE_PLAYER_HEIGHT_PX,
                 border: 0,
-                background: '#000',
+                background: HUD_COLORS.ground,
                 filter:
                   'invert(0.9) hue-rotate(180deg) saturate(0.85) brightness(0.82) contrast(1.08)',
                 transform: `scale(${SOUNDCLOUD_PLAYER_SCALE})`,

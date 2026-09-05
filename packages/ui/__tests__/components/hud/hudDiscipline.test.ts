@@ -4235,10 +4235,31 @@ describe('one alpha for a rule', () => {
 
     // And the strip really is where it is worn — otherwise the rung is a rule
     // about nothing.
-    const strip = SOURCES.find((source) => source.name === STRIP_RULE_SOURCE);
-    const worn = rulesIn(code(strip?.text ?? '')).map((rule) => rule.alpha);
+    //
+    // ⚠️ THE CHROME, NOT THE FILE. The strip's file also holds the PANELS
+    // dropdown, and the argument for 0.07 does not reach it: the rung is cyan
+    // on the instrument's own TRANSLUCENT chrome, and the menu stands on
+    // `stageGround` at 0.96, where a 0.07 hairline is not a faint line but no
+    // line. So the file is split at the menu's own component and the two
+    // halves are asked different questions — the chrome wears the strip's
+    // rung, the menu wears the ordinary section rule every other readout wears
+    // (and the membership rule above still holds it to a declared rung).
+    const strip = code(SOURCES.find((source) => source.name === STRIP_RULE_SOURCE)?.text ?? '');
+    const menuAt = strip.indexOf('function PanelVisibilityControl');
+    const menuEnd = strip.indexOf('\nconst ENRICHMENT_COLOR');
+    expect(menuAt, 'the PANELS menu moved out of the strip').toBeGreaterThan(-1);
+    expect(menuEnd).toBeGreaterThan(menuAt);
+    const chrome = strip.slice(0, menuAt) + strip.slice(menuEnd);
+    const menu = strip.slice(menuAt, menuEnd);
+
+    const worn = rulesIn(chrome).map((rule) => rule.alpha);
     expect(worn.length).toBeGreaterThan(1);
     expect(new Set(worn)).toEqual(new Set([ALPHA_RUNGS.strip]));
+
+    // The menu's own, and it is the section rule: the key legend is a second
+    // section of one readout, which is that rung's whole definition.
+    expect(new Set(rulesIn(menu).map((rule) => rule.alpha)))
+      .toEqual(new Set([ALPHA_RUNGS.rule]));
   });
 
   it('the ghost is one number, and no file writes it down', () => {

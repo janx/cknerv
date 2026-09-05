@@ -393,10 +393,13 @@ describe('SightedNodeCard discipline', () => {
       node: rosterNode({ rtt_ms: 41 }),
       sighting: { phase: 'ready', record: RECORD },
     });
-    // No facet buttons, no progressive plates — the close affordance is the
-    // card's only interactive element, and it is a role, not a <button>.
-    expect(container.querySelectorAll('button')).toHaveLength(0);
-    expect(container.querySelectorAll('[role="button"]')).toHaveLength(1);
+    // No facet buttons, no progressive plates — the close control is the card's
+    // only interactive element, and it is a real `<button>` now: as a
+    // `<span role="button">` with no `tabIndex` it was the one control on every
+    // card that no keyboard could reach (report E, E-13).
+    expect(container.querySelectorAll('button')).toHaveLength(1);
+    expect(container.querySelector('button')?.getAttribute('aria-label')).toBe('close');
+    expect(container.querySelectorAll('[role="button"]')).toHaveLength(0);
     expect(container.querySelector('[aria-busy="true"]')).toBeNull();
     for (const name of ['addr', 'version', 'dial']) {
       expect(row(container, name)).not.toBeNull();

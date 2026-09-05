@@ -37,7 +37,7 @@ describe('Jukebox glyph', () => {
     // wrapper clips the same box. The glow is cast from the wrapper, so its
     // silhouette is still the union of note and bars.
     expect(glyph.style.overflow).toBe('hidden');
-    expect(glyph.style.filter).toBe('drop-shadow(0 0 4px rgba(32,240,255,.55))');
+    expect(glyph.style.filter).toBe('drop-shadow(0 0 4px rgba(32,240,255,0.55))');
     // The note stays one static SVG, and it carries no filter of its own.
     const note = glyph.querySelector(':scope > svg') as SVGSVGElement;
     expect(note.getAttribute('viewBox')).toBe('0 0 23 14');

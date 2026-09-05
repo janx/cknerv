@@ -968,6 +968,9 @@ function EvidenceLedger({
             }}
             onKeyDown={(event) => {
               if (event.key !== 'Escape' || !expanded) return;
+              // Handled here, and said so: the card's own dismissal reads
+              // `defaultPrevented` before it closes the whole dossier.
+              event.preventDefault();
               event.stopPropagation();
               setExpandedEvidenceKey(null);
               onHopFocusChange?.(null);

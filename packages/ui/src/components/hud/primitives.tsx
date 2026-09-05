@@ -401,21 +401,35 @@ export function Gauge({ ratio, color }: { ratio: number; color: string }) {
   );
 }
 
+/** The one control every card carries, and for the life of the file the one
+ *  control no keyboard could reach: a `<span role="button">` with no
+ *  `tabIndex` and no key handler, so a visitor who had tabbed into a card's
+ *  facts had no way out of it but the mouse (report E, E-13).
+ *
+ *  A real `<button>` is the whole fix — it is focusable, it fires on Enter and
+ *  Space, and it takes the theme's `button:focus-visible` ring with every
+ *  other button in the overlay. What it also brings is a user-agent stylesheet
+ *  that would give it a border, a grey ground and the OS font, so the reset
+ *  below is not decoration: `appearance:none`, no border, no padding, the
+ *  ground transparent. `type="button"` because a bare button inside a form
+ *  submits it. */
 export function CloseButton({ onClose, title }: { onClose: () => void; title?: string }) {
   return (
-    <span
-      role="button"
+    <button
+      type="button"
       aria-label="close"
       title={title}
       onClick={(e) => { e.stopPropagation(); onClose(); }}
       onPointerDown={(e) => e.stopPropagation()}
       onMouseOver={(e) => { (e.currentTarget as HTMLElement).style.color = HUD_COLORS.danger; }}
       onMouseOut={(e) => { (e.currentTarget as HTMLElement).style.color = HUD_COLORS.dim; }}
+      onBlur={(e) => { (e.currentTarget as HTMLElement).style.color = HUD_COLORS.dim; }}
       style={{
+        appearance: 'none', border: 0, padding: 0, background: 'transparent',
         position: 'absolute', top: 6, right: 11, cursor: 'pointer', pointerEvents: 'auto',
         fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.emphasis, lineHeight: 1, color: HUD_COLORS.dim,
       }}
-    >×</span>
+    >×</button>
   );
 }
 

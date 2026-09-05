@@ -644,6 +644,10 @@ export default function App({
   const [nodeStreamHealth, setNodeStreamHealth] = useState<StreamHealth | null>(
     null,
   );
+  // SND·06's switch. The registry that owns it is the HUD's; this is only
+  // where the module it names happens to be mounted, so the default matches
+  // `DEFAULT_PANEL_VISIBILITY.sound` and the HUD publishes every change.
+  const [soundVisible, setSoundVisible] = useState(true);
   const retainedCellRecordsRef = useRef(cellsCache.cells);
   retainedCellRecordsRef.current = cellsCache.cells;
   // Cell and network ids retain separate state shapes because their scene
@@ -2197,8 +2201,14 @@ export default function App({
         build={build}
         colonyCount={topology.nodes.length}
         producerView={producerView}
+        onSoundVisibleChange={setSoundVisible}
       />
-      <Jukebox blockPulseAtMs={cellsCache.lastPulseAtMs} />
+      {/* SND·06. The chip wears a module code, so the module registry's own
+          menu lists it and this is what that switch reaches (D-14). It
+          UNMOUNTS rather than hiding, which is what OFF means everywhere else
+          in that menu — and for a music player it is also the honest reading:
+          a chip you have switched off should not still be playing. */}
+      {soundVisible ? <Jukebox blockPulseAtMs={cellsCache.lastPulseAtMs} /> : null}
       {/* Render-stats HUD overlay (DOM sibling of HudOverlay, NOT in-Canvas):
           visible through the ` panel toggle or ?render-stats=1. */}
       {forceRenderStats ? <RenderStatsPanel /> : null}

@@ -21,11 +21,15 @@ describe('HudOverlay wiring', () => {
     expect(APP_SOURCE).toContain("'/api/projections/cells/stream',\n      initialCellsCache,");
   });
 
-  it('owns the SoundCloud Jukebox as a floating app control', () => {
+  it('owns the SoundCloud Jukebox as a floating app control the registry lists', () => {
     expect(APP_SOURCE).toContain("import Jukebox from './Jukebox'");
+    // SND·06 is in the HUD's module registry (D-14), so the chip mounts on
+    // that switch rather than unconditionally — and it UNMOUNTS, because a
+    // player switched off should not still be playing.
     expect(APP_SOURCE).toContain(
-      '      <Jukebox blockPulseAtMs={cellsCache.lastPulseAtMs} />',
+      '{soundVisible ? <Jukebox blockPulseAtMs={cellsCache.lastPulseAtMs} /> : null}',
     );
+    expect(APP_SOURCE).toContain('onSoundVisibleChange={setSoundVisible}');
     expect(APP_SOURCE).not.toContain('topBarActions={<Jukebox');
   });
 

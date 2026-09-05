@@ -2,7 +2,23 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>cknerv</title>
+    <!-- Without this a phone lays the page out at ~980px and zooms out, so the
+         three-row mobile strip, the ≤560/≤380 label-shedding rules and the
+         Jukebox's `env(safe-area-inset-*)` were all unreachable code (report E,
+         E-13). `viewport-fit=cover` is what makes the safe-area insets non-zero
+         on a notched display, which is the only reason they are asked for. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <!-- The chrome around the page, painted in the page's own ground. -->
+    <meta name="theme-color" content="#02030a" />
+    <!-- The ◇ the boot band draws, the mark every `DiamondMark` in the HUD
+         wears. Served unhashed from the dist root, so `cknerv-cli`'s
+         `cache_control_for` gives it `no-cache` with everything else that is
+         not under `assets/`. -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- The name, in the HUD's one case. `HudOverlay` appends the tip to it on
+         every block, so a tab left open in a background window is still a
+         readout. It was `cknerv`, lowercase, and never updated. -->
+    <title>CKNERV</title>
     <style>
       /* The background is HUD_COLORS.stageGround from
          packages/ui/src/components/hud/hudTheme.ts — the same value the Canvas
@@ -13,7 +29,14 @@
          that drifts shows up as the page shifting at first light.
          `ui-app/__tests__/App.sceneRoots.test.tsx` holds this literal against
          the token. */
-      body { margin: 0; background: #02030a; overflow: hidden; font-family: ui-monospace, monospace; color: #cbd5e1; }
+      /* …and the ink beside it is `HUD_COLORS.dim`, spelled out on the same
+         terms. It was `#cbd5e1` — Tailwind slate-300, from the family the
+         08-24 review purged out of the overlay — sitting in the one stylesheet
+         no guard reads. Nothing on screen inherits it for long (every HUD
+         surface names its own ink), which is exactly why it went unnoticed and
+         exactly why it should be a token: a default nobody sees is a default
+         nobody corrects. */
+      body { margin: 0; background: #02030a; overflow: hidden; font-family: ui-monospace, monospace; color: #7c8794; }
       #root { width: 100vw; height: 100vh; }
     </style>
   </head>
