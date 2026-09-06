@@ -652,6 +652,9 @@ export default function App({
   // mount from the same buffer class the startup ceiling uses. Off above 8 MP
   // (a buffer that opens at MED/LOW — exactly where the DPR lever is inert and
   // the per-frame resolve is largest), on for a HIGH-class buffer below it.
+  // And off at ANY area once the buffer is 1.5× dense or more, where it cost
+  // 2.2× the scene for edges the density had already softened (the density
+  // rule and its measurement live at `MSAA_OFF_MIN_DPR`).
   const startupAntialias = useMemo(
     () => resolveStartupAntialias(
       typeof window === 'undefined' ? 0 : window.innerWidth,
@@ -2317,10 +2320,11 @@ export default function App({
           // created here with `alpha: false` — three then reads the real
           // attributes back off it.
           //
-          // `antialias` is decided once at mount by the startup buffer class
-          // (see `startupAntialias`): off above 8 MP, on for a HIGH-class
-          // buffer below it. It is a context attribute and cannot change
-          // without remounting the Canvas, so it must not be a runtime tier.
+          // `antialias` is decided once at mount by the startup buffer's
+          // density and class (see `startupAntialias`): off at 1.5× or denser
+          // and off above 8 MP, on only for a 1×-ish HIGH-class buffer. It is
+          // a context attribute and cannot change without remounting the
+          // Canvas, so it must not be a runtime tier.
           gl={{ antialias: startupAntialias, alpha: false }}
           dpr={canvasDpr}
           style={{ background: HUD_COLORS.stageGround }}

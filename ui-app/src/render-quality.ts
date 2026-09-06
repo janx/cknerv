@@ -36,6 +36,20 @@ export function resolveCanvasDpr(devicePixelRatio: number, maxDpr: number): numb
 export const AUTO_STARTUP_MED_BUFFER_PIXELS = 8_000_000;
 export const AUTO_STARTUP_LOW_BUFFER_PIXELS = 20_000_000;
 
+/** The drawing-buffer density at or above which MSAA stops paying, whatever
+ * the area. A buffer of 1.5 device pixels per CSS pixel already anti-aliases
+ * geometrically — an edge is spread across more than one sample before any
+ * multisampling — while the multisample resolve multiplies exactly the thin
+ * passes this scene is made of. Measured on the 890M at 1920×960 CSS @2× (a
+ * 3840×1920 buffer: 7.37 MP, a HIGH-class window under the 8 MP boundary): the
+ * MSAA context cost 2.2× the scene GPU time of the same page without it —
+ * residual fibres 2.5 → 6.5 ms, fabric base 0.46 → 1.5, bridge 0.22 → 1.0,
+ * cell bodies 0.55 → 1.9. Below this density MSAA is still worth its resolve,
+ * because there the hard edges it helps (the capsule `LineSegments2`, the
+ * couriers, the icosahedra) are one device pixel wide with nothing else to
+ * soften them. */
+export const MSAA_OFF_MIN_DPR = 1.5;
+
 export function resolveAutoStartupQuality(
   cssWidth: number,
   cssHeight: number,
@@ -58,21 +72,40 @@ export function resolveAutoStartupQuality(
 
 /** Whether to negotiate MSAA (the Canvas `antialias` context attribute) at
  * boot. MSAA is a multisampled default framebuffer resolved every frame at a
- * cost proportional to the drawing-buffer pixels, and it is largest exactly
- * where the DPR lever is already inert (>= 8 MP). It is a context attribute
+ * cost proportional to the drawing-buffer pixels. It is a context attribute
  * fixed at Canvas creation and cannot follow the runtime tier, so it is decided
- * once from the same buffer class the startup ceiling uses: a buffer that opens
- * at MED or LOW (>= 8 MP) turns MSAA off, and only a HIGH-class buffer (< 8 MP)
- * keeps it on — for the hard edges it actually helps (the capsule
- * `LineSegments2`, the couriers, the icosahedra), whose fill is cheap there.
- * Unusable geometry keeps AA on, matching {@link resolveAutoStartupQuality}'s
- * deterministic HIGH fallback. */
+ * once, from two readings of the buffer High would create, in this order.
+ *
+ * Density first: a buffer at {@link MSAA_OFF_MIN_DPR} or denser gets no MSAA at
+ * any area, because such a buffer already anti-aliases geometrically while the
+ * resolve multiplies precisely this scene's thin passes (the measurement lives
+ * at the constant). The density read is the buffer's, not the display's —
+ * `resolveCanvasDpr` first clamps the browser's reading to High's own ceiling —
+ * so a browser reporting 8 on a 2-capped buffer is dense at 2, and an invalid
+ * or sub-one reading normalises to 1 and is not dense at all. A dense display
+ * whose viewport geometry is unusable therefore gets no MSAA either: that is
+ * the cheaper of the two failures, and the only one that cannot miss a frame.
+ *
+ * Then the area class, for everything below that density: the same 8 MP class
+ * the startup ceiling uses. A buffer that opens at MED or LOW (>= 8 MP) turns
+ * MSAA off — there the per-frame resolve is largest and the DPR lever is
+ * already inert — and only a HIGH-class buffer (< 8 MP) keeps it on, for the
+ * hard edges it actually helps, whose fill is cheap there. Unusable geometry
+ * BELOW the density line keeps AA on, matching
+ * {@link resolveAutoStartupQuality}'s deterministic HIGH fallback.
+ *
+ * Only the context attribute moves: {@link resolveAutoStartupQuality} is
+ * untouched, the class still decides the OPENING TIER, and the maximized 2×
+ * window still opens at HIGH — now without a multisampled buffer under it. */
 export function resolveStartupAntialias(
   cssWidth: number,
   cssHeight: number,
   devicePixelRatio: number,
   highMaxDpr: number,
 ): boolean {
+  if (resolveCanvasDpr(devicePixelRatio, highMaxDpr) >= MSAA_OFF_MIN_DPR) {
+    return false;
+  }
   return (
     resolveAutoStartupQuality(cssWidth, cssHeight, devicePixelRatio, highMaxDpr)
     === 'high'

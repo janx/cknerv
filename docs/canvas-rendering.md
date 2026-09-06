@@ -1579,16 +1579,35 @@ vsync boundary. Deterministic review Labs retain High unless their URL opts
 into `adaptive-quality=1`. An explicit High/Med/Low query or control remains
 authoritative.
 
-Multisample antialiasing is decided once at that same mount, from the same
-buffer class. `antialias` is a context attribute fixed at Canvas creation and
-cannot follow the runtime tier, and the MSAA resolve is a per-frame cost
+Multisample antialiasing is decided once at that same mount, from two readings
+of the same buffer. `antialias` is a context attribute fixed at Canvas creation
+and cannot follow the runtime tier, so both readings happen before the first
+frame. **Density first:** a buffer at 1.5 device pixels per CSS pixel or denser
+gets no MSAA at any area, because such a buffer already anti-aliases
+geometrically while the resolve multiplies precisely this scene's thin passes.
+On the 890M at 1920×960 CSS @2× the MSAA context cost 2.2× the scene GPU time
+of the same page without it — residual fibres 2.5 → 6.5 ms, fabric base
+0.46 → 1.5, bridge 0.22 → 1.0, cell bodies 0.55 → 1.9 — for edges that a 2×
+buffer had already softened. The density read is the buffer's, not the
+display's: the browser's ratio is first clamped to High's own DPR ceiling, so an
+invalid or sub-one reading is not dense and a dense display whose viewport
+geometry is unusable gets no MSAA, which is the cheaper failure. **Then the area
+class,** for everything below that density: the MSAA resolve is a per-frame cost
 proportional to drawing-buffer pixels — largest at or above the 8-million-pixel
 class, exactly where the DPR lever is already inert. So a buffer that opens at
 Med or Low (≥ 8 million pixels) turns MSAA off, while a High-class buffer
-(< 8 million pixels) keeps it on for the hard edges it helps (capsule line
-segments, couriers, icosahedra). The softer hard edges above the class are the
-accepted cost; the passes that read as a nervous system are screen-space
-capsules whose own shader owns their caps.
+(< 8 million pixels) on a 1×-ish display keeps it on for the hard edges it helps
+(capsule line segments, couriers, icosahedra). The softer hard edges above the
+class are the accepted cost; the passes that read as a nervous system are
+screen-space capsules whose own shader owns their caps.
+
+One 2× 4K display produces two window classes of the same page: fullscreen is
+1920×1080 CSS → 8.29 million pixels, 3.7 % above the boundary, and opens at Med;
+the maximized window is 1920×~960 → 7.37 million, 8 % below it, and opens at
+High. The class still decides that opening tier and the two windows still differ
+in it. MSAA no longer differs between them: both are 2× buffers, so both open
+without one, and the maximized window is measured on the same cost curve as
+fullscreen instead of carrying a multisampled context for the life of the page.
 
 AUTO then samples 750 ms windows, uses a 1,500 ms exponential average, begins
 with a 4,000 ms warmup, and waits 6,000 ms after a switch. Sustained slow

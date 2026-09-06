@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AUTO_STARTUP_LOW_BUFFER_PIXELS,
   AUTO_STARTUP_MED_BUFFER_PIXELS,
+  MSAA_OFF_MIN_DPR,
   hasQuerySwitch,
   resolveAutoStartupQuality,
   resolveCanvasDpr,
@@ -53,8 +54,9 @@ describe('render quality route helpers', () => {
   });
 
   it('leaves MSAA on below the med startup class and off at or above it', () => {
-    // On for a HIGH-class buffer (< 8 MP), where the hard edges it helps are
-    // cheap to resolve.
+    // Below the density line the area class is the only rule. On for a
+    // HIGH-class buffer (< 8 MP), where the hard edges it helps are cheap to
+    // resolve.
     expect(resolveStartupAntialias(1440, 900, 1, 2)).toBe(true);
     expect(resolveStartupAntialias(1920, 1080, 1, 2)).toBe(true);
     // Off for a buffer that opens at MED or LOW (>= 8 MP), where the per-frame
@@ -62,6 +64,29 @@ describe('render quality route helpers', () => {
     expect(resolveStartupAntialias(3840, 2160, 1, 2)).toBe(false); // 4K@1x -> med
     expect(resolveStartupAntialias(1920, 1080, 2, 2)).toBe(false); // 1080p@2x -> med
     expect(resolveStartupAntialias(3840, 2160, 2, 2)).toBe(false); // 4K@2x -> low
+    // The class still bites at a density that is under the line: 13 MP at
+    // 1.25x opens at MED, so MSAA is off for the area reason alone.
+    expect(resolveStartupAntialias(2_600, 3_200, 1.25, 2)).toBe(false);
+  });
+
+  it('turns MSAA off on dense displays regardless of area', () => {
+    // The maximized window of a 2x 4K display: 7.37 MP, under the 8 MP class,
+    // so it opens at HIGH — and on master it negotiated MSAA 4x for the life
+    // of the context, which cost 2.2x the scene GPU time. A 2x buffer already
+    // anti-aliases geometrically, so density wins over the class here.
+    expect(resolveStartupAntialias(1920, 960, 2, 2)).toBe(false);
+    expect(resolveAutoStartupQuality(1920, 960, 2, 2)).toBe('high');
+    // The rule is the buffer's density, at the boundary and above it, however
+    // small the window.
+    expect(resolveStartupAntialias(1440, 900, MSAA_OFF_MIN_DPR, 2)).toBe(false);
+    expect(resolveStartupAntialias(1280, 720, 2, 2)).toBe(false);
+    // Just under the boundary the class rules again, and a small window keeps
+    // its MSAA.
+    expect(resolveStartupAntialias(1440, 900, 1.25, 2)).toBe(true);
+    // 1x displays are untouched: they keep MSAA for the capsule / courier /
+    // icosahedron edges, and lose it only to the 8 MP class as before.
+    expect(resolveStartupAntialias(1920, 1080, 1, 2)).toBe(true);
+    expect(resolveStartupAntialias(3840, 2160, 1, 2)).toBe(false);
   });
 
   it('puts the antialias boundary exactly on the med pixel class', () => {
@@ -72,11 +97,17 @@ describe('render quality route helpers', () => {
     expect(resolveStartupAntialias(
       AUTO_STARTUP_MED_BUFFER_PIXELS - 1, 1, 1, 2,
     )).toBe(true);
-    // A browser DPR above High's own ceiling must not exaggerate the load.
-    expect(resolveStartupAntialias(1_000, 1_000, 8, 2)).toBe(true);
-    // Unusable geometry falls back to the safe HIGH default: AA stays on.
+    // A browser DPR above High's own ceiling must not exaggerate the AREA, but
+    // the buffer it clamps to is still 2x dense, so MSAA is off on density.
+    expect(resolveAutoStartupQuality(1_000, 1_000, 8, 2)).toBe('high');
+    expect(resolveStartupAntialias(1_000, 1_000, 8, 2)).toBe(false);
+    // Unusable geometry below the density line falls back to the safe HIGH
+    // default: AA stays on.
     expect(resolveStartupAntialias(0, 900, 1, 2)).toBe(true);
     expect(resolveStartupAntialias(Number.NaN, 900, 1, 2)).toBe(true);
+    // Unusable geometry on a dense display gets no MSAA — the cheaper failure.
+    expect(resolveStartupAntialias(0, 900, 2, 2)).toBe(false);
+    expect(resolveStartupAntialias(Number.NaN, 900, 2, 2)).toBe(false);
   });
 
   it('does not silently adapt deterministic review Labs', () => {
