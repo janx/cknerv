@@ -302,6 +302,14 @@ describe('three knobs that default to the picture that shipped', () => {
     expect(halo).toContain('uDepthEnergy.value = LIVE.cell.bodyDepthEnergy');
     expect(halo).not.toMatch(/uEmission\.value = populationEmissionForGain\(gain\) \*/);
 
+    // The knob's OTHER consumer: the 12K resting cells. The body material
+    // DECLARES and READS uDepthEnergy, but the frame loop in CellGalaxy is what
+    // feeds it the knob — without this write the parked knob (c) reaches only
+    // the halo beads, not the tissue it was named for (REVIEW B1-1). The body's
+    // own material handle, so it cannot pass on the halo's write alone.
+    const galaxy = read('components/CellGalaxy.tsx');
+    expect(galaxy).toContain('hybridMaterial.uniforms.uDepthEnergy.value = LIVE.cell.bodyDepthEnergy');
+
     // …and the depth law is ONE law in one file, read by both body materials.
     const bodies = read('materials/cellHybridMaterial.ts');
     const field = read('materials/populationFieldMaterial.ts');

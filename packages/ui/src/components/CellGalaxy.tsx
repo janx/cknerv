@@ -2485,6 +2485,12 @@ function CellGalaxy({
     hybridMaterial.uniforms.uMemorySignalEnergy.value = memorySignal.energyScale;
     hybridMaterial.uniforms.uWarmth.value = LIVE.cell.warmth; // living rose body → ember bias
     hybridMaterial.uniforms.uCenterDim.value = LIVE.cell.centerDim; // shared centre-energy floor
+    // ⟨D-10 · knob c⟩ The far half's depth cue, on the 12K resting cells — the
+    // SAME value the halo writes to its own copy of this uniform
+    // (`CellPopulationField`), because the beads and the bodies are one matter
+    // and the depth term is one law across both. Default 0 = today's picture,
+    // no depth cue at all, so this is zero-cost until the knob is moved.
+    hybridMaterial.uniforms.uDepthEnergy.value = LIVE.cell.bodyDepthEnergy;
     // ⟨ruling 22⟩ The galaxy's own radiance, on the resting body alone — the
     // halo reads the same law through its emission (`CellPopulationField`), so
     // the tissue and its corona are one light. Default 1 = today's picture.
