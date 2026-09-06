@@ -4753,7 +4753,8 @@ describe('one ladder for time', () => {
     expect(wearers('instrumentEase')).toEqual(['hud/CellDetailPanel.tsx']);
 
     // The instrument's two: the scan beam, which interpolates between two
-    // samples of the scan clock, and the specimen sweep it outlives.
+    // samples of the scan clock, and the specimen sweep it runs alongside
+    // (both retire once the walk classifies — D-6).
     const dossier = code(SOURCES.find((source) => source.name === 'CellDetailPanel.tsx')?.text ?? '');
     expect(dossier).toContain('transform ${SCAN_TICK_MS}ms ${HUD_MOTION.instrumentEase}');
     expect(dossier).toContain('cknerv-cell-specimen-sweep ${HUD_MOTION.hold}ms ${HUD_MOTION.instrumentEase}');
@@ -6353,6 +6354,29 @@ describe('one entrance for five dialects', () => {
     // reveal, and its exit is the flip every other state change wears.
     expect(HUD_MOTION.reveal).toBe(260);
     expect(HUD_MOTION.flip).toBe(120);
+  });
+
+  it('and every card root carries a single drop-shadow, not the second accent glow', () => {
+    // D-6: the card root ran TWO Gaussian blurs per composited frame —
+    // `drop-shadow(silhouette) drop-shadow(0 0 14px accent@.06)`. The second,
+    // a 6 %-alpha glow over near-black, sat at the edge of perceptibility and
+    // was half the per-frame blur work on a surface the canvas and the specimen
+    // sweep already damage every frame. Only the silhouette shadow remains.
+    const CARD_ROOTS = [
+      'components/hud/CellDetailPanel.tsx',
+      'components/hud/PeerLinkCard.tsx',
+      'components/hud/NodeSelfCard.tsx',
+      'components/hud/MinerNodeCard.tsx',
+      'components/hud/SightedNodeCard.tsx',
+    ] as const;
+    for (const name of CARD_ROOTS) {
+      const source = PACKAGE_SOURCES.find((entry) => entry.name === name);
+      expect(source, `${name} moved — this oracle reads files off disk`).toBeDefined();
+      const text = code(source?.text ?? '');
+      const shadows = text.match(/drop-shadow\(/g) ?? [];
+      expect(shadows.length, `${name}: one card-root drop-shadow`).toBe(1);
+      expect(text, `${name}: the α.06 accent glow is gone`).not.toMatch(/drop-shadow\(0 0 14px/);
+    }
   });
 });
 

@@ -1920,12 +1920,15 @@ describe('CellDetailPanel', () => {
     const settledSpecimenScan = container.querySelector(
       '[data-cell-specimen-scan-light]',
     ) as HTMLElement;
-    // Classification ends the probe walk; the ambient sweep keeps looping.
-    expect(settledSpecimenScan.style.animation).toContain(
-      `cknerv-cell-specimen-sweep ${HUD_MOTION.hold}ms ${HUD_MOTION.instrumentEase} infinite`,
-    );
-    expect(settledSpecimenScan.style.willChange).toContain('transform');
-    expect(settledSpecimenScan.style.opacity).toBe('0.8');
+    // D-6: classification retires the ambient sweep — it stops looping,
+    // releases will-change and fades out — so the card's `filter` surface stops
+    // being damaged every frame. The element stays mounted (the reveal only
+    // ever changes ink, never the card's node set); during the scan it still
+    // animates — see the render test above.
+    expect(settledSpecimenScan).not.toBeNull();
+    expect(settledSpecimenScan.style.animation).toBe('');
+    expect(settledSpecimenScan.style.willChange).toBe('');
+    expect(settledSpecimenScan.style.opacity).toBe('0');
     expect(causal().style.display).toBe('block');
     expect(causal().style.opacity).toBe('1');
     expect(causal().style.pointerEvents).toBe('auto');

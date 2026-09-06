@@ -1134,6 +1134,29 @@ function CellScanSweep({ plateRef, reduced }: {
   );
 }
 
+/** The ambient specimen sweep. It is live instrumentation DURING the probe
+ *  walk; once the specimen is classified it retires (D-6) rather than looping
+ *  forever, so the card's `filter` surface stops being damaged every frame.
+ *  Reduced motion keeps its prior static, animation-free rendering. */
+function CellSpecimenSweep({ reduced }: { reduced: boolean }) {
+  const classified = useCellScanClassified();
+  // Once classified the sweep stops looping, releases will-change and fades out
+  // (opacity is ink the reveal is free to change; the element stays mounted with
+  // stable geometry — the card never adds or drops a node while it reveals). A
+  // stopped-but-visible sweep would strand a static line, since its keyframes
+  // fade to nothing only at a cycle's ends, so retirement is a fade not a freeze.
+  const animate = !reduced && !classified;
+  return (
+    <span
+      aria-hidden="true"
+      data-cell-specimen-scan-light
+      style={{ position: 'absolute', zIndex: 2, left: 5, right: 5, top: '9%', height: '82%', opacity: classified && !reduced ? 0 : 0.8, animation: animate ? `cknerv-cell-specimen-sweep ${HUD_MOTION.hold}ms ${HUD_MOTION.instrumentEase} infinite` : undefined, pointerEvents: 'none', willChange: animate ? 'transform, opacity' : undefined }}
+    >
+      <span style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 1, background: `linear-gradient(90deg,transparent,${rgba(CELL_CARD_ACCENT, 0.85)},${rgba(HUD_COLORS.orange, 0.46)},transparent)`, boxShadow: `0 0 9px ${rgba(CELL_CARD_ACCENT, 0.7)}` }} />
+    </span>
+  );
+}
+
 /** The byte budget joins on the enrichment-context step. */
 function CellScanByteBudget({ capacityShannons, knowledge, dataTruncated, revealAt }: {
   capacityShannons: number;
@@ -2111,11 +2134,11 @@ function CellDetailPanel({
         // One composited shadow around the constellation replaces a separate
         // filter surface for every satellite. It follows the silhouette, so
         // the scan square and the plate beside it cast one shadow instead of
-        // two stacked ones. The peer cards derive this glow from a live accent;
-        // the cell card has no per-fact accent at card level, so it derives it
-        // from the dialect's identity instead — the same colour the frame,
-        // the beam and the tether are drawn in.
-        filter: `drop-shadow(0 8px 16px ${rgba(HUD_COLORS.ground, 0.56)}) drop-shadow(0 0 14px ${rgba(CELL_CARD_ACCENT, 0.06)})`,
+        // two stacked ones. A second α.06 accent glow used to ride on top of
+        // it; it was dropped (D-6) — at 6 % over near-black it read as nothing
+        // while costing a second per-frame Gaussian blur on a surface the
+        // canvas beneath and the specimen sweep already repaint every frame.
+        filter: `drop-shadow(0 8px 16px ${rgba(HUD_COLORS.ground, 0.56)})`,
         // No enter of its own. The card arrives once, on the chassis
         // (`INSPECTION_CARD_STYLE`, `HUD_MOTION.reveal`) — this body used to
         // slide 12 px in over 280 ms while the frame around it faded over 120
@@ -2779,18 +2802,11 @@ function CellDetailPanel({
             : undefined}
           onInteractionChange={onScanInteractionChange}
         />
-        {/* Ambient specimen sweep — it loops for as long as the panel is open
-          * and deliberately outlives the probe walk, so a classified specimen
-          * still reads as live instrumentation. It animates transform/opacity
-          * only (never `top`), which is what keeps it off the layout path. */}
-        <span
-          key={cell.id}
-          aria-hidden="true"
-          data-cell-specimen-scan-light
-          style={{ position: 'absolute', zIndex: 2, left: 5, right: 5, top: '9%', height: '82%', opacity: 0.8, animation: reduced ? undefined : `cknerv-cell-specimen-sweep ${HUD_MOTION.hold}ms ${HUD_MOTION.instrumentEase} infinite`, pointerEvents: 'none', willChange: reduced ? undefined : 'transform, opacity' }}
-        >
-          <span style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 1, background: `linear-gradient(90deg,transparent,${rgba(CELL_CARD_ACCENT, 0.85)},${rgba(HUD_COLORS.orange, 0.46)},transparent)`, boxShadow: `0 0 9px ${rgba(CELL_CARD_ACCENT, 0.7)}` }} />
-        </span>
+        {/* Ambient specimen sweep — live instrumentation DURING the probe walk
+          * (it animates transform/opacity only, never `top`, so it stays off the
+          * layout path), retired once the specimen is classified (D-6) so the
+          * card's filter surface stops being damaged every frame. */}
+        <CellSpecimenSweep key={cell.id} reduced={reduced} />
         <span style={portraitBracket('tl')} /><span style={portraitBracket('tr')} />
         <span style={portraitBracket('bl')} /><span style={portraitBracket('br')} />
       </section>
