@@ -695,21 +695,27 @@ describe('the sprite footprint', () => {
     point.dispose();
   });
 
-  it('leaves the light alone when the CEILING is the clamp that bound', () => {
-    // The energy term corrects a sprite the MINIMUM widened. A narrowed one
-    // has shrink above one, which the saturation already caps.
+  it('⟨D-7⟩ conserves light when the CEILING is the clamp that bound', () => {
+    // A close sprite the ceiling narrowed keeps the integrated light of the
+    // footprint it WANTED — dimmed by (drawn/wanted)² — so a camera flying
+    // through the halo slab stops blowing the bead out additively.
     const wanted = populationPointFootprint(POPULATION_FIELD_POINT_SIZE_MAX, 2160, 1.8);
-    expect(populationPointEnergy(wanted, populationPointDrawn(wanted, 2))).toBe(1);
+    const drawn = populationPointDrawn(wanted, 2);
+    expect(drawn).toBeLessThan(wanted); // the ceiling bound it
+    expect(populationPointEnergy(wanted, drawn)).toBeCloseTo((drawn / wanted) ** 2, 10);
+    expect(populationPointEnergy(wanted, drawn)).toBeLessThan(1);
   });
 
-  it('conserves light when the minimum footprint has to widen a sprite', () => {
-    // A point cannot render smaller than a fragment. Without this the field
-    // would stop dimming as the camera pulled back and would twinkle as
-    // sprites crossed the pixel grid instead.
+  it('conserves light on BOTH sides of the bound, and is one only when unclamped', () => {
+    // A point cannot render smaller than a fragment (the FLOOR widens it) nor,
+    // ⟨D-7⟩, larger than the ceiling (which narrows it); either way the square
+    // law keeps the integrated light honest.
     expect(populationPointEnergy(4, 4)).toBe(1);
+    // Floor widened it (drawn > wanted): dim by (wanted/drawn)².
     expect(populationPointEnergy(0.7, 1.4)).toBeCloseTo(0.25, 6);
-    // Never above one: a sprite the minimum did not touch is unmodified.
-    expect(populationPointEnergy(8, 1.4)).toBe(1);
+    // ⟨D-7⟩ Ceiling narrowed it (drawn < wanted): dim by (drawn/wanted)².
+    expect(populationPointEnergy(8, 1.4)).toBeCloseTo((1.4 / 8) ** 2, 10);
+    expect(populationPointEnergy(8, 1.4)).toBeLessThan(1);
   });
 });
 
@@ -901,7 +907,9 @@ describe('the beads read the bodies own depth law', () => {
     // would lift the black between the beads, which is the one thing this
     // layer may not do.
     const points = makePopulationPointMaterial();
-    expect(points.vertexShader).toContain('vEnergy = min(1.0, shrink * shrink) * depthDim;');
+    // ⟨D-7⟩ Symmetric conservation: dims on either side of the size bound and
+    // is one only when unclamped — still bounded above by 1, still a spend.
+    expect(points.vertexShader).toContain('vEnergy = min(shrink * shrink, 1.0 / (shrink * shrink)) * depthDim;');
     expect(points.vertexShader).not.toMatch(/depthDim\s*\+/);
   });
 

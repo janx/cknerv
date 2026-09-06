@@ -8,10 +8,12 @@ import {
   makePeerCloudMaterial,
   makePeerHaloMaterial,
   MEASURED_EVENT_SCALE,
+  MEASURED_HALO_NEAR_DEPTH,
   MEASURED_HOVER_EXTENT,
   MEASURED_HOVER_FOCUS,
   MEASURED_HOVER_MATCH_WU,
   MEASURED_PEER_BRIGHTNESS,
+  measuredHaloDepthRolloff,
   PEER_COMPRESSION_GLSL,
   peerCloudHitRadius,
   PEER_CLOUD_GHOST_TONE,
@@ -472,5 +474,32 @@ describe('a hovered peer answers', () => {
     expect(lit(12, 22, 40)).toBe(0);
     hover.w = 0;
     expect(lit(12, 22, -8)).toBe(0);
+  });
+});
+
+describe('⟨D-7⟩ the measured halo rolls off as the camera dollies onto it', () => {
+  it('is untouched at and beyond the near depth — default and belt-standoff poses are byte-identical', () => {
+    expect(measuredHaloDepthRolloff(MEASURED_HALO_NEAR_DEPTH)).toBe(1);
+    // The nearest belt peer at the default camera is ~124 wu — well beyond it.
+    expect(measuredHaloDepthRolloff(124)).toBe(1);
+  });
+
+  it('holds the halo apparent size and conserves light below the near depth', () => {
+    expect(measuredHaloDepthRolloff(MEASURED_HALO_NEAR_DEPTH / 2)).toBeCloseTo(0.5, 6);
+    // At minDistance 4 the halo is drawn far in and dimmed by rolloff², so it
+    // no longer fills the viewport with additive fill.
+    expect(measuredHaloDepthRolloff(4)).toBeCloseTo(4 / MEASURED_HALO_NEAR_DEPTH, 6);
+    expect(measuredHaloDepthRolloff(4)).toBeLessThan(1);
+    expect(measuredHaloDepthRolloff(0)).toBe(0);
+  });
+
+  it('the material carries the near-depth uniform and the shader keys the roll-off on view depth', () => {
+    const measured = makeMeasuredPeerHalosMaterial();
+    expect(measured.uniforms.uHaloNearDepth.value).toBe(MEASURED_HALO_NEAR_DEPTH);
+    expect(measured.vertexShader).toContain(
+      'float rolloff = clamp(haloViewDepth / max(uHaloNearDepth, 0.001), 0.0, 1.0);',
+    );
+    expect(measured.vertexShader).toContain('extent *= rolloff;');
+    expect(measured.fragmentShader).toContain('intensity *= vHaloConserve;');
   });
 });

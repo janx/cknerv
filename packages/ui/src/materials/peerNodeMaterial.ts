@@ -523,6 +523,30 @@ export const MEASURED_HOVER_FOCUS = CELL_HOVER_FOCUS;
 export const MEASURED_HOVER_EXTENT = 0.18;
 
 /**
+ * ⟨D-7⟩ The view depth (world units) at which the measured halo begins to roll
+ * off. The billboard's extent is a world size, so its on-screen size grows as
+ * `1/viewDepth`: at `minDistance` 4 a single 8.4 wu halo is a full-screen
+ * additive pass, and the belt sums to a viewport of fill within ~20 wu (A2-6).
+ * Below this depth the extent scales WITH view depth, so the halo's angular
+ * size is held at what it is here instead of growing without bound, and its
+ * light is conserved by the square of the roll-off. Chosen well inside the
+ * nearest belt peer at the default camera (~124 wu), so every default and
+ * belt-standoff pose is byte-identical (rolloff = 1).
+ */
+export const MEASURED_HALO_NEAR_DEPTH = 32;
+
+/** The roll-off factor for a measured halo at a given view depth: 1 at and
+ *  beyond the near depth (byte-identical), scaling to 0 at the camera. The
+ *  extent is multiplied by this (angular size held) and the light by its
+ *  square (conserved). Mirrors the billboard vertex shader. */
+export function measuredHaloDepthRolloff(
+  viewDepth: number,
+  nearDepth: number = MEASURED_HALO_NEAR_DEPTH,
+): number {
+  return Math.min(1, Math.max(0, viewDepth / Math.max(nearDepth, 0.001)));
+}
+
+/**
  * Every measured peer halo in ONE instanced draw. Replaces one drei Billboard
  * plus one single-quad mesh (and two frame subscribers) per peer: the
  * billboard is rebuilt from the view matrix's camera axes — exactly the
@@ -549,6 +573,8 @@ export function makeMeasuredPeerHalosMaterial(
       // all. One uniform for a belt of twelve, written from the frame loop
       // off the canvas's own hover word — no re-render, no attribute upload.
       uHover: { value: new THREE.Vector4(0, 0, 0, 0) },
+      // ⟨D-7⟩ view depth at which the halo starts rolling off; see MEASURED_HALO_NEAR_DEPTH.
+      uHaloNearDepth: { value: MEASURED_HALO_NEAR_DEPTH },
       ...makeCompressionUniforms(),
       ...sharedShockwave(uniforms),
     },
@@ -573,10 +599,13 @@ export function makeMeasuredPeerHalosMaterial(
       varying float vPeerSelected;
       varying float vHeld;
       varying float vHover;
+      // ⟨D-7⟩ light conservation for a halo the depth roll-off drew in.
+      varying float vHaloConserve;
 
       uniform float uTime;
       uniform float uCompressDepth;
       uniform vec4 uHover;
+      uniform float uHaloNearDepth;
       ${SHOCKWAVE_UNIFORMS_GLSL}
 
       ${SHOCKWAVE_SIGNAL_GLSL}
@@ -619,6 +648,17 @@ export function makeMeasuredPeerHalosMaterial(
         float extent = expand
           * (1.0 - uCompressDepth * held)
           * (1.0 + ${MEASURED_HOVER_EXTENT.toFixed(2)} * vHover);
+        // ⟨D-7⟩ A depth-keyed roll-off: below uHaloNearDepth the extent scales
+        // WITH the halo's view depth, so its angular (on-screen) size is held
+        // at what it is at the near depth instead of covering the whole
+        // viewport in additive fill as the camera dollies in. The light is
+        // conserved by the square of the roll-off (vHaloConserve). At and
+        // beyond the near depth — every default and belt-standoff pose —
+        // rolloff is 1 and this is byte-identical. (Mirrors measuredHaloDepthRolloff.)
+        float haloViewDepth = -(viewMatrix * vec4(origin.xyz, 1.0)).z;
+        float rolloff = clamp(haloViewDepth / max(uHaloNearDepth, 0.001), 0.0, 1.0);
+        extent *= rolloff;
+        vHaloConserve = rolloff * rolloff;
         // The follow-Billboard applied the camera's world quaternion; the
         // view matrix's row axes are that same frame, so the silhouette is
         // identical with zero per-frame CPU.
@@ -645,6 +685,8 @@ export function makeMeasuredPeerHalosMaterial(
       varying float vPeerSelected;
       varying float vHeld;
       varying float vHover;
+      // ⟨D-7⟩ light conservation for a halo the depth roll-off drew in.
+      varying float vHaloConserve;
 
       uniform float uTime;
       uniform float uContextEnergy;
@@ -669,6 +711,11 @@ export function makeMeasuredPeerHalosMaterial(
         float intensity = envelope * breathe
           * (1.0 + uCompressGain * vHeld)
           * (1.0 + ${MEASURED_HOVER_FOCUS.toFixed(2)} * vHover);
+        // ⟨D-7⟩ …and a halo the depth roll-off drew in keeps the integrated
+        // light of the size it wanted (square of the roll-off), so it stops
+        // blowing out additively as the camera dollies onto it. Exactly 1 at
+        // every default and belt-standoff pose.
+        intensity *= vHaloConserve;
         float contextEnergy = mix(uContextEnergy, 1.0, vPeerSelected);
         // Only the event term is trimmed (MEASURED_EVENT_SCALE); rest stays.
         vec4 signal = peerShockwaveResponse(

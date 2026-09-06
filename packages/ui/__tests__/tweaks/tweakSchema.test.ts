@@ -310,7 +310,8 @@ describe('three knobs that default to the picture that shipped', () => {
     expect(bodies).toContain('base.a *= vDepthDim;');
     expect(field).toMatch(/BODY_DEPTH_ENERGY_GLSL,[\s\S]{0,80}from '\.\/cellHybridMaterial'/);
     expect(field).toContain('${BODY_DEPTH_ENERGY_GLSL}');
-    expect(field).toContain('vEnergy = min(1.0, shrink * shrink) * depthDim;');
+    // ⟨D-7⟩ symmetric size-energy, still the depth knob's one consumer (* depthDim).
+    expect(field).toContain('vEnergy = min(shrink * shrink, 1.0 / (shrink * shrink)) * depthDim;');
     // No second copy of the law anywhere: a twin would be a place for the two
     // body layers to disagree about where the front of the galaxy is.
     expect(field).not.toContain('float bodyDepthEnergy(');

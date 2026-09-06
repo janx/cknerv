@@ -4,6 +4,9 @@ import {
   BIRTH_BLOOM,
   BODY_DEPTH_HALF_SPREAD,
   bodyDepthEnergyValue,
+  CELL_BODY_MAX_POINT_PX,
+  cellBodyClampEnergy,
+  cellBodyPointDrawn,
   makeCellHybridMaterial,
   WITHER_COOL_END,
   WITHER_EMBER_TINT,
@@ -424,5 +427,32 @@ describe('makeCellHybridMaterial', () => {
     expect(m.vertexShader).not.toContain('position + drift');
     expect(m.fragmentShader).not.toContain('vShockwave');
     expect(m.fragmentShader).not.toContain('uShockwave');
+  });
+});
+
+describe('⟨D-7⟩ the body sprite has a device-pixel ceiling with light conservation', () => {
+  it('leaves a bead below the ceiling untouched — the default pose is byte-identical', () => {
+    // At the default camera a bead is ~14–30 device px (tagged ~58 at dpr 2),
+    // far below the ceiling: the footprint is returned unchanged and the
+    // energy factor is exactly one.
+    expect(cellBodyPointDrawn(30)).toBe(30);
+    expect(cellBodyPointDrawn(CELL_BODY_MAX_POINT_PX - 1)).toBe(CELL_BODY_MAX_POINT_PX - 1);
+    expect(cellBodyClampEnergy(30)).toBe(1);
+  });
+
+  it('clamps a close/interior bead to the ceiling and conserves its light', () => {
+    expect(cellBodyPointDrawn(1024)).toBe(CELL_BODY_MAX_POINT_PX);
+    // A bead the ceiling narrowed keeps the integrated light of the footprint
+    // it wanted: dimmed by (drawn/wanted)².
+    expect(cellBodyClampEnergy(1024)).toBeCloseTo((CELL_BODY_MAX_POINT_PX / 1024) ** 2, 10);
+    expect(cellBodyClampEnergy(1024)).toBeLessThan(1);
+  });
+
+  it('the material carries the ceiling uniform and the shader mirrors the clamp', () => {
+    const m = makeCellHybridMaterial();
+    expect(m.uniforms.uMaxPointPx.value).toBe(CELL_BODY_MAX_POINT_PX);
+    expect(m.vertexShader).toContain('gl_PointSize = min(wantedPointSize, uMaxPointPx);');
+    expect(m.vertexShader).toContain('vSizeEnergy = sizeShrink * sizeShrink;');
+    expect(m.fragmentShader).toContain('base.a *= vSizeEnergy;');
   });
 });

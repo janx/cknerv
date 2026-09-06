@@ -43,6 +43,41 @@ import { CELL_GALAXY_PALETTE, SCENE_ACCENT_PALETTE, type SceneColor } from '../v
  *  the same material family and has to shrink with distance at exactly the
  *  same rate — a second copy of this number is a seam waiting to open. */
 export const HYBRID_BASE_PX_PER_WU = 2.0; // sprite world→screen multiplier — ~2× halo outer-glow size; cell body (gl_PointCoord ≤ 0.5) renders at roughly halo-equivalent screen weight
+
+/**
+ * ⟨D-7⟩ The body sprite's device-pixel ceiling. The footprint law
+ * (`gl_PointSize = aSize · … · viewportHeight·0.5/viewZ`) is bounded only from
+ * BELOW (the retained-record floor), so at a close/interior pose — the controls
+ * allow 4 wu from the galaxy centre — one bead reaches the driver's max point
+ * size and a handful cover several framebuffers of additive fill (B1-5). At the
+ * DEFAULT camera a bead is ~14–30 device px (tagged cells ~58 at dpr 2), far
+ * below this, so the ceiling binds only inside the tissue. Device pixels, not
+ * CSS: the point is to bound the DEVICE fill, so a 2× buffer caps at the same
+ * device footprint a 1× one does.
+ */
+export const CELL_BODY_MAX_POINT_PX = 256;
+
+/** The drawn footprint: the wanted device-px footprint held under the ceiling.
+ *  A bead below the ceiling is returned unchanged (the default pose). */
+export function cellBodyPointDrawn(
+  wantedDevicePx: number,
+  maxDevicePx: number = CELL_BODY_MAX_POINT_PX,
+): number {
+  return Math.min(wantedDevicePx, maxDevicePx);
+}
+
+/** Light conservation for a bead the ceiling narrowed: integrated light scales
+ *  as the square of the footprint, so a clamped bead is dimmed by
+ *  `(drawn/wanted)²` and stops blowing out additively. Unclamped → exactly 1. */
+export function cellBodyClampEnergy(
+  wantedDevicePx: number,
+  maxDevicePx: number = CELL_BODY_MAX_POINT_PX,
+): number {
+  const shrink = cellBodyPointDrawn(wantedDevicePx, maxDevicePx)
+    / Math.max(wantedDevicePx, 1e-6);
+  return shrink * shrink;
+}
+
 /** How far a newborn's body is pulled toward the white core it already mixes
  *  toward at its peak. Spends itself over the birth ramp, so a settled cell
  *  is byte-identical to one that was never born on this screen. */
@@ -278,6 +313,8 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       uExitDurS:        { value: EXIT_FADE_MS / 1000 },
       uViewportHeight:  { value: 800 },
       uPixelRatio:      { value: 1 },
+      // ⟨D-7⟩ device-pixel ceiling on the body footprint; see CELL_BODY_MAX_POINT_PX.
+      uMaxPointPx:      { value: CELL_BODY_MAX_POINT_PX },
       uMemoryMinPointPx: { value: 24 },
       uMemoryLinePx:    { value: 0.55 },
       uMemorySignalEnergy: { value: 1 },
@@ -330,6 +367,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       uniform float uExitDurS;
       uniform float uViewportHeight;
       uniform float uPixelRatio;
+      uniform float uMaxPointPx;
       uniform float uMemoryMinPointPx;
       uniform float uWarmth;
       uniform float uCenterDim;
@@ -352,6 +390,8 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       // x = inverse breathing sigma squared; y = peak LOD gain;
       // z = outer-wash LOD gain. All three are constant across one point.
       varying vec3  vCloudParams;
+      // ⟨D-7⟩ light conservation for a bead the device-pixel ceiling narrowed.
+      varying float vSizeEnergy;
 
       ${BIRTH_DEATH_GLSL}
       ${STAGE_ENVELOPE_GLSL}
@@ -423,7 +463,16 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         )
           * smoothstep(0.0, 1.0, clamp(aRecallState, 0.0, 1.0));
         float retainedSizeBoost = mix(0.08, 0.16, aMemoryIdentity.w);
-        gl_PointSize  = aSize * ${HYBRID_BASE_PX_PER_WU.toFixed(1)} * (1.0 + vFocus * 0.32) * (1.0 + abs(vRecall) * 0.06 + retainedCore * retainedSizeBoost) * scale * (uViewportHeight * 0.5 / max(-viewPos.z, 0.001));
+        float wantedPointSize = aSize * ${HYBRID_BASE_PX_PER_WU.toFixed(1)} * (1.0 + vFocus * 0.32) * (1.0 + abs(vRecall) * 0.06 + retainedCore * retainedSizeBoost) * scale * (uViewportHeight * 0.5 / max(-viewPos.z, 0.001));
+        // ⟨D-7⟩ A device-pixel ceiling so one bead cannot fill multiples of the
+        // viewport at a close/interior pose; the clamped bead is dimmed by
+        // (drawn/wanted)^2 so its integrated light is conserved and it stops
+        // blowing out additively. At the default pose a bead is far below the
+        // ceiling, so this is min(x, big)=x and vSizeEnergy is exactly 1 —
+        // byte-identical. (Mirrors cellBodyPointDrawn / cellBodyClampEnergy.)
+        gl_PointSize = min(wantedPointSize, uMaxPointPx);
+        float sizeShrink = gl_PointSize / max(wantedPointSize, 1e-6);
+        vSizeEnergy = sizeShrink * sizeShrink;
         // Retained records have a semantic CSS-pixel floor so 1/3/5 checksum
         // lanes survive every quality DPR. The floor recedes by the exact
         // complement used when the expanded braid takes over.
@@ -465,6 +514,8 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       varying vec3  vBodyColor;
       varying vec3  vHotColor;
       varying vec3  vCloudParams;
+      // ⟨D-7⟩ light conservation for a bead the device-pixel ceiling narrowed.
+      varying float vSizeEnergy;
 
       // hash11 — small deterministic scrambler. Used for per-cell decorrelation.
       ${HASH11_GLSL}
@@ -516,6 +567,13 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         // ring and the recall below can still reclaim headroom — an event is
         // not part of the tissue's own radiance. 1 is today's picture.
         base.a *= uRadiance;
+        // ⟨D-7⟩ …and the size-energy rides the same resting quantity: a bead
+        // the device-pixel ceiling narrowed is dimmed by (drawn/wanted)^2 so it
+        // stops blowing out additively at a close/interior pose. Exactly 1 at
+        // every pose below the ceiling (the default), and it sits HERE — with
+        // the accumulation corrections, before the events — so the focus ring
+        // and recall below still reclaim their headroom.
+        base.a *= vSizeEnergy;
 
         vec3  col = base.rgb;
         float a   = base.a * (1.0 - vDeathRamp);

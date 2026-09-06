@@ -472,14 +472,19 @@ export function populationPointDrawn(
   );
 }
 
-/** Energy correction for a sprite the minimum footprint had to widen.
- *  Area scales as the square, so the light does too. */
+/** Symmetric size-energy correction. Area scales as the square, so the light
+ *  does too — whether the FLOOR had to widen a far sprite (`shrink < 1`) or,
+ *  ⟨D-7⟩, the CEILING had to narrow a close one (`shrink > 1`). Both are
+ *  corrected by the square of the smaller-to-larger size ratio, so a clamped
+ *  bead keeps the integrated light of the footprint it wanted instead of
+ *  over- or under-contributing, and a close bead stops blowing out additively.
+ *  An unclamped sprite (`shrink === 1`) is exactly 1. */
 export function populationPointEnergy(
   wantedPx: number,
   drawnPx: number,
 ): number {
   const shrink = wantedPx / Math.max(drawnPx, 1e-6);
-  return Math.min(1, shrink * shrink);
+  return Math.min(shrink * shrink, 1 / (shrink * shrink));
 }
 
 /**
@@ -1034,11 +1039,15 @@ export function makePopulationPointMaterial(): THREE.ShaderMaterial {
         // and the layer is never frustum culled, so a camera flying through
         // the slab is a pose the law has to hold at.
         float drawn = clamp(wanted, uMinPointPx * dpr, uMaxPointPx * dpr);
-        // Conserve the light the FLOOR added, so pulling the camera back
-        // dims the field instead of making it twinkle across the pixel grid.
-        // A sprite the ceiling narrowed leaves this at one.
+        // Conserve the light on BOTH sides of the bound. The FLOOR widening a
+        // far sprite (shrink < 1) dims it so pulling the camera back dims the
+        // field instead of making it twinkle across the pixel grid; ⟨D-7⟩ the
+        // CEILING narrowing a close sprite (shrink > 1) dims it by the same
+        // square law so a camera flying through the slab stops blowing the bead
+        // out additively. Unclamped leaves this at one. (Mirrors
+        // populationPointEnergy.)
         float shrink = wanted / drawn;
-        vEnergy = min(1.0, shrink * shrink) * depthDim;
+        vEnergy = min(shrink * shrink, 1.0 / (shrink * shrink)) * depthDim;
         gl_PointSize = drawn;
       }
     `,
