@@ -100,6 +100,10 @@ import {
 } from './bridgeStats';
 import { blockFrameNowMs, blockFrameStats } from './blockFrameStats';
 import {
+  bridgeRunDecision,
+  type PendingBridgeBuild,
+} from './bridgeSchedule';
+import {
   BRIDGE_NO_SLOT,
   BRIDGE_WIDTH_RATIO,
   bridgeRenderStateInto,
@@ -306,6 +310,7 @@ export default function CellBridgeNerves({
   cellsRef,
   passiveGraphRef,
   version,
+  fabricLandedVersionRef,
   cellDetailViewFocusRef,
 }: CellBridgeNervesProps) {
   const simClock = useSimClock();
@@ -355,6 +360,17 @@ export default function CellBridgeNerves({
    *  selection it did not need to run. */
   const selectedAgainstRef = useRef<BridgeAnchorIndex | null>(null);
   const selectedCountRef = useRef(0);
+  /** The build a React commit armed and no frame has run yet — the deferred
+   *  slot of `bridgeSchedule`. Exactly one: a newer arm REPLACES an older
+   *  one, so a build superseded before its own fabric landed never selects
+   *  (the newer arm's selection reads the same registry it would have). */
+  const pendingBuildRef = useRef<
+    (PendingBridgeBuild & { readonly anchorIndex: BridgeAnchorIndex }) | null
+  >(null);
+  /** Arm serials: the one the last commit issued, and the one the last frame
+   *  consumed. See `bridgeSchedule` for why the arm and not the version. */
+  const armRef = useRef(0);
+  const ranArmRef = useRef(0);
   /** Strokes the last build moved that no frame has admitted yet. */
   const pendingRef = useRef<BridgeStrokeState[]>([]);
   /** Arms the full walk, and says why. Null between walks. */
@@ -415,16 +431,30 @@ export default function CellBridgeNerves({
   }, [cellDetailViewFocusRef, layer.material]);
   useFrame(applyViewWeight);
 
-  // Re-select on every completed topology build whose hosts moved. Hosts are
-  // keyed on the DRAWN fabric, so this has to follow the same build the
-  // fabric does.
-  useEffect(() => {
-    if (anchorIndex === null) return;
-    // T1 gauge: the bridge half of a landing is ONE React commit — host
-    // sync, selection, stroke reconcile — and the block frame is only as
-    // short as its longest task, so the span wraps the whole body and
-    // closes on the skip return too (a build that moved no host is the
-    // steady state, and a gauge that only saw the slow path would lie).
+  // Re-select for a completed topology build whose hosts moved — the whole of
+  // it, on the frame the slot below fires, and never in the React commit that
+  // published the build. Hosts are keyed on the DRAWN fabric, and the owner
+  // drains a build's grow and kill across the frames AFTER that commit, so a
+  // selection run there would read a fabric that is provably one to three
+  // frames behind — and would pay 5–23 ms on the very task the drain unloaded.
+  //
+  // ⚠️ The build this runs for is the one the ARM named, and both halves of it
+  // are destructured out of the pending record on purpose: the body cannot see
+  // the render's current `anchorIndex` or `version` at all, so it cannot
+  // select for a build other than its own. Everything else is a ref read NOW —
+  // the registry sync is about what the staged Cells and the drawn fabric hold
+  // this frame, not what they held when the slot was armed.
+  const runBridgeBuild = useCallback((
+    pending: PendingBridgeBuild & { readonly anchorIndex: BridgeAnchorIndex },
+  ) => {
+    const { anchorIndex, version } = pending;
+    // T1 gauge: the bridge half of a landing is ONE body — host sync,
+    // selection, stroke reconcile — and the block frame is only as short as
+    // its longest task, so the span wraps the whole body and closes on the
+    // skip return too (a build that moved no host is the steady state, and a
+    // gauge that only saw the slow path would lie). It travels WITH the body
+    // into the deferred slot: left around the arming it would report the two
+    // writes that arm it and hide everything they defer.
     const bridgeStartedAtMs = blockFrameNowMs();
     try {
       const registry = registryRef.current;
@@ -496,9 +526,43 @@ export default function CellBridgeNerves({
     } finally {
       blockFrameStats.observeBridge(blockFrameNowMs() - bridgeStartedAtMs);
     }
+  }, [cellsRef, passiveGraphRef, simClock]);
+
+  // The React commit that publishes a build ARMS the slot and does nothing
+  // else — two writes, no host sync, no selection, no reconcile. The same
+  // triggers as before (a new build, or a new anchor index the plans are
+  // rebuilt against); the deps that only ever supply refs stay listed so the
+  // set of things that re-select is unchanged to the letter.
+  useEffect(() => {
+    if (anchorIndex === null) return;
+    armRef.current += 1;
+    pendingBuildRef.current = { anchorIndex, version, arm: armRef.current };
   }, [anchorIndex, version, cellsRef, passiveGraphRef, simClock]);
 
   useSimFrame(() => {
+    // ⭐ The bridge frame. One per build, ahead of everything else this class
+    // does, because the strokes the selection moves have to reach the
+    // admission pass below on the SAME frame — a build used to select and
+    // admit inside one block frame and it still does, just not inside the
+    // React commit. The owner's fabric drain runs at frame priority −1, so
+    // the version it lands is already published when this reads it and the
+    // deferral costs no extra frame. On every other frame this is one null
+    // read and one comparison.
+    const pendingBuild = pendingBuildRef.current;
+    if (pendingBuild !== null && bridgeRunDecision(
+      pendingBuild,
+      // No ref at all is a scene with no fabric drain behind it (the lab
+      // scenes): nothing to wait for, so the first frame runs it.
+      fabricLandedVersionRef?.current ?? Number.POSITIVE_INFINITY,
+      ranArmRef.current,
+    )) {
+      // Consumed BEFORE the body, so a throw inside the selection cannot
+      // leave an arm that re-runs on every frame from here on.
+      ranArmRef.current = pendingBuild.arm;
+      pendingBuildRef.current = null;
+      runBridgeBuild(pendingBuild);
+    }
+
     // A knob drag in a settled scene still has to land, exactly as the
     // fabric's `lastCellTweakRef` gate does.
     const tweaks = lastTweakRef.current;

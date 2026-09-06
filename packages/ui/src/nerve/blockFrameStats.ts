@@ -4,21 +4,22 @@
 //   1. the WORKER LANDING TASK — the topology worker's `built` message
 //      handler, plus the promise chain it resolves (a microtask, so still the
 //      same task): the graph swap, the topology apply and the fabric commit;
-//   2. the BRIDGE effect React runs on the graph version that landing
-//      published — host sync, selection and the stroke reconcile;
+//   2. the BRIDGE FRAME the arming commit defers to — host sync, selection
+//      and the stroke reconcile, run on the first frame where the fabric of
+//      the version that landing published has itself landed;
 //   3. the rAF INTERVAL that contained the landing — the frame before it to
 //      the frame after, which is what a viewer actually sees.
 // Each is a wall-clock reading of a task, not a CPU probe: `beginCpuProbe`
 // spans are opt-in and disabled on the ordinary dashboard, and the whole
 // point here is a gauge a live pass can read off a release build. Cost is one
-// `performance.now()` per landing, one per bridge effect, and one per frame.
+// `performance.now()` per landing, one per bridge frame, and one per frame.
 //
 // Pure module singleton — same idiom as `pulseStats` / `fabricStats`: read and
 // mutated directly, reset by tests. The WINDOW hook that surfaces it lives in
 // ui-app, so the library stays free of `window` coupling.
 
 /** Wall-clock reading for one landed topology build. `bridgeMs` is stamped by
- *  the bridge effect that follows the landing (0 until it runs), `frameGapMs`
+ *  the bridge frame that follows the landing (0 until it runs), `frameGapMs`
  *  starts as the gap since the frame BEFORE the landing and is finalised by
  *  the frame after it. */
 export interface BlockFrameSample {
@@ -32,8 +33,8 @@ export interface BlockFrameSample {
 export interface BlockFrameStatsSnapshot {
   /** Landings recorded since reset (one ring entry each). */
   count: number;
-  /** Bridge effect bodies timed since reset — normally one per landing, but
-   *  an anchor change re-runs the effect without a build behind it. */
+  /** Bridge frame bodies timed since reset — normally one per landing, but
+   *  an anchor change arms one without a build behind it. */
   bridgeCount: number;
   /** Last N landings, oldest first. */
   recent: BlockFrameSample[];
@@ -50,7 +51,7 @@ export interface BlockFrameStatsSnapshot {
 export const BLOCK_FRAME_RING_CAPACITY = 32;
 
 /** The clock every reading here shares. Exported so the callers that time a
- *  span themselves (the bridge effect) cannot drift into another domain. */
+ *  span themselves (the bridge frame) cannot drift into another domain. */
 export function blockFrameNowMs(): number {
   return typeof performance === 'undefined' ? Date.now() : performance.now();
 }

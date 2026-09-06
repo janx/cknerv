@@ -119,6 +119,54 @@ describe('the bridge layer stays inside its own budget', () => {
       .toBeLessThan(LAYER_CODE.indexOf('selectBridgeEdges('));
   });
 
+  it('arms the selection in the commit and runs the whole of it on a frame', () => {
+    // ⭐ Hosts are keyed on the DRAWN fabric, and the owner drains a build's
+    // grow and kill across the frames AFTER the commit that publishes its
+    // version. So the commit may not select: it writes the slot and stops,
+    // and the frame fires it once `fabricLandedVersionRef` says that build's
+    // fabric is whole. The three regions, sliced where the file puts them.
+    const body = LAYER_CODE.slice(
+      LAYER_CODE.indexOf('const runBridgeBuild ='),
+      LAYER_CODE.lastIndexOf('useEffect('),
+    );
+    const arming = LAYER_CODE.slice(
+      LAYER_CODE.lastIndexOf('useEffect('),
+      LAYER_CODE.indexOf('useSimFrame('),
+    );
+    const bridgeFrame = LAYER_CODE.slice(LAYER_CODE.indexOf('useSimFrame('));
+    expect(body.length).toBeGreaterThan(0);
+    expect(arming.length).toBeGreaterThan(0);
+
+    // The commit writes the slot and nothing else. Every piece of the old
+    // body — including T1's gauge — has left it.
+    expect(arming).toContain('pendingBuildRef.current = {');
+    for (const work of [
+      'syncBridgeHosts(',
+      'selectBridgeEdges(',
+      'reconcileBridgeStrokes(',
+      'reportBootBridgeSelected(',
+      'bridgeStats.observeBuild(',
+      'blockFrameStats.observeBridge(',
+    ]) {
+      expect(arming).not.toContain(work);
+      expect(body).toContain(work);
+    }
+
+    // ⚠️ T1's constraint: the gauge travels WITH the body. Left around the
+    // arming it would time two ref writes and report the win as already won.
+    expect(body).toContain('const bridgeStartedAtMs = blockFrameNowMs();');
+
+    // The frame asks the rule before it does anything else, so the strokes a
+    // selection moves still reach the admission pass on the same frame — and
+    // it hands the rule the LANDED version, which is the whole point.
+    expect(bridgeFrame).toContain('bridgeRunDecision(');
+    expect(bridgeFrame).toContain('fabricLandedVersionRef?.current');
+    expect(bridgeFrame.indexOf('bridgeRunDecision('))
+      .toBeLessThan(bridgeFrame.indexOf('lastTweakRef.current'));
+    expect(bridgeFrame.indexOf('runBridgeBuild(pendingBuild)'))
+      .toBeLessThan(bridgeFrame.indexOf('fullWalkRef.current = '));
+  });
+
   it('gives a birth a parked hole before it grows the prefix', () => {
     // The fabric's `allocateFabricSlot` rule: reuse first, high-water mark
     // next, and at capacity fall back to the compacting walk.

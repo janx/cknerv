@@ -575,6 +575,88 @@ describe('the bridge layer rewrites the strokes that moved, not the layer', () =
   });
 });
 
+describe('the bridge layer selects on a frame, never in the commit', () => {
+  /** One completed build WITHOUT its frame, so the React commit can be looked
+   *  at on its own — and with the owner's landed-version ref, which the
+   *  helper above deliberately omits (a scene that publishes none has no
+   *  fabric draining behind it, so its first frame runs the build). */
+  function commit(
+    ids: readonly number[],
+    atSec: number,
+    fabricLandedVersionRef: { current: number },
+  ): void {
+    cellsRef.current = cellsFor(ids);
+    version += 1;
+    resetSimClock(simClock, atSec);
+    frames.callbacks.length = 0;
+    const element = (
+      <CellBridgeNerves
+        cellsRef={cellsRef}
+        passiveGraphRef={passiveGraphRef}
+        version={version}
+        fabricLandedVersionRef={fabricLandedVersionRef}
+      />
+    );
+    if (view === null) view = render(element);
+    else view.rerender(element);
+  }
+
+  it('holds the whole build until the drain lands the fabric it picks hosts by', () => {
+    const select = vi.mocked(selectBridgeEdges);
+    const landed = { current: -1 };
+    commit([1], 0, landed);
+
+    // ⭐ The commit is two ref writes. Not a host sync, not a selection, not a
+    // reconcile — this is the 24–30 ms React scheduler task at every block,
+    // and it is gone.
+    expect(select).toHaveBeenCalledTimes(0);
+    expect(bridgeStats.builds).toBe(0);
+
+    // And the frames while the owner is still draining build 1's grows hold
+    // it too: hosts are keyed on the DRAWN fabric, so selecting here would
+    // read a fabric that is behind the staged Cells.
+    frame(0.01);
+    frame(0.02);
+    expect(select).toHaveBeenCalledTimes(0);
+    expect(bridgeStats.builds).toBe(0);
+
+    // The first frame after the drain finishes is the bridge frame: the whole
+    // body at once, and the strokes it moves are admitted on the same frame.
+    landed.current = 1;
+    frame(0.03);
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(bridgeStats.builds).toBe(1);
+    expect(bridgeBuffers().geometry.instanceCount).toBeGreaterThan(0);
+
+    // One bridge frame per build, not one per frame from here on.
+    frame(0.04);
+    frame(0.05);
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(bridgeStats.builds).toBe(1);
+  });
+
+  it('runs the newest build only, when one supersedes another mid-drain', () => {
+    const select = vi.mocked(selectBridgeEdges);
+    const landed = { current: -1 };
+    commit([1], 0, landed);
+    frame(0.01);
+    expect(select).toHaveBeenCalledTimes(0);
+
+    // Build 2 arrives before build 1's fabric drained. The arm is replaced,
+    // so build 1's selection never runs at all — and nothing is lost by it:
+    // the selection reads the CURRENT registry and drawn fabric, which is
+    // build 2's, and that is what build 1's would have had to become.
+    commit([1, 2], 0.02, landed);
+    landed.current = 2;
+    frame(0.02);
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(bridgeStats.builds).toBe(1);
+    expect(select.mock.results[0].value.bridges.some(
+      (bridge: { cellId: number }) => bridge.cellId === 2,
+    )).toBe(true);
+  });
+});
+
 describe('the bridge layer runs the selection only for a build that moved a host', () => {
   it('skips the selection and the reconcile when nothing it reads moved', () => {
     const select = vi.mocked(selectBridgeEdges);
