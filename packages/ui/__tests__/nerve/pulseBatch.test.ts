@@ -734,3 +734,100 @@ describe('createLinkBatchPlanner — stepping the machine is the one-shot plan',
     expect(planner.lastGuaranteedBlock).toBe(8);
   });
 });
+
+// ── the rescue pass is one candidate per step ────────────────────────
+//
+// Each attempt pays a scored breadth-first search of the whole stage, so a
+// dark block whose first candidates do not route must not spend eight of them
+// in the one grain the frame budget cannot subdivide.
+
+import { MAX_RESCUE_ATTEMPTS } from '../../src/nerve/pulseBatch';
+
+/** A link that lights nothing (no input anchor → no origin) and cannot be
+ *  rescued either: its output never reached the graph and no anchor names it,
+ *  so the rescue has no destination to root at. */
+const unrescuable = (seq: number, block: number) => mkLink({
+  seq, block, tx_hash: `0xdark${seq}`, to_ids: [900 + seq], endpoint_anchors: [],
+});
+/** A link that lights nothing but whose output IS on the stage, so the rim
+ *  rescue roots at it and routes. */
+const rescuable = (seq: number, block: number, to: number) => mkLink({
+  seq, block, tx_hash: `0xrim${seq}`, to_ids: [to], endpoint_anchors: [],
+});
+
+describe('createLinkBatchPlanner — the rescue pass takes one candidate a step', () => {
+  const cells = () => new Map<number, Cell>([
+    [1, mkCell(1, '0xu1', [0, 0, 0])],
+    [2, mkCell(2, '0xu2', [10, 0, 0])],
+    [3, mkCell(3, '0xu3', [20, 0, 0])],
+    [4, mkCell(4, '0xu4', [30, 0, 0])],
+    [5, mkCell(5, '0xu5', [40, 0, 0])],
+  ]);
+  const graph = () => mkGraph([[1, 2], [2, 3], [3, 4], [4, 5]]);
+
+  it('yields the frame after a failed attempt and rescues on the next step', () => {
+    const links = [unrescuable(1, 7), rescuable(2, 7, 4)];
+    const oneShot = planLinkBatch(links, 0, false, cells(), graph(), OPTS, pulseStats, 0);
+    const oneShotStats = snapshotPulseStats();
+    resetPulseStats();
+
+    const { toFire } = openLinkBatch(links, 0, false, pulseStats);
+    const planner = createLinkBatchPlanner(toFire, cells(), graph(), OPTS, pulseStats, 0);
+    const steps: number[] = [];
+    const stepped: ReturnType<typeof planner.step> = [];
+    while (!planner.done) {
+      const pulses = planner.step();
+      steps.push(pulses.length);
+      for (const pulse of pulses) stepped.push(pulse);
+    }
+    // Two link steps, then the pass: attempt 1 fails and returns nothing while
+    // the block stays open, attempt 2 routes and closes it.
+    expect(steps).toEqual([0, 0, 0, 1]);
+    expect(stepped).toEqual(oneShot.planned);
+    expect(stepped).toHaveLength(1);
+    expect(stepped[0].rescue).toBe('rim');
+    expect(planner.lastGuaranteedBlock).toBe(oneShot.lastGuaranteedBlock);
+    expect(snapshotPulseStats()).toEqual(oneShotStats);
+  });
+
+  it('spends the whole attempt cap one step at a time and gives up exactly once', () => {
+    expect(MAX_RESCUE_ATTEMPTS).toBe(8);
+    // Nine candidates offered, eight retained by the cap, none routable.
+    const links = Array.from({ length: 9 }, (_, i) => unrescuable(i + 1, 7));
+    const oneShot = planLinkBatch(links, 0, false, cells(), graph(), OPTS, pulseStats, 0);
+    const oneShotStats = snapshotPulseStats();
+    resetPulseStats();
+    expect(oneShot.planned).toEqual([]);
+
+    const { toFire } = openLinkBatch(links, 0, false, pulseStats);
+    const planner = createLinkBatchPlanner(toFire, cells(), graph(), OPTS, pulseStats, 0);
+    let steps = 0;
+    while (!planner.done) {
+      expect(planner.step()).toEqual([]);
+      steps += 1;
+    }
+    // Nine link steps and eight attempts — never one grain of eight searches.
+    expect(steps).toBe(links.length + MAX_RESCUE_ATTEMPTS);
+    expect(snapshotPulseStats()).toEqual(oneShotStats);
+    expect(snapshotPulseStats().rescues.failed).toBe(1);
+  });
+
+  it('forfeits a rescue pass already part-way through its candidates when the block rolls back', () => {
+    const links = [unrescuable(1, 7), unrescuable(2, 7), rescuable(3, 7, 4)];
+    const { toFire } = openLinkBatch(links, 0, false, pulseStats);
+    const planner = createLinkBatchPlanner(toFire, cells(), graph(), OPTS, pulseStats, 0);
+    // Three link steps and one failed attempt: the pass is open at candidate 2.
+    for (let i = 0; i < 4; i++) expect(planner.step()).toEqual([]);
+    resetPulseStats();
+    planner.prune(7);
+    while (!planner.done) expect(planner.step()).toEqual([]);
+    // Nothing of the rolled-back block rescues, and no 'failed' is recorded
+    // for a pass that was abandoned rather than exhausted.
+    expect(snapshotPulseStats().rescues).toEqual({
+      anchored: 0, rim: 0, failed: 0, 'dst-substituted': 0,
+    });
+    // Nothing had lit, so the watermark was still the entry value and the
+    // rewind leaves it there.
+    expect(planner.lastGuaranteedBlock).toBe(0);
+  });
+});

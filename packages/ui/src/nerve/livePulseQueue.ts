@@ -20,6 +20,18 @@
 // is within `LIVE_PLAN_DEADLINE_MARGIN_S` finishes in the current frame
 // regardless of the budget — the worst case is the one task the planner
 // always was, never a packet appearing mid-flight.
+//
+// THE BUDGET IS CHECKED BETWEEN STEPS, AND A STEP IS ONE ROUTE SEARCH.
+// Nothing here can subdivide a step: a slice must always take at least one,
+// and a step that has begun runs to its end. So the frame cost of planning is
+// this budget PLUS one grain, and the grain is whatever `LinkBatchPlanner`
+// puts in a step — which is why that machine plans one ORIGIN of a link and
+// one CANDIDATE of a rescue pass per step, never `MAX_ORIGINS_PER_LINK`
+// searches or `MAX_RESCUE_ATTEMPTS` of them at once. A full-stage search over
+// ~12,000 nodes is 2–7 ms warm and ~9 ms on the first traversal of a freshly
+// published graph (the router's per-node neighbour cache is built as it
+// walks), so anything that packs several into one step lands directly on the
+// frame, budget or no budget.
 
 import type { Cell, CellLink } from '@cknerv/types';
 import type { NeighborAdjacency } from '../geometry/neighborGraph';

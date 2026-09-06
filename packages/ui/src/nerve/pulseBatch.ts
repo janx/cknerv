@@ -20,9 +20,10 @@ import {
 import { consensusPacketColor } from '../derives/consensusFlow.derive';
 import { advanceLinkCursor } from './linkCursor';
 import {
-  planPulses,
+  createLinkPulsePlanner,
   pulseTiming,
   PULSE_START_JITTER_MS,
+  type LinkPulsePlanner,
   type Pulse,
   type PulseOrigin,
   type PulsePlanningOptions,
@@ -182,17 +183,21 @@ export function openLinkBatch(
 
 /**
  * The planning of one opened batch as a resumable machine. Each `step` plans
- * one unit — the entry grid when the batch will need one, then a link at a
- * time, and a finished block's rescue pass as a step of its OWN — and returns
- * the pulses it produced, in the exact order the one-shot planner appended
- * them; draining it IS `planLinkBatch`. The unit is a link because a link is
- * the smallest work the stats observe (`observeLink` per link, in link order),
- * and splitting the block-boundary flush out bounds one step at either two
- * route searches (a link) OR one rescue pass — never a rescue BFS sharing a
- * step with a link, so a single slice grain stays small. The grid gets a step
- * of its own too, so the first slice of a batch is not the grid AND a link:
- * the memo stays lazy, the step merely fills it
- * early when an anchored link guarantees it will be read.
+ * one unit and returns the pulses it produced, in the exact order the one-shot
+ * planner appended them; draining it IS `planLinkBatch`.
+ *
+ * THE UNIT IS ONE ROUTE SEARCH. A search over the ~12,000-node stage is the
+ * smallest work the planner cannot subdivide — 2–7 ms warm, ~9 ms on the first
+ * traversal of a freshly published graph — and the frame-sliced live driver
+ * checks its wall budget BETWEEN steps, so whatever a step holds is the grain
+ * the budget cannot cut. So: the batch's entry grid is a step of its own (the
+ * memo stays lazy; the step merely fills it early when an anchored link
+ * guarantees it will be read), a link is planned ONE ORIGIN per step (a link
+ * may carry `MAX_ORIGINS_PER_LINK` of them), and a finished block's rescue pass
+ * is ONE CANDIDATE per step (a dark block may hold `MAX_RESCUE_ATTEMPTS`, each
+ * paying a scored BFS of its own). Nothing else changes: `observeLink` still
+ * fires once per link in link order, on the step that finishes it, and every
+ * pulse of a link is still emitted before the next link's first.
  */
 export interface LinkBatchPlanner {
   /** Every link has been planned and the last block flushed. */
@@ -252,32 +257,43 @@ export function createLinkBatchPlanner(
   let curBlock = -1;
   let curLit = false;
   let curCandidates: CellLink[] = [];
+  // The rescue pass's own cursor: -1 while no pass is open, otherwise the next
+  // candidate to try. A failed attempt keeps the block open and yields the
+  // frame — each attempt pays a scored full-stage BFS of its own.
+  let rescueAt = -1;
+  // The link being planned, one origin per step, and the pulses it has emitted
+  // so far. Its verdict (`curLit`, `observeLink`, the batch budget) is read
+  // when the last origin closes it, never mid-link.
+  let openLink: CellLink | null = null;
+  let openPlanner: LinkPulsePlanner | null = null;
+  let openPulses = 0;
 
-  const flushBlock = (): Pulse | null => {
-    if (curBlock === -1) return null;
-    if (curLit) {
-      if (curBlock > guaranteed) guaranteed = curBlock;
-      return null;
-    }
-    if (curBlock <= entryWatermark) return null; // lit in an earlier slice
-    if (curCandidates.length === 0) return null; // cellbase-only: stays silent
-    for (const link of curCandidates) {
-      const rescued = planRescuePulse(
-        link,
-        cells,
-        graph,
-        stats,
-        entryIndex,
-        opts.routeScratch,
-      );
-      if (rescued) {
-        stats.observeLink(curBlock, true);
-        if (curBlock > guaranteed) guaranteed = curBlock;
-        return rescued;
+  /** Drop the open block's state; the next step opens the following block. */
+  const endBlock = (): void => {
+    curBlock = -1;
+    curLit = false;
+    curCandidates = [];
+    rescueAt = -1;
+  };
+
+  /** One origin of the link in flight; closes the link on its last origin. */
+  const stepOpenLink = (): Pulse[] => {
+    const planner = openPlanner!;
+    const link = openLink!;
+    const pulses = planner.step();
+    openPulses += pulses.length;
+    if (planner.done) {
+      if (openPulses > 0) {
+        curLit = true;
+        curCandidates = [];
       }
+      stats.observeLink(link.block, openPulses > 0);
+      budgeted += openPulses;
+      openLink = null;
+      openPlanner = null;
+      openPulses = 0;
     }
-    stats.bumpRescue('failed');
-    return null;
+    return pulses;
   };
 
   return {
@@ -297,28 +313,59 @@ export function createLinkBatchPlanner(
         entryIndex();
         return [];
       }
+      // A link in flight owns the step: its remaining origins are planned
+      // before the boundary is even looked at, so a link's pulses can never be
+      // split around the rescue of the block it belongs to.
+      if (openPlanner !== null) return stepOpenLink();
       const atEnd = next >= links.length;
-      // A finished block's rescue pass is a step of its OWN, so a rescue BFS
-      // never shares a step with a link's route searches. curBlock resets
-      // after the flush; the next step opens the following block (or, at the
-      // end, closes the batch). The pulse ORDER is unchanged: block N's rescue
-      // is still emitted after N's last link and before N+1's first, exactly
-      // where the shared-step flush placed it (and the final block already
-      // flushed in a step of its own).
+      // A finished block's rescue pass is a step of its OWN, one CANDIDATE at
+      // a time, so a scored rescue BFS never shares a step with a link's route
+      // search or with a second attempt. curBlock resets once the pass ends;
+      // the next step opens the following block (or, at the end, closes the
+      // batch). The pulse ORDER is unchanged: block N's rescue is still
+      // emitted after N's last link and before N+1's first, and the candidates
+      // are still tried in link order, first one that routes wins.
       if (curBlock !== -1 && (atEnd || links[next].block !== curBlock)) {
-        const rescued = flushBlock();
-        curBlock = -1;
-        curLit = false;
-        curCandidates = [];
+        if (rescueAt === -1) {
+          // The free verdicts, taken once, before any candidate is opened.
+          if (curLit && curBlock > guaranteed) guaranteed = curBlock;
+          if (
+            curLit
+            || curBlock <= entryWatermark // lit in an earlier slice
+            || curCandidates.length === 0 // cellbase-only: stays silent
+          ) {
+            endBlock();
+            if (atEnd) closed = true;
+            return [];
+          }
+          rescueAt = 0;
+        }
+        const rescued = planRescuePulse(
+          curCandidates[rescueAt++],
+          cells,
+          graph,
+          stats,
+          entryIndex,
+          opts.routeScratch,
+        );
+        if (rescued) {
+          stats.observeLink(curBlock, true);
+          if (curBlock > guaranteed) guaranteed = curBlock;
+          endBlock();
+          if (atEnd) closed = true;
+          return [rescued];
+        }
+        if (rescueAt < curCandidates.length) return []; // one attempt a frame
+        stats.bumpRescue('failed');
+        endBlock();
         if (atEnd) closed = true;
-        return rescued ? [rescued] : [];
+        return [];
       }
       if (atEnd) {
         closed = true;
         return [];
       }
       const link = links[next++];
-      const out: Pulse[] = [];
       if (link.block !== curBlock) {
         curBlock = link.block;
         curLit = false;
@@ -338,28 +385,41 @@ export function createLinkBatchPlanner(
       if (budgeted >= MAX_PULSES_PER_BATCH) {
         stats.bump('batch-budget');
         stats.observeLink(link.block, false);
-        return out;
+        return [];
       }
-      const p = planPulses(link, cells, graph, batchOpts, link.at_ms, stats);
-      if (p.length > 0) {
-        curLit = true;
-        curCandidates = [];
-      }
-      stats.observeLink(link.block, p.length > 0);
-      budgeted += p.length;
-      for (const pulse of p) out.push(pulse);
-      return out;
+      openLink = link;
+      openPulses = 0;
+      openPlanner = createLinkPulsePlanner(
+        link,
+        cells,
+        graph,
+        batchOpts,
+        link.at_ms,
+        stats,
+      );
+      // A link with no origin at all is `done` on arrival: it closes in this
+      // same step, exactly as the one-task planner's single call did.
+      return stepOpenLink();
     },
     prune(fromBlock: number): void {
       // Links are in block order, so the stale ones are a suffix.
       let keep = links.length;
       while (keep > next && links[keep - 1].block >= fromBlock) keep -= 1;
       links.length = keep;
+      // A link of a rolled-back block that was mid-flight (some origins
+      // planned, some not) forfeits the rest: its admitted pulses are the
+      // caller's to prune, and planning the remaining origins would admit NEW
+      // packets for evidence that no longer exists. It reports nothing either
+      // — the block's whole rollup goes with it.
+      if (openLink !== null && openLink.block >= fromBlock) {
+        openLink = null;
+        openPlanner = null;
+        openPulses = 0;
+      }
       if (curBlock >= fromBlock) {
-        // The open block was rolled back: nothing of it may still rescue.
-        curBlock = -1;
-        curLit = false;
-        curCandidates = [];
+        // The open block was rolled back: nothing of it may still rescue,
+        // including a rescue pass already part-way through its candidates.
+        endBlock();
       }
       entryWatermark = Math.min(entryWatermark, fromBlock - 1);
       guaranteed = Math.min(guaranteed, fromBlock - 1);

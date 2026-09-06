@@ -713,9 +713,16 @@ against the live graph either way). The searches run from a FIFO queue on the ra
 before the pulse walk, under a wall-relative budget (`livePlanBudgetMs` — 12 %
 of the last frame interval, floored at `LIVE_PLAN_BUDGET_MS` 2 ms — and a frame
 never starts a step its previous step's cost predicts would overrun it), never
-less than one step per frame, batches in arrival order; the batch's entry grid
-and each intermediate block boundary's rescue flush are each built as a step of
-their own. Pulses admitted from a slice carry the batch's `startSec`, so
+less than one step per frame, batches in arrival order. A STEP IS ONE ROUTE
+SEARCH — the smallest work the planner cannot subdivide, 2–7 ms warm over a
+12,000-node stage and ~9 ms on the first traversal of a freshly published graph,
+since the router's per-node neighbour cache is built as it walks. The budget is
+only ever spent between steps and a slice must always take at least one, so a
+planning frame costs the budget plus exactly one grain: the batch's entry grid is
+a step of its own, a link is planned one ORIGIN per step (a link may carry
+`MAX_ORIGINS_PER_LINK` of them), and a block boundary's rescue pass is one
+CANDIDATE per step (a dark block may hold `MAX_RESCUE_ATTEMPTS`, each paying a
+scored search of its own). Pulses admitted from a slice carry the batch's `startSec`, so
 departure times, pulse order, the 128-per-batch budget, the rescue pass and
 every stats bump are those the one-task planner produced. A batch whose earliest
 departure is within `LIVE_PLAN_DEADLINE_MARGIN_S` of now is planned under

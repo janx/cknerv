@@ -4,6 +4,7 @@ import type { NeighborGraph } from '../../src/geometry/neighborGraph';
 import {
   MAX_ORIGINS_PER_LINK,
   MAX_PULSES_PER_LINK,
+  createLinkPulsePlanner,
   planPulses,
   pulseTiming,
 } from '../../src/nerve/pulseRunner';
@@ -404,5 +405,92 @@ describe('planPulses purity — the sink must not change the return value', () =
     const withSink = planPulses(link, cells, graph, undefined, 0, pulseStats);
     const without = planPulses(link, cells, graph, undefined, 0);
     expect(without).toEqual(withSink);
+  });
+});
+
+describe('createLinkPulsePlanner — one origin per step, drained is planPulses', () => {
+  it('splits a two-origin link into two steps, each carrying one route search', () => {
+    const cells = mkCells(
+      mkCell(1, [0, 0, 0]), mkCell(2, [100, 0, 0]),
+      mkCell(40, [1, 0, 0]), mkCell(41, [2, 0, 0]),
+    );
+    const graph = mkGraph([[1, 40], [1, 41], [2, 40], [2, 41]]);
+    const link = mkLink({
+      to_ids: [40, 41],
+      endpoint_anchors: [mkAnchor(77, [0, 0, 0]), mkAnchor(78, [100, 0, 0])],
+    });
+    const oneShot = planPulses(link, cells, graph, {}, 0, pulseStats);
+    const reference = { ...pulseStats.origins };
+    resetPulseStats();
+
+    const planner = createLinkPulsePlanner(link, cells, graph, {}, 0, pulseStats);
+    const steps: number[][] = [];
+    const stepped: typeof oneShot = [];
+    while (!planner.done) {
+      const pulses = planner.step();
+      steps.push(pulses.map((p) => p.origin!.anchorId));
+      for (const pulse of pulses) stepped.push(pulse);
+    }
+    // Two steps, one anchor each: the entry query and the single BFS that
+    // covers every to_id of THAT origin. Never both searches in one grain.
+    expect(steps).toEqual([[77, 77], [78, 78]]);
+    expect(stepped).toEqual(oneShot);
+    expect(pulseStats.origins).toEqual(reference);
+    expect(planner.step()).toEqual([]); // idempotent once done
+  });
+
+  it('is done before it opens a search when the link has no origin to depart from', () => {
+    const cells = mkCells(mkCell(40, [1, 0, 0]));
+    const graph = mkGraph([[40, 41]]);
+    // Output-side anchor only: a cellbase names nothing consumed.
+    const cellbase = createLinkPulsePlanner(
+      mkLink({ to_ids: [40], endpoint_anchors: [mkAnchor(40, [0, 0, 0])] }),
+      cells, graph, {}, 0, pulseStats,
+    );
+    expect(cellbase.done).toBe(true);
+    expect(cellbase.step()).toEqual([]);
+    expect(pulseStats.linkReasons['no-origin']).toBe(1);
+
+    const noOutputs = createLinkPulsePlanner(
+      mkLink({ to_ids: [], endpoint_anchors: [mkAnchor(77, [0, 0, 0])] }),
+      cells, graph, {}, 0, pulseStats,
+    );
+    expect(noOutputs.done).toBe(true);
+    expect(pulseStats.linkReasons['no-outputs']).toBe(1);
+  });
+
+  it('closes on the per-link cap, so a second origin is never even started', () => {
+    const cells = mkCells(mkCell(1, [0, 0, 0]), mkCell(2, [100, 0, 0]), mkCell(40, [1, 0, 0]));
+    const graph = mkGraph([[1, 40], [2, 40]]);
+    const link = mkLink({
+      to_ids: [40],
+      endpoint_anchors: [mkAnchor(77, [0, 0, 0]), mkAnchor(78, [100, 0, 0])],
+    });
+    const planner = createLinkPulsePlanner(
+      link, cells, graph, { maxPulsesPerLink: 1 }, 0, pulseStats,
+    );
+    expect(planner.step().map((p) => p.origin!.anchorId)).toEqual([77]);
+    expect(planner.done).toBe(true);
+    expect(planPulses(link, cells, graph, { maxPulsesPerLink: 1 }, 0))
+      .toEqual([expect.objectContaining({ origin: expect.objectContaining({ anchorId: 77 }) })]);
+  });
+
+  it('bumps the link verdict once, on the step that finishes the link', () => {
+    const cells = mkCells(
+      mkCell(1, [0, 0, 0]), mkCell(2, [100, 0, 0]), mkCell(40, [1, 0, 0]),
+    );
+    const graph = mkGraph([[1, 40], [2, 40]]);
+    const planner = createLinkPulsePlanner(
+      mkLink({
+        to_ids: [40],
+        endpoint_anchors: [mkAnchor(77, [0, 0, 0]), mkAnchor(78, [100, 0, 0])],
+      }),
+      cells, graph, {}, 0, pulseStats,
+    );
+    planner.step();
+    expect(pulseStats.linkReasons.fired ?? 0).toBe(0); // still mid-link
+    planner.step();
+    expect(pulseStats.linkReasons.fired).toBe(1);
+    expect(planner.done).toBe(true);
   });
 });

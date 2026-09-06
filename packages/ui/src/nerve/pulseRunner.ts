@@ -136,7 +136,33 @@ export function pulseTiming(
 }
 
 /**
- * Plan all pulses for one new CellLink. Pure: returns a fresh array.
+ * The planning of ONE link as a resumable machine. Each `step` takes exactly
+ * one origin — its entry query and the single breadth-first search that
+ * routes to every `to_ids` at once — and returns that origin's pulses, in the
+ * order the one-shot planner appended them. {@link planPulses} is this machine
+ * drained in one call, so the pulses, their order and every stats bump are the
+ * same either way.
+ *
+ * The unit is an ORIGIN because a route search is the smallest work the
+ * planner cannot subdivide: over a 12,000-node stage one search costs 2–7 ms
+ * warm and ~9 ms on the first traversal of a freshly published graph (the
+ * per-node neighbour cache is built as it walks), and a link is allowed two of
+ * them. The frame-sliced live planner checks its wall budget BETWEEN steps, so
+ * a step is exactly what the budget cannot cut: keeping two searches inside one
+ * step made the grain twice the smallest grain available. Origins are counted
+ * against `MAX_PULSES_PER_LINK` exactly as before, so the second origin is not
+ * even started once the cap is full.
+ */
+export interface LinkPulsePlanner {
+  /** Every origin has been planned — or the link never had one to plan. */
+  readonly done: boolean;
+  /** Plan one origin; `[]` once done. */
+  step(): Pulse[];
+}
+
+/**
+ * Open the per-origin planner for one new CellLink. Pure apart from the stats
+ * sink; see {@link planPulses} for the plan it produces.
  *
  * Origins are the link's INPUT anchors — an anchor is input-side iff its id
  * is NOT one of this tx's newborns. Sound across id families: outputs always
@@ -145,20 +171,17 @@ export function pulseTiming(
  * Anchors are taken in wire order (the server's death pass, deterministic)
  * up to `MAX_ORIGINS_PER_LINK`.
  *
- * Each origin enters the fabric at the live node the entry index picks for
- * its address, and one BFS from there routes to every `to_ids` at once.
- * Pulses with no graph path (or path > maxHops) are silently dropped — they
- * wouldn't read visually anyway. Total emitted pulses are capped at
- * `MAX_PULSES_PER_LINK`.
+ * A link with no outputs, or none of whose anchors is input-side, is `done` on
+ * arrival: it bumps its drop reason here and never opens a search.
  */
-export function planPulses(
+export function createLinkPulsePlanner(
   link: CellLink,
   cells: ReadonlyMap<number, Cell>,
   graph: NeighborAdjacency,
   optionsOrMaxHops: PulsePlanningOptions | number = DEFAULT_MAX_HOPS,
   nowMs: number = link.at_ms,
   stats?: PulseStatsSink,
-): Pulse[] {
+): LinkPulsePlanner {
   const maxHops =
     typeof optionsOrMaxHops === 'number'
       ? optionsOrMaxHops
@@ -179,85 +202,144 @@ export function planPulses(
     typeof optionsOrMaxHops === 'number'
       ? undefined
       : optionsOrMaxHops.routeScratch;
-  if (link.to_ids.length === 0) {
-    stats?.bump('no-outputs');
-    return [];
-  }
 
   const origins: CellLinkEndpointAnchor[] = [];
-  for (const anchor of link.endpoint_anchors) {
-    if (origins.length >= maxOriginsPerLink) break;
-    if (link.to_ids.includes(anchor.id)) continue; // output-side anchor
-    origins.push(anchor);
-  }
-  if (origins.length === 0) {
-    // Nothing consumed to depart from: a cellbase, or a record persisted
-    // before inputs were anchored. The block guarantee decides separately
-    // whether the block still lights.
-    stats?.bump('no-origin');
-    return [];
+  let closed = false;
+  if (link.to_ids.length === 0) {
+    stats?.bump('no-outputs');
+    closed = true;
+  } else {
+    for (const anchor of link.endpoint_anchors) {
+      if (origins.length >= maxOriginsPerLink) break;
+      if (link.to_ids.includes(anchor.id)) continue; // output-side anchor
+      origins.push(anchor);
+    }
+    if (origins.length === 0) {
+      // Nothing consumed to depart from: a cellbase, or a record persisted
+      // before inputs were anchored. The block guarantee decides separately
+      // whether the block still lights.
+      stats?.bump('no-origin');
+      closed = true;
+    }
   }
 
-  const color = consensusPacketColor(link.tx_hash, link.tag);
+  // One colour per link, shared by every pulse of it — built on the first
+  // step, so a link that closed on arrival never pays the hash.
+  let color: [number, number, number] | null = null;
   let ownIndex: OriginEntryIndex | null = null;
   const entryIndex =
     sharedEntryIndex ?? (() => (ownIndex ??= buildOriginEntryIndex(cells, graph)));
 
-  const pulses: Pulse[] = [];
-  outer: for (const anchor of origins) {
-    if (pulses.length >= maxPulsesPerLink) break;
-    // `entryFor` leaves along the anchor's OWN surviving adjacency when it
-    // still has one (a corpse the graph has not pruned yet), so the packet
-    // departs down a real — retracting — edge; otherwise the grid answers.
-    // It never returns the anchor itself: path[0] must be a live cell.
-    const entry = entryIndex().entryFor(anchor.id, anchor.pos_seed);
-    // One BFS per origin covers every output of this tx; per-target results
-    // are byte-identical to routing each (entry, dst) pair separately.
-    const pathsByDst =
-      entry === null
-        ? null
-        : shortestPathsToTargets(
-          graph,
-          entry,
-          link.to_ids,
-          maxHops,
-          routeScratch,
-        );
-    // One ghost per origin, shared by its destinations — nothing mutates it.
-    const origin: PulseOrigin = {
-      pos: [anchor.pos_seed[0], anchor.pos_seed[1], anchor.pos_seed[2]],
-      anchorId: anchor.id,
-      resolved: anchor.resolved,
-    };
-    for (const dst of link.to_ids) {
-      if (pulses.length >= maxPulsesPerLink) break outer;
-      // Cannot happen — T2's id families are disjoint — but a tx that spent
-      // its own newborn would otherwise pulse a cell into itself.
-      if (anchor.id === dst) continue;
-      // A stage holding no eligible node at all fails the same way an
-      // absent destination does: there is nothing to route between.
-      const missing = entry === null || !graph.adjacency.has(dst);
-      const path = pathsByDst?.get(dst) ?? null;
-      // Length 1 = the entry node IS the destination; the ghost hop
-      // origin → dst carries that packet on its own.
-      if (!path || path.length < 1) {
-        stats?.bumpPath(missing ? 'endpoint-missing' : 'no-path');
-        continue;
+  let next = 0;
+  let planned = 0;
+
+  return {
+    get done() {
+      return closed;
+    },
+    step(): Pulse[] {
+      if (closed) return [];
+      const anchor = origins[next++];
+      const pulses: Pulse[] = [];
+      color ??= consensusPacketColor(link.tx_hash, link.tag);
+      // `entryFor` leaves along the anchor's OWN surviving adjacency when it
+      // still has one (a corpse the graph has not pruned yet), so the packet
+      // departs down a real — retracting — edge; otherwise the grid answers.
+      // It never returns the anchor itself: path[0] must be a live cell.
+      const entry = entryIndex().entryFor(anchor.id, anchor.pos_seed);
+      // One BFS per origin covers every output of this tx; per-target results
+      // are byte-identical to routing each (entry, dst) pair separately.
+      const pathsByDst =
+        entry === null
+          ? null
+          : shortestPathsToTargets(
+            graph,
+            entry,
+            link.to_ids,
+            maxHops,
+            routeScratch,
+          );
+      // One ghost per origin, shared by its destinations — nothing mutates it.
+      const origin: PulseOrigin = {
+        pos: [anchor.pos_seed[0], anchor.pos_seed[1], anchor.pos_seed[2]],
+        anchorId: anchor.id,
+        resolved: anchor.resolved,
+      };
+      for (const dst of link.to_ids) {
+        if (planned >= maxPulsesPerLink) break;
+        // Cannot happen — T2's id families are disjoint — but a tx that spent
+        // its own newborn would otherwise pulse a cell into itself.
+        if (anchor.id === dst) continue;
+        // A stage holding no eligible node at all fails the same way an
+        // absent destination does: there is nothing to route between.
+        const missing = entry === null || !graph.adjacency.has(dst);
+        const path = pathsByDst?.get(dst) ?? null;
+        // Length 1 = the entry node IS the destination; the ghost hop
+        // origin → dst carries that packet on its own.
+        if (!path || path.length < 1) {
+          stats?.bumpPath(missing ? 'endpoint-missing' : 'no-path');
+          continue;
+        }
+        const { startDelayMs, hopMs } = pulseTiming(link, anchor.id, dst);
+        pulses.push({
+          linkSeq: link.seq,
+          linkBlock: link.block,
+          path,
+          bornAtMs: nowMs,
+          color,
+          startDelayMs,
+          hopMs,
+          origin,
+        });
+        planned += 1;
+        stats?.bumpOrigin(origin.resolved ? 'origin-retained' : 'origin-derived');
       }
-      const { startDelayMs, hopMs } = pulseTiming(link, anchor.id, dst);
-      pulses.push({
-        linkSeq: link.seq,
-        linkBlock: link.block,
-        path,
-        bornAtMs: nowMs,
-        color,
-        startDelayMs,
-        hopMs,
-        origin,
-      });
-      stats?.bumpOrigin(origin.resolved ? 'origin-retained' : 'origin-derived');
-    }
+      // The link's verdict is bumped by the step that finishes it — the last
+      // origin, or the one that filled the per-link cap — so a link still
+      // reports 'fired' / 'all-paths-failed' exactly once, after its last
+      // pulse and before the next link's first stat.
+      if (next >= origins.length || planned >= maxPulsesPerLink) {
+        closed = true;
+        stats?.bump(planned > 0 ? 'fired' : 'all-paths-failed');
+      }
+      return pulses;
+    },
+  };
+}
+
+/**
+ * Plan all pulses for one new CellLink. Pure: returns a fresh array.
+ *
+ * Origins are the link's INPUT anchors, in wire order, up to
+ * `MAX_ORIGINS_PER_LINK`; each enters the fabric at the live node the entry
+ * index picks for its address, and one BFS from there routes to every
+ * `to_ids` at once. Pulses with no graph path (or path > maxHops) are
+ * silently dropped — they wouldn't read visually anyway. Total emitted pulses
+ * are capped at `MAX_PULSES_PER_LINK`.
+ *
+ * This is the one-task driver of {@link createLinkPulsePlanner}: every origin
+ * of the link planned in one call. The live overlay steps the same machine an
+ * origin at a time.
+ */
+export function planPulses(
+  link: CellLink,
+  cells: ReadonlyMap<number, Cell>,
+  graph: NeighborAdjacency,
+  optionsOrMaxHops: PulsePlanningOptions | number = DEFAULT_MAX_HOPS,
+  nowMs: number = link.at_ms,
+  stats?: PulseStatsSink,
+): Pulse[] {
+  const planner = createLinkPulsePlanner(
+    link,
+    cells,
+    graph,
+    optionsOrMaxHops,
+    nowMs,
+    stats,
+  );
+  const pulses: Pulse[] = [];
+  while (!planner.done) {
+    for (const pulse of planner.step()) pulses.push(pulse);
   }
-  stats?.bump(pulses.length > 0 ? 'fired' : 'all-paths-failed');
   return pulses;
 }

@@ -103,15 +103,20 @@ interface Admitted { pulse: Pulse; startSec: number; batch: LivePulseBatch }
 
 /** A fake wall clock advanced by the stats sink: every `observeLink` (one
  *  per planned link) costs `stepCostMs`, so a frame's budget is spent in
- *  units the test controls. */
-function makeDriver(stepCostMs: number, budgetMs: number) {
+ *  units the test controls. `originCostMs` charges the same clock per ROUTE
+ *  SEARCH instead — `bumpOrigin` fires once per (origin, destination) pair —
+ *  which is the grain a step actually holds. */
+function makeDriver(stepCostMs: number, budgetMs: number, originCostMs = 0) {
   let wallMs = 0;
   let clockReads = 0;
   let linkSteps = 0;
   const stats: PulseBatchStats = {
     bump: (r, n) => pulseStats.bump(r, n),
     bumpPath: (r, n) => pulseStats.bumpPath(r, n),
-    bumpOrigin: (k, n) => pulseStats.bumpOrigin(k, n),
+    bumpOrigin: (k, n) => {
+      wallMs += originCostMs;
+      pulseStats.bumpOrigin(k, n);
+    },
     bumpRescue: (k, n) => pulseStats.bumpRescue(k, n),
     bumpRingEvicted: (n) => pulseStats.bumpRingEvicted(n),
     observeLink: (b, lit) => {
@@ -302,6 +307,47 @@ describe('stepLivePulseQueue — sliced over frames, the one-task plan', () => {
       steps: 0, admitted: 0, pending: false, forcedByDeadline: false, maxStepMs: 0,
     });
     expect(driver.clockReads).toBe(0);
+  });
+
+  it('subdivides a LINK, not just a batch: a two-origin link is two steps', () => {
+    // The grain the wall budget cannot cut is ONE route search, and a link is
+    // allowed two of them. Charged per search against a zero budget, the link
+    // must therefore take two frames — one origin each — not one frame of two
+    // searches, which is what the review measured as a 46 ms step.
+    const { cells, graph } = fixture();
+    const twoOrigins = mkLink({
+      seq: 1, block: 7, to_ids: [4],
+      endpoint_anchors: [
+        { id: 77, pos_seed: [0, 0, 0], content_hash: CH, resolved: true },
+        { id: 78, pos_seed: [40, 0, 0], content_hash: CH, resolved: true },
+      ],
+    });
+    const oneShot = planLinkBatch([twoOrigins], 0, false, cells, graph, OPTS, pulseStats, 0);
+    const oneShotStats = snapshotPulseStats();
+    expect(oneShot.planned.map((p) => p.origin!.anchorId)).toEqual([77, 78]);
+    resetPulseStats();
+
+    const driver = makeDriver(0, 0, 5); // 5 ms per route search, zero budget
+    const queue = createLivePulseQueue();
+    const { toFire } = openLinkBatch([twoOrigins], 0, false, driver.stats);
+    const startSec = 100;
+    enqueueLivePulseBatch(queue, toFire, cells, graph, OPTS, startSec, {});
+    const perFrame: number[][] = [];
+    const grains: number[] = [];
+    let seen = 0;
+    while (queue.batches.length > 0) {
+      const report = stepLivePulseQueue(queue, driver.ctx);
+      perFrame.push(driver.admitted.slice(seen).map((a) => a.pulse.origin!.anchorId));
+      seen = driver.admitted.length;
+      grains.push(report.maxStepMs);
+    }
+    // One origin per frame, in wire order, and no frame ever holds both.
+    expect(perFrame.filter((f) => f.length > 0)).toEqual([[77], [78]]);
+    // The worst grain is one search, never the link's two.
+    expect(Math.max(...grains)).toBe(5);
+    expect(driver.admitted.map((a) => a.pulse)).toEqual(oneShot.planned);
+    expect(driver.admitted.every((a) => a.startSec === startSec)).toBe(true);
+    expect(snapshotPulseStats()).toEqual(oneShotStats);
   });
 
   it('reports the frame\'s longest planner step as maxStepMs', () => {
