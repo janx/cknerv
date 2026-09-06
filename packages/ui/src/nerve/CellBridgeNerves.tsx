@@ -292,6 +292,11 @@ export interface CellBridgeNervesProps {
   passiveGraphRef: { readonly current: PassiveSelection };
   /** Bumped by the owner whenever both refs above hold a completed build. */
   version: number;
+  /** The display graph version whose fabric grow/kill has fully landed — the
+   *  owner drains that work across frames, so a published `version` can be
+   *  ahead of the strokes this class chooses its hosts by. `-1` before the
+   *  first build lands. Optional keeps standalone scenes unchanged. */
+  fabricLandedVersionRef?: { readonly current: number };
   /** Shared camera-distance focus, so the class keeps its rung on the width
    *  and energy ladder when the detail view pulls the fabric down. */
   cellDetailViewFocusRef?: { readonly current: number };

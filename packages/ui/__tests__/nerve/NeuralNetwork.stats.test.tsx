@@ -12,6 +12,12 @@ const NETWORK_SOURCE = readFileSync(
   resolve(process.cwd(), 'src/nerve/NeuralNetwork.tsx'),
   'utf8',
 );
+// The fabric half of a landing moved out of the component and into this pure
+// module, so the guards that used to scan one file scan the pair.
+const LANDING_QUEUE_SOURCE = readFileSync(
+  resolve(process.cwd(), 'src/nerve/fabricLandingQueue.ts'),
+  'utf8',
+);
 
 beforeEach(() => resetPulseStats());
 
@@ -70,9 +76,17 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
   // key here reads as a working delta while nothing decays. The translation
   // has one home; this keeps the literal from growing back beside it.
   it('addresses the fabric through the edge-key translation, never raw', () => {
-    expect(NETWORK_SOURCE).toContain('planSelectionDeltaUpdate(delta, deltaNow)');
-    expect(NETWORK_SOURCE).toContain('selectionStrayEdgeKeys(');
+    // The translation followed the work: the drain plans the kills and each
+    // grow chunk, and the periodic prune still diffs through the same helper.
+    expect(LANDING_QUEUE_SOURCE).toContain('planSelectionDeltaUpdate(');
+    expect(LANDING_QUEUE_SOURCE).toContain('selectionStrayEdgeKeys(');
+    expect(LANDING_QUEUE_SOURCE).not.toMatch(/\$\{edge\.from\}:\$\{edge\.to\}/);
     expect(NETWORK_SOURCE).not.toMatch(/\$\{edge\.from\}:\$\{edge\.to\}/);
+    // …and the component grows nothing itself any more: every birth crosses
+    // the vocabulary boundary inside the queue. (`killEdges` stays for the
+    // eager living-mesh retraction, which translates in `planMeshUpdate`, and
+    // `setFabric` stays for the remount rehydrate, which hands a selection.)
+    expect(NETWORK_SOURCE).not.toContain('growEdges');
   });
 
   it('maintains that graph eagerly between worker builds', () => {
@@ -265,6 +279,63 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
     );
     expect(NETWORK_SOURCE.lastIndexOf('useFrame((_, rawDeltaSeconds) => {', frameAt))
       .toBeGreaterThan(-1);
+  });
+
+  // T4: the landing was one task doing two halves — the graph swap and the
+  // fabric's grow/kill for the selection that swap published — and a task
+  // cannot yield to itself. The split's correctness is entirely a matter of
+  // WHERE the two halves now sit, so that is what is pinned here; the queue's
+  // own order and budget are unit-tested in fabricLandingQueue.test.ts.
+  it('lands the graph in the worker task and drains the fabric on later frames', () => {
+    const commitAt = NETWORK_SOURCE.indexOf(
+      'beginCpuProbe(PERFORMANCE_PROBE_LABELS.fabricCommit)',
+    );
+    const landingEnd = NETWORK_SOURCE.indexOf(
+      'blockFrameStats.observeLanding();\n    }).catch(',
+      commitAt,
+    );
+    expect(commitAt).toBeGreaterThan(-1);
+    expect(landingEnd).toBeGreaterThan(commitAt);
+    const landingTask = NETWORK_SOURCE.slice(commitAt, landingEnd);
+    // The graph half stays: the swap, the version, the passive publish, the
+    // width tier and the boot report all happen in the task that landed them.
+    expect(landingTask).toContain('displayGraphRef.current = result.graph;');
+    expect(landingTask).toContain('setDisplayGraphVersion(landedVersion);');
+    expect(landingTask).toContain('passiveGraphRef.current = passiveGraph;');
+    expect(landingTask).toContain('setTrunkTier(passiveGraph)');
+    expect(landingTask).toContain('reportBootGraphApplied();');
+    // The fabric half leaves as ONE O(1) enqueue — no translation, no
+    // per-edge work, no handle call.
+    expect(landingTask).toContain('enqueueFabricLanding(fabricLandingQueueRef.current, {');
+    expect(landingTask).not.toContain('handles.');
+    expect(landingTask).not.toContain('planSelectionDeltaUpdate');
+    // The drain rides the raw priority −1 frame, after the gauge's frame mark
+    // and BEFORE the live-plan slice's own budget, and it costs one length
+    // check on the overwhelming majority of frames, which have nothing to land.
+    const drainAt = NETWORK_SOURCE.indexOf('drainFabricLandingQueue(landingQueue, {');
+    expect(drainAt).toBeGreaterThan(-1);
+    expect(NETWORK_SOURCE.lastIndexOf('if (landingQueue.items.length > 0 && handles) {', drainAt))
+      .toBeGreaterThan(-1);
+    expect(NETWORK_SOURCE.lastIndexOf('useFrame((_, rawDeltaSeconds) => {', drainAt))
+      .toBeGreaterThan(NETWORK_SOURCE.lastIndexOf('useFrame((_state, delta) => {', drainAt));
+    expect(drainAt).toBeLessThan(
+      NETWORK_SOURCE.indexOf('stepLivePulseQueue(queue, livePlanStep)'),
+    );
+    // The budget is read from the interval this frame followed, and the sim
+    // clock is read at drain so a birth never animates from the past.
+    expect(NETWORK_SOURCE).toContain(
+      'budgetMs: fabricLandingBudgetMs(rawDeltaSeconds * 1000),',
+    );
+    // A remount rehydrates the fabric wholesale, so every queued delta is a
+    // patch against a base that no longer exists.
+    expect(NETWORK_SOURCE).toContain(
+      'resetFabricLandingQueue(fabricLandingQueueRef.current);',
+    );
+    // The landed version reaches the bridge class, which chooses its hosts by
+    // drawn fabric degree and so must know when the fabric caught up.
+    expect(NETWORK_SOURCE).toContain(
+      'fabricLandedVersionRef={fabricLandedVersionRef}',
+    );
   });
 
   // Integration mount-safety test — the level this jsdom harness supports

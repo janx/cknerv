@@ -62,7 +62,7 @@ import {
   invalidateTopologyJournal,
 } from '../geometry/topologyJournal';
 import { fabricStats } from './fabricStats';
-import { blockFrameStats } from './blockFrameStats';
+import { blockFrameNowMs, blockFrameStats } from './blockFrameStats';
 import {
   resolveCellDisplayLimit,
   useCellDisplayRuntime,
@@ -116,9 +116,14 @@ import { pulseStats } from './pulseStats';
 import {
   planDisplayMeshDiff,
   planMeshUpdate,
-  planSelectionDeltaUpdate,
-  selectionStrayEdgeKeys,
 } from './livingMeshDriver';
+import {
+  createFabricLandingQueue,
+  drainFabricLandingQueue,
+  enqueueFabricLanding,
+  fabricLandingBudgetMs,
+  resetFabricLandingQueue,
+} from './fabricLandingQueue';
 import CellBridgeNerves from './CellBridgeNerves';
 import NeuralFabric, {
   makeActiveHopScratch,
@@ -462,9 +467,22 @@ function NeuralNetwork({
   // for bootstrap, recovery, or explicit topology changes; doing them on every
   // birth would continually cancel useful topology work.
   const passiveGraphRef = useRef<PassiveSelection>(emptyPassiveSelection());
-  /** Consecutive delta-applied builds since the last full setFabric
-   * reconcile (see the delta path below). */
-  const fabricDeltaStreakRef = useRef(0);
+  /** The fabric half of every landed build, waiting for frames to apply it.
+   * The landing task keeps the graph swap (a consumer reading the version has
+   * to find the graph there); the grow/kill it selects drains from here under
+   * a per-frame wall budget, because the two together were one 48 ms task and
+   * a task cannot yield to itself. The consecutive-delta streak that fires the
+   * periodic reconcile lives INSIDE the queue, with the work it counts. */
+  const fabricLandingQueueRef = useRef(createFabricLandingQueue());
+  /** The display graph version whose kills, grows and reconcile have all been
+   * applied to the fabric — `-1` until the first build lands. Published for
+   * the layers that must not read a selection the fabric has not caught up
+   * with yet; a remount, which rehydrates the fabric wholesale, carries it
+   * straight to the newest enqueued version. */
+  const fabricLandedVersionRef = useRef(-1);
+  /** Mirror of `displayGraphVersion` readable inside the landing microtask,
+   * so the queued item can name the version it will have landed. */
+  const displayGraphVersionRef = useRef(0);
   /** O(churn) topology journals for the two graph builders (Step B):
    * accumulated per cache generation, handed to build() and cleared
    * speculatively at issuance — every failure path (supersession, worker
@@ -695,15 +713,24 @@ function NeuralNetwork({
         blockFrameStats.discardLanding();
         return;
       }
-      // The fabric's half of a landed build — the graph swap, then the delta
-      // grow/kill or the full setFabric reconcile — on the main thread. Off,
-      // the probe returns before any clock read.
+      // The GRAPH half of a landed build: the swap, the version bump, and the
+      // refs a consumer reads at that version. The fabric half — the delta
+      // grow/kill, or the full setFabric reconcile — is enqueued below and
+      // drained by the frame loop, because the two together made one task of
+      // up to 48 ms and a task cannot yield to itself. Off, the probe returns
+      // before any clock read.
       const commitProbe = beginCpuProbe(PERFORMANCE_PROBE_LABELS.fabricCommit);
       const passiveGraph = result.passiveGraph ?? emptyPassiveSelection();
       displayRequestedCellsRef.current = null;
       displayRequestedTopologyVersionRef.current = -1;
       displayGraphRef.current = result.graph;
-      setDisplayGraphVersion((version) => version + 1);
+      // The mirror moves with the state, and the queued item is named by it:
+      // the setter's value is not readable from inside this microtask, and the
+      // fabric's landed version has to be comparable with the very number the
+      // graph's consumers are handed.
+      const landedVersion = displayGraphVersionRef.current + 1;
+      displayGraphVersionRef.current = landedVersion;
+      setDisplayGraphVersion(landedVersion);
       // The boot record's fabric line OPENS here, on the graph landing — and
       // closes in the nerve-rest gate, once the admitted edges have grown and
       // the outer tiers (halo placement, first bridges) are at rest on
@@ -715,9 +742,10 @@ function NeuralNetwork({
       passiveGraphRef.current = passiveGraph;
       fabricStats.passiveSelectionEdges = passiveGraph.edges.length;
       // The fabric's WIDTH tier is a property of the whole drawn selection,
-      // and the delta branch below never hands the layer that selection —
-      // so it is published here, on every completed build, beside the gauge
-      // that measures the same thing.
+      // and the queued delta below never hands the layer that selection — so
+      // it is published here, on every completed build, beside the gauge that
+      // measures the same thing. One threshold for the whole selection, so it
+      // is a graph fact and belongs on the graph half of the landing.
       fabricHandlesRef.current?.setTrunkTier(passiveGraph);
       // Already set at request time; re-asserted here because the guards
       // above are what prove THIS response is the live one.
@@ -726,67 +754,32 @@ function NeuralNetwork({
       displayTopologyVersionRef.current = requestedTopologyVersion;
       const wasBootstrapped = displayBootstrappedRef.current;
       displayBootstrappedRef.current = true;
-      const handles = fabricHandlesRef.current;
       // Selection deltas from the worker session let ordinary per-block
-      // churn skip the O(selection) full-set diff. The eager living-mesh
-      // driver may occasionally grow an edge the final selection never
-      // confirms, so every 16th delta application reconciles with one
-      // full setFabric — bounded drift, amortized cost.
+      // churn skip the O(selection) full-set diff. A delta is only applicable
+      // over the base it was stated against: an unbootstrapped display has no
+      // such base, and a dirty epoch means the fabric remounted and rehydrated
+      // from the published selection since the last landing. Either way the
+      // item lands as one full setFabric instead — which is also what the
+      // queue counts as the reconcile that clears its delta streak.
       const delta = result.passiveDelta;
       const epochClean =
         fabricEpochRef.current === fabricEpochAppliedRef.current;
       fabricEpochAppliedRef.current = fabricEpochRef.current;
-      if (
-        handles
-        && wasBootstrapped
-        && epochClean
-        && delta !== null
-      ) {
-        fabricDeltaStreakRef.current += 1;
-        // The worker speaks the graph's edge vocabulary and the fabric its
-        // own; `planSelectionDeltaUpdate` is the single translation, because
-        // an untranslated key is skipped in silence rather than rejected.
-        const deltaNow = simClock.elapsedSec;
-        const instructions = planSelectionDeltaUpdate(delta, deltaNow);
-        if (instructions.killKeys.length > 0) {
-          handles.killEdges(instructions.killKeys, deltaNow, 'gc');
-        }
-        if (delta.added.length > 0) {
-          handles.growEdges(
-            delta.added,
-            displayCells,
-            instructions.bornAtByKey,
-            instructions.dirByKey,
-          );
-        }
-        // Periodic reconcile: while deltas chain, drift can only be EXTRA
-        // fabric edges (eager living-mesh growth the selection never
-        // confirmed) — missing edges are impossible, so pruning extras
-        // replaces the old full re-admission (which cost a 300-500ms
-        // admission storm every 16th block at the High tier).
-        if (fabricDeltaStreakRef.current >= 16) {
-          fabricDeltaStreakRef.current = 0;
-          const extras = selectionStrayEdgeKeys(
-            passiveGraph.edges,
-            handles.collectLiveEdgeKeys(),
-          );
-          if (extras.length > 0) {
-            handles.killEdges(extras, simClock.elapsedSec, 'gc');
-          }
-        }
-      } else {
-        fabricDeltaStreakRef.current = 0;
-        handles?.setFabric(
-          passiveGraph,
-          displayCells,
-          simClock.elapsedSec,
-        );
-      }
+      // O(1): the item holds references to the arrays the worker already
+      // produced. Nothing is translated, allocated per edge, or handed to the
+      // fabric here — that is precisely the work this task no longer does.
+      enqueueFabricLanding(fabricLandingQueueRef.current, {
+        version: landedVersion,
+        cells: displayCells,
+        passiveGraph,
+        delta: wasBootstrapped && epochClean ? delta : null,
+      });
       endCpuProbe(commitProbe);
       invalidate();
       // The worker landing task ends here. This `.then` is a microtask of the
       // very task the worker's message handler opened, so handler entry → here
-      // is that task's wall time — the block frame's longest grain today.
+      // is that task's wall time — now the GRAPH half alone, which is what the
+      // gauge has to keep reading for the split to be readable at all.
       blockFrameStats.observeLanding();
     }).catch((error: unknown) => {
       blockFrameStats.discardLanding();
@@ -1520,6 +1513,28 @@ function NeuralNetwork({
       }
     }
     handles?.flushRouteHopPulse();
+
+    // The fabric half of every landed build, applied here instead of inside
+    // the worker's message task. Ordered before the live-plan slice (default
+    // priority, this callback is −1) so a frame that both drains and plans
+    // spends its two budgets in that order rather than racing them, and the
+    // budget is read from the interval this frame actually followed. The queue
+    // is normally empty: one length check per frame, no allocation.
+    const landingQueue = fabricLandingQueueRef.current;
+    if (landingQueue.items.length > 0 && handles) {
+      drainFabricLandingQueue(landingQueue, {
+        handles,
+        budgetMs: fabricLandingBudgetMs(rawDeltaSeconds * 1000),
+        // Drain-time clocks: a birth animates from the frame it enters on,
+        // never from the landing it waited behind.
+        nowSec: simClock.elapsedSec,
+        nowMs: blockFrameNowMs,
+      });
+      fabricLandedVersionRef.current = landingQueue.landedVersion;
+      // Under a demand frameloop nothing else would ask for the frame that
+      // finishes the queue.
+      if (landingQueue.items.length > 0) invalidate();
+    }
   }, CONSENSUS_ROUTE_HOP_PULSE_FRAME_PRIORITY);
 
   const onFabricReady = useCallback((handles: NeuralFabricHandles) => {
@@ -1532,6 +1547,13 @@ function NeuralNetwork({
       displayCellsRef.current,
       simClock.elapsedSec,
     );
+    // The rehydrate above IS the newest enqueued item's outcome — it applies
+    // the same published selection — so every queued delta is now a patch
+    // against a base that no longer exists. Drop them and carry the landed
+    // version forward, or a consumer waiting on it would wait forever.
+    resetFabricLandingQueue(fabricLandingQueueRef.current);
+    fabricLandedVersionRef.current =
+      fabricLandingQueueRef.current.landedVersion;
   }, []);
 
   // Per-frame planning slice for the opened link batches. Registered BEFORE
@@ -2155,6 +2177,7 @@ function NeuralNetwork({
         cellsRef={displayCellsRef}
         passiveGraphRef={passiveGraphRef}
         version={displayGraphVersion}
+        fabricLandedVersionRef={fabricLandedVersionRef}
         cellDetailViewFocusRef={cellDetailViewFocusRef}
       />
       <primitive object={spikePool.mesh} />
