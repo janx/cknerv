@@ -68,16 +68,21 @@
 //
 // ⭐⭐ THE FORM FOLDS WITH THE CAMERA, AND ONE NUMBER DOES IT. `uPxScale` is
 // written once a frame — `0.5 · drawingBufferHeight · projectionMatrix[1][1]`,
-// so it is DPR-aware for free — and each program divides it by its own distance
-// to the camera to get PIXELS PER WORLD UNIT at that cohort. Below `uUnfoldLo`
+// NORMALISED TO THE REFERENCE DPR (see `cohortPxScale`) — and each program
+// divides it by its own distance to the camera to get PIXELS PER WORLD UNIT at
+// that cohort AS THE REFERENCE DISPLAY WOULD MEASURE THEM. Below `uUnfoldLo`
 // the mass, the disc, the shadow's opacity, the motes' birth radius and their
 // brightness are all folded down to a peer-sized smudge; above `uUnfoldHi` the
 // film's hole is open. ⚠️ THE BAND IS 20 → 50 AND WAS 6 → 30 UNTIL 2026-09-03,
 // when the user judged the mid range far too big; the edges are named rather
 // than restated here so a retune never has to find this paragraph.
-// ⚠️ IT MUST BE THE DRAWING BUFFER'S HEIGHT AND NOT THE CSS HEIGHT: a quality
-// tier that moves the DPR changes how many pixels a world unit covers, and a
-// mark that folded on CSS pixels would unfold when the tier stepped down.
+// ⚠️ THE FOLD IS DISPLAY-INDEPENDENT (D-5, 2026-09-06). The scale is written
+// off the DRAWING BUFFER's height, never `state.size`, but divided back to the
+// reference DPR by the live pixel ratio, so one CSS framing folds the SAME on a
+// 1× and a 2× display and a tier's DPR step can neither fold nor unfold the
+// mark (the tier changes the DPR, not the reference). It was raw device pixels
+// until then, which made a 2× buffer march at the default camera and cost the
+// march ×dpr² — the ratchet a single dolly could step the tier down on.
 //
 // This file owns the four things that cannot live in a material:
 //   • WHICH nodes wear one — `cohortMarks`, pure and exported, one mark per
@@ -600,9 +605,16 @@ export function cohortWinStamp(
  * The two per-frame numbers this layer computes rather than reads.
  * -------------------------------------------------------------------------- */
 
+/** The reference DPR the fold is measured at. The reference display (2560×1440
+ *  at DPR 1) folds one world unit onto its own device pixels; every other
+ *  display folds onto the pixels IT would have at this same DPR, so a 2× buffer
+ *  folds one CSS framing the way the reference machine does. */
+export const COHORT_FOLD_REFERENCE_DPR = 1;
+
 /**
  * The fold's scale: multiply by nothing and divide by a cohort's distance to
- * the camera, and the answer is PIXELS PER WORLD UNIT at that cohort.
+ * the camera, and the answer is PIXELS PER WORLD UNIT at that cohort — as the
+ * REFERENCE DISPLAY would measure them.
  *
  * ⭐⭐ PIXELS PER WORLD UNIT AND NOT DISTANCE, because the same distance is a
  * different picture on a 1440p screen and a phone, and because a dolly and a
@@ -611,19 +623,33 @@ export function cohortWinStamp(
  * that expression with the `/ d` left to the shader, which knows each
  * instance's own depth.
  *
- * ⚠️⚠️ `height` IS THE DRAWING BUFFER'S, IN DEVICE PIXELS — `gl.domElement.height`
- * and never `state.size.height`. A quality tier that lowers `maxDpr` halves the
- * drawing buffer without moving one CSS pixel, and a mark folded on CSS pixels
- * would UNFOLD when the tier stepped down: the cohort would grow into the
- * film's hole exactly as the machine admitted it could not afford one.
+ * ⚠️⚠️ AND IT IS DISPLAY-INDEPENDENT (D-5, 2026-09-06). `height` is the DRAWING
+ * BUFFER'S, in device pixels — `gl.domElement.height`, never `state.size.height`
+ * — but it is divided back to `COHORT_FOLD_REFERENCE_DPR` by the live pixel
+ * ratio, so a 2× buffer, and a tier that raises `maxDpr`, fold ONE CSS framing
+ * the same way the reference machine does. At or below the reference DPR the
+ * factor is 1 and this is byte-identical to the old raw-device-pixel scale, so a
+ * 1× display is unchanged. It was the raw device height until 2026-09-06, which
+ * made a mark march at the default camera on a 2× buffer and cost the march
+ * ×dpr² — a close dolly could then step the down-only tier for the page's life.
+ * The tier still changes the DPR, not this reference, so a step can neither fold
+ * nor unfold the mark: the invariant the device-pixel scale was chosen for still
+ * holds, now on both axes.
  *
  * Pure and exported so the DPR claim can be pinned without a renderer.
  */
 export function cohortPxScale(
   drawingBufferHeight: number,
   projection11: number,
+  devicePixelRatio = 1,
+  referenceDpr = COHORT_FOLD_REFERENCE_DPR,
 ): number {
-  return 0.5 * drawingBufferHeight * projection11;
+  // Divide the device height back to the reference DPR — never inflate a
+  // sub-reference display (a mark there is genuinely small), only strip the
+  // extra device pixels a high-DPR buffer added. `min(1, ref/dpr)` is exactly 1
+  // whenever `dpr ≤ ref`, which is the byte-identical 1× path.
+  const foldDpr = Math.min(1, referenceDpr / Math.max(devicePixelRatio, 1e-6));
+  return 0.5 * drawingBufferHeight * foldDpr * projection11;
 }
 
 /**
@@ -1238,14 +1264,16 @@ export default function ColonyCohorts({
   useSimFrame(() => {
     const contextEnergy = contextEnergyRef?.current ?? 1;
     const elapsed = simClock.elapsedSec;
-    // ⭐⭐⭐ ONE NUMBER FOLDS BOTH DRAWS, and it is written from the DRAWING
-    // BUFFER rather than from the CSS size — see `cohortPxScale`. Each program
-    // divides it by its own distance to the camera, so the mass, the disc, the
-    // shadow's opacity, the specks' birth radius and their brightness all fold
-    // on one closeness and nothing can unfold on its own schedule.
+    // ⭐⭐⭐ ONE NUMBER FOLDS BOTH DRAWS, written from the DRAWING BUFFER but
+    // normalised to the reference DPR — never from the CSS size — see
+    // `cohortPxScale`. Each program divides it by its own distance to the
+    // camera, so the mass, the disc, the shadow's opacity, the specks' birth
+    // radius and their brightness all fold on one closeness and nothing can
+    // unfold on its own schedule — nor on the physical DPR.
     const pxScale = cohortPxScale(
       gl.domElement.height,
       camera.projectionMatrix.elements[5],
+      gl.getPixelRatio(),
     );
     // ⭐⭐ THE MASS IS THE SIZE PARAMETER, AND EVERY RADIUS IS A MULTIPLE OF IT.
     // Read once and written three times: the horizon itself, the disc's inner

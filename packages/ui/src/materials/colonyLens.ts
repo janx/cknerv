@@ -1304,6 +1304,25 @@ export function lensFold(pxPerWu: number, mass: number = 1): LensFold {
   };
 }
 
+/**
+ * The camera-facing quad's half-extent, in units of the cohort's own mass, at a
+ * given closeness — the vertex stage's fold mirrored, so the quad shrink (A1-2)
+ * can be pinned without a renderer. It is the GLSL `mix(1.25 · uDiscOutFar,
+ * uQuadR, closeness)` statement for statement.
+ *
+ * ⭐⭐ IT SHRINKS TO THE MARK BELOW THE BAND. At closeness 0 the lit footprint
+ * is the far disc out to `COHORT_DISC_OUT_FAR`, so the quad is 1.25× that — the
+ * 1.25 covering the perspective enlargement of the disc's near edge. It grows to
+ * `COHORT_LENS_QUAD_R` at closeness 1, where it is EXACTLY the shipped quad, so
+ * nothing drawn moves and only discarded fragments are removed. The margin over
+ * the footprint — `cohortLensQuadR(c)` against `lensFold(...).discOut` — never
+ * falls below 1 (its minimum is the shipped 32/28 at closeness 1), which is the
+ * proof the fold cuts off nothing the trace could light.
+ */
+export function cohortLensQuadR(closeness: number): number {
+  return mix(1.25 * COHORT_DISC_OUT_FAR, COHORT_LENS_QUAD_R, closeness);
+}
+
 /** The mist's own catchment weight on the far radius fraction: `(1 − q²)²`. */
 export function lensFarCatchment(rho: number, out: number): number {
   const q = Math.min(1, Math.max(0, rho / out));
@@ -1531,6 +1550,13 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
       uniform float uDriftSign;
       uniform float uShareFloor;
       uniform float uShareMax;
+      // Read in the vertex stage too, so the quad's own extent can fold on the
+      // SAME closeness the fragment reads (A1-2). Shared uniforms — the values
+      // are the ones the fragment already binds, not a second copy.
+      uniform float uPxScale;
+      uniform float uUnfoldLo;
+      uniform float uUnfoldHi;
+      uniform float uDiscOutFar;
 
       varying vec3 vWorld;
       varying vec3 vOrigin;
@@ -1582,9 +1608,23 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
         vec3 cameraUp = vec3(
           viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]
         );
+        // THE QUAD SHRINKS TO THE MARK BELOW THE BAND (A1-2, 2026-09-06). At
+        // closeness 0 the only light is the far disc, out to uDiscOutFar, and
+        // the nucleus inside it, so a quad sized for the traced hole (uQuadR 32
+        // against a 14-wu disc) rasterises ~3.3x the fragments it could ever
+        // light, all discarded. Fold the half-extent on the SAME closeness the
+        // fragment reads, recomputed here from the same r0 (camera to origin) so
+        // the two stages cannot disagree, down to 1.25x the far disc. The 1.25
+        // covers the perspective enlargement of the disc's near edge at the
+        // closest camera still at closeness 0; at closeness 1 the extent is
+        // uQuadR unchanged. The drawn pixels are identical -- only discarded
+        // ones are gone.
+        float r0v = max(length(cameraPosition - origin.xyz), 1e-4);
+        float closenessV = smoothstep(uUnfoldLo, uUnfoldHi, uPxScale * vMass / r0v);
+        float quadR = mix(1.25 * uDiscOutFar, uQuadR, closenessV);
         vWorld = origin.xyz
           + (cameraRight * position.x + cameraUp * position.y)
-            * uQuadR * vMass * 2.0;
+            * quadR * vMass * 2.0;
         gl_Position = projectionMatrix * viewMatrix * vec4(vWorld, 1.0);
       }
     `,
@@ -1722,9 +1762,17 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
         // streak field takes over, so the outer disc reads as the vortex
         // drawing material in rather than as a ring of light.
         float inner = smoothstep(0.35, 0.7, cc);
-        float fib = mix(
-          1.0, mistFibres(rho / edge, th, g, uTime), uFibreMix * inner * closeness
-        );
+        // SKIP THE DEAD FIBRE FETCH (A1-3, 2026-09-06). mistFibres is three of
+        // the seven texture fetches this crossing spends, and inner is exactly 0
+        // for rho past 6.6 wu -- ~94% of the disc -- where the fetch only fed a
+        // mix to a zero weight that returns 1.0. Guard it so the fetch runs only
+        // where its weight is positive; mix(a, b, 0.0) is a, so the output is
+        // byte-for-byte the same and the branch is coherent along one ring.
+        float fibW = uFibreMix * inner * closeness;
+        float fib = 1.0;
+        if (fibW > 0.0) {
+          fib = mix(1.0, mistFibres(rho / edge, th, g, uTime), fibW);
+        }
         float streak = uFil * g
           * (uContrastFar + uContrastNear * mix(1.0, 0.45, inner))
           * (1.0 + pile);

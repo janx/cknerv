@@ -304,8 +304,10 @@ describe('colonyLens.ts — source-level shader guards', () => {
     expect(unprovable).toEqual([]);
     // The fold, the inner band, the outer fade, the inner edge, the fibre lane,
     // the two colour stops, the context exemption — and the HOLE GATE, which is
-    // the fold's second, later schedule and the only quantity that has one.
-    expect(checked).toBe(9);
+    // the fold's second, later schedule and the only quantity that has one. The
+    // tenth, since 2026-09-06, is the VERTEX stage's copy of the fold (A1-2),
+    // which shrinks the quad to the mark on the same closeness the fragment reads.
+    expect(checked).toBe(10);
   });
 
   it('no pow anywhere can be handed a negative base', () => {
@@ -616,14 +618,41 @@ describe('colonyLens.ts — source-level shader guards', () => {
       .toHaveLength(2);
     expect(fragment).not.toContain('uDiscOutFar)');
     expect(fragment).not.toContain('uFarGlowR,');
-    // The vertex stage floors the lane and scales the quad, so the DOMAIN of
-    // the trace shrinks with the picture it computes.
+    // The vertex stage floors the lane and scales the quad — times the mass AND,
+    // since 2026-09-06, folded on closeness (A1-2) — so the DOMAIN of the trace
+    // shrinks with the picture it computes AND with the camera.
     expect(vertex).toContain('max(abs(aMass),');
     expect(vertex).toContain(
       `vMass = max(abs(aMass), ${COHORT_MASS_GLSL_FLOOR.toFixed(2)});`,
     );
-    expect(vertex).toContain('uQuadR * vMass * 2.0');
+    expect(vertex).toContain('quadR * vMass * 2.0');
     expect(vertex).not.toMatch(/uQuadR \* 2\.0/);
+    // ⭐ THE QUAD FOLDS TO THE MARK BELOW THE BAND (A1-2). The half-extent is
+    // 1.25× the far disc at closeness 0 and `uQuadR` at closeness 1, on the SAME
+    // closeness the fragment reads — recomputed here from the same r0
+    // (|camera − origin|), so the two stages cannot fold apart. Same drawn
+    // pixels, ~3.3× fewer fragments at the default camera. `cohortLensQuadR`
+    // mirrors this line in TypeScript and `colonyLens.test.ts` pins the margin.
+    expect(vertex).toContain('float quadR = mix(1.25 * uDiscOutFar, uQuadR, closenessV);');
+    expect(vertex).toContain('float r0v = max(length(cameraPosition - origin.xyz), 1e-4);');
+    expect(vertex).toContain(
+      'float closenessV = smoothstep(uUnfoldLo, uUnfoldHi, uPxScale * vMass / r0v);',
+    );
+    // …and the fold's uniforms are declared in the vertex stage too, or it will
+    // not link — the fragment's own, not a second copy.
+    for (const u of ['uPxScale', 'uUnfoldLo', 'uUnfoldHi', 'uDiscOutFar']) {
+      expect(vertex).toContain(`uniform float ${u};`);
+    }
+    // ⭐ THE DEAD FIBRE FETCH IS SKIPPED (A1-3). `mistFibres` — 3 of the 7
+    // fetches a disc crossing spends — runs only where its mix weight is
+    // positive; `inner` is exactly 0 on ~94% of the disc and `mix(a, b, 0.0)`
+    // is `a`, so the guarded output is identical and the unguarded fetch is gone.
+    expect(fragment).toContain('float fibW = uFibreMix * inner * closeness;');
+    expect(fragment).toContain('if (fibW > 0.0) {');
+    expect(fragment).toContain('fib = mix(1.0, mistFibres(rho / edge, th, g, uTime), fibW);');
+    expect(fragment).not.toContain(
+      'mistFibres(rho / edge, th, g, uTime), uFibreMix * inner * closeness',
+    );
     // ⚠️⚠️ THE FLOOR IS A LITERAL THE PROGRAM CANNOT READ AS ZERO, and it is
     // the third of three guards: the layer's array is filled with 1, the motes'
     // geometry allocates its copy at 1, and this is what stands under both.

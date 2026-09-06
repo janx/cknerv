@@ -54,6 +54,7 @@ import {
   COHORT_UNFOLD_LO,
   cohortDiscStops,
   cohortHandedness,
+  cohortLensQuadR,
   cohortMassApproach,
   cohortMassFactor,
   cohortMassLaneValue,
@@ -368,6 +369,42 @@ describe('cohort lens — the fold', () => {
     // already a quarter of the way to the near values.
     expect(lensFold(30).horizon).toBeGreaterThan(COHORT_HORIZON_FAR);
     expect(lensFold(30).discOut).toBeGreaterThan(COHORT_DISC_OUT_FAR);
+  });
+});
+
+describe('cohort lens — the quad folds to the mark (A1-2)', () => {
+  it('is the shipped quad at closeness 1 and shrinks below the band', () => {
+    // ⭐ Closeness 1 is EXACTLY the shipped quad, so nothing drawn moves — only
+    // discarded fragments go — and closeness 0 shrinks to 1.25× the far disc.
+    expect(cohortLensQuadR(1)).toBe(COHORT_LENS_QUAD_R);
+    expect(cohortLensQuadR(0)).toBe(1.25 * COHORT_DISC_OUT_FAR);
+    // It really shrinks — the whole point of the fold. At closeness 0 that is a
+    // ~(32/17.5)² ≈ 3.3× cut in the fragments the default-camera quad rasterises.
+    expect(cohortLensQuadR(0)).toBeLessThan(COHORT_LENS_QUAD_R);
+    expect((COHORT_LENS_QUAD_R / cohortLensQuadR(0)) ** 2).toBeGreaterThan(3);
+  });
+
+  it('covers the lit footprint at every closeness — margin never below 1', () => {
+    // ⭐⭐ THE SAME-IMAGE PROOF. Below the band the only light is the far disc
+    // (out to COHORT_DISC_OUT_FAR) and the nucleus inside it; through the band
+    // the traced disc reaches `lensFold(...).discOut = mix(FAR, OUT, closeness)`.
+    // The folded half-extent stays at or above that footprint at every
+    // closeness (its minimum margin is the shipped 32/28 at closeness 1), so the
+    // fold cuts off nothing the trace could have lit.
+    let minMargin = Infinity;
+    for (let i = 0; i <= 200; i++) {
+      const c = i / 200;
+      // The traced disc's reach, `mix(FAR, OUT, closeness)`, inlined.
+      const discOut = (1 - c) * COHORT_DISC_OUT_FAR + c * COHORT_DISC_OUT;
+      const footprint = Math.max(COHORT_DISC_OUT_FAR, discOut);
+      const quadR = cohortLensQuadR(c);
+      expect(quadR).toBeGreaterThanOrEqual(footprint);
+      minMargin = Math.min(minMargin, quadR / footprint);
+    }
+    expect(minMargin).toBeGreaterThanOrEqual(1);
+    // …and the tightest point is closeness 1, where it is the shipped quad over
+    // the full disc — the fold introduces no margin tighter than what ships.
+    expect(cohortLensQuadR(1) / COHORT_DISC_OUT).toBeCloseTo(minMargin, 6);
   });
 });
 
@@ -902,8 +939,12 @@ describe('cohort lens — the material', () => {
     // …and the instance matrix carries a TRANSLATION and nothing else, which is
     // why the quad's extent is a uniform — times the mass, so the domain of the
     // trace shrinks with the picture it computes and a small cohort costs the
-    // square of its size in fill.
-    expect(material.vertexShader).toContain('uQuadR * vMass * 2.0');
+    // square of its size in fill. Since 2026-09-06 the extent folds on closeness
+    // too (A1-2), so it also shrinks with the camera — see `cohortLensQuadR`.
+    expect(material.vertexShader).toContain('quadR * vMass * 2.0');
+    expect(material.vertexShader).toContain(
+      'float quadR = mix(1.25 * uDiscOutFar, uQuadR, closenessV);',
+    );
     expect(material.uniforms.uQuadR.value).toBe(COHORT_LENS_QUAD_R);
   });
 

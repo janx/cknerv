@@ -29,6 +29,7 @@ import {
 } from '../../src/derives/networkTopology.derive';
 import { colonyFlood } from '../../src/derives/networkFlood.derive';
 import ColonyCohorts, {
+  COHORT_FOLD_REFERENCE_DPR,
   COHORT_MARK_CAP,
   cohortMarks,
   cohortPxScale,
@@ -1034,8 +1035,15 @@ describe('what a POW cohort looks like', () => {
     expect(COHORT_LENS_QUAD_R).toBe(32);
     // ⭐ …AND TIMES THE COHORT'S OWN MASS, since 2026-09-04: the quad is the
     // DOMAIN of the trace, so it shrinks with the picture computed inside it
-    // and a small cohort costs the square of its size in fill.
-    expect(lensVertex()).toContain('* uQuadR * vMass * 2.0');
+    // and a small cohort costs the square of its size in fill. Since 2026-09-06
+    // the half-extent ALSO folds to the mark on closeness (A1-2) — `uQuadR` at
+    // closeness 1, 1.25× the far disc below the band — so the domain shrinks
+    // with the CAMERA too and the default-camera quad stops rasterising the
+    // ~93% of itself it can never light.
+    expect(lensVertex()).toContain('* quadR * vMass * 2.0');
+    expect(lensVertex()).toContain(
+      'float quadR = mix(1.25 * uDiscOutFar, uQuadR, closenessV);',
+    );
     // ⛔ AND NOTHING IS EVER DRAWN OFF THE COLONY PLANE. The disc plane IS the
     // membrane — the trace's plane crossing is `y * prevY < 0.0` about the
     // instance's own origin — and a mote's offset from its seat has y = 0
@@ -1112,23 +1120,40 @@ describe('what a POW cohort looks like', () => {
     expect(delivery).toBeGreaterThan(courier);
   });
 
-  it('folds on PIXELS PER WORLD UNIT, measured off the DRAWING BUFFER', () => {
+  it('folds on PIXELS PER WORLD UNIT, DISPLAY-INDEPENDENT off the DRAWING BUFFER', () => {
     // ⭐⭐⭐ ONE NUMBER FOLDS THE WHOLE FORM, and it is pixels per world unit
     // rather than distance — because the same distance is a different picture on
     // a 1440p screen and a phone, and because a dolly and a zoom must fold
     // identically. The layer writes the scale and each program divides it by its
     // own distance to the camera.
     const layer = source('ColonyCohorts.tsx');
+    // The reference DPR the fold is normalised to: the 1× reference machine.
+    expect(COHORT_FOLD_REFERENCE_DPR).toBe(1);
+    // ⭐ THE 1× PATH IS BYTE-IDENTICAL to the old raw-device-pixel scale, at any
+    // height (dpr defaults to the reference), so a 1× display is unchanged.
     expect(cohortPxScale(1440, 2.4142)).toBeCloseTo(0.5 * 1440 * 2.4142, 9);
-    // ⚠️⚠️ DOUBLE THE DPR AND IT DOUBLES. The drawing buffer's height is what a
-    // world unit is projected onto, so a quality tier that lowers `maxDpr`
-    // halves it — and a mark folded on CSS pixels would UNFOLD into the film's
-    // hole exactly as the machine admitted it could not afford one.
+    expect(cohortPxScale(2160, 2.4142)).toBeCloseTo(0.5 * 2160 * 2.4142, 9);
+    expect(cohortPxScale(1440, 2.4142, 1)).toBe(cohortPxScale(1440, 2.4142));
+    // At a FIXED dpr a taller CSS window folds proportionally more, and P[1][1]
+    // scales it linearly — the parts of the old law that were never the bug.
     expect(cohortPxScale(2880, 2.4142)).toBeCloseTo(2 * cohortPxScale(1440, 2.4142), 9);
     expect(cohortPxScale(1440, 4.8284)).toBeCloseTo(2 * cohortPxScale(1440, 2.4142), 9);
-    // …and it really is the DEVICE height, off the canvas, never `state.size`.
+    // ⚠️⚠️ AND IT IS DISPLAY-INDEPENDENT (D-5). A 2× buffer of a 1440-CSS window
+    // (drawing buffer 2880) folds EXACTLY as a 1× buffer of the same window
+    // (1440), so one CSS framing marches the same on a 1× and a 2× display.
+    expect(cohortPxScale(2880, 2.4142, 2)).toBeCloseTo(cohortPxScale(1440, 2.4142, 1), 9);
+    // …and a tier's DPR step (2 → 1.5 → 1) can neither fold nor unfold the mark:
+    // the same 1440-CSS window folds identically at every DPR it renders at.
+    expect(cohortPxScale(2160, 2.4142, 1.5)).toBeCloseTo(cohortPxScale(1440, 2.4142, 1), 9);
+    expect(cohortPxScale(2880, 2.4142, 2)).toBeCloseTo(cohortPxScale(2160, 2.4142, 1.5), 9);
+    // A sub-reference display is never INFLATED — a mark there is genuinely
+    // small, so the factor stays 1 and the scale is the raw device height.
+    expect(cohortPxScale(720, 2.4142, 0.5)).toBeCloseTo(0.5 * 720 * 2.4142, 9);
+    // …and it really is the DEVICE height off the canvas and the LIVE pixel
+    // ratio, never `state.size`.
     expect(layer).toContain('gl.domElement.height,');
     expect(layer).toContain('camera.projectionMatrix.elements[5],');
+    expect(layer).toContain('gl.getPixelRatio(),');
     // ⚠️ Comments stripped, because the paragraph beside the write NAMES the
     // CSS size it refuses and prose the compiler drops must not fail a claim
     // about code.
