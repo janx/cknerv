@@ -41,6 +41,17 @@ export interface AdaptiveQualityControllerProps {
    * MED -> LOW and the page stayed there. Same rule as hydration and the
    * hidden tab: not renderer evidence, in calibration or after the lock. */
   motionActiveRef?: { readonly current: boolean };
+  /** True for frames inside a POST-BLOCK WINDOW: ~1.5 s after a block landed
+   * (the cells cache's `lastPulseAtMs` advanced). A block's arrival runs a
+   * main-thread burst — the pulse reducer, the colony reflow, the delivery and
+   * courier layers arming their waves — that stretches a handful of rAF
+   * intervals the sampler would otherwise read as slowness. But the tier
+   * cascade only lowers GPU cost, so a step bought with a main-thread burst
+   * buys nothing: the next block costs the machine exactly the same. Same rule
+   * as a motion window and a hidden tab — not renderer evidence, in
+   * calibration or after the lock. Settled once per frame by App from
+   * `lastPulseAtMs`, exactly as `motionActiveRef` is by `CameraMotionSentinel`. */
+  recentBlockActiveRef?: { readonly current: boolean };
 }
 
 /** Frame-time controller for the page's whole life. It samples window
@@ -52,14 +63,16 @@ export interface AdaptiveQualityControllerProps {
  * is a clock read per frame. React state changes only when the preset or the
  * lock does.
  *
- * Three kinds of frame are never evidence, in either phase: a hidden tab's,
- * a replay storm's, and a motion window's (`motionActiveRef`). All three take
- * the same exit — the partial sample window is dropped and the next admitted
- * frame primes a fresh one — and only replay adds a restart on top, because
- * only replay leaves the seconds after it untrustworthy. */
+ * Four kinds of frame are never evidence, in either phase: a hidden tab's, a
+ * replay storm's, a motion window's (`motionActiveRef`) and a post-block
+ * window's (`recentBlockActiveRef`). All four take the same exit — the partial
+ * sample window is dropped and the next admitted frame primes a fresh one —
+ * and only replay adds a restart on top, because only replay leaves the
+ * seconds after it untrustworthy. */
 export default function AdaptiveQualityController({
   hydrationActiveRef,
   motionActiveRef,
+  recentBlockActiveRef,
 }: AdaptiveQualityControllerProps = {}): null {
   const { quality } = useControls('Time', QUALITY_MODE_CONTROL);
   const mode = quality as QualityMode;
@@ -146,6 +159,23 @@ export default function AdaptiveQualityController({
       // (one 30 ms frame moves a 45-frame window's mean by 0.3 ms). Checked
       // after the hydration branches above so a replay that ends mid-drag
       // still takes its restart on the first frame after it.
+      frames.current = 0;
+      lastAt.current = 0;
+      maxFrameMs.current = 0;
+      return;
+    }
+    if (recentBlockActiveRef?.current) {
+      // A post-block window. Dropped exactly as a motion window is: the partial
+      // sample is discarded — the frames before the block with it — and the
+      // first frame past the window primes a fresh one, so no interval that
+      // touches a block's main-thread burst is ever averaged. The cascade only
+      // lowers GPU cost and a block's cost is on the main thread, so a step
+      // bought here would buy nothing and the next block would pay it again.
+      // Checked after the hydration branches for the same reason motion is: a
+      // replay that ends as a block lands still takes its restart first. Like
+      // motion it needs no settle constant of its own — App's sentinel writes
+      // this ref after this callback, so the verdict read here is last frame's
+      // and the ~1.5 s window already absorbs the one-frame lag.
       frames.current = 0;
       lastAt.current = 0;
       maxFrameMs.current = 0;

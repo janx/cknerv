@@ -276,6 +276,49 @@ function CameraMotionSentinel({
   return null;
 }
 
+/** How long after a block lands the adaptive sampler treats a frame as
+ * block-disturbed. A block's arrival runs a main-thread burst (the pulse
+ * reducer, the colony reflow, the delivery/courier layers arming) that
+ * stretches a few rAF intervals; the tier cascade only buys GPU time, so a
+ * step taken on that burst buys nothing. ~1.5 s covers two sample windows —
+ * generous, because a wrongly-excluded window costs the sampler nothing it has
+ * learned, while a wrongly-counted burst can cost the page a tier. */
+const RECENT_BLOCK_WINDOW_MS = 1_500;
+
+/**
+ * Settles `recentBlockActiveRef`, once per frame, from the cells cache's
+ * `lastPulseAtMs`, exactly as CameraMotionSentinel settles `motionActiveRef`.
+ * AdaptiveQualityController reads it and drops every frame it flags.
+ *
+ * It KEYS ITS CLOCK ON `lastPulseAtMs` rather than differencing it — the same
+ * pattern every block-driven layer uses (NetworkColony, the courier and
+ * delivery layers). `lastPulseAtMs` is a server wall-clock stamp and cannot be
+ * subtracted from a local `performance.now()`, so the sentinel notices the
+ * stamp ADVANCE (App re-renders on it, handing this useFrame a fresh prop) and
+ * holds the window open for `RECENT_BLOCK_WINDOW_MS` of local time after. The
+ * opening stamp — a snapshot's last pulse, or 0 — is seeded, never fired: boot
+ * is already excluded by warmup, and a stale stamp is not a live burst.
+ */
+function BlockWindowSentinel({
+  lastPulseAtMs,
+  recentBlockActiveRef,
+}: {
+  lastPulseAtMs: number;
+  recentBlockActiveRef: { current: boolean };
+}) {
+  const seenPulseAtMs = useRef(lastPulseAtMs);
+  const blockSeenAtMs = useRef(Number.NEGATIVE_INFINITY);
+  useFrame(() => {
+    if (lastPulseAtMs !== seenPulseAtMs.current) {
+      seenPulseAtMs.current = lastPulseAtMs;
+      blockSeenAtMs.current = performance.now();
+    }
+    recentBlockActiveRef.current =
+      performance.now() - blockSeenAtMs.current < RECENT_BLOCK_WINDOW_MS;
+  });
+  return null;
+}
+
 function CellDetailViewTracker({
   controlsRef,
   focusRef,
@@ -491,6 +534,11 @@ export default function App({
   // or a flight — settled once per frame by the sentinel, read by
   // AdaptiveQualityController, which drops the frames it flags.
   const cameraMotionActiveRef = useRef(false);
+  // The sampler's view of a recent block: true for ~1.5 s after a block lands,
+  // settled once per frame by BlockWindowSentinel from `lastPulseAtMs` and read
+  // by AdaptiveQualityController, which drops the block's main-thread burst so
+  // it never steps a tier the cascade cannot buy back.
+  const recentBlockActiveRef = useRef(false);
   const beginOrbitInteraction = useCallback(() => {
     beginOrbitGesture(orbitGestureRef.current);
   }, []);
@@ -2311,6 +2359,7 @@ export default function App({
             <AdaptiveQualityController
               hydrationActiveRef={hydrationActiveRef}
               motionActiveRef={cameraMotionActiveRef}
+              recentBlockActiveRef={recentBlockActiveRef}
             />
           )}
           {/* Mirrors the backtick leva panel into the LIVE tuning store.
@@ -2447,6 +2496,12 @@ export default function App({
             automationActiveRef={cameraAutomationActiveRef}
             pickingSuspendedRef={orbitPickingSuspendedRef}
             motionActiveRef={cameraMotionActiveRef}
+          />
+          {/* Marks the ~1.5 s after a block lands so the adaptive sampler drops
+              the block's main-thread burst; keys its clock on `lastPulseAtMs`. */}
+          <BlockWindowSentinel
+            lastPulseAtMs={cellsCache.lastPulseAtMs}
+            recentBlockActiveRef={recentBlockActiveRef}
           />
         </Canvas>
       </CellGalaxyProvider>

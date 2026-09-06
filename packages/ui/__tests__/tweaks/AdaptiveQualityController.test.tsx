@@ -349,6 +349,80 @@ describe('AdaptiveQualityController motion windows', () => {
   });
 });
 
+describe('AdaptiveQualityController post-block windows', () => {
+  it('is unchanged by a block ref that never fires', () => {
+    // Equivalence pin: with the ref present and false, today's behaviour to
+    // the window — the flag is the whole difference the tests below measure,
+    // so a page that never lands a block steps down exactly as it does now.
+    const bare = lockedStepDownWindows();
+    const recentBlockActiveRef = { current: false };
+    render(<AdaptiveQualityController recentBlockActiveRef={recentBlockActiveRef} />);
+    windowsToLock(16);
+    sampleWindows(16, 8);
+    expect(windowsToStepDown(40)).toBe(bare);
+  });
+
+  it('drops a block\'s main-thread burst from the sample after the lock, and keeps listening', () => {
+    const recentBlockActiveRef = { current: false };
+    render(<AdaptiveQualityController recentBlockActiveRef={recentBlockActiveRef} />);
+    windowsToLock(16);
+    const switches = getQualityRuntimeSnapshot().switches;
+    const reads = clockReads;
+
+    // 15 s of 40 ms frames flagged as post-block — the burst a run of blocks
+    // leaves behind, held true the whole time as the sentinel's window would.
+    recentBlockActiveRef.current = true;
+    sampleWindows(40, 20);
+    recentBlockActiveRef.current = false;
+
+    // Skipped exactly as motion and replay are: not sampled, not even clocked.
+    expect(clockReads).toBe(reads);
+    expect(getQualityRuntimeSnapshot()).toMatchObject({
+      effective: 'high', locked: true, switches,
+    });
+
+    // Nothing of the burst lingers once the blocks stop: the average never saw
+    // a 40 ms window, so at-rest frames carry no evidence forward.
+    sampleWindows(16, 8);
+    expect(getQualityRuntimeSnapshot()).toMatchObject({
+      effective: 'high', locked: true, switches,
+    });
+
+    // The sampler is still alive, and on the post-lock hold — not on a
+    // re-armed warmup: a replay-style restart would push this past window 17.
+    const windows = windowsToStepDown(40);
+    expect(windows).toBeGreaterThan(12);
+    expect(windows).toBeLessThanOrEqual(18);
+    expect(getQualityRuntimeSnapshot()).toMatchObject({
+      mode: 'auto', effective: 'med', locked: true, switches: switches + 1,
+    });
+  });
+
+  it('drops a block burst before the lock, costing calibration nothing', () => {
+    const recentBlockActiveRef = { current: false };
+    render(<AdaptiveQualityController recentBlockActiveRef={recentBlockActiveRef} />);
+    sampleWindows(16, 7); // warmup spent (six samples), no stability yet
+    const switches = getQualityRuntimeSnapshot().switches;
+
+    // Twelve flagged 40 ms windows move nothing — not the tier, not the lock.
+    recentBlockActiveRef.current = true;
+    sampleWindows(40, 12);
+    recentBlockActiveRef.current = false;
+    expect(getQualityRuntimeSnapshot()).toMatchObject({
+      effective: 'high', locked: false, switches,
+    });
+
+    // The lock still lands on the full 10 s stable window from here, at the
+    // opening tier, as if the burst had not happened.
+    const windows = windowsToLock(16);
+    expect(windows).toBeGreaterThanOrEqual(Math.floor(10_000 / WINDOW_MS));
+    expect(windows).toBeLessThanOrEqual(Math.ceil(10_000 / WINDOW_MS) + 2);
+    expect(getQualityRuntimeSnapshot()).toMatchObject({
+      effective: 'high', locked: true, switches,
+    });
+  });
+});
+
 describe('a stall is not evidence', () => {
   /** A window at 60 fps with one stop in the middle of it. */
   function stalledWindow(stallMs: number): void {
