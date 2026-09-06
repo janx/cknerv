@@ -537,13 +537,19 @@ function ckbNodeLabel(id: string): string {
  *  intensityRef snaps toward `ANCHOR_FLASH_PEAK_INTENSITY` and lerps
  *  back to the quieter resting presentation over the same envelope. */
 const ANCHOR_FLASH_DURATION_S = 0.6;
-/** The local anchor remains a little larger than a measured peer (1.4), but
- *  no longer reads as a second hero beside the Cell field. */
-const ANCHOR_BODY_RADIUS = 1.75;
+/** The local anchor is half the radius it wore through the 2026-09-04 round
+ *  (1.75 → 0.875, "local node 体积缩小一倍"), which puts it UNDER a measured
+ *  peer (1.4): the observer is the smallest form in the mesh, found by its
+ *  cyan word rather than by bulk. The halo, the reticle and the label drop
+ *  derive from this radius, so the whole mark halves with the body. */
+const ANCHOR_BODY_RADIUS = 0.875;
 /** Preserve the generous glow language without the old 15 × 15 billboard. */
 const ANCHOR_HALO_PLANE_SIZE = ANCHOR_BODY_RADIUS * 5.6;
 /** Keep the original hit area after shrinking the visible body. */
 const ANCHOR_HIT_RADIUS = 2.5;
+/** The DOM word hangs the same 0.97 wu under the body's lowest vertex that it
+ *  did at radius 1.75 (2.72), so the gap survives the halving. */
+const ANCHOR_LABEL_DROP = ANCHOR_BODY_RADIUS + 0.97;
 /** A real block may briefly promote the anchor above both resting and selected
  *  states. The lower peak avoids a cyan strobe competing with the peer wave. */
 const ANCHOR_FLASH_PEAK_INTENSITY = 1.85;
@@ -796,7 +802,7 @@ function CkbNodeAnchor({
         <meshBasicMaterial visible={false} />
       </mesh>
       <Html
-        position={[0, -2.72, 0]}
+        position={[0, -ANCHOR_LABEL_DROP, 0]}
         center
         occlude={false}
         // Bounded stack: drei's default range is in the millions, which put
