@@ -480,6 +480,14 @@ lifeline, and stitches disconnected components with the minimum sparse long
 links needed for reachability. A 14-seed arbor forest assigns visual trunk
 weights; those weights affect presentation, not route connectivity.
 
+The builder is a pure function of the Cell *set*, not of Map-insertion order:
+it sorts its working Cell list by id before the k-nearest, lifeline,
+component-stitch and skeleton passes, so a full-pack rebuild and a delta-patched
+worker session grow the identical tree — the same skeleton partition, the same
+edge sequence, and the same arbor weights. That equivalence is the precondition
+for §8.2's in-place patch and, on a supersession, for making the recovery a
+small diff instead of a whole-fabric replacement.
+
 Cell IDs stay numeric end to end. Worker transport uses `Float64Array` for IDs
 because composition-derived IDs are not constrained to 32-bit integers.
 
@@ -531,6 +539,22 @@ The pipeline is latest-only:
   (`neighborGraphBuilderStats` also counts patched, whole, unchained applies
   and stale resends, and the passive selection's patched and whole applies).
 
+A topology supersession — two generations requested inside one worker build, as
+a block burst can cause — takes the same safe path as any broken generation
+chain: the superseded request is dropped, the next build resends the whole
+adjacency and passive list, and the main thread applies them in place. Because
+the builder is id-ordered (§8.1), that whole resend reproduces the neighbour
+runs the main thread already holds, so the Set reuse above makes the apply a
+small diff rather than the whole-fabric flush it once was (it drove a ~3 MB
+`setFabric` per burst before the id-order fix). Retaining the superseded build's
+patch-base generation so the recovery is a single chained patch with no resend
+at all was considered and deferred: the id-order fix already removed the
+resend's cost, and chaining across a supersession would trade the whole-re-pack
+safety net (every failure path funnels through the generation check into a full
+re-pack) for reliance on the topology journal's `valid` flag holding across the
+supersession window — a correctness risk not worth a saving seen only on the
+occasional burst.
+
 While a worker build is pending, an eager living mesh applies same-frame births
 and removals to the currently published graph, replacing — never editing — the
 adjacency Sets it touches and logging the displaced instance on a node's first
@@ -560,14 +584,22 @@ overrides the server value. Server and tuning values are bounded to
 `6,000..20,000`. The result is fixed across High, Med, and Low and across AUTO
 and manual Cell display modes.
 
-Selection order preserves the field's visual identity:
+Selection order preserves the field's visual identity, and admits continuity
+first so an ordinary block changes the fabric only where membership did:
 
-1. Use a spanning forest while it fits.
-2. If the forest exceeds the budget, reserve the coverage share (default
-   `0.55`) for a hash-scattered forest subset. Graph-order admission that fully
-   wires one region and leaves another bare is forbidden.
-3. Prefer still-valid prior edges so ordinary churn changes the fabric locally.
-4. Fill remaining capacity with hierarchical trunks, twigs, and deterministic
+1. Re-admit still-valid previously-drawn edges before anything else competes for
+   slots. A birth or death then frees only the dead edges' slots instead of
+   reshuffling the whole coverage forest — the forest is a queue-order BFS
+   skeleton, whose parent assignment shifts a large fraction of its edges when
+   membership moves even ~1 %, so taking coverage first evicted and regrew
+   roughly an eighth of the drawn edges every block. A cold build (no prior
+   edges) is a no-op here, so coverage below still fills everything as before.
+2. Then coverage: use a spanning forest while it fits; if the forest exceeds the
+   budget, reserve the coverage share (default `0.55`) for a hash-scattered
+   forest subset, ranked by a stable per-edge hash so an edge keeps its rank
+   while it lives. Graph-order admission that fully wires one region and leaves
+   another bare is forbidden.
+3. Fill remaining capacity with hierarchical trunks, twigs, and deterministic
    cross-links (default trunk and twig shares `0.72` and `0.18`).
 
 Every passive quadratic curve uses four samples at every quality preset. Dense
@@ -678,16 +710,20 @@ the landed graph: its routes are made of live edges and never of one the build
 just removed; only a whole rebuild replaces the object, and a batch opened
 before it keeps the graph it captured (the frame loop validates every hop
 against the live graph either way). The searches run from a FIFO queue on the raw frame,
-before the pulse walk: about 2 ms per frame (`LIVE_PLAN_BUDGET_MS` — a frame
+before the pulse walk, under a wall-relative budget (`livePlanBudgetMs` — 12 %
+of the last frame interval, floored at `LIVE_PLAN_BUDGET_MS` 2 ms — and a frame
 never starts a step its previous step's cost predicts would overrun it), never
 less than one step per frame, batches in arrival order; the batch's entry grid
-is built as a step of its own. Pulses admitted from a
-slice carry the batch's `startSec`, so departure times, pulse order, the
-128-per-batch budget, the rescue pass and every stats bump are those the
-one-task planner produced. A batch whose earliest departure is within
-`LIVE_PLAN_DEADLINE_MARGIN_S` of now finishes in the current frame regardless
-of the budget: no packet is ever admitted after it should have left, and the
-worst case is the single task the planner always was. A reorg prunes queued
+and each intermediate block boundary's rescue flush are each built as a step of
+their own. Pulses admitted from a slice carry the batch's `startSec`, so
+departure times, pulse order, the 128-per-batch budget, the rescue pass and
+every stats bump are those the one-task planner produced. A batch whose earliest
+departure is within `LIVE_PLAN_DEADLINE_MARGIN_S` of now is planned under
+departure pressure — flagged for the probe (`forcedByDeadline`) — but it does
+not bypass the budget: its remainder defers to the next slice like any other, so
+a batch that has fallen far behind (a long stall leaving a whole batch urgent at
+once) finishes over a few budgeted frames instead of one long synchronous drain,
+and no pulse is dropped. A reorg prunes queued
 links at or above the rewrite boundary before they can be admitted, the way it
 prunes packets already in flight. The searches themselves run over an
 epoch-stamped typed-array scratch with a per-node neighbour cache keyed on the
@@ -1511,6 +1547,30 @@ The particle multiplier can lower simultaneous active-pulse admission under
 saturation. It may omit bounded transient work, but it cannot reroute an
 admitted pulse or change canonical state.
 
+Several raster passes carry a device-pixel ceiling so a high-DPR buffer or a
+close pose cannot spend fill without bound. Each is byte-identical at its
+reference point, so the reference-DPR (1×) look and the default pose are
+unchanged:
+
+- the population halo sizes its beads and backbone width at a reference-DPR
+  fill budget (`populationFieldFillPixelRatio`, reference DPR 1), so High at
+  DPR 2 spends no more point and capsule fill than High at DPR 1; the one-pixel
+  residual-hairline pass is geometric and rides the buffer untouched;
+- the Cell body sprite caps at `CELL_BODY_MAX_POINT_PX` (256 device px), the
+  halo points conserve light on both sides of their existing CSS-pixel ceiling,
+  and a measured peer's halo rolls its angular size off below
+  `MEASURED_HALO_NEAR_DEPTH` (32 world units) — each dims the light it clamps so
+  the resting quantity is conserved, and each binds only past a threshold
+  distance, never at the default pose; and
+- the POW cohort lens folds on a reference DPR (`COHORT_FOLD_REFERENCE_DPR` 1)
+  rather than raw device pixels, so one CSS framing marches the same on a 1×
+  and a 2× buffer and a tier's `maxDpr` step leaves the fold unchanged; its
+  march decision (whether a mark lenses at all) is therefore display-independent.
+
+These are fill ceilings on quality-owned raster, not membership or nerve
+changes: they conserve the light they clamp and never touch AUTO membership,
+the passive edge budget, or the four-sample curve geometry (§15.4).
+
 Before the first Canvas mount, AUTO estimates the drawing-buffer load High
 would request. It begins at High below 8 million pixels, Med from 8 million,
 and Low from 20 million. Thus 4K at DPR 1 and 1080p at DPR 2 begin at Med
@@ -1519,6 +1579,17 @@ vsync boundary. Deterministic review Labs retain High unless their URL opts
 into `adaptive-quality=1`. An explicit High/Med/Low query or control remains
 authoritative.
 
+Multisample antialiasing is decided once at that same mount, from the same
+buffer class. `antialias` is a context attribute fixed at Canvas creation and
+cannot follow the runtime tier, and the MSAA resolve is a per-frame cost
+proportional to drawing-buffer pixels — largest at or above the 8-million-pixel
+class, exactly where the DPR lever is already inert. So a buffer that opens at
+Med or Low (≥ 8 million pixels) turns MSAA off, while a High-class buffer
+(< 8 million pixels) keeps it on for the hard edges it helps (capsule line
+segments, couriers, icosahedra). The softer hard edges above the class are the
+accepted cost; the passes that read as a nervous system are screen-space
+capsules whose own shader owns their caps.
+
 AUTO then samples 750 ms windows, uses a 1,500 ms exponential average, begins
 with a 4,000 ms warmup, and waits 6,000 ms after a switch. Sustained slow
 evidence may move it down one adjacent preset; it never moves up during the
@@ -1526,13 +1597,20 @@ page lifetime. Hidden tabs, delayed callbacks, debugger pauses,
 backfill/replay windows, and motion windows are rejected as performance
 evidence. Manual High/Med/Low takes ownership immediately.
 
-Three kinds of frame are never evidence — in calibration and after the lock
-alike, since the sampler outlives the lock — and all three take the same
+Four kinds of frame are never evidence — in calibration and after the lock
+alike, since the sampler outlives the lock — and all four take the same
 exit: the partial 750 ms window is dropped, the frames before it with it, and
 the next admitted frame primes a fresh one. They are a hidden tab's frames, a
 backfill/replay storm's frames (which alone also re-arm the warmup, because
-the seconds after a replay are not trustworthy either), and the frames of a
-**motion window**. A frame is inside a motion window when a pointer gesture is
+the seconds after a replay are not trustworthy either), the frames of a
+**post-block window** (~1,500 ms after a block lands, `recentBlockActiveRef`
+settled once a frame by a sentinel keyed on `lastPulseAtMs` advancing), and the
+frames of a **motion window**. The post-block window is excluded for the reason
+the motion window is: a block's main-thread burst (the pulse reducer, colony
+reflow, delivery and courier arming) feeds the rAF wall-time sampler, but the
+tier cascade only lowers GPU cost, so a step-down bought on a main-thread cost
+buys nothing back and the next block pays it again. A frame is inside a motion
+window when a pointer gesture is
 held (`OrbitControls` `start` to `end`, an un-moved press included), the
 camera moved during the last settled frame (a drag, or the damping tail after
 a release), or a route-camera flight owns the camera. `App` settles the OR of
@@ -1612,6 +1690,12 @@ current staged structure.
   five integers instead of walking the 12,000-member stage per block.
 - A stream batch that advances only the reconnect revision is never published:
   the cursor moves, the React commit does not.
+- A display write copies only the structure it touches: the staged member Set
+  and the resident payload Map are owned by separate flags, so a canonical enter
+  or exit copies the ~12 K member Set alone and a resident payload write copies
+  the ~10 K resident Map alone, instead of cloning both on every display batch;
+  a bounded link list is trimmed once at finalize rather than front-shifted on
+  every append.
 - The HUD's 1 Hz clock is a store with leaf subscribers (`hudClock`): the
   uptime, freshness and silence readouts re-render per tick, while the overlay
   root and its memoized panels render on data changes only. Producer standings
@@ -1627,9 +1711,12 @@ current staged structure.
   A whole rebuild is the fallback for a broken generation chain, not the
   steady state.
 - Live route planning is sliced across frames (§9.1): a link batch opens the
-  instant its delta arrives and its searches run from a FIFO queue at about
-  2 ms a frame on an epoch-stamped typed-array scratch, with a batch near its
-  departure finishing in the frame regardless.
+  instant its delta arrives and its searches run from a FIFO queue on an
+  epoch-stamped typed-array scratch under a wall-relative budget (12 % of the
+  last frame interval, a 2 ms floor), at least one step a frame. A batch past
+  its departure margin is planned under pressure but still yields to the budget,
+  deferring its remainder to the next slice rather than draining a whole batch
+  in one frame — no pulse is dropped.
 - The bridge layer's host registry decides whether a build changed anything
   its selection reads: an unchanged host set runs no selection, and a changed
   one writes only the strokes that moved — a birth into a parked hole or the
@@ -1642,8 +1729,24 @@ current staged structure.
 - High-frequency state stays in refs and reusable scratch objects: the pulse
   walk writes every hop through one scratch record and resolves its curve
   through a numeric two-level edge index rather than a key string, the warm
-  overlay's render records are a pool, and birth admission ranks its k
-  nearest with parallel scalars rather than a record per candidate.
+  overlay's render records are a pool, and birth admission answers each birth
+  from a bucketed neighbourhood rebuilt once per generation — not a scan of the
+  whole Cell map per birth — and ranks its k nearest with parallel scalars
+  rather than a record per candidate. The per-block emit and bridge walk
+  allocate nothing per edge or per stroke either: the fabric's resting route
+  colours are computed into one reused scratch, the bridge render state into one
+  `EdgeRender` consumed synchronously per stroke (the ~6.5 MB-per-block stroke
+  garbage removed), the recall-aperture index's grid ranges into reused
+  instances with pre-sized buckets, and the trunk-tier ranking into one growing
+  `Float64Array` reused across builds. The `gpuProbeFrame` test pins that
+  emit/draw path at zero per-frame allocation.
+- A held memory recall bakes the aperture's spatial half — bucket lookup,
+  projection, distance prefilter and spatial falloff — once per aperture
+  identity and slot-index revision, and per frame evaluates only the temporal
+  envelope over the near-route slots, uploading only their colour lanes, instead
+  of re-querying the index and re-running the full scale for every candidate
+  every frame. The split shares one arithmetic definition with the monolithic
+  scale, so its values are unchanged.
 - Peer topology excludes rapidly changing height from its memo signature.
 - Picking rebuilds only when an input it bakes changes — field version, draw
   count, pick-size epoch, detail epoch, viewport, projection — allocates
@@ -1654,7 +1757,11 @@ current staged structure.
   gesture, the damping tail or a route flight are dropped from the sample the
   way hidden-tab and replay frames are (§13).
 - Diagnostics cost nothing when off: every probe site is a boolean gate and
-  the always-on counters are integer increments (§19.5).
+  the always-on counters are integer increments (§19.5). The set includes the
+  selection-churn gauges `selectionChurn` and `weightedSelectionEdges` (beside
+  `trunkTierEdges` on `__fabricStats()`) and the live-plan gauges
+  `forcedByDeadline` and `maxStepMs` (on `__pulseStats()`), which name the
+  block-churn root and the plan tail without a profiler attached.
 
 ### 15.2 GPU strategy
 
@@ -1974,15 +2081,17 @@ Use the same snapshot and capture settings for these minimum scenarios:
 #### Counters beside the probe
 
 Always-on integer counters on `window`, each with a `…Reset()`; read them
-around a window the way the probe is read. `__fabricStats().bridge` (host-
-registry skips, strokes moved, uploads) and `__fabricStats().topology`
-(patched vs whole applies, the `unchainedApplies` and `staleResends` chain
-breaks, worker fallbacks); `__uploadStats()` (bufferSubData bytes by lane,
+around a window the way the probe is read. `__fabricStats()` (the selection
+gauges `selectionChurn` and `weightedSelectionEdges` beside `trunkTierEdges`),
+its `.bridge` block (host-registry skips, strokes moved, uploads) and its
+`.topology` block (patched vs whole applies, the `unchainedApplies` and
+`staleResends` chain breaks, worker fallbacks); `__uploadStats()` (bufferSubData bytes by lane,
 the cell attributes included); `__colonyStats()` (`topologyBuilds` against
 `scaffoldMisses`, `floods`, `edgeGeometryBuilds`, `courierSchedules`,
 `deliveryPlans`); `__cellPickStats()` (raycasts, `suspendedSkips`, `reuses`,
 `rebuilds`, and `rebuildReasons`, which counts every gate open at a rebuild
-and so sums to more than `rebuilds`); `__pulseStats()`,
+and so sums to more than `rebuilds`); `__pulseStats()` (admitted and dropped-by-
+reason plus the live-plan gauges `forcedByDeadline` and `maxStepMs`),
 `__producerOriginStats()` and `__qualityStats()` as before. Under a
 development StrictMode mount the colony's memo-driven counters read double;
 production is exact.
@@ -2005,6 +2114,38 @@ then unknown, not zero, and CPU/frame results remain usable. A non-zero
 discontinuous and affected queries were deliberately discarded; repeat the
 window on a stable visible context. Likewise, an absent metric key means its
 scope was not exercised or is not installed, never that the pass cost zero.
+
+#### Costs no on-page probe sees
+
+The scene GPU bracket covers the WebGL main pass only (`frame.gpu` above), so
+two real costs fall outside every on-page probe: the compositor's own work in
+the browser's GPU process, and anything resolved after `Scene.onAfterRender`
+(the MSAA resolve, §13). The DOM HUD is painted by the GPU-process compositor,
+not the WebGL context — an open card's `filter` drop-shadow surface and the
+overlay's scanline layer paint there — so no `render-stats` reading includes
+them. Measure them with a Chrome per-thread trace of the GPU process (the review
+kit's `run-trace.mjs` / `run-trace-ab.mjs`, reading GpuMain per frame): trace
+with the surface present and again with it gone (`display:none` the HUD, or a
+card open versus closed) and read the GpuMain delta. Compare only at equal GPU
+clock — the AMD 890M throttles its DPM clock (600–2,900 MHz) under load, so an
+unpaired before/after is dominated by clock swing, not by the surface; run the
+two legs back to back and reject unequal-clock windows.
+
+For a live gate against production data without occupying the embedded server,
+run the isolated-backend recipe: the user's node binary on a spare port
+(`:7001`) and a Vite dev/verify config whose `server.proxy` forwards `/api` and
+`/runtime-config.js` to it (`ui-app/vite.config.ts`), so the harness renders the
+SAME galaxy config production injects rather than the bundled defaults. Drive it
+headless over CDP; the AUTO sampler needs focus emulation
+(`setFocusEmulationEnabled` + `setWebLifecycleState active`) or it never samples
+(`document.hidden`), and every A/B is paired at equal clock as above.
+
+A hidden-tab or frozen-tab return is its own gate (`run-hidden.mjs` /
+`run-bg.mjs`, the frozen variant via `setWebLifecycleState frozen`): background
+the tab for a long absence, then confirm on return that the chain caught up
+through patched applies with no full render-set rebuild (`__fabricStats().topology`
+shows 0 full/unchained/stale) — the real cost of a long absence is one large
+catch-up flush, not a rebuild storm.
 
 ## 20. Change Checklist
 
