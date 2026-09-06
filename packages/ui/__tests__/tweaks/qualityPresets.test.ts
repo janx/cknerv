@@ -1,13 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import {
+  POPULATION_FIELD_FILL_REF_DPR,
   QUALITY_PRESETS,
   getQualityRuntimeSnapshot,
+  populationFieldFillPixelRatio,
   populationSpriteMulForCap,
   setAdaptiveQuality,
   setAdaptiveQualityLocked,
   setQualityMode,
   subscribeQualityRuntime,
 } from '../../src/tweaks/qualityPresets';
+import {
+  POPULATION_FIELD_POINT_SIZE_MAX,
+  populationPointDrawn,
+  populationPointFootprint,
+} from '../../src/materials/populationFieldMaterial';
 
 describe('QUALITY_PRESETS', () => {
   it('high preserves the production DPR, stars, particles, and rails', () => {
@@ -231,5 +238,45 @@ describe('the halo keeps its reach and spends its level', () => {
   it('never asks for a zero or negative radius', () => {
     expect(Number.isFinite(populationSpriteMulForCap(0))).toBe(true);
     expect(populationSpriteMulForCap(0)).toBeGreaterThan(0);
+  });
+});
+
+describe('⟨D-3⟩ the population field spends no more device-pixel fill at high dpr than at the reference', () => {
+  it('is the true ratio at or below the reference dpr — the 1× path is byte-identical', () => {
+    expect(POPULATION_FIELD_FILL_REF_DPR).toBe(1);
+    expect(populationFieldFillPixelRatio(0.5)).toBe(0.5);
+    expect(populationFieldFillPixelRatio(1)).toBe(1);
+  });
+
+  it('caps the sizing dpr above the reference so a 2× buffer sizes as a 1× one', () => {
+    expect(populationFieldFillPixelRatio(2)).toBe(1);
+    expect(populationFieldFillPixelRatio(3)).toBe(1);
+  });
+
+  it('holds the point pass device-pixel fill to the dpr-1 budget (down 4× at dpr 2)', () => {
+    // A footprint-bound bead (between the min and max clamps): its drawn size
+    // is the footprint, and fill scales as its square.
+    const cssHeight = 1080;
+    const size = POPULATION_FIELD_POINT_SIZE_MAX;
+    const viewDistance = 60;
+    const drawn1 = populationPointDrawn(
+      populationPointFootprint(size, cssHeight * 1, viewDistance),
+      1,
+    );
+    // dpr 2 the pre-D-3 way: the device viewport is 2× and the clamps ×2, so
+    // the bead is twice the linear footprint — 4× the device-pixel fill.
+    const drawn2Uncapped = populationPointDrawn(
+      populationPointFootprint(size, cssHeight * 2, viewDistance),
+      2,
+    );
+    // dpr 2 with the D-3 budget: sized as if the buffer were the reference DPR.
+    const fill = populationFieldFillPixelRatio(2);
+    const drawn2Capped = populationPointDrawn(
+      populationPointFootprint(size, cssHeight * fill, viewDistance),
+      fill,
+    );
+    expect(drawn2Uncapped).toBeCloseTo(drawn1 * 2, 6);
+    expect(drawn2Capped).toBe(drawn1);
+    expect(drawn2Capped).toBeLessThan(drawn2Uncapped);
   });
 });

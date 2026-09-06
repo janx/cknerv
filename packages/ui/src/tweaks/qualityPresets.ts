@@ -226,6 +226,31 @@ export function populationSpriteMulForCap(capMul: number): number {
   return Math.max(0.001, capMul) ** -0.25;
 }
 
+/**
+ * ⟨D-3⟩ The population field's device-pixel fill budget, as a reference DPR.
+ *
+ * The halo's point footprint law is stated in DRAWING-BUFFER pixels
+ * (`populationFieldMaterial.ts`), so a 2× buffer rasterises 4× the fill of a 1×
+ * one for the same world size and view distance. Live at HIGH the field is ~12
+ * of ~17 scoped GPU ms at dpr 2 — the point pass alone spends 4× its dpr-1
+ * cost — which is why HIGH is unreachable there while every 1× display is fine.
+ *
+ * Sizing the field as if the buffer were at most this DPR holds its
+ * device-pixel fill to the reference-monitor budget: the look is untouched at
+ * or below the reference (every 1× display — byte-identical) and bounded above
+ * it. This is ORTHOGONAL to the count lever the tiers pull
+ * (`populationCapMul`): it scales only the per-primitive footprint, and only
+ * above the reference DPR. 1 = the reference 4K monitor and every 1× desktop.
+ */
+export const POPULATION_FIELD_FILL_REF_DPR = 1;
+
+/** The DPR the field SIZES itself at: the true ratio at or below the reference
+ *  (byte-identical to the pre-D-3 path), capped above it so a high-DPR buffer
+ *  spends no more halo fill than the reference monitor spends. */
+export function populationFieldFillPixelRatio(pixelRatio: number): number {
+  return Math.min(pixelRatio, POPULATION_FIELD_FILL_REF_DPR);
+}
+
 /** Shared Leva input. `auto` owns only the effective rendering preset; selecting
  * high/med/low is an explicit manual override. */
 export const QUALITY_MODE_CONTROL = {

@@ -21,6 +21,7 @@ import {
   reportBootPopulationReady,
 } from '../boot/nerveRestGate';
 import {
+  populationFieldFillPixelRatio,
   populationSpriteMulForCap,
   QUALITY_PRESETS,
   useQualityRuntime,
@@ -325,6 +326,9 @@ export default function CellPopulationField({
   // capsule geometry does not carry it — the instance data was expanded from
   // it and the pairs are not recoverable from the expansion.
   const backboneIndexRef = useRef<Uint32Array>(new Uint32Array(0));
+  // ⟨D-3⟩ The live sprite multiplier from the last tier crossfade step, held so
+  // the capsule width can take the per-frame device-pixel fill budget below.
+  const spriteMulRef = useRef(1);
   const populationCapMul = QUALITY_PRESETS[quality].populationCapMul;
 
   // Placement, off the main thread. Walking 105K points of filament against a
@@ -607,26 +611,34 @@ export default function CellPopulationField({
       ramp.to,
       qualityCrossfade(performance.now() - ramp.startedAt),
     );
+    const pixelRatio = resolvePointSpritePixelRatio(state.gl.getPixelRatio());
+    // ⟨D-3⟩ The field sizes itself at the reference-DPR fill budget, so a 2×
+    // buffer spends no more halo fill than the reference monitor. At or below
+    // the reference this IS the true ratio and every quantity below is
+    // byte-identical to the pre-D-3 path.
+    const fillPixelRatio = populationFieldFillPixelRatio(pixelRatio);
     if (Math.abs(capMul - capApplied.current) > 0.0005) {
       capApplied.current = capMul;
       applyTrim(capMul);
       const spriteMul = populationSpriteMulForCap(capMul);
+      spriteMulRef.current = spriteMul;
       material.uniforms.uSizeMin.value = POPULATION_FIELD_POINT_SIZE_MIN * spriteMul;
       material.uniforms.uSizeMax.value = POPULATION_FIELD_POINT_SIZE_MAX * spriteMul;
-      // The capsule pass takes the same widening, and it is the half that
-      // carries REACH. A bead is a sample of the density; a promoted strand is
-      // a FILAMENT, and a filament thinned to a quarter of its beads is the
-      // one thing in this layer that reads as the field not going that far
-      // any more. The hairline pass is deliberately not touched — it is one
-      // device pixel by construction, and a wider hairline is a capsule.
-      backboneMaterial.linewidth = POPULATION_BACKBONE_WIDTH_PX * spriteMul;
     }
-    const pixelRatio = resolvePointSpritePixelRatio(state.gl.getPixelRatio());
-    material.uniforms.uPixelRatio.value = pixelRatio;
+    material.uniforms.uPixelRatio.value = fillPixelRatio;
     material.uniforms.uViewportHeight.value = pointSpriteDeviceViewportHeight(
       state.size.height,
-      pixelRatio,
+      fillPixelRatio,
     );
+    // The capsule pass takes the same widening as the beads (its half of the
+    // curve carries REACH; a filament thinned to a quarter of its beads reads
+    // as the field not going that far), and the same ⟨D-3⟩ fill budget: its
+    // device WIDTH is held to the reference DPR, while its length — like the
+    // one-pixel hairline, deliberately untouched — is geometric and rides the
+    // buffer. At or below the reference the scale is × 1, byte-identical.
+    backboneMaterial.linewidth = POPULATION_BACKBONE_WIDTH_PX
+      * spriteMulRef.current
+      * (fillPixelRatio / Math.max(pixelRatio, 1e-6));
     // ⟨ruling 22⟩ The galaxy's radiance rides the amount curve, because this
     // layer states its level in ONE place and all three of its passes read it.
     // Default 1 = today's picture.
