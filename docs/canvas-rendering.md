@@ -2134,6 +2134,31 @@ discontinuous and affected queries were deliberately discarded; repeat the
 window on a stable visible context. Likewise, an absent metric key means its
 scope was not exercised or is not installed, never that the pass cost zero.
 
+#### Timer queries on a multisampled context
+
+The probe is not free where the drawing buffer is multisampled, and it is not
+free in a way that reads as a scene cost. WebGL allows one `TIME_ELAPSED` query
+at a time, so each scoped draw's query is a pass boundary; on a multisampled
+buffer a pass boundary resolves the colour attachment and reloads it, so EVERY
+scoped draw pays attachment traffic it does not pay unprobed — the stars and
+the nucleus glow along with the fibres. On the 890M at 1920×960 CSS @2× with
+MSAA the ten cheapest programs measured 0.80–0.87 ms per draw, against
+0.05–0.07 ms for the same programs on the fullscreen window's larger but
+non-multisampled 1920×1080 @2× buffer — a 14× floor across a 12 % difference in
+area, so it is not the area — and 21 scoped draws a frame turn that floor into
+the whole frame. The page ran **28.6 fps with `render-stats=1` against 58
+without it, at the same 2.1–2.2 GHz GPU clock**. Neither number is wrong; they are two different pages.
+So the rule: **never judge a page whose `gpu.state.samples` is non-zero by its
+scopes.** Read the shape of the profile if you like — the ranking survives —
+but take the frame rate from a probe-free leg, the same URL without
+`render-stats=1` and with GL·08 closed, and treat `GPU`, `OTHER` and every
+`gpu.metrics` mean as upper bounds. GL·08 states this itself: with a
+multisampled context it prints `MSAA ×n · SCOPES SPLIT THE PASS · READ FPS`
+under its two GPU rows. Since MSAA became a density decision (§13) the only
+contexts that still reach it are 1×-ish buffers below the 8-million-pixel
+class; every dense buffer is now unsampled, which is what makes the per-draw
+scopes readable at face value on the maximized 2× window at all.
+
 #### Costs no on-page probe sees
 
 The scene GPU bracket covers the WebGL main pass only (`frame.gpu` above), so

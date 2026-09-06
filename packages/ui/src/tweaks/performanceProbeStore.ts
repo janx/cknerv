@@ -512,6 +512,15 @@ export function readGpuFrameLedger(): Readonly<GpuFrameLedgerSnapshot> {
   return frameLedger;
 }
 
+/** The drawing buffer's sample count on its own, for the one reader that wants
+ * this device fact and nothing else: GL·08 states it beside the two GPU
+ * figures it qualifies. Beside `readGpuFrameLedger` and for its reason — the
+ * panel asks once per sampling window and should not copy two records to learn
+ * one integer. */
+export function readGpuSampleCount(): number | null {
+  return gpuState.samples;
+}
+
 export function snapshotPerformanceProbe(): PerformanceProbeSnapshot {
   return {
     schemaVersion: PERFORMANCE_PROBE_SCHEMA_VERSION,
